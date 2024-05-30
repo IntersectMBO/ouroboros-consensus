@@ -445,6 +445,8 @@ instance Functor m => Isomorphic (BlockForging m) where
                                    (unComp (inject (Comp tickedLgrSt)))
                                    (inject' (Proxy @(WrapValidatedGenTx blk)) <$> txs)
                                    (inject' (Proxy @(WrapIsLeader blk)) isLeader)
+      , setCredentials   = undefined -- TODO
+      , unsetCredentials = undefined -- TODO
       }
     where
       injTickedChainDepSt ::
@@ -488,6 +490,8 @@ instance Functor m => Isomorphic (BlockForging m) where
                                    (unComp (project (Comp tickedLgrSt)))
                                    (project' (Proxy @(WrapValidatedGenTx blk)) <$> txs)
                                    (project' (Proxy @(WrapIsLeader blk)) isLeader)
+      , setCredentials   = undefined -- TODO
+      , unsetCredentials = undefined -- TODO
       }
     where
       projTickedChainDepSt ::

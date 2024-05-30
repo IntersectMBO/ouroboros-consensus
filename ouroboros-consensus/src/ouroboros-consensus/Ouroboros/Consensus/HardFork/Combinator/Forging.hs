@@ -90,6 +90,8 @@ hardForkBlockForging label blockForging =
       , updateForgeState = hardForkUpdateForgeState          blockForging
       , checkCanForge    = hardForkCheckCanForge             blockForging
       , forgeBlock       = hardForkForgeBlock                blockForging
+      , setCredentials   = undefined -- TODO
+      , unsetCredentials = undefined -- TODO
       }
 
 hardForkCanBeLeader ::

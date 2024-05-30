@@ -35,7 +35,7 @@ import           Control.Monad (guard)
 import           Data.Coerce (coerce)
 import           Data.Maybe
 import           Data.Text (Text)
-import           Data.Void (Void)
+import           Data.Void (Void, absurd)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime (SystemStart (..))
 import           Ouroboros.Consensus.Byron.Crypto.DSIGN
@@ -126,6 +126,8 @@ type instance ForgeStateInfo ByronBlock = ()
 
 type instance ForgeStateUpdateError ByronBlock = Void
 
+type instance BlockForgingCredentials ByronBlock = Void
+
 byronBlockForging ::
      Monad m
   => Mempool.TxOverrides ByronBlock
@@ -142,6 +144,8 @@ byronBlockForging maxTxCapacityOverrides creds = BlockForging {
                                slot
                                tickedPBftState
     , forgeBlock       = \cfg -> return ....: forgeByronBlock cfg maxTxCapacityOverrides
+    , setCredentials   = absurd
+    , unsetCredentials = pure ()
     }
   where
     canBeLeader = mkPBftCanBeLeader creds

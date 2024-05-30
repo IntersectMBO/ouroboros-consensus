@@ -148,6 +148,11 @@ data BlockForging m blk = BlockForging {
         -> [Validated (GenTx blk)]      -- Contents of the mempool
         -> IsLeader (BlockProtocol blk) -- Proof we are leader
         -> m blk
+
+    , setCredentials :: BlockForgingCredentials blk -> m ()
+
+    , unsetCredentials :: m ()
+
     }
 
 -- | The prefix of transactions to include in the block

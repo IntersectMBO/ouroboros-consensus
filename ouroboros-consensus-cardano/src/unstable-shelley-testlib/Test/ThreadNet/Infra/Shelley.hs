@@ -37,7 +37,7 @@ module Test.ThreadNet.Infra.Shelley (
 
 import           Cardano.Crypto.DSIGN (DSIGNAlgorithm (..), seedSizeDSIGN)
 import           Cardano.Crypto.Hash (Hash, HashAlgorithm)
-import           Cardano.Crypto.KES (KESAlgorithm (..), UnsoundPureKESAlgorithm (..), seedSizeKES, unsoundPureSignKeyKESToSoundSignKeyKES)
+import           Cardano.Crypto.KES (KESAlgorithm (..), UnsoundPureKESAlgorithm (..), seedSizeKES)
 import           Cardano.Crypto.Seed (mkSeedFromBytes)
 import qualified Cardano.Crypto.Seed as Cardano.Crypto
 import           Cardano.Crypto.VRF (SignKeyVRF, VRFAlgorithm, VerKeyVRF,
@@ -210,16 +210,12 @@ genCoreNode startKESPeriod = do
     genSeed :: Integral a => a -> Gen Cardano.Crypto.Seed
     genSeed = fmap mkSeedFromBytes . genBytes
 
-mkLeaderCredentials :: (MonadST m, MonadThrow m, PraosCrypto c)
+mkLeaderCredentials :: PraosCrypto c
                     => CoreNode c
-                    -> ShelleyLeaderCredentials c m
-mkLeaderCredentials CoreNode { cnDelegateKey, cnVRF, cnKES, cnOCert } =
+                    -> ShelleyLeaderCredentials c
+mkLeaderCredentials CoreNode { cnDelegateKey, cnVRF } =
     ShelleyLeaderCredentials {
-        shelleyLeaderCredentialsGetSignKeyBundle =
-          ShelleyKeyBundle
-            <$> unsoundPureSignKeyKESToSoundSignKeyKES cnKES
-            <*> pure cnOCert
-      , shelleyLeaderCredentialsCanBeLeader = PraosCanBeLeader {
+       shelleyLeaderCredentialsCanBeLeader = PraosCanBeLeader {
           praosCanBeLeaderColdVerKey = SL.VKey $ deriveVerKeyDSIGN cnDelegateKey
         , praosCanBeLeaderSignKeyVRF = cnVRF
         }

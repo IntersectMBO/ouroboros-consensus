@@ -1,9 +1,12 @@
 {-# LANGUAGE BangPatterns        #-}
 {-# LANGUAGE DeriveAnyClass      #-}
 {-# LANGUAGE DeriveGeneric       #-}
+{-# LANGUAGE DerivingVia         #-}
+{-# LANGUAGE StandaloneDeriving  #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DataKinds           #-}
 
 -- | Hot key
 --
@@ -33,6 +36,7 @@ import           GHC.Generics (Generic)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block.Forging (UpdateInfo (..))
 import           Ouroboros.Consensus.Util.IOLike
+import           NoThunks.Class (OnlyCheckWhnfNamed (..))
 
 {-------------------------------------------------------------------------------
   KES Info
@@ -141,6 +145,8 @@ data HotKey c m = HotKey {
       -- | Securely erase the key and release its memory.
     , forget :: m ()
     }
+
+deriving via (OnlyCheckWhnfNamed "HotKey" (HotKey c m)) instance NoThunks (HotKey c m)
 
 sign ::
      (SL.KESignable c toSign, HasCallStack)

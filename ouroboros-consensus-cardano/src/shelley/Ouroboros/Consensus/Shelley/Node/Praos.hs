@@ -39,11 +39,13 @@ import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock,
 import           Ouroboros.Consensus.Shelley.Node.Common (ShelleyEraWithCrypto,
                      ShelleyKeyBundle (..), ShelleyLeaderCredentials (..))
 import           Ouroboros.Consensus.Shelley.Protocol.Praos ()
-import           Ouroboros.Consensus.Util.IOLike (IOLike)
+import           Ouroboros.Consensus.Util.IOLike (IOLike, newEmptyMVar, withMVar)
 
 {-------------------------------------------------------------------------------
   BlockForging
 -------------------------------------------------------------------------------}
+
+type instance BlockForgingCredentials (ShelleyBlock (Praos c) era) = ShelleyKeyBundle c
 
 -- | Create a 'BlockForging' record for a single era.
 praosBlockForging ::
@@ -55,25 +57,16 @@ praosBlockForging ::
      )
   => PraosParams
   -> Mempool.TxOverrides (ShelleyBlock (Praos c) era)
-  -> ShelleyLeaderCredentials (EraCrypto era) m
+  -> ShelleyLeaderCredentials (EraCrypto era)
   -> m (BlockForging m (ShelleyBlock (Praos c) era))
 praosBlockForging praosParams maxTxCapacityOverrides credentials = do
-    ShelleyKeyBundle
-          { shelleyKeyBundleSignKeyKES = skSound
-          , shelleyKeyBundleOpCert = ocert
-          } <- shelleyLeaderCredentialsGetSignKeyBundle credentials
-
-    let startPeriod :: Absolute.KESPeriod
-        startPeriod = SL.ocertKESPeriod ocert
-
-        slotToPeriod :: SlotNo -> Absolute.KESPeriod
+    let slotToPeriod :: SlotNo -> Absolute.KESPeriod
         slotToPeriod (SlotNo slot) =
           SL.KESPeriod $ fromIntegral $ slot `div` praosSlotsPerKESPeriod
 
-    hotKey <- HotKey.mkHotKey @m @c skSound startPeriod praosMaxKESEvo
-    pure $ praosSharedBlockForging hotKey ocert slotToPeriod credentials maxTxCapacityOverrides
+    praosSharedBlockForging slotToPeriod credentials maxTxCapacityOverrides
   where
-    PraosParams {praosMaxKESEvo, praosSlotsPerKESPeriod} = praosParams
+    PraosParams {praosSlotsPerKESPeriod} = praosParams
 
 -- | Create a 'BlockForging' record safely using the given 'Hotkey'.
 --
@@ -84,38 +77,46 @@ praosSharedBlockForging ::
      ( ShelleyEraWithCrypto c (Praos c) era
      , IOLike m
      )
-  => HotKey.HotKey c m
-  -> SL.OCert c
-  -> (SlotNo -> Absolute.KESPeriod)
-  -> ShelleyLeaderCredentials c m
+  => (SlotNo -> Absolute.KESPeriod)
+  -> ShelleyLeaderCredentials c
   -> Mempool.TxOverrides (ShelleyBlock (Praos c) era)
-  -> BlockForging m     (ShelleyBlock (Praos c) era)
+  -> m (BlockForging m (ShelleyBlock (Praos c) era))
 praosSharedBlockForging
-  hotKey
-  ocert
   slotToPeriod
   ShelleyLeaderCredentials {
       shelleyLeaderCredentialsCanBeLeader = canBeLeader
     , shelleyLeaderCredentialsLabel = label
     }
   maxTxCapacityOverrides = do
-    BlockForging
+    keyBundleVar <- newEmptyMVar
+
+    pure BlockForging
       { forgeLabel = label <> "_" <> T.pack (L.eraName @era),
         canBeLeader = canBeLeader,
         updateForgeState = \_ curSlot _ ->
-          forgeStateUpdateInfoFromUpdateInfo
-            <$> HotKey.evolve hotKey (slotToPeriod curSlot),
+          withMVar keyBundleVar $ \(hotKey, ocert) -> do
+            forgeStateUpdateInfoFromUpdateInfo
+              <$> HotKey.evolve hotKey (slotToPeriod curSlot),
         checkCanForge = \cfg curSlot _tickedChainDepState _isLeader ->
           praosCheckCanForge
             (configConsensus cfg)
             curSlot,
-        forgeBlock = \cfg ->
-          forgeShelleyBlock
-            hotKey
-            ocert
-            canBeLeader
-            cfg
-            maxTxCapacityOverrides
+        forgeBlock = \cfg curNo curSlot tickedLedger txs isLeader -> do
+          withMVar keyBundleVar $ \(hotKey, ocert) -> do
+            let startPeriod :: Absolute.KESPeriod
+                startPeriod = SL.ocertKESPeriod ocert
+
+            forgeShelleyBlock
+              hotKey
+              ocert
+              canBeLeader
+              cfg
+              maxTxCapacityOverrides
+              curNo
+              curSlot
+              tickedLedger
+              txs
+              isLeader
       }
 
 {-------------------------------------------------------------------------------

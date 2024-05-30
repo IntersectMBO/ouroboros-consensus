@@ -338,7 +338,7 @@ mkTestProtocolInfo
           generatedSecretsByron
           coreNodeId
 
-    leaderCredentialsShelley :: ShelleyLeaderCredentials c m
+    leaderCredentialsShelley :: ShelleyLeaderCredentials c
     leaderCredentialsShelley = Shelley.mkLeaderCredentials coreNode
 
     -- This sets a vestigial header field which is not actually used for anything.

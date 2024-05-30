@@ -64,8 +64,7 @@ import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Prelude (cborError)
-import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..),
-                     ocertKESPeriod)
+import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
 import           Cardano.Slotting.Time (SystemStart (SystemStart))
 import qualified Codec.CBOR.Decoding as CBOR
 import           Codec.CBOR.Encoding (Encoding)
@@ -81,7 +80,7 @@ import           Data.SOP.NonEmpty
 import           Data.SOP.OptNP (NonEmptyOptNP, OptNP (OptSkip))
 import qualified Data.SOP.OptNP as OptNP
 import           Data.SOP.Strict
-import           Data.Word (Word16, Word64)
+import           Data.Word (Word16)
 import           Lens.Micro ((^.))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger (ByronBlock)
@@ -104,7 +103,6 @@ import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Node.Run
-import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import           Ouroboros.Consensus.Protocol.Praos (Praos, PraosParams (..))
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosParams (..))
 import qualified Ouroboros.Consensus.Protocol.TPraos as Shelley
@@ -115,9 +113,7 @@ import           Ouroboros.Consensus.Shelley.Ledger.Block (IsShelleyBlock,
                      ShelleyBlockLedgerEra)
 import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
 import           Ouroboros.Consensus.Shelley.Node
-import           Ouroboros.Consensus.Shelley.Node.Common (ShelleyEraWithCrypto,
-                     ShelleyKeyBundle (..),
-                     shelleyBlockIssuerVKey)
+import           Ouroboros.Consensus.Shelley.Node.Common (ShelleyEraWithCrypto, shelleyBlockIssuerVKey)
 import qualified Ouroboros.Consensus.Shelley.Node.Praos as Praos
 import qualified Ouroboros.Consensus.Shelley.Node.TPraos as TPraos
 import           Ouroboros.Consensus.Storage.Serialisation
@@ -589,7 +585,7 @@ pattern CardanoProtocolParams {
 -- for mainnet (check against @'SL.gNetworkId' == 'SL.Mainnet'@).
 protocolInfoCardano ::
      forall c m. (IOLike m, CardanoHardForkConstraints c)
-  => ProtocolParamsShelleyBased c m
+  => ProtocolParamsShelleyBased c
   -> CardanoProtocolParams c
   -> ( ProtocolInfo      (CardanoBlock c)
      , m [BlockForging m (CardanoBlock c)]
@@ -726,7 +722,7 @@ protocolInfoCardano paramsShelleyBased paramsCardano
           initialNonceShelley
           genesisShelley
 
-    TPraosParams { tpraosSlotsPerKESPeriod, tpraosMaxKESEvo } = tpraosParams
+    TPraosParams { tpraosSlotsPerKESPeriod } = tpraosParams
 
     praosParams :: PraosParams
     praosParams = PraosParams
@@ -747,7 +743,7 @@ protocolInfoCardano paramsShelleyBased paramsCardano
             (SL.mkActiveSlotCoeff $ SL.sgActiveSlotsCoeff genesisShelley)
       }
 
-    PraosParams { praosSlotsPerKESPeriod, praosMaxKESEvo } = praosParams
+    PraosParams { praosSlotsPerKESPeriod } = praosParams
 
     blockConfigShelley :: BlockConfig (ShelleyBlock (TPraos c) (ShelleyEra c))
     blockConfigShelley =
@@ -1036,27 +1032,9 @@ protocolInfoCardano paramsShelleyBased paramsCardano
         return $ byronBlockForging maxTxCapacityOverridesByron creds `OptNP.at` IZ
 
     blockForgingShelleyBased ::
-         ShelleyLeaderCredentials c m
+         ShelleyLeaderCredentials c
       -> m (NonEmptyOptNP (BlockForging m) (CardanoEras c))
     blockForgingShelleyBased credentials = do
-        let ShelleyLeaderCredentials
-              { shelleyLeaderCredentialsGetSignKeyBundle = getSignKeyBundle
-              } = credentials
-
-        ShelleyKeyBundle
-              { shelleyKeyBundleSignKeyKES = skSound
-              , shelleyKeyBundleOpCert = ocert
-              } <- getSignKeyBundle
-
-        hotKey <- do
-          let maxKESEvo :: Word64
-              maxKESEvo = assert (tpraosMaxKESEvo == praosMaxKESEvo) praosMaxKESEvo
-
-              startPeriod :: Absolute.KESPeriod
-              startPeriod = Absolute.ocertKESPeriod ocert
-
-          HotKey.mkHotKey @m @c skSound startPeriod maxKESEvo
-
         let slotToPeriod :: SlotNo -> Absolute.KESPeriod
             slotToPeriod (SlotNo slot) = assert (tpraosSlotsPerKESPeriod == praosSlotsPerKESPeriod) $
               Absolute.KESPeriod $ fromIntegral $ slot `div` praosSlotsPerKESPeriod
@@ -1064,26 +1042,33 @@ protocolInfoCardano paramsShelleyBased paramsCardano
         let tpraos :: forall era.
                  ShelleyEraWithCrypto c (TPraos c) era
               => Mempool.TxOverrides (ShelleyBlock (TPraos c) era)
-              -> BlockForging m      (ShelleyBlock (TPraos c) era)
+              -> m (BlockForging m (ShelleyBlock (TPraos c) era))
             tpraos maxTxCapacityOverrides =
-              TPraos.shelleySharedBlockForging hotKey ocert slotToPeriod credentials maxTxCapacityOverrides
+              TPraos.shelleySharedBlockForging tpraosParams slotToPeriod credentials maxTxCapacityOverrides
 
         let praos :: forall era.
                  ShelleyEraWithCrypto c (Praos c) era
               => Mempool.TxOverrides (ShelleyBlock (Praos c) era)
-              -> BlockForging m      (ShelleyBlock (Praos c) era)
+              -> m (BlockForging m (ShelleyBlock (Praos c) era))
             praos maxTxCapacityOverrides =
-              Praos.praosSharedBlockForging hotKey ocert slotToPeriod credentials maxTxCapacityOverrides
+              Praos.praosSharedBlockForging slotToPeriod credentials maxTxCapacityOverrides
+
+        tpraosShelley <- tpraos maxTxCapacityOverridesShelley
+        tpraosAllegra <- tpraos maxTxCapacityOverridesAllegra
+        tpraosMary <- tpraos maxTxCapacityOverridesMary
+        tpraosAlonzo <- tpraos maxTxCapacityOverridesAlonzo
+        praosBabbage <- praos maxTxCapacityOverridesBabbage
+        praosConway <- praos maxTxCapacityOverridesConway
 
         pure
           $ OptSkip    -- Byron
           $ OptNP.fromNonEmptyNP $
-            tpraos maxTxCapacityOverridesShelley :*
-            tpraos maxTxCapacityOverridesAllegra :*
-            tpraos maxTxCapacityOverridesMary    :*
-            tpraos maxTxCapacityOverridesAlonzo  :*
-            praos  maxTxCapacityOverridesBabbage :*
-            praos  maxTxCapacityOverridesConway  :*
+            tpraosShelley :*
+            tpraosAllegra :*
+            tpraosMary    :*
+            tpraosAlonzo  :*
+            praosBabbage :*
+            praosConway  :*
             Nil
 
 protocolClientInfoCardano ::

@@ -223,7 +223,7 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
 protocolInfoShelleyBasedHardFork ::
      forall m proto1 era1 proto2 era2.
      (IOLike m, ShelleyBasedHardForkConstraints proto1 era1 proto2 era2)
-  => ProtocolParamsShelleyBased (EraCrypto era1) m
+  => ProtocolParamsShelleyBased (EraCrypto era1)
   -> SL.ProtVer
   -> SL.ProtVer
   -> L.TransitionConfig era2

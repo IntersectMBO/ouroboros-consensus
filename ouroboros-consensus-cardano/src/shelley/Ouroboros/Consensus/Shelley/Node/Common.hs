@@ -58,18 +58,8 @@ data ShelleyKeyBundle c = ShelleyKeyBundle
   Credentials
 -------------------------------------------------------------------------------}
 
-data ShelleyLeaderCredentials c m = ShelleyLeaderCredentials
-  { -- | The unevolved signing KES key (at evolution 0).
-    --
-    -- Note that this is not inside 'ShelleyCanBeLeader' since it gets evolved
-    -- automatically, whereas 'ShelleyCanBeLeader' does not change.
-    -- TODO: this currently uses 'UnsoundPureSignKeyKES', so the KES key is not
-    -- mlocked, and does not provide full forward security. Eventually, this
-    -- field should be removed entirely, and the KES sign key acquired through
-    -- different means, ensuring a fully mlocked in-memory chain from key
-    -- generation to block forging.
-    shelleyLeaderCredentialsGetSignKeyBundle :: m (ShelleyKeyBundle c),
-    shelleyLeaderCredentialsCanBeLeader :: PraosCanBeLeader c,
+data ShelleyLeaderCredentials c = ShelleyLeaderCredentials
+  { shelleyLeaderCredentialsCanBeLeader :: PraosCanBeLeader c,
     -- | Identifier for this set of credentials.
     --
     -- Useful when the node is running with multiple sets of credentials.
@@ -77,7 +67,7 @@ data ShelleyLeaderCredentials c m = ShelleyLeaderCredentials
   }
 
 shelleyBlockIssuerVKey ::
-  ShelleyLeaderCredentials c m -> SL.VKey 'SL.BlockIssuer c
+  ShelleyLeaderCredentials c -> SL.VKey 'SL.BlockIssuer c
 shelleyBlockIssuerVKey =
   praosCanBeLeaderColdVerKey . shelleyLeaderCredentialsCanBeLeader
 
@@ -136,12 +126,12 @@ instance ShelleyCompatible proto era => NodeInitStorage (ShelleyBlock proto era)
 -- When running a chain with multiple Shelley-based eras, in addition to the
 -- per-era protocol parameters, one value of 'ProtocolParamsShelleyBased' will
 -- be needed, which is shared among all Shelley-based eras.
-data ProtocolParamsShelleyBased c m = ProtocolParamsShelleyBased
+data ProtocolParamsShelleyBased c = ProtocolParamsShelleyBased
   { -- | The initial nonce, typically derived from the hash of Genesis
     -- config JSON file.
     --
     -- WARNING: chains using different values of this parameter will be
     -- mutually incompatible.
     shelleyBasedInitialNonce      :: SL.Nonce,
-    shelleyBasedLeaderCredentials :: [ShelleyLeaderCredentials c m]
+    shelleyBasedLeaderCredentials :: [ShelleyLeaderCredentials c]
   }

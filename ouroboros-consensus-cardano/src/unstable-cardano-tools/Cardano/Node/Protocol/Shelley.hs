@@ -31,7 +31,7 @@ import           Cardano.Api.OperationalCertificate
 import qualified Cardano.Api.Protocol.Types as Protocol
 import           Cardano.Api.SerialiseTextEnvelope
 import qualified Cardano.Crypto.Hash.Class as Crypto
-import qualified Cardano.Crypto.KES.Class as KES
+-- import qualified Cardano.Crypto.KES.Class as KES
 import           Cardano.Ledger.BaseTypes (ProtVer (..), natVersion)
 import           Cardano.Ledger.Crypto (StandardCrypto)
 import           Cardano.Ledger.Keys (coerceKeyRole)
@@ -41,8 +41,6 @@ import           Cardano.Node.Types
 import           Cardano.Prelude
 import           Control.Monad.Trans.Except.Extra (firstExceptT,
                      handleIOExceptT, hoistEither, left, newExceptT)
-import           Control.Monad.Class.MonadST (MonadST)
-import           Control.Monad.Class.MonadThrow (MonadThrow)
 import qualified Data.Aeson as Aeson (FromJSON (..), eitherDecodeStrict')
 import qualified Data.ByteString as BS
 import qualified Data.Text as T
@@ -52,8 +50,7 @@ import           Ouroboros.Consensus.Protocol.Praos.Common
                      (PraosCanBeLeader (..))
 import           Ouroboros.Consensus.Shelley.Node (Nonce (..),
                      ProtocolParams (..), ProtocolParamsShelleyBased (..),
-                     ShelleyGenesis (..), ShelleyLeaderCredentials (..),
-                     ShelleyKeyBundle (..))
+                     ShelleyGenesis (..), ShelleyLeaderCredentials (..))
 import           Prelude (String, id)
 
 
@@ -134,9 +131,8 @@ validateGenesis genesis =
       Shelley.validateGenesis genesis
 
 readLeaderCredentials ::
-     (MonadST m, MonadThrow m) =>
      Maybe ProtocolFilepaths
-  -> ExceptT PraosLeaderCredentialsError IO [ShelleyLeaderCredentials StandardCrypto m]
+  -> ExceptT PraosLeaderCredentialsError IO [ShelleyLeaderCredentials StandardCrypto]
 readLeaderCredentials Nothing = return []
 readLeaderCredentials (Just pfp) =
   -- The set of credentials is a sum total of what comes from the CLI,
@@ -145,10 +141,9 @@ readLeaderCredentials (Just pfp) =
        <*> readLeaderCredentialsBulk      pfp
 
 readLeaderCredentialsSingleton ::
-     (MonadST m, MonadThrow m) =>
      ProtocolFilepaths ->
      ExceptT PraosLeaderCredentialsError IO
-             [ShelleyLeaderCredentials StandardCrypto m]
+             [ShelleyLeaderCredentials StandardCrypto]
 -- It's OK to supply none of the files on the CLI
 readLeaderCredentialsSingleton
    ProtocolFilepaths
@@ -165,9 +160,9 @@ readLeaderCredentialsSingleton
     vrfSKey <-
       firstExceptT FileError (newExceptT $ readFileTextEnvelope (AsSigningKey AsVrfKey) vrfFile)
 
-    (opCert, kesSKey) <- opCertKesKeyCheck kesFile opCertFile
+    (opCert, _kesSKey) <- opCertKesKeyCheck kesFile opCertFile
 
-    let leaderCredentials = mkPraosLeaderCredentials opCert vrfSKey kesSKey
+    let leaderCredentials = mkPraosLeaderCredentials opCert vrfSKey
 
     return [leaderCredentials]
 
@@ -206,20 +201,18 @@ data ShelleyCredentials
     }
 
 readLeaderCredentialsBulk ::
-     forall m. (MonadST m, MonadThrow m)
-  => ProtocolFilepaths
-  -> ExceptT PraosLeaderCredentialsError IO [ShelleyLeaderCredentials StandardCrypto m]
+     ProtocolFilepaths
+  -> ExceptT PraosLeaderCredentialsError IO [ShelleyLeaderCredentials StandardCrypto]
 readLeaderCredentialsBulk ProtocolFilepaths { shelleyBulkCredsFile = mfp } =
   mapM parseShelleyCredentials =<< readBulkFile mfp
  where
    parseShelleyCredentials
      :: ShelleyCredentials
-     -> ExceptT PraosLeaderCredentialsError IO (ShelleyLeaderCredentials StandardCrypto m)
-   parseShelleyCredentials ShelleyCredentials { scCert, scVrf, scKes } = do
+     -> ExceptT PraosLeaderCredentialsError IO (ShelleyLeaderCredentials StandardCrypto)
+   parseShelleyCredentials ShelleyCredentials { scCert, scVrf, scKes = _ } = do
      cert <- parseEnvelope AsOperationalCertificate scCert
      vrfKey <- parseEnvelope (AsSigningKey AsVrfKey) scVrf
-     kesKey <- parseEnvelope (AsSigningKey AsUnsoundPureKesKey) scKes
-     return $ mkPraosLeaderCredentials cert vrfKey kesKey
+     return $ mkPraosLeaderCredentials cert vrfKey
 
    readBulkFile
      :: Maybe FilePath
@@ -241,26 +234,18 @@ readLeaderCredentialsBulk ProtocolFilepaths { shelleyBulkCredsFile = mfp } =
                              (teKes,  loc "kes")
 
 mkPraosLeaderCredentials ::
-     (MonadST m, MonadThrow m)
-  => OperationalCertificate
+     OperationalCertificate
   -> SigningKey VrfKey
-  -> SigningKey UnsoundPureKesKey
-  -> ShelleyLeaderCredentials StandardCrypto m
+  -> ShelleyLeaderCredentials StandardCrypto
 mkPraosLeaderCredentials
-    (OperationalCertificate opcert (StakePoolVerificationKey vkey))
-    (VrfSigningKey vrfKey)
-    (KesSigningKey kesKey) =
+    (OperationalCertificate _ (StakePoolVerificationKey vkey))
+    (VrfSigningKey vrfKey) =
     ShelleyLeaderCredentials
     { shelleyLeaderCredentialsCanBeLeader =
         PraosCanBeLeader {
-          -- praosCanBeLeaderOpCert     = opcert,
           praosCanBeLeaderColdVerKey = coerceKeyRole vkey,
           praosCanBeLeaderSignKeyVRF = vrfKey
         }
-    , shelleyLeaderCredentialsGetSignKeyBundle =
-        ShelleyKeyBundle
-          <$> KES.unsoundPureSignKeyKESToSoundSignKeyKES kesKey
-          <*> pure opcert
     , shelleyLeaderCredentialsLabel = "Shelley"
     }
 
