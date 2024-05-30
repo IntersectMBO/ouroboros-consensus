@@ -7,6 +7,12 @@ concurrency:
 
 on:
   workflow_dispatch:
+    inputs:
+      nothunks:
+        description:
+          Run the test run under NoThunks conditions instead of the default variant
+        type: boolean
+        default: false
   pull_request:
   merge_group:
   push:
@@ -26,9 +32,10 @@ jobs:
          ghc: ["8.10.7", "9.6.5", "9.8.2"]
          cabal: ["3.10.3.0"]
          os: [ubuntu-latest]
+         variant: [default, no-thunks]
          exclude:
            - variant:
-             ${{ github.event.type == 'schedule' && 'default' || 'no-thunks' }}
+             ${{ (github.event.type == 'schedule' || github.event.inputs.nothunks) && 'default' || 'no-thunks' }}
     env:
       # Modify this value to "invalidate" the Cabal cache.
       CABAL_CACHE_VERSION: "2024-01-29"
