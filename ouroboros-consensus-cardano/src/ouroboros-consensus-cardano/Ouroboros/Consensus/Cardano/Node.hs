@@ -120,6 +120,9 @@ import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util.Assert
 import           Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
+import Cardano.Protocol.TPraos.OCert (OCert)
+import Ouroboros.Consensus.Shelley.Node.TPraos (setShelleyBlockForgingCredentials, unsetShelleyBlockForgingCredentials)
 {-------------------------------------------------------------------------------
   SerialiseHFC
 -------------------------------------------------------------------------------}
@@ -570,6 +573,8 @@ pattern CardanoProtocolParams {
       , cardanoCheckpoints = checkpoints
       }
 
+type instance BlockForgingCredentials (CardanoBlock c) = ShelleyKeyBundle c
+
 {-# COMPLETE CardanoProtocolParams #-}
 
 -- | Create a 'ProtocolInfo' for 'CardanoBlock'
@@ -590,7 +595,7 @@ protocolInfoCardano ::
   -> ( ProtocolInfo      (CardanoBlock c)
      , m [BlockForging m (CardanoBlock c)]
      )
-protocolInfoCardano paramsShelleyBased paramsCardano 
+protocolInfoCardano paramsShelleyBased paramsCardano
   | SL.Mainnet <- SL.sgNetworkId genesisShelley
   , length credssShelleyBased > 1
   = error "Multiple Shelley-based credentials not allowed for mainnet"
@@ -1011,12 +1016,12 @@ protocolInfoCardano paramsShelleyBased paramsCardano
     blockForging :: m [BlockForging m (CardanoBlock c)]
     blockForging = do
         shelleyBased <- traverse blockForgingShelleyBased credssShelleyBased
-        let blockForgings :: [NonEmptyOptNP (BlockForging m) (CardanoEras c)]
+        let blockForgings :: [(NonEmptyOptNP (BlockForging m) (CardanoEras c), BlockForgingCredentials (CardanoBlock c) -> m (), m ())]
             blockForgings = case (mBlockForgingByron, shelleyBased) of
               (Nothing,    shelleys)         -> shelleys
-              (Just byron, [])               -> [byron]
-              (Just byron, shelley:shelleys) ->
-                  OptNP.zipWith merge byron shelley : shelleys
+              (Just byron, [])               -> [(byron, \_ -> pure (), pure ())]
+              (Just byron, (shelley, set, unset):shelleys) ->
+                  (OptNP.zipWith merge byron shelley, set, unset) : shelleys
                 where
                   -- When merging Byron with Shelley-based eras, we should never
                   -- merge two from the same era.
@@ -1024,7 +1029,7 @@ protocolInfoCardano paramsShelleyBased paramsCardano
                   merge (This1 x)    = x
                   merge (That1 y)    = y
 
-        return $ hardForkBlockForging "Cardano" <$> blockForgings
+        pure $ flip fmap blockForgings $ \(blockForging, set, unset) -> hardForkBlockForging "Cardano" set unset blockForging
 
     mBlockForgingByron :: Maybe (NonEmptyOptNP (BlockForging m) (CardanoEras c))
     mBlockForgingByron = do
@@ -1033,18 +1038,19 @@ protocolInfoCardano paramsShelleyBased paramsCardano
 
     blockForgingShelleyBased ::
          ShelleyLeaderCredentials c
-      -> m (NonEmptyOptNP (BlockForging m) (CardanoEras c))
+      -> m (NonEmptyOptNP (BlockForging m) (CardanoEras c), BlockForgingCredentials (CardanoBlock c) -> m (), m ())
     blockForgingShelleyBased credentials = do
         let slotToPeriod :: SlotNo -> Absolute.KESPeriod
             slotToPeriod (SlotNo slot) = assert (tpraosSlotsPerKESPeriod == praosSlotsPerKESPeriod) $
               Absolute.KESPeriod $ fromIntegral $ slot `div` praosSlotsPerKESPeriod
 
+        (keyBundleVar :: StrictMVar m (HotKey c m, OCert c)) <- newEmptyMVar
         let tpraos :: forall era.
                  ShelleyEraWithCrypto c (TPraos c) era
               => Mempool.TxOverrides (ShelleyBlock (TPraos c) era)
               -> m (BlockForging m (ShelleyBlock (TPraos c) era))
             tpraos maxTxCapacityOverrides =
-              TPraos.shelleySharedBlockForging tpraosParams slotToPeriod credentials maxTxCapacityOverrides
+              TPraos.shelleySharedBlockForging tpraosParams slotToPeriod credentials maxTxCapacityOverrides keyBundleVar
 
         let praos :: forall era.
                  ShelleyEraWithCrypto c (Praos c) era
@@ -1060,16 +1066,16 @@ protocolInfoCardano paramsShelleyBased paramsCardano
         praosBabbage <- praos maxTxCapacityOverridesBabbage
         praosConway <- praos maxTxCapacityOverridesConway
 
-        pure
-          $ OptSkip    -- Byron
-          $ OptNP.fromNonEmptyNP $
-            tpraosShelley :*
-            tpraosAllegra :*
-            tpraosMary    :*
-            tpraosAlonzo  :*
-            praosBabbage :*
-            praosConway  :*
-            Nil
+        let opt = OptSkip    -- Byron
+                $ OptNP.fromNonEmptyNP $
+                  tpraosShelley :*
+                  tpraosAllegra :*
+                  tpraosMary    :*
+                  tpraosAlonzo  :*
+                  praosBabbage :*
+                  praosConway  :*
+                  Nil
+        pure (opt, setShelleyBlockForgingCredentials tpraosParams keyBundleVar, unsetShelleyBlockForgingCredentials keyBundleVar)
 
 protocolClientInfoCardano ::
      forall c.

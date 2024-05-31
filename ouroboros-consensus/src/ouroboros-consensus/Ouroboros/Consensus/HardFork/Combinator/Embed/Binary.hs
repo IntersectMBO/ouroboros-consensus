@@ -133,12 +133,18 @@ protocolInfoBinary protocolInfo1 blockForging1 eraParams1 toPartialConsensusConf
       This bf1 ->
         hardForkBlockForging
           (forgeLabel bf1)
+          undefined -- TODO
+          undefined -- TODO
           (OptCons bf1 $ OptSkip OptNil)
       That bf2 ->
         hardForkBlockForging
           (forgeLabel bf2)
+          undefined -- TODO
+          undefined -- TODO
           (OptSkip $ OptCons bf2 OptNil)
       These bf1 bf2 ->
         hardForkBlockForging
           (forgeLabel bf1 <> "-" <> forgeLabel bf2)
+          undefined -- TODO
+          undefined -- TODO
           (OptCons bf1 $ OptCons bf2 OptNil)

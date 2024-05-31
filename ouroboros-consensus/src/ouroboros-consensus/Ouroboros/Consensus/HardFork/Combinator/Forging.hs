@@ -81,17 +81,19 @@ hardForkBlockForging ::
   => Text
      -- ^ Used as the 'forgeLabel', the labels of the given 'BlockForging's will
      -- be ignored.
+  -> (BlockForgingCredentials (HardForkBlock xs) -> m ()) -- ^ setCredentials
+  -> m () -- ^ unsetCredentials
   -> NonEmptyOptNP (BlockForging m) xs
   -> BlockForging m (HardForkBlock xs)
-hardForkBlockForging label blockForging =
+hardForkBlockForging label set unset blockForging =
     BlockForging {
         forgeLabel       = label
       , canBeLeader      = hardForkCanBeLeader               blockForging
       , updateForgeState = hardForkUpdateForgeState          blockForging
       , checkCanForge    = hardForkCheckCanForge             blockForging
       , forgeBlock       = hardForkForgeBlock                blockForging
-      , setCredentials   = undefined -- TODO
-      , unsetCredentials = undefined -- TODO
+      , setCredentials   = set
+      , unsetCredentials = unset
       }
 
 hardForkCanBeLeader ::

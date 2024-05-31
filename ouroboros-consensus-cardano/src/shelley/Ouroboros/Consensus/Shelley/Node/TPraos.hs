@@ -30,6 +30,8 @@ module Ouroboros.Consensus.Shelley.Node.TPraos (
   , protocolInfoTPraosShelleyBased
   , shelleyBlockForging
   , shelleySharedBlockForging
+  , setShelleyBlockForgingCredentials
+  , unsetShelleyBlockForgingCredentials
   , validateGenesis
   ) where
 
@@ -97,9 +99,9 @@ shelleyBlockForging tpraosParams maxTxCapacityOverrides credentials = do
     let slotToPeriod :: SlotNo -> Absolute.KESPeriod
         slotToPeriod (SlotNo slot) =
           SL.KESPeriod $ fromIntegral $ slot `div` tpraosSlotsPerKESPeriod
-
+    keyBundleVar <- newEmptyMVar
     -- hotKey <- HotKey.mkHotKey @m @c skSound startPeriod tpraosMaxKESEvo
-    shelleySharedBlockForging tpraosParams slotToPeriod credentials maxTxCapacityOverrides
+    shelleySharedBlockForging tpraosParams slotToPeriod credentials maxTxCapacityOverrides keyBundleVar
   where
     TPraosParams {tpraosSlotsPerKESPeriod} = tpraosParams
 
@@ -117,9 +119,9 @@ shelleySharedBlockForging ::
   -> (SlotNo -> Absolute.KESPeriod)
   -> ShelleyLeaderCredentials c
   -> Mempool.TxOverrides (ShelleyBlock (TPraos c) era)
+  -> StrictMVar m (HotKey.HotKey c m, SL.OCert c)
   -> m (BlockForging m     (ShelleyBlock (TPraos c) era))
-shelleySharedBlockForging tpraosParams slotToPeriod credentials maxTxCapacityOverrides = do
-    keyBundleVar <- newEmptyMVar
+shelleySharedBlockForging tpraosParams slotToPeriod credentials maxTxCapacityOverrides keyBundleVar = do
     pure BlockForging {
         forgeLabel       = label <> "_" <> T.pack (L.eraName @era)
       , canBeLeader      = canBeLeader
@@ -146,27 +148,9 @@ shelleySharedBlockForging tpraosParams slotToPeriod credentials maxTxCapacityOve
               txs
               isLeader
 
-      , unsetCredentials = do
-          oldBundleMay <- tryTakeMVar keyBundleVar
-          case oldBundleMay of
-            Nothing ->
-              pure ()
-            Just (oldHotKey, _) ->
-              HotKey.forget oldHotKey
+      , setCredentials = setShelleyBlockForgingCredentials tpraosParams keyBundleVar
 
-      , setCredentials = \(ShelleyKeyBundle sk ocert) -> do
-          oldBundleMay <- tryTakeMVar keyBundleVar
-          case oldBundleMay of
-            Nothing ->
-              pure ()
-            Just (oldHotKey, _) ->
-              HotKey.forget oldHotKey
-
-          let startPeriod :: Absolute.KESPeriod
-              startPeriod = SL.ocertKESPeriod ocert
-
-          hotKey <- HotKey.mkHotKey @m @c sk startPeriod (tpraosMaxKESEvo tpraosParams)
-          putMVar keyBundleVar (hotKey, ocert)
+      , unsetCredentials = unsetShelleyBlockForgingCredentials keyBundleVar
       }
   where
     ShelleyLeaderCredentials {
@@ -180,6 +164,40 @@ shelleySharedBlockForging tpraosParams slotToPeriod credentials maxTxCapacityOve
         . VRF.deriveVerKeyVRF
         . praosCanBeLeaderSignKeyVRF
         $ canBeLeader
+
+setShelleyBlockForgingCredentials ::
+     forall m c era. (
+       PraosCrypto c
+     , IOLike m
+     )
+  => TPraosParams
+  -> StrictMVar m (HotKey.HotKey c m, SL.OCert c)
+  -> BlockForgingCredentials (ShelleyBlock (TPraos c) era)
+  -> m ()
+setShelleyBlockForgingCredentials tpraosParams keyBundleVar (ShelleyKeyBundle sk ocert) = do
+    oldBundleMay <- tryTakeMVar keyBundleVar
+    case oldBundleMay of
+      Nothing ->
+        pure ()
+      Just (oldHotKey, _) ->
+        HotKey.forget oldHotKey
+
+    let startPeriod :: Absolute.KESPeriod
+        startPeriod = SL.ocertKESPeriod ocert
+
+    hotKey <- HotKey.mkHotKey @m @c sk startPeriod (tpraosMaxKESEvo tpraosParams)
+    putMVar keyBundleVar (hotKey, ocert)
+
+unsetShelleyBlockForgingCredentials ::
+     MonadMVar m
+  => StrictMVar m (HotKey.HotKey c m, b) -> m ()
+unsetShelleyBlockForgingCredentials keyBundleVar = do
+    oldBundleMay <- tryTakeMVar keyBundleVar
+    case oldBundleMay of
+      Nothing ->
+        pure ()
+      Just (oldHotKey, _) ->
+        HotKey.forget oldHotKey
 
 {-------------------------------------------------------------------------------
   ProtocolInfo

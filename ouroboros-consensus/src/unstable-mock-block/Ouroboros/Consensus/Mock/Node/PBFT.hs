@@ -110,4 +110,6 @@ pbftBlockForging canBeLeader = BlockForging {
               lst
               (map txForgetValidated txs)
               proof
+    , setCredentials = undefined -- TODO
+    , unsetCredentials = undefined -- TODO
     }

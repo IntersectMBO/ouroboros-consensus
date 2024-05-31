@@ -99,6 +99,8 @@ simpleBlockForging aCanBeLeader aForgeExt = BlockForging {
               lst
               (map txForgetValidated txs)
               proof
+    , setCredentials = undefined -- TODO
+    , unsetCredentials = undefined -- TODO
     }
   where
     _ = keepRedundantConstraint (Proxy @(ForgeStateUpdateError (SimpleBlock c ext) ~ Void))

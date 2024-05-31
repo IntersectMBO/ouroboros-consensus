@@ -94,7 +94,7 @@ praosSharedBlockForging
       { forgeLabel = label <> "_" <> T.pack (L.eraName @era),
         canBeLeader = canBeLeader,
         updateForgeState = \_ curSlot _ ->
-          withMVar keyBundleVar $ \(hotKey, ocert) -> do
+          withMVar keyBundleVar $ \(hotKey, _ocert) -> do
             forgeStateUpdateInfoFromUpdateInfo
               <$> HotKey.evolve hotKey (slotToPeriod curSlot),
         checkCanForge = \cfg curSlot _tickedChainDepState _isLeader ->
@@ -103,8 +103,8 @@ praosSharedBlockForging
             curSlot,
         forgeBlock = \cfg curNo curSlot tickedLedger txs isLeader -> do
           withMVar keyBundleVar $ \(hotKey, ocert) -> do
-            let startPeriod :: Absolute.KESPeriod
-                startPeriod = SL.ocertKESPeriod ocert
+            let _startPeriod :: Absolute.KESPeriod
+                _startPeriod = SL.ocertKESPeriod ocert
 
             forgeShelleyBlock
               hotKey
@@ -117,6 +117,9 @@ praosSharedBlockForging
               tickedLedger
               txs
               isLeader
+
+      , setCredentials = undefined -- TODO
+      , unsetCredentials = undefined -- TODO
       }
 
 {-------------------------------------------------------------------------------

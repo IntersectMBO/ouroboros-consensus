@@ -136,4 +136,6 @@ praosBlockForging cid initHotKey = do
                                    tickedLedgerSt
                                    (map txForgetValidated txs)
                                    isLeader
+      , setCredentials = undefined -- TODO
+      , unsetCredentials = undefined -- TODO
       }

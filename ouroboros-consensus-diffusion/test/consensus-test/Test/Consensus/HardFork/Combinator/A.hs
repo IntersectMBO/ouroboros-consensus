@@ -292,6 +292,8 @@ blockForgingA = BlockForging {
    , checkCanForge    = \_ _ _ _ _ -> return ()
    , forgeBlock       = \cfg bno slot st txs proof -> return $
        forgeBlockA cfg bno slot st (fmap txForgetValidated txs) proof
+  , setCredentials = undefined -- TODO
+  , unsetCredentials = undefined -- TODO
    }
 
 -- | See 'Ouroboros.Consensus.HardFork.History.EraParams.safeFromTip'

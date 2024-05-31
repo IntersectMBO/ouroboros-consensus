@@ -229,6 +229,8 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
     blockForging :: Monad m => [BlockForging m TestBlock]
     blockForging =
       [   hardForkBlockForging "Test"
+          undefined -- TODO
+          undefined -- TODO
         $ OptCons blockForgingA
         $ OptCons blockForgingB
         $ OptNil

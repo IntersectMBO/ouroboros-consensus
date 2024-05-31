@@ -240,6 +240,8 @@ blockForgingB = BlockForging {
    , checkCanForge    = \_ _ _ _ _ -> return ()
    , forgeBlock       = \cfg bno slot st txs proof -> return $
        forgeBlockB cfg bno slot st (fmap txForgetValidated txs) proof
+   , setCredentials = undefined -- TODO
+   , unsetCredentials = undefined -- TODO
    }
 
 -- | A basic 'History.SafeZone'
