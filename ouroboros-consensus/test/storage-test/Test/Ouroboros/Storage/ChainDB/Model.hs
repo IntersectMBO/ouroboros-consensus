@@ -11,6 +11,8 @@
 {-# LANGUAGE TypeFamilies         #-}
 {-# LANGUAGE UndecidableInstances #-}
 
+{-# OPTIONS_GHC -Wno-orphans #-}
+
 -- | Model implementation of the chain DB
 --
 -- Intended for qualified import
@@ -123,7 +125,6 @@ import qualified Ouroboros.Network.Mock.Chain as Chain
 import           Ouroboros.Network.Mock.ProducerState (ChainProducerState)
 import qualified Ouroboros.Network.Mock.ProducerState as CPS
 import           Test.Cardano.Slotting.TreeDiff ()
-
 
 type IteratorId = Int
 
@@ -1139,3 +1140,14 @@ getFragmentBetween bs anchor = go
       block <- Map.lookup hash bs
       prevFragment <- go $ blockPrevHash block
       Just $ prevFragment Fragment.:> block
+
+{-------------------------------------------------------------------------------
+  Orphan instances
+-------------------------------------------------------------------------------}
+
+deriving instance ToExpr a => ToExpr (LoE a)
+
+deriving instance ( ToExpr blk
+                  , ToExpr (HeaderHash blk)
+                  )
+                 => ToExpr (Fragment.Anchor blk)

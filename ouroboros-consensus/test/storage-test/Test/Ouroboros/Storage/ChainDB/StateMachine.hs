@@ -1280,12 +1280,6 @@ deriving instance ( ToExpr blk
                   , ToExpr (ExtValidationError blk)
                   )
                  => ToExpr (Model blk IO Concrete)
-deriving instance ToExpr a => ToExpr (LoE a)
-deriving instance ( ToExpr blk
-                  , ToExpr (HeaderHash blk)
-                  )
-                 => ToExpr (AF.Anchor blk)
-
 {-------------------------------------------------------------------------------
   Labelling
 -------------------------------------------------------------------------------}
