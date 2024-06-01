@@ -20,8 +20,8 @@ jobs:
     strategy:
        fail-fast: false
        matrix:
-         ghc: ["8.10.7", "9.6.4", "9.8.1"]
-         cabal: ["3.10.2.1"]
+         ghc: ["8.10.7", "9.6.5", "9.8.2"]
+         cabal: ["3.10.3.0"]
          os: [ubuntu-latest]
     env:
       # Modify this value to "invalidate" the Cabal cache.

@@ -2,7 +2,7 @@ inputs: final: prev:
 
 let
   inherit (final) lib;
-  tool-index-state = "2024-04-01T00:00:00Z";
+  tool-index-state = "2024-05-31T00:00:00Z";
   tool = name: version: other:
     final.haskell-nix.tool final.hsPkgs.args.compiler-nix-name name ({
       version = version;
@@ -37,16 +37,10 @@ in
   }).cabal-install.components.exes.cabal;
 
   cabal-docspec = tool "cabal-docspec" "git" {
+    compiler-nix-name = "ghc98";
     src = inputs.cabal-extras;
     cabalProject = ''
-      packages: peura cabal-docspec ${inputs.gentle-introduction}
-    '';
-    cabalProjectLocal = ''
-      allow-newer: cabal-docspec:*
-                 , gentle-introduction:*
-                 , peura:*
-                 , paths:*
-      constraints: directory <1.3.8.0
+      packages: peura cabal-docspec ${inputs.gentle-introduction} paths-0.2.0.0
     '';
   };
 
@@ -54,17 +48,14 @@ in
     src = final.fetchFromGitHub {
       owner = "kokobd";
       repo = "cabal-hoogle";
-      rev = "7452c2b1dbdae4eb675d280ed99ec135293adc13";
-      hash = "sha256-w7PkNZfHJw1291c2nfviENSXykYpNV+4i3FmbMJqSMs=";
+      rev = "f3a230de36a08920f8ad47766b0528b9229b3ce6";
+      hash = "sha256-WiSq1uBjuSCEW7vp/81a1PVdo/7pf86dqy+R7lDCOdY=";
     };
-    cabalProjectLocal = ''
-      allow-newer: cabal-hoogle:*
-    '';
   };
 
   stylish-haskell = tool "stylish-haskell" "0.14.6.0" { };
 
-  cabal-gild = tool "cabal-gild" "1.3.0.1" { };
+  cabal-gild = tool "cabal-gild" "1.3.1.2" { };
 
   haskellBuildUtils = prev.haskellBuildUtils.override {
     inherit (final.hsPkgs.args) compiler-nix-name;
