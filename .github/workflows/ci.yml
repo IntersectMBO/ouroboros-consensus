@@ -7,22 +7,35 @@ concurrency:
 
 on:
   workflow_dispatch:
+    inputs:
+      nothunks:
+        description:
+          Run the test run under NoThunks conditions instead of the default variant
+        type: boolean
+        default: false
   pull_request:
   merge_group:
   push:
     branches:
       - main
+  schedule:
+    # every night, at midnight
+    - cron: "0 0 * * *"
 
 jobs:
   build-test-bench-haddocks:
     name: Build and test
     runs-on: ${{ matrix.os }}
     strategy:
-       fail-fast: false
-       matrix:
-         ghc: ["8.10.7", "9.6.5", "9.8.2"]
-         cabal: ["3.10.3.0"]
-         os: [ubuntu-latest]
+      fail-fast: false
+      matrix:
+        ghc: ["8.10.7", "9.6.5", "9.8.2"]
+        cabal: ["3.10.3.0"]
+        os: [ubuntu-latest]
+        variant: [default, no-thunks]
+        exclude:
+          - variant:
+            ${{ (github.event.type == 'schedule' || github.event.inputs.nothunks) && 'default' || 'no-thunks' }}
     env:
       # Modify this value to "invalidate" the Cabal cache.
       CABAL_CACHE_VERSION: "2024-01-29"
@@ -44,7 +57,7 @@ jobs:
 
     - name: Configure Cabal
       run: |
-        cp .github/workflows/cabal.project.local .
+        cp .github/workflows/cabal.project.${{ matrix.variant }}.local ./cabal.project.local
 
     - name: Update Cabal (Hackage and CHaP)
       run: |
@@ -87,10 +100,10 @@ jobs:
       id: restore-cabal-store
       with:
         path: ${{ steps.setup-haskell.outputs.cabal-store }}
-        key: cabal-store-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ env.MONTHNUM }}-${{ hashFiles('dependencies.txt') }}
+        key: cabal-store-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ matrix.variant }}-${{ env.MONTHNUM }}-${{ hashFiles('dependencies.txt') }}
         restore-keys: |
-          cabal-store-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ env.MONTHNUM }}-${{ hashFiles('dependencies.txt') }}
-          cabal-store-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ env.MONTHNUM }}-
+          cabal-store-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ matrix.variant }}-${{ env.MONTHNUM }}-${{ hashFiles('dependencies.txt') }}
+          cabal-store-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ matrix.variant }}-${{ env.MONTHNUM }}-
 
     - name: Build dependencies
       id: build-dependencies
@@ -133,6 +146,7 @@ jobs:
     # then we will save the same results we just restored.
     - name: Cache benchmark baseline results
       uses: actions/cache@v4
+      if: matrix.variant == 'default'
       with:
         path: baseline-mempool-benchmarks.csv
         key:  baseline-mempool-benchmarks-${{ runner.os }}-${{ matrix.ghc }}-${{ github.run_id }}
@@ -172,7 +186,7 @@ jobs:
       if: |
         github.event_name == 'push'
         && github.ref == 'refs/heads/main'
-        && matrix.ghc=='9.6.4'
+        && matrix.ghc == '9.6.4'
       run: |
         # need for latex, dvisvgm and standalone
         sudo apt install texlive-latex-extra texlive-latex-base
