@@ -35,7 +35,7 @@ jobs:
         variant: [default, no-thunks]
         exclude:
           - variant:
-            ${{ (github.event.type == 'schedule' || github.event.inputs.nothunks) && 'default' || 'no-thunks' }}
+              ${{ (github.event.type == 'schedule' || github.event.inputs.nothunks) && 'default' || 'no-thunks' }}
     env:
       # Modify this value to "invalidate" the Cabal cache.
       CABAL_CACHE_VERSION: "2024-01-29"
