@@ -93,11 +93,8 @@ startBlockFetchLogic registry tracer chainDb fetchClientRegistry getCandidates =
             -- do not serialize the blocks.
             (\_hdr -> 1000)
             slotForgeTime
-            -- Initially, we tried FetchModeBulkSync, but adversaries had the
-            -- opportunity to delay syncing by not responding to block requests.
-            -- The BlockFetch logic would then wait for the timeout to expire
-            -- before trying to download the block from another peer.
-            (pure FetchModeDeadline)
+            -- This is a syncing test, so we use 'FetchModeBulkSync'.
+            (pure FetchModeBulkSync)
 
         -- Values taken from
         -- ouroboros-consensus-diffusion/src/unstable-diffusion-testlib/Test/ThreadNet/Network.hs
