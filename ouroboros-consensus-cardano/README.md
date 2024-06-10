@@ -264,6 +264,26 @@ gnuplot -e "bench_data='ledger-ops-cost.csv'" \
 The plot will be written to a file named `results.png`. See the script file for
 more usage options.
 
+## db-immutaliser
+
+Copy a specific chain from a volatile DB to an immutable DB, such that other
+tools that expect an immutable DB can process the corresponding blocks.
+
+Currently, it will copy the longest chain that extends the immutable tip, but it
+will not perform any validation (and therefore, it does not require a ledger
+snapshot).
+
+Basic usage:
+```sh
+cabal run db-immutaliser -- \
+  --immutable-db /path/to/db1/immutable \
+  --volatile-db /path/to/db2/volatile \
+  --config /path/to/config.json
+```
+
+The `config.json` should be in the same format (Node configuration) as for eg
+db-analyser.
+
 ## db-synthesizer
 
 ### About
