@@ -128,7 +128,7 @@ dbmTipBlock DBModel { dbmSlots } =
           InSlotEBB       blk -> blk
           InSlotBoth _ebb blk -> blk
 
-dbmTip :: (HasHeader blk, GetHeader blk) => DBModel blk -> WithOrigin (Tip blk)
+dbmTip :: GetHeader blk => DBModel blk -> WithOrigin (Tip blk)
 dbmTip = fmap blockToTip . dbmTipBlock
 
 -- | Return a list of blocks in the same order as they appear on the \"virtual\"
@@ -214,7 +214,7 @@ lookupBlock pt@(RealPoint slot hash) dbm@DBModel { dbmSlots } =
 --
 -- PRECONDITION: the given tip must correspond to a block in the model
 rollBackToTip ::
-     forall blk. (HasHeader blk, GetHeader blk)
+     forall blk. GetHeader blk
   => WithOrigin (Tip blk) -> DBModel blk -> DBModel blk
 rollBackToTip tip dbm@DBModel { dbmSlots } =
     dbm { dbmSlots = Map.mapMaybe shouldKeep dbmSlots }
@@ -268,7 +268,7 @@ blocksInChunk chunk dbm = eq
   where
     (_lt, eq, _gt) = blocksBeforeInAfterChunk chunk dbm
 
-properTips :: (HasHeader blk, GetHeader blk) => DBModel blk -> [Tip blk]
+properTips :: GetHeader blk => DBModel blk -> [Tip blk]
 properTips = map blockToTip . concatMap go . Map.elems . dbmSlots
   where
     go :: InSlot blk -> [blk]
@@ -279,7 +279,7 @@ properTips = map blockToTip . concatMap go . Map.elems . dbmSlots
 -- | List all 'Tip's that point to a filled slot or an existing EBB in the
 -- model, including 'Origin'. The tips will be sorted from old to recent.
 tips ::
-     (HasHeader blk, GetHeader blk)
+     GetHeader blk
   => DBModel blk
   -> NonEmpty (WithOrigin (Tip blk))
 tips dbm = Origin NE.:| map NotOrigin (properTips dbm)
@@ -330,7 +330,7 @@ instance StandardHash blk => Ord (RollBackPoint blk) where
       compare (CompareTip <$> t1) (CompareTip <$> t2)
 
 rollBack ::
-    (HasHeader blk, GetHeader blk)
+     GetHeader blk
   => RollBackPoint blk -> DBModel blk -> DBModel blk
 rollBack rbp dbm = case rbp of
     DontRollBack      -> dbm
@@ -423,18 +423,18 @@ rollbackToLastFilledSlotBefore chunk dbm = case lastMaybe beforeChunk of
 ------------------------------------------------------------------------------}
 
 getTipModel ::
-     (HasHeader blk, GetHeader blk)
+     GetHeader blk
   => DBModel blk -> WithOrigin (Tip blk)
 getTipModel = dbmTip
 
 -- | Close all open iterators and return the current tip
 reopenModel ::
-     (HasHeader blk, GetHeader blk)
+     GetHeader blk
   => DBModel blk -> (WithOrigin (Tip blk), DBModel blk)
 reopenModel dbm = (dbmTip dbm, closeAllIterators dbm)
 
 deleteAfterModel ::
-     (HasHeader blk, GetHeader blk)
+     GetHeader blk
   => WithOrigin (Tip blk) -> DBModel blk -> DBModel blk
 deleteAfterModel tip = rollBackToTip tip . closeAllIterators
 
