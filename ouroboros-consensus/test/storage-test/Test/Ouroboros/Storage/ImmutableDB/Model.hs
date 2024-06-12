@@ -26,6 +26,7 @@ module Test.Ouroboros.Storage.ImmutableDB.Model (
   , appendBlockModel
   , deleteAfterModel
   , getBlockComponentModel
+  , getHashForSlotModel
   , getTipModel
   , iteratorCloseModel
   , iteratorHasNextModel
@@ -436,6 +437,15 @@ deleteAfterModel ::
      (HasHeader blk, GetHeader blk)
   => WithOrigin (Tip blk) -> DBModel blk -> DBModel blk
 deleteAfterModel tip = rollBackToTip tip . closeAllIterators
+
+getHashForSlotModel ::
+     (HasHeader blk)
+  => SlotNo -> DBModel blk -> Maybe (HeaderHash blk)
+getHashForSlotModel slotNo dbm = case Map.lookup slotNo (dbmSlots dbm) of
+    Just (InSlotBlock  blk) -> Just $ blockHash blk
+    Just (InSlotEBB    blk) -> Just $ blockHash blk
+    Just (InSlotBoth _ blk) -> Just $ blockHash blk
+    Nothing                 -> Nothing
 
 extractBlockComponent ::
      forall blk b.
