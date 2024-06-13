@@ -62,7 +62,10 @@ If you want to analyse blocks from the VolatileDB, consider copying them to the 
 [--analyse-from SLOT_NUMBER]
 ```
 
-This flag allows to start processing blocks from the requested slot number. A snapshot at that slot number must exist in `DB_PATH/ledger/SLOT_NUMBER_db-analyser` - where `SLOT_NUMBER` is the value provided by the user with the `--analyse-from` flag.
+This flag allows to start processing blocks from the requested slot number.
+A block with the corresponding slot number must exist in the ImmutableDB.
+
+For certain analyses, a snapshot at that slot number must exist in `DB_PATH/ledger/SLOT_NUMBER_db-analyser` - where `SLOT_NUMBER` is the value provided by the user with the `--analyse-from` flag.
 The user can use snapshots created by the node or they can create their own snapshots via db-analyser - see the `--store-ledger` command
 
 #### COMMAND

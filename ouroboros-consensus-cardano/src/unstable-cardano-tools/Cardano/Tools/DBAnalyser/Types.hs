@@ -6,11 +6,10 @@ module Cardano.Tools.DBAnalyser.Types (
 import           Cardano.Tools.DBAnalyser.Analysis as AnalysisTypes
                      (AnalysisName (..), AnalysisResult (..), Limit (..),
                      NumberOfBlocks (..))
-import           Ouroboros.Consensus.Storage.LedgerDB (DiskSnapshot)
-
+import           Ouroboros.Consensus.Block
 
 data SelectDB =
-    SelectImmutableDB (Maybe DiskSnapshot)
+    SelectImmutableDB (WithOrigin SlotNo)
 
 data DBAnalyserConfig = DBAnalyserConfig {
     dbDir      :: FilePath
