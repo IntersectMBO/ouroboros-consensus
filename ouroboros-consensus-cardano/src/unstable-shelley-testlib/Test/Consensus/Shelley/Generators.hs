@@ -30,6 +30,7 @@ import           Ouroboros.Consensus.Protocol.TPraos (PraosCrypto, TPraos,
                      TPraosState (..))
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger
+import           Ouroboros.Consensus.Shelley.Ledger.Query.Types
 import           Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import           Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import           Ouroboros.Network.Block (mkSerialised)
@@ -152,7 +153,7 @@ instance CanMock proto era => Arbitrary (SomeResult (ShelleyBlock proto era)) wh
     , SomeResult <$> (GetNonMyopicMemberRewards <$> arbitrary) <*> arbitrary
     , SomeResult GetCurrentPParams <$> arbitrary
     , SomeResult GetProposedPParamsUpdates <$> arbitrary
-    , SomeResult GetStakeDistribution <$> arbitrary
+    , SomeResult GetStakeDistribution . fromLedgerPoolDistr <$> arbitrary
     , SomeResult DebugEpochState <$> arbitrary
     , (\(SomeResult q r) ->
         SomeResult (GetCBOR q) (mkSerialised (encodeShelleyResult maxBound q) r)) <$>

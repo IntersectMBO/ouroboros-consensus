@@ -83,6 +83,7 @@ import           Ouroboros.Consensus.Shelley.Ledger.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
                      (ShelleyNodeToClientVersion (..))
 import           Ouroboros.Consensus.Shelley.Ledger.Query.PParamsLegacyEncoder
+import           Ouroboros.Consensus.Shelley.Ledger.Query.Types
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import           Ouroboros.Consensus.Util (ShowProxy (..))
 import           Ouroboros.Network.Block (Serialised (..), decodePoint,
@@ -127,7 +128,7 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   -- an endpoint that provides all the information that the wallet wants about
   -- pools, in an extensible fashion.
   GetStakeDistribution
-    :: BlockQuery (ShelleyBlock proto era) (SL.PoolDistr (EraCrypto era))
+    :: BlockQuery (ShelleyBlock proto era) (PoolDistr (EraCrypto era))
 
   -- | Get a subset of the UTxO, filtered by address. Although this will
   -- typically return a lot less data than 'GetUTxOWhole', it requires a linear
@@ -224,7 +225,7 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   GetPoolDistr
     :: Maybe (Set (SL.KeyHash 'SL.StakePool (EraCrypto era)))
     -> BlockQuery (ShelleyBlock proto era)
-                  (SL.PoolDistr (EraCrypto era))
+                  (PoolDistr (EraCrypto era))
 
   GetStakeDelegDeposits
     :: Set (StakeCredential (EraCrypto era))
@@ -319,7 +320,7 @@ instance (ShelleyCompatible proto era, ProtoCrypto proto ~ crypto)
         GetProposedPParamsUpdates ->
           getProposedPPUpdates st
         GetStakeDistribution ->
-          SL.poolsByTotalStakeFraction globals st
+          fromLedgerPoolDistr $ SL.poolsByTotalStakeFraction globals st
         GetUTxOByAddress addrs ->
           SL.getFilteredUTxO st addrs
         GetUTxOWhole ->
@@ -416,7 +417,8 @@ instance (ShelleyCompatible proto era, ProtoCrypto proto ~ crypto)
 
         GetPoolDistr mPoolIds ->
           let stakeSet = SL.ssStakeSet . SL.esSnapshots $ getEpochState st in
-          SL.calculatePoolDistr' (maybe (const True) (flip Set.member) mPoolIds) stakeSet
+          fromLedgerPoolDistr $
+            SL.calculatePoolDistr' (maybe (const True) (flip Set.member) mPoolIds) stakeSet
         GetStakeDelegDeposits stakeCreds ->
           let lookupDeposit =
                 lookupDepositDState (SL.certDState $ SL.lsCertState $ SL.esLState $ SL.nesEs st)
