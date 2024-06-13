@@ -475,6 +475,7 @@ instance MonadSTM m => MonadSTM (OverrideDelay m) where
   putTMVar v    = OverrideDelaySTM . lift . LazySTM.putTMVar v
   tryPutTMVar v = OverrideDelaySTM . lift . LazySTM.tryPutTMVar v
   readTMVar     = OverrideDelaySTM . lift . LazySTM.readTMVar
+  writeTMVar v  = OverrideDelaySTM . lift . LazySTM.writeTMVar v
   tryReadTMVar  = OverrideDelaySTM . lift . LazySTM.tryReadTMVar
   swapTMVar v   = OverrideDelaySTM . lift . LazySTM.swapTMVar v
   isEmptyTMVar  = OverrideDelaySTM . lift . LazySTM.isEmptyTMVar
