@@ -25,13 +25,11 @@ on:
 jobs:
   build-test-bench-haddocks:
     name: Build and test
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         ghc: ["8.10.7", "9.6.5", "9.8.2"]
-        cabal: ["3.10.3.0"]
-        os: [ubuntu-latest]
         variant: [default, no-thunks]
         exclude:
           - variant:
@@ -39,6 +37,8 @@ jobs:
     env:
       # Modify this value to "invalidate" the Cabal cache.
       CABAL_CACHE_VERSION: "2024-01-29"
+
+      CABAL: "3.10.3.0"
 
     steps:
     - uses: actions/checkout@v4
@@ -53,7 +53,7 @@ jobs:
       id: setup-haskell
       with:
         ghc-version: ${{ matrix.ghc }}
-        cabal-version: ${{ matrix.cabal }}
+        cabal-version: $CABAL
 
     - name: Configure Cabal
       run: |
