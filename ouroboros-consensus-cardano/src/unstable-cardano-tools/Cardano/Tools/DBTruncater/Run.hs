@@ -4,7 +4,6 @@
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
-{-# LANGUAGE ViewPatterns        #-}
 
 module Cardano.Tools.DBTruncater.Run (truncate) where
 
@@ -14,8 +13,8 @@ import           Cardano.Tools.DBTruncater.Types
 import           Control.Monad
 import           Control.Tracer
 import           Data.Functor.Identity
-import           Ouroboros.Consensus.Block.Abstract (HasHeader, Header,
-                     HeaderFields (..), getHeaderFields)
+import           Data.Traversable (for)
+import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Node as Node
 import           Ouroboros.Consensus.Node.InitStorage as Node
@@ -57,24 +56,26 @@ truncate DBTruncaterConfig{ dbDir, truncateAfter, verbose } args = do
           }
 
     withDB immutableDBArgs $ \(immutableDB, internal) -> do
+      mLastHdr :: Maybe (Header block) <- case truncateAfter of
+        TruncateAfterSlot slotNo -> do
+          mHash <- getHashForSlot internal slotNo
+          for (RealPoint slotNo <$> mHash) $
+            ImmutableDB.getKnownBlockComponent immutableDB GetHeader
 
-      -- At the moment, we're just running a linear search with streamAll to
-      -- find the correct block to truncate from, but we could in theory do this
-      -- more quickly by binary searching the chunks of the ImmutableDB.
-      iterator <- ImmutableDB.streamAll immutableDB registry
-        ((,) <$> GetHeader <*> GetIsEBB)
+        TruncateAfterBlock bno   -> do
+          -- At the moment, we're just running a linear search with streamAll to
+          -- find the correct block to truncate from, but we could in theory do this
+          -- more quickly by binary searching the chunks of the ImmutableDB.
+          iterator <- ImmutableDB.streamAll immutableDB registry GetHeader
+          findLast ((<= bno) . blockNo) iterator
 
-      mTruncatePoint <- findNewTip truncateAfter iterator
-      case mTruncatePoint of
+      case ImmutableDB.headerToTip <$> mLastHdr of
         Nothing ->
           putStrLn $ mconcat
-            [ "Unable to find a truncate point. This is likely because the tip "
-            , "of the ImmutableDB has a slot number or block number less than "
-            , "the intended truncate point"
+            [ "Unable to find a truncate point. This is because the ImmutableDB"
+            , "does not contain a block with the given slot or block number."
             ]
-        Just (header, isEBB) -> do
-          let HeaderFields slotNo blockNo hash = getHeaderFields header
-              newTip = ImmutableDB.Tip slotNo isEBB blockNo hash
+        Just newTip -> do
           when verbose $ do
             putStrLn $ mconcat
               [ "Truncating the ImmutableDB using the following block as the "
@@ -83,33 +84,19 @@ truncate DBTruncaterConfig{ dbDir, truncateAfter, verbose } args = do
               ]
           deleteAfter internal (At newTip)
 
--- | Given a 'TruncateAfter' (either a slot number or a block number), and an
--- iterator, find the last block whose slot or block number is less than or
--- equal to the intended new chain tip.
-findNewTip :: forall m blk c.
-#if __GLASGOW_HASKELL__ >= 906
-              (HasHeader blk, HasHeader (Header blk), Monad m)
-#else
-              -- GHC 9.6 considiers these constraints insufficient.
-              (HasHeader (Header blk), Monad m)
-#endif
-           => TruncateAfter
-           -> Iterator m blk (Header blk, c)
-           -> m (Maybe (Header blk, c))
-findNewTip target iter =
+-- | Given a predicate, and an iterator, find the last item for which
+-- the predicate passes.
+findLast :: Monad m => (a -> Bool) -> Iterator m blk a -> m (Maybe a)
+findLast p iter =
     go Nothing
   where
-    acceptable (getHeaderFields -> HeaderFields slotNo blockNo _, _) = do
-      case target of
-        TruncateAfterSlot s  -> slotNo <= s
-        TruncateAfterBlock b -> blockNo <= b
     go acc =
       ImmutableDB.iteratorNext iter >>= \case
         IteratorExhausted -> do
           ImmutableDB.iteratorClose iter
           pure acc
-        IteratorResult item -> do
-          if acceptable item then go (Just item) else pure acc
+        IteratorResult a -> do
+          if p a then go (Just a) else pure acc
 
 mkLock :: MonadMVar m => m (StrictMVar m ())
 mkLock = newMVar ()

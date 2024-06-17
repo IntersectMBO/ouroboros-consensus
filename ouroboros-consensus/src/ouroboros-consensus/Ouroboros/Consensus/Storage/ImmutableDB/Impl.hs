@@ -97,13 +97,14 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl (
     -- * Internals for testing purposes
   , Internal (..)
   , deleteAfter
+  , getHashForSlot
   , openDBInternal
   ) where
 
 import qualified Codec.CBOR.Write as CBOR
 import           Control.Monad (replicateM_, unless, when)
 import           Control.Monad.Except (runExceptT)
-import           Control.Monad.State.Strict (get, lift, modify, put)
+import           Control.Monad.State.Strict (get, modify, put)
 import           Control.Tracer (Tracer, nullTracer, traceWith)
 import qualified Data.ByteString.Lazy as Lazy
 import           GHC.Stack (HasCallStack)
@@ -126,6 +127,7 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Validation
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util (SomePair (..))
 import           Ouroboros.Consensus.Util.Args
+import           Ouroboros.Consensus.Util.EarlyExit
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           System.FS.API.Lazy hiding (allowExisting)
@@ -199,7 +201,10 @@ data Internal m blk = Internal {
     -- closed before calling this operation.
     --
     -- Throws a 'ClosedDBError' if the database is closed.
-    deleteAfter_ :: HasCallStack => WithOrigin (Tip blk) -> m ()
+    deleteAfter_    :: HasCallStack => WithOrigin (Tip blk) -> m ()
+    -- | Get the hash of the block in the given slot. If the slot contains both
+    -- an EBB and a non-EBB, return the hash of the non-EBB.
+  , getHashForSlot_ :: HasCallStack => SlotNo -> m (Maybe (HeaderHash blk))
   }
 
 -- | Wrapper around 'deleteAfter_' to ensure 'HasCallStack' constraint
@@ -207,6 +212,12 @@ data Internal m blk = Internal {
 -- See documentation of 'deleteAfter_'.
 deleteAfter :: HasCallStack => Internal m blk -> WithOrigin (Tip blk) -> m ()
 deleteAfter = deleteAfter_
+
+-- | Wrapper around 'getHashForSlot_' to ensure 'HasCallStack' constraint
+--
+-- See documentation of 'getHashForSlot_'.
+getHashForSlot :: HasCallStack => Internal m blk -> SlotNo -> m (Maybe (HeaderHash blk))
+getHashForSlot = getHashForSlot_
 
 {------------------------------------------------------------------------------
   ImmutableDB Implementation
@@ -279,7 +290,8 @@ openDBInternal ImmutableDbArgs { immHasFS = SomeHasFS hasFS, .. } cont = cont $ 
           , stream_            = streamImpl            dbEnv
           }
         internal = Internal {
-            deleteAfter_ = deleteAfterImpl dbEnv
+            deleteAfter_    = deleteAfterImpl    dbEnv
+          , getHashForSlot_ = getHashForSlotImpl dbEnv
           }
 
     return ((db, internal), ost)
@@ -372,6 +384,44 @@ deleteAfterImpl dbEnv@ImmutableDBEnv { tracer, chunkInfo } newTip =
               chunkFile = fsPathChunkFile chunk
               offset    = unBlockOffset (Secondary.blockOffset entry)
                         + fromIntegral size
+
+getHashForSlotImpl ::
+     forall m blk. (HasCallStack, IOLike m, HasHeader blk)
+  => ImmutableDBEnv m blk
+  -> SlotNo
+  -> m (Maybe (HeaderHash blk))
+getHashForSlotImpl dbEnv slot =
+    withOpenState dbEnv $ \_hasFS openState -> withEarlyExit $ do
+      let OpenState{currentTip, currentIndex = index} = openState
+
+          readOffset offset =
+            lift $ Index.readOffset index chunk (chunkRelative offset)
+
+          (chunk, mIfBoundary, ifRegular) =
+            chunkSlotForUnknownBlock chunkInfo slot
+
+      -- Check that the slot is not beyond the tip.
+      case currentTip of
+        NotOrigin (Tip { tipSlotNo })
+          | slot <= tipSlotNo
+          -> pure ()
+        _ -> exitEarly
+
+      -- Primary index: test whether the slot contains a non-EBB, or an EBB as a
+      -- fallback.
+      (offset, isEBB) <- readOffset ifRegular >>= \case
+        Just offset -> pure (offset, IsNotEBB)
+        Nothing     -> case mIfBoundary of
+          Nothing         -> exitEarly
+          Just ifBoundary -> readOffset ifBoundary >>= \case
+            Just offset -> pure (offset, IsEBB)
+            Nothing     -> exitEarly
+
+      -- Read hash from secondary index.
+      (entry, _) <- lift $ Index.readEntry index chunk isEBB offset
+      pure $ Secondary.headerHash entry
+  where
+    ImmutableDBEnv { chunkInfo } = dbEnv
 
 getTipImpl ::
      forall m blk. (HasCallStack, IOLike m, HasHeader blk)

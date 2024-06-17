@@ -556,6 +556,7 @@ library unstable-cardano-tools
     ouroboros-network-framework,
     ouroboros-network-protocols,
     serialise ^>=0.2,
+    singletons,
     sop-core,
     sop-extras,
     strict-sop-core,
@@ -672,7 +673,7 @@ test-suite tools-test
   main-is: Main.hs
   build-depends:
     base,
-    ouroboros-consensus:unstable-consensus-testlib,
+    ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib},
     ouroboros-consensus-cardano,
     tasty,
     tasty-hunit,
