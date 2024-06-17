@@ -16,10 +16,9 @@ import           Cardano.Tools.DBAnalyser.Types
 import           Data.Foldable (asum)
 #endif
 import           Options.Applicative
-import           Ouroboros.Consensus.Block (SlotNo (..))
+import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Node (PBftSignatureThreshold (..))
 import           Ouroboros.Consensus.Shelley.Node (Nonce (..))
-import           Ouroboros.Consensus.Storage.LedgerDB (DiskSnapshot (..))
 
 {-------------------------------------------------------------------------------
   Parsing
@@ -48,8 +47,8 @@ parseSelectDB :: Parser SelectDB
 parseSelectDB =
     SelectImmutableDB <$> analyseFrom
   where
-    analyseFrom :: Parser (Maybe DiskSnapshot)
-    analyseFrom = optional $ ((flip DiskSnapshot $ Just "db-analyser") . read) <$> strOption
+    analyseFrom :: Parser (WithOrigin SlotNo)
+    analyseFrom = fmap (maybe Origin (NotOrigin . SlotNo)) $ optional $ option auto
       (  long "analyse-from"
       <> metavar "SLOT_NUMBER"
       <> help "Start analysis from ledger state stored at specific slot number" )

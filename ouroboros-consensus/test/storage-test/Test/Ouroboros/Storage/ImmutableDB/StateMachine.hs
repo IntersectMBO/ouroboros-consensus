@@ -57,7 +57,7 @@ import           Data.List (delete, partition, sortBy)
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (listToMaybe)
+import           Data.Maybe (isJust, listToMaybe)
 import           Data.TreeDiff (ToExpr (..))
 import           Data.Typeable (Typeable)
 import           Data.Word (Word16, Word64)
@@ -134,6 +134,7 @@ data Cmd it =
   | Reopen                 ValidationPolicy
   | Migrate                ValidationPolicy
   | DeleteAfter            (WithOrigin (Tip TestBlock))
+  | GetHashForSlot         SlotNo
   | Corruption             Corruption
   deriving (Generic, Show, Functor, Foldable, Traversable)
 
@@ -164,6 +165,7 @@ data Success it =
   | IterHasNext     (Maybe (RealPoint TestBlock))
   | IterResults     [AllComponents TestBlock]
   | ImmTip          (WithOrigin (Tip TestBlock))
+  | HashForSlot     (Maybe TestHeaderHash)
   deriving (Eq, Show, Functor, Foldable, Traversable)
 
 -- | Product of all 'BlockComponent's. As this is a GADT, generating random
@@ -246,6 +248,8 @@ run env@ImmutableDBEnv {
       DeleteAfter tip -> do
         closeOpenIterators varIters
         Unit <$> deleteAfter internal tip
+      GetHashForSlot slot -> do
+        HashForSlot <$> getHashForSlot internal slot
       Reopen valPol -> do
         closeOpenIterators varIters
         closeDB db
@@ -328,6 +332,7 @@ runPure = \case
     IteratorHasNext it   -> ok IterHasNext     $ query    (iteratorHasNextModel it)
     IteratorClose   it   -> ok Unit            $ update_  (iteratorCloseModel it)
     DeleteAfter tip      -> ok Unit            $ update_  (deleteAfterModel tip)
+    GetHashForSlot slot  -> ok HashForSlot     $ query    (getHashForSlotModel slot)
     Corruption corr      -> ok ImmTip          $ update   (simulateCorruptions (getCorruptions corr))
     Reopen _             -> ok ImmTip          $ update    reopenModel
     Migrate _            -> ok ImmTip          $ update    reopenModel
@@ -532,6 +537,7 @@ generateCmd Model {..} = At <$> frequency
     , (1, Reopen <$> genValPol)
     , (1, Migrate <$> genValPol)
     , (1, DeleteAfter <$> genTip)
+    , (1, GetHashForSlot <$> genGetHashForSlot)
     , (if null dbFiles then 0 else 1, Corruption <$> genCorruption)
     ]
   where
@@ -701,6 +707,12 @@ generateCmd Model {..} = At <$> frequency
 
     genTip :: Gen (WithOrigin (Tip TestBlock))
     genTip = elements $ NE.toList $ tips dbModel
+
+    genGetHashForSlot :: Gen SlotNo
+    genGetHashForSlot = frequency $
+        [ (if empty then 0 else 3, elements $ Map.keys dbmSlots)
+        , (2, chooseSlot (0, lastSlot + 5))
+        ]
 
 -- | Return the files that the database with the given model would have
 -- created. For each epoch an epoch, primary index, and secondary index file.
@@ -920,6 +932,8 @@ data Tag =
 
   | TagErrorDuringIteratorClose
 
+  | TagGetHashForSlot Bool
+
   deriving (Show, Eq)
 
 
@@ -982,6 +996,7 @@ tag = C.classify
     , tagIteratorStreamedN Map.empty
     , tagCorruption
     , tagMigrate
+    , tagGetHashForSlot
     , tagErrorDuring TagErrorDuringAppendBlock $ \case
       { At (AppendBlock {}) -> True; _ -> False }
     , tagErrorDuring TagErrorDuringGetBlockComponent $ \case
@@ -1066,6 +1081,12 @@ tag = C.classify
           _               -> Right tagMigrate
       , C.predFinish = Nothing
       }
+
+    tagGetHashForSlot :: EventPred m
+    tagGetHashForSlot = successful $ \_ev r -> case r of
+      HashForSlot mHash -> Left $ TagGetHashForSlot $ isJust mHash
+      _                 -> Right tagGetHashForSlot
+
 
     tagErrorDuring :: Tag -> (At Cmd m Symbolic -> Bool) -> EventPred m
     tagErrorDuring t isErr = simulatedError $ \ev ->
