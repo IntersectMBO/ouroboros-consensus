@@ -1,6 +1,7 @@
 {-# LANGUAGE AllowAmbiguousTypes     #-}
 {-# LANGUAGE DataKinds               #-}
 {-# LANGUAGE DeriveAnyClass          #-}
+{-# LANGUAGE DeriveGeneric           #-}
 {-# LANGUAGE FlexibleContexts        #-}
 {-# LANGUAGE FlexibleInstances       #-}
 {-# LANGUAGE GADTs                   #-}
@@ -9,6 +10,7 @@
 {-# LANGUAGE NumericUnderscores      #-}
 {-# LANGUAGE OverloadedStrings       #-}
 {-# LANGUAGE ScopedTypeVariables     #-}
+{-# LANGUAGE StandaloneDeriving      #-}
 {-# LANGUAGE TypeApplications        #-}
 {-# LANGUAGE TypeFamilies            #-}
 {-# LANGUAGE TypeOperators           #-}
@@ -149,6 +151,9 @@ class ( Core.EraSegWits era
       , DSignable (EraCrypto era) (Hash (EraCrypto era) EraIndependentTxBody)
       , NoThunks (PredicateFailure (Core.EraRule "BBODY" era))
       , NoThunks (Core.TranslationContext era)
+
+      , DecCBOR (SL.TxIn (EraCrypto era))
+      , EncCBOR (SL.TxIn (EraCrypto era))
 
       ) => ShelleyBasedEra era where
 

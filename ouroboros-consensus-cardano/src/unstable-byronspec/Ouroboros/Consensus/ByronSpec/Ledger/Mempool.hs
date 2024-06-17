@@ -22,6 +22,7 @@ import qualified Ouroboros.Consensus.ByronSpec.Ledger.GenTx as GenTx
 import           Ouroboros.Consensus.ByronSpec.Ledger.Ledger
 import           Ouroboros.Consensus.ByronSpec.Ledger.Orphans ()
 import           Ouroboros.Consensus.Ledger.SupportsMempool
+import           Ouroboros.Consensus.Ledger.Tables.Utils
 
 newtype instance GenTx ByronSpecBlock = ByronSpecGenTx {
       unByronSpecGenTx :: ByronSpecGenTx
@@ -38,6 +39,11 @@ newtype instance Validated (GenTx ByronSpecBlock) = ValidatedByronSpecGenTx {
 
 type instance ApplyTxErr ByronSpecBlock = ByronSpecGenTxErr
 
+-- | This data family instance is not used anywhere but still required by the
+-- instance of @LedgerSupportsMempool ByronSpecBlock@
+newtype instance TxId (GenTx ByronSpecBlock) = TxId Int
+  deriving newtype NoThunks
+
 instance LedgerSupportsMempool ByronSpecBlock where
   applyTx cfg _wti _slot tx (TickedByronSpecLedgerState tip st) =
         fmap (\st' ->
@@ -49,8 +55,8 @@ instance LedgerSupportsMempool ByronSpecBlock where
 
   -- Byron spec doesn't have multiple validation modes
   reapplyTx cfg slot vtx st =
-        fmap fst
-      $ applyTx cfg DoNotIntervene slot (forgetValidatedByronSpecGenTx vtx) st
+        applyDiffs st . fst
+    <$> applyTx cfg DoNotIntervene slot (forgetValidatedByronSpecGenTx vtx) st
 
   -- Dummy values, as these are not used in practice.
   txsMaxBytes   = const maxBound
@@ -59,3 +65,4 @@ instance LedgerSupportsMempool ByronSpecBlock where
   txForgetValidated = forgetValidatedByronSpecGenTx
 
   txRefScriptSize _cfg _tlst _tx = 0
+  getTransactionKeySets _ = emptyLedgerTables

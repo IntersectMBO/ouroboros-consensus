@@ -16,24 +16,23 @@ import           Cardano.Tools.DBSynthesizer.Types
 import           Control.Monad.Trans.Except (ExceptT)
 import           Control.Monad.Trans.Except.Extra (firstExceptT,
                      handleIOExceptT, hoistEither, runExceptT)
-import           Control.Tracer (nullTracer)
 import           Data.Aeson as Aeson (FromJSON, Result (..), Value,
                      eitherDecodeFileStrict', eitherDecodeStrict', fromJSON)
 import           Data.Bool (bool)
 import           Data.ByteString as BS (ByteString, readFile)
 import           Ouroboros.Consensus.Config (configStorage)
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture (dontCheck)
-import qualified Ouroboros.Consensus.Node as Node (mkChainDbArgs,
-                     stdMkChainDbHasFS)
+import qualified Ouroboros.Consensus.Node as Node (stdMkChainDbHasFS)
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
                      (nodeImmutableDbChunkInfo)
 import           Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import           Ouroboros.Consensus.Shelley.Node (ShelleyGenesis (..),
                      validateGenesis)
-import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB (defaultArgs,
-                     getTipPoint)
-import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB (cdbTracer,
-                     withDB)
+import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB (getTipPoint)
+import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
+import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
+import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args as LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args as LedgerDB.V1
 import           Ouroboros.Consensus.Util.IOLike (atomically)
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Block
@@ -112,12 +111,24 @@ eitherParseJson v = case fromJSON v of
 synthesize :: DBSynthesizerConfig -> SomeConsensusProtocol -> IO ForgeResult
 synthesize DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} (SomeConsensusProtocol _ runP) =
     withRegistry $ \registry -> do
+
         let
             epochSize   = sgEpochLength confShelleyGenesis
             chunkInfo   = Node.nodeImmutableDbChunkInfo (configStorage pInfoConfig)
-            dbArgs      = Node.mkChainDbArgs
-                registry InFuture.dontCheck pInfoConfig pInfoInitLedger chunkInfo $
-                    ChainDB.defaultArgs (Node.stdMkChainDbHasFS confDbDir)
+            bss = LedgerDB.V1.V1Args LedgerDB.V1.DisableFlushing LedgerDB.V1.DisableQuerySize $ InMemoryBackingStoreArgs
+            flavargs = LedgerDB.LedgerDbFlavorArgsV1 bss
+            dbArgs      =
+             ChainDB.completeChainDbArgs
+              registry
+              InFuture.dontCheck
+              pInfoConfig
+              pInfoInitLedger
+              chunkInfo
+              (const True)
+              (Node.stdMkChainDbHasFS confDbDir)
+              (Node.stdMkChainDbHasFS confDbDir)
+              flavargs $
+             ChainDB.defaultArgs
 
         forgers <- blockForging
         let fCount = length forgers
@@ -126,8 +137,7 @@ synthesize DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} (Some
             then do
                 putStrLn $ "--> opening ChainDB on file system with mode: " ++ show synthOpenMode
                 preOpenChainDB synthOpenMode confDbDir
-                let dbTracer = nullTracer
-                ChainDB.withDB dbArgs {ChainDB.cdbTracer = dbTracer} $ \chainDB -> do
+                ChainDB.withDB dbArgs $ \chainDB -> do
                     slotNo <- do
                         tip <- atomically (ChainDB.getTipPoint chainDB)
                         pure $ case pointSlot tip of
