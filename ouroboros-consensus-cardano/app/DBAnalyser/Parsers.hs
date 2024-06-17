@@ -1,7 +1,11 @@
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE CPP           #-}
 
-module DBAnalyser.Parsers (parseCmdLine, blockTypeParser, BlockType (..)) where
+module DBAnalyser.Parsers (
+    BlockType (..)
+  , blockTypeParser
+  , parseCmdLine
+  ) where
 
 import           Cardano.Crypto (RequiresNetworkMagic (..))
 import           Cardano.Tools.DBAnalyser.Block.Byron
@@ -41,16 +45,9 @@ parseDBAnalyserConfig = DBAnalyserConfig
     <*> parseLimit
 
 parseSelectDB :: Parser SelectDB
-parseSelectDB = asum [
-    SelectImmutableDB . snd <$> ((,) <$> onlyImmutableDB <*> analyseFrom)
-  , pure SelectChainDB
-  ]
+parseSelectDB =
+    SelectImmutableDB <$> analyseFrom
   where
-    onlyImmutableDB = flag' () (mconcat [
-        long "only-immutable-db"
-      , help "Validate only the Immutable DB (e.g. do not do ledger validation)"
-      ])
-
     analyseFrom :: Parser (Maybe DiskSnapshot)
     analyseFrom = optional $ ((flip DiskSnapshot $ Just "db-analyser") . read) <$> strOption
       (  long "analyse-from"
@@ -62,11 +59,11 @@ parseValidationPolicy :: Parser (Maybe ValidateBlocks)
 parseValidationPolicy = optional $ asum [
       flag' ValidateAllBlocks $ mconcat [
           long "validate-all-blocks"
-        , help "Validate all blocks of the Volatile and Immutable DB"
+        , help "Validate all blocks of the Immutable DB"
         ]
     , flag' MinimumBlockValidation $ mconcat [
           long "minimum-block-validation"
-        , help "Validate a minimum part of the Volatile and Immutable DB"
+        , help "Validate a minimum part of the Immutable DB"
         ]
     ]
 

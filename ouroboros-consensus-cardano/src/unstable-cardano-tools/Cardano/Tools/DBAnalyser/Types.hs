@@ -10,8 +10,7 @@ import           Ouroboros.Consensus.Storage.LedgerDB (DiskSnapshot)
 
 
 data SelectDB =
-    SelectChainDB
-  | SelectImmutableDB (Maybe DiskSnapshot)
+    SelectImmutableDB (Maybe DiskSnapshot)
 
 data DBAnalyserConfig = DBAnalyserConfig {
     dbDir      :: FilePath

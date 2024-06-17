@@ -52,37 +52,17 @@ we explain each command line option.
 
 #### --db PATH
 
-The tool works on a cardano-node's ChainDB. Thus the user must provide an obligatory `--db PATH` argument pointing to the particular DB.
+The tool works on a cardano-node's ChainDB (in fact, only on the ImmutableDB and the ledger snapshots). Thus the user must provide an obligatory `--db PATH` argument pointing to the particular DB.
 
-#### --verbose
+If you want to analyse blocks from the VolatileDB, consider copying them to the ImmutableDB via db-immutaliser.
 
-db-analyser will get quite noisy
-
-#### --only-immutable-db
-
-By default db-analyser will process all blocks from the chain database
-(`ChainDB`), from the genesis block up to the chain tip. In order to do this it
-must first properly initialize the whole database. That means that before it
-even starts processing blocks it will:
-
-1. look for the latest snapshot stored in DB_PATH/ledger. The latest snapshot is determined by looking at the highest snapshot number. The storage layer of consensus expects the snapshot file names to be of the form `<SNAPSHOT NUMBER_SUFFIX>`, this is, a snapshot number, optionally followed by the `_` character and an arbitrary suffix. For instance, given snapshots files with these names `101_foo`, `100_db-analyser`, `99`, the file with the highest snapshot number is `101_foo`.
-2. load that snapshot into memory
-3. start replaying blocks
-   * starting from that ledger state
-   * while updating the ledger state in the process for each replayed block
-   * keeping the intermediate results (ledger states) in memory while replaying blocks that live in the volatile DB (less than k blocks from the tip)
-
-This may heavily impact any profiling that the user might be interested in doing.
-
-To counter that problem `--only-immutable-db` flag was introduced.
+#### --analyse-from
 
 ```
-[--only-immutable-db [--analyse-from SLOT_NUMBER]]
+[--analyse-from SLOT_NUMBER]
 ```
 
-When enabled, db-analyser will work only with blocks from immutableDB, thus initialization described above will not happen.
-
-This flag comes with an additional `--analyse-from` flag. It allows to start processing blocks from the requested slot number. A snapshot at that slot number must exist in `DB_PATH/ledger/SLOT_NUMBER_db-analyser` - where `SLOT_NUMBER` is the value provided by the user with the `--analyse-from` flag.
+This flag allows to start processing blocks from the requested slot number. A snapshot at that slot number must exist in `DB_PATH/ledger/SLOT_NUMBER_db-analyser` - where `SLOT_NUMBER` is the value provided by the user with the `--analyse-from` flag.
 The user can use snapshots created by the node or they can create their own snapshots via db-analyser - see the `--store-ledger` command
 
 #### COMMAND
@@ -206,7 +186,7 @@ want to take a snapshot of the ledger state for slot `100`. Then we can run:
 cabal run exe:db-analyser -- cardano \
     --config $NODE_HOME/configuration/cardano/mainnet-config.json \
     --db $NODE_HOME/mainnet/db \
-    --only-immutable-db --store-ledger 100
+    --store-ledger 100
 ```
 
 If we had a previous snapshot of the ledger state, say corresponding to slot
@@ -217,7 +197,7 @@ cabal run exe:db-analyser -- cardano \
     --config $NODE_HOME/configuration/cardano/mainnet-config.json \
     --db $NODE_HOME/mainnet/db \
     --analyse-from 50 \
-    --only-immutable-db --store-ledger 100
+    --store-ledger 100
 ```
 
 #### Running the ledger operations benchmark
@@ -231,8 +211,7 @@ cabal run exe:db-analyser -- cardano
     --db $NODE_HOME/mainnet/db \
     --analyse-from 100 \
     --benchmark-ledger-ops \
-    --out-file ledger-ops-cost.csv \
-    --only-immutable-db
+    --out-file ledger-ops-cost.csv
 ```
 
 The benchmarking command can be combined with `--num-blocks-to-process` to
@@ -246,7 +225,6 @@ cabal run exe:db-analyser -- cardano
     --benchmark-ledger-ops \
     --out-file ledger-ops-cost.csv \
     --num-blocks-to-process 200
-    --only-immutable-db
 ```
 
 ##### Plotting the benchmark results
@@ -263,6 +241,26 @@ gnuplot -e "bench_data='ledger-ops-cost.csv'" \
 
 The plot will be written to a file named `results.png`. See the script file for
 more usage options.
+
+## db-immutaliser
+
+Copy a specific chain from a volatile DB to an immutable DB, such that other
+tools that expect an immutable DB can process the corresponding blocks.
+
+Currently, it will copy the longest chain that extends the immutable tip, but it
+will not perform any validation (and therefore, it does not require a ledger
+snapshot).
+
+Basic usage:
+```sh
+cabal run db-immutaliser -- \
+  --immutable-db /path/to/db1/immutable \
+  --volatile-db /path/to/db2/volatile \
+  --config /path/to/config.json
+```
+
+The `config.json` should be in the same format (Node configuration) as for eg
+db-analyser.
 
 ## db-synthesizer
 

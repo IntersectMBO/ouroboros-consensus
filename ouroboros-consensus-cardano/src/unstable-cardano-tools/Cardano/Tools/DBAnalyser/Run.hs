@@ -54,67 +54,55 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
       analysisTracer <- mkTracer lock True
       ProtocolInfo { pInfoInitLedger = genesisLedger, pInfoConfig = cfg } <-
         mkProtocolInfo args
-      let chunkInfo  = Node.nodeImmutableDbChunkInfo (configStorage cfg)
-          args' =
-            completeChainDbArgs
-              registry
-              InFuture.dontCheck
-              cfg
-              genesisLedger
-              chunkInfo
-              (const True)
-              (Node.stdMkChainDbHasFS dbDir) $ defaultArgs
-          chainDbArgs = maybeValidateAll $ updateTracer chainDBTracer args'
+      let chunkInfo   = Node.nodeImmutableDbChunkInfo (configStorage cfg)
+          chainDbArgs =
+                maybeValidateAll
+              $ updateTracer chainDBTracer
+              $ completeChainDbArgs
+                  registry
+                  InFuture.dontCheck
+                  cfg
+                  genesisLedger
+                  chunkInfo
+                  (const True)
+                  (Node.stdMkChainDbHasFS dbDir)
+              $ defaultArgs
           immutableDbArgs = ChainDB.cdbImmDbArgs chainDbArgs
           ledgerDbFS = lgrHasFS $ ChainDB.cdbLgrDbArgs chainDbArgs
 
-      case selectDB of
-        SelectImmutableDB initializeFrom -> do
-          -- TODO we need to check if the snapshot exists. If not, print an
-          -- error and ask the user if she wanted to create a snapshot first and
-          -- how to do it.
-          initLedgerErr <- runExceptT $ case initializeFrom of
-            Nothing       -> pure genesisLedger
-            Just snapshot -> readSnapshot ledgerDbFS (decodeDiskExtLedgerState $ configCodec cfg) decode snapshot
-              -- TODO @readSnapshot@ has type @ExceptT ReadIncrementalErr m
-              -- (ExtLedgerState blk)@ but it also throws exceptions! This makes
-              -- error handling more challenging than it ought to be. Maybe we
-              -- can enrich the error that @readSnapthot@ return, so that it can
-              -- contain the @HasFS@ errors as well.
-          initLedger <- either (error . show) pure initLedgerErr
-          -- This marker divides the "loading" phase of the program, where the
-          -- system is principally occupied with reading snapshot data from
-          -- disk, from the "processing" phase, where we are streaming blocks
-          -- and running the ledger processing on them.
-          Debug.traceMarkerIO "SNAPSHOT_LOADED"
-          ImmutableDB.withDB (ImmutableDB.openDB immutableDbArgs runWithTempRegistry) $ \immutableDB -> do
-            result <- runAnalysis analysis $ AnalysisEnv {
-                cfg
-              , initLedger
-              , db = Left immutableDB
-              , registry
-              , ledgerDbFS = ledgerDbFS
-              , limit = confLimit
-              , tracer = analysisTracer
-              }
-            tipPoint <- atomically $ ImmutableDB.getTipPoint immutableDB
-            putStrLn $ "ImmutableDB tip: " ++ show tipPoint
-            pure result
-        SelectChainDB ->
-          ChainDB.withDB chainDbArgs $ \chainDB -> do
-            result <- runAnalysis analysis $ AnalysisEnv {
-                cfg
-              , initLedger = genesisLedger
-              , db = Right chainDB
-              , registry
-              , ledgerDbFS = ledgerDbFS
-              , limit = confLimit
-              , tracer = analysisTracer
-              }
-            tipPoint <- atomically $ ChainDB.getTipPoint chainDB
-            putStrLn $ "ChainDB tip: " ++ show tipPoint
-            pure result
+      -- TODO we need to check if the snapshot exists. If not, print an
+      -- error and ask the user if she wanted to create a snapshot first and
+      -- how to do it.
+      initLedgerErr <- runExceptT $ case initializeFrom of
+        Nothing       -> pure genesisLedger
+        Just snapshot -> readSnapshot ledgerDbFS (decodeDiskExtLedgerState $ configCodec cfg) decode snapshot
+          -- TODO @readSnapshot@ has type @ExceptT ReadIncrementalErr m
+          -- (ExtLedgerState blk)@ but it also throws exceptions! This makes
+          -- error handling more challenging than it ought to be. Maybe we
+          -- can enrich the error that @readSnapthot@ return, so that it can
+          -- contain the @HasFS@ errors as well.
+      initLedger <- either (error . show) pure initLedgerErr
+      -- This marker divides the "loading" phase of the program, where the
+      -- system is principally occupied with reading snapshot data from
+      -- disk, from the "processing" phase, where we are streaming blocks
+      -- and running the ledger processing on them.
+      Debug.traceMarkerIO "SNAPSHOT_LOADED"
+      ImmutableDB.withDB (ImmutableDB.openDB immutableDbArgs runWithTempRegistry) $ \immutableDB -> do
+        result <- runAnalysis analysis $ AnalysisEnv {
+            cfg
+          , initLedger
+          , db = immutableDB
+          , registry
+          , ledgerDbFS = ledgerDbFS
+          , limit = confLimit
+          , tracer = analysisTracer
+          }
+        tipPoint <- atomically $ ImmutableDB.getTipPoint immutableDB
+        putStrLn $ "ImmutableDB tip: " ++ show tipPoint
+        pure result
   where
+    SelectImmutableDB initializeFrom = selectDB
+
     mkTracer _    False = return nullTracer
     mkTracer lock True  = do
       startTime <- getMonotonicTime
