@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveAnyClass       #-}
 {-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE FlexibleContexts     #-}
+{-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE LambdaCase           #-}
 {-# LANGUAGE MultiWayIf           #-}
 {-# LANGUAGE NamedFieldPuns       #-}
@@ -10,6 +11,8 @@
 {-# LANGUAGE TypeApplications     #-}
 {-# LANGUAGE TypeFamilies         #-}
 {-# LANGUAGE UndecidableInstances #-}
+
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Model implementation of the chain DB
 --
@@ -70,9 +73,11 @@ module Test.Ouroboros.Storage.ChainDB.Model (
   , garbageCollectable
   , garbageCollectableIteratorNext
   , garbageCollectablePoint
+  , getFragmentBetween
   , immutableDbChain
   , initLedger
   , reopen
+  , updateLoE
   , validChains
   , volatileDbBlocks
   , wipeVolatileDB
@@ -81,12 +86,14 @@ module Test.Ouroboros.Storage.ChainDB.Model (
 import           Codec.Serialise (Serialise, serialise)
 import           Control.Monad (unless)
 import           Control.Monad.Except (runExcept)
+import           Data.Bitraversable (bimapM)
 import qualified Data.ByteString.Lazy as Lazy
-import           Data.Function (on)
+import           Data.Function (on, (&))
+import           Data.Functor (($>), (<&>))
 import           Data.List (isInfixOf, isPrefixOf, sortBy)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromMaybe, isJust)
+import           Data.Maybe (fromMaybe, isJust, mapMaybe)
 import           Data.Proxy
 import           Data.Set (Set)
 import qualified Data.Set as Set
@@ -104,8 +111,8 @@ import           Ouroboros.Consensus.Protocol.MockChainSel
 import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      AddBlockResult (..), BlockComponent (..),
                      ChainDbError (..), InvalidBlockReason (..),
-                     IteratorResult (..), StreamFrom (..), StreamTo (..),
-                     UnknownRange (..), validBounds)
+                     IteratorResult (..), LoE (..), StreamFrom (..),
+                     StreamTo (..), UnknownRange (..), validBounds)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanK)
 import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Util (repeatedly)
@@ -119,7 +126,6 @@ import qualified Ouroboros.Network.Mock.Chain as Chain
 import           Ouroboros.Network.Mock.ProducerState (ChainProducerState)
 import qualified Ouroboros.Network.Mock.ProducerState as CPS
 import           Test.Cardano.Slotting.TreeDiff ()
-
 
 type IteratorId = Int
 
@@ -136,6 +142,7 @@ data Model blk = Model {
     , valid            :: Set (HeaderHash blk)
     , invalid          :: InvalidBlocks blk
     , currentSlot      :: SlotNo
+    , loeFragment      :: LoE (AnchoredFragment blk)
     , maxClockSkew     :: Word64
       -- ^ Max clock skew in terms of slots. A static configuration parameter.
     , isOpen           :: Bool
@@ -364,10 +371,12 @@ getLedgerDB cfg m@Model{..} =
 -------------------------------------------------------------------------------}
 
 empty ::
-     ExtLedgerState blk
+     HasHeader blk
+  => LoE ()
+  -> ExtLedgerState blk
   -> Word64   -- ^ Max clock skew in number of blocks
   -> Model blk
-empty initLedger maxClockSkew = Model {
+empty loe initLedger maxClockSkew = Model {
       volatileDbBlocks = Map.empty
     , immutableDbChain = Chain.Genesis
     , cps              = CPS.initChainProducerState Chain.Genesis
@@ -379,6 +388,7 @@ empty initLedger maxClockSkew = Model {
     , currentSlot      = 0
     , maxClockSkew     = maxClockSkew
     , isOpen           = True
+    , loeFragment      = loe $> Fragment.Empty Fragment.AnchorGenesis
     }
 
 -- | Advance the 'currentSlot' of the model to the given 'SlotNo' if the
@@ -392,22 +402,17 @@ addBlock :: forall blk. LedgerSupportsProtocol blk
          => TopLevelConfig blk
          -> blk
          -> Model blk -> Model blk
-addBlock cfg blk m = Model {
-      volatileDbBlocks = volatileDbBlocks'
-    , immutableDbChain = immutableDbChain m
-    , cps              = CPS.switchFork newChain (cps m)
-    , currentLedger    = newLedger
-    , initLedger       = initLedger m
-    , iterators        = iterators  m
-    , valid            = valid'
-    , invalid          = invalid'
-    , currentSlot      = currentSlot  m
-    , maxClockSkew     = maxClockSkew m
-    , isOpen           = True
-    }
+addBlock cfg blk m =
+  if ignoreBlock
+    then m
+    else
+      chainSelection cfg $
+        m
+          { volatileDbBlocks =
+              Map.insert (blockHash blk) blk (volatileDbBlocks m)
+          }
   where
     secParam = configSecurityParam cfg
-
     immBlockNo = immutableBlockNo secParam m
 
     hdr = getHeader blk
@@ -419,19 +424,31 @@ addBlock cfg blk m = Model {
         -- If it's an invalid block we've seen before, ignore it.
         Map.member (blockHash blk) (invalid m)
 
-    volatileDbBlocks' :: Map (HeaderHash blk) blk
-    volatileDbBlocks'
-        | ignoreBlock
-        = volatileDbBlocks m
-        | otherwise
-        = Map.insert (blockHash blk) blk (volatileDbBlocks m)
+chainSelection :: forall blk. LedgerSupportsProtocol blk
+         => TopLevelConfig blk
+         -> Model blk -> Model blk
+chainSelection cfg m = Model {
+      volatileDbBlocks = volatileDbBlocks m
+    , immutableDbChain = immutableDbChain m
+    , cps              = CPS.switchFork newChain (cps m)
+    , currentLedger    = newLedger
+    , initLedger       = initLedger m
+    , iterators        = iterators  m
+    , valid            = valid'
+    , invalid          = invalid'
+    , currentSlot      = currentSlot  m
+    , maxClockSkew     = maxClockSkew m
+    , isOpen           = True
+    , loeFragment      = loeFragment m
+    }
+  where
+    secParam = configSecurityParam cfg
 
     -- @invalid'@ will be a (non-strict) superset of the previous value of
     -- @invalid@, see 'validChains', thus no need to union.
     invalid'   :: InvalidBlocks blk
     candidates :: [(Chain blk, ExtLedgerState blk)]
-    (invalid', candidates) =
-        validChains cfg m (immutableDbBlocks m <> volatileDbBlocks')
+    (invalid', candidates) = validChains cfg m (blocks m)
 
     immutableChainHashes =
         map blockHash
@@ -446,7 +463,49 @@ addBlock cfg blk m = Model {
 
     -- Note that this includes the currently selected chain, but that does not
     -- influence chain selection via 'selectChain'.
-    consideredCandidates = filter (extendsImmutableChain . fst) candidates
+    consideredCandidates =
+      candidates
+        & filter (extendsImmutableChain . fst)
+        & mapMaybe (bimapM trimToLoE pure)
+
+    currentChain' = currentChain m
+
+    -- If the LoE fragment does not intersect with the current selection, then
+    -- we use the empty fragment anchored at the immutable tip instead.
+    loeFragment' =
+      loeFragment m <&> \loeFragment'' ->
+        case Fragment.intersect (Chain.toAnchoredFragment currentChain') loeFragment'' of
+          Just _ -> loeFragment''
+          Nothing -> Fragment.Empty $ Chain.headAnchor $ immutableChain secParam m
+
+    -- REVIEW: This might lead to 'consideredCandidates' containing duplicates;
+    -- is this a problem?
+    trimToLoE :: Chain blk -> Maybe (Chain blk)
+    trimToLoE chain =
+      case loeFragment' of
+        LoEDisabled -> Just chain
+        LoEEnabled loeFragment'' ->
+          case Fragment.intersect (Chain.toAnchoredFragment chain) loeFragment'' of
+            -- NOTE: There needs to be an intersection, but not any kind of
+            -- intersection: we accept only fragments that extend the LoE.
+            -- Although not strictly necessary, this prevents some peculiar
+            -- transient states. The fragments that do not extend the LoE are
+            -- trimmed to have their tip point on the LoE. The others may have k
+            -- blocks past the tip of the LoE.
+            Just (chainPrefix, _, chainSuffix, loeSuffix)
+              | Fragment.null chainSuffix || Fragment.null loeSuffix ->
+                  let trimmedSuffix = Fragment.takeOldest (fromIntegral $ maxRollbacks secParam) chainSuffix
+                  in case Fragment.join chainPrefix trimmedSuffix of
+                        Nothing -> error "bug in trimToLoE: chainPrefix and chainSuffix do not join, violating the postcondition of AnchoredFragment.intersect"
+                        Just trimmedChain ->
+                          case Chain.fromAnchoredFragment trimmedChain of
+                            Nothing -> error "bug in trimToLoE: trimmedChain is not anchored at Origin"
+                            Just trimmedChain' -> Just trimmedChain'
+              | otherwise ->
+                case Chain.fromAnchoredFragment chainPrefix of
+                  Nothing -> error "bug in trimToLoE: chainPrefix is not anchored at Origin"
+                  Just chainPrefix' -> Just chainPrefix'
+            _ -> Nothing
 
     newChain  :: Chain blk
     newLedger :: ExtLedgerState blk
@@ -490,6 +549,17 @@ addBlockPromise cfg blk m = (result, m')
       { blockWrittenToDisk = return blockWritten
       , blockProcessed     = return $ SuccesfullyAddedBlock $ tipPoint m'
       }
+
+updateLoE ::
+  forall blk.
+  LedgerSupportsProtocol blk =>
+  TopLevelConfig blk ->
+  AnchoredFragment blk ->
+  Model blk ->
+  (Point blk, Model blk)
+updateLoE cfg f m =
+  let m' = chainSelection cfg $ m {loeFragment = loeFragment m $> f}
+   in (tipPoint m', m')
 
 {-------------------------------------------------------------------------------
   Iterators
@@ -755,7 +825,6 @@ validate cfg Model { currentSlot, maxClockSkew, initLedger, invalid } chain =
              findInvalidBlockInTheFuture ledger' bs'
           | otherwise
           -> findInvalidBlockInTheFuture ledger' bs'
-
 
 chains :: forall blk. (GetPrevHash blk)
        => Map (HeaderHash blk) blk -> [Chain blk]
@@ -1041,3 +1110,46 @@ wipeVolatileDB cfg m =
         -> error "Did not select the ImmutableDB's chain"
 
     toHashes = map blockHash . Chain.toOldestFirst
+
+-- | Look in the given blocks database for a fragment spanning from the given
+-- anchor to the given hash, and return the fragment in question, or @Nothing@.
+getFragmentBetween ::
+  forall blk.
+  (GetPrevHash blk) =>
+  -- | A map of blocks; usually the 'volatileDbBlocks' of a 'Model'.
+  Map (HeaderHash blk) blk ->
+  -- | The anchor of the fragment to get.
+  Fragment.Anchor blk ->
+  -- | The hash of the block to get the fragment up to.
+  ChainHash blk ->
+  Maybe (AnchoredFragment blk)
+getFragmentBetween bs anchor = go
+  where
+    anchorHash :: ChainHash blk
+    anchorHash = case anchor of
+      Fragment.AnchorGenesis          -> GenesisHash
+      Fragment.Anchor _ anchorHash' _ -> BlockHash anchorHash'
+
+    go :: ChainHash blk -> Maybe (AnchoredFragment blk)
+    go hash | hash == anchorHash =
+      Just $ Fragment.Empty $ anchor
+    go GenesisHash =
+      Nothing
+    go (BlockHash hash) = do
+      block <- Map.lookup hash bs
+      prevFragment <- go $ blockPrevHash block
+      Just $ prevFragment Fragment.:> block
+
+{-------------------------------------------------------------------------------
+  Orphan instances
+-------------------------------------------------------------------------------}
+
+deriving instance ToExpr a => ToExpr (LoE a)
+
+deriving instance ( ToExpr blk
+                  , ToExpr (HeaderHash blk)
+                  )
+                 => ToExpr (Fragment.Anchor blk)
+
+instance (ToExpr blk, ToExpr (HeaderHash blk)) => ToExpr (AnchoredFragment blk) where
+  toExpr f = toExpr (Fragment.anchor f, Fragment.toOldestFirst f)
