@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveAnyClass       #-}
 {-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE FlexibleContexts     #-}
+{-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE LambdaCase           #-}
 {-# LANGUAGE MultiWayIf           #-}
 {-# LANGUAGE NamedFieldPuns       #-}
@@ -141,7 +142,7 @@ data Model blk = Model {
     , valid            :: Set (HeaderHash blk)
     , invalid          :: InvalidBlocks blk
     , currentSlot      :: SlotNo
-    , loeFragment      :: LoE (Fragment.Anchor blk, [blk]) -- FIXME: AnchoredFragment blk
+    , loeFragment      :: LoE (AnchoredFragment blk)
     , maxClockSkew     :: Word64
       -- ^ Max clock skew in terms of slots. A static configuration parameter.
     , isOpen           :: Bool
@@ -370,7 +371,8 @@ getLedgerDB cfg m@Model{..} =
 -------------------------------------------------------------------------------}
 
 empty ::
-     LoE ()
+     HasHeader blk
+  => LoE ()
   -> ExtLedgerState blk
   -> Word64   -- ^ Max clock skew in number of blocks
   -> Model blk
@@ -386,7 +388,7 @@ empty loe initLedger maxClockSkew = Model {
     , currentSlot      = 0
     , maxClockSkew     = maxClockSkew
     , isOpen           = True
-    , loeFragment      = loe $> (Fragment.AnchorGenesis, [])
+    , loeFragment      = loe $> Fragment.Empty Fragment.AnchorGenesis
     }
 
 -- | Advance the 'currentSlot' of the model to the given 'SlotNo' if the
@@ -471,11 +473,10 @@ chainSelection cfg m = Model {
     -- If the LoE fragment does not intersect with the current selection, then
     -- we use the empty fragment anchored at the immutable tip instead.
     loeFragment' =
-      loeFragment m <&> \(loeAnchor, loeBlocks) ->
-        let loeFragment'' = Fragment.fromOldestFirst loeAnchor loeBlocks
-        in case Fragment.intersect (Chain.toAnchoredFragment currentChain') loeFragment'' of
-              Just _ -> loeFragment''
-              Nothing -> Fragment.Empty $ Chain.headAnchor $ immutableChain secParam m
+      loeFragment m <&> \loeFragment'' ->
+        case Fragment.intersect (Chain.toAnchoredFragment currentChain') loeFragment'' of
+          Just _ -> loeFragment''
+          Nothing -> Fragment.Empty $ Chain.headAnchor $ immutableChain secParam m
 
     -- REVIEW: This might lead to 'consideredCandidates' containing duplicates;
     -- is this a problem?
@@ -557,9 +558,7 @@ updateLoE ::
   Model blk ->
   (Point blk, Model blk)
 updateLoE cfg f m =
-  let m' =
-        chainSelection cfg $
-          m {loeFragment = loeFragment m $> (Fragment.anchor f, Fragment.toOldestFirst f)}
+  let m' = chainSelection cfg $ m {loeFragment = loeFragment m $> f}
    in (tipPoint m', m')
 
 {-------------------------------------------------------------------------------
@@ -1151,3 +1150,6 @@ deriving instance ( ToExpr blk
                   , ToExpr (HeaderHash blk)
                   )
                  => ToExpr (Fragment.Anchor blk)
+
+instance (ToExpr blk, ToExpr (HeaderHash blk)) => ToExpr (AnchoredFragment blk) where
+  toExpr f = toExpr (Fragment.anchor f, Fragment.toOldestFirst f)

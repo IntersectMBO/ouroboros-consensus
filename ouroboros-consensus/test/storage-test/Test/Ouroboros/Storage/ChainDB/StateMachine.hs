@@ -768,7 +768,8 @@ data Model blk m r = Model
 deriving instance (TestConstraints blk, Show1 r) => Show (Model blk m r)
 
 -- | Initial model
-initModel :: LoE ()
+initModel :: HasHeader blk
+          => LoE ()
           -> TopLevelConfig blk
           -> ExtLedgerState blk
           -> MaxClockSkew
