@@ -1,24 +1,29 @@
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE TypeFamilies     #-}
+{-# LANGUAGE DataKinds                #-}
+{-# LANGUAGE FlexibleContexts         #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeFamilies             #-}
 module Ouroboros.Consensus.Ledger.SupportsMempool (
     ApplyTxErr
   , GenTx
   , GenTxId
   , HasTxId (..)
   , HasTxs (..)
+  , Invalidated (..)
   , LedgerSupportsMempool (..)
+  , ReapplyTxsResult (..)
   , TxId
   , Validated
   , WhetherToIntervene (..)
   ) where
 
 import           Control.Monad.Except
+import           Data.Foldable
 import           Data.Kind (Type)
 import           Data.Word (Word32)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Ticked
+import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Util.IOLike
 
 -- | Generalized transaction
@@ -26,11 +31,13 @@ import           Ouroboros.Consensus.Util.IOLike
 -- The mempool (and, accordingly, blocks) consist of "generalized
 -- transactions"; this could be "proper" transactions (transferring funds) but
 -- also other kinds of things such as update proposals, delegations, etc.
-data family GenTx blk :: Type
+type GenTx :: Type -> Type
+data family GenTx blk
 
 -- | Updating the ledger with a single transaction may result in a different
 -- error type as when updating it with a block
-type family ApplyTxErr blk :: Type
+type ApplyTxErr :: Type -> Type
+type family ApplyTxErr blk
 
 -- | A flag indicating whether the mempool should reject a valid-but-problematic
 -- transaction, in order to to protect its author from penalties etc
@@ -58,7 +65,6 @@ data WhetherToIntervene
 class ( UpdateLedger blk
       , NoThunks (GenTx blk)
       , NoThunks (Validated (GenTx blk))
-      , NoThunks (Ticked (LedgerState blk))
       , Show (GenTx blk)
       , Show (Validated (GenTx blk))
       , Show (ApplyTxErr blk)
@@ -77,8 +83,8 @@ class ( UpdateLedger blk
           -> WhetherToIntervene
           -> SlotNo -- ^ Slot number of the block containing the tx
           -> GenTx blk
-          -> TickedLedgerState blk
-          -> Except (ApplyTxErr blk) (TickedLedgerState blk, Validated (GenTx blk))
+          -> TickedLedgerState blk ValuesMK
+          -> Except (ApplyTxErr blk) (TickedLedgerState blk DiffMK, Validated (GenTx blk))
 
   -- | Apply a previously validated transaction to a potentially different
   -- ledger state
@@ -90,8 +96,42 @@ class ( UpdateLedger blk
             => LedgerConfig blk
             -> SlotNo -- ^ Slot number of the block containing the tx
             -> Validated (GenTx blk)
-            -> TickedLedgerState blk
-            -> Except (ApplyTxErr blk) (TickedLedgerState blk)
+            -> TickedLedgerState blk ValuesMK
+            -> Except (ApplyTxErr blk) (TickedLedgerState blk ValuesMK)
+
+  -- | Apply a list of previously validated transactions to a new ledger state.
+  --
+  -- It is never the case that we reapply one single transaction, we always
+  -- reapply a list of transactions (and even one transaction can just be lifted
+  -- into the unary list).
+  --
+  -- When reapplying a list of transactions, in the hard-fork instance we want
+  -- to first project everything into the particular block instance and then we
+  -- can inject/project the ledger tables only once. For single era blocks, this
+  -- is by default implemented as a fold using 'reapplyTx'.
+  --
+  -- Notice: It is crucial that the list of validated transactions returned is
+  -- in the same order as they were given, as we will use those later on to
+  -- filter a list of 'TxTicket's.
+  reapplyTxs ::
+       HasCallStack
+    => LedgerConfig blk
+    -> SlotNo -- ^ Slot number of the block containing the tx
+    -> [Validated (GenTx blk)]
+    -> TickedLedgerState blk ValuesMK
+    -> ReapplyTxsResult blk
+  reapplyTxs cfg slot txs st =
+      (\(err, val, st') ->
+         ReapplyTxsResult
+           err
+           (reverse val)
+           (forgetTrackingValues . calculateDifference st $ st')
+      )
+    $ foldl' (\(accE, accV, st') tx ->
+                 case runExcept (reapplyTx cfg slot tx st') of
+                   Left err   -> (Invalidated tx err : accE, accV, st')
+                   Right st'' -> (accE, tx : accV, st'')
+             ) ([], [], st) txs
 
   -- | The maximum number of bytes worth of transactions that can be put into
   -- a block according to the currently adopted protocol parameters of the
@@ -99,7 +139,7 @@ class ( UpdateLedger blk
   --
   -- This is (conservatively) computed by subtracting the header size and any
   -- other fixed overheads from the maximum block size.
-  txsMaxBytes :: TickedLedgerState blk -> Word32
+  txsMaxBytes :: TickedLedgerState blk mk -> Word32
 
   -- | Return the post-serialisation size in bytes of a 'GenTx' /when it is
   -- embedded in a block/. This size might differ from the size of the
@@ -124,8 +164,24 @@ class ( UpdateLedger blk
   -- | Discard the evidence that transaction has been previously validated
   txForgetValidated :: Validated (GenTx blk) -> GenTx blk
 
+  -- | Given a transaction, get the key-sets that we need to apply it to a
+  -- ledger state.
+  getTransactionKeySets :: GenTx blk -> LedgerTables (LedgerState blk) KeysMK
+
+data ReapplyTxsResult blk =
+  ReapplyTxsResult {
+      -- | txs that are now invalid. Order doesn't matter
+      invalidatedTxs :: ![Invalidated blk]
+      -- | txs that are valid again, order must be the same as the order in
+      -- which txs were received
+    , validatedTxs   :: ![Validated (GenTx blk)]
+      -- | Resulting ledger state
+    , resultingState :: !(TickedLedgerState blk DiffMK)
+    }
+
 -- | A generalized transaction, 'GenTx', identifier.
-data family TxId tx :: Type
+type TxId :: Type -> Type
+data family TxId blk
 
 -- | Transactions with an identifier
 --
@@ -156,3 +212,9 @@ type GenTxId blk = TxId (GenTx blk)
 class HasTxs blk where
   -- | Return the transactions part of the given block in no particular order.
   extractTxs :: blk -> [GenTx blk]
+
+-- | A transaction that was previously valid. Used to clarify the types on the
+-- 'reapplyTxs' function.
+data Invalidated blk = Invalidated { getInvalidated :: Validated (GenTx blk)
+                                   , getReason      ::  ApplyTxErr blk
+                                   }

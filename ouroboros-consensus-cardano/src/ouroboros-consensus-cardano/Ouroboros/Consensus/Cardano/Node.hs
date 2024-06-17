@@ -75,6 +75,7 @@ import           Data.Functor.These (These1 (..))
 import qualified Data.Map.Strict as Map
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Counting
+import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.Index (Index (..))
 import           Data.SOP.NonEmpty
 import           Data.SOP.OptNP (NonEmptyOptNP, OptNP (OptSkip))
@@ -90,6 +91,8 @@ import           Ouroboros.Consensus.Byron.Ledger.NetworkProtocolVersion
 import           Ouroboros.Consensus.Byron.Node
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.CanHardFork
+import           Ouroboros.Consensus.Cardano.Ledger ()
+import           Ouroboros.Consensus.Cardano.QueryHF ()
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
@@ -99,6 +102,8 @@ import           Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.Tables
+import           Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.ProtocolInfo
@@ -938,21 +943,22 @@ protocolInfoCardano paramsCardano
     -- Ledger layer provides an era-generic registration function,
     -- which will abstract away the data to be registered for a given
     -- era.
-    initExtLedgerStateCardano :: ExtLedgerState (CardanoBlock c)
+    initExtLedgerStateCardano :: ExtLedgerState (CardanoBlock c) ValuesMK
     initExtLedgerStateCardano = ExtLedgerState {
           headerState = initHeaderState
-        , ledgerState =
-              HardForkLedgerState
-            . hap (fn id :* registerAny)
-            $ hardForkLedgerStatePerEra initLedgerState
+        , ledgerState = overShelleyBasedLedgerState initLedgerState
         }
       where
-        initHeaderState :: HeaderState (CardanoBlock c)
-        initLedgerState :: LedgerState (CardanoBlock c)
-        ExtLedgerState initLedgerState initHeaderState =
-          injectInitialExtLedgerState cfg initExtLedgerStateByron
+        overShelleyBasedLedgerState (HardForkLedgerState st) =
+          HardForkLedgerState $ hap (fn id :* registerAny) st
 
-        registerAny :: NP (LedgerState -.-> LedgerState) (CardanoShelleyEras c)
+        initHeaderState :: HeaderState (CardanoBlock c)
+        initLedgerState :: LedgerState (CardanoBlock c) ValuesMK
+        ExtLedgerState initLedgerState initHeaderState =
+            injectInitialExtLedgerState cfg
+          $ initExtLedgerStateByron
+
+        registerAny :: NP (Flip LedgerState ValuesMK -.-> Flip LedgerState ValuesMK) (CardanoShelleyEras c)
         registerAny =
              register transitionConfigShelley
           :* register transitionConfigAllegra
@@ -963,33 +969,45 @@ protocolInfoCardano paramsCardano
           :* Nil
 
         register ::
-             L.EraTransition era
+             ShelleyBasedEra era
           => L.TransitionConfig era
-          -> (LedgerState -.-> LedgerState) (ShelleyBlock proto era)
+          -> (Flip LedgerState ValuesMK -.-> Flip LedgerState ValuesMK) (ShelleyBlock proto era)
         register cfg = fn $ registerInitialFundsThenStaking cfg
 
+        -- Due to UTxO-HD there is a subtlety here. The functions that register
+        -- the initial funds work on the UTxO inside the LedgerState instead of
+        -- on the tables. This implies that we have to first stow the tables,
+        -- modify the values and then unstow them. However because
+        -- 'unstowLedgerTables' expects an 'EmptyMK' state, we have to
+        -- 'forgetLedgerTables' just to make the types match.
+        --
+        -- It doesn't seem wise to modify the type of 'unstowLedgerTables' to
+        -- accept any 'mk' as now we get the guarantee that whenever we are
+        -- unstowing, we are doing it on an EmptyMK and only in this case (which
+        -- must happen only on tests) we do this trickery.
         registerInitialFundsThenStaking ::
-             L.EraTransition era
+             ShelleyBasedEra era
           => L.TransitionConfig era
-          -> LedgerState (ShelleyBlock proto era)
-          -> LedgerState (ShelleyBlock proto era)
-        registerInitialFundsThenStaking cfg st = st {
+          -> Flip LedgerState ValuesMK (ShelleyBlock proto era)
+          -> Flip LedgerState ValuesMK (ShelleyBlock proto era)
+        registerInitialFundsThenStaking cfg (Flip st) = Flip $ unstowLedgerTables $ forgetLedgerTables $ st {
             Shelley.shelleyLedgerState =
               -- We must first register the initial funds, because the stake
               -- information depends on it.
                 L.registerInitialStaking cfg
               . L.registerInitialFunds   cfg
-              $ Shelley.shelleyLedgerState st
+              $ Shelley.shelleyLedgerState $ stowLedgerTables st
           }
 
         registerConway ::
-             ConwayEraTransition era
+             (ConwayEraTransition era, ShelleyBasedEra era)
           => L.TransitionConfig era
-          -> (LedgerState -.-> LedgerState) (ShelleyBlock proto era)
+          -> (Flip LedgerState ValuesMK -.-> Flip LedgerState ValuesMK) (ShelleyBlock proto era)
         registerConway cfg = fn $ registerDRepsThenDelegs         cfg
                                 . registerInitialFundsThenStaking cfg
+
           where
-            registerDRepsThenDelegs cfg st = st {
+            registerDRepsThenDelegs cfg (Flip st) = Flip $ st {
               Shelley.shelleyLedgerState =
                    L.registerDelegs cfg -- NOTE: The order of registration does not matter.
                  . L.registerInitialDReps cfg

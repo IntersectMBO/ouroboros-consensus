@@ -14,9 +14,9 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2024-03-14T23:28:52Z
+  , hackage.haskell.org 2024-03-25T10:39:21Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2024-04-04T19:09:56Z
+  , cardano-haskell-packages 2024-05-24T09:29:56Z
 
 packages:
   ouroboros-consensus
@@ -30,4 +30,17 @@ packages:
 tests: true
 benchmarks: true
 
+optional-packages:
+  latex-svg-image
+
 import: ./asserts.cabal
+
+--
+-- source-repository-packages
+--
+
+source-repository-package
+  type: git
+  location: https://github.com/stevana/quickcheck-state-machine
+  tag: bce278e90a3af5a31dccc25e2062fb6b56175575
+  --sha256: 1ljh3j48jmppcaa0f52hgahx65dvp38a0zdilqdv15nifvmb5sii

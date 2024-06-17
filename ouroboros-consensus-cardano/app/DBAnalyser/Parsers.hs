@@ -1,7 +1,11 @@
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE CPP           #-}
 
-module DBAnalyser.Parsers (parseCmdLine, blockTypeParser, BlockType (..)) where
+module DBAnalyser.Parsers (
+    BlockType (..)
+  , blockTypeParser
+  , parseCmdLine
+  ) where
 
 import           Cardano.Crypto (RequiresNetworkMagic (..))
 import           Cardano.Tools.DBAnalyser.Block.Byron
@@ -11,11 +15,15 @@ import           Cardano.Tools.DBAnalyser.Types
 #if __GLASGOW_HASKELL__ < 900
 import           Data.Foldable (asum)
 #endif
+import qualified Data.SOP.Dict as Dict
 import           Options.Applicative
 import           Ouroboros.Consensus.Block (SlotNo (..))
 import           Ouroboros.Consensus.Byron.Node (PBftSignatureThreshold (..))
 import           Ouroboros.Consensus.Shelley.Node (Nonce (..))
-import           Ouroboros.Consensus.Storage.LedgerDB (DiskSnapshot (..))
+import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
+                     (DiskSnapshot (..))
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
 
 {-------------------------------------------------------------------------------
   Parsing
@@ -31,6 +39,19 @@ parseDBAnalyserConfig = DBAnalyserConfig
           , help "Path to the Chain DB"
           , metavar "PATH"
           ])
+    <*> strOption (mconcat [
+            long "ssddb"
+          , help "Path to the SSD Chain DB"
+          , metavar "PATH"
+          ])
+    <*> switch (mconcat [
+        long "state-in-ssd"
+      , help "Are states from snapshots in SSD?"
+      ])
+    <*> switch (mconcat [
+        long "tables-in-ssd"
+      , help "Are tables from snapshots in SSD?"
+      ])
     <*> switch (mconcat [
             long "verbose"
           , help "Enable verbose logging"
@@ -39,11 +60,28 @@ parseDBAnalyserConfig = DBAnalyserConfig
     <*> parseValidationPolicy
     <*> parseAnalysis
     <*> parseLimit
+    <*> asum [
+          flag' InMemoryBackingStoreArgs $ mconcat [
+                long "in-mem"
+              , help "use in-memory backing store"
+              ]
+          , flag' (LMDBBackingStoreArgs defaultLMDBLimits Dict.Dict) $ mconcat [
+              long "lmdb"
+              , help "use LMDB backing store"
+              ]
+          ]
+
+defaultLMDBLimits :: LMDBLimits
+defaultLMDBLimits = LMDBLimits {
+    lmdbMapSize = 16 * 1024 * 1024 * 1024
+  , lmdbMaxDatabases = 10
+  , lmdbMaxReaders = 16
+  }
 
 parseSelectDB :: Parser SelectDB
 parseSelectDB = asum [
     SelectImmutableDB . snd <$> ((,) <$> onlyImmutableDB <*> analyseFrom)
-  , pure SelectChainDB
+  , SelectChainDB <$> analyseFrom
   ]
   where
     onlyImmutableDB = flag' () (mconcat [

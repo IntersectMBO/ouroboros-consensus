@@ -3,6 +3,7 @@
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE ViewPatterns        #-}
 
 module Cardano.Tools.DBTruncater.Run (truncate) where
@@ -23,6 +24,7 @@ import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB, Iterator,
                      IteratorResult (..))
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl
+import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry (runWithTempRegistry,
                      withRegistry)
@@ -44,14 +46,15 @@ truncate DBTruncaterConfig{ dbDir, truncateAfter, verbose } args = do
     let
       fs = Node.stdMkChainDbHasFS dbDir (RelativeMountPoint "immutable")
       chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage config)
-      immutableDBArgs :: ImmutableDbArgs Identity IO block
+      immutableDBArgs :: Complete ImmutableDbArgs IO block
       immutableDBArgs =
-        (ImmutableDB.defaultArgs fs)
+        (ImmutableDB.defaultArgs @IO)
           { immTracer = immutableDBTracer
           , immRegistry = registry
           , immCheckIntegrity = nodeCheckIntegrity (configStorage config)
           , immCodecConfig = configCodec config
           , immChunkInfo = chunkInfo
+          , immHasFS = fs
           }
 
     withDB immutableDBArgs $ \(immutableDB, internal) -> do
@@ -85,12 +88,12 @@ truncate DBTruncaterConfig{ dbDir, truncateAfter, verbose } args = do
 -- iterator, find the last block whose slot or block number is less than or
 -- equal to the intended new chain tip.
 findNewTip :: forall m blk c.
-#if __GLASGOW_HASKELL__ >= 906
-              (HasHeader blk, HasHeader (Header blk), Monad m)
-#else
-              -- GHC 9.6 considiers these constraints insufficient.
-              (HasHeader (Header blk), Monad m)
+              ( HasHeader (Header blk)
+              , Monad m
+#if __GLASGOW_HASKELL__ >= 904
+              , HasHeader blk
 #endif
+              )
            => TruncateAfter
            -> Iterator m blk (Header blk, c)
            -> m (Maybe (Header blk, c))

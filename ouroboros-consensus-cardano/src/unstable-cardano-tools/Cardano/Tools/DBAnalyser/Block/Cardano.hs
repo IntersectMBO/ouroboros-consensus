@@ -45,6 +45,7 @@ import qualified Data.ByteString as BS
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
 import           Data.SOP.BasicFunctors
+import           Data.SOP.Functors
 import           Data.SOP.Strict
 import qualified Data.SOP.Telescope as Telescope
 import           Data.String (IsString (..))
@@ -98,15 +99,15 @@ analyseWithLedgerState f (WithLedgerState cb sb sa) =
     p :: Proxy HasAnalysis
     p = Proxy
 
-    zipLS (Comp (Just sb')) (Comp (Just sa')) (I blk) =
+    zipLS (Comp (Just (Flip sb'))) (Comp (Just (Flip sa'))) (I blk) =
       Comp . Just $ WithLedgerState blk sb' sa'
     zipLS _ _ _ = Comp Nothing
 
     oeb = getOneEraBlock . getHardForkBlock $ cb
 
     goLS ::
-      LedgerState (CardanoBlock StandardCrypto) ->
-      NP (Maybe :.: LedgerState) (CardanoEras StandardCrypto)
+      LedgerState (CardanoBlock StandardCrypto) mk ->
+      NP (Maybe :.: Flip LedgerState mk) (CardanoEras StandardCrypto)
     goLS =
       hexpand (Comp Nothing)
         . hmap (Comp . Just . currentState)

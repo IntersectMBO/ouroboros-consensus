@@ -3,7 +3,6 @@
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
 
 -- | Intended for qualified import
 --
@@ -48,7 +47,7 @@ data CheckInFuture m blk = CheckInFuture {
        --
        -- > checkInFuture vf >>= \(af, fut) ->
        -- >   validatedFragment vf == af <=> null fut
-       checkInFuture :: ValidatedFragment (Header blk) (LedgerState blk)
+       checkInFuture :: ValidatedFragment (Header blk) (LedgerState blk EmptyMK)
                      -> m (AnchoredFragment (Header blk), [InFuture m blk])
     }
   deriving NoThunks

@@ -22,6 +22,7 @@ import           Data.Bimap (Bimap)
 import qualified Data.Bimap as Bimap
 import           Data.IntPSQ (IntPSQ)
 import qualified Data.IntPSQ as PSQ
+import           Data.Monoid
 import           Data.SOP.BasicFunctors
 import           NoThunks.Class (InspectHeap (..), InspectHeapNamed (..),
                      NoThunks (..), OnlyCheckWhnfNamed (..), allNoThunks,
@@ -97,6 +98,8 @@ deriving via OnlyCheckWhnfNamed "Tracer" (Tracer m ev) instance NoThunks (Tracer
 instance NoThunks a => NoThunks (K a b) where
   showTypeOf _ = showTypeOf (Proxy @a)
   wNoThunks ctxt (K a) = wNoThunks ("K":ctxt) a
+
+instance NoThunks a => NoThunks (Sum a)
 
 {-------------------------------------------------------------------------------
   fs-api

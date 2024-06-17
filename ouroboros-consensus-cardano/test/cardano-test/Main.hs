@@ -1,11 +1,12 @@
 module Main (main) where
 
 import           System.IO (BufferMode (LineBuffering), hSetBuffering, stdout)
-import qualified Test.Consensus.Cardano.ByronCompatibility
-import qualified Test.Consensus.Cardano.Golden
+import qualified Test.Consensus.Cardano.ByronCompatibility (tests)
+import qualified Test.Consensus.Cardano.Golden (tests)
 import qualified Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server
-import qualified Test.Consensus.Cardano.Serialisation
+import qualified Test.Consensus.Cardano.Serialisation (tests)
 import qualified Test.Consensus.Cardano.SupportedNetworkProtocolVersion
+import qualified Test.Consensus.Cardano.Translation (tests)
 import           Test.Tasty
 import qualified Test.ThreadNet.AllegraMary
 import qualified Test.ThreadNet.Cardano
@@ -31,4 +32,5 @@ tests =
   , Test.ThreadNet.MaryAlonzo.tests
   , Test.ThreadNet.ShelleyAllegra.tests
   , Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server.tests
+  , Test.Consensus.Cardano.Translation.tests
   ]

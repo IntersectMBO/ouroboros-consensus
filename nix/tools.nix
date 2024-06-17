@@ -2,7 +2,7 @@ inputs: final: prev:
 
 let
   inherit (final) lib;
-  tool-index-state = "2024-01-22T00:00:00Z";
+  tool-index-state = "2024-03-22T00:00:00Z";
   tool = name: version: other:
     final.haskell-nix.tool final.hsPkgs.args.compiler-nix-name name ({
       version = version;
@@ -13,6 +13,20 @@ in
   inherit tool-index-state;
 
   cabal = tool "cabal" "latest" { };
+
+  cabal-docspec = tool "cabal-docspec" "git" {
+    src = inputs.cabal-extras;
+    cabalProject = ''
+      packages: peura cabal-docspec ${inputs.gentle-introduction}
+    '';
+    cabalProjectLocal = ''
+      allow-newer: cabal-docspec:*
+                 , gentle-introduction:*
+                 , peura:*
+                 , paths:*
+      constraints: directory <1.3.8.0
+    '';
+  };
 
   cabal-multi-repl = (final.haskell-nix.cabalProject {
     # cabal master commit containing https://github.com/haskell/cabal/pull/8726

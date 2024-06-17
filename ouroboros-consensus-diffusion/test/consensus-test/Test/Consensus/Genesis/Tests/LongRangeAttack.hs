@@ -43,7 +43,7 @@ prop_longRangeAttack = do
         -- But we are testing Praos for the moment
         $ existsSelectableAdversary cls ==> not $ isHonestTestFragH fragment
         -- TODO
-        -- $ not (existsSelectableAdversary cls) ==> immutableTipBeforeFork fragment
+        --  $ not (existsSelectableAdversary cls) ==> immutableTipBeforeFork fragment
   where
     isHonestTestFragH :: TestFragH -> Bool
     isHonestTestFragH frag = case headAnchor frag of

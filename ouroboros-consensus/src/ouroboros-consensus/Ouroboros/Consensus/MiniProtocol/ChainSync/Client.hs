@@ -81,7 +81,7 @@ import           Ouroboros.Consensus.HeaderStateHistory
                      (HeaderStateHistory (..), validateHeader)
 import qualified Ouroboros.Consensus.HeaderStateHistory as HeaderStateHistory
 import           Ouroboros.Consensus.HeaderValidation hiding (validateHeader)
-import           Ouroboros.Consensus.Ledger.Basics (LedgerState)
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
@@ -125,7 +125,7 @@ data ChainDbView m blk = ChainDbView {
   ,
     getHeaderStateHistory :: STM m (HeaderStateHistory blk)
   ,
-    getPastLedger :: Point blk -> STM m (Maybe (ExtLedgerState blk))
+    getPastLedger :: Point blk -> STM m (Maybe (ExtLedgerState blk EmptyMK))
   ,
     getIsInvalidBlock ::
       STM m
@@ -133,9 +133,7 @@ data ChainDbView m blk = ChainDbView {
               (HeaderHash blk -> Maybe (InvalidBlockReason blk)))
   }
 
-defaultChainDbView ::
-     (IOLike m, LedgerSupportsProtocol blk)
-  => ChainDB m blk -> ChainDbView m blk
+defaultChainDbView :: ChainDB m blk -> ChainDbView m blk
 defaultChainDbView chainDB = ChainDbView {
     getCurrentChain       = ChainDB.getCurrentChain       chainDB
   , getHeaderStateHistory = ChainDB.getHeaderStateHistory chainDB
@@ -1268,7 +1266,7 @@ checkTime cfgEnv intEnv =
     checkArrivalTime ::
          KnownIntersectionState blk
       -> arrival
-      -> WithEarlyExit m (Intersects blk (LedgerState blk))
+      -> WithEarlyExit m (Intersects blk (LedgerState blk EmptyMK))
     checkArrivalTime kis arrival = do
         Intersects kis' (lst, judgment) <- do
             readLedgerState kis $ \lst ->
@@ -1291,14 +1289,14 @@ checkTime cfgEnv intEnv =
     readLedgerState ::
       forall a.
          KnownIntersectionState blk
-      -> (LedgerState blk -> Maybe a)
+      -> (LedgerState blk EmptyMK -> Maybe a)
       -> WithEarlyExit m (Intersects blk a)
     readLedgerState kis prj = castM $ readLedgerStateHelper kis prj
 
     readLedgerStateHelper ::
       forall a.
          KnownIntersectionState blk
-      -> (LedgerState blk -> Maybe a)
+      -> (LedgerState blk EmptyMK -> Maybe a)
       -> m (WithEarlyExit m (Intersects blk a))
     readLedgerStateHelper kis prj = atomically $ do
         -- We must first find the most recent intersection with the current
@@ -1329,7 +1327,7 @@ checkTime cfgEnv intEnv =
     -- that far into the future.
     projectLedgerView ::
          SlotNo
-      -> LedgerState blk
+      -> LedgerState blk EmptyMK
       -> Maybe (LedgerView (BlockProtocol blk))
     projectLedgerView slot lst =
         let forecast = ledgerViewForecastAt (configLedger cfg) lst
