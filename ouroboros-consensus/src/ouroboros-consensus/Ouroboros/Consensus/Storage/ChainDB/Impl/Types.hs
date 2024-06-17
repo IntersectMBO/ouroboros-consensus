@@ -464,7 +464,7 @@ data ChainSelMessage m blk
   -- | Add a new block
   = ChainSelAddBlock !(BlockToAdd m blk)
   -- | Reprocess blocks that have been postponed by the LoE. The action is to be
-  -- called once reprocesing is done.
+  -- called once reprocessing is done.
   | ChainSelReprocessLoEBlocks !(m ())
 
 -- | Create a new 'ChainSelQueue' with the given size.
@@ -508,9 +508,11 @@ addReprocessLoEBlocks
   -> m (ChainSelectionPromise m)
 addReprocessLoEBlocks tracer (ChainSelQueue queue) = do
   varChainSelRan <- newEmptyTMVarIO
+  let declareRan = atomically $ putTMVar varChainSelRan ()
+      waitUntilRan = atomically $ readTMVar varChainSelRan
   traceWith tracer $ AddedReprocessLoEBlocksToQueue
-  atomically $ writeTBQueue queue $ ChainSelReprocessLoEBlocks $ atomically $ putTMVar varChainSelRan ()
-  return $ ChainSelectionPromise $ atomically $ readTMVar varChainSelRan
+  atomically $ writeTBQueue queue $ ChainSelReprocessLoEBlocks declareRan
+  return $ ChainSelectionPromise waitUntilRan
 
 -- | Get the oldest message from the 'ChainSelQueue' queue. Can block when the
 -- queue is empty.

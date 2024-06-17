@@ -1730,9 +1730,6 @@ mkArgs cfg chunkInfo initLedger registry nodeDBs tracer (MaxClockSkew maxClockSk
                }
           }
 
--- TODO: For now, we separate tests with and without LoE. It would be nice to
--- have a single test that runs both with and without LoE, in particular because
--- shrinking could try disabling the LoE.
 tests :: TestTree
 tests = testGroup "ChainDB q-s-m"
     [ adjustQuickCheckTests (* 100) $ testProperty "sequential" prop_sequential

@@ -195,12 +195,6 @@ data ChainDB m blk = ChainDB {
       -- 'getTipPoint' will return the tip of the immutable DB.
     , getTipPoint        :: STM m (Point blk)
 
-      -- | Get LoE fragment, or return 'LoEDisabled'.
-      --
-      -- See the documentation of 'LoE' for more information on the Limit on
-      -- Eagerness (LoE).
-    , getLoEFragment     :: m (LoE (AnchoredFragment (Header blk)))
-
       -- | Get the given component(s) of the block at the specified point. If
       -- there is no block at the given point, 'Nothing' is returned.
     , getBlockComponent  :: forall b. BlockComponent blk b

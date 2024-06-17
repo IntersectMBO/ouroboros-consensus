@@ -21,7 +21,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query (
   , getAnyBlockComponent
   , getAnyKnownBlock
   , getAnyKnownBlockComponent
-  , getLoEFragment
   ) where
 
 import qualified Data.Map.Strict as Map
@@ -30,7 +29,7 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.API (BlockComponent (..),
-                     ChainDbFailure (..), InvalidBlockReason, LoE)
+                     ChainDbFailure (..), InvalidBlockReason)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB as LgrDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
@@ -120,11 +119,6 @@ getTipPoint ::
   => ChainDbEnv m blk -> STM m (Point blk)
 getTipPoint CDB{..} =
     (castPoint . AF.headPoint) <$> readTVar cdbChain
-
-getLoEFragment ::
-  forall m blk.
-  ChainDbEnv m blk -> m (LoE (AnchoredFragment (Header blk)))
-getLoEFragment = cdbLoE
 
 getBlockComponent ::
      forall m blk b. IOLike m
