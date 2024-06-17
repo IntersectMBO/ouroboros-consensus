@@ -6,6 +6,7 @@ import           Cardano.Tools.DBAnalyser.Types
 import qualified Cardano.Tools.DBImmutaliser.Run as DBImmutaliser
 import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
 import           Cardano.Tools.DBSynthesizer.Types
+import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Cardano.Block
 import           Test.Tasty
 import           Test.Tasty.HUnit
@@ -62,7 +63,7 @@ testAnalyserConfig =
   DBAnalyserConfig {
       dbDir       = chainDB
     , verbose     = False
-    , selectDB    = SelectImmutableDB Nothing
+    , selectDB    = SelectImmutableDB Origin
     , validation  = Just ValidateAllBlocks
     , analysis    = CountBlocks
     , confLimit   = Unlimited

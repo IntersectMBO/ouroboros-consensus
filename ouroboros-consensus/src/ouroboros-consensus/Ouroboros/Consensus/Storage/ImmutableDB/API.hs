@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveGeneric       #-}
 {-# LANGUAGE DeriveTraversable   #-}
 {-# LANGUAGE DerivingVia         #-}
+{-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE RankNTypes          #-}
@@ -21,6 +22,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.API (
   , CompareTip (..)
   , Tip (..)
   , blockToTip
+  , headerToTip
   , tipToAnchor
   , tipToPoint
   , tipToRealPoint
@@ -266,13 +268,16 @@ tipToAnchor = \case
     NotOrigin (Tip { tipSlotNo, tipHash, tipBlockNo }) ->
       AF.Anchor tipSlotNo tipHash tipBlockNo
 
-blockToTip :: (HasHeader blk, GetHeader blk) => blk -> Tip blk
-blockToTip blk = Tip {
-      tipSlotNo  = blockSlot    blk
-    , tipIsEBB   = blockToIsEBB blk
-    , tipBlockNo = blockNo      blk
-    , tipHash    = blockHash    blk
+headerToTip :: GetHeader blk => Header blk -> Tip blk
+headerToTip hdr = Tip {
+      tipSlotNo  = blockSlot     hdr
+    , tipIsEBB   = headerToIsEBB hdr
+    , tipBlockNo = blockNo       hdr
+    , tipHash    = blockHash     hdr
     }
+
+blockToTip :: GetHeader blk => blk -> Tip blk
+blockToTip = headerToTip . getHeader
 
 -- | newtype with an 'Ord' instance that only uses 'tipSlotNo' and 'tipIsEBB'
 -- and ignores the other fields.
