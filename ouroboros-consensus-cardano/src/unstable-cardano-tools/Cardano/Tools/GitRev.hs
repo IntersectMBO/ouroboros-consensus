@@ -23,6 +23,5 @@ gitRev
                [||T.pack (giHash gitInfo) <> if giDirty gitInfo then "-dirty" else ""||]
              -- In case of failure, try cardano-git-rev (where the commit hash
              -- can be embedded later).
-             Left _ -> [||otherRev||]
+             Left _ -> [||Cardano.Git.Rev.gitRev||]
           )
-    otherRev = $(Cardano.Git.Rev.gitRev)
