@@ -39,6 +39,7 @@ import           Ouroboros.Consensus.Protocol.TPraos (TPraos,
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.HFEras
 import           Ouroboros.Consensus.Shelley.Ledger
+import           Ouroboros.Consensus.Shelley.Ledger.Query.Types
 import           Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Network.Block (Serialised (..))
@@ -114,7 +115,7 @@ fromShelleyLedgerExamples ShelleyLedgerExamples {
         , ("EpochNo",                SomeResult GetEpochNo 10)
         , ("EmptyPParams",           SomeResult GetCurrentPParams srePParams)
         , ("ProposedPParamsUpdates", SomeResult GetProposedPParamsUpdates sreProposedPPUpdates)
-        , ("StakeDistribution",      SomeResult GetStakeDistribution srePoolDistr)
+        , ("StakeDistribution",      SomeResult GetStakeDistribution $ fromLedgerPoolDistr srePoolDistr)
         , ("NonMyopicMemberRewards", SomeResult (GetNonMyopicMemberRewards Set.empty)
                                      (NonMyopicMemberRewards $ sreNonMyopicRewards))
         , ("GenesisConfig",          SomeResult GetGenesisConfig (compactGenesis sreShelleyGenesis))
@@ -207,7 +208,7 @@ fromShelleyLedgerExamplesPraos ShelleyLedgerExamples {
         , ("EpochNo",                SomeResult GetEpochNo 10)
         , ("EmptyPParams",           SomeResult GetCurrentPParams srePParams)
         , ("ProposedPParamsUpdates", SomeResult GetProposedPParamsUpdates sreProposedPPUpdates)
-        , ("StakeDistribution",      SomeResult GetStakeDistribution srePoolDistr)
+        , ("StakeDistribution",      SomeResult GetStakeDistribution $ fromLedgerPoolDistr srePoolDistr)
         , ("NonMyopicMemberRewards", SomeResult (GetNonMyopicMemberRewards Set.empty)
                                      (NonMyopicMemberRewards $ sreNonMyopicRewards))
         , ("GenesisConfig",          SomeResult GetGenesisConfig (compactGenesis sreShelleyGenesis))
