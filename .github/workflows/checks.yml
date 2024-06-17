@@ -9,6 +9,12 @@ on:
     branches:
       - main
       - 'cardano-node-*-backports'
+    types:
+      - opened
+      - synchronize
+      - reopened
+      # see https://stackoverflow.com/a/77497491
+      - edited
   merge_group:
 
 jobs:
