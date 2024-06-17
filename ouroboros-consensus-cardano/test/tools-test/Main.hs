@@ -3,6 +3,7 @@ module Main (main) where
 import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
 import qualified Cardano.Tools.DBAnalyser.Run as DBAnalyser
 import           Cardano.Tools.DBAnalyser.Types
+import qualified Cardano.Tools.DBImmutaliser.Run as DBImmutaliser
 import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
 import           Cardano.Tools.DBSynthesizer.Types
 import           Ouroboros.Consensus.Cardano.Block
@@ -46,12 +47,22 @@ testNodeCredentials =
       , credBulkFile  = Just "test/tools-test/disk/config/bulk-creds-k2.json"
     }
 
+testImmutaliserConfig :: DBImmutaliser.Opts
+testImmutaliserConfig =
+  DBImmutaliser.Opts {
+      DBImmutaliser.dbDirs = DBImmutaliser.DBDirs {
+          DBImmutaliser.immDBDir = chainDB <> "/immutable"
+        , DBImmutaliser.volDBDir = chainDB <> "/volatile"
+        }
+   , DBImmutaliser.configFile = nodeConfig
+   }
+
 testAnalyserConfig :: DBAnalyserConfig
 testAnalyserConfig =
   DBAnalyserConfig {
       dbDir       = chainDB
     , verbose     = False
-    , selectDB    = SelectChainDB
+    , selectDB    = SelectImmutableDB Nothing
     , validation  = Just ValidateAllBlocks
     , analysis    = CountBlocks
     , confLimit   = Unlimited
@@ -64,7 +75,8 @@ testBlockArgs = Cardano.CardanoBlockArgs nodeConfig Nothing
 --
 -- 1. step: synthesize a ChainDB from scratch and count the amount of blocks forged.
 -- 2. step: append to the previous ChainDB and coutn the amount of blocks forged.
--- 3. step: analyze the ChainDB resulting from previous steps and confirm the total block count.
+-- 3. step: copy the VolatileDB into the ImmutableDB.
+-- 3. step: analyze the ImmutableDB resulting from previous steps and confirm the total block count.
 
 --
 blockCountTest :: (String -> IO ()) -> Assertion
@@ -83,6 +95,9 @@ blockCountTest logStep = do
     resultAppend <- DBSynthesizer.synthesize options {confOptions = testSynthOptionsAppend} protocol
     let blockCountAppend = resultForged resultAppend
     blockCountAppend > 0 @? "no blocks have been forged during append step"
+
+    logStep "copy volatile to immutable DB"
+    DBImmutaliser.run testImmutaliserConfig
 
     logStep "running analysis"
     resultAnalysis <- DBAnalyser.analyse testAnalyserConfig testBlockArgs

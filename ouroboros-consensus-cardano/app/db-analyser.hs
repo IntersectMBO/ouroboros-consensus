@@ -4,15 +4,16 @@
 
 -- | Database analysis tool.
 --
--- Usage: db-analyser --db PATH [--verbose]
---                    [--only-immutable-db [--analyse-from SLOT_NUMBER]]
+-- Usage: db-analyser --db PATH [--analyse-from SLOT_NUMBER]
 --                    [--validate-all-blocks | --minimum-block-validation]
 --                    [--show-slot-block-no | --count-tx-outputs |
 --                      --show-block-header-size | --show-block-txs-size |
 --                      --show-ebbs | --store-ledger SLOT_NUMBER | --count-blocks |
 --                      --checkThunks BLOCK_COUNT | --trace-ledger |
 --                      --repro-mempool-and-forge INT | --benchmark-ledger-ops
---                      [--out-file FILE]] [--num-blocks-to-process INT] COMMAND
+--                      [--out-file FILE] |
+--                      --get-block-application-metrics NUM [--out-file FILE]]
+--                    [--num-blocks-to-process INT] COMMAND
 module Main (main) where
 
 import           Cardano.Crypto.Init (cryptoInit)

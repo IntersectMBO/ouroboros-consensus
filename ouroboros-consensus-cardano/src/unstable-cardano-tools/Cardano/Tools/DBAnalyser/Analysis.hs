@@ -55,12 +55,9 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol (..))
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Protocol.Abstract (LedgerView)
-import           Ouroboros.Consensus.Storage.ChainDB (ChainDB)
-import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB
                      (LgrDbSerialiseConstraints)
-import           Ouroboros.Consensus.Storage.Common (BlockComponent (..),
-                     StreamFrom (..))
+import           Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.LedgerDB (DiskSnapshot (..),
@@ -139,7 +136,7 @@ type Analysis blk = AnalysisEnv IO blk -> IO (Maybe AnalysisResult)
 data AnalysisEnv m blk = AnalysisEnv {
       cfg        :: TopLevelConfig blk
     , initLedger :: ExtLedgerState blk
-    , db         :: Either (ImmutableDB IO blk) (ChainDB IO blk)
+    , db         :: ImmutableDB IO blk
     , registry   :: ResourceRegistry IO
     , ledgerDbFS :: SomeHasFS IO
     , limit      :: Limit
@@ -807,80 +804,6 @@ data NextStep = Continue | Stop
 
 processAllUntil ::
      forall blk b st. (HasHeader blk, HasAnnTip blk)
-  => Either (ImmutableDB IO blk) (ChainDB IO blk)
-  -> ResourceRegistry IO
-  -> BlockComponent blk b
-  -> ExtLedgerState blk
-  -> Limit
-  -> st
-  -> (st -> b -> IO (NextStep, st))
-  -> IO st
-processAllUntil = either processAllImmutableDB processAllChainDB
-
-processAll ::
-     forall blk b st. (HasHeader blk, HasAnnTip blk)
-  => Either (ImmutableDB IO blk) (ChainDB IO blk)
-  -> ResourceRegistry IO
-  -> BlockComponent blk b
-  -> ExtLedgerState blk
-  -> Limit
-  -> st
-  -> (st -> b -> IO st)
-  -> IO st
-processAll db rr blockComponent initLedger limit initSt cb =
-  processAllUntil db rr blockComponent initLedger limit initSt callback
-    where
-      callback st b = (Continue, ) <$> cb st b
-
-processAll_ ::
-     forall blk b. (HasHeader blk, HasAnnTip blk)
-  => Either (ImmutableDB IO blk) (ChainDB IO blk)
-  -> ResourceRegistry IO
-  -> BlockComponent blk b
-  -> ExtLedgerState blk
-  -> Limit
-  -> (b -> IO ())
-  -> IO ()
-processAll_ db registry blockComponent initLedger limit callback =
-    processAll db registry blockComponent initLedger limit () (const callback)
-
-processAllChainDB ::
-     forall st blk b. (HasHeader blk, HasAnnTip blk)
-  => ChainDB IO blk
-  -> ResourceRegistry IO
-  -> BlockComponent blk b
-  -> ExtLedgerState blk
-  -> Limit
-  -> st
-  -> (st -> b -> IO (NextStep, st))
-  -> IO st
-processAllChainDB chainDB registry blockComponent ExtLedgerState{headerState} limit initState callback = do
-    itr <- case headerStateTip headerState of
-      Origin           -> ChainDB.streamAll
-                             chainDB
-                             registry
-                             blockComponent
-      NotOrigin annTip -> ChainDB.streamFrom
-                             (StreamFromExclusive $ annTipPoint annTip)
-                             chainDB
-                             registry
-                             blockComponent
-    go itr limit initState
-  where
-    go :: ChainDB.Iterator IO blk b -> Limit -> st -> IO st
-    go itr lt !st = case decreaseLimit lt of
-      Nothing             -> return st
-      Just decreasedLimit -> do
-        itrResult <- ChainDB.iteratorNext itr
-        case itrResult of
-          ChainDB.IteratorExhausted    -> return st
-          ChainDB.IteratorResult b     -> callback st b >>= \case
-            (Continue, nst) -> go itr decreasedLimit nst
-            (Stop, nst)     -> return nst
-          ChainDB.IteratorBlockGCed pt -> error $ "block GC'ed " <> show pt
-
-processAllImmutableDB ::
-     forall st blk b. (HasHeader blk, HasAnnTip blk)
   => ImmutableDB IO blk
   -> ResourceRegistry IO
   -> BlockComponent blk b
@@ -889,7 +812,7 @@ processAllImmutableDB ::
   -> st
   -> (st -> b -> IO (NextStep, st))
   -> IO st
-processAllImmutableDB immutableDB registry blockComponent ExtLedgerState{headerState} limit initState callback = do
+processAllUntil immutableDB registry blockComponent ExtLedgerState{headerState} limit initState callback = do
     itr <- case headerStateTip headerState of
       Origin           -> ImmutableDB.streamAll
                              immutableDB
@@ -912,3 +835,30 @@ processAllImmutableDB immutableDB registry blockComponent ExtLedgerState{headerS
           ImmutableDB.IteratorResult b  -> callback st b >>= \case
             (Continue, nst) -> go itr decreasedLimit nst
             (Stop, nst)     -> return nst
+
+processAll ::
+     forall blk b st. (HasHeader blk, HasAnnTip blk)
+  => ImmutableDB IO blk
+  -> ResourceRegistry IO
+  -> BlockComponent blk b
+  -> ExtLedgerState blk
+  -> Limit
+  -> st
+  -> (st -> b -> IO st)
+  -> IO st
+processAll db rr blockComponent initLedger limit initSt cb =
+  processAllUntil db rr blockComponent initLedger limit initSt callback
+    where
+      callback st b = (Continue, ) <$> cb st b
+
+processAll_ ::
+     forall blk b. (HasHeader blk, HasAnnTip blk)
+  => ImmutableDB IO blk
+  -> ResourceRegistry IO
+  -> BlockComponent blk b
+  -> ExtLedgerState blk
+  -> Limit
+  -> (b -> IO ())
+  -> IO ()
+processAll_ db registry blockComponent initLedger limit callback =
+    processAll db registry blockComponent initLedger limit () (const callback)
