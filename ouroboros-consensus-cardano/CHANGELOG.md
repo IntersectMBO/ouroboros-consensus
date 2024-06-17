@@ -2,13 +2,6 @@
 
 # Changelog entries
 
-<a id='changelog-0.14.2.0'></a>
-## 0.14.2.0 — 2024-03-21
-
-### Non-Breaking
-
-- Use the version of cardano-git-rev in the cardano-base repo.
-
 <a id='changelog-0.14.1.0'></a>
 ## 0.14.1.0 — 2024-03-15
 
