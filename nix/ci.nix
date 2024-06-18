@@ -51,9 +51,10 @@ let
       haskell98 = mkHaskellJobsFor pkgs.hsPkgs.projectVariants.ghc98;
     };
   } // lib.optionalAttrs (buildSystem == "x86_64-linux") {
-    windows = {
-      haskell96 = mkHaskellJobsFor pkgs.hsPkgs.projectCross.mingwW64;
-    };
+    # temporarily disable windows builds because of haskell.nix failures
+    #windows = {
+    #  haskell96 = mkHaskellJobsFor pkgs.hsPkgs.projectCross.mingwW64;
+    #};
   });
 
   require = jobs: pkgs.releaseTools.aggregate {
