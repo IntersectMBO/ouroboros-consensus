@@ -30,11 +30,16 @@ packages:
 tests: true
 benchmarks: true
 
-extra-packages: Cabal
-
 import: ./asserts.cabal
 
 -- We need to disable bitvec's SIMD for now, as it breaks during cross compilation.
 if(os(windows))
   constraints:
     bitvec -simd
+
+-- Workaround for a haskell.nix bug around pre-installed libraries. Might be
+-- fixed by https://github.com/input-output-hk/haskell.nix/pull/2218.
+extra-packages: Cabal
+if os(windows)
+  constraints: time ^>=1.14
+  allow-newer: *:time
