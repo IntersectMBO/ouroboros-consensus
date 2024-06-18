@@ -19,7 +19,7 @@ module Test.Consensus.Genesis.Tests.Uniform (
 import           Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin (..))
 import           Control.Monad (replicateM)
 import           Control.Monad.Class.MonadTime.SI (Time, addTime)
-import           Data.List (intercalate, sort)
+import           Data.List (intercalate, sort, uncons)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe, mapMaybe)
@@ -40,7 +40,8 @@ import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Peers (Peers (..), isHonestPeerId)
+import           Test.Consensus.PointSchedule.Peers (Peers (..), getPeerIds,
+                     isHonestPeerId, peers')
 import           Test.Consensus.PointSchedule.Shrinking
                      (shrinkByRemovingAdversaries, shrinkPeerSchedules)
 import           Test.Consensus.PointSchedule.SinglePeer
@@ -72,7 +73,8 @@ tests =
     -- because this test writes the immutable chain to disk and `instance Binary TestBlock`
     -- chokes on long chains.
     adjustQuickCheckMaxSize (const 10) $
-    testProperty "the node is shut down and restarted after some time" prop_downtime
+    testProperty "the node is shut down and restarted after some time" prop_downtime,
+    testProperty "block fetch leashing attack" prop_blockFetchLeashingAttack
     ]
 
 theProperty ::
@@ -416,3 +418,44 @@ prop_downtime = forAllGenesisTest
       { pgpExtraHonestPeers = fromIntegral (gtExtraHonestPeers gt)
       , pgpDowntime = DowntimeWithSecurityParam (gtSecurityParam gt)
       }
+
+prop_blockFetchLeashingAttack :: Property
+prop_blockFetchLeashingAttack =
+  forAllGenesisTest
+    (disableBoringTimeouts <$> genChains (pure 0) `enrichedWith` genBlockFetchLeashingSchedule)
+    defaultSchedulerConfig
+      { scEnableLoE = True,
+        scEnableLoP = True,
+        scEnableCSJ = True
+      }
+    shrinkPeerSchedules
+    theProperty
+  where
+    genBlockFetchLeashingSchedule :: GenesisTest TestBlock () -> QC.Gen (PointSchedule TestBlock)
+    genBlockFetchLeashingSchedule genesisTest = do
+      PointSchedule {psSchedule, psMinEndTime} <-
+        stToGen $
+          uniformPoints
+            (PointsGeneratorParams {pgpExtraHonestPeers = 1, pgpDowntime = NoDowntime})
+            (gtBlockTree genesisTest)
+      peers <- QC.shuffle $ Map.elems $ honestPeers psSchedule
+      let (honest, adversaries) = fromMaybe (error "blockFetchLeashingAttack") $ uncons peers
+          adversaries' = map (filter (not . isBlockPoint . snd)) adversaries
+          psSchedule' = peers' [honest] adversaries'
+      -- Important to shuffle the order in which the peers start, otherwise the
+      -- honest peer starts first and systematically becomes dynamo.
+      psStartOrder <- shuffle $ getPeerIds psSchedule'
+      pure $ PointSchedule {psSchedule = psSchedule', psStartOrder, psMinEndTime}
+
+    isBlockPoint :: SchedulePoint blk -> Bool
+    isBlockPoint (ScheduleBlockPoint _) = True
+    isBlockPoint _                      = False
+
+    disableBoringTimeouts gt =
+      gt
+        { gtChainSyncTimeouts =
+            (gtChainSyncTimeouts gt)
+              { mustReplyTimeout = Nothing,
+                idleTimeout = Nothing
+              }
+        }
