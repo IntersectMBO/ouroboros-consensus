@@ -39,3 +39,6 @@ import: ./asserts.cabal
 if(os(windows))
   constraints:
     bitvec -simd
+
+constraints:
+  io-classes-mtl <0.1.2

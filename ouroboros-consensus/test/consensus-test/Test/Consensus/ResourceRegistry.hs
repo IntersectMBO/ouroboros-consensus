@@ -540,7 +540,7 @@ transition m c = after . lockstep m c
 precondition :: forall m. (IOLike m)
              => Model m Symbolic -> At m Cmd Symbolic -> Logic
 precondition (Model mock hs) (At c) =
-    forall (toList c) checkRef
+    Test.StateMachine.forAll (toList c) checkRef
   where
     checkRef :: Reference (TestThread m) Symbolic -> Logic
     checkRef r =

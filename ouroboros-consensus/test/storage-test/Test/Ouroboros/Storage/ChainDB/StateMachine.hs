@@ -1108,8 +1108,8 @@ mock model cmd = At <$> bitraverse (const genSym) (const genSym) resp
 precondition :: forall m blk. TestConstraints blk
              => Model blk m Symbolic -> At Cmd blk m Symbolic -> Logic
 precondition Model {..} (At cmd) =
-   forall (iters cmd) (`member` RE.keys knownIters)   .&&
-   forall (flrs  cmd) (`member` RE.keys knownFollowers) .&&
+   Test.StateMachine.forAll (iters cmd) (`member` RE.keys knownIters)   .&&
+   Test.StateMachine.forAll (flrs  cmd) (`member` RE.keys knownFollowers) .&&
    case cmd of
      -- Even though we ensure this in the generator, shrinking might change
      -- it.
@@ -1171,7 +1171,7 @@ precondition Model {..} (At cmd) =
         case Model.between secParam from to dbModel of
           Left  _    -> Bot
           -- All blocks must be valid
-          Right blks -> forall blks $ \blk -> Boolean $
+          Right blks -> Test.StateMachine.forAll blks $ \blk -> Boolean $
             Map.notMember (blockHash blk) $ Model.invalid dbModel
 
 transition :: (TestConstraints blk, Show1 r, Eq1 r)
@@ -1187,7 +1187,7 @@ invariant ::
   -> Model blk m Concrete
   -> Logic
 invariant cfg Model {..} =
-    forall ptsOnCurChain (Boolean . fromMaybe False . Model.getIsValid dbModel)
+    Test.StateMachine.forAll ptsOnCurChain (Boolean . fromMaybe False . Model.getIsValid dbModel)
   where
     -- | The blocks occurring on the current volatile chain fragment
     ptsOnCurChain :: [RealPoint blk]

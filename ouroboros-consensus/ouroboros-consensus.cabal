@@ -425,7 +425,7 @@ library unstable-consensus-testlib
     , pretty-simple
     , QuickCheck
     , quickcheck-instances
-    , quickcheck-state-machine:no-vendored-treediff  ^>=0.9
+    , quickcheck-state-machine:no-vendored-treediff  ^>=0.10
     , quiet
     , random
     , serialise
@@ -702,7 +702,7 @@ test-suite storage-test
     , QuickCheck
     , quickcheck-dynamic                             >=3.4
     , quickcheck-lockstep                            >=0.5
-    , quickcheck-state-machine:no-vendored-treediff  ^>=0.9
+    , quickcheck-state-machine:no-vendored-treediff  ^>=0.10
     , random
     , serialise
     , sop-core

@@ -303,7 +303,7 @@ preconditionImpl :: Model Symbolic -> At CmdErr Symbolic -> Logic
 preconditionImpl Model{..} (At (CmdErr cmd mbErrors)) =
     compatibleWithError .&& case cmd of
       Corruption cors ->
-        forall (corruptionFiles cors) (`member` getDBFiles dbModel)
+        Test.StateMachine.forAll (corruptionFiles cors) (`member` getDBFiles dbModel)
 
       -- When duplicating a block by appending it to some other file, make
       -- sure that both the file and the block exists, and that we're adding
