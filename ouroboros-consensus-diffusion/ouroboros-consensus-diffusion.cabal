@@ -87,7 +87,6 @@ library
     fs-api ^>=0.2.0.1,
     hashable,
     io-classes ^>=1.5,
-    io-classes ^>=1.5,
     mtl,
     ouroboros-consensus ^>=0.18,
     ouroboros-network ^>=0.16,

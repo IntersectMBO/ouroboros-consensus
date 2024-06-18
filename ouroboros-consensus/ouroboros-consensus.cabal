@@ -287,7 +287,6 @@ library
     fs-api ^>=0.2.0.1,
     hashable,
     io-classes ^>=1.5,
-    io-classes ^>=1.5,
     measures,
     mtl,
     nothunks ^>=0.1.5,
