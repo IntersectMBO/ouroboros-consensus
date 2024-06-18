@@ -19,9 +19,12 @@ module Test.Consensus.Shelley.Examples (
   , examplesShelley
   ) where
 
+import qualified Data.List.NonEmpty as NE
+
 import qualified Cardano.Ledger.Block as SL
 import           Cardano.Ledger.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
+import           Cardano.Slotting.Slot
 import           Data.Coerce (coerce)
 import qualified Data.Set as Set
 import           Ouroboros.Consensus.Block
@@ -42,6 +45,8 @@ import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Network.Block (Serialised (..))
+import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
+import           Ouroboros.Network.PeerSelection.RelayAccessPoint
 import           Test.Cardano.Ledger.Allegra.Examples.Consensus
                      (ledgerExamplesAllegra)
 import           Test.Cardano.Ledger.Alonzo.Examples.Consensus
@@ -108,6 +113,7 @@ fromShelleyLedgerExamples ShelleyLedgerExamples {
         , ("GetStakeDistribution",      SomeSecond GetStakeDistribution)
         , ("GetNonMyopicMemberRewards", SomeSecond $ GetNonMyopicMemberRewards sleRewardsCredentials)
         , ("GetGenesisConfig",          SomeSecond GetGenesisConfig)
+        , ("GetBigLedgerPeerSnapshot",  SomeSecond GetBigLedgerPeerSnapshot)
       ]
     results = labelled [
           ("LedgerTip",              SomeResult GetLedgerTip (blockPoint blk))
@@ -118,6 +124,13 @@ fromShelleyLedgerExamples ShelleyLedgerExamples {
         , ("NonMyopicMemberRewards", SomeResult (GetNonMyopicMemberRewards Set.empty)
                                      (NonMyopicMemberRewards $ sreNonMyopicRewards))
         , ("GenesisConfig",          SomeResult GetGenesisConfig (compactGenesis sreShelleyGenesis))
+        , ("GetBigLedgerPeerSnapshot",
+           SomeResult GetBigLedgerPeerSnapshot
+                      (LedgerPeerSnapshot (At slotNo, [(AccPoolStake 0.9
+                                                       , (PoolStake 0.9
+                                                         , NE.singleton $
+                                                             RelayAccessAddress (IPv4 "1.1.1.1")
+                                                                                1234))])))
         ]
     annTip = AnnTip {
         annTipSlotNo  = SlotNo 14
