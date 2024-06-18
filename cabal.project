@@ -30,6 +30,8 @@ packages:
 tests: true
 benchmarks: true
 
+extra-packages: Cabal
+
 import: ./asserts.cabal
 
 -- We need to disable bitvec's SIMD for now, as it breaks during cross compilation.
