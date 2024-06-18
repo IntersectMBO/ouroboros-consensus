@@ -12,9 +12,7 @@
     nixpkgs.follows = "haskellNix/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     haskellNix = {
-      # temporarily use the static-nix-tools branch until it's merged to work
-      # aroundt he Cabal build issues.
-      url = "github:input-output-hk/haskell.nix/static-nix-tools";
+      url = "github:input-output-hk/haskell.nix";
       inputs.hackage.follows = "hackageNix";
     };
     hackageNix = {
