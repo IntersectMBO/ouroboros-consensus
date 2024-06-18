@@ -756,12 +756,12 @@ mock model cmdErr = At <$> traverse (const genSym) resp
 
 precondition :: Model m Symbolic -> At CmdErr m Symbolic -> Logic
 precondition Model {..} (At (CmdErr { cmd })) =
-   forall (iters cmd) (`member` RE.keys knownIters) .&&
+   Test.StateMachine.forAll (iters cmd) (`member` RE.keys knownIters) .&&
     case cmd of
       AppendBlock blk -> fitsOnTip blk
       DeleteAfter tip -> tip `member` NE.toList (tips dbModel)
       Corruption corr ->
-        forall
+        Test.StateMachine.forAll
           (corruptionFiles (getCorruptions corr))
           (`member` getDBFiles dbModel)
       _ -> Top
