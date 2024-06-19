@@ -41,7 +41,7 @@ shrinkPeerSchedules ::
   StateView TestBlock ->
   [GenesisTestFull TestBlock]
 shrinkPeerSchedules genesisTest@GenesisTest{gtBlockTree, gtSchedule} _stateView =
-  let PointSchedule {psSchedule} = gtSchedule
+  let PointSchedule {psSchedule, psStartOrder} = gtSchedule
       simulationDuration = duration gtSchedule
       trimmedBlockTree sch = trimBlockTree' sch gtBlockTree
       shrunkAdversarialPeers =
@@ -50,6 +50,7 @@ shrinkPeerSchedules genesisTest@GenesisTest{gtBlockTree, gtSchedule} _stateView 
             genesisTest
               { gtSchedule = PointSchedule
                   { psSchedule = shrunkSchedule
+                  , psStartOrder
                   , psMinEndTime = simulationDuration
                   }
               , gtBlockTree = trimmedBlockTree shrunkSchedule
@@ -61,6 +62,7 @@ shrinkPeerSchedules genesisTest@GenesisTest{gtBlockTree, gtSchedule} _stateView 
         <&> \shrunkSchedule -> genesisTest
           { gtSchedule = PointSchedule
             { psSchedule = shrunkSchedule
+            , psStartOrder
             , psMinEndTime = simulationDuration
             }
           }
@@ -81,6 +83,7 @@ shrinkByRemovingAdversaries genesisTest@GenesisTest{gtSchedule, gtBlockTree} _st
      in genesisTest
       { gtSchedule = PointSchedule
         { psSchedule = shrunkSchedule
+        , psStartOrder = psStartOrder gtSchedule
         , psMinEndTime = simulationDuration
         }
       , gtBlockTree = trimmedBlockTree
