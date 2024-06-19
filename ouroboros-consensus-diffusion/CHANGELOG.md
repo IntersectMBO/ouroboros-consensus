@@ -2,6 +2,17 @@
 
 # Changelog entries
 
+<a id='changelog-0.17.0.0'></a>
+## 0.17.0.0 — 2024-06-19
+
+### Patch
+
+- Updated dependencies; no local changes required.
+
+### Breaking
+
+- Implemented a first version of CSJ (ChainSync Jumping). (disabled by default)
+
 <a id='changelog-0.16.0.0'></a>
 ## 0.16.0.0 — 2024-05-13
 
