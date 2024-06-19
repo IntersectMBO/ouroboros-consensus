@@ -245,6 +245,38 @@ gnuplot -e "bench_data='ledger-ops-cost.csv'" \
 The plot will be written to a file named `results.png`. See the script file for
 more usage options.
 
+#### Finding the intersection between two ChainDBs
+
+Suppose that you have two ChainDBs containing different forks, and you want to
+find their intersection. This can be accomplished with db-analyser via the
+`--show-slot-block-no` analysis:
+
+First, run the following command for both of your ChainDBs:
+
+```
+db-analyser --analyse-from 1234 --db /path/to/dbX --show-slot-block-no \
+  cardano --config /path/to/config.json | cut -d ' ' -f 2- > dbX.log
+```
+
+Note that specificying `--analyse-from` is optional; it means that you are
+certain that both ChainDBs still were on the same fork in slot `1234`, in order
+to decrease the run time of the command.
+
+Then, you can `diff` the resulting files to find the last common block, or the
+`comm` tool like this:
+
+ - Get the last few blocks in common (last one is the intersection):
+   ```console
+   comm -1 -2 db0.log db1.log | tail
+   ```
+ - Get the first few blocks after the intersection:
+   ```console
+   comm -3 db0.log db1.log | head
+   ```
+
+> It is possible to do this in logarithmic instead of linear time via a binary
+> search; however, this hasn't been necessary so far.
+
 ## db-immutaliser
 
 Copy a specific chain from a volatile DB to an immutable DB, such that other
