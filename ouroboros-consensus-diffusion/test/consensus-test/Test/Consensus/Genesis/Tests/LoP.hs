@@ -79,6 +79,7 @@ prop_wait mustTimeout =
       let offset :: DiffTime = if mustTimeout then 1 else -1
        in PointSchedule
             { psSchedule = peersOnlyHonest [(Time 0, scheduleTipPoint tipBlock)]
+            , psStartOrder = []
             , psMinEndTime = Time $ timeout + offset
             }
 
@@ -108,6 +109,7 @@ prop_waitBehindForecastHorizon =
             [ (Time 0, scheduleTipPoint tipBlock)
             , (Time 0, scheduleHeaderPoint tipBlock)
             ]
+        , psStartOrder = []
         , psMinEndTime = Time 11
         }
 
@@ -166,13 +168,18 @@ prop_serve mustTimeout =
     makeSchedule :: (HasHeader blk) => AnchoredFragment blk -> PointSchedule blk
     makeSchedule (AF.Empty _) = error "fragment must have at least one block"
     makeSchedule fragment@(_ AF.:> tipBlock) =
-      mkPointSchedule $ peersOnlyHonest $
+      PointSchedule {
+        psSchedule =
+        peersOnlyHonest $
         (Time 0, scheduleTipPoint tipBlock)
           : ( flip concatMap (zip [1 ..] (AF.toOldestFirst fragment)) $ \(i, block) ->
                 [ (Time (secondsRationalToDiffTime (i * timeBetweenBlocks)), scheduleHeaderPoint block),
                   (Time (secondsRationalToDiffTime (i * timeBetweenBlocks)), scheduleBlockPoint block)
                 ]
-            )
+            ),
+        psStartOrder = [],
+        psMinEndTime = Time 0
+      }
 
 -- NOTE: Same as 'LoE.prop_adversaryHitsTimeouts' with LoP instead of timeouts.
 prop_delayAttack :: Bool -> Property
@@ -249,4 +256,4 @@ prop_delayAttack lopEnabled =
             ]
           -- Wait for LoP bucket to empty
           psMinEndTime = Time 11
-       in PointSchedule {psSchedule, psMinEndTime}
+       in PointSchedule {psSchedule, psStartOrder = [], psMinEndTime}

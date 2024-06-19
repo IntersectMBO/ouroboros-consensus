@@ -499,7 +499,8 @@ prop_densityDisconnectTriggersChainSel =
             (AF.Empty _)       -> Origin
             (_ AF.:> tipBlock) -> At tipBlock
           advTip = getOnlyBranchTip tree
-       in mkPointSchedule $ peers'
+       in PointSchedule {
+            psSchedule = peers'
             -- Eagerly serve the honest tree, but after the adversary has
             -- advertised its chain up to the intersection.
             [[(Time 0, scheduleTipPoint trunkTip),
@@ -514,4 +515,7 @@ prop_densityDisconnectTriggersChainSel =
               (Time 0, ScheduleBlockPoint intersect),
               (Time 1, scheduleHeaderPoint advTip),
               (Time 1, scheduleBlockPoint advTip)
-            ]]
+            ]],
+            psStartOrder = [],
+            psMinEndTime = Time 0
+          }
