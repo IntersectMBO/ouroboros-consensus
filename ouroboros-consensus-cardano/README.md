@@ -106,8 +106,8 @@ Note that these flags do not refer to Ledger validation.
 
 Lastly the user can provide the analysis that should be run on the chain:
 
-* `--show-slot-block-no` prints the slot and block number of each block it
-  process.
+* `--show-slot-block-no` prints the slot and block number and hash of each block
+  it process.
 
 * `--count-tx-outputs` prints the block and slot number, tx out output for given
   block and the cumulative tx out output for all the blocks seen so far.
