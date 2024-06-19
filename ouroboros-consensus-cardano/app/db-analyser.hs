@@ -4,8 +4,8 @@
 
 -- | Database analysis tool.
 --
--- Usage: db-analyser --db PATH [--analyse-from SLOT_NUMBER]
---                    [--validate-all-blocks | --minimum-block-validation]
+-- Usage: db-analyser --db PATH [--verbose] [--analyse-from SLOT_NUMBER]
+--                    [--db-validation ARG]
 --                    [--show-slot-block-no | --count-tx-outputs |
 --                      --show-block-header-size | --show-block-txs-size |
 --                      --show-ebbs | --store-ledger SLOT_NUMBER | --count-blocks |

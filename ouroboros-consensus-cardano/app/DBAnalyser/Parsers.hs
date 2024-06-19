@@ -1,5 +1,6 @@
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE CPP           #-}
+{-# LANGUAGE LambdaCase    #-}
 
 module DBAnalyser.Parsers (
     BlockType (..)
@@ -55,16 +56,18 @@ parseSelectDB =
 
 
 parseValidationPolicy :: Parser (Maybe ValidateBlocks)
-parseValidationPolicy = optional $ asum [
-      flag' ValidateAllBlocks $ mconcat [
-          long "validate-all-blocks"
-        , help "Validate all blocks of the Immutable DB"
-        ]
-    , flag' MinimumBlockValidation $ mconcat [
-          long "minimum-block-validation"
-        , help "Validate a minimum part of the Immutable DB"
-        ]
-    ]
+parseValidationPolicy =
+    optional $ option reader $ mconcat [
+        long "db-validation"
+      , help $ "The extent of the ChainDB on-disk files validation. This is "
+            <> "completely unrelated to validation of the ledger rules. "
+            <> "Possible values: validate-all-blocks, minimum-block-validation."
+      ]
+  where
+    reader = maybeReader $ \case
+        "validate-all-blocks"      -> Just ValidateAllBlocks
+        "minimum-block-validation" -> Just MinimumBlockValidation
+        _                          -> Nothing
 
 parseAnalysis :: Parser AnalysisName
 parseAnalysis = asum [

@@ -91,12 +91,12 @@ User should run this if they are dealing with a `cardano` chain.
 
 The user can limit the maximum number of blocks that db-analyser will process.
 
-### Database validation
+### Database validation, via --db-validation
 
 The tool provides two database validation policies:
 
 - `validate-all-blocks`, which will cause the tool to validate all chunks on the
-  immutable and volatile databases.
+  immutable database.
 - `minimum-block-validation`, which will cause the tool to validate only the
   most recent chunk in the immutable database.
 
