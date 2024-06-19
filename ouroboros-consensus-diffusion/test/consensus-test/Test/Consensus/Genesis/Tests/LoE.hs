@@ -115,4 +115,4 @@ prop_adversaryHitsTimeouts timeoutsEnabled =
             ]
           -- We want to wait more than the short wait timeout
           psMinEndTime = Time 11
-       in PointSchedule {psSchedule, psMinEndTime}
+       in PointSchedule {psSchedule, psStartOrder = [], psMinEndTime}

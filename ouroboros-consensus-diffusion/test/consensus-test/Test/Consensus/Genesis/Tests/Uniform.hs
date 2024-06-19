@@ -288,6 +288,7 @@ prop_leashingAttackTimeLimited =
           advs = fmap (takePointsUntil timeLimit) advs0
       pure $ PointSchedule
         { psSchedule = Peers honests advs
+        , psStartOrder = []
         , psMinEndTime = timeLimit
         }
 
