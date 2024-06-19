@@ -20,6 +20,6 @@ data DBAnalyserConfig = DBAnalyserConfig {
   , confLimit  :: Limit
   }
 
--- | Whether to validate the on-disk files of the ChainDB. This is completely
+-- | The extent of the ChainDB on-disk files validation. This is completely
 -- unrelated to validation of the ledger rules.
 data ValidateBlocks = ValidateAllBlocks | MinimumBlockValidation

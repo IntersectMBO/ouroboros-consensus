@@ -9,6 +9,7 @@ module DBAnalyser.Parsers (
   ) where
 
 import           Cardano.Crypto (RequiresNetworkMagic (..))
+import           Cardano.Tools.DBAnalyser.Analysis
 import           Cardano.Tools.DBAnalyser.Block.Byron
 import           Cardano.Tools.DBAnalyser.Block.Cardano
 import           Cardano.Tools.DBAnalyser.Block.Shelley
@@ -117,10 +118,19 @@ parseAnalysis = asum [
     ]
 
 storeLedgerParser :: Parser AnalysisName
-storeLedgerParser = (StoreLedgerStateAt . SlotNo) <$> option auto
-  (  long "store-ledger"
-  <> metavar "SLOT_NUMBER"
-  <> help "Store ledger state at specific slot number" )
+storeLedgerParser = do
+  slot <- SlotNo <$> option auto
+    (  long "store-ledger"
+    <> metavar "SLOT_NUMBER"
+    <> help "Store ledger state at specific slot number" )
+  ledgerValidation <- flag LedgerReapply LedgerApply
+    (  long "full-ledger-validation"
+    <> help (  "Use full block application while applying blocks to ledger states, "
+            <> "also validating signatures and scripts. "
+            <> "This is much slower than block reapplication (the default)."
+            )
+    )
+  pure $ StoreLedgerStateAt slot ledgerValidation
 
 checkNoThunksParser :: Parser AnalysisName
 checkNoThunksParser = CheckNoThunksEvery <$> option auto

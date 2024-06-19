@@ -127,6 +127,12 @@ Lastly the user can provide the analysis that should be run on the chain:
   slot number, it will create one on the next available slot number (and issue a
   warning about this fact).
 
+  By default, for better performance, blocks are only *re*applied, skipping eg
+  validation of signatures and Plutus scripts. If desired (eg when investigating
+  a Ledger bug), one can use `--full-ledger-validation` to also perform these
+  checks. If there is an error on block application, the previous ledger state
+  is stored.
+
 * `--count-blocks` prints out the number of blocks it saw on the chain
 
 * `--benchmark-ledger-ops` applies the main ledger calculations to each block in
