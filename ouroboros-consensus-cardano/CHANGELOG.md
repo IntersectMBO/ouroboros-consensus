@@ -2,6 +2,15 @@
 
 # Changelog entries
 
+<a id='changelog-0.17.0.0'></a>
+## 0.17.0.0 — 2024-06-19
+
+### Breaking
+
+- Changed `GetStakeDistribution` and `GetPoolDistr` queries to return a
+  Consensus-vendored version of `PoolDistr` (instead of using the one from
+  Ledger, as it changed in a backwards-incompatible manner).
+
 <a id='changelog-0.16.0.0'></a>
 ## 0.16.0.0 — 2024-05-13
 

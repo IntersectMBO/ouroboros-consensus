@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.9.0.1'></a>
+## 0.9.0.1 — 2024-06-19
+
+### Patch
+
+- Updated dependencies, but no changes to the interface.
+
 <a id='changelog-0.9.0.0'></a>
 ## 0.9.0.0 — 2024-05-13
 

@@ -2,6 +2,27 @@
 
 # Changelog entries
 
+<a id='changelog-0.19.0.0'></a>
+## 0.19.0.0 — 2024-06-19
+
+### Patch
+
+- Updated dependencies, but no changes to the interface.
+
+### Non-Breaking
+
+- Fixed GDD implementation. (still disabled by default)
+
+- ImmutableDB: added `headerToTip`.
+
+### Breaking
+
+- Implemented a first version of CSJ (ChainSync Jumping). (disabled by default)
+
+- Added `getHashForSlot` to the internal ImmutableDB API.
+
+- ImmutableDB `blockToTip`: relaxed constraints.
+
 <a id='changelog-0.18.0.0'></a>
 ## 0.18.0.0 — 2024-05-13
 
