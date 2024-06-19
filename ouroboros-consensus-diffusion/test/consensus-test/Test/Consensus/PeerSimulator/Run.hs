@@ -16,6 +16,7 @@ import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
 import           Data.Coerce (coerce)
 import           Data.Foldable (for_)
+import           Data.List (sort)
 import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -340,8 +341,15 @@ startNode schedulerConfig genesisTest interval = do
       getCandidates = viewChainSyncState (cschcMap handles) CSClient.csCandidate
   fetchClientRegistry <- newFetchClientRegistry
   let chainDbView = CSClient.defaultChainDbView lnChainDb
-      activePeers = Map.restrictKeys (psrPeers lrPeerSim) (lirActive liveResult)
-  for_ activePeers $ \PeerResources {prShared, prChainSync, prBlockFetch} -> do
+      activePeers = Map.toList $ Map.restrictKeys (psrPeers lrPeerSim) (lirActive liveResult)
+      peersStartOrder = psStartOrder ++ sort [pid | (pid, _) <- activePeers, pid `notElem` psStartOrder]
+      activePeersOrdered = [
+          peerResources
+          | pid <- peersStartOrder
+          , (pid', peerResources) <- activePeers
+          , pid == pid'
+          ]
+  for_ activePeersOrdered $ \PeerResources {prShared, prChainSync, prBlockFetch} -> do
     let pid = srPeerId prShared
     forkLinkedThread lrRegistry ("Peer overview " ++ show pid) $
       -- The peerRegistry helps ensuring that if any thread fails, then
@@ -405,6 +413,7 @@ startNode schedulerConfig genesisTest interval = do
       , gtBlockFetchTimeouts
       , gtLoPBucketParams = LoPBucketParams { lbpCapacity, lbpRate }
       , gtCSJParams = CSJParams { csjpJumpSize }
+      , gtSchedule = PointSchedule {psStartOrder}
       } = genesisTest
 
     StateViewTracers{svtTraceTracer} = lnStateViewTracers

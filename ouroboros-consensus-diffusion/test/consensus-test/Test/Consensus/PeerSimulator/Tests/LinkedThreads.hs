@@ -72,4 +72,4 @@ prop_chainSyncKillsBlockFetch = do
               (Time 0, scheduleHeaderPoint firstBlock)
             ]
           psMinEndTime = Time $ timeout + 1
-       in PointSchedule {psSchedule, psMinEndTime}
+       in PointSchedule {psSchedule, psStartOrder = [], psMinEndTime}
