@@ -119,6 +119,7 @@ instance MonadSTM m => MonadSTM (WithEarlyExit m) where
   putTMVar        = lift .: putTMVar
   tryPutTMVar     = lift .: tryPutTMVar
   readTMVar       = lift .  readTMVar
+  writeTMVar      = lift .: writeTMVar
   tryReadTMVar    = lift .  tryReadTMVar
   swapTMVar       = lift .: swapTMVar
   isEmptyTMVar    = lift .  isEmptyTMVar

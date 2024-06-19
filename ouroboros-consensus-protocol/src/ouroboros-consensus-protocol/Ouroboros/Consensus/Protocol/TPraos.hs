@@ -422,7 +422,7 @@ meetsLeaderThreshold TPraosConfig { tpraosParams }
       r
       (tpraosLeaderF tpraosParams)
   where
-    SL.PoolDistr poolDistr = lvPoolDistr
+    SL.PoolDistr poolDistr _totalActiveStake = lvPoolDistr
     r = maybe 0 SL.individualPoolStake
         $ Map.lookup keyHash poolDistr
 

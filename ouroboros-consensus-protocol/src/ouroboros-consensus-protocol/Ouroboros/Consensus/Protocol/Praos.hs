@@ -524,7 +524,7 @@ meetsLeaderThreshold
       r
       (praosLeaderF praosParams)
     where
-      SL.PoolDistr poolDistr = lvPoolDistr
+      SL.PoolDistr poolDistr _totalActiveStake = lvPoolDistr
       r =
         maybe 0 SL.individualPoolStake $
           Map.lookup keyHash poolDistr
@@ -538,10 +538,10 @@ validateVRFSignature ::
   ActiveSlotCoeff ->
   Views.HeaderView c ->
   Except (PraosValidationErr c) ()
-validateVRFSignature eta0 (Views.lvPoolDistr -> SL.PoolDistr pd) f b = do
+validateVRFSignature eta0 (Views.lvPoolDistr -> SL.PoolDistr pd _) f b = do
   case Map.lookup hk pd of
     Nothing -> throwError $ VRFKeyUnknown hk
-    Just (IndividualPoolStake sigma vrfHK) -> do
+    Just (IndividualPoolStake sigma _totalPoolStake vrfHK) -> do
       vrfHK == hashVerKeyVRF vrfK
         ?! VRFKeyWrongVRFKey hk vrfHK (hashVerKeyVRF vrfK)
       VRF.verifyCertified
@@ -710,14 +710,13 @@ instance
         }
       where
         coercePoolDistr :: SL.PoolDistr c1 -> SL.PoolDistr c2
-        coercePoolDistr (SL.PoolDistr m) =
+        coercePoolDistr (SL.PoolDistr m totalActiveStake) =
           SL.PoolDistr
-            . Map.mapKeysMonotonic coerce
-            . Map.map coerceIndividualPoolStake
-            $ m
+            (Map.mapKeysMonotonic coerce (Map.map coerceIndividualPoolStake m))
+            totalActiveStake
         coerceIndividualPoolStake :: SL.IndividualPoolStake c1 -> SL.IndividualPoolStake c2
-        coerceIndividualPoolStake (SL.IndividualPoolStake stake vrf) =
-          SL.IndividualPoolStake stake $ coerce vrf
+        coerceIndividualPoolStake (SL.IndividualPoolStake stake totalStake vrf) =
+          SL.IndividualPoolStake stake totalStake (coerce vrf)
 
   translateChainDepState _ tpState =
     PraosState

@@ -14,9 +14,9 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2024-06-02T23:45:05Z
+  , hackage.haskell.org 2024-06-13T08:49:27Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2024-05-29T10:00:00Z
+  , cardano-haskell-packages 2024-06-18T14:00:00Z
 
 packages:
   ouroboros-consensus
@@ -37,11 +37,9 @@ if(os(windows))
   constraints:
     bitvec -simd
 
-source-repository-package
-  type: git
-  location: https://github.com/IntersectMBO/ouroboros-network
-  tag: 431bb599940d2947b2cb99d3ae29b7f2c4cdd36d
-  --sha256: 1a62hqddpnc0j5r7nl54q79nrxyw77dphpsgp68hxij210dkpvca
-  subdir:
-    ouroboros-network-api
-    ouroboros-network-protocols
+-- Workaround for a haskell.nix bug around pre-installed libraries. Might be
+-- fixed by https://github.com/input-output-hk/haskell.nix/pull/2218.
+extra-packages: Cabal
+if os(windows)
+  constraints: time ^>=1.14
+  allow-newer: *:time
