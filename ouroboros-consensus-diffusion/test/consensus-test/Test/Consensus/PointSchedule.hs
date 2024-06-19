@@ -37,7 +37,6 @@ module Test.Consensus.PointSchedule (
   , ensureScheduleDuration
   , genesisNodeState
   , longRangeAttack
-  , mkPointSchedule
   , peerSchedulesBlocks
   , peerStates
   , peersStates
@@ -55,7 +54,6 @@ import           Control.Monad.Class.MonadTime.SI (Time (Time), addTime,
 import           Control.Monad.ST (ST)
 import           Data.Functor (($>))
 import           Data.List (mapAccumL, partition, scanl')
-import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, fromMaybe, mapMaybe)
 import           Data.Time (DiffTime)
 import           Data.Word (Word64)
@@ -77,8 +75,8 @@ import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
 import           Test.Consensus.PeerSimulator.StateView (StateView)
 import           Test.Consensus.PointSchedule.NodeState (NodeState (..),
                      genesisNodeState)
-import           Test.Consensus.PointSchedule.Peers (Peer (..), Peers (..),
-                     peers', peersList)
+import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId,
+                     Peers (..), getPeerIds, peers', peersList)
 import           Test.Consensus.PointSchedule.SinglePeer
                      (IsTrunk (IsBranch, IsTrunk), PeerScheduleParams (..),
                      SchedulePoint (..), defaultPeerScheduleParams, mergeOn,
@@ -97,21 +95,24 @@ prettyPointSchedule ::
   (CondenseList (NodeState blk)) =>
   PointSchedule blk ->
   [String]
-prettyPointSchedule peers =
-  [ "honest peers: " ++ show (Map.size (honestPeers $ psSchedule peers))
-  , "adversaries: " ++ show (Map.size (adversarialPeers $ psSchedule peers))
-  , "minimal duration: " ++ show (psMinEndTime peers)
-  ] ++
-  zipWith3
-    (\number time peerState ->
-      number ++ ": " ++ peerState ++ " @ " ++ time
-    )
-    (condenseListWithPadding PadLeft $ fst <$> numberedPeersStates)
-    (showDT . fst . snd <$> numberedPeersStates)
-    (condenseList $ (snd . snd) <$> numberedPeersStates)
+prettyPointSchedule ps@PointSchedule {psStartOrder, psMinEndTime} =
+  []
+    ++ [ "psSchedule ="
+       ]
+    ++ ( zipWith3
+           ( \number time peerState ->
+               "  " ++ number ++ ": " ++ peerState ++ " @ " ++ time
+           )
+           (condenseListWithPadding PadLeft $ fst <$> numberedPeersStates)
+           (showDT . fst . snd <$> numberedPeersStates)
+           (condenseList $ (snd . snd) <$> numberedPeersStates)
+       )
+    ++ [ "psStartOrder = " ++ show psStartOrder,
+         "psMinEndTime = " ++ show psMinEndTime
+       ]
   where
     numberedPeersStates :: [(Int, (Time, Peer (NodeState blk)))]
-    numberedPeersStates = zip [0..] (peersStates peers)
+    numberedPeersStates = zip [0 ..] (peersStates ps)
 
     showDT :: Time -> String
     showDT (Time dt) = printf "%.6f" (realToFrac dt :: Double)
@@ -177,14 +178,16 @@ peerScheduleBlocks = mapMaybe (withOriginToMaybe . schedulePointToBlock . snd)
 data PointSchedule blk = PointSchedule {
     -- | The actual point schedule
     psSchedule   :: Peers (PeerSchedule blk),
+    -- | The order in which the peers start and connect to the node under test.
+    -- The peers that are absent from 'psSchedule' are ignored; the peers from
+    -- 'psSchedule' that are absent of 'psStartOrder' are started in the end in
+    -- the order of 'PeerId'.
+    psStartOrder :: [PeerId],
     -- | Minimum duration for the simulation of this point schedule.
     -- If no point in the schedule is larger than 'psMinEndTime',
     -- the simulation will still run until this time is reached.
     psMinEndTime :: Time
   }
-
-mkPointSchedule :: Peers (PeerSchedule blk) -> PointSchedule blk
-mkPointSchedule sch = PointSchedule sch $ Time 0
 
 -- | List of all blocks appearing in the schedules.
 peerSchedulesBlocks :: Peers (PeerSchedule blk) -> [blk]
@@ -208,7 +211,11 @@ longRangeAttack ::
 longRangeAttack BlockTree {btTrunk, btBranches = [branch]} g = do
   honest <- peerScheduleFromTipPoints g honParams [(IsTrunk, [AF.length btTrunk - 1])] btTrunk []
   adv <- peerScheduleFromTipPoints g advParams [(IsBranch, [AF.length (btbFull branch) - 1])] btTrunk [btbFull branch]
-  pure $ mkPointSchedule $ peers' [honest] [adv]
+  pure $ PointSchedule {
+    psSchedule = peers' [honest] [adv],
+    psStartOrder = [],
+    psMinEndTime = Time 0
+    }
   where
     honParams = defaultPeerScheduleParams {pspHeaderDelayInterval = (0.3, 0.4)}
     advParams = defaultPeerScheduleParams {pspTipDelayInterval = (0, 0.1)}
@@ -240,6 +247,7 @@ uniformPoints PointsGeneratorParams {pgpExtraHonestPeers, pgpDowntime} = case pg
 -- Include rollbacks in a percentage of adversaries, in which case that peer uses two branchs.
 --
 uniformPointsWithExtraHonestPeers ::
+  forall g m blk.
   (StatefulGen g m, AF.HasHeader blk) =>
   Int ->
   BlockTree blk ->
@@ -254,7 +262,9 @@ uniformPointsWithExtraHonestPeers
   honests <- replicateM (extraHonestPeers + 1) $
     mkSchedule [(IsTrunk, [honestTip0 .. AF.length btTrunk - 1])] []
   advs <- takeBranches btBranches
-  pure $ mkPointSchedule $ peers' honests advs
+  let psSchedule = peers' honests advs
+  psStartOrder <- shuffle (getPeerIds psSchedule)
+  pure $ PointSchedule {psSchedule, psStartOrder, psMinEndTime = Time 0}
   where
     takeBranches = \case
         [] -> pure []
@@ -304,6 +314,15 @@ uniformPointsWithExtraHonestPeers
       pure defaultPeerScheduleParams {pspTipDelayInterval = (tipL, tipU), pspHeaderDelayInterval = (headerL, headerU)}
 
     rollbackProb = 0.2
+
+    -- Inefficient implementation, but sufficient for small lists.
+    shuffle :: [a] -> m [a]
+    shuffle [] = pure []
+    shuffle xs = do
+      i <- Random.uniformRM (0, length xs - 1) g
+      let x = xs !! i
+          xs' = take i xs ++ drop (i+1) xs
+      (x :) <$> shuffle xs'
 
 minusClamp :: (Ord a, Num a) => a -> a -> a
 minusClamp a b | a <= b = 0
@@ -361,6 +380,7 @@ syncTips honests advs =
 --
 -- Includes rollbacks in some schedules.
 uniformPointsWithExtraHonestPeersAndDowntime ::
+  forall g m blk.
   (StatefulGen g m, AF.HasHeader blk) =>
   Int ->
   SecurityParam ->
@@ -383,7 +403,9 @@ uniformPointsWithExtraHonestPeersAndDowntime
     mkSchedule [(IsTrunk, [honestTip0, minusClamp (AF.length btTrunk) 1])] []
   advs <- takeBranches pauseSlot btBranches
   let (honests', advs') = syncTips honests advs
-  pure $ mkPointSchedule $ peers' honests' advs'
+      psSchedule = peers' honests' advs'
+  psStartOrder <- shuffle $ getPeerIds psSchedule
+  pure $ PointSchedule {psSchedule, psStartOrder, psMinEndTime = Time 0}
   where
     takeBranches pause = \case
         [] -> pure []
@@ -437,6 +459,15 @@ uniformPointsWithExtraHonestPeersAndDowntime
       pure defaultPeerScheduleParams {pspTipDelayInterval = (tipL, tipU), pspHeaderDelayInterval = (headerL, headerU)}
 
     rollbackProb = 0.2
+
+    -- Inefficient implementation, but sufficient for small lists.
+    shuffle :: [a] -> m [a]
+    shuffle [] = pure []
+    shuffle xs = do
+      i <- Random.uniformRM (0, length xs - 1) g
+      let x = xs !! i
+          xs' = take i xs ++ drop (i+1) xs
+      (x :) <$> shuffle xs'
 
 newtype ForecastRange = ForecastRange { unForecastRange :: Word64 }
   deriving (Show)
@@ -545,9 +576,10 @@ stToGen gen = do
   pure (runSTGen_ seed gen)
 
 ensureScheduleDuration :: GenesisTest blk a -> PointSchedule blk -> PointSchedule blk
-ensureScheduleDuration gt PointSchedule{psSchedule, psMinEndTime} =
+ensureScheduleDuration gt PointSchedule{psSchedule, psStartOrder, psMinEndTime} =
     PointSchedule
       { psSchedule
+      , psStartOrder
       , psMinEndTime = max psMinEndTime (Time endingDelay)
       }
   where
