@@ -189,7 +189,7 @@ data TraceEvent blk =
     -- ^ triggered when given analysis has started
   | DoneEvent
     -- ^ triggered when analysis has ended
-  | BlockSlotEvent BlockNo SlotNo
+  | BlockSlotEvent BlockNo SlotNo (HeaderHash blk)
     -- ^ triggered when block has been found, it holds:
     --   * block's number
     --   * slot number when the block was forged
@@ -244,9 +244,10 @@ data TraceEvent blk =
 instance HasAnalysis blk => Show (TraceEvent blk) where
   show (StartedEvent analysisName)        = "Started " <> (show analysisName)
   show DoneEvent                          = "Done"
-  show (BlockSlotEvent bn sn)             = intercalate "\t" $ [
+  show (BlockSlotEvent bn sn h)           = intercalate "\t" $ [
       show bn
     , show sn
+    , show h
     ]
   show (CountTxOutputsEvent bn sn cumulative count) = intercalate "\t" $ [
       show bn
@@ -292,7 +293,7 @@ instance HasAnalysis blk => Show (TraceEvent blk) where
 
 
 {-------------------------------------------------------------------------------
-  Analysis: show block and slot number for all blocks
+  Analysis: show block and slot number and hash for all blocks
 -------------------------------------------------------------------------------}
 
 showSlotBlockNo :: forall blk. HasAnalysis blk => Analysis blk StartFromPoint
@@ -301,7 +302,8 @@ showSlotBlockNo AnalysisEnv { db, registry, startFrom, limit, tracer } =
         >> pure Nothing
   where
     process :: Header blk -> IO ()
-    process hdr = traceWith tracer $ BlockSlotEvent (blockNo hdr) (blockSlot hdr)
+    process hdr = traceWith tracer $
+        BlockSlotEvent (blockNo hdr) (blockSlot hdr) (headerHash hdr)
 
 {-------------------------------------------------------------------------------
   Analysis: show total number of tx outputs per block
@@ -419,7 +421,7 @@ storeLedgerStateAt slotNo (AnalysisEnv { db, registry, startFrom, cfg, limit, le
 
     issueWarning blk   = let event = SnapshotWarningEvent slotNo (blockSlot blk)
                          in traceWith tracer event
-    reportProgress blk = let event = BlockSlotEvent (blockNo blk) (blockSlot blk)
+    reportProgress blk = let event = BlockSlotEvent (blockNo blk) (blockSlot blk) (blockHash blk)
                          in traceWith tracer event
 
     storeLedgerState ::

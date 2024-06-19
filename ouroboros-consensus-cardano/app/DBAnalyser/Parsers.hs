@@ -70,7 +70,7 @@ parseAnalysis :: Parser AnalysisName
 parseAnalysis = asum [
       flag' ShowSlotBlockNo $ mconcat [
           long "show-slot-block-no"
-        , help "Show slot and block number of all blocks"
+        , help "Show slot and block number and hash of all blocks"
         ]
     , flag' CountTxOutputs $ mconcat [
           long "count-tx-outputs"
