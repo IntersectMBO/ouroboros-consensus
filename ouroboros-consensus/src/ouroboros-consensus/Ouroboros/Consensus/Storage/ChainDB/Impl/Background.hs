@@ -522,7 +522,7 @@ addBlockRunner fuse cdb@CDB{..} = forever $ do
     -- exception (or it errored), notify the blocked thread
     withFuse fuse $
       bracketOnError
-        (lift $ getChainSelMessage cdbChainSelQueue)
+        (lift $ getChainSelMessage (writeTVar cdbLastTimeStarved) cdbChainSelQueue)
         (\message -> lift $ atomically $ do
           case message of
             ChainSelReprocessLoEBlocks -> pure ()
