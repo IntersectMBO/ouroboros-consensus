@@ -370,6 +370,10 @@ traceChainDBEventTestBlockWith tracer = \case
         AddedReprocessLoEBlocksToQueue ->
           trace $ "Requested ChainSel run"
         _ -> pure ()
+    ChainDB.TraceChainSelStarvationEvent (ChainDB.ChainSelStarvationStarted time) ->
+      trace $ "ChainSel starvation started at " ++ prettyTime time
+    ChainDB.TraceChainSelStarvationEvent (ChainDB.ChainSelStarvationEnded time pt) ->
+      trace $ "ChainSel starvation ended at " ++ prettyTime time ++ " thanks to " ++ terseRealPoint pt
     _ -> pure ()
   where
     trace = traceUnitWith tracer "ChainDB"
