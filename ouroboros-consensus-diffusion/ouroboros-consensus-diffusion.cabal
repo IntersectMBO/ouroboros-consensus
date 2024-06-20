@@ -87,6 +87,7 @@ library
     filepath,
     fs-api ^>=0.2.0.1,
     hashable,
+    nf-vars,
     io-classes ^>=1.5,
     mtl,
     ouroboros-consensus ^>=0.20,

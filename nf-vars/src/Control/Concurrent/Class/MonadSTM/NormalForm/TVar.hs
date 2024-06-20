@@ -14,7 +14,7 @@
 -- The exports of this module (should) mirror the exports of the
 -- "Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked" module from the
 -- @strict-checked-vars@ package.
-module Ouroboros.Consensus.Util.NormalForm.StrictTVar (
+module Control.Concurrent.Class.MonadSTM.NormalForm.TVar (
     -- * StrictTVar
     newTVar
   , newTVarIO
@@ -35,8 +35,7 @@ import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked as Checke
 import           Control.Monad.Class.MonadSTM as StrictSTM
 import           GHC.Stack
 import           NoThunks.Class (NoThunks (..))
-import           Ouroboros.Consensus.Util.NormalForm.StrictMVar
-                     (noThunksInvariant)
+import           NoThunks.Invariant (noThunksInvariant)
 
 {-------------------------------------------------------------------------------
   StrictTVar

@@ -257,11 +257,7 @@ library
     Ouroboros.Consensus.Util.FileLock
     Ouroboros.Consensus.Util.IOLike
     Ouroboros.Consensus.Util.LeakyBucket
-    Ouroboros.Consensus.Util.MonadSTM.NormalForm
     Ouroboros.Consensus.Util.MonadSTM.RAWLock
-    Ouroboros.Consensus.Util.MonadSTM.StrictSVar
-    Ouroboros.Consensus.Util.NormalForm.StrictMVar
-    Ouroboros.Consensus.Util.NormalForm.StrictTVar
     Ouroboros.Consensus.Util.Orphans
     Ouroboros.Consensus.Util.RedundantConstraints
     Ouroboros.Consensus.Util.ResourceRegistry
@@ -304,9 +300,8 @@ library
     sop-core ^>=0.5,
     sop-extras ^>=0.2,
     streaming,
-    strict-checked-vars ^>=0.2,
     strict-sop-core ^>=0.1,
-    strict-stm ^>=1.5,
+    nf-vars,
     text,
     these ^>=1.2,
     time,
@@ -406,6 +401,7 @@ library unstable-consensus-testlib
     ouroboros-consensus,
     ouroboros-network-api,
     ouroboros-network-mock,
+    nf-vars,
     pretty-simple,
     quickcheck-instances,
     quickcheck-state-machine:no-vendored-treediff ^>=0.10,
@@ -415,7 +411,6 @@ library unstable-consensus-testlib
     si-timers,
     sop-core,
     sop-extras,
-    strict-checked-vars,
     strict-sop-core,
     tasty,
     tasty-golden,
@@ -526,7 +521,6 @@ test-suite consensus-test
     Test.Consensus.MiniProtocol.ChainSync.Client
     Test.Consensus.MiniProtocol.LocalStateQuery.Server
     Test.Consensus.ResourceRegistry
-    Test.Consensus.Util.MonadSTM.NormalForm
     Test.Consensus.Util.MonadSTM.RAWLock
     Test.Consensus.Util.Versioned
 

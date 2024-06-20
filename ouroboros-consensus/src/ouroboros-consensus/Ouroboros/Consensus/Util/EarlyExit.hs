@@ -41,7 +41,7 @@ import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Util ((.:))
 import           Ouroboros.Consensus.Util.IOLike (IOLike (..), PrimMonad (..),
                      StrictSVar, StrictTVar, castStrictSVar, castStrictTVar)
-import           Ouroboros.Consensus.Util.NormalForm.StrictMVar (StrictMVar)
+import           Control.Concurrent.Class.MonadMVar.NormalForm (StrictMVar)
 
 {-------------------------------------------------------------------------------
   Basic definitions

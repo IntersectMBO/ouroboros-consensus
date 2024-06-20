@@ -116,7 +116,7 @@ data instance Block.StorageConfig TestBlock = TestBlockStorageConfig
   Mempool support
 -------------------------------------------------------------------------------}
 
-newtype instance Ledger.GenTx TestBlock = TestBlockGenTx { unGenTx :: Tx }
+newtype instance Ledger.GenTx TestBlock = TestBlockGenTx Tx
   deriving stock (Generic)
   deriving newtype (Show, NoThunks, Eq, Ord, NFData)
 

@@ -4,15 +4,19 @@
 {-# LANGUAGE RankNTypes         #-}
 {-# LANGUAGE TypeApplications   #-}
 
-module Test.Consensus.Util.MonadSTM.NormalForm (tests) where
+module Main (main) where
 
 import           Control.Monad.IOSim
 import           GHC.Generics
 import           NoThunks.Class
-import           Ouroboros.Consensus.Util.MonadSTM.NormalForm (MonadSTM,
+import           Control.Concurrent.Class.MonadSTM.NormalForm (
                      newSVar, updateSVar)
+import           Control.Concurrent.Class.MonadSTM (MonadSTM)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
+
+main :: IO ()
+main = defaultMain tests
 
 -- Note that all of the tests here are only significant with compiler
 -- optimizations turned off! These tests ensure that the invariants are
@@ -23,7 +27,7 @@ import           Test.Tasty.QuickCheck
 -- optimizations, these tests will *always* pass at -O1 or higher (at least on
 -- GHC 8.10 and GHC 9.2).
 tests :: TestTree
-tests = testGroup "Ouroboros.Consensus.Util.MonadSTM.NormalForm"
+tests = testGroup "Control.Concurrent.Class.MonadSTM.NormalForm"
   [ testGroup "updateSVar"
     [ testGroup "updateSVar strictness"
       [ testProperty "IO @Integer @String"

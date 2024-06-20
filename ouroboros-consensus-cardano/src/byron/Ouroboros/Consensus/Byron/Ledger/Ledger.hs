@@ -344,7 +344,12 @@ applyABlock :: CC.ValidationMode
             -> BlockNo
             -> Ticked (LedgerState (ByronBlock))
             -> Except (LedgerError ByronBlock) (LedgerState ByronBlock)
-applyABlock validationMode cfg blk blkHash blkNo TickedByronLedgerState{..} = do
+applyABlock validationMode cfg blk blkHash blkNo tls = do
+    let TickedByronLedgerState {
+            untickedByronLedgerTransition
+          , tickedByronLedgerState
+          } = tls
+
     st' <- CC.validateBlock cfg validationMode blk blkHash tickedByronLedgerState
 
     let updState :: UPI.State

@@ -19,6 +19,7 @@ index-state:
   , cardano-haskell-packages 2024-07-24T06:25:44Z
 
 packages:
+  nf-vars
   ouroboros-consensus
   ouroboros-consensus-cardano
   ouroboros-consensus-protocol

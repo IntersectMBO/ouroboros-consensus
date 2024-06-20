@@ -14,7 +14,7 @@
 -- The exports of this module (should) mirror the exports of the
 -- "Control.Concurrent.Class.MonadMVar.Strict.Checked" module from the
 -- @strict-checked-vars@ package.
-module Ouroboros.Consensus.Util.NormalForm.StrictMVar (
+module Control.Concurrent.Class.MonadMVar.NormalForm (
     -- * StrictMVar
     newEmptyMVar
   , newEmptyMVarWithInvariant
@@ -36,7 +36,8 @@ import           Control.Concurrent.Class.MonadMVar.Strict.Checked hiding
 import qualified Control.Concurrent.Class.MonadMVar.Strict.Checked as Checked
 import           Data.Proxy (Proxy (..))
 import           GHC.Stack (HasCallStack)
-import           NoThunks.Class (NoThunks (..), unsafeNoThunks)
+import           NoThunks.Class (NoThunks (..))
+import           NoThunks.Invariant
 
 {-------------------------------------------------------------------------------
   StrictMVar
@@ -73,13 +74,6 @@ newEmptyMVarWithInvariant ::
   -> m (StrictMVar m a)
 newEmptyMVarWithInvariant inv =
     Checked.newEmptyMVarWithInvariant (\x -> inv x <> noThunksInvariant x)
-
-{-------------------------------------------------------------------------------
-  Invariant
--------------------------------------------------------------------------------}
-
-noThunksInvariant :: NoThunks a => a -> Maybe String
-noThunksInvariant = fmap show . unsafeNoThunks
 
 {-------------------------------------------------------------------------------
   NoThunks instance

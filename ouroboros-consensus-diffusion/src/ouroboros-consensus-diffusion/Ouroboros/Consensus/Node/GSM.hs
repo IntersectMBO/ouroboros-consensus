@@ -47,8 +47,8 @@ import qualified Ouroboros.Consensus.HardFork.History.Qry as Qry
 import qualified Ouroboros.Consensus.Ledger.Basics as L
 import           Ouroboros.Consensus.Node.GsmState
 import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
-import           Ouroboros.Consensus.Util.NormalForm.StrictTVar (StrictTVar)
-import qualified Ouroboros.Consensus.Util.NormalForm.StrictTVar as StrictSTM
+import           Control.Concurrent.Class.MonadSTM.NormalForm (StrictTVar)
+import qualified Control.Concurrent.Class.MonadSTM.NormalForm as StrictSTM
 import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
                      (LedgerStateJudgement (..))
 import           System.FS.API (HasFS, createDirectoryIfMissing, doesFileExist,
