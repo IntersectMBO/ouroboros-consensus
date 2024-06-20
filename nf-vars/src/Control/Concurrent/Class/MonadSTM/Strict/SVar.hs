@@ -6,7 +6,7 @@
 {-# LANGUAGE TypeFamilies      #-}
 {-# LANGUAGE TypeOperators     #-}
 
-module Ouroboros.Consensus.Util.MonadSTM.StrictSVar (
+module Control.Concurrent.Class.MonadSTM.Strict.SVar (
     castStrictSVar
   , isEmptySVar
   , modifySVar

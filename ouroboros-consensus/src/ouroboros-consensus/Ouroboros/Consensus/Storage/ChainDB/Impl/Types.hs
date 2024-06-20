@@ -431,7 +431,7 @@ type FutureBlocks m blk = Map (HeaderHash blk) (Header blk, InvalidBlockPunishme
 -- | FIFO queue used to add blocks asynchronously to the ChainDB. Blocks are
 -- read from this queue by a background thread, which processes the blocks
 -- synchronously.
-newtype ChainSelQueue m blk = ChainSelQueue (TBQueue m (ChainSelMessage m blk))
+newtype ChainSelQueue m blk = ChainSelQueue (StrictTBQueue m (ChainSelMessage m blk))
   deriving NoThunks via OnlyCheckWhnfNamed "ChainSelQueue" (ChainSelQueue m blk)
 
 -- | Entry in the 'ChainSelQueue' queue: a block together with the 'TMVar's used

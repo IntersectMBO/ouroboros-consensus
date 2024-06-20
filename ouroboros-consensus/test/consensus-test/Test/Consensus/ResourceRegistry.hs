@@ -274,7 +274,7 @@ data TestThread m = TestThread {
     , threadLinked :: Link (TestThread m)
 
       -- | Send the thread instructions (see 'ThreadInstr')
-    , threadComms  :: TQueue m (QueuedInstr m)
+    , threadComms  :: StrictTQueue m (QueuedInstr m)
     }
 
 -- | Instructions to a thread
@@ -340,7 +340,7 @@ newThread alive parentReg = \shouldLink -> do
   where
     threadBody :: ResourceRegistry m
                -> StrictMVar m (TestThread m)
-               -> TQueue m (QueuedInstr m)
+               -> StrictTQueue m (QueuedInstr m)
                -> m ()
     threadBody childReg spawned comms = do
         us <- readMVar spawned

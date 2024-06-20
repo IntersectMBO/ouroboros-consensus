@@ -11,7 +11,6 @@ import qualified Test.Consensus.MiniProtocol.BlockFetch.Client (tests)
 import qualified Test.Consensus.MiniProtocol.ChainSync.Client (tests)
 import qualified Test.Consensus.MiniProtocol.LocalStateQuery.Server (tests)
 import qualified Test.Consensus.ResourceRegistry (tests)
-import qualified Test.Consensus.Util.MonadSTM.NormalForm (tests)
 import qualified Test.Consensus.Util.MonadSTM.RAWLock (tests)
 import qualified Test.Consensus.Util.Versioned (tests)
 import           Test.Tasty
@@ -33,7 +32,6 @@ tests =
   , Test.Consensus.Mempool.Fairness.tests
   , Test.Consensus.ResourceRegistry.tests
   , Test.Consensus.Util.MonadSTM.RAWLock.tests
-  , Test.Consensus.Util.MonadSTM.NormalForm.tests
   , Test.Consensus.Util.Versioned.tests
   , testGroup "HardFork" [
         testGroup "History" [
