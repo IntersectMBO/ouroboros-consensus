@@ -91,6 +91,8 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (ChainUpdate, MaxSlotNo,
                      Serialised (..))
 import qualified Ouroboros.Network.Block as Network
+import           Ouroboros.Network.BlockFetch.ConsensusInterface
+                     (ChainSelStarvation (..))
 import           Ouroboros.Network.Mock.Chain (Chain (..))
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import           System.FS.API.Types (FsError)
@@ -346,6 +348,10 @@ data ChainDB m blk = ChainDB {
       -- which rechecks the blocks in all candidate chains whenever a new
       -- invalid block is detected. These blocks are likely to be valid.
     , getIsInvalidBlock :: STM m (WithFingerprint (HeaderHash blk -> Maybe (ExtValidationError blk)))
+
+      -- | Whether ChainSel is currently starved, or when was last time it
+      -- stopped being starved.
+    , getChainSelStarvation :: STM m ChainSelStarvation
 
     , closeDB            :: m ()
 

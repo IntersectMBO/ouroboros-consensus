@@ -22,6 +22,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query (
   , getAnyBlockComponent
   , getAnyKnownBlock
   , getAnyKnownBlockComponent
+  , getChainSelStarvation
   ) where
 
 import qualified Data.Map.Strict as Map
@@ -50,6 +51,8 @@ import           Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (MaxSlotNo, maxSlotNoFromWithOrigin)
+import           Ouroboros.Network.BlockFetch.ConsensusInterface
+                     (ChainSelStarvation (..))
 
 -- | Return the last @k@ headers.
 --
@@ -180,6 +183,12 @@ getIsInvalidBlock ::
   -> STM m (WithFingerprint (HeaderHash blk -> Maybe (ExtValidationError blk)))
 getIsInvalidBlock CDB{..} =
   fmap (fmap (fmap invalidBlockReason) . flip Map.lookup) <$> readTVar cdbInvalid
+
+getChainSelStarvation ::
+     forall m blk. IOLike m
+  => ChainDbEnv m blk
+  -> STM m ChainSelStarvation
+getChainSelStarvation CDB {..} = readTVar cdbChainSelStarvation
 
 getIsValid ::
      forall m blk. (IOLike m, HasHeader blk)

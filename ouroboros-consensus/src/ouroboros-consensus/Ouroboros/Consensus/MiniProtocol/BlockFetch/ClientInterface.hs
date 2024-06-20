@@ -42,7 +42,8 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (MaxSlotNo)
 import           Ouroboros.Network.BlockFetch.ConsensusInterface
-                     (BlockFetchConsensusInterface (..), FetchMode (..),
+                     (BlockFetchConsensusInterface (..),
+                     ChainSelStarvation (..), FetchMode (..),
                      FromConsensus (..))
 import           Ouroboros.Network.PeerSelection.Bootstrap (UseBootstrapPeers,
                      requiresBootstrapPeers)
@@ -56,6 +57,7 @@ data ChainDbView m blk = ChainDbView {
    , getIsFetched              :: STM m (Point blk -> Bool)
    , getMaxSlotNo              :: STM m MaxSlotNo
    , addBlockWaitWrittenToDisk :: InvalidBlockPunishment m -> blk -> m Bool
+   , getChainSelStarvation     :: STM m ChainSelStarvation
    }
 
 defaultChainDbView :: IOLike m => ChainDB m blk -> ChainDbView m blk
@@ -64,6 +66,7 @@ defaultChainDbView chainDB = ChainDbView {
   , getIsFetched              = ChainDB.getIsFetched chainDB
   , getMaxSlotNo              = ChainDB.getMaxSlotNo chainDB
   , addBlockWaitWrittenToDisk = ChainDB.addBlockWaitWrittenToDisk chainDB
+  , getChainSelStarvation     = ChainDB.getChainSelStarvation chainDB
   }
 
 -- | How to get the wall-clock time of a slot. Note that this is a very
@@ -336,6 +339,8 @@ mkBlockFetchConsensusInterface
     compareCandidateChains = compareAnchoredFragments bcfg
 
     headerForgeUTCTime = slotForgeTime . headerRealPoint . unFromConsensus
+
+    readChainSelStarvation = getChainSelStarvation chainDB
 
     demoteCSJDynamo :: peer -> m ()
     demoteCSJDynamo = void . atomically . Jumping.rotateDynamo csHandlesCol
