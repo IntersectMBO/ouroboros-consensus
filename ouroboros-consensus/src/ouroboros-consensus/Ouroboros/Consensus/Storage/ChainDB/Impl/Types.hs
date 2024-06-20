@@ -52,6 +52,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
     -- * Trace types
   , SelectionChangedInfo (..)
   , TraceAddBlockEvent (..)
+  , TraceChainSelStarvationEvent (..)
   , TraceCopyToImmutableDBEvent (..)
   , TraceEvent (..)
   , TraceFollowerEvent (..)
@@ -63,6 +64,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
   , TraceValidationEvent (..)
   ) where
 
+import           Cardano.Prelude (whenM)
 import           Control.Tracer
 import           Data.Foldable (traverse_)
 import           Data.Map.Strict (Map)
@@ -107,6 +109,8 @@ import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (WithFingerprint)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import           Ouroboros.Network.Block (MaxSlotNo)
+import           Ouroboros.Network.BlockFetch.ConsensusInterface
+                     (ChainSelStarvation (..))
 
 -- | All the serialisation related constraints needed by the ChainDB.
 class ( ImmutableDbSerialiseConstraints blk
@@ -275,6 +279,9 @@ data ChainDbEnv m blk = CDB
     -- switch back to a chain containing it. The fragment is usually anchored at
     -- a recent immutable tip; if it does not, it will conservatively be treated
     -- as the empty fragment anchored in the current immutable tip.
+  , cdbChainSelStarvation :: !(StrictTVar m ChainSelStarvation)
+    -- ^ Information on the last starvation of ChainSel, whether ongoing or
+    -- ended recently.
   } deriving (Generic)
 
 -- | We include @blk@ in 'showTypeOf' because it helps resolving type families
@@ -509,9 +516,32 @@ addReprocessLoEBlocks tracer (ChainSelQueue queue) = do
   atomically $ writeTBQueue queue ChainSelReprocessLoEBlocks
 
 -- | Get the oldest message from the 'ChainSelQueue' queue. Can block when the
--- queue is empty.
-getChainSelMessage :: IOLike m => ChainSelQueue m blk -> m (ChainSelMessage m blk)
-getChainSelMessage (ChainSelQueue queue) = atomically $ readTBQueue queue
+-- queue is empty; in that case, reports the starvation (and its end) to the
+-- callback.
+getChainSelMessage
+  :: (IOLike m, HasHeader blk)
+  => Tracer m (TraceChainSelStarvationEvent blk)
+  -> StrictTVar m ChainSelStarvation
+  -> ChainSelQueue m blk
+  -> m (ChainSelMessage m blk)
+getChainSelMessage starvationTracer starvationVar (ChainSelQueue queue) = do
+  -- NOTE: The test of emptiness and the blocking read are in different STM
+  -- transactions on purpose.
+  whenM (atomically $ isEmptyTBQueue queue) $ do
+    writeTVarIO starvationVar ChainSelStarvationOngoing
+    traceWith starvationTracer . ChainSelStarvationStarted =<< getMonotonicTime
+  message <- atomically $ readTBQueue queue
+  -- If there was a starvation ongoing, we need to report that it is done.
+  whenM ((== ChainSelStarvationOngoing) <$> readTVarIO starvationVar) $
+    case message of
+      ChainSelAddBlock BlockToAdd {blockToAdd} -> do
+        time <- getMonotonicTime
+        traceWith starvationTracer $ ChainSelStarvationEnded time $ blockRealPoint blockToAdd
+        writeTVarIO starvationVar $ ChainSelStarvationEndedAt time
+      ChainSelReprocessLoEBlocks -> pure ()
+  return message
+  where
+    writeTVarIO v x = atomically $ writeTVar v x
 
 -- | Flush the 'ChainSelQueue' queue and notify the waiting threads.
 --
@@ -545,6 +575,7 @@ data TraceEvent blk
   | TraceImmutableDBEvent       (ImmutableDB.TraceEvent       blk)
   | TraceVolatileDBEvent        (VolatileDB.TraceEvent        blk)
   | TraceLastShutdownUnclean
+  | TraceChainSelStarvationEvent(TraceChainSelStarvationEvent blk)
   deriving (Generic)
 
 
@@ -876,4 +907,9 @@ data TraceIteratorEvent blk
     -- back in the VolatileDB again because the ImmutableDB doesn't have the
     -- next block we're looking for.
   | SwitchBackToVolatileDB
+  deriving (Generic, Eq, Show)
+
+data TraceChainSelStarvationEvent blk
+  = ChainSelStarvationStarted Time
+  | ChainSelStarvationEnded Time (RealPoint blk)
   deriving (Generic, Eq, Show)

@@ -16,6 +16,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl (
   , LgrDB.TraceReplayEvent
   , SelectionChangedInfo (..)
   , TraceAddBlockEvent (..)
+  , TraceChainSelStarvationEvent (..)
   , TraceCopyToImmutableDBEvent (..)
   , TraceEvent (..)
   , TraceFollowerEvent (..)
@@ -69,6 +70,8 @@ import           Ouroboros.Consensus.Util.ResourceRegistry (WithTempRegistry,
 import           Ouroboros.Consensus.Util.STM (Fingerprint (..),
                      WithFingerprint (..))
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import           Ouroboros.Network.BlockFetch.ConsensusInterface
+                     (ChainSelStarvation (..))
 
 {-------------------------------------------------------------------------------
   Initialization
@@ -177,6 +180,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       copyFuse           <- newFuse "copy to immutable db"
       chainSelFuse       <- newFuse "chain selection"
       chainSelQueue      <- newChainSelQueue (Args.cdbsBlocksToAddSize cdbSpecificArgs)
+      varChainSelStarvation <- newTVarIO ChainSelStarvationOngoing
 
       let env = CDB { cdbImmutableDB     = immutableDB
                     , cdbVolatileDB      = volatileDB
@@ -201,6 +205,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                     , cdbChainSelQueue   = chainSelQueue
                     , cdbFutureBlocks    = varFutureBlocks
                     , cdbLoE             = Args.cdbsLoE cdbSpecificArgs
+                    , cdbChainSelStarvation = varChainSelStarvation
                     }
       h <- fmap CDBHandle $ newTVarIO $ ChainDbOpen env
       let chainDB = API.ChainDB
@@ -218,6 +223,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , stream                = Iterator.stream  h
             , newFollower           = Follower.newFollower h
             , getIsInvalidBlock     = getEnvSTM  h Query.getIsInvalidBlock
+            , getChainSelStarvation = getEnvSTM  h Query.getChainSelStarvation
             , closeDB               = closeDB h
             , isOpen                = isOpen  h
             }

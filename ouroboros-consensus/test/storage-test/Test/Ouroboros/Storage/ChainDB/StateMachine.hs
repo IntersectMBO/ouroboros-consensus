@@ -1252,6 +1252,8 @@ deriving instance SOP.Generic         (ImmutableDB.TraceEvent blk)
 deriving instance SOP.HasDatatypeInfo (ImmutableDB.TraceEvent blk)
 deriving instance SOP.Generic         (VolatileDB.TraceEvent blk)
 deriving instance SOP.HasDatatypeInfo (VolatileDB.TraceEvent blk)
+deriving instance SOP.Generic         (TraceChainSelStarvationEvent blk)
+deriving instance SOP.HasDatatypeInfo (TraceChainSelStarvationEvent blk)
 
 data Tag =
     TagGetIsValidJust
@@ -1632,7 +1634,7 @@ traceEventName = \case
     TraceImmutableDBEvent       ev    -> "ImmutableDB."       <> constrName ev
     TraceVolatileDBEvent        ev    -> "VolatileDB."        <> constrName ev
     TraceLastShutdownUnclean          -> "LastShutdownUnclean"
-    TraceChainSelStarvationEvent _    -> "TraceChainSelStarvationEvent"
+    TraceChainSelStarvationEvent ev   -> "ChainSelStarvation." <> constrName ev
 
 mkArgs :: IOLike m
        => TopLevelConfig Blk
