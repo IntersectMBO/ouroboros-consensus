@@ -6,12 +6,12 @@
 
 module Main (main) where
 
+import           Control.Concurrent.Class.MonadSTM (MonadSTM)
+import           Control.Concurrent.Class.MonadSTM.NormalForm (newSVar,
+                     updateSVar)
 import           Control.Monad.IOSim
 import           GHC.Generics
 import           NoThunks.Class
-import           Control.Concurrent.Class.MonadSTM.NormalForm (
-                     newSVar, updateSVar)
-import           Control.Concurrent.Class.MonadSTM (MonadSTM)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 

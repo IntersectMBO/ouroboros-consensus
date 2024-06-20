@@ -17,6 +17,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Args (
   , updateTracer
   ) where
 
+import           Control.ResourceRegistry (ResourceRegistry)
 import           Control.Tracer (Tracer, nullTracer)
 import           Data.Functor.Contravariant ((>$<))
 import           Data.Kind
@@ -37,7 +38,6 @@ import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceRegistry)
 import           System.FS.API
 
 {-------------------------------------------------------------------------------

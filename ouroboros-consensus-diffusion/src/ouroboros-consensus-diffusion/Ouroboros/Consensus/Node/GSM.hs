@@ -27,6 +27,8 @@ module Ouroboros.Consensus.Node.GSM (
   ) where
 
 import qualified Cardano.Slotting.Slot as Slot
+import           Control.Concurrent.Class.MonadSTM.NormalForm (StrictTVar)
+import qualified Control.Concurrent.Class.MonadSTM.NormalForm as StrictSTM
 import qualified Control.Concurrent.Class.MonadSTM.TVar as LazySTM
 import           Control.Monad (forever, join, unless)
 import           Control.Monad.Class.MonadSTM (MonadSTM, STM, atomically, check,
@@ -44,8 +46,6 @@ import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import qualified Ouroboros.Consensus.HardFork.History.Qry as Qry
 import qualified Ouroboros.Consensus.Ledger.Basics as L
 import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
-import           Control.Concurrent.Class.MonadSTM.NormalForm (StrictTVar)
-import qualified Control.Concurrent.Class.MonadSTM.NormalForm as StrictSTM
 import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
                      (LedgerStateJudgement (..))
 import           System.FS.API (HasFS, createDirectoryIfMissing, doesFileExist,

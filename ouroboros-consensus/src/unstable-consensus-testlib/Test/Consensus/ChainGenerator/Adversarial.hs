@@ -39,8 +39,8 @@ import qualified Test.Consensus.ChainGenerator.BitVector as BV
 import qualified Test.Consensus.ChainGenerator.Counting as C
 import           Test.Consensus.ChainGenerator.Honest
                      (ChainSchema (ChainSchema), HonestRecipe (HonestRecipe))
-import           Test.Consensus.ChainGenerator.Params (Asc,
-                     Delta (Delta), Kcp (Kcp), Scg (Scg))
+import           Test.Consensus.ChainGenerator.Params (Asc, Delta (Delta),
+                     Kcp (Kcp), Scg (Scg))
 import qualified Test.Consensus.ChainGenerator.RaceIterator as RI
 import qualified Test.Consensus.ChainGenerator.Slot as S
 import           Test.Consensus.ChainGenerator.Slot

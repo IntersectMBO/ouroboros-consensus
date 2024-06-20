@@ -23,13 +23,13 @@ module Test.Util.LogicalClock (
   ) where
 
 import           Control.Monad
+import           Control.ResourceRegistry
 import           Control.Tracer (Tracer, contramapM)
 import           Data.Time (NominalDiffTime)
 import           Data.Word
 import           GHC.Stack
 import qualified Ouroboros.Consensus.BlockchainTime as BTime
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM
 import           Ouroboros.Consensus.Util.Time
 import           System.Random (Random)

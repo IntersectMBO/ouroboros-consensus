@@ -16,6 +16,7 @@ import           Control.Monad (forM_)
 import           Control.Monad.Except (ExceptT (..), runExceptT)
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Monad.Trans.Class (lift)
+import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.List (intercalate)
 import qualified Data.Map.Strict as Map
@@ -33,7 +34,6 @@ import           Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util.Condense (condense)
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Mock.Chain (Chain)
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import qualified Test.Consensus.Storage.ImmutableDB.Mock as ImmutableDB

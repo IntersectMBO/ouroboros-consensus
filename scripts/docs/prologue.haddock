@@ -56,7 +56,7 @@ implementation of consensus.
 
 * Utilities:
 
-    * "Ouroboros.Consensus.Util.ResourceRegistry"
+    * "Control.ResourceRegistry"
 
 
 == Consensus Components

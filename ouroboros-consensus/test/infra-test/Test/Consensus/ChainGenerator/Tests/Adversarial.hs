@@ -24,13 +24,12 @@ import           Data.Proxy (Proxy (Proxy))
 import qualified System.Random as R
 import qualified System.Timeout as IO (timeout)
 import qualified Test.Consensus.ChainGenerator.Adversarial as A
-import           Test.Consensus.ChainGenerator.Adversarial
-                     (genPrefixBlockCount)
+import           Test.Consensus.ChainGenerator.Adversarial (genPrefixBlockCount)
 import qualified Test.Consensus.ChainGenerator.BitVector as BV
 import qualified Test.Consensus.ChainGenerator.Counting as C
 import qualified Test.Consensus.ChainGenerator.Honest as H
-import           Test.Consensus.ChainGenerator.Params (Asc,
-                     Delta (Delta), Kcp (Kcp), Len (Len), Scg (Scg), genAsc)
+import           Test.Consensus.ChainGenerator.Params (Asc, Delta (Delta),
+                     Kcp (Kcp), Len (Len), Scg (Scg), genAsc)
 import qualified Test.Consensus.ChainGenerator.RaceIterator as RI
 import qualified Test.Consensus.ChainGenerator.Slot as S
 import           Test.Consensus.ChainGenerator.Slot (E (SlotE))

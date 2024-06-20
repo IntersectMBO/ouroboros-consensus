@@ -55,6 +55,7 @@ import           Control.Monad (forM_, unless, void, when)
 import           Control.Monad.Class.MonadThrow (Handler (..), catches)
 import           Control.Monad.Class.MonadTime (MonadTime, getCurrentTime)
 import           Control.Monad.IOSim (runSimOrThrow)
+import           Control.ResourceRegistry
 import           Control.Tracer (contramap, contramapM, nullTracer)
 import           Data.DerivingVia (InstantiatedAt (InstantiatedAt))
 import           Data.List (intercalate)
@@ -98,7 +99,6 @@ import           Ouroboros.Consensus.Storage.ChainDB.API
 import           Ouroboros.Consensus.Util (whenJust)
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (Fingerprint (..),
                      WithFingerprint (..))
 import           Ouroboros.Consensus.Util.Time (multipleNominalDelay,

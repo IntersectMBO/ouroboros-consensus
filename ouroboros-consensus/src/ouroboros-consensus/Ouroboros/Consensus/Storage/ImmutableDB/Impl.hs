@@ -105,6 +105,7 @@ import qualified Codec.CBOR.Write as CBOR
 import           Control.Monad (replicateM_, unless, when)
 import           Control.Monad.Except (runExceptT)
 import           Control.Monad.State.Strict (get, modify, put)
+import           Control.ResourceRegistry
 import           Control.Tracer (Tracer, nullTracer, traceWith)
 import qualified Data.ByteString.Lazy as Lazy
 import           GHC.Stack (HasCallStack)
@@ -129,7 +130,6 @@ import           Ouroboros.Consensus.Util (SomePair (..))
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.EarlyExit
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           System.FS.API.Lazy hiding (allowExisting)
 import           System.FS.CRC
 

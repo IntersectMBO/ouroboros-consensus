@@ -18,9 +18,8 @@ if ! command -v "$fdcmd" &> /dev/null; then
         exit 1
     fi
 fi
-$fdcmd --full-path "$(pwd)/(ouroboros-consensus|scripts|sop-extras|strict-sop-core)" \
+$fdcmd --full-path "$(pwd)/(ouroboros-consensus|scripts|sop-extras|strict-sop-core|resource-registry|nf-vars)" \
        --extension hs \
-       --exclude Setup.hs \
        --exclude ouroboros-consensus-cardano/app/DBAnalyser/Parsers.hs \
        --exec-batch stylish-haskell -c .stylish-haskell.yaml -i
 

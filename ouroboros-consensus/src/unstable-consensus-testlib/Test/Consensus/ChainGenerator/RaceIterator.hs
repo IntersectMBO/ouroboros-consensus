@@ -34,8 +34,7 @@ import           Prelude hiding (init)
 import qualified Test.Consensus.ChainGenerator.BitVector as BV
 import qualified Test.Consensus.ChainGenerator.Counting as C
 import           Test.Consensus.ChainGenerator.Params (Kcp (Kcp))
-import           Test.Consensus.ChainGenerator.Slot
-                     (E (ActiveSlotE, SlotE), S)
+import           Test.Consensus.ChainGenerator.Slot (E (ActiveSlotE, SlotE), S)
 
 -----
 

@@ -21,6 +21,7 @@ module Test.Consensus.Storage.ChainDB.FollowerPromptness (tests) where
 
 import           Control.Monad (forever)
 import           Control.Monad.IOSim (runSimOrThrow)
+import           Control.ResourceRegistry
 import           Control.Tracer (Tracer (..), contramapM, traceWith)
 import           Data.Foldable (for_)
 import           Data.Map.Strict (Map)
@@ -38,7 +39,6 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import           Test.QuickCheck
 import           Test.Tasty

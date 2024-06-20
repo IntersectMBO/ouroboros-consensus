@@ -39,11 +39,10 @@ import           Prelude hiding (words)
 import qualified System.Random.Stateful as R
 import qualified Test.Consensus.ChainGenerator.BitVector as BV
 import qualified Test.Consensus.ChainGenerator.Counting as C
-import           Test.Consensus.ChainGenerator.Params (Asc,
-                     Delta (Delta), Kcp (Kcp), Len (Len), Scg (Scg), genKSD)
+import           Test.Consensus.ChainGenerator.Params (Asc, Delta (Delta),
+                     Kcp (Kcp), Len (Len), Scg (Scg), genKSD)
 import qualified Test.Consensus.ChainGenerator.Slot as S
-import           Test.Consensus.ChainGenerator.Slot
-                     (E (ActiveSlotE, SlotE), S)
+import           Test.Consensus.ChainGenerator.Slot (E (ActiveSlotE, SlotE), S)
 import qualified Test.Consensus.ChainGenerator.Some as Some
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck.Extras (sized1)

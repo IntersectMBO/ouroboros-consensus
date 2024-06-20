@@ -1,8 +1,8 @@
 {-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE TypeFamilies      #-}
-{-# LANGUAGE NamedFieldPuns #-}
 
 module Ouroboros.Consensus.Mock.Protocol.LeaderSchedule (
     ConsensusConfig (..)

@@ -29,11 +29,11 @@ import           Control.Exception (throw)
 import           Control.Monad.Except
 import           Control.Monad.IOSim (IOSim, SimEventType (..), SimTrace,
                      runSimTrace, selectTraceEvents, traceResult)
+import           Control.ResourceRegistry
 import           Data.Time.Clock (picosecondsToDiffTime)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.MonadSTM.RAWLock (RAWLock)
 import qualified Ouroboros.Consensus.Util.MonadSTM.RAWLock as RAWLock
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Test.QuickCheck
 import           Test.QuickCheck.Gen.Unsafe (Capture (..), capture)
 import           Test.QuickCheck.Monadic

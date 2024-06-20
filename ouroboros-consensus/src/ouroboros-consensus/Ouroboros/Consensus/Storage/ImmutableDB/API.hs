@@ -54,6 +54,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.API (
 import qualified Codec.CBOR.Read as CBOR
 import           Control.Monad.Except (ExceptT (..), runExceptT, throwError)
 import           Control.Monad.Trans.Class (lift)
+import           Control.ResourceRegistry (ResourceRegistry)
 import qualified Data.ByteString.Lazy as Lazy
 import           Data.Either (isRight)
 import           Data.Function (on)
@@ -65,7 +66,6 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Storage.Common
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceRegistry)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           System.FS.API.Types (FsError, FsPath)
 import           System.FS.CRC (CRC)

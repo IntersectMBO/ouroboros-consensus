@@ -13,8 +13,8 @@ module Ouroboros.Consensus.Util.IOLike (
   , MonadThrow (..)
   , SomeException
     -- *** Variables with NoThunks invariants
-  , module Control.Concurrent.Class.MonadSTM.NormalForm
   , module Control.Concurrent.Class.MonadMVar.NormalForm
+  , module Control.Concurrent.Class.MonadSTM.NormalForm
     -- *** MonadFork, TODO: Should we hide this in favour of MonadAsync?
   , MonadFork (..)
   , MonadThread (..)
@@ -27,9 +27,9 @@ module Ouroboros.Consensus.Util.IOLike (
   , MonadST (..)
   , PrimMonad (..)
     -- *** MonadSTM
-  , MonadSTM (..)
   , MonadInspectSTM (..)
   , MonadLabelledSTM
+  , MonadSTM (..)
   , throwSTM
     -- *** MonadTime
   , DiffTime
@@ -51,6 +51,8 @@ import           Cardano.Crypto.KES (KESAlgorithm, SignKeyKES)
 import qualified Cardano.Crypto.KES as KES
 import           Control.Applicative (Alternative)
 import           Control.Concurrent.Class.MonadMVar
+import           Control.Concurrent.Class.MonadMVar.NormalForm
+import           Control.Concurrent.Class.MonadSTM.NormalForm
 import           Control.Monad.Class.MonadAsync
 import           Control.Monad.Class.MonadEventlog
 import           Control.Monad.Class.MonadFork
@@ -61,8 +63,6 @@ import           Control.Monad.Class.MonadTime.SI
 import           Control.Monad.Class.MonadTimer.SI
 import           Control.Monad.Primitive
 import           NoThunks.Class (NoThunks (..))
-import           Control.Concurrent.Class.MonadSTM.NormalForm
-import           Control.Concurrent.Class.MonadMVar.NormalForm
 import           Ouroboros.Consensus.Util.Orphans ()
 
 {-------------------------------------------------------------------------------

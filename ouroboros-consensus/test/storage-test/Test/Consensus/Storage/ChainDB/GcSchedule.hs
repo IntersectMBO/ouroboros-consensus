@@ -16,9 +16,7 @@
 -- We then test that the real implementation behaves exactly as the model
 -- predicts.
 --
-module Test.Consensus.Storage.ChainDB.GcSchedule (
-    tests
-  ) where
+module Test.Consensus.Storage.ChainDB.GcSchedule (tests) where
 
 import           Control.Monad (forM)
 import           Control.Monad.IOSim (runSimOrThrow)
