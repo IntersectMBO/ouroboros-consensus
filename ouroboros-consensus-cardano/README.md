@@ -91,12 +91,12 @@ User should run this if they are dealing with a `cardano` chain.
 
 The user can limit the maximum number of blocks that db-analyser will process.
 
-### Database validation
+### Database validation, via --db-validation
 
 The tool provides two database validation policies:
 
 - `validate-all-blocks`, which will cause the tool to validate all chunks on the
-  immutable and volatile databases.
+  immutable database.
 - `minimum-block-validation`, which will cause the tool to validate only the
   most recent chunk in the immutable database.
 
@@ -126,6 +126,12 @@ Lastly the user can provide the analysis that should be run on the chain:
   `DB_PATH/ledger/SLOT_NUMBER_db-analyser`. If there is no block under requested
   slot number, it will create one on the next available slot number (and issue a
   warning about this fact).
+
+  By default, for better performance, blocks are only *re*applied, skipping eg
+  validation of signatures and Plutus scripts. If desired (eg when investigating
+  a Ledger bug), one can use `--full-ledger-validation` to also perform these
+  checks. If there is an error on block application, the previous ledger state
+  is stored.
 
 * `--count-blocks` prints out the number of blocks it saw on the chain
 

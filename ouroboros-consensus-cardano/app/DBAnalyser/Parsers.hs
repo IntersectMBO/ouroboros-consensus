@@ -1,5 +1,6 @@
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE CPP           #-}
+{-# LANGUAGE LambdaCase    #-}
 
 module DBAnalyser.Parsers (
     BlockType (..)
@@ -8,6 +9,7 @@ module DBAnalyser.Parsers (
   ) where
 
 import           Cardano.Crypto (RequiresNetworkMagic (..))
+import           Cardano.Tools.DBAnalyser.Analysis
 import           Cardano.Tools.DBAnalyser.Block.Byron
 import           Cardano.Tools.DBAnalyser.Block.Cardano
 import           Cardano.Tools.DBAnalyser.Block.Shelley
@@ -55,16 +57,18 @@ parseSelectDB =
 
 
 parseValidationPolicy :: Parser (Maybe ValidateBlocks)
-parseValidationPolicy = optional $ asum [
-      flag' ValidateAllBlocks $ mconcat [
-          long "validate-all-blocks"
-        , help "Validate all blocks of the Immutable DB"
-        ]
-    , flag' MinimumBlockValidation $ mconcat [
-          long "minimum-block-validation"
-        , help "Validate a minimum part of the Immutable DB"
-        ]
-    ]
+parseValidationPolicy =
+    optional $ option reader $ mconcat [
+        long "db-validation"
+      , help $ "The extent of the ChainDB on-disk files validation. This is "
+            <> "completely unrelated to validation of the ledger rules. "
+            <> "Possible values: validate-all-blocks, minimum-block-validation."
+      ]
+  where
+    reader = maybeReader $ \case
+        "validate-all-blocks"      -> Just ValidateAllBlocks
+        "minimum-block-validation" -> Just MinimumBlockValidation
+        _                          -> Nothing
 
 parseAnalysis :: Parser AnalysisName
 parseAnalysis = asum [
@@ -114,10 +118,19 @@ parseAnalysis = asum [
     ]
 
 storeLedgerParser :: Parser AnalysisName
-storeLedgerParser = (StoreLedgerStateAt . SlotNo) <$> option auto
-  (  long "store-ledger"
-  <> metavar "SLOT_NUMBER"
-  <> help "Store ledger state at specific slot number" )
+storeLedgerParser = do
+  slot <- SlotNo <$> option auto
+    (  long "store-ledger"
+    <> metavar "SLOT_NUMBER"
+    <> help "Store ledger state at specific slot number" )
+  ledgerValidation <- flag LedgerReapply LedgerApply
+    (  long "full-ledger-validation"
+    <> help (  "Use full block application while applying blocks to ledger states, "
+            <> "also validating signatures and scripts. "
+            <> "This is much slower than block reapplication (the default)."
+            )
+    )
+  pure $ StoreLedgerStateAt slot ledgerValidation
 
 checkNoThunksParser :: Parser AnalysisName
 checkNoThunksParser = CheckNoThunksEvery <$> option auto
