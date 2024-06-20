@@ -40,11 +40,10 @@
 -- more state than that, in order to deal with stateful API components such as
 -- database cursors, but that's basically it.
 --
-module Test.Consensus.Storage.ImmutableDB.StateMachine (
-    tests
-  ) where
+module Test.Consensus.Storage.ImmutableDB.StateMachine (tests) where
 
 import           Control.Monad (forM_, void)
+import           Control.ResourceRegistry
 import           Data.Bifunctor (first)
 import           Data.ByteString.Lazy (ByteString)
 import           Data.Coerce (Coercible, coerce)
@@ -74,7 +73,6 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index as Index
                      (CacheConfig (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Util
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Prelude hiding (elem, notElem)
 import           System.FS.API (HasFS (..), SomeHasFS (..))
 import           System.FS.API.Types (FsPath, mkFsPath)

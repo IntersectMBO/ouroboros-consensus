@@ -19,12 +19,12 @@ module Ouroboros.Consensus.Util.STM (
   , blockUntilJust
   ) where
 
+import           Control.ResourceRegistry
 import           Data.Void
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           GHC.Stack
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 
 {-------------------------------------------------------------------------------
   Misc

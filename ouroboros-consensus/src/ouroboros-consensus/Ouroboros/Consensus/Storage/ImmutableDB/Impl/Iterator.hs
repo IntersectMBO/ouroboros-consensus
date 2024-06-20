@@ -1,12 +1,14 @@
-{-# LANGUAGE DeriveAnyClass      #-}
-{-# LANGUAGE DeriveGeneric       #-}
-{-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE GADTs               #-}
-{-# LANGUAGE LambdaCase          #-}
-{-# LANGUAGE NamedFieldPuns      #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving  #-}
+{-# LANGUAGE DeriveAnyClass        #-}
+{-# LANGUAGE DeriveGeneric         #-}
+{-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE GADTs                 #-}
+{-# LANGUAGE LambdaCase            #-}
+{-# LANGUAGE NamedFieldPuns        #-}
+{-# LANGUAGE QuantifiedConstraints #-}
+{-# LANGUAGE RecordWildCards       #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
+{-# LANGUAGE StandaloneDeriving    #-}
+{-# LANGUAGE UndecidableInstances  #-}
 
 module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Iterator (
     CurrentChunkInfo (..)
@@ -20,6 +22,8 @@ import qualified Codec.CBOR.Read as CBOR
 import           Control.Monad (unless, void, when)
 import           Control.Monad.Except (ExceptT, runExceptT, throwError)
 import           Control.Monad.Trans.Class (lift)
+import           Control.ResourceRegistry (ResourceKey, ResourceRegistry,
+                     allocate, release, unsafeRelease)
 import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.ByteString.Short as Short
 import           Data.Foldable (find)
@@ -45,8 +49,6 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Types
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Util
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceKey,
-                     ResourceRegistry, allocate, release, unsafeRelease)
 import           Ouroboros.Network.SizeInBytes
 import           System.FS.API.Lazy
 import           System.FS.CRC
@@ -75,7 +77,9 @@ data IteratorHandle m blk h = IteratorHandle {
 data IteratorStateOrExhausted m hash h =
     IteratorStateOpen !(IteratorState m hash h)
   | IteratorStateExhausted
-  deriving (Generic, NoThunks)
+  deriving (Generic)
+
+deriving instance (StandardHash blk, forall a. NoThunks a => NoThunks (StrictTVar m a)) => NoThunks (IteratorStateOrExhausted m blk h)
 
 data IteratorState m blk h = IteratorState {
       itsChunk        :: !ChunkNo
@@ -98,7 +102,7 @@ data IteratorState m blk h = IteratorState {
     }
   deriving (Generic)
 
-deriving instance (StandardHash blk, IOLike m) => NoThunks (IteratorState m blk h)
+deriving instance (StandardHash blk, forall a. NoThunks a => NoThunks (StrictTVar m a)) => NoThunks (IteratorState m blk h)
 
 -- | Auxiliary data type that combines the 'currentChunk' and
 -- 'currentChunkOffset' fields from 'OpenState'. This is used to avoid passing

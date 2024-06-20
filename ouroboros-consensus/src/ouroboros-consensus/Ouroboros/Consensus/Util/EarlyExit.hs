@@ -22,6 +22,7 @@ module Ouroboros.Consensus.Util.EarlyExit (
 
 import           Control.Applicative
 import           Control.Concurrent.Class.MonadMVar
+import           Control.Concurrent.Class.MonadMVar.NormalForm (StrictMVar)
 import           Control.Monad
 import           Control.Monad.Class.MonadAsync
 import           Control.Monad.Class.MonadEventlog
@@ -41,7 +42,6 @@ import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Util ((.:))
 import           Ouroboros.Consensus.Util.IOLike (IOLike (..), PrimMonad (..),
                      StrictSVar, StrictTVar, castStrictSVar, castStrictTVar)
-import           Control.Concurrent.Class.MonadMVar.NormalForm (StrictMVar)
 
 {-------------------------------------------------------------------------------
   Basic definitions

@@ -22,6 +22,7 @@ import           Control.Monad.Reader (MonadReader, ReaderT, ask, runReaderT)
 import           Control.Monad.State (MonadState, StateT, evalStateT, get,
                      modify, put)
 import           Control.Monad.Trans.Class (lift)
+import           Control.ResourceRegistry (closeRegistry, unsafeNewRegistry)
 import           Data.Maybe (isJust)
 import           Ouroboros.Consensus.Block.Abstract (blockSlot)
 import           Ouroboros.Consensus.Block.RealPoint
@@ -40,8 +41,6 @@ import           Ouroboros.Consensus.Storage.Common (StreamFrom (..),
                      StreamTo (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks as ImmutableDB
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry (closeRegistry,
-                     unsafeNewRegistry)
 import           Ouroboros.Network.Block (ChainUpdate (..), Point, blockPoint)
 import qualified Ouroboros.Network.Mock.Chain as Mock
 import qualified Test.Consensus.Storage.ChainDB.Model as Model

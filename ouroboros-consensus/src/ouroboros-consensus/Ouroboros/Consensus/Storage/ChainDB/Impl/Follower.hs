@@ -17,6 +17,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Follower (
 import           Codec.CBOR.Write (toLazyByteString)
 import           Control.Exception (assert)
 import           Control.Monad (join)
+import           Control.ResourceRegistry (ResourceRegistry)
 import           Control.Tracer (contramap, traceWith)
 import qualified Data.ByteString.Lazy as Lazy
 import           Data.Functor ((<&>))
@@ -35,7 +36,6 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceRegistry)
 import           Ouroboros.Consensus.Util.STM (blockUntilJust)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF

@@ -18,9 +18,8 @@ import           Data.Proxy (Proxy (Proxy))
 import qualified System.Random as R
 import qualified System.Timeout as IO (timeout)
 import qualified Test.Consensus.ChainGenerator.Honest as H
-import           Test.Consensus.ChainGenerator.Params (Asc,
-                     Delta (Delta), Kcp (Kcp), Len (Len), Scg (Scg), genAsc,
-                     genKSD)
+import           Test.Consensus.ChainGenerator.Params (Asc, Delta (Delta),
+                     Kcp (Kcp), Len (Len), Scg (Scg), genAsc, genKSD)
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck.Extras (sized1, unsafeMapSuchThatJust)
 import           Test.QuickCheck.Random (QCGen)

@@ -14,6 +14,7 @@ module Test.Util.HardFork.OracularClock (
   ) where
 
 import           Control.Monad (void, when)
+import           Control.ResourceRegistry
 import           Data.Foldable (toList)
 import           Data.Function (fix)
 import           Data.Time
@@ -21,7 +22,6 @@ import           GHC.Stack
 import           Ouroboros.Consensus.Block
 import qualified Ouroboros.Consensus.BlockchainTime as BTime
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.Time (nominalDelay)
 import           Test.Util.HardFork.Future (Future, futureSlotLengths,
                      futureSlotToTime, futureTimeToSlot)

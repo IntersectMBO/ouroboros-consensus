@@ -36,9 +36,7 @@
 -- The model here is satisfyingly simple: just a map from blocks to their
 -- corresponding ledger state.
 --
-module Test.Consensus.Storage.LedgerDB.OnDisk (
-    tests
-  ) where
+module Test.Consensus.Storage.LedgerDB.OnDisk (tests) where
 
 import           Codec.Serialise (Serialise)
 import qualified Codec.Serialise as S

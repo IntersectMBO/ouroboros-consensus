@@ -11,6 +11,7 @@ import           Cardano.Slotting.Slot (WithOrigin (..))
 import           Cardano.Tools.DBAnalyser.HasAnalysis
 import           Cardano.Tools.DBTruncater.Types
 import           Control.Monad
+import           Control.ResourceRegistry (runWithTempRegistry, withRegistry)
 import           Control.Tracer
 import           Data.Functor.Identity
 import           Data.Traversable (for)
@@ -24,8 +25,6 @@ import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB, Iterator,
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry (runWithTempRegistry,
-                     withRegistry)
 import           Prelude hiding (truncate)
 import           System.IO
 

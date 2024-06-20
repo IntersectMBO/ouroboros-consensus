@@ -12,13 +12,13 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Stream (
   ) where
 
 import           Control.Monad.Except
+import           Control.ResourceRegistry
 import           GHC.Stack
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Storage.Common
 import           Ouroboros.Consensus.Storage.ImmutableDB hiding (streamAll)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.API as ImmutableDB
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 
 {-------------------------------------------------------------------------------
   Abstraction over the streaming API provided by the Chain DB

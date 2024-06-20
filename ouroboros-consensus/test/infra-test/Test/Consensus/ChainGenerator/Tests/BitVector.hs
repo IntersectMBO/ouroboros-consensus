@@ -16,8 +16,8 @@ import qualified System.Random.Stateful as R
 import qualified Test.Consensus.ChainGenerator.BitVector as BV
 import qualified Test.Consensus.ChainGenerator.Counting as C
 import qualified Test.Consensus.ChainGenerator.Slot as S
-import           Test.Consensus.ChainGenerator.Slot
-                     (E (EmptySlotE, SlotE), POL, PreImage, S)
+import           Test.Consensus.ChainGenerator.Slot (E (EmptySlotE, SlotE), POL,
+                     PreImage, S)
 import qualified Test.Consensus.ChainGenerator.Some as Some
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck.Random (QCGen)

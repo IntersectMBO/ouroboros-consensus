@@ -46,6 +46,7 @@ import           Control.Monad.Class.MonadTimer.SI
 import           Control.Monad.Except (Except, runExcept, throwError)
 import           Control.Monad.IOSim
 import           Control.Monad.Reader (ReaderT (..), lift)
+import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.Fixed
 import qualified Data.Time.Clock as Time
@@ -53,7 +54,6 @@ import           NoThunks.Class (AllowThunk (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (withWatcher)
 import           Ouroboros.Consensus.Util.Time
 import           Test.QuickCheck hiding (Fixed)

@@ -260,7 +260,6 @@ library
     Ouroboros.Consensus.Util.MonadSTM.RAWLock
     Ouroboros.Consensus.Util.Orphans
     Ouroboros.Consensus.Util.RedundantConstraints
-    Ouroboros.Consensus.Util.ResourceRegistry
     Ouroboros.Consensus.Util.STM
     Ouroboros.Consensus.Util.Time
     Ouroboros.Consensus.Util.Versioned
@@ -286,6 +285,7 @@ library
     io-classes ^>=1.5,
     measures,
     mtl,
+    nf-vars ^>=0.1,
     nothunks ^>=0.1.5,
     ouroboros-network-api ^>=0.7.3,
     ouroboros-network-mock ^>=0.1,
@@ -294,6 +294,7 @@ library
     psqueues ^>=0.2.3,
     quiet ^>=0.2,
     reflection,
+    resource-registry ^>=0.1,
     semialign >=1.1,
     serialise ^>=0.2,
     si-timers ^>=1.5,
@@ -301,7 +302,6 @@ library
     sop-extras ^>=0.2,
     streaming,
     strict-sop-core ^>=0.1,
-    nf-vars,
     text,
     these ^>=1.2,
     time,
@@ -396,17 +396,18 @@ library unstable-consensus-testlib
     io-classes,
     io-sim,
     mtl,
+    nf-vars,
     nothunks,
     optparse-applicative,
     ouroboros-consensus,
     ouroboros-network-api,
     ouroboros-network-mock,
-    nf-vars,
     pretty-simple,
     quickcheck-instances,
     quickcheck-state-machine:no-vendored-treediff ^>=0.10,
     quiet,
     random,
+    resource-registry,
     serialise,
     si-timers,
     sop-core,
@@ -520,7 +521,6 @@ test-suite consensus-test
     Test.Consensus.MiniProtocol.BlockFetch.Client
     Test.Consensus.MiniProtocol.ChainSync.Client
     Test.Consensus.MiniProtocol.LocalStateQuery.Server
-    Test.Consensus.ResourceRegistry
     Test.Consensus.Util.MonadSTM.RAWLock
     Test.Consensus.Util.Versioned
 
@@ -537,7 +537,6 @@ test-suite consensus-test
     contra-tracer,
     deepseq,
     fs-api ^>=0.2.0.1,
-    generics-sop,
     hashable,
     io-classes,
     io-sim,
@@ -548,9 +547,9 @@ test-suite consensus-test
     ouroboros-network-api,
     ouroboros-network-mock,
     ouroboros-network-protocols:{ouroboros-network-protocols, testlib},
-    quickcheck-state-machine:no-vendored-treediff,
     quiet,
     random,
+    resource-registry,
     serialise,
     si-timers,
     sop-core,
@@ -560,7 +559,6 @@ test-suite consensus-test
     tasty-hunit,
     tasty-quickcheck,
     time,
-    tree-diff,
     typed-protocols ^>=0.1.1,
     typed-protocols-examples,
     unstable-consensus-testlib,
@@ -656,6 +654,7 @@ test-suite storage-test
     pretty-show,
     quickcheck-state-machine:no-vendored-treediff ^>=0.10,
     random,
+    resource-registry,
     serialise,
     tasty,
     tasty-hunit,
@@ -713,6 +712,7 @@ benchmark ChainSync-client-bench
     ouroboros-consensus,
     ouroboros-network-api,
     ouroboros-network-protocols,
+    resource-registry,
     time,
     typed-protocols-examples,
     unstable-consensus-testlib,
@@ -724,7 +724,6 @@ test-suite doctest
   type: exitcode-stdio-1.0
   hs-source-dirs: test
   default-language: Haskell2010
-  ghc-options: -Wno-unused-packages
   build-depends:
     base,
     latex-svg-image,

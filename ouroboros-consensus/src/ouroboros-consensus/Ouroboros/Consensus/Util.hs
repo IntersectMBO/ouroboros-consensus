@@ -66,8 +66,7 @@ module Ouroboros.Consensus.Util (
   , withFuse
   ) where
 
-import           Cardano.Crypto.Hash (Hash, HashAlgorithm,
-                     hashFromBytesShort)
+import           Cardano.Crypto.Hash (Hash, HashAlgorithm, hashFromBytesShort)
 import           Control.Monad (unless)
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Trans.Class

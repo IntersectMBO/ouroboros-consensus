@@ -38,7 +38,7 @@ module Ouroboros.Consensus.Mempool (
 import           Ouroboros.Consensus.Mempool.API (ForgeLedgerState (..),
                      Mempool (..), MempoolAddTxResult (..),
                      MempoolSnapshot (..), TicketNo, TxSizeInBytes, addLocalTxs,
-                     addTxs,                      mempoolTxAddedToMaybe, zeroTicketNo)
+                     addTxs, mempoolTxAddedToMaybe, zeroTicketNo)
 import           Ouroboros.Consensus.Mempool.Capacity (ByteSize (..),
                      MempoolCapacityBytes (..),
                      MempoolCapacityBytesOverride (..), MempoolSize (..),

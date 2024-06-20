@@ -62,6 +62,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
   , TraceValidationEvent (..)
   ) where
 
+import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.Foldable (traverse_)
 import           Data.Map.Strict (Map)
@@ -102,7 +103,6 @@ import           Ouroboros.Consensus.Util (Fuse)
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.Enclose (Enclosing, Enclosing' (..))
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (WithFingerprint)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import           Ouroboros.Network.Block (MaxSlotNo)

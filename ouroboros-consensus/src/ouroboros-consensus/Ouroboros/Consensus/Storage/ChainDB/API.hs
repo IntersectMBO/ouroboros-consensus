@@ -63,6 +63,7 @@ module Ouroboros.Consensus.Storage.ChainDB.API (
   ) where
 
 import           Control.Monad (void)
+import           Control.ResourceRegistry
 import           Data.Typeable (Typeable)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
@@ -80,7 +81,6 @@ import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util ((..:))
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (WithFingerprint)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF

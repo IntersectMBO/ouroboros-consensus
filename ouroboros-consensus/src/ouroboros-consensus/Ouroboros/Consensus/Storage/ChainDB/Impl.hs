@@ -37,6 +37,8 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl (
 
 import           Control.Monad (when)
 import           Control.Monad.Trans.Class (lift)
+import           Control.ResourceRegistry (WithTempRegistry, allocate,
+                     runInnerWithTempRegistry, runWithTempRegistry)
 import           Control.Tracer
 import           Data.Functor (void, (<&>))
 import           Data.Functor.Identity (Identity)
@@ -64,8 +66,6 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util (newFuse, whenJust, withFuse)
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry (WithTempRegistry,
-                     allocate, runInnerWithTempRegistry, runWithTempRegistry)
 import           Ouroboros.Consensus.Util.STM (Fingerprint (..),
                      WithFingerprint (..))
 import qualified Ouroboros.Network.AnchoredFragment as AF

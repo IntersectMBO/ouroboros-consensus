@@ -15,6 +15,7 @@ import           Cardano.Tools.DBSynthesizer.Types
 import           Control.Monad.Trans.Except (ExceptT)
 import           Control.Monad.Trans.Except.Extra (firstExceptT,
                      handleIOExceptT, hoistEither, runExceptT)
+import           Control.ResourceRegistry
 import           Control.Tracer (nullTracer)
 import           Data.Aeson as Aeson (FromJSON, Result (..), Value,
                      eitherDecodeFileStrict', eitherDecodeStrict', fromJSON)
@@ -34,7 +35,6 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB (getTipPoint)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB (withDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import           Ouroboros.Consensus.Util.IOLike (atomically)
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Block
 import           Ouroboros.Network.Point (WithOrigin (..))
 import           System.Directory

@@ -8,14 +8,14 @@
 module Test.Util.Orphans.NoThunks () where
 
 import           Control.Concurrent.Class.MonadMVar
+import           Control.Concurrent.Class.MonadMVar.NormalForm
+import           Control.Concurrent.Class.MonadSTM
+import           Control.Concurrent.Class.MonadSTM.NormalForm
 import           Control.Monad.IOSim
 import           Control.Monad.ST.Lazy
 import           Control.Monad.ST.Unsafe (unsafeSTToIO)
 import           Data.Proxy
 import           NoThunks.Class (NoThunks (..))
-import           Control.Concurrent.Class.MonadSTM.NormalForm
-import           Control.Concurrent.Class.MonadMVar.NormalForm
-import           Control.Concurrent.Class.MonadSTM
 import           System.FS.API.Types
 import           System.FS.Sim.FsTree
 import           System.FS.Sim.MockFS

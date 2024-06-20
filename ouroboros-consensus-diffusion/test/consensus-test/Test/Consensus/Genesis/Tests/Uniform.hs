@@ -33,6 +33,7 @@ import           Ouroboros.Network.Protocol.ChainSync.Codec
                      (ChainSyncTimeout (..))
 import           Ouroboros.Network.Protocol.Limits (shortWait)
 import           Test.Consensus.BlockTree (BlockTree (..), btbSuffix)
+import           Test.Consensus.ChainGenerator.Params (Delta (Delta))
 import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.Genesis.Setup.Classifiers
 import           Test.Consensus.PeerSimulator.ChainSync (chainSyncNoTimeouts)
@@ -45,7 +46,6 @@ import           Test.Consensus.PointSchedule.Shrinking
                      (shrinkByRemovingAdversaries, shrinkPeerSchedules)
 import           Test.Consensus.PointSchedule.SinglePeer
                      (SchedulePoint (ScheduleBlockPoint, ScheduleTipPoint))
-import           Test.Consensus.ChainGenerator.Params (Delta (Delta))
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck
 import           Test.Tasty

@@ -556,6 +556,7 @@ library unstable-cardano-tools
     ouroboros-network-api,
     ouroboros-network-framework ^>=0.13.2,
     ouroboros-network-protocols,
+    resource-registry ^>=0.1,
     serialise ^>=0.2,
     singletons,
     sop-core,

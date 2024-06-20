@@ -119,6 +119,7 @@ import qualified Codec.CBOR.Write as CBOR
 import           Control.Monad (unless, when)
 import           Control.Monad.State.Strict (get, gets, lift, modify, put,
                      state)
+import           Control.ResourceRegistry
 import           Control.Tracer (Tracer, nullTracer, traceWith)
 import qualified Data.ByteString.Lazy as Lazy
 import           Data.List as List (foldl')
@@ -142,7 +143,6 @@ import           Ouroboros.Consensus.Storage.VolatileDB.Impl.Util
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Consensus.Util.MonadSTM.RAWLock as RAWLock
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Block (MaxSlotNo (..))
 import           System.FS.API.Lazy
 

@@ -1,21 +1,16 @@
-{-# LANGUAGE DeriveGeneric              #-}
-{-# LANGUAGE DeriveTraversable          #-}
-{-# LANGUAGE FlexibleContexts           #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE GADTs                      #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE KindSignatures             #-}
-{-# LANGUAGE LambdaCase                 #-}
-{-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE StandaloneDeriving         #-}
-{-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE DeriveGeneric       #-}
+{-# LANGUAGE DeriveTraversable   #-}
+{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE FlexibleInstances   #-}
+{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE KindSignatures      #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving  #-}
+{-# LANGUAGE TypeApplications    #-}
 
 -- | Tests for the resource registry
---
--- The resource registry is a component throughout the consensus layer that
--- helps us keep track of resources and makes sure that all resources that we
--- allocate are eventually also deallocated in the right order.
 --
 -- The tests for the registry are model based. The model records which resources
 -- we expect to be alive and which we expect to have been deallocated. The only
@@ -28,18 +23,22 @@
 --
 -- We then verify that the resource registry behaves like the model, cleaning
 -- up resources as threads terminate or crash.
---
-module Test.Consensus.ResourceRegistry (tests) where
+module Main (main) where
 
-import           Control.Monad ((>=>))
+import           Control.Concurrent.Class.MonadMVar.Strict
+import           Control.Concurrent.Class.MonadSTM.Strict
+import           Control.Monad
+import           Control.Monad.Class.MonadAsync
+import           Control.Monad.Class.MonadFork
+import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Class.MonadTimer.SI
-import           Control.Monad.Except (Except, MonadError, runExcept,
-                     throwError)
-import           Control.Monad.IO.Class (liftIO)
-import           Data.Foldable (toList)
-import           Data.Function (on)
+import           Control.Monad.Except
+import           Control.Monad.IO.Class
+import           Control.ResourceRegistry
+import           Data.Foldable
+import           Data.Function
 import           Data.Functor.Classes
-import           Data.Kind (Type)
+import           Data.Kind
 import           Data.List (delete, sort)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -47,23 +46,21 @@ import           Data.TreeDiff
 import           Data.Typeable
 import qualified Generics.SOP as SOP
 import           GHC.Generics (Generic, Generic1)
-import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
-import           Prelude hiding (elem)
-import qualified Test.QuickCheck as QC
-import           Test.QuickCheck (Gen)
-import qualified Test.QuickCheck.Monadic as QC
+import           Prelude
+import           Test.QuickCheck
+import           Test.QuickCheck.Monadic hiding (run)
 import           Test.StateMachine
 import qualified Test.StateMachine.Types as QSM
 import qualified Test.StateMachine.Types.Rank2 as Rank2
 import           Test.Tasty hiding (after)
-import           Test.Tasty.QuickCheck (testProperty)
+import           Test.Tasty.QuickCheck
 import           Test.Util.QSM
 import           Test.Util.SOP
 import           Test.Util.ToExpr ()
 
-tests :: TestTree
-tests = testGroup "ResourceRegistry" [
+main :: IO ()
+main = defaultMain
+    $ testGroup "ResourceRegistry" [
       testProperty "sequential" prop_sequential
     ]
 
@@ -293,16 +290,16 @@ data ThreadInstr m :: Type -> Type where
 -- | Instruction along with an MVar for the result
 data QueuedInstr m = forall a. QueuedInstr (ThreadInstr m a) (StrictMVar m a)
 
-runInThread :: IOLike m => TestThread m -> ThreadInstr m a -> m a
+runInThread :: (MonadMVar m, MonadSTM m) => TestThread m -> ThreadInstr m a -> m a
 runInThread TestThread{..} instr = do
-    result <- uncheckedNewEmptyMVar
+    result <- newEmptyMVar
     atomically $ writeTQueue threadComms (QueuedInstr instr result)
     takeMVar result
 
-instance (IOLike m) => Show (TestThread m) where
+instance (MonadThread m) => Show (TestThread m) where
   show TestThread{..} = "<Thread " ++ show (threadId testThread) ++ ">"
 
-instance (IOLike m) => Eq (TestThread m) where
+instance (MonadThread m) => Eq (TestThread m) where
   (==) = (==) `on` (threadId . testThread)
 
 -- | Create a new thread in the given registry
@@ -310,14 +307,14 @@ instance (IOLike m) => Eq (TestThread m) where
 -- In order to be able to see which threads are alive, we have threads
 -- register and unregister themselves. We do not reuse the registry for this,
 -- to avoid circular reasoning in the tests.
-newThread :: forall m. IOLike m
+newThread :: forall m. (MonadMVar m, MonadMask m, MonadAsync m, MonadFork m)
           => StrictTVar m [TestThread m]
           -> ResourceRegistry m
           -> Link (TestThread m)
           -> m (TestThread m)
 newThread alive parentReg = \shouldLink -> do
     comms      <- atomically $ newTQueue
-    spawned    <- uncheckedNewEmptyMVar
+    spawned    <- newEmptyMVar
 
     thread <- forkThread parentReg "newThread" $
                 withRegistry $ \childReg ->
@@ -360,7 +357,7 @@ newThread alive parentReg = \shouldLink -> do
               putMVar result ()
               error "crashing"
 
-runIO :: forall m. (IOLike m, MonadTimer m)
+runIO :: forall m. (MonadMVar m, MonadTimer m, MonadMask m, MonadAsync m, MonadFork m)
       => StrictTVar m [TestThread m]
       -> ResourceRegistry m
       -> Cmd (TestThread m) -> m (Resp (TestThread m))
@@ -398,8 +395,8 @@ runIO alive reg cmd = catchEx $ timeout 1 $
 
 newtype At m f r = At (f (Reference (TestThread m) r))
 
-deriving instance (Show1 r, IOLike m) => Show (At m Cmd  r)
-deriving instance (Show1 r, IOLike m) => Show (At m Resp r)
+deriving instance (MonadThread m, Show1 r) => Show (At m Cmd  r)
+deriving instance (MonadThread m, Show1 r) => Show (At m Resp r)
 
 {-------------------------------------------------------------------------------
   Relate model to IO
@@ -423,11 +420,11 @@ initModel = Model emptyMock []
   Events
 -------------------------------------------------------------------------------}
 
-toMock :: forall m f r. (Functor f, Eq1 r, Show1 r, IOLike m)
+toMock :: forall m f r. (Functor f, Eq1 r, Show1 r, MonadThread m)
        => Model m r -> At m f r -> f MockThread
 toMock (Model _ hs) (At fr) = (hs !) <$> fr
 
-step :: (Eq1 r, Show1 r, IOLike m)
+step :: (Eq1 r, Show1 r, MonadThread m)
      => Model m r -> At m Cmd r -> (Resp MockThread, Mock)
 step m@(Model mock _) c = runMock (toMock m c) mock
 
@@ -438,7 +435,7 @@ data Event m r = Event {
     , mockResp :: Resp MockThread
     }
 
-lockstep :: (Eq1 r, Show1 r, IOLike m)
+lockstep :: (Eq1 r, Show1 r, MonadThread m)
          => Model m      r
          -> At    m Cmd  r
          -> At    m Resp r
@@ -464,9 +461,9 @@ lockstep m@(Model _ hs) c (At resp) = Event {
 -------------------------------------------------------------------------------}
 
 generator :: forall m. Model m Symbolic -> Maybe (Gen (At m Cmd Symbolic))
-generator (Model _ hs) = Just $ QC.oneof $ concat [
+generator (Model _ hs) = Just $ oneof $ concat [
       withoutHandle
-    , if null hs then [] else withHandle (QC.elements (map fst hs))
+    , if null hs then [] else withHandle (elements (map fst hs))
     ]
   where
     withoutHandle :: [Gen (At m Cmd Symbolic)]
@@ -484,7 +481,7 @@ generator (Model _ hs) = Just $ QC.oneof $ concat [
         ]
 
     genLink :: Gen (Link ())
-    genLink = aux <$> QC.arbitrary
+    genLink = aux <$> arbitrary
       where
         aux :: Bool -> Link ()
         aux True  = LinkFromParent ()
@@ -519,14 +516,14 @@ instance ToExpr Mock
 instance ToExpr (Link MockThread)
 instance ToExpr (Model IO Concrete)
 
-instance (IOLike m) => ToExpr (TestThread m) where
+instance (MonadThread m) => ToExpr (TestThread m) where
   toExpr = defaultExprViaShow
 
 {-------------------------------------------------------------------------------
   QSM toplevel
 -------------------------------------------------------------------------------}
 
-semantics :: (IOLike m, MonadTimer m, Typeable m)
+semantics :: (MonadMVar m, MonadMask m, MonadAsync m, MonadFork m, MonadTimer m, Typeable m)
           => StrictTVar m [TestThread m]
           -> ResourceRegistry m
           -> At m Cmd Concrete -> m (At m Resp Concrete)
@@ -534,11 +531,11 @@ semantics alive reg (At c) =
     (At . fmap reference) <$>
       runIO alive reg (concrete <$> c)
 
-transition :: (Eq1 r, Show1 r, IOLike m)
+transition :: (Eq1 r, Show1 r, MonadThread m)
            => Model m r -> At m Cmd r -> At m Resp r -> Model m r
 transition m c = after . lockstep m c
 
-precondition :: forall m. (IOLike m)
+precondition :: forall m. (MonadThread m)
              => Model m Symbolic -> At m Cmd Symbolic -> Logic
 precondition (Model mock hs) (At c) =
     forAll (toList c) checkRef
@@ -549,7 +546,7 @@ precondition (Model mock hs) (At c) =
           Nothing -> Bot
           Just r' -> r' `member` mockLiveThreads (threads mock)
 
-postcondition :: (IOLike m)
+postcondition :: (MonadThread m)
               => Model m      Concrete
               -> At    m Cmd  Concrete
               -> At    m Resp Concrete
@@ -559,7 +556,7 @@ postcondition m c r =
   where
     e = lockstep m c r
 
-symbolicResp :: (IOLike m, Typeable m)
+symbolicResp :: (MonadThread m, Typeable m)
              => Model m     Symbolic
              -> At    m Cmd Symbolic
              -> GenSym (At m Resp Symbolic)
@@ -567,7 +564,7 @@ symbolicResp m c = At <$> traverse (const genSym) resp
   where
     (resp, _mock') = step m c
 
-sm :: (IOLike m, MonadTimer m, Typeable m)
+sm :: (MonadMVar m, MonadMask m, MonadAsync m, MonadFork m, MonadTimer m, Typeable m)
    => StrictTVar m [TestThread m]
    -> ResourceRegistry m
    -> StateMachine (Model m) (At m Cmd) m (At m Resp)
@@ -584,18 +581,18 @@ sm alive reg = StateMachine {
     , cleanup       = noCleanup
     }
 
-prop_sequential :: QC.Property
+prop_sequential :: Property
 prop_sequential = forAllCommands (sm unused unused) Nothing prop_sequential'
 
-prop_sequential' :: QSM.Commands (At IO Cmd) (At IO Resp) -> QC.Property
-prop_sequential' cmds = QC.monadicIO $ do
-    alive <- liftIO $ uncheckedNewTVarM []
+prop_sequential' :: QSM.Commands (At IO Cmd) (At IO Resp) -> Property
+prop_sequential' cmds = monadicIO $ do
+    alive <- liftIO $ newTVarIO []
     reg   <- liftIO $ unsafeNewRegistry
     let sm' = sm alive reg
     (hist, _model, res) <- runCommands sm' cmds
     prettyCommands sm' hist
       $ checkCommandNames cmds
-      $ res QC.=== Ok
+      $ res === Ok
 
 unused :: a
 unused = error "not used during command generation"

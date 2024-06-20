@@ -74,6 +74,7 @@ import qualified System.Random.Stateful as Random
 import           System.Random.Stateful (STGenM, StatefulGen, runSTGen_)
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
                      allFragments, prettyBlockTree)
+import           Test.Consensus.ChainGenerator.Params (Delta (Delta))
 import           Test.Consensus.PeerSimulator.StateView (StateView)
 import           Test.Consensus.PointSchedule.NodeState (NodeState (..),
                      genesisNodeState)
@@ -85,7 +86,6 @@ import           Test.Consensus.PointSchedule.SinglePeer
                      peerScheduleFromTipPoints, schedulePointToBlock)
 import           Test.Consensus.PointSchedule.SinglePeer.Indices
                      (uniformRMDiffTime)
-import           Test.Consensus.ChainGenerator.Params (Delta (Delta))
 import           Test.QuickCheck (Gen, arbitrary)
 import           Test.QuickCheck.Random (QCGen)
 import           Test.Util.TersePrinting (terseFragment)

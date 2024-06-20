@@ -29,18 +29,17 @@ import           Ouroboros.Network.Protocol.ChainSync.Codec
                      (ChainSyncTimeout (..))
 import           Ouroboros.Network.Protocol.Limits (shortWait)
 import qualified Test.Consensus.BlockTree as BT
-import           Test.Consensus.PointSchedule
 import qualified Test.Consensus.ChainGenerator.Adversarial as A
-import           Test.Consensus.ChainGenerator.Adversarial
-                     (genPrefixBlockCount)
-import           Test.Consensus.ChainGenerator.Counting
-                     (Count (Count), getVector)
+import           Test.Consensus.ChainGenerator.Adversarial (genPrefixBlockCount)
+import           Test.Consensus.ChainGenerator.Counting (Count (Count),
+                     getVector)
 import qualified Test.Consensus.ChainGenerator.Honest as H
 import           Test.Consensus.ChainGenerator.Honest
                      (ChainSchema (ChainSchema), HonestRecipe (..))
 import           Test.Consensus.ChainGenerator.Params
 import qualified Test.Consensus.ChainGenerator.Slot as S
 import           Test.Consensus.ChainGenerator.Slot (S)
+import           Test.Consensus.PointSchedule
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck.Extras (unsafeMapSuchThatJust)
 import           Test.QuickCheck.Random (QCGen)

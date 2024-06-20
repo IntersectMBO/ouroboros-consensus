@@ -36,6 +36,7 @@ import qualified Cardano.Tools.DBAnalyser.HasAnalysis as HasAnalysis
 import           Codec.CBOR.Encoding (Encoding)
 import           Control.Monad (unless, void, when)
 import           Control.Monad.Except (runExcept)
+import           Control.ResourceRegistry
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
 import           Data.Int (Int64)
 import           Data.List (intercalate)
@@ -75,7 +76,6 @@ import           Ouroboros.Consensus.Storage.Serialisation (SizeInBytes,
                      encodeDisk)
 import           Ouroboros.Consensus.Util ((..:))
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           System.FS.API (SomeHasFS (..))
 import qualified System.IO as IO
 

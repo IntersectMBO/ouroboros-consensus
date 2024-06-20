@@ -1,0 +1,85 @@
+cabal-version: 3.0
+name: resource-registry
+version: 0.1.0.0
+synopsis: Track allocated resources
+description:
+  When the scope of a @bracket@ doesn't enclose all uses of the resource, a
+  'ResourceRegistry' can be used instead to capture the lifetime of those
+  resources.
+
+homepage: https://github.com/input-output-hk/resource-registry
+license: Apache-2.0
+license-file: LICENSE
+author: IOG Engineering Team
+maintainer: hackage@iohk.io
+copyright:
+  2019-2023 Input Output Global Inc (IOG)
+  2023-2024 INTERSECT
+  2024      Input Output Global Inc (IOG)
+
+category: Control
+build-type: Simple
+extra-doc-files:
+  CHANGELOG.md
+
+tested-with:
+  ghc ==8.10 || ==9.6 || ==9.8
+
+source-repository head
+  type: git
+  location: https://github.com/input-output-hk/resource-registry
+
+common warnings
+  ghc-options:
+    -Wall
+    -Wcompat
+    -Wincomplete-uni-patterns
+    -Wincomplete-record-updates
+    -Wpartial-fields
+    -Widentities
+    -Wredundant-constraints
+    -Wmissing-export-lists
+    -Wunused-packages
+    -Wno-unticked-promoted-constructors
+
+library
+  import: warnings
+  exposed-modules: Control.ResourceRegistry
+  build-depends:
+    base >=4.14 && <4.20,
+    bimap,
+    containers,
+    io-classes ^>=1.5,
+    mtl,
+    nf-vars ^>=0.1,
+    nothunks ^>=0.1.5,
+
+  hs-source-dirs: src
+  default-language: Haskell2010
+
+test-suite resource-registry-test
+  import: warnings
+  default-language: Haskell2010
+  type: exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is: Main.hs
+  other-modules:
+    Test.Util.QSM
+    Test.Util.SOP
+    Test.Util.ToExpr
+
+  build-depends:
+    QuickCheck,
+    base,
+    containers,
+    generics-sop,
+    io-classes,
+    mtl,
+    quickcheck-state-machine:no-vendored-treediff,
+    resource-registry,
+    si-timers,
+    strict-mvar,
+    strict-stm,
+    tasty,
+    tasty-quickcheck,
+    tree-diff,

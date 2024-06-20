@@ -13,6 +13,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index (
   , cachedIndex
   ) where
 
+import           Control.ResourceRegistry
 import           Control.Tracer (Tracer)
 import           Data.Functor.Identity (Identity (..))
 import           Data.Typeable (Typeable)
@@ -32,7 +33,6 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index.Secondary as
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Types
                      (TraceCacheEvent, WithBlockSize (..))
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           System.FS.API (HasFS)
 import           System.FS.API.Types (AllowExisting, Handle)
 
