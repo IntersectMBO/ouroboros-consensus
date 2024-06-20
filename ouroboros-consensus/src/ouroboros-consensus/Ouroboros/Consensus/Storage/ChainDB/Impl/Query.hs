@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query (
   , getAnyBlockComponent
   , getAnyKnownBlock
   , getAnyKnownBlockComponent
+  , getLastTimeStarved
   ) where
 
 import qualified Data.Map.Strict as Map
@@ -147,6 +148,9 @@ getIsInvalidBlock ::
   -> STM m (WithFingerprint (HeaderHash blk -> Maybe (InvalidBlockReason blk)))
 getIsInvalidBlock CDB{..} =
   fmap (fmap (fmap invalidBlockReason) . flip Map.lookup) <$> readTVar cdbInvalid
+
+getLastTimeStarved :: forall m blk. IOLike m => ChainDbEnv m blk -> STM m Time
+getLastTimeStarved CDB{..} = readTVar cdbLastTimeStarved
 
 getIsValid ::
      forall m blk. (IOLike m, HasHeader blk)

@@ -334,6 +334,10 @@ data ChainDB m blk = ChainDB {
       -- invalid block is detected. These blocks are likely to be valid.
     , getIsInvalidBlock :: STM m (WithFingerprint (HeaderHash blk -> Maybe (InvalidBlockReason blk)))
 
+      -- | The last time we starved the chainsel thread. this is used by the
+      -- blockfetch decision logic to demote peers.
+    , getLastTimeStarved :: STM m Time
+
     , closeDB            :: m ()
 
       -- | Return 'True' when the database is open.

@@ -63,6 +63,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
   , TraceValidationEvent (..)
   ) where
 
+import           Cardano.Prelude (whenM)
 import           Control.Tracer
 import           Data.Foldable (traverse_)
 import           Data.Map.Strict (Map)
@@ -275,6 +276,9 @@ data ChainDbEnv m blk = CDB
     -- switch back to a chain containing it. The fragment is usually anchored at
     -- a recent immutable tip; if it does not, it will conservatively be treated
     -- as the empty fragment anchored in the current immutable tip.
+  , cdbLastTimeStarved :: !(StrictTVar m Time)
+    -- ^ The last time we starved the ChainSel thread. This is used by the
+    -- BlockFetch decision logic to demote peers.
   } deriving (Generic)
 
 -- | We include @blk@ in 'showTypeOf' because it helps resolving type families
@@ -509,9 +513,13 @@ addReprocessLoEBlocks tracer (ChainSelQueue queue) = do
   atomically $ writeTBQueue queue ChainSelReprocessLoEBlocks
 
 -- | Get the oldest message from the 'ChainSelQueue' queue. Can block when the
--- queue is empty.
-getChainSelMessage :: IOLike m => ChainSelQueue m blk -> m (ChainSelMessage m blk)
-getChainSelMessage (ChainSelQueue queue) = atomically $ readTBQueue queue
+-- queue is empty; in that case, reports the current time to the given callback.
+getChainSelMessage :: IOLike m => (Time -> STM m ()) -> ChainSelQueue m blk -> m (ChainSelMessage m blk)
+getChainSelMessage whenEmpty (ChainSelQueue queue) = do
+  time <- getMonotonicTime
+  -- NOTE: The two following lines are in different `atomically` on purpose.
+  atomically $ whenM (isEmptyTBQueue queue) (whenEmpty time)
+  atomically $ readTBQueue queue
 
 -- | Flush the 'ChainSelQueue' queue and notify the waiting threads.
 --
