@@ -9,7 +9,6 @@
 module Ouroboros.Consensus.Byron.Ledger.PBFT (
     decodeByronChainDepState
   , encodeByronChainDepState
-  , fromPBftLedgerView
   , mkByronContextDSIGN
   , toPBftLedgerView
   ) where
@@ -73,9 +72,6 @@ instance BlockSupportsProtocol ByronBlock where
 
 toPBftLedgerView :: Delegation.Map -> PBftLedgerView PBftByronCrypto
 toPBftLedgerView = PBftLedgerView . Delegation.unMap
-
-fromPBftLedgerView :: PBftLedgerView PBftByronCrypto -> Delegation.Map
-fromPBftLedgerView = Delegation.Map . pbftDelegates
 
 encodeByronChainDepState ::
      ChainDepState (BlockProtocol ByronBlock)

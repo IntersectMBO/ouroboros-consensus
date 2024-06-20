@@ -6,7 +6,6 @@
 module Test.Consensus.Byron.Generators (
     RegularBlock (..)
   , epochSlots
-  , k
   , protocolMagicId
   ) where
 
@@ -60,10 +59,6 @@ import           Test.Util.Serialisation.SomeResult (SomeResult (..))
 {-------------------------------------------------------------------------------
   Generators
 -------------------------------------------------------------------------------}
-
--- | Matches that from the 'CC.dummyConfig'
-k :: SecurityParam
-k = SecurityParam 10
 
 -- | Matches that from the 'CC.dummyConfig'
 epochSlots :: EpochSlots

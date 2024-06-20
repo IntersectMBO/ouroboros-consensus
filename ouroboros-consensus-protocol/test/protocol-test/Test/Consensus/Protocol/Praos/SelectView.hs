@@ -20,7 +20,7 @@ import           Data.Containers.ListUtils (nubOrdOn)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Protocol.Praos.Common
 import           Test.Cardano.Ledger.Binary.Arbitrary ()
-import           Test.Ouroboros.Consensus.Protocol
+import           Test.Consensus.Protocol
 import           Test.QuickCheck.Gen (Gen (..))
 import           Test.QuickCheck.Random (mkQCGen)
 import           Test.Tasty

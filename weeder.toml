@@ -1,0 +1,24 @@
+unused-types = true
+roots = [ # consensus api
+          "Ouroboros.Consensus.Node"
+        , "Ouroboros.Consensus.NodeKernel"
+        , "Ouroboros.Consensus.Cardano"
+        # lemmas
+        , "^*._lemma_*"
+        # GHCI helper for ChainDB
+        , "Test.Consensus.Storage.ChainDB.StateMachine.Utils.RunOnRepl"
+        # tests mains
+        , "Main"
+        # sop-extras & strict-sop-core
+        , "Data.SOP.*"
+        # resource-registry
+        , "Control.ResourceRegistry"
+        # nf-vars
+        , "Control.Concurrent.*.NormalForm.*"
+        , "Control.Concurrent.Class.MonadSTM.Strict.SVar"
+        # code ported from cardano-api for db-synthesizer
+        , "^Cardano.*"
+        # ad-hoc
+        , "^*_should_process_and_return$"
+        ]
+type-class-roots = true

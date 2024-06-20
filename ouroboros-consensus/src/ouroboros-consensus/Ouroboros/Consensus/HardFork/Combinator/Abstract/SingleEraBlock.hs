@@ -13,11 +13,9 @@ module Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock (
   , singleEraTransition'
     -- * Era index
   , EraIndex (..)
-  , eraIndexEmpty
   , eraIndexFromIndex
   , eraIndexFromNS
   , eraIndexSucc
-  , eraIndexToInt
   , eraIndexZero
   ) where
 
@@ -30,7 +28,6 @@ import           Data.SOP.Index
 import           Data.SOP.Match
 import           Data.SOP.Strict
 import qualified Data.Text as Text
-import           Data.Void
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config.SupportsNode
@@ -151,9 +148,6 @@ instance SListI xs => Serialise (EraIndex xs) where
       Nothing       -> fail $ "EraIndex: invalid index " <> show idx
       Just eraIndex -> return (EraIndex eraIndex)
 
-eraIndexEmpty :: EraIndex '[] -> Void
-eraIndexEmpty (EraIndex ns) = case ns of {}
-
 eraIndexFromNS :: SListI xs => NS f xs -> EraIndex xs
 eraIndexFromNS = EraIndex . hmap (const (K ()))
 
@@ -165,6 +159,3 @@ eraIndexZero = EraIndex (Z (K ()))
 
 eraIndexSucc :: EraIndex xs -> EraIndex (x ': xs)
 eraIndexSucc (EraIndex ix) = EraIndex (S ix)
-
-eraIndexToInt :: EraIndex xs -> Int
-eraIndexToInt = index_NS . getEraIndex

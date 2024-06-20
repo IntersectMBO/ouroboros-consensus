@@ -99,7 +99,6 @@ protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
               }
           , topLevelConfigBlock = DualBlockConfig {
                 dualBlockConfigMain = concreteConfig
-              , dualBlockConfigAux  = ByronSpecBlockConfig
               }
           , topLevelConfigCodec = DualCodecConfig {
                 dualCodecConfigMain = mkByronCodecConfig concreteGenesis
@@ -107,7 +106,6 @@ protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
               }
           , topLevelConfigStorage = DualStorageConfig {
                 dualStorageConfigMain = ByronStorageConfig concreteConfig
-              , dualStorageConfigAux  = ByronSpecStorageConfig
               }
           , topLevelConfigCheckpoints = emptyCheckpointsMap
           }

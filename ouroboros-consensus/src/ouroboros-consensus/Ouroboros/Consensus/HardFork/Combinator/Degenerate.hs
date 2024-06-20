@@ -14,10 +14,8 @@
 module Ouroboros.Consensus.HardFork.Combinator.Degenerate (
     -- * Pattern synonyms
     BlockConfig (DegenBlockConfig)
-  , BlockQuery (DegenQuery)
   , CodecConfig (DegenCodecConfig)
   , ConsensusConfig (DegenConsensusConfig)
-  , Either (DegenQueryResult)
   , GenTx (DegenGenTx)
   , HardForkApplyTxErr (DegenApplyTxErr)
   , HardForkBlock (DegenBlock)
@@ -40,7 +38,6 @@ import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.HardFork.Combinator.Embed.Unary
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger.CommonProtocolParams ()
-import           Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
 import           Ouroboros.Consensus.HardFork.Combinator.Mempool
 import           Ouroboros.Consensus.HardFork.Combinator.Node ()
 import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
@@ -66,8 +63,6 @@ import           Ouroboros.Consensus.TypeFamilyWrappers
 {-# COMPLETE DegenLedgerError              #-}
 {-# COMPLETE DegenLedgerState              #-}
 {-# COMPLETE DegenOtherHeaderEnvelopeError #-}
-{-# COMPLETE DegenQuery                    #-}
-{-# COMPLETE DegenQueryResult              #-}
 {-# COMPLETE DegenTipInfo                  #-}
 
 pattern DegenBlock ::
@@ -133,22 +128,6 @@ pattern DegenTipInfo ::
 pattern DegenTipInfo x <- (project' (Proxy @(WrapTipInfo b)) -> x)
   where
     DegenTipInfo x = inject' (Proxy @(WrapTipInfo b)) x
-
-pattern DegenQuery ::
-     ()
-  => HardForkQueryResult '[b] result ~ a
-  => BlockQuery b result
-  -> BlockQuery (HardForkBlock '[b]) a
-pattern DegenQuery x <- (projQuery' -> ProjHardForkQuery x)
-  where
-    DegenQuery x = injQuery x
-
-pattern DegenQueryResult ::
-     result
-  -> HardForkQueryResult '[b] result
-pattern DegenQueryResult x <- (projQueryResult -> x)
-  where
-    DegenQueryResult x = injQueryResult x
 
 pattern DegenCodecConfig ::
      NoHardForks b

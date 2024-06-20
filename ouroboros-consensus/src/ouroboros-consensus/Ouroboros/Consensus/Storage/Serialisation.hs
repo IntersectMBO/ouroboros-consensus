@@ -44,7 +44,6 @@ module Ouroboros.Consensus.Storage.Serialisation (
   , PrefixLen (..)
   , ReconstructNestedCtxt (..)
   , addPrefixLen
-  , takePrefix
     -- * Binary block info
   , BinaryBlockInfo (..)
   , HasBinaryBlockInfo (..)
@@ -66,7 +65,7 @@ import           Data.SOP.BasicFunctors
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..),
-                     PrefixLen (..), addPrefixLen, takePrefix)
+                     PrefixLen (..), addPrefixLen)
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util (ShowProxy (..))
 import           Ouroboros.Consensus.Util.RedundantConstraints

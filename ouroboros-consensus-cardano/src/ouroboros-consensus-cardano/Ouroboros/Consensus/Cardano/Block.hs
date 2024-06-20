@@ -28,14 +28,14 @@ module Ouroboros.Consensus.Cardano.Block (
   , CardanoGenTx
   , CardanoGenTxId
   , GenTx (GenTxAllegra, GenTxAlonzo, GenTxByron, GenTxMary, GenTxShelley, GenTxBabbage, GenTxConway)
-  , HardForkApplyTxErr (ApplyTxErrAllegra, ApplyTxErrAlonzo, ApplyTxErrByron, ApplyTxErrMary, ApplyTxErrShelley, ApplyTxErrWrongEra, ApplyTxErrBabbage, ApplyTxErrConway)
+  , HardForkApplyTxErr (ApplyTxErrAllegra, ApplyTxErrAlonzo, ApplyTxErrByron, ApplyTxErrMary, ApplyTxErrShelley, ApplyTxErrBabbage, ApplyTxErrConway)
   , TxId (GenTxIdAllegra, GenTxIdAlonzo, GenTxIdByron, GenTxIdMary, GenTxIdShelley, GenTxIdBabbage, GenTxIdConway)
     -- * LedgerError
   , CardanoLedgerError
-  , HardForkLedgerError (LedgerErrorAllegra, LedgerErrorAlonzo, LedgerErrorByron, LedgerErrorMary, LedgerErrorShelley, LedgerErrorWrongEra, LedgerErrorBabbage, LedgerErrorConway)
+  , HardForkLedgerError (LedgerErrorAllegra, LedgerErrorAlonzo, LedgerErrorByron, LedgerErrorMary, LedgerErrorShelley, LedgerErrorBabbage, LedgerErrorConway)
     -- * OtherEnvelopeError
   , CardanoOtherHeaderEnvelopeError
-  , HardForkEnvelopeErr (OtherHeaderEnvelopeErrorAllegra, OtherHeaderEnvelopeErrorBabbage, OtherHeaderEnvelopeErrorConway, OtherHeaderEnvelopeErrorAlonzo, OtherHeaderEnvelopeErrorByron, OtherHeaderEnvelopeErrorMary, OtherHeaderEnvelopeErrorShelley, OtherHeaderEnvelopeErrorWrongEra)
+  , HardForkEnvelopeErr (OtherHeaderEnvelopeErrorAllegra, OtherHeaderEnvelopeErrorBabbage, OtherHeaderEnvelopeErrorConway, OtherHeaderEnvelopeErrorAlonzo, OtherHeaderEnvelopeErrorByron, OtherHeaderEnvelopeErrorMary, OtherHeaderEnvelopeErrorShelley)
     -- * TipInfo
   , CardanoTipInfo
   , OneEraTipInfo (TipInfoAllegra, TipInfoAlonzo, TipInfoByron, TipInfoBabbage, TipInfoConway, TipInfoMary, TipInfoShelley)
@@ -43,7 +43,7 @@ module Ouroboros.Consensus.Cardano.Block (
   , BlockQuery (QueryAnytimeAllegra, QueryAnytimeAlonzo, QueryAnytimeBabbage, QueryAnytimeConway, QueryAnytimeByron, QueryAnytimeMary, QueryAnytimeShelley, QueryHardFork, QueryIfCurrentAllegra, QueryIfCurrentAlonzo, QueryIfCurrentBabbage, QueryIfCurrentConway, QueryIfCurrentByron, QueryIfCurrentMary, QueryIfCurrentShelley)
   , CardanoQuery
   , CardanoQueryResult
-  , Either (QueryResultSuccess, QueryResultEraMismatch)
+  , Either (QueryResultSuccess)
     -- * CodecConfig
   , CardanoCodecConfig
   , CodecConfig (CardanoCodecConfig)
@@ -456,10 +456,6 @@ pattern ApplyTxErrConway ::
 pattern ApplyTxErrConway err =
     HardForkApplyTxErrFromEra (OneEraApplyTxErr (TagConway (WrapApplyTxErr err)))
 
-pattern ApplyTxErrWrongEra :: EraMismatch -> CardanoApplyTxErr c
-pattern ApplyTxErrWrongEra eraMismatch <-
-    HardForkApplyTxErrWrongEra (mkEraMismatch -> eraMismatch)
-
 {-# COMPLETE ApplyTxErrByron
            , ApplyTxErrShelley
            , ApplyTxErrAllegra
@@ -467,7 +463,6 @@ pattern ApplyTxErrWrongEra eraMismatch <-
            , ApplyTxErrAlonzo
            , ApplyTxErrBabbage
            , ApplyTxErrConway
-           , ApplyTxErrWrongEra
   #-}
 
 {-------------------------------------------------------------------------------
@@ -538,10 +533,6 @@ pattern LedgerErrorConway err =
     HardForkLedgerErrorFromEra
       (OneEraLedgerError (TagConway (WrapLedgerErr err)))
 
-pattern LedgerErrorWrongEra :: EraMismatch -> CardanoLedgerError c
-pattern LedgerErrorWrongEra eraMismatch <-
-    HardForkLedgerErrorWrongEra (mkEraMismatch -> eraMismatch)
-
 {-# COMPLETE LedgerErrorByron
            , LedgerErrorShelley
            , LedgerErrorAllegra
@@ -549,7 +540,6 @@ pattern LedgerErrorWrongEra eraMismatch <-
            , LedgerErrorAlonzo
            , LedgerErrorBabbage
            , LedgerErrorConway
-           , LedgerErrorWrongEra
   #-}
 
 {-------------------------------------------------------------------------------
@@ -602,12 +592,6 @@ pattern OtherHeaderEnvelopeErrorConway
 pattern OtherHeaderEnvelopeErrorConway err =
     HardForkEnvelopeErrFromEra (OneEraEnvelopeErr (TagConway (WrapEnvelopeErr err)))
 
-pattern OtherHeaderEnvelopeErrorWrongEra
-  :: EraMismatch
-  -> CardanoOtherHeaderEnvelopeError c
-pattern OtherHeaderEnvelopeErrorWrongEra eraMismatch <-
-    HardForkEnvelopeErrWrongEra (mkEraMismatch -> eraMismatch)
-
 {-# COMPLETE OtherHeaderEnvelopeErrorByron
            , OtherHeaderEnvelopeErrorShelley
            , OtherHeaderEnvelopeErrorAllegra
@@ -615,7 +599,6 @@ pattern OtherHeaderEnvelopeErrorWrongEra eraMismatch <-
            , OtherHeaderEnvelopeErrorAlonzo
            , OtherHeaderEnvelopeErrorBabbage
            , OtherHeaderEnvelopeErrorConway
-           , OtherHeaderEnvelopeErrorWrongEra
   #-}
 
 {-------------------------------------------------------------------------------
@@ -857,11 +840,7 @@ type CardanoQueryResult c = HardForkQueryResult (CardanoEras c)
 pattern QueryResultSuccess :: result -> CardanoQueryResult c result
 pattern QueryResultSuccess result = Right result
 
--- | A query from a different era than the ledger's era was sent.
-pattern QueryResultEraMismatch :: EraMismatch -> CardanoQueryResult c result
-pattern QueryResultEraMismatch eraMismatch <- Left (mkEraMismatch -> eraMismatch)
-
-{-# COMPLETE QueryResultSuccess, QueryResultEraMismatch #-}
+{-# COMPLETE QueryResultSuccess #-}
 
 {-------------------------------------------------------------------------------
   CodecConfig

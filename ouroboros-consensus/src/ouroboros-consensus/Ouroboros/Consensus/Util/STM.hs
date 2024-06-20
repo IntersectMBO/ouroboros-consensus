@@ -15,18 +15,10 @@ module Ouroboros.Consensus.Util.STM (
     -- * Misc
   , Fingerprint (..)
   , WithFingerprint (..)
-  , blockUntilAllJust
   , blockUntilChanged
   , blockUntilJust
-  , runWhenJust
-    -- * Simulate various monad stacks in STM
-  , Sim (..)
-  , simId
-  , simStateT
   ) where
 
-import           Control.Monad (void)
-import           Control.Monad.State (StateT (..))
 import           Data.Void
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
@@ -48,28 +40,12 @@ blockUntilChanged f b getA = do
       then retry
       else return (a, b')
 
--- | Spawn a new thread that waits for an STM value to become 'Just'
---
--- The thread will be linked to the registry.
-runWhenJust :: IOLike m
-            => ResourceRegistry m
-            -> String  -- ^ Label for the thread
-            -> STM m (Maybe a)
-            -> (a -> m ())
-            -> m ()
-runWhenJust registry label getMaybeA action =
-    void $ forkLinkedThread registry label $
-      action =<< atomically (blockUntilJust getMaybeA)
-
 blockUntilJust :: MonadSTM m => STM m (Maybe a) -> STM m a
 blockUntilJust getMaybeA = do
     ma <- getMaybeA
     case ma of
       Nothing -> retry
       Just a  -> return a
-
-blockUntilAllJust :: MonadSTM m => [STM m (Maybe a)] -> STM m [a]
-blockUntilAllJust = mapM blockUntilJust
 
 -- | Simple type that can be used to indicate something in a @TVar@ is
 -- changed.
@@ -83,22 +59,6 @@ data WithFingerprint a = WithFingerprint
   { forgetFingerprint :: !a
   , getFingerprint    :: !Fingerprint
   } deriving (Show, Eq, Functor, Generic, NoThunks)
-
-{-------------------------------------------------------------------------------
-  Simulate monad stacks
--------------------------------------------------------------------------------}
-
-newtype Sim n m = Sim { runSim :: forall a. n a -> STM m a }
-
-simId :: Sim (STM m) m
-simId = Sim id
-
-simStateT :: IOLike m => StrictTVar m st -> Sim n m -> Sim (StateT st n) m
-simStateT stVar (Sim k) = Sim $ \(StateT f) -> do
-    st       <- readTVar stVar
-    (a, st') <- k (f st)
-    writeTVar stVar st'
-    return a
 
 {-------------------------------------------------------------------------------
   Watchers

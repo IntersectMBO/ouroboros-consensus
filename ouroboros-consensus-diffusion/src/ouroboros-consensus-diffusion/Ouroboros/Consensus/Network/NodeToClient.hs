@@ -11,19 +11,13 @@ module Ouroboros.Consensus.Network.NodeToClient (
     Handlers (..)
   , mkHandlers
     -- * Codecs
-  , ClientCodecs
   , Codecs
   , Codecs' (..)
   , DefaultCodecs
-  , clientCodecs
   , defaultCodecs
-  , identityCodecs
-    -- * ClientCodecs
     -- * Tracers
   , Tracers
   , Tracers' (..)
-  , nullTracers
-  , showTracers
     -- * Applications
   , App
   , Apps (..)
@@ -152,8 +146,6 @@ type Codecs blk e m bCS bTX bSQ bTM =
     Codecs' blk (Serialised blk) e m bCS bTX bSQ bTM
 type DefaultCodecs blk m =
     Codecs' blk (Serialised blk) DeserialiseFailure m ByteString ByteString ByteString ByteString
-type ClientCodecs blk  m =
-    Codecs' blk blk DeserialiseFailure m ByteString ByteString ByteString ByteString
 
 -- | Protocol codecs for the node-to-client protocols
 --
@@ -228,80 +220,6 @@ defaultCodecs ccfg version networkVersion = Codecs {
     dec :: SerialiseNodeToClient blk a => forall s. Decoder s a
     dec = decodeNodeToClient ccfg version
 
--- | Protocol codecs for the node-to-client protocols which serialise
--- / deserialise blocks in /chain-sync/ protocol.
---
-clientCodecs :: forall m blk.
-                ( MonadST m
-                , SerialiseNodeToClientConstraints blk
-                , ShowQuery (BlockQuery blk)
-                , StandardHash blk
-                , Serialise (HeaderHash blk)
-                )
-             => CodecConfig blk
-             -> BlockNodeToClientVersion blk
-             -> N.NodeToClientVersion
-             -> ClientCodecs blk m
-clientCodecs ccfg version networkVersion = Codecs {
-      cChainSyncCodec =
-        codecChainSync
-          enc
-          dec
-          (encodePoint (encodeRawHash p))
-          (decodePoint (decodeRawHash p))
-          (encodeTip   (encodeRawHash p))
-          (decodeTip   (decodeRawHash p))
-
-    , cTxSubmissionCodec =
-        codecLocalTxSubmission
-          enc
-          dec
-          enc
-          dec
-
-    , cStateQueryCodec =
-        codecLocalStateQuery
-          networkVersion
-          (encodePoint (encodeRawHash p))
-          (decodePoint (decodeRawHash p))
-          (queryEncodeNodeToClient ccfg queryVersion version . SomeSecond)
-          ((\(SomeSecond qry) -> Some qry) <$> queryDecodeNodeToClient ccfg queryVersion version)
-          (encodeResult ccfg version)
-          (decodeResult ccfg version)
-
-    , cTxMonitorCodec =
-        codecLocalTxMonitor
-          enc dec
-          enc dec
-          enc dec
-    }
-  where
-    queryVersion :: QueryVersion
-    queryVersion = nodeToClientVersionToQueryVersion networkVersion
-
-    p :: Proxy blk
-    p = Proxy
-
-    enc :: SerialiseNodeToClient blk a => a -> Encoding
-    enc = encodeNodeToClient ccfg version
-
-    dec :: SerialiseNodeToClient blk a => forall s. Decoder s a
-    dec = decodeNodeToClient ccfg version
-
--- | Identity codecs used in tests.
-identityCodecs :: (Monad m, BlockSupportsLedgerQuery blk)
-               => Codecs blk CodecFailure m
-                    (AnyMessage (ChainSync (Serialised blk) (Point blk) (Tip blk)))
-                    (AnyMessage (LocalTxSubmission (GenTx blk) (ApplyTxErr blk)))
-                    (AnyMessage (LocalStateQuery blk (Point blk) (Query blk)))
-                    (AnyMessage (LocalTxMonitor (GenTxId blk) (GenTx blk) SlotNo))
-identityCodecs = Codecs {
-      cChainSyncCodec    = codecChainSyncId
-    , cTxSubmissionCodec = codecLocalTxSubmissionId
-    , cStateQueryCodec   = codecLocalStateQueryId sameDepIndex
-    , cTxMonitorCodec    = codecLocalTxMonitorId
-    }
-
 {-------------------------------------------------------------------------------
   Tracers
 -------------------------------------------------------------------------------}
@@ -329,30 +247,6 @@ instance (forall a. Semigroup (f a)) => Semigroup (Tracers' peer blk e f) where
         => (Tracers' peer blk e f -> a)
         -> a
       f prj = prj l <> prj r
-
--- | Use a 'nullTracer' for each protocol.
-nullTracers :: Monad m => Tracers m peer blk e
-nullTracers = Tracers {
-      tChainSyncTracer    = nullTracer
-    , tTxSubmissionTracer = nullTracer
-    , tStateQueryTracer   = nullTracer
-    , tTxMonitorTracer    = nullTracer
-    }
-
-showTracers :: ( Show peer
-               , Show (GenTx blk)
-               , Show (GenTxId blk)
-               , Show (ApplyTxErr blk)
-               , ShowQuery (BlockQuery blk)
-               , HasHeader blk
-               )
-            => Tracer m String -> Tracers m peer blk e
-showTracers tr = Tracers {
-      tChainSyncTracer    = showTracing tr
-    , tTxSubmissionTracer = showTracing tr
-    , tStateQueryTracer   = showTracing tr
-    , tTxMonitorTracer    = showTracing tr
-    }
 
 {-------------------------------------------------------------------------------
   Applications

@@ -8,7 +8,6 @@ module Ouroboros.Consensus.Mock.Ledger.Stake (
   , AddrDist
     -- * Stake distribution
   , StakeDist (..)
-  , equalStakeDist
   , genesisStakeDist
   , relativeStakes
   , stakeWithDefault
@@ -20,7 +19,6 @@ module Ouroboros.Consensus.Mock.Ledger.Stake (
 import           Codec.Serialise (Serialise)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (mapMaybe)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Mock.Ledger.Address
 import           Ouroboros.Consensus.Mock.Ledger.UTxO
@@ -70,24 +68,6 @@ totalStakes addrDist = foldl f Map.empty
    f m (a, stake) = case Map.lookup a addrDist of
        Just (CoreId nid) -> Map.insertWith (+) (StakeCore nid)    stake m
        _                 -> Map.insertWith (+) StakeEverybodyElse stake m
-
--- | Stake distribution where every address has equal state
-equalStakeDist :: AddrDist -> StakeDist
-equalStakeDist ad =
-    StakeDist $
-    Map.fromList $
-    mapMaybe (nodeStake . snd) $
-    Map.toList ad
-  where
-    nodeStake :: NodeId -> Maybe (CoreNodeId, Rational)
-    nodeStake (RelayId _) = Nothing
-    nodeStake (CoreId i)  = Just (i, recip (fromIntegral n))
-
-    n = length $ filter isCore $ Map.elems ad
-
-    isCore :: NodeId -> Bool
-    isCore CoreId{}  = True
-    isCore RelayId{} = False
 
 -- | Genesis stake distribution
 genesisStakeDist :: AddrDist -> StakeDist

@@ -28,10 +28,8 @@ module Ouroboros.Consensus.HeaderValidation (
   , annTipRealPoint
   , castAnnTip
   , getAnnTip
-  , mapAnnTip
     -- * Header state
   , HeaderState (..)
-  , castHeaderState
   , genesisHeaderState
   , headerStateBlockNo
   , headerStatePoint
@@ -64,7 +62,6 @@ import           Codec.Serialise (decode, encode)
 import           Control.Monad (unless, when)
 import           Control.Monad.Except (Except, runExcept, throwError,
                      withExcept)
-import           Data.Coerce
 import           Data.Kind (Type)
 import qualified Data.Map.Strict as Map
 import           Data.Proxy
@@ -114,9 +111,6 @@ annTipRealPoint annTip@AnnTip{..} = RealPoint annTipSlotNo (annTipHash annTip)
 castAnnTip :: TipInfo blk ~ TipInfo blk' => AnnTip blk -> AnnTip blk'
 castAnnTip AnnTip{..} = AnnTip{..}
 
-mapAnnTip :: (TipInfo blk -> TipInfo blk') -> AnnTip blk -> AnnTip blk'
-mapAnnTip f AnnTip { annTipInfo, .. } = AnnTip { annTipInfo = f annTipInfo, .. }
-
 class ( StandardHash blk
       , Show     (TipInfo blk)
       , Eq       (TipInfo blk)
@@ -164,17 +158,6 @@ data HeaderState blk = HeaderState {
 instance Anchorable (WithOrigin SlotNo) (HeaderState blk) (HeaderState blk) where
   asAnchor = id
   getAnchorMeasure _ = fmap annTipSlotNo . headerStateTip
-
-castHeaderState ::
-     ( Coercible (ChainDepState (BlockProtocol blk ))
-                 (ChainDepState (BlockProtocol blk'))
-     , TipInfo blk ~ TipInfo blk'
-     )
-  => HeaderState blk -> HeaderState blk'
-castHeaderState HeaderState {..} = HeaderState {
-      headerStateTip      = castAnnTip <$> headerStateTip
-    , headerStateChainDep = coerce headerStateChainDep
-    }
 
 deriving instance (BlockSupportsProtocol blk, HasAnnTip blk)
                 => Eq (HeaderState blk)
