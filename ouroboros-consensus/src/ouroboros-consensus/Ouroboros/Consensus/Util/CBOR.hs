@@ -4,27 +4,16 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Ouroboros.Consensus.Util.CBOR (
-    -- * Incremental parsing in I/O
-    IDecodeIO (..)
-  , deserialiseIncrementalIO
-  , fromIDecode
-    -- * Higher-level incremental interface
-  , Decoder (..)
-  , initDecoderIO
     -- * Decode as FlatTerm
-  , decodeAsFlatTerm
+    decodeAsFlatTerm
     -- * HasFS interaction
   , ReadIncrementalErr (..)
   , readIncremental
   , withStreamIncrementalOffsets
     -- * Encoding/decoding containers
-  , decodeList
   , decodeMaybe
-  , decodeSeq
   , decodeWithOrigin
-  , encodeList
   , encodeMaybe
-  , encodeSeq
   , encodeWithOrigin
   ) where
 
@@ -35,8 +24,6 @@ import qualified Codec.CBOR.Decoding as CBOR.D
 import qualified Codec.CBOR.Encoding as CBOR.E
 import qualified Codec.CBOR.FlatTerm as CBOR.F
 import qualified Codec.CBOR.Read as CBOR.R
-import           Control.Exception (assert)
-import           Control.Monad
 import           Control.Monad.Except
 import           Control.Monad.ST
 import qualified Control.Monad.ST.Lazy as ST.Lazy
@@ -44,10 +31,6 @@ import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import           Data.ByteString.Builder.Extra (defaultChunkSize)
 import qualified Data.ByteString.Lazy as LBS
-import           Data.Foldable (toList)
-import           Data.IORef
-import           Data.Sequence.Strict (StrictSeq)
-import qualified Data.Sequence.Strict as Seq
 import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Util.IOLike as U
@@ -55,65 +38,6 @@ import qualified Streaming as S
 import qualified Streaming.Prelude as S
 import           Streaming.Prelude (Of (..), Stream)
 import           System.FS.API
-
-{-------------------------------------------------------------------------------
-  Incremental parsing in I/O
--------------------------------------------------------------------------------}
-
-data IDecodeIO a =
-    Partial (Maybe ByteString -> IO (IDecodeIO a))
-  | Done !ByteString !CBOR.R.ByteOffset a
-  | Fail !ByteString !CBOR.R.ByteOffset CBOR.R.DeserialiseFailure
-
-fromIDecode :: CBOR.R.IDecode RealWorld a -> IDecodeIO a
-fromIDecode (CBOR.R.Partial k)     = Partial $ fmap fromIDecode . U.stToIO . k
-fromIDecode (CBOR.R.Done bs off x) = Done bs off x
-fromIDecode (CBOR.R.Fail bs off e) = Fail bs off e
-
-deserialiseIncrementalIO :: (forall s. CBOR.D.Decoder s a) -> IO (IDecodeIO a)
-deserialiseIncrementalIO = fmap fromIDecode
-                         . U.stToIO
-                         . CBOR.R.deserialiseIncremental
-
-{-------------------------------------------------------------------------------
-  Higher-level incremental interface
--------------------------------------------------------------------------------}
-
-data Decoder m = Decoder {
-      -- | Decode next failure
-      --
-      -- May throw 'CBOR.DeserialiseFailure'
-      decodeNext :: forall a. (forall s. CBOR.D.Decoder s a) -> m a
-    }
-
--- | Construct incremental decoder given a way to get chunks
---
--- Resulting decoder is not thread safe.
-initDecoderIO :: IO ByteString -> IO (Decoder IO)
-initDecoderIO getChunk = do
-    leftover <- newIORef BS.empty
-    let go :: forall a. (forall s. CBOR.D.Decoder s a) -> IO a
-        go decoder = do
-           i <- deserialiseIncrementalIO decoder
-           case i of
-             Done bs _ a -> assert (BS.null bs) $ return a
-             Fail _  _ e -> throwIO e
-             Partial k   -> readIORef leftover >>= (k . Just >=> goWith)
-
-        goWith :: forall a. IDecodeIO a -> IO a
-        goWith (Partial k)   = getChunk' >>= (k >=> goWith)
-        goWith (Done bs _ a) = writeIORef leftover bs >> return a
-        goWith (Fail _  _ e) = throwIO e
-
-    return $ Decoder go
-
-  where
-    getChunk' :: IO (Maybe ByteString)
-    getChunk' = checkEmpty <$> getChunk
-
-    checkEmpty :: ByteString -> Maybe ByteString
-    checkEmpty bs | BS.null bs = Nothing
-                  | otherwise  = Just bs
 
 {-------------------------------------------------------------------------------
   Decode as FlatTerm
@@ -296,26 +220,6 @@ withStreamIncrementalOffsets hasFS@HasFS{..} decoder fp = \k ->
 {-------------------------------------------------------------------------------
   Encoding/decoding lists
 -------------------------------------------------------------------------------}
-
-encodeList :: (a -> CBOR.E.Encoding) -> [a] -> CBOR.E.Encoding
-encodeList _   [] = CBOR.E.encodeListLen 0
-encodeList enc xs = mconcat [
-      CBOR.E.encodeListLenIndef
-    , foldr (\x r -> enc x <> r) CBOR.E.encodeBreak xs
-    ]
-
-decodeList :: CBOR.D.Decoder s a -> CBOR.D.Decoder s [a]
-decodeList dec = do
-    mn <- CBOR.D.decodeListLenOrIndef
-    case mn of
-      Nothing -> CBOR.D.decodeSequenceLenIndef (flip (:)) [] reverse   dec
-      Just n  -> CBOR.D.decodeSequenceLenN     (flip (:)) [] reverse n dec
-
-encodeSeq :: (a -> CBOR.E.Encoding) -> StrictSeq a -> CBOR.E.Encoding
-encodeSeq f = encodeList f . toList
-
-decodeSeq :: CBOR.D.Decoder s a -> CBOR.D.Decoder s (StrictSeq a)
-decodeSeq f = Seq.fromList <$> decodeList f
 
 encodeWithOrigin :: (a -> CBOR.E.Encoding) -> WithOrigin a -> CBOR.E.Encoding
 encodeWithOrigin f = encodeMaybe f . withOriginToMaybe

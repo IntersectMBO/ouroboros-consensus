@@ -19,13 +19,11 @@ module Ouroboros.Consensus.HardFork.History.Qry (
   , qryFromExpr
   , runQuery
   , runQueryPure
-  , runQueryThrow
     -- ** opaque
   , Qry
     -- * Interpreter
   , interpretQuery
   , mkInterpreter
-  , unsafeExtendSafeZone
     -- ** opaque
   , Interpreter
     -- * Specific queries
@@ -406,9 +404,6 @@ runQuery qry (Summary summary) = go summary
             Nothing ->
               Left $ PastHorizon callStack (Some e) (toList summary)
 
-runQueryThrow :: (HasCallStack, MonadThrow m) => Qry a -> Summary xs -> m a
-runQueryThrow q = either throwIO return . runQuery q
-
 runQueryPure :: HasCallStack => Qry a -> Summary xs -> a
 runQueryPure q = either throw id . runQuery q
 
@@ -437,25 +432,6 @@ interpretQuery ::
   -> Qry a
   -> Either PastHorizonException a
 interpretQuery (Interpreter summary) qry = runQuery qry summary
-
--- | UNSAFE: extend the safe zone of the current era of the given 'Interpreter'
--- to be /unbounded/, ignoring any future hard forks.
---
--- This only has effect when the 'Interpreter' was obtained in an era that was
--- /not the final one/ (in the final era, this is a no-op). The 'Interpreter'
--- will be made to believe that the current era is the final era, making its
--- horizon unbounded, and thus never returning a 'PastHorizonException'.
---
--- Use of this function is /strongly discouraged/, as it will ignore any future
--- hard forks, and the results produced by the 'Interpreter' can thus be
--- incorrect.
-unsafeExtendSafeZone :: Interpreter xs -> Interpreter xs
-unsafeExtendSafeZone (Interpreter (Summary eraSummaries)) =
-    Interpreter (Summary (go eraSummaries))
-  where
-    go :: NonEmpty xs' EraSummary -> NonEmpty xs' EraSummary
-    go (NonEmptyCons e es) = NonEmptyCons e (go es)
-    go (NonEmptyOne  e)    = NonEmptyOne  e { eraEnd = EraUnbounded }
 
 {-------------------------------------------------------------------------------
   Specific queries

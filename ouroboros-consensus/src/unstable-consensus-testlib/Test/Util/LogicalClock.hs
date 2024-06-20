@@ -17,8 +17,6 @@ module Test.Util.LogicalClock (
   , new
   , sufficientTimeFor
     -- * Scheduling actions
-  , blockUntilTick
-  , onTick
   , tickWatcher
     -- * Utilities
   , tickTracer
@@ -97,34 +95,6 @@ tickWatcher clock action =
       , wReader      = getCurrentTick clock
       }
 
--- | Execute action once at the specified tick
-onTick :: (IOLike m, HasCallStack)
-       => ResourceRegistry m
-       -> LogicalClock m
-       -> String
-       -> Tick
-       -> m ()
-       -> m ()
-onTick registry clock threadLabel tick action = do
-    void $
-      forkLinkedThread
-        registry
-        threadLabel
-        (waitForTick clock tick >> action)
-
--- | Block until the specified tick
---
--- Returns 'False' if the current tick is later than the requested one, or
--- 'True' if they were equal.
-blockUntilTick :: MonadSTM m => LogicalClock m -> Tick -> m Bool
-blockUntilTick clock tick = atomically $ do
-    now <- getCurrentTick clock
-    if now > tick then
-      return True
-    else do
-      when (now < tick) retry
-      return False
-
 {-------------------------------------------------------------------------------
   Utilities
 -------------------------------------------------------------------------------}
@@ -176,30 +146,3 @@ newWithDelay registry (NumTicks numTicks) tickLen = do
               return ()
           }
       }
-
--- | Wait for the specified tick (blocking the current thread)
-waitForTick :: IOLike m => LogicalClock m -> Tick -> m ()
-waitForTick clock tick = do
-    start <- atomically $ getCurrentTick clock
-    when (start >= tick) $
-      throwIO $ WaitForTickTooLate {
-          tickRequest = tick
-        , tickCurrent = start
-        }
-
-    atomically $ do
-      now <- getCurrentTick clock
-      check (now >= tick)
-
--- | Thrown by 'waitForTick' (and hence 'onTick')
-data WaitForTickException =
-    WaitForTickTooLate {
-        -- | The time the action should have run at
-        tickRequest :: Tick
-
-        -- | The time when 'onTick' was called
-      , tickCurrent :: Tick
-      }
-  deriving (Eq, Show)
-
-instance Exception WaitForTickException

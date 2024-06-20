@@ -6,7 +6,6 @@
 module Ouroboros.Consensus.Storage.VolatileDB.Impl.Util (
     -- * FileId utilities
     filePath
-  , findLastFd
   , parseAllFds
   , parseFd
     -- * Exception handling
@@ -62,10 +61,6 @@ parseAllFds = first (sortOn fst) . foldr judge ([], [])
     judge fsPath (parsed, notParsed) = case parseFd fsPath of
       Nothing     -> (parsed, fsPath : notParsed)
       Just fileId -> ((fileId, fsPath) : parsed, notParsed)
-
--- | This also returns any 'FsPath' which failed to parse.
-findLastFd :: [FsPath] -> (Maybe FileId, [FsPath])
-findLastFd = first (fmap fst . lastMaybe) . parseAllFds
 
 filePath :: FileId -> FsPath
 filePath fd = mkFsPath ["blocks-" ++ show fd ++ ".dat"]

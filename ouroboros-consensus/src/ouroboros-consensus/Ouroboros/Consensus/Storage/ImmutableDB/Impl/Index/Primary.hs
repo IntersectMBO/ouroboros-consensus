@@ -25,14 +25,11 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index.Primary (
   , getLastSlot
   , isFilledSlot
   , lastFilledSlot
-  , lastOffset
   , load
   , nextFilledSlot
   , offsetOfSlot
   , open
   , readFirstFilledSlot
-  , readOffset
-  , readOffsets
   , secondaryOffsetSize
   , sizeOfSlot
   , slots
@@ -52,7 +49,6 @@ import qualified Data.Binary.Get as Get
 import qualified Data.Binary.Put as Put
 import qualified Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
-import           Data.Functor.Identity (Identity (..))
 import           Data.Proxy (Proxy (..))
 import           Data.Typeable (Typeable)
 import           Data.Vector.Unboxed (Vector)
@@ -159,63 +155,6 @@ currentVersionNumber = 1
 -- | Count the number of (filled or unfilled) slots currently in the index
 slots :: PrimaryIndex -> Word64
 slots (MkPrimaryIndex _ offsets) = fromIntegral $ V.length offsets - 1
-
--- | Read the 'SecondaryOffset' corresponding to the given relative slot in
--- the primary index. Return 'Nothing' when the slot is empty.
-readOffset ::
-     forall blk m h.
-     (HasCallStack, MonadThrow m, StandardHash blk, Typeable blk)
-  => Proxy blk
-  -> HasFS m h
-  -> ChunkNo
-  -> RelativeSlot
-  -> m (Maybe SecondaryOffset)
-readOffset pb hasFS chunk slot = runIdentity <$>
-    readOffsets pb hasFS chunk (Identity slot)
-
--- | Same as 'readOffset', but for multiple offsets.
---
--- NOTE: only use this for a few offsets, as we will seek (@pread@) for each
--- offset. Use 'load' if you want to read the whole primary index.
-readOffsets ::
-     forall blk m h t.
-     ( HasCallStack
-     , MonadThrow m
-     , Traversable t
-     , StandardHash blk
-     , Typeable blk
-     )
-  => Proxy blk
-  -> HasFS m h
-  -> ChunkNo
-  -> t RelativeSlot
-  -> m (t (Maybe SecondaryOffset))
-       -- ^ The offset in the secondary index file corresponding to the given
-       -- slot. 'Nothing' when the slot is empty.
-readOffsets pb hasFS@HasFS { hGetSize } chunk toRead =
-    withFile hasFS primaryIndexFile ReadMode $ \pHnd -> do
-      size <- hGetSize pHnd
-      forM toRead $ \relSlot -> do
-        let slot   = assertRelativeSlotInChunk chunk relSlot
-        let offset = AbsOffset $
-              fromIntegral (sizeOf currentVersionNumber) +
-              slot * secondaryOffsetSize
-        if unAbsOffset offset + nbBytes > size then
-          -- Don't try reading if the file doesn't contain enough bytes
-          return Nothing
-        else do
-          (secondaryOffset, nextSecondaryOffset) <-
-            runGet pb primaryIndexFile get =<<
-            hGetExactlyAt hasFS pHnd nbBytes offset
-          return $ if nextSecondaryOffset - secondaryOffset > 0
-            then Just secondaryOffset
-            else Nothing
-  where
-    primaryIndexFile = fsPathPrimaryIndexFile chunk
-    nbBytes          = secondaryOffsetSize * 2
-
-    get :: Get (SecondaryOffset, SecondaryOffset)
-    get = (,) <$> getSecondaryOffset <*> getSecondaryOffset
 
 -- | Return the first filled slot in the primary index file, or 'Nothing' in
 -- case there are no filled slots.
@@ -428,12 +367,6 @@ appendOffsets ::
   -> m ()
 appendOffsets hasFS pHnd offsets =
     void $ hPut hasFS pHnd $ Put.execPut $ foldMap putSecondaryOffset offsets
-
--- | Return the last 'SecondaryOffset' in the primary index file.
-lastOffset :: PrimaryIndex -> SecondaryOffset
-lastOffset (MkPrimaryIndex _ offsets)
-  | V.null offsets = 0
-  | otherwise = offsets ! (V.length offsets - 1)
 
 -- | Return the last slot of the primary index (empty or not).
 --

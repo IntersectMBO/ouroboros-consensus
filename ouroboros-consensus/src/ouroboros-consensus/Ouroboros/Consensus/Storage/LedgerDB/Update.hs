@@ -38,7 +38,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.Update (
   , ledgerDbPush
   , ledgerDbSwitch
     -- * Pure API
-  , ledgerDbPush'
   , ledgerDbPushMany'
   , ledgerDbSwitch'
     -- * Trace
@@ -367,10 +366,6 @@ data UpdateLedgerDbTraceEvent blk =
 pureBlock :: blk -> Ap m l blk ()
 pureBlock = ReapplyVal
 
-ledgerDbPush' :: ApplyBlock l blk
-              => LedgerDbCfg l -> blk -> LedgerDB l -> LedgerDB l
-ledgerDbPush' cfg b = runIdentity . ledgerDbPush cfg (pureBlock b)
-
 ledgerDbPushMany' :: ApplyBlock l blk
                   => LedgerDbCfg l -> [blk] -> LedgerDB l -> LedgerDB l
 ledgerDbPushMany' cfg bs =
@@ -383,4 +378,3 @@ ledgerDbSwitch' cfg n bs db =
     case runIdentity $ ledgerDbSwitch cfg n (const $ pure ()) (map pureBlock bs) db of
       Left  ExceededRollback{} -> Nothing
       Right db'                -> Just db'
-

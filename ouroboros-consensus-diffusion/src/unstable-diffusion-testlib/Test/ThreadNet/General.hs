@@ -20,8 +20,6 @@ module Test.ThreadNet.General (
   , TestConfig (..)
   , TestConfigB (..)
   , TestConfigMB (..)
-  , truncateNodeJoinPlan
-  , truncateNodeRestarts
   , truncateNodeTopology
     -- * Expected CannotForge
   , noExpectedCannotForges
@@ -100,24 +98,9 @@ data TestConfig = TestConfig
   }
   deriving (Show)
 
-truncateNodeJoinPlan ::
-    NodeJoinPlan -> NumCoreNodes -> (NumSlots, NumSlots) -> NodeJoinPlan
-truncateNodeJoinPlan
-  (NodeJoinPlan m) (NumCoreNodes n') (NumSlots t, NumSlots t') =
-    NodeJoinPlan $
-    -- scale by t' / t
-    Map.map (\(SlotNo i) -> SlotNo $ (i * t') `div` t) $
-    -- discard discarded nodes
-    Map.filterWithKey (\(CoreNodeId nid) _ -> nid < n') $
-    m
-
 truncateNodeTopology :: NodeTopology -> NumCoreNodes -> NodeTopology
 truncateNodeTopology (NodeTopology m) (NumCoreNodes n') =
     NodeTopology $ Map.filterWithKey (\(CoreNodeId i) _ -> i < n') m
-
-truncateNodeRestarts :: NodeRestarts -> NumSlots -> NodeRestarts
-truncateNodeRestarts (NodeRestarts m) (NumSlots t) =
-    NodeRestarts $ Map.filterWithKey (\(SlotNo s) _ -> s < t) m
 
 instance Arbitrary TestConfig where
   arbitrary = do

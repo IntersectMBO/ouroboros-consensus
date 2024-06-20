@@ -23,9 +23,6 @@ module Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common (
   , futureEraException
   , pSHFC
     -- * Distinguish first era from the rest
-  , FirstEra
-  , LaterEra
-  , isFirstEra
   , notFirstEra
     -- * Versioning
   , EraNodeToClientVersion (..)
@@ -74,7 +71,6 @@ import           Control.Exception (Exception, throw)
 import qualified Data.ByteString.Lazy as Lazy
 import           Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as Short
-import           Data.Kind (Type)
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
 import           Data.SOP.Index
@@ -102,21 +98,6 @@ import           Ouroboros.Network.Block (Serialised)
 {-------------------------------------------------------------------------------
   Distinguish between the first era and all others
 -------------------------------------------------------------------------------}
-
-type family FirstEra (xs :: [Type]) where
-  FirstEra (x ': xs) = x
-
-type family LaterEra (xs :: [Type]) where
-  LaterEra (x ': xs) = xs
-
-isFirstEra :: forall f xs. All SingleEraBlock xs
-           => NS f xs
-           -> Either (NS SingleEraInfo (LaterEra xs)) (f (FirstEra xs))
-isFirstEra (Z x) = Right x
-isFirstEra (S x) = Left (hcmap proxySingle aux x)
-  where
-    aux :: forall blk. SingleEraBlock blk => f blk -> SingleEraInfo blk
-    aux _ = singleEraInfo (Proxy @blk)
 
 -- | Used to construct 'FutureEraException'
 notFirstEra :: All SingleEraBlock xs

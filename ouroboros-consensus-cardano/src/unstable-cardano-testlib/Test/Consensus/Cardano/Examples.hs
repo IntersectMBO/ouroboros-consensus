@@ -19,8 +19,6 @@ module Test.Consensus.Cardano.Examples (
   , exampleEraMismatchByron
   , exampleEraMismatchShelley
   , exampleQueryAnytimeShelley
-  , exampleQueryEraMismatchByron
-  , exampleQueryEraMismatchShelley
   , exampleResultAnytimeShelley
   , exampleResultEraMismatchByron
   , exampleResultEraMismatchShelley
@@ -321,14 +319,6 @@ exampleApplyTxErrWrongEraByron =
 exampleApplyTxErrWrongEraShelley :: ApplyTxErr (CardanoBlock Crypto)
 exampleApplyTxErrWrongEraShelley =
       HardForkApplyTxErrWrongEra exampleEraMismatchShelley
-
-exampleQueryEraMismatchByron :: SomeSecond BlockQuery (CardanoBlock Crypto)
-exampleQueryEraMismatchByron =
-    SomeSecond (QueryIfCurrentShelley Shelley.GetLedgerTip)
-
-exampleQueryEraMismatchShelley :: SomeSecond BlockQuery (CardanoBlock Crypto)
-exampleQueryEraMismatchShelley =
-    SomeSecond (QueryIfCurrentByron Byron.GetUpdateInterfaceState)
 
 exampleQueryAnytimeByron :: SomeSecond BlockQuery (CardanoBlock Crypto)
 exampleQueryAnytimeByron =

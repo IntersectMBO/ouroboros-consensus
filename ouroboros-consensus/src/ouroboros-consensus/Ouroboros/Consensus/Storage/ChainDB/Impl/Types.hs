@@ -24,7 +24,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
   , getEnv1
   , getEnv2
   , getEnvSTM
-  , getEnvSTM1
     -- * Exposed internals for testing purposes
   , Internal (..)
     -- * Iterator-related
@@ -151,16 +150,6 @@ getEnvSTM :: forall m blk r. (IOLike m, HasCallStack, HasHeader blk)
           -> STM m r
 getEnvSTM (CDBHandle varState) f = readTVar varState >>= \case
     ChainDbOpen env -> f env
-    ChainDbClosed   -> throwSTM $ ClosedDBError @blk prettyCallStack
-
--- | Variant of 'getEnv1' that works in 'STM'.
-getEnvSTM1 ::
-     forall m blk a r. (IOLike m, HasCallStack, HasHeader blk)
-  => ChainDbHandle m blk
-  -> (ChainDbEnv m blk -> a -> STM m r)
-  -> a -> STM m r
-getEnvSTM1 (CDBHandle varState) f a = readTVar varState >>= \case
-    ChainDbOpen env -> f env a
     ChainDbClosed   -> throwSTM $ ClosedDBError @blk prettyCallStack
 
 data ChainDbState m blk

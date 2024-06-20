@@ -85,7 +85,7 @@ import           Test.Consensus.PointSchedule.SinglePeer
                      peerScheduleFromTipPoints, schedulePointToBlock)
 import           Test.Consensus.PointSchedule.SinglePeer.Indices
                      (uniformRMDiffTime)
-import           Test.Ouroboros.Consensus.ChainGenerator.Params (Delta (Delta))
+import           Test.Consensus.ChainGenerator.Params (Delta (Delta))
 import           Test.QuickCheck (Gen, arbitrary)
 import           Test.QuickCheck.Random (QCGen)
 import           Test.Util.TersePrinting (terseFragment)

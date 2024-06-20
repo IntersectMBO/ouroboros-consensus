@@ -20,7 +20,6 @@ module Ouroboros.Consensus.Ledger.Abstract (
   , UpdateLedger
     -- * Derived
   , applyLedgerBlock
-  , foldLedger
   , reapplyLedgerBlock
   , refoldLedger
   , tickThenApply
@@ -41,7 +40,7 @@ import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ticked
-import           Ouroboros.Consensus.Util (repeatedly, repeatedlyM, (..:))
+import           Ouroboros.Consensus.Util (repeatedly, (..:))
 
 -- | " Validated " transaction or block
 --
@@ -174,11 +173,6 @@ tickThenReapply ::
   -> l
   -> l
 tickThenReapply = lrResult ..: tickThenReapplyLedgerResult
-
-foldLedger ::
-     ApplyBlock l blk
-  => LedgerCfg l -> [blk] -> l -> Except (LedgerErr l) l
-foldLedger = repeatedlyM . tickThenApply
 
 refoldLedger ::
      ApplyBlock l blk

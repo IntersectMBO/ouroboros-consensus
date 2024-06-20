@@ -17,8 +17,6 @@ module Ouroboros.Consensus.Mempool.API (
   , MempoolAddTxResult (..)
   , addLocalTxs
   , addTxs
-  , isMempoolTxAdded
-  , isMempoolTxRejected
   , mempoolTxAddedToMaybe
     -- * Ledger state to forge on top of
   , ForgeLedgerState (..)
@@ -230,14 +228,6 @@ deriving instance (Show (GenTx blk), Show (Validated (GenTx blk)), Show (ApplyTx
 mempoolTxAddedToMaybe :: MempoolAddTxResult blk -> Maybe (Validated (GenTx blk))
 mempoolTxAddedToMaybe (MempoolTxAdded vtx) = Just vtx
 mempoolTxAddedToMaybe _                    = Nothing
-
-isMempoolTxAdded :: MempoolAddTxResult blk -> Bool
-isMempoolTxAdded MempoolTxAdded{} = True
-isMempoolTxAdded _                = False
-
-isMempoolTxRejected :: MempoolAddTxResult blk -> Bool
-isMempoolTxRejected MempoolTxRejected{} = True
-isMempoolTxRejected _                   = False
 
 -- | A wrapper around 'addTx' that adds a sequence of transactions on behalf of
 -- a remote peer.

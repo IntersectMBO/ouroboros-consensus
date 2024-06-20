@@ -12,7 +12,6 @@ module Test.ThreadNet.Util.NodeJoinPlan (
   , coreNodeIdJoinSlot
   , genNodeJoinPlan
   , nodeIdJoinSlot
-  , shrinkNodeJoinPlan
   , trivialNodeJoinPlan
   ) where
 
@@ -75,27 +74,6 @@ genNodeJoinPlan numCoreNodes@(NumCoreNodes n) numSlots@(NumSlots t)
     -- without loss of generality, the nodes start initializing in order of
     -- their Ids; this merely makes it easer to interpret the counterexamples
     pure $ NodeJoinPlan $ Map.fromList $ zip nids $ List.sort schedules
-
--- | Shrink a node join plan
---
--- INVARIANT no inter-join delay increases
---
--- Specifically, we shrink by setting some of the delays to 0.
---
-shrinkNodeJoinPlan :: NodeJoinPlan -> [NodeJoinPlan]
-shrinkNodeJoinPlan (NodeJoinPlan m0) =
-    init $   -- the last one is the same as the input
-    map (NodeJoinPlan . snd) $ go diffs0
-  where
-    slots  = map snd (Map.toDescList m0) ++ [0]
-    diffs0 = zipWith (\j2 j1 -> j2 - j1) slots (tail slots)
-
-    go = \case
-        []   -> [((CoreNodeId 0, 0), Map.empty)]
-        d:ds -> do
-            ((CoreNodeId i, mx), m) <- go ds
-            let f s = ((CoreNodeId (succ i), s), Map.insert (CoreNodeId i) s m)
-            [f mx] ++ [f (mx + d) | d > 0]
 
 -- | Partial; @error@ for a node not in the plan
 --

@@ -17,7 +17,6 @@ module Ouroboros.Consensus.Storage.ImmutableDB.API (
   , Iterator (..)
   , IteratorResult (..)
   , iteratorToList
-  , traverseIterator
     -- * Types
   , CompareTip (..)
   , Tip (..)
@@ -195,19 +194,6 @@ data Iterator m blk b = Iterator {
     }
   deriving (Functor)
   deriving NoThunks via OnlyCheckWhnfNamed "Iterator" (Iterator m blk b)
-
--- | Variant of 'traverse' instantiated to @'Iterator' m blk m@ that executes
--- the monadic function when calling 'iteratorNext'.
-traverseIterator ::
-     Monad m
-  => (b -> m b')
-  -> Iterator m blk b
-  -> Iterator m blk b'
-traverseIterator f itr = Iterator{
-      iteratorNext    = iteratorNext    itr >>= traverse f
-    , iteratorHasNext = iteratorHasNext itr
-    , iteratorClose   = iteratorClose   itr
-    }
 
 -- | The result of stepping an 'Iterator'.
 data IteratorResult b

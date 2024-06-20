@@ -15,13 +15,11 @@ module Ouroboros.Consensus.Block.NestedContent (
     -- * Block contents
     HasNestedContent (..)
   , NestedCtxt_
-  , curriedNest
     -- * Flip type arguments
   , NestedCtxt (..)
   , castNestedCtxt
   , mapNestedCtxt
     -- * Existentials
-  , castSomeNestedCtxt
   , mapSomeNestedCtxt
     -- * Convenience re-exports
   , module Ouroboros.Consensus.Util.DepPair
@@ -92,9 +90,6 @@ class ( forall a. Show (NestedCtxt_ blk f a)
                => DepPair (NestedCtxt f blk) -> f blk
   nest (DepPair x y) = fromTrivialDependency x y
 
-curriedNest :: HasNestedContent f blk => NestedCtxt f blk a -> a -> f blk
-curriedNest ctxt a = nest (DepPair ctxt a)
-
 -- | Context identifying what kind of block we have
 --
 -- In almost all places we will use 'NestedCtxt' rather than 'NestedCtxt_'.
@@ -161,11 +156,6 @@ deriving via InspectHeap (SomeSecond (NestedCtxt f) blk)
 instance SameDepIndex (NestedCtxt_ blk f)
       => Eq (SomeSecond (NestedCtxt f) blk) where
   SomeSecond ctxt == SomeSecond ctxt' = isJust (sameDepIndex ctxt ctxt')
-
-castSomeNestedCtxt :: (forall a. NestedCtxt_ blk f a -> NestedCtxt_ blk' f a)
-                   -> SomeSecond (NestedCtxt f) blk
-                   -> SomeSecond (NestedCtxt f) blk'
-castSomeNestedCtxt coerce (SomeSecond ctxt) = SomeSecond (castNestedCtxt coerce ctxt)
 
 mapSomeNestedCtxt :: (forall a. NestedCtxt_ blk f a -> NestedCtxt_ blk' f' a)
                   -> SomeSecond (NestedCtxt f)  blk

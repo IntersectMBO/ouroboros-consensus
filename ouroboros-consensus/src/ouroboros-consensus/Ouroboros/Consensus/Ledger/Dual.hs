@@ -46,13 +46,11 @@ module Ouroboros.Consensus.Ledger.Dual (
   , decodeDualGenTx
   , decodeDualGenTxErr
   , decodeDualGenTxId
-  , decodeDualHeader
   , decodeDualLedgerState
   , encodeDualBlock
   , encodeDualGenTx
   , encodeDualGenTxErr
   , encodeDualGenTxId
-  , encodeDualHeader
   , encodeDualLedgerState
   ) where
 
@@ -157,9 +155,8 @@ instance (Typeable m, Typeable a)
   Config
 -------------------------------------------------------------------------------}
 
-data instance BlockConfig (DualBlock m a) = DualBlockConfig {
+newtype instance BlockConfig (DualBlock m a) = DualBlockConfig {
       dualBlockConfigMain :: BlockConfig m
-    , dualBlockConfigAux  :: BlockConfig a
     }
   deriving NoThunks via AllowThunk (BlockConfig (DualBlock m a))
 
@@ -201,9 +198,8 @@ instance ( NoThunks (CodecConfig m)
   StorageConfig
 -------------------------------------------------------------------------------}
 
-data instance StorageConfig (DualBlock m a) = DualStorageConfig {
-      dualStorageConfigMain :: !(StorageConfig m)
-    , dualStorageConfigAux  :: !(StorageConfig a)
+newtype instance StorageConfig (DualBlock m a) = DualStorageConfig {
+      dualStorageConfigMain :: StorageConfig m
     }
   deriving (Generic)
 
@@ -380,7 +376,7 @@ instance Bridge m a => ApplyBlock (LedgerState (DualBlock m a)) (DualBlock m a) 
 
   applyBlockLedgerResult cfg
                          block@DualBlock{..}
-                         TickedDualLedgerState{..} = do
+                         tdls = do
       (ledgerResult, aux') <-
         agreeOnError DualLedgerError (
             applyBlockLedgerResult
@@ -400,10 +396,17 @@ instance Bridge m a => ApplyBlock (LedgerState (DualBlock m a)) (DualBlock m a) 
                                     block
                                     tickedDualLedgerStateBridge
         }
+      where
+        TickedDualLedgerState {
+            tickedDualLedgerStateMain
+          , tickedDualLedgerStateAux
+          , tickedDualLedgerStateAuxOrig
+          , tickedDualLedgerStateBridge
+          } = tdls
 
   reapplyBlockLedgerResult cfg
                            block@DualBlock{..}
-                           TickedDualLedgerState{..} =
+                           tdls =
     castLedgerResult ledgerResult <&> \main' -> DualLedgerState {
         dualLedgerStateMain   = main'
       , dualLedgerStateAux    = reapplyMaybeBlock
@@ -420,6 +423,13 @@ instance Bridge m a => ApplyBlock (LedgerState (DualBlock m a)) (DualBlock m a) 
                        (dualLedgerConfigMain cfg)
                        dualBlockMain
                        tickedDualLedgerStateMain
+
+      TickedDualLedgerState {
+            tickedDualLedgerStateMain
+          , tickedDualLedgerStateAux
+          , tickedDualLedgerStateAuxOrig
+          , tickedDualLedgerStateBridge
+          } = tdls
 
 data instance LedgerState (DualBlock m a) = DualLedgerState {
       dualLedgerStateMain   :: LedgerState m
@@ -833,28 +843,17 @@ decodeDualBlock decodeMain = do
               -> (Lazy.ByteString -> DualBlock m a)
     dualBlock conc abst bridge bs = DualBlock (conc bs) abst bridge
 
-encodeDualHeader :: (Header m -> Encoding)
-                 -> Header (DualBlock m a) -> Encoding
-encodeDualHeader encodeMain DualHeader{..} = encodeMain dualHeaderMain
-
-decodeDualHeader :: Decoder s (Lazy.ByteString -> Header m)
-                 -> Decoder s (Lazy.ByteString -> Header (DualBlock m a))
-decodeDualHeader decodeMain =
-    dualHeader <$> decodeMain
-  where
-    dualHeader :: (Lazy.ByteString -> Header m)
-               -> (Lazy.ByteString -> Header (DualBlock m a))
-    dualHeader conc bs = DualHeader (conc bs)
-
 encodeDualGenTx :: (Bridge m a, Serialise (GenTx a))
                 => (GenTx m -> Encoding)
                 -> GenTx (DualBlock m a) -> Encoding
-encodeDualGenTx encodeMain DualGenTx{..} = mconcat [
+encodeDualGenTx encodeMain dgtx = mconcat [
       encodeListLen 3
     , encodeMain dualGenTxMain
     , encode     dualGenTxAux
     , encode     dualGenTxBridge
     ]
+  where
+    DualGenTx{dualGenTxMain, dualGenTxAux, dualGenTxBridge} = dgtx
 
 decodeDualGenTx :: (Bridge m a, Serialise (GenTx a))
                 => Decoder s (GenTx m)
@@ -895,12 +894,18 @@ decodeDualGenTxErr decodeMain = do
 encodeDualLedgerState :: (Bridge m a, Serialise (LedgerState a))
                       => (LedgerState m -> Encoding)
                       -> LedgerState (DualBlock m a) -> Encoding
-encodeDualLedgerState encodeMain DualLedgerState{..} = mconcat [
+encodeDualLedgerState encodeMain dls = mconcat [
       encodeListLen 3
     , encodeMain dualLedgerStateMain
     , encode     dualLedgerStateAux
     , encode     dualLedgerStateBridge
     ]
+  where
+    DualLedgerState{
+        dualLedgerStateMain
+      , dualLedgerStateAux
+      , dualLedgerStateBridge
+      } = dls
 
 decodeDualLedgerState :: (Bridge m a, Serialise (LedgerState a))
                       => Decoder s (LedgerState m)

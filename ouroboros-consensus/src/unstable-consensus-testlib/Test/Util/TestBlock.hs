@@ -473,7 +473,7 @@ instance ( Typeable ptype
          , NoThunks (CodecConfig (TestBlockWith ptype))
          , NoThunks (StorageConfig (TestBlockWith ptype))
          ) => BlockSupportsProtocol (TestBlockWith ptype) where
-  validateView TestBlockConfig{..} =
+  validateView TestBlockConfig{testBlockNumCoreNodes} =
       bftValidateView bftFields
     where
       NumCoreNodes numCore = testBlockNumCoreNodes

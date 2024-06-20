@@ -95,7 +95,7 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs {
 -- * 'cdbsCheckInFuture'
 --
 -- We a 'cdbsGcDelay' of 60 seconds and a 'cdbsGcInterval' of 10 seconds, this
--- means (see the properties in "Test.Ouroboros.Storage.ChainDB.GcSchedule"):
+-- means (see the properties in "Test.Consensus.Storage.ChainDB.GcSchedule"):
 --
 -- * The length of the 'GcSchedule' queue is @<= ⌈gcDelay / gcInterval⌉ + 1@,
 --   i.e., @<= 7@.

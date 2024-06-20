@@ -9,7 +9,6 @@
 -- > import qualified Ouroboros.Consensus.ByronSpec.Ledger.Genesis as Genesis
 module Ouroboros.Consensus.ByronSpec.Ledger.Genesis (
     ByronSpecGenesis (..)
-  , modFeeParams
   , modPBftThreshold
   , modPParams
   , modUtxo
@@ -56,11 +55,6 @@ modPBftThreshold :: (Double -> Double)
                  -> ByronSpecGenesis -> ByronSpecGenesis
 modPBftThreshold = modPParams . modPParamsPBftThreshold
 
--- | Modify the @a@ and @b@ fee parameters
-modFeeParams :: ((Int, Int) -> (Int, Int))
-             -> ByronSpecGenesis -> ByronSpecGenesis
-modFeeParams = modPParams . modPParamsFeeParams
-
 -- | Adjust all values in the initial UTxO equally
 modUtxoValues :: (Integer -> Integer) -> ByronSpecGenesis -> ByronSpecGenesis
 modUtxoValues = modUtxo . Spec.mapUTxOValues . coerce
@@ -87,16 +81,6 @@ modPParamsPBftThreshold f pparams = pparams {
     }
   where
     Spec.BkSgnCntT threshold = Spec._bkSgnCntT pparams
-
-modPParamsFeeParams :: ((Int, Int) -> (Int, Int))
-                    -> Spec.PParams -> Spec.PParams
-modPParamsFeeParams f pparams = pparams {
-      Spec._factorA = Spec.FactorA $ fst (f (a, b))
-    , Spec._factorB = Spec.FactorB $ snd (f (a, b))
-    }
-  where
-    Spec.FactorA a = Spec._factorA pparams
-    Spec.FactorB b = Spec._factorB pparams
 
 {-------------------------------------------------------------------------------
   Conversions

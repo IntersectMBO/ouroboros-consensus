@@ -28,8 +28,6 @@ module Ouroboros.Consensus.Byron.Ledger.Ledger (
   , decodeByronQuery
   , decodeByronResult
   , encodeByronAnnTip
-  , encodeByronExtLedgerState
-  , encodeByronHeaderState
   , encodeByronLedgerState
   , encodeByronQuery
   , encodeByronResult
@@ -403,17 +401,6 @@ encodeByronAnnTip = encodeAnnTipIsEBB encodeByronHeaderHash
 
 decodeByronAnnTip :: Decoder s (AnnTip ByronBlock)
 decodeByronAnnTip = decodeAnnTipIsEBB decodeByronHeaderHash
-
-encodeByronExtLedgerState :: ExtLedgerState ByronBlock -> Encoding
-encodeByronExtLedgerState = encodeExtLedgerState
-    encodeByronLedgerState
-    encodeByronChainDepState
-    encodeByronAnnTip
-
-encodeByronHeaderState :: HeaderState ByronBlock -> Encoding
-encodeByronHeaderState = encodeHeaderState
-    encodeByronChainDepState
-    encodeByronAnnTip
 
 -- | Encode transition info
 --

@@ -103,7 +103,6 @@ library
     Ouroboros.Consensus.HardFork.Combinator.AcrossEras
     Ouroboros.Consensus.HardFork.Combinator.Basics
     Ouroboros.Consensus.HardFork.Combinator.Block
-    Ouroboros.Consensus.HardFork.Combinator.Compat
     Ouroboros.Consensus.HardFork.Combinator.Condense
     Ouroboros.Consensus.HardFork.Combinator.Degenerate
     Ouroboros.Consensus.HardFork.Combinator.Embed.Binary
@@ -256,7 +255,6 @@ library
     Ouroboros.Consensus.Util.EarlyExit
     Ouroboros.Consensus.Util.Enclose
     Ouroboros.Consensus.Util.FileLock
-    Ouroboros.Consensus.Util.HList
     Ouroboros.Consensus.Util.IOLike
     Ouroboros.Consensus.Util.LeakyBucket
     Ouroboros.Consensus.Util.MonadSTM.NormalForm
@@ -327,16 +325,16 @@ library unstable-consensus-testlib
   visibility: public
   hs-source-dirs: src/unstable-consensus-testlib
   exposed-modules:
-    Test.Ouroboros.Consensus.ChainGenerator.Adversarial
-    Test.Ouroboros.Consensus.ChainGenerator.BitVector
-    Test.Ouroboros.Consensus.ChainGenerator.Counting
-    Test.Ouroboros.Consensus.ChainGenerator.Honest
-    Test.Ouroboros.Consensus.ChainGenerator.Params
-    Test.Ouroboros.Consensus.ChainGenerator.RaceIterator
-    Test.Ouroboros.Consensus.ChainGenerator.Slot
-    Test.Ouroboros.Consensus.ChainGenerator.Some
-    Test.Ouroboros.Consensus.DiffusionPipelining
-    Test.Ouroboros.Consensus.Protocol
+    Test.Consensus.ChainGenerator.Adversarial
+    Test.Consensus.ChainGenerator.BitVector
+    Test.Consensus.ChainGenerator.Counting
+    Test.Consensus.ChainGenerator.Honest
+    Test.Consensus.ChainGenerator.Params
+    Test.Consensus.ChainGenerator.RaceIterator
+    Test.Consensus.ChainGenerator.Slot
+    Test.Consensus.ChainGenerator.Some
+    Test.Consensus.DiffusionPipelining
+    Test.Consensus.Protocol
     Test.QuickCheck.Extras
     Test.Util.BoolProps
     Test.Util.ChainDB
@@ -356,7 +354,6 @@ library unstable-consensus-testlib
     Test.Util.Orphans.SignableRepresentation
     Test.Util.Orphans.ToExpr
     Test.Util.Paths
-    Test.Util.QSM
     Test.Util.QuickCheck
     Test.Util.Range
     Test.Util.RefEnv
@@ -582,12 +579,12 @@ test-suite infra-test
   main-is: Main.hs
   other-modules:
     Ouroboros.Consensus.Util.Tests
-    Test.Ouroboros.Consensus.ChainGenerator.Tests
-    Test.Ouroboros.Consensus.ChainGenerator.Tests.Adversarial
-    Test.Ouroboros.Consensus.ChainGenerator.Tests.BitVector
-    Test.Ouroboros.Consensus.ChainGenerator.Tests.Counting
-    Test.Ouroboros.Consensus.ChainGenerator.Tests.Honest
-    Test.Ouroboros.Consensus.Util.LeakyBucket.Tests
+    Test.Consensus.ChainGenerator.Tests
+    Test.Consensus.ChainGenerator.Tests.Adversarial
+    Test.Consensus.ChainGenerator.Tests.BitVector
+    Test.Consensus.ChainGenerator.Tests.Counting
+    Test.Consensus.ChainGenerator.Tests.Honest
+    Test.Consensus.Util.LeakyBucket.Tests
     Test.Util.ChainUpdates.Tests
     Test.Util.Schedule.Tests
     Test.Util.Split.Tests
@@ -612,33 +609,33 @@ test-suite storage-test
   hs-source-dirs: test/storage-test
   main-is: Main.hs
   other-modules:
-    Test.Ouroboros.Storage
-    Test.Ouroboros.Storage.ChainDB
-    Test.Ouroboros.Storage.ChainDB.FollowerPromptness
-    Test.Ouroboros.Storage.ChainDB.GcSchedule
-    Test.Ouroboros.Storage.ChainDB.Iterator
-    Test.Ouroboros.Storage.ChainDB.Model
-    Test.Ouroboros.Storage.ChainDB.Model.Test
-    Test.Ouroboros.Storage.ChainDB.Paths
-    Test.Ouroboros.Storage.ChainDB.StateMachine
-    Test.Ouroboros.Storage.ChainDB.StateMachine.Utils.RunOnRepl
-    Test.Ouroboros.Storage.ChainDB.Unit
-    Test.Ouroboros.Storage.ImmutableDB
-    Test.Ouroboros.Storage.ImmutableDB.Mock
-    Test.Ouroboros.Storage.ImmutableDB.Model
-    Test.Ouroboros.Storage.ImmutableDB.Primary
-    Test.Ouroboros.Storage.ImmutableDB.StateMachine
-    Test.Ouroboros.Storage.LedgerDB
-    Test.Ouroboros.Storage.LedgerDB.DiskPolicy
-    Test.Ouroboros.Storage.LedgerDB.InMemory
-    Test.Ouroboros.Storage.LedgerDB.OnDisk
-    Test.Ouroboros.Storage.LedgerDB.OrphanArbitrary
-    Test.Ouroboros.Storage.Orphans
-    Test.Ouroboros.Storage.TestBlock
-    Test.Ouroboros.Storage.VolatileDB
-    Test.Ouroboros.Storage.VolatileDB.Mock
-    Test.Ouroboros.Storage.VolatileDB.Model
-    Test.Ouroboros.Storage.VolatileDB.StateMachine
+    Test.Consensus.Storage
+    Test.Consensus.Storage.ChainDB
+    Test.Consensus.Storage.ChainDB.FollowerPromptness
+    Test.Consensus.Storage.ChainDB.GcSchedule
+    Test.Consensus.Storage.ChainDB.Iterator
+    Test.Consensus.Storage.ChainDB.Model
+    Test.Consensus.Storage.ChainDB.Model.Test
+    Test.Consensus.Storage.ChainDB.Paths
+    Test.Consensus.Storage.ChainDB.StateMachine
+    Test.Consensus.Storage.ChainDB.StateMachine.Utils.RunOnRepl
+    Test.Consensus.Storage.ChainDB.Unit
+    Test.Consensus.Storage.ImmutableDB
+    Test.Consensus.Storage.ImmutableDB.Mock
+    Test.Consensus.Storage.ImmutableDB.Model
+    Test.Consensus.Storage.ImmutableDB.Primary
+    Test.Consensus.Storage.ImmutableDB.StateMachine
+    Test.Consensus.Storage.LedgerDB
+    Test.Consensus.Storage.LedgerDB.DiskPolicy
+    Test.Consensus.Storage.LedgerDB.InMemory
+    Test.Consensus.Storage.LedgerDB.OnDisk
+    Test.Consensus.Storage.LedgerDB.OrphanArbitrary
+    Test.Consensus.Storage.Orphans
+    Test.Consensus.Storage.TestBlock
+    Test.Consensus.Storage.VolatileDB
+    Test.Consensus.Storage.VolatileDB.Mock
+    Test.Consensus.Storage.VolatileDB.Model
+    Test.Consensus.Storage.VolatileDB.StateMachine
 
   build-depends:
     QuickCheck,

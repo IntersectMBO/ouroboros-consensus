@@ -120,7 +120,6 @@ module Ouroboros.Consensus.Storage.LedgerDB (
   , ledgerDbPush
   , ledgerDbSwitch
     -- ** Pure API
-  , ledgerDbPush'
   , ledgerDbPushMany'
   , ledgerDbSwitch'
     -- ** Trace
@@ -183,5 +182,5 @@ import           Ouroboros.Consensus.Storage.LedgerDB.Update
                      ThrowsLedgerError (..), UpdateLedgerDbTraceEvent (..),
                      defaultResolveBlocks, defaultResolveWithErrors,
                      defaultThrowLedgerErrors, ledgerDbBimap, ledgerDbPrune,
-                     ledgerDbPush, ledgerDbPush', ledgerDbPushMany',
+                     ledgerDbPush, ledgerDbPushMany',
                      ledgerDbSwitch, ledgerDbSwitch', ledgerDbWithAnchor)

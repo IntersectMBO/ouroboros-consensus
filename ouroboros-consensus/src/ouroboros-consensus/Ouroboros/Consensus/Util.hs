@@ -17,12 +17,10 @@
 -- | Miscellaneous utilities
 module Ouroboros.Consensus.Util (
     -- * Type-level utility
-    Empty
-  , ShowProxy (..)
+    ShowProxy (..)
   , Some (..)
   , SomePair (..)
   , SomeSecond (..)
-  , mustBeRight
     -- * Folding variations
   , foldlM'
   , nTimes
@@ -31,11 +29,8 @@ module Ouroboros.Consensus.Util (
   , repeatedlyM
     -- * Lists
   , allEqual
-  , chunks
   , dropLast
   , firstJust
-  , markLast
-  , pickOne
   , split
   , splits
   , takeLast
@@ -46,17 +41,9 @@ module Ouroboros.Consensus.Util (
   , safeMaximumBy
   , safeMaximumOn
     -- * Hashes
-  , hashFromBytesE
   , hashFromBytesShortE
-    -- * Bytestrings
-  , byteStringChunks
-  , lazyByteStringChunks
     -- * Monadic utilities
   , whenJust
-    -- * Test code
-  , checkThat
-    -- * Sets
-  , allDisjoint
     -- * Composition
   , (......:)
   , (.....:)
@@ -79,13 +66,11 @@ module Ouroboros.Consensus.Util (
   , withFuse
   ) where
 
-import           Cardano.Crypto.Hash (Hash, HashAlgorithm, hashFromBytes,
+import           Cardano.Crypto.Hash (Hash, HashAlgorithm,
                      hashFromBytesShort)
 import           Control.Monad (unless)
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Trans.Class
-import qualified Data.ByteString as Strict
-import qualified Data.ByteString.Lazy as Lazy
 import           Data.ByteString.Short (ShortByteString)
 import           Data.Foldable (asum, toList)
 import           Data.Function (on)
@@ -110,9 +95,6 @@ import           Ouroboros.Network.Util.ShowProxy (ShowProxy (..))
   Type-level utility
 -------------------------------------------------------------------------------}
 
-class Empty a
-instance Empty a
-
 -- | Pair of functors instantiated to the /same/ existential
 data SomePair (f :: k -> Type) (g :: k -> Type) where
     SomePair :: f a -> g a -> SomePair f g
@@ -124,10 +106,6 @@ data SomePair (f :: k -> Type) (g :: k -> Type) where
 type SomeSecond :: (k1 -> k2 -> Type) -> k1 -> Type
 data SomeSecond f a where
   SomeSecond :: !(f a b) -> SomeSecond f a
-
-mustBeRight :: Either Void a -> a
-mustBeRight (Left  v) = absurd v
-mustBeRight (Right a) = a
 
 {-------------------------------------------------------------------------------
   Folding variations
@@ -162,30 +140,6 @@ nTimesM f = go
 {-------------------------------------------------------------------------------
   Lists
 -------------------------------------------------------------------------------}
-
-chunks :: Int -> [a] -> [[a]]
-chunks _ [] = []
-chunks n xs = let (chunk, xs') = splitAt n xs
-              in chunk : chunks n xs'
-
--- | All possible ways to pick on element from a list, preserving order
---
--- > pickOne [1,2,3] = [ ([], 1, [2, 3])
--- >                   , ([1], 2, [3])
--- >                   , ([1,2], 3, [])
--- >                   ]
-pickOne :: [a] -> [([a], a, [a])]
-pickOne []     = []
-pickOne (x:xs) = ([], x, xs)
-               : map (\(as, b, cs) -> (x:as, b, cs)) (pickOne xs)
-
--- | Mark the last element of the list as 'Right'
-markLast :: [a] -> [Either a a]
-markLast = go
-  where
-    go []     = []
-    go [x]    = [Right x]
-    go (x:xs) = Left x : go xs
 
 -- | Take the last @n@ elements
 takeLast :: Word64 -> [a] -> [a]
@@ -274,18 +228,6 @@ safeMaximumOn f = safeMaximumBy (compare `on` f)
   Hashes
 -------------------------------------------------------------------------------}
 
--- | Calls 'hashFromBytes' and throws an error if the input is of the wrong
--- length.
-hashFromBytesE ::
-     forall h a. (HashAlgorithm h, HasCallStack)
-  => Strict.ByteString
-  -> Hash h a
-hashFromBytesE bs = fromMaybe (error msg) $ hashFromBytes bs
-  where
-    msg =
-      "hashFromBytes called with ByteString of the wrong length: " <>
-      show bs
-
 -- | Calls 'hashFromBytesShort' and throws an error if the input is of the
 -- wrong length.
 hashFromBytesShortE ::
@@ -297,18 +239,6 @@ hashFromBytesShortE bs = fromMaybe (error msg) $ hashFromBytesShort bs
     msg =
       "hashFromBytesShort called with ShortByteString of the wrong length: " <>
       show bs
-{-------------------------------------------------------------------------------
-  Bytestrings
--------------------------------------------------------------------------------}
-
-byteStringChunks :: Int -> Strict.ByteString -> [Strict.ByteString]
-byteStringChunks n = map Strict.pack . chunks n . Strict.unpack
-
-lazyByteStringChunks :: Int -> Lazy.ByteString -> [Lazy.ByteString]
-lazyByteStringChunks n bs
-  | Lazy.null bs = []
-  | otherwise    = let (chunk, bs') = Lazy.splitAt (fromIntegral n) bs
-                   in chunk : lazyByteStringChunks n bs'
 
 {-------------------------------------------------------------------------------
   Monadic utilities
@@ -317,35 +247,6 @@ lazyByteStringChunks n bs
 whenJust :: Applicative f => Maybe a -> (a -> f ()) -> f ()
 whenJust (Just x) f = f x
 whenJust Nothing _  = pure ()
-
-{-------------------------------------------------------------------------------
-  Test code
--------------------------------------------------------------------------------}
-
--- | Assertion
---
--- Variation on 'assert' for use in testing code.
-checkThat :: (Show a, Monad m)
-          => String
-          -> (a -> Bool)
-          -> a
-          -> m ()
-checkThat label prd a
-  | prd a     = return ()
-  | otherwise = error $ label ++ " failed on " ++ show a ++ "\n"
-                     ++ prettyCallStack callStack
-
-{-------------------------------------------------------------------------------
-  Sets
--------------------------------------------------------------------------------}
-
--- | Check that a bunch of sets are all mutually disjoint
-allDisjoint :: forall a. Ord a => [Set a] -> Bool
-allDisjoint = go Set.empty
-  where
-    go :: Set a -> [Set a] -> Bool
-    go _   []       = True
-    go acc (xs:xss) = Set.disjoint acc xs && go (Set.union acc xs) xss
 
 {-------------------------------------------------------------------------------
   Composition

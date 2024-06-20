@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE TypeFamilies      #-}
+{-# LANGUAGE NamedFieldPuns #-}
 
 module Ouroboros.Consensus.Mock.Protocol.LeaderSchedule (
     ConsensusConfig (..)
@@ -47,7 +48,7 @@ instance ConsensusProtocol p => ConsensusProtocol (WithLeaderSchedule p) where
 
   protocolSecurityParam = protocolSecurityParam . wlsConfigP
 
-  checkIsLeader WLSConfig{..} () slot _ =
+  checkIsLeader WLSConfig{wlsConfigSchedule, wlsConfigNodeId} () slot _ =
     case Map.lookup slot $ getLeaderSchedule wlsConfigSchedule of
         Nothing -> error $ "WithLeaderSchedule: missing slot " ++ show slot
         Just nids

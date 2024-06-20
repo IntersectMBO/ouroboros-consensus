@@ -16,8 +16,7 @@
 
 -- | This module is the Shelley Hard Fork Combinator
 module Ouroboros.Consensus.Shelley.ShelleyHFC (
-    ProtocolShelley
-  , ShelleyBlockHFC
+    ShelleyBlockHFC
   , ShelleyPartialLedgerConfig (..)
   , crossEraForecastAcrossShelley
   , forecastAcrossShelley
@@ -118,12 +117,6 @@ instance (ShelleyCompatible proto era, LedgerSupportsProtocol (ShelleyBlock prot
  => SerialiseHFC '[ShelleyBlock proto era]
 instance (ShelleyCompatible proto era, LedgerSupportsProtocol (ShelleyBlock proto era))
   => SerialiseConstraintsHFC (ShelleyBlock proto era)
-
-{-------------------------------------------------------------------------------
-  Protocol type definition
--------------------------------------------------------------------------------}
-
-type ProtocolShelley = HardForkProtocol '[ ShelleyBlock (TPraos StandardCrypto) StandardShelley ]
 
 {-------------------------------------------------------------------------------
   SingleEraBlock Shelley

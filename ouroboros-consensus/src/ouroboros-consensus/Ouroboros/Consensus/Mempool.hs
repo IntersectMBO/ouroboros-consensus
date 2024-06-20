@@ -7,8 +7,6 @@ module Ouroboros.Consensus.Mempool (
   , MempoolAddTxResult (..)
   , addLocalTxs
   , addTxs
-  , isMempoolTxAdded
-  , isMempoolTxRejected
   , mempoolTxAddedToMaybe
     -- ** Ledger state to forge on top of
   , ForgeLedgerState (..)
@@ -40,8 +38,7 @@ module Ouroboros.Consensus.Mempool (
 import           Ouroboros.Consensus.Mempool.API (ForgeLedgerState (..),
                      Mempool (..), MempoolAddTxResult (..),
                      MempoolSnapshot (..), TicketNo, TxSizeInBytes, addLocalTxs,
-                     addTxs, isMempoolTxAdded, isMempoolTxRejected,
-                     mempoolTxAddedToMaybe, zeroTicketNo)
+                     addTxs,                      mempoolTxAddedToMaybe, zeroTicketNo)
 import           Ouroboros.Consensus.Mempool.Capacity (ByteSize (..),
                      MempoolCapacityBytes (..),
                      MempoolCapacityBytesOverride (..), MempoolSize (..),

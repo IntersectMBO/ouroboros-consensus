@@ -45,7 +45,7 @@ import           Test.Consensus.PointSchedule.Shrinking
                      (shrinkByRemovingAdversaries, shrinkPeerSchedules)
 import           Test.Consensus.PointSchedule.SinglePeer
                      (SchedulePoint (ScheduleBlockPoint, ScheduleTipPoint))
-import           Test.Ouroboros.Consensus.ChainGenerator.Params (Delta (Delta))
+import           Test.Consensus.ChainGenerator.Params (Delta (Delta))
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck
 import           Test.Tasty

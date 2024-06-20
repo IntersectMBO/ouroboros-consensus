@@ -174,7 +174,7 @@ instance CanHardFork xs
 
   applyBlockLedgerResult cfg
                     (HardForkBlock (OneEraBlock block))
-                    (TickedHardForkLedgerState transition st) =
+                    thfls =
       case State.match block st of
         Left mismatch ->
           -- Block from the wrong era (note that 'applyChainTick' will already
@@ -187,6 +187,11 @@ instance CanHardFork xs
           $ hsequence'
           $ hcizipWith proxySingle apply cfgs matched
     where
+      TickedHardForkLedgerState {
+          tickedHardForkLedgerStateTransition = transition
+        , tickedHardForkLedgerStatePerEra = st
+        } = thfls
+
       cfgs = distribLedgerConfig ei cfg
       ei   = State.epochInfoPrecomputedTransitionInfo
                (hardForkLedgerConfigShape cfg)

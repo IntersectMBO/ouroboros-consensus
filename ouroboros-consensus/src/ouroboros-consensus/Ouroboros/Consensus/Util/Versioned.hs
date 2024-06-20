@@ -15,7 +15,6 @@ module Ouroboros.Consensus.Util.Versioned (
   , decodeVersionWithHook
   , decodeVersioned
   , encodeVersion
-  , encodeVersioned
     -- * opaque
   , VersionNumber
   ) where
@@ -98,8 +97,7 @@ encodeVersion vn encodedA = mconcat
     , encodedA
     ]
 
--- | Decode a /versioned/ @a@ (encoded using 'encodeVersion' or
--- 'encodeVersioned').
+-- | Decode a /versioned/ @a@ (encoded using 'encodeVersion').
 --
 -- The corresponding 'VersionDecoder' for the deserialised 'VersionNumber' is
 -- looked up in the given list. The first match is used (using the semantics
@@ -156,12 +154,6 @@ decodeVersionWithHook hook versionDecoders = do
         case lookup vn versionDecoders of
           Nothing   -> fail $ show $ UnknownVersion vn
           Just vDec -> getVersionDecoder vn vDec
-
-encodeVersioned ::
-     (          a -> Encoding)
-  -> (Versioned a -> Encoding)
-encodeVersioned enc (Versioned vn a) =
-    encodeVersion vn (enc a)
 
 decodeVersioned ::
      [(VersionNumber, VersionDecoder a)]

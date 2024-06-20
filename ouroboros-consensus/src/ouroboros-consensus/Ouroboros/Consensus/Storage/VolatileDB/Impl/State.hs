@@ -21,7 +21,6 @@ module Ouroboros.Consensus.Storage.VolatileDB.Impl.State (
   , ReverseIndex
   , SuccessorsIndex
   , VolatileDBEnv (..)
-  , dbIsOpen
     -- * State helpers
   , ModifyOpenState
   , appendOpenState
@@ -78,10 +77,6 @@ data InternalState blk h =
     DbClosed
   | DbOpen !(OpenState blk h)
   deriving (Generic, NoThunks)
-
-dbIsOpen :: InternalState blk h -> Bool
-dbIsOpen (DbOpen _) = True
-dbIsOpen DbClosed   = False
 
 -- | Internal state when the database is open.
 data OpenState blk h = OpenState {

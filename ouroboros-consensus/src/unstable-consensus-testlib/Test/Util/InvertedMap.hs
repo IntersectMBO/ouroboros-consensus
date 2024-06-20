@@ -5,10 +5,8 @@ module Test.Util.InvertedMap (
   , Test.Util.InvertedMap.null
     -- * Construction
   , toMap
-  , unsafeInvertedMap
     -- * Conversion
   , fromMap
-  , unsafeCoercion
     -- * Filter
   , spanAntitone
     -- * Min/Max
@@ -19,7 +17,6 @@ import           Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Type.Coercion
 
 -- | An inverted 'Map'
 --
@@ -29,12 +26,6 @@ import           Data.Type.Coercion
 --
 newtype InvertedMap v k = UnsafeInvertedMap {getInvertedMap :: Map v (NonEmpty k)}
   deriving (Show)
-
-unsafeCoercion :: Coercion (InvertedMap v k) (Map v (NonEmpty k))
-unsafeCoercion = Coercion
-
-unsafeInvertedMap :: Map v (NonEmpty k) -> InvertedMap v k
-unsafeInvertedMap = UnsafeInvertedMap
 
 -- | This inverts the given 'Map'
 --

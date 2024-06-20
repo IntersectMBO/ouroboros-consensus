@@ -19,14 +19,8 @@ module Ouroboros.Consensus.HardFork.Combinator.Embed.Unary (
   , inject'
   , project'
     -- * Dependent types
-  , ProjHardForkQuery (..)
   , injNestedCtxt
-  , injQuery
-  , injQueryResult
   , projNestedCtxt
-  , projQuery
-  , projQuery'
-  , projQueryResult
     -- * Convenience exports
   , I (..)
   , Proxy (..)
@@ -35,13 +29,11 @@ module Ouroboros.Consensus.HardFork.Combinator.Embed.Unary (
 import           Cardano.Slotting.EpochInfo
 import           Data.Bifunctor (first)
 import           Data.Coerce
-import           Data.Kind (Type)
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
 import qualified Data.SOP.OptNP as OptNP
 import           Data.SOP.Strict
 import qualified Data.SOP.Telescope as Telescope
-import           Data.Type.Equality
 import           Data.Void
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
@@ -51,7 +43,6 @@ import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.HardFork.Combinator.Block
 import           Ouroboros.Consensus.HardFork.Combinator.Forging
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger
-import           Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
 import           Ouroboros.Consensus.HardFork.Combinator.Mempool
 import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import           Ouroboros.Consensus.HardFork.Combinator.Protocol
@@ -607,49 +598,6 @@ instance Isomorphic SerialisedHeader where
 
   TODO: Class?
 -------------------------------------------------------------------------------}
-
--- | Project 'BlockQuery'
---
--- Not an instance of 'Isomorphic' because the types change.
-projQuery :: BlockQuery (HardForkBlock '[b]) result
-          -> (forall result'.
-                  (result :~: HardForkQueryResult '[b] result')
-               -> BlockQuery b result'
-               -> a)
-          -> a
-projQuery qry k =
-    getHardForkQuery
-      qry
-      (\Refl -> k Refl . aux)
-      (\Refl prfNonEmpty _ _ -> case prfNonEmpty of {})
-      (\Refl prfNonEmpty _   -> case prfNonEmpty of {})
-  where
-    aux :: QueryIfCurrent '[b] result -> BlockQuery b result
-    aux (QZ q) = q
-    aux (QS q) = case q of {}
-
-projQuery' :: BlockQuery (HardForkBlock '[b]) result
-           -> ProjHardForkQuery b result
-projQuery' qry = projQuery qry $ \Refl -> ProjHardForkQuery
-
-data ProjHardForkQuery b :: Type -> Type where
-  ProjHardForkQuery ::
-       BlockQuery b result'
-    -> ProjHardForkQuery b (HardForkQueryResult '[b] result')
-
--- | Inject 'BlockQuery'
---
--- Not an instance of 'Isomorphic' because the types change.
-injQuery :: BlockQuery b result
-         -> BlockQuery (HardForkBlock '[b]) (HardForkQueryResult '[b] result)
-injQuery = QueryIfCurrent . QZ
-
-projQueryResult :: HardForkQueryResult '[b] result -> result
-projQueryResult (Left  err)    = absurd $ mismatchOneEra err
-projQueryResult (Right result) = result
-
-injQueryResult :: result -> HardForkQueryResult '[b] result
-injQueryResult = Right
 
 projNestedCtxt :: NestedCtxt f (HardForkBlock '[blk]) a -> NestedCtxt f blk a
 projNestedCtxt = NestedCtxt . aux . flipNestedCtxt

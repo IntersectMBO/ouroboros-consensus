@@ -28,7 +28,6 @@ module Ouroboros.Consensus.HardFork.History.Summary (
   , Summary (..)
     -- ** Construction
   , neverForksSummary
-  , summaryWithExactly
     -- *** Summarize
   , Shape (..)
   , Transitions (..)
@@ -36,7 +35,6 @@ module Ouroboros.Consensus.HardFork.History.Summary (
   , invariantSummary
   , singletonShape
   , summarize
-  , transitionsUnknown
     -- ** Query
   , summaryBounds
   , summaryInit
@@ -229,12 +227,6 @@ summaryBounds (Summary summary) =
 summaryInit :: Summary xs -> (Maybe (Summary xs), EraSummary)
 summaryInit (Summary summary) = first (fmap Summary) $ nonEmptyInit summary
 
--- | Construct 'Summary' with an exact number of 'EraSummary'
---
--- Primarily useful for tests.
-summaryWithExactly :: Exactly (x ': xs) EraSummary -> Summary (x ': xs)
-summaryWithExactly = Summary . exactlyWeakenNonEmpty
-
 {-------------------------------------------------------------------------------
   Shape and Transitions
 
@@ -275,10 +267,6 @@ data Transitions :: [Type] -> Type where
   Transitions :: AtMost xs EpochNo -> Transitions (x ': xs)
 
 deriving instance Show (Transitions xs)
-
--- | No known transitions yet
-transitionsUnknown :: Transitions (x ': xs)
-transitionsUnknown = Transitions AtMostNil
 
 {-------------------------------------------------------------------------------
   Constructing the summary

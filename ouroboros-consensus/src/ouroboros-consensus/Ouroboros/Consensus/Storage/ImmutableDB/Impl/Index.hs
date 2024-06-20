@@ -8,8 +8,6 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index (
     Index (..)
   , readEntry
   , readOffset
-    -- * File-backed index
-  , fileBackedIndex
     -- * Cached index
   , CacheConfig (..)
   , cachedIndex
@@ -17,7 +15,6 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index (
 
 import           Control.Tracer (Tracer)
 import           Data.Functor.Identity (Identity (..))
-import           Data.Proxy (Proxy (..))
 import           Data.Typeable (Typeable)
 import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
@@ -29,7 +26,6 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index.Cache
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index.Cache as Cache
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index.Primary
                      (SecondaryOffset)
-import qualified Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index.Primary as Primary
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index.Secondary
                      (BlockSize)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index.Secondary as Secondary
@@ -137,33 +133,6 @@ readEntry ::
   -> m (Secondary.Entry blk, BlockSize)
 readEntry index chunk isEBB slotOffset = runIdentity <$>
     readEntries index chunk (Identity (isEBB, slotOffset))
-
-{------------------------------------------------------------------------------
-  File-backed index
-------------------------------------------------------------------------------}
-
-fileBackedIndex ::
-     forall m blk h.
-     (ConvertRawHash blk, MonadCatch m, StandardHash blk, Typeable blk)
-  => HasFS m h
-  -> ChunkInfo
-  -> Index m blk h
-fileBackedIndex hasFS chunkInfo = Index
-    { readOffsets         = Primary.readOffsets         p hasFS
-    , readFirstFilledSlot = Primary.readFirstFilledSlot p hasFS chunkInfo
-    , openPrimaryIndex    = Primary.open                  hasFS
-    , appendOffsets       = Primary.appendOffsets         hasFS
-    , readEntries         = Secondary.readEntries         hasFS
-    , readAllEntries      = Secondary.readAllEntries      hasFS
-    , appendEntry         = \_chunk h (WithBlockSize _ entry) ->
-                            Secondary.appendEntry         hasFS h entry
-      -- Nothing to do
-    , close               = return ()
-    , restart             = \_newCurChunk -> return ()
-    }
-  where
-    p :: Proxy blk
-    p = Proxy
 
 {------------------------------------------------------------------------------
   Cached index

@@ -213,14 +213,6 @@ itself:
 >          , body
 >          )
 
-Finally, a convenience function `addBlockHash` allows us to properly set the
-hash of a `BlockD` to its computed value:
-
-> addBlockHash :: BlockD -> BlockD
-> addBlockHash b = b { bd_header = header' }
->   where
->     header' = (bd_header b) { hbd_Hash = computeBlockHash b }
-
 The preceding definitions require that `ChainHash BlockD` be `Hashable` so we
 derive a suitable instance here:
 

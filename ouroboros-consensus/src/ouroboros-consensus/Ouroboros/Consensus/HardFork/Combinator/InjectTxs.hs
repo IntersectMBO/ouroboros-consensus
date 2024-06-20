@@ -15,12 +15,10 @@ module Ouroboros.Consensus.HardFork.Combinator.InjectTxs (
     -- * Unvalidated transactions
   , InjectTx
   , cannotInjectTx
-  , matchTx
   , pattern InjectTx
     -- * Validated transactions
   , InjectValidatedTx
   , cannotInjectValidatedTx
-  , matchValidatedTx
   , matchValidatedTxsNS
   , pattern InjectValidatedTx
   ) where
@@ -153,16 +151,6 @@ pattern InjectTx f = InjectPolyTx f
 cannotInjectTx :: InjectTx blk blk'
 cannotInjectTx = cannotInjectPolyTx
 
--- | 'matchPolyTx' at type 'InjectTx'
-matchTx ::
-     SListI xs
-  => InPairs InjectTx xs
-  -> NS GenTx xs
-  -> HardForkState f xs
-  -> Either (Mismatch GenTx (Current f) xs)
-            (HardForkState (Product GenTx f) xs)
-matchTx = matchPolyTx
-
 -----
 
 type InjectValidatedTx = InjectPolyTx WrapValidatedGenTx
@@ -176,16 +164,6 @@ pattern InjectValidatedTx f = InjectPolyTx f
 -- | 'cannotInjectPolyTx' at type 'InjectValidatedTx'
 cannotInjectValidatedTx :: InjectValidatedTx blk blk'
 cannotInjectValidatedTx = cannotInjectPolyTx
-
--- | 'matchPolyTx' at type 'InjectValidatedTx'
-matchValidatedTx ::
-     SListI xs
-  => InPairs InjectValidatedTx xs
-  -> NS WrapValidatedGenTx xs
-  -> HardForkState f xs
-  -> Either (Mismatch WrapValidatedGenTx (Current f) xs)
-            (HardForkState (Product WrapValidatedGenTx f) xs)
-matchValidatedTx = matchPolyTx
 
 -- | 'matchPolyTxsNS' at type 'InjectValidatedTx'
 matchValidatedTxsNS ::

@@ -36,7 +36,6 @@ module Ouroboros.Consensus.Storage.ChainDB.API (
     -- * BlockComponent
   , BlockComponent (..)
     -- * Support for tests
-  , fromChain
   , toChain
     -- * Iterator API
   , Iterator (..)
@@ -47,14 +46,12 @@ module Ouroboros.Consensus.Storage.ChainDB.API (
   , emptyIterator
   , streamAll
   , streamFrom
-  , traverseIterator
   , validBounds
     -- * Invalid block reason
   , InvalidBlockReason (..)
     -- * Followers
   , ChainType (..)
   , Follower (..)
-  , traverseFollower
     -- * Recovery
   , ChainDbFailure (..)
   , IsEBB (..)
@@ -76,7 +73,6 @@ import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
                      (InvalidBlockPunishment)
-import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import           Ouroboros.Consensus.Storage.Common
 import           Ouroboros.Consensus.Storage.LedgerDB (LedgerDB')
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
@@ -520,16 +516,6 @@ toChain chainDB = withRegistry $ \registry ->
         IteratorBlockGCed _ ->
           error "block on the current chain was garbage-collected"
 
-fromChain ::
-     forall m blk. IOLike m
-  => m (ChainDB m blk)
-  -> Chain blk
-  -> m (ChainDB m blk)
-fromChain openDB chain = do
-    chainDB <- openDB
-    mapM_ (addBlock_ chainDB InvalidBlockPunishment.noPunishment) $ Chain.toOldestFirst chain
-    return chainDB
-
 {-------------------------------------------------------------------------------
   Iterator API
 -------------------------------------------------------------------------------}
@@ -549,17 +535,6 @@ emptyIterator :: Monad m => Iterator m blk b
 emptyIterator = Iterator {
       iteratorNext  = return IteratorExhausted
     , iteratorClose = return ()
-    }
-
--- | Variant of 'traverse' instantiated to @'Iterator' m blk@ that executes
--- the monadic function when calling 'iteratorNext'.
-traverseIterator ::
-     Monad m
-  => (b -> m b')
-  -> Iterator m blk b
-  -> Iterator m blk b'
-traverseIterator f it = it {
-      iteratorNext = iteratorNext it >>= traverse f
     }
 
 data IteratorResult blk b =
@@ -762,21 +737,6 @@ data Follower m blk a = Follower {
     , followerClose               :: m ()
     }
   deriving (Functor)
-
--- | Variant of 'traverse' instantiated to @'Follower' m blk@ that executes the
--- monadic function when calling 'followerInstruction' and
--- 'followerInstructionBlocking'.
-traverseFollower ::
-     Monad m
-  => (b -> m b')
-  -> Follower m blk b
-  -> Follower m blk b'
-traverseFollower f flr = Follower
-    { followerInstruction         = followerInstruction         flr >>= traverse (traverse f)
-    , followerInstructionBlocking = followerInstructionBlocking flr >>= traverse f
-    , followerForward             = followerForward             flr
-    , followerClose               = followerClose               flr
-    }
 
 {-------------------------------------------------------------------------------
   Recovery

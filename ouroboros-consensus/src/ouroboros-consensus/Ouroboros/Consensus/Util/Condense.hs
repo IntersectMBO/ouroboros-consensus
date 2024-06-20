@@ -33,15 +33,12 @@ import           Data.Int
 import           Data.List (intercalate, maximumBy)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Proxy
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Text (Text, unpack)
 import           Data.Void
 import           Data.Word
 import           Numeric.Natural
-import           Ouroboros.Consensus.Util.HList (All, HList (..))
-import qualified Ouroboros.Consensus.Util.HList as HList
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block
@@ -141,16 +138,16 @@ instance Condense a => Condense (Set a) where
   condense = condense1
 
 instance (Condense a, Condense b) => Condense (a, b) where
-  condense (a, b) = condense (a :* b :* Nil)
+  condense (a, b) = "(" ++ condense a ++ "," ++ condense b ++ ")"
 
 instance (Condense a, Condense b, Condense c) => Condense (a, b, c) where
-  condense (a, b, c) = condense (a :* b :* c :* Nil)
+  condense (a, b, c) = "(" ++ condense a ++ "," ++ condense b ++ "," ++ condense c ++ "," ++ ")"
 
 instance (Condense a, Condense b, Condense c, Condense d) => Condense (a, b, c, d) where
-  condense (a, b, c, d) = condense (a :* b :* c :* d :* Nil)
+  condense (a, b, c, d) = "(" ++ condense a ++ "," ++ condense b ++ "," ++ condense c ++ "," ++ condense d ++ "," ++ ")"
 
 instance (Condense a, Condense b, Condense c, Condense d, Condense e) => Condense (a, b, c, d, e) where
-  condense (a, b, c, d, e) = condense (a :* b :* c :* d :* e :* Nil)
+  condense (a, b, c, d, e) = "(" ++ condense a ++ "," ++ condense b ++ "," ++ condense c ++ "," ++ condense d ++ "," ++ condense e ++ "," ++ ")"
 
 instance (Condense k, Condense a) => Condense (Map k a) where
   condense = condense . Map.toList
@@ -160,13 +157,6 @@ instance Condense BS.Strict.ByteString where
 
 instance Condense BS.Lazy.ByteString where
   condense bs = show bs ++ "<" ++ show (BS.Lazy.length bs) ++ "b>"
-
-{-------------------------------------------------------------------------------
-  Consensus specific general purpose types
--------------------------------------------------------------------------------}
-
-instance All Condense as => Condense (HList as) where
-  condense as = "(" ++ intercalate "," (HList.collapse (Proxy @Condense) condense as) ++ ")"
 
 {-------------------------------------------------------------------------------
   Instances for ouroboros-network
