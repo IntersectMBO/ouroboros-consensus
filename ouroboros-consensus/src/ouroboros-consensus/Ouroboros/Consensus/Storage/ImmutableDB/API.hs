@@ -310,7 +310,12 @@ data ImmutableDBError blk =
   | UnexpectedFailure (UnexpectedFailure blk)
     -- ^ An unexpected error thrown because something went wrong on a lower
     -- layer.
-  deriving (Generic, Show)
+  deriving (Generic)
+
+instance (StandardHash blk, Typeable blk) => Show (ImmutableDBError blk) where
+  show = \case
+      ApiMisuse am cs      -> show "ImmutableDBApiMisuse (" <> show am <> ") (" <> show cs <> ")"
+      UnexpectedFailure uf -> show "ImmutableDBUnexpectedFailure (" <> show uf <> ")"
 
 instance (StandardHash blk, Typeable blk)
       => Exception (ImmutableDBError blk) where
