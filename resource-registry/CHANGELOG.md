@@ -1,5 +1,8 @@
-# Revision history for resource-registry
+# resource-registry Changelog
 
-## 0.1.0.0 -- YYYY-mm-dd
+# Changelog entries
 
-* First version. Released on an unsuspecting world.
+<a id='changelog-0.1.0.0'></a>
+## 0.1.0.0 — 2024-06-21
+
+- First release, extracted from `ouroboros-consensus`.

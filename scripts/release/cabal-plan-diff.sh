@@ -64,6 +64,8 @@ tests: False
 benchmarks: False
 
 packages:
+  nf-vars
+  resource-registry
   ouroboros-consensus
   ouroboros-consensus-cardano
   ouroboros-consensus-protocol

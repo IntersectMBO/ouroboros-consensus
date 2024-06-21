@@ -1,5 +1,4 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE NamedFieldPuns   #-}
 
 -- | Mempool with a mocked ledger interface
 module Test.Consensus.Mempool.Mocked (
