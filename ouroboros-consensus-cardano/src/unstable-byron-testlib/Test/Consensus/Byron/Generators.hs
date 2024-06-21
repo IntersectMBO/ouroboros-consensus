@@ -34,7 +34,6 @@ import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger
 import           Ouroboros.Consensus.Byron.Protocol
-import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.HeaderValidation (AnnTip (..))
 import           Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
 import           Ouroboros.Consensus.Protocol.PBFT.State (PBftState)

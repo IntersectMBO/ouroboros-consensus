@@ -32,7 +32,6 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Crypto.DSIGN (SignKeyDSIGN (..))
 import           Ouroboros.Consensus.Byron.Ledger
 import           Ouroboros.Consensus.Byron.Node (ByronLeaderCredentials (..))
-import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended

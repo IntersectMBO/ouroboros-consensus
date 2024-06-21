@@ -4,7 +4,6 @@
 module Test.ThreadNet.LeaderSchedule (tests) where
 
 import           Control.Monad (replicateM)
-import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime

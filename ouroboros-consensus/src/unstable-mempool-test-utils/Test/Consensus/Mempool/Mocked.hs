@@ -12,7 +12,7 @@ module Test.Consensus.Mempool.Mocked (
   ) where
 
 import           Control.Concurrent.Class.MonadSTM.Strict (StrictTVar,
-                     atomically, newTVarIO, readTVar, writeTVar)
+                     atomically, newTVarIO, readTVar)
 import           Control.DeepSeq (NFData (rnf))
 import           Control.Tracer (Tracer)
 import           Ouroboros.Consensus.HeaderValidation as Header
