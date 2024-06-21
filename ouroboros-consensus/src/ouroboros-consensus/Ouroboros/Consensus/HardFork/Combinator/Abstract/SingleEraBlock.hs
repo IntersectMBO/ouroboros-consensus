@@ -1,5 +1,4 @@
 {-# LANGUAGE DataKinds            #-}
-{-# LANGUAGE EmptyCase            #-}
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
 {-# LANGUAGE TypeApplications     #-}

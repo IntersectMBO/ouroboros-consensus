@@ -1,7 +1,6 @@
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE PatternSynonyms      #-}
-{-# LANGUAGE TypeApplications     #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Util.Condense (
