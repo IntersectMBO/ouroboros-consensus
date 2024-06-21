@@ -116,3 +116,30 @@ jobs:
 
     - name: Diff plans
       run: GH=1 ./scripts/release/cabal-plan-diff.sh
+
+  check-index-states:
+    name: Check index-state timestamps
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Install Haskell
+      uses: input-output-hk/actions/haskell@latest
+      id: setup-haskell
+      with:
+        cabal-version: "3.10.3.0"
+
+    - uses: actions/checkout@v4
+
+    - run: |
+       cabal update | grep "\(up to date\|is set to\)" | sed 's/.$//' | paste -d " "  - - | awk '{ print $4,$14 }' | sort > from-update
+       grep "\(cardano-haskell-packages\|hackage.haskell.org\)\s" cabal.project | awk '{ print $2,$3 }' | sort > from-project
+
+    - run: |
+       while read -r -a upd && read -r -a proj <&3; do
+        # this will compute the oldest of both timestamps
+        if [[ "${upd[2]}" == "$(echo "${upd[2]}\n${proj[2]}" | tr ' ' '\12' | sort -r | tail -1)" ]]; then
+          echo "An index-state timestamp (${proj[@]}) in the project is newer than the latest existing index-state (${upd[@]})."
+          echo "If a new index-state is published with a timestamp between the latest existing and the one specified, compilation might break."
+          echo "Please change the index-states in the project to the latest existing index-state or older."
+        fi
+       done < from-update 3< from-project
