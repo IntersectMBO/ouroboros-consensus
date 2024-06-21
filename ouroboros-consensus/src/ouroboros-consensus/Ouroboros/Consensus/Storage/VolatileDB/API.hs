@@ -169,7 +169,10 @@ data VolatileDBError blk =
     -- | An unexpected failure thrown because something went wrong.
   | UnexpectedFailure (UnexpectedFailure blk)
 
-deriving instance (StandardHash blk, Typeable blk) => Show (VolatileDBError blk)
+instance (StandardHash blk, Typeable blk) => Show (VolatileDBError blk) where
+  show = \case
+      ApiMisuse am         -> "VolatileDBApiMisuse (" <> show am <> ")"
+      UnexpectedFailure uf -> "VolatileDBUnexpectedFailure (" <> show uf <> ")"
 
 instance (StandardHash blk, Typeable blk) => Exception (VolatileDBError blk) where
   displayException = \case
