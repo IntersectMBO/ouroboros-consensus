@@ -14,6 +14,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Args (
   ) where
 
 import           Control.Tracer (Tracer, contramap, nullTracer)
+import           Data.Maybe (fromMaybe)
 import           Data.Time.Clock (DiffTime, secondsToDiffTime)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
@@ -29,7 +30,9 @@ import           Ouroboros.Consensus.Storage.LedgerDB (DiskPolicyArgs)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceRegistry)
+import           System.Environment (lookupEnv)
 import           System.FS.API
+import           System.IO.Unsafe (unsafePerformIO)
 
 {-------------------------------------------------------------------------------
   Arguments
@@ -97,6 +100,10 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs {
     , cdbsHasFSGsmDB      :: SomeHasFS m
     }
 
+envGcDelay :: Maybe Integer
+envGcDelay = read <$> unsafePerformIO (lookupEnv "CARDANO_GC_DELAY")
+{-# NOINLINE envGcDelay #-}
+
 -- | Default arguments
 --
 -- The following fields must still be defined:
@@ -126,7 +133,7 @@ defaultSpecificArgs ::
 defaultSpecificArgs mkFS = ChainDbSpecificArgs {
       cdbsBlocksToAddSize = 10
     , cdbsCheckInFuture   = NoDefault
-    , cdbsGcDelay         = secondsToDiffTime 60
+    , cdbsGcDelay         = secondsToDiffTime (fromMaybe 60 envGcDelay)
     , cdbsGcInterval      = secondsToDiffTime 10
     , cdbsRegistry        = NoDefault
     , cdbsTracer          = nullTracer
