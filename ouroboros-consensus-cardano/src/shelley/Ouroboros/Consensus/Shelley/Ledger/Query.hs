@@ -287,6 +287,17 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   GetAccountState
     :: BlockQuery (ShelleyBlock proto era) AccountState
 
+  -- | Query the SPO voting stake distribution.
+  -- This stake distribution is different from the one used in leader election.
+  --
+  -- See: https://github.com/IntersectMBO/cardano-ledger/issues/4342
+  --
+  -- Not supported in eras before Conway.
+  GetSPOStakeDistr
+    :: CG.ConwayEraGov era
+    => Set (KeyHash 'StakePool (EraCrypto era))
+    -> BlockQuery (ShelleyBlock proto era) (Map (KeyHash 'StakePool (EraCrypto era)) Coin)
+
   -- WARNING: please add new queries to the end of the list and stick to this
   -- order in all other pattern matches on queries. This helps in particular
   -- with the en/decoders, as we want the CBOR tags to be ordered.
@@ -441,6 +452,8 @@ instance (ShelleyCompatible proto era, ProtoCrypto proto ~ crypto)
           getFilteredVoteDelegatees st stakeCreds
         GetAccountState ->
           SL.queryAccountState st
+        GetSPOStakeDistr keys ->
+          SL.querySPOStakeDistr st keys
     where
       lcfg    = configLedger $ getExtLedgerCfg cfg
       globals = shelleyLedgerGlobals lcfg
@@ -594,6 +607,8 @@ instance SameDepIndex (BlockQuery (ShelleyBlock proto era)) where
   sameDepIndex GetFilteredVoteDelegatees {} _ = Nothing
   sameDepIndex GetAccountState {} GetAccountState {} = Just Refl
   sameDepIndex GetAccountState {} _ = Nothing
+  sameDepIndex GetSPOStakeDistr{} GetSPOStakeDistr{} = Just Refl
+  sameDepIndex GetSPOStakeDistr{} _ = Nothing
 
 deriving instance Eq   (BlockQuery (ShelleyBlock proto era) result)
 deriving instance Show (BlockQuery (ShelleyBlock proto era) result)
@@ -630,6 +645,7 @@ instance ShelleyCompatible proto era => ShowQuery (BlockQuery (ShelleyBlock prot
       GetCommitteeMembersState {}                -> show
       GetFilteredVoteDelegatees {}               -> show
       GetAccountState {}                         -> show
+      GetSPOStakeDistr {}                        -> show
 
 -- | Is the given query supported by the given 'ShelleyNodeToClientVersion'?
 querySupportedVersion :: BlockQuery (ShelleyBlock proto era) result -> ShelleyNodeToClientVersion -> Bool
@@ -664,6 +680,7 @@ querySupportedVersion = \case
     GetCommitteeMembersState {}                -> (>= v8)
     GetFilteredVoteDelegatees {}               -> (>= v8)
     GetAccountState {}                         -> (>= v8)
+    GetSPOStakeDistr {}                        -> (>= v8)
     -- WARNING: when adding a new query, a new @ShelleyNodeToClientVersionX@
     -- must be added. See #2830 for a template on how to do this.
   where
@@ -787,6 +804,8 @@ encodeShelleyQuery query = case query of
       CBOR.encodeListLen 2 <> CBOR.encodeWord8 28 <> LC.toEraCBOR @era stakeCreds
     GetAccountState ->
       CBOR.encodeListLen 1 <> CBOR.encodeWord8 29
+    GetSPOStakeDistr keys ->
+      CBOR.encodeListLen 2 <> CBOR.encodeWord8 30 <> LC.toEraCBOR @era keys
 
 decodeShelleyQuery ::
      forall era proto. ShelleyBasedEra era
@@ -844,6 +863,7 @@ decodeShelleyQuery = do
       (2, 28) -> requireCG $ do
         SomeSecond . GetFilteredVoteDelegatees <$> LC.fromEraCBOR @era
       (1, 29) ->             return $ SomeSecond GetAccountState
+      (2, 30) -> requireCG $ SomeSecond . GetSPOStakeDistr <$> LC.fromEraCBOR @era
       _       -> failmsg "invalid"
 
 encodeShelleyResult ::
@@ -881,6 +901,7 @@ encodeShelleyResult v query = case query of
     GetCommitteeMembersState {}                -> LC.toEraCBOR @era
     GetFilteredVoteDelegatees {}               -> LC.toEraCBOR @era
     GetAccountState {}                         -> LC.toEraCBOR @era
+    GetSPOStakeDistr {}                        -> LC.toEraCBOR @era
 
 decodeShelleyResult ::
      forall proto era result. ShelleyCompatible proto era
@@ -918,6 +939,7 @@ decodeShelleyResult v query = case query of
     GetCommitteeMembersState {}                -> LC.fromEraCBOR @era
     GetFilteredVoteDelegatees {}               -> LC.fromEraCBOR @era
     GetAccountState {}                         -> LC.fromEraCBOR @era
+    GetSPOStakeDistr {}                        -> LC.fromEraCBOR @era
 
 currentPParamsEnDecoding ::
      forall era s.
