@@ -528,6 +528,7 @@ library unstable-cardano-tools
     Cardano.Tools.Headers
     Cardano.Tools.ImmDBServer.Diffusion
     Cardano.Tools.ImmDBServer.MiniProtocols
+    Cardano.Tools.N2NPG.Run
 
   other-modules:
     Cardano.Api.Key
@@ -575,6 +576,7 @@ library unstable-cardano-tools
     filepath,
     fs-api ^>=0.4,
     githash,
+    io-classes,
     microlens,
     mtl,
     network,
@@ -597,6 +599,7 @@ library unstable-cardano-tools
     text-builder >=1,
     transformers,
     transformers-except,
+    typed-protocols,
 
 executable db-analyser
   import: common-lib
@@ -708,6 +711,20 @@ executable snapshot-converter
 
   other-modules:
     DBAnalyser.Parsers
+
+executable n2n-pg
+  import: common-exe
+  hs-source-dirs: app
+  main-is: n2n-pg.hs
+  build-depends:
+    base,
+    base16-bytestring,
+    bytestring,
+    cardano-crypto-class,
+    optparse-applicative,
+    ouroboros-consensus,
+    ouroboros-consensus-cardano:unstable-cardano-tools,
+    with-utf8,
 
 test-suite tools-test
   import: common-test
