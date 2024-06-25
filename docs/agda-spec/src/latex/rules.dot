@@ -1,0 +1,13 @@
+digraph STS {
+        CHAINHEAD -> PRTCL
+        CHAINHEAD -> TICKN
+        CHAINHEAD -> TICKF
+
+        TICKN -> PRTCL [style=dotted]
+
+        PRTCL -> UPDN
+        PRTCL -> OCERT
+
+	TICKF -> NEWEPOCH
+        TICKF -> TICKN [style=dotted]
+}
