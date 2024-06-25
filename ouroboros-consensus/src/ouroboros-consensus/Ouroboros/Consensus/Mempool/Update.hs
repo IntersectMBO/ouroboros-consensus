@@ -184,6 +184,11 @@ pureTryAddTx ::
 pureTryAddTx cfg txSize wti tx is
   | let curSize = msNumBytes  $ isMempoolSize is
   , curSize < getMempoolCapacityBytes (isCapacity is)
+    -- C) Block if the mempool already has 2.5 mebibytes of ref script.
+  , let maxTotalRefScriptSize = 5 * 512 * 1024 -- 2.5 Mebibytes
+        curTotalRefScriptSize = isTotalRefScriptSize is
+    -- could also add the ref script size of the new tx on the LHS here
+  , curTotalRefScriptSize Prelude.< maxTotalRefScriptSize
   = -- We add the transaction if there is at least one byte free left in the mempool.
   case eVtx of
       -- We only extended the ValidationResult with a single transaction

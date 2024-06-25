@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
@@ -124,6 +125,36 @@ instance CanHardFork xs => LedgerSupportsMempool (HardForkBlock xs) where
       . hcmap proxySingle (txForgetValidated . unwrapValidatedGenTx)
       . getOneEraValidatedGenTx
       . getHardForkValidatedGenTx
+
+  txRefScriptSize cfg st tx = case matchPolyTx injs tx' hardForkState of
+      Left {}       -> 0 -- TODO application will fail later anyway
+      Right matched ->
+          hcollapse
+        $ hczipWith proxySingle
+            (\(WrapLedgerConfig eraCfg) (Pair eraTx (Comp eraSt)) ->
+               K $ txRefScriptSize eraCfg eraSt eraTx)
+            cfgs
+            (State.tip matched)
+    where
+      HardForkLedgerConfig {
+          hardForkLedgerConfigPerEra
+        , hardForkLedgerConfigShape
+        } = cfg
+      TickedHardForkLedgerState transition hardForkState = st
+      tx' = getOneEraGenTx . getHardForkGenTx $ tx
+
+      pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
+      cfgs  = hcmap proxySingle (completeLedgerConfig'' ei) pcfgs
+      ei    = State.epochInfoPrecomputedTransitionInfo
+                hardForkLedgerConfigShape
+                transition
+                hardForkState
+
+      injs :: InPairs (InjectPolyTx GenTx) xs
+      injs =
+          InPairs.hmap
+            (\(Pair2 injTx _injValidatedTx) -> injTx)
+            (InPairs.requiringBoth cfgs hardForkInjectTxs)
 
 -- | A private type used only to clarify the parameterization of 'applyHelper'
 data ApplyHelperMode :: (Type -> Type) -> Type where
