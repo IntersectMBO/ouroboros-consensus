@@ -7,7 +7,6 @@ import           Cardano.Crypto.Init (cryptoInit)
 import           Cardano.Tools.N2NPG.Run (Opts (..))
 import qualified Cardano.Tools.N2NPG.Run as N2NPG
 import           Main.Utf8 (withStdTerminalHandles)
-import qualified Network.Socket as Socket
 import           Options.Applicative
 import           Ouroboros.Consensus.Block
 
@@ -33,11 +32,16 @@ optsParser =
         , help "Path to the ImmutableDB, only used for hash lookups"
         , metavar "PATH"
         ]
-      -- TODO don't hardcode
-      let serverAddr = Socket.SockAddrInet 3001 ip
-            where
-              -- some IOG relay
-              ip = Socket.tupleToHostAddress (18, 136, 216, 144)
+      let readHostPort = do
+            hostPort <- str
+            case break (== ':') hostPort of
+              (host, ':' : port) -> pure (host, port)
+              _ -> fail $ "Could not read host and port: " ++ show hostPort
+      serverAddr <- option readHostPort $ mconcat
+        [ long "server"
+        , help "Server address"
+        , metavar "HOST:PORT"
+        ]
       startSlot <- fmap withOriginFromMaybe $ optional $ option (SlotNo <$> auto) $ mconcat
         [ long "start-from"
         , metavar "SLOT_NUMBER"
