@@ -24,7 +24,7 @@ import           Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
 import           Data.Void (Void)
 import           Data.Word (Word64)
-import           Network.Socket (SockAddr)
+import qualified Network.Socket as Socket
 import           Network.TypedProtocol (PeerHasAgency (..), PeerPipelined (..),
                      PeerRole (..), PeerSender (..))
 import           Network.TypedProtocol.Pipelined (N (..))
@@ -75,7 +75,7 @@ import           System.FS.IO (ioHasFS)
 data Opts = Opts {
     configFile     :: FilePath
   , immutableDBDir :: FilePath
-  , serverAddr     :: SockAddr
+  , serverAddr     :: (Socket.HostName, Socket.ServiceName)
   , startSlot      :: WithOrigin SlotNo
   , numBlocks      :: Word64
   }
@@ -113,7 +113,10 @@ run opts = evalContT $ do
           waitBlockFetchDone   = atomically $ takeTMVar blockFetchDone
           signalBlockFetchDone = atomically $ putTMVar blockFetchDone ()
 
-      runApplication snocket serverAddr $
+      let hints = Socket.defaultHints { Socket.addrSocketType = Socket.Stream }
+      -- The result is always non-empty
+      serverInfo <- head <$> Socket.getAddrInfo (Just hints) (Just serverHostName) (Just serverPort)
+      runApplication snocket (Socket.addrAddress serverInfo) $
         mkApplication
           (configCodec cfg)
           (getNetworkMagic (configBlock cfg))
@@ -123,7 +126,7 @@ run opts = evalContT $ do
     Opts {
         configFile
       , immutableDBDir
-      , serverAddr
+      , serverAddr = (serverHostName, serverPort)
       , startSlot
       , numBlocks
       } = opts
@@ -246,11 +249,11 @@ simpleBlockFetch getNextPt signalDone =
 
 runApplication ::
      SocketSnocket
-  -> SockAddr
+  -> Socket.SockAddr
   -> Versions
        NodeToNodeVersion
        NodeToNodeVersionData
-       (OuroborosApplicationWithMinimalCtx InitiatorMode SockAddr BL.ByteString IO a b)
+       (OuroborosApplicationWithMinimalCtx InitiatorMode Socket.SockAddr BL.ByteString IO a b)
   -> IO ()
 runApplication sn sockAddr application =
     connectTo
