@@ -6,6 +6,7 @@
 {-# LANGUAGE GADTs                   #-}
 {-# LANGUAGE LambdaCase              #-}
 {-# LANGUAGE MultiParamTypeClasses   #-}
+{-# LANGUAGE NumericUnderscores      #-}
 {-# LANGUAGE OverloadedStrings       #-}
 {-# LANGUAGE ScopedTypeVariables     #-}
 {-# LANGUAGE TypeApplications        #-}
@@ -30,6 +31,7 @@ module Ouroboros.Consensus.Shelley.Eras (
   , StandardMary
   , StandardShelley
     -- * Shelley-based era
+  , BabbageTxDict (..)
   , ConwayEraGovDict (..)
   , ShelleyBasedEra (..)
   , WrapTx (..)
@@ -45,6 +47,7 @@ import           Cardano.Ledger.Alonzo (AlonzoEra)
 import qualified Cardano.Ledger.Alonzo.Rules as Alonzo
 import qualified Cardano.Ledger.Alonzo.Translation as Alonzo
 import qualified Cardano.Ledger.Alonzo.Tx as Alonzo
+import qualified Cardano.Ledger.Api as SL
 import           Cardano.Ledger.Babbage (BabbageEra)
 import qualified Cardano.Ledger.Babbage.Rules as Babbage
 import qualified Cardano.Ledger.Babbage.Translation as Babbage
@@ -55,6 +58,8 @@ import qualified Cardano.Ledger.Conway.Governance as CG
 import qualified Cardano.Ledger.Conway.Rules as SL
                      (ConwayLedgerPredFailure (..))
 import qualified Cardano.Ledger.Conway.Translation as Conway
+import qualified Cardano.Ledger.Conway.Tx as SL
+import qualified Cardano.Ledger.Conway.UTxO as SL
 import           Cardano.Ledger.Core as Core
 import           Cardano.Ledger.Crypto (StandardCrypto)
 import           Cardano.Ledger.Keys (DSignable, Hash)
@@ -66,6 +71,7 @@ import           Cardano.Ledger.Shelley.Core as Core
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import qualified Cardano.Ledger.Shelley.Rules as SL
 import qualified Cardano.Ledger.Shelley.Transition as SL
+import qualified Cardano.Ledger.Val as SL
 import qualified Cardano.Protocol.TPraos.API as SL
 import           Control.Monad.Except
 import           Control.State.Transition (PredicateFailure)
@@ -173,13 +179,23 @@ class ( Core.EraSegWits era
   -- | Whether the era has an instance of 'CG.ConwayEraGov'
   getConwayEraGovDict :: proxy era -> Maybe (ConwayEraGovDict era)
 
+  getBabbageTxDict :: proxy era -> Maybe (BabbageTxDict era)
+
+data BabbageTxDict era where
+    BabbageTxDict ::
+         SL.BabbageEraTxBody era
+      => (Integer -> Integer -> SL.ApplyTxError era)
+         -- ^ Construct an arbitrary ledger error with two integers as its
+         -- payload.
+      -> BabbageTxDict era
+
 data ConwayEraGovDict era where
     ConwayEraGovDict :: CG.ConwayEraGov era => ConwayEraGovDict era
 
 -- | The default implementation of 'applyShelleyBasedTx', a thin wrapper around
 -- 'SL.applyTx'
 defaultApplyShelleyBasedTx ::
-     ShelleyBasedEra era
+     forall era. ShelleyBasedEra era
   => SL.Globals
   -> SL.LedgerEnv era
   -> SL.LedgerState era
@@ -190,12 +206,51 @@ defaultApplyShelleyBasedTx ::
        ( SL.LedgerState era
        , SL.Validated (Core.Tx era)
        )
-defaultApplyShelleyBasedTx globals ledgerEnv mempoolState _wti tx =
+defaultApplyShelleyBasedTx globals ledgerEnv mempoolState _wti tx = do
+    refScriptPredicate
     SL.applyTx
       globals
       ledgerEnv
       mempoolState
       tx
+  where
+    refScriptPredicate = case getBabbageTxDict (Proxy @era) of
+      Nothing -> pure ()
+      Just (BabbageTxDict mkError)
+        -- Reject it if it has more than 100 kibibytes of ref script.
+        | refScriptsSize > totalRefScriptsSizeLimit
+        -> throwError $ mkError
+            -- As we are reusing an existing error message, we add a large
+            -- number to make users running into this are productively irritated
+            -- and post this error message somewhere where they can receive
+            -- help/context.
+            (toInteger refScriptsSize           + 1_000_000_000)
+            (toInteger totalRefScriptsSizeLimit + 1_000_000_000)
+        -- Reject it if it has more than 50 kibibytes of ref script and does not
+        -- satisfy an additional fee as calculated in the table below.
+        | refScriptsSize > freeOfChargeRefScriptsBytes
+        , actualFee < expectedFee
+        -> throwError $ mkError
+            -- See above for why we add a large constant.
+            (SL.unCoin actualFee   + 100_000_000)
+            (SL.unCoin expectedFee + 100_000_000)
+        | otherwise -> pure ()
+        where
+          totalRefScriptsSizeLimit :: Int
+          totalRefScriptsSizeLimit = 100 * 1024
+
+          freeOfChargeRefScriptsBytes :: Int
+          freeOfChargeRefScriptsBytes = 50 * 1024
+
+          actualFee = tx ^. SL.bodyTxL . SL.feeTxBodyL
+          expectedFee = minFee SL.<+> refScriptsFee
+            where
+              minFee = SL.getMinFeeTx (SL.ledgerPp ledgerEnv) tx
+              refScriptsFee = SL.tierRefScriptFee 1.2 25600 15 refScriptsSize
+
+          refScriptsSize = SL.txNonDistinctRefScriptsSize utxo tx
+
+          utxo = SL.utxosUtxo . SL.lsUTxOState $ mempoolState
 
 defaultGetProposedProtocolVersion ::
      (EraPParams era, ProtVerAtMost era 8)
@@ -217,6 +272,8 @@ instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
+  getBabbageTxDict _ = Nothing
+
 instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   => ShelleyBasedEra (AllegraEra c) where
   shelleyBasedEraName _ = "Allegra"
@@ -226,6 +283,8 @@ instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   getProposedProtocolVersion = defaultGetProposedProtocolVersion
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
+
+  getBabbageTxDict _ = Nothing
 
 instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   => ShelleyBasedEra (MaryEra c) where
@@ -237,6 +296,8 @@ instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
+  getBabbageTxDict _ = Nothing
+
 instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   => ShelleyBasedEra (AlonzoEra c) where
   shelleyBasedEraName _ = "Alonzo"
@@ -247,6 +308,8 @@ instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
+  getBabbageTxDict _ = Nothing
+
 instance (Praos.PraosCrypto c) => ShelleyBasedEra (BabbageEra c) where
   shelleyBasedEraName _ = "Babbage"
   applyShelleyBasedTx = applyAlonzoBasedTx
@@ -255,11 +318,21 @@ instance (Praos.PraosCrypto c) => ShelleyBasedEra (BabbageEra c) where
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
+  getBabbageTxDict _ = Just $ BabbageTxDict $ \a b ->
+      SL.ApplyTxError
+    $ pure
+    $ SL.UtxowFailure
+    $ Babbage.UtxoFailure
+    $ Babbage.AlonzoInBabbageUtxoPredFailure
+    $ Alonzo.MaxTxSizeUTxO a b
+
 instance (Praos.PraosCrypto c) => ShelleyBasedEra (ConwayEra c) where
   shelleyBasedEraName _ = "Conway"
   applyShelleyBasedTx = applyAlonzoBasedTx
   getProposedProtocolVersion _ = Nothing
   getConwayEraGovDict _ = Just ConwayEraGovDict
+
+  getBabbageTxDict _ = Nothing
 
 applyAlonzoBasedTx :: forall era.
   ( ShelleyBasedEra era,
