@@ -32,7 +32,6 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Node.InitStorage
 import           Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import           Ouroboros.Consensus.Protocol.Abstract
-import           Ouroboros.Consensus.Storage.ChainDB.API (LoELimit (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Paths as Paths
 import           Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB,
@@ -175,7 +174,7 @@ immutalise bcfg tracer immDB volDB = do
 
     succsOf <- atomically $ VolatileDB.filterByPredecessor volDB
     let candidates =
-          Paths.maximalCandidates succsOf LoEUnlimited (tipToPoint immTip)
+          Paths.maximalCandidates succsOf Nothing (tipToPoint immTip)
     candidatesAndTipHdrs <- for candidates $ \candidate -> do
       tipHdr <-
         VolatileDB.getKnownBlockComponent volDB GetHeader (NE.last candidate)
