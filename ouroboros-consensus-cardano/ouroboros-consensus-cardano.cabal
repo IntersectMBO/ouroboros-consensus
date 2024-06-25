@@ -648,7 +648,6 @@ executable n2n-pg
   build-depends:
     base,
     cardano-crypto-class,
-    network,
     optparse-applicative,
     ouroboros-consensus,
     ouroboros-consensus-cardano:unstable-cardano-tools,
