@@ -624,6 +624,12 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
           , vDualGenTxBridge
           } = vtx
 
+  txRefScriptSize cfg st tx =
+      txRefScriptSize
+        (dualLedgerConfigMain cfg)
+        (tickedDualLedgerStateMain st)
+        (dualGenTxMain tx)
+
 -- We don't need a pair of IDs, as long as we can unique ID the transaction
 newtype instance TxId (GenTx (DualBlock m a)) = DualGenTxId {
       dualGenTxIdMain :: GenTxId m
