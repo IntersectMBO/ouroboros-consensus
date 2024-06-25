@@ -146,6 +146,8 @@ instance LedgerSupportsMempool ByronBlock where
 
   txForgetValidated = forgetValidatedByronTx
 
+  txRefScriptSize _ _ _ = 0
+
 data instance TxId (GenTx ByronBlock)
   = ByronTxId             !Utxo.TxId
   | ByronDlgId            !Delegation.CertificateId

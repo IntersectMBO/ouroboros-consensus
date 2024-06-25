@@ -182,9 +182,15 @@ pureTryAddTx ::
      -- ^ The current internal state of the mempool.
   -> TryAddTx blk
 pureTryAddTx cfg txSize wti tx is
+    -- We add the transaction if there is at least one byte free left in the
+    -- mempool, and...
   | let curSize = msNumBytes  $ isMempoolSize is
   , curSize < getMempoolCapacityBytes (isCapacity is)
-  = -- We add the transaction if there is at least one byte free left in the mempool.
+    -- ... if the mempool has less than 2.5 mebibytes of ref scripts.
+  , let maxTotalRefScriptSize = 5 * 512 * 1024 -- 2.5 Mebibytes
+        curTotalRefScriptSize = isTotalRefScriptSize is
+  , curTotalRefScriptSize Prelude.< maxTotalRefScriptSize
+  =
   case eVtx of
       -- We only extended the ValidationResult with a single transaction
       -- ('tx'). So if it's not in 'vrInvalid', it must be in 'vrNewValid'.
