@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 -- | This module adds support for sanity checking consensus configuration
 --   on node startup. These checks should primarily look for unusual
 --   configuration choices that may point to an accidentally-misconfigured node
@@ -12,7 +13,6 @@ module Ouroboros.Consensus.Block.SupportsSanityCheck (
     BlockSupportsSanityCheck (..)
   , SanityCheckIssue (..)
   , checkSecurityParamConsistency
-  , issueDescription
   , sanityCheckConfig
   ) where
 
@@ -32,15 +32,14 @@ data SanityCheckIssue
   = InconsistentSecurityParam (NonEmpty SecurityParam)
   deriving (Show, Eq)
 
-instance Exception SanityCheckIssue
-
-issueDescription :: SanityCheckIssue -> String
-issueDescription (InconsistentSecurityParam ks) =
-  mconcat
-    [ "SecurityParams (K) were found to be inconsistent between constituent "
-    , "eras of a HardForkBlock: "
-    , show (NonEmpty.toList ks)
-    ]
+instance Exception SanityCheckIssue where
+  displayException = \case
+    InconsistentSecurityParam ks -> mconcat
+      [ "InconsistentSecurityParam: "
+      , "SecurityParams (K) were found to be inconsistent between constituent "
+      , "eras of a HardForkBlock: "
+      , show (NonEmpty.toList ks)
+      ]
 
 -- | 'BlockSupportsSanityCheck' provides evidence that a block can be sanity
 --   checked for common issues on node startup. 'sanityCheckConfig', which runs
