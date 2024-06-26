@@ -51,7 +51,6 @@ import qualified Cardano.Ledger.Api.Era as L
 import           Cardano.Ledger.Babbage (BabbageEra)
 import qualified Cardano.Ledger.Babbage.Rules as Babbage
 import qualified Cardano.Ledger.Babbage.Translation as Babbage
-import qualified Cardano.Ledger.Babbage.UTxO as SL
 import           Cardano.Ledger.BaseTypes
 import           Cardano.Ledger.Binary (DecCBOR, EncCBOR)
 import           Cardano.Ledger.Conway (ConwayEra)
@@ -60,12 +59,13 @@ import qualified Cardano.Ledger.Conway.Rules as Conway
 import qualified Cardano.Ledger.Conway.Rules as SL
                      (ConwayLedgerPredFailure (..))
 import qualified Cardano.Ledger.Conway.Translation as Conway
+import qualified Cardano.Ledger.Conway.Tx as SL
+import qualified Cardano.Ledger.Conway.UTxO as SL
 import           Cardano.Ledger.Core as Core
 import           Cardano.Ledger.Crypto (StandardCrypto)
 import           Cardano.Ledger.Keys (DSignable, Hash)
 import           Cardano.Ledger.Mary (MaryEra)
 import           Cardano.Ledger.Mary.Translation ()
-import           Cardano.Ledger.SafeHash (SafeToHash (..))
 import           Cardano.Ledger.Shelley (ShelleyEra)
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Ledger.Shelley.Core as Core
@@ -78,7 +78,6 @@ import           Control.Monad.Except
 import           Control.State.Transition (PredicateFailure)
 import           Data.Data (Proxy (Proxy))
 import           Data.List.NonEmpty (NonEmpty ((:|)))
-import qualified Data.Set as Set
 import           Lens.Micro ((^.))
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Ledger.SupportsMempool
@@ -211,37 +210,33 @@ defaultApplyShelleyBasedTx globals ledgerEnv mempoolState _wti tx = do
     refScriptPredicate = case getBabbageTxDict (Proxy @era) of
       Nothing -> pure ()
       Just (BabbageTxDict mkError)
-        | refScriptsSize >= threshold
+        -- A) Reject it if it has more than 100 kibibytes of ref script.
+        | refScriptsSize > totalRefScriptsSizeLimit
+        -> throwError $ mkError
+            (toInteger refScriptsSize)
+            (toInteger totalRefScriptsSizeLimit)
+        -- B) Reject it if it has more than 50 kibibytes of ref script and does
+        -- not satisfy an additional fee as calculated in the table below.
+        | refScriptsSize > freeOfChargeRefScriptsBytes
         , actualFee < expectedFee
         -> throwError $ mkError (SL.unCoin actualFee) (SL.unCoin expectedFee)
         | otherwise -> pure ()
         where
-          threshold :: Int
-          threshold = 32_000
+          totalRefScriptsSizeLimit :: Int
+          totalRefScriptsSizeLimit = 100 * 1024
 
-          minFeeRefScriptCostPerByte :: SL.Coin
-          minFeeRefScriptCostPerByte = SL.Coin 22
+          freeOfChargeRefScriptsBytes :: Int
+          freeOfChargeRefScriptsBytes = 50 * 1024
 
           actualFee = tx ^. SL.bodyTxL . SL.feeTxBodyL
-
-          expectedFee =
-              minFee SL.<+> discountedRefScriptSize SL.<×> minFeeRefScriptCostPerByte
+          expectedFee = minFee SL.<+> refScriptsFee
             where
-              discountedRefScriptSize
-                | refScriptsSize <= threshold
-                = 0
-                | otherwise
-                = refScriptsSize - threshold
+              minFee = SL.getMinFeeTx (SL.ledgerPp ledgerEnv) tx 0
+              refScriptsFee = SL.tierRefScriptFee 1.5 25600 15 refScriptsSize
 
-          minFee = SL.getMinFeeTx (SL.ledgerPp ledgerEnv) tx 0
+          refScriptsSize = SL.txNonDistinctRefScriptsSize utxo tx
 
-          ins =
-            (tx ^. SL.bodyTxL . SL.referenceInputsTxBodyL)
-              `Set.union`
-            (tx ^. bodyTxL . inputsTxBodyL)
           utxo = SL.utxosUtxo . SL.lsUTxOState $ mempoolState
-          refScripts = SL.getReferenceScriptsNonDistinct utxo ins
-          refScriptsSize = sum $ originalBytesSize . snd <$> refScripts
 
 defaultGetConwayEraGovDict :: proxy era -> Maybe (ConwayEraGovDict era)
 defaultGetConwayEraGovDict _ = Nothing
