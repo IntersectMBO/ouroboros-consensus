@@ -61,8 +61,7 @@ deriving via SelectViewDiffusionPipelining (SimpleBlock c ext) instance
   ) => BlockSupportsDiffusionPipelining (SimpleBlock c ext)
   
 instance ConsensusProtocol (BlockProtocol (SimpleBlock c ext)) => BlockSupportsSanityCheck (SimpleBlock c ext) where
-  configAllSecurityParams =
-    pure . protocolSecurityParam . topLevelConfigProtocol
+  configAllSecurityParams = pure . configSecurityParam
 
 instance ( LedgerSupportsProtocol      (SimpleBlock SimpleMockCrypto ext)
          , Show (CannotForge           (SimpleBlock SimpleMockCrypto ext))
