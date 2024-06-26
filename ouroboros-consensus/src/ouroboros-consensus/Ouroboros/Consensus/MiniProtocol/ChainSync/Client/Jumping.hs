@@ -77,9 +77,10 @@
 -- Interactions with the BlockFetch logic
 -- --------------------------------------
 --
--- When syncing, the BlockFetch logic will fetch blocks from the dynamo. If the
--- dynamo is responding too slowly, the BlockFetch logic can ask to change the
--- dynamo with a call to 'rotateDynamo'.
+-- When syncing, the BlockFetch logic might request to change the dynamo with
+-- a call to 'rotateDynamo'. This is because the choice of dynamo influences
+-- which peer is selected to download blocks. See the note "Interactions with
+-- ChainSync Jumping" in "Ouroboros.Network.BlockFetch.Decision.BulkSync".
 --
 -- Interactions with the Limit on Patience
 -- ---------------------------------------
@@ -155,8 +156,9 @@
 -- (j|k).
 --
 -- The BlockFetch logic can ask to change the dynamo if it is not serving blocks
--- fast enough. If there are other non-disengaged peers the dynamo is demoted to
--- a jumper (l) and a new dynamo is elected.
+-- fast enough. If there are other non-disengaged peers, the dynamo (and the
+-- objector if there is one) is demoted to a jumper (l+g) and a new dynamo is
+-- elected.
 --
 module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping (
     Context
@@ -275,9 +277,9 @@ mkJumping peerContext = Jumping
 --
 -- Invariants:
 --
--- - If 'handlesCol is not empty, then there is exactly one dynamo in it.
--- - There is at most one objector in 'handlesCol.
--- - If there exist 'FoundIntersection' jumpers in 'handlesCol, then there
+-- - If 'handlesCol' is not empty, then there is exactly one dynamo in it.
+-- - There is at most one objector in 'handlesCol'.
+-- - If there exist 'FoundIntersection' jumpers in 'handlesCol', then there
 --   is an objector and the intersection of the objector with the dynamo is
 --   at least as old as the oldest intersection of the `FoundIntersection` jumpers
 --   with the dynamo.
@@ -763,8 +765,9 @@ unregisterClient context = do
     Objector{} -> electNewObjector context'
     Dynamo{} -> void $ electNewDynamo context'
 
--- | Elects a new dynamo by demoting the given dynamo to a jumper, moving the
--- peer to the end of the queue of chain sync handles and electing a new dynamo.
+-- | Elects a new dynamo by demoting the given dynamo (and the objector if there
+-- is one) to a jumper, moving the peer to the end of the queue of chain sync
+-- handles and electing a new dynamo.
 --
 -- It does nothing if there is no other engaged peer to elect or if the given
 -- peer is not the dynamo.
