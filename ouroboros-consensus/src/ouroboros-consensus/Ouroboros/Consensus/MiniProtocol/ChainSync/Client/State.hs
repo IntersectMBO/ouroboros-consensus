@@ -165,8 +165,11 @@ newChainSyncClientHandleCollection = do
     }
 
 data DynamoInitState blk
-  = -- | The dynamo has not yet started jumping and we first need to jump to the
-    -- given jump info to set the intersection of the ChainSync server.
+  = -- | The dynamo still has to set the intersection of the ChainSync server
+    -- before it can resume downloading headers. This is because
+    -- the message pipeline might be drained to do jumps, and this causes
+    -- the intersection on the ChainSync server to diverge from the tip of
+    -- the candidate fragment.
     DynamoStarting !(JumpInfo blk)
   | DynamoStarted
   deriving (Generic)
@@ -179,7 +182,10 @@ deriving anyclass instance
 
 data ObjectorInitState
   = -- | The objector still needs to set the intersection of the ChainSync
-    -- server before resuming retrieval of headers.
+    -- server before resuming retrieval of headers. This is mainly because
+    -- the message pipeline might be drained to do jumps, and this causes
+    -- the intersection on the ChainSync server to diverge from the tip of
+    -- the candidate fragment.
     Starting
   | Started
   deriving (Generic, Show, NoThunks)
