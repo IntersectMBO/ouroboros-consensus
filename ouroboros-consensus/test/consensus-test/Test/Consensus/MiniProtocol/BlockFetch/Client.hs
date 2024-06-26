@@ -8,6 +8,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | A test for the consensus-specific parts of the BlockFetch client.
 --
@@ -51,7 +52,7 @@ import           Ouroboros.Consensus.Util.STM (blockUntilJust,
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..),
-                     BlockFetchConsensusInterface, FetchMode (..),
+                     BlockFetchConsensusInterface (..), FetchMode (..),
                      blockFetchLogic, bracketFetchClient,
                      bracketKeepAliveClient, bracketSyncWithFetchClient,
                      newFetchClientRegistry)
@@ -254,10 +255,11 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
 
         let -- Always return the empty chain such that the BlockFetch logic
             -- downloads all chains.
-            getCurrentChain           = pure $ AF.Empty AF.AnchorGenesis
-            getIsFetched              = ChainDB.getIsFetched chainDB
-            getMaxSlotNo              = ChainDB.getMaxSlotNo chainDB
-            addBlockWaitWrittenToDisk = ChainDB.addBlockWaitWrittenToDisk chainDB
+            getCurrentChain       = pure $ AF.Empty AF.AnchorGenesis
+            getIsFetched          = ChainDB.getIsFetched chainDB
+            getMaxSlotNo          = ChainDB.getMaxSlotNo chainDB
+            addBlockAsync         = ChainDB.addBlockAsync chainDB
+            getChainSelStarvation = ChainDB.getChainSelStarvation chainDB
         pure BlockFetchClientInterface.ChainDbView {..}
       where
         -- Needs to be larger than any chain length in this test, to ensure that
@@ -276,14 +278,17 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
       -> BlockFetchClientInterface.ChainDbView m TestBlock
       -> BlockFetchConsensusInterface PeerId (Header TestBlock) TestBlock m
     mkTestBlockFetchConsensusInterface getCandidates chainDbView =
-        BlockFetchClientInterface.mkBlockFetchConsensusInterface
+        (BlockFetchClientInterface.mkBlockFetchConsensusInterface @m @PeerId
           (TestBlockConfig numCoreNodes)
           chainDbView
-          getCandidates
+          (error "ChainSyncClientHandleCollection not provided to mkBlockFetchConsensusInterface")
           (\_hdr -> 1000) -- header size, only used for peer prioritization
           slotForgeTime
           (pure blockFetchMode)
-          blockFetchPipelining
+          blockFetchPipelining)
+            { readCandidateChains          = getCandidates
+            , demoteChainSyncJumpingDynamo = const (pure ())
+            }
       where
         -- Bogus implementation; this is fine as this is only used for
         -- enriching tracing information ATM.
@@ -362,6 +367,7 @@ instance Arbitrary BlockFetchClientTestSetup where
             -- logic iterations in case the monitored state vars change too
             -- fast, which we don't have to worry about in this test.
             bfcDecisionLoopInterval   = 0
+            bfcBulkSyncGracePeriod = 10
         bfcMaxRequestsInflight <- chooseEnum (2, 10)
         bfcSalt                <- arbitrary
         pure BlockFetchConfiguration {..}
