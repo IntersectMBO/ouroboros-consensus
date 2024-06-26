@@ -43,7 +43,6 @@ import           Data.Function (on)
 import           Data.Functor ((<&>))
 import           Data.Hashable (Hashable)
 import           Data.List.NonEmpty (NonEmpty)
-import           Data.Map.Strict (Map)
 import           Data.Maybe (isJust, mapMaybe)
 import           Data.Proxy
 import qualified Data.Text as Text
@@ -65,7 +64,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as 
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (ChainSyncClientHandle (..),
                      ChainSyncClientHandleCollection (..), ChainSyncState (..),
-                     newChainSyncClientHandleCollection, viewChainSyncState)
+                     newChainSyncClientHandleCollection)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
                      (SomeHeaderInFutureCheck)
 import           Ouroboros.Consensus.Node.Genesis (GenesisNodeKernelArgs (..),
@@ -386,9 +385,6 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
 
     fetchClientRegistry <- newFetchClientRegistry
 
-    let getCandidates :: STM m (Map (ConnectionId addrNTN) (AnchoredFragment (Header blk)))
-        getCandidates = viewChainSyncState (cschcMap varChainSyncHandles) csCandidate
-
     slotForgeTimeOracle <- BlockFetchClientInterface.initSlotForgeTimeOracle cfg chainDB
     let readFetchMode = BlockFetchClientInterface.readFetchModeDefault
           btime
@@ -399,7 +395,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
         blockFetchInterface = BlockFetchClientInterface.mkBlockFetchConsensusInterface
           (configBlock cfg)
           (BlockFetchClientInterface.defaultChainDbView chainDB)
-          getCandidates
+          varChainSyncHandles
           blockFetchSize
           slotForgeTimeOracle
           readFetchMode

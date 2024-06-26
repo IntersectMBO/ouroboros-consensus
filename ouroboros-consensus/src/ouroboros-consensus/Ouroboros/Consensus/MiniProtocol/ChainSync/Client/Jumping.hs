@@ -775,20 +775,20 @@ rotateDynamo ::
     LedgerSupportsProtocol blk,
     MonadSTM m
   ) =>
-  Context m peer blk ->
+  ChainSyncClientHandleCollection peer m blk ->
   peer ->
   STM m (Maybe (peer, ChainSyncClientHandle m blk))
-rotateDynamo context peer = do
-  handles <- cschcMap (handlesCol context)
+rotateDynamo handlesCol peer = do
+  handles <- cschcMap handlesCol
   case handles Map.!? peer of
     Nothing ->
       -- Do not re-elect a dynamo if the peer has been disconnected.
-      getDynamo (handlesCol context)
+      getDynamo handlesCol
     Just oldDynHandle ->
       readTVar (cschJumping oldDynHandle) >>= \case
         Dynamo{} -> do
-          cschcRotateHandle (handlesCol context) peer
-          peerStates <- cschcSeq (handlesCol context)
+          cschcRotateHandle handlesCol peer
+          peerStates <- cschcSeq handlesCol
           mEngaged <- findNonDisengaged peerStates
           case mEngaged of
             Nothing ->
@@ -806,7 +806,7 @@ rotateDynamo context peer = do
                 pure $ Just (newDynamoId, newDynHandle)
         _ ->
           -- Do not re-elect a dynamo if the peer is not the dynamo.
-          getDynamo (handlesCol context)
+          getDynamo handlesCol
 
 -- | Choose an unspecified new non-idling dynamo and demote all other peers to
 -- jumpers.
