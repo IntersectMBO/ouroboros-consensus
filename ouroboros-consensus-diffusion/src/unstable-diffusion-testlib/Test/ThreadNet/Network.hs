@@ -1013,8 +1013,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
                   txSubmissionMaxUnacked      = 1000 -- TODO ?
                 }
             , blockFetchConfiguration = BlockFetchConfiguration {
-                  bfcMaxConcurrencyBulkSync = 1
-                , bfcMaxConcurrencyDeadline = 2
+                  bfcMaxConcurrencyDeadline = 2
                 , bfcMaxRequestsInflight    = 10
                 , bfcDecisionLoopInterval   = 0.0 -- Mock testsuite can use sub-second slot
                                                   -- interval which doesn't play nice with
