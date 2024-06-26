@@ -29,6 +29,7 @@ module Ouroboros.Consensus.Shelley.Eras (
   , StandardMary
   , StandardShelley
     -- * Shelley-based era
+  , BabbageTxDict (..)
   , ConwayEraGovDict (..)
   , ShelleyBasedEra (..)
   , WrapTx (..)
