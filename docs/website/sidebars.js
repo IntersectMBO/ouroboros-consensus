@@ -55,7 +55,8 @@ const sidebars = {
         'for-developers/TechnicalReports',
         'for-developers/PreflightGuide',
         'for-developers/NodeTasks',
-        'for-developers/HandlingBlocksFromTheFuture'
+        'for-developers/HandlingBlocksFromTheFuture',
+        'for-developers/Genesis',
       ]
     },
   ]

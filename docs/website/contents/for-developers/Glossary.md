@@ -95,6 +95,30 @@ Chain sync is a mini protocol to exchange chains of headers.
 
   - The server can *claim to have no additional headers* when asked for updates. This is signaled explicitly via `MsgAwaitReply` or implicitly by the server's selection tip point that is sent with every message (though the latter is currently not used on the client for any logic).
 
+## ;ChainSync Jumping
+
+In the context of [Genesis](#genesis-consensus-protocol-paper-version), a node should execute [ChainSync](#chainsync) with all of its peers, thus often re-downloading and re-validating the same header from multiple peers. This would unnecessarily increase the network load on honest peers, which by definition will serve the same headers on the historical part of the chain.
+
+To mitigate this load, we use ChainSync Jumping, an extended version of ChainSync in which a node only downloads headers from *one* of its peers, and periodically asks all the other peers if they agree with it. If there is a disagreement, ChainSync starts downloading headers from another peer until one of them gets disconnected.
+
+### ;Dynamo
+
+The dynamo is the only peer from which a syncing node gets all headers, and run the normal ChainSync protocol. Every once in a while, the syncing node sends a message to all of its jumpers to check if the tip of the dynamo's chain is also on their chain.
+
+### ;Jumper
+
+The jumpers are all the peers of a syncing node from which headers aren't downloaded with normal ChainSync protocol. The syncing node will periodically send the tip of its chain to all jumpers. If they confirm this tip is on their chain as well, the node assumes they have the exact same chain as the dynamo, up to their current tip. If they disagree with the tip of the dynamo, they might be promoted to objector.
+
+### ;Objector
+
+An objector is a peer which disagrees with the dynamo and from which headers are downloaded. When a jumper doesn't have the tip of the dynamo's chain, it might be promoted to an objector, and exchange headers with the syncing node as per ChainSync protocol. This lasts until either the objector or the dynamo gets disconnected. If the dynamo gets disconnected, a new dynamo is selected by the syncing node.
+
+### ;Disengaged Peer
+
+A disengaged peer is a peer from which headers are downloaded as per ChainSync protocol. It cannot be selected as a dynamo, and never becomes a jumper nor an objector.
+
+A dynamo, an objector, or a jumper can be disengaged if they rollback their selection or if they claim to have sent all headers.
+
 ## ;Checkpointing
 
 Solve dynamic availability by providing syncing nodes with (trusted) information: the points on the (immutable) honest chain every few (i.e. `≤ k`) blocks.
@@ -124,6 +148,11 @@ Due to the incremental nature of ChainSync, we often only know a *prefix* of the
 ## ;Density rule
 
 A rule to compare two chains `C` and `D`: prefer the chain that has the higher density in the interval after `C ∩ D` of length `sgen`.
+
+## ;Eclipse attack
+
+An attack on a blockchain (or any other peer-to-peer network) system in which malicious actors attempt to isolate one or several hones participants from the rest of the network. See [this paper](https://www.usenix.org/conference/usenixsecurity15/technical-sessions/presentation/heilman) for an example attack on Bitcoin.
+
 
 ## ;Election proof
 
@@ -166,8 +195,13 @@ When Ouroboros runs as intended, all short forks are short-lived.
 
 ## ;Forecasting
 
+Forecasting is the ability to validate headers that are ahead of a node's current selection.
 Because of [Common Prefix](#common-prefix) and [Chain Growth](#chain-growth), the latest `k+1` ledger states along the node's selection always provide sufficient information for the node to validate its peers' headers that are no more than `3k/f` after the peer's first header.
 Since the node hasn't selected that header's block, it has to use forecasting in order to validate its descendant headers.
+
+### ;Forecast horizon
+
+The forecast horizon is the number of slots ahead of its current selection in which a node can validate headers. With current Genesis parameters, it is `3k/f`, which is the [stability window](#stability-window) for [Shelley-based eras](#shelley-based-eras).
 
 ## ;Genesis block
 
@@ -194,7 +228,7 @@ Disconnect from nodes whose fragments certainly lose to other fragments accordin
 
 Motivation: allows the intersection of candidate fragments to progress
 
-## ;Genesis state machine
+## ;Genesis State Machine (GSM)
 
 Mechanism describing when a node can conclude that it is caught-up. This is used to avoid connecting to lots of ledger peers (for the HAA) when unnecessary and to disarm certain timeouts.
 
@@ -330,6 +364,34 @@ It's the same part whether or not the validation is done via forecasting.
 Do not select more than `k` blocks past the intersection of all candidate fragments.
 
 Motivation: ensure that we can still switch to any candidate chain while respecting the maximum rollback limit.
+
+### ;LoE Fragment
+
+The common prefix of all candidate fragments, anchored at the tip of the current chain selection
+
+### ;LoE Tip
+
+The tip of the LoE fragment
+
+### ;Long-range Attack
+
+An attack on Proof-of-Stake blockchain systems that refers to the ability of a minority set of stakeholders to execute the blockchain protocol starting from the genesis block (or any sufficiently old state) and produce a valid alternative history of the system. See [this blog post](https://blog.ethereum.org/2014/05/15/long-range-attacks-the-serious-problem-with-adaptive-proof-of-work) by Vitalik Buterin and [this paper](https://iohk.io/en/research/library/papers/stake-bleeding-attacks-on-proof-of-stake-blockchains/) for details.
+
+## ;Limit on Patience (LoP)
+
+Disconnect peers that advertise a better header than their current one, but haven't provided it quickly enough.
+
+Motivation: because of the [LoE](#limit-on-eagerness-loe), we don't select headers past `k` blocks beyond the common intersection of all candidate fragments. Therefore, an attacker could prevent a syncing node from making progress by stalling indefinitely at an intersection, promising headers to extend their chain but never delivering them. The LoP mitigates that attack.
+
+In the current version of Genesis, the limit on patience is implemented by a "leaky token bucket" algorithm.
+
+### ;Token Capacity (TCAP)
+
+The LoP bucket has an initial and maximal token capacity of `TCAP`. A token is gained when the associated peer sends a header with a higher block number than its previous one. When the bucket is already at maximum capacity, extra tokens are lost.
+
+### ;Token Drip Rate (TDRIP)
+
+When the peer has advertised a header with a higher block number than its previous one, but hasn't served yet, the LoP bucket loses tokens at a rate of `TDRIP` tokens per second. When the bucket is empty, the associated peer has exhausted its limit on patience, and gets disconnected.
 
 ## ;Local root peers
 
@@ -495,6 +557,10 @@ The process of becoming synchronized with the system, either from scratch or due
 
 If a slot has multiple leaders or if the leader of a slot hadn't received the latest block, then they will issue multiple blocks that all claim to have the same predecessor.A [block body](#header-and-body) is just a sequence of transactions.
 -Each one modifies the [ledger state](#ledger-state) in a way determined by the [ledger rules](#block-validity-and-ledger-rules-ledger-rules).
+
+## ;Valency
+
+The number of peers the node maintains a connection to.
 
 ## ;Verifiable Random Functions, ;VRF
 
