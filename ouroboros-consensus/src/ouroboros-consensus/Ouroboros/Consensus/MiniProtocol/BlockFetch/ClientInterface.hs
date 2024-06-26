@@ -26,6 +26,10 @@ import qualified Ouroboros.Consensus.HardFork.Abstract as History
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
+                     (LedgerSupportsProtocol)
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as Jumping
 import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
@@ -169,11 +173,12 @@ mkBlockFetchConsensusInterface ::
      forall m peer blk.
      ( IOLike m
      , BlockSupportsDiffusionPipelining blk
-     , BlockSupportsProtocol blk
+     , Ord peer
+     , LedgerSupportsProtocol blk
      )
   => BlockConfig blk
   -> ChainDbView m blk
-  -> STM m (Map peer (AnchoredFragment (Header blk)))
+  -> CSClient.ChainSyncClientHandleCollection peer m blk
   -> (Header blk -> SizeInBytes)
   -> SlotForgeTimeOracle m blk
      -- ^ Slot forge time, see 'headerForgeUTCTime' and 'blockForgeUTCTime'.
@@ -181,9 +186,12 @@ mkBlockFetchConsensusInterface ::
      -- ^ See 'readFetchMode'.
   -> BlockFetchConsensusInterface peer (Header blk) blk m
 mkBlockFetchConsensusInterface
-  bcfg chainDB getCandidates blockFetchSize slotForgeTime readFetchMode =
+  bcfg chainDB csHandlesCol blockFetchSize slotForgeTime readFetchMode =
     BlockFetchConsensusInterface {..}
   where
+    getCandidates :: STM m (Map peer (AnchoredFragment (Header blk)))
+    getCandidates = CSClient.viewChainSyncState (CSClient.cschcMap csHandlesCol) CSClient.csCandidate
+
     blockMatchesHeader :: Header blk -> blk -> Bool
     blockMatchesHeader = Block.blockMatchesHeader
 
@@ -340,3 +348,6 @@ mkBlockFetchConsensusInterface
 
     headerForgeUTCTime = slotForgeTime . headerRealPoint . unFromConsensus
     blockForgeUTCTime  = slotForgeTime . blockRealPoint  . unFromConsensus
+
+    demoteCSJDynamo :: peer -> m ()
+    demoteCSJDynamo = void . atomically . Jumping.rotateDynamo csHandlesCol
