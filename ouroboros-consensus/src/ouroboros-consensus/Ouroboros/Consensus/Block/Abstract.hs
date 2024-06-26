@@ -250,7 +250,13 @@ succWithOrigin = withOrigin minBound succ
   Ouroboros Genesis window
 -------------------------------------------------------------------------------}
 
--- TODO docs/better place?
+-- | Size of the Genesis window, in number of slots.
+--
+-- This is the number of slots that the GDD Governor (Genesis Density
+-- Disconnection Governor -- see 'Ouroboros.Consensus.Genesis.Governor') will
+-- consider when deciding whether to disconnect from a peer. It has to be
+-- smaller or equal to the stability window. For instance, for Shelley-based
+-- eras, this will be equal to a stability window, that is @3k/f@.
 newtype GenesisWindow = GenesisWindow { unGenesisWindow :: Word64 }
   deriving stock (Show, Eq, Ord)
   deriving newtype (NoThunks, Num)
