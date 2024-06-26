@@ -126,7 +126,11 @@ instance CanHardFork xs => LedgerSupportsMempool (HardForkBlock xs) where
       . getHardForkValidatedGenTx
 
   txRefScriptSize cfg st tx = case matchPolyTx injs tx' hardForkState of
-      Left {}       -> 0 -- TODO application will fail later anyway
+      Left {}       ->
+        -- This is ugly/adhoc, but fine, as in the mempool, we only call
+        -- txRefScriptSize after applyTx (which internall also calls
+        -- matchPolyTx), so this case is unreachable.
+        0
       Right matched ->
           hcollapse
         $ hczipWith proxySingle
