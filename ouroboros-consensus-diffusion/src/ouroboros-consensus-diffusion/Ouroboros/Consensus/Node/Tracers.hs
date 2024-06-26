@@ -38,8 +38,10 @@ import           Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
                      (TraceLocalTxSubmissionServerEvent (..))
 import           Ouroboros.Consensus.Node.GSM (TraceGsmEvent)
 import           Ouroboros.Network.Block (Tip)
-import           Ouroboros.Network.BlockFetch (FetchDecision,
-                     TraceFetchClientState, TraceLabelPeer)
+import           Ouroboros.Network.BlockFetch (TraceFetchClientState,
+                     TraceLabelPeer)
+import           Ouroboros.Network.BlockFetch.Decision.Trace
+                     (TraceDecisionEvent)
 import           Ouroboros.Network.KeepAlive (TraceKeepAliveClient)
 import           Ouroboros.Network.TxSubmission.Inbound
                      (TraceTxSubmissionInbound)
@@ -54,7 +56,7 @@ data Tracers' remotePeer localPeer blk f = Tracers
   { chainSyncClientTracer         :: f (TraceLabelPeer remotePeer (TraceChainSyncClientEvent blk))
   , chainSyncServerHeaderTracer   :: f (TraceLabelPeer remotePeer (TraceChainSyncServerEvent blk))
   , chainSyncServerBlockTracer    :: f (TraceChainSyncServerEvent blk)
-  , blockFetchDecisionTracer      :: f [TraceLabelPeer remotePeer (FetchDecision [Point (Header blk)])]
+  , blockFetchDecisionTracer      :: f (TraceDecisionEvent remotePeer (Header blk))
   , blockFetchClientTracer        :: f (TraceLabelPeer remotePeer (TraceFetchClientState (Header blk)))
   , blockFetchServerTracer        :: f (TraceLabelPeer remotePeer (TraceBlockFetchServerEvent blk))
   , txInboundTracer               :: f (TraceLabelPeer remotePeer (TraceTxSubmissionInbound  (GenTxId blk) (GenTx blk)))

@@ -1635,6 +1635,7 @@ traceEventName = \case
     TraceImmutableDBEvent       ev    -> "ImmutableDB."       <> constrName ev
     TraceVolatileDBEvent        ev    -> "VolatileDB."        <> constrName ev
     TraceLastShutdownUnclean          -> "LastShutdownUnclean"
+    TraceChainSelStarvationEvent _    -> "TraceChainSelStarvationEvent"
 
 mkArgs :: IOLike m
        => TopLevelConfig Blk

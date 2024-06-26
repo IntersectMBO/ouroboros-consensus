@@ -336,9 +336,7 @@ startNode ::
   LiveInterval TestBlock m ->
   m ()
 startNode schedulerConfig genesisTest interval = do
-  let
-      handles = psrHandles lrPeerSim
-      getCandidates = viewChainSyncState (cschcMap handles) CSClient.csCandidate
+  let handles = psrHandles lrPeerSim
   fetchClientRegistry <- newFetchClientRegistry
   let chainDbView = CSClient.defaultChainDbView lnChainDb
       activePeers = Map.toList $ Map.restrictKeys (psrPeers lrPeerSim) (lirActive liveResult)
@@ -385,7 +383,7 @@ startNode schedulerConfig genesisTest interval = do
   -- The block fetch logic needs to be started after the block fetch clients
   -- otherwise, an internal assertion fails because getCandidates yields more
   -- peer fragments than registered clients.
-  BlockFetch.startBlockFetchLogic lrRegistry lrTracer lnChainDb fetchClientRegistry getCandidates
+  BlockFetch.startBlockFetchLogic lrRegistry lrTracer lnChainDb fetchClientRegistry handles
 
   for_ lrLoEVar $ \ var -> do
       forkLinkedWatcher lrRegistry "LoE updater background" $
