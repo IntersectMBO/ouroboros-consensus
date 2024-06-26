@@ -14,6 +14,8 @@ module Cardano.Tools.N2NPG.Run (
 
 import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
 import           Cardano.Tools.DBAnalyser.HasAnalysis (mkProtocolInfo)
+import           Control.Concurrent.Async
+import           Control.Monad (forM, replicateM_)
 import           Control.Monad.Class.MonadSay (MonadSay (..))
 import           Control.Monad.Cont
 import           Control.Monad.Trans (MonadTrans (..))
@@ -29,6 +31,7 @@ import           Network.TypedProtocol (PeerHasAgency (..), PeerPipelined (..),
                      PeerRole (..), PeerSender (..))
 import           Network.TypedProtocol.Pipelined (N (..))
 import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Config.SupportsNode
                      (ConfigSupportsNode (..))
@@ -78,50 +81,31 @@ data Opts = Opts {
   , serverAddr     :: (Socket.HostName, Socket.ServiceName)
   , startSlot      :: WithOrigin SlotNo
   , numBlocks      :: Word64
+  , sweepCommand   :: Bool
   }
 
 run :: Opts -> IO ()
-run opts = evalContT $ do
+run opts = if sweepCommand opts then sweepCache opts else runSingle opts
+
+runSingle :: Opts -> IO ()
+runSingle opts = evalContT $ do
     let immDBFS = SomeHasFS $ ioHasFS $ MountPoint immutableDBDir
         args = Cardano.CardanoBlockArgs configFile Nothing
     ProtocolInfo{pInfoConfig = cfg} <- lift $ mkProtocolInfo args
     registry <- ContT withRegistry
     internalImmDB <- ContT $ withImmutableDBInternal cfg registry immDBFS
-    snocket <- Snocket.socketSnocket <$> ContT withIOManager
     lift $ do
-      ptQueue        <- newTQueueIO
-      varNumDequeued <- newTVarIO (0 :: Word64)
-      blockFetchDone <- newEmptyTMVarIO
-
       startPoint <- case startSlot of
         Origin      -> pure GenesisPoint
-        NotOrigin s -> ImmutableDB.getHashForSlot internalImmDB s >>= \case
-          Just h  -> pure $ BlockPoint s h
+        NotOrigin s -> findM (ImmutableDB.getHashForSlot internalImmDB) [s..(s+130000)] >>= \case
+          Just (s1, h)  -> pure $ BlockPoint s1 h
           Nothing -> fail $ "Slot not in ImmutableDB: " <> show s
-
-      let enqueue hdr = do
-            atomically $ writeTQueue ptQueue (headerPoint hdr)
-
-          dequeue = atomically $ do
-            numDequeued <- readTVar varNumDequeued
-            if numDequeued >= numBlocks
-              then pure Nothing
-              else do
-                modifyTVar varNumDequeued (+ 1)
-                Just <$> readTQueue ptQueue
-
-          waitBlockFetchDone   = atomically $ takeTMVar blockFetchDone
-          signalBlockFetchDone = atomically $ putTMVar blockFetchDone ()
 
       let hints = Socket.defaultHints { Socket.addrSocketType = Socket.Stream }
       -- The result is always non-empty
       serverInfo <- head <$> Socket.getAddrInfo (Just hints) (Just serverHostName) (Just serverPort)
-      runApplication snocket (Socket.addrAddress serverInfo) $
-        mkApplication
-          (configCodec cfg)
-          (getNetworkMagic (configBlock cfg))
-          (simpleChainSync startPoint numBlocks enqueue waitBlockFetchDone)
-          (simpleBlockFetch dequeue signalBlockFetchDone)
+
+      fetchBlocks cfg numBlocks (Socket.addrAddress serverInfo) startPoint
   where
     Opts {
         configFile
@@ -130,6 +114,82 @@ run opts = evalContT $ do
       , startSlot
       , numBlocks
       } = opts
+
+sweepCache :: Opts -> IO ()
+sweepCache opts = evalContT $ do
+    let immDBFS = SomeHasFS $ ioHasFS $ MountPoint immutableDBDir
+        args = Cardano.CardanoBlockArgs configFile Nothing
+    ProtocolInfo{pInfoConfig = cfg} <- lift $ mkProtocolInfo args
+    registry <- ContT withRegistry
+    internalImmDB <- ContT $ withImmutableDBInternal cfg registry immDBFS
+    lift $ do
+      let hints = Socket.defaultHints { Socket.addrSocketType = Socket.Stream }
+      -- The result is always non-empty
+      serverInfo <- head <$> Socket.getAddrInfo (Just hints) (Just serverHostName) (Just serverPort)
+
+      bps <- forM [0..249] $ \i ->
+        findBlockPointFrom internalImmDB (addSlots startSlot (i*433000))
+      replicateM_ 1000 $
+        mapConcurrently_ (fetchBlocks cfg numBlocks (Socket.addrAddress serverInfo)) bps
+  where
+    Opts {
+        configFile
+      , immutableDBDir
+      , serverAddr = (serverHostName, serverPort)
+      , startSlot
+      , numBlocks
+      } = opts
+
+    addSlots Origin o = NotOrigin o
+    addSlots (NotOrigin x) o = NotOrigin (x + o)
+
+fetchBlocks ::
+    TopLevelConfig (CardanoBlock StandardCrypto) ->
+    Word64 ->
+    Socket.SockAddr ->
+    Point (CardanoBlock StandardCrypto) ->
+    IO ()
+fetchBlocks cfg nBlocks addr startPoint = withIOManager $ \m -> do
+    let snocket = Snocket.socketSnocket m
+    ptQueue        <- newTQueueIO
+    varNumDequeued <- newTVarIO (0 :: Word64)
+    blockFetchDone <- newEmptyTMVarIO
+    let enqueue hdr = do
+          atomically $ writeTQueue ptQueue (headerPoint hdr)
+
+        dequeue = atomically $ do
+          numDequeued <- readTVar varNumDequeued
+          if numDequeued >= nBlocks
+            then pure Nothing
+            else do
+              modifyTVar varNumDequeued (+ 1)
+              Just <$> readTQueue ptQueue
+
+        waitBlockFetchDone   = atomically $ takeTMVar blockFetchDone
+        signalBlockFetchDone = atomically $ putTMVar blockFetchDone ()
+
+    runApplication snocket addr $
+      mkApplication
+        (configCodec cfg)
+        (getNetworkMagic (configBlock cfg))
+        (simpleChainSync startPoint nBlocks enqueue waitBlockFetchDone)
+        (simpleBlockFetch dequeue signalBlockFetchDone)
+
+findBlockPointFrom :: MonadFail m => ImmutableDB.Internal m blk -> WithOrigin SlotNo -> m (Point blk)
+findBlockPointFrom internalImmDB startS =
+    case startS of
+      Origin      -> pure GenesisPoint
+      NotOrigin s -> findM (ImmutableDB.getHashForSlot internalImmDB) [s..(s+130000)] >>= \case
+        Just (s1, h)  -> pure $ BlockPoint s1 h
+        Nothing -> fail $ "Slot not in ImmutableDB: " <> show s
+
+findM :: Monad m => (a -> m (Maybe b)) -> [a] -> m (Maybe (a, b))
+findM _f [] = pure Nothing
+findM f (x:xs) = do
+    m <- f x
+    case m of
+      Nothing -> findM f xs
+      Just b -> pure (Just (x, b))
 
 {-------------------------------------------------------------------------------
   ChainSync and BlockFetch logic

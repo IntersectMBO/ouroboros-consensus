@@ -52,10 +52,15 @@ optsParser =
         , metavar "NUM_BLOCKS"
         , help "Number of blocks to download"
         ]
+      sweepCommand <- subparser $
+        command "sweep" (info (pure True) (progDesc "Sweeps the cache of the server"))
+        <>
+        command "single" (info (pure False) (progDesc "Requests a single range of blocks"))
       pure Opts {
           configFile
         , immutableDBDir
         , serverAddr
         , startSlot
         , numBlocks
+        , sweepCommand
         }
