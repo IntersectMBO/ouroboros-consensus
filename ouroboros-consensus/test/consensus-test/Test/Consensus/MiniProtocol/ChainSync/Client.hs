@@ -81,12 +81,14 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended hiding (ledgerState)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (CSJConfig (..), ChainDbView (..),
-                     ChainSyncClientException, ChainSyncClientResult (..),
-                     ChainSyncLoPBucketConfig (..), ChainSyncState (..),
-                     ChainSyncStateView (..), ConfigEnv (..), Consensus,
-                     DynamicEnv (..), Our (..), Their (..),
-                     TraceChainSyncClientEvent (..), bracketChainSyncClient,
-                     chainSyncClient, chainSyncStateFor, viewChainSyncState)
+                     ChainSyncClientException,
+                     ChainSyncClientHandleCollection (..),
+                     ChainSyncClientResult (..), ChainSyncLoPBucketConfig (..),
+                     ChainSyncState (..), ChainSyncStateView (..),
+                     ConfigEnv (..), Consensus, DynamicEnv (..), Our (..),
+                     Their (..), TraceChainSyncClientEvent (..),
+                     bracketChainSyncClient, chainSyncClient, chainSyncStateFor,
+                     newChainSyncClientHandleCollection, viewChainSyncState)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
                      (HistoricityCheck, HistoricityCutoff (..))
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
@@ -353,7 +355,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
     -- separate map too, one that isn't emptied. We can use this map to look
     -- at the final state of each candidate.
     varFinalCandidates <- uncheckedNewTVarM Map.empty
-    varHandles     <- uncheckedNewTVarM Map.empty
+    cschCol            <- atomically newChainSyncClientHandleCollection
 
     (tracer, getTrace) <- do
           (tracer', getTrace) <- recordingTracerTVar
@@ -506,7 +508,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
               bracketChainSyncClient
                  chainSyncTracer
                  chainDbView
-                 varHandles
+                 cschCol
                  -- 'Syncing' only ever impacts the LoP, which is disabled in
                  -- this test, so any value would do.
                  (pure Syncing)
@@ -517,7 +519,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                  diffusionPipelining
                  $ \csState -> do
                    atomically $ do
-                     handles <- readTVar varHandles
+                     handles <- cschcMap cschCol
                      modifyTVar varFinalCandidates $ Map.insert serverId (handles Map.! serverId)
                    (result, _) <-
                      runPipelinedPeer protocolTracer codecChainSyncId clientChannel $
@@ -538,7 +540,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
     let checkTipTime :: m ()
         checkTipTime = do
             now        <- systemTimeCurrent clientSystemTime
-            candidates <- atomically $ viewChainSyncState varHandles csCandidate
+            candidates <- atomically $ viewChainSyncState (cschcMap cschCol) csCandidate
             forM_ candidates $ \candidate -> do
               let p = castPoint $ AF.headPoint candidate :: Point TestBlock
               case pointSlot p of
