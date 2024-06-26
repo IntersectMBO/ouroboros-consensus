@@ -100,6 +100,8 @@ instance Ledger.LedgerSupportsMempool TestBlock where
 
   txForgetValidated (ValidatedGenTx tx) = tx
 
+  txRefScriptSize _cfg _tlst _tx = 0
+
 {-------------------------------------------------------------------------------
   Ledger support
 -------------------------------------------------------------------------------}

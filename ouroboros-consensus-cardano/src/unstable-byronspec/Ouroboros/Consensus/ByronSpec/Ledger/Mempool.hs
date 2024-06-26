@@ -57,3 +57,5 @@ instance LedgerSupportsMempool ByronSpecBlock where
   txInBlockSize = const 0
 
   txForgetValidated = forgetValidatedByronSpecGenTx
+
+  txRefScriptSize _cfg _tlst _tx = 0
