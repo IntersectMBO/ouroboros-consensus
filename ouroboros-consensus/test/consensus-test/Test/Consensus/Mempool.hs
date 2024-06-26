@@ -3,6 +3,7 @@
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE NumericUnderscores  #-}
+{-# LANGUAGE ParallelListComp    #-}
 {-# LANGUAGE PatternSynonyms     #-}
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE RecordWildCards     #-}
@@ -845,7 +846,9 @@ prop_TxSeq_lookupByTicketNo_complete xs =
         | (tx, tn) <- TxSeq.toTuples txseq ]
   where
     txseq :: TxSeq Int
-    txseq = TxSeq.fromList $ zipWith3 TxTicket xs (map TicketNo [0..]) (repeat 0)
+    txseq =
+        TxSeq.fromList
+      $ [ TxTicket x (TicketNo i) 0 0 | x <- xs | i <- [0..] ]
 
 -- | Only finds elements in the sequence
 prop_TxSeq_lookupByTicketNo_sound ::
@@ -873,7 +876,7 @@ prop_TxSeq_lookupByTicketNo_sound smalls small =
     txseq =
         foldl' (TxSeq.:>) TxSeq.Empty $ map mkTicket haystack
 
-    mkTicket x = TxTicket x (mkTicketNo x) 0
+    mkTicket x = TxTicket x (mkTicketNo x) 0 0
     mkTicketNo = TicketNo . toEnum
 
 -- | Test that the 'fst' of the result of 'splitAfterTxSize' only contains
@@ -948,7 +951,7 @@ instance Arbitrary TxSizeSplitTestSetup where
 -- | Convert a 'TxSizeSplitTestSetup' to a 'TxSeq'.
 txSizeSplitTestSetupToTxSeq :: TxSizeSplitTestSetup -> TxSeq Int
 txSizeSplitTestSetupToTxSeq TxSizeSplitTestSetup { tssTxSizes } =
-    TxSeq.fromList [TxTicket 0 (TicketNo 0) tssTxSize | tssTxSize <- tssTxSizes]
+    TxSeq.fromList [TxTicket 0 (TicketNo 0) tssTxSize 0 | tssTxSize <- tssTxSizes]
 
 {-------------------------------------------------------------------------------
   TicketNo Properties
