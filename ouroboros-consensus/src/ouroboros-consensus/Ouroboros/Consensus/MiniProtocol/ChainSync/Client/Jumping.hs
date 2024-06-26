@@ -273,9 +273,9 @@ mkJumping peerContext = Jumping
 --
 -- Invariants:
 --
--- - If 'handlesCol is not empty, then there is exactly one dynamo in it.
--- - There is at most one objector in 'handlesCol.
--- - If there exist 'FoundIntersection' jumpers in 'handlesCol, then there
+-- - If 'handlesCol' is not empty, then there is exactly one dynamo in it.
+-- - There is at most one objector in 'handlesCol'.
+-- - If there exist 'FoundIntersection' jumpers in 'handlesCol', then there
 --   is an objector and the intersection of the objector with the dynamo is
 --   at least as old as the oldest intersection of the `FoundIntersection` jumpers
 --   with the dynamo.
