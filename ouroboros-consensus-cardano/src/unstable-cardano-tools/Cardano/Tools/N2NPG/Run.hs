@@ -12,16 +12,22 @@ module Cardano.Tools.N2NPG.Run (
   , run
   ) where
 
+import           Cardano.Ledger.Crypto
 import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
 import           Cardano.Tools.DBAnalyser.HasAnalysis (mkProtocolInfo)
 import           Control.Monad.Class.MonadSay (MonadSay (..))
 import           Control.Monad.Cont
 import           Control.Monad.Trans (MonadTrans (..))
 import           Control.Tracer (nullTracer, stdoutTracer)
+import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Lazy as BL
+import qualified Data.ByteString.Short as Short
 import           Data.Functor ((<&>))
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
+import           Data.Text (Text)
+import qualified Data.Text.IO as Text
+import qualified Data.Text.Encoding as Text
 import           Data.Void (Void)
 import           Data.Word (Word64)
 import qualified Network.Socket as Socket
@@ -29,9 +35,11 @@ import           Network.TypedProtocol (PeerHasAgency (..), PeerPipelined (..),
                      PeerRole (..), PeerSender (..))
 import           Network.TypedProtocol.Pipelined (N (..))
 import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Config.SupportsNode
                      (ConfigSupportsNode (..))
+import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Network.NodeToNode (Codecs (..),
                      defaultCodecs)
@@ -95,7 +103,7 @@ run opts = evalContT $ do
 
       startPoint <- case startSlot of
         Origin      -> pure GenesisPoint
-        NotOrigin s -> ImmutableDB.getHashForSlot internalImmDB s >>= \case
+        NotOrigin s -> findM (ImmutableDB.getHashForSlot internalImmDB) [s..] >>= \case
           Just h  -> pure $ BlockPoint s h
           Nothing -> fail $ "Slot not in ImmutableDB: " <> show s
 
@@ -130,6 +138,17 @@ run opts = evalContT $ do
       , startSlot
       , numBlocks
       } = opts
+
+findM :: Monad m => (a -> m (Maybe b)) -> [a] -> m (Maybe b)
+findM f [] = pure Nothing
+findM f (x:xs) = do
+    m <- f x
+    case m of
+      Nothing -> findM f xs
+      _ -> pure m
+
+readHash :: Text -> Either String (HeaderHash (CardanoBlock StandardCrypto))
+readHash = fmap (OneEraHash . Short.toShort) . B16.decode . Text.encodeUtf8
 
 {-------------------------------------------------------------------------------
   ChainSync and BlockFetch logic
