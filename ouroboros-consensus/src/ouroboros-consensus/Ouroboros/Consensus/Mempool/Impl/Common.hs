@@ -13,6 +13,7 @@ module Ouroboros.Consensus.Mempool.Impl.Common (
     -- * Internal state
     InternalState (..)
   , isMempoolSize
+  , isTotalRefScriptSize
     -- * Mempool environment
   , MempoolEnv (..)
   , initMempoolEnv
@@ -138,6 +139,9 @@ deriving instance ( NoThunks (Validated (GenTx blk))
 -- the Mempool paired with their total size in bytes.
 isMempoolSize :: InternalState blk -> MempoolSize
 isMempoolSize = TxSeq.toMempoolSize . isTxs
+
+isTotalRefScriptSize :: InternalState blk -> Int
+isTotalRefScriptSize = TxSeq.toRefScriptSize . isTxs
 
 initInternalState ::
      LedgerSupportsMempool blk
@@ -340,6 +344,7 @@ extendVRNew cfg txSize wti tx vr = assert (isNothing vrNewValid) $
       Right (st', vtx) ->
         ( Right vtx
         , vr { vrValid        = vrValid :> TxTicket vtx nextTicketNo (txSize tx)
+                                             (txRefScriptSize cfg vrAfter tx)
              , vrValidTxIds   = Set.insert (txId tx) vrValidTxIds
              , vrNewValid     = Just vtx
              , vrAfter        = st'

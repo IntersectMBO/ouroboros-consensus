@@ -42,6 +42,7 @@ import           Cardano.Ledger.Alonzo.Tx (totExUnits)
 import           Cardano.Ledger.Binary (Annotator (..), DecCBOR (..),
                      EncCBOR (..), FromCBOR (..), FullByteString (..),
                      ToCBOR (..), toPlainDecoder)
+import qualified Cardano.Ledger.Conway.UTxO as SL
 import qualified Cardano.Ledger.Core as SL (txIdTxBody)
 import           Cardano.Ledger.Crypto (Crypto)
 import qualified Cardano.Ledger.SafeHash as SL
@@ -146,6 +147,12 @@ instance ShelleyCompatible proto era
       txSize = fromIntegral $ tx ^. sizeTxF
 
   txForgetValidated (ShelleyValidatedTx txid vtx) = ShelleyTx txid (SL.extractTx vtx)
+
+  txRefScriptSize _cfg st (ShelleyTx _ tx) = case getBabbageTxDict (Proxy @era) of
+      Nothing              -> 0
+      Just BabbageTxDict{} -> SL.txNonDistinctRefScriptsSize utxo tx
+    where
+      utxo = SL.getUTxO . tickedShelleyLedgerState $ st
 
 mkShelleyTx :: forall era proto. ShelleyBasedEra era => Tx era -> GenTx (ShelleyBlock proto era)
 mkShelleyTx tx = ShelleyTx (SL.txIdTxBody @era (tx ^. bodyTxL)) tx

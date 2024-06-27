@@ -127,6 +127,8 @@ class ( UpdateLedger blk
   -- | Discard the evidence that transaction has been previously validated
   txForgetValidated :: Validated (GenTx blk) -> GenTx blk
 
+  txRefScriptSize :: LedgerConfig blk -> TickedLedgerState blk -> GenTx blk -> Int
+
 -- | A generalized transaction, 'GenTx', identifier.
 data family TxId tx :: Type
 

@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.17.0.1'></a>
+## 0.17.0.1 — 2024-06-26
+
+### Patch
+
+- Add trivial `txRefScriptSize` definitions
+
 <a id='changelog-0.17.0.0'></a>
 ## 0.17.0.0 — 2024-06-19
 
