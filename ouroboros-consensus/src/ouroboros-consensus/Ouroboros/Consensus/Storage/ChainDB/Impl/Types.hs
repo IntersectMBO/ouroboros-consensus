@@ -63,7 +63,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
   , TraceValidationEvent (..)
   ) where
 
-import           Cardano.Prelude (whenM)
+import           Control.Monad (when)
 import           Control.Tracer
 import           Data.Foldable (traverse_)
 import           Data.Map.Strict (Map)
@@ -108,6 +108,8 @@ import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (WithFingerprint)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import           Ouroboros.Network.Block (MaxSlotNo)
+import           Ouroboros.Network.BlockFetch.ConsensusInterface
+                     (ChainSelStarvation (..))
 
 -- | All the serialisation related constraints needed by the ChainDB.
 class ( ImmutableDbSerialiseConstraints blk
@@ -276,9 +278,9 @@ data ChainDbEnv m blk = CDB
     -- switch back to a chain containing it. The fragment is usually anchored at
     -- a recent immutable tip; if it does not, it will conservatively be treated
     -- as the empty fragment anchored in the current immutable tip.
-  , cdbLastTimeStarved :: !(StrictTVar m Time)
-    -- ^ The last time we starved the ChainSel thread. This is used by the
-    -- BlockFetch decision logic to demote peers.
+  , cdbChainSelStarvation :: !(StrictTVar m ChainSelStarvation)
+    -- ^ Information on the last starvation of ChainSel, whether ongoing or
+    -- ended recently.
   } deriving (Generic)
 
 -- | We include @blk@ in 'showTypeOf' because it helps resolving type families
@@ -513,13 +515,21 @@ addReprocessLoEBlocks tracer (ChainSelQueue queue) = do
   atomically $ writeTBQueue queue ChainSelReprocessLoEBlocks
 
 -- | Get the oldest message from the 'ChainSelQueue' queue. Can block when the
--- queue is empty; in that case, reports the current time to the given callback.
-getChainSelMessage :: IOLike m => (Time -> STM m ()) -> ChainSelQueue m blk -> m (ChainSelMessage m blk)
-getChainSelMessage whenEmpty (ChainSelQueue queue) = do
-  time <- getMonotonicTime
-  -- NOTE: The two following lines are in different `atomically` on purpose.
-  atomically $ whenM (isEmptyTBQueue queue) (whenEmpty time)
-  atomically $ readTBQueue queue
+-- queue is empty; in that case, reports the starvation (and its end) to the
+-- callback.
+getChainSelMessage
+  :: IOLike m
+  => (ChainSelStarvation -> m ())
+  -> ChainSelQueue m blk
+  -> m (ChainSelMessage m blk)
+getChainSelMessage report (ChainSelQueue queue) = do
+  -- NOTE: The test of emptiness and the blocking read are in different STM
+  -- transactions on purpose.
+  starved <- atomically $ isEmptyTBQueue queue
+  when starved $ report ChainSelStarvationOngoing
+  message <- atomically $ readTBQueue queue
+  when starved $ report =<< ChainSelStarvationEndedAt <$> getMonotonicTime
+  return message
 
 -- | Flush the 'ChainSelQueue' queue and notify the waiting threads.
 --
@@ -552,6 +562,7 @@ data TraceEvent blk
   | TraceLedgerReplayEvent      (LgrDB.TraceReplayEvent       blk)
   | TraceImmutableDBEvent       (ImmutableDB.TraceEvent       blk)
   | TraceVolatileDBEvent        (VolatileDB.TraceEvent        blk)
+  | TraceChainSelStarvation      ChainSelStarvation
   deriving (Generic)
 
 
