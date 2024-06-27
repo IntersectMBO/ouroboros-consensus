@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.16.1.0'></a>
+## 0.16.1.0 — 2024-06-27
+
+### Non-Breaking
+
+- Track size of txs' ref scripts in mempool.
+
 <a id='changelog-0.16.0.0'></a>
 ## 0.16.0.0 — 2024-02-23
 
