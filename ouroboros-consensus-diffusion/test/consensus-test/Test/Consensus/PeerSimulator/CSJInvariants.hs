@@ -19,7 +19,7 @@ import           Data.Typeable (Typeable)
 import           Ouroboros.Consensus.Block (Point, StandardHash, castPoint)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State as CSState
 import           Ouroboros.Consensus.Util.IOLike (Exception, MonadSTM (STM),
-                     MonadThrow (throwIO), StrictTVar, readTVar)
+                     MonadThrow (throwIO), readTVar)
 import           Ouroboros.Consensus.Util.STM (Watcher (..))
 
 --------------------------------------------------------------------------------
@@ -109,10 +109,10 @@ readAndView ::
   forall m peer blk.
   ( MonadSTM m
   ) =>
-  StrictTVar m (Map peer (CSState.ChainSyncClientHandle m blk)) ->
+  STM m (Map peer (CSState.ChainSyncClientHandle m blk)) ->
   STM m (View peer blk)
-readAndView handles =
-  traverse (fmap idealiseState . readTVar . CSState.cschJumping) =<< readTVar handles
+readAndView readHandles =
+  traverse (fmap idealiseState . readTVar . CSState.cschJumping) =<< readHandles
   where
     -- Idealise the state of a ChainSync peer with respect to ChainSync jumping.
     -- In particular, we get rid of non-comparable information such as the TVars
@@ -170,7 +170,7 @@ watcher ::
     Typeable blk,
     StandardHash blk
   ) =>
-  StrictTVar m (Map peer (CSState.ChainSyncClientHandle m blk)) ->
+  STM m (Map peer (CSState.ChainSyncClientHandle m blk)) ->
   Watcher m (View peer blk) (View peer blk)
 watcher handles =
   Watcher

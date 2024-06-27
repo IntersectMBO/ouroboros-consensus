@@ -26,7 +26,9 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (CSJConfig (..), CSJEnabledConfig (..), ChainDbView,
-                     ChainSyncClientHandle, ChainSyncLoPBucketConfig (..),
+                     ChainSyncClientHandle,
+                     ChainSyncClientHandleCollection (..),
+                     ChainSyncLoPBucketConfig (..),
                      ChainSyncLoPBucketEnabledConfig (..), viewChainSyncState)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.Node.GsmState as GSM
@@ -147,7 +149,7 @@ startChainSyncConnectionThread ::
   ChainSyncLoPBucketConfig ->
   CSJConfig ->
   StateViewTracers blk m ->
-  StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
+  ChainSyncClientHandleCollection PeerId m blk ->
   m (Thread m (), Thread m ())
 startChainSyncConnectionThread
   registry
@@ -230,7 +232,7 @@ smartDelay _ node duration = do
 dispatchTick :: forall m blk.
   IOLike m =>
   Tracer m (TraceSchedulerEvent blk) ->
-  StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
+  STM m (Map PeerId (ChainSyncClientHandle m blk)) ->
   Map PeerId (PeerResources m blk) ->
   NodeLifecycle blk m ->
   LiveNode blk m ->
@@ -250,7 +252,7 @@ dispatchTick tracer varHandles peers lifecycle node (number, (duration, Peer pid
     traceNewTick = do
       currentChain <- atomically $ ChainDB.getCurrentChain (lnChainDb node)
       (csState, jumpingStates) <- atomically $ do
-         m <- readTVar varHandles
+         m <- varHandles
          csState <- traverse (readTVar . CSClient.cschState) (m Map.!? pid)
          jumpingStates <- forM (Map.toList m) $ \(peer, h) -> do
            st <- readTVar (CSClient.cschJumping h)
@@ -272,7 +274,7 @@ dispatchTick tracer varHandles peers lifecycle node (number, (duration, Peer pid
 runScheduler ::
   IOLike m =>
   Tracer m (TraceSchedulerEvent blk) ->
-  StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
+  STM m (Map PeerId (ChainSyncClientHandle m blk)) ->
   PointSchedule blk ->
   Map PeerId (PeerResources m blk) ->
   NodeLifecycle blk m ->
@@ -314,7 +316,7 @@ mkStateTracer ::
   m (Tracer m ())
 mkStateTracer schedulerConfig GenesisTest {gtBlockTree} PeerSimulatorResources {psrHandles, psrPeers} chainDb
   | scTraceState schedulerConfig
-  , let getCandidates = viewChainSyncState psrHandles CSClient.csCandidate
+  , let getCandidates = viewChainSyncState (cschcMap psrHandles) CSClient.csCandidate
         getCurrentChain = ChainDB.getCurrentChain chainDb
         getPoints = traverse readTVar (srCurrentState . prShared <$> psrPeers)
   = peerSimStateDiagramSTMTracerDebug gtBlockTree getCurrentChain getCandidates getPoints
@@ -335,7 +337,7 @@ startNode ::
 startNode schedulerConfig genesisTest interval = do
   let
       handles = psrHandles lrPeerSim
-      getCandidates = viewChainSyncState handles CSClient.csCandidate
+      getCandidates = viewChainSyncState (cschcMap handles) CSClient.csCandidate
   fetchClientRegistry <- newFetchClientRegistry
   let chainDbView = CSClient.defaultChainDbView lnChainDb
       activePeers = Map.restrictKeys (psrPeers lrPeerSim) (lirActive liveResult)
@@ -384,10 +386,11 @@ startNode schedulerConfig genesisTest interval = do
           (mkGDDTracerTestBlock lrTracer)
           lnChainDb
           (pure GSM.Syncing) -- TODO actually run GSM
-          (readTVar handles)
+          (cschcMap handles)
           var
 
-  void $ forkLinkedWatcher lrRegistry "CSJ invariants watcher" $ CSJInvariants.watcher handles
+  void $ forkLinkedWatcher lrRegistry "CSJ invariants watcher" $
+    CSJInvariants.watcher (cschcMap handles)
   where
     LiveResources {lrRegistry, lrTracer, lrConfig, lrPeerSim, lrLoEVar} = resources
 
@@ -483,7 +486,7 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
     lifecycle <- nodeLifecycle schedulerConfig genesisTest tracer registry peerSim
     (chainDb, stateViewTracers) <- runScheduler
       (Tracer $ traceWith tracer . TraceSchedulerEvent)
-      (psrHandles peerSim)
+      (cschcMap (psrHandles peerSim))
       gtSchedule
       (psrPeers peerSim)
       lifecycle
