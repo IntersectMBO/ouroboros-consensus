@@ -233,8 +233,8 @@ viewChainSyncState ::
   STM m (Map peer (ChainSyncClientHandle m blk)) ->
   (ChainSyncState blk -> a) ->
   STM m (Map peer a)
-viewChainSyncState varHandles f =
-  Map.map f <$> (traverse (readTVar . cschState) =<< varHandles)
+viewChainSyncState readHandles f =
+  Map.map f <$> (traverse (readTVar . cschState) =<< readHandles)
 
 -- | Convenience function for reading the 'ChainSyncState' for a single peer
 -- from a nested set of TVars.
