@@ -211,6 +211,11 @@ defaultApplyShelleyBasedTx globals ledgerEnv mempoolState _wti tx = do
     refScriptPredicate = case getBabbageTxDict (Proxy @era) of
       Nothing -> pure ()
       Just (BabbageTxDict mkError)
+        -- The ledger rules of Conway (and later eras) already handle ref
+        -- scripts appropriately, so we only need to perform the checks below
+        -- for Babbage.
+        | not $ isBeforeConway (Proxy @era)
+        -> pure ()
         -- Reject it if it has more than 100 kibibytes of ref script.
         | refScriptsSize > totalRefScriptsSizeLimit
         -> throwError $ mkError
@@ -299,7 +304,12 @@ instance (Praos.PraosCrypto c) => ShelleyBasedEra (ConwayEra c) where
 
   getConwayEraGovDict _ = Just ConwayEraGovDict
 
-  getBabbageTxDict _ = Nothing
+  getBabbageTxDict _ = Just $ BabbageTxDict $ \a b ->
+      SL.ApplyTxError
+    $ pure
+    $ Conway.ConwayUtxowFailure
+    $ Conway.UtxoFailure
+    $ Conway.MaxTxSizeUTxO a b
 
 applyAlonzoBasedTx :: forall era.
   ( ShelleyBasedEra era,
