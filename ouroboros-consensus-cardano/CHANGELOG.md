@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.14.3.0'></a>
+## 0.14.3.0 — 2024-06-27
+
+### Non-Breaking
+
+- Enforce Conway minfees for ref scripts in the mempool, even in Babbage
+
 <a id='changelog-0.14.2.0'></a>
 ## 0.14.2.0 — 2024-03-21
 
