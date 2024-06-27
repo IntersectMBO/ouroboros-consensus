@@ -811,7 +811,10 @@ reproMempoolForge numBlks env = do
       -- add this block's transactions to the mempool
       do
         results <- Mempool.addTxs mempool $ LedgerSupportsMempool.extractTxs blk'
-        let rejs = [ rej | rej@Mempool.MempoolTxRejected{} <- results ]
+        let rejs =
+              [ (LedgerSupportsMempool.txId tx, rej)
+              | rej@(Mempool.MempoolTxRejected tx _) <- results
+              ]
         unless (null rejs) $ do
           fail $ "Mempool rejected some of the on-chain txs: " <> show rejs
 
