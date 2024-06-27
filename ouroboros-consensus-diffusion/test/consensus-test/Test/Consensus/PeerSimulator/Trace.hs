@@ -48,6 +48,8 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      headPoint)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (SlotNo (SlotNo), Tip, castPoint)
+import           Ouroboros.Network.BlockFetch.ConsensusInterface
+                     (ChainSelStarvation (..))
 import           Test.Consensus.PointSchedule.NodeState (NodeState)
 import           Test.Consensus.PointSchedule.Peers (Peer (Peer), PeerId)
 import           Test.Util.TersePrinting (terseAnchor, terseBlock,
@@ -369,6 +371,8 @@ traceChainDBEventTestBlockWith tracer = \case
         AddedReprocessLoEBlocksToQueue ->
           trace $ "Requested ChainSel run"
         _ -> pure ()
+    ChainDB.TraceChainSelStarvation ChainSelStarvationOngoing -> trace "ChainSel starved"
+    ChainDB.TraceChainSelStarvation (ChainSelStarvationEndedAt time) -> trace $ "ChainSel starvation ended at " ++ prettyTime time
     _ -> pure ()
   where
     trace = traceUnitWith tracer "ChainDB"
