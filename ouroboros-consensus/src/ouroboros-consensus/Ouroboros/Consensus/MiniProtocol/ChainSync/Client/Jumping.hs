@@ -156,8 +156,9 @@
 -- (j|k).
 --
 -- The BlockFetch logic can ask to change the dynamo if it is not serving blocks
--- fast enough. If there are other non-disengaged peers the dynamo is demoted to
--- a jumper (l) and a new dynamo is elected.
+-- fast enough. If there are other non-disengaged peers, the dynamo (and the
+-- objector if there is one) is demoted to a jumper (l+g) and a new dynamo is
+-- elected.
 --
 module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping (
     Context
@@ -761,8 +762,9 @@ unregisterClient context = do
     Objector{} -> electNewObjector context'
     Dynamo{} -> void $ electNewDynamo context'
 
--- | Elects a new dynamo by demoting the given dynamo to a jumper, moving the
--- peer to the end of the queue of chain sync handles and electing a new dynamo.
+-- | Elects a new dynamo by demoting the given dynamo (and the objector if there
+-- is one) to a jumper, moving the peer to the end of the queue of chain sync
+-- handles and electing a new dynamo.
 --
 -- It does nothing if there is no other engaged peer to elect or if the given
 -- peer is not the dynamo.
