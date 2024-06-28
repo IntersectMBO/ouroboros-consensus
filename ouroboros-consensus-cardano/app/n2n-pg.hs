@@ -42,7 +42,7 @@ optsParser =
         , help "Server address"
         , metavar "HOST:PORT"
         ]
-      startSlot <- fmap withOriginFromMaybe $ optional $ option (SlotNo <$> auto) $ mconcat
+      startSlots <- some $ option (SlotNo <$> auto) $ mconcat
         [ long "start-from"
         , metavar "SLOT_NUMBER"
         , help "Start downloading from this slot (must be in the ImmutableDB)"
@@ -56,6 +56,6 @@ optsParser =
           configFile
         , immutableDBDir
         , serverAddr
-        , startSlot
+        , startSlots
         , numBlocks
         }
