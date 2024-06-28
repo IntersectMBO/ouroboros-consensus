@@ -22,6 +22,7 @@ import qualified Data.ByteString.Lazy as BL
 import           Data.Functor ((<&>))
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
+import           Data.Traversable (for)
 import           Data.Void (Void)
 import           Data.Word (Word64)
 import qualified Network.Socket as Socket
@@ -76,7 +77,7 @@ data Opts = Opts {
     configFile     :: FilePath
   , immutableDBDir :: FilePath
   , serverAddr     :: (Socket.HostName, Socket.ServiceName)
-  , startSlot      :: WithOrigin SlotNo
+  , startSlots     :: [SlotNo]
   , numBlocks      :: Word64
   }
 
@@ -93,18 +94,19 @@ run opts = evalContT $ do
       varNumDequeued <- newTVarIO (0 :: Word64)
       blockFetchDone <- newEmptyTMVarIO
 
-      startPoint <- case startSlot of
-        Origin      -> pure GenesisPoint
-        NotOrigin s -> ImmutableDB.getHashForSlot internalImmDB s >>= \case
+      startPoints <- for startSlots $ \s ->
+        ImmutableDB.getHashForSlot internalImmDB s >>= \case
           Just h  -> pure $ BlockPoint s h
           Nothing -> fail $ "Slot not in ImmutableDB: " <> show s
 
-      let enqueue hdr = do
+      let totalBlocks = numBlocks * fromIntegral (length startPoints)
+
+          enqueue hdr = do
             atomically $ writeTQueue ptQueue (headerPoint hdr)
 
           dequeue = atomically $ do
             numDequeued <- readTVar varNumDequeued
-            if numDequeued >= numBlocks
+            if numDequeued >= totalBlocks
               then pure Nothing
               else do
                 modifyTVar varNumDequeued (+ 1)
@@ -120,14 +122,14 @@ run opts = evalContT $ do
         mkApplication
           (configCodec cfg)
           (getNetworkMagic (configBlock cfg))
-          (simpleChainSync startPoint numBlocks enqueue waitBlockFetchDone)
+          (simpleChainSync startPoints numBlocks enqueue waitBlockFetchDone)
           (simpleBlockFetch dequeue signalBlockFetchDone)
   where
     Opts {
         configFile
       , immutableDBDir
       , serverAddr = (serverHostName, serverPort)
-      , startSlot
+      , startSlots
       , numBlocks
       } = opts
 
@@ -147,14 +149,14 @@ TODOs if we want this as a proper tool:
 
 -}
 
--- | Find an intersection for the given point, and download the given number of
--- headers after that.
+-- | Find an intersection for the given points (separately), and download the
+-- given number of headers after that.
 simpleChainSync ::
      forall m blk.
      ( MonadFail m, MonadSay m
      , HasHeader blk
      )
-  => Point blk
+  => [Point blk]
      -- ^ Point to start from.
   -> Word64
      -- ^ Number of headers to process.
@@ -163,26 +165,26 @@ simpleChainSync ::
   -> m ()
      -- ^ Invoked when we are done, as ChainSync needs to be kept open.
   -> PeerPipelined (ChainSync' blk) AsClient ChainSync.StIdle m ()
-simpleChainSync startPt numHeaders onHdr waitEnd =
-      PeerPipelined
-    $ SenderYield (ClientAgency ChainSync.TokIdle) (ChainSync.MsgFindIntersect [startPt])
-    $ SenderAwait (ServerAgency ChainSync.TokIntersect) $ \case
-        ChainSync.MsgIntersectNotFound {} ->
-          SenderEffect $ fail $ "Server doesn't know " <> show startPt
-        ChainSync.MsgIntersectFound {}    ->
-          go numHeaders
+simpleChainSync startPts numHeaders onHdr waitEnd = PeerPipelined $
+    foldr ($) done
+      [ \ps ->
+          SenderYield (ClientAgency ChainSync.TokIdle) (ChainSync.MsgFindIntersect [startPt])
+        $ SenderAwait (ServerAgency ChainSync.TokIntersect) $ \case
+            ChainSync.MsgIntersectNotFound {} ->
+              SenderEffect $ fail $ "Server doesn't know " <> show startPt
+            ChainSync.MsgIntersectFound {}    ->
+              go numHeaders ps
+      | startPt <- startPts
+      ]
   where
     go ::
          forall c.
          Word64
       -> PeerSender (ChainSync' blk) AsClient ChainSync.StIdle Z c m ()
-    go = \case
-      0 -> SenderEffect $ do
-        waitEnd
-        pure
-          $ SenderYield (ClientAgency ChainSync.TokIdle) ChainSync.MsgDone
-          $ SenderDone ChainSync.TokDone ()
-      n ->
+      -> PeerSender (ChainSync' blk) AsClient ChainSync.StIdle Z c m ()
+    go = \cases
+      0 ps -> ps
+      n ps ->
           SenderYield (ClientAgency ChainSync.TokIdle) ChainSync.MsgRequestNext
         $ SenderAwait (ServerAgency (ChainSync.TokNext ChainSync.TokCanAwait)) $ \case
             ChainSync.MsgRollForward hdr _tip -> onRollForward hdr
@@ -197,14 +199,22 @@ simpleChainSync startPt numHeaders onHdr waitEnd =
             -> PeerSender (ChainSync' blk) AsClient ChainSync.StIdle Z c m ()
           onRollForward hdr = SenderEffect $ do
               onHdr hdr
-              pure $ go (n - 1)
+              pure $ go (n - 1) ps
 
           onRollBackward ::
                Point blk
             -> PeerSender (ChainSync' blk) AsClient ChainSync.StIdle Z c m ()
           onRollBackward to = SenderEffect $ do
               say $ "Ignoring rollback to " <> show to
-              pure $ go n
+              pure $ go n ps
+
+    done :: PeerSender (ChainSync' blk) AsClient ChainSync.StIdle Z c m ()
+    done = SenderEffect $ do
+        waitEnd
+        pure
+          $ SenderYield (ClientAgency ChainSync.TokIdle) ChainSync.MsgDone
+          $ SenderDone ChainSync.TokDone ()
+
 
 simpleBlockFetch ::
      forall m blk.
