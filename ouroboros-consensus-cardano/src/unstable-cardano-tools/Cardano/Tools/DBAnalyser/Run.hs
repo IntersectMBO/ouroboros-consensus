@@ -34,6 +34,7 @@ import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           System.IO
+import           Text.Printf (printf)
 
 
 {-------------------------------------------------------------------------------
@@ -132,7 +133,7 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
       return $ Tracer $ \ev -> withLock $ do
         traceTime <- getMonotonicTime
         let diff = diffTime traceTime startTime
-        hPutStrLn stderr $ concat ["[", show diff, "] ", show ev]
+        hPutStrLn stderr $ printf "[%.6fs] %s" (realToFrac diff :: Double) (show ev)
         hFlush stderr
       where
         withLock = bracket_ (takeMVar lock) (putMVar lock ())
