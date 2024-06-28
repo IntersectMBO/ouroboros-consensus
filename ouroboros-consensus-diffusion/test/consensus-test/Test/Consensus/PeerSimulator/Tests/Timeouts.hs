@@ -70,4 +70,4 @@ prop_timeouts mustTimeout = do
             ]
           -- This keeps the test running long enough to pass the timeout by 'offset'.
           psMinEndTime = Time $ timeout + offset
-       in PointSchedule {psSchedule, psMinEndTime}
+       in PointSchedule {psSchedule, psStartOrder = [], psMinEndTime}

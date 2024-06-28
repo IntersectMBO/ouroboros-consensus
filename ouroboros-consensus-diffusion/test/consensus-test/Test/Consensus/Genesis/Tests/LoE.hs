@@ -2,7 +2,6 @@
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE ViewPatterns        #-}
 
 module Test.Consensus.Genesis.Tests.LoE (tests) where
@@ -116,4 +115,4 @@ prop_adversaryHitsTimeouts timeoutsEnabled =
             ]
           -- We want to wait more than the short wait timeout
           psMinEndTime = Time 11
-       in PointSchedule {psSchedule, psMinEndTime}
+       in PointSchedule {psSchedule, psStartOrder = [], psMinEndTime}
