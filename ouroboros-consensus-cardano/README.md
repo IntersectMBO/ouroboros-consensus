@@ -166,6 +166,16 @@ Lastly the user can provide the analysis that should be run on the chain:
   - time spent in the mutator in microseconds
   - time spent in GC in microseconds
 
+  Currently, only NUM=1 or NUM=2 are supported. Note that with NUM=2, even for a
+  fully valid chain (like mainnet), you might get an error like this:
+
+  ```
+  Mempool rejected some of the on-chain txs: ... (OutsideValidityIntervalUTxO ...) ...
+  ```
+
+  Therefore, it is recommended to start with NUM=1, and only use NUM=2 when you
+  want to test the performance impact of a more filled mempool.
+
 * `--get-block-application-metrics NUM` computes different block application metrics every `NUM` blocks.
 It currently outputs block number, slot number, UTxO size in MB, and UTxO map size.
 In the [`scripts`](./scripts) directory we provide a `plot_utxo-growth.py` script that can be used to plot the these results.

@@ -816,7 +816,14 @@ reproMempoolForge numBlks env = do
               | rej@(Mempool.MempoolTxRejected tx _) <- results
               ]
         unless (null rejs) $ do
-          fail $ "Mempool rejected some of the on-chain txs: " <> show rejs
+          fail $ unlines $
+               ["Mempool rejected some of the on-chain txs: " <> show rejs]
+            <> case howManyBlocks of
+                 ReproMempoolForgeOneBlk -> []
+                 ReproMempoolForgeTwoBlks ->
+                   [ "This might be expected, see the db-analyser README."
+                   , "Consider trying again with `--repro-mempool-and-forge 1`."
+                   ]
 
       let scrutinee = case howManyBlocks of
             ReproMempoolForgeOneBlk  -> Just blk'
