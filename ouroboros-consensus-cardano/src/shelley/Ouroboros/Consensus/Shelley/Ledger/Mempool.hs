@@ -30,6 +30,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Mempool (
   , perTxOverhead
     -- * Exported for tests
   , AlonzoMeasure (..)
+  , ConwayMeasure (..)
   , fromExUnits
   ) where
 
@@ -361,14 +362,36 @@ instance ( ShelleyCompatible p (BabbageEra c)
 
   txsBlockCapacity = txsBlockCapacityAlonzo
 
+data ConwayMeasure = ConwayMeasure {
+    alonzoMeasure  :: !AlonzoMeasure
+  , refScriptsSize :: !Mempool.ByteSize
+  } deriving stock (Eq, Generic, Show)
+    deriving (BoundedMeasure, Measure)
+         via (InstantiatedAt Generic ConwayMeasure)
+
 instance ( ShelleyCompatible p (ConwayEra c)
          ) => Mempool.TxLimits (ShelleyBlock p (ConwayEra c)) where
 
-  type TxMeasure (ShelleyBlock p (ConwayEra c)) = AlonzoMeasure
+  type TxMeasure (ShelleyBlock p (ConwayEra c)) = ConwayMeasure
 
-  txMeasure _st = txMeasureAlonzo
+  txMeasure st genTx@(ShelleyValidatedTx _txid vtx) =
+      ConwayMeasure {
+          alonzoMeasure  = txMeasureAlonzo genTx
+        , refScriptsSize = Mempool.ByteSize $ fromIntegral $
+            SL.txNonDistinctRefScriptsSize utxo (SL.extractTx vtx)
+        }
+    where
+      utxo = SL.getUTxO . tickedShelleyLedgerState $ st
 
-  txsBlockCapacity = txsBlockCapacityAlonzo
+
+  txsBlockCapacity st =
+      ConwayMeasure {
+          alonzoMeasure  = txsBlockCapacityAlonzo st
+        , refScriptsSize =
+            -- TODO use maxRefScriptSizePerBlock from
+            -- https://github.com/IntersectMBO/cardano-ledger/pull/4450
+            Mempool.ByteSize $ 2560 * 1024 -- 2.5 MB
+        }
 
 {-------------------------------------------------------------------------------
   WithTop
