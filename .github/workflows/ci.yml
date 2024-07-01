@@ -38,7 +38,7 @@ jobs:
       # Modify this value to "invalidate" the Cabal cache.
       CABAL_CACHE_VERSION: "2024-01-29"
 
-      CABAL: "3.10.3.0"
+      CABAL: "3.12.1.0"
 
     steps:
     - uses: actions/checkout@v4
