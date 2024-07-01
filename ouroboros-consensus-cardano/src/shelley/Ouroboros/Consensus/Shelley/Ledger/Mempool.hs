@@ -295,17 +295,17 @@ theLedgerLens f x =
 
 instance ShelleyCompatible p (ShelleyEra c) => Mempool.TxLimits (ShelleyBlock p (ShelleyEra c)) where
   type TxMeasure (ShelleyBlock p (ShelleyEra c)) = Mempool.ByteSize
-  txMeasure        = Mempool.ByteSize . txInBlockSize . txForgetValidated
+  txMeasure _st    = Mempool.ByteSize . txInBlockSize . txForgetValidated
   txsBlockCapacity = Mempool.ByteSize . txsMaxBytes
 
 instance ShelleyCompatible p (AllegraEra c) => Mempool.TxLimits (ShelleyBlock p (AllegraEra c)) where
   type TxMeasure (ShelleyBlock p (AllegraEra c)) = Mempool.ByteSize
-  txMeasure        = Mempool.ByteSize . txInBlockSize . txForgetValidated
+  txMeasure _st    = Mempool.ByteSize . txInBlockSize . txForgetValidated
   txsBlockCapacity = Mempool.ByteSize . txsMaxBytes
 
 instance ShelleyCompatible p (MaryEra c) => Mempool.TxLimits (ShelleyBlock p (MaryEra c)) where
   type TxMeasure (ShelleyBlock p (MaryEra c)) = Mempool.ByteSize
-  txMeasure        = Mempool.ByteSize . txInBlockSize . txForgetValidated
+  txMeasure _st    = Mempool.ByteSize . txInBlockSize . txForgetValidated
   txsBlockCapacity = Mempool.ByteSize . txsMaxBytes
 
 instance ( ShelleyCompatible p (AlonzoEra c)
@@ -313,7 +313,7 @@ instance ( ShelleyCompatible p (AlonzoEra c)
 
   type TxMeasure (ShelleyBlock p (AlonzoEra c)) = AlonzoMeasure
 
-  txMeasure (ShelleyValidatedTx _txid vtx) =
+  txMeasure _st (ShelleyValidatedTx _txid vtx) =
     AlonzoMeasure {
         byteSize = Mempool.ByteSize $ txInBlockSize (mkShelleyTx @(AlonzoEra c) @p (SL.extractTx vtx))
       , exUnits  = fromExUnits $ totExUnits (SL.extractTx vtx)
@@ -342,7 +342,7 @@ instance ( ShelleyCompatible p (BabbageEra c)
 
   type TxMeasure (ShelleyBlock p (BabbageEra c)) = AlonzoMeasure
 
-  txMeasure (ShelleyValidatedTx _txid vtx) =
+  txMeasure _st (ShelleyValidatedTx _txid vtx) =
     AlonzoMeasure {
         byteSize = Mempool.ByteSize $ txInBlockSize (mkShelleyTx @(BabbageEra c) @p (SL.extractTx vtx))
       , exUnits  = fromExUnits $ totExUnits (SL.extractTx vtx)
@@ -361,7 +361,7 @@ instance ( ShelleyCompatible p (ConwayEra c)
 
   type TxMeasure (ShelleyBlock p (ConwayEra c)) = AlonzoMeasure
 
-  txMeasure (ShelleyValidatedTx _txid vtx) =
+  txMeasure _st (ShelleyValidatedTx _txid vtx) =
     AlonzoMeasure {
         byteSize = Mempool.ByteSize $ txInBlockSize (mkShelleyTx @(ConwayEra c) @p (SL.extractTx vtx))
       , exUnits  = fromExUnits $ totExUnits (SL.extractTx vtx)
