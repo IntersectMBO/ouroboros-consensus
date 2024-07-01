@@ -14,8 +14,7 @@ module Cardano.Tools.N2NPG.Run (
 
 import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
 import           Cardano.Tools.DBAnalyser.HasAnalysis (mkProtocolInfo)
-import           Control.Concurrent.Async
-import           Control.Monad (forM, replicateM_)
+import           Control.Monad (forM)
 import           Control.Monad.Class.MonadSay (MonadSay (..))
 import           Control.Monad.Cont
 import           Control.Monad.Trans (MonadTrans (..))
@@ -105,7 +104,7 @@ runSingle opts = evalContT $ do
       -- The result is always non-empty
       serverInfo <- head <$> Socket.getAddrInfo (Just hints) (Just serverHostName) (Just serverPort)
 
-      fetchBlocks cfg numBlocks (Socket.addrAddress serverInfo) startPoint
+      fetchBlocks cfg numBlocks (Socket.addrAddress serverInfo) (Just 1) [startPoint]
   where
     Opts {
         configFile
@@ -127,11 +126,15 @@ sweepCache opts = evalContT $ do
       -- The result is always non-empty
       serverInfo <- head <$> Socket.getAddrInfo (Just hints) (Just serverHostName) (Just serverPort)
 
-      bps <- forM [0..249] $ \i ->
+      bps <- forM [0..259] $ \i ->
         findBlockPointFrom internalImmDB (addSlots startSlot (i*433000))
-      replicateM_ 1000 $
-        mapConcurrently_ (fetchBlocks cfg numBlocks (Socket.addrAddress serverInfo)) bps
+      fetchBlocks cfg numBlocks (Socket.addrAddress serverInfo) Nothing $ cycle $ dropPointsInTestRange bps
   where
+    dropPointsInTestRange = filter $ \p ->
+      pointSlot p <= NotOrigin (100000000-433000)
+      ||
+      pointSlot p >= NotOrigin (100000000+60000+433000)
+
     Opts {
         configFile
       , immutableDBDir
@@ -147,9 +150,10 @@ fetchBlocks ::
     TopLevelConfig (CardanoBlock StandardCrypto) ->
     Word64 ->
     Socket.SockAddr ->
-    Point (CardanoBlock StandardCrypto) ->
+    Maybe Int ->
+    [Point (CardanoBlock StandardCrypto)] ->
     IO ()
-fetchBlocks cfg nBlocks addr startPoint = withIOManager $ \m -> do
+fetchBlocks cfg nBlocks addr mnPoints startPoints = withIOManager $ \m -> do
     let snocket = Snocket.socketSnocket m
     ptQueue        <- newTQueueIO
     varNumDequeued <- newTVarIO (0 :: Word64)
@@ -157,9 +161,11 @@ fetchBlocks cfg nBlocks addr startPoint = withIOManager $ \m -> do
     let enqueue hdr = do
           atomically $ writeTQueue ptQueue (headerPoint hdr)
 
+        totalBlocks = maybe maxBound ((nBlocks *) . fromIntegral) mnPoints
+
         dequeue = atomically $ do
           numDequeued <- readTVar varNumDequeued
-          if numDequeued >= nBlocks
+          if numDequeued >= totalBlocks
             then pure Nothing
             else do
               modifyTVar varNumDequeued (+ 1)
@@ -172,7 +178,7 @@ fetchBlocks cfg nBlocks addr startPoint = withIOManager $ \m -> do
       mkApplication
         (configCodec cfg)
         (getNetworkMagic (configBlock cfg))
-        (simpleChainSync startPoint nBlocks enqueue waitBlockFetchDone)
+        (simpleChainSync startPoints nBlocks enqueue waitBlockFetchDone)
         (simpleBlockFetch dequeue signalBlockFetchDone)
 
 findBlockPointFrom :: MonadFail m => ImmutableDB.Internal m blk -> WithOrigin SlotNo -> m (Point blk)
@@ -207,15 +213,15 @@ TODOs if we want this as a proper tool:
 
 -}
 
--- | Find an intersection for the given point, and download the given number of
+-- | Find an intersection for the given points (separately), and download the given number of
 -- headers after that.
 simpleChainSync ::
      forall m blk.
      ( MonadFail m, MonadSay m
      , HasHeader blk
      )
-  => Point blk
-     -- ^ Point to start from.
+  => [Point blk]
+     -- ^ Points to start from.
   -> Word64
      -- ^ Number of headers to process.
   -> (Header blk -> m ())
@@ -223,26 +229,26 @@ simpleChainSync ::
   -> m ()
      -- ^ Invoked when we are done, as ChainSync needs to be kept open.
   -> PeerPipelined (ChainSync' blk) AsClient ChainSync.StIdle m ()
-simpleChainSync startPt numHeaders onHdr waitEnd =
-      PeerPipelined
-    $ SenderYield (ClientAgency ChainSync.TokIdle) (ChainSync.MsgFindIntersect [startPt])
-    $ SenderAwait (ServerAgency ChainSync.TokIntersect) $ \case
-        ChainSync.MsgIntersectNotFound {} ->
-          SenderEffect $ fail $ "Server doesn't know " <> show startPt
-        ChainSync.MsgIntersectFound {}    ->
-          go numHeaders
+simpleChainSync startPts numHeaders onHdr waitEnd = PeerPipelined $
+    foldr ($) done
+      [ \ps ->
+          SenderYield (ClientAgency ChainSync.TokIdle) (ChainSync.MsgFindIntersect [startPt])
+        $ SenderAwait (ServerAgency ChainSync.TokIntersect) $ \case
+            ChainSync.MsgIntersectNotFound {} ->
+              SenderEffect $ fail $ "Server doesn't know " <> show startPt
+            ChainSync.MsgIntersectFound {}    ->
+              go numHeaders ps
+      | startPt <- startPts
+      ]
   where
     go ::
          forall c.
          Word64
       -> PeerSender (ChainSync' blk) AsClient ChainSync.StIdle Z c m ()
-    go = \case
-      0 -> SenderEffect $ do
-        waitEnd
-        pure
-          $ SenderYield (ClientAgency ChainSync.TokIdle) ChainSync.MsgDone
-          $ SenderDone ChainSync.TokDone ()
-      n ->
+      -> PeerSender (ChainSync' blk) AsClient ChainSync.StIdle Z c m ()
+    go = \cases
+      0 ps -> ps
+      n ps ->
           SenderYield (ClientAgency ChainSync.TokIdle) ChainSync.MsgRequestNext
         $ SenderAwait (ServerAgency (ChainSync.TokNext ChainSync.TokCanAwait)) $ \case
             ChainSync.MsgRollForward hdr _tip -> onRollForward hdr
@@ -257,14 +263,21 @@ simpleChainSync startPt numHeaders onHdr waitEnd =
             -> PeerSender (ChainSync' blk) AsClient ChainSync.StIdle Z c m ()
           onRollForward hdr = SenderEffect $ do
               onHdr hdr
-              pure $ go (n - 1)
+              pure $ go (n - 1) ps
 
           onRollBackward ::
                Point blk
             -> PeerSender (ChainSync' blk) AsClient ChainSync.StIdle Z c m ()
           onRollBackward to = SenderEffect $ do
               say $ "Ignoring rollback to " <> show to
-              pure $ go n
+              pure $ go n ps
+
+    done :: PeerSender (ChainSync' blk) AsClient ChainSync.StIdle Z c m ()
+    done = SenderEffect $ do
+        waitEnd
+        pure
+          $ SenderYield (ClientAgency ChainSync.TokIdle) ChainSync.MsgDone
+          $ SenderDone ChainSync.TokDone ()
 
 simpleBlockFetch ::
      forall m blk.
