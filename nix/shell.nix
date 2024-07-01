@@ -6,7 +6,6 @@ in
 hsPkgs.shellFor {
   nativeBuildInputs = [
     pkgs.cabal
-    pkgs.cabal-multi-repl
     pkgs.cabal-docspec
     pkgs.fd
     pkgs.nixpkgs-fmt
@@ -24,7 +23,7 @@ hsPkgs.shellFor {
   # version as used in hsPkgs.
   tools = {
     haskell-language-server = {
-      src = inputs.haskellNix.inputs."hls-2.8";
+      src = inputs.haskellNix.inputs."hls-2.9";
       configureArgs = "--disable-benchmarks --disable-tests";
     };
   };
