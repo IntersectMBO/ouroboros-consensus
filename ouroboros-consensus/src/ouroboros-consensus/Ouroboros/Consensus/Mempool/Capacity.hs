@@ -120,7 +120,10 @@ class BoundedMeasure (TxMeasure blk) => TxLimits blk where
   type TxMeasure blk
 
   -- | What is the measure an individual tx?
-  txMeasure        :: Validated (GenTx blk)    -> TxMeasure blk
+  txMeasure ::
+       TickedLedgerState blk
+    -> Validated (GenTx blk)
+    -> TxMeasure blk
 
   -- | What is the allowed capacity for txs in an individual block?
   txsBlockCapacity :: Ticked (LedgerState blk) -> TxMeasure blk

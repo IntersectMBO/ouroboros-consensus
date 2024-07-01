@@ -165,7 +165,7 @@ takeLargestPrefixThatFits ::
   -> [Validated (GenTx blk)]
   -> [Validated (GenTx blk)]
 takeLargestPrefixThatFits overrides ledger txs =
-    Measure.take MempoolCapacity.txMeasure capacity txs
+    Measure.take (MempoolCapacity.txMeasure ledger) capacity txs
   where
     capacity =
       MempoolCapacity.applyOverrides
