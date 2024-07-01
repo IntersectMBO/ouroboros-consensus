@@ -39,6 +39,7 @@ import           Cardano.Ledger.Alonzo.Core (Tx, TxSeq, bodyTxL, eraProtVerLow,
 import           Cardano.Ledger.Alonzo.Scripts (ExUnits, ExUnits',
                      unWrapExUnits)
 import           Cardano.Ledger.Alonzo.Tx (totExUnits)
+import qualified Cardano.Ledger.Api as L
 import           Cardano.Ledger.Binary (Annotator (..), DecCBOR (..),
                      EncCBOR (..), FromCBOR (..), FullByteString (..),
                      ToCBOR (..), toPlainDecoder)
@@ -313,19 +314,9 @@ instance ( ShelleyCompatible p (AlonzoEra c)
 
   type TxMeasure (ShelleyBlock p (AlonzoEra c)) = AlonzoMeasure
 
-  txMeasure _st (ShelleyValidatedTx _txid vtx) =
-    AlonzoMeasure {
-        byteSize = Mempool.ByteSize $ txInBlockSize (mkShelleyTx @(AlonzoEra c) @p (SL.extractTx vtx))
-      , exUnits  = fromExUnits $ totExUnits (SL.extractTx vtx)
-      }
+  txMeasure _st = txMeasureAlonzo
 
-  txsBlockCapacity ledgerState =
-      AlonzoMeasure {
-          byteSize = Mempool.ByteSize $ txsMaxBytes ledgerState
-        , exUnits  = fromExUnits $ pparams ^. ppMaxBlockExUnitsL
-        }
-    where
-      pparams = getPParams $ tickedShelleyLedgerState ledgerState
+  txsBlockCapacity = txsBlockCapacityAlonzo
 
 data AlonzoMeasure = AlonzoMeasure {
     byteSize :: !Mempool.ByteSize
@@ -337,43 +328,47 @@ data AlonzoMeasure = AlonzoMeasure {
 fromExUnits :: ExUnits -> ExUnits' (WithTop Natural)
 fromExUnits = fmap NotTop . unWrapExUnits
 
+txMeasureAlonzo ::
+     forall proto era.
+     (ShelleyCompatible proto era, L.AlonzoEraTxWits era)
+  => Validated (GenTx (ShelleyBlock proto era)) -> AlonzoMeasure
+txMeasureAlonzo (ShelleyValidatedTx _txid vtx) =
+    AlonzoMeasure {
+        byteSize = Mempool.ByteSize $ txInBlockSize (mkShelleyTx @era @proto tx)
+      , exUnits  = fromExUnits $ totExUnits tx
+      }
+  where
+    tx = SL.extractTx vtx
+
+txsBlockCapacityAlonzo ::
+     forall proto era.
+     (ShelleyCompatible proto era, L.AlonzoEraPParams era)
+  => TickedLedgerState (ShelleyBlock proto era) -> AlonzoMeasure
+txsBlockCapacityAlonzo ledgerState =
+    AlonzoMeasure {
+        byteSize = Mempool.ByteSize $ txsMaxBytes ledgerState
+      , exUnits  = fromExUnits $ pparams ^. ppMaxBlockExUnitsL
+      }
+  where
+    pparams = getPParams $ tickedShelleyLedgerState ledgerState
+
 instance ( ShelleyCompatible p (BabbageEra c)
          ) => Mempool.TxLimits (ShelleyBlock p (BabbageEra c)) where
 
   type TxMeasure (ShelleyBlock p (BabbageEra c)) = AlonzoMeasure
 
-  txMeasure _st (ShelleyValidatedTx _txid vtx) =
-    AlonzoMeasure {
-        byteSize = Mempool.ByteSize $ txInBlockSize (mkShelleyTx @(BabbageEra c) @p (SL.extractTx vtx))
-      , exUnits  = fromExUnits $ totExUnits (SL.extractTx vtx)
-      }
+  txMeasure _st = txMeasureAlonzo
 
-  txsBlockCapacity ledgerState =
-      AlonzoMeasure {
-          byteSize = Mempool.ByteSize $ txsMaxBytes ledgerState
-        , exUnits  = fromExUnits $ pparams ^. ppMaxBlockExUnitsL
-        }
-    where
-      pparams = getPParams $ tickedShelleyLedgerState ledgerState
+  txsBlockCapacity = txsBlockCapacityAlonzo
 
 instance ( ShelleyCompatible p (ConwayEra c)
          ) => Mempool.TxLimits (ShelleyBlock p (ConwayEra c)) where
 
   type TxMeasure (ShelleyBlock p (ConwayEra c)) = AlonzoMeasure
 
-  txMeasure _st (ShelleyValidatedTx _txid vtx) =
-    AlonzoMeasure {
-        byteSize = Mempool.ByteSize $ txInBlockSize (mkShelleyTx @(ConwayEra c) @p (SL.extractTx vtx))
-      , exUnits  = fromExUnits $ totExUnits (SL.extractTx vtx)
-      }
+  txMeasure _st = txMeasureAlonzo
 
-  txsBlockCapacity ledgerState =
-      AlonzoMeasure {
-          byteSize = Mempool.ByteSize $ txsMaxBytes ledgerState
-        , exUnits  = fromExUnits $ pparams ^. ppMaxBlockExUnitsL
-        }
-    where
-      pparams = getPParams $ tickedShelleyLedgerState ledgerState
+  txsBlockCapacity = txsBlockCapacityAlonzo
 
 {-------------------------------------------------------------------------------
   WithTop
