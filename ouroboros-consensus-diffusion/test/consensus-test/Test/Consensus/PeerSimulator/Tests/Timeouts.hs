@@ -44,6 +44,9 @@ prop_timeouts mustTimeout = do
     -- Timeouts are enabled by default
     defaultSchedulerConfig
 
+    -- Here we can't shrink because we exploit the properties of the point schedule to wait
+    -- at the end of the test for the adversaries to get disconnected, by adding an extra point.
+    -- If this point gets removed by the shrinker, we lose that property and the test becomes useless.
     (\_ _ -> [])
 
     (\_ stateView ->
@@ -56,16 +59,15 @@ prop_timeouts mustTimeout = do
     )
 
   where
-    dullSchedule :: AF.HasHeader blk => DiffTime -> AF.AnchoredFragment blk -> PeersSchedule blk
+    dullSchedule :: AF.HasHeader blk => DiffTime -> AF.AnchoredFragment blk -> PointSchedule blk
     dullSchedule _ (AF.Empty _) = error "requires a non-empty block tree"
     dullSchedule timeout (_ AF.:> tipBlock) =
       let offset :: DiffTime = if mustTimeout then 1 else -1
-       in peersOnlyHonest $ [
-            (Time 0, scheduleTipPoint tipBlock),
-            (Time 0, scheduleHeaderPoint tipBlock),
-            (Time 0, scheduleBlockPoint tipBlock),
-            -- This last point does not matter, it is only here to leave the
-            -- connection open (aka. keep the test running) long enough to
-            -- pass the timeout by 'offset'.
-            (Time (timeout + offset), scheduleTipPoint tipBlock)
+          psSchedule = peersOnlyHonest $ [
+              (Time 0, scheduleTipPoint tipBlock),
+              (Time 0, scheduleHeaderPoint tipBlock),
+              (Time 0, scheduleBlockPoint tipBlock)
             ]
+          -- This keeps the test running long enough to pass the timeout by 'offset'.
+          psMinEndTime = Time $ timeout + offset
+       in PointSchedule {psSchedule, psMinEndTime}

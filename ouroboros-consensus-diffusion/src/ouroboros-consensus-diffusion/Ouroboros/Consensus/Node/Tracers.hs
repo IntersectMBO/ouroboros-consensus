@@ -23,6 +23,7 @@ import           Data.Time (UTCTime)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Forecast (OutsideForecastRange)
+import           Ouroboros.Consensus.Genesis.Governor (TraceGDDEvent)
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Mempool (MempoolSize, TraceEventMempool)
@@ -65,6 +66,7 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , keepAliveClientTracer         :: f (TraceKeepAliveClient remotePeer)
   , consensusErrorTracer          :: f SomeException
   , gsmTracer                     :: f (TraceGsmEvent (Tip blk))
+  , gddTracer                     :: f (TraceGDDEvent remotePeer blk)
   }
 
 instance (forall a. Semigroup (f a))
@@ -86,6 +88,7 @@ instance (forall a. Semigroup (f a))
       , keepAliveClientTracer         = f keepAliveClientTracer
       , consensusErrorTracer          = f consensusErrorTracer
       , gsmTracer                     = f gsmTracer
+      , gddTracer                     = f gddTracer
       }
     where
       f :: forall a. Semigroup a
@@ -115,6 +118,7 @@ nullTracers = Tracers
     , keepAliveClientTracer         = nullTracer
     , consensusErrorTracer          = nullTracer
     , gsmTracer                     = nullTracer
+    , gddTracer                     = nullTracer
     }
 
 showTracers :: ( Show blk
@@ -147,6 +151,7 @@ showTracers tr = Tracers
     , keepAliveClientTracer         = showTracing tr
     , consensusErrorTracer          = showTracing tr
     , gsmTracer                     = showTracing tr
+    , gddTracer                     = showTracing tr
     }
 
 {-------------------------------------------------------------------------------
