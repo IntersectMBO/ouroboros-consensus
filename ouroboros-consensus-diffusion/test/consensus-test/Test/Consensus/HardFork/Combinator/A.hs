@@ -49,6 +49,7 @@ import qualified Data.ByteString.Short as SBS
 import           Data.Functor.Identity (Identity)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Measure as Measure
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Void
@@ -326,12 +327,14 @@ instance LedgerSupportsMempool BlockA where
 
   reapplyTx cfg slot = fmap fst .: (applyTx cfg DoNotIntervene slot . forgetValidatedGenTxA)
 
-  txsMaxBytes   _ = maxBound
-  txInBlockSize _ = 0
-
   txForgetValidated = forgetValidatedGenTxA
 
-  txRefScriptSize _cfg _tlst _tx = 0
+instance TxLimits BlockA where
+  type TxMeasure BlockA = SizeInBytes
+
+  blockTxCapacity _cfg _st     = Measure.maxBound
+  txInBlockSize   _cfg _st _tx = 0
+  txMeasureBytes  _prx         = id
 
 newtype instance TxId (GenTx BlockA) = TxIdA Int
   deriving stock   (Show, Eq, Ord, Generic)

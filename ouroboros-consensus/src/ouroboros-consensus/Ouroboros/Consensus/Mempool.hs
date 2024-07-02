@@ -14,19 +14,14 @@ module Ouroboros.Consensus.Mempool (
   , ForgeLedgerState (..)
     -- ** Mempool Snapshot
   , MempoolSnapshot (..)
+  , snapshotTxs
     -- ** Re-exports
   , TicketNo
   , TxSizeInBytes
+  , TxTicket (..)
   , zeroTicketNo
-    -- * Mempool capacity
-  , MempoolCapacityBytes (..)
-  , MempoolCapacityBytesOverride (..)
-  , computeMempoolCapacity
     -- ** Mempool Size
   , MempoolSize (..)
-    -- ** Transaction size
-  , ByteSize (..)
-  , TxLimits (..)
     -- ** Restricting more strongly than the ledger's limits
   , TxOverrides
   , applyOverrides
@@ -45,14 +40,13 @@ module Ouroboros.Consensus.Mempool (
 
 import           Ouroboros.Consensus.Mempool.API (ForgeLedgerState (..),
                      Mempool (..), MempoolAddTxResult (..),
-                     MempoolSnapshot (..), TicketNo, TxSizeInBytes, addLocalTxs,
-                     addTxs, isMempoolTxAdded, isMempoolTxRejected,
-                     mempoolTxAddedToMaybe, zeroTicketNo)
-import           Ouroboros.Consensus.Mempool.Capacity (ByteSize (..),
-                     MempoolCapacityBytes (..),
-                     MempoolCapacityBytesOverride (..), MempoolSize (..),
-                     TxLimits (..), TxOverrides (..), applyOverrides,
-                     computeMempoolCapacity, mkOverrides, noOverridesMeasure)
+                     MempoolSnapshot (..), TicketNo, TxSizeInBytes,
+                     TxTicket (..), addLocalTxs, addTxs, isMempoolTxAdded,
+                     isMempoolTxRejected, mempoolTxAddedToMaybe, snapshotTxs,
+                     zeroTicketNo)
+import           Ouroboros.Consensus.Mempool.Capacity (MempoolSize (..),
+                     TxOverrides (..), applyOverrides, mkOverrides,
+                     noOverridesMeasure)
 import           Ouroboros.Consensus.Mempool.Impl.Common (LedgerInterface (..),
                      TraceEventMempool (..), chainDBLedgerInterface)
 import           Ouroboros.Consensus.Mempool.Init (openMempool,

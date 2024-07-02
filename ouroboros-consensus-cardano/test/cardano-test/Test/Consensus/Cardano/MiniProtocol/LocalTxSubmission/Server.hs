@@ -10,6 +10,7 @@ module Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server (tests) wher
 import           Control.Monad (void)
 import           Control.Tracer (Tracer, nullTracer, stdoutTracer)
 import           Data.Functor.Contravariant ((>$<))
+import qualified Data.Measure as Measure
 import           Data.SOP.Strict (index_NS)
 import qualified Data.SOP.Telescope as Telescope
 import           Network.TypedProtocol.Proofs (connect)
@@ -26,6 +27,9 @@ import           Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
                      (TraceLocalTxSubmissionServerEvent,
                      localTxSubmissionServer)
 import           Ouroboros.Consensus.Node.ProtocolInfo
+import           Ouroboros.Consensus.Shelley.Ledger.Mempool
+                     (AlonzoMeasure (..),
+                     ConwayMeasure (..))
 import           Ouroboros.Network.Protocol.LocalTxSubmission.Client
                      (SubmitResult, localTxSubmissionClientPeer)
 import           Ouroboros.Network.Protocol.LocalTxSubmission.Examples
@@ -71,7 +75,11 @@ tests =
 
           let
             -- We don't want the mempool to fill up during these tests.
-            capcityBytesOverride = Mempool.mkCapacityBytesOverride 100_000
+            capcityBytesOverride =
+                Mempool.mkOverrides
+              $ ConwayMeasure
+                  (AlonzoMeasure 100_000 Measure.maxBound)   -- TODO
+                  Measure.maxBound
             -- Use 'show >$< stdoutTracer' for debugging.
             tracer               = nullTracer
             mempoolParams        = Mocked.MempoolAndModelParams {
@@ -84,7 +92,6 @@ tests =
           mempool <- Mocked.openMockedMempool
                       capcityBytesOverride
                       tracer
-                      LedgerSupportsMempool.txInBlockSize
                       mempoolParams
 
           mempool `should_process` [ _137 ]

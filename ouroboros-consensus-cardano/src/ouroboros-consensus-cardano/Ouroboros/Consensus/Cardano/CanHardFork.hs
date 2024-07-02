@@ -53,10 +53,11 @@ import           Data.Function ((&))
 import           Data.Functor.Identity
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (listToMaybe, mapMaybe)
+import qualified Data.Measure as Measure
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
-import           Data.SOP.Strict (hpure)
+import           Data.SOP.Strict (hcmap, hcollapse, hpure)
 import           Data.SOP.Tails (Tails (..))
 import qualified Data.SOP.Tails as Tails
 import           Data.Void
@@ -77,6 +78,7 @@ import           Ouroboros.Consensus.HardFork.History (Bound (boundSlot),
                      addSlots)
 import           Ouroboros.Consensus.HardFork.Simple
 import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.SupportsMempool (TxMeasure)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.Protocol.Abstract
@@ -88,12 +90,14 @@ import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import           Ouroboros.Consensus.Protocol.TPraos
 import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 import           Ouroboros.Consensus.Shelley.Ledger
+import qualified Ouroboros.Consensus.Shelley.Ledger.Mempool as ConwayMeasure
 import           Ouroboros.Consensus.Shelley.Node ()
 import           Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import           Ouroboros.Consensus.Shelley.ShelleyHFC
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util (eitherToMaybe)
 import           Ouroboros.Consensus.Util.RedundantConstraints
+import           Ouroboros.Network.SizeInBytes (SizeInBytes (..))
 
 {-------------------------------------------------------------------------------
   Figure out the transition point for Byron
@@ -281,7 +285,40 @@ type CardanoHardForkConstraints c =
   , DSIGN    c ~ Ed25519DSIGN
   )
 
+-----
+
+class InjMeasure a where
+  injMeasure :: a -> ConwayMeasure.ConwayMeasure
+
+instance InjMeasure SizeInBytes where
+  injMeasure x = injMeasure $ ConwayMeasure.AlonzoMeasure x Measure.zero
+
+instance InjMeasure AlonzoMeasure where
+  injMeasure x = injMeasure $ ConwayMeasure.ConwayMeasure x Measure.zero
+
+instance InjMeasure ConwayMeasure where injMeasure = id
+
+class    InjMeasure (TxMeasure blk) => WrapInjMeasure blk
+instance InjMeasure (TxMeasure blk) => WrapInjMeasure blk
+
+-----
+
 instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
+  type HardForkTxMeasure (CardanoEras c) = ConwayMeasure.ConwayMeasure
+
+  hardForkMeasureTx =
+        hcollapse
+      . hcmap (Proxy @WrapInjMeasure) aux
+    where
+      aux ::
+           WrapInjMeasure blk
+        => WrapTxMeasure blk
+        -> K ConwayMeasure.ConwayMeasure blk
+      aux (WrapTxMeasure x) = K $ injMeasure x
+
+  hardForkTxMeasureBytes _prx =
+      ConwayMeasure.byteSize . ConwayMeasure.alonzoMeasure
+
   hardForkEraTranslation = EraTranslation {
       translateLedgerState   =
           PCons translateLedgerStateByronToShelleyWrapper

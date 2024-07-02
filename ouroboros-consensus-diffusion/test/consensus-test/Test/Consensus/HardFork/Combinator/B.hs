@@ -38,6 +38,7 @@ import           Codec.Serialise
 import qualified Data.Binary as B
 import qualified Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
+import qualified Data.Measure as Measure
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Void
@@ -262,12 +263,14 @@ instance LedgerSupportsMempool BlockB where
   applyTx   = \_ _ _wti tx -> case tx of {}
   reapplyTx = \_ _ vtx -> case vtx of {}
 
-  txsMaxBytes   _ = maxBound
-  txInBlockSize _ = 0
-
   txForgetValidated = \case {}
 
-  txRefScriptSize _cfg _tlst _tx = 0
+instance TxLimits BlockB where
+  type TxMeasure BlockB = SizeInBytes
+
+  blockTxCapacity _cfg _st     = Measure.maxBound
+  txInBlockSize   _cfg _st _tx = 0
+  txMeasureBytes  _prx         = id
 
 data instance TxId (GenTx BlockB)
   deriving stock    (Show, Eq, Ord, Generic)

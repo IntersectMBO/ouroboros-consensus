@@ -20,7 +20,6 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
-import           Ouroboros.Consensus.Mempool (TxLimits)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Protocol.Abstract (CanBeLeader, IsLeader)
 import           Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
@@ -41,7 +40,10 @@ import           Ouroboros.Consensus.Util.Assert
 
 forgeShelleyBlock ::
      forall m era proto.
-      (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era), Monad m)
+      ( ShelleyCompatible proto era
+      , TxLimits (ShelleyBlock proto era)
+      , Monad m
+      )
   => HotKey (EraCrypto era) m
   -> CanBeLeader proto
   -> TopLevelConfig (ShelleyBlock proto era)
@@ -76,7 +78,11 @@ forgeShelleyBlock
         SL.toTxSeq @era
       . Seq.fromList
       . fmap extractTx
-      $ takeLargestPrefixThatFits maxTxCapacityOverrides tickedLedger txs
+      $ takeLargestPrefixThatFits
+          maxTxCapacityOverrides
+          (topLevelConfigLedger cfg)
+          tickedLedger
+          txs
 
     extractTx :: Validated (GenTx (ShelleyBlock proto era)) -> Core.Tx era
     extractTx (ShelleyValidatedTx _txid vtx) = SL.extractTx vtx
@@ -102,5 +108,11 @@ forgeShelleyBlock
       = return ()
 
     estimatedBodySize, actualBodySize :: Int
-    estimatedBodySize = fromIntegral $ foldl' (+) 0 $ map (txInBlockSize . txForgetValidated) txs
     actualBodySize    = SL.bBodySize protocolVersion body
+    estimatedBodySize =
+          fromIntegral
+        $ foldl' (+) 0
+        $ map (  txMeasureBytes (Proxy @(ShelleyBlock proto era))
+               . txInBlockSize (topLevelConfigLedger cfg) tickedLedger
+               . txForgetValidated
+              ) txs

@@ -33,7 +33,6 @@ import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
-import           Ouroboros.Consensus.Mempool.Capacity (TxLimits)
 import qualified Ouroboros.Consensus.Mempool.Capacity as MempoolCapacity
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Ticked
@@ -159,18 +158,22 @@ data BlockForging m blk = BlockForging {
 -- override. In other words, the override can only reduce (parts of) the
 -- 'MempoolCapacity.TxMeasure'.
 takeLargestPrefixThatFits ::
-     TxLimits blk
+     LedgerSupportsMempool blk
   => MempoolCapacity.TxOverrides blk
+  -> LedgerConfig blk
   -> TickedLedgerState blk
   -> [Validated (GenTx blk)]
   -> [Validated (GenTx blk)]
-takeLargestPrefixThatFits overrides ledger txs =
-    Measure.take (MempoolCapacity.txMeasure ledger) capacity txs
+takeLargestPrefixThatFits overrides cfg ledger txs =
+    Measure.take
+      (txInBlockSize cfg ledger . txForgetValidated)
+      capacity
+      txs
   where
     capacity =
       MempoolCapacity.applyOverrides
         overrides
-        (MempoolCapacity.txsBlockCapacity ledger)
+        (blockTxCapacity cfg ledger)
 
 data ShouldForge blk =
     -- | Before check whether we are a leader in this slot, we tried to update

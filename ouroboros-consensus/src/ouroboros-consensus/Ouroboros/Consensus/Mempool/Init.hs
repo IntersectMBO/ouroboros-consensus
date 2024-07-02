@@ -7,6 +7,7 @@ module Ouroboros.Consensus.Mempool.Init (
   , openMempoolWithoutSyncThread
   ) where
 
+import           Control.Arrow ((&&&))
 import           Control.Monad (void)
 import           Control.Tracer
 import           Ouroboros.Consensus.Block
@@ -37,12 +38,11 @@ openMempool ::
   => ResourceRegistry m
   -> LedgerInterface m blk
   -> LedgerConfig blk
-  -> MempoolCapacityBytesOverride
+  -> TxOverrides blk
   -> Tracer m (TraceEventMempool blk)
-  -> (GenTx blk -> TxSizeInBytes)
   -> m (Mempool m blk)
-openMempool registry ledger cfg capacityOverride tracer txSize = do
-    env <- initMempoolEnv ledger cfg capacityOverride tracer txSize
+openMempool registry ledger cfg capacityOverride tracer = do
+    env <- initMempoolEnv ledger cfg capacityOverride tracer
     forkSyncStateOnTipPointChange registry env
     return $ mkMempool env
 
@@ -89,12 +89,11 @@ openMempoolWithoutSyncThread ::
      )
   => LedgerInterface m blk
   -> LedgerConfig blk
-  -> MempoolCapacityBytesOverride
+  -> TxOverrides blk
   -> Tracer m (TraceEventMempool blk)
-  -> (GenTx blk -> TxSizeInBytes)
   -> m (Mempool m blk)
-openMempoolWithoutSyncThread ledger cfg capacityOverride tracer txSize =
-    mkMempool <$> initMempoolEnv ledger cfg capacityOverride tracer txSize
+openMempoolWithoutSyncThread ledger cfg capacityOverride tracer =
+    mkMempool <$> initMempoolEnv ledger cfg capacityOverride tracer
 
 mkMempool ::
      ( IOLike m
@@ -104,19 +103,17 @@ mkMempool ::
      )
   => MempoolEnv m blk -> Mempool m blk
 mkMempool mpEnv = Mempool
-    { addTx          = implAddTx istate remoteFifo allFifo cfg txSize trcr
+    { addTx          = implAddTx istate remoteFifo allFifo cfg trcr
     , removeTxs      = implRemoveTxs mpEnv
     , syncWithLedger = implSyncWithLedger mpEnv
     , getSnapshot    = snapshotFromIS <$> readTVar istate
     , getSnapshotFor = \fls -> pureGetSnapshotFor cfg fls co <$> readTVar istate
-    , getCapacity    = isCapacity <$> readTVar istate
-    , getTxSize      = txSize
+    , getCapacity    = (isCapacity &&& isMultiplicity) <$> readTVar istate
     }
    where MempoolEnv { mpEnvStateVar = istate
                     , mpEnvAddTxsRemoteFifo = remoteFifo
                     , mpEnvAddTxsAllFifo = allFifo
                     , mpEnvLedgerCfg = cfg
-                    , mpEnvTxSize = txSize
                     , mpEnvTracer = trcr
                     , mpEnvCapacityOverride = co
                     } = mpEnv

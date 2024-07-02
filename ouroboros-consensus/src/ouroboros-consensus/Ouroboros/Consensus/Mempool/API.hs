@@ -24,17 +24,21 @@ module Ouroboros.Consensus.Mempool.API (
   , ForgeLedgerState (..)
     -- * Mempool Snapshot
   , MempoolSnapshot (..)
+  , snapshotTxs
     -- * Re-exports
   , TicketNo
   , TxSizeInBytes
+  , TxTicket (txTicketNo, txTicketSize, txTicketTx)
   , zeroTicketNo
   ) where
 
+import qualified Data.Measure as Measure
 import           Ouroboros.Consensus.Block (SlotNo)
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Cap
-import           Ouroboros.Consensus.Mempool.TxSeq (TicketNo, zeroTicketNo)
+import           Ouroboros.Consensus.Mempool.TxSeq (TicketNo, TxTicket (..),
+                     zeroTicketNo)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Protocol.TxSubmission2.Type (TxSizeInBytes)
 
@@ -194,22 +198,17 @@ data Mempool m blk = Mempool {
       -- This does not update the state of the mempool.
     , getSnapshotFor :: ForgeLedgerState blk -> STM m (MempoolSnapshot blk)
 
-      -- | Get the mempool's capacity in bytes.
+      -- | Get the mempool's capacity.
       --
-      -- Note that the capacity of the Mempool, unless it is overridden with
-      -- 'MempoolCapacityBytesOverride', can dynamically change when the
-      -- ledger state is updated: it will be set to twice the current ledger's
-      -- maximum transaction capacity of a block.
+      -- Note that the capacity of the Mempool, unless it is overridden, can
+      -- dynamically change when the ledger state is updated.
       --
       -- When the capacity happens to shrink at some point, we /do not/ remove
       -- transactions from the Mempool to satisfy this new lower limit.
       -- Instead, we treat it the same way as a Mempool which is /at/
       -- capacity, i.e., we won't admit new transactions until some have been
       -- removed because they have become invalid.
-    , getCapacity    :: STM m Cap.MempoolCapacityBytes
-
-      -- | Return the post-serialisation size in bytes of a 'GenTx'.
-    , getTxSize      :: GenTx blk -> TxSizeInBytes
+    , getCapacity    :: STM m (TxMeasure blk, Int)
     }
 
 {-------------------------------------------------------------------------------
@@ -328,14 +327,15 @@ data ForgeLedgerState blk =
 -- when the transaction has been removed from the mempool between snapshots.
 --
 data MempoolSnapshot blk = MempoolSnapshot {
-    -- | Get all transactions (oldest to newest) in the mempool snapshot along
-    -- with their ticket number.
-    snapshotTxs         :: [(Validated (GenTx blk), TicketNo)]
+    -- | Get the prefix of transactions in the mempool snapshot that fit within
+    -- the given 'TxMeasure', and that prefix's cumulative 'TxMeasure'.
+    snapshotTxsWithin   :: TxMeasure blk -> [TxTicket (TxMeasure blk) (Validated (GenTx blk))]
 
-    -- | Get all transactions (oldest to newest) in the mempool snapshot,
-    -- along with their ticket number, which are associated with a ticket
-    -- number greater than the one provided.
-  , snapshotTxsAfter    :: TicketNo -> [(Validated (GenTx blk), TicketNo)]
+    -- | Get the prefix of the transactions in the mempool snapshot, that are
+    -- associated with a ticket number greater than the one provided.
+    --
+    -- This is used by the @TxSubmission(2)@ protocol.
+  , snapshotTxsAfter    :: TicketNo -> [TxTicket (TxMeasure blk) (Validated (GenTx blk))]
 
     -- | Get a specific transaction from the mempool snapshot by its ticket
     -- number, if it exists.
@@ -346,7 +346,7 @@ data MempoolSnapshot blk = MempoolSnapshot {
   , snapshotHasTx       :: GenTxId blk -> Bool
 
     -- | Get the size of the mempool snapshot.
-  , snapshotMempoolSize :: Cap.MempoolSize
+  , snapshotMempoolSize :: Cap.MempoolSize (TxMeasure blk)
 
     -- | The block number of the "virtual block" under construction
   , snapshotSlotNo      :: SlotNo
@@ -354,3 +354,8 @@ data MempoolSnapshot blk = MempoolSnapshot {
     -- | The ledger state after all transactions in the snapshot
   , snapshotLedgerState :: TickedLedgerState blk
   }
+
+snapshotTxs ::
+     LedgerSupportsMempool blk
+  => MempoolSnapshot blk -> [TxTicket (TxMeasure blk) (Validated (GenTx blk))]
+snapshotTxs snap = snapshotTxsWithin snap Measure.zero

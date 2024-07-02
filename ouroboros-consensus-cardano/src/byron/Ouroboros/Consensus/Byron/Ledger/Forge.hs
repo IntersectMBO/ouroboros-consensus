@@ -138,6 +138,8 @@ forgeRegularBlock cfg maxTxCapacityOverrides bno sno st txs isLeader =
         isLeader
         (reAnnotate byronProtVer $ Annotated toSign ())
   where
+    lcfg = byronGenesisConfig cfg
+
     epochSlots :: CC.Slot.EpochSlots
     epochSlots = byronEpochSlots cfg
 
@@ -146,7 +148,7 @@ forgeRegularBlock cfg maxTxCapacityOverrides bno sno st txs isLeader =
         foldr
           extendBlockPayloads
           initBlockPayloads
-          (takeLargestPrefixThatFits maxTxCapacityOverrides st txs)
+          (takeLargestPrefixThatFits maxTxCapacityOverrides lcfg st txs)
 
     txPayload :: CC.UTxO.TxPayload
     txPayload = CC.UTxO.mkTxPayload (bpTxs blockPayloads)

@@ -39,6 +39,7 @@ import           Ouroboros.Network.Block (Tip)
 import           Ouroboros.Network.BlockFetch (FetchDecision,
                      TraceFetchClientState, TraceLabelPeer)
 import           Ouroboros.Network.KeepAlive (TraceKeepAliveClient)
+import           Ouroboros.Network.SizeInBytes (SizeInBytes)
 import           Ouroboros.Network.TxSubmission.Inbound
                      (TraceTxSubmissionInbound)
 import           Ouroboros.Network.TxSubmission.Outbound
@@ -127,6 +128,7 @@ showTracers :: ( Show blk
                , Show (ForgeStateUpdateError blk)
                , Show (CannotForge blk)
                , Show remotePeer
+               , Show (TxMeasure blk)
                , LedgerSupportsProtocol blk
                )
             => Tracer m String -> Tracers m remotePeer localPeer blk
@@ -319,7 +321,7 @@ data TraceForgeEvent blk
     -- * TraceAdoptedBlock (normally)
     -- * TraceDidntAdoptBlock (rarely)
     -- * TraceForgedInvalidBlock (hopefully never -- this would indicate a bug)
-  | TraceForgedBlock SlotNo (Point blk) blk MempoolSize
+  | TraceForgedBlock SlotNo (Point blk) blk (MempoolSize SizeInBytes)
 
     -- | We did not adopt the block we produced, but the block was valid. We
     -- must have adopted a block that another leader of the same slot produced

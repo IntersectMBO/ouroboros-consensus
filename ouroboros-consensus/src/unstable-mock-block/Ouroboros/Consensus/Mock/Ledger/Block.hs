@@ -38,6 +38,7 @@ module Ouroboros.Consensus.Mock.Ledger.Block (
   , CodecConfig (..)
   , SimpleLedgerConfig (..)
   , StorageConfig (..)
+  , simpleBlockTxCapacity
     -- * Protocol-specific part
   , MockProtocolSpecific (..)
     -- * 'UpdateLedger'
@@ -95,6 +96,8 @@ import           Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..),
 import           Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE,
                      (..:), (.:))
 import           Ouroboros.Consensus.Util.Condense
+import           Ouroboros.Consensus.Util.Orphans ()
+import           Ouroboros.Network.SizeInBytes (SizeInBytes (..))
 import           Test.Util.Orphans.Serialise ()
 
 {-------------------------------------------------------------------------------
@@ -431,14 +434,20 @@ instance MockProtocolSpecific c ext
   reapplyTx _cfg slot vtx st =
       updateSimpleUTxO slot (forgetValidatedSimpleGenTx vtx) st
 
-  -- Large value so that the Mempool tests never run out of capacity when they
-  -- don't override it.
-  txsMaxBytes   = const 1000000000
-  txInBlockSize = txSize
-
   txForgetValidated = forgetValidatedSimpleGenTx
 
-  txRefScriptSize _cfg _tlst _tx = 0
+instance TxLimits (SimpleBlock c ext) where
+  type TxMeasure (SimpleBlock c ext) = SizeInBytes
+
+  -- Large value so that the Mempool tests never run out of capacity when they
+  -- don't override it.
+  blockTxCapacity _cfg _st = simpleBlockTxCapacity
+  txInBlockSize   _cfg _st = SizeInBytes . txSize
+
+  txMeasureBytes _ = id
+
+simpleBlockTxCapacity :: SizeInBytes
+simpleBlockTxCapacity = 1000000000
 
 newtype instance TxId (GenTx (SimpleBlock c ext)) = SimpleGenTxId {
       unSimpleGenTxId :: Mock.TxId

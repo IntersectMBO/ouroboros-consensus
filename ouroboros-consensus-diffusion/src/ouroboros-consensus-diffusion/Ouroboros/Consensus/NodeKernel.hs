@@ -14,8 +14,7 @@
 
 module Ouroboros.Consensus.NodeKernel (
     -- * Node kernel
-    MempoolCapacityBytesOverride (..)
-  , NodeKernel (..)
+    NodeKernel (..)
   , NodeKernelArgs (..)
   , TraceForgeEvent (..)
   , getImmTipSlot
@@ -166,7 +165,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs {
     , initChainDB             :: StorageConfig blk -> InitChainDB m blk -> m ()
     , chainSyncFutureCheck    :: SomeHeaderInFutureCheck m blk
     , blockFetchSize          :: Header blk -> SizeInBytes
-    , mempoolCapacityOverride :: MempoolCapacityBytesOverride
+    , mempoolCapacityOverride :: TxOverrides blk
     , miniProtocolParameters  :: MiniProtocolParameters
     , blockFetchConfiguration :: BlockFetchConfiguration
     , keepAliveRng            :: StdGen
@@ -350,7 +349,6 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
                                  (configLedger cfg)
                                  mempoolCapacityOverride
                                  (mempoolTracer tracers)
-                                 txInBlockSize
 
     fetchClientRegistry <- newFetchClientRegistry
 
@@ -515,7 +513,7 @@ forkBlockForging IS{..} blockForging =
                       (ForgeInKnownSlot currentSlot tickedLedgerState)
             pure (mempoolHash, mempoolSlotNo, snap)
 
-        let txs = map fst $ snapshotTxs mempoolSnapshot
+        let txs = map txTicketTx $ snapshotTxs mempoolSnapshot
 
         -- force the mempool's computation before the tracer event
         _ <- evaluate (length txs)
@@ -536,7 +534,7 @@ forkBlockForging IS{..} blockForging =
                   currentSlot
                   (ledgerTipPoint (ledgerState unticked))
                   newBlock
-                  (snapshotMempoolSize mempoolSnapshot)
+                  (txMeasureBytes (Proxy @blk) <$> snapshotMempoolSize mempoolSnapshot)
 
         -- Add the block to the chain DB
         let noPunish = InvalidBlockPunishment.noPunishment   -- no way to punish yourself
@@ -703,8 +701,11 @@ getMempoolReader mempool = MempoolReader.TxSubmissionMempoolReader
                                       snapshotHasTx } =
       MempoolReader.MempoolSnapshot
         { mempoolTxIdsAfter = \idx ->
-            [ (txId (txForgetValidated tx), idx', getTxSize mempool (txForgetValidated tx))
-            | (tx, idx') <- snapshotTxsAfter idx
+            [ ( txId $ txForgetValidated $ txTicketTx ticket
+              , txTicketNo ticket
+              , fromIntegral $ txMeasureBytes mempool $ txTicketSize ticket
+              )
+            | ticket <- snapshotTxsAfter idx
             ]
         , mempoolLookupTx   = snapshotLookupTx
         , mempoolHasTx      = snapshotHasTx
