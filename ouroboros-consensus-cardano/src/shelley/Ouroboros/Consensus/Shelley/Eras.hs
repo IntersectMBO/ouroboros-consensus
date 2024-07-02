@@ -299,12 +299,7 @@ instance (Praos.PraosCrypto c) => ShelleyBasedEra (ConwayEra c) where
 
   getConwayEraGovDict _ = Just ConwayEraGovDict
 
-  getBabbageTxDict _ = Just $ BabbageTxDict $ \a b ->
-      SL.ApplyTxError
-    $ pure
-    $ Conway.ConwayUtxowFailure
-    $ Conway.UtxoFailure
-    $ Conway.MaxTxSizeUTxO a b
+  getBabbageTxDict _ = Nothing
 
 applyAlonzoBasedTx :: forall era.
   ( ShelleyBasedEra era,
