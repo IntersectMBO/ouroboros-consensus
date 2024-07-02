@@ -88,7 +88,7 @@ library
     hashable,
     io-classes ^>=1.5,
     mtl,
-    ouroboros-consensus ^>=0.19,
+    ouroboros-consensus ^>=0.20,
     ouroboros-network ^>=0.16,
     ouroboros-network-api ^>=0.7.3,
     ouroboros-network-framework ^>=0.13.2,

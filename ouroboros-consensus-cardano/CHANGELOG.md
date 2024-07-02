@@ -2,6 +2,28 @@
 
 # Changelog entries
 
+<a id='changelog-0.18.0.0'></a>
+## 0.18.0.0 — 2024-07-02
+
+### Non-Breaking
+
+- Update ledger packages:
+  - `cardano-ledger-alonzo`: `^>=1.10`
+  - `cardano-ledger-babbage`: `^>=1.8.2`
+  - `cardano-ledger-conway`: `^>=1.16.0`
+  - `cardano-ledger-core`: `^>=1.13.2`
+
+### Breaking
+
+- Added `GetSPOStakeDistr` query
+
+- Added `TickedLedgerState` argument to `txMeasure`.
+
+- Introduced `ConwayMeasure`, a Conway-specific `TxMeasure` adding the total
+  reference scripts size as a new dimension on top of `AlonzoMeasure`.
+
+- Update N2C part of `latestReleasedNodeVersion` to `NodeToClientV_16`.
+
 <a id='changelog-0.17.1.0'></a>
 ## 0.17.1.0 — 2024-06-26
 
