@@ -381,7 +381,7 @@ data ForgeLedgerState blk =
 --
 data MempoolSnapshot blk = MempoolSnapshot {
     -- | Get the prefix of transactions in the mempool snapshot that fit within
-    -- the given 'TxMeasure', and that prefix's cumulative 'TxMeasure'.
+    -- the given 'TxMeasure'.
     snapshotTxsWithin   :: TxMeasure blk -> [TxTicket (TxMeasure blk) (Validated (GenTx blk))]
 
     -- | Get the prefix of the transactions in the mempool snapshot, that are
@@ -411,4 +411,4 @@ data MempoolSnapshot blk = MempoolSnapshot {
 snapshotTxs ::
      LedgerSupportsMempool blk
   => MempoolSnapshot blk -> [TxTicket (TxMeasure blk) (Validated (GenTx blk))]
-snapshotTxs snap = snapshotTxsWithin snap Measure.zero
+snapshotTxs snap = snapshotTxsWithin snap Measure.maxBound
