@@ -3,6 +3,8 @@ module Ouroboros.Consensus.Mempool (
     -- * Mempool API
     -- ** Mempool
     Mempool (..)
+  , MempoolCapacity (..)
+  , worstCaseCapacity
     -- ** Transaction adding
   , MempoolAddTxResult (..)
   , addLocalTxs
@@ -40,9 +42,10 @@ module Ouroboros.Consensus.Mempool (
 
 import           Ouroboros.Consensus.Mempool.API (ForgeLedgerState (..),
                      Mempool (..), MempoolAddTxResult (..),
-                     MempoolSnapshot (..), TicketNo, TxSizeInBytes,
-                     TxTicket (..), addLocalTxs, addTxs, isMempoolTxAdded,
-                     isMempoolTxRejected, mempoolTxAddedToMaybe, snapshotTxs,
+                     MempoolCapacity (..), MempoolSnapshot (..), TicketNo,
+                     TxSizeInBytes, TxTicket (..), addLocalTxs, addTxs,
+                     isMempoolTxAdded, isMempoolTxRejected,
+                     mempoolTxAddedToMaybe, snapshotTxs, worstCaseCapacity,
                      zeroTicketNo)
 import           Ouroboros.Consensus.Mempool.Capacity (MempoolSize (..),
                      TxOverrides (..), applyOverrides, mkOverrides,

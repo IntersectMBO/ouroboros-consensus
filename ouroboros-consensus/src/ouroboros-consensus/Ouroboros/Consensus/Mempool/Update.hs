@@ -176,7 +176,7 @@ pureTryAddTx ::
      -- ^ The current internal state of the mempool.
   -> TryAddTx blk
 pureTryAddTx cfg wti tx is
-  | willItFit is (txInBlockSize cfg (isLedgerState is) tx)
+  | shouldTryToAdd is (txInBlockSize cfg (isLedgerState is) tx)
   =
   case eVtx of
       -- We only extended the ValidationResult with a single transaction
@@ -208,20 +208,30 @@ pureTryAddTx cfg wti tx is
       (eVtx, vr) = extendVRNew cfg wti tx $ validationResultFromIS is
       is'        = internalStateFromVR vr
 
-willItFit ::
+-- | Should the mempool admit this tx?
+--
+-- There's a simple rule, but one exception to that rule. Let this transaction
+-- in if and only if the resulting mempool would not be over capacity. However,
+-- if the tx alone is too big to fit into even a block that contained no other
+-- txs, then try to add it to the mempool; it will be immediately recognized as
+-- invalid.
+shouldTryToAdd ::
      Measure (TxMeasure blk)
   => InternalState blk -> TxMeasure blk -> Bool
-willItFit is tx
+shouldTryToAdd is tx
   | not (tx Measure.<= cap) = True   -- let it be found invalid
   | otherwise               =
-    go (isTxs is) (max 0 $ isMultiplicity is - 1)
+    go (isTxs is) (max 0 $ mult - 1)
   where
-    cap = isCapacity is
+    MempoolCapacity {
+        mcBlockCapacity     = cap
+      , mcBlockMultiplicity = mult
+      } = isCapacity is
 
     go !txseq = \case
       0 -> msSize (TxSeq.toMempoolSize txseq) `Measure.plus` tx Measure.<= cap
       n -> case txseq of
-        TxSeq.Empty -> go txseq 0
+        TxSeq.Empty -> True   -- guard above ensures 0 + tx <= cap
         _           -> go (snd $ TxSeq.splitAfterTxSize txseq cap) (n - 1)
 
 {-------------------------------------------------------------------------------

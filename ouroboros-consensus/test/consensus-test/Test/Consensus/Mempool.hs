@@ -214,8 +214,8 @@ prop_Mempool_semigroup_removeTxs (TestSetupWithTxsInMempool testSetup txsToRemov
 prop_Mempool_getCapacity :: MempoolCapTestSetup -> Property
 prop_Mempool_getCapacity mcts =
     withTestMempool testSetup $ \TestMempool{mempool} -> do
-      (actualCapacity, _mult) <- atomically $ getCapacity mempool
-      pure (actualCapacity === min testCapacity simpleBlockTxCapacity )
+      actualCapacity <- atomically $ worstCaseCapacity <$> getCapacity mempool
+      pure (actualCapacity === 2 * min testCapacity simpleBlockTxCapacity )
   where
     Just testCapacity = testMempoolCapOverride testSetup
     MempoolCapTestSetup (TestSetupWithTxs testSetup _txsToAdd) = mcts

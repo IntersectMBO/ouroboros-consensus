@@ -7,7 +7,6 @@ module Ouroboros.Consensus.Mempool.Init (
   , openMempoolWithoutSyncThread
   ) where
 
-import           Control.Arrow ((&&&))
 import           Control.Monad (void)
 import           Control.Tracer
 import           Ouroboros.Consensus.Block
@@ -108,7 +107,7 @@ mkMempool mpEnv = Mempool
     , syncWithLedger = implSyncWithLedger mpEnv
     , getSnapshot    = snapshotFromIS <$> readTVar istate
     , getSnapshotFor = \fls -> pureGetSnapshotFor cfg fls co <$> readTVar istate
-    , getCapacity    = (isCapacity &&& isMultiplicity) <$> readTVar istate
+    , getCapacity    = isCapacity <$> readTVar istate
     }
    where MempoolEnv { mpEnvStateVar = istate
                     , mpEnvAddTxsRemoteFifo = remoteFifo

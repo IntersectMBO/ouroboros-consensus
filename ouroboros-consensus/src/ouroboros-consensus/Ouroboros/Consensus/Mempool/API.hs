@@ -1,6 +1,8 @@
+{-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
 {-# LANGUAGE StandaloneDeriving   #-}
+{-# LANGUAGE TypeApplications     #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Exposes the @'Mempool'@ datatype which captures the public API of the
@@ -12,6 +14,8 @@
 module Ouroboros.Consensus.Mempool.API (
     -- * Mempool
     Mempool (..)
+  , MempoolCapacity (..)
+  , worstCaseCapacity
     -- * Transaction adding
   , AddTxOnBehalfOf (..)
   , MempoolAddTxResult (..)
@@ -32,7 +36,10 @@ module Ouroboros.Consensus.Mempool.API (
   , zeroTicketNo
   ) where
 
+import           Data.DerivingVia (InstantiatedAt (..))
 import qualified Data.Measure as Measure
+import           Data.Semigroup (stimes)
+import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block (SlotNo)
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
@@ -198,18 +205,64 @@ data Mempool m blk = Mempool {
       -- This does not update the state of the mempool.
     , getSnapshotFor :: ForgeLedgerState blk -> STM m (MempoolSnapshot blk)
 
-      -- | Get the mempool's capacity.
+      -- | Get the current 'MempoolCapacity'.
       --
-      -- Note that the capacity of the Mempool, unless it is overridden, can
-      -- dynamically change when the ledger state is updated.
-      --
-      -- When the capacity happens to shrink at some point, we /do not/ remove
-      -- transactions from the Mempool to satisfy this new lower limit.
-      -- Instead, we treat it the same way as a Mempool which is /at/
-      -- capacity, i.e., we won't admit new transactions until some have been
-      -- removed because they have become invalid.
-    , getCapacity    :: STM m (TxMeasure blk, Int)
+      -- This might change if the mempool is synchronized with the node's
+      -- latest selection.
+    , getCapacity    :: STM m (MempoolCapacity blk)
     }
+
+-- | The capacity of a mempool.
+--
+-- When the capacity happens to shrink at some point, we /do not/ remove
+-- transactions from the mempool to satisfy this new lower limit. Instead, we
+-- treat it the same way as a mempool which is /at/ capacity, ie we won't admit
+-- new transactions until some have been removed because they have become
+-- invalid.
+--
+-- Cardano governance tends to only change this limit based on ticking across
+-- some slot boundary. The mempool cannot know the slot of whatever block these
+-- transactions will end up in. And so we cannot know what the actual block
+-- capacity will be.
+--
+-- As long as the block capacity is not changed severely and abruptly, then it
+-- is an effective approximation to use the capacity of whatever ledger state
+-- the mempool was most recently synchronized against.
+data MempoolCapacity blk = MempoolCapacity {
+      -- | The anticipated limits of the next block to be minted.
+      mcBlockCapacity     :: !(TxMeasure blk)
+
+      -- | How many 'mcBlockCapacity'-maximized blocks could be cut from the
+      -- sequence of txs in a full mempool.
+    , mcBlockMultiplicity :: !Int
+    }
+  deriving Generic
+
+-- | The largest the mempool could be along each of the dimensions.
+--
+-- EG if the mempool contained only transactions that only had one non-trivial
+-- component of their size measures, then that component of the mempool's
+-- capacity could be up to 'mcBlockMultiplicity' times that component of
+-- 'mcBlockCapacity'.
+worstCaseCapacity ::
+     Measure.Measure (TxMeasure blk)
+  => MempoolCapacity blk
+  -> TxMeasure blk
+worstCaseCapacity capacity =
+    x
+  where
+    MempoolCapacity {
+        mcBlockCapacity     = cap
+      , mcBlockMultiplicity = mult
+      } = capacity
+
+    InstantiatedAt x =
+      stimes mult $ InstantiatedAt @Measure.Measure cap
+
+instance NoThunks (TxMeasure blk) => NoThunks (MempoolCapacity blk)
+
+deriving instance Eq (TxMeasure blk) => Eq (MempoolCapacity blk)
+deriving instance Show (TxMeasure blk) => Show (MempoolCapacity blk)
 
 {-------------------------------------------------------------------------------
   Result of adding a transaction to the mempool

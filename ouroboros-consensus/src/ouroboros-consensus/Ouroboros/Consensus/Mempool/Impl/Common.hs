@@ -67,14 +67,9 @@ import           Ouroboros.Consensus.Util.IOLike hiding (newMVar)
 data InternalState blk = IS {
       -- | Transactions currently in the mempool
       --
-      -- NOTE: the total size of the transactions in 'isTxs' may exceed the
-      -- current capacity ('isCapacity'). When the capacity computed from the
-      -- ledger has shrunk, we don't remove transactions from the Mempool to
-      -- satisfy the new lower limit. We let the transactions get removed in
-      -- the normal way: by becoming invalid w.r.t. the updated ledger state.
-      -- We treat a Mempool /over/ capacity in the same way as a Mempool /at/
-      -- capacity.
-      isTxs          :: !(TxSeq (TxMeasure blk) (Validated (GenTx blk)))
+      -- See the note on 'MempoolCapacity' about the mempool possibly being
+      -- over-capacity.
+      isTxs :: !(TxSeq (TxMeasure blk) (Validated (GenTx blk)))
 
       -- | The cached IDs of transactions currently in the mempool.
       --
@@ -82,7 +77,7 @@ data InternalState blk = IS {
       -- 'MempoolSnapshot' (see 'snapshotHasTx').
       --
       -- This should always be in-sync with the transactions in 'isTxs'.
-    , isTxIds        :: !(Set (GenTxId blk))
+    , isTxIds :: !(Set (GenTxId blk))
 
       -- | The cached ledger state after applying the transactions in the
       -- Mempool against the chain's ledger state. New transactions will be
@@ -90,12 +85,12 @@ data InternalState blk = IS {
       --
       -- INVARIANT: 'isLedgerState' is the ledger resulting from applying the
       -- transactions in 'isTxs' against the ledger identified 'isTip' as tip.
-    , isLedgerState  :: !(TickedLedgerState blk)
+    , isLedgerState :: !(TickedLedgerState blk)
 
       -- | The tip of the chain that 'isTxs' was validated against
       --
       -- This comes from the underlying ledger state ('tickedLedgerState')
-    , isTip          :: !(ChainHash blk)
+    , isTip :: !(ChainHash blk)
 
       -- | The most recent 'SlotNo' that 'isTxs' was validated against
       --
@@ -104,27 +99,16 @@ data InternalState blk = IS {
       -- slot, see 'tickLedgerState') and 'isSlotNo' will be set to @succ s@,
       -- which is different from the slot of the original ledger state, which
       -- will remain in 'isTip'.
-    , isSlotNo       :: !SlotNo
+    , isSlotNo :: !SlotNo
 
       -- | The mempool 'TicketNo' counter.
       --
       -- See 'vrLastTicketNo' for more information.
     , isLastTicketNo :: !TicketNo
 
-      -- | The mempool will refuse additional transactions when it already
-      -- contains enough to _fill_ this many (or more) blocks, each of size up
-      -- to @isCapacity@.
-      --
-      -- There might be a transaction in the Mempool triggering a change in the
-      -- maximum transaction capacity of a block, which would change the
-      -- Mempool's capacity. We don't want the Mempool's capacity to depend on
-      -- its contents. Any changes caused by those txs will take effect after
-      -- applying the block they end up in.
-    , isMultiplicity :: !Int
-
-      -- | The capacity of a block according to the last ledger state the
-      -- mempool was synchronized with.
-    , isCapacity     :: !(TxMeasure blk)
+      -- | The capacity of a block according to the ledger state the mempool
+      -- was most recently synchronized with.
+    , isCapacity :: !(MempoolCapacity blk)
     }
   deriving (Generic)
 
@@ -159,8 +143,11 @@ initInternalState capacityOverride lastTicketNo cfg slot st = IS {
     , isTip          = castHash (getTipHash st)
     , isSlotNo       = slot
     , isLastTicketNo = lastTicketNo
-    , isCapacity     = capacityOverride `applyOverrides` blockTxCapacity cfg st
-    , isMultiplicity = 2
+    , isCapacity     = MempoolCapacity {
+        mcBlockCapacity      =
+          capacityOverride `applyOverrides` blockTxCapacity cfg st
+      , mcBlockMultiplicity  = 2
+      }
     }
 
 {-------------------------------------------------------------------------------
@@ -199,7 +186,6 @@ data MempoolEnv m blk = MempoolEnv {
 
 initMempoolEnv :: ( IOLike m
                   , NoThunks (GenTxId blk)
-                  , NoThunks (TxMeasure blk)
                   , LedgerSupportsMempool blk
                   , ValidateEnvelope blk
                   )
@@ -260,10 +246,9 @@ data ValidationResult invalidTx blk = ValidationResult {
       -- | The slot number of the (imaginary) block the txs will be placed in
     , vrSlotNo         :: SlotNo
 
-      -- | Capacity of the Mempool. Corresponds to 'vrBeforeTip' and
-      -- 'vrBeforeSlotNo', /not/ 'vrAfter'.
-    , vrBeforeCapacity :: TxMeasure blk
-    , vrMultiplicity   :: Int
+      -- | The capacity of the mempool according to the ledger state of
+      -- 'vrBeforeTip' and 'vrBeforeSlotNo', /not/ the 'vrAfter' ledger state.
+    , vrBeforeCapacity :: MempoolCapacity blk
 
       -- | The transactions that were found to be valid (oldest to newest)
     , vrValid          :: TxSeq (TxMeasure blk) (Validated (GenTx blk))
@@ -382,14 +367,12 @@ internalStateFromVR vr = IS {
     , isSlotNo       = vrSlotNo
     , isLastTicketNo = vrLastTicketNo
     , isCapacity     = vrBeforeCapacity
-    , isMultiplicity = vrMultiplicity
     }
   where
     ValidationResult {
         vrBeforeTip
       , vrSlotNo
       , vrBeforeCapacity
-      , vrMultiplicity
       , vrValid
       , vrValidTxIds
       , vrAfter
@@ -402,7 +385,6 @@ validationResultFromIS is = ValidationResult {
       vrBeforeTip      = isTip
     , vrSlotNo         = isSlotNo
     , vrBeforeCapacity = isCapacity
-    , vrMultiplicity   = isMultiplicity
     , vrValid          = isTxs
     , vrValidTxIds     = isTxIds
     , vrNewValid       = Nothing
@@ -419,7 +401,6 @@ validationResultFromIS is = ValidationResult {
       , isSlotNo
       , isLastTicketNo
       , isCapacity
-      , isMultiplicity
       } = is
 
 -- | Create a Mempool Snapshot from a given Internal State of the mempool.

@@ -1,14 +1,9 @@
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
-{-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE ViewPatterns        #-}
 
 module Ouroboros.Consensus.MiniProtocol.LocalTxMonitor.Server (localTxMonitorServer) where
 
-import           Data.DerivingVia (InstantiatedAt (..))
-import           Data.Measure (Measure)
-import           Data.Semigroup (stimes)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Mempool
@@ -89,10 +84,8 @@ localTxMonitorServer mempool =
       &&
       snapshotSlotNo a == snapshotSlotNo b
 
+    query :: STM m (TxMeasure blk, MempoolSnapshot blk)
     query = do
-      (capacity, mult) <- getCapacity mempool
+      capacity <- worstCaseCapacity <$> getCapacity mempool
       snapshot <- getSnapshot mempool
-      let InstantiatedAt capacity' =
-              stimes mult
-            $ InstantiatedAt @Measure capacity
-      pure (capacity', snapshot)
+      pure (capacity, snapshot)
