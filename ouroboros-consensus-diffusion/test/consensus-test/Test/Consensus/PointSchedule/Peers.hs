@@ -15,13 +15,19 @@ module Test.Consensus.PointSchedule.Peers (
     Peer (..)
   , PeerId (..)
   , Peers (..)
+  , adversarialPeers'
+  , adversarialPeers''
+  , deletePeer
   , enumerateAdversaries
   , fromMap
   , fromMap'
   , getPeer
   , getPeerIds
-  , mkPeers
-  , mkPeers'
+  , honestPeers'
+  , honestPeers''
+  , isAdversarialPeerId
+  , isHonestPeerId
+  , peers'
   , peersFromPeerIdList
   , peersFromPeerIdList'
   , peersFromPeerList
@@ -29,12 +35,11 @@ module Test.Consensus.PointSchedule.Peers (
   , peersOnlyHonest
   , toMap
   , toMap'
+  , unionWithKey
   , updatePeer
   ) where
 
 import           Data.Hashable (Hashable)
-import           Data.List.NonEmpty (NonEmpty ((:|)))
-import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.String (IsString (fromString))
@@ -45,20 +50,25 @@ import           Ouroboros.Consensus.Util.Condense (Condense (..),
                      condenseListWithPadding)
 
 -- | Identifier used to index maps and specify which peer is active during a tick.
-data PeerId =
-  HonestPeer
-  |
-  PeerId String
+data PeerId
+  = HonestPeer Int
+  | AdversarialPeer Int
   deriving (Eq, Generic, Show, Ord, NoThunks)
 
 instance IsString PeerId where
-  fromString "honest" = HonestPeer
-  fromString i        = PeerId i
+  fromString s = case words s of
+    ["honest"]       -> HonestPeer 1
+    ["honest", n]    -> HonestPeer (read n)
+    ["adversary"]    -> AdversarialPeer 1
+    ["adversary", n] -> AdversarialPeer (read n)
+    _                -> error $ "fromString: invalid PeerId: " ++ s
 
 instance Condense PeerId where
   condense = \case
-    HonestPeer -> "honest"
-    PeerId name -> name
+    HonestPeer 1 -> "honest"
+    HonestPeer n -> "honest " ++ show n
+    AdversarialPeer 1 -> "adversary"
+    AdversarialPeer n -> "adversary " ++ show n
 
 instance CondenseList PeerId where
   condenseList = condenseListWithPadding PadRight
@@ -94,119 +104,165 @@ instance CondenseList a => CondenseList (Peer a) where
       (condenseList $ value <$> peers)
 
 -- | General-purpose functor for a set of peers.
---
--- REVIEW: There is a duplicate entry for the honest peer, here. We should
--- probably either have only the 'Map' or have the keys of the map be 'String'?
---
--- Alternatively, we could just have 'newtype PeerId = PeerId String' with an
--- alias for 'HonestPeer = PeerId "honest"'?
-data Peers a =
-  Peers {
-    honest :: Peer a,
-    others :: Map PeerId (Peer a)
+data Peers a = Peers
+  { honestPeers      :: Map Int a,
+    adversarialPeers :: Map Int a
   }
   deriving (Eq, Show)
 
+-- | Variant of 'honestPeers' that returns a map with 'PeerId's as keys.
+honestPeers' :: Peers a -> Map PeerId a
+honestPeers' = Map.mapKeysMonotonic HonestPeer . honestPeers
+
+-- | Variant of 'honestPeers' that returns a map with 'PeerId's as keys and
+-- values as 'Peer's.
+honestPeers'' :: Peers a -> Map PeerId (Peer a)
+honestPeers'' = Map.mapWithKey Peer . honestPeers'
+
+-- | Variant of 'adversarialPeers' that returns a map with 'PeerId's as keys.
+adversarialPeers' :: Peers a -> Map PeerId a
+adversarialPeers' peers = Map.mapKeysMonotonic AdversarialPeer $ adversarialPeers peers
+
+-- | Variant of 'adversarialPeers' that returns a map with 'PeerId's as keys and
+-- values as 'Peer's.
+adversarialPeers'' :: Peers a -> Map PeerId (Peer a)
+adversarialPeers'' = Map.mapWithKey Peer . adversarialPeers'
+
 instance Functor Peers where
-  fmap f Peers {honest, others} = Peers {honest = f <$> honest, others = fmap f <$> others}
+  fmap f Peers {honestPeers, adversarialPeers} =
+    Peers
+      { honestPeers = f <$> honestPeers,
+        adversarialPeers = f <$> adversarialPeers
+      }
 
 instance Foldable Peers where
-  foldMap f Peers {honest, others} = (f . value) honest <> foldMap (f . value) others
+  foldMap f Peers {honestPeers, adversarialPeers} =
+    foldMap f honestPeers <> foldMap f adversarialPeers
 
 -- | A set of peers with only one honest peer carrying the given value.
 peersOnlyHonest :: a -> Peers a
 peersOnlyHonest value =
-  Peers {
-    honest = Peer {name = HonestPeer, value},
-    others = Map.empty
+  Peers
+    { honestPeers = Map.singleton 1 value,
+      adversarialPeers = Map.empty
     }
 
 -- | Extract all 'PeerId's.
-getPeerIds :: Peers a -> NonEmpty PeerId
-getPeerIds peers = HonestPeer :| Map.keys (others peers)
+getPeerIds :: Peers a -> [PeerId]
+getPeerIds Peers {honestPeers, adversarialPeers} =
+  (HonestPeer <$> Map.keys honestPeers) ++ (AdversarialPeer <$> Map.keys adversarialPeers)
 
 getPeer :: PeerId -> Peers a -> Peer a
-getPeer pid peers
-  | HonestPeer <- pid
-  = honest peers
-  | otherwise
-  = others peers Map.! pid
+getPeer (HonestPeer n) Peers {honestPeers} = Peer (HonestPeer n) (honestPeers Map.! n)
+getPeer (AdversarialPeer n) Peers {adversarialPeers} = Peer (AdversarialPeer n) (adversarialPeers Map.! n)
 
 updatePeer :: (a -> (a, b)) -> PeerId -> Peers a -> (Peers a, b)
-updatePeer f pid Peers {honest, others}
-  | HonestPeer <- pid
-  , let (a, b) = f (value honest)
-  = (Peers {honest = a <$ honest, others}, b)
-  | otherwise
-  , let p = others Map.! pid
-        (a, b) = f (value p)
-  = (Peers {honest, others = Map.adjust (a <$) pid others}, b)
+updatePeer f (HonestPeer n) Peers {honestPeers, adversarialPeers} =
+  let (a, b) = f (honestPeers Map.! n)
+   in (Peers {honestPeers = Map.insert n a honestPeers, adversarialPeers}, b)
+updatePeer f (AdversarialPeer n) Peers {honestPeers, adversarialPeers} =
+  let (a, b) = f (adversarialPeers Map.! n)
+   in (Peers {honestPeers, adversarialPeers = Map.insert n a adversarialPeers}, b)
 
 -- | Convert 'Peers' to a list of 'Peer'.
-peersList :: Peers a -> NonEmpty (Peer a)
-peersList Peers {honest, others} =
-  honest :| Map.elems others
+peersList :: Peers a -> [Peer a]
+peersList Peers {honestPeers, adversarialPeers} =
+  Map.foldrWithKey
+    (\k v -> (Peer (HonestPeer k) v :))
+    ( Map.foldrWithKey
+        (\k v -> (Peer (AdversarialPeer k) v :))
+        []
+        adversarialPeers
+    )
+    honestPeers
 
 enumerateAdversaries :: [PeerId]
-enumerateAdversaries =
-  (\ n -> PeerId ("adversary " ++ show n)) <$> [1 :: Int ..]
+enumerateAdversaries = AdversarialPeer <$> [1 ..]
 
 -- | Construct 'Peers' from values, adding adversary names based on the default schema.
--- A single adversary gets the ID @adversary@, multiple get enumerated as @adversary N@.
-mkPeers :: a -> [a] -> Peers a
-mkPeers h as =
-  Peers (Peer HonestPeer h) (Map.fromList (mkPeer <$> advs as))
-  where
-    mkPeer (pid, a) = (pid, Peer pid a)
-    advs [a] = [("adversary", a)]
-    advs _   = zip enumerateAdversaries as
+peers' :: [a] -> [a] -> Peers a
+peers' hs as =
+  Peers
+    { honestPeers = Map.fromList $ zip [1 ..] hs,
+      adversarialPeers = Map.fromList $ zip [1 ..] as
+    }
 
--- | Make a 'Peers' structure from the honest value and the other peers. Fail if
--- one of the other peers is the 'HonestPeer'.
-mkPeers' :: a -> [Peer a] -> Peers a
-mkPeers' value prs =
-    Peers (Peer HonestPeer value) (Map.fromList $ dupAdvPeerId <$> prs)
+-- | Make a 'Peers' structure from individual 'Peer's.
+peersFromPeerList :: [Peer a] -> Peers a
+peersFromPeerList peers =
+  let (hs, as) = partitionPeers peers
+   in Peers
+        { honestPeers = Map.fromList hs,
+          adversarialPeers = Map.fromList as
+        }
   where
-    -- | Duplicate an adversarial peer id; fail if honest.
-    dupAdvPeerId :: Peer a -> (PeerId, Peer a)
-    dupAdvPeerId (Peer HonestPeer _) = error "cannot be the honest peer"
-    dupAdvPeerId peer@(Peer pid _)   = (pid, peer)
+    partitionPeers :: [Peer a] -> ([(Int, a)], [(Int, a)])
+    partitionPeers =
+      foldl
+        ( \(hs, as) (Peer pid v) -> case pid of
+            HonestPeer n      -> ((n, v) : hs, as)
+            AdversarialPeer n -> (hs, (n, v) : as)
+        )
+        ([], [])
 
--- | Make a 'Peers' structure from a non-empty list of peers. Fail if the honest
--- peer is not exactly once in the list.
-peersFromPeerList :: NonEmpty (Peer a) -> Peers a
-peersFromPeerList =
-    uncurry mkPeers' . extractHonestPeer . NonEmpty.toList
-  where
-    -- | Return the value associated with the honest peer and the list of peers
-    -- excluding the honest one.
-    extractHonestPeer :: [Peer a] -> (a, [Peer a])
-    extractHonestPeer [] = error "could not find honest peer"
-    extractHonestPeer (Peer HonestPeer value : peers) = (value, peers)
-    extractHonestPeer (peer : peers) = (peer :) <$> extractHonestPeer peers
+unionWithKey :: (PeerId -> a -> a -> a) -> Peers a -> Peers a -> Peers a
+unionWithKey f peers1 peers2 =
+  Peers
+    { honestPeers = Map.unionWithKey (f . HonestPeer) (honestPeers peers1) (honestPeers peers2),
+      adversarialPeers = Map.unionWithKey (f . AdversarialPeer) (adversarialPeers peers1) (adversarialPeers peers2)
+    }
 
--- | Make a 'Peers' structure from a non-empty list of peer ids and a default
--- value. Fails if the honest peer is not exactly once in the list.
-peersFromPeerIdList :: NonEmpty PeerId -> a -> Peers a
+-- | Make a 'Peers' structure from a list of peer ids and a default value.
+peersFromPeerIdList :: [PeerId] -> a -> Peers a
 peersFromPeerIdList = flip $ \val -> peersFromPeerList . fmap (flip Peer val)
 
 -- | Like 'peersFromPeerIdList' with @()@.
-peersFromPeerIdList' :: NonEmpty PeerId -> Peers ()
+peersFromPeerIdList' :: [PeerId] -> Peers ()
 peersFromPeerIdList' = flip peersFromPeerIdList ()
-
-toMap :: Peers a -> Map PeerId (Peer a)
-toMap Peers{honest, others} = Map.insert HonestPeer honest others
 
 -- | Same as 'toMap' but the map contains unwrapped values.
 toMap' :: Peers a -> Map PeerId a
-toMap' = fmap (\(Peer _ v) -> v) . toMap
+toMap' Peers {honestPeers, adversarialPeers} =
+  Map.union
+    (Map.mapKeysMonotonic HonestPeer honestPeers)
+    (Map.mapKeysMonotonic AdversarialPeer adversarialPeers)
 
-fromMap :: Map PeerId (Peer a) -> Peers a
-fromMap peers = Peers{
-    honest = peers Map.! HonestPeer,
-    others = Map.delete HonestPeer peers
-  }
+toMap :: Peers a -> Map PeerId (Peer a)
+toMap = Map.mapWithKey Peer . toMap'
 
 -- | Same as 'fromMap' but the map contains unwrapped values.
 fromMap' :: Map PeerId a -> Peers a
-fromMap' = fromMap . Map.mapWithKey Peer
+fromMap' peers =
+  let (honestPeers, adversarialPeers) =
+        Map.mapEitherWithKey
+          ( \case
+              HonestPeer _ -> Left
+              AdversarialPeer _ -> Right
+          )
+          peers
+   in Peers
+        { honestPeers = Map.mapKeysMonotonic unHonestPeer honestPeers,
+          adversarialPeers = Map.mapKeysMonotonic unAdversarialPeer adversarialPeers
+        }
+  where
+    unHonestPeer (HonestPeer n) = n
+    unHonestPeer _              = error "unHonestPeer: not a honest peer"
+    unAdversarialPeer (AdversarialPeer n) = n
+    unAdversarialPeer _ = error "unAdversarialPeer: not an adversarial peer"
+
+fromMap :: Map PeerId (Peer a) -> Peers a
+fromMap = fromMap' . Map.map value
+
+deletePeer :: PeerId -> Peers a -> Peers a
+deletePeer (HonestPeer n) Peers {honestPeers, adversarialPeers} =
+  Peers {honestPeers = Map.delete n honestPeers, adversarialPeers}
+deletePeer (AdversarialPeer n) Peers {honestPeers, adversarialPeers} =
+  Peers {honestPeers, adversarialPeers = Map.delete n adversarialPeers}
+
+isHonestPeerId :: PeerId -> Bool
+isHonestPeerId (HonestPeer _) = True
+isHonestPeerId _              = False
+
+isAdversarialPeerId :: PeerId -> Bool
+isAdversarialPeerId (AdversarialPeer _) = True
+isAdversarialPeerId _                   = False

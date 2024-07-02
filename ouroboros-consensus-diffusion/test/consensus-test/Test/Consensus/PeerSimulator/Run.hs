@@ -10,31 +10,32 @@ module Test.Consensus.PeerSimulator.Run (
   , runPointSchedule
   ) where
 
-import           Control.Monad (foldM, forM)
+import           Control.Monad (foldM, forM, void)
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
+import           Data.Coerce (coerce)
 import           Data.Foldable (for_)
-import           Data.Functor (void)
+import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
-import           Ouroboros.Consensus.Genesis.Governor (runGdd,
-                     updateLoEFragGenesis)
+import           Ouroboros.Consensus.Genesis.Governor (gddWatcher)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (CSJConfig (..), CSJEnabledConfig (..), ChainDbView,
                      ChainSyncClientHandle, ChainSyncLoPBucketConfig (..),
-                     ChainSyncLoPBucketEnabledConfig (..), ChainSyncState (..),
-                     viewChainSyncState)
+                     ChainSyncLoPBucketEnabledConfig (..), viewChainSyncState)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
+import qualified Ouroboros.Consensus.Node.GsmState as GSM
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
+import           Ouroboros.Consensus.Util.STM (forkLinkedWatcher)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.BlockFetch (FetchClientRegistry,
@@ -47,6 +48,7 @@ import           Ouroboros.Network.Util.ShowProxy (ShowProxy)
 import qualified Test.Consensus.PeerSimulator.BlockFetch as BlockFetch
 import qualified Test.Consensus.PeerSimulator.ChainSync as ChainSync
 import           Test.Consensus.PeerSimulator.Config
+import qualified Test.Consensus.PeerSimulator.CSJInvariants as CSJInvariants
 import           Test.Consensus.PeerSimulator.NodeLifecycle
 import           Test.Consensus.PeerSimulator.Resources
 import           Test.Consensus.PeerSimulator.StateDiagram
@@ -55,7 +57,8 @@ import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PeerSimulator.Trace
 import           Test.Consensus.PointSchedule (BlockFetchTimeout,
                      CSJParams (..), GenesisTest (..), GenesisTestFull,
-                     LoPBucketParams (..), PeersSchedule, peersStatesRelative)
+                     LoPBucketParams (..), PointSchedule (..), peersStates,
+                     peersStatesRelative)
 import           Test.Consensus.PointSchedule.NodeState (NodeState)
 import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId,
                      getPeerIds)
@@ -201,6 +204,23 @@ startBlockFetchConnectionThread
         BlockFetch.runBlockFetchServer tracer srPeerId tracers bfrServer serverChannel
     pure (clientThread, serverThread)
 
+-- | Wait for the given duration, but if the duration is longer than the minimum
+-- duration in the live cycle, shutdown the node and restart it after the delay.
+smartDelay ::
+  (MonadDelay m) =>
+  NodeLifecycle blk m ->
+  LiveNode blk m ->
+  DiffTime ->
+  m (LiveNode blk m)
+smartDelay NodeLifecycle {nlMinDuration, nlStart, nlShutdown} node duration
+  | Just minInterval <- nlMinDuration, duration > minInterval = do
+    results <- nlShutdown node
+    threadDelay duration
+    nlStart results
+smartDelay _ node duration = do
+  threadDelay duration
+  pure node
+
 -- | The 'Tick' contains a state update for a specific peer.
 -- If the peer has not terminated by protocol rules, this will update its TMVar
 -- with the new state, thereby unblocking the handler that's currently waiting
@@ -221,25 +241,11 @@ dispatchTick tracer varHandles peers lifecycle node (number, (duration, Peer pid
     Just PeerResources {prUpdateState} -> do
       traceNewTick
       atomically (prUpdateState state)
-      newNode <- checkDowntime
+      newNode <- smartDelay lifecycle node duration
       traceWith (lnStateTracer newNode) ()
       pure newNode
     Nothing -> error "“The impossible happened,” as GHC would say."
   where
-    checkDowntime
-      | Just minInterval <- nlMinDuration
-      , duration > minInterval
-      = do
-        results <- nlShutdown node
-        threadDelay duration
-        nlStart results
-      | otherwise
-      = do
-        threadDelay duration
-        pure node
-
-    NodeLifecycle {nlMinDuration, nlStart, nlShutdown} = lifecycle
-
     traceNewTick :: m ()
     traceNewTick = do
       currentChain <- atomically $ ChainDB.getCurrentChain (lnChainDb node)
@@ -267,14 +273,21 @@ runScheduler ::
   IOLike m =>
   Tracer m (TraceSchedulerEvent blk) ->
   StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
-  PeersSchedule blk ->
+  PointSchedule blk ->
   Map PeerId (PeerResources m blk) ->
   NodeLifecycle blk m ->
   m (ChainDB m blk, StateViewTracers blk m)
-runScheduler tracer varHandles ps peers lifecycle@NodeLifecycle {nlStart} = do
+runScheduler tracer varHandles ps@PointSchedule{psMinEndTime} peers lifecycle@NodeLifecycle {nlStart} = do
   node0 <- nlStart LiveIntervalResult {lirActive = Map.keysSet peers, lirPeerResults = []}
   traceWith tracer TraceBeginningOfTime
-  LiveNode {lnChainDb, lnStateViewTracers} <- foldM tick node0 (zip [0..] (peersStatesRelative ps))
+  nodeEnd <- foldM tick node0 (zip [0..] (peersStatesRelative ps))
+  let extraDelay = case take 1 $ reverse $ peersStates ps of
+        [(t, _)] -> if t < psMinEndTime
+            then Just $ diffTime psMinEndTime t
+            else Nothing
+        _        -> Just $ coerce psMinEndTime
+  LiveNode{lnChainDb, lnStateViewTracers} <-
+    maybe (pure nodeEnd) (smartDelay lifecycle nodeEnd) extraDelay
   traceWith tracer TraceEndOfTime
   pure (lnChainDb, lnStateViewTracers)
   where
@@ -362,20 +375,19 @@ startNode schedulerConfig genesisTest interval = do
   -- The block fetch logic needs to be started after the block fetch clients
   -- otherwise, an internal assertion fails because getCandidates yields more
   -- peer fragments than registered clients.
-  let getCurrentChain = ChainDB.getCurrentChain lnChainDb
-
-      gdd = updateLoEFragGenesis lrConfig (mkGDDTracerTestBlock lrTracer) (readTVar handles)
-      -- We make GDD rerun every time the anchor or the blocks of the
-      -- selection change.
-      gddTrigger = do
-        s <- viewChainSyncState handles (\ s -> (csLatestSlot s, csIdling s))
-        c <- getCurrentChain
-        return (s, [AF.anchorToHash $ AF.headAnchor c])
-
   BlockFetch.startBlockFetchLogic lrRegistry lrTracer lnChainDb fetchClientRegistry getCandidates
+
   for_ lrLoEVar $ \ var -> do
-      forkLinkedThread lrRegistry "LoE updater background" $
-        void $ runGdd gdd var lnChainDb gddTrigger
+      forkLinkedWatcher lrRegistry "LoE updater background" $
+        gddWatcher
+          lrConfig
+          (mkGDDTracerTestBlock lrTracer)
+          lnChainDb
+          (pure GSM.Syncing) -- TODO actually run GSM
+          (readTVar handles)
+          var
+
+  void $ forkLinkedWatcher lrRegistry "CSJ invariants watcher" $ CSJInvariants.watcher handles
   where
     LiveResources {lrRegistry, lrTracer, lrConfig, lrPeerSim, lrLoEVar} = resources
 
@@ -467,7 +479,7 @@ runPointSchedule ::
   m (StateView TestBlock)
 runPointSchedule schedulerConfig genesisTest tracer0 =
   withRegistry $ \registry -> do
-    peerSim <- makePeerSimulatorResources tracer gtBlockTree (getPeerIds gtSchedule)
+    peerSim <- makePeerSimulatorResources tracer gtBlockTree (NonEmpty.fromList $ getPeerIds $ psSchedule gtSchedule)
     lifecycle <- nodeLifecycle schedulerConfig genesisTest tracer registry peerSim
     (chainDb, stateViewTracers) <- runScheduler
       (Tracer $ traceWith tracer . TraceSchedulerEvent)

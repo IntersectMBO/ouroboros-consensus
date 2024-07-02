@@ -65,6 +65,7 @@ library
     Ouroboros.Consensus.Node.Exit
     Ouroboros.Consensus.Node.ExitPolicy
     Ouroboros.Consensus.Node.GSM
+    Ouroboros.Consensus.Node.Genesis
     Ouroboros.Consensus.Node.Recovery
     Ouroboros.Consensus.Node.RethrowPolicy
     Ouroboros.Consensus.Node.Tracers
@@ -242,6 +243,7 @@ test-suite consensus-test
     Test.Consensus.Network.AnchoredFragment.Extras
     Test.Consensus.Node
     Test.Consensus.PeerSimulator.BlockFetch
+    Test.Consensus.PeerSimulator.CSJInvariants
     Test.Consensus.PeerSimulator.ChainSync
     Test.Consensus.PeerSimulator.Config
     Test.Consensus.PeerSimulator.Handlers
@@ -266,6 +268,7 @@ test-suite consensus-test
     Test.Consensus.PointSchedule.SinglePeer
     Test.Consensus.PointSchedule.SinglePeer.Indices
     Test.Consensus.PointSchedule.Tests
+    Test.Util.PartialAccessors
     Test.Util.TersePrinting
 
   build-depends:

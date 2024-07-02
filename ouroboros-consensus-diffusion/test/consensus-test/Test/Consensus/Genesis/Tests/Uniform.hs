@@ -40,8 +40,7 @@ import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Peers (PeerId (..), Peers (..),
-                     value)
+import           Test.Consensus.PointSchedule.Peers (Peers (..), isHonestPeerId)
 import           Test.Consensus.PointSchedule.Shrinking
                      (shrinkByRemovingAdversaries, shrinkPeerSchedules)
 import           Test.Consensus.PointSchedule.SinglePeer
@@ -52,6 +51,7 @@ import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
+import           Test.Util.PartialAccessors
 import           Test.Util.QuickCheck (le)
 import           Test.Util.TestBlock (TestBlock)
 import           Test.Util.TestEnv (adjustQuickCheckMaxSize,
@@ -66,11 +66,8 @@ tests =
     -- See Note [Leashing attacks]
     testProperty "stalling leashing attack" prop_leashingAttackStalling,
     testProperty "time limited leashing attack" prop_leashingAttackTimeLimited,
-    adjustQuickCheckTests (`div` 10) $
     testProperty "serve adversarial branches" prop_serveAdversarialBranches,
-    adjustQuickCheckTests (`div` 100) $
     testProperty "the LoE stalls the chain, but the immutable tip is honest" prop_loeStalling,
-    adjustQuickCheckTests (`div` 100) $
     -- This is a crude way of ensuring that we don't get chains with more than 100 blocks,
     -- because this test writes the immutable chain to disk and `instance Binary TestBlock`
     -- chokes on long chains.
@@ -92,13 +89,13 @@ theProperty genesisTest stateView@StateView{svSelectedChain} =
   -- to the governor that the density is too low.
   longerThanGenesisWindow ==>
   conjoin [
-    counterexample "The honest peer was disconnected" (HonestPeer `notElem` disconnected),
+    counterexample "An honest peer was disconnected" (not $ any isHonestPeerId disconnected),
     counterexample ("The immutable tip is not honest: " ++ show immutableTip) $
     property (isHonest immutableTipHash),
     immutableTipIsRecent
   ]
   where
-    advCount = Map.size (others (gtSchedule genesisTest))
+    advCount = Map.size (adversarialPeers (psSchedule $ gtSchedule genesisTest))
 
     immutableTipIsRecent =
       counterexample ("Age of the immutable tip: " ++ show immutableTipAge) $
@@ -132,7 +129,7 @@ theProperty genesisTest stateView@StateView{svSelectedChain} =
       [] -> "No peers were disconnected"
       peers -> "Some peers were disconnected: " ++ intercalate ", " (condense <$> peers)
 
-    honestTipSlot = At $ blockSlot $ snd $ last $ mapMaybe fromBlockPoint $ value $ honest $ gtSchedule genesisTest
+    honestTipSlot = At $ blockSlot $ snd $ last $ mapMaybe fromBlockPoint $ getHonestPeer $ honestPeers $ psSchedule $ gtSchedule genesisTest
 
     GenesisTest {gtBlockTree, gtGenesisWindow = GenesisWindow s, gtDelay = Delta d} = genesisTest
 
@@ -154,17 +151,30 @@ prop_serveAdversarialBranches = forAllGenesisTest
        , scTrace = False
        , scEnableLoE = True
        , scEnableCSJ = True
+       , scEnableLoP = False
+       , scEnableChainSyncTimeouts = False
+       , scEnableBlockFetchTimeouts = False
        })
 
     -- We cannot shrink by removing points from the adversarial schedules.
-    -- Otherwise, the immutable tip could get stuck because a peer doesn't
-    -- send any blocks or headers.
+    -- Removing ticks could make an adversary unable to serve any blocks or headers.
+    -- Because LoP and timeouts are disabled, this would cause the immutable tip
+    -- to get stuck indefinitely, as the adversary wouldn't get disconnected.
+    --
+    -- We don't enable timeouts in this test and we don't wait long enough for
+    -- timeouts to expire. The leashing attack tests are testing the timeouts
+    -- together with LoP.
     shrinkByRemovingAdversaries
 
     theProperty
 
-genUniformSchedulePoints :: GenesisTest TestBlock () -> QC.Gen (PeersSchedule TestBlock)
-genUniformSchedulePoints gt = stToGen (uniformPoints (gtBlockTree gt))
+genUniformSchedulePoints :: GenesisTest TestBlock () -> QC.Gen (PointSchedule TestBlock)
+genUniformSchedulePoints gt = stToGen (uniformPoints pointsGeneratorParams (gtBlockTree gt))
+  where
+    pointsGeneratorParams = PointsGeneratorParams
+      { pgpExtraHonestPeers = fromIntegral $ gtExtraHonestPeers gt
+      , pgpDowntime = NoDowntime
+      }
 
 -- Note [Leashing attacks]
 --
@@ -212,11 +222,11 @@ prop_leashingAttackStalling =
     -- This is achieved by dropping random points from the schedule of each peer
     -- and by adding sufficient time at the end of a test to allow LoP and
     -- timeouts to disconnect adversaries.
-    genLeashingSchedule :: GenesisTest TestBlock () -> QC.Gen (PeersSchedule TestBlock)
+    genLeashingSchedule :: GenesisTest TestBlock () -> QC.Gen (PointSchedule TestBlock)
     genLeashingSchedule genesisTest = do
-      Peers honest advs0 <- ensureScheduleDuration genesisTest <$> genUniformSchedulePoints genesisTest
-      advs <- mapM (mapM dropRandomPoints) advs0
-      pure $ Peers honest advs
+      ps@PointSchedule{psSchedule = sch} <- ensureScheduleDuration genesisTest <$> genUniformSchedulePoints genesisTest
+      advs <- mapM dropRandomPoints $ adversarialPeers sch
+      pure $ ps {psSchedule = sch {adversarialPeers = advs}}
 
     disableBoringTimeouts gt =
       gt { gtChainSyncTimeouts = (gtChainSyncTimeouts gt)
@@ -267,27 +277,21 @@ prop_leashingAttackTimeLimited =
 
   where
     -- | A schedule which doesn't run past the last event of the honest peer
-    genTimeLimitedSchedule :: GenesisTest TestBlock () -> QC.Gen (PeersSchedule TestBlock)
+    genTimeLimitedSchedule :: GenesisTest TestBlock () -> QC.Gen (PointSchedule TestBlock)
     genTimeLimitedSchedule genesisTest = do
-      Peers honest advs0 <- genUniformSchedulePoints genesisTest
+      Peers honests advs0 <- psSchedule <$> genUniformSchedulePoints genesisTest
       let timeLimit = estimateTimeBound
             (gtChainSyncTimeouts genesisTest)
             (gtLoPBucketParams genesisTest)
-            (value honest)
-            (map value $ Map.elems advs0)
-          advs = fmap (fmap (takePointsUntil timeLimit)) advs0
-          extendedHonest = extendScheduleUntil timeLimit <$> honest
-      pure $ Peers extendedHonest advs
+            (getHonestPeer honests)
+            (Map.elems advs0)
+          advs = fmap (takePointsUntil timeLimit) advs0
+      pure $ PointSchedule
+        { psSchedule = Peers honests advs
+        , psMinEndTime = timeLimit
+        }
 
     takePointsUntil limit = takeWhile ((<= limit) . fst)
-
-    extendScheduleUntil
-      :: Time -> [(Time, SchedulePoint TestBlock)] -> [(Time, SchedulePoint TestBlock)]
-    extendScheduleUntil t [] = [(t, ScheduleTipPoint Origin)]
-    extendScheduleUntil t xs =
-        let (t', p) = last xs
-         in if t < t' then xs
-            else xs ++ [(t, p)]
 
     disableBoringTimeouts gt =
       gt { gtChainSyncTimeouts = (gtChainSyncTimeouts gt)
@@ -357,10 +361,10 @@ prop_loeStalling =
         pure gt {gtChainSyncTimeouts = chainSyncNoTimeouts {canAwaitTimeout = shortWait}}
     )
 
-    (defaultSchedulerConfig {
+    defaultSchedulerConfig {
       scEnableLoE = True,
-      scEnableChainSyncTimeouts = True
-    })
+      scEnableCSJ = True
+    }
 
     shrinkPeerSchedules
 
@@ -393,11 +397,21 @@ prop_downtime :: Property
 prop_downtime = forAllGenesisTest
 
     (genChains (QC.choose (1, 4)) `enrichedWith` \ gt ->
-      ensureScheduleDuration gt <$> stToGen (uniformPointsWithDowntime (gtSecurityParam gt) (gtBlockTree gt)))
+      ensureScheduleDuration gt <$> stToGen (uniformPoints (pointsGeneratorParams gt) (gtBlockTree gt)))
 
-    (defaultSchedulerConfig
-       {scEnableLoE = True, scEnableLoP = True, scDowntime = Just 11})
+    defaultSchedulerConfig
+      { scEnableLoE = True
+      , scEnableLoP = True
+      , scDowntime = Just 11
+      , scEnableCSJ = True
+      }
 
     shrinkPeerSchedules
 
     theProperty
+
+  where
+    pointsGeneratorParams gt = PointsGeneratorParams
+      { pgpExtraHonestPeers = fromIntegral (gtExtraHonestPeers gt)
+      , pgpDowntime = DowntimeWithSecurityParam (gtSecurityParam gt)
+      }

@@ -598,11 +598,6 @@ instance Condense RenderCell where
     CellEllipsis -> " .. "
     RenderCell _ cell -> condense cell
 
-renderPeerId :: PeerId -> String
-renderPeerId = \case
-  HonestPeer -> "honest"
-  PeerId p -> p
-
 slotWidth :: NonEmpty Cell -> SlotWidth
 slotWidth =
   maximum . fmap cellWidth
@@ -612,7 +607,7 @@ slotWidth =
       CellPeers peerIds -> SlotWidth (sum (labelWidth <$> peerIds))
       _ -> 1
 
-    labelWidth pid = 2 + length (renderPeerId pid)
+    labelWidth pid = 2 + length (show pid)
 
     sortWidth = \case
       CellHere as -> sum (pointWidth <$> as)
@@ -773,7 +768,7 @@ renderSlotNo config width num =
 
 renderPeers :: [PeerId] -> Col
 renderPeers peers =
-  ColCat [ColAspect (pure (Candidate p)) (ColString ("  " ++ renderPeerId p)) | p <- peers]
+  ColCat [ColAspect (pure (Candidate p)) (ColString ("  " ++ show p)) | p <- peers]
 
 renderCell :: RenderConfig -> RenderCell -> Col
 renderCell config@RenderConfig {ellipsis} = \case
