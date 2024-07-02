@@ -44,6 +44,7 @@ import qualified Cardano.Ledger.Api as L
 import           Cardano.Ledger.Binary (Annotator (..), DecCBOR (..),
                      EncCBOR (..), FromCBOR (..), FullByteString (..),
                      ToCBOR (..), toPlainDecoder)
+import qualified Cardano.Ledger.Conway.Rules as SL
 import qualified Cardano.Ledger.Conway.UTxO as SL
 import qualified Cardano.Ledger.Core as SL (txIdTxBody)
 import           Cardano.Ledger.Crypto (Crypto)
@@ -387,10 +388,9 @@ instance ( ShelleyCompatible p (ConwayEra c)
   txsBlockCapacity st =
       ConwayMeasure {
           alonzoMeasure  = txsBlockCapacityAlonzo st
-        , refScriptsSize =
-            -- TODO use maxRefScriptSizePerBlock from
-            -- https://github.com/IntersectMBO/cardano-ledger/pull/4450
-            Mempool.ByteSize $ 2560 * 1024 -- 2.5 MB
+        , refScriptsSize = Mempool.ByteSize $ fromIntegral $
+            -- For post-Conway eras, this will become a protocol parameter.
+            SL.maxRefScriptSizePerBlock
         }
 
 {-------------------------------------------------------------------------------

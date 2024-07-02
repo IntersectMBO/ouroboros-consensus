@@ -102,10 +102,10 @@ mkConsensusProtocolCardano NodeByronProtocolConfiguration {
                              npcConwayGenesisFileHash
                            }
                            NodeHardForkProtocolConfiguration {
-                            npcTestEnableDevelopmentHardForkEras,
-                            -- During testing of the Alonzo era, we conditionally declared that we
-                            -- knew about the Alonzo era. We do so only when a config option for
-                            -- testing development/unstable eras is used. This lets us include
+                            npcTestEnableDevelopmentHardForkEras = _,
+                            -- During testing of the latest unreleased era, we conditionally
+                            -- declared that we knew about it. We do so only when a config option
+                            -- for testing development/unstable eras is used. This lets us include
                             -- not-yet-ready eras in released node versions without mainnet nodes
                             -- prematurely advertising that they could hard fork into the new era.
                              npcTestShelleyHardForkAtEpoch,
@@ -224,7 +224,7 @@ mkConsensusProtocolCardano NodeByronProtocolConfiguration {
           -- version that this node will declare that it understands, when it
           -- is in the Alonzo era. That is, it is the version of protocol
           -- /after/ Alonzo, i.e. Babbage.
-          alonzoProtVer = ProtVer (natVersion @6) 0,
+          alonzoProtVer = ProtVer (natVersion @7) 0,
           alonzoMaxTxCapacityOverrides =
             Mempool.mkOverrides Mempool.noOverridesMeasure
         }
@@ -232,7 +232,7 @@ mkConsensusProtocolCardano NodeByronProtocolConfiguration {
           -- This is /not/ the Babbage protocol version. It is the protocol
           -- version that this node will declare that it understands, when it
           -- is in the Babbage era.
-          Consensus.babbageProtVer = ProtVer (natVersion @7) 0,
+          Consensus.babbageProtVer = ProtVer (natVersion @9) 0,
           Consensus.babbageMaxTxCapacityOverrides =
             Mempool.mkOverrides Mempool.noOverridesMeasure
         }
@@ -240,10 +240,7 @@ mkConsensusProtocolCardano NodeByronProtocolConfiguration {
           -- This is /not/ the Conway protocol version. It is the protocol
           -- version that this node will declare that it understands, when it
           -- is in the Conway era.
-          Consensus.conwayProtVer =
-            if npcTestEnableDevelopmentHardForkEras
-            then ProtVer (natVersion @9) 0  -- Advertise we can support Conway
-            else ProtVer (natVersion @8) 0, -- Otherwise we only advertise we know about Babbage
+          Consensus.conwayProtVer = ProtVer (natVersion @9) 0,
           Consensus.conwayMaxTxCapacityOverrides =
             Mempool.mkOverrides Mempool.noOverridesMeasure
         }
