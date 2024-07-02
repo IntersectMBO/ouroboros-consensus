@@ -1,3 +1,0 @@
-### Breaking
-
-- Added `GetSPOStakeDistr` query

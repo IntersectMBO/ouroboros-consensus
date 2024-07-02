@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.20.0.0'></a>
+## 0.20.0.0 — 2024-07-02
+
+### Breaking
+
+- Added `TickedLedgerState` argument to `txMeasure`.
+
 <a id='changelog-0.19.1.0'></a>
 ## 0.19.1.0 — 2024-06-26
 
