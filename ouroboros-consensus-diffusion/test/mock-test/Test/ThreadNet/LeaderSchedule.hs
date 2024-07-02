@@ -4,7 +4,6 @@
 module Test.ThreadNet.LeaderSchedule (tests) where
 
 import           Control.Monad (replicateM)
-import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
@@ -159,18 +158,3 @@ genLeaderSchedule k (NumSlots numSlots) numCoreNodes nodeJoinPlan =
             nid <- elements nids
             xs  <- go (filter (/= nid) nids) (n - 1)
             return $ nid : xs
-
-_shrinkLeaderSchedule :: NumSlots -> LeaderSchedule -> [LeaderSchedule]
-_shrinkLeaderSchedule (NumSlots numSlots) (LeaderSchedule m) =
-    [ LeaderSchedule m'
-    | slot <- [0 .. fromIntegral numSlots - 1]
-    , m'   <- reduceSlot slot m
-    ]
-  where
-    reduceSlot :: SlotNo -> Map SlotNo [CoreNodeId] -> [Map SlotNo [CoreNodeId]]
-    reduceSlot s m' = [Map.insert s xs m' | xs <- reduceList $ m' Map.! s]
-
-    reduceList :: [a] -> [[a]]
-    reduceList []       = []
-    reduceList [_]      = []
-    reduceList (x : xs) = xs : map (x :) (reduceList xs)

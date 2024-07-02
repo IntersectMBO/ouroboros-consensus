@@ -24,7 +24,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
   , getEnv1
   , getEnv2
   , getEnvSTM
-  , getEnvSTM1
     -- * Exposed internals for testing purposes
   , Internal (..)
     -- * Iterator-related
@@ -63,6 +62,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
   , TraceValidationEvent (..)
   ) where
 
+import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.Foldable (traverse_)
 import           Data.Map.Strict (Map)
@@ -103,7 +103,6 @@ import           Ouroboros.Consensus.Util (Fuse)
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.Enclose (Enclosing, Enclosing' (..))
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (WithFingerprint)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import           Ouroboros.Network.Block (MaxSlotNo)
@@ -151,16 +150,6 @@ getEnvSTM :: forall m blk r. (IOLike m, HasCallStack, HasHeader blk)
           -> STM m r
 getEnvSTM (CDBHandle varState) f = readTVar varState >>= \case
     ChainDbOpen env -> f env
-    ChainDbClosed   -> throwSTM $ ClosedDBError @blk prettyCallStack
-
--- | Variant of 'getEnv1' that works in 'STM'.
-getEnvSTM1 ::
-     forall m blk a r. (IOLike m, HasCallStack, HasHeader blk)
-  => ChainDbHandle m blk
-  -> (ChainDbEnv m blk -> a -> STM m r)
-  -> a -> STM m r
-getEnvSTM1 (CDBHandle varState) f a = readTVar varState >>= \case
-    ChainDbOpen env -> f env a
     ChainDbClosed   -> throwSTM $ ClosedDBError @blk prettyCallStack
 
 data ChainDbState m blk
@@ -442,7 +431,7 @@ type FutureBlocks m blk = Map (HeaderHash blk) (Header blk, InvalidBlockPunishme
 -- | FIFO queue used to add blocks asynchronously to the ChainDB. Blocks are
 -- read from this queue by a background thread, which processes the blocks
 -- synchronously.
-newtype ChainSelQueue m blk = ChainSelQueue (TBQueue m (ChainSelMessage m blk))
+newtype ChainSelQueue m blk = ChainSelQueue (StrictTBQueue m (ChainSelMessage m blk))
   deriving NoThunks via OnlyCheckWhnfNamed "ChainSelQueue" (ChainSelQueue m blk)
 
 -- | Entry in the 'ChainSelQueue' queue: a block together with the 'TMVar's used

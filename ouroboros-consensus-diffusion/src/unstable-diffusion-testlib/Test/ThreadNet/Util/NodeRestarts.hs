@@ -3,7 +3,6 @@ module Test.ThreadNet.Util.NodeRestarts (
   , NodeRestarts (..)
   , genNodeRestarts
   , noRestarts
-  , shrinkNodeRestarts
   ) where
 
 import           Data.Map.Strict (Map)
@@ -87,8 +86,3 @@ genNodeRestarts (NodeJoinPlan m) (NumSlots t)
         joinSlot <= s &&
         -- must not be leading (TODO relax this somehow?)
         not (isLeading nid s)
-
-shrinkNodeRestarts :: NodeRestarts -> [NodeRestarts]
-shrinkNodeRestarts (NodeRestarts m)
-  | Map.null m = []  -- TODO better shrink
-  | otherwise  = [noRestarts]

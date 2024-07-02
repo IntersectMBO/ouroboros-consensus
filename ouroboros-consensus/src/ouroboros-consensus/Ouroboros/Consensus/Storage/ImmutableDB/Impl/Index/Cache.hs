@@ -38,6 +38,7 @@ import           Cardano.Prelude (forceElemsToWHNF)
 import           Control.Exception (assert)
 import           Control.Monad (forM, forM_, forever, unless, void, when)
 import           Control.Monad.Except (throwError)
+import           Control.ResourceRegistry
 import           Control.Tracer (Tracer, traceWith)
 import           Data.Foldable (toList)
 import           Data.Functor ((<&>))
@@ -73,7 +74,6 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Util
 import           Ouroboros.Consensus.Util (takeUntil, whenJust)
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           System.FS.API (HasFS (..), withFile)
 import           System.FS.API.Types (AllowExisting (..), Handle,
                      OpenMode (ReadMode))

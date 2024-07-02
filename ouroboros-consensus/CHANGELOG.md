@@ -257,7 +257,7 @@
 ### Non-Breaking
 
 - Add `StrictMVar`s with default `NoThunks` invariants
-    `Ouroboros.Consensus.Util.NormalForm.StrictMVar`.
+    `Control.Concurrent.Class.MonadMVar.NormalForm`.
 
 ### Breaking
 

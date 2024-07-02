@@ -21,7 +21,6 @@ module Ouroboros.Consensus.Storage.VolatileDB.Impl.State (
   , ReverseIndex
   , SuccessorsIndex
   , VolatileDBEnv (..)
-  , dbIsOpen
     -- * State helpers
   , ModifyOpenState
   , appendOpenState
@@ -33,6 +32,8 @@ module Ouroboros.Consensus.Storage.VolatileDB.Impl.State (
 
 import           Control.Monad
 import           Control.Monad.State.Strict hiding (withState)
+import           Control.ResourceRegistry (WithTempRegistry, allocateTemp,
+                     modifyWithTempRegistry)
 import           Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString.Lazy as Lazy
 import           Data.List (foldl')
@@ -56,8 +57,6 @@ import           Ouroboros.Consensus.Util (whenJust, (.:))
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.MonadSTM.RAWLock (RAWLock)
 import qualified Ouroboros.Consensus.Util.MonadSTM.RAWLock as RAWLock
-import           Ouroboros.Consensus.Util.ResourceRegistry (WithTempRegistry,
-                     allocateTemp, modifyWithTempRegistry)
 import           Ouroboros.Network.Block (MaxSlotNo (..))
 import           System.FS.API
 
@@ -78,10 +77,6 @@ data InternalState blk h =
     DbClosed
   | DbOpen !(OpenState blk h)
   deriving (Generic, NoThunks)
-
-dbIsOpen :: InternalState blk h -> Bool
-dbIsOpen (DbOpen _) = True
-dbIsOpen DbClosed   = False
 
 -- | Internal state when the database is open.
 data OpenState blk h = OpenState {

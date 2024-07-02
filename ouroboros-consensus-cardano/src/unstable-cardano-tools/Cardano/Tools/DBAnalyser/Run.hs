@@ -12,6 +12,7 @@ import           Cardano.Tools.DBAnalyser.HasAnalysis
 import           Cardano.Tools.DBAnalyser.Types
 import           Codec.Serialise (Serialise (decode))
 import           Control.Monad.Except (runExceptT)
+import           Control.ResourceRegistry
 import           Control.Tracer (Tracer (..), nullTracer)
 import           Data.Singletons (Sing, SingI (..))
 import qualified Debug.Trace as Debug
@@ -32,7 +33,6 @@ import           Ouroboros.Consensus.Storage.LedgerDB (DiskSnapshot (..),
                      readSnapshot)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           System.IO
 import           Text.Printf (printf)
 

@@ -15,7 +15,6 @@ module Ouroboros.Consensus.Mock.Ledger.Block.PraosRule (
     PraosCryptoUnused
   , SimplePraosRuleBlock
   , SimplePraosRuleExt (..)
-  , SimplePraosRuleHeader
   , forgePraosRuleExt
   ) where
 
@@ -70,8 +69,8 @@ type instance BlockProtocol (SimplePraosRuleBlock c) =
     WithLeaderSchedule (Praos PraosCryptoUnused)
 
 -- | Sanity check that block and header type synonyms agree
-_simplePraosRuleHeader :: SimplePraosRuleBlock c -> SimplePraosRuleHeader c
-_simplePraosRuleHeader = simpleHeader
+_lemma_simplePraosRuleHeader :: SimplePraosRuleBlock c -> SimplePraosRuleHeader c
+_lemma_simplePraosRuleHeader = simpleHeader
 
 {-------------------------------------------------------------------------------
   Customization of the generic infrastructure

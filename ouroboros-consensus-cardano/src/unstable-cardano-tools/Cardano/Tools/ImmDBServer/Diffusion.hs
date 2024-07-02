@@ -6,6 +6,7 @@
 module Cardano.Tools.ImmDBServer.Diffusion (run) where
 
 import           Cardano.Tools.ImmDBServer.MiniProtocols (immDBServer)
+import           Control.ResourceRegistry
 import           Control.Tracer
 import qualified Data.ByteString.Lazy as BL
 import           Data.Functor.Contravariant ((>$<))
@@ -22,7 +23,6 @@ import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDbArgs (..))
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.ErrorPolicy (nullErrorPolicies)
 import           Ouroboros.Network.IOManager (withIOManager)
 import           Ouroboros.Network.Mux

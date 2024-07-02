@@ -57,7 +57,6 @@ module Ouroboros.Consensus.HardFork.Combinator.AcrossEras (
   , MismatchEraInfo (..)
   , mismatchFutureEra
   , mismatchOneEra
-  , mkEraMismatch
     -- * Utility
   , getSameValue
   , oneEraBlockHeader
@@ -216,32 +215,6 @@ data EraMismatch = EraMismatch {
     , otherEraName  :: !Text
     }
   deriving (Eq, Show, Generic)
-
--- | When a transaction or block from a certain era was applied to a ledger
--- from another era, we get a 'MismatchEraInfo'.
---
--- Given such a 'MismatchEraInfo', return the name of the era of the
--- transaction/block and the name of the era of the ledger.
-mkEraMismatch :: SListI xs => MismatchEraInfo xs -> EraMismatch
-mkEraMismatch (MismatchEraInfo mismatch) =
-    go mismatch
-  where
-    go :: SListI xs => Mismatch SingleEraInfo LedgerEraInfo xs -> EraMismatch
-    go (Match.ML otherEra ledgerEra) = EraMismatch {
-          ledgerEraName = hcollapse $ hmap (K . ledgerName) ledgerEra
-        , otherEraName  = otherName otherEra
-        }
-    go (Match.MR otherEra ledgerEra) = EraMismatch {
-          ledgerEraName = ledgerName ledgerEra
-        , otherEraName  = hcollapse $ hmap (K . otherName) otherEra
-        }
-    go (Match.MS m) = go m
-
-    ledgerName :: LedgerEraInfo blk -> Text
-    ledgerName = singleEraName . getLedgerEraInfo
-
-    otherName :: SingleEraInfo blk -> Text
-    otherName = singleEraName
 
 {-------------------------------------------------------------------------------
   Utility

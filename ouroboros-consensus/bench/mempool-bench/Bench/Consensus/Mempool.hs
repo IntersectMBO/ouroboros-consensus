@@ -11,8 +11,6 @@ module Bench.Consensus.Mempool (
     MempoolCmd (..)
     -- ** Queries on commands
   , getCmdTx
-  , getCmdTxId
-  , getCmdsTxIds
   , getCmdsTxs
     -- * Commands execution
   , run
@@ -51,15 +49,6 @@ getCmdTx (AddTx tx) = Just tx
 getCmdsTxs :: [MempoolCmd blk] -> [Ledger.GenTx blk]
 getCmdsTxs = mapMaybe getCmdTx
 
-getCmdTxId ::
-     Ledger.HasTxId (Ledger.GenTx blk)
-  => MempoolCmd blk -> Maybe (Ledger.TxId (Ledger.GenTx blk))
-getCmdTxId = fmap Ledger.txId . getCmdTx
-
-getCmdsTxIds ::
-     Ledger.HasTxId (Ledger.GenTx blk)
-  => [MempoolCmd blk] -> [Ledger.TxId (Ledger.GenTx blk)]
-getCmdsTxIds = mapMaybe getCmdTxId
 
 {-------------------------------------------------------------------------------
   Commands execution

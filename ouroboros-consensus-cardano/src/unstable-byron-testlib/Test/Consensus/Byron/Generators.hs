@@ -6,7 +6,6 @@
 module Test.Consensus.Byron.Generators (
     RegularBlock (..)
   , epochSlots
-  , k
   , protocolMagicId
   ) where
 
@@ -35,7 +34,6 @@ import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger
 import           Ouroboros.Consensus.Byron.Protocol
-import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.HeaderValidation (AnnTip (..))
 import           Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
 import           Ouroboros.Consensus.Protocol.PBFT.State (PBftState)
@@ -60,10 +58,6 @@ import           Test.Util.Serialisation.SomeResult (SomeResult (..))
 {-------------------------------------------------------------------------------
   Generators
 -------------------------------------------------------------------------------}
-
--- | Matches that from the 'CC.dummyConfig'
-k :: SecurityParam
-k = SecurityParam 10
 
 -- | Matches that from the 'CC.dummyConfig'
 epochSlots :: EpochSlots

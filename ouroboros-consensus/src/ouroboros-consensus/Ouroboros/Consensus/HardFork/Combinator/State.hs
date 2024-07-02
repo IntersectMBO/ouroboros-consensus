@@ -17,8 +17,6 @@ module Ouroboros.Consensus.HardFork.Combinator.State (
     module X
     -- * Support for defining instances
   , getTip
-    -- * Serialisation support
-  , recover
     -- * EpochInfo
   , epochInfoLedger
   , epochInfoPrecomputedTransitionInfo
@@ -29,7 +27,6 @@ module Ouroboros.Consensus.HardFork.Combinator.State (
   ) where
 
 import           Control.Monad (guard)
-import           Data.Functor.Product
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
@@ -37,7 +34,7 @@ import           Data.SOP.Counting (getExactly)
 import           Data.SOP.InPairs (InPairs, Requiring (..))
 import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.Strict
-import           Data.SOP.Telescope (Extend (..), ScanNext (..), Telescope)
+import           Data.SOP.Telescope (Extend (..))
 import qualified Data.SOP.Telescope as Telescope
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HardFork.Combinator.Abstract
@@ -70,35 +67,6 @@ getTip getLedgerTip =
     injPoint GenesisPoint     = GenesisPoint
     injPoint (BlockPoint s h) = BlockPoint s $ OneEraHash $
                                   toShortRawHash (Proxy @blk) h
-
-{-------------------------------------------------------------------------------
-  Recovery
--------------------------------------------------------------------------------}
-
--- | Recover 'HardForkState' from partial information
---
--- The primary goal of this is to make sure that for the /current/ state we
--- really only need to store the underlying @f@. It is not strictly essential
--- that this is possible but it helps with the unary hardfork case, and it may
--- in general help with binary compatibility.
-recover :: forall f xs. CanHardFork xs
-        => Telescope (K Past) f xs -> HardForkState f xs
-recover =
-    case isNonEmpty (Proxy @xs) of
-      ProofNonEmpty {} ->
-          HardForkState
-        . Telescope.bihmap
-            (\(Pair _ past) -> past)
-            recoverCurrent
-        . Telescope.scanl
-            (InPairs.hpure $ ScanNext $ const $ K . pastEnd . unK)
-            (K History.initBound)
-  where
-    recoverCurrent :: Product (K History.Bound) f blk -> Current f blk
-    recoverCurrent (Pair (K prevEnd) st) = Current {
-          currentStart = prevEnd
-        , currentState = st
-        }
 
 {-------------------------------------------------------------------------------
   Reconstruct EpochInfo

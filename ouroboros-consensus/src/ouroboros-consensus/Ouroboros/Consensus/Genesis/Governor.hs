@@ -30,8 +30,6 @@ module Ouroboros.Consensus.Genesis.Governor (
   , runGdd
   , sharedCandidatePrefix
   , updateLoEFragGenesis
-  , updateLoEFragStall
-  , updateLoEFragUnconditional
   ) where
 
 import           Control.Monad (guard)
@@ -84,14 +82,6 @@ data UpdateLoEFrag m blk = UpdateLoEFrag {
   deriving stock (Generic)
   deriving anyclass (NoThunks)
 
--- | A dummy version of the LoE that sets the LoE fragment to the current
--- selection. This can be seen as emulating Praos behavior.
-updateLoEFragUnconditional ::
-  MonadSTM m =>
-  UpdateLoEFrag m blk
-updateLoEFragUnconditional =
-  UpdateLoEFrag $ \ curChain _ -> pure curChain
-
 -- | Compute the fragment @loeFrag@ between the immutable tip and the
 -- earliest intersection between @curChain@ and any of the @candidates@.
 --
@@ -120,26 +110,6 @@ sharedCandidatePrefix curChain candidates =
       -- sound to pre-emptively discard their candidate from this
       -- 'Map' via 'mapMaybe'.
       Map.mapMaybe splitAfterImmutableTip candidates
-
--- | This version of the LoE implements part of the intended Genesis approach.
--- The fragment is set to the prefix of all candidates, ranging from the
--- immutable tip to the earliest intersection of all peers.
---
--- Using this will cause ChainSel to stall indefinitely, or until a peer
--- disconnects for unrelated reasons.
--- In the future, the Genesis Density Disconnect Governor variant will extend
--- this with an analysis that will always result in disconnections from peers
--- to ensure the selection can advance.
-updateLoEFragStall ::
-  MonadSTM m =>
-  GetHeader blk =>
-  STM m (Map peer (AnchoredFragment (Header blk))) ->
-  UpdateLoEFrag m blk
-updateLoEFragStall getCandidates =
-  UpdateLoEFrag $ \ curChain _ ->
-    atomically $ do
-      candidates <- getCandidates
-      pure (fst (sharedCandidatePrefix curChain candidates))
 
 -- | A never ending computation that runs the GDD governor whenever
 -- the STM action @getTrigger@ changes, writing the LoE fragment

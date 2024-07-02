@@ -1,15 +1,12 @@
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE TypeFamilies               #-}
-{-# LANGUAGE TypeOperators              #-}
 {-# LANGUAGE UndecidableInstances       #-}
 
 module Ouroboros.Consensus.Config (
     -- * The top-level node configuration
     TopLevelConfig (..)
-  , castTopLevelConfig
   , mkTopLevelConfig
     -- ** Checkpoints map
   , CheckpointsMap (..)
@@ -105,25 +102,6 @@ configStorage = topLevelConfigStorage
 configSecurityParam :: ConsensusProtocol (BlockProtocol blk)
                     => TopLevelConfig blk -> SecurityParam
 configSecurityParam = protocolSecurityParam . configConsensus
-
-castTopLevelConfig ::
-     ( Coercible (ConsensusConfig (BlockProtocol blk))
-                 (ConsensusConfig (BlockProtocol blk'))
-     , LedgerConfig blk ~ LedgerConfig blk'
-     , Coercible (BlockConfig   blk) (BlockConfig   blk')
-     , Coercible (CodecConfig   blk) (CodecConfig   blk')
-     , Coercible (StorageConfig blk) (StorageConfig blk')
-     , Coercible (HeaderHash    blk) (HeaderHash    blk')
-     )
-  => TopLevelConfig blk -> TopLevelConfig blk'
-castTopLevelConfig TopLevelConfig{..} = TopLevelConfig{
-      topLevelConfigProtocol    = coerce topLevelConfigProtocol
-    , topLevelConfigLedger      = topLevelConfigLedger
-    , topLevelConfigBlock       = coerce topLevelConfigBlock
-    , topLevelConfigCodec       = coerce topLevelConfigCodec
-    , topLevelConfigStorage     = coerce topLevelConfigStorage
-    , topLevelConfigCheckpoints = coerce topLevelConfigCheckpoints
-    }
 
 castCheckpointsMap ::
      Coercible (HeaderHash blk) (HeaderHash blk')

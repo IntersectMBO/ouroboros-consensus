@@ -14,4 +14,4 @@ if ! command -v "$fdcmd" &> /dev/null; then
     fi
 fi
 
-$fdcmd --full-path "$(pwd)/(ouroboros-consensus|sop-extras|strict-sop-core)" -e cabal -x cabal-gild -i {} -o {}
+$fdcmd --full-path "$(pwd)/(ouroboros-consensus|sop-extras|strict-sop-core|resource-registry|nf-vars)" -e cabal -x cabal-gild -i {} -o {}

@@ -23,12 +23,10 @@ module Ouroboros.Consensus.Protocol.PBFT.State (
   , append
   , empty
     -- * Queries
-  , countSignatures
   , countSignedBy
   , lastSignedSlot
     -- * Conversion
   , fromList
-  , toList
     -- * Serialization
   , decodePBftState
   , encodePBftState
@@ -164,12 +162,6 @@ deriving instance PBftCrypto c => NoThunks (PBftSigner c)
   Queries
 -------------------------------------------------------------------------------}
 
--- | Number of signatures in the window
---
--- This will be equal to the specified window size, unless near genesis
-countSignatures :: PBftState c -> Word64
-countSignatures PBftState{..} = size inWindow
-
 -- | The number of blocks signed by the specified genesis key
 --
 -- This only considers the signatures within the window, not in the pre-window;
@@ -248,9 +240,6 @@ decrementKey = Map.alter dec
 {-------------------------------------------------------------------------------
   Conversion
 -------------------------------------------------------------------------------}
-
-toList :: PBftState c -> [PBftSigner c]
-toList = Foldable.toList . inWindow
 
 -- | Note: we are not checking the invariants because we don't want to require
 -- the 'WindowSize' to be in the context, see #2383. When assertions are

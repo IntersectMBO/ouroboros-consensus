@@ -102,7 +102,6 @@ library
     Ouroboros.Consensus.HardFork.Combinator.AcrossEras
     Ouroboros.Consensus.HardFork.Combinator.Basics
     Ouroboros.Consensus.HardFork.Combinator.Block
-    Ouroboros.Consensus.HardFork.Combinator.Compat
     Ouroboros.Consensus.HardFork.Combinator.Condense
     Ouroboros.Consensus.HardFork.Combinator.Degenerate
     Ouroboros.Consensus.HardFork.Combinator.Embed.Binary
@@ -253,17 +252,11 @@ library
     Ouroboros.Consensus.Util.EarlyExit
     Ouroboros.Consensus.Util.Enclose
     Ouroboros.Consensus.Util.FileLock
-    Ouroboros.Consensus.Util.HList
     Ouroboros.Consensus.Util.IOLike
     Ouroboros.Consensus.Util.LeakyBucket
-    Ouroboros.Consensus.Util.MonadSTM.NormalForm
     Ouroboros.Consensus.Util.MonadSTM.RAWLock
-    Ouroboros.Consensus.Util.MonadSTM.StrictSVar
-    Ouroboros.Consensus.Util.NormalForm.StrictMVar
-    Ouroboros.Consensus.Util.NormalForm.StrictTVar
     Ouroboros.Consensus.Util.Orphans
     Ouroboros.Consensus.Util.RedundantConstraints
-    Ouroboros.Consensus.Util.ResourceRegistry
     Ouroboros.Consensus.Util.STM
     Ouroboros.Consensus.Util.Time
     Ouroboros.Consensus.Util.Versioned
@@ -289,6 +282,7 @@ library
     io-classes ^>=1.5,
     measures,
     mtl,
+    nf-vars ^>=0.1,
     nothunks ^>=0.1.5,
     ouroboros-network-api ^>=0.7.3,
     ouroboros-network-mock ^>=0.1,
@@ -297,15 +291,14 @@ library
     psqueues ^>=0.2.3,
     quiet ^>=0.2,
     reflection,
+    resource-registry ^>=0.1,
     semialign >=1.1,
     serialise ^>=0.2,
     si-timers ^>=1.5,
     sop-core ^>=0.5,
     sop-extras ^>=0.2,
     streaming,
-    strict-checked-vars ^>=0.2,
     strict-sop-core ^>=0.1,
-    strict-stm ^>=1.5,
     text,
     these ^>=1.2,
     time,
@@ -324,16 +317,16 @@ library unstable-consensus-testlib
   visibility: public
   hs-source-dirs: src/unstable-consensus-testlib
   exposed-modules:
-    Test.Ouroboros.Consensus.ChainGenerator.Adversarial
-    Test.Ouroboros.Consensus.ChainGenerator.BitVector
-    Test.Ouroboros.Consensus.ChainGenerator.Counting
-    Test.Ouroboros.Consensus.ChainGenerator.Honest
-    Test.Ouroboros.Consensus.ChainGenerator.Params
-    Test.Ouroboros.Consensus.ChainGenerator.RaceIterator
-    Test.Ouroboros.Consensus.ChainGenerator.Slot
-    Test.Ouroboros.Consensus.ChainGenerator.Some
-    Test.Ouroboros.Consensus.DiffusionPipelining
-    Test.Ouroboros.Consensus.Protocol
+    Test.Consensus.ChainGenerator.Adversarial
+    Test.Consensus.ChainGenerator.BitVector
+    Test.Consensus.ChainGenerator.Counting
+    Test.Consensus.ChainGenerator.Honest
+    Test.Consensus.ChainGenerator.Params
+    Test.Consensus.ChainGenerator.RaceIterator
+    Test.Consensus.ChainGenerator.Slot
+    Test.Consensus.ChainGenerator.Some
+    Test.Consensus.DiffusionPipelining
+    Test.Consensus.Protocol
     Test.QuickCheck.Extras
     Test.Util.BoolProps
     Test.Util.ChainDB
@@ -353,7 +346,6 @@ library unstable-consensus-testlib
     Test.Util.Orphans.SignableRepresentation
     Test.Util.Orphans.ToExpr
     Test.Util.Paths
-    Test.Util.QSM
     Test.Util.QuickCheck
     Test.Util.Range
     Test.Util.RefEnv
@@ -400,6 +392,7 @@ library unstable-consensus-testlib
     io-classes,
     io-sim,
     mtl,
+    nf-vars,
     nothunks,
     optparse-applicative,
     ouroboros-consensus,
@@ -410,11 +403,11 @@ library unstable-consensus-testlib
     quickcheck-state-machine:no-vendored-treediff ^>=0.9,
     quiet,
     random,
+    resource-registry,
     serialise,
     si-timers,
     sop-core,
     sop-extras,
-    strict-checked-vars,
     strict-sop-core,
     tasty,
     tasty-golden,
@@ -523,8 +516,6 @@ test-suite consensus-test
     Test.Consensus.MiniProtocol.BlockFetch.Client
     Test.Consensus.MiniProtocol.ChainSync.Client
     Test.Consensus.MiniProtocol.LocalStateQuery.Server
-    Test.Consensus.ResourceRegistry
-    Test.Consensus.Util.MonadSTM.NormalForm
     Test.Consensus.Util.MonadSTM.RAWLock
     Test.Consensus.Util.Versioned
 
@@ -541,7 +532,6 @@ test-suite consensus-test
     contra-tracer,
     deepseq,
     fs-api ^>=0.2.0.1,
-    generics-sop,
     hashable,
     io-classes,
     io-sim,
@@ -552,9 +542,9 @@ test-suite consensus-test
     ouroboros-network-api,
     ouroboros-network-mock,
     ouroboros-network-protocols:{ouroboros-network-protocols, testlib},
-    quickcheck-state-machine:no-vendored-treediff,
     quiet,
     random,
+    resource-registry,
     serialise,
     si-timers,
     sop-core,
@@ -564,7 +554,6 @@ test-suite consensus-test
     tasty-hunit,
     tasty-quickcheck,
     time,
-    tree-diff,
     typed-protocols ^>=0.1.1,
     typed-protocols-examples,
     unstable-consensus-testlib,
@@ -577,12 +566,12 @@ test-suite infra-test
   main-is: Main.hs
   other-modules:
     Ouroboros.Consensus.Util.Tests
-    Test.Ouroboros.Consensus.ChainGenerator.Tests
-    Test.Ouroboros.Consensus.ChainGenerator.Tests.Adversarial
-    Test.Ouroboros.Consensus.ChainGenerator.Tests.BitVector
-    Test.Ouroboros.Consensus.ChainGenerator.Tests.Counting
-    Test.Ouroboros.Consensus.ChainGenerator.Tests.Honest
-    Test.Ouroboros.Consensus.Util.LeakyBucket.Tests
+    Test.Consensus.ChainGenerator.Tests
+    Test.Consensus.ChainGenerator.Tests.Adversarial
+    Test.Consensus.ChainGenerator.Tests.BitVector
+    Test.Consensus.ChainGenerator.Tests.Counting
+    Test.Consensus.ChainGenerator.Tests.Honest
+    Test.Consensus.Util.LeakyBucket.Tests
     Test.Util.ChainUpdates.Tests
     Test.Util.Schedule.Tests
     Test.Util.Split.Tests
@@ -606,33 +595,33 @@ test-suite storage-test
   hs-source-dirs: test/storage-test
   main-is: Main.hs
   other-modules:
-    Test.Ouroboros.Storage
-    Test.Ouroboros.Storage.ChainDB
-    Test.Ouroboros.Storage.ChainDB.FollowerPromptness
-    Test.Ouroboros.Storage.ChainDB.GcSchedule
-    Test.Ouroboros.Storage.ChainDB.Iterator
-    Test.Ouroboros.Storage.ChainDB.Model
-    Test.Ouroboros.Storage.ChainDB.Model.Test
-    Test.Ouroboros.Storage.ChainDB.Paths
-    Test.Ouroboros.Storage.ChainDB.StateMachine
-    Test.Ouroboros.Storage.ChainDB.StateMachine.Utils.RunOnRepl
-    Test.Ouroboros.Storage.ChainDB.Unit
-    Test.Ouroboros.Storage.ImmutableDB
-    Test.Ouroboros.Storage.ImmutableDB.Mock
-    Test.Ouroboros.Storage.ImmutableDB.Model
-    Test.Ouroboros.Storage.ImmutableDB.Primary
-    Test.Ouroboros.Storage.ImmutableDB.StateMachine
-    Test.Ouroboros.Storage.LedgerDB
-    Test.Ouroboros.Storage.LedgerDB.DiskPolicy
-    Test.Ouroboros.Storage.LedgerDB.InMemory
-    Test.Ouroboros.Storage.LedgerDB.OnDisk
-    Test.Ouroboros.Storage.LedgerDB.OrphanArbitrary
-    Test.Ouroboros.Storage.Orphans
-    Test.Ouroboros.Storage.TestBlock
-    Test.Ouroboros.Storage.VolatileDB
-    Test.Ouroboros.Storage.VolatileDB.Mock
-    Test.Ouroboros.Storage.VolatileDB.Model
-    Test.Ouroboros.Storage.VolatileDB.StateMachine
+    Test.Consensus.Storage
+    Test.Consensus.Storage.ChainDB
+    Test.Consensus.Storage.ChainDB.FollowerPromptness
+    Test.Consensus.Storage.ChainDB.GcSchedule
+    Test.Consensus.Storage.ChainDB.Iterator
+    Test.Consensus.Storage.ChainDB.Model
+    Test.Consensus.Storage.ChainDB.Model.Test
+    Test.Consensus.Storage.ChainDB.Paths
+    Test.Consensus.Storage.ChainDB.StateMachine
+    Test.Consensus.Storage.ChainDB.StateMachine.Utils.RunOnRepl
+    Test.Consensus.Storage.ChainDB.Unit
+    Test.Consensus.Storage.ImmutableDB
+    Test.Consensus.Storage.ImmutableDB.Mock
+    Test.Consensus.Storage.ImmutableDB.Model
+    Test.Consensus.Storage.ImmutableDB.Primary
+    Test.Consensus.Storage.ImmutableDB.StateMachine
+    Test.Consensus.Storage.LedgerDB
+    Test.Consensus.Storage.LedgerDB.DiskPolicy
+    Test.Consensus.Storage.LedgerDB.InMemory
+    Test.Consensus.Storage.LedgerDB.OnDisk
+    Test.Consensus.Storage.LedgerDB.OrphanArbitrary
+    Test.Consensus.Storage.Orphans
+    Test.Consensus.Storage.TestBlock
+    Test.Consensus.Storage.VolatileDB
+    Test.Consensus.Storage.VolatileDB.Mock
+    Test.Consensus.Storage.VolatileDB.Model
+    Test.Consensus.Storage.VolatileDB.StateMachine
 
   build-depends:
     QuickCheck,
@@ -656,9 +645,8 @@ test-suite storage-test
     ouroboros-consensus,
     ouroboros-network-api,
     ouroboros-network-mock,
-    pretty-show,
     quickcheck-state-machine:no-vendored-treediff ^>=0.9,
-    random,
+    resource-registry,
     serialise,
     tasty,
     tasty-hunit,
@@ -716,6 +704,7 @@ benchmark ChainSync-client-bench
     ouroboros-consensus,
     ouroboros-network-api,
     ouroboros-network-protocols,
+    resource-registry,
     time,
     typed-protocols-examples,
     unstable-consensus-testlib,
@@ -727,7 +716,6 @@ test-suite doctest
   type: exitcode-stdio-1.0
   hs-source-dirs: test
   default-language: Haskell2010
-  ghc-options: -Wno-unused-packages
   build-depends:
     base,
     latex-svg-image,

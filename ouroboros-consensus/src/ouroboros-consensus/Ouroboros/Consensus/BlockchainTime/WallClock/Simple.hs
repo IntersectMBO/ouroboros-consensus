@@ -10,6 +10,7 @@ module Ouroboros.Consensus.BlockchainTime.WallClock.Simple (
   ) where
 
 import           Control.Monad
+import           Control.ResourceRegistry
 import           Data.Bifunctor
 import           Data.Fixed (divMod')
 import           Data.Time (NominalDiffTime)
@@ -19,7 +20,6 @@ import           Ouroboros.Consensus.BlockchainTime.API
 import           Ouroboros.Consensus.BlockchainTime.WallClock.Types
 import           Ouroboros.Consensus.BlockchainTime.WallClock.Util
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.Time
 
 -- | Real blockchain time

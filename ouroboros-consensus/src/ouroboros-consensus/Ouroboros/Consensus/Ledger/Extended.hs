@@ -9,7 +9,6 @@
 {-# LANGUAGE StandaloneDeriving    #-}
 {-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE TypeFamilies          #-}
-{-# LANGUAGE TypeOperators         #-}
 {-# LANGUAGE UndecidableInstances  #-}
 
 module Ouroboros.Consensus.Ledger.Extended (
@@ -22,8 +21,6 @@ module Ouroboros.Consensus.Ledger.Extended (
   , decodeExtLedgerState
   , encodeDiskExtLedgerState
   , encodeExtLedgerState
-    -- * Casts
-  , castExtLedgerState
     -- * Type family instances
   , Ticked (..)
   ) where
@@ -31,7 +28,6 @@ module Ouroboros.Consensus.Ledger.Extended (
 import           Codec.CBOR.Decoding (Decoder, decodeListLenOf)
 import           Codec.CBOR.Encoding (Encoding, encodeListLen)
 import           Control.Monad.Except
-import           Data.Coerce
 import           Data.Functor ((<&>))
 import           Data.Proxy
 import           Data.Typeable
@@ -236,20 +232,3 @@ decodeDiskExtLedgerState cfg =
     (decodeDisk cfg)
     (decodeDisk cfg)
     (decodeDisk cfg)
-
-{-------------------------------------------------------------------------------
-  Casts
--------------------------------------------------------------------------------}
-
-castExtLedgerState ::
-     ( Coercible (LedgerState blk)
-                 (LedgerState blk')
-     , Coercible (ChainDepState (BlockProtocol blk))
-                 (ChainDepState (BlockProtocol blk'))
-     , TipInfo blk ~ TipInfo blk'
-     )
-  => ExtLedgerState blk -> ExtLedgerState blk'
-castExtLedgerState ExtLedgerState{..} = ExtLedgerState {
-      ledgerState = coerce ledgerState
-    , headerState = castHeaderState headerState
-    }

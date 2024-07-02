@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
@@ -174,7 +175,7 @@ tick :: CanHardFork xs
      -> SlotNo
      -> HardForkChainDepState xs
      -> Ticked (HardForkChainDepState xs)
-tick cfg@HardForkConsensusConfig{..}
+tick cfg
      (HardForkLedgerView transition ledgerView)
      slot
      chainDepState = TickedHardForkChainDepState {
@@ -187,6 +188,10 @@ tick cfg@HardForkConsensusConfig{..}
            chainDepState
     }
   where
+    HardForkConsensusConfig{
+        hardForkConsensusConfigShape
+      , hardForkConsensusConfigPerEra
+      } = cfg
     cfgs = getPerEraConsensusConfig hardForkConsensusConfigPerEra
     ei   = State.epochInfoPrecomputedTransitionInfo
              hardForkConsensusConfigShape
@@ -232,7 +237,7 @@ check :: forall xs. (CanHardFork xs, HasCallStack)
 check HardForkConsensusConfig{..}
       (SomeErasCanBeLeader canBeLeader)
       slot
-      (TickedHardForkChainDepState chainDepState ei) =
+      thfcds =
     undistrib $
       hczipWith3
         proxySingle
@@ -241,6 +246,11 @@ check HardForkConsensusConfig{..}
         (OptNP.toNP canBeLeader)
         (State.tip chainDepState)
   where
+    TickedHardForkChainDepState {
+        tickedHardForkChainDepStatePerEra = chainDepState
+      , tickedHardForkChainDepStateEpochInfo = ei
+      } = thfcds
+
     cfgs = getPerEraConsensusConfig hardForkConsensusConfigPerEra
 
     checkOne ::

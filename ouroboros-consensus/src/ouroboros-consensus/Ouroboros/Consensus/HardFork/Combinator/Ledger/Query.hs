@@ -27,7 +27,6 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger.Query (
   , decodeQueryHardForkResult
   , encodeQueryAnytimeResult
   , encodeQueryHardForkResult
-  , getHardForkQuery
   , hardForkQueryInfo
   ) where
 
@@ -184,28 +183,6 @@ instance All SingleEraBlock xs => SameDepIndex (BlockQuery (HardForkBlock xs)) w
       Nothing
 
 deriving instance All SingleEraBlock xs => Show (BlockQuery (HardForkBlock xs) result)
-
-getHardForkQuery :: BlockQuery (HardForkBlock xs) result
-                 -> (forall result'.
-                          result :~: HardForkQueryResult xs result'
-                       -> QueryIfCurrent xs result'
-                       -> r)
-                 -> (forall x' xs'.
-                          xs :~: x' ': xs'
-                       -> ProofNonEmpty xs'
-                       -> QueryAnytime result
-                       -> EraIndex xs
-                       -> r)
-                 -> (forall x' xs'.
-                          xs :~: x' ': xs'
-                       -> ProofNonEmpty xs'
-                       -> QueryHardFork xs result
-                       -> r)
-                 -> r
-getHardForkQuery q k1 k2 k3 = case q of
-    QueryIfCurrent qry   -> k1 Refl qry
-    QueryAnytime qry era -> k2 Refl (isNonEmpty Proxy) qry era
-    QueryHardFork qry    -> k3 Refl (isNonEmpty Proxy) qry
 
 {-------------------------------------------------------------------------------
   Current era queries

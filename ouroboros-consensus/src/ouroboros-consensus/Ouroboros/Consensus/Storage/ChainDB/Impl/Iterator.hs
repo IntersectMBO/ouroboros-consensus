@@ -21,6 +21,7 @@ import           Control.Monad (unless, when)
 import           Control.Monad.Except (ExceptT (..), catchError, runExceptT,
                      throwError, withExceptT)
 import           Control.Monad.Trans.Class (lift)
+import           Control.ResourceRegistry (ResourceRegistry)
 import           Control.Tracer
 import           Data.Functor (($>))
 import           Data.List.NonEmpty (NonEmpty)
@@ -44,7 +45,6 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceRegistry)
 
 -- | Stream blocks
 --

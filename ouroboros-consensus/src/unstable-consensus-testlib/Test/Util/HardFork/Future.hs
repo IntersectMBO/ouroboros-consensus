@@ -7,7 +7,6 @@ module Test.Util.HardFork.Future (
   , Future (..)
   , futureEpochInFirstEra
   , futureFirstEpochSize
-  , futureFirstSlotLength
   , futureSlotLengths
   , futureSlotToEpoch
   , futureSlotToTime
@@ -50,12 +49,6 @@ data Future =
 -- | 'Future' with only one era
 singleEraFuture :: SlotLength -> EpochSize -> Future
 singleEraFuture = EraFinal
-
--- | 'SlotLength' of the first era
-futureFirstSlotLength :: Future -> SlotLength
-futureFirstSlotLength future = case future of
-    EraCons  slotLength _epochSize _eraSize _future -> slotLength
-    EraFinal slotLength _epochSize                  -> slotLength
 
 -- | 'EpochSize' of the first era
 futureFirstEpochSize :: Future -> EpochSize

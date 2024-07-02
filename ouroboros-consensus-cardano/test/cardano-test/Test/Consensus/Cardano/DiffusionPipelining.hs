@@ -31,7 +31,7 @@ import           Ouroboros.Consensus.Shelley.Node.DiffusionPipelining
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Test.Cardano.Ledger.Binary.Arbitrary ()
 import           Test.Cardano.Ledger.Core.Arbitrary ()
-import           Test.Ouroboros.Consensus.DiffusionPipelining
+import           Test.Consensus.DiffusionPipelining
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 
