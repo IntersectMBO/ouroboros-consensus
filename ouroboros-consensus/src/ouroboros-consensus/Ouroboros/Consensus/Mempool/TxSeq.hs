@@ -58,11 +58,11 @@ zeroTicketNo = TicketNo 0
 -- their size.
 --
 data TxTicket sz tx = TxTicket
-  { txTicketTx            :: !tx
+  { txTicketTx   :: !tx
     -- ^ The transaction associated with this ticket.
-  , txTicketNo            :: !TicketNo
+  , txTicketNo   :: !TicketNo
     -- ^ The ticket number.
-  , txTicketSize          :: !sz
+  , txTicketSize :: !sz
     -- ^ The possibly-multi-dimensional size of the transaction ('txTicketTx')
     -- associated with this ticket.
   } deriving (Eq, Show, Generic, NoThunks)
@@ -104,10 +104,10 @@ instance Measure sz => Foldable (TxSeq sz) where
 -- instance.
 --
 data TxSeqMeasure sz = TxSeqMeasure {
-       mCount         :: !Int,
-       mMinTicket     :: !TicketNo,
-       mMaxTicket     :: !TicketNo,
-       mSizeCumu      :: !sz
+       mCount     :: !Int,
+       mMinTicket :: !TicketNo,
+       mMaxTicket :: !TicketNo,
+       mSizeCumu  :: !sz
      }
   deriving Show
 

@@ -47,14 +47,13 @@ import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.HardFork.Combinator.Info
 import           Ouroboros.Consensus.HardFork.Combinator.InjectTxs
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger (Ticked (..))
+import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
+                     (WrapPartialLedgerConfig (..))
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util (ShowProxy)
-
-import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
-                     (WrapPartialLedgerConfig (..))
 
 data HardForkApplyTxErr xs =
     -- | Validation error from one of the eras

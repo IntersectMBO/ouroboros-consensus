@@ -69,7 +69,7 @@ data InternalState blk = IS {
       --
       -- See the note on 'MempoolCapacity' about the mempool possibly being
       -- over-capacity.
-      isTxs :: !(TxSeq (TxMeasure blk) (Validated (GenTx blk)))
+      isTxs          :: !(TxSeq (TxMeasure blk) (Validated (GenTx blk)))
 
       -- | The cached IDs of transactions currently in the mempool.
       --
@@ -77,7 +77,7 @@ data InternalState blk = IS {
       -- 'MempoolSnapshot' (see 'snapshotHasTx').
       --
       -- This should always be in-sync with the transactions in 'isTxs'.
-    , isTxIds :: !(Set (GenTxId blk))
+    , isTxIds        :: !(Set (GenTxId blk))
 
       -- | The cached ledger state after applying the transactions in the
       -- Mempool against the chain's ledger state. New transactions will be
@@ -85,12 +85,12 @@ data InternalState blk = IS {
       --
       -- INVARIANT: 'isLedgerState' is the ledger resulting from applying the
       -- transactions in 'isTxs' against the ledger identified 'isTip' as tip.
-    , isLedgerState :: !(TickedLedgerState blk)
+    , isLedgerState  :: !(TickedLedgerState blk)
 
       -- | The tip of the chain that 'isTxs' was validated against
       --
       -- This comes from the underlying ledger state ('tickedLedgerState')
-    , isTip :: !(ChainHash blk)
+    , isTip          :: !(ChainHash blk)
 
       -- | The most recent 'SlotNo' that 'isTxs' was validated against
       --
@@ -99,7 +99,7 @@ data InternalState blk = IS {
       -- slot, see 'tickLedgerState') and 'isSlotNo' will be set to @succ s@,
       -- which is different from the slot of the original ledger state, which
       -- will remain in 'isTip'.
-    , isSlotNo :: !SlotNo
+    , isSlotNo       :: !SlotNo
 
       -- | The mempool 'TicketNo' counter.
       --
@@ -108,7 +108,7 @@ data InternalState blk = IS {
 
       -- | The capacity of a block according to the ledger state the mempool
       -- was most recently synchronized with.
-    , isCapacity :: !(MempoolCapacity blk)
+    , isCapacity     :: !(MempoolCapacity blk)
     }
   deriving (Generic)
 

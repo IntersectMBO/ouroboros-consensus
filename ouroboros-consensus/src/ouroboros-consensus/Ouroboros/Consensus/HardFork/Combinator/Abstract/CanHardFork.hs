@@ -8,7 +8,6 @@
 
 module Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork (CanHardFork (..)) where
 
-import           NoThunks.Class (NoThunks)
 import           Data.Measure (BoundedMeasure)
 import           Data.SOP.Constraint
 import           Data.SOP.Functors (Product2)
@@ -19,6 +18,7 @@ import qualified Data.SOP.Strict as SOP
 import           Data.SOP.Tails (Tails)
 import qualified Data.SOP.Tails as Tails
 import           Data.Typeable
+import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
 import           Ouroboros.Consensus.HardFork.Combinator.InjectTxs
 import           Ouroboros.Consensus.HardFork.Combinator.Protocol.ChainSel

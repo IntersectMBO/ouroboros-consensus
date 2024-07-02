@@ -27,8 +27,7 @@ import           Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
                      (TraceLocalTxSubmissionServerEvent,
                      localTxSubmissionServer)
 import           Ouroboros.Consensus.Node.ProtocolInfo
-import           Ouroboros.Consensus.Shelley.Ledger.Mempool
-                     (AlonzoMeasure (..),
+import           Ouroboros.Consensus.Shelley.Ledger.Mempool (AlonzoMeasure (..),
                      ConwayMeasure (..))
 import           Ouroboros.Network.Protocol.LocalTxSubmission.Client
                      (SubmitResult, localTxSubmissionClientPeer)
