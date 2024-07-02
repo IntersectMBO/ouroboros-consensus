@@ -268,7 +268,7 @@ data ChainDbEnv m blk = CDB
     -- The number of blocks from the future is bounded by the number of
     -- upstream peers multiplied by the max clock skew divided by the slot
     -- length.
-  , cdbLoE             :: LoE (m (AnchoredFragment (Header blk)))
+  , cdbLoE             :: !(LoE (m (AnchoredFragment (Header blk))))
     -- ^ Configure the Limit on Eagerness. If this is 'LoEEnabled', it contains
     -- an action that returns the LoE fragment, which indicates the latest rollback
     -- point, i.e. we are not allowed to select a chain from which we could not

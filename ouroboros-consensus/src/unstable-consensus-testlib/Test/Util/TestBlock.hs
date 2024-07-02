@@ -550,7 +550,7 @@ data TestBlockLedgerConfig = TestBlockLedgerConfig {
   tblcHardForkParams :: HardFork.EraParams,
   -- | `Nothing` means an infinite forecast range.
   -- Instead of SlotNo, it should be something like "SlotRange"
-  tblcForecastRange  :: Maybe SlotNo
+  tblcForecastRange  :: !(Maybe SlotNo) -- StrictMaybe?
 }
   deriving (Show, Eq, Generic)
   deriving anyclass (NoThunks)

@@ -39,7 +39,7 @@ defaultCfg secParam (ForecastRange sfor) sgen = TopLevelConfig {
       , (CoreId (CoreNodeId 1), VerKeyMockDSIGN 1)
       ]
     }
-  , topLevelConfigLedger      = TestBlockLedgerConfig eraParams (Just $ fromIntegral sfor)
+  , topLevelConfigLedger      = TestBlockLedgerConfig eraParams (Just $! fromIntegral sfor)
   , topLevelConfigBlock       = TestBlockConfig numCoreNodes
   , topLevelConfigCodec       = TestBlockCodecConfig
   , topLevelConfigStorage     = TestBlockStorageConfig
