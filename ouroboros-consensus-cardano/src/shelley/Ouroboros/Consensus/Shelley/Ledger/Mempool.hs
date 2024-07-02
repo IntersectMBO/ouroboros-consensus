@@ -417,7 +417,7 @@ blockTxCapacityConway _cfg st =
       , refScriptsSize =
           -- TODO use maxRefScriptSizePerBlock from
           -- https://github.com/IntersectMBO/cardano-ledger/pull/4450
-          SizeInBytes $ 2560 * 1024 -- 2.5 MB
+          SizeInBytes $ 5 * 512 * 1024 -- 2.5 mebibytes
       }
 
 instance ( ShelleyCompatible p (ConwayEra c)
