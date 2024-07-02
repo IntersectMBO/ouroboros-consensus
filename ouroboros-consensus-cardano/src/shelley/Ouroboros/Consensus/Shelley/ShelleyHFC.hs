@@ -162,8 +162,8 @@ shelleyTransition ShelleyPartialLedgerConfig{..}
          return newPParamsEpochNo
 
 instance
-  ( ShelleyCompatible proto era,
-    LedgerSupportsProtocol (ShelleyBlock proto era)
+  ( ShelleyCompatible proto era
+  , LedgerSupportsProtocol (ShelleyBlock proto era)
   ) => SingleEraBlock (ShelleyBlock proto era) where
   singleEraTransition pcfg _eraParams _eraStart ledgerState =
       -- TODO: We might be evaluating 'singleEraTransition' more than once when
