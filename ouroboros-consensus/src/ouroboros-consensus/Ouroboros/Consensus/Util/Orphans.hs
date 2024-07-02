@@ -90,5 +90,7 @@ deriving via OnlyCheckWhnfNamed "SomeHasFS" (SomeHasFS m)
   ouroboros-network
 -------------------------------------------------------------------------------}
 
+-- TODO https://github.com/IntersectMBO/ouroboros-network/pull/4903 will
+-- supplant these
 deriving newtype instance Measure.Measure        SizeInBytes
 deriving newtype instance Measure.BoundedMeasure SizeInBytes
