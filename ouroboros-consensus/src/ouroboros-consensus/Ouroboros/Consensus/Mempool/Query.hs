@@ -19,7 +19,7 @@ pureGetSnapshotFor ::
      )
   => LedgerConfig blk
   -> ForgeLedgerState blk
-  -> MempoolCapacityBytesOverride
+  -> TxOverrides blk
   -> InternalState blk
   -> MempoolSnapshot blk
 pureGetSnapshotFor cfg blockLedgerState capacityOverride =

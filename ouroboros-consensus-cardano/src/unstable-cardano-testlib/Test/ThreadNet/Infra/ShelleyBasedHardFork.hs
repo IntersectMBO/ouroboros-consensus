@@ -1,13 +1,16 @@
-{-# LANGUAGE ConstraintKinds      #-}
-{-# LANGUAGE DataKinds            #-}
-{-# LANGUAGE FlexibleContexts     #-}
-{-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE NamedFieldPuns       #-}
-{-# LANGUAGE PatternSynonyms      #-}
-{-# LANGUAGE ScopedTypeVariables  #-}
-{-# LANGUAGE TypeFamilies         #-}
-{-# LANGUAGE TypeOperators        #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ConstraintKinds       #-}
+{-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE LambdaCase            #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NamedFieldPuns        #-}
+{-# LANGUAGE PatternSynonyms       #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
+{-# LANGUAGE TypeApplications      #-}
+{-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE TypeOperators         #-}
+{-# LANGUAGE UndecidableInstances  #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -30,6 +33,8 @@ import qualified Cardano.Ledger.Era as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Control.Monad.Except (runExcept)
 import qualified Data.Map.Strict as Map
+import qualified Data.Measure as Measure
+import           Data.Proxy (Proxy (Proxy))
 import           Data.SOP.BasicFunctors
 import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.Strict
@@ -47,9 +52,9 @@ import           Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import qualified Ouroboros.Consensus.HardFork.Combinator.State.Types as HFC
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
+import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
-import           Ouroboros.Consensus.Mempool (TxLimits)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Node
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -60,6 +65,7 @@ import           Ouroboros.Consensus.Shelley.Node
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util (eitherToMaybe)
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
+import           Ouroboros.Network.SizeInBytes (SizeInBytes)
 import           Test.ThreadNet.TxGen
 import           Test.ThreadNet.TxGen.Shelley ()
 
@@ -136,7 +142,25 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
   , PraosCrypto (EraCrypto era1)
   , proto1 ~ TPraos (EraCrypto era1)
   , proto1 ~ proto2
+  , InjMeasure (TxMeasure (ShelleyBlock proto1 era1)) (TxMeasure (ShelleyBlock proto2 era2))
   )
+
+class InjMeasure a b where injMeasure :: a -> b
+
+instance InjMeasure SizeInBytes SizeInBytes where injMeasure = id
+
+instance InjMeasure SizeInBytes AlonzoMeasure where
+  injMeasure x = AlonzoMeasure x Measure.zero
+
+instance InjMeasure SizeInBytes ConwayMeasure where
+  injMeasure x = ConwayMeasure (AlonzoMeasure x Measure.zero) Measure.zero
+
+instance InjMeasure AlonzoMeasure AlonzoMeasure where injMeasure = id
+
+instance InjMeasure AlonzoMeasure ConwayMeasure where
+  injMeasure x = ConwayMeasure x Measure.zero
+
+instance InjMeasure ConwayMeasure ConwayMeasure where injMeasure = id
 
 instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
       => SerialiseHFC (ShelleyBasedHardForkEras proto1 era1 proto2 era2)
@@ -144,6 +168,14 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
 
 instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
       => CanHardFork (ShelleyBasedHardForkEras proto1 era1 proto2 era2) where
+  type HardForkTxMeasure (ShelleyBasedHardForkEras proto1 era1 proto2 era2) = TxMeasure (ShelleyBlock proto2 era2)
+
+  hardForkMeasureTx = \case
+      Z x     -> injMeasure $ unwrapTxMeasure x
+      S (Z x) -> unwrapTxMeasure x
+
+  hardForkTxMeasureBytes _prx = txMeasureBytes (Proxy @(ShelleyBlock proto2 era2))
+
   hardForkEraTranslation = EraTranslation {
         translateLedgerState   = PCons translateLedgerState                PNil
       , translateChainDepState = PCons translateChainDepStateAcrossShelley PNil

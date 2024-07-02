@@ -52,6 +52,7 @@ import qualified Data.List as List
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import qualified Data.Measure as Measure
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Typeable as Typeable
@@ -648,7 +649,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
                 -- a new tx (e.g. added by TxSubmission) might render a crucial
                 -- transaction valid
                 mempChanged = do
-                  let getMemp = (map snd . snapshotTxs) <$> getSnapshot mempool
+                  let getMemp = (map txTicketNo . snapshotTxs) <$> getSnapshot mempool
                   (mempFp', _) <- atomically $ blockUntilChanged id mempFp getMemp
                   pure (slot, ledger, mempFp')
 
@@ -1003,7 +1004,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
                     InFuture.defaultClockSkew
                     (OracularClock.finiteSystemTime clock)
             , blockFetchSize          = estimateBlockSize
-            , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
+            , mempoolCapacityOverride = mkOverrides Measure.zero
             , keepAliveRng            = kaRng
             , peerSharingRng          = psRng
             , miniProtocolParameters  = MiniProtocolParameters {
@@ -1637,6 +1638,7 @@ type TracingConstraints blk =
   , Show (ForgeStateInfo blk)
   , Show (ForgeStateUpdateError blk)
   , Show (CannotForge blk)
+  , Show (TxMeasure blk)
   , HasNestedContent Header blk
   )
 

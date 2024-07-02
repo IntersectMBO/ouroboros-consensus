@@ -40,6 +40,7 @@ import           Control.Tracer (Tracer (..), nullTracer, traceWith)
 import           Data.Int (Int64)
 import           Data.List (intercalate)
 import qualified Data.Map.Strict as Map
+import qualified Data.Measure as Measure
 import           Data.Singletons
 import           Data.Word (Word16, Word64)
 import qualified Debug.Trace as Debug
@@ -764,10 +765,8 @@ reproMempoolForge numBlks env = do
         Mempool.getCurrentLedgerState = ledgerState <$> IOLike.readTVar ref
       }
       lCfg
-      -- one megabyte should generously accomodate two blocks' worth of txs
-      (Mempool.MempoolCapacityBytesOverride $ Mempool.MempoolCapacityBytes $ 2^(20 :: Int))
+      (Mempool.mkOverrides Measure.maxBound)
       nullTracer
-      LedgerSupportsMempool.txInBlockSize
 
     void $ processAll db registry GetBlock startFrom limit Nothing (process howManyBlocks ref mempool)
     pure Nothing

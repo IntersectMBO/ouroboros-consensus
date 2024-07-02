@@ -7,6 +7,7 @@ module Data.SOP.Functors (
     Flip (..)
   , K2 (..)
   , Product2 (..)
+  , fst2
   , snd2
   ) where
 
@@ -19,6 +20,9 @@ type Product2 :: (Type -> Type -> Type)
               -> Type -> Type -> Type
 data Product2 f g x y = Pair2 (f x y) (g x y)
   deriving (Eq, Generic, Show)
+
+fst2 :: Product2 f g x y -> f x y
+fst2 (Pair2 f _) = f
 
 snd2 :: Product2 f g x y -> g x y
 snd2 (Pair2 _ g) = g

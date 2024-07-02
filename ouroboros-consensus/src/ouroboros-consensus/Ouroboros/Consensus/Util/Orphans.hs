@@ -22,11 +22,13 @@ import           Data.Bimap (Bimap)
 import qualified Data.Bimap as Bimap
 import           Data.IntPSQ (IntPSQ)
 import qualified Data.IntPSQ as PSQ
+import qualified Data.Measure as Measure
 import           Data.Monoid
 import           Data.SOP.BasicFunctors
 import           NoThunks.Class (InspectHeap (..), InspectHeapNamed (..),
                      NoThunks (..), OnlyCheckWhnfNamed (..), allNoThunks,
                      noThunksInKeysAndValues)
+import           Ouroboros.Network.SizeInBytes (SizeInBytes (..))
 import           Ouroboros.Network.Util.ShowProxy
 import           System.FS.API (SomeHasFS)
 import           System.FS.API.Types (FsPath, Handle)
@@ -83,3 +85,10 @@ deriving via InspectHeapNamed "Handle" (Handle h)
     instance NoThunks (Handle h)
 deriving via OnlyCheckWhnfNamed "SomeHasFS" (SomeHasFS m)
     instance NoThunks (SomeHasFS m)
+
+{-------------------------------------------------------------------------------
+  ouroboros-network
+-------------------------------------------------------------------------------}
+
+deriving newtype instance Measure.Measure        SizeInBytes
+deriving newtype instance Measure.BoundedMeasure SizeInBytes

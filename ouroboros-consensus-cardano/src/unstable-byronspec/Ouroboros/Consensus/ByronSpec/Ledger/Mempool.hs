@@ -12,6 +12,7 @@ module Ouroboros.Consensus.ByronSpec.Ledger.Mempool (
   ) where
 
 import           Codec.Serialise
+import qualified Data.Measure as Measure
 import           GHC.Generics (Generic)
 import           NoThunks.Class (AllowThunk (..), NoThunks)
 import           Ouroboros.Consensus.ByronSpec.Ledger.Block
@@ -21,6 +22,8 @@ import qualified Ouroboros.Consensus.ByronSpec.Ledger.GenTx as GenTx
 import           Ouroboros.Consensus.ByronSpec.Ledger.Ledger
 import           Ouroboros.Consensus.ByronSpec.Ledger.Orphans ()
 import           Ouroboros.Consensus.Ledger.SupportsMempool
+import           Ouroboros.Consensus.Util.Orphans ()
+import           Ouroboros.Network.SizeInBytes (SizeInBytes)
 
 newtype instance GenTx ByronSpecBlock = ByronSpecGenTx {
       unByronSpecGenTx :: ByronSpecGenTx
@@ -51,10 +54,12 @@ instance LedgerSupportsMempool ByronSpecBlock where
         fmap fst
       $ applyTx cfg DoNotIntervene slot (forgetValidatedByronSpecGenTx vtx) st
 
-  -- Dummy values, as these are not used in practice.
-  txsMaxBytes   = const maxBound
-  txInBlockSize = const 0
-
   txForgetValidated = forgetValidatedByronSpecGenTx
 
-  txRefScriptSize _cfg _tlst _tx = 0
+instance TxLimits ByronSpecBlock where
+  type TxMeasure ByronSpecBlock = SizeInBytes
+
+  -- Dummy values, as these are not used in practice.
+  blockTxCapacity _cfg _st     = Measure.maxBound
+  txInBlockSize   _cfg _st _tx = 0
+  txMeasureBytes  _prx         = id

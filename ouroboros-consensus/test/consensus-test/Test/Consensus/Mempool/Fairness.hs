@@ -20,14 +20,13 @@ import qualified Control.Tracer as Tracer
 import           Data.Foldable (asum)
 import qualified Data.List as List
 import           Data.Void (Void, vacuous)
-import           Data.Word (Word32)
 import           Ouroboros.Consensus.Config.SecurityParam as Consensus
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Mempool
 import           Ouroboros.Consensus.Mempool (Mempool)
 import qualified Ouroboros.Consensus.Mempool as Mempool
-import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool
 import           Ouroboros.Consensus.Util.IOLike (STM, atomically, retry)
+import           Ouroboros.Network.SizeInBytes (SizeInBytes)
 import           System.Random (randomIO)
 import           Test.Consensus.Mempool.Fairness.TestBlock
 import           Test.Tasty (TestTree, testGroup)
@@ -90,9 +89,8 @@ testTxSizeFairness TestParams { mempoolMaxCapacity, smallTxSize, largeTxSize, nr
     mempool <- Mempool.openMempoolWithoutSyncThread
                    ledgerItf
                    (testBlockLedgerConfigFrom eraParams)
-                   (Mempool.mkCapacityBytesOverride mempoolMaxCapacity)
+                   (Mempool.mkOverrides mempoolMaxCapacity)
                    Tracer.nullTracer
-                   genTxSize
 
     ----------------------------------------------------------------------------
     --  Add and collect transactions
@@ -145,10 +143,10 @@ runConcurrently = Async.runConcurrently . asum . fmap Async.Concurrently
 --   added before the mempool is saturated.
 --
 data TestParams = TestParams {
-    mempoolMaxCapacity :: Word32
-  , smallTxSize        :: Word32
+    mempoolMaxCapacity :: SizeInBytes
+  , smallTxSize        :: SizeInBytes
     -- ^ Size of what we consider to be a small transaction.
-  , largeTxSize        :: Word32
+  , largeTxSize        :: SizeInBytes
     -- ^ Size of what we consider to be a large transaction.
   , nrOftxsToCollect   :: Int
     -- ^ How many added transactions we count.
@@ -168,7 +166,7 @@ data TestParams = TestParams {
 adders ::
      TestMempool
      -- ^ Mempool to which transactions will be added
-  -> Word32
+  -> SizeInBytes
      -- ^ Transaction size
   -> IO a
 adders mempool fixedTxSize = vacuous $ runConcurrently $ fmap adder [0..2]
@@ -215,5 +213,5 @@ getTxsInSnapshot :: Mempool IO TestBlock -> STM IO [Mempool.GenTx TestBlock]
 getTxsInSnapshot mempool = fmap txsInSnapshot
                          $ Mempool.getSnapshot mempool
   where
-    txsInSnapshot = fmap (Mempool.txForgetValidated . fst)
+    txsInSnapshot = fmap (Mempool.txForgetValidated . Mempool.txTicketTx)
                   . Mempool.snapshotTxs

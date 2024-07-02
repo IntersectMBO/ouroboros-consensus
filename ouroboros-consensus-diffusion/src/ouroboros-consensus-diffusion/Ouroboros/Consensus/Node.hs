@@ -41,7 +41,6 @@ module Ouroboros.Consensus.Node (
   , HardForkBlockchainTimeArgs (..)
   , LastShutDownWasClean (..)
   , LowLevelRunNodeArgs (..)
-  , MempoolCapacityBytesOverride (..)
   , NodeKernel (..)
   , NodeKernelArgs (..)
   , ProtocolInfo (..)
@@ -70,6 +69,7 @@ import           Data.Hashable (Hashable)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe, isNothing)
+import qualified Data.Measure as Measure
 import           Data.Time (NominalDiffTime)
 import           Data.Typeable (Typeable)
 import           Ouroboros.Consensus.Block
@@ -80,6 +80,7 @@ import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture,
                      ClockSkew)
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
+import           Ouroboros.Consensus.Mempool (TxOverrides, mkOverrides)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (CSJConfig (..), ChainSyncLoPBucketConfig (..))
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
@@ -313,7 +314,7 @@ data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) = StdRunNodeArgs
     -- versions to the latest " official " release (as chosen by Network and
     -- Consensus Team, with input from Node Team)
   , srnTraceChainDB                 :: Tracer m (ChainDB.TraceEvent blk)
-  , srnMaybeMempoolCapacityOverride :: Maybe MempoolCapacityBytesOverride
+  , srnMaybeMempoolCapacityOverride :: Maybe (TxOverrides blk)
     -- ^ Determine whether to use the system default mempool capacity or explicitly set
     -- capacity of the mempool.
   , srnChainSyncTimeout             :: Maybe (m NTN.ChainSyncTimeout)
@@ -738,7 +739,7 @@ mkNodeKernelArgs
       , initChainDB             = nodeInitChainDB
       , chainSyncFutureCheck
       , blockFetchSize          = estimateBlockSize
-      , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
+      , mempoolCapacityOverride = mkOverrides Measure.maxBound
       , miniProtocolParameters  = defaultMiniProtocolParameters
       , blockFetchConfiguration = Diffusion.defaultBlockFetchConfiguration bfcSalt
       , gsmArgs = GsmNodeKernelArgs {

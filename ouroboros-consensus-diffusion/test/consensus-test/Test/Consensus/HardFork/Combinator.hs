@@ -4,6 +4,7 @@
 {-# LANGUAGE DerivingVia           #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE RankNTypes            #-}
@@ -46,6 +47,7 @@ import           Ouroboros.Consensus.Protocol.LeaderSchedule
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util.Orphans ()
 import qualified Ouroboros.Network.Mock.Chain as Mock
+import           Ouroboros.Network.SizeInBytes (SizeInBytes)
 import           Quiet (Quiet (..))
 import           Test.Consensus.HardFork.Combinator.A
 import           Test.Consensus.HardFork.Combinator.B
@@ -360,6 +362,14 @@ instance TxGen TestBlock where
 type TestBlock = HardForkBlock '[BlockA, BlockB]
 
 instance CanHardFork '[BlockA, BlockB] where
+  type HardForkTxMeasure '[BlockA, BlockB] = SizeInBytes
+
+  hardForkMeasureTx = \case
+      Z x     -> unwrapTxMeasure x
+      S (Z x) -> unwrapTxMeasure x
+
+  hardForkTxMeasureBytes _ = id
+
   hardForkEraTranslation = EraTranslation {
         translateLedgerState   = PCons ledgerState_AtoB   PNil
       , translateChainDepState = PCons chainDepState_AtoB PNil

@@ -1,4 +1,6 @@
+{-# LANGUAGE BangPatterns     #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase       #-}
 
 -- | Operations that update the mempool. They are internally divided in the pure
 -- and impure sides of the operation.
@@ -12,14 +14,15 @@ import           Control.Concurrent.Class.MonadMVar (MVar, withMVar)
 import           Control.Exception (assert)
 import           Control.Tracer
 import           Data.Maybe (isJust, isNothing)
+import           Data.Measure (Measure)
+import qualified Data.Measure as Measure
 import qualified Data.Set as Set
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Mempool.API
-import           Ouroboros.Consensus.Mempool.Capacity
+import           Ouroboros.Consensus.Mempool.Capacity (TxOverrides, msSize)
 import           Ouroboros.Consensus.Mempool.Impl.Common
-import           Ouroboros.Consensus.Mempool.TxSeq (TxTicket (..))
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import           Ouroboros.Consensus.Util (whenJust)
 import           Ouroboros.Consensus.Util.IOLike hiding (withMVar)
@@ -44,16 +47,13 @@ implAddTx ::
       -- ^ The FIFO for all remote peers and local clients
   -> LedgerConfig blk
      -- ^ The configuration of the ledger.
-  -> (GenTx blk -> TxSizeInBytes)
-     -- ^ The function to calculate the size of a
-     -- transaction.
   -> Tracer m (TraceEventMempool blk)
   -> AddTxOnBehalfOf
      -- ^ Whether we're acting on behalf of a remote peer or a local client.
   -> GenTx blk
      -- ^ The transaction to add to the mempool.
   -> m (MempoolAddTxResult blk)
-implAddTx istate remoteFifo allFifo cfg txSize trcr onbehalf tx =
+implAddTx istate remoteFifo allFifo cfg trcr onbehalf tx =
     -- To ensure fair behaviour between threads that are trying to add
     -- transactions, we make them all queue in a fifo. Only the one at the head
     -- of the queue gets to actually wait for space to get freed up in the
@@ -87,7 +87,7 @@ implAddTx istate remoteFifo allFifo cfg txSize trcr onbehalf tx =
   where
     implAddTx' = do
       (result, ev) <- atomically $ do
-        outcome <- implTryAddTx istate cfg txSize
+        outcome <- implTryAddTx istate cfg
                                 (whetherToIntervene onbehalf)
                                 tx
         case outcome of
@@ -144,16 +144,13 @@ implTryAddTx ::
      -- ^ The InternalState TVar.
   -> LedgerConfig blk
      -- ^ The configuration of the ledger.
-  -> (GenTx blk -> TxSizeInBytes)
-     -- ^ The function to calculate the size of a
-     -- transaction.
   -> WhetherToIntervene
   -> GenTx blk
      -- ^ The transaction to add to the mempool.
   -> STM m (TryAddTx blk)
-implTryAddTx istate cfg txSize wti tx = do
+implTryAddTx istate cfg wti tx = do
         is <- readTVar istate
-        let outcome = pureTryAddTx cfg txSize wti tx is
+        let outcome = pureTryAddTx cfg wti tx is
         case outcome of
           TryAddTx (Just is') _ _ -> writeTVar istate is'
           _                       -> return ()
@@ -172,23 +169,14 @@ pureTryAddTx ::
      )
   => LedgerCfg (LedgerState blk)
      -- ^ The ledger configuration.
-  -> (GenTx blk -> TxSizeInBytes)
-     -- ^ The function to claculate the size of a transaction.
   -> WhetherToIntervene
   -> GenTx blk
      -- ^ The transaction to add to the mempool.
   -> InternalState blk
      -- ^ The current internal state of the mempool.
   -> TryAddTx blk
-pureTryAddTx cfg txSize wti tx is
-    -- We add the transaction if there is at least one byte free left in the
-    -- mempool, and...
-  | let curSize = msNumBytes  $ isMempoolSize is
-  , curSize < getMempoolCapacityBytes (isCapacity is)
-    -- ... if the mempool has less than 2.5 mebibytes of ref scripts.
-  , let maxTotalRefScriptSize = 5 * 512 * 1024 -- 2.5 Mebibytes
-        curTotalRefScriptSize = isTotalRefScriptSize is
-  , curTotalRefScriptSize Prelude.< maxTotalRefScriptSize
+pureTryAddTx cfg wti tx is
+  | shouldTryToAdd is (txInBlockSize cfg (isLedgerState is) tx)
   =
   case eVtx of
       -- We only extended the ValidationResult with a single transaction
@@ -217,8 +205,34 @@ pureTryAddTx cfg txSize wti tx is
   | otherwise
   = NoSpaceLeft
     where
-      (eVtx, vr) = extendVRNew cfg txSize wti tx $ validationResultFromIS is
+      (eVtx, vr) = extendVRNew cfg wti tx $ validationResultFromIS is
       is'        = internalStateFromVR vr
+
+-- | Should the mempool admit this tx?
+--
+-- There's a simple rule, but one exception to that rule. Let this transaction
+-- in if and only if the resulting mempool would not be over capacity. However,
+-- if the tx alone is too big to fit into even a block that contained no other
+-- txs, then try to add it to the mempool; it will be immediately recognized as
+-- invalid.
+shouldTryToAdd ::
+     Measure (TxMeasure blk)
+  => InternalState blk -> TxMeasure blk -> Bool
+shouldTryToAdd is tx
+  | not (tx Measure.<= cap) = True   -- let it be found invalid
+  | otherwise               =
+    go (isTxs is) (max 0 $ mult - 1)
+  where
+    MempoolCapacity {
+        mcBlockCapacity     = cap
+      , mcBlockMultiplicity = mult
+      } = isCapacity is
+
+    go !txseq = \case
+      0 -> msSize (TxSeq.toMempoolSize txseq) `Measure.plus` tx Measure.<= cap
+      n -> case txseq of
+        TxSeq.Empty -> True   -- guard above ensures 0 + tx <= cap
+        _           -> go (snd $ TxSeq.splitAfterTxSize txseq cap) (n - 1)
 
 {-------------------------------------------------------------------------------
   Remove transactions
@@ -266,7 +280,7 @@ pureRemoveTxs ::
      , ValidateEnvelope blk
      )
   => LedgerConfig blk
-  -> MempoolCapacityBytesOverride
+  -> TxOverrides blk
   -> [GenTxId blk]
   -> InternalState blk
   -> LedgerState blk
@@ -349,7 +363,7 @@ pureSyncWithLedger ::
   => InternalState blk
   -> LedgerState blk
   -> LedgerConfig blk
-  -> MempoolCapacityBytesOverride
+  -> TxOverrides blk
   -> SyncWithLedger blk
 pureSyncWithLedger istate lstate lcfg capacityOverride =
     let vr          = validateStateFor

@@ -1,12 +1,15 @@
-{-# LANGUAGE DataKinds         #-}
-{-# LANGUAGE DeriveAnyClass    #-}
-{-# LANGUAGE DeriveGeneric     #-}
-{-# LANGUAGE DerivingVia       #-}
-{-# LANGUAGE FlexibleContexts  #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE LambdaCase        #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TypeFamilies      #-}
+{-# LANGUAGE DataKinds                  #-}
+{-# LANGUAGE DeriveAnyClass             #-}
+{-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE DerivingVia                #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE TypeFamilies               #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -71,18 +74,29 @@ import           Ouroboros.Consensus.Byron.Ledger.Serialisation
                      (byronBlockEncodingOverhead)
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
-import           Ouroboros.Consensus.Mempool
 import           Ouroboros.Consensus.Util (ShowProxy (..))
 import           Ouroboros.Consensus.Util.Condense
+import           Ouroboros.Consensus.Util.Orphans ()
+import           Ouroboros.Network.SizeInBytes (SizeInBytes (..))
 
 {-------------------------------------------------------------------------------
   TxLimits
 -------------------------------------------------------------------------------}
 
 instance TxLimits ByronBlock where
-  type TxMeasure ByronBlock = ByteSize
-  txMeasure _st    = ByteSize . txInBlockSize . txForgetValidated
-  txsBlockCapacity = ByteSize . txsMaxBytes
+  type TxMeasure ByronBlock = SizeInBytes
+
+  blockTxCapacity _cfg st = SizeInBytes $
+    CC.getMaxBlockSize (tickedByronLedgerState st) - byronBlockEncodingOverhead
+
+  txInBlockSize _cfg _st =
+      SizeInBytes
+    . toEnum
+    . Strict.length
+    . CC.mempoolPayloadRecoverBytes
+    . toMempoolPayload
+
+  txMeasureBytes _ = id
 
 {-------------------------------------------------------------------------------
   Transactions
@@ -132,18 +146,7 @@ instance LedgerSupportsMempool ByronBlock where
     where
       validationMode = CC.ValidationMode CC.NoBlockValidation Utxo.TxValidationNoCrypto
 
-  txsMaxBytes st =
-    CC.getMaxBlockSize (tickedByronLedgerState st) - byronBlockEncodingOverhead
-
-  txInBlockSize =
-      fromIntegral
-    . Strict.length
-    . CC.mempoolPayloadRecoverBytes
-    . toMempoolPayload
-
   txForgetValidated = forgetValidatedByronTx
-
-  txRefScriptSize _ _ _ = 0
 
 data instance TxId (GenTx ByronBlock)
   = ByronTxId             !Utxo.TxId

@@ -29,9 +29,10 @@ module Ouroboros.Consensus.HardFork.Combinator.Mempool (
 import           Control.Monad.Except
 import           Data.Functor.Product
 import           Data.Kind (Type)
+import qualified Data.Measure as Measure
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
-import           Data.SOP.Functors (Product2 (..))
+import           Data.SOP.Functors (Product2 (..), fst2)
 import           Data.SOP.Index
 import           Data.SOP.InPairs (InPairs)
 import qualified Data.SOP.InPairs as InPairs
@@ -52,6 +53,9 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util (ShowProxy)
+
+import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
+                     (WrapPartialLedgerConfig (..))
 
 data HardForkApplyTxErr xs =
     -- | Validation error from one of the eras
@@ -93,6 +97,74 @@ instance Typeable xs => ShowProxy (GenTx (HardForkBlock xs)) where
 
 type instance ApplyTxErr (HardForkBlock xs) = HardForkApplyTxErr xs
 
+instance CanHardFork xs => TxLimits (HardForkBlock xs) where
+  type TxMeasure (HardForkBlock xs) = HardForkTxMeasure xs
+
+  blockTxCapacity
+    HardForkLedgerConfig{..}
+    (TickedHardForkLedgerState transition hardForkState)
+      =
+        hardForkMeasureTx
+      $ State.tip
+      $ hczipWith proxySingle aux pcfgs hardForkState
+    where
+      pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
+      ei    = State.epochInfoPrecomputedTransitionInfo
+                hardForkLedgerConfigShape
+                transition
+                hardForkState
+
+      aux ::
+           SingleEraBlock blk
+        => WrapPartialLedgerConfig blk
+        -> (Ticked :.: LedgerState) blk
+        -> WrapTxMeasure blk
+      aux pcfg st' =
+          WrapTxMeasure
+        $ blockTxCapacity
+            (completeLedgerConfig' ei pcfg)
+            (unComp st')
+
+  txInBlockSize
+    HardForkLedgerConfig{..}
+    (TickedHardForkLedgerState transition hardForkState)
+    tx
+      =
+        case matchTx injs (unwrapTx tx) hardForkState of
+          Left{}     -> Measure.zero   -- safe b/c the tx will be found invalid
+          Right pair ->
+              hardForkMeasureTx
+            $ State.tip
+            $ hczipWith proxySingle aux cfgs pair
+    where
+      pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
+      ei    = State.epochInfoPrecomputedTransitionInfo
+                hardForkLedgerConfigShape
+                transition
+                hardForkState
+      cfgs  = hcmap proxySingle (completeLedgerConfig'' ei) pcfgs
+
+      unwrapTx = getOneEraGenTx . getHardForkGenTx
+
+      injs :: InPairs (InjectPolyTx GenTx) xs
+      injs =
+          InPairs.hmap fst2
+        $ InPairs.requiringBoth cfgs hardForkInjectTxs
+
+      aux ::
+           SingleEraBlock blk
+        => WrapLedgerConfig blk
+        -> (Product GenTx (Ticked :.: LedgerState)) blk
+        -> WrapTxMeasure blk
+      aux cfg (Pair tx' st') =
+          WrapTxMeasure
+        $ txInBlockSize
+            (unwrapLedgerConfig cfg)
+            (unComp st')
+            tx'
+
+  txMeasureBytes _ = hardForkTxMeasureBytes (Proxy @xs)
+
 instance CanHardFork xs => LedgerSupportsMempool (HardForkBlock xs) where
   applyTx   = applyHelper ModeApply
 
@@ -106,58 +178,12 @@ instance CanHardFork xs => LedgerSupportsMempool (HardForkBlock xs) where
           (WrapValidatedGenTx vtx)
           tls
 
-  txsMaxBytes =
-        hcollapse
-      . hcmap proxySingle (K . txsMaxBytes . unComp)
-      . State.tip
-      . tickedHardForkLedgerStatePerEra
-
-  txInBlockSize =
-        hcollapse
-      . hcmap proxySingle (K . txInBlockSize)
-      . getOneEraGenTx
-      . getHardForkGenTx
-
   txForgetValidated =
         HardForkGenTx
       . OneEraGenTx
       . hcmap proxySingle (txForgetValidated . unwrapValidatedGenTx)
       . getOneEraValidatedGenTx
       . getHardForkValidatedGenTx
-
-  txRefScriptSize cfg st tx = case matchPolyTx injs tx' hardForkState of
-      Left {}       ->
-        -- This is ugly/adhoc, but fine, as in the mempool, we only call
-        -- txRefScriptSize after applyTx (which internall also calls
-        -- matchPolyTx), so this case is unreachable.
-        0
-      Right matched ->
-          hcollapse
-        $ hczipWith proxySingle
-            (\(WrapLedgerConfig eraCfg) (Pair eraTx (Comp eraSt)) ->
-               K $ txRefScriptSize eraCfg eraSt eraTx)
-            cfgs
-            (State.tip matched)
-    where
-      HardForkLedgerConfig {
-          hardForkLedgerConfigPerEra
-        , hardForkLedgerConfigShape
-        } = cfg
-      TickedHardForkLedgerState transition hardForkState = st
-      tx' = getOneEraGenTx . getHardForkGenTx $ tx
-
-      pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
-      cfgs  = hcmap proxySingle (completeLedgerConfig'' ei) pcfgs
-      ei    = State.epochInfoPrecomputedTransitionInfo
-                hardForkLedgerConfigShape
-                transition
-                hardForkState
-
-      injs :: InPairs (InjectPolyTx GenTx) xs
-      injs =
-          InPairs.hmap
-            (\(Pair2 injTx _injValidatedTx) -> injTx)
-            (InPairs.requiringBoth cfgs hardForkInjectTxs)
 
 -- | A private type used only to clarify the parameterization of 'applyHelper'
 data ApplyHelperMode :: (Type -> Type) -> Type where

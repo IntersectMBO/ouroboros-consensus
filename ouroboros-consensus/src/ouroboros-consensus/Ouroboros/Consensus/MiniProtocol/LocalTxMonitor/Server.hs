@@ -1,6 +1,5 @@
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE ViewPatterns        #-}
 
 module Ouroboros.Consensus.MiniProtocol.LocalTxMonitor.Server (localTxMonitorServer) where
@@ -11,6 +10,7 @@ import           Ouroboros.Consensus.Mempool
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Protocol.LocalTxMonitor.Server
 import           Ouroboros.Network.Protocol.LocalTxMonitor.Type
+import           Ouroboros.Network.SizeInBytes (getSizeInBytes)
 
 -- | Local transaction monitoring server, for inspecting the mempool.
 --
@@ -31,19 +31,21 @@ localTxMonitorServer mempool =
       { recvMsgDone = do
           pure ()
       , recvMsgAcquire = do
-          s <- atomically $ (,) <$> getCapacity mempool <*> getSnapshot mempool
+          s <- atomically query
           pure $ serverStAcquiring s
       }
 
     serverStAcquiring
-      :: (MempoolCapacityBytes, MempoolSnapshot blk)
+      :: (TxMeasure blk, MempoolSnapshot blk)
       -> ServerStAcquiring (GenTxId blk) (GenTx blk) SlotNo m ()
     serverStAcquiring s@(_, snapshot) =
-      SendMsgAcquired (snapshotSlotNo snapshot) (serverStAcquired s (snapshotTxs snapshot))
+      SendMsgAcquired
+        (snapshotSlotNo snapshot)
+        (serverStAcquired s (snapshotTxs snapshot))
 
     serverStAcquired
-      :: (MempoolCapacityBytes, MempoolSnapshot blk)
-      -> [(Validated (GenTx blk), idx)]
+      :: (TxMeasure blk, MempoolSnapshot blk)
+      -> [TxTicket (TxMeasure blk) (Validated (GenTx blk))]
       -> ServerStAcquired (GenTxId blk) (GenTx blk) SlotNo m ()
     serverStAcquired s@(capacity, snapshot) txs =
       ServerStAcquired
@@ -51,21 +53,21 @@ localTxMonitorServer mempool =
           case txs of
             []  ->
               pure $ SendMsgReplyNextTx Nothing (serverStAcquired s [])
-            (txForgetValidated -> h, _):q ->
+            (txTicketTx -> txForgetValidated -> h):q ->
               pure $ SendMsgReplyNextTx (Just h) (serverStAcquired s q)
       , recvMsgHasTx = \txid ->
           pure $ SendMsgReplyHasTx (snapshotHasTx snapshot txid) (serverStAcquired s txs)
       , recvMsgGetSizes = do
-          let MempoolSize{msNumTxs,msNumBytes} = snapshotMempoolSize snapshot
+          let MempoolSize{msNumTxs,msSize} = snapshotMempoolSize snapshot
           let sizes = MempoolSizeAndCapacity
-                { capacityInBytes = getMempoolCapacityBytes capacity
-                , sizeInBytes     = msNumBytes
+                { capacityInBytes = getSizeInBytes $ txMeasureBytes snapshot capacity
+                , sizeInBytes     = getSizeInBytes $ txMeasureBytes snapshot msSize
                 , numberOfTxs     = msNumTxs
                 }
           pure $ SendMsgReplyGetSizes sizes (serverStAcquired s txs)
       , recvMsgAwaitAcquire = do
           s' <- atomically $ do
-            s'@(_, snapshot') <- (,) <$> getCapacity mempool <*> getSnapshot mempool
+            s'@(_, snapshot') <- query
             s' <$ check (not (snapshot `isSameSnapshot` snapshot'))
           pure $ serverStAcquiring s'
       , recvMsgRelease =
@@ -78,6 +80,12 @@ localTxMonitorServer mempool =
       -> MempoolSnapshot blk
       -> Bool
     isSameSnapshot a b =
-      (snd <$> snapshotTxs a) == (snd <$> snapshotTxs b)
+      (txTicketNo <$> snapshotTxs a) == (txTicketNo <$> snapshotTxs b)
       &&
       snapshotSlotNo a == snapshotSlotNo b
+
+    query :: STM m (TxMeasure blk, MempoolSnapshot blk)
+    query = do
+      capacity <- worstCaseCapacity <$> getCapacity mempool
+      snapshot <- getSnapshot mempool
+      pure (capacity, snapshot)
