@@ -283,7 +283,7 @@ validateNewTransaction cfg txSize wti tx values is =
       Left err         -> ( Left err, is )
       Right (st', vtx) ->
         ( Right vtx
-        , is { isTxs          = isTxs :> TxTicket vtx nextTicketNo (txSize tx) (txRefScriptSize cfg vrAfter tx)
+        , is { isTxs          = isTxs :> TxTicket vtx nextTicketNo (txSize tx) (txRefScriptSize cfg st' tx)
              , isTxIds        = Set.insert (txId tx) isTxIds
              , isLedgerState  = prependDiffs isLedgerState st'
              , isLastTicketNo = nextTicketNo

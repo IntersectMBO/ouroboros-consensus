@@ -164,7 +164,7 @@ class ( UpdateLedger blk
   -- | Discard the evidence that transaction has been previously validated
   txForgetValidated :: Validated (GenTx blk) -> GenTx blk
 
-  txRefScriptSize :: LedgerConfig blk -> TickedLedgerState blk -> GenTx blk -> Int
+  txRefScriptSize :: LedgerConfig blk -> TickedLedgerState blk mk -> GenTx blk -> Int
   -- | Given a transaction, get the key-sets that we need to apply it to a
   -- ledger state.
   getTransactionKeySets :: GenTx blk -> LedgerTables (LedgerState blk) KeysMK

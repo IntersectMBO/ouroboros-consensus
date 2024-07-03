@@ -211,7 +211,7 @@ instance ( CanHardFork xs
       Right matched ->
           hcollapse
         $ hczipWith proxySingle
-            (\(WrapLedgerConfig eraCfg) (Pair eraTx (Comp eraSt)) ->
+            (\(WrapLedgerConfig eraCfg) (Pair eraTx (FlipTickedLedgerState eraSt)) ->
                K $ txRefScriptSize eraCfg eraSt eraTx)
             cfgs
             (State.tip matched)
