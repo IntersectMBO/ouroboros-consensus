@@ -1,12 +1,12 @@
-module Test.Util.SanityCheck
-  ( prop_sanityChecks
+module Test.Util.SanityCheck (
+    prop_sanityChecks
   , prop_securityParamConsistent
   ) where
 
-import Ouroboros.Consensus.Block.SupportsSanityCheck
-import Ouroboros.Consensus.Config
-import Test.Util.Orphans.Arbitrary ()
-import Test.Tasty.QuickCheck
+import           Ouroboros.Consensus.Block.SupportsSanityCheck
+import           Ouroboros.Consensus.Config
+import           Test.Tasty.QuickCheck
+import           Test.Util.Orphans.Arbitrary ()
 
 prop_sanityChecks
   :: BlockSupportsSanityCheck blk

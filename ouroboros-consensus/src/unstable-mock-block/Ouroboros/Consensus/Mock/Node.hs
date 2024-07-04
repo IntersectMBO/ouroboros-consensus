@@ -59,7 +59,7 @@ deriving via SelectViewDiffusionPipelining (SimpleBlock c ext) instance
   ( BlockSupportsProtocol (SimpleBlock c ext)
   , Show (SelectView (BlockProtocol (SimpleBlock c ext)))
   ) => BlockSupportsDiffusionPipelining (SimpleBlock c ext)
-  
+
 instance ConsensusProtocol (BlockProtocol (SimpleBlock c ext)) => BlockSupportsSanityCheck (SimpleBlock c ext) where
   configAllSecurityParams = pure . configSecurityParam
 

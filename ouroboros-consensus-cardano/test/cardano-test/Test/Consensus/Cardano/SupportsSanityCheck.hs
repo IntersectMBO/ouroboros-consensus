@@ -1,18 +1,18 @@
 {-# LANGUAGE NamedFieldPuns #-}
 module Test.Consensus.Cardano.SupportsSanityCheck (tests) where
 
-import Ouroboros.Consensus.Cardano.Block
-import Ouroboros.Consensus.Node.ProtocolInfo
-import Test.Consensus.Cardano.ProtocolInfo
-import Test.Tasty
-import Test.Tasty.QuickCheck
-import Test.Util.SanityCheck
-import qualified Test.QuickCheck.Gen as Gen
+import           Ouroboros.Consensus.Cardano.Block
+import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.HardFork.Combinator.Basics
+import           Ouroboros.Consensus.Node.ProtocolInfo
+import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
+import           Test.Consensus.Cardano.ProtocolInfo
 import qualified Test.QuickCheck as QC
+import qualified Test.QuickCheck.Gen as Gen
+import           Test.Tasty
+import           Test.Tasty.QuickCheck
 import qualified Test.ThreadNet.Infra.Shelley as Shelley
-import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
-import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.HardFork.Combinator.Basics
+import           Test.Util.SanityCheck
 
 tests :: TestTree
 tests = testGroup "SupportsSanityCheck"
@@ -56,10 +56,10 @@ genSimpleTestProtocolInfo = do
 
 data SimpleTestProtocolInfoSetup = SimpleTestProtocolInfoSetup
   { decentralizationParam :: Shelley.DecentralizationParam
-  , securityParam :: SecurityParam
-  , byronSlotLength :: ByronSlotLengthInSeconds
-  , shelleySlotLength :: ShelleySlotLengthInSeconds
-  , hardForkSpec :: HardForkSpec
+  , securityParam         :: SecurityParam
+  , byronSlotLength       :: ByronSlotLengthInSeconds
+  , shelleySlotLength     :: ShelleySlotLengthInSeconds
+  , hardForkSpec          :: HardForkSpec
   }
 
 instance Arbitrary SimpleTestProtocolInfoSetup where
