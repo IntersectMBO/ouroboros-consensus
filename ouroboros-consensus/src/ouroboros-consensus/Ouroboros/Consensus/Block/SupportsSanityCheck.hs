@@ -23,7 +23,7 @@ import           Data.Maybe (catMaybes)
 import           Ouroboros.Consensus.Config (TopLevelConfig)
 import           Ouroboros.Consensus.Config.SecurityParam
 
--- | An issue found in the 'TopLevelConfig' for a block. See 'issueDescription'
+-- | An issue found in the 'TopLevelConfig' for a block. See 'displayException'
 --   for human-readable descriptions of each of these cases, especially when
 --   presenting these to users.
 data SanityCheckIssue
