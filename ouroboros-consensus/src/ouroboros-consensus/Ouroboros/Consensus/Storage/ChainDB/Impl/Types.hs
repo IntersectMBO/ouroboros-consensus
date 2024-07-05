@@ -529,7 +529,7 @@ getChainSelMessage starvationTracer starvationVar (ChainSelQueue queue) = do
   -- transactions on purpose.
   whenM (atomically $ isEmptyTBQueue queue) $ do
     writeTVarIO starvationVar ChainSelStarvationOngoing
-    traceWith starvationTracer ChainSelStarvationStarted
+    traceWith starvationTracer . ChainSelStarvationStarted =<< getMonotonicTime
   message <- atomically $ readTBQueue queue
   -- If there was a starvation ongoing, we need to report that it is done.
   whenM ((== ChainSelStarvationOngoing) <$> readTVarIO starvationVar) $
@@ -909,6 +909,6 @@ data TraceIteratorEvent blk
   deriving (Generic, Eq, Show)
 
 data TraceChainSelStarvationEvent blk
-  = ChainSelStarvationStarted
+  = ChainSelStarvationStarted Time
   | ChainSelStarvationEnded Time (RealPoint blk)
   deriving (Generic, Eq, Show)
