@@ -13,6 +13,8 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
 import           Ouroboros.Consensus.Util.Condense (PaddingDirection (..),
                      condenseListWithPadding)
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import           Ouroboros.Network.Protocol.ChainSync.Codec
+                     (ChainSyncTimeout (mustReplyTimeout), idleTimeout)
 import           Test.Consensus.BlockTree (BlockTree (..))
 import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.Genesis.Tests.Uniform (genUniformSchedulePoints)
@@ -50,6 +52,7 @@ tests =
 
 -- | A flag to indicate if properties are tested with adversarial peers
 data WithAdversariesFlag = NoAdversaries | WithAdversaries
+  deriving Eq
 
 -- | A flag to indicate if properties are tested using the same schedule for the
 -- honest peers, or if each peer should used its own schedule.
@@ -82,7 +85,7 @@ prop_CSJ adversariesFlag numHonestSchedules = do
                    NoAdversaries   -> pure 0
                    WithAdversaries -> choose (2, 4)
   forAllGenesisTest
-    ( case numHonestSchedules of
+    ( disableBoringTimeouts <$> case numHonestSchedules of
         OneScheduleForAllPeers ->
           genChains genForks
           `enrichedWith` genDuplicatedHonestSchedule
@@ -94,6 +97,13 @@ prop_CSJ adversariesFlag numHonestSchedules = do
       { scEnableCSJ = True
       , scEnableLoE = True
       , scEnableLoP = True
+      , scEnableChainSelStarvation = adversariesFlag == NoAdversaries
+      -- ^ NOTE: When there are adversaries and the ChainSel
+      -- starvation detection of BlockFetch is enabled, then our property does
+      -- not actually hold, because peer simulator-based tests have virtually
+      -- infinite CPU, and therefore ChainSel gets starved at every tick, which
+      -- makes us cycle the dynamos, which can lead to some extra headers being
+      -- downloaded.
       }
     )
     shrinkPeerSchedules
@@ -161,3 +171,12 @@ prop_CSJ adversariesFlag numHonestSchedules = do
        in
         -- Sanity check: add @1 +@ after @>@ and watch the World burn.
         hdrSlot + jumpSize >= succWithOrigin tipSlot
+
+    disableBoringTimeouts gt =
+      gt
+        { gtChainSyncTimeouts =
+            (gtChainSyncTimeouts gt)
+              { mustReplyTimeout = Nothing,
+                idleTimeout = Nothing
+              }
+        }
