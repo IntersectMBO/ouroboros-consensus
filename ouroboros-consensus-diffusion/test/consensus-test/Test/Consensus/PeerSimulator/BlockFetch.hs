@@ -112,6 +112,7 @@ startBlockFetchLogic registry tracer chainDb fetchClientRegistry csHandlesCol = 
           , bfcMaxRequestsInflight = 10
           , bfcDecisionLoopInterval = 0
           , bfcSalt = 0
+          , bfcBulkSyncGracePeriod = 10
           }
 
     void $ forkLinkedThread registry "BlockFetchLogic" $
