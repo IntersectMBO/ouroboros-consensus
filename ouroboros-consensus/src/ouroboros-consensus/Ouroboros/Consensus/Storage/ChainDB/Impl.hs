@@ -16,6 +16,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl (
   , LgrDB.TraceReplayEvent
   , SelectionChangedInfo (..)
   , TraceAddBlockEvent (..)
+  , TraceChainSelStarvationEvent (..)
   , TraceCopyToImmutableDBEvent (..)
   , TraceEvent (..)
   , TraceFollowerEvent (..)
@@ -25,7 +26,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl (
   , TraceOpenEvent (..)
   , TracePipeliningEvent (..)
   , TraceValidationEvent (..)
-  , TraceChainSelStarvationEvent (..)
     -- * Re-exported for convenience
   , Args.RelativeMountPoint (..)
   , ImmutableDB.ImmutableDbSerialiseConstraints
