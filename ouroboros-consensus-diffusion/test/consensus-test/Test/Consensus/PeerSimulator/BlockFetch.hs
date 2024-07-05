@@ -73,13 +73,14 @@ import           Test.Util.Time (dawnOfTime)
 startBlockFetchLogic ::
      forall m.
      (IOLike m)
-  => ResourceRegistry m
+  => Bool -- ^ Whether to enable chain selection starvation
+  -> ResourceRegistry m
   -> Tracer m (TraceEvent TestBlock)
   -> ChainDB m TestBlock
   -> FetchClientRegistry PeerId (Header TestBlock) TestBlock m
   -> ChainSyncClientHandleCollection PeerId m TestBlock
   -> m ()
-startBlockFetchLogic registry tracer chainDb fetchClientRegistry csHandlesCol = do
+startBlockFetchLogic enableChainSelStarvation registry tracer chainDb fetchClientRegistry csHandlesCol = do
     let slotForgeTime :: BlockFetchClientInterface.SlotForgeTimeOracle m blk
         slotForgeTime _ = pure dawnOfTime
 
@@ -112,7 +113,8 @@ startBlockFetchLogic registry tracer chainDb fetchClientRegistry csHandlesCol = 
           , bfcMaxRequestsInflight = 10
           , bfcDecisionLoopInterval = 0
           , bfcSalt = 0
-          , bfcBulkSyncGracePeriod = 10
+          , bfcBulkSyncGracePeriod =
+            if enableChainSelStarvation then 10 else 1000000 -- (more than 11 days)
           }
 
     void $ forkLinkedThread registry "BlockFetchLogic" $
