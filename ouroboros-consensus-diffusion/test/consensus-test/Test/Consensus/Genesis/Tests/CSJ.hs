@@ -12,6 +12,8 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
 import           Ouroboros.Consensus.Util.Condense (PaddingDirection (..),
                      condenseListWithPadding)
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import           Ouroboros.Network.Protocol.ChainSync.Codec
+                     (ChainSyncTimeout (mustReplyTimeout), idleTimeout)
 import           Test.Consensus.BlockTree (BlockTree (..))
 import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.Genesis.Tests.Uniform (genUniformSchedulePoints)
@@ -77,7 +79,7 @@ tests =
 prop_CSJ :: Bool -> Bool -> Property
 prop_CSJ happy synchronized =
   forAllGenesisTest
-    ( if synchronized
+    ( disableBoringTimeouts <$> if synchronized
         then genChains (if happy then pure 0 else choose (2, 4))
           `enrichedWith` genDuplicatedHonestSchedule
         else genChainsWithExtraHonestPeers (choose (2, 4)) (if happy then pure 0 else choose (2, 4))
@@ -87,6 +89,13 @@ prop_CSJ happy synchronized =
       { scEnableCSJ = True
       , scEnableLoE = True
       , scEnableLoP = True
+      , scEnableChainSelStarvation = happy
+      -- ^ NOTE: When there are adversaries (happy == False), and the ChainSel
+      -- starvation detection of BlockFetch is enabled, then our property does
+      -- not actually hold, because peer simulator-based tests have virtually
+      -- infinite CPU, and therefore ChainSel gets starved at every tick, which
+      -- makes us cycle the dynamos, which can lead to some extra headers being
+      -- downloaded.
       }
     )
     shrinkPeerSchedules
@@ -146,3 +155,12 @@ prop_CSJ happy synchronized =
        in
         -- Sanity check: add @1 +@ after @>@ and watch the World burn.
         hdrSlot + jumpSize >= succWithOrigin tipSlot
+
+    disableBoringTimeouts gt =
+      gt
+        { gtChainSyncTimeouts =
+            (gtChainSyncTimeouts gt)
+              { mustReplyTimeout = Nothing,
+                idleTimeout = Nothing
+              }
+        }
