@@ -61,9 +61,10 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
   , TraceOpenEvent (..)
   , TracePipeliningEvent (..)
   , TraceValidationEvent (..)
+  , TraceChainSelStarvationEvent (..)
   ) where
 
-import           Control.Monad (when)
+import           Cardano.Prelude (whenM)
 import           Control.Tracer
 import           Data.Foldable (traverse_)
 import           Data.Map.Strict (Map)
@@ -518,18 +519,29 @@ addReprocessLoEBlocks tracer (ChainSelQueue queue) = do
 -- queue is empty; in that case, reports the starvation (and its end) to the
 -- callback.
 getChainSelMessage
-  :: IOLike m
-  => (ChainSelStarvation -> m ())
+  :: (IOLike m, HasHeader blk)
+  => Tracer m (TraceChainSelStarvationEvent blk)
+  -> StrictTVar m ChainSelStarvation
   -> ChainSelQueue m blk
   -> m (ChainSelMessage m blk)
-getChainSelMessage report (ChainSelQueue queue) = do
+getChainSelMessage starvationTracer starvationVar (ChainSelQueue queue) = do
   -- NOTE: The test of emptiness and the blocking read are in different STM
   -- transactions on purpose.
-  starved <- atomically $ isEmptyTBQueue queue
-  when starved $ report ChainSelStarvationOngoing
+  whenM (atomically $ isEmptyTBQueue queue) $ do
+    writeTVarIO starvationVar ChainSelStarvationOngoing
+    traceWith starvationTracer ChainSelStarvationStarted
   message <- atomically $ readTBQueue queue
-  when starved $ report =<< ChainSelStarvationEndedAt <$> getMonotonicTime
+  -- If there was a starvation ongoing, we need to report that it is done.
+  whenM ((== ChainSelStarvationOngoing) <$> readTVarIO starvationVar) $
+    case message of
+      ChainSelAddBlock BlockToAdd {blockToAdd} -> do
+        time <- getMonotonicTime
+        traceWith starvationTracer $ ChainSelStarvationEnded time $ blockRealPoint blockToAdd
+        writeTVarIO starvationVar $ ChainSelStarvationEndedAt time
+      ChainSelReprocessLoEBlocks -> pure ()
   return message
+  where
+    writeTVarIO v x = atomically $ writeTVar v x
 
 -- | Flush the 'ChainSelQueue' queue and notify the waiting threads.
 --
@@ -562,7 +574,7 @@ data TraceEvent blk
   | TraceLedgerReplayEvent      (LgrDB.TraceReplayEvent       blk)
   | TraceImmutableDBEvent       (ImmutableDB.TraceEvent       blk)
   | TraceVolatileDBEvent        (VolatileDB.TraceEvent        blk)
-  | TraceChainSelStarvation      ChainSelStarvation
+  | TraceChainSelStarvationEvent(TraceChainSelStarvationEvent blk)
   deriving (Generic)
 
 
@@ -894,4 +906,9 @@ data TraceIteratorEvent blk
     -- back in the VolatileDB again because the ImmutableDB doesn't have the
     -- next block we're looking for.
   | SwitchBackToVolatileDB
+  deriving (Generic, Eq, Show)
+
+data TraceChainSelStarvationEvent blk
+  = ChainSelStarvationStarted
+  | ChainSelStarvationEnded Time (RealPoint blk)
   deriving (Generic, Eq, Show)
