@@ -105,6 +105,11 @@ data SchedulerConfig =
     -- duration to trigger it.
     , scDowntime                 :: Maybe DiffTime
 
+    -- | Enable the use of ChainSel starvation information in the block fetch
+    -- decision logic. It is never actually disabled, but rather the grace
+    -- period is made virtually infinite.
+    , scEnableChainSelStarvation :: Bool
+
     -- | Whether to enable ChainSync Jumping. The parameters come from
     -- 'GenesisTest'.
     , scEnableCSJ                :: Bool
@@ -122,6 +127,7 @@ defaultSchedulerConfig =
     scEnableLoE = False,
     scEnableLoP = False,
     scDowntime = Nothing,
+    scEnableChainSelStarvation = True,
     scEnableCSJ = False
   }
 
@@ -383,7 +389,13 @@ startNode schedulerConfig genesisTest interval = do
   -- The block fetch logic needs to be started after the block fetch clients
   -- otherwise, an internal assertion fails because getCandidates yields more
   -- peer fragments than registered clients.
-  BlockFetch.startBlockFetchLogic lrRegistry lrTracer lnChainDb fetchClientRegistry handles
+  BlockFetch.startBlockFetchLogic
+    (scEnableChainSelStarvation schedulerConfig)
+    lrRegistry
+    lrTracer
+    lnChainDb
+    fetchClientRegistry
+    handles
 
   for_ lrLoEVar $ \ var -> do
       forkLinkedWatcher lrRegistry "LoE updater background" $
