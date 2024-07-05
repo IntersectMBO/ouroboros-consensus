@@ -143,7 +143,7 @@ sweepCache opts = evalContT $ do
       , numBlocks
       } = opts
 
-    addSlots Origin o = NotOrigin o
+    addSlots Origin o        = NotOrigin o
     addSlots (NotOrigin x) o = NotOrigin (x + o)
 
 fetchBlocks ::
@@ -195,7 +195,7 @@ findM f (x:xs) = do
     m <- f x
     case m of
       Nothing -> findM f xs
-      Just b -> pure (Just (x, b))
+      Just b  -> pure (Just (x, b))
 
 {-------------------------------------------------------------------------------
   ChainSync and BlockFetch logic

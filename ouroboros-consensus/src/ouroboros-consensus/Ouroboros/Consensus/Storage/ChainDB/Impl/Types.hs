@@ -52,6 +52,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
     -- * Trace types
   , SelectionChangedInfo (..)
   , TraceAddBlockEvent (..)
+  , TraceChainSelStarvationEvent (..)
   , TraceCopyToImmutableDBEvent (..)
   , TraceEvent (..)
   , TraceFollowerEvent (..)
@@ -61,7 +62,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
   , TraceOpenEvent (..)
   , TracePipeliningEvent (..)
   , TraceValidationEvent (..)
-  , TraceChainSelStarvationEvent (..)
   ) where
 
 import           Cardano.Prelude (whenM)
