@@ -25,6 +25,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl (
   , TraceOpenEvent (..)
   , TracePipeliningEvent (..)
   , TraceValidationEvent (..)
+  , TraceChainSelStarvationEvent (..)
     -- * Re-exported for convenience
   , Args.RelativeMountPoint (..)
   , ImmutableDB.ImmutableDbSerialiseConstraints
