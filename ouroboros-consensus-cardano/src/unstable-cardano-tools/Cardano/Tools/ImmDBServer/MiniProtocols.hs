@@ -1,6 +1,7 @@
 {-# LANGUAGE BlockArguments      #-}
 {-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE DeriveAnyClass      #-}
+{-# LANGUAGE DeriveGeneric       #-}
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE LambdaCase          #-}
@@ -23,6 +24,7 @@ import           Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
 import           Data.Typeable (Typeable)
 import           Data.Void (Void)
+import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
                      (blockFetchServer')
@@ -152,6 +154,15 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic = do
           , miniProtocolRun    = ResponderProtocolOnly proto
           }
 
+-- | The ChainSync specification requires sending a rollback instruction to the
+-- intersection point right after an intersection has been negotiated. (Opening
+-- a connection implicitly negotiates the Genesis point as the intersection.)
+data ChainSyncIntersection blk =
+    JustNegotiatedIntersection !(Point blk)
+  | AlreadySentRollbackToIntersection
+  deriving stock (Generic)
+  deriving anyclass (NoThunks)
+
 chainSyncServer ::
      forall m blk a. (IOLike m, HasHeader blk)
   => ImmutableDB m blk
@@ -167,15 +178,24 @@ chainSyncServer immDB blockComponent registry = ChainSyncServer $ do
     newImmutableDBFollower = do
         varIterator <-
           newTVarIO =<< ImmutableDB.streamAll immDB registry blockComponent
+        varIntersection <-
+          newTVarIO $ JustNegotiatedIntersection GenesisPoint
 
-        let followerInstructionBlocking = do
-              iterator <- readTVarIO varIterator
-              ImmutableDB.iteratorNext iterator >>= \case
-                ImmutableDB.IteratorExhausted -> do
-                  ImmutableDB.iteratorClose iterator
-                  throwIO ReachedImmutableTip
-                ImmutableDB.IteratorResult a  ->
-                  pure $ AddBlock a
+        let followerInstructionBlocking =
+              readTVarIO varIntersection >>= \case
+                JustNegotiatedIntersection intersectionPt -> do
+                  atomically $
+                    writeTVar varIntersection AlreadySentRollbackToIntersection
+                  pure $ RollBack intersectionPt
+                -- Otherwise, get the next block from the iterator (or fail).
+                AlreadySentRollbackToIntersection -> do
+                  iterator <- readTVarIO varIterator
+                  ImmutableDB.iteratorNext iterator >>= \case
+                    ImmutableDB.IteratorExhausted -> do
+                      ImmutableDB.iteratorClose iterator
+                      throwIO ReachedImmutableTip
+                    ImmutableDB.IteratorResult a  ->
+                      pure $ AddBlock a
 
             followerClose = ImmutableDB.iteratorClose =<< readTVarIO varIterator
 
@@ -185,7 +205,9 @@ chainSyncServer immDB blockComponent registry = ChainSyncServer $ do
                 Left _         -> followerForward pts
                 Right iterator -> do
                   followerClose
-                  atomically $ writeTVar varIterator iterator
+                  atomically $ do
+                    writeTVar varIterator iterator
+                    writeTVar varIntersection $ JustNegotiatedIntersection pt
                   pure $ Just pt
 
         pure Follower {
