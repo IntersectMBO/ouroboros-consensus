@@ -29,16 +29,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ["8.10.7", "9.6.5", "9.8.2"]
+        ghc: ["8.10.7", "9.6.6", "9.8.2"]
         variant: [default, no-thunks]
         exclude:
           - variant:
               ${{ (github.event_name == 'schedule' || inputs.nothunks) && 'default' || 'no-thunks' }}
     env:
       # Modify this value to "invalidate" the Cabal cache.
-      CABAL_CACHE_VERSION: "2024-01-29"
+      CABAL_CACHE_VERSION: "2024-07-04"
 
-      CABAL: "3.10.3.0"
+      CABAL: "3.12.1.0"
 
     steps:
     - uses: actions/checkout@v4
@@ -186,7 +186,7 @@ jobs:
       if: |
         github.event_name == 'push'
         && github.ref == 'refs/heads/main'
-        && matrix.ghc=='9.6.5'
+        && matrix.ghc=='9.6.6'
       run: |
         # need for latex, dvisvgm and standalone
         sudo apt install texlive-latex-extra texlive-latex-base
@@ -201,7 +201,7 @@ jobs:
       if: |
         github.event_name == 'push'
         && github.ref == 'refs/heads/main'
-        && matrix.ghc=='9.6.5'
+        && matrix.ghc=='9.6.6'
       uses: actions/upload-artifact@v4
       with:
         name: haddocks

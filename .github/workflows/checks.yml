@@ -95,8 +95,8 @@ jobs:
       uses: input-output-hk/actions/haskell@latest
       id: setup-haskell
       with:
-        cabal-version: "3.10.1.0"
-        ghc-version: "9.6.5"
+        cabal-version: "3.12.1.0"
+        ghc-version: "9.6.6"
 
     - name: Install base libraries
       uses: input-output-hk/actions/base@latest

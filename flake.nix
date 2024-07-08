@@ -33,7 +33,7 @@
     };
     # for cabal-docspec
     cabal-extras = {
-      url = "github:phadej/cabal-extras/cabal-docspec-0.0.0.20240414";
+      url = "github:phadej/cabal-extras/cabal-docspec-0.0.0.20240703";
       flake = false;
     };
     gentle-introduction = {
