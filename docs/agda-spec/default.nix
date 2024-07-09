@@ -60,7 +60,7 @@ in
 rec {
 
   agdaWithDeps = agdaWithPkgs deps;
-  agda = agdaWithPkgs (deps ++ [ formalLedger ]);
+  agda = agdaWithPkgs deps;
 
   latex = texlive.combine {
     inherit (texlive)
@@ -71,23 +71,6 @@ rec {
       collection-mathscience
       bclogo
       latexmk;
-  };
-
-  formalLedger = customAgda.agdaPackages.mkDerivation {
-    inherit (locales) LANG LC_ALL LOCALE_ARCHIVE;
-    pname = "formal-ledger";
-    version = "0.1";
-    src = ./src;
-    meta = { };
-    buildInputs = deps;
-    buildPhase = ''
-      bash typeCheck.sh
-    '';
-    postInstall = ''
-      cp -r latex/ Makefile typecheck.time $out
-      sh checkTypeChecked.sh
-    '';
-    extraExtensions = [ "hs" "cabal" "py" ];
   };
 
   mkSpecDerivation = { project, main }: rec {
@@ -108,89 +91,7 @@ rec {
       dontInstall = true;
     };
 
-    html = stdenv.mkDerivation {
-      inherit (locales) LANG LC_ALL LOCALE_ARCHIVE;
-      pname = "html";
-      version = "0.1";
-      src = "${formalLedger}";
-      meta = { };
-      buildInputs = [ agdaWithDeps ];
-      buildPhase = ''
-        OUT_DIR=$out make "${project}".html
-      '';
-      doCheck = true;
-      checkPhase = ''
-        test -n "$(find $out/html/ -type f -name '*.html')"
-      '';
-      dontInstall = true;
-    };
-
-    hsSrc = stdenv.mkDerivation {
-      inherit (locales) LANG LC_ALL LOCALE_ARCHIVE;
-      pname = "hs-src";
-      version = "0.1";
-      src = "${formalLedger}";
-      meta = { };
-      buildInputs = [ agdaWithDeps ];
-      buildPhase = ''
-        OUT_DIR=$out make "${project}".hs
-      '';
-      doCheck = true;
-      checkPhase = ''
-        test -n "$(find $out/haskell/ -type f -name '*.hs')"
-        # OUT_DIR=$out make "${project}".hsTest
-      '';
-      dontInstall = true;
-    };
-
-    # hsDocs = stdenv.mkDerivation {
-    #   pname = "hs-docs";
-    #   version = "0.1";
-    #   src = "${formalLedger}";
-    #   meta = { };
-    #   buildInputs = [ agdaWithDeps ];
-    #   configurePhase = ''
-    #     export HOME=$TMP
-    #   '';
-    #   buildPhase = ''
-    #     OUT_DIR=$out make "${project}".hsDocs
-    #   '';
-    #   doCheck = true;
-    #   checkPhase = ''
-    #     test -n "$(find $out/haskell/ -type f -name '*.html')"
-    #   '';
-    #   dontInstall = true;
-    # };
-
     hsExe = haskell.lib.disableLibraryProfiling (haskellPackages.callCabal2nixWithOptions "${project}" "${hsSrc}/haskell/${main}" "--no-haddock" {});
 
-  };
-
-  mkPdfDerivation = name: version: project: stdenv.mkDerivation {
-    inherit (locales) LANG LC_ALL LOCALE_ARCHIVE;
-    pname = name;
-    version = version;
-    src = "${formalLedger}";
-    meta = { };
-    buildInputs = [ agdaWithDeps latex python3 ];
-    buildPhase = ''
-        OUT_DIR=$out make ${project}
-      '';
-    doCheck = true;
-    checkPhase = ''
-        test -n "$(find $out/pdfs/ -type f -name '*.pdf')"
-      '';
-    dontInstall = true;
-  };
-
-  ledger = mkSpecDerivation {
-    project = "ledger";
-    main = "Ledger";
-  } // {
-    conway = mkPdfDerivation "conway-formal-spec" "0.9" "ledger.conway.docs";
-  };
-  midnight = mkSpecDerivation {
-    project = "midnight";
-    main = "MidnightExample";
   };
 }
