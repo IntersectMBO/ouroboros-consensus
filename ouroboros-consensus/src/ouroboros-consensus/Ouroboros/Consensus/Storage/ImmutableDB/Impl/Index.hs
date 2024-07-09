@@ -2,6 +2,7 @@
 {-# LANGUAGE DerivingVia         #-}
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections       #-}
 
 module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index (
     -- * Index
@@ -18,6 +19,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index (
 import           Control.Tracer (Tracer)
 import           Data.Functor.Identity (Identity (..))
 import           Data.Proxy (Proxy (..))
+import           Data.Sequence.Strict (StrictSeq)
 import           Data.Typeable (Typeable)
 import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
@@ -52,7 +54,7 @@ data Index m blk h = Index
       :: forall t. (HasCallStack, Traversable t)
       => ChunkNo
       -> t RelativeSlot
-      -> m (t (Maybe SecondaryOffset))
+      -> m (t (Maybe SecondaryOffset), Maybe (StrictSeq SecondaryOffset))
 
     -- |  See 'Primary.readFirstFilledSlot'
   , readFirstFilledSlot
@@ -123,8 +125,8 @@ readOffset ::
   => Index m blk h
   -> ChunkNo
   -> RelativeSlot
-  -> m (Maybe SecondaryOffset)
-readOffset index chunk slot = runIdentity <$>
+  -> m (Maybe SecondaryOffset, Maybe (StrictSeq SecondaryOffset))
+readOffset index chunk slot = (\(x, y) -> (runIdentity x, y)) <$>
     readOffsets index chunk (Identity slot)
 
 -- | See 'Secondary.readEntry'.
@@ -149,7 +151,8 @@ fileBackedIndex ::
   -> ChunkInfo
   -> Index m blk h
 fileBackedIndex hasFS chunkInfo = Index
-    { readOffsets         = Primary.readOffsets         p hasFS
+    { readOffsets         = \x y -> (,Nothing) <$>
+                            Primary.readOffsets         p hasFS x y
     , readFirstFilledSlot = Primary.readFirstFilledSlot p hasFS chunkInfo
     , openPrimaryIndex    = Primary.open                  hasFS
     , appendOffsets       = Primary.appendOffsets         hasFS

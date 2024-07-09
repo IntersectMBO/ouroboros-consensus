@@ -62,7 +62,7 @@ import           Foreign.Storable (sizeOf)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block (StandardHash)
 import           Ouroboros.Consensus.Storage.ImmutableDB.API
-                     (ImmutableDBError (..), UnexpectedFailure (..))
+                     (ImmutableDBError (..), UnexpectedFailure (..), SecondaryOffset)
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Util
@@ -74,12 +74,6 @@ import           System.FS.API.Lazy hiding (allowExisting)
 {------------------------------------------------------------------------------
   SecondaryOffset
 ------------------------------------------------------------------------------}
-
--- | An offset in the secondary index file.
---
--- We need 4 bytes ('Word32') because the secondary index file can grow to
--- +1MiB.
-type SecondaryOffset = Word32
 
 getSecondaryOffset :: Get SecondaryOffset
 getSecondaryOffset = Get.getWord32be

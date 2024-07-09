@@ -410,12 +410,12 @@ getHashForSlotImpl dbEnv slot =
       -- Primary index: test whether the slot contains a non-EBB, or an EBB as a
       -- fallback.
       (offset, isEBB) <- readOffset ifRegular >>= \case
-        Just offset -> pure (offset, IsNotEBB)
-        Nothing     -> case mIfBoundary of
+        (Just offset, _) -> pure (offset, IsNotEBB)
+        (Nothing, _)     -> case mIfBoundary of
           Nothing         -> exitEarly
           Just ifBoundary -> readOffset ifBoundary >>= \case
-            Just offset -> pure (offset, IsEBB)
-            Nothing     -> exitEarly
+            (Just offset, _) -> pure (offset, IsEBB)
+            (Nothing, _)     -> exitEarly
 
       -- Read hash from secondary index.
       (entry, _) <- lift $ Index.readEntry index chunk isEBB offset
