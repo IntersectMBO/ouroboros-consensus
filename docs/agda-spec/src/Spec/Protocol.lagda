@@ -93,7 +93,7 @@ data
 \begin{figure*}[h]
 \emph{Protocol helper functions}
 \begin{code}
-hBLeader : BHBody → ∃[ n ] n < 2 ^ 512 -- [0, 2^512)
+hBLeader : BHBody → Certifiedℕ
 hBLeader bhb = serHashToℕ (hash (encode "L" ∥ encode vrfRes))
   where open BHBody bhb
 
@@ -101,7 +101,7 @@ hBNonce : BHBody → Nonce
 hBNonce bhb = serHashToNonce (hash (encode "N" ∥ encode vrfRes))
   where open BHBody bhb
 
-checkLeaderVal : ∃[ n ] n < 2 ^ 512 → PosUnitInterval → ℚ → Type
+checkLeaderVal : Certifiedℕ → PosUnitInterval → ℚ → Type
 checkLeaderVal (certℕ , certℕprf) (f , posf , f≤1) σ =
    if f ≡ 1ℚ then ⊤ else λ{f≢1ℚ} →
      let
