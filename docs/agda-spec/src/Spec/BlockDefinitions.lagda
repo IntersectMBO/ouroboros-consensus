@@ -34,6 +34,7 @@ record BlockStructure : Type₁ where
 \emph{Concrete types}
 \begin{code}
   BlockNo = ℕ -- block number
+  Certifiedℕ = ∃[ n ] n < 2 ^ 512 -- [0, 2^512) (64-byte VRF output)
 \end{code}
 \emph{Operational Certificate}
 \begin{AgdaSuppressSpace}
@@ -87,7 +88,7 @@ record BlockStructure : Type₁ where
       headerSize      : BHeader → ℕ -- size of a block header
       slotToSeed      : Slot → Seed -- big-endian encoding of the slot number in 8 bytes
       prevHashToNonce : Maybe HashHeader → Nonce
-      serHashToℕ      : SerHash → ∃[ n ] n < 2 ^ 512 -- [0, 2^512) (64-byte VRF output)
+      serHashToℕ      : SerHash → Certifiedℕ
       serHashToNonce  : SerHash → Nonce
 \end{code}
 \end{AgdaAlign}
