@@ -52,27 +52,40 @@ open import Ledger.Prelude
 \end{code}
 
 \begin{figure*}[h]
+\begin{AgdaAlign}
 \emph{Chain Head environments}
 \begin{code}
 ChainHeadEnv = NewEpochState
 \end{code}
 \emph{Chain Head states}
+\begin{AgdaSuppressSpace}
 \begin{code}
 record LastAppliedBlock : Type where
+\end{code}
+\begin{code}[hide]
   constructor ⟦_,_,_⟧ℓ
-  field bℓ : BlockNo    -- last block number
-        sℓ : Slot       -- last slot
-        h  : HashHeader -- latest header hash
+  field
+\end{code}
+\begin{code}  
+    bℓ : BlockNo    -- last block number
+    sℓ : Slot       -- last slot
+    h  : HashHeader -- latest header hash
 
 record ChainHeadState : Type where
-  constructor ⟦_,_,_,_,_,_⟧ᶜˢ
-  field cs  : OCertCounters          -- operational certificate issue numbers
-        η₀  : Nonce                  -- epoch nonce
-        ηv  : Nonce                  -- evolving nonce
-        ηc  : Nonce                  -- candidate nonce
-        ηh  : Nonce                  -- nonce from hash of last epoch’s last header
-        lab : Maybe LastAppliedBlock -- latest applied block
 \end{code}
+\begin{code}[hide]
+  constructor ⟦_,_,_,_,_,_⟧ᶜˢ
+  field
+\end{code}
+\begin{code}  
+    cs  : OCertCounters          -- operational certificate issue numbers
+    η₀  : Nonce                  -- epoch nonce
+    ηv  : Nonce                  -- evolving nonce
+    ηc  : Nonce                  -- candidate nonce
+    ηh  : Nonce                  -- nonce from hash of last epoch’s last header
+    lab : Maybe LastAppliedBlock -- latest applied block
+\end{code}
+\end{AgdaSuppressSpace}
 \emph{Chain Head transitions}
 \begin{code}[hide]
 data
@@ -100,6 +113,7 @@ prtlSeqChecks lab@(just ⟦ bℓ , sℓ , _ ⟧ℓ) bh = sℓ < slot × bℓ + 1
     open BHBody (proj₁ bh)
     ph = lastAppliedHash lab
 \end{code}
+\end{AgdaAlign}
 \caption{Chain Head transition system types and functions}
 \label{fig:ts-types:chainhead}
 \end{figure*}

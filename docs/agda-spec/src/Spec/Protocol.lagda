@@ -48,21 +48,36 @@ open Ledger.Prelude.ℤ using (pos)
 \end{code}
 
 \begin{figure*}[h]
+\begin{AgdaAlign}
 \emph{Protocol environments}
+\begin{AgdaSuppressSpace}
 \begin{code}
 record PrtclEnv : Type where
-  constructor ⟦_,_⟧ᵖᵉ
-  field pd  : PoolDistr -- pool stake distribution
-        η₀  : Nonce     -- epoch nonce
 \end{code}
+\begin{code}[hide]
+  constructor ⟦_,_⟧ᵖᵉ
+  field
+\end{code}
+\begin{code}  
+    pd  : PoolDistr -- pool stake distribution
+    η₀  : Nonce     -- epoch nonce
+\end{code}
+\end{AgdaSuppressSpace}
 \emph{Protocol states}
+\begin{AgdaSuppressSpace}
 \begin{code}
 record PrtclState : Type where
-  constructor ⟦_,_,_⟧ᵖˢ
-  field cs : OCertCounters -- operational certificate issues numbers
-        ηv : Nonce         -- evolving nonce
-        ηc : Nonce         -- candidate nonce
 \end{code}
+\begin{code}[hide]
+  constructor ⟦_,_,_⟧ᵖˢ
+  field
+\end{code}
+\begin{code}
+    cs : OCertCounters -- operational certificate issues numbers
+    ηv : Nonce         -- evolving nonce
+    ηc : Nonce         -- candidate nonce
+\end{code}
+\end{AgdaSuppressSpace}
 \emph{Protocol transitions}
 \begin{code}[hide]
 data
@@ -70,6 +85,7 @@ data
 \begin{code}
   _⊢_⇀⦇_,PRTCL⦈_ : PrtclEnv → PrtclState → BHeader → PrtclState → Type
 \end{code}
+\end{AgdaAlign}
 \caption{Protocol transition system types}
 \label{fig:ts-types:prtcl}
 \end{figure*}
