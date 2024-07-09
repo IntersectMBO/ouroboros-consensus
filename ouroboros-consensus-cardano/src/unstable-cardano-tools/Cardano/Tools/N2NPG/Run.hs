@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE LambdaCase          #-}
@@ -7,8 +8,11 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
 
+{-# OPTIONS_GHC -Wwarn #-}
+
 module Cardano.Tools.N2NPG.Run (
     Opts (..)
+  , StartFrom (..)
   , run
   ) where
 
@@ -19,6 +23,7 @@ import           Control.Monad.Class.MonadSay (MonadSay (..))
 import           Control.Monad.Cont
 import           Control.Monad.Trans (MonadTrans (..))
 import           Control.Tracer (nullTracer, stdoutTracer)
+import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as BL
 import           Data.Functor ((<&>))
 import           Data.Functor.Contravariant ((>$<))
@@ -31,6 +36,7 @@ import           Network.TypedProtocol (N (..), Nat (..), PeerHasAgency (..),
                      PeerPipelined (..), PeerReceiver (..), PeerRole (..),
                      PeerSender (..), natToInt)
 import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Config.SupportsNode
                      (ConfigSupportsNode (..))
@@ -84,29 +90,45 @@ import           System.FS.IO (ioHasFS)
 
 data Opts = Opts {
     configFile     :: FilePath
-  , immutableDBDir :: FilePath
+  , immutableDBDir :: Maybe FilePath
   , serverAddr     :: (Socket.HostName, Socket.ServiceName)
-  , startSlots     :: [SlotNo]
+  , startFrom      :: [StartFrom]
   , numBlocks      :: Word64
   }
+  deriving stock (Show)
+
+data StartFrom =
+    -- | Start from a specific slot number. We will use the ImmutableDB to find
+    -- the corresponding hash.
+    StartFromSlot SlotNo
+    -- | Start from a specific point, ie a pair of slot number and hash.
+  | StartFromPoint SlotNo ByteString
+  deriving stock (Show)
 
 run :: Opts -> IO ()
 run opts = evalContT $ do
-    let immDBFS = SomeHasFS $ ioHasFS $ MountPoint immutableDBDir
+    let mImmDBFS = SomeHasFS . ioHasFS . MountPoint <$> immutableDBDir
         args = Cardano.CardanoBlockArgs configFile Nothing
     ProtocolInfo{pInfoConfig = cfg} <- lift $ mkProtocolInfo args
     registry <- ContT withRegistry
-    internalImmDB <- ContT $ withImmutableDBInternal cfg registry immDBFS
+    mInternalImmDB <-
+      traverse (ContT . withImmutableDBInternal cfg registry) mImmDBFS
     snocket <- Snocket.socketSnocket <$> ContT withIOManager
     lift $ do
       ptQueue        <- newTQueueIO
       varNumDequeued <- newTVarIO (0 :: Word64)
       blockFetchDone <- newEmptyTMVarIO
 
-      startPoints <- for startSlots $ \s ->
-        ImmutableDB.getHashForSlot internalImmDB s >>= \case
-          Just h  -> pure $ BlockPoint s h
-          Nothing -> fail $ "Slot not in ImmutableDB: " <> show s
+      startPoints <- for startFrom $ \case
+        StartFromSlot s -> case mInternalImmDB of
+          Just internalImmDB ->
+            ImmutableDB.getHashForSlot internalImmDB s >>= \case
+              Just h  -> pure $ BlockPoint s h
+              Nothing -> fail $ "Slot not in ImmutableDB: " <> show s
+          Nothing -> fail "Need to specify the path to an ImmutableDB"
+        StartFromPoint s h -> pure $ BlockPoint s (fromRawHash p h)
+          where
+            p = Proxy @(CardanoBlock StandardCrypto)
 
       let totalBlocks = numBlocks * fromIntegral (length startPoints)
 
@@ -138,7 +160,7 @@ run opts = evalContT $ do
         configFile
       , immutableDBDir
       , serverAddr = (serverHostName, serverPort)
-      , startSlots
+      , startFrom
       , numBlocks
       } = opts
 

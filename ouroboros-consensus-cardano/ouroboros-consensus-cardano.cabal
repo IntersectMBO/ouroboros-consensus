@@ -661,6 +661,8 @@ executable n2n-pg
   main-is: n2n-pg.hs
   build-depends:
     base,
+    base16-bytestring,
+    bytestring,
     cardano-crypto-class,
     optparse-applicative,
     ouroboros-consensus,
