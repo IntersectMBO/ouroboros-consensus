@@ -80,6 +80,7 @@ import           Data.Kind (Type)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
+import           Data.Maybe.Strict (StrictMaybe (..))
 import           Data.Proxy
 import           Data.Typeable
 import           Data.Word (Word64)
@@ -349,7 +350,7 @@ bracketChainSyncClient
               csvSetCandidate =
               modifyTVar csHandleState . \ c s -> s {csCandidate = c}
             , csvSetLatestSlot =
-              modifyTVar csHandleState . \ ls s -> s {csLatestSlot = Just $! ls}
+              modifyTVar csHandleState . \ ls s -> s {csLatestSlot = SJust ls}
             , csvIdling = Idling {
                 idlingStart = atomically $ modifyTVar csHandleState $ \ s -> s {csIdling = True}
               , idlingStop = atomically $ modifyTVar csHandleState $ \ s -> s {csIdling = False}
@@ -365,7 +366,7 @@ bracketChainSyncClient
     mkChainSyncClientHandleState =
       newTVarIO ChainSyncState {
           csCandidate = AF.Empty AF.AnchorGenesis
-        , csLatestSlot = Nothing
+        , csLatestSlot = SNothing
         , csIdling = False
         }
 
@@ -1001,7 +1002,7 @@ findIntersectionTop cfgEnv dynEnv intEnv =
                 map castPoint
               $ AF.selectPoints (map fromIntegral offsets) ourFrag
 
-            uis = UnknownIntersectionState {
+            !uis = UnknownIntersectionState {
                 ourFrag               = ourFrag
               , ourHeaderStateHistory = ourHeaderStateHistory
               , uBestBlockNo

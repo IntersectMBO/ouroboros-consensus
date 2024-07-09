@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns         #-}
 {-# LANGUAGE DeriveAnyClass       #-}
 {-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE FlexibleContexts     #-}
@@ -257,7 +258,7 @@ snapshotFill bucket toAdd = do
         levelFilled = min capacity (levelLeaked + toAdd)
         overflew = levelLeaked + toAdd > capacity
         newLevel = if not overflew || fillOnOverflow then levelFilled else levelLeaked
-        newState = State {time = newTime, level = newLevel, paused, config}
+        !newState = State {time = newTime, level = newLevel, paused, config}
     writeTVar bucket newState
     pure (newState, if overflew then Overflew else DidNotOverflow)
 
