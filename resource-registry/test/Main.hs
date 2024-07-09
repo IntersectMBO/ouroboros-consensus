@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP                 #-}
 {-# LANGUAGE DeriveGeneric       #-}
 {-# LANGUAGE DeriveTraversable   #-}
 {-# LANGUAGE FlexibleContexts    #-}
@@ -33,7 +34,9 @@ import           Control.Monad.Class.MonadFork
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Class.MonadTimer.SI
 import           Control.Monad.Except
+#if __GLASGOW_HASKELL__ >= 900
 import           Control.Monad.IO.Class
+#endif
 import           Control.ResourceRegistry
 import           Data.Foldable
 import           Data.Function
