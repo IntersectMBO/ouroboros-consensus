@@ -13,14 +13,23 @@ on:
           Run the test run under NoThunks conditions instead of the default variant
         type: boolean
         default: false
+      nothunks-safe-only:
+        description:
+          Run only the test suites which are known to pass under NoThunks conditions
+        type: boolean
+        default: false
   pull_request:
   merge_group:
   push:
     branches:
       - main
   schedule:
+
     # every night, at midnight
     - cron: "0 0 * * *"
+
+    # on the first day of each month, at midnight
+    - cron: "0 0 1 * *"
 
 jobs:
   build-test-bench-haddocks:
@@ -31,9 +40,12 @@ jobs:
       matrix:
         ghc: ["8.10.7", "9.6.6", "9.8.2"]
         variant: [default, no-thunks]
+        test-set: [all, no-thunks-safe]
         exclude:
           - variant:
               ${{ (github.event_name == 'schedule' || inputs.nothunks) && 'default' || 'no-thunks' }}
+          - test-set:
+              ${{ (github.event_name == 'schedule' || inputs.nothunks-safe-only) && 'all' || 'no-thunks-safe' }}
     env:
       # Modify this value to "invalidate" the Cabal cache.
       CABAL_CACHE_VERSION: "2024-07-04"
@@ -127,7 +139,12 @@ jobs:
       run: cabal build all -j
 
     - name: Test
+      if: matrix.test-set == 'all'
       run: cabal test all -j --test-show-details=streaming
+
+    - name: Test (NoThunks-safe tests only)
+      if: matrix.test-set == 'no-thunks-safe'
+      run: cabal test ouroboros-consensus:consensus-test ouroboros-consensus:doctest ouroboros-consensus:infra-test ouroboros-consensus:storage-test ouroboros-consensus-cardano:byron-test ouroboros-consensus-cardano:shelley-test ouroboros-consensus-diffusion:infra-test ouroboros-consensus-diffusion:mock-test ouroboros-consensus-protocol:protocol-test -j --test-show-details=streaming
 
     - name: Create baseline-benchmark
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
