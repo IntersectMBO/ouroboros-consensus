@@ -25,19 +25,34 @@ open import Ledger.Prelude
 \end{code}
 
 \begin{figure*}[h]
+\begin{AgdaAlign}
 \emph{Update Nonce environments}
+\begin{AgdaSuppressSpace}
 \begin{code}
 record UpdateNonceEnv : Type where
-  constructor ⟦_⟧ᵘᵉ
-  field η : Nonce -- new nonce
 \end{code}
+\begin{code}[hide]
+  constructor ⟦_⟧ᵘᵉ
+  field
+\end{code}
+\begin{code}  
+    η : Nonce -- new nonce
+\end{code}
+\end{AgdaSuppressSpace}
 \emph{Update Nonce states}
+\begin{AgdaSuppressSpace}
 \begin{code}
 record UpdateNonceState : Type where
-  constructor ⟦_,_⟧ᵘˢ
-  field ηv : Nonce -- evolving nonce
-        ηc : Nonce -- candidate nonce
 \end{code}
+\begin{code}[hide]
+  constructor ⟦_,_⟧ᵘˢ
+  field
+\end{code}
+\begin{code}
+    ηv : Nonce -- evolving nonce
+    ηc : Nonce -- candidate nonce
+\end{code}
+\end{AgdaSuppressSpace}
 \emph{Update Nonce transitions}
 \begin{code}[hide]
 data
@@ -45,6 +60,7 @@ data
 \begin{code}
   _⊢_⇀⦇_,UPDN⦈_ : UpdateNonceEnv → UpdateNonceState → Slot → UpdateNonceState → Type
 \end{code}
+\end{AgdaAlign}
 \caption{Update Nonce transition system types}
 \label{fig:ts-types:updnonce}
 \end{figure*}

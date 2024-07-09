@@ -26,20 +26,35 @@ open import Ledger.Prelude
 \end{code}
 
 \begin{figure*}[h]
+\begin{AgdaAlign}
 \emph{Tick Nonce environments}
+\begin{AgdaSuppressSpace}
 \begin{code}
 record TickNonceEnv : Type where
-  constructor ⟦_,_⟧ᵗᵉ
-  field ηc  : Nonce     -- candidate nonce
-        ηph : Nonce     -- previous header hash as nonce
 \end{code}
+\begin{code}[hide]
+  constructor ⟦_,_⟧ᵗᵉ
+  field
+\end{code}
+\begin{code}
+    ηc  : Nonce     -- candidate nonce
+    ηph : Nonce     -- previous header hash as nonce
+\end{code}
+\end{AgdaSuppressSpace}
 \emph{Tick Nonce states}
+\begin{AgdaSuppressSpace}
 \begin{code}
 record TickNonceState : Type where
-  constructor ⟦_,_⟧ᵗˢ
-  field η₀ : Nonce -- epoch nonce
-        ηh : Nonce -- nonce from hash of previous epoch's last block header
 \end{code}
+\begin{code}[hide]
+  constructor ⟦_,_⟧ᵗˢ
+  field
+\end{code}
+\begin{code}  
+    η₀ : Nonce -- epoch nonce
+    ηh : Nonce -- nonce from hash of previous epoch's last block header
+\end{code}
+\end{AgdaSuppressSpace}
 \emph{Tick Nonce transitions}
 \begin{code}[hide]
 data
@@ -47,6 +62,7 @@ data
 \begin{code}
   _⊢_⇀⦇_,TICKN⦈_ : TickNonceEnv → TickNonceState → Bool → TickNonceState → Type
 \end{code}
+\end{AgdaAlign}
 \caption{Tick Nonce transition system types}
 \label{fig:ts-types:ticknonce}
 \end{figure*}
