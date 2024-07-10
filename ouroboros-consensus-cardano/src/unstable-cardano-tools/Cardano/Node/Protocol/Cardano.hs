@@ -37,7 +37,6 @@ import           Ouroboros.Consensus.Cardano.Condense ()
 import           Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams)
 import           Ouroboros.Consensus.Config (emptyCheckpointsMap)
 import           Ouroboros.Consensus.HardFork.Combinator.Condense ()
-import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Shelley.Crypto (StandardCrypto)
 
 
@@ -180,10 +179,7 @@ mkConsensusProtocolCardano NodeByronProtocolConfiguration {
             Byron.SoftwareVersion
               npcByronApplicationName
               npcByronApplicationVersion,
-          byronLeaderCredentials =
-            byronLeaderCredentials,
-          byronMaxTxCapacityOverrides =
-            Mempool.mkOverrides Mempool.noOverridesMeasure
+          byronLeaderCredentials = byronLeaderCredentials
         }
         Consensus.ProtocolParamsShelleyBased {
           shelleyBasedInitialNonce      = Shelley.genesisHashToPraosNonce
@@ -195,54 +191,40 @@ mkConsensusProtocolCardano NodeByronProtocolConfiguration {
           -- version that this node will declare that it understands, when it
           -- is in the Shelley era. That is, it is the version of protocol
           -- /after/ Shelley, i.e. Allegra.
-          shelleyProtVer =
-            ProtVer (natVersion @3) 0,
-          shelleyMaxTxCapacityOverrides =
-            Mempool.mkOverrides Mempool.noOverridesMeasure
+          shelleyProtVer = ProtVer (natVersion @3) 0
         }
         Consensus.ProtocolParamsAllegra {
           -- This is /not/ the Allegra protocol version. It is the protocol
           -- version that this node will declare that it understands, when it
           -- is in the Allegra era. That is, it is the version of protocol
           -- /after/ Allegra, i.e. Mary.
-          allegraProtVer =
-            ProtVer (natVersion @4) 0,
-          allegraMaxTxCapacityOverrides =
-            Mempool.mkOverrides Mempool.noOverridesMeasure
+          allegraProtVer = ProtVer (natVersion @4) 0
         }
         Consensus.ProtocolParamsMary {
           -- This is /not/ the Mary protocol version. It is the protocol
           -- version that this node will declare that it understands, when it
           -- is in the Mary era. That is, it is the version of protocol
           -- /after/ Mary, i.e. Alonzo.
-          maryProtVer = ProtVer (natVersion @5) 0,
-          maryMaxTxCapacityOverrides =
-            Mempool.mkOverrides Mempool.noOverridesMeasure
+          maryProtVer = ProtVer (natVersion @5) 0
         }
         Consensus.ProtocolParamsAlonzo {
           -- This is /not/ the Alonzo protocol version. It is the protocol
           -- version that this node will declare that it understands, when it
           -- is in the Alonzo era. That is, it is the version of protocol
           -- /after/ Alonzo, i.e. Babbage.
-          alonzoProtVer = ProtVer (natVersion @7) 0,
-          alonzoMaxTxCapacityOverrides =
-            Mempool.mkOverrides Mempool.noOverridesMeasure
+          alonzoProtVer = ProtVer (natVersion @7) 0
         }
         Consensus.ProtocolParamsBabbage {
           -- This is /not/ the Babbage protocol version. It is the protocol
           -- version that this node will declare that it understands, when it
           -- is in the Babbage era.
-          Consensus.babbageProtVer = ProtVer (natVersion @9) 0,
-          Consensus.babbageMaxTxCapacityOverrides =
-            Mempool.mkOverrides Mempool.noOverridesMeasure
+          Consensus.babbageProtVer = ProtVer (natVersion @9) 0
         }
         Consensus.ProtocolParamsConway {
           -- This is /not/ the Conway protocol version. It is the protocol
           -- version that this node will declare that it understands, when it
           -- is in the Conway era.
-          Consensus.conwayProtVer = ProtVer (natVersion @9) 0,
-          Consensus.conwayMaxTxCapacityOverrides =
-            Mempool.mkOverrides Mempool.noOverridesMeasure
+          Consensus.conwayProtVer = ProtVer (natVersion @9) 0
         }
         -- The 'CardanoHardForkTriggers' specify the parameters needed to
         -- transition between two eras. The comments below also apply for all

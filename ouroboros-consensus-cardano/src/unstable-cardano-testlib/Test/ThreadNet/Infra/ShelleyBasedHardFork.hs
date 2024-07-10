@@ -50,7 +50,6 @@ import           Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.Mempool (TxLimits)
-import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Node
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Protocol.TPraos
@@ -267,7 +266,6 @@ protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
           protocolParamsShelleyBased
           (transCfg2 ^. L.tcPreviousEraConfigL)
           protVer1
-          (Mempool.mkOverrides Mempool.noOverridesMeasure)
 
     eraParams1 :: History.EraParams
     eraParams1 = shelleyEraParams genesis
@@ -292,7 +290,6 @@ protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
             }
           transCfg2
           protVer2
-          (Mempool.mkOverrides Mempool.noOverridesMeasure)
 
     eraParams2 :: History.EraParams
     eraParams2 = shelleyEraParams genesis

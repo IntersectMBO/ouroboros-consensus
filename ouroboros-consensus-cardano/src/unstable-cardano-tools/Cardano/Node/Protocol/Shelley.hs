@@ -44,7 +44,6 @@ import qualified Data.Aeson as Aeson (FromJSON (..), eitherDecodeStrict')
 import qualified Data.ByteString as BS
 import qualified Data.Text as T
 import qualified Ouroboros.Consensus.Cardano as Consensus
-import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Protocol.Praos.Common
                      (PraosCanBeLeader (..))
 import           Ouroboros.Consensus.Shelley.Node (Nonce (..),
@@ -87,10 +86,7 @@ mkSomeConsensusProtocolShelley NodeShelleyProtocolConfiguration {
             leaderCredentials
       }
       Consensus.ProtocolParamsShelley {
-        shelleyProtVer =
-          ProtVer (natVersion @2) 0,
-        shelleyMaxTxCapacityOverrides =
-          Mempool.mkOverrides Mempool.noOverridesMeasure
+        shelleyProtVer = ProtVer (natVersion @2) 0
       }
 
 genesisHashToPraosNonce :: GenesisHash -> Nonce

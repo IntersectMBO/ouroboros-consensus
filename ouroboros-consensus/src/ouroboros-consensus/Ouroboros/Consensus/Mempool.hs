@@ -27,12 +27,6 @@ module Ouroboros.Consensus.Mempool (
     -- ** Transaction size
   , ByteSize (..)
   , TxLimits (..)
-    -- ** Restricting more strongly than the ledger's limits
-  , TxOverrides
-  , applyOverrides
-  , getOverrides
-  , mkOverrides
-  , noOverridesMeasure
     -- * Mempool initialization
   , openMempool
   , openMempoolWithoutSyncThread
@@ -51,8 +45,7 @@ import           Ouroboros.Consensus.Mempool.API (ForgeLedgerState (..),
 import           Ouroboros.Consensus.Mempool.Capacity (ByteSize (..),
                      MempoolCapacityBytes (..),
                      MempoolCapacityBytesOverride (..), MempoolSize (..),
-                     TxLimits (..), TxOverrides (..), applyOverrides,
-                     computeMempoolCapacity, mkOverrides, noOverridesMeasure)
+                     TxLimits (..), computeMempoolCapacity)
 import           Ouroboros.Consensus.Mempool.Impl.Common (LedgerInterface (..),
                      TraceEventMempool (..), chainDBLedgerInterface)
 import           Ouroboros.Consensus.Mempool.Init (openMempool,

@@ -2,7 +2,6 @@
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeFamilies               #-}
 
 -- | Mempool capacity, size and transaction size datatypes.
@@ -22,24 +21,14 @@ module Ouroboros.Consensus.Mempool.Capacity (
     -- * Transaction size
   , ByteSize (..)
   , TxLimits (..)
-  , (<=)
-    -- * Restricting more strongly than the ledger's limits
-  , TxOverrides
-  , applyOverrides
-  , getOverrides
-  , mkOverrides
-  , noOverridesMeasure
   ) where
 
-import           Data.Coerce (coerce)
 import           Data.Measure (BoundedMeasure, Measure)
-import qualified Data.Measure as Measure
 import           Data.Word (Word32)
 import           NoThunks.Class
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ticked (Ticked (..))
-import           Prelude hiding ((<=))
 
 {-------------------------------------------------------------------------------
   Mempool capacity in bytes
@@ -128,11 +117,6 @@ class BoundedMeasure (TxMeasure blk) => TxLimits blk where
   -- | What is the allowed capacity for txs in an individual block?
   txsBlockCapacity :: Ticked (LedgerState blk) -> TxMeasure blk
 
--- | Is every component of the first value less-than-or-equal-to the
--- corresponding component of the second value?
-(<=) :: Measure a => a -> a -> Bool
-(<=) = (Measure.<=)
-
 {-------------------------------------------------------------------------------
   ByteSize
 -------------------------------------------------------------------------------}
@@ -141,49 +125,3 @@ newtype ByteSize = ByteSize { unByteSize :: Word32 }
   deriving stock (Show)
   deriving newtype (Eq, Ord)
   deriving newtype (BoundedMeasure, Measure)
-
-{-------------------------------------------------------------------------------
-  Overrides
--------------------------------------------------------------------------------}
-
--- | An override that lowers a capacity limit
---
--- Specifically, we use this override to let the node operator limit the total
--- 'TxMeasure' of transactions in blocks even more severely than would the
--- ledger state's 'txsBlockCapacity'. The forge logic will use the 'Measure.min'
--- (ie the lattice's @meet@ operator) to combine this override with the capacity
--- given by the ledger state. More concretely, that will typically be a
--- componentwise minimum operation, along each of the components\/dimensions of
--- @'TxMeasure' blk@.
---
--- This newtype wrapper distinguishes the intention of this particular
--- 'TxMeasure' as such an override. We use 'TxMeasure' in different ways in this
--- code base. The newtype also allows us to distinguish the one most appropriate
--- monoid among many offered by the 'TxLimits' superclass constraints: it is the
--- monoid induced by the bounded meet-semilattice (see 'BoundedMeasure') that is
--- relevant to the notion of /overriding/ the ledger's block capacity.
-newtype TxOverrides blk =
-  -- This constructor is not exported.
-  TxOverrides { getOverrides :: TxMeasure blk }
-
-instance TxLimits blk => Monoid (TxOverrides blk) where
-  mempty = TxOverrides noOverridesMeasure
-
-instance TxLimits blk => Semigroup (TxOverrides blk) where
-  (<>) = coerce $ Measure.min @(TxMeasure blk)
-
--- | @'applyOverrides' 'noOverrides' m = m@
-noOverridesMeasure :: BoundedMeasure a => a
-noOverridesMeasure = Measure.maxBound
-
--- | Smart constructor for 'Overrides'.
-mkOverrides :: TxMeasure blk -> TxOverrides blk
-mkOverrides = TxOverrides
-
--- | Apply the override
-applyOverrides ::
-     TxLimits blk
-  => TxOverrides blk
-  -> TxMeasure blk
-  -> TxMeasure blk
-applyOverrides (TxOverrides m') m = Measure.min m' m

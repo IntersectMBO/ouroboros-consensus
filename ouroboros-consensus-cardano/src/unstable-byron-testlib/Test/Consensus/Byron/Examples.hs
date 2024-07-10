@@ -38,7 +38,6 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
-import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.NodeId
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.PBFT
@@ -121,7 +120,6 @@ exampleBlock :: ByronBlock
 exampleBlock =
     forgeRegularBlock
       cfg
-      (Mempool.mkOverrides Mempool.noOverridesMeasure)
       (BlockNo 1)
       (SlotNo 1)
       (applyChainTick ledgerConfig (SlotNo 1) ledgerStateAfterEBB)

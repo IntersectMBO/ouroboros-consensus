@@ -24,7 +24,6 @@ import           Ouroboros.Consensus.Byron.Crypto.DSIGN (ByronDSIGN,
                      SignKeyDSIGN (..))
 import           Ouroboros.Consensus.Byron.Ledger (ByronBlock)
 import           Ouroboros.Consensus.Byron.Node
-import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import           Ouroboros.Consensus.Protocol.PBFT
@@ -66,7 +65,6 @@ mkProtocolByron params coreNodeId genesisConfig genesisSecrets =
           , byronProtocolVersion        = theProposedProtocolVersion
           , byronSoftwareVersion        = theProposedSoftwareVersion
           , byronLeaderCredentials      = Just leaderCredentials
-          , byronMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
           }
 
 mkLeaderCredentials ::

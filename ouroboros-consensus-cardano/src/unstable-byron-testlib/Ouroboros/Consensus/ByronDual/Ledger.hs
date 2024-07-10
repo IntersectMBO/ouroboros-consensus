@@ -43,7 +43,6 @@ import           Ouroboros.Consensus.ByronSpec.Ledger
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Dual
-import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Protocol.PBFT
 import qualified Test.Cardano.Chain.Elaboration.Block as Spec.Test
 import qualified Test.Cardano.Chain.Elaboration.Keys as Spec.Test
@@ -223,7 +222,6 @@ forgeDualByronBlock cfg curBlockNo curSlotNo tickedLedger vtxs isLeader =
     main :: ByronBlock
     main = forgeByronBlock
              (dualTopLevelConfigMain cfg)
-             (Mempool.mkOverrides Mempool.noOverridesMeasure)
              curBlockNo
              curSlotNo
              (tickedDualLedgerStateMain tickedLedger)

@@ -26,7 +26,6 @@ import           Ouroboros.Consensus.Byron.Ledger (ByronBlock)
 import qualified Ouroboros.Consensus.Byron.Ledger as Byron
 import           Ouroboros.Consensus.Byron.Node (PBftSignatureThreshold (..),
                      ProtocolParams (..), protocolInfoByron)
-import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Text.Builder (decimal)
 
@@ -114,5 +113,4 @@ mkByronProtocolInfo genesisConfig signatureThreshold =
       , byronProtocolVersion        = Update.ProtocolVersion 1 0 0
       , byronSoftwareVersion        = Update.SoftwareVersion (Update.ApplicationName "db-analyser") 2
       , byronLeaderCredentials      = Nothing
-      , byronMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
       }

@@ -154,23 +154,16 @@ data BlockForging m blk = BlockForging {
 --
 -- Filters out all transactions that do not fit the maximum size of total
 -- transactions in a single block, which is determined by querying the ledger
--- state for the current limit and the given override. The result is the
--- pointwise minimum of the ledger-specific capacity and the result of the
--- override. In other words, the override can only reduce (parts of) the
--- 'MempoolCapacity.TxMeasure'.
+-- state for the current limit.
 takeLargestPrefixThatFits ::
      TxLimits blk
-  => MempoolCapacity.TxOverrides blk
-  -> TickedLedgerState blk
+  => TickedLedgerState blk
   -> [Validated (GenTx blk)]
   -> [Validated (GenTx blk)]
-takeLargestPrefixThatFits overrides ledger txs =
+takeLargestPrefixThatFits ledger txs =
     Measure.take (MempoolCapacity.txMeasure ledger) capacity txs
   where
-    capacity =
-      MempoolCapacity.applyOverrides
-        overrides
-        (MempoolCapacity.txsBlockCapacity ledger)
+    capacity = MempoolCapacity.txsBlockCapacity ledger
 
 data ShouldForge blk =
     -- | Before check whether we are a leader in this slot, we tried to update

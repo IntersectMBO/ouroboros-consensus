@@ -20,7 +20,6 @@ import           Ouroboros.Consensus.Byron.Ledger hiding (byronProtocolVersion,
                      byronSoftwareVersion)
 import           Ouroboros.Consensus.Byron.Node
 import           Ouroboros.Consensus.Config
-import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Node.Serialisation ()
 import           Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..))
@@ -98,7 +97,6 @@ testCfg = pInfoConfig protocolInfo
         , byronProtocolVersion        = CC.Update.ProtocolVersion 1 0 0
         , byronSoftwareVersion        = CC.Update.SoftwareVersion (CC.Update.ApplicationName "Cardano Test") 2
         , byronLeaderCredentials      = Nothing
-        , byronMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
         }
 
 -- | Matches the values used for the generators.
