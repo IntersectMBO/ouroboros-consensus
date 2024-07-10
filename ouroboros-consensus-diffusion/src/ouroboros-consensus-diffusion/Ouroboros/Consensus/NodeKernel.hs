@@ -253,7 +253,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
               , GSM.setCaughtUpPersistentMark = \upd ->
                   (if upd then GSM.touchMarkerFile else GSM.removeMarkerFile)
                     gsmMarkerFileView
-              , GSM.writeGsmState = \gsmState -> do
+              , GSM.writeGsmState = \gsmState ->
                   atomicallyWithMonotonicTime $ \time -> do
                     writeTVar varGsmState gsmState
                     handles <- readTVar varChainSyncHandles
