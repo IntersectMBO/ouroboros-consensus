@@ -49,7 +49,7 @@ tests =
 
 -- | Test of ChainSync Jumping (CSJ).
 --
--- This test features several peers the all sync the “honest” chain (ie. the
+-- This test features several peers that all sync the “honest” chain (ie. the
 -- trunk of the block tree) with CSJ enabled. What we expect to observe is that
 -- one of the honest peers becomes the dynamo while the others become jumpers.
 -- Because the jumpers will agree to all the jumps, the whole syncing should
