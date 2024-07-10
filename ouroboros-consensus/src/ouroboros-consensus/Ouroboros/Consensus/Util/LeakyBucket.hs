@@ -21,12 +21,14 @@
 -- a “good” action.
 --
 -- NOTE: Even though the imagery is the same, this is different from what is
--- usually called a “token bucket” or “leaky bucket” in the litterature where it
--- is mostly used for rate limiting.
+-- usually called a \“token bucket\” or \“leaky bucket\” in the litterature
+-- where it is mostly used for rate limiting.
 --
 -- REVIEW: Could be used as leaky bucket used for rate limiting algorithms. All
 -- the infrastructure is here (put 'onEmpty' to @pure ()@ and you're good to go)
 -- but it has not been tested with that purpose in mind.
+--
+-- $leakyBucketDesign
 module Ouroboros.Consensus.Util.LeakyBucket (
     Config (..)
   , Handlers (..)
@@ -292,6 +294,8 @@ init config@Config {capacity} = do
         config = config
       }
 
+-- $leakyBucketDesign
+--
 -- Note [Leaky bucket design]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~
 --
@@ -314,7 +318,7 @@ init config@Config {capacity} = do
 -- for the action to lower the waiting time by changing the bucket configuration
 -- to one where the rate is higher.
 --
--- We fix both those issues with one mechanism, the “runThreadVar”. It is an
+-- We fix both those issues with one mechanism, the @runThreadVar@. It is an
 -- MVar containing an integer that tells the thread whether it should be
 -- running. An empty MVar means that the thread should not be running, for
 -- instance if the rate is null. A full MVar (no matter what the integer is)
@@ -325,7 +329,7 @@ init config@Config {capacity} = do
 -- that the configuration changed as that it might have to wait less long. The
 -- change in configuration is detected by changes in the integer.
 --
--- Note that we call “start”/“stop” running the action of filling/emptying the
+-- Note that we call \“start\”/\“stop\” running the action of filling/emptying the
 -- MVar. This is not to mistaken for the thread actually being spawned/killed.
 
 -- | Monadic action that calls 'threadDelay' until the bucket is empty, then
