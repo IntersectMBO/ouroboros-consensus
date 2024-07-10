@@ -56,12 +56,11 @@ praosBlockForging ::
      , IOLike m
      )
   => PraosParams
-  -> Mempool.TxOverrides (ShelleyBlock (Praos c) era)
   -> ShelleyLeaderCredentials (EraCrypto era)
   -> m (BlockForging m (ShelleyBlock (Praos c) era))
-praosBlockForging praosParams maxTxCapacityOverrides credentials = do
+praosBlockForging praosParams credentials = do
     hotKey <- HotKey.mkHotKey @m @c initSignKey startPeriod praosMaxKESEvo
-    pure $ praosSharedBlockForging hotKey slotToPeriod credentials maxTxCapacityOverrides
+    pure $ praosSharedBlockForging hotKey slotToPeriod credentials
   where
     PraosParams {praosMaxKESEvo, praosSlotsPerKESPeriod} = praosParams
 
@@ -89,16 +88,14 @@ praosSharedBlockForging ::
   => HotKey.HotKey c m
   -> (SlotNo -> Absolute.KESPeriod)
   -> ShelleyLeaderCredentials c
-  -> Mempool.TxOverrides (ShelleyBlock (Praos c) era)
-  -> BlockForging m     (ShelleyBlock (Praos c) era)
+  -> BlockForging m (ShelleyBlock (Praos c) era)
 praosSharedBlockForging
   hotKey
   slotToPeriod
   ShelleyLeaderCredentials {
       shelleyLeaderCredentialsCanBeLeader = canBeLeader
     , shelleyLeaderCredentialsLabel = label
-    }
-  maxTxCapacityOverrides = do
+    } = do
     BlockForging
       { forgeLabel = label <> "_" <> T.pack (L.eraName @era),
         canBeLeader = canBeLeader,
@@ -114,7 +111,6 @@ praosSharedBlockForging
             hotKey
             canBeLeader
             cfg
-            maxTxCapacityOverrides
       }
 
 {-------------------------------------------------------------------------------
@@ -122,13 +118,11 @@ praosSharedBlockForging
 -------------------------------------------------------------------------------}
 
 data instance ProtocolParams (ShelleyBlock (Praos c) (BabbageEra c)) = ProtocolParamsBabbage {
-    babbageProtVer                :: SL.ProtVer
+    babbageProtVer :: SL.ProtVer
     -- ^ see 'Ouroboros.Consensus.Shelley.Node.TPraos.shelleyProtVer', mutatis mutandi
-  , babbageMaxTxCapacityOverrides :: Mempool.TxOverrides (ShelleyBlock (Praos c) (BabbageEra c))
   }
 
 data instance ProtocolParams (ShelleyBlock (Praos c) (ConwayEra c)) = ProtocolParamsConway {
-    conwayProtVer                :: SL.ProtVer
+    conwayProtVer :: SL.ProtVer
     -- ^ see 'Ouroboros.Consensus.Shelley.Node.TPraos.shelleyProtVer', mutatis mutandi
-  , conwayMaxTxCapacityOverrides :: Mempool.TxOverrides (ShelleyBlock (Praos c) (ConwayEra c))
   }

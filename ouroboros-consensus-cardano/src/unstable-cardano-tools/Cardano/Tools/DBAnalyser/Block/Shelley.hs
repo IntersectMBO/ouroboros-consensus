@@ -37,7 +37,6 @@ import           Data.Sequence.Strict (StrictSeq)
 import           Data.Word (Word64)
 import           Lens.Micro ((^.))
 import           Lens.Micro.Extras (view)
-import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import           Ouroboros.Consensus.Shelley.Eras (StandardCrypto,
@@ -156,6 +155,5 @@ mkShelleyProtocolInfo genesis initialNonce =
         , shelleyBasedLeaderCredentials = []
         }
       ProtocolParamsShelley {
-          shelleyProtVer                = SL.ProtVer (CL.natVersion @2) 0
-        , shelleyMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
+          shelleyProtVer = SL.ProtVer (CL.natVersion @2) 0
         }

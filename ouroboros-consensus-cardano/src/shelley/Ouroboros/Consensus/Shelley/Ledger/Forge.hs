@@ -21,7 +21,6 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Mempool (TxLimits)
-import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Protocol.Abstract (CanBeLeader, IsLeader)
 import           Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
@@ -45,8 +44,6 @@ forgeShelleyBlock ::
   => HotKey (EraCrypto era) m
   -> CanBeLeader proto
   -> TopLevelConfig (ShelleyBlock proto era)
-  -> Mempool.TxOverrides (ShelleyBlock proto era) -- ^ How to override max tx
-                                                  --   capacity defined by ledger
   -> BlockNo                                      -- ^ Current block number
   -> SlotNo                                       -- ^ Current slot number
   -> TickedLedgerState (ShelleyBlock proto era)   -- ^ Current ledger
@@ -57,7 +54,6 @@ forgeShelleyBlock
   hotKey
   cbl
   cfg
-  maxTxCapacityOverrides
   curNo
   curSlot
   tickedLedger
@@ -76,7 +72,7 @@ forgeShelleyBlock
         SL.toTxSeq @era
       . Seq.fromList
       . fmap extractTx
-      $ takeLargestPrefixThatFits maxTxCapacityOverrides tickedLedger txs
+      $ takeLargestPrefixThatFits tickedLedger txs
 
     extractTx :: Validated (GenTx (ShelleyBlock proto era)) -> Core.Tx era
     extractTx (ShelleyValidatedTx _txid vtx) = SL.extractTx vtx

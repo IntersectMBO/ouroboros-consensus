@@ -47,7 +47,6 @@ import           Ouroboros.Consensus.Byron.Ledger.Conversions
 import           Ouroboros.Consensus.Byron.Node
 import           Ouroboros.Consensus.Byron.Protocol
 import           Ouroboros.Consensus.Config
-import qualified Ouroboros.Consensus.Mempool as TxLimits
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.NodeId
@@ -1295,10 +1294,7 @@ mkRekeyUpd genesisConfig genesisSecrets cid pInfo blockForging eno newSK = do
     (_:_) ->
       let genSK = genesisSecretFor genesisConfig genesisSecrets cid
           creds' = updSignKey genSK bcfg cid (coerce eno) newSK
-          blockForging' =
-            byronBlockForging
-              (TxLimits.mkOverrides TxLimits.noOverridesMeasure)
-              creds'
+          blockForging' = byronBlockForging creds'
 
       in Just TestNodeInitialization
         { tniCrucialTxs = [dlgTx (blcDlgCert creds')]

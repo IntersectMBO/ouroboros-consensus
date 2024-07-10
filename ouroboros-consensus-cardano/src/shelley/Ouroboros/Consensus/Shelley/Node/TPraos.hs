@@ -54,7 +54,6 @@ import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Mempool (TxLimits)
-import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
@@ -90,12 +89,11 @@ shelleyBlockForging ::
       , IOLike m
       )
   => TPraosParams
-  -> Mempool.TxOverrides (ShelleyBlock (TPraos c) era)
   -> ShelleyLeaderCredentials (EraCrypto era)
   -> m (BlockForging m (ShelleyBlock (TPraos c) era))
-shelleyBlockForging tpraosParams maxTxCapacityOverrides credentials = do
+shelleyBlockForging tpraosParams credentials = do
     hotKey <- HotKey.mkHotKey @m @c initSignKey startPeriod tpraosMaxKESEvo
-    pure $ shelleySharedBlockForging hotKey slotToPeriod credentials maxTxCapacityOverrides
+    pure $ shelleySharedBlockForging hotKey slotToPeriod credentials
   where
     TPraosParams {tpraosMaxKESEvo, tpraosSlotsPerKESPeriod} = tpraosParams
 
@@ -124,9 +122,8 @@ shelleySharedBlockForging ::
   => HotKey c m
   -> (SlotNo -> Absolute.KESPeriod)
   -> ShelleyLeaderCredentials c
-  -> Mempool.TxOverrides (ShelleyBlock (TPraos c) era)
   -> BlockForging m     (ShelleyBlock (TPraos c) era)
-shelleySharedBlockForging hotKey slotToPeriod credentials maxTxCapacityOverrides =
+shelleySharedBlockForging hotKey slotToPeriod credentials =
     BlockForging {
         forgeLabel       = label <> "_" <> T.pack (L.eraName @era)
       , canBeLeader      = canBeLeader
@@ -143,7 +140,6 @@ shelleySharedBlockForging hotKey slotToPeriod credentials maxTxCapacityOverrides
             hotKey
             canBeLeader
             cfg
-            maxTxCapacityOverrides
       }
   where
     ShelleyLeaderCredentials {
@@ -206,29 +202,25 @@ data instance ProtocolParams (ShelleyBlock (TPraos c) (ShelleyEra c)) = Protocol
       -- version increments past 'shelleyProtVer', this isn't an important
       -- discrepancy. The key aspects of the comment before this TODO are only
       -- important for the last era prot ver limit, anyway.
-      shelleyProtVer                :: SL.ProtVer
-    , shelleyMaxTxCapacityOverrides :: Mempool.TxOverrides (ShelleyBlock(TPraos c) (ShelleyEra c) )
+      shelleyProtVer :: SL.ProtVer
     }
 
 -- | Parameters needed to run Allegra
 data instance ProtocolParams (ShelleyBlock (TPraos c) (AllegraEra c)) = ProtocolParamsAllegra {
-      allegraProtVer                :: SL.ProtVer
+      allegraProtVer :: SL.ProtVer
       -- ^ see 'shelleyProtVer', mutatis mutandi
-    , allegraMaxTxCapacityOverrides :: Mempool.TxOverrides (ShelleyBlock (TPraos c) (AllegraEra c) )
     }
 
 -- | Parameters needed to run Mary
 data instance ProtocolParams (ShelleyBlock (TPraos c) (MaryEra c)) = ProtocolParamsMary {
-      maryProtVer                :: SL.ProtVer
+      maryProtVer :: SL.ProtVer
       -- ^ see 'shelleyProtVer', mutatis mutandi
-    , maryMaxTxCapacityOverrides :: Mempool.TxOverrides (ShelleyBlock (TPraos c) (MaryEra c) )
     }
 
 -- | Parameters needed to run Alonzo
 data instance ProtocolParams (ShelleyBlock (TPraos c) (AlonzoEra c)) = ProtocolParamsAlonzo {
-      alonzoProtVer                :: SL.ProtVer
+      alonzoProtVer :: SL.ProtVer
       -- ^ see 'shelleyProtVer', mutatis mutandi
-    , alonzoMaxTxCapacityOverrides :: Mempool.TxOverrides (ShelleyBlock (TPraos c) (AlonzoEra c) )
     }
 
 protocolInfoShelley ::
@@ -247,14 +239,12 @@ protocolInfoShelley ::
 protocolInfoShelley shelleyGenesis
                     protocolParamsShelleyBased
                     ProtocolParamsShelley {
-                        shelleyProtVer                = protVer
-                      , shelleyMaxTxCapacityOverrides = maxTxCapacityOverrides
+                        shelleyProtVer = protVer
                       } =
     protocolInfoTPraosShelleyBased
       protocolParamsShelleyBased
       (L.mkShelleyTransitionConfig shelleyGenesis)
       protVer
-      maxTxCapacityOverrides
 
 protocolInfoTPraosShelleyBased ::
      forall m era c.
@@ -268,7 +258,6 @@ protocolInfoTPraosShelleyBased ::
   -> L.TransitionConfig era
   -> SL.ProtVer
      -- ^ see 'shelleyProtVer', mutatis mutandi
-  -> Mempool.TxOverrides (ShelleyBlock (TPraos c) era)
   -> ( ProtocolInfo (ShelleyBlock (TPraos c) era)
      , m [BlockForging m (ShelleyBlock (TPraos c) era)]
      )
@@ -277,15 +266,14 @@ protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
                            , shelleyBasedLeaderCredentials = credentialss
                            }
                          transitionCfg
-                         protVer
-                         maxTxCapacityOverrides =
+                         protVer =
     assertWithMsg (validateGenesis genesis) $
     ( ProtocolInfo {
         pInfoConfig       = topLevelConfig
       , pInfoInitLedger   = initExtLedgerState
       }
     , traverse
-        (shelleyBlockForging tpraosParams maxTxCapacityOverrides)
+        (shelleyBlockForging tpraosParams)
         credentialss
     )
   where

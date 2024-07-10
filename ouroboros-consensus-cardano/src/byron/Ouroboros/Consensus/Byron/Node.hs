@@ -49,7 +49,6 @@ import           Ouroboros.Consensus.Config.SupportsNode
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
-import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Node.InitStorage
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Node.Run
@@ -128,10 +127,9 @@ type instance ForgeStateUpdateError ByronBlock = Void
 
 byronBlockForging ::
      Monad m
-  => Mempool.TxOverrides ByronBlock
-  -> ByronLeaderCredentials
+  => ByronLeaderCredentials
   -> BlockForging m ByronBlock
-byronBlockForging maxTxCapacityOverrides creds = BlockForging {
+byronBlockForging creds = BlockForging {
       forgeLabel       = blcLabel creds
     , canBeLeader
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
@@ -141,7 +139,7 @@ byronBlockForging maxTxCapacityOverrides creds = BlockForging {
                                canBeLeader
                                slot
                                tickedPBftState
-    , forgeBlock       = \cfg -> return ....: forgeByronBlock cfg maxTxCapacityOverrides
+    , forgeBlock       = \cfg -> return ....: forgeByronBlock cfg
     }
   where
     canBeLeader = mkPBftCanBeLeader creds
@@ -156,10 +154,9 @@ mkPBftCanBeLeader (ByronLeaderCredentials sk cert nid _) = PBftCanBeLeader {
 blockForgingByron :: Monad m
                   => ProtocolParams ByronBlock
                   -> [BlockForging m ByronBlock]
-blockForgingByron ProtocolParamsByron { byronLeaderCredentials      = mLeaderCreds
-                                      , byronMaxTxCapacityOverrides = maxTxCapacityOverrides
+blockForgingByron ProtocolParamsByron { byronLeaderCredentials = mLeaderCreds
                                       } =
-            byronBlockForging maxTxCapacityOverrides
+            byronBlockForging
             <$> maybeToList mLeaderCreds
 
 {-------------------------------------------------------------------------------
@@ -178,7 +175,6 @@ data instance ProtocolParams ByronBlock = ProtocolParamsByron {
     , byronProtocolVersion        :: Update.ProtocolVersion
     , byronSoftwareVersion        :: Update.SoftwareVersion
     , byronLeaderCredentials      :: Maybe ByronLeaderCredentials
-    , byronMaxTxCapacityOverrides :: Mempool.TxOverrides ByronBlock
     }
 
 protocolInfoByron :: ProtocolParams ByronBlock

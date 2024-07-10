@@ -33,7 +33,6 @@ import qualified Data.ByteString.Lazy as LB
 import           Data.Text as Text (unpack)
 import           Ouroboros.Consensus.Cardano
 import qualified Ouroboros.Consensus.Cardano as Consensus
-import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Prelude hiding (show, (.))
 
 
@@ -83,10 +82,7 @@ mkSomeConsensusProtocolByron NodeByronProtocolConfiguration {
           Update.SoftwareVersion
             npcByronApplicationName
             npcByronApplicationVersion,
-        byronLeaderCredentials =
-          optionalLeaderCredentials,
-        byronMaxTxCapacityOverrides =
-          Mempool.mkOverrides Mempool.noOverridesMeasure
+        byronLeaderCredentials = optionalLeaderCredentials
         }
 
 readGenesis :: GenesisFile

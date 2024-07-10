@@ -37,7 +37,6 @@ import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Dual
 import           Ouroboros.Consensus.Ledger.Extended
-import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Node.InitStorage
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Node.Run
@@ -69,10 +68,7 @@ dualByronBlockForging creds = BlockForging {
     , forgeBlock       = return .....: forgeDualByronBlock
     }
   where
-    BlockForging {..} =
-      byronBlockForging
-        (Mempool.mkOverrides Mempool.noOverridesMeasure)
-        creds
+    BlockForging {..} = byronBlockForging creds
 
 {-------------------------------------------------------------------------------
   ProtocolInfo

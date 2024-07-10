@@ -100,7 +100,6 @@ import           Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Extended
-import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Node.Run
@@ -631,37 +630,30 @@ protocolInfoCardano paramsCardano
     genesisShelley = ledgerTransitionConfig ^. L.tcShelleyGenesisL
 
     ProtocolParamsByron {
-          byronGenesis                = genesisByron
-        , byronLeaderCredentials      = mCredsByron
-        , byronMaxTxCapacityOverrides = maxTxCapacityOverridesByron
+          byronGenesis           = genesisByron
+        , byronLeaderCredentials = mCredsByron
         } = paramsByron
     ProtocolParamsShelleyBased {
           shelleyBasedInitialNonce      = initialNonceShelley
         , shelleyBasedLeaderCredentials = credssShelleyBased
         } = paramsShelleyBased
     ProtocolParamsShelley {
-          shelleyProtVer                = protVerShelley
-        , shelleyMaxTxCapacityOverrides = maxTxCapacityOverridesShelley
+          shelleyProtVer = protVerShelley
         } = paramsShelley
     ProtocolParamsAllegra {
-          allegraProtVer                = protVerAllegra
-        , allegraMaxTxCapacityOverrides = maxTxCapacityOverridesAllegra
+          allegraProtVer = protVerAllegra
         } = paramsAllegra
     ProtocolParamsMary {
-          maryProtVer                = protVerMary
-        , maryMaxTxCapacityOverrides = maxTxCapacityOverridesMary
+          maryProtVer = protVerMary
         } = paramsMary
     ProtocolParamsAlonzo {
-          alonzoProtVer                = protVerAlonzo
-        , alonzoMaxTxCapacityOverrides = maxTxCapacityOverridesAlonzo
+          alonzoProtVer = protVerAlonzo
         } = paramsAlonzo
     ProtocolParamsBabbage {
-          babbageProtVer                = protVerBabbage
-        , babbageMaxTxCapacityOverrides = maxTxCapacityOverridesBabbage
+          babbageProtVer = protVerBabbage
         } = paramsBabbage
     ProtocolParamsConway {
-          conwayProtVer                = protVerConway
-        , conwayMaxTxCapacityOverrides = maxTxCapacityOverridesConway
+          conwayProtVer = protVerConway
         } = paramsConway
 
     transitionConfigShelley = transitionConfigAllegra ^. L.tcPreviousEraConfigL
@@ -1033,7 +1025,7 @@ protocolInfoCardano paramsCardano
     mBlockForgingByron :: Maybe (NonEmptyOptNP (BlockForging m) (CardanoEras c))
     mBlockForgingByron = do
         creds <- mCredsByron
-        return $ byronBlockForging maxTxCapacityOverridesByron creds `OptNP.at` IZ
+        return $ byronBlockForging creds `OptNP.at` IZ
 
     blockForgingShelleyBased ::
          ShelleyLeaderCredentials c
@@ -1058,28 +1050,26 @@ protocolInfoCardano paramsCardano
               Absolute.KESPeriod $ fromIntegral $ slot `div` praosSlotsPerKESPeriod
 
         let tpraos :: forall era.
-                 ShelleyEraWithCrypto c (TPraos c) era
-              => Mempool.TxOverrides (ShelleyBlock (TPraos c) era)
-              -> BlockForging m      (ShelleyBlock (TPraos c) era)
-            tpraos maxTxCapacityOverrides =
-              TPraos.shelleySharedBlockForging hotKey slotToPeriod credentials maxTxCapacityOverrides
+                 ShelleyEraWithCrypto c       (TPraos c) era
+              => BlockForging m (ShelleyBlock (TPraos c) era)
+            tpraos =
+              TPraos.shelleySharedBlockForging hotKey slotToPeriod credentials
 
         let praos :: forall era.
-                 ShelleyEraWithCrypto c (Praos c) era
-              => Mempool.TxOverrides (ShelleyBlock (Praos c) era)
-              -> BlockForging m      (ShelleyBlock (Praos c) era)
-            praos maxTxCapacityOverrides =
-              Praos.praosSharedBlockForging hotKey slotToPeriod credentials maxTxCapacityOverrides
+                 ShelleyEraWithCrypto c       (Praos c) era
+              => BlockForging m (ShelleyBlock (Praos c) era)
+            praos =
+              Praos.praosSharedBlockForging hotKey slotToPeriod credentials
 
         pure
           $ OptSkip    -- Byron
           $ OptNP.fromNonEmptyNP $
-            tpraos maxTxCapacityOverridesShelley :*
-            tpraos maxTxCapacityOverridesAllegra :*
-            tpraos maxTxCapacityOverridesMary    :*
-            tpraos maxTxCapacityOverridesAlonzo  :*
-            praos  maxTxCapacityOverridesBabbage :*
-            praos  maxTxCapacityOverridesConway  :*
+            tpraos :*
+            tpraos :*
+            tpraos :*
+            tpraos :*
+            praos  :*
+            praos  :*
             Nil
 
 protocolClientInfoCardano ::

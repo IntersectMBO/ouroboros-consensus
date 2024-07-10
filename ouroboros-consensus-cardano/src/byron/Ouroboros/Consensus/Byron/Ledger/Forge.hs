@@ -40,14 +40,11 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
                      (LedgerSupportsMempool (..), txForgetValidated)
-import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Protocol.PBFT
 
 forgeByronBlock ::
      HasCallStack
   => TopLevelConfig ByronBlock
-  -> Mempool.TxOverrides ByronBlock   -- ^ How to override max tx capacity
-                                      --   defined by ledger
   -> BlockNo                          -- ^ Current block number
   -> SlotNo                           -- ^ Current slot number
   -> TickedLedgerState ByronBlock     -- ^ Current ledger
@@ -123,15 +120,13 @@ initBlockPayloads = BlockPayloads
 forgeRegularBlock ::
      HasCallStack
   => BlockConfig ByronBlock
-  -> Mempool.TxOverrides ByronBlock    -- ^ How to override max tx capacity
-                                       --   defined by ledger
   -> BlockNo                           -- ^ Current block number
   -> SlotNo                            -- ^ Current slot number
   -> TickedLedgerState ByronBlock      -- ^ Current ledger
   -> [Validated (GenTx ByronBlock)]    -- ^ Txs to consider adding in the block
   -> PBftIsLeader PBftByronCrypto      -- ^ Leader proof ('IsLeader')
   -> ByronBlock
-forgeRegularBlock cfg maxTxCapacityOverrides bno sno st txs isLeader =
+forgeRegularBlock cfg bno sno st txs isLeader =
     forge $
       forgePBftFields
         (mkByronContextDSIGN cfg)
@@ -146,7 +141,7 @@ forgeRegularBlock cfg maxTxCapacityOverrides bno sno st txs isLeader =
         foldr
           extendBlockPayloads
           initBlockPayloads
-          (takeLargestPrefixThatFits maxTxCapacityOverrides st txs)
+          (takeLargestPrefixThatFits st txs)
 
     txPayload :: CC.UTxO.TxPayload
     txPayload = CC.UTxO.mkTxPayload (bpTxs blockPayloads)

@@ -35,8 +35,7 @@ import           Ouroboros.Consensus.Block.Forging (BlockForging)
 import           Ouroboros.Consensus.BlockchainTime (SlotLength)
 import           Ouroboros.Consensus.Byron.Node (ByronLeaderCredentials,
                      ProtocolParams (..), byronGenesis,
-                     byronMaxTxCapacityOverrides, byronPbftSignatureThreshold,
-                     byronSoftwareVersion)
+                     byronPbftSignatureThreshold, byronSoftwareVersion)
 import           Ouroboros.Consensus.Cardano.Block (CardanoBlock)
 import           Ouroboros.Consensus.Cardano.Node (CardanoHardForkConstraints,
                      CardanoHardForkTriggers (..), ProtocolParams (..),
@@ -44,7 +43,6 @@ import           Ouroboros.Consensus.Cardano.Node (CardanoHardForkConstraints,
                      protocolInfoCardano)
 import           Ouroboros.Consensus.Config (emptyCheckpointsMap)
 import           Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
-import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..),
                      ProtocolInfo)
 import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
@@ -279,35 +277,28 @@ mkTestProtocolInfo
             , byronProtocolVersion        = aByronProtocolVersion
             , byronSoftwareVersion        = softVerByron
             , byronLeaderCredentials      = Just leaderCredentialsByron
-            , byronMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
             }
           ProtocolParamsShelleyBased {
               shelleyBasedInitialNonce      = initialNonce
             , shelleyBasedLeaderCredentials = [leaderCredentialsShelley]
             }
           ProtocolParamsShelley {
-              shelleyProtVer                = hfSpecProtVer Shelley hardForkSpec
-            , shelleyMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
+              shelleyProtVer = hfSpecProtVer Shelley hardForkSpec
             }
           ProtocolParamsAllegra {
-              allegraProtVer                = hfSpecProtVer Allegra hardForkSpec
-            , allegraMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
+              allegraProtVer = hfSpecProtVer Allegra hardForkSpec
             }
           ProtocolParamsMary {
-              maryProtVer                   = hfSpecProtVer Mary hardForkSpec
-            , maryMaxTxCapacityOverrides    = Mempool.mkOverrides Mempool.noOverridesMeasure
+              maryProtVer = hfSpecProtVer Mary hardForkSpec
             }
           ProtocolParamsAlonzo {
-              alonzoProtVer                 = hfSpecProtVer Alonzo hardForkSpec
-            , alonzoMaxTxCapacityOverrides  = Mempool.mkOverrides Mempool.noOverridesMeasure
+              alonzoProtVer = hfSpecProtVer Alonzo hardForkSpec
             }
           ProtocolParamsBabbage {
-              babbageProtVer                = hfSpecProtVer Babbage hardForkSpec
-            , babbageMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
+              babbageProtVer = hfSpecProtVer Babbage hardForkSpec
             }
           ProtocolParamsConway {
-              conwayProtVer                 = hfSpecProtVer Conway hardForkSpec
-            , conwayMaxTxCapacityOverrides  = Mempool.mkOverrides Mempool.noOverridesMeasure
+              conwayProtVer = hfSpecProtVer Conway hardForkSpec
             }
           CardanoHardForkTriggers' {
               triggerHardForkShelley = hfSpecTransitionTrigger Shelley hardForkSpec
