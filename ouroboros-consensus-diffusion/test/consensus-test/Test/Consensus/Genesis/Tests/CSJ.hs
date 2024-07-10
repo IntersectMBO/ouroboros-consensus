@@ -37,15 +37,22 @@ tests =
       "CSJ"
       [ testGroup
           "Happy Path"
-          [ testProperty "honest peers are synchronised" $ prop_CSJ True True,
-            testProperty "honest peers do their own thing" $ prop_CSJ True False
+          [ testProperty "honest peers are synchronised" $ prop_CSJ NoAdversaries OneScheduleForAllPeers,
+            testProperty "honest peers do their own thing" $ prop_CSJ NoAdversaries OneSchedulePerHonestPeer
           ],
         testGroup
           "With some adversaries"
-          [ testProperty "honest peers are synchronised" $ prop_CSJ False True,
-            testProperty "honest peers do their own thing" $ prop_CSJ False False
+          [ testProperty "honest peers are synchronised" $ prop_CSJ WithAdversaries OneScheduleForAllPeers,
+            testProperty "honest peers do their own thing" $ prop_CSJ WithAdversaries OneSchedulePerHonestPeer
           ]
       ]
+
+-- | A flag to indicate if properties are tested with adversarial peers
+data WithAdversariesFlag = NoAdversaries | WithAdversaries
+
+-- | A flag to indicate if properties are tested using the same schedule for the
+-- honest peers, or if each peer should used its own schedule.
+data NumHonestSchedulesFlag = OneScheduleForAllPeers | OneSchedulePerHonestPeer
 
 -- | Test of ChainSync Jumping (CSJ).
 --
@@ -68,19 +75,18 @@ tests =
 -- duplication of headers, but only in a window of @jumpSize@ slots near the tip
 -- of the chain.
 --
--- The first boolean differentiates between the “happy path” variant and the
--- variant with adversaries; the second boolean differentiates between
--- “synchronous” and “asynchronous” scenarios. In a synchronous scenario, all
--- the honest peers have the same schedule: they serve the chain exactly in the
--- same way. In the asynchronous scenario, a random schedule is generated for
--- each peer (but they still serve the same chain).
-prop_CSJ :: Bool -> Bool -> Property
-prop_CSJ happy synchronized =
+prop_CSJ :: WithAdversariesFlag -> NumHonestSchedulesFlag -> Property
+prop_CSJ adversariesFlag numHonestSchedules = do
+  let genForks = case adversariesFlag of
+                   NoAdversaries   -> pure 0
+                   WithAdversaries -> choose (2, 4)
   forAllGenesisTest
-    ( if synchronized
-        then genChains (if happy then pure 0 else choose (2, 4))
+    ( case numHonestSchedules of
+        OneScheduleForAllPeers ->
+          genChains genForks
           `enrichedWith` genDuplicatedHonestSchedule
-        else genChainsWithExtraHonestPeers (choose (2, 4)) (if happy then pure 0 else choose (2, 4))
+        OneSchedulePerHonestPeer ->
+          genChainsWithExtraHonestPeers (choose (2, 4)) genForks
           `enrichedWith` genUniformSchedulePoints
     )
     ( defaultSchedulerConfig
