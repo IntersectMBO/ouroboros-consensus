@@ -149,8 +149,11 @@ gddWatcher cfg tracer chainDb getGsmState getHandles varLoEFrag =
 
 -- | Pure snapshot of the dynamic data the GDD operates on.
 data GDDStateView m blk peer = GDDStateView {
+    -- | The current chain selection
     gddCtxCurChain          :: AnchoredFragment (Header blk)
+    -- | The current ledger state
   , gddCtxImmutableLedgerSt :: ExtLedgerState blk
+    -- | Callbacks to disconnect from peers
   , gddCtxKillActions       :: Map peer (m ())
   , gddCtxStates            :: Map peer (ChainSyncState blk)
   }
@@ -160,13 +163,6 @@ data GDDStateView m blk peer = GDDStateView {
 -- Disconnecting peers causes candidate fragments to be removed, which causes
 -- the GDD governor to reevaluate GDD over and over until no more peers are
 -- disconnected.
---
--- @getHandles@ is the callback to get the handles that allow to disconnect
--- from peers.
---
--- @curChain@ is the current chain selection.
---
--- @immutableLedgerSt@ is the current ledger state.
 --
 -- Yields the new LoE fragment.
 --
