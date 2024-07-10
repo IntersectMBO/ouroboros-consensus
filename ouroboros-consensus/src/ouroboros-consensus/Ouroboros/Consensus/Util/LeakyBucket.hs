@@ -72,7 +72,7 @@ data Config m = Config
   }
   deriving (Generic)
 
-deriving instance (NoThunks (m ())) => NoThunks (Config m)
+deriving instance NoThunks (m ()) => NoThunks (Config m)
 
 -- | A configuration for a bucket that does nothing.
 dummyConfig :: (Applicative m) => Config m
