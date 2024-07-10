@@ -878,6 +878,10 @@ instance (Typeable blk, StandardHash blk) => Exception (ChainDbError blk) where
 -- See "Ouroboros.Consensus.Genesis.Governor" for details.
 --
 -- This type indicates whether LoE is enabled, and contains a value if it is.
+-- There is no a priori meaning assigned to the type parameter @a@.
+-- @LoE a@ is isomorphic to @Maybe a@, with the added meaning that
+-- @Just/LoEEnabled@ is only used when the LoE is enabled.
+--
 data LoE a =
   -- | The LoE is disabled, so ChainSel will not keep the selection from
   -- advancing.
