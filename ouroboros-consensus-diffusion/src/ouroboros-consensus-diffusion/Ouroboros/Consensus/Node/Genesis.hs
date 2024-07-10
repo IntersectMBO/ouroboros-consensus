@@ -116,7 +116,7 @@ setGetLoEFragment readGsmState readLoEFragment varGetLoEFragment =
   where
     getLoEFragment :: ChainDB.GetLoEFragment m blk
     getLoEFragment = atomically $ readGsmState >>= \case
-        -- When the HAA can currently not be guaranteed, we should not select
+        -- When the Honest Availability Assumption cannot currently be guaranteed, we should not select
         -- any blocks that would cause our immutable tip to advance, so we
         -- return the most conservative LoE fragment.
         GSM.PreSyncing ->
