@@ -297,7 +297,7 @@ init config@Config {capacity} = do
 --
 -- The leaky bucket works by running the given action against a thread that
 -- makes the bucket leak. Since that would be extremely inefficient to actually
--- remove tokens one by one from the token, the 'leak' thread instead looks at
+-- remove tokens one by one from the bucket, the 'leak' thread instead looks at
 -- the current state of the bucket, computes how much time it would take for the
 -- bucket to empty, and then wait that amount of time. Once the wait is over, it
 -- recurses, looks at the new state of the bucket, etc. If tokens were given to
@@ -325,7 +325,7 @@ init config@Config {capacity} = do
 -- that the configuration changed as that it might have to wait less long. The
 -- change in configuration is detected by changes in the integer.
 --
--- Note that we call “start”/“stop” running the action of filling/emtpying the
+-- Note that we call “start”/“stop” running the action of filling/emptying the
 -- MVar. This is not to mistaken for the thread actually being spawned/killed.
 
 -- | Monadic action that calls 'threadDelay' until the bucket is empty, then
