@@ -476,7 +476,7 @@ data GenesisTest blk schedule = GenesisTest
     --
     -- There will be at most one adversarial peer per alternative branch in the block tree
     -- (exactly one per branch if no adversary does a rollback),
-    -- and `1 + gtExtraHonestPeers` honest peers.
+    -- and @1 + gtExtraHonestPeers@ honest peers.
     gtExtraHonestPeers   :: Word,
     gtSchedule           :: schedule
   }
