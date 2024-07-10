@@ -91,6 +91,7 @@ data
 \end{figure*}
 
 \begin{figure*}[h]
+\begin{AgdaSuppressSpace}
 \emph{Protocol helper functions}
 \begin{code}
 hBLeader : BHBody → Certifiedℕ
@@ -101,22 +102,37 @@ hBNonce : BHBody → Nonce
 hBNonce bhb = serHashToNonce (hash (encode "N" ∥ encode vrfRes))
   where open BHBody bhb
 
+\end{code}
+\begin{AgdaAlign}
+\begin{code}
 checkLeaderVal : Certifiedℕ → PosUnitInterval → ℚ → Type
 checkLeaderVal (certℕ , certℕprf) (f , posf , f≤1) σ =
-   if f ≡ 1ℚ then ⊤ else λ{f≢1ℚ} →
-     let
-       p     = pos certℕ ℚ./ (2 ^ 512)
-       p≢1ℚ  = ↥p<↧p⇒p≢1 {p} (n<m⇒↥[n/m]<↧[n/m] certℕprf)
-       q     = 1ℚ ℚ.- p
-       1-f≥0 = p≤1⇒1-p≥0 f≤1
-       1-f≢0 = p≢1⇒1-p≢0 f≢1ℚ
-       instance
-         q≢0ℚ  = ℚ.≢-nonZero (p≢1⇒1-p≢0 p≢1ℚ)
-         1-f>0 = ℚ.positive (≤∧≢⇒< 1-f≥0 $ ≢-sym 1-f≢0)
-       c = ln (1ℚ ℚ.- f)
-     in
-       ℚ.1/ q < exp ((ℚ.- σ) ℚ.* c)
+   if f ≡ 1ℚ then ⊤ else
+\end{code}
+\begin{code}[hide]
+     λ{f≢1ℚ} →
+\end{code}
+\begin{code}
+       let
+         p = pos certℕ ℚ./ (2 ^ 512)
+         q = 1ℚ ℚ.- p
+\end{code}
+\begin{code}[hide]       
+         p≢1ℚ  = ↥p<↧p⇒p≢1 {p} (n<m⇒↥[n/m]<↧[n/m] certℕprf)
+         1-f≥0 = p≤1⇒1-p≥0 f≤1
+         1-f≢0 = p≢1⇒1-p≢0 f≢1ℚ
+         instance
+           q≢0ℚ  = ℚ.≢-nonZero (p≢1⇒1-p≢0 p≢1ℚ)
+           1-f>0 = ℚ.positive (≤∧≢⇒< 1-f≥0 $ ≢-sym 1-f≢0)
+\end{code}
+\begin{code}
+         c = ln (1ℚ ℚ.- f)
+       in
+         ℚ.1/ q < exp ((ℚ.- σ) ℚ.* c)
 
+\end{code}
+\end{AgdaAlign}
+\begin{code}
 vrfChecks : Nonce → PoolDistr → PosUnitInterval → BHBody → Type
 vrfChecks η₀ pd f bhb =
   case lookupPoolDistr pd hk of
@@ -131,6 +147,7 @@ vrfChecks η₀ pd f bhb =
     hk = hash issuerVk
     seed = slotToSeed slot XOR nonceToSeed η₀
 \end{code}
+\end{AgdaSuppressSpace}
 \caption{Protocol transition system helper functions}
 \label{fig:ts-funs:prtcl}
 \end{figure*}
