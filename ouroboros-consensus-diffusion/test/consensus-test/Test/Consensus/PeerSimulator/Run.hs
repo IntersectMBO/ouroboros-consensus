@@ -10,7 +10,7 @@ module Test.Consensus.PeerSimulator.Run (
   , runPointSchedule
   ) where
 
-import           Control.Monad (foldM, forM, void)
+import           Control.Monad (foldM, forM, void, when)
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.ResourceRegistry
@@ -105,6 +105,11 @@ data SchedulerConfig =
     -- duration to trigger it.
     , scDowntime                 :: Maybe DiffTime
 
+    -- | Enable the use of ChainSel starvation information in the block fetch
+    -- decision logic. It is never actually disabled, but rather the grace
+    -- period is made virtually infinite.
+    , scEnableChainSelStarvation :: Bool
+
     -- | Whether to enable ChainSync Jumping. The parameters come from
     -- 'GenesisTest'.
     , scEnableCSJ                :: Bool
@@ -122,6 +127,7 @@ defaultSchedulerConfig =
     scEnableLoE = False,
     scEnableLoP = False,
     scDowntime = Nothing,
+    scEnableChainSelStarvation = True,
     scEnableCSJ = False
   }
 
@@ -215,14 +221,20 @@ smartDelay ::
   LiveNode blk m ->
   DiffTime ->
   m (LiveNode blk m)
-smartDelay NodeLifecycle {nlMinDuration, nlStart, nlShutdown} node duration
-  | Just minInterval <- nlMinDuration, duration > minInterval = do
+smartDelay lifecycle@NodeLifecycle {nlStart, nlShutdown} node duration
+  | itIsTimeToRestartTheNode lifecycle duration = do
     results <- nlShutdown node
     threadDelay duration
     nlStart results
 smartDelay _ node duration = do
   threadDelay duration
   pure node
+
+itIsTimeToRestartTheNode :: NodeLifecycle blk m -> DiffTime -> Bool
+itIsTimeToRestartTheNode NodeLifecycle {nlMinDuration} duration =
+  case nlMinDuration of
+    Just minInterval -> duration > minInterval
+    Nothing          -> False
 
 -- | The 'Tick' contains a state update for a specific peer.
 -- If the peer has not terminated by protocol rules, this will update its TMVar
@@ -290,7 +302,16 @@ runScheduler tracer varHandles ps@PointSchedule{psMinEndTime} peers lifecycle@No
             else Nothing
         _        -> Just $ coerce psMinEndTime
   LiveNode{lnChainDb, lnStateViewTracers} <-
-    maybe (pure nodeEnd) (smartDelay lifecycle nodeEnd) extraDelay
+    case extraDelay of
+      Just duration -> do
+        nodeEnd' <- smartDelay lifecycle nodeEnd duration
+        -- Give an opportunity to the node to finish whatever it was doing at
+        -- shutdown
+        when (itIsTimeToRestartTheNode lifecycle duration) $
+          threadDelay $ coerce psMinEndTime
+        pure nodeEnd'
+      Nothing ->
+        pure nodeEnd
   traceWith tracer TraceEndOfTime
   pure (lnChainDb, lnStateViewTracers)
   where
@@ -383,7 +404,13 @@ startNode schedulerConfig genesisTest interval = do
   -- The block fetch logic needs to be started after the block fetch clients
   -- otherwise, an internal assertion fails because getCandidates yields more
   -- peer fragments than registered clients.
-  BlockFetch.startBlockFetchLogic lrRegistry lrTracer lnChainDb fetchClientRegistry handles
+  BlockFetch.startBlockFetchLogic
+    (scEnableChainSelStarvation schedulerConfig)
+    lrRegistry
+    lrTracer
+    lnChainDb
+    fetchClientRegistry
+    handles
 
   for_ lrLoEVar $ \ var -> do
       forkLinkedWatcher lrRegistry "LoE updater background" $
@@ -391,7 +418,10 @@ startNode schedulerConfig genesisTest interval = do
           lrConfig
           (mkGDDTracerTestBlock lrTracer)
           lnChainDb
-          1.0 -- Default config value in NodeKernel.hs at the time or writing
+          0.0 -- The rate limit makes simpler the calculations of how long tests
+              -- should run and still should produce interesting interleavings.
+              -- It is similar to the setting of bfcDecisionLoopInterval in
+              -- Test.Consensus.PeerSimulator.BlockFetch
           (pure GSM.Syncing) -- TODO actually run GSM
           (cschcMap handles)
           var

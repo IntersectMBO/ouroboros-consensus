@@ -1015,9 +1015,9 @@ runThreadNetwork systemTime ThreadNetworkArgs
             , blockFetchConfiguration = BlockFetchConfiguration {
                   bfcMaxConcurrencyDeadline = 2
                 , bfcMaxRequestsInflight    = 10
-                , bfcDecisionLoopInterval   = 0.0 -- Mock testsuite can use sub-second slot
-                                                  -- interval which doesn't play nice with
-                                                  -- blockfetch descision interval.
+                , bfcDecisionLoopIntervalBulkSync = 0.0 -- Mock testsuite can use sub-second slot
+                , bfcDecisionLoopIntervalDeadline = 0.0 -- interval which doesn't play nice with
+                                                        -- blockfetch descision interval.
                 , bfcSalt                   = 0
                 , bfcGenesisBFConfig        = gcBlockFetchConfig enableGenesisConfigDefault
                 }
