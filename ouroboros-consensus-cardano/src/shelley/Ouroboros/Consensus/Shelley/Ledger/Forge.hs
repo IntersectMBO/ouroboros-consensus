@@ -1,6 +1,5 @@
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE FlexibleContexts         #-}
-{-# LANGUAGE OverloadedStrings        #-}
 {-# LANGUAGE ScopedTypeVariables      #-}
 {-# LANGUAGE TypeApplications         #-}
 {-# LANGUAGE TypeFamilies             #-}
@@ -13,8 +12,6 @@ import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractTx)
 import qualified Cardano.Ledger.Shelley.BlockChain as SL (bBodySize)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import           Control.Exception
-import           Control.Monad.Except
-import           Data.List (foldl')
 import qualified Data.Sequence.Strict as Seq
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
@@ -31,7 +28,6 @@ import           Ouroboros.Consensus.Shelley.Ledger.Mempool
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto,
                      ProtocolHeaderSupportsKES (configSlotsPerKESPeriod),
                      mkHeader)
-import           Ouroboros.Consensus.Util.Assert
 
 {-------------------------------------------------------------------------------
   Forging
@@ -39,14 +35,14 @@ import           Ouroboros.Consensus.Util.Assert
 
 forgeShelleyBlock ::
      forall m era proto.
-     (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era), Monad m)
+     (ShelleyCompatible proto era, Monad m)
   => HotKey (EraCrypto era) m
   -> CanBeLeader proto
   -> TopLevelConfig (ShelleyBlock proto era)
   -> BlockNo                                      -- ^ Current block number
   -> SlotNo                                       -- ^ Current slot number
   -> TickedLedgerState (ShelleyBlock proto era)   -- ^ Current ledger
-  -> [Validated (GenTx (ShelleyBlock proto era))] -- ^ Txs to add in the block
+  -> [Validated (GenTx (ShelleyBlock proto era))] -- ^ Txs to include
   -> IsLeader proto
   -> m (ShelleyBlock proto era)
 forgeShelleyBlock
@@ -63,17 +59,16 @@ forgeShelleyBlock
     let blk = mkShelleyBlock $ SL.Block hdr body
     return $
       assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus cfg) blk) $
-      assertWithMsg bodySizeEstimate blk
+      blk
   where
-    lcfg = configLedger cfg
-
     protocolVersion = shelleyProtocolVersion $ configBlock cfg
 
     body =
         SL.toTxSeq @era
-      . Seq.fromList
-      . fmap extractTx
-      $ takeLargestPrefixThatFits lcfg tickedLedger txs
+      $ Seq.fromList
+      $ fmap extractTx txs
+
+    actualBodySize = SL.bBodySize protocolVersion body
 
     extractTx :: Validated (GenTx (ShelleyBlock proto era)) -> Core.Tx era
     extractTx (ShelleyValidatedTx _txid vtx) = SL.extractTx vtx
@@ -84,26 +79,3 @@ forgeShelleyBlock
       . castHash
       . getTipHash
       $ tickedLedger
-
-    bodySizeEstimate :: Either String ()
-    bodySizeEstimate
-      | actualBodySize > estimatedBodySize + fixedBlockBodyOverhead
-      = throwError $
-          "Actual block body size > Estimated block body size + fixedBlockBodyOverhead: "
-            <> show actualBodySize
-            <> " > "
-            <> show estimatedBodySize
-            <> " + "
-            <> show (fixedBlockBodyOverhead :: Int)
-      | otherwise
-      = return ()
-
-    actualBodySize, estimatedBodySize :: Int
-    actualBodySize = SL.bBodySize protocolVersion body
-
-    estimatedBodySize =
-        fromIntegral . unByteSize
-      $ foldl' (<>) mempty
-      $ map
-          (txMeasureByteSize . txMeasure lcfg tickedLedger . txForgetValidated)
-          txs

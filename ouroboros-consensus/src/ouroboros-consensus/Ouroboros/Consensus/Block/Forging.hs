@@ -20,13 +20,10 @@ module Ouroboros.Consensus.Block.Forging (
   , forgeStateUpdateInfoFromUpdateInfo
     -- * 'UpdateInfo'
   , UpdateInfo (..)
-    -- * Selecting transaction sequence prefixes
-  , takeLargestPrefixThatFits
   ) where
 
 import           Control.Tracer (Tracer, traceWith)
 import           Data.Kind (Type)
-import qualified Data.Measure as Measure
 import           Data.Text (Text)
 import           GHC.Stack
 import           Ouroboros.Consensus.Block.Abstract
@@ -125,11 +122,11 @@ data BlockForging m blk = BlockForging {
 
       -- | Forge a block
       --
-      -- The function is passed the contents of the mempool; this is a set of
-      -- transactions that is guaranteed to be consistent with the ledger state
-      -- (also provided as an argument) and with each other (when applied in
-      -- order). In principle /all/ of them could be included in the block (up
-      -- to maximum block size).
+      -- The function is passed the prefix of the mempool that will fit within
+      -- a valid block; this is a set of transactions that is guaranteed to be
+      -- consistent with the ledger state (also provided as an argument) and
+      -- with each other (when applied in order). All of them should be
+      -- included in the forged block, since the mempool ensures they can fit.
       --
       -- NOTE: do not refer to the consensus or ledger config in the closure,
       -- because they might contain an @EpochInfo Identity@, which will be
@@ -143,27 +140,10 @@ data BlockForging m blk = BlockForging {
         -> BlockNo                      -- Current block number
         -> SlotNo                       -- Current slot number
         -> TickedLedgerState blk        -- Current ledger state
-        -> [Validated (GenTx blk)]      -- Contents of the mempool
+        -> [Validated (GenTx blk)]      -- Transactions to include
         -> IsLeader (BlockProtocol blk) -- Proof we are leader
         -> m blk
     }
-
--- | The prefix of transactions to include in the block
---
--- Filters out all transactions that do not fit the maximum size of total
--- transactions in a single block, which is determined by querying the ledger
--- state for the current limit.
-takeLargestPrefixThatFits ::
-     LedgerSupportsMempool blk
-  => LedgerConfig blk
-  -> TickedLedgerState blk
-  -> [Validated (GenTx blk)]
-  -> [Validated (GenTx blk)]
-takeLargestPrefixThatFits cfg ledger txs =
-    Measure.take toMeasure capacity txs
-  where
-    toMeasure = txMeasure cfg ledger . txForgetValidated
-    capacity  = blockCapacityTxMeasure cfg ledger
 
 data ShouldForge blk =
     -- | Before check whether we are a leader in this slot, we tried to update

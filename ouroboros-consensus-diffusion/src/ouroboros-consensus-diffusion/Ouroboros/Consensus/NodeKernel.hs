@@ -514,7 +514,11 @@ forkBlockForging IS{..} blockForging =
                       (ForgeInKnownSlot currentSlot tickedLedgerState)
             pure (mempoolHash, mempoolSlotNo, snap)
 
-        let txs = [ vtx | (vtx, _tno, _byteSize) <- snapshotTxs mempoolSnapshot ]
+        let txs =
+                snapshotTake mempoolSnapshot
+              $ blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
+                -- NB respect the capacity of the ledger state we're extending,
+                -- which is /not/ 'snapshotLedgerState'
 
         -- force the mempool's computation before the tracer event
         _ <- evaluate (length txs)

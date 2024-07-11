@@ -334,6 +334,10 @@ data MempoolSnapshot blk = MempoolSnapshot {
     -- number greater than the one provided.
   , snapshotTxsAfter    :: TicketNo -> [(Validated (GenTx blk), TicketNo, ByteSize)]
 
+    -- | Get the greatest prefix (oldest to newest) that respects the given
+    -- block capacity.
+  , snapshotTake        :: TxMeasure blk -> [Validated (GenTx blk)]
+
     -- | Get a specific transaction from the mempool snapshot by its ticket
     -- number, if it exists.
   , snapshotLookupTx    :: TicketNo -> Maybe (Validated (GenTx blk))

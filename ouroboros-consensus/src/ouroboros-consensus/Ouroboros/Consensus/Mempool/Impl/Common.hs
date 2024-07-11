@@ -429,6 +429,7 @@ snapshotFromIS is = MempoolSnapshot {
     , snapshotMempoolSize = implSnapshotGetMempoolSize is
     , snapshotSlotNo      = isSlotNo                   is
     , snapshotLedgerState = isLedgerState              is
+    , snapshotTake        = implSnapshotTake           is
     }
  where
   implSnapshotGetTxs :: InternalState blk
@@ -440,6 +441,12 @@ snapshotFromIS is = MempoolSnapshot {
                           -> [(Validated (GenTx blk), TicketNo, ByteSize)]
   implSnapshotGetTxsAfter IS{isTxs} =
     TxSeq.toTuples . snd . TxSeq.splitAfterTicketNo isTxs
+
+  implSnapshotTake :: InternalState blk
+                   -> TxMeasure blk
+                   -> [Validated (GenTx blk)]
+  implSnapshotTake IS{isTxs} =
+    map TxSeq.txTicketTx . TxSeq.toList . fst . TxSeq.splitAfterTxSize isTxs
 
   implSnapshotGetTx :: InternalState blk
                     -> TicketNo
