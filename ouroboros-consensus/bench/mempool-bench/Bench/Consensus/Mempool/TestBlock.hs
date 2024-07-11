@@ -36,8 +36,6 @@ import           Ouroboros.Consensus.Config.SecurityParam as Consensus
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
-import qualified Ouroboros.Consensus.Mempool as Mempool
-import           Ouroboros.Network.SizeInBytes
 import           Test.Util.TestBlock (LedgerState (TestLedger),
                      PayloadSemantics (PayloadDependentError, PayloadDependentState, applyPayload),
                      TestBlockWith, applyDirectlyToPayloadDependentState,
@@ -123,8 +121,11 @@ newtype instance Ledger.GenTx TestBlock = TestBlockGenTx { unGenTx :: Tx }
 
 -- | For the mempool tests and benchmarks it is not imporant that we calculate
 -- the actual size of the transaction in bytes.
-txSize :: Ledger.GenTx TestBlock -> Mempool.SizeInBytes
-txSize (TestBlockGenTx tx) = fromIntegral $ 1 + length (consumed tx) + length (produced tx)
+txSize :: Ledger.GenTx TestBlock -> Ledger.ByteSize32
+txSize (TestBlockGenTx tx) =
+    Ledger.ByteSize32
+  $ fromIntegral
+  $ 1 + length (consumed tx) + length (produced tx)
 
 mkTx ::
      [Token]
@@ -145,13 +146,17 @@ instance Ledger.LedgerSupportsMempool TestBlock where
     fst <$> Ledger.applyTx cfg Ledger.DoNotIntervene slot genTx tickedSt
     -- FIXME: it is ok to use 'DoNotIntervene' here?
 
+  txForgetValidated (ValidatedGenTx tx) = tx
+
+instance Ledger.TxLimits TestBlock where
+  type TxMeasure TestBlock = Ledger.IgnoringOverflow Ledger.ByteSize32
+
   -- We tweaked this in such a way that we test the case in which we exceed the
   -- maximum mempool capacity. The value used here depends on 'txInBlockSize'.
-  txsMaxBytes _ = 20
+  blockCapacityTxMeasure _cfg _st =
+    Ledger.IgnoringOverflow $ Ledger.ByteSize32 20
 
-  txInBlockSize = getSizeInBytes . txSize
-
-  txForgetValidated (ValidatedGenTx tx) = tx
+  txMeasure _cfg _st = pure . Ledger.IgnoringOverflow . txSize
 
 newtype instance Ledger.TxId (Ledger.GenTx TestBlock) = TestBlockTxId Tx
   deriving stock (Generic)

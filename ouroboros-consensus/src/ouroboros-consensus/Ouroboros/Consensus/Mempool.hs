@@ -19,14 +19,10 @@ module Ouroboros.Consensus.Mempool (
   , TicketNo
   , zeroTicketNo
     -- * Mempool capacity
-  , MempoolCapacityBytes (..)
   , MempoolCapacityBytesOverride (..)
   , computeMempoolCapacity
     -- ** Mempool Size
   , MempoolSize (..)
-    -- ** Transaction size
-  , ByteSize (..)
-  , TxLimits (..)
     -- * Mempool initialization
   , openMempool
   , openMempoolWithoutSyncThread
@@ -42,10 +38,9 @@ import           Ouroboros.Consensus.Mempool.API (ForgeLedgerState (..),
                      MempoolSnapshot (..), SizeInBytes, TicketNo, addLocalTxs,
                      addTxs, isMempoolTxAdded, isMempoolTxRejected,
                      mempoolTxAddedToMaybe, zeroTicketNo)
-import           Ouroboros.Consensus.Mempool.Capacity (ByteSize (..),
-                     MempoolCapacityBytes (..),
-                     MempoolCapacityBytesOverride (..), MempoolSize (..),
-                     TxLimits (..), computeMempoolCapacity)
+import           Ouroboros.Consensus.Mempool.Capacity
+                     (MempoolCapacityBytesOverride (..), MempoolSize (..),
+                     computeMempoolCapacity)
 import           Ouroboros.Consensus.Mempool.Impl.Common (LedgerInterface (..),
                      TraceEventMempool (..), chainDBLedgerInterface)
 import           Ouroboros.Consensus.Mempool.Init (openMempool,

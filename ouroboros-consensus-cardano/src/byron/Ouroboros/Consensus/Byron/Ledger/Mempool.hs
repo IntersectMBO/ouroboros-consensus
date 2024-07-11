@@ -48,13 +48,13 @@ import           Cardano.Ledger.Binary (ByteSpan, DecoderError (..),
                      byronProtVer, fromByronCBOR, serialize, slice, toByronCBOR,
                      unsafeDeserialize)
 import           Cardano.Ledger.Binary.Plain (enforceSize)
-import           Cardano.Prelude (cborError)
+import           Cardano.Prelude (Natural, cborError)
 import           Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
 import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import           Control.Monad (void)
-import           Control.Monad.Except (Except)
+import           Control.Monad.Except (Except, throwError)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
@@ -71,18 +71,8 @@ import           Ouroboros.Consensus.Byron.Ledger.Serialisation
                      (byronBlockEncodingOverhead)
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
-import           Ouroboros.Consensus.Mempool
 import           Ouroboros.Consensus.Util (ShowProxy (..))
 import           Ouroboros.Consensus.Util.Condense
-
-{-------------------------------------------------------------------------------
-  TxLimits
--------------------------------------------------------------------------------}
-
-instance TxLimits ByronBlock where
-  type TxMeasure ByronBlock = ByteSize
-  txMeasure _st    = ByteSize . txInBlockSize . txForgetValidated
-  txsBlockCapacity = ByteSize . txsMaxBytes
 
 {-------------------------------------------------------------------------------
   Transactions
@@ -132,16 +122,39 @@ instance LedgerSupportsMempool ByronBlock where
     where
       validationMode = CC.ValidationMode CC.NoBlockValidation Utxo.TxValidationNoCrypto
 
-  txsMaxBytes st =
-    CC.getMaxBlockSize (tickedByronLedgerState st) - byronBlockEncodingOverhead
-
-  txInBlockSize =
-      fromIntegral
-    . Strict.length
-    . CC.mempoolPayloadRecoverBytes
-    . toMempoolPayload
-
   txForgetValidated = forgetValidatedByronTx
+
+instance TxLimits ByronBlock where
+  type TxMeasure ByronBlock = IgnoringOverflow ByteSize32
+
+  blockCapacityTxMeasure _cfg st =
+      IgnoringOverflow
+    $ ByteSize32
+    $ CC.getMaxBlockSize cvs - byronBlockEncodingOverhead
+    where
+      cvs = tickedByronLedgerState st
+
+  txMeasure _cfg st tx =
+      if txszNat > maxTxSize then throwError err else
+      pure $ IgnoringOverflow $ ByteSize32 $ fromIntegral txsz
+    where
+      maxTxSize =
+          Update.ppMaxTxSize
+        $ CC.adoptedProtocolParameters
+        $ CC.cvsUpdateState
+        $ tickedByronLedgerState st
+
+      txszNat = fromIntegral txsz :: Natural
+
+      txsz =
+          Strict.length
+        $ CC.mempoolPayloadRecoverBytes
+        $ toMempoolPayload tx
+
+      err =
+          CC.MempoolTxErr
+        $ Utxo.UTxOValidationTxValidationError
+        $ Utxo.TxValidationTxTooLarge txszNat maxTxSize
 
 data instance TxId (GenTx ByronBlock)
   = ByronTxId             !Utxo.TxId

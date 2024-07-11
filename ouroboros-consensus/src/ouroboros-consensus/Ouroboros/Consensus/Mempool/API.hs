@@ -96,31 +96,30 @@ data Mempool m blk = Mempool {
       --
       -- The new transaction provided will be validated, /in order/, against
       -- the ledger state obtained by applying all the transactions already in
-      -- the Mempool to it. Transactions which are found to be invalid, with
-      -- respect to the ledger state, are dropped, whereas valid transactions
-      -- are added to the mempool.
+      -- the mempool. Transactions which are found to be invalid are dropped,
+      -- whereas valid transactions are added to the mempool.
       --
-      -- Note that transactions that are invalid, with respect to the ledger
-      -- state, will /never/ be added to the mempool. However, it is possible
-      -- that, at a given point in time, transactions which were once valid
-      -- but are now invalid, with respect to the current ledger state, could
-      -- exist within the mempool until they are revalidated and dropped from
-      -- the mempool via a call to 'syncWithLedger' or by the background
-      -- thread that watches the ledger for changes.
+      -- Note that transactions that are invalid will /never/ be added to the
+      -- mempool. However, it is possible that, at a given point in time,
+      -- transactions which were valid in an older ledger state but are invalid
+      -- in the current ledger state, could exist within the mempool until they
+      -- are revalidated and dropped from the mempool via a call to
+      -- 'syncWithLedger' or by the background thread that watches the ledger
+      -- for changes.
       --
-      -- This action returns one of two results
+      -- This action returns one of two results.
       --
       --  * A 'MempoolTxAdded' value if the transaction provided was found to
-      --    be valid. This transactions is now in the Mempool.
+      --    be valid. This transactions is now in the mempool.
       --
       --  * A 'MempoolTxRejected' value if the transaction provided was found
       --    to be invalid, along with its accompanying validation errors. This
-      --    transactions is not in the Mempool.
+      --    transactions is not in the mempool.
       --
       -- Note that this is a blocking action. It will block until the
       -- transaction fits into the mempool. This includes transactions that
       -- turn out to be invalid: the action waits for there to be space for
-      -- the transaction before it gets validated.
+      -- the transaction before validation is attempted.
       --
       -- Note that it is safe to use this from multiple threads concurrently.
       --
@@ -130,10 +129,6 @@ data Mempool m blk = Mempool {
       -- >       MempoolTxRejected tx _err -> tx
       -- > processed <- addTx wti txs
       -- > prj processed == tx
-      --
-      -- Note that previously valid transaction that are now invalid with
-      -- respect to the current ledger state are dropped from the mempool, but
-      -- are not part of the first returned list (nor the second).
       --
       -- In principle it is possible that validation errors are transient; for
       -- example, it is possible that a transaction is rejected because one of
@@ -148,16 +143,14 @@ data Mempool m blk = Mempool {
       -- (after all, by definition that must mean its inputs have been used).
       -- Rejected transactions are therefore not necessarily a sign of
       -- malicious behaviour. Indeed, we would expect /most/ transactions that
-      -- are reported as invalid by 'tryAddTxs' to be invalid precisely
-      -- because they have already been included. Distinguishing between these
-      -- two cases can be done in theory, but it is expensive unless we have
-      -- an index of transaction hashes that have been included on the
-      -- blockchain.
+      -- are reported as invalid by 'addTxs' to be invalid precisely because
+      -- they have already been included. Distinguishing between these two
+      -- cases can be done in theory, but it is expensive unless we have an
+      -- index of transaction hashes that have been included on the blockchain.
       --
       -- As long as we keep the mempool entirely in-memory this could live in
       -- @STM m@; we keep it in @m@ instead to leave open the possibility of
       -- persistence.
-      --
       addTx      :: AddTxOnBehalfOf
                  -> GenTx blk
                  -> m (MempoolAddTxResult blk)
@@ -194,19 +187,19 @@ data Mempool m blk = Mempool {
       -- This does not update the state of the mempool.
     , getSnapshotFor :: ForgeLedgerState blk -> STM m (MempoolSnapshot blk)
 
-      -- | Get the mempool's capacity in bytes.
+      -- | Get the mempool's capacity
       --
       -- Note that the capacity of the Mempool, unless it is overridden with
-      -- 'MempoolCapacityBytesOverride', can dynamically change when the
-      -- ledger state is updated: it will be set to twice the current ledger's
-      -- maximum transaction capacity of a block.
+      -- 'MempoolCapacityBytesOverride', can dynamically change when the ledger
+      -- state is updated: it will be set to twice the current ledger's maximum
+      -- transaction capacity of a block.
       --
       -- When the capacity happens to shrink at some point, we /do not/ remove
       -- transactions from the Mempool to satisfy this new lower limit.
       -- Instead, we treat it the same way as a Mempool which is /at/
       -- capacity, i.e., we won't admit new transactions until some have been
       -- removed because they have become invalid.
-    , getCapacity    :: STM m Cap.MempoolCapacityBytes
+    , getCapacity    :: STM m (TxMeasure blk)
     }
 
 {-------------------------------------------------------------------------------
@@ -327,13 +320,17 @@ data ForgeLedgerState blk =
 data MempoolSnapshot blk = MempoolSnapshot {
     -- | Get all transactions (oldest to newest) in the mempool snapshot along
     -- with their ticket number.
-    snapshotTxs         :: [(Validated (GenTx blk), TicketNo)]
+    snapshotTxs         :: [(Validated (GenTx blk), TicketNo, ByteSize32)]
 
     -- | Get all transactions (oldest to newest) in the mempool snapshot,
     -- along with their ticket number, which are associated with a ticket
     -- number greater than the one provided.
   , snapshotTxsAfter    ::
-      TicketNo -> [(Validated (GenTx blk), TicketNo, TxSizeInBytes)]
+      TicketNo -> [(Validated (GenTx blk), TicketNo, ByteSize32)]
+
+    -- | Get the greatest prefix (oldest to newest) that respects the given
+    -- block capacity.
+  , snapshotTake        :: TxMeasure blk -> [Validated (GenTx blk)]
 
     -- | Get a specific transaction from the mempool snapshot by its ticket
     -- number, if it exists.

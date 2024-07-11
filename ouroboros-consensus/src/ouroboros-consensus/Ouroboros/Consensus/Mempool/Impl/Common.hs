@@ -73,7 +73,7 @@ data InternalState blk = IS {
       -- the normal way: by becoming invalid w.r.t. the updated ledger state.
       -- We treat a Mempool /over/ capacity in the same way as a Mempool /at/
       -- capacity.
-      isTxs          :: !(TxSeq (Validated (GenTx blk)))
+      isTxs          :: !(TxSeq (TxMeasure blk) (Validated (GenTx blk)))
 
       -- | The cached IDs of transactions currently in the mempool.
       --
@@ -123,37 +123,42 @@ data InternalState blk = IS {
       -- transactions will be in the next block. So any changes caused by that
       -- block will take effect after applying it and will only affect the
       -- next block.
-    , isCapacity     :: !MempoolCapacityBytes
+    , isCapacity     :: !(TxMeasure blk)
     }
   deriving (Generic)
 
 deriving instance ( NoThunks (Validated (GenTx blk))
                   , NoThunks (GenTxId blk)
                   , NoThunks (Ticked (LedgerState blk))
+                  , NoThunks (TxMeasure blk)
                   , StandardHash blk
                   , Typeable blk
                   ) => NoThunks (InternalState blk)
 
 -- | \( O(1) \). Return the number of transactions in the internal state of
 -- the Mempool paired with their total size in bytes.
-isMempoolSize :: InternalState blk -> MempoolSize
-isMempoolSize = TxSeq.toMempoolSize . isTxs
+isMempoolSize :: TxLimits blk => InternalState blk -> MempoolSize
+isMempoolSize is = MempoolSize {
+    msNumTxs   = fromIntegral $ length $ isTxs is
+  , msNumBytes = txMeasureByteSize $ TxSeq.toSize $ isTxs is
+  }
 
 initInternalState ::
      LedgerSupportsMempool blk
   => MempoolCapacityBytesOverride
   -> TicketNo  -- ^ Used for 'isLastTicketNo'
+  -> LedgerConfig blk
   -> SlotNo
   -> TickedLedgerState blk
   -> InternalState blk
-initInternalState capacityOverride lastTicketNo slot st = IS {
+initInternalState capacityOverride lastTicketNo cfg slot st = IS {
       isTxs          = TxSeq.Empty
     , isTxIds        = Set.empty
     , isLedgerState  = st
     , isTip          = castHash (getTipHash st)
     , isSlotNo       = slot
     , isLastTicketNo = lastTicketNo
-    , isCapacity     = computeMempoolCapacity st capacityOverride
+    , isCapacity     = computeMempoolCapacity cfg st capacityOverride
     }
 
 {-------------------------------------------------------------------------------
@@ -203,7 +208,9 @@ initMempoolEnv :: ( IOLike m
 initMempoolEnv ledgerInterface cfg capacityOverride tracer = do
     st <- atomically $ getCurrentLedgerState ledgerInterface
     let (slot, st') = tickLedgerState cfg (ForgeInUnknownSlot st)
-    isVar <- newTVarIO $ initInternalState capacityOverride TxSeq.zeroTicketNo slot st'
+    isVar <-
+        newTVarIO
+      $ initInternalState capacityOverride TxSeq.zeroTicketNo cfg slot st'
     addTxRemoteFifo <- newMVar ()
     addTxAllFifo    <- newMVar ()
     return MempoolEnv
@@ -254,10 +261,10 @@ data ValidationResult invalidTx blk = ValidationResult {
 
       -- | Capacity of the Mempool. Corresponds to 'vrBeforeTip' and
       -- 'vrBeforeSlotNo', /not/ 'vrAfter'.
-    , vrBeforeCapacity :: MempoolCapacityBytes
+    , vrBeforeCapacity :: TxMeasure blk
 
       -- | The transactions that were found to be valid (oldest to newest)
-    , vrValid          :: TxSeq (Validated (GenTx blk))
+    , vrValid          :: TxSeq (TxMeasure blk) (Validated (GenTx blk))
 
       -- | The cached IDs of transactions that were found to be valid (oldest to
       -- newest)
@@ -297,7 +304,7 @@ data ValidationResult invalidTx blk = ValidationResult {
 -- signatures.
 extendVRPrevApplied :: (LedgerSupportsMempool blk, HasTxId (GenTx blk))
                     => LedgerConfig blk
-                    -> TxTicket (Validated (GenTx blk))
+                    -> TxTicket (TxMeasure blk) (Validated (GenTx blk))
                     -> ValidationResult (Validated (GenTx blk)) blk
                     -> ValidationResult (Validated (GenTx blk)) blk
 extendVRPrevApplied cfg txTicket vr =
@@ -323,39 +330,36 @@ extendVRNew :: (LedgerSupportsMempool blk, HasTxId (GenTx blk))
             -> WhetherToIntervene
             -> GenTx blk
             -> ValidationResult (GenTx blk) blk
-            -> ( Either (ApplyTxErr blk) (Validated (GenTx blk))
-               , ValidationResult (GenTx blk) blk
-               )
-extendVRNew cfg wti tx vr = assert (isNothing vrNewValid) $
-    case runExcept (applyTx cfg wti vrSlotNo tx vrAfter) of
-      Left err         ->
-        ( Left err
-        , vr { vrInvalid      = (tx, err) : vrInvalid
-             }
-        )
-      Right (st', vtx) ->
-        ( Right vtx
-        , vr { vrValid        = vrValid :> TxTicket vtx nextTicketNo sz
+            -> Either
+                 (ApplyTxErr blk)
+                 ( Validated        (GenTx blk)
+                 , ValidationResult (GenTx blk) blk
+                 )
+extendVRNew cfg wti tx vr =
+    assert (isNothing vrNewValid) $ runExcept m
+  where
+    ValidationResult {
+        vrValid
+      , vrValidTxIds
+      , vrAfter
+      , vrLastTicketNo
+      , vrNewValid
+      , vrSlotNo
+      } = vr
+
+    m = do
+      txsz <- txMeasure cfg vrAfter tx
+      (st', vtx) <- applyTx cfg wti vrSlotNo tx vrAfter
+      let nextTicketNo = succ vrLastTicketNo
+      pure
+        ( vtx
+        , vr { vrValid        = vrValid :> TxTicket vtx nextTicketNo txsz
              , vrValidTxIds   = Set.insert (txId tx) vrValidTxIds
              , vrNewValid     = Just vtx
              , vrAfter        = st'
              , vrLastTicketNo = nextTicketNo
              }
         )
-  where
-    ValidationResult {
-        vrValid
-      , vrValidTxIds
-      , vrAfter
-      , vrInvalid
-      , vrLastTicketNo
-      , vrNewValid
-      , vrSlotNo
-      } = vr
-
-    nextTicketNo = succ vrLastTicketNo
-
-    sz = txInBlockSize tx
 
 {-------------------------------------------------------------------------------
   Conversions
@@ -410,8 +414,8 @@ validationResultFromIS is = ValidationResult {
       } = is
 
 -- | Create a Mempool Snapshot from a given Internal State of the mempool.
-snapshotFromIS ::
-     HasTxId (GenTx blk)
+snapshotFromIS :: forall blk.
+     (HasTxId (GenTx blk), TxLimits blk)
   => InternalState blk
   -> MempoolSnapshot blk
 snapshotFromIS is = MempoolSnapshot {
@@ -422,34 +426,38 @@ snapshotFromIS is = MempoolSnapshot {
     , snapshotMempoolSize = implSnapshotGetMempoolSize is
     , snapshotSlotNo      = isSlotNo                   is
     , snapshotLedgerState = isLedgerState              is
+    , snapshotTake        = implSnapshotTake           is
     }
  where
   implSnapshotGetTxs :: InternalState blk
-                     -> [(Validated (GenTx blk), TicketNo)]
-  implSnapshotGetTxs is' =
-      map (\(a, b, _c) -> (a, b))
-    $ implSnapshotGetTxsAfter is' TxSeq.zeroTicketNo
+                     -> [(Validated (GenTx blk), TicketNo, ByteSize32)]
+  implSnapshotGetTxs = flip implSnapshotGetTxsAfter TxSeq.zeroTicketNo
 
   implSnapshotGetTxsAfter :: InternalState blk
                           -> TicketNo
-                          -> [(Validated (GenTx blk), TicketNo, TxSizeInBytes)]
+                          -> [(Validated (GenTx blk), TicketNo, ByteSize32)]
   implSnapshotGetTxsAfter IS{isTxs} =
     TxSeq.toTuples . snd . TxSeq.splitAfterTicketNo isTxs
+
+  implSnapshotTake :: InternalState blk
+                   -> TxMeasure blk
+                   -> [Validated (GenTx blk)]
+  implSnapshotTake IS{isTxs} =
+    map TxSeq.txTicketTx . TxSeq.toList . fst . TxSeq.splitAfterTxSize isTxs
 
   implSnapshotGetTx :: InternalState blk
                     -> TicketNo
                     -> Maybe (Validated (GenTx blk))
   implSnapshotGetTx IS{isTxs} = (isTxs `TxSeq.lookupByTicketNo`)
 
-  implSnapshotHasTx :: Ord (GenTxId blk)
-                    => InternalState blk
+  implSnapshotHasTx :: InternalState blk
                     -> GenTxId blk
                     -> Bool
   implSnapshotHasTx IS{isTxIds} = flip Set.member isTxIds
 
   implSnapshotGetMempoolSize :: InternalState blk
                              -> MempoolSize
-  implSnapshotGetMempoolSize = TxSeq.toMempoolSize . isTxs
+  implSnapshotGetMempoolSize = isMempoolSize
 
 {-------------------------------------------------------------------------------
   Validating txs or states
@@ -498,7 +506,7 @@ revalidateTxsFor ::
   -> TickedLedgerState blk
   -> TicketNo
      -- ^ 'isLastTicketNo' & 'vrLastTicketNo'
-  -> [TxTicket (Validated (GenTx blk))]
+  -> [TxTicket (TxMeasure blk) (Validated (GenTx blk))]
   -> ValidationResult (Validated (GenTx blk)) blk
 revalidateTxsFor capacityOverride cfg slot st lastTicketNo txTickets =
     repeatedly
@@ -506,7 +514,7 @@ revalidateTxsFor capacityOverride cfg slot st lastTicketNo txTickets =
       txTickets
       (validationResultFromIS is)
   where
-    is = initInternalState capacityOverride lastTicketNo slot st
+    is = initInternalState capacityOverride lastTicketNo cfg slot st
 
 {-------------------------------------------------------------------------------
   Tracing support for the mempool operations

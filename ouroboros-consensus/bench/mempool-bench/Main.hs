@@ -21,8 +21,8 @@ import           Data.Set ()
 import qualified Data.Text as Text
 import qualified Data.Text.Read as Text.Read
 import           Main.Utf8 (withStdTerminalHandles)
+import           Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32)
 import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool
-import           Ouroboros.Network.SizeInBytes
 import           System.Exit (die, exitFailure)
 import qualified Test.Consensus.Mempool.Mocked as Mocked
 import           Test.Consensus.Mempool.Mocked (MockedMempool)
@@ -57,8 +57,8 @@ main = withStdTerminalHandles $ do
                 withResource
                   (pure $!!
                      let cmds = mkNTryAddTxs n
-                         sz   = sum $ map TestBlock.txSize $ getCmdsTxs cmds
-                     in (cmds, Mempool.ByteSize $ getSizeInBytes sz)
+                         sz   = foldMap TestBlock.txSize $ getCmdsTxs cmds
+                     in (cmds, sz)
                   )
                   (\_ -> pure ())
                   (\getCmds -> do
@@ -134,11 +134,9 @@ main = withStdTerminalHandles $ do
   Adding TestBlock transactions to a mempool
 -------------------------------------------------------------------------------}
 
-openMempoolWithCapacity :: Mempool.ByteSize -> IO (MockedMempool IO TestBlock)
+openMempoolWithCapacity :: ByteSize32 -> IO (MockedMempool IO TestBlock)
 openMempoolWithCapacity capacity =
-    Mocked.openMockedMempool (Mempool.mkCapacityBytesOverride
-                               (Mempool.unByteSize capacity)
-                             )
+    Mocked.openMockedMempool (Mempool.mkCapacityBytesOverride capacity)
                              Tracer.nullTracer
                              Mocked.MempoolAndModelParams {
                                  Mocked.immpInitialState = TestBlock.initialLedgerState

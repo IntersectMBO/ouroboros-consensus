@@ -25,9 +25,11 @@ module Ouroboros.Consensus.HardFork.Combinator.Mempool (
   , hardForkApplyTxErrToEither
   ) where
 
+import           Control.Arrow ((+++))
 import           Control.Monad.Except
 import           Data.Functor.Product
 import           Data.Kind (Type)
+import qualified Data.Measure as Measure
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
 import           Data.SOP.Functors (Product2 (..))
@@ -46,6 +48,8 @@ import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.HardFork.Combinator.Info
 import           Ouroboros.Consensus.HardFork.Combinator.InjectTxs
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger (Ticked (..))
+import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
+                     (WrapPartialLedgerConfig (..))
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
@@ -105,24 +109,86 @@ instance CanHardFork xs => LedgerSupportsMempool (HardForkBlock xs) where
           (WrapValidatedGenTx vtx)
           tls
 
-  txsMaxBytes =
-        hcollapse
-      . hcmap proxySingle (K . txsMaxBytes . unComp)
-      . State.tip
-      . tickedHardForkLedgerStatePerEra
-
-  txInBlockSize =
-        hcollapse
-      . hcmap proxySingle (K . txInBlockSize)
-      . getOneEraGenTx
-      . getHardForkGenTx
-
   txForgetValidated =
         HardForkGenTx
       . OneEraGenTx
       . hcmap proxySingle (txForgetValidated . unwrapValidatedGenTx)
       . getOneEraValidatedGenTx
       . getHardForkValidatedGenTx
+
+instance CanHardFork xs => TxLimits (HardForkBlock xs) where
+  type TxMeasure (HardForkBlock xs) = HardForkTxMeasure xs
+
+  blockCapacityTxMeasure
+    HardForkLedgerConfig{..}
+    (TickedHardForkLedgerState transition hardForkState)
+      =
+        hcollapse
+      $ hcizipWith proxySingle aux pcfgs hardForkState
+    where
+      pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
+      ei    = State.epochInfoPrecomputedTransitionInfo
+                hardForkLedgerConfigShape
+                transition
+                hardForkState
+
+      aux ::
+           SingleEraBlock blk
+        => Index xs blk
+        -> WrapPartialLedgerConfig blk
+        -> (Ticked :.: LedgerState) blk
+        -> K (HardForkTxMeasure xs) blk
+      aux idx pcfg st' =
+          K
+        $ hardForkInjTxMeasure . injectNS idx . WrapTxMeasure
+        $ blockCapacityTxMeasure
+            (completeLedgerConfig' ei pcfg)
+            (unComp st')
+
+  txMeasure
+    HardForkLedgerConfig{..}
+    (TickedHardForkLedgerState transition hardForkState)
+    tx
+      =
+        case matchTx injs (unwrapTx tx) hardForkState of
+          Left{}     -> pure Measure.zero   -- safe b/c the tx will be found invalid
+          Right pair -> hcollapse $ hcizipWith proxySingle aux cfgs pair
+    where
+      pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
+      ei    = State.epochInfoPrecomputedTransitionInfo
+                hardForkLedgerConfigShape
+                transition
+                hardForkState
+      cfgs  = hcmap proxySingle (completeLedgerConfig'' ei) pcfgs
+
+      unwrapTx = getOneEraGenTx . getHardForkGenTx
+
+      injs :: InPairs (InjectPolyTx GenTx) xs
+      injs =
+          InPairs.hmap (\(Pair2 injTx _injValidatedTx) -> injTx)
+        $ InPairs.requiringBoth cfgs hardForkInjectTxs
+
+      aux :: forall blk.
+           SingleEraBlock blk
+        => Index xs blk
+        -> WrapLedgerConfig blk
+        -> (Product GenTx (Ticked :.: LedgerState)) blk
+        -> K (Except (HardForkApplyTxErr xs) (HardForkTxMeasure xs)) blk
+      aux idx cfg (Pair tx' st') =
+          K
+        $ mapExcept
+            (   ( HardForkApplyTxErrFromEra
+                . OneEraApplyTxErr
+                . injectNS idx
+                . WrapApplyTxErr
+                )
+              +++
+                (hardForkInjTxMeasure . injectNS idx . WrapTxMeasure)
+            )
+        $ txMeasure
+            (unwrapLedgerConfig cfg)
+            (unComp st')
+            tx'
 
 -- | A private type used only to clarify the parameterization of 'applyHelper'
 data ApplyHelperMode :: (Type -> Type) -> Type where

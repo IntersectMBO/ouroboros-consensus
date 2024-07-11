@@ -544,7 +544,11 @@ forkBlockForging IS{..} blockForging =
                       (ForgeInKnownSlot currentSlot tickedLedgerState)
             pure (mempoolHash, mempoolSlotNo, snap)
 
-        let txs = map fst $ snapshotTxs mempoolSnapshot
+        let txs =
+                snapshotTake mempoolSnapshot
+              $ blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
+                -- NB respect the capacity of the ledger state we're extending,
+                -- which is /not/ 'snapshotLedgerState'
 
         -- force the mempool's computation before the tracer event
         _ <- evaluate (length txs)
@@ -732,8 +736,11 @@ getMempoolReader mempool = MempoolReader.TxSubmissionMempoolReader
                                       snapshotHasTx } =
       MempoolReader.MempoolSnapshot
         { mempoolTxIdsAfter = \idx ->
-            [ (txId (txForgetValidated tx), idx', sz)
-            | (tx, idx', sz) <- snapshotTxsAfter idx
+            [ ( txId (txForgetValidated tx)
+              , idx'
+              , SizeInBytes $ unByteSize32 byteSize
+              )
+            | (tx, idx', byteSize) <- snapshotTxsAfter idx
             ]
         , mempoolLookupTx   = snapshotLookupTx
         , mempoolHasTx      = snapshotHasTx

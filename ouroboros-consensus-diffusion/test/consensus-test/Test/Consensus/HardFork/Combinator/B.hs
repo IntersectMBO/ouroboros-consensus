@@ -262,10 +262,12 @@ instance LedgerSupportsMempool BlockB where
   applyTx   = \_ _ _wti tx -> case tx of {}
   reapplyTx = \_ _ vtx -> case vtx of {}
 
-  txsMaxBytes   _ = maxBound
-  txInBlockSize _ = 0
-
   txForgetValidated = \case {}
+
+instance TxLimits BlockB where
+  type TxMeasure BlockB = IgnoringOverflow ByteSize32
+  blockCapacityTxMeasure _cfg _st     = IgnoringOverflow $ ByteSize32 $ 100 * 1024   -- arbitrary
+  txMeasure              _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
 
 data instance TxId (GenTx BlockB)
   deriving stock    (Show, Eq, Ord, Generic)

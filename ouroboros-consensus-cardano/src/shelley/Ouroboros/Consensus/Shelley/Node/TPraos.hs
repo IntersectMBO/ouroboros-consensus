@@ -52,7 +52,7 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
-import           Ouroboros.Consensus.Mempool (TxLimits)
+import           Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
@@ -121,7 +121,7 @@ shelleySharedBlockForging ::
   => HotKey c m
   -> (SlotNo -> Absolute.KESPeriod)
   -> ShelleyLeaderCredentials c
-  -> BlockForging m     (ShelleyBlock (TPraos c) era)
+  -> BlockForging m (ShelleyBlock (TPraos c) era)
 shelleySharedBlockForging hotKey slotToPeriod credentials =
     BlockForging {
         forgeLabel       = label <> "_" <> T.pack (L.eraName @era)

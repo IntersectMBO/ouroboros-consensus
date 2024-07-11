@@ -1,5 +1,6 @@
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE NamedFieldPuns   #-}
+{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE NamedFieldPuns      #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Mempool with a mocked ledger interface
 module Test.Consensus.Mempool.Mocked (
@@ -96,11 +97,13 @@ removeTxs ::
   -> m ()
 removeTxs = Mempool.removeTxs . getMempool
 
-getTxs ::
+getTxs :: forall blk.
      (Ledger.LedgerSupportsMempool blk)
   => MockedMempool IO blk -> IO [Ledger.GenTx blk]
 getTxs mockedMempool = do
     snapshotTxs <- fmap Mempool.snapshotTxs $ atomically
                                             $ Mempool.getSnapshot
                                             $ getMempool mockedMempool
-    pure $ fmap (Ledger.txForgetValidated . fst) snapshotTxs
+    pure $ fmap prjTx snapshotTxs
+  where
+    prjTx (a, _b, _c) = Ledger.txForgetValidated a :: Ledger.GenTx blk
