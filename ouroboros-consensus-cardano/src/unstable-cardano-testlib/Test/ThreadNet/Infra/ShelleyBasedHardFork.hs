@@ -1,13 +1,15 @@
-{-# LANGUAGE ConstraintKinds      #-}
-{-# LANGUAGE DataKinds            #-}
-{-# LANGUAGE FlexibleContexts     #-}
-{-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE NamedFieldPuns       #-}
-{-# LANGUAGE PatternSynonyms      #-}
-{-# LANGUAGE ScopedTypeVariables  #-}
-{-# LANGUAGE TypeFamilies         #-}
-{-# LANGUAGE TypeOperators        #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ConstraintKinds       #-}
+{-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE LambdaCase            #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NamedFieldPuns        #-}
+{-# LANGUAGE PatternSynonyms       #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
+{-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE TypeOperators         #-}
+{-# LANGUAGE UndecidableInstances  #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -47,9 +49,9 @@ import           Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import qualified Ouroboros.Consensus.HardFork.Combinator.State.Types as HFC
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
+import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
-import           Ouroboros.Consensus.Mempool (TxLimits)
 import           Ouroboros.Consensus.Node
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Protocol.TPraos
@@ -123,6 +125,7 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
   , LedgerSupportsProtocol (ShelleyBlock proto2 era2)
   , TxLimits (ShelleyBlock proto1 era1)
   , TxLimits (ShelleyBlock proto2 era2)
+  , TranslateTxMeasure (TxMeasure (ShelleyBlock proto1 era1)) (TxMeasure (ShelleyBlock proto2 era2))
   , SL.PreviousEra era2 ~ era1
 
   , SL.TranslateEra       era2 SL.NewEpochState
@@ -137,12 +140,37 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
   , proto1 ~ proto2
   )
 
+class TranslateTxMeasure a b where
+  translateTxMeasure :: a -> b
+
+instance TranslateTxMeasure (IgnoringOverflow ByteSize32) (IgnoringOverflow ByteSize32) where
+  translateTxMeasure = id
+
+instance TranslateTxMeasure (IgnoringOverflow ByteSize32) AlonzoMeasure where
+  translateTxMeasure x = AlonzoMeasure x mempty
+
+instance TranslateTxMeasure (IgnoringOverflow ByteSize32) ConwayMeasure where
+  translateTxMeasure =
+    translateTxMeasure . (\x -> x :: AlonzoMeasure) . translateTxMeasure
+
+instance TranslateTxMeasure AlonzoMeasure AlonzoMeasure where
+  translateTxMeasure = id
+
+instance TranslateTxMeasure AlonzoMeasure ConwayMeasure where
+  translateTxMeasure x = ConwayMeasure x mempty
+
+instance TranslateTxMeasure ConwayMeasure ConwayMeasure where
+  translateTxMeasure = id
+
 instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
       => SerialiseHFC (ShelleyBasedHardForkEras proto1 era1 proto2 era2)
    -- use defaults
 
 instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
       => CanHardFork (ShelleyBasedHardForkEras proto1 era1 proto2 era2) where
+  type HardForkTxMeasure (ShelleyBasedHardForkEras proto1 era1 proto2 era2) =
+      TxMeasure (ShelleyBlock proto2 era2)
+
   hardForkEraTranslation = EraTranslation {
         translateLedgerState   = PCons translateLedgerState                PNil
       , translateChainDepState = PCons translateChainDepStateAcrossShelley PNil
@@ -202,6 +230,10 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
             fmap unComp
           . eitherToMaybe . runExcept . SL.translateEra transCtxt
           . Comp
+
+  hardForkInjTxMeasure = \case
+      (  Z (WrapTxMeasure x)) -> translateTxMeasure x
+      S (Z (WrapTxMeasure x)) -> x
 
 instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
       => SupportedNetworkProtocolVersion (ShelleyBasedHardForkBlock proto1 era1 proto2 era2) where

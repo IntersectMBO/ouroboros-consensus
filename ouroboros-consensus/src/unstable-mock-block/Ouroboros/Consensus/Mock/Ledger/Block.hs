@@ -59,6 +59,8 @@ module Ouroboros.Consensus.Mock.Ledger.Block (
   , decodeSimpleHeader
   , encodeSimpleHeader
   , simpleBlockBinaryBlockInfo
+    -- * For tests
+  , simpleBlockCapacity
   ) where
 
 import           Cardano.Binary (ToCBOR (..))
@@ -431,14 +433,20 @@ instance MockProtocolSpecific c ext
   reapplyTx _cfg slot vtx st =
       updateSimpleUTxO slot (forgetValidatedSimpleGenTx vtx) st
 
-  -- Large value so that the Mempool tests never run out of capacity when they
-  -- don't override it.
-  txsMaxBytes   = const 1000000000
-  txInBlockSize = txSize
-
   txForgetValidated = forgetValidatedSimpleGenTx
 
-  txRefScriptSize _cfg _tlst _tx = 0
+instance TxLimits (SimpleBlock c ext) where
+  type TxMeasure (SimpleBlock c ext) = IgnoringOverflow ByteSize32
+
+  -- Large value so that the Mempool tests never run out of capacity when they
+  -- don't override it.
+  --
+  -- But not 'maxbound'!, since the mempool sometimes holds multiple blocks worth.
+  blockCapacityTxMeasure _cfg _st = IgnoringOverflow simpleBlockCapacity
+  txMeasure              _cfg _st = pure . IgnoringOverflow . txSize
+
+simpleBlockCapacity :: ByteSize32
+simpleBlockCapacity = ByteSize32 512
 
 newtype instance TxId (GenTx (SimpleBlock c ext)) = SimpleGenTxId {
       unSimpleGenTxId :: Mock.TxId
@@ -482,8 +490,8 @@ mkSimpleGenTx tx = SimpleGenTx
     , simpleGenTxId = Hash.hashWithSerialiser toCBOR tx
     }
 
-txSize :: GenTx (SimpleBlock c ext) -> Word32
-txSize = fromIntegral . Lazy.length . serialise
+txSize :: GenTx (SimpleBlock c ext) -> ByteSize32
+txSize = ByteSize32 . fromIntegral . Lazy.length . serialise
 
 {-------------------------------------------------------------------------------
   Support for QueryLedger

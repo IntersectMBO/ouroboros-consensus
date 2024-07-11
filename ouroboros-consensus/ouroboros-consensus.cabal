@@ -273,6 +273,7 @@ library
 
   build-depends:
     base >=4.14 && <4.21,
+    base-deriving-via,
     base16-bytestring,
     bimap >=0.4 && <0.6,
     binary >=0.8 && <0.11,

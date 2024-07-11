@@ -51,10 +51,12 @@ instance LedgerSupportsMempool ByronSpecBlock where
         fmap fst
       $ applyTx cfg DoNotIntervene slot (forgetValidatedByronSpecGenTx vtx) st
 
-  -- Dummy values, as these are not used in practice.
-  txsMaxBytes   = const maxBound
-  txInBlockSize = const 0
-
   txForgetValidated = forgetValidatedByronSpecGenTx
 
-  txRefScriptSize _cfg _tlst _tx = 0
+instance TxLimits ByronSpecBlock where
+  type TxMeasure ByronSpecBlock = IgnoringOverflow ByteSize32
+
+  -- Dummy values, as these are not used in practice.
+  blockCapacityTxMeasure _cfg _st = IgnoringOverflow $ ByteSize32 1
+
+  txMeasure _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0

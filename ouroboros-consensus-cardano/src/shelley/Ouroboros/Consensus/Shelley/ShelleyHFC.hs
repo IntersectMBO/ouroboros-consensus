@@ -52,6 +52,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.State.Types
 import           Ouroboros.Consensus.HardFork.History (Bound (boundSlot))
 import           Ouroboros.Consensus.HardFork.Simple
 import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol, ledgerViewForecastAt)
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -75,10 +76,10 @@ type ShelleyBlockHFC proto era = HardForkBlock '[ShelleyBlock proto era]
   NoHardForks instance
 -------------------------------------------------------------------------------}
 
-instance
-  ( ShelleyCompatible proto era
-  , LedgerSupportsProtocol (ShelleyBlock proto era)
-  ) => NoHardForks (ShelleyBlock proto era) where
+instance ( ShelleyCompatible proto era
+         , LedgerSupportsProtocol (ShelleyBlock proto era)
+         , TxLimits               (ShelleyBlock proto era)
+         ) => NoHardForks (ShelleyBlock proto era) where
   getEraParams =
         shelleyEraParamsNeverHardForks
       . shelleyLedgerGenesis
@@ -95,8 +96,10 @@ instance
 -- | Forward to the ShelleyBlock instance. Only supports
 -- 'HardForkNodeToNodeDisabled', which is compatible with nodes running with
 -- 'ShelleyBlock'.
-instance (ShelleyCompatible proto era, LedgerSupportsProtocol (ShelleyBlock proto era))
-      => SupportedNetworkProtocolVersion (ShelleyBlockHFC proto era) where
+instance ( ShelleyCompatible proto era
+         , LedgerSupportsProtocol (ShelleyBlock proto era)
+         , TxLimits               (ShelleyBlock proto era)
+         ) => SupportedNetworkProtocolVersion (ShelleyBlockHFC proto era) where
   supportedNodeToNodeVersions _ =
       Map.map HardForkNodeToNodeDisabled $
       supportedNodeToNodeVersions (Proxy @(ShelleyBlock proto era))
@@ -114,10 +117,14 @@ instance (ShelleyCompatible proto era, LedgerSupportsProtocol (ShelleyBlock prot
 -- | Use the default implementations. This means the serialisation of blocks
 -- includes an era wrapper. Each block should do this from the start to be
 -- prepared for future hard forks without having to do any bit twiddling.
-instance (ShelleyCompatible proto era, LedgerSupportsProtocol (ShelleyBlock proto era))
- => SerialiseHFC '[ShelleyBlock proto era]
-instance (ShelleyCompatible proto era, LedgerSupportsProtocol (ShelleyBlock proto era))
-  => SerialiseConstraintsHFC (ShelleyBlock proto era)
+instance ( ShelleyCompatible proto era
+         , LedgerSupportsProtocol (ShelleyBlock proto era)
+         , TxLimits               (ShelleyBlock proto era)
+         ) => SerialiseHFC '[ShelleyBlock proto era]
+instance ( ShelleyCompatible proto era
+         , LedgerSupportsProtocol (ShelleyBlock proto era)
+         , TxLimits               (ShelleyBlock proto era)
+         ) => SerialiseConstraintsHFC (ShelleyBlock proto era)
 
 {-------------------------------------------------------------------------------
   Protocol type definition
@@ -161,10 +168,10 @@ shelleyTransition ShelleyPartialLedgerConfig{..}
          guard $ shelleyAfterVoting >= fromIntegral k
          return newPParamsEpochNo
 
-instance
-  ( ShelleyCompatible proto era
-  , LedgerSupportsProtocol (ShelleyBlock proto era)
-  ) => SingleEraBlock (ShelleyBlock proto era) where
+instance ( ShelleyCompatible proto era
+         , LedgerSupportsProtocol (ShelleyBlock proto era)
+         , TxLimits               (ShelleyBlock proto era)
+         ) => SingleEraBlock (ShelleyBlock proto era) where
   singleEraTransition pcfg _eraParams _eraStart ledgerState =
       -- TODO: We might be evaluating 'singleEraTransition' more than once when
       -- replaying blocks. We should investigate if this is the case, and if so,

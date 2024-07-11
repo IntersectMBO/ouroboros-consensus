@@ -4,6 +4,7 @@
 {-# LANGUAGE DerivingVia           #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE RankNTypes            #-}
@@ -362,6 +363,8 @@ instance TxGen TestBlock where
 type TestBlock = HardForkBlock '[BlockA, BlockB]
 
 instance CanHardFork '[BlockA, BlockB] where
+  type HardForkTxMeasure '[BlockA, BlockB] = IgnoringOverflow ByteSize32
+
   hardForkEraTranslation = EraTranslation {
         translateLedgerState   = PCons ledgerState_AtoB   PNil
       , translateChainDepState = PCons chainDepState_AtoB PNil
@@ -369,6 +372,10 @@ instance CanHardFork '[BlockA, BlockB] where
       }
   hardForkChainSel  = Tails.mk2 CompareBlockNo
   hardForkInjectTxs = InPairs.mk2 injectTx_AtoB
+
+  hardForkInjTxMeasure = \case
+    (  Z (WrapTxMeasure x)) -> x
+    S (Z (WrapTxMeasure x)) -> x
 
 versionN2N :: BlockNodeToNodeVersion TestBlock
 versionN2N =

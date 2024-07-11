@@ -649,7 +649,8 @@ runThreadNetwork systemTime ThreadNetworkArgs
                 -- a new tx (e.g. added by TxSubmission) might render a crucial
                 -- transaction valid
                 mempChanged = do
-                  let getMemp = (map snd . snapshotTxs) <$> getSnapshot mempool
+                  let prjTno (_a, b, _c) = b :: TicketNo
+                      getMemp = (map prjTno . snapshotTxs) <$> getSnapshot mempool
                   (mempFp', _) <- atomically $ blockUntilChanged id mempFp getMemp
                   pure (slot, ledger, mempFp')
 
