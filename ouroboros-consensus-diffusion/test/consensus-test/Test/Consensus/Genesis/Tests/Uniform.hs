@@ -18,7 +18,7 @@ module Test.Consensus.Genesis.Tests.Uniform (
 
 import           Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin (..))
 import           Control.Monad (replicateM)
-import           Control.Monad.Class.MonadTime.SI (Time, addTime)
+import           Control.Monad.Class.MonadTime.SI (Time (..), addTime)
 import           Data.List (intercalate, sort, uncons)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
@@ -230,13 +230,6 @@ prop_leashingAttackStalling =
       advs <- mapM dropRandomPoints $ adversarialPeers sch
       pure $ ps {psSchedule = sch {adversarialPeers = advs}}
 
-    disableBoringTimeouts gt =
-      gt { gtChainSyncTimeouts = (gtChainSyncTimeouts gt)
-            { mustReplyTimeout = Nothing
-            , idleTimeout = Nothing
-            }
-         }
-
     dropRandomPoints :: [(Time, SchedulePoint blk)] -> QC.Gen [(Time, SchedulePoint blk)]
     dropRandomPoints ps = do
       let lenps = length ps
@@ -255,15 +248,14 @@ prop_leashingAttackStalling =
 -- immutable tip needs to be advanced enough when the honest peer has offered
 -- all of its ticks.
 --
--- This test is expected to fail because we don't test a genesis implementation
--- yet.
---
 -- See Note [Leashing attacks]
 prop_leashingAttackTimeLimited :: Property
 prop_leashingAttackTimeLimited =
   forAllGenesisTest
 
-    (disableBoringTimeouts <$> genChains (QC.choose (1, 4)) `enrichedWith` genTimeLimitedSchedule)
+    (disableCanAwaitTimeout . disableBoringTimeouts <$>
+      genChains (QC.choose (1, 4)) `enrichedWith` genTimeLimitedSchedule
+    )
 
     defaultSchedulerConfig
       { scTrace = False
@@ -295,14 +287,6 @@ prop_leashingAttackTimeLimited =
         }
 
     takePointsUntil limit = takeWhile ((<= limit) . fst)
-
-    disableBoringTimeouts gt =
-      gt { gtChainSyncTimeouts = (gtChainSyncTimeouts gt)
-            { canAwaitTimeout = Nothing
-            , mustReplyTimeout = Nothing
-            , idleTimeout = Nothing
-            }
-         }
 
     estimateTimeBound
       :: AF.HasHeader blk
@@ -343,6 +327,15 @@ prop_leashingAttackTimeLimited =
 
     fromTipPoint (t, ScheduleTipPoint bp) = Just (t, bp)
     fromTipPoint _                        = Nothing
+
+    disableCanAwaitTimeout :: GenesisTest blk schedule -> GenesisTest blk schedule
+    disableCanAwaitTimeout gt =
+      gt
+        { gtChainSyncTimeouts =
+            (gtChainSyncTimeouts gt)
+              { canAwaitTimeout = Nothing
+              }
+        }
 
 headCallStack :: HasCallStack => [a] -> a
 headCallStack = \case
@@ -399,7 +392,7 @@ prop_loeStalling =
 prop_downtime :: Property
 prop_downtime = forAllGenesisTest
 
-    (genChains (QC.choose (1, 4)) `enrichedWith` \ gt ->
+    (disableBoringTimeouts <$> genChains (QC.choose (1, 4)) `enrichedWith` \ gt ->
       ensureScheduleDuration gt <$> stToGen (uniformPoints (pointsGeneratorParams gt) (gtBlockTree gt)))
 
     defaultSchedulerConfig
@@ -411,7 +404,14 @@ prop_downtime = forAllGenesisTest
 
     shrinkPeerSchedules
 
-    theProperty
+    (\genesisTest stateView ->
+      counterexample (unlines
+        [ "TODO: Shutting down the node inserts delays in the simulation that"
+        , "are not reflected in the point schedule table. Reporting these delays"
+        , "correctly is still to be done."
+        ]) $
+        theProperty genesisTest stateView
+    )
 
   where
     pointsGeneratorParams gt = PointsGeneratorParams
@@ -433,7 +433,7 @@ prop_blockFetchLeashingAttack =
   where
     genBlockFetchLeashingSchedule :: GenesisTest TestBlock () -> QC.Gen (PointSchedule TestBlock)
     genBlockFetchLeashingSchedule genesisTest = do
-      PointSchedule {psSchedule, psMinEndTime} <-
+      PointSchedule {psSchedule} <-
         stToGen $
           uniformPoints
             (PointsGeneratorParams {pgpExtraHonestPeers = 1, pgpDowntime = NoDowntime})
@@ -445,17 +445,27 @@ prop_blockFetchLeashingAttack =
       -- Important to shuffle the order in which the peers start, otherwise the
       -- honest peer starts first and systematically becomes dynamo.
       psStartOrder <- shuffle $ getPeerIds psSchedule'
-      pure $ PointSchedule {psSchedule = psSchedule', psStartOrder, psMinEndTime}
+      let maxTime = maximum $
+            Time 0 : [ pt | s <- honest : adversaries', (pt, _) <- take 1 (reverse s) ]
+      pure $ PointSchedule {
+          psSchedule = psSchedule',
+          psStartOrder,
+          -- Allow to run the blockfetch decision logic after the last tick
+          -- 11 is the grace period for unresponsive peers that should send
+          -- blocks
+          psMinEndTime = addTime 11 maxTime
+        }
 
     isBlockPoint :: SchedulePoint blk -> Bool
     isBlockPoint (ScheduleBlockPoint _) = True
     isBlockPoint _                      = False
 
-    disableBoringTimeouts gt =
-      gt
-        { gtChainSyncTimeouts =
-            (gtChainSyncTimeouts gt)
-              { mustReplyTimeout = Nothing,
-                idleTimeout = Nothing
-              }
-        }
+disableBoringTimeouts :: GenesisTest blk schedule -> GenesisTest blk schedule
+disableBoringTimeouts gt =
+    gt
+      { gtChainSyncTimeouts =
+          (gtChainSyncTimeouts gt)
+            { mustReplyTimeout = Nothing
+            , idleTimeout = Nothing
+            }
+      }

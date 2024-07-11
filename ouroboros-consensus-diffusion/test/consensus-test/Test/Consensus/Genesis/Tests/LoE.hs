@@ -26,16 +26,18 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.PartialAccessors
-import           Test.Util.TestEnv (adjustQuickCheckTests)
+import           Test.Util.TestEnv (adjustQuickCheckMaxSize,
+                     adjustQuickCheckTests)
 
 tests :: TestTree
 tests =
+  adjustQuickCheckTests (* 10) $
   testGroup
     "LoE"
     [
-      adjustQuickCheckTests (`div` 5) $
+      adjustQuickCheckMaxSize (`div` 5) $
         testProperty "adversary does not hit timeouts" (prop_adversaryHitsTimeouts False),
-      adjustQuickCheckTests (`div` 5) $
+      adjustQuickCheckMaxSize (`div` 5) $
         testProperty "adversary hits timeouts" (prop_adversaryHitsTimeouts True)
     ]
 
