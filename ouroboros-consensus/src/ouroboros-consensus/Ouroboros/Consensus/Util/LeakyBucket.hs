@@ -46,7 +46,7 @@ module Ouroboros.Consensus.Util.LeakyBucket (
   , updateConfig'
   ) where
 
-import           Control.Monad (void, when)
+import           Control.Monad (forever, void, when)
 import qualified Control.Monad.Class.MonadSTM.Internal as TVar
 import           Control.Monad.Class.MonadTimer (MonadTimer, registerDelay)
 import           Control.Monad.Class.MonadTimer.SI (diffTimeToMicrosecondsAsInt)
@@ -348,9 +348,7 @@ leak ::
   ThreadId m ->
   Bucket m ->
   m ()
-leak runThreadVar actionThreadId bucket = go
-  where
-    go = do
+leak runThreadVar actionThreadId bucket = forever $ do
       -- Block until we are allowed to run. Do not modify the TMVar.
       oldRunThread <- atomically $ readTMVar runThreadVar
       -- NOTE: It is tempting to group this @atomically@ and
@@ -369,7 +367,6 @@ leak runThreadVar actionThreadId bucket = go
           -- We have run the action on empty, there is nothing left to do,
           -- unless someone changes the configuration.
           void $ atomically $ blockUntilChanged configGeneration oldConfigGeneration $ readTVar bucket
-          go
         else
           -- Wait for the bucket to empty, or for the thread to be stopped or
           -- restarted. Beware not to call 'registerDelay' with argument 0, that
@@ -380,7 +377,6 @@ leak runThreadVar actionThreadId bucket = go
               (check =<< TVar.readTVar varTimeout)
                 `orElse`
               (void $ blockUntilChanged id (Just oldRunThread) $ tryReadTMVar runThreadVar)
-            go
 
 -- | Take a snapshot of the bucket, that is compute its state at the current
 -- time.
