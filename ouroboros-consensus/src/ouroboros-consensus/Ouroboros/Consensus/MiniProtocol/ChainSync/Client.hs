@@ -392,7 +392,7 @@ bracketChainSyncClient
       cschJumping <- newTVarIO (Disengaged DisengagedDone)
       let handle = ChainSyncClientHandle {
               cschGDDKill = throwTo tid DensityTooLow
-            , cschGsmCallback = updateLopBucketConfig lopBucket
+            , cschOnGsmStateChanged = updateLopBucketConfig lopBucket
             , cschState
             , cschJumping
             , cschJumpInfo
@@ -417,7 +417,7 @@ bracketChainSyncClient
           context <- Jumping.makeContext varHandles jumpSize
           Jumping.registerClient context peer cschState $ \cschJumping -> ChainSyncClientHandle
             { cschGDDKill = throwTo tid DensityTooLow
-            , cschGsmCallback = updateLopBucketConfig lopBucket
+            , cschOnGsmStateChanged = updateLopBucketConfig lopBucket
             , cschState
             , cschJumping
             , cschJumpInfo

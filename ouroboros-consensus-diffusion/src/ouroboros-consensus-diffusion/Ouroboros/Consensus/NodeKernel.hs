@@ -255,7 +255,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                   atomicallyWithMonotonicTime $ \time -> do
                     writeTVar varGsmState gsmState
                     handles <- readTVar varChainSyncHandles
-                    traverse_ (($ time) . ($ gsmState) . cschGsmCallback) handles
+                    traverse_ (($ time) . ($ gsmState) . cschOnGsmStateChanged) handles
               , GSM.isHaaSatisfied            = do
                   readTVar varOutboundConnectionsState <&> \case
                     -- See the upstream Haddocks for the exact conditions under
