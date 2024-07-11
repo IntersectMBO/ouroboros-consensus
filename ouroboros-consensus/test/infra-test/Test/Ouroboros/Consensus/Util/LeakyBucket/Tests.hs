@@ -1,5 +1,4 @@
 {-# LANGUAGE LambdaCase          #-}
-{-# LANGUAGE MultiWayIf          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE NumericUnderscores  #-}
 {-# LANGUAGE RankNTypes          #-}
