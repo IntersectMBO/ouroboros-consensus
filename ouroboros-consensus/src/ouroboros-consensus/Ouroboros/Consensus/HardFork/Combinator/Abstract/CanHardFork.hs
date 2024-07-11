@@ -6,7 +6,7 @@
 
 module Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork (CanHardFork (..)) where
 
-import           Data.Measure (BoundedMeasure)
+import           Data.Measure (Measure)
 import           Data.SOP.Constraint
 import           Data.SOP.Functors (Product2)
 import           Data.SOP.InPairs (InPairs, RequiringBoth)
@@ -31,10 +31,10 @@ import           Ouroboros.Consensus.TypeFamilyWrappers
 class ( All SingleEraBlock xs
       , Typeable xs
       , IsNonEmpty xs
-      , BoundedMeasure (HardForkTxMeasure xs)
-      , HasByteSize    (HardForkTxMeasure xs)
-      , NoThunks       (HardForkTxMeasure xs)
-      , Show           (HardForkTxMeasure xs)
+      , Measure     (HardForkTxMeasure xs)
+      , HasByteSize (HardForkTxMeasure xs)
+      , NoThunks    (HardForkTxMeasure xs)
+      , Show        (HardForkTxMeasure xs)
       ) => CanHardFork xs where
   -- | A measure that can accurately represent the 'TxMeasure' of any era.
   --

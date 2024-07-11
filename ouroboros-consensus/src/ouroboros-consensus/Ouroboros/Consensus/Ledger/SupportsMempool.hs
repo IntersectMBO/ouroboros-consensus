@@ -25,7 +25,7 @@ import           Control.Monad.Except
 import           Data.ByteString.Short (ShortByteString)
 import           Data.DerivingVia (InstantiatedAt (..))
 import           Data.Kind (Type)
-import           Data.Measure (BoundedMeasure, Measure)
+import           Data.Measure (Measure)
 import           Data.Word (Word32)
 import           GHC.Stack (HasCallStack)
 import           NoThunks.Class
@@ -165,10 +165,10 @@ class HasTxs blk where
 -- state). In future eras (starting with Alonzo) this measure was a bit more
 -- complex as it had to take other factors into account (like execution units).
 -- For details please see the individual instances for the TxLimits.
-class ( BoundedMeasure (TxMeasure blk)
-      , HasByteSize    (TxMeasure blk)
-      , NoThunks       (TxMeasure blk)
-      , Show           (TxMeasure blk)
+class ( Measure     (TxMeasure blk)
+      , HasByteSize (TxMeasure blk)
+      , NoThunks    (TxMeasure blk)
+      , Show        (TxMeasure blk)
       ) => TxLimits blk where
   -- | The (possibly multi-dimensional) size of a transaction in a block.
   type TxMeasure blk
@@ -207,7 +207,7 @@ class ( BoundedMeasure (TxMeasure blk)
 newtype ByteSize = ByteSize { unByteSize :: Word32 }
   deriving stock (Show)
   deriving newtype (Eq, Ord)
-  deriving newtype (BoundedMeasure, Measure)
+  deriving newtype (Measure)
   deriving newtype (NFData)
   deriving         (Monoid, Semigroup) via (InstantiatedAt Measure ByteSize)
   deriving         (NoThunks) via OnlyCheckWhnfNamed "ByteSize" ByteSize
