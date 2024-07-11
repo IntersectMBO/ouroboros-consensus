@@ -133,14 +133,13 @@ openMempoolWithCapacityFor :: [MempoolCmd TestBlock] ->  IO (MockedMempool IO Te
 openMempoolWithCapacityFor cmds =
     Mocked.openMockedMempool capacityRequiredByCmds
                              Tracer.nullTracer
-                             TestBlock.txSize
                              Mocked.MempoolAndModelParams {
                                  Mocked.immpInitialState = TestBlock.initialLedgerState
                                , Mocked.immpLedgerConfig = TestBlock.sampleLedgerConfig
                              }
   where
     capacityRequiredByCmds = Mempool.mkCapacityBytesOverride totalTxsSize
-      where totalTxsSize = sum $ fmap TestBlock.txSize $ getCmdsTxs cmds
+      where totalTxsSize = foldMap TestBlock.txSize $ getCmdsTxs cmds
 
 mkNTryAddTxs :: Int -> [MempoolCmd TestBlock.TestBlock]
 mkNTryAddTxs 0 = []

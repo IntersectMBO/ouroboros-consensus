@@ -326,12 +326,12 @@ instance LedgerSupportsMempool BlockA where
 
   reapplyTx cfg slot = fmap fst .: (applyTx cfg DoNotIntervene slot . forgetValidatedGenTxA)
 
-  txsMaxBytes   _ = maxBound
-  txInBlockSize _ = 0
-
   txForgetValidated = forgetValidatedGenTxA
 
-  txRefScriptSize _cfg _tlst _tx = 0
+instance TxLimits BlockA where
+  type TxMeasure BlockA = ByteSize
+  blockCapacityTxMeasure _cfg _st     = ByteSize 1
+  txMeasure              _cfg _st _tx = ByteSize 0
 
 newtype instance TxId (GenTx BlockA) = TxIdA Int
   deriving stock   (Show, Eq, Ord, Generic)

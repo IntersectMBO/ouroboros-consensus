@@ -350,7 +350,6 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
                                  (configLedger cfg)
                                  mempoolCapacityOverride
                                  (mempoolTracer tracers)
-                                 txInBlockSize
 
     fetchClientRegistry <- newFetchClientRegistry
 
@@ -515,7 +514,7 @@ forkBlockForging IS{..} blockForging =
                       (ForgeInKnownSlot currentSlot tickedLedgerState)
             pure (mempoolHash, mempoolSlotNo, snap)
 
-        let txs = map fst $ snapshotTxs mempoolSnapshot
+        let txs = [ vtx | (vtx, _tno, _byteSize) <- snapshotTxs mempoolSnapshot ]
 
         -- force the mempool's computation before the tracer event
         _ <- evaluate (length txs)
@@ -703,8 +702,8 @@ getMempoolReader mempool = MempoolReader.TxSubmissionMempoolReader
                                       snapshotHasTx } =
       MempoolReader.MempoolSnapshot
         { mempoolTxIdsAfter = \idx ->
-            [ (txId (txForgetValidated tx), idx', getTxSize mempool (txForgetValidated tx))
-            | (tx, idx') <- snapshotTxsAfter idx
+            [ (txId (txForgetValidated tx), idx', unByteSize byteSize)
+            | (tx, idx', byteSize) <- snapshotTxsAfter idx
             ]
         , mempoolLookupTx   = snapshotLookupTx
         , mempoolHasTx      = snapshotHasTx

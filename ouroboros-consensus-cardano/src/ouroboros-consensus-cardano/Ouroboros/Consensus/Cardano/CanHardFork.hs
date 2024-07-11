@@ -2,8 +2,10 @@
 {-# LANGUAGE DataKinds             #-}
 {-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE DeriveGeneric         #-}
+{-# LANGUAGE EmptyCase             #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns        #-}
 {-# LANGUAGE OverloadedStrings     #-}
@@ -56,7 +58,7 @@ import           Data.Maybe (listToMaybe, mapMaybe)
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
-import           Data.SOP.Strict (hpure)
+import qualified Data.SOP.Strict as SOP
 import           Data.SOP.Tails (Tails (..))
 import qualified Data.SOP.Tails as Tails
 import           Data.Void
@@ -77,6 +79,8 @@ import           Ouroboros.Consensus.HardFork.History (Bound (boundSlot),
                      addSlots)
 import           Ouroboros.Consensus.HardFork.Simple
 import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize,
+                     TxMeasure)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.Protocol.Abstract
@@ -282,6 +286,8 @@ type CardanoHardForkConstraints c =
   )
 
 instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
+  type HardForkTxMeasure (CardanoEras c) = ConwayMeasure
+
   hardForkEraTranslation = EraTranslation {
       translateLedgerState   =
           PCons translateLedgerStateByronToShelleyWrapper
@@ -310,7 +316,7 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
     }
   hardForkChainSel =
         -- Byron <-> Shelley, ...
-        TCons (hpure CompareBlockNo)
+        TCons (SOP.hpure CompareBlockNo)
         -- Inter-Shelley-based
       $ Tails.hcpure (Proxy @(HasPraosSelectView c)) CompareSameSelectView
   hardForkInjectTxs =
@@ -347,6 +353,34 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
                   (translateValidatedTxBabbageToConwayWrapper ctxt)
               )
       $ PNil
+
+  hardForkInjTxMeasure =
+    fromByteSize `o`
+    fromByteSize `o`
+    fromByteSize `o`
+    fromByteSize `o`
+    fromAlonzo   `o`
+    fromAlonzo   `o`
+    fromConway   `o`
+    nil
+    where
+      nil :: SOP.NS f '[] -> a
+      nil = \case {}
+
+      infixr `o`
+      o ::
+           (TxMeasure x -> a)
+        -> (SOP.NS WrapTxMeasure xs -> a)
+        -> SOP.NS WrapTxMeasure (x : xs)
+        -> a
+      o f g = \case
+        SOP.Z (WrapTxMeasure x) -> f x
+        SOP.S y                 -> g y
+
+      fromByteSize :: ByteSize -> ConwayMeasure
+      fromByteSize x = fromAlonzo $ AlonzoMeasure x mempty
+      fromAlonzo   x = fromConway $ ConwayMeasure x mempty
+      fromConway   x = x
 
 class    (SelectView (BlockProtocol blk) ~ PraosChainSelectView c) => HasPraosSelectView c blk
 instance (SelectView (BlockProtocol blk) ~ PraosChainSelectView c) => HasPraosSelectView c blk

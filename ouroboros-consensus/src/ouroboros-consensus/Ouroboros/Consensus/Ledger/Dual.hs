@@ -608,9 +608,6 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
                                            tickedDualLedgerStateBridge
         }
 
-  txsMaxBytes   = txsMaxBytes . tickedDualLedgerStateMain
-  txInBlockSize = txInBlockSize . dualGenTxMain
-
   txForgetValidated vtx =
       DualGenTx {
           dualGenTxMain   = txForgetValidated vDualGenTxMain
@@ -624,11 +621,14 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
           , vDualGenTxBridge
           } = vtx
 
-  txRefScriptSize cfg st tx =
-      txRefScriptSize
-        (dualLedgerConfigMain cfg)
-        (tickedDualLedgerStateMain st)
-        (dualGenTxMain tx)
+instance TxLimits m => TxLimits (DualBlock m a) where
+  type TxMeasure (DualBlock m a) = TxMeasure m
+
+  txMeasure DualLedgerConfig{..} TickedDualLedgerState{..} DualGenTx{..} =
+      txMeasure dualLedgerConfigMain tickedDualLedgerStateMain dualGenTxMain
+
+  blockCapacityTxMeasure DualLedgerConfig{..} TickedDualLedgerState{..} =
+      blockCapacityTxMeasure dualLedgerConfigMain tickedDualLedgerStateMain
 
 -- We don't need a pair of IDs, as long as we can unique ID the transaction
 newtype instance TxId (GenTx (DualBlock m a)) = DualGenTxId {

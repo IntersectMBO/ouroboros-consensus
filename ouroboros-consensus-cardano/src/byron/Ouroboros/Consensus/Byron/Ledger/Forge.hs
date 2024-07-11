@@ -141,7 +141,7 @@ forgeRegularBlock cfg bno sno st txs isLeader =
         foldr
           extendBlockPayloads
           initBlockPayloads
-          (takeLargestPrefixThatFits st txs)
+      $ takeLargestPrefixThatFits (byronGenesisConfig cfg) st txs
 
     txPayload :: CC.UTxO.TxPayload
     txPayload = CC.UTxO.mkTxPayload (bpTxs blockPayloads)

@@ -71,18 +71,8 @@ import           Ouroboros.Consensus.Byron.Ledger.Serialisation
                      (byronBlockEncodingOverhead)
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
-import           Ouroboros.Consensus.Mempool
 import           Ouroboros.Consensus.Util (ShowProxy (..))
 import           Ouroboros.Consensus.Util.Condense
-
-{-------------------------------------------------------------------------------
-  TxLimits
--------------------------------------------------------------------------------}
-
-instance TxLimits ByronBlock where
-  type TxMeasure ByronBlock = ByteSize
-  txMeasure _st    = ByteSize . txInBlockSize . txForgetValidated
-  txsBlockCapacity = ByteSize . txsMaxBytes
 
 {-------------------------------------------------------------------------------
   Transactions
@@ -132,18 +122,23 @@ instance LedgerSupportsMempool ByronBlock where
     where
       validationMode = CC.ValidationMode CC.NoBlockValidation Utxo.TxValidationNoCrypto
 
-  txsMaxBytes st =
-    CC.getMaxBlockSize (tickedByronLedgerState st) - byronBlockEncodingOverhead
+  txForgetValidated = forgetValidatedByronTx
 
-  txInBlockSize =
-      fromIntegral
+instance TxLimits ByronBlock where
+  type TxMeasure ByronBlock = ByteSize
+
+  blockCapacityTxMeasure _cfg st =
+      ByteSize
+    $ CC.getMaxBlockSize cvs - byronBlockEncodingOverhead
+    where
+      cvs = tickedByronLedgerState st
+
+  txMeasure _cfg _st =
+      ByteSize
+    . fromIntegral
     . Strict.length
     . CC.mempoolPayloadRecoverBytes
     . toMempoolPayload
-
-  txForgetValidated = forgetValidatedByronTx
-
-  txRefScriptSize _ _ _ = 0
 
 data instance TxId (GenTx ByronBlock)
   = ByronTxId             !Utxo.TxId

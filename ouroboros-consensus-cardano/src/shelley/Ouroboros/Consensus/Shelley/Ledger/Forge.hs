@@ -20,7 +20,6 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
-import           Ouroboros.Consensus.Mempool (TxLimits)
 import           Ouroboros.Consensus.Protocol.Abstract (CanBeLeader, IsLeader)
 import           Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
@@ -40,7 +39,7 @@ import           Ouroboros.Consensus.Util.Assert
 
 forgeShelleyBlock ::
      forall m era proto.
-      (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era), Monad m)
+     (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era), Monad m)
   => HotKey (EraCrypto era) m
   -> CanBeLeader proto
   -> TopLevelConfig (ShelleyBlock proto era)
@@ -66,13 +65,15 @@ forgeShelleyBlock
       assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus cfg) blk) $
       assertWithMsg bodySizeEstimate blk
   where
+    lcfg = configLedger cfg
+
     protocolVersion = shelleyProtocolVersion $ configBlock cfg
 
     body =
         SL.toTxSeq @era
       . Seq.fromList
       . fmap extractTx
-      $ takeLargestPrefixThatFits tickedLedger txs
+      $ takeLargestPrefixThatFits lcfg tickedLedger txs
 
     extractTx :: Validated (GenTx (ShelleyBlock proto era)) -> Core.Tx era
     extractTx (ShelleyValidatedTx _txid vtx) = SL.extractTx vtx
@@ -97,6 +98,12 @@ forgeShelleyBlock
       | otherwise
       = return ()
 
-    estimatedBodySize, actualBodySize :: Int
-    estimatedBodySize = fromIntegral $ foldl' (+) 0 $ map (txInBlockSize . txForgetValidated) txs
-    actualBodySize    = SL.bBodySize protocolVersion body
+    actualBodySize, estimatedBodySize :: Int
+    actualBodySize = SL.bBodySize protocolVersion body
+
+    estimatedBodySize =
+        fromIntegral . unByteSize
+      $ foldl' (<>) mempty
+      $ map
+          (txMeasureByteSize . txMeasure lcfg tickedLedger . txForgetValidated)
+          txs

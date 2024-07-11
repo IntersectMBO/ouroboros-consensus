@@ -194,22 +194,19 @@ data Mempool m blk = Mempool {
       -- This does not update the state of the mempool.
     , getSnapshotFor :: ForgeLedgerState blk -> STM m (MempoolSnapshot blk)
 
-      -- | Get the mempool's capacity in bytes.
+      -- | Get the mempool's capacity
       --
       -- Note that the capacity of the Mempool, unless it is overridden with
-      -- 'MempoolCapacityBytesOverride', can dynamically change when the
-      -- ledger state is updated: it will be set to twice the current ledger's
-      -- maximum transaction capacity of a block.
+      -- 'MempoolCapacityBytesOverride', can dynamically change when the ledger
+      -- state is updated: it will be set to twice the current ledger's maximum
+      -- transaction capacity of a block.
       --
       -- When the capacity happens to shrink at some point, we /do not/ remove
       -- transactions from the Mempool to satisfy this new lower limit.
       -- Instead, we treat it the same way as a Mempool which is /at/
       -- capacity, i.e., we won't admit new transactions until some have been
       -- removed because they have become invalid.
-    , getCapacity    :: STM m Cap.MempoolCapacityBytes
-
-      -- | Return the post-serialisation size in bytes of a 'GenTx'.
-    , getTxSize      :: GenTx blk -> TxSizeInBytes
+    , getCapacity    :: STM m (TxMeasure blk)
     }
 
 {-------------------------------------------------------------------------------
@@ -330,12 +327,12 @@ data ForgeLedgerState blk =
 data MempoolSnapshot blk = MempoolSnapshot {
     -- | Get all transactions (oldest to newest) in the mempool snapshot along
     -- with their ticket number.
-    snapshotTxs         :: [(Validated (GenTx blk), TicketNo)]
+    snapshotTxs         :: [(Validated (GenTx blk), TicketNo, ByteSize)]
 
     -- | Get all transactions (oldest to newest) in the mempool snapshot,
     -- along with their ticket number, which are associated with a ticket
     -- number greater than the one provided.
-  , snapshotTxsAfter    :: TicketNo -> [(Validated (GenTx blk), TicketNo)]
+  , snapshotTxsAfter    :: TicketNo -> [(Validated (GenTx blk), TicketNo, ByteSize)]
 
     -- | Get a specific transaction from the mempool snapshot by its ticket
     -- number, if it exists.

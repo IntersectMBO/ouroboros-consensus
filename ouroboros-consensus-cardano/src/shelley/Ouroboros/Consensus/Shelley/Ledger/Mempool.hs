@@ -7,6 +7,7 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE Rank2Types                 #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
@@ -64,7 +65,6 @@ import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
-import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Ledger
@@ -130,7 +130,7 @@ fixedBlockBodyOverhead = 1024
 perTxOverhead :: Num a => a
 perTxOverhead = 4
 
-instance ShelleyCompatible proto era
+instance (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era))
       => LedgerSupportsMempool (ShelleyBlock proto era) where
   txInvariant = const True
 
@@ -138,24 +138,7 @@ instance ShelleyCompatible proto era
 
   reapplyTx = reapplyShelleyTx
 
-  txsMaxBytes TickedShelleyLedgerState { tickedShelleyLedgerState = shelleyState } =
-
-      -- `maxBlockBodySize` is expected to be bigger than `fixedBlockBodyOverhead`
-      maxBlockBodySize - fixedBlockBodyOverhead
-    where
-      maxBlockBodySize = getPParams shelleyState ^. ppMaxBBSizeL
-
-  txInBlockSize (ShelleyTx _ tx) = txSize + perTxOverhead
-    where
-      txSize = fromIntegral $ tx ^. sizeTxF
-
   txForgetValidated (ShelleyValidatedTx txid vtx) = ShelleyTx txid (SL.extractTx vtx)
-
-  txRefScriptSize _cfg st (ShelleyTx _ tx) = case getBabbageTxDict (Proxy @era) of
-      Nothing              -> 0
-      Just BabbageTxDict{} -> SL.txNonDistinctRefScriptsSize utxo tx
-    where
-      utxo = SL.getUTxO . tickedShelleyLedgerState $ st
 
 mkShelleyTx :: forall era proto. ShelleyBasedEra era => Tx era -> GenTx (ShelleyBlock proto era)
 mkShelleyTx tx = ShelleyTx (SL.txIdTxBody @era (tx ^. bodyTxL)) tx
@@ -296,36 +279,57 @@ theLedgerLens f x =
   Tx Limits
 -------------------------------------------------------------------------------}
 
-instance ShelleyCompatible p (ShelleyEra c) => Mempool.TxLimits (ShelleyBlock p (ShelleyEra c)) where
-  type TxMeasure (ShelleyBlock p (ShelleyEra c)) = Mempool.ByteSize
-  txMeasure _st    = Mempool.ByteSize . txInBlockSize . txForgetValidated
-  txsBlockCapacity = Mempool.ByteSize . txsMaxBytes
+txsMaxBytes ::
+     ShelleyCompatible proto era
+  => TickedLedgerState (ShelleyBlock proto era)
+  -> ByteSize
+txsMaxBytes TickedShelleyLedgerState { tickedShelleyLedgerState } =
+    -- `maxBlockBodySize` is expected to be bigger than `fixedBlockBodyOverhead`
+    ByteSize $ maxBlockBodySize - fixedBlockBodyOverhead
+  where
+    maxBlockBodySize = getPParams tickedShelleyLedgerState ^. ppMaxBBSizeL
 
-instance ShelleyCompatible p (AllegraEra c) => Mempool.TxLimits (ShelleyBlock p (AllegraEra c)) where
-  type TxMeasure (ShelleyBlock p (AllegraEra c)) = Mempool.ByteSize
-  txMeasure _st    = Mempool.ByteSize . txInBlockSize . txForgetValidated
-  txsBlockCapacity = Mempool.ByteSize . txsMaxBytes
+txInBlockSize ::
+     ShelleyCompatible proto era
+  => GenTx (ShelleyBlock proto era)
+  -> ByteSize
+txInBlockSize (ShelleyTx _ tx) =
+    ByteSize $ txSize + perTxOverhead
+  where
+    txSize = fromIntegral $ tx ^. sizeTxF
 
-instance ShelleyCompatible p (MaryEra c) => Mempool.TxLimits (ShelleyBlock p (MaryEra c)) where
-  type TxMeasure (ShelleyBlock p (MaryEra c)) = Mempool.ByteSize
-  txMeasure _st    = Mempool.ByteSize . txInBlockSize . txForgetValidated
-  txsBlockCapacity = Mempool.ByteSize . txsMaxBytes
+instance ShelleyCompatible p (ShelleyEra c) => TxLimits (ShelleyBlock p (ShelleyEra c)) where
+  type TxMeasure (ShelleyBlock p (ShelleyEra c)) = ByteSize
+  txMeasure              _cfg _st = txInBlockSize
+  blockCapacityTxMeasure _cfg     = txsMaxBytes
+
+instance ShelleyCompatible p (AllegraEra c) => TxLimits (ShelleyBlock p (AllegraEra c)) where
+  type TxMeasure (ShelleyBlock p (AllegraEra c)) = ByteSize
+  txMeasure              _cfg _st = txInBlockSize
+  blockCapacityTxMeasure _cfg     = txsMaxBytes
+
+instance ShelleyCompatible p (MaryEra c) => TxLimits (ShelleyBlock p (MaryEra c)) where
+  type TxMeasure (ShelleyBlock p (MaryEra c)) = ByteSize
+  txMeasure              _cfg _st = txInBlockSize
+  blockCapacityTxMeasure _cfg     = txsMaxBytes
 
 instance ( ShelleyCompatible p (AlonzoEra c)
-         ) => Mempool.TxLimits (ShelleyBlock p (AlonzoEra c)) where
+         ) => TxLimits (ShelleyBlock p (AlonzoEra c)) where
 
   type TxMeasure (ShelleyBlock p (AlonzoEra c)) = AlonzoMeasure
-
-  txMeasure _st = txMeasureAlonzo
-
-  txsBlockCapacity = txsBlockCapacityAlonzo
+  txMeasure              _cfg _st = txMeasureAlonzo
+  blockCapacityTxMeasure _cfg     = blockCapacityAlonzoMeasure
 
 data AlonzoMeasure = AlonzoMeasure {
-    byteSize :: !Mempool.ByteSize
+    byteSize :: !ByteSize
   , exUnits  :: !(ExUnits' (WithTop Natural))
   } deriving stock (Eq, Generic, Show)
+    deriving anyclass (NoThunks)
     deriving (BoundedMeasure, Measure)
          via (InstantiatedAt Generic AlonzoMeasure)
+
+instance HasByteSize AlonzoMeasure where
+  txMeasureByteSize = byteSize
 
 fromExUnits :: ExUnits -> ExUnits' (WithTop Natural)
 fromExUnits = fmap NotTop . unWrapExUnits
@@ -333,62 +337,62 @@ fromExUnits = fmap NotTop . unWrapExUnits
 txMeasureAlonzo ::
      forall proto era.
      (ShelleyCompatible proto era, L.AlonzoEraTxWits era)
-  => Validated (GenTx (ShelleyBlock proto era)) -> AlonzoMeasure
-txMeasureAlonzo (ShelleyValidatedTx _txid vtx) =
+  => GenTx (ShelleyBlock proto era) -> AlonzoMeasure
+txMeasureAlonzo (ShelleyTx _txid tx) =
     AlonzoMeasure {
-        byteSize = Mempool.ByteSize $ txInBlockSize (mkShelleyTx @era @proto tx)
+        byteSize = txInBlockSize (mkShelleyTx @era @proto tx)
       , exUnits  = fromExUnits $ totExUnits tx
       }
-  where
-    tx = SL.extractTx vtx
 
-txsBlockCapacityAlonzo ::
+blockCapacityAlonzoMeasure ::
      forall proto era.
      (ShelleyCompatible proto era, L.AlonzoEraPParams era)
-  => TickedLedgerState (ShelleyBlock proto era) -> AlonzoMeasure
-txsBlockCapacityAlonzo ledgerState =
+  => TickedLedgerState (ShelleyBlock proto era)
+  -> AlonzoMeasure
+blockCapacityAlonzoMeasure ledgerState =
     AlonzoMeasure {
-        byteSize = Mempool.ByteSize $ txsMaxBytes ledgerState
+        byteSize = txsMaxBytes ledgerState
       , exUnits  = fromExUnits $ pparams ^. ppMaxBlockExUnitsL
       }
   where
     pparams = getPParams $ tickedShelleyLedgerState ledgerState
 
 instance ( ShelleyCompatible p (BabbageEra c)
-         ) => Mempool.TxLimits (ShelleyBlock p (BabbageEra c)) where
+         ) => TxLimits (ShelleyBlock p (BabbageEra c)) where
 
   type TxMeasure (ShelleyBlock p (BabbageEra c)) = AlonzoMeasure
-
-  txMeasure _st = txMeasureAlonzo
-
-  txsBlockCapacity = txsBlockCapacityAlonzo
+  txMeasure              _cfg _st = txMeasureAlonzo
+  blockCapacityTxMeasure _cfg     = blockCapacityAlonzoMeasure
 
 data ConwayMeasure = ConwayMeasure {
     alonzoMeasure  :: !AlonzoMeasure
-  , refScriptsSize :: !Mempool.ByteSize
+  , refScriptsSize :: !ByteSize
   } deriving stock (Eq, Generic, Show)
+    deriving anyclass (NoThunks)
     deriving (BoundedMeasure, Measure)
          via (InstantiatedAt Generic ConwayMeasure)
 
+instance HasByteSize ConwayMeasure where
+  txMeasureByteSize = txMeasureByteSize . alonzoMeasure
+
 instance ( ShelleyCompatible p (ConwayEra c)
-         ) => Mempool.TxLimits (ShelleyBlock p (ConwayEra c)) where
+         ) => TxLimits (ShelleyBlock p (ConwayEra c)) where
 
   type TxMeasure (ShelleyBlock p (ConwayEra c)) = ConwayMeasure
 
-  txMeasure st genTx@(ShelleyValidatedTx _txid vtx) =
+  txMeasure _cfg st tx@(ShelleyTx _txid tx') =
       ConwayMeasure {
-          alonzoMeasure  = txMeasureAlonzo genTx
-        , refScriptsSize = Mempool.ByteSize $ fromIntegral $
-            SL.txNonDistinctRefScriptsSize utxo (SL.extractTx vtx)
+          alonzoMeasure  = txMeasureAlonzo tx
+        , refScriptsSize = ByteSize $ fromIntegral $
+            SL.txNonDistinctRefScriptsSize utxo tx'
         }
     where
       utxo = SL.getUTxO . tickedShelleyLedgerState $ st
 
-
-  txsBlockCapacity st =
+  blockCapacityTxMeasure _cfg st =
       ConwayMeasure {
-          alonzoMeasure  = txsBlockCapacityAlonzo st
-        , refScriptsSize = Mempool.ByteSize $ fromIntegral $
+          alonzoMeasure  = blockCapacityAlonzoMeasure st
+        , refScriptsSize = ByteSize $ fromIntegral $
             -- For post-Conway eras, this will become a protocol parameter.
             SL.maxRefScriptSizePerBlock
         }
@@ -400,8 +404,9 @@ instance ( ShelleyCompatible p (ConwayEra c)
 -- | Add a unique top element to a lattice.
 --
 -- TODO This should be relocated to `cardano-base:Data.Measure'.
-data WithTop a = NotTop a | Top
+data WithTop a = NotTop !a | Top
   deriving (Eq, Generic, Show)
+  deriving anyclass (NoThunks)
 
 instance Ord a => Ord (WithTop a) where
   compare = curry $ \case

@@ -33,8 +33,6 @@ import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
-import           Ouroboros.Consensus.Mempool.Capacity (TxLimits)
-import qualified Ouroboros.Consensus.Mempool.Capacity as MempoolCapacity
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Ticked
 
@@ -156,14 +154,16 @@ data BlockForging m blk = BlockForging {
 -- transactions in a single block, which is determined by querying the ledger
 -- state for the current limit.
 takeLargestPrefixThatFits ::
-     TxLimits blk
-  => TickedLedgerState blk
+     LedgerSupportsMempool blk
+  => LedgerConfig blk
+  -> TickedLedgerState blk
   -> [Validated (GenTx blk)]
   -> [Validated (GenTx blk)]
-takeLargestPrefixThatFits ledger txs =
-    Measure.take (MempoolCapacity.txMeasure ledger) capacity txs
+takeLargestPrefixThatFits cfg ledger txs =
+    Measure.take toMeasure capacity txs
   where
-    capacity = MempoolCapacity.txsBlockCapacity ledger
+    toMeasure = txMeasure cfg ledger . txForgetValidated
+    capacity  = blockCapacityTxMeasure cfg ledger
 
 data ShouldForge blk =
     -- | Before check whether we are a leader in this slot, we tried to update
