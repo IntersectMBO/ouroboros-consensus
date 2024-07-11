@@ -6,7 +6,8 @@ module Test.Consensus.Genesis.Tests.CSJ (tests) where
 import           Data.List (nub)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe)
-import           Ouroboros.Consensus.Block (Header, blockSlot, succWithOrigin)
+import           Ouroboros.Consensus.Block (Header, blockSlot, succWithOrigin,
+                     unSlotNo)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (TraceChainSyncClientEvent (..))
 import           Ouroboros.Consensus.Util.Condense (PaddingDirection (..),
@@ -114,8 +115,16 @@ prop_CSJ happy synchronized =
                 _ -> Nothing
               )
               svTrace
+          -- We receive headers at most once from honest peer. The only
+          -- exception is when an honest peer gets to be the objector, until an
+          -- adversary dies, and then the dynamo. In that specific case, we
+          -- might re-download jumpSize blocks. TODO: If we ever choose to
+          -- promote objectors to dynamo to reuse their state, then we could
+          -- make this bound tighter.
           receivedHeadersAtMostOnceFromHonestPeers =
-            length (nub $ snd <$> headerHonestDownloadEvents) == length headerHonestDownloadEvents
+            length headerHonestDownloadEvents <=
+              length (nub $ snd <$> headerHonestDownloadEvents) +
+                (fromIntegral $ unSlotNo $ csjpJumpSize $ gtCSJParams gt)
         in
           tabulate ""
             [ if headerHonestDownloadEvents == []
