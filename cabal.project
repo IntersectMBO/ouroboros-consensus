@@ -53,3 +53,13 @@ if impl(ghc >= 9.10)
   constraints:
     -- Earlier versions do not compile with ghc-9.10
     , plutus-ledger-api ^>=1.31
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/ouroboros-network
+  tag: fcb842fcd6f32b43a7cdf18a4301c1659a8bb879
+  --sha256: kjwUrduwwxC+5QRQNJa4stEBzz7kqDJyyHOgGMfDw7s=
+  subdir:
+    ouroboros-network
+    ouroboros-network-api
+    ouroboros-network-protocols
