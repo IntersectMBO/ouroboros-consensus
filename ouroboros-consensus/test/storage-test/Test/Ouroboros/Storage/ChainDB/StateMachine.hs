@@ -1631,6 +1631,7 @@ traceEventName = \case
     TraceLedgerReplayEvent      ev    -> "LedgerReplay."      <> constrName ev
     TraceImmutableDBEvent       ev    -> "ImmutableDB."       <> constrName ev
     TraceVolatileDBEvent        ev    -> "VolatileDB."        <> constrName ev
+    TraceChainSelStarvationEvent _   -> "TraceChainSelStarvationEvent"
 
 mkArgs :: IOLike m
        => TopLevelConfig Blk
