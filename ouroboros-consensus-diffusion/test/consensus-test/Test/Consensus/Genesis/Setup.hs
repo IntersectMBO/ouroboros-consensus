@@ -59,7 +59,7 @@ runGenesisTest schedulerConfig genesisTest =
     (recordingTracer, getTrace) <- recordingTracerM
     let tracer = if scDebug schedulerConfig then debugTracer else recordingTracer
 
-    traceLinesWith tracer $ prettyGenesisTest prettyPeersSchedule genesisTest
+    traceLinesWith tracer $ prettyGenesisTest prettyPointSchedule genesisTest
 
     rgtrStateView <- runPointSchedule schedulerConfig genesisTest =<< tracerTestBlock tracer
     traceWith tracer (condense rgtrStateView)

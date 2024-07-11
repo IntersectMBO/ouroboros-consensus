@@ -27,7 +27,6 @@ module Ouroboros.Consensus.NodeKernel (
   ) where
 
 
-
 import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Control.DeepSeq (force)
@@ -52,6 +51,7 @@ import qualified Ouroboros.Consensus.Block as Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Forecast
+import           Ouroboros.Consensus.Genesis.Governor (gddWatcher)
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
@@ -65,6 +65,8 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      viewChainSyncState)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
                      (SomeHeaderInFutureCheck)
+import           Ouroboros.Consensus.Node.Genesis (GenesisNodeKernelArgs (..),
+                     LoEAndGDDConfig (..), setGetLoEFragment)
 import           Ouroboros.Consensus.Node.GSM (GsmNodeKernelArgs (..))
 import qualified Ouroboros.Consensus.Node.GSM as GSM
 import           Ouroboros.Consensus.Node.Run
@@ -80,6 +82,8 @@ import           Ouroboros.Consensus.Util.AnchoredFragment
                      (preferAnchoredCandidate)
 import           Ouroboros.Consensus.Util.EarlyExit
 import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Consensus.Util.LeakyBucket
+                     (atomicallyWithMonotonicTime)
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM
@@ -130,9 +134,10 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
       --
     , getFetchMode            :: STM m FetchMode
 
-      -- | The ledger judgement, used by diffusion.
+      -- | The GSM state, used by diffusion. A ledger judgement can be derived
+      -- from it with 'GSM.gsmStateToLedgerJudgement'.
       --
-    , getLedgerStateJudgement :: STM m LedgerStateJudgement
+    , getGsmState             :: STM m GSM.GsmState
 
       -- | The kill handle and exposed state for each ChainSync client.
     , getChainSyncHandles     :: StrictTVar m (Map (ConnectionId addrNTN) (ChainSyncClientHandle m blk))
@@ -175,6 +180,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs {
     , peerSharingRng          :: StdGen
     , publicPeerSelectionStateVar
                               :: StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
+    , genesisArgs             :: GenesisNodeKernelArgs m blk
     }
 
 initNodeKernel ::
@@ -194,6 +200,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                    , gsmArgs
                                    , peerSharingRng
                                    , publicPeerSelectionStateVar
+                                   , genesisArgs
                                    } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [BlockForging m blk] <- LazySTM.newTMVarIO []
@@ -206,7 +213,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
           , mempool
           , peerSharingRegistry
           , varChainSyncHandles
-          , varLedgerJudgement
+          , varGsmState
           } = st
 
     varOutboundConnectionsState <- newTVarIO UntrustedState
@@ -244,8 +251,11 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
               , GSM.setCaughtUpPersistentMark = \upd ->
                   (if upd then GSM.touchMarkerFile else GSM.removeMarkerFile)
                     gsmMarkerFileView
-              , GSM.writeGsmState = \x -> atomically $ do
-                  writeTVar varLedgerJudgement $ GSM.gsmStateToLedgerJudgement x
+              , GSM.writeGsmState = \gsmState ->
+                  atomicallyWithMonotonicTime $ \time -> do
+                    writeTVar varGsmState gsmState
+                    handles <- readTVar varChainSyncHandles
+                    traverse_ (($ time) . ($ gsmState) . cschOnGsmStateChanged) handles
               , GSM.isHaaSatisfied            = do
                   readTVar varOutboundConnectionsState <&> \case
                     -- See the upstream Haddocks for the exact conditions under
@@ -253,7 +263,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                     TrustedStateWithExternalPeers -> True
                     UntrustedState                -> False
               }
-        judgment <- readTVarIO varLedgerJudgement
+        judgment <- GSM.gsmStateToLedgerJudgement <$> readTVarIO varGsmState
         void $ forkLinkedThread registry "NodeKernel.GSM" $ case judgment of
           TooOld      -> GSM.enterPreSyncing gsm
           YoungEnough -> GSM.enterCaughtUp   gsm
@@ -262,6 +272,25 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                         peerSharingRng
                                         ps_POLICY_PEER_SHARE_STICKY_TIME
                                         ps_POLICY_PEER_SHARE_MAX_PEERS
+
+    case gnkaGetLoEFragment genesisArgs of
+      LoEAndGDDDisabled                  -> pure ()
+      LoEAndGDDEnabled varGetLoEFragment -> do
+        varLoEFragment <- newTVarIO $ AF.Empty AF.AnchorGenesis
+        setGetLoEFragment
+          (readTVar varGsmState)
+          (readTVar varLoEFragment)
+          varGetLoEFragment
+
+        void $ forkLinkedWatcher registry "NodeKernel.GDD" $
+          gddWatcher
+            cfg
+            (gddTracer tracers)
+            chainDB
+            (readTVar varGsmState)
+            -- TODO GDD should only consider (big) ledger peers
+            (readTVar varChainSyncHandles)
+            varLoEFragment
 
     void $ forkLinkedThread registry "NodeKernel.blockForging" $
                             blockForgingController st (LazySTM.takeTMVar blockForgingVar)
@@ -282,7 +311,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
       , getTopLevelConfig       = cfg
       , getFetchClientRegistry  = fetchClientRegistry
       , getFetchMode            = readFetchMode blockFetchInterface
-      , getLedgerStateJudgement = readTVar varLedgerJudgement
+      , getGsmState             = readTVar varGsmState
       , getChainSyncHandles     = varChainSyncHandles
       , getPeerSharingRegistry  = peerSharingRegistry
       , getTracers              = tracers
@@ -317,9 +346,9 @@ data InternalState m addrNTN addrNTC blk = IS {
     , blockFetchInterface :: BlockFetchConsensusInterface (ConnectionId addrNTN) (Header blk) blk m
     , fetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (Header blk) blk m
     , varChainSyncHandles :: StrictTVar m (Map (ConnectionId addrNTN) (ChainSyncClientHandle m blk))
+    , varGsmState         :: StrictTVar m GSM.GsmState
     , mempool             :: Mempool m blk
     , peerSharingRegistry :: PeerSharingRegistry addrNTN m
-    , varLedgerJudgement  :: StrictTVar m LedgerStateJudgement
     }
 
 initInternalState ::
@@ -336,13 +365,13 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
                                  , mempoolCapacityOverride
                                  , gsmArgs, getUseBootstrapPeers
                                  } = do
-    varLedgerJudgement <- do
+    varGsmState <- do
       let GsmNodeKernelArgs {..} = gsmArgs
-      j <- GSM.initializationLedgerJudgement
+      gsmState <- GSM.initializationGsmState
         (atomically $ ledgerState <$> ChainDB.getCurrentLedger chainDB)
         gsmDurationUntilTooOld
         gsmMarkerFileView
-      newTVarIO j
+      newTVarIO gsmState
 
     varChainSyncHandles <- newTVarIO mempty
     mempool       <- openMempool registry
@@ -362,7 +391,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
           btime
           (ChainDB.getCurrentChain chainDB)
           getUseBootstrapPeers
-          (readTVar varLedgerJudgement)
+          (GSM.gsmStateToLedgerJudgement <$> readTVar varGsmState)
         blockFetchInterface :: BlockFetchConsensusInterface (ConnectionId addrNTN) (Header blk) blk m
         blockFetchInterface = BlockFetchClientInterface.mkBlockFetchConsensusInterface
           (configBlock cfg)

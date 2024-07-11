@@ -28,8 +28,9 @@ import           Ouroboros.Consensus.Block (HasHeader, Header, Point)
 import           Ouroboros.Consensus.HeaderStateHistory (HeaderStateHistory)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
-import           Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks (..),
-                     StrictTVar)
+import           Ouroboros.Consensus.Node.GsmState (GsmState)
+import           Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks (..), STM,
+                     StrictTVar, Time)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      headPoint)
 
@@ -70,17 +71,21 @@ deriving anyclass instance (
 -- the GDD governor.
 data ChainSyncClientHandle m blk = ChainSyncClientHandle {
     -- | Disconnects from the peer when the GDD considers it adversarial
-    cschGDDKill  :: !(m ())
+    cschGDDKill           :: !(m ())
+
+    -- | Callback called by the GSM when the GSM state changes. They take the
+    -- current time and should execute rapidly. Used to enable/disable the LoP.
+  , cschOnGsmStateChanged :: !(GsmState -> Time -> STM m ())
 
     -- | Data shared between the client and external components like GDD.
-  , cschState    :: !(StrictTVar m (ChainSyncState blk))
+  , cschState             :: !(StrictTVar m (ChainSyncState blk))
 
     -- | The state of the peer with respect to ChainSync jumping.
-  , cschJumping  :: !(StrictTVar m (ChainSyncJumpingState m blk))
+  , cschJumping           :: !(StrictTVar m (ChainSyncJumpingState m blk))
 
     -- | ChainSync state needed to jump to the tip of the candidate fragment of
     -- the peer.
-  , cschJumpInfo :: !(StrictTVar m (Maybe (JumpInfo blk)))
+  , cschJumpInfo          :: !(StrictTVar m (Maybe (JumpInfo blk)))
   }
   deriving stock (Generic)
 

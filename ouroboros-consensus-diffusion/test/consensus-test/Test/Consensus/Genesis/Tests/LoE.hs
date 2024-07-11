@@ -18,13 +18,14 @@ import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Peers (Peers, mkPeers)
+import           Test.Consensus.PointSchedule.Peers (peers')
 import           Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules)
 import           Test.Consensus.PointSchedule.SinglePeer (scheduleBlockPoint,
                      scheduleHeaderPoint, scheduleTipPoint)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
+import           Test.Util.PartialAccessors
 import           Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
@@ -43,6 +44,9 @@ tests =
 -- NOTE: Same as 'LoP.prop_delayAttack' with timeouts instead of LoP.
 prop_adversaryHitsTimeouts :: Bool -> Property
 prop_adversaryHitsTimeouts timeoutsEnabled =
+  -- Here we can't shrink because we exploit the properties of the point schedule to wait
+  -- at the end of the test for the adversaries to get disconnected, by adding an extra point.
+  -- If this point gets removed by the shrinker, we lose that property and the test becomes useless.
   noShrinking $
     forAllGenesisTest
       ( do
@@ -75,27 +79,18 @@ prop_adversaryHitsTimeouts timeoutsEnabled =
            in selectedCorrect && exceptionsCorrect
       )
   where
-    getOnlyBranch :: BlockTree blk -> BlockTreeBranch blk
-    getOnlyBranch BlockTree {btBranches} = case btBranches of
-      [branch] -> branch
-      _        -> error "tree must have exactly one alternate branch"
-
-    delaySchedule :: HasHeader blk => BlockTree blk -> Peers (PeerSchedule blk)
+    delaySchedule :: HasHeader blk => BlockTree blk -> PointSchedule blk
     delaySchedule tree =
-      let trunkTip = case btTrunk tree of
-            (AF.Empty _)       -> error "tree must have at least one block"
-            (_ AF.:> tipBlock) -> tipBlock
+      let trunkTip = getTrunkTip tree
           branch = getOnlyBranch tree
           intersectM = case btbPrefix branch of
             (AF.Empty _)       -> Nothing
             (_ AF.:> tipBlock) -> Just tipBlock
-          branchTip = case btbFull branch of
-            (AF.Empty _) -> error "alternate branch must have at least one block"
-            (_ AF.:> tipBlock) -> tipBlock
-       in mkPeers
+          branchTip = getOnlyBranchTip tree
+          psSchedule = peers'
             -- Eagerly serve the honest tree, but after the adversary has
             -- advertised its chain.
-            ( (Time 0, scheduleTipPoint trunkTip) : case intersectM of
+            [ (Time 0, scheduleTipPoint trunkTip) : case intersectM of
                 Nothing ->
                   [ (Time 0.5, scheduleHeaderPoint trunkTip),
                     (Time 0.5, scheduleBlockPoint trunkTip)
@@ -106,16 +101,18 @@ prop_adversaryHitsTimeouts timeoutsEnabled =
                     (Time 5, scheduleHeaderPoint trunkTip),
                     (Time 5, scheduleBlockPoint trunkTip)
                   ]
-            )
+            ]
             -- The one adversarial peer advertises and serves up to the
             -- intersection early, then waits more than the short wait timeout.
             [ (Time 0, scheduleTipPoint branchTip) : case intersectM of
                 -- the alternate branch forks from `Origin`
-                Nothing -> [(Time 11, scheduleTipPoint branchTip)]
+                Nothing -> []
                 -- the alternate branch forks from `intersect`
                 Just intersect ->
                   [ (Time 0, scheduleHeaderPoint intersect),
-                    (Time 0, scheduleBlockPoint intersect),
-                    (Time 11, scheduleBlockPoint intersect)
+                    (Time 0, scheduleBlockPoint intersect)
                   ]
             ]
+          -- We want to wait more than the short wait timeout
+          psMinEndTime = Time 11
+       in PointSchedule {psSchedule, psMinEndTime}

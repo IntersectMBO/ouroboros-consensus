@@ -23,41 +23,43 @@
 module Test.Consensus.PointSchedule (
     BlockFetchTimeout (..)
   , CSJParams (..)
+  , DowntimeParams (..)
   , ForecastRange (..)
   , GenesisTest (..)
   , GenesisTestFull
   , GenesisWindow (..)
   , LoPBucketParams (..)
   , PeerSchedule
-  , PeersSchedule
+  , PointSchedule (..)
+  , PointsGeneratorParams (..)
   , RunGenesisTestResult (..)
   , enrichedWith
   , ensureScheduleDuration
   , genesisNodeState
   , longRangeAttack
+  , mkPointSchedule
   , peerSchedulesBlocks
   , peerStates
   , peersStates
   , peersStatesRelative
   , prettyGenesisTest
-  , prettyPeersSchedule
+  , prettyPointSchedule
   , stToGen
   , uniformPoints
-  , uniformPointsWithDowntime
   ) where
 
 import           Cardano.Slotting.Time (SlotLength)
+import           Control.Monad (replicateM)
 import           Control.Monad.Class.MonadTime.SI (Time (Time), addTime,
                      diffTime)
 import           Control.Monad.ST (ST)
-import           Data.Foldable (toList)
 import           Data.Functor (($>))
 import           Data.List (mapAccumL, partition, scanl')
+import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, fromMaybe, mapMaybe)
 import           Data.Time (DiffTime)
 import           Data.Word (Word64)
-import           Ouroboros.Consensus.Block.Abstract (WithOrigin (..),
-                     withOriginToMaybe)
+import           Ouroboros.Consensus.Block.Abstract (withOriginToMaybe)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (GenesisWindow (..))
 import           Ouroboros.Consensus.Network.NodeToNode (ChainSyncTimeout (..))
@@ -76,7 +78,7 @@ import           Test.Consensus.PeerSimulator.StateView (StateView)
 import           Test.Consensus.PointSchedule.NodeState (NodeState (..),
                      genesisNodeState)
 import           Test.Consensus.PointSchedule.Peers (Peer (..), Peers (..),
-                     mkPeers, peersList)
+                     peers', peersList)
 import           Test.Consensus.PointSchedule.SinglePeer
                      (IsTrunk (IsBranch, IsTrunk), PeerScheduleParams (..),
                      SchedulePoint (..), defaultPeerScheduleParams, mergeOn,
@@ -90,12 +92,16 @@ import           Test.Util.TersePrinting (terseFragment)
 import           Test.Util.TestBlock (TestBlock)
 import           Text.Printf (printf)
 
-prettyPeersSchedule ::
+prettyPointSchedule ::
   forall blk.
   (CondenseList (NodeState blk)) =>
-  PeersSchedule blk ->
+  PointSchedule blk ->
   [String]
-prettyPeersSchedule peers =
+prettyPointSchedule peers =
+  [ "honest peers: " ++ show (Map.size (honestPeers $ psSchedule peers))
+  , "adversaries: " ++ show (Map.size (adversarialPeers $ psSchedule peers))
+  , "minimal duration: " ++ show (psMinEndTime peers)
+  ] ++
   zipWith3
     (\number time peerState ->
       number ++ ": " ++ peerState ++ " @ " ++ time
@@ -150,12 +156,13 @@ peerStates Peer {name, value = schedulePoints} =
 -- | Convert several @SinglePeer@ schedules to a common 'NodeState' schedule.
 --
 -- The resulting schedule contains all the peers. Items are sorted by time.
-peersStates :: PeersSchedule blk -> [(Time, Peer (NodeState blk))]
-peersStates peers = foldr (mergeOn fst) [] (peerStates <$> toList (peersList peers))
+peersStates :: PointSchedule blk -> [(Time, Peer (NodeState blk))]
+peersStates PointSchedule{psSchedule} =
+  foldr (mergeOn fst) [] (peerStates <$> peersList psSchedule)
 
 -- | Same as 'peersStates' but returns the duration of a state instead of the
 -- absolute time at which it starts holding.
-peersStatesRelative :: PeersSchedule blk -> [(DiffTime, Peer (NodeState blk))]
+peersStatesRelative :: PointSchedule blk -> [(DiffTime, Peer (NodeState blk))]
 peersStatesRelative peers =
   let (starts, states) = unzip $ peersStates peers
       durations = snd (mapAccumL (\ prev start -> (start, diffTime start prev)) (Time 0) (drop 1 starts)) ++ [0.1]
@@ -167,11 +174,21 @@ type PeerSchedule blk = [(Time, SchedulePoint blk)]
 peerScheduleBlocks :: (PeerSchedule blk) -> [blk]
 peerScheduleBlocks = mapMaybe (withOriginToMaybe . schedulePointToBlock . snd)
 
-type PeersSchedule blk = Peers (PeerSchedule blk)
+data PointSchedule blk = PointSchedule {
+    -- | The actual point schedule
+    psSchedule   :: Peers (PeerSchedule blk),
+    -- | Minimum duration for the simulation of this point schedule.
+    -- If no point in the schedule is larger than 'psMinEndTime',
+    -- the simulation will still run until this time is reached.
+    psMinEndTime :: Time
+  }
+
+mkPointSchedule :: Peers (PeerSchedule blk) -> PointSchedule blk
+mkPointSchedule sch = PointSchedule sch $ Time 0
 
 -- | List of all blocks appearing in the schedules.
-peerSchedulesBlocks :: PeersSchedule blk -> [blk]
-peerSchedulesBlocks = concatMap (peerScheduleBlocks . value) . toList . peersList
+peerSchedulesBlocks :: Peers (PeerSchedule blk) -> [blk]
+peerSchedulesBlocks = concatMap (peerScheduleBlocks . value) . peersList
 
 ----------------------------------------------------------------------------------------------------
 -- Schedule generators
@@ -187,11 +204,11 @@ longRangeAttack ::
   (StatefulGen g m, AF.HasHeader blk) =>
   BlockTree blk ->
   g ->
-  m (PeersSchedule blk)
+  m (PointSchedule blk)
 longRangeAttack BlockTree {btTrunk, btBranches = [branch]} g = do
   honest <- peerScheduleFromTipPoints g honParams [(IsTrunk, [AF.length btTrunk - 1])] btTrunk []
   adv <- peerScheduleFromTipPoints g advParams [(IsBranch, [AF.length (btbFull branch) - 1])] btTrunk [btbFull branch]
-  pure (mkPeers honest [adv])
+  pure $ mkPointSchedule $ peers' [honest] [adv]
   where
     honParams = defaultPeerScheduleParams {pspHeaderDelayInterval = (0.3, 0.4)}
     advParams = defaultPeerScheduleParams {pspTipDelayInterval = (0, 0.1)}
@@ -199,22 +216,45 @@ longRangeAttack BlockTree {btTrunk, btBranches = [branch]} g = do
 longRangeAttack _ _ =
   error "longRangeAttack can only deal with single adversary"
 
--- | Generate a schedule in which the trunk and branches are served by one peer each, using
--- a single tip point, without specifically assigned delay intervals like in
--- 'newLongRangeAttack'.
+data PointsGeneratorParams = PointsGeneratorParams {
+  pgpExtraHonestPeers :: Int,
+  pgpDowntime         :: DowntimeParams
+}
+
+data DowntimeParams = NoDowntime | DowntimeWithSecurityParam SecurityParam
+
+uniformPoints ::
+  (StatefulGen g m, AF.HasHeader blk) =>
+  PointsGeneratorParams ->
+  BlockTree blk ->
+  g ->
+  m (PointSchedule blk)
+uniformPoints PointsGeneratorParams {pgpExtraHonestPeers, pgpDowntime} = case pgpDowntime of
+  NoDowntime                  -> uniformPointsWithExtraHonestPeers pgpExtraHonestPeers
+  DowntimeWithSecurityParam k -> uniformPointsWithExtraHonestPeersAndDowntime pgpExtraHonestPeers k
+
+-- | Generate a schedule in which the trunk is served by @pgpExtraHonestPeers + 1@ peers,
+-- and extra branches are served by one peer each, using a single tip point,
+-- without specifically assigned delay intervals like in 'newLongRangeAttack'.
 --
 -- Include rollbacks in a percentage of adversaries, in which case that peer uses two branchs.
 --
-uniformPoints ::
+uniformPointsWithExtraHonestPeers ::
   (StatefulGen g m, AF.HasHeader blk) =>
+  Int ->
   BlockTree blk ->
   g ->
-  m (PeersSchedule blk)
-uniformPoints BlockTree {btTrunk, btBranches} g = do
+  m (PointSchedule blk)
+uniformPointsWithExtraHonestPeers
+    extraHonestPeers
+    BlockTree {btTrunk, btBranches}
+    g
+  = do
   honestTip0 <- firstTip btTrunk
-  honest <- mkSchedule [(IsTrunk, [honestTip0 .. AF.length btTrunk - 1])] []
+  honests <- replicateM (extraHonestPeers + 1) $
+    mkSchedule [(IsTrunk, [honestTip0 .. AF.length btTrunk - 1])] []
   advs <- takeBranches btBranches
-  pure (mkPeers honest advs)
+  pure $ mkPointSchedule $ peers' honests advs
   where
     takeBranches = \case
         [] -> pure []
@@ -301,16 +341,16 @@ bumpTips tips =
       = (tn, (t0, p))
     step ts a = (ts, a)
 
-syncTips :: [(Time, SchedulePoint blk)] -> [[(Time, SchedulePoint blk)]] -> ([(Time, SchedulePoint blk)], [[(Time, SchedulePoint blk)]])
-syncTips honest advs =
-  (bump honest, bump <$> advs)
+syncTips :: [[(Time, SchedulePoint blk)]] -> [[(Time, SchedulePoint blk)]] -> ([[(Time, SchedulePoint blk)]], [[(Time, SchedulePoint blk)]])
+syncTips honests advs =
+  (bump <$> honests, bump <$> advs)
   where
     bump = bumpTips earliestTips
     earliestTips = chooseEarliest <$> zipPadN (tipTimes <$> scheds)
-    scheds = honest : advs
+    scheds = honests <> advs
     chooseEarliest times = minimum (fromMaybe (Time 0) <$> times)
 
--- | This is a variant of 'uniformPoints' that uses multiple tip points, used to simulate node downtimes.
+-- | This is a variant of 'uniformPointsWithExtraHonestPeers' that uses multiple tip points, used to simulate node downtimes.
 -- Ultimately, this should be replaced by a redesign of the peer schedule generator that is aware of node liveness
 -- intervals.
 --
@@ -320,23 +360,30 @@ syncTips honest advs =
 -- The second tip is the last block of each branch.
 --
 -- Includes rollbacks in some schedules.
-uniformPointsWithDowntime ::
+uniformPointsWithExtraHonestPeersAndDowntime ::
   (StatefulGen g m, AF.HasHeader blk) =>
+  Int ->
   SecurityParam ->
   BlockTree blk ->
   g ->
-  m (PeersSchedule blk)
-uniformPointsWithDowntime (SecurityParam k) BlockTree {btTrunk, btBranches} g = do
+  m (PointSchedule blk)
+uniformPointsWithExtraHonestPeersAndDowntime
+    extraHonestPeers
+    (SecurityParam k)
+    BlockTree {btTrunk, btBranches}
+    g
+  = do
   let
     kSlot = withOrigin 0 (fromIntegral . unSlotNo) (AF.headSlot (AF.takeOldest (fromIntegral k) btTrunk))
     midSlot = (AF.length btTrunk) `div` 2
     lowerBound = max kSlot midSlot
   pauseSlot <- SlotNo . fromIntegral <$> Random.uniformRM (lowerBound, AF.length btTrunk - 1) g
   honestTip0 <- firstTip pauseSlot btTrunk
-  honest <- mkSchedule [(IsTrunk, [honestTip0, minusClamp (AF.length btTrunk) 1])] []
+  honests <- replicateM (extraHonestPeers + 1) $
+    mkSchedule [(IsTrunk, [honestTip0, minusClamp (AF.length btTrunk) 1])] []
   advs <- takeBranches pauseSlot btBranches
-  let (honest', advs') = syncTips honest advs
-  pure (mkPeers honest' advs')
+  let (honests', advs') = syncTips honests advs
+  pure $ mkPointSchedule $ peers' honests' advs'
   where
     takeBranches pause = \case
         [] -> pure []
@@ -391,7 +438,6 @@ uniformPointsWithDowntime (SecurityParam k) BlockTree {btTrunk, btBranches} g = 
 
     rollbackProb = 0.2
 
-
 newtype ForecastRange = ForecastRange { unForecastRange :: Word64 }
   deriving (Show)
 
@@ -425,10 +471,17 @@ data GenesisTest blk schedule = GenesisTest
     gtLoPBucketParams    :: LoPBucketParams,
     gtCSJParams          :: CSJParams,
     gtSlotLength         :: SlotLength,
+    -- | The number of extra honest peers we want in the test.
+    -- It is stored here for convenience, and because it may affect schedule and block tree generation.
+    --
+    -- There will be at most one adversarial peer per alternative branch in the block tree
+    -- (exactly one per branch if no adversary does a rollback),
+    -- and @1 + gtExtraHonestPeers@ honest peers.
+    gtExtraHonestPeers   :: Word,
     gtSchedule           :: schedule
   }
 
-type GenesisTestFull blk = GenesisTest blk (PeersSchedule blk)
+type GenesisTestFull blk = GenesisTest blk (PointSchedule blk)
 
 -- | All the data describing the result of a test
 data RunGenesisTestResult = RunGenesisTestResult
@@ -491,19 +544,13 @@ stToGen gen = do
   seed :: QCGen <- arbitrary
   pure (runSTGen_ seed gen)
 
-duplicateLastPoint
-  :: DiffTime -> [(Time, SchedulePoint blk)] -> [(Time, SchedulePoint blk)]
-duplicateLastPoint d [] = [(Time d, ScheduleTipPoint Origin)]
-duplicateLastPoint d xs =
-  let (t, p) = last xs
-    in xs ++ [(addTime d t, p)]
-
-ensureScheduleDuration :: GenesisTest blk a -> PeersSchedule blk -> PeersSchedule blk
-ensureScheduleDuration gt Peers {honest, others} =
-  Peers {honest = extendHonest, others}
+ensureScheduleDuration :: GenesisTest blk a -> PointSchedule blk -> PointSchedule blk
+ensureScheduleDuration gt PointSchedule{psSchedule, psMinEndTime} =
+    PointSchedule
+      { psSchedule
+      , psMinEndTime = max psMinEndTime (Time endingDelay)
+      }
   where
-    extendHonest = duplicateLastPoint endingDelay <$> honest
-
     endingDelay =
      let cst = gtChainSyncTimeouts gt
          bft = gtBlockFetchTimeouts gt
@@ -513,5 +560,4 @@ ensureScheduleDuration gt Peers {honest, others} =
            , busyTimeout bft
            , streamingTimeout bft
            ])
-
-    peerCount = 1 + length others
+    peerCount = length (peersList psSchedule)

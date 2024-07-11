@@ -38,8 +38,7 @@ import           Test.Consensus.Network.AnchoredFragment.Extras (slotLength)
 import           Test.Consensus.PeerSimulator.StateView
                      (PeerSimulatorResult (..), StateView (..), pscrToException)
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId (..),
-                     Peers (..))
+import           Test.Consensus.PointSchedule.Peers (PeerId (..), Peers (..))
 import           Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..))
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock, TestHash (TestHash),
@@ -165,15 +164,15 @@ resultClassifiers GenesisTest{gtSchedule} RunGenesisTestResult{rgtrStateView} =
     StateView{svPeerSimulatorResults} = rgtrStateView
 
     adversaries :: [PeerId]
-    adversaries = Map.keys $ others gtSchedule
+    adversaries = fmap AdversarialPeer $ Map.keys $ adversarialPeers $ psSchedule gtSchedule
 
     adversariesCount = fromIntegral $ length adversaries
 
     adversariesExceptions :: [(PeerId, SomeException)]
     adversariesExceptions = mapMaybe
       (\PeerSimulatorResult{psePeerId, pseResult} -> case psePeerId of
-        HonestPeer -> Nothing
-        pid        -> (pid,) <$> pscrToException pseResult
+        HonestPeer _ -> Nothing
+        pid          -> (pid,) <$> pscrToException pseResult
       )
       svPeerSimulatorResults
 
@@ -249,20 +248,19 @@ scheduleClassifiers GenesisTest{gtSchedule = schedule} =
           peerSch
 
     rollbacks :: Peers Bool
-    rollbacks = hasRollback <$> schedule
+    rollbacks = hasRollback <$> psSchedule schedule
 
-    adversaryRollback = any value $ others rollbacks
+    adversaryRollback = any id $ adversarialPeers rollbacks
+    honestRollback = any id $ honestPeers rollbacks
 
-    honestRollback = value $ honest rollbacks
-
-    allAdversariesEmpty = all value $ others $ null <$> schedule
+    allAdversariesEmpty = all id $ adversarialPeers $ null <$> psSchedule schedule
 
     isTrivial :: PeerSchedule TestBlock -> Bool
     isTrivial = \case
       []             -> True
       (t0, _):points -> all ((== t0) . fst) points
 
-    allAdversariesTrivial = all value $ others $ isTrivial <$> schedule
+    allAdversariesTrivial = all id $ adversarialPeers $ isTrivial <$> psSchedule schedule
 
 simpleHash ::
   HeaderHash block ~ TestHash =>

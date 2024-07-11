@@ -74,6 +74,7 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client (
   ) where
 
 import           Control.Monad (join, void)
+import           Control.Monad.Class.MonadTimer (MonadTimer)
 import           Control.Monad.Except (runExcept, throwError)
 import           Control.Tracer
 import           Data.Kind (Type)
@@ -103,6 +104,7 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as Jumping
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
+import           Ouroboros.Consensus.Node.GsmState (GsmState (..))
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB (ChainDB,
@@ -114,6 +116,8 @@ import           Ouroboros.Consensus.Util.Assert (assertWithMsg)
 import           Ouroboros.Consensus.Util.EarlyExit (WithEarlyExit, exitEarly)
 import qualified Ouroboros.Consensus.Util.EarlyExit as EarlyExit
 import           Ouroboros.Consensus.Util.IOLike hiding (handle)
+import           Ouroboros.Consensus.Util.LeakyBucket
+                     (atomicallyWithMonotonicTime)
 import qualified Ouroboros.Consensus.Util.LeakyBucket as LeakyBucket
 import           Ouroboros.Consensus.Util.STM (Fingerprint, Watcher (..),
                      WithFingerprint (..), withWatcher)
@@ -314,16 +318,20 @@ deriving anyclass instance (
   NoThunks (Header blk)
   ) => NoThunks (ChainSyncStateView m blk)
 
-bracketChainSyncClient :: forall m peer blk a.
+bracketChainSyncClient ::
+  forall m peer blk a.
     ( IOLike m
     , Ord peer
     , LedgerSupportsProtocol blk
+    , MonadTimer m
     )
  => Tracer m (TraceChainSyncClientEvent blk)
  -> ChainDbView m blk
  -> StrictTVar m (Map peer (ChainSyncClientHandle m blk))
     -- ^ The kill handle and states for each peer, we need the whole map because we
     -- (de)register nodes (@peer@).
+ -> STM m GsmState
+    -- ^ A function giving the current GSM state; only used at startup.
  -> peer
  -> NodeToNodeVersion
  -> ChainSyncLoPBucketConfig
@@ -334,19 +342,21 @@ bracketChainSyncClient
     tracer
     ChainDbView { getIsInvalidBlock }
     varHandles
+    getGsmState
     peer
     version
     csBucketConfig
     csjConfig
     body
-  = mkChainSyncClientHandleState >>= \csHandleState ->
-    withCSJCallbacks csHandleState csjConfig $ \csjCallbacks ->
+  =
+    LeakyBucket.execAgainstBucket'
+  $ \lopBucket ->
+    mkChainSyncClientHandleState >>= \csHandleState ->
+    withCSJCallbacks lopBucket csHandleState csjConfig $ \csjCallbacks ->
         withWatcher
             "ChainSync.Client.rejectInvalidBlocks"
             (invalidBlockWatcher csHandleState)
-      $ LeakyBucket.execAgainstBucket lopBucketConfig
-      $ \lopBucket ->
-            body ChainSyncStateView {
+      $ body ChainSyncStateView {
               csvSetCandidate =
               modifyTVar csHandleState . \ c s -> s {csCandidate = c}
             , csvSetLatestSlot =
@@ -356,9 +366,9 @@ bracketChainSyncClient
               , idlingStop = atomically $ modifyTVar csHandleState $ \ s -> s {csIdling = False}
               }
             , csvLoPBucket = LoPBucket {
-                lbPause = LeakyBucket.setPaused lopBucket True
-              , lbResume = LeakyBucket.setPaused lopBucket False
-              , lbGrantToken = void $ LeakyBucket.fill lopBucket 1
+                lbPause = LeakyBucket.setPaused' lopBucket True
+              , lbResume = LeakyBucket.setPaused' lopBucket False
+              , lbGrantToken = void $ LeakyBucket.fill' lopBucket 1
               }
             , csvJumping = csjCallbacks
             }
@@ -371,34 +381,43 @@ bracketChainSyncClient
         }
 
     withCSJCallbacks ::
+      LeakyBucket.Handlers m ->
       StrictTVar m (ChainSyncState blk) ->
       CSJConfig ->
       (Jumping.Jumping m blk -> m a) ->
       m a
-    withCSJCallbacks cschState CSJDisabled f = do
+    withCSJCallbacks lopBucket cschState CSJDisabled f = do
       tid <- myThreadId
       cschJumpInfo <- newTVarIO Nothing
       cschJumping <- newTVarIO (Disengaged DisengagedDone)
       let handle = ChainSyncClientHandle {
               cschGDDKill = throwTo tid DensityTooLow
+            , cschOnGsmStateChanged = updateLopBucketConfig lopBucket
             , cschState
             , cschJumping
             , cschJumpInfo
             }
-          insertHandle = atomically $ modifyTVar varHandles $ Map.insert peer handle
+          insertHandle = atomicallyWithMonotonicTime $ \time -> do
+            initialGsmState <- getGsmState
+            updateLopBucketConfig lopBucket initialGsmState time
+            modifyTVar varHandles $ Map.insert peer handle
           deleteHandle = atomically $ modifyTVar varHandles $ Map.delete peer
       bracket_ insertHandle deleteHandle $ f Jumping.noJumping
 
-    withCSJCallbacks csHandleState (CSJEnabled csjEnabledConfig) f =
-      bracket (acquireContext csHandleState csjEnabledConfig) releaseContext $ \peerContext ->
+    withCSJCallbacks lopBucket csHandleState (CSJEnabled csjEnabledConfig) f =
+      bracket (acquireContext lopBucket csHandleState csjEnabledConfig) releaseContext $ \peerContext ->
         f $ Jumping.mkJumping peerContext
-    acquireContext cschState (CSJEnabledConfig jumpSize) = do
+
+    acquireContext lopBucket cschState (CSJEnabledConfig jumpSize) = do
         tid <- myThreadId
-        atomically $ do
+        atomicallyWithMonotonicTime $ \time -> do
+          initialGsmState <- getGsmState
+          updateLopBucketConfig lopBucket initialGsmState time
           cschJumpInfo <- newTVar Nothing
           context <- Jumping.makeContext varHandles jumpSize
           Jumping.registerClient context peer cschState $ \cschJumping -> ChainSyncClientHandle
             { cschGDDKill = throwTo tid DensityTooLow
+            , cschOnGsmStateChanged = updateLopBucketConfig lopBucket
             , cschState
             , cschJumping
             , cschJumpInfo
@@ -410,19 +429,33 @@ bracketChainSyncClient
         invalidBlockRejector
             tracer version getIsInvalidBlock (csCandidate <$> readTVar varState)
 
+    -- | Update the configuration of the bucket to match the given GSM state.
+    -- NOTE: The new level is currently the maximal capacity of the bucket;
+    -- maybe we want to change that later.
+    updateLopBucketConfig :: LeakyBucket.Handlers m -> GsmState -> Time -> STM m ()
+    updateLopBucketConfig lopBucket gsmState =
+      LeakyBucket.updateConfig lopBucket $ \_ ->
+        let config = lopBucketConfig gsmState in
+          (LeakyBucket.capacity config, config)
+
     -- | Wrapper around 'LeakyBucket.execAgainstBucket' that handles the
     -- disabled bucket by running the given action with dummy handlers.
-    lopBucketConfig :: LeakyBucket.Config m
-    lopBucketConfig =
-      case csBucketConfig of
-        ChainSyncLoPBucketDisabled -> LeakyBucket.dummyConfig
-        ChainSyncLoPBucketEnabled ChainSyncLoPBucketEnabledConfig {csbcCapacity, csbcRate} ->
+    lopBucketConfig :: GsmState -> LeakyBucket.Config m
+    lopBucketConfig gsmState =
+      case (gsmState, csBucketConfig) of
+        (Syncing, ChainSyncLoPBucketEnabled ChainSyncLoPBucketEnabledConfig {csbcCapacity, csbcRate}) ->
             LeakyBucket.Config
               { capacity = fromInteger $ csbcCapacity,
                 rate = csbcRate,
                 onEmpty = throwIO EmptyBucket,
                 fillOnOverflow = True
               }
+        -- NOTE: If we decide to slow the bucket down when “almost caught-up”,
+        -- we should add a state to the GSM and corresponding configuration
+        -- fields and a bucket config here.
+        (_, ChainSyncLoPBucketDisabled) -> LeakyBucket.dummyConfig
+        (PreSyncing, ChainSyncLoPBucketEnabled _) -> LeakyBucket.dummyConfig
+        (CaughtUp, ChainSyncLoPBucketEnabled _) -> LeakyBucket.dummyConfig
 
 -- Our task: after connecting to an upstream node, try to maintain an
 -- up-to-date header-only fragment representing their chain. We maintain

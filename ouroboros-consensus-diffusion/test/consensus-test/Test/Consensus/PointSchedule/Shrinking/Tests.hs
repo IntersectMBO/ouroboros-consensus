@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase        #-}
+{-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Test properties of the shrinking functions
@@ -9,10 +10,10 @@ import           Data.Map (keys)
 import           Data.Maybe (mapMaybe)
 import           Test.Consensus.Genesis.Setup (genChains)
 import           Test.Consensus.Genesis.Tests.Uniform (genUniformSchedulePoints)
-import           Test.Consensus.PointSchedule (PeerSchedule, PeersSchedule,
-                     prettyPeersSchedule)
-import           Test.Consensus.PointSchedule.Peers (Peer (..), Peers (..))
-import           Test.Consensus.PointSchedule.Shrinking (shrinkHonestPeer)
+import           Test.Consensus.PointSchedule (PeerSchedule, PointSchedule (..),
+                     prettyPointSchedule)
+import           Test.Consensus.PointSchedule.Peers (Peers (..))
+import           Test.Consensus.PointSchedule.Shrinking (shrinkHonestPeers)
 import           Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..))
 import           Test.QuickCheck (Property, conjoin, counterexample)
 import           Test.Tasty
@@ -25,7 +26,6 @@ tests =
     [ testGroup "honest peer shrinking"
       [ testProperty "actually shortens the schedule" prop_shortens
       , testProperty "preserves the final state all peers" prop_preservesFinalStates
-      , testProperty "doesn't remove points of the adversarial schedule" prop_preserversAdversarial
       ]
     ]
 
@@ -35,22 +35,21 @@ prop_shortens = checkShrinkProperty isShorterThan
 prop_preservesFinalStates :: Property
 prop_preservesFinalStates = checkShrinkProperty doesNotChangeFinalState
 
-prop_preserversAdversarial :: Property
-prop_preserversAdversarial = checkShrinkProperty doesNotRemoveAdversarialPoints
-
 -- | Apparently, `unsnoc` hasn't been invented yet, so we'll do this manually
 lastM :: [a] -> Maybe a
 lastM []     = Nothing
 lastM [a]    = Just a
 lastM (_:ps) = lastM ps
 
-samePeers :: PeersSchedule blk -> PeersSchedule blk -> Bool
-samePeers sch1 sch2 = (keys $ others sch1) == (keys $ others sch2)
+samePeers :: Peers (PeerSchedule blk) -> Peers (PeerSchedule blk) -> Bool
+samePeers sch1 sch2 =
+  (keys $ adversarialPeers sch1)
+    == (keys $ adversarialPeers sch2)
 
 -- | Checks whether at least one peer schedule in the second given peers schedule
 -- is shorter than its corresponding one in the fist given peers schedule. “Shorter”
 -- here means that it executes in less time.
-isShorterThan :: PeersSchedule blk -> PeersSchedule blk -> Bool
+isShorterThan :: Peers (PeerSchedule blk) -> Peers (PeerSchedule blk) -> Bool
 isShorterThan original shrunk =
   samePeers original shrunk
   && (or $ zipWith
@@ -59,7 +58,7 @@ isShorterThan original shrunk =
     (toList shrunk)
   )
 
-doesNotChangeFinalState :: Eq blk => PeersSchedule blk -> PeersSchedule blk -> Bool
+doesNotChangeFinalState :: Eq blk => Peers (PeerSchedule blk) -> Peers (PeerSchedule blk) -> Bool
 doesNotChangeFinalState original shrunk =
   samePeers original shrunk
   && (and $ zipWith
@@ -79,29 +78,20 @@ doesNotChangeFinalState original shrunk =
     lastBP :: PeerSchedule blk -> Maybe (SchedulePoint blk)
     lastBP sch = lastM $ mapMaybe (\case (_, p@(ScheduleBlockPoint  _)) -> Just p ; _ -> Nothing) sch
 
-doesNotRemoveAdversarialPoints :: Eq blk => PeersSchedule blk -> PeersSchedule blk -> Bool
-doesNotRemoveAdversarialPoints original shrunk =
-  samePeers original shrunk
-  && (and $ zipWith
-    (\oldSch newSch -> fmap snd oldSch == fmap snd newSch)
-    (toList $ (fmap value) $ others original)
-    (toList $ (fmap value) $ others shrunk)
-  )
-
-checkShrinkProperty :: (PeersSchedule TestBlock -> PeersSchedule TestBlock -> Bool) -> Property
+checkShrinkProperty :: (Peers (PeerSchedule TestBlock) -> Peers (PeerSchedule TestBlock) -> Bool) -> Property
 checkShrinkProperty prop =
   forAllBlind
     (genChains (choose (1, 4)) >>= genUniformSchedulePoints)
-    (\schedule ->
+    (\sch@PointSchedule{psSchedule, psMinEndTime} ->
       conjoin $ map
       (\shrunk ->
           counterexample
           (  "Original schedule:\n"
-          ++ unlines (map ("    " ++) $ prettyPeersSchedule schedule)
+          ++ unlines (map ("    " ++) $ prettyPointSchedule sch)
           ++ "\nShrunk schedule:\n"
-          ++ unlines (map ("    " ++) $ prettyPeersSchedule shrunk)
+          ++ unlines (map ("    " ++) $ prettyPointSchedule $ PointSchedule shrunk psMinEndTime)
           )
-          (prop schedule shrunk)
+          (prop psSchedule shrunk)
       )
-      (shrinkHonestPeer schedule)
+      (shrinkHonestPeers psSchedule)
     )

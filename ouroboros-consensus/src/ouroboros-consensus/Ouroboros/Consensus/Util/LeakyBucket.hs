@@ -2,8 +2,6 @@
 {-# LANGUAGE DeriveAnyClass       #-}
 {-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE FlexibleContexts     #-}
-{-# LANGUAGE LambdaCase           #-}
-{-# LANGUAGE MultiWayIf           #-}
 {-# LANGUAGE NamedFieldPuns       #-}
 {-# LANGUAGE NumericUnderscores   #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
@@ -21,28 +19,43 @@
 -- a “good” action.
 --
 -- NOTE: Even though the imagery is the same, this is different from what is
--- usually called a “token bucket” or “leaky bucket” in the litterature where it
--- is mostly used for rate limiting.
+-- usually called a \“token bucket\” or \“leaky bucket\” in the litterature
+-- where it is mostly used for rate limiting.
 --
 -- REVIEW: Could be used as leaky bucket used for rate limiting algorithms. All
 -- the infrastructure is here (put 'onEmpty' to @pure ()@ and you're good to go)
 -- but it has not been tested with that purpose in mind.
+--
+-- $leakyBucketDesign
 module Ouroboros.Consensus.Util.LeakyBucket (
     Config (..)
   , Handlers (..)
   , State (..)
+  , atomicallyWithMonotonicTime
   , diffTimeToSecondsRational
   , dummyConfig
   , evalAgainstBucket
   , execAgainstBucket
+  , execAgainstBucket'
+  , fill'
+  , microsecondsPerSecond
+  , picosecondsPerSecond
   , runAgainstBucket
   , secondsRationalToDiffTime
+  , setPaused'
+  , updateConfig'
   ) where
 
+import           Control.Exception (assert)
+import           Control.Monad (forever, void, when)
+import qualified Control.Monad.Class.MonadSTM.Internal as TVar
+import           Control.Monad.Class.MonadTimer (MonadTimer, registerDelay)
+import           Control.Monad.Class.MonadTimer.SI (diffTimeToMicrosecondsAsInt)
 import           Data.Ratio ((%))
 import           Data.Time.Clock (diffTimeToPicoseconds)
 import           GHC.Generics (Generic)
-import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Consensus.Util.IOLike hiding (killThread)
+import           Ouroboros.Consensus.Util.STM (blockUntilChanged)
 import           Prelude hiding (init)
 
 -- | Configuration of a leaky bucket.
@@ -71,118 +84,197 @@ dummyConfig =
     }
 
 -- | State of a leaky bucket, giving the level and the associated time.
-data State cfg = State
-  { level  :: !Rational,
-    time   :: !Time,
-    paused :: !Bool,
-    config :: !cfg
+data State m = State
+  { level            :: !Rational,
+    time             :: !Time,
+    paused           :: !Bool,
+    configGeneration :: !Int,
+    config           :: !(Config m)
   }
-  deriving (Eq, Show, Generic, NoThunks)
+  deriving (Generic)
 
--- | A bucket is simply a TVar of a state.
-type Bucket m = StrictTVar m (State (Config m))
+deriving instance (NoThunks (m ())) => NoThunks (State m)
+
+-- | A bucket is simply a TVar of a state. The state carries a 'Config' and an
+-- integer (a “generation”) to detect changes in the configuration.
+type Bucket m = StrictTVar m (State m)
 
 -- | Whether filling the bucket overflew.
 data FillResult = Overflew | DidNotOverflow
 
 -- | The handlers to a bucket: contains the API to interact with a running
--- bucket.
+-- bucket. All the endpoints are STM but require the current time; the easy way
+-- to provide this being 'atomicallyWithMonotonicTime'.
 data Handlers m = Handlers
   { -- | Refill the bucket by the given amount and returns whether the bucket
     -- overflew. The bucket may silently get filled to full capacity or not get
     -- filled depending on 'fillOnOverflow'.
-    fill         :: !(Rational -> m FillResult),
+    fill ::
+      !( Rational ->
+         Time ->
+         STM m FillResult
+       ),
     -- | Pause or resume the bucket. Pausing stops the bucket from leaking until
     -- it is resumed. It is still possible to fill it during that time. @setPaused
     -- True@ and @setPaused False@ are idempotent.
-    setPaused    :: !(Bool -> m ()),
-    -- | Dynamically update the configuration of the bucket.
-    updateConfig :: !((Config m -> Config m) -> m ())
+    setPaused ::
+      !( Bool ->
+         Time ->
+         STM m ()
+       ),
+    -- | Dynamically update the level and configuration of the bucket. Updating
+    -- the level matters if the capacity changes, in particular. If updating
+    -- leave the bucket empty, the action is triggered immediately.
+    updateConfig ::
+      !( ((Rational, Config m) -> (Rational, Config m)) ->
+         Time ->
+         STM m ()
+       )
   }
+
+-- | Variant of 'fill' already wrapped in 'atomicallyWithMonotonicTime'.
+fill' ::
+  ( MonadMonotonicTime m,
+    MonadSTM m
+  ) =>
+  Handlers m ->
+  Rational ->
+  m FillResult
+fill' h r = atomicallyWithMonotonicTime $ fill h r
+
+-- | Variant of 'setPaused' already wrapped in 'atomicallyWithMonotonicTime'.
+setPaused' ::
+  ( MonadMonotonicTime m,
+    MonadSTM m
+  ) =>
+  Handlers m ->
+  Bool ->
+  m ()
+setPaused' h p = atomicallyWithMonotonicTime $ setPaused h p
+
+-- | Variant of 'updateConfig' already wrapped in 'atomicallyWithMonotonicTime'.
+updateConfig' ::
+  ( MonadMonotonicTime m,
+    MonadSTM m
+  ) =>
+  Handlers m ->
+  ((Rational, Config m) -> (Rational, Config m)) ->
+  m ()
+updateConfig' h f = atomicallyWithMonotonicTime $ updateConfig h f
 
 -- | Create a bucket with the given configuration, then run the action against
 -- that bucket. Returns when the action terminates or the bucket empties. In the
 -- first case, return the value returned by the action. In the second case,
 -- return @Nothing@.
 execAgainstBucket ::
-  (MonadDelay m, MonadAsync m, MonadFork m, MonadMask m, NoThunks (m ())) =>
+  ( MonadDelay m,
+    MonadAsync m,
+    MonadFork m,
+    MonadMask m,
+    MonadTimer m,
+    NoThunks (m ())
+  ) =>
   Config m ->
   (Handlers m -> m a) ->
   m a
 execAgainstBucket config action = snd <$> runAgainstBucket config action
 
+-- | Variant of 'execAgainstBucket' that uses a dummy configuration. This only
+-- makes sense for actions that use 'updateConfig'.
+execAgainstBucket' ::
+  ( MonadDelay m,
+    MonadAsync m,
+    MonadFork m,
+    MonadMask m,
+    MonadTimer m,
+    NoThunks (m ())
+  ) =>
+  (Handlers m -> m a) ->
+  m a
+execAgainstBucket' action =
+  execAgainstBucket dummyConfig action
+
 -- | Same as 'execAgainstBucket' but returns the 'State' of the bucket when the
 -- action terminates. Exposed for testing purposes.
 evalAgainstBucket ::
-  (MonadDelay m, MonadAsync m, MonadFork m, MonadMask m, NoThunks (m ())) =>
+  (MonadDelay m, MonadAsync m, MonadFork m, MonadMask m, MonadTimer m, NoThunks (m ())
+  ) =>
   Config m ->
   (Handlers m -> m a) ->
-  m (State (Config m))
+  m (State m)
 evalAgainstBucket config action = fst <$> runAgainstBucket config action
 
 -- | Same as 'execAgainstBucket' but also returns the 'State' of the bucket when
 -- the action terminates. Exposed for testing purposes.
 runAgainstBucket ::
   forall m a.
-  (MonadDelay m, MonadAsync m, MonadFork m, MonadMask m, NoThunks (m ())) =>
+  ( MonadDelay m,
+    MonadAsync m,
+    MonadFork m,
+    MonadMask m,
+    MonadTimer m,
+    NoThunks (m ())
+  ) =>
   Config m ->
   (Handlers m -> m a) ->
-  m (State (Config m), a)
+  m (State m, a)
 runAgainstBucket config action = do
-  bucket <- init config
+  leakingPeriodVersionTMVar <- atomically newEmptyTMVar -- see note [Leaky bucket design].
   tid <- myThreadId
-  killThreadVar <- newTVarIO Nothing
-  finally
-    ( do
-        startThread killThreadVar bucket tid
-        result <-
-          action $
-            Handlers
-              { fill = (snd <$>) . snapshotFill bucket,
-                setPaused = setPaused bucket,
-                updateConfig = updateConfig killThreadVar bucket tid
-              }
-        state <- snapshot bucket
-        pure (state, result)
-    )
-    (stopThread killThreadVar)
+  bucket <- init config
+  withAsync (leak (readTMVar leakingPeriodVersionTMVar) tid bucket) $ \_ -> do
+    atomicallyWithMonotonicTime $ maybeStartThread Nothing leakingPeriodVersionTMVar bucket
+    result <-
+      action $
+        Handlers
+          { fill = \r t -> (snd <$>) $ snapshotFill bucket r t,
+            setPaused = setPaused bucket,
+            updateConfig = updateConfig leakingPeriodVersionTMVar bucket
+          }
+    state <- atomicallyWithMonotonicTime $ snapshot bucket
+    pure (state, result)
   where
-    startThread ::
-      StrictTVar m (Maybe (m ())) ->
-      Bucket m ->
-      ThreadId m ->
-      m ()
-    startThread killThreadVar bucket tid =
-      readTVarIO killThreadVar >>= \case
-        Just _ -> error "LeakyBucket: startThread called when a thread is already running"
-        Nothing -> (atomically . writeTVar killThreadVar) =<< leak bucket tid
+    -- Start the thread (that is, write to its 'leakingPeriodVersionTMVar') if it is useful.
+    -- Takes a potential old value of the 'leakingPeriodVersionTMVar' as first argument,
+    -- which will be increased to help differentiate between restarts.
+    maybeStartThread :: Maybe Int -> StrictTMVar m Int -> Bucket m -> Time -> STM m ()
+    maybeStartThread mLeakingPeriodVersion leakingPeriodVersionTMVar bucket time = do
+      State {config = Config {rate}} <- snapshot bucket time
+      when (rate > 0) $ void $ tryPutTMVar leakingPeriodVersionTMVar $ maybe 0 (+ 1) mLeakingPeriodVersion
 
-    stopThread :: StrictTVar m (Maybe (m ())) -> m ()
-    stopThread killThreadVar =
-      readTVarIO killThreadVar >>= \case
-        Just killThread' -> killThread'
-        Nothing -> pure ()
-
-    setPaused :: Bucket m -> Bool -> m ()
-    setPaused bucket paused = do
-      newState <- snapshot bucket
-      atomically $ writeTVar bucket newState {paused}
+    setPaused :: Bucket m -> Bool -> Time -> STM m ()
+    setPaused bucket paused time = do
+      newState <- snapshot bucket time
+      writeTVar bucket newState {paused}
 
     updateConfig ::
-      StrictTVar m (Maybe (m ())) ->
+      StrictTMVar m Int ->
       Bucket m ->
-      ThreadId m ->
-      (Config m -> Config m) ->
-      m ()
-    updateConfig killThreadVar bucket tid = \f -> do
-      State {level, time, paused, config = oldConfig} <- snapshot bucket
-      let newConfig@Config {capacity = newCapacity, rate = newRate} = f oldConfig
-          newLevel = min newCapacity level
-      if
-        | newRate <= 0 -> stopThread killThreadVar
-        | newRate > rate oldConfig -> stopThread killThreadVar >> startThread killThreadVar bucket tid
-        | otherwise -> pure ()
-      atomically $ writeTVar bucket State {level = newLevel, time, paused, config = newConfig}
+      ((Rational, Config m) -> (Rational, Config m)) ->
+      Time ->
+      STM m ()
+    updateConfig leakingPeriodVersionTMVar bucket f time = do
+      State
+        { level = oldLevel,
+          paused,
+          configGeneration = oldConfigGeneration,
+          config = oldConfig
+        } <-
+        snapshot bucket time
+      let (newLevel, newConfig) = f (oldLevel, oldConfig)
+          Config {capacity = newCapacity} = newConfig
+          newLevel' = clamp (0, newCapacity) newLevel
+      writeTVar bucket $
+        State
+          { level = newLevel',
+            time,
+            paused,
+            configGeneration = oldConfigGeneration + 1,
+            config = newConfig
+          }
+      -- Ensure that 'leakingPeriodVersionTMVar' is empty, then maybe start the thread.
+      mLeakingPeriodVersion <- tryTakeTMVar leakingPeriodVersionTMVar
+      maybeStartThread mLeakingPeriodVersion leakingPeriodVersionTMVar bucket time
 
 -- | Initialise a bucket given a configuration. The bucket starts full at the
 -- time where one calls 'init'.
@@ -192,81 +284,163 @@ init ::
   m (Bucket m)
 init config@Config {capacity} = do
   time <- getMonotonicTime
-  newTVarIO $ State {time, level = capacity, paused = False, config}
+  newTVarIO $
+    State
+      { time,
+        level = capacity,
+        paused = False,
+        configGeneration = 0,
+        config = config
+      }
 
--- | Monadic action that calls 'threadDelay' until the bucket is empty, then
--- returns @()@. It receives the 'ThreadId' argument of the action's thread,
--- which it uses to throw exceptions at it; it returns a monadic action that can
--- be used to interrupt the thread from the outside.
+-- $leakyBucketDesign
+--
+-- Note [Leaky bucket design]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~
+--
+-- The leaky bucket works by running the given action against a thread that
+-- makes the bucket leak. Since it would be inefficient to actually
+-- remove tokens one by one from the bucket, the 'leak' thread instead looks at
+-- the current state of the bucket, computes how much time it would take for the
+-- bucket to empty, and then wait that amount of time. Once the wait is over, it
+-- recurses, looks at the new state of the bucket, etc. If tokens were given to
+-- the bucket via the action, the bucket is not empty and the loop continues.
+--
+-- This description assumes that two things hold:
+--
+--  - the bucket must be leaking (ie. rate is strictly positive),
+--  - the action can only increase the waiting time (eg. by giving tokens).
+--
+-- Neither of those properties hold in the general case. Indeed, it is possible
+-- for the bucket to have a zero rate or even a negative one (for a more
+-- traditional rate limiting bucket, for instance). Conversely, it is possible
+-- for the action to lower the waiting time by changing the bucket configuration
+-- to one where the rate is higher.
+--
+-- We fix both those issues with one mechanism, the @leakingPeriodVersionSTM@.
+-- It is a computation returning an integer that identifies a version of the
+-- configuration that controls the leaking period. If the computation blocks,
+-- it means that no configuration has been determined yet.
+-- The leak thread first waits until @leakingPeriodVersionSTM@ yields a
+-- value, and only then proceeds as described above.
+-- Additionally, while waiting for the bucket to empty, the thread monitors
+-- for changes to the version of the leaking period, indicating either that the
+-- thread should pause running if the @leakingPeriodVersionSTM@ starts blocking
+-- again or that the configuration changed as that it might have to wait less
+-- long.
+--
+
+-- | Neverending computation that runs 'onEmpty' whenever the bucket becomes
+-- empty. See note [Leaky bucket design].
 leak ::
-  (MonadDelay m, MonadCatch m, MonadFork m, MonadAsync m) =>
-  Bucket m ->
+  ( MonadDelay m,
+    MonadCatch m,
+    MonadFork m,
+    MonadAsync m,
+    MonadTimer m
+  ) =>
+  -- | A computation indicating the version of the configuration affecting the
+  -- leaking period. Whenever the configuration changes, the returned integer
+  -- must be incremented. While no configuration is available, the computation
+  -- should block. Blocking is allowed at any time, and it will cause the
+  -- leaking to pause.
+  STM m Int ->
+  -- | The 'ThreadId' of the action's thread, which is used to throw exceptions
+  -- at it.
   ThreadId m ->
-  m (Maybe (m ()))
-leak bucket actionThreadId = do
-  State {config = Config {rate}} <- snapshot bucket
-  if rate <= 0
-    then pure Nothing
-    else do
-      a <- async go
-      pure $ Just $! uninterruptibleCancel a
-  where
-    go = do
-      State {level, config = Config {rate, onEmpty}} <- snapshot bucket
+  Bucket m ->
+  m ()
+leak leakingPeriodVersionSTM actionThreadId bucket = forever $ do
+      -- Block until we are allowed to run.
+      leakingPeriodVersion <- atomically leakingPeriodVersionSTM
+      -- NOTE: It is tempting to group this @atomically@ and
+      -- @atomicallyWithMonotonicTime@ into one; however, because the former is
+      -- blocking, the latter could get a _very_ inaccurate time, which we
+      -- cannot afford.
+      State {level, configGeneration = oldConfigGeneration, config = Config {rate, onEmpty}} <-
+        atomicallyWithMonotonicTime $ snapshot bucket
       let timeToWait = secondsRationalToDiffTime (level / rate)
-      -- NOTE: It is possible that @timeToWait == 0@ while @level > 0@ when @level@
-      -- is so tiny that @level / rate@ rounds down to 0 picoseconds. In that case,
-      -- it is safe to assume that it is just zero.
-      if level <= 0 || timeToWait == 0
-        then handle (\(e :: SomeException) -> throwTo actionThreadId e) onEmpty
-        else threadDelay timeToWait >> go
+          timeToWaitMicroseconds = diffTimeToMicrosecondsAsInt timeToWait
+      -- NOTE: It is possible that @timeToWait <= 1µs@ while @level > 0@ when
+      -- @level@ is extremely small.
+      if level <= 0 || timeToWaitMicroseconds <= 0
+        then do
+          handle (\(e :: SomeException) -> throwTo actionThreadId e) onEmpty
+          -- We have run the action on empty, there is nothing left to do,
+          -- unless someone changes the configuration.
+          void $ atomically $ blockUntilChanged configGeneration oldConfigGeneration $ readTVar bucket
+        else
+          -- Wait for the bucket to empty, or for the thread to be stopped or
+          -- restarted. Beware not to call 'registerDelay' with argument 0, that
+          -- is ensure that @timeToWaitMicroseconds > 0@.
+          assert (timeToWaitMicroseconds > 0) $ do
+            varTimeout <- registerDelay timeToWaitMicroseconds
+            atomically $
+              (check =<< TVar.readTVar varTimeout)
+                `orElse`
+              (void $ blockUntilChanged id leakingPeriodVersion leakingPeriodVersionSTM)
 
 -- | Take a snapshot of the bucket, that is compute its state at the current
 -- time.
 snapshot ::
-  (MonadSTM m, MonadMonotonicTime m) =>
+  ( MonadSTM m
+  ) =>
   Bucket m ->
-  m (State (Config m))
-snapshot bucket = fst <$> snapshotFill bucket 0
+  Time ->
+  STM m (State m)
+snapshot bucket newTime = fst <$> snapshotFill bucket 0 newTime
 
 -- | Same as 'snapshot' but also adds the given quantity to the resulting
 -- level and returns whether this action overflew the bucket.
 --
 -- REVIEW: What to do when 'toAdd' is negative?
---
--- REVIEW: Really, this should all be an STM transaction. Now there is the risk
--- that two snapshot-taking transactions interleave with the time measurement to
--- get a slightly imprecise state (which is not the worst because everything
--- should happen very fast). There is also the bigger risk that when we snapshot
--- and then do something (eg. in the 'setPaused' handler) we interleave with
--- something else. It cannot easily be an STM transaction, though, because we
--- need to measure the time, and @io-classes@'s STM does not allow running IO in
--- an STM.
 snapshotFill ::
-  (MonadSTM m, MonadMonotonicTime m) =>
+  ( MonadSTM m
+  ) =>
   Bucket m ->
   Rational ->
-  m (State (Config m), FillResult)
-snapshotFill bucket toAdd = do
-  newTime <- getMonotonicTime
-  atomically $ do
-    State {level, time, paused, config} <- readTVar bucket
-    let Config {rate, capacity, fillOnOverflow} = config
-        elapsed = diffTime newTime time
-        leaked = if paused then 0 else (diffTimeToSecondsRational elapsed * rate)
-        levelLeaked = max 0 (level - leaked)
-        levelFilled = min capacity (levelLeaked + toAdd)
-        overflew = levelLeaked + toAdd > capacity
-        newLevel = if not overflew || fillOnOverflow then levelFilled else levelLeaked
-        !newState = State {time = newTime, level = newLevel, paused, config}
-    writeTVar bucket newState
-    pure (newState, if overflew then Overflew else DidNotOverflow)
+  Time ->
+  STM m (State m, FillResult)
+snapshotFill bucket toAdd newTime = do
+  State {level, time, paused, configGeneration, config = config} <- readTVar bucket
+  let Config {rate, capacity, fillOnOverflow} = config
+      elapsed = diffTime newTime time
+      leaked = if paused then 0 else (diffTimeToSecondsRational elapsed * rate)
+      levelLeaked = clamp (0, capacity) (level - leaked)
+      levelFilled = clamp (0, capacity) (levelLeaked + toAdd)
+      overflew = levelLeaked + toAdd > capacity
+      newLevel = if not overflew || fillOnOverflow then levelFilled else levelLeaked
+      !newState = State {time = newTime, level = newLevel, paused, configGeneration, config}
+  writeTVar bucket newState
+  pure (newState, if overflew then Overflew else DidNotOverflow)
 
 -- | Convert a 'DiffTime' to a 'Rational' number of seconds. This is similar to
 -- 'diffTimeToSeconds' but with picoseconds precision.
 diffTimeToSecondsRational :: DiffTime -> Rational
-diffTimeToSecondsRational = (% 1_000_000_000_000) . diffTimeToPicoseconds
+diffTimeToSecondsRational = (% picosecondsPerSecond) . diffTimeToPicoseconds
 
 -- | Alias of 'realToFrac' to make code more readable and typing more explicit.
 secondsRationalToDiffTime :: Rational -> DiffTime
 secondsRationalToDiffTime = realToFrac
+
+-- | Helper around 'getMonotonicTime' and 'atomically'.
+atomicallyWithMonotonicTime ::
+  ( MonadMonotonicTime m,
+    MonadSTM m
+  ) =>
+  (Time -> STM m b) ->
+  m b
+atomicallyWithMonotonicTime f =
+  atomically . f =<< getMonotonicTime
+
+-- NOTE: Needed for GHC 8
+clamp :: Ord a => (a, a) -> a -> a
+clamp (low, high) x = min high (max low x)
+
+-- | Number of microseconds in a second (@10^6@).
+microsecondsPerSecond :: Integer
+microsecondsPerSecond = 1_000_000
+
+-- | Number of picoseconds in a second (@10^12@).
+picosecondsPerSecond :: Integer
+picosecondsPerSecond = 1_000_000_000_000
