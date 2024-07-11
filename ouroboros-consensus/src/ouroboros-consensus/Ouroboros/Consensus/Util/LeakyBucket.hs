@@ -46,6 +46,7 @@ module Ouroboros.Consensus.Util.LeakyBucket (
   , updateConfig'
   ) where
 
+import           Control.Exception (assert)
 import           Control.Monad (forever, void, when)
 import qualified Control.Monad.Class.MonadSTM.Internal as TVar
 import           Control.Monad.Class.MonadTimer (MonadTimer, registerDelay)
