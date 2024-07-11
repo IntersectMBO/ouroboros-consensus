@@ -30,10 +30,12 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.PartialAccessors
-import           Test.Util.TestEnv (adjustQuickCheckTests)
+import           Test.Util.TestEnv (adjustQuickCheckMaxSize,
+                     adjustQuickCheckTests)
 
 tests :: TestTree
 tests =
+  adjustQuickCheckTests (* 10) $
   testGroup
     "LoP"
     [ -- \| NOTE: Running the test that must _not_ timeout (@prop_smoke False@) takes
@@ -41,16 +43,18 @@ tests =
       -- does all the computation (serving the headers, validating them, serving the
       -- block, validating them) while the former does nothing, because it timeouts
       -- before reaching the last tick of the point schedule.
-      adjustQuickCheckTests (`div` 10) $
+      adjustQuickCheckMaxSize (`div` 5) $
         testProperty "wait just enough" (prop_wait False),
       testProperty "wait too much" (prop_wait True),
+      adjustQuickCheckMaxSize (`div` 5) $
       testProperty "wait behind forecast horizon" prop_waitBehindForecastHorizon,
-      adjustQuickCheckTests (`div` 5) $
+      adjustQuickCheckMaxSize (`div` 5) $
         testProperty "serve just fast enough" (prop_serve False),
+      adjustQuickCheckMaxSize (`div` 5) $
       testProperty "serve too slow" (prop_serve True),
-      adjustQuickCheckTests (`div` 5) $
+      adjustQuickCheckMaxSize (`div` 5) $
         testProperty "delaying attack succeeds without LoP" (prop_delayAttack False),
-      adjustQuickCheckTests (`div` 5) $
+      adjustQuickCheckMaxSize (`div` 5) $
         testProperty "delaying attack fails with LoP" (prop_delayAttack True)
     ]
 
