@@ -370,16 +370,17 @@ leak runThreadVar actionThreadId bucket = go
           -- unless someone changes the configuration.
           void $ atomically $ blockUntilChanged configGeneration oldConfigGeneration $ readTVar bucket
           go
-        else do
+        else
           -- Wait for the bucket to empty, or for the thread to be stopped or
           -- restarted. Beware not to call 'registerDelay' with argument 0, that
           -- is ensure that @timeToWaitMicroseconds > 0@.
-          varTimeout <- registerDelay timeToWaitMicroseconds
-          atomically $
-            (check =<< TVar.readTVar varTimeout)
-              `orElse`
-            (void $ blockUntilChanged id (Just oldRunThread) $ tryReadTMVar runThreadVar)
-          go
+          assert (timeToWaitMicroseconds > 0) $ do
+            varTimeout <- registerDelay timeToWaitMicroseconds
+            atomically $
+              (check =<< TVar.readTVar varTimeout)
+                `orElse`
+              (void $ blockUntilChanged id (Just oldRunThread) $ tryReadTMVar runThreadVar)
+            go
 
 -- | Take a snapshot of the bucket, that is compute its state at the current
 -- time.
