@@ -6,12 +6,15 @@ module Test.Consensus.Genesis.Tests.CSJ (tests) where
 import           Data.List (nub)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe)
-import           Ouroboros.Consensus.Block (Header, blockSlot, succWithOrigin)
+import           Ouroboros.Consensus.Block (Header, blockSlot, succWithOrigin,
+                     unSlotNo)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (TraceChainSyncClientEvent (..))
 import           Ouroboros.Consensus.Util.Condense (PaddingDirection (..),
                      condenseListWithPadding)
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import           Ouroboros.Network.Protocol.ChainSync.Codec
+                     (ChainSyncTimeout (mustReplyTimeout), idleTimeout)
 import           Test.Consensus.BlockTree (BlockTree (..))
 import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.Genesis.Tests.Uniform (genUniformSchedulePoints)
@@ -28,10 +31,11 @@ import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.PartialAccessors
 import           Test.Util.TestBlock (TestBlock)
-import           Test.Util.TestEnv (adjustQuickCheckMaxSize)
+import           Test.Util.TestEnv (adjustQuickCheckMaxSize, adjustQuickCheckTests)
 
 tests :: TestTree
 tests =
+  adjustQuickCheckTests (* 10) $
   adjustQuickCheckMaxSize (`div` 5) $
     testGroup
       "CSJ"
@@ -49,6 +53,7 @@ tests =
 
 -- | A flag to indicate if properties are tested with adversarial peers
 data WithAdversariesFlag = NoAdversaries | WithAdversaries
+  deriving Eq
 
 -- | A flag to indicate if properties are tested using the same schedule for the
 -- honest peers, or if each peer should used its own schedule.
@@ -81,7 +86,7 @@ prop_CSJ adversariesFlag numHonestSchedules = do
                    NoAdversaries   -> pure 0
                    WithAdversaries -> choose (2, 4)
   forAllGenesisTest
-    ( case numHonestSchedules of
+    ( disableBoringTimeouts <$> case numHonestSchedules of
         OneScheduleForAllPeers ->
           genChains genForks
           `enrichedWith` genDuplicatedHonestSchedule
@@ -93,6 +98,13 @@ prop_CSJ adversariesFlag numHonestSchedules = do
       { scEnableCSJ = True
       , scEnableLoE = True
       , scEnableLoP = True
+      , scEnableChainSelStarvation = adversariesFlag == NoAdversaries
+      -- ^ NOTE: When there are adversaries and the ChainSel
+      -- starvation detection of BlockFetch is enabled, then our property does
+      -- not actually hold, because peer simulator-based tests have virtually
+      -- infinite CPU, and therefore ChainSel gets starved at every tick, which
+      -- makes us cycle the dynamos, which can lead to some extra headers being
+      -- downloaded.
       }
     )
     shrinkPeerSchedules
@@ -111,8 +123,16 @@ prop_CSJ adversariesFlag numHonestSchedules = do
                 _ -> Nothing
               )
               svTrace
+          -- We receive headers at most once from honest peer. The only
+          -- exception is when an honest peer gets to be the objector, until an
+          -- adversary dies, and then the dynamo. In that specific case, we
+          -- might re-download jumpSize blocks. TODO: If we ever choose to
+          -- promote objectors to dynamo to reuse their state, then we could
+          -- make this bound tighter.
           receivedHeadersAtMostOnceFromHonestPeers =
-            length (nub $ snd <$> headerHonestDownloadEvents) == length headerHonestDownloadEvents
+            length headerHonestDownloadEvents <=
+              length (nub $ snd <$> headerHonestDownloadEvents) +
+                (fromIntegral $ unSlotNo $ csjpJumpSize $ gtCSJParams gt)
         in
           tabulate ""
             [ if headerHonestDownloadEvents == []
@@ -152,3 +172,12 @@ prop_CSJ adversariesFlag numHonestSchedules = do
        in
         -- Sanity check: add @1 +@ after @>@ and watch the World burn.
         hdrSlot + jumpSize >= succWithOrigin tipSlot
+
+    disableBoringTimeouts gt =
+      gt
+        { gtChainSyncTimeouts =
+            (gtChainSyncTimeouts gt)
+              { mustReplyTimeout = Nothing,
+                idleTimeout = Nothing
+              }
+        }
