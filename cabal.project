@@ -47,3 +47,13 @@ if(os(windows))
 
 -- https://github.com/ulidtko/cabal-doctest/issues/85
 constraints: Cabal < 3.13
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/ouroboros-network
+  tag: bb0a7d0ff41e265a8ec47bc94377cb4d65e0b498
+  --sha256: sha256-P7m+nsjtogNQsdpXQnaH1kWxYibEWa0UC6iNGg0+bH4=
+  subdir:
+    ouroboros-network
+    ouroboros-network-api
+    ouroboros-network-protocols
