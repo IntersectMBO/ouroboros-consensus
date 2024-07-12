@@ -61,10 +61,10 @@ localTxMonitorServer mempool =
       , recvMsgGetSizes = do
           let MempoolSize{msNumTxs,msNumBytes} = snapshotMempoolSize snapshot
           let sizes = MempoolSizeAndCapacity
-                { capacityInBytes = unByteSize capacity
-                , sizeInBytes     = unByteSize msNumBytes
+                { capacityInBytes = fromIntegral $ unByteSize capacity
+                , sizeInBytes     = fromIntegral $ unByteSize msNumBytes
                 , numberOfTxs     = msNumTxs
-                }
+                }   -- TODO what to do about overflow?
           pure $ SendMsgReplyGetSizes sizes (serverStAcquired s txs)
       , recvMsgAwaitAcquire = do
           s' <- atomically $ do

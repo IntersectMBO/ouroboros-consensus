@@ -35,7 +35,7 @@ module Test.Consensus.Mempool (tests) where
 import           Cardano.Binary (Encoding, toCBOR)
 import           Cardano.Crypto.Hash
 import           Control.Exception (assert)
-import           Control.Monad (foldM, forM, forM_, void)
+import           Control.Monad (foldM, forM, forM_, void, when)
 import           Control.Monad.Except (Except, runExcept)
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Monad.State (State, evalState, get, modify)
@@ -48,8 +48,9 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe)
 import           Data.Semigroup (stimes)
 import qualified Data.Set as Set
-import           Data.Word
+import           Data.Word (Word32)
 import           GHC.Stack (HasCallStack)
+import           Numeric.Natural (Natural)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config.SecurityParam
@@ -355,7 +356,7 @@ ppTestTxWithHash x = condense
 --
 -- The generated 'testMempoolCap' will be:
 -- > foldMap 'txSize' 'testInitialTxs' + extraCapacity
-genTestSetupWithExtraCapacity :: Int -> Word32 -> Gen (TestSetup, LedgerState TestBlock)
+genTestSetupWithExtraCapacity :: Int -> Natural -> Gen (TestSetup, LedgerState TestBlock)
 genTestSetupWithExtraCapacity maxInitialTxs extraCapacity = do
     ledgerSize   <- choose (0, maxInitialTxs)
     nbInitialTxs <- choose (0, maxInitialTxs)
@@ -831,20 +832,26 @@ instance Arbitrary MempoolCapTestSetup where
     -- The Mempool should at least be capable of containing the transactions
     -- it already contains.
     let currentSize               = foldMap txSize (testInitialTxs testSetup)
-        ByteSize capacityMinBound = currentSize
+        capacityMinBound = currentSize
         validTxsToAdd             = [tx | (tx, True) <- txs]
         -- Use the current size + the sum of all the valid transactions to add
         -- as the upper bound.
-        ByteSize capacityMaxBound = currentSize <> foldMap txSize validTxsToAdd
+        capacityMaxBound = currentSize <> foldMap txSize validTxsToAdd
     -- Note that we could pick @currentSize@, meaning that we can't add any
     -- more transactions to the Mempool
+
+    when (unByteSize capacityMaxBound >= 2^(32 :: Int)) $ do
+      error "impossible!"   -- could 'QC.discard' if this is actually feasible
+
     capacity <- choose
-      ( capacityMinBound
-      , capacityMaxBound
+      ( fromIntegral (unByteSize capacityMinBound) :: Word32
+      , fromIntegral (unByteSize capacityMaxBound) :: Word32
       )
     let testSetup' = testSetup {
             testMempoolCapOverride =
-              MempoolCapacityBytesOverride (ByteSize capacity)
+                MempoolCapacityBytesOverride
+              $ ByteSize
+              $ fromIntegral (capacity :: Word32)
           }
     return $ MempoolCapTestSetup testSetupWithTxs { testSetup = testSetup' }
 
@@ -942,8 +949,8 @@ data TxSizeSplitTestSetup = TxSizeSplitTestSetup
 
 instance Arbitrary TxSizeSplitTestSetup where
   arbitrary = do
-    let txSizeMaxBound = 10 * 1024 * 1024 -- 10MB transaction max bound
-    txSizes <- listOf $ choose (1, txSizeMaxBound)
+    let txSizeMaxBound = 10 * 1024 * 1024 -- 10 mebibyte transaction max bound
+    txSizes <- listOf $ choose (1, txSizeMaxBound :: Word32)
     let totalTxsSize = sum txSizes
     txSizeToSplitOn <- frequency
       [ (1, pure 0)
@@ -952,8 +959,8 @@ instance Arbitrary TxSizeSplitTestSetup where
       , (1, choose (totalTxsSize + 1, totalTxsSize + 1000))
       ]
     pure TxSizeSplitTestSetup
-      { tssTxSizes = map ByteSize txSizes
-      , tssTxSizeToSplitOn = ByteSize txSizeToSplitOn
+      { tssTxSizes = map (ByteSize . fromIntegral) txSizes
+      , tssTxSizeToSplitOn = ByteSize $ fromIntegral txSizeToSplitOn
       }
 
   shrink TxSizeSplitTestSetup { tssTxSizes, tssTxSizeToSplitOn = ByteSize x } =
@@ -1031,9 +1038,8 @@ prop_Mempool_idx_consistency (Actions actions) =
       , testMempoolCapOverride =
             MempoolCapacityBytesOverride
           $ ByteSize
-          $ maxBound - unByteSize simpleBlockCapacity
-          --- can't use maxBound, because then 'computeMempoolCapacity'
-          --- calculation overflows, resulting in a capacity of just one block
+          $ 1024*1024*1024
+            -- There's no way this test will need more than a gibibyte.
       }
 
     lastOfMempoolRemoved txsInMempool = \case

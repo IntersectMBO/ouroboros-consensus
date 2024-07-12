@@ -282,7 +282,7 @@ txsMaxBytes ::
   -> ByteSize
 txsMaxBytes TickedShelleyLedgerState { tickedShelleyLedgerState } =
     -- `maxBlockBodySize` is expected to be bigger than `fixedBlockBodyOverhead`
-    ByteSize $ maxBlockBodySize - fixedBlockBodyOverhead
+    ByteSize $ fromIntegral $ maxBlockBodySize - fixedBlockBodyOverhead
   where
     maxBlockBodySize = getPParams tickedShelleyLedgerState ^. ppMaxBBSizeL
 

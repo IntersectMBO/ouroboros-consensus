@@ -5,7 +5,7 @@ import qualified Data.Measure as Measure
 import           Data.Word (Word32)
 import           Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize (..))
 import           Ouroboros.Consensus.Shelley.Ledger.Mempool (AlonzoMeasure (..),
-                     fromExUnits)
+                     ConwayMeasure (..), fromExUnits)
 import           Test.Cardano.Ledger.Alonzo.Serialisation.Generators ()
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -16,11 +16,18 @@ tests = testGroup "Shelley coherences" [
     ]
 
 -- | 'Measure.<=' and @'pointWiseExUnits' (<=)@ must agree
-leqCoherence :: Word32 -> ExUnits -> ExUnits -> Property
-leqCoherence w eu1 eu2 =
+leqCoherence :: Word32 -> Word32 -> ExUnits -> ExUnits -> Property
+leqCoherence w1 w2 eu1 eu2 =
     actual === expected
   where
-    inj eu = AlonzoMeasure (ByteSize w) (fromExUnits eu)
+    -- ConwayMeasure is the fullest TxMeasure and mainnet's
+    inj eu =
+        ConwayMeasure
+          (AlonzoMeasure
+             (ByteSize (fromIntegral w1))
+             (fromExUnits eu)
+          )
+          (ByteSize (fromIntegral w2))
 
     actual   = inj eu1 Measure.<= inj eu2
     expected = pointWiseExUnits (<=) eu1 eu2

@@ -129,6 +129,7 @@ instance TxLimits ByronBlock where
 
   blockCapacityTxMeasure _cfg st =
       ByteSize
+    $ fromIntegral
     $ CC.getMaxBlockSize cvs - byronBlockEncodingOverhead
     where
       cvs = tickedByronLedgerState st

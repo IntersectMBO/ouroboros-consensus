@@ -26,9 +26,9 @@ import           Data.ByteString.Short (ShortByteString)
 import           Data.DerivingVia (InstantiatedAt (..))
 import           Data.Kind (Type)
 import           Data.Measure (Measure)
-import           Data.Word (Word32)
 import           GHC.Stack (HasCallStack)
 import           NoThunks.Class
+import           Numeric.Natural (Natural)
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ticked
@@ -204,7 +204,10 @@ class ( Measure     (TxMeasure blk)
     -> TickedLedgerState blk
     -> TxMeasure blk
 
-newtype ByteSize = ByteSize { unByteSize :: Word32 }
+-- | We intentionally do not declare a 'Num' instance! We prefer @ByteSize@ to
+-- occur explicitly in the code where possible, for legibility/perspciousness.
+-- We also do not need nor want subtraction.
+newtype ByteSize = ByteSize { unByteSize :: Natural }
   deriving stock (Show)
   deriving newtype (Eq, Ord)
   deriving newtype (Measure)
