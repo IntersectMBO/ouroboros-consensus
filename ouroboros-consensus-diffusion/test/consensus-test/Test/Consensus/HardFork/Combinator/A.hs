@@ -330,7 +330,8 @@ instance LedgerSupportsMempool BlockA where
 
 instance TxLimits BlockA where
   type TxMeasure BlockA = ByteSize
-  blockCapacityTxMeasure _cfg _st     = ByteSize 1
+  -- default mempool capacity is two blocks, so maxBound/2 avoids overflow
+  blockCapacityTxMeasure _cfg _st     = ByteSize $ maxBound `div` 2
   txMeasure              _cfg _st _tx = ByteSize 0
 
 newtype instance TxId (GenTx BlockA) = TxIdA Int

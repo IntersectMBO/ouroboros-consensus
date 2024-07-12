@@ -1029,8 +1029,11 @@ prop_Mempool_idx_consistency (Actions actions) =
       { testLedgerState        = testInitLedger
       , testInitialTxs         = []
       , testMempoolCapOverride =
-          MempoolCapacityBytesOverride $ ByteSize $ maxBound - 100 * 1024 * 1024
-          --- can't use maxBound, because then the check in addTx overflows
+            MempoolCapacityBytesOverride
+          $ ByteSize
+          $ maxBound - unByteSize simpleBlockCapacity
+          --- can't use maxBound, because then 'computeMempoolCapacity'
+          --- calculation overflows, resulting in a capacity of just one block
       }
 
     lastOfMempoolRemoved txsInMempool = \case

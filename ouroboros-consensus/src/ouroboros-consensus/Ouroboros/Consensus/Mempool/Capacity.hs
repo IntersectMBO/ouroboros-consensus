@@ -63,6 +63,8 @@ computeMempoolCapacity cfg st override =
     blockCount = case override of
       NoMempoolCapacityBytesOverride            -> 2
       MempoolCapacityBytesOverride (ByteSize x) ->
+        -- This calculation is happening at Word32. Thus overflow is silently
+        -- accepted.
         max 1 $ (x + oneBlockBytes - 1) `div` oneBlockBytes
 
     SemigroupViaMeasure capacity =
