@@ -354,13 +354,6 @@ blockCapacityAlonzoMeasure ledgerState =
   where
     pparams = getPParams $ tickedShelleyLedgerState ledgerState
 
-instance ( ShelleyCompatible p (BabbageEra c)
-         ) => TxLimits (ShelleyBlock p (BabbageEra c)) where
-
-  type TxMeasure (ShelleyBlock p (BabbageEra c)) = AlonzoMeasure
-  txMeasure              _cfg _st = txMeasureAlonzo
-  blockCapacityTxMeasure _cfg     = blockCapacityAlonzoMeasure
-
 data ConwayMeasure = ConwayMeasure {
     alonzoMeasure  :: !AlonzoMeasure
   , refScriptsSize :: !ByteSize
@@ -369,27 +362,50 @@ data ConwayMeasure = ConwayMeasure {
     deriving (Measure)
          via (InstantiatedAt Generic ConwayMeasure)
 
+txMeasureConway ::
+     forall proto era.
+     ( ShelleyCompatible proto era
+     , L.AlonzoEraTxWits era
+     , L.BabbageEraTxBody era
+     )
+  => TickedLedgerState (ShelleyBlock proto era)
+  -> GenTx (ShelleyBlock proto era) -> ConwayMeasure
+txMeasureConway st tx@(ShelleyTx _txid tx') =
+    ConwayMeasure {
+        alonzoMeasure  = txMeasureAlonzo tx
+      , refScriptsSize = ByteSize $ fromIntegral $
+          SL.txNonDistinctRefScriptsSize utxo tx'
+      }
+  where
+    utxo = SL.getUTxO . tickedShelleyLedgerState $ st
+
+blockCapacityConwayMeasure ::
+     forall proto era.
+     (ShelleyCompatible proto era, L.AlonzoEraPParams era)
+  => TickedLedgerState (ShelleyBlock proto era)
+  -> ConwayMeasure
+blockCapacityConwayMeasure st =
+    ConwayMeasure {
+        alonzoMeasure  = blockCapacityAlonzoMeasure st
+      , refScriptsSize = ByteSize $ fromIntegral $
+          -- For post-Conway eras, this will become a protocol parameter.
+          SL.maxRefScriptSizePerBlock
+      }
+
 instance HasByteSize ConwayMeasure where
   txMeasureByteSize = txMeasureByteSize . alonzoMeasure
+
+-- | We anachronistically use 'ConwayMeasure' in Babbage.
+instance ( ShelleyCompatible p (BabbageEra c)
+         ) => TxLimits (ShelleyBlock p (BabbageEra c)) where
+
+  type TxMeasure (ShelleyBlock p (BabbageEra c)) = ConwayMeasure
+  txMeasure              _cfg = txMeasureConway
+  blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure
 
 instance ( ShelleyCompatible p (ConwayEra c)
          ) => TxLimits (ShelleyBlock p (ConwayEra c)) where
 
   type TxMeasure (ShelleyBlock p (ConwayEra c)) = ConwayMeasure
-
-  txMeasure _cfg st tx@(ShelleyTx _txid tx') =
-      ConwayMeasure {
-          alonzoMeasure  = txMeasureAlonzo tx
-        , refScriptsSize = ByteSize $ fromIntegral $
-            SL.txNonDistinctRefScriptsSize utxo tx'
-        }
-    where
-      utxo = SL.getUTxO . tickedShelleyLedgerState $ st
-
-  blockCapacityTxMeasure _cfg st =
-      ConwayMeasure {
-          alonzoMeasure  = blockCapacityAlonzoMeasure st
-        , refScriptsSize = ByteSize $ fromIntegral $
-            -- For post-Conway eras, this will become a protocol parameter.
-            SL.maxRefScriptSizePerBlock
-        }
+  txMeasure              _cfg = txMeasureConway
+  blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure

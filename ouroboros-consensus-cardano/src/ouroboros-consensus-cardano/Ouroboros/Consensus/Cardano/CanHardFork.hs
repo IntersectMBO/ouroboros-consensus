@@ -360,7 +360,7 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
     fromByteSize `o`
     fromByteSize `o`
     fromAlonzo   `o`
-    fromAlonzo   `o`
+    fromConway   `o`
     fromConway   `o`
     nil
     where
