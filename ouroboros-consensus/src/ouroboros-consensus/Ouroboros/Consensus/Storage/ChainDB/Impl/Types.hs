@@ -68,7 +68,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
   ) where
 
 import           Cardano.Prelude (Bifunctor (second))
-import           Control.Monad (void)
+import           Control.Monad (void, when)
 import           Control.Tracer
 import           Data.Foldable (for_)
 import           Data.Map.Strict (Map)
@@ -574,12 +574,14 @@ getChainSelMessage starvationTracer starvationVar queue = go
               writeTVarIO varChainSelQueue chainSelQueue'
               return $ ChainSelAddBlock blockToAdd
             Nothing -> do
-              writeTVarIO starvationVar ChainSelStarvationOngoing
-              traceWith starvationTracer . ChainSelStarvationStarted =<< getMonotonicTime -- FIXME: only trace if first time
+              prevStarvation <- swapTVarIO starvationVar ChainSelStarvationOngoing
+              when (prevStarvation /= ChainSelStarvationOngoing) $
+                traceWith starvationTracer . ChainSelStarvationStarted =<< getMonotonicTime
               void $ atomically $ blockUntilChanged (second Map.null) (False, True) readBoth
               go
     ChainSelQueue {varChainSelQueue, varChainSelReprocessLoEBlocks} = queue
     writeTVarIO v x = atomically $ writeTVar v x
+    swapTVarIO v x = atomically $ swapTVar v x
     readBoth = (,) <$> readTVar varChainSelReprocessLoEBlocks <*> readTVar varChainSelQueue
 
 -- | Flush the 'ChainSelQueue' queue and notify the waiting threads.
