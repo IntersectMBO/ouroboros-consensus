@@ -30,8 +30,7 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as Jumping
-import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise,
-                     ChainDB)
+import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
                      (InvalidBlockPunishment)
@@ -57,16 +56,16 @@ data ChainDbView m blk = ChainDbView {
      getCurrentChain           :: STM m (AnchoredFragment (Header blk))
    , getIsFetched              :: STM m (Point blk -> Bool)
    , getMaxSlotNo              :: STM m MaxSlotNo
-   , addBlockAsync             :: InvalidBlockPunishment m -> blk -> m (AddBlockPromise m blk)
+   , addBlockWaitWrittenToDisk :: InvalidBlockPunishment m -> blk -> m Bool
    , getChainSelStarvation     :: STM m ChainSelStarvation
    }
 
-defaultChainDbView :: ChainDB m blk -> ChainDbView m blk
+defaultChainDbView :: IOLike m => ChainDB m blk -> ChainDbView m blk
 defaultChainDbView chainDB = ChainDbView {
     getCurrentChain           = ChainDB.getCurrentChain chainDB
   , getIsFetched              = ChainDB.getIsFetched chainDB
   , getMaxSlotNo              = ChainDB.getMaxSlotNo chainDB
-  , addBlockAsync             = ChainDB.addBlockAsync chainDB
+  , addBlockWaitWrittenToDisk = ChainDB.addBlockWaitWrittenToDisk chainDB
   , getChainSelStarvation     = ChainDB.getChainSelStarvation chainDB
   }
 
@@ -216,8 +215,8 @@ mkBlockFetchConsensusInterface
       pipeliningPunishment <- InvalidBlockPunishment.mkForDiffusionPipelining
       pure $ mkAddFetchedBlock_ pipeliningPunishment enabledPipelining
 
-    -- Hand over the block to the ChainDB, but don't wait until it has been
-    -- written to disk or processed.
+    -- Waits until the block has been written to disk, but not until chain
+    -- selection has processed the block.
     mkAddFetchedBlock_ ::
          (   BlockConfig blk
           -> Header blk
@@ -261,7 +260,7 @@ mkBlockFetchConsensusInterface
                NotReceivingTentativeBlocks -> disconnect
                ReceivingTentativeBlocks    ->
                  pipeliningPunishment bcfg (getHeader blk) disconnect
-       addBlockAsync
+       addBlockWaitWrittenToDisk
          chainDB
          punishment
          blk

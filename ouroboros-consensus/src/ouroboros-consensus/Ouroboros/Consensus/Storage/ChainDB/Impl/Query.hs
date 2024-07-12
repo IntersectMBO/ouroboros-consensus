@@ -131,15 +131,18 @@ getBlockComponent ::
 getBlockComponent CDB{..} = getAnyBlockComponent cdbImmutableDB cdbVolatileDB
 
 getIsFetched ::
-     forall m blk. (IOLike m, HasHeader blk)
+     forall m blk. IOLike m
   => ChainDbEnv m blk -> STM m (Point blk -> Bool)
-getIsFetched CDB{..} = do
-    checkBlocksToAdd <- memberBlocksToAdd cdbChainSelQueue
-    checkVolDb       <- VolatileDB.getIsMember cdbVolatileDB
-    return $ \pt ->
-      case pointToWithOriginRealPoint pt of
-        Origin        -> False
-        NotOrigin pt' -> checkBlocksToAdd pt' || checkVolDb (realPointHash pt')
+getIsFetched CDB{..} = basedOnHash <$> VolatileDB.getIsMember cdbVolatileDB
+  where
+    -- The volatile DB indexes by hash only, not by points. However, it should
+    -- not be possible to have two points with the same hash but different
+    -- slot numbers.
+    basedOnHash :: (HeaderHash blk -> Bool) -> Point blk -> Bool
+    basedOnHash f p =
+        case pointHash p of
+          BlockHash hash -> f hash
+          GenesisHash    -> False
 
 getIsInvalidBlock ::
      forall m blk. (IOLike m, HasHeader blk)
@@ -182,13 +185,10 @@ getMaxSlotNo CDB{..} = do
     -- contains block 9'. The ImmutableDB contains blocks 1-10. The max slot
     -- of the current chain will be 10 (being the anchor point of the empty
     -- current chain), while the max slot of the VolatileDB will be 9.
-    --
-    -- Moreover, we have to look in 'ChainSelQueue' too.
-    curChainMaxSlotNo    <-
-      maxSlotNoFromWithOrigin . AF.headSlot <$> readTVar cdbChain
-    volatileDbMaxSlotNo  <- VolatileDB.getMaxSlotNo cdbVolatileDB
-    blocksToAddMaxSlotNo <- getBlocksToAddMaxSlotNo cdbChainSelQueue
-    return $ curChainMaxSlotNo `max` volatileDbMaxSlotNo `max` blocksToAddMaxSlotNo
+    curChainMaxSlotNo <- maxSlotNoFromWithOrigin . AF.headSlot
+                     <$> readTVar cdbChain
+    volatileDbMaxSlotNo    <- VolatileDB.getMaxSlotNo cdbVolatileDB
+    return $ curChainMaxSlotNo `max` volatileDbMaxSlotNo
 
 {-------------------------------------------------------------------------------
   Unifying interface over the immutable DB and volatile DB, but independent
