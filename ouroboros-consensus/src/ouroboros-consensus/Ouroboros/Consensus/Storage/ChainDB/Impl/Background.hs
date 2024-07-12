@@ -540,11 +540,6 @@ addBlockRunner fuse cdb@CDB{..} = forever $ do
             ChainSelAddBlock BlockToAdd{blockToAdd} ->
               trace $ PoppedBlockFromQueue $ FallingEdgeWith $
                       blockRealPoint blockToAdd
-          chainSelSync cdb message
-          lift $ case message of
-            ChainSelAddBlock blockToAdd ->
-              deleteBlockToAdd blockToAdd cdbChainSelQueue
-            _ -> pure ()
-        )
+          chainSelSync cdb message)
   where
     starvationTracer = Tracer $ traceWith cdbTracer . TraceChainSelStarvationEvent
