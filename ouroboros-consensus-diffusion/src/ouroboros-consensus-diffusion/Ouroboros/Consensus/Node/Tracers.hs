@@ -32,6 +32,7 @@ import           Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
                      (TraceBlockFetchServerEvent)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (TraceChainSyncClientEvent)
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as CSJumping
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Server
                      (TraceChainSyncServerEvent)
 import           Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
@@ -71,6 +72,7 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , consensusErrorTracer          :: f SomeException
   , gsmTracer                     :: f (TraceGsmEvent (Tip blk))
   , gddTracer                     :: f (TraceGDDEvent remotePeer blk)
+  , csjTracer                     :: f (CSJumping.TraceEvent remotePeer)
   }
 
 instance (forall a. Semigroup (f a))
@@ -94,6 +96,7 @@ instance (forall a. Semigroup (f a))
       , consensusErrorTracer          = f consensusErrorTracer
       , gsmTracer                     = f gsmTracer
       , gddTracer                     = f gddTracer
+      , csjTracer                     = f csjTracer
       }
     where
       f :: forall a. Semigroup a
@@ -125,6 +128,7 @@ nullTracers = Tracers
     , consensusErrorTracer          = nullTracer
     , gsmTracer                     = nullTracer
     , gddTracer                     = nullTracer
+    , csjTracer                     = nullTracer
     }
 
 showTracers :: ( Show blk
@@ -159,6 +163,7 @@ showTracers tr = Tracers
     , consensusErrorTracer          = showTracing tr
     , gsmTracer                     = showTracing tr
     , gddTracer                     = showTracing tr
+    , csjTracer                     = showTracing tr
     }
 
 {-------------------------------------------------------------------------------

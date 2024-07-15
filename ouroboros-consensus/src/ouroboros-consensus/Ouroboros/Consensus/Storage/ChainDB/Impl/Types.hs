@@ -64,6 +64,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
   ) where
 
 import           Cardano.Prelude (whenM)
+import           Control.Monad (when)
 import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.Foldable (traverse_)
