@@ -86,6 +86,7 @@ startBlockFetchLogic enableChainSelStarvation registry tracer chainDb fetchClien
 
         blockFetchConsensusInterface =
           BlockFetchClientInterface.mkBlockFetchConsensusInterface
+            nullTracer -- FIXME
             (TestBlockConfig $ NumCoreNodes 0) -- Only needed when minting blocks
             (BlockFetchClientInterface.defaultChainDbView chainDb)
             csHandlesCol

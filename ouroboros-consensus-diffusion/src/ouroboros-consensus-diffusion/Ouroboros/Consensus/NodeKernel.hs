@@ -377,6 +377,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
           (GSM.gsmStateToLedgerJudgement <$> readTVar varGsmState)
         blockFetchInterface :: BlockFetchConsensusInterface (ConnectionId addrNTN) (Header blk) blk m
         blockFetchInterface = BlockFetchClientInterface.mkBlockFetchConsensusInterface
+          (csjTracer tracers)
           (configBlock cfg)
           (BlockFetchClientInterface.defaultChainDbView chainDB)
           varChainSyncHandles
