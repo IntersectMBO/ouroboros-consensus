@@ -60,6 +60,7 @@ import           Cardano.Binary (enforceSize)
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding, encodeListLen)
 import           Codec.Serialise
+import           Control.Arrow ((+++))
 import           Control.Monad.Except
 import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.ByteString.Short as Short
@@ -621,11 +622,14 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
           , vDualGenTxBridge
           } = vtx
 
-instance TxLimits m => TxLimits (DualBlock m a) where
+instance Bridge m a => TxLimits (DualBlock m a) where
   type TxMeasure (DualBlock m a) = TxMeasure m
 
-  txMeasure DualLedgerConfig{..} TickedDualLedgerState{..} DualGenTx{..} =
-      txMeasure dualLedgerConfigMain tickedDualLedgerStateMain dualGenTxMain
+  txMeasure DualLedgerConfig{..} TickedDualLedgerState{..} DualGenTx{..} = do
+      mapExcept (inj +++ id)
+    $ txMeasure dualLedgerConfigMain tickedDualLedgerStateMain dualGenTxMain
+    where
+      inj m = DualGenTxErr m (error "ByronSpec has no tx-too-big error")
 
   blockCapacityTxMeasure DualLedgerConfig{..} TickedDualLedgerState{..} =
       blockCapacityTxMeasure dualLedgerConfigMain tickedDualLedgerStateMain

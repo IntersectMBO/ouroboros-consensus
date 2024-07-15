@@ -335,18 +335,8 @@ extendVRNew :: (LedgerSupportsMempool blk, HasTxId (GenTx blk))
                  ( Validated        (GenTx blk)
                  , ValidationResult (GenTx blk) blk
                  )
-extendVRNew cfg wti tx vr = assert (isNothing vrNewValid) $
-    case runExcept (applyTx cfg wti vrSlotNo tx vrAfter) of
-      Left err         -> Left err
-      Right (st', vtx) -> Right $
-        ( vtx
-        , vr { vrValid        = vrValid :> TxTicket vtx nextTicketNo sz
-             , vrValidTxIds   = Set.insert (txId tx) vrValidTxIds
-             , vrNewValid     = Just vtx
-             , vrAfter        = st'
-             , vrLastTicketNo = nextTicketNo
-             }
-        )
+extendVRNew cfg wti tx vr =
+    assert (isNothing vrNewValid) $ runExcept m
   where
     ValidationResult {
         vrValid
@@ -357,9 +347,19 @@ extendVRNew cfg wti tx vr = assert (isNothing vrNewValid) $
       , vrSlotNo
       } = vr
 
-    nextTicketNo = succ vrLastTicketNo
-
-    sz = txMeasure cfg vrAfter tx
+    m = do
+      txsz <- txMeasure cfg vrAfter tx
+      (st', vtx) <- applyTx cfg wti vrSlotNo tx vrAfter
+      let nextTicketNo = succ vrLastTicketNo
+      pure
+        ( vtx
+        , vr { vrValid        = vrValid :> TxTicket vtx nextTicketNo txsz
+             , vrValidTxIds   = Set.insert (txId tx) vrValidTxIds
+             , vrNewValid     = Just vtx
+             , vrAfter        = st'
+             , vrLastTicketNo = nextTicketNo
+             }
+        )
 
 {-------------------------------------------------------------------------------
   Conversions

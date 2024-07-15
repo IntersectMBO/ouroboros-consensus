@@ -54,7 +54,7 @@ import qualified Codec.CBOR.Decoding as CBOR
 import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import           Control.Monad (void)
-import           Control.Monad.Except (Except)
+import           Control.Monad.Except (Except, throwError)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
@@ -134,12 +134,26 @@ instance TxLimits ByronBlock where
     where
       cvs = tickedByronLedgerState st
 
-  txMeasure _cfg _st =
-      ByteSize
-    . fromIntegral
-    . Strict.length
-    . CC.mempoolPayloadRecoverBytes
-    . toMempoolPayload
+  txMeasure _cfg st tx =
+      if txsz > maxTxSize then throwError err else
+      pure $ ByteSize txsz
+    where
+      maxTxSize =
+          Update.ppMaxTxSize
+        $ CC.adoptedProtocolParameters
+        $ CC.cvsUpdateState
+        $ tickedByronLedgerState st
+
+      txsz =
+          fromIntegral
+        $ Strict.length
+        $ CC.mempoolPayloadRecoverBytes
+        $ toMempoolPayload tx
+
+      err =
+          CC.MempoolTxErr
+        $ Utxo.UTxOValidationTxValidationError
+        $ Utxo.TxValidationTxTooLarge txsz maxTxSize
 
 data instance TxId (GenTx ByronBlock)
   = ByronTxId             !Utxo.TxId

@@ -167,6 +167,7 @@ library
     strict-sop-core ^>=0.1,
     text,
     these ^>=1.2,
+    validation,
     vector-map,
 
   -- GHC 8.10.7 on aarch64-darwin cannot use text-2

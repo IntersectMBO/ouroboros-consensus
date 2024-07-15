@@ -190,12 +190,15 @@ class ( Measure     (TxMeasure blk)
   --
   -- INVARIANT Assuming no hash collisions, the size should be the same in any
   -- state in which the transaction is valid.
+  --
+  -- Returns an exception if and only if the transaction violates the per-tx
+  -- limits.
   txMeasure ::
        LedgerConfig blk
        -- ^ used at least by HFC's composition logic
     -> TickedLedgerState blk
     -> GenTx blk
-    -> TxMeasure blk
+    -> Except (ApplyTxErr blk) (TxMeasure blk)
 
   -- | What is the allowed capacity for the txs in an individual block?
   blockCapacityTxMeasure ::

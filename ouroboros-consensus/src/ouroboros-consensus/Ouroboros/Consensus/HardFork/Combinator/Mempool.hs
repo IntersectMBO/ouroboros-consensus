@@ -25,6 +25,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Mempool (
   , hardForkApplyTxErrToEither
   ) where
 
+import           Control.Arrow ((+++))
 import           Control.Monad.Except
 import           Data.Functor.Product
 import           Data.Kind (Type)
@@ -152,7 +153,7 @@ instance CanHardFork xs => TxLimits (HardForkBlock xs) where
     tx
       =
         case matchTx injs (unwrapTx tx) hardForkState of
-          Left{}     -> Measure.zero   -- safe b/c the tx will be found invalid
+          Left{}     -> pure Measure.zero   -- safe b/c the tx will be found invalid
           Right pair -> hcollapse $ hcizipWith proxySingle aux cfgs pair
     where
       pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
@@ -169,15 +170,23 @@ instance CanHardFork xs => TxLimits (HardForkBlock xs) where
           InPairs.hmap (\(Pair2 injTx _injValidatedTx) -> injTx)
         $ InPairs.requiringBoth cfgs hardForkInjectTxs
 
-      aux ::
+      aux :: forall blk.
            SingleEraBlock blk
         => Index xs blk
         -> WrapLedgerConfig blk
         -> (Product GenTx (Ticked :.: LedgerState)) blk
-        -> K (HardForkTxMeasure xs) blk
+        -> K (Except (HardForkApplyTxErr xs) (HardForkTxMeasure xs)) blk
       aux idx cfg (Pair tx' st') =
           K
-        $ hardForkInjTxMeasure . injectNS idx . WrapTxMeasure
+        $ mapExcept
+            (   ( HardForkApplyTxErrFromEra
+                . OneEraApplyTxErr
+                . injectNS idx
+                . WrapApplyTxErr
+                )
+              +++
+                (hardForkInjTxMeasure . injectNS idx . WrapTxMeasure)
+            )
         $ txMeasure
             (unwrapLedgerConfig cfg)
             (unComp st')

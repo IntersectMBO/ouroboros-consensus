@@ -267,7 +267,7 @@ instance LedgerSupportsMempool BlockB where
 instance TxLimits BlockB where
   type TxMeasure BlockB = ByteSize
   blockCapacityTxMeasure _cfg _st     = ByteSize $ 100 * 1024   -- arbitrary
-  txMeasure              _cfg _st _tx = ByteSize 0
+  txMeasure              _cfg _st _tx = pure $ ByteSize 0
 
 data instance TxId (GenTx BlockB)
   deriving stock    (Show, Eq, Ord, Generic)

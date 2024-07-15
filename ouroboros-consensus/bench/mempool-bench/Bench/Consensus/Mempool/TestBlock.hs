@@ -155,7 +155,7 @@ instance Ledger.TxLimits TestBlock where
   -- maximum mempool capacity. The value used here depends on 'txInBlockSize'.
   blockCapacityTxMeasure _cfg _st = Ledger.ByteSize 20
 
-  txMeasure _cfg _st = txSize
+  txMeasure _cfg _st = pure . txSize
 
 newtype instance Ledger.TxId (Ledger.GenTx TestBlock) = TestBlockTxId Tx
   deriving stock (Generic)

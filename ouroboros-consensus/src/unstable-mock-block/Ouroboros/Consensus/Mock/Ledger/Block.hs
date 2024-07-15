@@ -443,7 +443,7 @@ instance TxLimits (SimpleBlock c ext) where
   --
   -- But not 'maxbound'!, since the mempool sometimes holds multiple blocks worth.
   blockCapacityTxMeasure _cfg _st = simpleBlockCapacity
-  txMeasure              _cfg _st = txSize
+  txMeasure              _cfg _st = pure . txSize
 
 simpleBlockCapacity :: ByteSize
 simpleBlockCapacity = ByteSize 512

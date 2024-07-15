@@ -97,7 +97,7 @@ instance Ledger.TxLimits TestBlock where
     -- can be exactly what each test requests.
     Ledger.ByteSize 1
 
-  txMeasure _cfg _st = txSize . unGenTx
+  txMeasure _cfg _st = pure . txSize . unGenTx
 
 {-------------------------------------------------------------------------------
   Ledger support

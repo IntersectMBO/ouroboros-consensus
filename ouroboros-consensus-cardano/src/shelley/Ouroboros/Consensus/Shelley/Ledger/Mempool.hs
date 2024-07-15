@@ -7,6 +7,7 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns             #-}
+{-# LANGUAGE NumericUnderscores         #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE Rank2Types                 #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
@@ -18,6 +19,9 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Shelley mempool integration
+--
+-- TODO nearly all of the logic in this module belongs in cardano-ledger, not
+-- ouroboros-consensus; ouroboros-consensus-cardano should just be "glue code".
 module Ouroboros.Consensus.Shelley.Ledger.Mempool (
     GenTx (..)
   , SL.ApplyTxError (..)
@@ -34,27 +38,37 @@ module Ouroboros.Consensus.Shelley.Ledger.Mempool (
   ) where
 
 import qualified Cardano.Crypto.Hash as Hash
+import qualified Cardano.Ledger.Allegra.Rules as AllegraEra
 import           Cardano.Ledger.Alonzo.Core (Tx, TxSeq, bodyTxL, eraProtVerLow,
                      fromTxSeq, ppMaxBBSizeL, ppMaxBlockExUnitsL, sizeTxF)
+import qualified Cardano.Ledger.Alonzo.Rules as AlonzoEra
 import           Cardano.Ledger.Alonzo.Scripts (ExUnits, ExUnits',
-                     unWrapExUnits)
+                     pointWiseExUnits, unWrapExUnits)
 import           Cardano.Ledger.Alonzo.Tx (totExUnits)
 import qualified Cardano.Ledger.Api as L
+import qualified Cardano.Ledger.Babbage.Rules as BabbageEra
 import           Cardano.Ledger.Binary (Annotator (..), DecCBOR (..),
                      EncCBOR (..), FromCBOR (..), FullByteString (..),
                      ToCBOR (..), toPlainDecoder)
+import qualified Cardano.Ledger.Conway.Rules as ConwayEra
 import qualified Cardano.Ledger.Conway.Rules as SL
+import qualified Cardano.Ledger.Conway.Tx as SL (tierRefScriptFee)
 import qualified Cardano.Ledger.Conway.UTxO as SL
 import qualified Cardano.Ledger.Core as SL (txIdTxBody)
 import           Cardano.Ledger.Crypto (Crypto)
 import qualified Cardano.Ledger.SafeHash as SL
 import qualified Cardano.Ledger.Shelley.API as SL
-import           Control.Monad.Except (Except)
+import qualified Cardano.Ledger.Shelley.Rules as ShelleyEra
+import qualified Cardano.Ledger.Val as SL ((<+>), zero)
+import           Control.Arrow ((+++))
+import           Control.Monad (guard)
+import           Control.Monad.Except (Except, liftEither)
 import           Control.Monad.Identity (Identity (..))
 import           Data.DerivingVia (InstantiatedAt (..))
 import           Data.Foldable (toList)
 import           Data.Measure (Measure)
 import           Data.Typeable (Typeable)
+import qualified Data.Validation as V
 import           GHC.Generics (Generic)
 import           GHC.Natural (Natural)
 import           Lens.Micro ((^.))
@@ -276,6 +290,32 @@ theLedgerLens f x =
   Tx Limits
 -------------------------------------------------------------------------------}
 
+-- | A non-exported newtype wrapper just to give a 'SemiGroup' instance
+newtype TxErrorSG era = TxErrorSG { unTxErrorSG :: SL.ApplyTxError era }
+
+instance Semigroup (TxErrorSG era) where
+  TxErrorSG (SL.ApplyTxError x) <> TxErrorSG (SL.ApplyTxError y) =
+    TxErrorSG (SL.ApplyTxError (x <> y))
+
+validateMaybe ::
+     SL.ApplyTxError era
+  -> Maybe a
+  -> V.Validation (TxErrorSG era) a
+validateMaybe err mb = V.validate (TxErrorSG err) id mb
+
+validateGuard ::
+     SL.ApplyTxError era
+  -> Bool
+  -> V.Validation (TxErrorSG era) ()
+validateGuard err b = validateMaybe err $ guard b
+
+runValidation ::
+     V.Validation (TxErrorSG era) a
+  -> Except (SL.ApplyTxError era) a
+runValidation = liftEither . (unTxErrorSG +++ id) . V.toEither
+
+-----
+
 txsMaxBytes ::
      ShelleyCompatible proto era
   => TickedLedgerState (ShelleyBlock proto era)
@@ -287,35 +327,85 @@ txsMaxBytes TickedShelleyLedgerState { tickedShelleyLedgerState } =
     maxBlockBodySize = getPParams tickedShelleyLedgerState ^. ppMaxBBSizeL
 
 txInBlockSize ::
-     ShelleyCompatible proto era
-  => GenTx (ShelleyBlock proto era)
-  -> ByteSize
-txInBlockSize (ShelleyTx _ tx) =
-    ByteSize $ txSize + perTxOverhead
+     (ShelleyCompatible proto era, MaxTxSizeUTxO era)
+  => TickedLedgerState (ShelleyBlock proto era)
+  -> GenTx (ShelleyBlock proto era)
+  -> V.Validation (TxErrorSG era) ByteSize
+txInBlockSize st (ShelleyTx _txid tx') =
+    validateMaybe (maxTxSizeUTxO txsz limit) $ do
+      guard $ txsz <= limit
+      Just $ ByteSize $ fromIntegral txsz
   where
-    txSize = fromIntegral $ tx ^. sizeTxF
+    txsz = perTxOverhead + (tx' ^. sizeTxF)
+
+    pparams = getPParams $ tickedShelleyLedgerState st
+    limit   = fromIntegral (pparams ^. L.ppMaxTxSizeL) :: Integer
+
+class MaxTxSizeUTxO era where
+  maxTxSizeUTxO :: Integer -> Integer -> SL.ApplyTxError era
+
+instance MaxTxSizeUTxO (ShelleyEra c) where
+  maxTxSizeUTxO x y =
+      SL.ApplyTxError . pure
+    $ ShelleyEra.UtxowFailure
+    $ ShelleyEra.UtxoFailure
+    $ ShelleyEra.MaxTxSizeUTxO x y
+
+instance MaxTxSizeUTxO (AllegraEra c) where
+  maxTxSizeUTxO x y =
+      SL.ApplyTxError . pure
+    $ ShelleyEra.UtxowFailure
+    $ ShelleyEra.UtxoFailure
+    $ AllegraEra.MaxTxSizeUTxO x y
+
+instance MaxTxSizeUTxO (MaryEra c) where
+  maxTxSizeUTxO x y =
+      SL.ApplyTxError . pure
+    $ ShelleyEra.UtxowFailure
+    $ ShelleyEra.UtxoFailure
+    $ AllegraEra.MaxTxSizeUTxO x y
+
+instance MaxTxSizeUTxO (AlonzoEra c) where
+  maxTxSizeUTxO x y =
+      SL.ApplyTxError . pure
+    $ ShelleyEra.UtxowFailure
+    $ AlonzoEra.ShelleyInAlonzoUtxowPredFailure
+    $ ShelleyEra.UtxoFailure
+    $ AlonzoEra.MaxTxSizeUTxO x y
+
+instance MaxTxSizeUTxO (BabbageEra c) where
+  maxTxSizeUTxO x y =
+      SL.ApplyTxError . pure
+    $ ShelleyEra.UtxowFailure
+    $ BabbageEra.UtxoFailure
+    $ BabbageEra.AlonzoInBabbageUtxoPredFailure
+    $ AlonzoEra.MaxTxSizeUTxO x y
+
+instance MaxTxSizeUTxO (ConwayEra c) where
+  maxTxSizeUTxO x y =
+      SL.ApplyTxError . pure
+    $ ConwayEra.ConwayUtxowFailure
+    $ ConwayEra.UtxoFailure
+    $ ConwayEra.MaxTxSizeUTxO x y
+
+-----
 
 instance ShelleyCompatible p (ShelleyEra c) => TxLimits (ShelleyBlock p (ShelleyEra c)) where
   type TxMeasure (ShelleyBlock p (ShelleyEra c)) = ByteSize
-  txMeasure              _cfg _st = txInBlockSize
-  blockCapacityTxMeasure _cfg     = txsMaxBytes
+  txMeasure              _cfg st tx = runValidation $ txInBlockSize st tx
+  blockCapacityTxMeasure _cfg       = txsMaxBytes
 
 instance ShelleyCompatible p (AllegraEra c) => TxLimits (ShelleyBlock p (AllegraEra c)) where
   type TxMeasure (ShelleyBlock p (AllegraEra c)) = ByteSize
-  txMeasure              _cfg _st = txInBlockSize
-  blockCapacityTxMeasure _cfg     = txsMaxBytes
+  txMeasure              _cfg st tx = runValidation $ txInBlockSize st tx
+  blockCapacityTxMeasure _cfg       = txsMaxBytes
 
 instance ShelleyCompatible p (MaryEra c) => TxLimits (ShelleyBlock p (MaryEra c)) where
   type TxMeasure (ShelleyBlock p (MaryEra c)) = ByteSize
-  txMeasure              _cfg _st = txInBlockSize
-  blockCapacityTxMeasure _cfg     = txsMaxBytes
+  txMeasure              _cfg st tx = runValidation $ txInBlockSize st tx
+  blockCapacityTxMeasure _cfg       = txsMaxBytes
 
-instance ( ShelleyCompatible p (AlonzoEra c)
-         ) => TxLimits (ShelleyBlock p (AlonzoEra c)) where
-
-  type TxMeasure (ShelleyBlock p (AlonzoEra c)) = AlonzoMeasure
-  txMeasure              _cfg _st = txMeasureAlonzo
-  blockCapacityTxMeasure _cfg     = blockCapacityAlonzoMeasure
+-----
 
 data AlonzoMeasure = AlonzoMeasure {
     byteSize :: !ByteSize
@@ -331,16 +421,6 @@ instance HasByteSize AlonzoMeasure where
 fromExUnits :: ExUnits -> ExUnits' Natural
 fromExUnits = unWrapExUnits
 
-txMeasureAlonzo ::
-     forall proto era.
-     (ShelleyCompatible proto era, L.AlonzoEraTxWits era)
-  => GenTx (ShelleyBlock proto era) -> AlonzoMeasure
-txMeasureAlonzo (ShelleyTx _txid tx) =
-    AlonzoMeasure {
-        byteSize = txInBlockSize (mkShelleyTx @era @proto tx)
-      , exUnits  = fromExUnits $ totExUnits tx
-      }
-
 blockCapacityAlonzoMeasure ::
      forall proto era.
      (ShelleyCompatible proto era, L.AlonzoEraPParams era)
@@ -354,6 +434,68 @@ blockCapacityAlonzoMeasure ledgerState =
   where
     pparams = getPParams $ tickedShelleyLedgerState ledgerState
 
+txMeasureAlonzo ::
+     forall proto era.
+     ( ShelleyCompatible proto era
+     , L.AlonzoEraTxWits era
+     , ExUnitsTooBigUTxO era
+     , MaxTxSizeUTxO era
+     )
+  => TickedLedgerState (ShelleyBlock proto era)
+  -> GenTx (ShelleyBlock proto era)
+  -> V.Validation (TxErrorSG era) AlonzoMeasure
+txMeasureAlonzo st tx@(ShelleyTx _txid tx') =
+    AlonzoMeasure <$> txInBlockSize st tx <*> exunits
+  where
+    txsz = totExUnits tx'
+
+    pparams = getPParams $ tickedShelleyLedgerState st
+    limit   = pparams ^. L.ppMaxTxExUnitsL
+
+    exunits =
+      validateMaybe (exUnitsTooBigUTxO limit txsz) $ do
+        guard $ pointWiseExUnits (<=) txsz limit
+        Just $ fromExUnits txsz
+
+class L.AlonzoEraPParams era => ExUnitsTooBigUTxO era where
+  exUnitsTooBigUTxO :: ExUnits -> ExUnits -> SL.ApplyTxError era
+
+instance Crypto c => ExUnitsTooBigUTxO (AlonzoEra c) where
+  exUnitsTooBigUTxO x y =
+      SL.ApplyTxError . pure
+    $ ShelleyEra.UtxowFailure
+    $ AlonzoEra.ShelleyInAlonzoUtxowPredFailure
+    $ ShelleyEra.UtxoFailure
+    $ AlonzoEra.ExUnitsTooBigUTxO x y
+
+instance Crypto c => ExUnitsTooBigUTxO (BabbageEra c) where
+  exUnitsTooBigUTxO x y =
+      SL.ApplyTxError . pure
+    $ ShelleyEra.UtxowFailure
+    $ BabbageEra.AlonzoInBabbageUtxowPredFailure
+    $ AlonzoEra.ShelleyInAlonzoUtxowPredFailure
+    $ ShelleyEra.UtxoFailure
+    $ BabbageEra.AlonzoInBabbageUtxoPredFailure
+    $ AlonzoEra.ExUnitsTooBigUTxO x y
+
+instance Crypto c => ExUnitsTooBigUTxO (ConwayEra c) where
+  exUnitsTooBigUTxO x y =
+      SL.ApplyTxError . pure
+    $ ConwayEra.ConwayUtxowFailure
+    $ ConwayEra.UtxoFailure
+    $ ConwayEra.ExUnitsTooBigUTxO x y
+
+-----
+
+instance ( ShelleyCompatible p (AlonzoEra c)
+         ) => TxLimits (ShelleyBlock p (AlonzoEra c)) where
+
+  type TxMeasure (ShelleyBlock p (AlonzoEra c)) = AlonzoMeasure
+  txMeasure              _cfg st tx = runValidation $ txMeasureAlonzo st tx
+  blockCapacityTxMeasure _cfg       = blockCapacityAlonzoMeasure
+
+-----
+
 data ConwayMeasure = ConwayMeasure {
     alonzoMeasure  :: !AlonzoMeasure
   , refScriptsSize :: !ByteSize
@@ -362,26 +504,12 @@ data ConwayMeasure = ConwayMeasure {
     deriving (Measure)
          via (InstantiatedAt Generic ConwayMeasure)
 
-txMeasureConway ::
-     forall proto era.
-     ( ShelleyCompatible proto era
-     , L.AlonzoEraTxWits era
-     , L.BabbageEraTxBody era
-     )
-  => TickedLedgerState (ShelleyBlock proto era)
-  -> GenTx (ShelleyBlock proto era) -> ConwayMeasure
-txMeasureConway st tx@(ShelleyTx _txid tx') =
-    ConwayMeasure {
-        alonzoMeasure  = txMeasureAlonzo tx
-      , refScriptsSize = ByteSize $ fromIntegral $
-          SL.txNonDistinctRefScriptsSize utxo tx'
-      }
-  where
-    utxo = SL.getUTxO . tickedShelleyLedgerState $ st
+instance HasByteSize ConwayMeasure where
+  txMeasureByteSize = txMeasureByteSize . alonzoMeasure
 
 blockCapacityConwayMeasure ::
      forall proto era.
-     (ShelleyCompatible proto era, L.AlonzoEraPParams era)
+     (ShelleyCompatible proto era, ExUnitsTooBigUTxO era)
   => TickedLedgerState (ShelleyBlock proto era)
   -> ConwayMeasure
 blockCapacityConwayMeasure st =
@@ -392,20 +520,116 @@ blockCapacityConwayMeasure st =
           SL.maxRefScriptSizePerBlock
       }
 
-instance HasByteSize ConwayMeasure where
-  txMeasureByteSize = txMeasureByteSize . alonzoMeasure
+txMeasureConway ::
+     forall proto era.
+     ( ShelleyCompatible proto era
+     , L.AlonzoEraTxWits era
+     , L.BabbageEraTxBody era
+     , ExUnitsTooBigUTxO era
+     , MaxTxSizeUTxO era
+     , TxRefScriptsSizeTooBig era
+     )
+  => TickedLedgerState (ShelleyBlock proto era)
+  -> GenTx (ShelleyBlock proto era)
+  -> V.Validation (TxErrorSG era) ConwayMeasure
+txMeasureConway st tx@(ShelleyTx _txid tx') =
+    ConwayMeasure <$> txMeasureAlonzo st tx <*> refScriptBytes
+  where
+    utxo = SL.getUTxO . tickedShelleyLedgerState $ st
+    txsz = SL.txNonDistinctRefScriptsSize utxo tx' :: Int
+
+    -- For post-Conway eras, this will become a protocol parameter.
+    limit = SL.maxRefScriptSizePerTx
+
+    refScriptBytes =
+      validateMaybe (txRefScriptsSizeTooBig limit txsz) $ do
+        guard $ txsz <= limit
+        Just $ ByteSize $ fromIntegral txsz
+
+class TxRefScriptsSizeTooBig era where
+  txRefScriptsSizeTooBig :: Int -> Int -> SL.ApplyTxError era
+
+instance Crypto c => TxRefScriptsSizeTooBig (ConwayEra c) where
+  txRefScriptsSizeTooBig x y =
+      SL.ApplyTxError . pure
+    $ ConwayEra.ConwayTxRefScriptsSizeTooBig x y
+
+-----
+
+txMeasureBabbage ::
+     forall proto era.
+     ( ShelleyCompatible proto era
+     , L.AlonzoEraTxWits era
+     , L.BabbageEraTxBody era
+     , ExUnitsTooBigUTxO era
+     , MaxTxSizeUTxO era
+     )
+  => TickedLedgerState (ShelleyBlock proto era)
+  -> GenTx (ShelleyBlock proto era)
+  -> V.Validation (TxErrorSG era) ConwayMeasure
+txMeasureBabbage st tx@(ShelleyTx _txid tx') =
+    ConwayMeasure <$> txMeasureAlonzo st tx <*> refScriptBytes
+  where
+    utxo = SL.getUTxO $ tickedShelleyLedgerState st
+    txsz = SL.txNonDistinctRefScriptsSize utxo tx' :: Int
+
+    -- TODO recall the assertion in this module header that this logic should
+    -- be owned by Ledger, not by Consensus: Ledger prefers to delete these
+    -- checks after mainnet hard forks to Conway, rather than introduce the
+    -- necessary 'SL.PredicateFailure' constructors for Babbage (which would in
+    -- turn require a bump to "Ouroboros.Network.NodeToNode.Version" and
+    -- "Ouroboros.Network.NodeToClient.Version")
+    --
+    -- -- Babbage should have enforced a per-tx limit here, but did not.
+    -- refScriptBytes = pure $ ByteSize $ fromIntegral txsz
+    refScriptBytes :: V.Validation (TxErrorSG era) ByteSize
+    refScriptBytes =
+         (ByteSize $ fromIntegral txsz)
+         -- Reject it if it has more than 100 kibibytes of ref script.
+      <$ validateGuard
+           (err 1_000_000 (fromIntegral txsz) (fromIntegral limit))
+           (txsz <= limit)
+         -- Reject it if it has more than 50 kibibytes of ref script and does
+         -- not satisfy an additional fee of 'SL.tierRefScriptFee'.
+         --
+         -- TODO this additional fee check in particular doesn't truly belong
+         -- in 'txMeasure' (which only needs to enforce per-tx limits);
+         -- however, it's less confusing and less duplication to put it here
+         -- rather than
+         -- 'Ouroboros.Consensus.Shelley.Eras.defaultApplyShelleyBasedTx'
+      <* validateGuard
+           (err 100_000 (SL.unCoin fee) (SL.unCoin reqFee))
+           (reqFee <= fee)
+      where
+        limit = 100 * 1024
+
+        fee = tx' ^. L.bodyTxL . L.feeTxBodyL :: SL.Coin
+
+        reqFee :: SL.Coin
+        reqFee = if txsz <= 50 * 1024 then SL.zero else minFee SL.<+> addlFee
+
+        pparams = getPParams $ tickedShelleyLedgerState st
+        minFee  = L.getMinFeeTx pparams tx' 0
+        addlFee = SL.tierRefScriptFee 1.2 25600 15 txsz
+
+        -- As we are reusing an existing error message, we add a large number
+        -- to ensure users running into this are productively irritated and
+        -- post this error message somewhere where they can receive
+        -- help/context.
+        err :: Integer -> Integer -> Integer -> SL.ApplyTxError era
+        err shift l r = maxTxSizeUTxO (l + shift) (r + shift)
 
 -- | We anachronistically use 'ConwayMeasure' in Babbage.
 instance ( ShelleyCompatible p (BabbageEra c)
          ) => TxLimits (ShelleyBlock p (BabbageEra c)) where
 
   type TxMeasure (ShelleyBlock p (BabbageEra c)) = ConwayMeasure
-  txMeasure              _cfg = txMeasureConway
-  blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure
+  txMeasure              _cfg st tx = runValidation $ txMeasureBabbage st tx
+  blockCapacityTxMeasure _cfg       = blockCapacityConwayMeasure
 
 instance ( ShelleyCompatible p (ConwayEra c)
          ) => TxLimits (ShelleyBlock p (ConwayEra c)) where
 
   type TxMeasure (ShelleyBlock p (ConwayEra c)) = ConwayMeasure
-  txMeasure              _cfg = txMeasureConway
-  blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure
+  txMeasure              _cfg st tx = runValidation $ txMeasureConway st tx
+  blockCapacityTxMeasure _cfg       = blockCapacityConwayMeasure

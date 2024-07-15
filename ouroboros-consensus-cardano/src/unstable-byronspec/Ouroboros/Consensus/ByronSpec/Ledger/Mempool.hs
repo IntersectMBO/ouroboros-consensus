@@ -59,4 +59,4 @@ instance TxLimits ByronSpecBlock where
   -- Dummy values, as these are not used in practice.
   blockCapacityTxMeasure _cfg _st = ByteSize 1
 
-  txMeasure _cfg _st _tx = ByteSize 0
+  txMeasure _cfg _st _tx = pure $ ByteSize 0
