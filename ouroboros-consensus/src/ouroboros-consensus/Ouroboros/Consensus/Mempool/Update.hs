@@ -176,9 +176,29 @@ pureTryAddTx ::
 pureTryAddTx cfg wti tx is
     -- We add the transaction if it wouldn't overrun any component of the
     -- mempool capacity.
+    --
+    -- In the past, this condition was instead @TxSeq.toSize (isTxs is) <
+    -- isCapacity is@. Thus the effective capacity of the mempool was actually
+    -- one increment less than the reported capacity plus one transaction. That
+    -- subtlety's cost payed for two benefits.
+    --
+    -- First, the absence of addition means there's no risk of overflow, since
+    -- the transaction's sizes (eg ExUnits) have not yet been bounded by
+    -- validation (which presumably enforces a low enough bound that any
+    -- reasonably-sized mempool would never overflow the representation's
+    -- 'maxBound').
+    --
+    -- Second, it is more fair, since it does not depend on the transaction at
+    -- all. EG a large transaction might struggle to win the race against a
+    -- firehose of tiny transactions.
+    --
+    -- However, we prefer to avoid the subtlety. Overflow is impossible with
+    -- the recent switch to 'Natural's within 'TxMeasure'. (TODO a ledger-based
+    -- per-tx pre-check still seems worthwhile). And fairness is already
+    -- ensured elsewhere (the 'MVar's in 'implAddTx' -- which the
+    -- "Test.Consensus.Mempool.Fairness" test exercises).
   | TxSeq.toSize (isTxs is) `Measure.plus` sz Measure.<= isCapacity is
-  =
-  case eVtx of
+  = case eVtx of
       -- We only extended the ValidationResult with a single transaction
       -- ('tx'). So if it's not in 'vrInvalid', it must be in 'vrNewValid'.
       Right vtx ->
