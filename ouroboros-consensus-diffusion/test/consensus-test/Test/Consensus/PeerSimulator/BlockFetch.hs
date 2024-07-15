@@ -83,6 +83,7 @@ startBlockFetchLogic registry tracer chainDb fetchClientRegistry csHandlesCol = 
 
         blockFetchConsensusInterface =
           BlockFetchClientInterface.mkBlockFetchConsensusInterface
+            nullTracer -- FIXME
             (TestBlockConfig $ NumCoreNodes 0) -- Only needed when minting blocks
             (BlockFetchClientInterface.defaultChainDbView chainDb)
             csHandlesCol
