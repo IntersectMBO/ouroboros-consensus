@@ -14,6 +14,7 @@ module Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface (
   ) where
 
 import           Control.Monad
+import           Control.Tracer (Tracer)
 import           Data.Map.Strict (Map)
 import           Data.Time.Clock (UTCTime)
 import           GHC.Stack (HasCallStack)
@@ -29,7 +30,7 @@ import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
-import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as Jumping
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as CSJumping
 import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
@@ -179,7 +180,8 @@ mkBlockFetchConsensusInterface ::
      , Ord peer
      , LedgerSupportsProtocol blk
      )
-  => BlockConfig blk
+  => Tracer m (CSJumping.TraceEvent peer)
+  -> BlockConfig blk
   -> ChainDbView m blk
   -> CSClient.ChainSyncClientHandleCollection peer m blk
   -> (Header blk -> SizeInBytes)
@@ -189,7 +191,7 @@ mkBlockFetchConsensusInterface ::
      -- ^ See 'readFetchMode'.
   -> BlockFetchConsensusInterface peer (Header blk) blk m
 mkBlockFetchConsensusInterface
-  bcfg chainDB csHandlesCol blockFetchSize slotForgeTime readFetchMode =
+  csjTracer bcfg chainDB csHandlesCol blockFetchSize slotForgeTime readFetchMode =
     BlockFetchConsensusInterface {..}
   where
     getCandidates :: STM m (Map peer (AnchoredFragment (Header blk)))
@@ -355,4 +357,4 @@ mkBlockFetchConsensusInterface
     readChainSelStarvation = getChainSelStarvation chainDB
 
     demoteCSJDynamo :: peer -> m ()
-    demoteCSJDynamo = void . atomically . Jumping.rotateDynamo csHandlesCol
+    demoteCSJDynamo = CSJumping.rotateDynamo csjTracer csHandlesCol

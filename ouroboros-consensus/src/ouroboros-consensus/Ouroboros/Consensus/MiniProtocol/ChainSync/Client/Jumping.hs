@@ -8,7 +8,6 @@
 {-# LANGUAGE RankNTypes           #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
 {-# LANGUAGE StandaloneDeriving   #-}
-{-# LANGUAGE TupleSections        #-}
 {-# LANGUAGE TypeApplications     #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -167,6 +166,7 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping (
   , JumpInstruction (..)
   , JumpResult (..)
   , Jumping (..)
+  , TraceEvent (..)
   , getDynamo
   , makeContext
   , mkJumping
@@ -178,7 +178,8 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping (
 
 import           Cardano.Slotting.Slot (SlotNo (..), WithOrigin (..))
 import           Control.Monad (forM, forM_, void, when)
-import           Data.Foldable (toList)
+import           Control.Tracer (Tracer, traceWith)
+import           Data.Foldable (toList, traverse_)
 import           Data.List (sortOn)
 import qualified Data.Map as Map
 import           Data.Maybe (catMaybes, fromMaybe)
@@ -775,38 +776,42 @@ rotateDynamo ::
     LedgerSupportsProtocol blk,
     MonadSTM m
   ) =>
+  Tracer m (TraceEvent peer) ->
   ChainSyncClientHandleCollection peer m blk ->
   peer ->
-  STM m (Maybe (peer, ChainSyncClientHandle m blk))
-rotateDynamo handlesCol peer = do
-  handles <- cschcMap handlesCol
-  case handles Map.!? peer of
-    Nothing ->
-      -- Do not re-elect a dynamo if the peer has been disconnected.
-      getDynamo handlesCol
-    Just oldDynHandle ->
-      readTVar (cschJumping oldDynHandle) >>= \case
-        Dynamo{} -> do
-          cschcRotateHandle handlesCol peer
-          peerStates <- cschcSeq handlesCol
-          mEngaged <- findNonDisengaged peerStates
-          case mEngaged of
-            Nothing ->
-              -- There are no engaged peers. This case cannot happen, as the
-              -- dynamo is always engaged.
-              error "rotateDynamo: no engaged peer found"
-            Just (newDynamoId, newDynHandle)
-              | newDynamoId == peer ->
-                -- The old dynamo is the only engaged peer left.
-                pure $ Just (newDynamoId, newDynHandle)
-              | otherwise -> do
-                newJumper Nothing (Happy FreshJumper Nothing)
-                  >>= writeTVar (cschJumping oldDynHandle)
-                promoteToDynamo peerStates newDynamoId newDynHandle
-                pure $ Just (newDynamoId, newDynHandle)
-        _ ->
-          -- Do not re-elect a dynamo if the peer is not the dynamo.
-          getDynamo handlesCol
+  m ()
+  -- STM m (Maybe (peer, ChainSyncClientHandle m blk))
+rotateDynamo tracer handlesCol peer = do
+  traceEvent <- atomically $ do
+    handles <- cschcMap handlesCol
+    case handles Map.!? peer of
+      Nothing ->
+        -- Do not re-elect a dynamo if the peer has been disconnected.
+        pure Nothing
+      Just oldDynHandle ->
+        readTVar (cschJumping oldDynHandle) >>= \case
+          Dynamo{} -> do
+            cschcRotateHandle handlesCol peer
+            peerStates <- cschcSeq handlesCol
+            mEngaged <- findNonDisengaged peerStates
+            case mEngaged of
+              Nothing ->
+                -- There are no engaged peers. This case cannot happen, as the
+                -- dynamo is always engaged.
+                error "rotateDynamo: no engaged peer found"
+              Just (newDynamoId, newDynHandle)
+                | newDynamoId == peer ->
+                  -- The old dynamo is the only engaged peer left.
+                  pure Nothing
+                | otherwise -> do
+                  newJumper Nothing (Happy FreshJumper Nothing)
+                    >>= writeTVar (cschJumping oldDynHandle)
+                  promoteToDynamo peerStates newDynamoId newDynHandle
+                  pure $ Just $ RotatedDynamo peer newDynamoId
+          _ ->
+            -- Do not re-elect a dynamo if the peer is not the dynamo.
+            pure Nothing
+  traverse_ (traceWith tracer) traceEvent
 
 -- | Choose an unspecified new non-idling dynamo and demote all other peers to
 -- jumpers.
@@ -907,3 +912,7 @@ electNewObjector context = do
             pure $ Just (badPoint, (initState, goodJumpInfo, handle))
           _ ->
             pure Nothing
+
+data TraceEvent peer
+  = RotatedDynamo peer peer
+  deriving (Show)

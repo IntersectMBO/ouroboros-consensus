@@ -64,8 +64,8 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
   , TraceValidationEvent (..)
   ) where
 
-import           Control.Monad (when)
 import           Cardano.Prelude (whenM)
+import           Control.Monad (when)
 import           Control.Tracer
 import           Data.Foldable (traverse_)
 import           Data.Map.Strict (Map)
