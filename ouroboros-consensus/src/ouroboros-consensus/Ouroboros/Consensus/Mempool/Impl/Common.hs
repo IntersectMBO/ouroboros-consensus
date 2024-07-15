@@ -330,18 +330,16 @@ extendVRNew :: (LedgerSupportsMempool blk, HasTxId (GenTx blk))
             -> WhetherToIntervene
             -> GenTx blk
             -> ValidationResult (GenTx blk) blk
-            -> ( Either (ApplyTxErr blk) (Validated (GenTx blk))
-               , ValidationResult (GenTx blk) blk
-               )
+            -> Either
+                 (ApplyTxErr blk)
+                 ( Validated        (GenTx blk)
+                 , ValidationResult (GenTx blk) blk
+                 )
 extendVRNew cfg wti tx vr = assert (isNothing vrNewValid) $
     case runExcept (applyTx cfg wti vrSlotNo tx vrAfter) of
-      Left err         ->
-        ( Left err
-        , vr { vrInvalid      = (tx, err) : vrInvalid
-             }
-        )
-      Right (st', vtx) ->
-        ( Right vtx
+      Left err         -> Left err
+      Right (st', vtx) -> Right $
+        ( vtx
         , vr { vrValid        = vrValid :> TxTicket vtx nextTicketNo sz
              , vrValidTxIds   = Set.insert (txId tx) vrValidTxIds
              , vrNewValid     = Just vtx
@@ -354,7 +352,6 @@ extendVRNew cfg wti tx vr = assert (isNothing vrNewValid) $
         vrValid
       , vrValidTxIds
       , vrAfter
-      , vrInvalid
       , vrLastTicketNo
       , vrNewValid
       , vrSlotNo
