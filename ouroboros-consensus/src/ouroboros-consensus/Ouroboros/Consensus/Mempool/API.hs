@@ -148,11 +148,10 @@ data Mempool m blk = Mempool {
       -- (after all, by definition that must mean its inputs have been used).
       -- Rejected transactions are therefore not necessarily a sign of
       -- malicious behaviour. Indeed, we would expect /most/ transactions that
-      -- are reported as invalid by 'tryAddTxs' to be invalid precisely
-      -- because they have already been included. Distinguishing between these
-      -- two cases can be done in theory, but it is expensive unless we have
-      -- an index of transaction hashes that have been included on the
-      -- blockchain.
+      -- are reported as invalid by 'addTxs' to be invalid precisely because
+      -- they have already been included. Distinguishing between these two
+      -- cases can be done in theory, but it is expensive unless we have an
+      -- index of transaction hashes that have been included on the blockchain.
       --
       -- As long as we keep the mempool entirely in-memory this could live in
       -- @STM m@; we keep it in @m@ instead to leave open the possibility of

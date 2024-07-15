@@ -125,7 +125,7 @@ data TryAddTx blk =
 -- Transactions are added one by one, updating the Mempool each time one was
 -- added successfully.
 --
--- See the necessary invariants on the Haddock for 'API.tryAddTxs'.
+-- See the necessary invariants on the Haddock for 'API.addTxs'.
 --
 -- This function does not sync the Mempool contents with the ledger state in
 -- case the latter changes, it relies on the background thread to do that.
