@@ -279,6 +279,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
       -> BlockFetchConsensusInterface PeerId (Header TestBlock) TestBlock m
     mkTestBlockFetchConsensusInterface getCandidates chainDbView =
         (BlockFetchClientInterface.mkBlockFetchConsensusInterface @m @PeerId
+          nullTracer
           (TestBlockConfig numCoreNodes)
           chainDbView
           (error "ChainSyncClientHandleCollection not provided to mkBlockFetchConsensusInterface")
