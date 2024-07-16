@@ -4,10 +4,14 @@
 module Ouroboros.Consensus.Util.Enclose (
     Enclosing
   , Enclosing' (..)
+  , EnclosingTimed
+  , encloseTimedWith
   , encloseWith
   , pattern FallingEdge
   ) where
 
+import           Control.Monad.Class.MonadTime.SI (DiffTime,
+                     MonadMonotonicTime (..), diffTime)
 import           Control.Tracer (Tracer, traceWith)
 
 data Enclosing' a =
@@ -32,3 +36,18 @@ encloseWith ::
   -> m a
 encloseWith tracer action =
     traceWith tracer RisingEdge *> action <* traceWith tracer FallingEdge
+
+type EnclosingTimed = Enclosing' DiffTime
+
+encloseTimedWith ::
+     MonadMonotonicTime m
+  => Tracer m EnclosingTimed
+  -> m a
+  -> m a
+encloseTimedWith tracer action = do
+    before <- getMonotonicTime
+    traceWith tracer RisingEdge
+    res <- action
+    after <- getMonotonicTime
+    traceWith tracer (FallingEdgeWith (after `diffTime` before))
+    pure res

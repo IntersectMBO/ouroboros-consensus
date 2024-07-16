@@ -37,6 +37,7 @@ import           Codec.Serialise.Encoding (Encoding)
 import           Control.Monad (forM, void)
 import           Control.Monad.Except (ExceptT (..))
 import           Control.Tracer
+import           Data.Functor.Contravariant ((>$<))
 import qualified Data.List as List
 import           Data.Maybe (isJust, mapMaybe)
 import           Data.Ord (Down (..))
@@ -51,6 +52,7 @@ import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
 import           Ouroboros.Consensus.Util.CBOR (ReadIncrementalErr,
                      decodeWithOrigin, readIncremental)
+import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Versioned
 import           System.FS.API.Lazy
@@ -77,7 +79,7 @@ data SnapshotFailure blk =
 data TraceSnapshotEvent blk
   = InvalidSnapshot DiskSnapshot (SnapshotFailure blk)
     -- ^ An on disk snapshot was skipped because it was invalid.
-  | TookSnapshot DiskSnapshot (RealPoint blk)
+  | TookSnapshot DiskSnapshot (RealPoint blk) EnclosingTimed
     -- ^ A snapshot was written to disk.
   | DeletedSnapshot DiskSnapshot
     -- ^ An old or invalid on-disk snapshot was deleted
@@ -103,7 +105,7 @@ data TraceSnapshotEvent blk
 --
 -- TODO: Should we delete the file if an error occurs during writing?
 takeSnapshot ::
-     forall m blk. (MonadThrow m, IsLedger (LedgerState blk))
+     forall m blk. (MonadThrow m, MonadMonotonicTime m, IsLedger (LedgerState blk))
   => Tracer m (TraceSnapshotEvent blk)
   -> SomeHasFS m
   -> (ExtLedgerState blk -> Encoding)
@@ -119,8 +121,8 @@ takeSnapshot tracer hasFS encLedger oldest =
         if List.any ((== number) . dsNumber) snapshots then
           return Nothing
         else do
-          writeSnapshot hasFS encLedger snapshot oldest
-          traceWith tracer $ TookSnapshot snapshot tip
+          encloseTimedWith (TookSnapshot snapshot tip >$< tracer)
+              $ writeSnapshot hasFS encLedger snapshot oldest
           return $ Just (snapshot, tip)
 
 -- | Trim the number of on disk snapshots so that at most 'onDiskNumSnapshots'
