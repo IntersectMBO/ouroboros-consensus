@@ -421,6 +421,7 @@ library unstable-consensus-testlib
     tasty-golden,
     tasty-hunit,
     tasty-quickcheck >=0.11,
+    tasty-rerun,
     template-haskell,
     text,
     time,
