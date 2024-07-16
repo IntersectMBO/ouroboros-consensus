@@ -53,9 +53,9 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..),
                      BlockFetchConsensusInterface (..), FetchMode (..),
-                     blockFetchLogic, bracketFetchClient,
-                     bracketKeepAliveClient, bracketSyncWithFetchClient,
-                     newFetchClientRegistry)
+                     GenesisBlockFetchConfiguration (..), blockFetchLogic,
+                     bracketFetchClient, bracketKeepAliveClient,
+                     bracketSyncWithFetchClient, newFetchClientRegistry)
 import           Ouroboros.Network.BlockFetch.Client (blockFetchClient)
 import           Ouroboros.Network.ControlMessage (ControlMessage (..))
 import           Ouroboros.Network.Mock.Chain (Chain)
@@ -371,6 +371,8 @@ instance Arbitrary BlockFetchClientTestSetup where
             bfcBulkSyncGracePeriod = 10
         bfcMaxRequestsInflight <- chooseEnum (2, 10)
         bfcSalt                <- arbitrary
+        gbfcBulkSyncGracePeriod <- fromIntegral <$> chooseInteger (5, 60)
+        let bfcGenesisBFConfig = GenesisBlockFetchConfiguration {..}
         pure BlockFetchConfiguration {..}
       pure BlockFetchClientTestSetup {..}
     where
