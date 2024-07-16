@@ -99,6 +99,12 @@ startBlockFetchLogic registry tracer chainDb fetchClientRegistry csHandlesCol = 
             -- before trying to download the block from another peer.
             (pure FetchModeDeadline)
 
+        bfcGenesisBFConfig = if enableChainSelStarvation
+          then GenesisBlockFetchConfiguration
+            { gbfcBulkSyncGracePeriod = 1000000 -- (more than 11 days)
+            }
+          else gcBlockFetchConfig enableGenesisConfigDefault
+
         -- Values taken from
         -- ouroboros-consensus-diffusion/src/unstable-diffusion-testlib/Test/ThreadNet/Network.hs
         blockFetchCfg = BlockFetchConfiguration
@@ -106,6 +112,7 @@ startBlockFetchLogic registry tracer chainDb fetchClientRegistry csHandlesCol = 
           , bfcMaxRequestsInflight = 10
           , bfcDecisionLoopInterval = 0
           , bfcSalt = 0
+          , bfcBulkSyncGracePeriod
           }
 
     void $ forkLinkedThread registry "BlockFetchLogic" $
