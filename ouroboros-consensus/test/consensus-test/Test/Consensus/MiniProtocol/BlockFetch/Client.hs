@@ -5,6 +5,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE NamedFieldPuns             #-}
+{-# LANGUAGE NumericUnderscores         #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TupleSections              #-}
@@ -51,7 +52,7 @@ import           Ouroboros.Consensus.Util.STM (blockUntilJust,
                      forkLinkedWatcher)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..),
+import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..), GenesisBlockFetchConfiguration (..),
                      BlockFetchConsensusInterface (..), FetchMode (..),
                      blockFetchLogic, bracketFetchClient,
                      bracketKeepAliveClient, bracketSyncWithFetchClient,
@@ -368,6 +369,8 @@ instance Arbitrary BlockFetchClientTestSetup where
             bfcBulkSyncGracePeriod = 10
         bfcMaxRequestsInflight <- chooseEnum (2, 10)
         bfcSalt                <- arbitrary
+        gbfcBulkSyncGracePeriod <- fromIntegral <$> chooseInteger (5, 60)
+        let bfcGenesisBFConfig = GenesisBlockFetchConfiguration {..}
         pure BlockFetchConfiguration {..}
       pure BlockFetchClientTestSetup {..}
     where

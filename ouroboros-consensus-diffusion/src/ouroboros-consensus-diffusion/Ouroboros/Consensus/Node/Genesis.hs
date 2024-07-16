@@ -18,6 +18,7 @@ module Ouroboros.Consensus.Node.Genesis (
   ) where
 
 import           Control.Monad (join)
+import           Data.Maybe (isJust)
 import           Data.Traversable (for)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -32,6 +33,10 @@ import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import           Ouroboros.Network.BlockFetch
+                     (GenesisBlockFetchConfiguration (..))
+import           System.Environment (lookupEnv)
+import           System.IO.Unsafe (unsafePerformIO)
 
 -- | Whether to en-/disable the Limit on Eagerness and the Genesis Density
 -- Disconnector.
@@ -41,29 +46,63 @@ data LoEAndGDDConfig a =
   deriving stock (Show, Functor, Foldable, Traversable)
 
 -- | Aggregating the various configs for Genesis-related subcomponents.
-data GenesisConfig = GenesisConfig {
-    gcChainSyncLoPBucketConfig :: !ChainSyncLoPBucketConfig
+data GenesisConfig = GenesisConfig
+  { gcBlockFetchConfig         :: !GenesisBlockFetchConfiguration
+  , gcChainSyncLoPBucketConfig :: !ChainSyncLoPBucketConfig
   , gcCSJConfig                :: !CSJConfig
   , gcLoEAndGDDConfig          :: !(LoEAndGDDConfig ())
   }
 
 -- TODO justification/derivation from other parameters
 enableGenesisConfigDefault :: GenesisConfig
-enableGenesisConfigDefault = GenesisConfig {
-      gcChainSyncLoPBucketConfig = ChainSyncLoPBucketEnabled ChainSyncLoPBucketEnabledConfig {
-          csbcCapacity = 100_000 -- number of tokens
-        , csbcRate     = 500 -- tokens per second leaking, 1/2ms
+enableGenesisConfigDefault = unsafePerformIO $ do
+  enableGenesis   <- isJust <$> lookupEnv "ENABLE_GENESIS"
+  enableLoP       <- (enableGenesis ||) . isJust <$> lookupEnv "ENABLE_LoP"
+  enableCSJ       <- (enableGenesis ||) . isJust <$> lookupEnv "ENABLE_CSJ"
+  enableLoEAndGDD <- (enableGenesis ||) . isJust <$> lookupEnv "ENABLE_LoEGDD"
+
+  let defaultBulkSyncGracePeriod = 10 -- seconds
+      defaultCapacity            = 100_000 -- number of tokens
+      defaultRate                = 500 -- tokens per second leaking, 1/2ms
+      defaultCSJJumpSize         = 3 * 2160 * 20 -- mainnet forecast range
+
+  gbfcBulkSyncGracePeriod <- maybe defaultBulkSyncGracePeriod
+    (fromInteger . read) <$> lookupEnv "BLOCKFETCH_GRACE_PERIOD"
+  csbcCapacity <- maybe defaultCapacity
+    (fromInteger . read) <$> lookupEnv "LOP_CAPACITY"
+  csbcRate <- maybe defaultRate
+    (fromInteger . read) <$> lookupEnv "LOP_RATE"
+  csjcJumpSize <- maybe defaultCSJJumpSize
+    (fromInteger . read) <$> lookupEnv "CSJ_JUMP_SIZE"
+
+  pure $ GenesisConfig
+    { gcBlockFetchConfig = GenesisBlockFetchConfiguration
+        { gbfcBulkSyncGracePeriod
         }
-    , gcCSJConfig = CSJEnabled CSJEnabledConfig {
-          csjcJumpSize = 3 * 2160 * 20 -- mainnet forecast range
-        }
-    , gcLoEAndGDDConfig = LoEAndGDDEnabled ()
+    , gcChainSyncLoPBucketConfig = if enableLoP
+        then ChainSyncLoPBucketEnabled ChainSyncLoPBucketEnabledConfig
+          { csbcCapacity
+          , csbcRate
+          }
+        else ChainSyncLoPBucketDisabled
+    , gcCSJConfig = if enableCSJ
+        then CSJEnabled CSJEnabledConfig
+          { csjcJumpSize
+          }
+        else CSJDisabled
+    , gcLoEAndGDDConfig = if enableLoEAndGDD
+        then LoEAndGDDEnabled ()
+        else LoEAndGDDDisabled
     }
+{-# NOINLINE enableGenesisConfigDefault #-}
 
 -- | Disable all Genesis components, yielding Praos behavior.
 disableGenesisConfig :: GenesisConfig
-disableGenesisConfig = GenesisConfig {
-      gcChainSyncLoPBucketConfig = ChainSyncLoPBucketDisabled
+disableGenesisConfig = GenesisConfig
+    { gcBlockFetchConfig = GenesisBlockFetchConfiguration
+        { gbfcBulkSyncGracePeriod = 0 -- no grace period when Genesis is disabled
+        }
+    , gcChainSyncLoPBucketConfig = ChainSyncLoPBucketDisabled
     , gcCSJConfig                = CSJDisabled
     , gcLoEAndGDDConfig          = LoEAndGDDDisabled
     }

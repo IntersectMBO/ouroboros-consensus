@@ -97,6 +97,12 @@ startBlockFetchLogic enableChainSelStarvation registry tracer chainDb fetchClien
             -- This is a syncing test, so we use 'FetchModeBulkSync'.
             (pure FetchModeBulkSync)
 
+        bfcGenesisBFConfig = if enableChainSelStarvation
+          then GenesisBlockFetchConfiguration
+            { gbfcBulkSyncGracePeriod = 1000000 -- (more than 11 days)
+            }
+          else gcBlockFetchConfig enableGenesisConfigDefault
+
         -- Values taken from
         -- ouroboros-consensus-diffusion/src/unstable-diffusion-testlib/Test/ThreadNet/Network.hs
         blockFetchCfg = BlockFetchConfiguration
@@ -104,8 +110,7 @@ startBlockFetchLogic enableChainSelStarvation registry tracer chainDb fetchClien
           , bfcMaxRequestsInflight = 10
           , bfcDecisionLoopInterval = 0
           , bfcSalt = 0
-          , bfcBulkSyncGracePeriod =
-            if enableChainSelStarvation then 10 else 1000000 -- (more than 11 days)
+          , bfcBulkSyncGracePeriod
           }
 
     void $ forkLinkedThread registry "BlockFetchLogic" $

@@ -1020,7 +1020,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
                                                   -- interval which doesn't play nice with
                                                   -- blockfetch descision interval.
                 , bfcSalt                   = 0
-                , bfcBulkSyncGracePeriod    = 10 -- seconds
+                , bfcGenesisBFConfig        = gcBlockFetchConfig enableGenesisConfigDefault
                 }
             , gsmArgs                 = GSM.GsmNodeKernelArgs {
                   gsmAntiThunderingHerd  = kaRng
