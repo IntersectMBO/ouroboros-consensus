@@ -355,7 +355,7 @@ data ChainDBEnv m blk = ChainDBEnv {
   , registry        :: ResourceRegistry m
   , varCurSlot      :: StrictTVar m SlotNo
   , varNextId       :: StrictTVar m Id
-  , varVolatileDbFs :: StrictTVar m MockFS
+  , varVolatileDbFs :: StrictTMVar m MockFS
   , args            :: ChainDbArgs Identity m blk
     -- ^ Needed to reopen a ChainDB, i.e., open a new one.
   }
@@ -434,7 +434,9 @@ run env@ChainDBEnv { varDB, .. } cmd =
     wipeVolatileDB :: ChainDBState m blk -> m (Point blk)
     wipeVolatileDB st = do
       close st
-      atomically $ writeTVar varVolatileDbFs Mock.empty
+      -- TODO: replace swapTMVar by writeTMVar once it is added to MonadSTM (see
+      -- https://github.com/input-output-hk/io-sim/issues/152)
+      void $ atomically $ swapTMVar varVolatileDbFs Mock.empty
       reopen env
       ChainDB { getTipPoint } <- chainDB <$> readTVarIO varDB
       atomically getTipPoint
@@ -1534,7 +1536,7 @@ runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
       closeRegistry iteratorRegistry
 
       -- Read the final MockFS of each database
-      fses <- atomically $ traverse readTVar nodeDBs
+      fses <- atomically $ traverse readTMVar nodeDBs
       let
           modelChain = Model.currentChain $ dbModel model
           prop =
@@ -1637,7 +1639,7 @@ mkArgs :: IOLike m
        -> ImmutableDB.ChunkInfo
        -> ExtLedgerState Blk
        -> ResourceRegistry m
-       -> NodeDBs (StrictTVar m MockFS)
+       -> NodeDBs (StrictTMVar m MockFS)
        -> CT.Tracer m (TraceEvent Blk)
        -> MaxClockSkew
        -> StrictTVar m SlotNo

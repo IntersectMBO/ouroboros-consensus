@@ -1,13 +1,12 @@
 module Main (main) where
 
 import           Control.Monad
-import           System.IO
-import           Text.Printf (printf)
-
 import           Data.Number.LogFloat (LogFloat)
 import qualified Data.Number.LogFloat as LF
 import           Statistics.Distribution
 import           Statistics.Distribution.Binomial
+import           System.IO
+import           Text.Printf (printf)
 
 -- | Compute the probability of seeing more than @k@ blocks in @n@ slots
 moreThanK ::

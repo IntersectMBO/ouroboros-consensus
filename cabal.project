@@ -38,3 +38,12 @@ import: ./asserts.cabal
 if(os(windows))
   constraints:
     bitvec -simd
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/fs-sim
+  tag: 7e2f38fb5fe3816e7c8c8b10081ef9520cddf94a
+  --sha256: 18hfq9bd7mnjc981rafwd5qc02p531shns9wqyp0vbdak26wi0qq
+  subdir:
+    fs-api
+    fs-sim

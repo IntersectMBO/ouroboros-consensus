@@ -12,6 +12,7 @@ module Test.Util.ChainDB (
   ) where
 
 
+import           Control.Concurrent.Class.MonadSTM.Strict
 import           Control.Tracer (nullTracer)
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Config
@@ -53,12 +54,12 @@ data NodeDBs db = NodeDBs {
   }
   deriving (Functor, Foldable, Traversable)
 
-emptyNodeDBs :: MonadSTM m => m (NodeDBs (StrictTVar m MockFS))
+emptyNodeDBs :: MonadSTM m => m (NodeDBs (StrictTMVar m MockFS))
 emptyNodeDBs = NodeDBs
-  <$> uncheckedNewTVarM Mock.empty
-  <*> uncheckedNewTVarM Mock.empty
-  <*> uncheckedNewTVarM Mock.empty
-  <*> uncheckedNewTVarM Mock.empty
+  <$> atomically (newTMVar Mock.empty)
+  <*> atomically (newTMVar Mock.empty)
+  <*> atomically (newTMVar Mock.empty)
+  <*> atomically (newTMVar Mock.empty)
 
 -- | Minimal set of arguments for creating a ChainDB instance for testing purposes.
 data MinimalChainDbArgs m blk = MinimalChainDbArgs {
@@ -69,9 +70,9 @@ data MinimalChainDbArgs m blk = MinimalChainDbArgs {
   -- ^ The initial ledger state.
   , mcdbRegistry       :: ResourceRegistry m
   -- ^ Keeps track of non-lexically scoped resources.
-  , mcdbNodeDBs        :: NodeDBs (StrictTVar m MockFS)
+  , mcdbNodeDBs        :: NodeDBs (StrictTMVar m MockFS)
   -- ^ File systems underlying the immutable, volatile and ledger databases.
-  -- Would be useful to default this to StrictTVar's containing empty MockFS's.
+  -- Would be useful to default this to StrictTMVar's containing empty MockFS's.
   }
 
 -- | Utility function to get a default chunk info in case we have EraParams available.
@@ -83,6 +84,7 @@ fromMinimalChainDbArgs ::
      ( MonadThrow m
      , MonadSTM m
      , ConsensusProtocol (BlockProtocol blk)
+     , PrimMonad m
      )
   => MinimalChainDbArgs m blk -> Complete ChainDbArgs m blk
 fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
@@ -96,7 +98,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
             -- done in @extractBlockComponent@ in the iterator for the
             -- ImmutableDB, and in @getBlockComponent@ for the VolatileDB.
           , immChunkInfo        = mcdbChunkInfo
-          , immHasFS            = SomeHasFS $ simHasFS (unsafeToUncheckedStrictTVar $ nodeDBsImm mcdbNodeDBs)
+          , immHasFS            = SomeHasFS $ simHasFS (nodeDBsImm mcdbNodeDBs)
           , immRegistry         = mcdbRegistry
           , immTracer           = nullTracer
           , immCodecConfig      = configCodec mcdbTopLevelConfig
@@ -105,7 +107,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
     , cdbVolDbArgs = VolatileDbArgs {
           volCheckIntegrity   = const True
         , volCodecConfig      = configCodec mcdbTopLevelConfig
-        , volHasFS            = SomeHasFS $ simHasFS (unsafeToUncheckedStrictTVar $ nodeDBsVol mcdbNodeDBs)
+        , volHasFS            = SomeHasFS $ simHasFS (nodeDBsVol mcdbNodeDBs)
         , volMaxBlocksPerFile = VolatileDB.mkBlocksPerFile 4
         , volTracer           = nullTracer
         , volValidationPolicy = VolatileDB.ValidateAll
@@ -115,7 +117,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
           -- Keep 2 ledger snapshots, and take a new snapshot at least every 2 *
           -- k seconds, where k is the security parameter.
         , lgrGenesis          = return mcdbInitLedger
-        , lgrHasFS            = SomeHasFS $ simHasFS (unsafeToUncheckedStrictTVar $ nodeDBsLgr mcdbNodeDBs)
+        , lgrHasFS            = SomeHasFS $ simHasFS (nodeDBsLgr mcdbNodeDBs)
         , lgrTracer           = nullTracer
         , lgrConfig           = configLedgerDb mcdbTopLevelConfig
         }
@@ -124,7 +126,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
         , cdbsCheckInFuture   = CheckInFuture $ \vf -> pure (VF.validatedFragment vf, [])
           -- Blocks are never in the future
         , cdbsGcDelay         = 1
-        , cdbsHasFSGsmDB      = SomeHasFS $ simHasFS (unsafeToUncheckedStrictTVar $ nodeDBsGsm mcdbNodeDBs)
+        , cdbsHasFSGsmDB      = SomeHasFS $ simHasFS (nodeDBsGsm mcdbNodeDBs)
         , cdbsGcInterval      = 1
         , cdbsRegistry        = mcdbRegistry
         , cdbsTracer          = nullTracer
