@@ -437,6 +437,7 @@ blockCapacityAlonzoMeasure ledgerState =
 txMeasureAlonzo ::
      forall proto era.
      ( ShelleyCompatible proto era
+     , L.AlonzoEraPParams era
      , L.AlonzoEraTxWits era
      , ExUnitsTooBigUTxO era
      , MaxTxSizeUTxO era
@@ -457,7 +458,7 @@ txMeasureAlonzo st tx@(ShelleyTx _txid tx') =
         guard $ pointWiseExUnits (<=) txsz limit
         Just $ fromExUnits txsz
 
-class L.AlonzoEraPParams era => ExUnitsTooBigUTxO era where
+class ExUnitsTooBigUTxO era where
   exUnitsTooBigUTxO :: ExUnits -> ExUnits -> SL.ApplyTxError era
 
 instance Crypto c => ExUnitsTooBigUTxO (AlonzoEra c) where
@@ -509,7 +510,9 @@ instance HasByteSize ConwayMeasure where
 
 blockCapacityConwayMeasure ::
      forall proto era.
-     (ShelleyCompatible proto era, ExUnitsTooBigUTxO era)
+     ( ShelleyCompatible proto era
+     , L.AlonzoEraPParams era
+     )
   => TickedLedgerState (ShelleyBlock proto era)
   -> ConwayMeasure
 blockCapacityConwayMeasure st =

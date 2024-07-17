@@ -5,7 +5,6 @@
 {-# LANGUAGE GADTs                   #-}
 {-# LANGUAGE LambdaCase              #-}
 {-# LANGUAGE MultiParamTypeClasses   #-}
-{-# LANGUAGE NumericUnderscores      #-}
 {-# LANGUAGE ScopedTypeVariables     #-}
 {-# LANGUAGE TypeApplications        #-}
 {-# LANGUAGE TypeFamilies            #-}
