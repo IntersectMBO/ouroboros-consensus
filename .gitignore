@@ -71,6 +71,7 @@ launch-*
 /dist-chap
 cabal.project.consensus
 
+*/.tasty-rerun-log
 ouroboros-consensus-cardano/test/tools-test/disk/chaindb/
 
 # https://github.com/github/gitignore/blob/main/Haskell.gitignore

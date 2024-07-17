@@ -17,6 +17,7 @@ import           Main.Utf8 (withStdTerminalHandles)
 import           Options.Applicative (metavar)
 import           Test.Tasty
 import           Test.Tasty.Ingredients
+import           Test.Tasty.Ingredients.Rerun
 import           Test.Tasty.Options
 import           Test.Tasty.QuickCheck
 
@@ -26,8 +27,9 @@ defaultMainWithTestEnv :: TestEnvConfig -> TestTree -> IO ()
 defaultMainWithTestEnv testConfig testTree = do
     cryptoInit
     withStdTerminalHandles $
-      defaultMainWithIngredients (testEnvIngredient : defaultIngredients) $
-        withTestEnv testConfig testTree
+      defaultMainWithIngredients
+        [rerunningTests (testEnvIngredient : defaultIngredients)]
+        ( withTestEnv testConfig testTree )
     where
       testEnvIngredient :: Ingredient
       testEnvIngredient = includingOptions [Option (Proxy :: Proxy TestEnv)]
