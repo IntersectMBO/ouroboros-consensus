@@ -1252,6 +1252,8 @@ deriving instance SOP.Generic         (ImmutableDB.TraceEvent blk)
 deriving instance SOP.HasDatatypeInfo (ImmutableDB.TraceEvent blk)
 deriving instance SOP.Generic         (VolatileDB.TraceEvent blk)
 deriving instance SOP.HasDatatypeInfo (VolatileDB.TraceEvent blk)
+deriving instance SOP.Generic         (TraceChainSelStarvationEvent blk)
+deriving instance SOP.HasDatatypeInfo (TraceChainSelStarvationEvent blk)
 
 data Tag =
     TagGetIsValidJust
@@ -1615,22 +1617,23 @@ whenOccurs evs occurs k = go evs
 
 traceEventName :: TraceEvent blk -> String
 traceEventName = \case
-    TraceAddBlockEvent          ev    -> "AddBlock."          <> case ev of
-      AddBlockValidation        ev' -> constrName ev'
-      _                             -> constrName ev
-    TraceFollowerEvent          ev    -> "Follower."            <> constrName ev
-    TraceCopyToImmutableDBEvent ev    -> "CopyToImmutableDB." <> constrName ev
-    TraceInitChainSelEvent      ev    -> "InitChainSel."      <> case ev of
-      InitChainSelValidation    ev' -> constrName ev'
-      StartedInitChainSelection     -> "StartedInitChainSelection"
-      InitialChainSelected          -> "InitialChainSelected"
-    TraceOpenEvent              ev    -> "Open."              <> constrName ev
-    TraceGCEvent                ev    -> "GC."                <> constrName ev
-    TraceIteratorEvent          ev    -> "Iterator."          <> constrName ev
-    TraceSnapshotEvent          ev    -> "Ledger."            <> constrName ev
-    TraceLedgerReplayEvent      ev    -> "LedgerReplay."      <> constrName ev
-    TraceImmutableDBEvent       ev    -> "ImmutableDB."       <> constrName ev
-    TraceVolatileDBEvent        ev    -> "VolatileDB."        <> constrName ev
+    TraceAddBlockEvent            ev  -> "AddBlock."           <> case ev of
+      AddBlockValidation          ev' -> constrName ev'
+      _                               -> constrName ev
+    TraceFollowerEvent            ev  -> "Follower."           <> constrName ev
+    TraceCopyToImmutableDBEvent   ev  -> "CopyToImmutableDB."  <> constrName ev
+    TraceInitChainSelEvent        ev  -> "InitChainSel."       <> case ev of
+      InitChainSelValidation      ev' -> constrName ev'
+      StartedInitChainSelection       -> "StartedInitChainSelection"
+      InitialChainSelected            -> "InitialChainSelected"
+    TraceOpenEvent                ev  -> "Open."               <> constrName ev
+    TraceGCEvent                  ev  -> "GC."                 <> constrName ev
+    TraceIteratorEvent            ev  -> "Iterator."           <> constrName ev
+    TraceSnapshotEvent            ev  -> "Ledger."             <> constrName ev
+    TraceLedgerReplayEvent        ev  -> "LedgerReplay."       <> constrName ev
+    TraceImmutableDBEvent         ev  -> "ImmutableDB."        <> constrName ev
+    TraceVolatileDBEvent          ev  -> "VolatileDB."         <> constrName ev
+    TraceChainSelStarvationEvent  ev  -> "ChainSelStarvation." <> constrName ev
 
 mkArgs :: IOLike m
        => TopLevelConfig Blk
