@@ -59,7 +59,7 @@ import           Cardano.Ledger.Crypto (Crypto)
 import qualified Cardano.Ledger.SafeHash as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Rules as ShelleyEra
-import qualified Cardano.Ledger.Val as SL ((<+>), zero)
+import qualified Cardano.Ledger.Val as SL (zero, (<+>))
 import           Control.Arrow ((+++))
 import           Control.Monad (guard)
 import           Control.Monad.Except (Except, liftEither)
