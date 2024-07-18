@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -42,12 +43,15 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
     -- * Blocks to add
   , BlockToAdd (..)
   , ChainSelMessage (..)
-  , ChainSelQueue
+  , ChainSelQueue -- opaque
   , addBlockToAdd
   , addReprocessLoEBlocks
   , closeChainSelQueue
   , getChainSelMessage
+  , getMaxSlotNoChainSelQueue
+  , memberChainSelQueue
   , newChainSelQueue
+  , processedChainSelMessage
     -- * Trace types
   , SelectionChangedInfo (..)
   , TraceAddBlockEvent (..)
@@ -63,7 +67,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
   , TraceValidationEvent (..)
   ) where
 
-import           Cardano.Prelude (whenM)
 import           Control.Monad (when)
 import           Control.ResourceRegistry
 import           Control.Tracer
@@ -71,6 +74,8 @@ import           Data.Foldable (traverse_)
 import           Data.Map.Strict (Map)
 import           Data.Maybe (mapMaybe)
 import           Data.Maybe.Strict (StrictMaybe (..))
+import           Data.MultiSet (MultiSet)
+import qualified Data.MultiSet as MultiSet
 import           Data.Set (Set)
 import           Data.Typeable
 import           Data.Void (Void)
@@ -107,7 +112,7 @@ import           Ouroboros.Consensus.Util.Enclose (Enclosing, Enclosing' (..))
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.STM (WithFingerprint)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
-import           Ouroboros.Network.Block (MaxSlotNo)
+import           Ouroboros.Network.Block (MaxSlotNo (..))
 import           Ouroboros.Network.BlockFetch.ConsensusInterface
                      (ChainSelStarvation (..))
 
@@ -419,7 +424,19 @@ data InvalidBlockInfo blk = InvalidBlockInfo
 -- | FIFO queue used to add blocks asynchronously to the ChainDB. Blocks are
 -- read from this queue by a background thread, which processes the blocks
 -- synchronously.
-newtype ChainSelQueue m blk = ChainSelQueue (TBQueue m (ChainSelMessage m blk))
+--
+-- We also maintain a multiset of the points of all of the blocks in the queue,
+-- plus potentially the one block for which chain selection is currently in
+-- progress. It is used to account for queued blocks in eg 'getIsFetched' and
+-- 'getMaxSlotNo'.
+--
+-- INVARIANT: Counted with multiplicity, @varChainSelPoints@ contains exactly
+-- the same hashes or at most one additional hash compared to the hashes of
+-- blocks in @varChainSelQueue@.
+data ChainSelQueue m blk = ChainSelQueue {
+    varChainSelQueue  :: TBQueue m (ChainSelMessage m blk)
+  , varChainSelPoints :: StrictTVar m (MultiSet (RealPoint blk))
+  }
   deriving NoThunks via OnlyCheckWhnfNamed "ChainSelQueue" (ChainSelQueue m blk)
 
 -- | Entry in the 'ChainSelQueue' queue: a block together with the 'TMVar's used
@@ -445,9 +462,14 @@ data ChainSelMessage m blk
       -- ^ Used for 'ChainSelectionPromise'.
 
 -- | Create a new 'ChainSelQueue' with the given size.
-newChainSelQueue :: IOLike m => Word -> m (ChainSelQueue m blk)
-newChainSelQueue queueSize = ChainSelQueue <$>
-    atomically (newTBQueue (fromIntegral queueSize))
+newChainSelQueue :: (IOLike m, StandardHash blk, Typeable blk) => Word -> m (ChainSelQueue m blk)
+newChainSelQueue chainSelQueueCapacity = do
+  varChainSelQueue  <- newTBQueueIO (fromIntegral chainSelQueueCapacity)
+  varChainSelPoints <- newTVarIO MultiSet.empty
+  pure ChainSelQueue {
+      varChainSelQueue
+    , varChainSelPoints
+    }
 
 -- | Add a block to the 'ChainSelQueue' queue. Can block when the queue is full.
 addBlockToAdd ::
@@ -457,7 +479,7 @@ addBlockToAdd ::
   -> InvalidBlockPunishment m
   -> blk
   -> m (AddBlockPromise m blk)
-addBlockToAdd tracer (ChainSelQueue queue) punish blk = do
+addBlockToAdd tracer (ChainSelQueue {varChainSelQueue, varChainSelPoints}) punish blk = do
     varBlockWrittenToDisk <- newEmptyTMVarIO
     varBlockProcessed     <- newEmptyTMVarIO
     let !toAdd = BlockToAdd
@@ -466,10 +488,12 @@ addBlockToAdd tracer (ChainSelQueue queue) punish blk = do
           , varBlockWrittenToDisk
           , varBlockProcessed
           }
-    traceWith tracer $ AddedBlockToQueue (blockRealPoint blk) RisingEdge
+        pt = blockRealPoint blk
+    traceWith tracer $ AddedBlockToQueue pt RisingEdge
     queueSize <- atomically $ do
-      writeTBQueue  queue (ChainSelAddBlock toAdd)
-      lengthTBQueue queue
+      writeTBQueue varChainSelQueue (ChainSelAddBlock toAdd)
+      modifyTVar varChainSelPoints $ MultiSet.insert pt
+      lengthTBQueue varChainSelQueue
     traceWith tracer $
       AddedBlockToQueue (blockRealPoint blk) (FallingEdgeWith (fromIntegral queueSize))
     return AddBlockPromise
@@ -483,11 +507,12 @@ addReprocessLoEBlocks
   => Tracer m (TraceAddBlockEvent blk)
   -> ChainSelQueue m blk
   -> m (ChainSelectionPromise m)
-addReprocessLoEBlocks tracer (ChainSelQueue queue) = do
+addReprocessLoEBlocks tracer ChainSelQueue {varChainSelQueue} = do
   varProcessed <- newEmptyTMVarIO
   let waitUntilRan = atomically $ readTMVar varProcessed
   traceWith tracer $ AddedReprocessLoEBlocksToQueue
-  atomically $ writeTBQueue queue $ ChainSelReprocessLoEBlocks varProcessed
+  atomically $ writeTBQueue varChainSelQueue $
+    ChainSelReprocessLoEBlocks varProcessed
   return $ ChainSelectionPromise waitUntilRan
 
 -- | Get the oldest message from the 'ChainSelQueue' queue. Can block when the
@@ -499,7 +524,7 @@ getChainSelMessage
   -> StrictTVar m ChainSelStarvation
   -> ChainSelQueue m blk
   -> m (ChainSelMessage m blk)
-getChainSelMessage starvationTracer starvationVar (ChainSelQueue queue) =
+getChainSelMessage starvationTracer starvationVar chainSelQueue =
     atomically (tryReadTBQueue' queue) >>= \case
       Just msg -> pure msg
       Nothing  -> do
@@ -508,6 +533,10 @@ getChainSelMessage starvationTracer starvationVar (ChainSelQueue queue) =
         terminateStarvationMeasure msg
         pure msg
   where
+    ChainSelQueue {
+        varChainSelQueue = queue
+      } = chainSelQueue
+
     startStarvationMeasure :: m ()
     startStarvationMeasure = do
       prevStarvation <- atomically $ swapTVar starvationVar ChainSelStarvationOngoing
@@ -531,7 +560,7 @@ tryReadTBQueue' q = (Just <$> readTBQueue q) `orElse` pure Nothing
 -- | Flush the 'ChainSelQueue' queue and notify the waiting threads.
 --
 closeChainSelQueue :: IOLike m => ChainSelQueue m blk -> STM m ()
-closeChainSelQueue (ChainSelQueue queue) = do
+closeChainSelQueue ChainSelQueue{varChainSelQueue = queue} = do
   as <- mapMaybe blockAdd <$> flushTBQueue queue
   traverse_ (\a -> tryPutTMVar (varBlockProcessed a)
                               (FailedToAddBlock "Queue flushed"))
@@ -541,6 +570,41 @@ closeChainSelQueue (ChainSelQueue queue) = do
       ChainSelAddBlock ab -> Just ab
       ChainSelReprocessLoEBlocks _ -> Nothing
 
+-- | To invoke when the given 'ChainSelMessage' has been processed by ChainSel.
+-- This is used to remove the respective point from the multiset of points in
+-- the 'ChainSelQueue' (as the block has now been written to disk by ChainSel).
+processedChainSelMessage ::
+     (IOLike m, HasHeader blk)
+  => ChainSelQueue m blk
+  -> ChainSelMessage m blk
+  -> STM m ()
+processedChainSelMessage ChainSelQueue {varChainSelPoints} = \case
+    ChainSelAddBlock BlockToAdd{blockToAdd = blk} ->
+      modifyTVar varChainSelPoints $ MultiSet.delete (blockRealPoint blk)
+    ChainSelReprocessLoEBlocks{} ->
+      pure ()
+
+-- | Return a function to test the membership
+memberChainSelQueue ::
+     (IOLike m, HasHeader blk)
+  => ChainSelQueue m blk
+  -> STM m (RealPoint blk -> Bool)
+memberChainSelQueue ChainSelQueue {varChainSelPoints} =
+    flip MultiSet.member <$> readTVar varChainSelPoints
+
+getMaxSlotNoChainSelQueue ::
+     IOLike m
+  => ChainSelQueue m blk
+  -> STM m MaxSlotNo
+getMaxSlotNoChainSelQueue ChainSelQueue {varChainSelPoints} =
+    aux <$> readTVar varChainSelPoints
+  where
+    -- | The 'Ord' instance of 'RealPoint' orders by 'SlotNo' first, so the
+    -- maximal key of the map has the greatest 'SlotNo'.
+    aux :: MultiSet (RealPoint blk) -> MaxSlotNo
+    aux pts = case MultiSet.maxView pts of
+        Nothing                 -> NoMaxSlotNo
+        Just (RealPoint s _, _) -> MaxSlotNo s
 
 {-------------------------------------------------------------------------------
   Trace types
