@@ -541,6 +541,7 @@ addBlockRunner fuse cdb@CDB{..} = forever $ do
             ChainSelAddBlock BlockToAdd{blockToAdd} ->
               trace $ PoppedBlockFromQueue $ FallingEdgeWith $
                       blockRealPoint blockToAdd
-          chainSelSync cdb message)
+          chainSelSync cdb message
+          lift $ atomically $ processedChainSelMessage cdbChainSelQueue message)
   where
     starvationTracer = Tracer $ traceWith cdbTracer . TraceChainSelStarvationEvent
