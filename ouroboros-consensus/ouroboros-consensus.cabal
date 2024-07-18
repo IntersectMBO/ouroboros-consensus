@@ -292,6 +292,7 @@ library
     io-classes ^>=1.5,
     measures,
     mtl,
+    multiset ^>=0.3,
     nothunks ^>=0.2,
     ouroboros-network-api ^>=0.11,
     ouroboros-network-mock ^>=0.1,
