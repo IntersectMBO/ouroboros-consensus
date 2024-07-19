@@ -555,7 +555,7 @@ addReprocessLoEBlocks tracer (ChainSelQueue {varChainSelReprocessLoEBlocks}) = d
 -- queue is empty; in that case, reports the starvation (and its end) to the
 -- callback.
 getChainSelMessage
-  :: IOLike m
+  :: (HasHeader blk, IOLike m)
   => Tracer m (TraceChainSelStarvationEvent blk)
   -> StrictTVar m ChainSelStarvation
   -> ChainSelQueue m blk
@@ -572,17 +572,28 @@ getChainSelMessage starvationTracer starvationVar queue = go
           case Map.minView chainSelQueue of
             Just (blockToAdd, chainSelQueue') -> do
               writeTVarIO varChainSelQueue chainSelQueue'
+              terminateStarvationMeasure blockToAdd
               return $ ChainSelAddBlock blockToAdd
             Nothing -> do
-              prevStarvation <- swapTVarIO starvationVar ChainSelStarvationOngoing
-              when (prevStarvation /= ChainSelStarvationOngoing) $
-                traceWith starvationTracer . ChainSelStarvationStarted =<< getMonotonicTime
+              startStarvationMeasure
               void $ atomically $ blockUntilChanged (second Map.null) (False, True) readBoth
               go
     ChainSelQueue {varChainSelQueue, varChainSelReprocessLoEBlocks} = queue
     writeTVarIO v x = atomically $ writeTVar v x
     swapTVarIO v x = atomically $ swapTVar v x
     readBoth = (,) <$> readTVar varChainSelReprocessLoEBlocks <*> readTVar varChainSelQueue
+
+    startStarvationMeasure = do
+      prevStarvation <- swapTVarIO starvationVar ChainSelStarvationOngoing
+      when (prevStarvation /= ChainSelStarvationOngoing) $
+        traceWith starvationTracer . ChainSelStarvationStarted =<< getMonotonicTime
+
+    terminateStarvationMeasure BlockToAdd{blockToAdd=block} = do
+      prevStarvation <- readTVarIO starvationVar
+      when (prevStarvation == ChainSelStarvationOngoing) $ do
+        tf <- getMonotonicTime
+        traceWith starvationTracer (ChainSelStarvationEnded tf $ blockRealPoint block)
+        writeTVarIO starvationVar (ChainSelStarvationEndedAt tf)
 
 -- | Flush the 'ChainSelQueue' queue and notify the waiting threads.
 --
