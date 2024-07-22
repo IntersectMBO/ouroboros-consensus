@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveTraversable   #-}
+{-# LANGUAGE DeriveGeneric       #-}
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
@@ -23,6 +24,7 @@ module Ouroboros.Consensus.Node.Genesis (
 import           Control.Monad (join)
 import           Data.Maybe (fromMaybe)
 import           Data.Traversable (for)
+import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (CSJConfig (..), CSJEnabledConfig (..),
@@ -44,7 +46,7 @@ import           Ouroboros.Network.BlockFetch
 data LoEAndGDDConfig a =
     LoEAndGDDEnabled !a
   | LoEAndGDDDisabled
-  deriving stock (Show, Functor, Foldable, Traversable)
+  deriving stock (Eq, Generic, Show, Functor, Foldable, Traversable)
 
 -- | Aggregating the various configs for Genesis-related subcomponents.
 data GenesisConfig = GenesisConfig
@@ -52,7 +54,7 @@ data GenesisConfig = GenesisConfig
   , gcChainSyncLoPBucketConfig :: !ChainSyncLoPBucketConfig
   , gcCSJConfig                :: !CSJConfig
   , gcLoEAndGDDConfig          :: !(LoEAndGDDConfig ())
-  }
+  } deriving stock (Eq, Generic, Show)
 
 -- | Genesis configuration flags and low-level args, as parsed from config file or CLI
 data GenesisConfigFlags = GenesisConfigFlags
@@ -63,7 +65,7 @@ data GenesisConfigFlags = GenesisConfigFlags
   , gcfBucketCapacity       :: Maybe Integer
   , gcfBucketRate           :: Maybe Integer
   , gcfCSJJumpSize          :: Maybe Integer
-  }
+  } deriving stock (Eq, Generic, Show)
 
 enableGenesisConfigDefault :: GenesisConfig
 enableGenesisConfigDefault = mkGenesisConfig $ Just $ GenesisConfigFlags
