@@ -3,14 +3,17 @@
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE NumericUnderscores  #-}
+{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Ouroboros.Consensus.Node.Genesis (
     -- * 'GenesisConfig'
     GenesisConfig (..)
+  , GenesisConfigFlags (..)
   , LoEAndGDDConfig (..)
   , disableGenesisConfig
   , enableGenesisConfigDefault
+  , mkGenesisConfig
     -- * NodeKernel helpers
   , GenesisNodeKernelArgs (..)
   , mkGenesisNodeKernelArgs
@@ -18,7 +21,7 @@ module Ouroboros.Consensus.Node.Genesis (
   ) where
 
 import           Control.Monad (join)
-import           Data.Maybe (isJust)
+import           Data.Maybe (fromMaybe)
 import           Data.Traversable (for)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -35,8 +38,6 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.BlockFetch
                      (GenesisBlockFetchConfiguration (..))
-import           System.Environment (lookupEnv)
-import           System.IO.Unsafe (unsafePerformIO)
 
 -- | Whether to en-/disable the Limit on Eagerness and the Genesis Density
 -- Disconnector.
@@ -53,52 +54,35 @@ data GenesisConfig = GenesisConfig
   , gcLoEAndGDDConfig          :: !(LoEAndGDDConfig ())
   }
 
--- TODO justification/derivation from other parameters
+-- | Genesis configuration flags and low-level args, as parsed from config file or CLI
+data GenesisConfigFlags = GenesisConfigFlags
+  { gcfEnableCSJ            :: Bool
+  , gcfEnableLoEAndGDD      :: Bool
+  , gcfEnableLoP            :: Bool
+  , gcfBulkSyncGracePeriod  :: Maybe Integer
+  , gcfBucketCapacity       :: Maybe Integer
+  , gcfBucketRate           :: Maybe Integer
+  , gcfCSJJumpSize          :: Maybe Integer
+  }
+
 enableGenesisConfigDefault :: GenesisConfig
-enableGenesisConfigDefault = unsafePerformIO $ do
-  enableGenesis   <- isJust <$> lookupEnv "ENABLE_GENESIS"
-  enableLoP       <- (enableGenesis ||) . isJust <$> lookupEnv "ENABLE_LoP"
-  enableCSJ       <- (enableGenesis ||) . isJust <$> lookupEnv "ENABLE_CSJ"
-  enableLoEAndGDD <- (enableGenesis ||) . isJust <$> lookupEnv "ENABLE_LoEGDD"
-
-  let defaultBulkSyncGracePeriod = 10 -- seconds
-      defaultCapacity            = 100_000 -- number of tokens
-      defaultRate                = 500 -- tokens per second leaking, 1/2ms
-      defaultCSJJumpSize         = 3 * 2160 * 20 -- mainnet forecast range
-
-  gbfcBulkSyncGracePeriod <- maybe defaultBulkSyncGracePeriod
-    (fromInteger . read) <$> lookupEnv "BLOCKFETCH_GRACE_PERIOD"
-  csbcCapacity <- maybe defaultCapacity
-    (fromInteger . read) <$> lookupEnv "LOP_CAPACITY"
-  csbcRate <- maybe defaultRate
-    (fromInteger . read) <$> lookupEnv "LOP_RATE"
-  csjcJumpSize <- maybe defaultCSJJumpSize
-    (fromInteger . read) <$> lookupEnv "CSJ_JUMP_SIZE"
-
-  pure $ GenesisConfig
-    { gcBlockFetchConfig = GenesisBlockFetchConfiguration
-        { gbfcBulkSyncGracePeriod
-        }
-    , gcChainSyncLoPBucketConfig = if enableLoP
-        then ChainSyncLoPBucketEnabled ChainSyncLoPBucketEnabledConfig
-          { csbcCapacity
-          , csbcRate
-          }
-        else ChainSyncLoPBucketDisabled
-    , gcCSJConfig = if enableCSJ
-        then CSJEnabled CSJEnabledConfig
-          { csjcJumpSize
-          }
-        else CSJDisabled
-    , gcLoEAndGDDConfig = if enableLoEAndGDD
-        then LoEAndGDDEnabled ()
-        else LoEAndGDDDisabled
-    }
-{-# NOINLINE enableGenesisConfigDefault #-}
+enableGenesisConfigDefault = mkGenesisConfig $ Just $ GenesisConfigFlags
+  { gcfEnableCSJ            = True
+  , gcfEnableLoEAndGDD      = True
+  , gcfEnableLoP            = True
+  , gcfBulkSyncGracePeriod  = Nothing
+  , gcfBucketCapacity       = Nothing
+  , gcfBucketRate           = Nothing
+  , gcfCSJJumpSize          = Nothing
+  }
 
 -- | Disable all Genesis components, yielding Praos behavior.
 disableGenesisConfig :: GenesisConfig
-disableGenesisConfig = GenesisConfig
+disableGenesisConfig = mkGenesisConfig Nothing
+
+mkGenesisConfig :: Maybe GenesisConfigFlags -> GenesisConfig
+mkGenesisConfig Nothing = -- disable Genesis
+  GenesisConfig
     { gcBlockFetchConfig = GenesisBlockFetchConfiguration
         { gbfcBulkSyncGracePeriod = 0 -- no grace period when Genesis is disabled
         }
@@ -106,6 +90,37 @@ disableGenesisConfig = GenesisConfig
     , gcCSJConfig                = CSJDisabled
     , gcLoEAndGDDConfig          = LoEAndGDDDisabled
     }
+mkGenesisConfig (Just GenesisConfigFlags{..}) =
+  GenesisConfig
+    { gcBlockFetchConfig = GenesisBlockFetchConfiguration
+        { gbfcBulkSyncGracePeriod
+        }
+    , gcChainSyncLoPBucketConfig = if gcfEnableLoP
+        then ChainSyncLoPBucketEnabled ChainSyncLoPBucketEnabledConfig
+          { csbcCapacity
+          , csbcRate
+          }
+        else ChainSyncLoPBucketDisabled
+    , gcCSJConfig = if gcfEnableCSJ
+        then CSJEnabled CSJEnabledConfig
+          { csjcJumpSize
+          }
+        else CSJDisabled
+    , gcLoEAndGDDConfig = if gcfEnableLoEAndGDD
+        then LoEAndGDDEnabled ()
+        else LoEAndGDDDisabled
+    }
+  where
+    -- TODO justification/derivation from other parameters
+    defaultBulkSyncGracePeriod = 10 -- seconds
+    defaultCapacity            = 100_000 -- number of tokens
+    defaultRate                = 500 -- tokens per second leaking, 1/2ms
+    defaultCSJJumpSize         = 3 * 2160 * 20 -- mainnet forecast range
+
+    gbfcBulkSyncGracePeriod = fromInteger $ fromMaybe defaultBulkSyncGracePeriod gcfBulkSyncGracePeriod
+    csbcCapacity            = fromInteger $ fromMaybe defaultCapacity gcfBucketCapacity
+    csbcRate                = fromInteger $ fromMaybe defaultRate gcfBucketRate
+    csjcJumpSize            = fromInteger $ fromMaybe defaultCSJJumpSize gcfCSJJumpSize
 
 -- | Genesis-related arguments needed by the NodeKernel initialization logic.
 data GenesisNodeKernelArgs m blk = GenesisNodeKernelArgs {
