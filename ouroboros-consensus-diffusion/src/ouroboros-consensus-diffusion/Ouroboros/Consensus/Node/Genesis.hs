@@ -24,6 +24,8 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (CSJConfig (..), CSJEnabledConfig (..),
                      ChainSyncLoPBucketConfig (..),
                      ChainSyncLoPBucketEnabledConfig (..))
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
+                     (HistoricityCutoff (..))
 import qualified Ouroboros.Consensus.Node.GsmState as GSM
 import           Ouroboros.Consensus.Storage.ChainDB (ChainDbArgs)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
@@ -45,6 +47,7 @@ data GenesisConfig = GenesisConfig {
     gcChainSyncLoPBucketConfig :: !ChainSyncLoPBucketConfig
   , gcCSJConfig                :: !CSJConfig
   , gcLoEAndGDDConfig          :: !(LoEAndGDDConfig ())
+  , gcHistoricityCutoff        :: !(Maybe HistoricityCutoff)
   }
 
 -- TODO justification/derivation from other parameters
@@ -58,6 +61,10 @@ enableGenesisConfigDefault = GenesisConfig {
           csjcJumpSize = 3 * 2160 * 20 -- mainnet forecast range
         }
     , gcLoEAndGDDConfig = LoEAndGDDEnabled ()
+      -- Duration in seconds of one Cardano mainnet Shelley stability window
+      -- (3k/f slots times one second per slot) plus one extra hour as a
+      -- safety margin.
+    , gcHistoricityCutoff = Just $ HistoricityCutoff $ 3 * 2160 * 20 + 3600
     }
 
 -- | Disable all Genesis components, yielding Praos behavior.
@@ -66,6 +73,7 @@ disableGenesisConfig = GenesisConfig {
       gcChainSyncLoPBucketConfig = ChainSyncLoPBucketDisabled
     , gcCSJConfig                = CSJDisabled
     , gcLoEAndGDDConfig          = LoEAndGDDDisabled
+    , gcHistoricityCutoff        = Nothing
     }
 
 -- | Genesis-related arguments needed by the NodeKernel initialization logic.

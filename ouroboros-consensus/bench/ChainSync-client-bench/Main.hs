@@ -25,6 +25,7 @@ import qualified Ouroboros.Consensus.HeaderStateHistory as HeaderStateHistory
 import qualified Ouroboros.Consensus.HeaderValidation as HV
 import qualified Ouroboros.Consensus.Ledger.Extended as Extended
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Server
                      (chainSyncServerForFollower)
@@ -132,6 +133,7 @@ oneBenchRun
               , CSClient.cfg                     = topConfig
               , CSClient.tracer                  = nullTracer `asTypeOf` contramap show debugTracer
               , CSClient.someHeaderInFutureCheck = headerInFutureCheck
+              , CSClient.historicityCheck        = HistoricityCheck.noCheck
               , CSClient.mkPipelineDecision0     =
                     pipelineDecisionLowHighMark 10 20
               }
