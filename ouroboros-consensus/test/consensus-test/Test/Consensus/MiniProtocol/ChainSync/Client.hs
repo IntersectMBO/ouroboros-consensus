@@ -64,7 +64,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust)
 import           Data.Semigroup (Max (Max), getMax)
 import qualified Data.Set as Set
-import           Data.Time (diffUTCTime)
+import           Data.Time (NominalDiffTime, diffUTCTime)
 import           Data.Typeable
 import           GHC.Generics (Generic)
 import           Network.TypedProtocol.Channel
@@ -88,6 +88,8 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      DynamicEnv (..), Our (..), Their (..),
                      TraceChainSyncClientEvent (..), bracketChainSyncClient,
                      chainSyncClient, chainSyncStateFor, viewChainSyncState)
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricalRollbacks
+                     (HistoricalRollbackCheck)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricalRollbacks as HistoricalRollbacks
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Node.GsmState (GsmState (Syncing))
@@ -343,11 +345,6 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
     let _ = clientSystemTime :: SystemTime m
 
     varCurrentLogicalTick <- uncheckedNewTVarM (Tick 0)
-    let clockUpdates :: Schedule NewMaxSlot
-        clockUpdates =
-            mkClockUpdates
-              (ClientUpdates clientUpdates)
-              (ServerUpdates serverUpdates)
 
     -- Set up the client
     varClientState  <- uncheckedNewTVarM Genesis
@@ -404,6 +401,15 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
             -- Note that this tests passes in the exact difference between the
             -- client's and server's clock as the tolerable clock skew.
 
+        historicalRollbackCheck :: HistoricalRollbackCheck m TestBlock
+        historicalRollbackCheck =
+            HistoricalRollbacks.mkCheck
+              clientSystemTime
+              -- The historical rollback check is disabled when we use
+              -- 'CaughtUp' here, so we use 'Syncing'.
+              (pure Syncing)
+              maxRollbackAge
+
         lopBucketConfig :: ChainSyncLoPBucketConfig
         lopBucketConfig = ChainSyncLoPBucketDisabled
 
@@ -421,8 +427,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                 , cfg                     = nodeCfg
                 , tracer                  = chainSyncTracer
                 , someHeaderInFutureCheck = headerInFutureCheck
-                  -- TODO this will be changed in the next commit
-                , historicalRollbackCheck = HistoricalRollbacks.noCheck
+                , historicalRollbackCheck
                 , mkPipelineDecision0     =
                     pipelineDecisionLowHighMark 10 20
                 }
@@ -447,12 +452,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
         advanceWallClockForTick tick = do
             doTick clockUpdates tick $ \case
               [newMaxSlot] -> do
-                let target = case newMaxSlot of
-                      NewMaxClientSlot slot -> toOnset slot
-                      NewMaxServerSlot slot -> toSkewedOnset slot
-
-                      NewMaxClientAndServerSlot cslot sslot ->
-                        toOnset cslot `max` toSkewedOnset sslot
+                let target = clientTimeForNewMaxSlot newMaxSlot
                 now <- systemTimeCurrent clientSystemTime
                 threadDelay $ nominalDelay $ target `diffRelTime` now
 
@@ -596,6 +596,60 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
       let RelativeTime onset = toOnset slot
       in
       RelativeTime $ onset - unClockSkew skew
+
+    -- The target time (as reported by 'clientSystemTime') for the given
+    -- 'NewMaxSlot'.
+    clientTimeForNewMaxSlot :: NewMaxSlot -> RelativeTime
+    clientTimeForNewMaxSlot = \case
+        NewMaxClientSlot slot -> toOnset slot
+        NewMaxServerSlot slot -> toSkewedOnset slot
+
+        NewMaxClientAndServerSlot cslot sslot ->
+          toOnset cslot `max` toSkewedOnset sslot
+
+    clockUpdates :: Schedule NewMaxSlot
+    clockUpdates =
+        mkClockUpdates
+          (ClientUpdates clientUpdates)
+          (ServerUpdates serverUpdates)
+
+    clientTimeForTick :: Tick -> RelativeTime
+    clientTimeForTick = \tick -> case Map.lookupLE tick clientTimes of
+        Just (_, time) -> time
+        -- For every tick, there is a clock update before or at that tick.
+        Nothing        -> error "unreachable"
+      where
+        clientTimes :: Map.Map Tick RelativeTime
+        clientTimes =
+            Map.foldlWithKey' f Map.empty (getSchedule clockUpdates)
+          where
+            f acc t [newMaxSlot] = case Map.lookupMax acc of
+                Just (_, time')
+                  | time' < time -> Map.insert t time acc
+                  | otherwise    -> acc
+                Nothing -> Map.singleton t time
+              where
+                time = clientTimeForNewMaxSlot newMaxSlot
+            f _   _ _            = error "bad clockUpdates"
+
+    -- For the historical rollback check. This is calculated by considering the
+    -- 'ChainUpdate' which rolls back to the earliest slot relative to the
+    -- client wallclock time in the given tick.
+    maxRollbackAge :: NominalDiffTime
+    maxRollbackAge =
+        case foldMap (Just . Max) rollbackAges of
+          Just (Max maxAge) -> maxAge
+          -- If there are no rollbacks at all, any value will do.
+          Nothing           -> 0
+      where
+        rollbackAges :: [NominalDiffTime]
+        rollbackAges =
+          [ clientTime `diffRelTime` toSkewedOnset rollbackSlot
+          | (tick, updates) <- Map.toList $ getSchedule serverUpdates
+          , let clientTime = clientTimeForTick tick
+          , SwitchFork rollbackPoint _blks <- updates
+          , let rollbackSlot = fromWithOrigin 0 $ pointSlot rollbackPoint
+          ]
 
     doTick :: Schedule a -> Tick -> ([a] -> m ()) -> m ()
     doTick sched tick kont = whenJust (Map.lookup tick (getSchedule sched)) kont

@@ -1877,7 +1877,8 @@ checkHistoricalRollback cfgEnv justFoundIntersection rollbackPoint =
     case justFoundIntersection of
       JustFoundIntersection intersectionPoint
         -- Honest peers will send a rollback to the intersection point right
-        -- after the intersection; this is /never/ a historical rollback.
+        -- after the intersection was negotiated; this is not a historical
+        -- rollback even if the point is in the distant past.
         | rollbackPoint == intersectionPoint
         -> pure ()
         | otherwise                 -> doHistoricalRollbackCheck
