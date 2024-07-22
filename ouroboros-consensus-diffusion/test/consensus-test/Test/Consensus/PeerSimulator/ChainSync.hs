@@ -26,6 +26,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      ChainSyncLoPBucketConfig, ChainSyncStateView (..),
                      Consensus, bracketChainSyncClient, chainSyncClient)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Node.GsmState (GsmState (Syncing))
 import           Ouroboros.Consensus.Util (ShowProxy)
@@ -85,6 +86,10 @@ basicChainSyncClient
       , CSClient.cfg
       , CSClient.chainDbView
       , CSClient.someHeaderInFutureCheck = dummyHeaderInFutureCheck
+        -- Preventing historical MsgRollBack and MsgAwaitReply messages is
+        -- motivated by preventing additional load from CSJ-disengaged peers; we
+        -- do not care about this in these tests.
+      , CSClient.historicityCheck        = HistoricityCheck.noCheck
       }
     CSClient.DynamicEnv {
         CSClient.version             = maxBound

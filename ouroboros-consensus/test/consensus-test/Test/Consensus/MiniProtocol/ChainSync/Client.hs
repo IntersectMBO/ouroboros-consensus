@@ -88,6 +88,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      DynamicEnv (..), Our (..), Their (..),
                      TraceChainSyncClientEvent (..), bracketChainSyncClient,
                      chainSyncClient, chainSyncStateFor, viewChainSyncState)
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Node.GsmState (GsmState (Syncing))
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -420,6 +421,8 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                 , cfg                     = nodeCfg
                 , tracer                  = chainSyncTracer
                 , someHeaderInFutureCheck = headerInFutureCheck
+                  -- TODO this will be changed in the next commit
+                , historicityCheck        = HistoricityCheck.noCheck
                 , mkPipelineDecision0     =
                     pipelineDecisionLowHighMark 10 20
                 }

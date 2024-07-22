@@ -104,6 +104,10 @@ import           Ouroboros.Consensus.HeaderValidation hiding (validateHeader)
 import           Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
+                     (HistoricalChainSyncMessage (..), HistoricityCheck,
+                     HistoricityException)
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as Jumping
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
@@ -759,6 +763,7 @@ data ConfigEnv m blk = ConfigEnv {
   , tracer                  :: Tracer m (TraceChainSyncClientEvent blk)
   , cfg                     :: TopLevelConfig blk
   , someHeaderInFutureCheck :: InFutureCheck.SomeHeaderInFutureCheck m blk
+  , historicityCheck        :: HistoricityCheck m blk
   , chainDbView             :: ChainDbView m blk
   }
 
@@ -1097,7 +1102,7 @@ findIntersectionTop cfgEnv dynEnv intEnv =
                          intersection
                          (ourFrag, ourHeaderStateHistory)
                   of
-                    Just (c, d) -> return (c, d)
+                    Just (c, d, _oldestRewound) -> return (c, d)
                     Nothing ->
                         -- The @intersection@ is not on our fragment, even
                         -- though we sent only points from our fragment to find
@@ -1148,6 +1153,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
         mkPipelineDecision0
       , tracer
       , cfg
+      , historicityCheck
       } = cfgEnv
 
     DynamicEnv {
@@ -1321,9 +1327,15 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     n
                     candTipBlockNo
                     theirTipBlockNo
-            onMsgAwaitReply =
-              idlingStart idling >>
-              lbPause loPBucket >>
+            onMsgAwaitReply = do
+              HistoricityCheck.judgeMessageHistoricity
+                historicityCheck
+                HistoricalMsgAwaitReply
+                (HeaderStateHistory.current (theirHeaderStateHistory kis)) >>= \case
+                  Left ex  -> throwIO $ HistoricityError ex
+                  Right () -> pure ()
+              idlingStart idling
+              lbPause loPBucket
               Jumping.jgOnAwaitReply jumping
         in
         case (n, decision) of
@@ -1501,7 +1513,16 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                         (ourTipFromChain ourFrag)
                         theirTip
 
-                Just (theirFrag', theirHeaderStateHistory') -> do
+                Just (theirFrag', theirHeaderStateHistory', mOldestRewound) -> do
+
+                  whenJust mOldestRewound $ \oldestRewound ->
+                    HistoricityCheck.judgeMessageHistoricity
+                        historicityCheck
+                        HistoricalMsgRollBackward
+                        oldestRewound >>= \case
+                      Left ex  -> throwIO $ HistoricityError ex
+                      Right () -> pure ()
+
                   -- We just rolled back to @rollBackPoint@, either our most
                   -- recent intersection was after or at @rollBackPoint@, in
                   -- which case @rollBackPoint@ becomes the new most recent
@@ -1923,11 +1944,16 @@ attemptRollback ::
      )
   => Point blk
   ->       (AnchoredFragment (Header blk), HeaderStateHistory blk)
-  -> Maybe (AnchoredFragment (Header blk), HeaderStateHistory blk)
+  -> Maybe
+       ( AnchoredFragment (Header blk)
+       , HeaderStateHistory blk
+       , -- The state of the oldest header that was rolled back, if any.
+         Maybe (HeaderStateWithTime blk)
+       )
 attemptRollback rollBackPoint (frag, state) = do
-    frag'                    <- AF.rollback (castPoint rollBackPoint) frag
-    (state', _oldestRewound) <- HeaderStateHistory.rewind rollBackPoint state
-    return (frag', state')
+    frag'                   <- AF.rollback (castPoint rollBackPoint) frag
+    (state', oldestRewound) <- HeaderStateHistory.rewind rollBackPoint state
+    return (frag', state', oldestRewound)
 
 {-------------------------------------------------------------------------------
    Looking for newly-recognized trap headers on the existing candidate
@@ -2134,6 +2160,8 @@ data ChainSyncClientException =
     InFutureHeaderExceedsClockSkew !InFutureCheck.HeaderArrivalException
     -- ^ A header arrived from the far future.
   |
+    HistoricityError !HistoricityException
+  |
     EmptyBucket
     -- ^ The peer lost its race against the bucket.
   |
@@ -2167,6 +2195,12 @@ instance Eq ChainSyncClientException where
         (InFutureHeaderExceedsClockSkew a )
         (InFutureHeaderExceedsClockSkew a')
       = a == a'
+
+    (==)
+        (HistoricityError a )
+        (HistoricityError a')
+      = a == a'
+
     (==)
         EmptyBucket EmptyBucket
       = True
@@ -2181,6 +2215,7 @@ instance Eq ChainSyncClientException where
     InvalidIntersection{}            == _ = False
     InvalidBlock{}                   == _ = False
     InFutureHeaderExceedsClockSkew{} == _ = False
+    HistoricityError{}               == _ = False
     EmptyBucket                      == _ = False
     InvalidJumpResponse              == _ = False
     DensityTooLow                    == _ = False

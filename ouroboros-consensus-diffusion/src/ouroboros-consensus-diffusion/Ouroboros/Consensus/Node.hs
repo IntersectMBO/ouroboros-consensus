@@ -81,6 +81,9 @@ import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture,
                      ClockSkew)
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
+                     (HistoricityCheck)
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.Network.NodeToClient as NTC
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
@@ -491,6 +494,11 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
               let gsmMarkerFileView =
                     case ChainDB.cdbsHasFSGsmDB $ ChainDB.cdbsArgs finalArgs of
                         SomeHasFS x -> GSM.realMarkerFileView chainDB x
+                  historicityCheck getGsmState =
+                    case gcHistoricityCutoff llrnGenesisConfig of
+                      Nothing                -> HistoricityCheck.noCheck
+                      Just historicityCutoff ->
+                        HistoricityCheck.mkCheck systemTime getGsmState historicityCutoff
               fmap (nodeKernelArgsEnforceInvariants . llrnCustomiseNodeKernelArgs)
                 $ mkNodeKernelArgs
                     registry
@@ -501,6 +509,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                     rnTraceConsensus
                     btime
                     (InFutureCheck.realHeaderInFutureCheck llrnMaxClockSkew systemTime)
+                    historicityCheck
                     chainDB
                     llrnMaxCaughtUpAge
                     (Just durationUntilTooOld)
@@ -744,6 +753,7 @@ mkNodeKernelArgs ::
   -> Tracers m (ConnectionId addrNTN) (ConnectionId addrNTC) blk
   -> BlockchainTime m
   -> InFutureCheck.SomeHeaderInFutureCheck m blk
+  -> (m GSM.GsmState -> HistoricityCheck m blk)
   -> ChainDB m blk
   -> NominalDiffTime
   -> Maybe (GSM.WrapDurationUntilTooOld m blk)
@@ -761,6 +771,7 @@ mkNodeKernelArgs
   tracers
   btime
   chainSyncFutureCheck
+  chainSyncHistoricityCheck
   chainDB
   maxCaughtUpAge
   gsmDurationUntilTooOld
@@ -778,6 +789,7 @@ mkNodeKernelArgs
       , chainDB
       , initChainDB             = nodeInitChainDB
       , chainSyncFutureCheck
+      , chainSyncHistoricityCheck
       , blockFetchSize          = estimateBlockSize
       , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
       , miniProtocolParameters  = defaultMiniProtocolParameters
