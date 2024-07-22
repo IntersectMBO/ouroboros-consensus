@@ -164,7 +164,7 @@ data ChainSyncLoPBucketEnabledConfig = ChainSyncLoPBucketEnabledConfig {
     csbcCapacity :: Integer,
     -- | The rate of the bucket (think tokens per second).
     csbcRate     :: Rational
-  }
+  } deriving stock (Eq, Generic, Show)
 
 -- | Configuration of the leaky bucket.
 data ChainSyncLoPBucketConfig
@@ -175,6 +175,7 @@ data ChainSyncLoPBucketConfig
   |
     -- | Enable the leaky bucket.
     ChainSyncLoPBucketEnabled ChainSyncLoPBucketEnabledConfig
+  deriving stock (Eq, Generic, Show)
 
 -- | Configuration of ChainSync Jumping
 data CSJConfig
@@ -185,6 +186,7 @@ data CSJConfig
   |
     -- | Enable ChainSync Jumping
     CSJEnabled CSJEnabledConfig
+  deriving stock (Eq, Generic, Show)
 
 newtype CSJEnabledConfig = CSJEnabledConfig {
   -- | The _ideal_ size for ChainSync jumps. Note that the algorithm
@@ -204,7 +206,7 @@ newtype CSJEnabledConfig = CSJEnabledConfig {
   -- window has a higher change that dishonest peers can delay syncing by a
   -- small margin (around 2 minutes per dishonest peer with mainnet parameters).
   csjcJumpSize       :: SlotNo
-}
+} deriving stock (Eq, Generic, Show)
 
 defaultChainDbView ::
      (IOLike m, LedgerSupportsProtocol blk)
