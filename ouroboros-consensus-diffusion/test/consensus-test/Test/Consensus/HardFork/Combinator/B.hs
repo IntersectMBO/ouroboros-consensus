@@ -262,12 +262,12 @@ instance LedgerSupportsMempool BlockB where
   applyTx   = \_ _ _wti tx -> case tx of {}
   reapplyTx = \_ _ vtx -> case vtx of {}
 
-  txsMaxBytes   _ = maxBound
-  txInBlockSize _ = 0
-
   txForgetValidated = \case {}
 
-  txRefScriptSize _cfg _tlst _tx = 0
+instance TxLimits BlockB where
+  type TxMeasure BlockB = ByteSize
+  blockCapacityTxMeasure _cfg _st     = ByteSize $ 100 * 1024   -- arbitrary
+  txMeasure              _cfg _st _tx = pure $ ByteSize 0
 
 data instance TxId (GenTx BlockB)
   deriving stock    (Show, Eq, Ord, Generic)

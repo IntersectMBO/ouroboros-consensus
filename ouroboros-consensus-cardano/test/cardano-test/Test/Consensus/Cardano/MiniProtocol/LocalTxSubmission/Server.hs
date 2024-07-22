@@ -19,6 +19,7 @@ import qualified Ouroboros.Consensus.Config as Consensus
 import           Ouroboros.Consensus.HardFork.Combinator (getHardForkState,
                      hardForkLedgerStatePerEra)
 import           Ouroboros.Consensus.Ledger.Extended (ledgerState)
+import           Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize (..))
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as LedgerSupportsMempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool
@@ -71,7 +72,8 @@ tests =
 
           let
             -- We don't want the mempool to fill up during these tests.
-            capcityBytesOverride = Mempool.mkCapacityBytesOverride 100_000
+            capcityBytesOverride =
+              Mempool.mkCapacityBytesOverride (ByteSize 100_000)
             -- Use 'show >$< stdoutTracer' for debugging.
             tracer               = nullTracer
             mempoolParams        = Mocked.MempoolAndModelParams {
@@ -84,7 +86,6 @@ tests =
           mempool <- Mocked.openMockedMempool
                       capcityBytesOverride
                       tracer
-                      LedgerSupportsMempool.txInBlockSize
                       mempoolParams
 
           mempool `should_process` [ _137 ]

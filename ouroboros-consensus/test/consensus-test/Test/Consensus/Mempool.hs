@@ -35,7 +35,7 @@ module Test.Consensus.Mempool (tests) where
 import           Cardano.Binary (Encoding, toCBOR)
 import           Cardano.Crypto.Hash
 import           Control.Exception (assert)
-import           Control.Monad (foldM, forM, forM_, void)
+import           Control.Monad (foldM, forM, forM_, void, when)
 import           Control.Monad.Except (Except, runExcept)
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Monad.State (State, evalState, get, modify)
@@ -46,9 +46,11 @@ import           Data.List (foldl', isSuffixOf, nub, partition, sortOn)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe)
+import           Data.Semigroup (stimes)
 import qualified Data.Set as Set
-import           Data.Word
+import           Data.Word (Word32)
 import           GHC.Stack (HasCallStack)
+import           Numeric.Natural (Natural)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config.SecurityParam
@@ -114,7 +116,7 @@ prop_Mempool_addTxs_getTxs setup =
       _ <- addTxs mempool (allTxs setup)
       MempoolSnapshot { snapshotTxs } <- atomically $ getSnapshot mempool
       return $ counterexample (ppTxs (txs setup)) $
-        validTxs setup `isSuffixOf` map (txForgetValidated . fst) snapshotTxs
+        validTxs setup `isSuffixOf` map (txForgetValidated . prjTx) snapshotTxs
 
 -- | Test that both adding the transactions one by one and adding them in one go
 -- produce the same result.
@@ -153,10 +155,10 @@ prop_Mempool_addTxs_result setup =
 prop_Mempool_InvalidTxsNeverAdded :: TestSetupWithTxs -> Property
 prop_Mempool_InvalidTxsNeverAdded setup =
     withTestMempool (testSetup setup) $ \TestMempool { mempool } -> do
-      txsInMempoolBefore <- map fst . snapshotTxs <$>
+      txsInMempoolBefore <- map prjTx . snapshotTxs <$>
         atomically (getSnapshot mempool)
       _ <- addTxs mempool (allTxs setup)
-      txsInMempoolAfter <- map fst . snapshotTxs <$>
+      txsInMempoolAfter <- map prjTx . snapshotTxs <$>
         atomically (getSnapshot mempool)
       return $ counterexample (ppTxs (txs setup)) $ conjoin
         -- Check for each transaction in the mempool (ignoring those already
@@ -176,7 +178,7 @@ prop_Mempool_removeTxs (TestSetupWithTxInMempool testSetup txToRemove) =
     withTestMempool testSetup $ \TestMempool { mempool } -> do
       let Mempool { removeTxs, getSnapshot } = mempool
       removeTxs [txId txToRemove]
-      txsInMempoolAfter <- map fst . snapshotTxs <$> atomically getSnapshot
+      txsInMempoolAfter <- map prjTx . snapshotTxs <$> atomically getSnapshot
       return $ counterexample
         ("Transactions in the mempool after removing (" <>
          show txToRemove <> "): " <> show txsInMempoolAfter)
@@ -201,8 +203,8 @@ prop_Mempool_semigroup_removeTxs (TestSetupWithTxsInMempool testSetup txsToRemov
         snapshotMempoolSize snapshot1 === snapshotMempoolSize snapshot2 .&&.
         snapshotSlotNo snapshot1 === snapshotSlotNo snapshot1
 
--- | Test that 'getCapacity' returns the 'MempoolCapacityBytes' value that the
--- mempool was initialized with.
+-- | Test that 'getCapacity' returns the greatest multiple of the block
+-- capacity that is not greater than the requested capacity.
 --
 -- Ignore the "100% empty Mempool" label in the test output, that is there
 -- because we reuse 'withTestMempool' and always start with an empty Mempool
@@ -211,10 +213,17 @@ prop_Mempool_getCapacity :: MempoolCapTestSetup -> Property
 prop_Mempool_getCapacity mcts =
     withTestMempool testSetup $ \TestMempool{mempool} -> do
       actualCapacity <- atomically $ getCapacity mempool
-      pure (actualCapacity === testCapacity)
+      pure $ actualCapacity === expectedCapacity
   where
     MempoolCapacityBytesOverride testCapacity = testMempoolCapOverride testSetup
     MempoolCapTestSetup (TestSetupWithTxs testSetup _txsToAdd) = mcts
+
+    ByteSize dom = simpleBlockCapacity
+
+    expectedCapacity =
+        (\n -> stimes n simpleBlockCapacity)
+      $ max 1
+      $ (unByteSize testCapacity + dom - 1) `div` dom   -- div rounding up
 
 -- | Test that all valid transactions added to a 'Mempool' via 'addTxs' are
 -- appropriately represented in the trace of events.
@@ -258,7 +267,7 @@ prop_Mempool_TraceRemovedTxs setup =
       MempoolSnapshot { snapshotTxs } <- atomically $ getSnapshot mempool
       -- We add all the transactions in the mempool to the ledger. Some of
       -- them will become invalid because all inputs have been spent.
-      let txsInMempool = map fst snapshotTxs
+      let txsInMempool = map prjTx snapshotTxs
       errs <- atomically $ addTxsToLedger (map txForgetValidated txsInMempool)
 
       -- Sync the mempool with the ledger. Now some of the transactions in the
@@ -288,6 +297,9 @@ prop_Mempool_TraceRemovedTxs setup =
       [ (tx, err)
       | (tx, Left err) <- fst $ validateTxs ledgerState txsInMempool
       ]
+
+prjTx :: (Validated (GenTx TestBlock), TicketNo, ByteSize) -> Validated (GenTx TestBlock)
+prjTx (a, _b, _c) = a
 
 {-------------------------------------------------------------------------------
   TestSetup: how to set up a TestMempool
@@ -328,32 +340,30 @@ ppTestSetup :: TestSetup -> String
 ppTestSetup TestSetup { testInitialTxs
                       , testMempoolCapOverride
                       } = unlines $
-    ["Initial contents of the Mempool:"]  <>
-    (map ppTestTxWithHash testInitialTxs) <>
-    ["Mempool capacity override:"]        <>
+    ["Initial contents of the Mempool:"]     <>
+    (map ppTestTxWithHash testInitialTxs)    <>
+    ["Total size:"]                          <>
+    [show $ foldMap txSize $ testInitialTxs] <>
+    ["Mempool capacity override:"]           <>
     [show testMempoolCapOverride]
 
 ppTestTxWithHash :: TestTx -> String
 ppTestTxWithHash x = condense
   (hashWithSerialiser toCBOR (simpleGenTx x) :: Hash SHA256 Tx, x)
 
--- | Given some transactions, calculate the sum of their sizes in bytes.
-txSizesInBytes :: [TestTx] -> TxSizeInBytes
-txSizesInBytes = foldl' (\acc tx -> acc + txSize tx) 0
-
 -- | Generate a 'TestSetup' and return the ledger obtained by applying all of
 -- the initial transactions.
 --
 -- The generated 'testMempoolCap' will be:
--- > 'txSizesInBytes' 'testInitialTxs' + extraCapacity
-genTestSetupWithExtraCapacity :: Int -> Word32 -> Gen (TestSetup, LedgerState TestBlock)
+-- > foldMap 'txSize' 'testInitialTxs' + extraCapacity
+genTestSetupWithExtraCapacity :: Int -> Natural -> Gen (TestSetup, LedgerState TestBlock)
 genTestSetupWithExtraCapacity maxInitialTxs extraCapacity = do
     ledgerSize   <- choose (0, maxInitialTxs)
     nbInitialTxs <- choose (0, maxInitialTxs)
     (_txs1,  ledger1) <- genValidTxs ledgerSize testInitLedger
     ( txs2,  ledger2) <- genValidTxs nbInitialTxs ledger1
-    let initTxsSizeInBytes = txSizesInBytes txs2
-        mpCap = MempoolCapacityBytes (initTxsSizeInBytes + extraCapacity)
+    let initTxsSizeInBytes = foldMap txSize txs2
+        mpCap = initTxsSizeInBytes <> ByteSize extraCapacity
         testSetup = TestSetup
           { testLedgerState        = ledger1
           , testInitialTxs         = txs2
@@ -373,26 +383,29 @@ instance Arbitrary TestSetup where
     extraCapacity <- fromIntegral <$> choose (0, n)
     testSetup <- fst <$> genTestSetupWithExtraCapacity n extraCapacity
     noOverride <- arbitrary
+    let initialSize = foldMap txSize $ testInitialTxs testSetup
+        defaultCap  = simpleBlockCapacity <> simpleBlockCapacity
     return $
-      if noOverride
+      if noOverride && initialSize <= defaultCap
       then testSetup { testMempoolCapOverride = NoMempoolCapacityBytesOverride }
       else testSetup
 
   shrink TestSetup { testLedgerState
                    , testInitialTxs
-                   , testMempoolCapOverride = MempoolCapacityBytesOverride
-                       (MempoolCapacityBytes mpCap)
+                   , testMempoolCapOverride =
+                       MempoolCapacityBytesOverride (ByteSize mpCap)
                    } =
     -- TODO we could shrink @testLedgerState@ too
     [ TestSetup { testLedgerState
                 , testInitialTxs = testInitialTxs'
-                , testMempoolCapOverride = MempoolCapacityBytesOverride
-                    (MempoolCapacityBytes mpCap')
+                , testMempoolCapOverride =
+                    MempoolCapacityBytesOverride mpCap'
                 }
-    | let extraCap = mpCap - txSizesInBytes testInitialTxs
+    | let ByteSize initial = foldMap txSize testInitialTxs
+          extraCap = mpCap - initial
     , testInitialTxs' <- shrinkList (const []) testInitialTxs
     , isRight $ txsAreValid testLedgerState testInitialTxs'
-    , let mpCap' = txSizesInBytes testInitialTxs' + extraCap
+    , let mpCap' = foldMap txSize testInitialTxs' <> ByteSize extraCap
     ]
 
   -- TODO shrink to an override, that's an easier test case
@@ -589,15 +602,19 @@ instance Arbitrary TestSetupWithTxs where
     (testSetup, ledger)  <- genTestSetup n
     (txs,      _ledger') <- genTxs nbTxs ledger
     testSetup' <- case testMempoolCapOverride testSetup of
-      NoMempoolCapacityBytesOverride -> return testSetup
-      MempoolCapacityBytesOverride (MempoolCapacityBytes mpCap) -> do
+      NoMempoolCapacityBytesOverride     -> return testSetup
+      MempoolCapacityBytesOverride mpCap -> do
         noOverride <- arbitrary
+        let initialSize = foldMap txSize $ testInitialTxs testSetup
+            defaultCap  = simpleBlockCapacity <> simpleBlockCapacity
+            newSize     =
+                 foldMap (txSize . fst) (filter snd txs)
+              <> maximum (ByteSize 0 : map (txSize . fst) (filter (not . snd) txs))
         return testSetup {
               testMempoolCapOverride =
-                if noOverride
+                if noOverride && initialSize <> newSize <= defaultCap
                 then NoMempoolCapacityBytesOverride
-                else MempoolCapacityBytesOverride $ MempoolCapacityBytes $
-                       mpCap + txSizesInBytes (map fst txs)
+                else MempoolCapacityBytesOverride $ mpCap <> newSize
             }
     return TestSetupWithTxs { testSetup = testSetup', txs }
 
@@ -733,7 +750,6 @@ withTestMempool setup@TestSetup {..} prop =
           testLedgerConfig
           testMempoolCapOverride
           tracer
-          txSize
       result  <- addTxs mempool testInitialTxs
       -- the invalid transactions are reported in the same order they were
       -- added, so the first error is not the result of a cascade
@@ -795,7 +811,7 @@ withTestMempool setup@TestSetup {..} prop =
           Right _ -> property True
           Left  e -> counterexample (mkErrMsg e) $ property False
       where
-        txs = map (txForgetValidated . fst) snapshotTxs
+        txs = map (txForgetValidated . prjTx) snapshotTxs
         mkErrMsg e =
           "At the end of the test, the Mempool contents were invalid: " <>
           show e
@@ -815,21 +831,27 @@ instance Arbitrary MempoolCapTestSetup where
     testSetupWithTxs@TestSetupWithTxs { testSetup, txs } <- arbitrary
     -- The Mempool should at least be capable of containing the transactions
     -- it already contains.
-    let currentSize      = sum (map txSize (testInitialTxs testSetup))
+    let currentSize               = foldMap txSize (testInitialTxs testSetup)
         capacityMinBound = currentSize
-        validTxsToAdd    = [tx | (tx, True) <- txs]
+        validTxsToAdd             = [tx | (tx, True) <- txs]
         -- Use the current size + the sum of all the valid transactions to add
         -- as the upper bound.
-        capacityMaxBound = currentSize + sum (map txSize validTxsToAdd)
+        capacityMaxBound = currentSize <> foldMap txSize validTxsToAdd
     -- Note that we could pick @currentSize@, meaning that we can't add any
     -- more transactions to the Mempool
+
+    when (unByteSize capacityMaxBound >= 2^(32 :: Int)) $ do
+      error "impossible!"   -- could 'QC.discard' if this is actually feasible
+
     capacity <- choose
-      ( capacityMinBound
-      , capacityMaxBound
+      ( fromIntegral (unByteSize capacityMinBound) :: Word32
+      , fromIntegral (unByteSize capacityMaxBound) :: Word32
       )
     let testSetup' = testSetup {
-            testMempoolCapOverride = MempoolCapacityBytesOverride $
-              MempoolCapacityBytes capacity
+            testMempoolCapOverride =
+                MempoolCapacityBytesOverride
+              $ ByteSize
+              $ fromIntegral (capacity :: Word32)
           }
     return $ MempoolCapTestSetup testSetupWithTxs { testSetup = testSetup' }
 
@@ -838,17 +860,19 @@ instance Arbitrary MempoolCapTestSetup where
 -------------------------------------------------------------------------------}
 
 -- | Finds elements in the sequence
-prop_TxSeq_lookupByTicketNo_complete :: [Int] -> Bool
+prop_TxSeq_lookupByTicketNo_complete :: [Int] -> Property
 prop_TxSeq_lookupByTicketNo_complete xs =
-    and [ case TxSeq.lookupByTicketNo txseq tn of
-            Just tx' -> tx == tx'
-            Nothing  -> False
-        | (tx, tn) <- TxSeq.toTuples txseq ]
+      counterexample (show txseq)
+    $ conjoin
+        [ case TxSeq.lookupByTicketNo txseq tn of
+            Just tx' -> tx === tx'
+            Nothing  -> property False
+        | (tx, tn, _byteSize) <- TxSeq.toTuples txseq ]
   where
-    txseq :: TxSeq Int
+    txseq :: TxSeq ByteSize Int
     txseq =
         TxSeq.fromList
-      $ [ TxTicket x (TicketNo i) 0 0 | x <- xs | i <- [0..] ]
+      $ [ TxTicket x (TicketNo i) (ByteSize 0) | x <- xs | i <- [0..] ]
 
 -- | Only finds elements in the sequence
 prop_TxSeq_lookupByTicketNo_sound ::
@@ -872,16 +896,16 @@ prop_TxSeq_lookupByTicketNo_sound smalls small =
     needle = abs (getSmall small)
 
     -- the identity mapping over haystack
-    txseq :: TxSeq Int
+    txseq :: TxSeq ByteSize Int
     txseq =
         foldl' (TxSeq.:>) TxSeq.Empty $ map mkTicket haystack
 
-    mkTicket x = TxTicket x (mkTicketNo x) 0 0
+    mkTicket x = TxTicket x (mkTicketNo x) (ByteSize 0)
     mkTicketNo = TicketNo . toEnum
 
 -- | Test that the 'fst' of the result of 'splitAfterTxSize' only contains
 -- 'TxTicket's whose summed up transaction sizes are less than or equal to
--- that of the 'TxSizeInBytes' which the 'TxSeq' was split on.
+-- that of the 'ByteSize' which the 'TxSeq' was split on.
 prop_TxSeq_splitAfterTxSize :: TxSizeSplitTestSetup -> Property
 prop_TxSeq_splitAfterTxSize tss =
       property $ txSizeSum (TxSeq.toList before) <= tssTxSizeToSplitOn
@@ -890,11 +914,11 @@ prop_TxSeq_splitAfterTxSize tss =
 
     (before, _after) = splitAfterTxSize txseq tssTxSizeToSplitOn
 
-    txseq :: TxSeq Int
+    txseq :: TxSeq ByteSize Int
     txseq = txSizeSplitTestSetupToTxSeq tss
 
-    txSizeSum :: [TxTicket tx] -> TxSizeInBytes
-    txSizeSum = sum . map txTicketTxSizeInBytes
+    txSizeSum :: [TxTicket ByteSize tx] -> ByteSize
+    txSizeSum = foldMap txTicketSize
 
 
 -- | Test that the results of 'splitAfterTxSizeSpec', a specification of
@@ -911,7 +935,7 @@ prop_TxSeq_splitAfterTxSizeSpec tss =
 
     (specBefore, specAfter) = splitAfterTxSizeSpec txseq tssTxSizeToSplitOn
 
-    txseq :: TxSeq Int
+    txseq :: TxSeq ByteSize Int
     txseq = txSizeSplitTestSetupToTxSeq tss
 
 {-------------------------------------------------------------------------------
@@ -919,14 +943,14 @@ prop_TxSeq_splitAfterTxSizeSpec tss =
 -------------------------------------------------------------------------------}
 
 data TxSizeSplitTestSetup = TxSizeSplitTestSetup
-  { tssTxSizes         :: ![TxSizeInBytes]
-  , tssTxSizeToSplitOn :: !TxSizeInBytes
+  { tssTxSizes         :: ![ByteSize]
+  , tssTxSizeToSplitOn :: !ByteSize
   } deriving Show
 
 instance Arbitrary TxSizeSplitTestSetup where
   arbitrary = do
-    let txSizeMaxBound = 10 * 1024 * 1024 -- 10MB transaction max bound
-    txSizes <- listOf $ choose (1, txSizeMaxBound)
+    let txSizeMaxBound = 10 * 1024 * 1024 -- 10 mebibyte transaction max bound
+    txSizes <- listOf $ choose (1, txSizeMaxBound :: Word32)
     let totalTxsSize = sum txSizes
     txSizeToSplitOn <- frequency
       [ (1, pure 0)
@@ -935,23 +959,26 @@ instance Arbitrary TxSizeSplitTestSetup where
       , (1, choose (totalTxsSize + 1, totalTxsSize + 1000))
       ]
     pure TxSizeSplitTestSetup
-      { tssTxSizes = txSizes
-      , tssTxSizeToSplitOn = txSizeToSplitOn
+      { tssTxSizes = map (ByteSize . fromIntegral) txSizes
+      , tssTxSizeToSplitOn = ByteSize $ fromIntegral txSizeToSplitOn
       }
 
-  shrink TxSizeSplitTestSetup { tssTxSizes, tssTxSizeToSplitOn } =
+  shrink TxSizeSplitTestSetup { tssTxSizes, tssTxSizeToSplitOn = ByteSize x } =
     [ TxSizeSplitTestSetup
-        { tssTxSizes         = tssTxSizes'
-        , tssTxSizeToSplitOn = tssTxSizeToSplitOn'
+        { tssTxSizes         = map ByteSize tssTxSizes'
+        , tssTxSizeToSplitOn = ByteSize tssTxSizeToSplitOn'
         }
-    | tssTxSizes' <- shrinkList (const []) tssTxSizes
-    , tssTxSizeToSplitOn' <- shrinkIntegral tssTxSizeToSplitOn
+    | tssTxSizes' <- shrinkList (const []) [ y | ByteSize y <- tssTxSizes ]
+    , tssTxSizeToSplitOn' <- shrinkIntegral x
     ]
 
 -- | Convert a 'TxSizeSplitTestSetup' to a 'TxSeq'.
-txSizeSplitTestSetupToTxSeq :: TxSizeSplitTestSetup -> TxSeq Int
+txSizeSplitTestSetupToTxSeq :: TxSizeSplitTestSetup -> TxSeq ByteSize Int
 txSizeSplitTestSetupToTxSeq TxSizeSplitTestSetup { tssTxSizes } =
-    TxSeq.fromList [TxTicket 0 (TicketNo 0) tssTxSize 0 | tssTxSize <- tssTxSizes]
+    TxSeq.fromList [ TxTicket 1 (TicketNo i) tssTxSize
+                   | tssTxSize <- tssTxSizes
+                   | i <- [0 ..]
+                   ]
 
 {-------------------------------------------------------------------------------
   TicketNo Properties
@@ -978,7 +1005,7 @@ prop_Mempool_idx_consistency :: Actions -> Property
 prop_Mempool_idx_consistency (Actions actions) =
     withTestMempool emptyTestSetup $ \testMempool@TestMempool { mempool } ->
       fmap conjoin $ forM actions $ \action -> do
-        txsInMempool      <- map fst . snapshotTxs <$>
+        txsInMempool      <- map prjTx . snapshotTxs <$>
                              atomically (getSnapshot mempool)
         actionProp        <- executeAction testMempool action
         currentAssignment <- currentTicketAssignment mempool
@@ -1009,7 +1036,10 @@ prop_Mempool_idx_consistency (Actions actions) =
       { testLedgerState        = testInitLedger
       , testInitialTxs         = []
       , testMempoolCapOverride =
-          MempoolCapacityBytesOverride $ MempoolCapacityBytes maxBound
+            MempoolCapacityBytesOverride
+          $ ByteSize
+          $ 1024*1024*1024
+            -- There's no way this test will need more than a gibibyte.
       }
 
     lastOfMempoolRemoved txsInMempool = \case
@@ -1108,7 +1138,7 @@ currentTicketAssignment Mempool { syncWithLedger } = do
     MempoolSnapshot { snapshotTxs } <- syncWithLedger
     return $ Map.fromList
       [ (ticketNo, txId (txForgetValidated tx))
-      | (tx, ticketNo) <- snapshotTxs
+      | (tx, ticketNo, _byteSize) <- snapshotTxs
       ]
 
 instance Arbitrary Actions where

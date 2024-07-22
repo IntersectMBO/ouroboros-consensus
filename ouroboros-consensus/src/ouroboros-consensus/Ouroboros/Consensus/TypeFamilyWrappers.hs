@@ -22,6 +22,8 @@ module Ouroboros.Consensus.TypeFamilyWrappers (
   , WrapTentativeHeaderState (..)
   , WrapTentativeHeaderView (..)
   , WrapTipInfo (..)
+  , WrapTxMeasure (..)
+  , WrapValidatedGenTx (..)
     -- * Protocol based
   , WrapCanBeLeader (..)
   , WrapChainDepState (..)
@@ -31,7 +33,6 @@ module Ouroboros.Consensus.TypeFamilyWrappers (
   , WrapLedgerView (..)
   , WrapSelectView (..)
   , WrapValidateView (..)
-  , WrapValidatedGenTx (..)
   , WrapValidationErr (..)
     -- * Versioning
   , WrapNodeToClientVersion (..)
@@ -79,7 +80,8 @@ newtype WrapTipInfo               blk = WrapTipInfo               { unwrapTipInf
 -- :.: g)@ requires @'Data.Functor.Classes.Eq1' f)). The bespoke composition
 -- 'WrapValidatedGenTx' therefore serves much the same purpose as the other
 -- wrappers in this module.
-newtype WrapValidatedGenTx        blk = WrapValidatedGenTx        { unwrapValidatedGenTx        :: Validated         (GenTx blk)}
+newtype WrapValidatedGenTx blk = WrapValidatedGenTx { unwrapValidatedGenTx :: Validated (GenTx blk) }
+newtype WrapTxMeasure      blk = WrapTxMeasure      { unwrapTxMeasure      :: TxMeasure        blk  }
 
 {-------------------------------------------------------------------------------
   Consensus based

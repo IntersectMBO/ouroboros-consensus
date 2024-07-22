@@ -1,28 +1,37 @@
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE TypeFamilies     #-}
+{-# LANGUAGE DataKinds                  #-}
+{-# LANGUAGE DerivingVia                #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE TypeFamilies               #-}
 
 module Ouroboros.Consensus.Ledger.SupportsMempool (
     ApplyTxErr
+  , ByteSize (..)
   , ConvertRawTxId (..)
   , GenTx
   , GenTxId
+  , HasByteSize (..)
   , HasTxId (..)
   , HasTxs (..)
   , LedgerSupportsMempool (..)
   , TxId
+  , TxLimits (..)
   , Validated
   , WhetherToIntervene (..)
   ) where
 
+import           Control.DeepSeq (NFData)
 import           Control.Monad.Except
 import           Data.ByteString.Short (ShortByteString)
+import           Data.DerivingVia (InstantiatedAt (..))
 import           Data.Kind (Type)
-import           Data.Word (Word32)
+import           Data.Measure (Measure)
 import           GHC.Stack (HasCallStack)
+import           NoThunks.Class
+import           Numeric.Natural (Natural)
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ticked
-import           Ouroboros.Consensus.Util.IOLike
 
 -- | Generalized transaction
 --
@@ -59,6 +68,7 @@ data WhetherToIntervene
     deriving (Show)
 
 class ( UpdateLedger blk
+      , TxLimits blk
       , NoThunks (GenTx blk)
       , NoThunks (Validated (GenTx blk))
       , NoThunks (Ticked (LedgerState blk))
@@ -96,38 +106,8 @@ class ( UpdateLedger blk
             -> TickedLedgerState blk
             -> Except (ApplyTxErr blk) (TickedLedgerState blk)
 
-  -- | The maximum number of bytes worth of transactions that can be put into
-  -- a block according to the currently adopted protocol parameters of the
-  -- ledger state.
-  --
-  -- This is (conservatively) computed by subtracting the header size and any
-  -- other fixed overheads from the maximum block size.
-  txsMaxBytes :: TickedLedgerState blk -> Word32
-
-  -- | Return the post-serialisation size in bytes of a 'GenTx' /when it is
-  -- embedded in a block/. This size might differ from the size of the
-  -- serialisation used to send and receive the transaction across the
-  -- network.
-  --
-  -- This size is used to compute how many transaction we can put in a block
-  -- when forging one.
-  --
-  -- For example, CBOR-in-CBOR could be used when sending the transaction
-  -- across the network, requiring a few extra bytes compared to the actual
-  -- in-block serialisation. Another example is the transaction of the
-  -- hard-fork combinator which will include an envelope indicating its era
-  -- when sent across the network. However, when embedded in the respective
-  -- era's block, there is no need for such envelope.
-  --
-  -- Can be implemented by serialising the 'GenTx', but, ideally, this is
-  -- implement more efficiently. E.g., by returning the length of the
-  -- annotation.
-  txInBlockSize :: GenTx blk -> Word32
-
   -- | Discard the evidence that transaction has been previously validated
   txForgetValidated :: Validated (GenTx blk) -> GenTx blk
-
-  txRefScriptSize :: LedgerConfig blk -> TickedLedgerState blk -> GenTx blk -> Int
 
 -- | A generalized transaction, 'GenTx', identifier.
 data family TxId tx :: Type
@@ -168,3 +148,79 @@ type GenTxId blk = TxId (GenTx blk)
 class HasTxs blk where
   -- | Return the transactions part of the given block in no particular order.
   extractTxs :: blk -> [GenTx blk]
+
+{-------------------------------------------------------------------------------
+  Tx sizes
+-------------------------------------------------------------------------------}
+
+-- | Each block has its limits of how many transactions it can hold. That limit
+-- is compared against the sum of measurements taken of each of the
+-- transactions in that block.
+--
+-- How we measure the transaction depends of the era that this transaction
+-- belongs to (more specifically it depends on the block type to which this
+-- transaction will be added). For initial eras (like Byron and initial
+-- generations of Shelley based eras) this measure was simply a ByteSize (block
+-- could not be bigger then given size - in bytes - specified by the ledger
+-- state). In future eras (starting with Alonzo) this measure was a bit more
+-- complex as it had to take other factors into account (like execution units).
+-- For details please see the individual instances for the TxLimits.
+class ( Measure     (TxMeasure blk)
+      , HasByteSize (TxMeasure blk)
+      , NoThunks    (TxMeasure blk)
+      , Show        (TxMeasure blk)
+      ) => TxLimits blk where
+  -- | The (possibly multi-dimensional) size of a transaction in a block.
+  type TxMeasure blk
+
+  -- | The various sizes (bytes, Plutus script ExUnits, etc) of a tx /when it's
+  -- in a block/
+  --
+  -- This size is used to compute how many transaction we can put in a block
+  -- when forging one.
+  --
+  -- The byte size component in particular might differ from the size of the
+  -- serialisation used to send and receive the transaction across the network.
+  -- For example, CBOR-in-CBOR could be used when sending the transaction
+  -- across the network, requiring a few extra bytes compared to the actual
+  -- in-block serialisation. Another example is the transaction of the
+  -- hard-fork combinator which will include an envelope indicating its era
+  -- when sent across the network. However, when embedded in the respective
+  -- era's block, there is no need for such envelope.
+  --
+  -- INVARIANT Assuming no hash collisions, the size should be the same in any
+  -- state in which the transaction is valid.
+  --
+  -- Returns an exception if and only if the transaction violates the per-tx
+  -- limits.
+  txMeasure ::
+       LedgerConfig blk
+       -- ^ used at least by HFC's composition logic
+    -> TickedLedgerState blk
+    -> GenTx blk
+    -> Except (ApplyTxErr blk) (TxMeasure blk)
+
+  -- | What is the allowed capacity for the txs in an individual block?
+  blockCapacityTxMeasure ::
+       LedgerConfig blk
+       -- ^ at least for symmetry with 'txMeasure'
+    -> TickedLedgerState blk
+    -> TxMeasure blk
+
+-- | We intentionally do not declare a 'Num' instance! We prefer @ByteSize@ to
+-- occur explicitly in the code where possible, for legibility/perspciousness.
+-- We also do not need nor want subtraction.
+newtype ByteSize = ByteSize { unByteSize :: Natural }
+  deriving stock (Show)
+  deriving newtype (Eq, Ord)
+  deriving newtype (Measure)
+  deriving newtype (NFData)
+  deriving         (Monoid, Semigroup) via (InstantiatedAt Measure ByteSize)
+  deriving         (NoThunks) via OnlyCheckWhnfNamed "ByteSize" ByteSize
+
+class HasByteSize a where
+  -- | The byte size component (of 'TxMeasure')
+  txMeasureByteSize :: a -> ByteSize
+
+instance HasByteSize ByteSize where
+  txMeasureByteSize = id

@@ -10,8 +10,10 @@ module Ouroboros.Consensus.Mempool.Update (
 
 import           Control.Concurrent.Class.MonadMVar (MVar, withMVar)
 import           Control.Exception (assert)
+import           Control.Monad.Except (runExcept)
 import           Control.Tracer
-import           Data.Maybe (isJust, isNothing)
+import           Data.Maybe (isJust)
+import qualified Data.Measure as Measure
 import qualified Data.Set as Set
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
@@ -44,16 +46,13 @@ implAddTx ::
       -- ^ The FIFO for all remote peers and local clients
   -> LedgerConfig blk
      -- ^ The configuration of the ledger.
-  -> (GenTx blk -> TxSizeInBytes)
-     -- ^ The function to calculate the size of a
-     -- transaction.
   -> Tracer m (TraceEventMempool blk)
   -> AddTxOnBehalfOf
      -- ^ Whether we're acting on behalf of a remote peer or a local client.
   -> GenTx blk
      -- ^ The transaction to add to the mempool.
   -> m (MempoolAddTxResult blk)
-implAddTx istate remoteFifo allFifo cfg txSize trcr onbehalf tx =
+implAddTx istate remoteFifo allFifo cfg trcr onbehalf tx =
     -- To ensure fair behaviour between threads that are trying to add
     -- transactions, we make them all queue in a fifo. Only the one at the head
     -- of the queue gets to actually wait for space to get freed up in the
@@ -87,7 +86,7 @@ implAddTx istate remoteFifo allFifo cfg txSize trcr onbehalf tx =
   where
     implAddTx' = do
       (result, ev) <- atomically $ do
-        outcome <- implTryAddTx istate cfg txSize
+        outcome <- implTryAddTx istate cfg
                                 (whetherToIntervene onbehalf)
                                 tx
         case outcome of
@@ -127,7 +126,7 @@ data TryAddTx blk =
 -- Transactions are added one by one, updating the Mempool each time one was
 -- added successfully.
 --
--- See the necessary invariants on the Haddock for 'API.tryAddTxs'.
+-- See the necessary invariants on the Haddock for 'API.addTxs'.
 --
 -- This function does not sync the Mempool contents with the ledger state in
 -- case the latter changes, it relies on the background thread to do that.
@@ -144,16 +143,13 @@ implTryAddTx ::
      -- ^ The InternalState TVar.
   -> LedgerConfig blk
      -- ^ The configuration of the ledger.
-  -> (GenTx blk -> TxSizeInBytes)
-     -- ^ The function to calculate the size of a
-     -- transaction.
   -> WhetherToIntervene
   -> GenTx blk
      -- ^ The transaction to add to the mempool.
   -> STM m (TryAddTx blk)
-implTryAddTx istate cfg txSize wti tx = do
+implTryAddTx istate cfg wti tx = do
         is <- readTVar istate
-        let outcome = pureTryAddTx cfg txSize wti tx is
+        let outcome = pureTryAddTx cfg wti tx is
         case outcome of
           TryAddTx (Just is') _ _ -> writeTVar istate is'
           _                       -> return ()
@@ -172,40 +168,87 @@ pureTryAddTx ::
      )
   => LedgerCfg (LedgerState blk)
      -- ^ The ledger configuration.
-  -> (GenTx blk -> TxSizeInBytes)
-     -- ^ The function to claculate the size of a transaction.
   -> WhetherToIntervene
   -> GenTx blk
      -- ^ The transaction to add to the mempool.
   -> InternalState blk
      -- ^ The current internal state of the mempool.
   -> TryAddTx blk
-pureTryAddTx cfg txSize wti tx is
-    -- We add the transaction if there is at least one byte free left in the
-    -- mempool, and...
-  | let curSize = msNumBytes  $ isMempoolSize is
-  , curSize < getMempoolCapacityBytes (isCapacity is)
-    -- ... if the mempool has less than 2.5 mebibytes of ref scripts.
-  , let maxTotalRefScriptSize = 5 * 512 * 1024 -- 2.5 Mebibytes
-        curTotalRefScriptSize = isTotalRefScriptSize is
-  , curTotalRefScriptSize Prelude.< maxTotalRefScriptSize
-  =
-  case eVtx of
-      -- We only extended the ValidationResult with a single transaction
-      -- ('tx'). So if it's not in 'vrInvalid', it must be in 'vrNewValid'.
-      Right vtx ->
-        assert (isJust (vrNewValid vr)) $
-          TryAddTx
-            (Just is')
-            (MempoolTxAdded vtx)
-            (TraceMempoolAddedTx
-              vtx
-              (isMempoolSize is)
-              (isMempoolSize is')
-            )
-      Left err ->
-        assert (isNothing (vrNewValid vr))  $
-          assert (length (vrInvalid vr) == 1) $
+pureTryAddTx cfg wti tx is =
+  case runExcept $ txMeasure cfg (isLedgerState is) tx of
+    Left err ->
+      -- The transaction does not have a valid measure (eg its ExUnits is
+      -- greater than what this ledger state allows for a single transaction).
+      --
+      -- It might seem simpler to remove the failure case from 'txMeasure' and
+      -- simply fully validate the tx before determing whether it'd fit in the
+      -- mempool; that way we could reject invalid txs ASAP. However, we'd pay
+      -- that validation cost every time the node's selection changed, even if
+      -- the tx wouldn't fit. So it'd very much be as if the mempool were
+      -- effectively over capacity! What's worse, each attempt would not be
+      -- using 'extendVRPrevApplied'.
+      TryAddTx
+        Nothing
+        (MempoolTxRejected tx err)
+        (TraceMempoolRejectedTx
+         tx
+         err
+         (isMempoolSize is)
+        )
+    Right txsz
+      -- We add the transaction if and only if it wouldn't overrun any component
+      -- of the mempool capacity.
+      --
+      -- In the past, this condition was instead @TxSeq.toSize (isTxs is) <
+      -- isCapacity is@. Thus the effective capacity of the mempool was
+      -- actually one increment less than the reported capacity plus one
+      -- transaction. That subtlety's cost paid for two benefits.
+      --
+      -- First, the absence of addition avoids a risk of overflow, since the
+      -- transaction's sizes (eg ExUnits) have not yet been bounded by
+      -- validation (which presumably enforces a low enough bound that any
+      -- reasonably-sized mempool would never overflow the representation's
+      -- 'maxBound').
+      --
+      -- Second, it is more fair, since it does not depend on the transaction
+      -- at all. EG a large transaction might struggle to win the race against
+      -- a firehose of tiny transactions.
+      --
+      -- However, we prefer to avoid the subtlety. Overflow is impossible with
+      -- the recent switch to 'Natural's within 'TxMeasure'. And fairness is
+      -- already ensured elsewhere (the 'MVar's in 'implAddTx' -- which the
+      -- "Test.Consensus.Mempool.Fairness" test exercises). Moreover, the
+      -- notion of "is under capacity" becomes difficult to assess
+      -- independently of the pending tx when the measure is multi-dimensional;
+      -- both typical options (any component is not full or every component is
+      -- not full) lead to some confusing behaviors (denying some txs that
+      -- would "obviously" fit and accepting some txs that "obviously" don't,
+      -- respectively).
+      --
+      -- Even with no risk of overflow, it's important that 'txMeasure' returns
+      -- a well-bounded result. Otherwise, if an adversarial tx arrived that
+      -- could't even fit in an empty mempool, then that thread would never
+      -- release the 'MVar'. For example, we tacitally assume here that a tx
+      -- that wouldn't even fit in an empty mempool would be rejected by
+      -- 'txMeasure'.
+      | TxSeq.toSize (isTxs is) `Measure.plus` txsz Measure.<= isCapacity is
+      ->
+        let eVtx = extendVRNew cfg wti tx $ validationResultFromIS is
+        in
+        case eVtx of
+          Right (vtx, vr) ->
+            let is' = internalStateFromVR vr
+            in
+            assert (isJust (vrNewValid vr)) $
+              TryAddTx
+                (Just is')
+                (MempoolTxAdded vtx)
+                (TraceMempoolAddedTx
+                  vtx
+                  (isMempoolSize is)
+                  (isMempoolSize is')
+                )
+          Left err ->
             TryAddTx
               Nothing
               (MempoolTxRejected tx err)
@@ -214,11 +257,8 @@ pureTryAddTx cfg txSize wti tx is
                err
                (isMempoolSize is)
               )
-  | otherwise
-  = NoSpaceLeft
-    where
-      (eVtx, vr) = extendVRNew cfg txSize wti tx $ validationResultFromIS is
-      is'        = internalStateFromVR vr
+      | otherwise
+      -> NoSpaceLeft
 
 {-------------------------------------------------------------------------------
   Remove transactions
