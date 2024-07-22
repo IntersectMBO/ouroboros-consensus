@@ -63,6 +63,8 @@ import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as 
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (ChainSyncClientHandle (..), ChainSyncState (..),
                      viewChainSyncState)
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricalRollbacks
+                     (HistoricalRollbackCheck)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
                      (SomeHeaderInFutureCheck)
 import           Ouroboros.Consensus.Node.Genesis (GenesisNodeKernelArgs (..),
@@ -170,6 +172,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs {
     , chainDB                 :: ChainDB m blk
     , initChainDB             :: StorageConfig blk -> InitChainDB m blk -> m ()
     , chainSyncFutureCheck    :: SomeHeaderInFutureCheck m blk
+    , historicalRollbackCheck :: m GSM.GsmState -> HistoricalRollbackCheck m blk
     , blockFetchSize          :: Header blk -> SizeInBytes
     , mempoolCapacityOverride :: MempoolCapacityBytesOverride
     , miniProtocolParameters  :: MiniProtocolParameters

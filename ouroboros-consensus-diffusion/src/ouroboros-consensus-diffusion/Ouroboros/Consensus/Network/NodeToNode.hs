@@ -211,14 +211,15 @@ mkHandlers ::
   -> NodeKernel     m addrNTN addrNTC blk
   -> Handlers       m addrNTN           blk
 mkHandlers
-      NodeKernelArgs {chainSyncFutureCheck, keepAliveRng, miniProtocolParameters}
-      NodeKernel {getChainDB, getMempool, getTopLevelConfig, getTracers = tracers, getPeerSharingAPI} =
+      NodeKernelArgs {chainSyncFutureCheck, historicalRollbackCheck, keepAliveRng, miniProtocolParameters}
+      NodeKernel {getChainDB, getMempool, getTopLevelConfig, getTracers = tracers, getPeerSharingAPI, getGsmState} =
     Handlers {
         hChainSyncClient = \peer _isBigLedgerpeer dynEnv ->
           CsClient.chainSyncClient
             CsClient.ConfigEnv {
                 CsClient.cfg                     = getTopLevelConfig
               , CsClient.someHeaderInFutureCheck = chainSyncFutureCheck
+              , CsClient.historicalRollbackCheck = historicalRollbackCheck (atomically getGsmState)
               , CsClient.chainDbView             =
                   CsClient.defaultChainDbView getChainDB
               , CsClient.mkPipelineDecision0     = pipelineDecisionLowHighMark

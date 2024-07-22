@@ -80,6 +80,11 @@ import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture,
                      ClockSkew)
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+                     (CSJConfig (..))
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricalRollbacks
+                     (HistoricalRollbackCheck)
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricalRollbacks as HistoricalRollbacks
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.Network.NodeToClient as NTC
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
@@ -281,6 +286,10 @@ data LowLevelRunNodeArgs m addrNTN addrNTC versionDataNTN versionDataNTC blk
       -- | Maximum clock skew
     , llrnMaxClockSkew :: ClockSkew
 
+      -- | If we receive a ChainSync rollback to a slot that is older than this
+      -- upon arrival, we will disconnect. If 'Nothing', disable the check.
+    , llrnMaxRollbackAge :: Maybe NominalDiffTime
+
     , llrnPublicPeerSelectionStateVar :: StrictSTM.StrictTVar m (Diffusion.PublicPeerSelectionState addrNTN)
     }
 
@@ -460,6 +469,10 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
               let gsmMarkerFileView =
                     case ChainDB.cdbsHasFSGsmDB $ ChainDB.cdbsArgs finalArgs of
                         SomeHasFS x -> GSM.realMarkerFileView chainDB x
+                  historicalRollbackCheck getGsmState = case llrnMaxRollbackAge of
+                    Nothing             -> HistoricalRollbacks.noCheck
+                    Just maxRollbackAge ->
+                      HistoricalRollbacks.mkCheck systemTime getGsmState maxRollbackAge
               fmap (nodeKernelArgsEnforceInvariants . llrnCustomiseNodeKernelArgs)
                 $ mkNodeKernelArgs
                     registry
@@ -470,6 +483,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                     rnTraceConsensus
                     btime
                     (InFutureCheck.realHeaderInFutureCheck llrnMaxClockSkew systemTime)
+                    historicalRollbackCheck
                     chainDB
                     llrnMaxCaughtUpAge
                     (Just durationUntilTooOld)
@@ -708,6 +722,7 @@ mkNodeKernelArgs ::
   -> Tracers m (ConnectionId addrNTN) (ConnectionId addrNTC) blk
   -> BlockchainTime m
   -> InFutureCheck.SomeHeaderInFutureCheck m blk
+  -> (m GSM.GsmState ->HistoricalRollbackCheck m blk)
   -> ChainDB m blk
   -> NominalDiffTime
   -> Maybe (GSM.WrapDurationUntilTooOld m blk)
@@ -725,6 +740,7 @@ mkNodeKernelArgs
   tracers
   btime
   chainSyncFutureCheck
+  historicalRollbackCheck
   chainDB
   maxCaughtUpAge
   gsmDurationUntilTooOld
@@ -742,6 +758,7 @@ mkNodeKernelArgs
       , chainDB
       , initChainDB             = nodeInitChainDB
       , chainSyncFutureCheck
+      , historicalRollbackCheck
       , blockFetchSize          = estimateBlockSize
       , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
       , miniProtocolParameters  = defaultMiniProtocolParameters
@@ -909,6 +926,20 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
       , llrnMaxCaughtUpAge = secondsToNominalDiffTime $ 20 * 60   -- 20 min
       , llrnMaxClockSkew =
           InFuture.defaultClockSkew
+      , llrnMaxRollbackAge = case gcCSJConfig rnGenesisConfig of
+          -- If CSJ is disabled, we are either syncing from trusted peers (Praos
+          -- mode), or the LoP already handles historical rollbacks.
+          CSJDisabled  -> Nothing
+          -- If CSJ is enabled, we prevent historical rollbacks: When peers roll
+          -- back before their last acknowledged jump, we disengage them
+          -- (causing us to run full ChainSync with them). This is fine when we
+          -- are almost caught-up, but it is wasteful while syncing historical
+          -- parts of the chain.
+          --
+          -- Here, "historical" is defined to be the length of a Shelley
+          -- stability window (3k/f slots) plus one extra hour as a safety
+          -- margin.
+          CSJEnabled{} -> Just $ 3 * 2160 * 20 + 3600
       , llrnPublicPeerSelectionStateVar =
           Diffusion.daPublicPeerSelectionVar srnDiffusionArguments
       }
