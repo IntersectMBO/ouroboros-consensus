@@ -12,6 +12,7 @@ module Ouroboros.Consensus.Node.Genesis (
     GenesisConfig (..)
   , GenesisConfigFlags (..)
   , LoEAndGDDConfig (..)
+  , defaultGenesisConfigFlags
   , disableGenesisConfig
   , enableGenesisConfigDefault
   , mkGenesisConfig
@@ -67,8 +68,8 @@ data GenesisConfigFlags = GenesisConfigFlags
   , gcfCSJJumpSize          :: Maybe Integer
   } deriving stock (Eq, Generic, Show)
 
-enableGenesisConfigDefault :: GenesisConfig
-enableGenesisConfigDefault = mkGenesisConfig $ Just $ GenesisConfigFlags
+defaultGenesisConfigFlags :: GenesisConfigFlags
+defaultGenesisConfigFlags = GenesisConfigFlags
   { gcfEnableCSJ            = True
   , gcfEnableLoEAndGDD      = True
   , gcfEnableLoP            = True
@@ -77,6 +78,9 @@ enableGenesisConfigDefault = mkGenesisConfig $ Just $ GenesisConfigFlags
   , gcfBucketRate           = Nothing
   , gcfCSJJumpSize          = Nothing
   }
+
+enableGenesisConfigDefault :: GenesisConfig
+enableGenesisConfigDefault = mkGenesisConfig $ Just $ defaultGenesisConfigFlags
 
 -- | Disable all Genesis components, yielding Praos behavior.
 disableGenesisConfig :: GenesisConfig
