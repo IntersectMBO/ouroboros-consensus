@@ -140,7 +140,12 @@ mkGenesisConfig (Just GenesisConfigFlags{..}) =
     defaultCapacity = 100_000 -- number of tokens
     defaultRate     = 500 -- tokens per second leaking, 1/2ms
 
-    defaultCSJJumpSize = 3 * 2160 * 20 -- mainnet forecast range
+    -- The larger Shelley forecast range (3 * 2160 * 20) works in more recent
+    -- ranges of slots, but causes syncing to block in Byron. A future
+    -- improvement would be to make this era-dynamic, such that we can use the
+    -- larger (and hence more efficient) larger CSJ jump size in Shelley-based
+    -- eras.
+    defaultCSJJumpSize = 2 * 2160 -- Byron forecast range
 
     gbfcBulkSyncGracePeriod = fromInteger $ fromMaybe defaultBulkSyncGracePeriod gcfBulkSyncGracePeriod
     csbcCapacity            = fromInteger $ fromMaybe defaultCapacity gcfBucketCapacity
