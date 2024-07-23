@@ -82,14 +82,12 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended hiding (ledgerState)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (CSJConfig (..), ChainDbView (..),
-                     ChainSyncClientException,
-                     ChainSyncClientHandleCollection (..),
-                     ChainSyncClientResult (..), ChainSyncLoPBucketConfig (..),
-                     ChainSyncState (..), ChainSyncStateView (..),
-                     ConfigEnv (..), Consensus, DynamicEnv (..), Our (..),
-                     Their (..), TraceChainSyncClientEvent (..),
-                     bracketChainSyncClient, chainSyncClient, chainSyncStateFor,
-                     newChainSyncClientHandleCollection, viewChainSyncState)
+                     ChainSyncClientException, ChainSyncClientResult (..),
+                     ChainSyncLoPBucketConfig (..), ChainSyncState (..),
+                     ChainSyncStateView (..), ConfigEnv (..), Consensus,
+                     DynamicEnv (..), Our (..), Their (..),
+                     TraceChainSyncClientEvent (..), bracketChainSyncClient,
+                     chainSyncClient, chainSyncStateFor, viewChainSyncState)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Node.GsmState (GsmState (Syncing))
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -359,7 +357,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
     -- separate map too, one that isn't emptied. We can use this map to look
     -- at the final state of each candidate.
     varFinalCandidates <- uncheckedNewTVarM Map.empty
-    varHandles         <- atomically newChainSyncClientHandleCollection
+    varHandles     <- uncheckedNewTVarM Map.empty
 
     (tracer, getTrace) <- do
           (tracer', getTrace) <- recordingTracerTVar
@@ -513,7 +511,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                  csjConfig
                  $ \csState -> do
                    atomically $ do
-                     handles <- cschcMap varHandles
+                     handles <- readTVar varHandles
                      modifyTVar varFinalCandidates $ Map.insert serverId (handles Map.! serverId)
                    result <-
                      runPipelinedPeer protocolTracer codecChainSyncId clientChannel $
@@ -534,7 +532,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
     let checkTipTime :: m ()
         checkTipTime = do
             now        <- systemTimeCurrent clientSystemTime
-            candidates <- atomically $ viewChainSyncState (cschcMap varHandles) csCandidate
+            candidates <- atomically $ viewChainSyncState varHandles csCandidate
             forM_ candidates $ \candidate -> do
               let p = castPoint $ AF.headPoint candidate :: Point TestBlock
               case pointSlot p of

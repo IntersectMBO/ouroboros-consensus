@@ -30,8 +30,6 @@ import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (ChainSyncClientHandleCollection)
-import           Ouroboros.Consensus.Node.Genesis (GenesisConfig (..),
-                     enableGenesisConfigDefault)
 import           Ouroboros.Consensus.Node.ProtocolInfo
                      (NumCoreNodes (NumCoreNodes))
 import           Ouroboros.Consensus.Storage.ChainDB.API
@@ -40,8 +38,7 @@ import           Ouroboros.Consensus.Util.IOLike (DiffTime,
                      Exception (fromException), IOLike, atomically, retry, try)
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..),
-                     FetchClientRegistry, FetchMode (..),
-                     GenesisBlockFetchConfiguration (..), blockFetchLogic,
+                     FetchClientRegistry, FetchMode (..), blockFetchLogic,
                      bracketFetchClient, bracketKeepAliveClient)
 import           Ouroboros.Network.BlockFetch.Client (blockFetchClient)
 import           Ouroboros.Network.Channel (Channel)
@@ -113,7 +110,7 @@ startBlockFetchLogic enableChainSelStarvation registry tracer chainDb fetchClien
           , bfcMaxRequestsInflight = 10
           , bfcDecisionLoopInterval = 0
           , bfcSalt = 0
-          , bfcGenesisBFConfig
+          , bfcBulkSyncGracePeriod
           }
 
     void $ forkLinkedThread registry "BlockFetchLogic" $

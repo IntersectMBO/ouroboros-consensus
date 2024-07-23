@@ -40,7 +40,6 @@ import qualified Network.TypedProtocol.Driver.Simple as Driver
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
-import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDBImpl
@@ -52,14 +51,12 @@ import           Ouroboros.Consensus.Util.STM (blockUntilJust,
                      forkLinkedWatcher)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..),
+import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..), GenesisBlockFetchConfiguration (..),
                      BlockFetchConsensusInterface, FetchMode (..),
-                     GenesisBlockFetchConfiguration (..), blockFetchLogic,
-                     bracketFetchClient, bracketKeepAliveClient,
-                     bracketSyncWithFetchClient, newFetchClientRegistry)
+                     blockFetchLogic, bracketFetchClient,
+                     bracketKeepAliveClient, bracketSyncWithFetchClient,
+                     newFetchClientRegistry)
 import           Ouroboros.Network.BlockFetch.Client (blockFetchClient)
-import           Ouroboros.Network.BlockFetch.ConsensusInterface
-                     (ChainSelStarvation (..))
 import           Ouroboros.Network.ControlMessage (ControlMessage (..))
 import           Ouroboros.Network.Mock.Chain (Chain)
 import qualified Ouroboros.Network.Mock.Chain as Chain
@@ -138,13 +135,12 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
     (tracer, getTrace)  <-
       first (LogicalClock.tickTracer clock) <$> recordingTracerTVar
     chainDbView         <- mkChainDbView registry tracer
-    handles             <- atomically CSClient.newChainSyncClientHandleCollection
 
     let getCandidates = Map.map chainToAnchoredFragment <$> readTVar varChains
 
         blockFetchConsensusInterface =
           mkTestBlockFetchConsensusInterface
-            handles
+            (Map.map (AF.mapAnchoredFragment getHeader) <$> getCandidates)
             chainDbView
 
     _ <- forkLinkedThread registry "BlockFetchLogic" $
@@ -264,8 +260,6 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
             getCurrentChain           = pure $ AF.Empty AF.AnchorGenesis
             getIsFetched              = ChainDB.getIsFetched chainDB
             getMaxSlotNo              = ChainDB.getMaxSlotNo chainDB
-            -- REVIEW: Do we want a non-trivial starvation indicator here?
-            getChainSelStarvation     = pure $ ChainSelStarvationEndedAt (Time 0) 0
             addBlockWaitWrittenToDisk = ChainDB.addBlockWaitWrittenToDisk chainDB
         pure BlockFetchClientInterface.ChainDbView {..}
       where
@@ -281,15 +275,15 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
 
 
     mkTestBlockFetchConsensusInterface ::
-         CSClient.ChainSyncClientHandleCollection PeerId m TestBlock
+         STM m (Map PeerId (AnchoredFragment (Header TestBlock)))
       -> BlockFetchClientInterface.ChainDbView m TestBlock
       -> BlockFetchConsensusInterface PeerId (Header TestBlock) TestBlock m
-    mkTestBlockFetchConsensusInterface handles chainDbView =
+    mkTestBlockFetchConsensusInterface getCandidates chainDbView =
         BlockFetchClientInterface.mkBlockFetchConsensusInterface
           nullTracer
           (TestBlockConfig numCoreNodes)
           chainDbView
-          handles
+          getCandidates
           (\_hdr -> 1000) -- header size, only used for peer prioritization
           slotForgeTime
           (pure blockFetchMode)
@@ -361,6 +355,7 @@ instance Arbitrary BlockFetchClientTestSetup where
       blockFetchMode <- elements [FetchModeBulkSync, FetchModeDeadline]
       blockFetchCfg  <- do
         let -- ensure that we can download blocks from all peers
+            bfcMaxConcurrencyBulkSync = fromIntegral numPeers
             bfcMaxConcurrencyDeadline = fromIntegral numPeers
             -- This is used to introduce a minimal delay between BlockFetch
             -- logic iterations in case the monitored state vars change too
@@ -404,7 +399,7 @@ instance Arbitrary BlockFetchClientTestSetup where
 
 newtype PeerId = PeerId Int
   deriving stock (Show, Eq, Ord)
-  deriving newtype (Condense, Hashable, Enum, Bounded, NoThunks)
+  deriving newtype (Condense, Hashable, Enum, Bounded)
 
 {-------------------------------------------------------------------------------
   Utilities
