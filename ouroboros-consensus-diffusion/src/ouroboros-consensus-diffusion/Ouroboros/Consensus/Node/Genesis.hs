@@ -121,7 +121,9 @@ mkGenesisConfig (Just GenesisConfigFlags{..}) =
     defaultBulkSyncGracePeriod = 10 -- seconds
     defaultCapacity            = 100_000 -- number of tokens
     defaultRate                = 500 -- tokens per second leaking, 1/2ms
-    defaultCSJJumpSize         = 3 * 2160 * 20 -- mainnet forecast range
+    -- 3 * 2160 * 20 works in more recent ranges of slots, but causes syncing to
+    -- block in byron.
+    defaultCSJJumpSize         = 2 * 2160
 
     gbfcBulkSyncGracePeriod = fromInteger $ fromMaybe defaultBulkSyncGracePeriod gcfBulkSyncGracePeriod
     csbcCapacity            = fromInteger $ fromMaybe defaultCapacity gcfBucketCapacity
