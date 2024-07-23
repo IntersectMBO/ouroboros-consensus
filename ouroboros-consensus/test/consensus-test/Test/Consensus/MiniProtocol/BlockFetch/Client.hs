@@ -360,13 +360,11 @@ instance Arbitrary BlockFetchClientTestSetup where
       blockFetchMode <- elements [FetchModeBulkSync, FetchModeDeadline]
       blockFetchCfg  <- do
         let -- ensure that we can download blocks from all peers
-            bfcMaxConcurrencyBulkSync = fromIntegral numPeers
             bfcMaxConcurrencyDeadline = fromIntegral numPeers
             -- This is used to introduce a minimal delay between BlockFetch
             -- logic iterations in case the monitored state vars change too
             -- fast, which we don't have to worry about in this test.
             bfcDecisionLoopInterval   = 0
-            bfcBulkSyncGracePeriod = 10
         bfcMaxRequestsInflight <- chooseEnum (2, 10)
         bfcSalt                <- arbitrary
         gbfcBulkSyncGracePeriod <- fromIntegral <$> chooseInteger (5, 60)
