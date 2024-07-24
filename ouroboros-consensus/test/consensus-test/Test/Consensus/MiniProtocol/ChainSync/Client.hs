@@ -58,7 +58,7 @@ import           Control.Monad.Class.MonadTimer (MonadTimer)
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer (contramap, contramapM, nullTracer)
 import           Data.DerivingVia (InstantiatedAt (InstantiatedAt))
-import           Data.List (intercalate)
+import           Data.List (foldl', intercalate)
 import qualified Data.Map.Merge.Strict as Map
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust)
@@ -89,7 +89,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      TraceChainSyncClientEvent (..), bracketChainSyncClient,
                      chainSyncClient, chainSyncStateFor, viewChainSyncState)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricalRollbacks
-                     (HistoricalRollbackCheck)
+                     (HistoricalRollbackCheck, MaxRollbackAge (..))
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricalRollbacks as HistoricalRollbacks
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Node.GsmState (GsmState (Syncing))
@@ -613,6 +613,8 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
           (ClientUpdates clientUpdates)
           (ServerUpdates serverUpdates)
 
+    -- Also see the module header for how ticks/time/clock skew are working in
+    -- this test.
     clientTimeForTick :: Tick -> RelativeTime
     clientTimeForTick = \tick -> case Map.lookupLE tick clientTimes of
         Just (_, time) -> time
@@ -635,12 +637,10 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
     -- For the historical rollback check. This is calculated by considering the
     -- 'ChainUpdate' which rolls back to the earliest slot relative to the
     -- client wallclock time in the given tick.
-    maxRollbackAge :: NominalDiffTime
+    maxRollbackAge :: MaxRollbackAge
     maxRollbackAge =
-        case foldMap (Just . Max) rollbackAges of
-          Just (Max maxAge) -> maxAge
-          -- If there are no rollbacks at all, any value will do.
-          Nothing           -> 0
+        -- If there are no rollbacks at all, any value will do.
+        MaxRollbackAge $ foldl' max 0 rollbackAges
       where
         rollbackAges :: [NominalDiffTime]
         rollbackAges =
