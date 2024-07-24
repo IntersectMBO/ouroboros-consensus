@@ -1034,7 +1034,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
             , getUseBootstrapPeers = pure DontUseBootstrapPeers
             , publicPeerSelectionStateVar
             , genesisArgs          = GenesisNodeKernelArgs {
-                  gnkaGetLoEFragment = LoEAndGDDDisabled
+                  gnkaLoEAndGDDArgs = LoEAndGDDDisabled
                 }
             , getDiffusionPipeliningSupport = DiffusionPipeliningOn
             }

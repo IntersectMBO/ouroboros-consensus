@@ -69,7 +69,8 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCh
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
                      (SomeHeaderInFutureCheck)
 import           Ouroboros.Consensus.Node.Genesis (GenesisNodeKernelArgs (..),
-                     LoEAndGDDConfig (..), setGetLoEFragment)
+                     LoEAndGDDConfig (..), LoEAndGDDNodeKernelArgs (..),
+                     setGetLoEFragment)
 import           Ouroboros.Consensus.Node.GSM (GsmNodeKernelArgs (..))
 import qualified Ouroboros.Consensus.Node.GSM as GSM
 import           Ouroboros.Consensus.Node.Run
@@ -283,20 +284,21 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                         ps_POLICY_PEER_SHARE_STICKY_TIME
                                         ps_POLICY_PEER_SHARE_MAX_PEERS
 
-    case gnkaGetLoEFragment genesisArgs of
-      LoEAndGDDDisabled                  -> pure ()
-      LoEAndGDDEnabled varGetLoEFragment -> do
+    case gnkaLoEAndGDDArgs genesisArgs of
+      LoEAndGDDDisabled       -> pure ()
+      LoEAndGDDEnabled lgArgs -> do
         varLoEFragment <- newTVarIO $ AF.Empty AF.AnchorGenesis
         setGetLoEFragment
           (readTVar varGsmState)
           (readTVar varLoEFragment)
-          varGetLoEFragment
+          (lgnkaLoEFragmentTVar lgArgs)
 
         void $ forkLinkedWatcher registry "NodeKernel.GDD" $
           gddWatcher
             cfg
             (gddTracer tracers)
             chainDB
+            (lgnkaGDDRateLimit lgArgs)
             (readTVar varGsmState)
             -- TODO GDD should only consider (big) ledger peers
             (cschcMap varChainSyncHandles)
