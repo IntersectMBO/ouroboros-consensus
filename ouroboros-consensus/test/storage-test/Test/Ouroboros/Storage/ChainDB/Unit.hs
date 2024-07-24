@@ -42,6 +42,7 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks as ImmutableDB
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry (closeRegistry,
                      unsafeNewRegistry)
+import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (ChainUpdate (..), Point, blockPoint)
 import qualified Ouroboros.Network.Mock.Chain as Mock
 import qualified Test.Ouroboros.Storage.ChainDB.Model as Model
@@ -61,19 +62,19 @@ import           Test.Util.Tracer (recordingTracerTVar)
 tests :: TestTree
 tests = testGroup "Unit tests"
   [ testGroup "First follower instruction isJust on empty ChainDB"
-    [ testCase "model" $ runModelIO followerInstructionOnEmptyChain
+    [ testCase "model" $ runModelIO API.LoEDisabled followerInstructionOnEmptyChain
     , testCase "system" $ runSystemIO followerInstructionOnEmptyChain
     ]
   , testGroup "Follower switches to new chain"
-    [ testCase "model" $ runModelIO followerSwitchesToNewChain
+    [ testCase "model" $ runModelIO API.LoEDisabled followerSwitchesToNewChain
     , testCase "system" $ runSystemIO followerSwitchesToNewChain
     ]
   , testGroup (ouroborosNetworkIssue 4183)
-    [ testCase "model" $ runModelIO ouroboros_network_4183
+    [ testCase "model" $ runModelIO API.LoEDisabled ouroboros_network_4183
     , testCase "system" $ runSystemIO ouroboros_network_4183
     ]
   , testGroup (ouroborosNetworkIssue 3999)
-    [ testCase "model" $ runModelIO ouroboros_network_3999
+    [ testCase "model" $ runModelIO API.LoEDisabled ouroboros_network_3999
     , testCase "system" $ runSystemIO ouroboros_network_3999
     ]
   ]
@@ -218,11 +219,11 @@ extractBlock (blk, _, _, _, _, _, _, _, _, _, _) = blk
 
 -- | Helper function to run the test against the model and translate to something
 -- that HUnit likes.
-runModelIO :: ModelM TestBlock a -> IO ()
-runModelIO expr = toAssertion (runModel newModel topLevelConfig expr)
+runModelIO :: API.LoE () -> ModelM TestBlock a -> IO ()
+runModelIO loe expr = toAssertion (runModel newModel topLevelConfig expr)
   where
     chunkInfo      = ImmutableDB.simpleChunkInfo 100
-    newModel       = Model.empty testInitExtLedger 0
+    newModel       = Model.empty loe testInitExtLedger 0
     topLevelConfig = mkTestCfg chunkInfo
 
 
@@ -408,6 +409,7 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont
       iteratorRegistry <- unsafeNewRegistry
       varCurSlot <- uncheckedNewTVarM 0
       varNextId <- uncheckedNewTVarM 0
+      varLoEFragment <- newTVarIO $ AF.Empty AF.AnchorGenesis
       nodeDbs <- emptyNodeDBs
       (tracer, getTrace) <- recordingTracerTVar
       let args = chainDbArgs threadRegistry nodeDbs tracer
@@ -419,6 +421,7 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont
             , varNextId
             , varVolatileDbFs = nodeDBsVol nodeDbs
             , args
+            , varLoEFragment
             }
       pure (env, getTrace)
 

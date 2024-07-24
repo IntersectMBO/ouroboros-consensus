@@ -87,6 +87,8 @@ import           Data.Bifunctor
 import qualified Data.Bifunctor.TH as TH
 import           Data.Bitraversable
 import           Data.ByteString.Lazy (ByteString)
+import           Data.Function (on)
+import           Data.Functor (($>))
 import           Data.Functor.Classes (Eq1, Show1)
 import           Data.Functor.Identity (Identity)
 import           Data.List (sortOn)
@@ -153,6 +155,7 @@ import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.ChainDB
 import           Test.Util.ChunkInfo
+import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Orphans.ToExpr ()
 import           Test.Util.QuickCheck
 import qualified Test.Util.RefEnv as RE
@@ -171,7 +174,7 @@ import           Test.Util.WithEq
 data Cmd blk it flr
   = AddBlock       blk
     -- ^ Advance the current slot to the block's slot (unless smaller than the
-    -- current slot) and add the block.
+    -- current slot), add the block and run chain selection.
   | AddFutureBlock blk SlotNo
     -- ^ Advance the current slot to the given slot, which is guaranteed to be
     -- smaller than the block's slot number (such that the block is from the
@@ -187,6 +190,8 @@ data Cmd blk it flr
   | GetMaxSlotNo
   | GetIsValid            (RealPoint blk)
   | Stream                (StreamFrom blk) (StreamTo blk)
+  | UpdateLoE             (AnchoredFragment blk)
+    -- ^ Update the LoE fragment and run chain selection.
   | IteratorNext          it
   | IteratorNextGCed      it
     -- ^ Only for blocks that may have been garbage collected.
@@ -358,6 +363,7 @@ data ChainDBEnv m blk = ChainDBEnv {
   , varVolatileDbFs :: StrictTVar m MockFS
   , args            :: ChainDbArgs Identity m blk
     -- ^ Needed to reopen a ChainDB, i.e., open a new one.
+  , varLoEFragment  :: StrictTVar m (AnchoredFragment (Header blk))
   }
 
 open ::
@@ -400,6 +406,7 @@ run env@ChainDBEnv { varDB, .. } cmd =
       GetGCedBlockComponent pt -> mbGCedAllComponents <$> getBlockComponent allComponents pt
       GetIsValid pt            -> isValidResult       <$> ($ pt) <$> atomically getIsValid
       GetMaxSlotNo             -> MaxSlot             <$> atomically getMaxSlotNo
+      UpdateLoE frag           -> Point               <$> updateLoE st frag
       Stream from to           -> iter                =<< stream registry allComponents from to
       IteratorNext  it         -> IterResult          <$> iteratorNext (unWithEq it)
       IteratorNextGCed  it     -> iterResultGCed      <$> iteratorNext (unWithEq it)
@@ -427,9 +434,17 @@ run env@ChainDBEnv { varDB, .. } cmd =
       atomically $ modifyTVar varCurSlot (max newCurSlot)
       -- `blockProcessed` always returns 'Just'
       res <- addBlock chainDB InvalidBlockPunishment.noPunishment blk
+      ChainDB.triggerChainSelection chainDB
       return $ case res of
         FailedToAddBlock f       -> error $ "advanceAndAdd: block not added - " ++ f
         SuccesfullyAddedBlock pt -> pt
+
+    updateLoE :: ChainDBState m blk -> AnchoredFragment blk -> m (Point blk)
+    updateLoE ChainDBState { chainDB } frag = do
+      let headersFrag = AF.mapAnchoredFragment getHeader frag
+      atomically $ writeTVar varLoEFragment headersFrag
+      ChainDB.triggerChainSelection chainDB
+      atomically $ getTipPoint chainDB
 
     wipeVolatileDB :: ChainDBState m blk -> m (Point blk)
     wipeVolatileDB st = do
@@ -635,6 +650,7 @@ runPure cfg = \case
     GetGCedBlockComponent pt -> err mbGCedAllComponents $ query   (Model.getBlockComponentByPoint allComponents pt)
     GetMaxSlotNo             -> ok  MaxSlot             $ query    Model.getMaxSlotNo
     GetIsValid pt            -> ok  isValidResult       $ query   (Model.isValid pt)
+    UpdateLoE frag           -> ok  Point               $ update  (Model.updateLoE cfg frag)
     Stream from to           -> err iter                $ updateE (Model.stream k from to)
     IteratorNext  it         -> ok  IterResult          $ update  (Model.iteratorNext it allComponents)
     IteratorNextGCed it      -> ok  iterResultGCed      $ update  (Model.iteratorNext it allComponents)
@@ -753,12 +769,14 @@ data Model blk m r = Model
 deriving instance (TestConstraints blk, Show1 r) => Show (Model blk m r)
 
 -- | Initial model
-initModel :: TopLevelConfig blk
+initModel :: HasHeader blk
+          => LoE ()
+          -> TopLevelConfig blk
           -> ExtLedgerState blk
           -> MaxClockSkew
           -> Model blk m r
-initModel cfg initLedger (MaxClockSkew maxClockSkew) = Model
-  { dbModel        = Model.empty initLedger maxClockSkew
+initModel loe cfg initLedger (MaxClockSkew maxClockSkew) = Model
+  { dbModel        = Model.empty loe initLedger maxClockSkew
   , knownIters     = RE.empty
   , knownFollowers = RE.empty
   , modelConfig    = QSM.Opaque cfg
@@ -876,10 +894,11 @@ type BlockGen blk m = Model blk m Symbolic -> Gen blk
 -- | Generate a 'Cmd'
 generator ::
      forall blk m. TestConstraints blk
-  => BlockGen     blk m
+  => LoE ()
+  -> BlockGen     blk m
   -> Model        blk m Symbolic
   -> Gen (At Cmd  blk m Symbolic)
-generator genBlock m@Model {..} = At <$> frequency
+generator loe genBlock m@Model {..} = At <$> frequency
     [ (30, genAddBlock)
     , (if empty then 1 else 10, return GetCurrentChain)
     , (if empty then 1 else 10, return GetLedgerDB)
@@ -889,6 +908,11 @@ generator genBlock m@Model {..} = At <$> frequency
     , (10, genGetBlockComponent)
     , (if empty then 1 else 10, return GetMaxSlotNo)
     , (if empty then 1 else 10, genGetIsValid)
+
+    , let freq = case loe of
+            LoEDisabled   -> 0
+            LoEEnabled () -> if empty then 1 else 10
+      in (freq, UpdateLoE <$> genLoEFragment)
 
     -- Iterators
     , (if empty then 1 else 10, uncurry Stream <$> genBounds)
@@ -933,8 +957,36 @@ generator genBlock m@Model {..} = At <$> frequency
     genRandomPoint :: Gen (RealPoint blk)
     genRandomPoint = blockRealPoint <$> genBlock m
 
+    blocksInDB :: Map.Map (HeaderHash blk) blk
+    blocksInDB = Model.blocks dbModel
+
     pointsInDB :: [RealPoint blk]
-    pointsInDB = blockRealPoint <$> Map.elems (Model.blocks dbModel)
+    pointsInDB = blockRealPoint <$> Map.elems blocksInDB
+
+    genLoEFragment :: Gen (AnchoredFragment blk)
+    genLoEFragment = frequency
+        [ (1, return $ AF.Empty AF.AnchorGenesis)
+        , (20, flip suchThatMap id $ do
+            -- Generate a fragment between an anchor in the ImmutableDB and a
+            -- tip corresponding to either the immutable tip, a volatile block
+            -- or a block not yet in the ChainDB.
+            anchor <- elements $
+              AF.AnchorGenesis : fmap AF.anchorFromBlock immutableBlocks
+            blk <- genBlock m
+            tip    <- frequency
+              [ (1, pure $ Chain.headHash immutableChain)
+              , (5, pure $ BlockHash (blockHash blk))
+              , ( if null volatileBlocks then 0 else 5
+                , elements $ BlockHash . blockHash <$> volatileBlocks
+                )
+              ]
+            let blks = Map.insert (blockHash blk) blk blocksInDB
+            pure $ Model.getFragmentBetween blks anchor tip)
+        ]
+      where
+        immutableChain  = Model.immutableChain secParam dbModel
+        immutableBlocks = Chain.toNewestFirst immutableChain
+        volatileBlocks  = Map.elems $ Model.volatileDbBlocks dbModel
 
     empty :: Bool
     empty = null pointsInDB
@@ -1180,7 +1232,8 @@ semantics env (At cmd) =
 
 -- | The state machine proper
 sm :: TestConstraints blk
-   => ChainDBEnv IO blk
+   => LoE ()
+   -> ChainDBEnv IO blk
    -> BlockGen                  blk IO
    -> TopLevelConfig            blk
    -> ExtLedgerState            blk
@@ -1189,12 +1242,12 @@ sm :: TestConstraints blk
                    (At Cmd      blk IO)
                                     IO
                    (At Resp     blk IO)
-sm env genBlock cfg initLedger maxClockSkew = StateMachine
-  { initModel     = initModel cfg initLedger maxClockSkew
+sm loe env genBlock cfg initLedger maxClockSkew = StateMachine
+  { initModel     = initModel loe cfg initLedger maxClockSkew
   , transition    = transition
   , precondition  = precondition
   , postcondition = postcondition
-  , generator     = Just . generator genBlock
+  , generator     = Just . generator loe genBlock
   , shrinker      = shrinker
   , semantics     = semantics env
   , mock          = mock
@@ -1221,7 +1274,6 @@ deriving instance ( ToExpr blk
                   , ToExpr (ExtValidationError blk)
                   )
                  => ToExpr (Model blk IO Concrete)
-
 {-------------------------------------------------------------------------------
   Labelling
 -------------------------------------------------------------------------------}
@@ -1256,6 +1308,8 @@ deriving instance SOP.HasDatatypeInfo (VolatileDB.TraceEvent blk)
 data Tag =
     TagGetIsValidJust
   | TagGetIsValidNothing
+  | TagChainSelReprocessChangedSelection
+  | TagChainSelReprocessKeptSelection
   deriving (Show, Eq)
 
 -- | Predicate on events
@@ -1279,6 +1333,8 @@ tag :: forall m. [Event Blk m Symbolic] -> [Tag]
 tag = C.classify [
       tagGetIsValidJust
     , tagGetIsValidNothing
+    , tagChainSelReprocess TagChainSelReprocessChangedSelection (/=)
+    , tagChainSelReprocess TagChainSelReprocessKeptSelection    (==)
     ]
   where
     tagGetIsValidJust :: EventPred m
@@ -1292,6 +1348,14 @@ tag = C.classify [
       IsValid (IsValidResult { isValid = Nothing }) | GetIsValid {} <- unAt $ eventCmd ev ->
         Left TagGetIsValidNothing
       _ -> Right tagGetIsValidNothing
+
+    tagChainSelReprocess ::
+         Tag -> (Point TestBlock -> Point TestBlock -> Bool) -> EventPred m
+    tagChainSelReprocess t test = successful $ \ev _r -> case unAt $ eventCmd ev of
+      UpdateLoE{}
+        | (test `on` Model.tipPoint . dbModel) (eventBefore ev) (eventAfter ev)
+        -> Left t
+      _ -> Right $ tagChainSelReprocess t test
 
 -- | Step the model using a 'QSM.Command' (i.e., a command associated with
 -- an explicit set of variables)
@@ -1438,28 +1502,31 @@ mkTestCfg (ImmutableDB.UniformChunkSize chunkSize) =
 envUnused :: ChainDBEnv m blk
 envUnused = error "ChainDBEnv used during command generation"
 
-smUnused :: MaxClockSkew
+smUnused :: LoE ()
+         -> MaxClockSkew
          -> ImmutableDB.ChunkInfo
          -> StateMachine (Model Blk IO) (At Cmd Blk IO) IO (At Resp Blk IO)
-smUnused maxClockSkew chunkInfo =
+smUnused loe maxClockSkew chunkInfo =
     sm
+      loe
       envUnused
       (genBlk chunkInfo)
       (mkTestCfg chunkInfo)
       testInitExtLedger
       maxClockSkew
 
-prop_sequential :: MaxClockSkew -> SmallChunkInfo -> Property
-prop_sequential maxClockSkew smallChunkInfo@(SmallChunkInfo chunkInfo)  =
-    forAllCommands (smUnused maxClockSkew chunkInfo) Nothing $
-      runCmdsLockstep maxClockSkew smallChunkInfo
+prop_sequential :: LoE () -> MaxClockSkew -> SmallChunkInfo -> Property
+prop_sequential loe maxClockSkew smallChunkInfo@(SmallChunkInfo chunkInfo)  =
+    forAllCommands (smUnused loe maxClockSkew chunkInfo) Nothing $
+      runCmdsLockstep loe maxClockSkew smallChunkInfo
 
 runCmdsLockstep ::
-     MaxClockSkew
+     LoE ()
+  -> MaxClockSkew
   -> SmallChunkInfo
   -> QSM.Commands (At Cmd Blk IO) (At Resp Blk IO)
   -> Property
-runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
+runCmdsLockstep loe maxClockSkew (SmallChunkInfo chunkInfo) cmds =
     QC.monadicIO $ do
         let
           -- Current test case command names.
@@ -1467,10 +1534,10 @@ runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
           ctcCmdNames = fmap (show . cmdName . QSM.getCommand) $ QSM.unCommands cmds
 
         (hist, prop) <- QC.run $ test cmds
-        prettyCommands (smUnused maxClockSkew chunkInfo) hist
+        prettyCommands (smUnused loe maxClockSkew chunkInfo) hist
           $ tabulate
               "Tags"
-              (map show $ tag (execCmds (QSM.initModel (smUnused maxClockSkew chunkInfo)) cmds))
+              (map show $ tag (execCmds (QSM.initModel (smUnused loe maxClockSkew chunkInfo)) cmds))
           $ tabulate "Command sequence length" [show $ length ctcCmdNames]
           $ tabulate "Commands"                ctcCmdNames
           $ prop
@@ -1489,6 +1556,7 @@ runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
       varCurSlot         <- uncheckedNewTVarM 0
       varNextId          <- uncheckedNewTVarM 0
       nodeDBs            <- emptyNodeDBs
+      varLoEFragment     <- newTVarIO $ AF.Empty AF.AnchorGenesis
       let args = mkArgs
                    testCfg
                    chunkInfo
@@ -1498,6 +1566,7 @@ runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
                    tracer
                    maxClockSkew
                    varCurSlot
+                   (loe $> varLoEFragment)
 
       (hist, model, res, trace) <- bracket
         (open args >>= newTVarIO)
@@ -1513,9 +1582,10 @@ runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
                 , varCurSlot
                 , varNextId
                 , varVolatileDbFs = nodeDBsVol nodeDBs
+                , varLoEFragment
                 , args
                 }
-              sm' = sm env (genBlk chunkInfo) testCfg testInitExtLedger maxClockSkew
+              sm' = sm loe env (genBlk chunkInfo) testCfg testInitExtLedger maxClockSkew
           (hist, model, res) <- QSM.runCommands' sm' cmds'
           trace <- getTrace
           return (hist, model, res, trace)
@@ -1538,6 +1608,7 @@ runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
       let
           modelChain = Model.currentChain $ dbModel model
           prop =
+            counterexample (show (configSecurityParam testCfg))          $
             counterexample ("Model chain: " <> condense modelChain)      $
             counterexample ("TraceEvents: " <> unlines (map show trace)) $
             tabulate "Chain length" [show (Chain.length modelChain)]     $
@@ -1641,8 +1712,9 @@ mkArgs :: IOLike m
        -> CT.Tracer m (TraceEvent Blk)
        -> MaxClockSkew
        -> StrictTVar m SlotNo
+       -> LoE (StrictTVar m (AnchoredFragment (Header Blk)))
        -> ChainDbArgs Identity m Blk
-mkArgs cfg chunkInfo initLedger registry nodeDBs tracer (MaxClockSkew maxClockSkew) varCurSlot =
+mkArgs cfg chunkInfo initLedger registry nodeDBs tracer (MaxClockSkew maxClockSkew) varCurSlot varLoEFragment =
   let args = fromMinimalChainDbArgs MinimalChainDbArgs {
             mcdbTopLevelConfig = cfg
           , mcdbChunkInfo = chunkInfo
@@ -1654,6 +1726,7 @@ mkArgs cfg chunkInfo initLedger registry nodeDBs tracer (MaxClockSkew maxClockSk
       args { cdbsArgs = (cdbsArgs args) {
                ChainDB.cdbsCheckInFuture = InFuture.miracle (readTVar varCurSlot) maxClockSkew
              , ChainDB.cdbsBlocksToAddSize = 2
+             , ChainDB.cdbsLoE = traverse (atomically . readTVar) varLoEFragment
              }
            , cdbImmDbArgs = (cdbImmDbArgs args) {
                ImmutableDB.immCheckIntegrity = testBlockIsValid
