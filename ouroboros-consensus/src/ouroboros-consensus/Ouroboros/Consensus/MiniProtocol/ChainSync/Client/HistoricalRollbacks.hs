@@ -11,6 +11,7 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricalRollbacks (
     -- * Interface
     HistoricalRollbackCheck (..)
   , HistoricalRollbackException (..)
+  , MaxRollbackAge (..)
     -- * Real implementation
   , mkCheck
   , noCheck
@@ -61,7 +62,7 @@ data HistoricalRollbackException =
       -- | When the @MsgRollBackward@ to the given point was received.
     , arrivalTime    :: !RelativeTime
       -- | The maximum age of a rollback at arrival time.
-    , maxRollbackAge :: !NominalDiffTime
+    , maxRollbackAge :: !MaxRollbackAge
     }
   deriving anyclass (Exception)
 
@@ -75,14 +76,32 @@ instance Eq HistoricalRollbackException where
         Nothing   -> False
         Just Refl -> (l0, l1, l2, l3) == (r0, r1, r2, r3)
 
+-- ^ The maximum age of a rollback at arrival time.
+--
+-- This should be set to at least the maximum duration (across all eras) of a
+-- stability window (the number of slots in which at least @k@ blocks are
+-- guaranteed to arise).
+--
+-- For example, on Cardano mainnet today, the Praos Chain Growth property
+-- implies that @3k/f@ (=129600) slots (=36 hours) will contain at least @k@
+-- (=2160) blocks. (Byron has a smaller stability window, namely @2k@ (=24 hours
+-- as the Byron slot length is 20s). Thus a peer rolling back a header that is
+-- older than 36 hours is either violating the maximum rollback or else isn't a
+-- caught-up node. Either way, a syncing node should not be connected to that
+-- peer.
+newtype MaxRollbackAge = MaxRollbackAge {
+    getMaxRollbackAge :: NominalDiffTime
+  }
+  deriving stock (Show, Eq, Ord)
+
 {-------------------------------------------------------------------------------
   Real implmementation
 -------------------------------------------------------------------------------}
 
 -- | Do not perform any historicity checks. This is useful when we only sync
 -- from trusted peers (Praos mode) or when the impact of historical rollbacks is
--- already mitigated by other means (for example the Limit on Patience in the
--- case of Genesis /without/ ChainSync Jumping).
+-- already mitigated by other means (for example indirectly by the Limit on
+-- Patience in the case of Genesis /without/ ChainSync Jumping).
 noCheck :: Applicative m => HistoricalRollbackCheck m blk
 noCheck = HistoricalRollbackCheck {
       onRollBackward = \_lcfg _lst _rollbackPoint -> pure $ Right ()
@@ -103,11 +122,7 @@ mkCheck ::
      -- This is used to disable the historical rollback check when we are caught
      -- up. The rationale is extra resilience against disconnects between honest
      -- nodes in disaster scenarios with very low chain density.
-  -> NominalDiffTime
-     -- ^ The maximum age of a rollback at arrival time.
-     --
-     -- This should be set to at least the maximum duration duration (across all
-     -- eras) of a stability window.
+  -> MaxRollbackAge
   -> HistoricalRollbackCheck m blk
 mkCheck systemTime getCurrentGsmState maxRollbackAge = HistoricalRollbackCheck {
       onRollBackward = \lcfg lst rollbackPoint -> getCurrentGsmState >>= \case
@@ -118,7 +133,8 @@ mkCheck systemTime getCurrentGsmState maxRollbackAge = HistoricalRollbackCheck {
   where
     judgeRollback lcfg lst rollbackPoint = do
         arrivalTime <- systemTimeCurrent systemTime
-        pure $ when (maxRollbackAge < arrivalTime `diffRelTime` slotTime) $
+        let actualRollbackAge = arrivalTime `diffRelTime` slotTime
+        pure $ when (getMaxRollbackAge maxRollbackAge < actualRollbackAge) $
           throwError HistoricalRollbackException {
               rollbackPoint
             , slotTime
