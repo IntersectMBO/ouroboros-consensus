@@ -86,6 +86,9 @@ gddWatcher ::
   => TopLevelConfig blk
   -> Tracer m (TraceGDDEvent peer blk)
   -> ChainDB m blk
+  -> DiffTime -- ^ How often to evaluate GDD. 0 means as soon as possible.
+              -- Otherwise, no faster than once every T seconds, where T is
+              -- the provided value.
   -> STM m GsmState
   -> STM m (Map peer (ChainSyncClientHandle m blk))
      -- ^ The ChainSync handles. We trigger the GDD whenever our 'GsmState'
@@ -98,7 +101,7 @@ gddWatcher ::
   -> Watcher m
        (GsmState, GDDStateView m blk peer)
        (Map peer (StrictMaybe (WithOrigin SlotNo), Bool))
-gddWatcher cfg tracer chainDb getGsmState getHandles varLoEFrag =
+gddWatcher cfg tracer chainDb rateLimit getGsmState getHandles varLoEFrag =
     Watcher {
         wInitial = Nothing
       , wReader  = (,) <$> getGsmState <*> getGDDStateView
@@ -140,12 +143,17 @@ gddWatcher cfg tracer chainDb getGsmState getHandles varLoEFrag =
 
     wNotify :: (GsmState, GDDStateView m blk peer) -> m ()
     wNotify (_gsmState, stateView) = do
+        t0 <- getMonotonicTime
         loeFrag <- evaluateGDD cfg tracer stateView
         oldLoEFrag <- atomically $ swapTVar varLoEFrag loeFrag
         -- The chain selection only depends on the LoE tip, so there
         -- is no point in retriggering it if the LoE tip hasn't changed.
         when (AF.headHash oldLoEFrag /= AF.headHash loeFrag) $
           void $ ChainDB.triggerChainSelectionAsync chainDb
+        tf <- getMonotonicTime
+        -- We limit the rate at which GDD is evaluated, otherwise it would
+        -- be called every time a new header is validated.
+        threadDelay $ rateLimit - diffTime tf t0
 
 -- | Pure snapshot of the dynamic data the GDD operates on.
 data GDDStateView m blk peer = GDDStateView {
