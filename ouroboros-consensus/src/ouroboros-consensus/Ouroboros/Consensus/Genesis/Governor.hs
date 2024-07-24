@@ -32,7 +32,7 @@ module Ouroboros.Consensus.Genesis.Governor (
   , sharedCandidatePrefix
   ) where
 
-import           Control.Monad (guard, when)
+import           Control.Monad (guard, void, when)
 import           Control.Tracer (Tracer, traceWith)
 import           Data.Bifunctor (second)
 import           Data.Containers.ListUtils (nubOrd)
@@ -142,7 +142,7 @@ gddWatcher cfg tracer chainDb getGsmState getHandles varLoEFrag =
         -- The chain selection only depends on the LoE tip, so there
         -- is no point in retriggering it if the LoE tip hasn't changed.
         when (AF.headHash oldLoEFrag /= AF.headHash loeFrag) $
-          ChainDB.triggerChainSelectionAsync chainDb
+          void $ ChainDB.triggerChainSelectionAsync chainDb
 
 -- | Pure snapshot of the dynamic data the GDD operates on.
 data GDDStateView m blk peer = GDDStateView {
