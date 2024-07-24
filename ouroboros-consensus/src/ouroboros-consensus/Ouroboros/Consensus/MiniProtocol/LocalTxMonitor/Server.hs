@@ -46,7 +46,7 @@ localTxMonitorServer mempool =
 
     serverStAcquired
       :: (ByteSize32, MempoolSnapshot blk)
-      -> [(Validated (GenTx blk), idx, ByteSize32)]
+      -> [(Validated (GenTx blk), idx, TxMeasure blk)]
       -> ServerStAcquired (GenTxId blk) (GenTx blk) SlotNo m ()
     serverStAcquired s@(capacity, snapshot) txs =
       ServerStAcquired

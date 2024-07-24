@@ -256,13 +256,13 @@ toList :: TxSeq sz tx -> [TxTicket sz tx]
 toList (TxSeq ftree) = Foldable.toList ftree
 
 -- | Convert a 'TxSeq' to a list of pairs of transactions and their
--- associated 'TicketNo's and 'ByteSize's.
-toTuples :: HasByteSize sz => TxSeq sz tx -> [(tx, TicketNo, ByteSize32)]
+-- associated 'TicketNo's and sizes.
+toTuples :: TxSeq sz tx -> [(tx, TicketNo, sz)]
 toTuples (TxSeq ftree) = fmap
     (\ticket ->
        ( txTicketTx ticket
        , txTicketNo ticket
-       , txMeasureByteSize (txTicketSize ticket)
+       , txTicketSize ticket
        )
     )
     (Foldable.toList ftree)
