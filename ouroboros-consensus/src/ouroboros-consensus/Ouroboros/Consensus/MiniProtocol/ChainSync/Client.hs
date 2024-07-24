@@ -644,8 +644,9 @@ data KnownIntersectionState blk = KnownIntersectionState {
     -- ^ The best block number of any header sent by this peer, to be used by
     -- the limit on patience.
   ,
-    justFoundIntersection   :: !(WhetherJustFoundIntersection blk)
-    -- ^ Whether we just negotiated an intersection with the peer.
+    expectingMsgRollback    :: !(WhetherExpectingMsgRollback blk)
+    -- ^ Whether we are expecting a @MsgRollback@ as a reply to the next
+    -- @MsgRequestNext@ due to just having negotiated an intersection.
   }
   deriving (Generic)
 
@@ -936,7 +937,7 @@ chainSyncClient cfgEnv dynEnv =
               , theirFrag
               , theirHeaderStateHistory
               , kBestBlockNo
-              , justFoundIntersection
+              , expectingMsgRollback
               } = kis
         ourFrag' <- getCurrentChain
 
@@ -974,7 +975,7 @@ chainSyncClient cfgEnv dynEnv =
                                 (AF.length trimmedCandidate)
                                 theirHeaderStateHistory
                       , kBestBlockNo
-                      , justFoundIntersection
+                      , expectingMsgRollback
                       }
 
 {-------------------------------------------------------------------------------
@@ -1120,7 +1121,7 @@ findIntersectionTop cfgEnv dynEnv intEnv =
                      , theirFrag
                      , theirHeaderStateHistory
                      , kBestBlockNo            = uBestBlockNo
-                     , justFoundIntersection   = JustFoundIntersection intersection
+                     , expectingMsgRollback    = ExpectingMsgRollback intersection
                      }
             atomically $ do
               updateJumpInfoSTM jumping kis
@@ -1259,10 +1260,10 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     | pt == dynamoTipPt -> do
                       Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedJump jump
                       traceWith tracer $ TraceJumpResult $ Jumping.AcceptedJump jump
-                      let setJustFoundIntersection kis'' = kis'' {
-                              justFoundIntersection = JustFoundIntersection dynamoTipPt
+                      let setExpectingMsgRollback kis'' = kis'' {
+                              expectingMsgRollback = ExpectingMsgRollback dynamoTipPt
                             }
-                          kis' = setJustFoundIntersection $ case jump of
+                          kis' = setExpectingMsgRollback $ case jump of
                             -- Since the updated kis is needed to validate headers,
                             -- we only update it if we are becoming a Dynamo or
                             -- an objector
@@ -1314,7 +1315,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                   , theirFrag = jTheirFragment ji
                   , theirHeaderStateHistory = rewoundHistory
                   , kBestBlockNo = max (fromWithOrigin 0 $ AF.headBlockNo $ jTheirFragment ji) (kBestBlockNo kis)
-                  , justFoundIntersection = justFoundIntersection kis
+                  , expectingMsgRollback = expectingMsgRollback kis
                   }
 
     requestNext ::
@@ -1473,10 +1474,10 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                   , theirFrag
                   , theirHeaderStateHistory
                   , kBestBlockNo
-                  , justFoundIntersection
+                  , expectingMsgRollback
                   } = kis
 
-            checkHistoricalRollback cfgEnv justFoundIntersection rollBackPoint
+            checkHistoricalRollback cfgEnv expectingMsgRollback rollBackPoint
 
             case attemptRollback
                      rollBackPoint
@@ -1539,7 +1540,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                             , theirFrag               = theirFrag'
                             , theirHeaderStateHistory = theirHeaderStateHistory'
                             , kBestBlockNo
-                            , justFoundIntersection   = IntersectionWasFoundInThePast
+                            , expectingMsgRollback    = NotExpectingMsgRollback
                             }
                   atomically $ do
                     updateJumpInfoSTM jumping kis'
@@ -1833,7 +1834,7 @@ checkValid cfgEnv intEnv hdr theirTip kis ledgerView = do
           , theirFrag               = theirFrag'
           , theirHeaderStateHistory = theirHeaderStateHistory'
           , kBestBlockNo
-          , justFoundIntersection   = IntersectionWasFoundInThePast
+          , expectingMsgRollback    = NotExpectingMsgRollback
           }
   where
     ConfigEnv {
@@ -1870,19 +1871,19 @@ checkLoP ConfigEnv{tracer} DynamicEnv{loPBucket} hdr kis@KnownIntersectionState{
 checkHistoricalRollback ::
      forall m blk. (IOLike m, HasHeader blk, GetHeader blk)
   => ConfigEnv m blk
-  -> WhetherJustFoundIntersection blk
+  -> WhetherExpectingMsgRollback blk
   -> Point blk
   -> m ()
-checkHistoricalRollback cfgEnv justFoundIntersection rollbackPoint =
-    case justFoundIntersection of
-      JustFoundIntersection intersectionPoint
+checkHistoricalRollback cfgEnv expectingMsgRollback rollbackPoint =
+    case expectingMsgRollback of
+      ExpectingMsgRollback intersectionPoint
         -- Honest peers will send a rollback to the intersection point right
         -- after the intersection was negotiated; this is not a historical
         -- rollback even if the point is in the distant past.
         | rollbackPoint == intersectionPoint
         -> pure ()
-        | otherwise                 -> doHistoricalRollbackCheck
-      IntersectionWasFoundInThePast -> doHistoricalRollbackCheck
+        | otherwise                      -> doHistoricalRollbackCheck
+      NotExpectingMsgRollback -> doHistoricalRollbackCheck
   where
     doHistoricalRollbackCheck = do
         -- TODO Using the ledger at the chain tip is sound due to the
@@ -1938,16 +1939,18 @@ castEarlyExitIntersects =
         Nothing                 -> NoLongerIntersects
         Just (Intersects kis a) -> StillIntersects a kis
 
--- | Whether we just negotiated an intersection. This is used to specially
--- handle the first @MsgRollBackward@ that is sent right after.
-data WhetherJustFoundIntersection blk =
+-- | Whether we just negotiated an intersection and are therefore expecting a
+-- @MsgRollback@ to the intersection point. This is used to specially handle the
+-- first @MsgRollBackward@ that is sent right after.
+data WhetherExpectingMsgRollback blk =
     -- | We just received and successfully processed a @MsgIntersectFound@. The
     -- ChainSync network spec guarantees that the reply to the next
     -- @MsgRequestNext@ will be @MsgRollBackward@ to the intersection point.
-    JustFoundIntersection !(Point blk)
-  | -- | The last intersection was negotiated in the past, ie we received at
-    -- least one reply to @MsgRequestNext@ in the meantime.
-    IntersectionWasFoundInThePast
+    ExpectingMsgRollback !(Point blk)
+  | -- | We did not just negotiate an intersection, ie we received at least one
+    -- reply to @MsgRequestNext@ in the meantime, and so we are not necessarily
+    -- expecting a @MsgRollback@.
+    NotExpectingMsgRollback
   deriving stock (Generic)
   deriving anyclass (NoThunks)
 
