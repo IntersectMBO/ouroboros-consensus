@@ -643,10 +643,6 @@ data KnownIntersectionState blk = KnownIntersectionState {
     kBestBlockNo            :: !BlockNo
     -- ^ The best block number of any header sent by this peer, to be used by
     -- the limit on patience.
-  ,
-    expectingMsgRollback    :: !(WhetherExpectingMsgRollback blk)
-    -- ^ Whether we are expecting a @MsgRollback@ as a reply to the next
-    -- @MsgRequestNext@ due to just having negotiated an intersection.
   }
   deriving (Generic)
 
@@ -937,7 +933,6 @@ chainSyncClient cfgEnv dynEnv =
               , theirFrag
               , theirHeaderStateHistory
               , kBestBlockNo
-              , expectingMsgRollback
               } = kis
         ourFrag' <- getCurrentChain
 
@@ -975,7 +970,6 @@ chainSyncClient cfgEnv dynEnv =
                                 (AF.length trimmedCandidate)
                                 theirHeaderStateHistory
                       , kBestBlockNo
-                      , expectingMsgRollback
                       }
 
 {-------------------------------------------------------------------------------
@@ -1121,14 +1115,24 @@ findIntersectionTop cfgEnv dynEnv intEnv =
                      , theirFrag
                      , theirHeaderStateHistory
                      , kBestBlockNo            = uBestBlockNo
-                     , expectingMsgRollback    = ExpectingMsgRollback intersection
                      }
             atomically $ do
               updateJumpInfoSTM jumping kis
               setCandidate theirFrag
               setLatestSlot dynEnv (AF.headSlot theirFrag)
-            continueWithState kis $
-                knownIntersectionStateTop cfgEnv dynEnv intEnv theirTip
+
+            let noRollbackToIntersection =
+                  throwIO . NoRollbackToIntersection intersection
+            pure $ SendMsgRequestNext (pure ()) ClientStNext {
+                recvMsgRollForward = \hdr _tip ->
+                  noRollbackToIntersection $ Left (headerPoint hdr)
+              , recvMsgRollBackward = \rollbackPoint _tip ->
+                  if intersection == rollbackPoint then
+                    continueWithState kis $
+                       knownIntersectionStateTop cfgEnv dynEnv intEnv theirTip
+                  else
+                    noRollbackToIntersection $ Right rollbackPoint
+              }
 
 {-------------------------------------------------------------------------------
   Processing 'MsgRollForward' and 'MsgRollBackward'
@@ -1260,10 +1264,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     | pt == dynamoTipPt -> do
                       Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedJump jump
                       traceWith tracer $ TraceJumpResult $ Jumping.AcceptedJump jump
-                      let setExpectingMsgRollback kis'' = kis'' {
-                              expectingMsgRollback = ExpectingMsgRollback dynamoTipPt
-                            }
-                          kis' = setExpectingMsgRollback $ case jump of
+                      let kis' = case jump of
                             -- Since the updated kis is needed to validate headers,
                             -- we only update it if we are becoming a Dynamo or
                             -- an objector
@@ -1315,7 +1316,6 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                   , theirFrag = jTheirFragment ji
                   , theirHeaderStateHistory = rewoundHistory
                   , kBestBlockNo = max (fromWithOrigin 0 $ AF.headBlockNo $ jTheirFragment ji) (kBestBlockNo kis)
-                  , expectingMsgRollback = expectingMsgRollback kis
                   }
 
     requestNext ::
@@ -1474,10 +1474,9 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                   , theirFrag
                   , theirHeaderStateHistory
                   , kBestBlockNo
-                  , expectingMsgRollback
                   } = kis
 
-            checkHistoricalRollback cfgEnv expectingMsgRollback rollBackPoint
+            checkHistoricalRollback cfgEnv rollBackPoint
 
             case attemptRollback
                      rollBackPoint
@@ -1540,7 +1539,6 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                             , theirFrag               = theirFrag'
                             , theirHeaderStateHistory = theirHeaderStateHistory'
                             , kBestBlockNo
-                            , expectingMsgRollback    = NotExpectingMsgRollback
                             }
                   atomically $ do
                     updateJumpInfoSTM jumping kis'
@@ -1834,7 +1832,6 @@ checkValid cfgEnv intEnv hdr theirTip kis ledgerView = do
           , theirFrag               = theirFrag'
           , theirHeaderStateHistory = theirHeaderStateHistory'
           , kBestBlockNo
-          , expectingMsgRollback    = NotExpectingMsgRollback
           }
   where
     ConfigEnv {
@@ -1869,39 +1866,27 @@ checkLoP ConfigEnv{tracer} DynamicEnv{loPBucket} hdr kis@KnownIntersectionState{
 -- | Perform the historical rollback check; delegating to
 -- 'HistoricalRollbacks.onRollback'.
 checkHistoricalRollback ::
-     forall m blk. (IOLike m, HasHeader blk, GetHeader blk)
+     forall m blk. (IOLike m, GetHeader blk)
   => ConfigEnv m blk
-  -> WhetherExpectingMsgRollback blk
   -> Point blk
   -> m ()
-checkHistoricalRollback cfgEnv expectingMsgRollback rollbackPoint =
-    case expectingMsgRollback of
-      ExpectingMsgRollback intersectionPoint
-        -- Honest peers will send a rollback to the intersection point right
-        -- after the intersection was negotiated; this is not a historical
-        -- rollback even if the point is in the distant past.
-        | rollbackPoint == intersectionPoint
-        -> pure ()
-        | otherwise                      -> doHistoricalRollbackCheck
-      NotExpectingMsgRollback -> doHistoricalRollbackCheck
+checkHistoricalRollback cfgEnv rollbackPoint = do
+    -- TODO Using the ledger at the chain tip is sound due to the
+    -- cross-chain lemma (Property 17.3 in the Consensus report), but we try
+    -- not to rely on it, so this should be changed.
+    currentLedger <- atomically $ do
+      chain <- getCurrentChain chainDbView
+      getPastLedger chainDbView (castPoint $ AF.headPoint chain) >>= \case
+        Nothing -> error "impossible"
+        Just st -> pure $ ledgerState st
+    HistoricalRollbacks.onRollBackward
+        historicalRollbackCheck
+        (configLedger cfg)
+        currentLedger
+        rollbackPoint >>= \case
+      Right () -> pure ()
+      Left ex -> throwIO $ HistoricalRollback ex
   where
-    doHistoricalRollbackCheck = do
-        -- TODO Using the ledger at the chain tip is sound due to the
-        -- cross-chain lemma (Property 17.3 in the Consensus report), but we try
-        -- not to rely on it, so this should be changed.
-        currentLedger <- atomically $ do
-          chain <- getCurrentChain chainDbView
-          getPastLedger chainDbView (castPoint $ AF.headPoint chain) >>= \case
-            Nothing -> error "impossible"
-            Just st -> pure $ ledgerState st
-        HistoricalRollbacks.onRollBackward
-            historicalRollbackCheck
-            (configLedger cfg)
-            currentLedger
-            rollbackPoint >>= \case
-          Right () -> pure ()
-          Left ex -> throwIO $ HistoricalRollback ex
-
     ConfigEnv {
         cfg
       , historicalRollbackCheck
@@ -2209,6 +2194,15 @@ data ChainSyncClientException =
   |
     HistoricalRollback !HistoricalRollbackException
   |
+    forall blk. HasHeader blk => NoRollbackToIntersection
+        !(Point blk)
+        -- ^ Expected a @MsgRollBack@ to this point (the just-negotiated
+        -- intersection).
+        !(Either (Point blk) (Point blk))
+        -- ^ Instead, got the following reply (either a @MsgRollForward@ to a
+        -- header with the given point, or a @MsgRollBackward@ to a different
+        -- point).
+  |
     EmptyBucket
     -- ^ The peer lost its race against the bucket.
   |
@@ -2249,6 +2243,12 @@ instance Eq ChainSyncClientException where
       = a == a'
 
     (==)
+        (NoRollbackToIntersection (a  :: Point blk )  b )
+        (NoRollbackToIntersection (a' :: Point blk') b')
+      | Just Refl <- eqT @blk @blk'
+      = (a, b) == (a', b')
+
+    (==)
         EmptyBucket EmptyBucket
       = True
     (==)
@@ -2263,6 +2263,7 @@ instance Eq ChainSyncClientException where
     InvalidBlock{}                   == _ = False
     InFutureHeaderExceedsClockSkew{} == _ = False
     HistoricalRollback{}             == _ = False
+    NoRollbackToIntersection{}       == _ = False
     EmptyBucket                      == _ = False
     InvalidJumpResponse              == _ = False
     DensityTooLow                    == _ = False
