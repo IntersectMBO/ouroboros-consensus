@@ -305,7 +305,7 @@ prop_Mempool_TraceRemovedTxs setup =
       ]
 
 prjTx ::
-     (Validated (GenTx TestBlock), TicketNo, ByteSize32)
+     (Validated (GenTx TestBlock), TicketNo, TxMeasure TestBlock)
   -> Validated (GenTx TestBlock)
 prjTx (a, _b, _c) = a
 

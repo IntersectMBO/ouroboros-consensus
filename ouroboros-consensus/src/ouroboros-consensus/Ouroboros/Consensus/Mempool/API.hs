@@ -320,13 +320,12 @@ data ForgeLedgerState blk =
 data MempoolSnapshot blk = MempoolSnapshot {
     -- | Get all transactions (oldest to newest) in the mempool snapshot along
     -- with their ticket number.
-    snapshotTxs         :: [(Validated (GenTx blk), TicketNo, ByteSize32)]
+    snapshotTxs         :: [(Validated (GenTx blk), TicketNo, TxMeasure blk)]
 
     -- | Get all transactions (oldest to newest) in the mempool snapshot,
     -- along with their ticket number, which are associated with a ticket
     -- number greater than the one provided.
-  , snapshotTxsAfter    ::
-      TicketNo -> [(Validated (GenTx blk), TicketNo, ByteSize32)]
+  , snapshotTxsAfter    :: TicketNo -> [(Validated (GenTx blk), TicketNo, TxMeasure blk)]
 
     -- | Get the greatest prefix (oldest to newest) that respects the given
     -- block capacity.
