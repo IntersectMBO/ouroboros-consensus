@@ -41,7 +41,7 @@ import qualified Cardano.Ledger.Allegra.Rules as AllegraEra
 import           Cardano.Ledger.Alonzo.Core (Tx, TxSeq, bodyTxL, eraDecoder,
                      fromTxSeq, ppMaxBBSizeL, ppMaxBlockExUnitsL, sizeTxF)
 import qualified Cardano.Ledger.Alonzo.Rules as AlonzoEra
-import           Cardano.Ledger.Alonzo.Scripts (ExUnits, ExUnits',
+import           Cardano.Ledger.Alonzo.Scripts (ExUnits, ExUnits' (..),
                      pointWiseExUnits, unWrapExUnits)
 import           Cardano.Ledger.Alonzo.Tx (totExUnits)
 import qualified Cardano.Ledger.Api as L
@@ -431,6 +431,20 @@ data AlonzoMeasure = AlonzoMeasure {
 instance HasByteSize AlonzoMeasure where
   txMeasureByteSize = unIgnoringOverflow . byteSize
 
+instance Semigroup AlonzoMeasure where
+  AlonzoMeasure b1 e1 <> AlonzoMeasure b2 e2 =
+    AlonzoMeasure (b1 <> b2) (e1 <> e2)
+
+instance Monoid AlonzoMeasure where
+  mappend = (<>)
+  mempty = AlonzoMeasure mempty mempty
+
+instance TxMeasureMetrics AlonzoMeasure where
+  txMeasureMetricTxSizeBytes = txMeasureMetricTxSizeBytes . byteSize
+  txMeasureMetricExUnitsMemory = exUnitsMem' . exUnits
+  txMeasureMetricExUnitsSteps = exUnitsSteps' . exUnits
+  txMeasureMetricRefScriptsSizeBytes _ = mempty
+
 fromExUnits :: ExUnits -> ExUnits' Natural
 fromExUnits = unWrapExUnits
 
@@ -524,8 +538,23 @@ data ConwayMeasure = ConwayMeasure {
     deriving (Measure)
          via (InstantiatedAt Generic ConwayMeasure)
 
+instance Semigroup ConwayMeasure where
+  ConwayMeasure a1 r1 <> ConwayMeasure a2 r2 =
+    ConwayMeasure (a1 <> a2) (r1 <> r2)
+
+instance Monoid ConwayMeasure where
+  mappend = (<>)
+  mempty = ConwayMeasure mempty mempty
+
 instance HasByteSize ConwayMeasure where
   txMeasureByteSize = txMeasureByteSize . alonzoMeasure
+
+instance TxMeasureMetrics ConwayMeasure where
+  txMeasureMetricTxSizeBytes = txMeasureMetricTxSizeBytes . alonzoMeasure
+  txMeasureMetricExUnitsMemory = txMeasureMetricExUnitsMemory . alonzoMeasure
+  txMeasureMetricExUnitsSteps = txMeasureMetricExUnitsSteps . alonzoMeasure
+  txMeasureMetricRefScriptsSizeBytes =
+    unIgnoringOverflow . refScriptsSize
 
 blockCapacityConwayMeasure ::
      forall proto era.
