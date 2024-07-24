@@ -77,9 +77,10 @@
 -- Interactions with the BlockFetch logic
 -- --------------------------------------
 --
--- When syncing, the BlockFetch logic will fetch blocks from the dynamo. If the
--- dynamo is responding too slowly, the BlockFetch logic can ask to change the
--- dynamo with a call to 'rotateDynamo'.
+-- When syncing, the BlockFetch logic might request to change the dynamo with
+-- a call to 'rotateDynamo'. This is because the choice of dynamo influences
+-- which peer is selected to download blocks. See the note "Interactions with
+-- ChainSync Jumping" in "Ouroboros.Network.BlockFetch.Decision.BulkSync".
 --
 -- Interactions with the Limit on Patience
 -- ---------------------------------------
