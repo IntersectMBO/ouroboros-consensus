@@ -1,10 +1,16 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ViewPatterns #-}
 
 module Ouroboros.Consensus.MiniProtocol.LocalTxMonitor.Server (localTxMonitorServer) where
 
+import           Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import qualified Data.Measure as Measure
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Mempool
@@ -33,20 +39,20 @@ localTxMonitorServer mempool =
       , recvMsgAcquire = do
           s <- atomically $
                 (,)
-            <$> (txMeasureByteSize <$> getCapacity mempool)
+            <$> getCapacity mempool
             <*> getSnapshot mempool
           pure $ serverStAcquiring s
       }
 
     serverStAcquiring
-      :: (ByteSize32, MempoolSnapshot blk)
+      :: (TxMeasure blk, MempoolSnapshot blk)
       -> ServerStAcquiring (GenTxId blk) (GenTx blk) SlotNo m ()
     serverStAcquiring s@(_, snapshot) =
       SendMsgAcquired (snapshotSlotNo snapshot) (serverStAcquired s (snapshotTxs snapshot))
 
     serverStAcquired
-      :: (ByteSize32, MempoolSnapshot blk)
-      -> [(Validated (GenTx blk), idx, ByteSize32)]
+      :: (TxMeasure blk, MempoolSnapshot blk)
+      -> [(Validated (GenTx blk), idx, TxMeasure blk)]
       -> ServerStAcquired (GenTxId blk) (GenTx blk) SlotNo m ()
     serverStAcquired s@(capacity, snapshot) txs =
       ServerStAcquired
@@ -61,22 +67,30 @@ localTxMonitorServer mempool =
       , recvMsgGetSizes = do
           let MempoolSize{msNumTxs,msNumBytes} = snapshotMempoolSize snapshot
           let sizes = MempoolSizeAndCapacity
-                { capacityInBytes = unByteSize32 capacity
-                , sizeInBytes     = unByteSize32 msNumBytes
+                { capacityInBytes = unByteSize32 $ txMeasureByteSize capacity
+                , sizeInBytes     = unByteSize32 $ txMeasureByteSize msNumBytes
                 , numberOfTxs     = msNumTxs
                 }
           pure $ SendMsgReplyGetSizes sizes (serverStAcquired s txs)
+      , recvMsgGetMeasures = do
+          let txsMeasures =
+                foldl (\acc (_, _, m) -> Measure.plus acc m) Measure.zero txs
+              measures = MempoolMeasures
+                { txCount = fromIntegral $ length txs
+                , measuresMap =
+                    mkMeasuresMap (Proxy :: Proxy blk) txsMeasures capacity
+                } -- TODO what to do about overflow?
+          pure $ SendMsgReplyGetMeasures measures (serverStAcquired s txs)
       , recvMsgAwaitAcquire = do
           s' <- atomically $ do
             s'@(_, snapshot') <-
                   (,)
-              <$> (txMeasureByteSize <$> getCapacity mempool)
+              <$> getCapacity mempool
               <*> getSnapshot mempool
             s' <$ check (not (snapshot `isSameSnapshot` snapshot'))
           pure $ serverStAcquiring s'
       , recvMsgRelease =
           pure serverStIdle
-      , recvMsgGetMeasures = undefined -- TODO
       }
 
     -- Are two snapshots equal? (from the perspective of this protocol)
@@ -90,3 +104,31 @@ localTxMonitorServer mempool =
       snapshotSlotNo a == snapshotSlotNo b
 
     tno (_a, b, _c) = b :: TicketNo
+
+mkMeasuresMap :: TxMeasureMetrics (TxMeasure blk)
+              => Proxy blk
+              -> TxMeasure blk
+              -> TxMeasure blk
+              -> Map MeasureName (SizeAndCapacity Integer)
+mkMeasuresMap Proxy size capacity =
+  Map.fromList
+    [ (TransactionBytes, SizeAndCapacity (byteSizeInteger $ txMeasureMetricTxSizeBytes size) (byteSizeInteger $ txMeasureMetricTxSizeBytes capacity))
+    , (ExUnitsMemory, SizeAndCapacity (fromIntegral $ txMeasureMetricExUnitsMemory size) (fromIntegral $ txMeasureMetricExUnitsMemory capacity))
+    , (ExUnitsSteps, SizeAndCapacity (fromIntegral $ txMeasureMetricExUnitsSteps size) (fromIntegral $ txMeasureMetricExUnitsSteps capacity))
+    , (ReferenceScriptsBytes, SizeAndCapacity (byteSizeInteger $ txMeasureMetricRefScriptsSizeBytes size) (byteSizeInteger $ txMeasureMetricRefScriptsSizeBytes capacity))
+    ]
+  where
+    byteSizeInteger :: ByteSize32 -> Integer
+    byteSizeInteger = fromIntegral . unByteSize32
+
+pattern TransactionBytes :: MeasureName
+pattern TransactionBytes = MeasureName "transaction_bytes"
+
+pattern ExUnitsSteps :: MeasureName
+pattern ExUnitsSteps = MeasureName "ex_units_steps"
+
+pattern ExUnitsMemory :: MeasureName
+pattern ExUnitsMemory = MeasureName "ex_units_memory"
+
+pattern ReferenceScriptsBytes :: MeasureName
+pattern ReferenceScriptsBytes = MeasureName "reference_scripts_bytes"
