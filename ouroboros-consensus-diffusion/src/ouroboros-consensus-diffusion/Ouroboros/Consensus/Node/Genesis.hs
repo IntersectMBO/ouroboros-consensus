@@ -18,6 +18,7 @@ module Ouroboros.Consensus.Node.Genesis (
   , mkGenesisConfig
     -- * NodeKernel helpers
   , GenesisNodeKernelArgs (..)
+  , LoEAndGDDNodeKernelArgs (..)
   , mkGenesisNodeKernelArgs
   , setGetLoEFragment
   ) where
@@ -54,7 +55,7 @@ data GenesisConfig = GenesisConfig
   { gcBlockFetchConfig         :: !GenesisBlockFetchConfiguration
   , gcChainSyncLoPBucketConfig :: !ChainSyncLoPBucketConfig
   , gcCSJConfig                :: !CSJConfig
-  , gcLoEAndGDDConfig          :: !(LoEAndGDDConfig ())
+  , gcLoEAndGDDConfig          :: !(LoEAndGDDConfig LoEAndGDDParams)
   } deriving stock (Eq, Generic, Show)
 
 -- | Genesis configuration flags and low-level args, as parsed from config file or CLI
@@ -66,6 +67,7 @@ data GenesisConfigFlags = GenesisConfigFlags
   , gcfBucketCapacity       :: Maybe Integer
   , gcfBucketRate           :: Maybe Integer
   , gcfCSJJumpSize          :: Maybe Integer
+  , gcfGDDRateLimit         :: Maybe DiffTime
   } deriving stock (Eq, Generic, Show)
 
 defaultGenesisConfigFlags :: GenesisConfigFlags
@@ -77,6 +79,7 @@ defaultGenesisConfigFlags = GenesisConfigFlags
   , gcfBucketCapacity       = Nothing
   , gcfBucketRate           = Nothing
   , gcfCSJJumpSize          = Nothing
+  , gcfGDDRateLimit         = Nothing
   }
 
 enableGenesisConfigDefault :: GenesisConfig
@@ -113,7 +116,7 @@ mkGenesisConfig (Just GenesisConfigFlags{..}) =
           }
         else CSJDisabled
     , gcLoEAndGDDConfig = if gcfEnableLoEAndGDD
-        then LoEAndGDDEnabled ()
+        then LoEAndGDDEnabled LoEAndGDDParams{lgpGDDRateLimit}
         else LoEAndGDDDisabled
     }
   where
@@ -124,21 +127,34 @@ mkGenesisConfig (Just GenesisConfigFlags{..}) =
     -- 3 * 2160 * 20 works in more recent ranges of slots, but causes syncing to
     -- block in byron.
     defaultCSJJumpSize         = 3 * 2160 - 1
+    defaultGDDRateLimit        = 1.0 -- seconds
 
     gbfcBulkSyncGracePeriod = fromInteger $ fromMaybe defaultBulkSyncGracePeriod gcfBulkSyncGracePeriod
     csbcCapacity            = fromInteger $ fromMaybe defaultCapacity gcfBucketCapacity
     csbcRate                = fromInteger $ fromMaybe defaultRate gcfBucketRate
     csjcJumpSize            = fromInteger $ fromMaybe defaultCSJJumpSize gcfCSJJumpSize
+    lgpGDDRateLimit            = fromMaybe defaultGDDRateLimit gcfGDDRateLimit
+
+newtype LoEAndGDDParams = LoEAndGDDParams
+  { -- | How often to evaluate GDD. 0 means as soon as possible.
+    -- Otherwise, no faster than once every T seconds, where T is the
+    -- value of the field.
+    lgpGDDRateLimit :: DiffTime
+  } deriving stock (Eq, Generic, Show)
 
 -- | Genesis-related arguments needed by the NodeKernel initialization logic.
 data GenesisNodeKernelArgs m blk = GenesisNodeKernelArgs {
+    gnkaLoEAndGDDArgs :: !(LoEAndGDDConfig (LoEAndGDDNodeKernelArgs m blk))
+  }
+
+data LoEAndGDDNodeKernelArgs m blk = LoEAndGDDNodeKernelArgs {
     -- | A TVar containing an action that returns the 'ChainDB.GetLoEFragment'
     -- action. We use this extra indirection to update this action after we
     -- opened the ChainDB (which happens before we initialize the NodeKernel).
     -- After that, this TVar will not be modified again.
-    gnkaGetLoEFragment :: !(LoEAndGDDConfig (StrictTVar m (ChainDB.GetLoEFragment m blk)))
+    lgnkaLoEFragmentTVar :: !(StrictTVar m (ChainDB.GetLoEFragment m blk))
+  , lgnkaGDDRateLimit   :: DiffTime
   }
-
 -- | Create the initial 'GenesisNodeKernelArgs" (with a temporary
 -- 'ChainDB.GetLoEFragment' that will be replaced via 'setGetLoEFragment') and a
 -- function to update the 'ChainDbArgs' accordingly.
@@ -149,20 +165,24 @@ mkGenesisNodeKernelArgs ::
        , Complete ChainDbArgs m blk -> Complete ChainDbArgs m blk
        )
 mkGenesisNodeKernelArgs gcfg = do
-    gnkaGetLoEFragment <- for (gcLoEAndGDDConfig gcfg) $ \() ->
-        newTVarIO $ pure $
+    gnkaLoEAndGDDArgs <- for (gcLoEAndGDDConfig gcfg) $ \p -> do
+        loeFragmentTVar <- newTVarIO $ pure $
           -- Use the most conservative LoE fragment until 'setGetLoEFragment'
           -- is called.
           ChainDB.LoEEnabled $ AF.Empty AF.AnchorGenesis
-    let updateChainDbArgs = case gnkaGetLoEFragment of
+        pure LoEAndGDDNodeKernelArgs
+          { lgnkaLoEFragmentTVar = loeFragmentTVar
+          , lgnkaGDDRateLimit = lgpGDDRateLimit p
+          }
+    let updateChainDbArgs = case gnkaLoEAndGDDArgs of
           LoEAndGDDDisabled -> id
-          LoEAndGDDEnabled varGetLoEFragment -> \cfg ->
+          LoEAndGDDEnabled lgnkArgs -> \cfg ->
             cfg { ChainDB.cdbsArgs =
                   (ChainDB.cdbsArgs cfg) { ChainDB.cdbsLoE = getLoEFragment }
                 }
             where
-              getLoEFragment = join $ readTVarIO varGetLoEFragment
-    pure (GenesisNodeKernelArgs {gnkaGetLoEFragment}, updateChainDbArgs)
+              getLoEFragment = join $ readTVarIO $ lgnkaLoEFragmentTVar lgnkArgs
+    pure (GenesisNodeKernelArgs{gnkaLoEAndGDDArgs}, updateChainDbArgs)
 
 -- | Set 'gnkaGetLoEFragment' to the actual logic for determining the current
 -- LoE fragment.
