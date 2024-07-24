@@ -27,8 +27,8 @@ module Test.Ouroboros.Storage.ChainDB.Model.Test (tests) where
 import           GHC.Stack
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
-import           Ouroboros.Consensus.Storage.ChainDB.API (StreamFrom (..),
-                     StreamTo (..))
+import           Ouroboros.Consensus.Storage.ChainDB.API (LoE (..),
+                     StreamFrom (..), StreamTo (..))
 import qualified Ouroboros.Consensus.Util.AnchoredFragment as AF
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import qualified Ouroboros.Network.Mock.Chain as Chain
@@ -37,6 +37,7 @@ import           Test.Ouroboros.Storage.ChainDB.Model (ModelSupportsBlock)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
+import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.TestBlock
 
 tests :: TestTree
@@ -47,32 +48,36 @@ tests = testGroup "Model" [
     , testProperty "between_currentChain"     prop_between_currentChain
     ]
 
-addBlocks :: [TestBlock] -> M.Model TestBlock
-addBlocks blks = M.addBlocks cfg blks m
+addBlocks :: LoE () -> [TestBlock] -> M.Model TestBlock
+addBlocks loe blks = M.addBlocks cfg blks m
   where
     cfg = singleNodeTestConfig
     -- Set the current slot to 'maxBound' so that no block is in the future
-    m   = M.advanceCurSlot maxBound (M.empty testInitExtLedger 0)
+    m   = M.advanceCurSlot maxBound (M.empty loe testInitExtLedger 0)
 
-prop_getBlock_addBlock :: BlockTree -> Permutation -> Property
-prop_getBlock_addBlock bt p =
+prop_getBlock_addBlock :: LoE () -> BlockTree -> Permutation -> Property
+prop_getBlock_addBlock loe bt p =
         M.getBlock (blockHash newBlock) (M.addBlock singleNodeTestConfig newBlock model)
     === if NotOrigin (blockNo newBlock) > M.immutableBlockNo secParam model
         then Just newBlock
         else Nothing
   where
     (newBlock:initBlocks) = permute p $ treeToBlocks bt
-    model = addBlocks initBlocks
+    model = addBlocks loe initBlocks
     secParam = configSecurityParam singleNodeTestConfig
 
+-- | Test that, for any chain @bc@, adding its blocks to an empty model causes
+-- the selection to be @bc@. This is only true with LoE disabled.
 prop_getChain_addChain :: BlockChain -> Property
 prop_getChain_addChain bc =
     counterexample ("model: " ++ show model) $
     blockChain bc === M.currentChain model
   where
     blocks = chainToBlocks bc
-    model  = addBlocks blocks
+    model  = addBlocks LoEDisabled blocks
 
+-- | Test that, no matter in which order we add blocks to the chain DB, we
+-- always pick the most preferred chain. This is only true with LoE disabled.
 prop_alwaysPickPreferredChain :: BlockTree -> Permutation -> Property
 prop_alwaysPickPreferredChain bt p =
     counterexample ("blocks: " ++ show blocks) $
@@ -83,7 +88,7 @@ prop_alwaysPickPreferredChain bt p =
       ]
   where
     blocks  = permute p $ treeToBlocks bt
-    model   = addBlocks blocks
+    model   = addBlocks LoEDisabled blocks
     current = M.currentChain model
 
     curFragment = Chain.toAnchoredFragment (getHeader <$> current)
@@ -99,13 +104,13 @@ prop_alwaysPickPreferredChain bt p =
         candFragment = Chain.toAnchoredFragment (getHeader <$> candidate)
 
 -- TODO add properties about forks too
-prop_between_currentChain :: BlockTree -> Property
-prop_between_currentChain bt =
+prop_between_currentChain :: LoE () -> BlockTree -> Property
+prop_between_currentChain loe bt =
     Right (AF.toOldestFirst $ Chain.toAnchoredFragment $ M.currentChain model) ===
     M.between secParam from to model
   where
     blocks   = treeToBlocks bt
-    model    = addBlocks blocks
+    model    = addBlocks loe blocks
     from     = StreamFromExclusive GenesisPoint
     to       = StreamToInclusive $ cantBeGenesis (M.tipPoint model)
     secParam = configSecurityParam singleNodeTestConfig

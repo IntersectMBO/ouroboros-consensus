@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE DerivingStrategies   #-}
 {-# LANGUAGE FlexibleContexts     #-}
+{-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE StandaloneDeriving   #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -18,9 +19,12 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB (InvalidBlockReason)
+import           Ouroboros.Consensus.Storage.ChainDB.API (LoE (..))
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB
 import           Ouroboros.Consensus.Storage.ImmutableDB
 import           Ouroboros.Consensus.Util.STM (Fingerprint, WithFingerprint)
+import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
+import qualified Ouroboros.Network.AnchoredFragment as Fragment
 import           Ouroboros.Network.Block (MaxSlotNo)
 import           Ouroboros.Network.Mock.Chain
 import           Ouroboros.Network.Mock.ProducerState
@@ -36,6 +40,14 @@ import           Test.Util.ToExpr ()
 instance ToExpr (HeaderHash blk) => ToExpr (Point blk)
 instance ToExpr (HeaderHash blk) => ToExpr (RealPoint blk)
 instance (ToExpr slot, ToExpr hash) => ToExpr (Block slot hash)
+
+deriving instance ( ToExpr blk
+                  , ToExpr (HeaderHash blk)
+                  )
+                 => ToExpr (Fragment.Anchor blk)
+
+instance (ToExpr blk, ToExpr (HeaderHash blk)) => ToExpr (AnchoredFragment blk) where
+  toExpr f = toExpr (Fragment.anchor f, Fragment.toOldestFirst f)
 
 {-------------------------------------------------------------------------------
   ouroboros-consensus
@@ -72,6 +84,8 @@ instance ToExpr ChunkInfo where
   toExpr = defaultExprViaShow
 instance ToExpr FsError where
   toExpr fsError = App (show fsError) []
+
+deriving instance ToExpr a => ToExpr (LoE a)
 
 
 {-------------------------------------------------------------------------------
