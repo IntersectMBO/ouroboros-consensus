@@ -311,7 +311,7 @@ data ChainSyncOutcome = ChainSyncOutcome {
 -- Note that updates that are scheduled before the time at which we start
 -- syncing help generate different chains to start syncing from.
 runChainSync ::
-       forall m. (IOLike m, MonadTime m, MonadTimer m)
+       forall m. (IOLike m, MonadTime m, MonadTimer m, MonadTraceSTM m)
     => ClockSkew
     -> SecurityParam
     -> ClientUpdates
@@ -513,7 +513,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                    atomically $ do
                      handles <- readTVar varHandles
                      modifyTVar varFinalCandidates $ Map.insert serverId (handles Map.! serverId)
-                   result <-
+                   (result, _) <-
                      runPipelinedPeer protocolTracer codecChainSyncId clientChannel $
                        chainSyncClientPeerPipelined $ client csState
                    atomically $ writeTVar varClientResult (Just (ClientFinished result))
