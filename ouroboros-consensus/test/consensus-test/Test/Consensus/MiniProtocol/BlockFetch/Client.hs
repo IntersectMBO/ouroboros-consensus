@@ -364,7 +364,8 @@ instance Arbitrary BlockFetchClientTestSetup where
             -- This is used to introduce a minimal delay between BlockFetch
             -- logic iterations in case the monitored state vars change too
             -- fast, which we don't have to worry about in this test.
-            bfcDecisionLoopInterval   = 0
+            bfcDecisionLoopIntervalBulkSync = 0
+            bfcDecisionLoopIntervalDeadline = 0
             bfcBulkSyncGracePeriod = 10
         bfcMaxRequestsInflight <- chooseEnum (2, 10)
         bfcSalt                <- arbitrary
