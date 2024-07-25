@@ -77,6 +77,7 @@ import           Control.Monad (join, void)
 import           Control.Monad.Class.MonadTimer (MonadTimer)
 import           Control.Monad.Except (runExcept, throwError)
 import           Control.Tracer
+import           Data.Functor ((<&>))
 import           Data.Kind (Type)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -90,12 +91,14 @@ import           GHC.Stack (HasCallStack)
 import           Network.TypedProtocol.Pipelined
 import           NoThunks.Class (unsafeNoThunks)
 import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.BlockchainTime (RelativeTime)
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Forecast
 import           Ouroboros.Consensus.HardFork.History
                      (PastHorizonException (PastHorizon))
 import           Ouroboros.Consensus.HeaderStateHistory
-                     (HeaderStateHistory (..), validateHeader)
+                     (HeaderStateHistory (..), HeaderStateWithTime (..),
+                     validateHeader)
 import qualified Ouroboros.Consensus.HeaderStateHistory as HeaderStateHistory
 import           Ouroboros.Consensus.HeaderValidation hiding (validateHeader)
 import           Ouroboros.Consensus.Ledger.Basics (LedgerState)
@@ -660,13 +663,13 @@ checkKnownIntersectionInvariants ::
 checkKnownIntersectionInvariants cfg kis
     -- 'theirHeaderStateHistory' invariant
     | let HeaderStateHistory snapshots = theirHeaderStateHistory
-          historyTips  = headerStateTip        <$> AS.toOldestFirst snapshots
+          historyTips  = headerStateTip . hswtHeaderState <$> AS.toOldestFirst snapshots
           fragmentTips = NotOrigin . getAnnTip <$> AF.toOldestFirst theirFrag
 
           fragmentAnchorPoint = castPoint $ AF.anchorPoint theirFrag
           historyAnchorPoint  =
               withOriginRealPointToPoint
-            $ annTipRealPoint <$> headerStateTip (AS.anchor snapshots)
+            $ annTipRealPoint <$> headerStateTip (hswtHeaderState $ AS.anchor snapshots)
     ,    historyTips        /= fragmentTips
       ||
          historyAnchorPoint /= fragmentAnchorPoint
@@ -1284,7 +1287,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                 historyNeedsRewinding =
                      (/= AF.headPoint (jTheirFragment ji)) $
                      castPoint $
-                     either headerStatePoint headerStatePoint $
+                     headerStatePoint . hswtHeaderState . either id id $
                      AF.head $
                      HeaderStateHistory.unHeaderStateHistory $
                      jTheirHeaderStateHistory ji
@@ -1429,9 +1432,9 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                         (kBestBlockNo kis)
                         NoMoreIntersection
 
-                StillIntersects ledgerView kis' -> do
+                StillIntersects (ledgerView, hdrSlotTime) kis' -> do
                     kis'' <-
-                        checkValid cfgEnv intEnv hdr theirTip kis' ledgerView
+                        checkValid cfgEnv intEnv hdr hdrSlotTime theirTip kis' ledgerView
                     kis''' <- checkLoP cfgEnv dynEnv hdr kis''
 
                     atomically $ do
@@ -1600,11 +1603,11 @@ checkKnownInvalid cfgEnv dynEnv intEnv hdr = case scrutinee of
 -- | Manage the relationships between the header's slot, arrival time, and
 -- intersection with the local selection
 --
--- The first step is to determine the timestamp of the slot's onset. If the
--- intersection with local selection is much older than the header, then this
--- may not be possible. The client will block until that is no longer true.
--- However, it will stop blocking and 'exitEarly' as soon as
--- 'NoLongerIntersects' arises.
+-- The first step is to determine the timestamp of the slot's onset (which is
+-- also returned in case of success). If the intersection with local selection
+-- is much older than the header, then this may not be possible. The client will
+-- block until that is no longer true. However, it will stop blocking and
+-- 'exitEarly' as soon as 'NoLongerIntersects' arises.
 --
 -- If the slot is from the far-future, the peer is buggy, so disconnect. If
 -- it's from the near-future, follow the Ouroboros Chronos rule and ignore this
@@ -1625,11 +1628,11 @@ checkTime ::
   -> KnownIntersectionState blk
   -> arrival
   -> SlotNo
-  -> m (UpdatedIntersectionState blk (LedgerView (BlockProtocol blk)))
+  -> m (UpdatedIntersectionState blk (LedgerView (BlockProtocol blk), RelativeTime))
 checkTime cfgEnv dynEnv intEnv =
     \kis arrival slotNo -> pauseBucket $ castEarlyExitIntersects $ do
-        Intersects kis2 lst        <- checkArrivalTime kis arrival
-        Intersects kis3 ledgerView <- case projectLedgerView slotNo lst of
+        Intersects kis2 (lst, slotTime) <- checkArrivalTime kis arrival
+        Intersects kis3 ledgerView      <- case projectLedgerView slotNo lst of
             Just ledgerView -> pure $ Intersects kis2 ledgerView
             Nothing         -> do
               EarlyExit.lift $
@@ -1640,7 +1643,7 @@ checkTime cfgEnv dynEnv intEnv =
                   traceWith (tracer cfgEnv)
                 $ TraceAccessingForecastHorizon slotNo
               pure res
-        pure $ Intersects kis3 ledgerView
+        pure $ Intersects kis3 (ledgerView, slotTime)
   where
     ConfigEnv {
         cfg
@@ -1669,7 +1672,7 @@ checkTime cfgEnv dynEnv intEnv =
     checkArrivalTime ::
          KnownIntersectionState blk
       -> arrival
-      -> WithEarlyExit m (Intersects blk (LedgerState blk))
+      -> WithEarlyExit m (Intersects blk (LedgerState blk, RelativeTime))
     checkArrivalTime kis arrival = do
         Intersects kis' (lst, judgment) <- do
             readLedgerState kis $ \lst ->
@@ -1681,9 +1684,9 @@ checkTime cfgEnv dynEnv intEnv =
 
         -- For example, throw an exception if the header is from the far
         -- future.
-        EarlyExit.lift $ handleHeaderArrival judgment >>= \case
-            Just exn -> disconnect (InFutureHeaderExceedsClockSkew exn)
-            Nothing  -> return $ Intersects kis' lst
+        EarlyExit.lift $ handleHeaderArrival judgment <&> runExcept >>= \case
+            Left exn       -> disconnect (InFutureHeaderExceedsClockSkew exn)
+            Right slotTime -> return $ Intersects kis' (lst, slotTime)
 
     -- Block until the the ledger state at the intersection with the local
     -- selection returns 'Just'.
@@ -1769,11 +1772,12 @@ checkValid ::
   => ConfigEnv m blk
   -> InternalEnv m blk arrival judgment
   -> Header blk
+  -> RelativeTime -- ^ onset of the header's slot
   -> Their (Tip blk)
   -> KnownIntersectionState blk
   -> LedgerView (BlockProtocol blk)
   -> m (KnownIntersectionState blk)
-checkValid cfgEnv intEnv hdr theirTip kis ledgerView = do
+checkValid cfgEnv intEnv hdr hdrSlotTime theirTip kis ledgerView = do
     let KnownIntersectionState {
             mostRecentIntersection
           , ourFrag
@@ -1787,7 +1791,7 @@ checkValid cfgEnv intEnv hdr theirTip kis ledgerView = do
     -- Validate header
     theirHeaderStateHistory' <-
         case   runExcept
-             $ validateHeader cfg ledgerView hdr theirHeaderStateHistory
+             $ validateHeader cfg ledgerView hdr hdrSlotTime theirHeaderStateHistory
           of
             Right theirHeaderStateHistory' -> return theirHeaderStateHistory'
             Left  vErr ->

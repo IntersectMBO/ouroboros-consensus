@@ -723,6 +723,7 @@ benchmark ChainSync-client-bench
     contra-tracer,
     ouroboros-consensus,
     ouroboros-network-api,
+    ouroboros-network-mock,
     ouroboros-network-protocols,
     time,
     typed-protocols-examples,

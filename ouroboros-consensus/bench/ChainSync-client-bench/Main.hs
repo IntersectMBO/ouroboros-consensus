@@ -38,10 +38,10 @@ import           Ouroboros.Consensus.Util.STM (Fingerprint (..),
 import           Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import qualified Ouroboros.Network.AnchoredSeq as AS
 import           Ouroboros.Network.Block (ChainUpdate (AddBlock, RollBack),
                      Tip (TipGenesis), tipFromHeader)
 import           Ouroboros.Network.ControlMessage (ControlMessage (Continue))
+import qualified Ouroboros.Network.Mock.Chain as Chain
 import           Ouroboros.Network.Protocol.ChainSync.ClientPipelined
 import           Ouroboros.Network.Protocol.ChainSync.Codec (codecChainSyncId)
 import           Ouroboros.Network.Protocol.ChainSync.PipelineDecision
@@ -105,11 +105,12 @@ oneBenchRun
         CSClient.getCurrentChain       = pure $ AF.Empty AF.AnchorGenesis
       , CSClient.getHeaderStateHistory =
             pure
-          $ HeaderStateHistory.HeaderStateHistory
-          $ AS.Empty
-          $ HV.genesisHeaderState ()
+          $ HeaderStateHistory.fromChain
+              topConfig
+              (oracularLedgerDB GenesisPoint)
+              Chain.Genesis
       , CSClient.getIsInvalidBlock     = pure invalidBlock
-      , CSClient.getPastLedger         = pure . oracularLedgerDB
+      , CSClient.getPastLedger         = pure . Just . oracularLedgerDB
       }
 
     headerInFutureCheck ::
@@ -174,9 +175,9 @@ inTheYearOneBillion = SystemTime {
         * 1e9
   }
 
-oracularLedgerDB :: Point B -> Maybe (Extended.ExtLedgerState B)
+oracularLedgerDB :: Point B -> Extended.ExtLedgerState B
 oracularLedgerDB p =
-    Just Extended.ExtLedgerState {
+    Extended.ExtLedgerState {
         Extended.headerState = HV.HeaderState {
             HV.headerStateTip      = case pointToWithOriginRealPoint p of
                 Origin       -> Origin

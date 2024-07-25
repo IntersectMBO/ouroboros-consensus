@@ -9,6 +9,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query (
     -- * Queries
     getBlockComponent
   , getCurrentChain
+  , getHeaderStateHistory
   , getIsFetched
   , getIsInvalidBlock
   , getIsValid
@@ -27,6 +28,12 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
+import           Ouroboros.Consensus.HeaderStateHistory
+                     (HeaderStateHistory (..), mkHeaderStateWithTimeFromSummary)
+import           Ouroboros.Consensus.HeaderValidation (HasAnnTip)
+import           Ouroboros.Consensus.Ledger.Abstract (IsLedger, LedgerState)
+import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.API (BlockComponent (..),
                      ChainDbFailure (..), InvalidBlockReason)
@@ -34,6 +41,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB as LgrDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util (eitherToMaybe)
@@ -75,6 +83,31 @@ getLedgerDB ::
      IOLike m
   => ChainDbEnv m blk -> STM m (LgrDB.LedgerDB' blk)
 getLedgerDB CDB{..} = LgrDB.getCurrent cdbLgrDB
+
+-- | Get a 'HeaderStateHistory' populated with the 'HeaderState's of the
+-- last @k@ blocks of the current chain.
+getHeaderStateHistory ::
+     forall m blk.
+     ( IOLike m
+     , HasHardForkHistory blk
+     , HasAnnTip blk
+     , IsLedger (LedgerState blk)
+     )
+  => ChainDbEnv m blk -> STM m (HeaderStateHistory blk)
+getHeaderStateHistory cdb@CDB{cdbTopLevelConfig = cfg} = do
+    ledgerDb <- getLedgerDB cdb
+    let currentLedgerState = ledgerState $ LedgerDB.ledgerDbCurrent ledgerDb
+        -- This summary can convert all tip slots of the ledger states in the
+        -- @ledgerDb@ as these are not newer than the tip slot of the current
+        -- ledger state (Property 17.1 in the Consensus report).
+        summary = hardForkSummary (configLedger cfg) currentLedgerState
+        mkHeaderStateWithTime' =
+              mkHeaderStateWithTimeFromSummary summary
+            . headerState
+    pure
+      . HeaderStateHistory
+      . LedgerDB.ledgerDbBimap mkHeaderStateWithTime' mkHeaderStateWithTime'
+      $ ledgerDb
 
 getTipBlock ::
      forall m blk.
