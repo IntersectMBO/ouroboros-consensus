@@ -73,8 +73,8 @@
           default = ghc96;
           ghc96 = hydraJobs.native.haskell96.devShell;
           ghc96-profiled = hydraJobs.native.haskell96.devShellProfiled;
-          ghc98 = hydraJobs.native.haskell98.devShell;
-          ghc98-profiled = hydraJobs.native.haskell98.devShellProfiled;
+          ghc910 = hydraJobs.native.haskell910.devShell;
+          ghc910-profiled = hydraJobs.native.haskell910.devShellProfiled;
 
           website = pkgs.mkShell {
             packages = [ pkgs.nodejs pkgs.yarn ];

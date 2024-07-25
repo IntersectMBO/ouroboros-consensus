@@ -47,8 +47,8 @@ let
         (mkHaskellJobsFor pkgs.hsPkgs.projectVariants.ghc810)
         [ "checks" "devShell" "devShellProfiled" ];
 
-      # also already test GHC 9.8, but only on Linux to reduce CI load
-      haskell98 = mkHaskellJobsFor pkgs.hsPkgs.projectVariants.ghc98;
+      # also already test GHC 9.10, but only on Linux to reduce CI load
+      haskell910 = mkHaskellJobsFor pkgs.hsPkgs.projectVariants.ghc910;
     };
   } // lib.optionalAttrs (buildSystem == "x86_64-linux") {
     windows = {
