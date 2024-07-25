@@ -14,7 +14,6 @@ module Ouroboros.Consensus.ByronSpec.Ledger.Accessors (
     -- * ChainState modifiers
   , ModChainState
   , modChainStateDIState
-  , modChainStateSlot
   , modChainStateUPIState
   , modChainStateUtxoState
     -- * Auxiliary
@@ -39,9 +38,6 @@ type ModChainState a = forall m. Applicative m => (a -> m a)
 
 getChainStateSlot :: GetChainState Spec.Slot
 getChainStateSlot (a, _, _, _, _, _) = a
-
-modChainStateSlot :: ModChainState Spec.Slot
-modChainStateSlot fn (a, b, c, d, e, f) = (, b, c, d, e, f) <$> fn a
 
 getChainStateHash :: GetChainState Spec.Hash
 getChainStateHash (_, _, c, _, _, _) = c

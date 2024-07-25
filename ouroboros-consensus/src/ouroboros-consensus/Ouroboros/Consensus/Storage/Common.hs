@@ -7,12 +7,9 @@
 {-# LANGUAGE TypeFamilies               #-}
 
 module Ouroboros.Consensus.Storage.Common (
-    -- * Indexing
-    tipIsGenesis
     -- * PrefixLen
-  , PrefixLen (..)
+    PrefixLen (..)
   , addPrefixLen
-  , takePrefix
     -- * BinaryBlockInfo
   , BinaryBlockInfo (..)
   , extractHeader
@@ -28,21 +25,11 @@ module Ouroboros.Consensus.Storage.Common (
 
 import           Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as BL
-import           Data.ByteString.Short (ShortByteString)
-import qualified Data.ByteString.Short as Short
 import           Data.Word
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Network.SizeInBytes (SizeInBytes)
-
-{-------------------------------------------------------------------------------
-  Indexing
--------------------------------------------------------------------------------}
-
-tipIsGenesis :: WithOrigin r -> Bool
-tipIsGenesis Origin        = True
-tipIsGenesis (NotOrigin _) = False
 
 {-------------------------------------------------------------------------------
   PrefixLen
@@ -60,10 +47,6 @@ newtype PrefixLen = PrefixLen {
 
 addPrefixLen :: Word8 -> PrefixLen -> PrefixLen
 addPrefixLen m (PrefixLen n) = PrefixLen (m + n)
-
-takePrefix :: PrefixLen -> BL.ByteString -> ShortByteString
-takePrefix (PrefixLen n) =
-    Short.toShort . BL.toStrict . BL.take (fromIntegral n)
 
 {-------------------------------------------------------------------------------
   BinaryBlockInfo

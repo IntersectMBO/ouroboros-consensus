@@ -22,7 +22,6 @@ module Ouroboros.Consensus.Byron.Ledger.Block (
   , mkByronHeader
   , mkRegularByronHeader
     -- * Dealing with EBBs
-  , byronBlockIsEBB
   , byronHeaderIsEBB
   , knownEBBs
     -- * Low-level API
@@ -229,9 +228,6 @@ byronHeaderIsEBB = go . byronHeaderRaw
     go :: CC.ABlockOrBoundaryHdr a -> IsEBB
     go (CC.ABOBBlockHdr    _) = IsNotEBB
     go (CC.ABOBBoundaryHdr _) = IsEBB
-
-byronBlockIsEBB :: ByronBlock -> IsEBB
-byronBlockIsEBB = byronHeaderIsEBB . getHeader
 
 knownEBBs :: Map (HeaderHash ByronBlock) (ChainHash ByronBlock)
 knownEBBs = Map.fromList $ map aux EBBs.knownEBBs

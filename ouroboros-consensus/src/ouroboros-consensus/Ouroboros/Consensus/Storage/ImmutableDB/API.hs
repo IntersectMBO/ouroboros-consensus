@@ -17,7 +17,6 @@ module Ouroboros.Consensus.Storage.ImmutableDB.API (
   , Iterator (..)
   , IteratorResult (..)
   , iteratorToList
-  , traverseIterator
     -- * Types
   , CompareTip (..)
   , Tip (..)
@@ -55,6 +54,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.API (
 import qualified Codec.CBOR.Read as CBOR
 import           Control.Monad.Except (ExceptT (..), runExceptT, throwError)
 import           Control.Monad.Trans.Class (lift)
+import           Control.ResourceRegistry (ResourceRegistry)
 import qualified Data.ByteString.Lazy as Lazy
 import           Data.Either (isRight)
 import           Data.Function (on)
@@ -66,7 +66,6 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Storage.Common
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceRegistry)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           System.FS.API.Types (FsError, FsPath)
 import           System.FS.CRC (CRC)
@@ -195,19 +194,6 @@ data Iterator m blk b = Iterator {
     }
   deriving (Functor)
   deriving NoThunks via OnlyCheckWhnfNamed "Iterator" (Iterator m blk b)
-
--- | Variant of 'traverse' instantiated to @'Iterator' m blk m@ that executes
--- the monadic function when calling 'iteratorNext'.
-traverseIterator ::
-     Monad m
-  => (b -> m b')
-  -> Iterator m blk b
-  -> Iterator m blk b'
-traverseIterator f itr = Iterator{
-      iteratorNext    = iteratorNext    itr >>= traverse f
-    , iteratorHasNext = iteratorHasNext itr
-    , iteratorClose   = iteratorClose   itr
-    }
 
 -- | The result of stepping an 'Iterator'.
 data IteratorResult b

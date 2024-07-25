@@ -17,6 +17,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Args (
   , updateTracer
   ) where
 
+import           Control.ResourceRegistry (ResourceRegistry)
 import           Control.Tracer (Tracer, nullTracer)
 import           Data.Functor.Contravariant ((>$<))
 import           Data.Kind
@@ -37,7 +38,6 @@ import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceRegistry)
 import           System.FS.API
 
 {-------------------------------------------------------------------------------
@@ -95,7 +95,7 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs {
 -- * 'cdbsCheckInFuture'
 --
 -- We a 'cdbsGcDelay' of 60 seconds and a 'cdbsGcInterval' of 10 seconds, this
--- means (see the properties in "Test.Ouroboros.Storage.ChainDB.GcSchedule"):
+-- means (see the properties in "Test.Consensus.Storage.ChainDB.GcSchedule"):
 --
 -- * The length of the 'GcSchedule' queue is @<= ⌈gcDelay / gcInterval⌉ + 1@,
 --   i.e., @<= 7@.

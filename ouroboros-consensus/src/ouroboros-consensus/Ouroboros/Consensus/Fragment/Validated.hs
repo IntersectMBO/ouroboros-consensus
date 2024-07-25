@@ -13,7 +13,6 @@ module Ouroboros.Consensus.Fragment.Validated (
     ValidatedFragment (ValidatedFragment)
   , validatedFragment
   , validatedLedger
-  , validatedTip
   ) where
 
 import           GHC.Stack
@@ -45,9 +44,6 @@ pattern ValidatedFragment ::
 pattern ValidatedFragment f l <- UnsafeValidatedFragment f l
   where
     ValidatedFragment f l = new f l
-
-validatedTip :: HasHeader b => ValidatedFragment b l -> Point b
-validatedTip = AF.headPoint . validatedFragment
 
 invariant ::
      forall l b.

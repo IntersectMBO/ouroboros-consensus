@@ -17,6 +17,7 @@ module Cardano.Tools.ImmDBServer.MiniProtocols (immDBServer) where
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import           Control.Monad (forever)
+import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.Bifunctor (bimap)
 import qualified Data.ByteString.Lazy as BL
@@ -42,7 +43,6 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.API (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.API as ImmutableDB
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Block (ChainUpdate (..), Tip (..))
 import           Ouroboros.Network.Driver (runPeer)
 import           Ouroboros.Network.KeepAlive (keepAliveServer)

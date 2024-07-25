@@ -6,6 +6,9 @@
 [![cardano](https://img.shields.io/badge/ouroboros--consensus--cardano-0.18.0.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-cardano-0.18.0.0/)
 [![sop-extras](https://img.shields.io/badge/sop--extras-0.2.0.0-blue)](https://chap.intersectmbo.org/package/sop-extras-0.2.0.0/)
 [![strict-sop-core](https://img.shields.io/badge/strict--sop--core-0.1.1.0-blue)](https://chap.intersectmbo.org/package/strict-sop-core-0.1.1.0/)
+[![resource-registry](https://img.shields.io/badge/resource--registry-0.1.0.0-blue)](https://chap.intersectmbo.org/package/resource-registry-0.1.0.0/)
+[![nf-vars](https://img.shields.io/badge/nf--vars-0.1.0.0-blue)](https://chap.intersectmbo.org/package/nf-vars-0.1.0.0/)
+
 
 [![docs](https://img.shields.io/badge/Documentation-yellow)][webpage]
 
@@ -23,6 +26,12 @@ flowchart TD
     A --> C
     B --> C[ouroboros-consensus]
 ```
+
+Some other supporting libraries are provided, namely:
+- `strict-sop-core`
+- `sop-extras`
+- `resource-registry`
+- `nf-vars`
 
 The packages contain many test-suites that complicate the dependency graph as
 they create new depencency arcs.

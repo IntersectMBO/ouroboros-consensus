@@ -15,8 +15,8 @@ if ! command -v "$fdcmd" &> /dev/null; then
 fi
 
 case "$(uname -s)" in
-    MINGW*)     path="$(pwd -W | sed 's_/_\\\\_g')\\\\(ouroboros-consensus|sop-extras|strict-sop-core)";;
-    *)          path="$(pwd)/(ouroboros-consensus|sop-extras|strict-sop-core)";;
+    MINGW*)     path="$(pwd -W | sed 's_/_\\\\_g')\\\\(ouroboros-consensus|sop-extras|strict-sop-core|resource-registry|nf-vars)";;
+    *)          path="$(pwd)/(ouroboros-consensus|sop-extras|strict-sop-core|resource-registry|nf-vars)";;
 esac
 
 $fdcmd --full-path "$path" -e cabal -x cabal-gild -i {} -o {}

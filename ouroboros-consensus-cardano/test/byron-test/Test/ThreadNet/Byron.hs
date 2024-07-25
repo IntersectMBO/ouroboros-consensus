@@ -14,7 +14,6 @@ module Test.ThreadNet.Byron (
   , byronPBftParams
   , expectedCannotForge
   , genTestSetup
-  , noEBBs
   ) where
 
 import qualified Cardano.Chain.Block as Block
@@ -1068,11 +1067,6 @@ data ProduceEBBs
     -- ^ In addition to the genesis EBB the node generates itself, the tests
     -- also produce an EBB at the start of each subsequent epoch.
   deriving (Eq, Show)
-
--- | Exported alias for 'NoEBBs'.
---
-noEBBs :: ProduceEBBs
-noEBBs = NoEBBs
 
 instance Arbitrary ProduceEBBs where
   arbitrary = elements [NoEBBs, ProduceEBBs]

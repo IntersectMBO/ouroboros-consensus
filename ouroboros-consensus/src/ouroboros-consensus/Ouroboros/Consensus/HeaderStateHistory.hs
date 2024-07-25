@@ -4,7 +4,6 @@
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TypeFamilies               #-}
-{-# LANGUAGE TypeOperators              #-}
 
 -- | HeaderState history
 --
@@ -14,7 +13,6 @@
 -- > import qualified Ouroboros.Consensus.HeaderStateHistory as HeaderStateHistory
 module Ouroboros.Consensus.HeaderStateHistory (
     HeaderStateHistory (..)
-  , cast
   , current
   , rewind
   , trim
@@ -25,7 +23,6 @@ module Ouroboros.Consensus.HeaderStateHistory (
   ) where
 
 import           Control.Monad.Except (Except)
-import           Data.Coerce (Coercible)
 import qualified Data.List.NonEmpty as NE
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
@@ -74,15 +71,6 @@ append h (HeaderStateHistory history) = HeaderStateHistory (history :> h)
 trim :: Int -> HeaderStateHistory blk -> HeaderStateHistory blk
 trim n (HeaderStateHistory history) =
     HeaderStateHistory (AS.anchorNewest (fromIntegral n) history)
-
-cast ::
-     ( Coercible (ChainDepState (BlockProtocol blk ))
-                 (ChainDepState (BlockProtocol blk'))
-     , TipInfo blk ~ TipInfo blk'
-     )
-  => HeaderStateHistory blk -> HeaderStateHistory blk'
-cast (HeaderStateHistory history) =
-    HeaderStateHistory $ AS.bimap castHeaderState castHeaderState history
 
 -- | \( O\(n\) \). Rewind the header state history
 --

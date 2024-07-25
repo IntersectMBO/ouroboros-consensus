@@ -13,9 +13,8 @@ module Ouroboros.Consensus.Util.IOLike (
   , MonadThrow (..)
   , SomeException
     -- *** Variables with NoThunks invariants
-  , module Ouroboros.Consensus.Util.MonadSTM.NormalForm
-  , module Ouroboros.Consensus.Util.NormalForm.StrictMVar
-  , module Ouroboros.Consensus.Util.NormalForm.StrictTVar
+  , module Control.Concurrent.Class.MonadMVar.NormalForm
+  , module Control.Concurrent.Class.MonadSTM.NormalForm
     -- *** MonadFork, TODO: Should we hide this in favour of MonadAsync?
   , MonadFork (..)
   , MonadThread (..)
@@ -24,10 +23,14 @@ module Ouroboros.Consensus.Util.IOLike (
   , ExceptionInLinkedThread (..)
   , MonadAsync (..)
   , link
-  , linkTo
     -- *** MonadST
   , MonadST (..)
   , PrimMonad (..)
+    -- *** MonadSTM
+  , MonadInspectSTM (..)
+  , MonadLabelledSTM
+  , MonadSTM (..)
+  , throwSTM
     -- *** MonadTime
   , DiffTime
   , MonadMonotonicTime (..)
@@ -48,19 +51,18 @@ import           Cardano.Crypto.KES (KESAlgorithm, SignKeyKES)
 import qualified Cardano.Crypto.KES as KES
 import           Control.Applicative (Alternative)
 import           Control.Concurrent.Class.MonadMVar
+import           Control.Concurrent.Class.MonadMVar.NormalForm
+import           Control.Concurrent.Class.MonadSTM.NormalForm
 import           Control.Monad.Class.MonadAsync
 import           Control.Monad.Class.MonadEventlog
 import           Control.Monad.Class.MonadFork
 import           Control.Monad.Class.MonadST
+import           Control.Monad.Class.MonadSTM
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Class.MonadTime.SI
 import           Control.Monad.Class.MonadTimer.SI
 import           Control.Monad.Primitive
-import           Data.Functor (void)
 import           NoThunks.Class (NoThunks (..))
-import           Ouroboros.Consensus.Util.MonadSTM.NormalForm
-import           Ouroboros.Consensus.Util.NormalForm.StrictMVar
-import           Ouroboros.Consensus.Util.NormalForm.StrictTVar
 import           Ouroboros.Consensus.Util.Orphans ()
 
 {-------------------------------------------------------------------------------
@@ -94,48 +96,3 @@ class ( MonadAsync              m
 
 instance IOLike IO where
   forgetSignKeyKES = KES.forgetSignKeyKES
-
--- | Generalization of 'link' that links an async to an arbitrary thread.
---
--- Non standard (not in 'async' library)
---
-linkTo :: (MonadAsync m, MonadFork m, MonadMask m)
-       => ThreadId m -> Async m a -> m ()
-linkTo tid = linkToOnly tid (not . isCancel)
-
--- | Generalization of 'linkOnly' that links an async to an arbitrary thread.
---
--- Non standard (not in 'async' library).
---
-linkToOnly :: forall m a. (MonadAsync m, MonadFork m, MonadMask m)
-           => ThreadId m -> (SomeException -> Bool) -> Async m a -> m ()
-linkToOnly tid shouldThrow a = do
-    void $ forkRepeat ("linkToOnly " <> show linkedThreadId) $ do
-      r <- waitCatch a
-      case r of
-        Left e | shouldThrow e -> throwTo tid (exceptionInLinkedThread e)
-        _otherwise             -> return ()
-  where
-    linkedThreadId :: ThreadId m
-    linkedThreadId = asyncThreadId a
-
-    exceptionInLinkedThread :: SomeException -> ExceptionInLinkedThread
-    exceptionInLinkedThread =
-        ExceptionInLinkedThread (show linkedThreadId)
-
-isCancel :: SomeException -> Bool
-isCancel e
-  | Just AsyncCancelled <- fromException e = True
-  | otherwise = False
-
-forkRepeat :: (MonadFork m, MonadMask m) => String -> m a -> m (ThreadId m)
-forkRepeat label action =
-  mask $ \restore ->
-    let go = do r <- tryAll (restore action)
-                case r of
-                  Left _ -> go
-                  _      -> return ()
-    in forkIO (labelThisThread label >> go)
-
-tryAll :: MonadCatch m => m a -> m (Either SomeException a)
-tryAll = try

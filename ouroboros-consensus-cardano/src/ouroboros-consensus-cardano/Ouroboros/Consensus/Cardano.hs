@@ -4,9 +4,7 @@ module Ouroboros.Consensus.Cardano (
     -- * The block type of the Cardano block chain
     CardanoBlock
     -- * Supported protocols
-  , ProtocolByron
   , ProtocolCardano
-  , ProtocolShelley
     -- * Abstract over the various protocols
   , CardanoHardForkTriggers (..)
   , ProtocolParams (..)
@@ -22,7 +20,6 @@ import           Ouroboros.Consensus.Protocol.Praos (Praos)
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Node as X
-import           Ouroboros.Consensus.Shelley.ShelleyHFC
 
 {-------------------------------------------------------------------------------
   Supported protocols
@@ -33,7 +30,6 @@ import           Ouroboros.Consensus.Shelley.ShelleyHFC
   breaking any assumptions made in @cardano-node@.
 -------------------------------------------------------------------------------}
 
-type ProtocolByron   = HardForkProtocol '[ ByronBlock ]
 type ProtocolCardano = HardForkProtocol '[ ByronBlock
                                          , ShelleyBlock (TPraos StandardCrypto) StandardShelley
                                          , ShelleyBlock (TPraos StandardCrypto) StandardAllegra

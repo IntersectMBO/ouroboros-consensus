@@ -8,6 +8,7 @@ module Ouroboros.Consensus.BlockchainTime.WallClock.HardFork (
   ) where
 
 import           Control.Monad
+import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.Time (NominalDiffTime)
 import           Data.Void
@@ -19,7 +20,6 @@ import           Ouroboros.Consensus.HardFork.Abstract
 import qualified Ouroboros.Consensus.HardFork.History as HF
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.Time
 
 -- | A backoff delay

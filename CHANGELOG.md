@@ -6,3 +6,5 @@ This project contains multiple packages. Their changelogs are listed and linked 
 - [sop-extras/CHANGELOG.md](./sop-extras/CHANGELOG.md)
 - [strict-sop-core/CHANGELOG.md](./strict-sop-core/CHANGELOG.md)
 - [ouroboros-consensus-protocol/CHANGELOG.md](./ouroboros-consensus-protocol/CHANGELOG.md)
+- [resource-registry/CHANGELOG.md](./resource-registry/CHANGELOG.md)
+- [nf-vars/CHANGELOG.md](./nf-vars/CHANGELOG.md)

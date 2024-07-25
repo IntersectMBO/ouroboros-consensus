@@ -26,6 +26,7 @@ import           Control.Monad (replicateM)
 import           Control.Monad.Class.MonadTime
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Monad.IOSim (runSimOrThrow)
+import           Control.ResourceRegistry
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
 import           Data.Bifunctor (first)
 import           Data.Hashable (Hashable)
@@ -45,7 +46,6 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDBImpl
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (blockUntilJust,
                      forkLinkedWatcher)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)

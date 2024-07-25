@@ -14,7 +14,6 @@ module Ouroboros.Consensus.HardFork.Combinator.State.Infra (
     -- * Lifting 'Telescope' operations
   , fromTZ
   , match
-  , sequence
   , tip
     -- * Situated
   , Situated (..)
@@ -73,15 +72,6 @@ match ns (HardForkState t) =
     distrib :: Product h (Current f) blk -> Current (Product h f) blk
     distrib (Pair x (Current start y)) =
         Current start (Pair x y)
-
-sequence :: forall f m xs. (SListI xs, Functor m)
-         => HardForkState (m :.: f) xs -> m (HardForkState f xs)
-sequence = \(HardForkState st) -> HardForkState <$>
-    Telescope.sequence (hmap distrib st)
-  where
-    distrib :: Current (m :.: f) blk -> (m :.: Current f) blk
-    distrib (Current start st) = Comp $
-        Current start <$> unComp st
 
 fromTZ :: HardForkState f '[blk] -> f blk
 fromTZ = currentState . Telescope.fromTZ . getHardForkState

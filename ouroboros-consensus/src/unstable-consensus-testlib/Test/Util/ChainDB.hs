@@ -12,6 +12,7 @@ module Test.Util.ChainDB (
   ) where
 
 
+import           Control.ResourceRegistry (ResourceRegistry)
 import           Control.Tracer (nullTracer)
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Config
@@ -33,7 +34,6 @@ import           Ouroboros.Consensus.Storage.VolatileDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike hiding (invariant)
-import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceRegistry)
 import           System.FS.API (SomeHasFS (..))
 import qualified System.FS.Sim.MockFS as Mock
 import           System.FS.Sim.MockFS

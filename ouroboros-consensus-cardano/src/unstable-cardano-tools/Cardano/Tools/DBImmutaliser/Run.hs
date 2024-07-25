@@ -19,6 +19,7 @@ module Cardano.Tools.DBImmutaliser.Run (
 
 import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
 import           Cardano.Tools.DBAnalyser.HasAnalysis (mkProtocolInfo)
+import           Control.ResourceRegistry
 import           Control.Tracer (Tracer, stdoutTracer, traceWith)
 import           Data.Foldable (for_)
 import           Data.Functor.Contravariant ((>$<))
@@ -43,7 +44,6 @@ import qualified Ouroboros.Consensus.Storage.VolatileDB.API as VolatileDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB.Impl as VolatileDB
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Block (MaxSlotNo)
 import           System.FS.API (SomeHasFS (..))
 import           System.FS.API.Types (MountPoint (..))

@@ -12,7 +12,6 @@ module Ouroboros.Consensus.Protocol.Ledger.HotKey (
     -- * KES Info
     KESEvolution
   , KESInfo (..)
-  , kesAbsolutePeriod
     -- * KES Status
   , KESStatus (..)
   , kesStatus
@@ -54,13 +53,6 @@ data KESInfo = KESInfo {
       -- > kesStartPeriod + kesEvolution in [kesStartPeriod, kesEndPeriod)
     }
   deriving (Show, Generic, NoThunks)
-
--- | Return the absolute KES period
-kesAbsolutePeriod :: KESInfo -> Absolute.KESPeriod
-kesAbsolutePeriod KESInfo { kesStartPeriod, kesEvolution } =
-    Absolute.KESPeriod $ start + kesEvolution
-  where
-    Absolute.KESPeriod start = kesStartPeriod
 
 {-------------------------------------------------------------------------------
   KES Status

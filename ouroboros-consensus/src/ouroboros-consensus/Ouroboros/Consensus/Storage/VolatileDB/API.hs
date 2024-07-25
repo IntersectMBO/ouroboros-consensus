@@ -22,7 +22,6 @@ module Ouroboros.Consensus.Storage.VolatileDB.API (
     -- * Derived functionality
   , getIsMember
   , getKnownBlockComponent
-  , getPredecessor
   , withDB
   ) where
 
@@ -239,12 +238,6 @@ getIsMember ::
   => VolatileDB m blk
   -> STM m (HeaderHash blk -> Bool)
 getIsMember = fmap (isJust .) . getBlockInfo
-
-getPredecessor ::
-     Functor (STM m)
-  => VolatileDB m blk
-  -> STM m (HeaderHash blk -> Maybe (ChainHash blk))
-getPredecessor = fmap (fmap biPrevHash .) . getBlockInfo
 
 getKnownBlockComponent ::
      (MonadThrow m, HasHeader blk)

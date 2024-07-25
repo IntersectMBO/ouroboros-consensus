@@ -1,5 +1,4 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE NamedFieldPuns   #-}
 
 -- | Mempool with a mocked ledger interface
 module Test.Consensus.Mempool.Mocked (
@@ -7,15 +6,13 @@ module Test.Consensus.Mempool.Mocked (
     -- * Mempool with a mocked LedgerDB interface
   , MockedMempool (getMempool)
   , openMockedMempool
-  , setLedgerState
     -- * Mempool API functions
   , addTx
   , getTxs
-  , removeTxs
   ) where
 
 import           Control.Concurrent.Class.MonadSTM.Strict (StrictTVar,
-                     atomically, newTVarIO, readTVar, writeTVar)
+                     atomically, newTVarIO, readTVar)
 import           Control.DeepSeq (NFData (rnf))
 import           Control.Tracer (Tracer)
 import           Ouroboros.Consensus.HeaderValidation as Header
@@ -78,25 +75,12 @@ openMockedMempool capacityOverride tracer txSizeImpl initialParams = do
       , getMempool         = mempool
     }
 
-setLedgerState ::
-     MockedMempool IO blk
-  -> LedgerState blk
-  -> IO ()
-setLedgerState MockedMempool {getLedgerStateTVar} newSt =
-  atomically $ writeTVar getLedgerStateTVar newSt
-
 addTx ::
      MockedMempool m blk
   -> AddTxOnBehalfOf
   -> Ledger.GenTx blk
   -> m (MempoolAddTxResult blk)
 addTx = Mempool.addTx . getMempool
-
-removeTxs ::
-     MockedMempool m blk
-  -> [Ledger.GenTxId blk]
-  -> m ()
-removeTxs = Mempool.removeTxs . getMempool
 
 getTxs ::
      (Ledger.LedgerSupportsMempool blk)

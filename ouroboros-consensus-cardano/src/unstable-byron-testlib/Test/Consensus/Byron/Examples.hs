@@ -9,8 +9,6 @@ module Test.Consensus.Byron.Examples (
   , codecConfig
   , leaderCredentials
   , ledgerConfig
-  , secParam
-  , windowSize
     -- * Examples
   , exampleApplyTxErr
   , exampleChainDepState
@@ -34,7 +32,6 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Crypto.DSIGN (SignKeyDSIGN (..))
 import           Ouroboros.Consensus.Byron.Ledger
 import           Ouroboros.Consensus.Byron.Node (ByronLeaderCredentials (..))
-import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
@@ -57,15 +54,6 @@ import           Test.Util.Serialisation.SomeResult (SomeResult (..))
 {-------------------------------------------------------------------------------
   Setup
 -------------------------------------------------------------------------------}
-
--- | Note that we must use the same value for the 'SecurityParam' as for the
--- 'S.WindowSize', because 'decodeByronChainDepState' only takes the
--- 'SecurityParam' and uses it as the basis for the 'S.WindowSize'.
-secParam :: SecurityParam
-secParam = SecurityParam 2
-
-windowSize :: S.WindowSize
-windowSize = S.WindowSize 2
 
 cfg :: BlockConfig ByronBlock
 cfg = ByronConfig {

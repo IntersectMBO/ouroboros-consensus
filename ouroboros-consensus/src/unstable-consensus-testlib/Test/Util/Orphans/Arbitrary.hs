@@ -16,13 +16,8 @@
 
 module Test.Util.Orphans.Arbitrary (
     SmallDiffTime (..)
-  , genLimitedEpochSize
-  , genLimitedSlotNo
-  , genSmallEpochNo
-  , genSmallSlotNo
     -- * Time
   , genNominalDiffTime50Years
-  , genUTCTime50Years
   ) where
 
 import           Data.Coerce (coerce)
@@ -62,7 +57,6 @@ import           Ouroboros.Network.SizeInBytes
 import           Test.Cardano.Slotting.Arbitrary ()
 import           Test.QuickCheck hiding (Fixed (..))
 import           Test.QuickCheck.Instances ()
-import           Test.Util.Time (dawnOfTime)
 
 minNumCoreNodes :: Word64
 minNumCoreNodes = 2
@@ -81,13 +75,6 @@ genNominalDiffTime50Years = conv <$> choose (0, 50 * daysPerYear * secondsPerDay
     conv :: Double -> NominalDiffTime
     conv = realToFrac
 
--- | Picks moment between 'dawnOfTime' and (roughly) 50 years later
---
--- /Note/ - Arbitrary instance for `UTCTime` comes from @quickcheck-instances@ and it uses
--- a much wider timespan.
-genUTCTime50Years :: Gen UTCTime
-genUTCTime50Years = (`addUTCTime` dawnOfTime) <$> genNominalDiffTime50Years
-
 -- | Length between 0.001 and 20 seconds, millisecond granularity
 instance Arbitrary SlotLength where
   arbitrary = slotLengthFromMillisec <$> choose (1, 20 * 1_000)
@@ -100,33 +87,6 @@ instance Arbitrary SlotLength where
 
 instance Arbitrary RelativeSlot where
   arbitrary = RelativeSlot <$> arbitrary <*> arbitrary <*> arbitrary
-
--- | The functions 'slotAtTime' and 'timeUntilNextSlot' suffer from arithmetic
--- overflow for very large values, so generate values that avoid overflow when
--- used in these two functions. The largest value generated is still sufficently
--- large to allow for 5e12 years worth of slots at a slot interval of 20
--- seconds.
-genLimitedSlotNo :: Gen SlotNo
-genLimitedSlotNo =
-    SlotNo <$> arbitrary `suchThat` (< 0x8000000000000000)
-
--- | Generate a small SlotNo for the state machine tests. The runtime of the
--- StateMachine prop_sequential tests is proportional the the upper bound.
-genSmallSlotNo :: Gen SlotNo
-genSmallSlotNo =
-    SlotNo <$> choose (0, 1000)
-
--- | The tests for 'CumulEpochSizes' requires that the sum of a list of these
--- values does not overflow.
---
--- An epoch size must be > 0.
-genLimitedEpochSize :: Gen EpochSize
-genLimitedEpochSize =
-    EpochSize <$> choose (1, 100_000)
-
-genSmallEpochNo :: Gen EpochNo
-genSmallEpochNo =
-    EpochNo <$> choose (0, 10000)
 
 -- | This picks an 'EpochNo' between 0 and 10000
 --
