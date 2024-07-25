@@ -111,7 +111,8 @@ startBlockFetchLogic enableChainSelStarvation registry tracer chainDb fetchClien
         blockFetchCfg = BlockFetchConfiguration
           { bfcMaxConcurrencyDeadline = 50 -- unused because of @pure FetchModeBulkSync@ above
           , bfcMaxRequestsInflight = 10
-          , bfcDecisionLoopInterval = 0
+          , bfcDecisionLoopIntervalBulkSync = 0
+          , bfcDecisionLoopIntervalDeadline = 0
           , bfcSalt = 0
           , bfcGenesisBFConfig
           }
