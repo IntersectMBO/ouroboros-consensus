@@ -126,7 +126,7 @@ mkGenesisConfig (Just GenesisConfigFlags{..}) =
     defaultRate                = 500 -- tokens per second leaking, 1/2ms
     -- 3 * 2160 * 20 works in more recent ranges of slots, but causes syncing to
     -- block in byron.
-    defaultCSJJumpSize         = 3 * 2160 - 1
+    defaultCSJJumpSize         = 2 * 2160
     defaultGDDRateLimit        = 1.0 -- seconds
 
     gbfcBulkSyncGracePeriod = fromInteger $ fromMaybe defaultBulkSyncGracePeriod gcfBulkSyncGracePeriod
