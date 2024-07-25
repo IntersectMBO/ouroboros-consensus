@@ -37,7 +37,7 @@ library
     Data.SOP.Strict.NS
 
   build-depends:
-    base >=4.14 && <4.20,
+    base >=4.14 && <4.21,
     nothunks ^>=0.1,
     sop-core ^>=0.5,
 

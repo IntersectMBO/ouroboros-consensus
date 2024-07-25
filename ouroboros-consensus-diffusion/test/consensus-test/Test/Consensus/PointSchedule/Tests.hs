@@ -11,7 +11,7 @@ import           Control.Monad (forM, replicateM)
 import           Control.Monad.Class.MonadTime.SI (Time (Time))
 import           Data.Bifunctor (second)
 import           Data.Coerce (coerce)
-import           Data.List (foldl', group, isSuffixOf, partition, sort)
+import           Data.List as List (foldl', group, isSuffixOf, partition, sort)
 import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Maybe (isNothing)
 import           Data.Time.Clock (DiffTime, diffTimeToPicoseconds,
@@ -376,7 +376,7 @@ genAdversarialFragment goodBlocks forkNo prefixCount slotsA
 
 -- | @mkFragment pre active forkNo@ generates a list of blocks at the given slots.
 mkFragment :: WithOrigin TestBlock -> [SlotNo] -> Int -> AF.AnchoredFragment TestBlock
-mkFragment pre active forkNo = AF.fromNewestFirst anchor $ foldl' issue [] active
+mkFragment pre active forkNo = AF.fromNewestFirst anchor $ List.foldl' issue [] active
   where
     anchor = withOrigin AF.AnchorGenesis AF.anchorFromBlock pre
     issue (h : t) s = (successorBlock h) {tbSlot = s} : h : t

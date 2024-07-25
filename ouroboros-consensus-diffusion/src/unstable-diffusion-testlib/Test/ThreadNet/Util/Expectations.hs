@@ -5,7 +5,7 @@ module Test.ThreadNet.Util.Expectations (
   , determineForkLength
   ) where
 
-import           Data.Foldable (foldl')
+import           Data.Foldable as Foldable (foldl')
 import qualified Data.Map.Strict as Map
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block
@@ -99,7 +99,7 @@ determineForkLength ::
   -> LeaderSchedule
   -> NumBlocks
 determineForkLength k (NodeJoinPlan joinPlan) (LeaderSchedule sched) =
-    prj $ foldl' step initial (Map.toAscList sched)
+    prj $ Foldable.foldl' step initial (Map.toAscList sched)
   where
     prj Acc{maxForkLength} = NumBlocks maxForkLength
 

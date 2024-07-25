@@ -35,7 +35,7 @@ import           Control.Monad
 import           Control.Monad.State.Strict hiding (withState)
 import           Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString.Lazy as Lazy
-import           Data.List (foldl')
+import           Data.List as List (foldl')
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -414,7 +414,7 @@ mkOpenStateHelper ccfg hasFS checkIntegrity validationPolicy tracer maxBlocksPer
 
       let fileInfo        = FileInfo.fromParsedBlockInfos acceptedBlocks
           currentMap'     = Index.insert fd fileInfo currentMap
-          currentSuccMap' = foldl'
+          currentSuccMap' = List.foldl'
             (\succMap ParsedBlockInfo { pbiBlockInfo } ->
               insertMapSet (biPrevHash pbiBlockInfo) (biHash pbiBlockInfo) succMap)
             currentSuccMap

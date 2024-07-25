@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP                        #-}
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -181,6 +182,11 @@ instance (MonadMVar m, MonadMask m, MonadEvaluate m)
 
 instance MonadCatch m => MonadThrow (WithEarlyExit m) where
   throwIO = lift . throwIO
+#if __GLASGOW_HASKELL__ >= 910
+  -- This method is defined in the io-classes package (part of the io-sim repository) where
+  -- it is guarded by the GHC version as above.
+  annotateIO = annotateIO
+#endif
 
 instance MonadCatch m => MonadCatch (WithEarlyExit m) where
   catch act handler = earlyExit $

@@ -21,7 +21,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Paths (
   , isReachable
   ) where
 
-import           Data.Foldable (foldl')
+import           Data.Foldable as Foldable (foldl')
 import           Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import           Data.Maybe (fromMaybe, mapMaybe)
@@ -110,7 +110,7 @@ extendWithSuccessors succsOf lookupBlockInfo diff =
       Just extensions' -> extensions'
   where
     extensions =
-        [ foldl' Diff.append diff (lookupHeaderFields <$> candHashes)
+        [ Foldable.foldl' Diff.append diff (lookupHeaderFields <$> candHashes)
         | candHashes <- maximalCandidates succsOf Nothing (castPoint (Diff.getTip diff))
         ]
 

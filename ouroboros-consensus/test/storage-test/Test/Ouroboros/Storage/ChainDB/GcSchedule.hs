@@ -25,7 +25,7 @@ import           Control.Monad (forM)
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer (nullTracer)
 import           Data.Fixed (div')
-import           Data.List (foldl', partition, sort)
+import           Data.List as List (foldl', partition, sort)
 import           Data.Time.Clock
 import           Data.Void (Void)
 import           Ouroboros.Consensus.Block
@@ -331,7 +331,7 @@ example gcParams = summarise gcParams 1000
 -- in the final 'GcGarbageCollections'.
 processQueueToEnd :: GcState -> GcGarbageCollections
 processQueueToEnd gcState@GcState { gcQueue = GcQueue queue } =
-    gcGarbageCollections (foldl' (flip runGc) gcState timesToGcAt)
+    gcGarbageCollections (List.foldl' (flip runGc) gcState timesToGcAt)
   where
     timesToGcAt = sort (map scheduledGcTime queue)
 

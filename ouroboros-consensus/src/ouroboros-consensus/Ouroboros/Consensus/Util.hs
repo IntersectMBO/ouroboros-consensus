@@ -92,7 +92,7 @@ import           Data.Function (on)
 import           Data.Functor.Identity
 import           Data.Functor.Product
 import           Data.Kind (Type)
-import           Data.List (foldl', maximumBy)
+import           Data.List as List (foldl', maximumBy)
 import           Data.List.NonEmpty (NonEmpty (..), (<|))
 import           Data.Maybe (fromMaybe)
 import           Data.Set (Set)
@@ -141,7 +141,7 @@ foldlM' f = go
     go !acc (x:xs) = f acc x >>= \acc' -> go acc' xs
 
 repeatedly :: (a -> b -> b) -> ([a] -> b -> b)
-repeatedly = flip . foldl' . flip
+repeatedly = flip . List.foldl' . flip
 
 repeatedlyM :: Monad m => (a -> b -> m b) -> ([a] -> b -> m b)
 repeatedlyM = flip . foldlM' . flip

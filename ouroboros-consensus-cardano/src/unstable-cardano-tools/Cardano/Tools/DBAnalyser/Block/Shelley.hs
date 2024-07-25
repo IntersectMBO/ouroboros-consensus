@@ -29,7 +29,7 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.RewardUpdate as SL
 import           Cardano.Tools.DBAnalyser.HasAnalysis
 import qualified Data.Aeson as Aeson
-import           Data.Foldable (foldl', toList)
+import           Data.Foldable as Foldable (foldl', toList)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, maybeToList)
 import           Data.Maybe.Strict
@@ -91,7 +91,7 @@ instance ( ShelleyCompatible proto era
       , decimal $ sum    $ blockTxSizes blk
       ]
       ++
-      [ decimal $ foldl' (\acc tx -> acc + f tx) 0 txs
+      [ decimal $ Foldable.foldl' (\acc tx -> acc + f tx) 0 txs
       | f <- maybeToList txExUnitsSteps
       ]
     where

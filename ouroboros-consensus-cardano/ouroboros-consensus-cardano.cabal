@@ -127,7 +127,7 @@ library
     Ouroboros.Consensus.Shelley.Ledger.Query.PParamsLegacyEncoder
 
   build-depends:
-    base >=4.14 && <4.20,
+    base >=4.14 && <4.21,
     base-deriving-via,
     bytestring >=0.10 && <0.13,
     cardano-binary,
@@ -190,7 +190,7 @@ library unstable-byronspec
     Ouroboros.Consensus.ByronSpec.Ledger.Rules
 
   build-depends:
-    base >=4.14 && <4.20,
+    base >=4.14 && <4.21,
     bimap >=0.4 && <0.6,
     byron-spec-chain,
     byron-spec-ledger,
@@ -515,7 +515,7 @@ library unstable-cardano-tools
 
   build-depends:
     aeson,
-    base >=4.14 && <4.20,
+    base >=4.14 && <4.21,
     base16-bytestring >=1.0,
     bytestring >=0.10 && <0.13,
     cardano-crypto,
