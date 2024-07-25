@@ -49,7 +49,7 @@ library
     NoThunks.Invariant
 
   build-depends:
-    base >=4.14 && <4.20,
+    base >=4.14 && <4.21,
     io-classes ^>=1.5,
     nothunks ^>=0.1.5,
     strict-checked-vars ^>=0.2,
