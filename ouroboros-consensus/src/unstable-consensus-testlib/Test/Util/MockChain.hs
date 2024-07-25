@@ -10,7 +10,7 @@ module Test.Util.MockChain (
   , lastSlot
   ) where
 
-import           Data.Foldable (foldl')
+import           Data.Foldable as Foldable (foldl')
 import           Data.Sequence.Strict (StrictSeq (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Network.Mock.Chain
@@ -44,7 +44,7 @@ dropLastBlocks i bs@(cs :> _)
 -------------------------------------------------------------------------------}
 
 chainFromSeq :: StrictSeq b -> Chain b
-chainFromSeq = foldl' (:>) Genesis
+chainFromSeq = Foldable.foldl' (:>) Genesis
 
 chainToSeq :: Chain b -> StrictSeq b
 chainToSeq = foldChain (:|>) Empty

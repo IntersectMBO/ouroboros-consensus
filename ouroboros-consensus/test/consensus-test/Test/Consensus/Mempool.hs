@@ -42,7 +42,7 @@ import           Control.Monad.State (State, evalState, get, modify)
 import           Control.Tracer (Tracer (..))
 import           Data.Bifunctor (first, second)
 import           Data.Either (isRight)
-import           Data.List (foldl', isSuffixOf, nub, partition, sortOn)
+import           Data.List as List (foldl', isSuffixOf, nub, partition, sortOn)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe)
@@ -339,7 +339,7 @@ ppTestTxWithHash x = condense
 
 -- | Given some transactions, calculate the sum of their sizes in bytes.
 txSizesInBytes :: [TestTx] -> TxSizeInBytes
-txSizesInBytes = foldl' (\acc tx -> acc + txSize tx) 0
+txSizesInBytes = List.foldl' (\acc tx -> acc + txSize tx) 0
 
 -- | Generate a 'TestSetup' and return the ledger obtained by applying all of
 -- the initial transactions.
@@ -874,7 +874,7 @@ prop_TxSeq_lookupByTicketNo_sound smalls small =
     -- the identity mapping over haystack
     txseq :: TxSeq Int
     txseq =
-        foldl' (TxSeq.:>) TxSeq.Empty $ map mkTicket haystack
+        List.foldl' (TxSeq.:>) TxSeq.Empty $ map mkTicket haystack
 
     mkTicket x = TxTicket x (mkTicketNo x) 0 0
     mkTicketNo = TicketNo . toEnum

@@ -14,7 +14,7 @@ import qualified Cardano.Ledger.Shelley.BlockChain as SL (bBodySize)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import           Control.Exception
 import           Control.Monad.Except
-import           Data.List (foldl')
+import           Data.List as List (foldl')
 import qualified Data.Sequence.Strict as Seq
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
@@ -98,5 +98,5 @@ forgeShelleyBlock
       = return ()
 
     estimatedBodySize, actualBodySize :: Int
-    estimatedBodySize = fromIntegral $ foldl' (+) 0 $ map (txInBlockSize . txForgetValidated) txs
+    estimatedBodySize = fromIntegral $ List.foldl' (+) 0 $ map (txInBlockSize . txForgetValidated) txs
     actualBodySize    = SL.bBodySize protocolVersion body

@@ -272,7 +272,7 @@ library
     Ouroboros.Consensus.Util.Versioned
 
   build-depends:
-    base >=4.14 && <4.20,
+    base >=4.14 && <4.21,
     base16-bytestring,
     bimap >=0.4 && <0.6,
     binary >=0.8 && <0.11,
@@ -411,7 +411,7 @@ library unstable-consensus-testlib
     ouroboros-network-mock,
     pretty-simple,
     quickcheck-instances,
-    quickcheck-state-machine:no-vendored-treediff ^>=0.9,
+    quickcheck-state-machine:no-vendored-treediff ^>=0.10,
     quiet,
     random,
     serialise,
@@ -663,7 +663,7 @@ test-suite storage-test
     ouroboros-network-api,
     ouroboros-network-mock,
     pretty-show,
-    quickcheck-state-machine:no-vendored-treediff ^>=0.9,
+    quickcheck-state-machine:no-vendored-treediff ^>=0.10,
     random,
     serialise,
     tasty,

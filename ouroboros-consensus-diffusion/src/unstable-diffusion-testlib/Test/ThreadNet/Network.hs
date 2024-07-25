@@ -1361,7 +1361,7 @@ directedEdgeInner registry clock (version, blockVersion) (cfg, calcMessageDelay)
       _         -> retry
 
     flattenPairs :: forall a. NE.NonEmpty (a, a) -> NE.NonEmpty a
-    flattenPairs = uncurry (<>) . NE.unzip
+    flattenPairs = uncurry (<>) . neUnzip
 
     neverReturns :: forall x void. String -> x -> void
     neverReturns s !_ = error $ s <> " never returns!"
@@ -1721,3 +1721,12 @@ data TxGenFailure = TxGenFailure Int   -- ^ how many times it failed
   deriving (Show)
 
 instance Exception TxGenFailure
+
+-- In base@4.20 the Data.List.NonEmpty.unzip is deprecated and suggests that
+-- Data.Function.unzip should be used instead,but base versions earlier than
+-- 4.20 do not have that.
+-- Neatest solution is to cargo cult it here and switch to Data.Function.unzip
+-- later.
+neUnzip :: Functor f => f (a,b) -> (f a, f b)
+neUnzip xs = (fst <$> xs, snd <$> xs)
+

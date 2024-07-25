@@ -51,7 +51,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB (
 import           Codec.Serialise (Serialise (decode))
 import           Control.Monad.Trans.Class
 import           Control.Tracer
-import           Data.Foldable (foldl')
+import           Data.Foldable as Foldable (foldl')
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Word (Word64)
@@ -365,7 +365,7 @@ validate LgrDB{..} ledgerDB blockCache numRollbacks trace = \hdrs -> do
 
     addPoints :: [RealPoint blk]
               -> Set (RealPoint blk) -> Set (RealPoint blk)
-    addPoints hs set = foldl' (flip Set.insert) set hs
+    addPoints hs set = Foldable.foldl' (flip Set.insert) set hs
 
 {-------------------------------------------------------------------------------
   Previously applied blocks

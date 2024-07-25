@@ -15,7 +15,7 @@ import           Cardano.Slotting.Time (SlotLength, getSlotLength,
                      slotLengthFromSec)
 import           Control.Monad (replicateM)
 import qualified Control.Monad.Except as Exn
-import           Data.List (foldl')
+import           Data.List as List (foldl')
 import           Data.Proxy (Proxy (..))
 import           Data.Time.Clock (DiffTime, secondsToDiffTime)
 import qualified Data.Vector.Unboxed as Vector
@@ -137,7 +137,7 @@ genChainsWithExtraHonestPeers genNumExtraHonest genNumForks = do
     -- values carry no special meaning. Someone needs to think about what values
     -- would make for interesting tests.
     gtCSJParams = CSJParams $ fromIntegral scg,
-    gtBlockTree = foldl' (flip BT.addBranch') (BT.mkTrunk goodChain) $ zipWith (genAdversarialFragment goodBlocks) [1..] alternativeChainSchemas,
+    gtBlockTree = List.foldl' (flip BT.addBranch') (BT.mkTrunk goodChain) $ zipWith (genAdversarialFragment goodBlocks) [1..] alternativeChainSchemas,
     gtExtraHonestPeers,
     gtSchedule = ()
     }
@@ -158,7 +158,7 @@ genChainsWithExtraHonestPeers genNumExtraHonest genNumForks = do
 
     mkTestBlocks :: [TestBlock] -> [S] -> Int -> [TestBlock]
     mkTestBlocks pre active forkNo =
-      fst (foldl' folder ([], 0) active)
+      fst (List.foldl' folder ([], 0) active)
       where
         folder (chain, inc) s | S.test S.notInverted s = (issue inc chain, 0)
                               | otherwise = (chain, inc + 1)

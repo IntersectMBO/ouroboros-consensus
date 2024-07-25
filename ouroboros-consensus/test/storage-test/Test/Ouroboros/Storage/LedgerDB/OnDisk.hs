@@ -1049,7 +1049,7 @@ postcondition m cmd r = toMock (eventAfter e) r .== eventMockResp e
 
 precondition :: Model Symbolic -> Cmd :@ Symbolic -> Logic
 precondition (Model mock hs) (At c) =
-        forall (toList c) (`member` map fst hs)
+        forAll (toList c) (`member` map fst hs)
     .&& validCmd c
   where
     -- Maximum rollback might decrease if shrinking removed blocks

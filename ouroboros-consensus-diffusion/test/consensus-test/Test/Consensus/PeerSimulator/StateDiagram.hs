@@ -27,7 +27,7 @@ import           Control.Monad.State.Strict (State, gets, modify', runState,
                      state)
 import           Control.Tracer (Tracer (Tracer), debugTracer, traceWith)
 import           Data.Bifunctor (first)
-import           Data.Foldable (foldl', foldr')
+import           Data.Foldable as Foldable (foldl', foldr')
 import           Data.List (find, intersperse, mapAccumL, sort, transpose)
 import           Data.List.NonEmpty (NonEmpty ((:|)), nonEmpty, (<|))
 import qualified Data.List.NonEmpty as NonEmpty
@@ -416,7 +416,7 @@ commonRange branch segment = do
   pure (Range (slotInt l + (if overFork then 0 else 1)) (slotInt u + 1), overFork)
   where
     findLower preB preS =
-      foldl' step Nothing (zip preB preS)
+      Foldable.foldl' step Nothing (zip preB preS)
     step prev (b1, b2) | b1 == b2 = Just b1
                        | otherwise = prev
 
@@ -476,7 +476,7 @@ addTipPoint _ _ treeSlots = treeSlots
 
 addPoints :: Map PeerId (NodeState TestBlock) -> TreeSlots -> TreeSlots
 addPoints peerPoints treeSlots =
-  foldl' step treeSlots (Map.toList peerPoints)
+  Foldable.foldl' step treeSlots (Map.toList peerPoints)
   where
     step z (pid, ap) = addTipPoint pid (nsTip ap) z
 
@@ -619,7 +619,7 @@ slotWidth =
 
 contiguous :: [(Int, Bool, a)] -> [[(Int, a)]]
 contiguous ((i0, _, a0) : rest) =
-  result (foldl' step (pure (i0, a0), []) rest)
+  result (Foldable.foldl' step (pure (i0, a0), []) rest)
   where
     result (cur, res) = reverse (reverse (toList cur) : res)
 
@@ -791,7 +791,7 @@ renderSlotWidth ellipsisWidth = \case
 
 breakLines :: RenderConfig -> [RenderSlot] -> [[RenderSlot]]
 breakLines RenderConfig {lineWidth, ellipsis} =
-  result . foldl' step (0, [], [])
+  result . Foldable.foldl' step (0, [], [])
   where
     result (_, cur, res) = reverse (reverse cur : res)
     step (w, cur, res) slot
@@ -851,7 +851,7 @@ peerSimStateDiagramWith config PeerSimState {pssBlockTree, pssSelection, pssCand
       treeCells $
       addPoints pssPoints $
       addForks $
-      flip (foldl' addCandidateRange) (Map.toList pssCandidates) $
+      flip (Foldable.foldl' addCandidateRange) (Map.toList pssCandidates) $
       addFragRange Selection pssSelection $
       initTree pssBlockTree
 

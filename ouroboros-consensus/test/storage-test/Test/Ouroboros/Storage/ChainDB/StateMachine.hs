@@ -142,7 +142,7 @@ import           Test.Ouroboros.Storage.ChainDB.Model (FollowerId, IteratorId,
                      ShouldGarbageCollect (DoNotGarbageCollect, GarbageCollect))
 import           Test.Ouroboros.Storage.Orphans ()
 import           Test.Ouroboros.Storage.TestBlock
-import           Test.QuickCheck hiding (elements)
+import           Test.QuickCheck hiding (elements, forAll)
 import qualified Test.QuickCheck.Monadic as QC
 import           Test.StateMachine
 import qualified Test.StateMachine.Labelling as C
@@ -1070,8 +1070,8 @@ mock model cmd = At <$> bitraverse (const genSym) (const genSym) resp
 precondition :: forall m blk. TestConstraints blk
              => Model blk m Symbolic -> At Cmd blk m Symbolic -> Logic
 precondition Model {..} (At cmd) =
-   forall (iters cmd) (`member` RE.keys knownIters)   .&&
-   forall (flrs  cmd) (`member` RE.keys knownFollowers) .&&
+   forAll (iters cmd) (`member` RE.keys knownIters)   .&&
+   forAll (flrs  cmd) (`member` RE.keys knownFollowers) .&&
    case cmd of
      -- Even though we ensure this in the generator, shrinking might change
      -- it.
@@ -1133,7 +1133,7 @@ precondition Model {..} (At cmd) =
         case Model.between secParam from to dbModel of
           Left  _    -> Bot
           -- All blocks must be valid
-          Right blks -> forall blks $ \blk -> Boolean $
+          Right blks -> forAll blks $ \blk -> Boolean $
             Map.notMember (blockHash blk) $ Model.invalid dbModel
 
 transition :: (TestConstraints blk, Show1 r, Eq1 r)
@@ -1149,7 +1149,7 @@ invariant ::
   -> Model blk m Concrete
   -> Logic
 invariant cfg Model {..} =
-    forall ptsOnCurChain (Boolean . fromMaybe False . Model.getIsValid dbModel)
+    forAll ptsOnCurChain (Boolean . fromMaybe False . Model.getIsValid dbModel)
   where
     -- | The blocks occurring on the current volatile chain fragment
     ptsOnCurChain :: [RealPoint blk]
@@ -1516,7 +1516,7 @@ runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
                 , args
                 }
               sm' = sm env (genBlk chunkInfo) testCfg testInitExtLedger maxClockSkew
-          (hist, model, res) <- QSM.runCommands' (pure sm') cmds'
+          (hist, model, res) <- QSM.runCommands' sm' cmds'
           trace <- getTrace
           return (hist, model, res, trace)
 

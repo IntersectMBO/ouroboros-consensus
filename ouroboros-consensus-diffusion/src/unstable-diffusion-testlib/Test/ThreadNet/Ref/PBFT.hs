@@ -27,7 +27,7 @@ module Test.ThreadNet.Ref.PBFT (
 import           Control.Applicative ((<|>))
 import           Control.Arrow ((&&&))
 import           Control.Monad (guard)
-import           Data.Foldable (foldl', toList)
+import           Data.Foldable as Foldable (foldl', toList)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Sequence (Seq)
@@ -609,7 +609,7 @@ nextLeader params State{nextSlot} = mkLeaderOf params nextSlot
 fillOut :: PBftParams -> NodeJoinPlan -> SlotNo -> NodeJoinPlan
 fillOut params (NodeJoinPlan m) s =
     NodeJoinPlan $
-    foldl' (\acc i -> Map.insert i j acc) m $
+    Foldable.foldl' (\acc i -> Map.insert i j acc) m $
     CoreNodeId <$> [i0 .. iN]
   where
     iN       = oneN params - 1

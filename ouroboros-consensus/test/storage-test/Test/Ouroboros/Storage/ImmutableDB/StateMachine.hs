@@ -86,7 +86,7 @@ import           System.Random (getStdRandom, randomR)
 import           Test.Ouroboros.Storage.ImmutableDB.Model
 import           Test.Ouroboros.Storage.Orphans ()
 import           Test.Ouroboros.Storage.TestBlock
-import           Test.QuickCheck
+import           Test.QuickCheck hiding (forAll)
 import qualified Test.QuickCheck.Monadic as QC
 import           Test.QuickCheck.Random (mkQCGen)
 import           Test.StateMachine hiding (showLabelledExamples,
@@ -767,12 +767,12 @@ mock model cmdErr = At <$> traverse (const genSym) resp
 
 precondition :: Model m Symbolic -> At CmdErr m Symbolic -> Logic
 precondition Model {..} (At (CmdErr { cmd })) =
-   forall (iters cmd) (`member` RE.keys knownIters) .&&
+   forAll (iters cmd) (`member` RE.keys knownIters) .&&
     case cmd of
       AppendBlock blk -> fitsOnTip blk
       DeleteAfter tip -> tip `member` NE.toList (tips dbModel)
       Corruption corr ->
-        forall
+        forAll
           (corruptionFiles (getCorruptions corr))
           (`member` getDBFiles dbModel)
       _ -> Top
@@ -1213,7 +1213,7 @@ test cacheConfig chunkInfo cmds = do
                 }
               sm' = sm env (initDBModel chunkInfo TestBlockCodecConfig)
 
-          (hist, model, res) <- QSM.runCommands' (pure sm') cmds
+          (hist, model, res) <- QSM.runCommands' sm' cmds
 
           trace <- getTrace
           return (hist, model, res, trace)
