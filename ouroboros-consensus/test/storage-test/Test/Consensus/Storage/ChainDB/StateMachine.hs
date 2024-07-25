@@ -140,8 +140,8 @@ import qualified Test.Consensus.Storage.ChainDB.Model as Model
 import           Test.Consensus.Storage.ChainDB.Model (FollowerId, IteratorId,
                      ModelSupportsBlock,
                      ShouldGarbageCollect (DoNotGarbageCollect, GarbageCollect))
-import           Test.Ouroboros.Storage.Orphans ()
-import           Test.Ouroboros.Storage.TestBlock
+import           Test.Consensus.Storage.Orphans ()
+import           Test.Consensus.Storage.TestBlock
 import           Test.QuickCheck hiding (elements, forAll)
 import qualified Test.QuickCheck.Monadic as QC
 import           Test.StateMachine

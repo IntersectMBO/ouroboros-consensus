@@ -14,7 +14,7 @@ module Test.Consensus.Genesis.Setup (
 
 import           Control.Exception (throw)
 import           Control.Monad.Class.MonadAsync
-                     (AsyncCancelled(AsyncCancelled))
+                     (AsyncCancelled (AsyncCancelled))
 import           Control.Monad.IOSim (IOSim, runSimStrictShutdown)
 import           Control.Tracer (debugTracer, traceWith)
 import           Data.Maybe (mapMaybe)

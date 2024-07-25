@@ -50,13 +50,13 @@ import           Data.Typeable
 import qualified Generics.SOP as SOP
 import           GHC.Generics (Generic, Generic1)
 import           Prelude
-import           Test.QuickCheck
+import           Test.QuickCheck hiding (forAll)
 import           Test.QuickCheck.Monadic hiding (run)
 import           Test.StateMachine
 import qualified Test.StateMachine.Types as QSM
 import qualified Test.StateMachine.Types.Rank2 as Rank2
 import           Test.Tasty hiding (after)
-import           Test.Tasty.QuickCheck
+import           Test.Tasty.QuickCheck hiding (forAll)
 import           Test.Util.QSM
 import           Test.Util.SOP
 import           Test.Util.ToExpr ()

@@ -79,10 +79,7 @@ import           Data.Kind (Type)
 import           Data.List as List (foldl', maximumBy)
 import           Data.List.NonEmpty (NonEmpty (..), (<|))
 import           Data.Maybe (fromMaybe)
-import           Data.Set (Set)
-import qualified Data.Set as Set
 import           Data.Text (Text)
-import           Data.Void
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           GHC.Stack

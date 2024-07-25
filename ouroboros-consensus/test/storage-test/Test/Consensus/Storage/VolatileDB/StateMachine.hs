@@ -57,10 +57,9 @@ import           Prelude hiding (elem)
 import           System.FS.API.Lazy
 import           System.FS.Sim.Error
 import qualified System.FS.Sim.MockFS as Mock
-import           System.Random (getStdRandom, randomR)
-import           Test.Ouroboros.Storage.Orphans ()
-import           Test.Ouroboros.Storage.TestBlock
-import           Test.Ouroboros.Storage.VolatileDB.Model
+import           Test.Consensus.Storage.Orphans ()
+import           Test.Consensus.Storage.TestBlock
+import           Test.Consensus.Storage.VolatileDB.Model
 import           Test.QuickCheck hiding (elements, forAll)
 import           Test.QuickCheck.Monadic
 import           Test.StateMachine

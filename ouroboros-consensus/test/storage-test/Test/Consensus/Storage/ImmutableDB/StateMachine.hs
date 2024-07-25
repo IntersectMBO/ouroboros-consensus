@@ -79,10 +79,9 @@ import           System.FS.API.Types (FsPath, mkFsPath)
 import           System.FS.Sim.Error (Errors, emptyErrors, mkSimErrorHasFS,
                      withErrors)
 import qualified System.FS.Sim.MockFS as Mock
-import           System.Random (getStdRandom, randomR)
-import           Test.Ouroboros.Storage.ImmutableDB.Model
-import           Test.Ouroboros.Storage.Orphans ()
-import           Test.Ouroboros.Storage.TestBlock
+import           Test.Consensus.Storage.ImmutableDB.Model
+import           Test.Consensus.Storage.Orphans ()
+import           Test.Consensus.Storage.TestBlock
 import           Test.QuickCheck hiding (forAll)
 import qualified Test.QuickCheck.Monadic as QC
 import           Test.StateMachine
