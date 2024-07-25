@@ -101,6 +101,8 @@ cast (HeaderStateHistory history) =
 
 -- | \( O\(n\) \). Rewind the header state history
 --
+-- We also return the oldest 'HeaderStateWithTime' that was rewound, if any.
+--
 -- NOTE: we don't distinguish headers of regular blocks from headers of EBBs.
 -- Whenever we use \"header\" it can be either. In practice, EBB headers do not
 -- affect the 'ChainDepState', but they /do/ affect the 'AnnTip'.
@@ -122,12 +124,18 @@ cast (HeaderStateHistory history) =
 rewind ::
      forall blk. (HasAnnTip blk)
   => Point blk
-  -> HeaderStateHistory blk -> Maybe (HeaderStateHistory blk)
-rewind p (HeaderStateHistory history) = HeaderStateHistory <$>
-    AS.rollback
+  -> HeaderStateHistory blk
+  -> Maybe (HeaderStateHistory blk, Maybe (HeaderStateWithTime blk))
+rewind p (HeaderStateHistory history) = do
+    (prefix, suffix) <- AS.splitAfterMeasure
       (pointSlot p)
       ((== p) . headerStatePoint . hswtHeaderState . either id id)
       history
+    let oldestRewound = case suffix of
+          AS.Empty _   -> Nothing
+          hswt AS.:< _ -> Just hswt
+    pure (HeaderStateHistory prefix, oldestRewound)
+
 
 {-------------------------------------------------------------------------------
   HeaderStateWithTime

@@ -1280,7 +1280,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                 -- where this wouldn't be true is if the original candidate
                 -- fragment provided by the dynamo contained headers that have
                 -- no corresponding header state.
-                rewoundHistory =
+                (rewoundHistory, _oldestRewound) =
                   fromMaybe (error "offerJump: cannot rewind history") mRewoundHistory
                 -- If the tip of jTheirFragment does not match the tip of
                 -- jTheirHeaderStateHistory, then the history needs rewinding.
@@ -1925,8 +1925,8 @@ attemptRollback ::
   ->       (AnchoredFragment (Header blk), HeaderStateHistory blk)
   -> Maybe (AnchoredFragment (Header blk), HeaderStateHistory blk)
 attemptRollback rollBackPoint (frag, state) = do
-    frag'  <- AF.rollback (castPoint rollBackPoint) frag
-    state' <- HeaderStateHistory.rewind rollBackPoint state
+    frag'                    <- AF.rollback (castPoint rollBackPoint) frag
+    (state', _oldestRewound) <- HeaderStateHistory.rewind rollBackPoint state
     return (frag', state')
 
 {-------------------------------------------------------------------------------
