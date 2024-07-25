@@ -15,9 +15,9 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck (
   ) where
 
 import           Control.Exception (Exception)
-import           Control.Monad (guard, unless, when)
+import           Control.Monad (unless, when)
 import           Control.Monad.Class.MonadTimer.SI (MonadDelay, threadDelay)
-import           Control.Monad.Except (Except, liftEither)
+import           Control.Monad.Except (Except, liftEither, throwError)
 import           Data.Proxy (Proxy (Proxy))
 import           Data.Time.Clock (NominalDiffTime)
 import           Data.Type.Equality ((:~:) (Refl))
@@ -71,8 +71,11 @@ data HeaderInFutureCheck m blk arrival judgment = HeaderInFutureCheck {
   ,
     -- | Enact the judgment.
     --
-    -- If @Just@ is returned, an exception should be raised.
-    handleHeaderArrival :: judgment -> m (Maybe HeaderArrivalException)
+    -- On success, return the slot time of the header; otherwise, an exception
+    -- should be raised.
+    handleHeaderArrival ::
+         judgment
+      -> m (Except HeaderArrivalException RelativeTime)
   }
 
 {-------------------------------------------------------------------------------
@@ -141,11 +144,12 @@ realHeaderInFutureCheck skew systemTime =
                 threadDelay $ nominalDelay syntheticDelay   -- TODO leap seconds?
 
         pure $ do
-            guard tooEarly   -- no exception if within skew
-            pure FarFutureHeaderException {
+          when tooEarly $ throwError FarFutureHeaderException {
                 ageUponArrival     = ageUponArrival_
               , arrivedPoint       = p
               , arrivalTime        = arrivalTime_
               , tolerableClockSkew = unClockSkew skew
               }
+          -- no exception if within skew
+          pure onset
   }

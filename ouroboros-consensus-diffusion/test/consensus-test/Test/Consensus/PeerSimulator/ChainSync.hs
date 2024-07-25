@@ -17,6 +17,7 @@ import           Data.Map.Strict (Map)
 import           Data.Proxy (Proxy (..))
 import           Network.TypedProtocol.Codec (AnyMessage)
 import           Ouroboros.Consensus.Block (Header, Point)
+import           Ouroboros.Consensus.BlockchainTime (RelativeTime (..))
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
@@ -103,7 +104,9 @@ basicChainSyncClient
       { InFutureCheck.proxyArrival = Proxy
       , InFutureCheck.recordHeaderArrival = \_ -> pure ()
       , InFutureCheck.judgeHeaderArrival = \_ _ _ -> pure ()
-      , InFutureCheck.handleHeaderArrival = \_ -> pure Nothing
+      , InFutureCheck.handleHeaderArrival = \_ ->
+          -- We are not inspecting header slot time in the Genesis tests.
+          pure $ pure $ RelativeTime 0
       }
 
 -- | Create and run a ChainSync client using 'bracketChainSyncClient' and

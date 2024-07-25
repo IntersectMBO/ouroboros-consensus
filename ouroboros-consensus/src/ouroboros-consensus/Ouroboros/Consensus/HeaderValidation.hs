@@ -79,7 +79,6 @@ import           Ouroboros.Consensus.Ticked
 import           Ouroboros.Consensus.Util (whenJust)
 import           Ouroboros.Consensus.Util.Assert
 import qualified Ouroboros.Consensus.Util.CBOR as Util.CBOR
-import           Ouroboros.Network.AnchoredSeq (Anchorable (..))
 
 {-------------------------------------------------------------------------------
   Preliminary: annotated tip
@@ -159,11 +158,6 @@ data HeaderState blk = HeaderState {
     , headerStateChainDep :: !(ChainDepState (BlockProtocol blk))
     }
   deriving (Generic)
-
--- | Used by 'HeaderStateHistory' but defined here, where it is not an orphan.
-instance Anchorable (WithOrigin SlotNo) (HeaderState blk) (HeaderState blk) where
-  asAnchor = id
-  getAnchorMeasure _ = fmap annTipSlotNo . headerStateTip
 
 castHeaderState ::
      ( Coercible (ChainDepState (BlockProtocol blk ))
