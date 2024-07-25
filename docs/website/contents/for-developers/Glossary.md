@@ -2,10 +2,10 @@
 
 Notes on the use and maintenance of this glossary:
 
-- Definitions are preceded by a colon (`:`), eg `:Slot` to make it easy to find the using `Ctrl-F`.
-- When adding a new definition, add a colon in front of it. If the definition has synonyms, separate them by commas (prefixing a colon for each synonym).
+- Definitions are preceded by a semicolon (`;`), eg `;Slot` to make it easy to find the using `Ctrl-F`.
+- When adding a new definition, add a semicolon in front of it. If the definition has synonyms, separate them by commas (prefixing a semicolon for each synonym).
 
-## :Active Slot Coefficient, :f
+## ;Active Slot Coefficient, ;f
 
 The active slot coefficient represents the chance a given slot elects one of the registered stake pools.
 In other words, the probability that each slot has any leaders.
@@ -19,28 +19,28 @@ So this means a 5% chance of electing one of the registered stakepools. Thus, un
 
 In the implementation we assume $f$ won't change. Dealing with changing $f$ is a hard problem which requires proper research.
 
-## :Adversarial node
+## ;Adversarial node
 
 A node that exhibits any behavior beyond the honest behaviors. EG it doesn't mint when it's elected. EG it mints multiple blocks when elected. EG it mints its block "too" late. EG it mints its block "too" soon. EG it mints invalid blocks. EG it sends headers but withholds the block, etc, etc, etc.
 
-## :Adversary
+## ;Adversary
 
 Security analyses typically assume the worst-case, ie the behavior of all adversarial nodes as well as any environmental interference is concerted (eg the adversasy "controls" more than just nodes, eg natural arising network delays).
 
-## :Anchor
+## ;Anchor
 
 A chain fragment always has an anchor point, which is the predecessor of the oldest header/block on the fragment.
 
-## :Block
+## ;Block
 
 In some slots, the protocol allows a block-producing node to contribute to the chain; it does so by minting a new block.
 A block at least identifies its issuer, its own real point, and the hash of the preceding block.
 
-## :BlockFetch
+## ;BlockFetch
 
 Download block bodies corresponding to the candidate fragments, prioritizing whichever fragments the BlockFetch heuristics consider most important (chain length is a key factor).
 
-## :Block-producing node versus relay node versus client
+## ;Block-producing node versus relay node versus client
 
 A node is a party that can participate in the network.
 
@@ -50,19 +50,19 @@ A node is a party that can participate in the network.
 
 - If it is just used to get a local view of the state of the network, it is a *client node*.
 
-## :Block validity and ledger rules, :ledger rules
+## ;Block validity and ledger rules, ;ledger rules
 
 A valid block satisfies the ledger rules in the context of the ledger state that resulted from the preceding block.
 
-## :Bootstrap peers
+## ;Bootstrap peers
 
 Trusted honest caught-up peers that are used for syncing before a Genesis-capable node is released. By default, these are public root peers.
 
-## :Chain
+## ;Chain
 
 A sequence of blocks.
 
-## :ChainDB
+## ;ChainDB
 
 Wraps several other components and provides *chain selection* (ChainSel) functionality on top:
 
@@ -74,7 +74,7 @@ Wraps several other components and provides *chain selection* (ChainSel) functio
 
    - LedgerDB - stores a ledger state for all points on the node's selection.
 
-## :Chain growth property
+## ;Chain growth property
 
 This property states that there are at least $k$ blocks in $3k/f$ slots.
 
@@ -82,7 +82,7 @@ Here $f$ refers to the [active slot coefficient](#active-slot-coefficient).
 
 The main Praos theorem also establishes a similarly-shaped bound on the probability of the immutable chain having less than `k` blocks in any contiguous run of `s` slots. The IOG researchers chose `s=3k/f` for Cardano. We started calling it `scg`, since `s` is a pretty common identifier.
 
-## :ChainSync
+## ;ChainSync
 
 Chain sync is a mini protocol to exchange chains of headers.
 
@@ -94,25 +94,25 @@ Chain sync is a mini protocol to exchange chains of headers.
 
   - The server can *claim to have no additional headers* when asked for updates. This is signaled explicitly via `MsgAwaitReply` or implicitly by the server's selection tip point that is sent with every message (though the latter is currently not used on the client for any logic).
 
-## :Checkpointing
+## ;Checkpointing
 
 Solve dynamic availability by providing syncing nodes with (trusted) information: the points on the (immutable) honest chain every few (i.e. `≤ k`) blocks.
 
-## :Common Prefix
+## ;Common Prefix
 
 In particular, the main Praos theorem establishes an upper bound of `a*exp(-k*b+c)` for the probability that honest nodes in an Ouroboros net will disagree on more but the latest k blocks, despite an adversary with less than half of the stake and the ability to delay any and all blocks by up to `Δ` slots. On Cardano `mainnet`, `k=2160`.
 
-## :Delta, :Δ
+## ;Delta, ;Δ
 
 `Δ`, aka maximum delay - The Praos theorems assume that messages (aka "chains"!) arrive within `Δ` slots. IE every honest block minted in slot `S` and also its predecessors will have arrived at every node before the onset of slot `S+1+Δ`. `Δ=0` implies no message is delayed beyond the next slot, aka "synchronous". Remarkably, the node is completely unaware of `Δ`; it is only used in the security analysis.
 
 Note that this implies in particular that (Praos has to assume that) there are no long-lived network partitions.
 
-## :Density
+## ;Density
 
 The density of a chain in a specific interval of slots is the number of blocks in that slots.
 
-## :Density interval
+## ;Density interval
 
 Due to the incremental nature of ChainSync, we often only know a *prefix* of the eventual chain inside of a Genesis window. Density intervals allow us to bound the density that extensions of the prefix could have eventually.
 
@@ -120,20 +120,20 @@ Due to the incremental nature of ChainSync, we often only know a *prefix* of the
 
   - Inclusive upper bound `hi`: `lo`, plus the number of slots in the Genesis window beyond the tip of the peer's current candidate fragment if the ChainSync server claims to have more headers in the Genesis window.
 
-## :Density rule
+## ;Density rule
 
 A rule to compare two chains `C` and `D`: prefer the chain that has the higher density in the interval after `C ∩ D` of length `sgen`.
 
-## :Election proof
+## ;Election proof
 
 A cryptographic proof that the [Ouroboros](#ouroboros) protocol did indeed assign the [block](#block)'s issuer to lead the block's [slot](#slot).
 
-## :Epoch
+## ;Epoch
 
 The sequence of slots is partitioned into a sequence of epochs, each of which is a contiguous run of a fixed number of slots.
 In the latest Cardano era, each epoch lasts for 432000 slots (= 5 days).
 
-## :Epoch structure
+## ;Epoch structure
 
 The ledger rules take snapshots of the nonce and stake distribution at different points of time in the course of an epoch. A snapshot may only be _used_ when it has stabilized, which means that their block has become immutable (being older than `k` blocks). Currently, Cardano `mainnet` uses an epoch length of `10k/f` slots, divided into three parts:
 
@@ -159,21 +159,21 @@ Note that nothing in the implementation happens on the transition from Part 1 to
 
   As advised by the IOG researchers, the nonce should be snapshotted even a bit earlier for intricate reasons related to Ouroboros Genesis. See erratum 17.3 in the [Shelley ledger specs](https://github.com/IntersectMBO/cardano-ledger/blob/master/README.md) for context.
 
-## :Eventual consensus
+## ;Eventual consensus
 
 When Ouroboros runs as intended, all short forks are short-lived.
 
-## :Forecasting
+## ;Forecasting
 
 Because of [Common Prefix](#common-prefix) and [Chain Growth](#chain-growth), the latest `k+1` ledger states along the node's selection always provide sufficient information for the node to validate its peers' headers that are no more than `3k/f` after the peer's first header.
 Since the node hasn't selected that header's block, it has to use forecasting in order to validate its descendant headers.
 
-## :Genesis block
+## ;Genesis block
 
 The hypothetical [block](#block) that precedes the first real block, ie the empty [chain](#chain).
 It's the beginning of _the_ chain: all [nodes](#node) in a net must agree on at least the genesis block; otherwise, they have no common ground.
 
-## :Genesis chain selection rule
+## ;Genesis chain selection rule
 
 The Genesis paper describes a new chain selection rule (`maxvalid-bg`) to use instead of the longest chain rule from Praos:
 
@@ -181,19 +181,19 @@ The Genesis paper describes a new chain selection rule (`maxvalid-bg`) to use in
     - If `D` forks off from `C` at most `k` blocks deep: Compare `C` and `D` using the longest chain rule.
     - Otherwise: Compare them using the density rule.
 
-## :Genesis consensus protocol, paper version™
+## ;Genesis consensus protocol, paper version™
 
 Praos, but using the [Genesis chain selection rule](#genesis-chain-selection-rule).
 Note that this protocol requires rollbacks by more than `k` blocks!
 We do not want to change that invariant at the moment.
 
-## :Genesis Density Disconnection Rule (GDD)
+## ;Genesis Density Disconnection Rule (GDD)
 
 Disconnect from nodes whose fragments certainly lose to other fragments according to the density rule.
 
 Motivation: allows the intersection of candidate fragments to progress
 
-## :Genesis state machine
+## ;Genesis state machine
 
 Mechanism describing when a node can conclude that it is caught-up. This is used to avoid connecting to lots of ledger peers (for the HAA) when unnecessary and to disarm certain timeouts.
 
@@ -203,38 +203,38 @@ Key transitions:
 
   - CaughtUp -> Syncing: Tip of our selection becomes older than X number of slots
 
-## :Genesis window
+## ;Genesis window
 
 A number of slots `sgen`. Consider the honest chain `H`, and any other valid (but potentially adverserial) chain `A` such that their intersection is more than `k` blocks behind the tip of `H`.
 Then the Genesis paper guarantees that `H` has a higher density than `A` in the `sgen`-many slots beginning immediately after their intersection.
 
 The Genesis design uses `sgen = scg = 3k/f = 129600`.
 
-## :Grinding
+## ;Grinding
 
 A difficult to quantify behavior of the adversary whereby they leverage a lot of compute power to make choices so that they lead more slots in the corresponding later epoch than the `phi_f(α)` random variable would theoretically allow them.
 
-## :Hard forks
+## ;Hard forks
 
 Moments in the life of a chain where old nodes cannot validate new blocks.
 There is one at each era change but they can also happen within the same era; they are then called “intra-era” hard forks.
 Intra-era hard forks are mostly ledger related, for instance to fix a bug of (de)serialisation of transactions, or to add a new smart contract feature.
 Recently, hard forks have been given names: Vasil is the hard fork from Alonzo to Babbage; Valentine is an intra-era hard fork within Babbage.
 
-## :Header-body split
+## ;Header-body split
 
 The [stability window](#stability-window) enables the engineering design of nodes exchanging chains of headers before exchanging chains of the corresponding blocks.
 
-## :Header and body
+## ;Header and body
 
 The two key parts of a block. The consensus part of Ouroboros directly involves the header but it also indirectly depends on the body.
 
-## :Header validity
+## ;Header validity
 
 Boring part: parseable, strictly ascending slot number, issuer's crypto signature, etc.
 Interesting part: the election proof. TODO also interesting: not from the future.
 
-## :Honest Availability Assumption
+## ;Honest Availability Assumption
 
 The assumption that any syncing node is always connected to at least one honest caught-up node.
 
@@ -243,12 +243,12 @@ Motivation: ensure that one of the candidate fragments is (a prefix of) the hone
 The Networking teams plans to essentially satify this assumption by always maintaining a minimum number of [ledger peers](#ledger-peers) from a recent stake distribution.
 The foundational Praos assumption of an honest majority then quickly implies the probability of no ledger peers is extremely low.
 
-## :Honest majority
+## ;Honest majority
 
 Ouroboros assumes the adversary always controls strictly less than 50% stake.
 Typically, the researchers bound it even lower than that. But Praos is 50% - ε, as long as eg `k` is large enough.
 
-## :Honest caught-up parties
+## ;Honest caught-up parties
 
 All honest block-producing nodes that are fully synchronized to the state of the system; i.e. they act indistinguishably from nodes that have been there since the beginning of the system.
 
@@ -262,79 +262,79 @@ All honest block-producing nodes that are fully synchronized to the state of the
 
     - The ratio `β` of active over all parties is bounded from `0` by some constant.
 
-## :Honest node and selection
+## ;Honest node and selection
 
 A node that follows the Praos specification.
 Assuming infinite compute resources, this is abstractly summarized as: at the onset of every slot, select the longest valid chain you have received breaking ties arbitrarily, if you lead this slot mint a new block extending your selection, select it, and propagate it to the world.
 On Cardano `mainnet`, the tiebreakers are carefully chosen and universal, but the Praos protocol doesn't technically constrain them.
 There are many many more rules for an honest node (eg "put as many transactions as you can in the block you mint"), but that summary is the only crucial rule for Praos.
 
-## :Identity grinding
+## ;Identity grinding
 
 This is an unofficial term. If an adversary knew the nonce snapshot before the stake distribution was snapped, they could use infinite compute resources to find a private key that optimizes the leader schedule, and transfer their stake before the snapshot.
 
 This cannot occur on Cardano thanks to the epoch structure: the nonce snapshot is taken after the stake distribution snapshot.
 
-## :Immutable chain
+## ;Immutable chain
 
 The immutable chain of whichever well-connected and caught-up honest node has the worst current selection.
 
-## :Immutability/stable/settled/etc
+## ;Immutability/stable/settled/etc
 
 Because of Common Prefix, no honest Praos node will ever need to discard more than k blocks (when switching to a longer chain). Thus, any block with at least `k` descendants on the node's selection is immutable. So is that block's contents (eg its transactions).
 
-## :In-future check
+## ;In-future check
 
 As nodes can not be expected to have perfectly synchronized clocks (ball park: <=100ms globally), blocks that are early but within the *maximum permissible clock skew* (currently: 5s) are not immediately considered invalid during ChainSel, but are instead stored and reprocessed immediately before the next time ChainSel is triggered by a newly added block.
 
-## :Independent aggregation
+## ;Independent aggregation
 
 `ϕ` was chosen in part because `ϕ(x+y) = 1 - (1 - ϕ(x))*(1 - ϕ(y)) = ϕ(x) + ϕ(y) - ϕ(x)*ϕ(y)`. Therefore reapportioning stake amongst the stake pools you control doesn't alter your chance of leading a slot.
 
-## :Issuer
+## ;Issuer
 
 Who can make blocks. Every issuer runs a node, but not every node is an issuer. We distinguish _block-producing nodes_.
 
-## :Issuer's leader schedule
+## ;Issuer's leader schedule
 
 Which slots a specific issuer leads is private information, until the issuer shares an election proof. (This privacy itself is an important feature.)
 
-## :Leader schedule
+## ;Leader schedule
 
 Which issuers the protocol assigns to lead each slot in an epoch; there can be zero, one, or many leaders in each slot.
 This omniscient view of the schedule only exists theoretically, because of crypto.
 
-## :Ledger eras
+## ;Ledger eras
 
 The sequence of ledger rule sets used by today's node to validate the respective segments of the historical Cardano chain.
 Byron, Shelley, Allegra, Mary, Alonzo, Babbage (current one as of August 2023), Conway.
 Conway is currently (August 2023) under development.
 
-## :Ledger peers
+## ;Ledger peers
 
 Relays selected to be peers, sampled according to a sufficiently-recent stake distribution.
 
-## :Ledger state
+## ;Ledger state
 
 The accumulated result (of a [prefix](#prefixtipetc-and-fragment-chain-fragment)) of a [chain](#chain) (which necessarily started from the [genesis block](#genesis-block)).
 The genesis block is not actually a block; it's the first ledger state.
 
-## :Ledger view
+## ;Ledger view
 
 The small part of the ledger state actually required for header validation.
 It's the same part whether or not the validation is done via forecasting.
 
-## :Limit on Eagerness (LoE)
+## ;Limit on Eagerness (LoE)
 
 Do not select more than `k` blocks past the intersection of all candidate fragments.
 
 Motivation: ensure that we can still switch to any candidate chain while respecting the maximum rollback limit.
 
-## :Local root peers
+## ;Local root peers
 
 Locally configured peers that the node should know and try to maintain a connection with. These are usually block-producing nodes or relay nodes that SPOs setup in order to shield their block-producing nodes from direct contact.
 
-## :Long-range attack
+## ;Long-range attack
 
 An adversary presents to a syncing node a chain that forks from the honest chain far in the past, in order to prevent the node from ever selecting the honest chain.
 
@@ -342,13 +342,13 @@ An adversary presents to a syncing node a chain that forks from the honest chain
 
   - Fundamental variant: After some time (multiple epochs), an adversary will be able to create blocks on its fork much faster (due to accumulated block rewards/governance) than the honest chain grows. Because it's actually the longest chain in the system, the theoretical Praos node---and also the real node, if patched to allow unlimited rollback---would select this adversarial chain.
 
-## :Maximum rollback
+## ;Maximum rollback
 
 The node relies on the exact value of [`k`](#security-parameter), at least for engineering purposes.
 By appeal to [Common Prefix](#common-prefix), the node design is incapable of discarding its selection's immutable prefix (eg this bounds the honest node's RAM requirements).
 If a peer tries to send blocks that diverges deeper than that, the node disconnects from them.
 
-## :Mini protocol
+## ;Mini protocol
 
 Nodes communicate with other nodes via a set of two-party protocols in which one node is the *client* and the other is the *server*.
 
@@ -360,47 +360,47 @@ Nodes communicate with other nodes via a set of two-party protocols in which one
 
    - Each directed edge in the node topology is a bundle of (multiplexed) mini-protocol instances.
 
-## :Node
+## ;Node
 
-## :Node's immutable chain
+## ;Node's immutable chain
 
 The prefix of the node's selection that excludes the youngest `k` blocks.
 
-## :Nonce
+## ;Nonce
 
 The [ledger state](#ledger-state) maintains a nonce, updated by each block's header, independent of the block body. The ledger takes a snapshot of this nonce once per epoch. The snapshot taken during one epoch is used by VRFs in the next epoch.
 
-## :Nonce grinding
+## ;Nonce grinding
 
 When the nonce is the only undetermined leader schedule input left, an adversary leading the last slots before the snapshot could compute the nonce for all permutations of blocks and pick the one that optimizes the leader schedule.
 
 This is possible on Cardano, though suspected to be uncommon.
 
-## :Net
+## ;Net
 
 A network of nodes running [Ouroboros](#ouroboros) to continually grow a single agreed upon chain.
 
-## :Opposite of a short fork
+## ;Opposite of a short fork
 
 We don't really have a word for this; it's when "something went wrong", and a [short fork](#short-forks) is so long it's problematic.
 
-## :Ouroboros
+## ;Ouroboros
 
 The family of consensus protocols that underly Cardano.
 
-## :Ouroboros Classic
+## ;Ouroboros Classic
 
 (and/or (?) Ouroboros BFT) The protocols the older Cardano nodes actually used during Byron.
 
-## :Ouroboros Genesis
+## ;Ouroboros Genesis
 
 A slight refinement of [Praos](#ouroboros-praos).
 
-## :Ouroboros Praos
+## ;Ouroboros Praos
 
 The protocol underlying the latest Cardano era.
 
-## :Peer kinds
+## ;Peer kinds
 
 These kinds are maintained by the Networking layer:
 
@@ -410,50 +410,50 @@ These kinds are maintained by the Networking layer:
 - [Public root peers](#public-root-peers).
 - [Shared peers](#shared-peers).
 
-## :Phases
+## ;Phases
 
 Byron, Shelley, Goguen (current one as of August 2023), Basho, Voltaire.
 Part of [the Cardano roadmap](https://roadmap.cardano.org/en/), also regularly called “eras”.
 Voltaire might happen before Basho.
 
-## :Point
+## ;Point
 
 `Point` is essentially `Maybe RealPoint` where the `Nothing` case identifies the [genesis block](#genesis-block).
 
-## :Prefix/tip/etc and fragment, :chain fragment
+## ;Prefix/tip/etc and fragment, ;chain fragment
 
 Any prefix of a [chain](#chain) is also a chain; suffixes and infixes are instead called _chain fragments_.
 Because (valid) blocks uniquely identify their predecessors, the prefixs and blocks of a chain are one-to-one.
 
-## :Protocol eras
+## ;Protocol eras
 The sequence of protocols used by today's node to validate the respective segments of the historical Cardano chain.
 Permissive BFT, Transitional Praos (aka. TPraos), Praos.
 
-## :Public root peers
+## ;Public root peers
 
 Peers coming from trusted public information (IOG relays, Cardano foundation also hosts similar nodes).
 
-## :Real point
+## ;Real point
 
 The slot number and hash of a block.
 
-## :Relative stake and phi
+## ;Relative stake and phi
 
 Relative stake and `ϕ`, aka phi: If some stake pool contains `U` ada in the stake distribution from epoch number `E`, and that whole distribution sums to `V` ada, then that pool leads each slot in epoch `E+2` with an independent probability of `ϕ_f(x) = 1 - (1 - f)^(x)` for `x = U/V`, the pool's relative stake
 
-## :Security parameter
+## ;Security parameter
 
 `k`, aka "_the_ security parameter": A parameter of the Common Prefix theorem that bounds how many blocks would exist on a well-connected honest node's selections after its intersection with another well-connected honest node.
 
-## :Swept into the adversarial budget
+## ;Swept into the adversarial budget
 
 Obviously, some messages on a real network will exceed `Δ` or even be actually lost. In that case, the security analysis considers the node to be adversarial, "sweeping" it under the rug, consuming a little bit of the analysis's budget. Other things get swept there too, but we try not too.
 
-## :Shared peers
+## ;Shared peers
 
 Peers that were discovered via the Peer Sharing protocol. These can be any kind of peer, e.g. ledger peers or client/wallet peers.
 
-## :Shelley-based eras
+## ;Shelley-based eras
 
 All eras apart from Byron share most of their code.
 They are sometimes just referred as “Shelley” eras.
@@ -461,40 +461,40 @@ They are sometimes just referred as “Shelley” eras.
 
 _For a table on phases, eras, protocols, etc., see [the Cardano features table in CIP 59](https://github.com/cardano-foundation/CIPs/blob/master/CIP-0059/feature-table.md)_.
 
-## :Short forks
+## ;Short forks
 
 If a [slot](#slot) has multiple leaders or if the leader of a slot hadn't received the latest block, then they will issue multiple blocks that all claim to have the same predecessor.
 These competing chains are called short forks, unless they grow too long.
 
-## :Slot
+## ;Slot
 
 Ouroboros discretizes time into a sequence of slots. In the latest Cardano era, each slot lasts one second.
 
-## :Stability window
+## ;Stability window
 
 The node relies on the exact value of `scg`. Specifically, the ledger rules prevent any block from influencing the leader schedule until at least `scg` slots later. Note that a block thus cannot influence the leader schedule until it's immutable.
 
-## :Stake and delegation
+## ;Stake and delegation
 
 In Praos, stake pools are the block issuers. Any party that controls ada can _delegate_ it to a _stake pool_.
 
-## :Stake distribution
+## ;Stake distribution
 
 The ledger state maintains the amount of stake controlled by every issuer (every issuer is registered). The ledger takes a snapshot of this distribution at the boundary between two epoches. The snapshot taken at the boundary of epochs `e` and `e+1` is used by VRFs in epoch `e+2`.
 
-## :Stake pool operator (SPO)
+## ;Stake pool operator (SPO)
 
 Some entity that maintains/controls one or multiple stake pools.
 
-## :Syncing
+## ;Syncing
 
 The process of becoming synchronized with the system, either from scratch or due to a temporary restart/crash/local network outage.
 
-## :Transactions
+## ;Transactions
 
 If a slot has multiple leaders or if the leader of a slot hadn't received the latest block, then they will issue multiple blocks that all claim to have the same predecessor.A [block body](#header-and-body) is just a sequence of transactions.
 -Each one modifies the [ledger state](#ledger-state) in a way determined by the [ledger rules](#block-validity-and-ledger-rules-ledger-rules).
 
-## :Verifiable Random Functions, :VRF
+## ;Verifiable Random Functions, ;VRF
 
 Verifiable Random Functions are used to ensure that even the proofs don't leak the issuers' private credentials. The VRF's output is determined by the issuer's private credentials, the slot number, and the nonce and stake distribution of the epoch that contains that slot.
