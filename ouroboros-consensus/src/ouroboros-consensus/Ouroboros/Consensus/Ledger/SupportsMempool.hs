@@ -15,6 +15,7 @@ module Ouroboros.Consensus.Ledger.SupportsMempool (
   , HasTxId (..)
   , HasTxs (..)
   , LedgerSupportsMempool (..)
+  , TxMeasureMetrics (..)
   , TxId
   , TxLimits (..)
   , Validated
@@ -166,10 +167,11 @@ class HasTxs blk where
 -- state). In future eras (starting with Alonzo) this measure was a bit more
 -- complex as it had to take other factors into account (like execution units).
 -- For details please see the individual instances for the TxLimits.
-class ( Measure     (TxMeasure blk)
-      , HasByteSize (TxMeasure blk)
-      , NoThunks    (TxMeasure blk)
-      , Show        (TxMeasure blk)
+class ( Measure          (TxMeasure blk)
+      , HasByteSize      (TxMeasure blk)
+      , TxMeasureMetrics (TxMeasure blk)
+      , NoThunks         (TxMeasure blk)
+      , Show             (TxMeasure blk)
       ) => TxLimits blk where
   -- | The (possibly multi-dimensional) size of a transaction in a block.
   type TxMeasure blk
@@ -231,3 +233,13 @@ class HasByteSize a where
 
 instance HasByteSize ByteSize where
   txMeasureByteSize = id
+
+class TxMeasureMetrics msr where
+  txMeasureMetricByteSize :: msr -> ByteSize
+  txMeasureMetricExUnits :: msr -> ByteSize
+  txMeasureMetricRefScriptsSize :: msr -> ByteSize
+
+instance TxMeasureMetrics ByteSize where
+  txMeasureMetricByteSize = id
+  txMeasureMetricExUnits = mempty
+  txMeasureMetricRefScriptsSize = mempty
