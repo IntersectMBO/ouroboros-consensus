@@ -840,7 +840,7 @@ instance Arbitrary MempoolCapTestSetup where
     -- Note that we could pick @currentSize@, meaning that we can't add any
     -- more transactions to the Mempool
 
-    when (fromByteSize capacityMaxBound >= 2^(32 :: Int)) $ do
+    when (fromByteSize capacityMaxBound >= (2^32 :: Int)) $ do
       error "impossible!"   -- could 'QC.discard' if this is actually feasible
 
     capacity <- choose
