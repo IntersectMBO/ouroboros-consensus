@@ -285,11 +285,13 @@ instance HasByteSize ByteSize32 where
   txMeasureByteSize = id
 
 class TxMeasureMetrics msr where
-  txMeasureMetricByteSize :: msr -> ByteSize
-  txMeasureMetricExUnits :: msr -> ByteSize
-  txMeasureMetricRefScriptsSize :: msr -> ByteSize
+  txMeasureMetricTxSizeBytes :: msr -> Natural
+  txMeasureMetricExUnitsMemory :: msr -> Natural
+  txMeasureMetricExUnitsSteps :: msr -> Natural
+  txMeasureMetricRefScriptsSizeBytes :: msr -> Natural
 
 instance TxMeasureMetrics ByteSize where
-  txMeasureMetricByteSize = id
-  txMeasureMetricExUnits = mempty
-  txMeasureMetricRefScriptsSize = mempty
+  txMeasureMetricTxSizeBytes = fromByteSize
+  txMeasureMetricExUnitsMemory _ = 0
+  txMeasureMetricExUnitsSteps _ = 0
+  txMeasureMetricRefScriptsSizeBytes _ = 0

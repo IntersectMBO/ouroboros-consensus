@@ -42,7 +42,7 @@ import qualified Cardano.Ledger.Allegra.Rules as AllegraEra
 import           Cardano.Ledger.Alonzo.Core (Tx, TxSeq, bodyTxL, eraProtVerLow,
                      fromTxSeq, ppMaxBBSizeL, ppMaxBlockExUnitsL, sizeTxF)
 import qualified Cardano.Ledger.Alonzo.Rules as AlonzoEra
-import           Cardano.Ledger.Alonzo.Scripts (ExUnits, ExUnits',
+import           Cardano.Ledger.Alonzo.Scripts (ExUnits, ExUnits'(..),
                      pointWiseExUnits, unWrapExUnits)
 import           Cardano.Ledger.Alonzo.Tx (totExUnits)
 import qualified Cardano.Ledger.Api as L
@@ -428,6 +428,12 @@ instance Monoid AlonzoMeasure where
   mappend = (<>)
   mempty = AlonzoMeasure mempty mempty
 
+instance TxMeasureMetrics AlonzoMeasure where
+  txMeasureMetricTxSizeBytes = txMeasureMetricTxSizeBytes . byteSize
+  txMeasureMetricExUnitsMemory = exUnitsMem' . exUnits
+  txMeasureMetricExUnitsSteps = exUnitsSteps' . exUnits
+  txMeasureMetricRefScriptsSizeBytes _ = 0
+
 fromExUnits :: ExUnits -> ExUnits' Natural
 fromExUnits = unWrapExUnits
 
@@ -525,6 +531,12 @@ instance Monoid ConwayMeasure where
 
 instance HasByteSize ConwayMeasure where
   txMeasureByteSize = txMeasureByteSize . alonzoMeasure
+
+instance TxMeasureMetrics ConwayMeasure where
+  txMeasureMetricTxSizeBytes = txMeasureMetricTxSizeBytes . alonzoMeasure
+  txMeasureMetricExUnitsMemory = txMeasureMetricExUnitsMemory . alonzoMeasure
+  txMeasureMetricExUnitsSteps = txMeasureMetricExUnitsSteps . alonzoMeasure
+  txMeasureMetricRefScriptsSizeBytes = unByteSize . refScriptsSize
 
 blockCapacityConwayMeasure ::
      forall proto era.
