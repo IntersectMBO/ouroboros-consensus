@@ -60,6 +60,7 @@ import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Control.DeepSeq (NFData)
+import           Control.Monad (when)
 import           Control.Monad.Class.MonadTime.SI (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer, contramap, traceWith)
@@ -632,9 +633,10 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   lpGetLedgerPeers = fromMaybe [] <$> getPeersFromCurrentLedger kernel (const True),
                   lpGetLedgerStateJudgement = GSM.gsmStateToLedgerJudgement <$> getGsmState kernel
                 },
-            -- TODO: consensus can use this callback to store information if the
-            -- node is connected to peers other than local roots.
-            Diffusion.daUpdateOutboundConnectionsState = \_ -> return ()
+            Diffusion.daUpdateOutboundConnectionsState =
+              let varOcs = getOutboundConnectionsState kernel in \newOcs -> do
+                oldOcs <- readTVar varOcs
+                when (newOcs /= oldOcs) $ writeTVar varOcs newOcs
           }
 
         localRethrowPolicy :: RethrowPolicy
