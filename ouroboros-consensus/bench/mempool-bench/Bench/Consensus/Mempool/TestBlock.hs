@@ -40,7 +40,7 @@ import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import           Ouroboros.Consensus.Ledger.Tables
-import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
+import qualified Ouroboros.Consensus.Ledger.Tables.UtxoDiff as Diff
 import qualified Ouroboros.Consensus.Ledger.Tables.Utils as Ledger
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Test.Util.TestBlock hiding (TestBlock)
@@ -123,12 +123,14 @@ instance PayloadSemantics Tx where
       TestPLDS toks@(ValuesMK tokMap) = plds
       Tx {consumed, produced}         = tx
 
-      consumedDiff, producedDiff :: Diff.Diff Token ()
+      consumedDiff, producedDiff :: Diff.UtxoDiff Token ()
       consumedDiff = Diff.fromListDeletes [(t, ()) | t <- Set.toList consumed]
       producedDiff = Diff.fromListInserts [(t, ()) | t <- Set.toList produced]
 
       fullDiff :: DiffMK Token ()
-      fullDiff = DiffMK $ consumedDiff <> producedDiff
+      fullDiff = case Diff.AUtxoDiff consumedDiff <> Diff.AUtxoDiff producedDiff of
+        Diff.NotAUtxoDiff -> error "Violation of the UTxO property when applying a transaction!"
+        Diff.AUtxoDiff d -> DiffMK d
 
   getPayloadKeySets tx = LedgerTables $ KeysMK $ consumed <> produced
     where

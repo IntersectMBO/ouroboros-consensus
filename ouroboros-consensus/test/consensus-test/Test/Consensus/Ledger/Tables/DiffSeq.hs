@@ -9,30 +9,19 @@ module Test.Consensus.Ledger.Tables.DiffSeq (tests) where
 
 import           Control.Monad (liftM)
 import qualified Data.FingerTree.RootMeasured.Strict as RMFT
-import           Data.Map.Diff.Strict (Delta (..), Diff)
-import           Data.Map.Diff.Strict.Internal (DeltaHistory (..), Diff (..))
 import           Data.Maybe.Strict (StrictMaybe (..))
-import           Data.Sequence.NonEmpty (NESeq (..))
 import           Data.Typeable
 import           Ouroboros.Consensus.Ledger.Tables.DiffSeq
 import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Test.QuickCheck.Classes
-import           Test.QuickCheck.Classes.Semigroup.Cancellative
+import           Test.Consensus.Ledger.Tables.Diff ()
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.Arbitrary ()
 
 tests :: TestTree
 tests = testGroup "Test.Consensus.Ledger.Tables.DiffSeq" [
-    lawsTestOne (Proxy @(RootMeasure Key Val)) [
-        semigroupLaws
-      , monoidLaws
-      , leftReductiveLaws
-      , rightReductiveLaws
-      , leftCancellativeLaws
-      , rightCancellativeLaws
-      ]
-  , lawsTestOne (Proxy @(InternalMeasure Key Val)) [
+    lawsTestOne (Proxy @(InternalMeasure Key Val)) [
         semigroupLaws
       , monoidLaws
       ]
@@ -52,23 +41,6 @@ lawsTest Laws{lawsTypeclass, lawsProperties} = testGroup lawsTypeclass $
 lawsTestOne :: Typeable a => Proxy a -> [Proxy a -> Laws] -> TestTree
 lawsTestOne p tts =
     testGroup (show $ typeOf p) (fmap (\f -> lawsTest $ f p) tts)
-
-{------------------------------------------------------------------------------
-  Diffs
-------------------------------------------------------------------------------}
-
-deriving newtype instance (Ord k, Arbitrary k, Arbitrary v)
-                       => Arbitrary (Diff k v)
-
-instance (Arbitrary v) => Arbitrary (DeltaHistory v) where
-  arbitrary = DeltaHistory <$>
-    ((:<||) <$> arbitrary <*> arbitrary)
-
-instance (Arbitrary v) => Arbitrary (Delta v) where
-  arbitrary = oneof [
-      Insert <$> arbitrary
-    , pure Delete
-    ]
 
 {-------------------------------------------------------------------------------
   DiffSeq

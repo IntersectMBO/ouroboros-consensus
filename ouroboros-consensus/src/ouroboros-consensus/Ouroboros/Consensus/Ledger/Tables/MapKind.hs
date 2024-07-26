@@ -37,8 +37,10 @@ import qualified Data.Set as Set
 import           GHC.Generics (Generic)
 import           NoThunks.Class
 import           Ouroboros.Consensus.Ledger.Tables.Basics
-import           Ouroboros.Consensus.Ledger.Tables.Diff (Diff (..))
-import           Ouroboros.Consensus.Ledger.Tables.DiffSeq
+import           Ouroboros.Consensus.Ledger.Tables.UtxoDiff (UtxoDiff)
+import qualified Ouroboros.Consensus.Ledger.Tables.UtxoDiff as UtxoDiff
+import           Ouroboros.Consensus.Ledger.Tables.DiffSeq (DiffSeq)
+import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DiffSeq
 
 {-------------------------------------------------------------------------------
   Classes
@@ -131,18 +133,18 @@ instance CanMapKeysMK ValuesMK where
   DiffMK
 -------------------------------------------------------------------------------}
 
-newtype DiffMK k v = DiffMK { getDiffMK :: Diff k v }
+newtype DiffMK k v = DiffMK { getDiffMK :: UtxoDiff k v }
   deriving stock (Generic, Eq, Show)
   deriving newtype Functor
   deriving anyclass NoThunks
   deriving anyclass (ShowMK, EqMK, NoThunksMK)
 
 instance ZeroableMK DiffMK where
-  emptyMK = DiffMK mempty
+  emptyMK = DiffMK UtxoDiff.empty
 
 instance CanMapKeysMK DiffMK where
-  mapKeysMK f (DiffMK (Diff m)) = DiffMK . Diff $
-    Map.mapKeys f m
+  mapKeysMK f (DiffMK (UtxoDiff.UtxoDiff m1 m2)) =
+     DiffMK $ UtxoDiff.UtxoDiff (Map.mapKeys f m1) (Map.mapKeys f m2)
 
 instance CanMapMK DiffMK where
   mapMK f (DiffMK d) = DiffMK $ fmap f d
@@ -151,12 +153,12 @@ instance CanMapMK DiffMK where
   TrackingMK
 -------------------------------------------------------------------------------}
 
-data TrackingMK k v = TrackingMK !(Map k v) !(Diff k v)
+data TrackingMK k v = TrackingMK !(Map k v) !(UtxoDiff k v)
   deriving (Generic, Eq, Show, NoThunks)
   deriving anyclass (ShowMK, EqMK, NoThunksMK)
 
 instance ZeroableMK TrackingMK where
-  emptyMK = TrackingMK mempty mempty
+  emptyMK = TrackingMK mempty UtxoDiff.empty
 
 instance CanMapMK TrackingMK where
   mapMK f (TrackingMK vs d) = TrackingMK (fmap f vs) (fmap f d)
@@ -177,7 +179,8 @@ newtype SeqDiffMK  k v = SeqDiffMK { getSeqDiffMK :: DiffSeq k v }
   deriving anyclass (ShowMK, EqMK, NoThunksMK)
 
 instance ZeroableMK SeqDiffMK where
-  emptyMK = SeqDiffMK empty
+  emptyMK = SeqDiffMK DiffSeq.empty
+
 
 {-------------------------------------------------------------------------------
   CodecMK

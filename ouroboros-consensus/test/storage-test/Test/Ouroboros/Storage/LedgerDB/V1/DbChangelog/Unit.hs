@@ -18,10 +18,9 @@ import           Control.Monad hiding (ap)
 import           Control.Monad.Trans.Class (lift)
 import           Control.Monad.Trans.State.Strict hiding (state)
 import           Data.Foldable
-import qualified Data.Map.Diff.Strict.Internal as Diff
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes, fromJust, isJust, isNothing)
+import           Data.Maybe (catMaybes, fromJust, isJust, isNothing, fromMaybe)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           GHC.Generics (Generic)
@@ -29,7 +28,7 @@ import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
 import           Ouroboros.Consensus.Ledger.Basics hiding (Key, LedgerState)
 import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
-import           Ouroboros.Consensus.Ledger.Tables.Diff (fromAntiDiff)
+import           Ouroboros.Consensus.Ledger.Tables.UtxoDiff as Diff
 import           Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
                      (DbChangelog (..))
@@ -42,7 +41,7 @@ import           Test.QuickCheck
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.Orphans.Arbitrary ()
-import           Test.Util.QuickCheck (frequency', oneof')
+import           Test.Util.QuickCheck (frequency')
 import           Text.Show.Pretty (ppShow)
 
 samples :: Int
@@ -82,7 +81,7 @@ data TestLedger (mk :: MapKind) = TestLedger {
 nextState :: DbChangelog TestLedger -> TestLedger DiffMK
 nextState dblog = TestLedger {
               tlTip = pointAtSlot $ nextSlot (getTipSlot old)
-            , tlUtxos = DiffMK mempty
+            , tlUtxos = emptyMK
             }
   where
     old = DbChangelog.current $ anchorlessChangelog dblog
@@ -185,8 +184,8 @@ applyOperations ops dblog = foldr' apply' dblog ops
 -- immutable states.
 prop_flushingSplitsTheChangelog :: DbChangelogTestSetup -> Property
 prop_flushingSplitsTheChangelog setup = isNothing toFlush .||.
-    (    toKeepTip            === At toFlushTip
-    .&&. fromAntiDiff (cumulativeDiff diffs) === toFlushDiffs <> fromAntiDiff (cumulativeDiff toKeepDiffs)
+    (    toKeepTip                        === At toFlushTip
+    .&&. AUtxoDiff (cumulativeDiff diffs) === AUtxoDiff toFlushDiffs <> AUtxoDiff (cumulativeDiff toKeepDiffs)
     )
   where
     dblog                                    = resultingDbChangelog setup
@@ -292,7 +291,7 @@ genOperations slotNo nOps = gosOps <$> execStateT (replicateM_ nOps genOperation
     genExtend = do
       nextSlotNo <- advanceSlotNo =<< lift (chooseEnum (1, 5))
       d <- genUtxoDiff
-      pure $ Extend $ TestLedger (DiffMK $ fromAntiDiff d) (castPoint $ pointAtSlot nextSlotNo)
+      pure $ Extend $ TestLedger (DiffMK d) (castPoint $ pointAtSlot nextSlotNo)
 
     advanceSlotNo :: SlotNo -> StateT GenOperationsState Gen (WithOrigin SlotNo)
     advanceSlotNo by = do
@@ -300,32 +299,35 @@ genOperations slotNo nOps = gosOps <$> execStateT (replicateM_ nOps genOperation
       modify' $ \st -> st { gosSlotNo = nextSlotNo }
       pure nextSlotNo
 
-    genUtxoDiff :: StateT GenOperationsState Gen (Diff.Diff Key Int)
+    genUtxoDiff :: StateT GenOperationsState Gen (Diff.UtxoDiff Key Int)
     genUtxoDiff = do
       nEntries <- lift $ chooseInt (1, 10)
       entries <- replicateM nEntries genUtxoDiffEntry
       modify' applyPending
-      pure $ Diff.fromList entries
+      case mconcat $ map AUtxoDiff entries of
+        NotAUtxoDiff -> error "Impossible, violation of the UTxO property when generating actions!"
+        AUtxoDiff d -> pure d
 
-    genUtxoDiffEntry :: StateT GenOperationsState Gen (Key, Diff.Delta Int)
+    genUtxoDiffEntry :: StateT GenOperationsState Gen (Diff.UtxoDiff Key Int)
     genUtxoDiffEntry = do
       activeUtxos <- gets gosActiveUtxos
       consumedUtxos <- gets gosConsumedUtxos
-      oneof' $ catMaybes [
-        genDelEntry activeUtxos,
-        genInsertEntry consumedUtxos]
+      dels <- fromMaybe (pure mempty) $ genDelEntry activeUtxos
+      ins <- fromMaybe (pure mempty) $ genInsertEntry consumedUtxos
+      pure $ Diff.UtxoDiff dels ins
 
-    genDelEntry :: Map Key Int -> Maybe (StateT GenOperationsState Gen (Key, Diff.Delta Int))
+    genDelEntry :: Map Key Int -> Maybe (StateT GenOperationsState Gen (Map.Map Key Int))
     genDelEntry activeUtxos =
-      if Map.null activeUtxos then Nothing
+      if Map.null activeUtxos
+      then Nothing
       else Just $ do
-        (k, _) <- lift $ elements (Map.toList activeUtxos)
+        (k, v) <- lift $ elements (Map.toList activeUtxos)
         modify' $ \st -> st
           { gosActiveUtxos = Map.delete k (gosActiveUtxos st)
           }
-        pure (k, Diff.Delete)
+        pure $ Map.singleton k v
 
-    genInsertEntry :: Set Key -> Maybe (StateT GenOperationsState Gen (Key, Diff.Delta Int))
+    genInsertEntry :: Set Key -> Maybe (StateT GenOperationsState Gen (Map.Map Key Int))
     genInsertEntry consumedUtxos = Just $ do
       k <- lift $ genKey `suchThat` (`Set.notMember` consumedUtxos)
       v <- lift arbitrary
@@ -333,7 +335,7 @@ genOperations slotNo nOps = gosOps <$> execStateT (replicateM_ nOps genOperation
         { gosPendingInsertions = Map.insert k v (gosPendingInsertions st)
         , gosConsumedUtxos = Set.insert k (gosConsumedUtxos st)
         }
-      pure (k, Diff.Insert v)
+      pure $ Map.singleton k v
 
 genKey :: Gen Key
 genKey = replicateM 2 $ elements ['A'..'Z']

@@ -95,8 +95,6 @@ import qualified Control.Exception as Exn
 import           Data.Bifunctor (Bifunctor (bimap))
 import           Data.FingerTree.RootMeasured.Strict hiding (split)
 import qualified Data.FingerTree.RootMeasured.Strict as RMFT (splitSized)
-import           Data.Map.Diff.Strict (Diff)
-import qualified Data.Map.Diff.Strict as Diff
 import           Data.Maybe.Strict
 import           Data.Monoid (Sum (..))
 import           Data.Semigroup (Max (..), Min (..))
@@ -104,6 +102,8 @@ import           Data.Semigroup.Cancellative
 import           GHC.Generics (Generic)
 import           GHC.Stack (HasCallStack)
 import           NoThunks.Class (NoThunks)
+import           Ouroboros.Consensus.Ledger.Tables.UtxoDiff hiding (empty, numInserts, numDeletes)
+import qualified Ouroboros.Consensus.Ledger.Tables.UtxoDiff as UtxoDiff
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Prelude hiding (length, splitAt)
 
@@ -132,7 +132,7 @@ data RootMeasure k v = RootMeasure {
     -- | Cumulative length
     rmLength     :: {-# UNPACK #-} !Length
     -- | Cumulative diff
-  , rmDiff       :: !(Diff k v)
+  , rmDiff       :: !(UtxoDiff k v)
     -- | Cumulative number of inserts
   , rmNumInserts :: !(Sum Int)
     -- | Cumulative number of deletes
@@ -160,7 +160,7 @@ data InternalMeasure k v = InternalMeasure {
 
 data Element k v = Element {
     elSlotNo :: {-# UNPACK #-} !Slot.SlotNo
-  , elDiff   ::                !(Diff k v)
+  , elDiff   ::                !(UtxoDiff k v)
   }
   deriving stock (Generic, Show, Eq, Functor)
   deriving anyclass (NoThunks)
@@ -201,24 +201,34 @@ noSlotBoundsIntersect (SlotNoUB sl1) (SlotNoLB sl2) = sl1 <= sl2
 
 instance (Ord k, Eq v) => RootMeasured (RootMeasure k v) (Element k v) where
   measureRoot (Element _ d) =
-      RootMeasure 1 d (Sum $ Diff.numInserts d) (Sum $ Diff.numDeletes d)
+      RootMeasure 1 d (Sum $ UtxoDiff.numInserts d) (Sum $ UtxoDiff.numDeletes d)
 
 instance (Ord k, Eq v) => Semigroup (RootMeasure k v) where
   RootMeasure len1 d1 n1 m1 <> RootMeasure len2 d2 n2 m2 =
-      RootMeasure (len1 <> len2) (d1 <> d2) (n1 <> n2) (m1 <> m2)
+    case AUtxoDiff d1 <> AUtxoDiff d2 of
+      NotAUtxoDiff -> error "Violation of the UTxO property!"
+      AUtxoDiff d  -> RootMeasure (len1 <> len2) d (n1 <> n2) (m1 <> m2)
 
 instance (Ord k, Eq v) => Monoid (RootMeasure k v) where
-  mempty = RootMeasure mempty mempty mempty mempty
+  mempty = RootMeasure mempty UtxoDiff.empty mempty mempty
 
 instance (Ord k, Eq v) => LeftReductive (RootMeasure k v) where
   stripPrefix (RootMeasure len1 d1 n1 m1) (RootMeasure len2 d2 n2 m2) =
-      RootMeasure <$> stripPrefix len1 len2 <*> stripPrefix d1 d2
-                  <*> stripPrefix n1 n2     <*> stripPrefix m1 m2
+    let df = case stripPrefix (AUtxoDiff d1) (AUtxoDiff d2) of
+              Nothing -> Nothing
+              Just NotAUtxoDiff -> error "Violation of the UTxO property!"
+              Just (AUtxoDiff d) -> Just d
+    in RootMeasure <$> stripPrefix len1 len2 <*> df
+                   <*> stripPrefix n1 n2     <*> stripPrefix m1 m2
 
 instance (Ord k, Eq v) => RightReductive (RootMeasure k v) where
   stripSuffix (RootMeasure len1 d1 n1 m1) (RootMeasure len2 d2 n2 m2) =
-      RootMeasure <$> stripSuffix len1 len2 <*> stripSuffix d1 d2
-                  <*> stripSuffix n1 n2     <*> stripSuffix m1 m2
+    let df = case stripSuffix (AUtxoDiff d1) (AUtxoDiff d2) of
+              Nothing -> Nothing
+              Just NotAUtxoDiff -> error "Violation of the UTxO property!"
+              Just (AUtxoDiff d) -> Just d
+    in RootMeasure <$> stripSuffix len1 len2 <*> df
+                   <*> stripSuffix n1 n2     <*> stripSuffix m1 m2
 
 instance (Ord k, Eq v) => LeftCancellative (RootMeasure k v)
 instance (Ord k, Eq v) => RightCancellative (RootMeasure k v)
@@ -256,7 +266,7 @@ type SM k v =
 cumulativeDiff ::
      SM k v
   => DiffSeq k v
-  -> Diff k v
+  -> UtxoDiff k v
 cumulativeDiff (UnsafeDiffSeq ft) = rmDiff $ measureRoot ft
 
 length ::
@@ -279,13 +289,15 @@ numDeletes (UnsafeDiffSeq ft) = rmNumDeletes $ measureRoot ft
 -------------------------------------------------------------------------------}
 
 extend ::
-     SM k v
+     (Ord k, SM k v)
   => DiffSeq k v
   -> Slot.SlotNo
-  -> Diff k v
-  -> DiffSeq k v
+  -> UtxoDiff k v
+  -> Maybe (DiffSeq k v)
 extend (UnsafeDiffSeq ft) sl d =
-    Exn.assert invariant $ UnsafeDiffSeq $ ft |> Element sl d
+  if utxoProperty2 (rmDiff $ measureRoot ft) d
+    then Exn.assert invariant $ Just $ UnsafeDiffSeq $ ft |> Element sl d
+    else Nothing
   where
     invariant = case imSlotNoR $ measure ft of
       SNothing  -> True

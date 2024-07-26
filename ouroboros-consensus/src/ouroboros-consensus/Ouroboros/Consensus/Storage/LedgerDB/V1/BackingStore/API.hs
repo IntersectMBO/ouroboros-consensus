@@ -61,6 +61,8 @@ data DiffsToFlush l = DiffsToFlush {
   , toFlushSlot  :: !SlotNo
   }
 
+deriving instance (Show (Key l), Show (Value l)) => Show (DiffsToFlush l)
+
 data BackingStore m keys values diff = BackingStore {
     -- | Close the backing store
     --

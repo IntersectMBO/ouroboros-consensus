@@ -282,14 +282,17 @@ validateNewTransaction cfg txSize wti tx values is =
                    ) of
       Left err         -> ( Left err, is )
       Right (st', vtx) ->
-        ( Right vtx
-        , is { isTxs          = isTxs :> TxTicket vtx nextTicketNo (txSize tx)
-                                         (txRefScriptSize cfg isLedgerState tx)
-             , isTxIds        = Set.insert (txId tx) isTxIds
-             , isLedgerState  = prependDiffs isLedgerState st'
-             , isLastTicketNo = nextTicketNo
-             }
-        )
+        case prependDiffs isLedgerState st' of
+          Nothing -> error "Critical error! applying a transaction produced diffs that do not preserve the UTxO property!"
+          Just st'' ->
+            ( Right vtx
+            , is { isTxs          = isTxs :> TxTicket vtx nextTicketNo (txSize tx)
+                                            (txRefScriptSize cfg isLedgerState tx)
+                , isTxIds        = Set.insert (txId tx) isTxIds
+                , isLedgerState  = st''
+                , isLastTicketNo = nextTicketNo
+                }
+            )
   where
     IS {
         isTxs

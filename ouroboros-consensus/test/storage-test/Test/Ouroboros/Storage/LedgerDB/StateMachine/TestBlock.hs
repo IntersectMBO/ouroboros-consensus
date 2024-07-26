@@ -36,9 +36,8 @@ import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (Serialise)
 import qualified Codec.Serialise as S
-import           Data.Foldable (toList)
 import           Data.List.NonEmpty (nonEmpty)
-import qualified Data.Map.Diff.Strict.Internal as DS
+import qualified Ouroboros.Consensus.Ledger.Tables.UtxoDiff as DS
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
@@ -238,8 +237,7 @@ instance CanStowLedgerTables (LedgerState TestBlock) where
 stowErr :: String -> a
 stowErr fname = error $ "Function " <> fname <> " should not be used in these tests."
 
-deriving anyclass instance ToExpr v => ToExpr (DS.Delta v)
-deriving anyclass instance (ToExpr k, ToExpr v) => ToExpr (DS.Diff k v)
+deriving anyclass instance (ToExpr k, ToExpr v) => ToExpr (DS.UtxoDiff k v)
 deriving anyclass instance (ToExpr k, ToExpr v) => ToExpr (DS.RootMeasure k v)
 deriving anyclass instance (ToExpr k, ToExpr v) => ToExpr (DS.InternalMeasure k v)
 deriving anyclass instance (ToExpr v) => ToExpr (StrictMaybe v)
@@ -251,9 +249,6 @@ deriving anyclass instance ToExpr (mk Token TValue) => ToExpr (LedgerTables (Led
 deriving instance ToExpr (LedgerTables (LedgerState TestBlock) mk) => ToExpr (PayloadDependentState Tx mk)
 
 deriving newtype instance ToExpr (ValuesMK Token TValue)
-
-instance ToExpr v => ToExpr (DS.DeltaHistory v) where
-  toExpr h = App "DeltaHistory" [genericToExpr . toList . DS.getDeltaHistory $ h]
 
 instance ToExpr (ExtLedgerState TestBlock ValuesMK) where
   toExpr = genericToExpr

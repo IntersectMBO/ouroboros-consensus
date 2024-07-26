@@ -33,7 +33,7 @@ import qualified Data.Set as Set
 import qualified Data.SOP.Dict as Dict
 import           Data.Typeable
 import           Ouroboros.Consensus.Ledger.Tables
-import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
+import qualified Ouroboros.Consensus.Ledger.Tables.UtxoDiff as Diff
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as BS
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
@@ -65,6 +65,7 @@ import           Test.Tasty.QuickCheck (QuickCheckTests (..), testProperty)
 import           Test.Util.LedgerStateOnlyTables
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Orphans.IOLike ()
+import           Test.Util.UtxoDiff ()
 import           Test.Util.Orphans.ToExpr ()
 
 {-------------------------------------------------------------------------------
@@ -274,7 +275,7 @@ instance Mock.MakeDiff V D where
   diff t1 t2 = forgetTrackingValues $ calculateDifference t1 t2
 
 instance Mock.DiffSize D where
-  diffSize (LedgerTables (DiffMK (Diff.Diff m))) = Map.size m
+  diffSize (LedgerTables (DiffMK d)) = Diff.size d
 
 instance Mock.KeysSize K where
   keysSize (LedgerTables (KeysMK s)) = Set.size s
@@ -324,15 +325,6 @@ instance (Ord k, QC.Arbitrary k, QC.Arbitrary v)
       => QC.Arbitrary (ValuesMK k v) where
   arbitrary = ValuesMK <$> QC.arbitrary
   shrink (ValuesMK vs) = ValuesMK <$> QC.shrink vs
-
-deriving newtype instance (Ord k, QC.Arbitrary k, QC.Arbitrary v)
-                       => QC.Arbitrary (Diff.Diff k v)
-instance QC.Arbitrary v => QC.Arbitrary (Diff.Delta v) where
-  arbitrary =
-    QC.oneof [
-        Diff.Insert <$> QC.arbitrary
-      , pure Diff.Delete
-      ]
 
 instance QC.Arbitrary ks => QC.Arbitrary (BS.RangeQuery ks) where
   arbitrary = BS.RangeQuery <$> QC.arbitrary <*> QC.arbitrary
