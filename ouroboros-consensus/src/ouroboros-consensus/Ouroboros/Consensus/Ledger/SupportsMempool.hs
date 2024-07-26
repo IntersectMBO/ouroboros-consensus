@@ -7,7 +7,6 @@
 module Ouroboros.Consensus.Ledger.SupportsMempool (
     ApplyTxErr
   , ByteSize (..)
-  , fromByteSize
   , ConvertRawTxId (..)
   , GenTx
   , GenTxId
@@ -15,11 +14,12 @@ module Ouroboros.Consensus.Ledger.SupportsMempool (
   , HasTxId (..)
   , HasTxs (..)
   , LedgerSupportsMempool (..)
-  , TxMeasureMetrics (..)
   , TxId
   , TxLimits (..)
+  , TxMeasureMetrics (..)
   , Validated
   , WhetherToIntervene (..)
+  , fromByteSize
   ) where
 
 import           Control.DeepSeq (NFData)
