@@ -33,19 +33,19 @@ localTxMonitorServer mempool =
       , recvMsgAcquire = do
           s <- atomically $
                 (,)
-            <$> (txMeasureByteSize <$> getCapacity mempool)
+            <$> getCapacity mempool
             <*> getSnapshot mempool
           pure $ serverStAcquiring s
       }
 
     serverStAcquiring
-      :: (ByteSize32, MempoolSnapshot blk)
+      :: (TxMeasure blk, MempoolSnapshot blk)
       -> ServerStAcquiring (GenTxId blk) (GenTx blk) SlotNo m ()
     serverStAcquiring s@(_, snapshot) =
       SendMsgAcquired (snapshotSlotNo snapshot) (serverStAcquired s (snapshotTxs snapshot))
 
     serverStAcquired
-      :: (ByteSize32, MempoolSnapshot blk)
+      :: (TxMeasure blk, MempoolSnapshot blk)
       -> [(Validated (GenTx blk), idx, TxMeasure blk)]
       -> ServerStAcquired (GenTxId blk) (GenTx blk) SlotNo m ()
     serverStAcquired s@(capacity, snapshot) txs =
@@ -61,8 +61,8 @@ localTxMonitorServer mempool =
       , recvMsgGetSizes = do
           let MempoolSize{msNumTxs,msNumBytes} = snapshotMempoolSize snapshot
           let sizes = MempoolSizeAndCapacity
-                { capacityInBytes = unByteSize32 capacity
-                , sizeInBytes     = unByteSize32 msNumBytes
+                { capacityInBytes = unByteSize32 $ txMeasureByteSize capacity
+                , sizeInBytes     = unByteSize32 $ txMeasureByteSize msNumBytes
                 , numberOfTxs     = msNumTxs
                 }
           pure $ SendMsgReplyGetSizes sizes (serverStAcquired s txs)
@@ -70,7 +70,7 @@ localTxMonitorServer mempool =
           s' <- atomically $ do
             s'@(_, snapshot') <-
                   (,)
-              <$> (txMeasureByteSize <$> getCapacity mempool)
+              <$> getCapacity mempool
               <*> getSnapshot mempool
             s' <$ check (not (snapshot `isSameSnapshot` snapshot'))
           pure $ serverStAcquiring s'
