@@ -708,9 +708,9 @@ getMempoolReader mempool = MempoolReader.TxSubmissionMempoolReader
         { mempoolTxIdsAfter = \idx ->
             [ ( txId (txForgetValidated tx)
               , idx'
-              , fromIntegral $ unByteSize byteSize   -- TODO overflow?
+              , fromByteSize $ txMeasureByteSize msr   -- TODO overflow?
               )
-            | (tx, idx', byteSize) <- snapshotTxsAfter idx
+            | (tx, idx', msr) <- snapshotTxsAfter idx
             ]
         , mempoolLookupTx   = snapshotLookupTx
         , mempoolHasTx      = snapshotHasTx

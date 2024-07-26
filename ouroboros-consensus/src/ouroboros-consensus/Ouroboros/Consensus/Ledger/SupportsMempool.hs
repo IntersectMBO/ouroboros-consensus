@@ -16,8 +16,10 @@ module Ouroboros.Consensus.Ledger.SupportsMempool (
   , LedgerSupportsMempool (..)
   , TxId
   , TxLimits (..)
+  , TxMeasureMetrics (..)
   , Validated
   , WhetherToIntervene (..)
+  , fromByteSize
   ) where
 
 import           Control.DeepSeq (NFData)
@@ -165,10 +167,11 @@ class HasTxs blk where
 -- state). In future eras (starting with Alonzo) this measure was a bit more
 -- complex as it had to take other factors into account (like execution units).
 -- For details please see the individual instances for the TxLimits.
-class ( Measure     (TxMeasure blk)
-      , HasByteSize (TxMeasure blk)
-      , NoThunks    (TxMeasure blk)
-      , Show        (TxMeasure blk)
+class ( Measure          (TxMeasure blk)
+      , HasByteSize      (TxMeasure blk)
+      , TxMeasureMetrics (TxMeasure blk)
+      , NoThunks         (TxMeasure blk)
+      , Show             (TxMeasure blk)
       ) => TxLimits blk where
   -- | The (possibly multi-dimensional) size of a transaction in a block.
   type TxMeasure blk
@@ -218,9 +221,27 @@ newtype ByteSize = ByteSize { unByteSize :: Natural }
   deriving         (Monoid, Semigroup) via (InstantiatedAt Measure ByteSize)
   deriving         (NoThunks) via OnlyCheckWhnfNamed "ByteSize" ByteSize
 
+-- BIG WARNING: THIS FUNCTION IS LIKELY TO OVERFLOW AND SHOULD BE REMOVED AND
+-- HAVE ALL OF ITS USE SITES CHANGED TO SOMETHING LESS OVERFLOW-Y
+fromByteSize :: Num a => ByteSize -> a
+fromByteSize = fromIntegral . unByteSize
+{-# WARNING fromByteSize "THIS FUNCTION WILL ALMOST CERTAINLY OVERFLOW" #-}
+
 class HasByteSize a where
   -- | The byte size component (of 'TxMeasure')
   txMeasureByteSize :: a -> ByteSize
 
 instance HasByteSize ByteSize where
   txMeasureByteSize = id
+
+class TxMeasureMetrics msr where
+  txMeasureMetricTxSizeBytes :: msr -> Natural
+  txMeasureMetricExUnitsMemory :: msr -> Natural
+  txMeasureMetricExUnitsSteps :: msr -> Natural
+  txMeasureMetricRefScriptsSizeBytes :: msr -> Natural
+
+instance TxMeasureMetrics ByteSize where
+  txMeasureMetricTxSizeBytes = fromByteSize
+  txMeasureMetricExUnitsMemory _ = 0
+  txMeasureMetricExUnitsSteps _ = 0
+  txMeasureMetricRefScriptsSizeBytes _ = 0

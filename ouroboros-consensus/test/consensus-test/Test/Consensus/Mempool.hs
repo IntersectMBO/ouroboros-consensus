@@ -223,7 +223,7 @@ prop_Mempool_getCapacity mcts =
     expectedCapacity =
         (\n -> stimes n simpleBlockCapacity)
       $ max 1
-      $ (unByteSize testCapacity + dom - 1) `div` dom   -- div rounding up
+      $ (fromByteSize testCapacity + dom - 1) `div` dom   -- div rounding up
 
 -- | Test that all valid transactions added to a 'Mempool' via 'addTxs' are
 -- appropriately represented in the trace of events.
@@ -840,12 +840,12 @@ instance Arbitrary MempoolCapTestSetup where
     -- Note that we could pick @currentSize@, meaning that we can't add any
     -- more transactions to the Mempool
 
-    when (unByteSize capacityMaxBound >= 2^(32 :: Int)) $ do
+    when (fromByteSize capacityMaxBound >= (2^32 :: Int)) $ do
       error "impossible!"   -- could 'QC.discard' if this is actually feasible
 
     capacity <- choose
-      ( fromIntegral (unByteSize capacityMinBound) :: Word32
-      , fromIntegral (unByteSize capacityMaxBound) :: Word32
+      ( fromByteSize capacityMinBound :: Word32
+      , fromByteSize capacityMaxBound :: Word32
       )
     let testSetup' = testSetup {
             testMempoolCapOverride =

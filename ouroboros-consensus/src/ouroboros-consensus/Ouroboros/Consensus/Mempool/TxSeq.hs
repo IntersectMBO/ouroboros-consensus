@@ -37,8 +37,6 @@ import qualified Data.Measure as Measure
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
-import           Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize,
-                     HasByteSize, txMeasureByteSize)
 
 {-------------------------------------------------------------------------------
   Mempool transaction sequence as a finger tree
@@ -202,9 +200,9 @@ splitAfterTicketNo (TxSeq txs) n =
     case FingerTree.split (\m -> mMaxTicket m > n) txs of
       (l, r) -> (TxSeq l, TxSeq r)
 
--- | \( O(\log(n)) \). Split the sequence of transactions into two parts
--- based on the given @sz@. The first part has transactions whose
--- summed '' is less than or equal to the given 'TxSizeInBytes',
+-- | \( O(\log(n)) \). Split the sequence of transactions into a pair of
+-- sequences of transactions based on the given @sz@. The first part
+-- has transactions whose sum is less than or equal to the given size 'sz',
 -- and the second part has the remaining transactions in the sequence.
 --
 splitAfterTxSize ::
@@ -256,13 +254,13 @@ toList :: TxSeq sz tx -> [TxTicket sz tx]
 toList (TxSeq ftree) = Foldable.toList ftree
 
 -- | Convert a 'TxSeq' to a list of pairs of transactions and their
--- associated 'TicketNo's and 'ByteSize's.
-toTuples :: HasByteSize sz => TxSeq sz tx -> [(tx, TicketNo, ByteSize)]
+-- associated 'TicketNo's and sizes.
+toTuples :: TxSeq sz tx -> [(tx, TicketNo, sz)]
 toTuples (TxSeq ftree) = fmap
     (\ticket ->
        ( txTicketTx ticket
        , txTicketNo ticket
-       , txMeasureByteSize (txTicketSize ticket)
+       , txTicketSize ticket
        )
     )
     (Foldable.toList ftree)
