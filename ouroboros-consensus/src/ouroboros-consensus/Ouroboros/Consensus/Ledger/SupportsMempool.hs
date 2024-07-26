@@ -7,6 +7,7 @@
 module Ouroboros.Consensus.Ledger.SupportsMempool (
     ApplyTxErr
   , ByteSize (..)
+  , fromByteSize
   , ConvertRawTxId (..)
   , GenTx
   , GenTxId
@@ -217,6 +218,12 @@ newtype ByteSize = ByteSize { unByteSize :: Natural }
   deriving newtype (NFData)
   deriving         (Monoid, Semigroup) via (InstantiatedAt Measure ByteSize)
   deriving         (NoThunks) via OnlyCheckWhnfNamed "ByteSize" ByteSize
+
+-- BIG WARNING: THIS FUNCTION IS LIKELY TO OVERFLOW AND SHOULD BE REMOVED AND
+-- HAVE ALL OF ITS USE SITES CHANGED TO SOMETHING LESS OVERFLOW-Y
+fromByteSize :: Num a => ByteSize -> a
+fromByteSize = fromIntegral . unByteSize
+{-# WARNING fromByteSize "THIS FUNCTION WILL ALMOST CERTAINLY OVERFLOW" #-}
 
 class HasByteSize a where
   -- | The byte size component (of 'TxMeasure')
