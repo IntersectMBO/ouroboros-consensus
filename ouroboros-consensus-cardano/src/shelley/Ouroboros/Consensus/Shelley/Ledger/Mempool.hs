@@ -42,7 +42,7 @@ import qualified Cardano.Ledger.Allegra.Rules as AllegraEra
 import           Cardano.Ledger.Alonzo.Core (Tx, TxSeq, bodyTxL, eraProtVerLow,
                      fromTxSeq, ppMaxBBSizeL, ppMaxBlockExUnitsL, sizeTxF)
 import qualified Cardano.Ledger.Alonzo.Rules as AlonzoEra
-import           Cardano.Ledger.Alonzo.Scripts (ExUnits, ExUnits'(..),
+import           Cardano.Ledger.Alonzo.Scripts (ExUnits, ExUnits' (..),
                      pointWiseExUnits, unWrapExUnits)
 import           Cardano.Ledger.Alonzo.Tx (totExUnits)
 import qualified Cardano.Ledger.Api as L

@@ -18,11 +18,12 @@ module Ouroboros.Consensus.Ledger.SupportsMempool (
   , HasTxs (..)
   , IgnoringOverflow (..)
   , LedgerSupportsMempool (..)
-  , TxMeasureMetrics (..)
   , TxId
   , TxLimits (..)
+  , TxMeasureMetrics (..)
   , Validated
   , WhetherToIntervene (..)
+  , fromByteSize32
   ) where
 
 import           Control.DeepSeq (NFData)
