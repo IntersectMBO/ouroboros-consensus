@@ -418,6 +418,14 @@ data AlonzoMeasure = AlonzoMeasure {
 instance HasByteSize AlonzoMeasure where
   txMeasureByteSize = byteSize
 
+instance Semigroup AlonzoMeasure where
+  AlonzoMeasure b1 e1 <> AlonzoMeasure b2 e2 =
+    AlonzoMeasure (b1 <> b2) (e1 <> e2)
+
+instance Monoid AlonzoMeasure where
+  mappend = (<>)
+  mempty = AlonzoMeasure mempty mempty
+
 fromExUnits :: ExUnits -> ExUnits' Natural
 fromExUnits = unWrapExUnits
 
@@ -504,6 +512,14 @@ data ConwayMeasure = ConwayMeasure {
     deriving anyclass (NoThunks)
     deriving (Measure)
          via (InstantiatedAt Generic ConwayMeasure)
+
+instance Semigroup ConwayMeasure where
+  ConwayMeasure a1 r1 <> ConwayMeasure a2 r2 =
+    ConwayMeasure (a1 <> a2) (r1 <> r2)
+
+instance Monoid ConwayMeasure where
+  mappend = (<>)
+  mempty = ConwayMeasure mempty mempty
 
 instance HasByteSize ConwayMeasure where
   txMeasureByteSize = txMeasureByteSize . alonzoMeasure
