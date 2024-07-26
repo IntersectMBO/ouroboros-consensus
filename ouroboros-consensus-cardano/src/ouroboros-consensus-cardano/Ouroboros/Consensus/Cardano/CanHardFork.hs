@@ -84,7 +84,7 @@ import           Ouroboros.Consensus.HardFork.Simple
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
-import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
+import qualified Ouroboros.Consensus.Ledger.Tables.UtxoDiff as Diff
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.PBFT (PBft, PBftCrypto)

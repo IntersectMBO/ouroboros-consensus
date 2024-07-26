@@ -147,10 +147,12 @@ tickThenApplyLedgerResult ::
 tickThenApplyLedgerResult cfg blk l = do
   let lrTick = applyChainTickLedgerResult cfg (blockSlot blk) (forgetLedgerTables l)
   lrBlock <-   applyBlockLedgerResult     cfg            blk  (applyDiffForKeys l (getBlockKeySets blk) (lrResult lrTick))
-  pure LedgerResult {
-      lrEvents = lrEvents lrTick <> lrEvents lrBlock
-    , lrResult = prependDiffs (lrResult lrTick) (lrResult lrBlock)
-    }
+  case prependDiffs (lrResult lrTick) (lrResult lrBlock) of
+    Nothing     -> error "Critical error! ledger rules produced diffs that do not satisfy the UTxO property!"
+    Just result -> pure LedgerResult {
+        lrEvents = lrEvents lrTick <> lrEvents lrBlock
+      , lrResult = result
+      }
 
 tickThenReapplyLedgerResult ::
      ApplyBlock l blk
@@ -161,10 +163,12 @@ tickThenReapplyLedgerResult ::
 tickThenReapplyLedgerResult cfg blk l =
   let lrTick  = applyChainTickLedgerResult cfg (blockSlot blk) (forgetLedgerTables l)
       lrBlock = reapplyBlockLedgerResult   cfg            blk  (applyDiffForKeys l (getBlockKeySets blk) (lrResult lrTick))
-  in LedgerResult {
-      lrEvents = lrEvents lrTick <> lrEvents lrBlock
-    , lrResult = prependDiffs (lrResult lrTick) (lrResult lrBlock)
-    }
+  in case prependDiffs (lrResult lrTick) (lrResult lrBlock) of
+    Nothing     -> error "Critical error! ledger rules produced diffs that do not satisfy the UTxO property!"
+    Just result -> LedgerResult {
+        lrEvents = lrEvents lrTick <> lrEvents lrBlock
+      , lrResult = result
+      }
 
 tickThenApply ::
      ApplyBlock l blk

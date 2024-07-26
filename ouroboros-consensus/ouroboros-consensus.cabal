@@ -160,7 +160,7 @@ library
     Ouroboros.Consensus.Ledger.Tables
     Ouroboros.Consensus.Ledger.Tables.Basics
     Ouroboros.Consensus.Ledger.Tables.Combinators
-    Ouroboros.Consensus.Ledger.Tables.Diff
+    Ouroboros.Consensus.Ledger.Tables.UtxoDiff
     Ouroboros.Consensus.Ledger.Tables.DiffSeq
     Ouroboros.Consensus.Ledger.Tables.MapKind
     Ouroboros.Consensus.Ledger.Tables.Utils
@@ -313,7 +313,6 @@ library
     containers >=0.5 && <0.7,
     contra-tracer,
     deepseq,
-    diff-containers >=1.2,
     filelock,
     fingertree-rm >=1.0,
     fs-api ^>=0.2.0.1,
@@ -415,6 +414,7 @@ library unstable-consensus-testlib
     Test.Util.Time
     Test.Util.ToExpr
     Test.Util.Tracer
+    Test.Util.UtxoDiff
     Test.Util.WithEq
 
   build-depends:
@@ -589,16 +589,15 @@ test-suite consensus-test
     containers,
     contra-tracer,
     deepseq,
-    diff-containers,
     fingertree-rm,
     fs-api ^>=0.2.0.1,
     fs-sim,
     generics-sop,
     hashable,
     io-classes,
+    monoid-subclasses,
     io-sim,
     mtl,
-    nonempty-containers,
     nothunks,
     ouroboros-consensus,
     ouroboros-network,
@@ -606,7 +605,6 @@ test-suite consensus-test
     ouroboros-network-mock,
     ouroboros-network-protocols:{ouroboros-network-protocols, testlib},
     quickcheck-classes,
-    quickcheck-monoid-subclasses,
     quickcheck-state-machine:no-vendored-treediff,
     quiet,
     random,
@@ -714,7 +712,6 @@ test-suite storage-test
     constraints,
     containers,
     contra-tracer,
-    diff-containers,
     directory,
     fs-api ^>=0.2.0.1,
     fs-sim ^>=0.2.1.1,

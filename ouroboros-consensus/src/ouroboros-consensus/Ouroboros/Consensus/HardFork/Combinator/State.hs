@@ -30,6 +30,7 @@ module Ouroboros.Consensus.HardFork.Combinator.State (
 
 import           Control.Monad (guard)
 import           Data.Functor.Product
+import           Data.Maybe (fromMaybe)
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
@@ -278,6 +279,7 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
                   -- will just be a no-op. See the haddock for
                   -- 'translateLedgerTablesWith' and 'extendToSlot' for more
                   -- information.
+                . fromMaybe (error "Critical error! translating the ledger state produced diffs that do not satisfy the UTxO property!")
                 . prependDiffs ( translateLedgerTablesWith f'
                                . projectLedgerTables
                                . unFlip

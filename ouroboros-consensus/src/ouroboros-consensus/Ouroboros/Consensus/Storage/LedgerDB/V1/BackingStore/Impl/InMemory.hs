@@ -33,7 +33,7 @@ import qualified Data.Set as Set
 import           Data.String (fromString)
 import           GHC.Generics
 import           Ouroboros.Consensus.Ledger.Basics
-import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
+import           Ouroboros.Consensus.Ledger.Tables.UtxoDiff ( applyUtxoDiff )
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import           Ouroboros.Consensus.Util.IOLike (Exception, IOLike,
                      MonadSTM (STM, atomically), MonadThrow (throwIO), NoThunks,
@@ -250,7 +250,7 @@ newInMemoryBackingStore tracer _ (SomeHasFS fs) initialization = do
       -> DiffMK   k v
       -> ValuesMK k v
     applyDiff_ (ValuesMK values) (DiffMK diff) =
-      ValuesMK (Diff.applyDiff values diff)
+      ValuesMK (applyUtxoDiff values diff)
 
     count :: LedgerTables l ValuesMK -> Int
     count = getSum . ltcollapse . ltmap (K2 . count')

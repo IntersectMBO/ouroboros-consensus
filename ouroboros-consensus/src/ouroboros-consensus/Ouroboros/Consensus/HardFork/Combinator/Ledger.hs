@@ -200,6 +200,7 @@ tickOne :: SingleEraBlock blk
 tickOne ei slot sopIdx partialCfg st =
       Comp
     . fmap ( FlipTickedLedgerState
+           . fromMaybe (error "Critical error! ticking a ledger state produced diffs that do not preserve the UTxO property!")
            . prependDiffs (unFlip st)
            )
     . embedLedgerResult (injectLedgerEvent sopIdx)
