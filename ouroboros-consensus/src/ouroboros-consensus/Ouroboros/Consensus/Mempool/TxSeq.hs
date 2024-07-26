@@ -200,9 +200,9 @@ splitAfterTicketNo (TxSeq txs) n =
     case FingerTree.split (\m -> mMaxTicket m > n) txs of
       (l, r) -> (TxSeq l, TxSeq r)
 
--- | \( O(\log(n)) \). Split the sequence of transactions into two parts
--- based on the given @sz@. The first part has transactions whose
--- summed '' is less than or equal to the given 'TxSizeInBytes',
+-- | \( O(\log(n)) \). Split the sequence of transactions into a pair of
+-- sequences of transactions based on the given @sz@. The first part
+-- has transactions whose sum is less than or equal to the given size 'sz',
 -- and the second part has the remaining transactions in the sequence.
 --
 splitAfterTxSize ::
