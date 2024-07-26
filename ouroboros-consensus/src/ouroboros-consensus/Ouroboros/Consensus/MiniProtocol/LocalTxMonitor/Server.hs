@@ -33,19 +33,19 @@ localTxMonitorServer mempool =
       , recvMsgAcquire = do
           s <- atomically $
                 (,)
-            <$> (txMeasureByteSize <$> getCapacity mempool)
+            <$> getCapacity mempool
             <*> getSnapshot mempool
           pure $ serverStAcquiring s
       }
 
     serverStAcquiring
-      :: (ByteSize, MempoolSnapshot blk)
+      :: (TxMeasure blk, MempoolSnapshot blk)
       -> ServerStAcquiring (GenTxId blk) (GenTx blk) SlotNo m ()
     serverStAcquiring s@(_, snapshot) =
       SendMsgAcquired (snapshotSlotNo snapshot) (serverStAcquired s (snapshotTxs snapshot))
 
     serverStAcquired
-      :: (ByteSize, MempoolSnapshot blk)
+      :: (TxMeasure blk, MempoolSnapshot blk)
       -> [(Validated (GenTx blk), idx, TxMeasure blk)]
       -> ServerStAcquired (GenTxId blk) (GenTx blk) SlotNo m ()
     serverStAcquired s@(capacity, snapshot) txs =
@@ -61,8 +61,8 @@ localTxMonitorServer mempool =
       , recvMsgGetSizes = do
           let MempoolSize{msNumTxs,msNumBytes} = snapshotMempoolSize snapshot
           let sizes = MempoolSizeAndCapacity
-                { capacityInBytes = fromByteSize capacity
-                , sizeInBytes     = fromByteSize msNumBytes
+                { capacityInBytes = fromByteSize $ txMeasureByteSize capacity
+                , sizeInBytes     = fromByteSize $ txMeasureByteSize msNumBytes
                 , numberOfTxs     = msNumTxs
                 }   -- TODO what to do about overflow?
           pure $ SendMsgReplyGetSizes sizes (serverStAcquired s txs)
@@ -70,7 +70,7 @@ localTxMonitorServer mempool =
           s' <- atomically $ do
             s'@(_, snapshot') <-
                   (,)
-              <$> (txMeasureByteSize <$> getCapacity mempool)
+              <$> getCapacity mempool
               <*> getSnapshot mempool
             s' <$ check (not (snapshot `isSameSnapshot` snapshot'))
           pure $ serverStAcquiring s'
