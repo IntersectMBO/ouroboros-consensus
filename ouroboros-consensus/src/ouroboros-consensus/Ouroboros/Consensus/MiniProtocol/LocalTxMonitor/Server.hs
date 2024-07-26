@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies        #-}
@@ -5,6 +6,10 @@
 
 module Ouroboros.Consensus.MiniProtocol.LocalTxMonitor.Server (localTxMonitorServer) where
 
+import qualified Data.Measure as Measure
+import Data.Word (Word32)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Mempool
@@ -66,6 +71,15 @@ localTxMonitorServer mempool =
                 , numberOfTxs     = msNumTxs
                 }   -- TODO what to do about overflow?
           pure $ SendMsgReplyGetSizes sizes (serverStAcquired s txs)
+      , recvMsgGetMeasures = do
+          let txsMeasures =
+                foldl (\acc (_, _, m) -> Measure.plus acc m) Measure.zero txs
+              measures = MempoolMeasures
+                { txCount = fromIntegral $ length txs
+                , measuresMap =
+                    mkMeasuresMap (Proxy :: Proxy blk) txsMeasures capacity
+                } -- TODO what to do about overflow?
+          pure $ SendMsgReplyGetMeasures measures (serverStAcquired s txs)
       , recvMsgAwaitAcquire = do
           s' <- atomically $ do
             s'@(_, snapshot') <-
@@ -89,3 +103,17 @@ localTxMonitorServer mempool =
       snapshotSlotNo a == snapshotSlotNo b
 
     tno (_a, b, _c) = b :: TicketNo
+
+mkMeasuresMap :: TxMeasureMetrics (TxMeasure blk)
+              => Proxy blk
+              -> TxMeasure blk
+              -> TxMeasure blk
+              -> Map MeasureName (SizeAndCapacity Word32)
+mkMeasuresMap Proxy size capacity =
+  fmap (fmap fromIntegral) $ -- oof oof ow ouch oo ow
+    Map.fromList
+      [ (TransactionBytes, SizeAndCapacity (txMeasureMetricTxSizeBytes size) (txMeasureMetricTxSizeBytes capacity))
+      , (ExUnitsMemory, SizeAndCapacity (txMeasureMetricExUnitsMemory size) (txMeasureMetricExUnitsMemory capacity))
+      , (ExUnitsSteps, SizeAndCapacity (txMeasureMetricExUnitsSteps size) (txMeasureMetricExUnitsSteps capacity))
+      , (ReferenceScriptsBytes, SizeAndCapacity (txMeasureMetricRefScriptsSizeBytes size) (txMeasureMetricRefScriptsSizeBytes capacity))
+      ]
