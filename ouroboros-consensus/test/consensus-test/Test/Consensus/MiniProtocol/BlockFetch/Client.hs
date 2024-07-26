@@ -366,7 +366,6 @@ instance Arbitrary BlockFetchClientTestSetup where
             -- fast, which we don't have to worry about in this test.
             bfcDecisionLoopIntervalBulkSync = 0
             bfcDecisionLoopIntervalDeadline = 0
-            bfcBulkSyncGracePeriod = 10
         bfcMaxRequestsInflight <- chooseEnum (2, 10)
         bfcSalt                <- arbitrary
         gbfcBulkSyncGracePeriod <- fromIntegral <$> chooseInteger (5, 60)
