@@ -9,6 +9,7 @@
 module Ouroboros.Consensus.Ledger.SupportsMempool (
     ApplyTxErr
   , ByteSize32 (..)
+  , fromByteSize32
   , ConvertRawTxId (..)
   , GenTx
   , GenTxId
@@ -267,6 +268,12 @@ instance Measure (IgnoringOverflow ByteSize32) where
   plus = coerce $ (+) @Word32
   min  = coerce $ min @Word32
   max  = coerce $ max @Word32
+
+-- BIG WARNING: THIS FUNCTION IS LIKELY TO OVERFLOW AND SHOULD BE REMOVED AND
+-- HAVE ALL OF ITS USE SITES CHANGED TO SOMETHING LESS OVERFLOW-Y
+fromByteSize32 :: Num a => ByteSize32 -> a
+fromByteSize32 = fromIntegral . unByteSize32
+{-# WARNING fromByteSize "THIS FUNCTION WILL ALMOST CERTAINLY OVERFLOW" #-}
 
 class HasByteSize a where
   -- | The byte size component (of 'TxMeasure')
