@@ -81,7 +81,7 @@ import           Ouroboros.Consensus.Util.Condense
 
 instance TxLimits ByronBlock where
   type TxMeasure ByronBlock = ByteSize
-  txMeasure _st    = ByteSize . txInBlockSize . txForgetValidated
+  txMeasure _st    = ByteSize . getSizeInBytes . txInBlockSize . txForgetValidated
   txsBlockCapacity = ByteSize . txsMaxBytes
 
 {-------------------------------------------------------------------------------

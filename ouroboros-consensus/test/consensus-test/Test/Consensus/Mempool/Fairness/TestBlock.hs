@@ -16,12 +16,12 @@ module Test.Consensus.Mempool.Fairness.TestBlock (
   ) where
 
 import           Control.DeepSeq (NFData)
-import           Data.Word (Word32)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import qualified Ouroboros.Consensus.Block as Block
 import qualified Ouroboros.Consensus.Ledger.Abstract as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
+import           Ouroboros.Consensus.Mempool (SizeInBytes (..))
 import qualified Test.Util.TestBlock as TestBlock
 import           Test.Util.TestBlock (TestBlockWith)
 
@@ -36,7 +36,7 @@ type TestBlock = TestBlockWith Tx
 -- We do need to keep track of the transaction id.
 --
 -- All transactions will be accepted by the mempool.
-data Tx = Tx { txNumber :: Int, txSize ::  Word32 }
+data Tx = Tx { txNumber :: Int, txSize :: SizeInBytes }
   deriving stock (Eq, Ord, Generic, Show)
   deriving anyclass (NoThunks, NFData)
 
@@ -80,10 +80,10 @@ newtype instance Ledger.TxId (Ledger.GenTx TestBlock) = TestBlockTxId Tx
 instance Ledger.HasTxId (Ledger.GenTx TestBlock) where
   txId (TestBlockGenTx tx) = TestBlockTxId tx
 
-genTxSize :: Ledger.GenTx TestBlock -> Word32
+genTxSize :: Ledger.GenTx TestBlock -> SizeInBytes
 genTxSize = txSize . unGenTx
 
-mkGenTx :: Int -> Word32 -> Ledger.GenTx TestBlock
+mkGenTx :: Int -> SizeInBytes -> Ledger.GenTx TestBlock
 mkGenTx anId aSize = TestBlockGenTx $ Tx { txNumber = anId, txSize = aSize }
 
 instance Ledger.LedgerSupportsMempool TestBlock where

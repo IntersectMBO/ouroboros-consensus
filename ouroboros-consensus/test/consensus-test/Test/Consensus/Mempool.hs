@@ -338,7 +338,7 @@ ppTestTxWithHash x = condense
   (hashWithSerialiser toCBOR (simpleGenTx x) :: Hash SHA256 Tx, x)
 
 -- | Given some transactions, calculate the sum of their sizes in bytes.
-txSizesInBytes :: [TestTx] -> TxSizeInBytes
+txSizesInBytes :: [TestTx] -> SizeInBytes
 txSizesInBytes = foldl' (\acc tx -> acc + txSize tx) 0
 
 -- | Generate a 'TestSetup' and return the ledger obtained by applying all of
@@ -352,7 +352,7 @@ genTestSetupWithExtraCapacity maxInitialTxs extraCapacity = do
     nbInitialTxs <- choose (0, maxInitialTxs)
     (_txs1,  ledger1) <- genValidTxs ledgerSize testInitLedger
     ( txs2,  ledger2) <- genValidTxs nbInitialTxs ledger1
-    let initTxsSizeInBytes = txSizesInBytes txs2
+    let initTxsSizeInBytes = fromIntegral $ txSizesInBytes txs2
         mpCap = MempoolCapacityBytes (initTxsSizeInBytes + extraCapacity)
         testSetup = TestSetup
           { testLedgerState        = ledger1
@@ -389,10 +389,10 @@ instance Arbitrary TestSetup where
                 , testMempoolCapOverride = MempoolCapacityBytesOverride
                     (MempoolCapacityBytes mpCap')
                 }
-    | let extraCap = mpCap - txSizesInBytes testInitialTxs
+    | let extraCap = mpCap - fromIntegral (txSizesInBytes testInitialTxs)
     , testInitialTxs' <- shrinkList (const []) testInitialTxs
     , isRight $ txsAreValid testLedgerState testInitialTxs'
-    , let mpCap' = txSizesInBytes testInitialTxs' + extraCap
+    , let mpCap' = fromIntegral (txSizesInBytes testInitialTxs') + extraCap
     ]
 
   -- TODO shrink to an override, that's an easier test case
@@ -597,7 +597,7 @@ instance Arbitrary TestSetupWithTxs where
                 if noOverride
                 then NoMempoolCapacityBytesOverride
                 else MempoolCapacityBytesOverride $ MempoolCapacityBytes $
-                       mpCap + txSizesInBytes (map fst txs)
+                       mpCap + fromIntegral (txSizesInBytes (map fst txs))
             }
     return TestSetupWithTxs { testSetup = testSetup', txs }
 
@@ -824,8 +824,8 @@ instance Arbitrary MempoolCapTestSetup where
     -- Note that we could pick @currentSize@, meaning that we can't add any
     -- more transactions to the Mempool
     capacity <- choose
-      ( capacityMinBound
-      , capacityMaxBound
+      ( getSizeInBytes capacityMinBound
+      , getSizeInBytes capacityMaxBound
       )
     let testSetup' = testSetup {
             testMempoolCapOverride = MempoolCapacityBytesOverride $
@@ -881,7 +881,7 @@ prop_TxSeq_lookupByTicketNo_sound smalls small =
 
 -- | Test that the 'fst' of the result of 'splitAfterTxSize' only contains
 -- 'TxTicket's whose summed up transaction sizes are less than or equal to
--- that of the 'TxSizeInBytes' which the 'TxSeq' was split on.
+-- that of the 'SizeInBytes' which the 'TxSeq' was split on.
 prop_TxSeq_splitAfterTxSize :: TxSizeSplitTestSetup -> Property
 prop_TxSeq_splitAfterTxSize tss =
       property $ txSizeSum (TxSeq.toList before) <= tssTxSizeToSplitOn
@@ -893,7 +893,7 @@ prop_TxSeq_splitAfterTxSize tss =
     txseq :: TxSeq Int
     txseq = txSizeSplitTestSetupToTxSeq tss
 
-    txSizeSum :: [TxTicket tx] -> TxSizeInBytes
+    txSizeSum :: [TxTicket tx] -> SizeInBytes
     txSizeSum = sum . map txTicketTxSizeInBytes
 
 
@@ -919,8 +919,8 @@ prop_TxSeq_splitAfterTxSizeSpec tss =
 -------------------------------------------------------------------------------}
 
 data TxSizeSplitTestSetup = TxSizeSplitTestSetup
-  { tssTxSizes         :: ![TxSizeInBytes]
-  , tssTxSizeToSplitOn :: !TxSizeInBytes
+  { tssTxSizes         :: ![SizeInBytes]
+  , tssTxSizeToSplitOn :: !SizeInBytes
   } deriving Show
 
 instance Arbitrary TxSizeSplitTestSetup where
@@ -935,17 +935,17 @@ instance Arbitrary TxSizeSplitTestSetup where
       , (1, choose (totalTxsSize + 1, totalTxsSize + 1000))
       ]
     pure TxSizeSplitTestSetup
-      { tssTxSizes = txSizes
-      , tssTxSizeToSplitOn = txSizeToSplitOn
+      { tssTxSizes = SizeInBytes <$> txSizes
+      , tssTxSizeToSplitOn = SizeInBytes txSizeToSplitOn
       }
 
-  shrink TxSizeSplitTestSetup { tssTxSizes, tssTxSizeToSplitOn } =
+  shrink TxSizeSplitTestSetup { tssTxSizes, tssTxSizeToSplitOn = SizeInBytes txSizeToSplitOn } =
     [ TxSizeSplitTestSetup
         { tssTxSizes         = tssTxSizes'
-        , tssTxSizeToSplitOn = tssTxSizeToSplitOn'
+        , tssTxSizeToSplitOn = SizeInBytes tssTxSizeToSplitOn'
         }
     | tssTxSizes' <- shrinkList (const []) tssTxSizes
-    , tssTxSizeToSplitOn' <- shrinkIntegral tssTxSizeToSplitOn
+    , tssTxSizeToSplitOn' <- shrinkIntegral txSizeToSplitOn
     ]
 
 -- | Convert a 'TxSizeSplitTestSetup' to a 'TxSeq'.
