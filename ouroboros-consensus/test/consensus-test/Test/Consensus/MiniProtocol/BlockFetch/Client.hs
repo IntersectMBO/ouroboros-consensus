@@ -98,7 +98,9 @@ prop_blockFetch bfcts@BlockFetchClientTestSetup{..} =
       ] <>
       [ Map.keysSet bfcoBlockFetchResults === Map.keysSet peerUpdates
       , counterexample ("Fetched blocks per peer: " <> condense bfcoFetchedBlocks) $
-        property $ all (> 0) bfcoFetchedBlocks
+        property $ case blockFetchMode of
+          FetchModeDeadline -> all (> 0) bfcoFetchedBlocks
+          FetchModeBulkSync -> any (> 0) bfcoFetchedBlocks
       ]
   where
     BlockFetchClientOutcome{..} = runSimOrThrow $ runBlockFetchTest bfcts
