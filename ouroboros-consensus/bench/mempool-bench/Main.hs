@@ -21,6 +21,7 @@ import           Data.Set ()
 import qualified Data.Text as Text
 import qualified Data.Text.Read as Text.Read
 import           Main.Utf8 (withStdTerminalHandles)
+import qualified Ouroboros.Consensus.Mempool as Mempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool
 import           System.Exit (die, exitFailure)
 import qualified Test.Consensus.Mempool.Mocked as Mocked
@@ -140,7 +141,7 @@ openMempoolWithCapacityFor cmds =
                              }
   where
     capacityRequiredByCmds = Mempool.mkCapacityBytesOverride totalTxsSize
-      where totalTxsSize = sum $ fmap TestBlock.txSize $ getCmdsTxs cmds
+      where totalTxsSize = Mempool.getSizeInBytes $ sum $ fmap TestBlock.txSize $ getCmdsTxs cmds
 
 mkNTryAddTxs :: Int -> [MempoolCmd TestBlock.TestBlock]
 mkNTryAddTxs 0 = []

@@ -58,7 +58,7 @@ openMockedMempool ::
      )
   => Mempool.MempoolCapacityBytesOverride
   -> Tracer IO (Mempool.TraceEventMempool blk)
-  -> (Ledger.GenTx blk -> Mempool.TxSizeInBytes)
+  -> (Ledger.GenTx blk -> Mempool.SizeInBytes)
   -> InitialMempoolAndModelParams blk
   -> IO (MockedMempool IO blk)
 openMockedMempool capacityOverride tracer txSizeImpl initialParams = do

@@ -482,7 +482,7 @@ mkSimpleGenTx tx = SimpleGenTx
     , simpleGenTxId = Hash.hashWithSerialiser toCBOR tx
     }
 
-txSize :: GenTx (SimpleBlock c ext) -> Word32
+txSize :: GenTx (SimpleBlock c ext) -> SizeInBytes
 txSize = fromIntegral . Lazy.length . serialise
 
 {-------------------------------------------------------------------------------

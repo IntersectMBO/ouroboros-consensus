@@ -44,7 +44,7 @@ implAddTx ::
       -- ^ The FIFO for all remote peers and local clients
   -> LedgerConfig blk
      -- ^ The configuration of the ledger.
-  -> (GenTx blk -> TxSizeInBytes)
+  -> (GenTx blk -> SizeInBytes)
      -- ^ The function to calculate the size of a
      -- transaction.
   -> Tracer m (TraceEventMempool blk)
@@ -144,7 +144,7 @@ implTryAddTx ::
      -- ^ The InternalState TVar.
   -> LedgerConfig blk
      -- ^ The configuration of the ledger.
-  -> (GenTx blk -> TxSizeInBytes)
+  -> (GenTx blk -> SizeInBytes)
      -- ^ The function to calculate the size of a
      -- transaction.
   -> WhetherToIntervene
@@ -172,7 +172,7 @@ pureTryAddTx ::
      )
   => LedgerCfg (LedgerState blk)
      -- ^ The ledger configuration.
-  -> (GenTx blk -> TxSizeInBytes)
+  -> (GenTx blk -> SizeInBytes)
      -- ^ The function to claculate the size of a transaction.
   -> WhetherToIntervene
   -> GenTx blk

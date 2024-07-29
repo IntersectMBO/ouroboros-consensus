@@ -298,17 +298,17 @@ theLedgerLens f x =
 
 instance ShelleyCompatible p (ShelleyEra c) => Mempool.TxLimits (ShelleyBlock p (ShelleyEra c)) where
   type TxMeasure (ShelleyBlock p (ShelleyEra c)) = Mempool.ByteSize
-  txMeasure _st    = Mempool.ByteSize . txInBlockSize . txForgetValidated
+  txMeasure _st    = Mempool.ByteSize . Mempool.getSizeInBytes . txInBlockSize . txForgetValidated
   txsBlockCapacity = Mempool.ByteSize . txsMaxBytes
 
 instance ShelleyCompatible p (AllegraEra c) => Mempool.TxLimits (ShelleyBlock p (AllegraEra c)) where
   type TxMeasure (ShelleyBlock p (AllegraEra c)) = Mempool.ByteSize
-  txMeasure _st    = Mempool.ByteSize . txInBlockSize . txForgetValidated
+  txMeasure _st    = Mempool.ByteSize . Mempool.getSizeInBytes . txInBlockSize . txForgetValidated
   txsBlockCapacity = Mempool.ByteSize . txsMaxBytes
 
 instance ShelleyCompatible p (MaryEra c) => Mempool.TxLimits (ShelleyBlock p (MaryEra c)) where
   type TxMeasure (ShelleyBlock p (MaryEra c)) = Mempool.ByteSize
-  txMeasure _st    = Mempool.ByteSize . txInBlockSize . txForgetValidated
+  txMeasure _st    = Mempool.ByteSize . Mempool.getSizeInBytes . txInBlockSize . txForgetValidated
   txsBlockCapacity = Mempool.ByteSize . txsMaxBytes
 
 instance ( ShelleyCompatible p (AlonzoEra c)
@@ -336,7 +336,7 @@ txMeasureAlonzo ::
   => Validated (GenTx (ShelleyBlock proto era)) -> AlonzoMeasure
 txMeasureAlonzo (ShelleyValidatedTx _txid vtx) =
     AlonzoMeasure {
-        byteSize = Mempool.ByteSize $ txInBlockSize (mkShelleyTx @era @proto tx)
+        byteSize = Mempool.ByteSize . Mempool.getSizeInBytes $ txInBlockSize (mkShelleyTx @era @proto tx)
       , exUnits  = fromExUnits $ totExUnits tx
       }
   where

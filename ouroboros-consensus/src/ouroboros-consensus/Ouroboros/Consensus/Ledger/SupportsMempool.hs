@@ -23,6 +23,7 @@ import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ticked
 import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Network.SizeInBytes (SizeInBytes (..))
 
 -- | Generalized transaction
 --
@@ -122,7 +123,7 @@ class ( UpdateLedger blk
   -- Can be implemented by serialising the 'GenTx', but, ideally, this is
   -- implement more efficiently. E.g., by returning the length of the
   -- annotation.
-  txInBlockSize :: GenTx blk -> Word32
+  txInBlockSize :: GenTx blk -> SizeInBytes
 
   -- | Discard the evidence that transaction has been previously validated
   txForgetValidated :: Validated (GenTx blk) -> GenTx blk

@@ -122,7 +122,7 @@ newtype instance Ledger.GenTx TestBlock = TestBlockGenTx { unGenTx :: Tx }
 
 -- | For the mempool tests and benchmarks it is not imporant that we calculate
 -- the actual size of the transaction in bytes.
-txSize :: Ledger.GenTx TestBlock -> Mempool.TxSizeInBytes
+txSize :: Ledger.GenTx TestBlock -> Mempool.SizeInBytes
 txSize (TestBlockGenTx tx) = fromIntegral $ 1 + length (consumed tx) + length (produced tx)
 
 mkTx ::

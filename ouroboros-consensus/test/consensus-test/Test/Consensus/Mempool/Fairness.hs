@@ -24,7 +24,7 @@ import           Data.Word (Word32)
 import           Ouroboros.Consensus.Config.SecurityParam as Consensus
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Mempool
-import           Ouroboros.Consensus.Mempool (Mempool)
+import           Ouroboros.Consensus.Mempool (Mempool, SizeInBytes (..))
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool
 import           Ouroboros.Consensus.Util.IOLike (STM, atomically, retry)
@@ -146,9 +146,9 @@ runConcurrently = Async.runConcurrently . asum . fmap Async.Concurrently
 --
 data TestParams = TestParams {
     mempoolMaxCapacity :: Word32
-  , smallTxSize        :: Word32
+  , smallTxSize        :: SizeInBytes
     -- ^ Size of what we consider to be a small transaction.
-  , largeTxSize        :: Word32
+  , largeTxSize        :: SizeInBytes
     -- ^ Size of what we consider to be a large transaction.
   , nrOftxsToCollect   :: Int
     -- ^ How many added transactions we count.
@@ -168,7 +168,7 @@ data TestParams = TestParams {
 adders ::
      TestMempool
      -- ^ Mempool to which transactions will be added
-  -> Word32
+  -> SizeInBytes
      -- ^ Transaction size
   -> IO a
 adders mempool fixedTxSize = vacuous $ runConcurrently $ fmap adder [0..2]
