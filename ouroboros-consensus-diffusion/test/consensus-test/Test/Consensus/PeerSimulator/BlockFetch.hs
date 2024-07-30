@@ -75,7 +75,7 @@ import           Test.Util.Time (dawnOfTime)
 
 startBlockFetchLogic ::
      forall m.
-     (IOLike m)
+     (IOLike m, MonadTimer m)
   => Bool -- ^ Whether to enable chain selection starvation
   -> ResourceRegistry m
   -> Tracer m (TraceEvent TestBlock)
