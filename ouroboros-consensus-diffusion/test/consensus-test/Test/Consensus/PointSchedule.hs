@@ -33,6 +33,7 @@ module Test.Consensus.PointSchedule (
   , PointSchedule (..)
   , PointsGeneratorParams (..)
   , RunGenesisTestResult (..)
+  , addGddLeeway
   , enrichedWith
   , ensureScheduleDuration
   , genesisNodeState
@@ -52,6 +53,7 @@ import           Control.Monad (replicateM)
 import           Control.Monad.Class.MonadTime.SI (Time (Time), addTime,
                      diffTime)
 import           Control.Monad.ST (ST)
+import           Data.Foldable (toList)
 import           Data.Functor (($>))
 import           Data.List (mapAccumL, partition, scanl')
 import           Data.Maybe (catMaybes, fromMaybe, mapMaybe)
@@ -593,3 +595,13 @@ ensureScheduleDuration gt PointSchedule{psSchedule, psStartOrder, psMinEndTime} 
            , streamingTimeout bft
            ])
     peerCount = length (peersList psSchedule)
+
+-- | Add enough time at the end of the schedule for the GDD to reach a fixed point
+addGddLeeway :: DiffTime -> PointSchedule blk -> PointSchedule blk
+addGddLeeway gddRateLimit ps@PointSchedule{psSchedule, psMinEndTime} =
+  ps{psMinEndTime = max psMinEndTime $ addTime gddLeeway lastTime}
+  where
+    lastTime = maximum [ t | sch <- toList psSchedule, (t, _) <- take 1 (reverse sch) ]
+    -- At worst, the GDD will disconnect peers one after the other, so we need enough time
+    -- to run it as many time as there are peers
+    gddLeeway = gddRateLimit * (fromInteger $ toInteger $ length psSchedule)

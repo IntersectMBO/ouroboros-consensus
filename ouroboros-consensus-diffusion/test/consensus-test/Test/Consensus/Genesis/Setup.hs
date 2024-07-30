@@ -50,11 +50,12 @@ runSimStrictShutdownOrThrow action =
 
 -- | Runs the given 'GenesisTest' and 'PointSchedule' and evaluates the given
 -- property on the final 'StateView'.
+-- Slightly extend the test `psMinEndTime to accomodate for GDD rate limit.
 runGenesisTest ::
   SchedulerConfig ->
   GenesisTestFull TestBlock ->
   RunGenesisTestResult
-runGenesisTest schedulerConfig genesisTest =
+runGenesisTest schedulerConfig genesisTest' =
   runSimStrictShutdownOrThrow $ do
     (recordingTracer, getTrace) <- recordingTracerM
     let tracer = if scDebug schedulerConfig then debugTracer else recordingTracer
@@ -66,6 +67,9 @@ runGenesisTest schedulerConfig genesisTest =
     rgtrTrace <- unlines <$> getTrace
 
     pure $ RunGenesisTestResult {rgtrTrace, rgtrStateView}
+  where
+    genesisTest = genesisTest {gtSchedule = extendedSchedule}
+    extendedSchedule = addGddLeeway (scGDDRateLimit schedulerConfig) (gtSchedule genesisTest')
 
 -- | Variant of 'runGenesisTest' that also takes a property on the final
 -- 'StateView' and returns a QuickCheck property. The trace is printed in case

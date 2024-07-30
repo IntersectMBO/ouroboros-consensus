@@ -113,6 +113,10 @@ data SchedulerConfig =
     -- | Whether to enable ChainSync Jumping. The parameters come from
     -- 'GenesisTest'.
     , scEnableCSJ                :: Bool
+
+    -- | How often to evaluate GDD. 0 means as soon as possible.
+    -- Otherwise, no faster than once every T seconds, where T is the provided value.
+    , scGDDRateLimit             :: DiffTime
   }
 
 -- | Default scheduler config
@@ -128,7 +132,11 @@ defaultSchedulerConfig =
     scEnableLoP = False,
     scDowntime = Nothing,
     scEnableChainSelStarvation = True,
-    scEnableCSJ = False
+    scEnableCSJ = False,
+    -- We don't really need a large value here. We want it non-zero to avoid aberrant
+    -- behaviors, but the relatively small number of events in the test environment
+    -- means that the GDD won't really waste too much CPU.
+    scGDDRateLimit = 0.005
   }
 
 -- | Enable debug tracing during a scheduler test.
@@ -403,7 +411,7 @@ startNode schedulerConfig genesisTest interval = do
           lrConfig
           (mkGDDTracerTestBlock lrTracer)
           lnChainDb
-          1.0 -- Default config value in NodeKernel.hs at the time or writing
+          (scGDDRateLimit schedulerConfig)
           (pure GSM.Syncing) -- TODO actually run GSM
           (cschcMap handles)
           var
