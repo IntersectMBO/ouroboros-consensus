@@ -102,7 +102,7 @@ startBlockFetchLogic enableChainSelStarvation registry tracer chainDb fetchClien
 
         bfcGenesisBFConfig = if enableChainSelStarvation
           then GenesisBlockFetchConfiguration
-            { gbfcBulkSyncGracePeriod = 1000000 -- (more than 11 days)
+            { gbfcBulkSyncGracePeriod = 10 -- default value for cardano-node at the time of writing
             }
           else gcBlockFetchConfig enableGenesisConfigDefault
 
