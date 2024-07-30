@@ -403,7 +403,10 @@ startNode schedulerConfig genesisTest interval = do
           lrConfig
           (mkGDDTracerTestBlock lrTracer)
           lnChainDb
-          1.0 -- Default config value in NodeKernel.hs at the time or writing
+          0.0 -- The rate limit makes simpler the calculations of how long tests
+              -- should run and still should produce interesting interleavings.
+              -- It is similar to the setting of bfcDecisionLoopInterval in
+              -- Test.Consensus.PeerSimulator.BlockFetch
           (pure GSM.Syncing) -- TODO actually run GSM
           (cschcMap handles)
           var
