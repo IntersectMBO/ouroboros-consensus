@@ -159,6 +159,9 @@ completeChainDbArgs ::
   -> (blk -> Bool)
      -- ^ Check integrity
   -> (RelativeMountPoint -> SomeHasFS m)
+     -- ^ Immutable FS, see 'NodeDatabasePaths'
+  -> (RelativeMountPoint -> SomeHasFS m)
+     -- ^ Volatile  FS, see 'NodeDatabasePaths'
   -> Incomplete ChainDbArgs m blk
      -- ^ A set of incomplete arguments, possibly modified wrt @defaultArgs@
   -> Complete ChainDbArgs m blk
@@ -169,7 +172,8 @@ completeChainDbArgs
   initLedger
   immChunkInfo
   checkIntegrity
-  mkFS
+  mkImmFS
+  mkVolFS
   defArgs
   = defArgs {
       cdbImmDbArgs = (cdbImmDbArgs defArgs) {
@@ -177,23 +181,23 @@ completeChainDbArgs
           , ImmutableDB.immCheckIntegrity = checkIntegrity
           , ImmutableDB.immRegistry       = registry
           , ImmutableDB.immCodecConfig    = configCodec cdbsTopLevelConfig
-          , ImmutableDB.immHasFS          = mkFS $ RelativeMountPoint "immutable"
+          , ImmutableDB.immHasFS          = mkImmFS $ RelativeMountPoint "immutable"
           }
       , cdbVolDbArgs = (cdbVolDbArgs defArgs) {
-            VolatileDB.volHasFS          = mkFS $ RelativeMountPoint "volatile"
+            VolatileDB.volHasFS          = mkVolFS $ RelativeMountPoint "volatile"
           , VolatileDB.volCheckIntegrity = checkIntegrity
           , VolatileDB.volCodecConfig    = configCodec cdbsTopLevelConfig
           }
       , cdbLgrDbArgs = (cdbLgrDbArgs defArgs) {
             LedgerDB.lgrGenesis    = pure initLedger
-          , LedgerDB.lgrHasFS      = mkFS $ RelativeMountPoint "ledger"
+          , LedgerDB.lgrHasFS      = mkVolFS $ RelativeMountPoint "ledger"
           , LedgerDB.lgrConfig     = LedgerDB.configLedgerDb cdbsTopLevelConfig
           }
       , cdbsArgs = (cdbsArgs defArgs) {
             cdbsCheckInFuture
           , cdbsRegistry       = registry
           , cdbsTopLevelConfig
-          , cdbsHasFSGsmDB     = mkFS $ RelativeMountPoint "gsm"
+          , cdbsHasFSGsmDB     = mkVolFS $ RelativeMountPoint "gsm"
           }
       }
 

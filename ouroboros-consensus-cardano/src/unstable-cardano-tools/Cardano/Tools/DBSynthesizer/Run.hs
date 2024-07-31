@@ -131,6 +131,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
               chunkInfo
               (const True)
               (Node.stdMkChainDbHasFS confDbDir)
+              (Node.stdMkChainDbHasFS confDbDir)
               $ ChainDB.defaultArgs
 
         forgers <- blockForging
