@@ -62,7 +62,8 @@ import           Foreign.Storable (sizeOf)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block (StandardHash)
 import           Ouroboros.Consensus.Storage.ImmutableDB.API
-                     (ImmutableDBError (..), UnexpectedFailure (..), SecondaryOffset)
+                     (ImmutableDBError (..), SecondaryOffset,
+                     UnexpectedFailure (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Util

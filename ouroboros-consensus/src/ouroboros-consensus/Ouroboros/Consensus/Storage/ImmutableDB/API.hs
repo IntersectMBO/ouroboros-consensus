@@ -60,10 +60,10 @@ import qualified Data.ByteString.Lazy as Lazy
 import           Data.Either (isRight)
 import           Data.Function (on)
 import           Data.List.NonEmpty (NonEmpty)
+import           Data.Sequence.Strict (StrictSeq)
 import           Data.Typeable (Typeable)
 import           Data.Word (Word32)
 import           GHC.Generics (Generic)
-import           Data.Sequence.Strict (StrictSeq)
 import           NoThunks.Class (OnlyCheckWhnfNamed (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Storage.Common
@@ -427,9 +427,9 @@ data MissingBlock blk
 
 -- | Return the 'RealPoint' of the block that was missing.
 missingBlockPoint :: MissingBlock blk -> RealPoint blk
-missingBlockPoint (EmptySlot pt _ _ _)      = pt
-missingBlockPoint (WrongHash pt _)    = pt
-missingBlockPoint (NewerThanTip pt _) = pt
+missingBlockPoint (EmptySlot pt _ _ _) = pt
+missingBlockPoint (WrongHash pt _)     = pt
+missingBlockPoint (NewerThanTip pt _)  = pt
 
 {-------------------------------------------------------------------------------
   Wrappers that preserve 'HasCallStack'
