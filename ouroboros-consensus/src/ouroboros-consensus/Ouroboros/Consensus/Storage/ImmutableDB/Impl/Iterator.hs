@@ -35,8 +35,6 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.API hiding
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index (Index)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index as Index
-import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index.Primary
-                     (SecondaryOffset)
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index.Secondary
                      (BlockOffset (..), BlockSize (..))
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index.Secondary as Secondary
@@ -288,11 +286,11 @@ getSlotInfo chunkInfo index currentTip pt@(RealPoint slot hash) = do
     -- the secondary index file with the hash we have.
     toRead :: NonEmpty (IsEBB, SecondaryOffset) <- case mIfBoundary of
       Just ifBoundary -> do
-        offsets <- lift $ Index.readOffsets index chunk
-                            (chunkRelative <$> Two ifBoundary ifRegular)
+        let relatives@(Two relb relr) = chunkRelative <$> Two ifBoundary ifRegular
+        (offsets, s) <- lift $ Index.readOffsets index chunk relatives
         case offsets of
           Two Nothing Nothing                   ->
-            throwError $ EmptySlot pt
+            throwError $ EmptySlot pt chunk [relb, relr] s
           Two (Just ebbOffset) (Just blkOffset) ->
             return ((IsEBB, ebbOffset) NE.:| [(IsNotEBB, blkOffset)])
           Two (Just ebbOffset) Nothing          ->
@@ -300,10 +298,11 @@ getSlotInfo chunkInfo index currentTip pt@(RealPoint slot hash) = do
           Two Nothing (Just blkOffset)          ->
             return ((IsNotEBB, blkOffset) NE.:| [])
       Nothing -> do
-        offset <- lift $ Index.readOffset index chunk (chunkRelative ifRegular)
+        let relr = chunkRelative ifRegular
+        (offset, s) <- lift $ Index.readOffset index chunk relr
         case offset of
           Nothing        ->
-            throwError $ EmptySlot pt
+            throwError $ EmptySlot pt chunk [relr] s
           Just blkOffset ->
             return ((IsNotEBB, blkOffset) NE.:| [])
 

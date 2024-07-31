@@ -54,6 +54,8 @@ import           Ouroboros.Consensus.Storage.Common
 import           Ouroboros.Consensus.Storage.ImmutableDB.API hiding
                      (throwApiMisuse)
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks
+import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
+                     (ChunkNo (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Util (parseDBFile)
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util (lastMaybe, takeUntil)
@@ -208,7 +210,7 @@ lookupBlock pt@(RealPoint slot hash) dbm@DBModel { dbmSlots } =
         | NotOrigin slot > (tipSlotNo <$> dbmTip dbm)
         -> throwError $ NewerThanTip pt (tipToPoint (dbmTip dbm))
         | otherwise
-        -> throwError $ EmptySlot pt
+        -> throwError $ EmptySlot pt (ChunkNo 0) [] Nothing
 
 -- | Rolls back the chain so that the given 'Tip' is the new tip.
 --

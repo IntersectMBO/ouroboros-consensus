@@ -35,7 +35,7 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index
                      (cachedIndex)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index as Index
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index.Primary
-                     (PrimaryIndex, SecondaryOffset)
+                     (PrimaryIndex)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index.Primary as Primary
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index.Secondary as Secondary
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Parser

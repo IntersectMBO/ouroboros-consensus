@@ -665,13 +665,14 @@ readOffsets ::
   => CacheEnv m blk h
   -> ChunkNo
   -> t RelativeSlot
-  -> m (t (Maybe SecondaryOffset))
-readOffsets cacheEnv chunk relSlots =
-    getChunkInfo cacheEnv chunk <&> \case
+  -> m (t (Maybe SecondaryOffset), Maybe (StrictSeq SecondaryOffset))
+readOffsets cacheEnv chunk relSlots = do
+    ci <- getChunkInfo cacheEnv chunk
+    pure $ case ci of
       Left CurrentChunkInfo { currentChunkOffsets } ->
-        getOffsetFromSecondaryOffsets currentChunkOffsets <$> relSlots
+        (getOffsetFromSecondaryOffsets currentChunkOffsets <$> relSlots, Just currentChunkOffsets)
       Right PastChunkInfo { pastChunkOffsets } ->
-        getOffsetFromPrimaryIndex pastChunkOffsets <$> relSlots
+        (getOffsetFromPrimaryIndex pastChunkOffsets <$> relSlots, Nothing)
   where
     getOffsetFromSecondaryOffsets
       :: StrictSeq SecondaryOffset

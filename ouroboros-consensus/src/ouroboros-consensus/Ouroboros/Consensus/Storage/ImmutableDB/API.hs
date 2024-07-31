@@ -20,6 +20,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.API (
   , traverseIterator
     -- * Types
   , CompareTip (..)
+  , SecondaryOffset
   , Tip (..)
   , blockToTip
   , headerToTip
@@ -59,11 +60,14 @@ import qualified Data.ByteString.Lazy as Lazy
 import           Data.Either (isRight)
 import           Data.Function (on)
 import           Data.List.NonEmpty (NonEmpty)
+import           Data.Sequence.Strict (StrictSeq)
 import           Data.Typeable (Typeable)
+import           Data.Word (Word32)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (OnlyCheckWhnfNamed (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Storage.Common
+import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceRegistry)
@@ -74,6 +78,12 @@ import           System.FS.CRC (CRC)
 {-------------------------------------------------------------------------------
   API
 -------------------------------------------------------------------------------}
+
+-- | An offset in the secondary index file.
+--
+-- We need 4 bytes ('Word32') because the secondary index file can grow to
+-- +1MiB.
+type SecondaryOffset = Word32
 
 -- | API for the 'ImmutableDB'.
 --
@@ -399,7 +409,13 @@ throwUnexpectedFailure = throwIO . UnexpectedFailure
 -- 'Either', because it can be expected in some cases.
 data MissingBlock blk
     -- | There is no block in the slot of the given point.
-  = EmptySlot (RealPoint blk)
+  = EmptySlot
+       (RealPoint blk) -- ^ The requested point
+       ChunkNo         -- ^ The chunk we thought it was in
+       [RelativeSlot]  -- ^ What should be the relative slot in the chunk
+       (Maybe (StrictSeq SecondaryOffset))
+         -- ^ Which offsets are known if we are looking at the current (probably cached) chunk
+
     -- | The block and/or EBB in the slot of the given point have a different
     -- hash. We return the 'HeaderHash' for each block we found with the
     -- corresponding slot number.
@@ -411,9 +427,9 @@ data MissingBlock blk
 
 -- | Return the 'RealPoint' of the block that was missing.
 missingBlockPoint :: MissingBlock blk -> RealPoint blk
-missingBlockPoint (EmptySlot pt)      = pt
-missingBlockPoint (WrongHash pt _)    = pt
-missingBlockPoint (NewerThanTip pt _) = pt
+missingBlockPoint (EmptySlot pt _ _ _) = pt
+missingBlockPoint (WrongHash pt _)     = pt
+missingBlockPoint (NewerThanTip pt _)  = pt
 
 {-------------------------------------------------------------------------------
   Wrappers that preserve 'HasCallStack'

@@ -36,8 +36,6 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.API
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index (Index)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index as Index
-import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index.Primary
-                     (SecondaryOffset)
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index.Secondary
                      (BlockOffset (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Types
