@@ -52,6 +52,7 @@ import           Control.Monad (replicateM)
 import           Control.Monad.Class.MonadTime.SI (Time (Time), addTime,
                      diffTime)
 import           Control.Monad.ST (ST)
+import           Data.Bifunctor (first)
 import           Data.Functor (($>))
 import           Data.List (mapAccumL, partition, scanl')
 import           Data.Maybe (catMaybes, fromMaybe, mapMaybe)
@@ -126,12 +127,6 @@ prettyPointSchedule ps@PointSchedule {psStartOrder, psMinEndTime} =
 -- Accumulates the new points in each tick into the previous state, starting with a set of all
 -- 'Origin' points.
 --
--- Also shifts all tick start times so that the first tip point is announced at the very beginning
--- of the test, keeping the relative delays of the schedule intact.
--- This is a preliminary measure to make the long range attack test work, since that relies on the
--- honest node sending headers later than the adversary, which is not possible if the adversary's
--- first tip point is delayed by 20 or more seconds due to being in a later slot.
---
 -- Finally, drops the first state, since all points being 'Origin' (in particular the tip) has no
 -- useful effects in the simulator, but it could set the tip in the GDD governor to 'Origin', which
 -- causes slow nodes to be disconnected right away.
@@ -139,14 +134,8 @@ prettyPointSchedule ps@PointSchedule {psStartOrder, psMinEndTime} =
 -- TODO Remove dropping the first state in favor of better GDD logic
 peerStates :: Peer (PeerSchedule blk) -> [(Time, Peer (NodeState blk))]
 peerStates Peer {name, value = schedulePoints} =
-  drop 1 (zip (Time 0 : (map shiftTime times)) (Peer name <$> scanl' modPoint genesisNodeState points))
+  drop 1 (zip (Time 0 : times) (Peer name <$> scanl' modPoint genesisNodeState points))
   where
-    shiftTime :: Time -> Time
-    shiftTime t = addTime (- firstTipOffset) t
-
-    firstTipOffset :: DiffTime
-    firstTipOffset = case times of [] -> 0; (Time dt : _) -> dt
-
     modPoint z = \case
       ScheduleTipPoint nsTip -> z {nsTip}
       ScheduleHeaderPoint nsHeader -> z {nsHeader}
@@ -211,7 +200,7 @@ longRangeAttack ::
 longRangeAttack BlockTree {btTrunk, btBranches = [branch]} g = do
   honest <- peerScheduleFromTipPoints g honParams [(IsTrunk, [AF.length btTrunk - 1])] btTrunk []
   adv <- peerScheduleFromTipPoints g advParams [(IsBranch, [AF.length (btbFull branch) - 1])] btTrunk [btbFull branch]
-  pure $ PointSchedule {
+  pure $ shiftPointSchedule $ PointSchedule {
     psSchedule = peers' [honest] [adv],
     psStartOrder = [],
     psMinEndTime = Time 0
@@ -236,9 +225,33 @@ uniformPoints ::
   BlockTree blk ->
   g ->
   m (PointSchedule blk)
-uniformPoints PointsGeneratorParams {pgpExtraHonestPeers, pgpDowntime} = case pgpDowntime of
-  NoDowntime                  -> uniformPointsWithExtraHonestPeers pgpExtraHonestPeers
-  DowntimeWithSecurityParam k -> uniformPointsWithExtraHonestPeersAndDowntime pgpExtraHonestPeers k
+uniformPoints PointsGeneratorParams {pgpExtraHonestPeers, pgpDowntime} bt =
+  fmap shiftPointSchedule . case pgpDowntime of
+    NoDowntime                  ->
+      uniformPointsWithExtraHonestPeers pgpExtraHonestPeers bt
+    DowntimeWithSecurityParam k ->
+      uniformPointsWithExtraHonestPeersAndDowntime pgpExtraHonestPeers k bt
+
+-- | Shifts all tick start times so that the first tip point is announced at
+-- the very beginning of the test, keeping the relative delays of the schedule
+-- intact.
+--
+-- This is a measure to make the long range attack test work, since that
+-- relies on the honest node sending headers later than the adversary, which
+-- is not possible if the adversary's first tip point is delayed by 20 or
+-- more seconds due to being in a later slot.
+shiftPointSchedule :: PointSchedule blk -> PointSchedule blk
+shiftPointSchedule s = s {psSchedule = shiftPeerSchedule <$> psSchedule s}
+  where
+    shiftPeerSchedule :: PeerSchedule blk -> PeerSchedule blk
+    shiftPeerSchedule times = map (first shiftTime) times
+      where
+        shiftTime :: Time -> Time
+        shiftTime t = addTime (- firstTipOffset) t
+
+        firstTipOffset :: DiffTime
+        firstTipOffset = case times of [] -> 0; ((Time dt, _) : _) -> dt
+
 
 -- | Generate a schedule in which the trunk is served by @pgpExtraHonestPeers + 1@ peers,
 -- and extra branches are served by one peer each, using a single tip point,
