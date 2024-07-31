@@ -365,11 +365,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
                              , upperBound = ub0
                              , hasBlockAfter = hasBlockAfter0
                              , idling = idling0
-                             }) ->
-      -- If the density is 0, the peer should be disconnected. This affects
-      -- ChainSync jumping, where genesis windows with no headers prevent jumps
-      -- from happening.
-      if ub0 == 0 then pure peer0 else do
+                             }) -> do
       (_peer1, DensityBounds {clippedFragment = frag1, offersMoreThanK, lowerBound = lb1 }) <-
         densityBounds
       -- Don't disconnect peer0 if it sent no headers after the intersection yet
@@ -377,8 +373,6 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
       --
       -- See Note [Chain disagreement]
       --
-      -- Note: hasBlockAfter0 is False if frag0 is empty and ub0>0.
-      -- But we leave it here as a reminder that we care about it.
       guard $ idling0 || not (AF.null frag0) || hasBlockAfter0
       -- ensure that the two peer fragments don't share any
       -- headers after the LoE

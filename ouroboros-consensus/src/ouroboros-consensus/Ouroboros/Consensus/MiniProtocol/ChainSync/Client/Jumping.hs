@@ -74,6 +74,13 @@
 -- when the client should pause, download headers, or ask about agreement with
 -- a given point (jumping). See the 'Jumping' type for more details.
 --
+-- CSJ depends on the ChainSync client to disconnect dynamos that have an empty
+-- genesis window after their intersection with the selection. This is necessary
+-- because otherwise there are no points to jump to, and CSJ could would get
+-- stuck when the dynamo blocks on the forecast horizon. See
+-- Note [Candidate comparing beyond the forecast horizon] in
+-- "Ouroboros.Consensus.MiniProtocol.ChainSync.Client".
+--
 -- Interactions with the BlockFetch logic
 -- --------------------------------------
 --
