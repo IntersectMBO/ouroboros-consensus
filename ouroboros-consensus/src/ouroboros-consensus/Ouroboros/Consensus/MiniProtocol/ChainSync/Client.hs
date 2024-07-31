@@ -113,7 +113,8 @@ import           Ouroboros.Consensus.Storage.ChainDB (ChainDB,
                      InvalidBlockReason)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import           Ouroboros.Consensus.Util
-import           Ouroboros.Consensus.Util.AnchoredFragment (cross)
+import           Ouroboros.Consensus.Util.AnchoredFragment (cross,
+                     preferAnchoredCandidate)
 import           Ouroboros.Consensus.Util.Assert (assertWithMsg)
 import           Ouroboros.Consensus.Util.EarlyExit (WithEarlyExit, exitEarly)
 import qualified Ouroboros.Consensus.Util.EarlyExit as EarlyExit
@@ -1422,7 +1423,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
             Jumping.jgOnRollForward jumping (blockPoint hdr)
             atomically (setLatestSlot dynEnv (NotOrigin slotNo))
 
-            checkTime cfgEnv dynEnv intEnv kis arrival slotNo >>= \case
+            checkTime cfgEnv dynEnv intEnv kis arrival slotNo  >>= \case
                 NoLongerIntersects ->
                     continueWithState ()
                   $ drainThePipe n
@@ -1714,6 +1715,8 @@ checkTime cfgEnv dynEnv intEnv =
             StillIntersects () kis' -> do
                 let KnownIntersectionState {
                         mostRecentIntersection
+                      , ourFrag
+                      , theirFrag
                       } = kis'
                 lst <-
                     fmap
@@ -1726,7 +1729,12 @@ checkTime cfgEnv dynEnv intEnv =
                       )
                   $ getPastLedger mostRecentIntersection
                 case prj lst of
-                    Nothing         -> retry
+                    Nothing         ->
+                        -- Precondition is fulfilled as ourFrag and theirFrag
+                        -- intersect by construction.
+                        if preferAnchoredCandidate (configBlock cfg) ourFrag theirFrag
+                        then retry
+                        else throwSTM DensityTooLow
                     Just ledgerView ->
                         return $ return $ Intersects kis' ledgerView
 
