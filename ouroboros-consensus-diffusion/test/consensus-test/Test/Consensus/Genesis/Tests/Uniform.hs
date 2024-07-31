@@ -18,7 +18,7 @@ module Test.Consensus.Genesis.Tests.Uniform (
 
 import           Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin (..))
 import           Control.Monad (replicateM)
-import           Control.Monad.Class.MonadTime.SI (Time, addTime)
+import           Control.Monad.Class.MonadTime.SI (Time (..), addTime)
 import           Data.List (intercalate, sort, uncons)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
@@ -433,7 +433,7 @@ prop_blockFetchLeashingAttack =
   where
     genBlockFetchLeashingSchedule :: GenesisTest TestBlock () -> QC.Gen (PointSchedule TestBlock)
     genBlockFetchLeashingSchedule genesisTest = do
-      PointSchedule {psSchedule, psMinEndTime} <-
+      PointSchedule {psSchedule} <-
         stToGen $
           uniformPoints
             (PointsGeneratorParams {pgpExtraHonestPeers = 1, pgpDowntime = NoDowntime})
@@ -445,7 +445,16 @@ prop_blockFetchLeashingAttack =
       -- Important to shuffle the order in which the peers start, otherwise the
       -- honest peer starts first and systematically becomes dynamo.
       psStartOrder <- shuffle $ getPeerIds psSchedule'
-      pure $ PointSchedule {psSchedule = psSchedule', psStartOrder, psMinEndTime}
+      let maxTime = maximum $
+            Time 0 : [ pt | s <- honest : adversaries', (pt, _) <- take 1 (reverse s) ]
+      pure $ PointSchedule {
+          psSchedule = psSchedule',
+          psStartOrder,
+          -- Allow to run the blockfetch decision logic after the last tick
+          -- 11 is the grace period for unresponsive peers that should send
+          -- blocks
+          psMinEndTime = addTime 11 maxTime
+        }
 
     isBlockPoint :: SchedulePoint blk -> Bool
     isBlockPoint (ScheduleBlockPoint _) = True
