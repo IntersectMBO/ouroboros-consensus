@@ -10,6 +10,7 @@ module Ouroboros.Consensus.Node.Recovery (
   ) where
 
 import           Control.Monad (unless, when)
+import           Control.Tracer (Tracer, traceWith)
 import           Data.Proxy (Proxy)
 import           Data.Typeable (Typeable)
 import           Ouroboros.Consensus.Block (StandardHash)
@@ -88,10 +89,11 @@ exceptionRequiresRecovery pb e = case toExitReason pb e of
 runWithCheckedDB ::
      forall a m h blk. (IOLike m, StandardHash blk, Typeable blk)
   => Proxy blk
+  -> Tracer m (TraceEvent blk)
   -> HasFS m h
   -> (LastShutDownWasClean -> (ChainDB m blk -> m a -> m a) -> m a)
   -> m a
-runWithCheckedDB pb hasFS body = do
+runWithCheckedDB pb tracer hasFS body = do
     -- When we shut down cleanly, we create a marker file so that the next
     -- time we start, we know we don't have to validate the contents of the
     -- whole ChainDB. When we shut down with an exception indicating
@@ -99,7 +101,7 @@ runWithCheckedDB pb hasFS body = do
     -- create this marker file so that the next time we start, we do a full
     -- validation.
     wasClean <- hasCleanShutdownMarker hasFS
-
+    unless wasClean (traceWith tracer TraceLastShutdownUnclean)
     removeMarkerOnUncleanShutdown wasClean
       $ body
           (LastShutDownWasClean wasClean)

@@ -99,7 +99,8 @@ import           Ouroboros.Consensus.Node.RethrowPolicy
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Node.Tracers
 import           Ouroboros.Consensus.NodeKernel
-import           Ouroboros.Consensus.Storage.ChainDB (ChainDB, ChainDbArgs)
+import           Ouroboros.Consensus.Storage.ChainDB (ChainDB, ChainDbArgs,
+                     TraceEvent)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
@@ -657,11 +658,12 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
 stdWithCheckedDB ::
      forall blk a. (StandardHash blk, Typeable blk)
   => Proxy blk
+  -> Tracer IO (TraceEvent blk)
   -> FilePath
   -> NetworkMagic
   -> (LastShutDownWasClean -> (ChainDB IO blk -> IO a -> IO a) -> IO a)  -- ^ Body action with last shutdown was clean.
   -> IO a
-stdWithCheckedDB pb databasePath networkMagic body = do
+stdWithCheckedDB pb tracer databasePath networkMagic body = do
 
     -- Check the DB marker first, before doing the lock file, since if the
     -- marker is not present, it expects an empty DB dir.
@@ -671,7 +673,7 @@ stdWithCheckedDB pb databasePath networkMagic body = do
       networkMagic
 
     -- Then create the lock file.
-    withLockDB mountPoint $ runWithCheckedDB pb hasFS body
+    withLockDB mountPoint $ runWithCheckedDB pb tracer hasFS body
   where
     mountPoint = MountPoint databasePath
     hasFS      = ioHasFS mountPoint
@@ -908,7 +910,7 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
             snd
             (supportedNodeToClientVersions (Proxy @blk))
       , llrnWithCheckedDB =
-          stdWithCheckedDB (Proxy @blk) srnDatabasePath networkMagic
+          stdWithCheckedDB (Proxy @blk) srnTraceChainDB srnDatabasePath networkMagic
       , llrnMaxCaughtUpAge = secondsToNominalDiffTime $ 20 * 60   -- 20 min
       , llrnMaxClockSkew =
           InFuture.defaultClockSkew
