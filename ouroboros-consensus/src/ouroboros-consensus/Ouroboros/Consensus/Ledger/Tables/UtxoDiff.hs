@@ -1,24 +1,24 @@
-{-# LANGUAGE DeriveAnyClass             #-}
-{-# LANGUAGE DeriveGeneric              #-}
-{-# LANGUAGE DerivingVia                #-}
-{-# LANGUAGE ViewPatterns               #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric  #-}
+{-# LANGUAGE DerivingVia    #-}
+{-# LANGUAGE ViewPatterns   #-}
 
 module Ouroboros.Consensus.Ledger.Tables.UtxoDiff (
     -- * Types
-    UtxoDiff (..)
-  , MaybeUtxoDiff (..)
+    MaybeUtxoDiff (..)
+  , UtxoDiff (..)
     -- * Conversion
   , keysSet
     -- * Construction
-  , empty
   , diff
+  , empty
   , utxoProperty
   , utxoProperty2
     -- ** Maps
-  , fromMapDeletes
-  , fromMapInserts
   , fromListDeletes
   , fromListInserts
+  , fromMapDeletes
+  , fromMapInserts
     -- * Query
     -- ** Size
   , null
@@ -216,7 +216,7 @@ instance (Ord k, Eq v) => LeftReductive (MaybeUtxoDiff k v) where
             (notCancelled, cancelled) =
               (m2 `Map.intersection` m4, m2 `Map.difference` m4)
           in case stripPrefix notCancelled m4 of
-              Nothing ->  Just NotAUtxoDiff
+              Nothing  ->  Just NotAUtxoDiff
               Just m4' -> Just $ AUtxoDiff $ UtxoDiff (cancelled <> dels') m4'
         -- m2 ⊆ m4 because none have been cancelled
         (Just dels', Just m5) -> Just $ AUtxoDiff $ UtxoDiff dels' m5
@@ -236,7 +236,7 @@ instance (Ord k, Eq v) => RightReductive (MaybeUtxoDiff k v) where
             (notCancelled, cancelled) =
               (m1 `Map.intersection` m3, m1 `Map.difference` m3)
           in case stripSuffix notCancelled m3 of
-              Nothing -> Just NotAUtxoDiff
+              Nothing  -> Just NotAUtxoDiff
               Just m3' -> Just $ AUtxoDiff $ UtxoDiff m3' (ins' <> cancelled)
         (Just ins', Just m5) ->
           -- m1 ⊇ m3 because none have been cancelled

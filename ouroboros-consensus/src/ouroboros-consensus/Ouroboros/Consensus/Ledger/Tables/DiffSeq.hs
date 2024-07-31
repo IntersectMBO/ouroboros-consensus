@@ -102,7 +102,8 @@ import           Data.Semigroup.Cancellative
 import           GHC.Generics (Generic)
 import           GHC.Stack (HasCallStack)
 import           NoThunks.Class (NoThunks)
-import           Ouroboros.Consensus.Ledger.Tables.UtxoDiff hiding (empty, numInserts, numDeletes)
+import           Ouroboros.Consensus.Ledger.Tables.UtxoDiff hiding (empty,
+                     numDeletes, numInserts)
 import qualified Ouroboros.Consensus.Ledger.Tables.UtxoDiff as UtxoDiff
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Prelude hiding (length, splitAt)
@@ -215,8 +216,8 @@ instance (Ord k, Eq v) => Monoid (RootMeasure k v) where
 instance (Ord k, Eq v) => LeftReductive (RootMeasure k v) where
   stripPrefix (RootMeasure len1 d1 n1 m1) (RootMeasure len2 d2 n2 m2) =
     let df = case stripPrefix (AUtxoDiff d1) (AUtxoDiff d2) of
-              Nothing -> Nothing
-              Just NotAUtxoDiff -> error "Violation of the UTxO property!"
+              Nothing            -> Nothing
+              Just NotAUtxoDiff  -> error "Violation of the UTxO property!"
               Just (AUtxoDiff d) -> Just d
     in RootMeasure <$> stripPrefix len1 len2 <*> df
                    <*> stripPrefix n1 n2     <*> stripPrefix m1 m2
@@ -224,8 +225,8 @@ instance (Ord k, Eq v) => LeftReductive (RootMeasure k v) where
 instance (Ord k, Eq v) => RightReductive (RootMeasure k v) where
   stripSuffix (RootMeasure len1 d1 n1 m1) (RootMeasure len2 d2 n2 m2) =
     let df = case stripSuffix (AUtxoDiff d1) (AUtxoDiff d2) of
-              Nothing -> Nothing
-              Just NotAUtxoDiff -> error "Violation of the UTxO property!"
+              Nothing            -> Nothing
+              Just NotAUtxoDiff  -> error "Violation of the UTxO property!"
               Just (AUtxoDiff d) -> Just d
     in RootMeasure <$> stripSuffix len1 len2 <*> df
                    <*> stripSuffix n1 n2     <*> stripSuffix m1 m2

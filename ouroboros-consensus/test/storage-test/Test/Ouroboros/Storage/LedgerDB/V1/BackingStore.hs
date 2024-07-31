@@ -33,8 +33,8 @@ import qualified Data.Set as Set
 import qualified Data.SOP.Dict as Dict
 import           Data.Typeable
 import           Ouroboros.Consensus.Ledger.Tables
-import qualified Ouroboros.Consensus.Ledger.Tables.UtxoDiff as Diff
 import           Ouroboros.Consensus.Ledger.Tables.Utils
+import qualified Ouroboros.Consensus.Ledger.Tables.UtxoDiff as Diff
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as BS
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as InMemory
@@ -65,8 +65,8 @@ import           Test.Tasty.QuickCheck (QuickCheckTests (..), testProperty)
 import           Test.Util.LedgerStateOnlyTables
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Orphans.IOLike ()
-import           Test.Util.UtxoDiff ()
 import           Test.Util.Orphans.ToExpr ()
+import           Test.Util.UtxoDiff ()
 
 {-------------------------------------------------------------------------------
   Main test tree

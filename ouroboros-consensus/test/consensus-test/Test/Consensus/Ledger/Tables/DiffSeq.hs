@@ -13,8 +13,8 @@ import           Data.Maybe.Strict (StrictMaybe (..))
 import           Data.Typeable
 import           Ouroboros.Consensus.Ledger.Tables.DiffSeq
 import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
-import           Test.QuickCheck.Classes
 import           Test.Consensus.Ledger.Tables.Diff ()
+import           Test.QuickCheck.Classes
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.Arbitrary ()

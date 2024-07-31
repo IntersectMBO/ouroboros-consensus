@@ -13,8 +13,8 @@ import           Data.SOP.Dict (Dict (..))
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Ledger.Tables (DiffMK (..), KeysMK (..),
                      LedgerTables (..), ValuesMK)
-import qualified Ouroboros.Consensus.Ledger.Tables.UtxoDiff as Diff
 import           Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
+import qualified Ouroboros.Consensus.Ledger.Tables.UtxoDiff as Diff
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB

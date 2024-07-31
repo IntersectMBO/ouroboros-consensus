@@ -37,10 +37,10 @@ import qualified Data.Set as Set
 import           GHC.Generics (Generic)
 import           NoThunks.Class
 import           Ouroboros.Consensus.Ledger.Tables.Basics
-import           Ouroboros.Consensus.Ledger.Tables.UtxoDiff (UtxoDiff)
-import qualified Ouroboros.Consensus.Ledger.Tables.UtxoDiff as UtxoDiff
 import           Ouroboros.Consensus.Ledger.Tables.DiffSeq (DiffSeq)
 import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DiffSeq
+import           Ouroboros.Consensus.Ledger.Tables.UtxoDiff (UtxoDiff)
+import qualified Ouroboros.Consensus.Ledger.Tables.UtxoDiff as UtxoDiff
 
 {-------------------------------------------------------------------------------
   Classes

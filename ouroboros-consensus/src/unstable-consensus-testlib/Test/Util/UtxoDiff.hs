@@ -1,6 +1,9 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Test.Util.UtxoDiff (UtxoLike (..), TwoUtxoLike (..)) where
+module Test.Util.UtxoDiff (
+    TwoUtxoLike (..)
+  , UtxoLike (..)
+  ) where
 
 import           Data.Foldable as F
 import           Data.Map.Strict (Map)
@@ -52,7 +55,7 @@ instance (Ord k, Arbitrary k, Arbitrary v) => Arbitrary (TwoUtxoLike k v) where
     case utxolike of
       UtxoLike _ (a:b:_) -> pure $ TwoUtxoLike a b
       -- unreachable, we always produce >2 diffs
-      _ -> arbitrary
+      _                  -> arbitrary
 
 -- Notice that generating a sequence of these might not preserve the UTxO property
 instance (Ord k, Arbitrary k, Arbitrary v) => Arbitrary (UtxoDiff k v) where

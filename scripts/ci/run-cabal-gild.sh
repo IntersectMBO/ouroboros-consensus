@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
+set -xeuo pipefail
 
 # First, try to find the 'fd' command
 fdcmd="fd"
@@ -22,6 +22,6 @@ esac
 $fdcmd --full-path "$path" -e cabal -x cabal-gild -i {} -o {}
 
 case "$(uname -s)" in
-    MINGW*) git ls-files --eol | grep "w/crlf" | awk '{print $4}' | xargs dos2unix;;
+    MINGW*) git ls-files --eol | grep "w/crlf" | awk '{print $4}' | xargs dos2unix || exit 0;;
     *) ;;
 esac

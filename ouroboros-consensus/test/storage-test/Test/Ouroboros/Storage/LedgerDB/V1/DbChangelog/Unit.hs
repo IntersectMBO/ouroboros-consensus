@@ -20,7 +20,7 @@ import           Control.Monad.Trans.State.Strict hiding (state)
 import           Data.Foldable
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes, fromJust, isJust, isNothing, fromMaybe)
+import           Data.Maybe (catMaybes, fromJust, fromMaybe, isJust, isNothing)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           GHC.Generics (Generic)
@@ -28,8 +28,8 @@ import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
 import           Ouroboros.Consensus.Ledger.Basics hiding (Key, LedgerState)
 import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
-import           Ouroboros.Consensus.Ledger.Tables.UtxoDiff as Diff
 import           Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
+import           Ouroboros.Consensus.Ledger.Tables.UtxoDiff as Diff
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
                      (DbChangelog (..))
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
