@@ -51,9 +51,9 @@ import           Ouroboros.Consensus.HardFork.Combinator.State.Types
 import           Ouroboros.Consensus.Ledger.Basics (LedgerCfg, LedgerConfig,
                      LedgerState)
 import           Ouroboros.Consensus.Ledger.Tables
+import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Ledger.Tables.UtxoDiff (UtxoDiff)
 import qualified Ouroboros.Consensus.Ledger.Tables.UtxoDiff as Diff
-import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Protocol.Praos
 import           Ouroboros.Consensus.Protocol.Praos.Common
                      (MaxMajorProtVer (..))

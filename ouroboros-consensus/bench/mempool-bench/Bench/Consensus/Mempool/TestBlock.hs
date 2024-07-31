@@ -40,8 +40,8 @@ import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import           Ouroboros.Consensus.Ledger.Tables
-import qualified Ouroboros.Consensus.Ledger.Tables.UtxoDiff as Diff
 import qualified Ouroboros.Consensus.Ledger.Tables.Utils as Ledger
+import qualified Ouroboros.Consensus.Ledger.Tables.UtxoDiff as Diff
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Test.Util.TestBlock hiding (TestBlock)
 

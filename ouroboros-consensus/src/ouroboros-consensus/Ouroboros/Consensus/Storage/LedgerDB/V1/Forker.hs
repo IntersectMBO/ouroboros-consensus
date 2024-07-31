@@ -26,8 +26,10 @@ import           Data.Word
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
-import qualified Ouroboros.Consensus.Ledger.Tables.UtxoDiff as Diff
 import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
+import           Ouroboros.Consensus.Ledger.Tables.UtxoDiff (numDeletes,
+                     numInserts)
+import qualified Ouroboros.Consensus.Ledger.Tables.UtxoDiff as Diff
 import           Ouroboros.Consensus.Storage.LedgerDB.API as API
 import           Ouroboros.Consensus.Storage.LedgerDB.API.Config
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Common
@@ -41,7 +43,6 @@ import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
-import Ouroboros.Consensus.Ledger.Tables.UtxoDiff (numDeletes, numInserts)
 
 {-------------------------------------------------------------------------------
   Close

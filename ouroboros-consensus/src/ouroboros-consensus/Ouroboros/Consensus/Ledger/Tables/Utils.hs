@@ -39,6 +39,7 @@ module Ouroboros.Consensus.Ledger.Tables.Utils (
   , restrictValues
   , restrictValues'
     -- * Testing
+  , rawApplyDiffForKeys
   , rawApplyDiffs
   , rawAttachAndApplyDiffs
   , rawAttachEmptyDiffs
@@ -49,7 +50,6 @@ module Ouroboros.Consensus.Ledger.Tables.Utils (
   , rawPrependTrackingDiffs
   , rawReapplyTracking
   , rawRestrictValues
-  , rawApplyDiffForKeys
   ) where
 
 import qualified Data.Map.Strict as Map
@@ -128,7 +128,7 @@ rawPrependDiffs ::
 rawPrependDiffs (DiffMK d1) (DiffMK d2) =
   case Diff.AUtxoDiff d1 <> Diff.AUtxoDiff d2 of
     Diff.NotAUtxoDiff -> Nothing
-    Diff.AUtxoDiff d -> Just $ DiffMK d
+    Diff.AUtxoDiff d  -> Just $ DiffMK d
 
 -- | Prepend diffs from the first ledger state to the diffs from the second
 -- ledger state. Returns ledger tables.
@@ -280,7 +280,7 @@ rawPrependTrackingDiffs ::
 rawPrependTrackingDiffs (TrackingMK _ d1) (TrackingMK v d2) =
   case Diff.AUtxoDiff d1 <> Diff.AUtxoDiff d2 of
     Diff.NotAUtxoDiff -> Nothing
-    Diff.AUtxoDiff d -> Just $ TrackingMK v d
+    Diff.AUtxoDiff d  -> Just $ TrackingMK v d
 
 
 -- | Prepend tracking diffs from the first ledger state to the tracking diffs

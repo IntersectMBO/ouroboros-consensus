@@ -1,7 +1,7 @@
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE FlexibleContexts           #-}
-{-# LANGUAGE MultiParamTypeClasses      #-}
-{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE DerivingStrategies    #-}
+{-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
 
 module Test.Consensus.Ledger.Tables.Diff (tests) where
 
@@ -103,7 +103,7 @@ prop_applySum :: UtxoLike K V -> Property
 prop_applySum (UtxoLike x ds) =
   case foldMap' id $ map AUtxoDiff ds of
     NotAUtxoDiff -> counterexample "Violation of the UtxO property!" False
-    AUtxoDiff d -> F.foldl' applyUtxoDiff x ds === applyUtxoDiff x d
+    AUtxoDiff d  -> F.foldl' applyUtxoDiff x ds === applyUtxoDiff x d
 
 -- | Applying a @'UtxoDiff' d@ to a @'Map' m@ increases the size of @m@ by exactly
 -- @numInserts d - numDeletes d@ if @d@ inserts only new keys and @d@ only

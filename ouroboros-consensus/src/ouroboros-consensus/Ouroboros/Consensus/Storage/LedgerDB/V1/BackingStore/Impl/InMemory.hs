@@ -33,7 +33,7 @@ import qualified Data.Set as Set
 import           Data.String (fromString)
 import           GHC.Generics
 import           Ouroboros.Consensus.Ledger.Basics
-import           Ouroboros.Consensus.Ledger.Tables.UtxoDiff ( applyUtxoDiff )
+import           Ouroboros.Consensus.Ledger.Tables.UtxoDiff (applyUtxoDiff)
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import           Ouroboros.Consensus.Util.IOLike (Exception, IOLike,
                      MonadSTM (STM, atomically), MonadThrow (throwIO), NoThunks,

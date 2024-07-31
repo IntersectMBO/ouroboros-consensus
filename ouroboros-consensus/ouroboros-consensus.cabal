@@ -160,10 +160,10 @@ library
     Ouroboros.Consensus.Ledger.Tables
     Ouroboros.Consensus.Ledger.Tables.Basics
     Ouroboros.Consensus.Ledger.Tables.Combinators
-    Ouroboros.Consensus.Ledger.Tables.UtxoDiff
     Ouroboros.Consensus.Ledger.Tables.DiffSeq
     Ouroboros.Consensus.Ledger.Tables.MapKind
     Ouroboros.Consensus.Ledger.Tables.Utils
+    Ouroboros.Consensus.Ledger.Tables.UtxoDiff
     Ouroboros.Consensus.Mempool
     Ouroboros.Consensus.Mempool.API
     Ouroboros.Consensus.Mempool.Capacity
@@ -595,8 +595,8 @@ test-suite consensus-test
     generics-sop,
     hashable,
     io-classes,
-    monoid-subclasses,
     io-sim,
+    monoid-subclasses,
     mtl,
     nothunks,
     ouroboros-consensus,
