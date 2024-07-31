@@ -544,6 +544,7 @@ data TraceEvent blk
   | TraceLedgerReplayEvent      (LgrDB.TraceReplayEvent       blk)
   | TraceImmutableDBEvent       (ImmutableDB.TraceEvent       blk)
   | TraceVolatileDBEvent        (VolatileDB.TraceEvent        blk)
+  | TraceLastShutdownUnclean
   deriving (Generic)
 
 
