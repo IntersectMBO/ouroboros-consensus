@@ -190,7 +190,7 @@ traceSchedulerEventTestBlockWith ::
   Tracer m String ->
   TraceSchedulerEvent TestBlock ->
   m ()
-traceSchedulerEventTestBlockWith setTickTime tracer0 _tracer = \case
+traceSchedulerEventTestBlockWith setTickTime tracer0 tracer = \case
     TraceBeginningOfTime ->
       traceWith tracer0 "Running point schedule ..."
     TraceEndOfTime ->
@@ -221,13 +221,13 @@ traceSchedulerEventTestBlockWith setTickTime tracer0 _tracer = \case
           "  jumping states:\n" ++ traceJumpingStates jumpingStates
         ]
     TraceNodeShutdownStart immTip ->
-      traceWith tracer0 ("  Initiating node shutdown with immutable tip at slot " ++ condense immTip)
+      traceWith tracer ("  Initiating node shutdown with immutable tip at slot " ++ condense immTip)
     TraceNodeShutdownComplete ->
-      traceWith tracer0 "  Node shutdown complete"
+      traceWith tracer "  Node shutdown complete"
     TraceNodeStartupStart ->
-      traceWith tracer0 "  Initiating node startup"
+      traceWith tracer "  Initiating node startup"
     TraceNodeStartupComplete selection ->
-      traceWith tracer0 ("  Node startup complete with selection " ++ terseHFragment selection)
+      traceWith tracer ("  Node startup complete with selection " ++ terseHFragment selection)
 
   where
     traceJumpingStates :: [(PeerId, ChainSyncJumpingState m TestBlock)] -> String
