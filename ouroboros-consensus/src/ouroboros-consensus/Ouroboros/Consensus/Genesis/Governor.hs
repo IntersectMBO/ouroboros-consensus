@@ -43,7 +43,7 @@ import           Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (mapMaybe, maybeToList)
+import           Data.Maybe (maybeToList)
 import           Data.Maybe.Strict (StrictMaybe)
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block
@@ -255,16 +255,41 @@ sharedCandidatePrefix curChain candidates =
     immutableTip = AF.anchorPoint curChain
 
     splitAfterImmutableTip (peer, frag) =
-      (,) peer . snd <$> AF.splitAfterPoint frag immutableTip
+      case AF.splitAfterPoint frag immutableTip of
+        -- When there is no intersection, we assume the candidate fragment is
+        -- empty and anchored at the immutable tip.
+        -- See Note [CSJ truncates the candidate fragments].
+        Nothing          -> (peer, AF.takeOldest 0 curChain)
+        Just (_, suffix) -> (peer, suffix)
 
     immutableTipSuffixes =
-      -- If a ChainSync client's candidate forks off before the
-      -- immutable tip, then this transaction is currently winning an
-      -- innocuous race versus the thread that will fatally raise
-      -- 'InvalidIntersection' within that ChainSync client, so it's
-      -- sound to pre-emptively discard their candidate from this
-      -- 'Map' via 'mapMaybe'.
-      mapMaybe splitAfterImmutableTip candidates
+      map splitAfterImmutableTip candidates
+
+-- Note [CSJ truncates the candidate fragments]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+--
+-- Before CSJ, only rollback could cause truncation of a candidate fragment.
+-- Truncation is a serious business to GDD because the LoE might have allowed
+-- the selection to advance, based on the tips of the candidate fragments.
+--
+-- Truncating a candidate fragment risks moving the LoE back, which could be
+-- earlier than the anchor of the latest selection. When rollbacks where the
+-- only mechanism to truncate, it was fine to ignore candidate fragments that
+-- don't intersect with the current selection. This could only happen if the
+-- peer is rolling back more than k blocks, which is dishonest behavior.
+--
+-- With CSJ, however, the candidate fragments can recede without a rollback.
+-- A former objector might be asked to jump back when it becomes a jumper again.
+-- The jump point might still be a descendent of the immutable tip. But by the
+-- time the jump is accepted, the immutable tip might have advanced, and the
+-- candidate fragment of the otherwise honest peer might be ignored by GDD.
+--
+-- Therefore, at the moment, when there is no intersection with the current
+-- selection, the GDD assumes that the candidate fragment is empty and anchored
+-- at the immutable tip. It is the job of the ChainSync client to update the
+-- candidate fragment so it intersects with the selection or to disconnect the
+-- peer if no such fragment can be established.
+--
 
 data DensityBounds blk =
   DensityBounds {
