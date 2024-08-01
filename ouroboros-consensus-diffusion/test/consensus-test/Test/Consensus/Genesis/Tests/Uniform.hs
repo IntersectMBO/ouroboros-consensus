@@ -399,7 +399,7 @@ prop_loeStalling =
 prop_downtime :: Property
 prop_downtime = forAllGenesisTest
 
-    (genChains (QC.choose (1, 4)) `enrichedWith` \ gt ->
+    (disableBoringTimeouts <$> genChains (QC.choose (1, 4)) `enrichedWith` \ gt ->
       ensureScheduleDuration gt <$> stToGen (uniformPoints (pointsGeneratorParams gt) (gtBlockTree gt)))
 
     defaultSchedulerConfig
@@ -460,7 +460,7 @@ prop_blockFetchLeashingAttack =
     isBlockPoint (ScheduleBlockPoint _) = True
     isBlockPoint _                      = False
 
-    disableBoringTimeouts gt =
+disableBoringTimeouts gt =
       gt
         { gtChainSyncTimeouts =
             (gtChainSyncTimeouts gt)

@@ -35,6 +35,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.Node.GsmState as GSM
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
+import           Ouroboros.Consensus.Util (whenJust)
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
@@ -295,8 +296,8 @@ runScheduler tracer varHandles ps@PointSchedule{psMinEndTime} peers lifecycle@No
             then Just $ diffTime psMinEndTime t
             else Nothing
         _        -> Just $ coerce psMinEndTime
-  LiveNode{lnChainDb, lnStateViewTracers} <-
-    maybe (pure nodeEnd) (smartDelay lifecycle nodeEnd) extraDelay
+  whenJust extraDelay threadDelay
+  let LiveNode{lnChainDb, lnStateViewTracers} = nodeEnd
   traceWith tracer TraceEndOfTime
   pure (lnChainDb, lnStateViewTracers)
   where
