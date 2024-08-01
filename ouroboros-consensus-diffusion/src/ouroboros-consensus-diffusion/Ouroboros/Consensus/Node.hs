@@ -42,6 +42,7 @@ module Ouroboros.Consensus.Node (
   , LastShutDownWasClean (..)
   , LowLevelRunNodeArgs (..)
   , MempoolCapacityBytesOverride (..)
+  , NodeDatabasePaths (..)
   , NodeKernel (..)
   , NodeKernelArgs (..)
   , ProtocolInfo (..)
@@ -221,9 +222,13 @@ data LowLevelRunNodeArgs m addrNTN addrNTC versionDataNTN versionDataNTC blk
       -- | The " static " ChainDB arguments
     , llrnChainDbArgsDefaults :: Incomplete ChainDbArgs m blk
 
-      -- | File-system on which the directories for the different databases will
+      -- | File-system on which the directory for the ImmutableDB will
       -- be created.
-    , llrnMkHasFS :: ChainDB.RelativeMountPoint -> SomeHasFS m
+    , llrnMkImmutableHasFS :: ChainDB.RelativeMountPoint -> SomeHasFS m
+
+      -- | File-system on which the directories for databases other than the ImmutableDB will
+      -- be created.
+    , llrnMkVolatileHasFS :: ChainDB.RelativeMountPoint -> SomeHasFS m
 
       -- | Customise the 'ChainDbArgs'
     , llrnCustomiseChainDbArgs ::
@@ -285,6 +290,27 @@ data LowLevelRunNodeArgs m addrNTN addrNTC versionDataNTN versionDataNTC blk
     , llrnPublicPeerSelectionStateVar :: StrictSTM.StrictTVar m (Diffusion.PublicPeerSelectionState addrNTN)
     }
 
+data NodeDatabasePaths =
+    OnePathForAllDbs
+      FilePath -- ^ Databases will be stored under this path, such that given a
+               -- path @/foo@, databases will be in @/foo/{immutable,volatile,...}@.
+  | MultipleDbPaths
+      FilePath -- ^ Immutable path, usually pointing to a non-necessarily
+               -- performant volume. ImmutableDB will be stored under this path,
+               -- so given @/foo@, the ImmutableDB will be in @/foo/immutable@.
+      FilePath -- ^ Non-immutable (volatile data) path, usually pointing to a
+               -- performant volume. Databases other than the ImmutableDB will
+               -- be stored under this path, so given @/bar@, it will contain
+               -- @/bar/{volatile,ledger,...}@.
+
+immutableDbPath :: NodeDatabasePaths -> FilePath
+immutableDbPath (OnePathForAllDbs f)    = f
+immutableDbPath (MultipleDbPaths imm _) = imm
+
+nonImmutableDbPath :: NodeDatabasePaths -> FilePath
+nonImmutableDbPath (OnePathForAllDbs f)    = f
+nonImmutableDbPath (MultipleDbPaths _ vol) = vol
+
 -- | Higher-level arguments that can determine the 'LowLevelRunNodeArgs' under
 -- some usual assumptions for realistic use cases such as in @cardano-node@.
 --
@@ -295,7 +321,7 @@ data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) = StdRunNodeArgs
   , srnChainDbValidateOverride      :: Bool
     -- ^ If @True@, validate the ChainDB on init no matter what
   , srnDiskPolicyArgs               :: DiskPolicyArgs
-  , srnDatabasePath                 :: FilePath
+  , srnDatabasePath                 :: NodeDatabasePaths
     -- ^ Location of the DBs
   , srnDiffusionArguments           :: Diffusion.Arguments
                                          IO
@@ -431,7 +457,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                      inFuture
                      cfg
                      initLedger
-                     llrnMkHasFS
+                     llrnMkImmutableHasFS
+                     llrnMkVolatileHasFS
                      llrnChainDbArgsDefaults
                      (  setLoEinChainDbArgs
                       . maybeValidateAll
@@ -686,12 +713,15 @@ openChainDB ::
   -> ExtLedgerState blk
      -- ^ Initial ledger
   -> (ChainDB.RelativeMountPoint -> SomeHasFS m)
+     -- ^ Immutable FS, see 'NodeDatabasePaths'
+  -> (ChainDB.RelativeMountPoint -> SomeHasFS m)
+     -- ^ Volatile FS, see 'NodeDatabasePaths'
   -> Incomplete ChainDbArgs m blk
      -- ^ A set of default arguments (possibly modified from 'defaultArgs')
   -> (Complete ChainDbArgs m blk -> Complete ChainDbArgs m blk)
       -- ^ Customise the 'ChainDbArgs'
   -> m (ChainDB m blk, Complete ChainDbArgs m blk)
-openChainDB registry inFuture cfg initLedger fs defArgs customiseArgs =
+openChainDB registry inFuture cfg initLedger fsImm fsVol defArgs customiseArgs =
    let args = customiseArgs $ ChainDB.completeChainDbArgs
                registry
                inFuture
@@ -699,7 +729,8 @@ openChainDB registry inFuture cfg initLedger fs defArgs customiseArgs =
                initLedger
                (nodeImmutableDbChunkInfo (configStorage cfg))
                (nodeCheckIntegrity (configStorage cfg))
-               fs
+               fsImm
+               fsVol
                defArgs
       in (,args) <$> ChainDB.openDB args
 
@@ -876,7 +907,8 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
       , llrnCustomiseHardForkBlockchainTimeArgs = id
       , llrnGsmAntiThunderingHerd
       , llrnKeepAliveRng
-      , llrnMkHasFS = stdMkChainDbHasFS srnDatabasePath
+      , llrnMkImmutableHasFS = stdMkChainDbHasFS $ immutableDbPath srnDatabasePath
+      , llrnMkVolatileHasFS = stdMkChainDbHasFS $ nonImmutableDbPath srnDatabasePath
       , llrnChainDbArgsDefaults = updateChainDbDefaults ChainDB.defaultArgs
       , llrnCustomiseChainDbArgs = id
       , llrnCustomiseNodeKernelArgs
@@ -910,7 +942,9 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
             snd
             (supportedNodeToClientVersions (Proxy @blk))
       , llrnWithCheckedDB =
-          stdWithCheckedDB (Proxy @blk) srnTraceChainDB srnDatabasePath networkMagic
+          -- 'stdWithCheckedDB' uses the FS just to check for the clean file.
+          -- We put that one in the immutable path.
+          stdWithCheckedDB (Proxy @blk) srnTraceChainDB (immutableDbPath srnDatabasePath) networkMagic
       , llrnMaxCaughtUpAge = secondsToNominalDiffTime $ 20 * 60   -- 20 min
       , llrnMaxClockSkew =
           InFuture.defaultClockSkew

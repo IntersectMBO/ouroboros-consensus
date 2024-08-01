@@ -71,6 +71,7 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
                   chunkInfo
                   (const True)
                   (Node.stdMkChainDbHasFS dbDir)
+                  (Node.stdMkChainDbHasFS dbDir)
               $ defaultArgs
           immutableDbArgs = ChainDB.cdbImmDbArgs chainDbArgs
           ledgerDbFS = lgrHasFS $ ChainDB.cdbLgrDbArgs chainDbArgs
