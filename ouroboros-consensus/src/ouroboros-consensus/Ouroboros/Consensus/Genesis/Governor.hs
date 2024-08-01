@@ -40,7 +40,7 @@ import           Data.Foldable (for_, toList)
 import           Data.Functor.Compose (Compose (..))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (mapMaybe, maybeToList)
+import           Data.Maybe (maybeToList)
 import           Data.Maybe.Strict (StrictMaybe)
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block
@@ -249,16 +249,16 @@ sharedCandidatePrefix curChain candidates =
     immutableTip = AF.anchorPoint curChain
 
     splitAfterImmutableTip (peer, frag) =
-      (,) peer . snd <$> AF.splitAfterPoint frag immutableTip
+      case AF.splitAfterPoint frag immutableTip of
+        -- If there is no intersection, it might be the case that the candidate
+        -- is behind the immutable tip. In that case we give the peer the
+        -- benefit of the doubt, and considered its fragment anchored at the
+        -- immutable tip.
+        Nothing -> (peer, AF.takeOldest 0 curChain)
+        Just (_, suffix) -> (peer, suffix)
 
     immutableTipSuffixes =
-      -- If a ChainSync client's candidate forks off before the
-      -- immutable tip, then this transaction is currently winning an
-      -- innocuous race versus the thread that will fatally raise
-      -- 'InvalidIntersection' within that ChainSync client, so it's
-      -- sound to pre-emptively discard their candidate from this
-      -- 'Map' via 'mapMaybe'.
-      mapMaybe splitAfterImmutableTip candidates
+      map splitAfterImmutableTip candidates
 
 data DensityBounds blk =
   DensityBounds {
