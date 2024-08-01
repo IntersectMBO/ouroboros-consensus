@@ -230,13 +230,6 @@ prop_leashingAttackStalling =
       advs <- mapM dropRandomPoints $ adversarialPeers sch
       pure $ ps {psSchedule = sch {adversarialPeers = advs}}
 
-    disableBoringTimeouts gt =
-      gt { gtChainSyncTimeouts = (gtChainSyncTimeouts gt)
-            { mustReplyTimeout = Nothing
-            , idleTimeout = Nothing
-            }
-         }
-
     dropRandomPoints :: [(Time, SchedulePoint blk)] -> QC.Gen [(Time, SchedulePoint blk)]
     dropRandomPoints ps = do
       let lenps = length ps
@@ -295,14 +288,6 @@ prop_leashingAttackTimeLimited =
         }
 
     takePointsUntil limit = takeWhile ((<= limit) . fst)
-
-    disableBoringTimeouts gt =
-      gt { gtChainSyncTimeouts = (gtChainSyncTimeouts gt)
-            { canAwaitTimeout = Nothing
-            , mustReplyTimeout = Nothing
-            , idleTimeout = Nothing
-            }
-         }
 
     estimateTimeBound
       :: AF.HasHeader blk
@@ -399,7 +384,7 @@ prop_loeStalling =
 prop_downtime :: Property
 prop_downtime = forAllGenesisTest
 
-    (genChains (QC.choose (1, 4)) `enrichedWith` \ gt ->
+    (disableBoringTimeouts <$> genChains (QC.choose (1, 4)) `enrichedWith` \ gt ->
       ensureScheduleDuration gt <$> stToGen (uniformPoints (pointsGeneratorParams gt) (gtBlockTree gt)))
 
     defaultSchedulerConfig
@@ -460,11 +445,13 @@ prop_blockFetchLeashingAttack =
     isBlockPoint (ScheduleBlockPoint _) = True
     isBlockPoint _                      = False
 
-    disableBoringTimeouts gt =
-      gt
-        { gtChainSyncTimeouts =
-            (gtChainSyncTimeouts gt)
-              { mustReplyTimeout = Nothing,
-                idleTimeout = Nothing
-              }
-        }
+disableBoringTimeouts :: GenesisTest blk schedule -> GenesisTest blk schedule
+disableBoringTimeouts gt =
+    gt
+      { gtChainSyncTimeouts =
+          (gtChainSyncTimeouts gt)
+            { mustReplyTimeout = Nothing
+            , idleTimeout = Nothing
+            , canAwaitTimeout = Nothing
+            }
+      }
