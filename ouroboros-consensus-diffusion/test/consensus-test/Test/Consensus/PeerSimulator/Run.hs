@@ -10,7 +10,7 @@ module Test.Consensus.PeerSimulator.Run (
   , runPointSchedule
   ) where
 
-import           Control.Monad (foldM, forM, void)
+import           Control.Monad (foldM, forM, void, when)
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
@@ -221,14 +221,20 @@ smartDelay ::
   LiveNode blk m ->
   DiffTime ->
   m (LiveNode blk m)
-smartDelay NodeLifecycle {nlMinDuration, nlStart, nlShutdown} node duration
-  | Just minInterval <- nlMinDuration, duration > minInterval = do
+smartDelay lifecycle@NodeLifecycle {nlStart, nlShutdown} node duration
+  | itIsTimeToRestartTheNode lifecycle duration = do
     results <- nlShutdown node
     threadDelay duration
     nlStart results
 smartDelay _ node duration = do
   threadDelay duration
   pure node
+
+itIsTimeToRestartTheNode :: NodeLifecycle blk m -> DiffTime -> Bool
+itIsTimeToRestartTheNode NodeLifecycle {nlMinDuration} duration =
+  case nlMinDuration of
+    Just minInterval -> duration > minInterval
+    Nothing -> False
 
 -- | The 'Tick' contains a state update for a specific peer.
 -- If the peer has not terminated by protocol rules, this will update its TMVar
@@ -296,7 +302,16 @@ runScheduler tracer varHandles ps@PointSchedule{psMinEndTime} peers lifecycle@No
             else Nothing
         _        -> Just $ coerce psMinEndTime
   LiveNode{lnChainDb, lnStateViewTracers} <-
-    maybe (pure nodeEnd) (smartDelay lifecycle nodeEnd) extraDelay
+    case extraDelay of
+      Just duration -> do
+        nodeEnd' <- smartDelay lifecycle nodeEnd duration
+        -- Give an opportunity to the node to finish whatever it was doing at
+        -- shutdown
+        when (itIsTimeToRestartTheNode lifecycle duration) $
+          threadDelay $ coerce psMinEndTime
+        pure nodeEnd'
+      Nothing ->
+        pure nodeEnd
   traceWith tracer TraceEndOfTime
   pure (lnChainDb, lnStateViewTracers)
   where
