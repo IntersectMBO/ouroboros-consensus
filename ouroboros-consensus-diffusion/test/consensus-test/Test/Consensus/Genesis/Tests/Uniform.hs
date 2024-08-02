@@ -248,9 +248,6 @@ prop_leashingAttackStalling =
 -- immutable tip needs to be advanced enough when the honest peer has offered
 -- all of its ticks.
 --
--- This test is expected to fail because we don't test a genesis implementation
--- yet.
---
 -- See Note [Leashing attacks]
 prop_leashingAttackTimeLimited :: Property
 prop_leashingAttackTimeLimited =
