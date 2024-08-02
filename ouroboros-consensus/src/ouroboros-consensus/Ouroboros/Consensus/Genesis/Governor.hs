@@ -258,33 +258,31 @@ sharedCandidatePrefix curChain candidates =
       case AF.splitAfterPoint frag immutableTip of
         -- When there is no intersection, we assume the candidate fragment is
         -- empty and anchored at the immutable tip.
-        -- See Note [CSJ can recede the candidate fragments]
+        -- See Note [CSJ truncates the candidate fragments].
         Nothing -> (peer, AF.takeOldest 0 curChain)
         Just (_, suffix) -> (peer, suffix)
 
     immutableTipSuffixes =
       map splitAfterImmutableTip candidates
 
--- Note [CSJ can recede the candidate fragments]
--- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- Note [CSJ truncates the candidate fragments]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 --
--- Before CSJ, only rollback could cause trimming of the suffix of a candidate
--- fragment. Trimming suffixes is a serious business to GDD because the LoE
--- might have allowed the selection to advance, based on the tips of the
--- candidate fragments.
+-- Before CSJ, only rollback could cause truncation of a candidate fragment.
+-- Truncation is a serious business to GDD because the LoE might have allowed
+-- the selection to advance, based on the tips of the candidate fragments.
 --
--- Trimming a suffix risks moving the LoE back, which could be earlier than the
--- anchor of the latest selection. When rollbacks where the only mechanism to
--- trim suffixes, it was fine to ignore candidate fragments that don't intersect
--- with the current selection. This could only happen if the peer is rolling
--- back more than k blocks, which is dishonest behavior.
+-- Truncating a candidate fragment risks moving the LoE back, which could be
+-- earlier than the anchor of the latest selection. When rollbacks where the
+-- only mechanism to truncate, it was fine to ignore candidate fragments that
+-- don't intersect with the current selection. This could only happen if the
+-- peer is rolling back more than k blocks, which is dishonest behavior.
 --
 -- With CSJ, however, the candidate fragments can recede without a rollback.
 -- A former objector might be asked to jump back when it becomes a jumper again.
--- The jump back might still be to a point that is a descendent of the immutable
--- tip. But by the time the jump is accepted, the immutable tip might have
--- advanced, and the candidate fragment of the otherwise honest peer might be
--- ignored by GDD.
+-- The jump point might still be a descendent of the immutable tip. But by the
+-- time the jump is accepted, the immutable tip might have advanced, and the
+-- candidate fragment of the otherwise honest peer might be ignored by GDD.
 --
 -- Therefore, at the moment, when there is no intersection with the current
 -- selection, the GDD assumes that the candidate fragment is empty and anchored
