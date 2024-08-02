@@ -1201,7 +1201,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     Jumping.JumpInstruction jumpInstruction ->
                       continueWithState kis
                         $ drainThePipe n
-                        $ offerJump mkPipelineDecision jumpInstruction
+                        $ offerJump mkPipelineDecision jumpInstruction theirTip
                     Jumping.RunNormally -> do
                       lbResume loPBucket
                       continueWithState kis
@@ -1237,29 +1237,40 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
     offerJump ::
         MkPipelineDecision
      -> Jumping.JumpInstruction blk
+     -> Their (Tip blk)
      -> Stateful m blk
             (KnownIntersectionState blk)
             (ClientPipelinedStIdle Z)
-    offerJump mkPipelineDecision jump = Stateful $ \kis -> do
+    offerJump mkPipelineDecision jump theirOldTip = Stateful $ \kis -> do
         let jumpInfo = case jump of
               Jumping.JumpTo ji          -> ji
               Jumping.JumpToGoodPoint ji -> ji
-            dynamoTipPt = castPoint $ AF.headPoint $ jTheirFragment jumpInfo
-        traceWith tracer $ TraceOfferJump dynamoTipPt
-        return $
-            SendMsgFindIntersect [dynamoTipPt] $
+            dynamoTipPt = AF.headPoint $ jTheirFragment jumpInfo
+        traceWith tracer $ TraceOfferJump $ castPoint dynamoTipPt
+        -- We avoid MsgFindIntersect if we can answer the jump request with
+        -- the candidate fragment.
+        if AF.withinFragmentBounds dynamoTipPt (theirFrag kis) then do
+          Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedJump jump
+          traceWith tracer $ TraceJumpResult $ Jumping.AcceptedJump jump
+          continueWithState kis $ nextStep mkPipelineDecision Zero theirOldTip
+        else
+          return $
+            SendMsgFindIntersect [castPoint dynamoTipPt] $
             ClientPipelinedStIntersect {
               recvMsgIntersectFound = \pt theirTip ->
                   if
-                    | pt == dynamoTipPt -> do
-                      Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedJump jump
+                    | pt == castPoint dynamoTipPt -> do
                       traceWith tracer $ TraceJumpResult $ Jumping.AcceptedJump jump
                       let kis' = case jump of
                             -- Since the updated kis is needed to validate headers,
                             -- we only update it if we are becoming a Dynamo or
                             -- an objector
                             Jumping.JumpToGoodPoint{} -> combineJumpInfo kis jumpInfo
-                            _ -> kis
+                            _ -> combineJumpInfo kis jumpInfo
+                      atomically $ do
+                        updateJumpInfoSTM jumping kis'
+                        setCandidate (theirFrag kis')
+                      Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedJump jump
                       continueWithState kis' $ nextStep mkPipelineDecision Zero (Their theirTip)
                     | otherwise         -> throwIO InvalidJumpResponse
             ,

@@ -184,7 +184,6 @@ import           Data.Foldable (toList, traverse_)
 import           Data.List (sortOn)
 import qualified Data.Map as Map
 import           Data.Maybe (catMaybes, fromMaybe)
-import           Data.Maybe.Strict (StrictMaybe (..))
 import           Data.Sequence.Strict (StrictSeq)
 import qualified Data.Sequence.Strict as Seq
 import           GHC.Generics (Generic)
@@ -516,8 +515,7 @@ processJumpResult context jumpResult =
   readTVar (cschJumping (handle context)) >>= \case
     Dynamo{} ->
       case jumpResult of
-        AcceptedJump (JumpToGoodPoint jumpInfo) ->
-          updateChainSyncState (handle context) jumpInfo
+        AcceptedJump JumpToGoodPoint{} -> pure ()
         RejectedJump JumpToGoodPoint{} -> do
           startDisengaging (handle context)
           void $ electNewDynamo (stripContext context)
@@ -529,8 +527,7 @@ processJumpResult context jumpResult =
     Disengaged{} -> pure ()
     Objector{} ->
       case jumpResult of
-        AcceptedJump (JumpToGoodPoint jumpInfo) ->
-          updateChainSyncState (handle context) jumpInfo
+        AcceptedJump JumpToGoodPoint{} -> pure ()
         RejectedJump JumpToGoodPoint{} -> do
           -- If the objector rejects a good point, it is a sign of a rollback
           -- to earlier than the last jump.
@@ -543,14 +540,7 @@ processJumpResult context jumpResult =
 
     Jumper nextJumpVar jumperState ->
         case jumpResult of
-          AcceptedJump (JumpTo goodJumpInfo) -> do
-            -- The jump was accepted; we set the jumper's candidate fragment to
-            -- the dynamo's candidate fragment up to the accepted point.
-            --
-            -- The candidate fragments of jumpers don't grow otherwise, as only the
-            -- objector and the dynamo request further headers.
-            updateChainSyncState (handle context) goodJumpInfo
-            writeTVar (cschJumpInfo (handle context)) $ Just goodJumpInfo
+          AcceptedJump (JumpTo goodJumpInfo) ->
             case jumperState of
               LookingForIntersection _goodJumpInfo badJumpInfo ->
                 -- @AF.headPoint fragment@ is in @badFragment@, as the jumper
@@ -593,13 +583,6 @@ processJumpResult context jumpResult =
   where
     -- Avoid redundant constraint "HasHeader blk" reported by some ghc's
     _ = getHeaderFields @blk
-
-    updateChainSyncState :: ChainSyncClientHandle m blk -> JumpInfo blk -> STM m ()
-    updateChainSyncState handle jump = do
-      let fragment = jTheirFragment jump
-      modifyTVar (cschState handle) $ \csState ->
-        csState {csCandidate = fragment, csLatestSlot = SJust (AF.headSlot fragment) }
-      writeTVar (cschJumpInfo handle) $ Just jump
 
     mkGoodJumpInfo :: Maybe (JumpInfo blk) -> JumpInfo blk -> JumpInfo blk
     mkGoodJumpInfo mGoodJumpInfo badJumpInfo = do
