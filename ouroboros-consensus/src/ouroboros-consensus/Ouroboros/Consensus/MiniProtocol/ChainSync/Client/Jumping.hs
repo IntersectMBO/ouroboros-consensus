@@ -386,10 +386,10 @@ nextInstruction context =
     Disengaged Disengaging -> do
       writeTVar (cschJumping (handle context)) (Disengaged DisengagedDone)
       pure Restart
-    Dynamo (DynamoStarting goodJumpInfo) lastJumpSlot -> do
+    Dynamo (DynamoStarting _goodJumpInfo) lastJumpSlot -> do
       writeTVar (cschJumping (handle context)) $
         Dynamo DynamoStarted lastJumpSlot
-      pure $ JumpInstruction $ JumpToGoodPoint goodJumpInfo
+      pure Restart
     Dynamo DynamoStarted _ ->
       pure RunNormally
     Objector Starting goodJump badPoint -> do
