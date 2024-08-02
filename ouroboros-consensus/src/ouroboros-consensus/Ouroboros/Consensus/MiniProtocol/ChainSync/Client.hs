@@ -1423,7 +1423,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
             Jumping.jgOnRollForward jumping (blockPoint hdr)
             atomically (setLatestSlot dynEnv (NotOrigin slotNo))
 
-            checkTime cfgEnv dynEnv intEnv kis arrival slotNo  >>= \case
+            checkTime cfgEnv dynEnv intEnv kis arrival slotNo >>= \case
                 NoLongerIntersects ->
                     continueWithState ()
                   $ drainThePipe n
@@ -1618,7 +1618,8 @@ checkKnownInvalid cfgEnv dynEnv intEnv hdr = case scrutinee of
 -- Finally, the client will block on the intersection a second time, if
 -- necessary, since it's possible for a ledger state to determine the slot's
 -- onset's timestamp without also determining the slot's 'LedgerView'. During
--- this pause, the LoP bucket is paused.
+-- this pause, the LoP bucket is paused. If we need to block and their fragment
+-- is not preferrable to ours, we disconnect.
 checkTime ::
   forall m blk arrival judgment.
      ( IOLike m
@@ -1715,8 +1716,6 @@ checkTime cfgEnv dynEnv intEnv =
             StillIntersects () kis' -> do
                 let KnownIntersectionState {
                         mostRecentIntersection
-                      , ourFrag
-                      , theirFrag
                       } = kis'
                 lst <-
                     fmap
@@ -1729,14 +1728,39 @@ checkTime cfgEnv dynEnv intEnv =
                       )
                   $ getPastLedger mostRecentIntersection
                 case prj lst of
-                    Nothing         ->
-                        -- Precondition is fulfilled as ourFrag and theirFrag
-                        -- intersect by construction.
-                        if preferAnchoredCandidate (configBlock cfg) ourFrag theirFrag
-                        then retry
-                        else throwSTM DensityTooLow
+                    Nothing         -> do
+                        checkPreferTheirsOverOurs kis'
+                        retry
                     Just ledgerView ->
                         return $ return $ Intersects kis' ledgerView
+
+    -- When a header is beyond the forecast horizon and their fragment is not
+    -- preferrable to our selection (ourFrag), then we disconnect, as we will
+    -- never end up selecting it.
+    --
+    -- In the context of Genesis, one can think of the candidate losing a
+    -- density comparison against the selection. See the Genesis documentation
+    -- for why this check is necessary.
+    --
+    -- In particular, this means that we will disconnect from peers who offer us
+    -- a chain containing a slot gap larger than a forecast window.
+    checkPreferTheirsOverOurs :: KnownIntersectionState blk -> STM m ()
+    checkPreferTheirsOverOurs kis
+      | -- Precondition is fulfilled as ourFrag and theirFrag intersect by
+        -- construction.
+        preferAnchoredCandidate (configBlock cfg) ourFrag theirFrag
+      = pure ()
+      | otherwise
+      = throwSTM $ CandidateTooSparse
+            mostRecentIntersection
+            (ourTipFromChain ourFrag)
+            (theirTipFromChain theirFrag)
+      where
+        KnownIntersectionState {
+            mostRecentIntersection
+          , ourFrag
+          , theirFrag
+          } = kis
 
     -- Returns 'Nothing' if the ledger state cannot forecast the ledger view
     -- that far into the future.
@@ -1920,6 +1944,12 @@ ourTipFromChain ::
   => AnchoredFragment (Header blk)
   -> Our (Tip blk)
 ourTipFromChain = Our . AF.anchorToTip . AF.headAnchor
+
+theirTipFromChain ::
+     HasHeader (Header blk)
+  => AnchoredFragment (Header blk)
+  -> Their (Tip blk)
+theirTipFromChain = Their . AF.anchorToTip . AF.headAnchor
 
 -- | A type-legos auxillary function used in 'readLedgerState'.
 castM :: Monad m => m (WithEarlyExit m x) -> WithEarlyExit m x
@@ -2139,6 +2169,14 @@ data ChainSyncClientException =
         (InvalidBlockReason blk)
     -- ^ The upstream node's chain contained a block that we know is invalid.
   |
+    forall blk. BlockSupportsProtocol blk =>
+    CandidateTooSparse
+        (Point blk) -- ^ Intersection
+        (Our   (Tip blk))
+        (Their (Tip blk))
+    -- ^ The upstream node's chain was so sparse that it was worse than our
+    -- selection despite being blocked on the forecast horizon.
+  |
     InFutureHeaderExceedsClockSkew !InFutureCheck.HeaderArrivalException
     -- ^ A header arrived from the far future.
   |
@@ -2172,6 +2210,12 @@ instance Eq ChainSyncClientException where
       = (a, b, c) == (a', b', c')
 
     (==)
+        (CandidateTooSparse (a  :: Point blk ) b  c )
+        (CandidateTooSparse (a' :: Point blk') b' c')
+      | Just Refl <- eqT @blk @blk'
+      = (a, b, c) == (a', b', c')
+
+    (==)
         (InFutureHeaderExceedsClockSkew a )
         (InFutureHeaderExceedsClockSkew a')
       = a == a'
@@ -2188,6 +2232,7 @@ instance Eq ChainSyncClientException where
     HeaderError{}                    == _ = False
     InvalidIntersection{}            == _ = False
     InvalidBlock{}                   == _ = False
+    CandidateTooSparse{}             == _ = False
     InFutureHeaderExceedsClockSkew{} == _ = False
     EmptyBucket                      == _ = False
     InvalidJumpResponse              == _ = False
