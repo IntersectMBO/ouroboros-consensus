@@ -32,7 +32,7 @@ slotNoOption =
     mods = mconcat
       [ long "truncate-after-slot"
       , metavar "SLOT_NUMBER"
-      , help "The slot number of the intended new tip of the chain after truncation"
+      , help "Remove all blocks with a higher slot number"
       ]
 
 blockNoOption :: Parser BlockNo

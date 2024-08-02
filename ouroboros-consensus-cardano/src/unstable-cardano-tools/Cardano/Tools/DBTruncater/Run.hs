@@ -11,16 +11,19 @@ import           Cardano.Slotting.Slot (WithOrigin (..))
 import           Cardano.Tools.DBAnalyser.HasAnalysis
 import           Cardano.Tools.DBTruncater.Types
 import           Control.Monad
+import           Control.Monad.Trans.Class (lift)
+import           Control.Monad.Trans.Maybe (MaybeT (..))
 import           Control.Tracer
+import           Data.Foldable (asum)
+import           Data.Functor ((<&>))
 import           Data.Functor.Identity
-import           Data.Traversable (for)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Node as Node
 import           Ouroboros.Consensus.Node.InitStorage as Node
 import           Ouroboros.Consensus.Storage.Common
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB, Iterator,
-                     IteratorResult (..))
+                     IteratorResult (..), Tip (..))
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl
 import           Ouroboros.Consensus.Util.IOLike
@@ -56,33 +59,35 @@ truncate DBTruncaterConfig{ dbDir, truncateAfter, verbose } args = do
           }
 
     withDB immutableDBArgs $ \(immutableDB, internal) -> do
-      mLastHdr :: Maybe (Header block) <- case truncateAfter of
-        TruncateAfterSlot slotNo -> do
-          mHash <- getHashForSlot internal slotNo
-          for (RealPoint slotNo <$> mHash) $
-            ImmutableDB.getKnownBlockComponent immutableDB GetHeader
+      tip <- atomically $ ImmutableDB.getTip immutableDB
+      let truncationBeyondTip = case truncateAfter of
+            TruncateAfterSlot slotNo -> (tipSlotNo  <$> tip) <= NotOrigin slotNo
+            TruncateAfterBlock bno   -> (tipBlockNo <$> tip) <= NotOrigin bno
+      if truncationBeyondTip
+      then putStrLn $ "Nothing to truncate, tip stays at " <> show tip
+      else do
+        mLastHdr :: Maybe (Header block) <- case truncateAfter of
+          TruncateAfterSlot slotNo -> runMaybeT $ asum $
+            [slotNo, slotNo - 1 .. 0] <&> \s -> do
+              pt <- RealPoint s <$> MaybeT (getHashForSlot internal s)
+              lift $ ImmutableDB.getKnownBlockComponent immutableDB GetHeader pt
 
-        TruncateAfterBlock bno   -> do
-          -- At the moment, we're just running a linear search with streamAll to
-          -- find the correct block to truncate from, but we could in theory do this
-          -- more quickly by binary searching the chunks of the ImmutableDB.
-          iterator <- ImmutableDB.streamAll immutableDB registry GetHeader
-          findLast ((<= bno) . blockNo) iterator
+          TruncateAfterBlock bno   -> do
+            -- At the moment, we're just running a linear search with streamAll to
+            -- find the correct block to truncate from, but we could in theory do this
+            -- more quickly by binary searching the chunks of the ImmutableDB.
+            iterator <- ImmutableDB.streamAll immutableDB registry GetHeader
+            findLast ((<= bno) . blockNo) iterator
 
-      case ImmutableDB.headerToTip <$> mLastHdr of
-        Nothing ->
-          putStrLn $ mconcat
-            [ "Unable to find a truncate point. This is because the ImmutableDB"
-            , "does not contain a block with the given slot or block number."
-            ]
-        Just newTip -> do
-          when verbose $ do
+        case ImmutableDB.headerToTip <$> mLastHdr of
+          Nothing -> fail "Couldn't find a point to truncate to!"
+          Just newTip -> do
             putStrLn $ mconcat
               [ "Truncating the ImmutableDB using the following block as the "
               , "new tip:\n"
               , "  ", show newTip
               ]
-          deleteAfter internal (At newTip)
+            deleteAfter internal (At newTip)
 
 -- | Given a predicate, and an iterator, find the last item for which
 -- the predicate passes.
