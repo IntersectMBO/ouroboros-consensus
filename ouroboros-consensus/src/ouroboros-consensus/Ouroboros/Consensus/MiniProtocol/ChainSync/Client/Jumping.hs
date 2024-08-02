@@ -197,9 +197,8 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
                      ChainSyncClientHandleCollection (..),
                      ChainSyncJumpingJumperState (..),
                      ChainSyncJumpingState (..), ChainSyncState (..),
-                     DisengagedInitState (..), DynamoInitState (..),
-                     JumpInfo (..), JumperInitState (..),
-                     ObjectorInitState (..))
+                     DisengagedInitState (..),
+                     JumpInfo (..), JumperInitState (..))
 import           Ouroboros.Consensus.Util.IOLike hiding (handle)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
@@ -386,17 +385,8 @@ nextInstruction context =
     Disengaged Disengaging -> do
       writeTVar (cschJumping (handle context)) (Disengaged DisengagedDone)
       pure Restart
-    Dynamo (DynamoStarting goodJumpInfo) lastJumpSlot -> do
-      writeTVar (cschJumping (handle context)) $
-        Dynamo DynamoStarted lastJumpSlot
-      pure $ JumpInstruction $ JumpToGoodPoint goodJumpInfo
-    Dynamo DynamoStarted _ ->
-      pure RunNormally
-    Objector Starting goodJump badPoint -> do
-      writeTVar (cschJumping (handle context)) $
-        Objector Started goodJump badPoint
-      pure $ JumpInstruction $ JumpToGoodPoint goodJump
-    Objector Started _ _ -> pure RunNormally
+    Dynamo _ -> pure RunNormally
+    Objector _ _ -> pure RunNormally
     Jumper nextJumpVar jumperState -> do
       readTVar nextJumpVar >>= \case
         Nothing -> retry
@@ -429,14 +419,14 @@ onRollForward :: forall m peer blk.
   STM m ()
 onRollForward context point =
   readTVar (cschJumping (handle context)) >>= \case
-    Objector _ _ badPoint
+    Objector _ badPoint
       | badPoint == castPoint point -> do
           disengage (handle context)
           electNewObjector (stripContext context)
       | otherwise -> pure ()
     Disengaged{} -> pure ()
     Jumper{} -> pure ()
-    Dynamo _ lastJumpSlot
+    Dynamo lastJumpSlot
       | let jumpBoundaryPlus1 = jumpSize context + succWithOrigin lastJumpSlot
       , succWithOrigin (pointSlot point) > jumpBoundaryPlus1 -> do
           mJumpInfo <- readTVar (cschJumpInfo (handle context))
@@ -446,7 +436,7 @@ onRollForward context point =
     setJumps Nothing = error "onRollForward: Dynamo without jump info"
     setJumps (Just jumpInfo) = do
         writeTVar (cschJumping (handle context)) $
-          Dynamo DynamoStarted $ pointSlot $ AF.headPoint $ jTheirFragment jumpInfo
+          Dynamo $ pointSlot $ AF.headPoint $ jTheirFragment jumpInfo
         handles <- cschcSeq (handlesCol context)
         forM_ handles $ \(_, h) ->
           readTVar (cschJumping h) >>= \case
@@ -469,14 +459,14 @@ onRollBackward :: forall m peer blk.
   STM m ()
 onRollBackward context slot =
   readTVar (cschJumping (handle context)) >>= \case
-    Objector _ _ badPoint
+    Objector _ badPoint
       | slot < pointSlot badPoint -> do
           disengage (handle context)
           electNewObjector (stripContext context)
       | otherwise -> pure ()
     Disengaged{} -> pure ()
     Jumper{} -> pure ()
-    Dynamo _ lastJumpSlot
+    Dynamo lastJumpSlot
       | slot < lastJumpSlot -> do
           disengage (handle context)
           void $ electNewDynamo (stripContext context)
@@ -653,18 +643,18 @@ processJumpResult context jumpResult =
       findObjector (stripContext context) >>= \case
         Nothing ->
           -- There is no objector yet. Promote the jumper to objector.
-          writeTVar (cschJumping (handle context)) (Objector Starting goodJumpInfo badPoint)
-        Just (oInitState, oGoodJump, oPoint, oHandle)
+          writeTVar (cschJumping (handle context)) (Objector goodJumpInfo badPoint)
+        Just (oGoodJump, oPoint, oHandle)
           | pointSlot oPoint <= pointSlot badPoint ->
               -- The objector's intersection is still old enough. Keep it.
               writeTVar (cschJumping (handle context)) $
-                Jumper nextJumpVar (FoundIntersection Starting goodJumpInfo badPoint)
+                Jumper nextJumpVar (FoundIntersection goodJumpInfo badPoint)
           | otherwise -> do
               -- Found an earlier intersection. Demote the old objector and
               -- promote the jumper to objector.
-              newJumper Nothing (FoundIntersection oInitState oGoodJump oPoint) >>=
+              newJumper Nothing (FoundIntersection oGoodJump oPoint) >>=
                 writeTVar (cschJumping oHandle)
-              writeTVar (cschJumping (handle context)) (Objector Starting goodJumpInfo badPoint)
+              writeTVar (cschJumping (handle context)) (Objector goodJumpInfo badPoint)
 
 updateJumpInfo ::
   (MonadSTM m) =>
@@ -738,7 +728,7 @@ registerClient context peer csState mkHandle = do
   csjState <- getDynamo (handlesCol context) >>= \case
     Nothing -> do
       fragment <- csCandidate <$> readTVar csState
-      pure $ Dynamo DynamoStarted $ pointSlot $ AF.anchorPoint fragment
+      pure $ Dynamo $ pointSlot $ AF.anchorPoint fragment
     Just (_, handle) -> do
       mJustInfo <- readTVar (cschJumpInfo handle)
       newJumper mJustInfo (Happy FreshJumper Nothing)
@@ -846,11 +836,8 @@ promoteToDynamo ::
 promoteToDynamo peerStates dynId dynamo = do
   fragment <- csCandidate <$> readTVar (cschState dynamo)
   mJumpInfo <- readTVar (cschJumpInfo dynamo)
-  -- If there is no jump info, the dynamo must be just starting and
-  -- there is no need to set the intersection of the ChainSync server.
-  let dynamoInitState = maybe DynamoStarted DynamoStarting mJumpInfo
   writeTVar (cschJumping dynamo) $
-    Dynamo dynamoInitState $ pointSlot $ AF.headPoint fragment
+    Dynamo $ pointSlot $ AF.headPoint fragment
   -- Demote all other peers to jumpers
   forM_ peerStates $ \(peer, st) ->
     when (peer /= dynId) $ do
@@ -879,15 +866,15 @@ findM p =
 findObjector ::
   (MonadSTM m) =>
   Context m peer blk ->
-  STM m (Maybe (ObjectorInitState, JumpInfo blk, Point (Header blk), ChainSyncClientHandle m blk))
+  STM m (Maybe (JumpInfo blk, Point (Header blk), ChainSyncClientHandle m blk))
 findObjector context =
   cschcSeq (handlesCol context) >>= go
   where
     go Seq.Empty = pure Nothing
     go ((_, handle) Seq.:<| xs) =
       readTVar (cschJumping handle) >>= \case
-        Objector initState goodJump badPoint ->
-          pure $ Just (initState, goodJump, badPoint, handle)
+        Objector goodJump badPoint ->
+          pure $ Just (goodJump, badPoint, handle)
         _ -> go xs
 
 -- | Look into all dissenting jumper and promote the one with the oldest
@@ -901,8 +888,8 @@ electNewObjector context = do
   dissentingJumpers <- collectDissentingJumpers peerStates
   let sortedJumpers = sortOn (pointSlot . fst) dissentingJumpers
   case sortedJumpers of
-    (badPoint, (initState, goodJumpInfo, handle)):_ ->
-      writeTVar (cschJumping handle) $ Objector initState goodJumpInfo badPoint
+    (badPoint, (goodJumpInfo, handle)):_ ->
+      writeTVar (cschJumping handle) $ Objector goodJumpInfo badPoint
     _ ->
       pure ()
   where
@@ -910,8 +897,8 @@ electNewObjector context = do
       fmap catMaybes $
       forM peerStates $ \(_, handle) ->
         readTVar (cschJumping handle) >>= \case
-          Jumper _ (FoundIntersection initState goodJumpInfo badPoint) ->
-            pure $ Just (badPoint, (initState, goodJumpInfo, handle))
+          Jumper _ (FoundIntersection goodJumpInfo badPoint) ->
+            pure $ Just (badPoint, (goodJumpInfo, handle))
           _ ->
             pure Nothing
 

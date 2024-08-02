@@ -14,10 +14,8 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (
   , ChainSyncJumpingState (..)
   , ChainSyncState (..)
   , DisengagedInitState (..)
-  , DynamoInitState (..)
   , JumpInfo (..)
   , JumperInitState (..)
-  , ObjectorInitState (..)
   , newChainSyncClientHandleCollection
   ) where
 
@@ -164,26 +162,6 @@ newChainSyncClientHandleCollection = do
         modifyTVar handlesSeq (const mempty)
     }
 
-data DynamoInitState blk
-  = -- | The dynamo has not yet started jumping and we first need to jump to the
-    -- given jump info to set the intersection of the ChainSync server.
-    DynamoStarting !(JumpInfo blk)
-  | DynamoStarted
-  deriving (Generic)
-
-deriving anyclass instance
-  ( HasHeader blk,
-    LedgerSupportsProtocol blk,
-    NoThunks (Header blk)
-  ) => NoThunks (DynamoInitState blk)
-
-data ObjectorInitState
-  = -- | The objector still needs to set the intersection of the ChainSync
-    -- server before resuming retrieval of headers.
-    Starting
-  | Started
-  deriving (Generic, Show, NoThunks)
-
 data DisengagedInitState
   = -- | The node is being disengaged and for that we need to restart the
     -- ChainSync protocol.
@@ -205,7 +183,6 @@ data ChainSyncJumpingState m blk
     -- honest, but the goal of the algorithm is to eventually have an honest,
     -- alert peer as dynamo.
     Dynamo
-      !(DynamoInitState blk)
       -- | The last slot at which we triggered jumps for the jumpers.
       !(WithOrigin SlotNo)
   | -- | The objector, of which there is at most one, also runs normal
@@ -213,7 +190,6 @@ data ChainSyncJumpingState m blk
     -- that happened, we spun it up to let normal ChainSync and Genesis decide
     -- which one to disconnect from.
     Objector
-      !ObjectorInitState
       -- | The youngest point where the objector agrees with the dynamo.
       !(JumpInfo blk)
       -- | The point where the objector dissented with the dynamo when it was a
@@ -282,10 +258,7 @@ data ChainSyncJumpingJumperState blk
   | -- | The jumper disagrees with the dynamo and we have determined the latest
     -- point where dynamo and jumper agree. We store here the jump info of the
     -- latest accepted jump and the point of the earliest rejected jump.
-    --
-    -- The init state indicates the initialization to use for the objector in
-    -- case this jumper is promoted.
-    FoundIntersection ObjectorInitState !(JumpInfo blk) !(Point (Header blk))
+    FoundIntersection !(JumpInfo blk) !(Point (Header blk))
   deriving (Generic)
 
 deriving anyclass instance

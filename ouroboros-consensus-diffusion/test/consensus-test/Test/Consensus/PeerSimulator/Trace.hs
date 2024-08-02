@@ -34,7 +34,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping
                      (Instruction (..), JumpInstruction (..), JumpResult (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
                      (ChainSyncJumpingJumperState (..),
-                     ChainSyncJumpingState (..), DynamoInitState (..),
+                     ChainSyncJumpingState (..),
                      JumpInfo (..))
 import           Ouroboros.Consensus.Storage.ChainDB.API (LoE (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
@@ -235,14 +235,10 @@ traceSchedulerEventTestBlockWith setTickTime tracer0 tracer = \case
 
     traceJumpingState :: ChainSyncJumpingState m TestBlock -> String
     traceJumpingState = \case
-      Dynamo initState lastJump ->
-        let showInitState = case initState of
-              DynamoStarting ji -> terseJumpInfo ji
-              DynamoStarted     -> "DynamoStarted"
-         in unwords ["Dynamo", showInitState, terseWithOrigin show lastJump]
-      Objector initState goodJumpInfo badPoint -> unwords
+      Dynamo lastJump ->
+         unwords ["Dynamo", terseWithOrigin show lastJump]
+      Objector goodJumpInfo badPoint -> unwords
           [ "Objector"
-          , show initState
           , terseJumpInfo goodJumpInfo
           , tersePoint (castPoint badPoint)
           ]
@@ -253,9 +249,8 @@ traceSchedulerEventTestBlockWith setTickTime tracer0 tracer = \case
     traceJumperState = \case
       Happy initState mGoodJumpInfo ->
         "Happy " ++ show initState ++ " " ++ maybe "Nothing" terseJumpInfo mGoodJumpInfo
-      FoundIntersection initState goodJumpInfo point -> unwords
+      FoundIntersection goodJumpInfo point -> unwords
         [ "(FoundIntersection"
-        , show initState
         , terseJumpInfo goodJumpInfo
         , tersePoint $ castPoint point, ")"
         ]

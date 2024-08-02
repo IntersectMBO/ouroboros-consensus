@@ -119,7 +119,7 @@ readAndView readHandles =
     -- it may contain.
     idealiseState :: CSState.ChainSyncJumpingState m blk -> State blk
     idealiseState (CSState.Dynamo {}) = Dynamo
-    idealiseState (CSState.Objector _ point _) = Objector $ idealiseJumpInfo point
+    idealiseState (CSState.Objector point _) = Objector $ idealiseJumpInfo point
     idealiseState (CSState.Disengaged _) = Disengaged
     idealiseState (CSState.Jumper _ state) = Jumper $ idealiseJumperState state
     -- Idealise the jumper state by stripping away everything that is more of a
@@ -128,7 +128,7 @@ readAndView readHandles =
     idealiseJumperState (CSState.Happy _ lastAccepted) = Happy $ idealiseJumpInfo <$> lastAccepted
     idealiseJumperState (CSState.LookingForIntersection lastAccepted firstRejected) =
       LookingForIntersection (idealiseJumpInfo lastAccepted) (idealiseJumpInfo firstRejected)
-    idealiseJumperState (CSState.FoundIntersection _ lastAccepted firstRejected) =
+    idealiseJumperState (CSState.FoundIntersection lastAccepted firstRejected) =
       FoundIntersection (idealiseJumpInfo lastAccepted) (castPoint firstRejected)
     -- Jumpers actually carry a lot of information regarding the jump. From our
     -- idealised point of view, we only care about the points where the jumpers
