@@ -449,6 +449,5 @@ disableBoringTimeouts gt =
           (gtChainSyncTimeouts gt)
             { mustReplyTimeout = Nothing
             , idleTimeout = Nothing
-            , canAwaitTimeout = Nothing
             }
       }
