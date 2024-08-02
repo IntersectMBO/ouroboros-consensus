@@ -256,15 +256,42 @@ sharedCandidatePrefix curChain candidates =
 
     splitAfterImmutableTip (peer, frag) =
       case AF.splitAfterPoint frag immutableTip of
-        -- If there is no intersection, it might be the case that the candidate
-        -- is behind the immutable tip. In that case we give the peer the
-        -- benefit of the doubt, and considered its fragment anchored at the
-        -- immutable tip.
+        -- When there is no intersection, we assume the candidate fragment is
+        -- empty and anchored at the immutable tip.
+        -- See Note [CSJ can recede the candidate fragments]
         Nothing -> (peer, AF.takeOldest 0 curChain)
         Just (_, suffix) -> (peer, suffix)
 
     immutableTipSuffixes =
       map splitAfterImmutableTip candidates
+
+-- Note [CSJ can recede the candidate fragments]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+--
+-- Before CSJ, only rollback could cause trimming of the suffix of a candidate
+-- fragment. Trimming suffixes is a serious business to GDD because the LoE
+-- might have allowed the selection to advance, based on the tips of the
+-- candidate fragments.
+--
+-- Trimming a suffix risks moving the LoE back, which could be earlier than the
+-- anchor of the latest selection. When rollbacks where the only mechanism to
+-- trim suffixes, it was fine to ignore candidate fragments that don't intersect
+-- with the current selection. This could only happen if the peer is rolling
+-- back more than k blocks, which is dishonest behavior.
+--
+-- With CSJ, however, the candidate fragments can recede without a rollback.
+-- A former objector might be asked to jump back when it becomes a jumper again.
+-- The jump back might still be to a point that is a descendent of the immutable
+-- tip. But by the time the jump is accepted, the immutable tip might have
+-- advanced, and the candidate fragment of the otherwise honest peer might be
+-- ignored by GDD.
+--
+-- Therefore, at the moment, when there is no intersection with the current
+-- selection, the GDD assumes that the candidate fragment is empty and anchored
+-- at the immutable tip. It is the job of the ChainSync client to update the
+-- candidate fragment so it intersects with the selection or to disconnect the
+-- peer if no such fragment can be established.
+--
 
 data DensityBounds blk =
   DensityBounds {
