@@ -253,7 +253,9 @@ prop_leashingAttackTimeLimited :: Property
 prop_leashingAttackTimeLimited =
   forAllGenesisTest
 
-    (disableBoringTimeouts <$> genChains (QC.choose (1, 4)) `enrichedWith` genTimeLimitedSchedule)
+    (disableCanAwaitTimeout . disableBoringTimeouts <$>
+      genChains (QC.choose (1, 4)) `enrichedWith` genTimeLimitedSchedule
+    )
 
     defaultSchedulerConfig
       { scTrace = False
@@ -325,6 +327,15 @@ prop_leashingAttackTimeLimited =
 
     fromTipPoint (t, ScheduleTipPoint bp) = Just (t, bp)
     fromTipPoint _                        = Nothing
+
+    disableCanAwaitTimeout :: GenesisTest blk schedule -> GenesisTest blk schedule
+    disableCanAwaitTimeout gt =
+      gt
+        { gtChainSyncTimeouts =
+            (gtChainSyncTimeouts gt)
+              { canAwaitTimeout = Nothing
+              }
+        }
 
 headCallStack :: HasCallStack => [a] -> a
 headCallStack = \case
