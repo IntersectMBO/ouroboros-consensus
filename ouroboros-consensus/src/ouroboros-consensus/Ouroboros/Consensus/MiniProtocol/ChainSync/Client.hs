@@ -1200,8 +1200,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                 case instruction of
                     Jumping.JumpInstruction jumpInstruction ->
                       continueWithState kis
-                        $ drainThePipe n
-                        $ offerJump mkPipelineDecision jumpInstruction
+                        $ offerJump mkPipelineDecision jumpInstruction n theirTip
                     Jumping.RunNormally -> do
                       lbResume loPBucket
                       continueWithState kis
@@ -1237,22 +1236,34 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
     offerJump ::
         MkPipelineDecision
      -> Jumping.JumpInstruction blk
+     -> Nat n
+     -> Their (Tip blk)
      -> Stateful m blk
             (KnownIntersectionState blk)
-            (ClientPipelinedStIdle Z)
-    offerJump mkPipelineDecision jump = Stateful $ \kis -> do
-        let jumpInfo = case jump of
-              Jumping.JumpTo ji          -> ji
-              Jumping.JumpToGoodPoint ji -> ji
-            dynamoTipPt = castPoint $ AF.headPoint $ jTheirFragment jumpInfo
-        traceWith tracer $ TraceOfferJump dynamoTipPt
-        return $
-            SendMsgFindIntersect [dynamoTipPt] $
+            (ClientPipelinedStIdle n)
+    offerJump mkPipelineDecision jump n theirOldTip = Stateful $ \kis0 -> do
+        let (jumpInfo, normalJump) = case jump of
+              Jumping.JumpTo ji          -> (ji, True)
+              Jumping.JumpToGoodPoint ji -> (ji, False)
+            dynamoTipPt = AF.headPoint $ jTheirFragment jumpInfo
+        traceWith tracer $ TraceOfferJump $ castPoint dynamoTipPt
+        -- We avoid MsgFindIntersect if we can answer the jump request with
+        -- the candidate fragment.
+        -- JumpToGoodPoint indicates that we need to set the intersection in the
+        -- remote server and therefore cannot be answered without network
+        -- interaction.
+        if normalJump && AF.withinFragmentBounds dynamoTipPt (theirFrag kis0) then do
+          Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedJump jump
+          traceWith tracer $ TraceJumpResult $ Jumping.AcceptedJump jump
+          continueWithState kis0 $ nextStep mkPipelineDecision n theirOldTip
+        else
+          continueWithState kis0 $ drainThePipe n $ Stateful $ \kis ->
+          return $
+            SendMsgFindIntersect [castPoint dynamoTipPt] $
             ClientPipelinedStIntersect {
               recvMsgIntersectFound = \pt theirTip ->
                   if
-                    | pt == dynamoTipPt -> do
-                      Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedJump jump
+                    | pt == castPoint dynamoTipPt -> do
                       traceWith tracer $ TraceJumpResult $ Jumping.AcceptedJump jump
                       let kis' = case jump of
                             -- Since the updated kis is needed to validate headers,
@@ -1260,6 +1271,10 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                             -- an objector
                             Jumping.JumpToGoodPoint{} -> combineJumpInfo kis jumpInfo
                             _ -> kis
+                      atomically $ do
+                        updateJumpInfoSTM jumping kis'
+                        setCandidate (theirFrag kis')
+                      Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedJump jump
                       continueWithState kis' $ nextStep mkPipelineDecision Zero (Their theirTip)
                     | otherwise         -> throwIO InvalidJumpResponse
             ,
