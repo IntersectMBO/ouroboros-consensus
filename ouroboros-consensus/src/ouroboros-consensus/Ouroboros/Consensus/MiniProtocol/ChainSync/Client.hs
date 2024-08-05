@@ -1734,6 +1734,9 @@ checkTime cfgEnv dynEnv intEnv =
                     Just ledgerView ->
                         return $ return $ Intersects kis' ledgerView
 
+    -- Note [Candidate comparing beyond the forecast horizon]
+    -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    --
     -- When a header is beyond the forecast horizon and their fragment is not
     -- preferrable to our selection (ourFrag), then we disconnect, as we will
     -- never end up selecting it.
