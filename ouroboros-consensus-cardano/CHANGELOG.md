@@ -2,6 +2,17 @@
 
 # Changelog entries
 
+<a id='changelog-0.19.0.0'></a>
+## 0.18.0.0 — 2024-08-26
+
+### Breaking
+
+- Add `GetProposals` and `GetRatifyState` queries.
+- Propagate cardano-ledger's updated `TranslationContext` `NoGenesis` 
+- Add `NodeToClientV_17` to `supportedNodeToClientVersions`
+- Add `CardanoNodeToClientVersion13` 
+- Replace deprecated `TxSizeInBytes` with `SizeInBytes`
+
 <a id='changelog-0.18.0.0'></a>
 ## 0.18.0.0 — 2024-07-02
 

@@ -36,7 +36,7 @@ import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Mempool.Capacity (MempoolSize (..))
-import           Ouroboros.Network.Protocol.TxSubmission2.Type (TxSizeInBytes)
+import           Ouroboros.Network.SizeInBytes
 
 {-------------------------------------------------------------------------------
   Mempool transaction sequence as a finger tree
@@ -61,7 +61,7 @@ data TxTicket tx = TxTicket
     -- ^ The transaction associated with this ticket.
   , txTicketNo            :: !TicketNo
     -- ^ The ticket number.
-  , txTicketTxSizeInBytes :: !TxSizeInBytes
+  , txTicketTxSizeInBytes :: !SizeInBytes
     -- ^ The byte size of the transaction ('txTicketTx') associated with this
     -- ticket.
   , txTicketRefScriptSize :: !Int
@@ -106,7 +106,7 @@ instance Foldable TxSeq where
 data TxSeqMeasure = TxSeqMeasure {
        mMinTicket     :: !TicketNo,
        mMaxTicket     :: !TicketNo,
-       mSizeBytes     :: !TxSizeInBytes,
+       mSizeBytes     :: !SizeInBytes,
        mSize          :: !Int,
        mRefScriptSize :: !Int
      }
@@ -189,11 +189,11 @@ splitAfterTicketNo (TxSeq txs) n =
       (l, r) -> (TxSeq l, TxSeq r)
 
 -- | \( O(\log(n)) \). Split the sequence of transactions into two parts
--- based on the given 'TxSizeInBytes'. The first part has transactions whose
--- summed 'TxSizeInBytes' is less than or equal to the given 'TxSizeInBytes',
+-- based on the given 'SizeInBytes'. The first part has transactions whose
+-- summed 'SizeInBytes' is less than or equal to the given 'SizeInBytes',
 -- and the second part has the remaining transactions in the sequence.
 --
-splitAfterTxSize :: TxSeq tx -> TxSizeInBytes -> (TxSeq tx, TxSeq tx)
+splitAfterTxSize :: TxSeq tx -> SizeInBytes -> (TxSeq tx, TxSeq tx)
 splitAfterTxSize (TxSeq txs) n =
     case FingerTree.split (\m -> mSizeBytes m > n) txs of
       (l, r) -> (TxSeq l, TxSeq r)
@@ -204,14 +204,14 @@ splitAfterTxSize (TxSeq txs) n =
 --
 -- This function is used to verify whether 'splitAfterTxSize' behaves as
 -- expected.
-splitAfterTxSizeSpec :: TxSeq tx -> TxSizeInBytes -> (TxSeq tx, TxSeq tx)
+splitAfterTxSizeSpec :: TxSeq tx -> SizeInBytes -> (TxSeq tx, TxSeq tx)
 splitAfterTxSizeSpec txseq n =
     mapTuple fromList $ go 0 [] (toList txseq)
   where
     mapTuple :: (a -> b) -> (a, a) -> (b, b)
     mapTuple f (x, y) = (f x, f y)
 
-    go :: TxSizeInBytes
+    go :: SizeInBytes
        -> [TxTicket tx]
        -> [TxTicket tx]
        -> ([TxTicket tx], [TxTicket tx])
@@ -244,7 +244,7 @@ toTuples (TxSeq ftree) = fmap
 toMempoolSize :: TxSeq tx -> MempoolSize
 toMempoolSize (TxSeq ftree) = MempoolSize
     { msNumTxs   = fromIntegral mSize
-    , msNumBytes = mSizeBytes
+    , msNumBytes = getSizeInBytes mSizeBytes
     }
   where
     TxSeqMeasure { mSizeBytes, mSize } = FingerTree.measure ftree

@@ -104,6 +104,7 @@ import           Ouroboros.Network.PeerSharing (PeerSharingAPI,
                      PeerSharingRegistry, newPeerSharingAPI,
                      newPeerSharingRegistry, ps_POLICY_PEER_SHARE_MAX_PEERS,
                      ps_POLICY_PEER_SHARE_STICKY_TIME)
+import           Ouroboros.Network.SizeInBytes
 import           Ouroboros.Network.TxSubmission.Inbound
                      (TxSubmissionMempoolWriter)
 import qualified Ouroboros.Network.TxSubmission.Inbound as Inbound
@@ -379,7 +380,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
                                  (configLedger cfg)
                                  mempoolCapacityOverride
                                  (mempoolTracer tracers)
-                                 txInBlockSize
+                                 (SizeInBytes . txInBlockSize)
 
     fetchClientRegistry <- newFetchClientRegistry
 

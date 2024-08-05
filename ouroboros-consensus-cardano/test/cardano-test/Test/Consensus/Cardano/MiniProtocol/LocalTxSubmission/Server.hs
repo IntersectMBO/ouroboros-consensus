@@ -32,6 +32,7 @@ import           Ouroboros.Network.Protocol.LocalTxSubmission.Examples
                      (localTxSubmissionClient)
 import           Ouroboros.Network.Protocol.LocalTxSubmission.Server
                      (localTxSubmissionServerPeer)
+import           Ouroboros.Network.SizeInBytes
 import           Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.ByteStringTxParser
                      (deserialiseTx)
 import           Test.Consensus.Cardano.ProtocolInfo
@@ -85,7 +86,7 @@ tests =
           mempool <- Mocked.openMockedMempool
                       capcityBytesOverride
                       tracer
-                      LedgerSupportsMempool.txInBlockSize
+                      (SizeInBytes . LedgerSupportsMempool.txInBlockSize)
                       mempoolParams
 
           mempool `should_process` [ _137 ]

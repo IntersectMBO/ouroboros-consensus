@@ -22,6 +22,7 @@ import qualified Data.Text as Text
 import qualified Data.Text.Read as Text.Read
 import           Main.Utf8 (withStdTerminalHandles)
 import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool
+import           Ouroboros.Network.SizeInBytes
 import           System.Exit (die, exitFailure)
 import qualified Test.Consensus.Mempool.Mocked as Mocked
 import           Test.Consensus.Mempool.Mocked (MockedMempool)
@@ -57,7 +58,7 @@ main = withStdTerminalHandles $ do
                   (pure $!!
                      let cmds = mkNTryAddTxs n
                          sz   = sum $ map TestBlock.txSize $ getCmdsTxs cmds
-                     in (cmds, Mempool.ByteSize sz)
+                     in (cmds, Mempool.ByteSize $ getSizeInBytes sz)
                   )
                   (\_ -> pure ())
                   (\getCmds -> do

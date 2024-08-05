@@ -37,6 +37,7 @@ import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import qualified Ouroboros.Consensus.Mempool as Mempool
+import           Ouroboros.Network.SizeInBytes
 import           Test.Util.TestBlock (LedgerState (TestLedger),
                      PayloadSemantics (PayloadDependentError, PayloadDependentState, applyPayload),
                      TestBlockWith, applyDirectlyToPayloadDependentState,
@@ -122,7 +123,7 @@ newtype instance Ledger.GenTx TestBlock = TestBlockGenTx { unGenTx :: Tx }
 
 -- | For the mempool tests and benchmarks it is not imporant that we calculate
 -- the actual size of the transaction in bytes.
-txSize :: Ledger.GenTx TestBlock -> Mempool.TxSizeInBytes
+txSize :: Ledger.GenTx TestBlock -> Mempool.SizeInBytes
 txSize (TestBlockGenTx tx) = fromIntegral $ 1 + length (consumed tx) + length (produced tx)
 
 mkTx ::
@@ -148,7 +149,7 @@ instance Ledger.LedgerSupportsMempool TestBlock where
   -- maximum mempool capacity. The value used here depends on 'txInBlockSize'.
   txsMaxBytes _ = 20
 
-  txInBlockSize = txSize
+  txInBlockSize = getSizeInBytes . txSize
 
   txForgetValidated (ValidatedGenTx tx) = tx
 

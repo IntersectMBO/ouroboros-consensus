@@ -191,7 +191,7 @@ data MempoolEnv m blk = MempoolEnv {
     , mpEnvAddTxsRemoteFifo :: MVar m ()
     , mpEnvAddTxsAllFifo    :: MVar m ()
     , mpEnvTracer           :: Tracer m (TraceEventMempool blk)
-    , mpEnvTxSize           :: GenTx blk -> TxSizeInBytes
+    , mpEnvTxSize           :: GenTx blk -> SizeInBytes
     , mpEnvCapacityOverride :: MempoolCapacityBytesOverride
     }
 
@@ -204,7 +204,7 @@ initMempoolEnv :: ( IOLike m
                -> LedgerConfig blk
                -> MempoolCapacityBytesOverride
                -> Tracer m (TraceEventMempool blk)
-               -> (GenTx blk -> TxSizeInBytes)
+               -> (GenTx blk -> SizeInBytes)
                -> m (MempoolEnv m blk)
 initMempoolEnv ledgerInterface cfg capacityOverride tracer txSize = do
     st <- atomically $ getCurrentLedgerState ledgerInterface
@@ -327,7 +327,7 @@ extendVRPrevApplied cfg txTicket vr =
 -- again.
 extendVRNew :: (LedgerSupportsMempool blk, HasTxId (GenTx blk))
             => LedgerConfig blk
-            -> (GenTx blk -> TxSizeInBytes)
+            -> (GenTx blk -> SizeInBytes)
             -> WhetherToIntervene
             -> GenTx blk
             -> ValidationResult (GenTx blk) blk

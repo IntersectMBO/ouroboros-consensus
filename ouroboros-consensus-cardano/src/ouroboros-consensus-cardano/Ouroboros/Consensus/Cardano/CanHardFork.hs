@@ -35,6 +35,7 @@ import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Core as Core
 import           Cardano.Ledger.Crypto (ADDRHASH, Crypto, DSIGN, HASH)
 import qualified Cardano.Ledger.Era as SL
+import qualified Cardano.Ledger.Genesis as SL
 import           Cardano.Ledger.Hashes (EraIndependentTxBody)
 import           Cardano.Ledger.Keys (DSignable, Hash)
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -333,7 +334,7 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
                   (translateValidatedTxMaryToAlonzoWrapper ctxt)
               )
       $ PCons (RequireBoth $ \_cfgAlonzo _cfgBabbage ->
-                let ctxt = ()
+                let ctxt = SL.NoGenesis
                 in
                 Pair2
                   (translateTxAlonzoToBabbageWrapper          ctxt)
@@ -526,7 +527,7 @@ translateLedgerStateShelleyToAllegraWrapper ::
 translateLedgerStateShelleyToAllegraWrapper =
     ignoringBoth $
       Translate $ \_epochNo ->
-        unComp . SL.translateEra' () . Comp
+        unComp . SL.translateEra' SL.NoGenesis . Comp
 
 translateTxShelleyToAllegraWrapper ::
      (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
@@ -534,7 +535,7 @@ translateTxShelleyToAllegraWrapper ::
        (ShelleyBlock (TPraos c) (ShelleyEra c))
        (ShelleyBlock (TPraos c) (AllegraEra c))
 translateTxShelleyToAllegraWrapper = InjectTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra () . Comp
+    fmap unComp . eitherToMaybe . runExcept . SL.translateEra SL.NoGenesis . Comp
 
 translateValidatedTxShelleyToAllegraWrapper ::
      (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
@@ -542,7 +543,7 @@ translateValidatedTxShelleyToAllegraWrapper ::
        (ShelleyBlock (TPraos c) (ShelleyEra c))
        (ShelleyBlock (TPraos c) (AllegraEra c))
 translateValidatedTxShelleyToAllegraWrapper = InjectValidatedTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra () . Comp
+    fmap unComp . eitherToMaybe . runExcept . SL.translateEra SL.NoGenesis . Comp
 
 {-------------------------------------------------------------------------------
   Translation from Allegra to Mary
@@ -558,7 +559,7 @@ translateLedgerStateAllegraToMaryWrapper ::
 translateLedgerStateAllegraToMaryWrapper =
     ignoringBoth $
       Translate $ \_epochNo ->
-        unComp . SL.translateEra' () . Comp
+        unComp . SL.translateEra' SL.NoGenesis . Comp
 
 translateTxAllegraToMaryWrapper ::
      (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
@@ -566,7 +567,7 @@ translateTxAllegraToMaryWrapper ::
        (ShelleyBlock (TPraos c) (AllegraEra c))
        (ShelleyBlock (TPraos c) (MaryEra c))
 translateTxAllegraToMaryWrapper = InjectTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra () . Comp
+    fmap unComp . eitherToMaybe . runExcept . SL.translateEra SL.NoGenesis . Comp
 
 translateValidatedTxAllegraToMaryWrapper ::
      (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
@@ -574,7 +575,7 @@ translateValidatedTxAllegraToMaryWrapper ::
        (ShelleyBlock (TPraos c) (AllegraEra c))
        (ShelleyBlock (TPraos c) (MaryEra c))
 translateValidatedTxAllegraToMaryWrapper = InjectValidatedTx $
-    fmap unComp . eitherToMaybe . runExcept . SL.translateEra () . Comp
+    fmap unComp . eitherToMaybe . runExcept . SL.translateEra SL.NoGenesis . Comp
 
 {-------------------------------------------------------------------------------
   Translation from Mary to Alonzo
@@ -631,7 +632,7 @@ translateLedgerStateAlonzoToBabbageWrapper ::
 translateLedgerStateAlonzoToBabbageWrapper =
     RequireBoth $ \_cfgAlonzo _cfgBabbage ->
       Translate $ \_epochNo ->
-        unComp . SL.translateEra' () . Comp . transPraosLS
+        unComp . SL.translateEra' SL.NoGenesis . Comp . transPraosLS
   where
     transPraosLS ::
       LedgerState (ShelleyBlock (TPraos c) (AlonzoEra c)) ->

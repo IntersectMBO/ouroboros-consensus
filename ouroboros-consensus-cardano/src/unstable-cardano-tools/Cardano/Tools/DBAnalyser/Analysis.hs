@@ -72,11 +72,11 @@ import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.LedgerDB (DiskSnapshot (..),
                      writeSnapshot)
-import           Ouroboros.Consensus.Storage.Serialisation (SizeInBytes,
-                     encodeDisk)
+import           Ouroboros.Consensus.Storage.Serialisation (encodeDisk)
 import           Ouroboros.Consensus.Util ((..:))
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
+import           Ouroboros.Network.SizeInBytes
 import           System.FS.API (SomeHasFS (..))
 import qualified System.IO as IO
 
@@ -743,7 +743,7 @@ reproMempoolForge numBlks env = do
       -- one megabyte should generously accomodate two blocks' worth of txs
       (Mempool.MempoolCapacityBytesOverride $ Mempool.MempoolCapacityBytes $ 2^(20 :: Int))
       nullTracer
-      LedgerSupportsMempool.txInBlockSize
+      (SizeInBytes . LedgerSupportsMempool.txInBlockSize)
 
     void $ processAll db registry GetBlock startFrom limit Nothing (process howManyBlocks ref mempool)
     pure Nothing

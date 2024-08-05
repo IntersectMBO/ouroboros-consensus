@@ -15,6 +15,7 @@ module Ouroboros.Consensus.Util.Orphans () where
 import           Cardano.Crypto.DSIGN.Class
 import           Cardano.Crypto.DSIGN.Mock (MockDSIGN)
 import           Cardano.Crypto.Hash (Hash)
+import           Cardano.Ledger.Genesis (NoGenesis (..))
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.Serialise (Serialise (..))
 import           Control.Tracer (Tracer)
@@ -22,7 +23,6 @@ import           Data.Bimap (Bimap)
 import qualified Data.Bimap as Bimap
 import           Data.IntPSQ (IntPSQ)
 import qualified Data.IntPSQ as PSQ
-import           Data.Monoid
 import           Data.SOP.BasicFunctors
 import           NoThunks.Class (InspectHeap (..), InspectHeapNamed (..),
                      NoThunks (..), OnlyCheckWhnfNamed (..), allNoThunks,
@@ -45,6 +45,10 @@ instance Serialise (VerKeyDSIGN MockDSIGN) where
 {-------------------------------------------------------------------------------
   NoThunks
 -------------------------------------------------------------------------------}
+
+instance NoThunks (NoGenesis era) where
+  showTypeOf _ = "NoGenesis"
+  wNoThunks _ NoGenesis = return Nothing
 
 instance (NoThunks k, NoThunks v)
       => NoThunks (Bimap k v) where
@@ -70,8 +74,6 @@ deriving via OnlyCheckWhnfNamed "Tracer" (Tracer m ev) instance NoThunks (Tracer
 instance NoThunks a => NoThunks (K a b) where
   showTypeOf _ = showTypeOf (Proxy @a)
   wNoThunks ctxt (K a) = wNoThunks ("K":ctxt) a
-
-instance NoThunks a => NoThunks (Sum a)
 
 {-------------------------------------------------------------------------------
   fs-api
