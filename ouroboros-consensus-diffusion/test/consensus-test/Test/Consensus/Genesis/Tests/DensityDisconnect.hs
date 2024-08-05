@@ -68,7 +68,7 @@ import           Test.Util.TestEnv (adjustQuickCheckMaxSize,
 
 tests :: TestTree
 tests =
-  adjustQuickCheckTests (* 4) $
+  adjustQuickCheckTests (* 10) $
   adjustQuickCheckMaxSize (`div` 5) $
   testGroup "gdd" [
     testProperty "basic" prop_densityDisconnectStatic,

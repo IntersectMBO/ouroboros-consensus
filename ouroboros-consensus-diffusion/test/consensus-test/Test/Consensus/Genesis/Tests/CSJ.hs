@@ -31,10 +31,11 @@ import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.PartialAccessors
 import           Test.Util.TestBlock (TestBlock)
-import           Test.Util.TestEnv (adjustQuickCheckMaxSize)
+import           Test.Util.TestEnv (adjustQuickCheckMaxSize, adjustQuickCheckTests)
 
 tests :: TestTree
 tests =
+  adjustQuickCheckTests (* 10) $
   adjustQuickCheckMaxSize (`div` 5) $
     testGroup
       "CSJ"
