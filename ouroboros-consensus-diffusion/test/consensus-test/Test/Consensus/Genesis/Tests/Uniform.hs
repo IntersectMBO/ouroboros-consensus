@@ -404,7 +404,14 @@ prop_downtime = forAllGenesisTest
 
     shrinkPeerSchedules
 
-    theProperty
+    (\genesisTest stateView ->
+      counterexample (unlines
+        [ "TODO: Shutting down the node inserts delays in the simulation that"
+        , "are not reflected in the point schedule table. Reporting these delays"
+        , "correctly is still to be done."
+        ]) $
+        theProperty genesisTest stateView
+    )
 
   where
     pointsGeneratorParams gt = PointsGeneratorParams
