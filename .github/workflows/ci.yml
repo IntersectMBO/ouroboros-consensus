@@ -148,7 +148,7 @@ jobs:
 
     - name: Test (NoThunks-safe tests only, part 2)
       if: matrix.test-set == 'no-thunks-safe'
-      run: cabal test ouroboros-consensus-cardano:shelley-test ouroboros-consensus-diffusion:infra-test ouroboros-consensus-diffusion:mock-test ouroboros-consensus-protocol:protocol-test -j --test-show-details=streaming
+      run: cabal test ouroboros-consensus-cardano:shelley-test ouroboros-consensus-diffusion:infra-test ouroboros-consensus-protocol:protocol-test -j --test-show-details=streaming
 
     - name: Create baseline-benchmark
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
