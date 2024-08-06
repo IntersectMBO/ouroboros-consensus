@@ -37,6 +37,9 @@ data ShelleyNodeToClientVersion =
 
     -- | New queries introduced: GetConstitutionHash, GetFilteredVoteDelegatees
   | ShelleyNodeToClientVersion8
+
+    -- | New queries introduced: GetProposals, GetRatifyState
+  | ShelleyNodeToClientVersion9
   deriving (Show, Eq, Ord, Enum, Bounded)
 
 instance HasNetworkProtocolVersion (ShelleyBlock proto era) where
