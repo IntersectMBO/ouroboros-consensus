@@ -52,11 +52,11 @@ import           Ouroboros.Consensus.Util.STM (blockUntilJust,
                      forkLinkedWatcher)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..), GenesisBlockFetchConfiguration (..),
+import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..),
                      BlockFetchConsensusInterface (..), FetchMode (..),
-                     blockFetchLogic, bracketFetchClient,
-                     bracketKeepAliveClient, bracketSyncWithFetchClient,
-                     newFetchClientRegistry)
+                     GenesisBlockFetchConfiguration (..), blockFetchLogic,
+                     bracketFetchClient, bracketKeepAliveClient,
+                     bracketSyncWithFetchClient, newFetchClientRegistry)
 import           Ouroboros.Network.BlockFetch.Client (blockFetchClient)
 import           Ouroboros.Network.ControlMessage (ControlMessage (..))
 import           Ouroboros.Network.Mock.Chain (Chain)

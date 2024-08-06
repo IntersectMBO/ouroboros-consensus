@@ -234,7 +234,7 @@ itIsTimeToRestartTheNode :: NodeLifecycle blk m -> DiffTime -> Bool
 itIsTimeToRestartTheNode NodeLifecycle {nlMinDuration} duration =
   case nlMinDuration of
     Just minInterval -> duration > minInterval
-    Nothing -> False
+    Nothing          -> False
 
 -- | The 'Tick' contains a state update for a specific peer.
 -- If the peer has not terminated by protocol rules, this will update its TMVar

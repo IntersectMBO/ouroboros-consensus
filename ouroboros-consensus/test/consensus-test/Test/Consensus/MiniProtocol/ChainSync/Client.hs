@@ -84,14 +84,12 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (CSJConfig (..), ChainDbView (..),
                      ChainSyncClientException,
                      ChainSyncClientHandleCollection (..),
-                     ChainSyncClientResult (..),
-                     ChainSyncLoPBucketConfig (..), ChainSyncState (..),
-                     ChainSyncStateView (..), ConfigEnv (..), Consensus,
-                     DynamicEnv (..), Our (..), Their (..),
-                     TraceChainSyncClientEvent (..), bracketChainSyncClient,
-                     chainSyncClient, chainSyncStateFor,
-                     newChainSyncClientHandleCollection,
-                     viewChainSyncState)
+                     ChainSyncClientResult (..), ChainSyncLoPBucketConfig (..),
+                     ChainSyncState (..), ChainSyncStateView (..),
+                     ConfigEnv (..), Consensus, DynamicEnv (..), Our (..),
+                     Their (..), TraceChainSyncClientEvent (..),
+                     bracketChainSyncClient, chainSyncClient, chainSyncStateFor,
+                     newChainSyncClientHandleCollection, viewChainSyncState)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Node.GsmState (GsmState (Syncing))
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion

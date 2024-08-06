@@ -1,5 +1,5 @@
-{-# LANGUAGE DeriveTraversable   #-}
 {-# LANGUAGE DeriveGeneric       #-}
+{-# LANGUAGE DeriveTraversable   #-}
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
@@ -60,14 +60,14 @@ data GenesisConfig = GenesisConfig
 
 -- | Genesis configuration flags and low-level args, as parsed from config file or CLI
 data GenesisConfigFlags = GenesisConfigFlags
-  { gcfEnableCSJ            :: Bool
-  , gcfEnableLoEAndGDD      :: Bool
-  , gcfEnableLoP            :: Bool
-  , gcfBulkSyncGracePeriod  :: Maybe Integer
-  , gcfBucketCapacity       :: Maybe Integer
-  , gcfBucketRate           :: Maybe Integer
-  , gcfCSJJumpSize          :: Maybe Integer
-  , gcfGDDRateLimit         :: Maybe DiffTime
+  { gcfEnableCSJ           :: Bool
+  , gcfEnableLoEAndGDD     :: Bool
+  , gcfEnableLoP           :: Bool
+  , gcfBulkSyncGracePeriod :: Maybe Integer
+  , gcfBucketCapacity      :: Maybe Integer
+  , gcfBucketRate          :: Maybe Integer
+  , gcfCSJJumpSize         :: Maybe Integer
+  , gcfGDDRateLimit        :: Maybe DiffTime
   } deriving stock (Eq, Generic, Show)
 
 defaultGenesisConfigFlags :: GenesisConfigFlags
@@ -153,7 +153,7 @@ data LoEAndGDDNodeKernelArgs m blk = LoEAndGDDNodeKernelArgs {
     -- opened the ChainDB (which happens before we initialize the NodeKernel).
     -- After that, this TVar will not be modified again.
     lgnkaLoEFragmentTVar :: !(StrictTVar m (ChainDB.GetLoEFragment m blk))
-  , lgnkaGDDRateLimit   :: DiffTime
+  , lgnkaGDDRateLimit    :: DiffTime
   }
 -- | Create the initial 'GenesisNodeKernelArgs" (with a temporary
 -- 'ChainDB.GetLoEFragment' that will be replaced via 'setGetLoEFragment') and a
