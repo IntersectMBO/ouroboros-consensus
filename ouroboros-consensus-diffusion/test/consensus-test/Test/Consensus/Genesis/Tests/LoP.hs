@@ -59,6 +59,13 @@ tests =
         testProperty "delaying attack fails with LoP" (prop_delayAttack True)
     ]
 
+-- | Simple test in which we connect to only one peer, who advertises the tip of
+-- the block tree trunk and then does nothing. If the given boolean,
+-- @mustTimeout@, if @True@, then we wait just long enough for the LoP bucket to
+-- empty; we expect to observe an 'EmptyBucket' exception in the ChainSync
+-- client. If @mustTimeout@ is @False@, then we wait not quite as long, so the
+-- LoP bucket should not be empty at the end of the test and we should observe
+-- no exception in the ChainSync client.
 prop_wait :: Bool -> Property
 prop_wait mustTimeout =
   forAllGenesisTest
@@ -90,6 +97,13 @@ prop_wait mustTimeout =
             , psMinEndTime = Time $ timeout + offset
             }
 
+-- | Simple test in which we connect to only one peer, who advertises the tip of
+-- the block tree trunk, serves all of its headers, and then does nothing.
+-- Because the peer does not send its blocks, then the ChainSync client will end
+-- up stuck, waiting behind the forecast horizon. We expect that the LoP will
+-- then be disabled and that, therefore, one could wait forever in this state.
+-- We disable the timeouts and check that, indeed, the ChainSync client observes
+-- no exception.
 prop_waitBehindForecastHorizon :: Property
 prop_waitBehindForecastHorizon =
   forAllGenesisTest
