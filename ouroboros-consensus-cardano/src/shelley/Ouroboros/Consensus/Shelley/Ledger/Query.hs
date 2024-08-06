@@ -891,6 +891,8 @@ decodeShelleyQuery = do
         SomeSecond . GetFilteredVoteDelegatees <$> LC.fromEraCBOR @era
       (1, 29) ->             return $ SomeSecond GetAccountState
       (2, 30) -> requireCG $ SomeSecond . GetSPOStakeDistr <$> LC.fromEraCBOR @era
+      (2, 31) -> requireCG $ SomeSecond . GetProposals <$> LC.fromEraCBOR @era
+      (1, 32) -> requireCG $ return $ SomeSecond GetRatifyState
       _       -> failmsg "invalid"
 
 encodeShelleyResult ::
