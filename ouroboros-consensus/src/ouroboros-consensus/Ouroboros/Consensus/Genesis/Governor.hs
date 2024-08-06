@@ -253,7 +253,7 @@ sharedCandidatePrefix curChain candidates =
         -- When there is no intersection, we assume the candidate fragment is
         -- empty and anchored at the immutable tip.
         -- See Note [CSJ truncates the candidate fragments].
-        Nothing -> (peer, AF.takeOldest 0 curChain)
+        Nothing          -> (peer, AF.takeOldest 0 curChain)
         Just (_, suffix) -> (peer, suffix)
 
     immutableTipSuffixes =

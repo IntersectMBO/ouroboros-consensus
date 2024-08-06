@@ -31,8 +31,7 @@ import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.Genesis.Governor (DensityBounds,
                      densityDisconnect, sharedCandidatePrefix)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
-                     (ChainSyncClientException (..),
-                     ChainSyncState (..))
+                     (ChainSyncClientException (..), ChainSyncState (..))
 import           Ouroboros.Consensus.Util.Condense (condense)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -474,10 +473,10 @@ prop_densityDisconnectTriggersChainSel =
         let
           othersCount = Map.size (adversarialPeers $ psSchedule gtSchedule)
           exnCorrect = case exceptionsByComponent ChainSyncClient stateView of
-            [fromException -> Just DensityTooLow] -> True
+            [fromException -> Just DensityTooLow]        -> True
             [fromException -> Just CandidateTooSparse{}] -> True
-            []                 | othersCount == 0 -> True
-            _                                     -> False
+            []                 | othersCount == 0        -> True
+            _                                            -> False
           tipPointCorrect = Just (getTrunkTip gtBlockTree) == svTipBlock
         in counterexample "Unexpected exceptions" exnCorrect
             .&&.

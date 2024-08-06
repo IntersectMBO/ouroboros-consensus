@@ -66,7 +66,8 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
                      (SomeHeaderInFutureCheck)
 import           Ouroboros.Consensus.Node.Genesis (GenesisNodeKernelArgs (..),
-                     LoEAndGDDConfig (..), LoEAndGDDNodeKernelArgs (..), setGetLoEFragment)
+                     LoEAndGDDConfig (..), LoEAndGDDNodeKernelArgs (..),
+                     setGetLoEFragment)
 import           Ouroboros.Consensus.Node.GSM (GsmNodeKernelArgs (..))
 import qualified Ouroboros.Consensus.Node.GSM as GSM
 import           Ouroboros.Consensus.Node.Run

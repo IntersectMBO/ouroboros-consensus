@@ -31,7 +31,8 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.PartialAccessors
-import           Test.Util.TestEnv (adjustQuickCheckMaxSize, adjustQuickCheckTests)
+import           Test.Util.TestEnv (adjustQuickCheckMaxSize,
+                     adjustQuickCheckTests)
 
 tests :: TestTree
 tests =
