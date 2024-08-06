@@ -67,8 +67,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
   , TraceValidationEvent (..)
   ) where
 
-import           Cardano.Prelude (Bifunctor (second))
-import           Control.Monad (void, when)
+import           Control.Monad (join, when)
 import           Control.Tracer
 import           Data.Foldable (for_)
 import           Data.Map.Strict (Map)
@@ -110,8 +109,7 @@ import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.Enclose (Enclosing, Enclosing' (..))
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
-import           Ouroboros.Consensus.Util.STM (WithFingerprint,
-                     blockUntilChanged)
+import           Ouroboros.Consensus.Util.STM (WithFingerprint)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import           Ouroboros.Network.Block (MaxSlotNo (..))
 import           Ouroboros.Network.BlockFetch.ConsensusInterface
@@ -555,36 +553,43 @@ addReprocessLoEBlocks tracer (ChainSelQueue {varChainSelReprocessLoEBlocks}) = d
 -- queue is empty; in that case, reports the starvation (and its end) to the
 -- callback.
 getChainSelMessage
-  :: (HasHeader blk, IOLike m)
+  :: forall m blk. (HasHeader blk, IOLike m)
   => Tracer m (TraceChainSelStarvationEvent blk)
   -> StrictTVar m ChainSelStarvation
   -> ChainSelQueue m blk
   -> m (ChainSelMessage m blk)
 getChainSelMessage starvationTracer starvationVar queue = go
   where
-    go = do
-      (reprocessLoEBlocks, chainSelQueue) <- atomically readBoth
-      case reprocessLoEBlocks of
+    go = join $ atomically $
+      readTVar varChainSelReprocessLoEBlocks >>= \case
         True -> do
-          writeTVarIO varChainSelReprocessLoEBlocks False
-          return ChainSelReprocessLoEBlocks
-        False ->
+          writeTVar varChainSelReprocessLoEBlocks False
+          pure $ pure ChainSelReprocessLoEBlocks
+        False -> do
+          chainSelQueue <- readTVar varChainSelQueue
           case Map.minView chainSelQueue of
             Just (blockToAdd, chainSelQueue') -> do
-              writeTVarIO varChainSelQueue chainSelQueue'
-              terminateStarvationMeasure blockToAdd
-              return $ ChainSelAddBlock blockToAdd
-            Nothing -> do
+              writeTVar varChainSelQueue chainSelQueue'
+              pure $ do
+                terminateStarvationMeasure blockToAdd
+                pure $ ChainSelAddBlock blockToAdd
+            Nothing -> pure $ do
               startStarvationMeasure
-              void $ atomically $ blockUntilChanged (second Map.null) (False, True) readBoth
+              blockUntilMoreWork
               go
+
     ChainSelQueue {varChainSelQueue, varChainSelReprocessLoEBlocks} = queue
-    writeTVarIO v x = atomically $ writeTVar v x
-    swapTVarIO v x = atomically $ swapTVar v x
-    readBoth = (,) <$> readTVar varChainSelReprocessLoEBlocks <*> readTVar varChainSelQueue
+
+    -- Wait until we either need to reprocess blocks due to the LoE, or until a
+    -- new block arrives.
+    blockUntilMoreWork :: m ()
+    blockUntilMoreWork = atomically $ do
+        reprocessLoEBlocks <- readTVar varChainSelReprocessLoEBlocks
+        chainSelQueue      <- readTVar varChainSelQueue
+        check $ reprocessLoEBlocks || not (Map.null chainSelQueue)
 
     startStarvationMeasure = do
-      prevStarvation <- swapTVarIO starvationVar ChainSelStarvationOngoing
+      prevStarvation <- atomically $ swapTVar starvationVar ChainSelStarvationOngoing
       when (prevStarvation /= ChainSelStarvationOngoing) $
         traceWith starvationTracer . ChainSelStarvationStarted =<< getMonotonicTime
 
@@ -593,7 +598,7 @@ getChainSelMessage starvationTracer starvationVar queue = go
       when (prevStarvation == ChainSelStarvationOngoing) $ do
         tf <- getMonotonicTime
         traceWith starvationTracer (ChainSelStarvationEnded tf $ blockRealPoint block)
-        writeTVarIO starvationVar (ChainSelStarvationEndedAt tf)
+        atomically $ writeTVar starvationVar (ChainSelStarvationEndedAt tf)
 
 -- | Flush the 'ChainSelQueue' queue and notify the waiting threads.
 --
@@ -601,7 +606,7 @@ getChainSelMessage starvationTracer starvationVar queue = go
 -- will write after the flush?!
 closeChainSelQueue :: IOLike m => ChainSelQueue m blk -> STM m ()
 closeChainSelQueue ChainSelQueue {varChainSelQueue} = do
-  chainSelQueue <- readTVar varChainSelQueue
+  chainSelQueue <- swapTVar varChainSelQueue Map.empty
   for_ chainSelQueue $ \BlockToAdd {varBlockProcessed} ->
     putTMVar varBlockProcessed $ FailedToAddBlock "Queue flushed"
 
