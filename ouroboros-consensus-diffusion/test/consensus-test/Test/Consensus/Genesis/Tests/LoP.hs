@@ -22,7 +22,8 @@ import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Peers (peers', peersOnlyHonest)
+import           Test.Consensus.PointSchedule.Peers (peers', peersOnlyAdversary,
+                     peersOnlyHonest)
 import           Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules)
 import           Test.Consensus.PointSchedule.SinglePeer (scheduleBlockPoint,
                      scheduleHeaderPoint, scheduleTipPoint)
@@ -82,7 +83,9 @@ prop_wait mustTimeout =
     dullSchedule timeout (_ AF.:> tipBlock) =
       let offset :: DiffTime = if mustTimeout then 1 else -1
        in PointSchedule
-            { psSchedule = peersOnlyHonest [(Time 0, scheduleTipPoint tipBlock)]
+            { psSchedule =
+                (if mustTimeout then peersOnlyAdversary else peersOnlyHonest)
+                [(Time 0, scheduleTipPoint tipBlock)]
             , psStartOrder = []
             , psMinEndTime = Time $ timeout + offset
             }
@@ -174,7 +177,7 @@ prop_serve mustTimeout =
     makeSchedule fragment@(_ AF.:> tipBlock) =
       PointSchedule {
         psSchedule =
-        peersOnlyHonest $
+        (if mustTimeout then peersOnlyAdversary else peersOnlyHonest) $
         (Time 0, scheduleTipPoint tipBlock)
           : ( flip concatMap (zip [1 ..] (AF.toOldestFirst fragment)) $ \(i, block) ->
                 [ (Time (secondsRationalToDiffTime (i * timeBetweenBlocks)), scheduleHeaderPoint block),
