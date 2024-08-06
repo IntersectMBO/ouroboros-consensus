@@ -42,8 +42,8 @@ if(os(windows))
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/ouroboros-network
-  tag: f71d0126ff5d84af44b644460b4e08cf3c256914
-  --sha256: 1a62hqddpnc0j5r7nl54q79nrxyw77dphpsgp68hxij210dkpvca
+  tag: fcb842fcd6f32b43a7cdf18a4301c1659a8bb879
+  --sha256: kjwUrduwwxC+5QRQNJa4stEBzz7kqDJyyHOgGMfDw7s=
   subdir:
     ouroboros-network
     ouroboros-network-api
