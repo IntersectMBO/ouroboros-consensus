@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index.Cache (
   , checkInvariants
   , newEnv
     -- * Background thread
+  , checkMonotonicity
   , expireUnusedChunks
     -- * Operations
   , close
@@ -34,6 +35,8 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index.Cache (
   , readEntries
   ) where
 
+import           Control.Arrow ((&&&))
+import qualified Control.Monad.Class.MonadTimer.SI as SI
 import           Cardano.Prelude (forceElemsToWHNF)
 import           Control.Exception (assert)
 import           Control.Monad (forM, forM_, forever, unless, void, when)
@@ -357,7 +360,7 @@ data CacheEnv m blk h = CacheEnv
   , tracer      :: Tracer m TraceCacheEvent
   , cacheVar    :: StrictMVar m (Cached blk)
   , cacheConfig :: CacheConfig
-  , bgThreadVar :: StrictMVar m (Maybe (Thread m Void))
+  , bgThreadVar :: StrictMVar m [Thread m Void]
     -- ^ Nothing if no thread running
   , chunkInfo   :: ChunkInfo
   }
@@ -386,12 +389,14 @@ newEnv hasFS registry tracer cacheConfig chunkInfo chunk = do
 
     currentChunkInfo <- loadCurrentChunkInfo hasFS chunkInfo chunk
     cacheVar <- newMVarWithInvariants $ emptyCached chunk currentChunkInfo
-    bgThreadVar <- newMVar Nothing
+    bgThreadVar <- newMVar []
     let cacheEnv = CacheEnv {..}
-    mask_ $ modifyMVar_ bgThreadVar $ \_mustBeNothing -> do
-      !bgThread <- forkLinkedThread registry "ImmutableDB.expireUnusedChunks" $
+    mask_ $ modifyMVar_ bgThreadVar $ \xs -> do
+      !x1 <- forkLinkedThread registry "ImmutableDB.expireUnusedChunks" $
         expireUnusedChunks cacheEnv
-      return $ Just bgThread
+      !x2 <- forkLinkedThread registry "ImmutableDB.checkMonotonicity" $
+        checkMonotonicity cacheEnv
+      return (x1:x2:xs)
     return cacheEnv
   where
     CacheConfig { pastChunksToCache } = cacheConfig
@@ -465,6 +470,28 @@ expireUnusedChunks CacheEnv { cacheVar, cacheConfig, tracer } =
             | (chunk, _, _) <- expiredPastChunks
             ])
           nbPastChunks'
+
+-- | Intended to run as a background thread.
+--
+-- Calls 'error' if the current chunk info ever goes backwards.
+checkMonotonicity ::
+     (HasCallStack, StandardHash blk, IOLike m)
+  => CacheEnv m blk h
+  -> m Void
+checkMonotonicity CacheEnv { cacheVar } =
+    readMVar cacheVar >>= loop . currentChunkInfo
+  where
+    loop st = do
+        SI.threadDelay 0.010   -- ten milliseconds
+        st' <- currentChunkInfo <$> readMVar cacheVar
+        let prj = currentChunkNo &&& (length . currentChunkOffsets)
+        when (prj st > prj st') $
+          error $ "non-monotonic!"
+            <> " "
+            <> show st
+            <> " "
+            <> show st'
+        loop st'
 
 {------------------------------------------------------------------------------
   Reading indices
@@ -629,9 +656,9 @@ getChunkInfo cacheEnv chunk = do
 -- This operation is idempotent.
 close :: IOLike m => CacheEnv m blk h -> m ()
 close CacheEnv { bgThreadVar } =
-    mask_ $ modifyMVar_ bgThreadVar $ \mbBgThread -> do
-      mapM_ cancelThread mbBgThread
-      return Nothing
+    mask_ $ modifyMVar_ bgThreadVar $ \xs -> do
+      mapM_ cancelThread xs
+      return []
 
 -- | Restarts the background expiration thread, drops all previously cached
 -- information, loads the given chunk.
@@ -646,13 +673,15 @@ restart ::
 restart cacheEnv chunk = do
     currentChunkInfo <- loadCurrentChunkInfo hasFS chunkInfo chunk
     void $ swapMVar cacheVar $ emptyCached chunk currentChunkInfo
-    mask_ $ modifyMVar_ bgThreadVar $ \mbBgThread ->
-      case mbBgThread of
-        Just _  -> throwIO $ userError "background thread still running"
-        Nothing -> do
-          !bgThread <- forkLinkedThread registry "ImmutableDB.expireUnusedChunks" $
+    mask_ $ modifyMVar_ bgThreadVar $ \xs ->
+      case xs of
+        _:_ -> throwIO $ userError "background thread still running"
+        []  -> do
+          !x1 <- forkLinkedThread registry "ImmutableDB.expireUnusedChunks" $
             expireUnusedChunks cacheEnv
-          return $ Just bgThread
+          !x2 <- forkLinkedThread registry "ImmutableDB.checkMonotonicity" $
+            checkMonotonicity cacheEnv
+          return [x1, x2]
   where
     CacheEnv { hasFS, registry, cacheVar, bgThreadVar, chunkInfo } = cacheEnv
 
