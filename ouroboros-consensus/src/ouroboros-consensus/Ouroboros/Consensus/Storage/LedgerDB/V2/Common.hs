@@ -20,7 +20,8 @@
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2.Common (
     -- * LedgerDBEnv
-    LedgerDBEnv (..)
+    LDBLock (..)
+  , LedgerDBEnv (..)
   , LedgerDBHandle (..)
   , LedgerDBState (..)
   , closeAllForkers
@@ -60,6 +61,8 @@ import           Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Consensus.Util.MonadSTM.RAWLock (RAWLock)
+import qualified Ouroboros.Consensus.Util.MonadSTM.RAWLock as RAWLock
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
@@ -69,6 +72,8 @@ import           System.FS.API
 {-------------------------------------------------------------------------------
   The LedgerDBEnv
 -------------------------------------------------------------------------------}
+
+data LDBLock = LDBLock deriving (Generic, NoThunks)
 
 type LedgerDBEnv :: (Type -> Type) -> LedgerStateKind -> Type -> Type
 data LedgerDBEnv m l blk = LedgerDBEnv {
@@ -99,6 +104,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv {
   , ldbHasFS          :: !(SomeHasFS m)
   , ldbResolveBlock   :: !(ResolveBlock m blk)
   , ldbQueryBatchSize :: !(Maybe Int)
+  , ldbReleaseLock    :: !(RAWLock m LDBLock)
   } deriving (Generic)
 
 deriving instance ( IOLike m
@@ -199,8 +205,10 @@ data ForkerEnv m l blk = ForkerEnv {
   }
   deriving Generic
 
-closeForkerEnv :: IOLike m => ForkerEnv m l blk -> m ()
-closeForkerEnv e = sequence_ =<< readTVarIO (foeResourcesToRelease e)
+closeForkerEnv :: IOLike m => (LedgerDBEnv m l blk, ForkerEnv m l blk) -> m ()
+closeForkerEnv (ldbEnv, frkEnv) =
+  RAWLock.withWriteAccess_ (ldbReleaseLock ldbEnv) $
+    const $ sequence_ =<< readTVarIO (foeResourcesToRelease frkEnv)
 
 deriving instance ( IOLike m
                   , LedgerSupportsProtocol blk
@@ -289,7 +297,7 @@ implForkerClose ::
 implForkerClose (LDBHandle varState) forkerKey = do
     menv <- atomically $ readTVar varState >>= \case
       LedgerDBClosed       -> pure Nothing
-      LedgerDBOpen ldbEnv -> do
+      LedgerDBOpen ldbEnv -> fmap (ldbEnv,) <$>
         stateTVar
             (ldbForkers ldbEnv)
             (Map.updateLookupWithKey (\_ _ -> Nothing) forkerKey)
@@ -399,24 +407,29 @@ implForkerCommit env = do
   Acquiring consistent views
 -------------------------------------------------------------------------------}
 
+-- | This function must hold the 'LDBLock' such that handles are not released
+-- before they are duplicated.
 acquireAtWellKnownPoint ::
      (IOLike m, GetTip l, StandardHash blk)
   => LedgerDBEnv m l blk
   -> Target (Point blk)
+  -> LDBLock
   -> m (StateRef m l)
-acquireAtWellKnownPoint ldbEnv VolatileTip = do
+acquireAtWellKnownPoint ldbEnv VolatileTip _ = do
   l <- readTVarIO (ldbSeq ldbEnv)
   let StateRef st tbs = currentHandle l
   t <- duplicate tbs
   pure (StateRef st t)
-acquireAtWellKnownPoint ldbEnv ImmutableTip = do
+acquireAtWellKnownPoint ldbEnv ImmutableTip _ = do
   l <- readTVarIO (ldbSeq ldbEnv)
   let StateRef st tbs = anchorHandle l
   t <- duplicate tbs
   pure (StateRef st t)
-acquireAtWellKnownPoint _ (SpecificPoint pt) =
+acquireAtWellKnownPoint _ (SpecificPoint pt) _ =
   error $ "calling acquireAtWellKnownPoint for a not well-known point: " <> show pt
 
+-- | This function must hold the 'LDBLock' such that handles are not released
+-- before they are duplicated.
 acquireAtPoint ::
      forall m l blk. (
        HeaderHash l ~ HeaderHash blk
@@ -427,8 +440,9 @@ acquireAtPoint ::
      )
   => LedgerDBEnv m l blk
   -> Point blk
+  -> LDBLock
   -> m (Either GetForkerError (StateRef m l))
-acquireAtPoint ldbEnv pt = do
+acquireAtPoint ldbEnv pt _ = do
       dblog <- readTVarIO (ldbSeq ldbEnv)
       let immTip = getTip $ anchor dblog
       case currentHandle <$> rollback pt dblog of
@@ -437,6 +451,8 @@ acquireAtPoint ldbEnv pt = do
         Just (StateRef st tbs) ->
               Right . StateRef st <$> duplicate tbs
 
+-- | This function must hold the 'LDBLock' such that handles are not released
+-- before they are duplicated.
 acquireAtFromTip ::
      forall m l blk. (
        IOLike m
@@ -444,8 +460,9 @@ acquireAtFromTip ::
      )
   => LedgerDBEnv m l blk
   -> Word64
+  -> LDBLock
   -> m (Either ExceededRollback (StateRef m l))
-acquireAtFromTip ldbEnv n = do
+acquireAtFromTip ldbEnv n _ = do
       dblog <- readTVarIO (ldbSeq ldbEnv)
       case currentHandle <$> rollbackN n dblog of
         Nothing ->
@@ -467,7 +484,7 @@ newForkerAtWellKnownPoint ::
   -> Target (Point blk)
   -> m (Forker m l blk)
 newForkerAtWellKnownPoint h rr pt = getEnv h $ \ldbEnv -> do
-    acquireAtWellKnownPoint ldbEnv pt >>= newForker h ldbEnv rr
+    RAWLock.withReadAccess (ldbReleaseLock ldbEnv) (acquireAtWellKnownPoint ldbEnv pt) >>= newForker h ldbEnv rr
 
 newForkerAtPoint ::
      ( HeaderHash l ~ HeaderHash blk
@@ -482,7 +499,7 @@ newForkerAtPoint ::
   -> Point blk
   -> m (Either GetForkerError (Forker m l blk))
 newForkerAtPoint h rr pt = getEnv h $ \ldbEnv -> do
-    acquireAtPoint ldbEnv pt >>= traverse (newForker h ldbEnv rr)
+    RAWLock.withReadAccess (ldbReleaseLock ldbEnv) (acquireAtPoint ldbEnv pt) >>= traverse (newForker h ldbEnv rr)
 
 newForkerAtFromTip ::
      ( IOLike m
@@ -495,7 +512,7 @@ newForkerAtFromTip ::
   -> Word64
   -> m (Either ExceededRollback (Forker m l blk))
 newForkerAtFromTip h rr n = getEnv h $ \ldbEnv -> do
-    acquireAtFromTip ldbEnv n >>= traverse (newForker h ldbEnv rr)
+    RAWLock.withReadAccess (ldbReleaseLock ldbEnv) (acquireAtFromTip ldbEnv n) >>= traverse (newForker h ldbEnv rr)
 
 -- | Close all open block and header 'Follower's.
 closeAllForkers ::
@@ -503,7 +520,7 @@ closeAllForkers ::
   => LedgerDBEnv m l blk
   -> m ()
 closeAllForkers ldbEnv = do
-    toClose <- atomically $ stateTVar forkersVar (, Map.empty)
+    toClose <- fmap (ldbEnv,) <$> (atomically $ stateTVar forkersVar (, Map.empty))
     mapM_ closeForkerEnv toClose
   where
     forkersVar = ldbForkers ldbEnv

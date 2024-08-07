@@ -6,6 +6,7 @@
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE TupleSections              #-}
 
 -- | A writer-biased Read-Append-Write (RAW) lock
 --
@@ -19,6 +20,7 @@ module Ouroboros.Consensus.Util.MonadSTM.RAWLock (
   , withAppendAccess
   , withReadAccess
   , withWriteAccess
+  , withWriteAccess_
     -- * Exposed internals: non-bracketed acquire & release
   , unsafeAcquireAppendAccess
   , unsafeAcquireReadAccess
@@ -196,6 +198,23 @@ withWriteAccess rawLock k = snd . fst <$>
           rawLock
           (stateToPutBack acquiredSt exitCase))
       k
+
+-- | Access the state stored in the 'RAWLock' as a writer.
+--
+-- Will block when there is another writer or while there are readers and/or
+-- an appender.
+--
+-- The given function only reads from the lock, not modifying its contents.
+withWriteAccess_ ::
+     forall m st a. IOLike m => RAWLock m st -> (st -> m a) -> m a
+withWriteAccess_ rawLock k = snd . fst <$>
+    generalBracket
+      (unsafeAcquireWriteAccess rawLock)
+      (\acquiredSt exitCase ->
+        unsafeReleaseWriteAccess
+          rawLock
+          (stateToPutBack acquiredSt exitCase))
+      (\st -> (st,) <$> k st)
 
 -- | Internal helper
 stateToPutBack ::
