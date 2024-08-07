@@ -108,6 +108,7 @@ data CurrentChunkInfo blk = CurrentChunkInfo
   , currentChunkEntries :: !(StrictSeq (Entry blk))
   }
   deriving (Show, Generic, NoThunks)
+  deriving (Eq)
 
 emptyCurrentChunkInfo :: ChunkNo -> CurrentChunkInfo blk
 emptyCurrentChunkInfo chunk = CurrentChunkInfo
@@ -409,13 +410,17 @@ newEnv hasFS registry tracer cacheConfig chunkInfo chunk = do
 -- Will expire past chunks that haven't been used for 'expireUnusedAfter' from
 -- the cache.
 expireUnusedChunks ::
-     (HasCallStack, IOLike m)
+     (HasCallStack, StandardHash blk, IOLike m)
   => CacheEnv m blk h
   -> m Void
 expireUnusedChunks CacheEnv { cacheVar, cacheConfig, tracer } =
     forever $ do
       now <- getMonotonicTime
-      mbTraceMsg <- modifyMVar cacheVar $ pure . garbageCollect now
+      mbTraceMsg <-
+          modifyCacheVarChecked
+              doesNotChangeCurrentChunkInfo
+              cacheVar
+        $ pure . garbageCollect now
       mapM_ (traceWith tracer) mbTraceMsg
       threadDelay expireUnusedAfter
   where
@@ -579,11 +584,12 @@ getChunkInfo cacheEnv chunk = do
         | chunk == currentChunk -> do
           -- Cache hit for the current chunk
           putMVar cacheVar cached
+
           traceWith tracer $ TraceCurrentChunkHit chunk nbPastChunks
           return $ Just $ Left currentChunkInfo
         | Just (pastChunkInfo, cached') <- lookupPastChunkInfo chunk lastUsed cached -> do
           -- Cache hit for an chunk in the past
-          putMVar cacheVar cached'
+          putCacheVarChecked doesNotChangeCurrentChunkInfo cached cacheVar cached'
           traceWith tracer $ TracePastChunkHit chunk nbPastChunks
           return $ Just $ Right pastChunkInfo
         | otherwise -> do
@@ -602,7 +608,7 @@ getChunkInfo cacheEnv chunk = do
         -- Loading the chunk might have taken some time, so obtain the time
         -- again.
         lastUsed' <- LastUsed <$> getMonotonicTime
-        mbEvicted <- modifyMVar cacheVar $
+        mbEvicted <- modifyCacheVarChecked doesNotChangeCurrentChunkInfo cacheVar $
           pure .
           evictIfNecessary pastChunksToCache .
           addPastChunkInfo chunk lastUsed' pastChunkInfo
@@ -757,14 +763,17 @@ openPrimaryIndex cacheEnv chunk allowExisting = do
     CacheConfig { pastChunksToCache } = cacheConfig
 
 appendOffsets ::
-     (HasCallStack, Foldable f, IOLike m)
+     (HasCallStack, Foldable f, StandardHash blk, IOLike m)
   => CacheEnv m blk h
   -> Handle h
   -> f SecondaryOffset
   -> m ()
 appendOffsets CacheEnv { hasFS, cacheVar } pHnd offsets = do
     Primary.appendOffsets hasFS pHnd offsets
-    modifyMVar_ cacheVar $ pure . addCurrentChunkOffsets
+    modifyCacheVarChecked_
+        (addsOffsets (length offsets))
+        cacheVar
+      $ pure . addCurrentChunkOffsets
   where
     -- Lenses would be nice here
     addCurrentChunkOffsets :: Cached blk -> Cached blk
@@ -850,7 +859,12 @@ readAllEntries cacheEnv secondaryOffset chunk stopCondition
       secondaryOffset `div` Secondary.entrySize (Proxy @blk)
 
 appendEntry ::
-     forall m blk h. (HasCallStack, ConvertRawHash blk, IOLike m)
+     forall m blk h.
+     ( HasCallStack
+     , ConvertRawHash blk
+     , IOLike m
+     , StandardHash blk
+     )
   => CacheEnv m blk h
   -> ChunkNo
   -> Handle h
@@ -858,7 +872,7 @@ appendEntry ::
   -> m Word64
 appendEntry CacheEnv { hasFS, cacheVar } chunk sHnd entry = do
     nbBytes <- Secondary.appendEntry hasFS sHnd (withoutBlockSize entry)
-    modifyMVar_ cacheVar $ pure . addCurrentChunkEntry
+    modifyCacheVarChecked_ addsOneEntry cacheVar $ pure . addCurrentChunkEntry
     return nbBytes
   where
     -- Lenses would be nice here
@@ -875,3 +889,81 @@ appendEntry CacheEnv { hasFS, cacheVar } chunk sHnd entry = do
                 currentChunkEntries currentChunkInfo Seq.|> entry
             }
           }
+
+-----
+
+-- | Old, new and output
+type ModInv blk b = Cached blk -> (Cached blk, b) -> [String]
+
+doesNotChangeCurrentChunkInfo :: StandardHash blk => ModInv blk b
+doesNotChangeCurrentChunkInfo cache (cache', _b) =
+    ["changed currentChunkInfo!: "
+       <> show (currentChunkInfo cache)
+       <> " "
+       <> show (currentChunkInfo cache')
+    | currentChunkInfo cache /= currentChunkInfo cache'
+    ]
+
+addsOffsets :: StandardHash blk => Int -> ModInv blk b
+addsOffsets n cache (cache', _b) =
+    ["did not add N offsets!: "
+       <> show n
+       <> " "
+       <> show (currentChunkInfo cache)
+       <> " "
+       <> show (currentChunkInfo cache')
+    | prj cache + n /= prj cache'
+    ]
+  where
+    prj = length . currentChunkOffsets . currentChunkInfo
+
+addsOneEntry :: StandardHash blk => ModInv blk b
+addsOneEntry cache (cache', _b) =
+    ["did not add exactly one entry!: "
+       <> show (currentChunkInfo cache)
+       <> " "
+       <> show (currentChunkInfo cache')
+    | prj cache + 1 /= prj cache'
+    ]
+  where
+    prj = length . currentChunkEntries . currentChunkInfo
+
+checkModInv ::
+     (HasCallStack, Monad m)
+  => ModInv blk b
+  -> Cached blk
+  -> (Cached blk, b)
+  -> m (Cached blk, b)
+checkModInv inv cache pair =
+    case inv cache pair of
+        [] -> pure pair
+        o  -> error $ unlines o
+
+modifyCacheVarChecked ::
+     (HasCallStack, IOLike m)
+  => ModInv blk b
+  -> StrictMVar m (Cached blk)
+  -> (Cached blk -> m (Cached blk, b))
+  -> m b
+modifyCacheVarChecked inv cacheVar f =
+    modifyMVar cacheVar $ \cached ->
+        f cached >>= checkModInv inv cached
+
+modifyCacheVarChecked_ ::
+     (HasCallStack, IOLike m)
+  => ModInv blk ()
+  -> StrictMVar m (Cached blk)
+  -> (Cached blk -> m (Cached blk))
+  -> m ()
+modifyCacheVarChecked_ inv cacheVar f =
+    modifyCacheVarChecked inv cacheVar $ fmap (\x -> (x, ())) . f
+
+putCacheVarChecked ::
+     (HasCallStack, IOLike m)
+  => ModInv blk ()
+  -> Cached blk
+  -> StrictMVar m (Cached blk)
+  -> Cached blk
+  -> m ()
+putCacheVarChecked inv cached cacheVar cached' =
+    checkModInv inv cached (cached', ()) >>= putMVar cacheVar . fst
