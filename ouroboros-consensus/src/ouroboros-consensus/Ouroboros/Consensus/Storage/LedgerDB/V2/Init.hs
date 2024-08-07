@@ -47,6 +47,7 @@ import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
+import qualified Ouroboros.Consensus.Util.MonadSTM.RAWLock as RAWLock
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.AnchoredSeq (AnchoredSeq)
 import qualified Ouroboros.Network.AnchoredSeq as AS
@@ -85,6 +86,7 @@ mkInitDb args flavArgs getBlock =
           (,) <$> newTVarIO dbPrunedToImmDBTip <*> newTVarIO Set.empty
         forkers <- newTVarIO Map.empty
         nextForkerKey <- newTVarIO (ForkerKey 0)
+        lock <- RAWLock.new LDBLock
         let env = LedgerDBEnv {
                  ldbSeq            = varDB
                , ldbPrevApplied    = prevApplied
@@ -99,6 +101,7 @@ mkInitDb args flavArgs getBlock =
                  -- V2, then QueryBatchSize should be accessible from here and
                  -- we should provide that instead.
                , ldbQueryBatchSize = Nothing
+               , ldbReleaseLock    = lock
                }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h bss

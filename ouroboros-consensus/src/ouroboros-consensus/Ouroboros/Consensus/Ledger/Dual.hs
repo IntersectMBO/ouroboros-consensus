@@ -1,7 +1,7 @@
 {-# LANGUAGE CPP                     #-}
 {-# LANGUAGE ConstraintKinds         #-}
 #if __GLASGOW_HASKELL__ < 900
-{-# LANGUAGE DataKinds                #-}
+{-# LANGUAGE DataKinds               #-}
 #endif
 {-# LANGUAGE DeriveGeneric           #-}
 {-# LANGUAGE DerivingVia             #-}
