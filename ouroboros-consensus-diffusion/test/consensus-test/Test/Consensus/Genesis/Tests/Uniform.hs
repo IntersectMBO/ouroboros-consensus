@@ -212,6 +212,7 @@ prop_leashingAttackStalling =
       , scEnableLoE = True
       , scEnableLoP = True
       , scEnableCSJ = True
+      , scEnableBlockFetchTimeouts = False
       }
 
     shrinkPeerSchedules
@@ -233,16 +234,21 @@ prop_leashingAttackStalling =
     dropRandomPoints :: [(Time, SchedulePoint blk)] -> QC.Gen [(Time, SchedulePoint blk)]
     dropRandomPoints ps = do
       let lenps = length ps
-      dropCount <- QC.choose (0, max 1 $ div lenps 5)
+          dropsMax = max 1 $ lenps - 1
+      dropCount <- QC.choose (div dropsMax 2, dropsMax)
       let dedup = map NE.head . NE.group
       is <- fmap (dedup . sort) $ replicateM dropCount $ QC.choose (0, lenps - 1)
       pure $ dropElemsAt ps is
 
     dropElemsAt :: [a] -> [Int] -> [a]
-    dropElemsAt xs [] = xs
-    dropElemsAt xs (i:is) =
-      let (ys, zs) = splitAt i xs
-       in ys ++ dropElemsAt (drop 1 zs) is
+    dropElemsAt = go 0
+      where
+        go _c [] _ = []
+        go _c xs [] = xs
+        go c (x:xs) iss@(i:is)
+         | c==i = go (c+1) xs is
+         | otherwise = x : go (c+1) xs iss
+
 
 -- | Test that the leashing attacks do not delay the immutable tip after. The
 -- immutable tip needs to be advanced enough when the honest peer has offered

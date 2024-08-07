@@ -132,7 +132,7 @@ genChainsWithExtraHonestPeers genNumExtraHonest genNumForks = do
     gtSlotLength,
     gtChainSyncTimeouts = chainSyncTimeouts gtSlotLength asc,
     gtBlockFetchTimeouts = blockFetchTimeouts,
-    gtLoPBucketParams = LoPBucketParams { lbpCapacity = 100_000, lbpRate = 1_000 },
+    gtLoPBucketParams = LoPBucketParams { lbpCapacity = 50, lbpRate = 10 },
     -- ^ REVIEW: Do we want to generate those randomly? For now, the chosen
     -- values carry no special meaning. Someone needs to think about what values
     -- would make for interesting tests.
