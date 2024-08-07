@@ -23,6 +23,7 @@ import           Data.List (intercalate, sort, uncons)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe, mapMaybe)
+import qualified Data.Set as Set
 import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block.Abstract (WithOrigin (NotOrigin))
@@ -239,10 +240,9 @@ prop_leashingAttackStalling =
       pure $ dropElemsAt ps is
 
     dropElemsAt :: [a] -> [Int] -> [a]
-    dropElemsAt xs [] = xs
-    dropElemsAt xs (i:is) =
-      let (ys, zs) = splitAt i xs
-       in ys ++ dropElemsAt (drop 1 zs) is
+    dropElemsAt xs is' =
+      let is = Set.fromList is'
+      in map fst $ filter (\(_, i) -> not $ i `Set.member` is) (zip xs [0..])
 
 -- | Test that the leashing attacks do not delay the immutable tip after. The
 -- immutable tip needs to be advanced enough when the honest peer has offered
