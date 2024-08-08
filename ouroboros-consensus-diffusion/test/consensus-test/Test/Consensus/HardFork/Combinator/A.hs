@@ -400,8 +400,9 @@ instance LedgerSupportsMempool BlockA where
 
 instance TxLimits BlockA where
   type TxMeasure BlockA = IgnoringOverflow ByteSize32
-  blockCapacityTxMeasure _cfg _st = IgnoringOverflow $ ByteSize32 $ 100 * 1024 -- arbitrary
-  txMeasure _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
+  txWireSize = const . fromIntegral $ (0 :: Int)
+  blockCapacityTxMeasure _cfg _st     = IgnoringOverflow $ ByteSize32 $ 100 * 1024   -- arbitrary
+  txMeasure              _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
 
 newtype instance TxId (GenTx BlockA) = TxIdA Int
   deriving stock (Show, Eq, Ord, Generic)

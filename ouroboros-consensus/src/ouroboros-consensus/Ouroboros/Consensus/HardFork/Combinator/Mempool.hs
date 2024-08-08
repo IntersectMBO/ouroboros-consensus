@@ -309,6 +309,12 @@ instance
 instance CanHardFork xs => TxLimits (HardForkBlock xs) where
   type TxMeasure (HardForkBlock xs) = HardForkTxMeasure xs
 
+  txWireSize =
+        hcollapse
+      . hcmap proxySingle (K . txWireSize)
+      . getOneEraGenTx
+      . getHardForkGenTx
+
   blockCapacityTxMeasure
     HardForkLedgerConfig{..}
     (TickedHardForkLedgerState transition hardForkState) =

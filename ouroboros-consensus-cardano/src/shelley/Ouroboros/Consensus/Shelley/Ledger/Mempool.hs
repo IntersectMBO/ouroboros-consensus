@@ -48,6 +48,7 @@ import Cardano.Ledger.Alonzo.Core
   , ppMaxBBSizeL
   , ppMaxBlockExUnitsL
   , sizeTxF
+  , wireSizeTxF
   , txIdTx
   , txSeqBlockBodyL
   )
@@ -486,18 +487,21 @@ instance MaxTxSizeUTxO DijkstraEra where
 
 instance ShelleyCompatible p ShelleyEra => TxLimits (ShelleyBlock p ShelleyEra) where
   type TxMeasure (ShelleyBlock p ShelleyEra) = IgnoringOverflow ByteSize32
-  txMeasure _cfg st tx = runValidation $ txInBlockSize st tx
-  blockCapacityTxMeasure _cfg = txsMaxBytes
+  txWireSize (ShelleyTx _ tx) = fromIntegral (tx ^. wireSizeTxF)
+  txMeasure              _cfg st tx = runValidation $ txInBlockSize st tx
+  blockCapacityTxMeasure _cfg       = txsMaxBytes
 
 instance ShelleyCompatible p AllegraEra => TxLimits (ShelleyBlock p AllegraEra) where
   type TxMeasure (ShelleyBlock p AllegraEra) = IgnoringOverflow ByteSize32
-  txMeasure _cfg st tx = runValidation $ txInBlockSize st tx
-  blockCapacityTxMeasure _cfg = txsMaxBytes
+  txWireSize (ShelleyTx _ tx) = fromIntegral (tx ^. wireSizeTxF)
+  txMeasure              _cfg st tx = runValidation $ txInBlockSize st tx
+  blockCapacityTxMeasure _cfg       = txsMaxBytes
 
 instance ShelleyCompatible p MaryEra => TxLimits (ShelleyBlock p MaryEra) where
   type TxMeasure (ShelleyBlock p MaryEra) = IgnoringOverflow ByteSize32
-  txMeasure _cfg st tx = runValidation $ txInBlockSize st tx
-  blockCapacityTxMeasure _cfg = txsMaxBytes
+  txWireSize (ShelleyTx _ tx) = fromIntegral (tx ^. wireSizeTxF)
+  txMeasure              _cfg st tx = runValidation $ txInBlockSize st tx
+  blockCapacityTxMeasure _cfg       = txsMaxBytes
 
 -----
 
@@ -626,8 +630,9 @@ instance
   TxLimits (ShelleyBlock p AlonzoEra)
   where
   type TxMeasure (ShelleyBlock p AlonzoEra) = AlonzoMeasure
-  txMeasure _cfg st tx = runValidation $ txMeasureAlonzo st tx
-  blockCapacityTxMeasure _cfg = blockCapacityAlonzoMeasure
+  txWireSize (ShelleyTx _ tx) = fromIntegral (tx ^. wireSizeTxF)
+  txMeasure              _cfg st tx = runValidation $ txMeasureAlonzo st tx
+  blockCapacityTxMeasure _cfg       = blockCapacityAlonzoMeasure
 
 -----
 
@@ -769,6 +774,7 @@ instance
   type TxMeasure (ShelleyBlock p BabbageEra) = AlonzoMeasure
   txMeasure _cfg st tx = runValidation $ txMeasureAlonzo st tx
   blockCapacityTxMeasure _cfg = blockCapacityAlonzoMeasure
+  txWireSize (ShelleyTx _ tx) = fromIntegral (tx ^. wireSizeTxF)
 
 instance
   ShelleyCompatible p ConwayEra =>
@@ -785,3 +791,4 @@ instance
   type TxMeasure (ShelleyBlock p DijkstraEra) = DijkstraMeasure
   txMeasure _cfg st tx = runValidation $ txMeasureDijkstra st tx
   blockCapacityTxMeasure _cfg = blockCapacityDijkstraMeasure
+  txWireSize (ShelleyTx _ tx) = fromIntegral (tx ^. wireSizeTxF)
