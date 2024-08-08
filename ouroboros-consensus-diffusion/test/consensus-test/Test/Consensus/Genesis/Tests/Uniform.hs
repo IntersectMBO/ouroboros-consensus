@@ -237,15 +237,15 @@ prop_leashingAttackStalling =
       advs <- mapM dropRandomPoints $ adversarialPeers sch
       pure $ ps {psSchedule = sch {adversarialPeers = advs}}
 
-    dropRandomPoints :: [(Time, SchedulePoint blk)] -> QC.Gen [(Time, SchedulePoint blk)]
-    dropRandomPoints ps = do
+dropRandomPoints :: [(Time, SchedulePoint blk)] -> QC.Gen [(Time, SchedulePoint blk)]
+dropRandomPoints ps = do
       let lenps = length ps
           dropsMax = max 1 $ lenps - 1
       dropCount <- QC.choose (div dropsMax 2, dropsMax)
       let dedup = map NE.head . NE.group
       is <- fmap (dedup . sort) $ replicateM dropCount $ QC.choose (0, lenps - 1)
       pure $ dropElemsAt ps is
-
+  where
     dropElemsAt :: [a] -> [Int] -> [a]
     dropElemsAt xs is' =
       let is = Set.fromList is'
@@ -286,7 +286,8 @@ prop_leashingAttackTimeLimited =
             (gtLoPBucketParams genesisTest)
             (getHonestPeer honests)
             (Map.elems advs0)
-          advs = fmap (takePointsUntil timeLimit) advs0
+          advs1 = fmap (takePointsUntil timeLimit) advs0
+      advs <- mapM dropRandomPoints advs1
       pure $ PointSchedule
         { psSchedule = Peers honests advs
         , psStartOrder = []
