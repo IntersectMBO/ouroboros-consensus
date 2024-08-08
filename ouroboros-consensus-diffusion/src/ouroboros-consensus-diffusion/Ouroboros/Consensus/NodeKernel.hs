@@ -143,11 +143,20 @@ import Ouroboros.Network.PeerSharing
   , ps_POLICY_PEER_SHARE_STICKY_TIME
   )
 import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (..))
-import Ouroboros.Network.SizeInBytes
-import Ouroboros.Network.TxSubmission.Inbound
-  ( TxSubmissionMempoolWriter
+import Ouroboros.Network.TxSubmission.Inbound.V1
+  ( TxSubmissionInitDelay
+  , TxSubmissionMempoolWriter
   )
-import qualified Ouroboros.Network.TxSubmission.Inbound as Inbound
+import qualified Ouroboros.Network.TxSubmission.Inbound.V1 as Inbound
+import Ouroboros.Network.TxSubmission.Inbound.V2.Registry
+  ( SharedTxStateVar
+  , TxChannelsVar
+  , TxMempoolSem
+  , decisionLogicThreads
+  , newSharedTxStateVar
+  , newTxChannelsVar
+  , newTxMempoolSem
+  )
 import Ouroboros.Network.TxSubmission.Mempool.Reader
   ( TxSubmissionMempoolReader
   )
@@ -190,6 +199,13 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel
   , getDiffusionPipeliningSupport ::
       DiffusionPipeliningSupport
   , getBlockchainTime :: BlockchainTime m
+  , getTxChannelsVar :: TxChannelsVar m (ConnectionId addrNTN) (GenTxId blk) (GenTx blk)
+  -- ^ Communication channels between `TxSubmission` client mini-protocol and
+  -- decision logic.
+  , getSharedTxStateVar :: SharedTxStateVar m (ConnectionId addrNTN) (GenTxId blk) (GenTx blk)
+  -- ^ Shared state of all `TxSubmission` clients.
+  , getTxMempoolSem :: TxMempoolSem m
+  -- ^ A semaphore used by tx-submission for submitting `tx`s to the mempool.
   }
 
 -- | Arguments required when initializing a node
@@ -215,6 +231,8 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs
   , gsmArgs :: GsmNodeKernelArgs m blk
   , getUseBootstrapPeers :: STM m UseBootstrapPeers
   , peerSharingRng :: StdGen
+  , txSubmissionRng :: StdGen
+  , txSubmissionInitDelay :: TxSubmissionInitDelay
   , publicPeerSelectionStateVar ::
       StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
   , genesisArgs :: GenesisNodeKernelArgs m blk
@@ -243,9 +261,11 @@ initNodeKernel
     , btime
     , gsmArgs
     , peerSharingRng
+    , txSubmissionRng
     , publicPeerSelectionStateVar
     , genesisArgs
     , getDiffusionPipeliningSupport
+    , miniProtocolParameters
     } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [MkBlockForging m blk] <- LazySTM.newTMVarIO []
@@ -326,6 +346,10 @@ initNodeKernel
         ps_POLICY_PEER_SHARE_STICKY_TIME
         ps_POLICY_PEER_SHARE_MAX_PEERS
 
+    txChannelsVar <- newTxChannelsVar
+    sharedTxStateVar <- newSharedTxStateVar txSubmissionRng
+    txMempoolSem <- newTxMempoolSem
+
     case gnkaLoEAndGDDArgs genesisArgs of
       LoEAndGDDDisabled -> pure ()
       LoEAndGDDEnabled lgArgs -> do
@@ -333,7 +357,7 @@ initNodeKernel
         setGetLoEFragment
           (readTVar varGsmState)
           (readTVar varLoEFragment)
-          (lgnkaLoEFragmentTVar lgArgs)
+          (lgnkaLoEFragmentTVar varGetLoEFragment)
 
         void $
           forkLinkedWatcher registry "NodeKernel.GDD" $
@@ -361,6 +385,15 @@ initNodeKernel
           fetchClientRegistry
           blockFetchConfiguration
 
+    void $
+      forkLinkedThread registry "NodeKernel.decisionLogicThreads" $
+        decisionLogicThreads
+          (txLogicTracer tracers)
+          (txCountersTracer tracers)
+          (txDecisionPolicy miniProtocolParameters)
+          txChannelsVar
+          sharedTxStateVar
+
     return
       NodeKernel
         { getChainDB = chainDB
@@ -378,6 +411,9 @@ initNodeKernel
             varOutboundConnectionsState
         , getDiffusionPipeliningSupport
         , getBlockchainTime = btime
+        , getTxChannelsVar = txChannelsVar
+        , getSharedTxStateVar = sharedTxStateVar
+        , getTxMempoolSem = txMempoolSem
         }
    where
     blockForgingController ::
@@ -875,9 +911,9 @@ getMempoolReader mempool =
         { mempoolTxIdsAfter = \idx ->
             [ ( txId (txForgetValidated tx)
               , idx'
-              , SizeInBytes $ unByteSize32 $ txMeasureByteSize msr
+              , txWireSize $ txForgetValidated tx
               )
-            | (tx, idx', msr) <- snapshotTxsAfter idx
+            | (tx, idx', _msr) <- snapshotTxsAfter idx
             ]
         , mempoolLookupTx = snapshotLookupTx
         , mempoolHasTx = snapshotHasTx

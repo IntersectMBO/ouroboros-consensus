@@ -5,6 +5,8 @@
 
 module Test.Consensus.Shelley.Serialisation (tests) where
 
+import qualified Cardano.Ledger.MemoBytes.Internal as SL
+import qualified Cardano.Ledger.Shelley.Tx.Internal as SL
 import qualified Codec.CBOR.Write as CBOR
 import qualified Data.ByteString.Lazy as Lazy
 import Data.Constraint
@@ -26,12 +28,22 @@ import Test.Tasty.QuickCheck
 import Test.Util.Corruption
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Serialisation.Roundtrip
+import Test.Util.Serialisation.TxWireSize
+
+getTxBytes :: GenTx Block -> Maybe String
+getTxBytes (ShelleyTx _txId (SL.MkShelleyTx (SL.ShelleyTx _ (SL.MkShelleyTxWits memoBytes) _))) =
+  Just $ show (SL.mbBytes memoBytes)
 
 tests :: TestTree
 tests =
   testGroup
     "Shelley"
     [ roundtrip_all testCodecCfg dictNestedHdr Nothing
+    , testGroup
+        "GenTx.txWireSize"
+        [ testProperty "txSubmission" $ prop_txWireSize_txSubmission testCodecCfg
+        , testProperty "tight" $ prop_txWireSize getTxBytes testCodecCfg
+        ]
     , -- Test for real crypto too
       testProperty "hashSize real crypto" $ prop_hashSize pReal
     , testProperty "ConvertRawHash real crypto" $ roundtrip_ConvertRawHash pReal
