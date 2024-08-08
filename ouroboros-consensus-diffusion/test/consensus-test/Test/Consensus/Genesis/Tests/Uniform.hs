@@ -285,7 +285,7 @@ prop_leashingAttackTimeLimited =
       pure $ PointSchedule
         { psSchedule = Peers honests advs
         , psStartOrder = []
-        , psMinEndTime = timeLimit
+        , psMinEndTime = addGracePeriodDelay (length advs) timeLimit
         }
 
     takePointsUntil limit = takeWhile ((<= limit) . fst)
@@ -361,7 +361,8 @@ prop_loeStalling =
 
     defaultSchedulerConfig {
       scEnableLoE = True,
-      scEnableCSJ = True
+      scEnableCSJ = True,
+      scEnableBlockFetchTimeouts = False
     }
 
     shrinkPeerSchedules
@@ -402,6 +403,7 @@ prop_downtime = forAllGenesisTest
       , scEnableLoP = True
       , scDowntime = Just 11
       , scEnableCSJ = True
+      , scEnableBlockFetchTimeouts = False
       }
 
     shrinkPeerSchedules
@@ -433,7 +435,8 @@ prop_blockFetchLeashingAttack =
     defaultSchedulerConfig
       { scEnableLoE = True,
         scEnableLoP = True,
-        scEnableCSJ = True
+        scEnableCSJ = True,
+        scEnableBlockFetchTimeouts = False
       }
     shrinkPeerSchedules
     theProperty
@@ -455,7 +458,7 @@ prop_blockFetchLeashingAttack =
       -- Important to shuffle the order in which the peers start, otherwise the
       -- honest peer starts first and systematically becomes dynamo.
       psStartOrder <- shuffle $ getPeerIds psSchedule'
-      let maxTime = maximum $
+      let maxTime = addGracePeriodDelay (length adversaries') $ maximum $
             Time 0 : [ pt | s <- honest : adversaries', (pt, _) <- take 1 (reverse s) ]
       pure $ PointSchedule {
           psSchedule = psSchedule',
@@ -469,6 +472,12 @@ prop_blockFetchLeashingAttack =
     isBlockPoint :: SchedulePoint blk -> Bool
     isBlockPoint (ScheduleBlockPoint _) = True
     isBlockPoint _                      = False
+
+-- | Add a delay at the end of tests to account for retention of blocks
+-- by adversarial peers in blockfetch. This delay is 10 seconds per
+-- adversarial peer.
+addGracePeriodDelay :: Int -> Time -> Time
+addGracePeriodDelay adversaryCount = addTime (fromIntegral adversaryCount * 10)
 
 disableBoringTimeouts :: GenesisTest blk schedule -> GenesisTest blk schedule
 disableBoringTimeouts gt =
