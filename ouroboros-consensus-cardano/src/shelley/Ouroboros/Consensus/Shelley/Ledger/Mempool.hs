@@ -39,7 +39,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Mempool (
 import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Ledger.Allegra.Rules as AllegraEra
 import           Cardano.Ledger.Alonzo.Core (Tx, TxSeq, bodyTxL, eraProtVerLow,
-                     fromTxSeq, ppMaxBBSizeL, ppMaxBlockExUnitsL, sizeTxF)
+                     fromTxSeq, ppMaxBBSizeL, ppMaxBlockExUnitsL, sizeTxF, wireSizeTxF)
 import qualified Cardano.Ledger.Alonzo.Rules as AlonzoEra
 import           Cardano.Ledger.Alonzo.Scripts (ExUnits, ExUnits',
                      pointWiseExUnits, unWrapExUnits)
@@ -145,6 +145,8 @@ instance (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era))
   applyTx = applyShelleyTx
 
   reapplyTx = reapplyShelleyTx
+
+  wireTxSize (ShelleyTx _ tx) = fromIntegral $ tx ^. wireSizeTxF
 
   txForgetValidated (ShelleyValidatedTx txid vtx) = ShelleyTx txid (SL.extractTx vtx)
 

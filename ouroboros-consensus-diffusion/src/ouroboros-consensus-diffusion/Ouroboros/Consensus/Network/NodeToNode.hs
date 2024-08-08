@@ -748,6 +748,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
                    (getSharedTxStateVar kernel)
                    (mapTxSubmissionMempoolReader txForgetValidated
                    $ getMempoolReader (getMempool kernel))
+                   wireTxSize
                    them $ \api ->
                      runServer (newTxSubmissionServer api)
 

@@ -609,6 +609,8 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
                                            tickedDualLedgerStateBridge
         }
 
+  wireTxSize    = wireTxSize . dualGenTxMain
+
   txForgetValidated vtx =
       DualGenTx {
           dualGenTxMain   = txForgetValidated vDualGenTxMain

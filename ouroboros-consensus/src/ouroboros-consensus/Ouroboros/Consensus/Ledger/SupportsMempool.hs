@@ -37,6 +37,7 @@ import           NoThunks.Class
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ticked
+import           Ouroboros.Network.SizeInBytes as Network
 
 -- | Generalized transaction
 --
@@ -110,6 +111,10 @@ class ( UpdateLedger blk
             -> Validated (GenTx blk)
             -> TickedLedgerState blk
             -> Except (ApplyTxErr blk) (TickedLedgerState blk)
+
+  -- | Return the size of a serialised transaction as it is transmitted
+  -- across the network.
+  wireTxSize :: GenTx blk -> Network.SizeInBytes
 
   -- | Discard the evidence that transaction has been previously validated
   txForgetValidated :: Validated (GenTx blk) -> GenTx blk
