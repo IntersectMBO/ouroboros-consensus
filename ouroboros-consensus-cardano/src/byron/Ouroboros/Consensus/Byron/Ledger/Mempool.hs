@@ -74,6 +74,7 @@ import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Mempool
 import           Ouroboros.Consensus.Util (ShowProxy (..))
 import           Ouroboros.Consensus.Util.Condense
+import           Ouroboros.Network.SizeInBytes as Network
 
 {-------------------------------------------------------------------------------
   TxLimits
@@ -140,6 +141,8 @@ instance LedgerSupportsMempool ByronBlock where
     . Strict.length
     . CC.mempoolPayloadRecoverBytes
     . toMempoolPayload
+
+  wireTxSize = Network.SizeInBytes . txInBlockSize
 
   txForgetValidated = forgetValidatedByronTx
 

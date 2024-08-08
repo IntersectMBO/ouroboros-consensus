@@ -244,6 +244,7 @@ mkHandlers
             (contramap (TraceLabelPeer peer) (Node.txOutboundTracer tracers))
             (txSubmissionMaxUnacked miniProtocolParameters)
             (mapTxSubmissionMempoolReader txForgetValidated $ getMempoolReader getMempool)
+            wireTxSize
             version
             controlMessageSTM
       , hTxSubmissionServer = \version peer ->
@@ -252,6 +253,7 @@ mkHandlers
             (txSubmissionMaxUnacked miniProtocolParameters)
             (mapTxSubmissionMempoolReader txForgetValidated $ getMempoolReader getMempool)
             (getMempoolWriter getMempool)
+            wireTxSize
             version
       , hKeepAliveClient = \_version -> keepAliveClient (Node.keepAliveClientTracer tracers) keepAliveRng
       , hKeepAliveServer = \_version _peer -> keepAliveServer
