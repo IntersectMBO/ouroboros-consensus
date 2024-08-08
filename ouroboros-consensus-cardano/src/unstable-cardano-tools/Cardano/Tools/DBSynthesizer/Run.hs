@@ -183,4 +183,6 @@ preOpenChainDB mode db =
             OpenCreateForce | isChainDB ->
                 removePathForcibly db >> create
             _ ->
-                fail $ loc ++ " is non-empty and does not look like a ChainDB. Aborting."
+                fail $ loc ++ " is non-empty and does not look like a ChainDB"
+                    <> " (i.e. its entries are not exactly 'immutable'/'ledger'/'volatile')."
+                    <> " Aborting."
