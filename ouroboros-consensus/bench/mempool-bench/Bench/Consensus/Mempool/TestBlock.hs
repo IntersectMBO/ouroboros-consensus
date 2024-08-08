@@ -223,6 +223,7 @@ instance Ledger.LedgerSupportsMempool TestBlock where
 instance Ledger.TxLimits TestBlock where
   type TxMeasure TestBlock = Ledger.IgnoringOverflow Ledger.ByteSize32
 
+  txWireSize = fromIntegral . Ledger.unByteSize32 . txSize
   -- We tweaked this in such a way that we test the case in which we exceed the
   -- maximum mempool capacity. The value used here depends on 'txInBlockSize'.
   blockCapacityTxMeasure _cfg _st =
