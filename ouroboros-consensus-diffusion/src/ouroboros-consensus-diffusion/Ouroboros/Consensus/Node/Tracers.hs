@@ -56,12 +56,11 @@ import Ouroboros.Network.BlockFetch.Decision.Trace
   ( TraceDecisionEvent
   )
 import Ouroboros.Network.KeepAlive (TraceKeepAliveClient)
-import Ouroboros.Network.TxSubmission.Inbound
-  ( TraceTxSubmissionInbound
+import Ouroboros.Network.TxSubmission.Inbound.V2.Types
+  ( TraceTxLogic
+  , TxSubmissionCounters
   )
 import Ouroboros.Network.TxSubmission.Outbound
-  ( TraceTxSubmissionOutbound
-  )
 
 {-------------------------------------------------------------------------------
   All tracers of a node bundled together
@@ -79,6 +78,8 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , txOutboundTracer ::
       f (TraceLabelPeer remotePeer (TraceTxSubmissionOutbound (GenTxId blk) (GenTx blk)))
   , localTxSubmissionServerTracer :: f (TraceLocalTxSubmissionServerEvent blk)
+  , txLogicTracer :: f (TraceTxLogic remotePeer (GenTxId blk) (GenTx blk))
+  , txCountersTracer :: f TxSubmissionCounters
   , mempoolTracer :: f (TraceEventMempool blk)
   , forgeTracer :: f (TraceLabelCreds (TraceForgeEvent blk))
   , blockchainTimeTracer :: f (TraceBlockchainTimeEvent UTCTime)
@@ -109,6 +110,8 @@ instance
       , txInboundTracer = f txInboundTracer
       , txOutboundTracer = f txOutboundTracer
       , localTxSubmissionServerTracer = f localTxSubmissionServerTracer
+      , txLogicTracer = f txLogicTracer
+      , txCountersTracer = f txCountersTracer
       , mempoolTracer = f mempoolTracer
       , forgeTracer = f forgeTracer
       , blockchainTimeTracer = f blockchainTimeTracer
@@ -157,7 +160,8 @@ nullTracers =
     , gddTracer = nullTracer
     , csjTracer = nullTracer
     , dbfTracer = nullTracer
-    , kesAgentTracer = nullTracer
+    , txLogicTracer = nullTracer
+    , txCountersTracer = nullTracer
     }
 
 showTracers ::
@@ -186,6 +190,8 @@ showTracers tr =
     , txInboundTracer = showTracing tr
     , txOutboundTracer = showTracing tr
     , localTxSubmissionServerTracer = showTracing tr
+    , txLogicTracer = showTracing tr
+    , txCountersTracer = showTracing tr
     , mempoolTracer = showTracing tr
     , forgeTracer = showTracing tr
     , blockchainTimeTracer = showTracing tr
