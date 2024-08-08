@@ -60,6 +60,7 @@ instance TxLimits ByronSpecBlock where
   type TxMeasure ByronSpecBlock = IgnoringOverflow ByteSize32
 
   -- Dummy values, as these are not used in practice.
+  txWireSize = const . fromIntegral $ (0 :: Int)
   blockCapacityTxMeasure _cfg _st = IgnoringOverflow $ ByteSize32 1
 
   txMeasure _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0

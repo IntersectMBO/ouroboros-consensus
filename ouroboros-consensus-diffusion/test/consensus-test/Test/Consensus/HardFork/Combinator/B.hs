@@ -305,6 +305,7 @@ instance LedgerSupportsMempool BlockB where
 
 instance TxLimits BlockB where
   type TxMeasure BlockB = IgnoringOverflow ByteSize32
+  txWireSize = const . fromIntegral $ (0 :: Int)
   blockCapacityTxMeasure _cfg _st     = IgnoringOverflow $ ByteSize32 $ 100 * 1024   -- arbitrary
   txMeasure              _cfg _st _tx = pure $ IgnoringOverflow $ ByteSize32 0
 
