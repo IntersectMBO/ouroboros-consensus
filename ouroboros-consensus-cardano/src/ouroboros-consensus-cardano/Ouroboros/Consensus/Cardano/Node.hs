@@ -45,6 +45,7 @@ module Ouroboros.Consensus.Cardano.Node (
   , pattern CardanoNodeToClientVersion10
   , pattern CardanoNodeToClientVersion11
   , pattern CardanoNodeToClientVersion12
+  , pattern CardanoNodeToClientVersion13
   , pattern CardanoNodeToClientVersion2
   , pattern CardanoNodeToClientVersion3
   , pattern CardanoNodeToClientVersion4
