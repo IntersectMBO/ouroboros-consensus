@@ -127,6 +127,11 @@ instance LedgerSupportsMempool ByronBlock where
 instance TxLimits ByronBlock where
   type TxMeasure ByronBlock = IgnoringOverflow ByteSize32
 
+  txWireSize =   fromIntegral
+               . Strict.length
+               . CC.mempoolPayloadRecoverBytes
+               . toMempoolPayload
+
   blockCapacityTxMeasure _cfg st =
       IgnoringOverflow
     $ ByteSize32
