@@ -419,6 +419,11 @@ prop_downtime = forAllGenesisTest
       , pgpDowntime = DowntimeWithSecurityParam (gtSecurityParam gt)
       }
 
+-- | Test that the block fetch leashing attack does not delay the immutable tip.
+-- This leashing attack consists in having adversarial peers that behave
+-- honestly when it comes to ChainSync but refuse to send blocks. A proper node
+-- under test should detect those behaviours as adversarial and find a way to
+-- make progress.
 prop_blockFetchLeashingAttack :: Property
 prop_blockFetchLeashingAttack =
   forAllGenesisTest
@@ -433,6 +438,9 @@ prop_blockFetchLeashingAttack =
   where
     genBlockFetchLeashingSchedule :: GenesisTest TestBlock () -> QC.Gen (PointSchedule TestBlock)
     genBlockFetchLeashingSchedule genesisTest = do
+      -- A schedule with several honest peers and no adversaries. We will then
+      -- keep one of those as honest and remove the block points from the
+      -- others, hence producing one honest peer and several adversaries.
       PointSchedule {psSchedule} <-
         stToGen $
           uniformPoints
