@@ -78,6 +78,11 @@ tests =
     testProperty "block fetch leashing attack" prop_blockFetchLeashingAttack
     ]
 
+-- | The conjunction of
+--
+--  * no honest peer has been disconnected,
+--  * the immutable tip is on the best chain, and
+--  * the immutable tip is no older than s + d + 1 slots
 theProperty ::
   GenesisTestFull TestBlock ->
   StateView TestBlock ->
@@ -92,8 +97,8 @@ theProperty genesisTest stateView@StateView{svSelectedChain} =
   -- to the governor that the density is too low.
   longerThanGenesisWindow ==>
   conjoin [
-    counterexample "An honest peer was disconnected" (not $ any isHonestPeerId disconnected),
-    counterexample ("The immutable tip is not honest: " ++ show immutableTip) $
+    counterexample "Honest peers shouldn't be disconnected" (not $ any isHonestPeerId disconnected),
+    counterexample ("The immutable tip should be honest: " ++ show immutableTip) $
     property (isHonest immutableTipHash),
     immutableTipIsRecent
   ]
@@ -101,7 +106,7 @@ theProperty genesisTest stateView@StateView{svSelectedChain} =
     advCount = Map.size (adversarialPeers (psSchedule $ gtSchedule genesisTest))
 
     immutableTipIsRecent =
-      counterexample ("Age of the immutable tip: " ++ show immutableTipAge) $
+      counterexample ("The immutable tip is too old: " ++ show immutableTipAge) $
       immutableTipAge `le` s + fromIntegral d + 1
 
     SlotNo immutableTipAge = case (honestTipSlot, immutableTipSlot) of
@@ -263,8 +268,8 @@ prop_leashingAttackTimeLimited =
       { scTrace = False
       , scEnableLoE = True
       , scEnableLoP = True
-      , scEnableBlockFetchTimeouts = False
       , scEnableCSJ = True
+      , scEnableBlockFetchTimeouts = False
       }
 
     shrinkPeerSchedules
@@ -344,11 +349,8 @@ headCallStack = \case
   x:_ -> x
   _   -> error "headCallStack: empty list"
 
--- | Test that enabling the LoE using the updater that sets the LoE fragment to
--- the shared prefix (as used by the GDDG) causes the selection to remain at
+-- | Test that enabling the LoE causes the selection to remain at
 -- the first fork intersection (keeping the immutable tip honest).
---
--- This is pretty slow since it relies on timeouts to terminate the test.
 prop_loeStalling :: Property
 prop_loeStalling =
   forAllGenesisTest
