@@ -1,0 +1,96 @@
+\newcommand{\Val}{\fun{Val}}
+\newcommand{\POV}[1]{\ensuremath{\mathsf{PresOfVal}(\mathsf{#1})}}
+\newcommand{\DBE}[2]{\ensuremath{\mathsf{DBE}({#1},~{#2})}}
+\newcommand{\DGO}[2]{\ensuremath{\mathsf{DGO}({#1},~{#2})}}
+\newcommand{\transtar}[2]{\xlongrightarrow[\textsc{#1}]{#2}\negthickspace^{*}}
+\newcommand{\StabilityWindow}{\ensuremath{\mathsf{StabilityWindow}}}
+
+\section{Properties}
+\label{sec:properties}
+
+This section describes the properties that the consensus layer should have.
+The goal is to include these properties in the executable specification
+to enable e.g. property-based testing or formal verification.
+
+\subsection{Header-Only Validation}
+\label{sec:header-only-validation}
+In any given chain state, the consensus layer needs to be able to validate the
+block headers without having to download the block bodies.
+Property~\ref{prop:header-only-validation} states that if an extension of a
+chain that spans less than $\StabilityWindow$ slots is valid, then validating the
+headers of that extension is also valid. This property is useful for its
+converse: if the header validation check for a sequence of headers does not
+pass, then we know that the block validation that corresponds to those headers
+will not pass either. In these properties, we refer to the $\mathsf{CHAIN}$
+transition system as defined in \cite{shelley_chain_spec}.
+
+\begin{property}[Header only validation]\label{prop:header-only-validation}
+  For all states $s$ with slot number $t$\footnote{i.e. the
+    component $\var{s_\ell}$ of the last applied block of $s$ equals $t$},
+    and chain extensions $E$ with corresponding headers $H$ such that:
+  %
+  $$
+  0 \leq t_E - t  \leq \StabilityWindow
+  $$
+  %
+  we have:
+  %
+  $$
+  \vdash s \transtar{chain}{E} s'
+  \implies
+  \var{nes} \vdash \tilde{s} \transtar{\hyperref[fig:ts-rules:chainhead]{chainhead}}{H} \tilde{s}'
+  $$
+  where $s=(\var{nes},~\tilde{s})$,
+  $t_E$ is the maximum slot number appearing in the blocks contained in
+  $E$, and $H$ is obtained from $E$ by extracting the header from each block in $E$.
+\end{property}
+
+\begin{property}[Body only validation]\label{prop:body-only-validation}
+  For all states $s$ with slot number $t$, and chain
+  extensions $E = [b_0, \ldots, b_n]$ with corresponding headers $H = [h_0, \ldots, h_n]$ such that:
+  $$
+  0 \leq t_E - t  \leq \StabilityWindow
+  $$
+  we have that for all $i \in [1, n]$:
+  $$
+  \var{nes} \vdash \tilde{s} \transtar{\hyperref[fig:ts-rules:chainhead]{chainhead}}{H} s_{h}
+  \wedge
+  \vdash (\var{nes},~\tilde{s}) \transtar{chain}{[b_0, \ldots, b_{i-1}]} s_{i-1}
+  \implies
+  \var{nes'} \vdash \tilde{s}_{i-1}\trans{\hyperref[fig:ts-rules:chainhead]{chainhead}}{h_i} s'_{h}
+  $$
+  where $s=(\var{nes},~\tilde{s})$, $s_{i-1}=(\var{nes'},~\tilde{s}_{i-1})$,
+  $t_E$ is the maximum slot number appearing in the blocks contained in $E$.
+\end{property}
+
+Property~\ref{prop:body-only-validation} states that if we validate a sequence
+of headers, we can validate their bodies independently and be sure that the
+blocks will pass the chain validation rule. To see this, given an environment
+$e$ and initial state $s$, assume that a sequence of headers
+$H = [h_0, \ldots, h_n]$ corresponding to blocks in $E = [b_0, \ldots, b_n]$ is
+valid according to the $\mathsf{CHAINHEAD}$ transition system:
+%
+$$
+\var{nes} \vdash \tilde{s} \transtar{\hyperref[fig:ts-rules:chainhead]{chainhead}}{H} \tilde{s}'
+$$
+%
+Assume the bodies of $E$ are valid
+according to the $\mathsf{BBODY}$ rules (defined in \cite{shelley_chain_spec}), but $E$ is not valid according to
+the $\mathsf{CHAIN}$ rule. Assume that there is a $b_j \in E$ such that it is
+\textbf{the first block} such that does not pass the $\mathsf{CHAIN}$
+validation. Then:
+%
+$$
+\vdash (\var{nes},~\tilde{s}) \transtar{chain}{[b_0, \ldots, b_{j-1}]} s_j
+$$
+But by Property~\ref{prop:body-only-validation} we know that
+%
+$$
+\var{nes}_j \vdash \tilde{s}_j \trans{\hyperref[fig:ts-rules:chainhead]{chainhead}}{h_j} \tilde{s}_{j+1}
+$$
+which means that block $b_j$ has valid headers, and this in turn means that the
+validation of $b_j$ according to the chain rules must have failed because it
+contained an invalid block body. But this contradicts our assumption that the
+block bodies were valid.
+
+\clearpage
