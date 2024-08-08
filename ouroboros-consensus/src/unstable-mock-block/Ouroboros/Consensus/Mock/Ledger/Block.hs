@@ -438,6 +438,7 @@ instance MockProtocolSpecific c ext
 instance TxLimits (SimpleBlock c ext) where
   type TxMeasure (SimpleBlock c ext) = IgnoringOverflow ByteSize32
 
+  txWireSize = fromIntegral . unByteSize32 . txSize
   -- Large value so that the Mempool tests never run out of capacity when they
   -- don't override it.
   --
