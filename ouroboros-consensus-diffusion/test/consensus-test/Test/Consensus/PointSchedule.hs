@@ -55,6 +55,7 @@ import           Control.Monad.ST (ST)
 import           Data.Bifunctor (first)
 import           Data.Functor (($>))
 import           Data.List (mapAccumL, partition, scanl')
+import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, fromMaybe, mapMaybe)
 import           Data.Time (DiffTime)
 import           Data.Word (Word64)
@@ -599,10 +600,12 @@ ensureScheduleDuration gt PointSchedule{psSchedule, psStartOrder, psMinEndTime} 
     endingDelay =
      let cst = gtChainSyncTimeouts gt
          bft = gtBlockFetchTimeouts gt
-      in 1 + fromIntegral peerCount * maximum (0 : catMaybes
+         bfGracePeriodDelay = fromIntegral adversaryCount * 10
+      in 1 + bfGracePeriodDelay + fromIntegral peerCount * maximum (0 : catMaybes
            [ canAwaitTimeout cst
            , intersectTimeout cst
            , busyTimeout bft
            , streamingTimeout bft
            ])
     peerCount = length (peersList psSchedule)
+    adversaryCount = Map.size (adversarialPeers psSchedule)
