@@ -37,6 +37,7 @@ import           NoThunks.Class
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ticked
+import           Ouroboros.Network.SizeInBytes as Network
 
 -- | Generalized transaction
 --
@@ -178,6 +179,10 @@ class ( Measure     (TxMeasure blk)
       ) => TxLimits blk where
   -- | The (possibly multi-dimensional) size of a transaction in a block.
   type TxMeasure blk
+
+  -- | The size of the transaction from the perspective of diffusion layer
+  --
+  txWireSize :: GenTx blk -> Network.SizeInBytes
 
   -- | The various sizes (bytes, Plutus script ExUnits, etc) of a tx /when it's
   -- in a block/

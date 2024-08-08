@@ -73,6 +73,7 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Util (ShowProxy (..))
 import           Ouroboros.Consensus.Util.Condense
+import           Ouroboros.Network.SizeInBytes as Network
 
 {-------------------------------------------------------------------------------
   Transactions
@@ -126,6 +127,11 @@ instance LedgerSupportsMempool ByronBlock where
 
 instance TxLimits ByronBlock where
   type TxMeasure ByronBlock = IgnoringOverflow ByteSize32
+
+  txWireSize =   fromIntegral
+               . Strict.length
+               . CC.mempoolPayloadRecoverBytes
+               . toMempoolPayload
 
   blockCapacityTxMeasure _cfg st =
       IgnoringOverflow
