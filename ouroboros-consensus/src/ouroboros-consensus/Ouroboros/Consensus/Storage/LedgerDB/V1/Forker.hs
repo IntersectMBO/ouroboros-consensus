@@ -21,16 +21,15 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Forker (
 import           Control.Tracer
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
-import           Data.Semigroup
 import qualified Data.Set as Set
 import           Data.Word
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
-import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
-import           Ouroboros.Consensus.Ledger.Tables.DiffSeq (numDeletes,
-                     numInserts)
 import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
+import           Ouroboros.Consensus.Ledger.Tables.UtxoDiff (numDeletes,
+                     numInserts)
+import qualified Ouroboros.Consensus.Ledger.Tables.UtxoDiff as Diff
 import           Ouroboros.Consensus.Storage.LedgerDB.API as API
 import           Ouroboros.Consensus.Storage.LedgerDB.API.Config
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Common
@@ -325,7 +324,7 @@ implForkerRangeReadTables env rq0 = do
          (Ord k, Eq v)
       => SeqDiffMK k v
       -> DiffMK k v
-    prj (SeqDiffMK sq) = DiffMK (Diff.fromAntiDiff $ DS.cumulativeDiff sq)
+    prj (SeqDiffMK sq) = DiffMK (DS.cumulativeDiff sq)
 
     -- Remove all diff elements that are <= to the greatest given key
     doDropLTE ::
@@ -341,12 +340,7 @@ implForkerRangeReadTables env rq0 = do
 
     -- NOTE: this is counting the deletions wrt disk.
     numDeletesDiffMK :: DiffMK k v -> Int
-    numDeletesDiffMK (DiffMK d) =
-      getSum $ Diff.foldMapDelta (Sum . oneIfDel) d
-      where
-        oneIfDel x = case x of
-          Diff.Delete   -> 1
-          Diff.Insert _ -> 0
+    numDeletesDiffMK (DiffMK d) = numDeletes d
 
     -- INVARIANT: nrequested > 0
     --
@@ -380,7 +374,7 @@ implForkerRangeReadTables env rq0 = do
       (DiffMK ds)
       (ValuesMK vs) =
         let includingAllKeys        =
-              Diff.applyDiff vs ds
+              Diff.applyUtxoDiff vs ds
             definitelyNoMoreToFetch = Map.size vs < nrequested
         in
         ValuesMK
@@ -391,7 +385,7 @@ implForkerRangeReadTables env rq0 = do
               else error $ "Size of values " <> show (Map.size vs) <> ", nrequested " <> show nrequested
           Just ((k, _v), vs') ->
             if definitelyNoMoreToFetch then includingAllKeys else
-            Diff.applyDiff
+            Diff.applyUtxoDiff
               vs'
                (Diff.filterOnlyKey (< k) ds)
 
@@ -419,13 +413,11 @@ implForkerReadStatistics env = do
       let
         diffs = adcDiffs dblog
 
-        nInserts = getSum
-                $ ltcollapse
-                $ ltmap (K2 . numInserts . getSeqDiffMK)
+        nInserts = ltcollapse
+                $ ltmap (K2 . numInserts . DS.cumulativeDiff . getSeqDiffMK)
                   diffs
-        nDeletes = getSum
-                $ ltcollapse
-                $ ltmap (K2 . numDeletes . getSeqDiffMK)
+        nDeletes = ltcollapse
+                $ ltmap (K2 . numDeletes . DS.cumulativeDiff . getSeqDiffMK)
                   diffs
       pure . Just $ API.Statistics {
           ledgerTableSize = n + nInserts - nDeletes

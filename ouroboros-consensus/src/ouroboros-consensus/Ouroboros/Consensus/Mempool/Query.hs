@@ -1,5 +1,4 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE NamedFieldPuns   #-}
 
 -- | Queries to the mempool
 module Ouroboros.Consensus.Mempool.Query (

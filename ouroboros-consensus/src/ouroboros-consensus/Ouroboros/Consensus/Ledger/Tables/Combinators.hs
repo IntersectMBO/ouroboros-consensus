@@ -37,6 +37,7 @@ module Ouroboros.Consensus.Ledger.Tables.Combinators (
   , ltmap
     -- * Traversable
   , lttraverse
+  , lttraverse2
     -- ** Utility functions
   , ltsequence
     -- * Applicative
@@ -102,6 +103,15 @@ lttraverse ::
   -> LedgerTables l mk1
   -> f (LedgerTables l mk2)
 lttraverse f (LedgerTables x) = LedgerTables <$> f x
+
+-- | Like 'btraverse', but for ledger tables.
+lttraverse2 ::
+     (Applicative f, LedgerTableConstraints l)
+  => (forall k v. (Ord k, Eq v) => mk1 k v -> mk2 k v -> f (mk3 k v))
+  -> LedgerTables l mk1
+  -> LedgerTables l mk2
+  -> f (LedgerTables l mk3)
+lttraverse2 f (LedgerTables x) (LedgerTables y) = LedgerTables <$> f x y
 
 --
 -- Utility functions
