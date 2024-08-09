@@ -43,15 +43,19 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
     -- * Blocks to add
   , BlockToAdd (..)
   , ChainSelMessage (..)
-  , ChainSelQueue
+  , ChainSelQueue -- opaque
   , addBlockToAdd
   , addReprocessLoEBlocks
   , closeChainSelQueue
+  , deleteBlockToAdd
+  , getBlocksToAddMaxSlotNo
   , getChainSelMessage
+  , memberBlocksToAdd
   , newChainSelQueue
     -- * Trace types
   , SelectionChangedInfo (..)
   , TraceAddBlockEvent (..)
+  , TraceChainSelStarvationEvent (..)
   , TraceCopyToImmutableDBEvent (..)
   , TraceEvent (..)
   , TraceFollowerEvent (..)
@@ -63,10 +67,11 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
   , TraceValidationEvent (..)
   ) where
 
+import           Control.Monad (join, when)
 import           Control.Tracer
-import           Data.Foldable (traverse_)
+import           Data.Foldable (for_)
 import           Data.Map.Strict (Map)
-import           Data.Maybe (mapMaybe)
+import qualified Data.Map.Strict as Map
 import           Data.Maybe.Strict (StrictMaybe (..))
 import           Data.Set (Set)
 import           Data.Typeable
@@ -106,7 +111,9 @@ import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (WithFingerprint)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
-import           Ouroboros.Network.Block (MaxSlotNo)
+import           Ouroboros.Network.Block (MaxSlotNo (..))
+import           Ouroboros.Network.BlockFetch.ConsensusInterface
+                     (ChainSelStarvation (..))
 
 -- | All the serialisation related constraints needed by the ChainDB.
 class ( ImmutableDbSerialiseConstraints blk
@@ -250,6 +257,17 @@ data ChainDbEnv m blk = CDB
   , cdbCheckInFuture   :: !(CheckInFuture m blk)
   , cdbChainSelQueue   :: !(ChainSelQueue m blk)
     -- ^ Queue of blocks that still have to be added.
+    --
+    -- NOTE: the set of blocks in this queue are /not/ disjoint from the set of
+    -- blocks in the VolatileDB. When processing the next block in the queue, we
+    -- do not remove the block from the queue /until/ it has been added to the
+    -- VolatileDB and processed by chain selection. This means the block
+    -- currently being added will be both in the queue and the VolatileDB for a
+    -- short while.
+    --
+    -- If we would remove the block from the queue before adding it to the
+    -- VolatileDB, then it would be in /neither/ for a short time, and
+    -- 'getIsFetched' would incorrectly return 'False'.
   , cdbFutureBlocks    :: !(StrictTVar m (FutureBlocks m blk))
     -- ^ Blocks from the future
     --
@@ -275,6 +293,9 @@ data ChainDbEnv m blk = CDB
     -- switch back to a chain containing it. The fragment is usually anchored at
     -- a recent immutable tip; if it does not, it will conservatively be treated
     -- as the empty fragment anchored in the current immutable tip.
+  , cdbChainSelStarvation :: !(StrictTVar m ChainSelStarvation)
+    -- ^ Information on the last starvation of ChainSel, whether ongoing or
+    -- ended recently.
   } deriving (Generic)
 
 -- | We include @blk@ in 'showTypeOf' because it helps resolving type families
@@ -442,8 +463,21 @@ type FutureBlocks m blk = Map (HeaderHash blk) (Header blk, InvalidBlockPunishme
 -- | FIFO queue used to add blocks asynchronously to the ChainDB. Blocks are
 -- read from this queue by a background thread, which processes the blocks
 -- synchronously.
-newtype ChainSelQueue m blk = ChainSelQueue (TBQueue m (ChainSelMessage m blk))
-  deriving NoThunks via OnlyCheckWhnfNamed "ChainSelQueue" (ChainSelQueue m blk)
+data ChainSelQueue m blk = ChainSelQueue {
+    -- TODO use a better data structure, e.g., a heap from the @heaps@
+    -- package. Wish list:
+    -- + O(1) pop min value
+    -- + O(log n) insert
+    -- + O(n) get all
+    -- + Bounded in size
+    --
+    -- TODO join consecutive blocks into a fragment that can be added at
+    -- once.
+    varChainSelQueue :: !(StrictTVar m (Map (RealPoint blk) (BlockToAdd m blk)))
+  , chainSelQueueCapacity :: !Word
+  , varChainSelReprocessLoEBlocks :: !(StrictTVar m Bool)
+  }
+  deriving (NoThunks) via OnlyCheckWhnfNamed "ChainSelQueue" (ChainSelQueue m blk)
 
 -- | Entry in the 'ChainSelQueue' queue: a block together with the 'TMVar's used
 -- to implement 'AddBlockPromise'.
@@ -457,6 +491,7 @@ data BlockToAdd m blk = BlockToAdd
   , varBlockProcessed     :: !(StrictTMVar m (AddBlockResult blk))
     -- ^ Used for the 'blockProcessed' field of 'AddBlockPromise'.
   }
+  deriving NoThunks via OnlyCheckWhnfNamed "BlockToAdd" (BlockToAdd m blk)
 
 -- | Different async tasks for triggering ChainSel
 data ChainSelMessage m blk
@@ -466,9 +501,11 @@ data ChainSelMessage m blk
   | ChainSelReprocessLoEBlocks
 
 -- | Create a new 'ChainSelQueue' with the given size.
-newChainSelQueue :: IOLike m => Word -> m (ChainSelQueue m blk)
-newChainSelQueue queueSize = ChainSelQueue <$>
-    atomically (newTBQueue (fromIntegral queueSize))
+newChainSelQueue :: (IOLike m, StandardHash blk, Typeable blk) => Word -> m (ChainSelQueue m blk)
+newChainSelQueue chainSelQueueCapacity = do
+  varChainSelQueue <- newTVarIO mempty
+  varChainSelReprocessLoEBlocks <- newTVarIO False
+  return $ ChainSelQueue {varChainSelQueue, chainSelQueueCapacity, varChainSelReprocessLoEBlocks}
 
 -- | Add a block to the 'ChainSelQueue' queue. Can block when the queue is full.
 addBlockToAdd ::
@@ -478,7 +515,7 @@ addBlockToAdd ::
   -> InvalidBlockPunishment m
   -> blk
   -> m (AddBlockPromise m blk)
-addBlockToAdd tracer (ChainSelQueue queue) punish blk = do
+addBlockToAdd tracer (ChainSelQueue {varChainSelQueue, chainSelQueueCapacity}) punish blk = do
     varBlockWrittenToDisk <- newEmptyTMVarIO
     varBlockProcessed     <- newEmptyTMVarIO
     let !toAdd = BlockToAdd
@@ -489,8 +526,12 @@ addBlockToAdd tracer (ChainSelQueue queue) punish blk = do
           }
     traceWith tracer $ AddedBlockToQueue (blockRealPoint blk) RisingEdge
     queueSize <- atomically $ do
-      writeTBQueue  queue (ChainSelAddBlock toAdd)
-      lengthTBQueue queue
+      chainSelQueue <- readTVar varChainSelQueue
+      let chainSelQueue'    = Map.insert (blockRealPoint blk) toAdd chainSelQueue
+          chainSelQueueSize = Map.size chainSelQueue'
+      check (fromIntegral chainSelQueueSize <= chainSelQueueCapacity)
+      writeTVar varChainSelQueue chainSelQueue'
+      return chainSelQueueSize
     traceWith tracer $
       AddedBlockToQueue (blockRealPoint blk) (FallingEdgeWith (fromIntegral queueSize))
     return AddBlockPromise
@@ -504,28 +545,102 @@ addReprocessLoEBlocks
   => Tracer m (TraceAddBlockEvent blk)
   -> ChainSelQueue m blk
   -> m ()
-addReprocessLoEBlocks tracer (ChainSelQueue queue) = do
+addReprocessLoEBlocks tracer (ChainSelQueue {varChainSelReprocessLoEBlocks}) = do
   traceWith tracer $ AddedReprocessLoEBlocksToQueue
-  atomically $ writeTBQueue queue ChainSelReprocessLoEBlocks
+  atomically $ writeTVar varChainSelReprocessLoEBlocks True
 
 -- | Get the oldest message from the 'ChainSelQueue' queue. Can block when the
--- queue is empty.
-getChainSelMessage :: IOLike m => ChainSelQueue m blk -> m (ChainSelMessage m blk)
-getChainSelMessage (ChainSelQueue queue) = atomically $ readTBQueue queue
+-- queue is empty; in that case, reports the starvation (and its end) to the
+-- callback.
+getChainSelMessage
+  :: forall m blk. (HasHeader blk, IOLike m)
+  => Tracer m (TraceChainSelStarvationEvent blk)
+  -> StrictTVar m ChainSelStarvation
+  -> ChainSelQueue m blk
+  -> m (ChainSelMessage m blk)
+getChainSelMessage starvationTracer starvationVar queue = go
+  where
+    go = join $ atomically $
+      readTVar varChainSelReprocessLoEBlocks >>= \case
+        True -> do
+          writeTVar varChainSelReprocessLoEBlocks False
+          pure $ pure ChainSelReprocessLoEBlocks
+        False -> do
+          chainSelQueue <- readTVar varChainSelQueue
+          case Map.minView chainSelQueue of
+            Just (blockToAdd, chainSelQueue') -> do
+              writeTVar varChainSelQueue chainSelQueue'
+              pure $ do
+                terminateStarvationMeasure blockToAdd
+                pure $ ChainSelAddBlock blockToAdd
+            Nothing -> pure $ do
+              startStarvationMeasure
+              blockUntilMoreWork
+              go
+
+    ChainSelQueue {varChainSelQueue, varChainSelReprocessLoEBlocks} = queue
+
+    -- Wait until we either need to reprocess blocks due to the LoE, or until a
+    -- new block arrives.
+    blockUntilMoreWork :: m ()
+    blockUntilMoreWork = atomically $ do
+        reprocessLoEBlocks <- readTVar varChainSelReprocessLoEBlocks
+        chainSelQueue      <- readTVar varChainSelQueue
+        check $ reprocessLoEBlocks || not (Map.null chainSelQueue)
+
+    startStarvationMeasure = do
+      prevStarvation <- atomically $ swapTVar starvationVar ChainSelStarvationOngoing
+      when (prevStarvation /= ChainSelStarvationOngoing) $
+        traceWith starvationTracer . ChainSelStarvationStarted =<< getMonotonicTime
+
+    terminateStarvationMeasure BlockToAdd{blockToAdd=block} = do
+      prevStarvation <- readTVarIO starvationVar
+      when (prevStarvation == ChainSelStarvationOngoing) $ do
+        tf <- getMonotonicTime
+        traceWith starvationTracer (ChainSelStarvationEnded tf $ blockRealPoint block)
+        atomically $ writeTVar starvationVar (ChainSelStarvationEndedAt tf)
 
 -- | Flush the 'ChainSelQueue' queue and notify the waiting threads.
 --
+-- REVIEW: What about all the threads that are waiting to write in the queue and
+-- will write after the flush?!
 closeChainSelQueue :: IOLike m => ChainSelQueue m blk -> STM m ()
-closeChainSelQueue (ChainSelQueue queue) = do
-  as <- mapMaybe blockAdd <$> flushTBQueue queue
-  traverse_ (\a -> tryPutTMVar (varBlockProcessed a)
-                              (FailedToAddBlock "Queue flushed"))
-            as
-  where
-    blockAdd = \case
-      ChainSelAddBlock ab -> Just ab
-      ChainSelReprocessLoEBlocks -> Nothing
+closeChainSelQueue ChainSelQueue {varChainSelQueue} = do
+  chainSelQueue <- swapTVar varChainSelQueue Map.empty
+  for_ chainSelQueue $ \BlockToAdd {varBlockProcessed} ->
+    putTMVar varBlockProcessed $ FailedToAddBlock "Queue flushed"
 
+-- | Delete the given 'BlockToAdd' from the 'ChainSelQueue'.
+--
+-- PRECONDITION: the given 'BlockToAdd' is in 'ChainSelQueue'.
+deleteBlockToAdd ::
+     (IOLike m, HasHeader blk)
+  => BlockToAdd m blk
+  -> ChainSelQueue m blk
+  -> m ()
+deleteBlockToAdd (BlockToAdd _ blk _ _) (ChainSelQueue {varChainSelQueue}) =
+  atomically $ modifyTVar varChainSelQueue $ Map.delete (blockRealPoint blk)
+
+-- | Return a function to test the membership for the given 'BlocksToAdd'.
+memberBlocksToAdd ::
+     (IOLike m, HasHeader blk)
+  => ChainSelQueue m blk
+  -> STM m (RealPoint blk -> Bool)
+memberBlocksToAdd (ChainSelQueue {varChainSelQueue}) =
+    flip Map.member <$> readTVar varChainSelQueue
+
+getBlocksToAddMaxSlotNo ::
+     IOLike m
+  => ChainSelQueue m blk
+  -> STM m MaxSlotNo
+getBlocksToAddMaxSlotNo (ChainSelQueue {varChainSelQueue}) = aux <$> readTVar varChainSelQueue
+  where
+    -- | The 'Ord' instance of 'RealPoint' orders by 'SlotNo' first, so the
+    -- maximal key of the map has the greatest 'SlotNo'.
+    aux :: Map (RealPoint blk) (BlockToAdd m blk) -> MaxSlotNo
+    aux queue = case Map.lookupMax queue of
+        Nothing                 -> NoMaxSlotNo
+        Just (RealPoint s _, _) -> MaxSlotNo s
 
 {-------------------------------------------------------------------------------
   Trace types
@@ -545,6 +660,7 @@ data TraceEvent blk
   | TraceImmutableDBEvent       (ImmutableDB.TraceEvent       blk)
   | TraceVolatileDBEvent        (VolatileDB.TraceEvent        blk)
   | TraceLastShutdownUnclean
+  | TraceChainSelStarvationEvent(TraceChainSelStarvationEvent blk)
   deriving (Generic)
 
 
@@ -876,4 +992,9 @@ data TraceIteratorEvent blk
     -- back in the VolatileDB again because the ImmutableDB doesn't have the
     -- next block we're looking for.
   | SwitchBackToVolatileDB
+  deriving (Generic, Eq, Show)
+
+data TraceChainSelStarvationEvent blk
+  = ChainSelStarvationStarted Time
+  | ChainSelStarvationEnded Time (RealPoint blk)
   deriving (Generic, Eq, Show)

@@ -1014,13 +1014,13 @@ runThreadNetwork systemTime ThreadNetworkArgs
                   txSubmissionMaxUnacked      = 1000 -- TODO ?
                 }
             , blockFetchConfiguration = BlockFetchConfiguration {
-                  bfcMaxConcurrencyBulkSync = 1
-                , bfcMaxConcurrencyDeadline = 2
+                  bfcMaxConcurrencyDeadline = 2
                 , bfcMaxRequestsInflight    = 10
-                , bfcDecisionLoopInterval   = 0.0 -- Mock testsuite can use sub-second slot
-                                                  -- interval which doesn't play nice with
-                                                  -- blockfetch descision interval.
+                , bfcDecisionLoopIntervalBulkSync = 0.0 -- Mock testsuite can use sub-second slot
+                , bfcDecisionLoopIntervalDeadline = 0.0 -- interval which doesn't play nice with
+                                                        -- blockfetch descision interval.
                 , bfcSalt                   = 0
+                , bfcGenesisBFConfig        = gcBlockFetchConfig enableGenesisConfigDefault
                 }
             , gsmArgs                 = GSM.GsmNodeKernelArgs {
                   gsmAntiThunderingHerd  = kaRng
@@ -1035,7 +1035,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
             , getUseBootstrapPeers = pure DontUseBootstrapPeers
             , publicPeerSelectionStateVar
             , genesisArgs          = GenesisNodeKernelArgs {
-                  gnkaGetLoEFragment = LoEAndGDDDisabled
+                  gnkaLoEAndGDDArgs = LoEAndGDDDisabled
                 }
             }
 

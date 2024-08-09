@@ -22,7 +22,8 @@ import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Peers (peers', peersOnlyHonest)
+import           Test.Consensus.PointSchedule.Peers (peers', peersOnlyAdversary,
+                     peersOnlyHonest)
 import           Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules)
 import           Test.Consensus.PointSchedule.SinglePeer (scheduleBlockPoint,
                      scheduleHeaderPoint, scheduleTipPoint)
@@ -30,10 +31,12 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.PartialAccessors
-import           Test.Util.TestEnv (adjustQuickCheckTests)
+import           Test.Util.TestEnv (adjustQuickCheckMaxSize,
+                     adjustQuickCheckTests)
 
 tests :: TestTree
 tests =
+  adjustQuickCheckTests (* 10) $
   testGroup
     "LoP"
     [ -- \| NOTE: Running the test that must _not_ timeout (@prop_smoke False@) takes
@@ -41,19 +44,28 @@ tests =
       -- does all the computation (serving the headers, validating them, serving the
       -- block, validating them) while the former does nothing, because it timeouts
       -- before reaching the last tick of the point schedule.
-      adjustQuickCheckTests (`div` 10) $
+      adjustQuickCheckMaxSize (`div` 5) $
         testProperty "wait just enough" (prop_wait False),
       testProperty "wait too much" (prop_wait True),
+      adjustQuickCheckMaxSize (`div` 5) $
       testProperty "wait behind forecast horizon" prop_waitBehindForecastHorizon,
-      adjustQuickCheckTests (`div` 5) $
+      adjustQuickCheckMaxSize (`div` 5) $
         testProperty "serve just fast enough" (prop_serve False),
+      adjustQuickCheckMaxSize (`div` 5) $
       testProperty "serve too slow" (prop_serve True),
-      adjustQuickCheckTests (`div` 5) $
+      adjustQuickCheckMaxSize (`div` 5) $
         testProperty "delaying attack succeeds without LoP" (prop_delayAttack False),
-      adjustQuickCheckTests (`div` 5) $
+      adjustQuickCheckMaxSize (`div` 5) $
         testProperty "delaying attack fails with LoP" (prop_delayAttack True)
     ]
 
+-- | Simple test in which we connect to only one peer, who advertises the tip of
+-- the block tree trunk and then does nothing. If the given boolean,
+-- @mustTimeout@, if @True@, then we wait just long enough for the LoP bucket to
+-- empty; we expect to observe an 'EmptyBucket' exception in the ChainSync
+-- client. If @mustTimeout@ is @False@, then we wait not quite as long, so the
+-- LoP bucket should not be empty at the end of the test and we should observe
+-- no exception in the ChainSync client.
 prop_wait :: Bool -> Property
 prop_wait mustTimeout =
   forAllGenesisTest
@@ -78,10 +90,20 @@ prop_wait mustTimeout =
     dullSchedule timeout (_ AF.:> tipBlock) =
       let offset :: DiffTime = if mustTimeout then 1 else -1
        in PointSchedule
-            { psSchedule = peersOnlyHonest [(Time 0, scheduleTipPoint tipBlock)]
+            { psSchedule =
+                (if mustTimeout then peersOnlyAdversary else peersOnlyHonest)
+                [(Time 0, scheduleTipPoint tipBlock)]
+            , psStartOrder = []
             , psMinEndTime = Time $ timeout + offset
             }
 
+-- | Simple test in which we connect to only one peer, who advertises the tip of
+-- the block tree trunk, serves all of its headers, and then does nothing.
+-- Because the peer does not send its blocks, then the ChainSync client will end
+-- up stuck, waiting behind the forecast horizon. We expect that the LoP will
+-- then be disabled and that, therefore, one could wait forever in this state.
+-- We disable the timeouts and check that, indeed, the ChainSync client observes
+-- no exception.
 prop_waitBehindForecastHorizon :: Property
 prop_waitBehindForecastHorizon =
   forAllGenesisTest
@@ -108,6 +130,7 @@ prop_waitBehindForecastHorizon =
             [ (Time 0, scheduleTipPoint tipBlock)
             , (Time 0, scheduleHeaderPoint tipBlock)
             ]
+        , psStartOrder = []
         , psMinEndTime = Time 11
         }
 
@@ -166,13 +189,18 @@ prop_serve mustTimeout =
     makeSchedule :: (HasHeader blk) => AnchoredFragment blk -> PointSchedule blk
     makeSchedule (AF.Empty _) = error "fragment must have at least one block"
     makeSchedule fragment@(_ AF.:> tipBlock) =
-      mkPointSchedule $ peersOnlyHonest $
+      PointSchedule {
+        psSchedule =
+        (if mustTimeout then peersOnlyAdversary else peersOnlyHonest) $
         (Time 0, scheduleTipPoint tipBlock)
           : ( flip concatMap (zip [1 ..] (AF.toOldestFirst fragment)) $ \(i, block) ->
                 [ (Time (secondsRationalToDiffTime (i * timeBetweenBlocks)), scheduleHeaderPoint block),
                   (Time (secondsRationalToDiffTime (i * timeBetweenBlocks)), scheduleBlockPoint block)
                 ]
-            )
+            ),
+        psStartOrder = [],
+        psMinEndTime = Time 0
+      }
 
 -- NOTE: Same as 'LoE.prop_adversaryHitsTimeouts' with LoP instead of timeouts.
 prop_delayAttack :: Bool -> Property
@@ -249,4 +277,4 @@ prop_delayAttack lopEnabled =
             ]
           -- Wait for LoP bucket to empty
           psMinEndTime = Time 11
-       in PointSchedule {psSchedule, psMinEndTime}
+       in PointSchedule {psSchedule, psStartOrder = [], psMinEndTime}

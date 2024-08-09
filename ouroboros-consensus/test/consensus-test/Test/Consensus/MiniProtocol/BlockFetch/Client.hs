@@ -8,6 +8,7 @@
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TupleSections              #-}
+{-# LANGUAGE TypeApplications           #-}
 
 -- | A test for the consensus-specific parts of the BlockFetch client.
 --
@@ -51,10 +52,10 @@ import           Ouroboros.Consensus.Util.STM (blockUntilJust,
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..),
-                     BlockFetchConsensusInterface, FetchMode (..),
-                     blockFetchLogic, bracketFetchClient,
-                     bracketKeepAliveClient, bracketSyncWithFetchClient,
-                     newFetchClientRegistry)
+                     BlockFetchConsensusInterface (..), FetchMode (..),
+                     GenesisBlockFetchConfiguration (..), blockFetchLogic,
+                     bracketFetchClient, bracketKeepAliveClient,
+                     bracketSyncWithFetchClient, newFetchClientRegistry)
 import           Ouroboros.Network.BlockFetch.Client (blockFetchClient)
 import           Ouroboros.Network.ControlMessage (ControlMessage (..))
 import           Ouroboros.Network.Mock.Chain (Chain)
@@ -96,7 +97,9 @@ prop_blockFetch bfcts@BlockFetchClientTestSetup{..} =
       ] <>
       [ Map.keysSet bfcoBlockFetchResults === Map.keysSet peerUpdates
       , counterexample ("Fetched blocks per peer: " <> condense bfcoFetchedBlocks) $
-        property $ all (> 0) bfcoFetchedBlocks
+        property $ case blockFetchMode of
+          FetchModeDeadline -> all (> 0) bfcoFetchedBlocks
+          FetchModeBulkSync -> any (> 0) bfcoFetchedBlocks
       ]
   where
     BlockFetchClientOutcome{..} = runSimOrThrow $ runBlockFetchTest bfcts
@@ -256,10 +259,11 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
 
         let -- Always return the empty chain such that the BlockFetch logic
             -- downloads all chains.
-            getCurrentChain           = pure $ AF.Empty AF.AnchorGenesis
-            getIsFetched              = ChainDB.getIsFetched chainDB
-            getMaxSlotNo              = ChainDB.getMaxSlotNo chainDB
-            addBlockWaitWrittenToDisk = ChainDB.addBlockWaitWrittenToDisk chainDB
+            getCurrentChain       = pure $ AF.Empty AF.AnchorGenesis
+            getIsFetched          = ChainDB.getIsFetched chainDB
+            getMaxSlotNo          = ChainDB.getMaxSlotNo chainDB
+            addBlockAsync         = ChainDB.addBlockAsync chainDB
+            getChainSelStarvation = ChainDB.getChainSelStarvation chainDB
         pure BlockFetchClientInterface.ChainDbView {..}
       where
         -- Needs to be larger than any chain length in this test, to ensure that
@@ -278,13 +282,17 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
       -> BlockFetchClientInterface.ChainDbView m TestBlock
       -> BlockFetchConsensusInterface PeerId (Header TestBlock) TestBlock m
     mkTestBlockFetchConsensusInterface getCandidates chainDbView =
-        BlockFetchClientInterface.mkBlockFetchConsensusInterface
+        (BlockFetchClientInterface.mkBlockFetchConsensusInterface @m @PeerId
+          nullTracer
           (TestBlockConfig numCoreNodes)
           chainDbView
-          getCandidates
+          (error "ChainSyncClientHandleCollection not provided to mkBlockFetchConsensusInterface")
           (\_hdr -> 1000) -- header size, only used for peer prioritization
           slotForgeTime
-          (pure blockFetchMode)
+          (pure blockFetchMode))
+            { readCandidateChains = getCandidates
+            , demoteCSJDynamo = const (pure ())
+            }
       where
         -- Bogus implementation; this is fine as this is only used for
         -- enriching tracing information ATM.
@@ -353,14 +361,16 @@ instance Arbitrary BlockFetchClientTestSetup where
       blockFetchMode <- elements [FetchModeBulkSync, FetchModeDeadline]
       blockFetchCfg  <- do
         let -- ensure that we can download blocks from all peers
-            bfcMaxConcurrencyBulkSync = fromIntegral numPeers
             bfcMaxConcurrencyDeadline = fromIntegral numPeers
             -- This is used to introduce a minimal delay between BlockFetch
             -- logic iterations in case the monitored state vars change too
             -- fast, which we don't have to worry about in this test.
-            bfcDecisionLoopInterval   = 0
+            bfcDecisionLoopIntervalBulkSync = 0
+            bfcDecisionLoopIntervalDeadline = 0
         bfcMaxRequestsInflight <- chooseEnum (2, 10)
         bfcSalt                <- arbitrary
+        gbfcBulkSyncGracePeriod <- fromIntegral <$> chooseInteger (5, 60)
+        let bfcGenesisBFConfig = GenesisBlockFetchConfiguration {..}
         pure BlockFetchConfiguration {..}
       pure BlockFetchClientTestSetup {..}
     where

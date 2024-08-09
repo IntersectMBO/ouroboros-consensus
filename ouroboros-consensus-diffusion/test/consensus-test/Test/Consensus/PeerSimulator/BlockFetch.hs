@@ -23,23 +23,25 @@ import           Control.Monad.Class.MonadTime
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer, nullTracer, traceWith)
 import           Data.Functor.Contravariant ((>$<))
-import           Data.Map.Strict (Map)
 import           Network.TypedProtocol.Codec (AnyMessage, PeerHasAgency (..),
                      PeerRole)
 import           Ouroboros.Consensus.Block (HasHeader)
 import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+                     (ChainSyncClientHandleCollection)
+import           Ouroboros.Consensus.Node.Genesis (GenesisConfig (..),
+                     enableGenesisConfigDefault)
 import           Ouroboros.Consensus.Node.ProtocolInfo
                      (NumCoreNodes (NumCoreNodes))
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Consensus.Util.IOLike (DiffTime,
-                     Exception (fromException), IOLike, STM, atomically, retry,
-                     try)
+                     Exception (fromException), IOLike, atomically, retry, try)
 import           Ouroboros.Consensus.Util.ResourceRegistry
-import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..),
-                     FetchClientRegistry, FetchMode (..), blockFetchLogic,
+                     FetchClientRegistry, FetchMode (..),
+                     GenesisBlockFetchConfiguration (..), blockFetchLogic,
                      bracketFetchClient, bracketKeepAliveClient)
 import           Ouroboros.Network.BlockFetch.Client (blockFetchClient)
 import           Ouroboros.Network.Channel (Channel)
@@ -73,49 +75,50 @@ import           Test.Util.Time (dawnOfTime)
 
 startBlockFetchLogic ::
      forall m.
-     (IOLike m)
-  => ResourceRegistry m
+     (IOLike m, MonadTimer m)
+  => Bool -- ^ Whether to enable chain selection starvation
+  -> ResourceRegistry m
   -> Tracer m (TraceEvent TestBlock)
   -> ChainDB m TestBlock
   -> FetchClientRegistry PeerId (Header TestBlock) TestBlock m
-  -> STM m (Map PeerId (AnchoredFragment (Header TestBlock)))
+  -> ChainSyncClientHandleCollection PeerId m TestBlock
   -> m ()
-startBlockFetchLogic registry tracer chainDb fetchClientRegistry getCandidates = do
+startBlockFetchLogic enableChainSelStarvation registry tracer chainDb fetchClientRegistry csHandlesCol = do
     let slotForgeTime :: BlockFetchClientInterface.SlotForgeTimeOracle m blk
         slotForgeTime _ = pure dawnOfTime
 
         blockFetchConsensusInterface =
           BlockFetchClientInterface.mkBlockFetchConsensusInterface
+            nullTracer -- FIXME
             (TestBlockConfig $ NumCoreNodes 0) -- Only needed when minting blocks
             (BlockFetchClientInterface.defaultChainDbView chainDb)
-            getCandidates
+            csHandlesCol
             -- The size of headers in bytes is irrelevant because our tests
             -- do not serialize the blocks.
             (\_hdr -> 1000)
             slotForgeTime
-            -- Initially, we tried FetchModeBulkSync, but adversaries had the
-            -- opportunity to delay syncing by not responding to block requests.
-            -- The BlockFetch logic would then wait for the timeout to expire
-            -- before trying to download the block from another peer.
-            (pure FetchModeDeadline)
+            -- This is a syncing test, so we use 'FetchModeBulkSync'.
+            (pure FetchModeBulkSync)
+
+        bfcGenesisBFConfig = if enableChainSelStarvation
+          then GenesisBlockFetchConfiguration
+            { gbfcBulkSyncGracePeriod =
+                if enableChainSelStarvation then
+                  10  -- default value for cardano-node at the time of writing
+                else
+                  1000000  -- (more than 11 days)
+            }
+          else gcBlockFetchConfig enableGenesisConfigDefault
 
         -- Values taken from
         -- ouroboros-consensus-diffusion/src/unstable-diffusion-testlib/Test/ThreadNet/Network.hs
         blockFetchCfg = BlockFetchConfiguration
-          { -- We set a higher value here to allow downloading blocks from all
-            -- peers.
-            --
-            -- If the value is too low, block downloads from a peer may prevent
-            -- blocks from being downloaded from other peers. This can be
-            -- problematic, since the batch download of a simulated BlockFetch
-            -- server can last serveral ticks if the block pointer is not
-            -- advanced to allow completion of the batch.
-            --
-            bfcMaxConcurrencyBulkSync = 50
-          , bfcMaxConcurrencyDeadline = 50
+          { bfcMaxConcurrencyDeadline = 50 -- unused because of @pure FetchModeBulkSync@ above
           , bfcMaxRequestsInflight = 10
-          , bfcDecisionLoopInterval = 0
+          , bfcDecisionLoopIntervalBulkSync = 0
+          , bfcDecisionLoopIntervalDeadline = 0
           , bfcSalt = 0
+          , bfcGenesisBFConfig
           }
 
     void $ forkLinkedThread registry "BlockFetchLogic" $
