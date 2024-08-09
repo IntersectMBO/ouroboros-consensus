@@ -2,7 +2,6 @@
 {-# LANGUAGE DerivingStrategies        #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE NamedFieldPuns            #-}
-{-# LANGUAGE NumericUnderscores        #-}
 {-# LANGUAGE ScopedTypeVariables       #-}
 
 module Test.Consensus.Genesis.Setup.GenChains (
