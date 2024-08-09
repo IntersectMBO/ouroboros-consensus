@@ -1,5 +1,6 @@
 {-# LANGUAGE LambdaCase     #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# OPTIONS_GHC -Wno-unused-imports #-}
 
 module Main (main) where
 
@@ -18,10 +19,13 @@ import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Fragment.InFuture (clockSkewInSeconds)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
+import           Ouroboros.Consensus.HeaderStateHistory
+                     (HeaderStateWithTime (..))
 import qualified Ouroboros.Consensus.HeaderStateHistory as HeaderStateHistory
 import qualified Ouroboros.Consensus.HeaderValidation as HV
 import qualified Ouroboros.Consensus.Ledger.Extended as Extended
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Server
                      (chainSyncServerForFollower)
@@ -42,6 +46,7 @@ import qualified Ouroboros.Network.AnchoredSeq as AS
 import           Ouroboros.Network.Block (ChainUpdate (AddBlock, RollBack),
                      Tip (TipGenesis), tipFromHeader)
 import           Ouroboros.Network.ControlMessage (ControlMessage (Continue))
+import qualified Ouroboros.Network.Mock.Chain as Chain
 import           Ouroboros.Network.Protocol.ChainSync.ClientPipelined
 import           Ouroboros.Network.Protocol.ChainSync.Codec (codecChainSyncId)
 import           Ouroboros.Network.Protocol.ChainSync.PipelineDecision
@@ -105,11 +110,12 @@ oneBenchRun
         CSClient.getCurrentChain       = pure $ AF.Empty AF.AnchorGenesis
       , CSClient.getHeaderStateHistory =
             pure
-          $ HeaderStateHistory.HeaderStateHistory
-          $ AS.Empty
-          $ HV.genesisHeaderState ()
+          $ HeaderStateHistory.fromChain
+              topConfig
+              (oracularLedgerDB GenesisPoint)
+              Chain.Genesis
       , CSClient.getIsInvalidBlock     = pure invalidBlock
-      , CSClient.getPastLedger         = pure . oracularLedgerDB
+      , CSClient.getPastLedger         = pure . Just . oracularLedgerDB
       }
 
     headerInFutureCheck ::
@@ -127,6 +133,7 @@ oneBenchRun
               , CSClient.cfg                     = topConfig
               , CSClient.tracer                  = nullTracer `asTypeOf` contramap show debugTracer
               , CSClient.someHeaderInFutureCheck = headerInFutureCheck
+              , CSClient.historicityCheck        = HistoricityCheck.noCheck
               , CSClient.mkPipelineDecision0     =
                     pipelineDecisionLowHighMark 10 20
               }
@@ -174,9 +181,9 @@ inTheYearOneBillion = SystemTime {
         * 1e9
   }
 
-oracularLedgerDB :: Point B -> Maybe (Extended.ExtLedgerState B)
+oracularLedgerDB :: Point B -> Extended.ExtLedgerState B
 oracularLedgerDB p =
-    Just Extended.ExtLedgerState {
+    Extended.ExtLedgerState {
         Extended.headerState = HV.HeaderState {
             HV.headerStateTip      = case pointToWithOriginRealPoint p of
                 Origin       -> Origin
