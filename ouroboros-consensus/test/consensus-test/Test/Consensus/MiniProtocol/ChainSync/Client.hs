@@ -766,7 +766,7 @@ instance Arbitrary ChainSyncClientSetup where
           , lastTick (getClientUpdates clientUpdates) - 1
           , lastTick (getServerUpdates serverUpdates) - 1
           ]
-    startTick <- choose (1, maxStartTick)
+    startTick <- chooseExponential 3 (1, maxStartTick)
     let trapBlocks =
           [ blockHash b
           | AddBlock b <- joinSchedule (getServerUpdates serverUpdates)
@@ -827,6 +827,13 @@ instance Arbitrary ChainSyncClientSetup where
     [ cscs { clientSlowBy = SlotLengthTenths y }
     | let SlotLengthTenths x = clientSlowBy
     , y <- shrink x
+    ]
+
+chooseExponential :: Enum a => Int -> (a, a) -> Gen a
+chooseExponential decayFactor (low, up) =
+  frequency
+    [ (decayFactor, pure low)
+    , (1, chooseExponential decayFactor (succ low, up))
     ]
 
 prettyChainSyncClientSetup :: ChainSyncClientSetup -> String
