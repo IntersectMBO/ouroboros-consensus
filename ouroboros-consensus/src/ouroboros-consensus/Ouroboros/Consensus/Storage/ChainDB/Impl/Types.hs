@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
     ChainDbEnv (..)
   , ChainDbHandle (..)
   , ChainDbState (..)
+  , ChainSelectionPromise (..)
   , SerialiseDiskConstraints
   , getEnv
   , getEnv1
@@ -83,9 +84,9 @@ import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
-                     AddBlockResult (..), ChainDbError (..), ChainType,
-                     InvalidBlockReason, LoE, StreamFrom, StreamTo,
-                     UnknownRange)
+                     AddBlockResult (..), ChainDbError (..),
+                     ChainSelectionPromise (..), ChainType, InvalidBlockReason,
+                     LoE, StreamFrom, StreamTo, UnknownRange)
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
                      (InvalidBlockPunishment)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB (LgrDB,
@@ -462,8 +463,10 @@ data BlockToAdd m blk = BlockToAdd
 data ChainSelMessage m blk
   -- | Add a new block
   = ChainSelAddBlock !(BlockToAdd m blk)
-  -- | Reprocess blocks that have been postponed by the LoE
+  -- | Reprocess blocks that have been postponed by the LoE.
   | ChainSelReprocessLoEBlocks
+      !(StrictTMVar m ())
+      -- ^ Used for 'ChainSelectionPromise'.
 
 -- | Create a new 'ChainSelQueue' with the given size.
 newChainSelQueue :: IOLike m => Word -> m (ChainSelQueue m blk)
@@ -503,10 +506,13 @@ addReprocessLoEBlocks
   :: IOLike m
   => Tracer m (TraceAddBlockEvent blk)
   -> ChainSelQueue m blk
-  -> m ()
+  -> m (ChainSelectionPromise m)
 addReprocessLoEBlocks tracer (ChainSelQueue queue) = do
+  varProcessed <- newEmptyTMVarIO
+  let waitUntilRan = atomically $ readTMVar varProcessed
   traceWith tracer $ AddedReprocessLoEBlocksToQueue
-  atomically $ writeTBQueue queue ChainSelReprocessLoEBlocks
+  atomically $ writeTBQueue queue $ ChainSelReprocessLoEBlocks varProcessed
+  return $ ChainSelectionPromise waitUntilRan
 
 -- | Get the oldest message from the 'ChainSelQueue' queue. Can block when the
 -- queue is empty.
@@ -524,7 +530,7 @@ closeChainSelQueue (ChainSelQueue queue) = do
   where
     blockAdd = \case
       ChainSelAddBlock ab -> Just ab
-      ChainSelReprocessLoEBlocks -> Nothing
+      ChainSelReprocessLoEBlocks _ -> Nothing
 
 
 {-------------------------------------------------------------------------------
