@@ -58,6 +58,7 @@ import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (decode, encode)
 import           Control.DeepSeq (NFData)
+import           Data.Bifunctor (second)
 import           Data.Kind (Type)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -72,8 +73,10 @@ import           Lens.Micro.Extras (view)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HeaderValidation
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query
+import           Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import qualified Ouroboros.Consensus.Shelley.Eras as SE
@@ -82,12 +85,15 @@ import           Ouroboros.Consensus.Shelley.Ledger.Config
 import           Ouroboros.Consensus.Shelley.Ledger.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
                      (ShelleyNodeToClientVersion (..))
+import           Ouroboros.Consensus.Shelley.Ledger.PeerSelection ()
 import           Ouroboros.Consensus.Shelley.Ledger.Query.PParamsLegacyEncoder
 import           Ouroboros.Consensus.Shelley.Ledger.Query.Types
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import           Ouroboros.Consensus.Util (ShowProxy (..))
 import           Ouroboros.Network.Block (Serialised (..), decodePoint,
                      encodePoint, mkSerialised)
+import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
+import           Ouroboros.Network.PeerSelection.LedgerPeers.Utils
 
 {-------------------------------------------------------------------------------
   QueryLedger
@@ -298,6 +304,13 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
     => Set (KeyHash 'StakePool (EraCrypto era))
     -> BlockQuery (ShelleyBlock proto era) (Map (KeyHash 'StakePool (EraCrypto era)) Coin)
 
+  -- | Obtain a snapshot of big ledger peers. CLI can serialize these,
+  -- and if made available to the node by topology configuration,
+  -- the diffusion layer can use these peers when syncing up from scratch
+  -- or stale ledger state - especially useful for Genesis mode
+  GetBigLedgerPeerSnapshot
+    :: BlockQuery (ShelleyBlock proto era) LedgerPeerSnapshot    
+
   -- WARNING: please add new queries to the end of the list and stick to this
   -- order in all other pattern matches on queries. This helps in particular
   -- with the en/decoders, as we want the CBOR tags to be ordered.
@@ -454,6 +467,11 @@ instance (ShelleyCompatible proto era, ProtoCrypto proto ~ crypto)
           SL.queryAccountState st
         GetSPOStakeDistr keys ->
           SL.querySPOStakeDistr st keys
+        GetBigLedgerPeerSnapshot ->
+          let slot = getTipSlot lst
+              ledgerPeers = second (fmap stakePoolRelayAccessPoint) <$> getPeers lst
+              bigLedgerPeers = accumulateBigLedgerStake ledgerPeers
+          in LedgerPeerSnapshot (slot, bigLedgerPeers)          
     where
       lcfg    = configLedger $ getExtLedgerCfg cfg
       globals = shelleyLedgerGlobals lcfg
@@ -609,6 +627,8 @@ instance SameDepIndex (BlockQuery (ShelleyBlock proto era)) where
   sameDepIndex GetAccountState {} _ = Nothing
   sameDepIndex GetSPOStakeDistr{} GetSPOStakeDistr{} = Just Refl
   sameDepIndex GetSPOStakeDistr{} _ = Nothing
+  sameDepIndex GetBigLedgerPeerSnapshot GetBigLedgerPeerSnapshot = Just Refl
+  sameDepIndex GetBigLedgerPeerSnapshot _ = Nothing
 
 deriving instance Eq   (BlockQuery (ShelleyBlock proto era) result)
 deriving instance Show (BlockQuery (ShelleyBlock proto era) result)
@@ -646,6 +666,7 @@ instance ShelleyCompatible proto era => ShowQuery (BlockQuery (ShelleyBlock prot
       GetFilteredVoteDelegatees {}               -> show
       GetAccountState {}                         -> show
       GetSPOStakeDistr {}                        -> show
+      GetBigLedgerPeerSnapshot                   -> show
 
 -- | Is the given query supported by the given 'ShelleyNodeToClientVersion'?
 querySupportedVersion :: BlockQuery (ShelleyBlock proto era) result -> ShelleyNodeToClientVersion -> Bool
@@ -681,6 +702,7 @@ querySupportedVersion = \case
     GetFilteredVoteDelegatees {}               -> (>= v8)
     GetAccountState {}                         -> (>= v8)
     GetSPOStakeDistr {}                        -> (>= v8)
+    GetBigLedgerPeerSnapshot                   -> (>= v8)    
     -- WARNING: when adding a new query, a new @ShelleyNodeToClientVersionX@
     -- must be added. See #2830 for a template on how to do this.
   where
@@ -806,9 +828,11 @@ encodeShelleyQuery query = case query of
       CBOR.encodeListLen 1 <> CBOR.encodeWord8 29
     GetSPOStakeDistr keys ->
       CBOR.encodeListLen 2 <> CBOR.encodeWord8 30 <> LC.toEraCBOR @era keys
+    GetBigLedgerPeerSnapshot ->
+      CBOR.encodeListLen 1 <> CBOR.encodeWord8 31
 
 decodeShelleyQuery ::
-     forall era proto. ShelleyBasedEra era
+     forall era proto. (ShelleyBasedEra era)
   => forall s. Decoder s (SomeSecond BlockQuery (ShelleyBlock proto era))
 decodeShelleyQuery = do
     len <- CBOR.decodeListLen
@@ -864,6 +888,7 @@ decodeShelleyQuery = do
         SomeSecond . GetFilteredVoteDelegatees <$> LC.fromEraCBOR @era
       (1, 29) ->             return $ SomeSecond GetAccountState
       (2, 30) -> requireCG $ SomeSecond . GetSPOStakeDistr <$> LC.fromEraCBOR @era
+      (1, 31) ->             return $ SomeSecond GetBigLedgerPeerSnapshot      
       _       -> failmsg "invalid"
 
 encodeShelleyResult ::
@@ -902,6 +927,7 @@ encodeShelleyResult v query = case query of
     GetFilteredVoteDelegatees {}               -> LC.toEraCBOR @era
     GetAccountState {}                         -> LC.toEraCBOR @era
     GetSPOStakeDistr {}                        -> LC.toEraCBOR @era
+    GetBigLedgerPeerSnapshot                   -> toCBOR    
 
 decodeShelleyResult ::
      forall proto era result. ShelleyCompatible proto era
@@ -940,6 +966,7 @@ decodeShelleyResult v query = case query of
     GetFilteredVoteDelegatees {}               -> LC.fromEraCBOR @era
     GetAccountState {}                         -> LC.fromEraCBOR @era
     GetSPOStakeDistr {}                        -> LC.fromEraCBOR @era
+    GetBigLedgerPeerSnapshot                   -> fromCBOR
 
 currentPParamsEnDecoding ::
      forall era s.
