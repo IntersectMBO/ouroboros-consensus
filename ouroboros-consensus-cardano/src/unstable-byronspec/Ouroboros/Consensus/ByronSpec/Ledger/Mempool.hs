@@ -54,6 +54,7 @@ instance LedgerSupportsMempool ByronSpecBlock where
   -- Dummy values, as these are not used in practice.
   txsMaxBytes   = const maxBound
   txInBlockSize = const 0
+  wireTxSize    = const 0
 
   txForgetValidated = forgetValidatedByronSpecGenTx
 

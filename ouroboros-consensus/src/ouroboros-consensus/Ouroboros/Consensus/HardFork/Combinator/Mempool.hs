@@ -118,6 +118,12 @@ instance CanHardFork xs => LedgerSupportsMempool (HardForkBlock xs) where
       . getOneEraGenTx
       . getHardForkGenTx
 
+  wireTxSize =
+        hcollapse
+      . hcmap proxySingle (K . wireTxSize)
+      . getOneEraGenTx
+      . getHardForkGenTx
+
   txForgetValidated =
         HardForkGenTx
       . OneEraGenTx
