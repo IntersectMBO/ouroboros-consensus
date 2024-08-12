@@ -65,7 +65,7 @@ type GenTxs blk mk = SlotNo -> TickedLedgerState blk mk -> IO [Validated (GenTx 
 -- For an extensive commentary of the forging loop, see there.
 
 runForge ::
-     forall blk mk.
+     forall blk.
     ( LedgerSupportsProtocol blk )
     => EpochSize
     -> SlotNo
@@ -73,7 +73,7 @@ runForge ::
     -> ChainDB IO blk
     -> [BlockForging IO blk]
     -> TopLevelConfig blk
-    -> GenTxs blk mk
+    -> GenTxs blk DiffMK
     -> IO ForgeResult
 runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
     putStrLn $ "--> epoch size: " ++ show epochSize_
@@ -168,7 +168,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
 
         -- Let the caller generate transactions
         -- TODO @js re-enable!
-        txs <- lift $ genTxs currentSlot $ undefined tickedLedgerState
+        txs <- lift $ genTxs currentSlot tickedLedgerState
 
         -- Actually produce the block
         newBlock <- lift $
