@@ -24,6 +24,7 @@ import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.Node
 import           Ouroboros.Consensus.Config (TopLevelConfig, configStorage)
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture (dontCheck)
+import           Ouroboros.Consensus.Ledger.Abstract (DiffMK)
 import qualified Ouroboros.Consensus.Node as Node (stdMkChainDbHasFS)
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
                      (nodeImmutableDbChunkInfo)
@@ -114,7 +115,7 @@ eitherParseJson v = case fromJSON v of
 
 synthesize ::
     (   TopLevelConfig (CardanoBlock StandardCrypto)
-     -> GenTxs (CardanoBlock StandardCrypto) mk
+     -> GenTxs (CardanoBlock StandardCrypto) DiffMK
     )
   -> DBSynthesizerConfig
   -> (CardanoProtocolParams StandardCrypto)
