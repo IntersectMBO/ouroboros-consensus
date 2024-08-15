@@ -13,23 +13,24 @@ import           Control.Arrow (first)
 import           Control.DeepSeq
 import           Control.Monad (unless)
 import qualified Control.Tracer as Tracer
+import           Criterion (bench, perRunEnv)
+import           Criterion.Main (defaultMainWith)
+import           Criterion.Main.Options (config, defaultConfig, describeWith)
+import           Criterion.Types (Config (csvFile))
 import           Data.Aeson
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Csv as Csv
 import           Data.Maybe (fromMaybe)
 import           Data.Set ()
-import qualified Data.Text as Text
 import qualified Data.Text.Read as Text.Read
 import           Main.Utf8 (withStdTerminalHandles)
+import           Options.Applicative (execParser)
 import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool
 import           System.Exit (die, exitFailure)
 import qualified Test.Consensus.Mempool.Mocked as Mocked
 import           Test.Consensus.Mempool.Mocked (MockedMempool)
-import           Test.Tasty (withResource)
-import           Test.Tasty.Bench (CsvPath (CsvPath), bench, benchIngredients,
-                     bgroup, whnfIO)
+import           Test.Tasty (defaultIngredients, testGroup, withResource)
 import           Test.Tasty.HUnit (testCase, (@?=))
-import           Test.Tasty.Options (changeOption)
 import           Test.Tasty.Runners (parseOptions, tryIngredients)
 
 main :: IO ()
@@ -38,47 +39,51 @@ main = withStdTerminalHandles $ do
     runBenchmarks csvFilePath
     rawValues <- parseBenchmarkResults csvFilePath
     convertCsvRowsToJsonObjects rawValues "mempool-benchmarks.json"
+    runTests
   where
     runBenchmarks csvFilePath = do
-        opts <- parseOptions benchIngredients benchmarkJustAddingTransactions
-        let opts' = changeOption (Just . fromMaybe (CsvPath csvFilePath)) opts
-        case tryIngredients benchIngredients opts' benchmarkJustAddingTransactions of
+        cfg <- execParser $ describeWith $ config defaultConfig
+        let cfg' = cfg { csvFile = Just . fromMaybe csvFilePath $ csvFile cfg }
+        defaultMainWith cfg' $ fmap benchAddNTxs [10_000, 20_000]
+      where
+        benchAddNTxs n = bench ("Just adding " <> show n <> " transactions") $
+          perRunEnv
+            (do
+              let txs = mkNTryAddTxs n
+              mempool <- openMempoolWithCapacityFor txs
+              pure (mempool,txs))
+            (uncurry run)
+    runTests = do
+        opts <- parseOptions defaultIngredients testJustAddingTransactions
+        case tryIngredients defaultIngredients opts testJustAddingTransactions of
           Nothing               -> exitFailure
           Just    runIngredient -> do
             success <- runIngredient
             unless success exitFailure
       where
-        benchmarkJustAddingTransactions =
-            bgroup "Just adding" $
-                fmap benchAddNTxs [10_000, 20_000]
+        testJustAddingTransactions =
+          testGroup "Just adding" $
+            fmap testAddNTxs [10_000, 20_000]
+        testAddNTxs n =
+          withResource
+            (pure $!! mkNTryAddTxs n)
+            (\_ -> pure ())
+            (\getTxs -> do
+                testGroup (show n <> " transactions") [
+                  testCase "test" $ do
+                      txs <- getTxs
+                      mempool <- openMempoolWithCapacityFor txs
+                      testAddTxs mempool txs
+                  , testCase "txs length" $ do
+                      txs <- getTxs
+                      length txs @?= n
+                  ]
+            )
           where
-            benchAddNTxs n =
-                withResource
-                  (pure $!! mkNTryAddTxs n)
-                  (\_ -> pure ())
-                  (\getTxs -> do
-                      bgroup (show n <> " transactions") [
-                          bench "setup mempool" $ whnfIO $ do
-                            txs <- getTxs
-                            openMempoolWithCapacityFor txs
-                        , bench "setup mempool + benchmark" $ whnfIO $ do
-                            txs <- getTxs
-                            mempool <- openMempoolWithCapacityFor txs
-                            run mempool txs
-                        , testCase "test" $ do
-                            txs <- getTxs
-                            mempool <- openMempoolWithCapacityFor txs
-                            testAddTxs mempool txs
-                        , testCase "txs length" $ do
-                            txs <- getTxs
-                            length txs @?= n
-                        ]
-                  )
-              where
-                testAddTxs mempool txs = do
-                    run mempool txs
-                    mempoolTxs <- Mocked.getTxs mempool
-                    mempoolTxs @?= getCmdsTxs txs
+            testAddTxs mempool txs = do
+                run mempool txs
+                mempoolTxs <- Mocked.getTxs mempool
+                mempoolTxs @?= getCmdsTxs txs
 
     parseBenchmarkResults csvFilePath = do
         csvData <- BL.readFile csvFilePath
@@ -93,35 +98,28 @@ main = withStdTerminalHandles $ do
       encodeFile outFilePath $ fmap convertRowToJsonObject rows
       where
         convertRowToJsonObject (name:mean:_) =
-          object [ "name"  .= adjustName name
+          object [ "name"  .= name
                  , "value" .= adjustedMean
                  , "unit"  .= unit
                  ]
           where
-            adjustName = Text.replace "."          " "
-                       . Text.replace ".benchmark" ""
-
             adjustedMean :: Integer
             (adjustedMean, unit) = first round
-                                 $ convertPicosecondsWithUnit
-                                 $ fromInteger
-                                 $ textToInt mean
+                                 $ convertSecondsWithUnit
+                                 $ textToDouble mean
               where
-                textToInt = either error fst . Text.Read.decimal
+                textToDouble = either error fst . Text.Read.double
 
-            -- Convert a number of picoseconds to the largest time unit that
+            -- Convert a number of seconds to the largest time unit that
             -- makes the conversion greater or equal than one.
-            convertPicosecondsWithUnit :: Double -> (Double, String)
-            convertPicosecondsWithUnit n
-                |                        numberOfDigits  <= 4  = (n       , "picoseconds" )
-                | 4 <= numberOfDigits  && numberOfDigits <  7  = (n / 1e3 , "nanoseconds" )
-                | 7 <= numberOfDigits  && numberOfDigits <  10 = (n / 1e6 , "microseconds")
-                | 10 <= numberOfDigits && numberOfDigits <  13 = (n / 1e9 , "milliseconds")
-                | 13 <= numberOfDigits                         = (n / 1e12, "seconds"     )
-              where
-                numberOfDigits :: Int
-                numberOfDigits = floor (logBase 10 n) + 1
-            convertPicosecondsWithUnit _ = error "All the cases should be covered by the conditions above"
+            convertSecondsWithUnit :: Double -> (Double, String)
+            convertSecondsWithUnit n
+                | n >= 1     = (n        , "seconds"     )
+                | n >= 1e-3  = (n * 1e3  , "milliseconds")
+                | n >= 1e-6  = (n * 1e6  , "microseconds")
+                | n >= 1e-9  = (n * 1e9  , "nanoseconds" )
+                | n >= 1e-12 = (n * 1e12 , "picoseconds" )
+            convertSecondsWithUnit _ = error "All the cases should be covered by the conditions above"
 
         convertRowToJsonObject _             = error "Wrong format"
 
