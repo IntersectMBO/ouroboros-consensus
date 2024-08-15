@@ -32,7 +32,7 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
                      (unChunkNo, unsafeEpochNoToChunkNo)
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index
-                     (cachedIndex)
+                     (fileBackedIndex)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index as Index
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index.Primary
                      (PrimaryIndex, SecondaryOffset)
@@ -82,15 +82,9 @@ validateAndReopen ::
   -> ResourceRegistry m
   -> ValidationPolicy
   -> WithTempRegistry (OpenState m blk h) m (OpenState m blk h)
-validateAndReopen validateEnv registry valPol = wrapFsError (Proxy @blk) $ do
+validateAndReopen validateEnv _registry valPol = wrapFsError (Proxy @blk) $ do
     (chunk, tip) <- lift $ validate validateEnv valPol
-    index        <- lift $ cachedIndex
-                      hasFS
-                      registry
-                      cacheTracer
-                      cacheConfig
-                      chunkInfo
-                      chunk
+    let index = fileBackedIndex hasFS chunkInfo
     case tip of
       Origin -> assert (chunk == firstChunkNo) $ do
         lift $ traceWith tracer NoValidLastLocation
@@ -99,8 +93,7 @@ validateAndReopen validateEnv registry valPol = wrapFsError (Proxy @blk) $ do
         lift $ traceWith tracer $ ValidatedLastLocation chunk tip'
         mkOpenState hasFS index chunk tip AllowExisting
   where
-    ValidateEnv { hasFS, tracer, cacheConfig, chunkInfo } = validateEnv
-    cacheTracer = contramap TraceCacheEvent tracer
+    ValidateEnv { hasFS, tracer, chunkInfo } = validateEnv
 
 -- | Execute the 'ValidationPolicy'.
 --
