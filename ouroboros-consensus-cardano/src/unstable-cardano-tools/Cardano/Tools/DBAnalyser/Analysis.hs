@@ -49,11 +49,12 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Forecast (forecastFor)
 import           Ouroboros.Consensus.HeaderValidation (HasAnnTip (..),
-                     HeaderState (..), headerStatePoint, tickHeaderState,
-                     validateHeader)
-import           Ouroboros.Consensus.Ledger.Abstract (LedgerCfg, LedgerConfig,
-                     applyBlockLedgerResult, applyChainTick, tickThenApply,
-                     tickThenApplyLedgerResult, tickThenReapply)
+                     HeaderState (..), headerStatePoint, revalidateHeader,
+                     tickHeaderState, validateHeader)
+import           Ouroboros.Consensus.Ledger.Abstract
+                     (ApplyBlock (reapplyBlockLedgerResult), LedgerCfg,
+                     LedgerConfig, applyBlockLedgerResult, applyChainTick,
+                     tickThenApply, tickThenApplyLedgerResult, tickThenReapply)
 import           Ouroboros.Consensus.Ledger.Basics (LedgerResult (..),
                      LedgerState, getTipSlot)
 import           Ouroboros.Consensus.Ledger.Extended
@@ -112,7 +113,7 @@ runAnalysis analysisName = case go analysisName of
     go (CheckNoThunksEvery nBks)                      = mkAnalysis $ checkNoThunksEvery nBks
     go TraceLedgerProcessing                          = mkAnalysis $ traceLedgerProcessing
     go (ReproMempoolAndForge nBks)                    = mkAnalysis $ reproMempoolForge nBks
-    go (BenchmarkLedgerOps mOutfile)                  = mkAnalysis $ benchmarkLedgerOps mOutfile
+    go (BenchmarkLedgerOps mOutfile lgrAppMode)       = mkAnalysis $ benchmarkLedgerOps mOutfile lgrAppMode
     go (GetBlockApplicationMetrics nrBlocks mOutfile) = mkAnalysis $ getBlockApplicationMetrics nrBlocks mOutfile
 
     mkAnalysis ::
@@ -536,13 +537,15 @@ benchmarkLedgerOps ::
      ( HasAnalysis blk
      , LedgerSupportsProtocol blk
      )
-  => Maybe FilePath -> Analysis blk StartFromLedgerState
-benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, startFrom, cfg, limit} = do
+  => Maybe FilePath
+  -> LedgerApplicationMode
+  -> Analysis blk StartFromLedgerState
+benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv {db, registry, startFrom, cfg, limit} = do
     -- We default to CSV when the no output file is provided (and thus the results are output to stdout).
     outFormat <- F.getOutputFormat mOutfile
 
     withFile mOutfile $ \outFileHandle -> do
-      F.writeMetadata outFileHandle outFormat
+      F.writeMetadata outFileHandle outFormat ledgerAppMode
       F.writeHeader   outFileHandle outFormat
 
       void $ processAll db registry GetBlock startFrom limit initLedger (process outFileHandle outFormat)
@@ -639,10 +642,13 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, startFrom, cfg, limit} = 
              LedgerView (BlockProtocol blk)
           -> Ticked (HeaderState blk)
           -> IO (HeaderState blk)
-        applyTheHeader ledgerView tickedHeaderState = do
+        applyTheHeader ledgerView tickedHeaderState = case ledgerAppMode of
+          LedgerApply ->
             case runExcept $ validateHeader cfg ledgerView (getHeader blk) tickedHeaderState of
               Left err -> fail $ "benchmark doesn't support invalid headers: " <> show rp <> " " <> show err
               Right x -> pure x
+          LedgerReapply ->
+            pure $! revalidateHeader cfg ledgerView (getHeader blk) tickedHeaderState
 
         tickTheLedgerState ::
              SlotNo
@@ -654,10 +660,13 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, startFrom, cfg, limit} = 
         applyTheBlock ::
              Ticked (LedgerState blk)
           -> IO (LedgerState blk)
-        applyTheBlock tickedLedgerSt = do
+        applyTheBlock tickedLedgerSt = case ledgerAppMode of
+          LedgerApply ->
             case runExcept (lrResult <$> applyBlockLedgerResult lcfg blk tickedLedgerSt) of
               Left err -> fail $ "benchmark doesn't support invalid blocks: " <> show rp <> " " <> show err
               Right x  -> pure x
+          LedgerReapply ->
+            pure $! lrResult $ reapplyBlockLedgerResult lcfg blk tickedLedgerSt
 
 withFile :: Maybe FilePath -> (IO.Handle -> IO r) -> IO r
 withFile (Just outfile) = IO.withFile outfile IO.WriteMode

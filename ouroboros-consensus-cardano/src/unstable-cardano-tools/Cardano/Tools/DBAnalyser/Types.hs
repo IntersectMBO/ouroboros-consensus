@@ -28,7 +28,7 @@ data AnalysisName =
   | CountBlocks
   | CheckNoThunksEvery Word64
   | TraceLedgerProcessing
-  | BenchmarkLedgerOps (Maybe FilePath)
+  | BenchmarkLedgerOps (Maybe FilePath) LedgerApplicationMode
   | ReproMempoolAndForge Int
     -- | Compute different block application metrics every 'NumberOfBlocks'.
     --

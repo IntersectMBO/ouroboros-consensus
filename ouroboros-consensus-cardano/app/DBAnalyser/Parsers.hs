@@ -150,7 +150,8 @@ parseLimit = asum [
 
 benchmarkLedgerOpsParser :: Parser AnalysisName
 benchmarkLedgerOpsParser =
-    BenchmarkLedgerOps <$> (benchmarkLedgerOpsFlagParser *> pMaybeOutputFile)
+       benchmarkLedgerOpsFlagParser
+    *> (BenchmarkLedgerOps <$> pMaybeOutputFile <*> pApplyMode)
   where
     benchmarkLedgerOpsFlagParser =
       flag' BenchmarkLedgerOps $ mconcat [
@@ -158,6 +159,12 @@ benchmarkLedgerOpsParser =
           , help $ "Maintain ledger state and benchmark the main ledger calculations for each block."
                   <> " Prints one line of stats per block to the given output file "
                   <> " (defaults to stdout)."
+          ]
+
+    pApplyMode =
+      flag LedgerApply LedgerReapply $ mconcat [
+            long "reapply"
+          , help $ "Measure header/block *re*application instead of full application."
           ]
 
 getBlockApplicationMetrics :: Parser AnalysisName

@@ -16,6 +16,7 @@ import           Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPo
                      (SlotDataPoint)
 import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint as DP
 import qualified Cardano.Tools.DBAnalyser.CSV as CSV
+import           Cardano.Tools.DBAnalyser.Types (LedgerApplicationMode)
 import           Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as BSL
 import           System.FilePath.Posix (takeExtension)
@@ -86,10 +87,10 @@ writeDataPoint outFileHandle JSON slotDataPoint =
 
 -- | Write metadata to a JSON file if this is the selected
 -- format. Perform a no-op otherwise.
-writeMetadata :: IO.Handle -> OutputFormat -> IO ()
-writeMetadata _outFileHandle CSV  = pure ()
-writeMetadata  outFileHandle JSON =
-  BenchmarkLedgerOps.Metadata.getMetadata
+writeMetadata :: IO.Handle -> OutputFormat -> LedgerApplicationMode -> IO ()
+writeMetadata _outFileHandle CSV _lgrAppMode = pure ()
+writeMetadata  outFileHandle JSON lgrAppMode =
+  BenchmarkLedgerOps.Metadata.getMetadata lgrAppMode
   >>= BSL.hPut outFileHandle . Aeson.encode
 
 {-------------------------------------------------------------------------------
