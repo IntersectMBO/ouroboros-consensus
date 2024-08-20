@@ -1,16 +1,15 @@
-{-# LANGUAGE BangPatterns               #-}
-{-# LANGUAGE BlockArguments             #-}
-{-# LANGUAGE DataKinds                  #-}
-{-# LANGUAGE FlexibleContexts           #-}
-{-# LANGUAGE GADTs                      #-}
-{-# LANGUAGE GeneralisedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase                 #-}
-{-# LANGUAGE NamedFieldPuns             #-}
-{-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE TupleSections              #-}
-{-# LANGUAGE TypeApplications           #-}
-{-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE BangPatterns        #-}
+{-# LANGUAGE BlockArguments      #-}
+{-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE NamedFieldPuns      #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections       #-}
+{-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE TypeFamilies        #-}
 
 module Cardano.Tools.DBAnalyser.Analysis (
     AnalysisEnv (..)
@@ -33,6 +32,7 @@ import           Cardano.Tools.DBAnalyser.CSV (computeAndWriteLine,
                      writeHeaderLine)
 import           Cardano.Tools.DBAnalyser.HasAnalysis (HasAnalysis)
 import qualified Cardano.Tools.DBAnalyser.HasAnalysis as HasAnalysis
+import           Cardano.Tools.DBAnalyser.Types
 import           Codec.CBOR.Encoding (Encoding)
 import           Control.Monad (unless, void, when)
 import           Control.Monad.Except (runExcept)
@@ -82,39 +82,6 @@ import qualified System.IO as IO
 {-------------------------------------------------------------------------------
   Run the requested analysis
 -------------------------------------------------------------------------------}
-
-data AnalysisName =
-    ShowSlotBlockNo
-  | CountTxOutputs
-  | ShowBlockHeaderSize
-  | ShowBlockTxsSize
-  | ShowEBBs
-  | OnlyValidation
-  | StoreLedgerStateAt SlotNo LedgerApplicationMode
-  | CountBlocks
-  | CheckNoThunksEvery Word64
-  | TraceLedgerProcessing
-  | BenchmarkLedgerOps (Maybe FilePath)
-  | ReproMempoolAndForge Int
-    -- | Compute different block application metrics every 'NumberOfBlocks'.
-    --
-    -- The metrics will be written to the provided file path, or to
-    -- the standard output if no file path is specified.
-  | GetBlockApplicationMetrics NumberOfBlocks (Maybe FilePath)
-  deriving Show
-
-data AnalysisResult =
-    ResultCountBlock Int
-  | ResultMaxHeaderSize Word16
-  deriving (Eq, Show)
-
-newtype NumberOfBlocks = NumberOfBlocks { unNumberOfBlocks :: Word64 }
-  deriving (Eq, Show, Num, Read)
-
--- | Whether to apply blocks to a ledger state via /reapplication/ (eg skipping
--- signature checks/Plutus scripts) or full /application/ (much slower).
-data LedgerApplicationMode = LedgerReapply | LedgerApply
-  deriving (Eq, Show)
 
 runAnalysis ::
      forall blk.
@@ -876,8 +843,6 @@ reproMempoolForge numBlks env = do
 {-------------------------------------------------------------------------------
   Auxiliary: processing all blocks in the DB
 -------------------------------------------------------------------------------}
-
-data Limit = Limit Int | Unlimited
 
 decreaseLimit :: Limit -> Maybe Limit
 decreaseLimit Unlimited = Just Unlimited

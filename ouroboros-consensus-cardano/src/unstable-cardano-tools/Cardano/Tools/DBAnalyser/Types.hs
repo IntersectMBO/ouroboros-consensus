@@ -1,11 +1,8 @@
-module Cardano.Tools.DBAnalyser.Types (
-    module AnalysisTypes
-  , module Cardano.Tools.DBAnalyser.Types
-  ) where
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
-import           Cardano.Tools.DBAnalyser.Analysis as AnalysisTypes
-                     (AnalysisName (..), AnalysisResult (..), Limit (..),
-                     NumberOfBlocks (..))
+module Cardano.Tools.DBAnalyser.Types (module Cardano.Tools.DBAnalyser.Types) where
+
+import           Data.Word
 import           Ouroboros.Consensus.Block
 
 data SelectDB =
@@ -20,6 +17,41 @@ data DBAnalyserConfig = DBAnalyserConfig {
   , confLimit  :: Limit
   }
 
+data AnalysisName =
+    ShowSlotBlockNo
+  | CountTxOutputs
+  | ShowBlockHeaderSize
+  | ShowBlockTxsSize
+  | ShowEBBs
+  | OnlyValidation
+  | StoreLedgerStateAt SlotNo LedgerApplicationMode
+  | CountBlocks
+  | CheckNoThunksEvery Word64
+  | TraceLedgerProcessing
+  | BenchmarkLedgerOps (Maybe FilePath)
+  | ReproMempoolAndForge Int
+    -- | Compute different block application metrics every 'NumberOfBlocks'.
+    --
+    -- The metrics will be written to the provided file path, or to
+    -- the standard output if no file path is specified.
+  | GetBlockApplicationMetrics NumberOfBlocks (Maybe FilePath)
+  deriving Show
+
+data AnalysisResult =
+    ResultCountBlock Int
+  | ResultMaxHeaderSize Word16
+  deriving (Eq, Show)
+
+newtype NumberOfBlocks = NumberOfBlocks { unNumberOfBlocks :: Word64 }
+  deriving (Eq, Show, Num, Read)
+
+data Limit = Limit Int | Unlimited
+
 -- | The extent of the ChainDB on-disk files validation. This is completely
 -- unrelated to validation of the ledger rules.
 data ValidateBlocks = ValidateAllBlocks | MinimumBlockValidation
+
+-- | Whether to apply blocks to a ledger state via /reapplication/ (eg skipping
+-- signature checks/Plutus scripts) or full /application/ (much slower).
+data LedgerApplicationMode = LedgerReapply | LedgerApply
+  deriving (Eq, Show)
