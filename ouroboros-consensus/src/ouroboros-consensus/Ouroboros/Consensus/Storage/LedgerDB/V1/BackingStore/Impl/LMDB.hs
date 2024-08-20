@@ -17,6 +17,12 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB (
   , newLMDBBackingStore
     -- * Errors
   , LMDBErr (..)
+    -- * Internals exposed for @snapshot-converter@
+  , DbState (..)
+  , LMDBMK (..)
+  , getDb
+  , initLMDBTable
+  , withDbStateRWMaybeNull
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo, WithOrigin (At))

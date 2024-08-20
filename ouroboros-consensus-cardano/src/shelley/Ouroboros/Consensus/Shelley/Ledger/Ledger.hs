@@ -302,9 +302,9 @@ instance ShelleyBasedEra era
       => CanSerializeLedgerTables (LedgerState (ShelleyBlock proto era)) where
     codecLedgerTables = LedgerTables (CodecMK
                                        (Core.toEraCBOR @era)
-                                       toCBOR
+                                       (Core.toEraCBOR @era)
                                        (Core.fromEraCBOR @era)
-                                       fromCBOR)
+                                       (Core.fromEraShareCBOR @era))
 
 instance ShelleyBasedEra era
       => CanStowLedgerTables (LedgerState (ShelleyBlock proto era)) where

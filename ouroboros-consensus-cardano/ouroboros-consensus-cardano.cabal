@@ -668,6 +668,32 @@ executable immdb-server
     ouroboros-consensus-cardano:unstable-cardano-tools,
     with-utf8,
 
+executable snapshot-converter
+  import: common-exe
+  hs-source-dirs: app
+  main-is: snapshot-converter.hs
+  build-depends:
+    base,
+    bytestring,
+    cardano-crypto-class,
+    cardano-crypto-wrapper,
+    cardano-lmdb-simple,
+    cborg,
+    filepath,
+    fs-api,
+    optparse-applicative,
+    ouroboros-consensus,
+    ouroboros-consensus-cardano,
+    ouroboros-consensus-cardano:unstable-cardano-tools,
+    serialise,
+    sop-core,
+    text,
+    transformers,
+    with-utf8,
+
+  other-modules:
+    DBAnalyser.Parsers
+
 test-suite tools-test
   import: common-test
   type: exitcode-stdio-1.0
