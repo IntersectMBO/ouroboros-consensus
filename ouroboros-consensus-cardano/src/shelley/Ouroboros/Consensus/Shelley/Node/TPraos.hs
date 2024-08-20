@@ -18,7 +18,6 @@
 
 module Ouroboros.Consensus.Shelley.Node.TPraos (
     MaxMajorProtVer (..)
-  , ProtocolParams (..)
   , ProtocolParamsShelleyBased (..)
   , SL.Nonce (..)
   , SL.ProtVer (..)
@@ -170,59 +169,6 @@ validateGenesis = first errsToString . SL.validateGenesis
         Text.unpack $ Text.unlines
           ("Invalid genesis config:" : map SL.describeValidationErr errs)
 
--- | Parameters needed to run Shelley
-data instance ProtocolParams (ShelleyBlock (TPraos c) (ShelleyEra c)) = ProtocolParamsShelley {
-      -- | The greatest protocol version that this node's software and config
-      -- files declare to handle correctly in the Shelley era (ie the Cardano
-      -- era that is after Byron and before Allegra)
-      --
-      -- This parameter has three consequences. First, the blocks minted in the
-      -- (first) Shelley era will include it in their header, but essentially
-      -- only for public signaling (eg measuring the adoption of software
-      -- updates).
-      --
-      -- Second, and more importantly, it's passed to the protocol logic. In
-      -- particular, the node's envelope check will begin rejecting all blocks
-      -- (actually, their headers) if the chain moves to a greater protocol
-      -- version. This should never happen in a node that is using up-to-date
-      -- software and config files. Note that the missing software update is
-      -- not necessarily a 'HardForkBlock' era transition: it might be an
-      -- /intra-era hard fork/ (ie conditionals in the ledger rules).
-      --
-      -- Third, it's passed to the ledger rules---but that's entirely
-      -- vestigial. See
-      -- <https://github.com/IntersectMBO/cardano-ledger/issues/3682>.
-      --
-      -- TODO 'Ouroboros.Consensus.Cardano.Node.protocolInfoCardano' always
-      -- passes this parameter to the Shelley era block minting thread.
-      -- However, the protocol and the ledger rules instead receive this
-      -- parameter from the final
-      -- 'Ouroboros.Consensus.HardFork.Combinator.Basics.HardForkBlock' era.
-      -- Since the HFC doesn't use the 'ShelleyEra' code when the protocol
-      -- version increments past 'shelleyProtVer', this isn't an important
-      -- discrepancy. The key aspects of the comment before this TODO are only
-      -- important for the last era prot ver limit, anyway.
-      shelleyProtVer :: SL.ProtVer
-    }
-
--- | Parameters needed to run Allegra
-data instance ProtocolParams (ShelleyBlock (TPraos c) (AllegraEra c)) = ProtocolParamsAllegra {
-      allegraProtVer :: SL.ProtVer
-      -- ^ see 'shelleyProtVer', mutatis mutandi
-    }
-
--- | Parameters needed to run Mary
-data instance ProtocolParams (ShelleyBlock (TPraos c) (MaryEra c)) = ProtocolParamsMary {
-      maryProtVer :: SL.ProtVer
-      -- ^ see 'shelleyProtVer', mutatis mutandi
-    }
-
--- | Parameters needed to run Alonzo
-data instance ProtocolParams (ShelleyBlock (TPraos c) (AlonzoEra c)) = ProtocolParamsAlonzo {
-      alonzoProtVer :: SL.ProtVer
-      -- ^ see 'shelleyProtVer', mutatis mutandi
-    }
-
 protocolInfoShelley ::
      forall m c.
       ( IOLike m
@@ -232,15 +178,13 @@ protocolInfoShelley ::
       )
   => SL.ShelleyGenesis c
   -> ProtocolParamsShelleyBased c
-  -> ProtocolParams (ShelleyBlock (TPraos c) (ShelleyEra c))
+  -> SL.ProtVer
   -> ( ProtocolInfo (ShelleyBlock (TPraos c) (ShelleyEra c) )
      , m [BlockForging m (ShelleyBlock (TPraos c) (ShelleyEra c))]
      )
 protocolInfoShelley shelleyGenesis
                     protocolParamsShelleyBased
-                    ProtocolParamsShelley {
-                        shelleyProtVer = protVer
-                      } =
+                    protVer =
     protocolInfoTPraosShelleyBased
       protocolParamsShelleyBased
       (L.mkShelleyTransitionConfig shelleyGenesis)

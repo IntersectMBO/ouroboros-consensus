@@ -37,7 +37,7 @@ import           Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.ByteStrin
 import           Test.Consensus.Cardano.ProtocolInfo
                      (ByronSlotLengthInSeconds (..), Era (..),
                      ShelleySlotLengthInSeconds (..), hardForkInto,
-                     mkSimpleTestProtocolInfo)
+                     mkSimpleTestProtocolInfo, protocolVersionZero)
 import qualified Test.Consensus.Mempool.Mocked as Mocked
 import           Test.Consensus.Mempool.Mocked (MockedMempool)
 import           Test.Tasty (TestTree, testGroup)
@@ -58,6 +58,7 @@ tests =
                         (Consensus.SecurityParam 10)
                         (ByronSlotLengthInSeconds 1)
                         (ShelleySlotLengthInSeconds 1)
+                        protocolVersionZero
                         (hardForkInto era)
 
             eraIndex = index_NS

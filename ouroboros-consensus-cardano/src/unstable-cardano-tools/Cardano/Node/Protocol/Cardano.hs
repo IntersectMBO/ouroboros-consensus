@@ -20,8 +20,8 @@ module Cardano.Node.Protocol.Cardano (
 import           Cardano.Api.Any
 import           Cardano.Api.Protocol.Types
 import qualified Cardano.Chain.Update as Byron
-import qualified Cardano.Ledger.Api.Transition as L
-import           Cardano.Ledger.BaseTypes (natVersion)
+import qualified Cardano.Ledger.Api.Era as L
+import qualified Cardano.Ledger.Api.Transition as SL
 import qualified Cardano.Node.Protocol.Alonzo as Alonzo
 import qualified Cardano.Node.Protocol.Byron as Byron
 import qualified Cardano.Node.Protocol.Conway as Conway
@@ -34,7 +34,7 @@ import           Ouroboros.Consensus.Cardano
 import qualified Ouroboros.Consensus.Cardano as Consensus
 import qualified Ouroboros.Consensus.Cardano.CanHardFork as Consensus
 import           Ouroboros.Consensus.Cardano.Condense ()
-import           Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams)
+import           Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams (..))
 import           Ouroboros.Consensus.Config (emptyCheckpointsMap)
 import           Ouroboros.Consensus.HardFork.Combinator.Condense ()
 import           Ouroboros.Consensus.Shelley.Crypto (StandardCrypto)
@@ -151,7 +151,7 @@ mkConsensusProtocolCardano NodeByronProtocolConfiguration {
         Shelley.readLeaderCredentials files
 
     let transitionLedgerConfig =
-          L.mkLatestTransitionConfig shelleyGenesis alonzoGenesis conwayGenesis
+          SL.mkLatestTransitionConfig shelleyGenesis alonzoGenesis conwayGenesis
 
     --TODO: all these protocol versions below are confusing and unnecessary.
     -- It could and should all be automated and these config entries eliminated.
@@ -185,46 +185,6 @@ mkConsensusProtocolCardano NodeByronProtocolConfiguration {
           shelleyBasedInitialNonce      = Shelley.genesisHashToPraosNonce
                                             shelleyGenesisHash,
           shelleyBasedLeaderCredentials = shelleyLeaderCredentials
-        }
-        Consensus.ProtocolParamsShelley {
-          -- This is /not/ the Shelley protocol version. It is the protocol
-          -- version that this node will declare that it understands, when it
-          -- is in the Shelley era. That is, it is the version of protocol
-          -- /after/ Shelley, i.e. Allegra.
-          shelleyProtVer = ProtVer (natVersion @3) 0
-        }
-        Consensus.ProtocolParamsAllegra {
-          -- This is /not/ the Allegra protocol version. It is the protocol
-          -- version that this node will declare that it understands, when it
-          -- is in the Allegra era. That is, it is the version of protocol
-          -- /after/ Allegra, i.e. Mary.
-          allegraProtVer = ProtVer (natVersion @4) 0
-        }
-        Consensus.ProtocolParamsMary {
-          -- This is /not/ the Mary protocol version. It is the protocol
-          -- version that this node will declare that it understands, when it
-          -- is in the Mary era. That is, it is the version of protocol
-          -- /after/ Mary, i.e. Alonzo.
-          maryProtVer = ProtVer (natVersion @5) 0
-        }
-        Consensus.ProtocolParamsAlonzo {
-          -- This is /not/ the Alonzo protocol version. It is the protocol
-          -- version that this node will declare that it understands, when it
-          -- is in the Alonzo era. That is, it is the version of protocol
-          -- /after/ Alonzo, i.e. Babbage.
-          alonzoProtVer = ProtVer (natVersion @7) 0
-        }
-        Consensus.ProtocolParamsBabbage {
-          -- This is /not/ the Babbage protocol version. It is the protocol
-          -- version that this node will declare that it understands, when it
-          -- is in the Babbage era.
-          Consensus.babbageProtVer = ProtVer (natVersion @9) 0
-        }
-        Consensus.ProtocolParamsConway {
-          -- This is /not/ the Conway protocol version. It is the protocol
-          -- version that this node will declare that it understands, when it
-          -- is in the Conway era.
-          Consensus.conwayProtVer = ProtVer (natVersion @9) 0
         }
         -- The 'CardanoHardForkTriggers' specify the parameters needed to
         -- transition between two eras. The comments below also apply for all
@@ -292,6 +252,7 @@ mkConsensusProtocolCardano NodeByronProtocolConfiguration {
         }
         transitionLedgerConfig
         emptyCheckpointsMap
+        (ProtVer (L.eraProtVerHigh @(L.LatestKnownEra StandardCrypto)) 0)
 
 ------------------------------------------------------------------------------
 -- Errors

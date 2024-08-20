@@ -20,7 +20,6 @@ module Cardano.Api.Protocol.Types (
 import           Cardano.Chain.Slotting (EpochSlots)
 import           Data.Bifunctor (bimap)
 import           Ouroboros.Consensus.Block.Forging (BlockForging)
-import qualified Ouroboros.Consensus.Byron.Ledger.Block as Consensus
 import           Ouroboros.Consensus.Cardano
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.ByronHFC (ByronBlockHFC)
@@ -58,7 +57,7 @@ class RunNode blk => ProtocolClient blk where
 
 -- | Run PBFT against the Byron ledger
 instance IOLike m => Protocol m ByronBlockHFC where
-  data ProtocolInfoArgs m ByronBlockHFC = ProtocolInfoArgsByron (ProtocolParams Consensus.ByronBlock)
+  data ProtocolInfoArgs m ByronBlockHFC = ProtocolInfoArgsByron ProtocolParamsByron
   protocolInfo (ProtocolInfoArgsByron params) = ( inject $ protocolInfoByron params
                                                 , pure . map inject $ blockForgingByron params
                                                 )
@@ -92,9 +91,9 @@ instance ( IOLike m
   data ProtocolInfoArgs m (ShelleyBlockHFC (Consensus.TPraos StandardCrypto) StandardShelley) = ProtocolInfoArgsShelley
     (ShelleyGenesis StandardCrypto)
     (ProtocolParamsShelleyBased StandardCrypto)
-    (ProtocolParams (Consensus.ShelleyBlock (Consensus.TPraos StandardCrypto) (ShelleyEra StandardCrypto)))
-  protocolInfo (ProtocolInfoArgsShelley genesis paramsShelleyBased' paramsShelley') =
-    bimap inject (fmap $ map inject) $ protocolInfoShelley genesis paramsShelleyBased' paramsShelley'
+    ProtVer
+  protocolInfo (ProtocolInfoArgsShelley genesis shelleyBasedProtocolParams' protVer) =
+    bimap inject (fmap $ map inject) $ protocolInfoShelley genesis shelleyBasedProtocolParams' protVer
 
 instance Consensus.LedgerSupportsProtocol
           (Consensus.ShelleyBlock

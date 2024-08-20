@@ -478,31 +478,22 @@ mkProtocolCardanoAndHardForkTxs
                                           -- window so that the forks induced by
                                           -- the network partition are as deep
                                           -- as possible.
+        (SL.ProtVer conwayMajorVersion  0) -- During the tests, we
+                                           -- want to hard fork all
+                                           -- the way to Conway, so we
+                                           -- need to signal that we
+                                           -- support that era. This
+                                           -- version will have to be
+                                           -- changed if this test has
+                                           -- to hard fork to eras
+                                           -- beyond Conway.
         HardForkSpec {
-            shelleyHardForkSpec =
-              ( SL.ProtVer shelleyMajorVersion 0
-              , TriggerHardForkAtVersion $ SL.getVersion shelleyMajorVersion
-              )
-          , allegraHardForkSpec =
-              ( SL.ProtVer allegraMajorVersion 0
-              , TriggerHardForkAtVersion $ SL.getVersion allegraMajorVersion
-              )
-          , maryHardForkSpec =
-              ( SL.ProtVer maryMajorVersion    0
-              , TriggerHardForkAtVersion $ SL.getVersion maryMajorVersion
-              )
-          , alonzoHardForkSpec =
-              ( SL.ProtVer alonzoMajorVersion  0
-              , TriggerHardForkAtVersion $ SL.getVersion alonzoMajorVersion
-              )
-          , babbageHardForkSpec =
-              ( SL.ProtVer babbageMajorVersion  0
-              , TriggerHardForkAtVersion $ SL.getVersion babbageMajorVersion
-              )
-          , conwayHardForkSpec =
-              ( SL.ProtVer conwayMajorVersion  0
-              , TriggerHardForkAtVersion $ SL.getVersion conwayMajorVersion
-              )
+            shelleyHardForkSpec = TriggerHardForkAtVersion $ SL.getVersion shelleyMajorVersion
+          , allegraHardForkSpec = TriggerHardForkAtVersion $ SL.getVersion allegraMajorVersion
+          , maryHardForkSpec    = TriggerHardForkAtVersion $ SL.getVersion maryMajorVersion
+          , alonzoHardForkSpec  = TriggerHardForkAtVersion $ SL.getVersion alonzoMajorVersion
+          , babbageHardForkSpec = TriggerHardForkAtVersion $ SL.getVersion babbageMajorVersion
+          , conwayHardForkSpec  = TriggerHardForkAtVersion $ SL.getVersion conwayMajorVersion
         }
 
 {-------------------------------------------------------------------------------

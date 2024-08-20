@@ -420,10 +420,7 @@ mkProtocolShelley genesis initialNonce protVer coreNode =
           shelleyBasedInitialNonce      = initialNonce
         , shelleyBasedLeaderCredentials = [mkLeaderCredentials coreNode]
         }
-      ProtocolParamsShelley {
-          shelleyProtVer = protVer
-        }
-
+      protVer
 {-------------------------------------------------------------------------------
   Necessary transactions for updating the 'DecentralizationParam'
 -------------------------------------------------------------------------------}

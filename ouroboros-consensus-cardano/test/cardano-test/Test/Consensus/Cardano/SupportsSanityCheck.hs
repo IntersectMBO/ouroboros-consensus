@@ -52,6 +52,7 @@ genSimpleTestProtocolInfo = do
       (securityParam setup)
       (byronSlotLength setup)
       (shelleySlotLength setup)
+      protocolVersionZero
       (hardForkSpec setup)
 
 data SimpleTestProtocolInfoSetup = SimpleTestProtocolInfoSetup

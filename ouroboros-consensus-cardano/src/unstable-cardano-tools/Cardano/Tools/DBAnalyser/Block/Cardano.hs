@@ -31,8 +31,7 @@ import qualified Cardano.Crypto as Crypto
 import qualified Cardano.Crypto.Hash.Class as CryptoClass
 import           Cardano.Crypto.Raw (Raw)
 import qualified Cardano.Ledger.Api.Era as L
-import qualified Cardano.Ledger.Api.Transition as L
-import qualified Cardano.Ledger.BaseTypes as SL (natVersion)
+import qualified Cardano.Ledger.Api.Transition as SL
 import           Cardano.Ledger.Binary.Version (getVersion)
 import           Cardano.Ledger.Core (TxOut)
 import           Cardano.Ledger.Crypto
@@ -61,8 +60,8 @@ import qualified Ouroboros.Consensus.Byron.Ledger.Ledger as Byron.Ledger
 import           Ouroboros.Consensus.Cardano
 import           Ouroboros.Consensus.Cardano.Block (CardanoEras)
 import qualified Ouroboros.Consensus.Cardano.Block as Cardano.Block
-import           Ouroboros.Consensus.Cardano.Node (TriggerHardFork (..),
-                     protocolInfoCardano)
+import           Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams (..),
+                     TriggerHardFork (..), protocolInfoCardano)
 import           Ouroboros.Consensus.Config (emptyCheckpointsMap)
 import           Ouroboros.Consensus.HardFork.Combinator (HardForkBlock (..),
                      OneEraBlock (..), OneEraHash (..), getHardForkState,
@@ -150,7 +149,7 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
       Aeson.eitherDecodeFileStrict' (conwayGenesisPath cc)
 
     let transCfg =
-          L.mkLatestTransitionConfig genesisShelley genesisAlonzo genesisConway
+          SL.mkLatestTransitionConfig genesisShelley genesisAlonzo genesisConway
 
     initialNonce <- case shelleyGenesisHash cc of
       Just h  -> pure h
@@ -362,7 +361,7 @@ type CardanoBlockArgs = Args (CardanoBlock StandardCrypto)
 mkCardanoProtocolInfo ::
      Byron.Genesis.Config
   -> Maybe PBftSignatureThreshold
-  -> L.TransitionConfig (L.LatestKnownEra StandardCrypto)
+  -> SL.TransitionConfig (L.LatestKnownEra StandardCrypto)
   -> Nonce
   -> CardanoHardForkTriggers
   -> ProtocolInfo (CardanoBlock StandardCrypto)
@@ -380,30 +379,10 @@ mkCardanoProtocolInfo genesisByron signatureThreshold transitionConfig initialNo
             shelleyBasedInitialNonce      = initialNonce
           , shelleyBasedLeaderCredentials = []
           }
-        ProtocolParamsShelley {
-            -- Note that this is /not/ the Shelley protocol version, see
-            -- https://github.com/IntersectMBO/cardano-node/blob/daeae61a005776ee7b7514ce47de3933074234a8/cardano-node/src/Cardano/Node/Protocol/Cardano.hs#L167-L170
-            -- and the succeeding comments.
-            shelleyProtVer = ProtVer (SL.natVersion @3) 0
-          }
-        ProtocolParamsAllegra {
-            allegraProtVer = ProtVer (SL.natVersion @4) 0
-          }
-        ProtocolParamsMary {
-            maryProtVer = ProtVer (SL.natVersion @5) 0
-          }
-        ProtocolParamsAlonzo {
-            alonzoProtVer = ProtVer (SL.natVersion @7) 0
-          }
-        ProtocolParamsBabbage {
-            babbageProtVer = ProtVer (SL.natVersion @9) 0
-          }
-        ProtocolParamsConway {
-            conwayProtVer = ProtVer (SL.natVersion @9) 0
-          }
         triggers
         transitionConfig
         emptyCheckpointsMap
+        (ProtVer (L.eraProtVerHigh @(L.LatestKnownEra StandardCrypto)) 0)
       )
   where
 

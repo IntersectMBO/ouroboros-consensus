@@ -34,9 +34,8 @@
 module Ouroboros.Consensus.Cardano.Node (
     CardanoHardForkConstraints
   , CardanoHardForkTriggers (.., CardanoHardForkTriggers', triggerHardForkShelley, triggerHardForkAllegra, triggerHardForkMary, triggerHardForkAlonzo, triggerHardForkBabbage, triggerHardForkConway)
-  , CardanoProtocolParams
+  , CardanoProtocolParams (..)
   , MaxMajorProtVer (..)
-  , ProtocolParams (.., CardanoProtocolParams, paramsByron, paramsShelleyBased, paramsShelley, paramsAllegra, paramsMary, paramsAlonzo, paramsBabbage, paramsConway, hardForkTriggers, ledgerTransitionConfig, checkpoints)
   , TriggerHardFork (..)
   , protocolClientInfoCardano
   , protocolInfoCardano
@@ -77,7 +76,6 @@ import qualified Data.Map.Strict as Map
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Counting
 import           Data.SOP.Index (Index (..))
-import           Data.SOP.NonEmpty
 import           Data.SOP.OptNP (NonEmptyOptNP, OptNP (OptSkip))
 import qualified Data.SOP.OptNP as OptNP
 import           Data.SOP.Strict
@@ -93,8 +91,6 @@ import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.CanHardFork
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Combinator
-import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
-                     (PerEraProtocolParams (..))
 import           Ouroboros.Consensus.HardFork.Combinator.Embed.Nary
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import qualified Ouroboros.Consensus.HardFork.History as History
@@ -521,60 +517,56 @@ pattern CardanoHardForkTriggers' {
 {-# COMPLETE CardanoHardForkTriggers' #-}
 
 -- | Parameters needed to run Cardano.
-data instance ProtocolParams (CardanoBlock c) = ProtocolParamsCardano {
-    cardanoProtocolParamsPerEra   :: PerEraProtocolParams (CardanoEras c)
+--
+-- __On the relation between 'cardanoHardForkTriggers' and 'cardanoProtocolVersion'__:
+--
+-- The 'cardanoHardForkTriggers' can mention __ledger__ protocol
+-- version versions at which the hard fork will occur. In principle
+-- there is no relation between the versions mentioned in
+-- 'cardanoProtocolVerson' (if any) and 'cardanoHardForkTriggers',
+-- however their relationship might indicate experimental eras or
+-- intra-era hard forks. For instance if the last era in the
+-- 'CardanoHardForkTriggers' is set to @9 0@, ie:
+--
+-- > ... :* TriggerHardForkAtVersion (ProtVer (SL.natVersion @9) 0)
+--
+-- Setting 'cardanoProtocolVersion' to @ProtVer (SL.natVersion @8) 0@
+-- will mark that last era as experimental because the obsolete node
+-- checks determine that the highest version we support is @8 0@.
+--
+-- If, on the other hand, we would set 'cardanoProtocolVersion' to
+-- @ProtVer (SL.natVersion @10) 0@, this indicates that the node is
+-- ready to perform an intra-era hardfork (from version @9@ to version
+-- @10@).
+--
+data CardanoProtocolParams c = CardanoProtocolParams {
+    byronProtocolParams           :: ProtocolParamsByron
   , shelleyBasedProtocolParams    :: ProtocolParamsShelleyBased c
   , cardanoHardForkTriggers       :: CardanoHardForkTriggers
   , cardanoLedgerTransitionConfig :: L.TransitionConfig (L.LatestKnownEra c)
   , cardanoCheckpoints            :: CheckpointsMap (CardanoBlock c)
+    -- | The greatest protocol version that this node's software and config
+    -- files declare to handle correctly.
+    --
+    -- This parameter has three consequences. First, the blocks minted
+    -- will include the protocol version in their header, but
+    -- essentially only for public signaling (eg measuring the
+    -- percentage of adoption of software updates).
+    --
+    -- Second, and more importantly, it's passed to the protocol logic. In
+    -- particular, the node's envelope check will begin rejecting all blocks
+    -- (actually, their headers) if the chain moves to a greater protocol
+    -- version. This should never happen in a node that is using up-to-date
+    -- software and config files. Note that the missing software update is
+    -- not necessarily a 'HardForkBlock' era transition: it might be an
+    -- /intra-era hard fork/ (ie conditionals in the ledger rules).
+    --
+    -- Third, it's passed to the ledger rules---but that's entirely
+    -- vestigial. See
+    -- <https://github.com/IntersectMBO/cardano-ledger/issues/3682>.
+    --
+  , cardanoProtocolVersion        :: ProtVer
   }
-
-type CardanoProtocolParams c = ProtocolParams (CardanoBlock c)
-
-pattern CardanoProtocolParams ::
-     ProtocolParams ByronBlock
-  -> ProtocolParamsShelleyBased c
-  -> ProtocolParams (ShelleyBlock (TPraos c) (ShelleyEra c))
-  -> ProtocolParams (ShelleyBlock (TPraos c) (AllegraEra c))
-  -> ProtocolParams (ShelleyBlock (TPraos c) (MaryEra    c))
-  -> ProtocolParams (ShelleyBlock (TPraos c) (AlonzoEra  c))
-  -> ProtocolParams (ShelleyBlock (Praos  c) (BabbageEra c))
-  -> ProtocolParams (ShelleyBlock (Praos  c) (ConwayEra  c))
-  -> CardanoHardForkTriggers
-  -> L.TransitionConfig (L.LatestKnownEra c)
-  -> CheckpointsMap (CardanoBlock c)
-  -> CardanoProtocolParams c
-pattern CardanoProtocolParams {
-        paramsByron
-      , paramsShelleyBased
-      , paramsShelley
-      , paramsAllegra
-      , paramsMary
-      , paramsAlonzo
-      , paramsBabbage
-      , paramsConway
-      , hardForkTriggers
-      , ledgerTransitionConfig
-      , checkpoints
-      } =
-    ProtocolParamsCardano {
-        cardanoProtocolParamsPerEra = PerEraProtocolParams
-          (  paramsByron
-          :* paramsShelley
-          :* paramsAllegra
-          :* paramsMary
-          :* paramsAlonzo
-          :* paramsBabbage
-          :* paramsConway
-          :* Nil
-          )
-      , shelleyBasedProtocolParams = paramsShelleyBased
-      , cardanoHardForkTriggers = hardForkTriggers
-      , cardanoLedgerTransitionConfig = ledgerTransitionConfig
-      , cardanoCheckpoints = checkpoints
-      }
-
-{-# COMPLETE CardanoProtocolParams #-}
 
 -- | Create a 'ProtocolInfo' for 'CardanoBlock'
 --
@@ -607,15 +599,9 @@ protocolInfoCardano paramsCardano
     )
   where
     CardanoProtocolParams {
-        paramsByron
-      , paramsShelleyBased
-      , paramsShelley
-      , paramsAllegra
-      , paramsMary
-      , paramsAlonzo
-      , paramsBabbage
-      , paramsConway
-      , hardForkTriggers = CardanoHardForkTriggers' {
+        byronProtocolParams
+      , shelleyBasedProtocolParams
+      , cardanoHardForkTriggers = CardanoHardForkTriggers' {
           triggerHardForkShelley
         , triggerHardForkAllegra
         , triggerHardForkMary
@@ -623,68 +609,34 @@ protocolInfoCardano paramsCardano
         , triggerHardForkBabbage
         , triggerHardForkConway
         }
-      , ledgerTransitionConfig
-      , checkpoints
+      , cardanoLedgerTransitionConfig
+      , cardanoCheckpoints
+      , cardanoProtocolVersion
       } = paramsCardano
 
-    genesisShelley = ledgerTransitionConfig ^. L.tcShelleyGenesisL
+    genesisShelley = cardanoLedgerTransitionConfig ^. L.tcShelleyGenesisL
 
     ProtocolParamsByron {
           byronGenesis           = genesisByron
         , byronLeaderCredentials = mCredsByron
-        } = paramsByron
+        } = byronProtocolParams
     ProtocolParamsShelleyBased {
           shelleyBasedInitialNonce      = initialNonceShelley
         , shelleyBasedLeaderCredentials = credssShelleyBased
-        } = paramsShelleyBased
-    ProtocolParamsShelley {
-          shelleyProtVer = protVerShelley
-        } = paramsShelley
-    ProtocolParamsAllegra {
-          allegraProtVer = protVerAllegra
-        } = paramsAllegra
-    ProtocolParamsMary {
-          maryProtVer = protVerMary
-        } = paramsMary
-    ProtocolParamsAlonzo {
-          alonzoProtVer = protVerAlonzo
-        } = paramsAlonzo
-    ProtocolParamsBabbage {
-          babbageProtVer = protVerBabbage
-        } = paramsBabbage
-    ProtocolParamsConway {
-          conwayProtVer = protVerConway
-        } = paramsConway
+        } = shelleyBasedProtocolParams
 
     transitionConfigShelley = transitionConfigAllegra ^. L.tcPreviousEraConfigL
     transitionConfigAllegra = transitionConfigMary    ^. L.tcPreviousEraConfigL
     transitionConfigMary    = transitionConfigAlonzo  ^. L.tcPreviousEraConfigL
     transitionConfigAlonzo  = transitionConfigBabbage ^. L.tcPreviousEraConfigL
     transitionConfigBabbage = transitionConfigConway  ^. L.tcPreviousEraConfigL
-    transitionConfigConway  = ledgerTransitionConfig
+    transitionConfigConway  = cardanoLedgerTransitionConfig
 
     -- The major protocol version of the last era is the maximum major protocol
     -- version we support.
     --
-    -- TODO: use index of CardanoProtocolParams NP
     maxMajorProtVer :: MaxMajorProtVer
-    maxMajorProtVer =
-          MaxMajorProtVer
-        $ pvMajor
-        $ nonEmptyLast
-        $ exactlyWeakenNonEmpty
-        $ protVers
-      where
-        protVers :: Exactly (CardanoShelleyEras StandardCrypto) ProtVer
-        protVers = Exactly $
-          -- ensure that these have the same order as 'CardanoShelleyEras'!
-          K protVerShelley :*
-          K protVerAllegra :*
-          K protVerMary :*
-          K protVerAlonzo :*
-          K protVerBabbage :*
-          K protVerConway :*
-          Nil
+    maxMajorProtVer = MaxMajorProtVer $ pvMajor cardanoProtocolVersion
 
     -- Byron
 
@@ -695,7 +647,7 @@ protocolInfoCardano paramsCardano
           , topLevelConfigBlock    = blockConfigByron
           }
       , pInfoInitLedger = initExtLedgerStateByron
-      } = protocolInfoByron paramsByron
+      } = protocolInfoByron byronProtocolParams
 
     partialConsensusConfigByron :: PartialConsensusConfig (BlockProtocol ByronBlock)
     partialConsensusConfigByron = consensusConfigByron
@@ -744,7 +696,7 @@ protocolInfoCardano paramsCardano
     blockConfigShelley :: BlockConfig (ShelleyBlock (TPraos c) (ShelleyEra c))
     blockConfigShelley =
         Shelley.mkShelleyBlockConfig
-          protVerShelley
+          cardanoProtocolVersion
           genesisShelley
           (shelleyBlockIssuerVKey <$> credssShelleyBased)
 
@@ -767,7 +719,7 @@ protocolInfoCardano paramsCardano
     blockConfigAllegra :: BlockConfig (ShelleyBlock (TPraos c) (AllegraEra c))
     blockConfigAllegra =
         Shelley.mkShelleyBlockConfig
-          protVerAllegra
+          cardanoProtocolVersion
           genesisShelley
           (shelleyBlockIssuerVKey <$> credssShelleyBased)
 
@@ -787,7 +739,7 @@ protocolInfoCardano paramsCardano
     blockConfigMary :: BlockConfig (ShelleyBlock (TPraos c) (MaryEra c))
     blockConfigMary =
         Shelley.mkShelleyBlockConfig
-          protVerMary
+          cardanoProtocolVersion
           genesisShelley
           (shelleyBlockIssuerVKey <$> credssShelleyBased)
 
@@ -807,7 +759,7 @@ protocolInfoCardano paramsCardano
     blockConfigAlonzo :: BlockConfig (ShelleyBlock (TPraos c) (AlonzoEra c))
     blockConfigAlonzo =
         Shelley.mkShelleyBlockConfig
-          protVerAlonzo
+          cardanoProtocolVersion
           genesisShelley
           (shelleyBlockIssuerVKey <$> credssShelleyBased)
 
@@ -827,7 +779,7 @@ protocolInfoCardano paramsCardano
     blockConfigBabbage :: BlockConfig (ShelleyBlock (Praos c) (BabbageEra c))
     blockConfigBabbage =
         Shelley.mkShelleyBlockConfig
-          protVerBabbage
+          cardanoProtocolVersion
           genesisShelley
           (shelleyBlockIssuerVKey <$> credssShelleyBased)
 
@@ -857,7 +809,7 @@ protocolInfoCardano paramsCardano
     blockConfigConway :: BlockConfig (ShelleyBlock (Praos c) (ConwayEra c))
     blockConfigConway =
         Shelley.mkShelleyBlockConfig
-          protVerConway
+          cardanoProtocolVersion
           genesisShelley
           (shelleyBlockIssuerVKey <$> credssShelleyBased)
 
@@ -944,7 +896,7 @@ protocolInfoCardano paramsCardano
             (Shelley.ShelleyStorageConfig tpraosSlotsPerKESPeriod k)
             (Shelley.ShelleyStorageConfig tpraosSlotsPerKESPeriod k)
             (Shelley.ShelleyStorageConfig tpraosSlotsPerKESPeriod k)
-      , topLevelConfigCheckpoints = checkpoints
+      , topLevelConfigCheckpoints = cardanoCheckpoints
       }
 
     -- When the initial ledger state is not in the Byron era, register the

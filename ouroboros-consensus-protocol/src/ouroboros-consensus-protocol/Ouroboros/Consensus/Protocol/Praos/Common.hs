@@ -18,7 +18,8 @@ module Ouroboros.Consensus.Protocol.Praos.Common (
   ) where
 
 import qualified Cardano.Crypto.VRF as VRF
-import           Cardano.Ledger.BaseTypes (Nonce, Version)
+import           Cardano.Ledger.BaseTypes (Nonce)
+import qualified Cardano.Ledger.BaseTypes as SL
 import           Cardano.Ledger.Crypto (Crypto, VRF)
 import           Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer))
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -35,10 +36,26 @@ import           Ouroboros.Consensus.Protocol.Abstract
 
 -- | The maximum major protocol version.
 --
--- Must be at least the current major protocol version. For Cardano mainnet, the
--- Shelley era has major protocol verison __2__.
+-- This refers to the largest __ledger__ version that this node supports.
+--
+-- Once the ledger protocol version (as reported by the ledger state)
+-- exceeds this version we will consider all blocks invalid. This is
+-- called the "obsolete node check" (see the 'ObsoleteNode' error
+-- constructor).
+--
+-- Major ledger protocol versions are used to trigger both intra and
+-- inter era hard forks, which can potentially change the set of
+-- ledger rules that are applied.
+--
+-- Minor ledger protocol versions were intended to signal soft forks
+-- but they're currently unused, and they're irrelevant for the
+-- consensus logic.
+--
+-- For Cardano mainnet, the Shelley era has major protocol version
+-- __2__.  For more details, see [this
+-- table](https://github.com/cardano-foundation/CIPs/blob/master/CIP-0059/feature-table.md)
 newtype MaxMajorProtVer = MaxMajorProtVer
-  { getMaxMajorProtVer :: Version
+  { getMaxMajorProtVer :: SL.Version
   }
   deriving (Eq, Show, Generic)
   deriving newtype NoThunks

@@ -14,7 +14,6 @@
 
 module Ouroboros.Consensus.Shelley.Node (
     MaxMajorProtVer (..)
-  , ProtocolParams (..)
   , ProtocolParamsShelleyBased (..)
   , SL.Nonce (..)
   , SL.ProtVer (..)
@@ -44,7 +43,6 @@ import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Inspect ()
 import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion ()
 import           Ouroboros.Consensus.Shelley.Node.DiffusionPipelining ()
-import           Ouroboros.Consensus.Shelley.Node.Praos
 import           Ouroboros.Consensus.Shelley.Node.Serialisation ()
 import           Ouroboros.Consensus.Shelley.Node.TPraos
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract (pHeaderIssuer)
