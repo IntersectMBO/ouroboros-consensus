@@ -185,10 +185,11 @@ pureTryAddTx cfg txSize wti tx is
     -- mempool, and...
   | let curSize = msNumBytes  $ isMempoolSize is
   , curSize < getMempoolCapacityBytes (isCapacity is)
-    -- ... if the mempool has less than 2.5 mebibytes of ref scripts.
-  , let maxTotalRefScriptSize = 5 * 512 * 1024 -- 2.5 Mebibytes
-        curTotalRefScriptSize = isTotalRefScriptSize is
-  , curTotalRefScriptSize Prelude.< maxTotalRefScriptSize
+    -- ... if the mempool will have at most 1 mebibyte of ref scripts.
+  , let curTotalRefScriptSize = isTotalRefScriptSize is
+        newTxRefScriptSize    = txRefScriptSize cfg (isLedgerState is) tx
+        maxTotalRefScriptSize = 1024 * 1024 -- 1MiB
+  , curTotalRefScriptSize + newTxRefScriptSize Prelude.<= maxTotalRefScriptSize
   =
   case eVtx of
       -- We only extended the ValidationResult with a single transaction
