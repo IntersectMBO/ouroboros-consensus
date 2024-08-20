@@ -12,6 +12,7 @@ import           Cardano.Node.Types
 import           Cardano.Tools.DBSynthesizer.Forging
 import           Cardano.Tools.DBSynthesizer.Orphans ()
 import           Cardano.Tools.DBSynthesizer.Types
+import           Control.Monad (filterM)
 import           Control.Monad.Trans.Except (ExceptT)
 import           Control.Monad.Trans.Except.Extra (firstExceptT,
                      handleIOExceptT, hoistEither, runExceptT)
@@ -20,6 +21,7 @@ import           Data.Aeson as Aeson (FromJSON, Result (..), Value,
                      eitherDecodeFileStrict', eitherDecodeStrict', fromJSON)
 import           Data.Bool (bool)
 import           Data.ByteString as BS (ByteString, readFile)
+import qualified Data.Set as Set
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.Node
 import           Ouroboros.Consensus.Config (TopLevelConfig, configStorage)
@@ -170,11 +172,12 @@ preOpenChainDB :: DBSynthesizerOpenMode -> FilePath -> IO ()
 preOpenChainDB mode db =
     doesDirectoryExist db >>= bool create checkMode
   where
-    checkIsDB ls    = length ls <= 3 && all (`elem` ["immutable", "ledger", "volatile"]) ls
+    checkIsDB ls    = Set.fromList ls `Set.isSubsetOf` chainDBDirs
+    chainDBDirs     = Set.fromList ["immutable", "ledger", "volatile", "gsm"]
     loc             = "preOpenChainDB: '" ++ db ++ "'"
     create          = createDirectoryIfMissing True db
     checkMode = do
-        isChainDB <- checkIsDB <$> listDirectory db
+        isChainDB <- checkIsDB <$> listSubdirectories db
         case mode of
             OpenCreate ->
                 fail $ loc ++ " already exists. Use -f to overwrite or -a to append."
@@ -184,5 +187,9 @@ preOpenChainDB mode db =
                 removePathForcibly db >> create
             _ ->
                 fail $ loc ++ " is non-empty and does not look like a ChainDB"
-                    <> " (i.e. its entries are not exactly 'immutable'/'ledger'/'volatile')."
-                    <> " Aborting."
+                    <> " (i.e. it contains directories other than"
+                    <> " 'immutable'/'ledger'/'volatile'/'gsm'). Aborting."
+
+    listSubdirectories path = filterM isDir =<< listDirectory path
+      where
+        isDir p = doesDirectoryExist (path </> p)
