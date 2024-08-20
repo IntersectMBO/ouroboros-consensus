@@ -57,6 +57,8 @@ import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..),
                      bracketFetchClient, bracketKeepAliveClient,
                      bracketSyncWithFetchClient, newFetchClientRegistry)
 import           Ouroboros.Network.BlockFetch.Client (blockFetchClient)
+import           Ouroboros.Network.BlockFetch.ConsensusInterface
+                     (PraosFetchMode (..))
 import           Ouroboros.Network.ControlMessage (ControlMessage (..))
 import           Ouroboros.Network.Mock.Chain (Chain)
 import qualified Ouroboros.Network.Mock.Chain as Chain
@@ -97,8 +99,9 @@ prop_blockFetch bfcts@BlockFetchClientTestSetup{..} =
       [ Map.keysSet bfcoBlockFetchResults === Map.keysSet peerUpdates
       , counterexample ("Fetched blocks per peer: " <> condense bfcoFetchedBlocks) $
         property $ case blockFetchMode of
-          FetchModeDeadline -> all (> 0) bfcoFetchedBlocks
-          FetchModeBulkSync -> any (> 0) bfcoFetchedBlocks
+          PraosFetchMode FetchModeDeadline -> all (> 0) bfcoFetchedBlocks
+          PraosFetchMode FetchModeBulkSync -> all (> 0) bfcoFetchedBlocks
+          FetchModeGenesis                 -> any (> 0) bfcoFetchedBlocks
       ]
   where
     BlockFetchClientOutcome{..} = runSimOrThrow $ runBlockFetchTest bfcts
@@ -361,18 +364,23 @@ instance Arbitrary BlockFetchClientTestSetup where
       peerUpdates <-
             Map.fromList . zip peerIds
         <$> replicateM numPeers (genUpdateSchedule blockFetchPipelining)
-      blockFetchMode <- elements [FetchModeBulkSync, FetchModeDeadline]
+      blockFetchMode <- elements
+        [ PraosFetchMode FetchModeBulkSync
+        , PraosFetchMode FetchModeDeadline
+        , FetchModeGenesis
+        ]
       blockFetchCfg  <- do
         let -- ensure that we can download blocks from all peers
+            bfcMaxConcurrencyBulkSync = fromIntegral numPeers
             bfcMaxConcurrencyDeadline = fromIntegral numPeers
             -- This is used to introduce a minimal delay between BlockFetch
             -- logic iterations in case the monitored state vars change too
             -- fast, which we don't have to worry about in this test.
-            bfcDecisionLoopIntervalBulkSync = 0
-            bfcDecisionLoopIntervalDeadline = 0
+            bfcDecisionLoopIntervalGenesis = 0
+            bfcDecisionLoopIntervalPraos = 0
         bfcMaxRequestsInflight <- chooseEnum (2, 10)
         bfcSalt                <- arbitrary
-        gbfcBulkSyncGracePeriod <- fromIntegral <$> chooseInteger (5, 60)
+        gbfcGracePeriod <- fromIntegral <$> chooseInteger (5, 60)
         let bfcGenesisBFConfig = GenesisBlockFetchConfiguration {..}
         pure BlockFetchConfiguration {..}
       pure BlockFetchClientTestSetup {..}
