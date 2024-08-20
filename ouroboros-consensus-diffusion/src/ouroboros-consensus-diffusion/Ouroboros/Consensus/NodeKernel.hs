@@ -92,6 +92,8 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (castTip, tipFromHeader)
 import           Ouroboros.Network.BlockFetch
+import           Ouroboros.Network.BlockFetch.ConsensusInterface
+                     (GenesisFetchMode)
 import           Ouroboros.Network.Diffusion (PublicPeerSelectionState)
 import           Ouroboros.Network.NodeToNode (ConnectionId,
                      MiniProtocolParameters (..))
@@ -130,7 +132,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
 
       -- | The fetch mode, used by diffusion.
       --
-    , getFetchMode            :: STM m FetchMode
+    , getFetchMode            :: STM m GenesisFetchMode
 
       -- | The GSM state, used by diffusion. A ledger judgement can be derived
       -- from it with 'GSM.gsmStateToLedgerJudgement'.
@@ -351,6 +353,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
                                  , blockFetchSize, btime
                                  , mempoolCapacityOverride
                                  , gsmArgs, getUseBootstrapPeers
+                                 , genesisArgs
                                  } = do
     varGsmState <- do
       let GsmNodeKernelArgs {..} = gsmArgs
@@ -372,6 +375,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
 
     slotForgeTimeOracle <- BlockFetchClientInterface.initSlotForgeTimeOracle cfg chainDB
     let readFetchMode = BlockFetchClientInterface.readFetchModeDefault
+          (isGenesisEnabled $ gnkaLoEAndGDDArgs genesisArgs)
           btime
           (ChainDB.getCurrentChain chainDB)
           getUseBootstrapPeers
@@ -389,6 +393,11 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
     peerSharingRegistry <- newPeerSharingRegistry
 
     return IS {..}
+  where
+    isGenesisEnabled :: forall a. LoEAndGDDConfig a -> Bool
+    isGenesisEnabled = \case
+      LoEAndGDDDisabled -> False
+      LoEAndGDDEnabled _ -> True
 
 forkBlockForging ::
        forall m addrNTN addrNTC blk.

@@ -46,7 +46,8 @@ import           Ouroboros.Network.Block (MaxSlotNo)
 import           Ouroboros.Network.BlockFetch.ConsensusInterface
                      (BlockFetchConsensusInterface (..),
                      ChainSelStarvation (..), FetchMode (..),
-                     FromConsensus (..), WhetherReceivingTentativeBlocks (..))
+                     FromConsensus (..), GenesisFetchMode (..),
+                     WhetherReceivingTentativeBlocks (..))
 import           Ouroboros.Network.PeerSelection.Bootstrap (UseBootstrapPeers,
                      requiresBootstrapPeers)
 import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
@@ -142,24 +143,28 @@ initSlotForgeTimeOracle cfg chainDB = do
 
 readFetchModeDefault ::
      (MonadSTM m, HasHeader blk)
-  => BlockchainTime m
+  => Bool -- Is genesis enabled?
+  -> BlockchainTime m
   -> STM m (AnchoredFragment blk)
   -> STM m UseBootstrapPeers
   -> STM m LedgerStateJudgement
-  -> STM m FetchMode
-readFetchModeDefault btime getCurrentChain
+  -> STM m GenesisFetchMode
+readFetchModeDefault genesisEnabled btime getCurrentChain
                      getUseBootstrapPeers getLedgerStateJudgement = do
     mCurSlot <- getCurrentSlot btime
     usingBootstrapPeers <- requiresBootstrapPeers <$> getUseBootstrapPeers
                                                   <*> getLedgerStateJudgement
+    let nonDeadlineFetchMode = if genesisEnabled
+          then FetchModeGenesis
+          else PraosFetchMode FetchModeBulkSync
 
     -- This logic means that when the node is using bootstrap peers and is in
     -- TooOld state it will always return BulkSync. Otherwise if the node
     -- isn't using bootstrap peers (i.e. has them disabled it will use the old
     -- logic of returning BulkSync if behind 1000 slots
     case (usingBootstrapPeers, mCurSlot) of
-      (True, _)                    -> return FetchModeBulkSync
-      (False, CurrentSlotUnknown)  -> return FetchModeBulkSync
+      (True, _)                    -> return nonDeadlineFetchMode
+      (False, CurrentSlotUnknown)  -> return nonDeadlineFetchMode
       (False, CurrentSlot curSlot) -> do
         curChainSlot <- AF.headSlot <$> getCurrentChain
         let slotsBehind = case curChainSlot of
@@ -171,8 +176,8 @@ readFetchModeDefault btime getCurrentChain
         return $ if slotsBehind < maxSlotsBehind
           -- When the current chain is near to "now", use deadline mode,
           -- when it is far away, use bulk sync mode.
-          then FetchModeDeadline
-          else FetchModeBulkSync
+          then PraosFetchMode FetchModeDeadline
+          else nonDeadlineFetchMode
 
 mkBlockFetchConsensusInterface ::
      forall m peer blk.
@@ -188,7 +193,7 @@ mkBlockFetchConsensusInterface ::
   -> (Header blk -> SizeInBytes)
   -> SlotForgeTimeOracle m blk
      -- ^ Slot forge time, see 'headerForgeUTCTime' and 'blockForgeUTCTime'.
-  -> STM m FetchMode
+  -> STM m GenesisFetchMode
      -- ^ See 'readFetchMode'.
   -> BlockFetchConsensusInterface peer (Header blk) blk m
 mkBlockFetchConsensusInterface

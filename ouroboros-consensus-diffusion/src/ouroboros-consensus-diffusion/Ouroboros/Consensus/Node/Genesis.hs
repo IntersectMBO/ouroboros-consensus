@@ -60,26 +60,26 @@ data GenesisConfig = GenesisConfig
 
 -- | Genesis configuration flags and low-level args, as parsed from config file or CLI
 data GenesisConfigFlags = GenesisConfigFlags
-  { gcfEnableCSJ            :: Bool
-  , gcfEnableLoEAndGDD      :: Bool
-  , gcfEnableLoP            :: Bool
-  , gcfBulkSyncGracePeriod  :: Maybe Integer
-  , gcfBucketCapacity       :: Maybe Integer
-  , gcfBucketRate           :: Maybe Integer
-  , gcfCSJJumpSize          :: Maybe Integer
-  , gcfGDDRateLimit         :: Maybe DiffTime
+  { gcfEnableCSJ             :: Bool
+  , gcfEnableLoEAndGDD       :: Bool
+  , gcfEnableLoP             :: Bool
+  , gcfBlockFetchGracePeriod :: Maybe Integer
+  , gcfBucketCapacity        :: Maybe Integer
+  , gcfBucketRate            :: Maybe Integer
+  , gcfCSJJumpSize           :: Maybe Integer
+  , gcfGDDRateLimit          :: Maybe DiffTime
   } deriving stock (Eq, Generic, Show)
 
 defaultGenesisConfigFlags :: GenesisConfigFlags
 defaultGenesisConfigFlags = GenesisConfigFlags
-  { gcfEnableCSJ            = True
-  , gcfEnableLoEAndGDD      = True
-  , gcfEnableLoP            = True
-  , gcfBulkSyncGracePeriod  = Nothing
-  , gcfBucketCapacity       = Nothing
-  , gcfBucketRate           = Nothing
-  , gcfCSJJumpSize          = Nothing
-  , gcfGDDRateLimit         = Nothing
+  { gcfEnableCSJ              = True
+  , gcfEnableLoEAndGDD        = True
+  , gcfEnableLoP              = True
+  , gcfBlockFetchGracePeriod  = Nothing
+  , gcfBucketCapacity         = Nothing
+  , gcfBucketRate             = Nothing
+  , gcfCSJJumpSize            = Nothing
+  , gcfGDDRateLimit           = Nothing
   }
 
 enableGenesisConfigDefault :: GenesisConfig
@@ -93,7 +93,7 @@ mkGenesisConfig :: Maybe GenesisConfigFlags -> GenesisConfig
 mkGenesisConfig Nothing = -- disable Genesis
   GenesisConfig
     { gcBlockFetchConfig = GenesisBlockFetchConfiguration
-        { gbfcBulkSyncGracePeriod = 0 -- no grace period when Genesis is disabled
+        { gbfcGracePeriod = 0 -- no grace period when Genesis is disabled
         }
     , gcChainSyncLoPBucketConfig = ChainSyncLoPBucketDisabled
     , gcCSJConfig                = CSJDisabled
@@ -102,7 +102,7 @@ mkGenesisConfig Nothing = -- disable Genesis
 mkGenesisConfig (Just GenesisConfigFlags{..}) =
   GenesisConfig
     { gcBlockFetchConfig = GenesisBlockFetchConfiguration
-        { gbfcBulkSyncGracePeriod
+        { gbfcGracePeriod
         }
     , gcChainSyncLoPBucketConfig = if gcfEnableLoP
         then ChainSyncLoPBucketEnabled ChainSyncLoPBucketEnabledConfig
@@ -121,18 +121,18 @@ mkGenesisConfig (Just GenesisConfigFlags{..}) =
     }
   where
     -- TODO justification/derivation from other parameters
-    defaultBulkSyncGracePeriod = 10 -- seconds
-    defaultCapacity            = 100_000 -- number of tokens
-    defaultRate                = 500 -- tokens per second leaking, 1/2ms
+    defaultBlockFetchGracePeriod = 10 -- seconds
+    defaultCapacity              = 100_000 -- number of tokens
+    defaultRate                  = 500 -- tokens per second leaking, 1/2ms
     -- 3 * 2160 * 20 works in more recent ranges of slots, but causes syncing to
     -- block in byron.
-    defaultCSJJumpSize         = 2 * 2160
-    defaultGDDRateLimit        = 1.0 -- seconds
+    defaultCSJJumpSize           = 2 * 2160
+    defaultGDDRateLimit          = 1.0 -- seconds
 
-    gbfcBulkSyncGracePeriod = fromInteger $ fromMaybe defaultBulkSyncGracePeriod gcfBulkSyncGracePeriod
-    csbcCapacity            = fromInteger $ fromMaybe defaultCapacity gcfBucketCapacity
-    csbcRate                = fromInteger $ fromMaybe defaultRate gcfBucketRate
-    csjcJumpSize            = fromInteger $ fromMaybe defaultCSJJumpSize gcfCSJJumpSize
+    gbfcGracePeriod = fromInteger $ fromMaybe defaultBlockFetchGracePeriod gcfBlockFetchGracePeriod
+    csbcCapacity              = fromInteger $ fromMaybe defaultCapacity gcfBucketCapacity
+    csbcRate                  = fromInteger $ fromMaybe defaultRate gcfBucketRate
+    csjcJumpSize              = fromInteger $ fromMaybe defaultCSJJumpSize gcfCSJJumpSize
     lgpGDDRateLimit            = fromMaybe defaultGDDRateLimit gcfGDDRateLimit
 
 newtype LoEAndGDDParams = LoEAndGDDParams
