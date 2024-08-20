@@ -316,7 +316,8 @@ nonImmutableDbPath (MultipleDbPaths _ vol) = vol
 --
 -- See 'stdLowLevelRunNodeArgsIO'.
 data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) = StdRunNodeArgs
-  { srnBfcMaxConcurrencyDeadline    :: Maybe Word
+  { srnBfcMaxConcurrencyBulkSync    :: Maybe Word
+  , srnBfcMaxConcurrencyDeadline    :: Maybe Word
   , srnChainDbValidateOverride      :: Bool
     -- ^ If @True@, validate the ChainDB on init no matter what
   , srnDiskPolicyArgs               :: DiskPolicyArgs
@@ -976,6 +977,9 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
             maybe id
               (\mc bfc -> bfc { bfcMaxConcurrencyDeadline = mc })
               srnBfcMaxConcurrencyDeadline
+          . maybe id
+              (\mc bfc -> bfc { bfcMaxConcurrencyBulkSync = mc })
+              srnBfcMaxConcurrencyBulkSync
         modifyMempoolCapacityOverride =
             maybe id
               (\mc nka -> nka { mempoolCapacityOverride = mc })
