@@ -157,6 +157,9 @@ Lastly the user can provide the analysis that should be run on the chain:
       - Ticking the [ledger state](https://github.com/IntersectMBO/ouroboros-consensus/blob/51da3876c01edc2eec250fdc998f6cb33cdc4367/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Basics.hs#L174).
       - Applying a block.
 
+    When the `--reapply` flag is specified, we measure header/block
+    *re*application instead of full application.
+
 * `--repro-mempool-and-forge NUM` populates the mempool with the transactions
   from NUM blocks every time and then runs the forging loop. Useful to inspect
   regressions in the forging loop or in the mempool adding/snapshotting logic.

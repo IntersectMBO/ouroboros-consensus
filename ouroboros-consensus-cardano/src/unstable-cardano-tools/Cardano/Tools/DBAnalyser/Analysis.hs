@@ -1,16 +1,15 @@
-{-# LANGUAGE BangPatterns               #-}
-{-# LANGUAGE BlockArguments             #-}
-{-# LANGUAGE DataKinds                  #-}
-{-# LANGUAGE FlexibleContexts           #-}
-{-# LANGUAGE GADTs                      #-}
-{-# LANGUAGE GeneralisedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase                 #-}
-{-# LANGUAGE NamedFieldPuns             #-}
-{-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE TupleSections              #-}
-{-# LANGUAGE TypeApplications           #-}
-{-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE BangPatterns        #-}
+{-# LANGUAGE BlockArguments      #-}
+{-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE NamedFieldPuns      #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections       #-}
+{-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE TypeFamilies        #-}
 
 module Cardano.Tools.DBAnalyser.Analysis (
     AnalysisEnv (..)
@@ -33,6 +32,7 @@ import           Cardano.Tools.DBAnalyser.CSV (computeAndWriteLine,
                      writeHeaderLine)
 import           Cardano.Tools.DBAnalyser.HasAnalysis (HasAnalysis)
 import qualified Cardano.Tools.DBAnalyser.HasAnalysis as HasAnalysis
+import           Cardano.Tools.DBAnalyser.Types
 import           Codec.CBOR.Encoding (Encoding)
 import           Control.Monad (unless, void, when)
 import           Control.Monad.Except (runExcept)
@@ -49,11 +49,12 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Forecast (forecastFor)
 import           Ouroboros.Consensus.HeaderValidation (HasAnnTip (..),
-                     HeaderState (..), headerStatePoint, tickHeaderState,
-                     validateHeader)
-import           Ouroboros.Consensus.Ledger.Abstract (LedgerCfg, LedgerConfig,
-                     applyBlockLedgerResult, applyChainTick, tickThenApply,
-                     tickThenApplyLedgerResult, tickThenReapply)
+                     HeaderState (..), headerStatePoint, revalidateHeader,
+                     tickHeaderState, validateHeader)
+import           Ouroboros.Consensus.Ledger.Abstract
+                     (ApplyBlock (reapplyBlockLedgerResult), LedgerCfg,
+                     LedgerConfig, applyBlockLedgerResult, applyChainTick,
+                     tickThenApply, tickThenApplyLedgerResult, tickThenReapply)
 import           Ouroboros.Consensus.Ledger.Basics (LedgerResult (..),
                      LedgerState, getTipSlot)
 import           Ouroboros.Consensus.Ledger.Extended
@@ -82,39 +83,6 @@ import qualified System.IO as IO
 {-------------------------------------------------------------------------------
   Run the requested analysis
 -------------------------------------------------------------------------------}
-
-data AnalysisName =
-    ShowSlotBlockNo
-  | CountTxOutputs
-  | ShowBlockHeaderSize
-  | ShowBlockTxsSize
-  | ShowEBBs
-  | OnlyValidation
-  | StoreLedgerStateAt SlotNo LedgerApplicationMode
-  | CountBlocks
-  | CheckNoThunksEvery Word64
-  | TraceLedgerProcessing
-  | BenchmarkLedgerOps (Maybe FilePath)
-  | ReproMempoolAndForge Int
-    -- | Compute different block application metrics every 'NumberOfBlocks'.
-    --
-    -- The metrics will be written to the provided file path, or to
-    -- the standard output if no file path is specified.
-  | GetBlockApplicationMetrics NumberOfBlocks (Maybe FilePath)
-  deriving Show
-
-data AnalysisResult =
-    ResultCountBlock Int
-  | ResultMaxHeaderSize Word16
-  deriving (Eq, Show)
-
-newtype NumberOfBlocks = NumberOfBlocks { unNumberOfBlocks :: Word64 }
-  deriving (Eq, Show, Num, Read)
-
--- | Whether to apply blocks to a ledger state via /reapplication/ (eg skipping
--- signature checks/Plutus scripts) or full /application/ (much slower).
-data LedgerApplicationMode = LedgerReapply | LedgerApply
-  deriving (Eq, Show)
 
 runAnalysis ::
      forall blk.
@@ -145,7 +113,7 @@ runAnalysis analysisName = case go analysisName of
     go (CheckNoThunksEvery nBks)                      = mkAnalysis $ checkNoThunksEvery nBks
     go TraceLedgerProcessing                          = mkAnalysis $ traceLedgerProcessing
     go (ReproMempoolAndForge nBks)                    = mkAnalysis $ reproMempoolForge nBks
-    go (BenchmarkLedgerOps mOutfile)                  = mkAnalysis $ benchmarkLedgerOps mOutfile
+    go (BenchmarkLedgerOps mOutfile lgrAppMode)       = mkAnalysis $ benchmarkLedgerOps mOutfile lgrAppMode
     go (GetBlockApplicationMetrics nrBlocks mOutfile) = mkAnalysis $ getBlockApplicationMetrics nrBlocks mOutfile
 
     mkAnalysis ::
@@ -569,13 +537,15 @@ benchmarkLedgerOps ::
      ( HasAnalysis blk
      , LedgerSupportsProtocol blk
      )
-  => Maybe FilePath -> Analysis blk StartFromLedgerState
-benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, startFrom, cfg, limit} = do
+  => Maybe FilePath
+  -> LedgerApplicationMode
+  -> Analysis blk StartFromLedgerState
+benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv {db, registry, startFrom, cfg, limit} = do
     -- We default to CSV when the no output file is provided (and thus the results are output to stdout).
     outFormat <- F.getOutputFormat mOutfile
 
     withFile mOutfile $ \outFileHandle -> do
-      F.writeMetadata outFileHandle outFormat
+      F.writeMetadata outFileHandle outFormat ledgerAppMode
       F.writeHeader   outFileHandle outFormat
 
       void $ processAll db registry GetBlock startFrom limit initLedger (process outFileHandle outFormat)
@@ -672,10 +642,13 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, startFrom, cfg, limit} = 
              LedgerView (BlockProtocol blk)
           -> Ticked (HeaderState blk)
           -> IO (HeaderState blk)
-        applyTheHeader ledgerView tickedHeaderState = do
+        applyTheHeader ledgerView tickedHeaderState = case ledgerAppMode of
+          LedgerApply ->
             case runExcept $ validateHeader cfg ledgerView (getHeader blk) tickedHeaderState of
               Left err -> fail $ "benchmark doesn't support invalid headers: " <> show rp <> " " <> show err
               Right x -> pure x
+          LedgerReapply ->
+            pure $! revalidateHeader cfg ledgerView (getHeader blk) tickedHeaderState
 
         tickTheLedgerState ::
              SlotNo
@@ -687,10 +660,13 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, startFrom, cfg, limit} = 
         applyTheBlock ::
              Ticked (LedgerState blk)
           -> IO (LedgerState blk)
-        applyTheBlock tickedLedgerSt = do
+        applyTheBlock tickedLedgerSt = case ledgerAppMode of
+          LedgerApply ->
             case runExcept (lrResult <$> applyBlockLedgerResult lcfg blk tickedLedgerSt) of
               Left err -> fail $ "benchmark doesn't support invalid blocks: " <> show rp <> " " <> show err
               Right x  -> pure x
+          LedgerReapply ->
+            pure $! lrResult $ reapplyBlockLedgerResult lcfg blk tickedLedgerSt
 
 withFile :: Maybe FilePath -> (IO.Handle -> IO r) -> IO r
 withFile (Just outfile) = IO.withFile outfile IO.WriteMode
@@ -876,8 +852,6 @@ reproMempoolForge numBlks env = do
 {-------------------------------------------------------------------------------
   Auxiliary: processing all blocks in the DB
 -------------------------------------------------------------------------------}
-
-data Limit = Limit Int | Unlimited
 
 decreaseLimit :: Limit -> Maybe Limit
 decreaseLimit Unlimited = Just Unlimited

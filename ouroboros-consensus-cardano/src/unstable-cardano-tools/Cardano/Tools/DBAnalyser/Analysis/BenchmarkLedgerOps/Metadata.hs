@@ -15,6 +15,7 @@ module Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.Metadata (
   , getMetadata
   ) where
 
+import           Cardano.Tools.DBAnalyser.Types (LedgerApplicationMode (..))
 import           Cardano.Tools.GitRev (gitRev)
 import           Data.Aeson (ToJSON)
 import qualified Data.Aeson as Aeson
@@ -35,13 +36,14 @@ data Metadata = Metadata {
   , operatingSystem             :: String
   , machineArchitecture         :: String
   , gitRevison                  :: String
+  , ledgerApplicationMode       :: String
   } deriving (Generic, Show, Eq)
 
 instance ToJSON Metadata where
   toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
 
-getMetadata :: IO Metadata
-getMetadata = do
+getMetadata :: LedgerApplicationMode -> IO Metadata
+getMetadata lgrAppMode = do
   rtsFlags <- RTS.getRTSFlags
   pure $ Metadata {
       rtsGCMaxStkSize             = RTS.maxStkSize     $ RTS.gcFlags rtsFlags
@@ -53,4 +55,7 @@ getMetadata = do
     , operatingSystem             = System.Info.os
     , machineArchitecture         = System.Info.arch
     , gitRevison                  = T.unpack gitRev
+    , ledgerApplicationMode       = case lgrAppMode of
+        LedgerApply   -> "full-application"
+        LedgerReapply -> "reapplication"
     }

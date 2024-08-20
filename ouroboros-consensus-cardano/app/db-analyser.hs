@@ -12,7 +12,7 @@
 --                      [--full-ledger-validation] |
 --                      --count-blocks | --checkThunks BLOCK_COUNT |
 --                      --trace-ledger | --repro-mempool-and-forge INT |
---                      --benchmark-ledger-ops [--out-file FILE] |
+--                      --benchmark-ledger-ops [--out-file FILE] [--reapply] |
 --                      --get-block-application-metrics NUM [--out-file FILE]]
 --                    [--num-blocks-to-process INT] COMMAND
 module Main (main) where
