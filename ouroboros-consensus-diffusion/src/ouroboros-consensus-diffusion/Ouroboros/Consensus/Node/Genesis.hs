@@ -66,26 +66,26 @@ data GenesisConfig = GenesisConfig
 
 -- | Genesis configuration flags and low-level args, as parsed from config file or CLI
 data GenesisConfigFlags = GenesisConfigFlags
-  { gcfEnableCSJ           :: Bool
-  , gcfEnableLoEAndGDD     :: Bool
-  , gcfEnableLoP           :: Bool
-  , gcfBulkSyncGracePeriod :: Maybe Integer
-  , gcfBucketCapacity      :: Maybe Integer
-  , gcfBucketRate          :: Maybe Integer
-  , gcfCSJJumpSize         :: Maybe Integer
-  , gcfGDDRateLimit        :: Maybe DiffTime
+  { gcfEnableCSJ             :: Bool
+  , gcfEnableLoEAndGDD       :: Bool
+  , gcfEnableLoP             :: Bool
+  , gcfBlockFetchGracePeriod :: Maybe Integer
+  , gcfBucketCapacity        :: Maybe Integer
+  , gcfBucketRate            :: Maybe Integer
+  , gcfCSJJumpSize           :: Maybe Integer
+  , gcfGDDRateLimit          :: Maybe DiffTime
   } deriving stock (Eq, Generic, Show)
 
 defaultGenesisConfigFlags :: GenesisConfigFlags
 defaultGenesisConfigFlags = GenesisConfigFlags
-  { gcfEnableCSJ            = True
-  , gcfEnableLoEAndGDD      = True
-  , gcfEnableLoP            = True
-  , gcfBulkSyncGracePeriod  = Nothing
-  , gcfBucketCapacity       = Nothing
-  , gcfBucketRate           = Nothing
-  , gcfCSJJumpSize          = Nothing
-  , gcfGDDRateLimit         = Nothing
+  { gcfEnableCSJ              = True
+  , gcfEnableLoEAndGDD        = True
+  , gcfEnableLoP              = True
+  , gcfBlockFetchGracePeriod  = Nothing
+  , gcfBucketCapacity         = Nothing
+  , gcfBucketRate             = Nothing
+  , gcfCSJJumpSize            = Nothing
+  , gcfGDDRateLimit           = Nothing
   }
 
 enableGenesisConfigDefault :: GenesisConfig
@@ -99,7 +99,7 @@ mkGenesisConfig :: Maybe GenesisConfigFlags -> GenesisConfig
 mkGenesisConfig Nothing = -- disable Genesis
   GenesisConfig
     { gcBlockFetchConfig = GenesisBlockFetchConfiguration
-        { gbfcBulkSyncGracePeriod = 0 -- no grace period when Genesis is disabled
+        { gbfcGracePeriod = 0 -- no grace period when Genesis is disabled
         }
     , gcChainSyncLoPBucketConfig = ChainSyncLoPBucketDisabled
     , gcCSJConfig                = CSJDisabled
@@ -109,7 +109,7 @@ mkGenesisConfig Nothing = -- disable Genesis
 mkGenesisConfig (Just GenesisConfigFlags{..}) =
   GenesisConfig
     { gcBlockFetchConfig = GenesisBlockFetchConfiguration
-        { gbfcBulkSyncGracePeriod
+        { gbfcGracePeriod
         }
     , gcChainSyncLoPBucketConfig = if gcfEnableLoP
         then ChainSyncLoPBucketEnabled ChainSyncLoPBucketEnabledConfig
@@ -134,7 +134,7 @@ mkGenesisConfig (Just GenesisConfigFlags{..}) =
     -- The minimum amount of time during which the Genesis BlockFetch logic will
     -- download blocks from a specific peer (even if it is not performing well
     -- during that period).
-    defaultBulkSyncGracePeriod = 10 -- seconds
+    defaultBlockFetchGracePeriod = 10 -- seconds
 
     -- LoP parameters. Empirically, it takes less than 1ms to validate a header,
     -- so leaking one token per 2ms is conservative. The capacity of 100_000
@@ -153,11 +153,11 @@ mkGenesisConfig (Just GenesisConfigFlags{..}) =
     -- Limiting the performance impact of the GDD.
     defaultGDDRateLimit        = 1.0 -- seconds
 
-    gbfcBulkSyncGracePeriod = fromInteger $ fromMaybe defaultBulkSyncGracePeriod gcfBulkSyncGracePeriod
-    csbcCapacity            = fromInteger $ fromMaybe defaultCapacity gcfBucketCapacity
-    csbcRate                = fromInteger $ fromMaybe defaultRate gcfBucketRate
-    csjcJumpSize            = fromInteger $ fromMaybe defaultCSJJumpSize gcfCSJJumpSize
-    lgpGDDRateLimit            = fromMaybe defaultGDDRateLimit gcfGDDRateLimit
+    gbfcGracePeriod = fromInteger $ fromMaybe defaultBlockFetchGracePeriod gcfBlockFetchGracePeriod
+    csbcCapacity    = fromInteger $ fromMaybe defaultCapacity gcfBucketCapacity
+    csbcRate        = fromInteger $ fromMaybe defaultRate gcfBucketRate
+    csjcJumpSize    = fromInteger $ fromMaybe defaultCSJJumpSize gcfCSJJumpSize
+    lgpGDDRateLimit = fromMaybe defaultGDDRateLimit gcfGDDRateLimit
 
 newtype LoEAndGDDParams = LoEAndGDDParams
   { -- | How often to evaluate GDD. 0 means as soon as possible.
