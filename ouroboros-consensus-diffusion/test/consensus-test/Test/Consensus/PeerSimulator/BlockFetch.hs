@@ -37,10 +37,12 @@ import           Ouroboros.Consensus.Storage.ChainDB.API
 import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..),
-                     FetchClientRegistry, FetchMode (..),
-                     GenesisBlockFetchConfiguration (..), blockFetchLogic,
-                     bracketFetchClient, bracketKeepAliveClient)
+                     FetchClientRegistry, GenesisBlockFetchConfiguration (..),
+                     blockFetchLogic, bracketFetchClient,
+                     bracketKeepAliveClient)
 import           Ouroboros.Network.BlockFetch.Client (blockFetchClient)
+import           Ouroboros.Network.BlockFetch.ConsensusInterface
+                     (FetchMode (..))
 import           Ouroboros.Network.Channel (Channel)
 import           Ouroboros.Network.ControlMessage (ControlMessageSTM)
 import           Ouroboros.Network.Driver (runPeer)
@@ -93,13 +95,13 @@ startBlockFetchLogic enableChainSelStarvation registry tracer chainDb fetchClien
             -- do not serialize the blocks.
             (\_hdr -> 1000)
             slotForgeTime
-            -- This is a syncing test, so we use 'FetchModeBulkSync'.
-            (pure FetchModeBulkSync)
+            -- This is a syncing test, so we use 'FetchModeGenesis'.
+            (pure FetchModeGenesis)
             DiffusionPipeliningOn
 
         bfcGenesisBFConfig = if enableChainSelStarvation
           then GenesisBlockFetchConfiguration
-            { gbfcBulkSyncGracePeriod =
+            { gbfcGracePeriod =
                 if enableChainSelStarvation then
                   10  -- default value for cardano-node at the time of writing
                 else
@@ -110,10 +112,11 @@ startBlockFetchLogic enableChainSelStarvation registry tracer chainDb fetchClien
         -- Values taken from
         -- ouroboros-consensus-diffusion/src/unstable-diffusion-testlib/Test/ThreadNet/Network.hs
         blockFetchCfg = BlockFetchConfiguration
-          { bfcMaxConcurrencyDeadline = 50 -- unused because of @pure FetchModeBulkSync@ above
+          { bfcMaxConcurrencyBulkSync = 50
+          , bfcMaxConcurrencyDeadline = 50 -- unused because of @pure FetchModeBulkSync@ above
           , bfcMaxRequestsInflight = 10
-          , bfcDecisionLoopIntervalBulkSync = 0
-          , bfcDecisionLoopIntervalDeadline = 0
+          , bfcDecisionLoopIntervalPraos = 0
+          , bfcDecisionLoopIntervalGenesis = 0
           , bfcSalt = 0
           , bfcGenesisBFConfig
           }

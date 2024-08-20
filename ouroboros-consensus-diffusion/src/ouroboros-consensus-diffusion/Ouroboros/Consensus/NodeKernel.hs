@@ -95,6 +95,7 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (castTip, tipFromHeader)
 import           Ouroboros.Network.BlockFetch
+import           Ouroboros.Network.ConsensusMode (ConsensusMode (..))
 import           Ouroboros.Network.Diffusion (PublicPeerSelectionState)
 import           Ouroboros.Network.NodeToNode (ConnectionId,
                      MiniProtocolParameters (..))
@@ -378,6 +379,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
                                  , mempoolCapacityOverride
                                  , gsmArgs, getUseBootstrapPeers
                                  , getDiffusionPipeliningSupport
+                                 , genesisArgs
                                  } = do
     varGsmState <- do
       let GsmNodeKernelArgs {..} = gsmArgs
@@ -398,6 +400,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
 
     slotForgeTimeOracle <- BlockFetchClientInterface.initSlotForgeTimeOracle cfg chainDB
     let readFetchMode = BlockFetchClientInterface.readFetchModeDefault
+          (toConsensusMode $ gnkaLoEAndGDDArgs genesisArgs)
           btime
           (ChainDB.getCurrentChain chainDB)
           getUseBootstrapPeers
@@ -416,6 +419,11 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
     peerSharingRegistry <- newPeerSharingRegistry
 
     return IS {..}
+  where
+    toConsensusMode :: forall a. LoEAndGDDConfig a -> ConsensusMode
+    toConsensusMode = \case
+      LoEAndGDDDisabled  -> PraosMode
+      LoEAndGDDEnabled _ -> GenesisMode
 
 forkBlockForging ::
        forall m addrNTN addrNTC blk.
