@@ -189,7 +189,21 @@ pureTryAddTx cfg txSize wti tx is
   , let curTotalRefScriptSize = isTotalRefScriptSize is
         newTxRefScriptSize    = txRefScriptSize cfg (isLedgerState is) tx
         maxTotalRefScriptSize = 1024 * 1024 -- 1MiB
-  , curTotalRefScriptSize + newTxRefScriptSize Prelude.<= maxTotalRefScriptSize
+        -- In case the tx exceeds the per-tx limit, let it be rejected by tx
+        -- validation (such that we are not blocked here forever/for a long
+        -- time).
+        --
+        -- For Babbage, this is 100KiB (see @totalRefScriptsSizeLimit@ in
+        -- "Ouroboros.Consensus.Shelley.Eras"), and for Conway, this is 200KiB
+        -- (see @maxRefScriptSizePerTx@ in "Cardano.Ledger.Conway.Rules.Ledger").
+        txRefScriptSizeTooLarge = newTxRefScriptSize Prelude.> 200 * 1024
+        -- There is a potential overflow in this check, causing it to be 'False'
+        -- erroneously. In practice, this can only happen if
+        -- 'newTxRefScriptSize' is huge, in which case 'txRefScriptSizeTooLarge'
+        -- is 'True', so the disjunction below is still 'True'.
+        mempoolStaysBelowCapacity =
+          curTotalRefScriptSize + newTxRefScriptSize Prelude.<= maxTotalRefScriptSize
+  , txRefScriptSizeTooLarge || mempoolStaysBelowCapacity
   =
   case eVtx of
       -- We only extended the ValidationResult with a single transaction
