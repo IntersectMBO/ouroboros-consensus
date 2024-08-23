@@ -75,7 +75,6 @@ import           Ouroboros.Consensus.HardFork.Abstract
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Ledger.CommonProtocolParams
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsPeerSelection
@@ -215,17 +214,6 @@ instance ShowProxy (BlockQuery ByronBlock) where
 
 instance LedgerSupportsPeerSelection ByronBlock where
   getPeers = const []
-
-instance CommonProtocolParams ByronBlock where
-  maxHeaderSize = fromIntegral . Update.ppMaxHeaderSize . getProtocolParameters
-  maxTxSize     = fromIntegral . Update.ppMaxTxSize     . getProtocolParameters
-
--- | Return the protocol parameters adopted by the given ledger.
-getProtocolParameters :: LedgerState ByronBlock -> Update.ProtocolParameters
-getProtocolParameters =
-      CC.adoptedProtocolParameters
-    . CC.cvsUpdateState
-    . byronLedgerState
 
 instance LedgerSupportsProtocol ByronBlock where
   protocolLedgerView _cfg =

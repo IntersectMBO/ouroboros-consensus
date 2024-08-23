@@ -31,7 +31,6 @@ import           Ouroboros.Consensus.ByronSpec.Ledger.Genesis (ByronSpecGenesis)
 import           Ouroboros.Consensus.ByronSpec.Ledger.Orphans ()
 import qualified Ouroboros.Consensus.ByronSpec.Ledger.Rules as Rules
 import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Ledger.CommonProtocolParams
 import           Ouroboros.Consensus.Ticked
 import           Ouroboros.Consensus.Util ((..:))
 
@@ -139,17 +138,3 @@ instance ApplyBlock (LedgerState ByronSpecBlock) ByronSpecBlock where
       dontExpectError mb = case runExcept mb of
         Left  _ -> error "reapplyBlockLedgerResult: unexpected error"
         Right b -> b
-
-{-------------------------------------------------------------------------------
-  CommonProtocolParams
--------------------------------------------------------------------------------}
-
-instance CommonProtocolParams ByronSpecBlock where
-  maxHeaderSize = fromIntegral . Spec._maxHdrSz . getPParams
-  maxTxSize     = fromIntegral . Spec._maxTxSz  . getPParams
-
-getPParams :: LedgerState ByronSpecBlock -> Spec.PParams
-getPParams =
-      Spec.protocolParameters
-    . getChainStateUPIState
-    . byronSpecLedgerState

@@ -112,7 +112,6 @@ library
     Ouroboros.Consensus.HardFork.Combinator.Info
     Ouroboros.Consensus.HardFork.Combinator.InjectTxs
     Ouroboros.Consensus.HardFork.Combinator.Ledger
-    Ouroboros.Consensus.HardFork.Combinator.Ledger.CommonProtocolParams
     Ouroboros.Consensus.HardFork.Combinator.Ledger.PeerSelection
     Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
     Ouroboros.Consensus.HardFork.Combinator.Lifting
@@ -149,7 +148,6 @@ library
     Ouroboros.Consensus.HeaderValidation
     Ouroboros.Consensus.Ledger.Abstract
     Ouroboros.Consensus.Ledger.Basics
-    Ouroboros.Consensus.Ledger.CommonProtocolParams
     Ouroboros.Consensus.Ledger.Dual
     Ouroboros.Consensus.Ledger.Extended
     Ouroboros.Consensus.Ledger.Inspect

@@ -68,7 +68,6 @@ import           Ouroboros.Consensus.HardFork.History (Bound (..),
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Ledger.CommonProtocolParams
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool
@@ -234,10 +233,6 @@ instance ApplyBlock (LedgerState BlockA) BlockA where
         Right b -> b
 
 instance UpdateLedger BlockA
-
-instance CommonProtocolParams BlockA where
-  maxHeaderSize _ = maxBound
-  maxTxSize     _ = maxBound
 
 instance BlockSupportsProtocol BlockA where
   validateView _ _ = ()

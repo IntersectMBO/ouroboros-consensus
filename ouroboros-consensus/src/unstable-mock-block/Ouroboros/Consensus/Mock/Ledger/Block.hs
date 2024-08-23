@@ -81,7 +81,6 @@ import           Ouroboros.Consensus.HardFork.Abstract
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Ledger.CommonProtocolParams
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.Query
@@ -393,11 +392,6 @@ updateSimpleUTxO x slot (TickedSimpleLedgerState (SimpleLedgerState st)) =
 
 genesisSimpleLedgerState :: AddrDist -> LedgerState (SimpleBlock c ext)
 genesisSimpleLedgerState = SimpleLedgerState . genesisMockState
-
--- | Dummy values
-instance MockProtocolSpecific c ext => CommonProtocolParams (SimpleBlock c ext) where
-  maxHeaderSize = const 2000000
-  maxTxSize     = const 2000000
 
 instance LedgerSupportsPeerSelection (SimpleBlock c ext) where
   getPeers = const []

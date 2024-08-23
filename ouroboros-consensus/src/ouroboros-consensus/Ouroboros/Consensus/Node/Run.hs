@@ -21,7 +21,6 @@ import           Data.Typeable (Typeable)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config.SupportsNode
 import           Ouroboros.Consensus.HardFork.Abstract
-import           Ouroboros.Consensus.Ledger.CommonProtocolParams
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool
@@ -84,7 +83,6 @@ class ( LedgerSupportsProtocol           blk
       , SupportedNetworkProtocolVersion  blk
       , ConfigSupportsNode               blk
       , ConvertRawHash                   blk
-      , CommonProtocolParams             blk
       , HasBinaryBlockInfo               blk
       , SerialiseDiskConstraints         blk
       , SerialiseNodeToNodeConstraints   blk

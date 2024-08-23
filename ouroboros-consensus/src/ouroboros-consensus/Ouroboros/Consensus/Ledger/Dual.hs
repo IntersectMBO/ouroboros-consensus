@@ -73,7 +73,6 @@ import           Ouroboros.Consensus.Config.SupportsNode
 import           Ouroboros.Consensus.HardFork.Abstract
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Ledger.CommonProtocolParams
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.Query
@@ -221,7 +220,6 @@ class (
       , LedgerSupportsProtocol m
       , HasHardForkHistory     m
       , LedgerSupportsMempool  m
-      , CommonProtocolParams   m
       , HasTxId (GenTx         m)
       , Show (ApplyTxErr       m)
 
@@ -520,11 +518,6 @@ instance SameDepIndex (BlockQuery (DualBlock m a)) where
 
 instance ShowQuery (BlockQuery (DualBlock m a)) where
   showResult = \case {}
-
--- | Forward to the main ledger
-instance Bridge m a => CommonProtocolParams (DualBlock m a) where
-  maxHeaderSize = maxHeaderSize . dualLedgerStateMain
-  maxTxSize     = maxTxSize     . dualLedgerStateMain
 
 {-------------------------------------------------------------------------------
   Mempool support

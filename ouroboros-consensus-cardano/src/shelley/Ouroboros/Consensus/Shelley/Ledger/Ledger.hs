@@ -51,7 +51,7 @@ import qualified Cardano.Ledger.BaseTypes as SL (epochInfoPure)
 import qualified Cardano.Ledger.BHeaderView as SL (BHeaderView)
 import           Cardano.Ledger.Binary.Plain (FromCBOR (..), ToCBOR (..),
                      enforceSize)
-import           Cardano.Ledger.Core (Era, ppMaxBHSizeL, ppMaxTxSizeL)
+import           Cardano.Ledger.Core (Era)
 import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Governance as SL
@@ -82,7 +82,6 @@ import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import           Ouroboros.Consensus.HardFork.History.Util
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Ledger.CommonProtocolParams
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import           Ouroboros.Consensus.Protocol.TPraos (MaxMajorProtVer (..))
@@ -465,11 +464,6 @@ instance HasHardForkHistory (ShelleyBlock proto era) where
   type HardForkIndices (ShelleyBlock proto era) = '[ShelleyBlock proto era]
   hardForkSummary = neverForksHardForkSummary $
       shelleyEraParamsNeverHardForks . shelleyLedgerGenesis
-
-instance ShelleyCompatible proto era
-      => CommonProtocolParams (ShelleyBlock proto era) where
-  maxHeaderSize = fromIntegral . view ppMaxBHSizeL . getPParams . shelleyLedgerState
-  maxTxSize     = view ppMaxTxSizeL . getPParams . shelleyLedgerState
 
 {-------------------------------------------------------------------------------
   ValidateEnvelope

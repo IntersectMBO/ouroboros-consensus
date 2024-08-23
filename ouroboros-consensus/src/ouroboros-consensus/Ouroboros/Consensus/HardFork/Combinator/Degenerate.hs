@@ -36,7 +36,6 @@ import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.HardFork.Combinator.Embed.Unary
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger
-import           Ouroboros.Consensus.HardFork.Combinator.Ledger.CommonProtocolParams ()
 import           Ouroboros.Consensus.HardFork.Combinator.Mempool
 import           Ouroboros.Consensus.HardFork.Combinator.Node ()
 import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig

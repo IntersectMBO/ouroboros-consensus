@@ -27,7 +27,6 @@ import           Ouroboros.Consensus.HardFork.Combinator.InjectTxs as X
                      cannotInjectValidatedTx, pattern InjectTx,
                      pattern InjectValidatedTx)
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger as X
-import           Ouroboros.Consensus.HardFork.Combinator.Ledger.CommonProtocolParams as X ()
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger.PeerSelection as X ()
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger.Query as X
 import           Ouroboros.Consensus.HardFork.Combinator.Mempool as X

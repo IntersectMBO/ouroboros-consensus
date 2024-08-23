@@ -34,7 +34,6 @@ import           Ouroboros.Consensus.HardFork.Combinator.Info
 import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import           Ouroboros.Consensus.HardFork.History (Bound, EraParams)
 import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Ledger.CommonProtocolParams
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool
@@ -58,7 +57,6 @@ class ( LedgerSupportsProtocol blk
       , HasPartialLedgerConfig blk
       , ConvertRawHash blk
       , ReconstructNestedCtxt Header blk
-      , CommonProtocolParams blk
       , LedgerSupportsPeerSelection blk
       , ConfigSupportsNode blk
       , NodeInitStorage blk
