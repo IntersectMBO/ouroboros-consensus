@@ -79,8 +79,7 @@ instance Ledger.HasTxId (Ledger.GenTx TestBlock) where
   txId (TestBlockGenTx tx) = TestBlockTxId tx
 
 mkGenTx :: Int -> Ledger.ByteSize32 -> Ledger.GenTx TestBlock
-mkGenTx anId aSize =
-    TestBlockGenTx $ Tx { txNumber = anId, txSize = aSize }
+mkGenTx anId aSize = TestBlockGenTx $ Tx { txNumber = anId, txSize = aSize }
 
 instance Ledger.LedgerSupportsMempool TestBlock where
   applyTx _cfg _shouldIntervene _slot gtx st = pure (st, ValidatedGenTx gtx)

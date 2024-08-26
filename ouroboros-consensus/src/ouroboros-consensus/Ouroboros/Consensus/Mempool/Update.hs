@@ -175,8 +175,8 @@ pureTryAddTx cfg wti tx is =
       -- greater than what this ledger state allows for a single transaction).
       --
       -- It might seem simpler to remove the failure case from 'txMeasure' and
-      -- simply fully validate the tx before determing whether it'd fit in the
-      -- mempool; that way we could reject invalid txs ASAP. However, for a
+      -- simply fully validate the tx before determining whether it'd fit in
+      -- the mempool; that way we could reject invalid txs ASAP. However, for a
       -- valid tx, we'd pay that validation cost every time the node's
       -- selection changed, even if the tx wouldn't fit. So it'd very much be
       -- as if the mempool were effectively over capacity! What's worse, each
@@ -194,7 +194,9 @@ pureTryAddTx cfg wti tx is =
       --
       -- No measure of a transaction can ever be negative, so the only way
       -- adding two measures could result in a smaller measure is if some
-      -- modular arithmetic overflowed.
+      -- modular arithmetic overflowed. Also, overflow necessarily yields a
+      -- lesser result, since adding 'maxBound' is modularly equivalent to
+      -- subtracting one. Recall that we're checking each individual addition.
       --
       -- We assume that the 'txMeasure' limit and the mempool capacity
       -- 'isCapacity' are much smaller than the modulus, and so this should
@@ -234,8 +236,8 @@ pureTryAddTx cfg wti tx is =
       -- Even with the overflow handler, it's important that 'txMeasure'
       -- returns a well-bounded result. Otherwise, if an adversarial tx arrived
       -- that could't even fit in an empty mempool, then that thread would
-      -- never release the 'MVar'. In particular, we tacitally assume here that
-      -- a tx that wouldn't even fit in an empty mempool would be rejected by
+      -- never release the 'MVar'. In particular, we tacitly assume here that a
+      -- tx that wouldn't even fit in an empty mempool would be rejected by
       -- 'txMeasure'.
       | not $ currentSize `Measure.plus` txsz Measure.<= isCapacity is
       ->

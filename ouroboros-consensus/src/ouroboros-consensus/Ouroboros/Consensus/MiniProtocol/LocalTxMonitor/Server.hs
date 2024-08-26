@@ -64,7 +64,7 @@ localTxMonitorServer mempool =
                 { capacityInBytes = unByteSize32 capacity
                 , sizeInBytes     = unByteSize32 msNumBytes
                 , numberOfTxs     = msNumTxs
-                }   -- TODO what to do about overflow?
+                }
           pure $ SendMsgReplyGetSizes sizes (serverStAcquired s txs)
       , recvMsgAwaitAcquire = do
           s' <- atomically $ do

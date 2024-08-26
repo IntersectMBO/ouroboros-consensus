@@ -219,12 +219,13 @@ prop_Mempool_getCapacity mcts =
     MempoolCapacityBytesOverride testCapacity = testMempoolCapOverride testSetup
     MempoolCapTestSetup (TestSetupWithTxs testSetup _txsToAdd) = mcts
 
-    ByteSize32 dom = simpleBlockCapacity
+    ByteSize32 dnom = simpleBlockCapacity
 
     expectedCapacity =
         (\n -> stimes n simpleBlockCapacity)
       $ max 1
-      $ (unByteSize32 testCapacity + dom - 1) `div` dom   -- div rounding up
+        -- adding one less than the denom to the numer achieves rounding up
+      $ (unByteSize32 testCapacity + dnom - 1) `div` dnom
 
 -- | Test that all valid transactions added to a 'Mempool' via 'addTxs' are
 -- appropriately represented in the trace of events.
@@ -299,7 +300,9 @@ prop_Mempool_TraceRemovedTxs setup =
       | (tx, Left err) <- fst $ validateTxs ledgerState txsInMempool
       ]
 
-prjTx :: (Validated (GenTx TestBlock), TicketNo, ByteSize32) -> Validated (GenTx TestBlock)
+prjTx ::
+     (Validated (GenTx TestBlock), TicketNo, ByteSize32)
+  -> Validated (GenTx TestBlock)
 prjTx (a, _b, _c) = a
 
 {-------------------------------------------------------------------------------
@@ -833,9 +836,9 @@ instance Arbitrary MempoolCapTestSetup where
     testSetupWithTxs@TestSetupWithTxs { testSetup, txs } <- arbitrary
     -- The Mempool should at least be capable of containing the transactions
     -- it already contains.
-    let currentSize               = foldMap txSize (testInitialTxs testSetup)
+    let currentSize      = foldMap txSize (testInitialTxs testSetup)
         capacityMinBound = currentSize
-        validTxsToAdd             = [tx | (tx, True) <- txs]
+        validTxsToAdd    = [tx | (tx, True) <- txs]
         -- Use the current size + the sum of all the valid transactions to add
         -- as the upper bound.
         capacityMaxBound = currentSize <> foldMap txSize validTxsToAdd
