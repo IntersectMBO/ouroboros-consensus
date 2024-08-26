@@ -64,7 +64,8 @@ computeMempoolCapacity cfg st override =
       NoMempoolCapacityBytesOverride              -> 2
       MempoolCapacityBytesOverride (ByteSize32 x) ->
         -- This calculation is happening at Word32. Thus overflow is silently
-        -- accepted.
+        -- accepted. Adding one less than the denominator to the numerator
+        -- effectively rounds up instead of down.
         max 1 $ (x + oneBlockBytes - 1) `div` oneBlockBytes
 
     SemigroupViaMeasure capacity =
