@@ -24,7 +24,7 @@ import qualified Cardano.Protocol.TPraos.OCert as SL
 import qualified Data.Text as T
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (configConsensus)
-import           Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
+import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Mempool
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import           Ouroboros.Consensus.Protocol.Praos (Praos, PraosParams (..),
                      praosCheckCanForge)
@@ -47,7 +47,7 @@ praosBlockForging ::
      forall m era c.
      ( ShelleyCompatible (Praos c) era
      , c ~ EraCrypto era
-     , TxLimits (ShelleyBlock (Praos c) era)
+     , Mempool.TxLimits (ShelleyBlock (Praos c) era)
      , IOLike m
      )
   => PraosParams
