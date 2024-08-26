@@ -87,6 +87,31 @@ from slot 0 with,
 $ SYNC_FROM_0=1 NUM_SLOTS=155000 ./run-syncing-node.sh 1
 ```
 
+### How to connect to other nodes than toxiproxy
+
+The following uses a custom topology file, instead of generating one that
+connects to toxiproxy.
+
+```
+$ TOPOLOGY=toplogy.json ./run-syncing-node.sh 1
+```
+
+For instance,
+```
+$ cat topology.json
+{"publicRoots": []
+, "localRoots":
+  [{ "accessPoints":
+     [ {"address": "34.216.201.242", "port": 3001}
+     , {"address": "3.77.115.8", "port": 3001}
+     ]
+   , "advertise": false
+   , "hotValency": 2
+   , "trustable": true
+   }]
+}
+```
+
 ### How to collect the eventlog of the syncing node
 
 The following command collects the eventlog.

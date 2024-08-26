@@ -88,7 +88,12 @@ then
 else
     truncate_chaindb
 fi
-generate_topology_json_p2p $TOPOLOGY_JSON
+if [ -v TOPOLOGY ]
+then
+    cp $TOPOLOGY $TOPOLOGY_JSON
+else
+    generate_topology_json_p2p $TOPOLOGY_JSON
+fi
 
 CABAL_FLAGS=${CABAL_FLAGS:-}
 
