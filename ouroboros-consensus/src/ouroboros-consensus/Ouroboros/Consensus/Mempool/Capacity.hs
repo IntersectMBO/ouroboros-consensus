@@ -88,8 +88,7 @@ data MempoolSize = MempoolSize
   } deriving (Eq, Show)
 
 instance Semigroup MempoolSize where
-  MempoolSize xt xb <> MempoolSize yt yb =
-      MempoolSize (xt + yt) (xb <> yb)
+  MempoolSize xt xb <> MempoolSize yt yb = MempoolSize (xt + yt) (xb <> yb)
 
 instance Monoid MempoolSize where
   mempty  = MempoolSize { msNumTxs = 0, msNumBytes = ByteSize32 0 }
