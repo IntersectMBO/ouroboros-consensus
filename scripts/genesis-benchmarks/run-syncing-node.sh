@@ -80,7 +80,14 @@ generate_topology_json_legacy() {
   echo '{"localRoots": [], "publicRoots": [], "Producers": [' ${TOPOLOGY_ARR[*]} ']}' > $OUTPUT
 }
 
-truncate_chaindb
+START_SLOT=100007913
+if [ -v SYNC_FROM_0 ]
+then
+    START_SLOT=0
+    rm -rf $NODE_DB
+else
+    truncate_chaindb
+fi
 generate_topology_json_p2p $TOPOLOGY_JSON
 
 CABAL_FLAGS=${CABAL_FLAGS:-}
@@ -92,7 +99,7 @@ CABAL_FLAGS=${CABAL_FLAGS:-}
     --topology $TOPOLOGY_JSON \
     --host-addr 0.0.0.0 --port 3002 \
     --socket-path $NODE_DIR/node.socket \
-    --shutdown-on-slot-synced $((100007913 + ${NUM_SLOTS:-50000})) \
+    --shutdown-on-slot-synced $((${START_SLOT} + ${NUM_SLOTS:-50000})) \
     +RTS -s ${CARDANO_NODE_RTS_FLAGS:-} \
    | tee $NODE_DIR/logs/sync-$(date -Iseconds).json" \
 )

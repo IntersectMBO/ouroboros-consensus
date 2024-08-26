@@ -79,7 +79,13 @@ $ NUM_SLOTS=155000 ENABLE_GENESIS=1 ./run-syncing-node.sh 30
 The initial slot of the range is harder to change because the startup of the
 node is optimized with a snapshot of the ledger at slot 100007913. Generating a
 snapshot for a different slot would make it possible to start the range from
-it.
+it. But at the price of deleting the current chaindb, one can start syncing
+from slot 0 with,
+
+```
+# WARNING: deletes the chaindb from the local storage
+$ SYNC_FROM_0=1 NUM_SLOTS=155000 ./run-syncing-node.sh 1
+```
 
 ### How to collect the eventlog of the syncing node
 
