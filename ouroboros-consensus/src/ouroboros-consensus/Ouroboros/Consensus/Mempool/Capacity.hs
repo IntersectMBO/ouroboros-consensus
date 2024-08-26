@@ -23,6 +23,7 @@ module Ouroboros.Consensus.Mempool.Capacity (
   , TxLimits (..)
   ) where
 
+import           Cardano.Prelude (NFData)
 import           Data.Measure (BoundedMeasure, Measure)
 import           Data.Word (Word32)
 import           NoThunks.Class
@@ -123,5 +124,5 @@ class BoundedMeasure (TxMeasure blk) => TxLimits blk where
 
 newtype ByteSize = ByteSize { unByteSize :: Word32 }
   deriving stock (Show)
-  deriving newtype (Eq, Ord)
+  deriving newtype (Eq, NFData, Ord)
   deriving newtype (BoundedMeasure, Measure)

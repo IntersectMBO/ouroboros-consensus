@@ -54,31 +54,35 @@ main = withStdTerminalHandles $ do
           where
             benchAddNTxs n =
                 withResource
-                  (pure $!! mkNTryAddTxs n)
+                  (pure $!!
+                     let cmds = mkNTryAddTxs n
+                         sz   = sum $ map TestBlock.txSize $ getCmdsTxs cmds
+                     in (cmds, Mempool.ByteSize sz)
+                  )
                   (\_ -> pure ())
-                  (\getTxs -> do
+                  (\getCmds -> do
                       bgroup (show n <> " transactions") [
                           bench "setup mempool" $ whnfIO $ do
-                            txs <- getTxs
-                            openMempoolWithCapacityFor txs
+                            (_cmds, capacity) <- getCmds
+                            openMempoolWithCapacity capacity
                         , bench "setup mempool + benchmark" $ whnfIO $ do
-                            txs <- getTxs
-                            mempool <- openMempoolWithCapacityFor txs
-                            run mempool txs
+                            (cmds, capacity) <- getCmds
+                            mempool <- openMempoolWithCapacity capacity
+                            run mempool cmds
                         , testCase "test" $ do
-                            txs <- getTxs
-                            mempool <- openMempoolWithCapacityFor txs
-                            testAddTxs mempool txs
-                        , testCase "txs length" $ do
-                            txs <- getTxs
-                            length txs @?= n
+                            (cmds, capacity) <- getCmds
+                            mempool <- openMempoolWithCapacity capacity
+                            testAddCmds mempool cmds
+                        , testCase "cmds length" $ do
+                            (cmds, _capacity) <- getCmds
+                            length cmds @?= n
                         ]
                   )
               where
-                testAddTxs mempool txs = do
-                    run mempool txs
+                testAddCmds mempool cmds = do
+                    run mempool cmds
                     mempoolTxs <- Mocked.getTxs mempool
-                    mempoolTxs @?= getCmdsTxs txs
+                    mempoolTxs @?= getCmdsTxs cmds
 
     parseBenchmarkResults csvFilePath = do
         csvData <- BL.readFile csvFilePath
@@ -129,18 +133,17 @@ main = withStdTerminalHandles $ do
   Adding TestBlock transactions to a mempool
 -------------------------------------------------------------------------------}
 
-openMempoolWithCapacityFor :: [MempoolCmd TestBlock] ->  IO (MockedMempool IO TestBlock)
-openMempoolWithCapacityFor cmds =
-    Mocked.openMockedMempool capacityRequiredByCmds
+openMempoolWithCapacity :: Mempool.ByteSize -> IO (MockedMempool IO TestBlock)
+openMempoolWithCapacity capacity =
+    Mocked.openMockedMempool (Mempool.mkCapacityBytesOverride
+                               (Mempool.unByteSize capacity)
+                             )
                              Tracer.nullTracer
                              TestBlock.txSize
                              Mocked.MempoolAndModelParams {
                                  Mocked.immpInitialState = TestBlock.initialLedgerState
                                , Mocked.immpLedgerConfig = TestBlock.sampleLedgerConfig
                              }
-  where
-    capacityRequiredByCmds = Mempool.mkCapacityBytesOverride totalTxsSize
-      where totalTxsSize = sum $ fmap TestBlock.txSize $ getCmdsTxs cmds
 
 mkNTryAddTxs :: Int -> [MempoolCmd TestBlock.TestBlock]
 mkNTryAddTxs 0 = []
