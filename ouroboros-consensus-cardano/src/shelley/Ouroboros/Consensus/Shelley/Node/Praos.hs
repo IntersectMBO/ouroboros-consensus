@@ -16,26 +16,21 @@ module Ouroboros.Consensus.Shelley.Node.Praos (
     -- * BlockForging
     praosBlockForging
   , praosSharedBlockForging
-    -- * ProtocolInfo
-  , ProtocolParams (..)
   ) where
 
 import qualified Cardano.Ledger.Api.Era as L
-import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Protocol.TPraos.OCert as Absolute
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import qualified Data.Text as T
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (configConsensus)
 import qualified Ouroboros.Consensus.Mempool as Mempool
-import           Ouroboros.Consensus.Node.ProtocolInfo
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import           Ouroboros.Consensus.Protocol.Praos (Praos, PraosParams (..),
                      praosCheckCanForge)
 import           Ouroboros.Consensus.Protocol.Praos.Common
                      (PraosCanBeLeader (praosCanBeLeaderOpCert))
-import           Ouroboros.Consensus.Shelley.Eras (BabbageEra, ConwayEra,
-                     EraCrypto)
+import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock,
                      ShelleyCompatible, forgeShelleyBlock)
 import           Ouroboros.Consensus.Shelley.Node.Common (ShelleyEraWithCrypto,
@@ -112,17 +107,3 @@ praosSharedBlockForging
             canBeLeader
             cfg
       }
-
-{-------------------------------------------------------------------------------
-  ProtocolInfo
--------------------------------------------------------------------------------}
-
-data instance ProtocolParams (ShelleyBlock (Praos c) (BabbageEra c)) = ProtocolParamsBabbage {
-    babbageProtVer :: SL.ProtVer
-    -- ^ see 'Ouroboros.Consensus.Shelley.Node.TPraos.shelleyProtVer', mutatis mutandi
-  }
-
-data instance ProtocolParams (ShelleyBlock (Praos c) (ConwayEra c)) = ProtocolParamsConway {
-    conwayProtVer :: SL.ProtVer
-    -- ^ see 'Ouroboros.Consensus.Shelley.Node.TPraos.shelleyProtVer', mutatis mutandi
-  }

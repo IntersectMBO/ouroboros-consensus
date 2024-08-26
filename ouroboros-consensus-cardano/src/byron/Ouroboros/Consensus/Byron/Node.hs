@@ -18,7 +18,7 @@ module Ouroboros.Consensus.Byron.Node (
   , mkByronLeaderCredentials
   , mkPBftCanBeLeader
     -- * ProtocolInfo
-  , ProtocolParams (..)
+  , ProtocolParamsByron (..)
   , defaultPBftSignatureThreshold
   , mkByronConfig
   , protocolClientInfoByron
@@ -152,7 +152,7 @@ mkPBftCanBeLeader (ByronLeaderCredentials sk cert nid _) = PBftCanBeLeader {
     }
 
 blockForgingByron :: Monad m
-                  => ProtocolParams ByronBlock
+                  => ProtocolParamsByron
                   -> [BlockForging m ByronBlock]
 blockForgingByron ProtocolParamsByron { byronLeaderCredentials = mLeaderCreds
                                       } =
@@ -169,7 +169,7 @@ defaultPBftSignatureThreshold :: PBftSignatureThreshold
 defaultPBftSignatureThreshold = PBftSignatureThreshold 0.22
 
 -- | Parameters needed to run Byron
-data instance ProtocolParams ByronBlock = ProtocolParamsByron {
+data ProtocolParamsByron = ProtocolParamsByron {
       byronGenesis                :: Genesis.Config
     , byronPbftSignatureThreshold :: Maybe PBftSignatureThreshold
     , byronProtocolVersion        :: Update.ProtocolVersion
@@ -177,7 +177,7 @@ data instance ProtocolParams ByronBlock = ProtocolParamsByron {
     , byronLeaderCredentials      :: Maybe ByronLeaderCredentials
     }
 
-protocolInfoByron :: ProtocolParams ByronBlock
+protocolInfoByron :: ProtocolParamsByron
                   -> ProtocolInfo ByronBlock
 protocolInfoByron ProtocolParamsByron {
                       byronGenesis                = genesisConfig

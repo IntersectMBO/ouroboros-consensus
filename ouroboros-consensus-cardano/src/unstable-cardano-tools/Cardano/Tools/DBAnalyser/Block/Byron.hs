@@ -25,7 +25,7 @@ import qualified Data.ByteString.Lazy as BL
 import           Ouroboros.Consensus.Byron.Ledger (ByronBlock)
 import qualified Ouroboros.Consensus.Byron.Ledger as Byron
 import           Ouroboros.Consensus.Byron.Node (PBftSignatureThreshold (..),
-                     ProtocolParams (..), protocolInfoByron)
+                     ProtocolParamsByron (..), protocolInfoByron)
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Text.Builder (decimal)
 

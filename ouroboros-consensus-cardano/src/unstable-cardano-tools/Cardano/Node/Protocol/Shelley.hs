@@ -47,8 +47,8 @@ import qualified Ouroboros.Consensus.Cardano as Consensus
 import           Ouroboros.Consensus.Protocol.Praos.Common
                      (PraosCanBeLeader (..))
 import           Ouroboros.Consensus.Shelley.Node (Nonce (..),
-                     ProtocolParams (..), ProtocolParamsShelleyBased (..),
-                     ShelleyGenesis (..), ShelleyLeaderCredentials (..))
+                     ProtocolParamsShelleyBased (..), ShelleyGenesis (..),
+                     ShelleyLeaderCredentials (..))
 import           Prelude (String, id)
 
 
@@ -85,9 +85,7 @@ mkSomeConsensusProtocolShelley NodeShelleyProtocolConfiguration {
         shelleyBasedLeaderCredentials =
             leaderCredentials
       }
-      Consensus.ProtocolParamsShelley {
-        shelleyProtVer = ProtVer (natVersion @2) 0
-      }
+      (ProtVer (natVersion @2) 0)
 
 genesisHashToPraosNonce :: GenesisHash -> Nonce
 genesisHashToPraosNonce (GenesisHash h) = Nonce (Crypto.castHash h)

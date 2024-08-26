@@ -47,8 +47,8 @@ import           Ouroboros.Consensus.Shelley.Ledger (ShelleyCompatible,
 import           Ouroboros.Consensus.Shelley.Ledger.Block (ShelleyBlock)
 import qualified Ouroboros.Consensus.Shelley.Ledger.Block as Shelley
 import           Ouroboros.Consensus.Shelley.Node (Nonce (..),
-                     ProtocolParams (..), ProtocolParamsShelleyBased (..),
-                     ShelleyGenesis, protocolInfoShelley)
+                     ProtocolParamsShelleyBased (..), ShelleyGenesis,
+                     protocolInfoShelley)
 import           Text.Builder (decimal)
 
 -- | Usable for each Shelley-based era
@@ -154,6 +154,4 @@ mkShelleyProtocolInfo genesis initialNonce =
           shelleyBasedInitialNonce      = initialNonce
         , shelleyBasedLeaderCredentials = []
         }
-      ProtocolParamsShelley {
-          shelleyProtVer = SL.ProtVer (CL.natVersion @2) 0
-        }
+      (SL.ProtVer (CL.natVersion @2) 0)
