@@ -40,7 +40,7 @@ let
       haskell96 = mkHaskellJobsFor pkgs.hsPkgs;
     } // lib.optionalAttrs (buildSystem == "x86_64-linux") {
       formatting = import ./formatting.nix pkgs;
-      inherit (pkgs) consensus-pdfs;
+      inherit (pkgs) consensus-pdfs agda-spec;
 
       # ensure we can still build on 8.10, can be removed soon
       haskell810 = builtins.removeAttrs

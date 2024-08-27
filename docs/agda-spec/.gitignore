@@ -5,9 +5,7 @@
 result*
 
 *.pdf
-src/latex/Ledger/*
-src/latex/MidnightExample/*
-src/latex/bclogo.sty
+src/latex/
 
 dist/
 

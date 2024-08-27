@@ -33,6 +33,22 @@
         "type": "github"
       }
     },
+    "agda-nixpkgs": {
+      "locked": {
+        "lastModified": 1716802541,
+        "narHash": "sha256-J2WSefw1i2GJDNGC3E6F8Mr9/iOzB+EfVT52g+Rqz6s=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "7148a46c2a1163faecb2915f5f1e6e6c43bcd3ee",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixpkgs-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
     "blst": {
       "flake": false,
       "locked": {
@@ -771,6 +787,7 @@
     "root": {
       "inputs": {
         "CHaP": "CHaP",
+        "agda-nixpkgs": "agda-nixpkgs",
         "cabal-extras": "cabal-extras",
         "flake-compat": "flake-compat",
         "flake-utils": "flake-utils",
