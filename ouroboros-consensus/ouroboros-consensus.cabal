@@ -628,6 +628,7 @@ test-suite storage-test
     Test.Ouroboros.Storage.ImmutableDB.Model
     Test.Ouroboros.Storage.ImmutableDB.Primary
     Test.Ouroboros.Storage.ImmutableDB.StateMachine
+    Test.Ouroboros.Storage.ImmutableDB.Index.StateMachine
     Test.Ouroboros.Storage.LedgerDB
     Test.Ouroboros.Storage.LedgerDB.DiskPolicy
     Test.Ouroboros.Storage.LedgerDB.InMemory
@@ -647,6 +648,7 @@ test-suite storage-test
     binary,
     bytestring,
     cardano-crypto-class,
+    cardano-strict-containers,
     cardano-slotting:{cardano-slotting, testlib},
     cborg,
     containers,
@@ -667,6 +669,7 @@ test-suite storage-test
     random,
     serialise,
     tasty,
+    temporary,
     tasty-hunit,
     tasty-quickcheck,
     text,
