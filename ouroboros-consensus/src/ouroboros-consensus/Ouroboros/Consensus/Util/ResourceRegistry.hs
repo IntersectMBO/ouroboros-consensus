@@ -49,6 +49,8 @@ module Ouroboros.Consensus.Util.ResourceRegistry (
   , closeRegistry
   , countResources
   , unsafeNewRegistry
+  , unsafeNewRegistry'
+  , withUncheckedRegistry
     -- * opaque
   , ResourceRegistry
   ) where
@@ -286,10 +288,17 @@ import           Ouroboros.Consensus.Util.Orphans ()
 -- created within, and hence their maximum lifetimes.
 data ResourceRegistry m = ResourceRegistry {
       -- | Context in which the registry was created
-      registryContext :: !(Context m)
+      registryContext           :: !(Context m)
 
       -- | Registry state
-    , registryState   :: !(StrictTVar m (RegistryState m))
+    , registryState             :: !(StrictTVar m (RegistryState m))
+
+      -- | Whether to check for known threads
+      --
+      -- This should be 'False' when running parallel tests on components that
+      -- use a registry at the top level as otherwise the forked threads inside
+      -- the test will be reported as unknown.
+    , registryCheckKnownThreads :: !Bool
     }
   deriving (Generic)
 
@@ -550,12 +559,16 @@ instance Exception RegistryClosedException
 -- You are strongly encouraged to use 'withRegistry' instead.
 -- Exported primarily for the benefit of tests.
 unsafeNewRegistry :: (IOLike m, HasCallStack) => m (ResourceRegistry m)
-unsafeNewRegistry = do
+unsafeNewRegistry = unsafeNewRegistry' True
+
+unsafeNewRegistry' :: (IOLike m, HasCallStack) => Bool -> m (ResourceRegistry m)
+unsafeNewRegistry' checkKnownThreads = do
     context  <- captureContext
     stateVar <- newTVarIO initState
     return ResourceRegistry {
           registryContext = context
         , registryState   = stateVar
+        , registryCheckKnownThreads = checkKnownThreads
         }
   where
     initState :: RegistryState m
@@ -645,6 +658,11 @@ releaseResources rr sortedKeys releaser = do
 -- See documentation of 'ResourceRegistry' for a detailed discussion.
 withRegistry :: (IOLike m, HasCallStack) => (ResourceRegistry m -> m a) -> m a
 withRegistry = bracket unsafeNewRegistry closeRegistry
+
+-- | Create a new registry which does not check for known threads. Just useful
+-- for parallel testing when the registry is not managed inside the tested components.
+withUncheckedRegistry :: (IOLike m, HasCallStack) => (ResourceRegistry m -> m a) -> m a
+withUncheckedRegistry = bracket (unsafeNewRegistry' False) closeRegistry
 
 -- | Create a new private registry for use by a bracketed resource
 --
@@ -1271,7 +1289,7 @@ forkLinkedThread rr label body = do
 
 ensureKnownThread :: forall m. IOLike m
                   => ResourceRegistry m -> Context m -> m ()
-ensureKnownThread rr context = do
+ensureKnownThread rr@ResourceRegistry{registryCheckKnownThreads = True} context = do
     isKnown <- checkIsKnown
     unless isKnown $
       throwIO $ ResourceRegistryUsedFromUntrackedThread {
@@ -1286,6 +1304,7 @@ ensureKnownThread rr context = do
       | otherwise = atomically $ do
           KnownThreads ts <- registryThreads <$> readTVar (registryState rr)
           return $ contextThreadId context `Set.member` ts
+ensureKnownThread ResourceRegistry{registryCheckKnownThreads = False} _context = pure ()
 
 -- | Registry used from untracked threads
 --
