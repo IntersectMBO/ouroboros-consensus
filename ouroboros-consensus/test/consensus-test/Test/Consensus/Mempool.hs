@@ -35,7 +35,7 @@ module Test.Consensus.Mempool (tests) where
 import           Cardano.Binary (Encoding, toCBOR)
 import           Cardano.Crypto.Hash
 import           Control.Exception (assert)
-import           Control.Monad (foldM, forM, forM_, void)
+import           Control.Monad (foldM, forM, forM_, guard, void)
 import           Control.Monad.Except (Except, runExcept)
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Monad.State (State, evalState, get, modify)
@@ -47,6 +47,7 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe)
 import           Data.Semigroup (stimes)
+import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Word (Word32)
 import           GHC.Stack (HasCallStack)
@@ -65,6 +66,7 @@ import           Ouroboros.Consensus.Util (repeatedly, repeatedlyM,
                      safeMaximumOn, (.:))
 import           Ouroboros.Consensus.Util.Condense (condense)
 import           Ouroboros.Consensus.Util.IOLike
+import           Test.Crypto.Hash ()
 import           Test.QuickCheck hiding (elements)
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
@@ -506,7 +508,8 @@ genValidTxs = go []
           (tx, ledger') <- genValidTx ledger
           go (tx:txs) (n - 1) ledger'
 
--- | Generate a valid transaction (but ignoring any per-tx size limits).
+-- | Generate a valid transaction (but ignoring any per-tx size limits, see Note
+-- [Transaction size limit]).
 genValidTx :: LedgerState TestBlock -> Gen (TestTx, LedgerState TestBlock)
 genValidTx ledgerState@(SimpleLedgerState MockState { mockUtxo = utxo }) = do
     -- Never let someone go broke, otherwise we risk concentrating all the
@@ -556,6 +559,23 @@ genInvalidTx ledgerState@(SimpleLedgerState MockState { mockUtxo = utxo }) = do
     let outs = [(recipient, amount)]
         tx   = mkSimpleGenTx $ Tx DoNotExpire ins outs
     return $ assert (not (txIsValid testLedgerConfigNoSizeLimits ledgerState tx)) tx
+
+-- | Generate an invalid tx that is larger than the given measure.
+genLargeInvalidTx :: TheMeasure -> Gen TestTx
+genLargeInvalidTx (IgnoringOverflow sz) = go Set.empty
+  where
+    go ins = case isLargeTx ins of
+        Just tx -> pure tx
+        Nothing -> do
+          newTxIn <- arbitrary
+          go (Set.insert newTxIn ins)
+
+    isLargeTx :: Set TxIn -> Maybe TestTx
+    isLargeTx ins = do
+        let outs = []
+            tx   = mkSimpleGenTx $ Tx DoNotExpire ins outs
+        guard $ genTxSize tx > sz
+        pure tx
 
 -- | Apply a transaction to the ledger
 --
@@ -619,6 +639,21 @@ validTxs = map fst . filter snd . txs
 invalidTxs :: TestSetupWithTxs -> [GenTx TestBlock]
 invalidTxs = map fst . filter (not . snd) . txs
 
+{-
+Note [Transaction size limit]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+An important property of the mempool is that adding a transaction that can never
+fit into the mempool must not block, also see
+https://github.com/IntersectMBO/ouroboros-consensus/issues/1226. We test this
+while generating a TestSetupWithTxs by always including a transaction that is
+larger than the entire mempool, and setting the per-tx size limit such that just
+this transaction is invalid due to its size, but not impacting the validity of
+any other transactions. Therefore, we disable the size limit in e.g.
+'genValidTx' to only capture UTxO-related validity for them by using an
+appropriate ledger config ('testLedgerConfigNoSizeLimits').
+-}
+
 instance Arbitrary TestSetupWithTxs where
   arbitrary = sized $ \n -> do
     nbTxs <- choose (0, n)
@@ -639,7 +674,28 @@ instance Arbitrary TestSetupWithTxs where
                 then NoMempoolCapacityBytesOverride
                 else MempoolCapacityBytesOverride $ mpCap <> newSize
             }
-    return TestSetupWithTxs { testSetup = testSetup', txs }
+    let mempoolCap :: TheMeasure
+        mempoolCap = computeMempoolCapacity
+          testLedgerConfigNoSizeLimits
+          (TickedSimpleLedgerState ledger)
+          (testMempoolCapOverride testSetup)
+
+
+    largeInvalidTx <- genLargeInvalidTx mempoolCap
+    let txs'        = (largeInvalidTx, False) : txs
+        -- Set the maximum tx size to the mempool capacity. This won't
+        -- invalidate any valid tx in @txs@ as the capacity was chosen such that
+        -- all @txs@ fit into the mempool. Also see Note [Transaction size
+        -- limit].
+        testSetup'' = testSetup' { testLedgerCfg =
+            (testLedgerCfg testSetup') { simpleLedgerMockConfig =
+                MockConfig {
+                    mockCfgMaxTxSize = Just (unIgnoringOverflow mempoolCap)
+                  }
+              }
+          }
+
+    return TestSetupWithTxs { testSetup = testSetup'', txs = txs' }
 
   shrink TestSetupWithTxs { testSetup, txs } =
       [ TestSetupWithTxs { testSetup = testSetup', txs }
