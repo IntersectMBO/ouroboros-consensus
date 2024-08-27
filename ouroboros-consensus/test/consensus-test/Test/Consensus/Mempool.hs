@@ -290,6 +290,8 @@ prop_Mempool_TraceRemovedTxs setup =
         map (const (Right ())) errs === errs .&&.
         sortOn fst expected === sortOn fst removedTxs
   where
+    cfg = testLedgerCfg setup
+
     isRemoveTxsEvent :: TraceEventMempool TestBlock -> Maybe [(TestTx, TestTxError)]
     isRemoveTxsEvent (TraceMempoolRemoveTxs txs _) = Just (map (first txForgetValidated) txs)
     isRemoveTxsEvent _                             = Nothing
@@ -297,7 +299,7 @@ prop_Mempool_TraceRemovedTxs setup =
     expectedToBeRemoved :: LedgerState TestBlock -> [TestTx] -> [(TestTx, TestTxError)]
     expectedToBeRemoved ledgerState txsInMempool =
       [ (tx, err)
-      | (tx, Left err) <- fst $ validateTxs ledgerState txsInMempool
+      | (tx, Left err) <- fst $ validateTxs cfg ledgerState txsInMempool
       ]
 
 prjTx ::
@@ -323,18 +325,23 @@ testInitLedger = genesisSimpleLedgerState $ mkAddrDist (NumCoreNodes 5)
 
 -- | Test config
 --
--- (We don't really care about these values here)
-testLedgerConfig :: LedgerConfig TestBlock
-testLedgerConfig = SimpleLedgerConfig {
+-- (We don't really care about most of these values here)
+mkTestLedgerConfig :: MockConfig -> LedgerConfig TestBlock
+mkTestLedgerConfig mockCfg = SimpleLedgerConfig {
       simpleMockLedgerConfig = ()
     , simpleLedgerEraParams  =
         HardFork.defaultEraParams
           (SecurityParam 4)
           (slotLengthFromSec 20)
+    , simpleLedgerMockConfig = mockCfg
     }
 
+testLedgerConfigNoSizeLimits :: LedgerConfig TestBlock
+testLedgerConfigNoSizeLimits = mkTestLedgerConfig defaultMockConfig
+
 data TestSetup = TestSetup
-  { testLedgerState        :: LedgerState TestBlock
+  { testLedgerCfg          :: LedgerConfig TestBlock
+  , testLedgerState        :: LedgerState TestBlock
   , testInitialTxs         :: [TestTx]
     -- ^ These are all valid and will be the initial contents of the Mempool.
   , testMempoolCapOverride :: MempoolCapacityBytesOverride
@@ -344,11 +351,11 @@ ppTestSetup :: TestSetup -> String
 ppTestSetup TestSetup { testInitialTxs
                       , testMempoolCapOverride
                       } = unlines $
-    ["Initial contents of the Mempool:"]     <>
-    (map ppTestTxWithHash testInitialTxs)    <>
-    ["Total size:"]                          <>
-    [show $ foldMap txSize $ testInitialTxs] <>
-    ["Mempool capacity override:"]           <>
+    ["Initial contents of the Mempool:"]        <>
+    (map ppTestTxWithHash testInitialTxs)       <>
+    ["Total size:"]                             <>
+    [show $ foldMap genTxSize $ testInitialTxs] <>
+    ["Mempool capacity override:"]              <>
     [show testMempoolCapOverride]
 
 ppTestTxWithHash :: TestTx -> String
@@ -359,17 +366,18 @@ ppTestTxWithHash x = condense
 -- the initial transactions.
 --
 -- The generated 'testMempoolCap' will be:
--- > foldMap 'txSize' 'testInitialTxs' + extraCapacity
+-- > foldMap 'genTxSize' 'testInitialTxs' + extraCapacity
 genTestSetupWithExtraCapacity :: Int -> ByteSize32 -> Gen (TestSetup, LedgerState TestBlock)
 genTestSetupWithExtraCapacity maxInitialTxs extraCapacity = do
     ledgerSize   <- choose (0, maxInitialTxs)
     nbInitialTxs <- choose (0, maxInitialTxs)
     (_txs1,  ledger1) <- genValidTxs ledgerSize testInitLedger
     ( txs2,  ledger2) <- genValidTxs nbInitialTxs ledger1
-    let initTxsSizeInBytes = foldMap txSize txs2
+    let initTxsSizeInBytes = foldMap genTxSize txs2
         mpCap              = initTxsSizeInBytes <> extraCapacity
         testSetup = TestSetup
-          { testLedgerState        = ledger1
+          { testLedgerCfg          = testLedgerConfigNoSizeLimits
+          , testLedgerState        = ledger1
           , testInitialTxs         = txs2
           , testMempoolCapOverride = MempoolCapacityBytesOverride mpCap
           }
@@ -388,43 +396,47 @@ instance Arbitrary TestSetup where
     extraCapacity <- (ByteSize32 . fromIntegral) <$> choose (0, n)
     testSetup <- fst <$> genTestSetupWithExtraCapacity n extraCapacity
     noOverride <- arbitrary
-    let initialSize = foldMap txSize $ testInitialTxs testSetup
+    let initialSize = foldMap genTxSize $ testInitialTxs testSetup
         defaultCap  = simpleBlockCapacity <> simpleBlockCapacity
     return $
       if noOverride && initialSize <= defaultCap
       then testSetup { testMempoolCapOverride = NoMempoolCapacityBytesOverride }
       else testSetup
 
-  shrink TestSetup { testLedgerState
+  shrink TestSetup { testLedgerCfg
+                   , testLedgerState
                    , testInitialTxs
                    , testMempoolCapOverride =
                        MempoolCapacityBytesOverride (ByteSize32 mpCap)
                    } =
     -- TODO we could shrink @testLedgerState@ too
-    [ TestSetup { testLedgerState
+    [ TestSetup { testLedgerCfg
+                , testLedgerState
                 , testInitialTxs = testInitialTxs'
                 , testMempoolCapOverride =
                     MempoolCapacityBytesOverride mpCap'
                 }
-    | let ByteSize32 initial = foldMap txSize testInitialTxs
+    | let ByteSize32 initial = foldMap genTxSize testInitialTxs
           extraCap           = mpCap - initial
     , testInitialTxs' <- shrinkList (const []) testInitialTxs
-    , isRight $ txsAreValid testLedgerState testInitialTxs'
-    , let mpCap' = foldMap txSize testInitialTxs' <> ByteSize32 extraCap
+    , isRight $ txsAreValid testLedgerCfg testLedgerState testInitialTxs'
+    , let mpCap' = foldMap genTxSize testInitialTxs' <> ByteSize32 extraCap
     ]
 
   -- TODO shrink to an override, that's an easier test case
-  shrink TestSetup { testLedgerState
+  shrink TestSetup { testLedgerCfg
+                   , testLedgerState
                    , testInitialTxs
                    , testMempoolCapOverride = NoMempoolCapacityBytesOverride
                    } =
     -- TODO we could shrink @testLedgerState@ too
-    [ TestSetup { testLedgerState
+    [ TestSetup { testLedgerCfg
+                , testLedgerState
                 , testInitialTxs = testInitialTxs'
                 , testMempoolCapOverride = NoMempoolCapacityBytesOverride
                 }
     | testInitialTxs' <- shrinkList (const []) testInitialTxs
-    , isRight $ txsAreValid testLedgerState testInitialTxs'
+    , isRight $ txsAreValid testLedgerCfg testLedgerState testInitialTxs'
     ]
 
 -- | Generate a number of valid and invalid transactions and apply the valid
@@ -455,26 +467,28 @@ mustBeValid ex = case runExcept ex of
   Left _       -> error "impossible"
   Right ledger -> ledger
 
-txIsValid :: LedgerState TestBlock -> TestTx -> Bool
-txIsValid ledgerState tx =
-    isRight $ runExcept $ applyTxToLedger ledgerState tx
+txIsValid :: LedgerConfig TestBlock -> LedgerState TestBlock -> TestTx -> Bool
+txIsValid cfg ledgerState tx =
+    isRight $ runExcept $ applyTxToLedger cfg ledgerState tx
 
 txsAreValid ::
-     LedgerState TestBlock
+     LedgerConfig TestBlock
+  -> LedgerState TestBlock
   -> [TestTx]
   -> Either TestTxError (LedgerState TestBlock)
-txsAreValid ledgerState txs =
-    runExcept $ repeatedlyM (flip applyTxToLedger) txs ledgerState
+txsAreValid cfg ledgerState txs =
+    runExcept $ repeatedlyM (flip (applyTxToLedger cfg)) txs ledgerState
 
 validateTxs ::
-     LedgerState TestBlock
+     LedgerConfig TestBlock
+  -> LedgerState TestBlock
   -> [TestTx]
   -> ([(TestTx, Either TestTxError ())], LedgerState TestBlock)
-validateTxs = go []
+validateTxs cfg = go []
   where
     go revalidated ledgerState = \case
       []      -> (reverse revalidated, ledgerState)
-      tx:txs' -> case runExcept (applyTxToLedger ledgerState tx) of
+      tx:txs' -> case runExcept (applyTxToLedger cfg ledgerState tx) of
         Left err           -> go ((tx, Left err):revalidated) ledgerState  txs'
         Right ledgerState' -> go ((tx, Right ()):revalidated) ledgerState' txs'
 
@@ -492,6 +506,7 @@ genValidTxs = go []
           (tx, ledger') <- genValidTx ledger
           go (tx:txs) (n - 1) ledger'
 
+-- | Generate a valid transaction (but ignoring any per-tx size limits).
 genValidTx :: LedgerState TestBlock -> Gen (TestTx, LedgerState TestBlock)
 genValidTx ledgerState@(SimpleLedgerState MockState { mockUtxo = utxo }) = do
     -- Never let someone go broke, otherwise we risk concentrating all the
@@ -520,7 +535,7 @@ genValidTx ledgerState@(SimpleLedgerState MockState { mockUtxo = utxo }) = do
           | otherwise
           = [outRecipient, (sender, fortune - amount)]
         tx = mkSimpleGenTx $ Tx DoNotExpire ins outs
-    return (tx, mustBeValid (applyTxToLedger ledgerState tx))
+    return (tx, mustBeValid (applyTxToLedger testLedgerConfigNoSizeLimits ledgerState tx))
   where
     peopleWithFunds :: Map Addr [(TxIn, Amount)]
     peopleWithFunds = Map.unionsWith (<>)
@@ -540,7 +555,7 @@ genInvalidTx ledgerState@(SimpleLedgerState MockState { mockUtxo = utxo }) = do
     amount <- choose (5_001, 10_000)
     let outs = [(recipient, amount)]
         tx   = mkSimpleGenTx $ Tx DoNotExpire ins outs
-    return $ assert (not (txIsValid ledgerState tx)) tx
+    return $ assert (not (txIsValid testLedgerConfigNoSizeLimits ledgerState tx)) tx
 
 -- | Apply a transaction to the ledger
 --
@@ -548,12 +563,15 @@ genInvalidTx ledgerState@(SimpleLedgerState MockState { mockUtxo = utxo }) = do
 -- we pretend the transaction /is/ a block, apply it to the UTxO, and then
 -- update the tip of the ledger state, incrementing the slot number and faking
 -- a hash.
-applyTxToLedger :: LedgerState TestBlock
+applyTxToLedger :: LedgerConfig TestBlock
+                -> LedgerState TestBlock
                 -> TestTx
                 -> Except TestTxError (LedgerState TestBlock)
-applyTxToLedger (SimpleLedgerState mockState) tx =
-    mkNewLedgerState <$> updateMockUTxO dummy tx mockState
+applyTxToLedger cfg (SimpleLedgerState mockState) tx =
+    mkNewLedgerState <$> updateMockUTxO mockCfg dummy tx mockState
   where
+    mockCfg = simpleLedgerMockConfig cfg
+
     -- All expiries in this test are 'DoNotExpire', so the current time is
     -- irrelevant.
     dummy :: SlotNo
@@ -610,11 +628,11 @@ instance Arbitrary TestSetupWithTxs where
       NoMempoolCapacityBytesOverride     -> return testSetup
       MempoolCapacityBytesOverride mpCap -> do
         noOverride <- arbitrary
-        let initialSize = foldMap txSize $ testInitialTxs testSetup
+        let initialSize = foldMap genTxSize $ testInitialTxs testSetup
             defaultCap  = simpleBlockCapacity <> simpleBlockCapacity
             newSize     =
-                 foldMap (txSize . fst) (filter snd txs)
-              <> maximum (ByteSize32 0 : map (txSize . fst) (filter (not . snd) txs))
+                 foldMap (genTxSize . fst) (filter snd txs)
+              <> maximum (ByteSize32 0 : map (genTxSize . fst) (filter (not . snd) txs))
         return testSetup {
               testMempoolCapOverride =
                 if noOverride && initialSize <> newSize <= defaultCap
@@ -632,12 +650,12 @@ instance Arbitrary TestSetupWithTxs where
                 map fst $ txs ]
 
 revalidate :: TestSetup -> [TestTx] -> ([(TestTx, Either TestTxError ())], LedgerState TestBlock)
-revalidate TestSetup { testLedgerState, testInitialTxs } =
-    validateTxs initLedgerState
+revalidate TestSetup { testLedgerCfg, testLedgerState, testInitialTxs } =
+    validateTxs testLedgerCfg initLedgerState
   where
     -- The LedgerState after adding the transactions initially in the mempool
     initLedgerState = repeatedly
-      (\tx l -> mustBeValid (applyTxToLedger l tx))
+      (\tx l -> mustBeValid (applyTxToLedger testLedgerCfg l tx))
       testInitialTxs
       testLedgerState
 
@@ -752,7 +770,7 @@ withTestMempool setup@TestSetup {..} prop =
       mempool <-
         openMempoolWithoutSyncThread
           ledgerInterface
-          testLedgerConfig
+          testLedgerCfg
           testMempoolCapOverride
           tracer
       result  <- addTxs mempool testInitialTxs
@@ -786,7 +804,7 @@ withTestMempool setup@TestSetup {..} prop =
                   -> STM m (Either TestTxError ())
     addTxToLedger varCurrentLedgerState tx = do
       ledgerState <- readTVar varCurrentLedgerState
-      case runExcept (applyTxToLedger ledgerState tx) of
+      case runExcept (applyTxToLedger testLedgerCfg ledgerState tx) of
         Left  e            -> return $ Left e
         Right ledgerState' -> do
           writeTVar varCurrentLedgerState ledgerState'
@@ -810,7 +828,7 @@ withTestMempool setup@TestSetup {..} prop =
                            , snapshotSlotNo
                            } =
         case runExcept $ repeatedlyM
-               (fmap fst .: applyTx testLedgerConfig DoNotIntervene snapshotSlotNo)
+               (fmap fst .: applyTx testLedgerCfg DoNotIntervene snapshotSlotNo)
                txs
                (TickedSimpleLedgerState ledgerState) of
           Right _ -> property True
@@ -836,12 +854,12 @@ instance Arbitrary MempoolCapTestSetup where
     testSetupWithTxs@TestSetupWithTxs { testSetup, txs } <- arbitrary
     -- The Mempool should at least be capable of containing the transactions
     -- it already contains.
-    let currentSize      = foldMap txSize (testInitialTxs testSetup)
+    let currentSize      = foldMap genTxSize (testInitialTxs testSetup)
         capacityMinBound = currentSize
         validTxsToAdd    = [tx | (tx, True) <- txs]
         -- Use the current size + the sum of all the valid transactions to add
         -- as the upper bound.
-        capacityMaxBound = currentSize <> foldMap txSize validTxsToAdd
+        capacityMaxBound = currentSize <> foldMap genTxSize validTxsToAdd
     -- Note that we could pick @currentSize@, meaning that we can't add any
     -- more transactions to the Mempool
 
@@ -1037,7 +1055,8 @@ prop_Mempool_idx_consistency (Actions actions) =
     expectedAssignment = expectedTicketAssignment actions
 
     emptyTestSetup = TestSetup
-      { testLedgerState        = testInitLedger
+      { testLedgerCfg          = testLedgerConfigNoSizeLimits
+      , testLedgerState        = testInitLedger
       , testInitialTxs         = []
       , testMempoolCapOverride =
             MempoolCapacityBytesOverride
@@ -1154,6 +1173,8 @@ genActions ::
   -> Gen Actions
 genActions genNbToAdd = go testInitLedger mempty mempty
   where
+    cfg = testLedgerConfigNoSizeLimits
+
     go :: LedgerState TestBlock
           -- ^ Current ledger state with the contents of the Mempool applied
        -> [TestTx]  -- ^ Transactions currently in the Mempool
@@ -1170,7 +1191,7 @@ genActions genNbToAdd = go testInitLedger mempty mempty
           -> do
           tx <- elements txs
           let ((vTxs, iTxs), ledger') = first (partition (isRight . snd)) $
-                validateTxs testInitLedger (filter (/= tx) txs)
+                validateTxs cfg testInitLedger (filter (/= tx) txs)
               txs'       = map fst vTxs
               removedTxs = tx : map fst iTxs
           go ledger' txs' (RemoveTxs removedTxs:actions) (n - 1)
