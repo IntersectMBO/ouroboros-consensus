@@ -58,10 +58,9 @@ openMockedMempool ::
      )
   => Mempool.MempoolCapacityBytesOverride
   -> Tracer IO (Mempool.TraceEventMempool blk)
-  -> (Ledger.GenTx blk -> Mempool.SizeInBytes)
   -> InitialMempoolAndModelParams blk
   -> IO (MockedMempool IO blk)
-openMockedMempool capacityOverride tracer txSizeImpl initialParams = do
+openMockedMempool capacityOverride tracer initialParams = do
     currentLedgerStateTVar <- newTVarIO (immpInitialState initialParams)
     let ledgerItf = Mempool.LedgerInterface {
             Mempool.getCurrentLedgerState = readTVar currentLedgerStateTVar
@@ -71,7 +70,6 @@ openMockedMempool capacityOverride tracer txSizeImpl initialParams = do
                    (immpLedgerConfig initialParams)
                    capacityOverride
                    tracer
-                   txSizeImpl
     pure MockedMempool {
         getLedgerInterface = ledgerItf
       , getLedgerStateTVar = currentLedgerStateTVar

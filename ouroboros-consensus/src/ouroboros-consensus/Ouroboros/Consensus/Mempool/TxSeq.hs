@@ -231,9 +231,13 @@ toList (TxSeq ftree) = Foldable.toList ftree
 
 -- | Convert a 'TxSeq' to a list of pairs of transactions and their
 -- associated 'TicketNo's.
-toTuples :: TxSeq tx -> [(tx, TicketNo)]
+toTuples :: TxSeq tx -> [(tx, TicketNo, TxSizeInBytes)]
 toTuples (TxSeq ftree) = fmap
-    (\ticket -> (txTicketTx ticket, txTicketNo ticket))
+    (\ticket ->
+       ( txTicketTx ticket
+       , txTicketNo ticket
+       , txTicketTxSizeInBytes ticket)
+    )
     (Foldable.toList ftree)
 
 -- | \( O(1) \). Return the 'MempoolSize' of the given 'TxSeq'.

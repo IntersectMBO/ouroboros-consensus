@@ -93,7 +93,6 @@ testTxSizeFairness TestParams { mempoolMaxCapacity, smallTxSize, largeTxSize, nr
                    (testBlockLedgerConfigFrom eraParams)
                    (Mempool.mkCapacityBytesOverride mempoolMaxCapacity)
                    Tracer.nullTracer
-                   (SizeInBytes . genTxSize)
 
     ----------------------------------------------------------------------------
     --  Add and collect transactions

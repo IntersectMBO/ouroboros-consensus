@@ -44,16 +44,13 @@ implAddTx ::
       -- ^ The FIFO for all remote peers and local clients
   -> LedgerConfig blk
      -- ^ The configuration of the ledger.
-  -> (GenTx blk -> SizeInBytes)
-     -- ^ The function to calculate the size of a
-     -- transaction.
   -> Tracer m (TraceEventMempool blk)
   -> AddTxOnBehalfOf
      -- ^ Whether we're acting on behalf of a remote peer or a local client.
   -> GenTx blk
      -- ^ The transaction to add to the mempool.
   -> m (MempoolAddTxResult blk)
-implAddTx istate remoteFifo allFifo cfg txSize trcr onbehalf tx =
+implAddTx istate remoteFifo allFifo cfg trcr onbehalf tx =
     -- To ensure fair behaviour between threads that are trying to add
     -- transactions, we make them all queue in a fifo. Only the one at the head
     -- of the queue gets to actually wait for space to get freed up in the
@@ -87,7 +84,7 @@ implAddTx istate remoteFifo allFifo cfg txSize trcr onbehalf tx =
   where
     implAddTx' = do
       (result, ev) <- atomically $ do
-        outcome <- implTryAddTx istate cfg txSize
+        outcome <- implTryAddTx istate cfg
                                 (whetherToIntervene onbehalf)
                                 tx
         case outcome of
@@ -144,16 +141,13 @@ implTryAddTx ::
      -- ^ The InternalState TVar.
   -> LedgerConfig blk
      -- ^ The configuration of the ledger.
-  -> (GenTx blk -> SizeInBytes)
-     -- ^ The function to calculate the size of a
-     -- transaction.
   -> WhetherToIntervene
   -> GenTx blk
      -- ^ The transaction to add to the mempool.
   -> STM m (TryAddTx blk)
-implTryAddTx istate cfg txSize wti tx = do
+implTryAddTx istate cfg wti tx = do
         is <- readTVar istate
-        let outcome = pureTryAddTx cfg txSize wti tx is
+        let outcome = pureTryAddTx cfg wti tx is
         case outcome of
           TryAddTx (Just is') _ _ -> writeTVar istate is'
           _                       -> return ()
@@ -172,15 +166,13 @@ pureTryAddTx ::
      )
   => LedgerCfg (LedgerState blk)
      -- ^ The ledger configuration.
-  -> (GenTx blk -> SizeInBytes)
-     -- ^ The function to claculate the size of a transaction.
   -> WhetherToIntervene
   -> GenTx blk
      -- ^ The transaction to add to the mempool.
   -> InternalState blk
      -- ^ The current internal state of the mempool.
   -> TryAddTx blk
-pureTryAddTx cfg txSize wti tx is
+pureTryAddTx cfg wti tx is
     -- We add the transaction if there is at least one byte free left in the
     -- mempool.
   | let curSize = msNumBytes $ isMempoolSize is
@@ -213,7 +205,7 @@ pureTryAddTx cfg txSize wti tx is
   | otherwise
   = NoSpaceLeft
     where
-      (eVtx, vr) = extendVRNew cfg txSize wti tx $ validationResultFromIS is
+      (eVtx, vr) = extendVRNew cfg wti tx $ validationResultFromIS is
       is'        = internalStateFromVR vr
 
 {-------------------------------------------------------------------------------

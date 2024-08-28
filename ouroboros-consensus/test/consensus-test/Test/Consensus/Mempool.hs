@@ -104,8 +104,9 @@ prop_Mempool_snapshotTxs_snapshotTxsAfter :: TestSetup -> Property
 prop_Mempool_snapshotTxs_snapshotTxsAfter setup =
     withTestMempool setup $ \TestMempool { mempool } -> do
       let Mempool { getSnapshot } = mempool
+          prj (tx, tn, _sz)       = (tx, tn)
       MempoolSnapshot { snapshotTxs, snapshotTxsAfter} <- atomically getSnapshot
-      return $ snapshotTxs === snapshotTxsAfter zeroTicketNo
+      return $ snapshotTxs === map prj (snapshotTxsAfter zeroTicketNo)
 
 -- | Test that all valid transactions added to a 'Mempool' can be retrieved
 -- afterward.
@@ -734,7 +735,6 @@ withTestMempool setup@TestSetup {..} prop =
           testLedgerConfig
           testMempoolCapOverride
           tracer
-          (SizeInBytes . txSize)
       result  <- addTxs mempool testInitialTxs
       -- the invalid transactions are reported in the same order they were
       -- added, so the first error is not the result of a cascade
@@ -844,7 +844,7 @@ prop_TxSeq_lookupByTicketNo_complete xs =
     and [ case TxSeq.lookupByTicketNo txseq tn of
             Just tx' -> tx == tx'
             Nothing  -> False
-        | (tx, tn) <- TxSeq.toTuples txseq ]
+        | (tx, tn, _sz) <- TxSeq.toTuples txseq ]
   where
     txseq :: TxSeq Int
     txseq =

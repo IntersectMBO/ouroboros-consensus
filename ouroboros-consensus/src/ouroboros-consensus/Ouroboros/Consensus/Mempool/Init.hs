@@ -39,10 +39,9 @@ openMempool ::
   -> LedgerConfig blk
   -> MempoolCapacityBytesOverride
   -> Tracer m (TraceEventMempool blk)
-  -> (GenTx blk -> SizeInBytes)
   -> m (Mempool m blk)
-openMempool registry ledger cfg capacityOverride tracer txSize = do
-    env <- initMempoolEnv ledger cfg capacityOverride tracer txSize
+openMempool registry ledger cfg capacityOverride tracer = do
+    env <- initMempoolEnv ledger cfg capacityOverride tracer
     forkSyncStateOnTipPointChange registry env
     return $ mkMempool env
 
@@ -91,10 +90,9 @@ openMempoolWithoutSyncThread ::
   -> LedgerConfig blk
   -> MempoolCapacityBytesOverride
   -> Tracer m (TraceEventMempool blk)
-  -> (GenTx blk -> SizeInBytes)
   -> m (Mempool m blk)
-openMempoolWithoutSyncThread ledger cfg capacityOverride tracer txSize =
-    mkMempool <$> initMempoolEnv ledger cfg capacityOverride tracer txSize
+openMempoolWithoutSyncThread ledger cfg capacityOverride tracer =
+    mkMempool <$> initMempoolEnv ledger cfg capacityOverride tracer
 
 mkMempool ::
      ( IOLike m
@@ -104,19 +102,17 @@ mkMempool ::
      )
   => MempoolEnv m blk -> Mempool m blk
 mkMempool mpEnv = Mempool
-    { addTx          = implAddTx istate remoteFifo allFifo cfg txSize trcr
+    { addTx          = implAddTx istate remoteFifo allFifo cfg trcr
     , removeTxs      = implRemoveTxs mpEnv
     , syncWithLedger = implSyncWithLedger mpEnv
     , getSnapshot    = snapshotFromIS <$> readTVar istate
     , getSnapshotFor = \fls -> pureGetSnapshotFor cfg fls co <$> readTVar istate
     , getCapacity    = isCapacity <$> readTVar istate
-    , getTxSize      = txSize
     }
    where MempoolEnv { mpEnvStateVar = istate
                     , mpEnvAddTxsRemoteFifo = remoteFifo
                     , mpEnvAddTxsAllFifo = allFifo
                     , mpEnvLedgerCfg = cfg
-                    , mpEnvTxSize = txSize
                     , mpEnvTracer = trcr
                     , mpEnvCapacityOverride = co
                     } = mpEnv

@@ -86,7 +86,6 @@ tests =
           mempool <- Mocked.openMockedMempool
                       capcityBytesOverride
                       tracer
-                      (SizeInBytes . LedgerSupportsMempool.txInBlockSize)
                       mempoolParams
 
           mempool `should_process` [ _137 ]

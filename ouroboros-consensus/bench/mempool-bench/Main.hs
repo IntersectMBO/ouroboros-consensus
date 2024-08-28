@@ -140,7 +140,6 @@ openMempoolWithCapacity capacity =
                                (Mempool.unByteSize capacity)
                              )
                              Tracer.nullTracer
-                             TestBlock.txSize
                              Mocked.MempoolAndModelParams {
                                  Mocked.immpInitialState = TestBlock.initialLedgerState
                                , Mocked.immpLedgerConfig = TestBlock.sampleLedgerConfig

@@ -207,9 +207,6 @@ data Mempool m blk = Mempool {
       -- capacity, i.e., we won't admit new transactions until some have been
       -- removed because they have become invalid.
     , getCapacity    :: STM m Cap.MempoolCapacityBytes
-
-      -- | Return the post-serialisation size in bytes of a 'GenTx'.
-    , getTxSize      :: GenTx blk -> SizeInBytes
     }
 
 {-------------------------------------------------------------------------------
@@ -335,7 +332,8 @@ data MempoolSnapshot blk = MempoolSnapshot {
     -- | Get all transactions (oldest to newest) in the mempool snapshot,
     -- along with their ticket number, which are associated with a ticket
     -- number greater than the one provided.
-  , snapshotTxsAfter    :: TicketNo -> [(Validated (GenTx blk), TicketNo)]
+  , snapshotTxsAfter    ::
+      TicketNo -> [(Validated (GenTx blk), TicketNo, TxSizeInBytes)]
 
     -- | Get a specific transaction from the mempool snapshot by its ticket
     -- number, if it exists.

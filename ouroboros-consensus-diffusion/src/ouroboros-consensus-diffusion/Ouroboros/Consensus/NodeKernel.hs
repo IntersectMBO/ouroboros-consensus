@@ -380,7 +380,6 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
                                  (configLedger cfg)
                                  mempoolCapacityOverride
                                  (mempoolTracer tracers)
-                                 (SizeInBytes . txInBlockSize)
 
     fetchClientRegistry <- newFetchClientRegistry
 
@@ -733,8 +732,8 @@ getMempoolReader mempool = MempoolReader.TxSubmissionMempoolReader
                                       snapshotHasTx } =
       MempoolReader.MempoolSnapshot
         { mempoolTxIdsAfter = \idx ->
-            [ (txId (txForgetValidated tx), idx', getTxSize mempool (txForgetValidated tx))
-            | (tx, idx') <- snapshotTxsAfter idx
+            [ (txId (txForgetValidated tx), idx', sz)
+            | (tx, idx', sz) <- snapshotTxsAfter idx
             ]
         , mempoolLookupTx   = snapshotLookupTx
         , mempoolHasTx      = snapshotHasTx

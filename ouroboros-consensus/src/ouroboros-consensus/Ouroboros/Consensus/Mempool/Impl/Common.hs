@@ -187,7 +187,6 @@ data MempoolEnv m blk = MempoolEnv {
     , mpEnvAddTxsRemoteFifo :: MVar m ()
     , mpEnvAddTxsAllFifo    :: MVar m ()
     , mpEnvTracer           :: Tracer m (TraceEventMempool blk)
-    , mpEnvTxSize           :: GenTx blk -> SizeInBytes
     , mpEnvCapacityOverride :: MempoolCapacityBytesOverride
     }
 
@@ -200,9 +199,8 @@ initMempoolEnv :: ( IOLike m
                -> LedgerConfig blk
                -> MempoolCapacityBytesOverride
                -> Tracer m (TraceEventMempool blk)
-               -> (GenTx blk -> SizeInBytes)
                -> m (MempoolEnv m blk)
-initMempoolEnv ledgerInterface cfg capacityOverride tracer txSize = do
+initMempoolEnv ledgerInterface cfg capacityOverride tracer = do
     st <- atomically $ getCurrentLedgerState ledgerInterface
     let (slot, st') = tickLedgerState cfg (ForgeInUnknownSlot st)
     isVar <- newTVarIO $ initInternalState capacityOverride TxSeq.zeroTicketNo slot st'
@@ -215,7 +213,6 @@ initMempoolEnv ledgerInterface cfg capacityOverride tracer txSize = do
       , mpEnvAddTxsRemoteFifo = addTxRemoteFifo
       , mpEnvAddTxsAllFifo    = addTxAllFifo
       , mpEnvTracer           = tracer
-      , mpEnvTxSize           = txSize
       , mpEnvCapacityOverride = capacityOverride
       }
 
@@ -323,14 +320,13 @@ extendVRPrevApplied cfg txTicket vr =
 -- again.
 extendVRNew :: (LedgerSupportsMempool blk, HasTxId (GenTx blk))
             => LedgerConfig blk
-            -> (GenTx blk -> SizeInBytes)
             -> WhetherToIntervene
             -> GenTx blk
             -> ValidationResult (GenTx blk) blk
             -> ( Either (ApplyTxErr blk) (Validated (GenTx blk))
                , ValidationResult (GenTx blk) blk
                )
-extendVRNew cfg txSize wti tx vr = assert (isNothing vrNewValid) $
+extendVRNew cfg wti tx vr = assert (isNothing vrNewValid) $
     case runExcept (applyTx cfg wti vrSlotNo tx vrAfter) of
       Left err         ->
         ( Left err
@@ -339,7 +335,7 @@ extendVRNew cfg txSize wti tx vr = assert (isNothing vrNewValid) $
         )
       Right (st', vtx) ->
         ( Right vtx
-        , vr { vrValid        = vrValid :> TxTicket vtx nextTicketNo (txSize tx)
+        , vr { vrValid        = vrValid :> TxTicket vtx nextTicketNo sz
              , vrValidTxIds   = Set.insert (txId tx) vrValidTxIds
              , vrNewValid     = Just vtx
              , vrAfter        = st'
@@ -358,6 +354,8 @@ extendVRNew cfg txSize wti tx vr = assert (isNothing vrNewValid) $
       } = vr
 
     nextTicketNo = succ vrLastTicketNo
+
+    sz = txInBlockSize tx
 
 {-------------------------------------------------------------------------------
   Conversions
@@ -428,11 +426,13 @@ snapshotFromIS is = MempoolSnapshot {
  where
   implSnapshotGetTxs :: InternalState blk
                      -> [(Validated (GenTx blk), TicketNo)]
-  implSnapshotGetTxs = flip implSnapshotGetTxsAfter TxSeq.zeroTicketNo
+  implSnapshotGetTxs is' =
+      map (\(a, b, _c) -> (a, b))
+    $ implSnapshotGetTxsAfter is' TxSeq.zeroTicketNo
 
   implSnapshotGetTxsAfter :: InternalState blk
                           -> TicketNo
-                          -> [(Validated (GenTx blk), TicketNo)]
+                          -> [(Validated (GenTx blk), TicketNo, TxSizeInBytes)]
   implSnapshotGetTxsAfter IS{isTxs} =
     TxSeq.toTuples . snd . TxSeq.splitAfterTicketNo isTxs
 
