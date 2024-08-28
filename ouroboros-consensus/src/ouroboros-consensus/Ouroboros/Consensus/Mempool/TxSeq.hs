@@ -22,7 +22,6 @@ module Ouroboros.Consensus.Mempool.TxSeq (
   , splitAfterTxSize
   , toList
   , toMempoolSize
-  , toRefScriptSize
   , toTuples
   , zeroTicketNo
     -- * Reference implementations for testing
@@ -64,7 +63,6 @@ data TxTicket tx = TxTicket
   , txTicketTxSizeInBytes :: !SizeInBytes
     -- ^ The byte size of the transaction ('txTicketTx') associated with this
     -- ticket.
-  , txTicketRefScriptSize :: !Int
   } deriving (Eq, Show, Generic, NoThunks)
 
 -- | The mempool is a sequence of transactions with their ticket numbers and
@@ -107,13 +105,12 @@ data TxSeqMeasure = TxSeqMeasure {
        mMinTicket     :: !TicketNo,
        mMaxTicket     :: !TicketNo,
        mSizeBytes     :: !SizeInBytes,
-       mSize          :: !Int,
-       mRefScriptSize :: !Int
+       mSize          :: !Int
      }
   deriving Show
 
 instance FingerTree.Measured TxSeqMeasure (TxTicket tx) where
-  measure (TxTicket _ tno tsz trssz) = TxSeqMeasure tno tno tsz 1 trssz
+  measure (TxTicket _ tno tsz) = TxSeqMeasure tno tno tsz 1
 
 instance Semigroup TxSeqMeasure where
   vl <> vr = TxSeqMeasure
@@ -121,10 +118,9 @@ instance Semigroup TxSeqMeasure where
                (mMaxTicket vl `max` mMaxTicket vr)
                (mSizeBytes vl   +   mSizeBytes vr)
                (mSize      vl   +   mSize      vr)
-               (mRefScriptSize vl + mRefScriptSize vr)
 
 instance Monoid TxSeqMeasure where
-  mempty  = TxSeqMeasure maxBound minBound 0 0 0
+  mempty  = TxSeqMeasure maxBound minBound 0 0
   mappend = (<>)
 
 -- | A helper function for the ':>' pattern.
@@ -175,8 +171,8 @@ lookupByTicketNo :: TxSeq tx -> TicketNo -> Maybe tx
 lookupByTicketNo (TxSeq txs) n =
     case FingerTree.search (\ml mr -> mMaxTicket ml >= n
                                    && mMinTicket mr >  n) txs of
-      FingerTree.Position _ (TxTicket tx n' _ _) _ | n' == n -> Just tx
-      _                                                      -> Nothing
+      FingerTree.Position _ (TxTicket tx n' _) _ | n' == n -> Just tx
+      _                                                    -> Nothing
 
 -- | \( O(\log(n)) \). Split the sequence of transactions into two parts
 -- based on the given 'TicketNo'. The first part has transactions with tickets
@@ -248,8 +244,3 @@ toMempoolSize (TxSeq ftree) = MempoolSize
     }
   where
     TxSeqMeasure { mSizeBytes, mSize } = FingerTree.measure ftree
-
-toRefScriptSize :: TxSeq tx -> Int
-toRefScriptSize (TxSeq ftree) = mRefScriptSize
-  where
-    TxSeqMeasure { mRefScriptSize } = FingerTree.measure ftree

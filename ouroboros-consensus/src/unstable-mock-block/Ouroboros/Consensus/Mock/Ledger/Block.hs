@@ -438,8 +438,6 @@ instance MockProtocolSpecific c ext
 
   txForgetValidated = forgetValidatedSimpleGenTx
 
-  txRefScriptSize _cfg _tlst _tx = 0
-
 newtype instance TxId (GenTx (SimpleBlock c ext)) = SimpleGenTxId {
       unSimpleGenTxId :: Mock.TxId
     }

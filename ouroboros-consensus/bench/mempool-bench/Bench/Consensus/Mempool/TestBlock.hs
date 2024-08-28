@@ -153,8 +153,6 @@ instance Ledger.LedgerSupportsMempool TestBlock where
 
   txForgetValidated (ValidatedGenTx tx) = tx
 
-  txRefScriptSize _cfg _tlst _tx = 0
-
 newtype instance Ledger.TxId (Ledger.GenTx TestBlock) = TestBlockTxId Tx
   deriving stock (Generic)
   deriving newtype (Show, Ord, Eq)

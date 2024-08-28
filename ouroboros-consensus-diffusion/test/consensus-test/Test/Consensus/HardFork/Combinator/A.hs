@@ -331,8 +331,6 @@ instance LedgerSupportsMempool BlockA where
 
   txForgetValidated = forgetValidatedGenTxA
 
-  txRefScriptSize _cfg _tlst _tx = 0
-
 newtype instance TxId (GenTx BlockA) = TxIdA Int
   deriving stock   (Show, Eq, Ord, Generic)
   deriving newtype (NoThunks, Serialise)

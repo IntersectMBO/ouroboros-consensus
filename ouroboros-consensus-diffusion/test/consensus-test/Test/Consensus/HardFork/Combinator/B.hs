@@ -267,8 +267,6 @@ instance LedgerSupportsMempool BlockB where
 
   txForgetValidated = \case {}
 
-  txRefScriptSize _cfg _tlst _tx = 0
-
 data instance TxId (GenTx BlockB)
   deriving stock    (Show, Eq, Ord, Generic)
   deriving anyclass (NoThunks, Serialise)

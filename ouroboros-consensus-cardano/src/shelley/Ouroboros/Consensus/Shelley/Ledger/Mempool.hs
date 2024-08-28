@@ -149,12 +149,6 @@ instance ShelleyCompatible proto era
 
   txForgetValidated (ShelleyValidatedTx txid vtx) = ShelleyTx txid (SL.extractTx vtx)
 
-  txRefScriptSize _cfg st (ShelleyTx _ tx) = case getBabbageTxDict (Proxy @era) of
-      Nothing              -> 0
-      Just BabbageTxDict{} -> SL.txNonDistinctRefScriptsSize utxo tx
-    where
-      utxo = SL.getUTxO . tickedShelleyLedgerState $ st
-
 mkShelleyTx :: forall era proto. ShelleyBasedEra era => Tx era -> GenTx (ShelleyBlock proto era)
 mkShelleyTx tx = ShelleyTx (SL.txIdTxBody @era (tx ^. bodyTxL)) tx
 
