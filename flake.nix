@@ -31,6 +31,7 @@
       url = "github:nix-community/flake-compat";
       flake = false;
     };
+    agda-nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     # for cabal-docspec
     cabal-extras = {
       url = "github:phadej/cabal-extras/cabal-docspec-0.0.0.20240703";
@@ -63,7 +64,8 @@
             inputs.iohkNix.overlays.haskell-nix-extra
             (import ./nix/tools.nix inputs)
             (import ./nix/haskell.nix inputs)
-            (import ./nix/pdfs.nix)
+            (import ./nix/agda.nix inputs)
+            (import ./nix/pdfs.nix inputs)
           ];
         };
         hydraJobs = import ./nix/ci.nix { inherit inputs pkgs; };
@@ -75,6 +77,8 @@
           ghc96-profiled = hydraJobs.native.haskell96.devShellProfiled;
           ghc910 = hydraJobs.native.haskell910.devShell;
           ghc910-profiled = hydraJobs.native.haskell910.devShellProfiled;
+
+          agda-spec = pkgs.agda-spec.shell;
 
           website = pkgs.mkShell {
             packages = [ pkgs.nodejs pkgs.yarn ];

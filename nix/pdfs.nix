@@ -1,4 +1,4 @@
-final: prev: {
+inputs: final: prev: {
   consensus-pdfs = final.stdenvNoCC.mkDerivation {
     name = "ouroboros-consensus-pdfs";
     src = ../docs;
@@ -35,6 +35,7 @@ final: prev: {
 
       cp tech-reports/**/*.pdf $out/
       cp formal-spec/consensus-spec.pdf $out/
+      cp ${final.agda-spec.docs}/pdfs/consensus-spec.pdf $out/consensus-spec-agda.pdf
 
       mkdir -p $out/nix-support
       for pdf in $out/*.pdf; do

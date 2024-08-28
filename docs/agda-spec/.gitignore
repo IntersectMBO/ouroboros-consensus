@@ -1,0 +1,12 @@
+*.agdai
+.DS_Store
+**/dist-newstyle/
+.editorconfig
+result*
+
+*.pdf
+src/latex/
+
+dist/
+
+*.time
