@@ -34,6 +34,12 @@ multi-repl: True
 
 import: ./asserts.cabal
 
+package ouroboros-network
+  -- Certain ThreadNet tests rely on transactions to be submitted promptly after
+  -- a node (re)start. Therefore, we disable this flag (see
+  -- https://github.com/IntersectMBO/ouroboros-network/issues/4927 for context).
+  flags: -txsubmission-delay
+
 -- We need to disable bitvec's SIMD for now, as it breaks during cross compilation.
 if(os(windows))
   constraints:
