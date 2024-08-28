@@ -35,7 +35,7 @@ module Test.Consensus.Mempool (tests) where
 import           Cardano.Binary (Encoding, toCBOR)
 import           Cardano.Crypto.Hash
 import           Control.Exception (assert)
-import           Control.Monad (foldM, forM, forM_, void, when)
+import           Control.Monad (foldM, forM, forM_, void)
 import           Control.Monad.Except (Except, runExcept)
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Monad.State (State, evalState, get, modify)
@@ -844,9 +844,6 @@ instance Arbitrary MempoolCapTestSetup where
         capacityMaxBound = currentSize <> foldMap txSize validTxsToAdd
     -- Note that we could pick @currentSize@, meaning that we can't add any
     -- more transactions to the Mempool
-
-    when (unByteSize32 capacityMaxBound >= 2^(32 :: Int)) $ do
-      error "impossible!"   -- could 'QC.discard' if this is actually feasible
 
     capacity <- choose
       ( unByteSize32 capacityMinBound
