@@ -41,7 +41,6 @@ import           Data.Function (on)
 import           Data.Functor ((<&>))
 import           Data.Hashable (Hashable)
 import           Data.List.NonEmpty (NonEmpty)
-import           Data.Map.Strict (Map)
 import           Data.Maybe (isJust, mapMaybe)
 import           Data.Proxy
 import qualified Data.Text as Text
@@ -61,12 +60,14 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
-                     (ChainSyncClientHandle (..), ChainSyncState (..),
-                     viewChainSyncState)
+                     (ChainSyncClientHandle (..),
+                     ChainSyncClientHandleCollection (..), ChainSyncState (..),
+                     newChainSyncClientHandleCollection)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
                      (SomeHeaderInFutureCheck)
 import           Ouroboros.Consensus.Node.Genesis (GenesisNodeKernelArgs (..),
-                     LoEAndGDDConfig (..), setGetLoEFragment)
+                     LoEAndGDDConfig (..), LoEAndGDDNodeKernelArgs (..),
+                     setGetLoEFragment)
 import           Ouroboros.Consensus.Node.GSM (GsmNodeKernelArgs (..))
 import qualified Ouroboros.Consensus.Node.GSM as GSM
 import           Ouroboros.Consensus.Node.Run
@@ -92,6 +93,8 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (castTip, tipFromHeader)
 import           Ouroboros.Network.BlockFetch
+import           Ouroboros.Network.BlockFetch.ConsensusInterface
+                     (GenesisFetchMode)
 import           Ouroboros.Network.Diffusion (PublicPeerSelectionState)
 import           Ouroboros.Network.NodeToNode (ConnectionId,
                      MiniProtocolParameters (..))
@@ -132,7 +135,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
 
       -- | The fetch mode, used by diffusion.
       --
-    , getFetchMode            :: STM m FetchMode
+    , getFetchMode            :: STM m GenesisFetchMode
 
       -- | The GSM state, used by diffusion. A ledger judgement can be derived
       -- from it with 'GSM.gsmStateToLedgerJudgement'.
@@ -140,7 +143,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
     , getGsmState             :: STM m GSM.GsmState
 
       -- | The kill handle and exposed state for each ChainSync client.
-    , getChainSyncHandles     :: StrictTVar m (Map (ConnectionId addrNTN) (ChainSyncClientHandle m blk))
+    , getChainSyncHandles     :: ChainSyncClientHandleCollection (ConnectionId addrNTN) m blk
 
       -- | Read the current peer sharing registry, used for interacting with
       -- the PeerSharing protocol
@@ -242,7 +245,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                   <&> \wd (_headers, lst) ->
                         GSM.getDurationUntilTooOld wd (getTipSlot lst)
               , GSM.equivalent                = (==) `on` (AF.headPoint . fst)
-              , GSM.getChainSyncStates        = fmap cschState <$> readTVar varChainSyncHandles
+              , GSM.getChainSyncStates        = fmap cschState <$> cschcMap varChainSyncHandles
               , GSM.getCurrentSelection       = do
                   headers        <- ChainDB.getCurrentChain  chainDB
                   extLedgerState <- ChainDB.getCurrentLedger chainDB
@@ -254,7 +257,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
               , GSM.writeGsmState = \gsmState ->
                   atomicallyWithMonotonicTime $ \time -> do
                     writeTVar varGsmState gsmState
-                    handles <- readTVar varChainSyncHandles
+                    handles <- cschcMap varChainSyncHandles
                     traverse_ (($ time) . ($ gsmState) . cschOnGsmStateChanged) handles
               , GSM.isHaaSatisfied            = do
                   readTVar varOutboundConnectionsState <&> \case
@@ -273,23 +276,24 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                         ps_POLICY_PEER_SHARE_STICKY_TIME
                                         ps_POLICY_PEER_SHARE_MAX_PEERS
 
-    case gnkaGetLoEFragment genesisArgs of
-      LoEAndGDDDisabled                  -> pure ()
-      LoEAndGDDEnabled varGetLoEFragment -> do
+    case gnkaLoEAndGDDArgs genesisArgs of
+      LoEAndGDDDisabled       -> pure ()
+      LoEAndGDDEnabled lgArgs -> do
         varLoEFragment <- newTVarIO $ AF.Empty AF.AnchorGenesis
         setGetLoEFragment
           (readTVar varGsmState)
           (readTVar varLoEFragment)
-          varGetLoEFragment
+          (lgnkaLoEFragmentTVar lgArgs)
 
         void $ forkLinkedWatcher registry "NodeKernel.GDD" $
           gddWatcher
             cfg
             (gddTracer tracers)
             chainDB
+            (lgnkaGDDRateLimit lgArgs)
             (readTVar varGsmState)
             -- TODO GDD should only consider (big) ledger peers
-            (readTVar varChainSyncHandles)
+            (cschcMap varChainSyncHandles)
             varLoEFragment
 
     void $ forkLinkedThread registry "NodeKernel.blockForging" $
@@ -345,7 +349,7 @@ data InternalState m addrNTN addrNTC blk = IS {
     , chainDB             :: ChainDB m blk
     , blockFetchInterface :: BlockFetchConsensusInterface (ConnectionId addrNTN) (Header blk) blk m
     , fetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (Header blk) blk m
-    , varChainSyncHandles :: StrictTVar m (Map (ConnectionId addrNTN) (ChainSyncClientHandle m blk))
+    , varChainSyncHandles :: ChainSyncClientHandleCollection (ConnectionId addrNTN) m blk
     , varGsmState         :: StrictTVar m GSM.GsmState
     , mempool             :: Mempool m blk
     , peerSharingRegistry :: PeerSharingRegistry addrNTN m
@@ -364,6 +368,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
                                  , blockFetchSize, btime
                                  , mempoolCapacityOverride
                                  , gsmArgs, getUseBootstrapPeers
+                                 , genesisArgs
                                  } = do
     varGsmState <- do
       let GsmNodeKernelArgs {..} = gsmArgs
@@ -373,7 +378,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
         gsmMarkerFileView
       newTVarIO gsmState
 
-    varChainSyncHandles <- newTVarIO mempty
+    varChainSyncHandles <- atomically newChainSyncClientHandleCollection
     mempool       <- openMempool registry
                                  (chainDBLedgerInterface chainDB)
                                  (configLedger cfg)
@@ -383,20 +388,19 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
 
     fetchClientRegistry <- newFetchClientRegistry
 
-    let getCandidates :: STM m (Map (ConnectionId addrNTN) (AnchoredFragment (Header blk)))
-        getCandidates = viewChainSyncState varChainSyncHandles csCandidate
-
     slotForgeTimeOracle <- BlockFetchClientInterface.initSlotForgeTimeOracle cfg chainDB
     let readFetchMode = BlockFetchClientInterface.readFetchModeDefault
+          (isGenesisEnabled $ gnkaLoEAndGDDArgs genesisArgs)
           btime
           (ChainDB.getCurrentChain chainDB)
           getUseBootstrapPeers
           (GSM.gsmStateToLedgerJudgement <$> readTVar varGsmState)
         blockFetchInterface :: BlockFetchConsensusInterface (ConnectionId addrNTN) (Header blk) blk m
         blockFetchInterface = BlockFetchClientInterface.mkBlockFetchConsensusInterface
+          (csjTracer tracers)
           (configBlock cfg)
           (BlockFetchClientInterface.defaultChainDbView chainDB)
-          getCandidates
+          varChainSyncHandles
           blockFetchSize
           slotForgeTimeOracle
           readFetchMode
@@ -404,6 +408,11 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
     peerSharingRegistry <- newPeerSharingRegistry
 
     return IS {..}
+  where
+    isGenesisEnabled :: forall a. LoEAndGDDConfig a -> Bool
+    isGenesisEnabled = \case
+      LoEAndGDDDisabled -> False
+      LoEAndGDDEnabled _ -> True
 
 forkBlockForging ::
        forall m addrNTN addrNTC blk.

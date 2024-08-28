@@ -34,6 +34,12 @@ tests =
     testProperty "one adversary" prop_longRangeAttack
   ]
 
+-- | This test case features a long-range attack with one adversary. The honest
+-- peer serves the block tree trunk, while the adversary serves its own chain,
+-- forking off the trunk by at least @k@ blocks, but less good than the trunk.
+-- The adversary serves the chain more rapidly than the honest peer. We check at
+-- the end that the selection is honest. This property does not hold with Praos,
+-- but should hold with Genesis.
 prop_longRangeAttack :: Property
 prop_longRangeAttack =
   -- NOTE: `shrinkPeerSchedules` only makes sense for tests that expect the

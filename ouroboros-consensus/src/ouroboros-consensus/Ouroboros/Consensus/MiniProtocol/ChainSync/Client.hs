@@ -64,10 +64,12 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client (
   , TraceChainSyncClientEvent (..)
     -- * State shared with other components
   , ChainSyncClientHandle (..)
+  , ChainSyncClientHandleCollection (..)
   , ChainSyncState (..)
   , ChainSyncStateView (..)
   , Jumping.noJumping
   , chainSyncStateFor
+  , newChainSyncClientHandleCollection
   , noIdling
   , noLoPBucket
   , viewChainSyncState
@@ -111,7 +113,8 @@ import           Ouroboros.Consensus.Storage.ChainDB (ChainDB,
                      InvalidBlockReason)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import           Ouroboros.Consensus.Util
-import           Ouroboros.Consensus.Util.AnchoredFragment (cross)
+import           Ouroboros.Consensus.Util.AnchoredFragment (cross,
+                     preferAnchoredCandidate)
 import           Ouroboros.Consensus.Util.Assert (assertWithMsg)
 import           Ouroboros.Consensus.Util.EarlyExit (WithEarlyExit, exitEarly)
 import qualified Ouroboros.Consensus.Util.EarlyExit as EarlyExit
@@ -163,7 +166,7 @@ data ChainSyncLoPBucketEnabledConfig = ChainSyncLoPBucketEnabledConfig {
     csbcCapacity :: Integer,
     -- | The rate of the bucket (think tokens per second).
     csbcRate     :: Rational
-  }
+  } deriving stock (Eq, Generic, Show)
 
 -- | Configuration of the leaky bucket.
 data ChainSyncLoPBucketConfig
@@ -174,6 +177,7 @@ data ChainSyncLoPBucketConfig
   |
     -- | Enable the leaky bucket.
     ChainSyncLoPBucketEnabled ChainSyncLoPBucketEnabledConfig
+  deriving stock (Eq, Generic, Show)
 
 -- | Configuration of ChainSync Jumping
 data CSJConfig
@@ -184,6 +188,7 @@ data CSJConfig
   |
     -- | Enable ChainSync Jumping
     CSJEnabled CSJEnabledConfig
+  deriving stock (Eq, Generic, Show)
 
 newtype CSJEnabledConfig = CSJEnabledConfig {
   -- | The _ideal_ size for ChainSync jumps. Note that the algorithm
@@ -203,7 +208,7 @@ newtype CSJEnabledConfig = CSJEnabledConfig {
   -- window has a higher change that dishonest peers can delay syncing by a
   -- small margin (around 2 minutes per dishonest peer with mainnet parameters).
   csjcJumpSize       :: SlotNo
-}
+} deriving stock (Eq, Generic, Show)
 
 defaultChainDbView ::
      (IOLike m, LedgerSupportsProtocol blk)
@@ -229,11 +234,11 @@ newtype Our a = Our { unOur :: a }
 -- data from 'ChainSyncState'.
 viewChainSyncState ::
   IOLike m =>
-  StrictTVar m (Map peer (ChainSyncClientHandle m blk)) ->
+  STM m (Map peer (ChainSyncClientHandle m blk)) ->
   (ChainSyncState blk -> a) ->
   STM m (Map peer a)
-viewChainSyncState varHandles f =
-  Map.map f <$> (traverse (readTVar . cschState) =<< readTVar varHandles)
+viewChainSyncState readHandles f =
+  Map.map f <$> (traverse (readTVar . cschState) =<< readHandles)
 
 -- | Convenience function for reading the 'ChainSyncState' for a single peer
 -- from a nested set of TVars.
@@ -327,7 +332,7 @@ bracketChainSyncClient ::
     )
  => Tracer m (TraceChainSyncClientEvent blk)
  -> ChainDbView m blk
- -> StrictTVar m (Map peer (ChainSyncClientHandle m blk))
+ -> ChainSyncClientHandleCollection peer m blk
     -- ^ The kill handle and states for each peer, we need the whole map because we
     -- (de)register nodes (@peer@).
  -> STM m GsmState
@@ -400,8 +405,8 @@ bracketChainSyncClient
           insertHandle = atomicallyWithMonotonicTime $ \time -> do
             initialGsmState <- getGsmState
             updateLopBucketConfig lopBucket initialGsmState time
-            modifyTVar varHandles $ Map.insert peer handle
-          deleteHandle = atomically $ modifyTVar varHandles $ Map.delete peer
+            cschcAddHandle varHandles peer handle
+          deleteHandle = atomically $ cschcRemoveHandle varHandles peer
       bracket_ insertHandle deleteHandle $ f Jumping.noJumping
 
     withCSJCallbacks lopBucket csHandleState (CSJEnabled csjEnabledConfig) f =
@@ -1613,7 +1618,8 @@ checkKnownInvalid cfgEnv dynEnv intEnv hdr = case scrutinee of
 -- Finally, the client will block on the intersection a second time, if
 -- necessary, since it's possible for a ledger state to determine the slot's
 -- onset's timestamp without also determining the slot's 'LedgerView'. During
--- this pause, the LoP bucket is paused.
+-- this pause, the LoP bucket is paused. If we need to block and their fragment
+-- is not preferrable to ours, we disconnect.
 checkTime ::
   forall m blk arrival judgment.
      ( IOLike m
@@ -1722,9 +1728,42 @@ checkTime cfgEnv dynEnv intEnv =
                       )
                   $ getPastLedger mostRecentIntersection
                 case prj lst of
-                    Nothing         -> retry
+                    Nothing         -> do
+                        checkPreferTheirsOverOurs kis'
+                        retry
                     Just ledgerView ->
                         return $ return $ Intersects kis' ledgerView
+
+    -- Note [Candidate comparing beyond the forecast horizon]
+    -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    --
+    -- When a header is beyond the forecast horizon and their fragment is not
+    -- preferrable to our selection (ourFrag), then we disconnect, as we will
+    -- never end up selecting it.
+    --
+    -- In the context of Genesis, one can think of the candidate losing a
+    -- density comparison against the selection. See the Genesis documentation
+    -- for why this check is necessary.
+    --
+    -- In particular, this means that we will disconnect from peers who offer us
+    -- a chain containing a slot gap larger than a forecast window.
+    checkPreferTheirsOverOurs :: KnownIntersectionState blk -> STM m ()
+    checkPreferTheirsOverOurs kis
+      | -- Precondition is fulfilled as ourFrag and theirFrag intersect by
+        -- construction.
+        preferAnchoredCandidate (configBlock cfg) ourFrag theirFrag
+      = pure ()
+      | otherwise
+      = throwSTM $ CandidateTooSparse
+            mostRecentIntersection
+            (ourTipFromChain ourFrag)
+            (theirTipFromChain theirFrag)
+      where
+        KnownIntersectionState {
+            mostRecentIntersection
+          , ourFrag
+          , theirFrag
+          } = kis
 
     -- Returns 'Nothing' if the ledger state cannot forecast the ledger view
     -- that far into the future.
@@ -1908,6 +1947,12 @@ ourTipFromChain ::
   => AnchoredFragment (Header blk)
   -> Our (Tip blk)
 ourTipFromChain = Our . AF.anchorToTip . AF.headAnchor
+
+theirTipFromChain ::
+     HasHeader (Header blk)
+  => AnchoredFragment (Header blk)
+  -> Their (Tip blk)
+theirTipFromChain = Their . AF.anchorToTip . AF.headAnchor
 
 -- | A type-legos auxillary function used in 'readLedgerState'.
 castM :: Monad m => m (WithEarlyExit m x) -> WithEarlyExit m x
@@ -2127,6 +2172,14 @@ data ChainSyncClientException =
         (InvalidBlockReason blk)
     -- ^ The upstream node's chain contained a block that we know is invalid.
   |
+    forall blk. BlockSupportsProtocol blk =>
+    CandidateTooSparse
+        (Point blk) -- ^ Intersection
+        (Our   (Tip blk))
+        (Their (Tip blk))
+    -- ^ The upstream node's chain was so sparse that it was worse than our
+    -- selection despite being blocked on the forecast horizon.
+  |
     InFutureHeaderExceedsClockSkew !InFutureCheck.HeaderArrivalException
     -- ^ A header arrived from the far future.
   |
@@ -2160,6 +2213,12 @@ instance Eq ChainSyncClientException where
       = (a, b, c) == (a', b', c')
 
     (==)
+        (CandidateTooSparse (a  :: Point blk ) b  c )
+        (CandidateTooSparse (a' :: Point blk') b' c')
+      | Just Refl <- eqT @blk @blk'
+      = (a, b, c) == (a', b', c')
+
+    (==)
         (InFutureHeaderExceedsClockSkew a )
         (InFutureHeaderExceedsClockSkew a')
       = a == a'
@@ -2176,6 +2235,7 @@ instance Eq ChainSyncClientException where
     HeaderError{}                    == _ = False
     InvalidIntersection{}            == _ = False
     InvalidBlock{}                   == _ = False
+    CandidateTooSparse{}             == _ = False
     InFutureHeaderExceedsClockSkew{} == _ = False
     EmptyBucket                      == _ = False
     InvalidJumpResponse              == _ = False

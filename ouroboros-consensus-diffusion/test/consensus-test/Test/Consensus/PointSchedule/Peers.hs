@@ -32,6 +32,7 @@ module Test.Consensus.PointSchedule.Peers (
   , peersFromPeerIdList'
   , peersFromPeerList
   , peersList
+  , peersOnlyAdversary
   , peersOnlyHonest
   , toMap
   , toMap'
@@ -145,6 +146,13 @@ peersOnlyHonest value =
   Peers
     { honestPeers = Map.singleton 1 value,
       adversarialPeers = Map.empty
+    }
+
+peersOnlyAdversary :: a -> Peers a
+peersOnlyAdversary value =
+  Peers
+    { adversarialPeers = Map.singleton 1 value,
+      honestPeers = Map.empty
     }
 
 -- | Extract all 'PeerId's.

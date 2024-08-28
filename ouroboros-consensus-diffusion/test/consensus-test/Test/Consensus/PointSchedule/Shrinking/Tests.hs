@@ -82,14 +82,14 @@ checkShrinkProperty :: (Peers (PeerSchedule TestBlock) -> Peers (PeerSchedule Te
 checkShrinkProperty prop =
   forAllBlind
     (genChains (choose (1, 4)) >>= genUniformSchedulePoints)
-    (\sch@PointSchedule{psSchedule, psMinEndTime} ->
+    (\sch@PointSchedule{psSchedule, psStartOrder, psMinEndTime} ->
       conjoin $ map
       (\shrunk ->
           counterexample
           (  "Original schedule:\n"
           ++ unlines (map ("    " ++) $ prettyPointSchedule sch)
           ++ "\nShrunk schedule:\n"
-          ++ unlines (map ("    " ++) $ prettyPointSchedule $ PointSchedule shrunk psMinEndTime)
+          ++ unlines (map ("    " ++) $ prettyPointSchedule $ PointSchedule {psSchedule = shrunk, psStartOrder, psMinEndTime})
           )
           (prop psSchedule shrunk)
       )
