@@ -23,7 +23,6 @@ module Ouroboros.Consensus.Shelley.Ledger.Mempool (
   , SL.ApplyTxError (..)
   , TxId (..)
   , Validated (..)
-  , WithTop (..)
   , fixedBlockBodyOverhead
   , mkShelleyTx
   , mkShelleyValidatedTx
@@ -54,8 +53,7 @@ import           Control.Monad.Except (Except)
 import           Control.Monad.Identity (Identity (..))
 import           Data.DerivingVia (InstantiatedAt (..))
 import           Data.Foldable (toList)
-import           Data.Measure (BoundedMeasure, Measure)
-import qualified Data.Measure as Measure
+import           Data.Measure (Measure)
 import           Data.Typeable (Typeable)
 import           GHC.Generics (Generic)
 import           GHC.Natural (Natural)
@@ -322,13 +320,15 @@ instance ( ShelleyCompatible p (AlonzoEra c)
 
 data AlonzoMeasure = AlonzoMeasure {
     byteSize :: !Mempool.ByteSize
-  , exUnits  :: !(ExUnits' (WithTop Natural))
+  , exUnits  :: !(ExUnits' Natural)
   } deriving stock (Eq, Generic, Show)
-    deriving (BoundedMeasure, Measure)
+    deriving (Measure)
          via (InstantiatedAt Generic AlonzoMeasure)
 
-fromExUnits :: ExUnits -> ExUnits' (WithTop Natural)
-fromExUnits = fmap NotTop . unWrapExUnits
+-- | This function used to do more, but now it's merely a synonym that avoids
+-- more import statements in modules that import this one.
+fromExUnits :: ExUnits -> ExUnits' Natural
+fromExUnits = unWrapExUnits
 
 txMeasureAlonzo ::
      forall proto era.
@@ -367,7 +367,7 @@ data ConwayMeasure = ConwayMeasure {
     alonzoMeasure  :: !AlonzoMeasure
   , refScriptsSize :: !Mempool.ByteSize
   } deriving stock (Eq, Generic, Show)
-    deriving (BoundedMeasure, Measure)
+    deriving (Measure)
          via (InstantiatedAt Generic ConwayMeasure)
 
 instance ( ShelleyCompatible p (ConwayEra c)
@@ -392,38 +392,3 @@ instance ( ShelleyCompatible p (ConwayEra c)
             -- For post-Conway eras, this will become a protocol parameter.
             SL.maxRefScriptSizePerBlock
         }
-
-{-------------------------------------------------------------------------------
-  WithTop
--------------------------------------------------------------------------------}
-
--- | Add a unique top element to a lattice.
---
--- TODO This should be relocated to `cardano-base:Data.Measure'.
-data WithTop a = NotTop a | Top
-  deriving (Eq, Generic, Show)
-
-instance Ord a => Ord (WithTop a) where
-  compare = curry $ \case
-    (Top     , Top     ) -> EQ
-    (Top     , _       ) -> GT
-    (_       , Top     ) -> LT
-    (NotTop l, NotTop r) -> compare l r
-
-instance Measure a => Measure (WithTop a) where
-  zero = NotTop Measure.zero
-  plus = curry $ \case
-    (Top     , _       ) -> Top
-    (_       , Top     ) -> Top
-    (NotTop l, NotTop r) -> NotTop $ Measure.plus l r
-  min  = curry $ \case
-    (Top     , r       ) -> r
-    (l       , Top     ) -> l
-    (NotTop l, NotTop r) -> NotTop $ Measure.min l r
-  max  = curry $ \case
-    (Top     , _       ) -> Top
-    (_       , Top     ) -> Top
-    (NotTop l, NotTop r) -> NotTop $ Measure.max l r
-
-instance Measure a => BoundedMeasure (WithTop a) where
-  maxBound = Top

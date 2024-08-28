@@ -24,7 +24,7 @@ module Ouroboros.Consensus.Mempool.Capacity (
   ) where
 
 import           Cardano.Prelude (NFData)
-import           Data.Measure (BoundedMeasure, Measure)
+import           Data.Measure (Measure)
 import           Data.Word (Word32)
 import           NoThunks.Class
 import           Ouroboros.Consensus.Ledger.Basics
@@ -106,7 +106,7 @@ instance Monoid MempoolSize where
 -- eras (starting with Alonzo) this measure was a bit more complex
 -- as it had to take other factors into account (like execution units).
 -- For details please see the individual instances for the TxLimits.
-class BoundedMeasure (TxMeasure blk) => TxLimits blk where
+class Measure (TxMeasure blk) => TxLimits blk where
   type TxMeasure blk
 
   -- | What is the measure an individual tx?
@@ -125,4 +125,4 @@ class BoundedMeasure (TxMeasure blk) => TxLimits blk where
 newtype ByteSize = ByteSize { unByteSize :: Word32 }
   deriving stock (Show)
   deriving newtype (Eq, NFData, Ord)
-  deriving newtype (BoundedMeasure, Measure)
+  deriving newtype (Measure)
