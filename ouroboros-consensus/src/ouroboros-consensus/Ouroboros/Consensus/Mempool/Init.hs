@@ -39,7 +39,7 @@ openMempool ::
   -> LedgerConfig blk
   -> MempoolCapacityBytesOverride
   -> Tracer m (TraceEventMempool blk)
-  -> (GenTx blk -> TxSizeInBytes)
+  -> (GenTx blk -> SizeInBytes)
   -> m (Mempool m blk)
 openMempool registry ledger cfg capacityOverride tracer txSize = do
     env <- initMempoolEnv ledger cfg capacityOverride tracer txSize
@@ -91,7 +91,7 @@ openMempoolWithoutSyncThread ::
   -> LedgerConfig blk
   -> MempoolCapacityBytesOverride
   -> Tracer m (TraceEventMempool blk)
-  -> (GenTx blk -> TxSizeInBytes)
+  -> (GenTx blk -> SizeInBytes)
   -> m (Mempool m blk)
 openMempoolWithoutSyncThread ledger cfg capacityOverride tracer txSize =
     mkMempool <$> initMempoolEnv ledger cfg capacityOverride tracer txSize

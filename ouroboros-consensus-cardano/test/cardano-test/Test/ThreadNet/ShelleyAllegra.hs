@@ -251,7 +251,7 @@ prop_simple_shelleyAllegra_convergence TestSetup
                     protocolParamsShelleyBased
                     (SL.ProtVer majorVersion1 0)
                     (SL.ProtVer majorVersion2 0)
-                    ( L.mkTransitionConfig ()
+                    ( L.mkTransitionConfig L.NoGenesis
                     $ L.mkShelleyTransitionConfig genesisShelley
                     )
                     hardForkTrigger

@@ -246,8 +246,8 @@ prop_simple_allegraAlonzo_convergence TestSetup
                     (SL.ProtVer majorVersion1 0)
                     (SL.ProtVer majorVersion2 0)
                     ( L.mkTransitionConfig alonzoGenesis
-                    $ L.mkTransitionConfig ()
-                    $ L.mkTransitionConfig ()
+                    $ L.mkTransitionConfig L.NoGenesis
+                    $ L.mkTransitionConfig L.NoGenesis
                     $ L.mkShelleyTransitionConfig shelleyGenesis
                     )
                     hardForkTrigger

@@ -25,8 +25,8 @@ module Ouroboros.Consensus.Mempool.API (
     -- * Mempool Snapshot
   , MempoolSnapshot (..)
     -- * Re-exports
+  , SizeInBytes
   , TicketNo
-  , TxSizeInBytes
   , zeroTicketNo
   ) where
 
@@ -36,7 +36,7 @@ import           Ouroboros.Consensus.Ledger.SupportsMempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Cap
 import           Ouroboros.Consensus.Mempool.TxSeq (TicketNo, zeroTicketNo)
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Network.Protocol.TxSubmission2.Type (TxSizeInBytes)
+import           Ouroboros.Network.Protocol.TxSubmission2.Type (SizeInBytes)
 
 {-------------------------------------------------------------------------------
   Mempool API
@@ -209,7 +209,7 @@ data Mempool m blk = Mempool {
     , getCapacity    :: STM m Cap.MempoolCapacityBytes
 
       -- | Return the post-serialisation size in bytes of a 'GenTx'.
-    , getTxSize      :: GenTx blk -> TxSizeInBytes
+    , getTxSize      :: GenTx blk -> SizeInBytes
     }
 
 {-------------------------------------------------------------------------------

@@ -2,6 +2,23 @@
 
 # Changelog entries
 
+<a id='changelog-0.20.1.0'></a>
+## 0.20.1.0 — 2024-08-26
+
+### Non-Breaking
+
+- Bump to `nothunks` 0.2
+- Add `NoThunks` orphan instance for `NoGenesis era`
+
+### Breaking
+
+- Update `txSize` to return `SizeInBytes` instead of `TxSizeInBytes`
+- Expose `SizeInBytes` instead of `TxSizeInBytes`
+- Update `mpEnvTxSize`and `txSizesInBytes` to return `SizeInBytes` instead of `TxSizeInBytes`
+- `initMempoolEnv`, `extendVRNew`, `openMempool`, `openMempoolWithoutSyncThread`, `implAddTx`, `implTryAddTx` and `openMockedMempool` now require callback `(GenTx blk -> SizeInBytes)` instead of `(GenTx blk -> TxSizeInBytes)`
+- Update `txTicketTxSizeInBytes`,`mSizeBytes`'s types from `TxSizeInBytes` to `SizeInBytes`
+- `splitAfterTxSize`, `splitAfterTxSizeSpec` requires `SizeInBytes` instead of `TxSizeInBytes`
+
 <a id='changelog-0.20.0.0'></a>
 ## 0.20.0.0 — 2024-07-02
 

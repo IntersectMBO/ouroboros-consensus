@@ -242,14 +242,14 @@ mkHandlers
       , hTxSubmissionClient = \version controlMessageSTM peer ->
           txSubmissionOutbound
             (contramap (TraceLabelPeer peer) (Node.txOutboundTracer tracers))
-            (txSubmissionMaxUnacked miniProtocolParameters)
+            (NumTxIdsToAck $ txSubmissionMaxUnacked miniProtocolParameters)
             (mapTxSubmissionMempoolReader txForgetValidated $ getMempoolReader getMempool)
             version
             controlMessageSTM
       , hTxSubmissionServer = \version peer ->
           txSubmissionInbound
             (contramap (TraceLabelPeer peer) (Node.txInboundTracer tracers))
-            (txSubmissionMaxUnacked miniProtocolParameters)
+            (NumTxIdsToAck $ txSubmissionMaxUnacked miniProtocolParameters)
             (mapTxSubmissionMempoolReader txForgetValidated $ getMempoolReader getMempool)
             (getMempoolWriter getMempool)
             version

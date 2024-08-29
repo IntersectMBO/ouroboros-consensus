@@ -15,8 +15,8 @@ module Ouroboros.Consensus.Mempool (
     -- ** Mempool Snapshot
   , MempoolSnapshot (..)
     -- ** Re-exports
+  , SizeInBytes
   , TicketNo
-  , TxSizeInBytes
   , zeroTicketNo
     -- * Mempool capacity
   , MempoolCapacityBytes (..)
@@ -39,7 +39,7 @@ module Ouroboros.Consensus.Mempool (
 
 import           Ouroboros.Consensus.Mempool.API (ForgeLedgerState (..),
                      Mempool (..), MempoolAddTxResult (..),
-                     MempoolSnapshot (..), TicketNo, TxSizeInBytes, addLocalTxs,
+                     MempoolSnapshot (..), SizeInBytes, TicketNo, addLocalTxs,
                      addTxs, isMempoolTxAdded, isMempoolTxRejected,
                      mempoolTxAddedToMaybe, zeroTicketNo)
 import           Ouroboros.Consensus.Mempool.Capacity (ByteSize (..),

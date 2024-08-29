@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.17.1.0'></a>
+## 0.17.1.0 — 2024-08-26
+
+### Non-Breaking
+
+- Propagate `ouroboros-network` types `NumTxIdsToAck` and `SizeInBytes`
+
 <a id='changelog-0.17.0.1'></a>
 ## 0.17.0.1 — 2024-06-26
 

@@ -64,6 +64,7 @@ import           Ouroboros.Consensus.Util (repeatedly, repeatedlyM,
                      safeMaximumOn, (.:))
 import           Ouroboros.Consensus.Util.Condense (condense)
 import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Network.SizeInBytes
 import           Test.QuickCheck hiding (elements)
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
@@ -338,8 +339,8 @@ ppTestTxWithHash x = condense
   (hashWithSerialiser toCBOR (simpleGenTx x) :: Hash SHA256 Tx, x)
 
 -- | Given some transactions, calculate the sum of their sizes in bytes.
-txSizesInBytes :: [TestTx] -> TxSizeInBytes
-txSizesInBytes = List.foldl' (\acc tx -> acc + txSize tx) 0
+txSizesInBytes :: [TestTx] -> SizeInBytes
+txSizesInBytes = SizeInBytes . List.foldl' (\acc tx -> acc + txSize tx) 0
 
 -- | Generate a 'TestSetup' and return the ledger obtained by applying all of
 -- the initial transactions.
@@ -353,7 +354,7 @@ genTestSetupWithExtraCapacity maxInitialTxs extraCapacity = do
     (_txs1,  ledger1) <- genValidTxs ledgerSize testInitLedger
     ( txs2,  ledger2) <- genValidTxs nbInitialTxs ledger1
     let initTxsSizeInBytes = txSizesInBytes txs2
-        mpCap = MempoolCapacityBytes (initTxsSizeInBytes + extraCapacity)
+        mpCap = MempoolCapacityBytes (getSizeInBytes initTxsSizeInBytes + extraCapacity)
         testSetup = TestSetup
           { testLedgerState        = ledger1
           , testInitialTxs         = txs2
@@ -389,10 +390,10 @@ instance Arbitrary TestSetup where
                 , testMempoolCapOverride = MempoolCapacityBytesOverride
                     (MempoolCapacityBytes mpCap')
                 }
-    | let extraCap = mpCap - txSizesInBytes testInitialTxs
+    | let extraCap = mpCap - getSizeInBytes (txSizesInBytes testInitialTxs)
     , testInitialTxs' <- shrinkList (const []) testInitialTxs
     , isRight $ txsAreValid testLedgerState testInitialTxs'
-    , let mpCap' = txSizesInBytes testInitialTxs' + extraCap
+    , let mpCap' = getSizeInBytes (txSizesInBytes testInitialTxs') + extraCap
     ]
 
   -- TODO shrink to an override, that's an easier test case
@@ -597,7 +598,7 @@ instance Arbitrary TestSetupWithTxs where
                 if noOverride
                 then NoMempoolCapacityBytesOverride
                 else MempoolCapacityBytesOverride $ MempoolCapacityBytes $
-                       mpCap + txSizesInBytes (map fst txs)
+                       mpCap + getSizeInBytes (txSizesInBytes $ map fst txs)
             }
     return TestSetupWithTxs { testSetup = testSetup', txs }
 
@@ -733,7 +734,7 @@ withTestMempool setup@TestSetup {..} prop =
           testLedgerConfig
           testMempoolCapOverride
           tracer
-          txSize
+          (SizeInBytes . txSize)
       result  <- addTxs mempool testInitialTxs
       -- the invalid transactions are reported in the same order they were
       -- added, so the first error is not the result of a cascade
@@ -881,7 +882,7 @@ prop_TxSeq_lookupByTicketNo_sound smalls small =
 
 -- | Test that the 'fst' of the result of 'splitAfterTxSize' only contains
 -- 'TxTicket's whose summed up transaction sizes are less than or equal to
--- that of the 'TxSizeInBytes' which the 'TxSeq' was split on.
+-- that of the 'SizeInBytes' which the 'TxSeq' was split on.
 prop_TxSeq_splitAfterTxSize :: TxSizeSplitTestSetup -> Property
 prop_TxSeq_splitAfterTxSize tss =
       property $ txSizeSum (TxSeq.toList before) <= tssTxSizeToSplitOn
@@ -893,7 +894,7 @@ prop_TxSeq_splitAfterTxSize tss =
     txseq :: TxSeq Int
     txseq = txSizeSplitTestSetupToTxSeq tss
 
-    txSizeSum :: [TxTicket tx] -> TxSizeInBytes
+    txSizeSum :: [TxTicket tx] -> SizeInBytes
     txSizeSum = sum . map txTicketTxSizeInBytes
 
 
@@ -919,8 +920,8 @@ prop_TxSeq_splitAfterTxSizeSpec tss =
 -------------------------------------------------------------------------------}
 
 data TxSizeSplitTestSetup = TxSizeSplitTestSetup
-  { tssTxSizes         :: ![TxSizeInBytes]
-  , tssTxSizeToSplitOn :: !TxSizeInBytes
+  { tssTxSizes         :: ![SizeInBytes]
+  , tssTxSizeToSplitOn :: !SizeInBytes
   } deriving Show
 
 instance Arbitrary TxSizeSplitTestSetup where
@@ -935,8 +936,8 @@ instance Arbitrary TxSizeSplitTestSetup where
       , (1, choose (totalTxsSize + 1, totalTxsSize + 1000))
       ]
     pure TxSizeSplitTestSetup
-      { tssTxSizes = txSizes
-      , tssTxSizeToSplitOn = txSizeToSplitOn
+      { tssTxSizes = map SizeInBytes txSizes
+      , tssTxSizeToSplitOn = SizeInBytes txSizeToSplitOn
       }
 
   shrink TxSizeSplitTestSetup { tssTxSizes, tssTxSizeToSplitOn } =

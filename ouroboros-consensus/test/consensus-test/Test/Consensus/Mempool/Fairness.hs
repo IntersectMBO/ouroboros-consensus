@@ -28,6 +28,7 @@ import           Ouroboros.Consensus.Mempool (Mempool)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool
 import           Ouroboros.Consensus.Util.IOLike (STM, atomically, retry)
+import           Ouroboros.Network.SizeInBytes
 import           System.Random (randomIO)
 import           Test.Consensus.Mempool.Fairness.TestBlock
 import           Test.Tasty (TestTree, testGroup)
@@ -92,7 +93,7 @@ testTxSizeFairness TestParams { mempoolMaxCapacity, smallTxSize, largeTxSize, nr
                    (testBlockLedgerConfigFrom eraParams)
                    (Mempool.mkCapacityBytesOverride mempoolMaxCapacity)
                    Tracer.nullTracer
-                   genTxSize
+                   (SizeInBytes . genTxSize)
 
     ----------------------------------------------------------------------------
     --  Add and collect transactions
