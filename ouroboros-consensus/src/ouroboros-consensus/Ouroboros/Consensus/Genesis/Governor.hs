@@ -302,7 +302,8 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
   where
     densityBounds = do
       (peer, candidateSuffix) <- candidateSuffixes
-      let clippedFragment = dropBeyondGenesisWindow candidateSuffix
+      let (clippedFragment, _) =
+            AF.splitAtSlot firstSlotAfterGenesisWindow candidateSuffix
       state <- maybeToList (states Map.!? peer)
       -- Skip peers that haven't sent any headers yet.
       -- They should be disconnected by timeouts instead.
@@ -399,11 +400,6 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
 
     firstSlotAfterGenesisWindow =
         succWithOrigin loeIntersectionSlot + SlotNo sgen
-
-    -- This is performance sensitive. We used to call @takeWhileOldest@ here,
-    -- which would reconstruct much of the original fragment.
-    dropBeyondGenesisWindow =
-      AF.dropWhileNewest ((>= firstSlotAfterGenesisWindow) . blockSlot)
 
 -- Note [Chain disagreement]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~
