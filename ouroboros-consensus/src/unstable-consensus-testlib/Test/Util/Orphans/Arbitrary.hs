@@ -53,6 +53,7 @@ import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
+import           Ouroboros.Consensus.Storage.ChainDB.API (LoE (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
                      (ChunkNo (..), ChunkSize (..), RelativeSlot (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Layout
@@ -407,3 +408,12 @@ instance Arbitrary Index.CacheConfig where
     -- TODO create a Cmd that advances time, so this is being exercised too.
     expireUnusedAfter <- (fromIntegral :: Int -> DiffTime) <$> choose (1, 100)
     return Index.CacheConfig {Index.pastChunksToCache, Index.expireUnusedAfter}
+
+{-------------------------------------------------------------------------------
+  LoE
+-------------------------------------------------------------------------------}
+
+instance Arbitrary a => Arbitrary (LoE a) where
+  arbitrary = oneof [pure LoEDisabled, LoEEnabled <$> arbitrary]
+  shrink LoEDisabled    = []
+  shrink (LoEEnabled x) = LoEDisabled : map LoEEnabled (shrink x)

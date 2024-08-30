@@ -525,7 +525,8 @@ addBlockRunner fuse cdb@CDB{..} = forever $ do
         (lift $ getChainSelMessage cdbChainSelQueue)
         (\message -> lift $ atomically $ do
           case message of
-            ChainSelReprocessLoEBlocks -> pure ()
+            ChainSelReprocessLoEBlocks varProcessed ->
+              void $ tryPutTMVar varProcessed ()
             ChainSelAddBlock BlockToAdd{varBlockWrittenToDisk, varBlockProcessed} -> do
               _ <- tryPutTMVar varBlockWrittenToDisk
                               False
@@ -535,7 +536,7 @@ addBlockRunner fuse cdb@CDB{..} = forever $ do
           closeChainSelQueue cdbChainSelQueue)
         (\message -> do
           lift $ case message of
-            ChainSelReprocessLoEBlocks ->
+            ChainSelReprocessLoEBlocks _ ->
               trace PoppedReprocessLoEBlocksFromQueue
             ChainSelAddBlock BlockToAdd{blockToAdd} ->
               trace $ PoppedBlockFromQueue $ FallingEdgeWith $

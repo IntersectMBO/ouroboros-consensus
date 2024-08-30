@@ -30,10 +30,11 @@
 -- Then, the model and system under tests can be tested for lockstep agreement
 -- by running:
 --
--- > quickCheckCmdsLockStep someClockSkew someChunkInfo counterexample
+-- > quickCheckCmdsLockStep someLoE someClockSkew someChunkInfo counterexample
 --
 -- Where 'someClockSkew' and 'someChunkInfo' are the ones given by the
--- counterexample found by quickcheck-statemachine.
+-- counterexample found by quickcheck-statemachine, and 'someLoE' is @LoEEnabled
+-- ()@ or @LoEDisabled@.
 module Test.Ouroboros.Storage.ChainDB.StateMachine.Utils.RunOnRepl (
     -- * Running the counterexamples
     quickCheckCmdsLockStep
@@ -78,7 +79,7 @@ import           Ouroboros.Consensus.Block (BlockNo (BlockNo),
                      ChainHash (BlockHash, GenesisHash), EpochNo (EpochNo),
                      SlotNo (SlotNo))
 import           Ouroboros.Consensus.Storage.ChainDB
-                     (ChainType (TentativeChain))
+                     (ChainType (TentativeChain), LoE)
 import           Ouroboros.Consensus.Storage.ImmutableDB
                      (ChunkInfo (UniformChunkSize),
                      ChunkSize (ChunkSize, chunkCanContainEBB, numRegularBlocks))
@@ -113,9 +114,10 @@ pattern Command cmd rsp xs =
   StateMachine.Types.Command (StateMachine.At cmd) (StateMachine.At rsp) xs
 
 quickCheckCmdsLockStep ::
-     MaxClockSkew
+     LoE ()
+  -> MaxClockSkew
   -> SmallChunkInfo
   -> Commands (StateMachine.At Cmd TestBlock IO) (StateMachine.At Resp TestBlock IO)
   -> IO ()
-quickCheckCmdsLockStep maxClockSkew chunkInfo cmds =
-  quickCheck $ runCmdsLockstep maxClockSkew chunkInfo cmds
+quickCheckCmdsLockStep loe maxClockSkew chunkInfo cmds =
+  quickCheck $ runCmdsLockstep loe maxClockSkew chunkInfo cmds
