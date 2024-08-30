@@ -56,3 +56,4 @@ if impl(ghc >= 9.10)
     , cardano-ledger-binary:plutus-ledger-api
     , cardano-ledger-conway:plutus-ledger-api
 
+constraints: plutus-core ^>= 1.32
