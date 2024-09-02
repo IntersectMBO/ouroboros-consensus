@@ -13,7 +13,8 @@ module Test.Consensus.Genesis.Setup (
   ) where
 
 import           Control.Exception (throw)
-import           Control.Monad.Class.MonadAsync (AsyncCancelled(AsyncCancelled))
+import           Control.Monad.Class.MonadAsync
+                     (AsyncCancelled (AsyncCancelled))
 import           Control.Monad.IOSim (IOSim, runSimStrictShutdown)
 import           Control.Tracer (debugTracer, traceWith)
 import           Data.Maybe (mapMaybe)
@@ -23,13 +24,14 @@ import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.IOLike (Exception, fromException)
 import           Ouroboros.Network.Driver.Limits
                      (ProtocolLimitFailure (ExceededTimeLimit))
-import           Test.Consensus.Genesis.Setup.Classifiers
-                   (Classifiers (..), ResultClassifiers (..), ScheduleClassifiers (..),
-                   classifiers, resultClassifiers, scheduleClassifiers)
+import           Test.Consensus.Genesis.Setup.Classifiers (Classifiers (..),
+                     ResultClassifiers (..), ScheduleClassifiers (..),
+                     classifiers, resultClassifiers, scheduleClassifiers)
 import           Test.Consensus.Genesis.Setup.GenChains
 import           Test.Consensus.PeerSimulator.Run
 import           Test.Consensus.PeerSimulator.StateView
-import           Test.Consensus.PeerSimulator.Trace (traceLinesWith, tracerTestBlock)
+import           Test.Consensus.PeerSimulator.Trace (traceLinesWith,
+                     tracerTestBlock)
 import           Test.Consensus.PointSchedule
 import           Test.QuickCheck
 import           Test.Util.Orphans.IOLike ()
@@ -45,7 +47,7 @@ import           Text.Printf (printf)
 runSimStrictShutdownOrThrow :: forall a. (forall s. IOSim s a) -> a
 runSimStrictShutdownOrThrow action =
   case runSimStrictShutdown action of
-    Left e -> throw e
+    Left e  -> throw e
     Right x -> x
 
 -- | Runs the given 'GenesisTest' and 'PointSchedule' and evaluates the given

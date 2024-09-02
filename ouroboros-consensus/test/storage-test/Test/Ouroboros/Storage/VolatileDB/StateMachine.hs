@@ -32,6 +32,7 @@ module Test.Ouroboros.Storage.VolatileDB.StateMachine (
   , tests
   ) where
 
+import           Control.Concurrent.Class.MonadSTM.Strict (newTMVar)
 import           Control.Monad (forM_, void)
 import           Data.Bifunctor (first)
 import           Data.ByteString.Lazy (ByteString)
@@ -563,10 +564,10 @@ test :: Commands (At CmdErr) (At Resp)
      -> IO (History (At CmdErr) (At Resp), Property)
 test cmds = do
     varErrors          <- uncheckedNewTVarM emptyErrors
-    varFs              <- uncheckedNewTVarM Mock.empty
+    varFs              <- atomically $ newTMVar Mock.empty
     (tracer, getTrace) <- recordingTracerIORef
 
-    let hasFS = mkSimErrorHasFS (unsafeToUncheckedStrictTVar varFs) (unsafeToUncheckedStrictTVar varErrors)
+    let hasFS = simErrorHasFS varFs (unsafeToUncheckedStrictTVar varErrors)
         args = VolatileDbArgs {
                    volCheckIntegrity   = testBlockIsValid
                  , volCodecConfig      = TestBlockCodecConfig
@@ -589,7 +590,7 @@ test cmds = do
         trace <- getTrace
         return (hist, res, trace)
 
-    fs <- atomically $ readTVar varFs
+    fs <- atomically $ readTMVar varFs
 
     let prop =
           counterexample ("Trace: " <> unlines (map show trace)) $

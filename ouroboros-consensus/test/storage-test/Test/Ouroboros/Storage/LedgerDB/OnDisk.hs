@@ -43,6 +43,7 @@ module Test.Ouroboros.Storage.LedgerDB.OnDisk (
 
 import           Codec.Serialise (Serialise)
 import qualified Codec.Serialise as S
+import           Control.Concurrent.Class.MonadSTM.Strict (newTMVar)
 import           Control.Monad.Except (Except, runExcept)
 import           Control.Monad.State (StateT (..))
 import qualified Control.Monad.State as State
@@ -1092,9 +1093,9 @@ propCmds :: SecurityParam
          -> QSM.Commands (At Cmd) (At Resp)
          -> QC.PropertyM IO ()
 propCmds secParam cmds = do
-    fs <- QC.run $ uncheckedNewTVarM MockFS.empty
+    fs <- QC.run $ atomically $ newTMVar MockFS.empty
     let dbEnv :: DbEnv IO
-        dbEnv = DbEnv (SomeHasFS (simHasFS (unsafeToUncheckedStrictTVar fs))) secParam
+        dbEnv = DbEnv (SomeHasFS (simHasFS fs)) secParam
     db <- QC.run $ initStandaloneDB dbEnv
     let sm' = sm secParam db
     (hist, _model, res) <- runCommands sm' cmds

@@ -137,7 +137,7 @@ import qualified SafeWildCards
 import           System.Exit (ExitCode (..))
 import           System.FilePath ((</>))
 import           System.FS.API (SomeHasFS (..))
-import           System.FS.API.Types
+import           System.FS.API.Types (MountPoint (..))
 import           System.FS.IO (ioHasFS)
 import           System.Random (StdGen, newStdGen, randomIO, split)
 
