@@ -424,8 +424,7 @@ forkBlockForging IS{..} blockForging =
       -- is no longer on our chain. When that happens, we simply give up on the
       -- chance to produce a block.
       forkerEith <- lift $ ChainDB.getReadOnlyForkerAtPoint chainDB reg (SpecificPoint bcPrevPoint)
-      -- before 'earlyExit' we need to 'roforkerClose' this value handle. Once we get
-      -- a snapshot we can just close it.
+      -- Remember to close this forker before exiting!
       forker <- case forkerEith of
         Left _ -> do
           trace $ TraceNoLedgerState currentSlot bcPrevPoint
@@ -452,6 +451,7 @@ forkBlockForging IS{..} blockForging =
             -- produce a block in this case; we are most likely missing a blocks
             -- on our chain.
             trace $ TraceNoLedgerView currentSlot err
+            lift $ roforkerClose forker
             exitEarly
           Right lv ->
             return lv
@@ -482,12 +482,15 @@ forkBlockForging IS{..} blockForging =
         case shouldForge of
           ForgeStateUpdateError err -> do
             trace $ TraceForgeStateUpdateError currentSlot err
+            lift $ roforkerClose forker
             exitEarly
           CannotForge cannotForge -> do
             trace $ TraceNodeCannotForge currentSlot cannotForge
+            lift $ roforkerClose forker
             exitEarly
           NotLeader -> do
             trace $ TraceNodeNotLeader currentSlot
+            lift $ roforkerClose forker
             exitEarly
           ShouldForge p -> return p
 
