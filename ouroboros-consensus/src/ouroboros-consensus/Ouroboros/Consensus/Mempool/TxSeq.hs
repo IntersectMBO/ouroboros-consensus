@@ -37,8 +37,6 @@ import qualified Data.Measure as Measure
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
-import           Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32,
-                     HasByteSize, txMeasureByteSize)
 
 {-------------------------------------------------------------------------------
   Mempool transaction sequence as a finger tree

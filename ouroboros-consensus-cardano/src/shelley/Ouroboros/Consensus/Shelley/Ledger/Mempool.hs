@@ -432,7 +432,7 @@ instance TxMeasureMetrics AlonzoMeasure where
   txMeasureMetricTxSizeBytes = txMeasureMetricTxSizeBytes . byteSize
   txMeasureMetricExUnitsMemory = exUnitsMem' . exUnits
   txMeasureMetricExUnitsSteps = exUnitsSteps' . exUnits
-  txMeasureMetricRefScriptsSizeBytes _ = 0
+  txMeasureMetricRefScriptsSizeBytes _ = mempty
 
 fromExUnits :: ExUnits -> ExUnits' Natural
 fromExUnits = unWrapExUnits
@@ -536,7 +536,8 @@ instance TxMeasureMetrics ConwayMeasure where
   txMeasureMetricTxSizeBytes = txMeasureMetricTxSizeBytes . alonzoMeasure
   txMeasureMetricExUnitsMemory = txMeasureMetricExUnitsMemory . alonzoMeasure
   txMeasureMetricExUnitsSteps = txMeasureMetricExUnitsSteps . alonzoMeasure
-  txMeasureMetricRefScriptsSizeBytes = unByteSize . refScriptsSize
+  txMeasureMetricRefScriptsSizeBytes =
+    unIgnoringOverflow . refScriptsSize
 
 blockCapacityConwayMeasure ::
      forall proto era.

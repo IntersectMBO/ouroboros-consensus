@@ -9,7 +9,6 @@
 module Ouroboros.Consensus.Ledger.SupportsMempool (
     ApplyTxErr
   , ByteSize32 (..)
-  , fromByteSize32
   , ConvertRawTxId (..)
   , GenTx
   , GenTxId
@@ -23,7 +22,6 @@ module Ouroboros.Consensus.Ledger.SupportsMempool (
   , TxMeasureMetrics (..)
   , Validated
   , WhetherToIntervene (..)
-  , fromByteSize32
   ) where
 
 import           Control.DeepSeq (NFData)
@@ -37,6 +35,7 @@ import qualified Data.Measure
 import           Data.Word (Word32)
 import           GHC.Stack (HasCallStack)
 import           NoThunks.Class
+import           Numeric.Natural
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ticked
@@ -265,18 +264,13 @@ newtype IgnoringOverflow a = IgnoringOverflow { unIgnoringOverflow :: a }
   deriving newtype  (Monoid, Semigroup)
   deriving newtype  (NoThunks)
   deriving newtype  (HasByteSize)
+  deriving newtype  (TxMeasureMetrics)
 
 instance Measure (IgnoringOverflow ByteSize32) where
   zero = coerce (0 :: Word32)
   plus = coerce $ (+) @Word32
   min  = coerce $ min @Word32
   max  = coerce $ max @Word32
-
--- BIG WARNING: THIS FUNCTION IS LIKELY TO OVERFLOW AND SHOULD BE REMOVED AND
--- HAVE ALL OF ITS USE SITES CHANGED TO SOMETHING LESS OVERFLOW-Y
-fromByteSize32 :: Num a => ByteSize32 -> a
-fromByteSize32 = fromIntegral . unByteSize32
-{-# WARNING fromByteSize "THIS FUNCTION WILL ALMOST CERTAINLY OVERFLOW" #-}
 
 class HasByteSize a where
   -- | The byte size component (of 'TxMeasure')
@@ -286,13 +280,13 @@ instance HasByteSize ByteSize32 where
   txMeasureByteSize = id
 
 class TxMeasureMetrics msr where
-  txMeasureMetricTxSizeBytes :: msr -> Natural
+  txMeasureMetricTxSizeBytes :: msr -> ByteSize32
   txMeasureMetricExUnitsMemory :: msr -> Natural
   txMeasureMetricExUnitsSteps :: msr -> Natural
-  txMeasureMetricRefScriptsSizeBytes :: msr -> Natural
+  txMeasureMetricRefScriptsSizeBytes :: msr -> ByteSize32
 
-instance TxMeasureMetrics ByteSize where
-  txMeasureMetricTxSizeBytes = fromByteSize
+instance TxMeasureMetrics ByteSize32 where
+  txMeasureMetricTxSizeBytes = id
   txMeasureMetricExUnitsMemory _ = 0
   txMeasureMetricExUnitsSteps _ = 0
-  txMeasureMetricRefScriptsSizeBytes _ = 0
+  txMeasureMetricRefScriptsSizeBytes _ = mempty

@@ -9,7 +9,6 @@ module Ouroboros.Consensus.MiniProtocol.LocalTxMonitor.Server (localTxMonitorSer
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Measure as Measure
-import           Data.Word (Word32)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Mempool
@@ -108,12 +107,14 @@ mkMeasuresMap :: TxMeasureMetrics (TxMeasure blk)
               => Proxy blk
               -> TxMeasure blk
               -> TxMeasure blk
-              -> Map MeasureName (SizeAndCapacity Word32)
+              -> Map MeasureName (SizeAndCapacity Integer)
 mkMeasuresMap Proxy size capacity =
-  fmap (fmap fromIntegral) $ -- oof oof ow ouch oo ow
-    Map.fromList
-      [ (TransactionBytes, SizeAndCapacity (txMeasureMetricTxSizeBytes size) (txMeasureMetricTxSizeBytes capacity))
-      , (ExUnitsMemory, SizeAndCapacity (txMeasureMetricExUnitsMemory size) (txMeasureMetricExUnitsMemory capacity))
-      , (ExUnitsSteps, SizeAndCapacity (txMeasureMetricExUnitsSteps size) (txMeasureMetricExUnitsSteps capacity))
-      , (ReferenceScriptsBytes, SizeAndCapacity (txMeasureMetricRefScriptsSizeBytes size) (txMeasureMetricRefScriptsSizeBytes capacity))
-      ]
+  Map.fromList
+    [ (TransactionBytes, SizeAndCapacity (byteSizeInteger $ txMeasureMetricTxSizeBytes size) (byteSizeInteger $ txMeasureMetricTxSizeBytes capacity))
+    , (ExUnitsMemory, SizeAndCapacity (fromIntegral $ txMeasureMetricExUnitsMemory size) (fromIntegral $ txMeasureMetricExUnitsMemory capacity))
+    , (ExUnitsSteps, SizeAndCapacity (fromIntegral $ txMeasureMetricExUnitsSteps size) (fromIntegral $ txMeasureMetricExUnitsSteps capacity))
+    , (ReferenceScriptsBytes, SizeAndCapacity (byteSizeInteger $ txMeasureMetricRefScriptsSizeBytes size) (byteSizeInteger $ txMeasureMetricRefScriptsSizeBytes capacity))
+    ]
+  where
+    byteSizeInteger :: ByteSize32 -> Integer
+    byteSizeInteger = fromIntegral . unByteSize32
