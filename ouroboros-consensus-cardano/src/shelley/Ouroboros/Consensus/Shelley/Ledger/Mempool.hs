@@ -7,7 +7,6 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns             #-}
-{-# LANGUAGE NumericUnderscores         #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE Rank2Types                 #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
@@ -52,14 +51,12 @@ import           Cardano.Ledger.Binary (Annotator (..), DecCBOR (..),
                      ToCBOR (..), toPlainDecoder)
 import qualified Cardano.Ledger.Conway.Rules as ConwayEra
 import qualified Cardano.Ledger.Conway.Rules as SL
-import qualified Cardano.Ledger.Conway.Tx as SL (tierRefScriptFee)
 import qualified Cardano.Ledger.Conway.UTxO as SL
 import qualified Cardano.Ledger.Core as SL (txIdTxBody)
 import           Cardano.Ledger.Crypto (Crypto)
 import qualified Cardano.Ledger.SafeHash as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Rules as ShelleyEra
-import qualified Cardano.Ledger.Val as SL (zero, (<+>))
 import           Control.Arrow ((+++))
 import           Control.Monad (guard)
 import           Control.Monad.Except (Except, liftEither)
@@ -302,12 +299,6 @@ validateMaybe ::
   -> Maybe a
   -> V.Validation (TxErrorSG era) a
 validateMaybe err mb = V.validate (TxErrorSG err) id mb
-
-validateGuard ::
-     SL.ApplyTxError era
-  -> Bool
-  -> V.Validation (TxErrorSG era) ()
-validateGuard err b = validateMaybe err $ guard b
 
 runValidation ::
      V.Validation (TxErrorSG era) a
@@ -573,57 +564,18 @@ txMeasureBabbage ::
   -> GenTx (ShelleyBlock proto era)
   -> V.Validation (TxErrorSG era) ConwayMeasure
 txMeasureBabbage st tx@(ShelleyTx _txid tx') =
-    ConwayMeasure <$> txMeasureAlonzo st tx <*> refScriptBytes
+    (\x -> ConwayMeasure x refScriptBytes) <$> txMeasureAlonzo st tx
   where
     utxo = SL.getUTxO $ tickedShelleyLedgerState st
-    txsz = SL.txNonDistinctRefScriptsSize utxo tx' :: Int
 
-    -- TODO recall the assertion in this module header that this logic should
-    -- be owned by Ledger, not by Consensus: Ledger prefers to delete these
-    -- checks after mainnet hard forks to Conway, rather than introduce the
-    -- necessary 'SL.PredicateFailure' constructors for Babbage (which would in
-    -- turn require a bump to "Ouroboros.Network.NodeToNode.Version" and
-    -- "Ouroboros.Network.NodeToClient.Version")
-    --
-    -- -- Babbage should have enforced a per-tx limit here, but did not.
-    -- refScriptBytes = pure $ ByteSize $ fromIntegral txsz
-    refScriptBytes ::
-      V.Validation (TxErrorSG era) (IgnoringOverflow ByteSize32)
+    -- The Babbage rules should have checked this ref script size against a
+    -- limit, but they did not. Now that Cardano @mainnet@ is in Conway, that
+    -- omission is no longer an attack vector. Any other chain intending to
+    -- ever use Babbage as its current era ought to patch this.
     refScriptBytes =
-         (IgnoringOverflow $ ByteSize32 $ fromIntegral txsz)
-         -- Reject it if it has more than 100 kibibytes of ref script.
-      <$ validateGuard
-           (err 1_000_000 (fromIntegral txsz) (fromIntegral limit))
-           (txsz <= limit)
-         -- Reject it if it has more than 50 kibibytes of ref script and does
-         -- not satisfy an additional fee of 'SL.tierRefScriptFee'.
-         --
-         -- TODO this additional fee check in particular doesn't truly belong
-         -- in 'txMeasure' (which only needs to enforce per-tx limits);
-         -- however, it's less confusing and less duplication to put it here
-         -- rather than
-         -- 'Ouroboros.Consensus.Shelley.Eras.defaultApplyShelleyBasedTx'
-      <* validateGuard
-           (err 100_000 (SL.unCoin fee) (SL.unCoin reqFee))
-           (reqFee <= fee)
-      where
-        limit = 100 * 1024
-
-        fee = tx' ^. L.bodyTxL . L.feeTxBodyL :: SL.Coin
-
-        reqFee :: SL.Coin
-        reqFee = if txsz <= 50 * 1024 then SL.zero else minFee SL.<+> addlFee
-
-        pparams = getPParams $ tickedShelleyLedgerState st
-        minFee  = L.getMinFeeTx pparams tx' 0
-        addlFee = SL.tierRefScriptFee 1.2 25600 15 txsz
-
-        -- As we are reusing an existing error message, we add a large number
-        -- to ensure users running into this are productively irritated and
-        -- post this error message somewhere where they can receive
-        -- help/context.
-        err :: Integer -> Integer -> Integer -> SL.ApplyTxError era
-        err shift l r = maxTxSizeUTxO (l + shift) (r + shift)
+        IgnoringOverflow
+      $ ByteSize32
+      $ fromIntegral (SL.txNonDistinctRefScriptsSize utxo tx' :: Int)
 
 -- | We anachronistically use 'ConwayMeasure' in Babbage.
 instance ( ShelleyCompatible p (BabbageEra c)
