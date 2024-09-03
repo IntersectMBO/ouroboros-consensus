@@ -26,8 +26,6 @@ import           Data.Word
 import           GHC.Generics (Generic)
 import           GHC.Stack
 import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.HeaderValidation
-                     (HeaderState (headerStateTip), annTipPoint)
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Inspect
@@ -176,19 +174,19 @@ initFromSnapshot ::
 initFromSnapshot tracer hasFS decLedger decHash cfg stream ss = do
     initSS <- withExceptT InitFailureRead $
                 readSnapshot hasFS decLedger decHash ss
-    let initialPoint = withOrigin (Point Origin) annTipPoint $ headerStateTip $ headerState $ initSS
-    case pointToWithOriginRealPoint (castPoint (getTip initSS)) of
-      Origin        -> throwError InitFailureGenesis
-      NotOrigin tip -> do
-        lift $ traceWith tracer $ ReplayFromSnapshot ss tip (ReplayStart initialPoint)
-        let tracer' = decorateReplayTracerWithStart initialPoint tracer
+    let replayStart = castPoint $ getTip initSS
+    case pointToWithOriginRealPoint replayStart of
+      Origin -> throwError InitFailureGenesis
+      NotOrigin realReplayStart -> do
+        let tracer' = decorateReplayTracerWithStart replayStart tracer
+        lift $ traceWith tracer' $ ReplayFromSnapshot ss
         (initDB, replayed) <-
           initStartingWith
             tracer'
             cfg
             stream
             (ledgerDbWithAnchor initSS)
-        return (tip, initDB, replayed)
+        return (realReplayStart, initDB, replayed)
 
 -- | Attempt to initialize the ledger DB starting from the given ledger DB
 initStartingWith ::
@@ -267,7 +265,6 @@ data TraceReplayEvent blk
     -- We're replaying more recent blocks against it.
   | ReplayFromSnapshot
         DiskSnapshot
-        (RealPoint blk)
         (ReplayStart blk) -- ^ the block at which this replay started
         (ReplayGoal blk)  -- ^ the block at the tip of the ImmutableDB
   -- | We replayed the given block (reference) on the genesis snapshot during
