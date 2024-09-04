@@ -20,15 +20,14 @@ import qualified Control.Tracer as Tracer
 import           Data.Foldable (asum)
 import qualified Data.List as List
 import           Data.Void (Void, vacuous)
-import           Data.Word (Word32)
 import           Ouroboros.Consensus.Config.SecurityParam as Consensus
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
+import           Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Mempool
 import           Ouroboros.Consensus.Mempool (Mempool)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool
 import           Ouroboros.Consensus.Util.IOLike (STM, atomically, retry)
-import           Ouroboros.Network.SizeInBytes
 import           System.Random (randomIO)
 import           Test.Consensus.Mempool.Fairness.TestBlock
 import           Test.Tasty (TestTree, testGroup)
@@ -39,11 +38,11 @@ import           Test.Util.TestBlock (testBlockLedgerConfigFrom,
 tests :: TestTree
 tests = testGroup "Mempool fairness"
                   [ testCase "There is no substantial bias in added transaction sizes" $
-                              testTxSizeFairness TestParams { mempoolMaxCapacity =   100
-                                                            , smallTxSize        =     1
-                                                            , largeTxSize        =    10
+                              testTxSizeFairness TestParams { mempoolMaxCapacity = ByteSize32 100
+                                                            , smallTxSize        = ByteSize32   1
+                                                            , largeTxSize        = ByteSize32  10
                                                             , nrOftxsToCollect   = 1_000
-                                                            , toleranceThreshold =     0.2 -- Somewhat arbitrarily chosen.
+                                                            , toleranceThreshold = 0.2 -- Somewhat arbitrarily chosen.
                                                             }
                   ]
 
@@ -93,7 +92,6 @@ testTxSizeFairness TestParams { mempoolMaxCapacity, smallTxSize, largeTxSize, nr
                    (testBlockLedgerConfigFrom eraParams)
                    (Mempool.mkCapacityBytesOverride mempoolMaxCapacity)
                    Tracer.nullTracer
-                   (SizeInBytes . genTxSize)
 
     ----------------------------------------------------------------------------
     --  Add and collect transactions
@@ -146,10 +144,10 @@ runConcurrently = Async.runConcurrently . asum . fmap Async.Concurrently
 --   added before the mempool is saturated.
 --
 data TestParams = TestParams {
-    mempoolMaxCapacity :: Word32
-  , smallTxSize        :: Word32
+    mempoolMaxCapacity :: ByteSize32
+  , smallTxSize        :: ByteSize32
     -- ^ Size of what we consider to be a small transaction.
-  , largeTxSize        :: Word32
+  , largeTxSize        :: ByteSize32
     -- ^ Size of what we consider to be a large transaction.
   , nrOftxsToCollect   :: Int
     -- ^ How many added transactions we count.
@@ -169,7 +167,7 @@ data TestParams = TestParams {
 adders ::
      TestMempool
      -- ^ Mempool to which transactions will be added
-  -> Word32
+  -> ByteSize32
      -- ^ Transaction size
   -> IO a
 adders mempool fixedTxSize = vacuous $ runConcurrently $ fmap adder [0..2]
@@ -216,5 +214,7 @@ getTxsInSnapshot :: Mempool IO TestBlock -> STM IO [Mempool.GenTx TestBlock]
 getTxsInSnapshot mempool = fmap txsInSnapshot
                          $ Mempool.getSnapshot mempool
   where
-    txsInSnapshot = fmap (Mempool.txForgetValidated . fst)
+    txsInSnapshot = fmap prjTx
                   . Mempool.snapshotTxs
+
+    prjTx (a, _b, _c) = Mempool.txForgetValidated a :: Mempool.GenTx TestBlock

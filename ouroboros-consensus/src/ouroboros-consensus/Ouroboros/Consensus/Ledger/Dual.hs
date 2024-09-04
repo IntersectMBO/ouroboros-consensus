@@ -60,6 +60,7 @@ import           Cardano.Binary (enforceSize)
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding, encodeListLen)
 import           Codec.Serialise
+import           Control.Arrow ((+++))
 import           Control.Monad.Except
 import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.ByteString.Short as Short
@@ -608,9 +609,6 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
                                            tickedDualLedgerStateBridge
         }
 
-  txsMaxBytes   = txsMaxBytes . tickedDualLedgerStateMain
-  txInBlockSize = txInBlockSize . dualGenTxMain
-
   txForgetValidated vtx =
       DualGenTx {
           dualGenTxMain   = txForgetValidated vDualGenTxMain
@@ -624,11 +622,17 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
           , vDualGenTxBridge
           } = vtx
 
-  txRefScriptSize cfg st tx =
-      txRefScriptSize
-        (dualLedgerConfigMain cfg)
-        (tickedDualLedgerStateMain st)
-        (dualGenTxMain tx)
+instance Bridge m a => TxLimits (DualBlock m a) where
+  type TxMeasure (DualBlock m a) = TxMeasure m
+
+  txMeasure DualLedgerConfig{..} TickedDualLedgerState{..} DualGenTx{..} = do
+      mapExcept (inj +++ id)
+    $ txMeasure dualLedgerConfigMain tickedDualLedgerStateMain dualGenTxMain
+    where
+      inj m = DualGenTxErr m (error "ByronSpec has no tx-too-big error")
+
+  blockCapacityTxMeasure DualLedgerConfig{..} TickedDualLedgerState{..} =
+      blockCapacityTxMeasure dualLedgerConfigMain tickedDualLedgerStateMain
 
 -- We don't need a pair of IDs, as long as we can unique ID the transaction
 newtype instance TxId (GenTx (DualBlock m a)) = DualGenTxId {

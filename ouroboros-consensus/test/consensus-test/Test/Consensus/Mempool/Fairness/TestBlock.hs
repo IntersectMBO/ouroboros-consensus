@@ -9,14 +9,12 @@
 module Test.Consensus.Mempool.Fairness.TestBlock (
     TestBlock
   , Tx
-  , genTxSize
   , mkGenTx
   , txSize
   , unGenTx
   ) where
 
 import           Control.DeepSeq (NFData)
-import           Data.Word (Word32)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import qualified Ouroboros.Consensus.Block as Block
@@ -36,7 +34,7 @@ type TestBlock = TestBlockWith Tx
 -- We do need to keep track of the transaction id.
 --
 -- All transactions will be accepted by the mempool.
-data Tx = Tx { txNumber :: Int, txSize ::  Word32 }
+data Tx = Tx { txNumber :: Int, txSize :: Ledger.ByteSize32 }
   deriving stock (Eq, Ord, Generic, Show)
   deriving anyclass (NoThunks, NFData)
 
@@ -80,10 +78,7 @@ newtype instance Ledger.TxId (Ledger.GenTx TestBlock) = TestBlockTxId Tx
 instance Ledger.HasTxId (Ledger.GenTx TestBlock) where
   txId (TestBlockGenTx tx) = TestBlockTxId tx
 
-genTxSize :: Ledger.GenTx TestBlock -> Word32
-genTxSize = txSize . unGenTx
-
-mkGenTx :: Int -> Word32 -> Ledger.GenTx TestBlock
+mkGenTx :: Int -> Ledger.ByteSize32 -> Ledger.GenTx TestBlock
 mkGenTx anId aSize = TestBlockGenTx $ Tx { txNumber = anId, txSize = aSize }
 
 instance Ledger.LedgerSupportsMempool TestBlock where
@@ -91,16 +86,17 @@ instance Ledger.LedgerSupportsMempool TestBlock where
 
   reapplyTx _cfg _slot _gtx gst = pure gst
 
-  txsMaxBytes _ = error "The tests should override this value"
-                  -- The tests should be in control of the mempool capacity,
-                  -- since the judgement on whether the mempool is fair depends
-                  -- on this parameter.
-
-  txInBlockSize = txSize . unGenTx
-
   txForgetValidated (ValidatedGenTx tx) = tx
 
-  txRefScriptSize _cfg _tlst _tx = 0
+instance Ledger.TxLimits TestBlock where
+  type TxMeasure TestBlock = Ledger.IgnoringOverflow Ledger.ByteSize32
+
+  blockCapacityTxMeasure _cfg _st =
+    -- The tests will override this value. By using 1, @computeMempoolCapacity@
+    -- can be exactly what each test requests.
+    Ledger.IgnoringOverflow $ Ledger.ByteSize32 1
+
+  txMeasure _cfg _st = pure . Ledger.IgnoringOverflow . txSize . unGenTx
 
 {-------------------------------------------------------------------------------
   Ledger support

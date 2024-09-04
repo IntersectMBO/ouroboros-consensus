@@ -6,6 +6,7 @@
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE PatternSynonyms            #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE ViewPatterns               #-}
 
 -- | Intended for qualified import.
@@ -21,22 +22,24 @@ module Ouroboros.Consensus.Mempool.TxSeq (
   , splitAfterTicketNo
   , splitAfterTxSize
   , toList
-  , toMempoolSize
-  , toRefScriptSize
+  , toSize
   , toTuples
   , zeroTicketNo
     -- * Reference implementations for testing
   , splitAfterTxSizeSpec
   ) where
 
+import           Control.Arrow ((***))
 import           Data.FingerTree.Strict (StrictFingerTree)
 import qualified Data.FingerTree.Strict as FingerTree
 import qualified Data.Foldable as Foldable
+import           Data.Measure (Measure)
+import qualified Data.Measure as Measure
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
-import           Ouroboros.Consensus.Mempool.Capacity (MempoolSize (..))
-import           Ouroboros.Network.SizeInBytes
+import           Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32,
+                     HasByteSize, txMeasureByteSize)
 
 {-------------------------------------------------------------------------------
   Mempool transaction sequence as a finger tree
@@ -56,15 +59,13 @@ zeroTicketNo = TicketNo 0
 -- | We associate transactions in the mempool with their ticket number and
 -- size in bytes.
 --
-data TxTicket tx = TxTicket
-  { txTicketTx            :: !tx
+data TxTicket sz tx = TxTicket
+  { txTicketTx   :: !tx
     -- ^ The transaction associated with this ticket.
-  , txTicketNo            :: !TicketNo
+  , txTicketNo   :: !TicketNo
     -- ^ The ticket number.
-  , txTicketTxSizeInBytes :: !SizeInBytes
-    -- ^ The byte size of the transaction ('txTicketTx') associated with this
-    -- ticket.
-  , txTicketRefScriptSize :: !Int
+  , txTicketSize :: !sz
+    -- ^ The size of 'txTicketTx'.
   } deriving (Eq, Show, Generic, NoThunks)
 
 -- | The mempool is a sequence of transactions with their ticket numbers and
@@ -83,14 +84,15 @@ data TxTicket tx = TxTicket
 -- measure to allow not just normal sequence operations but also efficient
 -- splitting and indexing by the ticket number.
 --
-newtype TxSeq tx = TxSeq (StrictFingerTree TxSeqMeasure (TxTicket tx))
+newtype TxSeq sz tx =
+    TxSeq (StrictFingerTree (TxSeqMeasure sz) (TxTicket sz tx))
   deriving stock   (Show)
   deriving newtype (NoThunks)
 
-instance Foldable TxSeq where
+instance Measure sz => Foldable (TxSeq sz) where
   foldMap f (TxSeq txs) = Foldable.foldMap (f . txTicketTx) txs
   null      (TxSeq txs) = Foldable.null txs
-  length    (TxSeq txs) = mSize $ FingerTree.measure txs
+  length    (TxSeq txs) = mCount $ FingerTree.measure txs
 
 -- | The 'StrictFingerTree' relies on a \"measure\" for subsequences in the
 -- tree. A measure of the size of the subsequence allows for efficient
@@ -103,47 +105,57 @@ instance Foldable TxSeq where
 -- 'Measured' instance, and also a way to combine the measures, via a 'Monoid'
 -- instance.
 --
-data TxSeqMeasure = TxSeqMeasure {
-       mMinTicket     :: !TicketNo,
-       mMaxTicket     :: !TicketNo,
-       mSizeBytes     :: !SizeInBytes,
-       mSize          :: !Int,
-       mRefScriptSize :: !Int
+data TxSeqMeasure sz = TxSeqMeasure {
+       mCount     :: !Int,
+       mMinTicket :: !TicketNo,
+       mMaxTicket :: !TicketNo,
+       mSize      :: !sz
      }
   deriving Show
 
-instance FingerTree.Measured TxSeqMeasure (TxTicket tx) where
-  measure (TxTicket _ tno tsz trssz) = TxSeqMeasure tno tno tsz 1 trssz
+instance Measure sz => FingerTree.Measured (TxSeqMeasure sz) (TxTicket sz tx) where
+  measure ticket = TxSeqMeasure {
+      mCount = 1
+    , mMinTicket = txTicketNo
+    , mMaxTicket = txTicketNo
+    , mSize      = txTicketSize
+    }
+    where
+      TxTicket{txTicketNo, txTicketSize} = ticket
 
-instance Semigroup TxSeqMeasure where
+instance Measure sz => Semigroup (TxSeqMeasure sz) where
   vl <> vr = TxSeqMeasure
-               (mMinTicket vl `min` mMinTicket vr)
-               (mMaxTicket vl `max` mMaxTicket vr)
-               (mSizeBytes vl   +   mSizeBytes vr)
-               (mSize      vl   +   mSize      vr)
-               (mRefScriptSize vl + mRefScriptSize vr)
+               (mCount     vl +              mCount     vr)
+               (mMinTicket vl `min`          mMinTicket vr)
+               (mMaxTicket vl `max`          mMaxTicket vr)
+               (mSize      vl `Measure.plus` mSize      vr)
 
-instance Monoid TxSeqMeasure where
-  mempty  = TxSeqMeasure maxBound minBound 0 0 0
+instance Measure sz => Monoid (TxSeqMeasure sz) where
+  mempty  = TxSeqMeasure {
+        mCount     = 0
+      , mMinTicket = maxBound   -- note the inversion!
+      , mMaxTicket = minBound
+      , mSize      = Measure.zero
+      }
   mappend = (<>)
 
 -- | A helper function for the ':>' pattern.
 --
-viewBack :: TxSeq tx -> Maybe (TxSeq tx, TxTicket tx)
+viewBack :: Measure sz => TxSeq sz tx -> Maybe (TxSeq sz tx, TxTicket sz tx)
 viewBack (TxSeq txs) = case FingerTree.viewr txs of
                          FingerTree.EmptyR     -> Nothing
                          txs' FingerTree.:> tx -> Just (TxSeq txs', tx)
 
 -- | A helper function for the ':<' pattern.
 --
-viewFront :: TxSeq tx -> Maybe (TxTicket tx, TxSeq tx)
+viewFront :: Measure sz => TxSeq sz tx -> Maybe (TxTicket sz tx, TxSeq sz tx)
 viewFront (TxSeq txs) = case FingerTree.viewl txs of
                           FingerTree.EmptyL     -> Nothing
                           tx FingerTree.:< txs' -> Just (tx, TxSeq txs')
 
 -- | An empty mempool sequence.
 --
-pattern Empty :: TxSeq tx
+pattern Empty :: Measure sz => TxSeq sz tx
 pattern Empty <- (viewFront -> Nothing) where
   Empty = TxSeq FingerTree.empty
 
@@ -151,7 +163,7 @@ pattern Empty <- (viewFront -> Nothing) where
 --
 -- New txs are always added at the back.
 --
-pattern (:>) :: TxSeq tx -> TxTicket tx -> TxSeq tx
+pattern (:>) :: Measure sz => TxSeq sz tx -> TxTicket sz tx -> TxSeq sz tx
 pattern txs :> tx <- (viewBack -> Just (txs, tx)) where
   TxSeq txs :> tx = TxSeq (txs FingerTree.|> tx)  --TODO: assert ordered by ticket no
 
@@ -160,7 +172,7 @@ pattern txs :> tx <- (viewBack -> Just (txs, tx)) where
 -- Note that we never add txs at the front. We access txs from front to back
 -- when forwarding txs to other peers, or when adding txs to blocks.
 --
-pattern (:<) :: TxTicket tx -> TxSeq tx -> TxSeq tx
+pattern (:<) :: Measure sz => TxTicket sz tx -> TxSeq sz tx -> TxSeq sz tx
 pattern tx :< txs <- (viewFront -> Just (tx, txs))
 
 infixl 5 :>, :<
@@ -168,34 +180,41 @@ infixl 5 :>, :<
 {-# COMPLETE Empty, (:>) #-}
 {-# COMPLETE Empty, (:<) #-}
 
-
 -- | \( O(\log(n)) \). Look up a transaction in the sequence by its 'TicketNo'.
 --
-lookupByTicketNo :: TxSeq tx -> TicketNo -> Maybe tx
+lookupByTicketNo :: Measure sz => TxSeq sz tx -> TicketNo -> Maybe tx
 lookupByTicketNo (TxSeq txs) n =
     case FingerTree.search (\ml mr -> mMaxTicket ml >= n
                                    && mMinTicket mr >  n) txs of
-      FingerTree.Position _ (TxTicket tx n' _ _) _ | n' == n -> Just tx
-      _                                                      -> Nothing
+      FingerTree.Position _ (TxTicket tx n' _) _ | n' == n -> Just tx
+      _                                                    -> Nothing
 
 -- | \( O(\log(n)) \). Split the sequence of transactions into two parts
 -- based on the given 'TicketNo'. The first part has transactions with tickets
 -- less than or equal to the given ticket, and the second part has transactions
 -- with tickets strictly greater than the given ticket.
 --
-splitAfterTicketNo :: TxSeq tx -> TicketNo -> (TxSeq tx, TxSeq tx)
+splitAfterTicketNo ::
+     Measure sz
+  => TxSeq sz tx
+  -> TicketNo
+  -> (TxSeq sz tx, TxSeq sz tx)
 splitAfterTicketNo (TxSeq txs) n =
     case FingerTree.split (\m -> mMaxTicket m > n) txs of
       (l, r) -> (TxSeq l, TxSeq r)
 
--- | \( O(\log(n)) \). Split the sequence of transactions into two parts
--- based on the given 'SizeInBytes'. The first part has transactions whose
--- summed 'SizeInBytes' is less than or equal to the given 'SizeInBytes',
--- and the second part has the remaining transactions in the sequence.
+-- | \( O(\log(n)) \). Split the sequence of transactions into two parts based
+-- on the given @sz@. The first part has transactions whose summed @sz@ is less
+-- than or equal to the given @sz@, and the second part has the remaining
+-- transactions in the sequence.
 --
-splitAfterTxSize :: TxSeq tx -> SizeInBytes -> (TxSeq tx, TxSeq tx)
+splitAfterTxSize ::
+     Measure sz
+  => TxSeq sz tx
+  -> sz
+  -> (TxSeq sz tx, TxSeq sz tx)
 splitAfterTxSize (TxSeq txs) n =
-    case FingerTree.split (\m -> mSizeBytes m > n) txs of
+    case FingerTree.split (\m -> not $ mSize m Measure.<= n) txs of
       (l, r) -> (TxSeq l, TxSeq r)
 
 -- | \( O(n) \). Specification of 'splitAfterTxSize'.
@@ -204,52 +223,52 @@ splitAfterTxSize (TxSeq txs) n =
 --
 -- This function is used to verify whether 'splitAfterTxSize' behaves as
 -- expected.
-splitAfterTxSizeSpec :: TxSeq tx -> SizeInBytes -> (TxSeq tx, TxSeq tx)
+splitAfterTxSizeSpec :: forall sz tx.
+     Measure sz
+  => TxSeq sz tx
+  -> sz
+  -> (TxSeq sz tx, TxSeq sz tx)
 splitAfterTxSizeSpec txseq n =
-    mapTuple fromList $ go 0 [] (toList txseq)
+    (fromList *** fromList)
+  $ go Measure.zero []
+  $ toList txseq
   where
-    mapTuple :: (a -> b) -> (a, a) -> (b, b)
-    mapTuple f (x, y) = (f x, f y)
-
-    go :: SizeInBytes
-       -> [TxTicket tx]
-       -> [TxTicket tx]
-       -> ([TxTicket tx], [TxTicket tx])
-    go accByteSize accTickets = \case
+    go :: sz
+       -> [TxTicket sz tx]
+       -> [TxTicket sz tx]
+       -> ([TxTicket sz tx], [TxTicket sz tx])
+    go accSize accTickets = \case
       []
         -> (reverse accTickets, [])
       t:ts
-        | let accByteSize' = accByteSize + txTicketTxSizeInBytes t
-        , accByteSize' <= n
-        -> go accByteSize' (t:accTickets) ts
+        | let accSize' = accSize `Measure.plus` txTicketSize t
+        , accSize' Measure.<= n
+        -> go accSize' (t:accTickets) ts
         | otherwise
         -> (reverse accTickets, t:ts)
 
 -- | Given a list of 'TxTicket's, construct a 'TxSeq'.
-fromList :: [TxTicket tx] -> TxSeq tx
+fromList :: Measure sz => [TxTicket sz tx] -> TxSeq sz tx
 fromList = Foldable.foldl' (:>) Empty
 
 -- | Convert a 'TxSeq' to a list of 'TxTicket's.
-toList :: TxSeq tx -> [TxTicket tx]
+toList :: TxSeq sz tx -> [TxTicket sz tx]
 toList (TxSeq ftree) = Foldable.toList ftree
 
 -- | Convert a 'TxSeq' to a list of pairs of transactions and their
--- associated 'TicketNo's.
-toTuples :: TxSeq tx -> [(tx, TicketNo)]
+-- associated 'TicketNo's and 'ByteSize32's.
+toTuples :: HasByteSize sz => TxSeq sz tx -> [(tx, TicketNo, ByteSize32)]
 toTuples (TxSeq ftree) = fmap
-    (\ticket -> (txTicketTx ticket, txTicketNo ticket))
+    (\ticket ->
+       ( txTicketTx ticket
+       , txTicketNo ticket
+       , txMeasureByteSize (txTicketSize ticket)
+       )
+    )
     (Foldable.toList ftree)
 
--- | \( O(1) \). Return the 'MempoolSize' of the given 'TxSeq'.
-toMempoolSize :: TxSeq tx -> MempoolSize
-toMempoolSize (TxSeq ftree) = MempoolSize
-    { msNumTxs   = fromIntegral mSize
-    , msNumBytes = getSizeInBytes mSizeBytes
-    }
+-- | \( O(1) \). Return the total size of the given 'TxSeq'.
+toSize :: Measure sz => TxSeq sz tx -> sz
+toSize (TxSeq ftree) = mSize
   where
-    TxSeqMeasure { mSizeBytes, mSize } = FingerTree.measure ftree
-
-toRefScriptSize :: TxSeq tx -> Int
-toRefScriptSize (TxSeq ftree) = mRefScriptSize
-  where
-    TxSeqMeasure { mRefScriptSize } = FingerTree.measure ftree
+    TxSeqMeasure { mSize } = FingerTree.measure ftree

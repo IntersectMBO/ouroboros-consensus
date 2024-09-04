@@ -740,10 +740,12 @@ reproMempoolForge numBlks env = do
         Mempool.getCurrentLedgerState = ledgerState <$> IOLike.readTVar ref
       }
       lCfg
-      -- one megabyte should generously accomodate two blocks' worth of txs
-      (Mempool.MempoolCapacityBytesOverride $ Mempool.MempoolCapacityBytes $ 2^(20 :: Int))
+      -- one mebibyte should generously accomodate two blocks' worth of txs
+      ( Mempool.MempoolCapacityBytesOverride
+      $ LedgerSupportsMempool.ByteSize32
+      $ 1024*1024
+      )
       nullTracer
-      (SizeInBytes . LedgerSupportsMempool.txInBlockSize)
 
     void $ processAll db registry GetBlock startFrom limit Nothing (process howManyBlocks ref mempool)
     pure Nothing

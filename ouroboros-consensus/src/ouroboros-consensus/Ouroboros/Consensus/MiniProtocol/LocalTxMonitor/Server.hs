@@ -31,19 +31,22 @@ localTxMonitorServer mempool =
       { recvMsgDone = do
           pure ()
       , recvMsgAcquire = do
-          s <- atomically $ (,) <$> getCapacity mempool <*> getSnapshot mempool
+          s <- atomically $
+                (,)
+            <$> (txMeasureByteSize <$> getCapacity mempool)
+            <*> getSnapshot mempool
           pure $ serverStAcquiring s
       }
 
     serverStAcquiring
-      :: (MempoolCapacityBytes, MempoolSnapshot blk)
+      :: (ByteSize32, MempoolSnapshot blk)
       -> ServerStAcquiring (GenTxId blk) (GenTx blk) SlotNo m ()
     serverStAcquiring s@(_, snapshot) =
       SendMsgAcquired (snapshotSlotNo snapshot) (serverStAcquired s (snapshotTxs snapshot))
 
     serverStAcquired
-      :: (MempoolCapacityBytes, MempoolSnapshot blk)
-      -> [(Validated (GenTx blk), idx)]
+      :: (ByteSize32, MempoolSnapshot blk)
+      -> [(Validated (GenTx blk), idx, ByteSize32)]
       -> ServerStAcquired (GenTxId blk) (GenTx blk) SlotNo m ()
     serverStAcquired s@(capacity, snapshot) txs =
       ServerStAcquired
@@ -51,21 +54,24 @@ localTxMonitorServer mempool =
           case txs of
             []  ->
               pure $ SendMsgReplyNextTx Nothing (serverStAcquired s [])
-            (txForgetValidated -> h, _):q ->
+            (txForgetValidated -> h, _tno, _byteSize):q ->
               pure $ SendMsgReplyNextTx (Just h) (serverStAcquired s q)
       , recvMsgHasTx = \txid ->
           pure $ SendMsgReplyHasTx (snapshotHasTx snapshot txid) (serverStAcquired s txs)
       , recvMsgGetSizes = do
           let MempoolSize{msNumTxs,msNumBytes} = snapshotMempoolSize snapshot
           let sizes = MempoolSizeAndCapacity
-                { capacityInBytes = getMempoolCapacityBytes capacity
-                , sizeInBytes     = msNumBytes
+                { capacityInBytes = unByteSize32 capacity
+                , sizeInBytes     = unByteSize32 msNumBytes
                 , numberOfTxs     = msNumTxs
                 }
           pure $ SendMsgReplyGetSizes sizes (serverStAcquired s txs)
       , recvMsgAwaitAcquire = do
           s' <- atomically $ do
-            s'@(_, snapshot') <- (,) <$> getCapacity mempool <*> getSnapshot mempool
+            s'@(_, snapshot') <-
+                  (,)
+              <$> (txMeasureByteSize <$> getCapacity mempool)
+              <*> getSnapshot mempool
             s' <$ check (not (snapshot `isSameSnapshot` snapshot'))
           pure $ serverStAcquiring s'
       , recvMsgRelease =
@@ -78,6 +84,8 @@ localTxMonitorServer mempool =
       -> MempoolSnapshot blk
       -> Bool
     isSameSnapshot a b =
-      (snd <$> snapshotTxs a) == (snd <$> snapshotTxs b)
+      (tno <$> snapshotTxs a) == (tno <$> snapshotTxs b)
       &&
       snapshotSlotNo a == snapshotSlotNo b
+
+    tno (_a, b, _c) = b :: TicketNo

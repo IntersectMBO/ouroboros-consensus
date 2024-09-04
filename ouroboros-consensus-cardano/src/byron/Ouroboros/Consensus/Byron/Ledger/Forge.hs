@@ -48,7 +48,7 @@ forgeByronBlock ::
   -> BlockNo                          -- ^ Current block number
   -> SlotNo                           -- ^ Current slot number
   -> TickedLedgerState ByronBlock     -- ^ Current ledger
-  -> [Validated (GenTx ByronBlock)]   -- ^ Txs to consider adding in the block
+  -> [Validated (GenTx ByronBlock)]   -- ^ Txs to include
   -> PBftIsLeader PBftByronCrypto     -- ^ Leader proof ('IsLeader')
   -> ByronBlock
 forgeByronBlock cfg = forgeRegularBlock (configBlock cfg)
@@ -123,7 +123,7 @@ forgeRegularBlock ::
   -> BlockNo                           -- ^ Current block number
   -> SlotNo                            -- ^ Current slot number
   -> TickedLedgerState ByronBlock      -- ^ Current ledger
-  -> [Validated (GenTx ByronBlock)]    -- ^ Txs to consider adding in the block
+  -> [Validated (GenTx ByronBlock)]    -- ^ Txs to include
   -> PBftIsLeader PBftByronCrypto      -- ^ Leader proof ('IsLeader')
   -> ByronBlock
 forgeRegularBlock cfg bno sno st txs isLeader =
@@ -141,7 +141,7 @@ forgeRegularBlock cfg bno sno st txs isLeader =
         foldr
           extendBlockPayloads
           initBlockPayloads
-          (takeLargestPrefixThatFits st txs)
+          txs
 
     txPayload :: CC.UTxO.TxPayload
     txPayload = CC.UTxO.mkTxPayload (bpTxs blockPayloads)
