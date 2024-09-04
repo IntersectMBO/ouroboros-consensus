@@ -195,6 +195,10 @@ jobs:
       matrix:
         ghc: ["8.10.7", "9.6.6", "9.10.1"]
 
+    env:
+      ACCEPT_BENCHMARKS: ${{ contains(github.event.pull_request.labels.*.name, 'acceptable benchmarks') }}
+      BENCH_OPTIONS: ""
+
     steps:
     - uses: actions/checkout@v4
 
@@ -230,6 +234,13 @@ jobs:
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       run: cp mempool-benchmarks.csv baseline-mempool-benchmarks.csv
 
+    # The `fail-if-slower` value is determined ad-hoc based on the variability
+    # we observed in our benchmarks.
+    - name: Set benchmark options (accept)
+      if: ${{ !env.ACCEPT_BENCHMARKS }}
+      run: |
+        echo "BENCH_OPTIONS='--fail-if-slower 100'" >> "GITHUB_ENV"
+
     # TODO: this will be necessary when we publish the benchmarks results.
     # - name: Upload mempool benchmark baseline results
     #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -238,15 +249,13 @@ jobs:
     #     name: baseline-mempool-benchmarks
     #     path: baseline-mempool-benchmarks.csv
 
-    # The `fail-if-slower` value is determined ad-hoc based on the variability
-    # we observed in our benchmarks.
     - name: Run mempool benchmarks on pull requests
       if: ${{ github.event_name == 'pull_request' }}
       run: |
         if [ -f baseline-mempool-benchmarks.csv ]; then
           ./mempool-bench \
           --timeout=60 --baseline baseline-mempool-benchmarks.csv \
-          --fail-if-slower 100 \
+          ${{ env.BENCH_OPTIONS }} \
           +RTS -T
         else
           echo "No baseline benchmarks found. This likely happened when adding a new GHC version to the build matrix."
