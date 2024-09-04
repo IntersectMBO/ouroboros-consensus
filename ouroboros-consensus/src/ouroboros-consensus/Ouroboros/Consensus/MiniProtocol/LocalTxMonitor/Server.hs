@@ -1,8 +1,10 @@
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE NamedFieldPuns      #-}
+{-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE ViewPatterns        #-}
+{-# LANGUAGE PatternSynonyms     #-}
 
 module Ouroboros.Consensus.MiniProtocol.LocalTxMonitor.Server (localTxMonitorServer) where
 
@@ -118,3 +120,8 @@ mkMeasuresMap Proxy size capacity =
   where
     byteSizeInteger :: ByteSize32 -> Integer
     byteSizeInteger = fromIntegral . unByteSize32
+
+pattern TransactionBytes = MeasureName "transaction_bytes"
+pattern ExUnitsSteps = MeasureName "ex_units_steps"
+pattern ExUnitsMemory = MeasureName "ex_units_memory"
+pattern ReferenceScriptsBytes = MeasureName "reference_scripts_bytes"
