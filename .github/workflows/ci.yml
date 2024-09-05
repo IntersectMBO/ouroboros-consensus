@@ -203,6 +203,10 @@ jobs:
       with:
         name: benchmark-exes-${{ runner.os }}-${{ matrix.ghc }}
 
+    - name: Set permissions for benchmark executables
+      run: |
+        chmod u+x mempool-bench
+
     - name: Create baseline-benchmark
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       run: |
