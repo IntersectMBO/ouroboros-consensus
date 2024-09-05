@@ -17,6 +17,7 @@ import           Data.Map.Strict (Map)
 import           Data.Proxy (Proxy (..))
 import           Network.TypedProtocol.Codec (AnyMessage)
 import           Ouroboros.Consensus.Block (Header, Point)
+import           Ouroboros.Consensus.BlockchainTime (RelativeTime (..))
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
@@ -25,6 +26,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      ChainSyncLoPBucketConfig, ChainSyncStateView (..),
                      Consensus, bracketChainSyncClient, chainSyncClient)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Node.GsmState (GsmState (Syncing))
 import           Ouroboros.Consensus.Util (ShowProxy)
@@ -84,6 +86,10 @@ basicChainSyncClient
       , CSClient.cfg
       , CSClient.chainDbView
       , CSClient.someHeaderInFutureCheck = dummyHeaderInFutureCheck
+        -- Preventing historical MsgRollBack and MsgAwaitReply messages is
+        -- motivated by preventing additional load from CSJ-disengaged peers; we
+        -- do not care about this in these tests.
+      , CSClient.historicityCheck        = HistoricityCheck.noCheck
       }
     CSClient.DynamicEnv {
         CSClient.version             = maxBound
@@ -103,7 +109,9 @@ basicChainSyncClient
       { InFutureCheck.proxyArrival = Proxy
       , InFutureCheck.recordHeaderArrival = \_ -> pure ()
       , InFutureCheck.judgeHeaderArrival = \_ _ _ -> pure ()
-      , InFutureCheck.handleHeaderArrival = \_ -> pure Nothing
+      , InFutureCheck.handleHeaderArrival = \_ ->
+          -- We are not inspecting header slot time in the Genesis tests.
+          pure $ pure $ RelativeTime 0
       }
 
 -- | Create and run a ChainSync client using 'bracketChainSyncClient' and

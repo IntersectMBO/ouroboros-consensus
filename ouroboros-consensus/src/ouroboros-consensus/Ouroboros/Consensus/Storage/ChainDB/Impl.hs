@@ -208,6 +208,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , chainSelAsync         = getEnv     h ChainSel.triggerChainSelectionAsync
             , getCurrentChain       = getEnvSTM  h Query.getCurrentChain
             , getLedgerDB           = getEnvSTM  h Query.getLedgerDB
+            , getHeaderStateHistory = getEnvSTM  h Query.getHeaderStateHistory
             , getTipBlock           = getEnv     h Query.getTipBlock
             , getTipHeader          = getEnv     h Query.getTipHeader
             , getTipPoint           = getEnvSTM  h Query.getTipPoint

@@ -17,7 +17,6 @@ module Ouroboros.Consensus.Storage.ChainDB.API (
     ChainDB (..)
   , getCurrentLedger
   , getCurrentTip
-  , getHeaderStateHistory
   , getImmutableLedger
   , getPastLedger
   , getTipBlockNo
@@ -173,6 +172,10 @@ data ChainDB m blk = ChainDB {
 
       -- | Return the LedgerDB containing the last @k@ ledger states.
     , getLedgerDB        :: STM m (LedgerDB' blk)
+
+      -- | Get a 'HeaderStateHistory' populated with the 'HeaderState's and slot
+      -- times of the last @k@ blocks of the current chain.
+    , getHeaderStateHistory :: STM m (HeaderStateHistory blk)
 
       -- | Get block at the tip of the chain, if one exists
       --
@@ -374,20 +377,6 @@ getPastLedger ::
      (Monad (STM m), LedgerSupportsProtocol blk)
   => ChainDB m blk -> Point blk -> STM m (Maybe (ExtLedgerState blk))
 getPastLedger db pt = LedgerDB.ledgerDbPast pt <$> getLedgerDB db
-
--- | Get a 'HeaderStateHistory' populated with the 'HeaderState's of the
--- last @k@ blocks of the current chain.
-getHeaderStateHistory ::
-     Monad (STM m)
-  => ChainDB m blk -> STM m (HeaderStateHistory blk)
-getHeaderStateHistory = fmap toHeaderStateHistory . getLedgerDB
-  where
-    toHeaderStateHistory ::
-         LedgerDB' blk
-      -> HeaderStateHistory blk
-    toHeaderStateHistory =
-          HeaderStateHistory
-        . LedgerDB.ledgerDbBimap headerState headerState
 
 {-------------------------------------------------------------------------------
   Adding a block

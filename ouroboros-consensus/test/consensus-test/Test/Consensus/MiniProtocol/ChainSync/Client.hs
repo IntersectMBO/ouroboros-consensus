@@ -58,13 +58,13 @@ import           Control.Monad.Class.MonadTimer (MonadTimer)
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer (contramap, contramapM, nullTracer)
 import           Data.DerivingVia (InstantiatedAt (InstantiatedAt))
-import           Data.List (intercalate)
+import           Data.List as List (foldl', intercalate)
 import qualified Data.Map.Merge.Strict as Map
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (isJust)
+import           Data.Maybe (fromMaybe, isJust)
 import           Data.Semigroup (Max (Max), getMax)
 import qualified Data.Set as Set
-import           Data.Time (diffUTCTime)
+import           Data.Time (NominalDiffTime, diffUTCTime)
 import           Data.Typeable
 import           GHC.Generics (Generic)
 import           Network.TypedProtocol.Channel
@@ -88,6 +88,9 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      DynamicEnv (..), Our (..), Their (..),
                      TraceChainSyncClientEvent (..), bracketChainSyncClient,
                      chainSyncClient, chainSyncStateFor, viewChainSyncState)
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
+                     (HistoricityCheck, HistoricityCutoff (..))
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Node.GsmState (GsmState (Syncing))
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -97,7 +100,7 @@ import           Ouroboros.Consensus.NodeId
 import           Ouroboros.Consensus.Protocol.BFT
 import           Ouroboros.Consensus.Storage.ChainDB.API
                      (InvalidBlockReason (ValidationError))
-import           Ouroboros.Consensus.Util (whenJust)
+import           Ouroboros.Consensus.Util (lastMaybe, whenJust)
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
@@ -342,11 +345,6 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
     let _ = clientSystemTime :: SystemTime m
 
     varCurrentLogicalTick <- uncheckedNewTVarM (Tick 0)
-    let clockUpdates :: Schedule NewMaxSlot
-        clockUpdates =
-            mkClockUpdates
-              (ClientUpdates clientUpdates)
-              (ServerUpdates serverUpdates)
 
     -- Set up the client
     varClientState  <- uncheckedNewTVarM Genesis
@@ -403,6 +401,15 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
             -- Note that this tests passes in the exact difference between the
             -- client's and server's clock as the tolerable clock skew.
 
+        historicityCheck :: HistoricityCheck m TestBlock
+        historicityCheck =
+            HistoricityCheck.mkCheck
+              clientSystemTime
+              -- The historicity check is disabled when we use 'CaughtUp' here,
+              -- so we use 'Syncing'.
+              (pure Syncing)
+              historicityCutoff
+
         lopBucketConfig :: ChainSyncLoPBucketConfig
         lopBucketConfig = ChainSyncLoPBucketDisabled
 
@@ -420,6 +427,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                 , cfg                     = nodeCfg
                 , tracer                  = chainSyncTracer
                 , someHeaderInFutureCheck = headerInFutureCheck
+                , historicityCheck
                 , mkPipelineDecision0     =
                     pipelineDecisionLowHighMark 10 20
                 }
@@ -444,12 +452,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
         advanceWallClockForTick tick = do
             doTick clockUpdates tick $ \case
               [newMaxSlot] -> do
-                let target = case newMaxSlot of
-                      NewMaxClientSlot slot -> toOnset slot
-                      NewMaxServerSlot slot -> toSkewedOnset slot
-
-                      NewMaxClientAndServerSlot cslot sslot ->
-                        toOnset cslot `max` toSkewedOnset sslot
+                let target = clientTimeForNewMaxSlot newMaxSlot
                 now <- systemTimeCurrent clientSystemTime
                 threadDelay $ nominalDelay $ target `diffRelTime` now
 
@@ -593,6 +596,81 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
       let RelativeTime onset = toOnset slot
       in
       RelativeTime $ onset - unClockSkew skew
+
+    -- The target time (as reported by 'clientSystemTime') for the given
+    -- 'NewMaxSlot'.
+    clientTimeForNewMaxSlot :: NewMaxSlot -> RelativeTime
+    clientTimeForNewMaxSlot = \case
+        NewMaxClientSlot slot -> toOnset slot
+        NewMaxServerSlot slot -> toSkewedOnset slot
+
+        NewMaxClientAndServerSlot cslot sslot ->
+          toOnset cslot `max` toSkewedOnset sslot
+
+    clockUpdates :: Schedule NewMaxSlot
+    clockUpdates =
+        mkClockUpdates
+          (ClientUpdates clientUpdates)
+          (ServerUpdates serverUpdates)
+
+    -- Also see the module header for how ticks/time/clock skew are working in
+    -- this test.
+    clientTimeForTick :: Tick -> RelativeTime
+    clientTimeForTick = \tick -> case Map.lookupLE tick clientTimes of
+        Just (_, time) -> time
+        -- Before any clock updates, the client time is exactly @skew@ before
+        -- the onset of slot 0.
+        Nothing        -> RelativeTime (- unClockSkew skew)
+      where
+        clientTimes :: Map.Map Tick RelativeTime
+        clientTimes =
+            Map.foldlWithKey' f Map.empty (getSchedule clockUpdates)
+          where
+            f acc t [newMaxSlot] = case Map.lookupMax acc of
+                Just (_, time')
+                  | time' < time -> Map.insert t time acc
+                  | otherwise    -> acc
+                Nothing -> Map.singleton t time
+              where
+                time = clientTimeForNewMaxSlot newMaxSlot
+            f _   _ _            = error "bad clockUpdates"
+
+    -- For the historicity check, which constrains the age of @MsgRollBackward@
+    -- and @MsgAwaitReply@. This is calculated by considering the 'ChainUpdate'
+    -- which rewinds the oldest block relative to the client wallclock time in
+    -- the given tick, as well as the age of the last block sent up until a tick
+    -- (as a @MsgAwaitReply@ will be sent right after).
+    historicityCutoff :: HistoricityCutoff
+    historicityCutoff =
+          HistoricityCutoff
+        $ List.foldl' max 0
+        $ awaitReplyAges <> rollbackAges
+      where
+        rollbackAges :: [NominalDiffTime]
+        rollbackAges =
+          [ clientTime `diffRelTime` toSkewedOnset oldestRewound
+          | (tick, updates) <- Map.toList $ getSchedule serverUpdates
+          , let clientTime = clientTimeForTick tick
+          , SwitchFork rollbackPoint _blks <- updates
+          , -- Here, we make use of the fact that the blocks generated for this
+            -- test have dense slot numbers (ie there are no empty slots).
+            let oldestRewound =
+                  withOrigin firstSlot succ $ pointSlot rollbackPoint
+          ]
+
+        firstSlot = blockSlot $ firstBlock 0
+
+        awaitReplyAges :: [NominalDiffTime]
+        awaitReplyAges =
+          [ clientTimeForTick tick `diffRelTime` toSkewedOnset lastSlotBefore
+          | (tick, updates) <- Map.toList $ getSchedule serverUpdates
+          , let lastSlotBefore = fromMaybe 0 $ do
+                  lastUpdate <- lastMaybe updates
+                  lastBlk    <- case lastUpdate of
+                    AddBlock blk        -> pure blk
+                    SwitchFork _pt blks -> lastMaybe blks
+                  pure $ blockSlot lastBlk
+          ]
 
     doTick :: Schedule a -> Tick -> ([a] -> m ()) -> m ()
     doTick sched tick kont = whenJust (Map.lookup tick (getSchedule sched)) kont

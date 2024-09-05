@@ -77,6 +77,7 @@ import           Control.Monad (join, void)
 import           Control.Monad.Class.MonadTimer (MonadTimer)
 import           Control.Monad.Except (runExcept, throwError)
 import           Control.Tracer
+import           Data.Functor ((<&>))
 import           Data.Kind (Type)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -90,17 +91,23 @@ import           GHC.Stack (HasCallStack)
 import           Network.TypedProtocol.Pipelined
 import           NoThunks.Class (unsafeNoThunks)
 import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.BlockchainTime (RelativeTime)
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Forecast
 import           Ouroboros.Consensus.HardFork.History
                      (PastHorizonException (PastHorizon))
 import           Ouroboros.Consensus.HeaderStateHistory
-                     (HeaderStateHistory (..), validateHeader)
+                     (HeaderStateHistory (..), HeaderStateWithTime (..),
+                     validateHeader)
 import qualified Ouroboros.Consensus.HeaderStateHistory as HeaderStateHistory
 import           Ouroboros.Consensus.HeaderValidation hiding (validateHeader)
 import           Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
+                     (HistoricalChainSyncMessage (..), HistoricityCheck,
+                     HistoricityException)
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as Jumping
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
@@ -660,13 +667,13 @@ checkKnownIntersectionInvariants ::
 checkKnownIntersectionInvariants cfg kis
     -- 'theirHeaderStateHistory' invariant
     | let HeaderStateHistory snapshots = theirHeaderStateHistory
-          historyTips  = headerStateTip        <$> AS.toOldestFirst snapshots
+          historyTips  = headerStateTip . hswtHeaderState <$> AS.toOldestFirst snapshots
           fragmentTips = NotOrigin . getAnnTip <$> AF.toOldestFirst theirFrag
 
           fragmentAnchorPoint = castPoint $ AF.anchorPoint theirFrag
           historyAnchorPoint  =
               withOriginRealPointToPoint
-            $ annTipRealPoint <$> headerStateTip (AS.anchor snapshots)
+            $ annTipRealPoint <$> headerStateTip (hswtHeaderState $ AS.anchor snapshots)
     ,    historyTips        /= fragmentTips
       ||
          historyAnchorPoint /= fragmentAnchorPoint
@@ -756,6 +763,7 @@ data ConfigEnv m blk = ConfigEnv {
   , tracer                  :: Tracer m (TraceChainSyncClientEvent blk)
   , cfg                     :: TopLevelConfig blk
   , someHeaderInFutureCheck :: InFutureCheck.SomeHeaderInFutureCheck m blk
+  , historicityCheck        :: HistoricityCheck m blk
   , chainDbView             :: ChainDbView m blk
   }
 
@@ -1094,7 +1102,7 @@ findIntersectionTop cfgEnv dynEnv intEnv =
                          intersection
                          (ourFrag, ourHeaderStateHistory)
                   of
-                    Just (c, d) -> return (c, d)
+                    Just (c, d, _oldestRewound) -> return (c, d)
                     Nothing ->
                         -- The @intersection@ is not on our fragment, even
                         -- though we sent only points from our fragment to find
@@ -1145,6 +1153,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
         mkPipelineDecision0
       , tracer
       , cfg
+      , historicityCheck
       } = cfgEnv
 
     DynamicEnv {
@@ -1277,14 +1286,14 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                 -- where this wouldn't be true is if the original candidate
                 -- fragment provided by the dynamo contained headers that have
                 -- no corresponding header state.
-                rewoundHistory =
+                (rewoundHistory, _oldestRewound) =
                   fromMaybe (error "offerJump: cannot rewind history") mRewoundHistory
                 -- If the tip of jTheirFragment does not match the tip of
                 -- jTheirHeaderStateHistory, then the history needs rewinding.
                 historyNeedsRewinding =
                      (/= AF.headPoint (jTheirFragment ji)) $
                      castPoint $
-                     either headerStatePoint headerStatePoint $
+                     headerStatePoint . hswtHeaderState . either id id $
                      AF.head $
                      HeaderStateHistory.unHeaderStateHistory $
                      jTheirHeaderStateHistory ji
@@ -1318,9 +1327,15 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     n
                     candTipBlockNo
                     theirTipBlockNo
-            onMsgAwaitReply =
-              idlingStart idling >>
-              lbPause loPBucket >>
+            onMsgAwaitReply = do
+              HistoricityCheck.judgeMessageHistoricity
+                historicityCheck
+                HistoricalMsgAwaitReply
+                (HeaderStateHistory.current (theirHeaderStateHistory kis)) >>= \case
+                  Left ex  -> throwIO $ HistoricityError ex
+                  Right () -> pure ()
+              idlingStart idling
+              lbPause loPBucket
               Jumping.jgOnAwaitReply jumping
         in
         case (n, decision) of
@@ -1429,9 +1444,9 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                         (kBestBlockNo kis)
                         NoMoreIntersection
 
-                StillIntersects ledgerView kis' -> do
+                StillIntersects (ledgerView, hdrSlotTime) kis' -> do
                     kis'' <-
-                        checkValid cfgEnv intEnv hdr theirTip kis' ledgerView
+                        checkValid cfgEnv intEnv hdr hdrSlotTime theirTip kis' ledgerView
                     kis''' <- checkLoP cfgEnv dynEnv hdr kis''
 
                     atomically $ do
@@ -1498,7 +1513,16 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                         (ourTipFromChain ourFrag)
                         theirTip
 
-                Just (theirFrag', theirHeaderStateHistory') -> do
+                Just (theirFrag', theirHeaderStateHistory', mOldestRewound) -> do
+
+                  whenJust mOldestRewound $ \oldestRewound ->
+                    HistoricityCheck.judgeMessageHistoricity
+                        historicityCheck
+                        HistoricalMsgRollBackward
+                        oldestRewound >>= \case
+                      Left ex  -> throwIO $ HistoricityError ex
+                      Right () -> pure ()
+
                   -- We just rolled back to @rollBackPoint@, either our most
                   -- recent intersection was after or at @rollBackPoint@, in
                   -- which case @rollBackPoint@ becomes the new most recent
@@ -1600,11 +1624,11 @@ checkKnownInvalid cfgEnv dynEnv intEnv hdr = case scrutinee of
 -- | Manage the relationships between the header's slot, arrival time, and
 -- intersection with the local selection
 --
--- The first step is to determine the timestamp of the slot's onset. If the
--- intersection with local selection is much older than the header, then this
--- may not be possible. The client will block until that is no longer true.
--- However, it will stop blocking and 'exitEarly' as soon as
--- 'NoLongerIntersects' arises.
+-- The first step is to determine the timestamp of the slot's onset (which is
+-- also returned in case of success). If the intersection with local selection
+-- is much older than the header, then this may not be possible. The client will
+-- block until that is no longer true. However, it will stop blocking and
+-- 'exitEarly' as soon as 'NoLongerIntersects' arises.
 --
 -- If the slot is from the far-future, the peer is buggy, so disconnect. If
 -- it's from the near-future, follow the Ouroboros Chronos rule and ignore this
@@ -1625,11 +1649,11 @@ checkTime ::
   -> KnownIntersectionState blk
   -> arrival
   -> SlotNo
-  -> m (UpdatedIntersectionState blk (LedgerView (BlockProtocol blk)))
+  -> m (UpdatedIntersectionState blk (LedgerView (BlockProtocol blk), RelativeTime))
 checkTime cfgEnv dynEnv intEnv =
     \kis arrival slotNo -> pauseBucket $ castEarlyExitIntersects $ do
-        Intersects kis2 lst        <- checkArrivalTime kis arrival
-        Intersects kis3 ledgerView <- case projectLedgerView slotNo lst of
+        Intersects kis2 (lst, slotTime) <- checkArrivalTime kis arrival
+        Intersects kis3 ledgerView      <- case projectLedgerView slotNo lst of
             Just ledgerView -> pure $ Intersects kis2 ledgerView
             Nothing         -> do
               EarlyExit.lift $
@@ -1640,7 +1664,7 @@ checkTime cfgEnv dynEnv intEnv =
                   traceWith (tracer cfgEnv)
                 $ TraceAccessingForecastHorizon slotNo
               pure res
-        pure $ Intersects kis3 ledgerView
+        pure $ Intersects kis3 (ledgerView, slotTime)
   where
     ConfigEnv {
         cfg
@@ -1669,7 +1693,7 @@ checkTime cfgEnv dynEnv intEnv =
     checkArrivalTime ::
          KnownIntersectionState blk
       -> arrival
-      -> WithEarlyExit m (Intersects blk (LedgerState blk))
+      -> WithEarlyExit m (Intersects blk (LedgerState blk, RelativeTime))
     checkArrivalTime kis arrival = do
         Intersects kis' (lst, judgment) <- do
             readLedgerState kis $ \lst ->
@@ -1681,9 +1705,9 @@ checkTime cfgEnv dynEnv intEnv =
 
         -- For example, throw an exception if the header is from the far
         -- future.
-        EarlyExit.lift $ handleHeaderArrival judgment >>= \case
-            Just exn -> disconnect (InFutureHeaderExceedsClockSkew exn)
-            Nothing  -> return $ Intersects kis' lst
+        EarlyExit.lift $ handleHeaderArrival judgment <&> runExcept >>= \case
+            Left exn       -> disconnect (InFutureHeaderExceedsClockSkew exn)
+            Right slotTime -> return $ Intersects kis' (lst, slotTime)
 
     -- Block until the the ledger state at the intersection with the local
     -- selection returns 'Just'.
@@ -1769,11 +1793,12 @@ checkValid ::
   => ConfigEnv m blk
   -> InternalEnv m blk arrival judgment
   -> Header blk
+  -> RelativeTime -- ^ onset of the header's slot
   -> Their (Tip blk)
   -> KnownIntersectionState blk
   -> LedgerView (BlockProtocol blk)
   -> m (KnownIntersectionState blk)
-checkValid cfgEnv intEnv hdr theirTip kis ledgerView = do
+checkValid cfgEnv intEnv hdr hdrSlotTime theirTip kis ledgerView = do
     let KnownIntersectionState {
             mostRecentIntersection
           , ourFrag
@@ -1787,7 +1812,7 @@ checkValid cfgEnv intEnv hdr theirTip kis ledgerView = do
     -- Validate header
     theirHeaderStateHistory' <-
         case   runExcept
-             $ validateHeader cfg ledgerView hdr theirHeaderStateHistory
+             $ validateHeader cfg ledgerView hdr hdrSlotTime theirHeaderStateHistory
           of
             Right theirHeaderStateHistory' -> return theirHeaderStateHistory'
             Left  vErr ->
@@ -1919,11 +1944,16 @@ attemptRollback ::
      )
   => Point blk
   ->       (AnchoredFragment (Header blk), HeaderStateHistory blk)
-  -> Maybe (AnchoredFragment (Header blk), HeaderStateHistory blk)
+  -> Maybe
+       ( AnchoredFragment (Header blk)
+       , HeaderStateHistory blk
+       , -- The state of the oldest header that was rolled back, if any.
+         Maybe (HeaderStateWithTime blk)
+       )
 attemptRollback rollBackPoint (frag, state) = do
-    frag'  <- AF.rollback (castPoint rollBackPoint) frag
-    state' <- HeaderStateHistory.rewind rollBackPoint state
-    return (frag', state')
+    frag'                   <- AF.rollback (castPoint rollBackPoint) frag
+    (state', oldestRewound) <- HeaderStateHistory.rewind rollBackPoint state
+    return (frag', state', oldestRewound)
 
 {-------------------------------------------------------------------------------
    Looking for newly-recognized trap headers on the existing candidate
@@ -2130,6 +2160,8 @@ data ChainSyncClientException =
     InFutureHeaderExceedsClockSkew !InFutureCheck.HeaderArrivalException
     -- ^ A header arrived from the far future.
   |
+    HistoricityError !HistoricityException
+  |
     EmptyBucket
     -- ^ The peer lost its race against the bucket.
   |
@@ -2163,6 +2195,12 @@ instance Eq ChainSyncClientException where
         (InFutureHeaderExceedsClockSkew a )
         (InFutureHeaderExceedsClockSkew a')
       = a == a'
+
+    (==)
+        (HistoricityError a )
+        (HistoricityError a')
+      = a == a'
+
     (==)
         EmptyBucket EmptyBucket
       = True
@@ -2177,6 +2215,7 @@ instance Eq ChainSyncClientException where
     InvalidIntersection{}            == _ = False
     InvalidBlock{}                   == _ = False
     InFutureHeaderExceedsClockSkew{} == _ = False
+    HistoricityError{}               == _ = False
     EmptyBucket                      == _ = False
     InvalidJumpResponse              == _ = False
     DensityTooLow                    == _ = False

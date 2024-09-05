@@ -170,6 +170,7 @@ library
     Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface
     Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
     Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+    Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
     Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
     Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping
     Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
@@ -725,6 +726,7 @@ benchmark ChainSync-client-bench
     contra-tracer,
     ouroboros-consensus,
     ouroboros-network-api,
+    ouroboros-network-mock,
     ouroboros-network-protocols,
     time,
     typed-protocols-examples,
