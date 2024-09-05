@@ -33,12 +33,13 @@ import qualified Cardano.Chain.Genesis as CC.Genesis
 import qualified Cardano.Chain.Update as CC.Update
 import           Cardano.Crypto.DSIGN (Ed25519DSIGN)
 import           Cardano.Crypto.Hash.Blake2b (Blake2b_224, Blake2b_256)
+import qualified Cardano.Ledger.Babbage.Core as SL
 import           Cardano.Ledger.Crypto (ADDRHASH, Crypto, DSIGN, HASH)
-import qualified Cardano.Ledger.Era as SL
 import qualified Cardano.Ledger.Genesis as SL
 import           Cardano.Ledger.Hashes (EraIndependentTxBody)
 import           Cardano.Ledger.Keys (DSignable, Hash)
 import qualified Cardano.Ledger.Shelley.API as SL
+import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import           Cardano.Ledger.Shelley.Translation
                      (toFromByronTranslationContext)
 import qualified Cardano.Protocol.TPraos.API as SL
@@ -47,6 +48,7 @@ import qualified Cardano.Protocol.TPraos.Rules.Tickn as SL
 import           Control.Monad
 import           Control.Monad.Except (runExcept, throwError)
 import           Data.Coerce (coerce)
+import           Data.Function ((&))
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (listToMaybe, mapMaybe)
 import           Data.Proxy
@@ -57,6 +59,7 @@ import           Data.SOP.Tails (Tails (..))
 import qualified Data.SOP.Tails as Tails
 import           Data.Word
 import           GHC.Generics (Generic)
+import           Lens.Micro ((%~))
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger
@@ -709,7 +712,7 @@ translateValidatedTxAlonzoToBabbageWrapper ctxt = InjectValidatedTx $
 -------------------------------------------------------------------------------}
 
 translateLedgerStateBabbageToConwayWrapper ::
-     (Praos.PraosCrypto c)
+     forall c. (Praos.PraosCrypto c)
   => RequiringBoth
        WrapLedgerConfig
        (Translate LedgerState)
@@ -718,7 +721,33 @@ translateLedgerStateBabbageToConwayWrapper ::
 translateLedgerStateBabbageToConwayWrapper =
     RequireBoth $ \_cfgBabbage cfgConway ->
       Translate $ \_epochNo ->
-        unComp . SL.translateEra' (getConwayTranslationContext cfgConway) . Comp
+          unComp
+        . SL.translateEra' (getConwayTranslationContext cfgConway)
+        . Comp
+        . patchGovState
+  where
+    patchGovState ::
+         LedgerState (ShelleyBlock proto (BabbageEra c))
+      -> LedgerState (ShelleyBlock proto (BabbageEra c))
+    patchGovState st =
+        st { shelleyLedgerState = shelleyLedgerState st
+               & SL.newEpochStateGovStateL %~ rotateGovState
+           }
+      where
+        -- This is only needed to keep backwards-compatibility with a past hack.
+        -- Concretely, this means that the tick across the epoch/era boundary
+        -- (using Conway logic) will consider the protocol parameters of the
+        -- first Conway epoch (instead of the last Babbage epoch) to be the
+        -- /current/ protocol parameters. The only effect is that delegations
+        -- from pointer addresses are ignored already at this epoch boundary.
+        rotateGovState ::
+             SL.ShelleyGovState (BabbageEra c)
+          -> SL.ShelleyGovState (BabbageEra c)
+        rotateGovState gs = gs {
+            SL.sgsPrevPParams   = SL.sgsCurPParams    gs
+          , SL.sgsCurPParams    = SL.nextEpochPParams gs
+          , SL.sgsFuturePParams = SL.PotentialPParamsUpdate Nothing
+          }
 
 getConwayTranslationContext ::
      WrapLedgerConfig (ShelleyBlock (Praos c) (ConwayEra c))
