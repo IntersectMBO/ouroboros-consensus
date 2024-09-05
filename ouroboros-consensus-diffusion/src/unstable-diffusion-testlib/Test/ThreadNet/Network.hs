@@ -38,6 +38,7 @@ module Test.ThreadNet.Network (
 
 import           Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM as MonadSTM
+import           Control.Concurrent.Class.MonadSTM.Strict (newTMVar)
 import qualified Control.Exception as Exn
 import           Control.Monad
 import           Control.Monad.Class.MonadTime.SI (MonadTime)
@@ -452,7 +453,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
       -> CoreNodeId
       -> VertexStatusVar m blk
       -> [EdgeStatusVar m]
-      -> NodeInfo blk (StrictTVar m MockFS) (Tracer m)
+      -> NodeInfo blk (StrictTMVar m MockFS) (Tracer m)
       -> StrictTVar m SlotNo
       -> m ()
     forkVertex
@@ -570,7 +571,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
       :: OracularClock m
       -> ResourceRegistry m
       -> VertexStatusVar m blk
-      -> NodeInfo blk (StrictTVar m MockFS) (Tracer m)
+      -> NodeInfo blk (StrictTMVar m MockFS) (Tracer m)
       -> StrictTVar m SlotNo
       -> m ()
     forkInstrumentation
@@ -710,7 +711,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
            -> Tracer m (LedgerUpdate blk)
               -- ^ ledger updates tracer
            -> Tracer m (ChainDB.TracePipeliningEvent blk)
-           -> NodeDBs (StrictTVar m MockFS)
+           -> NodeDBs (StrictTMVar m MockFS)
            -> CoreNodeId
            -> ChainDbArgs Identity m blk
     mkArgs
@@ -799,7 +800,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
       -> ResourceRegistry m
       -> ProtocolInfo blk
       -> m [BlockForging m blk]
-      -> NodeInfo blk (StrictTVar m MockFS) (Tracer m)
+      -> NodeInfo blk (StrictTMVar m MockFS) (Tracer m)
       -> [GenTx blk]
          -- ^ valid transactions the node should immediately propagate
       -> m ( NodeKernel m NodeId Void blk
@@ -1475,7 +1476,7 @@ data NodeEvents blk ev = NodeEvents
 newNodeInfo ::
   forall blk m.
      IOLike m
-  => m ( NodeInfo blk (StrictTVar m MockFS) (Tracer m)
+  => m ( NodeInfo blk (StrictTMVar m MockFS) (Tracer m)
        , m (NodeInfo blk MockFS [])
        )
 newNodeInfo = do
@@ -1494,10 +1495,10 @@ newNodeInfo = do
           )
 
   (nodeInfoDBs, readDBs) <- do
-      let mk :: m (StrictTVar m MockFS, STM m MockFS)
+      let mk :: m (StrictTMVar m MockFS, STM m MockFS)
           mk = do
-              v <- uncheckedNewTVarM Mock.empty
-              pure (v, readTVar v)
+              v <- atomically $ newTMVar Mock.empty
+              pure (v, readTMVar v)
       (v1, m1) <- mk
       (v2, m2) <- mk
       (v3, m3) <- mk

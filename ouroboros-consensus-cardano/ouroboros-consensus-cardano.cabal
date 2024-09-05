@@ -543,7 +543,7 @@ library unstable-cardano-tools
     contra-tracer,
     directory,
     filepath,
-    fs-api ^>=0.2.0.1,
+    fs-api ^>=0.3,
     githash,
     microlens,
     mtl,

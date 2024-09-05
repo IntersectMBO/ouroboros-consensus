@@ -45,6 +45,7 @@ module Test.Ouroboros.Storage.ImmutableDB.StateMachine (
   , tests
   ) where
 
+import           Control.Concurrent.Class.MonadSTM.Strict (newTMVar)
 import           Control.Monad (forM_, void)
 import           Data.Bifunctor (first)
 import           Data.ByteString.Lazy (ByteString)
@@ -79,7 +80,7 @@ import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Prelude hiding (elem, notElem)
 import           System.FS.API (HasFS (..), SomeHasFS (..))
 import           System.FS.API.Types (FsPath, mkFsPath)
-import           System.FS.Sim.Error (Errors, emptyErrors, mkSimErrorHasFS,
+import           System.FS.Sim.Error (Errors, emptyErrors, simErrorHasFS,
                      withErrors)
 import qualified System.FS.Sim.MockFS as Mock
 import           System.Random (getStdRandom, randomR)
@@ -1178,14 +1179,14 @@ test :: Index.CacheConfig
      -> QSM.Commands (At CmdErr IO) (At Resp IO)
      -> IO (QSM.History (At CmdErr IO) (At Resp IO), Property)
 test cacheConfig chunkInfo cmds = do
-    fsVar              <- uncheckedNewTVarM Mock.empty
+    fsVar              <- atomically $ newTMVar Mock.empty
     varErrors          <- uncheckedNewTVarM emptyErrors
     varNextId          <- uncheckedNewTVarM 0
     varIters           <- uncheckedNewTVarM []
     (tracer, getTrace) <- recordingTracerIORef
 
     withRegistry $ \registry -> do
-      let hasFS = mkSimErrorHasFS (unsafeToUncheckedStrictTVar fsVar) (unsafeToUncheckedStrictTVar varErrors)
+      let hasFS = simErrorHasFS fsVar (unsafeToUncheckedStrictTVar varErrors)
           args  = ImmutableDbArgs {
               immCacheConfig      = cacheConfig
             , immCheckIntegrity   = testBlockIsValid
@@ -1218,7 +1219,7 @@ test cacheConfig chunkInfo cmds = do
           trace <- getTrace
           return (hist, model, res, trace)
 
-      fs <- atomically $ readTVar fsVar
+      fs <- atomically $ readTMVar fsVar
 
       let modelTip = dbmTip $ dbModel model
           prop =

@@ -85,7 +85,7 @@ data LiveResources blk m = LiveResources {
     -- After 'lnCopyToImmDb' was executed, the latter will contain the final
     -- state of an interval.
     -- The rest is reset when the chain DB is recreated.
-  , lrCdb      :: NodeDBs (StrictTVar m MockFS)
+  , lrCdb      :: NodeDBs (StrictTMVar m MockFS)
 
     -- | The LoE fragment must be reset for each live interval.
   , lrLoEVar   :: LoE (StrictTVar m (AnchoredFragment (Header blk)))
@@ -122,8 +122,8 @@ mkChainDb resources = do
       -- Reset only the non-persisted state of the ChainDB's file system mocks:
       -- - GSM state and Ledger DB are discarded
       -- - Immutable DB and Volatile DB are preserved for the next interval
-      modifyTVar (nodeDBsGsm lrCdb) (const MockFS.empty)
-      modifyTVar (nodeDBsLgr lrCdb) (const MockFS.empty)
+      void $ swapTMVar (nodeDBsGsm lrCdb) MockFS.empty
+      void $ swapTMVar (nodeDBsLgr lrCdb) MockFS.empty
     chainDbArgs <- do
       let args = updateTracer
             (Tracer (traceWith lrTracer . TraceChainDBEvent))
