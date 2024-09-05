@@ -146,56 +146,16 @@ jobs:
       if: matrix.test-set == 'no-thunks-safe'
       run: cabal test ouroboros-consensus:consensus-test ouroboros-consensus:doctest ouroboros-consensus:infra-test ouroboros-consensus:storage-test ouroboros-consensus-cardano:byron-test ouroboros-consensus-cardano:shelley-test ouroboros-consensus-diffusion:infra-test ouroboros-consensus-protocol:protocol-test -j --test-show-details=streaming
 
-    - name: Create baseline-benchmark
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    - name: Identify benchmark executables
       run: |
-        cabal new-run ouroboros-consensus:mempool-bench -- \
-        --timeout=60 --csv mempool-benchmarks.csv \
-        +RTS -T
+        cp $(cabal list-bin mempool-bench) mempool-bench
 
-    # TODO: we only care about saving the baseline results when we run on the
-    # main branch. However we need to restore the cache when we run the
-    # benchmarks during PRs. The caching mechanism of GitHub actions does not
-    # allow not to save a cache entry.
-    #
-    # The `run_id` is only relevant to store a new benchmarking result when we
-    # run on the `main` branch. If we run this workflow in the context of a PR,
-    # then we will save the same results we just restored.
-    - name: Cache benchmark baseline results
-      uses: actions/cache@v4
-      if: matrix.variant == 'default'
+    - name: Upload benchmark executables
+      uses: actions/upload-artifact@v4
       with:
-        path: baseline-mempool-benchmarks.csv
-        key:  baseline-mempool-benchmarks-${{ runner.os }}-${{ matrix.ghc }}-${{ github.run_id }}
-        restore-keys: baseline-mempool-benchmarks-${{ runner.os }}-${{ matrix.ghc }}
-
-    # We only update the cache if we just ran a benchmark on main.
-    - name: Copy baseline-benchmark to cache
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      run: cp mempool-benchmarks.csv baseline-mempool-benchmarks.csv
-
-    # TODO: this will be necessary when we publish the benchmarks results.
-    # - name: Upload mempool benchmark baseline results
-    #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    #   uses: actions/upload-artifact@v4
-    #   with:
-    #     name: baseline-mempool-benchmarks
-    #     path: baseline-mempool-benchmarks.csv
-
-    # The `fail-if-slower` value is determined ad-hoc based on the variability
-    # we observed in our benchmarks.
-    - name: Run mempool benchmarks on pull requests
-      if: ${{ github.event_name == 'pull_request' }}
-      run: |
-        if [ -f baseline-mempool-benchmarks.csv ]; then
-          cabal new-run ouroboros-consensus:mempool-bench -- \
-          --timeout=60 --baseline baseline-mempool-benchmarks.csv \
-          --fail-if-slower 100 \
-          +RTS -T
-        else
-          echo "No baseline benchmarks found. This likely happened when adding a new GHC version to the build matrix."
-          echo "Benchmarks comparison skipped."
-        fi
+        name: benchmark-exes-${{ runner.os }}-${{ matrix.ghc }}
+        path: mempool-bench
+        retention-days: 1
 
     # NB: build the haddocks at the end to avoid unecessary recompilations.
     # We build the haddocks only for one GHC version.
@@ -224,6 +184,83 @@ jobs:
         name: haddocks
         path: haddocks.tgz
         retention-days: 1
+
+  benchmarks:
+    name: Run benchmarks
+    needs: build-test-bench-haddocks
+
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ghc: ["8.10.7", "9.6.6", "9.10.1"]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install base libraries
+      uses: input-output-hk/actions/base@latest
+      with:
+        use-sodium-vrf: false
+
+    - name: Download benchmark executables
+      uses: actions/download-artifact@v4
+      with:
+        name: benchmark-exes-${{ runner.os }}-${{ matrix.ghc }}
+
+    - name: Set permissions for benchmark executables
+      run: |
+        chmod u+x mempool-bench
+
+    - name: Create baseline-benchmark
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      run: |
+        ./mempool-bench \
+        --timeout=60 --csv mempool-benchmarks.csv \
+        +RTS -T
+
+    # TODO: we only care about saving the baseline results when we run on the
+    # main branch. However we need to restore the cache when we run the
+    # benchmarks during PRs. The caching mechanism of GitHub actions does not
+    # allow not to save a cache entry.
+    #
+    # The `run_id` is only relevant to store a new benchmarking result when we
+    # run on the `main` branch. If we run this workflow in the context of a PR,
+    # then we will save the same results we just restored.
+    - name: Cache benchmark baseline results
+      uses: actions/cache@v4
+      with:
+        path: baseline-mempool-benchmarks.csv
+        key:  baseline-mempool-benchmarks-${{ runner.os }}-${{ matrix.ghc }}-${{ github.run_id }}
+        restore-keys: baseline-mempool-benchmarks-${{ runner.os }}-${{ matrix.ghc }}
+
+    # We only update the cache if we just ran a benchmark on main.
+    - name: Copy baseline-benchmark to cache
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      run: cp mempool-benchmarks.csv baseline-mempool-benchmarks.csv
+
+    # TODO: this will be necessary when we publish the benchmarks results.
+    # - name: Upload mempool benchmark baseline results
+    #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    #   uses: actions/upload-artifact@v4
+    #   with:
+    #     name: baseline-mempool-benchmarks
+    #     path: baseline-mempool-benchmarks.csv
+
+    # The `fail-if-slower` value is determined ad-hoc based on the variability
+    # we observed in our benchmarks.
+    - name: Run mempool benchmarks on pull requests
+      if: ${{ github.event_name == 'pull_request' }}
+      run: |
+        if [ -f baseline-mempool-benchmarks.csv ]; then
+          ./mempool-bench \
+          --timeout=60 --baseline baseline-mempool-benchmarks.csv \
+          --fail-if-slower 100 \
+          +RTS -T
+        else
+          echo "No baseline benchmarks found. This likely happened when adding a new GHC version to the build matrix."
+          echo "Benchmarks comparison skipped."
+        fi
 
   deploy-documentation:
     name: Deploy documentation to GitHub Pages
