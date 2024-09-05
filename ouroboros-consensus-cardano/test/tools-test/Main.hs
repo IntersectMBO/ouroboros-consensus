@@ -83,17 +83,14 @@ testBlockArgs = Cardano.CardanoBlockArgs nodeConfig Nothing
 blockCountTest :: (String -> IO ()) -> Assertion
 blockCountTest logStep = do
     logStep "running synthesis - create"
-    (options, protocol) <- either assertFailure pure
-        =<< DBSynthesizer.initialize
-          testNodeFilePaths
-          testNodeCredentials
-          testSynthOptionsCreate
+    (options, protocol) <- initialize
     resultCreate <- DBSynthesizer.synthesize genTxs options protocol
     let blockCountCreate = resultForged resultCreate
     blockCountCreate > 0 @? "no blocks have been forged during create step"
 
     logStep "running synthesis - append"
-    resultAppend <- DBSynthesizer.synthesize genTxs options {confOptions = testSynthOptionsAppend} protocol
+    (options', protocol') <- initialize
+    resultAppend <- DBSynthesizer.synthesize genTxs options' {confOptions = testSynthOptionsAppend} protocol'
     let blockCountAppend = resultForged resultAppend
     blockCountAppend > 0 @? "no blocks have been forged during append step"
 
@@ -109,6 +106,11 @@ blockCountTest logStep = do
         \ (counted: " ++ show resultAnalysis ++ "; expected: " ++ show blockCount ++ ")"
   where
     genTxs _ _ _ = pure []
+    initialize = either assertFailure pure
+                    =<< DBSynthesizer.initialize
+                      testNodeFilePaths
+                      testNodeCredentials
+                      testSynthOptionsCreate
 
 tests :: TestTree
 tests =
