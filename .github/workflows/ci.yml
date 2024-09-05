@@ -198,6 +198,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Install base libraries
+      uses: input-output-hk/actions/base@latest
+      with:
+        use-sodium-vrf: false
+
     - name: Download benchmark executables
       uses: actions/download-artifact@v4
       with:
