@@ -55,6 +55,7 @@ data SlotDataPoint =
       , mut_headerApply :: !Int64
       , mut_blockTick   :: !Int64
       , mut_blockApply  :: !Int64
+      , blockByteSize   :: !Word32
       -- | Free-form information about the block.
       , blockStats      :: !BlockStats
       } deriving (Generic, Show)

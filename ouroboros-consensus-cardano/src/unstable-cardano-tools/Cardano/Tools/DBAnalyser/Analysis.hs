@@ -41,7 +41,7 @@ import           Data.Int (Int64)
 import           Data.List (intercalate)
 import qualified Data.Map.Strict as Map
 import           Data.Singletons
-import           Data.Word (Word16, Word64)
+import           Data.Word (Word16, Word32, Word64)
 import qualified Debug.Trace as Debug
 import qualified GHC.Stats as GC
 import           NoThunks.Class (noThunks)
@@ -182,11 +182,12 @@ data TraceEvent blk =
   | CountedBlocksEvent Int
     -- ^ triggered once during CountBLocks analysis,
     --   when blocks were counted
-  | HeaderSizeEvent BlockNo SlotNo Word16
+  | HeaderSizeEvent BlockNo SlotNo Word16 Word32
     -- ^ triggered when header size has been measured
     --   * block's number
     --   * slot number when the block was forged
     --   * block's header size
+    --   * block's size
   | MaxHeaderSizeEvent Word16
     -- ^ triggered once during ShowBlockTxsSize analysis,
     --   holding maximum encountered header size
@@ -238,10 +239,11 @@ instance (HasAnalysis blk, LedgerSupportsProtocol blk) => Show (TraceEvent blk) 
     , "Known: " <> show known
     ]
   show (CountedBlocksEvent counted)       = "Counted " <> show counted <> " blocks."
-  show (HeaderSizeEvent bn sn headerSize) = intercalate "\t" $ [
+  show (HeaderSizeEvent bn sn hSz bSz)    = intercalate "\t" $ [
       show bn
     , show sn
-    , "header size: " <> show headerSize
+    , "header size: " <> show hSz
+    , "block size: "  <> show bSz
     ]
   show (MaxHeaderSizeEvent size)          =
     "Maximum encountered header size = " <> show size
@@ -312,15 +314,16 @@ countTxOutputs AnalysisEnv { db, registry, startFrom, limit, tracer } = do
 showHeaderSize :: forall blk. HasAnalysis blk => Analysis blk StartFromPoint
 showHeaderSize AnalysisEnv { db, registry, startFrom, limit, tracer } = do
     maxHeaderSize <-
-      processAll db registry ((,) <$> GetHeader <*> GetHeaderSize) startFrom limit 0 process
+      processAll db registry ((,,) <$> GetHeader <*> GetHeaderSize <*> GetBlockSize) startFrom limit 0 process
     traceWith tracer $ MaxHeaderSizeEvent maxHeaderSize
     pure $ Just $ ResultMaxHeaderSize maxHeaderSize
   where
-    process :: Word16 -> (Header blk, Word16) -> IO Word16
-    process maxHeaderSize (hdr, headerSize) = do
+    process :: Word16 -> (Header blk, Word16, SizeInBytes) -> IO Word16
+    process maxHeaderSize (hdr, headerSize, blockSize) = do
       let event = HeaderSizeEvent (blockNo hdr)
                                   (blockSlot hdr)
                                    headerSize
+                                  (getSizeInBytes blockSize)
       traceWith tracer event
       return $ maxHeaderSize `max` headerSize
 
@@ -548,7 +551,14 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv {db, registry, startFrom, 
       F.writeMetadata outFileHandle outFormat ledgerAppMode
       F.writeHeader   outFileHandle outFormat
 
-      void $ processAll db registry GetBlock startFrom limit initLedger (process outFileHandle outFormat)
+      void $ processAll
+        db
+        registry
+        ((,) <$> GetBlock <*> GetBlockSize)
+        startFrom
+        limit
+        initLedger
+        (process outFileHandle outFormat)
       pure Nothing
   where
     ccfg = topLevelConfigProtocol cfg
@@ -560,9 +570,9 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv {db, registry, startFrom, 
          IO.Handle
       -> F.OutputFormat
       -> ExtLedgerState blk
-      -> blk
+      -> (blk, SizeInBytes)
       -> IO (ExtLedgerState blk)
-    process outFileHandle outFormat prevLedgerState blk = do
+    process outFileHandle outFormat prevLedgerState (blk, sz)  = do
         prevRtsStats <- GC.getRTSStats
         let
           -- Compute how many nanoseconds the mutator used from the last
@@ -604,6 +614,7 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv {db, registry, startFrom, 
             , DP.mut_headerApply = tHdrApp   `div` 1000
             , DP.mut_blockTick   = tBlkTick  `div` 1000
             , DP.mut_blockApply  = tBlkApp   `div` 1000
+            , DP.blockByteSize   = getSizeInBytes sz
             , DP.blockStats      = DP.BlockStats $ HasAnalysis.blockStats blk
             }
 
