@@ -464,13 +464,7 @@ pattern CardanoNodeToClientVersion12 =
 instance CardanoHardForkConstraints c
       => SupportedNetworkProtocolVersion (CardanoBlock c) where
   supportedNodeToNodeVersions _ = Map.fromList $
-      [ (NodeToNodeV_7, CardanoNodeToNodeVersion2)
-      , (NodeToNodeV_8, CardanoNodeToNodeVersion2)
-      , (NodeToNodeV_9, CardanoNodeToNodeVersion2)
-      , (NodeToNodeV_10, CardanoNodeToNodeVersion2)
-      , (NodeToNodeV_11, CardanoNodeToNodeVersion2)
-      , (NodeToNodeV_12, CardanoNodeToNodeVersion2)
-      , (NodeToNodeV_13, CardanoNodeToNodeVersion2)
+      [ (NodeToNodeV_13, CardanoNodeToNodeVersion2)
       ]
 
   supportedNodeToClientVersions _ = Map.fromList $
