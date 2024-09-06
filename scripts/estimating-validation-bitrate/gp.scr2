@@ -1,0 +1,4 @@
+set xlabel 'slot number (at end of each 10 second chunk)'
+set ylabel 'blocks per 10 second chunk of mutator time, clamped to 1000'
+
+plot 'catch' using 1:(1000 < $3 ? 1000 : $3) notitle
