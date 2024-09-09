@@ -49,6 +49,7 @@ const sidebars = {
         'for-developers/BootstrapPeersIER',
         'for-developers/TechnicalReports',
         'for-developers/PreflightGuide',
+        'for-developers/NodeTasks',
       ]
     },
   ]
