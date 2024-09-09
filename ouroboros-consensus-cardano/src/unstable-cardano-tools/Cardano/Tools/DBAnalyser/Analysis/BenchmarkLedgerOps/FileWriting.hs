@@ -112,5 +112,6 @@ dataPointCsvBuilder =
     , ("mut_headerApply"       , decimal . DP.mut_headerApply)
     , ("mut_blockTick"         , decimal . DP.mut_blockTick)
     , ("mut_blockApply"        , decimal . DP.mut_blockApply)
+    , ("blockBytes"            , decimal . DP.blockByteSize)
     , ("...era-specific stats" , Builder.intercalate csvSeparator . DP.unBlockStats . DP.blockStats)
     ]
