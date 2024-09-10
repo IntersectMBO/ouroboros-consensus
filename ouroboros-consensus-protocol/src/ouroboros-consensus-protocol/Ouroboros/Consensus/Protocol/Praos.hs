@@ -159,17 +159,17 @@ forgePraosFields
   hotKey
   PraosCanBeLeader
     { praosCanBeLeaderColdVerKey,
-      praosCanBeLeaderSignKeyVRF,
-      praosCanBeLeaderOCert
+      praosCanBeLeaderSignKeyVRF
     }
   PraosIsLeader {praosIsLeaderVrfRes}
   mkToSign = do
+    ocert <- HotKey.getOCert hotKey
     let signedFields =
           PraosToSign
             { praosToSignIssuerVK = praosCanBeLeaderColdVerKey,
               praosToSignVrfVK = VRF.deriveVerKeyVRF praosCanBeLeaderSignKeyVRF,
               praosToSignVrfRes = praosIsLeaderVrfRes,
-              praosToSignOCert = praosCanBeLeaderOCert
+              praosToSignOCert = ocert
             }
         toSign = mkToSign signedFields
     signature <- HotKey.sign hotKey toSign

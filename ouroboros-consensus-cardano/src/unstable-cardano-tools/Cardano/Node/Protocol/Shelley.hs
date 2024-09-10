@@ -46,7 +46,7 @@ import qualified Data.ByteString as BS
 import qualified Data.Text as T
 import qualified Ouroboros.Consensus.Cardano as Consensus
 import           Ouroboros.Consensus.Protocol.Praos.Common
-                     (PraosCanBeLeader (..))
+                     (PraosCanBeLeader (..), PraosCredentialsSource (..))
 import           Ouroboros.Consensus.Shelley.Node (Nonce (..),
                      ProtocolParams (..), ProtocolParamsShelleyBased (..),
                      ShelleyGenesis (..), ShelleyLeaderCredentials (..))
@@ -156,9 +156,7 @@ readLeaderCredentialsSingleton
     vrfSKey <-
       firstExceptT FileError (newExceptT $ readFileTextEnvelope (AsSigningKey AsVrfKey) vrfFile)
 
-    (opCert, KesSigningKey unsoundKesSKey) <- opCertKesKeyCheck kesFile opCertFile
-
-    kesSKey <- liftIO $ KES.unsoundPureSignKeyKESToSoundSignKeyKES unsoundKesSKey
+    (opCert, KesSigningKey kesSKey) <- opCertKesKeyCheck kesFile opCertFile
 
     let leaderCredentials = mkPraosLeaderCredentials opCert vrfSKey kesSKey
 
@@ -210,8 +208,7 @@ readLeaderCredentialsBulk ProtocolFilepaths { shelleyBulkCredsFile = mfp } =
    parseShelleyCredentials ShelleyCredentials { scCert, scVrf, scKes } = do
      cert <- parseEnvelope AsOperationalCertificate scCert
      vrfKey <- parseEnvelope (AsSigningKey AsVrfKey) scVrf
-     KesSigningKey unsoundPureKesKey <- parseEnvelope (AsSigningKey AsUnsoundPureKesKey) scKes
-     kesKey <- liftIO $ KES.unsoundPureSignKeyKESToSoundSignKeyKES unsoundPureKesKey
+     KesSigningKey kesKey <- parseEnvelope (AsSigningKey AsUnsoundPureKesKey) scKes
      return $ mkPraosLeaderCredentials cert vrfKey kesKey
 
    readBulkFile
@@ -236,7 +233,7 @@ readLeaderCredentialsBulk ProtocolFilepaths { shelleyBulkCredsFile = mfp } =
 mkPraosLeaderCredentials ::
      OperationalCertificate
   -> SigningKey VrfKey
-  -> KES.SignKeyKES (KES StandardCrypto)
+  -> KES.UnsoundPureSignKeyKES (KES StandardCrypto)
   -> ShelleyLeaderCredentials StandardCrypto
 mkPraosLeaderCredentials
     (OperationalCertificate ocert (StakePoolVerificationKey vkey))
@@ -247,8 +244,7 @@ mkPraosLeaderCredentials
         PraosCanBeLeader {
           praosCanBeLeaderColdVerKey = coerceKeyRole vkey,
           praosCanBeLeaderSignKeyVRF = vrfKey,
-          praosCanBeLeaderOCert = ocert,
-          praosCanBeLeaderKESKey = kesKey
+          praosCanBeLeaderCredentialsSource = PraosCredentialsUnsound ocert kesKey
         }
     , shelleyLeaderCredentialsLabel = "Shelley"
     }

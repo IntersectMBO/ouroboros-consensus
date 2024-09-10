@@ -265,15 +265,14 @@ protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
     blockForgings <- traverse
                         (\credentials -> do
                               let canBeLeader = shelleyLeaderCredentialsCanBeLeader credentials
-
-                              let ocert :: SL.OCert c
-                                  ocert = praosCanBeLeaderOCert canBeLeader
+                              (ocert, sk) <- instantiatePraosCredentials (praosCanBeLeaderCredentialsSource canBeLeader)
 
                               let startPeriod :: Absolute.KESPeriod
                                   startPeriod = SL.ocertKESPeriod ocert
 
                               hotKey :: HotKey.HotKey c m <- HotKey.mkHotKey
-                                          (praosCanBeLeaderKESKey canBeLeader)
+                                          ocert
+                                          sk
                                           startPeriod
                                           (tpraosMaxKESEvo tpraosParams)
 

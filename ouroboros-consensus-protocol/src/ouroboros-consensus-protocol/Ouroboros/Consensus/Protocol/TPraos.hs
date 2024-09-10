@@ -129,13 +129,14 @@ forgeTPraosFields ::
   -> (TPraosToSign c -> toSign)
   -> m (TPraosFields c toSign)
 forgeTPraosFields hotKey PraosCanBeLeader{..} TPraosIsLeader{..} mkToSign = do
+    ocert <- HotKey.getOCert hotKey
     let signedFields =
           TPraosToSign {
               tpraosToSignIssuerVK = praosCanBeLeaderColdVerKey
             , tpraosToSignVrfVK    = VRF.deriveVerKeyVRF praosCanBeLeaderSignKeyVRF
             , tpraosToSignEta      = tpraosIsLeaderEta
             , tpraosToSignLeader   = tpraosIsLeaderProof
-            , tpraosToSignOCert    = praosCanBeLeaderOCert
+            , tpraosToSignOCert    = ocert
             }
         toSign = mkToSign signedFields
     signature <- HotKey.sign hotKey toSign

@@ -16,16 +16,21 @@ module Ouroboros.Consensus.Protocol.Praos.Common (
     -- * node support
   , PraosNonces (..)
   , PraosProtocolSupportsNode (..)
+  , PraosCredentialsSource (..)
+  , instantiatePraosCredentials
   ) where
 
 import qualified Cardano.Crypto.VRF as VRF
+import qualified Cardano.Crypto.KES.Class as KES
 import           Cardano.Ledger.BaseTypes (Nonce, Version)
-import           Cardano.Ledger.Crypto (Crypto, VRF)
+import           Cardano.Ledger.Crypto (Crypto, VRF, KES)
 import           Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer))
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Protocol.TPraos.OCert as OCert
 import           Cardano.Slotting.Block (BlockNo)
 import           Cardano.Slotting.Slot (SlotNo)
+import           Control.Monad.Class.MonadST (MonadST)
+import           Control.Monad.Class.MonadThrow (MonadThrow)
 import           Data.Function (on)
 import           Data.Map.Strict (Map)
 import           Data.Ord (Down (Down))
@@ -232,12 +237,28 @@ data PraosCanBeLeader c = PraosCanBeLeader
   { -- | Stake pool cold key or genesis stakeholder delegate cold key.
     praosCanBeLeaderColdVerKey :: !(SL.VKey 'SL.BlockIssuer c),
     praosCanBeLeaderSignKeyVRF :: !(SL.SignKeyVRF c),
-    praosCanBeLeaderOCert :: !(OCert.OCert c),
-    praosCanBeLeaderKESKey :: !(SL.SignKeyKES c)
+    praosCanBeLeaderCredentialsSource :: !(PraosCredentialsSource c)
+    -- praosCanBeLeaderOCert :: !(OCert.OCert c),
+    -- praosCanBeLeaderKESKey :: !(SL.SignKeyKES c)
   }
   deriving (Generic)
 
+data PraosCredentialsSource c
+  = PraosCredentialsUnsound (OCert.OCert c) (SL.UnsoundPureSignKeyKES c)
+  deriving (Generic)
+
+instance (NoThunks (SL.UnsoundPureSignKeyKES c), Crypto c) => NoThunks (PraosCredentialsSource c)
 instance (NoThunks (SL.UnsoundPureSignKeyKES c), Crypto c) => NoThunks (PraosCanBeLeader c)
+
+instantiatePraosCredentials :: ( KES.UnsoundPureKESAlgorithm (KES c)
+                               , MonadST m
+                               , MonadThrow m
+                               )
+                            => PraosCredentialsSource c
+                            -> m (OCert.OCert c, SL.SignKeyKES c)
+instantiatePraosCredentials (PraosCredentialsUnsound ocert skUnsound) = do
+  sk <- KES.unsoundPureSignKeyKESToSoundSignKeyKES skUnsound
+  return (ocert, sk)
 
 -- | See 'PraosProtocolSupportsNode'
 data PraosNonces = PraosNonces {

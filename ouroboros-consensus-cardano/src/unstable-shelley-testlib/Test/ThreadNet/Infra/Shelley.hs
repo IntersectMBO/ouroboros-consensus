@@ -37,7 +37,7 @@ module Test.ThreadNet.Infra.Shelley (
 
 import           Cardano.Crypto.DSIGN (DSIGNAlgorithm (..), seedSizeDSIGN)
 import           Cardano.Crypto.Hash (Hash, HashAlgorithm)
-import           Cardano.Crypto.KES (KESAlgorithm (..), UnsoundPureKESAlgorithm (..), seedSizeKES, unsoundPureSignKeyKESToSoundSignKeyKES)
+import           Cardano.Crypto.KES (KESAlgorithm (..), UnsoundPureKESAlgorithm (..), seedSizeKES)
 import           Cardano.Crypto.Seed (mkSeedFromBytes)
 import qualified Cardano.Crypto.Seed as Cardano.Crypto
 import           Cardano.Crypto.VRF (SignKeyVRF, VRFAlgorithm, VerKeyVRF,
@@ -80,8 +80,8 @@ import           Ouroboros.Consensus.Protocol.Praos.Common
                      (PraosCanBeLeader (PraosCanBeLeader),
                      praosCanBeLeaderColdVerKey,
                      praosCanBeLeaderSignKeyVRF,
-                     praosCanBeLeaderOCert,
-                     praosCanBeLeaderKESKey)
+                     praosCanBeLeaderCredentialsSource,
+                     PraosCredentialsSource (..))
 import           Ouroboros.Consensus.Protocol.TPraos
 import           Ouroboros.Consensus.Shelley.Eras (EraCrypto, ShelleyEra)
 import           Ouroboros.Consensus.Shelley.Ledger (GenTx (..),
@@ -216,14 +216,12 @@ mkLeaderCredentials :: forall m c.
                     => CoreNode c
                     -> m (ShelleyLeaderCredentials c)
 mkLeaderCredentials CoreNode { cnDelegateKey, cnVRF, cnKES, cnOCert } = do
-  kesKey <- unsoundPureSignKeyKESToSoundSignKeyKES cnKES
   return
     ShelleyLeaderCredentials {
        shelleyLeaderCredentialsCanBeLeader = PraosCanBeLeader {
           praosCanBeLeaderColdVerKey = SL.VKey $ deriveVerKeyDSIGN cnDelegateKey
         , praosCanBeLeaderSignKeyVRF = cnVRF
-        , praosCanBeLeaderKESKey = kesKey
-        , praosCanBeLeaderOCert = cnOCert
+        , praosCanBeLeaderCredentialsSource = PraosCredentialsUnsound cnOCert cnKES
         }
       , shelleyLeaderCredentialsLabel       = "ThreadNet"
       }
