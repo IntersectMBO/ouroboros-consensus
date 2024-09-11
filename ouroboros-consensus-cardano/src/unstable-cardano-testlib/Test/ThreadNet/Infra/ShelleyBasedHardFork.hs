@@ -228,7 +228,7 @@ protocolInfoShelleyBasedHardFork ::
   -> L.TransitionConfig era2
   -> TriggerHardFork
   -> m ( ProtocolInfo      (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)
-       , [BlockForging m (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)]
+       , m [BlockForging m (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)]
        )
 protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
                                  protVer1
@@ -250,7 +250,7 @@ protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
               (transCfg2 ^. L.tcPreviousEraConfigL)
               protVer1
   let protocolInfo1 :: ProtocolInfo (ShelleyBlock proto1 era1)
-      blockForging1 :: [BlockForging m (ShelleyBlock proto1 era1)]
+      blockForging1 :: m [BlockForging m (ShelleyBlock proto1 era1)]
       (protocolInfo1, blockForging1) = pinfo1
 
   let eraParams1 :: History.EraParams
@@ -274,7 +274,7 @@ protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
               transCfg2
               protVer2
   let protocolInfo2 :: ProtocolInfo (ShelleyBlock proto2 era2)
-      blockForging2 :: [BlockForging m (ShelleyBlock proto2 era2)]
+      blockForging2 :: m [BlockForging m (ShelleyBlock proto2 era2)]
       (protocolInfo2, blockForging2) = pinfo2
 
   let eraParams2 :: History.EraParams

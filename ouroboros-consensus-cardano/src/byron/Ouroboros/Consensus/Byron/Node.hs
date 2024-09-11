@@ -154,10 +154,10 @@ mkPBftCanBeLeader (ByronLeaderCredentials sk cert nid _) = PBftCanBeLeader {
 
 blockForgingByron :: Monad m
                   => ProtocolParams ByronBlock
-                  -> [BlockForging m ByronBlock]
+                  -> m [BlockForging m ByronBlock]
 blockForgingByron ProtocolParamsByron { byronLeaderCredentials = mLeaderCreds
                                       } =
-            byronBlockForging
+            return $ byronBlockForging
             <$> maybeToList mLeaderCreds
 
 {-------------------------------------------------------------------------------

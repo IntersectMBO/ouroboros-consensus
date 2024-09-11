@@ -107,6 +107,6 @@ prop_simple_bft_convergence TestSetup
                       nid
                       k
                       (HardFork.defaultEraParams k slotLength))
-                    (blockForgingBft nid)
+                    (pure $ blockForgingBft nid)
             , mkRekeyM = Nothing
             }

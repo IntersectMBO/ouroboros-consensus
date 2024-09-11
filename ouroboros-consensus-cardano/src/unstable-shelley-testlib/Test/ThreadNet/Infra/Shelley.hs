@@ -416,7 +416,7 @@ mkProtocolShelley ::
   -> ProtVer
   -> CoreNode c
   -> m ( ProtocolInfo (ShelleyBlock (TPraos c) (ShelleyEra c))
-       , [BlockForging m (ShelleyBlock (TPraos c) (ShelleyEra c))]
+       , m [BlockForging m (ShelleyBlock (TPraos c) (ShelleyEra c))]
        )
 mkProtocolShelley genesis initialNonce protVer coreNode = do
     leaderCredentials <- mkLeaderCredentials coreNode

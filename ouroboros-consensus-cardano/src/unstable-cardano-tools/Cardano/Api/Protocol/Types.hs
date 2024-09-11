@@ -44,7 +44,7 @@ class (RunNode blk, IOLike m) => Protocol m blk where
   data ProtocolInfoArgs m blk
   protocolInfo :: ProtocolInfoArgs m blk
                -> m ( ProtocolInfo blk
-                    , [BlockForging m blk]
+                    , m [BlockForging m blk]
                     )
 
 -- | Node client support for each consensus protocol.
@@ -63,7 +63,7 @@ instance IOLike m => Protocol m ByronBlockHFC where
   protocolInfo (ProtocolInfoArgsByron params) =
     pure
       ( inject $ protocolInfoByron params
-      , map inject $ blockForgingByron params
+      , map inject <$> blockForgingByron params
       )
 
 instance (CardanoHardForkConstraints StandardCrypto, IOLike m) => Protocol m (CardanoBlock StandardCrypto) where
@@ -98,7 +98,7 @@ instance ( IOLike m
     (ProtocolParams (Consensus.ShelleyBlock (Consensus.TPraos StandardCrypto) (ShelleyEra StandardCrypto)))
 
   protocolInfo (ProtocolInfoArgsShelley genesis paramsShelleyBased' paramsShelley') =
-    bimap inject (map inject) <$> do
+    bimap inject (fmap (map inject)) <$> do
       protocolInfoShelley genesis paramsShelleyBased' paramsShelley'
 
 instance Consensus.LedgerSupportsProtocol

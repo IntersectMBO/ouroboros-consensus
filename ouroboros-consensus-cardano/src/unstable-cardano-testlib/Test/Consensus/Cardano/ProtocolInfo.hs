@@ -257,7 +257,7 @@ mkTestProtocolInfo ::
   -> Maybe PBftSignatureThreshold
   -> HardForkSpec
   -- ^ Specification of the era to which the initial state should hard-fork to.
-  -> m (ProtocolInfo (CardanoBlock c), [BlockForging m (CardanoBlock c)])
+  -> m (ProtocolInfo (CardanoBlock c), m [BlockForging m (CardanoBlock c)])
 mkTestProtocolInfo
     (coreNodeId, coreNode)
     shelleyGenesis

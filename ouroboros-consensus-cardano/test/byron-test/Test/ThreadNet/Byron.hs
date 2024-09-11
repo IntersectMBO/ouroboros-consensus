@@ -1290,17 +1290,17 @@ mkRekeyUpd ::
   -> Crypto.SignKeyDSIGN Crypto.ByronDSIGN
   -> m (Maybe (TestNodeInitialization m ByronBlock))
 mkRekeyUpd genesisConfig genesisSecrets cid pInfo blockForging eno newSK = do
-  blockForging <&> \case
-    []    -> Nothing
-    (_:_) ->
+  blockForging >>= \case
+    []    -> pure Nothing
+    (_:_) -> do
       let genSK = genesisSecretFor genesisConfig genesisSecrets cid
           creds' = updSignKey genSK bcfg cid (coerce eno) newSK
           blockForging' = byronBlockForging creds'
 
-      in Just TestNodeInitialization
+      return $ Just TestNodeInitialization
         { tniCrucialTxs = [dlgTx (blcDlgCert creds')]
         , tniProtocolInfo = pInfo
-        , tniBlockForging = [blockForging']
+        , tniBlockForging = pure [blockForging']
         }
   where
     bcfg = configBlock (pInfoConfig pInfo)

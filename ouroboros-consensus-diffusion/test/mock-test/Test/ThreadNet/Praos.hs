@@ -142,7 +142,7 @@ prop_simple_praos_convergence TestSetup
     testOutput@TestOutput{testOutputNodes} =
         runTestNetwork testConfig testConfigB TestConfigMB
             { nodeInfo = \nid -> do
-                blockForging <- blockForgingPraos numCoreNodes nid
+                let blockForging = blockForgingPraos numCoreNodes nid
                 pure $ plainTestNodeInitialization
                   (protocolInfoPraos
                     numCoreNodes

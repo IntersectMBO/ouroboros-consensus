@@ -482,7 +482,7 @@ mkProtocolCardanoAndHardForkTxs
                 }
 
   let protocolInfo :: ProtocolInfo (CardanoBlock c)
-      blockForging :: [BlockForging m (CardanoBlock c)]
+      blockForging :: m [BlockForging m (CardanoBlock c)]
       (protocolInfo, blockForging) = pinfo
 
 

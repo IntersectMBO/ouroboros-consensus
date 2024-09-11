@@ -82,7 +82,7 @@ protocolInfoDualByron :: forall m. Monad m
                       -> PBftParams
                       -> [CoreNodeId] -- ^ Are we a core node?
                       -> m ( ProtocolInfo DualByronBlock
-                           , [BlockForging m DualByronBlock]
+                           , m [BlockForging m DualByronBlock]
                            )
 protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
   return
@@ -118,7 +118,7 @@ protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
            , headerState = genesisHeaderState S.empty
            }
       }
-    , dualByronBlockForging . byronLeaderCredentials <$> credss
+    , return $ dualByronBlockForging . byronLeaderCredentials <$> credss
     )
   where
     initUtxo :: Impl.UTxO

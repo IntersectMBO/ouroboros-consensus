@@ -89,8 +89,7 @@ blockCountTest logStep = do
     blockCountCreate > 0 @? "no blocks have been forged during create step"
 
     logStep "running synthesis - append"
-    (options', protocol') <- initialize
-    resultAppend <- DBSynthesizer.synthesize genTxs options' {confOptions = testSynthOptionsAppend} protocol'
+    resultAppend <- DBSynthesizer.synthesize genTxs options {confOptions = testSynthOptionsAppend} protocol
     let blockCountAppend = resultForged resultAppend
     blockCountAppend > 0 @? "no blocks have been forged during append step"
 

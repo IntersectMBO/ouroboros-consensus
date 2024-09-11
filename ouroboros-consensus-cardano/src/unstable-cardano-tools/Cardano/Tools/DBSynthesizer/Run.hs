@@ -20,6 +20,7 @@ import           Data.Aeson as Aeson (FromJSON, Result (..), Value,
                      eitherDecodeFileStrict', eitherDecodeStrict', fromJSON)
 import           Data.Bool (bool)
 import           Data.ByteString as BS (ByteString, readFile)
+import qualified Ouroboros.Consensus.Block.Forging as BlockForging
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.Node
 import           Ouroboros.Consensus.Config (TopLevelConfig, configStorage)
@@ -119,7 +120,7 @@ synthesize ::
   -> IO ForgeResult
 synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} runP =
     withRegistry $ \registry -> do
-        (pinfo, forgers) <- protocolInfoCardano runP
+        (pinfo, mkForgers) <- protocolInfoCardano runP
         let
             ProtocolInfo
                 { pInfoConfig
@@ -139,6 +140,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
               (Node.stdMkChainDbHasFS confDbDir)
               $ ChainDB.defaultArgs
 
+        (_, forgers) <- allocate registry (const $ mkForgers) (mapM_ BlockForging.finalize)
         let fCount = length forgers
         putStrLn $ "--> forger count: " ++ show fCount
         if fCount > 0

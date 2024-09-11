@@ -589,7 +589,7 @@ protocolInfoCardano ::
      forall c m. (IOLike m, CardanoHardForkConstraints c)
   => CardanoProtocolParams c
   -> m ( ProtocolInfo      (CardanoBlock c)
-       , [BlockForging m (CardanoBlock c)]
+       , m [BlockForging m (CardanoBlock c)]
        )
 protocolInfoCardano paramsCardano
   | SL.Mainnet <- SL.sgNetworkId genesisShelley
@@ -597,13 +597,12 @@ protocolInfoCardano paramsCardano
   = error "Multiple Shelley-based credentials not allowed for mainnet"
   | otherwise
   = assertWithMsg (validateGenesis genesisShelley) $ do
-      blockForging <- mkBlockForgings
       return
           ( ProtocolInfo {
               pInfoConfig       = cfg
             , pInfoInitLedger   = initExtLedgerStateCardano
             }
-          , blockForging
+          , mkBlockForgings
           )
   where
     CardanoProtocolParams {

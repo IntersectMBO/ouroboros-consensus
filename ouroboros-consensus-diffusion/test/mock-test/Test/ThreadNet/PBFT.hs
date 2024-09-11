@@ -115,7 +115,7 @@ prop_simple_pbft_convergence TestSetup
                   (protocolInfoMockPBFT
                     params
                     (HardFork.defaultEraParams k slotLength))
-                  (blockForgingMockPBFT nid)
+                  (pure $ blockForgingMockPBFT nid)
             , mkRekeyM = Nothing
             }
 

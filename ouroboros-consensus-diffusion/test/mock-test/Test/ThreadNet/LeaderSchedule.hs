@@ -127,7 +127,7 @@ prop_simple_leader_schedule_convergence TestSetup
                       (HardFork.defaultEraParams k slotLength)
                       schedule
                       emptyPraosEvolvingStake)
-                    blockForgingPraosRule
+                    (pure blockForgingPraosRule)
             , mkRekeyM = Nothing
             }
 

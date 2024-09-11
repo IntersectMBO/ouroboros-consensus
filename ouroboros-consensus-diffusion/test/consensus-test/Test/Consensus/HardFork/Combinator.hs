@@ -205,7 +205,7 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
             \a -> pure $
                     plainTestNodeInitialization
                       (protocolInfo a)
-                      blockForging
+                      (pure blockForging)
         , mkRekeyM = Nothing
         }
 

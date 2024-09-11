@@ -61,6 +61,7 @@ import           Network.TypedProtocol.Codec (AnyMessage (..), CodecFailure,
                      mapFailureCodec)
 import qualified Network.TypedProtocol.Codec as Codec
 import           Ouroboros.Consensus.Block
+import qualified Ouroboros.Consensus.Block.Forging as BlockForging
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture
@@ -160,7 +161,7 @@ instance Show (ForgeEbbEnv blk) where
 type RekeyM m blk =
      CoreNodeId
   -> ProtocolInfo blk
-  -> [BlockForging m blk]
+  -> m [BlockForging m blk]
   -> SlotNo
      -- ^ The slot in which the node is rekeying
   -> (SlotNo -> m EpochNo)
@@ -181,12 +182,12 @@ data TestNodeInitialization m blk = TestNodeInitialization
     -- that determines which transactions will be included in the block it's
     -- about to forge.
   , tniProtocolInfo :: ProtocolInfo blk
-  , tniBlockForging :: [BlockForging m blk]
+  , tniBlockForging :: m [BlockForging m blk]
   }
 
 plainTestNodeInitialization ::
      ProtocolInfo blk
-  -> [BlockForging m blk]
+  -> m [BlockForging m blk]
   -> TestNodeInitialization m blk
 plainTestNodeInitialization pInfo blockForging = TestNodeInitialization
     { tniCrucialTxs   = []
@@ -487,7 +488,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
         loop :: SlotNo
              -> [GenTx blk]
              -> ProtocolInfo blk
-             -> [BlockForging m blk]
+             -> m [BlockForging m blk]
              -> NodeRestart
              -> Map SlotNo NodeRestart
              -> m ()
@@ -802,14 +803,14 @@ runThreadNetwork systemTime ThreadNetworkArgs
       -> SlotNo
       -> ResourceRegistry m
       -> ProtocolInfo blk
-      -> [BlockForging m blk]
+      -> m [BlockForging m blk]
       -> NodeInfo blk (StrictTVar m MockFS) (Tracer m)
       -> [GenTx blk]
          -- ^ valid transactions the node should immediately propagate
       -> m ( NodeKernel m NodeId Void blk
            , LimitedApp m NodeId      blk
            )
-    forkNode coreNodeId clock joinSlot registry pInfo blockForging nodeInfo txs0 = do
+    forkNode coreNodeId clock joinSlot registry pInfo mkBlockForging nodeInfo txs0 = do
       let ProtocolInfo{..} = pInfo
 
       let NodeInfo
@@ -1046,6 +1047,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
 
       nodeKernel <- initNodeKernel nodeKernelArgs
 
+      (_, blockForging) <- allocate registry (const mkBlockForging) (mapM_ BlockForging.finalize)
       let blockForging' =
             map (\bf -> bf { forgeBlock = customForgeBlock bf }) blockForging
       setBlockForging nodeKernel blockForging'

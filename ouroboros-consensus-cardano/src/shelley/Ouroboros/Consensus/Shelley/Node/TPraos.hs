@@ -228,7 +228,7 @@ protocolInfoShelley ::
   -> ProtocolParamsShelleyBased c
   -> ProtocolParams (ShelleyBlock (TPraos c) (ShelleyEra c))
   -> m ( ProtocolInfo (ShelleyBlock (TPraos c) (ShelleyEra c) )
-       , [BlockForging m (ShelleyBlock (TPraos c) (ShelleyEra c))]
+       , m [BlockForging m (ShelleyBlock (TPraos c) (ShelleyEra c))]
        )
 protocolInfoShelley shelleyGenesis
                     protocolParamsShelleyBased
@@ -253,7 +253,7 @@ protocolInfoTPraosShelleyBased ::
   -> SL.ProtVer
      -- ^ see 'shelleyProtVer', mutatis mutandi
   -> m ( ProtocolInfo (ShelleyBlock (TPraos c) era)
-       , [BlockForging m (ShelleyBlock (TPraos c) era)]
+       , m [BlockForging m (ShelleyBlock (TPraos c) era)]
        )
 protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
                              shelleyBasedInitialNonce      = initialNonce
@@ -262,23 +262,24 @@ protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
                          transitionCfg
     protVer =
     assertWithMsg (validateGenesis genesis) $ do
-    blockForgings <- traverse
-                        (\credentials -> do
-                              let canBeLeader = shelleyLeaderCredentialsCanBeLeader credentials
-                              (ocert, sk) <- instantiatePraosCredentials (praosCanBeLeaderCredentialsSource canBeLeader)
+    let blockForgings =
+          traverse
+            (\credentials -> do
+                  let canBeLeader = shelleyLeaderCredentialsCanBeLeader credentials
+                  (ocert, sk) <- instantiatePraosCredentials (praosCanBeLeaderCredentialsSource canBeLeader)
 
-                              let startPeriod :: Absolute.KESPeriod
-                                  startPeriod = SL.ocertKESPeriod ocert
+                  let startPeriod :: Absolute.KESPeriod
+                      startPeriod = SL.ocertKESPeriod ocert
 
-                              hotKey :: HotKey.HotKey c m <- HotKey.mkHotKey
-                                          ocert
-                                          sk
-                                          startPeriod
-                                          (tpraosMaxKESEvo tpraosParams)
+                  hotKey :: HotKey.HotKey c m <- HotKey.mkHotKey
+                              ocert
+                              sk
+                              startPeriod
+                              (tpraosMaxKESEvo tpraosParams)
 
-                              shelleyBlockForging tpraosParams hotKey credentials
-                        )
-                        credentialss
+                  shelleyBlockForging tpraosParams hotKey credentials
+            )
+            credentialss
     return
       ( ProtocolInfo {
           pInfoConfig       = topLevelConfig
