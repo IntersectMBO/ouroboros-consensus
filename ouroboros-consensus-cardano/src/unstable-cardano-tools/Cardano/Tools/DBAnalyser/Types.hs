@@ -24,7 +24,7 @@ data AnalysisName =
   | ShowBlockTxsSize
   | ShowEBBs
   | OnlyValidation
-  | StoreLedgerStateAt SlotNo LedgerApplicationMode
+  | StoreLedgerStateAt [SlotNo] LedgerApplicationMode
   | CountBlocks
   | CheckNoThunksEvery Word64
   | TraceLedgerProcessing
