@@ -160,6 +160,16 @@ Lastly the user can provide the analysis that should be run on the chain:
     When the `--reapply` flag is specified, we measure header/block
     *re*application instead of full application.
 
+  - Size of the entire block in bytes.
+  - Era-specific stats:
+     - Byron:
+        - Number of txs.
+        - Total size of all txs.
+     - Shelley-based:
+        - Number of txs.
+        - Total size of all txs.
+        - Since Alonzo: Total script execution steps.
+
 * `--repro-mempool-and-forge NUM` populates the mempool with the transactions
   from NUM blocks every time and then runs the forging loop. Useful to inspect
   regressions in the forging loop or in the mempool adding/snapshotting logic.
