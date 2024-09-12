@@ -65,6 +65,7 @@ import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args as Args
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Init
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Init as V1
 import           Ouroboros.Consensus.Storage.LedgerDB.V2.Args
@@ -102,7 +103,7 @@ tests = testGroup "StateMachine" [
 
 prop_sequential ::
      Int
-  -> (SecurityParam -> TestArguments IO)
+  -> (SecurityParam -> SomeHasFS IO -> TestArguments IO)
   -> IO (SomeHasFS IO, IO ())
   -> Actions Model
   -> QC.Property
@@ -120,7 +121,7 @@ prop_sequential maxSuccess mkTestArguments fsOps as = QC.withMaxSuccess maxSucce
 -- are trivial, but nevertheless they have to exist.
 initialEnvironment ::
      IO (SomeHasFS IO, IO ())
-  -> (SecurityParam -> TestArguments IO)
+  -> (SecurityParam ->  SomeHasFS IO -> TestArguments IO)
   -> ChainDB IO
   -> IO Environment
 initialEnvironment fsOps mkTestArguments cdb = do
@@ -129,7 +130,7 @@ initialEnvironment fsOps mkTestArguments cdb = do
     undefined
     (TestInternals undefined undefined undefined undefined (pure ()))
     cdb
-    mkTestArguments
+    (flip mkTestArguments sfs)
     sfs
     cleanupFS
 
@@ -155,8 +156,9 @@ realFS = liftIO $ do
 
 inMemV1TestArguments ::
      SecurityParam
+  -> SomeHasFS IO
   -> TestArguments IO
-inMemV1TestArguments secParam =
+inMemV1TestArguments secParam _ =
   TestArguments {
       argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing DisableQuerySize InMemoryBackingStoreArgs
     , argLedgerDbCfg = extLedgerDbConfig secParam
@@ -164,8 +166,9 @@ inMemV1TestArguments secParam =
 
 inMemV2TestArguments ::
      SecurityParam
+  -> SomeHasFS IO
   -> TestArguments IO
-inMemV2TestArguments secParam =
+inMemV2TestArguments secParam _ =
   TestArguments {
       argFlavorArgs = LedgerDbFlavorArgsV2 $ V2Args InMemoryHandleArgs
     , argLedgerDbCfg = extLedgerDbConfig secParam
@@ -186,10 +189,11 @@ testLMDBLimits = LMDBLimits
 
 lmdbTestArguments ::
      SecurityParam
+  -> SomeHasFS IO
   -> TestArguments IO
-lmdbTestArguments secParam =
+lmdbTestArguments secParam fs =
   TestArguments {
-      argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing DisableQuerySize $ LMDBBackingStoreArgs testLMDBLimits Dict.Dict
+      argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing DisableQuerySize $ LMDBBackingStoreArgs (LiveLMDBFS fs) testLMDBLimits Dict.Dict
     , argLedgerDbCfg = extLedgerDbConfig secParam
     }
 
@@ -427,7 +431,7 @@ openLedgerDB flavArgs env cfg fs = do
   let args = LedgerDbArgs
                (SnapshotPolicyArgs DisableSnapshots DefaultNumOfDiskSnapshots)
                (pure genesis)
-               fs fs False False
+               fs
                cfg
                nullTracer
                flavArgs

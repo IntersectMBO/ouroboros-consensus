@@ -46,9 +46,6 @@ data LedgerDbArgs f m blk = LedgerDbArgs {
       lgrSnapshotPolicyArgs :: SnapshotPolicyArgs
     , lgrGenesis            :: HKD f (m (ExtLedgerState blk ValuesMK))
     , lgrHasFS              :: HKD f (SomeHasFS m)
-    , lgrSSDHasFS           :: HKD f (SomeHasFS m)
-    , lgrSnapshotTablesSSD  :: Bool
-    , lgrSnapshotStateSSD   :: Bool
     , lgrConfig             :: HKD f (LedgerDbCfg (ExtLedgerState blk))
     , lgrTracer             :: Tracer m (TraceLedgerDBEvent blk)
     , lgrFlavorArgs         :: LedgerDbFlavorArgs f m
@@ -68,12 +65,9 @@ defaultArgs = LedgerDbArgs {
       lgrSnapshotPolicyArgs = SnapshotPolicyArgs DefaultSnapshotInterval DefaultNumOfDiskSnapshots
     , lgrGenesis            = NoDefault
     , lgrHasFS              = NoDefault
-    , lgrSSDHasFS           = NoDefault
-    , lgrSnapshotTablesSSD  = False
-    , lgrSnapshotStateSSD   = False
     , lgrConfig             = NoDefault
     , lgrTracer             = nullTracer
-    , lgrFlavorArgs         = LedgerDbFlavorArgsV1 V1.defaultLedgerDbFlavorArgs
+    , lgrFlavorArgs         = LedgerDbFlavorArgsV2 (V2.V2Args V2.InMemoryHandleArgs)
     , lgrRegistry           = NoDefault
     , lgrStartSnapshot      = Nothing
     }

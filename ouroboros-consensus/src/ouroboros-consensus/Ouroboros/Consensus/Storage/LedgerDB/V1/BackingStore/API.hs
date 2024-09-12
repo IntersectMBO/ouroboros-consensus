@@ -1,4 +1,6 @@
 {-# LANGUAGE DataKinds            #-}
+{-# LANGUAGE DeriveAnyClass       #-}
+{-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE DerivingVia          #-}
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE NamedFieldPuns       #-}
@@ -17,8 +19,11 @@
 -- See "Ouroboros.Consensus.Storage.LedgerDB.BackingStore" for the
 -- implementations provided.
 module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API (
+    -- * FileSystem newtypes
+    LiveLMDBFS (..)
+  , SnapshotsFS (..)
     -- * Backing store
-    BackingStore (..)
+  , BackingStore (..)
   , BackingStore'
   , DiffsToFlush (..)
   , InitFrom (..)
@@ -41,11 +46,21 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API (
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo, WithOrigin (..))
+import           GHC.Generics
 import           NoThunks.Class (OnlyCheckWhnfNamed (..))
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Util.IOLike
+import           System.FS.API
 import qualified System.FS.API.Types as FS
+
+-- | The LedgerDB file system. Typically pointing to @<db-path\/vol-db-path>/ledger@.
+newtype SnapshotsFS m = SnapshotsFS { snapshotsFs :: SomeHasFS m }
+  deriving (Generic, NoThunks)
+
+-- | The LMDB file system. Typically pointing to @<db-path\/vol-db-path>/lmdb@.
+newtype LiveLMDBFS m = LiveLMDBFS { liveLMDBFs :: SomeHasFS m }
+  deriving (Generic, NoThunks)
 
 {-------------------------------------------------------------------------------
   Backing store interface

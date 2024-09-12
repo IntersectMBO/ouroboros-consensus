@@ -257,6 +257,7 @@ newForker ::
      , LedgerSupportsProtocol blk
      , NoThunks (l EmptyMK)
      , GetTip l
+     , StandardHash l
      )
   => LedgerDBHandle m l blk
   -> LedgerDBEnv m l blk
@@ -372,17 +373,18 @@ implForkerPush env newState = do
      )
 
 implForkerCommit ::
-     (IOLike m, GetTip l)
+     (IOLike m, GetTip l, StandardHash l)
   => ForkerEnv m l blk
   -> STM m ()
 implForkerCommit env = do
   LedgerSeq lseq <- readTVar foeLedgerSeq
   let intersectionSlot = getTipSlot $ state $ AS.anchor lseq
+  let predicate = (== getTipHash (state (AS.anchor lseq))) . getTipHash . state
   (statesToClose, LedgerSeq statesDiscarded) <- do
     stateTVar
       foeSwitchVar
       (\(LedgerSeq olddb) -> fromMaybe theImpossible $ do
-         (olddb', toClose) <- AS.splitAfterMeasure intersectionSlot (const True) olddb
+         (olddb', toClose) <- AS.splitAfterMeasure intersectionSlot (either predicate predicate) olddb
          newdb <- AS.join (const $ const True) olddb' lseq
          let (l, s) = prune (foeSecurityParam env) (LedgerSeq newdb)
          pure ((toClose, l), s)
@@ -478,6 +480,7 @@ newForkerAtWellKnownPoint ::
      , IsLedger l
      , HasLedgerTables l
      , LedgerSupportsProtocol blk
+     , StandardHash l
      )
   => LedgerDBHandle m l blk
   -> ResourceRegistry m
@@ -506,6 +509,7 @@ newForkerAtFromTip ::
      , IsLedger l
      , HasLedgerTables l
      , LedgerSupportsProtocol blk
+     , StandardHash l
      )
   => LedgerDBHandle m l blk
   -> ResourceRegistry m

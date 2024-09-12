@@ -46,9 +46,7 @@ import           Ouroboros.Consensus.Util.IOLike
 import           System.FS.API
 
 type BackingStoreInitialiser m l =
-     SomeHasFS m
-  -> SomeHasFS m
-  -> InitFrom (LedgerTables l ValuesMK)
+     InitFrom (LedgerTables l ValuesMK)
   -> m (LedgerBackingStore m l)
 
 -- | Overwrite the 'BackingStore' tables with the snapshot's tables
@@ -60,12 +58,11 @@ restoreBackingStore ::
      )
   => Tracer m FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m
-  -> SomeHasFS m
-  -> SomeHasFS m
+  -> SnapshotsFS m
   -> FsPath
   -> m (LedgerBackingStore m l)
-restoreBackingStore trcr bss someHasFs snapFs loadPath =
-    newBackingStoreInitialiser trcr bss someHasFs snapFs (InitFromCopy loadPath)
+restoreBackingStore trcr bss fs loadPath =
+    newBackingStoreInitialiser trcr bss fs (InitFromCopy loadPath)
 
 -- | Create a 'BackingStore' from the given initial tables.
 newBackingStore ::
@@ -76,12 +73,11 @@ newBackingStore ::
      )
   => Tracer m FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m
-  -> SomeHasFS m
-  -> SomeHasFS m
+  -> SnapshotsFS m
   -> LedgerTables l ValuesMK
   -> m (LedgerBackingStore m l)
-newBackingStore trcr bss someHasFS snapFs tables =
-    newBackingStoreInitialiser trcr bss someHasFS snapFs (InitFromValues Origin tables)
+newBackingStore trcr bss fs tables =
+    newBackingStoreInitialiser trcr bss fs (InitFromValues Origin tables)
 
 newBackingStoreInitialiser ::
      forall m l.
@@ -92,13 +88,15 @@ newBackingStoreInitialiser ::
      )
   => Tracer m FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m
+  -> SnapshotsFS m
   -> BackingStoreInitialiser m l
 newBackingStoreInitialiser trcr bss =
   case bss of
-    LMDBBackingStoreArgs limits Dict ->
+    LMDBBackingStoreArgs fs limits Dict ->
       LMDB.newLMDBBackingStore
         (FlavorImplSpecificTraceOnDisk . OnDiskBackingStoreTrace >$< trcr)
         limits
+        fs
     InMemoryBackingStoreArgs ->
       InMemory.newInMemoryBackingStore
         (FlavorImplSpecificTraceInMemory . InMemoryBackingStoreTrace >$< trcr)

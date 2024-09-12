@@ -17,13 +17,10 @@ import           Cardano.Tools.DBAnalyser.Types
 #if __GLASGOW_HASKELL__ < 900
 import           Data.Foldable (asum)
 #endif
-import qualified Data.SOP.Dict as Dict
 import           Options.Applicative
 import           Ouroboros.Consensus.Block (SlotNo (..), WithOrigin (..))
 import           Ouroboros.Consensus.Byron.Node (PBftSignatureThreshold (..))
 import           Ouroboros.Consensus.Shelley.Node (Nonce (..))
-import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
-import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
 
 {-------------------------------------------------------------------------------
   Parsing
@@ -39,19 +36,6 @@ parseDBAnalyserConfig = DBAnalyserConfig
           , help "Path to the Chain DB"
           , metavar "PATH"
           ])
-    <*> strOption (mconcat [
-            long "ssddb"
-          , help "Path to the SSD Chain DB"
-          , metavar "PATH"
-          ])
-    <*> switch (mconcat [
-        long "state-in-ssd"
-      , help "Are states from snapshots in SSD?"
-      ])
-    <*> switch (mconcat [
-        long "tables-in-ssd"
-      , help "Are tables from snapshots in SSD?"
-      ])
     <*> switch (mconcat [
             long "verbose"
           , help "Enable verbose logging"
@@ -61,22 +45,19 @@ parseDBAnalyserConfig = DBAnalyserConfig
     <*> parseAnalysis
     <*> parseLimit
     <*> asum [
-          flag' InMemoryBackingStoreArgs $ mconcat [
-                long "in-mem"
-              , help "use in-memory backing store"
+          flag' V1InMem $ mconcat [
+                long "v1-in-mem"
+              , help "use v1 in-memory backing store"
               ]
-          , flag' (LMDBBackingStoreArgs defaultLMDBLimits Dict.Dict) $ mconcat [
+          , flag' V1LMDB $ mconcat [
               long "lmdb"
-              , help "use LMDB backing store"
+              , help "use v1 LMDB backing store"
+              ]
+          , flag' V2InMem $ mconcat [
+              long "in-mem"
+              , help "use new in-memory backend"
               ]
           ]
-
-defaultLMDBLimits :: LMDBLimits
-defaultLMDBLimits = LMDBLimits {
-    lmdbMapSize = 16 * 1024 * 1024 * 1024
-  , lmdbMaxDatabases = 10
-  , lmdbMaxReaders = 16
-  }
 
 parseSelectDB :: Parser SelectDB
 parseSelectDB =

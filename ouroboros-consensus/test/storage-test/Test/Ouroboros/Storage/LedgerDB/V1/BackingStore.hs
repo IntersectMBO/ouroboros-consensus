@@ -77,15 +77,15 @@ tests = testGroup "BackingStore" [
       testProperty "InMemory IOSim SimHasFS" testWithIOSim
   , adjustOption (scaleQuickCheckTests 10) $
       testProperty "InMemory IO SimHasFS" $ testWithIO $
-        setupBSEnv BS.InMemoryBackingStoreArgs setupSimHasFS (pure ())
+        setupBSEnv (const BS.InMemoryBackingStoreArgs) setupSimHasFS (pure ())
   , adjustOption (scaleQuickCheckTests 10) $
       testProperty "InMemory IO IOHasFS" $ testWithIO $ do
         (fp, cleanup) <- setupTempDir
-        setupBSEnv BS.InMemoryBackingStoreArgs (setupIOHasFS fp) cleanup
+        setupBSEnv (const BS.InMemoryBackingStoreArgs) (setupIOHasFS fp) cleanup
   , adjustOption (scaleQuickCheckTests 2) $
       testProperty "LMDB IO IOHasFS" $ testWithIO $ do
         (fp, cleanup) <- setupTempDir
-        setupBSEnv (BS.LMDBBackingStoreArgs testLMDBLimits Dict.Dict) (setupIOHasFS fp) cleanup
+        setupBSEnv (\x -> BS.LMDBBackingStoreArgs (BS.LiveLMDBFS x) testLMDBLimits Dict.Dict) (setupIOHasFS fp) cleanup
   ]
 
 scaleQuickCheckTests :: Int -> QuickCheckTests -> QuickCheckTests
@@ -108,7 +108,7 @@ testLMDBLimits = LMDB.LMDBLimits
 testWithIOSim :: Actions (Lockstep (BackingStoreState K V D)) -> Property
 testWithIOSim acts = monadicSim $ do
   BSEnv {bsRealEnv, bsCleanup} <-
-    QC.run (setupBSEnv BS.InMemoryBackingStoreArgs setupSimHasFS (pure ()))
+    QC.run (setupBSEnv (const BS.InMemoryBackingStoreArgs) setupSimHasFS (pure ()))
   void $
     runPropertyIOLikeMonad $
       runPropertyReaderT (StateModel.runActions acts) bsRealEnv
@@ -162,18 +162,18 @@ setupTempDir = do
 
 setupBSEnv ::
      IOLike m
-  => Complete BS.BackingStoreArgs m
+  => (SomeHasFS m -> Complete BS.BackingStoreArgs m)
   -> m (SomeHasFS m)
   -> m ()
   -> m (BSEnv m K V D)
-setupBSEnv bss mkSfhs cleanup = do
-  sfhs@(SomeHasFS hfs) <- mkSfhs
+setupBSEnv bss mkShfs cleanup = do
+  shfs@(SomeHasFS hfs) <- mkShfs
 
   createDirectory hfs (mkFsPath ["copies"])
 
-  let bsi = BS.newBackingStoreInitialiser mempty bss
+  let bsi = BS.newBackingStoreInitialiser mempty (bss shfs) (BS.SnapshotsFS shfs)
 
-  bsVar <- newMVar =<< bsi sfhs sfhs (BS.InitFromValues Origin emptyLedgerTables)
+  bsVar <- newMVar =<< bsi (BS.InitFromValues Origin emptyLedgerTables)
 
   rr <- initHandleRegistry
 
@@ -185,8 +185,7 @@ setupBSEnv bss mkSfhs cleanup = do
 
   pure BSEnv {
       bsRealEnv = RealEnv {
-          reSomeHasFS = sfhs
-        , reBackingStoreInit = bsi
+          reBackingStoreInit = bsi
         , reBackingStore = bsVar
         , reRegistry = rr
         }

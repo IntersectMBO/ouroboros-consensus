@@ -184,11 +184,11 @@ takeSnapshot ::
   => StrictTVar m (DbChangelog' blk)
   -> CodecConfig blk
   -> Tracer m (TraceSnapshotEvent blk)
-  -> SomeHasFS m
+  -> SnapshotsFS m
   -> BackingStore' m blk
   -> Maybe DiskSnapshot -- ^ Override for snapshot numbering
   -> ReadLocked m (Maybe (DiskSnapshot, RealPoint blk))
-takeSnapshot ldbvar ccfg tracer hasFS backingStore dsOverride = readLocked $ do
+takeSnapshot ldbvar ccfg tracer (SnapshotsFS hasFS') backingStore dsOverride = readLocked $ do
     state <- changelogLastFlushedState <$> readTVarIO ldbvar
     case pointToWithOriginRealPoint (castPoint (getTip state)) of
       Origin ->
@@ -196,11 +196,11 @@ takeSnapshot ldbvar ccfg tracer hasFS backingStore dsOverride = readLocked $ do
       NotOrigin t -> do
         let number   = unSlotNo (realPointSlot t)
             snapshot = fromMaybe (DiskSnapshot number Nothing) dsOverride
-        diskSnapshots <- listSnapshots hasFS
+        diskSnapshots <- listSnapshots hasFS'
         if List.any ((== number) . dsNumber) diskSnapshots then
           return Nothing
         else do
-          writeSnapshot hasFS backingStore (encodeDiskExtLedgerState ccfg) snapshot state
+          writeSnapshot hasFS' backingStore (encodeDiskExtLedgerState ccfg) snapshot state
           traceWith tracer $ TookSnapshot snapshot t
           return $ Just (snapshot, t)
 
@@ -238,21 +238,19 @@ loadSnapshot ::
   => Tracer m V1.FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m
   -> CodecConfig blk
-  -> SomeHasFS m
-  -> SomeHasFS m
-  -> SomeHasFS m
+  -> SnapshotsFS m
   -> DiskSnapshot
   -> m (Either
          (SnapshotFailure blk)
          ((DbChangelog' blk, LedgerBackingStore m (ExtLedgerState blk)), RealPoint blk))
-loadSnapshot tracer bss ccfg statefs tablesfs bsfs s = do
-  eExtLedgerSt <- runExceptT $ readExtLedgerState statefs (decodeDiskExtLedgerState ccfg) decode (snapshotToStatePath s)
+loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs') s = do
+  eExtLedgerSt <- runExceptT $ readExtLedgerState fs' (decodeDiskExtLedgerState ccfg) decode (snapshotToStatePath s)
   case eExtLedgerSt of
     Left err -> pure (Left $ InitFailureRead err)
     Right extLedgerSt -> do
       case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
         Origin        -> pure (Left InitFailureGenesis)
         NotOrigin pt -> do
-          backingStore <- restoreBackingStore tracer bss bsfs tablesfs (snapshotToTablesPath s)
+          backingStore <- restoreBackingStore tracer bss fs (snapshotToTablesPath s)
           let chlog  = empty extLedgerSt
           pure (Right ((chlog, backingStore), pt))

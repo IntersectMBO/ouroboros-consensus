@@ -12,6 +12,7 @@ import           Cardano.Tools.DBAnalyser.HasAnalysis
 import           Cardano.Tools.DBAnalyser.Types
 import           Control.Tracer (Tracer (..), nullTracer)
 import           Data.Singletons (Sing, SingI (..))
+import qualified Data.SOP.Dict as Dict
 import qualified Debug.Trace as Debug
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
@@ -32,7 +33,10 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl.Args as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl.Init as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as LedgerDB.V1
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API as BS
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Init as LedgerDB.V1
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as LedgerDB.V2
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
@@ -71,6 +75,13 @@ openLedgerDB LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs=LedgerDB.LedgerDbFlavo
 emptyStream :: Applicative m => ImmutableDB.StreamAPI m blk a
 emptyStream = ImmutableDB.StreamAPI $ \_ k -> k $ Right $ pure ImmutableDB.NoMoreItems
 
+defaultLMDBLimits :: LMDB.LMDBLimits
+defaultLMDBLimits = LMDB.LMDBLimits
+   { LMDB.lmdbMapSize = 16 * 1024 * 1024 * 1024
+   , LMDB.lmdbMaxDatabases = 10
+   , LMDB.lmdbMaxReaders = 16
+   }
+
 analyse ::
      forall blk .
      ( Node.RunNode blk
@@ -83,16 +94,21 @@ analyse ::
   => DBAnalyserConfig
   -> Args blk
   -> IO (Maybe AnalysisResult)
-analyse DBAnalyserConfig{analysis, confLimit, ssdDir, {- stateInSSD, tablesInSSD,  -}dbDir, selectDB, validation, verbose, bsArgs} args =
+analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbose, ldbBackend} args =
     withRegistry $ \registry -> do
       lock           <- newMVar ()
       chainDBTracer  <- mkTracer lock verbose
       analysisTracer <- mkTracer lock True
       ProtocolInfo { pInfoInitLedger = genesisLedger, pInfoConfig = cfg } <-
         mkProtocolInfo args
-      let chunkInfo  = Node.nodeImmutableDbChunkInfo (configStorage cfg)
-          bss = LedgerDB.V1.V1Args LedgerDB.V1.DisableFlushing LedgerDB.V1.DisableQuerySize $ bsArgs
-          flavargs = LedgerDB.LedgerDbFlavorArgsV1 bss
+      let shfs = Node.stdMkChainDbHasFS dbDir
+          chunkInfo  = Node.nodeImmutableDbChunkInfo (configStorage cfg)
+          flavargs = case ldbBackend of
+            V1InMem -> LedgerDB.LedgerDbFlavorArgsV1
+               (LedgerDB.V1.V1Args LedgerDB.V1.DisableFlushing LedgerDB.V1.DisableQuerySize LedgerDB.V1.InMemoryBackingStoreArgs)
+            V1LMDB  -> LedgerDB.LedgerDbFlavorArgsV1
+               (LedgerDB.V1.V1Args LedgerDB.V1.DisableFlushing LedgerDB.V1.DisableQuerySize (LedgerDB.V1.LMDBBackingStoreArgs (BS.LiveLMDBFS (shfs (ChainDB.RelativeMountPoint "lmdb"))) defaultLMDBLimits Dict.Dict))
+            V2InMem -> LedgerDB.LedgerDbFlavorArgsV2 (LedgerDB.V2.V2Args LedgerDB.V2.InMemoryHandleArgs)
           args' =
             ChainDB.completeChainDbArgs
               registry
@@ -101,14 +117,11 @@ analyse DBAnalyserConfig{analysis, confLimit, ssdDir, {- stateInSSD, tablesInSSD
               genesisLedger
               chunkInfo
               (const True)
-              (Node.stdMkChainDbHasFS dbDir)
-              (Node.stdMkChainDbHasFS ssdDir)
+              shfs
               flavargs $
             ChainDB.defaultArgs
           chainDbArgs = maybeValidateAll $ ChainDB.updateTracer chainDBTracer args'
           immutableDbArgs = ChainDB.cdbImmDbArgs chainDbArgs
-{-           normalFs = SomeHasFS $ ioHasFS $ MountPoint (dbDir  </> "ledger")
-          ssdFs    = SomeHasFS $ ioHasFS $ MountPoint (ssdDir </> "ledger") -}
           ldbArgs = ChainDB.cdbLgrDbArgs args'
 
       withImmutableDB immutableDbArgs $ \(immutableDB, internal) -> do
