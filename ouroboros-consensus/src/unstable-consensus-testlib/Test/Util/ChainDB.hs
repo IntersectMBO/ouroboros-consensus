@@ -30,7 +30,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.LedgerDB (configLedgerDb)
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots as LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
+import           Ouroboros.Consensus.Storage.LedgerDB.V2.Args
 import           Ouroboros.Consensus.Storage.VolatileDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util.Args
@@ -48,18 +48,16 @@ import           Test.Util.TestBlock (TestBlock, TestBlockLedgerConfig (..))
 -- The @db@ type parameter is instantiated by this module at types for mock
 -- filesystems; either the 'MockFS' type or reference cells thereof.
 data NodeDBs db = NodeDBs {
-    nodeDBsImm    :: db
-  , nodeDBsVol    :: db
-  , nodeDBsLgr    :: db
-  , nodeDBsLgrSSD :: db
-  , nodeDBsGsm    :: db
+    nodeDBsImm :: db
+  , nodeDBsVol :: db
+  , nodeDBsLgr :: db
+  , nodeDBsGsm :: db
   }
   deriving (Functor, Foldable, Traversable)
 
 emptyNodeDBs :: MonadSTM m => m (NodeDBs (StrictTVar m MockFS))
 emptyNodeDBs = atomically $ NodeDBs
   <$> newTVar Mock.empty
-  <*> newTVar Mock.empty
   <*> newTVar Mock.empty
   <*> newTVar Mock.empty
   <*> newTVar Mock.empty
@@ -120,15 +118,12 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
           -- k seconds, where k is the security parameter.
         , lgrGenesis            = return mcdbInitLedger
         , lgrHasFS              = SomeHasFS $ simHasFS (unsafeToUncheckedStrictTVar $ nodeDBsLgr mcdbNodeDBs)
-        , lgrSSDHasFS           = SomeHasFS $ simHasFS (unsafeToUncheckedStrictTVar $ nodeDBsLgrSSD mcdbNodeDBs)
-        , lgrSnapshotTablesSSD  = False
-        , lgrSnapshotStateSSD   = False
         , lgrTracer             = nullTracer
         , lgrRegistry           = mcdbRegistry
         , lgrConfig             = configLedgerDb mcdbTopLevelConfig
         , lgrFlavorArgs         =
-            LedgerDbFlavorArgsV1
-              (V1Args DefaultFlushFrequency DefaultQueryBatchSize InMemoryBackingStoreArgs)
+            LedgerDbFlavorArgsV2
+              (V2Args InMemoryHandleArgs)
         , lgrStartSnapshot      = Nothing
         }
     , cdbsArgs = ChainDbSpecificArgs {

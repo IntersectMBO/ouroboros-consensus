@@ -62,7 +62,6 @@ import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
-import           System.FS.API
 
 {-------------------------------------------------------------------------------
   LedgerDB internal state
@@ -88,10 +87,10 @@ type LedgerDBEnv :: (Type -> Type) -> LedgerStateKind -> Type -> Type
 data LedgerDBEnv m l blk = LedgerDBEnv {
     -- | INVARIANT: the tip of the 'LedgerDB' is always in sync with the tip of
     -- the current chain of the ChainDB.
-    ldbChangelog       :: !(StrictTVar m (DbChangelog l))
+    ldbChangelog      :: !(StrictTVar m (DbChangelog l))
     -- | Handle to the ledger's backing store, containing the parts that grow too
     -- big for in-memory residency
-  , ldbBackingStore    :: !(LedgerBackingStore m l)
+  , ldbBackingStore   :: !(LedgerBackingStore m l)
     -- | The flush lock to the 'BackingStore'. This lock is crucial when it
     -- comes to keeping the data in memory consistent with the data on-disk.
     --
@@ -105,7 +104,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv {
     -- - when taking a snapshot of the ledger db, we need to prevent others
     --   from altering the backing store at the same time, thus we acquire a
     --   Write lock.
-  , ldbLock            :: !(LedgerDBLock m)
+  , ldbLock           :: !(LedgerDBLock m)
     -- | INVARIANT: this set contains only points that are in the
     -- VolatileDB.
     --
@@ -117,22 +116,20 @@ data LedgerDBEnv m l blk = LedgerDBEnv {
     -- When a garbage-collection is performed on the VolatileDB, the points
     -- of the blocks eligible for garbage-collection should be removed from
     -- this set.
-  , ldbPrevApplied     :: !(StrictTVar m (Set (RealPoint blk)))
+  , ldbPrevApplied    :: !(StrictTVar m (Set (RealPoint blk)))
     -- | Open forkers.
     --
     -- INVARIANT: a forker is open iff its 'ForkerKey' is in this 'Map.
-  , ldbForkers         :: !(StrictTVar m (Map ForkerKey (ForkerEnv m l blk)))
-  , ldbNextForkerKey   :: !(StrictTVar m ForkerKey)
+  , ldbForkers        :: !(StrictTVar m (Map ForkerKey (ForkerEnv m l blk)))
+  , ldbNextForkerKey  :: !(StrictTVar m ForkerKey)
 
-  , ldbSnapshotPolicy  :: !SnapshotPolicy
-  , ldbTracer          :: !(Tracer m (TraceLedgerDBEvent blk))
-  , ldbCfg             :: !(LedgerDbCfg l)
-  , ldbTablesHasFS     :: !(SomeHasFS m)
-  , ldbStateHasFS      :: !(SomeHasFS m)
-  , ldbLiveTablesHasFS :: !(SomeHasFS m)
-  , ldbShouldFlush     :: !(Word64 -> Bool)
-  , ldbQueryBatchSize  :: !QueryBatchSize
-  , ldbResolveBlock    :: !(ResolveBlock m blk)
+  , ldbSnapshotPolicy :: !SnapshotPolicy
+  , ldbTracer         :: !(Tracer m (TraceLedgerDBEvent blk))
+  , ldbCfg            :: !(LedgerDbCfg l)
+  , ldbHasFS          :: !(SnapshotsFS m)
+  , ldbShouldFlush    :: !(Word64 -> Bool)
+  , ldbQueryBatchSize :: !QueryBatchSize
+  , ldbResolveBlock   :: !(ResolveBlock m blk)
   } deriving (Generic)
 
 deriving instance ( IOLike m

@@ -589,7 +589,6 @@ executable db-analyser
     optparse-applicative,
     ouroboros-consensus,
     ouroboros-consensus-cardano:{ouroboros-consensus-cardano, unstable-cardano-tools},
-    sop-core,
     text,
     with-utf8,
 
@@ -648,7 +647,6 @@ executable db-truncater
     optparse-applicative,
     ouroboros-consensus,
     ouroboros-consensus-cardano:{ouroboros-consensus-cardano, unstable-cardano-tools},
-    sop-core,
     with-utf8,
 
   other-modules:
@@ -686,7 +684,6 @@ executable snapshot-converter
     ouroboros-consensus-cardano,
     ouroboros-consensus-cardano:unstable-cardano-tools,
     serialise,
-    sop-core,
     text,
     transformers,
     with-utf8,

@@ -182,27 +182,22 @@ writeExtLedgerState (SomeHasFS hasFS) encLedger path cs = do
 trimSnapshots ::
      Monad m
   => Tracer m (TraceSnapshotEvent r)
-  -> [SomeHasFS m]
+  -> SomeHasFS m
   -> SnapshotPolicy
   -> m [DiskSnapshot]
-trimSnapshots tracer fss SnapshotPolicy{onDiskNumSnapshots} = do
-    let getdiskSnapshotsPerFS fs = do
-          -- We only trim temporary snapshots
-          ss <- filter diskSnapshotIsTemporary <$> listSnapshots fs
-          -- The snapshot are most recent first, so we can simply drop from the
-          -- front to get the snapshots that are "too" old.
-          let ssTooOld = drop (fromIntegral onDiskNumSnapshots) ss
-          pure (fs, ssTooOld)
-    diskSnapshotsPerFS <-  mapM getdiskSnapshotsPerFS fss
-    deletedSnapshots <- forM diskSnapshotsPerFS $ \(fs, ss) -> do
-      mapM
+trimSnapshots tracer fs SnapshotPolicy{onDiskNumSnapshots} = do
+    -- We only trim temporary snapshots
+    ss <- filter diskSnapshotIsTemporary <$> listSnapshots fs
+    -- The snapshot are most recent first, so we can simply drop from the
+    -- front to get the snapshots that are "too" old.
+    let ssTooOld = drop (fromIntegral onDiskNumSnapshots) ss
+    mapM
         (\s -> do
           deleteSnapshot fs s
           traceWith tracer $ DeletedSnapshot s
           pure s
         )
-        ss
-    pure $ concat deletedSnapshots
+        ssTooOld
 
 snapshotToDirName :: DiskSnapshot -> String
 snapshotToDirName DiskSnapshot { dsNumber, dsSuffix } =

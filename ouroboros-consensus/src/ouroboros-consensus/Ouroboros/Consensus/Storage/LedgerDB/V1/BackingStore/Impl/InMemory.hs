@@ -70,11 +70,10 @@ newInMemoryBackingStore ::
      , HasLedgerTables l
      )
   => Tracer m BackingStoreTrace
-  -> SomeHasFS m
-  -> SomeHasFS m
+  -> SnapshotsFS m
   -> InitFrom (LedgerTables l ValuesMK)
   -> m (LedgerBackingStore m l)
-newInMemoryBackingStore tracer _ (SomeHasFS fs) initialization = do
+newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
     traceWith tracer BSOpening
     ref <- do
       (slot, values) <- case initialization of

@@ -241,10 +241,6 @@ data LowLevelRunNodeArgs m addrNTN addrNTC versionDataNTN versionDataNTC blk p2p
       -- be created.
     , llrnMkHasFS :: ChainDB.RelativeMountPoint -> SomeHasFS m
 
-    , llrnSSDMkHasFS :: ChainDB.RelativeMountPoint -> SomeHasFS m
-
-    , llrnPutInSSD :: (Bool, Bool)
-
       -- | Customise the 'ChainDbArgs'. 'StdRunNodeArgs' will use this field to
       -- set various options that are exposed in @cardano-node@ configuration
       -- files.
@@ -348,9 +344,7 @@ data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) = StdRunNodeArgs
 
     -- Ad hoc values to replace default ChainDB configurations
   , srnSnapshotPolicyArgs :: SnapshotPolicyArgs
-  , srnLdbFlavorArgs      :: Complete LedgerDbFlavorArgs m
-  , srnPutInSSD           :: (Bool, Bool)
-  , srnSSDPath            :: FilePath
+  , srnLdbFlavorArgs      :: Complete LedgerDbFlavorArgs m -- TODO this will contain a fs?? it should probably not as the node doesn't know about those
   }
 
 {-------------------------------------------------------------------------------
@@ -460,11 +454,9 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                      cfg
                      initLedger
                      llrnMkHasFS
-                     llrnSSDMkHasFS
                      llrnLdbFlavorArgs
                      llrnChainDbArgsDefaults
-                     (  ChainDB.putInSSD llrnPutInSSD
-                      . maybeValidateAll
+                     (  maybeValidateAll
                       . llrnCustomiseChainDbArgs
                      )
 
@@ -714,14 +706,13 @@ openChainDB ::
   -> ExtLedgerState blk ValuesMK
      -- ^ Initial ledger
   -> (ChainDB.RelativeMountPoint -> SomeHasFS m)
-  -> (ChainDB.RelativeMountPoint -> SomeHasFS m)
   -> Complete LedgerDbFlavorArgs m
   -> Incomplete ChainDbArgs m blk
      -- ^ A set of default arguments (possibly modified from 'defaultArgs')
   -> (Complete ChainDbArgs m blk -> Complete ChainDbArgs m blk)
       -- ^ Customise the 'ChainDbArgs'
   -> m (ChainDB m blk, Complete ChainDbArgs m blk)
-openChainDB registry inFuture cfg initLedger fs ssdfs flavorArgs defArgs customiseArgs =
+openChainDB registry inFuture cfg initLedger fs flavorArgs defArgs customiseArgs =
    let args = customiseArgs $ ChainDB.completeChainDbArgs
                registry
                inFuture
@@ -730,7 +721,6 @@ openChainDB registry inFuture cfg initLedger fs ssdfs flavorArgs defArgs customi
                (nodeImmutableDbChunkInfo (configStorage cfg))
                (nodeCheckIntegrity (configStorage cfg))
                fs
-               ssdfs
                flavorArgs
                defArgs
       in (,args) <$> ChainDB.openDB args
@@ -947,10 +937,6 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
           Diffusion.daPublicPeerSelectionVar srnDiffusionArguments
       , llrnLdbFlavorArgs =
           srnLdbFlavorArgs
-      , llrnPutInSSD =
-          srnPutInSSD
-      , llrnSSDMkHasFS =
-          stdMkChainDbHasFS srnSSDPath
       }
   where
     networkMagic :: NetworkMagic

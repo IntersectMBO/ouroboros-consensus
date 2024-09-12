@@ -13,7 +13,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Args (
   , completeChainDbArgs
   , defaultArgs
   , ensureValidateAll
-  , putInSSD
   , updateSnapshotPolicyArgs
   , updateTracer
   ) where
@@ -163,7 +162,6 @@ completeChainDbArgs ::
   -> (blk -> Bool)
      -- ^ Check integrity
   -> (RelativeMountPoint -> SomeHasFS m)
-  -> (RelativeMountPoint -> SomeHasFS m)
   -> Complete LedgerDbFlavorArgs m
   -> Incomplete ChainDbArgs m blk
      -- ^ A set of incomplete arguments, possibly modified wrt @defaultArgs@
@@ -176,7 +174,6 @@ completeChainDbArgs
   immChunkInfo
   checkIntegrity
   mkFS
-  ssdmkFS
   flavorArgs
   defArgs
   = defArgs {
@@ -195,7 +192,6 @@ completeChainDbArgs
       , cdbLgrDbArgs = (cdbLgrDbArgs defArgs) {
             LedgerDB.lgrGenesis    = pure initLedger
           , LedgerDB.lgrHasFS      = mkFS $ RelativeMountPoint "ledger"
-          , LedgerDB.lgrSSDHasFS   = ssdmkFS $ RelativeMountPoint "ledgerdb"
           , LedgerDB.lgrConfig     = LedgerDB.configLedgerDb cdbsTopLevelConfig
           , LedgerDB.lgrFlavorArgs = flavorArgs
           , LedgerDB.lgrRegistry   = registry
@@ -226,13 +222,6 @@ updateSnapshotPolicyArgs ::
   -> ChainDbArgs f m blk
 updateSnapshotPolicyArgs spa args =
   args { cdbLgrDbArgs = (cdbLgrDbArgs args) { LedgerDB.lgrSnapshotPolicyArgs = spa } }
-
-putInSSD ::
-     (Bool, Bool)
-  -> ChainDbArgs f m blk
-  -> ChainDbArgs f m blk
-putInSSD (tables, state) args =
-  args { cdbLgrDbArgs = (cdbLgrDbArgs args) { LedgerDB.lgrSnapshotTablesSSD = tables, LedgerDB.lgrSnapshotStateSSD = state }}
 
 {-------------------------------------------------------------------------------
   Relative mount points

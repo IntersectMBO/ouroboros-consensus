@@ -79,11 +79,11 @@ mkInitDb args bss getBlock =
       (_, backingStore) <-
         allocate
           lgrRegistry
-          (\_ -> newBackingStore bsTracer baArgs ldbLiveTablesHasFS ldbTablesHasFS (projectLedgerTables st))
+          (\_ -> newBackingStore bsTracer baArgs lgrHasFS' (projectLedgerTables st))
           bsClose
       pure (chlog, backingStore)
   , initFromSnapshot =
-      loadSnapshot bsTracer baArgs (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) ldbStateHasFS ldbTablesHasFS ldbLiveTablesHasFS
+      loadSnapshot bsTracer baArgs (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) lgrHasFS'
   , closeDb = bsClose . snd
   , initReapplyBlock = \cfg blk (chlog, bstore) -> do
       !chlog' <- onChangelogM (reapplyThenPush cfg blk (readKeySets bstore)) chlog
@@ -116,9 +116,7 @@ mkInitDb args bss getBlock =
                , ldbSnapshotPolicy  = defaultSnapshotPolicy (ledgerDbCfgSecParam lgrConfig) lgrSnapshotPolicyArgs
                , ldbTracer          = lgrTracer
                , ldbCfg             = lgrConfig
-               , ldbTablesHasFS
-               , ldbStateHasFS
-               , ldbLiveTablesHasFS
+               , ldbHasFS           = lgrHasFS'
                , ldbShouldFlush     = defaultShouldFlush flushFreq
                , ldbQueryBatchSize  = queryBatchSize
                , ldbResolveBlock    = getBlock
@@ -127,23 +125,18 @@ mkInitDb args bss getBlock =
       pure $ implMkLedgerDb h
   }
   where
-    ldbTablesHasFS     = if lgrSnapshotTablesSSD then lgrSSDHasFS else lgrHasFS
-    ldbStateHasFS      = if lgrSnapshotStateSSD  then lgrSSDHasFS else lgrHasFS
-    ldbLiveTablesHasFS = lgrSSDHasFS
-
     bsTracer = nullTracer --LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV1 >$< lgrTracer
 
     LedgerDbArgs {
         lgrHasFS
-      , lgrSSDHasFS
-      , lgrSnapshotTablesSSD
-      , lgrSnapshotStateSSD
       , lgrTracer
       , lgrSnapshotPolicyArgs
       , lgrConfig
       , lgrGenesis
       , lgrRegistry
       } = args
+
+    lgrHasFS' = SnapshotsFS lgrHasFS
 
     V1Args flushFreq queryBatchSize baArgs = bss
 
@@ -252,12 +245,12 @@ implTryTakeSnapshot env mTime nrBlocks =
                                           (ldbChangelog env)
                                           (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
                                           (LedgerDBSnapshotEvent >$< ldbTracer env)
-                                          (ldbStateHasFS env)
+                                          (ldbHasFS env)
                                           (ldbBackingStore env)
                                           Nothing)
       void $ trimSnapshots
                 (LedgerDBSnapshotEvent >$< ldbTracer env)
-                [ldbStateHasFS env, ldbTablesHasFS env]
+                (snapshotsFs $ ldbHasFS env)
                 (ldbSnapshotPolicy env)
       (`SnapCounters` 0) . Just <$> maybe getMonotonicTime (pure . snd) mTime
     else
@@ -304,16 +297,14 @@ mkInternals ::
 mkInternals h = TestInternals {
       takeSnapshotNOW = getEnv1 h implIntTakeSnapshot
     , reapplyThenPushNOW = getEnv1 h implIntReapplyThenPushBlock
-    , wipeLedgerDB = getEnv h $ \env ->
-        mapM_ destroySnapshots [ldbTablesHasFS env, ldbStateHasFS env]
-    , closeLedgerDB = getEnv h $ \env -> bsClose $ ldbBackingStore env
-    , truncateSnapshots = getEnv h $ \env ->
-        mapM_ implIntTruncateSnapshots [ldbTablesHasFS env, ldbStateHasFS env]
+    , wipeLedgerDB = getEnv h $ void . destroySnapshots . ldbHasFS
+    , closeLedgerDB = getEnv h $ bsClose . ldbBackingStore
+    , truncateSnapshots = getEnv h $ void . implIntTruncateSnapshots . ldbHasFS
     }
 
 -- | Testing only! Destroy all snapshots in the DB.
-destroySnapshots :: Monad m => SomeHasFS m -> m ()
-destroySnapshots (SomeHasFS fs) = do
+destroySnapshots :: Monad m => SnapshotsFS m -> m ()
+destroySnapshots (SnapshotsFS (SomeHasFS fs)) = do
   dirs <- Set.lookupMax . Set.filter (isJust . snapshotFromPath) <$> listDirectory fs (mkFsPath [])
   mapM_ ((\d -> do
             isDir <- doesDirectoryExist fs d
@@ -323,8 +314,8 @@ destroySnapshots (SomeHasFS fs) = do
         ) . mkFsPath . (:[])) dirs
 
 -- | Testing only! Truncate all snapshots in the DB.
-implIntTruncateSnapshots :: MonadThrow m => SomeHasFS m -> m ()
-implIntTruncateSnapshots (SomeHasFS fs) = do
+implIntTruncateSnapshots :: MonadThrow m => SnapshotsFS m -> m ()
+implIntTruncateSnapshots (SnapshotsFS (SomeHasFS fs)) = do
   dirs <- Set.lookupMax . Set.filter (isJust . snapshotFromPath) <$> listDirectory fs (mkFsPath [])
   mapM_ (truncateRecursively . (:[])) dirs
   where
@@ -354,7 +345,7 @@ implIntTakeSnapshot env diskSnapshot = do
       (ldbChangelog env)
       (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
       (LedgerDBSnapshotEvent >$< ldbTracer env)
-      (ldbStateHasFS env)
+      (ldbHasFS env)
       (ldbBackingStore env)
       diskSnapshot
 

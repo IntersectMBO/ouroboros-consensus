@@ -136,7 +136,6 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
               chunkInfo
               (const True)
               (Node.stdMkChainDbHasFS confDbDir)
-              (Node.stdMkChainDbHasFS confDbDir)
               flavargs $
              ChainDB.defaultArgs
 

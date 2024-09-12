@@ -8,7 +8,6 @@ import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
 import           Cardano.Tools.DBSynthesizer.Types
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Cardano.Block
-import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
 import           Test.Tasty
 import           Test.Tasty.HUnit
 import           Test.Util.TestEnv
@@ -63,10 +62,7 @@ testAnalyserConfig :: DBAnalyserConfig
 testAnalyserConfig =
   DBAnalyserConfig {
       dbDir       = chainDB
-    , ssdDir      = chainDB
-    , stateInSSD  = False
-    , tablesInSSD = False
-    , bsArgs      = InMemoryBackingStoreArgs
+    , ldbBackend  = V2InMem
     , verbose     = False
     , selectDB    = SelectImmutableDB Origin
     , validation  = Just ValidateAllBlocks

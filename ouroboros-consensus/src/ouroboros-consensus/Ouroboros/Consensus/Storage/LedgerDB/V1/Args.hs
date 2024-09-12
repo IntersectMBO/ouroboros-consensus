@@ -24,6 +24,7 @@ import qualified Data.SOP.Dict as Dict
 import           Data.Word
 import           GHC.Generics
 import           NoThunks.Class
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
 import           Ouroboros.Consensus.Util.Args
 
@@ -89,7 +90,7 @@ data LedgerDbFlavorArgs f m = V1Args {
   }
 
 data BackingStoreArgs f m =
-    LMDBBackingStoreArgs (HKD f LMDBLimits) (Dict.Dict MonadIO m)
+    LMDBBackingStoreArgs (LiveLMDBFS m) (HKD f LMDBLimits) (Dict.Dict MonadIO m)
   | InMemoryBackingStoreArgs
 
 defaultLedgerDbFlavorArgs :: Incomplete LedgerDbFlavorArgs  m

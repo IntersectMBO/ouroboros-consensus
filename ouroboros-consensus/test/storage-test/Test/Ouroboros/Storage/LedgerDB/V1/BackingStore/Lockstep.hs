@@ -148,14 +148,11 @@ maxOpenValueHandles = 32
 -------------------------------------------------------------------------------}
 
 type BackingStoreInitializer m ks vs d =
-     SomeHasFS m
-  -> SomeHasFS m
-  -> BS.InitFrom vs
+     BS.InitFrom vs
   -> m (BS.BackingStore m ks vs d)
 
 data RealEnv m ks vs d = RealEnv {
-    reSomeHasFS        :: SomeHasFS m
-  , reBackingStoreInit :: BackingStoreInitializer m ks vs d
+    reBackingStoreInit :: BackingStoreInitializer m ks vs d
   , reBackingStore     :: StrictMVar m (BS.BackingStore m ks vs d)
   , reRegistry         :: HandleRegistry m (BS.BackingStoreValueHandle m ks vs)
   }
@@ -583,10 +580,10 @@ runIO action lookUp = ReaderT $ \renv ->
       -> m a
     aux renv = \case
         BSInitFromValues sl (Values vs) -> catchErr $ do
-          bs <- bsi sfhs sfhs (BS.InitFromValues sl vs)
+          bs <- bsi (BS.InitFromValues sl vs)
           void $ swapMVar bsVar bs
         BSInitFromCopy bsp -> catchErr $ do
-          bs <- bsi sfhs sfhs (BS.InitFromCopy bsp)
+          bs <- bsi (BS.InitFromCopy bsp)
           void $ swapMVar bsVar bs
         BSClose            -> catchErr $
           readMVar bsVar >>= BS.bsClose
@@ -608,8 +605,7 @@ runIO action lookUp = ReaderT $ \renv ->
           readHandle rr (lookUp' h) >>= \vh -> BS.bsvhStat vh
       where
         RealEnv{
-            reSomeHasFS        = sfhs
-          , reBackingStoreInit = bsi
+            reBackingStoreInit = bsi
           , reBackingStore     = bsVar
           , reRegistry         = rr
           } = renv
