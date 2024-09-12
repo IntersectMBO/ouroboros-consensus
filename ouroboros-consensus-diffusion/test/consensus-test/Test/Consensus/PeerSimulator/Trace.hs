@@ -23,11 +23,12 @@ module Test.Consensus.PeerSimulator.Trace (
 import           Control.Tracer (Tracer (Tracer), contramap, traceWith)
 import           Data.Bifunctor (second)
 import           Data.List (intersperse)
+import qualified Data.List.NonEmpty as NE
 import           Data.Time.Clock (DiffTime, diffTimeToPicoseconds)
 import           Ouroboros.Consensus.Block (GenesisWindow (..), Header, Point,
                      WithOrigin (NotOrigin, Origin), succWithOrigin)
 import           Ouroboros.Consensus.Genesis.Governor (DensityBounds (..),
-                     TraceGDDEvent (..))
+                     GDDDebugInfo (..), TraceGDDEvent (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (TraceChainSyncClientEvent (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping
@@ -490,7 +491,15 @@ showPeers = map (\ (peer, v) -> "        " ++ condense peer ++ ": " ++ v)
 -- * Other utilities
 terseGDDEvent :: TraceGDDEvent PeerId TestBlock -> String
 terseGDDEvent = \case
-  TraceGDDEvent {sgen = GenesisWindow sgen, curChain, bounds, candidates, candidateSuffixes, losingPeers, loeHead} ->
+  TraceGDDDisconnected peers -> "GDD | Disconnected " <> show (NE.toList peers)
+  TraceGDDDebug GDDDebugInfo {
+      sgen = GenesisWindow sgen
+    , curChain, bounds
+    , candidates
+    , candidateSuffixes
+    , losingPeers
+    , loeHead
+    } ->
     unlines $ [
       "GDD | Window: " ++ window sgen loeHead,
       "      Selection: " ++ terseHFragment curChain,

@@ -25,6 +25,7 @@
 --
 module Ouroboros.Consensus.Genesis.Governor (
     DensityBounds (..)
+  , GDDDebugInfo (..)
   , GDDStateView (..)
   , TraceGDDEvent (..)
   , densityDisconnect
@@ -38,6 +39,8 @@ import           Data.Bifunctor (second)
 import           Data.Containers.ListUtils (nubOrd)
 import           Data.Foldable (for_, toList)
 import           Data.Functor.Compose (Compose (..))
+import           Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe, maybeToList)
@@ -215,9 +218,12 @@ evaluateGDD cfg tracer stateView = do
           densityDisconnect sgen (configSecurityParam cfg) states candidateSuffixes loeFrag
         loeHead = AF.headAnchor loeFrag
 
-      traceWith tracer TraceGDDEvent {sgen, curChain, bounds, candidates, candidateSuffixes, losingPeers, loeHead}
+      traceWith tracer $ TraceGDDDebug
+        GDDDebugInfo {sgen, curChain, bounds, candidates, candidateSuffixes, losingPeers, loeHead}
 
-      for_ losingPeers $ \peer -> killActions Map.! peer
+      whenJust (NE.nonEmpty losingPeers) $ \losingPeersNE -> do
+        for_ losingPeersNE $ \peer -> killActions Map.! peer
+        traceWith tracer $ TraceGDDDisconnected losingPeersNE
 
     pure loeFrag
 
@@ -424,8 +430,8 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
 -- after the intersection. If both chains agree on the next header after
 -- the intersection, we don't disconnect peer1 either.
 
-data TraceGDDEvent peer blk =
-  TraceGDDEvent {
+data GDDDebugInfo peer blk =
+  GDDDebugInfo {
     bounds            :: [(peer, DensityBounds blk)],
     curChain          :: AnchoredFragment (Header blk),
     candidates        :: [(peer, AnchoredFragment (Header blk))],
@@ -434,6 +440,16 @@ data TraceGDDEvent peer blk =
     loeHead           :: AF.Anchor (Header blk),
     sgen              :: GenesisWindow
   }
+
+deriving stock instance
+  ( GetHeader blk, Show (Header blk), Show peer
+  ) => Show (GDDDebugInfo peer blk)
+
+data TraceGDDEvent peer blk =
+    -- | The GDD disconnected from the given peers due to insufficient density.
+    TraceGDDDisconnected (NonEmpty peer)
+  |
+    TraceGDDDebug (GDDDebugInfo peer blk)
 
 deriving stock instance
   ( GetHeader blk, Show (Header blk), Show peer
