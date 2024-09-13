@@ -25,6 +25,8 @@ module Cardano.Tools.DBAnalyser.Analysis (
   , runAnalysis
   ) where
 
+import qualified GHC.Stats as GHC
+
 import qualified Cardano.Slotting.Slot as Slotting
 import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.FileWriting as F
 import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint as DP
@@ -193,8 +195,15 @@ data TraceEvent blk =
     --   holding maximum encountered header size
   | SnapshotStoredEventStart SlotNo
     -- ^ triggered when snapshot of ledger has been stored for SlotNo
-  | SnapshotStoredEventFinish SlotNo
+  | SnapshotStoredEventFinish SlotNo Word32 Word32 Word64 Word64 GHC.RtsTime GHC.RtsTime
     -- ^ triggered when snapshot of ledger has been stored for SlotNo
+    --
+    -- minor GCs during this snapshot
+    -- major GCs during this snapshot
+    -- bytes allocated during this snapshot
+    -- bytes copied during this snapshot
+    -- elapsed mutator during this snapshot
+    -- elapsed GC during this snapshot
   | SnapshotWarningEvent SlotNo SlotNo
     -- ^ triggered once during  StoreLedgerStateAt analysis,
     --   when snapshot was created in slot proceeding the
@@ -251,8 +260,8 @@ instance (HasAnalysis blk, LedgerSupportsProtocol blk) => Show (TraceEvent blk) 
     "Maximum encountered header size = " <> show size
   show (SnapshotStoredEventStart slot)    =
     "Start storing snapshot at " <> show slot
-  show (SnapshotStoredEventFinish slot)    =
-    "Done storing snapshot at " <> show slot
+  show (SnapshotStoredEventFinish slot mins majs alloc copy muttm gctm)    =
+    "Done storing snapshot at " <> show slot <> " -- " <> unwords [show mins, show majs, show alloc, show copy, show muttm, show gctm]
   show (SnapshotWarningEvent requested actual) =
     "Snapshot was created at " <> show actual <> " " <>
     "because there was no block forged at requested " <> show requested
@@ -435,8 +444,18 @@ storeLedgerStateAt slots ledgerAppMode env = do
         NotOrigin slot -> do
           let snapshot = DiskSnapshot (unSlotNo slot) (Just "db-analyser")
           traceWith tracer $ SnapshotStoredEventStart slot
+          stats1 <- GHC.getRTSStats
           writeSnapshot ledgerDbFS encLedger snapshot ledgerState
-          traceWith tracer $ SnapshotStoredEventFinish slot
+          stats2 <- GHC.getRTSStats
+          let f :: Num a => (GHC.RTSStats -> a) -> a
+              f prj = prj stats2 - prj stats1
+              mins  = f GHC.gcs - majs
+              majs  = f GHC.major_gcs
+              alloc = f GHC.allocated_bytes
+              copy  = f GHC.copied_bytes
+              muttm = f GHC.mutator_elapsed_ns `div` 1000000
+              gctm  = f GHC.gc_elapsed_ns      `div` 1000000
+          traceWith tracer $ SnapshotStoredEventFinish slot mins majs alloc copy muttm gctm
         Origin -> pure ()
       where
         pt = headerStatePoint $ headerState ledgerState
