@@ -248,7 +248,7 @@ prop_simple_real_tpraos_convergence TestSetup
     testOutput =
         runTestNetwork setupTestConfig testConfigB TestConfigMB
             { nodeInfo = \(CoreNodeId nid) -> do
-              (protocolInfo, blockForging) <-
+              let (protocolInfo, blockForging) =
                     mkProtocolShelley
                       genesisConfig
                       setupInitialNonce

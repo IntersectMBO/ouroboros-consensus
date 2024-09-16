@@ -139,16 +139,16 @@ instance HasProtocolInfo (ShelleyBlock (TPraos StandardCrypto) StandardShelley) 
   mkProtocolInfo ShelleyBlockArgs{configFileShelley, initialNonce} = do
     config <- either (error . show) return =<<
       Aeson.eitherDecodeFileStrict' configFileShelley
-    mkShelleyProtocolInfo config initialNonce
+    return $ mkShelleyProtocolInfo config initialNonce
 
 type ShelleyBlockArgs = Args (ShelleyBlock (TPraos StandardCrypto) StandardShelley)
 
 mkShelleyProtocolInfo ::
      ShelleyGenesis StandardCrypto
   -> Nonce
-  -> IO (ProtocolInfo (ShelleyBlock (TPraos StandardCrypto) StandardShelley))
-mkShelleyProtocolInfo genesis initialNonce = do
-    fst <$> protocolInfoShelley @IO
+  -> ProtocolInfo (ShelleyBlock (TPraos StandardCrypto) StandardShelley)
+mkShelleyProtocolInfo genesis initialNonce =
+    fst $ protocolInfoShelley @IO
       genesis
       ProtocolParamsShelleyBased {
           shelleyBasedInitialNonce      = initialNonce

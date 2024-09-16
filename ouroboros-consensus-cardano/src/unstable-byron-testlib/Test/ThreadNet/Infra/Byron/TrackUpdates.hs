@@ -374,14 +374,14 @@ mkProtocolByronAndHardForkTxs
     TestNodeInitialization
       { tniCrucialTxs   = proposals ++ votes
       , tniProtocolInfo = pInfo
-      , tniBlockForging = blockForging
+      , tniBlockForging = pure blockForging
       }
   where
     ProtocolInfo{pInfoConfig} = pInfo
     bcfg = configBlock pInfoConfig
 
     pInfo :: ProtocolInfo ByronBlock
-    blockForging :: m [BlockForging m ByronBlock]
+    blockForging :: [BlockForging m ByronBlock]
     opKey :: Crypto.SigningKey
     (pInfo, blockForging, Crypto.SignKeyByronDSIGN opKey) =
         mkProtocolByron params cid genesisConfig genesisSecrets
@@ -434,7 +434,7 @@ mkHardForkProposal params genesisConfig genesisSecrets propPV =
       (Crypto.noPassSafeSigner opKey)
   where
     pInfo :: ProtocolInfo ByronBlock
-    _blockForging :: Identity [BlockForging Identity ByronBlock]
+    _blockForging :: [BlockForging Identity ByronBlock]
     opKey :: Crypto.SigningKey
     (pInfo, _blockForging, Crypto.SignKeyByronDSIGN opKey) =
         mkProtocolByron params (CoreNodeId 0) genesisConfig genesisSecrets

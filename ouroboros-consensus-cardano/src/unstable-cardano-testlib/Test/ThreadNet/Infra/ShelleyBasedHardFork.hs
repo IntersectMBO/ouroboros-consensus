@@ -245,10 +245,10 @@ protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
   let genesis :: SL.ShelleyGenesis (EraCrypto era1)
       genesis = transCfg2 ^. L.tcShelleyGenesisL
 
-  pinfo1 <- protocolInfoTPraosShelleyBased
-              protocolParamsShelleyBased
-              (transCfg2 ^. L.tcPreviousEraConfigL)
-              protVer1
+  let pinfo1 = protocolInfoTPraosShelleyBased
+                protocolParamsShelleyBased
+                (transCfg2 ^. L.tcPreviousEraConfigL)
+                protVer1
   let protocolInfo1 :: ProtocolInfo (ShelleyBlock proto1 era1)
       blockForging1 :: m [BlockForging m (ShelleyBlock proto1 era1)]
       (protocolInfo1, blockForging1) = pinfo1
@@ -266,11 +266,11 @@ protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
 
   -- Era 2
 
-  pinfo2 <- protocolInfoTPraosShelleyBased
-              ProtocolParamsShelleyBased {
-                  shelleyBasedInitialNonce
-                , shelleyBasedLeaderCredentials
-                }
+  let pinfo2 = protocolInfoTPraosShelleyBased
+                ProtocolParamsShelleyBased {
+                    shelleyBasedInitialNonce
+                  , shelleyBasedLeaderCredentials
+                  }
               transCfg2
               protVer2
   let protocolInfo2 :: ProtocolInfo (ShelleyBlock proto2 era2)

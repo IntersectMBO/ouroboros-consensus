@@ -34,7 +34,7 @@ mkProtocolByron ::
   -> CoreNodeId
   -> Genesis.Config
   -> Genesis.GeneratedSecrets
-  -> (ProtocolInfo ByronBlock, m [BlockForging m ByronBlock], SignKeyDSIGN ByronDSIGN)
+  -> (ProtocolInfo ByronBlock, [BlockForging m ByronBlock], SignKeyDSIGN ByronDSIGN)
      -- ^ We return the signing key which is needed in some tests, because it
      -- cannot easily be extracted from the 'ProtocolInfo'.
 mkProtocolByron params coreNodeId genesisConfig genesisSecrets =
@@ -55,7 +55,7 @@ mkProtocolByron params coreNodeId genesisConfig genesisSecrets =
     protocolInfo :: ProtocolInfo ByronBlock
     protocolInfo = protocolInfoByron protocolParams
 
-    blockForging :: m [BlockForging m ByronBlock]
+    blockForging :: [BlockForging m ByronBlock]
     blockForging = blockForgingByron protocolParams
 
     protocolParams :: ProtocolParams ByronBlock

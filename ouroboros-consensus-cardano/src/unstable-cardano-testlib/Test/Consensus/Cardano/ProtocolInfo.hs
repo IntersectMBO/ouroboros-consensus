@@ -268,7 +268,7 @@ mkTestProtocolInfo
     aByronPbftSignatureThreshold
     hardForkSpec = do
 
-  leaderCredentialsShelley :: ShelleyLeaderCredentials c <- Shelley.mkLeaderCredentials coreNode
+  let leaderCredentialsShelley :: ShelleyLeaderCredentials c = Shelley.mkLeaderCredentials coreNode
 
   protocolInfoCardano
         (CardanoProtocolParams

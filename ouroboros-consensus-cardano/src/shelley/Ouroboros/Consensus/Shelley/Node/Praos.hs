@@ -56,7 +56,7 @@ praosBlockForging ::
   => PraosParams
   -> HotKey.HotKey c m
   -> ShelleyLeaderCredentials (EraCrypto era)
-  -> m (BlockForging m (ShelleyBlock (Praos c) era))
+  -> BlockForging m (ShelleyBlock (Praos c) era)
 praosBlockForging praosParams hotKey credentials = do
     let slotToPeriod :: SlotNo -> Absolute.KESPeriod
         slotToPeriod (SlotNo slot) =
@@ -78,15 +78,15 @@ praosSharedBlockForging ::
   => HotKey.HotKey c m
   -> (SlotNo -> Absolute.KESPeriod)
   -> ShelleyLeaderCredentials c
-  -> m (BlockForging m (ShelleyBlock (Praos c) era))
+  -> BlockForging m (ShelleyBlock (Praos c) era)
 praosSharedBlockForging
   hotKey
   slotToPeriod
   ShelleyLeaderCredentials {
       shelleyLeaderCredentialsCanBeLeader = canBeLeader
     , shelleyLeaderCredentialsLabel = label
-    } = do
-    pure BlockForging
+    } =
+    BlockForging
       { forgeLabel = label <> "_" <> T.pack (L.eraName @era)
       , canBeLeader = canBeLeader
 

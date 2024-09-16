@@ -1019,7 +1019,7 @@ protocolInfoCardano paramsCardano
                   merge (This1 x)    = x
                   merge (That1 y)    = y
 
-        return (hardForkBlockForging "Cardano" <$> blockForgings)
+        return $ hardForkBlockForging "Cardano" <$> blockForgings
 
     mBlockForgingByron :: Maybe (NonEmptyOptNP (BlockForging m) (CardanoEras c))
     mBlockForgingByron = do
@@ -1052,32 +1052,25 @@ protocolInfoCardano paramsCardano
 
         let tpraos :: forall era.
                  ShelleyEraWithCrypto c       (TPraos c) era
-              => m (BlockForging m (ShelleyBlock (TPraos c) era))
+              => BlockForging m (ShelleyBlock (TPraos c) era)
             tpraos =
               TPraos.shelleySharedBlockForging hotKey slotToPeriod credentials
 
         let praos :: forall era.
                  ShelleyEraWithCrypto c       (Praos c) era
-              => m (BlockForging m (ShelleyBlock (Praos c) era))
+              => BlockForging m (ShelleyBlock (Praos c) era)
             praos =
               Praos.praosSharedBlockForging hotKey slotToPeriod credentials
-
-        tpraosShelley <- tpraos
-        tpraosAllegra <- tpraos
-        tpraosMary <- tpraos
-        tpraosAlonzo <- tpraos
-        praosBabbage <- praos
-        praosConway <- praos
 
         pure
           $ OptSkip    -- Byron
           $ OptNP.fromNonEmptyNP $
-            tpraosShelley :*
-            tpraosAllegra :*
-            tpraosMary    :*
-            tpraosAlonzo  :*
-            praosBabbage :*
-            praosConway  :*
+            tpraos :*
+            tpraos :*
+            tpraos    :*
+            tpraos  :*
+            praos :*
+            praos  :*
             Nil
 
 protocolClientInfoCardano ::

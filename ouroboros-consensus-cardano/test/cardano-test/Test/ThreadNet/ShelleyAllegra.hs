@@ -237,7 +237,7 @@ prop_simple_shelleyAllegra_convergence TestSetup
     testOutput :: TestOutput ShelleyAllegraBlock
     testOutput = runTestNetwork setupTestConfig testConfigB TestConfigMB {
           nodeInfo = \(CoreNodeId nid) -> do
-            leaderCredentials <- Shelley.mkLeaderCredentials
+            let leaderCredentials = Shelley.mkLeaderCredentials
                                     (coreNodes !! fromIntegral nid)
             let protocolParamsShelleyBased =
                   ProtocolParamsShelleyBased {

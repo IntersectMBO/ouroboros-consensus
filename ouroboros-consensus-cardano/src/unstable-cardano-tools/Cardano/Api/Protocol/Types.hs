@@ -63,7 +63,7 @@ instance IOLike m => Protocol m ByronBlockHFC where
   protocolInfo (ProtocolInfoArgsByron params) =
     pure
       ( inject $ protocolInfoByron params
-      , map inject <$> blockForgingByron params
+      , pure $ map inject $ blockForgingByron params
       )
 
 instance (CardanoHardForkConstraints StandardCrypto, IOLike m) => Protocol m (CardanoBlock StandardCrypto) where
@@ -98,7 +98,8 @@ instance ( IOLike m
     (ProtocolParams (Consensus.ShelleyBlock (Consensus.TPraos StandardCrypto) (ShelleyEra StandardCrypto)))
 
   protocolInfo (ProtocolInfoArgsShelley genesis paramsShelleyBased' paramsShelley') =
-    bimap inject (fmap (map inject)) <$> do
+    pure $
+    bimap inject (fmap (map inject)) $ do
       protocolInfoShelley genesis paramsShelleyBased' paramsShelley'
 
 instance Consensus.LedgerSupportsProtocol

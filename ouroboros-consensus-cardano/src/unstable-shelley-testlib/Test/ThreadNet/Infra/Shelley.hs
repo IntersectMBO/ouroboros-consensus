@@ -211,20 +211,19 @@ genCoreNode startKESPeriod = do
     genSeed :: Integral a => a -> Gen Cardano.Crypto.Seed
     genSeed = fmap mkSeedFromBytes . genBytes
 
-mkLeaderCredentials :: forall m c.
-                       (IOLike m, PraosCrypto c)
+mkLeaderCredentials :: forall c.
+                       (PraosCrypto c)
                     => CoreNode c
-                    -> m (ShelleyLeaderCredentials c)
+                    -> ShelleyLeaderCredentials c
 mkLeaderCredentials CoreNode { cnDelegateKey, cnVRF, cnKES, cnOCert } = do
-  return
-    ShelleyLeaderCredentials {
-       shelleyLeaderCredentialsCanBeLeader = PraosCanBeLeader {
-          praosCanBeLeaderColdVerKey = SL.VKey $ deriveVerKeyDSIGN cnDelegateKey
-        , praosCanBeLeaderSignKeyVRF = cnVRF
-        , praosCanBeLeaderCredentialsSource = PraosCredentialsUnsound cnOCert cnKES
-        }
-      , shelleyLeaderCredentialsLabel       = "ThreadNet"
+  ShelleyLeaderCredentials {
+     shelleyLeaderCredentialsCanBeLeader = PraosCanBeLeader {
+        praosCanBeLeaderColdVerKey = SL.VKey $ deriveVerKeyDSIGN cnDelegateKey
+      , praosCanBeLeaderSignKeyVRF = cnVRF
+      , praosCanBeLeaderCredentialsSource = PraosCredentialsUnsound cnOCert cnKES
       }
+    , shelleyLeaderCredentialsLabel       = "ThreadNet"
+    }
 
 {-------------------------------------------------------------------------------
   KES configuration
@@ -415,20 +414,21 @@ mkProtocolShelley ::
   -> SL.Nonce
   -> ProtVer
   -> CoreNode c
-  -> m ( ProtocolInfo (ShelleyBlock (TPraos c) (ShelleyEra c))
-       , m [BlockForging m (ShelleyBlock (TPraos c) (ShelleyEra c))]
-       )
-mkProtocolShelley genesis initialNonce protVer coreNode = do
-    leaderCredentials <- mkLeaderCredentials coreNode
-    protocolInfoShelley
-      genesis
-      ProtocolParamsShelleyBased {
-          shelleyBasedInitialNonce      = initialNonce
-        , shelleyBasedLeaderCredentials = [leaderCredentials]
-        }
-      ProtocolParamsShelley {
-          shelleyProtVer = protVer
-        }
+  -> ( ProtocolInfo (ShelleyBlock (TPraos c) (ShelleyEra c))
+     , m [BlockForging m (ShelleyBlock (TPraos c) (ShelleyEra c))]
+     )
+mkProtocolShelley genesis initialNonce protVer coreNode =
+  protocolInfoShelley
+    genesis
+    ProtocolParamsShelleyBased {
+        shelleyBasedInitialNonce      = initialNonce
+      , shelleyBasedLeaderCredentials = [leaderCredentials]
+      }
+    ProtocolParamsShelley {
+        shelleyProtVer = protVer
+      }
+  where
+    leaderCredentials = mkLeaderCredentials coreNode
 
 
 {-------------------------------------------------------------------------------
