@@ -76,6 +76,7 @@ import           Data.Proxy
 import           Data.Typeable
 import           Data.Word
 import           GHC.Generics (Generic)
+import           GHC.TypeNats (KnownNat)
 import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
@@ -170,7 +171,10 @@ data SimpleStdHeader c ext = SimpleStdHeader {
     , simpleBodySize :: SizeInBytes
     }
   deriving stock    (Generic, Show, Eq)
-  deriving anyclass (Serialise, NoThunks)
+  deriving anyclass (NoThunks)
+
+deriving anyclass instance KnownNat (Hash.SizeHash (SimpleHash c)) =>
+  Serialise (SimpleStdHeader c ext)
 
 data SimpleBody = SimpleBody {
       simpleTxs :: [Mock.Tx]
@@ -367,7 +371,10 @@ newtype instance LedgerState (SimpleBlock c ext) = SimpleLedgerState {
       simpleLedgerState :: MockState (SimpleBlock c ext)
     }
   deriving stock   (Generic, Show, Eq)
-  deriving newtype (Serialise, NoThunks)
+  deriving newtype (NoThunks)
+
+deriving anyclass instance KnownNat (Hash.SizeHash (SimpleHash c)) =>
+  Serialise (LedgerState (SimpleBlock c ext))
 
 -- Ticking has no effect on the simple ledger state
 newtype instance Ticked (LedgerState (SimpleBlock c ext)) = TickedSimpleLedgerState {
@@ -541,7 +548,7 @@ instance InspectLedger (SimpleBlock c ext) where
   Crypto needed for simple blocks
 -------------------------------------------------------------------------------}
 
-class (HashAlgorithm (SimpleHash c), Typeable c) => SimpleCrypto c where
+class (KnownNat (Hash.SizeHash (SimpleHash c)), HashAlgorithm (SimpleHash c), Typeable c) => SimpleCrypto c where
   type family SimpleHash c :: Type
 
 data SimpleStandardCrypto
@@ -598,7 +605,8 @@ instance Condense ext' => Condense (SimpleBlock' c ext ext') where
 instance ToCBOR SimpleBody where
   toCBOR = encode
 
-encodeSimpleHeader :: (ext' -> CBOR.Encoding)
+encodeSimpleHeader :: KnownNat (Hash.SizeHash (SimpleHash c))
+                   => (ext' -> CBOR.Encoding)
                    -> Header (SimpleBlock' c ext ext')
                    -> CBOR.Encoding
 encodeSimpleHeader encodeExt SimpleHeader{..} =  mconcat [
