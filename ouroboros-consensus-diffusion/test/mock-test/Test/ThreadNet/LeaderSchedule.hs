@@ -114,7 +114,6 @@ prop_simple_leader_schedule_convergence TestSetup
     testOutput@TestOutput{testOutputNodes} =
         runTestNetwork testConfig testConfigB TestConfigMB
             { nodeInfo = \nid ->
-                pure $
                   plainTestNodeInitialization
                     (protocolInfoPraosRule
                       numCoreNodes

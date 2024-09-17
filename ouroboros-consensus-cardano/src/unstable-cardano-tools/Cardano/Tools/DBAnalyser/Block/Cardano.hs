@@ -162,7 +162,7 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
           $ CryptoClass.hashWith id
           $ content
 
-    mkCardanoProtocolInfo
+    return $ mkCardanoProtocolInfo
         genesisByron
         threshold
         transCfg
@@ -364,9 +364,9 @@ mkCardanoProtocolInfo ::
   -> L.TransitionConfig (L.LatestKnownEra StandardCrypto)
   -> Nonce
   -> CardanoHardForkTriggers
-  -> IO (ProtocolInfo (CardanoBlock StandardCrypto))
+  -> ProtocolInfo (CardanoBlock StandardCrypto)
 mkCardanoProtocolInfo genesisByron signatureThreshold transitionConfig initialNonce triggers =
-    fst <$> protocolInfoCardano @_ @IO
+    fst $ protocolInfoCardano @_ @IO
       (CardanoProtocolParams
         ProtocolParamsByron {
             byronGenesis                = genesisByron

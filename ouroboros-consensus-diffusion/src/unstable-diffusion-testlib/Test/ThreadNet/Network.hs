@@ -217,7 +217,7 @@ data ThreadNetworkArgs m blk = ThreadNetworkArgs
   { tnaForgeEbbEnv  :: Maybe (ForgeEbbEnv blk)
   , tnaFuture       :: Future
   , tnaJoinPlan     :: NodeJoinPlan
-  , tnaNodeInfo     :: CoreNodeId -> m (TestNodeInitialization m blk)
+  , tnaNodeInfo     :: CoreNodeId -> TestNodeInitialization m blk
   , tnaNumCoreNodes :: NumCoreNodes
   , tnaNumSlots     :: NumSlots
   , tnaMessageDelay :: CalcMessageDelay blk
@@ -347,7 +347,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
 
     -- assume they all start with the empty chain and the same initial
     -- ledger
-    nodeInitData0 <- mkProtocolInfo (CoreNodeId 0)
+    let nodeInitData0 = mkProtocolInfo (CoreNodeId 0)
 
     -- allocate the status variable for each vertex
     vertexStatusVars <- fmap Map.fromList $ do
@@ -468,7 +468,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
       edgeStatusVars
       nodeInfo
       nextInstrSlotVar = do
-        tni <- mkProtocolInfo coreNodeId
+        let tni = mkProtocolInfo coreNodeId
         let TestNodeInitialization
                { tniCrucialTxs
                , tniProtocolInfo

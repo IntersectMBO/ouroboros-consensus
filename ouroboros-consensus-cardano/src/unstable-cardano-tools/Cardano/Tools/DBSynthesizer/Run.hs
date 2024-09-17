@@ -120,12 +120,12 @@ synthesize ::
   -> IO ForgeResult
 synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} runP =
     withRegistry $ \registry -> do
-        (pinfo, mkForgers) <- protocolInfoCardano runP
-        let
-            ProtocolInfo
-                { pInfoConfig
-                , pInfoInitLedger
-                } = pinfo
+        let ( ProtocolInfo
+                  { pInfoConfig
+                  , pInfoInitLedger
+                  },
+              mkForgers
+              ) = protocolInfoCardano runP
 
             epochSize   = sgEpochLength confShelleyGenesis
             chunkInfo   = Node.nodeImmutableDbChunkInfo (configStorage pInfoConfig)

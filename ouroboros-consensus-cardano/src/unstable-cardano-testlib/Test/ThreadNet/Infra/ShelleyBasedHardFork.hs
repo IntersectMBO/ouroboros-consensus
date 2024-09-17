@@ -227,68 +227,15 @@ protocolInfoShelleyBasedHardFork ::
   -> SL.ProtVer
   -> L.TransitionConfig era2
   -> TriggerHardFork
-  -> m ( ProtocolInfo      (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)
-       , m [BlockForging m (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)]
-       )
+  -> ( ProtocolInfo      (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)
+     , m [BlockForging m (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)]
+     )
 protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
                                  protVer1
                                  protVer2
                                  transCfg2
-                                 hardForkTrigger = do
-  let ProtocolParamsShelleyBased
-        { shelleyBasedInitialNonce
-        , shelleyBasedLeaderCredentials
-        } = protocolParamsShelleyBased
-
-  -- Era 1
-
-  let genesis :: SL.ShelleyGenesis (EraCrypto era1)
-      genesis = transCfg2 ^. L.tcShelleyGenesisL
-
-  let pinfo1 = protocolInfoTPraosShelleyBased
-                protocolParamsShelleyBased
-                (transCfg2 ^. L.tcPreviousEraConfigL)
-                protVer1
-  let protocolInfo1 :: ProtocolInfo (ShelleyBlock proto1 era1)
-      blockForging1 :: m [BlockForging m (ShelleyBlock proto1 era1)]
-      (protocolInfo1, blockForging1) = pinfo1
-
-  let eraParams1 :: History.EraParams
-      eraParams1 = shelleyEraParams genesis
-
-      toPartialLedgerConfig1 ::
-           LedgerConfig (ShelleyBlock proto1 era1)
-        -> PartialLedgerConfig (ShelleyBlock proto1 era1)
-      toPartialLedgerConfig1 cfg = ShelleyPartialLedgerConfig {
-            shelleyLedgerConfig    = cfg
-          , shelleyTriggerHardFork = hardForkTrigger
-          }
-
-  -- Era 2
-
-  let pinfo2 = protocolInfoTPraosShelleyBased
-                ProtocolParamsShelleyBased {
-                    shelleyBasedInitialNonce
-                  , shelleyBasedLeaderCredentials
-                  }
-              transCfg2
-              protVer2
-  let protocolInfo2 :: ProtocolInfo (ShelleyBlock proto2 era2)
-      blockForging2 :: m [BlockForging m (ShelleyBlock proto2 era2)]
-      (protocolInfo2, blockForging2) = pinfo2
-
-  let eraParams2 :: History.EraParams
-      eraParams2 = shelleyEraParams genesis
-
-      toPartialLedgerConfig2 ::
-           LedgerConfig (ShelleyBlock proto2 era2)
-        -> PartialLedgerConfig (ShelleyBlock proto2 era2)
-      toPartialLedgerConfig2 cfg = ShelleyPartialLedgerConfig {
-            shelleyLedgerConfig    = cfg
-          , shelleyTriggerHardFork = TriggerHardForkNotDuringThisExecution
-          }
-
-  return $ protocolInfoBinary
+                                 hardForkTrigger =
+  protocolInfoBinary
         -- Era 1
         protocolInfo1
         blockForging1
@@ -301,6 +248,60 @@ protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
         eraParams2
         tpraosParams
         toPartialLedgerConfig2
+
+  where
+      ProtocolParamsShelleyBased
+        { shelleyBasedInitialNonce
+        , shelleyBasedLeaderCredentials
+        } = protocolParamsShelleyBased
+
+      -- Era 1
+
+      genesis :: SL.ShelleyGenesis (EraCrypto era1)
+      genesis = transCfg2 ^. L.tcShelleyGenesisL
+
+      pinfo1 = protocolInfoTPraosShelleyBased
+                protocolParamsShelleyBased
+                (transCfg2 ^. L.tcPreviousEraConfigL)
+                protVer1
+      protocolInfo1 :: ProtocolInfo (ShelleyBlock proto1 era1)
+      blockForging1 :: m [BlockForging m (ShelleyBlock proto1 era1)]
+      (protocolInfo1, blockForging1) = pinfo1
+
+      eraParams1 :: History.EraParams
+      eraParams1 = shelleyEraParams genesis
+
+      toPartialLedgerConfig1 ::
+           LedgerConfig (ShelleyBlock proto1 era1)
+        -> PartialLedgerConfig (ShelleyBlock proto1 era1)
+      toPartialLedgerConfig1 cfg = ShelleyPartialLedgerConfig {
+            shelleyLedgerConfig    = cfg
+          , shelleyTriggerHardFork = hardForkTrigger
+          }
+
+      -- Era 2
+
+      pinfo2 = protocolInfoTPraosShelleyBased
+                ProtocolParamsShelleyBased {
+                    shelleyBasedInitialNonce
+                  , shelleyBasedLeaderCredentials
+                  }
+              transCfg2
+              protVer2
+      protocolInfo2 :: ProtocolInfo (ShelleyBlock proto2 era2)
+      blockForging2 :: m [BlockForging m (ShelleyBlock proto2 era2)]
+      (protocolInfo2, blockForging2) = pinfo2
+
+      eraParams2 :: History.EraParams
+      eraParams2 = shelleyEraParams genesis
+
+      toPartialLedgerConfig2 ::
+           LedgerConfig (ShelleyBlock proto2 era2)
+        -> PartialLedgerConfig (ShelleyBlock proto2 era2)
+      toPartialLedgerConfig2 cfg = ShelleyPartialLedgerConfig {
+            shelleyLedgerConfig    = cfg
+          , shelleyTriggerHardFork = TriggerHardForkNotDuringThisExecution
+          }
 
 {-------------------------------------------------------------------------------
   TxGen instance

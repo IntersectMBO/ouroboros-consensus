@@ -236,26 +236,27 @@ prop_simple_shelleyAllegra_convergence TestSetup
 
     testOutput :: TestOutput ShelleyAllegraBlock
     testOutput = runTestNetwork setupTestConfig testConfigB TestConfigMB {
-          nodeInfo = \(CoreNodeId nid) -> do
+          nodeInfo = \(CoreNodeId nid) ->
             let leaderCredentials = Shelley.mkLeaderCredentials
                                     (coreNodes !! fromIntegral nid)
-            let protocolParamsShelleyBased =
+                protocolParamsShelleyBased =
                   ProtocolParamsShelleyBased {
                       shelleyBasedInitialNonce      = setupInitialNonce
                     , shelleyBasedLeaderCredentials = [leaderCredentials]
                     }
                 hardForkTrigger =
                   TriggerHardForkAtVersion $ SL.getVersion majorVersion2
-            (protocolInfo, blockForging) <-
-                protocolInfoShelleyBasedHardFork
-                  protocolParamsShelleyBased
-                  (SL.ProtVer majorVersion1 0)
-                  (SL.ProtVer majorVersion2 0)
-                  ( L.mkTransitionConfig ()
-                  $ L.mkShelleyTransitionConfig genesisShelley
-                  )
-                  hardForkTrigger
-            return TestNodeInitialization {
+                (protocolInfo, blockForging) =
+                  protocolInfoShelleyBasedHardFork
+                    protocolParamsShelleyBased
+                    (SL.ProtVer majorVersion1 0)
+                    (SL.ProtVer majorVersion2 0)
+                    ( L.mkTransitionConfig ()
+                    $ L.mkShelleyTransitionConfig genesisShelley
+                    )
+                    hardForkTrigger
+            in
+              TestNodeInitialization {
                 tniCrucialTxs   =
                   if not setupHardFork then [] else
                   fmap GenTxShelley1 $

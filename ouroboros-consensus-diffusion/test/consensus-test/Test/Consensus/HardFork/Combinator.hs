@@ -202,8 +202,7 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
     testConfigMB :: Monad m => TestConfigMB m TestBlock
     testConfigMB = TestConfigMB {
           nodeInfo =
-            \a -> pure $
-                    plainTestNodeInitialization
+            \a -> plainTestNodeInitialization
                       (protocolInfo a)
                       (pure blockForging)
         , mkRekeyM = Nothing

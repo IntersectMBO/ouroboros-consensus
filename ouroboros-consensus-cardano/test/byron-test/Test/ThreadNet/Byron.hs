@@ -918,7 +918,6 @@ prop_simple_real_pbft_convergence TestSetup
     testOutput =
         runTestNetwork testConfig testConfigB TestConfigMB
             { nodeInfo = \nid ->
-                pure $
                   mkProtocolByronAndHardForkTxs
                     params nid genesisConfig genesisSecrets
                     theProposedProtocolVersion

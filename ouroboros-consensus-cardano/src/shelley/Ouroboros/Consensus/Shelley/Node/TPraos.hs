@@ -253,24 +253,25 @@ protocolInfoTPraosShelleyBased ::
   -> L.TransitionConfig era
   -> SL.ProtVer
      -- ^ see 'shelleyProtVer', mutatis mutandi
-  -> ( ProtocolInfo (ShelleyBlock (TPraos c) era) , m [BlockForging m (ShelleyBlock (TPraos c) era)]
+  -> ( ProtocolInfo (ShelleyBlock (TPraos c) era)
+     , m [BlockForging m (ShelleyBlock (TPraos c) era)]
      )
 protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
                              shelleyBasedInitialNonce      = initialNonce
                            , shelleyBasedLeaderCredentials = credentialss
                            }
                          transitionCfg
-    protVer =
+                         protVer =
     assertWithMsg (validateGenesis genesis) $
-      ( ProtocolInfo {
-          pInfoConfig       = topLevelConfig
-        , pInfoInitLedger   = initExtLedgerState
-        }
-      , blockForgings
-      )
+    ( ProtocolInfo {
+        pInfoConfig       = topLevelConfig
+      , pInfoInitLedger   = initExtLedgerState
+      }
+    , mkBlockForgings
+    )
   where
-    blockForgings :: m [BlockForging m (ShelleyBlock (TPraos c) era)]
-    blockForgings =
+    mkBlockForgings :: m [BlockForging m (ShelleyBlock (TPraos c) era)]
+    mkBlockForgings =
       traverse
         (\credentials -> do
               let canBeLeader = shelleyLeaderCredentialsCanBeLeader credentials

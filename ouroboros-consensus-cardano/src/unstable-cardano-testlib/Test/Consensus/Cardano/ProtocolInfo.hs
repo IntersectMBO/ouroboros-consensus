@@ -184,14 +184,14 @@ mkSimpleTestProtocolInfo ::
   -> ByronSlotLengthInSeconds
   -> ShelleySlotLengthInSeconds
   -> HardForkSpec
-  -> IO (ProtocolInfo (CardanoBlock c))
+  -> ProtocolInfo (CardanoBlock c)
 mkSimpleTestProtocolInfo
     decentralizationParam
     securityParam
     byronSlotLenghtInSeconds
     shelleySlotLengthInSeconds
     hardForkSpec
-  = fst <$> mkTestProtocolInfo @IO
+  = fst $ mkTestProtocolInfo @IO
       (CoreNodeId 0, coreNodeShelley)
       shelleyGenesis
       byronProtocolVersion
@@ -257,7 +257,7 @@ mkTestProtocolInfo ::
   -> Maybe PBftSignatureThreshold
   -> HardForkSpec
   -- ^ Specification of the era to which the initial state should hard-fork to.
-  -> m (ProtocolInfo (CardanoBlock c), m [BlockForging m (CardanoBlock c)])
+  -> (ProtocolInfo (CardanoBlock c), m [BlockForging m (CardanoBlock c)])
 mkTestProtocolInfo
     (coreNodeId, coreNode)
     shelleyGenesis
@@ -266,11 +266,9 @@ mkTestProtocolInfo
     genesisByron
     generatedSecretsByron
     aByronPbftSignatureThreshold
-    hardForkSpec = do
-
-  let leaderCredentialsShelley :: ShelleyLeaderCredentials c = Shelley.mkLeaderCredentials coreNode
-
-  protocolInfoCardano
+    hardForkSpec
+  =
+    protocolInfoCardano
         (CardanoProtocolParams
           ProtocolParamsByron {
               byronGenesis                = genesisByron
@@ -325,6 +323,9 @@ mkTestProtocolInfo
         )
 
   where
+    leaderCredentialsShelley :: ShelleyLeaderCredentials c
+    leaderCredentialsShelley = Shelley.mkLeaderCredentials coreNode
+
     leaderCredentialsByron :: ByronLeaderCredentials
     leaderCredentialsByron =
         Byron.mkLeaderCredentials

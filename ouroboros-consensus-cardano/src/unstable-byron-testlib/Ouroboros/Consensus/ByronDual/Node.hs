@@ -81,11 +81,10 @@ protocolInfoDualByron :: forall m. Monad m
                       => ByronSpecGenesis
                       -> PBftParams
                       -> [CoreNodeId] -- ^ Are we a core node?
-                      -> m ( ProtocolInfo DualByronBlock
-                           , m [BlockForging m DualByronBlock]
-                           )
+                      -> ( ProtocolInfo DualByronBlock
+                         , m [BlockForging m DualByronBlock]
+                         )
 protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
-  return
     ( ProtocolInfo {
         pInfoConfig = TopLevelConfig {
             topLevelConfigProtocol = PBftConfig {

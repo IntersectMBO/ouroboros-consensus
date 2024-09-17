@@ -438,12 +438,20 @@ mkProtocolCardanoAndHardForkTxs ::
   -> ShelleyGenesis c
   -> SL.Nonce
   -> Shelley.CoreNode c
-  -> m (TestNodeInitialization m (CardanoBlock c))
+  -> (TestNodeInitialization m (CardanoBlock c))
 mkProtocolCardanoAndHardForkTxs
     pbftParams coreNodeId genesisByron generatedSecretsByron propPV
     genesisShelley initialNonce coreNodeShelley
-  = do
-  pinfo <- mkTestProtocolInfo
+  =
+  TestNodeInitialization
+    { tniCrucialTxs   = crucialTxs
+    , tniProtocolInfo = protocolInfo
+    , tniBlockForging = mkBlockForgings
+    }
+  where
+    protocolInfo :: ProtocolInfo (CardanoBlock c)
+    mkBlockForgings :: m [BlockForging m (CardanoBlock c)]
+    (protocolInfo, mkBlockForgings) = mkTestProtocolInfo
               (coreNodeId, coreNodeShelley)
               genesisShelley
               propPV
@@ -481,17 +489,6 @@ mkProtocolCardanoAndHardForkTxs
                     )
                 }
 
-  let protocolInfo :: ProtocolInfo (CardanoBlock c)
-      blockForging :: m [BlockForging m (CardanoBlock c)]
-      (protocolInfo, blockForging) = pinfo
-
-
-  return TestNodeInitialization
-    { tniCrucialTxs   = crucialTxs
-    , tniProtocolInfo = protocolInfo
-    , tniBlockForging = blockForging
-    }
-  where
     crucialTxs :: [GenTx (CardanoBlock c)]
     crucialTxs =
         GenTxByron <$> tniCrucialTxs tniByron

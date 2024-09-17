@@ -588,16 +588,15 @@ pattern CardanoProtocolParams {
 protocolInfoCardano ::
      forall c m. (IOLike m, CardanoHardForkConstraints c)
   => CardanoProtocolParams c
-  -> m ( ProtocolInfo      (CardanoBlock c)
-       , m [BlockForging m (CardanoBlock c)]
-       )
+  -> ( ProtocolInfo      (CardanoBlock c)
+     , m [BlockForging m (CardanoBlock c)]
+     )
 protocolInfoCardano paramsCardano
   | SL.Mainnet <- SL.sgNetworkId genesisShelley
   , length credssShelleyBased > 1
   = error "Multiple Shelley-based credentials not allowed for mainnet"
   | otherwise
-  = assertWithMsg (validateGenesis genesisShelley) $ do
-      return
+  = assertWithMsg (validateGenesis genesisShelley) $
           ( ProtocolInfo {
               pInfoConfig       = cfg
             , pInfoInitLedger   = initExtLedgerStateCardano
@@ -1067,9 +1066,9 @@ protocolInfoCardano paramsCardano
           $ OptNP.fromNonEmptyNP $
             tpraos :*
             tpraos :*
-            tpraos    :*
-            tpraos  :*
-            praos :*
+            tpraos :*
+            tpraos :*
+            praos  :*
             praos  :*
             Nil
 

@@ -52,13 +52,14 @@ tests =
   where
     localServerPassesRegressionTests era =
         testCase ("Passes the regression tests (" ++ show era ++ ")") $ do
-          pInfo :: ProtocolInfo (CardanoBlock StandardCrypto) <-
-                    mkSimpleTestProtocolInfo
-                      (Shelley.DecentralizationParam 1)
-                      (Consensus.SecurityParam 10)
-                      (ByronSlotLengthInSeconds 1)
-                      (ShelleySlotLengthInSeconds 1)
-                      (hardForkInto era)
+          let
+            pInfo :: ProtocolInfo (CardanoBlock StandardCrypto) =
+                      mkSimpleTestProtocolInfo
+                        (Shelley.DecentralizationParam 1)
+                        (Consensus.SecurityParam 10)
+                        (ByronSlotLengthInSeconds 1)
+                        (ShelleySlotLengthInSeconds 1)
+                        (hardForkInto era)
 
           let
             eraIndex = index_NS

@@ -141,18 +141,17 @@ prop_simple_praos_convergence TestSetup
 
     testOutput@TestOutput{testOutputNodes} =
         runTestNetwork testConfig testConfigB TestConfigMB
-            { nodeInfo = \nid -> do
-                let blockForging = blockForgingPraos numCoreNodes nid
-                pure $ plainTestNodeInitialization
-                  (protocolInfoPraos
-                    numCoreNodes
-                    nid
-                    params
-                    (HardFork.defaultEraParams
-                       k
-                       slotLength)
-                    setupInitialNonce
-                    evolvingStake)
-                  blockForging
+            { nodeInfo = \nid ->
+                  plainTestNodeInitialization
+                    (protocolInfoPraos
+                      numCoreNodes
+                      nid
+                      params
+                      (HardFork.defaultEraParams
+                         k
+                         slotLength)
+                      setupInitialNonce
+                      evolvingStake)
+                    (blockForgingPraos numCoreNodes nid)
             , mkRekeyM = Nothing
             }

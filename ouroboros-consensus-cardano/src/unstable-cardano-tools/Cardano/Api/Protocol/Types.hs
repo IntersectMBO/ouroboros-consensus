@@ -43,9 +43,9 @@ import           Ouroboros.Consensus.Util.IOLike (IOLike)
 class (RunNode blk, IOLike m) => Protocol m blk where
   data ProtocolInfoArgs m blk
   protocolInfo :: ProtocolInfoArgs m blk
-               -> m ( ProtocolInfo blk
-                    , m [BlockForging m blk]
-                    )
+               -> ( ProtocolInfo blk
+                  , m [BlockForging m blk]
+                  )
 
 -- | Node client support for each consensus protocol.
 --
@@ -61,7 +61,6 @@ class RunNode blk => ProtocolClient blk where
 instance IOLike m => Protocol m ByronBlockHFC where
   data ProtocolInfoArgs m ByronBlockHFC = ProtocolInfoArgsByron (ProtocolParams Consensus.ByronBlock)
   protocolInfo (ProtocolInfoArgsByron params) =
-    pure
       ( inject $ protocolInfoByron params
       , pure $ map inject $ blockForgingByron params
       )
@@ -98,7 +97,6 @@ instance ( IOLike m
     (ProtocolParams (Consensus.ShelleyBlock (Consensus.TPraos StandardCrypto) (ShelleyEra StandardCrypto)))
 
   protocolInfo (ProtocolInfoArgsShelley genesis paramsShelleyBased' paramsShelley') =
-    pure $
     bimap inject (fmap (map inject)) $ do
       protocolInfoShelley genesis paramsShelleyBased' paramsShelley'
 

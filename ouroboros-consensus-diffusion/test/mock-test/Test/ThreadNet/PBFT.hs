@@ -110,7 +110,7 @@ prop_simple_pbft_convergence TestSetup
 
     testOutput =
         runTestNetwork testConfig testConfigB TestConfigMB
-            { nodeInfo = \nid -> pure $
+            { nodeInfo = \nid ->
                 plainTestNodeInitialization
                   (protocolInfoMockPBFT
                     params
