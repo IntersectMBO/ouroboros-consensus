@@ -1,5 +1,5 @@
 {-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveGeneric  #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 -- | This module contains the definition of a state in the Genesis State Machine
 -- (GSM). The GSM itself is defined in 'ouroboros-consensus-diffusion', but the

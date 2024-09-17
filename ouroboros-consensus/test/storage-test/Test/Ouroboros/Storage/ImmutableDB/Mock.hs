@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Test.Ouroboros.Storage.ImmutableDB.Mock (openDBMock) where

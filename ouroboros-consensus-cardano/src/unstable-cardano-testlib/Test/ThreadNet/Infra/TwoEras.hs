@@ -1,10 +1,10 @@
-{-# LANGUAGE DataKinds      #-}
-{-# LANGUAGE DeriveGeneric  #-}
-{-# LANGUAGE GADTs          #-}
-{-# LANGUAGE LambdaCase     #-}
-{-# LANGUAGE MultiWayIf     #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE TypeOperators  #-}
+{-# LANGUAGE TypeOperators #-}
 
 -- | Definitions used in ThreadNet tests that involve two eras.
 module Test.ThreadNet.Infra.TwoEras (

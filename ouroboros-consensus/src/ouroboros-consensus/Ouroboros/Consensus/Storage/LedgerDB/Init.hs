@@ -1,6 +1,6 @@
-{-# LANGUAGE BangPatterns        #-}
-{-# LANGUAGE DeriveGeneric       #-}
-{-# LANGUAGE RankNTypes          #-}
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- | LedgerDB initialization either from a LedgerState or from a DiskSnapshot

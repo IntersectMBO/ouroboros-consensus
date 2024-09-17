@@ -1,7 +1,7 @@
-{-# LANGUAGE LambdaCase         #-}
-{-# LANGUAGE NamedFieldPuns     #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NumericUnderscores #-}
-{-# LANGUAGE TypeApplications   #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Test.Ouroboros.Storage.LedgerDB.DiskPolicy (tests) where
 

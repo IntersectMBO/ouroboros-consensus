@@ -1,7 +1,7 @@
-{-# LANGUAGE DeriveAnyClass        #-}
-{-# LANGUAGE DeriveGeneric         #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE RankNTypes            #-}
+{-# LANGUAGE RankNTypes #-}
 
 -- | Tests for versioned serialisation.
 --

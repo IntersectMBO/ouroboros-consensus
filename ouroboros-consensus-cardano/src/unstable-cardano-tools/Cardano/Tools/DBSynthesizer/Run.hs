@@ -1,4 +1,4 @@
-{-# LANGUAGE NamedFieldPuns      #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Cardano.Tools.DBSynthesizer.Run (

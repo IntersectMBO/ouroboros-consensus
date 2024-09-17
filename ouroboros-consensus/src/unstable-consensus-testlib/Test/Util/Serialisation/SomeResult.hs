@@ -1,6 +1,6 @@
-{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Test.Util.Serialisation.SomeResult (SomeResult (..)) where
 

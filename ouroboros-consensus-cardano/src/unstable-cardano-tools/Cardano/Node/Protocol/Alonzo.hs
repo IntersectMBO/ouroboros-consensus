@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- DUPLICATE -- adapted from: cardano-node/src/Cardano/Node/Protocol/Alonzo.hs

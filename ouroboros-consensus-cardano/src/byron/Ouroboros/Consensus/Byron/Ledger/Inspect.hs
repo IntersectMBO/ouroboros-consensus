@@ -1,4 +1,4 @@
-{-# LANGUAGE MultiWayIf   #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE TypeFamilies #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}

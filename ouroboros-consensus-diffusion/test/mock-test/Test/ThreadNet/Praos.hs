@@ -1,4 +1,4 @@
-{-# LANGUAGE NamedFieldPuns   #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Test.ThreadNet.Praos (tests) where

@@ -1,4 +1,4 @@
-{-# LANGUAGE DataKinds   #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingVia #-}
 
 module Ouroboros.Consensus.BlockchainTime.WallClock.Types (

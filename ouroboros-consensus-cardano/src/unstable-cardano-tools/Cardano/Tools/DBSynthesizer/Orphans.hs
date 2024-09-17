@@ -1,4 +1,4 @@
-{-# LANGUAGE GADTs             #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}

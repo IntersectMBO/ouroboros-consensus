@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DerivingVia   #-}
-{-# LANGUAGE LambdaCase    #-}
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Test.Util.HardFork.Future (
     EraSize (..)

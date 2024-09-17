@@ -1,5 +1,5 @@
 {-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveGeneric  #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 -- | Generic infrastructure for working with EBBs
 module Ouroboros.Consensus.Block.EBB (

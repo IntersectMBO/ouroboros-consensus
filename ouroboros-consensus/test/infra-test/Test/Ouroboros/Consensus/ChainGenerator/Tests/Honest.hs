@@ -1,4 +1,4 @@
-{-# LANGUAGE LambdaCase     #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
 module Test.Ouroboros.Consensus.ChainGenerator.Tests.Honest (

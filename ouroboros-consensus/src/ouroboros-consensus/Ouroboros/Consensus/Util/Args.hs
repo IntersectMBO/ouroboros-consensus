@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE PolyKinds     #-}
-{-# LANGUAGE TypeFamilies  #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE TypeFamilies #-}
 
 -- | Utilities for arguments record with defaults
 --

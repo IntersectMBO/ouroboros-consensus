@@ -1,5 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE GADTs             #-}
+{-# LANGUAGE GADTs #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 

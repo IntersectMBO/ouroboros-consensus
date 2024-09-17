@@ -1,10 +1,10 @@
-{-# LANGUAGE DataKinds                #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
-{-# LANGUAGE GADTs                    #-}
-{-# LANGUAGE PatternSynonyms          #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TypeOperators            #-}
-{-# LANGUAGE ViewPatterns             #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Ouroboros.Consensus.Cardano.Block (
     -- * Eras

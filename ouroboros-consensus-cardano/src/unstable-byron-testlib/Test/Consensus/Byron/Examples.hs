@@ -1,5 +1,5 @@
 {-# LANGUAGE DisambiguateRecordFields #-}
-{-# LANGUAGE OverloadedStrings        #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 

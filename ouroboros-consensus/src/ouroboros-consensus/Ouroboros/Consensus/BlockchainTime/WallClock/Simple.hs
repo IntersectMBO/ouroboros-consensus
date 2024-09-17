@@ -1,5 +1,5 @@
-{-# LANGUAGE MultiWayIf          #-}
-{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Ouroboros.Consensus.BlockchainTime.WallClock.Simple (
