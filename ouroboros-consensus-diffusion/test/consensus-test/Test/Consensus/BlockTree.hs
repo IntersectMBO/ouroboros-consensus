@@ -1,5 +1,5 @@
-{-# LANGUAGE CPP             #-}
-{-# LANGUAGE NamedFieldPuns  #-}
+{-# LANGUAGE CPP #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 
 #if __GLASGOW_HASKELL__ >= 908

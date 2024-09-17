@@ -1,6 +1,6 @@
-{-# LANGUAGE FlexibleContexts     #-}
-{-# LANGUAGE StandaloneDeriving   #-}
-{-# LANGUAGE TypeFamilies         #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server (

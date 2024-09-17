@@ -1,5 +1,5 @@
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE RankNTypes     #-}
+{-# LANGUAGE RankNTypes #-}
 
 -- | This module provides a watcher of the invariants that are specific to the
 -- ChainSync jumping (CSJ) implementation. Those invariants are typically

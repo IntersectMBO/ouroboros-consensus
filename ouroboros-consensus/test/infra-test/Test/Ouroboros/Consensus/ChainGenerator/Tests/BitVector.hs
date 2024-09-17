@@ -1,11 +1,11 @@
-{-# LANGUAGE DataKinds                 #-}
-{-# LANGUAGE DeriveGeneric             #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE KindSignatures            #-}
-{-# LANGUAGE MonoLocalBinds            #-}
-{-# LANGUAGE NamedFieldPuns            #-}
-{-# LANGUAGE ScopedTypeVariables       #-}
-{-# LANGUAGE StandaloneDeriving        #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE MonoLocalBinds #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 
 module Test.Ouroboros.Consensus.ChainGenerator.Tests.BitVector (tests) where
 

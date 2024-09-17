@@ -1,6 +1,6 @@
-{-# LANGUAGE NamedFieldPuns      #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE ViewPatterns        #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Test.Consensus.PeerSimulator.Tests.Timeouts (tests) where
 

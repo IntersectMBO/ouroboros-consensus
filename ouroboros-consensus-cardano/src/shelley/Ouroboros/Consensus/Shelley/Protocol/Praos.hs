@@ -1,7 +1,7 @@
-{-# LANGUAGE DeriveGeneric    #-}
-{-# LANGUAGE NamedFieldPuns   #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies     #-}
+{-# LANGUAGE TypeFamilies #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 -- See https://gitlab.haskell.org/ghc/ghc/-/issues/14630. GHC currently warns

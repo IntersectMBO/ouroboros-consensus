@@ -1,6 +1,6 @@
 {-# LANGUAGE DisambiguateRecordFields #-}
-{-# LANGUAGE NamedFieldPuns           #-}
-{-# LANGUAGE ScopedTypeVariables      #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Test.Consensus.PeerSimulator.NodeLifecycle (
     LiveInterval (..)

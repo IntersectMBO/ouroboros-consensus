@@ -1,4 +1,4 @@
-{-# LANGUAGE ApplicativeDo  #-}
+{-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
 module Main (main) where

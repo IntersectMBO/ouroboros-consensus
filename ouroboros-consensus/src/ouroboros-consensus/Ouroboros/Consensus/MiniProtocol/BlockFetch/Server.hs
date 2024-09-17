@@ -1,12 +1,12 @@
-{-# LANGUAGE AllowAmbiguousTypes       #-}
-{-# LANGUAGE EmptyDataDeriving         #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE EmptyDataDeriving #-}
 {-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE FlexibleContexts          #-}
-{-# LANGUAGE ScopedTypeVariables       #-}
-{-# LANGUAGE StandaloneDeriving        #-}
-{-# LANGUAGE TypeApplications          #-}
-{-# LANGUAGE TypeFamilies              #-}
-{-# LANGUAGE UndecidableInstances      #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.MiniProtocol.BlockFetch.Server (
     blockFetchServer

@@ -1,6 +1,6 @@
-{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Test.Ouroboros.Consensus.Protocol (tests_chainOrder) where
 

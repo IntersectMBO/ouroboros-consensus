@@ -1,5 +1,5 @@
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE ViewPatterns   #-}
+{-# LANGUAGE ViewPatterns #-}
 
 -- | The scheduled ChainSync and BlockFetch servers are supposed to be linked,
 -- such that if one gets disconnected, then so does the other. This module

@@ -1,4 +1,4 @@
-{-# LANGUAGE RankNTypes          #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Test.Util.Serialisation.Examples (

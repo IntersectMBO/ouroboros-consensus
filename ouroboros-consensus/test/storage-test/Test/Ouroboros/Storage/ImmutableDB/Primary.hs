@@ -1,5 +1,5 @@
-{-# LANGUAGE CPP              #-}
-{-# LANGUAGE LambdaCase       #-}
+{-# LANGUAGE CPP #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TypeApplications #-}
 
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}

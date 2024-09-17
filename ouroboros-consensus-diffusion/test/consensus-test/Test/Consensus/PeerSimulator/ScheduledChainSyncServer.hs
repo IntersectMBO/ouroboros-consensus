@@ -1,4 +1,4 @@
-{-# LANGUAGE LambdaCase     #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
 -- | A ChainSync protocol server that allows external scheduling of its

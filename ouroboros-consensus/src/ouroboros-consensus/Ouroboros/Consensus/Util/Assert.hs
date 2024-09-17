@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP              #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Ouroboros.Consensus.Util.Assert (assertWithMsg) where

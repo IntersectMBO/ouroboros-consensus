@@ -1,4 +1,4 @@
-{-# LANGUAGE LambdaCase     #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
 module Test.Consensus.Genesis.Tests.CSJ (tests) where

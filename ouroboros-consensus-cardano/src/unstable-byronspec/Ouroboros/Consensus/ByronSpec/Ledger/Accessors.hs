@@ -1,6 +1,6 @@
-{-# LANGUAGE RankNTypes      #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE TupleSections   #-}
+{-# LANGUAGE TupleSections #-}
 
 -- | Working with the Byron spec chain state
 module Ouroboros.Consensus.ByronSpec.Ledger.Accessors (

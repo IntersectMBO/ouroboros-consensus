@@ -1,6 +1,6 @@
-{-# LANGUAGE BangPatterns       #-}
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE RankNTypes         #-}
+{-# LANGUAGE RankNTypes #-}
 
 -- | Utilities to schedule actions per 'Tick'.
 module Test.Util.Schedule (

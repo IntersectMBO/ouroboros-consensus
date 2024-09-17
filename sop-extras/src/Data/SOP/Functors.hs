@@ -1,7 +1,7 @@
-{-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE PolyKinds                  #-}
-{-# LANGUAGE StandaloneKindSignatures   #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 
 module Data.SOP.Functors (
     Flip (..)

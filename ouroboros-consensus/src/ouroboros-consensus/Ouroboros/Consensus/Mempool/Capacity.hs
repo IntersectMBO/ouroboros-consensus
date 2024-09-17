@@ -1,4 +1,4 @@
-{-# LANGUAGE DerivingVia                #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 -- | Mempool capacity, size and transaction size datatypes.

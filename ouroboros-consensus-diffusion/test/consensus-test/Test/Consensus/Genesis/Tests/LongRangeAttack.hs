@@ -1,6 +1,6 @@
-{-# LANGUAGE BlockArguments      #-}
-{-# LANGUAGE DerivingStrategies  #-}
-{-# LANGUAGE NamedFieldPuns      #-}
+{-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Test.Consensus.Genesis.Tests.LongRangeAttack (tests) where

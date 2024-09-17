@@ -1,4 +1,4 @@
-{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Ouroboros.Consensus.BlockchainTime.WallClock.HardFork (

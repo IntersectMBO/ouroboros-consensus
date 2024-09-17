@@ -1,5 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE NamedFieldPuns   #-}
+{-# LANGUAGE NamedFieldPuns #-}
 
 module Ouroboros.Consensus.Forecast (
     Forecast (..)

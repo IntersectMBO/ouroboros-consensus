@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TypeApplications  #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Utility functions to deserialize the hexadecimal representation of a CBOR
 -- encoded Cardano transaction.

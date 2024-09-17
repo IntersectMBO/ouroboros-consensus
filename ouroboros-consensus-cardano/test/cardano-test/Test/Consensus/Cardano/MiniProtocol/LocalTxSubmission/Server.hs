@@ -1,6 +1,6 @@
-{-# LANGUAGE FlexibleContexts   #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NumericUnderscores #-}
-{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 -- | Test that we can submit transactions to the mempool using the local
 -- submission server, in different Cardano eras.

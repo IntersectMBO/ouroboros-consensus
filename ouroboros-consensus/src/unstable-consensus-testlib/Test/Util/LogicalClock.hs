@@ -1,6 +1,6 @@
-{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE TupleSections              #-}
+{-# LANGUAGE TupleSections #-}
 
 -- | Logical time (in terms of abstract " ticks ")
 --
