@@ -100,13 +100,15 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
                 -- error handling more challenging than it ought to be. Maybe we
                 -- can enrich the error that @readSnapthot@ return, so that it can
                 -- contain the @HasFS@ errors as well.
-            initLedger <- either (error . show) pure initLedgerErr
+            ExtLedgerState xxx hs <- either (error . show) pure initLedgerErr
             -- This marker divides the "loading" phase of the program, where the
             -- system is principally occupied with reading snapshot data from
             -- disk, from the "processing" phase, where we are streaming blocks
             -- and running the ledger processing on them.
             Debug.traceMarkerIO "SNAPSHOT_LOADED"
-            pure $ FromLedgerState initLedger
+            xxx' <- compactUTxO xxx
+            Debug.traceMarkerIO "UTXO_COMPACTED"
+            pure $ FromLedgerState $ ExtLedgerState xxx' hs
 
         result <- ana AnalysisEnv {
             cfg

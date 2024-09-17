@@ -63,12 +63,11 @@ import qualified Ouroboros.Consensus.Cardano.Block as Cardano.Block
 import           Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams (..),
                      TriggerHardFork (..), protocolInfoCardano)
 import           Ouroboros.Consensus.Config (emptyCheckpointsMap)
-import           Ouroboros.Consensus.HardFork.Combinator (HardForkBlock (..),
-                     OneEraBlock (..), OneEraHash (..), getHardForkState,
-                     hardForkLedgerStatePerEra)
+import           Ouroboros.Consensus.HardFork.Combinator (HardForkBlock (..), LedgerState (HardForkLedgerState, hardForkLedgerStatePerEra), OneEraBlock (..), OneEraHash (..), getHardForkState)
 import           Ouroboros.Consensus.HardFork.Combinator.State (currentState)
 import           Ouroboros.Consensus.HeaderValidation (HasAnnTip)
 import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (ExtLedgerState))
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Shelley.HFEras ()
 import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley.Ledger
@@ -264,6 +263,16 @@ instance Aeson.FromJSON CardanoConfig where
         }
 
 instance (HasAnnTip (CardanoBlock StandardCrypto), GetPrevHash (CardanoBlock StandardCrypto)) => HasAnalysis (CardanoBlock StandardCrypto) where
+  compactUTxO xxx =
+      fmap HardForkLedgerState
+    $ hctraverse' (Proxy :: Proxy HasAnalysis) compactUTxO
+    $ hardForkLedgerStatePerEra xxx
+
+  splitUp xxx =
+      hcollapse
+    $ hcmap (Proxy :: Proxy HasAnalysis) (\x -> K $ splitUp x)
+    $ hardForkLedgerStatePerEra xxx
+
   countTxOutputs = analyseBlock countTxOutputs
   blockTxSizes   = analyseBlock blockTxSizes
   knownEBBs _    =

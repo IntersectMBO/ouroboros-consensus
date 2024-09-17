@@ -25,7 +25,13 @@ module Cardano.Tools.DBAnalyser.Analysis (
   , runAnalysis
   ) where
 
+import           Codec.CBOR.Encoding (Encoding (Encoding), Tokens (..))
+import qualified Cardano.Ledger.Binary.Encoding as LEnc
+import qualified Codec.CBOR.Write as CBOR
+import           Control.DeepSeq (deepseq)
+import           Control.Exception (evaluate)
 import qualified GHC.Stats as GHC
+import qualified System.Mem as System
 
 import qualified Cardano.Slotting.Slot as Slotting
 import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.FileWriting as F
@@ -117,6 +123,7 @@ runAnalysis analysisName = case go analysisName of
     go (ReproMempoolAndForge nBks)                    = mkAnalysis $ reproMempoolForge nBks
     go (BenchmarkLedgerOps mOutfile lgrAppMode)       = mkAnalysis $ benchmarkLedgerOps mOutfile lgrAppMode
     go (GetBlockApplicationMetrics nrBlocks mOutfile) = mkAnalysis $ getBlockApplicationMetrics nrBlocks mOutfile
+    go DoMajorGC                                      = mkAnalysis $ doMajorGC
 
     mkAnalysis ::
          forall startFrom. SingI startFrom
@@ -195,19 +202,31 @@ data TraceEvent blk =
     --   holding maximum encountered header size
   | SnapshotStoredEventStart SlotNo
     -- ^ triggered when snapshot of ledger has been stored for SlotNo
-  | SnapshotStoredEventFinish SlotNo Word32 Word32 Word64 Word64 GHC.RtsTime GHC.RtsTime
+  | SnapshotStoredEventFinish SlotNo Word32 Word32 Word64 Word64 GHC.RtsTime GHC.RtsTime Word64
     -- ^ triggered when snapshot of ledger has been stored for SlotNo
     --
-    -- minor GCs during this snapshot
     -- major GCs during this snapshot
+    -- minor GCs during this snapshot
     -- bytes allocated during this snapshot
     -- bytes copied during this snapshot
     -- elapsed mutator during this snapshot
     -- elapsed GC during this snapshot
+    -- live bytes after this snapshot
   | SnapshotWarningEvent SlotNo SlotNo
     -- ^ triggered once during  StoreLedgerStateAt analysis,
     --   when snapshot was created in slot proceeding the
     --   requested one
+  | DoGcFinish String Word32 Word32 Word64 Word64 GHC.RtsTime GHC.RtsTime Word64
+    -- ^ triggered when snapshot of ledger has been stored for SlotNo
+    --
+    -- major GCs during this snapshot
+    -- minor GCs during this snapshot
+    -- bytes allocated during this snapshot
+    -- bytes copied during this snapshot
+    -- elapsed mutator during this snapshot
+    -- elapsed GC during this snapshot
+    -- live bytes
+  | RtsStatsDiff String Word32 Word32 Word64 Word64 GHC.RtsTime GHC.RtsTime
   | LedgerErrorEvent (Point blk) (ExtValidationError blk)
     -- ^ triggered when applying a block with the given point failed
   | BlockTxSizeEvent SlotNo Int SizeInBytes
@@ -260,11 +279,15 @@ instance (HasAnalysis blk, LedgerSupportsProtocol blk) => Show (TraceEvent blk) 
     "Maximum encountered header size = " <> show size
   show (SnapshotStoredEventStart slot)    =
     "Start storing snapshot at " <> show slot
-  show (SnapshotStoredEventFinish slot mins majs alloc copy muttm gctm)    =
-    "Done storing snapshot at " <> show slot <> " -- " <> unwords [show mins, show majs, show alloc, show copy, show muttm, show gctm]
+  show (SnapshotStoredEventFinish slot majs mins alloc copy muttm gctm live)    =
+    "Done storing snapshot at " <> show slot <> " -- " <> unwords [show majs, show mins, show alloc, show copy, show muttm, show gctm, show live]
   show (SnapshotWarningEvent requested actual) =
     "Snapshot was created at " <> show actual <> " " <>
     "because there was no block forged at requested " <> show requested
+  show (RtsStatsDiff s majs mins alloc copy muttm gctm) =
+    "RTS stats diff " <> s <> " -- " <> unwords [show majs, show mins, ";", million alloc, million copy, ";", million muttm, million gctm]
+  show (DoGcFinish s majs mins alloc copy muttm gctm live)    =
+    "Done GCing -- " <> s <> " ; " <> unwords [show majs, show mins, ";", million alloc, million copy, ";", million muttm, million gctm, ";", show live]
   show (LedgerErrorEvent pt err) =
     "Applying block at " <> show pt <> " failed: " <> show err
   show (BlockTxSizeEvent slot numBlocks txsSize) = intercalate "\t" [
@@ -285,6 +308,8 @@ instance (HasAnalysis blk, LedgerSupportsProtocol blk) => Show (TraceEvent blk) 
     , "gcSnap " <> show gcSnap
     ]
 
+million :: Integral a => a -> String
+million x = show (fromIntegral x / 1000000 :: Double)
 
 {-------------------------------------------------------------------------------
   Analysis: show block and slot number and hash for all blocks
@@ -442,6 +467,7 @@ storeLedgerStateAt slots ledgerAppMode env = do
     storeLedgerState :: ExtLedgerState blk -> IO ()
     storeLedgerState ledgerState = case pointSlot pt of
         NotOrigin slot -> do
+          doOneMajorGC tracer "Before storing"
           let snapshot = DiskSnapshot (unSlotNo slot) (Just "db-analyser")
           traceWith tracer $ SnapshotStoredEventStart slot
           stats1 <- GHC.getRTSStats
@@ -453,9 +479,11 @@ storeLedgerStateAt slots ledgerAppMode env = do
               majs  = f GHC.major_gcs
               alloc = f GHC.allocated_bytes
               copy  = f GHC.copied_bytes
-              muttm = f GHC.mutator_elapsed_ns `div` 1000000
-              gctm  = f GHC.gc_elapsed_ns      `div` 1000000
-          traceWith tracer $ SnapshotStoredEventFinish slot mins majs alloc copy muttm gctm
+              muttm = f GHC.mutator_elapsed_ns
+              gctm  = f GHC.gc_elapsed_ns
+              live  = f GHC.cumulative_live_bytes
+          traceWith tracer $ SnapshotStoredEventFinish slot majs mins alloc copy muttm gctm live
+          doOneMajorGC tracer "After storing"
         Origin -> pure ()
       where
         pt = headerStatePoint $ headerState ledgerState
@@ -480,6 +508,115 @@ countBlocks (AnalysisEnv { db, registry, startFrom, limit, tracer }) = do
   where
     process :: Int -> () -> IO Int
     process count _ = pure $ count + 1
+
+doMajorGC ::
+     forall blk .
+     ( HasAnalysis blk, LgrDbSerialiseConstraints blk
+     )
+  => Analysis blk StartFromLedgerState
+doMajorGC env = do
+    doOneMajorGC tracer "one"
+    doOneMajorGC tracer "two"
+    doOneMinorGC tracer "minor"
+
+    let go n = if n < 1 then const () else \case
+            TkWord _ xs -> go (n - 1) xs
+            TkWord64 _ xs -> go (n - 1) xs
+            TkInt _ xs -> go (n - 1) xs
+            TkInt64 _ xs -> go (n - 1) xs
+            TkBytes _ xs -> go (n - 1) xs
+            TkBytesBegin xs -> go (n - 1) xs
+            TkByteArray _ xs -> go (n - 1) xs
+            TkString _ xs -> go (n - 1) xs
+            TkUtf8ByteArray _ xs -> go (n - 1) xs
+            TkStringBegin xs -> go (n - 1) xs
+            TkListLen _ xs -> go (n - 1) xs
+            TkListBegin xs -> go (n - 1) xs
+            TkMapLen _ xs -> go (n - 1) xs
+            TkMapBegin xs -> go (n - 1) xs
+            TkTag _ xs -> go (n - 1) xs
+            TkTag64 _ xs -> go (n - 1) xs
+            TkInteger _ xs -> go (n - 1) xs
+            TkNull xs -> go (n - 1) xs
+            TkUndef xs -> go (n - 1) xs
+            TkBool _ xs -> go (n - 1) xs
+            TkSimple _ xs -> go (n - 1) xs
+            TkFloat16 _ xs -> go (n - 1) xs
+            TkFloat32 _ xs -> go (n - 1) xs
+            TkFloat64 _ xs -> go (n - 1) xs
+            TkBreak xs -> go (n - 1) xs
+            TkEncoded _ xs -> go (n - 1) xs
+            TkEnd -> ()
+
+    let gotop = go (100000 :: Int)
+
+    withRtsStats tracer
+      (evaluate $ gotop $ let Encoding xs = encLedger initLedger in xs TkEnd)
+      (\x1 x2 x3 x4 x5 x6 _x7 -> RtsStatsDiff "full" x1 x2 x3 x4 x5 x6)
+
+    doOneMajorGC tracer "three"
+    doOneMinorGC tracer "minor"
+
+--    withRtsStats tracer System.performMinorGC (SnapshotStoredEventFinish (SlotNo 0))
+
+    let encs = [ (s, LEnc.toPlainEncoding (LEnc.natVersionProxy (Proxy :: Proxy LEnc.MaxVersion)) enc)
+               | (s, enc) <- HasAnalysis.splitUp (ledgerState initLedger)
+               ]
+
+    flip mapM_ encs $ \(s, enc) -> do
+        doOneMajorGC tracer s
+        withRtsStats tracer
+          (do
+            evaluate $ gotop $ let Encoding xs = enc in xs TkEnd
+            System.performMajorGC
+          )
+          (\x1 x2 x3 x4 x5 x6 _x7 -> RtsStatsDiff s x1 x2 x3 x4 x5 x6)
+
+    doOneMajorGC tracer "after encoding"
+
+    _ <- evaluate initLedger
+
+    doOneMajorGC tracer "at the end"
+
+    pure Nothing
+  where
+    AnalysisEnv { cfg, startFrom, tracer } = env
+    FromLedgerState initLedger             = startFrom
+
+    encLedger :: ExtLedgerState blk -> Encoding
+    encLedger =
+      let ccfg = configCodec cfg
+      in encodeExtLedgerState
+           (encodeDisk ccfg)
+           (encodeDisk ccfg)
+           (encodeDisk ccfg)
+
+withRtsStats ::
+     Tracer IO (TraceEvent blk)
+  -> IO ()
+  -> (Word32 -> Word32 -> Word64 -> Word64 -> GHC.RtsTime -> GHC.RtsTime -> Word64 -> TraceEvent blk)
+  -> IO ()
+withRtsStats tracer m ctor = do
+    stats1 <- GHC.getRTSStats
+    m
+    stats2 <- GHC.getRTSStats
+    let f :: Num a => (GHC.RTSStats -> a) -> a
+        f prj = prj stats2 - prj stats1
+        mins  = f GHC.gcs - majs
+        majs  = f GHC.major_gcs
+        alloc = f GHC.allocated_bytes
+        copy  = f GHC.copied_bytes
+        muttm = f GHC.mutator_elapsed_ns
+        gctm  = f GHC.gc_elapsed_ns
+        live  = f GHC.cumulative_live_bytes
+    traceWith tracer $ ctor majs mins alloc copy muttm gctm live
+
+doOneMajorGC :: Tracer IO (TraceEvent blk) -> String -> IO ()
+doOneMajorGC tracer s = withRtsStats tracer System.performMajorGC (DoGcFinish s)
+
+doOneMinorGC :: Tracer IO (TraceEvent blk) -> String -> IO ()
+doOneMinorGC tracer s = withRtsStats tracer System.performMinorGC (DoGcFinish s)
+
 {-------------------------------------------------------------------------------
   Analysis: check for ledger state thunks every n blocks
 -------------------------------------------------------------------------------}

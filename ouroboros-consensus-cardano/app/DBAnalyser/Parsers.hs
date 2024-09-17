@@ -97,6 +97,10 @@ parseAnalysis = asum [
           long "count-blocks"
         , help "Count number of blocks processed"
         ]
+    , flag' DoMajorGC $ mconcat [
+          long "do-major-GC"
+        , help "Do a major GC"
+        ]
     , checkNoThunksParser
     , flag' TraceLedgerProcessing $ mconcat [
           long "trace-ledger"

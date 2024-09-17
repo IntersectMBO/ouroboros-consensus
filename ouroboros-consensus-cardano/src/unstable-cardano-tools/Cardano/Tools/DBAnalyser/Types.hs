@@ -35,6 +35,7 @@ data AnalysisName =
     -- The metrics will be written to the provided file path, or to
     -- the standard output if no file path is specified.
   | GetBlockApplicationMetrics NumberOfBlocks (Maybe FilePath)
+  | DoMajorGC
   deriving Show
 
 data AnalysisResult =

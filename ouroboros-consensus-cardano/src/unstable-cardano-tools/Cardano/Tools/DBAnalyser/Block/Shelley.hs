@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -14,12 +15,15 @@ module Cardano.Tools.DBAnalyser.Block.Shelley (
   , ShelleyBlockArgs
   ) where
 
+import           GHC.Compact (compact, getCompact)
+
 import           Cardano.Ledger.Allegra (AllegraEra)
 import           Cardano.Ledger.Alonzo (AlonzoEra)
 import qualified Cardano.Ledger.Alonzo.Scripts as Alonzo
 import qualified Cardano.Ledger.Alonzo.Tx as Alonzo
 import           Cardano.Ledger.Babbage (BabbageEra)
 import qualified Cardano.Ledger.BaseTypes as CL (natVersion)
+import           Cardano.Ledger.Binary.Encoding (encCBOR)
 import           Cardano.Ledger.Conway (ConwayEra)
 import qualified Cardano.Ledger.Core as Core
 import           Cardano.Ledger.Crypto (Crypto)
@@ -37,6 +41,7 @@ import           Data.Sequence.Strict (StrictSeq)
 import           Data.Word (Word64)
 import           Lens.Micro ((^.))
 import           Lens.Micro.Extras (view)
+import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import           Ouroboros.Consensus.Shelley.Eras (StandardCrypto,
@@ -55,6 +60,46 @@ import           Text.Builder (decimal)
 instance ( ShelleyCompatible proto era
          , PerEraAnalysis era
          ) => HasAnalysis (ShelleyBlock proto era) where
+
+{-  compactUTxO xxx = do
+    let
+      nes  = shelleyLedgerState xxx
+      es   = SL.nesEs nes
+      ls   = SL.esLState es
+      us   = SL.lsUTxOState ls
+      utxo = SL.utxosUtxo us
+    utxo' <- getCompact <$> compact utxo   -- pure $ const $ SL.UTxO Map.empty is also interesting
+    let
+      !us' = us { SL.utxosUtxo = utxo' }
+      !ls'  = ls { SL.lsUTxOState = us' }
+      !es'  = es { SL.esLState = ls' }
+      !nes' = nes { SL.nesEs = es' }
+      !xxx' = xxx { shelleyLedgerState = nes' }
+    pure xxx'
+-}
+
+  splitUp xxx =
+      [ ("nesBprev", encCBOR $ SL.nesBprev nes)
+      , ("nesBcur", encCBOR $ SL.nesBcur nes)
+      , ("nesEs.esLState.lsUTxOState.utxosUtxo", encCBOR $ SL.utxosUtxo us)
+      , ("nesEs.esLState.lsUTxOState.utxosGovState", encCBOR $ SL.utxosGovState us)
+      , ("nesEs.esLState.lsUTxOState.utxosStakeDistr", encCBOR $ SL.utxosStakeDistr us)
+      , ("nesEs.esLState.lsCertState", encCBOR $ SL.lsCertState ls)
+      , ("nesEs.esSnapshots.ssStakeMark", encCBOR $ SL.ssStakeMark snaps)
+      , ("nesEs.esSnapshots.ssStakeMarkPoolDistr", encCBOR $ SL.ssStakeMarkPoolDistr snaps)
+      , ("nesEs.esSnapshots.ssStakeSet", encCBOR $ SL.ssStakeSet snaps)
+      , ("nesEs.esSnapshots.ssStakeGo", encCBOR $ SL.ssStakeGo snaps)
+      , ("nesEs.esNonMyopic", encCBOR $ SL.esNonMyopic es)
+      , ("nesRu", encCBOR $ SL.nesRu nes)
+      , ("nesPd", encCBOR $ SL.nesPd nes)
+      , ("stashedAVVMAddresses", encCBOR $ SL.stashedAVVMAddresses nes)
+      ]
+    where
+      nes   = shelleyLedgerState xxx
+      es    = SL.nesEs nes
+      ls    = SL.esLState es
+      snaps = SL.esSnapshots es
+      us    = SL.lsUTxOState ls
 
   countTxOutputs blk = case Shelley.shelleyBlockRaw blk of
       SL.Block _ body -> sum $ fmap countOutputs (Core.fromTxSeq @era body)

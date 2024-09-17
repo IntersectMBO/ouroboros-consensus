@@ -8,10 +8,13 @@ module Cardano.Tools.DBAnalyser.HasAnalysis (
   , WithLedgerState (..)
   ) where
 
+import           Cardano.Ledger.Binary.Encoding (Encoding)
+
 import           Data.Map.Strict (Map)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation (HasAnnTip (..))
 import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Storage.Serialisation (SizeInBytes)
 import           Ouroboros.Consensus.Util.Condense (Condense)
@@ -28,6 +31,12 @@ data WithLedgerState blk = WithLedgerState
   }
 
 class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis blk where
+
+  compactUTxO :: LedgerState blk -> IO (LedgerState blk)
+  compactUTxO = pure 
+
+  splitUp :: LedgerState blk -> [(String, Encoding)]
+  splitUp _ = []
 
   countTxOutputs :: blk -> Int
   blockTxSizes   :: blk -> [SizeInBytes]
