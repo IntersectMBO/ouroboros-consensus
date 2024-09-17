@@ -29,4 +29,5 @@ in
   stylish = checkFormatting pkgs.stylish-haskell ../scripts/ci/run-stylish.sh;
   cabal-gild = checkFormatting pkgs.cabal-gild ../scripts/ci/run-cabal-gild.sh;
   nixpkgs-fmt = checkFormatting pkgs.nixpkgs-fmt ../scripts/ci/run-nixpkgs-fmt.sh;
+  dos2unix = checkFormatting pkgs.dos2unix ../scripts/ci/run-dos2unix.sh;
 }
