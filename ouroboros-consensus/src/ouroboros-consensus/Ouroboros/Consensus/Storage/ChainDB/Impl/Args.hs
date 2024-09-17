@@ -110,7 +110,7 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs {
 --   normal operation, we receive 1 block/20s, meaning at most 1 block.
 defaultSpecificArgs :: Monad m => Incomplete ChainDbSpecificArgs m blk
 defaultSpecificArgs = ChainDbSpecificArgs {
-      cdbsBlocksToAddSize = 10
+      cdbsBlocksToAddSize = 100
     , cdbsCheckInFuture   = noDefault
     , cdbsGcDelay         = secondsToDiffTime 60
     , cdbsGcInterval      = secondsToDiffTime 10
