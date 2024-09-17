@@ -108,7 +108,7 @@ runAnalysis analysisName = case go analysisName of
     go ShowBlockTxsSize                               = mkAnalysis $ showBlockTxsSize
     go ShowEBBs                                       = mkAnalysis $ showEBBs
     go OnlyValidation                                 = mkAnalysis @StartFromPoint $ \_ -> pure Nothing
-    go (StoreLedgerStateAt slotNo lgrAppMode)         = mkAnalysis $ storeLedgerStateAt slotNo lgrAppMode
+    go (StoreLedgerStateAt slots lgrAppMode)          = mkAnalysis $ storeLedgerStateAt slots lgrAppMode
     go CountBlocks                                    = mkAnalysis $ countBlocks
     go (CheckNoThunksEvery nBks)                      = mkAnalysis $ checkNoThunksEvery nBks
     go TraceLedgerProcessing                          = mkAnalysis $ traceLedgerProcessing
@@ -191,7 +191,9 @@ data TraceEvent blk =
   | MaxHeaderSizeEvent Word16
     -- ^ triggered once during ShowBlockTxsSize analysis,
     --   holding maximum encountered header size
-  | SnapshotStoredEvent SlotNo
+  | SnapshotStoredEventStart SlotNo
+    -- ^ triggered when snapshot of ledger has been stored for SlotNo
+  | SnapshotStoredEventFinish SlotNo
     -- ^ triggered when snapshot of ledger has been stored for SlotNo
   | SnapshotWarningEvent SlotNo SlotNo
     -- ^ triggered once during  StoreLedgerStateAt analysis,
@@ -247,8 +249,10 @@ instance (HasAnalysis blk, LedgerSupportsProtocol blk) => Show (TraceEvent blk) 
     ]
   show (MaxHeaderSizeEvent size)          =
     "Maximum encountered header size = " <> show size
-  show (SnapshotStoredEvent slot)         =
-    "Snapshot stored at " <> show slot
+  show (SnapshotStoredEventStart slot)    =
+    "Start storing snapshot at " <> show slot
+  show (SnapshotStoredEventFinish slot)    =
+    "Done storing snapshot at " <> show slot
   show (SnapshotWarningEvent requested actual) =
     "Snapshot was created at " <> show actual <> " " <>
     "because there was no block forged at requested " <> show requested
@@ -380,50 +384,59 @@ storeLedgerStateAt ::
      , HasAnalysis blk
      , LedgerSupportsProtocol blk
      )
-  => SlotNo
+  => [SlotNo]
   -> LedgerApplicationMode
   -> Analysis blk StartFromLedgerState
-storeLedgerStateAt slotNo ledgerAppMode env = do
-    void $ processAllUntil db registry GetBlock startFrom limit initLedger process
+storeLedgerStateAt slots ledgerAppMode env = do
+    void $ processAllUntil db registry GetBlock startFrom limit (slots, initLedger) process
     pure Nothing
   where
     AnalysisEnv { db, registry, startFrom, cfg, limit, ledgerDbFS, tracer } = env
     FromLedgerState initLedger = startFrom
 
-    process :: ExtLedgerState blk -> blk -> IO (NextStep, ExtLedgerState blk)
-    process oldLedger blk = do
+    process :: ([SlotNo], ExtLedgerState blk) -> blk -> IO (NextStep, ([SlotNo], ExtLedgerState blk))
+
+    process ([], oldLedger) _blk = return (Stop, ([], oldLedger))
+
+    process (slotNo:nextSlots, !oldLedger) blk = do
       let ledgerCfg = ExtLedgerCfg cfg
       case runExcept $ tickThenXApply ledgerCfg blk oldLedger of
         Right newLedger -> do
-          when (blockSlot blk >= slotNo) $ storeLedgerState newLedger
-          when (blockSlot blk > slotNo) $ issueWarning blk
+          slots' <-
+            if (blockSlot blk < slotNo) then pure (slotNo:nextSlots) else do
+              storeLedgerState newLedger
+              pure nextSlots
+          when (blockSlot blk > slotNo) $ issueWarning slotNo blk
           when ((unBlockNo $ blockNo blk) `mod` 1000 == 0) $ reportProgress blk
-          return (continue blk, newLedger)
+          return (continue slotNo nextSlots blk, (slots', newLedger))
         Left err -> do
           traceWith tracer $ LedgerErrorEvent (blockPoint blk) err
           storeLedgerState oldLedger
-          pure (Stop, oldLedger)
+          pure (Stop, (nextSlots, oldLedger))
 
     tickThenXApply = case ledgerAppMode of
         LedgerReapply -> pure ..: tickThenReapply
         LedgerApply   -> tickThenApply
 
-    continue :: blk -> NextStep
-    continue blk
-      | blockSlot blk >= slotNo = Stop
-      | otherwise               = Continue
+    continue :: SlotNo -> [SlotNo] -> blk -> NextStep
+    continue slotNo nextSlots blk
+      | null nextSlots && blockSlot blk >= slotNo = Stop
+      | otherwise                                 = Continue
 
-    issueWarning blk   = let event = SnapshotWarningEvent slotNo (blockSlot blk)
-                         in traceWith tracer event
-    reportProgress blk = let event = BlockSlotEvent (blockNo blk) (blockSlot blk) (blockHash blk)
-                         in traceWith tracer event
+    issueWarning slotNo blk =
+        let event = SnapshotWarningEvent slotNo (blockSlot blk)
+        in traceWith tracer event
+    reportProgress blk =
+        let event = BlockSlotEvent (blockNo blk) (blockSlot blk) (blockHash blk)
+        in traceWith tracer event
 
     storeLedgerState :: ExtLedgerState blk -> IO ()
     storeLedgerState ledgerState = case pointSlot pt of
         NotOrigin slot -> do
           let snapshot = DiskSnapshot (unSlotNo slot) (Just "db-analyser")
+          traceWith tracer $ SnapshotStoredEventStart slot
           writeSnapshot ledgerDbFS encLedger snapshot ledgerState
-          traceWith tracer $ SnapshotStoredEvent slot
+          traceWith tracer $ SnapshotStoredEventFinish slot
         Origin -> pure ()
       where
         pt = headerStatePoint $ headerState ledgerState
