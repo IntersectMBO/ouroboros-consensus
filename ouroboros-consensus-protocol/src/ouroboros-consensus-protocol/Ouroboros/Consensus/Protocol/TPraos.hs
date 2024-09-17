@@ -395,7 +395,6 @@ mkShelleyGlobals TPraosConfig{..} = SL.Globals {
     , securityParameter             = k
     , maxKESEvo                     = tpraosMaxKESEvo
     , quorum                        = tpraosQuorum
-    , maxMajorPV                    = getMaxMajorProtVer tpraosMaxMajorPV
     , maxLovelaceSupply             = tpraosMaxLovelaceSupply
     , activeSlotCoeff               = tpraosLeaderF
     , networkId                     = tpraosNetworkId

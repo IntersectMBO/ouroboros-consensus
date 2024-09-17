@@ -56,3 +56,49 @@ if impl(ghc >= 9.10)
     , cardano-ledger-binary:plutus-ledger-api
     , cardano-ledger-conway:plutus-ledger-api
 
+source-repository-package
+  type: git
+  location: https://github.com/lehins/mempack.git
+  tag: f07b53fbfc3c56d4d60e072e277ffdf655aee59e
+  --sha256: sha256-tkgPmpFQ2h5hX8gh3tQ5T5H756tmqgUNGb2hLQUgLWc=
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-base.git
+  tag: fb9b71f3bc33f8de673c6427736f09bf7972e81f
+  subdir:
+    cardano-crypto-class
+  --sha256: sha256-ExQ497FDYlmQyZaXOTddU+KraAUHnTAqPiyt055v0+M=
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-ledger
+  tag: cb8348d3a04856b76282b9986e49b2723111eeab
+  --sha256: sha256-0j9aKQrfvEBoE4fqAo+H4Vxq5xe1P8K+OSpIxv63L3Y=
+  subdir:
+    eras/allegra/impl
+    eras/alonzo/impl
+    eras/alonzo/test-suite
+    eras/babbage/impl
+    eras/babbage/test-suite
+    eras/conway/impl
+    eras/conway/test-suite
+    eras/mary/impl
+    eras/shelley/impl
+    eras/shelley/test-suite
+    eras/shelley-ma/test-suite
+    libs/cardano-ledger-api
+    libs/cardano-ledger-core
+    libs/cardano-ledger-binary
+    libs/cardano-protocol-tpraos
+    libs/non-integral
+    libs/small-steps
+    libs/cardano-data
+    libs/set-algebra
+    libs/vector-map
+    eras/byron/chain/executable-spec
+    eras/byron/ledger/executable-spec
+    eras/byron/ledger/impl
+    eras/byron/ledger/impl/test
+    eras/byron/crypto
+    eras/byron/crypto/test
