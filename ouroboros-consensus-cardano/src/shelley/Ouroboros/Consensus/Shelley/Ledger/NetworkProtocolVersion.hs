@@ -40,6 +40,9 @@ data ShelleyNodeToClientVersion =
 
     -- | New queries introduced: GetProposals, GetRatifyState
   | ShelleyNodeToClientVersion9
+
+    -- | New queries introduced: GetFuturePParams
+  | ShelleyNodeToClientVersion10
   deriving (Show, Eq, Ord, Enum, Bounded)
 
 instance HasNetworkProtocolVersion (ShelleyBlock proto era) where
