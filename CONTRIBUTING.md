@@ -370,8 +370,6 @@ The core contributors to consensus codebase are:
 
 -   [Damian Nadales](https://github.com/dnadales)
 
--   [Renate Eilers](https://github.com/RenateEilers)
-
 # Code of conduct
 
 See [Cardano engineering
