@@ -597,12 +597,12 @@ protocolInfoCardano paramsCardano
   = error "Multiple Shelley-based credentials not allowed for mainnet"
   | otherwise
   = assertWithMsg (validateGenesis genesisShelley) $
-          ( ProtocolInfo {
-              pInfoConfig       = cfg
-            , pInfoInitLedger   = initExtLedgerStateCardano
-            }
-          , mkBlockForgings
-          )
+    ( ProtocolInfo {
+        pInfoConfig       = cfg
+      , pInfoInitLedger   = initExtLedgerStateCardano
+      }
+    , mkBlockForgings
+    )
   where
     CardanoProtocolParams {
         paramsByron

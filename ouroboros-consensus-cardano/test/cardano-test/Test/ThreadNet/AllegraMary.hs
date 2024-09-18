@@ -226,27 +226,26 @@ prop_simple_allegraMary_convergence TestSetup
     testOutput :: TestOutput AllegraMaryBlock
     testOutput = runTestNetwork setupTestConfig testConfigB TestConfigMB {
           nodeInfo = \(CoreNodeId nid) ->
-            let leaderCredentials = Shelley.mkLeaderCredentials
-                                    (coreNodes !! fromIntegral nid)
-                protocolParamsShelleyBased =
+            let protocolParamsShelleyBased =
                   ProtocolParamsShelleyBased {
                       shelleyBasedInitialNonce      = setupInitialNonce
-                    , shelleyBasedLeaderCredentials = [leaderCredentials]
+                    , shelleyBasedLeaderCredentials =
+                        [Shelley.mkLeaderCredentials
+                          (coreNodes !! fromIntegral nid)]
                     }
                 hardForkTrigger =
                   TriggerHardForkAtVersion $ SL.getVersion majorVersion2
                 (protocolInfo, blockForging) =
-                    protocolInfoShelleyBasedHardFork
-                      protocolParamsShelleyBased
-                      (SL.ProtVer majorVersion1 0)
-                      (SL.ProtVer majorVersion2 0)
-                      ( L.mkTransitionConfig ()
-                      $ L.mkTransitionConfig ()
-                      $ L.mkShelleyTransitionConfig genesisShelley
-                      )
-                      hardForkTrigger
-            in
-              TestNodeInitialization {
+                  protocolInfoShelleyBasedHardFork
+                    protocolParamsShelleyBased
+                    (SL.ProtVer majorVersion1 0)
+                    (SL.ProtVer majorVersion2 0)
+                    ( L.mkTransitionConfig ()
+                    $ L.mkTransitionConfig ()
+                    $ L.mkShelleyTransitionConfig genesisShelley
+                    )
+                    hardForkTrigger
+             in TestNodeInitialization {
                   tniCrucialTxs   =
                     if not setupHardFork then [] else
                     fmap GenTxShelley1 $

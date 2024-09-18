@@ -413,7 +413,8 @@ forkBlockForging ::
     -> m (Thread m Void)
 forkBlockForging IS{..} blockForging =
     forkLinkedWatcherFinalize registry threadLabel
-      watcher (finalize blockForging)
+      watcher
+      (finalize blockForging)
   where
     watcher :: Watcher m SlotNo SlotNo
     watcher = knownSlotWatcher btime $ withEarlyExit_ . go

@@ -162,12 +162,13 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
           $ CryptoClass.hashWith id
           $ content
 
-    return $ mkCardanoProtocolInfo
-        genesisByron
-        threshold
-        transCfg
-        initialNonce
-        (cfgHardForkTriggers cc)
+    return
+      $ mkCardanoProtocolInfo
+          genesisByron
+          threshold
+          transCfg
+          initialNonce
+          (cfgHardForkTriggers cc)
 
 data CardanoConfig = CardanoConfig {
     -- | @RequiresNetworkMagic@ field

@@ -56,7 +56,7 @@ instance Key UnsoundPureKesKey where
       deriving anyclass SerialiseAsCBOR
 
     newtype SigningKey UnsoundPureKesKey =
-        KesSigningKey (Shelley.UnsoundPureSignKeyKES StandardCrypto)
+        KesSigningKey { unKesSigningKey :: Shelley.UnsoundPureSignKeyKES StandardCrypto }
       deriving (Show, IsString) via UsingRawBytesHex (SigningKey UnsoundPureKesKey)
       deriving newtype (EncCBOR, DecCBOR, ToCBOR, FromCBOR)
       deriving anyclass SerialiseAsCBOR

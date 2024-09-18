@@ -211,19 +211,16 @@ genCoreNode startKESPeriod = do
     genSeed :: Integral a => a -> Gen Cardano.Crypto.Seed
     genSeed = fmap mkSeedFromBytes . genBytes
 
-mkLeaderCredentials :: forall c.
-                       (PraosCrypto c)
-                    => CoreNode c
-                    -> ShelleyLeaderCredentials c
-mkLeaderCredentials CoreNode { cnDelegateKey, cnVRF, cnKES, cnOCert } = do
-  ShelleyLeaderCredentials {
-     shelleyLeaderCredentialsCanBeLeader = PraosCanBeLeader {
-        praosCanBeLeaderColdVerKey = SL.VKey $ deriveVerKeyDSIGN cnDelegateKey
-      , praosCanBeLeaderSignKeyVRF = cnVRF
-      , praosCanBeLeaderCredentialsSource = PraosCredentialsUnsound cnOCert cnKES
+mkLeaderCredentials :: (PraosCrypto c) => CoreNode c -> ShelleyLeaderCredentials c
+mkLeaderCredentials CoreNode { cnDelegateKey, cnVRF, cnKES, cnOCert } =
+    ShelleyLeaderCredentials {
+        shelleyLeaderCredentialsCanBeLeader = PraosCanBeLeader {
+          praosCanBeLeaderCredentialsSource = PraosCredentialsUnsound cnOCert cnKES
+        , praosCanBeLeaderColdVerKey = SL.VKey $ deriveVerKeyDSIGN cnDelegateKey
+        , praosCanBeLeaderSignKeyVRF = cnVRF
+        }
+      , shelleyLeaderCredentialsLabel       = "ThreadNet"
       }
-    , shelleyLeaderCredentialsLabel       = "ThreadNet"
-    }
 
 {-------------------------------------------------------------------------------
   KES configuration
@@ -418,17 +415,15 @@ mkProtocolShelley ::
      , m [BlockForging m (ShelleyBlock (TPraos c) (ShelleyEra c))]
      )
 mkProtocolShelley genesis initialNonce protVer coreNode =
-  protocolInfoShelley
-    genesis
-    ProtocolParamsShelleyBased {
-        shelleyBasedInitialNonce      = initialNonce
-      , shelleyBasedLeaderCredentials = [leaderCredentials]
-      }
-    ProtocolParamsShelley {
-        shelleyProtVer = protVer
-      }
-  where
-    leaderCredentials = mkLeaderCredentials coreNode
+    protocolInfoShelley
+      genesis
+      ProtocolParamsShelleyBased {
+          shelleyBasedInitialNonce      = initialNonce
+        , shelleyBasedLeaderCredentials = [mkLeaderCredentials coreNode]
+        }
+      ProtocolParamsShelley {
+          shelleyProtVer = protVer
+        }
 
 
 {-------------------------------------------------------------------------------

@@ -208,22 +208,20 @@ runTestNetwork ::
   -> TestConfigB blk
   -> (forall m. IOLike m => TestConfigMB m blk)
   -> TestOutput blk
-runTestNetwork
-    TestConfig
-      { numCoreNodes
-      , numSlots
-      , nodeTopology
-      , initSeed
-      }
-    TestConfigB
-      { forgeEbbEnv
-      , future
-      , messageDelay
-      , nodeJoinPlan
-      , nodeRestarts
-      , txGenExtra
-      , version = (networkVersion, blockVersion)
-      }
+runTestNetwork TestConfig
+  { numCoreNodes
+  , numSlots
+  , nodeTopology
+  , initSeed
+  } TestConfigB
+  { forgeEbbEnv
+  , future
+  , messageDelay
+  , nodeJoinPlan
+  , nodeRestarts
+  , txGenExtra
+  , version = (networkVersion, blockVersion)
+  }
     mkTestConfigMB
   = runSimOrThrow $ do
     setCurrentTime dawnOfTime

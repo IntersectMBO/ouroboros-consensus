@@ -254,8 +254,7 @@ prop_simple_real_tpraos_convergence TestSetup
                       setupInitialNonce
                       nextProtVer
                       (coreNodes !! fromIntegral nid)
-              in
-                TestNodeInitialization
+               in TestNodeInitialization
                     { tniProtocolInfo = protocolInfo
                     , tniCrucialTxs =
                         if not includingDUpdateTx then [] else

@@ -158,9 +158,7 @@ readLeaderCredentialsSingleton
 
     (opCert, KesSigningKey kesSKey) <- opCertKesKeyCheck kesFile opCertFile
 
-    let leaderCredentials = mkPraosLeaderCredentials opCert vrfSKey kesSKey
-
-    return [leaderCredentials]
+    return [mkPraosLeaderCredentials opCert vrfSKey kesSKey]
 
 -- But not OK to supply some of the files without the others.
 readLeaderCredentialsSingleton ProtocolFilepaths {shelleyCertFile = Nothing} =
@@ -205,11 +203,11 @@ readLeaderCredentialsBulk ProtocolFilepaths { shelleyBulkCredsFile = mfp } =
    parseShelleyCredentials
      :: ShelleyCredentials
      -> ExceptT PraosLeaderCredentialsError IO (ShelleyLeaderCredentials StandardCrypto)
-   parseShelleyCredentials ShelleyCredentials { scCert, scVrf, scKes } = do
-     cert <- parseEnvelope AsOperationalCertificate scCert
-     vrfKey <- parseEnvelope (AsSigningKey AsVrfKey) scVrf
-     KesSigningKey kesKey <- parseEnvelope (AsSigningKey AsUnsoundPureKesKey) scKes
-     return $ mkPraosLeaderCredentials cert vrfKey kesKey
+   parseShelleyCredentials ShelleyCredentials { scCert, scVrf, scKes } =
+     mkPraosLeaderCredentials
+      <$> parseEnvelope AsOperationalCertificate scCert
+      <*> parseEnvelope (AsSigningKey AsVrfKey) scVrf
+      <*> (unKesSigningKey <$> parseEnvelope (AsSigningKey AsUnsoundPureKesKey) scKes)
 
    readBulkFile
      :: Maybe FilePath

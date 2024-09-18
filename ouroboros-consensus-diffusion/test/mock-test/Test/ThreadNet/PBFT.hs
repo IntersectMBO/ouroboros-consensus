@@ -110,12 +110,11 @@ prop_simple_pbft_convergence TestSetup
 
     testOutput =
         runTestNetwork testConfig testConfigB TestConfigMB
-            { nodeInfo = \nid ->
-                plainTestNodeInitialization
-                  (protocolInfoMockPBFT
-                    params
-                    (HardFork.defaultEraParams k slotLength))
-                  (pure $ blockForgingMockPBFT nid)
+            { nodeInfo = \nid -> plainTestNodeInitialization
+                                  (protocolInfoMockPBFT
+                                    params
+                                    (HardFork.defaultEraParams k slotLength))
+                                  (pure $ blockForgingMockPBFT nid)
             , mkRekeyM = Nothing
             }
 

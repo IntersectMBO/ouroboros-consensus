@@ -299,9 +299,7 @@ runThreadNetwork :: forall m blk.
                     , TracingConstraints blk
                     , HasCallStack
                     )
-                 => SystemTime m
-                 -> ThreadNetworkArgs m blk
-                 -> m (TestOutput blk)
+                 => SystemTime m -> ThreadNetworkArgs m blk -> m (TestOutput blk)
 runThreadNetwork systemTime ThreadNetworkArgs
   { tnaForgeEbbEnv    = mbForgeEbbEnv
   , tnaFuture         = future
@@ -345,14 +343,13 @@ runThreadNetwork systemTime ThreadNetworkArgs
     -- node and server threads on the head node. These mini protocols begin as
     -- soon as both nodes have joined the network, according to @nodeJoinPlan@.
 
-    -- assume they all start with the empty chain and the same initial
-    -- ledger
-    let nodeInitData0 = mkProtocolInfo (CoreNodeId 0)
-
     -- allocate the status variable for each vertex
     vertexStatusVars <- fmap Map.fromList $ do
       forM coreNodeIds $ \nid -> do
-        let TestNodeInitialization{tniProtocolInfo} = nodeInitData0
+        -- assume they all start with the empty chain and the same initial
+        -- ledger
+        let nodeInitData = mkProtocolInfo (CoreNodeId 0)
+            TestNodeInitialization{tniProtocolInfo} = nodeInitData
             ProtocolInfo{pInfoInitLedger} = tniProtocolInfo
             ExtLedgerState{ledgerState} = pInfoInitLedger
         v <- uncheckedNewTVarM (VDown Genesis ledgerState)
@@ -362,7 +359,8 @@ runThreadNetwork systemTime ThreadNetworkArgs
     let uedges = edgesNodeTopology nodeTopology
     edgeStatusVars <- fmap (Map.fromList . concat) $ do
       -- assume they all use the same CodecConfig
-      let TestNodeInitialization{tniProtocolInfo} = nodeInitData0
+      let nodeInitData = mkProtocolInfo (CoreNodeId 0)
+          TestNodeInitialization{tniProtocolInfo} = nodeInitData
           ProtocolInfo{pInfoConfig} = tniProtocolInfo
           codecConfig = configCodec pInfoConfig
       forM uedges $ \uedge -> do
@@ -467,18 +465,17 @@ runThreadNetwork systemTime ThreadNetworkArgs
       vertexStatusVar
       edgeStatusVars
       nodeInfo
-      nextInstrSlotVar = do
-        let tni = mkProtocolInfo coreNodeId
-        let TestNodeInitialization
-               { tniCrucialTxs
-               , tniProtocolInfo
-               , tniBlockForging
-               } = tni
-
+      nextInstrSlotVar =
         void $ forkLinkedThread sharedRegistry label $ do
-          loop 0 tniCrucialTxs tniProtocolInfo tniBlockForging NodeRestart restarts0
+          loop 0 tniProtocolInfo tniBlockForging NodeRestart restarts0
       where
         label = "vertex-" <> condense coreNodeId
+
+        TestNodeInitialization
+           { tniCrucialTxs
+           , tniProtocolInfo
+           , tniBlockForging
+           } = mkProtocolInfo coreNodeId
 
         restarts0 :: Map SlotNo NodeRestart
         restarts0 = Map.mapMaybe (Map.lookup coreNodeId) m
@@ -486,13 +483,11 @@ runThreadNetwork systemTime ThreadNetworkArgs
             NodeRestarts m = nodeRestarts
 
         loop :: SlotNo
-             -> [GenTx blk]
              -> ProtocolInfo blk
              -> m [BlockForging m blk]
              -> NodeRestart
-             -> Map SlotNo NodeRestart
-             -> m ()
-        loop s tniCrucialTxs pInfo blockForging nr rs = do
+             -> Map SlotNo NodeRestart -> m ()
+        loop s pInfo blockForging nr rs = do
           -- a registry solely for the resources of this specific node instance
           (again, finalChain, finalLdgr) <- withRegistry $ \nodeRegistry -> do
             -- change the node's key and prepare a delegation transaction if
@@ -565,7 +560,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
 
           case again of
             Nothing                                    -> pure ()
-            Just (s', pInfo', blockForging', nr', rs') -> loop s' tniCrucialTxs pInfo' blockForging' nr' rs'
+            Just (s', pInfo', blockForging', nr', rs') -> loop s' pInfo' blockForging' nr' rs'
 
     -- | Instrumentation: record the tip's block number at the onset of the
     -- slot.

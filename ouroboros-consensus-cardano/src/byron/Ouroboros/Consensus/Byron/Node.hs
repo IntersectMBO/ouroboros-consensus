@@ -157,7 +157,8 @@ blockForgingByron :: Monad m
                   -> [BlockForging m ByronBlock]
 blockForgingByron ProtocolParamsByron { byronLeaderCredentials = mLeaderCreds
                                       } =
-            byronBlockForging <$> maybeToList mLeaderCreds
+            byronBlockForging
+            <$> maybeToList mLeaderCreds
 
 {-------------------------------------------------------------------------------
   ProtocolInfo

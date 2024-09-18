@@ -57,14 +57,14 @@ praosBlockForging ::
   -> HotKey.HotKey c m
   -> ShelleyLeaderCredentials (EraCrypto era)
   -> BlockForging m (ShelleyBlock (Praos c) era)
-praosBlockForging praosParams hotKey credentials = do
-    let slotToPeriod :: SlotNo -> Absolute.KESPeriod
-        slotToPeriod (SlotNo slot) =
-          SL.KESPeriod $ fromIntegral $ slot `div` praosSlotsPerKESPeriod
-
+praosBlockForging praosParams hotKey credentials =
     praosSharedBlockForging hotKey slotToPeriod credentials
   where
     PraosParams {praosSlotsPerKESPeriod} = praosParams
+
+    slotToPeriod :: SlotNo -> Absolute.KESPeriod
+    slotToPeriod (SlotNo slot) =
+      SL.KESPeriod $ fromIntegral $ slot `div` praosSlotsPerKESPeriod
 
 -- | Create a 'BlockForging' record safely using the given 'Hotkey'.
 --
@@ -87,22 +87,23 @@ praosSharedBlockForging
     , shelleyLeaderCredentialsLabel = label
     } =
     BlockForging
-      { forgeLabel = label <> "_" <> T.pack (L.eraName @era)
-      , canBeLeader = canBeLeader
+      { forgeLabel = label <> "_" <> T.pack (L.eraName @era),
+        canBeLeader = canBeLeader,
 
-      , updateForgeState = \_ curSlot _ ->
+        updateForgeState = \_ curSlot _ ->
           forgeStateUpdateInfoFromUpdateInfo
-            <$> HotKey.evolve hotKey (slotToPeriod curSlot)
+            <$> HotKey.evolve hotKey (slotToPeriod curSlot),
 
-      , checkCanForge = \cfg curSlot _tickedChainDepState _isLeader ->
+        checkCanForge = \cfg curSlot _tickedChainDepState _isLeader ->
           praosCheckCanForge
             (configConsensus cfg)
-            curSlot
-      , forgeBlock =
+            curSlot,
+        forgeBlock = \cfg ->
           forgeShelleyBlock
             hotKey
             canBeLeader
-      , finalize = HotKey.finalize hotKey
+            cfg,
+        finalize = HotKey.finalize hotKey
       }
 
 {-------------------------------------------------------------------------------
