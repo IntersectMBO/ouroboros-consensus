@@ -519,6 +519,7 @@ doMajorGC env = do
     doOneMajorGC tracer "two"
     doOneMinorGC tracer "minor"
 
+{-
     let go n = if n < 1 then const () else \case
             TkWord _ xs -> go (n - 1) xs
             TkWord64 _ xs -> go (n - 1) xs
@@ -549,9 +550,43 @@ doMajorGC env = do
             TkEnd -> ()
 
     let gotop = go (100000 :: Int)
+-}
+    let go !n = \case
+            TkWord _ xs -> go (n + 1) xs
+            TkWord64 _ xs -> go (n + 1) xs
+            TkInt _ xs -> go (n + 1) xs
+            TkInt64 _ xs -> go (n + 1) xs
+            TkBytes _ xs -> go (n + 1) xs
+            TkBytesBegin xs -> go (n + 1) xs
+            TkByteArray _ xs -> go (n + 1) xs
+            TkString _ xs -> go (n + 1) xs
+            TkUtf8ByteArray _ xs -> go (n + 1) xs
+            TkStringBegin xs -> go (n + 1) xs
+            TkListLen _ xs -> go (n + 1) xs
+            TkListBegin xs -> go (n + 1) xs
+            TkMapLen _ xs -> go (n + 1) xs
+            TkMapBegin xs -> go (n + 1) xs
+            TkTag _ xs -> go (n + 1) xs
+            TkTag64 _ xs -> go (n + 1) xs
+            TkInteger _ xs -> go (n + 1) xs
+            TkNull xs -> go (n + 1) xs
+            TkUndef xs -> go (n + 1) xs
+            TkBool _ xs -> go (n + 1) xs
+            TkSimple _ xs -> go (n + 1) xs
+            TkFloat16 _ xs -> go (n + 1) xs
+            TkFloat32 _ xs -> go (n + 1) xs
+            TkFloat64 _ xs -> go (n + 1) xs
+            TkBreak xs -> go (n + 1) xs
+            TkEncoded _ xs -> go (n + 1) xs
+            TkEnd -> n
+
+    let gotop = go (0 :: Word64)
 
     withRtsStats tracer
-      (evaluate $ gotop $ let Encoding xs = encLedger initLedger in xs TkEnd)
+      (do
+          x <- evaluate $ gotop $ let Encoding xs = encLedger initLedger in xs TkEnd
+	  putStrLn $ "full " <> show x
+      )
       (\x1 x2 x3 x4 x5 x6 _x7 -> RtsStatsDiff "full" x1 x2 x3 x4 x5 x6)
 
     doOneMajorGC tracer "three"
@@ -567,8 +602,9 @@ doMajorGC env = do
         doOneMajorGC tracer s
         withRtsStats tracer
           (do
-            evaluate $ gotop $ let Encoding xs = enc in xs TkEnd
+            x <- evaluate $ gotop $ let Encoding xs = enc in xs TkEnd
             System.performMajorGC
+	    putStrLn $ s ++ " " <> show x 
           )
           (\x1 x2 x3 x4 x5 x6 _x7 -> RtsStatsDiff s x1 x2 x3 x4 x5 x6)
 
