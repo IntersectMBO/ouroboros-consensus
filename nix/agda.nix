@@ -21,10 +21,10 @@ let
     pname = "agda-stdlib-classes";
     version = "2.0";
     src = pkgs.fetchFromGitHub {
-      repo = "agda-stdlib-classes";
       owner = "omelkonian";
+      repo = "agda-stdlib-classes";
       rev = "v2.0";
-      sha256 = "4ujdQv38u6BybFhRup9PMR0xpI59J/Naz/kaBtQQ9aY=";
+      hash = "sha256-PcieRRnctjCzFCi+gUYAgyIAicMOAZPl8Sw35fZdt0E=";
     };
     meta = { };
     libraryFile = "agda-stdlib-classes.agda-lib";
@@ -37,10 +37,10 @@ let
     pname = "agda-stdlib-meta";
     version = "2.0";
     src = pkgs.fetchFromGitHub {
-      repo = "stdlib-meta";
-      owner = "input-output-hk";
-      rev = "4fc4b1ed6e47d180516917d04be87cbacbf7d314";
-      sha256 = "T+9vwccbDO1IGBcGLjgV/fOt+IN14KEV9ct/J6nQCsM=";
+      owner = "omelkonian";
+      repo = "agda-stdlib-meta";
+      rev = "v2.1.1";
+      hash = "sha256-qOoThYMG0dzjKvwmzzVZmGcerfb++MApbaGRzLEq3/4=";
     };
     meta = { };
     libraryFile = "agda-stdlib-meta.agda-lib";

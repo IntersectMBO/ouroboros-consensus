@@ -35,11 +35,11 @@
     },
     "agda-nixpkgs": {
       "locked": {
-        "lastModified": 1716802541,
-        "narHash": "sha256-J2WSefw1i2GJDNGC3E6F8Mr9/iOzB+EfVT52g+Rqz6s=",
+        "lastModified": 1726583932,
+        "narHash": "sha256-zACxiQx8knB3F8+Ze+1BpiYrI+CbhxyWpcSID9kVhkQ=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "7148a46c2a1163faecb2915f5f1e6e6c43bcd3ee",
+        "rev": "658e7223191d2598641d50ee4e898126768fe847",
         "type": "github"
       },
       "original": {
