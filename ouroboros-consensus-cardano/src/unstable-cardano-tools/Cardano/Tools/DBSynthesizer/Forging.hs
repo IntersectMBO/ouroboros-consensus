@@ -38,13 +38,17 @@ import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState,
                      tickChainDepState)
 import           Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
                      (AddBlockResult (..), ChainDB, addBlockAsync,
-                     blockProcessed, getCurrentChain, getPastLedger)
+                     blockProcessed, getCurrentChain, getPastLedger,
+                     getReadOnlyForkerAtPoint)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
                      (noPunishment)
+import           Ouroboros.Consensus.Storage.LedgerDB.API
 import           Ouroboros.Consensus.Ticked
 import           Ouroboros.Consensus.Util.IOLike (atomically)
+import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.AnchoredFragment as AF (Anchor (..),
                      AnchoredFragment, AnchoredSeq (..), headPoint)
+import           Ouroboros.Network.Protocol.LocalStateQuery.Type
 
 
 data ForgeState =
@@ -59,7 +63,7 @@ initialForgeState :: ForgeState
 initialForgeState = ForgeState 0 0 0 0
 
 -- | An action to generate transactions for a given block
-type GenTxs blk mk = SlotNo -> TickedLedgerState blk mk -> IO [Validated (GenTx blk)]
+type GenTxs blk mk = SlotNo -> (IO (ReadOnlyForker IO (ExtLedgerState blk) blk)) -> TickedLedgerState blk DiffMK -> IO [Validated (GenTx blk)]
 
 -- DUPLICATE: runForge mirrors forging loop from ouroboros-consensus/src/Ouroboros/Consensus/NodeKernel.hs
 -- For an extensive commentary of the forging loop, see there.
@@ -167,8 +171,13 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
                 (ledgerState unticked)
 
         -- Let the caller generate transactions
-        -- TODO @js re-enable!
-        txs <- lift $ genTxs currentSlot $ undefined tickedLedgerState
+        txs <- lift $ withRegistry $ \reg ->
+          genTxs
+            currentSlot
+            (    either (error "Impossible: we are forging on top of a block that the ChainDB cannot create forkers on!") id
+             <$> getReadOnlyForkerAtPoint chainDB reg (SpecificPoint bcPrevPoint)
+            )
+            tickedLedgerState
 
         -- Actually produce the block
         newBlock <- lift $
