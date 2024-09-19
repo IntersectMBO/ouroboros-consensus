@@ -33,7 +33,7 @@ $fdcmd --full-path "$path" \
 # We don't want these deprecation warnings to be removed accidentally
 grep "#if __GLASGOW_HASKELL__ < 900
 import           Data.Foldable (asum)
-#endif" ouroboros-consensus-cardano/app/DBAnalyser/Parsers.hs                           >/dev/null 2>&1
+#endif" ouroboros-consensus-cardano/app/DBAnalyser/Parsers.hs >/dev/null 2>&1
 
 case "$(uname -s)" in
     MINGW*) git ls-files --eol | grep "w/crlf" | awk '{print $4}' | xargs dos2unix;;

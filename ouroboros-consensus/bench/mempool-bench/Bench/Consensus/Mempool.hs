@@ -43,6 +43,7 @@ data MempoolCmd blk =
     AddTx (Ledger.GenTx blk)
   deriving (Generic)
 
+deriving stock instance Show (Ledger.GenTx blk) => Show (MempoolCmd blk)
 deriving anyclass instance (NFData (Ledger.GenTx blk)) => NFData (MempoolCmd blk)
 
 getCmdTx :: MempoolCmd blk -> Maybe (Ledger.GenTx blk)
