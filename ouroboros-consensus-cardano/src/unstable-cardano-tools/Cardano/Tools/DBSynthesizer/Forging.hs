@@ -33,16 +33,22 @@ import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsMempool (GenTx)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import           Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState,
                      tickChainDepState)
 import           Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
                      (AddBlockResult (..), ChainDB, addBlockAsync,
-                     blockProcessed, getCurrentChain, getPastLedger)
+                     blockProcessed, getCurrentChain, getPastLedger,
+                     getReadOnlyForkerAtPoint)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
                      (noPunishment)
+import           Ouroboros.Consensus.Storage.LedgerDB.API
+import           Ouroboros.Consensus.Ticked
 import           Ouroboros.Consensus.Util.IOLike (atomically)
+import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.AnchoredFragment as AF (Anchor (..),
                      AnchoredFragment, AnchoredSeq (..), headPoint)
+import           Ouroboros.Network.Protocol.LocalStateQuery.Type
 
 
 data ForgeState =
@@ -57,13 +63,13 @@ initialForgeState :: ForgeState
 initialForgeState = ForgeState 0 0 0 0
 
 -- | An action to generate transactions for a given block
-type GenTxs blk = SlotNo -> TickedLedgerState blk -> IO [Validated (GenTx blk)]
+type GenTxs blk mk = SlotNo -> (IO (ReadOnlyForker IO (ExtLedgerState blk) blk)) -> TickedLedgerState blk DiffMK -> IO [Validated (GenTx blk)]
 
 -- DUPLICATE: runForge mirrors forging loop from ouroboros-consensus/src/Ouroboros/Consensus/NodeKernel.hs
 -- For an extensive commentary of the forging loop, see there.
 
 runForge ::
-     forall blk.
+     forall blk mk.
     ( LedgerSupportsProtocol blk )
     => EpochSize
     -> SlotNo
@@ -71,7 +77,7 @@ runForge ::
     -> ChainDB IO blk
     -> [BlockForging IO blk]
     -> TopLevelConfig blk
-    -> GenTxs blk
+    -> GenTxs blk mk
     -> IO ForgeResult
 runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
     putStrLn $ "--> epoch size: " ++ show epochSize_
@@ -157,7 +163,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
           _   -> exitEarly' "NoLeader"
 
         -- Tick the ledger state for the 'SlotNo' we're producing a block for
-        let tickedLedgerState :: Ticked (LedgerState blk)
+        let tickedLedgerState :: Ticked1 (LedgerState blk) DiffMK
             tickedLedgerState =
               applyChainTick
                 (configLedger cfg)
@@ -165,7 +171,13 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
                 (ledgerState unticked)
 
         -- Let the caller generate transactions
-        txs <- lift $ genTxs currentSlot tickedLedgerState
+        txs <- lift $ withRegistry $ \reg ->
+          genTxs
+            currentSlot
+            (    either (error "Impossible: we are forging on top of a block that the ChainDB cannot create forkers on!") id
+             <$> getReadOnlyForkerAtPoint chainDB reg (SpecificPoint bcPrevPoint)
+            )
+            tickedLedgerState
 
         -- Actually produce the block
         newBlock <- lift $
@@ -173,7 +185,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
             cfg
             bcBlockNo
             currentSlot
-            tickedLedgerState
+            (forgetLedgerTables tickedLedgerState)
             txs
             proof
 

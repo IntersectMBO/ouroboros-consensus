@@ -10,15 +10,18 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.Ledger.Query (
     BlockQuery (..)
+  , BlockSupportsHFLedgerQuery (..)
   , HardForkQueryResult
   , QueryAnytime (..)
   , QueryHardFork (..)
@@ -45,10 +48,13 @@ import           Data.Reflection (give)
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
 import           Data.SOP.Counting (getExactly)
+import           Data.SOP.Functors (Flip (..))
+import           Data.SOP.Index
 import           Data.SOP.Match (Mismatch (..), mustMatchNS)
 import           Data.SOP.Strict
 import           Data.Type.Equality
 import           Data.Typeable (Typeable)
+import           NoThunks.Class
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Abstract (hardForkSummary)
@@ -57,7 +63,8 @@ import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.HardFork.Combinator.Block
 import           Ouroboros.Consensus.HardFork.Combinator.Info
-import           Ouroboros.Consensus.HardFork.Combinator.Ledger ()
+import           Ouroboros.Consensus.HardFork.Combinator.Ledger
+                     (HardForkHasLedgerTables)
 import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import           Ouroboros.Consensus.HardFork.Combinator.State (Current (..),
                      Past (..), Situated (..))
@@ -68,29 +75,23 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HardFork.History.EraParams
                      (EraParamsFormat (..))
 import           Ouroboros.Consensus.HeaderValidation
+import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Node.Serialisation (Some (..))
-import           Ouroboros.Consensus.TypeFamilyWrappers (WrapChainDepState (..))
+import           Ouroboros.Consensus.Storage.LedgerDB
+import           Ouroboros.Consensus.TypeFamilyWrappers (WrapChainDepState (..),
+                     WrapTxOut)
 import           Ouroboros.Consensus.Util (ShowProxy)
-
-instance Typeable xs => ShowProxy (BlockQuery (HardForkBlock xs)) where
-
-instance All SingleEraBlock xs => ShowQuery (BlockQuery (HardForkBlock xs)) where
-  showResult (QueryAnytime   qry _) result = showResult qry result
-  showResult (QueryHardFork  qry)   result = showResult qry result
-  showResult (QueryIfCurrent qry)  mResult =
-      case mResult of
-        Left  err    -> show err
-        Right result -> showResult qry result
+import           Ouroboros.Consensus.Util.IOLike (MonadSTM (atomically))
 
 type HardForkQueryResult xs = Either (MismatchEraInfo xs)
 
-data instance BlockQuery (HardForkBlock xs) :: Type -> Type where
+data instance BlockQuery (HardForkBlock xs) footprint result where
   -- | Answer a query about an era if it is the current one.
   QueryIfCurrent ::
-       QueryIfCurrent xs result
-    -> BlockQuery (HardForkBlock xs) (HardForkQueryResult xs result)
+       QueryIfCurrent xs footprint result
+    -> BlockQuery (HardForkBlock xs) footprint (HardForkQueryResult xs result)
 
   -- | Answer a query about an era from /any/ era.
   --
@@ -100,7 +101,7 @@ data instance BlockQuery (HardForkBlock xs) :: Type -> Type where
        IsNonEmpty xs
     => QueryAnytime result
     -> EraIndex (x ': xs)
-    -> BlockQuery (HardForkBlock (x ': xs)) result
+    -> BlockQuery (HardForkBlock (x ': xs)) QFNoTables result
 
   -- | Answer a query about the hard fork combinator
   --
@@ -109,10 +110,100 @@ data instance BlockQuery (HardForkBlock xs) :: Type -> Type where
   QueryHardFork ::
        IsNonEmpty xs
     => QueryHardFork (x ': xs) result
-    -> BlockQuery (HardForkBlock (x ': xs)) result
+    -> BlockQuery (HardForkBlock (x ': xs)) QFNoTables result
 
-instance All SingleEraBlock xs => BlockSupportsLedgerQuery (HardForkBlock xs) where
-  answerBlockQuery
+-- | Queries that use ledger tables usually can be implemented faster if we work
+-- with the hard fork tables rather than projecting everything to the
+-- appropriate era before we process the query. This class should be used to
+-- implement how these queries that have a footprint which is not @QFNoTables@
+-- are answered.
+class ( All (Compose NoThunks WrapTxOut) xs
+      , All (Compose Show WrapTxOut) xs
+      , All (Compose Eq WrapTxOut) xs
+      , All (Compose HasTickedLedgerTables LedgerState) xs
+      , All (Compose HasLedgerTables LedgerState) xs
+      ) => BlockSupportsHFLedgerQuery xs where
+  answerBlockQueryHFLookup ::
+       All SingleEraBlock xs
+    => Monad m
+    => Index xs x
+    -> ExtLedgerCfg x
+    -> BlockQuery x QFLookupTables result
+    -> ReadOnlyForker' m (HardForkBlock xs)
+    -> m result
+
+  answerBlockQueryHFTraverse ::
+       All SingleEraBlock xs
+    => Monad m
+    => Index xs x
+    -> ExtLedgerCfg x
+    -> BlockQuery x QFTraverseTables result
+    -> ReadOnlyForker' m (HardForkBlock xs)
+    -> m result
+
+  -- | The @QFTraverseTables@ queries consist of some filter on the @TxOut@. This class
+  -- provides that filter so that @answerBlockQueryHFAll@ can be implemented
+  -- in an abstract manner depending on this function.
+  queryLedgerGetTraversingFilter ::
+       Index xs x
+    -> BlockQuery x QFTraverseTables result
+    -> Value (LedgerState (HardForkBlock xs))
+    -> Bool
+
+{-------------------------------------------------------------------------------
+  Instances
+-------------------------------------------------------------------------------}
+
+------
+-- Show
+------
+
+instance Typeable xs => ShowProxy (BlockQuery (HardForkBlock xs)) where
+-- Use default implementation
+
+deriving instance All SingleEraBlock xs => Show (BlockQuery (HardForkBlock xs) footprint result)
+
+instance All SingleEraBlock xs
+      => ShowQuery (BlockQuery (HardForkBlock xs) footprint) where
+  showResult (QueryAnytime   qry _) result = showResult qry result
+  showResult (QueryHardFork  qry)   result = showResult qry result
+  showResult (QueryIfCurrent qry)  mResult =
+      case mResult of
+        Left  err    -> show err
+        Right result -> showResult qry result
+
+------
+-- Eq
+------
+
+instance All SingleEraBlock xs => SameDepIndex2 (BlockQuery (HardForkBlock xs)) where
+  sameDepIndex2 (QueryIfCurrent qry) (QueryIfCurrent qry') =
+      (\Refl -> Refl) <$> sameDepIndex2 qry qry'
+  sameDepIndex2 (QueryIfCurrent {}) _ =
+      Nothing
+  sameDepIndex2 (QueryAnytime qry era) (QueryAnytime qry' era')
+    | era == era'
+    = (\Refl -> Refl) <$> sameDepIndex qry qry'
+    | otherwise
+    = Nothing
+  sameDepIndex2(QueryAnytime {}) _ =
+      Nothing
+  sameDepIndex2 (QueryHardFork qry) (QueryHardFork qry') =
+      (\Refl -> Refl) <$> sameDepIndex qry qry'
+  sameDepIndex2 (QueryHardFork {}) _ =
+      Nothing
+
+{-------------------------------------------------------------------------------
+  Query Ledger
+-------------------------------------------------------------------------------}
+
+instance ( All SingleEraBlock xs
+         , HardForkHasLedgerTables xs
+         , BlockSupportsHFLedgerQuery xs
+         , CanHardFork xs
+         )
+      => BlockSupportsLedgerQuery (HardForkBlock xs) where
+  answerPureBlockQuery
     (ExtLedgerCfg cfg)
     query
     ext@(ExtLedgerState st@(HardForkLedgerState hardForkState) _) =
@@ -138,14 +229,46 @@ instance All SingleEraBlock xs => BlockSupportsLedgerQuery (HardForkBlock xs) wh
       lcfg = configLedger cfg
       ei   = State.epochInfoLedger lcfg hardForkState
 
+  answerBlockQueryLookup
+    (ExtLedgerCfg cfg)
+    qry
+    forker = do
+      hardForkState <- hardForkLedgerStatePerEra . ledgerState <$> atomically (roforkerGetLedgerState forker)
+      let ei   = State.epochInfoLedger lcfg hardForkState
+          cfgs = hmap ExtLedgerCfg $ distribTopLevelConfig ei cfg
+      case qry of
+        QueryIfCurrent queryIfCurrent ->
+          interpretQueryIfCurrentOne
+                cfgs
+                queryIfCurrent
+                forker
+    where
+      lcfg = configLedger cfg
+
+  answerBlockQueryTraverse
+    (ExtLedgerCfg cfg)
+    qry
+    forker = do
+      hardForkState <- hardForkLedgerStatePerEra . ledgerState <$> atomically (roforkerGetLedgerState forker)
+      let ei   = State.epochInfoLedger lcfg hardForkState
+          cfgs = hmap ExtLedgerCfg $ distribTopLevelConfig ei cfg
+      case qry of
+        QueryIfCurrent queryIfCurrent ->
+          interpretQueryIfCurrentAll
+                cfgs
+                queryIfCurrent
+                forker
+    where
+      lcfg = configLedger cfg
+
 -- | Precondition: the 'ledgerState' and 'headerState' should be from the same
 -- era. In practice, this is _always_ the case, unless the 'ExtLedgerState' was
 -- manually crafted.
 distribExtLedgerState ::
      All SingleEraBlock xs
-  => ExtLedgerState (HardForkBlock xs) -> NS ExtLedgerState xs
+  => ExtLedgerState (HardForkBlock xs) mk -> NS (Flip ExtLedgerState mk) xs
 distribExtLedgerState (ExtLedgerState ledgerState headerState) =
-    hmap (\(Pair hst lst) -> ExtLedgerState lst hst) $
+    hmap (\(Pair hst lst) -> Flip $ ExtLedgerState (unFlip lst) hst) $
       mustMatchNS
         "HeaderState"
         (distribHeaderState headerState)
@@ -166,29 +289,10 @@ distribHeaderState (HeaderState tip chainDepState) =
           (\(Pair t cds) -> HeaderState (NotOrigin t) (unwrapChainDepState cds))
           (mustMatchNS "AnnTip" (distribAnnTip annTip) (State.tip chainDepState))
 
-instance All SingleEraBlock xs => SameDepIndex (BlockQuery (HardForkBlock xs)) where
-  sameDepIndex (QueryIfCurrent qry) (QueryIfCurrent qry') =
-      apply Refl <$> sameDepIndex qry qry'
-  sameDepIndex (QueryIfCurrent {}) _ =
-      Nothing
-  sameDepIndex (QueryAnytime qry era) (QueryAnytime qry' era')
-    | era == era'
-    = sameDepIndex qry qry'
-    | otherwise
-    = Nothing
-  sameDepIndex (QueryAnytime {}) _ =
-      Nothing
-  sameDepIndex (QueryHardFork qry) (QueryHardFork qry') =
-      sameDepIndex qry qry'
-  sameDepIndex (QueryHardFork {}) _ =
-      Nothing
-
-deriving instance All SingleEraBlock xs => Show (BlockQuery (HardForkBlock xs) result)
-
-getHardForkQuery :: BlockQuery (HardForkBlock xs) result
+getHardForkQuery :: BlockQuery (HardForkBlock xs) footprint result
                  -> (forall result'.
                           result :~: HardForkQueryResult xs result'
-                       -> QueryIfCurrent xs result'
+                       -> QueryIfCurrent xs footprint result'
                        -> r)
                  -> (forall x' xs'.
                           xs :~: x' ': xs'
@@ -211,42 +315,89 @@ getHardForkQuery q k1 k2 k3 = case q of
   Current era queries
 -------------------------------------------------------------------------------}
 
-data QueryIfCurrent :: [Type] -> Type -> Type where
-  QZ :: BlockQuery x result      -> QueryIfCurrent (x ': xs) result
-  QS :: QueryIfCurrent xs result -> QueryIfCurrent (x ': xs) result
+type QueryIfCurrent :: [Type] -> QueryFootprint -> Type -> Type
+data QueryIfCurrent xs footprint result where
+  QZ :: BlockQuery     x  footprint result -> QueryIfCurrent (x ': xs) footprint result
+  QS :: QueryIfCurrent xs footprint result -> QueryIfCurrent (x ': xs) footprint result
 
-deriving instance All SingleEraBlock xs => Show (QueryIfCurrent xs result)
+deriving instance All SingleEraBlock xs => Show (QueryIfCurrent xs footprint result)
 
-instance All SingleEraBlock xs => ShowQuery (QueryIfCurrent xs) where
+instance All SingleEraBlock xs => ShowQuery (QueryIfCurrent xs footprint) where
   showResult (QZ qry) = showResult qry
   showResult (QS qry) = showResult qry
 
-instance All SingleEraBlock xs => SameDepIndex (QueryIfCurrent xs) where
-  sameDepIndex (QZ qry) (QZ qry') = sameDepIndex qry qry'
-  sameDepIndex (QS qry) (QS qry') = sameDepIndex qry qry'
-  sameDepIndex _        _         = Nothing
+instance All SingleEraBlock xs => SameDepIndex2 (QueryIfCurrent xs) where
+  sameDepIndex2 (QZ qry) (QZ qry') = sameDepIndex2 qry qry'
+  sameDepIndex2 (QS qry) (QS qry') = sameDepIndex2 qry qry'
+  sameDepIndex2 _        _         = Nothing
 
 interpretQueryIfCurrent ::
      forall result xs. All SingleEraBlock xs
   => NP ExtLedgerCfg xs
-  -> QueryIfCurrent xs result
-  -> NS ExtLedgerState xs
+  -> QueryIfCurrent xs QFNoTables result
+  -> NS (Flip ExtLedgerState EmptyMK) xs
   -> HardForkQueryResult xs result
 interpretQueryIfCurrent = go
   where
     go :: All SingleEraBlock xs'
        => NP ExtLedgerCfg xs'
-       -> QueryIfCurrent xs' result
-       -> NS ExtLedgerState xs'
+       -> QueryIfCurrent xs' QFNoTables result
+       -> NS (Flip ExtLedgerState EmptyMK) xs'
        -> HardForkQueryResult xs' result
-    go (c :* _)  (QZ qry) (Z st) =
-        Right $ answerBlockQuery c qry st
+    go (c :* _)  (QZ qry) (Z (Flip st)) =
+        Right $ answerPureBlockQuery c qry st
     go (_ :* cs) (QS qry) (S st) =
         first shiftMismatch $ go cs qry st
     go _         (QZ qry) (S st) =
-        Left $ MismatchEraInfo $ ML (queryInfo qry) (hcmap proxySingle ledgerInfo st)
-    go _         (QS qry) (Z st) =
+        Left $ MismatchEraInfo $ ML (queryInfo qry) (hcmap proxySingle (ledgerInfo . unFlip) st)
+    go _         (QS qry) (Z (Flip st)) =
         Left $ MismatchEraInfo $ MR (hardForkQueryInfo qry) (ledgerInfo st)
+
+interpretQueryIfCurrentOne ::
+     forall result xs m. (MonadSTM m, BlockSupportsHFLedgerQuery xs, CanHardFork xs)
+  => NP ExtLedgerCfg xs
+  -> QueryIfCurrent xs QFLookupTables result
+  -> ReadOnlyForker' m (HardForkBlock xs)
+  -> m (HardForkQueryResult xs result)
+interpretQueryIfCurrentOne cfg q forker = do
+    st <- distribExtLedgerState <$> atomically (roforkerGetLedgerState forker)
+    go indices cfg q st
+  where
+    go :: All SingleEraBlock xs'
+       => NP (Index xs) xs'
+       -> NP ExtLedgerCfg xs'
+       -> QueryIfCurrent xs' QFLookupTables result
+       -> NS (Flip ExtLedgerState EmptyMK) xs'
+       -> m (HardForkQueryResult xs' result)
+    go (idx :* _) (c :* _)  (QZ qry) _ =
+        Right <$> answerBlockQueryHFLookup idx c qry forker
+    go (_ :* idx) (_ :* cs) (QS qry) (S st) =
+        first shiftMismatch <$> go idx cs qry st
+    go _          _         (QS qry) (Z (Flip st)) =
+        pure $ Left $ MismatchEraInfo $ MR (hardForkQueryInfo qry) (ledgerInfo st)
+
+interpretQueryIfCurrentAll ::
+     forall result xs m. (MonadSTM m, BlockSupportsHFLedgerQuery xs, CanHardFork xs)
+  => NP ExtLedgerCfg xs
+  -> QueryIfCurrent xs QFTraverseTables result
+  -> ReadOnlyForker' m (HardForkBlock xs)
+  -> m (HardForkQueryResult xs result)
+interpretQueryIfCurrentAll cfg q forker = do
+    st <- distribExtLedgerState <$> atomically (roforkerGetLedgerState forker)
+    go indices cfg q st
+  where
+    go :: All SingleEraBlock xs'
+       => NP (Index xs) xs'
+       -> NP ExtLedgerCfg xs'
+       -> QueryIfCurrent xs' QFTraverseTables result
+       -> NS (Flip ExtLedgerState EmptyMK) xs'
+       -> m (HardForkQueryResult xs' result)
+    go (idx :* _) (c :* _)  (QZ qry) _ =
+        Right <$> answerBlockQueryHFTraverse idx c qry forker
+    go (_ :* idx) (_ :* cs) (QS qry) (S st) =
+        first shiftMismatch <$> go idx cs qry st
+    go _          _         (QS qry) (Z (Flip st)) =
+        pure $ Left $ MismatchEraInfo $ MR (hardForkQueryInfo qry) (ledgerInfo st)
 
 {-------------------------------------------------------------------------------
   Any era queries
@@ -261,14 +412,14 @@ instance ShowQuery QueryAnytime where
   showResult GetEraStart = show
 
 instance SameDepIndex QueryAnytime where
-  sameDepIndex GetEraStart GetEraStart = Just Refl
+   sameDepIndex GetEraStart GetEraStart = Just Refl
 
 interpretQueryAnytime ::
-     forall result xs. All SingleEraBlock xs
+     forall result xs mk. All SingleEraBlock xs
   => HardForkLedgerConfig xs
   -> QueryAnytime result
   -> EraIndex xs
-  -> State.HardForkState LedgerState xs
+  -> State.HardForkState (Flip LedgerState mk) xs
   -> result
 interpretQueryAnytime cfg query (EraIndex era) st =
     answerQueryAnytime cfg query (State.situate era st)
@@ -277,7 +428,7 @@ answerQueryAnytime ::
      All SingleEraBlock xs
   => HardForkLedgerConfig xs
   -> QueryAnytime result
-  -> Situated h LedgerState xs
+  -> Situated h (Flip LedgerState mk) xs
   -> result
 answerQueryAnytime HardForkLedgerConfig{..} =
     go cfgs (getExactly (getShape hardForkLedgerConfigShape))
@@ -288,7 +439,7 @@ answerQueryAnytime HardForkLedgerConfig{..} =
        => NP WrapPartialLedgerConfig xs'
        -> NP (K EraParams) xs'
        -> QueryAnytime result
-       -> Situated h LedgerState xs'
+       -> Situated h (Flip LedgerState mk) xs'
        -> result
     go Nil       _             _           ctxt = case ctxt of {}
     go (c :* cs) (K ps :* pss) GetEraStart ctxt = case ctxt of
@@ -302,7 +453,7 @@ answerQueryAnytime HardForkLedgerConfig{..} =
           (unwrapPartialLedgerConfig c)
           ps
           (currentStart cur)
-          (currentState cur)
+          (unFlip $ currentState cur)
 
 {-------------------------------------------------------------------------------
   Hard fork queries
@@ -332,7 +483,7 @@ interpretQueryHardFork ::
      All SingleEraBlock xs
   => HardForkLedgerConfig xs
   -> QueryHardFork xs result
-  -> LedgerState (HardForkBlock xs)
+  -> LedgerState (HardForkBlock xs) mk
   -> result
 interpretQueryHardFork cfg query st =
     case query of
@@ -384,21 +535,21 @@ decodeQueryHardForkResult epf = \case
   Auxiliary
 -------------------------------------------------------------------------------}
 
-ledgerInfo :: forall blk. SingleEraBlock blk
-           => ExtLedgerState blk
+ledgerInfo :: forall blk mk. SingleEraBlock blk
+           => ExtLedgerState blk mk
            -> LedgerEraInfo blk
 ledgerInfo _ = LedgerEraInfo $ singleEraInfo (Proxy @blk)
 
-queryInfo :: forall blk query result. SingleEraBlock blk
-          => query blk result -> SingleEraInfo blk
+queryInfo :: forall blk query (footprint :: QueryFootprint) result. SingleEraBlock blk
+          => query blk footprint result -> SingleEraInfo blk
 queryInfo _ = singleEraInfo (Proxy @blk)
 
 hardForkQueryInfo :: All SingleEraBlock xs
-                  => QueryIfCurrent xs result -> NS SingleEraInfo xs
+                  => QueryIfCurrent xs footprint result -> NS SingleEraInfo xs
 hardForkQueryInfo = go
   where
     go :: All SingleEraBlock xs'
-       => QueryIfCurrent xs' result -> NS SingleEraInfo xs'
+       => QueryIfCurrent xs' footprint result -> NS SingleEraInfo xs'
     go (QZ qry) = Z (queryInfo qry)
     go (QS qry) = S (go qry)
 

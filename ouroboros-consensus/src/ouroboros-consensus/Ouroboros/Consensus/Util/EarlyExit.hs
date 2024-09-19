@@ -92,7 +92,7 @@ collapse :: Maybe () -> ()
 collapse Nothing   = ()
 collapse (Just ()) = ()
 
-exitEarly :: Applicative m => WithEarlyExit m a
+exitEarly :: Monad m => WithEarlyExit m a
 exitEarly = earlyExit $ pure Nothing
 
 instance (forall a'. NoThunks (m a'))

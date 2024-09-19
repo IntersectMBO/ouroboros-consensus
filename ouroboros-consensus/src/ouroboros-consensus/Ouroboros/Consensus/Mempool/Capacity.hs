@@ -1,5 +1,13 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 
 -- | Mempool capacity, size and transaction size datatypes.
 --
@@ -20,6 +28,8 @@ import           Data.DerivingVia (InstantiatedAt (..))
 import           Data.Measure (Measure)
 import           Data.Semigroup (stimes)
 import           Data.Word (Word32)
+import           GHC.Generics
+import           NoThunks.Class
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 
@@ -51,7 +61,7 @@ mkCapacityBytesOverride = MempoolCapacityBytesOverride
 computeMempoolCapacity ::
      LedgerSupportsMempool blk
   => LedgerConfig blk
-  -> TickedLedgerState blk
+  -> TickedLedgerState blk mk
   -> MempoolCapacityBytesOverride
   -> TxMeasure blk
 computeMempoolCapacity cfg st override =
@@ -72,7 +82,7 @@ computeMempoolCapacity cfg st override =
       stimes blockCount (SemigroupViaMeasure oneBlock)
 
 newtype SemigroupViaMeasure a = SemigroupViaMeasure a
-  deriving (Eq, Measure)
+  deriving newtype (Eq, Measure)
   deriving Semigroup via (InstantiatedAt Measure (SemigroupViaMeasure a))
 
 {-------------------------------------------------------------------------------
@@ -85,7 +95,7 @@ data MempoolSize = MempoolSize
     -- ^ The number of transactions in the mempool.
   , msNumBytes :: !ByteSize32
     -- ^ The summed byte size of all the transactions in the mempool.
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic, NoThunks)
 
 instance Semigroup MempoolSize where
   MempoolSize xt xb <> MempoolSize yt yb = MempoolSize (xt + yt) (xb <> yb)

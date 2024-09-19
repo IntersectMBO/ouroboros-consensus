@@ -4,6 +4,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -80,7 +81,7 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Fragment.Diff (ChainDiff)
 import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture)
-import           Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
+import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.Abstract
@@ -90,13 +91,12 @@ import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      LoE, StreamFrom, StreamTo, UnknownRange)
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
                      (InvalidBlockPunishment)
-import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB (LgrDB,
-                     LgrDbSerialiseConstraints)
-import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB as LgrDB
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB,
                      ImmutableDbSerialiseConstraints)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import           Ouroboros.Consensus.Storage.LedgerDB (UpdateLedgerDbTraceEvent)
+import           Ouroboros.Consensus.Storage.LedgerDB (LedgerDB',
+                     LedgerDbSerialiseConstraints, TraceLedgerDBEvent,
+                     TraceValidateEvent)
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Storage.VolatileDB (VolatileDB,
                      VolatileDbSerialiseConstraints)
@@ -105,13 +105,14 @@ import           Ouroboros.Consensus.Util (Fuse)
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.Enclose (Enclosing, Enclosing' (..))
 import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Consensus.Util.STM (WithFingerprint)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import           Ouroboros.Network.Block (MaxSlotNo)
 
 -- | All the serialisation related constraints needed by the ChainDB.
 class ( ImmutableDbSerialiseConstraints blk
-      , LgrDbSerialiseConstraints blk
+      , LedgerDbSerialiseConstraints blk
       , VolatileDbSerialiseConstraints blk
         -- Needed for Follower
       , EncodeDiskDep (NestedCtxt Header) blk
@@ -172,7 +173,7 @@ data ChainDbState m blk
 data ChainDbEnv m blk = CDB
   { cdbImmutableDB     :: !(ImmutableDB m blk)
   , cdbVolatileDB      :: !(VolatileDB m blk)
-  , cdbLgrDB           :: !(LgrDB m blk)
+  , cdbLedgerDB        :: !(LedgerDB' m blk)
   , cdbChain           :: !(StrictTVar m (AnchoredFragment (Header blk)))
     -- ^ Contains the current chain fragment.
     --
@@ -238,8 +239,6 @@ data ChainDbEnv m blk = CDB
   , cdbChainSelFuse    :: !(Fuse m)
   , cdbTracer          :: !(Tracer m (TraceEvent blk))
   , cdbRegistry        :: !(ResourceRegistry m)
-    -- ^ Resource registry that will be used to (re)start the background
-    -- threads, see 'cdbBgThreads'.
   , cdbGcDelay         :: !DiffTime
     -- ^ How long to wait between copying a block from the VolatileDB to
     -- ImmutableDB and garbage collecting it from the VolatileDB
@@ -290,21 +289,21 @@ instance (IOLike m, LedgerSupportsProtocol blk, BlockSupportsDiffusionPipelining
 -------------------------------------------------------------------------------}
 
 data Internal m blk = Internal
-  { intCopyToImmutableDB     :: m (WithOrigin SlotNo)
+  { intCopyToImmutableDB :: m (WithOrigin SlotNo)
     -- ^ Copy the blocks older than @k@ from to the VolatileDB to the
     -- ImmutableDB and update the in-memory chain fragment correspondingly.
     --
     -- The 'SlotNo' of the tip of the ImmutableDB after copying the blocks is
     -- returned. This can be used for a garbage collection on the VolatileDB.
-  , intGarbageCollect        :: SlotNo -> m ()
+  , intGarbageCollect    :: SlotNo -> m ()
     -- ^ Perform garbage collection for blocks <= the given 'SlotNo'.
-  , intUpdateLedgerSnapshots :: m ()
+  , intTryTakeSnapshot   :: m ()
     -- ^ Write a new LedgerDB snapshot to disk and remove the oldest one(s).
-  , intAddBlockRunner        :: m Void
+  , intAddBlockRunner    :: m Void
     -- ^ Start the loop that adds blocks to the ChainDB retrieved from the
     -- queue populated by 'ChainDB.addBlock'. Execute this loop in a separate
     -- thread.
-  , intKillBgThreads         :: StrictTVar m (m ())
+  , intKillBgThreads     :: StrictTVar m (m ())
     -- ^ A handle to kill the background threads.
   }
 
@@ -539,20 +538,18 @@ closeChainSelQueue (ChainSelQueue queue) = do
 
 -- | Trace type for the various events of the ChainDB.
 data TraceEvent blk
-  = TraceAddBlockEvent          (TraceAddBlockEvent           blk)
-  | TraceFollowerEvent          (TraceFollowerEvent           blk)
-  | TraceCopyToImmutableDBEvent (TraceCopyToImmutableDBEvent  blk)
-  | TraceGCEvent                (TraceGCEvent                 blk)
-  | TraceInitChainSelEvent      (TraceInitChainSelEvent       blk)
-  | TraceOpenEvent              (TraceOpenEvent               blk)
-  | TraceIteratorEvent          (TraceIteratorEvent           blk)
-  | TraceSnapshotEvent          (LgrDB.TraceSnapshotEvent     blk)
-  | TraceLedgerReplayEvent      (LgrDB.TraceReplayEvent       blk)
-  | TraceImmutableDBEvent       (ImmutableDB.TraceEvent       blk)
-  | TraceVolatileDBEvent        (VolatileDB.TraceEvent        blk)
+  = TraceAddBlockEvent            (TraceAddBlockEvent          blk)
+  | TraceFollowerEvent            (TraceFollowerEvent          blk)
+  | TraceCopyToImmutableDBEvent   (TraceCopyToImmutableDBEvent blk)
+  | TraceGCEvent                  (TraceGCEvent                blk)
+  | TraceInitChainSelEvent        (TraceInitChainSelEvent      blk)
+  | TraceOpenEvent                (TraceOpenEvent              blk)
+  | TraceIteratorEvent            (TraceIteratorEvent          blk)
+  | TraceLedgerDBEvent            (TraceLedgerDBEvent          blk)
+  | TraceImmutableDBEvent         (ImmutableDB.TraceEvent      blk)
+  | TraceVolatileDBEvent          (VolatileDB.TraceEvent       blk)
   | TraceLastShutdownUnclean
   deriving (Generic)
-
 
 deriving instance
   ( Eq (Header blk)
@@ -759,7 +756,7 @@ data TraceValidationEvent blk =
       -- ^ Candidate chain containing headers from the future
       [Header blk]
       -- ^ Headers from the future, exceeding clock skew
-  | UpdateLedgerDbTraceEvent (UpdateLedgerDbTraceEvent blk)
+  | UpdateLedgerDbTraceEvent (TraceValidateEvent blk)
   deriving (Generic)
 
 deriving instance
