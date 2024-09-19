@@ -13,7 +13,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl (
   , openDB
   , withDB
     -- * Trace types
-  , LgrDB.TraceReplayEvent
   , SelectionChangedInfo (..)
   , TraceAddBlockEvent (..)
   , TraceCopyToImmutableDBEvent (..)
@@ -28,20 +27,22 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl (
     -- * Re-exported for convenience
   , Args.RelativeMountPoint (..)
   , ImmutableDB.ImmutableDbSerialiseConstraints
-  , LgrDB.LgrDbSerialiseConstraints
+  , LedgerDB.LedgerDbSerialiseConstraints
   , VolatileDB.VolatileDbSerialiseConstraints
     -- * Internals for testing purposes
   , Internal (..)
   , openDBInternal
   ) where
 
-import           Control.Monad (when)
+import           Control.Monad (void, when)
+import           Control.Monad.Base (MonadBase)
 import           Control.Monad.Trans.Class (lift)
 import           Control.ResourceRegistry (WithTempRegistry, allocate,
-                     runInnerWithTempRegistry, runWithTempRegistry)
+                     runInnerWithTempRegistry, runWithTempRegistry,
+                     withRegistry)
 import           Control.Tracer
-import           Data.Functor (void, (<&>))
-import           Data.Functor.Identity (Identity)
+import           Data.Functor ((<&>))
+import           Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
 import           Data.Maybe.Strict (StrictMaybe (..))
 import           GHC.Stack (HasCallStack)
@@ -59,12 +60,14 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Background as Backgrou
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel as ChainSel
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Follower as Follower
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Iterator as Iterator
-import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB as LgrDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
+import qualified Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream as ImmutableDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util (newFuse, whenJust, withFuse)
+import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.STM (Fingerprint (..),
                      WithFingerprint (..))
@@ -83,8 +86,9 @@ withDB ::
      , HasHardForkHistory blk
      , ConvertRawHash blk
      , SerialiseDiskConstraints blk
+     , MonadBase m m
      )
-  => ChainDbArgs Identity m blk
+  => Complete Args.ChainDbArgs m blk
   -> (ChainDB m blk -> m a)
   -> m a
 withDB args = bracket (fst <$> openDBInternal args True) API.closeDB
@@ -98,8 +102,9 @@ openDB ::
      , HasHardForkHistory blk
      , ConvertRawHash blk
      , SerialiseDiskConstraints blk
+     , MonadBase m m
      )
-  => ChainDbArgs Identity m blk
+  => Complete Args.ChainDbArgs m blk
   -> m (ChainDB m blk)
 openDB args = fst <$> openDBInternal args True
 
@@ -112,8 +117,10 @@ openDBInternal ::
      , HasHardForkHistory blk
      , ConvertRawHash blk
      , SerialiseDiskConstraints blk
+     , HasCallStack
+     , MonadBase m m
      )
-  => ChainDbArgs Identity m blk
+  => Complete Args.ChainDbArgs m blk
   -> Bool -- ^ 'True' = Launch background tasks
   -> m (ChainDB m blk, Internal m blk)
 openDBInternal args launchBgTasks = runWithTempRegistry $ do
@@ -132,40 +139,43 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     maxSlot <- lift $ atomically $ VolatileDB.getMaxSlotNo volatileDB
     (chainDB, testing, env) <- lift $ do
       traceWith tracer $ TraceOpenEvent (OpenedVolatileDB maxSlot)
-      let lgrReplayTracer =
-            LgrDB.decorateReplayTracerWithGoal
-              immutableDbTipPoint
-              (contramap TraceLedgerReplayEvent tracer)
       traceWith tracer $ TraceOpenEvent StartedOpeningLgrDB
-      (lgrDB, replayed) <- LgrDB.openDB argsLgrDb
-                            lgrReplayTracer
-                            immutableDB
+      (lgrDB, replayed) <- LedgerDB.openDB
+                            argsLgrDb
+                            (ImmutableDB.streamAPI immutableDB)
+                            immutableDbTipPoint
                             (Query.getAnyKnownBlock immutableDB volatileDB)
       traceWith tracer $ TraceOpenEvent OpenedLgrDB
 
       varInvalid      <- newTVarIO (WithFingerprint Map.empty (Fingerprint 0))
       varFutureBlocks <- newTVarIO Map.empty
 
-      let initChainSelTracer = contramap TraceInitChainSelEvent tracer
+      let initChainSelTracer = TraceInitChainSelEvent >$< tracer
 
       traceWith initChainSelTracer StartedInitChainSelection
       initialLoE     <- Args.cdbsLoE cdbSpecificArgs
-      chainAndLedger <- ChainSel.initialChainSelection
+      chain <- withRegistry $ \rr -> do
+        chainAndLedger <- ChainSel.initialChainSelection
                           immutableDB
                           volatileDB
                           lgrDB
+                          rr
                           initChainSelTracer
                           (Args.cdbsTopLevelConfig cdbSpecificArgs)
                           varInvalid
                           varFutureBlocks
                           (Args.cdbsCheckInFuture cdbSpecificArgs)
                           (void initialLoE)
-      traceWith initChainSelTracer InitialChainSelected
+        traceWith initChainSelTracer InitialChainSelected
 
-      let chain  = VF.validatedFragment chainAndLedger
-          ledger = VF.validatedLedger   chainAndLedger
+        let chain  = VF.validatedFragment chainAndLedger
+            ledger = VF.validatedLedger   chainAndLedger
 
-      atomically $ LgrDB.setCurrent lgrDB ledger
+        atomically $ LedgerDB.forkerCommit ledger
+        LedgerDB.forkerClose ledger
+        pure chain
+      LedgerDB.tryFlush lgrDB
+
       varChain           <- newTVarIO chain
       varTentativeState  <- newTVarIO $ initialTentativeHeaderState (Proxy @blk)
       varTentativeHeader <- newTVarIO SNothing
@@ -180,7 +190,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
 
       let env = CDB { cdbImmutableDB     = immutableDB
                     , cdbVolatileDB      = volatileDB
-                    , cdbLgrDB           = lgrDB
+                    , cdbLedgerDB        = lgrDB
                     , cdbChain           = varChain
                     , cdbTentativeState  = varTentativeState
                     , cdbTentativeHeader = varTentativeHeader
@@ -204,32 +214,38 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                     }
       h <- fmap CDBHandle $ newTVarIO $ ChainDbOpen env
       let chainDB = API.ChainDB
-            { addBlockAsync         = getEnv2    h ChainSel.addBlockAsync
+            { addBlockAsync            = getEnv2    h ChainSel.addBlockAsync
             , chainSelAsync         = getEnv     h ChainSel.triggerChainSelectionAsync
-            , getCurrentChain       = getEnvSTM  h Query.getCurrentChain
-            , getLedgerDB           = getEnvSTM  h Query.getLedgerDB
-            , getHeaderStateHistory = getEnvSTM  h Query.getHeaderStateHistory
-            , getTipBlock           = getEnv     h Query.getTipBlock
-            , getTipHeader          = getEnv     h Query.getTipHeader
-            , getTipPoint           = getEnvSTM  h Query.getTipPoint
-            , getBlockComponent     = getEnv2    h Query.getBlockComponent
-            , getIsFetched          = getEnvSTM  h Query.getIsFetched
-            , getIsValid            = getEnvSTM  h Query.getIsValid
-            , getMaxSlotNo          = getEnvSTM  h Query.getMaxSlotNo
-            , stream                = Iterator.stream  h
-            , newFollower           = Follower.newFollower h
-            , getIsInvalidBlock     = getEnvSTM  h Query.getIsInvalidBlock
-            , closeDB               = closeDB h
-            , isOpen                = isOpen  h
+            , getCurrentChain          = getEnvSTM  h Query.getCurrentChain
+            , getTipBlock              = getEnv     h Query.getTipBlock
+            , getTipHeader             = getEnv     h Query.getTipHeader
+            , getTipPoint              = getEnvSTM  h Query.getTipPoint
+            , getBlockComponent        = getEnv2    h Query.getBlockComponent
+            , getIsFetched             = getEnvSTM  h Query.getIsFetched
+            , getIsValid               = getEnvSTM  h Query.getIsValid
+            , getMaxSlotNo             = getEnvSTM  h Query.getMaxSlotNo
+            , stream                   = Iterator.stream  h
+            , newFollower              = Follower.newFollower h
+            , getIsInvalidBlock        = getEnvSTM  h Query.getIsInvalidBlock
+            , closeDB                  = closeDB h
+            , isOpen                   = isOpen  h
+            , getCurrentLedger         = getEnvSTM  h Query.getCurrentLedger
+            , getImmutableLedger       = getEnvSTM  h Query.getImmutableLedger
+            , getPastLedger            = getEnvSTM1 h Query.getPastLedger
+            , getHeaderStateHistory    = getEnvSTM  h Query.getHeaderStateHistory
+            , getReadOnlyForkerAtPoint = getEnv2    h Query.getReadOnlyForkerAtPoint
+            , getLedgerTablesAtFor     = getEnv2    h Query.getLedgerTablesAtFor
+            , getStatistics            = getEnv     h Query.getStatistics
             }
       addBlockTestFuse <- newFuse "test chain selection"
       copyTestFuse <- newFuse "test copy to immutable db"
       let testing = Internal
-            { intCopyToImmutableDB       = getEnv  h (withFuse copyTestFuse . Background.copyToImmutableDB)
-            , intGarbageCollect          = getEnv1 h Background.garbageCollect
-            , intUpdateLedgerSnapshots   = getEnv  h Background.updateLedgerSnapshots
-            , intAddBlockRunner          = getEnv  h (Background.addBlockRunner addBlockTestFuse)
-            , intKillBgThreads           = varKillBgThreads
+            { intCopyToImmutableDB = getEnv  h (withFuse copyTestFuse . Background.copyToImmutableDB)
+            , intGarbageCollect    = getEnv1 h Background.garbageCollect
+            , intTryTakeSnapshot   = getEnv  h $ \env' ->
+                void $ LedgerDB.tryTakeSnapshot (cdbLedgerDB env') Nothing maxBound
+            , intAddBlockRunner    = getEnv  h (Background.addBlockRunner addBlockTestFuse)
+            , intKillBgThreads     = varKillBgThreads
             }
 
       traceWith tracer $ TraceOpenEvent $ OpenedDB
@@ -240,7 +256,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
 
       return (chainDB, testing, env)
 
-    _ <- lift $ allocate (Args.cdbsRegistry cdbSpecificArgs) (\_ -> return $ chainDB) API.closeDB
+    _ <- lift $ allocate (Args.cdbsRegistry cdbSpecificArgs) (\_ -> return chainDB) API.closeDB
 
     return ((chainDB, testing), env)
   where
@@ -276,6 +292,7 @@ closeDB ::
      )
   => ChainDbHandle m blk -> m ()
 closeDB (CDBHandle varState) = do
+    traceMarkerIO "Closing ChainDB"
     mbOpenEnv <- atomically $ readTVar varState >>= \case
       -- Idempotent
       ChainDbClosed   -> return Nothing
@@ -294,6 +311,7 @@ closeDB (CDBHandle varState) = do
 
       ImmutableDB.closeDB cdbImmutableDB
       VolatileDB.closeDB cdbVolatileDB
+      LedgerDB.closeDB cdbLedgerDB
 
       chain <- atomically $ readTVar cdbChain
 

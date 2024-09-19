@@ -1,4 +1,6 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -9,8 +11,12 @@
 module Ouroboros.Consensus.HardFork.Combinator.InjectTxs (
     -- * Polymorphic
     InjectPolyTx (..)
+  , ListOfTxs (..)
+  , TelescopeWithTxList
+  , TxsWithOriginal (..)
   , cannotInjectPolyTx
   , matchPolyTx
+  , matchPolyTxs
   , matchPolyTxsNS
     -- * Unvalidated transactions
   , InjectTx
@@ -26,11 +32,12 @@ module Ouroboros.Consensus.HardFork.Combinator.InjectTxs (
   ) where
 
 import           Data.Bifunctor
+import           Data.Either (partitionEithers)
 import           Data.Functor.Product
 import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
 import           Data.SOP.InPairs (InPairs (..))
 import           Data.SOP.Match
-import           Data.SOP.Sing
 import           Data.SOP.Strict
 import           Data.SOP.Telescope (Telescope (..))
 import qualified Data.SOP.Telescope as Telescope
@@ -92,6 +99,103 @@ matchPolyTx is tx =
     distrib (Pair tx' Current{..}) = Current {
           currentStart = currentStart
         , currentState = Pair tx' currentState
+        }
+
+-- | A transaction coupled with its original version.
+--
+-- We use this to keep the original hard fork transaction around, as otherwise
+-- we would lose the index at which the transaction was originally, before
+-- translations.
+data TxsWithOriginal tx xs blk =
+  TxsWithOriginal { origTx :: !(NS tx xs)
+                  , blkTx  :: !(tx blk)
+                  }
+
+-- | A partially applied list of tuples.
+--
+-- In the end it represents @[(orig :: NS tx xs, t :: tx blk), ...]@ for some
+-- @blk@.
+newtype ListOfTxs tx xs blk = ListOfTxs { txsList :: [TxsWithOriginal tx xs blk] }
+
+-- | A special telescope. This type alias is used just for making this more
+-- readable.
+--
+-- This in the end is basically:
+--
+-- > TS ... (
+-- >    TZ (
+-- >         [(orig, tx), ...]
+-- >       , f
+-- >    ) ...)
+--
+-- So at the tip of the telescope, we have both an @f@ and a list of tuples of
+-- transactions.
+type TelescopeWithTxList g f tx xs' xs  =
+   Telescope g (Product (ListOfTxs tx xs') f) xs
+
+matchPolyTxs' ::
+     All Top xs
+  => InPairs (InjectPolyTx tx) xs
+  -> [NS tx xs]
+  -> Telescope g f xs
+  -> ( [(NS tx xs, Mismatch tx f xs)]
+     , TelescopeWithTxList g f tx xs xs
+     )
+matchPolyTxs' ips txs = go ips [ hmap (TxsWithOriginal x) x | x <- txs ]
+  where
+    tipFst :: All Top xs => NS (TxsWithOriginal tx xs') xs -> NS tx xs'
+    tipFst = hcollapse . hmap (K . origTx)
+
+    go :: All Top xs
+       => InPairs (InjectPolyTx tx) xs
+       -> [NS (TxsWithOriginal tx xs') xs]
+       -> Telescope g f xs
+       -> ( [(NS tx xs', Mismatch tx f xs)]
+          , TelescopeWithTxList g f tx xs' xs
+          )
+    go _            txs' (TZ f)   =
+      let (rejected, accepted) =
+              partitionEithers
+            $ map (\case
+                      Z x -> Right x
+                      -- The ones from later eras are invalid
+                      S x -> Left (tipFst x, MR (hmap blkTx x) f)
+                  ) txs'
+      in (rejected, TZ (Pair (ListOfTxs accepted) f))
+
+    go (PCons i is) txs' (TS g f) =
+      let (rejected, translated) =
+              partitionEithers
+            $ map (\case
+                      Z (TxsWithOriginal origx x) ->
+                        case injectTxWith i x of
+                          -- The ones from this era that we cannot transport to
+                          -- the next era are invalid
+                          Nothing -> Left (origx, ML x (Telescope.tip f))
+                          Just x' -> Right $ Z (TxsWithOriginal origx x')
+                      S x -> Right x
+                  ) txs'
+          (nextRejected, nextState) = go is translated f
+      in (rejected ++ map (second MS) nextRejected, TS g nextState)
+
+matchPolyTxs ::
+     SListI xs
+  => InPairs (InjectPolyTx tx) xs
+  -> [NS tx xs]
+  -> HardForkState f xs
+  -> ( [(NS tx xs, Mismatch tx (Current f) xs)]
+     , HardForkState (Product (ListOfTxs tx xs) f) xs
+     )
+matchPolyTxs is tx =
+      fmap (HardForkState . hmap distrib)
+    . matchPolyTxs' is tx
+    . getHardForkState
+  where
+    distrib :: Product (ListOfTxs tx xs) (Current f) blk
+            -> Current (Product (ListOfTxs tx xs) f) blk
+    distrib (Pair x Current{..}) = Current {
+          currentStart = currentStart
+        , currentState = Pair x currentState
         }
 
 -- | Match transaction with an 'NS', attempting to inject where possible

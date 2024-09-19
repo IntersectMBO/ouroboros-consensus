@@ -22,7 +22,9 @@ module Ouroboros.Consensus.TypeFamilyWrappers (
   , WrapTentativeHeaderState (..)
   , WrapTentativeHeaderView (..)
   , WrapTipInfo (..)
+  , WrapTxIn (..)
   , WrapTxMeasure (..)
+  , WrapTxOut (..)
   , WrapValidatedGenTx (..)
     -- * Protocol based
   , WrapCanBeLeader (..)
@@ -83,6 +85,9 @@ newtype WrapTipInfo               blk = WrapTipInfo               { unwrapTipInf
 newtype WrapValidatedGenTx blk = WrapValidatedGenTx { unwrapValidatedGenTx :: Validated (GenTx blk) }
 newtype WrapTxMeasure      blk = WrapTxMeasure      { unwrapTxMeasure      :: TxMeasure        blk  }
 
+newtype WrapTxIn                  blk = WrapTxIn                  { unwrapTxIn                  :: Key            (LedgerState blk) }
+newtype WrapTxOut                 blk = WrapTxOut                 { unwrapTxOut                 :: Value          (LedgerState blk) }
+
 {-------------------------------------------------------------------------------
   Consensus based
 -------------------------------------------------------------------------------}
@@ -142,6 +147,16 @@ deriving instance NoThunks (OtherHeaderEnvelopeError blk ) => NoThunks (WrapEnve
 deriving instance NoThunks (TentativeHeaderState     blk ) => NoThunks (WrapTentativeHeaderState blk)
 deriving instance NoThunks (TipInfo                  blk ) => NoThunks (WrapTipInfo              blk)
 deriving instance NoThunks (Validated (GenTx         blk)) => NoThunks (WrapValidatedGenTx       blk)
+
+deriving instance Show (Key (LedgerState blk)) => Show (WrapTxIn blk)
+deriving instance Eq (Key (LedgerState blk)) => Eq (WrapTxIn blk)
+deriving instance Ord (Key (LedgerState blk)) => Ord (WrapTxIn blk)
+deriving instance NoThunks (Key (LedgerState blk)) => NoThunks (WrapTxIn blk)
+
+deriving instance Show (Value (LedgerState blk)) => Show (WrapTxOut blk)
+deriving instance Eq (Value (LedgerState blk)) => Eq (WrapTxOut blk)
+deriving instance Ord (Value (LedgerState blk)) => Ord (WrapTxOut blk)
+deriving instance NoThunks (Value (LedgerState blk)) => NoThunks (WrapTxOut blk)
 
 {-------------------------------------------------------------------------------
   .. consensus based

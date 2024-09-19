@@ -55,6 +55,7 @@ import qualified Cardano.Ledger.Conway.Rules as SL
 import qualified Cardano.Ledger.Conway.UTxO as SL
 import qualified Cardano.Ledger.Core as SL (txIdTxBody)
 import           Cardano.Ledger.Crypto (Crypto)
+import qualified Cardano.Ledger.Era as SL (getAllTxInputs)
 import qualified Cardano.Ledger.SafeHash as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Rules as ShelleyEra
@@ -74,11 +75,12 @@ import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
+import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Ledger
                      (ShelleyLedgerConfig (shelleyLedgerGlobals),
-                     Ticked (TickedShelleyLedgerState, tickedShelleyLedgerState),
+                     Ticked1 (TickedShelleyLedgerState, tickedShelleyLedgerState),
                      getPParams)
 import           Ouroboros.Consensus.Util (ShowProxy (..))
 import           Ouroboros.Consensus.Util.Condense
@@ -148,6 +150,11 @@ instance (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era))
   reapplyTx = reapplyShelleyTx
 
   txForgetValidated (ShelleyValidatedTx txid vtx) = ShelleyTx txid (SL.extractTx vtx)
+
+  getTransactionKeySets (ShelleyTx _ tx) =
+        LedgerTables
+      $ KeysMK
+      $ SL.getAllTxInputs (tx ^. bodyTxL)
 
 mkShelleyTx :: forall era proto. ShelleyBasedEra era => Tx era -> GenTx (ShelleyBlock proto era)
 mkShelleyTx tx = ShelleyTx (SL.txIdTxBody @era (tx ^. bodyTxL)) tx
@@ -227,12 +234,18 @@ applyShelleyTx :: forall era proto.
   -> WhetherToIntervene
   -> SlotNo
   -> GenTx (ShelleyBlock proto era)
-  -> TickedLedgerState (ShelleyBlock proto era)
+  -> TickedLedgerState (ShelleyBlock proto era) ValuesMK
   -> Except (ApplyTxErr (ShelleyBlock proto era))
-       ( TickedLedgerState (ShelleyBlock proto era)
+       ( TickedLedgerState (ShelleyBlock proto era) DiffMK
        , Validated (GenTx (ShelleyBlock proto era))
        )
-applyShelleyTx cfg wti slot (ShelleyTx _ tx) st = do
+applyShelleyTx cfg wti slot (ShelleyTx _ tx) st0 = do
+    let st1 :: TickedLedgerState (ShelleyBlock proto era) EmptyMK
+        st1 = stowLedgerTables st0
+
+        innerSt :: SL.NewEpochState era
+        innerSt = tickedShelleyLedgerState st1
+
     (mempoolState', vtx) <-
        applyShelleyBasedTx
          (shelleyLedgerGlobals cfg)
@@ -241,20 +254,25 @@ applyShelleyTx cfg wti slot (ShelleyTx _ tx) st = do
          wti
          tx
 
-    let st' = set theLedgerLens mempoolState' st
+    let st' :: TickedLedgerState (ShelleyBlock proto era) DiffMK
+        st' = forgetTrackingValues
+            $ calculateDifference st0
+            $ unstowLedgerTables
+            $ set theLedgerLens mempoolState' st1
 
     pure (st', mkShelleyValidatedTx vtx)
-  where
-    innerSt = tickedShelleyLedgerState st
 
 reapplyShelleyTx ::
      ShelleyBasedEra era
   => LedgerConfig (ShelleyBlock proto era)
   -> SlotNo
   -> Validated (GenTx (ShelleyBlock proto era))
-  -> TickedLedgerState (ShelleyBlock proto era)
-  -> Except (ApplyTxErr (ShelleyBlock proto era)) (TickedLedgerState (ShelleyBlock proto era))
-reapplyShelleyTx cfg slot vgtx st = do
+  -> TickedLedgerState (ShelleyBlock proto era) ValuesMK
+  -> Except (ApplyTxErr (ShelleyBlock proto era)) (TickedLedgerState (ShelleyBlock proto era) ValuesMK)
+reapplyShelleyTx cfg slot vgtx st0 = do
+    let st1     = stowLedgerTables st0
+        innerSt = tickedShelleyLedgerState st1
+
     mempoolState' <-
         SL.reapplyTx
           (shelleyLedgerGlobals cfg)
@@ -262,11 +280,12 @@ reapplyShelleyTx cfg slot vgtx st = do
           (SL.mkMempoolState innerSt)
           vtx
 
-    pure $ set theLedgerLens mempoolState' st
+    let st2 = unstowLedgerTables
+          $ set theLedgerLens mempoolState' st1
+
+    pure st2
   where
     ShelleyValidatedTx _txid vtx = vgtx
-
-    innerSt = tickedShelleyLedgerState st
 
 -- | The lens combinator
 set ::
@@ -278,8 +297,8 @@ set lens inner outer =
 theLedgerLens ::
      Functor f
   => (SL.LedgerState era -> f (SL.LedgerState era))
-  -> TickedLedgerState (ShelleyBlock proto era)
-  -> f (TickedLedgerState (ShelleyBlock proto era))
+  -> TickedLedgerState (ShelleyBlock proto era) mk
+  -> f (TickedLedgerState (ShelleyBlock proto era) mk)
 theLedgerLens f x =
         (\y -> x{tickedShelleyLedgerState = y})
     <$> SL.overNewEpochState f (tickedShelleyLedgerState x)
@@ -310,7 +329,7 @@ runValidation = liftEither . (unTxErrorSG +++ id) . V.toEither
 
 txsMaxBytes ::
      ShelleyCompatible proto era
-  => TickedLedgerState (ShelleyBlock proto era)
+  => TickedLedgerState (ShelleyBlock proto era) mk
   -> IgnoringOverflow ByteSize32
 txsMaxBytes TickedShelleyLedgerState { tickedShelleyLedgerState } =
     -- `maxBlockBodySize` is expected to be bigger than `fixedBlockBodyOverhead`
@@ -322,7 +341,7 @@ txsMaxBytes TickedShelleyLedgerState { tickedShelleyLedgerState } =
 
 txInBlockSize ::
      (ShelleyCompatible proto era, MaxTxSizeUTxO era)
-  => TickedLedgerState (ShelleyBlock proto era)
+  => TickedLedgerState (ShelleyBlock proto era) mk
   -> GenTx (ShelleyBlock proto era)
   -> V.Validation (TxErrorSG era) (IgnoringOverflow ByteSize32)
 txInBlockSize st (ShelleyTx _txid tx') =
@@ -423,9 +442,9 @@ fromExUnits :: ExUnits -> ExUnits' Natural
 fromExUnits = unWrapExUnits
 
 blockCapacityAlonzoMeasure ::
-     forall proto era.
+     forall proto era mk.
      (ShelleyCompatible proto era, L.AlonzoEraPParams era)
-  => TickedLedgerState (ShelleyBlock proto era)
+  => TickedLedgerState (ShelleyBlock proto era) mk
   -> AlonzoMeasure
 blockCapacityAlonzoMeasure ledgerState =
     AlonzoMeasure {
@@ -443,7 +462,7 @@ txMeasureAlonzo ::
      , ExUnitsTooBigUTxO era
      , MaxTxSizeUTxO era
      )
-  => TickedLedgerState (ShelleyBlock proto era)
+  => TickedLedgerState (ShelleyBlock proto era) ValuesMK
   -> GenTx (ShelleyBlock proto era)
   -> V.Validation (TxErrorSG era) AlonzoMeasure
 txMeasureAlonzo st tx@(ShelleyTx _txid tx') =
@@ -510,11 +529,11 @@ instance HasByteSize ConwayMeasure where
   txMeasureByteSize = txMeasureByteSize . alonzoMeasure
 
 blockCapacityConwayMeasure ::
-     forall proto era.
+     forall proto era mk.
      ( ShelleyCompatible proto era
      , L.AlonzoEraPParams era
      )
-  => TickedLedgerState (ShelleyBlock proto era)
+  => TickedLedgerState (ShelleyBlock proto era) mk
   -> ConwayMeasure
 blockCapacityConwayMeasure st =
     ConwayMeasure {
@@ -533,7 +552,7 @@ txMeasureConway ::
      , MaxTxSizeUTxO era
      , TxRefScriptsSizeTooBig era
      )
-  => TickedLedgerState (ShelleyBlock proto era)
+  => TickedLedgerState (ShelleyBlock proto era) ValuesMK
   -> GenTx (ShelleyBlock proto era)
   -> V.Validation (TxErrorSG era) ConwayMeasure
 txMeasureConway st tx@(ShelleyTx _txid tx') =
@@ -568,7 +587,7 @@ txMeasureBabbage ::
      , ExUnitsTooBigUTxO era
      , MaxTxSizeUTxO era
      )
-  => TickedLedgerState (ShelleyBlock proto era)
+  => TickedLedgerState (ShelleyBlock proto era) ValuesMK
   -> GenTx (ShelleyBlock proto era)
   -> V.Validation (TxErrorSG era) ConwayMeasure
 txMeasureBabbage st tx@(ShelleyTx _txid tx') =
