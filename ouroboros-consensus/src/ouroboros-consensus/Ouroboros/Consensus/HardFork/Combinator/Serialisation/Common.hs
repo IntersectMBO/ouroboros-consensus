@@ -92,9 +92,10 @@ import           Ouroboros.Consensus.HardFork.Combinator.Info
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
 import           Ouroboros.Consensus.HardFork.Combinator.State
 import           Ouroboros.Consensus.HardFork.Combinator.State.Instances
+import           Ouroboros.Consensus.Ledger.Query
+import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.Run
-import           Ouroboros.Consensus.Node.Serialisation (Some (..))
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Network.Block (Serialised)
@@ -261,6 +262,9 @@ class ( CanHardFork xs
       , All (DecodeDiskDepIx (NestedCtxt Header)) xs
         -- Required for 'getHfcBinaryBlockInfo'
       , All HasBinaryBlockInfo xs
+        -- LedgerTables on the HardForkBlock might not be compositionally
+        -- defined, but we need to require this instances for any instantiation.
+      , CanSerializeLedgerTables (LedgerState (HardForkBlock xs))
       ) => SerialiseHFC xs where
 
   encodeDiskHfcBlock :: CodecConfig (HardForkBlock xs)
@@ -274,14 +278,14 @@ class ( CanHardFork xs
   decodeDiskHfcBlock :: CodecConfig (HardForkBlock xs)
                      -> forall s. Decoder s (Lazy.ByteString -> HardForkBlock xs)
   decodeDiskHfcBlock cfg =
-        fmap (\f -> HardForkBlock . OneEraBlock . f)
-      $ decodeAnnNS (hcmap pSHFC aux cfgs)
+          (\f -> HardForkBlock . OneEraBlock . f)
+      <$> decodeAnnNS (hcmap pSHFC aux cfgs)
     where
       cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
 
       aux :: SerialiseDiskConstraints blk
           => CodecConfig blk -> AnnDecoder I blk
-      aux cfg' = AnnDecoder $ (\f -> I . f) <$> decodeDisk cfg'
+      aux cfg' = AnnDecoder $ (I .) <$> decodeDisk cfg'
 
   -- | Used as the implementation of 'reconstructPrefixLen' for
   -- 'HardForkBlock'.
@@ -412,7 +416,7 @@ encodeTelescope :: SListI xs
                 => NP (f -.-> K Encoding) xs -> HardForkState f xs -> Encoding
 encodeTelescope es (HardForkState st) = mconcat [
       Enc.encodeListLen (1 + fromIntegral ix)
-    , mconcat $ hcollapse $ SimpleTelescope $
+    , mconcat $ hcollapse $ SimpleTelescope
         (Telescope.bihzipWith (const encPast) encCurrent es st)
     ]
   where
@@ -643,26 +647,26 @@ undistribSerialisedHeader =
         depPairFirst (mapNestedCtxt NCS) $ go bs
 
 distribQueryIfCurrent ::
-     Some (QueryIfCurrent xs)
-  -> NS (SomeSecond BlockQuery) xs
-distribQueryIfCurrent = \(Some qry) -> go qry
+     SomeBlockQuery (QueryIfCurrent xs)
+  -> NS (SomeBlockQuery :.: BlockQuery) xs
+distribQueryIfCurrent = go
   where
-    go :: QueryIfCurrent xs result -> NS (SomeSecond BlockQuery) xs
-    go (QZ qry) = Z (SomeSecond qry)
-    go (QS qry) = S (go qry)
+    go :: SomeBlockQuery (QueryIfCurrent xs) -> NS (SomeBlockQuery :.: BlockQuery) xs
+    go (SomeBlockQuery (QZ qry)) = Z (Comp (SomeBlockQuery qry))
+    go (SomeBlockQuery (QS qry)) = S (go (SomeBlockQuery qry))
 
 undistribQueryIfCurrent ::
-     NS (SomeSecond BlockQuery) xs
-  -> Some (QueryIfCurrent xs)
+     NS (SomeBlockQuery :.: BlockQuery) xs
+  -> SomeBlockQuery (QueryIfCurrent xs)
 undistribQueryIfCurrent = go
   where
-    go :: NS (SomeSecond BlockQuery) xs -> Some (QueryIfCurrent xs)
+    go :: NS (SomeBlockQuery :.: BlockQuery) xs -> SomeBlockQuery (QueryIfCurrent xs)
     go (Z qry) = case qry of
-                   SomeSecond qry' ->
-                     Some (QZ qry')
+                   Comp (SomeBlockQuery qry') ->
+                     SomeBlockQuery (QZ qry')
     go (S qry) = case go qry of
-                   Some qry' ->
-                     Some (QS qry')
+                   SomeBlockQuery qry' ->
+                     SomeBlockQuery (QS qry')
 
 {-------------------------------------------------------------------------------
   Deriving-via support
@@ -686,6 +690,6 @@ instance All (Compose Serialise f) xs => Serialise (SerialiseNS f xs) where
                             (fn (K . Serialise.encode)))
          . getSerialiseNS
 
-  decode = fmap SerialiseNS
-         $ decodeNS (hcpure (Proxy @(Compose Serialise f))
+  decode = SerialiseNS
+       <$> decodeNS (hcpure (Proxy @(Compose Serialise f))
                             (Comp Serialise.decode))

@@ -44,7 +44,7 @@ import           Ouroboros.Consensus.NodeId
 import           Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 import           Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB (..))
-import           Ouroboros.Consensus.Util ((.....:), (.:))
+import           Ouroboros.Consensus.Util ((.....:))
 import qualified Test.Cardano.Chain.Elaboration.Block as Spec.Test
 import qualified Test.Cardano.Chain.Elaboration.Delegation as Spec.Test
 import qualified Test.Cardano.Chain.Elaboration.Keys as Spec.Test
@@ -141,8 +141,8 @@ protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
         configGenesisData  = Impl.configGenesisData translated
         protocolParameters = Impl.gdProtocolParameters configGenesisData
 
-    initAbstractState :: LedgerState ByronSpecBlock
-    initConcreteState :: LedgerState ByronBlock
+    initAbstractState :: LedgerState ByronSpecBlock ValuesMK
+    initConcreteState :: LedgerState ByronBlock     ValuesMK
 
     initAbstractState = initByronSpecLedgerState abstractGenesis
     initConcreteState = initByronLedgerState     concreteGenesis (Just initUtxo)

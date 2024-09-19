@@ -35,6 +35,6 @@ main = withStdTerminalHandles $ do
     cryptoInit
     (paths, creds, forgeOpts) <- parseCommandLine
     let
-      genTxs _ _ _ = pure []
+      genTxs _ _ _ _ = pure []
     result <- initialize paths creds forgeOpts >>= either die (uncurry (synthesize genTxs))
     putStrLn $ "--> done; result: " ++ show result

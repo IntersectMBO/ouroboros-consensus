@@ -1,4 +1,5 @@
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DerivingVia #-}
@@ -56,15 +57,15 @@ import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation (AnnTip)
 import           Ouroboros.Consensus.Ledger.Abstract (LedgerState)
-import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState,
-                     decodeExtLedgerState, encodeExtLedgerState)
-import           Ouroboros.Consensus.Ledger.Query (BlockQuery, Query (..),
-                     QueryVersion)
+import           Ouroboros.Consensus.Ledger.Extended (decodeDiskExtLedgerState,
+                     encodeDiskExtLedgerState)
+import           Ouroboros.Consensus.Ledger.Query
 import qualified Ouroboros.Consensus.Ledger.Query as Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr, GenTx,
                      GenTxId)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
+import           Ouroboros.Consensus.Ledger.Tables (EmptyMK)
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.Run (SerialiseNodeToClientConstraints,
                      SerialiseNodeToNodeConstraints (..))
@@ -191,7 +192,7 @@ roundtrip_all
      , Arbitrary' blk
      , Arbitrary' (Header blk)
      , Arbitrary' (HeaderHash blk)
-     , Arbitrary' (LedgerState blk)
+     , Arbitrary' (LedgerState blk EmptyMK)
      , Arbitrary' (AnnTip blk)
      , Arbitrary' (ChainDepState (BlockProtocol blk))
 
@@ -205,7 +206,7 @@ roundtrip_all
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) blk
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (GenTx blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (ApplyTxErr blk)
-     , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeSecond BlockQuery blk)
+     , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeBlockQuery (BlockQuery blk))
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeResult blk)
      , ArbitraryWithVersion (QueryVersion, BlockNodeToClientVersion blk) (SomeSecond Query blk)
      )
@@ -239,7 +240,7 @@ roundtrip_all_skipping
      , Arbitrary' blk
      , Arbitrary' (Header blk)
      , Arbitrary' (HeaderHash blk)
-     , Arbitrary' (LedgerState blk)
+     , Arbitrary' (LedgerState blk EmptyMK)
      , Arbitrary' (AnnTip blk)
      , Arbitrary' (ChainDepState (BlockProtocol blk))
 
@@ -253,7 +254,7 @@ roundtrip_all_skipping
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) blk
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (GenTx blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (ApplyTxErr blk)
-     , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeSecond BlockQuery blk)
+     , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeBlockQuery (BlockQuery blk))
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeResult blk)
      , ArbitraryWithVersion (QueryVersion, BlockNodeToClientVersion blk) (SomeSecond Query blk)
      )
@@ -280,7 +281,7 @@ roundtrip_SerialiseDisk
      ( SerialiseDiskConstraints blk
      , Arbitrary' blk
      , Arbitrary' (Header blk)
-     , Arbitrary' (LedgerState blk)
+     , Arbitrary' (LedgerState blk EmptyMK)
      , Arbitrary' (AnnTip blk)
      , Arbitrary' (ChainDepState (BlockProtocol blk))
      )
@@ -301,7 +302,7 @@ roundtrip_SerialiseDisk ccfg dictNestedHdr =
       -- Since the 'LedgerState' is a large data structure, we lower the
       -- number of tests to avoid slowing down the testsuite too much
     , adjustQuickCheckTests (`div` 10) $
-      rt (Proxy @(LedgerState blk)) "LedgerState"
+      rt (Proxy @(LedgerState blk EmptyMK)) "LedgerState"
     , rt (Proxy @(AnnTip blk)) "AnnTip"
     , rt (Proxy @(ChainDepState (BlockProtocol blk))) "ChainDepState"
     ]
@@ -329,7 +330,7 @@ type ArbitraryWithVersion v a = (Arbitrary (WithVersion v a), Eq a, Show a)
 
 instance ( blockVersion ~ BlockNodeToClientVersion blk
          , Arbitrary blockVersion
-         , Arbitrary (WithVersion (BlockNodeToClientVersion blk) (SomeSecond BlockQuery blk))
+         , Arbitrary (WithVersion (BlockNodeToClientVersion blk) (SomeBlockQuery (BlockQuery blk)))
          )
       => Arbitrary (WithVersion (QueryVersion, blockVersion) (SomeSecond Query blk)) where
   arbitrary = do
@@ -341,7 +342,8 @@ instance ( blockVersion ~ BlockNodeToClientVersion blk
       Query.QueryVersion1 -> genTopLevelQuery1
       Query.QueryVersion2 -> genTopLevelQuery2
     where
-      mkEntry :: QueryVersion
+      mkEntry ::
+           QueryVersion
         -> Query blk query
         -> Gen
             (WithVersion (QueryVersion, blockVersion) (SomeSecond Query blk))
@@ -369,7 +371,7 @@ instance ( blockVersion ~ BlockNodeToClientVersion blk
                           -> Gen (WithVersion (QueryVersion, blockVersion)
                                               (SomeSecond Query blk))
       arbitraryBlockQuery queryVersion = do
-        WithVersion blockV (SomeSecond someBlockQuery) <- arbitrary
+        WithVersion blockV (SomeBlockQuery someBlockQuery) <- arbitrary
         return (WithVersion (queryVersion, blockV)
                             (SomeSecond (BlockQuery someBlockQuery)))
 
@@ -494,7 +496,7 @@ roundtrip_SerialiseNodeToClient
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) blk
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (GenTx blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (ApplyTxErr blk)
-     , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeSecond BlockQuery blk)
+     , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeBlockQuery (BlockQuery blk))
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeResult blk)
      , ArbitraryWithVersion (QueryVersion, BlockNodeToClientVersion blk) (SomeSecond Query blk)
 
@@ -509,7 +511,7 @@ roundtrip_SerialiseNodeToClient shouldCheckCBORvalidity ccfg =
     [ rt (Proxy @blk)                         "blk"
     , rt (Proxy @(GenTx blk))                 "GenTx"
     , rt (Proxy @(ApplyTxErr blk))            "ApplyTxErr"
-    , rt (Proxy @(SomeSecond BlockQuery blk)) "BlockQuery"
+    , rt (Proxy @(SomeBlockQuery (BlockQuery blk))) "BlockQuery"
     , rtWith
         @(SomeSecond Query blk)
         @(QueryVersion, BlockNodeToClientVersion blk)
@@ -548,8 +550,8 @@ roundtrip_SerialiseNodeToClient shouldCheckCBORvalidity ccfg =
           \(WithVersion version (SomeResult query result :: SomeResult blk)) ->
             roundtripAnd
               (shouldCheckCBORvalidity testLabel)
-              (encodeResult ccfg version query)
-              (const <$> decodeResult ccfg version query)
+              (encodeResult' ccfg version query)
+              (const <$> decodeResult' ccfg version query)
               result
     ]
   where
@@ -734,7 +736,7 @@ examplesRoundtrip codecConfig examples =
     , testRoundtripFor "Ledger state"          (encodeDisk codecConfig) (const <$> decodeDisk codecConfig) exampleLedgerState
     , testRoundtripFor "Annotated tip"         (encodeDisk codecConfig) (const <$> decodeDisk codecConfig) exampleAnnTip
     , testRoundtripFor "Chain dependent state" (encodeDisk codecConfig) (const <$> decodeDisk codecConfig) exampleChainDepState
-    , testRoundtripFor "Extended ledger state" encodeExt                (const <$> decodeExt)              exampleExtLedgerState
+    , testRoundtripFor "Extended ledger state" (encodeDiskExtLedgerState codecConfig) (const <$> decodeDiskExtLedgerState codecConfig)  exampleExtLedgerState
     ]
   where
     testRoundtripFor ::
@@ -754,16 +756,3 @@ examplesRoundtrip codecConfig examples =
           testProperty (fromMaybe "" exampleName)
               $ once
               $ roundtrip' enc dec example
-
-    encodeExt =
-      encodeExtLedgerState
-        (encodeDisk codecConfig)
-        (encodeDisk codecConfig)
-        (encodeDisk codecConfig)
-
-    decodeExt :: forall s. Decoder s (ExtLedgerState blk)
-    decodeExt =
-      decodeExtLedgerState
-        (decodeDisk codecConfig)
-        (decodeDisk codecConfig)
-        (decodeDisk codecConfig)

@@ -1,9 +1,15 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE StandaloneDeriving #-}
+#if __GLASGOW_HASKELL__ <= 906
+{-# LANGUAGE TypeFamilies #-}
+#endif
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -17,9 +23,11 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.SupportsMempool
+import           Ouroboros.Consensus.Mempool.API
+import           Ouroboros.Consensus.Mempool.TxSeq
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.API (LoE (..))
-import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB
 import           Ouroboros.Consensus.Storage.ImmutableDB
 import           Ouroboros.Consensus.Util.STM (Fingerprint, WithFingerprint)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
@@ -52,20 +60,16 @@ instance (ToExpr blk, ToExpr (HeaderHash blk)) => ToExpr (AnchoredFragment blk) 
   ouroboros-consensus
 -------------------------------------------------------------------------------}
 
-instance ( ToExpr (LedgerState blk)
+instance ( ToExpr (LedgerState blk EmptyMK)
          , ToExpr (ChainDepState (BlockProtocol blk))
          , ToExpr (TipInfo blk)
-         ) => ToExpr (ExtLedgerState blk)
+         ) => ToExpr (ExtLedgerState blk EmptyMK)
 
 instance ( ToExpr (ChainDepState (BlockProtocol blk))
          , ToExpr (TipInfo blk)
          ) => ToExpr (HeaderState blk)
 
-instance ( ToExpr (TipInfo blk)
-         ) => ToExpr (AnnTip blk)
-
 instance ToExpr SecurityParam
-instance ToExpr DiskSnapshot
 
 instance ToExpr ChunkSize
 instance ToExpr ChunkNo
@@ -112,3 +116,28 @@ deriving instance ( ToExpr blk
                   )
                  => ToExpr (ChainProducerState blk)
 deriving instance ToExpr a => ToExpr (WithFingerprint a)
+
+instance ToExpr (TipInfo blk) => ToExpr (AnnTip blk)
+
+{-------------------------------------------------------------------------------
+  Mempool and transactions
+-------------------------------------------------------------------------------}
+
+deriving newtype instance ToExpr TicketNo
+
+instance Show (TxId (GenTx blk)) => ToExpr (TxId (GenTx blk)) where
+  toExpr x = App (show x) []
+
+deriving instance ( ToExpr (GenTx blk)
+         , LedgerSupportsMempool blk
+         , measure ~ TxMeasure blk
+         , ToExpr measure
+         , ToExpr (Validated (GenTx blk))
+         ) => ToExpr (TxTicket measure (Validated (GenTx blk)))
+
+instance ( ToExpr (GenTx blk)
+         , LedgerSupportsMempool blk
+         , ToExpr (Validated (GenTx blk))
+         ) => ToExpr (MempoolAddTxResult blk) where
+  toExpr (MempoolTxAdded vtx)     = App "Added" [toExpr vtx]
+  toExpr (MempoolTxRejected tx e) = App "Rejected" [toExpr tx, App (show e) [] ]
