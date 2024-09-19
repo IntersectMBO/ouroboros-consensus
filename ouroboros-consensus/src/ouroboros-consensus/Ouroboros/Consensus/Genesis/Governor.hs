@@ -54,6 +54,7 @@ import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import           Ouroboros.Consensus.HardFork.History.Qry (qryFromExpr,
                      runQuery, slotToGenesisWindow)
+import           Ouroboros.Consensus.Ledger.Basics (EmptyMK)
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState,
                      ledgerState)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -160,7 +161,7 @@ data GDDStateView m blk peer = GDDStateView {
     -- | The current chain selection
     gddCtxCurChain          :: AnchoredFragment (Header blk)
     -- | The current ledger state
-  , gddCtxImmutableLedgerSt :: ExtLedgerState blk
+  , gddCtxImmutableLedgerSt :: ExtLedgerState blk EmptyMK
     -- | Callbacks to disconnect from peers
   , gddCtxKillActions       :: Map peer (m ())
   , gddCtxStates            :: Map peer (ChainSyncState blk)

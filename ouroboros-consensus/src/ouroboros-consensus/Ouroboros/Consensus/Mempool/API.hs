@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -30,6 +31,7 @@ module Ouroboros.Consensus.Mempool.API (
   , zeroTicketNo
   ) where
 
+import qualified Data.List.NonEmpty as NE
 import           Ouroboros.Consensus.Block (SlotNo)
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
@@ -156,7 +158,7 @@ data Mempool m blk = Mempool {
                  -> m (MempoolAddTxResult blk)
 
       -- | Manually remove the given transactions from the mempool.
-    , removeTxs      :: [GenTxId blk] -> m ()
+    , removeTxs      :: NE.NonEmpty (GenTxId blk) -> m ()
 
       -- | Sync the transactions in the mempool with the current ledger state
       --  of the 'ChainDB'.
@@ -185,7 +187,21 @@ data Mempool m blk = Mempool {
       -- the given ledger state
       --
       -- This does not update the state of the mempool.
-    , getSnapshotFor :: ForgeLedgerState blk -> STM m (MempoolSnapshot blk)
+    , getSnapshotFor ::
+           SlotNo
+#if __GLASGOW_HASKELL__ >= 902
+           -- ^ The current slot in which we want the snapshot
+#endif
+        -> TickedLedgerState blk DiffMK
+#if __GLASGOW_HASKELL__ >= 902
+           -- ^ The ledger state ticked to the given slot number
+#endif
+        -> (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK))
+#if __GLASGOW_HASKELL__ >= 902
+        -- ^ A function that returns values corresponding to the given keys for
+        -- the unticked ledger state.
+#endif
+        -> m (MempoolSnapshot blk)
 
       -- | Get the mempool's capacity
       --
@@ -288,7 +304,7 @@ data ForgeLedgerState blk =
     -- This will only be the case when we realized that we are the slot leader
     -- and we are actually producing a block. It is the caller's responsibility
     -- to call 'applyChainTick' and produce the ticked ledger state.
-    ForgeInKnownSlot SlotNo (TickedLedgerState blk)
+    ForgeInKnownSlot SlotNo (TickedLedgerState blk DiffMK)
 
     -- | The slot number of the block is not yet known
     --
@@ -296,8 +312,7 @@ data ForgeLedgerState blk =
     -- will end up, we have to make an assumption about which slot number to use
     -- for 'applyChainTick' to prepare the ledger state; we will assume that
     -- they will end up in the slot after the slot at the tip of the ledger.
-  | ForgeInUnknownSlot (LedgerState blk)
-
+  | ForgeInUnknownSlot (LedgerState blk EmptyMK)
 
 {-------------------------------------------------------------------------------
   Snapshot of the mempool
@@ -346,6 +361,7 @@ data MempoolSnapshot blk = MempoolSnapshot {
     -- | The block number of the "virtual block" under construction
   , snapshotSlotNo      :: SlotNo
 
-    -- | The ledger state after all transactions in the snapshot
-  , snapshotLedgerState :: TickedLedgerState blk
+    -- | The resulting state currently in the mempool after applying the
+    -- transactions
+  , snapshotState       :: TickedLedgerState blk DiffMK
   }

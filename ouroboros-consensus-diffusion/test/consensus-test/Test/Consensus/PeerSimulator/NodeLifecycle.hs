@@ -13,6 +13,7 @@ module Test.Consensus.PeerSimulator.NodeLifecycle (
   , restoreNode
   ) where
 
+import           Control.Monad.Base
 import           Control.ResourceRegistry
 import           Control.Tracer (Tracer (..), traceWith)
 import           Data.Functor (void)
@@ -116,7 +117,7 @@ data NodeLifecycle blk m = NodeLifecycle {
 -- | Create a ChainDB and start a BlockRunner that operate on the peers'
 -- candidate fragments.
 mkChainDb ::
-  IOLike m =>
+  (IOLike m, MonadBase m m) =>
   LiveResources TestBlock m ->
   m (ChainDB m TestBlock, m (WithOrigin SlotNo))
 mkChainDb resources = do
@@ -152,7 +153,7 @@ mkChainDb resources = do
 -- | Allocate all the resources that depend on the results of previous live
 -- intervals, the ChainDB and its persisted state.
 restoreNode ::
-  IOLike m =>
+  (IOLike m, MonadBase m m) =>
   LiveResources TestBlock m ->
   LiveIntervalResult TestBlock ->
   m (LiveNode TestBlock m)
@@ -172,7 +173,7 @@ restoreNode resources LiveIntervalResult {lirPeerResults, lirActive} = do
 -- starts the node's threads.
 lifecycleStart ::
   forall m.
-  IOLike m =>
+  (IOLike m, MonadBase m m) =>
   (LiveInterval TestBlock m -> m ()) ->
   LiveResources TestBlock m ->
   LiveIntervalResult TestBlock ->
