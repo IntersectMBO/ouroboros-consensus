@@ -33,13 +33,12 @@ import           Ouroboros.Consensus.HardFork.Combinator.Abstract
 import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.HardFork.Combinator.InjectTxs
-import           Ouroboros.Consensus.HardFork.Combinator.Ledger (Ticked (..))
+import           Ouroboros.Consensus.HardFork.Combinator.Ledger
 import           Ouroboros.Consensus.HardFork.Combinator.Mempool
 import           Ouroboros.Consensus.HardFork.Combinator.Protocol
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.TypeFamilyWrappers
-import           Ouroboros.Consensus.Util ((.:))
 
 -- | If we cannot forge, it's because the current era could not forge
 type HardForkCannotForge xs = OneEraCannotForge xs
@@ -288,7 +287,7 @@ hardForkForgeBlock ::
   -> TopLevelConfig (HardForkBlock xs)
   -> BlockNo
   -> SlotNo
-  -> TickedLedgerState (HardForkBlock xs)
+  -> TickedLedgerState (HardForkBlock xs) EmptyMK
   -> [Validated (GenTx (HardForkBlock xs))]
   -> HardForkIsLeader xs
   -> m (HardForkBlock xs)
@@ -355,7 +354,7 @@ hardForkForgeBlock blockForging
       -> Product
            (Product
               WrapIsLeader
-              (Ticked :.: LedgerState))
+              (FlipTickedLedgerState EmptyMK))
            ([] :.: WrapValidatedGenTx)
            blk
       -> m blk
@@ -363,7 +362,7 @@ hardForkForgeBlock blockForging
                   cfg'
                   (Comp mBlockForging')
                   (Pair
-                    (Pair (WrapIsLeader isLeader') (Comp ledgerState'))
+                    (Pair (WrapIsLeader isLeader') (FlipTickedLedgerState ledgerState'))
                     (Comp txs')) =
         forgeBlock
           (fromMaybe
