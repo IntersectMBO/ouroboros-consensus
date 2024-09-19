@@ -16,6 +16,7 @@ module Test.Ouroboros.Storage.ChainDB.Unit (tests) where
 
 import           Cardano.Slotting.Slot (WithOrigin (..))
 import           Control.Monad (replicateM, unless, void)
+import           Control.Monad.Base (MonadBase)
 import           Control.Monad.Except (Except, ExceptT, MonadError, runExcept,
                      runExceptT, throwError)
 import           Control.Monad.Reader (MonadReader, ReaderT, ask, runReaderT)
@@ -27,6 +28,7 @@ import           Ouroboros.Consensus.Block.RealPoint
                      (pointToWithOriginRealPoint)
 import           Ouroboros.Consensus.Config (TopLevelConfig,
                      configSecurityParam)
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
@@ -34,7 +36,6 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as API
 import           Ouroboros.Consensus.Storage.ChainDB.Impl (TraceEvent)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args
-import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import           Ouroboros.Consensus.Storage.Common (StreamFrom (..),
                      StreamTo (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks as ImmutableDB
@@ -231,7 +232,7 @@ runSystemIO expr = runSystem withChainDbEnv expr >>= toAssertion
   where
     chunkInfo      = ImmutableDB.simpleChunkInfo 100
     topLevelConfig = mkTestCfg chunkInfo
-    withChainDbEnv = withTestChainDbEnv topLevelConfig chunkInfo testInitExtLedger
+    withChainDbEnv = withTestChainDbEnv topLevelConfig chunkInfo $ convertMapKind testInitExtLedger
 
 
 newtype TestFailure = TestFailure String deriving (Show)
@@ -328,7 +329,7 @@ withModelContext f = do
   pure a
 
 
-instance (Model.ModelSupportsBlock blk, LedgerSupportsProtocol blk)
+instance (Model.ModelSupportsBlock blk, LedgerSupportsProtocol blk, LedgerTablesAreTrivial (LedgerState blk))
       => SupportsUnitTest (ModelM blk) where
 
   type FollowerId (ModelM blk) = Model.FollowerId
@@ -391,10 +392,10 @@ runSystem withChainDbEnv expr
 
 -- | Provide a standard ChainDbEnv for testing.
 withTestChainDbEnv ::
-     (IOLike m, TestConstraints blk)
+     (IOLike m, TestConstraints blk, MonadBase m m)
   => TopLevelConfig blk
   -> ImmutableDB.ChunkInfo
-  -> ExtLedgerState blk
+  -> ExtLedgerState blk ValuesMK
   -> (ChainDBEnv m blk -> m [TraceEvent blk] -> m a)
   -> m a
 withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont
@@ -424,7 +425,7 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont
     closeChainDbEnv (env, _) = do
       readTVarIO (varDB env) >>= close
       closeRegistry (registry env)
-      closeRegistry (cdbsRegistry $ cdbsArgs $ args env)
+      closeRegistry (cdbsRegistry . cdbsArgs $ args env)
 
     chainDbArgs registry nodeDbs tracer =
       let args = fromMinimalChainDbArgs MinimalChainDbArgs
@@ -434,8 +435,7 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont
             , mcdbRegistry = registry
             , mcdbNodeDBs = nodeDbs
             }
-      in ChainDB.updateTracer tracer args
-
+      in updateTracer tracer args
 
 instance IOLike m => SupportsUnitTest (SystemM blk m) where
 

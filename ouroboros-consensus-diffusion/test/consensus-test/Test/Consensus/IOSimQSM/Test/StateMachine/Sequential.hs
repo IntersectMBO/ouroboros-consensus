@@ -36,7 +36,7 @@ import           Control.Concurrent.Class.MonadSTM.TChan (TChan, newTChanIO,
 import           Control.Exception (SomeAsyncException (..), SomeException,
                      displayException, fromException)
 import           Control.Monad (when)
-import           Control.Monad.Class.MonadSay (MonadSay, say)
+import           Control.Monad.Class.MonadSay (say)
 import           Control.Monad.State.Strict (StateT, get, lift, put, runStateT)
 import           Data.Dynamic (Dynamic, toDyn)
 import           Data.Either (fromRight)
@@ -54,7 +54,7 @@ import           Text.Show.Pretty (ppShow)
 
 runCommands' :: (Show (cmd Concrete), Show (resp Concrete))
              => (Rank2.Traversable cmd, Rank2.Foldable resp)
-             => (IOLike m, MonadSay m)
+             => IOLike m
              => m (StateMachine model cmd m resp)
              -> Commands cmd resp
              -> m (History cmd resp, model Concrete, Reason)
@@ -90,7 +90,7 @@ data Check
 
 executeCommands :: (Show (cmd Concrete), Show (resp Concrete))
                 => (Rank2.Traversable cmd, Rank2.Foldable resp)
-                => (MonadSay m, IOLike m)
+                => IOLike m
                 => StateMachine model cmd m resp
                 -> TChan m (Pid, HistoryEvent cmd resp)
                 -> Pid

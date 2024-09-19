@@ -19,7 +19,7 @@ import           Cardano.Tools.DBAnalyser.Types
 import           Data.Foldable (asum)
 #endif
 import           Options.Applicative
-import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.Block (SlotNo (..), WithOrigin (..))
 import           Ouroboros.Consensus.Byron.Node (PBftSignatureThreshold (..))
 import           Ouroboros.Consensus.Shelley.Node (Nonce (..))
 import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy (pattern DoDiskSnapshotChecksum, pattern NoDoDiskSnapshotChecksum)
@@ -50,6 +50,20 @@ parseDBAnalyserConfig = DBAnalyserConfig
             long "no-snapshot-checksum-on-read"
           , help "Don't check the '.checksum' file when reading a ledger snapshot"
           ])
+    <*> asum [
+          flag' V1InMem $ mconcat [
+                long "v1-in-mem"
+              , help "use v1 in-memory backing store"
+              ]
+          , flag' V1LMDB $ mconcat [
+              long "lmdb"
+              , help "use v1 LMDB backing store"
+              ]
+          , flag' V2InMem $ mconcat [
+              long "in-mem"
+              , help "use new in-memory backend"
+              ]
+          ]
 
 parseSelectDB :: Parser SelectDB
 parseSelectDB =

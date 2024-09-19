@@ -104,6 +104,7 @@ library
     text,
     time,
     transformers,
+    transformers-base,
     typed-protocols,
     typed-protocols-stateful,
 
@@ -158,6 +159,7 @@ library unstable-diffusion-testlib
     strict-sop-core ^>=0.1,
     strict-stm,
     text,
+    transformers-base,
     typed-protocols,
 
 library unstable-mock-testlib
@@ -202,6 +204,7 @@ test-suite mock-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.Ledger.Mock
+    Test.Consensus.Ledger.Mock.LedgerTables
     Test.ThreadNet.BFT
     Test.ThreadNet.LeaderSchedule
     Test.ThreadNet.PBFT
@@ -281,6 +284,7 @@ test-suite consensus-test
     base,
     binary,
     bytestring,
+    cardano-binary,
     cardano-crypto-class,
     cardano-slotting:{cardano-slotting, testlib},
     cardano-strict-containers,
@@ -317,6 +321,7 @@ test-suite consensus-test
     tasty-quickcheck,
     temporary,
     time,
+    transformers-base,
     tree-diff,
     typed-protocols,
     unstable-diffusion-testlib,

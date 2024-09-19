@@ -67,6 +67,7 @@ testAnalyserConfig :: DBAnalyserConfig
 testAnalyserConfig =
   DBAnalyserConfig {
       dbDir                      = chainDB
+    , ldbBackend                 = V2InMem
     , verbose                    = False
     , selectDB                   = SelectImmutableDB Origin
     , validation                 = Just ValidateAllBlocks
@@ -78,7 +79,7 @@ testAnalyserConfig =
 testBlockArgs :: Cardano.Args (CardanoBlock StandardCrypto)
 testBlockArgs = Cardano.CardanoBlockArgs nodeConfig Nothing
 
--- | A multi-step test including synthesis and analaysis 'SomeConsensusProtocol' using the Cardano instance.
+-- | A multi-step test including synthesis and analysis 'SomeConsensusProtocol' using the Cardano instance.
 --
 -- 1. step: synthesize a ChainDB from scratch and count the amount of blocks forged.
 -- 2. step: append to the previous ChainDB and coutn the amount of blocks forged.
@@ -114,7 +115,7 @@ blockCountTest logStep = do
         "wrong number of blocks encountered during analysis \
         \ (counted: " ++ show resultAnalysis ++ "; expected: " ++ show blockCount ++ ")"
   where
-    genTxs _ _ _ = pure []
+    genTxs _ _ _ _ = pure []
 
 tests :: TestTree
 tests =
