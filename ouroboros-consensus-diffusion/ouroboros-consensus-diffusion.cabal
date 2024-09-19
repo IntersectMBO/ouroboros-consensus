@@ -99,6 +99,7 @@ library
     serialise ^>=0.2,
     si-timers ^>=1.5,
     strict-stm ^>=1.5,
+    strict-mvar ^>=1.5,
     text,
     time,
     transformers,

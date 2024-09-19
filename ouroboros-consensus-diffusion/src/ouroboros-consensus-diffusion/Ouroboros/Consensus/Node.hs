@@ -136,6 +136,8 @@ import           Ouroboros.Network.PeerSelection.PeerSharing (PeerSharing)
 import           Ouroboros.Network.PeerSelection.PeerSharing.Codec
                      (decodeRemoteAddress, encodeRemoteAddress)
 import           Ouroboros.Network.RethrowPolicy
+import           Ouroboros.Network.TxSubmission.Inbound.Server
+                     (EnableNewTxSubmissionProtocol)
 import qualified SafeWildCards
 import           System.Exit (ExitCode (..))
 import           System.FilePath ((</>))
@@ -200,6 +202,9 @@ data RunNodeArgs m addrNTN addrNTC blk (p2p :: Diffusion.P2P) = RunNodeArgs {
     , rnGetUseBootstrapPeers :: STM m UseBootstrapPeers
 
     , rnGenesisConfig :: GenesisConfig
+
+    -- | Enable or disable the new tx submission protocol
+    , rnEnableNewTxSubmissionProtocol :: EnableNewTxSubmissionProtocol
     }
 
 
@@ -400,6 +405,7 @@ runWith :: forall m addrNTN addrNTC versionDataNTN versionDataNTC blk p2p.
      , Hashable addrNTN -- the constraint comes from `initNodeKernel`
      , NetworkIO m
      , NetworkAddr addrNTN
+     , Show addrNTN
      )
   => RunNodeArgs m addrNTN addrNTC blk p2p
   -> (NodeToNodeVersion -> addrNTN -> CBOR.Encoding)
@@ -567,7 +573,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
           (gcChainSyncLoPBucketConfig llrnGenesisConfig)
           (gcCSJConfig llrnGenesisConfig)
           (reportMetric Diffusion.peerMetricsConfiguration peerMetrics)
-          (NTN.mkHandlers nodeKernelArgs nodeKernel)
+          (NTN.mkHandlers nodeKernelArgs nodeKernel rnEnableNewTxSubmissionProtocol)
 
     mkNodeToClientApps
       :: NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
