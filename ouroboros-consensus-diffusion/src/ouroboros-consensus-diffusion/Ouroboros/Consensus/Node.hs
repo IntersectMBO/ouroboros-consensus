@@ -1,5 +1,6 @@
 {-# LANGUAGE ConstraintKinds     #-}
 {-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE KindSignatures      #-}
 {-# LANGUAGE LambdaCase          #-}
@@ -55,6 +56,12 @@ module Ouroboros.Consensus.Node (
   , openChainDB
   ) where
 
+import qualified Debug.Trace as EventLog
+import qualified Ouroboros.Consensus.Util.Enclose as Enclose
+import qualified Ouroboros.Network.AnchoredFragment as AF
+import qualified System.Environment as Env
+import           System.IO.Unsafe (unsafePerformIO)
+
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (DeserialiseFailure)
@@ -63,7 +70,7 @@ import           Control.DeepSeq (NFData)
 import           Control.Monad (when)
 import           Control.Monad.Class.MonadTime.SI (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
-import           Control.Tracer (Tracer, contramap, traceWith)
+import           Control.Tracer (Tracer (Tracer), contramap, traceWith)
 import           Data.ByteString.Lazy (ByteString)
 import           Data.Functor.Contravariant (Predicate (..))
 import           Data.Hashable (Hashable)
@@ -915,7 +922,7 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
       -> Incomplete ChainDbArgs IO blk
     updateChainDbDefaults =
           ChainDB.updateDiskPolicyArgs srnDiskPolicyArgs
-        . ChainDB.updateTracer srnTraceChainDB
+        . ChainDB.updateTracer (hackTracer <> srnTraceChainDB)
         . (if   not srnChainDbValidateOverride
            then id
            else ChainDB.ensureValidateAll)
@@ -966,3 +973,34 @@ overBlockFetchConfiguration f args = args {
     }
   where
     NodeKernelArgs { blockFetchConfiguration } = args
+
+--------------------------------------------------------------------------------
+
+hackTracer ::
+    (HasHeader (Header blk), StandardHash blk)
+ => Tracer IO (ChainDB.TraceEvent blk)
+hackTracer = Tracer $ \case
+
+    -- the queue was empty when p was added to it
+    ChainDB.TraceAddBlockEvent (ChainDB.AddedBlockToQueue p (Enclose.FallingEdgeWith 1)) ->
+      EventLog.traceEventIO $ 'Z' : ' ' : show p
+
+    ChainDB.TraceAddBlockEvent (ChainDB.AddedBlockToVolatileDB _p bno _ Enclose.RisingEdge)
+      | ok bno -> EventLog.traceEventIO $ 'A' : ' ' : show bno
+
+    ChainDB.TraceAddBlockEvent (ChainDB.AddedBlockToVolatileDB _p bno _ Enclose.FallingEdge)
+      | ok bno -> EventLog.traceEventIO $ 'B' : ' ' : show bno
+
+    ChainDB.TraceAddBlockEvent (ChainDB.AddedToCurrentChain _levs _info _old new)
+      | NotOrigin bno <- AF.headBlockNo new
+      , ok bno -> EventLog.traceEventIO $ 'C' : ' ' : show bno
+
+    _ -> pure ()
+
+  where
+    ok :: BlockNo -> Bool
+    ok (BlockNo bno) = case read <$> mbFreq of
+        Nothing -> True
+        Just m  -> 0 == bno `mod` m
+
+    mbFreq = unsafePerformIO $ Env.lookupEnv "CHAINSEL_EVENTLOG_FREQ"
