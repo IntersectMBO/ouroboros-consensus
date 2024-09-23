@@ -59,7 +59,8 @@ defaultChainDbView chainDB = ChainDbView {
     getCurrentChain           = ChainDB.getCurrentChain chainDB
   , getIsFetched              = ChainDB.getIsFetched chainDB
   , getMaxSlotNo              = ChainDB.getMaxSlotNo chainDB
-  , addBlockWaitWrittenToDisk = ChainDB.addBlockWaitWrittenToDisk chainDB
+  , addBlockWaitWrittenToDisk =
+      \punish blk -> True <$ ChainDB.addBlockAsync chainDB punish blk
   }
 
 -- | How to get the wall-clock time of a slot. Note that this is a very

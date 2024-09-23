@@ -47,7 +47,10 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
   , addBlockToAdd
   , addReprocessLoEBlocks
   , closeChainSelQueue
+  , dismissChainSelMessage
+  , getBlocksToAddMaxSlotNo
   , getChainSelMessage
+  , memberBlocksToAdd
   , newChainSelQueue
     -- * Trace types
   , SelectionChangedInfo (..)
@@ -66,6 +69,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
 import           Control.Tracer
 import           Data.Foldable (traverse_)
 import           Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe)
 import           Data.Maybe.Strict (StrictMaybe (..))
 import           Data.Set (Set)
@@ -106,7 +110,7 @@ import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (WithFingerprint)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
-import           Ouroboros.Network.Block (MaxSlotNo)
+import           Ouroboros.Network.Block (MaxSlotNo (..))
 
 -- | All the serialisation related constraints needed by the ChainDB.
 class ( ImmutableDbSerialiseConstraints blk
@@ -442,8 +446,15 @@ type FutureBlocks m blk = Map (HeaderHash blk) (Header blk, InvalidBlockPunishme
 -- | FIFO queue used to add blocks asynchronously to the ChainDB. Blocks are
 -- read from this queue by a background thread, which processes the blocks
 -- synchronously.
-newtype ChainSelQueue m blk = ChainSelQueue (TBQueue m (ChainSelMessage m blk))
-  deriving NoThunks via OnlyCheckWhnfNamed "ChainSelQueue" (ChainSelQueue m blk)
+data ChainSelQueue m blk =
+    ChainSelQueue
+        !(TBQueue m (ChainSelMessage m blk))
+        !(StrictTVar m (Map (RealPoint blk) Word))
+
+instance NoThunks (ChainSelQueue m blk) where
+  showTypeOf _ = "ChainSelQueue"
+
+  wNoThunks _ _ = pure Nothing
 
 -- | Entry in the 'ChainSelQueue' queue: a block together with the 'TMVar's used
 -- to implement 'AddBlockPromise'.
@@ -466,9 +477,11 @@ data ChainSelMessage m blk
   | ChainSelReprocessLoEBlocks
 
 -- | Create a new 'ChainSelQueue' with the given size.
-newChainSelQueue :: IOLike m => Word -> m (ChainSelQueue m blk)
-newChainSelQueue queueSize = ChainSelQueue <$>
-    atomically (newTBQueue (fromIntegral queueSize))
+newChainSelQueue ::
+     (IOLike m, StandardHash blk, Typeable blk)
+  => Word -> m (ChainSelQueue m blk)
+newChainSelQueue queueSize = atomically $
+    ChainSelQueue <$> newTBQueue (fromIntegral queueSize) <*> newTVar Map.empty
 
 -- | Add a block to the 'ChainSelQueue' queue. Can block when the queue is full.
 addBlockToAdd ::
@@ -478,7 +491,7 @@ addBlockToAdd ::
   -> InvalidBlockPunishment m
   -> blk
   -> m (AddBlockPromise m blk)
-addBlockToAdd tracer (ChainSelQueue queue) punish blk = do
+addBlockToAdd tracer (ChainSelQueue queue mset) punish blk = do
     varBlockWrittenToDisk <- newEmptyTMVarIO
     varBlockProcessed     <- newEmptyTMVarIO
     let !toAdd = BlockToAdd
@@ -489,6 +502,7 @@ addBlockToAdd tracer (ChainSelQueue queue) punish blk = do
           }
     traceWith tracer $ AddedBlockToQueue (blockRealPoint blk) RisingEdge
     queueSize <- atomically $ do
+      modifyTVar mset $ Map.insertWith (+) (blockRealPoint blk) 1
       writeTBQueue  queue (ChainSelAddBlock toAdd)
       lengthTBQueue queue
     traceWith tracer $
@@ -504,20 +518,61 @@ addReprocessLoEBlocks
   => Tracer m (TraceAddBlockEvent blk)
   -> ChainSelQueue m blk
   -> m ()
-addReprocessLoEBlocks tracer (ChainSelQueue queue) = do
+addReprocessLoEBlocks tracer (ChainSelQueue queue _mset) = do
   traceWith tracer $ AddedReprocessLoEBlocksToQueue
   atomically $ writeTBQueue queue ChainSelReprocessLoEBlocks
 
 -- | Get the oldest message from the 'ChainSelQueue' queue. Can block when the
 -- queue is empty.
-getChainSelMessage :: IOLike m => ChainSelQueue m blk -> m (ChainSelMessage m blk)
-getChainSelMessage (ChainSelQueue queue) = atomically $ readTBQueue queue
+--
+-- We don't decrement the multiset here. See 'dismissChainSelMessage'.
+getChainSelMessage
+  :: (IOLike m, HasHeader blk)
+  => ChainSelQueue m blk -> m (ChainSelMessage m blk)
+getChainSelMessage (ChainSelQueue queue mset) = atomically $ do
+  message <- readTBQueue queue
+  case message of
+    ChainSelReprocessLoEBlocks          -> pure ()
+    ChainSelAddBlock
+      (BlockToAdd { blockToAdd = blk }) -> modifyTVar mset $
+        Map.update (\case 1 -> Nothing; x -> Just $! (x - 1)) (blockRealPoint blk)
+  pure message
+
+-- | When ChainSel is done processing a block from 'getChainSelMessage', it
+-- should call this.
+dismissChainSelMessage
+  :: (IOLike m, HasHeader blk)
+  => ChainSelQueue m blk -> RealPoint blk -> m ()
+dismissChainSelMessage (ChainSelQueue _queue mset) rp = atomically $
+    modifyTVar mset $ Map.update (\case 1 -> Nothing; x -> Just $! (x - 1)) rp
+
+-- | Return a function to test the membership for the given 'BlocksToAdd'.
+memberBlocksToAdd ::
+     (IOLike m, HasHeader blk)
+  => ChainSelQueue m blk
+  -> STM m (RealPoint blk -> Bool)
+memberBlocksToAdd (ChainSelQueue _ mset) =
+  flip Map.member <$> readTVar mset
+
+getBlocksToAddMaxSlotNo ::
+     IOLike m
+  => ChainSelQueue m blk
+  -> STM m MaxSlotNo
+getBlocksToAddMaxSlotNo (ChainSelQueue _varQueue mset) = aux <$> readTVar mset
+  where
+    -- | The 'Ord' instance of 'RealPoint' orders by 'SlotNo' first, so the
+    -- maximal key of the map has the greatest 'SlotNo'.
+    aux :: Map (RealPoint blk) Word -> MaxSlotNo
+    aux x = case Map.lookupMax x of
+        Nothing                 -> NoMaxSlotNo
+        Just (RealPoint s _, _) -> MaxSlotNo s
 
 -- | Flush the 'ChainSelQueue' queue and notify the waiting threads.
 --
 closeChainSelQueue :: IOLike m => ChainSelQueue m blk -> STM m ()
-closeChainSelQueue (ChainSelQueue queue) = do
+closeChainSelQueue (ChainSelQueue queue mset) = do
   as <- mapMaybe blockAdd <$> flushTBQueue queue
+  writeTVar mset Map.empty
   traverse_ (\a -> tryPutTMVar (varBlockProcessed a)
                               (FailedToAddBlock "Queue flushed"))
             as

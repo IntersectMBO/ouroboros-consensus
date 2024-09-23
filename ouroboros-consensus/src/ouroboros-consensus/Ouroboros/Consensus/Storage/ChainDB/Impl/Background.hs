@@ -529,15 +529,19 @@ addBlockRunner fuse cdb@CDB{..} = forever $ do
             ChainSelAddBlock BlockToAdd{varBlockWrittenToDisk, varBlockProcessed} -> do
               _ <- tryPutTMVar varBlockWrittenToDisk
                               False
-              _ <- tryPutTMVar varBlockProcessed
+              _ <- do
+                  tryPutTMVar varBlockProcessed
                               (FailedToAddBlock "Failed to add block synchronously")
               pure ()
           closeChainSelQueue cdbChainSelQueue)
         (\message -> do
-          lift $ case message of
-            ChainSelReprocessLoEBlocks ->
+          mbRP <- lift $ case message of
+            ChainSelReprocessLoEBlocks -> do
               trace PoppedReprocessLoEBlocksFromQueue
-            ChainSelAddBlock BlockToAdd{blockToAdd} ->
-              trace $ PoppedBlockFromQueue $ FallingEdgeWith $
-                      blockRealPoint blockToAdd
-          chainSelSync cdb message)
+              pure Nothing
+            ChainSelAddBlock BlockToAdd{blockToAdd} -> do
+              let rp = blockRealPoint blockToAdd
+              trace $ PoppedBlockFromQueue $ FallingEdgeWith rp
+              pure $ Just rp
+          chainSelSync cdb message
+          lift $ mapM_ (dismissChainSelMessage cdbChainSelQueue) mbRP)
