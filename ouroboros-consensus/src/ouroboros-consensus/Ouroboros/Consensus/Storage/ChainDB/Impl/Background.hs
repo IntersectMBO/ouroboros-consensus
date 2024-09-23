@@ -284,7 +284,7 @@ updateLedgerSnapshots ::
      , IsLedger (LedgerState blk)
      )
   => ChainDbEnv m blk -> m ()
-updateLedgerSnapshots CDB{..} = do
+updateLedgerSnapshots CDB{..} = asTypeOf (pure ()) $ do
     void $ LgrDB.takeSnapshot  cdbLgrDB
     void $ LgrDB.trimSnapshots cdbLgrDB
 
