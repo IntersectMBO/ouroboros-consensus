@@ -59,8 +59,8 @@ if impl(ghc >= 9.10)
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/ouroboros-network
-  tag: d900a38c55e02f5eed8c8d6d6a4671cd8c5acc6a
-  --sha256: sha256-VVccbWFmd9GlL2N/xNsKtXg2U2asGc4fIX1lLEo+Ar8=
+  tag: 388cc6906b83f41ac2da192b1fd89ab986b4af74
+  --sha256: sha256-LUwryrP5jK+/c4lDitJf/oKg/DqLgbIc68bn83FsHI0=
   subdir:
     cardano-client
     cardano-ping
