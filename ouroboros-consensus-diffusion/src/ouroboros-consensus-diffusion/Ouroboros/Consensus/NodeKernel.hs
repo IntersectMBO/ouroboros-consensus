@@ -27,7 +27,6 @@ module Ouroboros.Consensus.NodeKernel (
   ) where
 
 
-import qualified Control.Concurrent.Class.MonadMVar.Strict as StrictSTM
 import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Control.DeepSeq (force)
@@ -43,7 +42,6 @@ import           Data.Functor ((<&>))
 import           Data.Hashable (Hashable)
 import           Data.List.NonEmpty (NonEmpty)
 import           Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust, mapMaybe)
 import           Data.Proxy
 import qualified Data.Text as Text
@@ -114,8 +112,8 @@ import           Ouroboros.Network.TxSubmission.Inbound
                      (TxSubmissionMempoolWriter)
 import qualified Ouroboros.Network.TxSubmission.Inbound as Inbound
 import           Ouroboros.Network.TxSubmission.Inbound.Registry
-                     (SharedTxStateVar, TxChannels (..), TxChannelsVar,
-                     decisionLogicThread, newSharedTxStateVar)
+                     (SharedTxStateVar, TxChannelsVar,
+                     decisionLogicThread, newSharedTxStateVar, newTxChannelsVar)
 import           Ouroboros.Network.TxSubmission.Mempool.Reader
                      (TxSubmissionMempoolReader)
 import qualified Ouroboros.Network.TxSubmission.Mempool.Reader as MempoolReader
@@ -294,7 +292,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                         ps_POLICY_PEER_SHARE_STICKY_TIME
                                         ps_POLICY_PEER_SHARE_MAX_PEERS
 
-    txChannelsVar <- StrictSTM.newMVar (TxChannels Map.empty)
+    txChannelsVar <- newTxChannelsVar
     sharedTxStateVar <- newSharedTxStateVar
 
     case gnkaGetLoEFragment genesisArgs of
