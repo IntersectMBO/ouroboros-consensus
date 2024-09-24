@@ -56,9 +56,10 @@ module Ouroboros.Consensus.Node (
   , openChainDB
   ) where
 
+import           Data.IORef (newIORef, modifyIORef', readIORef)
 import qualified Debug.Trace as EventLog
 import qualified Ouroboros.Consensus.Util.Enclose as Enclose
-import qualified Ouroboros.Network.AnchoredFragment as AF
+-- import qualified Ouroboros.Network.AnchoredFragment as AF
 import qualified System.Environment as Env
 import           System.IO.Unsafe (unsafePerformIO)
 
@@ -864,6 +865,7 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
     llrnBfcSalt               <- stdBfcSaltIO
     llrnGsmAntiThunderingHerd <- stdGsmAntiThunderingHerdIO
     llrnKeepAliveRng          <- stdKeepAliveRngIO
+    hackTracer                <- mkHackTracer
     pure LowLevelRunNodeArgs
       { llrnBfcSalt
       , llrnChainSyncTimeout = fromMaybe Diffusion.defaultChainSyncTimeout srnChainSyncTimeout
@@ -873,7 +875,7 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
       , llrnGsmAntiThunderingHerd
       , llrnKeepAliveRng
       , llrnMkHasFS = stdMkChainDbHasFS srnDatabasePath
-      , llrnChainDbArgsDefaults = updateChainDbDefaults ChainDB.defaultArgs
+      , llrnChainDbArgsDefaults = updateChainDbDefaults hackTracer ChainDB.defaultArgs
       , llrnCustomiseChainDbArgs = id
       , llrnCustomiseNodeKernelArgs
       , llrnRunDataDiffusion =
@@ -918,9 +920,10 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
     networkMagic = getNetworkMagic $ configBlock $ pInfoConfig rnProtocolInfo
 
     updateChainDbDefaults ::
-         Incomplete ChainDbArgs IO blk
+         (Tracer IO (ChainDB.TraceEvent blk))
       -> Incomplete ChainDbArgs IO blk
-    updateChainDbDefaults =
+      -> Incomplete ChainDbArgs IO blk
+    updateChainDbDefaults hackTracer =
           ChainDB.updateDiskPolicyArgs srnDiskPolicyArgs
         . ChainDB.updateTracer (hackTracer <> srnTraceChainDB)
         . (if   not srnChainDbValidateOverride
@@ -976,10 +979,81 @@ overBlockFetchConfiguration f args = args {
 
 --------------------------------------------------------------------------------
 
-hackTracer ::
-    (HasHeader (Header blk), StandardHash blk)
- => Tracer IO (ChainDB.TraceEvent blk)
-hackTracer = Tracer $ \case
+{- The tracer event timeline for each historical block when syncing from a trusted peer.
+
+    BlockFetch client thread:
+        TraceAddBlockEvent (AddedBlockToQueue rp RisingEdge)
+            wait for queue to not be full
+        TraceAddBlockEvent (AddedBlockToQueue rp FallingEdge)
+
+    ChainSel thread:
+            loop start
+        TraceAddBlockEvent (PoppedBlockFromQueue RisingEdge)
+            wait until queue is non-empty
+        TraceAddBlockEvent (PoppedBlockFromQueue (FallingEdgeWith rp))
+            chainSelSync's init and classification
+        TraceAddBlockEvent (AddedBlockToVolatileDB _p _bno _ Enclose.RisingEdge)
+        TraceAddBlockEvent (AddedBlockToVolatileDB _p _bno _ Enclose.FallingEdge)
+            chainSelectionForBlock's init and classification
+        TraceAddBlockEvent TryAddToCurrentChain{}
+            identify candidates, build ChainDiffs, sort candidates
+        TraceAddBlockEvent (PipeliningEvent (SetTentativeHeader{}))
+            call ledger
+        TraceAddBlockEvent ValidCandidate{}
+            build ValidatedChainDiff
+        TraceAddBlockEvent ChangingSelection{}
+            init switchTo, update cdbChain, LedgerDB, and varTentativeHeader
+        TraceAddBlockEvent AddedToCurrentChain{}
+            signal delivery
+            loop end
+
+-}
+
+mkHackTracer :: IO (Tracer IO (ChainDB.TraceEvent blk))
+mkHackTracer = do
+  counter <- newIORef (0 - 1 :: Word)
+
+  let mbFreq = unsafePerformIO $ Env.lookupEnv "CHAINSEL_EVENTLOG_FREQ"
+
+      whenOK = case read <$> mbFreq of
+        Nothing     -> id
+        Just period -> \m -> do
+          n <- readIORef counter
+          when (0 == n `mod` period) m
+
+  pure $ Tracer $ \case
+
+    ChainDB.TraceAddBlockEvent (ChainDB.PoppedBlockFromQueue Enclose.RisingEdge) -> do
+        modifyIORef' counter (+1)
+        whenOK $ EventLog.traceEventIO "Q"
+
+    ChainDB.TraceAddBlockEvent (ChainDB.PoppedBlockFromQueue (Enclose.FallingEdgeWith rp)) -> whenOK $ do
+        EventLog.traceEventIO $ 'Q' : let SlotNo x = realPointSlot rp in show x
+
+    ChainDB.TraceAddBlockEvent (ChainDB.AddedBlockToVolatileDB _p bno _  Enclose.RisingEdge ) -> whenOK $ do
+        start "W"
+        signal $ 'B' : let BlockNo x = bno in show x
+    ChainDB.TraceAddBlockEvent (ChainDB.AddedBlockToVolatileDB _p _bno _ Enclose.FallingEdge) -> whenOK $ do
+        stop "W"
+
+    ChainDB.TraceAddBlockEvent ChainDB.TryAddToCurrentChain{} -> whenOK $ signal "T"
+    ChainDB.TraceAddBlockEvent (ChainDB.PipeliningEvent (ChainDB.SetTentativeHeader _hdr Enclose.RisingEdge )) -> whenOK $ start "P"
+    ChainDB.TraceAddBlockEvent (ChainDB.PipeliningEvent (ChainDB.SetTentativeHeader _hdr Enclose.FallingEdge)) -> whenOK $ stop "P"
+    ChainDB.TraceAddBlockEvent (ChainDB.AddBlockValidation (ChainDB.ValidCandidate{})) -> whenOK $ signal "V"
+    ChainDB.TraceAddBlockEvent ChainDB.ChangingSelection{} -> whenOK $ start "S"
+    ChainDB.TraceAddBlockEvent ChainDB.AddedToCurrentChain{} -> whenOK $ stop "S"
+
+    _ -> pure ()
+
+  where
+    signal s = EventLog.traceEventIO s
+
+    start  s = signal $ '<' : s
+    stop   s = signal $ '>' : s
+
+
+{-
+
 
     -- the queue was empty when p was added to it
     ChainDB.TraceAddBlockEvent (ChainDB.AddedBlockToQueue p (Enclose.FallingEdgeWith 1)) ->
@@ -1004,3 +1078,4 @@ hackTracer = Tracer $ \case
         Just m  -> 0 == bno `mod` m
 
     mbFreq = unsafePerformIO $ Env.lookupEnv "CHAINSEL_EVENTLOG_FREQ"
+-}
