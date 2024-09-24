@@ -155,7 +155,7 @@ jobs:
       with:
         name: benchmark-exes-${{ runner.os }}-${{ matrix.ghc }}
         path: mempool-bench
-        retention-days: 1
+        retention-days: 10
 
     # NB: build the haddocks at the end to avoid unecessary recompilations.
     # We build the haddocks only for one GHC version.
