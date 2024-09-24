@@ -567,7 +567,7 @@ data CardanoProtocolParams c = CardanoProtocolParams {
     -- | The greatest protocol version that this node's software and config
     -- files declare to handle correctly.
     --
-    -- This parameter has three consequences. First, the blocks minted
+    -- This parameter has two consequences. First, the blocks minted
     -- will include the protocol version in their header, but
     -- essentially only for public signaling (eg measuring the
     -- percentage of adoption of software updates).
@@ -727,7 +727,6 @@ protocolInfoCardano paramsCardano
     partialLedgerConfigShelley =
         mkPartialLedgerConfigShelley
           transitionConfigShelley
-          maxMajorProtVer
           triggerHardForkAllegra
 
     kShelley :: SecurityParam
@@ -750,7 +749,6 @@ protocolInfoCardano paramsCardano
     partialLedgerConfigAllegra =
         mkPartialLedgerConfigShelley
           transitionConfigAllegra
-          maxMajorProtVer
           triggerHardForkMary
 
     -- Mary
@@ -770,7 +768,6 @@ protocolInfoCardano paramsCardano
     partialLedgerConfigMary =
         mkPartialLedgerConfigShelley
           transitionConfigMary
-          maxMajorProtVer
           triggerHardForkAlonzo
 
     -- Alonzo
@@ -790,7 +787,6 @@ protocolInfoCardano paramsCardano
     partialLedgerConfigAlonzo =
         mkPartialLedgerConfigShelley
           transitionConfigAlonzo
-          maxMajorProtVer
           triggerHardForkBabbage
 
     -- Babbage
@@ -820,7 +816,6 @@ protocolInfoCardano paramsCardano
     partialLedgerConfigBabbage =
         mkPartialLedgerConfigShelley
           transitionConfigBabbage
-          maxMajorProtVer
           triggerHardForkConway
 
     -- Conway
@@ -840,7 +835,6 @@ protocolInfoCardano paramsCardano
     partialLedgerConfigConway =
         mkPartialLedgerConfigShelley
           transitionConfigConway
-          maxMajorProtVer
           TriggerHardForkNotDuringThisExecution
 
     -- Cardano
@@ -1067,10 +1061,9 @@ protocolClientInfoCardano epochSlots = ProtocolClientInfo {
 mkPartialLedgerConfigShelley ::
      L.EraTransition era
   => L.TransitionConfig era
-  -> MaxMajorProtVer
   -> TriggerHardFork
   -> PartialLedgerConfig (ShelleyBlock proto era)
-mkPartialLedgerConfigShelley transitionConfig maxMajorProtVer shelleyTriggerHardFork =
+mkPartialLedgerConfigShelley transitionConfig shelleyTriggerHardFork =
     ShelleyPartialLedgerConfig {
           shelleyLedgerConfig =
             Shelley.mkShelleyLedgerConfig
@@ -1079,7 +1072,6 @@ mkPartialLedgerConfigShelley transitionConfig maxMajorProtVer shelleyTriggerHard
               -- 'completeLedgerConfig' will replace the 'History.dummyEpochInfo'
               -- in the partial ledger config with the correct one.
               History.dummyEpochInfo
-              maxMajorProtVer
         , shelleyTriggerHardFork = shelleyTriggerHardFork
         }
 

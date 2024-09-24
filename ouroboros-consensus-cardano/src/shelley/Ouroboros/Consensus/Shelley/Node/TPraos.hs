@@ -249,7 +249,6 @@ protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
          genesis
          (transitionCfg ^. L.tcTranslationContextL)
          epochInfo
-         maxMajorProtVer
 
     epochInfo :: EpochInfo (Except History.PastHorizonException)
     epochInfo =

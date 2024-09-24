@@ -361,4 +361,3 @@ prop_simple_real_tpraos_convergence TestSetup
             genesisConfig
             (SL.toFromByronTranslationContext genesisConfig)  -- trivial translation context
             (fixedEpochInfo epochSize tpraosSlotLength)
-            (MaxMajorProtVer maxBound)
