@@ -23,6 +23,7 @@ module Ouroboros.Consensus.Ledger.SupportsMempool (
   , WhetherToIntervene (..)
   ) where
 
+import           Codec.Serialise (Serialise)
 import           Control.DeepSeq (NFData)
 import           Control.Monad.Except
 import           Data.ByteString.Short (ShortByteString)
@@ -246,6 +247,7 @@ newtype ByteSize32 = ByteSize32 { unByteSize32 :: Word32 }
   deriving stock    (Show)
   deriving newtype  (Eq, Ord)
   deriving newtype  (NFData)
+  deriving newtype  (Serialise)
   deriving          (Monoid, Semigroup)
                 via (InstantiatedAt Measure (IgnoringOverflow ByteSize32))
   deriving          (NoThunks)

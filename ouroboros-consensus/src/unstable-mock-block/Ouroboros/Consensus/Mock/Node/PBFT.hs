@@ -37,7 +37,7 @@ protocolInfoMockPBFT params eraParams =
             topLevelConfigProtocol = PBftConfig {
                 pbftParams = params
               }
-          , topLevelConfigLedger      = SimpleLedgerConfig ledgerView eraParams
+          , topLevelConfigLedger      = SimpleLedgerConfig ledgerView eraParams defaultMockConfig
           , topLevelConfigBlock       = SimpleBlockConfig
           , topLevelConfigCodec       = SimpleCodecConfig
           , topLevelConfigStorage     = SimpleStorageConfig (pbftSecurityParam params)

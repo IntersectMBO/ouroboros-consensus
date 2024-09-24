@@ -49,8 +49,8 @@ module Ouroboros.Consensus.Mock.Ledger.Block (
   , GenTx (..)
   , TxId (..)
   , Validated (..)
+  , genTxSize
   , mkSimpleGenTx
-  , txSize
     -- * Crypto
   , SimpleCrypto
   , SimpleMockCrypto
@@ -95,7 +95,7 @@ import qualified Ouroboros.Consensus.Mock.Ledger.UTxO as Mock
 import           Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..),
                      SizeInBytes)
 import           Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE,
-                     (..:), (.:))
+                     (..:))
 import           Ouroboros.Consensus.Util.Condense
 import           Test.Util.Orphans.Serialise ()
 
@@ -328,6 +328,8 @@ data SimpleLedgerConfig c ext = SimpleLedgerConfig {
 
       -- | Era parameters
     , simpleLedgerEraParams  :: !HardFork.EraParams
+
+    , simpleLedgerMockConfig :: !MockConfig
     }
   deriving (Generic)
 
@@ -353,7 +355,7 @@ instance MockProtocolSpecific c ext
 
 instance MockProtocolSpecific c ext
       => ApplyBlock (LedgerState (SimpleBlock c ext)) (SimpleBlock c ext) where
-  applyBlockLedgerResult _ = fmap pureLedgerResult .: updateSimpleLedgerState
+  applyBlockLedgerResult = fmap pureLedgerResult ..: updateSimpleLedgerState
 
   reapplyBlockLedgerResult =
       (mustSucceed . runExcept) ..: applyBlockLedgerResult
@@ -377,21 +379,27 @@ newtype instance Ticked (LedgerState (SimpleBlock c ext)) = TickedSimpleLedgerSt
 instance MockProtocolSpecific c ext => UpdateLedger (SimpleBlock c ext)
 
 updateSimpleLedgerState :: (SimpleCrypto c, Typeable ext)
-                        => SimpleBlock c ext
+                        => LedgerConfig (SimpleBlock c ext)
+                        -> SimpleBlock c ext
                         -> TickedLedgerState (SimpleBlock c ext)
                         -> Except (MockError (SimpleBlock c ext))
                                   (LedgerState (SimpleBlock c ext))
-updateSimpleLedgerState b (TickedSimpleLedgerState (SimpleLedgerState st)) =
-    SimpleLedgerState <$> updateMockState b st
+updateSimpleLedgerState cfg b (TickedSimpleLedgerState (SimpleLedgerState st)) =
+    SimpleLedgerState <$> updateMockState mockCfg b st
+  where
+    mockCfg = simpleLedgerMockConfig cfg
 
 updateSimpleUTxO :: Mock.HasMockTxs a
-                 => SlotNo
+                 => LedgerConfig (SimpleBlock c ext)
+                 -> SlotNo
                  -> a
                  -> TickedLedgerState (SimpleBlock c ext)
                  -> Except (MockError (SimpleBlock c ext))
                            (TickedLedgerState (SimpleBlock c ext))
-updateSimpleUTxO x slot (TickedSimpleLedgerState (SimpleLedgerState st)) =
-    TickedSimpleLedgerState . SimpleLedgerState <$> updateMockUTxO x slot st
+updateSimpleUTxO cfg x slot (TickedSimpleLedgerState (SimpleLedgerState st)) =
+    TickedSimpleLedgerState . SimpleLedgerState <$> updateMockUTxO mockCfg x slot st
+  where
+    mockCfg = simpleLedgerMockConfig cfg
 
 genesisSimpleLedgerState :: AddrDist -> LedgerState (SimpleBlock c ext)
 genesisSimpleLedgerState = SimpleLedgerState . genesisMockState
@@ -427,11 +435,11 @@ type instance ApplyTxErr (SimpleBlock c ext) = MockError (SimpleBlock c ext)
 
 instance MockProtocolSpecific c ext
       => LedgerSupportsMempool (SimpleBlock c ext) where
-  applyTx _cfg _wti slot tx st = do
-      st' <- updateSimpleUTxO slot tx st
+  applyTx cfg _wti slot tx st = do
+      st' <- updateSimpleUTxO cfg slot tx st
       return (st', ValidatedSimpleGenTx tx)
-  reapplyTx _cfg slot vtx st =
-      updateSimpleUTxO slot (forgetValidatedSimpleGenTx vtx) st
+  reapplyTx cfg slot vtx st =
+      updateSimpleUTxO cfg slot (forgetValidatedSimpleGenTx vtx) st
 
   txForgetValidated = forgetValidatedSimpleGenTx
 
@@ -443,7 +451,11 @@ instance TxLimits (SimpleBlock c ext) where
   --
   -- But not 'maxbound'!, since the mempool sometimes holds multiple blocks worth.
   blockCapacityTxMeasure _cfg _st = IgnoringOverflow simpleBlockCapacity
-  txMeasure              _cfg _st = pure . IgnoringOverflow . txSize
+
+  txMeasure cfg _st =
+        fmap IgnoringOverflow
+      . checkTxSize (simpleLedgerMockConfig cfg)
+      . simpleGenTx
 
 simpleBlockCapacity :: ByteSize32
 simpleBlockCapacity = ByteSize32 512
@@ -490,8 +502,8 @@ mkSimpleGenTx tx = SimpleGenTx
     , simpleGenTxId = Hash.hashWithSerialiser toCBOR tx
     }
 
-txSize :: GenTx (SimpleBlock c ext) -> ByteSize32
-txSize = ByteSize32 . fromIntegral . Lazy.length . serialise
+genTxSize :: GenTx (SimpleBlock c ext) -> ByteSize32
+genTxSize = txSize . simpleGenTx
 
 {-------------------------------------------------------------------------------
   Support for QueryLedger

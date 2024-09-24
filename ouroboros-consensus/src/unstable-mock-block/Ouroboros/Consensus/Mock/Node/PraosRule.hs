@@ -50,7 +50,7 @@ protocolInfoPraosRule numCoreNodes
                 }
             , wlsConfigNodeId   = nid
             }
-        , topLevelConfigLedger      = SimpleLedgerConfig () eraParams
+        , topLevelConfigLedger      = SimpleLedgerConfig () eraParams defaultMockConfig
         , topLevelConfigBlock       = SimpleBlockConfig
         , topLevelConfigCodec       = SimpleCodecConfig
         , topLevelConfigStorage     = SimpleStorageConfig (praosSecurityParam params)

@@ -544,6 +544,7 @@ test-suite consensus-test
     base-deriving-via,
     cardano-binary,
     cardano-crypto-class,
+    cardano-crypto-tests,
     cardano-slotting:{cardano-slotting, testlib},
     cborg,
     containers,

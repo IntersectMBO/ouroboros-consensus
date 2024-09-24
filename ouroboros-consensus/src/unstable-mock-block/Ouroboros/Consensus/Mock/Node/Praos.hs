@@ -48,7 +48,7 @@ protocolInfoPraos numCoreNodes nid params eraParams eta0 evolvingStakeDist =
               , praosEvolvingStake = evolvingStakeDist
               , praosVerKeys       = verKeys
               }
-          , topLevelConfigLedger      = SimpleLedgerConfig addrDist eraParams
+          , topLevelConfigLedger      = SimpleLedgerConfig addrDist eraParams defaultMockConfig
           , topLevelConfigBlock       = SimpleBlockConfig
           , topLevelConfigCodec       = SimpleCodecConfig
           , topLevelConfigStorage     = SimpleStorageConfig (praosSecurityParam params)
