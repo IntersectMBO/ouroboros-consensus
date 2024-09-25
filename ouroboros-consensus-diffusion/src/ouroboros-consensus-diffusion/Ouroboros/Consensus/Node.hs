@@ -1024,6 +1024,7 @@ mkHackTracer = do
   pure $ Tracer $ \case
 
     ChainDB.TraceAddBlockEvent (ChainDB.PoppedBlockFromQueue Enclose.RisingEdge) -> do
+        whenOK $ EventLog.traceEventIO "R"   -- signaling when the /next/ iteration started
         modifyIORef' counter (+1)
         whenOK $ EventLog.traceEventIO "Q"
 
