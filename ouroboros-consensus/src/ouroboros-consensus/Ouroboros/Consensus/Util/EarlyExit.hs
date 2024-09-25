@@ -26,6 +26,7 @@ import           Control.Monad
 import           Control.Monad.Class.MonadAsync
 import           Control.Monad.Class.MonadEventlog
 import           Control.Monad.Class.MonadFork
+import           Control.Monad.Class.MonadSay
 import           Control.Monad.Class.MonadST
 import           Control.Monad.Class.MonadSTM.Internal
 import           Control.Monad.Class.MonadThrow
@@ -301,6 +302,37 @@ instance (MonadEvaluate m, MonadCatch m) => MonadEvaluate (WithEarlyExit m) wher
 instance MonadEventlog m => MonadEventlog (WithEarlyExit m) where
   traceEventIO  = lift . traceEventIO
   traceMarkerIO = lift . traceMarkerIO
+
+instance MonadLabelledSTM m => MonadLabelledSTM (WithEarlyExit m) where
+  labelTVar      = lift .: labelTVar
+  labelTMVar     = lift .: labelTMVar
+  labelTQueue    = lift .: labelTQueue
+  labelTBQueue   = lift .: labelTBQueue
+  labelTArray    = lift .: labelTArray
+  labelTSem      = lift .: labelTSem
+  labelTChan     = lift .: labelTChan
+  labelTVarIO    = lift .: labelTVarIO
+  labelTMVarIO   = lift .: labelTMVarIO
+  labelTQueueIO  = lift .: labelTQueueIO
+  labelTBQueueIO = lift .: labelTBQueueIO
+  labelTArrayIO  = lift .: labelTArrayIO
+  labelTSemIO    = lift .: labelTSemIO
+  labelTChanIO   = lift .: labelTChanIO
+
+instance MonadSay m => MonadSay (WithEarlyExit m) where
+  say = lift . say
+
+instance (MonadInspectSTM m, Monad (InspectMonad m)) =>  MonadInspectSTM (WithEarlyExit m) where
+    type InspectMonad (WithEarlyExit m) = InspectMonad m
+    inspectTVar  _ = inspectTVar (Proxy @m)
+    inspectTMVar _ = inspectTMVar (Proxy @m)
+
+instance MonadTraceSTM m => MonadTraceSTM (WithEarlyExit m) where
+  traceTVar    _ = lift .: traceTVar (Proxy @m)
+  traceTMVar   _ = lift .: traceTMVar (Proxy @m)
+  traceTQueue  _ = lift .: traceTQueue (Proxy @m)
+  traceTBQueue _ = lift .: traceTBQueue (Proxy @m)
+  traceTSem    _ = lift .: traceTSem (Proxy @m)
 
 {-------------------------------------------------------------------------------
   Finally, the consensus IOLike wrapper
