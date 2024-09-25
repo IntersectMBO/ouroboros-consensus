@@ -79,6 +79,9 @@ module Ouroboros.Consensus.Util (
   , electric
   , newFuse
   , withFuse
+    -- * withTMVar
+  , withTMVar
+  , withTMVarAnd
   ) where
 
 import           Cardano.Crypto.Hash (Hash, HashAlgorithm, hashFromBytes,
@@ -463,3 +466,40 @@ withFuse (Fuse name m) (Electric io) = do
 newtype FuseBlownException = FuseBlownException Text
  deriving (Show)
  deriving anyclass (Exception)
+
+{-------------------------------------------------------------------------------
+  withTMVar
+-------------------------------------------------------------------------------}
+
+-- | Apply @f@ with the content of @tv@ as state, restoring the original value when an
+-- exception occurs
+withTMVar ::
+     IOLike m
+  => StrictTMVar m a
+  -> (a -> m (c, a))
+  -> m c
+withTMVar tv f = withTMVarAnd tv (const $ pure ()) (\a -> const $ f a)
+
+-- | Apply @f@ with the content of @tv@ as state, restoring the original value
+-- when an exception occurs. Additionally run a @STM@ action when acquiring the
+-- value.
+withTMVarAnd ::
+     IOLike m
+  => StrictTMVar m a
+  -> (a -> STM m b) -- ^ Additional STM action to run in the same atomically
+                     -- block as the TMVar is acquired
+  -> (a -> b -> m (c, a)) -- ^ Action
+  -> m c
+withTMVarAnd tv guard f =
+  bracketOnError
+    (atomically $ do
+        i <- takeTMVar tv
+        g <- guard i
+        pure (i, g)
+    )
+    (atomically . putTMVar tv . fst)
+    (\(s, g) -> do
+        (x, s') <- f s g
+        atomically $ putTMVar tv s'
+        return x
+    )
