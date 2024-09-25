@@ -24,8 +24,8 @@ import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer, nullTracer, traceWith)
 import           Data.Functor.Contravariant ((>$<))
 import           Data.Map.Strict (Map)
-import           Network.TypedProtocol.Codec (AnyMessage, PeerHasAgency (..),
-                     PeerRole)
+import           Network.TypedProtocol.Codec (ActiveState, AnyMessage,
+                     StateToken, notActiveState)
 import           Ouroboros.Consensus.Block (HasHeader)
 import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
 import           Ouroboros.Consensus.Config
@@ -55,7 +55,7 @@ import           Ouroboros.Network.Protocol.BlockFetch.Codec
 import           Ouroboros.Network.Protocol.BlockFetch.Server
                      (BlockFetchServer (..), blockFetchServerPeer)
 import           Ouroboros.Network.Protocol.BlockFetch.Type (BlockFetch (..),
-                     ClientHasAgency (..), ServerHasAgency (..))
+                     SingBlockFetch (..))
 import           Ouroboros.Network.Protocol.Limits (ProtocolSizeLimits (..),
                      ProtocolTimeLimits (..), waitForever)
 import           Test.Consensus.PeerSimulator.StateView
@@ -190,11 +190,12 @@ timeLimitsBlockFetch :: forall block point. BlockFetchTimeout -> ProtocolTimeLim
 timeLimitsBlockFetch BlockFetchTimeout{busyTimeout, streamingTimeout} =
   ProtocolTimeLimits stateToLimit
   where
-    stateToLimit :: forall (pr :: PeerRole) (st :: BlockFetch block point).
-                    PeerHasAgency pr st -> Maybe DiffTime
-    stateToLimit (ClientAgency TokIdle)      = waitForever
-    stateToLimit (ServerAgency TokBusy)      = busyTimeout
-    stateToLimit (ServerAgency TokStreaming) = streamingTimeout
+    stateToLimit :: forall (st :: BlockFetch block point).
+                    ActiveState st => StateToken st-> Maybe DiffTime
+    stateToLimit SingBFIdle      = waitForever
+    stateToLimit SingBFBusy      = busyTimeout
+    stateToLimit SingBFStreaming = streamingTimeout
+    stateToLimit a@SingBFDone    = notActiveState a
 
 blockFetchNoTimeouts :: BlockFetchTimeout
 blockFetchNoTimeouts =

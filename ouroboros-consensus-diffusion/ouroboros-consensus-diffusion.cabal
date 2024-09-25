@@ -90,10 +90,10 @@ library
     io-classes ^>=1.5,
     mtl,
     ouroboros-consensus ^>=0.21,
-    ouroboros-network ^>=0.17.1,
-    ouroboros-network-api ^>=0.10,
-    ouroboros-network-framework ^>=0.13.2,
-    ouroboros-network-protocols ^>=0.11,
+    ouroboros-network ^>=0.18,
+    ouroboros-network-api ^>=0.11,
+    ouroboros-network-framework ^>=0.14,
+    ouroboros-network-protocols ^>=0.12,
     random,
     safe-wild-cards ^>=1.0,
     serialise ^>=0.2,
@@ -103,6 +103,7 @@ library
     time,
     transformers,
     typed-protocols,
+    typed-protocols-stateful,
 
   -- GHC 8.10.7 on aarch64-darwin cannot use text-2
   build-depends: text >=1.2.5.0 && <2.2

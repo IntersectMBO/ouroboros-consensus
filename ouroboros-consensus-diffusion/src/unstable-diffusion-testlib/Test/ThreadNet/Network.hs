@@ -1387,8 +1387,11 @@ directedEdgeInner registry clock (version, blockVersion) (cfg, calcMessageDelay)
     -- first step in process of one node diffusing a block to another node.
     chainSyncMiddle :: Lazy.ByteString -> m ()
     chainSyncMiddle bs = do
-        let tok = Codec.ServerAgency $ CS.TokNext CS.TokMustReply
-        decodeStep <- Codec.decode codec tok
+        let tok = CS.SingNext CS.SingMustReply
+        decodeStep :: Codec.DecodeStep
+                        Lazy.ByteString DeserialiseFailure m
+                        (Codec.SomeMessage ('CS.StNext 'CS.StMustReply))
+          <- Codec.decode codec tok
         Codec.runDecoder [bs] decodeStep >>= \case
           Right (Codec.SomeMessage (CS.MsgRollForward hdr _tip)) -> do
               s <- OracularClock.getCurrentSlot clock
