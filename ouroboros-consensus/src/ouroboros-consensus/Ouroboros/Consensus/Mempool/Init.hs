@@ -108,7 +108,7 @@ mkMempool ::
 mkMempool mpEnv = Mempool
     { addTx          = implAddTx mpEnv
     , removeTxs      = implRemoveTxs mpEnv
-    , syncWithLedger = fst <$> implSyncWithLedger mpEnv
+    , syncWithLedger = implSyncWithLedger mpEnv
     , getSnapshot    = snapshotFromIS <$> readTMVar istate
     , getSnapshotFor = implGetSnapshotFor mpEnv
     , getCapacity    = isCapacity <$> readTMVar istate
