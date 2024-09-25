@@ -88,7 +88,7 @@ import           Data.Typeable
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           GHC.Stack (HasCallStack)
-import           Network.TypedProtocol.Pipelined
+import           Network.TypedProtocol.Core
 import           NoThunks.Class (unsafeNoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime (RelativeTime)
