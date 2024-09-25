@@ -1290,8 +1290,7 @@ directedEdgeInner registry clock (version, blockVersion) (cfg, calcMessageDelay)
 
     atomically $ writeTVar edgeStatusVar EUp
 
-    let local = CoreId (CoreNodeId 0)
-        miniProtocol ::
+    let miniProtocol ::
              String
              -- ^ protocol name
           -> (String -> a -> RestartCause)
@@ -1321,12 +1320,12 @@ directedEdgeInner registry clock (version, blockVersion) (cfg, calcMessageDelay)
                )
           where
             initiatorCtx = ExpandedInitiatorContext {
-                eicConnectionId    = ConnectionId local (fromCoreNodeId node2),
+                eicConnectionId    = ConnectionId (fromCoreNodeId node1) (fromCoreNodeId node2),
                 eicControlMessage  = return Continue,
                 eicIsBigLedgerPeer = IsNotBigLedgerPeer
               }
             responderCtx = ResponderContext {
-                rcConnectionId     = ConnectionId local (fromCoreNodeId node1)
+                rcConnectionId     = ConnectionId (fromCoreNodeId node1) (fromCoreNodeId node2)
               }
 
     (>>= withAsyncsWaitAny) $
@@ -1733,4 +1732,3 @@ instance Exception TxGenFailure
 -- later.
 neUnzip :: Functor f => f (a,b) -> (f a, f b)
 neUnzip xs = (fst <$> xs, snd <$> xs)
-
