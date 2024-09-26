@@ -487,19 +487,22 @@ withTMVarAnd ::
      IOLike m
   => StrictTMVar m a
   -> (a -> STM m b) -- ^ Additional STM action to run in the same atomically
-                     -- block as the TMVar is acquired
+                    -- block as the TMVar is acquired
   -> (a -> b -> m (c, a)) -- ^ Action
   -> m c
 withTMVarAnd tv guard f =
-  bracketOnError
+  fst . fst <$> generalBracket
     (atomically $ do
-        i <- takeTMVar tv
-        g <- guard i
-        pure (i, g)
+        istate <- takeTMVar tv
+        guarded <- guard istate
+        pure (istate, guarded)
     )
-    (atomically . putTMVar tv . fst)
-    (\(s, g) -> do
-        (x, s') <- f s g
-        atomically $ putTMVar tv s'
-        return x
+    (\(origState, _) -> \case
+        ExitCaseSuccess (_, newState)
+          -> atomically $ putTMVar tv newState
+        ExitCaseException _
+          -> atomically $ putTMVar tv origState
+        ExitCaseAbort
+          -> atomically $ putTMVar tv origState
     )
+    (uncurry f)
