@@ -9,6 +9,10 @@
 
 - Bump to `nothunks` 0.2
 - Add `NoThunks` orphan instance for `NoGenesis era`
+- Add BlockSupportsSanityCheck to check for common configuration issues which may manifest themselves in unusual but not necessarily immediately obvious ways. For now it only checks that `k` is the same across all eras.
+- Mempool: also changed to use the more conservative value of Ledger's
+  `maxRefScriptSizePerBlock`, ie 1MiB, that was decided on for Conway.
+- The error `MissingBlock(EmptySlot)` now exposes more information when thrown.
 
 ### Breaking
 
@@ -18,6 +22,19 @@
 - `initMempoolEnv`, `extendVRNew`, `openMempool`, `openMempoolWithoutSyncThread`, `implAddTx`, `implTryAddTx` and `openMockedMempool` now require callback `(GenTx blk -> SizeInBytes)` instead of `(GenTx blk -> TxSizeInBytes)`
 - Update `txTicketTxSizeInBytes`,`mSizeBytes`'s types from `TxSizeInBytes` to `SizeInBytes`
 - `splitAfterTxSize`, `splitAfterTxSizeSpec` requires `SizeInBytes` instead of `TxSizeInBytes`
+- Refactored internals of the CSJ and GDD.
+- Improved the behavior of the LoE in certain edge cases.
+- Remove the capacity override from forging functions.
+- Remove `PerEraProtocolParams` newtype.
+- Remove `ProtocolParams` data family.
+- `completeChainDbArgs` now requires two file-systems. This allows to place the
+  immutable data (which doesn't need to be stored in a very performant device)
+  somewhere else than the volatile data.
+- New `ChainDB.TraceEvent(TraceLastShutdownUnclean)` trace message to be emitted
+  when the `clean` marker is missing and the node will therefore revalidate all
+  the data.
+- `TookSnapshot` event now carries a `EnclosingTimed` field to trace how much
+  time it took to make the snapshot.
 
 <a id='changelog-0.20.0.0'></a>
 ## 0.20.0.0 — 2024-07-02

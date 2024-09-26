@@ -8,10 +8,19 @@
 ### Breaking
 
 - Add `GetProposals` and `GetRatifyState` queries.
-- Propagate cardano-ledger's updated `TranslationContext` `NoGenesis` 
+- Propagate cardano-ledger's updated `TranslationContext` `NoGenesis`
 - Add `NodeToClientV_17` to `supportedNodeToClientVersions`
-- Add `CardanoNodeToClientVersion13` 
+- Add `CardanoNodeToClientVersion13`
 - Replace deprecated `TxSizeInBytes` with `SizeInBytes`
+- Remove the capacity override from forging functions.
+- ProtocolParams (CardanoBlock c) was monomorphized to `CardanoProtocolParams`
+- Remove `cardanoProtocolParamsPerEra` from `CardanoProtocolParams` in favour of a single `cardanoProtocolVersion`.
+  This patch intentionally removes the flexibility the n-ary product of versions per-era gave us, in favour of a simpler interface, as the current one has caused a lot of confusion and led to several mistakes in the past.
+
+### Non-Breaking
+
+- Also enabled total ref script size limit in the mempool in Conway (it
+  continues to be enabled in Babbage).
 
 <a id='changelog-0.18.0.0'></a>
 ## 0.18.0.0 — 2024-07-02
