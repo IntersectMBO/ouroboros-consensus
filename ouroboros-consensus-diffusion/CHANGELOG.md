@@ -8,6 +8,25 @@
 ### Non-Breaking
 
 - Propagate `ouroboros-network` types `NumTxIdsToAck` and `SizeInBytes`
+- Adds a Tracer for startup sanity check warnings in Ouroboros.Consensus.Node.Tracers (see BlockSupportsSanityCheck in ouroboros-consensus)
+- Emit `ChainDB.TraceEvent(TraceLastShutdownUnclean)` when the `clean` marker is
+  missing and the node will therefore revalidate all the data.
+
+### Breaking
+
+- Integrated all Genesis components into the NodeKernel. In particular,
+  `RunNodeArgs` now has a new field
+
+  ```haskell
+  rnGenesisConfig :: GenesisConfig
+  ```
+
+  This can be set to `Ouroboros.Consensus.Node.Genesis.disableGenesisConfig` to
+  keep the Praos behavior, or to `enableGenesisConfigDefault` to enable Genesis
+  with preliminary parameter choices.
+- The `StdRunNodeArgs(srnDatabasePath)` argument becomes of type `NodeDatabasePaths`
+  which will allow storing the immutable db (which doesn't need to be in a very
+  performant device) somewhere different than the volatile data.
 
 <a id='changelog-0.17.0.1'></a>
 ## 0.17.0.1 — 2024-06-26
