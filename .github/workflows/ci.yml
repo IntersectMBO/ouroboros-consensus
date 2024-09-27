@@ -281,7 +281,7 @@ jobs:
           cache: yarn
           cache-dependency-path: './docs/website/yarn.lock'
 
-      - uses: cachix/install-nix-action@V28
+      - uses: cachix/install-nix-action@v29
         with:
           extra_nix_config: |
             accept-flake-config = true
