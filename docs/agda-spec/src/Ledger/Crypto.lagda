@@ -44,6 +44,7 @@ record isHashableSet (T : Type) : Set₁ where
   constructor mkIsHashableSet
   field THash : Type
         ⦃ DecEq-THash ⦄ : DecEq      THash
+        ⦃ Show-THash  ⦄ : Show       THash
         ⦃ DecEq-T     ⦄ : DecEq    T
         ⦃ T-Hashable  ⦄ : Hashable T THash
 open isHashableSet

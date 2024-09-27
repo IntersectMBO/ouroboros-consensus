@@ -11,10 +11,14 @@ open import Data.Nat.Properties using (+-*-semiring)
 open import Data.Rational using (ℚ)
 open import Data.Rational.Ext using (PosUnitInterval)
 
+additionVia : ∀{A : Set} → (A → A) → ℕ → A → A
+additionVia sucFun zero r = r
+additionVia sucFun (suc l) r = sucFun (additionVia sucFun l r)
+
 record EpochStructure : Type₁ where
   field Slotʳ     : Semiring 0ℓ 0ℓ
-        Epoch     : Type; ⦃ DecEq-Epoch ⦄ : DecEq Epoch
         KESPeriod : Type; ⦃ DecEq-KESPeriod ⦄ : DecEq KESPeriod; ⦃ HasPreorder-KESPeriod ⦄ : HasPreorder≡ {A = KESPeriod}
+        Epoch     : Type; ⦃ DecEq-Epoch ⦄ : DecEq Epoch; ⦃ Show-Epoch ⦄ : Show Epoch
 
   Slot = Semiring.Carrier Slotʳ
 
@@ -33,6 +37,12 @@ record EpochStructure : Type₁ where
         MaxKESEvo                     : ℕ
         ActiveSlotCoeff               : PosUnitInterval
         MaxMajorPV                    : ℕ
+
+  _+ᵉ_ = additionVia sucᵉ
+
+  field
+        _+ᵉ'_           : ℕ → Epoch → Epoch
+        +ᵉ≡+ᵉ'          : ∀ {a b} → a +ᵉ b ≡ a +ᵉ' b
 
   -- preorders and partial orders
 
@@ -59,10 +69,6 @@ record EpochStructure : Type₁ where
   ℕtoEpoch zero    = epoch 0#
   ℕtoEpoch (suc n) = sucᵉ (ℕtoEpoch n)
 
-  _+ᵉ_ : ℕ → Epoch → Epoch
-  zero  +ᵉ e = e
-  suc n +ᵉ e = sucᵉ (n +ᵉ e)
-
   instance
     addSlot : HasAdd Slot
     addSlot ._+_ = _+ˢ_
@@ -75,7 +81,7 @@ record EpochStructure : Type₁ where
     Number-Epoch .Number.fromNat    x = ℕtoEpoch x
 
 record GlobalConstants : Type₁ where
-  field  Network : Type; ⦃ DecEq-Netw ⦄ : DecEq Network
+  field  Network : Type; ⦃ DecEq-Netw ⦄ : DecEq Network; ⦃ Show-Network ⦄ : Show Network
          SlotsPerEpochᶜ : ℕ; ⦃ NonZero-SlotsPerEpochᶜ ⦄ : NonZero SlotsPerEpochᶜ
          StabilityWindowᶜ : ℕ
          RandomnessStabilisationWindowᶜ : ℕ
@@ -85,6 +91,10 @@ record GlobalConstants : Type₁ where
          MaxKESEvoᶜ : ℕ
          ActiveSlotCoeffᶜ : PosUnitInterval
          MaxMajorPVᶜ : ℕ
+
+  ℕ+ᵉ≡+ᵉ' : ∀ {a b} → additionVia suc a b ≡ a + b
+  ℕ+ᵉ≡+ᵉ' {zero} {b} = refl
+  ℕ+ᵉ≡+ᵉ' {suc a} {b} = cong suc (ℕ+ᵉ≡+ᵉ' {a} {b})
 
   ℕEpochStructure : EpochStructure
   ℕEpochStructure = λ where
@@ -96,12 +106,14 @@ record GlobalConstants : Type₁ where
     .StabilityWindow               → StabilityWindowᶜ
     .RandomnessStabilisationWindow → RandomnessStabilisationWindowᶜ
     .sucᵉ                          → suc
+    ._+ᵉ'_                         → _+_
     .kesPeriod slot                → slot / SlotsPerKESPeriodᶜ
     ._+ᵏ_                          → _+_
     ._-ᵏ_                          → _-_
     .MaxKESEvo                     → MaxKESEvoᶜ
     .ActiveSlotCoeff               → ActiveSlotCoeffᶜ
     .MaxMajorPV                    → MaxMajorPVᶜ
+    .+ᵉ≡+ᵉ' {a} {b}                → ℕ+ᵉ≡+ᵉ' {a} {b}
 
    where open EpochStructure
 

@@ -31,6 +31,11 @@ All-syntax : ∀ {A X} ⦃ _ : IsSet X A ⦄ → (A → Type) → X → Type
 All-syntax P X = All P (toSet X)
 syntax All-syntax (λ x → P) l = ∀[ x ∈ l ] P
 
+infix 2 Ex-syntax
+Ex-syntax : ∀ {A X} ⦃ _ : IsSet X A ⦄ → (A → Type) → X → Type
+Ex-syntax P X = Any P (toSet X)
+syntax Ex-syntax (λ x → P) l = ∃[ x ∈ l ] P
+
 module _ ⦃ _ : IsSet X (A × B) ⦄ where
   dom : X → Set A
   dom = Rel.dom ∘ toSet

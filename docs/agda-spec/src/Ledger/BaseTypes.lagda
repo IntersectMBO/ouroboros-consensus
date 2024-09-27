@@ -1,4 +1,4 @@
-\section{Base types}
+\section{Base Types}
 \begin{code}[hide]
 {-# OPTIONS --safe #-}
 

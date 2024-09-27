@@ -97,6 +97,9 @@ record Theory {ℓ} : Type (sucˡ ℓ) where
   finite : Set A → Type ℓ
   finite X = ∃[ l ] ∀ {a} → a ∈ X ⇔ a ∈ˡ l
 
+  Show-finite : ⦃ Show A ⦄ → Show (Σ (Set A) finite)
+  Show.show Show-finite (X , (l , _)) = Show-List .show l
+
   weakly-finite : Set A → Type ℓ
   weakly-finite X = ∃[ l ] ∀ {a} → a ∈ X → a ∈ˡ l
 
@@ -291,6 +294,11 @@ record Theoryᶠ : Type₁ where
   lengthˢ : ⦃ DecEq A ⦄ → Set A → ℕ
   lengthˢ X = card (X , DecEq⇒strongly-finite X)
 
+  module _ {A : Type} ⦃ _ : Show A ⦄ where
+    instance
+      Show-Set : Show (Set A)
+      Show-Set .show = λ x → Show-finite .show (x , (finiteness x))
+
 -- set theories with an infinite set (containing all natural numbers)
 record Theoryⁱ : Type₁ where
   field theory : Theory
@@ -307,8 +315,22 @@ record Theoryᵈ : Type₁ where
   field
     ∈-sp : ⦃ DecEq A ⦄ → spec-∈ A
     _∈?_ : ⦃ DecEq A ⦄ → Decidable² (_∈_ {A = A})
-    all? : ⦃ DecEq A ⦄ → {P : A → Type} (P? : Decidable¹ P) {X : Set A} → Dec (All P X)
-    any? : ⦃ DecEq A ⦄ → {P : A → Type} (P? : Decidable¹ P) (X : Set A) → Dec (Any P X)
+    all? : {P : A → Type} (P? : Decidable¹ P) {X : Set A} → Dec (All P X)
+    any? : {P : A → Type} (P? : Decidable¹ P) (X : Set A) → Dec (Any P X)
+
+
+  module _ {A : Type} {P : A → Type} where
+    module _ ⦃ _ : P ⁇¹ ⦄ where instance
+      Dec-Allˢ : All P ⁇¹
+      Dec-Allˢ = ⁇¹ λ x → all? dec¹ {x}
+
+      Dec-Anyˢ : Any P ⁇¹
+      Dec-Anyˢ = ⁇¹ any? dec¹
+
+    module _ (P? : Decidable¹ P) where
+      allᵇ anyᵇ : (X : Set A) → Bool
+      allᵇ X = ⌊ all? P? {X} ⌋
+      anyᵇ X = ⌊ any? P? X   ⌋
 
   module _ {A : Type} ⦃ _ : DecEq A ⦄ where
 
@@ -318,18 +340,6 @@ record Theoryᵈ : Type₁ where
     instance
       Dec-∈ : _∈_ {A = A} ⁇²
       Dec-∈ = ⁇² _∈?_
-
-    module _ {P : A → Type} ⦃ _ : P ⁇¹ ⦄ where instance
-      Dec-Allˢ : All P ⁇¹
-      Dec-Allˢ = ⁇¹ λ x → all? dec¹ {x}
-
-      Dec-Anyˢ : Any P ⁇¹
-      Dec-Anyˢ = ⁇¹ any? dec¹
-
-    module _ {P : A → Type} (P? : Decidable¹ P) where
-      allᵇ anyᵇ : (X : Set A) → Bool
-      allᵇ X = ⌊ all? P? {X} ⌋
-      anyᵇ X = ⌊ any? P? X   ⌋
 
     _ = _∈_  {A = A} ⁇² ∋ it
     _ = _⊆_  {A = A} ⁇² ∋ it

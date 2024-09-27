@@ -161,12 +161,13 @@ module _ {STS : C → S → Sig → S → Type} (comp comp' : Computational STS 
   compute-ext≡ = ExtendedRel-rightUnique comp
     (ExtendedRel-compute comp) (ExtendedRel-compute comp')
 
-Computational⇒Dec' :
-  ⦃ _ : DecEq S ⦄ {STS : C → S → Sig → S → Type} ⦃ comp : Computational STS Err ⦄
-  → Dec (STS c s sig s')
-Computational⇒Dec' ⦃ comp = comp ⦄ = Computational⇒Dec comp
-
 open Computational ⦃...⦄
+
+Computational⇒Dec' :
+  {STS : C → S → Sig → S → Type} ⦃ comp : Computational STS Err ⦄ → Dec (∃[ s' ] STS c s sig s')
+Computational⇒Dec' with computeProof _ _ _ in eq
+... | success x = yes x
+... | failure x = no λ (_ , h) → failure⇒∀¬STS (-, cong (map proj₁) eq) _ h
 
 record InjectError Err₁ Err₂ : Type where
   field injectError : Err₁ → Err₂

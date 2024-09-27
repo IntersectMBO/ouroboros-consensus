@@ -1,11 +1,12 @@
 \NeedsTeXFormat{LaTeX2e}
 \ProvidesPackage{iohk}[2018/10/18]
 
-\RequirePackage{amssymb}
+% \RequirePackage{amssymb}
 \RequirePackage{extarrows}
 \RequirePackage{slashed}
 \RequirePackage[tikz]{bclogo}
 \RequirePackage{stmaryrd}
+\usepackage{fontspec}
 
 \DeclareMathOperator{\dom}{dom}
 \DeclareMathOperator{\range}{range}
@@ -32,6 +33,13 @@
 \newcommand{\where}{\ensuremath{~ ~ \mathbf{where}~ ~ }}
 
 \newcommand{\varUpdate}[1]{\boldsymbol{\color{Violet}#1}}
+
+% Make the ⇀ symbol a bit larger
+\usepackage{scalerel}
+\usepackage{newunicodechar}
+\newcommand{\largerightharpoonup}{\ensuremath{\mathrel{\scaleto{\rightharpoonup}{1.2ex}}}}
+
+\newunicodechar{⇀}{\largerightharpoonup}
 
 \newenvironment{question}
   {\begin{bclogo}[logo=\bcquestion, couleur=orange!10, arrondi=0.2]{ QUESTION}}
