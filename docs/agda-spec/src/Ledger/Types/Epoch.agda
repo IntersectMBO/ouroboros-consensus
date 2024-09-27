@@ -17,12 +17,12 @@ additionVia sucFun (suc l) r = sucFun (additionVia sucFun l r)
 
 record EpochStructure : Type₁ where
   field Slotʳ     : Semiring 0ℓ 0ℓ
-        KESPeriod : Type; ⦃ DecEq-KESPeriod ⦄ : DecEq KESPeriod; ⦃ HasPreorder-KESPeriod ⦄ : HasPreorder≡ {A = KESPeriod}
         Epoch     : Type; ⦃ DecEq-Epoch ⦄ : DecEq Epoch; ⦃ Show-Epoch ⦄ : Show Epoch
+        KESPeriod : Type; ⦃ DecEq-KESPeriod ⦄ : DecEq KESPeriod; ⦃ DecTo-KESPeriod ⦄ : HasDecTotalOrder≡ {A = KESPeriod}
 
   Slot = Semiring.Carrier Slotʳ
 
-  field ⦃ DecPo-Slot ⦄                : HasDecPartialOrder≡ {A = Slot}
+  field ⦃ DecTo-Slot ⦄                : HasDecTotalOrder≡ {A = Slot}
         ⦃ DecEq-Slot ⦄                : DecEq Slot
 
         epoch                         : Slot → Epoch

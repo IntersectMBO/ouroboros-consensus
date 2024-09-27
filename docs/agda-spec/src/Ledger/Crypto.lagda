@@ -5,6 +5,12 @@ module Ledger.Crypto where
 
 open import Ledger.Prelude hiding (T)
 
+module _ (M : Type↑) where
+  _⁴ : ∀ {ℓ} {A B C D : Type ℓ} → (A → B → C → D → Type ℓ) → Type _
+  _⁴ _~_~_~_ = ∀ {x y z w} → M (x ~ y ~ z ~ w)
+
+_⁇⁴ = _⁇ ⁴
+
 \end{code}
 
 \subsection{Serialization}
@@ -20,7 +26,7 @@ record Serializer : Type₁ where
 \begin{code}
         Ser             : Type
         encode          : {T : Type} → T → Ser
-        decode          : {T : Type} → Ser → T
+        decode          : {T : Type} → Ser → Maybe T
         _∥_             : Ser → Ser → Ser
 \end{code}
 \emph{Properties}
@@ -29,7 +35,7 @@ record Serializer : Type₁ where
         enc-dec-correct :
 \end{code}
 \begin{code}
-          ∀ {T : Type} (x : T) → decode (encode x) ≡ x
+          ∀ {T : Type} (x : T) → decode (encode x) ≡ just x
 \end{code}
 \caption{Definitions for serialization}
 \label{fig:defs:serialization}
@@ -136,7 +142,7 @@ record KESScheme (srl : Serializer) : Type₁ where
 \end{code}
 \emph{Properties}
 \begin{code}[hide]
-  field -- ⦃ Dec-isSigned ⦄ : isSigned ⁇⁴ -- TODO: Define ⁇⁴ if needed
+  field ⦃ Dec-isSigned ⦄ : isSigned ⁇⁴
         isSigned-correct :
 \end{code}
 \begin{code}        

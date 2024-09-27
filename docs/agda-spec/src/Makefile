@@ -39,3 +39,7 @@ clean:
 	       $(LATEX_DIR)/$(PDF_NAME).*\
 	       $(LATEX_DIR)/*.aux\
 	       $(OUT_DIR)/
+
+wipe: clean
+	rm -rf $(LATEX_DIR)/Spec\
+	       $(OUT_DIR)/

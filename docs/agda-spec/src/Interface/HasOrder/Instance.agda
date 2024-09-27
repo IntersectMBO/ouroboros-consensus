@@ -16,6 +16,9 @@ instance
   ℕ-hasPartialOrder = HasPartialOrder ∋ record
     { ≤-antisym = Nat.≤-antisym }
   ℕ-hasDecPartialOrder = HasDecPartialOrder {A = ℕ} ∋ record {}
+  ℕ-hasTotalOrder = HasTotalOrder ∋ record
+    { ≤-total = Nat.≤-total }
+  ℕ-hasDecTotalOrder = HasDecTotalOrder {A = ℕ} ∋ record {}
 
   import Data.Integer.Properties as Int hiding (_≟_)
   ℤ-hasPreorder = HasPreorder ∋ record {Int; ≤⇔<∨≈ = let open Int in mk⇔
@@ -29,3 +32,6 @@ instance
   ℚ-hasPreorder = hasPreorderFromNonStrict Rat.≤-isPreorder _≟_
   ℚ-hasPartialOrder = HasPartialOrder ∋ record { ≤-antisym = Rat.≤-antisym }
   ℚ-hasDecPartialOrder = HasDecPartialOrder {A = ℚ} ∋ record {}
+  ℚ-hasTotalOrder = HasTotalOrder ∋ record
+    { ≤-total = Rat.≤-total }
+  ℚ-hasDecTotalOrder = HasDecTotalOrder {A = ℚ} ∋ record {}

@@ -110,3 +110,14 @@ module Spec.PDF where
 \bibliography{references}
 
 \end{document}
+
+\begin{code}[hide]
+
+import Spec.TickNonce.Properties
+import Spec.UpdateNonce.Properties
+import Spec.OperationalCertificate.Properties
+import Spec.Protocol.Properties
+import Spec.TickForecast.Properties
+import Spec.ChainHead.Properties
+
+\end{code}

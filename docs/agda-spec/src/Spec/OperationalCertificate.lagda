@@ -112,7 +112,7 @@ data _⊢_⇀⦇_,OCERT⦈_ where
     in
     ∙ c₀ ≤ kp
     ∙ kp < c₀ +ᵏ MaxKESEvo
-    ∙ ∃[ m ] just m ≡ currentIssueNo stpools cs hk × (n ≡ m ⊎ n ≡ suc m)
+    ∙ ∃[ m ] (just m ≡ currentIssueNo stpools cs hk × (n ≡ m ⊎ n ≡ suc m))
     ∙ isSignedˢ issuerVk (encode (vkₕ , n , c₀)) τ
     ∙ isSignedᵏ vkₕ t (encode bhb) σ
     ────────────────────────────────
