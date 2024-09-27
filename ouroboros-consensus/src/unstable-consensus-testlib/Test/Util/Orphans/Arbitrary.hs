@@ -37,8 +37,6 @@ import           Data.Time
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
-import           Ouroboros.Consensus.Fragment.InFuture (ClockSkew)
-import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture
 import           Ouroboros.Consensus.HardFork.Combinator (HardForkBlock,
                      HardForkChainDepState, HardForkState (..),
                      LedgerEraInfo (..), LedgerState (..), Mismatch (..),
@@ -51,6 +49,9 @@ import           Ouroboros.Consensus.HeaderValidation (TipInfo)
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
+                     (ClockSkew)
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import           Ouroboros.Consensus.Storage.ChainDB.API (LoE (..))
@@ -147,7 +148,7 @@ instance Arbitrary ChunkSlot where
   shrink    = genericShrink
 
 instance Arbitrary ClockSkew where
-  arbitrary = InFuture.clockSkewInSeconds <$> choose (0, 5)
+  arbitrary = InFutureCheck.clockSkewInSeconds <$> choose (0, 5)
   shrink skew = concat [
      -- Shrink to some simple values, including 0
      -- (it would be useful to know if a test fails only when having non-zero
@@ -157,8 +158,8 @@ instance Arbitrary ClockSkew where
      ]
     where
       skew0, skew1 :: ClockSkew
-      skew0 = InFuture.clockSkewInSeconds 0
-      skew1 = InFuture.clockSkewInSeconds 1
+      skew0 = InFutureCheck.clockSkewInSeconds 0
+      skew1 = InFutureCheck.clockSkewInSeconds 1
 
 deriving newtype instance Arbitrary SizeInBytes
 

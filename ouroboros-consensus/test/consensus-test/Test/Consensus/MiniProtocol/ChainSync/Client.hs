@@ -73,8 +73,6 @@ import           Network.TypedProtocol.Driver.Simple
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
-import           Ouroboros.Consensus.Fragment.InFuture (ClockSkew,
-                     clockSkewInSeconds, unClockSkew)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import           Ouroboros.Consensus.HeaderStateHistory
                      (HeaderStateHistory (..))
@@ -92,6 +90,8 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
                      (HistoricityCheck, HistoricityCutoff (..))
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
+                     (ClockSkew, clockSkewInSeconds, unClockSkew)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Node.GsmState (GsmState (Syncing))
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion

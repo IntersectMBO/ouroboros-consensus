@@ -107,7 +107,6 @@ import           GHC.Generics (Generic)
 import           NoThunks.Class (AllowThunk (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
-import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture
 import           Ouroboros.Consensus.HardFork.Abstract
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
@@ -1564,8 +1563,6 @@ runCmdsLockstep loe maxClockSkew (SmallChunkInfo chunkInfo) cmds =
                    threadRegistry
                    nodeDBs
                    tracer
-                   maxClockSkew
-                   varCurSlot
                    (loe $> varLoEFragment)
 
       (hist, model, res, trace) <- bracket
@@ -1711,11 +1708,9 @@ mkArgs :: IOLike m
        -> ResourceRegistry m
        -> NodeDBs (StrictTMVar m MockFS)
        -> CT.Tracer m (TraceEvent Blk)
-       -> MaxClockSkew
-       -> StrictTVar m SlotNo
        -> LoE (StrictTVar m (AnchoredFragment (Header Blk)))
        -> ChainDbArgs Identity m Blk
-mkArgs cfg chunkInfo initLedger registry nodeDBs tracer (MaxClockSkew maxClockSkew) varCurSlot varLoEFragment =
+mkArgs cfg chunkInfo initLedger registry nodeDBs tracer varLoEFragment =
   let args = fromMinimalChainDbArgs MinimalChainDbArgs {
             mcdbTopLevelConfig = cfg
           , mcdbChunkInfo = chunkInfo
@@ -1725,8 +1720,7 @@ mkArgs cfg chunkInfo initLedger registry nodeDBs tracer (MaxClockSkew maxClockSk
           }
   in ChainDB.updateTracer tracer $
       args { cdbsArgs = (cdbsArgs args) {
-               ChainDB.cdbsCheckInFuture = InFuture.miracle (readTVar varCurSlot) maxClockSkew
-             , ChainDB.cdbsBlocksToAddSize = 2
+               ChainDB.cdbsBlocksToAddSize = 2
              , ChainDB.cdbsLoE = traverse (atomically . readTVar) varLoEFragment
              }
            , cdbImmDbArgs = (cdbImmDbArgs args) {

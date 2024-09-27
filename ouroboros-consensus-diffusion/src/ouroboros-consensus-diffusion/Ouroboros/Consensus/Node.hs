@@ -79,9 +79,6 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Config.SupportsNode
-import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture,
-                     ClockSkew)
-import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
                      (HistoricityCheck)
@@ -289,7 +286,7 @@ data LowLevelRunNodeArgs m addrNTN addrNTC versionDataNTN versionDataNTC blk
     , llrnMaxCaughtUpAge :: NominalDiffTime
 
       -- | Maximum clock skew
-    , llrnMaxClockSkew :: ClockSkew
+    , llrnMaxClockSkew :: InFutureCheck.ClockSkew
 
     , llrnPublicPeerSelectionStateVar :: StrictSTM.StrictTVar m (Diffusion.PublicPeerSelectionState addrNTN)
     }
@@ -436,12 +433,6 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                            systemStart
                            (blockchainTimeTracer rnTraceConsensus)
 
-            inFuture :: CheckInFuture m blk
-            inFuture = InFuture.reference
-                         (configLedger cfg)
-                         llrnMaxClockSkew
-                         systemTime
-
         (genesisArgs, setLoEinChainDbArgs) <-
           mkGenesisNodeKernelArgs llrnGenesisConfig
 
@@ -458,7 +449,6 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
 
         (chainDB, finalArgs) <- openChainDB
                      registry
-                     inFuture
                      cfg
                      initLedger
                      llrnMkImmutableHasFS
@@ -719,7 +709,6 @@ stdWithCheckedDB pb tracer databasePath networkMagic body = do
 openChainDB ::
      forall m blk. (RunNode blk, IOLike m)
   => ResourceRegistry m
-  -> CheckInFuture m blk
   -> TopLevelConfig blk
   -> ExtLedgerState blk
      -- ^ Initial ledger
@@ -732,10 +721,9 @@ openChainDB ::
   -> (Complete ChainDbArgs m blk -> Complete ChainDbArgs m blk)
       -- ^ Customise the 'ChainDbArgs'
   -> m (ChainDB m blk, Complete ChainDbArgs m blk)
-openChainDB registry inFuture cfg initLedger fsImm fsVol defArgs customiseArgs =
+openChainDB registry cfg initLedger fsImm fsVol defArgs customiseArgs =
    let args = customiseArgs $ ChainDB.completeChainDbArgs
                registry
-               inFuture
                cfg
                initLedger
                (nodeImmutableDbChunkInfo (configStorage cfg))
@@ -964,7 +952,7 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
           stdWithCheckedDB (Proxy @blk) srnTraceChainDB (immutableDbPath srnDatabasePath) networkMagic
       , llrnMaxCaughtUpAge = secondsToNominalDiffTime $ 20 * 60   -- 20 min
       , llrnMaxClockSkew =
-          InFuture.defaultClockSkew
+          InFutureCheck.defaultClockSkew
       , llrnPublicPeerSelectionStateVar =
           Diffusion.daPublicPeerSelectionVar srnDiffusionArguments
       }
