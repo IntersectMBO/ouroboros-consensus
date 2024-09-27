@@ -42,6 +42,7 @@ import           Ouroboros.Network.BlockFetch (FetchDecision,
 import           Ouroboros.Network.KeepAlive (TraceKeepAliveClient)
 import           Ouroboros.Network.TxSubmission.Inbound
                      (TraceTxSubmissionInbound)
+import           Ouroboros.Network.TxSubmission.Inbound.Types (TraceTxLogic)
 import           Ouroboros.Network.TxSubmission.Outbound
                      (TraceTxSubmissionOutbound)
 
@@ -59,6 +60,7 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , txInboundTracer               :: f (TraceLabelPeer remotePeer (TraceTxSubmissionInbound  (GenTxId blk) (GenTx blk)))
   , txOutboundTracer              :: f (TraceLabelPeer remotePeer (TraceTxSubmissionOutbound (GenTxId blk) (GenTx blk)))
   , localTxSubmissionServerTracer :: f (TraceLocalTxSubmissionServerEvent blk)
+  , txLogicTracer                 :: f (TraceTxLogic remotePeer (GenTxId blk) (GenTx blk))
   , mempoolTracer                 :: f (TraceEventMempool blk)
   , forgeTracer                   :: f (TraceLabelCreds (TraceForgeEvent blk))
   , blockchainTimeTracer          :: f (TraceBlockchainTimeEvent UTCTime)
@@ -82,6 +84,7 @@ instance (forall a. Semigroup (f a))
       , txInboundTracer               = f txInboundTracer
       , txOutboundTracer              = f txOutboundTracer
       , localTxSubmissionServerTracer = f localTxSubmissionServerTracer
+      , txLogicTracer                 = f txLogicTracer
       , mempoolTracer                 = f mempoolTracer
       , forgeTracer                   = f forgeTracer
       , blockchainTimeTracer          = f blockchainTimeTracer
@@ -113,6 +116,7 @@ nullTracers = Tracers
     , txInboundTracer               = nullTracer
     , txOutboundTracer              = nullTracer
     , localTxSubmissionServerTracer = nullTracer
+    , txLogicTracer                 = nullTracer
     , mempoolTracer                 = nullTracer
     , forgeTracer                   = nullTracer
     , blockchainTimeTracer          = nullTracer
@@ -147,6 +151,7 @@ showTracers tr = Tracers
     , txInboundTracer               = showTracing tr
     , txOutboundTracer              = showTracing tr
     , localTxSubmissionServerTracer = showTracing tr
+    , txLogicTracer                 = showTracing tr
     , mempoolTracer                 = showTracing tr
     , forgeTracer                   = showTracing tr
     , blockchainTimeTracer          = showTracing tr

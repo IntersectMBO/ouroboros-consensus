@@ -94,6 +94,7 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (castTip, tipFromHeader)
 import           Ouroboros.Network.BlockFetch
+import           Ouroboros.Network.BlockFetch.ClientRegistry (readPeerGSVs)
 import           Ouroboros.Network.Diffusion (PublicPeerSelectionState)
 import           Ouroboros.Network.NodeToNode (ConnectionId,
                      MiniProtocolParameters (..))
@@ -110,6 +111,9 @@ import           Ouroboros.Network.SizeInBytes
 import           Ouroboros.Network.TxSubmission.Inbound
                      (TxSubmissionMempoolWriter)
 import qualified Ouroboros.Network.TxSubmission.Inbound as Inbound
+import           Ouroboros.Network.TxSubmission.Inbound.Registry
+                     (SharedTxStateVar, TxChannelsVar,
+                     decisionLogicThread, newSharedTxStateVar, newTxChannelsVar)
 import           Ouroboros.Network.TxSubmission.Mempool.Reader
                      (TxSubmissionMempoolReader)
 import qualified Ouroboros.Network.TxSubmission.Mempool.Reader as MempoolReader
@@ -162,6 +166,14 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
 
     , getOutboundConnectionsState
                              :: StrictTVar m OutboundConnectionsState
+
+    -- | Communication channels between `TxSubmission` client mini-protocol and
+    -- decision logic.
+    , getTxChannelsVar :: TxChannelsVar m (ConnectionId addrNTN) (GenTxId blk) (GenTx blk)
+
+    -- | Shared state of all `TxSubmission` clients.
+    --
+    , getSharedTxStateVar :: SharedTxStateVar m (ConnectionId addrNTN) (GenTxId blk) (GenTx blk)
     }
 
 -- | Arguments required when initializing a node
@@ -207,6 +219,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                    , peerSharingRng
                                    , publicPeerSelectionStateVar
                                    , genesisArgs
+                                   , miniProtocolParameters
                                    } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [BlockForging m blk] <- LazySTM.newTMVarIO []
@@ -279,6 +292,9 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                         ps_POLICY_PEER_SHARE_STICKY_TIME
                                         ps_POLICY_PEER_SHARE_MAX_PEERS
 
+    txChannelsVar <- newTxChannelsVar
+    sharedTxStateVar <- newSharedTxStateVar
+
     case gnkaGetLoEFragment genesisArgs of
       LoEAndGDDDisabled                  -> pure ()
       LoEAndGDDEnabled varGetLoEFragment -> do
@@ -311,6 +327,14 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
         fetchClientRegistry
         blockFetchConfiguration
 
+    void $ forkLinkedThread registry "NodeKernel.decisionLogicThread" $
+      decisionLogicThread
+        (txLogicTracer tracers)
+        (txDecisionPolicy miniProtocolParameters)
+        (readPeerGSVs fetchClientRegistry)
+        txChannelsVar
+        sharedTxStateVar
+
     return NodeKernel
       { getChainDB              = chainDB
       , getMempool              = mempool
@@ -325,6 +349,8 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
       , getPeerSharingAPI       = peerSharingAPI
       , getOutboundConnectionsState
                                 = varOutboundConnectionsState
+      , getTxChannelsVar        = txChannelsVar
+      , getSharedTxStateVar     = sharedTxStateVar
       }
   where
     blockForgingController :: InternalState m remotePeer localPeer blk

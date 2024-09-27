@@ -122,6 +122,10 @@ import           Ouroboros.Network.Protocol.KeepAlive.Type
 import           Ouroboros.Network.Protocol.Limits (waitForever)
 import           Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharing)
 import           Ouroboros.Network.Protocol.TxSubmission2.Type
+import           Ouroboros.Network.TxSubmission.Inbound.Policy
+                     (TxDecisionPolicy (..), defaultTxDecisionPolicy)
+import           Ouroboros.Network.TxSubmission.Inbound.Server
+                     (EnableNewTxSubmissionProtocol (..))
 import qualified System.FS.Sim.MockFS as Mock
 import           System.FS.Sim.MockFS (MockFS)
 import           System.Random (mkStdGen, split)
@@ -1015,7 +1019,8 @@ runThreadNetwork systemTime ThreadNetworkArgs
                   chainSyncPipeliningHighMark = 4,
                   chainSyncPipeliningLowMark  = 2,
                   blockFetchPipeliningMax     = 10,
-                  txSubmissionMaxUnacked      = 1000 -- TODO ?
+                  txDecisionPolicy            =
+                    defaultTxDecisionPolicy { maxUnacknowledgedTxIds = 1000 } -- TODO ?
                 }
             , blockFetchConfiguration = BlockFetchConfiguration {
                   bfcMaxConcurrencyBulkSync = 1
@@ -1071,7 +1076,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
                   -- The purpose of this test is not testing protocols, so
                   -- returning constant empty list is fine if we have thorough
                   -- tests about the peer sharing protocol itself.
-                  (NTN.mkHandlers nodeKernelArgs nodeKernel)
+                  (NTN.mkHandlers nodeKernelArgs nodeKernel DisableNewTxSubmissionProtocol)
 
       -- In practice, a robust wallet/user can persistently add a transaction
       -- until it appears on the chain. This thread adds robustness for the
