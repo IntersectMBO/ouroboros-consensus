@@ -311,6 +311,7 @@ library unstable-shelley-testlib
     cardano-ledger-shelley-ma-test,
     cardano-ledger-shelley-test,
     cardano-protocol-tpraos:{cardano-protocol-tpraos, testlib},
+    cardano-slotting,
     cardano-strict-containers,
     containers,
     generic-random,
