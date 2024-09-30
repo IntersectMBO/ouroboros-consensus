@@ -592,6 +592,8 @@ test-suite consensus-test
     cardano-binary,
     cardano-crypto-class,
     cardano-crypto-tests,
+    measures,
+    cardano-ledger-core:testlib,
     cardano-slotting:{cardano-slotting, testlib},
     cardano-strict-containers,
     cborg,
