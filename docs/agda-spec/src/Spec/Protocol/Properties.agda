@@ -19,6 +19,7 @@ module Spec.Protocol.Properties
 
 open import Data.Rational as ℚ using (1ℚ)
 open import Ledger.Prelude
+open import Tactic.GenError
 open import Spec.Protocol crypto nonces es ss bs af rs
 open import Spec.BaseTypes crypto using (OCertCounters)
 open import Spec.UpdateNonce crypto nonces es
@@ -88,7 +89,7 @@ instance
           (_ , updnStep)  ← computeUPDN updnΓ updnSt slot
           (_ , ocertStep) ← computeOCERT ocertΓ cs bh
           success (-, Evolve-Prtcl (updnStep , ocertStep , prf))
-        (no _) → failure "Failed in PRTCL"
+        (no ¬prf) → failure (genErrors ¬prf)
 
       completeness : ∀ s′ → Γ ⊢ s ⇀⦇ bh ,PRTCL⦈ s′ → (proj₁ <$> computeProof) ≡ success s′
       completeness _ (Evolve-Prtcl (updnStep , ocertStep , p))
