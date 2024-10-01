@@ -59,6 +59,7 @@ module Ouroboros.Consensus.Node (
 import           Data.IORef (newIORef, modifyIORef', readIORef)
 import qualified Debug.Trace as EventLog
 import qualified Ouroboros.Consensus.Util.Enclose as Enclose
+import qualified Ouroboros.Consensus.Fragment.Diff as Diff
 -- import qualified Ouroboros.Network.AnchoredFragment as AF
 import qualified System.Environment as Env
 import           System.IO.Unsafe (unsafePerformIO)
@@ -1009,7 +1010,9 @@ overBlockFetchConfiguration f args = args {
 
 -}
 
-mkHackTracer :: IO (Tracer IO (ChainDB.TraceEvent blk))
+mkHackTracer ::
+     (StandardHash blk, Typeable blk)
+  => IO (Tracer IO (ChainDB.TraceEvent blk))
 mkHackTracer = do
   counter <- newIORef (0 - 1 :: Word)
 
@@ -1043,6 +1046,13 @@ mkHackTracer = do
     ChainDB.TraceAddBlockEvent (ChainDB.AddBlockValidation (ChainDB.ValidCandidate{})) -> whenOK $ signal "V"
     ChainDB.TraceAddBlockEvent ChainDB.ChangingSelection{} -> whenOK $ start "S"
     ChainDB.TraceAddBlockEvent ChainDB.AddedToCurrentChain{} -> whenOK $ stop "S"
+
+    -- the paths other than TryAddToCurrentChain
+    ChainDB.TraceAddBlockEvent ChainDB.IgnoreBlockOlderThanK{}    -> whenOK $ signal "X1"
+    ChainDB.TraceAddBlockEvent ChainDB.IgnoreInvalidBlock{}       -> whenOK $ signal "X2"
+    ChainDB.TraceAddBlockEvent ChainDB.StoreButDontChange{}       -> whenOK $ signal "X3"
+    ChainDB.TraceAddBlockEvent (ChainDB.TrySwitchToAFork _p diff) -> do
+        whenOK $ signal $ "X4 " <> show (pointSlot $ Diff.getTip diff)
 
     _ -> pure ()
 
