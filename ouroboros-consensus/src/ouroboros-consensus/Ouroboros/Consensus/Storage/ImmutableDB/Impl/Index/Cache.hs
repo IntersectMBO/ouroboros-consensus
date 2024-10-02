@@ -574,26 +574,27 @@ getChunkInfo ::
 getChunkInfo cacheEnv chunk = do
     lastUsed <- LastUsed <$> getMonotonicTime
     -- Make sure we don't leave an empty MVar in case of an exception.
-    mbCacheHit <- bracketOnError (takeMVar cacheVar) (tryPutMVar cacheVar) $
+    (mbCacheHit, tr) <- modifyMVar cacheVar $
       \cached@Cached { currentChunk, currentChunkInfo, nbPastChunks } -> if
         | chunk == currentChunk -> do
           -- Cache hit for the current chunk
-          putMVar cacheVar cached
-          traceWith tracer $ TraceCurrentChunkHit chunk nbPastChunks
-          return $ Just $ Left currentChunkInfo
+          return ( cached
+                 , (Just $ Left currentChunkInfo, TraceCurrentChunkHit chunk nbPastChunks)
+                 )
         | Just (pastChunkInfo, cached') <- lookupPastChunkInfo chunk lastUsed cached -> do
           -- Cache hit for an chunk in the past
-          putMVar cacheVar cached'
-          traceWith tracer $ TracePastChunkHit chunk nbPastChunks
-          return $ Just $ Right pastChunkInfo
+          return ( cached'
+                 , (Just $ Right pastChunkInfo, TracePastChunkHit chunk nbPastChunks)
+                 )
         | otherwise -> do
           -- Cache miss for an chunk in the past. We don't want to hold on to
           -- the 'cacheVar' MVar, blocking all other access to the cace, while
           -- we're reading things from disk, so put it back now and update the
           -- cache afterwards.
-          putMVar cacheVar cached
-          traceWith tracer $ TracePastChunkMiss chunk nbPastChunks
-          return Nothing
+          return ( cached
+                 , (Nothing, TracePastChunkMiss chunk nbPastChunks)
+                 )
+    traceWith tracer tr
     case mbCacheHit of
       Just hit -> return hit
       Nothing  -> do
