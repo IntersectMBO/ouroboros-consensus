@@ -67,6 +67,7 @@ instance SupportedNetworkProtocolVersion (ShelleyBlock proto era) where
       , (NodeToClientV_15, ShelleyNodeToClientVersion7)
       , (NodeToClientV_16, ShelleyNodeToClientVersion8)
       , (NodeToClientV_17, ShelleyNodeToClientVersion9)
+      , (NodeToClientV_18, ShelleyNodeToClientVersion9)
       ]
 
   latestReleasedNodeVersion = latestReleasedNodeVersionDefault
