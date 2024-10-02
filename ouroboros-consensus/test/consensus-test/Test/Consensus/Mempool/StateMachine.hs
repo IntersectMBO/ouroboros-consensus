@@ -22,25 +22,22 @@
 module Test.Consensus.Mempool.StateMachine (tests) where
 
 import           Cardano.Slotting.Slot
-import           Control.Arrow (first, second)
+import           Control.Arrow (second)
 import           Control.Concurrent.Class.MonadSTM.Strict.TChan
 import           Control.Monad (void)
 import           Control.Monad.Except (runExcept)
 import qualified Control.Tracer as CT (Tracer (..), traceWith)
 import           Data.Bool (bool)
-import           Data.Either (rights)
 import           Data.Foldable hiding (toList)
 import           Data.Function (on)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes, fromMaybe)
+import           Data.Maybe (fromMaybe)
 import qualified Data.Measure as Measure
 import           Data.Proxy
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.TreeDiff
-import qualified Data.TreeDiff.OMap as OMap
 import qualified Data.TreeDiff.OMap as TD
-import qualified Debug.Trace as Dbg
 import           GHC.Generics
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation
@@ -50,7 +47,6 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Mempool
-import qualified Ouroboros.Consensus.Mempool.API as Mempool
 import           Ouroboros.Consensus.Mempool.Impl.Common (tickLedgerState)
 import           Ouroboros.Consensus.Mempool.TxSeq
 import           Ouroboros.Consensus.Mock.Ledger.Address
@@ -63,7 +59,7 @@ import           Ouroboros.Consensus.Util.Condense (condense)
 import           Ouroboros.Consensus.Util.IOLike hiding (bracket)
 import           Test.Cardano.Ledger.TreeDiff ()
 import           Test.Consensus.Mempool.Util (TestBlock, applyTxToLedger,
-                     genTxs, genValidTxs, mkTestLedgerConfig, testInitLedger,
+                     genTxs, genValidTxs, testInitLedger,
                      testLedgerConfigNoSizeLimits)
 import           Test.QuickCheck
 import           Test.QuickCheck.Monadic
