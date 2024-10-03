@@ -56,7 +56,7 @@ module Ouroboros.Consensus.Node (
   , openChainDB
   ) where
 
-import           Data.IORef (newIORef, modifyIORef', readIORef)
+import           Data.IORef (newIORef, modifyIORef', readIORef, writeIORef)
 import qualified Debug.Trace as EventLog
 import qualified Ouroboros.Consensus.Util.Enclose as Enclose
 import qualified Ouroboros.Consensus.Fragment.Diff as Diff
@@ -1014,7 +1014,8 @@ mkHackTracer ::
      (StandardHash blk, Typeable blk)
   => IO (Tracer IO (ChainDB.TraceEvent blk))
 mkHackTracer = do
-  counter <- newIORef (0 - 1 :: Word)
+  counter   <- newIORef (0 - 1 :: Word)
+  alreadyIn <- newIORef False
 
   let mbFreq = unsafePerformIO $ Env.lookupEnv "CHAINSEL_EVENTLOG_FREQ"
 
@@ -1028,7 +1029,10 @@ mkHackTracer = do
 
     ChainDB.TraceAddBlockEvent (ChainDB.PoppedBlockFromQueue Enclose.RisingEdge) -> do
         whenOK $ EventLog.traceEventIO "R"   -- signaling when the /next/ iteration started
-        modifyIORef' counter (+1)
+        readIORef alreadyIn >>= \b ->
+            if b
+            then writeIORef alreadyIn False
+            else modifyIORef' counter (+ 1)
         whenOK $ EventLog.traceEventIO "Q"
 
     ChainDB.TraceAddBlockEvent (ChainDB.PoppedBlockFromQueue (Enclose.FallingEdgeWith rp)) -> whenOK $ do
@@ -1052,10 +1056,14 @@ mkHackTracer = do
     ChainDB.TraceAddBlockEvent ChainDB.IgnoreInvalidBlock{}       -> whenOK $ signal "X2"
     ChainDB.TraceAddBlockEvent ChainDB.StoreButDontChange{}       -> whenOK $ signal "X3"
     ChainDB.TraceAddBlockEvent (ChainDB.TrySwitchToAFork _p diff) -> whenOK $ do
-        signal $ "X4 " <> show (pointSlot $ Diff.getTip diff)
+        signal $ "X4 " <> case pointSlot $ Diff.getTip diff of
+                              Origin               -> "-1"
+                              NotOrigin (SlotNo x) -> show x
 
     -- the paths other than AddedBlockToVolatileDB, beyond the alternatives to TryAddToCurrentChain
-    ChainDB.TraceAddBlockEvent ChainDB.IgnoreBlockAlreadyInVolatileDB{} -> whenOK $ signal "X5"
+    ChainDB.TraceAddBlockEvent (ChainDB.IgnoreBlockAlreadyInVolatileDB rp) -> do
+        signal $ "A" <> let SlotNo x = realPointSlot rp in show x
+        writeIORef alreadyIn True
 
     _ -> pure ()
 
