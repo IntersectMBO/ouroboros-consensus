@@ -1051,8 +1051,11 @@ mkHackTracer = do
     ChainDB.TraceAddBlockEvent ChainDB.IgnoreBlockOlderThanK{}    -> whenOK $ signal "X1"
     ChainDB.TraceAddBlockEvent ChainDB.IgnoreInvalidBlock{}       -> whenOK $ signal "X2"
     ChainDB.TraceAddBlockEvent ChainDB.StoreButDontChange{}       -> whenOK $ signal "X3"
-    ChainDB.TraceAddBlockEvent (ChainDB.TrySwitchToAFork _p diff) -> do
-        whenOK $ signal $ "X4 " <> show (pointSlot $ Diff.getTip diff)
+    ChainDB.TraceAddBlockEvent (ChainDB.TrySwitchToAFork _p diff) -> whenOK $ do
+        signal $ "X4 " <> show (pointSlot $ Diff.getTip diff)
+
+    -- the paths other than AddedBlockToVolatileDB, beyond the alternatives to TryAddToCurrentChain
+    ChainDB.TraceAddBlockEvent ChainDB.IgnoreBlockAlreadyInVolatileDB{} -> whenOK $ signal "X5"
 
     _ -> pure ()
 
