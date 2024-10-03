@@ -1,6 +1,8 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -40,6 +42,7 @@ import           Control.Tracer
 import           Data.ByteString.Lazy (ByteString)
 import           Data.Void (Void)
 import           Network.TypedProtocol.Codec
+import qualified Network.TypedProtocol.Stateful.Codec as Stateful
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query
@@ -66,6 +69,7 @@ import           Ouroboros.Network.BlockFetch
 import           Ouroboros.Network.Channel
 import           Ouroboros.Network.Context
 import           Ouroboros.Network.Driver
+import qualified Ouroboros.Network.Driver.Stateful as Stateful
 import           Ouroboros.Network.Mux
 import           Ouroboros.Network.NodeToClient hiding
                      (NodeToClientVersion (..))
@@ -142,17 +146,17 @@ mkHandlers NodeKernelArgs {cfg, tracers} NodeKernel {getChainDB, getMempool} =
 
 -- | Node-to-client protocol codecs needed to run 'Handlers'.
 data Codecs' blk serialisedBlk e m bCS bTX bSQ bTM = Codecs {
-      cChainSyncCodec    :: Codec (ChainSync serialisedBlk (Point blk) (Tip blk))   e m bCS
-    , cTxSubmissionCodec :: Codec (LocalTxSubmission (GenTx blk) (ApplyTxErr blk))  e m bTX
-    , cStateQueryCodec   :: Codec (LocalStateQuery blk (Point blk) (Query blk))     e m bSQ
-    , cTxMonitorCodec    :: Codec (LocalTxMonitor (GenTxId blk) (GenTx blk) SlotNo) e m bTM
+      cChainSyncCodec    :: Codec          (ChainSync serialisedBlk (Point blk) (Tip blk))   e       m bCS
+    , cTxSubmissionCodec :: Codec          (LocalTxSubmission (GenTx blk) (ApplyTxErr blk))  e       m bTX
+    , cStateQueryCodec   :: Stateful.Codec (LocalStateQuery blk (Point blk) (Query blk))     e State m bSQ
+    , cTxMonitorCodec    :: Codec          (LocalTxMonitor (GenTxId blk) (GenTx blk) SlotNo) e       m bTM
     }
 
 type Codecs blk e m bCS bTX bSQ bTM =
     Codecs' blk (Serialised blk) e m bCS bTX bSQ bTM
 type DefaultCodecs blk m =
     Codecs' blk (Serialised blk) DeserialiseFailure m ByteString ByteString ByteString ByteString
-type ClientCodecs blk  m =
+type ClientCodecs blk m =
     Codecs' blk blk DeserialiseFailure m ByteString ByteString ByteString ByteString
 
 -- | Protocol codecs for the node-to-client protocols
@@ -293,7 +297,7 @@ identityCodecs :: (Monad m, BlockSupportsLedgerQuery blk)
                => Codecs blk CodecFailure m
                     (AnyMessage (ChainSync (Serialised blk) (Point blk) (Tip blk)))
                     (AnyMessage (LocalTxSubmission (GenTx blk) (ApplyTxErr blk)))
-                    (AnyMessage (LocalStateQuery blk (Point blk) (Query blk)))
+                    (Stateful.AnyMessage (LocalStateQuery blk (Point blk) (Query blk)) State)
                     (AnyMessage (LocalTxMonitor (GenTxId blk) (GenTx blk) SlotNo))
 identityCodecs = Codecs {
       cChainSyncCodec    = codecChainSyncId
@@ -313,7 +317,7 @@ type Tracers m peer blk e =
 data Tracers' peer blk e f = Tracers {
       tChainSyncTracer    :: f (TraceLabelPeer peer (TraceSendRecv (ChainSync (Serialised blk) (Point blk) (Tip blk))))
     , tTxSubmissionTracer :: f (TraceLabelPeer peer (TraceSendRecv (LocalTxSubmission (GenTx blk) (ApplyTxErr blk))))
-    , tStateQueryTracer   :: f (TraceLabelPeer peer (TraceSendRecv (LocalStateQuery blk (Point blk) (Query blk))))
+    , tStateQueryTracer   :: f (TraceLabelPeer peer (Stateful.TraceSendRecv (LocalStateQuery blk (Point blk) (Query blk)) State))
     , tTxMonitorTracer    :: f (TraceLabelPeer peer (TraceSendRecv (LocalTxMonitor (GenTxId blk) (GenTx blk) SlotNo)))
     }
 
@@ -433,10 +437,11 @@ mkApps kernel Tracers {..} Codecs {..} Handlers {..} =
       -> m ((), Maybe bSQ)
     aStateQueryServer them channel = do
       labelThisThread "LocalStateQueryServer"
-      runPeer
+      Stateful.runPeer
         (contramap (TraceLabelPeer them) tStateQueryTracer)
         cStateQueryCodec
         channel
+        StateIdle
         (localStateQueryServerPeer hStateQueryServer)
 
     aTxMonitorServer
