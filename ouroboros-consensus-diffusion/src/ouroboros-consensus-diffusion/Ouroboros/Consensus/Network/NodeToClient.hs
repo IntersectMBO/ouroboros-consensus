@@ -1,6 +1,8 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -40,6 +42,7 @@ import           Control.Tracer
 import           Data.ByteString.Lazy (ByteString)
 import           Data.Void (Void)
 import           Network.TypedProtocol.Codec
+import qualified Network.TypedProtocol.Stateful.Codec as Stateful
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query
@@ -66,6 +69,7 @@ import           Ouroboros.Network.BlockFetch
 import           Ouroboros.Network.Channel
 import           Ouroboros.Network.Context
 import           Ouroboros.Network.Driver
+import qualified Ouroboros.Network.Driver.Stateful as Stateful
 import           Ouroboros.Network.Mux
 import           Ouroboros.Network.NodeToClient hiding
                      (NodeToClientVersion (..))
@@ -75,7 +79,7 @@ import           Ouroboros.Network.Protocol.ChainSync.Server
 import           Ouroboros.Network.Protocol.ChainSync.Type
 import           Ouroboros.Network.Protocol.LocalStateQuery.Codec
 import           Ouroboros.Network.Protocol.LocalStateQuery.Server
-import           Ouroboros.Network.Protocol.LocalStateQuery.Type
+import           Ouroboros.Network.Protocol.LocalStateQuery.Type as LocalStateQuery
 import           Ouroboros.Network.Protocol.LocalTxMonitor.Codec
 import           Ouroboros.Network.Protocol.LocalTxMonitor.Server
 import           Ouroboros.Network.Protocol.LocalTxMonitor.Type
@@ -144,7 +148,7 @@ mkHandlers NodeKernelArgs {cfg, tracers} NodeKernel {getChainDB, getMempool} =
 data Codecs' blk serialisedBlk e m bCS bTX bSQ bTM = Codecs {
       cChainSyncCodec    :: Codec (ChainSync serialisedBlk (Point blk) (Tip blk))   e m bCS
     , cTxSubmissionCodec :: Codec (LocalTxSubmission (GenTx blk) (ApplyTxErr blk))  e m bTX
-    , cStateQueryCodec   :: Codec (LocalStateQuery blk (Point blk) (Query blk))     e m bSQ
+    , cStateQueryCodec   :: Stateful.Codec (LocalStateQuery blk (Point blk) (Query blk)) e LocalStateQuery.State m bSQ
     , cTxMonitorCodec    :: Codec (LocalTxMonitor (GenTxId blk) (GenTx blk) SlotNo) e m bTM
     }
 
@@ -293,7 +297,7 @@ identityCodecs :: (Monad m, BlockSupportsLedgerQuery blk)
                => Codecs blk CodecFailure m
                     (AnyMessage (ChainSync (Serialised blk) (Point blk) (Tip blk)))
                     (AnyMessage (LocalTxSubmission (GenTx blk) (ApplyTxErr blk)))
-                    (AnyMessage (LocalStateQuery blk (Point blk) (Query blk)))
+                    (Stateful.AnyMessage (LocalStateQuery blk (Point blk) (Query blk)) LocalStateQuery.State)
                     (AnyMessage (LocalTxMonitor (GenTxId blk) (GenTx blk) SlotNo))
 identityCodecs = Codecs {
       cChainSyncCodec    = codecChainSyncId
@@ -313,7 +317,7 @@ type Tracers m peer blk e =
 data Tracers' peer blk e f = Tracers {
       tChainSyncTracer    :: f (TraceLabelPeer peer (TraceSendRecv (ChainSync (Serialised blk) (Point blk) (Tip blk))))
     , tTxSubmissionTracer :: f (TraceLabelPeer peer (TraceSendRecv (LocalTxSubmission (GenTx blk) (ApplyTxErr blk))))
-    , tStateQueryTracer   :: f (TraceLabelPeer peer (TraceSendRecv (LocalStateQuery blk (Point blk) (Query blk))))
+    , tStateQueryTracer   :: f (TraceLabelPeer peer (Stateful.TraceSendRecv (LocalStateQuery blk (Point blk) (Query blk)) LocalStateQuery.State))
     , tTxMonitorTracer    :: f (TraceLabelPeer peer (TraceSendRecv (LocalTxMonitor (GenTxId blk) (GenTx blk) SlotNo)))
     }
 
@@ -433,10 +437,11 @@ mkApps kernel Tracers {..} Codecs {..} Handlers {..} =
       -> m ((), Maybe bSQ)
     aStateQueryServer them channel = do
       labelThisThread "LocalStateQueryServer"
-      runPeer
+      Stateful.runPeer
         (contramap (TraceLabelPeer them) tStateQueryTracer)
         cStateQueryCodec
         channel
+        LocalStateQuery.StateIdle
         (localStateQueryServerPeer hStateQueryServer)
 
     aTxMonitorServer

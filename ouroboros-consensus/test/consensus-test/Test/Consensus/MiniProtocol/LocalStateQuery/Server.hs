@@ -24,7 +24,7 @@ import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer (nullTracer)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Network.TypedProtocol.Proofs (connect)
+import           Network.TypedProtocol.Stateful.Proofs (connect)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
@@ -51,7 +51,7 @@ import           Ouroboros.Network.Protocol.LocalStateQuery.Examples
                      (localStateQueryClient)
 import           Ouroboros.Network.Protocol.LocalStateQuery.Server
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
-                     (AcquireFailure (..), Target (..))
+                     (AcquireFailure (..), State (..), Target (..))
 import           System.FS.API (HasFS, SomeHasFS (..))
 import           Test.QuickCheck hiding (Result)
 import           Test.Tasty
@@ -101,6 +101,7 @@ prop_localStateQueryServer k bt p (Positive (Small n)) = checkOutcome k chain ac
       server <- mkServer k chain
       (\(a, _, _) -> a) <$>
         connect
+          StateIdle
           (localStateQueryClientPeer client)
           (localStateQueryServerPeer server)
 
