@@ -581,7 +581,12 @@ mkSUT cfg initialLedger = do
   pure (SUT mempool t, CT.Tracer $ atomically . writeTChan trcrChan . Left)
 
 semantics ::
-     (MonadSTM m, LedgerSupportsMempool blk, ValidateEnvelope blk) =>
+     ( MonadSTM m
+     , LedgerSupportsMempool blk
+#if __GLASGOW_HASKELL__  > 810
+     , ValidateEnvelope blk
+#endif
+     ) =>
      CT.Tracer m String
   -> Command blk Concrete
   -> StrictTVar m (SUT m blk)
