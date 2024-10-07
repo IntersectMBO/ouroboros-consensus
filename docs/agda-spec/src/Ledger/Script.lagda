@@ -32,17 +32,19 @@ record P1ScriptStructure : Type₁ where
 record PlutusStructure : Type₁ where
   field Dataʰ : HashableSet
         Language PlutusScript CostModel Prices LangDepView ExUnits : Type
+        PlutusV1 PlutusV2 PlutusV3   : Language
         ⦃ ExUnit-CommutativeMonoid ⦄ : IsCommutativeMonoid' 0ℓ 0ℓ ExUnits
         ⦃ Hashable-PlutusScript    ⦄ : Hashable PlutusScript ScriptHash
+        ⦃ DecEq-Language           ⦄ : DecEq Language
         ⦃ DecEq-CostModel          ⦄ : DecEq CostModel
         ⦃ DecEq-LangDepView        ⦄ : DecEq LangDepView
+        ⦃ Show-CostModel           ⦄ : Show CostModel
 
   field  _≥ᵉ_              : ExUnits → ExUnits → Type
          ⦃ DecEq-ExUnits ⦄ : DecEq ExUnits
          ⦃ DecEQ-Prices  ⦄ : DecEq Prices
-         -- GetPair              : ExUnits → Type × Type
-         -- coinIsMonoidMorphism : GetPair Is ExUnit-CommutativeMonoid
-         --                          -CommutativeMonoid⟶ +-0-commutativeMonoid
+         ⦃ Show-ExUnits  ⦄ : Show ExUnits
+         ⦃ Show-Prices   ⦄ : Show Prices
 
   open HashableSet Dataʰ renaming (T to Data; THash to DataHash) public
 

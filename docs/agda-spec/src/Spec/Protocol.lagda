@@ -128,7 +128,7 @@ checkLeaderVal (certℕ , certℕprf) (f , posf , f≤1) σ =
 \begin{code}
          c = ln (1ℚ ℚ.- f)
        in
-         ℚ.1/ q < exp ((ℚ.- σ) ℚ.* c)
+         ℚ.1/ q ℚ.< exp ((ℚ.- σ) ℚ.* c)
 
 \end{code}
 \end{AgdaAlign}

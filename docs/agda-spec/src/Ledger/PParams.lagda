@@ -1,4 +1,4 @@
-\section{Protocol parameters}
+\section{Protocol Parameters}
 \label{sec:protocol-parameters}
 This section defines the adjustable protocol parameters of the Cardano ledger.
 These parameters are used in block validation and can affect various features of the system,
@@ -10,8 +10,10 @@ open import Data.Product.Properties
 open import Data.Nat.Properties using (m+1+n≢m)
 open import Data.Rational using (ℚ)
 open import Relation.Nullary.Decidable
+open import Data.List.Relation.Unary.Any using (Any; here; there)
 
 open import Tactic.Derive.DecEq
+open import Tactic.Derive.Show
 
 open import Ledger.Prelude
 open import Ledger.Crypto
@@ -33,12 +35,13 @@ The \AgdaRecord{Acnt} record has two fields, \AgdaField{treasury} and \AgdaField
 the \AgdaBound{acnt} field in \AgdaRecord{NewEpochState} keeps track of the total assets that
 remain in treasury and reserves.
 
-\begin{figure*}[h!]
+\begin{figure*}[ht]
 \begin{AgdaMultiCode}
 \begin{code}
 record Acnt : Type where
 \end{code}
 \begin{code}[hide]
+  constructor ⟦_,_⟧ᵃ
   field
 \end{code}
 \begin{code}
@@ -46,6 +49,10 @@ record Acnt : Type where
 
 ProtVer : Type
 ProtVer = ℕ × ℕ
+
+instance
+  Show-ProtVer : Show ProtVer
+  Show-ProtVer = Show-×
 
 data pvCanFollow : ProtVer → ProtVer → Type where
   canFollowMajor : pvCanFollow (m , n) (m + 1 , 0)
@@ -57,11 +64,15 @@ data pvCanFollow : ProtVer → ProtVer → Type where
 \end{figure*}
 \end{NoConway}
 
-\begin{figure*}[h!]
+\begin{figure*}[ht]
 \begin{AgdaMultiCode}
 \begin{code}
 data PParamGroup : Type where
-  NetworkGroup EconomicGroup TechnicalGroup GovernanceGroup SecurityGroup : PParamGroup
+  NetworkGroup     : PParamGroup
+  EconomicGroup    : PParamGroup
+  TechnicalGroup   : PParamGroup
+  GovernanceGroup  : PParamGroup
+  SecurityGroup    : PParamGroup
 
 record DrepThresholds : Type where
 \end{code}
@@ -86,53 +97,95 @@ record PParams : Type where
 \end{code}
 \emph{Network group}
 \begin{code}
-        maxBlockSize maxTxSize        : ℕ
-        maxHeaderSize maxValSize      : ℕ
+        maxBlockSize                  : ℕ
+        maxTxSize                     : ℕ
+        maxHeaderSize                 : ℕ
+        maxTxExUnits                  : ExUnits
+        maxBlockExUnits               : ExUnits
+        maxValSize                    : ℕ
         maxCollateralInputs           : ℕ
-        maxTxExUnits maxBlockExUnits  : ExUnits
 \end{code}
 \begin{code}[hide]
         pv                            : ProtVer -- retired, keep for now
 \end{code}
 \emph{Economic group}
 \begin{code}
-        a b                           : ℕ
+        a                             : ℕ
+        b                             : ℕ
         keyDeposit                    : Coin
         poolDeposit                   : Coin
         coinsPerUTxOByte              : Coin
-        minFeeRefScriptCoinsPerByte   : ℚ
         prices                        : Prices
+        minFeeRefScriptCoinsPerByte   : ℚ
+        maxRefScriptSizePerTx         : ℕ
+        maxRefScriptSizePerBlock      : ℕ
+        refScriptCostStride           : ℕ
+        refScriptCostMultiplier       : ℚ
 \end{code}
 \begin{code}[hide]
         minUTxOValue                  : Coin -- retired, keep for now
 \end{code}
 \emph{Technical group}
 \begin{code}
-        a0                            : ℚ
         Emax                          : Epoch
         nopt                          : ℕ
+        a0                            : ℚ
         collateralPercentage          : ℕ
+\end{code}
+\begin{code}[hide]
         -- costmdls                   : Language →/⇀ CostModel (Does not work with DecEq)
+\end{code}
+\begin{code}
         costmdls                      : CostModel
 \end{code}
 \emph{Governance group}
 \begin{code}
-        drepThresholds                : DrepThresholds
         poolThresholds                : PoolThresholds
+        drepThresholds                : DrepThresholds
+        ccMinSize                     : ℕ
+        ccMaxTermLength               : ℕ
         govActionLifetime             : ℕ
-        govActionDeposit drepDeposit  : Coin
+        govActionDeposit              : Coin
+        drepDeposit                   : Coin
         drepActivity                  : Epoch
-        ccMinSize ccMaxTermLength     : ℕ
-
-paramsWellFormed : PParams → Type
-paramsWellFormed pp =
-     0 ∉ fromList  ( maxBlockSize ∷ maxTxSize ∷ maxHeaderSize ∷ maxValSize
-                   ∷ minUTxOValue ∷ poolDeposit ∷ collateralPercentage ∷ ccMaxTermLength
-                   ∷ govActionLifetime ∷ govActionDeposit ∷ drepDeposit ∷ [] )
-  where open PParams pp
+\end{code}
+\end{AgdaMultiCode}
+\caption{Protocol parameter definitions}
+\label{fig:protocol-parameter-declarations}
+\end{figure*}
+\begin{figure*}
+\begin{AgdaMultiCode}
+\begin{code}
+positivePParams : PParams → List ℕ
+positivePParams pp =  ( maxBlockSize ∷ maxTxSize ∷ maxHeaderSize ∷ maxValSize ∷ refScriptCostStride
+                      ∷ coinsPerUTxOByte ∷ poolDeposit ∷ collateralPercentage ∷ ccMaxTermLength
+                      ∷ govActionLifetime ∷ govActionDeposit ∷ drepDeposit ∷ [] )
 \end{code}
 \begin{code}[hide]
+  where open PParams pp
+\end{code}
+\begin{code}
+
+paramsWellFormed : PParams → Type
+paramsWellFormed pp = 0 ∉ fromList (positivePParams pp)
+\end{code}
+\begin{code}[hide]
+paramsWF-elim : (pp : PParams) → paramsWellFormed pp → (n : ℕ) → n ∈ˡ (positivePParams pp) → n > 0
+paramsWF-elim pp pwf (suc n) x = z<s
+paramsWF-elim pp pwf 0 0∈ = ⊥-elim (pwf (to ∈-fromList 0∈))
+  where open Equivalence
+
+refScriptCostStride>0 : (pp : PParams) → paramsWellFormed pp → (PParams.refScriptCostStride pp) > 0
+refScriptCostStride>0 pp pwf = paramsWF-elim pp pwf (PParams.refScriptCostStride pp) (there (there (there (there (here refl)))))
+\end{code}
+\end{AgdaMultiCode}
+\caption{Protocol parameter well-formedness}
+\label{fig:protocol-parameter-well-formedness}
+\end{figure*}
+\begin{code}[hide]
 instance
+  Show-ℚ = Show _ ∋ record {M}
+    where import Data.Rational.Show as M
   unquoteDecl DecEq-DrepThresholds = derive-DecEq
     ((quote DrepThresholds , DecEq-DrepThresholds) ∷ [])
   unquoteDecl DecEq-PoolThresholds = derive-DecEq
@@ -141,6 +194,12 @@ instance
     ((quote PParams , DecEq-PParams) ∷ [])
   unquoteDecl DecEq-PParamGroup    = derive-DecEq
     ((quote PParamGroup , DecEq-PParamGroup) ∷ [])
+  unquoteDecl Show-DrepThresholds = derive-Show
+    ((quote DrepThresholds , Show-DrepThresholds) ∷ [])
+  unquoteDecl Show-PoolThresholds = derive-Show
+    ((quote PoolThresholds , Show-PoolThresholds) ∷ [])
+  unquoteDecl Show-PParams        = derive-Show
+    ((quote PParams , Show-PParams) ∷ [])
 
 module PParamsUpdate where
   record PParamsUpdate : Type where
@@ -154,8 +213,12 @@ module PParamsUpdate where
           keyDeposit                    : Maybe Coin
           poolDeposit                   : Maybe Coin
           coinsPerUTxOByte              : Maybe Coin
-          minFeeRefScriptCoinsPerByte   : Maybe ℚ
           prices                        : Maybe Prices
+          minFeeRefScriptCoinsPerByte   : Maybe ℚ
+          maxRefScriptSizePerTx         : Maybe ℕ
+          maxRefScriptSizePerBlock      : Maybe ℕ
+          refScriptCostStride           : Maybe ℕ
+          refScriptCostMultiplier       : Maybe ℚ
           minUTxOValue                  : Maybe Coin -- retired, keep for now
           a0                            : Maybe ℚ
           Emax                          : Maybe Epoch
@@ -172,7 +235,7 @@ module PParamsUpdate where
   paramsUpdateWellFormed : PParamsUpdate → Type
   paramsUpdateWellFormed ppu =
        just 0 ∉ fromList ( maxBlockSize ∷ maxTxSize ∷ maxHeaderSize ∷ maxValSize
-                         ∷ minUTxOValue ∷ poolDeposit ∷ collateralPercentage ∷ ccMaxTermLength
+                         ∷ coinsPerUTxOByte ∷ poolDeposit ∷ collateralPercentage ∷ ccMaxTermLength
                          ∷ govActionLifetime ∷ govActionDeposit ∷ drepDeposit ∷ [] )
     where open PParamsUpdate ppu
   
@@ -201,6 +264,10 @@ module PParamsUpdate where
       ∷ is-just poolDeposit
       ∷ is-just coinsPerUTxOByte
       ∷ is-just minFeeRefScriptCoinsPerByte
+      ∷ is-just maxRefScriptSizePerTx
+      ∷ is-just maxRefScriptSizePerBlock
+      ∷ is-just refScriptCostStride
+      ∷ is-just refScriptCostMultiplier
       ∷ is-just prices
       ∷ is-just minUTxOValue
       ∷ [])
@@ -271,6 +338,10 @@ module PParamsUpdate where
       ; poolDeposit                 = U.poolDeposit ?↗ P.poolDeposit
       ; coinsPerUTxOByte            = U.coinsPerUTxOByte ?↗ P.coinsPerUTxOByte
       ; minFeeRefScriptCoinsPerByte = U.minFeeRefScriptCoinsPerByte ?↗ P.minFeeRefScriptCoinsPerByte
+      ; maxRefScriptSizePerTx       = U.maxRefScriptSizePerTx ?↗ P.maxRefScriptSizePerTx
+      ; maxRefScriptSizePerBlock    = U.maxRefScriptSizePerBlock ?↗ P.maxRefScriptSizePerBlock
+      ; refScriptCostStride         = U.refScriptCostStride ?↗ P.refScriptCostStride
+      ; refScriptCostMultiplier     = U.refScriptCostMultiplier ?↗ P.refScriptCostMultiplier
       ; prices                      = U.prices ?↗ P.prices
       ; minUTxOValue                = U.minUTxOValue ?↗ P.minUTxOValue
       ; a0                          = U.a0 ?↗ P.a0
@@ -294,12 +365,7 @@ module PParamsUpdate where
   instance
     unquoteDecl DecEq-PParamsUpdate  = derive-DecEq
       ((quote PParamsUpdate , DecEq-PParamsUpdate) ∷ [])
-
 \end{code}
-\end{AgdaMultiCode}
-\caption{Protocol parameter declarations}
-\label{fig:protocol-parameter-declarations}
-\end{figure*}
 % Retiring ProtVer's documentation since ProtVer is retired.
 % \ProtVer represents the protocol version used in the Cardano ledger.
 % It is a pair of natural numbers, representing the major and minor version,
@@ -365,7 +431,7 @@ can be applied and it has a set of groups associated with it. An
 update is well formed if it has at least one group (i.e. if it updates
 something) and if it preserves well-formedness.
 
-\begin{figure*}[h!]
+\begin{figure*}[ht]
 \begin{AgdaMultiCode}
 \begin{code}[hide]
 record PParamsDiff : Type₁ where
@@ -399,4 +465,5 @@ record GovParams : Type₁ where
   field ppHashingScheme : isHashableSet PParams
   open isHashableSet ppHashingScheme renaming (THash to PPHash) public
   field ⦃ DecEq-UpdT ⦄ : DecEq PParamsUpdate
+--         ⦃ Show-UpdT ⦄ : Show PParamsUpdate
 \end{code}

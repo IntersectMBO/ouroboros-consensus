@@ -54,8 +54,13 @@ opaque
     DecEq-ℙ : ⦃ _ : DecEq A ⦄ → DecEq (ℙ A)
     DecEq-ℙ = L.Decˡ.DecEq-Set
 
-open import Axiom.Set.Rel th public
-  hiding (_∣'_; _∣^'_; dom; range)
+    Show-ℙ : ⦃ _ : Show A ⦄ → Show (ℙ A)
+    Show-ℙ .show = λ x → Show-finite .show (x , (finiteness x))
+
+import Axiom.Set.Rel
+module Rel = Axiom.Set.Rel th
+
+open Rel public hiding (_∣'_; _∣^'_; dom; range)
 
 open import Axiom.Set.Map th public
   renaming ( Map to infixr 1 _⇀_
@@ -76,7 +81,7 @@ module _ ⦃ _ : DecEq A ⦄ where
     renaming (_∣_ to _∣ʳ_; _∣_ᶜ to _∣ʳ_ᶜ)
 
   open Corestriction {A} ∈-sp public
-    hiding (_∣^_; _∣^_ᶜ) public
+    renaming (_∣^_ to _∣^ʳ_; _∣^_ᶜ to _∣^ʳ_ᶜ) public
 
   open Restrictionᵐ {A} ∈-sp public
   open Corestrictionᵐ {A} ∈-sp public
@@ -132,3 +137,7 @@ opaque
 
   singleton-≢-∅ : ∀ {a} {x : a} → ⦃ DecEq a ⦄ → singleton x ≢ ∅
   singleton-≢-∅ {x = x} ()
+
+aggregateBy : ⦃ DecEq A ⦄ → ⦃ DecEq B ⦄ → ⦃ DecEq C ⦄ → ⦃ IsCommutativeMonoid' 0ℓ 0ℓ C ⦄
+            → Rel A B → A ⇀ C → B ⇀ C
+aggregateBy R m = mapFromFun (λ b → ∑[ x ← m ∣ Rel.dom (R ∣^ʳ ❴ b ❵) ] x) (Rel.range R)

@@ -31,6 +31,9 @@ record BlockStructure : Type₁ where
     HashBBody  : Type -- hash of a block body
     VRFRes     : Type -- VRF result value
 \end{code}
+\begin{code}[hide]
+    ⦃ DecEq-HashHeader ⦄ : DecEq HashHeader
+\end{code}
 \emph{Concrete types}
 \begin{code}
   BlockNo = ℕ -- block number

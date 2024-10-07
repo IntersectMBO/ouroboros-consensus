@@ -289,6 +289,9 @@ mapPartial-uniq {f = f} prop {a} {b} {b'} p q =
 mapMaybeWithKeyᵐ : (A → B → Maybe B') → Map A B → Map A B'
 mapMaybeWithKeyᵐ f (rel , prop) = mapMaybeWithKey f rel , mapPartial-uniq {f = f} prop
 
+mapFromPartialFun : (A → Maybe B) → Set A → Map A B
+mapFromPartialFun f s = mapMaybeWithKeyᵐ (λ _ → f) (idMap s)
+
 module Restrictionᵐ (sp-∈ : spec-∈ A) where
   private module R = Restriction sp-∈
   open Unionᵐ sp-∈
