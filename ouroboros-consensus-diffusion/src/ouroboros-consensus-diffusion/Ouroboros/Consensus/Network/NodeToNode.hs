@@ -273,6 +273,7 @@ mkHandlers
               Right $ \api ->
                 txSubmissionInboundV2
                   (contramap (TraceLabelPeer peer) (Node.txInboundTracer tracers))
+                  (mapTxSubmissionMempoolReader txForgetValidated $ getMempoolReader getMempool)
                   (getMempoolWriter getMempool)
                   api
             DisableNewTxSubmissionProtocol ->
