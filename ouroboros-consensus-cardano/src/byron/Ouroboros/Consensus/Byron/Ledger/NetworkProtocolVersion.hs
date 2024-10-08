@@ -28,10 +28,7 @@ instance HasNetworkProtocolVersion ByronBlock where
   type BlockNodeToClientVersion ByronBlock = ByronNodeToClientVersion
 
 instance SupportedNetworkProtocolVersion ByronBlock where
-  supportedNodeToNodeVersions   _ = Map.fromList [
-        (NodeToNodeV_7, ByronNodeToNodeVersion1)
-      , (NodeToNodeV_8, ByronNodeToNodeVersion1)
-      ]
+  supportedNodeToNodeVersions   _ = Map.empty
   supportedNodeToClientVersions _ = Map.fromList [
         (NodeToClientV_9,  ByronNodeToClientVersion1)
       , (NodeToClientV_10, ByronNodeToClientVersion1)
