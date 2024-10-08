@@ -526,17 +526,8 @@ addReprocessLoEBlocks tracer (ChainSelQueue queue _mset) = do
 -- queue is empty.
 --
 -- We don't decrement the multiset here. See 'dismissChainSelMessage'.
-getChainSelMessage
-  :: (IOLike m, HasHeader blk)
-  => ChainSelQueue m blk -> m (ChainSelMessage m blk)
-getChainSelMessage (ChainSelQueue queue mset) = atomically $ do
-  message <- readTBQueue queue
-  case message of
-    ChainSelReprocessLoEBlocks          -> pure ()
-    ChainSelAddBlock
-      (BlockToAdd { blockToAdd = blk }) -> modifyTVar mset $
-        Map.update (\case 1 -> Nothing; x -> Just $! (x - 1)) (blockRealPoint blk)
-  pure message
+getChainSelMessage :: IOLike m => ChainSelQueue m blk -> m (ChainSelMessage m blk)
+getChainSelMessage (ChainSelQueue queue _mset) = atomically $ readTBQueue queue
 
 -- | When ChainSel is done processing a block from 'getChainSelMessage', it
 -- should call this.
