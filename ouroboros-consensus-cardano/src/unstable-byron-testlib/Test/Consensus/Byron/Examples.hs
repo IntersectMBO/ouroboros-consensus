@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -38,6 +39,8 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.Query
+import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.NodeId
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.PBFT
@@ -104,16 +107,17 @@ examples = Examples {
     , exampleQuery            = unlabelled exampleQuery
     , exampleResult           = unlabelled exampleResult
     , exampleAnnTip           = unlabelled exampleAnnTip
-    , exampleLedgerState      = unlabelled exampleLedgerState
+    , exampleLedgerState      = unlabelled $ forgetLedgerTables exampleLedgerState
     , exampleChainDepState    = unlabelled exampleChainDepState
-    , exampleExtLedgerState   = unlabelled exampleExtLedgerState
+    , exampleExtLedgerState   = unlabelled $ forgetLedgerTables exampleExtLedgerState
     , exampleSlotNo           = unlabelled exampleSlotNo
+    , exampleLedgerTables     = unlabelled emptyLedgerTables
     }
   where
     regularAndEBB :: a -> a -> Labelled a
     regularAndEBB regular ebb = labelled [("regular", regular), ("EBB", ebb)]
 
-    exampleQuery  = SomeSecond GetUpdateInterfaceState
+    exampleQuery  = SomeBlockQuery GetUpdateInterfaceState
     exampleResult = SomeResult GetUpdateInterfaceState exampleUPIState
 
 exampleBlock :: ByronBlock
@@ -122,7 +126,7 @@ exampleBlock =
       cfg
       (BlockNo 1)
       (SlotNo 1)
-      (applyChainTick ledgerConfig (SlotNo 1) ledgerStateAfterEBB)
+      (applyChainTick ledgerConfig (SlotNo 1) (forgetLedgerTables ledgerStateAfterEBB))
       [ValidatedByronTx exampleGenTx]
       (fakeMkIsLeader leaderCredentials)
   where
@@ -167,7 +171,7 @@ exampleChainDepState = S.fromList signers
   where
     signers = map (`S.PBftSigner` CC.exampleKeyHash) [1..4]
 
-emptyLedgerState :: LedgerState ByronBlock
+emptyLedgerState :: LedgerState ByronBlock ValuesMK
 emptyLedgerState = ByronLedgerState {
       byronLedgerTipBlockNo = Origin
     , byronLedgerState      = initState
@@ -178,22 +182,28 @@ emptyLedgerState = ByronLedgerState {
     Right initState = runExcept $
       CC.Block.initialChainValidationState ledgerConfig
 
-ledgerStateAfterEBB :: LedgerState ByronBlock
+ledgerStateAfterEBB :: LedgerState ByronBlock ValuesMK
 ledgerStateAfterEBB =
-      reapplyLedgerBlock ledgerConfig exampleEBB
+      applyDiffs emptyLedgerState
+    . reapplyLedgerBlock ledgerConfig exampleEBB
+    . applyDiffs emptyLedgerState
     . applyChainTick ledgerConfig (SlotNo 0)
+    . forgetLedgerTables
     $ emptyLedgerState
 
-exampleLedgerState :: LedgerState ByronBlock
+exampleLedgerState :: LedgerState ByronBlock ValuesMK
 exampleLedgerState =
-      reapplyLedgerBlock ledgerConfig exampleBlock
+      applyDiffs emptyLedgerState
+    . reapplyLedgerBlock ledgerConfig exampleBlock
+    . applyDiffs ledgerStateAfterEBB
     . applyChainTick ledgerConfig (SlotNo 1)
+    . forgetLedgerTables
     $ ledgerStateAfterEBB
 
 exampleHeaderState :: HeaderState ByronBlock
 exampleHeaderState = HeaderState (NotOrigin exampleAnnTip) exampleChainDepState
 
-exampleExtLedgerState :: ExtLedgerState ByronBlock
+exampleExtLedgerState :: ExtLedgerState ByronBlock ValuesMK
 exampleExtLedgerState = ExtLedgerState {
       ledgerState = exampleLedgerState
     , headerState = exampleHeaderState

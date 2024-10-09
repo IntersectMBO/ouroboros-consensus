@@ -47,7 +47,7 @@ forgeByronBlock ::
   => TopLevelConfig ByronBlock
   -> BlockNo                          -- ^ Current block number
   -> SlotNo                           -- ^ Current slot number
-  -> TickedLedgerState ByronBlock     -- ^ Current ledger
+  -> TickedLedgerState ByronBlock mk  -- ^ Current ledger
   -> [Validated (GenTx ByronBlock)]   -- ^ Txs to include
   -> PBftIsLeader PBftByronCrypto     -- ^ Leader proof ('IsLeader')
   -> ByronBlock
@@ -122,7 +122,7 @@ forgeRegularBlock ::
   => BlockConfig ByronBlock
   -> BlockNo                           -- ^ Current block number
   -> SlotNo                            -- ^ Current slot number
-  -> TickedLedgerState ByronBlock      -- ^ Current ledger
+  -> TickedLedgerState ByronBlock mk   -- ^ Current ledger
   -> [Validated (GenTx ByronBlock)]    -- ^ Txs to include
   -> PBftIsLeader PBftByronCrypto      -- ^ Leader proof ('IsLeader')
   -> ByronBlock

@@ -34,15 +34,15 @@ import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto,
 -------------------------------------------------------------------------------}
 
 forgeShelleyBlock ::
-     forall m era proto.
+     forall m era proto mk.
      (ShelleyCompatible proto era, Monad m)
   => HotKey (EraCrypto era) m
   -> CanBeLeader proto
   -> TopLevelConfig (ShelleyBlock proto era)
-  -> BlockNo                                      -- ^ Current block number
-  -> SlotNo                                       -- ^ Current slot number
-  -> TickedLedgerState (ShelleyBlock proto era)   -- ^ Current ledger
-  -> [Validated (GenTx (ShelleyBlock proto era))] -- ^ Txs to include
+  -> BlockNo                                       -- ^ Current block number
+  -> SlotNo                                        -- ^ Current slot number
+  -> TickedLedgerState (ShelleyBlock proto era) mk -- ^ Current ledger
+  -> [Validated (GenTx (ShelleyBlock proto era))]  -- ^ Txs to include
   -> IsLeader proto
   -> m (ShelleyBlock proto era)
 forgeShelleyBlock
