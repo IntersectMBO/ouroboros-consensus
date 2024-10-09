@@ -440,6 +440,9 @@ addBlockWaitWrittenToDisk chainDB punish blk = do
 -- block died, in that case 'FailedToAddBlock' will be returned.
 --
 -- Note: this is a partial function, only to support tests.
+--
+-- PRECONDITON: the block to be added must not be from the future. See 'addBlockAsync'.
+--
 addBlock :: IOLike m => ChainDB m blk -> InvalidBlockPunishment m -> blk -> m (AddBlockResult blk)
 addBlock chainDB punish blk = do
     promise <- addBlockAsync chainDB punish blk

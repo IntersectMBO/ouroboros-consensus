@@ -18,6 +18,8 @@ As of [#525](https://github.com/IntersectMBO/ouroboros-consensus/pull/525):
 Only then it is validated and the corresponding block body is downloaded and added to the `ChainDB` for chain selection, where it is not considered to be from the future due to the previous artificial delay.
 - When receiving a header from the far future, we immediately disconnect from the corresponding peer.
 
+In addition, we never forge atop a block from the future (which was the case even before [#525](https://github.com/IntersectMBO/ouroboros-consensus/pull/525).
+
 ### During initialization
 
 Since we now delay the headers until they are no longer from the **near future**, a caught up node will never contain blocks from the future in the `VolatileDB`, according to its own clock.

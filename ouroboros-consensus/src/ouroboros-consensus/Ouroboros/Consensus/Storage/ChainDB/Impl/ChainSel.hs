@@ -263,6 +263,15 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
 -- in-memory state, it can't get out of sync with the file system state. On
 -- the next startup, a correct in-memory state will be reconstructed from the
 -- file system state.
+--
+-- PRECONDITON: the block to be added must not be from the future.
+--
+-- The current code ensures that the two sources of blocks
+-- ('ChainSync' and forging) do not allow blocks from the future,
+-- however this is not guaranteed when during initialization if the
+-- VolatileDB contains blocks from the future. See:
+-- https://github.com/IntersectMBO/ouroboros-consensus/blob/main/docs/website/contents/for-developers/HandlingBlocksFromTheFuture.md#handling-blocks-from-the-future
+--
 addBlockAsync ::
      forall m blk. (IOLike m, HasHeader blk)
   => ChainDbEnv m blk
