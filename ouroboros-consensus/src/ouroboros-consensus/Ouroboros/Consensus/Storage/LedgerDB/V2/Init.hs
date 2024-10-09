@@ -17,7 +17,9 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.Init (mkInitDb) where
 import           Control.Monad (void)
 import           Control.Monad.Base
 import           Control.Tracer
+#if __GLASGOW_HASKELL__ < 910
 import           Data.Foldable
+#endif
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust)
@@ -61,7 +63,9 @@ mkInitDb :: forall m blk.
             , MonadBase m m
             , LedgerDbSerialiseConstraints blk
             , HasHardForkHistory blk
+#if __GLASGOW_HASKELL__ < 910
             , HasAnnTip blk
+#endif
             )
          => Complete LedgerDbArgs m blk
          -> Complete V2.LedgerDbFlavorArgs m

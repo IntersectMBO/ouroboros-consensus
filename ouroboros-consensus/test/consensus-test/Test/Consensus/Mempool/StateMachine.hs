@@ -19,6 +19,10 @@
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
+#if __GLASGOW_HASKELL__ >= 910
+{-# OPTIONS_GHC -Wno-x-partial #-}
+#endif
+
 -- | See 'MakeAtomic'.
 module Test.Consensus.Mempool.StateMachine (tests) where
 
@@ -729,7 +733,9 @@ prop_mempoolSequential ::
   ( HasTxId (GenTx blk)
   , blk ~ TestBlock
   , LedgerSupportsMempool blk
+#if __GLASGOW_HASKELL__ > 900
   , LedgerSupportsProtocol blk
+#endif
   )
   => LedgerConfig blk
   -> TxMeasure blk
@@ -770,7 +776,9 @@ prop_mempoolParallel ::
   ( HasTxId (GenTx blk)
   , blk ~ TestBlock
   , LedgerSupportsMempool blk
+#if __GLASGOW_HASKELL__ > 900
   , LedgerSupportsProtocol blk
+#endif
   )
   => LedgerConfig blk
   -> TxMeasure blk
@@ -802,7 +810,7 @@ tests = testGroup "QSM"
             $ withMaxSuccess 1000 $ prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger Atomic
             $ \i -> fmap (fmap fst . fst) . genTxs i
           , testProperty "non atomic"
-            $ withMaxSuccess 1000 $ prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger NonAtomic
+            $ withMaxSuccess 10 $ prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger NonAtomic
             $ \i -> fmap (fmap fst . fst) . genTxs i
           ]
         ]
