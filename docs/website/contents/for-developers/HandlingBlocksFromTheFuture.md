@@ -34,7 +34,7 @@ When initializing the `ChainDB` we do not check if blocks in the `VolatileDB` ar
 These problems can be solved by wiping out the `VolatileDB` in this situation.
 However, note this is an extremely rare situation: the clock of the node would have to have been set quite far in the future, as shutting down a node and restarting it already takes a significant amount of time.
 
-In the future we might delete blocks from the future from the `VolatileDB` to improve the user experience and robustness of the initialization logic.
+In the future we might delete blocks from the future from the `VolatileDB` to improve the user experience and robustness of the initialization logic. For now it does not seem worthwhile to handle that rare case. (Downstream/bidirectional peers will disconnect from such a node, but only until enough time has passed that its `VolatileDB` does not contain blocks from the future anymore.)
 
 # References
 
