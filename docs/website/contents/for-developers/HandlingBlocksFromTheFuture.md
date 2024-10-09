@@ -32,7 +32,7 @@ When initializing the `ChainDB` we do not check if blocks in the `VolatileDB` ar
 - The node [will not forge](https://github.com/IntersectMBO/ouroboros-consensus/blob/16fa8754be24f26eddef006c03ba945ea00e3566/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/NodeKernel.hs#L708) a block on top of a block from the future, thus missing its chance to lead in the slot.
 
 These problems can be solved by wiping out the `VolatileDB` in this situation.
-However, note this is an extremely rare situation: the clock of the node should be set quite far in the future, as shutting down a node and restarting it already takes a significant amount of time.
+However, note this is an extremely rare situation: the clock of the node would have to have been set quite far in the future, as shutting down a node and restarting it already takes a significant amount of time.
 
 In the future we might delete blocks from the future from the `VolatileDB` to improve the user experience and robustness of the initialization logic.
 
