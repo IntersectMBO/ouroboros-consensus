@@ -249,12 +249,12 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
 --
 -- When the queue is full, this function will still block.
 --
--- An important advantage of this asynchronous approach over a synchronous
--- approach is that it doesn't have the following disadvantage: when a thread
--- adding a block to the ChainDB is killed, which can happen when
--- disconnecting from the corresponding node, we might have written the block
--- to disk, but not updated the corresponding in-memory state (e.g., that of
--- the VolatileDB), leaving both out of sync.
+-- Compared to a synchronous approach, the asynchronous counterpart
+-- doesn't have the following disadvantage: when a thread adding a
+-- block to the ChainDB is killed, which can happen when disconnecting
+-- from the corresponding node, we might have written the block to
+-- disk, but not updated the corresponding in-memory state (e.g., that
+-- of the VolatileDB), leaving both out of sync.
 --
 -- With this asynchronous approach, threads adding blocks asynchronously can
 -- be killed without worries, the background thread processing the blocks
@@ -263,6 +263,10 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
 -- in-memory state, it can't get out of sync with the file system state. On
 -- the next startup, a correct in-memory state will be reconstructed from the
 -- file system state.
+--
+-- PRECONDITON: the block to be added must not be from the future.
+-- See 'Ouroboros.Consensus.Storage.ChainDB.API.addBlockAsync'.
+--
 addBlockAsync ::
      forall m blk. (IOLike m, HasHeader blk)
   => ChainDbEnv m blk

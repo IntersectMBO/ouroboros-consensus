@@ -134,6 +134,15 @@ data ChainDB m blk = ChainDB {
       -- use 'addBlock' to add the block synchronously.
       --
       -- NOTE: back pressure can be applied when overloaded.
+      --
+      -- PRECONDITON: the block to be added must not be from the future.
+      --
+      -- The current code ensures that the two sources of blocks
+      -- ('ChainSync' and forging) do not allow blocks from the future,
+      -- however this is not guaranteed when during initialization if the
+      -- VolatileDB contains blocks from the future. See:
+      -- https://github.com/IntersectMBO/ouroboros-consensus/blob/main/docs/website/contents/for-developers/HandlingBlocksFromTheFuture.md#handling-blocks-from-the-future
+      --
       addBlockAsync      :: InvalidBlockPunishment m -> blk -> m (AddBlockPromise m blk)
 
       -- | Trigger reprocessing of blocks postponed by the LoE.
@@ -440,6 +449,9 @@ addBlockWaitWrittenToDisk chainDB punish blk = do
 -- block died, in that case 'FailedToAddBlock' will be returned.
 --
 -- Note: this is a partial function, only to support tests.
+--
+-- PRECONDITION: the block to be added must not be from the future. See 'addBlockAsync'.
+--
 addBlock :: IOLike m => ChainDB m blk -> InvalidBlockPunishment m -> blk -> m (AddBlockResult blk)
 addBlock chainDB punish blk = do
     promise <- addBlockAsync chainDB punish blk
