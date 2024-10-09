@@ -678,7 +678,9 @@ shrinker _ _ = []
 sm ::
   ( LedgerSupportsMempool blk
   , IOLike m
-  , ValidateEnvelope blk
+#if __GLASGOW_HASKELL__  > 810
+     , ValidateEnvelope blk
+#endif
   )
   => StateMachine (Model blk) (Command blk) m (Response blk)
   -> CT.Tracer m String

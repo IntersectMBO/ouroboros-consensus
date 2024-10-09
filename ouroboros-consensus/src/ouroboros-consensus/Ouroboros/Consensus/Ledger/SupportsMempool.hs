@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -32,7 +33,9 @@ import           Control.Monad.Except
 import           Data.ByteString.Short (ShortByteString)
 import           Data.Coerce (coerce)
 import           Data.DerivingVia (InstantiatedAt (..))
+#if __GLASGOW_HASKELL__ < 910
 import           Data.Foldable
+#endif
 import           Data.Kind (Type)
 import           Data.Measure (Measure)
 import qualified Data.Measure
