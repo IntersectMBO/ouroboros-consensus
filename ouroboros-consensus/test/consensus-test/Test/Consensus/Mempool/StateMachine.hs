@@ -613,7 +613,14 @@ semantics trcr cmd r = do
       atomically $ do
        MockedLedgerDB ledgerTip oldReachableTips oldUnreachableTips <- readTVar t
        if getTip l' == getTip ledgerTip
-       then pure ()
+       then if keepsDB newReachable
+            then pure ()
+            else
+              let (newReachableTips, newUnreachableTips) = (Set.empty,
+                      Set.insert ledgerTip
+                    $ Set.union oldUnreachableTips oldReachableTips
+                   )
+              in writeTVar t (MockedLedgerDB l' newReachableTips newUnreachableTips)
        else
          let
            (newReachableTips, newUnreachableTips) =
