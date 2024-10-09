@@ -249,12 +249,12 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
 --
 -- When the queue is full, this function will still block.
 --
--- An important advantage of this asynchronous approach over a synchronous
--- approach is that it doesn't have the following disadvantage: when a thread
--- adding a block to the ChainDB is killed, which can happen when
--- disconnecting from the corresponding node, we might have written the block
--- to disk, but not updated the corresponding in-memory state (e.g., that of
--- the VolatileDB), leaving both out of sync.
+-- Compared to a synchronous approach, the asynchronous counterpart
+-- doesn't have the following disadvantage: when a thread adding a
+-- block to the ChainDB is killed, which can happen when disconnecting
+-- from the corresponding node, we might have written the block to
+-- disk, but not updated the corresponding in-memory state (e.g., that
+-- of the VolatileDB), leaving both out of sync.
 --
 -- With this asynchronous approach, threads adding blocks asynchronously can
 -- be killed without worries, the background thread processing the blocks
