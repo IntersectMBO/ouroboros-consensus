@@ -21,7 +21,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (
   ) where
 
 import           Control.Exception (assert)
-import           Control.Monad (forM, forM_, void, when)
+import           Control.Monad (forM, forM_, when)
 import           Control.Monad.Except ()
 import           Control.Monad.Trans.Class (lift)
 import           Control.Monad.Trans.State.Strict
@@ -334,7 +334,7 @@ chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = do
                 _ -> VolatileDB.getKnownBlockComponent cdbVolatileDB GetHeader hash
         loeHeaders <- lift (mapM getHeaderFromHash loeHashes)
         for_ loeHeaders $ \hdr ->
-          void (chainSelectionForBlock cdb BlockCache.empty hdr noPunishment)
+          chainSelectionForBlock cdb BlockCache.empty hdr noPunishment
     lift $ atomically $ putTMVar varProcessed ()
 
 chainSelSync cdb@CDB {..} (ChainSelAddBlock BlockToAdd { blockToAdd = b, .. }) = do
@@ -372,14 +372,7 @@ chainSelSync cdb@CDB {..} (ChainSelAddBlock BlockToAdd { blockToAdd = b, .. }) =
         lift $ encloseWith (traceEv >$< addBlockTracer) $
           VolatileDB.putBlock cdbVolatileDB b
         lift $ deliverWrittenToDisk True
-        -- REVIEW: would the tip returned by
-        --
-        -- > chainSelectionForBlock cdb (BlockCache.singleton b) hdr blockPunish
-        --
-        -- equal
-        --
-        -- > Query.getTipPoint cdb
-        void $ chainSelectionForBlock cdb (BlockCache.singleton b) hdr blockPunish
+        chainSelectionForBlock cdb (BlockCache.singleton b) hdr blockPunish
 
     newTip <- lift $ atomically $ Query.getTipPoint cdb
 
@@ -450,8 +443,6 @@ data ChainSwitchType = AddingBlocks | SwitchingToAFork
 --
 -- PRECONDITION: the slot of the block <= the current (wall) slot
 --
--- The new tip of the current chain is returned.
---
 -- = Constructing candidate fragments
 --
 -- The VolatileDB keeps a \"successors\" map in memory, telling us the hashes
@@ -489,7 +480,7 @@ chainSelectionForBlock ::
   -> BlockCache blk
   -> Header blk
   -> InvalidBlockPunishment m
-  -> Electric m (Point blk)
+  -> Electric m ()
 chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
     (invalid, succsOf', lookupBlockInfo, lookupBlockInfo', curChain, tipPoint, ledgerDB)
       <- atomically $ do
@@ -541,7 +532,6 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       -- block is older than @k@.
       | olderThanK hdr isEBB immBlockNo -> do
         traceWith addBlockTracer $ IgnoreBlockOlderThanK p
-        return tipPoint
 
       -- The block is invalid
       | Just (InvalidBlockInfo reason _) <- Map.lookup (headerHash hdr) invalid -> do
@@ -552,8 +542,6 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
         InvalidBlockPunishment.enact
           punish
           InvalidBlockPunishment.BlockItself
-
-        return tipPoint
 
       -- The block fits onto the end of our current chain
       | pointHash tipPoint == headerPrevHash hdr -> do
@@ -572,7 +560,6 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       | otherwise -> do
         -- ### Store but don't change the current chain
         traceWith addBlockTracer (StoreButDontChange p)
-        return tipPoint
 
     -- Note that we may have extended the chain, but have not trimmed it to
     -- @k@ blocks/headers. That is the job of the background thread, which
@@ -618,7 +605,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
          -- ^ The current chain and ledger
       -> LoE (AnchoredFragment (Header blk))
          -- ^ LoE fragment
-      -> m (Point blk)
+      -> m ()
     addToCurrentChain succsOf curChainAndLedger loeFrag = do
         -- Extensions of @B@ that do not exceed the LoE
         let suffixesAfterB = Paths.maximalCandidates succsOf Nothing (realPointToPoint p)
@@ -658,11 +645,11 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
         -- candidate will be a two-block (the EBB and the new block)
         -- extension of the current chain.
         case chainDiffs of
-          Nothing          -> return curTip
+          Nothing          -> return ()
           Just chainDiffs' ->
             chainSelection chainSelEnv chainDiffs' >>= \case
               Nothing ->
-                return curTip
+                return ()
               Just validatedChainDiff ->
                 switchTo
                   validatedChainDiff
@@ -671,7 +658,6 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       where
         chainSelEnv = mkChainSelEnv curChainAndLedger
         curChain    = VF.validatedFragment curChainAndLedger
-        curTip      = castPoint $ AF.headPoint curChain
         curHead     = AF.headAnchor curChain
 
     -- | Trim the given candidate fragment to respect the LoE.
@@ -730,7 +716,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
          -- ^ LoE fragment
       -> ChainDiff (HeaderFields blk)
          -- ^ Header fields for @(x,b]@
-      -> m (Point blk)
+      -> m ()
     switchToAFork succsOf lookupBlockInfo curChainAndLedger loeFrag diff = do
         -- We use a cache to avoid reading the headers from disk multiple
         -- times in case they're part of multiple forks that go through @b@.
@@ -765,11 +751,11 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
 
         case NE.nonEmpty chainDiffs of
           -- No candidates preferred over the current chain
-          Nothing          -> return curTip
+          Nothing          -> return ()
           Just chainDiffs' ->
             chainSelection chainSelEnv chainDiffs' >>= \case
               Nothing                 ->
-                return curTip
+                return ()
               Just validatedChainDiff ->
                 switchTo
                   validatedChainDiff
@@ -778,7 +764,6 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       where
         chainSelEnv = mkChainSelEnv curChainAndLedger
         curChain    = VF.validatedFragment curChainAndLedger
-        curTip      = castPoint $ AF.headPoint curChain
 
     mkSelectionChangedInfo ::
          AnchoredFragment (Header blk) -- ^ old chain
@@ -835,7 +820,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       -> StrictTVar m (StrictMaybe (Header blk))
          -- ^ Tentative header
       -> ChainSwitchType
-      -> m (Point blk)
+      -> m ()
     switchTo vChainDiff varTentativeHeader chainSwitchType = do
         traceWith addBlockTracer $
             ChangingSelection
@@ -891,7 +876,6 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
         whenJust (strictMaybeToMaybe prevTentativeHeader) $ traceWith $
           PipeliningEvent . OutdatedTentativeHeader >$< addBlockTracer
 
-        return $ castPoint $ AF.headPoint newChain
       where
         -- Given the current chain and the new chain as chain fragments, and the
         -- intersection point (an optimization, since it has already been
