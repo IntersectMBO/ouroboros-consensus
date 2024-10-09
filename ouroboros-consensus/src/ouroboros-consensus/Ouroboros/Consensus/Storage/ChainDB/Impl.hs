@@ -144,7 +144,6 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       traceWith tracer $ TraceOpenEvent OpenedLgrDB
 
       varInvalid      <- newTVarIO (WithFingerprint Map.empty (Fingerprint 0))
-      varFutureBlocks <- newTVarIO Map.empty
 
       let initChainSelTracer = contramap TraceInitChainSelEvent tracer
 
@@ -157,8 +156,6 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                           initChainSelTracer
                           (Args.cdbsTopLevelConfig cdbSpecificArgs)
                           varInvalid
-                          varFutureBlocks
-                          (Args.cdbsCheckInFuture cdbSpecificArgs)
                           (void initialLoE)
       traceWith initChainSelTracer InitialChainSelected
 
@@ -197,9 +194,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                     , cdbGcDelay         = Args.cdbsGcDelay cdbSpecificArgs
                     , cdbGcInterval      = Args.cdbsGcInterval cdbSpecificArgs
                     , cdbKillBgThreads   = varKillBgThreads
-                    , cdbCheckInFuture   = Args.cdbsCheckInFuture cdbSpecificArgs
                     , cdbChainSelQueue   = chainSelQueue
-                    , cdbFutureBlocks    = varFutureBlocks
                     , cdbLoE             = Args.cdbsLoE cdbSpecificArgs
                     }
       h <- fmap CDBHandle $ newTVarIO $ ChainDbOpen env
