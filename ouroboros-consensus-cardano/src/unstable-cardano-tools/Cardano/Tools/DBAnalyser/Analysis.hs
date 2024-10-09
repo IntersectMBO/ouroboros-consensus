@@ -38,7 +38,9 @@ import           Cardano.Tools.DBAnalyser.Types
 import           Control.Monad (unless, void, when)
 import           Control.Monad.Except (runExcept)
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
+#if __GLASGOW_HASKELL__ < 910
 import           Data.Foldable (foldl')
+#endif
 import           Data.Int (Int64)
 import           Data.List (intercalate)
 import qualified Data.Map.Strict as Map
