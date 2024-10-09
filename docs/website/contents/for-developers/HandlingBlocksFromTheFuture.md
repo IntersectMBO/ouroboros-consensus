@@ -22,8 +22,11 @@ Only then it is validated and the corresponding block body is downloaded and add
 ### During initialization
 
 Since we now delay the headers until they are no longer from the **near future**, a caught up node will never contain blocks from the future in the `VolatileDB`, according to its own clock.
-However, a caveat is that its clock might be set in the future relative to the rest of the nodes in the network.
+However, there are two caveats:
+- Clock rewinds can violate this property. In particular the node [will error](https://github.com/IntersectMBO/ouroboros-consensus/blob/4488656439e78c572c3dce0f7ed2cf98f61c65bb/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/BlockchainTime/WallClock/HardFork.hs#L138-L146) when we rewind the clock by more than [20 seconds](https://github.com/IntersectMBO/ouroboros-consensus/blob/4488656439e78c572c3dce0f7ed2cf98f61c65bb/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/Node.hs#L485).
+- The node clock might be set in the future relative to the rest of the nodes in the network.
 Thus, it is possible that after restarting a node with a clock set in the future, and setting the clock back so that the clock is now synchronized with the rest of the network, the blocks in the `VolatileDB` are regarded as blocks from the future.
+
 When initializing the `ChainDB` we do not check if blocks in the `VolatileDB` are from the future. This presents two inconveniences:
 
 These problems can be solved by wiping out the `VolatileDB` in this situation.
