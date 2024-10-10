@@ -163,18 +163,15 @@ mkShelleyLedgerConfig ::
   -> EpochInfo (Except HardFork.PastHorizonException)
   -> MaxMajorProtVer
   -> ShelleyLedgerConfig era
-mkShelleyLedgerConfig genesis transCtxt epochInfo mmpv =
+mkShelleyLedgerConfig genesis transCtxt epochInfo _mmpv =
     ShelleyLedgerConfig {
         shelleyLedgerCompactGenesis     = compactGenesis genesis
       , shelleyLedgerGlobals            =
           SL.mkShelleyGlobals
             genesis
             (hoistEpochInfo (left (Text.pack . show) . runExcept) epochInfo)
-            maxMajorPV
       , shelleyLedgerTranslationContext = transCtxt
       }
-  where
-    MaxMajorProtVer maxMajorPV = mmpv
 
 type instance LedgerCfg (LedgerState (ShelleyBlock proto era)) = ShelleyLedgerConfig era
 

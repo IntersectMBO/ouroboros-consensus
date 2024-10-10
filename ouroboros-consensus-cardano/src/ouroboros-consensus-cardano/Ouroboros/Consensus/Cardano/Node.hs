@@ -45,6 +45,7 @@ module Ouroboros.Consensus.Cardano.Node (
   , pattern CardanoNodeToClientVersion11
   , pattern CardanoNodeToClientVersion12
   , pattern CardanoNodeToClientVersion13
+  , pattern CardanoNodeToClientVersion14
   , pattern CardanoNodeToClientVersion2
   , pattern CardanoNodeToClientVersion3
   , pattern CardanoNodeToClientVersion4
@@ -474,16 +475,28 @@ pattern CardanoNodeToClientVersion13 =
       :* Nil
       )
 
+-- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo and Babbage
+-- and Conway eras enabled, using 'ShelleyNodeToClientVersion10' for the
+-- Shelley-based eras.
+pattern CardanoNodeToClientVersion14 :: BlockNodeToClientVersion (CardanoBlock c)
+pattern CardanoNodeToClientVersion14 =
+    HardForkNodeToClientEnabled
+      HardForkSpecificNodeToClientVersion3
+      (  EraNodeToClientEnabled ByronNodeToClientVersion1
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
+      :* Nil
+      )
+
 instance CardanoHardForkConstraints c
       => SupportedNetworkProtocolVersion (CardanoBlock c) where
   supportedNodeToNodeVersions _ = Map.fromList $
-      [ (NodeToNodeV_7, CardanoNodeToNodeVersion2)
-      , (NodeToNodeV_8, CardanoNodeToNodeVersion2)
-      , (NodeToNodeV_9, CardanoNodeToNodeVersion2)
-      , (NodeToNodeV_10, CardanoNodeToNodeVersion2)
-      , (NodeToNodeV_11, CardanoNodeToNodeVersion2)
-      , (NodeToNodeV_12, CardanoNodeToNodeVersion2)
-      , (NodeToNodeV_13, CardanoNodeToNodeVersion2)
+      [ (NodeToNodeV_13, CardanoNodeToNodeVersion2)
+      , (NodeToNodeV_14, CardanoNodeToNodeVersion2)
       ]
 
   supportedNodeToClientVersions _ = Map.fromList $
@@ -496,9 +509,10 @@ instance CardanoHardForkConstraints c
       , (NodeToClientV_15, CardanoNodeToClientVersion11)
       , (NodeToClientV_16, CardanoNodeToClientVersion12)
       , (NodeToClientV_17, CardanoNodeToClientVersion13)
+      , (NodeToClientV_18, CardanoNodeToClientVersion14)
       ]
 
-  latestReleasedNodeVersion _prx = (Just NodeToNodeV_13, Just NodeToClientV_17)
+  latestReleasedNodeVersion _prx = (Just NodeToNodeV_14, Just NodeToClientV_18)
 
 {-------------------------------------------------------------------------------
   ProtocolInfo

@@ -39,7 +39,7 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (MaxSlotNo)
 import           Ouroboros.Network.BlockFetch.ConsensusInterface
                      (BlockFetchConsensusInterface (..), FetchMode (..),
-                     FromConsensus (..), WhetherReceivingTentativeBlocks (..))
+                     FromConsensus (..))
 import           Ouroboros.Network.PeerSelection.Bootstrap (UseBootstrapPeers,
                      requiresBootstrapPeers)
 import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
@@ -197,12 +197,9 @@ mkBlockFetchConsensusInterface
     readFetchedBlocks = getIsFetched chainDB
 
     -- See 'mkAddFetchedBlock_'
-    mkAddFetchedBlock ::
-         WhetherReceivingTentativeBlocks
-      -> STM m (Point blk -> blk -> m ())
-    mkAddFetchedBlock enabledPipelining = do
-      pipeliningPunishment <- InvalidBlockPunishment.mkForDiffusionPipelining
-      pure $ mkAddFetchedBlock_ pipeliningPunishment enabledPipelining
+    mkAddFetchedBlock :: STM m (Point blk -> blk -> m ())
+    mkAddFetchedBlock =
+      mkAddFetchedBlock_ <$> InvalidBlockPunishment.mkForDiffusionPipelining
 
     -- Waits until the block has been written to disk, but not until chain
     -- selection has processed the block.
@@ -212,11 +209,10 @@ mkBlockFetchConsensusInterface
           -> InvalidBlockPunishment m
           -> InvalidBlockPunishment m
          )
-      -> WhetherReceivingTentativeBlocks
       -> Point blk
       -> blk
       -> m ()
-    mkAddFetchedBlock_ pipeliningPunishment enabledPipelining _pt blk = void $ do
+    mkAddFetchedBlock_ pipeliningPunishment _pt blk = void $ do
        disconnect <- InvalidBlockPunishment.mkPunishThisThread
        -- A BlockFetch peer can either send an entire range or none of the
        -- range; anything else will incur a disconnect. And in 'FetchDeadline'
@@ -245,10 +241,9 @@ mkBlockFetchConsensusInterface
              InvalidBlockPunishment.BlockPrefix -> disconnect
              -- when pipelining, we forgive an invalid block itself if it's
              -- better than the previous invalid block this peer delivered
-             InvalidBlockPunishment.BlockItself -> case enabledPipelining of
-               NotReceivingTentativeBlocks -> disconnect
-               ReceivingTentativeBlocks    ->
-                 pipeliningPunishment bcfg (getHeader blk) disconnect
+             InvalidBlockPunishment.BlockItself ->
+               pipeliningPunishment bcfg (getHeader blk) disconnect
+
        addBlockWaitWrittenToDisk
          chainDB
          punishment

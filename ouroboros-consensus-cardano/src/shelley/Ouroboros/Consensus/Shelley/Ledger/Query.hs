@@ -308,6 +308,9 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
     :: CG.ConwayEraGov era
     => BlockQuery (ShelleyBlock proto era) (CG.RatifyState era)
 
+  GetFuturePParams
+    :: BlockQuery (ShelleyBlock proto era) (Maybe (LC.PParams era))
+
   -- WARNING: please add new queries to the end of the list and stick to this
   -- order in all other pattern matches on queries. This helps in particular
   -- with the en/decoders, as we want the CBOR tags to be ordered.
@@ -468,6 +471,8 @@ instance (ShelleyCompatible proto era, ProtoCrypto proto ~ crypto)
           SL.queryProposals st gids
         GetRatifyState ->
           SL.queryRatifyState st
+        GetFuturePParams ->
+          SL.queryFuturePParams st
     where
       lcfg    = configLedger $ getExtLedgerCfg cfg
       globals = shelleyLedgerGlobals lcfg
@@ -627,6 +632,8 @@ instance SameDepIndex (BlockQuery (ShelleyBlock proto era)) where
   sameDepIndex GetProposals{} _ = Nothing
   sameDepIndex GetRatifyState{} GetRatifyState{} = Just Refl
   sameDepIndex GetRatifyState{} _ = Nothing
+  sameDepIndex GetFuturePParams{} GetFuturePParams{} = Just Refl
+  sameDepIndex GetFuturePParams{} _ = Nothing
 
 deriving instance Eq   (BlockQuery (ShelleyBlock proto era) result)
 deriving instance Show (BlockQuery (ShelleyBlock proto era) result)
@@ -666,6 +673,7 @@ instance ShelleyCompatible proto era => ShowQuery (BlockQuery (ShelleyBlock prot
       GetSPOStakeDistr {}                        -> show
       GetProposals {}                            -> show
       GetRatifyState {}                          -> show
+      GetFuturePParams {}                        -> show
 
 -- | Is the given query supported by the given 'ShelleyNodeToClientVersion'?
 querySupportedVersion :: BlockQuery (ShelleyBlock proto era) result -> ShelleyNodeToClientVersion -> Bool
@@ -703,18 +711,20 @@ querySupportedVersion = \case
     GetSPOStakeDistr {}                        -> (>= v8)
     GetProposals {}                            -> (>= v9)
     GetRatifyState {}                          -> (>= v9)
+    GetFuturePParams {}                        -> (>= v10)
     -- WARNING: when adding a new query, a new @ShelleyNodeToClientVersionX@
     -- must be added. See #2830 for a template on how to do this.
   where
-    v1 = ShelleyNodeToClientVersion1
-    v2 = ShelleyNodeToClientVersion2
-    v3 = ShelleyNodeToClientVersion3
-    v4 = ShelleyNodeToClientVersion4
-    v5 = ShelleyNodeToClientVersion5
-    v6 = ShelleyNodeToClientVersion6
-    v7 = ShelleyNodeToClientVersion7
-    v8 = ShelleyNodeToClientVersion8
-    v9 = ShelleyNodeToClientVersion9
+    v1  = ShelleyNodeToClientVersion1
+    v2  = ShelleyNodeToClientVersion2
+    v3  = ShelleyNodeToClientVersion3
+    v4  = ShelleyNodeToClientVersion4
+    v5  = ShelleyNodeToClientVersion5
+    v6  = ShelleyNodeToClientVersion6
+    v7  = ShelleyNodeToClientVersion7
+    v8  = ShelleyNodeToClientVersion8
+    v9  = ShelleyNodeToClientVersion9
+    v10 = ShelleyNodeToClientVersion10
 
 {-------------------------------------------------------------------------------
   Auxiliary
@@ -833,6 +843,8 @@ encodeShelleyQuery query = case query of
       CBOR.encodeListLen 2 <> CBOR.encodeWord8 31 <> LC.toEraCBOR @era gids
     GetRatifyState ->
       CBOR.encodeListLen 1 <> CBOR.encodeWord8 32
+    GetFuturePParams ->
+      CBOR.encodeListLen 1 <> CBOR.encodeWord8 33
 
 decodeShelleyQuery ::
      forall era proto. ShelleyBasedEra era
@@ -893,6 +905,7 @@ decodeShelleyQuery = do
       (2, 30) -> requireCG $ SomeSecond . GetSPOStakeDistr <$> LC.fromEraCBOR @era
       (2, 31) -> requireCG $ SomeSecond . GetProposals <$> LC.fromEraCBOR @era
       (1, 32) -> requireCG $ return $ SomeSecond GetRatifyState
+      (1, 33) -> requireCG $ return $ SomeSecond GetFuturePParams
       _       -> failmsg "invalid"
 
 encodeShelleyResult ::
@@ -933,6 +946,7 @@ encodeShelleyResult v query = case query of
     GetSPOStakeDistr {}                        -> LC.toEraCBOR @era
     GetProposals {}                            -> LC.toEraCBOR @era
     GetRatifyState {}                          -> LC.toEraCBOR @era
+    GetFuturePParams {}                        -> LC.toEraCBOR @era
 
 decodeShelleyResult ::
      forall proto era result. ShelleyCompatible proto era
@@ -973,6 +987,7 @@ decodeShelleyResult v query = case query of
     GetSPOStakeDistr {}                        -> LC.fromEraCBOR @era
     GetProposals {}                            -> LC.fromEraCBOR @era
     GetRatifyState {}                          -> LC.fromEraCBOR @era
+    GetFuturePParams {}                        -> LC.fromEraCBOR @era
 
 currentPParamsEnDecoding ::
      forall era s.
