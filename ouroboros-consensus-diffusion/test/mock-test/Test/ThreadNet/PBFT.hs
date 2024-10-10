@@ -58,7 +58,7 @@ instance Arbitrary TestSetup where
 
 tests :: TestTree
 tests = testGroup "PBFT" $
-    [ testProperty "simple convergence" $ \setup ->
+    [ testProperty "mock-pbft simple convergence" $ \setup ->
         prop_simple_pbft_convergence setup
     ]
 

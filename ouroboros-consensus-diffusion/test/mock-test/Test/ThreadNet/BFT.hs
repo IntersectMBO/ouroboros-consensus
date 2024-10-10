@@ -54,7 +54,7 @@ instance Arbitrary TestSetup where
 tests :: TestTree
 tests = testGroup "BFT" $
     [ roundtrip_all SimpleCodecConfig dictNestedHdr
-    , testProperty "simple convergence" $ \setup ->
+    , testProperty "mock-bft simple convergence" $ \setup ->
         prop_simple_bft_convergence setup
     ]
   where

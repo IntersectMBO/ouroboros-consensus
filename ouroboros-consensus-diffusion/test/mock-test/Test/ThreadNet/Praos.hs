@@ -93,7 +93,7 @@ instance Arbitrary TestSetup where
 
 tests :: TestTree
 tests = testGroup "Praos"
-    [ testProperty "simple convergence" $ \setup ->
+    [ testProperty "mock-praos simple convergence" $ \setup ->
         prop_simple_praos_convergence setup
     ]
 

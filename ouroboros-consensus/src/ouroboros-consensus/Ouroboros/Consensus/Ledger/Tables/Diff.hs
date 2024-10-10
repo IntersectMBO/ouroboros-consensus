@@ -210,7 +210,7 @@ toAntiDiff :: Diff k v -> Anti.Diff k v
 toAntiDiff (Diff d) = Anti.Diff (Map.map f d)
   where
     f (Insert v) = Anti.singletonInsert v
-    f Delete     = Anti.singletonDelete undefined
+    f Delete     = Anti.singletonDelete
 
 {-------------------------------------------------------------------------------
   Traversals and folds

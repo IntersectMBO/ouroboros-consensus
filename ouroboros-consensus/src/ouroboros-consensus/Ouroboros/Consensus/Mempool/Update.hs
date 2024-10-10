@@ -440,8 +440,8 @@ implSyncWithLedger mpEnv = do
             -- If the point is gone, resync
             pure (Resync, is)
   case res of
-    OK v -> pure v
-    Resync -> implSyncWithLedger mpEnv
+    OK v    -> pure v
+    Resync  -> implSyncWithLedger mpEnv
     Retry _ -> error "Impossible!"
   where
     MempoolEnv { mpEnvStateVar         = istate
