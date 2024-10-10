@@ -478,6 +478,7 @@ instance CardanoHardForkConstraints c
       => SupportedNetworkProtocolVersion (CardanoBlock c) where
   supportedNodeToNodeVersions _ = Map.fromList $
       [ (NodeToNodeV_13, CardanoNodeToNodeVersion2)
+      , (NodeToNodeV_14, CardanoNodeToNodeVersion2)
       ]
 
   supportedNodeToClientVersions _ = Map.fromList $
@@ -493,7 +494,7 @@ instance CardanoHardForkConstraints c
       , (NodeToClientV_18, CardanoNodeToClientVersion14)
       ]
 
-  latestReleasedNodeVersion _prx = (Just NodeToNodeV_13, Just NodeToClientV_17)
+  latestReleasedNodeVersion _prx = (Just NodeToNodeV_14, Just NodeToClientV_18)
 
 {-------------------------------------------------------------------------------
   ProtocolInfo
