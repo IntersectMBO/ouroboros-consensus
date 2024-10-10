@@ -49,7 +49,8 @@ instance HasNetworkProtocolVersion (ShelleyBlock proto era) where
 -- TODO #2668 make this era-specific
 instance SupportedNetworkProtocolVersion (ShelleyBlock proto era) where
   supportedNodeToNodeVersions   _ = Map.fromList [
-      (NodeToNodeV_13, ShelleyNodeToNodeVersion1)
+        (NodeToNodeV_13, ShelleyNodeToNodeVersion1)
+      , (NodeToNodeV_14, ShelleyNodeToNodeVersion1)
       ]
   supportedNodeToClientVersions _ = Map.fromList [
         (NodeToClientV_9,  ShelleyNodeToClientVersion5)
