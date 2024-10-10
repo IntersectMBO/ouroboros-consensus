@@ -69,7 +69,7 @@ instance Arbitrary TestSetup where
 
 tests :: TestTree
 tests = testGroup "LeaderSchedule"
-    [ testProperty "simple convergence" $ \setup ->
+    [ testProperty "mock-leadersch simple convergence" $ \setup ->
         prop_simple_leader_schedule_convergence setup
     ]
 
