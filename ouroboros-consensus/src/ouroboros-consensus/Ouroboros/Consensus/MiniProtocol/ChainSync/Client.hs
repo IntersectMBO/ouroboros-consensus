@@ -133,11 +133,8 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import           Ouroboros.Network.Block (Tip (..), getTipBlockNo)
-import           Ouroboros.Network.BlockFetch.ConsensusInterface
-                     (WhetherReceivingTentativeBlocks (..))
 import           Ouroboros.Network.ControlMessage (ControlMessage (..),
                      ControlMessageSTM)
-import           Ouroboros.Network.NodeToNode.Version (isPipeliningEnabled)
 import           Ouroboros.Network.PeerSelection.PeerMetric.Type
                      (HeaderMetricsTracer)
 import           Ouroboros.Network.Protocol.ChainSync.ClientPipelined
@@ -1591,7 +1588,7 @@ checkKnownInvalid ::
   -> InternalEnv m blk arrival judgment
   -> Header blk
   -> m ()
-checkKnownInvalid cfgEnv dynEnv intEnv hdr = case scrutinee of
+checkKnownInvalid cfgEnv dynEnv intEnv hdr = case headerPrevHash hdr of
     GenesisHash    -> return ()
     BlockHash hash -> do
         isInvalidBlock <- atomically $ forgetFingerprint <$> getIsInvalidBlock
@@ -1607,19 +1604,12 @@ checkKnownInvalid cfgEnv dynEnv intEnv hdr = case scrutinee of
       } = chainDbView
 
     DynamicEnv {
-        version
+        version = _version
       } = dynEnv
 
     InternalEnv {
         disconnect
       } = intEnv
-
-    -- When pipelining, the tip of the candidate is forgiven for being an
-    -- invalid block, but not if it extends any invalid blocks.
-    scrutinee = case isPipeliningEnabled version of
-        NotReceivingTentativeBlocks -> BlockHash (headerHash hdr)
-        -- Disconnect if the parent block of `hdr` is known to be invalid.
-        ReceivingTentativeBlocks    -> headerPrevHash hdr
 
 -- | Manage the relationships between the header's slot, arrival time, and
 -- intersection with the local selection
@@ -1988,7 +1978,7 @@ invalidBlockRejector ::
   -> Watcher m
          (WithFingerprint (HeaderHash blk -> Maybe (InvalidBlockReason blk)))
          Fingerprint
-invalidBlockRejector tracer version getIsInvalidBlock getCandidate =
+invalidBlockRejector tracer _version getIsInvalidBlock getCandidate =
     Watcher {
         wFingerprint = getFingerprint
       , wInitial     = Nothing
@@ -2010,10 +2000,7 @@ invalidBlockRejector tracer version getIsInvalidBlock getCandidate =
         mapM_ (uncurry disconnect)
           $ firstJust
                 (\hdr -> (hdr,) <$> isInvalidBlock (headerHash hdr))
-          $ (   case isPipeliningEnabled version of
-                    ReceivingTentativeBlocks    -> drop 1
-                    NotReceivingTentativeBlocks -> id
-            )
+          $ drop 1
           $ AF.toNewestFirst theirFrag
 
     disconnect :: Header blk -> InvalidBlockReason blk -> m ()

@@ -85,7 +85,6 @@ import           Ouroboros.Network.Driver.Limits
 import           Ouroboros.Network.KeepAlive
 import           Ouroboros.Network.Mux
 import           Ouroboros.Network.NodeToNode
-import           Ouroboros.Network.NodeToNode.Version (isPipeliningEnabled)
 import           Ouroboros.Network.PeerSelection.PeerMetric.Type
                      (FetchedMetricsTracer, ReportPeerMetrics (..))
 import qualified Ouroboros.Network.PeerSelection.PeerSharing as PSTypes
@@ -612,10 +611,10 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
       bracketWithPrivateRegistry
         (chainSyncHeaderServerFollower
            (getChainDB kernel)
-           ( case isPipeliningEnabled version of
-              ReceivingTentativeBlocks    -> ChainDB.TentativeChain
-              NotReceivingTentativeBlocks -> ChainDB.SelectedChain
-           )
+           ChainDB.TentativeChain
+           -- ^ isPipeliningenabled was removed from o-n-api,
+           -- can we remove this argument, or eliminate the type
+           -- itself unless it is used for other purposes, eg. tests?
         )
         ChainDB.followerClose
         $ \flr ->
@@ -640,7 +639,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
                               channel = do
       labelThisThread "BlockFetchClient"
       bracketFetchClient (getFetchClientRegistry kernel) version
-                         isPipeliningEnabled them $ \clientCtx -> do
+                         them $ \clientCtx -> do
         ((), trailing) <- runPipelinedPeerWithLimits
           (contramap (TraceLabelPeer them) tBlockFetchTracer)
           (cBlockFetchCodec (mkCodecs version))
