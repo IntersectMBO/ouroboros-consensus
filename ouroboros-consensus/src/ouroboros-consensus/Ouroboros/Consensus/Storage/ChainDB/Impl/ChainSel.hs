@@ -21,7 +21,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (
   ) where
 
 import           Control.Exception (assert)
-import           Control.Monad (forM, forM_, void, when)
+import           Control.Monad (forM, forM_, when)
 import           Control.Monad.Except ()
 import           Control.Monad.Trans.Class (lift)
 import           Control.Monad.Trans.State.Strict
@@ -343,7 +343,7 @@ chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = do
                 _ -> VolatileDB.getKnownBlockComponent cdbVolatileDB GetHeader hash
         loeHeaders <- lift (mapM getHeaderFromHash loeHashes)
         for_ loeHeaders $ \hdr ->
-          void (chainSelectionForBlock cdb BlockCache.empty hdr noPunishment)
+          chainSelectionForBlock cdb BlockCache.empty hdr noPunishment
     lift $ atomically $ putTMVar varProcessed ()
 
 chainSelSync cdb@CDB {..} (ChainSelAddBlock BlockToAdd { blockToAdd = b, .. }) = do
@@ -381,7 +381,7 @@ chainSelSync cdb@CDB {..} (ChainSelAddBlock BlockToAdd { blockToAdd = b, .. }) =
         lift $ encloseWith (traceEv >$< addBlockTracer) $
           VolatileDB.putBlock cdbVolatileDB b
         lift $ deliverWrittenToDisk True
-        void $ chainSelectionForBlock cdb (BlockCache.singleton b) hdr blockPunish
+        chainSelectionForBlock cdb (BlockCache.singleton b) hdr blockPunish
 
     newTip <- lift $ atomically $ Query.getTipPoint cdb
 
