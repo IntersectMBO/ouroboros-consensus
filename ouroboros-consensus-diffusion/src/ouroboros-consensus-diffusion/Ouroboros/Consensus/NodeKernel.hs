@@ -162,6 +162,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
 
     , getOutboundConnectionsState
                              :: StrictTVar m OutboundConnectionsState
+    , getPipeliningSupport   :: PipeliningSupport
     }
 
 -- | Arguments required when initializing a node
@@ -187,6 +188,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs {
     , publicPeerSelectionStateVar
                               :: StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
     , genesisArgs             :: GenesisNodeKernelArgs m blk
+    , getPipeliningSupport    :: PipeliningSupport
     }
 
 initNodeKernel ::
@@ -207,6 +209,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                    , peerSharingRng
                                    , publicPeerSelectionStateVar
                                    , genesisArgs
+                                   , getPipeliningSupport
                                    } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [BlockForging m blk] <- LazySTM.newTMVarIO []
@@ -325,6 +328,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
       , getPeerSharingAPI       = peerSharingAPI
       , getOutboundConnectionsState
                                 = varOutboundConnectionsState
+      , getPipeliningSupport
       }
   where
     blockForgingController :: InternalState m remotePeer localPeer blk
@@ -370,6 +374,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
                                  , blockFetchSize, btime
                                  , mempoolCapacityOverride
                                  , gsmArgs, getUseBootstrapPeers
+                                 , getPipeliningSupport
                                  } = do
     varGsmState <- do
       let GsmNodeKernelArgs {..} = gsmArgs
@@ -405,6 +410,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
           blockFetchSize
           slotForgeTimeOracle
           readFetchMode
+          getPipeliningSupport
 
     peerSharingRegistry <- newPeerSharingRegistry
 

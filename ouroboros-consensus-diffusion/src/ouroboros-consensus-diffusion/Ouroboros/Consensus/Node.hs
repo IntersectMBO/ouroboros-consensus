@@ -517,6 +517,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                     rnGetUseBootstrapPeers
                     llrnPublicPeerSelectionStateVar
                     genesisArgs
+                    PipeliningOn -- ^ TODO make it configurable
           nodeKernel <- initNodeKernel nodeKernelArgs
           rnNodeKernelHook registry nodeKernel
 
@@ -761,6 +762,7 @@ mkNodeKernelArgs ::
   -> STM m UseBootstrapPeers
   -> StrictSTM.StrictTVar m (Diffusion.PublicPeerSelectionState addrNTN)
   -> GenesisNodeKernelArgs m blk
+  -> PipeliningSupport
   -> m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
   registry
@@ -779,6 +781,7 @@ mkNodeKernelArgs
   getUseBootstrapPeers
   publicPeerSelectionStateVar
   genesisArgs
+  getPipeliningSupport
   = do
     let (kaRng, psRng) = split rng
     return NodeKernelArgs
@@ -805,6 +808,7 @@ mkNodeKernelArgs
       , peerSharingRng = psRng
       , publicPeerSelectionStateVar
       , genesisArgs
+      , getPipeliningSupport
       }
 
 -- | We allow the user running the node to customise the 'NodeKernelArgs'

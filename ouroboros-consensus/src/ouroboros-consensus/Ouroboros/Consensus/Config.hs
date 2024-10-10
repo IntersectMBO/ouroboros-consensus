@@ -15,6 +15,7 @@ module Ouroboros.Consensus.Config (
   , CheckpointsMap (..)
   , castCheckpointsMap
   , emptyCheckpointsMap
+  , PipeliningSupport (..)
     -- ** Derived extraction functions
   , configBlock
   , configCodec
@@ -69,6 +70,12 @@ newtype CheckpointsMap blk = CheckpointsMap {
       unCheckpointsMap :: Map BlockNo (HeaderHash blk)
     }
   deriving (Generic, Monoid, Semigroup)
+
+-- | Configure consensus layer how to handle some cases of invalid data
+-- in the processing of mini protocol communication in the presence of
+-- pipelining
+--
+data PipeliningSupport = PipeliningOn | PipeliningOff
 
 instance ( NoThunks (HeaderHash    blk)
          ) => NoThunks (CheckpointsMap blk)

@@ -53,6 +53,7 @@ import           Data.Map.Strict (Map)
 import           Data.Void (Void)
 import           Network.TypedProtocol.Codec
 import           Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config (PipeliningSupport(..))
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
@@ -85,7 +86,6 @@ import           Ouroboros.Network.Driver.Limits
 import           Ouroboros.Network.KeepAlive
 import           Ouroboros.Network.Mux
 import           Ouroboros.Network.NodeToNode
-import           Ouroboros.Network.NodeToNode.Version (isPipeliningEnabled)
 import           Ouroboros.Network.PeerSelection.PeerMetric.Type
                      (FetchedMetricsTracer, ReportPeerMetrics (..))
 import qualified Ouroboros.Network.PeerSelection.PeerSharing as PSTypes
@@ -121,6 +121,7 @@ import           Ouroboros.Network.TxSubmission.Inbound
 import           Ouroboros.Network.TxSubmission.Mempool.Reader
                      (mapTxSubmissionMempoolReader)
 import           Ouroboros.Network.TxSubmission.Outbound
+
 
 {-------------------------------------------------------------------------------
   Handlers
@@ -211,7 +212,7 @@ mkHandlers ::
   -> NodeKernel     m addrNTN addrNTC blk
   -> Handlers       m addrNTN           blk
 mkHandlers
-      NodeKernelArgs {chainSyncFutureCheck, chainSyncHistoricityCheck, keepAliveRng, miniProtocolParameters}
+      NodeKernelArgs {chainSyncFutureCheck, chainSyncHistoricityCheck, keepAliveRng, miniProtocolParameters, getPipeliningSupport}
       NodeKernel {getChainDB, getMempool, getTopLevelConfig, getTracers = tracers, getPeerSharingAPI, getGsmState} =
     Handlers {
         hChainSyncClient = \peer _isBigLedgerpeer dynEnv ->
@@ -227,6 +228,7 @@ mkHandlers
                   (chainSyncPipeliningHighMark miniProtocolParameters)
               , CsClient.tracer                  =
                   contramap (TraceLabelPeer peer) (Node.chainSyncClientTracer tracers)
+              , CsClient.getPipeliningSupport    = getPipeliningSupport
               }
             dynEnv
       , hChainSyncServer = \peer _version ->
@@ -548,6 +550,8 @@ mkApps ::
 mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucketConfig csjConfig ReportPeerMetrics {..} Handlers {..} =
     Apps {..}
   where
+    NodeKernel { getPipeliningSupport } = kernel
+
     aChainSyncClient
       :: NodeToNodeVersion
       -> ExpandedInitiatorContext addrNTN m
@@ -576,6 +580,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
             version
             lopBucketConfig
             csjConfig
+            getPipeliningSupport
             $ \csState -> do
               chainSyncTimeout <- genChainSyncTimeout
               (r, trailing) <-
@@ -612,9 +617,9 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
       bracketWithPrivateRegistry
         (chainSyncHeaderServerFollower
            (getChainDB kernel)
-           ( case isPipeliningEnabled version of
-              ReceivingTentativeBlocks    -> ChainDB.TentativeChain
-              NotReceivingTentativeBlocks -> ChainDB.SelectedChain
+           ( case getPipeliningSupport of
+              PipeliningOn  -> ChainDB.TentativeChain
+              PipeliningOff -> ChainDB.SelectedChain
            )
         )
         ChainDB.followerClose
@@ -640,7 +645,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
                               channel = do
       labelThisThread "BlockFetchClient"
       bracketFetchClient (getFetchClientRegistry kernel) version
-                         isPipeliningEnabled them $ \clientCtx -> do
+                         them $ \clientCtx -> do
         ((), trailing) <- runPipelinedPeerWithLimits
           (contramap (TraceLabelPeer them) tBlockFetchTracer)
           (cBlockFetchCodec (mkCodecs version))

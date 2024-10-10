@@ -39,7 +39,7 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (MaxSlotNo)
 import           Ouroboros.Network.BlockFetch.ConsensusInterface
                      (BlockFetchConsensusInterface (..), FetchMode (..),
-                     FromConsensus (..), WhetherReceivingTentativeBlocks (..))
+                     FromConsensus (..))
 import           Ouroboros.Network.PeerSelection.Bootstrap (UseBootstrapPeers,
                      requiresBootstrapPeers)
 import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
@@ -179,9 +179,10 @@ mkBlockFetchConsensusInterface ::
      -- ^ Slot forge time, see 'headerForgeUTCTime' and 'blockForgeUTCTime'.
   -> STM m FetchMode
      -- ^ See 'readFetchMode'.
+  -> PipeliningSupport
   -> BlockFetchConsensusInterface peer (Header blk) blk m
 mkBlockFetchConsensusInterface
-  bcfg chainDB getCandidates blockFetchSize slotForgeTime readFetchMode =
+  bcfg chainDB getCandidates blockFetchSize slotForgeTime readFetchMode pipelining =
     BlockFetchConsensusInterface {..}
   where
     blockMatchesHeader :: Header blk -> blk -> Bool
@@ -198,11 +199,10 @@ mkBlockFetchConsensusInterface
 
     -- See 'mkAddFetchedBlock_'
     mkAddFetchedBlock ::
-         WhetherReceivingTentativeBlocks
-      -> STM m (Point blk -> blk -> m ())
-    mkAddFetchedBlock enabledPipelining = do
+      STM m (Point blk -> blk -> m ())
+    mkAddFetchedBlock = do
       pipeliningPunishment <- InvalidBlockPunishment.mkForDiffusionPipelining
-      pure $ mkAddFetchedBlock_ pipeliningPunishment enabledPipelining
+      pure $ mkAddFetchedBlock_ pipeliningPunishment pipelining
 
     -- Waits until the block has been written to disk, but not until chain
     -- selection has processed the block.
@@ -212,7 +212,7 @@ mkBlockFetchConsensusInterface
           -> InvalidBlockPunishment m
           -> InvalidBlockPunishment m
          )
-      -> WhetherReceivingTentativeBlocks
+      -> PipeliningSupport
       -> Point blk
       -> blk
       -> m ()
@@ -246,8 +246,8 @@ mkBlockFetchConsensusInterface
              -- when pipelining, we forgive an invalid block itself if it's
              -- better than the previous invalid block this peer delivered
              InvalidBlockPunishment.BlockItself -> case enabledPipelining of
-               NotReceivingTentativeBlocks -> disconnect
-               ReceivingTentativeBlocks    ->
+               PipeliningOff -> disconnect
+               PipeliningOn  ->
                  pipeliningPunishment bcfg (getHeader blk) disconnect
        addBlockWaitWrittenToDisk
          chainDB
