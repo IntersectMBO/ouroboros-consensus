@@ -24,13 +24,14 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Forecast (OutsideForecastRange)
 import           Ouroboros.Consensus.Genesis.Governor (TraceGDDEvent)
+import           Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Mempool (MempoolSize, TraceEventMempool)
 import           Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
                      (TraceBlockFetchServerEvent)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
-                     (InvalidBlockReason, TraceChainSyncClientEvent)
+                     (TraceChainSyncClientEvent)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Server
                      (TraceChainSyncServerEvent)
 import           Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
@@ -343,7 +344,7 @@ data TraceForgeEvent blk
     -- | We forged a block that is invalid according to the ledger in the
     -- ChainDB. This means there is an inconsistency between the mempool
     -- validation and the ledger validation. This is a serious error!
-  | TraceForgedInvalidBlock SlotNo blk (InvalidBlockReason blk)
+  | TraceForgedInvalidBlock SlotNo blk (ExtValidationError blk)
 
     -- | We adopted the block we produced, we also trace the transactions
     -- that were adopted.

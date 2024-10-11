@@ -36,7 +36,7 @@ import           Ouroboros.Consensus.Ledger.Abstract (IsLedger, LedgerState)
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.API (BlockComponent (..),
-                     ChainDbFailure (..), InvalidBlockReason)
+                     ChainDbFailure (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB as LgrDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
@@ -177,7 +177,7 @@ getIsFetched CDB{..} = basedOnHash <$> VolatileDB.getIsMember cdbVolatileDB
 getIsInvalidBlock ::
      forall m blk. (IOLike m, HasHeader blk)
   => ChainDbEnv m blk
-  -> STM m (WithFingerprint (HeaderHash blk -> Maybe (InvalidBlockReason blk)))
+  -> STM m (WithFingerprint (HeaderHash blk -> Maybe (ExtValidationError blk)))
 getIsInvalidBlock CDB{..} =
   fmap (fmap (fmap invalidBlockReason) . flip Map.lookup) <$> readTVar cdbInvalid
 
