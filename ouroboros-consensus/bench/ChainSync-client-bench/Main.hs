@@ -132,6 +132,8 @@ oneBenchRun
               , CSClient.historicityCheck        = HistoricityCheck.noCheck
               , CSClient.mkPipelineDecision0     =
                     pipelineDecisionLowHighMark 10 20
+              , CSClient.getDiffusionPipeliningSupport =
+                    DiffusionPipeliningOn
               }
             CSClient.DynamicEnv {
                 CSClient.version             = maxBound :: NodeToNodeVersion

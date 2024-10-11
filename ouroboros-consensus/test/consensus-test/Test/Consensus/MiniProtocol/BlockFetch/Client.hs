@@ -59,8 +59,7 @@ import           Ouroboros.Network.BlockFetch.Client (blockFetchClient)
 import           Ouroboros.Network.ControlMessage (ControlMessage (..))
 import           Ouroboros.Network.Mock.Chain (Chain)
 import qualified Ouroboros.Network.Mock.Chain as Chain
-import           Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion,
-                     isPipeliningEnabled)
+import           Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion)
 import           Ouroboros.Network.Protocol.BlockFetch.Codec (codecBlockFetchId)
 import           Ouroboros.Network.Protocol.BlockFetch.Server
                      (BlockFetchBlockSender (SendMsgNoBlocks, SendMsgStartBatch),
@@ -151,7 +150,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
         blockFetchCfg
 
     let runBlockFetchClient peerId =
-          bracketFetchClient fetchClientRegistry ntnVersion isPipeliningEnabled peerId \clientCtx -> do
+          bracketFetchClient fetchClientRegistry ntnVersion peerId \clientCtx -> do
             let bfClient = blockFetchClient
                     ntnVersion
                     (readTVar varControlMessage)
@@ -285,6 +284,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
           (\_hdr -> 1000) -- header size, only used for peer prioritization
           slotForgeTime
           (pure blockFetchMode)
+          blockFetchPipelining
       where
         -- Bogus implementation; this is fine as this is only used for
         -- enriching tracing information ATM.
@@ -320,10 +320,11 @@ ntnVersion = maxBound
 data BlockFetchClientTestSetup = BlockFetchClientTestSetup {
     -- | A 'Schedule' of 'ChainUpdate's for every peer. This emulates
     -- the candidate fragments provided by the ChainSync client.
-    peerUpdates    :: Map PeerId (Schedule ChainUpdate)
+    peerUpdates          :: Map PeerId (Schedule ChainUpdate)
     -- | BlockFetch 'FetchMode'
-  , blockFetchMode :: FetchMode
-  , blockFetchCfg  :: BlockFetchConfiguration
+  , blockFetchMode       :: FetchMode
+  , blockFetchCfg        :: BlockFetchConfiguration
+  , blockFetchPipelining :: DiffusionPipeliningSupport
   }
   deriving stock (Show)
 
@@ -334,6 +335,7 @@ instance Condense BlockFetchClientTestSetup where
       , "Chain updates:\n"
           <> ppPerPeer peerUpdates
       , "BlockFetch mode: " <> show blockFetchMode
+      , "BlockFetch pipelining " <> show blockFetchPipelining
       , "BlockFetch cfg: " <> show blockFetchCfg
       ]
     where
@@ -347,9 +349,11 @@ instance Arbitrary BlockFetchClientTestSetup where
   arbitrary = do
       numPeers <- chooseInt (1, 3)
       let peerIds = PeerId <$> [1 .. numPeers]
+      blockFetchPipelining <-
+        elements [DiffusionPipeliningOn, DiffusionPipeliningOff]
       peerUpdates <-
             Map.fromList . zip peerIds
-        <$> replicateM numPeers genUpdateSchedule
+        <$> replicateM numPeers (genUpdateSchedule blockFetchPipelining)
       blockFetchMode <- elements [FetchModeBulkSync, FetchModeDeadline]
       blockFetchCfg  <- do
         let -- ensure that we can download blocks from all peers
@@ -364,8 +368,12 @@ instance Arbitrary BlockFetchClientTestSetup where
         pure BlockFetchConfiguration {..}
       pure BlockFetchClientTestSetup {..}
     where
-      genUpdateSchedule =
-        genChainUpdates TentativeChainBehavior maxRollback 20 >>= genSchedule
+      genUpdateSchedule diffusionPipelining =
+          genChainUpdates behavior maxRollback 20 >>= genSchedule
+        where
+          behavior = case diffusionPipelining of
+            DiffusionPipeliningOn  -> TentativeChainBehavior
+            DiffusionPipeliningOff -> SelectedChainBehavior
 
       -- Only use a small k to avoid rolling forward by a big chain.
       maxRollback = SecurityParam 5

@@ -477,13 +477,8 @@ pattern CardanoNodeToClientVersion13 =
 instance CardanoHardForkConstraints c
       => SupportedNetworkProtocolVersion (CardanoBlock c) where
   supportedNodeToNodeVersions _ = Map.fromList $
-      [ (NodeToNodeV_7, CardanoNodeToNodeVersion2)
-      , (NodeToNodeV_8, CardanoNodeToNodeVersion2)
-      , (NodeToNodeV_9, CardanoNodeToNodeVersion2)
-      , (NodeToNodeV_10, CardanoNodeToNodeVersion2)
-      , (NodeToNodeV_11, CardanoNodeToNodeVersion2)
-      , (NodeToNodeV_12, CardanoNodeToNodeVersion2)
-      , (NodeToNodeV_13, CardanoNodeToNodeVersion2)
+      [ (NodeToNodeV_13, CardanoNodeToNodeVersion2)
+      , (NodeToNodeV_14, CardanoNodeToNodeVersion2)
       ]
 
   supportedNodeToClientVersions _ = Map.fromList $
@@ -496,9 +491,10 @@ instance CardanoHardForkConstraints c
       , (NodeToClientV_15, CardanoNodeToClientVersion11)
       , (NodeToClientV_16, CardanoNodeToClientVersion12)
       , (NodeToClientV_17, CardanoNodeToClientVersion13)
+      , (NodeToClientV_18, CardanoNodeToClientVersion14)
       ]
 
-  latestReleasedNodeVersion _prx = (Just NodeToNodeV_13, Just NodeToClientV_17)
+  latestReleasedNodeVersion _prx = (Just NodeToNodeV_14, Just NodeToClientV_18)
 
 {-------------------------------------------------------------------------------
   ProtocolInfo
@@ -579,10 +575,6 @@ data CardanoProtocolParams c = CardanoProtocolParams {
     -- software and config files. Note that the missing software update is
     -- not necessarily a 'HardForkBlock' era transition: it might be an
     -- /intra-era hard fork/ (ie conditionals in the ledger rules).
-    --
-    -- Third, it's passed to the ledger rules---but that's entirely
-    -- vestigial. See
-    -- <https://github.com/IntersectMBO/cardano-ledger/issues/3682>.
     --
   , cardanoProtocolVersion        :: ProtVer
   }
