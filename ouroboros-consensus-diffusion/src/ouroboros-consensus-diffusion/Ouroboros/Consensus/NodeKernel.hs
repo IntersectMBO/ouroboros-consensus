@@ -115,7 +115,8 @@ import           Ouroboros.Network.TxSubmission.Inbound
 import qualified Ouroboros.Network.TxSubmission.Inbound as Inbound
 import           Ouroboros.Network.TxSubmission.Inbound.Registry
                      (SharedTxStateVar, TxChannels (..), TxChannelsVar,
-                     decisionLogicThread, newSharedTxStateVar)
+                     decisionLogicThread, drainRejectionThread,
+                     newSharedTxStateVar)
 import           Ouroboros.Network.TxSubmission.Mempool.Reader
                      (TxSubmissionMempoolReader)
 import qualified Ouroboros.Network.TxSubmission.Mempool.Reader as MempoolReader
@@ -335,6 +336,10 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
         (txDecisionPolicy miniProtocolParameters)
         (readPeerGSVs fetchClientRegistry)
         txChannelsVar
+        sharedTxStateVar
+
+    void $ forkLinkedThread registry "NodeKernel.drainRejectionThread" $
+      drainRejectionThread
         sharedTxStateVar
 
     return NodeKernel
