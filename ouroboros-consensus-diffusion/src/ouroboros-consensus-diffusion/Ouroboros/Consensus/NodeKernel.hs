@@ -693,10 +693,14 @@ mkCurrentBlockContext currentSlot c = case c of
       LT -> Right $ blockContextFromPrevHeader hdr
 
       -- The block at the tip of our chain has a slot that lies in the
-      -- future. Although the chain DB does not adopt future blocks, if the
+      -- future. Although the chain DB should not contain blocks from the
+      -- future, if the volatile DB contained such blocks on startup
+      -- (due to a node clock misconfiguration) this invariant may be
+      -- violated. See: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/docs/website/contents/for-developers/HandlingBlocksFromTheFuture.md#handling-blocks-from-the-future
+      -- Also note that if the
       -- system is under heavy load, it is possible (though unlikely) that
       -- one or more slots have passed after @currentSlot@ that we got from
-      -- @onSlotChange@ and and before we queried the chain DB for the block
+      -- @onSlotChange@ and before we queried the chain DB for the block
       -- at its tip. At the moment, we simply don't produce a block if this
       -- happens.
 
