@@ -19,12 +19,10 @@ import           Control.Monad (replicateM, unless, void)
 import           Control.Monad.Except (Except, ExceptT, MonadError, runExcept,
                      runExceptT, throwError)
 import           Control.Monad.Reader (MonadReader, ReaderT, ask, runReaderT)
-import           Control.Monad.State (MonadState, StateT, evalStateT, get,
-                     modify, put)
+import           Control.Monad.State (MonadState, StateT, evalStateT, get, put)
 import           Control.Monad.Trans.Class (lift)
 import           Control.ResourceRegistry (closeRegistry, unsafeNewRegistry)
 import           Data.Maybe (isJust)
-import           Ouroboros.Consensus.Block.Abstract (blockSlot)
 import           Ouroboros.Consensus.Block.RealPoint
                      (pointToWithOriginRealPoint)
 import           Ouroboros.Consensus.Config (TopLevelConfig,
@@ -222,7 +220,7 @@ runModelIO :: API.LoE () -> ModelM TestBlock a -> IO ()
 runModelIO loe expr = toAssertion (runModel newModel topLevelConfig expr)
   where
     chunkInfo      = ImmutableDB.simpleChunkInfo 100
-    newModel       = Model.empty loe testInitExtLedger 0
+    newModel       = Model.empty loe testInitExtLedger
     topLevelConfig = mkTestCfg chunkInfo
 
 
@@ -348,7 +346,6 @@ instance (Model.ModelSupportsBlock blk, LedgerSupportsProtocol blk)
   addBlock blk = do
     -- Ensure that blocks are not characterized as invalid because they are
     -- from the future.
-    modify $ \model -> model { Model.currentSlot = blockSlot blk }
     withModelContext $ \model cfg -> ((), Model.addBlock cfg blk model)
     pure blk
 
