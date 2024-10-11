@@ -336,17 +336,21 @@ txInBlockSize st (ShelleyTx _txid tx') =
     limit   = fromIntegral (pparams ^. L.ppMaxTxSizeL) :: Integer
 
 class MaxTxSizeUTxO era where
-  maxTxSizeUTxO :: Integer -> Integer -> SL.ApplyTxError era
+  maxTxSizeUTxO ::
+       Integer
+       -- ^ Actual transaction size
+    -> Integer
+       -- ^ Maximum transaction size
+    -> SL.ApplyTxError era
 
 instance MaxTxSizeUTxO (ShelleyEra c) where
-  maxTxSizeUTxO x y =
+  maxTxSizeUTxO txSize txSizeLimit =
       SL.ApplyTxError . pure
     $ ShelleyEra.UtxowFailure
     $ ShelleyEra.UtxoFailure
     $ ShelleyEra.MaxTxSizeUTxO
-    -- TODO is this in the right order?
-    $ L.Mismatch { mismatchSupplied = x
-                 , mismatchExpected = y }
+    $ L.Mismatch { mismatchSupplied = txSize
+                 , mismatchExpected = txSizeLimit }
 
 instance MaxTxSizeUTxO (AllegraEra c) where
   maxTxSizeUTxO x y =
