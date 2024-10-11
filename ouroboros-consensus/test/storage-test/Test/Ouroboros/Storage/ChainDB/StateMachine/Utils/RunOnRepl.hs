@@ -50,7 +50,6 @@ module Test.Ouroboros.Storage.ChainDB.StateMachine.Utils.RunOnRepl (
   , Var (Var)
     -- ** ChainDB.StateMachine re-exports
   , Cmd (..)
-  , MaxClockSkew (MaxClockSkew)
   , Resp (..)
   , Success (..)
   , runCmdsLockstep
@@ -89,8 +88,8 @@ import           Ouroboros.Network.Point (Block (..))
 import qualified Ouroboros.Network.Point as Point
 import qualified Test.Ouroboros.Storage.ChainDB.StateMachine as StateMachine
 import           Test.Ouroboros.Storage.ChainDB.StateMachine (Cmd (..),
-                     FollowerRef, IterRef, MaxClockSkew (MaxClockSkew),
-                     Resp (..), Success (..), runCmdsLockstep)
+                     FollowerRef, IterRef, Resp (..), Success (..),
+                     runCmdsLockstep)
 import           Test.Ouroboros.Storage.Orphans ()
 import           Test.Ouroboros.Storage.TestBlock (ChainLength (ChainLength),
                      EBB (EBB, RegularBlock), TestBlock (..), TestBody (..),
@@ -115,9 +114,8 @@ pattern Command cmd rsp xs =
 
 quickCheckCmdsLockStep ::
      LoE ()
-  -> MaxClockSkew
   -> SmallChunkInfo
   -> Commands (StateMachine.At Cmd TestBlock IO) (StateMachine.At Resp TestBlock IO)
   -> IO ()
-quickCheckCmdsLockStep loe maxClockSkew chunkInfo cmds =
-  quickCheck $ runCmdsLockstep loe maxClockSkew chunkInfo cmds
+quickCheckCmdsLockStep loe chunkInfo cmds =
+  quickCheck $ runCmdsLockstep loe chunkInfo cmds
