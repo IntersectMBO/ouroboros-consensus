@@ -51,8 +51,6 @@ module Ouroboros.Consensus.Storage.ChainDB.API (
   , streamFrom
   , traverseIterator
   , validBounds
-    -- * Invalid block reason
-  , InvalidBlockReason (..)
     -- * Followers
   , ChainType (..)
   , Follower (..)
@@ -347,7 +345,7 @@ data ChainDB m blk = ChainDB {
       -- In particular, this affects the watcher in 'bracketChainSyncClient',
       -- which rechecks the blocks in all candidate chains whenever a new
       -- invalid block is detected. These blocks are likely to be valid.
-    , getIsInvalidBlock :: STM m (WithFingerprint (HeaderHash blk -> Maybe (InvalidBlockReason blk)))
+    , getIsInvalidBlock :: STM m (WithFingerprint (HeaderHash blk -> Maybe (ExtValidationError blk)))
 
     , closeDB            :: m ()
 
@@ -681,19 +679,6 @@ streamFrom from db registry blockComponent = do
         case errIt of
           Right it -> return it
           Left  e  -> error $ "failed to stream from genesis to tip: " <> show e
-
-{-------------------------------------------------------------------------------
-  Invalid block reason
--------------------------------------------------------------------------------}
-
--- | The reason why a block is invalid.
-data InvalidBlockReason blk
-  = ValidationError !(ExtValidationError blk)
-    -- ^ The ledger found the block to be invalid.
-  deriving (Eq, Show, Generic)
-
-instance LedgerSupportsProtocol blk
-      => NoThunks (InvalidBlockReason blk)
 
 {-------------------------------------------------------------------------------
   Followers

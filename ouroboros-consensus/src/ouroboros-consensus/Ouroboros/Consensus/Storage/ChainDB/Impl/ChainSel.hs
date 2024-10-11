@@ -56,7 +56,7 @@ import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      AddBlockResult (..), BlockComponent (..), ChainType (..),
-                     InvalidBlockReason (..), LoE (..))
+                     LoE (..))
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
                      (InvalidBlockPunishment, noPunishment)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
@@ -1219,7 +1219,7 @@ ledgerValidateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) =
     addInvalidBlock e (RealPoint slot hash) = atomically $
       modifyTVar varInvalid $ \(WithFingerprint invalid fp) ->
         WithFingerprint
-          (Map.insert hash (InvalidBlockInfo (ValidationError e) slot) invalid)
+          (Map.insert hash (InvalidBlockInfo e slot) invalid)
           (succ fp)
 
 -- | Validate a candidate chain using 'ledgerValidateCandidate'.

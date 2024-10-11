@@ -104,9 +104,9 @@ import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.MockChainSel
 import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      AddBlockResult (..), BlockComponent (..),
-                     ChainDbError (..), InvalidBlockReason (..),
-                     IteratorResult (..), LoE (..), StreamFrom (..),
-                     StreamTo (..), UnknownRange (..), validBounds)
+                     ChainDbError (..), IteratorResult (..), LoE (..),
+                     StreamFrom (..), StreamTo (..), UnknownRange (..),
+                     validBounds)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanK)
 import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Util (repeatedly)
@@ -154,7 +154,6 @@ deriving instance ( ToExpr blk
                   , ToExpr (Chain blk)
                   , ToExpr (ChainProducerState blk)
                   , ToExpr (ExtLedgerState blk)
-                  , ToExpr (InvalidBlockReason blk)
                   )
                  => ToExpr (Model blk)
 
@@ -705,7 +704,7 @@ class ( HasHeader blk
   Internal auxiliary
 -------------------------------------------------------------------------------}
 
-type InvalidBlocks blk = Map (HeaderHash blk) (InvalidBlockReason blk, SlotNo)
+type InvalidBlocks blk = Map (HeaderHash blk) (ExtValidationError blk, SlotNo)
 
 -- | Result of 'validate', also used internally.
 data ValidatedChain blk =
@@ -727,7 +726,7 @@ validate :: forall blk. LedgerSupportsProtocol blk
 validate cfg Model { initLedger, invalid } chain =
     go initLedger Genesis (Chain.toOldestFirst chain)
   where
-    mkInvalid :: blk -> InvalidBlockReason blk -> InvalidBlocks blk
+    mkInvalid :: blk -> ExtValidationError blk -> InvalidBlocks blk
     mkInvalid b reason =
       Map.singleton (blockHash b) (reason, blockSlot b)
 
@@ -744,7 +743,7 @@ validate cfg Model { initLedger, invalid } chain =
           -> ValidatedChain
                validPrefix
                ledger
-               (invalid <> mkInvalid b (ValidationError e))
+               (invalid <> mkInvalid b e)
 
         -- Valid block according to the ledger
         Right ledger'

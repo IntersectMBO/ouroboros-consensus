@@ -159,7 +159,7 @@ oneBenchRun
 -- | No invalid blocks in this benchmark
 invalidBlock ::
     WithFingerprint
-        (HeaderHash blk -> Maybe (ChainDB.InvalidBlockReason blk))
+        (HeaderHash blk -> Maybe (Extended.ExtValidationError blk))
 invalidBlock =
     WithFingerprint isInvalidBlock fp
   where

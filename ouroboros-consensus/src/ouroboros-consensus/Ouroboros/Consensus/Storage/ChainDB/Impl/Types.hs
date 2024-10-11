@@ -83,8 +83,8 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      AddBlockResult (..), ChainDbError (..),
-                     ChainSelectionPromise (..), ChainType, InvalidBlockReason,
-                     LoE, StreamFrom, StreamTo, UnknownRange)
+                     ChainSelectionPromise (..), ChainType, LoE, StreamFrom,
+                     StreamTo, UnknownRange)
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
                      (InvalidBlockPunishment)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB (LgrDB,
@@ -400,7 +400,7 @@ type InvalidBlocks blk = Map (HeaderHash blk) (InvalidBlockInfo blk)
 -- VolatileDB for some slot @s@, the hashes older or equal to @s@ can be
 -- removed from this map.
 data InvalidBlockInfo blk = InvalidBlockInfo
-  { invalidBlockReason :: !(InvalidBlockReason blk)
+  { invalidBlockReason :: !(ExtValidationError blk)
   , invalidBlockSlotNo :: !SlotNo
   } deriving (Eq, Show, Generic, NoThunks)
 
@@ -617,7 +617,7 @@ data TraceAddBlockEvent blk =
   | IgnoreBlockAlreadyInVolatileDB (RealPoint blk)
 
     -- | A block that is know to be invalid was ignored.
-  | IgnoreInvalidBlock (RealPoint blk) (InvalidBlockReason blk)
+  | IgnoreInvalidBlock (RealPoint blk) (ExtValidationError blk)
 
     -- | The block was added to the queue and will be added to the ChainDB by
     -- the background thread. The size of the queue is included.

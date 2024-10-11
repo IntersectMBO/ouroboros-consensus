@@ -18,7 +18,6 @@ import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Protocol.Abstract
-import           Ouroboros.Consensus.Storage.ChainDB (InvalidBlockReason)
 import           Ouroboros.Consensus.Storage.ChainDB.API (LoE (..))
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB
 import           Ouroboros.Consensus.Storage.ImmutableDB
@@ -113,7 +112,3 @@ deriving instance ( ToExpr blk
                   )
                  => ToExpr (ChainProducerState blk)
 deriving instance ToExpr a => ToExpr (WithFingerprint a)
-deriving instance ( ToExpr (HeaderHash blk)
-                  , ToExpr (ExtValidationError blk)
-                  )
-                 => ToExpr (InvalidBlockReason blk)
