@@ -64,12 +64,7 @@ consensusRethrowPolicy pb =
             ImmutableDB.UnexpectedFailure{} -> shutdownNode)
    <> mkRethrowPolicy (\_ctx (_ :: FsError) -> shutdownNode)
 
-      -- When the system clock moved back, we have to restart the node,
-      -- because the ImmutableDB validation might have to truncate some
-      -- blocks from the future. Note that a full validation is not
-      -- required, as the default validation (most recent epoch) will keep
-      -- on truncating epochs until a block that is not from the future is
-      -- found.
+      -- When the system clock moved back, we have to restart the node.
     <> mkRethrowPolicy (\_ctx (_ :: SystemClockMovedBackException) -> shutdownNode)
 
        -- Some chain DB errors are indicative of a bug in our code, others
