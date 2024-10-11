@@ -690,14 +690,6 @@ streamFrom from db registry blockComponent = do
 data InvalidBlockReason blk
   = ValidationError !(ExtValidationError blk)
     -- ^ The ledger found the block to be invalid.
-  | InFutureExceedsClockSkew !(RealPoint blk)
-    -- ^ The block's slot is in the future, exceeding the allowed clock skew.
-    --
-    -- Possible causes, order by decreasing likelihood:
-    --
-    -- 1. Our clock is behind (significantly more likely than the others)
-    -- 2. Their clock is ahead
-    -- 3. It's intentional, i.e., an attack
   deriving (Eq, Show, Generic)
 
 instance LedgerSupportsProtocol blk
