@@ -56,6 +56,7 @@ import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import           Ouroboros.Consensus.Storage.ChainDB (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Util (repeatedly)
+import           Ouroboros.Consensus.Util.Enclose (EnclosingTimed)
 import           Ouroboros.Consensus.Util.IOLike hiding (newMVar)
 
 {-------------------------------------------------------------------------------
@@ -556,6 +557,10 @@ data TraceEventMempool blk
       -- transactions.
       MempoolSize
       -- ^ The current size of the Mempool.
+   | TraceMempoolSynced
+      -- ^ Emitted when the mempool is adjusted after the tip has changed.
+      EnclosingTimed
+      -- ^ How long the sync operation took.
 
 deriving instance ( Eq (GenTx blk)
                   , Eq (Validated (GenTx blk))
