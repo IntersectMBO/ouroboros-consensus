@@ -416,6 +416,9 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
         csjConfig :: CSJConfig
         csjConfig = CSJDisabled
 
+        diffusionPipelining :: DiffusionPipeliningSupport
+        diffusionPipelining = DiffusionPipeliningOn
+
         client :: ChainSyncStateView m TestBlock
                -> Consensus ChainSyncClientPipelined
                     TestBlock
@@ -430,6 +433,8 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                 , historicityCheck
                 , mkPipelineDecision0     =
                     pipelineDecisionLowHighMark 10 20
+                , getDiffusionPipeliningSupport =
+                    diffusionPipelining
                 }
               DynamicEnv {
                   version             = maxBound :: NodeToNodeVersion
@@ -512,6 +517,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                  maxBound
                  lopBucketConfig
                  csjConfig
+                 diffusionPipelining
                  $ \csState -> do
                    atomically $ do
                      handles <- readTVar varHandles

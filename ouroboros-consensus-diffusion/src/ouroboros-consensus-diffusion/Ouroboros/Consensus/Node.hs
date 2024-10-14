@@ -1,5 +1,6 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
@@ -517,6 +518,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                     rnGetUseBootstrapPeers
                     llrnPublicPeerSelectionStateVar
                     genesisArgs
+                    DiffusionPipeliningOn
           nodeKernel <- initNodeKernel nodeKernelArgs
           rnNodeKernelHook registry nodeKernel
 
@@ -761,6 +763,7 @@ mkNodeKernelArgs ::
   -> STM m UseBootstrapPeers
   -> StrictSTM.StrictTVar m (Diffusion.PublicPeerSelectionState addrNTN)
   -> GenesisNodeKernelArgs m blk
+  -> DiffusionPipeliningSupport
   -> m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
   registry
@@ -779,6 +782,7 @@ mkNodeKernelArgs
   getUseBootstrapPeers
   publicPeerSelectionStateVar
   genesisArgs
+  getDiffusionPipeliningSupport
   = do
     let (kaRng, psRng) = split rng
     return NodeKernelArgs
@@ -805,6 +809,7 @@ mkNodeKernelArgs
       , peerSharingRng = psRng
       , publicPeerSelectionStateVar
       , genesisArgs
+      , getDiffusionPipeliningSupport
       }
 
 -- | We allow the user running the node to customise the 'NodeKernelArgs'

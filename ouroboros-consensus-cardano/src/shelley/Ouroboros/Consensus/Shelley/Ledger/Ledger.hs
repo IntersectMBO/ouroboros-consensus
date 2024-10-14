@@ -85,7 +85,6 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.CommonProtocolParams
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
-import           Ouroboros.Consensus.Protocol.TPraos (MaxMajorProtVer (..))
 import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Config
@@ -161,20 +160,16 @@ mkShelleyLedgerConfig ::
      SL.ShelleyGenesis (EraCrypto era)
   -> Core.TranslationContext era
   -> EpochInfo (Except HardFork.PastHorizonException)
-  -> MaxMajorProtVer
   -> ShelleyLedgerConfig era
-mkShelleyLedgerConfig genesis transCtxt epochInfo mmpv =
+mkShelleyLedgerConfig genesis transCtxt epochInfo =
     ShelleyLedgerConfig {
         shelleyLedgerCompactGenesis     = compactGenesis genesis
       , shelleyLedgerGlobals            =
           SL.mkShelleyGlobals
             genesis
             (hoistEpochInfo (left (Text.pack . show) . runExcept) epochInfo)
-            maxMajorPV
       , shelleyLedgerTranslationContext = transCtxt
       }
-  where
-    MaxMajorProtVer maxMajorPV = mmpv
 
 type instance LedgerCfg (LedgerState (ShelleyBlock proto era)) = ShelleyLedgerConfig era
 

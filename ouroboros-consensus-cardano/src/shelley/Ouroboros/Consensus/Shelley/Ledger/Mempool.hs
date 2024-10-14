@@ -46,6 +46,7 @@ import           Cardano.Ledger.Alonzo.Scripts (ExUnits, ExUnits',
 import           Cardano.Ledger.Alonzo.Tx (totExUnits)
 import qualified Cardano.Ledger.Api as L
 import qualified Cardano.Ledger.Babbage.Rules as BabbageEra
+import qualified Cardano.Ledger.BaseTypes as L
 import           Cardano.Ledger.Binary (Annotator (..), DecCBOR (..),
                      EncCBOR (..), FromCBOR (..), FullByteString (..),
                      ToCBOR (..), toPlainDecoder)
@@ -335,14 +336,21 @@ txInBlockSize st (ShelleyTx _txid tx') =
     limit   = fromIntegral (pparams ^. L.ppMaxTxSizeL) :: Integer
 
 class MaxTxSizeUTxO era where
-  maxTxSizeUTxO :: Integer -> Integer -> SL.ApplyTxError era
+  maxTxSizeUTxO ::
+       Integer
+       -- ^ Actual transaction size
+    -> Integer
+       -- ^ Maximum transaction size
+    -> SL.ApplyTxError era
 
 instance MaxTxSizeUTxO (ShelleyEra c) where
-  maxTxSizeUTxO x y =
+  maxTxSizeUTxO txSize txSizeLimit =
       SL.ApplyTxError . pure
     $ ShelleyEra.UtxowFailure
     $ ShelleyEra.UtxoFailure
-    $ ShelleyEra.MaxTxSizeUTxO x y
+    $ ShelleyEra.MaxTxSizeUTxO
+    $ L.Mismatch { mismatchSupplied = txSize
+                 , mismatchExpected = txSizeLimit }
 
 instance MaxTxSizeUTxO (AllegraEra c) where
   maxTxSizeUTxO x y =

@@ -1041,6 +1041,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
             , genesisArgs          = GenesisNodeKernelArgs {
                   gnkaGetLoEFragment = LoEAndGDDDisabled
                 }
+            , getDiffusionPipeliningSupport = DiffusionPipeliningOn
             }
 
       nodeKernel <- initNodeKernel nodeKernelArgs

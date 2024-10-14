@@ -45,6 +45,7 @@ module Ouroboros.Consensus.Cardano.Node (
   , pattern CardanoNodeToClientVersion11
   , pattern CardanoNodeToClientVersion12
   , pattern CardanoNodeToClientVersion13
+  , pattern CardanoNodeToClientVersion14
   , pattern CardanoNodeToClientVersion2
   , pattern CardanoNodeToClientVersion3
   , pattern CardanoNodeToClientVersion4
@@ -474,16 +475,28 @@ pattern CardanoNodeToClientVersion13 =
       :* Nil
       )
 
+-- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo and Babbage
+-- and Conway eras enabled, using 'ShelleyNodeToClientVersion10' for the
+-- Shelley-based eras.
+pattern CardanoNodeToClientVersion14 :: BlockNodeToClientVersion (CardanoBlock c)
+pattern CardanoNodeToClientVersion14 =
+    HardForkNodeToClientEnabled
+      HardForkSpecificNodeToClientVersion3
+      (  EraNodeToClientEnabled ByronNodeToClientVersion1
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
+      :* Nil
+      )
+
 instance CardanoHardForkConstraints c
       => SupportedNetworkProtocolVersion (CardanoBlock c) where
   supportedNodeToNodeVersions _ = Map.fromList $
-      [ (NodeToNodeV_7, CardanoNodeToNodeVersion2)
-      , (NodeToNodeV_8, CardanoNodeToNodeVersion2)
-      , (NodeToNodeV_9, CardanoNodeToNodeVersion2)
-      , (NodeToNodeV_10, CardanoNodeToNodeVersion2)
-      , (NodeToNodeV_11, CardanoNodeToNodeVersion2)
-      , (NodeToNodeV_12, CardanoNodeToNodeVersion2)
-      , (NodeToNodeV_13, CardanoNodeToNodeVersion2)
+      [ (NodeToNodeV_13, CardanoNodeToNodeVersion2)
+      , (NodeToNodeV_14, CardanoNodeToNodeVersion2)
       ]
 
   supportedNodeToClientVersions _ = Map.fromList $
@@ -496,9 +509,10 @@ instance CardanoHardForkConstraints c
       , (NodeToClientV_15, CardanoNodeToClientVersion11)
       , (NodeToClientV_16, CardanoNodeToClientVersion12)
       , (NodeToClientV_17, CardanoNodeToClientVersion13)
+      , (NodeToClientV_18, CardanoNodeToClientVersion14)
       ]
 
-  latestReleasedNodeVersion _prx = (Just NodeToNodeV_13, Just NodeToClientV_17)
+  latestReleasedNodeVersion _prx = (Just NodeToNodeV_14, Just NodeToClientV_18)
 
 {-------------------------------------------------------------------------------
   ProtocolInfo
@@ -567,7 +581,7 @@ data CardanoProtocolParams c = CardanoProtocolParams {
     -- | The greatest protocol version that this node's software and config
     -- files declare to handle correctly.
     --
-    -- This parameter has three consequences. First, the blocks minted
+    -- This parameter has two consequences. First, the blocks minted
     -- will include the protocol version in their header, but
     -- essentially only for public signaling (eg measuring the
     -- percentage of adoption of software updates).
@@ -579,10 +593,6 @@ data CardanoProtocolParams c = CardanoProtocolParams {
     -- software and config files. Note that the missing software update is
     -- not necessarily a 'HardForkBlock' era transition: it might be an
     -- /intra-era hard fork/ (ie conditionals in the ledger rules).
-    --
-    -- Third, it's passed to the ledger rules---but that's entirely
-    -- vestigial. See
-    -- <https://github.com/IntersectMBO/cardano-ledger/issues/3682>.
     --
   , cardanoProtocolVersion        :: ProtVer
   }
@@ -727,7 +737,6 @@ protocolInfoCardano paramsCardano
     partialLedgerConfigShelley =
         mkPartialLedgerConfigShelley
           transitionConfigShelley
-          maxMajorProtVer
           triggerHardForkAllegra
 
     kShelley :: SecurityParam
@@ -750,7 +759,6 @@ protocolInfoCardano paramsCardano
     partialLedgerConfigAllegra =
         mkPartialLedgerConfigShelley
           transitionConfigAllegra
-          maxMajorProtVer
           triggerHardForkMary
 
     -- Mary
@@ -770,7 +778,6 @@ protocolInfoCardano paramsCardano
     partialLedgerConfigMary =
         mkPartialLedgerConfigShelley
           transitionConfigMary
-          maxMajorProtVer
           triggerHardForkAlonzo
 
     -- Alonzo
@@ -790,7 +797,6 @@ protocolInfoCardano paramsCardano
     partialLedgerConfigAlonzo =
         mkPartialLedgerConfigShelley
           transitionConfigAlonzo
-          maxMajorProtVer
           triggerHardForkBabbage
 
     -- Babbage
@@ -820,7 +826,6 @@ protocolInfoCardano paramsCardano
     partialLedgerConfigBabbage =
         mkPartialLedgerConfigShelley
           transitionConfigBabbage
-          maxMajorProtVer
           triggerHardForkConway
 
     -- Conway
@@ -840,7 +845,6 @@ protocolInfoCardano paramsCardano
     partialLedgerConfigConway =
         mkPartialLedgerConfigShelley
           transitionConfigConway
-          maxMajorProtVer
           TriggerHardForkNotDuringThisExecution
 
     -- Cardano
@@ -1067,10 +1071,9 @@ protocolClientInfoCardano epochSlots = ProtocolClientInfo {
 mkPartialLedgerConfigShelley ::
      L.EraTransition era
   => L.TransitionConfig era
-  -> MaxMajorProtVer
   -> TriggerHardFork
   -> PartialLedgerConfig (ShelleyBlock proto era)
-mkPartialLedgerConfigShelley transitionConfig maxMajorProtVer shelleyTriggerHardFork =
+mkPartialLedgerConfigShelley transitionConfig shelleyTriggerHardFork =
     ShelleyPartialLedgerConfig {
           shelleyLedgerConfig =
             Shelley.mkShelleyLedgerConfig
@@ -1079,7 +1082,6 @@ mkPartialLedgerConfigShelley transitionConfig maxMajorProtVer shelleyTriggerHard
               -- 'completeLedgerConfig' will replace the 'History.dummyEpochInfo'
               -- in the partial ledger config with the correct one.
               History.dummyEpochInfo
-              maxMajorProtVer
         , shelleyTriggerHardFork = shelleyTriggerHardFork
         }
 

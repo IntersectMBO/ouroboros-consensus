@@ -28,6 +28,7 @@ import           Network.TypedProtocol.Codec (AnyMessage, PeerHasAgency (..),
                      PeerRole)
 import           Ouroboros.Consensus.Block (HasHeader)
 import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
+import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import           Ouroboros.Consensus.Node.ProtocolInfo
                      (NumCoreNodes (NumCoreNodes))
@@ -48,8 +49,7 @@ import           Ouroboros.Network.Driver (runPeer)
 import           Ouroboros.Network.Driver.Limits
                      (ProtocolLimitFailure (ExceededSizeLimit, ExceededTimeLimit),
                      runPipelinedPeerWithLimits)
-import           Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion,
-                     isPipeliningEnabled)
+import           Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion)
 import           Ouroboros.Network.Protocol.BlockFetch.Codec
                      (byteLimitsBlockFetch, codecBlockFetchId)
 import           Ouroboros.Network.Protocol.BlockFetch.Server
@@ -98,6 +98,7 @@ startBlockFetchLogic registry tracer chainDb fetchClientRegistry getCandidates =
             -- The BlockFetch logic would then wait for the timeout to expire
             -- before trying to download the block from another peer.
             (pure FetchModeDeadline)
+            DiffusionPipeliningOn
 
         -- Values taken from
         -- ouroboros-consensus-diffusion/src/unstable-diffusion-testlib/Test/ThreadNet/Network.hs
@@ -152,7 +153,7 @@ runBlockFetchClient ::
      -- ^ Send and receive message via the given 'Channel'.
   -> m ()
 runBlockFetchClient tracer peerId blockFetchTimeouts StateViewTracers {svtPeerSimulatorResultsTracer} fetchClientRegistry controlMsgSTM channel = do
-    bracketFetchClient fetchClientRegistry ntnVersion isPipeliningEnabled peerId $ \clientCtx -> do
+    bracketFetchClient fetchClientRegistry ntnVersion peerId $ \clientCtx -> do
       res <-
         try $
           runPipelinedPeerWithLimits

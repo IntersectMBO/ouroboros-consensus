@@ -18,7 +18,8 @@ import           Data.Proxy (Proxy (..))
 import           Network.TypedProtocol.Codec (AnyMessage)
 import           Ouroboros.Consensus.Block (Header, Point)
 import           Ouroboros.Consensus.BlockchainTime (RelativeTime (..))
-import           Ouroboros.Consensus.Config (TopLevelConfig (..))
+import           Ouroboros.Consensus.Config (DiffusionPipeliningSupport (..),
+                     TopLevelConfig (..))
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -90,6 +91,7 @@ basicChainSyncClient
         -- motivated by preventing additional load from CSJ-disengaged peers; we
         -- do not care about this in these tests.
       , CSClient.historicityCheck        = HistoricityCheck.noCheck
+      , CSClient.getDiffusionPipeliningSupport = DiffusionPipeliningOn
       }
     CSClient.DynamicEnv {
         CSClient.version             = maxBound
@@ -158,6 +160,7 @@ runChainSyncClient
       (maxBound :: NodeToNodeVersion)
       lopBucketConfig
       csjConfig
+      DiffusionPipeliningOn -- ^ TODO make this a parameter?
       $ \csState -> do
         res <-
           try $

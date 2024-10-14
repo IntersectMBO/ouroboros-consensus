@@ -162,6 +162,8 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
 
     , getOutboundConnectionsState
                              :: StrictTVar m OutboundConnectionsState
+    , getDiffusionPipeliningSupport
+                             :: DiffusionPipeliningSupport
     }
 
 -- | Arguments required when initializing a node
@@ -187,6 +189,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs {
     , publicPeerSelectionStateVar
                               :: StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
     , genesisArgs             :: GenesisNodeKernelArgs m blk
+    , getDiffusionPipeliningSupport    :: DiffusionPipeliningSupport
     }
 
 initNodeKernel ::
@@ -207,6 +210,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                    , peerSharingRng
                                    , publicPeerSelectionStateVar
                                    , genesisArgs
+                                   , getDiffusionPipeliningSupport
                                    } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [BlockForging m blk] <- LazySTM.newTMVarIO []
@@ -325,6 +329,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
       , getPeerSharingAPI       = peerSharingAPI
       , getOutboundConnectionsState
                                 = varOutboundConnectionsState
+      , getDiffusionPipeliningSupport
       }
   where
     blockForgingController :: InternalState m remotePeer localPeer blk
@@ -370,6 +375,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
                                  , blockFetchSize, btime
                                  , mempoolCapacityOverride
                                  , gsmArgs, getUseBootstrapPeers
+                                 , getDiffusionPipeliningSupport
                                  } = do
     varGsmState <- do
       let GsmNodeKernelArgs {..} = gsmArgs
@@ -405,6 +411,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
           blockFetchSize
           slotForgeTimeOracle
           readFetchMode
+          getDiffusionPipeliningSupport
 
     peerSharingRegistry <- newPeerSharingRegistry
 

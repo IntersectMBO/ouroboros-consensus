@@ -13,6 +13,7 @@ module Ouroboros.Consensus.Config (
   , mkTopLevelConfig
     -- ** Checkpoints map
   , CheckpointsMap (..)
+  , DiffusionPipeliningSupport (..)
   , castCheckpointsMap
   , emptyCheckpointsMap
     -- ** Derived extraction functions
@@ -69,6 +70,13 @@ newtype CheckpointsMap blk = CheckpointsMap {
       unCheckpointsMap :: Map BlockNo (HeaderHash blk)
     }
   deriving (Generic, Monoid, Semigroup)
+
+-- | Configure consensus layer how to handle some cases of invalid data
+-- when processing mini protocol communication in the presence of diffusion
+-- pipelining. See also 'Ouroboros.Consensus.Block.BlockSupportsDiffusionPipelining'
+--
+data DiffusionPipeliningSupport = DiffusionPipeliningOn | DiffusionPipeliningOff
+  deriving (Show)
 
 instance ( NoThunks (HeaderHash    blk)
          ) => NoThunks (CheckpointsMap blk)

@@ -27,16 +27,17 @@ instance HasNetworkProtocolVersion ByronBlock where
   type BlockNodeToNodeVersion   ByronBlock = ByronNodeToNodeVersion
   type BlockNodeToClientVersion ByronBlock = ByronNodeToClientVersion
 
+-- | This instance isn't used apart from tests; we therefore make our life easy
+-- below.
 instance SupportedNetworkProtocolVersion ByronBlock where
-  supportedNodeToNodeVersions   _ = Map.fromList [
-        (NodeToNodeV_7, ByronNodeToNodeVersion1)
-      , (NodeToNodeV_8, ByronNodeToNodeVersion1)
+  supportedNodeToNodeVersions   _ = Map.fromList
+      [ (v, ByronNodeToNodeVersion2)
+      | v <- [minBound .. maxBound]
       ]
-  supportedNodeToClientVersions _ = Map.fromList [
-        (NodeToClientV_9,  ByronNodeToClientVersion1)
-      , (NodeToClientV_10, ByronNodeToClientVersion1)
-      , (NodeToClientV_11, ByronNodeToClientVersion1)
-      , (NodeToClientV_12, ByronNodeToClientVersion1)
+
+  supportedNodeToClientVersions _ = Map.fromList
+      [ (v, ByronNodeToClientVersion1)
+      | v <- [minBound .. maxBound]
       ]
 
   latestReleasedNodeVersion = latestReleasedNodeVersionDefault

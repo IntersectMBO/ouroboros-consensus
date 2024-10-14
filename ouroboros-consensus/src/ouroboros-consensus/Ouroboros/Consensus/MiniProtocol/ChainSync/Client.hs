@@ -133,11 +133,8 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import           Ouroboros.Network.Block (Tip (..), getTipBlockNo)
-import           Ouroboros.Network.BlockFetch.ConsensusInterface
-                     (WhetherReceivingTentativeBlocks (..))
 import           Ouroboros.Network.ControlMessage (ControlMessage (..),
                      ControlMessageSTM)
-import           Ouroboros.Network.NodeToNode.Version (isPipeliningEnabled)
 import           Ouroboros.Network.PeerSelection.PeerMetric.Type
                      (HeaderMetricsTracer)
 import           Ouroboros.Network.Protocol.ChainSync.ClientPipelined
@@ -343,6 +340,7 @@ bracketChainSyncClient ::
  -> NodeToNodeVersion
  -> ChainSyncLoPBucketConfig
  -> CSJConfig
+ -> DiffusionPipeliningSupport
  -> (ChainSyncStateView m blk -> m a)
  -> m a
 bracketChainSyncClient
@@ -354,6 +352,7 @@ bracketChainSyncClient
     version
     csBucketConfig
     csjConfig
+    pipelining
     body
   =
     LeakyBucket.execAgainstBucket'
@@ -434,7 +433,7 @@ bracketChainSyncClient
 
     invalidBlockWatcher varState =
         invalidBlockRejector
-            tracer version getIsInvalidBlock (csCandidate <$> readTVar varState)
+            tracer version pipelining getIsInvalidBlock (csCandidate <$> readTVar varState)
 
     -- | Update the configuration of the bucket to match the given GSM state.
     -- NOTE: The new level is currently the maximal capacity of the bucket;
@@ -765,6 +764,8 @@ data ConfigEnv m blk = ConfigEnv {
   , someHeaderInFutureCheck :: InFutureCheck.SomeHeaderInFutureCheck m blk
   , historicityCheck        :: HistoricityCheck m blk
   , chainDbView             :: ChainDbView m blk
+  , getDiffusionPipeliningSupport
+                            :: DiffusionPipeliningSupport
   }
 
 -- | Arguments determined dynamically
@@ -1599,7 +1600,8 @@ checkKnownInvalid cfgEnv dynEnv intEnv hdr = case scrutinee of
             disconnect $ InvalidBlock (headerPoint hdr) hash reason
   where
     ConfigEnv {
-        chainDbView
+          chainDbView
+        , getDiffusionPipeliningSupport
       } = cfgEnv
 
     ChainDbView {
@@ -1607,7 +1609,7 @@ checkKnownInvalid cfgEnv dynEnv intEnv hdr = case scrutinee of
       } = chainDbView
 
     DynamicEnv {
-        version
+        version = _version
       } = dynEnv
 
     InternalEnv {
@@ -1616,10 +1618,10 @@ checkKnownInvalid cfgEnv dynEnv intEnv hdr = case scrutinee of
 
     -- When pipelining, the tip of the candidate is forgiven for being an
     -- invalid block, but not if it extends any invalid blocks.
-    scrutinee = case isPipeliningEnabled version of
-        NotReceivingTentativeBlocks -> BlockHash (headerHash hdr)
+    scrutinee = case getDiffusionPipeliningSupport of
+        DiffusionPipeliningOff -> BlockHash (headerHash hdr)
         -- Disconnect if the parent block of `hdr` is known to be invalid.
-        ReceivingTentativeBlocks    -> headerPrevHash hdr
+        DiffusionPipeliningOn  -> headerPrevHash hdr
 
 -- | Manage the relationships between the header's slot, arrival time, and
 -- intersection with the local selection
@@ -1981,6 +1983,7 @@ invalidBlockRejector ::
      )
   => Tracer m (TraceChainSyncClientEvent blk)
   -> NodeToNodeVersion
+  -> DiffusionPipeliningSupport
   -> STM m (WithFingerprint (HeaderHash blk -> Maybe (InvalidBlockReason blk)))
      -- ^ Get the invalid block checker
   -> STM m (AnchoredFragment (Header blk))
@@ -1988,7 +1991,7 @@ invalidBlockRejector ::
   -> Watcher m
          (WithFingerprint (HeaderHash blk -> Maybe (InvalidBlockReason blk)))
          Fingerprint
-invalidBlockRejector tracer version getIsInvalidBlock getCandidate =
+invalidBlockRejector tracer _version pipelining getIsInvalidBlock getCandidate =
     Watcher {
         wFingerprint = getFingerprint
       , wInitial     = Nothing
@@ -2010,9 +2013,9 @@ invalidBlockRejector tracer version getIsInvalidBlock getCandidate =
         mapM_ (uncurry disconnect)
           $ firstJust
                 (\hdr -> (hdr,) <$> isInvalidBlock (headerHash hdr))
-          $ (   case isPipeliningEnabled version of
-                    ReceivingTentativeBlocks    -> drop 1
-                    NotReceivingTentativeBlocks -> id
+          $ (   case pipelining of
+                    DiffusionPipeliningOn  -> drop 1
+                    DiffusionPipeliningOff -> id
             )
           $ AF.toNewestFirst theirFrag
 
