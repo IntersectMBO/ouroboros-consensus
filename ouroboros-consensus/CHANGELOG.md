@@ -2,6 +2,63 @@
 
 # Changelog entries
 
+<a id='changelog-0.21.0.0'></a>
+## 0.21.0.0 — 2024-10-14
+
+### Patch
+
+- Used new `AF.splitAtSlot` function in GDD.
+
+- Replace `bracketOnError` with `modifyMVar` in the Cached Index implementation.
+
+### Non-Breaking
+
+- Added a `Serialise ByteSize32` instance.
+
+- Decrease the maximum permissible clock skew from 5s to 2s.
+
+- Implement `Monad(LabelledSTM,InspectSTM,TraceSTM,Say)` instances for `WithEarlyExit`.
+
+### Breaking
+
+- Consolidate `TxLimits` in the mempool.
+     - Remove `Mempool.`getTxSize`; the snapshot interface contains byte sizes
+       now.
+
+     - Transaction size, block capacity, and mempool capacity are
+       multi-dimensional vectors (`ExUnits`, etc), instead of merely bytes:
+       `TxMeasure`.
+
+     - A transaction cannot be added if it would push any component of the size
+       over that component of the mempool capacity.
+
+     - The mempool capacity override is still specified in terms of bytes, but
+       the magnitude is interpreted via division as a block count, rounded up.
+
+- Pass a correctly-sized prefix of the mempool to the forging functions,
+  instead of its entire contents. The mempool's finger tree is best way to find
+  that cutoff.
+
+- Added functionality to disallow historical `MsgRollBackward`s and
+  `MsgAwaitReply`s in the ChainSync client.
+
+- ChainDB: allow to trigger chain selection synchronously
+
+- Removed `RealPoint` argument from `ReplayFromSnapshot`. Use the `ReplayStart`
+  field instead.
+
+- Made `TraceGDDEvent` into a sum type, added a new terse constructor for when
+  we disconnect from peers (this is supposed to get a high severity in the
+  tracing system).
+
+- Add TraceMempoolSynced to TraceEventMempool for tracing mempool sync time.
+
+- Added `DiffusionPipeliningSupport` to Config module. Since o-network does not track
+  any longer whether pipelining support is enabled for a particular `NodeToNodeVersion`
+  this capability was moved into the consensus layer to preserve generality.
+  - mkBlockFetchConsensusInterface and bracketChainSyncClient signatures were adapted
+    to leverage the new type.
+
 <a id='changelog-0.20.1.0'></a>
 ## 0.20.1.0 — 2024-08-26
 

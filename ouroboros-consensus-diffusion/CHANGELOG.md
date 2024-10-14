@@ -2,6 +2,21 @@
 
 # Changelog entries
 
+<a id='changelog-0.18.0.0'></a>
+## 0.18.0.0 — 2024-10-14
+
+### Patch
+
+- Updates for the `TxLimits` mempool consolidation.
+
+### Breaking
+
+- Adapted to ChainSync client changes due to new message historicity check.
+
+- `getDiffusionPipeliningSupport` :: `DiffusionPipeliningSupport` was added to `NodeKernelArgs`
+  and `NodeKernel` to enable gracefully handling some types of protocol errors when diffusion
+  is ran with pipelining enabled.
+
 <a id='changelog-0.17.1.0'></a>
 ## 0.17.1.0 — 2024-08-26
 

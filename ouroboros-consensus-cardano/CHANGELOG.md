@@ -2,6 +2,30 @@
 
 # Changelog entries
 
+<a id='changelog-0.20.0.0'></a>
+## 0.20.0.0 — 2024-10-14
+
+### Patch
+
+- Updates for the `TxLimits` mempool consolidation.
+
+### Non-Breaking
+
+- Do not check transaction sizes in the forging functions; simply include all
+  given transactions.
+
+- Remove the hotfix Babbage mempool checks.
+
+- Dropped `NodeToNodeV_12` and below from `supportedNodeToNodeVersion` as they were
+  removed from o-n-api.
+- Added `NodeToNodeV_14` to `supportedNodeToNodeVersions`
+
+### Breaking
+
+- Added a `blockBytes` column to the output of --benchmark-ledger-ops and --show-header-size.
+
+- Add `GetFuturePParams` query.
+
 <a id='changelog-0.19.0.0'></a>
 ## 0.18.0.0 — 2024-08-26
 
