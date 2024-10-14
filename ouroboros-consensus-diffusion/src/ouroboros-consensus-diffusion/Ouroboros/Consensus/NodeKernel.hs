@@ -205,6 +205,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs {
                               :: StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
     , genesisArgs             :: GenesisNodeKernelArgs m blk
     , getDiffusionPipeliningSupport    :: DiffusionPipeliningSupport
+    , txStateRng              :: StdGen
     }
 
 initNodeKernel ::
@@ -227,6 +228,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                    , genesisArgs
                                    , getDiffusionPipeliningSupport
                                    , miniProtocolParameters
+                                   , txStateRng
                                    } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [BlockForging m blk] <- LazySTM.newTMVarIO []
@@ -300,7 +302,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                         ps_POLICY_PEER_SHARE_MAX_PEERS
 
     txChannelsVar <- StrictSTM.newMVar (TxChannels Map.empty)
-    sharedTxStateVar <- newSharedTxStateVar
+    sharedTxStateVar <- newSharedTxStateVar txStateRng
 
     case gnkaGetLoEFragment genesisArgs of
       LoEAndGDDDisabled                  -> pure ()

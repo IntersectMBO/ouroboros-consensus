@@ -790,7 +790,8 @@ mkNodeKernelArgs
   genesisArgs
   getDiffusionPipeliningSupport
   = do
-    let (kaRng, psRng) = split rng
+    let (kaRng, rng') = split rng
+        (txRng, psRng) = split rng'
     return NodeKernelArgs
       { tracers
       , registry
@@ -816,6 +817,7 @@ mkNodeKernelArgs
       , publicPeerSelectionStateVar
       , genesisArgs
       , getDiffusionPipeliningSupport
+      , txStateRng = txRng
       }
 
 -- | We allow the user running the node to customise the 'NodeKernelArgs'
