@@ -32,7 +32,6 @@ import           Control.Monad.Trans.Except (ExceptT)
 import           Control.Monad.Trans.Except.Extra (firstExceptT)
 import           Ouroboros.Consensus.Cardano
 import qualified Ouroboros.Consensus.Cardano as Consensus
-import qualified Ouroboros.Consensus.Cardano.CanHardFork as Consensus
 import           Ouroboros.Consensus.Cardano.Condense ()
 import           Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams (..))
 import           Ouroboros.Consensus.Config (emptyCheckpointsMap)
@@ -108,17 +107,11 @@ mkConsensusProtocolCardano NodeByronProtocolConfiguration {
                             -- not-yet-ready eras in released node versions without mainnet nodes
                             -- prematurely advertising that they could hard fork into the new era.
                              npcTestShelleyHardForkAtEpoch,
-                             npcTestShelleyHardForkAtVersion,
                              npcTestAllegraHardForkAtEpoch,
-                             npcTestAllegraHardForkAtVersion,
                              npcTestMaryHardForkAtEpoch,
-                             npcTestMaryHardForkAtVersion,
                              npcTestAlonzoHardForkAtEpoch,
-                             npcTestAlonzoHardForkAtVersion,
                              npcTestBabbageHardForkAtEpoch,
-                             npcTestBabbageHardForkAtVersion,
-                             npcTestConwayHardForkAtEpoch,
-                             npcTestConwayHardForkAtVersion
+                             npcTestConwayHardForkAtEpoch
                            }
                            files = do
     byronGenesis <-
@@ -213,42 +206,36 @@ mkConsensusProtocolCardano NodeByronProtocolConfiguration {
               -- But we also provide an override to allow for simpler test setups
               -- such as triggering at the 0 -> 1 transition .
               --
-              Nothing -> Consensus.TriggerHardForkAtVersion
-                            (maybe 2 fromIntegral npcTestShelleyHardForkAtVersion)
+              Nothing      -> Consensus.CardanoTriggerHardForkAtDefaultVersion
 
               -- Alternatively, for testing we can transition at a specific epoch.
               --
-              Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
+              Just epochNo -> Consensus.CardanoTriggerHardForkAtEpoch epochNo
           -- Shelley to Allegra hard fork parameters
         , triggerHardForkAllegra =
             case npcTestAllegraHardForkAtEpoch of
-              Nothing -> Consensus.TriggerHardForkAtVersion
-                            (maybe 3 fromIntegral npcTestAllegraHardForkAtVersion)
-              Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
+              Nothing      -> Consensus.CardanoTriggerHardForkAtDefaultVersion
+              Just epochNo -> Consensus.CardanoTriggerHardForkAtEpoch epochNo
           -- Allegra to Mary hard fork parameters
         , triggerHardForkMary =
             case npcTestMaryHardForkAtEpoch of
-              Nothing -> Consensus.TriggerHardForkAtVersion
-                            (maybe 4 fromIntegral npcTestMaryHardForkAtVersion)
-              Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
+              Nothing      -> Consensus.CardanoTriggerHardForkAtDefaultVersion
+              Just epochNo -> Consensus.CardanoTriggerHardForkAtEpoch epochNo
           -- Mary to Alonzo hard fork parameters
         , triggerHardForkAlonzo =
             case npcTestAlonzoHardForkAtEpoch of
-              Nothing -> Consensus.TriggerHardForkAtVersion
-                            (maybe 5 fromIntegral npcTestAlonzoHardForkAtVersion)
-              Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
+              Nothing      -> Consensus.CardanoTriggerHardForkAtDefaultVersion
+              Just epochNo -> Consensus.CardanoTriggerHardForkAtEpoch epochNo
           -- Alonzo to Babbage hard fork parameters
         , triggerHardForkBabbage =
             case npcTestBabbageHardForkAtEpoch of
-                Nothing -> Consensus.TriggerHardForkAtVersion
-                            (maybe 7 fromIntegral npcTestBabbageHardForkAtVersion)
-                Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
+                Nothing      -> Consensus.CardanoTriggerHardForkAtDefaultVersion
+                Just epochNo -> Consensus.CardanoTriggerHardForkAtEpoch epochNo
           -- Babbage to Conway hard fork parameters
         , triggerHardForkConway =
             case npcTestConwayHardForkAtEpoch of
-                Nothing -> Consensus.TriggerHardForkAtVersion
-                            (maybe 9 fromIntegral npcTestConwayHardForkAtVersion)
-                Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
+                Nothing      -> Consensus.CardanoTriggerHardForkAtDefaultVersion
+                Just epochNo -> Consensus.CardanoTriggerHardForkAtEpoch epochNo
         }
         transitionLedgerConfig
         emptyCheckpointsMap

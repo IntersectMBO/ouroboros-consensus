@@ -1,7 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
@@ -14,9 +13,8 @@ module Test.Consensus.Cardano.ProtocolInfo (
   , ShelleySlotLengthInSeconds (..)
     -- ** Hard-fork specification
   , Era (..)
-  , HardForkSpec (..)
   , hardForkInto
-  , stayInByron
+  , hardForkOnDefaultProtocolVersions
     -- * ProtocolInfo elaboration
   , mkSimpleTestProtocolInfo
   , mkTestProtocolInfo
@@ -31,6 +29,7 @@ import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import qualified Cardano.Slotting.Time as Time
 import           Data.Proxy (Proxy (..))
+import           Data.SOP.Strict
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block.Forging (BlockForging)
 import           Ouroboros.Consensus.BlockchainTime (SlotLength)
@@ -39,9 +38,8 @@ import           Ouroboros.Consensus.Byron.Node (ByronLeaderCredentials,
                      byronPbftSignatureThreshold, byronSoftwareVersion)
 import           Ouroboros.Consensus.Cardano.Block (CardanoBlock)
 import           Ouroboros.Consensus.Cardano.Node (CardanoHardForkConstraints,
-                     CardanoHardForkTriggers (..), CardanoProtocolParams (..),
-                     TriggerHardFork (TriggerHardForkAtEpoch, TriggerHardForkNotDuringThisExecution),
-                     protocolInfoCardano)
+                     CardanoHardForkTrigger (..), CardanoHardForkTriggers (..),
+                     CardanoProtocolParams (..), protocolInfoCardano)
 import           Ouroboros.Consensus.Config (emptyCheckpointsMap)
 import           Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
 import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..),
@@ -77,19 +75,6 @@ instance ToSlotLength ByronSlotLengthInSeconds where
 instance ToSlotLength ShelleySlotLengthInSeconds where
   toSlotLength (ShelleySlotLengthInSeconds n) = Time.slotLengthFromSec $ fromIntegral n
 
--- | This data structure is used to specify if and when hardforks should take
--- place, and the version used at each era. See 'stayInByron' and 'hardForkInto'
--- for examples.
-data HardForkSpec =
-    HardForkSpec {
-      shelleyHardForkSpec :: TriggerHardFork
-    , allegraHardForkSpec :: TriggerHardFork
-    , maryHardForkSpec    :: TriggerHardFork
-    , alonzoHardForkSpec  :: TriggerHardFork
-    , babbageHardForkSpec :: TriggerHardFork
-    , conwayHardForkSpec  :: TriggerHardFork
-    }
-
 data Era = Byron
          | Shelley
          | Allegra
@@ -99,52 +84,37 @@ data Era = Byron
          | Conway
   deriving (Show, Eq, Ord, Enum)
 
-selectEra :: Era -> HardForkSpec -> TriggerHardFork
-selectEra Byron   _                                    = error "Byron is the first era, therefore there is no hard fork spec."
-selectEra Shelley HardForkSpec { shelleyHardForkSpec } = shelleyHardForkSpec
-selectEra Allegra HardForkSpec { allegraHardForkSpec } = allegraHardForkSpec
-selectEra Mary    HardForkSpec { maryHardForkSpec    } = maryHardForkSpec
-selectEra Alonzo  HardForkSpec { alonzoHardForkSpec  } = alonzoHardForkSpec
-selectEra Babbage HardForkSpec { babbageHardForkSpec } = babbageHardForkSpec
-selectEra Conway  HardForkSpec { conwayHardForkSpec  } = conwayHardForkSpec
-
-stayInByron :: HardForkSpec
-stayInByron =
-    HardForkSpec {
-      shelleyHardForkSpec = TriggerHardForkNotDuringThisExecution
-    , allegraHardForkSpec = TriggerHardForkNotDuringThisExecution
-    , maryHardForkSpec    = TriggerHardForkNotDuringThisExecution
-    , alonzoHardForkSpec  = TriggerHardForkNotDuringThisExecution
-    , babbageHardForkSpec = TriggerHardForkNotDuringThisExecution
-    , conwayHardForkSpec  = TriggerHardForkNotDuringThisExecution
-    }
-
 protocolVersionZero :: SL.ProtVer
 protocolVersionZero = SL.ProtVer versionZero 0
   where
     versionZero :: SL.Version
     versionZero = SL.natVersion @0
 
-hardForkInto :: Era -> HardForkSpec
-hardForkInto Byron   = stayInByron
+hardForkOnDefaultProtocolVersions :: CardanoHardForkTriggers
+hardForkOnDefaultProtocolVersions =
+      CardanoHardForkTriggers
+    $ hpure CardanoTriggerHardForkAtDefaultVersion
+
+hardForkInto :: Era -> CardanoHardForkTriggers
+hardForkInto Byron   = hardForkOnDefaultProtocolVersions
 hardForkInto Shelley =
-    stayInByron
-      { shelleyHardForkSpec = TriggerHardForkAtEpoch 0 }
+    hardForkOnDefaultProtocolVersions
+      { triggerHardForkShelley = CardanoTriggerHardForkAtEpoch 0 }
 hardForkInto Allegra =
     (hardForkInto Shelley)
-      { allegraHardForkSpec = TriggerHardForkAtEpoch 0 }
+      { triggerHardForkAllegra = CardanoTriggerHardForkAtEpoch 0 }
 hardForkInto Mary    =
     (hardForkInto Allegra)
-      { maryHardForkSpec    = TriggerHardForkAtEpoch 0 }
+      { triggerHardForkMary    = CardanoTriggerHardForkAtEpoch 0 }
 hardForkInto Alonzo  =
     (hardForkInto Mary)
-      { alonzoHardForkSpec  = TriggerHardForkAtEpoch 0 }
+      { triggerHardForkAlonzo  = CardanoTriggerHardForkAtEpoch 0 }
 hardForkInto Babbage =
     (hardForkInto Alonzo)
-      { babbageHardForkSpec = TriggerHardForkAtEpoch 0 }
+      { triggerHardForkBabbage = CardanoTriggerHardForkAtEpoch 0 }
 hardForkInto Conway =
     (hardForkInto Babbage)
-      { conwayHardForkSpec  = TriggerHardForkAtEpoch 0 }
+      { triggerHardForkConway  = CardanoTriggerHardForkAtEpoch 0 }
 
 {-------------------------------------------------------------------------------
  ProtocolInfo elaboration
@@ -167,9 +137,10 @@ hardForkInto Conway =
 -- If you want to tweak the resulting protocol info further see
 -- 'mkTestProtocolInfo'.
 --
--- The resulting 'ProtocolInfo' contains a ledger state. The 'HardForkSpec'
--- parameter will determine to which era this ledger state belongs. See
--- 'HardForkSpec' for more details on how to specify a value of this type.
+-- The resulting 'ProtocolInfo' contains a ledger state. The
+-- 'CardanoHardForkTriggers' parameter will determine to which era this ledger
+-- state belongs. See 'hardForkInto' and 'hardForkOnDefaultProtocolVersions' for
+-- more details on how to specify a value of this type.
 --
 mkSimpleTestProtocolInfo ::
      forall c
@@ -180,7 +151,7 @@ mkSimpleTestProtocolInfo ::
   -> ByronSlotLengthInSeconds
   -> ShelleySlotLengthInSeconds
   -> SL.ProtVer
-  -> HardForkSpec
+  -> CardanoHardForkTriggers
   -> ProtocolInfo (CardanoBlock c)
 mkSimpleTestProtocolInfo
     decentralizationParam
@@ -188,20 +159,20 @@ mkSimpleTestProtocolInfo
     byronSlotLenghtInSeconds
     shelleySlotLengthInSeconds
     protocolVersion
-    hardForkSpec
+    hardForkTriggers
   = fst
   $ mkTestProtocolInfo @IO
       (CoreNodeId 0, coreNodeShelley)
       shelleyGenesis
-      byronProtocolVersion
+      aByronProtocolVersion
       SL.NeutralNonce
       genesisByron
       generatedSecretsByron
       (Just $ PBftSignatureThreshold 1)
       protocolVersion
-      hardForkSpec
+      hardForkTriggers
   where
-    byronProtocolVersion =
+    aByronProtocolVersion =
         CC.Update.ProtocolVersion 0 0 0
 
     coreNodeShelley = runGen initSeed $ Shelley.genCoreNode initialKESPeriod
@@ -258,8 +229,8 @@ mkTestProtocolInfo ::
   -> SL.ProtVer
   -- ^ See 'protocolInfoCardano' for the details of what is the
   -- relation between this version and any 'TriggerHardForkAtVersion'
-  -- that __might__ appear in the 'HardForkSpec' parameter.
-  -> HardForkSpec
+  -- that __might__ appear in the 'CardanoHardForkTriggers' parameter.
+  -> CardanoHardForkTriggers
   -- ^ Specification of the era to which the initial state should hard-fork to.
   -> (ProtocolInfo (CardanoBlock c), m [BlockForging m (CardanoBlock c)])
 mkTestProtocolInfo
@@ -271,7 +242,7 @@ mkTestProtocolInfo
     generatedSecretsByron
     aByronPbftSignatureThreshold
     protocolVersion
-    hardForkSpec
+    hardForkTriggers
   =
     protocolInfoCardano
         (CardanoProtocolParams
@@ -286,14 +257,7 @@ mkTestProtocolInfo
               shelleyBasedInitialNonce      = initialNonce
             , shelleyBasedLeaderCredentials = [leaderCredentialsShelley]
             }
-          CardanoHardForkTriggers' {
-              triggerHardForkShelley = selectEra Shelley hardForkSpec
-            , triggerHardForkAllegra = selectEra Allegra hardForkSpec
-            , triggerHardForkMary    = selectEra Mary    hardForkSpec
-            , triggerHardForkAlonzo  = selectEra Alonzo  hardForkSpec
-            , triggerHardForkBabbage = selectEra Babbage hardForkSpec
-            , triggerHardForkConway  = selectEra Conway  hardForkSpec
-            }
+          hardForkTriggers
           ( L.mkLatestTransitionConfig
               shelleyGenesis
               -- These example genesis objects might need to become more

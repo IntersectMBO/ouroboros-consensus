@@ -1,6 +1,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 module Test.Consensus.Cardano.SupportsSanityCheck (tests) where
 
+import           Ouroboros.Consensus.Cardano (CardanoHardForkTriggers)
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Combinator.Basics
@@ -53,14 +54,14 @@ genSimpleTestProtocolInfo = do
       (byronSlotLength setup)
       (shelleySlotLength setup)
       protocolVersionZero
-      (hardForkSpec setup)
+      (hardForkTriggers setup)
 
 data SimpleTestProtocolInfoSetup = SimpleTestProtocolInfoSetup
   { decentralizationParam :: Shelley.DecentralizationParam
   , securityParam         :: SecurityParam
   , byronSlotLength       :: ByronSlotLengthInSeconds
   , shelleySlotLength     :: ShelleySlotLengthInSeconds
-  , hardForkSpec          :: HardForkSpec
+  , hardForkTriggers      :: CardanoHardForkTriggers
   }
 
 instance Arbitrary SimpleTestProtocolInfoSetup where
@@ -70,7 +71,7 @@ instance Arbitrary SimpleTestProtocolInfoSetup where
       <*> genSecurityParam
       <*> genByronSlotLength
       <*> genShelleySlotLength
-      <*> genHardForkSpec
+      <*> genHardForkTriggers
     where
       genSecurityParam =
         SecurityParam <$> Gen.choose (8, 12)
@@ -78,5 +79,5 @@ instance Arbitrary SimpleTestProtocolInfoSetup where
         ByronSlotLengthInSeconds <$> Gen.choose (1, 4)
       genShelleySlotLength =
         ShelleySlotLengthInSeconds <$> Gen.choose (1, 4)
-      genHardForkSpec =
+      genHardForkTriggers =
         hardForkInto <$> Gen.chooseEnum (Byron, Conway)

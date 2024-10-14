@@ -8,6 +8,7 @@ module Ouroboros.Consensus.Cardano (
   , ProtocolCardano
   , ProtocolShelley
     -- * Abstract over the various protocols
+  , CardanoHardForkTrigger (..)
   , CardanoHardForkTriggers (..)
   , module X
   ) where

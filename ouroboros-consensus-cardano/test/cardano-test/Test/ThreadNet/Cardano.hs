@@ -6,14 +6,18 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Test.ThreadNet.Cardano (tests) where
 
+import qualified Cardano.Chain.Block as CC
 import qualified Cardano.Chain.Common as CC.Common
 import qualified Cardano.Chain.Genesis as CC.Genesis
 import           Cardano.Chain.ProtocolConstants (kEpochSlots)
 import           Cardano.Chain.Slotting (unEpochSlots)
 import qualified Cardano.Chain.Update as CC.Update
+import qualified Cardano.Chain.Update.Validation.Interface as CC
+import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as SL
@@ -30,15 +34,18 @@ import           Data.Word (Word64)
 import           Lens.Micro
 import           Ouroboros.Consensus.Block.Forging (BlockForging)
 import           Ouroboros.Consensus.BlockchainTime
+import           Ouroboros.Consensus.Byron.Ledger (LedgerState (..))
 import           Ouroboros.Consensus.Byron.Ledger.Block (ByronBlock)
 import           Ouroboros.Consensus.Byron.Ledger.Conversions
 import           Ouroboros.Consensus.Byron.Node
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.Condense ()
-import           Ouroboros.Consensus.Cardano.Node
 import           Ouroboros.Consensus.Config.SecurityParam
+import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
                      (isHardForkNodeToNodeEnabled)
+import           Ouroboros.Consensus.HardFork.Combinator.State (Current (..))
+import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import           Ouroboros.Consensus.Ledger.SupportsMempool (extractTxs)
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.ProtocolInfo
@@ -47,8 +54,8 @@ import           Ouroboros.Consensus.Protocol.PBFT
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import           Ouroboros.Consensus.Shelley.Node
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
-import           Test.Consensus.Cardano.ProtocolInfo (HardForkSpec (..),
-                     mkTestProtocolInfo)
+import           Test.Consensus.Cardano.ProtocolInfo
+                     (hardForkOnDefaultProtocolVersions, mkTestProtocolInfo)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -360,7 +367,7 @@ prop_simple_cardano_convergence TestSetup
       else
         -- this new version must not induce the hard fork if accepted
         CC.Update.ProtocolVersion
-          (SL.getVersion byronMajorVersion) (byronInitialMinorVersion + 1) 0
+          byronMajorVersion (byronInitialMinorVersion + 1) 0
 
     -- Classifying test cases
 
@@ -466,7 +473,7 @@ mkProtocolCardanoAndHardForkTxs
 
     protocolInfo :: ProtocolInfo (CardanoBlock c)
     blockForging :: m [BlockForging m (CardanoBlock c)]
-    (protocolInfo, blockForging) =
+    (setByronProtVer -> protocolInfo, blockForging) =
       mkTestProtocolInfo
         (coreNodeId, coreNodeShelley)
         genesisShelley
@@ -478,75 +485,25 @@ mkProtocolCardanoAndHardForkTxs
                                           -- window so that the forks induced by
                                           -- the network partition are as deep
                                           -- as possible.
-        (SL.ProtVer conwayMajorVersion  0) -- During the tests, we
-                                           -- want to hard fork all
-                                           -- the way to Conway, so we
-                                           -- need to signal that we
-                                           -- support that era. This
-                                           -- version will have to be
-                                           -- changed if this test has
-                                           -- to hard fork to eras
-                                           -- beyond Conway.
-        HardForkSpec {
-            shelleyHardForkSpec = TriggerHardForkAtVersion $ SL.getVersion shelleyMajorVersion
-          , allegraHardForkSpec = TriggerHardForkAtVersion $ SL.getVersion allegraMajorVersion
-          , maryHardForkSpec    = TriggerHardForkAtVersion $ SL.getVersion maryMajorVersion
-          , alonzoHardForkSpec  = TriggerHardForkAtVersion $ SL.getVersion alonzoMajorVersion
-          , babbageHardForkSpec = TriggerHardForkAtVersion $ SL.getVersion babbageMajorVersion
-          , conwayHardForkSpec  = TriggerHardForkAtVersion $ SL.getVersion conwayMajorVersion
-        }
+        -- This test only enters the Shelley era.
+        (SL.ProtVer shelleyMajorVersion 0)
+        hardForkOnDefaultProtocolVersions
 
 {-------------------------------------------------------------------------------
   Constants
 -------------------------------------------------------------------------------}
 
--- | The major protocol version of Byron in this test
---
--- On mainnet, the Byron era spans multiple major versions: 0 for Classic and 1
--- for OBFT. So Shelley is 2. But in this test, we start with OBFT as major
--- version 0: the nodes are running OBFT from slot 0 and the Byron ledger
--- defaults to an initial version of 0. So Shelley is 1 in this test.
-byronMajorVersion :: SL.Version
-byronMajorVersion = SL.natVersion @0
+-- | The major protocol version of the Byron era in this test.
+byronMajorVersion :: Integral a => a
+byronMajorVersion = SL.getVersion shelleyMajorVersion - 1
 
--- | The major protocol version of Shelley in this test
---
--- See 'byronMajorVersion'
-shelleyMajorVersion :: SL.Version
-shelleyMajorVersion = SL.natVersion @1
-
--- | The major protocol version of Allegra in this test
---
--- See 'byronMajorVersion'
-allegraMajorVersion :: SL.Version
-allegraMajorVersion = SL.natVersion @2
-
--- | The major protocol version of Mary in this test
---
--- See 'byronMajorVersion'
-maryMajorVersion :: SL.Version
-maryMajorVersion = SL.natVersion @3
-
--- | The major protocol version of Alonzo in this test
---
-alonzoMajorVersion :: SL.Version
-alonzoMajorVersion = SL.natVersion @4
-
--- | The major protocol version of Babbage in this test
---
-babbageMajorVersion :: SL.Version
-babbageMajorVersion = SL.natVersion @5
-
--- | The major protocol version of Conway in this test
---
-conwayMajorVersion :: SL.Version
-conwayMajorVersion = SL.natVersion @6
-
--- | The initial minor protocol version of Byron in this test
---
--- See 'byronMajorVersion'
 byronInitialMinorVersion :: Num a => a
 byronInitialMinorVersion = 0
+
+-- | The (first) major protocol version of the Shelley era, as used by
+-- 'hardForkOnDefaultProtocolVersions'.
+shelleyMajorVersion :: SL.Version
+shelleyMajorVersion = L.eraProtVerLow @(ShelleyEra StandardCrypto)
 
 {-------------------------------------------------------------------------------
   Miscellany
@@ -555,3 +512,26 @@ byronInitialMinorVersion = 0
 byronEpochSize :: SecurityParam -> Word64
 byronEpochSize (SecurityParam k) =
     unEpochSlots $ kEpochSlots $ CC.Common.BlockCount k
+
+-- | By default, the initial major Byron protocol version is @0@, but we want to
+-- set it to 'byronMajorVersion'.
+setByronProtVer :: ProtocolInfo (CardanoBlock c) -> ProtocolInfo (CardanoBlock c)
+setByronProtVer =
+    modifyInitLedger $ modifyExtLedger $ modifyHFLedgerState $ \st ->
+      let cvs = byronLedgerState st
+          us  = (CC.cvsUpdateState cvs) {
+              CC.adoptedProtocolVersion =
+                CC.Update.ProtocolVersion byronMajorVersion byronInitialMinorVersion 0
+            }
+       in st { byronLedgerState = cvs { CC.cvsUpdateState = us } }
+  where
+    modifyInitLedger f pinfo = pinfo { pInfoInitLedger = f (pInfoInitLedger pinfo) }
+    modifyExtLedger f elgr = elgr { ledgerState = f (ledgerState elgr ) }
+
+    modifyHFLedgerState ::
+         (LedgerState x -> LedgerState x)
+      -> LedgerState (HardForkBlock (x : xs))
+      -> LedgerState (HardForkBlock (x : xs))
+    modifyHFLedgerState f (HardForkLedgerState (HardForkState (TZ st))) =
+        HardForkLedgerState (HardForkState (TZ st {currentState = f (currentState st)}))
+    modifyHFLedgerState _ st = st

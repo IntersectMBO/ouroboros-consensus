@@ -55,17 +55,11 @@ instance FromJSON NodeHardForkProtocolConfiguration where
           <$> v .:? "TestEnableDevelopmentHardForkEras"
                 .!= False
           <*> v .:? "TestShelleyHardForkAtEpoch"
-          <*> v .:? "TestShelleyHardForkAtVersion"
           <*> v .:? "TestAllegraHardForkAtEpoch"
-          <*> v .:? "TestAllegraHardForkAtVersion"
           <*> v .:? "TestMaryHardForkAtEpoch"
-          <*> v .:? "TestMaryHardForkAtVersion"
           <*> v .:? "TestAlonzoHardForkAtEpoch"
-          <*> v .:? "TestAlonzoHardForkAtVersion"
           <*> v .:? "TestBabbageHardForkAtEpoch"
-          <*> v .:? "TestBabbageHardForkAtVersion"
           <*> v .:? "TestConwayHardForkAtEpoch"
-          <*> v .:? "TestConwayHardForkAtVersion"
 
 instance FromJSON NodeByronProtocolConfiguration where
     parseJSON = withObject "NodeByronProtocolConfiguration" $ \v ->
