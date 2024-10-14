@@ -786,7 +786,8 @@ mkNodeKernelArgs
   publicPeerSelectionStateVar
   genesisArgs
   = do
-    let (kaRng, psRng) = split rng
+    let (kaRng, rng') = split rng
+        (txRng, psRng) = split rng'
     return NodeKernelArgs
       { tracers
       , registry
@@ -811,6 +812,7 @@ mkNodeKernelArgs
       , peerSharingRng = psRng
       , publicPeerSelectionStateVar
       , genesisArgs
+      , txStateRng = txRng
       }
 
 -- | We allow the user running the node to customise the 'NodeKernelArgs'
