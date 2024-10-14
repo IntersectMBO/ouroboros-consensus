@@ -28,6 +28,7 @@ import           Network.TypedProtocol.Codec (AnyMessage, PeerHasAgency (..),
                      PeerRole)
 import           Ouroboros.Consensus.Block (HasHeader)
 import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
+import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import           Ouroboros.Consensus.Node.ProtocolInfo
                      (NumCoreNodes (NumCoreNodes))
@@ -97,6 +98,7 @@ startBlockFetchLogic registry tracer chainDb fetchClientRegistry getCandidates =
             -- The BlockFetch logic would then wait for the timeout to expire
             -- before trying to download the block from another peer.
             (pure FetchModeDeadline)
+            DiffusionPipeliningOn
 
         -- Values taken from
         -- ouroboros-consensus-diffusion/src/unstable-diffusion-testlib/Test/ThreadNet/Network.hs
