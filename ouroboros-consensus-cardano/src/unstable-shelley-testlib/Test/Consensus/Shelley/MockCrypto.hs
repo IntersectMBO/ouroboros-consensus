@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 {-# LANGUAGE TypeOperators #-}
@@ -29,12 +30,16 @@ import           Control.State.Transition.Extended (PredicateFailure)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
+import           Ouroboros.Consensus.Protocol.Praos.AgentClient (AgentCrypto (..))
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import           Ouroboros.Consensus.Shelley.Eras (ShelleyEra)
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock,
                      ShelleyCompatible)
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import           Test.QuickCheck (Arbitrary)
+import qualified Cardano.KESAgent.KES.Crypto as Agent
+import qualified Cardano.KESAgent.Protocols.VersionedProtocol as Agent
+import qualified Cardano.KESAgent.Processes.ServiceClient as Agent
 
 -- | A mock replacement for 'StandardCrypto'
 --
@@ -79,3 +84,16 @@ type CanMock proto era =
   , Arbitrary (Core.GovState era)
   , Arbitrary (SL.CertState era)
   )
+
+instance Agent.NamedCrypto (MockCrypto h) where
+  cryptoName _ = Agent.CryptoName "Mock"
+
+instance Agent.ServiceClientDrivers (MockCrypto h) where
+  availableServiceClientDrivers = []
+
+instance Agent.Crypto (MockCrypto h) where
+  type KES (MockCrypto h) = MockKES 10
+  type DSIGN (MockCrypto h) = MockDSIGN
+
+instance HashAlgorithm h => AgentCrypto (MockCrypto h) where
+  type ACrypto (MockCrypto h) = MockCrypto h

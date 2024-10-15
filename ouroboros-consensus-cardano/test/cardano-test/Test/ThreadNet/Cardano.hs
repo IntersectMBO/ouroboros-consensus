@@ -54,9 +54,9 @@ import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.NodeId
 import           Ouroboros.Consensus.Protocol.PBFT
 import           Ouroboros.Consensus.Shelley.HFEras ()
+import           Ouroboros.Consensus.Protocol.Praos.AgentClient (KESAgentContext)
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import           Ouroboros.Consensus.Shelley.Node
-import           Ouroboros.Consensus.Util.IOLike (IOLike)
 import           Test.Consensus.Cardano.ProtocolInfo
                      (hardForkOnDefaultProtocolVersions, mkTestProtocolInfo)
 import           Test.QuickCheck
@@ -441,7 +441,7 @@ prop_simple_cardano_convergence TestSetup
     flakyTestCopy = "This test may be flaky, and its failure may not be indicative of an actual problem: see https://github.com/IntersectMBO/ouroboros-consensus/issues/545"
 
 mkProtocolCardanoAndHardForkTxs ::
-     forall c m. (IOLike m, c ~ StandardCrypto)
+     forall c m. (KESAgentContext c m, c ~ StandardCrypto)
      -- Byron
   => PBftParams
   -> CoreNodeId
