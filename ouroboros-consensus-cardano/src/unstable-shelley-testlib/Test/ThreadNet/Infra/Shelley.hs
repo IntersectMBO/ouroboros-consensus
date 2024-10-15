@@ -38,6 +38,7 @@ module Test.ThreadNet.Infra.Shelley (
 import           Cardano.Crypto.DSIGN (DSIGNAlgorithm (..), seedSizeDSIGN)
 import           Cardano.Crypto.Hash (HashAlgorithm)
 import           Cardano.Crypto.KES (UnsoundPureSignKeyKES, KESAlgorithm (..),
+                     UnsoundPureKESAlgorithm (..),
                      seedSizeKES, unsoundPureGenKeyKES, unsoundPureDeriveVerKeyKES)
 import           Cardano.Crypto.Seed (mkSeedFromBytes)
 import qualified Cardano.Crypto.Seed as Cardano.Crypto
@@ -79,8 +80,10 @@ import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Protocol.Praos.Common
                      (PraosCanBeLeader (PraosCanBeLeader),
-                     praosCanBeLeaderColdVerKey, praosCanBeLeaderOpCert,
-                     praosCanBeLeaderSignKeyVRF)
+                     praosCanBeLeaderColdVerKey,
+                     praosCanBeLeaderSignKeyVRF,
+                     praosCanBeLeaderCredentialsSource,
+                     PraosCredentialsSource (..))
 import           Ouroboros.Consensus.Protocol.TPraos
 import           Ouroboros.Consensus.Shelley.Eras (EraCrypto, ShelleyEra)
 import           Ouroboros.Consensus.Shelley.Ledger (GenTx (..),
@@ -213,9 +216,8 @@ genCoreNode startKESPeriod = do
 mkLeaderCredentials :: PraosCrypto c => CoreNode c -> ShelleyLeaderCredentials c
 mkLeaderCredentials CoreNode { cnDelegateKey, cnVRF, cnKES, cnOCert } =
     ShelleyLeaderCredentials {
-        shelleyLeaderCredentialsInitSignKey = cnKES
-      , shelleyLeaderCredentialsCanBeLeader = PraosCanBeLeader {
-          praosCanBeLeaderOpCert     = cnOCert
+        shelleyLeaderCredentialsCanBeLeader = PraosCanBeLeader {
+          praosCanBeLeaderCredentialsSource = PraosCredentialsUnsound cnOCert cnKES
         , praosCanBeLeaderColdVerKey = SL.VKey $ deriveVerKeyDSIGN cnDelegateKey
         , praosCanBeLeaderSignKeyVRF = cnVRF
         }
@@ -422,6 +424,7 @@ mkProtocolShelley genesis initialNonce protVer coreNode =
         , shelleyBasedLeaderCredentials = [mkLeaderCredentials coreNode]
         }
       protVer
+
 {-------------------------------------------------------------------------------
   Necessary transactions for updating the 'DecentralizationParam'
 -------------------------------------------------------------------------------}

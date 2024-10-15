@@ -1,3 +1,4 @@
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -163,6 +164,8 @@ instance (SimpleCrypto c, Typeable ext, Typeable ext')
 
   headerIsEBB = const Nothing
 
+type KnownHashSize c = KnownNat (Hash.SizeHash (SimpleHash c))
+
 data SimpleStdHeader c ext = SimpleStdHeader {
       simplePrev     :: ChainHash (SimpleBlock c ext)
     , simpleSlotNo   :: SlotNo
@@ -173,7 +176,7 @@ data SimpleStdHeader c ext = SimpleStdHeader {
   deriving stock    (Generic, Show, Eq)
   deriving anyclass (NoThunks)
 
-deriving anyclass instance KnownNat (Hash.SizeHash (SimpleHash c)) =>
+deriving anyclass instance KnownHashSize c =>
   Serialise (SimpleStdHeader c ext)
 
 data SimpleBody = SimpleBody {
@@ -373,7 +376,7 @@ newtype instance LedgerState (SimpleBlock c ext) = SimpleLedgerState {
   deriving stock   (Generic, Show, Eq)
   deriving newtype (NoThunks)
 
-deriving anyclass instance KnownNat (Hash.SizeHash (SimpleHash c)) =>
+deriving anyclass instance KnownHashSize c =>
   Serialise (LedgerState (SimpleBlock c ext))
 
 -- Ticking has no effect on the simple ledger state
@@ -548,7 +551,7 @@ instance InspectLedger (SimpleBlock c ext) where
   Crypto needed for simple blocks
 -------------------------------------------------------------------------------}
 
-class (KnownNat (Hash.SizeHash (SimpleHash c)), HashAlgorithm (SimpleHash c), Typeable c) => SimpleCrypto c where
+class (KnownHashSize c, HashAlgorithm (SimpleHash c), Typeable c) => SimpleCrypto c where
   type family SimpleHash c :: Type
 
 data SimpleStandardCrypto
@@ -605,7 +608,7 @@ instance Condense ext' => Condense (SimpleBlock' c ext ext') where
 instance ToCBOR SimpleBody where
   toCBOR = encode
 
-encodeSimpleHeader :: KnownNat (Hash.SizeHash (SimpleHash c))
+encodeSimpleHeader :: KnownHashSize c
                    => (ext' -> CBOR.Encoding)
                    -> Header (SimpleBlock' c ext ext')
                    -> CBOR.Encoding

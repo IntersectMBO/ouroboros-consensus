@@ -435,10 +435,13 @@ forkBlockForging ::
     -> BlockForging m blk
     -> m (Thread m Void)
 forkBlockForging IS{..} blockForging =
-    forkLinkedWatcher registry threadLabel
-    $ knownSlotWatcher btime
-    $ withEarlyExit_ . go
+    forkLinkedWatcherFinalize registry threadLabel
+      watcher
+      (finalize blockForging)
   where
+    watcher :: Watcher m SlotNo SlotNo
+    watcher = knownSlotWatcher btime $ withEarlyExit_ . go
+
     threadLabel :: String
     threadLabel =
         "NodeKernel.blockForging." <> Text.unpack (forgeLabel blockForging)
