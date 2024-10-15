@@ -56,13 +56,14 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.Node
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
+import           Ouroboros.Consensus.Protocol.Praos.AgentClient (KESAgentContext)
 import           Ouroboros.Consensus.Protocol.TPraos
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Node
+import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util (eitherToMaybe)
-import           Ouroboros.Consensus.Util.IOLike (IOLike)
 import           Test.ThreadNet.TxGen
 import           Test.ThreadNet.TxGen.Shelley ()
 
@@ -265,7 +266,9 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
 
 protocolInfoShelleyBasedHardFork ::
      forall m proto1 era1 proto2 era2.
-     (IOLike m, ShelleyBasedHardForkConstraints proto1 era1 proto2 era2)
+     ( KESAgentContext (ProtoCrypto proto2) m
+     , ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
+     )
   => ProtocolParamsShelleyBased (EraCrypto era1)
   -> SL.ProtVer
   -> SL.ProtVer

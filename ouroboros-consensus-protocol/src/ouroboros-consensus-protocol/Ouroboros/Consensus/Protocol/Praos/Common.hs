@@ -6,6 +6,9 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Various things common to iterations of the Praos protocol.
 module Ouroboros.Consensus.Protocol.Praos.Common (
@@ -30,15 +33,16 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Protocol.TPraos.OCert as OCert
 import           Cardano.Slotting.Block (BlockNo)
 import           Cardano.Slotting.Slot (SlotNo)
-import           Control.Monad.Class.MonadST (MonadST)
-import           Control.Monad.Class.MonadThrow (MonadThrow)
+import           Control.Tracer (nullTracer)
 import           Data.Function (on)
 import           Data.Map.Strict (Map)
 import           Data.Ord (Down (Down))
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
-import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Protocol.Abstract
+import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
+import           Ouroboros.Consensus.Protocol.Praos.AgentClient
+import           Ouroboros.Consensus.Util.IOLike
 
 -- | The maximum major protocol version.
 --
@@ -261,26 +265,47 @@ data PraosCanBeLeader c = PraosCanBeLeader
 
 instance (NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (PraosCanBeLeader c)
 
--- | Defines a method for obtaining Praos credentials (opcert + KES signing key).
--- Currently, the only available method is passing the credentials directly
--- (using an unsound KES key that is subject to swapping and can be loaded from
--- disk). Future versions may add constructors for sound methods (mlocking KES
--- keys along the entire chain).
+-- | Defines a method for obtaining Praos credentials (opcert + KES signing
+-- key).
 data PraosCredentialsSource c
-  = PraosCredentialsUnsound (OCert.OCert c) (KES.UnsoundPureSignKeyKES (KES c))
+  = -- | Pass an opcert and sign key directly. This uses
+    -- 'KES.UnsoundPureSignKeyKES', which does not provide mlocking guarantees,
+    -- violating the rule that KES secrets must never be stored on disk, but
+    -- allows the sign key to be loaded from a local file. This method is
+    -- provided for backwards compatibility.
+    PraosCredentialsUnsound (OCert.OCert c) (KES.UnsoundPureSignKeyKES (KES c))
+  | -- | Connect to a KES agent listening on a service socket at the given path.
+    PraosCredentialsAgent FilePath
   deriving (Generic)
 
 instance (NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (PraosCredentialsSource c)
 
-instantiatePraosCredentials :: ( KES.UnsoundPureKESAlgorithm (KES c)
-                               , MonadST m
-                               , MonadThrow m
+instantiatePraosCredentials :: forall m c.
+                               ( KESAgentContext c m
                                )
-                            => PraosCredentialsSource c
-                            -> m (OCert.OCert c, SL.SignKeyKES c)
-instantiatePraosCredentials (PraosCredentialsUnsound ocert skUnsound) = do
+                            => Word64
+                            -> PraosCredentialsSource c
+                            -> m (HotKey.HotKey c m)
+instantiatePraosCredentials maxKESEvolutions (PraosCredentialsUnsound ocert skUnsound) = do
   sk <- KES.unsoundPureSignKeyKESToSoundSignKeyKES skUnsound
-  return (ocert, sk)
+  let startPeriod :: OCert.KESPeriod
+      startPeriod = OCert.ocertKESPeriod ocert
+
+  HotKey.mkHotKey
+              ocert
+              sk
+              startPeriod
+              maxKESEvolutions
+
+instantiatePraosCredentials maxKESEvolutions (PraosCredentialsAgent path) = do
+  HotKey.mkDynamicHotKey
+      maxKESEvolutions
+      (Just $ \send -> do
+        let handleKey ocert sk p = do
+              send ocert sk p (OCert.ocertKESPeriod ocert)
+        runKESAgentClient nullTracer path handleKey
+      )
+      (pure ())
 
 -- | See 'PraosProtocolSupportsNode'
 data PraosNonces = PraosNonces {

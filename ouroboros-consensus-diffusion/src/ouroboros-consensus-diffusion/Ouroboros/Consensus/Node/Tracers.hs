@@ -38,6 +38,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Server
 import           Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
                      (TraceLocalTxSubmissionServerEvent (..))
 import           Ouroboros.Consensus.Node.GSM (TraceGsmEvent)
+import           Ouroboros.Consensus.Protocol.Praos.AgentClient (KESAgentClientTrace (..))
 import           Ouroboros.Network.Block (Tip)
 import           Ouroboros.Network.BlockFetch (TraceFetchClientState,
                      TraceLabelPeer)
@@ -74,6 +75,7 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , gddTracer                     :: f (TraceGDDEvent remotePeer blk)
   , csjTracer                     :: f (TraceLabelPeer remotePeer (CSJumping.TraceEventCsj remotePeer blk))
   , dbfTracer                     :: f (CSJumping.TraceEventDbf remotePeer)
+  , kesAgentTracer                :: f KESAgentClientTrace
   }
 
 instance (forall a. Semigroup (f a))
@@ -99,6 +101,7 @@ instance (forall a. Semigroup (f a))
       , gddTracer                     = f gddTracer
       , csjTracer                     = f csjTracer
       , dbfTracer                     = f dbfTracer
+      , kesAgentTracer                = f kesAgentTracer
       }
     where
       f :: forall a. Semigroup a
@@ -132,6 +135,7 @@ nullTracers = Tracers
     , gddTracer                     = nullTracer
     , csjTracer                     = nullTracer
     , dbfTracer                     = nullTracer
+    , kesAgentTracer                = nullTracer
     }
 
 showTracers :: ( Show blk
@@ -168,6 +172,7 @@ showTracers tr = Tracers
     , gddTracer                     = showTracing tr
     , csjTracer                     = showTracing tr
     , dbfTracer                     = showTracing tr
+    , kesAgentTracer                = showTracing tr
     }
 
 {-------------------------------------------------------------------------------

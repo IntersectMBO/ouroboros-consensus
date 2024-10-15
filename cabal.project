@@ -34,6 +34,11 @@ multi-repl: True
 
 import: ./asserts.cabal
 
+allow-newer: plutus-core:cardano-crypto-class
+           , bytestring
+           , serdoc-core:tasty-quickcheck
+           , kes-agent:base
+
 package ouroboros-network
   -- Certain ThreadNet tests rely on transactions to be submitted promptly after
   -- a node (re)start. Therefore, we disable this flag (see
@@ -44,6 +49,14 @@ package ouroboros-network
 if(os(windows))
   constraints:
     bitvec -simd
+
+source-repository-package
+  type: git
+  location: git@github.com:input-output-hk/kes-agent
+  tag: 7d3517d61004b3e0867b62f1b4cf02ae5eee5589
+  --sha256: sha256-N4XRVqC+UgWej+J16RPh3EO6MSIE3wmJvmP5/nRgIuw=
+  subdir:
+      kes-agent
 
 source-repository-package
   type: git
