@@ -243,15 +243,15 @@ prop_simple_cardano_convergence TestSetup
     testOutput =
         runTestNetwork setupTestConfig testConfigB TestConfigMB
             { nodeInfo = \coreNodeId@(CoreNodeId nid) ->
-                mkProtocolCardanoAndHardForkTxs
-                  pbftParams
-                  coreNodeId
-                  genesisByron
-                  generatedSecrets
-                  propPV
-                  genesisShelley
-                  setupInitialNonce
-                  (coreNodes !! fromIntegral nid)
+                  mkProtocolCardanoAndHardForkTxs
+                    pbftParams
+                    coreNodeId
+                    genesisByron
+                    generatedSecrets
+                    propPV
+                    genesisShelley
+                    setupInitialNonce
+                    (coreNodes !! fromIntegral nid)
             , mkRekeyM = Nothing
             }
 
@@ -445,16 +445,16 @@ mkProtocolCardanoAndHardForkTxs ::
   -> ShelleyGenesis c
   -> SL.Nonce
   -> Shelley.CoreNode c
-  -> TestNodeInitialization m (CardanoBlock c)
+  -> (TestNodeInitialization m (CardanoBlock c))
 mkProtocolCardanoAndHardForkTxs
     pbftParams coreNodeId genesisByron generatedSecretsByron propPV
     genesisShelley initialNonce coreNodeShelley
   =
-    TestNodeInitialization
-      { tniCrucialTxs   = crucialTxs
-      , tniProtocolInfo = protocolInfo
-      , tniBlockForging = blockForging
-      }
+  TestNodeInitialization
+    { tniCrucialTxs   = crucialTxs
+    , tniProtocolInfo = protocolInfo
+    , tniBlockForging = blockForging
+    }
   where
     crucialTxs :: [GenTx (CardanoBlock c)]
     crucialTxs =

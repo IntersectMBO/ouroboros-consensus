@@ -143,6 +143,9 @@ data BlockForging m blk = BlockForging {
         -> [Validated (GenTx blk)]      -- Transactions to include
         -> IsLeader (BlockProtocol blk) -- Proof we are leader
         -> m blk
+
+    , finalize :: m ()
+
     }
 
 data ShouldForge blk =

@@ -31,8 +31,9 @@ import           Cardano.Api.OperationalCertificate
 import qualified Cardano.Api.Protocol.Types as Protocol
 import           Cardano.Api.SerialiseTextEnvelope
 import qualified Cardano.Crypto.Hash.Class as Crypto
+import qualified Cardano.Crypto.KES.Class as KES
 import           Cardano.Ledger.BaseTypes (ProtVer (..), natVersion)
-import           Cardano.Ledger.Crypto (StandardCrypto)
+import           Cardano.Ledger.Crypto (Crypto (..), StandardCrypto)
 import           Cardano.Ledger.Keys (coerceKeyRole)
 import qualified Cardano.Ledger.Shelley.Genesis as Shelley
 import           Cardano.Node.Protocol.Types
@@ -45,7 +46,7 @@ import qualified Data.ByteString as BS
 import qualified Data.Text as T
 import qualified Ouroboros.Consensus.Cardano as Consensus
 import           Ouroboros.Consensus.Protocol.Praos.Common
-                     (PraosCanBeLeader (..))
+                     (PraosCanBeLeader (..), PraosCredentialsSource (..))
 import           Ouroboros.Consensus.Shelley.Node (Nonce (..),
                      ProtocolParamsShelleyBased (..), ShelleyGenesis (..),
                      ShelleyLeaderCredentials (..))
@@ -153,7 +154,7 @@ readLeaderCredentialsSingleton
     vrfSKey <-
       firstExceptT FileError (newExceptT $ readFileTextEnvelope (AsSigningKey AsVrfKey) vrfFile)
 
-    (opCert, kesSKey) <- opCertKesKeyCheck kesFile opCertFile
+    (opCert, KesSigningKey kesSKey) <- opCertKesKeyCheck kesFile opCertFile
 
     return [mkPraosLeaderCredentials opCert vrfSKey kesSKey]
 
@@ -170,12 +171,12 @@ opCertKesKeyCheck ::
   -- ^ KES key
   -> FilePath
   -- ^ Operational certificate
-  -> ExceptT PraosLeaderCredentialsError IO (OperationalCertificate, SigningKey KesKey)
+  -> ExceptT PraosLeaderCredentialsError IO (OperationalCertificate, SigningKey UnsoundPureKesKey)
 opCertKesKeyCheck kesFile certFile = do
   opCert <-
     firstExceptT FileError (newExceptT $ readFileTextEnvelope AsOperationalCertificate certFile)
   kesSKey <-
-    firstExceptT FileError (newExceptT $ readFileTextEnvelope (AsSigningKey AsKesKey) kesFile)
+    firstExceptT FileError (newExceptT $ readFileTextEnvelope (AsSigningKey AsUnsoundPureKesKey) kesFile)
   let opCertSpecifiedKesKeyhash = verificationKeyHash $ getHotKey opCert
       suppliedKesKeyHash = verificationKeyHash $ getVerificationKey kesSKey
   -- Specified KES key in operational certificate should match the one
@@ -200,11 +201,11 @@ readLeaderCredentialsBulk ProtocolFilepaths { shelleyBulkCredsFile = mfp } =
    parseShelleyCredentials
      :: ShelleyCredentials
      -> ExceptT PraosLeaderCredentialsError IO (ShelleyLeaderCredentials StandardCrypto)
-   parseShelleyCredentials ShelleyCredentials { scCert, scVrf, scKes } = do
+   parseShelleyCredentials ShelleyCredentials { scCert, scVrf, scKes } =
      mkPraosLeaderCredentials
-       <$> parseEnvelope AsOperationalCertificate scCert
-       <*> parseEnvelope (AsSigningKey AsVrfKey) scVrf
-       <*> parseEnvelope (AsSigningKey AsKesKey) scKes
+      <$> parseEnvelope AsOperationalCertificate scCert
+      <*> parseEnvelope (AsSigningKey AsVrfKey) scVrf
+      <*> (unKesSigningKey <$> parseEnvelope (AsSigningKey AsUnsoundPureKesKey) scKes)
 
    readBulkFile
      :: Maybe FilePath
@@ -228,21 +229,20 @@ readLeaderCredentialsBulk ProtocolFilepaths { shelleyBulkCredsFile = mfp } =
 mkPraosLeaderCredentials ::
      OperationalCertificate
   -> SigningKey VrfKey
-  -> SigningKey KesKey
+  -> KES.UnsoundPureSignKeyKES (KES StandardCrypto)
   -> ShelleyLeaderCredentials StandardCrypto
 mkPraosLeaderCredentials
-    (OperationalCertificate opcert (StakePoolVerificationKey vkey))
+    (OperationalCertificate ocert (StakePoolVerificationKey vkey))
     (VrfSigningKey vrfKey)
-    (KesSigningKey kesKey) =
+    kesKey =
     ShelleyLeaderCredentials
     { shelleyLeaderCredentialsCanBeLeader =
         PraosCanBeLeader {
-        praosCanBeLeaderOpCert     = opcert,
           praosCanBeLeaderColdVerKey = coerceKeyRole vkey,
-          praosCanBeLeaderSignKeyVRF = vrfKey
-        },
-      shelleyLeaderCredentialsInitSignKey = kesKey,
-      shelleyLeaderCredentialsLabel = "Shelley"
+          praosCanBeLeaderSignKeyVRF = vrfKey,
+          praosCanBeLeaderCredentialsSource = PraosCredentialsUnsound ocert kesKey
+        }
+    , shelleyLeaderCredentialsLabel = "Shelley"
     }
 
 parseEnvelope ::

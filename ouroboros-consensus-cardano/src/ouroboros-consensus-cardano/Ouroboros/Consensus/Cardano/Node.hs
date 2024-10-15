@@ -38,6 +38,9 @@ module Ouroboros.Consensus.Cardano.Node (
   , CardanoHardForkTriggers (.., CardanoHardForkTriggers', triggerHardForkShelley, triggerHardForkAllegra, triggerHardForkMary, triggerHardForkAlonzo, triggerHardForkBabbage, triggerHardForkConway)
   , CardanoProtocolParams (..)
   , MaxMajorProtVer (..)
+  , ProtocolParamsByron
+  , ProtocolParamsShelleyBased
+  , CheckpointsMap
   , TriggerHardFork (..)
   , protocolClientInfoCardano
   , protocolInfoCardano
@@ -103,10 +106,8 @@ import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Node.Run
-import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import           Ouroboros.Consensus.Protocol.Praos (Praos, PraosParams (..))
-import           Ouroboros.Consensus.Protocol.Praos.Common
-                     (praosCanBeLeaderOpCert)
+import           Ouroboros.Consensus.Protocol.Praos.Common (PraosCanBeLeader (..), instantiatePraosCredentials)
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosParams (..))
 import qualified Ouroboros.Consensus.Protocol.TPraos as Shelley
 import           Ouroboros.Consensus.Shelley.HFEras ()
@@ -115,9 +116,9 @@ import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley
 import           Ouroboros.Consensus.Shelley.Ledger.Block (IsShelleyBlock,
                      ShelleyBlockLedgerEra)
 import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
+import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import           Ouroboros.Consensus.Shelley.Node
-import           Ouroboros.Consensus.Shelley.Node.Common (ShelleyEraWithCrypto,
-                     shelleyBlockIssuerVKey)
+import           Ouroboros.Consensus.Shelley.Node.Common (ShelleyEraWithCrypto, shelleyBlockIssuerVKey)
 import qualified Ouroboros.Consensus.Shelley.Node.Praos as Praos
 import qualified Ouroboros.Consensus.Shelley.Node.TPraos as TPraos
 import           Ouroboros.Consensus.Storage.Serialisation
@@ -664,12 +665,12 @@ protocolInfoCardano paramsCardano
   , length credssShelleyBased > 1
   = error "Multiple Shelley-based credentials not allowed for mainnet"
   | otherwise
-  = assertWithMsg (validateGenesis genesisShelley)
+  = assertWithMsg (validateGenesis genesisShelley) $
     ( ProtocolInfo {
         pInfoConfig       = cfg
       , pInfoInitLedger   = initExtLedgerStateCardano
       }
-    , blockForging
+    , mkBlockForgings
     )
   where
     CardanoProtocolParams {
@@ -1016,8 +1017,8 @@ protocolInfoCardano paramsCardano
     -- credentials. If there are multiple Shelley credentials, we merge the
     -- Byron credentials with the first Shelley one but still have separate
     -- threads for the remaining Shelley ones.
-    blockForging :: m [BlockForging m (CardanoBlock c)]
-    blockForging = do
+    mkBlockForgings :: m ([BlockForging m (CardanoBlock c)])
+    mkBlockForgings = do
         shelleyBased <- traverse blockForgingShelleyBased credssShelleyBased
         let blockForgings :: [NonEmptyOptNP (BlockForging m) (CardanoEras c)]
             blockForgings = case (mBlockForgingByron, shelleyBased) of
@@ -1043,23 +1044,25 @@ protocolInfoCardano paramsCardano
          ShelleyLeaderCredentials c
       -> m (NonEmptyOptNP (BlockForging m) (CardanoEras c))
     blockForgingShelleyBased credentials = do
-        let ShelleyLeaderCredentials
-              { shelleyLeaderCredentialsInitSignKey = initSignKey
-              , shelleyLeaderCredentialsCanBeLeader = canBeLeader
-              } = credentials
-
-        hotKey <- do
-          let maxKESEvo :: Word64
-              maxKESEvo = assert (tpraosMaxKESEvo == praosMaxKESEvo) praosMaxKESEvo
-
-              startPeriod :: Absolute.KESPeriod
-              startPeriod = Absolute.ocertKESPeriod $ praosCanBeLeaderOpCert canBeLeader
-
-          HotKey.mkHotKey @m @c initSignKey startPeriod maxKESEvo
+        let canBeLeader = shelleyLeaderCredentialsCanBeLeader credentials
 
         let slotToPeriod :: SlotNo -> Absolute.KESPeriod
             slotToPeriod (SlotNo slot) = assert (tpraosSlotsPerKESPeriod == praosSlotsPerKESPeriod) $
               Absolute.KESPeriod $ fromIntegral $ slot `div` praosSlotsPerKESPeriod
+
+        (ocert, sk) <- instantiatePraosCredentials (praosCanBeLeaderCredentialsSource canBeLeader)
+
+        let startPeriod :: Absolute.KESPeriod
+            startPeriod = SL.ocertKESPeriod ocert
+
+        let maxKESEvo :: Word64
+            maxKESEvo = assert (tpraosMaxKESEvo == praosMaxKESEvo) praosMaxKESEvo
+
+        hotKey :: HotKey.HotKey c m <- HotKey.mkHotKey
+                    ocert
+                    sk
+                    startPeriod
+                    maxKESEvo
 
         let tpraos :: forall era.
                  ShelleyEraWithCrypto c       (TPraos c) era

@@ -384,7 +384,6 @@ mkCardanoProtocolInfo genesisByron signatureThreshold transitionConfig initialNo
         emptyCheckpointsMap
         (ProtVer (L.eraProtVerHigh @(L.LatestKnownEra StandardCrypto)) 0)
       )
-  where
 
 castHeaderHash ::
      HeaderHash ByronBlock

@@ -47,3 +47,82 @@ if(os(windows))
 
 -- https://github.com/ulidtko/cabal-doctest/issues/85
 constraints: Cabal < 3.13
+
+-- For the time being, we need to override some dependency bounds
+allow-newer: plutus-core:cardano-crypto-class
+           , cardano-slotting
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/cardano-base
+  tag: 890eec1bbb17068ee7df84c468e1c6bc39643d3a
+  --sha256: 0944wg2nqazmhlmsynwgdwxxj6ay0hb9qig9l128isb2cjia0hlp
+  subdir:
+    -- cardano-binary
+    cardano-crypto-class
+    cardano-crypto-tests
+    cardano-crypto-praos
+    cardano-mempool
+    -- cardano-slotting
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/formal-ledger-specifications.git
+  -- !WARNING!:
+  -- MAKE SURE THIS POINTS TO A COMMIT IN `MAlonzo-code` BEFORE MERGE!
+  subdir: generated
+  tag: 544ab20985e3374a1d672354e25d8ca0ca89e7e4
+  --sha256: sha256-bhh09OZkHazXCPjsiU/50Hrmfg52i+6UORTZ6/bAx6c=
+-- NOTE: If you would like to update the above, look for the `MAlonzo-code`
+-- branch in the `formal-ledger-specifications` repo and copy the SHA of
+-- the commit you need. The `MAlonzo-code` branch functions like an alternative
+-- `master / main` branch for the generated code, see the details here:
+-- https://github.com/IntersectMBO/formal-ledger-specifications/pull/530
+-- If you are working on something in `formal-ledger-specifications`
+-- and would like to see how they reflect here, just open a PR / draft PR
+-- in `formal-ledger-specifications` for your branch and that will
+-- automatically create a branch for the generated code that you can try here
+-- by editing the above SRP.
+-- Once your changes are merged in `formal-ledger-specifications`, the branch
+-- for the generated code will be merged into `MAlonzo-code` automatically.
+-- Before merging a PR in `cardano-ledger`, make sure that the above SRP
+-- points to a commit in `MAlonzo-code` if you were fiddling with the SRP
+-- as part of your PR.
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/cardano-ledger
+  tag: ebba3fb4554a04ddaa4734f9083afebd64c81099
+  --sha256: 0944wg2nqazmhlmsynwgdwxxj6ay0hb9qig9l128isb2cjia0hlp
+  subdir:
+      eras/allegra/impl
+      eras/alonzo/impl
+      eras/alonzo/test-suite
+      eras/babbage/impl
+      eras/babbage/test-suite
+      eras/byron/chain/executable-spec
+      eras/byron/crypto
+      eras/byron/crypto/test
+      eras/byron/ledger/executable-spec
+      eras/byron/ledger/impl
+      eras/byron/ledger/impl/test
+      eras/conway/impl
+      eras/conway/test-suite
+      eras/mary/impl
+      eras/shelley/impl
+      eras/shelley-ma/test-suite
+      eras/shelley/test-suite
+      libs/cardano-data
+      libs/cardano-ledger-api
+      libs/cardano-ledger-binary
+      libs/cardano-ledger-conformance
+      libs/cardano-ledger-core
+      libs/cardano-ledger-test
+      libs/cardano-protocol-tpraos
+      libs/constrained-generators
+      libs/ledger-state
+      libs/non-integral
+      libs/plutus-preprocessor
+      libs/set-algebra
+      libs/small-steps
+      libs/vector-map

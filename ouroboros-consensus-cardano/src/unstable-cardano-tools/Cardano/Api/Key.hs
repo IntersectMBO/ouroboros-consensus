@@ -9,7 +9,6 @@ module Cardano.Api.Key (
   , CastSigningKeyRole (..)
   , CastVerificationKeyRole (..)
   , Key (..)
-  , generateSigningKey
   ) where
 
 import           Cardano.Api.Any
@@ -51,16 +50,17 @@ class (Eq (VerificationKey keyrole),
     verificationKeyHash :: VerificationKey keyrole -> Hash keyrole
 
 
--- TODO: We should move this into the Key type class, with the existing impl as the default impl.
--- For KES we can then override it to keep the seed and key in mlocked memory at all times.
--- | Generate a 'SigningKey' using a seed from operating system entropy.
---
-generateSigningKey :: Key keyrole => AsType keyrole -> IO (SigningKey keyrole)
-generateSigningKey keytype = do
-    seed <- Crypto.readSeedFromSystemEntropy seedSize
-    return $! deterministicSigningKey keytype seed
-  where
-    seedSize = deterministicSigningKeySeedSize keytype
+    -- | Generate a 'SigningKey' using a seed from operating system entropy.
+    generateSigningKey :: AsType keyrole -> IO (SigningKey keyrole)
+    generateSigningKey keytype = do
+        --
+        -- For KES we can override this to keep the seed and key in mlocked memory
+        -- at all times.
+        --
+        seed <- Crypto.readSeedFromSystemEntropy seedSize
+        return $! deterministicSigningKey keytype seed
+      where
+        seedSize = deterministicSigningKeySeedSize keytype
 
 
 instance HasTypeProxy a => HasTypeProxy (VerificationKey a) where
