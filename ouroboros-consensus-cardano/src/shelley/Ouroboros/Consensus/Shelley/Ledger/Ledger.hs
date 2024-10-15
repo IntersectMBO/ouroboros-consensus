@@ -170,7 +170,6 @@ mkShelleyLedgerConfig genesis transCtxt epochInfo mmpv =
           SL.mkShelleyGlobals
             genesis
             (hoistEpochInfo (left (Text.pack . show) . runExcept) epochInfo)
-            maxMajorPV
       , shelleyLedgerTranslationContext = transCtxt
       }
   where

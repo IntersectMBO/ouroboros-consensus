@@ -129,20 +129,20 @@ forgeTPraosFields ::
   -> (TPraosToSign c -> toSign)
   -> m (TPraosFields c toSign)
 forgeTPraosFields hotKey PraosCanBeLeader{..} TPraosIsLeader{..} mkToSign = do
+    ocert <- HotKey.getOCert hotKey
+    let signedFields =
+          TPraosToSign {
+              tpraosToSignIssuerVK = praosCanBeLeaderColdVerKey
+            , tpraosToSignVrfVK    = VRF.deriveVerKeyVRF praosCanBeLeaderSignKeyVRF
+            , tpraosToSignEta      = tpraosIsLeaderEta
+            , tpraosToSignLeader   = tpraosIsLeaderProof
+            , tpraosToSignOCert    = ocert
+            }
+        toSign = mkToSign signedFields
     signature <- HotKey.sign hotKey toSign
     return TPraosFields {
         tpraosSignature = signature
       , tpraosToSign    = toSign
-      }
-  where
-    toSign = mkToSign signedFields
-
-    signedFields = TPraosToSign {
-        tpraosToSignIssuerVK = praosCanBeLeaderColdVerKey
-      , tpraosToSignVrfVK    = VRF.deriveVerKeyVRF praosCanBeLeaderSignKeyVRF
-      , tpraosToSignEta      = tpraosIsLeaderEta
-      , tpraosToSignLeader   = tpraosIsLeaderProof
-      , tpraosToSignOCert    = praosCanBeLeaderOpCert
       }
 
 -- | Because we are using the executable spec, rather than implementing the
@@ -395,7 +395,7 @@ mkShelleyGlobals TPraosConfig{..} = SL.Globals {
     , securityParameter             = k
     , maxKESEvo                     = tpraosMaxKESEvo
     , quorum                        = tpraosQuorum
-    , maxMajorPV                    = getMaxMajorProtVer tpraosMaxMajorPV
+    -- , maxMajorPV                    = getMaxMajorProtVer tpraosMaxMajorPV
     , maxLovelaceSupply             = tpraosMaxLovelaceSupply
     , activeSlotCoeff               = tpraosLeaderF
     , networkId                     = tpraosNetworkId

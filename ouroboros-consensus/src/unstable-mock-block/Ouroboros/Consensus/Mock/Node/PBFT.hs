@@ -110,4 +110,5 @@ pbftBlockForging canBeLeader = BlockForging {
               lst
               (map txForgetValidated txs)
               proof
+    , finalize = pure ()
     }
