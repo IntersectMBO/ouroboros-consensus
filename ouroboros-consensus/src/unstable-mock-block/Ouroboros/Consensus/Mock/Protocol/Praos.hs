@@ -48,6 +48,7 @@ import           Cardano.Crypto.Hash.Class (HashAlgorithm (..), hashToBytes,
                      hashWithSerialiser, sizeHash)
 import           Cardano.Crypto.Hash.SHA256 (SHA256)
 import           Cardano.Crypto.KES.Class
+
 import           Cardano.Crypto.KES.Mock
 import           Cardano.Crypto.KES.Simple
 import           Cardano.Crypto.Util
@@ -76,7 +77,6 @@ import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.Signed
 import           Ouroboros.Consensus.Util.Condense
-import           Test.Cardano.Slotting.Numeric ()
 
 -- The Praos paper can be located at https://ia.cr/2017/573
 --
@@ -207,7 +207,8 @@ data HotKey c =
   | HotKeyPoisoned
   deriving (Generic)
 
-instance PraosCrypto c => NoThunks (HotKey c)
+instance (PraosCrypto c, NoThunks (UnsoundPureSignKeyKES (PraosKES c))) => NoThunks (HotKey c)
+
 instance PraosCrypto c => Show (HotKey c) where
   show (HotKey p _)   = "HotKey " ++ show p ++ " <SignKeyKES: hidden>"
   show HotKeyPoisoned = "HotKeyPoisoned"
@@ -253,7 +254,7 @@ forgePraosFields :: ( PraosCrypto c
                  => PraosProof c
                  -> HotKey c
                  -> (PraosExtraFields c -> toSign)
-                 -> PraosFields c toSign
+                 -> (PraosFields c toSign)
 forgePraosFields PraosProof{..} hotKey mkToSign =
     case hotKey of
       HotKey kesPeriod key -> PraosFields {
@@ -408,14 +409,14 @@ infosEta :: forall c. (PraosCrypto c)
          -> [BlockInfo c]
          -> EpochNo
          -> Natural
-infosEta l _  0 =
+infosEta l _  (EpochNo 0) =
     praosInitialEta l
-infosEta l@PraosConfig{praosParams = PraosParams{..}} xs e =
+infosEta l@PraosConfig{praosParams = PraosParams{..}} xs (EpochNo e) =
     let e'   = e - 1
         -- the η from the previous epoch
-        eta' = infosEta l xs e'
+        eta' = infosEta l xs (EpochNo e')
         -- the first slot in previous epoch
-        from = epochFirst l e'
+        from = epochFirst l (EpochNo e')
         -- 2/3 of the slots per epoch
         n    = div (2 * praosSlotsPerEpoch) 3
         -- the last of the 2/3 of slots in this epoch
