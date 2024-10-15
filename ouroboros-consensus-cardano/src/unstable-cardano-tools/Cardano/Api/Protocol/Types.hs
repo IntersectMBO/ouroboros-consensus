@@ -6,6 +6,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 -- DUPLICATE -- adapted from: cardano-api/src/Cardano/Api/Protocol/Types.hs
 
@@ -30,6 +31,7 @@ import qualified Ouroboros.Consensus.Ledger.SupportsProtocol as Consensus
 import           Ouroboros.Consensus.Node.ProtocolInfo (ProtocolClientInfo (..),
                      ProtocolInfo (..))
 import           Ouroboros.Consensus.Node.Run (RunNode)
+import           Ouroboros.Consensus.Protocol.Praos.AgentClient
 import qualified Ouroboros.Consensus.Protocol.TPraos as Consensus
 import qualified Ouroboros.Consensus.Shelley.Eras as Consensus (ShelleyEra)
 import           Ouroboros.Consensus.Shelley.HFEras ()
@@ -37,7 +39,7 @@ import qualified Ouroboros.Consensus.Shelley.Ledger.Block as Consensus
                      (ShelleyBlock)
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import           Ouroboros.Consensus.Shelley.ShelleyHFC (ShelleyBlockHFC)
-import           Ouroboros.Consensus.Util.IOLike (IOLike)
+import           Ouroboros.Consensus.Util.IOLike
 
 
 class (RunNode blk, IOLike m) => Protocol m blk where
@@ -63,7 +65,11 @@ instance IOLike m => Protocol m ByronBlockHFC where
                                                 , pure . map inject $ blockForgingByron params
                                                 )
 
-instance (CardanoHardForkConstraints StandardCrypto, IOLike m) => Protocol m (CardanoBlock StandardCrypto) where
+instance ( CardanoHardForkConstraints StandardCrypto
+         , IOLike m
+         , MonadKESAgent m
+         )
+  => Protocol m (CardanoBlock StandardCrypto) where
   data ProtocolInfoArgs m (CardanoBlock StandardCrypto) =
          ProtocolInfoArgsCardano
           (CardanoProtocolParams StandardCrypto)
@@ -84,6 +90,7 @@ instance CardanoHardForkConstraints StandardCrypto => ProtocolClient (CardanoBlo
     protocolClientInfoCardano epochSlots
 
 instance ( IOLike m
+         , MonadKESAgent m
          , Consensus.LedgerSupportsProtocol
              (Consensus.ShelleyBlock
                 (Consensus.TPraos StandardCrypto) ShelleyEra)

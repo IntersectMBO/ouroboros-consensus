@@ -33,11 +33,13 @@ module Ouroboros.Consensus.Shelley.Node.TPraos (
 
 import           Cardano.Crypto.Hash (Hash)
 import qualified Cardano.Crypto.VRF as VRF
+import qualified Cardano.Crypto.KES as KES
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
 import           Cardano.Ledger.Hashes (HASH)
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Protocol.Crypto (VRF)
+import           Cardano.Ledger.Crypto (KES)
 import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
 import qualified Cardano.Protocol.TPraos.OCert as SL
@@ -45,6 +47,7 @@ import           Cardano.Slotting.EpochInfo
 import           Cardano.Slotting.Time (mkSlotLength)
 import           Control.Monad.Except (Except)
 import           Data.Bifunctor (first)
+import qualified Data.SerDoc.Class as SerDoc
 import qualified Data.Text as T
 import qualified Data.Text as Text
 import           Lens.Micro ((^.))
@@ -58,10 +61,11 @@ import           Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Protocol.Abstract
-import           Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey, mkHotKey)
+import           Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import           Ouroboros.Consensus.Protocol.Praos.Common
 import           Ouroboros.Consensus.Protocol.TPraos
+import           Ouroboros.Consensus.Protocol.Praos.AgentClient
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Inspect ()
@@ -74,6 +78,7 @@ import           Ouroboros.Consensus.Shelley.Node.Serialisation ()
 import           Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import           Ouroboros.Consensus.Util.Assert
 import           Ouroboros.Consensus.Util.IOLike
+import qualified Cardano.KESAgent.Serialization.DirectCodec as Agent
 
 {-------------------------------------------------------------------------------
   BlockForging
@@ -164,8 +169,13 @@ validateGenesis = first errsToString . SL.validateGenesis
 protocolInfoShelley ::
      forall m c.
       ( IOLike m
-      , ShelleyCompatible (TPraos c) ShelleyEra
-      , TxLimits (ShelleyBlock (TPraos c) ShelleyEra)
+      , PraosCrypto c
+      , AgentCrypto c
+      , ShelleyCompatible (TPraos c) (ShelleyEra c)
+      , TxLimits (ShelleyBlock (TPraos c) (ShelleyEra c))
+      , MonadKESAgent m
+      , SerDoc.HasInfo (Agent.DirectCodec m) (KES.VerKeyKES (KES c))
+      , SerDoc.HasInfo (Agent.DirectCodec m) (KES.SignKeyKES (KES c))
       )
   => SL.ShelleyGenesis
   -> ProtocolParamsShelleyBased c
@@ -183,9 +193,11 @@ protocolInfoShelley shelleyGenesis
 
 protocolInfoTPraosShelleyBased ::
      forall m era c.
-      ( IOLike m
+      ( PraosCrypto c
       , ShelleyCompatible (TPraos c) era
       , TxLimits (ShelleyBlock (TPraos c) era)
+      , c ~ EraCrypto era
+      , KESAgentContext c m
       )
   => ProtocolParamsShelleyBased c
   -> L.TransitionConfig era
@@ -211,16 +223,11 @@ protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
     mkBlockForging :: ShelleyLeaderCredentials c -> m (BlockForging m (ShelleyBlock (TPraos c) era))
     mkBlockForging credentials = do
       let canBeLeader = shelleyLeaderCredentialsCanBeLeader credentials
-      (ocert, sk) <- instantiatePraosCredentials (praosCanBeLeaderCredentialsSource canBeLeader)
 
-      let startPeriod :: Absolute.KESPeriod
-          startPeriod = SL.ocertKESPeriod ocert
-
-      hotKey :: HotKey c m <- mkHotKey
-                  ocert
-                  sk
-                  startPeriod
-                  (tpraosMaxKESEvo tpraosParams)
+      hotKey :: HotKey c m <-
+                  instantiatePraosCredentials
+                    (tpraosMaxKESEvo tpraosParams)
+                    (praosCanBeLeaderCredentialsSource canBeLeader)
 
       return $ shelleyBlockForging tpraosParams hotKey credentials
 

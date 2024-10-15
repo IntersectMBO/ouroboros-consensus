@@ -362,9 +362,7 @@ data Instruction blk
 deriving instance (Typeable blk, HasHeader (Header blk), Eq (Header blk)) => Eq (Instruction blk)
 deriving instance (Typeable blk, HasHeader (Header blk), Show (Header blk)) => Show (Instruction blk)
 deriving anyclass instance
-  ( HasHeader blk,
-    LedgerSupportsProtocol blk,
-    NoThunks (Header blk)
+  ( LedgerSupportsProtocol blk
   ) => NoThunks (Instruction blk)
 
 data JumpInstruction blk
@@ -384,9 +382,7 @@ instance (Typeable blk, HasHeader (Header blk), Show (Header blk)) => Show (Jump
       showParen (p > 10) $ showString "JumpToGoodPoint " . shows (AF.headPoint $ jTheirFragment jumpInfo)
 
 deriving anyclass instance
-  ( HasHeader blk,
-    LedgerSupportsProtocol blk,
-    NoThunks (Header blk)
+  ( LedgerSupportsProtocol blk
   ) => NoThunks (JumpInstruction blk)
 
 -- | The result of a jump request, either accepted or rejected.
@@ -399,9 +395,7 @@ deriving instance (Typeable blk, HasHeader (Header blk), Eq (Header blk)) => Eq 
 deriving instance (Typeable blk, HasHeader (Header blk), Show (Header blk)) => Show (JumpResult blk)
 
 deriving anyclass instance
-  ( HasHeader blk,
-    LedgerSupportsProtocol blk,
-    NoThunks (Header blk)
+  ( LedgerSupportsProtocol blk
   ) => NoThunks (JumpResult blk)
 
 -- | Compute the next instruction for the given peer. In the majority of cases,

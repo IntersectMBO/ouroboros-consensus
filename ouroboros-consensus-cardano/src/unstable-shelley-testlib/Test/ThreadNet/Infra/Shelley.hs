@@ -97,7 +97,6 @@ import           Ouroboros.Consensus.Shelley.Ledger (GenTx (..),
 import           Ouroboros.Consensus.Shelley.Node
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import           Ouroboros.Consensus.Util.Assert
-import           Ouroboros.Consensus.Util.IOLike
 import           Quiet (Quiet (..))
 import qualified Test.Cardano.Ledger.Core.KeyPair as TL (KeyPair (..),
                      mkWitnessesVKey)
@@ -107,6 +106,7 @@ import           Test.QuickCheck
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Slots (NumSlots (..))
 import           Test.Util.Time (dawnOfTime)
+import           Ouroboros.Consensus.Protocol.Praos.AgentClient (KESAgentContext)
 
 {-------------------------------------------------------------------------------
   The decentralization parameter
@@ -413,8 +413,11 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
 
 mkProtocolShelley ::
      forall m c.
-     (IOLike m, ShelleyCompatible (TPraos c) ShelleyEra)
-  => ShelleyGenesis
+     ( KESAgentContext c m
+     , PraosCrypto c
+     , ShelleyCompatible (TPraos c) (ShelleyEra c)
+     )
+  => ShelleyGenesis c
   -> SL.Nonce
   -> ProtVer
   -> CoreNode c

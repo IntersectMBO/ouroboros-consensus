@@ -97,9 +97,7 @@ data ChainSyncClientHandle m blk = ChainSyncClientHandle {
 
 deriving anyclass instance (
   IOLike m,
-  HasHeader blk,
-  LedgerSupportsProtocol blk,
-  NoThunks (Header blk)
+  LedgerSupportsProtocol blk
   ) => NoThunks (ChainSyncClientHandle m blk)
 
 -- | A collection of ChainSync client handles for the peers of this node.
@@ -125,10 +123,8 @@ data ChainSyncClientHandleCollection peer m blk = ChainSyncClientHandleCollectio
 
 deriving anyclass instance (
   IOLike m,
-  HasHeader blk,
   LedgerSupportsProtocol blk,
   NoThunks (STM m ()),
-  NoThunks (Header blk),
   NoThunks (STM m (Map peer (ChainSyncClientHandle m blk))),
   NoThunks (STM m (StrictSeq (peer, ChainSyncClientHandle m blk)))
   ) => NoThunks (ChainSyncClientHandleCollection peer m blk)
@@ -175,9 +171,7 @@ data DynamoInitState blk
   deriving (Generic)
 
 deriving anyclass instance
-  ( HasHeader blk,
-    LedgerSupportsProtocol blk,
-    NoThunks (Header blk)
+  ( LedgerSupportsProtocol blk
   ) => NoThunks (DynamoInitState blk)
 
 data ObjectorInitState
@@ -241,9 +235,7 @@ data ChainSyncJumpingState m blk
 
 deriving anyclass instance
   ( IOLike m,
-    HasHeader blk,
-    LedgerSupportsProtocol blk,
-    NoThunks (Header blk)
+    LedgerSupportsProtocol blk
   ) => NoThunks (ChainSyncJumpingState m blk)
 
 -- | The ChainSync state required for jumps
@@ -295,7 +287,5 @@ data ChainSyncJumpingJumperState blk
   deriving (Generic)
 
 deriving anyclass instance
-  ( HasHeader blk,
-    LedgerSupportsProtocol blk,
-    NoThunks (Header blk)
+  ( LedgerSupportsProtocol blk
   ) => NoThunks (ChainSyncJumpingJumperState blk)

@@ -58,8 +58,7 @@ import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Prelude (cborError)
-import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..),
-                     ocertKESPeriod)
+import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
 import qualified Codec.CBOR.Decoding as CBOR
 import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
@@ -100,6 +99,7 @@ import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Protocol.Praos (Praos, PraosParams (..))
 import           Ouroboros.Consensus.Protocol.Praos.Common (PraosCanBeLeader (..), instantiatePraosCredentials)
+import           Ouroboros.Consensus.Protocol.Praos.AgentClient
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosParams (..))
 import qualified Ouroboros.Consensus.Protocol.TPraos as Shelley
 import           Ouroboros.Consensus.Shelley.HFEras ()
@@ -108,7 +108,6 @@ import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley
 import           Ouroboros.Consensus.Shelley.Ledger.Block (IsShelleyBlock,
                      ShelleyBlockLedgerEra)
 import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
-import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import           Ouroboros.Consensus.Shelley.Node
 import           Ouroboros.Consensus.Shelley.Node.Common (ShelleyEraWithCrypto, shelleyBlockIssuerVKey)
 import qualified Ouroboros.Consensus.Shelley.Node.Praos as Praos
@@ -116,7 +115,6 @@ import qualified Ouroboros.Consensus.Shelley.Node.TPraos as TPraos
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util.Assert
-import           Ouroboros.Consensus.Util.IOLike
 
 {-------------------------------------------------------------------------------
   SerialiseHFC
@@ -486,7 +484,10 @@ data CardanoProtocolParams c = CardanoProtocolParams {
 -- PRECONDITION: only a single set of Shelley credentials is allowed when used
 -- for mainnet (check against @'SL.gNetworkId' == 'SL.Mainnet'@).
 protocolInfoCardano ::
-     forall c m. (IOLike m, CardanoHardForkConstraints c)
+     forall c m.
+     ( CardanoHardForkConstraints c
+     , KESAgentContext c m
+     )
   => CardanoProtocolParams c
   -> ( ProtocolInfo      (CardanoBlock c)
      , m [BlockForging m (CardanoBlock c)]
@@ -885,19 +886,12 @@ protocolInfoCardano paramsCardano
             slotToPeriod (SlotNo slot) = assert (tpraosSlotsPerKESPeriod == praosSlotsPerKESPeriod) $
               Absolute.KESPeriod $ fromIntegral $ slot `div` praosSlotsPerKESPeriod
 
-        (ocert, sk) <- instantiatePraosCredentials (praosCanBeLeaderCredentialsSource canBeLeader)
-
-        let startPeriod :: Absolute.KESPeriod
-            startPeriod = Absolute.ocertKESPeriod ocert
-
-        let maxKESEvo :: Word64
+            maxKESEvo :: Word64
             maxKESEvo = assert (tpraosMaxKESEvo == praosMaxKESEvo) praosMaxKESEvo
 
-        hotKey <- HotKey.mkHotKey
-                    ocert
-                    sk
-                    startPeriod
+        hotKey <- instantiatePraosCredentials
                     maxKESEvo
+                    (praosCanBeLeaderCredentialsSource canBeLeader)
 
         let tpraos :: forall era.
                  ShelleyEraWithCrypto c       (TPraos c) era
