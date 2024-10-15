@@ -454,9 +454,11 @@ forkBlockForging ::
     -> BlockForging m blk
     -> m (Thread m Void)
 forkBlockForging IS{..} blockForging =
-    forkLinkedWatcher registry threadLabel
-    $ knownSlotWatcher btime
-    $ \currentSlot -> withRegistry (\rr -> withEarlyExit_ $ go rr currentSlot)
+    forkLinkedWatcherFinalize registry threadLabel
+      (knownSlotWatcher btime
+       $ \currentSlot -> withRegistry (\rr -> withEarlyExit_ $ go rr currentSlot)
+      )
+      (finalize blockForging)
   where
     threadLabel :: String
     threadLabel =
