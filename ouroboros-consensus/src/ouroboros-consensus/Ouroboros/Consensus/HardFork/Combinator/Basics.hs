@@ -77,6 +77,8 @@ deriving stock   instance CanHardFork xs => Show (LedgerState (HardForkBlock xs)
 deriving stock   instance CanHardFork xs => Eq   (LedgerState (HardForkBlock xs))
 deriving newtype instance CanHardFork xs => NoThunks (LedgerState (HardForkBlock xs))
 
+type instance BlockForgingCredentials (HardForkBlock '[blk]) = BlockForgingCredentials blk
+
 {-------------------------------------------------------------------------------
   Protocol config
 -------------------------------------------------------------------------------}

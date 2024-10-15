@@ -145,7 +145,7 @@ setupTestOutput :: SetupDualByron -> TestOutput DualByronBlock
 setupTestOutput setup@SetupDualByron{..} =
     runTestNetwork testConfig testConfigB TestConfigMB {
         nodeInfo = \coreNodeId ->
-          uncurry plainTestNodeInitialization
+          uncurry plainTestNodeInitialization $
             (protocolInfoDualByron
               setupGenesis
               (setupParams setup)
