@@ -1,0 +1,16 @@
+{
+    "useLedgerAfterSlot": -1
+  ,
+    "publicRoots": []
+  ,
+    "localRoots":
+        [{
+            "accessPoints": [{"address": "127.0.0.1", "port": 3001}]
+	  ,
+            "advertise": false
+	  ,
+            "hotValency": 1
+	  ,
+            "trustable": true
+        }]
+}

@@ -1,0 +1,1 @@
+immdb-server --db ~/cardano-haskell/cardano-node/state-node-mainnet/db-mainnet/immutable/ --config config-files/immdb-config.json +RTS -N4 -s > log-immdb-server.txt 2>&1

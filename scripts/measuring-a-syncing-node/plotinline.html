@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html>
+<style>
+input[type=range] { width: 1000px }
+</style>
+<body>
+
+<p>X</p>
+<input class="range" id="slidex1" type="range"></input><br>
+<input class="range" id="slidex2" type="range"></input><br>
+<p>Y (log? <input id="ylog" type="checkbox" checked></input> &nbsp; normed? <input id="ynorm" type="checkbox"></input>)</p>
+<input class="range" id="slidey1" type="range"></input><br>
+<input class="range" id="slidey2" type="range"></input><br>
+<p><input id="render" type="button" value="Render again"></input></p>
+
+<div id="myplot">Initializing</div>
+<div id="myplot2"></div>
+
+<script charset="utf-8" src="d3.min.js"></script>
+<script charset="utf-8" src="plot.min.js"></script>
+<script charset="utf-8" src="qntm.js"></script>  <!-- from https://github.com/qntm/base32768, but without the export line -->
+<script>
+function fromString (s) {
+    const x = decode(s);
+    return new Float64Array(x.buffer, 0, x.length / 8);
+}
+
+// See csplit-cmd.txt.
+const dataStrings = {
+DECLARE_dataStrings
+};
+
+// ----------------------------------------
+
+function* fromto(start, stop) {
+  let i = start;
+  while (i <= stop) {
+    yield i++;
+  }
+}
+
+function iterreduce(g, f, acc) {
+    for (const i of g) acc = f(acc, i);
+    return acc
+}
+
+// ----------------------------------------
+
+// const epochOf = (x) => (x < 4492800 ? x*20 : 4492800*20 + (x - 4492800)) / (5*24*3600)
+
+const id = (i) => i
+
+const fst = (x) => x[0]
+const snd = (x) => x[1]
+
+const ordered = (a, b) => a < b ? [a, b] : [b, a]
+
+// ----------------------------------------
+
+const dat = fromString(dataStrings.jklSorted);
+//const dat = fromString(dataStrings.dbanalyser);
+const n = ~~(dat.length / 3)
+
+const ynorm = (i, y) => document.getElementById("ynorm").checked ? 1e9 * y / dat[1 + 3*i] : y
+
+const low  = (i) => ynorm(i, dat[0 + 3*i])
+const mid  = (i) => ynorm(i, dat[1 + 3*i])
+const high = (i) => ynorm(i, dat[2 + 3*i])
+
+// ----------------------------------------
+
+const grain = 10000
+var lox = 0
+var hix = grain - 1
+
+var loy = 0/0
+var hiy = 0/0
+
+// ----------------------------------------
+
+// these sample indices were determined manually by analyzing the slots of the pipe-valid events.
+//
+// TODO pass in those slots, and calculate these sample indices dynamically
+const eras = (y) => Plot.text([
+    ["Byron2", 37997],
+    ["Shelley", 44907],
+    ["Allegra", 50867],
+    ["Mary", 54070],
+    ["Alonzo1", 62363],
+    ["Alonzo2", 64054],
+    ["Babbage1", 77919],
+    ["Babbage2", 84004],
+  ], {x: snd, y: y, text: fst, rotate: -90})
+
+const width = 2000
+
+const toSeconds = (y) => (y <= 0 ? 1 : y) / 1e9
+
+const mkPlot = (title, g) =>
+    mkPlotHelper(title, (i) => toSeconds(g(high(i) - mid(i), mid(i) - low(i))))
+
+const mkPlotHelper = (title, g) =>
+    Plot.plot({
+        marks: [
+            Plot.dot(fromto(lox, hix), {x: id, y: g}),
+            Plot.density(fromto(lox, hix), {x: id, y: g, thresholds: 51, bandwidth: 1, fill: "density"}),
+            document.getElementById("ylog").checked ? Plot.ruleY(Array.from(fromto(Math.floor(Math.log10(loy)), Math.ceil(Math.log10(hiy)))).map((p) => 10**p), {opacity: 0.2}) : null,
+            eras(loy),
+          ],
+        width,
+        height: 500,
+        margin: 50,
+        y: {inset: 50, type: document.getElementById("ylog").checked ? "log" : "linear", domain: [loy, hiy], label: document.getElementById("ynorm").checked ? "" : "seconds"},
+        x: {inset: 50, domain: [lox, hix]}, label: "sample index",
+        title: title + " for " + (hix - lox + 1) + " samples",
+      })
+
+const mkRawPlot = (title) =>
+    Plot.plot({
+        marks: [
+            Plot.dot(fromto(lox, hix), {x: id, y: (i) => toSeconds(mid(i))}),
+            Plot.density(fromto(lox, hix), {x: id, y: (i) => toSeconds(mid(i)), thresholds: 51, bandwidth: 1, fill: "density"}),
+            document.getElementById("ylog").checked ? Plot.ruleY(Array.from(fromto(Math.floor(Math.log10(loy)), Math.ceil(Math.log10(hiy)))).map((p) => 10**p), {opacity: 0.2}) : null,
+            eras(loy),
+          ],
+        width,
+        height: 500,
+        margin: 50,
+        y: {inset: 50, type: document.getElementById("ylog").checked ? "log" : "linear", domain: [loy, hiy], label: document.getElementById("ynorm").checked ? "" : "seconds"},
+        x: {inset: 50, domain: [lox, hix]}, label: "sample index",
+        title: title + " for " + (hix - lox + 1) + " samples",
+      })
+
+function plot() {
+    const miny = iterreduce(fromto(0, n-1), (acc, i) => Math.min(acc, Math.min(high(i) - mid(i), mid(i) - low(i))), 1/0);
+    const maxy = iterreduce(fromto(0, n-1), (acc, i) => Math.max(acc, high(i) - low(i)), -1/0);
+
+    [lox, hix] = ordered(
+        Math.round(1.0 * n * document.getElementById("slidex1").value / grain),
+        Math.round(1.0 * n * document.getElementById("slidex2").value / grain),
+      );
+
+    [loy, hiy] = [toSeconds(miny), toSeconds(maxy)]
+    if (document.getElementById("ylog").checked) { loy = Math.log(loy); hiy = Math.log(hiy); }
+    [loy, hiy] = ordered(
+        loy + 1.0 * (hiy - loy) * document.getElementById("slidey1").value / grain,
+        loy + 1.0 * (hiy - loy) * document.getElementById("slidey2").value / grain,
+      );
+    if (document.getElementById("ylog").checked) { loy = Math.exp(loy); hiy = Math.exp(hiy); }
+
+    const plots = [
+        mkPlot("high - low", (x, y) => x + y),
+        mkPlot("max(high - mid, mid - low)", Math.max),
+        mkPlot("min(high - mid, mid - low)", Math.min),
+        mkRawPlot("mid"),
+      ];
+
+    document.getElementById("myplot").innerHTML = "";
+    plots.forEach((p) => document.querySelector("#myplot").append(p) );
+
+
+
+    document.getElementById("myplot").append(
+        Plot.plot({
+            marks: [
+                Plot.dot(fromto(0, n5 - 1), {x: id, y: (i) => dat5[i] / 1e9}),
+                Plot.density(fromto(0, n5 - 1), {x: id, y: (i) => dat5[i] / 1e9, thresholds: 51, bandwidth: 1, fill: "density"}),
+                Plot.ruleY(Array.from(fromto(-9,1)).map((p) => 10**p), {opacity: 0.2}),
+                eras(loy),
+              ],
+            width,
+            height: 500,
+            margin: 50,
+            y: {inset: 50, type: document.getElementById("ylog").checked ? "log" : "linear", domain: [loy, hiy], label: document.getElementById("ynorm").checked ? "" : "seconds"},
+            x: {inset: 50, domain: [lox, hix]}, label: "sample index",
+            title: "pipe-valid for " + n5 + " samples",
+          })
+      )
+} 
+
+function render() {
+    document.getElementById("myplot").innerHTML = "Rendering&hellip;";
+    setTimeout(plot, 50)
+}
+
+function initSlider (name, v) {
+    const e = document.getElementById(name);
+    e.max = grain;
+    e.value = v;
+}
+initSlider("slidex1", 0)
+initSlider("slidex2", 0)   // ~~(grain * 44907 / 91370))
+initSlider("slidey1", 0)
+initSlider("slidey2", grain)
+
+document.getElementById("render").addEventListener("click", render)
+
+// ------------------------------------------------------------
+
+const dat5 = fromString(dataStrings.byronEllAsu);
+const n5 = dat5.length;
+
+// ----------------------------------------
+
+const dat3 = fromString(dataStrings.blockSize);
+const n3   = dat3.length;
+
+document.getElementById("myplot2").append(
+    Plot.plot({
+        marks: [
+            Plot.dot(fromto(0, n3 - 1), {x: id, y: (i) => dat3[i]}),
+            Plot.density(fromto(0, n3 - 1), {x: id, y: (i) => dat3[i], thresholds: 51, bandwidth: 1, fill: "density"}),
+            Plot.ruleY(Array.from(fromto(2,5)).map((p) => 10**p), {opacity: 0.2}),
+            eras(10**2),
+          ],
+        width,
+        height: 500,
+        margin: 50,
+        y: {inset: 50, type: "log", label: "bytes", domain: [10**2, 10**5]},
+        x: {inset: 50, label: "sample index"},
+        title: "block size for " + n3 + " samples",
+      })
+)
+
+// ----------------------------------------
+
+const dat2 = fromString(dataStrings.utxoSize);
+const n2 = ~~(dat2.length / 2);
+
+setTimeout(render, 1000)
+
+document.getElementById("myplot2").append(
+    Plot.plot({
+        marks: [
+            Plot.dot(fromto(0, n2 - 1), {x: id, y: (i) => dat2[1 + 2*i]}),
+            Plot.ruleY(Array.from(fromto(4,7)).map((p) => 10**p), {opacity: 0.2}),
+            eras(10**4),
+          ],
+        width,
+        height: 500,
+        margin: 50,
+        y: {inset: 50, type: document.getElementById("ylog").checked ? "log" : "linear", label: "count"},
+        x: {inset: 50, label: "sample index"},
+        title: "utxo count for " + n2 + " samples",
+      })
+)
+
+const dat4 = fromString(dataStrings.dbanalyser);
+const n4   = ~~(dat4.length / 3);
+
+document.getElementById("myplot2").append(
+    Plot.plot({
+        marks: [
+            Plot.dot(fromto(45000, Math.min(n, n4) - 1), {x: (i) => dat[4 + 3*i] / 1e9, y: (i) => dat4[1 + 3*i] / 1e6}),
+            Plot.density(fromto(45000, Math.min(n, n4) - 1), {x: (i) => dat[4 + 3*i] / 1e9, y: (i) => dat4[1 + 3*i] / 1e6, thresholds: 51, bandwidth: 3, fill: "density"}),
+            Plot.ruleX(Array.from(fromto(-6,1)).map((p) => 10**p), {opacity: 0.2}),
+            Plot.ruleY(Array.from(fromto(-6,1)).map((p) => 10**p), {opacity: 0.2}),
+          ],
+        width: 500,
+        height: 500,
+        margin: 50,
+        x: {inset: 50, type: document.getElementById("ylog").checked ? "log" : "linear", domain: [10e-6, 6], label: "pipe-valid"},
+        y: {inset: 50, type: document.getElementById("ylog").checked ? "log" : "linear", domain: [10e-6, 6], label: "--benchmark-ledger-ops"},
+        title: 'After ~Byron; N=' + (Math.min(n, n4) - 45000),
+      })
+)
+
+
+document.getElementById("myplot2").append(
+    Plot.plot({
+        marks: [
+            Plot.dot(fromto(0, 45000-1), {x: (i) => dat[4 + 3*i] / 1e9, y: (i) => dat4[1 + 3*i] / 1e6}),
+            Plot.density(fromto(0, 45000 - 1), {x: (i) => dat[4 + 3*i] / 1e9, y: (i) => dat4[1 + 3*i] / 1e6, thresholds: 51, bandwidth: 3, fill: "density"}),
+            Plot.ruleX(Array.from(fromto(-6,1)).map((p) => 10**p), {opacity: 0.2}),
+            Plot.ruleY(Array.from(fromto(-6,1)).map((p) => 10**p), {opacity: 0.2}),
+          ],
+        width: 500,
+        height: 500,
+        margin: 50,
+        x: {inset: 50, type: document.getElementById("ylog").checked ? "log" : "linear", domain: [1e-5, 1e-2], label: "pipe-valid"},
+        y: {inset: 50, type: document.getElementById("ylog").checked ? "log" : "linear", domain: [1e-5, 1e-2], label: "--benchmark-ledger-ops"},
+        title: '~Byron; N=45000',
+      })
+)
+
+</script>
+</body>
+</html>

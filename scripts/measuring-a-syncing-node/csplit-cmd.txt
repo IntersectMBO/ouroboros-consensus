@@ -1,0 +1,1 @@
+csplit -q plotinline.html /DECLARE_dataStrings/; { cat xx00; cabal run exe:foobarbz-encode byronEllAsu byron-l-asu.txt jklSorted eradir/jkl-sorted.txt utxoSize matched-utxo-size.txt blockSize eras1thru11-block-sizes.txt dbanalyser dbanalyser-sorted.csv; tail -n+2 xx01; } >plotinlined.html
