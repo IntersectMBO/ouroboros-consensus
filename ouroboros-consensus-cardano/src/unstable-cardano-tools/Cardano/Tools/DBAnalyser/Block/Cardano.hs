@@ -32,7 +32,6 @@ import qualified Cardano.Crypto.Hash.Class as CryptoClass
 import           Cardano.Crypto.Raw (Raw)
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as SL
-import           Cardano.Ledger.Binary.Version (getVersion)
 import           Cardano.Ledger.Core (TxOut)
 import           Cardano.Ledger.Crypto
 import qualified Cardano.Ledger.Shelley.LedgerState as Shelley.LedgerState
@@ -61,7 +60,7 @@ import           Ouroboros.Consensus.Cardano
 import           Ouroboros.Consensus.Cardano.Block (CardanoEras)
 import qualified Ouroboros.Consensus.Cardano.Block as Cardano.Block
 import           Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams (..),
-                     TriggerHardFork (..), protocolInfoCardano)
+                     protocolInfoCardano)
 import           Ouroboros.Consensus.Config (emptyCheckpointsMap)
 import           Ouroboros.Consensus.HardFork.Combinator (HardForkBlock (..),
                      OneEraBlock (..), OneEraHash (..), getHardForkState,
@@ -233,19 +232,20 @@ instance Aeson.FromJSON CardanoConfig where
     triggers <- do
       let parseTrigger ::
                forall blk era. (IsShelleyBlock blk, ShelleyBlockLedgerEra blk ~ era)
-            => (Aeson.Parser :.: K TriggerHardFork) blk
-          parseTrigger = Comp $ fmap K $
-                        (fmap TriggerHardForkAtEpoch <$> (v Aeson..:? nm))
-              Aeson..!= TriggerHardForkAtVersion (getVersion (L.eraProtVerLow @era))
+            => (Aeson.Parser :.: CardanoHardForkTrigger) blk
+          parseTrigger = Comp $
+                        (fmap CardanoTriggerHardForkAtEpoch <$> (v Aeson..:? nm))
+              Aeson..!= CardanoTriggerHardForkAtDefaultVersion
             where
               nm = fromString $ "Test" <> L.eraName @era <> "HardForkAtEpoch"
 
       triggers <- hsequence' $ hcpure (Proxy @IsShelleyBlock) parseTrigger
 
-      let isBad :: NP (K TriggerHardFork) xs -> Bool
+      let isBad :: NP CardanoHardForkTrigger xs -> Bool
           isBad = \case
-            K TriggerHardForkAtVersion{} :* K TriggerHardForkAtEpoch{} :* _ -> True
-            K{} :* np -> isBad np
+            CardanoTriggerHardForkAtDefaultVersion
+              :* CardanoTriggerHardForkAtEpoch{} :* _ -> True
+            _ :* np -> isBad np
             Nil       -> False
       fmap (\() -> triggers) $ when (isBad triggers) $ fail $
            "if the Cardano config file sets a Test*HardForkEpoch,"

@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
@@ -33,6 +34,7 @@
 
 module Ouroboros.Consensus.Cardano.Node (
     CardanoHardForkConstraints
+  , CardanoHardForkTrigger (..)
   , CardanoHardForkTriggers (.., CardanoHardForkTriggers', triggerHardForkShelley, triggerHardForkAllegra, triggerHardForkMary, triggerHardForkAlonzo, triggerHardForkBabbage, triggerHardForkConway)
   , CardanoProtocolParams (..)
   , MaxMajorProtVer (..)
@@ -518,17 +520,42 @@ instance CardanoHardForkConstraints c
   ProtocolInfo
 -------------------------------------------------------------------------------}
 
+-- | When to trigger a hard fork to a Cardano era.
+data CardanoHardForkTrigger blk =
+    -- | Trigger the hard fork when the ledger protocol version is updated to
+    -- the default for that era (@'L.eraProtVerLow' \@('ShelleyBlockLedgerEra'
+    -- blk)@). Also see 'TriggerHardForkAtVersion'.
+    CardanoTriggerHardForkAtDefaultVersion
+  |
+    -- | Trigger the hard fork at the given epoch. For testing only. Also see
+    -- 'TriggerHardForkAtEpoch'.
+    CardanoTriggerHardForkAtEpoch EpochNo
+  deriving stock (Show)
+
+toTriggerHardFork ::
+     forall blk. L.Era (ShelleyBlockLedgerEra blk)
+  => CardanoHardForkTrigger blk
+  -> TriggerHardFork
+toTriggerHardFork = \case
+    CardanoTriggerHardForkAtDefaultVersion ->
+      TriggerHardForkAtVersion $
+        SL.getVersion (L.eraProtVerLow @(ShelleyBlockLedgerEra blk))
+    CardanoTriggerHardForkAtEpoch epochNo ->
+      TriggerHardForkAtEpoch epochNo
+
 newtype CardanoHardForkTriggers = CardanoHardForkTriggers {
-    getCardanoHardForkTriggers :: NP (K TriggerHardFork) (CardanoShelleyEras StandardCrypto)
+    getCardanoHardForkTriggers ::
+         NP CardanoHardForkTrigger (CardanoShelleyEras StandardCrypto)
   }
 
 pattern CardanoHardForkTriggers' ::
-     TriggerHardFork
-  -> TriggerHardFork
-  -> TriggerHardFork
-  -> TriggerHardFork
-  -> TriggerHardFork
-  -> TriggerHardFork
+     (c ~ StandardCrypto)
+  => CardanoHardForkTrigger (ShelleyBlock (TPraos c) (ShelleyEra  c))
+  -> CardanoHardForkTrigger (ShelleyBlock (TPraos c) (AllegraEra  c))
+  -> CardanoHardForkTrigger (ShelleyBlock (TPraos c) (MaryEra     c))
+  -> CardanoHardForkTrigger (ShelleyBlock (TPraos c) (AlonzoEra   c))
+  -> CardanoHardForkTrigger (ShelleyBlock (Praos  c) (BabbageEra  c))
+  -> CardanoHardForkTrigger (ShelleyBlock (Praos  c) (ConwayEra   c))
   -> CardanoHardForkTriggers
 pattern CardanoHardForkTriggers' {
         triggerHardForkShelley
@@ -539,12 +566,12 @@ pattern CardanoHardForkTriggers' {
       , triggerHardForkConway
       } =
     CardanoHardForkTriggers
-      (  K triggerHardForkShelley
-      :* K triggerHardForkAllegra
-      :* K triggerHardForkMary
-      :* K triggerHardForkAlonzo
-      :* K triggerHardForkBabbage
-      :* K triggerHardForkConway
+      (  triggerHardForkShelley
+      :* triggerHardForkAllegra
+      :* triggerHardForkMary
+      :* triggerHardForkAlonzo
+      :* triggerHardForkBabbage
+      :* triggerHardForkConway
       :* Nil
       )
 {-# COMPLETE CardanoHardForkTriggers' #-}
@@ -684,7 +711,7 @@ protocolInfoCardano paramsCardano
     partialLedgerConfigByron :: PartialLedgerConfig ByronBlock
     partialLedgerConfigByron = ByronPartialLedgerConfig {
           byronLedgerConfig    = ledgerConfigByron
-        , byronTriggerHardFork = triggerHardForkShelley
+        , byronTriggerHardFork = toTriggerHardFork triggerHardForkShelley
         }
 
     kByron :: SecurityParam
@@ -737,7 +764,7 @@ protocolInfoCardano paramsCardano
     partialLedgerConfigShelley =
         mkPartialLedgerConfigShelley
           transitionConfigShelley
-          triggerHardForkAllegra
+          (toTriggerHardFork triggerHardForkAllegra)
 
     kShelley :: SecurityParam
     kShelley = SecurityParam $ sgSecurityParam genesisShelley
@@ -759,7 +786,7 @@ protocolInfoCardano paramsCardano
     partialLedgerConfigAllegra =
         mkPartialLedgerConfigShelley
           transitionConfigAllegra
-          triggerHardForkMary
+          (toTriggerHardFork triggerHardForkMary)
 
     -- Mary
 
@@ -778,7 +805,7 @@ protocolInfoCardano paramsCardano
     partialLedgerConfigMary =
         mkPartialLedgerConfigShelley
           transitionConfigMary
-          triggerHardForkAlonzo
+          (toTriggerHardFork triggerHardForkAlonzo)
 
     -- Alonzo
 
@@ -797,7 +824,7 @@ protocolInfoCardano paramsCardano
     partialLedgerConfigAlonzo =
         mkPartialLedgerConfigShelley
           transitionConfigAlonzo
-          triggerHardForkBabbage
+          (toTriggerHardFork triggerHardForkBabbage)
 
     -- Babbage
 
@@ -826,7 +853,7 @@ protocolInfoCardano paramsCardano
     partialLedgerConfigBabbage =
         mkPartialLedgerConfigShelley
           transitionConfigBabbage
-          triggerHardForkConway
+          (toTriggerHardFork triggerHardForkConway)
 
     -- Conway
 
