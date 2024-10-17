@@ -27,6 +27,7 @@ module Test.Ouroboros.Storage.ChainDB.Model.Test (tests) where
 import           GHC.Stack
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Storage.ChainDB.API (LoE (..),
                      StreamFrom (..), StreamTo (..))
 import qualified Ouroboros.Consensus.Util.AnchoredFragment as AF
@@ -53,7 +54,7 @@ addBlocks loe blks = M.addBlocks cfg blks m
   where
     cfg = singleNodeTestConfig
     -- Set the current slot to 'maxBound' so that no block is in the future
-    m   = M.advanceCurSlot maxBound (M.empty loe testInitExtLedger 0)
+    m   = M.advanceCurSlot maxBound (M.empty loe (convertMapKind testInitExtLedger) 0)
 
 prop_getBlock_addBlock :: LoE () -> BlockTree -> Permutation -> Property
 prop_getBlock_addBlock loe bt p =

@@ -2,7 +2,9 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Serialisation for sending things across the network.
@@ -18,6 +20,7 @@ module Ouroboros.Consensus.Node.Serialisation (
     SerialiseNodeToClient (..)
   , SerialiseNodeToNode (..)
   , SerialiseResult (..)
+  , SerialiseResult' (..)
     -- * Defaults
   , defaultDecodeCBORinCBOR
   , defaultEncodeCBORinCBOR
@@ -28,14 +31,15 @@ module Ouroboros.Consensus.Node.Serialisation (
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding)
 import           Codec.Serialise (Serialise (decode, encode))
+import           Data.Kind
 import           Data.SOP.BasicFunctors
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr,
                      GenTxId)
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.TypeFamilyWrappers
+import           Ouroboros.Consensus.Util (Some (..))
 import           Ouroboros.Network.Block (unwrapCBORinCBOR, wrapCBORinCBOR)
-import           Ouroboros.Network.Protocol.LocalStateQuery.Codec (Some (..))
 
 {-------------------------------------------------------------------------------
   NodeToNode
@@ -91,18 +95,34 @@ class SerialiseNodeToClient blk a where
 --
 -- The @LocalStateQuery@ protocol is a node-to-client protocol, hence the
 -- 'NodeToClientVersion' argument.
+type SerialiseResult :: Type -> (Type -> Type -> Type) -> Constraint
 class SerialiseResult blk query where
   encodeResult
     :: forall result.
        CodecConfig blk
     -> BlockNodeToClientVersion blk
-    -> query result
+    -> query blk result
     -> result -> Encoding
   decodeResult
     :: forall result.
        CodecConfig blk
     -> BlockNodeToClientVersion blk
-    -> query result
+    -> query blk result
+    -> forall s. Decoder s result
+
+type SerialiseResult' :: Type -> (Type -> k -> Type -> Type) -> Constraint
+class SerialiseResult' blk query where
+  encodeResult'
+    :: forall fp result.
+       CodecConfig blk
+    -> BlockNodeToClientVersion blk
+    -> query blk fp result
+    -> result -> Encoding
+  decodeResult'
+    :: forall fp result.
+       CodecConfig blk
+    -> BlockNodeToClientVersion blk
+    -> query blk fp result
     -> forall s. Decoder s result
 
 {-------------------------------------------------------------------------------
