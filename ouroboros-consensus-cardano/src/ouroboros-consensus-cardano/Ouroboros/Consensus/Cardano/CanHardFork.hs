@@ -33,10 +33,8 @@ import qualified Cardano.Chain.Genesis as CC.Genesis
 import qualified Cardano.Chain.Update as CC.Update
 import           Cardano.Crypto.DSIGN (Ed25519DSIGN)
 import           Cardano.Crypto.Hash.Blake2b (Blake2b_224, Blake2b_256)
-import qualified Cardano.Ledger.BaseTypes as SL
-import qualified Cardano.Ledger.Core as Core
+import qualified Cardano.Ledger.Babbage.Core as SL
 import           Cardano.Ledger.Crypto (ADDRHASH, Crypto, DSIGN, HASH)
-import qualified Cardano.Ledger.Era as SL
 import qualified Cardano.Ledger.Genesis as SL
 import           Cardano.Ledger.Hashes (EraIndependentTxBody)
 import           Cardano.Ledger.Keys (DSignable, Hash)
@@ -47,13 +45,10 @@ import           Cardano.Ledger.Shelley.Translation
 import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.Rules.Prtcl as SL
 import qualified Cardano.Protocol.TPraos.Rules.Tickn as SL
-import           Cardano.Slotting.EpochInfo (epochInfoFirst)
 import           Control.Monad
 import           Control.Monad.Except (runExcept, throwError)
-import qualified Control.State.Transition as STS
 import           Data.Coerce (coerce)
 import           Data.Function ((&))
-import           Data.Functor.Identity
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (listToMaybe, mapMaybe)
 import           Data.Proxy
@@ -62,11 +57,9 @@ import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
 import qualified Data.SOP.Strict as SOP
 import           Data.SOP.Tails (Tails (..))
 import qualified Data.SOP.Tails as Tails
-import           Data.Void
 import           Data.Word
 import           GHC.Generics (Generic)
-import           Lens.Micro ((.~))
-import           Lens.Micro.Extras (view)
+import           Lens.Micro ((%~))
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger
@@ -726,59 +719,35 @@ translateLedgerStateBabbageToConwayWrapper ::
        (ShelleyBlock (Praos c) (BabbageEra c))
        (ShelleyBlock (Praos c) (ConwayEra c))
 translateLedgerStateBabbageToConwayWrapper =
-    RequireBoth $ \cfgBabbage cfgConway ->
-      Translate $ \epochNo ->
-        let -- It would be cleaner to just pass in the entire 'Bound' instead of
-            -- just the 'EpochNo'.
-            firstSlotNewEra = runIdentity $ epochInfoFirst ei epochNo
-              where
-                ei =
-                    SL.epochInfoPure
-                  $ shelleyLedgerGlobals
-                  $ unwrapLedgerConfig cfgConway
-
-            -- HACK to make sure protocol parameters get properly updated on the
-            -- era transition from Babbage to Conway. This will be replaced by a
-            -- more principled refactoring in the future.
-            --
-            -- Pre-Conway, protocol parameters (like the ledger protocol
-            -- version) were updated by the UPEC rule, which is executed while
-            -- ticking across an epoch boundary. If sufficiently many Genesis
-            -- keys submitted the same update proposal, it will update the
-            -- governance state accordingly.
-            --
-            -- Conway has a completely different governance scheme (CIP-1694),
-            -- and thus has no representation for pre-Conway update proposals,
-            -- which are hence discarded by 'SL.translateEra'' below. Therefore,
-            -- we monkey-patch the governance state by ticking across the
-            -- era/epoch boundary using Babbage logic, and set the governance
-            -- state to the updated one /before/ translating.
-            patchGovState ::
-                 LedgerState (ShelleyBlock proto (BabbageEra c))
-              -> LedgerState (ShelleyBlock proto (BabbageEra c))
-            patchGovState st =
-                st { shelleyLedgerState = shelleyLedgerState st
-                       & SL.newEpochStateGovStateL .~ newGovState
-                   }
-              where
-                newGovState =
-                    view SL.newEpochStateGovStateL
-                  . tickedShelleyLedgerState
-                  . applyChainTick
-                      (unwrapLedgerConfig cfgBabbage)
-                      firstSlotNewEra
-                  $ st
-
-            -- The UPEC rule emits no ledger events, hence this hack is not
-            -- swallowing anything.
-            _upecNoLedgerEvents ::
-                 STS.Event (Core.EraRule "UPEC" (BabbageEra c)) :~: Void
-            _upecNoLedgerEvents = Refl
-
-        in    unComp
-            . SL.translateEra' (getConwayTranslationContext cfgConway)
-            . Comp
-            . patchGovState
+    RequireBoth $ \_cfgBabbage cfgConway ->
+      Translate $ \_epochNo ->
+          unComp
+        . SL.translateEra' (getConwayTranslationContext cfgConway)
+        . Comp
+        . patchGovState
+  where
+    patchGovState ::
+         LedgerState (ShelleyBlock proto (BabbageEra c))
+      -> LedgerState (ShelleyBlock proto (BabbageEra c))
+    patchGovState st =
+        st { shelleyLedgerState = shelleyLedgerState st
+               & SL.newEpochStateGovStateL %~ rotateGovState
+           }
+      where
+        -- This is only needed to keep backwards-compatibility with a past hack.
+        -- Concretely, this means that the tick across the epoch/era boundary
+        -- (using Conway logic) will consider the protocol parameters of the
+        -- first Conway epoch (instead of the last Babbage epoch) to be the
+        -- /current/ protocol parameters. The only effect is that delegations
+        -- from pointer addresses are ignored already at this epoch boundary.
+        rotateGovState ::
+             SL.ShelleyGovState (BabbageEra c)
+          -> SL.ShelleyGovState (BabbageEra c)
+        rotateGovState gs = gs {
+            SL.sgsPrevPParams   = SL.sgsCurPParams    gs
+          , SL.sgsCurPParams    = SL.nextEpochPParams gs
+          , SL.sgsFuturePParams = SL.PotentialPParamsUpdate Nothing
+          }
 
 getConwayTranslationContext ::
      WrapLedgerConfig (ShelleyBlock (Praos c) (ConwayEra c))
