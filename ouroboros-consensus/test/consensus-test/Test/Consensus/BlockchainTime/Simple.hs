@@ -539,6 +539,18 @@ instance MonadLabelledSTM m => MonadLabelledSTM (OverrideDelay m) where
   labelTQueueIO v  = OverrideDelay . lift . LazySTM.labelTQueueIO v
   labelTBQueueIO v = OverrideDelay . lift . LazySTM.labelTBQueueIO v
 
+instance MonadInspectSTM m => MonadInspectSTM (OverrideDelay m) where
+  type InspectMonad (OverrideDelay m) = InspectMonad m
+  inspectTVar _  = inspectTVar (Proxy :: Proxy m)
+  inspectTMVar _ = inspectTMVar (Proxy :: Proxy m)
+
+instance MonadTraceSTM m => MonadTraceSTM (OverrideDelay m) where
+  traceTVar _ v    = OverrideDelaySTM . lift . LazySTM.traceTVar Proxy v
+  traceTMVar _ v   = OverrideDelaySTM . lift . LazySTM.traceTMVar Proxy v
+  traceTQueue _ v  = OverrideDelaySTM . lift . LazySTM.traceTQueue Proxy v
+  traceTBQueue _ v = OverrideDelaySTM . lift . LazySTM.traceTBQueue Proxy v
+  traceTSem _ v    = OverrideDelaySTM . lift . LazySTM.traceTSem Proxy v
+
 newtype OverrideDelayAsync m a = OverrideDelayAsync {
     unOverrideDelayAsync :: Async m a
   }

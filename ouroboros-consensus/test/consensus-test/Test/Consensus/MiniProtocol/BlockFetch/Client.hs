@@ -119,7 +119,7 @@ data BlockFetchClientOutcome = BlockFetchClientOutcome {
 
 runBlockFetchTest ::
      forall m.
-     (IOLike m, MonadTime m, MonadTimer m, MonadTraceSTM m)
+     (IOLike m, MonadTime m, MonadTimer m)
   => BlockFetchClientTestSetup
   -> m BlockFetchClientOutcome
 runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do

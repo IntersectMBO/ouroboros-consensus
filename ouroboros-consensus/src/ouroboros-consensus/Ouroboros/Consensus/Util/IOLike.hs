@@ -69,6 +69,7 @@ import           Ouroboros.Consensus.Util.Orphans ()
 
 class ( MonadAsync              m
       , MonadLabelledSTM        m
+      , MonadTraceSTM           m
       , MonadMVar               m
       , MonadEventlog           m
       , MonadFork               m

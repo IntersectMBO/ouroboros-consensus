@@ -314,7 +314,7 @@ data ChainSyncOutcome = ChainSyncOutcome {
 -- Note that updates that are scheduled before the time at which we start
 -- syncing help generate different chains to start syncing from.
 runChainSync ::
-       forall m. (IOLike m, MonadTime m, MonadTimer m, MonadTraceSTM m)
+       forall m. (IOLike m, MonadTime m, MonadTimer m)
     => ClockSkew
     -> SecurityParam
     -> ClientUpdates
