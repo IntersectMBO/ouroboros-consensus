@@ -296,9 +296,9 @@ library
     measures,
     mtl,
     nothunks ^>=0.2,
-    ouroboros-network-api ^>=0.10,
+    ouroboros-network-api ^>=0.11,
     ouroboros-network-mock ^>=0.1,
-    ouroboros-network-protocols ^>=0.11,
+    ouroboros-network-protocols ^>=0.12,
     primitive,
     psqueues ^>=0.2.3,
     quiet ^>=0.2,
@@ -316,7 +316,7 @@ library
     these ^>=1.2,
     time,
     transformers,
-    typed-protocols ^>=0.1.1,
+    typed-protocols ^>=0.3,
     vector ^>=0.13,
 
   -- GHC 8.10.7 on aarch64-darwin cannot use text-2
@@ -575,8 +575,9 @@ test-suite consensus-test
     tasty-quickcheck,
     time,
     tree-diff,
-    typed-protocols ^>=0.1.1,
+    typed-protocols ^>=0.3,
     typed-protocols-examples,
+    typed-protocols-stateful,
     unstable-consensus-testlib,
     unstable-mock-block,
 

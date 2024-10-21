@@ -245,14 +245,14 @@ mkHandlers
       , hTxSubmissionClient = \version controlMessageSTM peer ->
           txSubmissionOutbound
             (contramap (TraceLabelPeer peer) (Node.txOutboundTracer tracers))
-            (NumTxIdsToAck $ txSubmissionMaxUnacked miniProtocolParameters)
+            (txSubmissionMaxUnacked miniProtocolParameters)
             (mapTxSubmissionMempoolReader txForgetValidated $ getMempoolReader getMempool)
             version
             controlMessageSTM
       , hTxSubmissionServer = \version peer ->
           txSubmissionInbound
             (contramap (TraceLabelPeer peer) (Node.txInboundTracer tracers))
-            (NumTxIdsToAck $ txSubmissionMaxUnacked miniProtocolParameters)
+            (txSubmissionMaxUnacked miniProtocolParameters)
             (mapTxSubmissionMempoolReader txForgetValidated $ getMempoolReader getMempool)
             (getMempoolWriter getMempool)
             version
@@ -377,6 +377,7 @@ data Tracers' peer blk e f = Tracers {
     , tBlockFetchTracer           :: f (TraceLabelPeer peer (TraceSendRecv (BlockFetch blk (Point blk))))
     , tBlockFetchSerialisedTracer :: f (TraceLabelPeer peer (TraceSendRecv (BlockFetch (Serialised blk) (Point blk))))
     , tTxSubmission2Tracer        :: f (TraceLabelPeer peer (TraceSendRecv (TxSubmission2 (GenTxId blk) (GenTx blk))))
+    , tKeepAliveTracer            :: f (TraceLabelPeer peer (TraceSendRecv KeepAlive))
     }
 
 instance (forall a. Semigroup (f a)) => Semigroup (Tracers' peer blk e f) where
@@ -386,6 +387,7 @@ instance (forall a. Semigroup (f a)) => Semigroup (Tracers' peer blk e f) where
       , tBlockFetchTracer           = f tBlockFetchTracer
       , tBlockFetchSerialisedTracer = f tBlockFetchSerialisedTracer
       , tTxSubmission2Tracer        = f tTxSubmission2Tracer
+      , tKeepAliveTracer            = f tKeepAliveTracer
       }
     where
       f :: forall a. Semigroup a
@@ -401,6 +403,7 @@ nullTracers = Tracers {
     , tBlockFetchTracer           = nullTracer
     , tBlockFetchSerialisedTracer = nullTracer
     , tTxSubmission2Tracer        = nullTracer
+    , tKeepAliveTracer            = nullTracer
     }
 
 showTracers :: ( Show blk
@@ -418,6 +421,7 @@ showTracers tr = Tracers {
     , tBlockFetchTracer           = showTracing tr
     , tBlockFetchSerialisedTracer = showTracing tr
     , tTxSubmission2Tracer        = showTracing tr
+    , tKeepAliveTracer            = showTracing tr
     }
 
 {-------------------------------------------------------------------------------
@@ -721,7 +725,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
       labelThisThread "KeepAliveClient"
       let kacApp = \dqCtx ->
                        runPeerWithLimits
-                         nullTracer
+                         (TraceLabelPeer them `contramap` tKeepAliveTracer)
                          (cKeepAliveCodec (mkCodecs version))
                          blKeepAlive
                          timeLimitsKeepAlive
@@ -738,10 +742,10 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
       -> ResponderContext addrNTN
       -> Channel m bKA
       -> m ((), Maybe bKA)
-    aKeepAliveServer version _responderCtx channel = do
+    aKeepAliveServer version ResponderContext { rcConnectionId = them } channel = do
       labelThisThread "KeepAliveServer"
       runPeerWithLimits
-        nullTracer
+        (TraceLabelPeer them `contramap` tKeepAliveTracer)
         (cKeepAliveCodec (mkCodecs version))
         (byteLimitsKeepAlive (const 0)) -- TODO: Real Bytelimits, see #1727
         timeLimitsKeepAlive
@@ -765,6 +769,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
         $ \controller -> do
           psClient <- hPeerSharingClient version controlMessageSTM them controller
           ((), trailing) <- runPeerWithLimits
+            -- TODO: add tracer
             nullTracer
             (cPeerSharingCodec (mkCodecs version))
             (byteLimitsPeerSharing (const 0))
@@ -781,6 +786,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
     aPeerSharingServer version ResponderContext { rcConnectionId = them } channel = do
       labelThisThread "PeerSharingServer"
       runPeerWithLimits
+        -- TODO: add tracer
         nullTracer
         (cPeerSharingCodec (mkCodecs version))
         (byteLimitsPeerSharing (const 0))

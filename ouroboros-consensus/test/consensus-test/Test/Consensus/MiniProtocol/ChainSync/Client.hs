@@ -522,7 +522,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                    atomically $ do
                      handles <- readTVar varHandles
                      modifyTVar varFinalCandidates $ Map.insert serverId (handles Map.! serverId)
-                   result <-
+                   (result, _) <-
                      runPipelinedPeer protocolTracer codecChainSyncId clientChannel $
                        chainSyncClientPeerPipelined $ client csState
                    atomically $ writeTVar varClientResult (Just (ClientFinished result))
