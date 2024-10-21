@@ -82,6 +82,7 @@ class ( MonadAsync              m
       , Alternative        (STM m)
       , MonadCatch         (STM m)
       , PrimMonad               m
+      , MonadLabelledSTM        m
       , forall a. NoThunks (m a)
       , forall a. NoThunks a => NoThunks (StrictTVar m a)
       , forall a. NoThunks a => NoThunks (StrictSVar m a)

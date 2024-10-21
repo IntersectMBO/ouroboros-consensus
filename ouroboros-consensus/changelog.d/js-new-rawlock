@@ -1,0 +1,5 @@
+### Breaking
+
+* Removed `Ouroboros.Consensus.Util.MonadSTM.RAWLock` in favor of a
+  reimplementation which is safe in presence of exceptions. See the
+  `rawlock` package.

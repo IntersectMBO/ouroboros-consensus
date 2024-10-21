@@ -52,6 +52,7 @@ import qualified Data.Time.Clock as Time
 import           NoThunks.Class (AllowThunk (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
+import           Ouroboros.Consensus.Util ((.:))
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (withWatcher)
@@ -563,6 +564,23 @@ instance (MonadAsync m, MonadMask m, MonadThrow (STM m)) => MonadAsync (Override
 
   waitCatchSTM = OverrideDelaySTM . lift . waitCatchSTM . unOverrideDelayAsync
   pollSTM      = OverrideDelaySTM . lift . pollSTM . unOverrideDelayAsync
+
+instance MonadLabelledSTM m => MonadLabelledSTM (OverrideDelay m) where
+  labelTVar      = OverrideDelaySTM .: (lift .: LazySTM.labelTVar)
+  labelTMVar     = OverrideDelaySTM .: (lift .: LazySTM.labelTMVar)
+  labelTChan     = OverrideDelaySTM .: (lift .: LazySTM.labelTChan)
+  labelTQueue    = OverrideDelaySTM .: (lift .: LazySTM.labelTQueue)
+  labelTBQueue   = OverrideDelaySTM .: (lift .: LazySTM.labelTBQueue)
+  labelTArray    = OverrideDelaySTM .: (lift .: LazySTM.labelTArray)
+  labelTSem      = OverrideDelaySTM .: (lift .: LazySTM.labelTSem)
+
+  labelTVarIO    = OverrideDelay    .: (lift .: LazySTM.labelTVarIO)
+  labelTMVarIO   = OverrideDelay    .: (lift .: LazySTM.labelTMVarIO)
+  labelTChanIO   = OverrideDelay    .: (lift .: LazySTM.labelTChanIO)
+  labelTQueueIO  = OverrideDelay    .: (lift .: LazySTM.labelTQueueIO)
+  labelTBQueueIO = OverrideDelay    .: (lift .: LazySTM.labelTBQueueIO)
+  labelTArrayIO  = OverrideDelay    .: (lift .: LazySTM.labelTArrayIO)
+  labelTSemIO    = OverrideDelay    .: (lift .: LazySTM.labelTSemIO)
 
 instance (IOLike m, MonadDelay (OverrideDelay m)) => IOLike (OverrideDelay m) where
   forgetSignKeyKES = OverrideDelay . lift . forgetSignKeyKES

@@ -68,6 +68,7 @@ packages:
   ouroboros-consensus-cardano
   ouroboros-consensus-protocol
   ouroboros-consensus-diffusion
+  rawlock
   sop-extras
   strict-sop-core
 " > ./tmp/cabal.project

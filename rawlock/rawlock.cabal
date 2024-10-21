@@ -1,0 +1,77 @@
+cabal-version: 3.0
+name: rawlock
+version: 0.1.0.0
+synopsis: A writer-biased RAW lock.
+description:
+  A writer-biased RAW lock.
+
+  It allows for multiple readers to run concurrently with at most one
+  appender, or a single writer running on isolation.
+
+  The code is safe in the presence of async exceptions, meaning that each
+  actor will cleanup after itself if an exception is received.
+
+license: Apache-2.0
+license-files:
+  LICENSE
+  NOTICE
+
+copyright: 2024 INTERSECT
+author: IOG Engineering Team
+maintainer: operations@iohk.io, Javier Sagredo
+category: Concurrency
+build-type: Simple
+extra-doc-files:
+  CHANGELOG.md
+  README.md
+
+bug-reports: https://github.com/IntersectMBO/io-classes-extra/issues
+tested-with: ghc ==8.10 || ==9.2 || ==9.4 || ==9.6 || ==9.8 || ==9.10
+
+source-repository head
+  type: git
+  location: https://github.com/IntersectMBO/io-classes-extra
+  subdir: rawlock
+
+common warnings
+  ghc-options:
+    -Wall
+    -Wunused-packages
+    -Wcompat
+    -Wincomplete-uni-patterns
+    -Wincomplete-record-updates
+    -Wpartial-fields
+    -Widentities
+    -Wredundant-constraints
+    -Wmissing-export-lists
+    -Wno-unticked-promoted-constructors
+
+library
+  import: warnings
+  hs-source-dirs: src
+  default-language: Haskell2010
+  exposed-modules: Control.RAWLock
+  default-extensions: ImportQualifiedPost
+  build-depends:
+    base >=4.14 && <4.21,
+    io-classes ^>=1.5,
+    nothunks ^>=0.2,
+    strict-mvar ^>=1.5,
+    strict-stm ^>=1.5,
+
+test-suite rawlock-test
+  import: warnings
+  default-language: Haskell2010
+  type: exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is: Main.hs
+  build-depends:
+    QuickCheck,
+    base,
+    io-classes,
+    io-sim,
+    mtl,
+    rawlock,
+    strict-stm,
+    tasty,
+    tasty-quickcheck,

@@ -119,6 +119,7 @@ import qualified Codec.CBOR.Write as CBOR
 import           Control.Monad (unless, when)
 import           Control.Monad.State.Strict (get, gets, lift, modify, put,
                      state)
+import qualified Control.RAWLock as RAWLock
 import           Control.Tracer (Tracer, nullTracer, traceWith)
 import qualified Data.ByteString.Lazy as Lazy
 import           Data.List as List (foldl')
@@ -141,7 +142,6 @@ import           Ouroboros.Consensus.Storage.VolatileDB.Impl.Types
 import           Ouroboros.Consensus.Storage.VolatileDB.Impl.Util
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
-import qualified Ouroboros.Consensus.Util.MonadSTM.RAWLock as RAWLock
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Block (MaxSlotNo (..))
 import           System.FS.API.Lazy
@@ -233,7 +233,7 @@ closeDBImpl ::
   -> m ()
 closeDBImpl VolatileDBEnv { varInternalState, tracer, hasFS } = do
     mbInternalState <-
-      RAWLock.withWriteAccess varInternalState $ \st -> return (DbClosed, st)
+      RAWLock.withWriteAccess varInternalState $ \st -> return (st, DbClosed)
     case mbInternalState of
       DbClosed -> traceWith tracer DBAlreadyClosed
       DbOpen ost -> do

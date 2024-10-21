@@ -1,48 +1,73 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
--- | Tests for the RAW lock mechanism.
---
--- The volatile DB uses an abstraction we call a @RAWLock@, a lock that allows
--- the following combinations of readers, appender and writer:
---
---
--- >          │ Reader │ Appender │ Writer │
--- > ─────────┼────────┼──────────┼────────┤
--- > Reader   │   V    │     V    │    X   │
--- > Appender │░░░░░░░░│     X    │    X   │
--- > Writer   │░░░░░░░░│░░░░░░░░░░│    X   │
---
--- It improves concurrent access. In the test we generate lots of threads, some
--- readers, some appenders, some writers, each concurrently accessing some data
--- protected by the lock. We then record the access pattern; the test would fail
--- if at any point it would see a forbidden combination (for example, a writer
--- and a reader both having access at the same time).
---
-module Test.Consensus.Util.MonadSTM.RAWLock (tests) where
+module Main (main) where
 
+import           Control.Concurrent.Class.MonadSTM.Strict
 import           Control.Exception (throw)
+import           Control.Monad.Class.MonadAsync
+import           Control.Monad.Class.MonadFork
+import           Control.Monad.Class.MonadSay
+import           Control.Monad.Class.MonadTest
+import           Control.Monad.Class.MonadThrow
+import           Control.Monad.Class.MonadTimer
 import           Control.Monad.Except
-import           Control.Monad.IOSim (IOSim, SimEventType (..), SimTrace,
-                     runSimTrace, selectTraceEvents, traceResult)
-import           Data.Time.Clock (picosecondsToDiffTime)
-import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.MonadSTM.RAWLock (RAWLock)
-import qualified Ouroboros.Consensus.Util.MonadSTM.RAWLock as RAWLock
-import           Ouroboros.Consensus.Util.ResourceRegistry
-import           Test.QuickCheck
-import           Test.QuickCheck.Gen.Unsafe (Capture (..), capture)
+import           Control.Monad.IOSim
+import           Control.RAWLock
+import           Data.Either
+import           Test.QuickCheck.Gen.Unsafe
 import           Test.QuickCheck.Monadic
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
-import           Test.Util.Orphans.IOLike ()
 
-tests :: TestTree
-tests = testProperty "RAWLock correctness" prop_RAWLock_correctness
+main :: IO ()
+main = defaultMain $ testGroup "RAWLock" [
+    testProperty "Exception safe" $ conjoin (map prop_exception_safe allCommandCombinations)
+  , testProperty "correctness" prop_correctness
+  , testProperty "unsafe functions do not deadlock" $ conjoin (map prop_unsafe_actions allCommandCombinations)
+  ]
+
+{-------------------------------------------------------------------------------
+  Exception safe
+-------------------------------------------------------------------------------}
+
+data Action = Read | Incr | Append
+  deriving (Show)
+
+allCommandCombinations :: [(Action, Action, Action)]
+allCommandCombinations =
+  [ (a, b, c) | let cmds = [Read, Incr, Append], a <- cmds, b <- cmds, c <- cmds ]
+
+prop_exception_safe :: (Action, Action, Action) -> Property
+prop_exception_safe actions@(a1, a2, a3) = counterexample (show actions) $
+    exploreSimTrace id action
+      (\_ tr -> counterexample (ppTrace tr) . property . isRight . traceResult False $ tr)
+  where
+    action :: IOSim s ()
+    action = do
+      exploreRaces
+      l <- new (0 :: Int)
+      let c = \case
+            Read -> withReadAccess l $ \s -> say (show s)
+            Incr -> withWriteAccess l $ \s -> say (show s) >> pure ((), s + 1)
+            Append -> withAppendAccess l $ \s -> say (show s) >> pure ((), s + 1)
+      t1 <- async $ c a1
+      t2 <- async $ c a2
+      t3 <- async $ c a3
+      async (cancel t1) >>= wait
+      (_ :: Either SomeException ()) <- waitCatch t1
+      (_ :: Either SomeException ()) <- waitCatch t2
+      (_ :: Either SomeException ()) <- waitCatch t3
+      pure ()
+
+{-------------------------------------------------------------------------------
+  Correctness
+-------------------------------------------------------------------------------}
 
 -- | Test the correctness of the RAWLock
 --
@@ -57,77 +82,74 @@ tests = testProperty "RAWLock correctness" prop_RAWLock_correctness
 -- write each changed 'RAWState' to a trace (in a separate 'TVar').
 -- Afterwards, we check the 'RAWState's in the trace for consistency (using
 -- 'isConsistent'), e.g., not more than one concurrent appender.
-prop_RAWLock_correctness :: TestSetup -> Property
-prop_RAWLock_correctness (TestSetup rawDelays) =
+prop_correctness :: TestSetup -> Property
+prop_correctness (TestSetup rawDelays) =
     monadicSimWithTrace tabulateBlockeds test
   where
     RAW readerDelays appenderDelays writerDelays = rawDelays
 
-    test :: forall m. IOLike m => PropertyM m ()
+    test :: forall s. PropertyM (IOSim s) ()
     test = do
       rawVars@(RAW varReaders varAppenders varWriters) <- run newRAWVars
 
-      trace <- run $ withRegistry $ \registry -> do
-        rawLock  <- RAWLock.new ()
-        varTrace <- uncheckedNewTVarM []
+      trace <- run $ do
+        rawLock  <- new ()
+        varTrace <- newTVarIO []
 
-        let traceState :: STM m ()
+        let traceState :: STM (IOSim s) ()
             traceState = do
               rawState <- readRAWState rawVars
               modifyTVar varTrace (rawState:)
 
-        threads <- mapM (forkLinkedThread registry "testThread") $
+        threads <- mapM (async . (labelThisThread "testThread" >>)) $
           map (runReader   rawLock traceState varReaders)   readerDelays   <>
           map (runAppender rawLock traceState varAppenders) appenderDelays <>
           map (runWriter   rawLock traceState varWriters)   writerDelays
 
-        mapM_ waitThread threads
+        mapM_ wait threads
         reverse <$> atomically (readTVar varTrace)
 
       checkRAWTrace trace
 
     runReader
-      :: IOLike m
-      => RAWLock m ()
-      -> STM m ()  -- ^ Trace the 'RAWState'
-      -> StrictTVar m Int
+      :: RAWLock (IOSim s) ()
+      -> STM (IOSim s) ()  -- ^ Trace the 'RAWState'
+      -> StrictTVar (IOSim s) Int
       -> [ThreadDelays]
-      -> m ()
+      -> IOSim s ()
     runReader rawLock traceState varReaders =
       mapM_ $ \(ThreadDelays before with) -> do
         threadDelay before
-        RAWLock.withReadAccess rawLock $ const $ do
+        withReadAccess rawLock $ const $ do
           atomically $ modifyTVar varReaders succ *> traceState
           threadDelay with
           atomically $ modifyTVar varReaders pred *> traceState
 
     runAppender
-      :: IOLike m
-      => RAWLock m ()
-      -> STM m ()  -- ^ Trace the 'RAWState'
-      -> StrictTVar m Int
+      :: RAWLock (IOSim s) ()
+      -> STM (IOSim s) ()  -- ^ Trace the 'RAWState'
+      -> StrictTVar (IOSim s) Int
       -> [ThreadDelays]
-      -> m ()
+      -> IOSim s ()
     runAppender rawLock traceState varAppenders =
       mapM_ $ \(ThreadDelays before with) -> do
         threadDelay before
-        RAWLock.withAppendAccess rawLock $ const $ do
+        withAppendAccess rawLock $ const $ do
           atomically $ modifyTVar varAppenders succ *> traceState
           threadDelay with
           atomically $ modifyTVar varAppenders pred *> traceState
           return ((), ())
 
     runWriter
-      :: IOLike m
-      => RAWLock m ()
-      -> STM m ()  -- ^ Trace the 'RAWState'
-      -> StrictTVar m Int
+      :: RAWLock (IOSim s) ()
+      -> STM (IOSim s) ()  -- ^ Trace the 'RAWState'
+      -> StrictTVar (IOSim s) Int
       -> [ThreadDelays]
-      -> m ()
+      -> IOSim s ()
     runWriter rawLock traceState varWriters =
       mapM_ $ \(ThreadDelays before with) -> do
         threadDelay before
-        RAWLock.withWriteAccess rawLock $ const $ do
+        withWriteAccess rawLock $ const $ do
           atomically $ modifyTVar varWriters succ *> traceState
           threadDelay with
           atomically $ modifyTVar varWriters pred *> traceState
@@ -196,19 +218,19 @@ data RAW a = RAW
 
 type RAWVars m = RAW (StrictTVar m Int)
 
-newRAWVars :: IOLike m => m (RAWVars m)
+newRAWVars :: IOSim s (RAWVars (IOSim s))
 newRAWVars = RAW <$> newTVarIO 0 <*> newTVarIO 0 <*> newTVarIO 0
 
-type RAWState = RAW Int
+type RAWState' = RAW Int
 
-readRAWState :: IOLike m => RAWVars m -> STM m RAWState
+readRAWState :: RAWVars (IOSim s) -> STM (IOSim s) RAWState'
 readRAWState RAW { readers, appenders, writers } =
     RAW
       <$> readTVar readers
       <*> readTVar appenders
       <*> readTVar writers
 
-isConsistent :: RAWState -> Except String ()
+isConsistent :: RAWState' -> Except String ()
 isConsistent RAW { readers, appenders, writers }
     | appenders > 1
     = throwError $ show appenders <> " appenders while at most 1 is allowed"
@@ -221,14 +243,14 @@ isConsistent RAW { readers, appenders, writers }
     | otherwise
     = return ()
 
-type RAWTrace = [RAWState]
+type RAWTrace = [RAWState']
 
 checkRAWTrace :: Monad m => RAWTrace -> PropertyM m ()
 checkRAWTrace = mapM_ $ \rawState ->
     case runExcept $ isConsistent rawState of
       Left msg -> do
         monitor (counterexample msg)
-        assert False
+        Test.QuickCheck.Monadic.assert False
       Right () ->
         return ()
 
@@ -254,15 +276,62 @@ instance Arbitrary TestSetup where
     [TestSetup raw { writers   = writers'   } | writers'   <- shrink writers  ]
 
 data ThreadDelays = ThreadDelays
-    { beforeLockTime :: DiffTime
+    { beforeLockTime :: Int
       -- ^ How long the thread should wait before it starts to take the lock
-    , withLockTime   :: DiffTime
+    , withLockTime   :: Int
       -- ^ How long the thread should wait while holding the lock
     }
   deriving (Eq, Show)
 
 instance Arbitrary ThreadDelays where
   arbitrary = do
-    beforeLockTime <- picosecondsToDiffTime <$> choose (0, 1000)
-    withLockTime   <- picosecondsToDiffTime <$> choose (0, 2000)
+    beforeLockTime <- choose (0, 1000)
+    withLockTime   <- choose (0, 2000)
     return ThreadDelays { beforeLockTime, withLockTime }
+
+{-------------------------------------------------------------------------------
+  unsafe functions
+-------------------------------------------------------------------------------}
+
+prop_unsafe_actions :: (Action, Action, Action) -> Property
+prop_unsafe_actions actions@(a1, a2, a3) = counterexample (show actions) $
+  exploreSimTrace id action
+      (\_ tr -> counterexample (ppTrace tr) . property . isRight . traceResult False $ tr)
+  where
+    action :: IOSim s ()
+    action = do
+      exploreRaces
+      l <- new (0 :: Int)
+      let c = \case
+            Read -> bracket
+                      (atomically (unsafeAcquireReadAccess l))
+                      (const $ atomically (unsafeReleaseReadAccess l))
+                      (say . ("Read: " <>) . show)
+            Incr -> generalBracket
+                      (unsafeAcquireWriteAccess l)
+                      (\orig -> \case
+                          ExitCaseSuccess s' -> unsafeReleaseWriteAccess l s'
+                          _ -> unsafeReleaseWriteAccess l orig
+                      )
+                      (\s -> do
+                          say ("Incr: " <> show s)
+                          pure (s + 1)
+                      ) >> pure ()
+            Append -> generalBracket
+                        (unsafeAcquireAppendAccess l)
+                        (\orig -> \case
+                            ExitCaseSuccess s' -> unsafeReleaseAppendAccess l s'
+                            _ -> unsafeReleaseAppendAccess l orig
+                        )
+                        (\s -> do
+                            say ("Append: " <> show s)
+                            pure (s + 1)
+                        ) >> pure ()
+      t1 <- async $ c a1
+      t2 <- async $ c a2
+      t3 <- async $ c a3
+      async (cancel t1) >>= wait
+      (_ :: Either SomeException ()) <- waitCatch t1
+      (_ :: Either SomeException ()) <- waitCatch t2
+      (_ :: Either SomeException ()) <- waitCatch t3
+      pure ()
