@@ -45,6 +45,7 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe, maybeToList)
 import           Data.Maybe.Strict (StrictMaybe)
+import           Data.Typeable (Typeable)
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (TopLevelConfig, configLedger,
@@ -54,6 +55,7 @@ import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import           Ouroboros.Consensus.HardFork.History.Qry (qryFromExpr,
                      runQuery, slotToGenesisWindow)
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState,
                      ledgerState)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -216,7 +218,7 @@ evaluateGDD cfg tracer stateView = do
       let
         (losingPeers, bounds) =
           densityDisconnect sgen (configSecurityParam cfg) states candidateSuffixes loeFrag
-        loeHead = AF.headAnchor loeFrag
+        loeHead = AF.castAnchor $ AF.headAnchor loeFrag
 
       traceWith tracer $ TraceGDDDebug
         GDDDebugInfo {sgen, curChain, bounds, candidates, candidateSuffixes, losingPeers, loeHead}
@@ -225,7 +227,15 @@ evaluateGDD cfg tracer stateView = do
         for_ losingPeersNE $ \peer -> killActions Map.! peer
         traceWith tracer $ TraceGDDDisconnected losingPeersNE
 
-    pure loeFrag
+    -- REVIEW: we should avoid this linear computation, but I don't see an alternative to changing the type of the LoE fragment.
+    pure $ dropTime loeFrag
+
+
+-- REVIEW: If dropping time is correct, this function will go into HeaderValidation most likely.
+dropTime ::
+     AnchoredFragment (HeaderWithTime blk)
+  -> AnchoredFragment (Header blk)
+dropTime = undefined
 
 -- | Compute the fragment @loeFrag@ between the immutable tip and the
 -- earliest intersection between @curChain@ and any of the @candidates@.
@@ -235,14 +245,14 @@ evaluateGDD cfg tracer stateView = do
 -- The function also yields the suffixes of the intersection of @loeFrag@ with
 -- every candidate fragment.
 sharedCandidatePrefix ::
-  GetHeader blk =>
+  (Typeable blk, GetHeader blk) =>
   AnchoredFragment (Header blk) ->
-  [(peer, AnchoredFragment (Header blk))] ->
-  (AnchoredFragment (Header blk), [(peer, AnchoredFragment (Header blk))])
+  [(peer, AnchoredFragment (HeaderWithTime blk))] ->
+  (AnchoredFragment (HeaderWithTime blk), [(peer, AnchoredFragment (HeaderWithTime blk))])
 sharedCandidatePrefix curChain candidates =
   second getCompose $
-  stripCommonPrefix (AF.anchor curChain) $
-  Compose immutableTipSuffixes
+      stripCommonPrefix (AF.castAnchor $ AF.anchor curChain) $
+          Compose immutableTipSuffixes
   where
     immutableTip = AF.anchorPoint curChain
 
@@ -300,8 +310,8 @@ densityDisconnect ::
   => GenesisWindow
   -> SecurityParam
   -> Map peer (ChainSyncState blk)
-  -> [(peer, AnchoredFragment (Header blk))]
-  -> AnchoredFragment (Header blk)
+  -> [(peer, AnchoredFragment (HeaderWithTime blk))] -- REVIEW: add a comment here? (in addition to the haddock above)
+  -> AnchoredFragment (HeaderWithTime blk)           -- REVIEW: add a comment here?
   -> ([peer], [(peer, DensityBounds blk)])
 densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixes loeFrag =
   (losingPeers, densityBounds)
@@ -349,7 +359,9 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
           -- If not, it is not qualified to compete by density (yet).
           offersMoreThanK = totalBlockCount > k
 
-      pure (peer, DensityBounds {clippedFragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot, idling})
+      pure (peer, DensityBounds {
+               clippedFragment = (dropTime clippedFragment), -- REVIEW: should we change the type of the clipped fragment?
+               offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot, idling})
 
     losingPeers = nubOrd $ densityBounds >>= \
       (peer0 , DensityBounds { clippedFragment = frag0
@@ -434,8 +446,8 @@ data GDDDebugInfo peer blk =
   GDDDebugInfo {
     bounds            :: [(peer, DensityBounds blk)],
     curChain          :: AnchoredFragment (Header blk),
-    candidates        :: [(peer, AnchoredFragment (Header blk))],
-    candidateSuffixes :: [(peer, AnchoredFragment (Header blk))],
+    candidates        :: [(peer, AnchoredFragment (HeaderWithTime blk))],
+    candidateSuffixes :: [(peer, AnchoredFragment (HeaderWithTime blk))],
     losingPeers       :: [peer],
     loeHead           :: AF.Anchor (Header blk),
     sgen              :: GenesisWindow

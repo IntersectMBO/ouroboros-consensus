@@ -30,6 +30,7 @@ import           Ouroboros.Consensus.Config.SecurityParam
                      (SecurityParam (SecurityParam), maxRollbacks)
 import           Ouroboros.Consensus.Genesis.Governor (DensityBounds,
                      densityDisconnect, sharedCandidatePrefix)
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (ChainSyncClientException (DensityTooLow),
                      ChainSyncState (..))
@@ -93,6 +94,16 @@ data StaticCandidates =
   }
   deriving Show
 
+addTime ::
+     AnchoredFragment (Header TestBlock)
+  -> AnchoredFragment (HeaderWithTime TestBlock)
+addTime = undefined
+
+dropTime ::
+     AnchoredFragment (HeaderWithTime blk)
+  -> AnchoredFragment (Header blk)
+dropTime = undefined
+
 -- | Define one selection for each branch of the given block tree, consisting of the first @k@ blocks (or what's
 -- available) of the branch's suffix.
 --
@@ -106,13 +117,13 @@ staticCandidates GenesisTest {gtSecurityParam, gtGenesisWindow, gtBlockTree} =
       StaticCandidates {
         k = gtSecurityParam,
         sgen = gtGenesisWindow,
-        suffixes,
+        suffixes = fmap (second dropTime) suffixes,
         tips,
-        loeFrag
+        loeFrag = dropTime loeFrag
       }
       where
         (loeFrag, suffixes) =
-          sharedCandidatePrefix curChain (second toHeaders <$> candidates)
+          sharedCandidatePrefix curChain (second (addTime . toHeaders) <$> candidates)
 
     selections = selection <$> branches
 
@@ -133,7 +144,7 @@ staticCandidates GenesisTest {gtSecurityParam, gtGenesisWindow, gtBlockTree} =
 prop_densityDisconnectStatic :: Property
 prop_densityDisconnectStatic =
   forAll gen $ \ StaticCandidates {k, sgen, suffixes, loeFrag} -> do
-    let (disconnect, _) = densityDisconnect sgen k (mkState <$> Map.fromList suffixes) suffixes loeFrag
+    let (disconnect, _) = densityDisconnect sgen k (mkState <$> Map.fromList suffixes) (fmap (second addTime) suffixes) (addTime loeFrag)
     counterexample "it should disconnect some node" (not (null disconnect))
       .&&.
      counterexample "it should not disconnect the honest peers"
@@ -142,7 +153,7 @@ prop_densityDisconnectStatic =
     mkState :: AnchoredFragment (Header TestBlock) -> ChainSyncState TestBlock
     mkState frag =
       ChainSyncState {
-        csCandidate = frag,
+        csCandidate = addTime frag,
         csLatestSlot = SJust (AF.headSlot frag),
         csIdling = False
       }
@@ -377,12 +388,12 @@ evolveBranches EvolvingPeers {k, sgen, peers = initialPeers, fullTree} =
         states =
           candidates <&> \ csCandidate ->
             ChainSyncState {
-              csCandidate,
+              csCandidate = addTime csCandidate,
               csIdling = False,
               csLatestSlot = SJust (AF.headSlot csCandidate)
             }
         -- Run GDD.
-        (loeFrag, suffixes) = sharedCandidatePrefix curChain (Map.toList candidates)
+        (loeFrag, suffixes) = sharedCandidatePrefix curChain (Map.toList $ fmap addTime candidates)
         (killedNow, bounds) = first Set.fromList $ densityDisconnect sgen k states suffixes loeFrag
         event = UpdateEvent {
           target,
@@ -390,13 +401,13 @@ evolveBranches EvolvingPeers {k, sgen, peers = initialPeers, fullTree} =
           killed = killedNow,
           bounds,
           tree = snapshotTree nextPeers,
-          loeFrag,
+          loeFrag = dropTime loeFrag,
           curChain
           }
         newEvents = event : events
         -- Check the termination condition and remove exhausted peers.
         updated = updatePeers sgen nextPeers killedBefore event
-      either (pure . result newEvents loeFrag) (step newEvents) updated
+      either (pure . result newEvents (dropTime loeFrag)) (step newEvents) updated
       where
         result evs f (res, final) = (res, EvolvingPeers {k, sgen, peers = final, loeFrag = f, fullTree}, reverse evs)
 

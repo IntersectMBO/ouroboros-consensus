@@ -1,6 +1,7 @@
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
@@ -15,6 +16,8 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+
+{-# LANGUAGE InstanceSigs #-}
 
 -- | Header validation
 module Ouroboros.Consensus.HeaderValidation (
@@ -55,6 +58,8 @@ module Ouroboros.Consensus.HeaderValidation (
   , encodeHeaderState
     -- * Type family instances
   , Ticked (..)
+    -- * Header with time
+  , HeaderWithTime (..)
   ) where
 
 import           Cardano.Binary (enforceSize)
@@ -68,11 +73,13 @@ import           Data.Coerce
 import           Data.Kind (Type)
 import qualified Data.Map.Strict as Map
 import           Data.Proxy
+import           Data.Typeable (Typeable)
 import           Data.Void (Void)
 import           GHC.Generics (Generic)
 import           GHC.Stack (HasCallStack)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.BlockchainTime (RelativeTime)
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Ticked
@@ -498,6 +505,50 @@ data TipInfoIsEBB blk = TipInfoIsEBB !(HeaderHash blk) !IsEBB
 deriving instance StandardHash blk => Eq   (TipInfoIsEBB blk)
 deriving instance StandardHash blk => Show (TipInfoIsEBB blk)
 deriving instance StandardHash blk => NoThunks (TipInfoIsEBB blk)
+
+{-------------------------------------------------------------------------------
+  Header with time
+-------------------------------------------------------------------------------}
+
+-- | A header and the slot time at which it was received
+--
+-- REVIEW: we originally talked about calling this time
+-- 'ValidatedHeader' however this seems to be a misnomer since the
+-- header is not validated at the point at which we construct this
+-- value in 'Ouroboros.Consensus.MiniProtocol.ChainSync.Client'.
+-- Furthermore, the reader might expect that 'validateHeader' returns
+-- a 'ValidatedHeader' type, which is not the case.
+data HeaderWithTime blk = HeaderWithTime {
+    hwtHeader           :: Header blk
+  , hwtSlotRelativeTime :: RelativeTime
+  -- ^ Time of the slot at which the header was received.
+  }
+  deriving (Generic)
+
+deriving stock instance (Eq (Header blk))
+                      => Eq (HeaderWithTime blk)
+deriving stock instance (Show (Header blk))
+                      => Show (HeaderWithTime blk)
+deriving anyclass instance (NoThunks (Header blk))
+                         => NoThunks (HeaderWithTime blk)
+
+type instance HeaderHash (HeaderWithTime blk) = HeaderHash (Header blk)
+
+instance ( Show (HeaderHash blk)
+         , Eq (HeaderHash blk)
+         , Ord (HeaderHash blk)
+         , Typeable (HeaderHash blk)
+         , NoThunks (HeaderHash blk)
+         ) => StandardHash (HeaderWithTime blk)
+
+
+instance (Typeable blk, HasHeader (Header blk), Show (HeaderHash blk))
+    => HasHeader (HeaderWithTime blk) where
+
+
+  getHeaderFields  = castHeaderFields
+                   . getHeaderFields
+                   . hwtHeader
 
 {-------------------------------------------------------------------------------
   Serialisation

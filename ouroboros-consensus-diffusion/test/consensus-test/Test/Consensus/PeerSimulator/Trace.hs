@@ -29,6 +29,7 @@ import           Ouroboros.Consensus.Block (GenesisWindow (..), Header, Point,
                      WithOrigin (NotOrigin, Origin), succWithOrigin)
 import           Ouroboros.Consensus.Genesis.Governor (DensityBounds (..),
                      GDDDebugInfo (..), TraceGDDEvent (..))
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (TraceChainSyncClientEvent (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping
@@ -52,8 +53,9 @@ import           Ouroboros.Network.Block (SlotNo (SlotNo), Tip, castPoint)
 import           Test.Consensus.PointSchedule.NodeState (NodeState)
 import           Test.Consensus.PointSchedule.Peers (Peer (Peer), PeerId)
 import           Test.Util.TersePrinting (terseAnchor, terseBlock,
-                     terseFragment, terseHFragment, terseHeader, tersePoint,
-                     terseRealPoint, terseTip, terseWithOrigin)
+                     terseFragment, terseHFragment, terseHWTFragment,
+                     terseHeader, tersePoint, terseRealPoint, terseTip,
+                     terseWithOrigin)
 import           Test.Util.TestBlock (TestBlock)
 import           Text.Printf (printf)
 
@@ -75,7 +77,7 @@ data TraceSchedulerEvent blk
       DiffTime
       (Peer (NodeState blk))
       (AnchoredFragment (Header blk))
-      (Maybe (AnchoredFragment (Header blk)))
+      (Maybe (AnchoredFragment (HeaderWithTime blk)))
       [(PeerId, ChainSyncJumpingState m blk)]
   | TraceNodeShutdownStart (WithOrigin SlotNo)
   | TraceNodeShutdownComplete
@@ -218,7 +220,7 @@ traceSchedulerEventTestBlockWith setTickTime tracer0 _tracer = \case
           "  peer: " ++ condense pid,
           "  state: " ++ condense state,
           "  current chain: " ++ terseHFragment currentChain,
-          "  candidate fragment: " ++ maybe "Nothing" terseHFragment mCandidateFrag,
+          "  candidate fragment: " ++ maybe "Nothing" terseHWTFragment mCandidateFrag,
           "  jumping states:\n" ++ traceJumpingStates jumpingStates
         ]
     TraceNodeShutdownStart immTip ->

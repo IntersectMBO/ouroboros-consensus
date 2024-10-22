@@ -28,6 +28,7 @@ import           Network.TypedProtocol.Codec (AnyMessage, PeerHasAgency (..),
                      PeerRole)
 import           Ouroboros.Consensus.Block (HasHeader)
 import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import           Ouroboros.Consensus.Node.ProtocolInfo
                      (NumCoreNodes (NumCoreNodes))
@@ -78,7 +79,7 @@ startBlockFetchLogic ::
   -> Tracer m (TraceEvent TestBlock)
   -> ChainDB m TestBlock
   -> FetchClientRegistry PeerId (Header TestBlock) TestBlock m
-  -> STM m (Map PeerId (AnchoredFragment (Header TestBlock)))
+  -> STM m (Map PeerId (AnchoredFragment (HeaderWithTime TestBlock)))
   -> m ()
 startBlockFetchLogic registry tracer chainDb fetchClientRegistry getCandidates = do
     let slotForgeTime :: BlockFetchClientInterface.SlotForgeTimeOracle m blk

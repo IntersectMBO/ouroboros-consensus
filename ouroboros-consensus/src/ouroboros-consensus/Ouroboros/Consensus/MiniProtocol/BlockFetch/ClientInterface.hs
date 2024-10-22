@@ -24,6 +24,7 @@ import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.Config.SupportsNode as SupportsNode
 import qualified Ouroboros.Consensus.HardFork.Abstract as History
 import qualified Ouroboros.Consensus.HardFork.History as History
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
@@ -173,7 +174,7 @@ mkBlockFetchConsensusInterface ::
      )
   => BlockConfig blk
   -> ChainDbView m blk
-  -> STM m (Map peer (AnchoredFragment (Header blk)))
+  -> STM m (Map peer (AnchoredFragment (HeaderWithTime blk)))
   -> (Header blk -> SizeInBytes)
   -> SlotForgeTimeOracle m blk
      -- ^ Slot forge time, see 'headerForgeUTCTime' and 'blockForgeUTCTime'.
@@ -188,7 +189,8 @@ mkBlockFetchConsensusInterface
     blockMatchesHeader = Block.blockMatchesHeader
 
     readCandidateChains :: STM m (Map peer (AnchoredFragment (Header blk)))
-    readCandidateChains = getCandidates
+    readCandidateChains = undefined getCandidates
+       -- REVIWE: Should we change the 'BlockFetchConsensusInterface' s that 'readCandidateChains' return 'HeaderWithTime'?
 
     readCurrentChain :: STM m (AnchoredFragment (Header blk))
     readCurrentChain = getCurrentChain chainDB

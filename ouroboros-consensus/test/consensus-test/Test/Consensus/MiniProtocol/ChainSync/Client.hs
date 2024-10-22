@@ -585,10 +585,13 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
           finalClientChain
         , finalServerChain
         , mbResult
-        , syncedFragment   = AF.mapAnchoredFragment testHeader candidateFragment
+        , syncedFragment   = AF.mapAnchoredFragment testHeader (dropTime candidateFragment)
         , traceEvents
         }
   where
+    -- TODO: this should be a library function if the idea of dropping time on the candidate fragment makes sense.
+    dropTime = undefined
+
     k = maxRollbacks securityParam
 
     toSkewedOnset :: SlotNo -> RelativeTime

@@ -317,7 +317,8 @@ mkStateTracer schedulerConfig GenesisTest {gtBlockTree} PeerSimulatorResources {
   , let getCandidates = viewChainSyncState psrHandles CSClient.csCandidate
         getCurrentChain = ChainDB.getCurrentChain chainDb
         getPoints = traverse readTVar (srCurrentState . prShared <$> psrPeers)
-  = peerSimStateDiagramSTMTracerDebug gtBlockTree getCurrentChain getCandidates getPoints
+    -- REVIEW: is it ok to drop time here?
+  = peerSimStateDiagramSTMTracerDebug gtBlockTree getCurrentChain (undefined getCandidates) getPoints
   | otherwise
   = pure nullTracer
 

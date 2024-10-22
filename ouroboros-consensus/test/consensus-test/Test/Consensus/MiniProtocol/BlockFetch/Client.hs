@@ -281,7 +281,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
         BlockFetchClientInterface.mkBlockFetchConsensusInterface
           (TestBlockConfig numCoreNodes)
           chainDbView
-          getCandidates
+          (undefined getCandidates) -- TODO: adapt 'getCandidates' if the change to 'mkBlockFetchConsensusInterface' is correct.
           (\_hdr -> 1000) -- header size, only used for peer prioritization
           slotForgeTime
           (pure blockFetchMode)

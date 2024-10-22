@@ -22,10 +22,11 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (
 import           Cardano.Slotting.Slot (SlotNo, WithOrigin)
 import           Data.Function (on)
 import           Data.Maybe.Strict (StrictMaybe (..))
-import           Data.Typeable (Proxy (..), typeRep)
+import           Data.Typeable (Proxy (..), Typeable, typeRep)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block (HasHeader, Header, Point)
 import           Ouroboros.Consensus.HeaderStateHistory (HeaderStateHistory)
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.Node.GsmState (GsmState)
@@ -39,7 +40,9 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
 data ChainSyncState blk = ChainSyncState {
 
     -- | The current candidate fragment.
-    csCandidate  :: !(AnchoredFragment (Header blk))
+    csCandidate  :: !(AnchoredFragment (HeaderWithTime blk))
+    --
+    -- REVIEW: See NodeKernel.initInternalState.blockFetchInterface, where we use getCandidates to remove the need for using the HFC to compute the header time.
 
     -- | Whether the last message sent by the peer was MsgAwaitReply.
     --
@@ -183,12 +186,12 @@ deriving anyclass instance
 data JumpInfo blk = JumpInfo
   { jMostRecentIntersection  :: !(Point blk)
   , jOurFragment             :: !(AnchoredFragment (Header blk))
-  , jTheirFragment           :: !(AnchoredFragment (Header blk))
+  , jTheirFragment           :: !(AnchoredFragment (HeaderWithTime blk))
   , jTheirHeaderStateHistory :: !(HeaderStateHistory blk)
   }
   deriving (Generic)
 
-instance (HasHeader (Header blk)) => Eq (JumpInfo blk) where
+instance (Typeable blk, HasHeader (Header blk)) => Eq (JumpInfo blk) where
   (==) = (==) `on` headPoint . jTheirFragment
 
 instance LedgerSupportsProtocol blk => NoThunks (JumpInfo blk) where

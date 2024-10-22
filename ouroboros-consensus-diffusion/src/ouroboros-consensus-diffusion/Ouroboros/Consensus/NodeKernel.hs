@@ -230,6 +230,9 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
               , gsmTracer tracers
               )
 
+            -- TODO: this should be a library function if the idea of dropping time on the candidate fragment makes sense.
+            dropTime = undefined
+
         let gsm = GSM.realGsmEntryPoints gsmTracerArgs GSM.GsmView
               { GSM.antiThunderingHerd        = Just gsmAntiThunderingHerd
               , GSM.candidateOverSelection    = \(headers, _lst) state ->
@@ -241,7 +244,8 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                             preferAnchoredCandidate
                                 (configBlock cfg)
                                 headers
-                                (csCandidate state)
+                                -- REVIEW: is it ok to drop the times here because we're initializing the node kernel?
+                                (dropTime $ csCandidate state)
               , GSM.peerIsIdle                = csIdling
               , GSM.durationUntilTooOld       =
                       gsmDurationUntilTooOld
@@ -388,7 +392,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
 
     fetchClientRegistry <- newFetchClientRegistry
 
-    let getCandidates :: STM m (Map (ConnectionId addrNTN) (AnchoredFragment (Header blk)))
+    let getCandidates :: STM m (Map (ConnectionId addrNTN) (AnchoredFragment (HeaderWithTime blk)))
         getCandidates = viewChainSyncState varChainSyncHandles csCandidate
 
     slotForgeTimeOracle <- BlockFetchClientInterface.initSlotForgeTimeOracle cfg chainDB
@@ -401,7 +405,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
         blockFetchInterface = BlockFetchClientInterface.mkBlockFetchConsensusInterface
           (configBlock cfg)
           (BlockFetchClientInterface.defaultChainDbView chainDB)
-          getCandidates
+          getCandidates -- REVIEW: note for myself. This is what enables the use of 'HeaderWithTime' to obtain the time slot of the header, removing the need of using the HFC to compute the header time.
           blockFetchSize
           slotForgeTimeOracle
           readFetchMode
