@@ -261,7 +261,6 @@ library
     Ouroboros.Consensus.Util.IOLike
     Ouroboros.Consensus.Util.LeakyBucket
     Ouroboros.Consensus.Util.MonadSTM.NormalForm
-    Ouroboros.Consensus.Util.MonadSTM.RAWLock
     Ouroboros.Consensus.Util.MonadSTM.StrictSVar
     Ouroboros.Consensus.Util.NormalForm.StrictMVar
     Ouroboros.Consensus.Util.NormalForm.StrictTVar
@@ -302,6 +301,7 @@ library
     primitive,
     psqueues ^>=0.2.3,
     quiet ^>=0.2,
+    rawlock ^>=0.1,
     reflection,
     semialign >=1.1,
     serialise ^>=0.2,
@@ -534,7 +534,6 @@ test-suite consensus-test
     Test.Consensus.MiniProtocol.LocalStateQuery.Server
     Test.Consensus.ResourceRegistry
     Test.Consensus.Util.MonadSTM.NormalForm
-    Test.Consensus.Util.MonadSTM.RAWLock
     Test.Consensus.Util.Versioned
 
   build-depends:
