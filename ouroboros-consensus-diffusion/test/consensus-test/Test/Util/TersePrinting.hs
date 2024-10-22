@@ -8,6 +8,7 @@ module Test.Util.TersePrinting (
   , terseBlock
   , terseFragment
   , terseHFragment
+  , terseHWTFragment
   , terseHeader
   , terseMaybe
   , tersePoint
@@ -24,6 +25,7 @@ import           Ouroboros.Consensus.Block (Header,
                      Point (BlockPoint, GenesisPoint), RealPoint,
                      SlotNo (SlotNo), blockHash, blockNo, blockSlot,
                      realPointToPoint)
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import           Ouroboros.Network.AnchoredFragment (Anchor, AnchoredFragment,
                      anchor, anchorToPoint, mapAnchoredFragment, toOldestFirst)
 import           Ouroboros.Network.Block (Tip (..))
@@ -117,6 +119,11 @@ terseFragment fragment =
 -- | Same as 'terseFragment' for fragments of headers.
 terseHFragment :: AnchoredFragment (Header TestBlock) -> String
 terseHFragment = terseFragment . mapAnchoredFragment (\(TestHeader block) -> block)
+
+-- | Same as 'terseFragment' for fragments of headers with time.
+--
+terseHWTFragment :: AnchoredFragment (HeaderWithTime TestBlock) -> String
+terseHWTFragment = terseHFragment . mapAnchoredFragment hwtHeader
 
 -- | Same as 'terseWithOrigin' for 'Maybe'.
 terseMaybe :: (a -> String) -> Maybe a -> String
