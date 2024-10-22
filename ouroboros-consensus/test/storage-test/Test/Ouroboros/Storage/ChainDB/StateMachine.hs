@@ -97,6 +97,8 @@ import           NoThunks.Class (AllowThunk (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Abstract
+import           Ouroboros.Consensus.HardFork.Combinator.Abstract
+                     (ImmutableEraParams)
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
@@ -143,6 +145,7 @@ import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.ChainDB
 import           Test.Util.ChunkInfo
+import           Test.Util.HeaderValidation (attachSlotTimeToFragment)
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Orphans.ToExpr ()
 import           Test.Util.QuickCheck
@@ -314,6 +317,7 @@ type TestConstraints blk =
   , ConvertRawHash                    blk
   , HasHardForkHistory                blk
   , SerialiseDiskConstraints          blk
+  , ImmutableEraParams                blk
   )
 
 deriving instance (TestConstraints blk, Eq   it, Eq   flr)
@@ -347,7 +351,7 @@ data ChainDBEnv m blk = ChainDBEnv {
   , varVolatileDbFs :: StrictTMVar m MockFS
   , args            :: ChainDbArgs Identity m blk
     -- ^ Needed to reopen a ChainDB, i.e., open a new one.
-  , varLoEFragment  :: StrictTVar m (AnchoredFragment (Header blk))
+  , varLoEFragment  :: StrictTVar m (AnchoredFragment (HeaderWithTime blk))
   }
 
 open ::
@@ -374,10 +378,11 @@ close ChainDBState { chainDB, addBlockAsync } = do
 
 run :: forall m blk.
        (IOLike m, TestConstraints blk)
-    => ChainDBEnv m blk
-    ->    Cmd     blk (TestIterator m blk) (TestFollower m blk)
-    -> m (Success blk (TestIterator m blk) (TestFollower m blk))
-run env@ChainDBEnv { varDB, .. } cmd =
+    => TopLevelConfig blk
+    -> ChainDBEnv m   blk
+    ->    Cmd         blk (TestIterator m blk) (TestFollower m blk)
+    -> m (Success     blk (TestIterator m blk) (TestFollower m blk))
+run cfg env@ChainDBEnv { varDB, .. } cmd =
     readTVarIO varDB >>= \st@ChainDBState { chainDB = ChainDB{..}, internal } -> case cmd of
       AddBlock blk             -> Point               <$> (advanceAndAdd st (blockSlot blk) blk)
       GetCurrentChain          -> Chain               <$> atomically getCurrentChain
@@ -425,7 +430,7 @@ run env@ChainDBEnv { varDB, .. } cmd =
     updateLoE :: ChainDBState m blk -> AnchoredFragment blk -> m (Point blk)
     updateLoE ChainDBState { chainDB } frag = do
       let headersFrag = AF.mapAnchoredFragment getHeader frag
-      atomically $ writeTVar varLoEFragment headersFrag
+      atomically $ writeTVar varLoEFragment $ attachSlotTimeToFragment cfg headersFrag
       ChainDB.triggerChainSelection chainDB
       atomically $ getTipPoint chainDB
 
@@ -678,10 +683,11 @@ runPure cfg = \case
     openOrClosed f = first (Resp . Right . Unit) . f
 
 runIO :: TestConstraints blk
-      => ChainDBEnv IO blk
-      ->     Cmd  blk (TestIterator IO blk) (TestFollower IO blk)
+      => TopLevelConfig blk
+      -> ChainDBEnv IO blk
+      -> Cmd blk (TestIterator IO blk) (TestFollower IO blk)
       -> IO (Resp blk (TestIterator IO blk) (TestFollower IO blk))
-runIO env cmd = Resp <$> try (run env cmd)
+runIO cfg env cmd = Resp <$> try (run cfg env cmd)
 
 {-------------------------------------------------------------------------------
   Collect arguments
@@ -1161,12 +1167,13 @@ postcondition model cmd resp =
     ev = lockstep model cmd resp
 
 semantics :: forall blk. TestConstraints blk
-          => ChainDBEnv IO blk
+          => TopLevelConfig blk
+          -> ChainDBEnv IO blk
           -> At Cmd blk IO Concrete
           -> IO (At Resp blk IO Concrete)
-semantics env (At cmd) =
+semantics cfg env (At cmd) =
     At . (bimap (QSM.reference . QSM.Opaque) (QSM.reference . QSM.Opaque)) <$>
-    runIO env (bimap QSM.opaque QSM.opaque cmd)
+    runIO cfg env (bimap QSM.opaque QSM.opaque cmd)
 
 -- | The state machine proper
 sm :: TestConstraints blk
@@ -1186,7 +1193,7 @@ sm loe env genBlock cfg initLedger = StateMachine
   , postcondition = postcondition
   , generator     = Just . generator loe genBlock
   , shrinker      = shrinker
-  , semantics     = semantics env
+  , semantics     = semantics cfg env
   , mock          = mock
   , invariant     = Just $ invariant cfg
   , cleanup       = noCleanup
@@ -1643,7 +1650,7 @@ mkArgs :: IOLike m
        -> ResourceRegistry m
        -> NodeDBs (StrictTMVar m MockFS)
        -> CT.Tracer m (TraceEvent Blk)
-       -> LoE (StrictTVar m (AnchoredFragment (Header Blk)))
+       -> LoE (StrictTVar m (AnchoredFragment (HeaderWithTime Blk)))
        -> ChainDbArgs Identity m Blk
 mkArgs cfg chunkInfo initLedger registry nodeDBs tracer varLoEFragment =
   let args = fromMinimalChainDbArgs MinimalChainDbArgs {

@@ -23,6 +23,7 @@ import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import           Ouroboros.Consensus.Genesis.Governor (gddWatcher)
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -63,6 +64,7 @@ import           Test.Consensus.PointSchedule.NodeState (NodeState)
 import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId,
                      getPeerIds)
 import           Test.Util.ChainDB
+import           Test.Util.HeaderValidation (dropTimeFromFragment)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock)
 
@@ -140,7 +142,7 @@ startChainSyncConnectionThread ::
   Tracer m (TraceEvent blk) ->
   TopLevelConfig blk ->
   ChainDbView m blk ->
-  FetchClientRegistry PeerId (Header blk) blk m ->
+  FetchClientRegistry PeerId (HeaderWithTime blk) blk m ->
   SharedResources m blk ->
   ChainSyncResources m blk ->
   ChainSyncTimeout ->
@@ -180,7 +182,7 @@ startBlockFetchConnectionThread ::
   ResourceRegistry m ->
   Tracer m (TraceEvent blk) ->
   StateViewTracers blk m ->
-  FetchClientRegistry PeerId (Header blk) blk m ->
+  FetchClientRegistry PeerId (HeaderWithTime blk) blk m ->
   ControlMessageSTM m ->
   SharedResources m blk ->
   BlockFetchResources m blk ->
@@ -228,7 +230,7 @@ smartDelay _ node duration = do
 --
 -- TODO doc is outdated
 dispatchTick :: forall m blk.
-  IOLike m =>
+  (IOLike m, HasHeader (Header blk)) =>
   Tracer m (TraceSchedulerEvent blk) ->
   StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
   Map PeerId (PeerResources m blk) ->
@@ -261,7 +263,7 @@ dispatchTick tracer varHandles peers lifecycle node (number, (duration, Peer pid
         duration
         (Peer pid state)
         currentChain
-        (CSClient.csCandidate <$> csState)
+        (dropTimeFromFragment . CSClient.csCandidate <$> csState)
         jumpingStates
 
 -- | Iterate over a 'PointSchedule', sending each tick to the associated peer in turn,
@@ -270,7 +272,7 @@ dispatchTick tracer varHandles peers lifecycle node (number, (duration, Peer pid
 -- This usually means for the ChainSync server to have sent the target header to the
 -- client.
 runScheduler ::
-  IOLike m =>
+  (IOLike m, HasHeader (Header blk)) =>
   Tracer m (TraceSchedulerEvent blk) ->
   StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
   PointSchedule blk ->
@@ -298,7 +300,7 @@ runScheduler tracer varHandles ps@PointSchedule{psMinEndTime} peers lifecycle@No
 mkLoEVar ::
   IOLike m =>
   SchedulerConfig ->
-  m (LoE (StrictTVar m (AnchoredFragment (Header TestBlock))))
+  m (LoE (StrictTVar m (AnchoredFragment (HeaderWithTime TestBlock))))
 mkLoEVar SchedulerConfig {scEnableLoE}
   | scEnableLoE
   = LoEEnabled <$> newTVarIO (AF.Empty AF.AnchorGenesis)
@@ -317,7 +319,11 @@ mkStateTracer schedulerConfig GenesisTest {gtBlockTree} PeerSimulatorResources {
   , let getCandidates = viewChainSyncState psrHandles CSClient.csCandidate
         getCurrentChain = ChainDB.getCurrentChain chainDb
         getPoints = traverse readTVar (srCurrentState . prShared <$> psrPeers)
-  = peerSimStateDiagramSTMTracerDebug gtBlockTree getCurrentChain getCandidates getPoints
+  = peerSimStateDiagramSTMTracerDebug
+        gtBlockTree
+        getCurrentChain
+        (fmap (Map.map dropTimeFromFragment) getCandidates)
+        getPoints
   | otherwise
   = pure nullTracer
 
