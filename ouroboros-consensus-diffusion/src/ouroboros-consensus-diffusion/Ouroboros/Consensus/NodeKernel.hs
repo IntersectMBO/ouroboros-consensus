@@ -49,6 +49,7 @@ import           Data.Hashable (Hashable)
 import           Data.List.NonEmpty (NonEmpty)
 import           Data.Maybe (isJust, mapMaybe)
 import           Data.Proxy
+import qualified Data.Set as Set
 import qualified Data.Text as Text
 import           Data.Void (Void)
 import           Ouroboros.Consensus.Block hiding (blockMatchesHeader)
@@ -100,6 +101,9 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (castTip, tipFromHeader)
 import           Ouroboros.Network.BlockFetch
+import qualified Ouroboros.Network.BlockFetch.ClientState as BF
+import           Ouroboros.Network.BlockFetch.Decision.Trace
+                     (TraceDecisionEvent (..))
 import           Ouroboros.Network.NodeToNode (ConnectionId,
                      MiniProtocolParameters (..))
 import           Ouroboros.Network.PeerSelection.Governor.Types
@@ -133,7 +137,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
     , getTopLevelConfig       :: TopLevelConfig blk
 
       -- | The fetch client registry, used for the block fetch clients.
-    , getFetchClientRegistry  :: FetchClientRegistry (ConnectionId addrNTN) (Header blk) blk m
+    , getFetchClientRegistry  :: FetchClientRegistry (ConnectionId addrNTN) (HeaderWithTime blk) blk m
 
       -- | The fetch mode, used by diffusion.
       --
@@ -258,8 +262,8 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
               , GSM.equivalent                = (==) `on` (AF.headPoint . fst)
               , GSM.getChainSyncStates        = fmap cschState <$> cschcMap varChainSyncHandles
               , GSM.getCurrentSelection       = do
-                  headers        <- ChainDB.getCurrentChain  chainDB
-                  extLedgerState <- ChainDB.getCurrentLedger chainDB
+                  headers        <- ChainDB.getCurrentChainWithTime chainDB
+                  extLedgerState <- ChainDB.getCurrentLedger        chainDB
                   return (headers, ledgerState extLedgerState)
               , GSM.minCaughtUpDuration       = gsmMinCaughtUpDuration
               , GSM.setCaughtUpPersistentMark = \upd ->
@@ -314,8 +318,8 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
     -- 'addFetchedBlock' whenever a new block is downloaded.
     void $ forkLinkedThread registry "NodeKernel.blockFetchLogic" $
       blockFetchLogic
-        (blockFetchDecisionTracer tracers)
-        (blockFetchClientTracer   tracers)
+        (contramap castTraceFetchDecision $ blockFetchDecisionTracer tracers)
+        (contramap (fmap castTraceFetchClientState) $ blockFetchClientTracer tracers)
         blockFetchInterface
         fetchClientRegistry
         blockFetchConfiguration
@@ -350,6 +354,52 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
           blockForging' <- traverse (forkBlockForging st) blockForging
           go blockForging'
 
+castTraceFetchDecision ::
+     forall remotePeer blk.
+     TraceDecisionEvent remotePeer (HeaderWithTime blk) -> TraceDecisionEvent remotePeer (Header blk)
+castTraceFetchDecision = \case
+      PeersFetch xs -> PeersFetch (map (fmap (second (map castPoint))) xs) -- [TraceLabelPeer peer (FetchDecision [Point header])]
+      PeerStarvedUs peer -> PeerStarvedUs peer
+
+castTraceFetchClientState ::
+     forall blk. HasHeader (Header blk)
+  => TraceFetchClientState (HeaderWithTime blk) -> TraceFetchClientState (Header blk)
+castTraceFetchClientState = mapTraceFetchClientState hwtHeader
+
+mapTraceFetchClientState ::
+     (HeaderHash h1 ~ HeaderHash h2, HasHeader h2)
+  => (h1 -> h2) -> TraceFetchClientState h1 -> TraceFetchClientState h2
+mapTraceFetchClientState fheader = \case
+    AddedFetchRequest request inflight inflightLimits status -> AddedFetchRequest (frequest request) (finflight inflight) inflightLimits (fstatus status)
+
+    AcknowledgedFetchRequest request -> AcknowledgedFetchRequest (frequest request)
+
+    SendFetchRequest headers gsv -> SendFetchRequest (AF.mapAnchoredFragment fheader headers) gsv
+
+    StartedFetchBatch   range inflight inflightLimits status           -> StartedFetchBatch   (frange range) (finflight inflight) inflightLimits (fstatus status)
+    CompletedBlockFetch point inflight inflightLimits status time size -> CompletedBlockFetch (fpoint point) (finflight inflight) inflightLimits (fstatus status) time size
+    CompletedFetchBatch range inflight inflightLimits status           -> CompletedFetchBatch (frange range) (finflight inflight) inflightLimits (fstatus status)
+    RejectedFetchBatch  range inflight inflightLimits status           -> RejectedFetchBatch  (frange range) (finflight inflight) inflightLimits (fstatus status)
+
+    ClientTerminating i -> ClientTerminating i
+  where
+    frequest (BF.FetchRequest headers) = BF.FetchRequest $ map (AF.mapAnchoredFragment fheader) headers
+
+    finflight inflight = inflight { BF.peerFetchBlocksInFlight = fpoints (BF.peerFetchBlocksInFlight inflight) }
+
+    fstatus = \case
+      BF.PeerFetchStatusShutdown          -> BF.PeerFetchStatusShutdown
+      BF.PeerFetchStatusStarting          -> BF.PeerFetchStatusStarting
+      BF.PeerFetchStatusAberrant          -> BF.PeerFetchStatusAberrant
+      BF.PeerFetchStatusBusy              -> BF.PeerFetchStatusBusy
+      BF.PeerFetchStatusReady points idle -> BF.PeerFetchStatusReady (fpoints points) idle
+
+    fpoints = Set.mapMonotonic fpoint
+
+    frange (BF.ChainRange p1 p2) = BF.ChainRange (fpoint p1) (fpoint p2)
+
+    fpoint = castPoint
+
 {-------------------------------------------------------------------------------
   Internal node components
 -------------------------------------------------------------------------------}
@@ -360,8 +410,8 @@ data InternalState m addrNTN addrNTC blk = IS {
     , registry            :: ResourceRegistry m
     , btime               :: BlockchainTime m
     , chainDB             :: ChainDB m blk
-    , blockFetchInterface :: BlockFetchConsensusInterface (ConnectionId addrNTN) (Header blk) blk m
-    , fetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (Header blk) blk m
+    , blockFetchInterface :: BlockFetchConsensusInterface (ConnectionId addrNTN) (HeaderWithTime blk) blk m
+    , fetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (HeaderWithTime blk) blk m
     , varChainSyncHandles :: ChainSyncClientHandleCollection (ConnectionId addrNTN) m blk
     , varGsmState         :: StrictTVar m GSM.GsmState
     , mempool             :: Mempool m blk
@@ -408,7 +458,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
           (ChainDB.getCurrentChain chainDB)
           getUseBootstrapPeers
           (GSM.gsmStateToLedgerJudgement <$> readTVar varGsmState)
-        blockFetchInterface :: BlockFetchConsensusInterface (ConnectionId addrNTN) (Header blk) blk m
+        blockFetchInterface :: BlockFetchConsensusInterface (ConnectionId addrNTN) (HeaderWithTime blk) blk m
         blockFetchInterface = BlockFetchClientInterface.mkBlockFetchConsensusInterface
           (dbfTracer tracers)
           (configBlock cfg)

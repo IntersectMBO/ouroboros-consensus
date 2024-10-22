@@ -56,6 +56,7 @@ import qualified Network.Mux as Mux
 import           Network.TypedProtocol.Codec
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (DiffusionPipeliningSupport (..))
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
@@ -152,7 +153,7 @@ data Handlers m addr blk = Handlers {
         :: NodeToNodeVersion
         -> ControlMessageSTM m
         -> FetchedMetricsTracer m
-        -> BlockFetchClient (Header blk) blk m ()
+        -> BlockFetchClient (HeaderWithTime blk) blk m ()
 
     , hBlockFetchServer
         :: ConnectionId addr
