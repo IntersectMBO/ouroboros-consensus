@@ -8,6 +8,7 @@ module Ouroboros.Consensus.Mempool.Init (
   ) where
 
 import           Control.Monad (void)
+import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.Functor.Contravariant ((>$<))
 import           Ouroboros.Consensus.Block
@@ -21,7 +22,6 @@ import           Ouroboros.Consensus.Mempool.Query
 import           Ouroboros.Consensus.Mempool.Update
 import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (Watcher (..), forkLinkedWatcher)
 
 {-------------------------------------------------------------------------------

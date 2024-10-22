@@ -13,6 +13,7 @@ import           Cardano.Tools.DBTruncater.Types
 import           Control.Monad
 import           Control.Monad.Trans.Class (lift)
 import           Control.Monad.Trans.Maybe (MaybeT (..))
+import           Control.ResourceRegistry (runWithTempRegistry, withRegistry)
 import           Control.Tracer
 import           Data.Foldable (asum)
 import           Data.Functor ((<&>))
@@ -27,8 +28,6 @@ import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB, Iterator,
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry (runWithTempRegistry,
-                     withRegistry)
 import           Prelude hiding (truncate)
 import           System.IO
 

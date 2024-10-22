@@ -13,6 +13,7 @@ module Test.Consensus.PeerSimulator.NodeLifecycle (
   , restoreNode
   ) where
 
+import           Control.ResourceRegistry
 import           Control.Tracer (Tracer (..), traceWith)
 import           Data.Functor (void)
 import           Data.Set (Set)
@@ -25,7 +26,6 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args (cdbsLoE,
                      updateTracer)
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import qualified System.FS.Sim.MockFS as MockFS

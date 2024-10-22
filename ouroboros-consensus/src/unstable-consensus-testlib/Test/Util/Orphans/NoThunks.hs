@@ -1,21 +1,26 @@
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Util.Orphans.NoThunks () where
 
 import           Control.Concurrent.Class.MonadMVar
-import           Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked
+import           Control.Concurrent.Class.MonadMVar.Strict
+import           Control.Concurrent.Class.MonadSTM.Strict
 import           Control.Monad.IOSim
 import           Control.Monad.ST.Lazy
 import           Control.Monad.ST.Unsafe (unsafeSTToIO)
 import           Data.Proxy
 import           NoThunks.Class (NoThunks (..))
-import           Ouroboros.Consensus.Util.MonadSTM.NormalForm
-import           Ouroboros.Consensus.Util.NormalForm.StrictMVar
+import           Ouroboros.Consensus.Util.MonadSTM.StrictSVar
+import qualified Ouroboros.Consensus.Util.NormalForm.StrictMVar as NormalForm
+import qualified Ouroboros.Consensus.Util.NormalForm.StrictTVar as NormalForm
 import           System.FS.API.Types
 import           System.FS.Sim.FsTree
 import           System.FS.Sim.MockFS
@@ -32,11 +37,13 @@ instance NoThunks a => NoThunks (StrictMVar (IOSim s) a) where
       aMay <- unsafeSTToIO $ lazyToStrictST $ inspectMVar (Proxy :: Proxy (IOSim s)) (toLazyMVar mvar)
       noThunks ctxt aMay
 
-instance NoThunks a => NoThunks (StrictTVar (IOSim s) a) where
+instance NoThunks (StrictMVar (IOSim s) a) => NoThunks (NormalForm.StrictMVar (IOSim s) a) where
+  showTypeOf _ = "StrictMVar IOSim"
+  wNoThunks ctxt mvar = wNoThunks ctxt (NormalForm.unsafeToUncheckedStrictMVar mvar)
+
+instance NoThunks (StrictTVar (IOSim s) a) => NoThunks (NormalForm.StrictTVar (IOSim s) a) where
   showTypeOf _ = "StrictTVar IOSim"
-  wNoThunks ctxt tvar = do
-      a <- unsafeSTToIO $ lazyToStrictST $ inspectTVar (Proxy :: Proxy (IOSim s)) $ toLazyTVar tvar
-      noThunks ctxt a
+  wNoThunks ctxt tv = wNoThunks ctxt (NormalForm.unsafeToUncheckedStrictTVar tv)
 
 {-------------------------------------------------------------------------------
   fs-sim

@@ -44,6 +44,7 @@ import           Control.Monad
 import           Control.Monad.Class.MonadTime.SI (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import qualified Control.Monad.Except as Exc
+import           Control.ResourceRegistry
 import           Control.Tracer
 import qualified Data.ByteString.Lazy as Lazy
 import           Data.Either (isRight)
@@ -99,7 +100,6 @@ import           Ouroboros.Consensus.Util.Enclose (pattern FallingEdge)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Consensus.Util.RedundantConstraints
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM
 import           Ouroboros.Consensus.Util.Time
 import qualified Ouroboros.Network.AnchoredFragment as AF
