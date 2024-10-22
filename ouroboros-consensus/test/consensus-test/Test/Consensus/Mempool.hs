@@ -61,8 +61,8 @@ import           Ouroboros.Consensus.Mock.Ledger hiding (TxId)
 import           Ouroboros.Consensus.Util (repeatedly, repeatedlyM)
 import           Ouroboros.Consensus.Util.Condense (condense)
 import           Ouroboros.Consensus.Util.IOLike
-import           Test.Crypto.Hash ()
 import           Test.Consensus.Mempool.Util
+import           Test.Crypto.Hash ()
 import           Test.QuickCheck hiding (elements)
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)

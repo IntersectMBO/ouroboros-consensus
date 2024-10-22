@@ -46,6 +46,7 @@ module Test.Ouroboros.Storage.LedgerDB.StateMachine (tests) where
 
 import           Control.Monad.Except
 import           Control.Monad.State hiding (state)
+import           Control.ResourceRegistry
 import           Control.Tracer (nullTracer)
 import qualified Data.List as L
 import           Data.Map.Strict (Map)
@@ -73,7 +74,6 @@ import           Ouroboros.Consensus.Storage.LedgerDB.V2.Init as V2
 import           Ouroboros.Consensus.Util hiding (Some)
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import qualified System.Directory as Dir
 import           System.FS.API

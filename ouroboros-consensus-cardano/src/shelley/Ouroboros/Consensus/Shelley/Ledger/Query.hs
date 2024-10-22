@@ -327,7 +327,7 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
     => BlockQuery (ShelleyBlock proto era) QFNoTables (CG.RatifyState era)
 
   GetFuturePParams
-    :: BlockQuery (ShelleyBlock proto era) (Maybe (LC.PParams era))
+    :: BlockQuery (ShelleyBlock proto era) QFNoTables (Maybe (LC.PParams era))
 
   -- WARNING: please add new queries to the end of the list and stick to this
   -- order in all other pattern matches on queries. This helps in particular

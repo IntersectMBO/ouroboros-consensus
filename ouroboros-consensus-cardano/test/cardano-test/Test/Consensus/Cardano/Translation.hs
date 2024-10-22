@@ -17,7 +17,6 @@ import qualified Cardano.Chain.Block as Byron
 import qualified Cardano.Chain.UTxO as Byron
 import           Cardano.Ledger.Alonzo ()
 import           Cardano.Ledger.BaseTypes (Network (Testnet), TxIx (..))
-import           Cardano.Ledger.Binary.Version
 import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Crypto as Crypto
 import qualified Cardano.Ledger.Genesis as Genesis
@@ -35,7 +34,6 @@ import           Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import           Cardano.Slotting.Slot (EpochNo (..))
 import qualified Data.ListMap as ListMap
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromMaybe)
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Functors
 import           Data.SOP.InPairs (RequiringBoth (..), provideBoth)
@@ -56,8 +54,6 @@ import           Ouroboros.Consensus.Ledger.Tables.Diff (Diff)
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Protocol.Praos
-import           Ouroboros.Consensus.Protocol.Praos.Common
-                     (MaxMajorProtVer (..))
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.HFEras ()
@@ -380,7 +376,6 @@ fixedShelleyLedgerConfig translationContext = mkShelleyLedgerConfig
     shelleyGenesis
     translationContext
     (fixedEpochInfo (sgEpochLength shelleyGenesis) (slotLengthFromSec 2))
-    (MaxMajorProtVer (fromMaybe (error "this will never trigger") $ mkVersion (10 :: Int)))
   where
     shelleyGenesis = ShelleyGenesis {
         sgSystemStart       = dawnOfTime

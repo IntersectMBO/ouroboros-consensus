@@ -157,6 +157,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.API (
 
 import           Control.Monad (forM)
 import           Control.Monad.Class.MonadTime.SI
+import           Control.ResourceRegistry
 import           Data.Kind
 import           Data.Set (Set)
 import           Data.Word
@@ -170,7 +171,6 @@ import           Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
 
 {-------------------------------------------------------------------------------

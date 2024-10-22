@@ -4,6 +4,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 #if __GLASGOW_HASKELL__ <= 906
 {-# LANGUAGE GADTs #-}
@@ -104,7 +105,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv {
     -- - when taking a snapshot of the ledger db, we need to prevent others
     --   from altering the backing store at the same time, thus we acquire a
     --   Write lock.
-  , ldbLock           :: !(LedgerDBLock m)
+  , ldbLock           :: !(AllowThunk (LedgerDBLock m))
     -- | INVARIANT: this set contains only points that are in the
     -- VolatileDB.
     --

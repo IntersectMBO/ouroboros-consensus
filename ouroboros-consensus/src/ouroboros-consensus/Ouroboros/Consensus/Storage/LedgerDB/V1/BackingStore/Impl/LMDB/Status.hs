@@ -18,12 +18,12 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Status (
   ) where
 
 import           Control.Exception (Exception)
+import           Control.RAWLock (RAWLock)
+import qualified Control.RAWLock as RAW
 import           Data.Functor ((<&>))
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadThrow (throwIO))
-import           Ouroboros.Consensus.Util.MonadSTM.RAWLock (RAWLock)
-import qualified Ouroboros.Consensus.Util.MonadSTM.RAWLock as RAW
 
 {-------------------------------------------------------------------------------
   Status
@@ -58,7 +58,7 @@ withWriteAccess ::
      (IOLike m, Exception e)
   => StatusLock m
   -> e                -- ^ The exception to throw
-  -> m (Status, a)    -- ^ Action to perform, possibly updating the 'Status'
+  -> m (a, Status)    -- ^ Action to perform, possibly updating the 'Status'
   -> m a
 withWriteAccess lock exc k =
   RAW.withWriteAccess (getStatusLock lock) $ \case
@@ -70,12 +70,12 @@ withWriteAccess' ::
      IOLike m
   => StatusLock m
   -> m a
-  -> m (Status, a)
+  -> m (a, Status)
   -> m a
 withWriteAccess' lock def k =
     RAW.withWriteAccess (getStatusLock lock) $ \case
       Open   -> k
-      Closed -> def <&> (Closed,)
+      Closed -> def <&> (,Closed)
 
 -- | A variant of 'RAW.withReadAccess' that throws an exception if @'Status' ==
 -- 'Closed'@.

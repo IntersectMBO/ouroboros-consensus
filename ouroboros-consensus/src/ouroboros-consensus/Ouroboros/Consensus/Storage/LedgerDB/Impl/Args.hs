@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Impl.Args (
   , defaultArgs
   ) where
 
+import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.Kind
 import           Ouroboros.Consensus.Ledger.Abstract
@@ -29,7 +30,6 @@ import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
 import           Ouroboros.Consensus.Util.Args
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           System.FS.API
 
 {-------------------------------------------------------------------------------

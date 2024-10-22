@@ -15,6 +15,7 @@ import           Control.Monad (when)
 import           Control.Monad.Except (runExcept)
 import           Control.Monad.IO.Class (liftIO)
 import           Control.Monad.Trans.Except (ExceptT, runExceptT, throwE)
+import           Control.ResourceRegistry
 import           Control.Tracer as Trace (nullTracer)
 import           Data.Either (isRight)
 import           Data.Maybe (isJust)
@@ -45,7 +46,6 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunis
 import           Ouroboros.Consensus.Storage.LedgerDB.API
 import           Ouroboros.Consensus.Ticked
 import           Ouroboros.Consensus.Util.IOLike (atomically)
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.AnchoredFragment as AF (Anchor (..),
                      AnchoredFragment, AnchoredSeq (..), headPoint)
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type

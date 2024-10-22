@@ -25,6 +25,7 @@ import           Control.Monad (forM, forM_, unless, void, when)
 import           Control.Monad.Except ()
 import           Control.Monad.Trans.Class (lift)
 import           Control.Monad.Trans.State.Strict
+import           Control.ResourceRegistry (ResourceRegistry, withRegistry)
 import           Control.Tracer (Tracer, nullTracer, traceWith)
 import           Data.Foldable (for_)
 import           Data.Function (on)
@@ -81,8 +82,6 @@ import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.AnchoredFragment
 import           Ouroboros.Consensus.Util.Enclose (encloseWith)
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceRegistry,
-                     withRegistry)
 import           Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 import           Ouroboros.Network.AnchoredFragment (Anchor, AnchoredFragment,
                      AnchoredSeq (..))

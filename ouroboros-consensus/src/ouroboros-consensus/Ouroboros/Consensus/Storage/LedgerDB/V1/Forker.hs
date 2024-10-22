@@ -18,12 +18,14 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Forker (
   , acquireAtWellKnownPoint
   ) where
 
+import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
 import           Data.Semigroup
 import qualified Data.Set as Set
 import           Data.Word
+import           NoThunks.Class
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -42,7 +44,6 @@ import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
 
 {-------------------------------------------------------------------------------
@@ -59,8 +60,8 @@ newForkerAtWellKnownPoint ::
   -> ResourceRegistry m
   -> Target (Point blk)
   -> m (Forker m l blk)
-newForkerAtWellKnownPoint h rr pt = getEnv h $ \ldbEnv -> do
-    withReadLock (ldbLock ldbEnv) (acquireAtWellKnownPoint ldbEnv rr pt) >>= newForker h ldbEnv
+newForkerAtWellKnownPoint h rr pt = getEnv h $ \ldbEnv@LedgerDBEnv{ldbLock = AllowThunk lock} -> do
+    withReadLock lock (acquireAtWellKnownPoint ldbEnv rr pt) >>= newForker h ldbEnv
 
 newForkerAtPoint ::
      ( HeaderHash l ~ HeaderHash blk
@@ -74,8 +75,8 @@ newForkerAtPoint ::
   -> ResourceRegistry m
   -> Point blk
   -> m (Either GetForkerError (Forker m l blk))
-newForkerAtPoint h rr pt = getEnv h $ \ldbEnv -> do
-    withReadLock (ldbLock ldbEnv) (acquireAtPoint ldbEnv rr pt) >>= traverse (newForker h ldbEnv)
+newForkerAtPoint h rr pt = getEnv h $ \ldbEnv@LedgerDBEnv{ldbLock = AllowThunk lock} -> do
+    withReadLock lock (acquireAtPoint ldbEnv rr pt) >>= traverse (newForker h ldbEnv)
 
 newForkerAtFromTip ::
      ( IOLike m
@@ -87,8 +88,8 @@ newForkerAtFromTip ::
   -> ResourceRegistry m
   -> Word64
   -> m (Either ExceededRollback (Forker m l blk))
-newForkerAtFromTip h rr n = getEnv h $ \ldbEnv -> do
-    withReadLock (ldbLock ldbEnv) (acquireAtFromTip ldbEnv rr n) >>= traverse (newForker h ldbEnv)
+newForkerAtFromTip h rr n = getEnv h $ \ldbEnv@LedgerDBEnv{ldbLock = AllowThunk lock} -> do
+    withReadLock lock (acquireAtFromTip ldbEnv rr n) >>= traverse (newForker h ldbEnv)
 
 -- | Close all open block and header 'Follower's.
 closeAllForkers ::

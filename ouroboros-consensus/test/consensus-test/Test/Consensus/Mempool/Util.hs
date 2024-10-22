@@ -4,20 +4,20 @@
 module Test.Consensus.Mempool.Util (
     TestBlock
   , TestTx
-  , TestTxId
   , TestTxError
+  , TestTxId
   , TheMeasure
   , applyTxToLedger
   , genInvalidTx
+  , genLargeInvalidTx
   , genTxs
   , genValidTx
   , genValidTxs
+  , mkTestLedgerConfig
   , mustBeValid
   , testInitLedger
-  , mkTestLedgerConfig
-  , genLargeInvalidTx
-  , txIsValid
   , testLedgerConfigNoSizeLimits
+  , txIsValid
   ) where
 
 import           Cardano.Binary (Encoding, toCBOR)

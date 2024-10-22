@@ -34,6 +34,7 @@ import qualified Codec.CBOR.Write as CBOR
 import           Codec.Serialise (decode)
 import           Control.Monad (unless, void)
 import           Control.Monad.Except (runExceptT)
+import           Control.ResourceRegistry
 import           Control.Tracer
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.List as List
@@ -51,7 +52,6 @@ import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Common
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
 import           Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Prelude hiding (read)
 import           System.FS.API
 import           System.FS.API.Lazy

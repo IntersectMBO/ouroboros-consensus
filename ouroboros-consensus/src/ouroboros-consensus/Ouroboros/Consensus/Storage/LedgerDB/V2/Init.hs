@@ -16,6 +16,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.Init (mkInitDb) where
 
 import           Control.Monad (void)
 import           Control.Monad.Base
+import qualified Control.RAWLock as RAWLock
+import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.Foldable
 import           Data.Functor.Contravariant ((>$<))
@@ -24,6 +26,7 @@ import           Data.Maybe (isJust)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Word
+import           NoThunks.Class
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Abstract
@@ -49,8 +52,6 @@ import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
-import qualified Ouroboros.Consensus.Util.MonadSTM.RAWLock as RAWLock
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
 import           System.FS.API
@@ -101,7 +102,7 @@ mkInitDb args flavArgs getBlock =
                , ldbHasFS          = lgrHasFS
                , ldbResolveBlock   = getBlock
                , ldbQueryBatchSize = Nothing
-               , ldbReleaseLock    = lock
+               , ldbReleaseLock    = AllowThunk lock
                }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h bss

@@ -29,6 +29,7 @@ import           Control.Monad.Except (ExceptT (..), MonadError (..), runExcept,
                      runExceptT)
 import           Control.Monad.Reader (ReaderT (..))
 import           Control.Monad.Trans (MonadTrans (..))
+import           Control.ResourceRegistry
 import           Data.Kind
 import           Data.Set (Set)
 import qualified Data.Set as Set
@@ -43,7 +44,6 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCac
 import           Ouroboros.Consensus.Storage.LedgerDB.API hiding (validate)
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 
 {-------------------------------------------------------------------------------
   Validation

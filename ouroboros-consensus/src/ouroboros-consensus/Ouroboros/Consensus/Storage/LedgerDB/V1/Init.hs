@@ -17,6 +17,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Init (mkInitDb) where
 
 import           Control.Monad
 import           Control.Monad.Base
+import           Control.ResourceRegistry
 import           Control.Tracer (nullTracer)
 import           Data.Foldable
 import           Data.Functor.Contravariant ((>$<))
@@ -25,6 +26,7 @@ import           Data.Maybe (isJust)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Word
+import           NoThunks.Class
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Abstract
@@ -57,7 +59,6 @@ import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import           System.FS.API
 
@@ -112,7 +113,7 @@ mkInitDb args bss getBlock =
       let env = LedgerDBEnv {
                  ldbChangelog       = varDB
                , ldbBackingStore    = lgrBackingStore
-               , ldbLock            = flushLock
+               , ldbLock            = AllowThunk flushLock
                , ldbPrevApplied     = prevApplied
                , ldbForkers         = forkers
                , ldbNextForkerKey   = nextForkerKey
@@ -255,9 +256,9 @@ implTryTakeSnapshot ::
      , IOLike m, LedgerDbSerialiseConstraints blk, LedgerSupportsProtocol blk
      )
   => LedgerDBEnv m l blk -> Maybe (Time, Time) -> Word64 -> m SnapCounters
-implTryTakeSnapshot env mTime nrBlocks =
+implTryTakeSnapshot env@LedgerDBEnv{ldbLock = AllowThunk lock} mTime nrBlocks =
     if onDiskShouldTakeSnapshot (ldbSnapshotPolicy env) (uncurry (flip diffTime) <$> mTime) nrBlocks then do
-      void $ withReadLock (ldbLock env) (takeSnapshot
+      void $ withReadLock lock (takeSnapshot
                                           (ldbChangelog env)
                                           (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
                                           (LedgerDBSnapshotEvent >$< ldbTracer env)
@@ -278,11 +279,11 @@ implTryTakeSnapshot env mTime nrBlocks =
 implTryFlush ::
      (IOLike m, HasLedgerTables l, GetTip l)
   => LedgerDBEnv m l blk -> m ()
-implTryFlush env = do
+implTryFlush env@LedgerDBEnv{ldbLock = AllowThunk lock} = do
     ldb <- readTVarIO $ ldbChangelog env
     when (ldbShouldFlush env $ DbCh.flushableLength $ anchorlessChangelog ldb)
         (withWriteLock
-          (ldbLock env)
+          lock
           (flushLedgerDB (ldbChangelog env) (ldbBackingStore env))
         )
 
@@ -352,11 +353,11 @@ implIntTakeSnapshot ::
      , l ~ ExtLedgerState blk
      )
   => LedgerDBEnv m l blk -> Maybe DiskSnapshot -> m ()
-implIntTakeSnapshot env diskSnapshot = do
+implIntTakeSnapshot env@LedgerDBEnv{ldbLock = AllowThunk lock} diskSnapshot = do
   withWriteLock
-          (ldbLock env)
+          lock
           (flushLedgerDB (ldbChangelog env) (ldbBackingStore env))
-  void $ withReadLock (ldbLock env) $
+  void $ withReadLock lock $
     takeSnapshot
       (ldbChangelog env)
       (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)

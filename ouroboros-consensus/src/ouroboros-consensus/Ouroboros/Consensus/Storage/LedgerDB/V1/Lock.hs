@@ -1,5 +1,10 @@
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MonoLocalBinds #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V1.Lock (
     -- * LedgerDB lock
@@ -14,9 +19,9 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Lock (
   , writeLocked
   ) where
 
+import qualified Control.RAWLock as Lock
 import           NoThunks.Class
 import           Ouroboros.Consensus.Util.IOLike
-import qualified Ouroboros.Consensus.Util.MonadSTM.RAWLock as Lock
 
 {-------------------------------------------------------------------------------
   LedgerDB lock
@@ -45,7 +50,8 @@ import qualified Ouroboros.Consensus.Util.MonadSTM.RAWLock as Lock
 --
 -- - Write lock when flushing differences.
 newtype LedgerDBLock m = LedgerDBLock (Lock.RAWLock m ())
-  deriving newtype NoThunks
+
+deriving newtype instance NoThunks (Lock.RAWLock m ()) => NoThunks (LedgerDBLock m)
 
 mkLedgerDBLock :: IOLike m => m (LedgerDBLock m)
 mkLedgerDBLock = LedgerDBLock <$> Lock.new ()
@@ -77,4 +83,4 @@ writeLocked = WriteLocked
 -- | Acquire the ledger DB write lock and hold it while performing an action
 withWriteLock :: IOLike m => LedgerDBLock m -> WriteLocked m a -> m a
 withWriteLock (LedgerDBLock lock) m =
-    Lock.withWriteAccess lock (\() -> (,) () <$> runWriteLocked m)
+    Lock.withWriteAccess lock (\() -> (,()) <$> runWriteLocked m)

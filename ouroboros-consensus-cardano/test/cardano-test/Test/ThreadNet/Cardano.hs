@@ -30,6 +30,7 @@ import           Data.Maybe (maybeToList)
 import           Data.Proxy (Proxy (..))
 import           Data.Set (Set)
 import qualified Data.Set as Set
+import           Data.SOP.Functors
 import           Data.Word (Word64)
 import           Lens.Micro
 import           Ouroboros.Consensus.Block.Forging (BlockForging)
@@ -530,9 +531,9 @@ setByronProtVer =
     modifyExtLedger f elgr = elgr { ledgerState = f (ledgerState elgr ) }
 
     modifyHFLedgerState ::
-         (LedgerState x -> LedgerState x)
-      -> LedgerState (HardForkBlock (x : xs))
-      -> LedgerState (HardForkBlock (x : xs))
+         (LedgerState x mk -> LedgerState x mk)
+      -> LedgerState (HardForkBlock (x : xs)) mk
+      -> LedgerState (HardForkBlock (x : xs)) mk
     modifyHFLedgerState f (HardForkLedgerState (HardForkState (TZ st))) =
-        HardForkLedgerState (HardForkState (TZ st {currentState = f (currentState st)}))
+        HardForkLedgerState (HardForkState (TZ st {currentState = Flip $ f (unFlip $ currentState st)}))
     modifyHFLedgerState _ st = st

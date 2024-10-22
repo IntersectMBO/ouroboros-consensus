@@ -463,7 +463,7 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
              IOLike.atomically $ IOLike.writeTVar dbOpenHandles mempty
              liftIO $ LMDB.closeEnvironment dbEnv
              Trace.traceWith dbTracer API.BSClosed
-             pure (Closed, ())
+             pure ((), Closed)
             where
               traceAlreadyClosed = Trace.traceWith dbTracer API.BSAlreadyClosed
 
@@ -541,7 +541,7 @@ mkLMDBBackingStoreValueHandle db = do
         runCleanup cleanup
         IOLike.atomically $ IOLike.modifyTVar' dbOpenHandles (Map.delete vhId)
         Trace.traceWith tracer API.BSVHClosed
-        pure (Closed, ())
+        pure ((), Closed)
       where
         traceAlreadyClosed    = Trace.traceWith dbTracer API.BSAlreadyClosed
         traceTVHAlreadyClosed = Trace.traceWith tracer API.BSVHAlreadyClosed

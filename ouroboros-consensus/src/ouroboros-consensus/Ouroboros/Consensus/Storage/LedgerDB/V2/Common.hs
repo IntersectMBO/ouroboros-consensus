@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -38,6 +39,9 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.Common (
 
 import           Control.Arrow
 import           Control.Monad ((>=>))
+import           Control.RAWLock (RAWLock)
+import qualified Control.RAWLock as RAWLock
+import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.Functor.Contravariant ((>$<))
 import           Data.Kind
@@ -47,6 +51,7 @@ import           Data.Maybe (fromMaybe)
 import           Data.Set (Set)
 import           Data.Word
 import           GHC.Generics
+import           NoThunks.Class
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
@@ -61,9 +66,7 @@ import           Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.MonadSTM.RAWLock (RAWLock)
-import qualified Ouroboros.Consensus.Util.MonadSTM.RAWLock as RAWLock
-import           Ouroboros.Consensus.Util.ResourceRegistry
+import           Ouroboros.Consensus.Util.NormalForm.StrictTVar ()
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
 import           Prelude hiding (read)
@@ -104,7 +107,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv {
   , ldbHasFS          :: !(SomeHasFS m)
   , ldbResolveBlock   :: !(ResolveBlock m blk)
   , ldbQueryBatchSize :: !(Maybe Int)
-  , ldbReleaseLock    :: !(RAWLock m LDBLock)
+  , ldbReleaseLock    :: !(AllowThunk (RAWLock m LDBLock))
   } deriving (Generic)
 
 deriving instance ( IOLike m
@@ -206,9 +209,11 @@ data ForkerEnv m l blk = ForkerEnv {
   deriving Generic
 
 closeForkerEnv :: IOLike m => (LedgerDBEnv m l blk, ForkerEnv m l blk) -> m ()
-closeForkerEnv (ldbEnv, frkEnv) =
-  RAWLock.withWriteAccess_ (ldbReleaseLock ldbEnv) $
-    const $ sequence_ =<< readTVarIO (foeResourcesToRelease frkEnv)
+closeForkerEnv (LedgerDBEnv{ldbReleaseLock = AllowThunk lock}, frkEnv) =
+  RAWLock.withWriteAccess lock $
+    const $ do
+      sequence_ =<< readTVarIO (foeResourcesToRelease frkEnv)
+      pure ((), LDBLock)
 
 deriving instance ( IOLike m
                   , LedgerSupportsProtocol blk
@@ -486,8 +491,8 @@ newForkerAtWellKnownPoint ::
   -> ResourceRegistry m
   -> Target (Point blk)
   -> m (Forker m l blk)
-newForkerAtWellKnownPoint h rr pt = getEnv h $ \ldbEnv -> do
-    RAWLock.withReadAccess (ldbReleaseLock ldbEnv) (acquireAtWellKnownPoint ldbEnv pt) >>= newForker h ldbEnv rr
+newForkerAtWellKnownPoint h rr pt = getEnv h $ \ldbEnv@LedgerDBEnv{ldbReleaseLock = AllowThunk lock} -> do
+    RAWLock.withReadAccess lock (acquireAtWellKnownPoint ldbEnv pt) >>= newForker h ldbEnv rr
 
 newForkerAtPoint ::
      ( HeaderHash l ~ HeaderHash blk
@@ -501,8 +506,8 @@ newForkerAtPoint ::
   -> ResourceRegistry m
   -> Point blk
   -> m (Either GetForkerError (Forker m l blk))
-newForkerAtPoint h rr pt = getEnv h $ \ldbEnv -> do
-    RAWLock.withReadAccess (ldbReleaseLock ldbEnv) (acquireAtPoint ldbEnv pt) >>= traverse (newForker h ldbEnv rr)
+newForkerAtPoint h rr pt = getEnv h $ \ldbEnv@LedgerDBEnv{ldbReleaseLock = AllowThunk lock} -> do
+    RAWLock.withReadAccess lock (acquireAtPoint ldbEnv pt) >>= traverse (newForker h ldbEnv rr)
 
 newForkerAtFromTip ::
      ( IOLike m
@@ -515,8 +520,8 @@ newForkerAtFromTip ::
   -> ResourceRegistry m
   -> Word64
   -> m (Either ExceededRollback (Forker m l blk))
-newForkerAtFromTip h rr n = getEnv h $ \ldbEnv -> do
-    RAWLock.withReadAccess (ldbReleaseLock ldbEnv) (acquireAtFromTip ldbEnv n) >>= traverse (newForker h ldbEnv rr)
+newForkerAtFromTip h rr n = getEnv h $ \ldbEnv@LedgerDBEnv{ldbReleaseLock = AllowThunk lock} -> do
+    RAWLock.withReadAccess lock (acquireAtFromTip ldbEnv n) >>= traverse (newForker h ldbEnv rr)
 
 -- | Close all open block and header 'Follower's.
 closeAllForkers ::

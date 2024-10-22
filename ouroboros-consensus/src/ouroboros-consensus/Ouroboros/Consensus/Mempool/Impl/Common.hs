@@ -473,10 +473,3 @@ deriving instance ( Show (GenTx blk)
                   , Show (ApplyTxErr blk)
                   , StandardHash blk
                   ) => Show (TraceEventMempool blk)
-
-deriving instance ( NoThunks (GenTx blk)
-                  , NoThunks (Validated (GenTx blk))
-                  , NoThunks (GenTxId blk)
-                  , NoThunks (ApplyTxErr blk)
-                  , StandardHash blk
-                  ) => NoThunks (TraceEventMempool blk)

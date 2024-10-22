@@ -49,6 +49,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq (
   , volatileStatesBimap
   ) where
 
+import           Control.ResourceRegistry
 import qualified Data.Bifunctor as B
 import           Data.Function (on)
 import           Data.Word
@@ -61,7 +62,6 @@ import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Storage.LedgerDB.API.Config
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.AnchoredSeq hiding (anchor, last, map,
                      rollback)
 import qualified Ouroboros.Network.AnchoredSeq as AS hiding (map)

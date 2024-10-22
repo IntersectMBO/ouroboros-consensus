@@ -38,7 +38,8 @@ import           Control.Monad (void, when)
 import           Control.Monad.Base (MonadBase)
 import           Control.Monad.Trans.Class (lift)
 import           Control.ResourceRegistry (WithTempRegistry, allocate,
-                     runInnerWithTempRegistry, runWithTempRegistry)
+                     runInnerWithTempRegistry, runWithTempRegistry,
+                     withRegistry)
 import           Control.Tracer
 import           Data.Functor ((<&>))
 import           Data.Functor.Contravariant ((>$<))

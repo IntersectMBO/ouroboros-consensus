@@ -24,6 +24,7 @@ import           Cardano.Crypto.DSIGN.Mock
 import           Control.Concurrent.Class.MonadSTM.Strict.TMVar
 import           Control.Monad.Base
 import           Control.Monad.IOSim (runSimOrThrow)
+import           Control.ResourceRegistry
 import           Control.Tracer
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
@@ -47,7 +48,6 @@ import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
 import           Ouroboros.Consensus.Util.IOLike hiding (newTVarIO)
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Mock.Chain (Chain (..))
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import           Ouroboros.Network.Protocol.LocalStateQuery.Client
@@ -56,7 +56,7 @@ import           Ouroboros.Network.Protocol.LocalStateQuery.Examples
 import           Ouroboros.Network.Protocol.LocalStateQuery.Server
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
                      (AcquireFailure (..), State (..), Target (..))
-import           System.FS.API (HasFS, SomeHasFS (..))
+import           System.FS.API (SomeHasFS (..))
 import qualified System.FS.Sim.MockFS as MockFS
 import           System.FS.Sim.STM
 import           Test.QuickCheck hiding (Result)
