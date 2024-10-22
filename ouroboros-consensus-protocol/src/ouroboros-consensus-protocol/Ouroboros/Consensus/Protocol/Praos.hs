@@ -60,7 +60,6 @@ import           Cardano.Slotting.EpochInfo (EpochInfo, epochInfoEpoch,
                      epochInfoFirst, hoistEpochInfo)
 import           Cardano.Slotting.Slot (EpochNo (EpochNo), SlotNo (SlotNo),
                      WithOrigin, unSlotNo)
-import           Cardano.Slotting.Time (SystemStart)
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (Serialise (decode, encode))
 import           Control.Exception (throw)
@@ -198,19 +197,9 @@ data PraosParams = PraosParams
     praosSecurityParam                 :: !SecurityParam,
     -- | Maximum number of KES iterations, see 'Globals.maxKESEvo'.
     praosMaxKESEvo                     :: !Word64,
-    -- | Quorum for update system votes and MIR certificates, see
-    -- 'Globals.quorum'.
-    praosQuorum                        :: !Word64,
     -- | All blocks invalid after this protocol version, see
     -- 'Globals.maxMajorPV'.
     praosMaxMajorPV                    :: !MaxMajorProtVer,
-    -- | Maximum number of lovelace in the system, see
-    -- 'Globals.maxLovelaceSupply'.
-    praosMaxLovelaceSupply             :: !Word64,
-    -- | Testnet or mainnet?
-    praosNetworkId                     :: !SL.Network,
-    -- | The system start, as projected from the chain's genesis block.
-    praosSystemStart                   :: !SystemStart,
     -- | The number of slots before the start of an epoch where the
     -- corresponding epoch nonce is snapshotted. This has to be at least one
     -- stability window such that the nonce is stable at the beginning of the
