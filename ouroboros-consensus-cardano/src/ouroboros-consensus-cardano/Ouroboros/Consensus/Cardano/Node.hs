@@ -69,7 +69,6 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Prelude (cborError)
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..),
                      ocertKESPeriod)
-import           Cardano.Slotting.Time (SystemStart (SystemStart))
 import qualified Codec.CBOR.Decoding as CBOR
 import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
@@ -735,11 +734,7 @@ protocolInfoCardano paramsCardano
         praosLeaderF = SL.mkActiveSlotCoeff $ SL.sgActiveSlotsCoeff genesisShelley,
         praosSecurityParam = SecurityParam $ SL.sgSecurityParam genesisShelley,
         praosMaxKESEvo = SL.sgMaxKESEvolutions genesisShelley,
-        praosQuorum = SL.sgUpdateQuorum genesisShelley,
         praosMaxMajorPV = maxMajorProtVer,
-        praosMaxLovelaceSupply = SL.sgMaxLovelaceSupply genesisShelley,
-        praosNetworkId = SL.sgNetworkId genesisShelley,
-        praosSystemStart = SystemStart $ SL.sgSystemStart genesisShelley,
         praosRandomnessStabilisationWindow =
           -- This value is used for all Praos eras /except/ Babbage, see
           -- 'partialConsensusConfigBabbage'.
