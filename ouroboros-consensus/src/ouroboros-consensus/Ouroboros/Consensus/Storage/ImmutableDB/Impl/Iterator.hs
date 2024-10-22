@@ -20,6 +20,8 @@ import qualified Codec.CBOR.Read as CBOR
 import           Control.Monad (unless, void, when)
 import           Control.Monad.Except (ExceptT, runExceptT, throwError)
 import           Control.Monad.Trans.Class (lift)
+import           Control.ResourceRegistry (ResourceKey, ResourceRegistry,
+                     allocate, release, unsafeRelease)
 import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.ByteString.Short as Short
 import           Data.Foldable (find)
@@ -43,8 +45,6 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Types
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Util
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceKey,
-                     ResourceRegistry, allocate, release, unsafeRelease)
 import           Ouroboros.Network.SizeInBytes
 import           System.FS.API.Lazy
 import           System.FS.CRC

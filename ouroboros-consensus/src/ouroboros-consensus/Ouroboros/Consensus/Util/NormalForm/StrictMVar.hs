@@ -1,4 +1,6 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -29,12 +31,11 @@ module Ouroboros.Consensus.Util.NormalForm.StrictMVar (
   , module Control.Concurrent.Class.MonadMVar.Strict.Checked
   ) where
 
-import           Control.Concurrent.Class.MonadMVar (MonadInspectMVar (..))
+import qualified Control.Concurrent.Class.MonadMVar.Strict as Strict
 import           Control.Concurrent.Class.MonadMVar.Strict.Checked hiding
                      (newEmptyMVar, newEmptyMVarWithInvariant, newMVar,
                      newMVarWithInvariant)
 import qualified Control.Concurrent.Class.MonadMVar.Strict.Checked as Checked
-import           Data.Proxy (Proxy (..))
 import           GHC.Stack (HasCallStack)
 import           NoThunks.Class (NoThunks (..), unsafeNoThunks)
 
@@ -85,11 +86,9 @@ noThunksInvariant = fmap show . unsafeNoThunks
   NoThunks instance
 -------------------------------------------------------------------------------}
 
-instance NoThunks a => NoThunks (StrictMVar IO a) where
+instance NoThunks (Strict.StrictMVar IO a) => NoThunks (StrictMVar IO a) where
   showTypeOf _ = "StrictMVar IO"
-  wNoThunks ctxt mvar = do
-      aMay <- inspectMVar (Proxy :: Proxy IO) (toLazyMVar mvar)
-      noThunks ctxt aMay
+  wNoThunks ctxt mvar = wNoThunks ctxt (Checked.unsafeToUncheckedStrictMVar mvar)
 
 {-------------------------------------------------------------------------------
   Unchecked

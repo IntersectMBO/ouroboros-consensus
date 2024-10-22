@@ -13,6 +13,7 @@ module Test.Consensus.PeerSimulator.Run (
 import           Control.Monad (foldM, forM, void)
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
+import           Control.ResourceRegistry
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
 import           Data.Coerce (coerce)
 import           Data.Foldable (for_)
@@ -34,7 +35,6 @@ import           Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (forkLinkedWatcher)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF

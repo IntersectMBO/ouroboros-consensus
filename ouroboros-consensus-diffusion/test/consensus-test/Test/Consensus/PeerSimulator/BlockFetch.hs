@@ -21,6 +21,7 @@ import           Control.Exception (SomeException)
 import           Control.Monad (void)
 import           Control.Monad.Class.MonadTime
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
+import           Control.ResourceRegistry
 import           Control.Tracer (Tracer, nullTracer, traceWith)
 import           Data.Functor.Contravariant ((>$<))
 import           Data.Map.Strict (Map)
@@ -37,7 +38,6 @@ import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Consensus.Util.IOLike (DiffTime,
                      Exception (fromException), IOLike, STM, atomically, retry,
                      try)
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..),
                      FetchClientRegistry, FetchMode (..), blockFetchLogic,

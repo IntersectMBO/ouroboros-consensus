@@ -20,6 +20,7 @@ import           Control.Exception (assert)
 import           Control.Monad (forM_, unless, when)
 import           Control.Monad.Except (ExceptT, runExceptT, throwError)
 import           Control.Monad.Trans.Class (lift)
+import           Control.ResourceRegistry
 import           Control.Tracer (Tracer, contramap, traceWith)
 import qualified Data.ByteString.Lazy as Lazy
 import           Data.Functor (($>))
@@ -47,7 +48,6 @@ import           Ouroboros.Consensus.Storage.Serialisation (DecodeDisk (..),
                      HasBinaryBlockInfo (..))
 import           Ouroboros.Consensus.Util (lastMaybe, whenJust)
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Streaming (Of (..))
 import qualified Streaming.Prelude as S
 import           System.FS.API

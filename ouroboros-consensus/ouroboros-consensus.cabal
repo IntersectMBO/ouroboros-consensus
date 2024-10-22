@@ -266,7 +266,6 @@ library
     Ouroboros.Consensus.Util.NormalForm.StrictTVar
     Ouroboros.Consensus.Util.Orphans
     Ouroboros.Consensus.Util.RedundantConstraints
-    Ouroboros.Consensus.Util.ResourceRegistry
     Ouroboros.Consensus.Util.STM
     Ouroboros.Consensus.Util.Time
     Ouroboros.Consensus.Util.Versioned
@@ -303,6 +302,7 @@ library
     quiet ^>=0.2,
     rawlock ^>=0.1,
     reflection,
+    resource-registry ^>=0.1,
     semialign >=1.1,
     serialise ^>=0.2,
     si-timers ^>=1.5,
@@ -310,6 +310,7 @@ library
     sop-extras ^>=0.2,
     streaming,
     strict-checked-vars ^>=0.2,
+    strict-mvar ^>=1.5,
     strict-sop-core ^>=0.1,
     strict-stm ^>=1.5,
     text,
@@ -417,11 +418,12 @@ library unstable-consensus-testlib
     quickcheck-state-machine:no-vendored-treediff ^>=0.10,
     quiet,
     random,
+    resource-registry,
     serialise,
     si-timers,
     sop-core,
     sop-extras,
-    strict-checked-vars,
+    strict-mvar,
     strict-sop-core,
     strict-stm,
     tasty,
@@ -532,7 +534,6 @@ test-suite consensus-test
     Test.Consensus.MiniProtocol.BlockFetch.Client
     Test.Consensus.MiniProtocol.ChainSync.Client
     Test.Consensus.MiniProtocol.LocalStateQuery.Server
-    Test.Consensus.ResourceRegistry
     Test.Consensus.Util.MonadSTM.NormalForm
     Test.Consensus.Util.Versioned
 
@@ -550,7 +551,6 @@ test-suite consensus-test
     contra-tracer,
     deepseq,
     fs-api ^>=0.3,
-    generics-sop,
     hashable,
     io-classes,
     io-sim,
@@ -561,19 +561,20 @@ test-suite consensus-test
     ouroboros-network-api,
     ouroboros-network-mock,
     ouroboros-network-protocols:{ouroboros-network-protocols, testlib},
-    quickcheck-state-machine:no-vendored-treediff,
     quiet,
     random,
+    resource-registry,
     serialise,
     si-timers,
     sop-core,
     sop-extras,
+    strict-mvar,
     strict-sop-core,
+    strict-stm,
     tasty,
     tasty-hunit,
     tasty-quickcheck,
     time,
-    tree-diff,
     typed-protocols ^>=0.3,
     typed-protocols-examples,
     typed-protocols-stateful,
@@ -670,6 +671,7 @@ test-suite storage-test
     pretty-show,
     quickcheck-state-machine:no-vendored-treediff ^>=0.10,
     random,
+    resource-registry,
     serialise,
     strict-stm,
     tasty,
@@ -729,6 +731,7 @@ benchmark ChainSync-client-bench
     ouroboros-network-api,
     ouroboros-network-mock,
     ouroboros-network-protocols,
+    resource-registry,
     time,
     typed-protocols-examples,
     unstable-consensus-testlib,

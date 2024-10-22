@@ -17,6 +17,7 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Server (
   , chainSyncServerForFollower
   ) where
 
+import           Control.ResourceRegistry (ResourceRegistry)
 import           Control.Tracer
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB, Follower,
@@ -27,7 +28,6 @@ import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util.Enclose (Enclosing, Enclosing' (..),
                      pattern FallingEdge)
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceRegistry)
 import           Ouroboros.Network.Block (ChainUpdate (..), Serialised,
                      Tip (..))
 import           Ouroboros.Network.Protocol.ChainSync.Server

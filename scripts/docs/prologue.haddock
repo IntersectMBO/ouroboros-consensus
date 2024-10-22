@@ -54,11 +54,6 @@ implementation of consensus.
 
     * "Ouroboros.Consensus.MiniProtocol.ChainSync.Client"
 
-* Utilities:
-
-    * "Ouroboros.Consensus.Util.ResourceRegistry"
-
-
 == Consensus Components
 
 The following [C4 Component Diagram](https://c4model.com/) provides a high-level

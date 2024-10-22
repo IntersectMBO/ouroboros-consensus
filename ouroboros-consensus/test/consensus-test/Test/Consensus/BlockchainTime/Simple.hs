@@ -38,6 +38,8 @@
 module Test.Consensus.BlockchainTime.Simple (tests) where
 
 import           Control.Applicative (Alternative (..))
+import qualified Control.Concurrent.Class.MonadMVar.Strict as Strict
+import qualified Control.Concurrent.Class.MonadSTM.Strict as Strict
 import           Control.Monad (MonadPlus, when)
 import qualified Control.Monad.Class.MonadSTM.Internal as LazySTM
 import           Control.Monad.Class.MonadTime
@@ -46,6 +48,7 @@ import           Control.Monad.Class.MonadTimer.SI
 import           Control.Monad.Except (Except, runExcept, throwError)
 import           Control.Monad.IOSim
 import           Control.Monad.Reader (ReaderT (..), lift)
+import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.Fixed
 import qualified Data.Time.Clock as Time
@@ -53,7 +56,6 @@ import           NoThunks.Class (AllowThunk (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (withWatcher)
 import           Ouroboros.Consensus.Util.Time
 import           Test.QuickCheck hiding (Fixed)
@@ -389,6 +391,12 @@ deriving via AllowThunk (StrictSVar (OverrideDelay s) a)
 
 deriving via AllowThunk (StrictMVar (OverrideDelay s) a)
          instance NoThunks (StrictMVar (OverrideDelay s) a)
+
+deriving via AllowThunk (Strict.StrictTVar (OverrideDelay s) a)
+         instance NoThunks (Strict.StrictTVar (OverrideDelay s) a)
+
+deriving via AllowThunk (Strict.StrictMVar (OverrideDelay s) a)
+         instance NoThunks (Strict.StrictMVar (OverrideDelay s) a)
 
 instance MonadTimer.MonadDelay (OverrideDelay (IOSim s)) where
   threadDelay d = OverrideDelay $ ReaderT $ \schedule -> do

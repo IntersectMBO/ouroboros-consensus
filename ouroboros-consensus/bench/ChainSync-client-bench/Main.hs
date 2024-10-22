@@ -6,6 +6,7 @@ module Main (main) where
 import           Bench.Consensus.ChainSyncClient.Driver (mainWith)
 import           Cardano.Crypto.DSIGN.Mock
 import           Control.Monad (void)
+import           Control.ResourceRegistry
 import           Control.Tracer (contramap, debugTracer, nullTracer)
 import           Data.IORef (newIORef, readIORef, writeIORef)
 import qualified Data.List.NonEmpty as NE
@@ -33,7 +34,6 @@ import           Ouroboros.Consensus.NodeId
 import           Ouroboros.Consensus.Protocol.BFT
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (Fingerprint (..),
                      WithFingerprint (..))
 import           Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)

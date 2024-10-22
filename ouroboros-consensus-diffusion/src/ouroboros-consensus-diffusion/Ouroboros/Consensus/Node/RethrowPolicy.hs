@@ -3,6 +3,8 @@
 module Ouroboros.Consensus.Node.RethrowPolicy (consensusRethrowPolicy) where
 
 import           Control.Monad.Class.MonadAsync (ExceptionInLinkedThread (..))
+import           Control.ResourceRegistry (RegistryClosedException,
+                     ResourceRegistryThreadException, TempRegistryException)
 import           Data.Proxy (Proxy)
 import           Data.Typeable (Typeable)
 import           Ouroboros.Consensus.Block (StandardHash)
@@ -19,9 +21,6 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.API (ImmutableDBError)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.API as ImmutableDB
 import           Ouroboros.Consensus.Storage.VolatileDB.API (VolatileDBError)
 import qualified Ouroboros.Consensus.Storage.VolatileDB.API as VolatileDB
-import           Ouroboros.Consensus.Util.ResourceRegistry
-                     (RegistryClosedException, ResourceRegistryThreadException,
-                     TempRegistryException)
 import           Ouroboros.Network.RethrowPolicy
 import           System.FS.API.Types (FsError)
 

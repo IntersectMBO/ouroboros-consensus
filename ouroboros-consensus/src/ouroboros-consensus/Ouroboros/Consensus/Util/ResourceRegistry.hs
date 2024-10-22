@@ -11,7 +11,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Ouroboros.Consensus.Util.ResourceRegistry (
+module Control.ResourceRegistry (
     RegistryClosedException (..)
   , ResourceRegistryThreadException
     -- * Creating and releasing the registry itself
