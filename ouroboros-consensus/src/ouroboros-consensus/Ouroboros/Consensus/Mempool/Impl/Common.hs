@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -36,7 +37,9 @@ import           Control.Concurrent.Class.MonadMVar (MVar, newMVar)
 import           Control.Concurrent.Class.MonadSTM.Strict.TMVar (newTMVarIO)
 import           Control.Monad.Trans.Except (runExcept)
 import           Control.Tracer
+#if __GLASGOW_HASKELL__ < 910
 import           Data.Foldable
+#endif
 import qualified Data.List.NonEmpty as NE
 import           Data.Set (Set)
 import qualified Data.Set as Set
@@ -335,8 +338,7 @@ revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
         | otherwise
         = filterTxTickets t1s t2ss
       filterTxTickets [] _ =
-        error "There are less transactions given to the revalidate function than \
-              \ transactions revalidated! This is unacceptable (and impossible)!"
+        error "There are less transactions given to the revalidate function than transactions revalidated! This is unacceptable (and impossible)!"
 
   in RevalidateTxsResult
       (IS {

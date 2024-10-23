@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
@@ -7,7 +8,9 @@ module Ouroboros.Consensus.Mempool.Query (
   , pureGetSnapshotFor
   ) where
 
+#if __GLASGOW_HASKELL__ < 910
 import           Data.Foldable (foldl')
+#endif
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool

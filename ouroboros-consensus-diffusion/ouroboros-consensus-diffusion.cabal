@@ -149,6 +149,7 @@ library unstable-diffusion-testlib
     ouroboros-network-framework,
     ouroboros-network-mock,
     ouroboros-network-protocols,
+    ouroboros-network-testing,
     quiet ^>=0.2,
     random,
     resource-registry,

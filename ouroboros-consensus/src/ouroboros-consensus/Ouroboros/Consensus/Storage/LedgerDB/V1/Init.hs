@@ -19,7 +19,9 @@ import           Control.Monad
 import           Control.Monad.Base
 import           Control.ResourceRegistry
 import           Control.Tracer (nullTracer)
+#if __GLASGOW_HASKELL__ < 910
 import           Data.Foldable
+#endif
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust)
@@ -69,7 +71,9 @@ mkInitDb ::
   , LedgerDbSerialiseConstraints blk
   , MonadBase m m
   , HasHardForkHistory blk
+#if __GLASGOW_HASKELL__ < 910
   , HasAnnTip blk
+#endif
   )
   => Complete LedgerDbArgs m blk
   -> Complete V1.LedgerDbFlavorArgs m
@@ -154,7 +158,9 @@ implMkLedgerDb ::
      , MonadBase m m
      , ApplyBlock l blk
      , l ~ ExtLedgerState blk
+#if __GLASGOW_HASKELL__ < 910
      , HasAnnTip blk
+#endif
      , HasHardForkHistory blk
      )
   => LedgerDBHandle m l blk
