@@ -33,6 +33,7 @@ import           Control.DeepSeq (force)
 import           Control.Monad
 import qualified Control.Monad.Class.MonadTimer.SI as SI
 import           Control.Monad.Except
+import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.Bifunctor (second)
 import           Data.Data (Typeable)
@@ -87,7 +88,6 @@ import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.LeakyBucket
                      (atomicallyWithMonotonicTime)
 import           Ouroboros.Consensus.Util.Orphans ()
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      AnchoredSeq (..))

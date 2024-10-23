@@ -34,6 +34,7 @@ module Test.Ouroboros.Storage.VolatileDB.StateMachine (
 
 import           Control.Concurrent.Class.MonadSTM.Strict (newTMVar)
 import           Control.Monad (forM_, void)
+import           Control.ResourceRegistry
 import           Data.Bifunctor (first)
 import           Data.ByteString.Lazy (ByteString)
 import           Data.Functor.Classes
@@ -55,7 +56,6 @@ import           Ouroboros.Consensus.Storage.VolatileDB
 import           Ouroboros.Consensus.Storage.VolatileDB.Impl.Types (FileId)
 import           Ouroboros.Consensus.Storage.VolatileDB.Impl.Util
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Block (MaxSlotNo)
 import           Prelude hiding (elem)
 import           System.FS.API.Lazy

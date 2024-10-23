@@ -21,7 +21,9 @@ module Ouroboros.Consensus.Util.EarlyExit (
   ) where
 
 import           Control.Applicative
-import           Control.Concurrent.Class.MonadMVar
+import           Control.Concurrent.Class.MonadMVar (MVar, MonadMVar (..))
+import qualified Control.Concurrent.Class.MonadMVar.Strict as Strict
+import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Control.Monad
 import           Control.Monad.Class.MonadAsync
 import           Control.Monad.Class.MonadEventlog
@@ -41,8 +43,7 @@ import           Data.Proxy
 import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Util ((.:))
 import           Ouroboros.Consensus.Util.IOLike (IOLike (..), PrimMonad (..),
-                     StrictSVar, StrictTVar, castStrictSVar, castStrictTVar)
-import           Ouroboros.Consensus.Util.NormalForm.StrictMVar (StrictMVar)
+                     StrictMVar, StrictSVar, StrictTVar, castStrictSVar)
 
 {-------------------------------------------------------------------------------
   Basic definitions
@@ -59,11 +60,17 @@ newtype WithEarlyExit m a = WithEarlyExit {
            , MonadPlus
            )
 
-instance NoThunks (StrictTVar m a)
-      => NoThunks (StrictTVar (WithEarlyExit m) a) where
+instance NoThunks (StrictSTM.StrictTVar m a)
+      => NoThunks (StrictSTM.StrictTVar (WithEarlyExit m) a) where
   showTypeOf _ = "StrictTVar (WithEarlyExit m)"
   wNoThunks ctxt tv = do
-      wNoThunks ctxt (castStrictTVar tv :: StrictTVar m a)
+      wNoThunks ctxt (StrictSTM.castStrictTVar tv :: StrictSTM.StrictTVar m a)
+
+instance NoThunks (Strict.StrictMVar m a)
+      => NoThunks (Strict.StrictMVar (WithEarlyExit m) a) where
+  showTypeOf _ = "StrictMVar (WithEarlyExit m)"
+  wNoThunks ctxt mv = do
+      wNoThunks ctxt (Strict.castStrictMVar mv :: Strict.StrictMVar m a)
 
 instance NoThunks (StrictSVar m a)
       => NoThunks (StrictSVar (WithEarlyExit m) a) where

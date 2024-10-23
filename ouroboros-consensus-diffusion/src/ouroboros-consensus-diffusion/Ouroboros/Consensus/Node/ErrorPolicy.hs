@@ -3,6 +3,8 @@
 module Ouroboros.Consensus.Node.ErrorPolicy (consensusErrorPolicy) where
 
 import           Control.Monad.Class.MonadAsync (ExceptionInLinkedThread (..))
+import           Control.ResourceRegistry (RegistryClosedException,
+                     ResourceRegistryThreadException, TempRegistryException)
 import           Data.Proxy (Proxy)
 import           Data.Time.Clock (DiffTime)
 import           Data.Typeable (Typeable)
@@ -20,9 +22,6 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.API (ImmutableDBError)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.API as ImmutableDB
 import           Ouroboros.Consensus.Storage.VolatileDB.API (VolatileDBError)
 import qualified Ouroboros.Consensus.Storage.VolatileDB.API as VolatileDB
-import           Ouroboros.Consensus.Util.ResourceRegistry
-                     (RegistryClosedException, ResourceRegistryThreadException,
-                     TempRegistryException)
 import           Ouroboros.Network.ErrorPolicy
 import           System.FS.API.Types (FsError)
 

@@ -35,6 +35,8 @@ import           Control.Monad
 import           Control.Monad.State.Strict hiding (withState)
 import           Control.RAWLock (RAWLock)
 import qualified Control.RAWLock as RAWLock
+import           Control.ResourceRegistry (WithTempRegistry, allocateTemp,
+                     modifyWithTempRegistry)
 import           Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString.Lazy as Lazy
 import           Data.List as List (foldl')
@@ -56,8 +58,6 @@ import           Ouroboros.Consensus.Storage.VolatileDB.Impl.Types
 import           Ouroboros.Consensus.Storage.VolatileDB.Impl.Util
 import           Ouroboros.Consensus.Util (whenJust)
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry (WithTempRegistry,
-                     allocateTemp, modifyWithTempRegistry)
 import           Ouroboros.Network.Block (MaxSlotNo (..))
 import           System.FS.API
 

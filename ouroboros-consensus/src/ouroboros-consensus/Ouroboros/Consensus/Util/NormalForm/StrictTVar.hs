@@ -1,4 +1,6 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -28,11 +30,11 @@ module Ouroboros.Consensus.Util.NormalForm.StrictTVar (
   , module Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked
   ) where
 
+import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked hiding
                      (checkInvariant, newTVar, newTVarIO, newTVarWithInvariant,
                      newTVarWithInvariantIO)
 import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked as Checked
-import           Control.Monad.Class.MonadSTM as StrictSTM
 import           GHC.Stack
 import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Util.NormalForm.StrictMVar
@@ -43,11 +45,11 @@ import           Ouroboros.Consensus.Util.NormalForm.StrictMVar
 -------------------------------------------------------------------------------}
 
 -- | Create a 'StrictTVar' with a 'NoThunks' invariant.
-newTVar :: (HasCallStack, MonadSTM m, NoThunks a) => a -> STM m (StrictTVar m a)
+newTVar :: (HasCallStack, StrictSTM.MonadSTM m, NoThunks a) => a -> StrictSTM.STM m (StrictTVar m a)
 newTVar = Checked.newTVarWithInvariant noThunksInvariant
 
 -- | Create an 'StrictTVar' with a 'NoThunks' invariant.
-newTVarIO :: (HasCallStack, MonadSTM m, NoThunks a) => a -> m (StrictTVar m a)
+newTVarIO :: (HasCallStack, StrictSTM.MonadSTM m, NoThunks a) => a -> m (StrictTVar m a)
 newTVarIO = Checked.newTVarWithInvariantIO noThunksInvariant
 
 -- | Create a 'StrictTVar' with a custom invariant /and/ a 'NoThunks' invariant.
@@ -55,10 +57,10 @@ newTVarIO = Checked.newTVarWithInvariantIO noThunksInvariant
 -- When both the custom and 'NoThunks' invariants are broken, only the error
 -- related to the custom invariant is reported.
 newTVarWithInvariant ::
-     (HasCallStack, MonadSTM m, NoThunks a)
+     (HasCallStack, StrictSTM.MonadSTM m, NoThunks a)
   => (a -> Maybe String)
   -> a
-  -> STM m (StrictTVar m a)
+  -> StrictSTM.STM m (StrictTVar m a)
 newTVarWithInvariant inv =
     Checked.newTVarWithInvariant (\x -> inv x <> noThunksInvariant x)
 
@@ -67,7 +69,7 @@ newTVarWithInvariant inv =
 -- When both the custom and 'NoThunks' invariants are broken, only the error
 -- related to the custom invariant is reported.
 newTVarWithInvariantIO ::
-     (HasCallStack, MonadSTM m, NoThunks a)
+     (HasCallStack, StrictSTM.MonadSTM m, NoThunks a)
   => (a -> Maybe String)
   -> a
   -> m (StrictTVar m a)
@@ -78,18 +80,14 @@ newTVarWithInvariantIO inv =
   NoThunks instance
 -------------------------------------------------------------------------------}
 
-instance NoThunks a => NoThunks (StrictTVar IO a) where
+instance NoThunks (StrictSTM.StrictTVar IO a) => NoThunks (StrictTVar IO a) where
   showTypeOf _ = "StrictTVar IO"
-  wNoThunks ctxt tv = do
-      -- We can't use @atomically $ readTVar ..@ here, as that will lead to a
-      -- "Control.Concurrent.STM.atomically was nested" exception.
-      a <- readTVarIO tv
-      noThunks ctxt a
+  wNoThunks ctxt tv = wNoThunks ctxt (Checked.unsafeToUncheckedStrictTVar tv)
 
 {-------------------------------------------------------------------------------
   Unchecked
 -------------------------------------------------------------------------------}
 
 -- | Like 'newTVarIO', but without a 'NoThunks' invariant.
-uncheckedNewTVarM :: MonadSTM m => a -> m (StrictTVar m a)
+uncheckedNewTVarM :: StrictSTM.MonadSTM m => a -> m (StrictTVar m a)
 uncheckedNewTVarM = Checked.newTVarIO

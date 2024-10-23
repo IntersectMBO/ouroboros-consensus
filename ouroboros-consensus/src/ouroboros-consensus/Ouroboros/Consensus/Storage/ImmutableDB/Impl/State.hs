@@ -27,6 +27,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.State (
 
 import           Control.Monad (unless)
 import           Control.Monad.State.Strict (StateT, lift)
+import           Control.ResourceRegistry
 import           Control.Tracer (Tracer)
 import           Data.Typeable (Typeable)
 import           GHC.Generics (Generic)
@@ -42,7 +43,6 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Types
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Util
 import           Ouroboros.Consensus.Util (SomePair (..))
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           System.FS.API
 
 {------------------------------------------------------------------------------
