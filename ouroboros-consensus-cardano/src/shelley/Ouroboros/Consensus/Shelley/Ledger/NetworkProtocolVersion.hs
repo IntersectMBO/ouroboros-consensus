@@ -43,6 +43,9 @@ data ShelleyNodeToClientVersion =
 
     -- | New queries introduced: GetFuturePParams
   | ShelleyNodeToClientVersion10
+
+    -- | New queries introduced: GetBigLedgerPeerSnapshot
+  | ShelleyNodeToClientVersion11
   deriving (Show, Eq, Ord, Enum, Bounded)
 
 instance HasNetworkProtocolVersion (ShelleyBlock proto era) where
