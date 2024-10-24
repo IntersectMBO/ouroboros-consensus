@@ -15,6 +15,7 @@ data DBAnalyserConfig = DBAnalyserConfig {
   , validation :: Maybe ValidateBlocks
   , analysis   :: AnalysisName
   , confLimit  :: Limit
+  , ldbBackend :: LedgerDBBackend
   }
 
 data AnalysisName =
@@ -46,6 +47,8 @@ newtype NumberOfBlocks = NumberOfBlocks { unNumberOfBlocks :: Word64 }
   deriving (Eq, Show, Num, Read)
 
 data Limit = Limit Int | Unlimited
+
+data LedgerDBBackend = V1InMem | V1LMDB | V2InMem
 
 -- | The extent of the ChainDB on-disk files validation. This is completely
 -- unrelated to validation of the ledger rules.

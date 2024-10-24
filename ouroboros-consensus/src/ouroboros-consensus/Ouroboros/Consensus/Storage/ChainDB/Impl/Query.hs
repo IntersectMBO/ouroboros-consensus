@@ -9,12 +9,17 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query (
     -- * Queries
     getBlockComponent
   , getCurrentChain
+  , getCurrentLedger
   , getHeaderStateHistory
+  , getImmutableLedger
   , getIsFetched
   , getIsInvalidBlock
   , getIsValid
-  , getLedgerDB
+  , getLedgerTablesAtFor
   , getMaxSlotNo
+  , getPastLedger
+  , getReadOnlyForkerAtPoint
+  , getStatistics
   , getTipBlock
   , getTipHeader
   , getTipPoint
@@ -24,23 +29,22 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query (
   , getAnyKnownBlockComponent
   ) where
 
+import           Control.ResourceRegistry (ResourceRegistry)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
-import           Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
-import           Ouroboros.Consensus.HeaderStateHistory
-                     (HeaderStateHistory (..), mkHeaderStateWithTimeFromSummary)
-import           Ouroboros.Consensus.HeaderValidation (HasAnnTip)
-import           Ouroboros.Consensus.Ledger.Abstract (IsLedger, LedgerState)
-import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.HeaderStateHistory (HeaderStateHistory)
+import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.API (BlockComponent (..),
                      ChainDbFailure (..), InvalidBlockReason)
-import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB as LgrDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
+import           Ouroboros.Consensus.Storage.LedgerDB (GetForkerError,
+                     ReadOnlyForker', Statistics)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -50,6 +54,7 @@ import           Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (MaxSlotNo, maxSlotNoFromWithOrigin)
+import           Ouroboros.Network.Protocol.LocalStateQuery.Type
 
 -- | Return the last @k@ headers.
 --
@@ -79,35 +84,10 @@ getCurrentChain CDB{..} =
   where
     SecurityParam k = configSecurityParam cdbTopLevelConfig
 
-getLedgerDB ::
-     IOLike m
-  => ChainDbEnv m blk -> STM m (LgrDB.LedgerDB' blk)
-getLedgerDB CDB{..} = LgrDB.getCurrent cdbLgrDB
-
 -- | Get a 'HeaderStateHistory' populated with the 'HeaderState's of the
 -- last @k@ blocks of the current chain.
-getHeaderStateHistory ::
-     forall m blk.
-     ( IOLike m
-     , HasHardForkHistory blk
-     , HasAnnTip blk
-     , IsLedger (LedgerState blk)
-     )
-  => ChainDbEnv m blk -> STM m (HeaderStateHistory blk)
-getHeaderStateHistory cdb@CDB{cdbTopLevelConfig = cfg} = do
-    ledgerDb <- getLedgerDB cdb
-    let currentLedgerState = ledgerState $ LedgerDB.ledgerDbCurrent ledgerDb
-        -- This summary can convert all tip slots of the ledger states in the
-        -- @ledgerDb@ as these are not newer than the tip slot of the current
-        -- ledger state (Property 17.1 in the Consensus report).
-        summary = hardForkSummary (configLedger cfg) currentLedgerState
-        mkHeaderStateWithTime' =
-              mkHeaderStateWithTimeFromSummary summary
-            . headerState
-    pure
-      . HeaderStateHistory
-      . LedgerDB.ledgerDbBimap mkHeaderStateWithTime' mkHeaderStateWithTime'
-      $ ledgerDb
+getHeaderStateHistory :: ChainDbEnv m blk -> STM m (HeaderStateHistory blk)
+getHeaderStateHistory = LedgerDB.getHeaderStateHistory . cdbLedgerDB
 
 getTipBlock ::
      forall m blk.
@@ -135,8 +115,8 @@ getTipHeader CDB{..} = do
     anchorOrHdr <- AF.head <$> atomically (readTVar cdbChain)
     case anchorOrHdr of
       Right hdr   -> return $ Just hdr
-      Left anchor ->
-        case pointToWithOriginRealPoint (castPoint (AF.anchorToPoint anchor)) of
+      Left anch ->
+        case pointToWithOriginRealPoint (castPoint (AF.anchorToPoint anch)) of
           Origin      -> return Nothing
           NotOrigin p ->
             -- In this case, the fragment is empty but the anchor point is not
@@ -151,7 +131,7 @@ getTipPoint ::
      forall m blk. (IOLike m, HasHeader (Header blk))
   => ChainDbEnv m blk -> STM m (Point blk)
 getTipPoint CDB{..} =
-    (castPoint . AF.headPoint) <$> readTVar cdbChain
+    castPoint . AF.headPoint <$> readTVar cdbChain
 
 getBlockComponent ::
      forall m blk b. IOLike m
@@ -186,7 +166,7 @@ getIsValid ::
   => ChainDbEnv m blk
   -> STM m (RealPoint blk -> Maybe Bool)
 getIsValid CDB{..} = do
-    prevApplied <- LgrDB.getPrevApplied cdbLgrDB
+    prevApplied <- LedgerDB.getPrevApplied cdbLedgerDB
     invalid     <- forgetFingerprint <$> readTVar cdbInvalid
     return $ \pt@(RealPoint _ hash) ->
       -- Blocks from the future that were valid according to the ledger but
@@ -213,6 +193,46 @@ getMaxSlotNo CDB{..} = do
                      <$> readTVar cdbChain
     volatileDbMaxSlotNo    <- VolatileDB.getMaxSlotNo cdbVolatileDB
     return $ curChainMaxSlotNo `max` volatileDbMaxSlotNo
+
+-- | Get current ledger
+getCurrentLedger :: ChainDbEnv m blk -> STM m (ExtLedgerState blk EmptyMK)
+getCurrentLedger CDB{..} = LedgerDB.getVolatileTip cdbLedgerDB
+
+-- | Get the immutable ledger, i.e., typically @k@ blocks back.
+getImmutableLedger :: ChainDbEnv m blk -> STM m (ExtLedgerState blk EmptyMK)
+getImmutableLedger CDB{..} = LedgerDB.getImmutableTip cdbLedgerDB
+
+-- | Get the ledger for the given point.
+--
+-- When the given point is not among the last @k@ blocks of the current
+-- chain (i.e., older than @k@ or not on the current chain), 'Nothing' is
+-- returned.
+getPastLedger ::
+     ChainDbEnv m blk
+  -> Point blk
+  -> STM m (Maybe (ExtLedgerState blk EmptyMK))
+getPastLedger CDB{..} = LedgerDB.getPastLedgerState cdbLedgerDB
+
+getReadOnlyForkerAtPoint ::
+     IOLike m
+  => ChainDbEnv m blk
+  -> ResourceRegistry m
+  -> Target (Point blk)
+  -> m (Either GetForkerError (ReadOnlyForker' m blk))
+getReadOnlyForkerAtPoint CDB{..} = LedgerDB.getReadOnlyForker cdbLedgerDB
+
+getLedgerTablesAtFor ::
+     IOLike m
+  => ChainDbEnv m blk
+  -> Point blk
+  -> LedgerTables (ExtLedgerState blk) KeysMK
+  -> m (Maybe (LedgerTables (ExtLedgerState blk) ValuesMK))
+getLedgerTablesAtFor =
+      (\ldb pt ks -> eitherToMaybe <$> LedgerDB.readLedgerTablesAtFor ldb pt ks)
+    . cdbLedgerDB
+
+getStatistics :: IOLike m => ChainDbEnv m blk -> m (Maybe Statistics)
+getStatistics CDB{..} = LedgerDB.getTipStatistics cdbLedgerDB
 
 {-------------------------------------------------------------------------------
   Unifying interface over the immutable DB and volatile DB, but independent
@@ -301,4 +321,4 @@ getAnyBlockComponent immutableDB volatileDB blockComponent p = do
 
 mustExist :: RealPoint blk -> Maybe b -> Either (ChainDbFailure blk) b
 mustExist p Nothing  = Left  $ ChainDbMissingBlock p
-mustExist _ (Just b) = Right $ b
+mustExist _ (Just b) = Right b
