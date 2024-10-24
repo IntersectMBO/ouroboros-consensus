@@ -15,6 +15,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Iterator (
   , streamImpl
   ) where
 
+import qualified Debug.Trace as TR
 import           Cardano.Prelude (forceElemsToWHNF)
 import qualified Codec.CBOR.Read as CBOR
 import           Control.Monad (unless, void, when)
@@ -504,10 +505,13 @@ iteratorStateForChunk hasFS index registry
                       chunk secondaryOffset firstIsEBB = do
     -- Open the chunk file. Allocate the handle in the registry so that it
     -- will be closed in case of an exception.
+    TR.traceM $ "Iterator opening " <> show (fsPathChunkFile chunk)
     (key, eHnd) <- allocate
       registry
       (\_key -> hOpen (fsPathChunkFile chunk) ReadMode)
-      hClose
+      (\xxx -> do
+          TR.traceM $ "Iterator closing " <> show (fsPathChunkFile chunk)
+          hClose xxx)
 
     -- If the last entry in @entries@ corresponds to the last block in the
     -- chunk, we cannot calculate the block size based on the next block.

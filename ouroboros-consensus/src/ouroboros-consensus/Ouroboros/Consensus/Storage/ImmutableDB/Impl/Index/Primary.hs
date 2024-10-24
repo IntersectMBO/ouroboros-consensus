@@ -45,6 +45,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index.Primary (
   , toSecondaryOffsets
   ) where
 
+import qualified Debug.Trace as TR
 import           Control.Exception (assert)
 import           Control.Monad
 import           Data.Binary (Get, Put)
@@ -400,6 +401,7 @@ open ::
 open hasFS@HasFS { hOpen, hClose } chunk allowExisting = do
     -- TODO we rely on the fact that if the file exists, it already contains
     -- the version number and the first offset. What if that is not the case?
+    TR.traceM $ "open open open " <> show primaryIndexFile
     pHnd <- hOpen primaryIndexFile (AppendMode allowExisting)
     flip onException (hClose pHnd) $ do
       case allowExisting of

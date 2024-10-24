@@ -889,7 +889,7 @@ prop_simple_real_pbft_convergence TestSetup
       , pgaTestConfig          = testConfig
       , pgaTestConfigB         = testConfigB
       }
-      testOutput .&&.
+      testOutput tr .&&.
     prop_pvu .&&.
     prop_svu .&&.
     not (all (Chain.null . snd) finalChains) .&&.
@@ -917,7 +917,8 @@ prop_simple_real_pbft_convergence TestSetup
       , version      = version
       }
 
-    testOutput =
+
+    (testOutput, tr) =
         runTestNetwork testConfig testConfigB TestConfigMB
             { nodeInfo = \nid ->
                 mkProtocolByronAndHardForkTxs

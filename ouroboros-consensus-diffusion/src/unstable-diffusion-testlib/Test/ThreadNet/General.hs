@@ -34,7 +34,8 @@ module Test.ThreadNet.General (
 
 import           Control.Exception (assert)
 import           Control.Monad (guard)
-import           Control.Monad.IOSim (runSimOrThrow, setCurrentTime)
+import           Control.Monad.IOSim (setCurrentTime, SimTrace, ppTrace_,
+                                      runSimTrace, traceResult)
 import           Control.Tracer (nullTracer)
 import qualified Data.Map.Strict as Map
 import           Data.Set (Set)
@@ -207,7 +208,7 @@ runTestNetwork ::
   => TestConfig
   -> TestConfigB blk
   -> (forall m. IOLike m => TestConfigMB m blk)
-  -> TestOutput blk
+  -> (TestOutput blk, SimTrace (TestOutput blk))
 runTestNetwork TestConfig
   { numCoreNodes
   , numSlots
@@ -223,7 +224,12 @@ runTestNetwork TestConfig
   , version = (networkVersion, blockVersion)
   }
     mkTestConfigMB
-  = runSimOrThrow $ do
+  = case traceResult False tr of
+                   Left{} -> error "Blah"
+                   Right v -> (v, tr)
+
+  where
+   tr = runSimTrace $ do
     setCurrentTime dawnOfTime
     let TestConfigMB
           { nodeInfo
@@ -402,7 +408,7 @@ noExpectedCannotForges _ _ _ = False
 -- Specific tests make additional assumptions, eg the @Byron@ tests make
 -- assumptions about delegation certificates, update proposals, etc.
 prop_general ::
-  forall blk.
+  forall blk a.
      ( Condense blk
      , Condense (HeaderHash blk)
      , Eq blk
@@ -410,6 +416,7 @@ prop_general ::
      )
   => PropGeneralArgs blk
   -> TestOutput blk
+  -> SimTrace a
   -> Property
 prop_general = prop_general_internal Sync
 
@@ -430,7 +437,7 @@ data Synchronicity = SemiSync | Sync
 --
 -- For now, this simply disables a few 'Property's that depend on synchrony.
 prop_general_semisync ::
-  forall blk.
+  forall blk a .
      ( Condense blk
      , Condense (HeaderHash blk)
      , Eq blk
@@ -438,11 +445,12 @@ prop_general_semisync ::
      )
   => PropGeneralArgs blk
   -> TestOutput blk
+  -> SimTrace a
   -> Property
 prop_general_semisync = prop_general_internal SemiSync
 
 prop_general_internal ::
-  forall blk.
+  forall blk a.
      ( Condense blk
      , Condense (HeaderHash blk)
      , Eq blk
@@ -451,8 +459,9 @@ prop_general_internal ::
   => Synchronicity
   -> PropGeneralArgs blk
   -> TestOutput blk
+  -> SimTrace a
   -> Property
-prop_general_internal syncity pga testOutput =
+prop_general_internal syncity pga testOutput tr =
     counterexample ("nodeChains: " <> nodeChainsString) $
     counterexample ("nodeJoinPlan: " <> condense nodeJoinPlan) $
     counterexample ("nodeRestarts: " <> condense nodeRestarts) $
@@ -472,6 +481,7 @@ prop_general_internal syncity pga testOutput =
     tabulate "involves >=1 re-delegation" [show hasNodeRekey] $
     tabulate "average #txs/block" [show (range averageNumTxs)] $
     tabulate "updates" [unlines ("" : map (\x -> "  " <> condense x) (Map.toList nodeUpdates))] $
+    counterexample (ppTrace_ tr) $
     prop_no_BlockRejections .&&.
     prop_no_unexpected_CannotForges .&&.
     prop_no_invalid_blocks .&&.
@@ -641,7 +651,8 @@ prop_general_internal syncity pga testOutput =
       where
         checkLeak dbName fs = counterexample
           ("Node " <> show nid <> "'s " <> dbName <> " is leaking file handles")
-          (Mock.numOpenHandles fs === 0)
+          (counterexample (show (Mock.openHandles fs)) $
+          (Mock.numOpenHandles fs === 0))
 
     -- in which quarter of the simulation does the last node join?
     lastJoinSlot :: Maybe Word64
@@ -676,7 +687,7 @@ prop_general_internal syncity pga testOutput =
                 ]
       where
         -- all pairs @(x, y)@ where @x@ precedes @y@ in the given list
-        orderedPairs :: [a] -> [(a, a)]
+        orderedPairs :: [b] -> [(b, b)]
         orderedPairs = \case
             []   -> []
             x:ys -> foldr ((:) . (,) x) (orderedPairs ys) ys

@@ -25,6 +25,7 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.State (
   , withOpenState
   ) where
 
+import qualified Debug.Trace as TR
 import           Control.Monad (unless)
 import           Control.Monad.State.Strict (StateT, lift)
 import           Control.ResourceRegistry
@@ -106,7 +107,8 @@ mkOpenState ::
   -> AllowExisting
   -> WithTempRegistry (OpenState m blk h) m (OpenState m blk h)
 mkOpenState hasFS@HasFS{..} index chunk tip existing = do
-    eHnd <- allocateHandle currentChunkHandle     $ hOpen (fsPathChunkFile          chunk) appendMode
+    TR.traceM $ "mkOpenState opening: " <> show (fsPathChunkFile          chunk)
+    eHnd <- allocateHandle' currentChunkHandle     $ hOpen (fsPathChunkFile          chunk) appendMode
     pHnd <- allocateHandle currentPrimaryHandle   $ Index.openPrimaryIndex index    chunk  existing
     sHnd <- allocateHandle currentSecondaryHandle $ hOpen (fsPathSecondaryIndexFile chunk) appendMode
     chunkOffset     <- lift $ hGetSize eHnd
@@ -132,6 +134,18 @@ mkOpenState hasFS@HasFS{..} index chunk tip existing = do
       -- To check whether the handle made it in the final state, we check for
       -- equality.
       allocateTemp open (hClose' hasFS) ((==) . getHandle)
+
+    allocateHandle'
+      :: (OpenState m blk h -> Handle h)
+      -> m (Handle h)
+      -> WithTempRegistry (OpenState m blk h) m (Handle h)
+    allocateHandle' getHandle open =
+      -- To check whether the handle made it in the final state, we check for
+      -- equality.
+      allocateTemp open (\xxx -> do
+                            TR.traceM $ "mkOpenState closing: " <> show (fsPathChunkFile          chunk)
+                            hClose' hasFS xxx) ((==) . getHandle)
+
 
 -- | Get the 'OpenState' of the given database, throw a 'ClosedDBError' in
 -- case it is closed.
@@ -282,5 +296,6 @@ closeOpenHandles HasFS { hClose } OpenState {..}  = do
 -- shut down its background thread)
 cleanUp :: Monad m => HasFS m h -> OpenState m blk h -> m ()
 cleanUp hasFS ost@OpenState {..}  = do
+    TR.traceM "Cleanup!"
     Index.close currentIndex
     closeOpenHandles hasFS ost

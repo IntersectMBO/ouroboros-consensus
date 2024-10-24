@@ -30,7 +30,7 @@ module Ouroboros.Consensus.Storage.VolatileDB.Impl.State (
   , withOpenState
   , writeOpenState
   ) where
-
+import qualified Debug.Trace as TR
 import           Control.Monad
 import           Control.Monad.State.Strict hiding (withState)
 import           Control.RAWLock (RAWLock)
@@ -378,11 +378,13 @@ mkOpenStateHelper ccfg hasFS checkIntegrity validationPolicy tracer maxBlocksPer
             -> (lastWriteId, currentMap')
 
     let currentWritePath = filePath currentWriteId
-
+    TR.traceM $ "Opening " <> show currentWritePath
     currentWriteHandle <-
       allocateTemp
         (hOpen   hasFS currentWritePath (AppendMode AllowExisting))
-        (hClose' hasFS)
+        (\xxx -> do
+            TR.traceM $ "Closing " <> show currentWritePath
+            hClose' hasFS xxx)
         ((==) . currentWriteHandle)
     currentWriteOffset <- lift $ hGetSize hasFS currentWriteHandle
 

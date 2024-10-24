@@ -25,6 +25,7 @@ packages:
   ouroboros-consensus-diffusion
   sop-extras
   strict-sop-core
+  ../fs-sim/fs-sim
 
 -- We want to always build the test-suites and benchmarks
 tests: true
@@ -47,3 +48,10 @@ if(os(windows))
 
 -- https://github.com/ulidtko/cabal-doctest/issues/85
 constraints: Cabal < 3.13
+
+-- source-repository-package
+--    type: git
+--    location: https://github.com/input-output-hk/fs-sim
+--    subdir:
+--      fs-sim
+--    tag: 2d85d65814f4573270bb0c30a0d0bde6e9209a9b
