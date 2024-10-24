@@ -26,11 +26,9 @@ import           GHC.Generics (Generic)
 import           NoThunks.Class
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Protocol.Abstract
-import           Ouroboros.Consensus.Shelley.Eras (isBeforeConway)
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Protocol ()
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract
-import           Ouroboros.Consensus.Util
 
 -- | Hot block issuer identity for the purpose of Shelley block diffusion
 -- pipelining.
@@ -47,9 +45,7 @@ data HotIdentity c = HotIdentity {
   deriving anyclass (NoThunks)
 
 data ShelleyTentativeHeaderState proto =
-    -- | Legacy state, can be removed once mainnet is in Conway.
-    LegacyShelleyTentativeHeaderState !(SelectViewTentativeState proto)
-  | ShelleyTentativeHeaderState
+    ShelleyTentativeHeaderState
       -- | The block number of the last trap tentative header.
       !(WithOrigin BlockNo)
       -- | The set of all hot identies of those who issued trap tentative
@@ -68,25 +64,14 @@ data ShelleyTentativeHeaderState proto =
   deriving anyclass (NoThunks)
 
 data ShelleyTentativeHeaderView proto =
-    -- | Legacy state, can be removed once mainnet is in Conway.
-    LegacyShelleyTentativeHeaderView (SelectView proto)
-  | ShelleyTentativeHeaderView BlockNo (HotIdentity (ProtoCrypto proto))
+    ShelleyTentativeHeaderView BlockNo (HotIdentity (ProtoCrypto proto))
 
 deriving stock instance ConsensusProtocol proto => Show (ShelleyTentativeHeaderView proto)
 deriving stock instance ConsensusProtocol proto => Eq   (ShelleyTentativeHeaderView proto)
 
--- | This is currently a hybrid instance:
---
---  - For eras before Conway, this uses the logic from
---    'SelectViewDiffusionPipelining' for backwards-compatibility.
---
---  - For all eras since Conway, this uses a new scheme: A header can be
---    pipelined iff no trap header with the same block number and by the same
---    issuer was pipelined before. See 'HotIdentity' for what exactly we use for
---    the issuer identity.
---
--- Once mainnet has transitioned to Conway, we can remove the pre-Conway logic
--- here.
+-- | A header can be pipelined iff no trap header with the same block number and
+-- by the same issuer was pipelined before. See 'HotIdentity' for what exactly
+-- we use for the issuer identity.
 instance
   ( ShelleyCompatible proto era
   , BlockSupportsProtocol (ShelleyBlock proto era)
@@ -97,32 +82,18 @@ instance
   type TentativeHeaderView (ShelleyBlock proto era) =
     ShelleyTentativeHeaderView proto
 
-  initialTentativeHeaderState _
-    | isBeforeConway (Proxy @era)
-    = LegacyShelleyTentativeHeaderState NoLastInvalidSelectView
-    | otherwise
-    = ShelleyTentativeHeaderState Origin Set.empty
+  initialTentativeHeaderState _ =
+      ShelleyTentativeHeaderState Origin Set.empty
 
-  tentativeHeaderView
-    | isBeforeConway (Proxy @era)
-    = LegacyShelleyTentativeHeaderView .: selectView
-    | otherwise
-    = \_bcfg hdr@(ShelleyHeader sph _) ->
-        ShelleyTentativeHeaderView (blockNo hdr) HotIdentity {
-            hiIssuer  = SL.hashKey $ pHeaderIssuer sph
-          , hiIssueNo = pHeaderIssueNo sph
-          }
+  tentativeHeaderView _bcfg hdr@(ShelleyHeader sph _) =
+      ShelleyTentativeHeaderView (blockNo hdr) HotIdentity {
+          hiIssuer  = SL.hashKey $ pHeaderIssuer sph
+        , hiIssueNo = pHeaderIssueNo sph
+        }
 
-  applyTentativeHeaderView _ thv st
-    | LegacyShelleyTentativeHeaderView thv' <- thv
-    , LegacyShelleyTentativeHeaderState st' <- st
-    = LegacyShelleyTentativeHeaderState <$>
-        applyTentativeHeaderView
-          (Proxy @(SelectViewDiffusionPipelining (ShelleyBlock proto era)))
-          thv'
-          st'
-    | ShelleyTentativeHeaderView bno hdrIdentity <- thv
-    , ShelleyTentativeHeaderState lastBlockNo badIdentities <- st
+  applyTentativeHeaderView _
+    (ShelleyTentativeHeaderView bno hdrIdentity)
+    (ShelleyTentativeHeaderState lastBlockNo badIdentities)
     = case compare (NotOrigin bno) lastBlockNo of
         LT -> Nothing
         EQ -> do
@@ -134,6 +105,3 @@ instance
           Just $ ShelleyTentativeHeaderState
             (NotOrigin bno)
             (Set.singleton hdrIdentity)
-    -- Inconsistent tentative header view vs state. This case can be removed
-    -- once mainnet has transitioned to Conway.
-    | otherwise = error "impossible"

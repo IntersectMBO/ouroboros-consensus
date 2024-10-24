@@ -75,28 +75,21 @@ instance GenTentativeHeaderViews ByronBlock where
         pure $ PBftSelectView bno isEBB
 
 instance ShelleyCompatible proto era => GenTentativeHeaderViews (ShelleyBlock proto era) where
-  genTentativeHeaderViews _
-    | isBeforeConway (Proxy @era)
-    -- TODO These tests will reveal that the current chain order is
-    -- non-transitive. We could fix that easily, but it seems like a
-    -- distraction, and this case can be removed once we remove support for the
-    -- legacy pipelining scheme.
-    = pure []
-    | otherwise = do
-        bnos          <- nubOrd <$> orderedList
-        issuerHashes  <- nubOrd <$> replicateM numIssuers arbitrary
-        hotIdentities <- concat <$> for issuerHashes \issuerHash -> do
-          -- Due to the constraints placed by the OCERT rule on how the issue
-          -- number can evolve, the number of issue numbers per block number and
-          -- issuer (cold) identity is bounded. Note that we don't actually
-          -- enforce those exact constraints here across different block numbers
-          -- as their details are not relevant for this test.
-          numIssueNos <- elements [1, 2]
-          issueNos    <- take numIssueNos . iterate succ <$> arbitrary
-          pure $ HotIdentity issuerHash <$> issueNos
-        concat <$> for bnos \bno -> do
-          hotIds <- shuffle =<< sublistOf hotIdentities
-          pure $ ShelleyTentativeHeaderView bno <$> hotIds
+  genTentativeHeaderViews _ = do
+      bnos          <- nubOrd <$> orderedList
+      issuerHashes  <- nubOrd <$> replicateM numIssuers arbitrary
+      hotIdentities <- concat <$> for issuerHashes \issuerHash -> do
+        -- Due to the constraints placed by the OCERT rule on how the issue
+        -- number can evolve, the number of issue numbers per block number and
+        -- issuer (cold) identity is bounded. Note that we don't actually
+        -- enforce those exact constraints here across different block numbers
+        -- as their details are not relevant for this test.
+        numIssueNos <- elements [1, 2]
+        issueNos    <- take numIssueNos . iterate succ <$> arbitrary
+        pure $ HotIdentity issuerHash <$> issueNos
+      concat <$> for bnos \bno -> do
+        hotIds <- shuffle =<< sublistOf hotIdentities
+        pure $ ShelleyTentativeHeaderView bno <$> hotIds
     where
       -- Upper bound on the number of issuer identities
       numIssuers = 5
