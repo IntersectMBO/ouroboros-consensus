@@ -35,6 +35,8 @@ in
 
   cabal-gild = tool "cabal-gild" "1.5.0.1" { };
 
+  hlint = tool "hlint" "3.8" { };
+
   haskellBuildUtils = prev.haskellBuildUtils.override {
     inherit (final.hsPkgs.args) compiler-nix-name;
     index-state = tool-index-state;

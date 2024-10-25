@@ -24,17 +24,29 @@ let
       echo $EXIT_CODE > $out
     fi
   '';
-  formatting = {
+  formattingLinting = {
     stylish = checkFormatting pkgs.stylish-haskell ../scripts/ci/run-stylish.sh;
     cabal-gild = checkFormatting pkgs.cabal-gild ../scripts/ci/run-cabal-gild.sh;
     nixpkgs-fmt = checkFormatting pkgs.nixpkgs-fmt ../scripts/ci/run-nixpkgs-fmt.sh;
     dos2unix = checkFormatting pkgs.dos2unix ../scripts/ci/run-dos2unix.sh;
+    hlint = pkgs.runCommand "hlint"
+      {
+        buildInputs = [ pkgs.hlint ];
+        src = ../.;
+      } ''
+      unpackPhase
+      cd $sourceRoot
+
+      hlint -j .
+
+      touch $out
+    '';
   };
 in
-formatting // {
+formattingLinting // {
   all = pkgs.releaseTools.aggregate {
     name = "consensus-formatting";
-    meta.description = "Run all formatters";
-    constituents = lib.collect lib.isDerivation formatting;
+    meta.description = "Run all formatters and linters";
+    constituents = lib.collect lib.isDerivation formattingLinting;
   };
 }

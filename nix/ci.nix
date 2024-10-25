@@ -39,7 +39,7 @@ let
     native = {
       haskell96 = mkHaskellJobsFor pkgs.hsPkgs;
     } // lib.optionalAttrs (buildSystem == "x86_64-linux") {
-      formatting = import ./formatting.nix pkgs;
+      formattingLinting = import ./formatting-linting.nix pkgs;
       inherit (pkgs) consensus-pdfs agda-spec;
 
       # ensure we can still build on 8.10, can be removed soon

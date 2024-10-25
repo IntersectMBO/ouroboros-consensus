@@ -12,6 +12,7 @@ hsPkgs.shellFor {
     pkgs.stylish-haskell
     pkgs.dos2unix
     pkgs.cabal-gild
+    pkgs.hlint
     pkgs.cabal-hoogle
     pkgs.ghcid
 
