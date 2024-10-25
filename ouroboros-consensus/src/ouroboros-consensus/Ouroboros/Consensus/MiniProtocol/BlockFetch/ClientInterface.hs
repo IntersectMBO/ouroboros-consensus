@@ -310,7 +310,6 @@ mkBlockFetchConsensusInterface
       | AF.anchorBlockNo cand < AF.anchorBlockNo ours  -- (4)
       = case (AF.null ours, AF.null cand) of
           -- Both are non-empty, the precondition trivially holds.
-          -- FIXME: change the type once we adapt the code to the changes in BlockFetchConsensusInterface
           (False, False) -> preferAnchoredCandidate bcfg ours cand
           -- The candidate is shorter than our chain and, worse, we'd have to
           -- roll back past our immutable tip (the anchor of @cand@).
@@ -348,7 +347,6 @@ mkBlockFetchConsensusInterface
       -- unlikely, we chose no to include a case for EBBs here because it would
       -- complicate the code.
       | otherwise
-      -- FIXME: change the type once we adapt the code to the changes in BlockFetchConsensusInterface
       = preferAnchoredCandidate bcfg ours cand
 
     compareCandidateChains :: AnchoredFragment (HeaderWithTime blk)
