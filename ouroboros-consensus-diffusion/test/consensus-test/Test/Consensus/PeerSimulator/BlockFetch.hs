@@ -78,7 +78,7 @@ startBlockFetchLogic ::
   => ResourceRegistry m
   -> Tracer m (TraceEvent TestBlock)
   -> ChainDB m TestBlock
-  -> FetchClientRegistry PeerId (Header TestBlock) TestBlock m
+  -> FetchClientRegistry PeerId (HeaderWithTime TestBlock) TestBlock m
   -> STM m (Map PeerId (AnchoredFragment (HeaderWithTime TestBlock)))
   -> m ()
 startBlockFetchLogic registry tracer chainDb fetchClientRegistry getCandidates = do
@@ -130,10 +130,10 @@ startBlockFetchLogic registry tracer chainDb fetchClientRegistry getCandidates =
     decisionTracer = TraceOther . ("BlockFetchLogic | " ++) . show >$< tracer
 
 startKeepAliveThread ::
-     forall m peer blk.
+     forall m peer blk header.
      (Ord peer, IOLike m)
   => ResourceRegistry m
-  -> FetchClientRegistry peer (Header blk) blk m
+  -> FetchClientRegistry peer (header blk) blk m
   -> peer
   -> m ()
 startKeepAliveThread registry fetchClientRegistry peerId =
@@ -147,7 +147,7 @@ runBlockFetchClient ::
   -> PeerId
   -> BlockFetchTimeout
   -> StateViewTracers blk m
-  -> FetchClientRegistry PeerId (Header blk) blk m
+  -> FetchClientRegistry PeerId (HeaderWithTime blk) blk m
   -> ControlMessageSTM m
   -> Channel m (AnyMessage (BlockFetch blk (Point blk)))
      -- ^ Send and receive message via the given 'Channel'.

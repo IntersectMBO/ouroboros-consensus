@@ -22,6 +22,7 @@ import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import           Ouroboros.Consensus.Genesis.Governor (gddWatcher)
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -140,7 +141,7 @@ startChainSyncConnectionThread ::
   Tracer m (TraceEvent blk) ->
   TopLevelConfig blk ->
   ChainDbView m blk ->
-  FetchClientRegistry PeerId (Header blk) blk m ->
+  FetchClientRegistry PeerId (HeaderWithTime blk) blk m ->
   SharedResources m blk ->
   ChainSyncResources m blk ->
   ChainSyncTimeout ->
@@ -180,7 +181,7 @@ startBlockFetchConnectionThread ::
   ResourceRegistry m ->
   Tracer m (TraceEvent blk) ->
   StateViewTracers blk m ->
-  FetchClientRegistry PeerId (Header blk) blk m ->
+  FetchClientRegistry PeerId (HeaderWithTime blk) blk m ->
   ControlMessageSTM m ->
   SharedResources m blk ->
   BlockFetchResources m blk ->

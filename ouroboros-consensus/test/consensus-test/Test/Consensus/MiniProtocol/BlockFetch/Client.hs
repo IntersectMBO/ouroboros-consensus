@@ -38,6 +38,7 @@ import           Network.TypedProtocol.Core (PeerRole (..))
 import qualified Network.TypedProtocol.Driver.Simple as Driver
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -276,7 +277,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
     mkTestBlockFetchConsensusInterface ::
          STM m (Map PeerId (AnchoredFragment (Header TestBlock)))
       -> BlockFetchClientInterface.ChainDbView m TestBlock
-      -> BlockFetchConsensusInterface PeerId (Header TestBlock) TestBlock m
+      -> BlockFetchConsensusInterface PeerId (HeaderWithTime TestBlock) TestBlock m
     mkTestBlockFetchConsensusInterface getCandidates chainDbView =
         BlockFetchClientInterface.mkBlockFetchConsensusInterface
           (TestBlockConfig numCoreNodes)

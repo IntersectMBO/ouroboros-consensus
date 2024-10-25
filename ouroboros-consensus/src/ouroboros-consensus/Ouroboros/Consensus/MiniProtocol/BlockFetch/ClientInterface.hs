@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -180,20 +181,33 @@ mkBlockFetchConsensusInterface ::
      -- ^ Slot forge time, see 'headerForgeUTCTime' and 'blockForgeUTCTime'.
   -> STM m FetchMode
      -- ^ See 'readFetchMode'.
-  -> BlockFetchConsensusInterface peer (Header blk) blk m
+  -> BlockFetchConsensusInterface peer (HeaderWithTime blk) blk m
 mkBlockFetchConsensusInterface
   bcfg chainDB getCandidates blockFetchSize slotForgeTime readFetchMode =
-    BlockFetchConsensusInterface {..}
+    BlockFetchConsensusInterface {
+        readCandidateChains
+      , readCurrentChain
+      , readFetchMode
+      , readFetchedBlocks
+      , mkAddFetchedBlock
+      , readFetchedMaxSlotNo
+      , plausibleCandidateChain
+      , compareCandidateChains
+      , blockFetchSize =  blockFetchSize . hwtHeader
+      , blockMatchesHeader
+      , headerForgeUTCTime
+      , blockForgeUTCTime
+    }
   where
-    blockMatchesHeader :: Header blk -> blk -> Bool
-    blockMatchesHeader = Block.blockMatchesHeader
+    blockMatchesHeader :: HeaderWithTime blk -> blk -> Bool
+    blockMatchesHeader hwt b = Block.blockMatchesHeader (hwtHeader hwt) b
 
-    readCandidateChains :: STM m (Map peer (AnchoredFragment (Header blk)))
-    readCandidateChains = undefined getCandidates
-       -- REVIWE: Should we change the 'BlockFetchConsensusInterface' s that 'readCandidateChains' return 'HeaderWithTime'?
+    readCandidateChains :: STM m (Map peer (AnchoredFragment (HeaderWithTime blk)))
+    readCandidateChains = getCandidates
 
-    readCurrentChain :: STM m (AnchoredFragment (Header blk))
-    readCurrentChain = getCurrentChain chainDB
+    readCurrentChain :: STM m (AnchoredFragment (HeaderWithTime blk))
+    -- FIXME: change the type once we adapt the code to the changes in BlockFetchConsensusInterface
+    readCurrentChain = undefined (getCurrentChain chainDB)
 
     readFetchedBlocks :: STM m (Point blk -> Bool)
     readFetchedBlocks = getIsFetched chainDB
@@ -273,8 +287,8 @@ mkBlockFetchConsensusInterface
     -- fragment, by the time the block fetch download logic considers the
     -- fragment, our current chain might have changed.
     plausibleCandidateChain :: HasCallStack
-                            => AnchoredFragment (Header blk)
-                            -> AnchoredFragment (Header blk)
+                            => AnchoredFragment (HeaderWithTime blk)
+                            -> AnchoredFragment (HeaderWithTime blk)
                             -> Bool
     plausibleCandidateChain ours cand
       -- 1. The ChainDB maintains the invariant that the anchor of our fragment
@@ -296,7 +310,8 @@ mkBlockFetchConsensusInterface
       | AF.anchorBlockNo cand < AF.anchorBlockNo ours  -- (4)
       = case (AF.null ours, AF.null cand) of
           -- Both are non-empty, the precondition trivially holds.
-          (False, False) -> preferAnchoredCandidate bcfg ours cand
+          -- FIXME: change the type once we adapt the code to the changes in BlockFetchConsensusInterface
+          (False, False) -> preferAnchoredCandidate bcfg (undefined ours) (undefined cand)
           -- The candidate is shorter than our chain and, worse, we'd have to
           -- roll back past our immutable tip (the anchor of @cand@).
           (_,     True)  -> False
@@ -333,12 +348,15 @@ mkBlockFetchConsensusInterface
       -- unlikely, we chose no to include a case for EBBs here because it would
       -- complicate the code.
       | otherwise
-      = preferAnchoredCandidate bcfg ours cand
+      -- FIXME: change the type once we adapt the code to the changes in BlockFetchConsensusInterface
+      = undefined -- (preferAnchoredCandidate bcfg ours cand)
 
-    compareCandidateChains :: AnchoredFragment (Header blk)
-                           -> AnchoredFragment (Header blk)
+    compareCandidateChains :: AnchoredFragment (HeaderWithTime blk)
+                           -> AnchoredFragment (HeaderWithTime blk)
                            -> Ordering
-    compareCandidateChains = compareAnchoredFragments bcfg
+    -- FIXME: change the type once we adapt the code to the changes in BlockFetchConsensusInterface
+    compareCandidateChains = undefined (compareAnchoredFragments bcfg)
 
-    headerForgeUTCTime = slotForgeTime . headerRealPoint . unFromConsensus
+
+    headerForgeUTCTime = slotForgeTime . headerRealPoint . hwtHeader . unFromConsensus
     blockForgeUTCTime  = slotForgeTime . blockRealPoint  . unFromConsensus
