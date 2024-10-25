@@ -352,9 +352,7 @@ mkBlockFetchConsensusInterface
     compareCandidateChains :: AnchoredFragment (HeaderWithTime blk)
                            -> AnchoredFragment (HeaderWithTime blk)
                            -> Ordering
-    -- FIXME: change the type once we adapt the code to the changes in BlockFetchConsensusInterface
-    compareCandidateChains = undefined (compareAnchoredFragments bcfg)
-
+    compareCandidateChains = compareAnchoredFragments bcfg
 
     headerForgeUTCTime = slotForgeTime . headerRealPoint . hwtHeader . unFromConsensus
     blockForgeUTCTime  = slotForgeTime . blockRealPoint  . unFromConsensus

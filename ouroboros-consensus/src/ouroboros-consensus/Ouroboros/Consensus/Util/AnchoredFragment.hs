@@ -80,10 +80,15 @@ forksAtMostKBlocks k ours theirs = case ours `AF.intersect` theirs of
 -- these fragments intersect with our current chain, they must by transitivity
 -- also intersect each other.
 compareAnchoredFragments ::
-     forall blk. (BlockSupportsProtocol blk, HasCallStack)
+     forall blk t.
+     ( BlockSupportsProtocol blk
+     , HasCallStack
+     , ProjectHeader t blk
+     , HasHeader (t blk)
+     )
   => BlockConfig blk
-  -> AnchoredFragment (Header blk)
-  -> AnchoredFragment (Header blk)
+  -> AnchoredFragment (t blk)
+  -> AnchoredFragment (t blk)
   -> Ordering
 compareAnchoredFragments cfg frag1 frag2 =
     assertWithMsg (precondition frag1 frag2) $
@@ -110,8 +115,8 @@ compareAnchoredFragments cfg frag1 frag2 =
       (_ :> tip, _ :> tip') ->
         -- Case 4
         compare
-          (selectView cfg tip)
-          (selectView cfg tip')
+          (selectView cfg (projectHeader tip))
+          (selectView cfg (projectHeader tip'))
 
 -- | Lift 'preferCandidate' to 'AnchoredFragment'
 --
