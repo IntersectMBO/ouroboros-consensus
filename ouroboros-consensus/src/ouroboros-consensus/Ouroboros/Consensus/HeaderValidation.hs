@@ -60,6 +60,8 @@ module Ouroboros.Consensus.HeaderValidation (
   , Ticked (..)
     -- * Header with time
   , HeaderWithTime (..)
+    -- * Projecting a header
+  , ProjectHeader (..)
   ) where
 
 import           Cardano.Binary (enforceSize)
@@ -545,10 +547,25 @@ instance ( Show (HeaderHash blk)
 instance (Typeable blk, HasHeader (Header blk), Show (HeaderHash blk))
     => HasHeader (HeaderWithTime blk) where
 
-
   getHeaderFields  = castHeaderFields
                    . getHeaderFields
                    . hwtHeader
+
+{-------------------------------------------------------------------------------
+  Projecting a header
+-------------------------------------------------------------------------------}
+
+-- REVIEW: we could consider placing this somewhere else.
+
+-- | Values that contain a header
+class ProjectHeader t blk where
+  projectHeader :: t blk -> Header blk
+
+instance ProjectHeader Header blk where
+  projectHeader = id
+
+instance ProjectHeader HeaderWithTime blk where
+  projectHeader = hwtHeader
 
 {-------------------------------------------------------------------------------
   Serialisation
