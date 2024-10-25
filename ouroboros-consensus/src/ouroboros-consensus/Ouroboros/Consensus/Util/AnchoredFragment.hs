@@ -21,6 +21,7 @@ import           Data.Maybe (isJust)
 import           Data.Word (Word64)
 import           GHC.Stack
 import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.HeaderValidation (ProjectHeader (..))
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Util.Assert
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
@@ -123,10 +124,15 @@ compareAnchoredFragments cfg frag1 frag2 =
 -- from our tip, although the exact distance does not matter for
 -- 'compareAnchoredFragments').
 preferAnchoredCandidate ::
-     forall blk. (BlockSupportsProtocol blk, HasCallStack)
+     forall blk t.
+     ( BlockSupportsProtocol blk
+     , HasCallStack
+     , ProjectHeader t blk
+     , HasHeader (t blk)
+     )
   => BlockConfig blk
-  -> AnchoredFragment (Header blk)      -- ^ Our chain
-  -> AnchoredFragment (Header blk)      -- ^ Candidate
+  -> AnchoredFragment (t blk) -- ^ Our chain
+  -> AnchoredFragment (t blk) -- ^ Candidate
   -> Bool
 preferAnchoredCandidate cfg ours cand =
     assertWithMsg (precondition ours cand) $
@@ -137,14 +143,14 @@ preferAnchoredCandidate cfg ours cand =
       (_ :> ourTip, _ :> theirTip) ->
         preferCandidate
           (projectChainOrderConfig cfg)
-          (selectView cfg ourTip)
-          (selectView cfg theirTip)
+          (selectView cfg (projectHeader ourTip))
+          (selectView cfg (projectHeader theirTip))
 
 -- For 'compareAnchoredFragment' and 'preferAnchoredCandidate'.
 precondition ::
-     GetHeader blk
-  => AnchoredFragment (Header blk)
-  -> AnchoredFragment (Header blk)
+     forall blk t. (HasHeader (t blk))
+  => AnchoredFragment (t blk)
+  -> AnchoredFragment (t blk)
   -> Either String ()
 precondition frag1 frag2
   | not (AF.null frag1), not (AF.null frag2)
