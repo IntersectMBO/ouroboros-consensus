@@ -24,7 +24,7 @@ module Ouroboros.Consensus.Cardano.CanHardFork (
   , TriggerHardFork (..)
     -- * Re-exports of Shelley code
   , ShelleyPartialLedgerConfig (..)
-  , forecastAcrossShelley
+  , crossEraForecastAcrossShelley
   , translateChainDepStateAcrossShelley
   ) where
 

@@ -32,6 +32,7 @@ import qualified Cardano.Protocol.TPraos.API as SL
 import           Cardano.Slotting.EpochInfo (hoistEpochInfo)
 import           Control.Monad (guard)
 import           Control.Monad.Except (runExcept, throwError, withExceptT)
+import           Data.Coerce
 import qualified Data.Map.Strict as Map
 import           Data.SOP.BasicFunctors
 import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
@@ -237,6 +238,35 @@ instance ShelleyCompatible proto era => HasPartialLedgerConfig (ShelleyBlock pro
             }
         }
 
+translateChainDepStateAcrossShelley ::
+     forall eraFrom eraTo protoFrom protoTo.
+     ( TranslateProto protoFrom protoTo
+     )
+  => RequiringBoth
+       WrapConsensusConfig
+       (Translate WrapChainDepState)
+       (ShelleyBlock protoFrom eraFrom)
+       (ShelleyBlock protoTo eraTo)
+translateChainDepStateAcrossShelley =
+    ignoringBoth $
+      Translate $ \_epochNo (WrapChainDepState chainDepState) ->
+        -- Same protocol, same 'ChainDepState'. Note that we don't have to apply
+        -- any changes related to an epoch transition, this is already done when
+        -- ticking the state.
+        WrapChainDepState $ translateChainDepState (Proxy @(protoFrom, protoTo)) chainDepState
+
+crossEraForecastAcrossShelley ::
+     forall eraFrom eraTo protoFrom protoTo.
+     ( TranslateProto protoFrom protoTo
+     , LedgerSupportsProtocol (ShelleyBlock protoFrom eraFrom)
+     )
+  => RequiringBoth
+       WrapLedgerConfig
+       (CrossEraForecaster LedgerState WrapLedgerView)
+       (ShelleyBlock protoFrom eraFrom)
+       (ShelleyBlock protoTo eraTo)
+crossEraForecastAcrossShelley = coerce forecastAcrossShelley
+
 -- | Forecast from a Shelley-based era to the next Shelley-based era.
 forecastAcrossShelley ::
      forall protoFrom protoTo eraFrom eraTo.
@@ -277,38 +307,6 @@ forecastAcrossShelley cfgFrom cfgTo transition forecastFor ledgerStateFrom
                (boundSlot transition)
                (SL.stabilityWindow (shelleyLedgerGlobals cfgFrom))
                (SL.stabilityWindow (shelleyLedgerGlobals cfgTo))
-
-translateChainDepStateAcrossShelley ::
-     forall eraFrom eraTo protoFrom protoTo.
-     ( TranslateProto protoFrom protoTo
-     )
-  => RequiringBoth
-       WrapConsensusConfig
-       (Translate WrapChainDepState)
-       (ShelleyBlock protoFrom eraFrom)
-       (ShelleyBlock protoTo eraTo)
-translateChainDepStateAcrossShelley =
-    ignoringBoth $
-      Translate $ \_epochNo (WrapChainDepState chainDepState) ->
-        -- Same protocol, same 'ChainDepState'. Note that we don't have to apply
-        -- any changes related to an epoch transition, this is already done when
-        -- ticking the state.
-        WrapChainDepState $ translateChainDepState (Proxy @(protoFrom, protoTo)) chainDepState
-
-crossEraForecastAcrossShelley ::
-     forall eraFrom eraTo protoFrom protoTo.
-     ( TranslateProto protoFrom protoTo
-     , LedgerSupportsProtocol (ShelleyBlock protoFrom eraFrom)
-     )
-  => RequiringBoth
-       WrapLedgerConfig
-       (CrossEraForecaster LedgerState WrapLedgerView)
-       (ShelleyBlock protoFrom eraFrom)
-       (ShelleyBlock protoTo eraTo)
-crossEraForecastAcrossShelley =
-    RequireBoth $ \(WrapLedgerConfig cfgFrom)
-                   (WrapLedgerConfig cfgTo) ->
-      CrossEraForecaster $ forecastAcrossShelley cfgFrom cfgTo
 
 {-------------------------------------------------------------------------------
   Translation from one Shelley-based era to another Shelley-based era

@@ -40,7 +40,8 @@ import           Data.Void (Void)
 import           Lens.Micro ((^.))
 import           Ouroboros.Consensus.Block.Forging (BlockForging)
 import           Ouroboros.Consensus.Cardano.CanHardFork
-                     (ShelleyPartialLedgerConfig (..), forecastAcrossShelley,
+                     (ShelleyPartialLedgerConfig (..),
+                     crossEraForecastAcrossShelley,
                      translateChainDepStateAcrossShelley)
 import           Ouroboros.Consensus.Cardano.Node (TriggerHardFork (..))
 import           Ouroboros.Consensus.HardFork.Combinator
@@ -174,7 +175,7 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
   hardForkEraTranslation = EraTranslation {
         translateLedgerState   = PCons translateLedgerState                PNil
       , translateChainDepState = PCons translateChainDepStateAcrossShelley PNil
-      , crossEraForecast       = PCons forecastAcrossShelleyWrapper        PNil
+      , crossEraForecast       = PCons crossEraForecastAcrossShelley       PNil
       }
     where
       translateLedgerState ::
@@ -191,16 +192,6 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
             . SL.translateEra'
                 (shelleyLedgerTranslationContext (unwrapLedgerConfig cfg2))
             . Comp
-
-      forecastAcrossShelleyWrapper ::
-           InPairs.RequiringBoth
-              WrapLedgerConfig
-              (HFC.CrossEraForecaster LedgerState WrapLedgerView)
-              (ShelleyBlock proto1 era1)
-              (ShelleyBlock proto2 era2)
-      forecastAcrossShelleyWrapper =
-          InPairs.RequireBoth $ \(WrapLedgerConfig cfg1) (WrapLedgerConfig cfg2) ->
-            HFC.CrossEraForecaster $ forecastAcrossShelley cfg1 cfg2
 
   hardForkChainSel = Tails.mk2 CompareSameSelectView
 
