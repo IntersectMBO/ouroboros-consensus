@@ -31,7 +31,7 @@ prop_validate_legit_header :: Property
 prop_validate_legit_header =
     forAllBlind genContext $ \context ->
         forAllBlind (genMutatedHeader context) $ \(context', header) ->
-            annotate context header $
+            annotate context' header $
                 case validate context' header of
                     Valid mut -> property True & label (show mut)
                     Invalid mut err -> property False & counterexample ("Expected: " <> show mut <> "\nError: " <> err)

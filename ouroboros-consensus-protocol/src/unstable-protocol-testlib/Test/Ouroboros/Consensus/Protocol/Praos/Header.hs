@@ -61,6 +61,7 @@ import           Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF, mkInputVRF,
 import           Ouroboros.Consensus.Protocol.TPraos (StandardCrypto)
 import           Test.QuickCheck (Gen, arbitrary, choose, frequency, generate,
                      getPositive, resize, shrinkList, sized, suchThat, vectorOf)
+import Debug.Trace (trace)
 
 -- * Test Vectors
 
@@ -89,8 +90,8 @@ genSample = do
 
 genMutatedHeader :: GeneratorContext -> Gen (GeneratorContext, MutatedHeader)
 genMutatedHeader context = do
-    mutation <- genMutation
     header <- genHeader context
+    mutation <- genMutation header
     mutate context header mutation
 
 shrinkSample :: Sample -> [Sample]
@@ -133,19 +134,19 @@ mutate context header mutation =
                 pure (context, Header newBody (KES.SignedKES sig'))
             MutateKESPeriodBefore -> do
                 let Header body _ = header
-                let OCert{ocertKESPeriod = KESPeriod kesPeriod} = hbOCert body
+                    OCert{ocertKESPeriod = KESPeriod kesPeriod} = hbOCert body
                 newSlotNo <- genSlotAfterKESPeriod (fromIntegral kesPeriod) praosMaxKESEvo praosSlotsPerKESPeriod
                 let rho' = mkInputVRF newSlotNo nonce
+                    period' = unSlotNo newSlotNo `div` praosSlotsPerKESPeriod
                     hbVrfRes = VRF.evalCertified () rho' vrfSignKey
                     newBody = body{hbSlotNo = newSlotNo, hbVrfRes}
-                    sig' = KES.signKES () kesPeriod newBody kesSignKey
+                    sig' = KES.signKES () (fromIntegral period' - kesPeriod) newBody kesSignKey
                 pure (context, Header newBody (KES.SignedKES sig'))
             MutateCounterOver1 -> do
                 let poolId = coerce $ hashKey $ VKey $ deriveVerKeyDSIGN coldSignKey
-                    oldCounter = fromMaybe 0 $ Map.lookup poolId (ocertCounters context)
-                -- FIXME: assumes oldCounter is greater than 1, which is the case in the base generator
-                -- but is not guaranteed. If oldCounter == 0 then the mutation will fail
-                newCounter <- choose (0, oldCounter)
+                    Header body _ = header
+                    OCert{ocertN} = hbOCert body
+                newCounter <- choose (0, ocertN - 2)
                 let context' = context{ocertCounters = Map.insert poolId newCounter (ocertCounters context)}
                 pure (context', header)
             MutateCounterUnder -> do
@@ -217,17 +218,23 @@ expectedError = \case
         CounterTooSmallOCERT{} -> True
         _ -> False
 
-genMutation :: Gen Mutation
-genMutation =
-    frequency
+genMutation :: Header StandardCrypto -> Gen Mutation
+genMutation header =
+    frequency $
         [ (4, pure NoMutation)
         , (1, pure MutateKESKey)
         , (1, pure MutateColdKey)
         , (1, pure MutateKESPeriod)
         , (1, pure MutateKESPeriodBefore)
-        , (1, pure MutateCounterOver1)
         , (1, pure MutateCounterUnder)
-        ]
+        ] <> maybeCounterOver1
+     where
+       Header body _ = header
+       OCert{ocertN} = hbOCert body
+       maybeCounterOver1 =
+         if ocertN > 10
+           then [(1, pure MutateCounterOver1)]
+           else []
 
 data MutatedHeader = MutatedHeader
     { header   :: !(Header StandardCrypto)
@@ -441,12 +448,15 @@ genKESPeriodAfterLimit slotNo praosSlotsPerKESPeriod =
     currentKESPeriod = unSlotNo slotNo `div` praosSlotsPerKESPeriod
 
 genSlotAfterKESPeriod :: Word64 -> Word64 -> Word64 -> Gen SlotNo
-genSlotAfterKESPeriod ocertKESPeriod praosMaxKESEvo praosSlotsPerKESPeriod =
+genSlotAfterKESPeriod ocertKESPeriod praosMaxKESEvo praosSlotsPerKESPeriod = do
     -- kp_ < c0_ +  praosMaxKESEvo
     -- ! =>
     -- kp >=  c0_ +  praosMaxKESEvo
     -- c0 <=  kp -  praosMaxKESEvo
-    SlotNo <$> arbitrary `suchThat` (> (ocertKESPeriod + praosMaxKESEvo) * praosSlotsPerKESPeriod)
+    s <- SlotNo <$> arbitrary `suchThat` (> threshold)
+    pure $ trace ("new slot no: " <> show s <> ", threshold: " <> show threshold ) $ s
+  where
+    threshold = (ocertKESPeriod + praosMaxKESEvo + 1) * praosSlotsPerKESPeriod
 
 genHash :: Gen (Hash Blake2b_256 a)
 genHash = coerce . hashWith id <$> gen32Bytes

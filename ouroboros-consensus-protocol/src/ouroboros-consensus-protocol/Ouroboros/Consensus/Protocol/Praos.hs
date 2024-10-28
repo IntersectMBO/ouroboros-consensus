@@ -348,6 +348,7 @@ data PraosValidationErr c
       !Word -- current KES Period
       !Word -- KES start period
       !Word -- expected KES evolutions
+      !Word64 -- max KES evolutions
       !String -- error message given by Consensus Layer
   | NoCounterForKeyHashOCERT
       !(KeyHash 'BlockIssuer c) -- stake pool key hash
@@ -602,7 +603,7 @@ doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod stakeDistribution o
     DSIGN.verifySignedDSIGN () vkcold (OCert.ocertToSignable oc) tau ?!:
       InvalidSignatureOCERT n c0
     KES.verifySignedKES () vk_hot t (Views.hvSigned b) (Views.hvSignature b) ?!:
-      InvalidKesSignatureOCERT kp_ c0_ t
+      InvalidKesSignatureOCERT kp_ c0_ t praosMaxKESEvo
 
     case currentIssueNo of
       Nothing -> do
