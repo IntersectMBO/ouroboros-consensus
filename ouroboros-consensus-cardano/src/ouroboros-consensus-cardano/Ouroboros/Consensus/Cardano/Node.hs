@@ -1021,12 +1021,13 @@ protocolInfoCardano paramsCardano
              PNil
            where
              byronToShelleyTranslation =
-                 Translate $ translateLedgerStateByronToShelley ctx
+                 CrossEra $ \(Current bound _) ->
+                   translateLedgerStateByronToShelley ctx bound
                where
                  ctx = SL.toFromByronTranslationContext genesisShelley
 
              interShelleyTranslation transitionConfig =
-                 Translate $ \_ -> translateShelleyLedgerState ctx
+                 CrossEra $ \_ -> translateShelleyLedgerState ctx
                where
                  ctx = transitionConfig ^. L.tcTranslationContextL
 

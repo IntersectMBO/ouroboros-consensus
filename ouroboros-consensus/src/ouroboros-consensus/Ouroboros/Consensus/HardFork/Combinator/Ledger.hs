@@ -37,11 +37,12 @@ import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
 import           Data.SOP.Counting (getExactly)
 import           Data.SOP.Index
-import           Data.SOP.InPairs (InPairs (..))
+import           Data.SOP.InPairs (InPairs (..), Requiring (..),
+                     RequiringBoth' (..))
 import qualified Data.SOP.InPairs as InPairs
 import qualified Data.SOP.Match as Match
 import           Data.SOP.Strict
-import           Data.SOP.Telescope (Telescope (..))
+import           Data.SOP.Telescope (Extend (..), Telescope (..))
 import qualified Data.SOP.Telescope as Telescope
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks (..))
@@ -58,6 +59,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import           Ouroboros.Consensus.HardFork.Combinator.Protocol ()
 import           Ouroboros.Consensus.HardFork.Combinator.Protocol.LedgerView
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
+import qualified Ouroboros.Consensus.HardFork.Combinator.State.Lift as State
 import           Ouroboros.Consensus.HardFork.Combinator.State.Types
 import           Ouroboros.Consensus.HardFork.Combinator.Translation
 import           Ouroboros.Consensus.HardFork.History (Bound (..), EraParams,
@@ -68,6 +70,7 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.TypeFamilyWrappers
+import           Ouroboros.Consensus.Util ((.:))
 import           Ouroboros.Consensus.Util.Condense
 
 {-------------------------------------------------------------------------------
@@ -117,53 +120,110 @@ instance CanHardFork xs => IsLedger (LedgerState (HardForkBlock xs)) where
 
   type AuxLedgerEvent (LedgerState (HardForkBlock xs)) = OneEraLedgerEvent xs
 
-  applyChainTickLedgerResult cfg@HardForkLedgerConfig{..} slot (HardForkLedgerState st) =
-      sequenceHardForkState
-        (hcizipWith proxySingle (tickOne ei slot) cfgs extended) <&> \l' ->
+  applyChainTickLedgerResult cfg slot lst@(HardForkLedgerState st) =
+      ticked <&> \st' ->
       TickedHardForkLedgerState {
           tickedHardForkLedgerStateTransition =
-            -- We are bundling a 'TransitionInfo' with a /ticked/ ledger state,
-            -- but /derive/ that 'TransitionInfo' from the /unticked/  (albeit
-            -- extended) state. That requires justification. Three cases:
-            --
-            -- o 'TransitionUnknown'. If the transition is unknown, then it
-            --   cannot become known due to ticking. In this case, we record
-            --   the tip of the ledger, which ticking also does not modify
-            --   (this is an explicit postcondition of 'applyChainTick').
-            -- o 'TransitionKnown'. If the transition to the next epoch is
-            --   already known, then ticking does not change that information.
-            --   It can't be the case that the 'SlotNo' we're ticking to is
-            --   /in/ that next era, because if was, then 'extendToSlot' would
-            --   have extended the telescope further.
-            --   (This does mean however that it is important to use the
-            --   /extended/ ledger state, not the original, to determine the
-            --   'TransitionInfo'.)
-            -- o 'TransitionImpossible'. This has two subcases: either we are
-            --   in the final era, in which case ticking certainly won't be able
-            --   to change that, or we're forecasting, which is simply not
-            --   applicable here.
-            State.mostRecentTransitionInfo cfg extended
-        , tickedHardForkLedgerStatePerEra = l'
+            -- TODO justify
+            case State.match (State.tip st) st' of
+              -- TODO Previously, this might have been 'TransitionKnown' if the
+              -- next era uses 'TriggerHardForkAtEpoch'. It /seems/
+              -- inconsequential that we know a bit less here.
+              Left _  -> TransitionUnknown (ledgerTipSlot lst)
+              Right _ -> State.mostRecentTransitionInfo cfg st
+        , tickedHardForkLedgerStatePerEra = st'
         }
     where
-      cfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
-      ei   = State.epochInfoLedger cfg st
+      ticked :: HardForkLedgerResult xs (HardForkState (Ticked :.: LedgerState) xs)
+      ticked = tick cfg slot st
 
-      extended :: HardForkState LedgerState xs
-      extended = State.extendToSlot cfg slot st
+type HardForkLedgerResult xs = LedgerResult (LedgerState (HardForkBlock xs))
 
-tickOne :: SingleEraBlock blk
-        => EpochInfo (Except PastHorizonException)
-        -> SlotNo
-        -> Index xs                                           blk
-        -> WrapPartialLedgerConfig                            blk
-        -> LedgerState                                        blk
-        -> (    LedgerResult (LedgerState (HardForkBlock xs))
-            :.: (Ticked :.: LedgerState)
-           )                                                  blk
-tickOne ei slot index pcfg st = Comp $ fmap Comp $
-      embedLedgerResult (injectLedgerEvent index)
-    $ applyChainTickLedgerResult (completeLedgerConfig' ei pcfg) slot st
+tick ::
+     forall xs. CanHardFork xs
+  => HardForkLedgerConfig xs
+  -> SlotNo
+  -> HardForkState LedgerState xs
+  -> HardForkLedgerResult xs (HardForkState (Ticked :.: LedgerState) xs)
+tick ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st) =
+      sequenceHardForkState
+    . HardForkState
+    . unI
+    . Telescope.extend
+        (hczipWith
+           proxySingle
+           (fn .: whenExtend)
+           pcfgs
+           (getExactly (History.getShape hardForkLedgerConfigShape)))
+        ( InPairs.requiringBoth indices
+        $ InPairs.hmap (\f -> RequireBoth $ \_ ix
+                           -> Require $ \(K t)
+                           -> Extend  $ \cur
+                           -> I $ tickCross f ix t cur)
+        $ InPairs.requiringBoth cfgs
+        $ crossEraTickLedgerState hardForkEraTranslation
+        )
+        (hcimap proxySingle ((fn . State.lift) .: tickOne) cfgs)
+    $ st
+  where
+    pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
+    cfgs  = hcmap proxySingle (completeLedgerConfig'' ei) pcfgs
+    ei    = State.epochInfoLedger ledgerCfg ledgerSt
+
+    -- Return the end of this era if we should transition to the next
+    whenExtend :: SingleEraBlock              blk
+               => WrapPartialLedgerConfig     blk
+               -> K History.EraParams         blk
+               -> Current LedgerState         blk
+               -> (Maybe :.: K History.Bound) blk
+    whenExtend pcfg (K eraParams) cur = Comp $ K <$> do
+        transition <- singleEraTransition'
+                        pcfg
+                        eraParams
+                        (currentStart cur)
+                        (currentState cur)
+        let endBound = History.mkUpperBound
+                         eraParams
+                         (currentStart cur)
+                         transition
+        guard (slot >= History.boundSlot endBound)
+        return endBound
+
+    tickCross ::
+         CrossEraTickLedgerState blk blk'
+      -> Index xs blk'
+      -> History.Bound
+      -> Current LedgerState blk
+      -> ( K Past blk
+         , Current (HardForkLedgerResult xs :.: Ticked :.: LedgerState) blk'
+         )
+    tickCross f index currentEnd cur = (
+          K Past {
+              pastStart    = currentStart cur
+            , pastEnd      = currentEnd
+            }
+        , Current {
+              currentStart = currentEnd
+            , currentState =
+                  Comp $ fmap Comp
+                $ embedLedgerResult (injectLedgerEvent index)
+                $ crossEraTickLedgerStateWith f
+                    currentEnd
+                    slot
+                    (currentState cur)
+            }
+        )
+
+    tickOne ::
+         SingleEraBlock blk
+      => Index xs                                               blk
+      -> WrapLedgerConfig                                       blk
+      -> LedgerState                                            blk
+      -> (HardForkLedgerResult xs :.: (Ticked :.: LedgerState)) blk
+    tickOne index (WrapLedgerConfig cfg)  =
+          Comp . fmap Comp
+        . embedLedgerResult (injectLedgerEvent index)
+        . applyChainTickLedgerResult cfg slot
 
 {-------------------------------------------------------------------------------
   ApplyBlock

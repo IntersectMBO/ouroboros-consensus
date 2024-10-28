@@ -83,6 +83,7 @@ import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.PBFT
+import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util (ShowProxy (..), (..:))
 
 {-------------------------------------------------------------------------------
@@ -164,6 +165,7 @@ getByronTip state =
 -- | The ticked Byron ledger state
 data instance Ticked (LedgerState ByronBlock) = TickedByronLedgerState {
       tickedByronLedgerState        :: !CC.ChainValidationState
+    , untickedByronLedgerTipBlockNo :: !(WithOrigin BlockNo)
     , untickedByronLedgerTransition :: !ByronTransition
     }
   deriving (Generic, NoThunks)
@@ -178,6 +180,8 @@ instance IsLedger (LedgerState ByronBlock) where
       TickedByronLedgerState {
           tickedByronLedgerState =
             CC.applyChainTick cfg (toByronSlotNo slotNo) byronLedgerState
+        , untickedByronLedgerTipBlockNo =
+            byronLedgerTipBlockNo
         , untickedByronLedgerTransition =
             byronLedgerTransition
         }

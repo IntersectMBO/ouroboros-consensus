@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -7,6 +8,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.Embed.Nary (
     Inject (..)
@@ -16,6 +18,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Embed.Nary (
   , injectNestedCtxt_
   , injectQuery
     -- * Initial 'ExtLedgerState'
+  , Translate
   , injectInitialExtLedgerState
   , mkInitialStateViaTranslation
   ) where
@@ -29,7 +32,7 @@ import           Data.SOP.Index
 import           Data.SOP.Strict
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HardFork.Combinator
-import           Ouroboros.Consensus.HardFork.Combinator.State (Translate (..))
+import           Ouroboros.Consensus.HardFork.Combinator.State
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation (AnnTip, HeaderState (..))
@@ -186,8 +189,10 @@ injectInitialExtLedgerState =
     initBounds :: Exactly xs History.Bound
     initBounds = Exactly $ hpure $ K History.initBound
 
+type Translate f = CrossEra f Proxy f
+
 -- | Translate the given @f x@ until it has the same index as the n-ary sum. The
--- translations happen at epoch 0.
+-- translations happen at 'History.initBound'.
 mkInitialStateViaTranslation ::
      InPairs (Translate f) (x : xs)
   -> f x
@@ -203,4 +208,4 @@ mkInitialStateViaTranslation = go
     go _            fx Z{}     = Z fx
     go (PCons t ts) fx (S gxs) = S $ go ts fx' gxs
       where
-        fx' = translateWith t (EpochNo 0) fx
+        fx' = crossEra t (Current History.initBound Proxy) fx

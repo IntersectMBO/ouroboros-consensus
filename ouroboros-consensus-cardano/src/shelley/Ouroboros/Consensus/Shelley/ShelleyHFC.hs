@@ -22,7 +22,8 @@ module Ouroboros.Consensus.Shelley.ShelleyHFC (
   , ShelleyPartialLedgerConfig (..)
   , crossEraForecastAcrossShelley
   , forecastAcrossShelley
-  , translateChainDepStateAcrossShelley
+  , tickChainDepStateAcrossShelley
+  , tickLedgerStateAcrossShelley
   , translateShelleyLedgerState
   ) where
 
@@ -37,7 +38,7 @@ import           Control.Monad.Except (runExcept, throwError, withExceptT)
 import           Data.Coerce
 import qualified Data.Map.Strict as Map
 import           Data.SOP.BasicFunctors
-import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
+import           Data.SOP.InPairs (RequiringBoth, RequiringBoth' (..))
 import qualified Data.Text as T (pack)
 import           Data.Void (Void)
 import           Data.Word
@@ -48,8 +49,7 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Forecast
 import qualified Ouroboros.Consensus.Forecast as Forecast
-import           Ouroboros.Consensus.HardFork.Combinator hiding
-                     (translateChainDepState)
+import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
 import           Ouroboros.Consensus.HardFork.Combinator.State.Types
 import           Ouroboros.Consensus.HardFork.History (Bound (boundSlot))
@@ -241,25 +241,9 @@ instance ShelleyCompatible proto era => HasPartialLedgerConfig (ShelleyBlock pro
             }
         }
 
-translateChainDepStateAcrossShelley ::
-     forall eraFrom eraTo protoFrom protoTo.
-     ( TranslateProto protoFrom protoTo
-     )
-  => RequiringBoth
-       WrapConsensusConfig
-       (Translate WrapChainDepState)
-       (ShelleyBlock protoFrom eraFrom)
-       (ShelleyBlock protoTo eraTo)
-translateChainDepStateAcrossShelley =
-    ignoringBoth $
-      Translate $ \_epochNo (WrapChainDepState chainDepState) ->
-        -- Same protocol, same 'ChainDepState'. Note that we don't have to apply
-        -- any changes related to an epoch transition, this is already done when
-        -- ticking the state.
-        WrapChainDepState $ translateChainDepState (Proxy @(protoFrom, protoTo)) chainDepState
-
+-- | Wrapper around 'forecastAcrossShelley'.
 crossEraForecastAcrossShelley ::
-     forall eraFrom eraTo protoFrom protoTo.
+     forall protoFrom protoTo eraFrom eraTo.
      ( TranslateProto protoFrom protoTo
      , LedgerSupportsProtocol (ShelleyBlock protoFrom eraFrom)
      )
@@ -270,7 +254,14 @@ crossEraForecastAcrossShelley ::
        (ShelleyBlock protoTo eraTo)
 crossEraForecastAcrossShelley = coerce forecastAcrossShelley
 
--- | Forecast from a Shelley-based era to the next Shelley-based era.
+-- | Forecast from a Shelley-based era to the next Shelley-based era. We do so
+-- via the "forecast-then-translate" scheme:
+--
+--  - First, we forecast for the given slot using the logic of @'ShelleyBlock'
+--    protoFrom eraFrom@.
+--
+--  - Then, we translate the resulting 'LedgerView' from @protoFrom@ to
+--    @protoTo@.
 forecastAcrossShelley ::
      forall protoFrom protoTo eraFrom eraTo.
      ( TranslateProto protoFrom protoTo
@@ -311,31 +302,68 @@ forecastAcrossShelley cfgFrom cfgTo transition forecastFor ledgerStateFrom
                (SL.stabilityWindow (shelleyLedgerGlobals cfgFrom))
                (SL.stabilityWindow (shelleyLedgerGlobals cfgTo))
 
+-- | Tick the ledger state from one Shelley-based era @eraFrom@ to the the next
+-- era @eraTo@. We do so via the "translate-then-tick" scheme:
+--
+--  - First, we translate the ledger state from @eraFrom@ to @eraTo@.
+--
+--  - Then, we tick the ledger state to the target slot using the logic of
+--    @eraTo@.
+--
+-- Note that this function also allows to change the protocol; this is harmless
+-- as the ledger state only depends trivially on the protocol via the
+-- @HeaderHash@ contained in the tip.
+tickLedgerStateAcrossShelley ::
+     forall protoFrom protoTo eraFrom eraTo.
+     ( ShelleyBasedEra eraTo
+     , eraFrom ~ SL.PreviousEra eraTo
+     , SL.TranslateEra eraTo SL.NewEpochState
+     , SL.TranslationError eraTo SL.NewEpochState ~ Void
+     , ProtoCrypto protoFrom ~ ProtoCrypto protoTo
+     )
+  => RequiringBoth
+       WrapLedgerConfig
+       CrossEraTickLedgerState
+       (ShelleyBlock protoFrom eraFrom)
+       (ShelleyBlock protoTo   eraTo)
+tickLedgerStateAcrossShelley =
+    RequireBoth $ \_cfgFrom (WrapLedgerConfig cfgTo) ->
+      CrossEraTickLedgerState $ \_bound slot ->
+          applyChainTickLedgerResult cfgTo slot
+        . translateShelleyLedgerState
+            (shelleyLedgerTranslationContext cfgTo)
+
+-- | Tick the chain-dependent state from one Shelley-based era to the the next,
+-- potentially changing the protocol. We do so via the "translate-then-tick"
+-- scheme:
+--
+--  - First, we translate the chain-dependent state from @protoFrom@ to
+--    @protoTo@.
+--
+--  - Then, we tick the chain-dependent state to the target slot using the logic
+--    of @protoTo@.
+--
+-- Note that this function also allows to change the ledger era; this is
+-- harmless as the chain-dependent state doesn't depend on it at all.
+tickChainDepStateAcrossShelley ::
+     forall protoFrom protoTo eraFrom eraTo.
+     ( TranslateProto protoFrom protoTo
+     , ConsensusProtocol protoTo
+     )
+  => RequiringBoth
+       WrapConsensusConfig
+       CrossEraTickChainDepState
+       (ShelleyBlock protoFrom eraFrom)
+       (ShelleyBlock protoTo eraTo)
+tickChainDepStateAcrossShelley =
+    RequireBoth $ \_cfgFrom (WrapConsensusConfig cfgTo) ->
+      CrossEraTickChainDepState $ \_bound view slot ->
+          tickChainDepState cfgTo view slot
+        . translateChainDepState (Proxy @(protoFrom, protoTo))
+
 {-------------------------------------------------------------------------------
   Translation from one Shelley-based era to another Shelley-based era
 -------------------------------------------------------------------------------}
-
-instance ( ShelleyBasedEra era
-         , ShelleyBasedEra (SL.PreviousEra era)
-         , SL.Era (SL.PreviousEra era)
-         , EraCrypto (SL.PreviousEra era) ~ EraCrypto era
-         ) => SL.TranslateEra era (ShelleyTip proto) where
-  translateEra _ (ShelleyTip sno bno (ShelleyHash hash)) =
-      return $ ShelleyTip sno bno (ShelleyHash hash)
-
-instance ( ShelleyBasedEra era
-         , SL.TranslateEra era (ShelleyTip proto)
-         , SL.TranslateEra era SL.NewEpochState
-         , SL.TranslationError era SL.NewEpochState ~ Void
-         ) => SL.TranslateEra era (LedgerState :.: ShelleyBlock proto) where
-  translateEra ctxt (Comp (ShelleyLedgerState tip state _transition)) = do
-      tip'   <- mapM (SL.translateEra ctxt) tip
-      state' <- SL.translateEra ctxt state
-      return $ Comp $ ShelleyLedgerState {
-          shelleyLedgerTip        = tip'
-        , shelleyLedgerState      = state'
-        , shelleyLedgerTransition = ShelleyTransitionInfo 0
-        }
 
 translateShelleyLedgerState ::
      ( eraFrom ~ SL.PreviousEra eraTo
