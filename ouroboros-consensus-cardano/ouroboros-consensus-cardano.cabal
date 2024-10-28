@@ -356,7 +356,7 @@ test-suite shelley-test
     ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib},
     ouroboros-consensus-cardano,
     ouroboros-consensus-diffusion:unstable-diffusion-testlib,
-    ouroboros-consensus-protocol,
+    ouroboros-consensus-protocol:ouroboros-consensus-protocol,
     sop-core,
     strict-sop-core,
     tasty,
@@ -497,6 +497,7 @@ library unstable-cardano-tools
     Cardano.Tools.DBTruncater.Run
     Cardano.Tools.DBTruncater.Types
     Cardano.Tools.GitRev
+    Cardano.Tools.Headers
     Cardano.Tools.ImmDBServer.Diffusion
     Cardano.Tools.ImmDBServer.MiniProtocols
 
@@ -553,6 +554,7 @@ library unstable-cardano-tools
     ouroboros-consensus-cardano,
     ouroboros-consensus-diffusion ^>=0.18,
     ouroboros-consensus-protocol ^>=0.9,
+    ouroboros-consensus-protocol:unstable-protocol-testlib,
     ouroboros-network,
     ouroboros-network-api,
     ouroboros-network-framework ^>=0.14,
@@ -662,9 +664,30 @@ test-suite tools-test
   hs-source-dirs: test/tools-test
   main-is: Main.hs
   build-depends:
+    aeson,
     base,
     ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib},
-    ouroboros-consensus-cardano,
+    ouroboros-consensus-cardano:{ouroboros-consensus-cardano,unstable-cardano-tools},
+    ouroboros-consensus-protocol:unstable-protocol-testlib,
+    QuickCheck,
     tasty,
     tasty-hunit,
+    tasty-quickcheck,
+    text,
     unstable-cardano-tools,
+  other-modules:
+    Test.Cardano.Tools.Headers
+
+executable gen-header
+  import: common-exe
+  hs-source-dirs: app
+  main-is: gen-header.hs
+  build-depends:
+    base,
+    cardano-crypto-class,
+    optparse-applicative,
+    ouroboros-consensus-cardano:unstable-cardano-tools,
+    with-utf8,
+  other-modules:
+    GenHeader.Parsers
+    Paths_ouroboros_consensus_cardano

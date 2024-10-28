@@ -29,6 +29,9 @@ module Ouroboros.Consensus.Protocol.Praos (
   , Ticked (..)
   , forgePraosFields
   , praosCheckCanForge
+    -- * For testing purposes
+  , doValidateKESSignature
+  , doValidateVRFSignature
   ) where
 
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..), enforceSize)
@@ -527,7 +530,20 @@ validateVRFSignature ::
   ActiveSlotCoeff ->
   Views.HeaderView c ->
   Except (PraosValidationErr c) ()
-validateVRFSignature eta0 (Views.lvPoolDistr -> SL.PoolDistr pd _) f b = do
+validateVRFSignature eta0 (Views.lvPoolDistr -> SL.PoolDistr pd _) f =
+  doValidateVRFSignature eta0 pd f
+
+-- NOTE: this function is much easier to test than 'validateVRFSignature' because we don't need
+-- to construct a 'PraosConfig' nor 'LedgerView' to test it.
+doValidateVRFSignature ::
+  forall c.
+  PraosCrypto c =>
+  Nonce ->
+  Map (KeyHash SL.StakePool c) (IndividualPoolStake c) ->
+  ActiveSlotCoeff ->
+  Views.HeaderView c ->
+  Except (PraosValidationErr c) ()
+doValidateVRFSignature eta0 pd f b = do
   case Map.lookup hk pd of
     Nothing -> throwError $ VRFKeyUnknown hk
     Just (IndividualPoolStake sigma _totalPoolStake vrfHK) -> do
@@ -557,12 +573,25 @@ validateKESSignature ::
   Except (PraosValidationErr c) ()
 validateKESSignature
   _cfg@( PraosConfig
-           PraosParams {praosMaxKESEvo, praosSlotsPerKESPeriod}
-           _ei
-         )
-  Views.LedgerView {Views.lvPoolDistr}
-  ocertCounters
-  b = do
+              PraosParams{praosMaxKESEvo, praosSlotsPerKESPeriod}
+              _ei
+          )
+  Views.LedgerView{Views.lvPoolDistr = SL.PoolDistr lvPoolDistr _totalActiveStake}
+  ocertCounters =
+    doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod lvPoolDistr ocertCounters
+
+-- NOTE: This function is much easier to test than 'validateKESSignature' because we don't need to
+-- construct a 'PraosConfig' nor 'LedgerView' to test it.
+doValidateKESSignature ::
+  PraosCrypto c =>
+  Word64 ->
+  Word64 ->
+  Map (KeyHash SL.StakePool c) (IndividualPoolStake c) ->
+  Map (KeyHash BlockIssuer c) Word64 ->
+  Views.HeaderView c ->
+  Except (PraosValidationErr c) ()
+doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod stakeDistribution ocertCounters b =
+  do
     c0 <= kp ?! KESBeforeStartOCERT c0 kp
     kp_ < c0_ + fromIntegral praosMaxKESEvo ?! KESAfterEndOCERT kp c0 praosMaxKESEvo
 
@@ -594,7 +623,7 @@ validateKESSignature
       currentIssueNo :: Maybe Word64
       currentIssueNo
         | Map.member hk ocertCounters = Map.lookup hk ocertCounters
-        | Set.member (coerceKeyRole hk) (Map.keysSet $ SL.unPoolDistr lvPoolDistr) =
+        | Set.member (coerceKeyRole hk) (Map.keysSet stakeDistribution) =
           Just 0
         | otherwise = Nothing
 
@@ -727,6 +756,7 @@ instance
   Util
 -------------------------------------------------------------------------------}
 
+-- | Check value and raise error if it is false.
 (?!) :: Bool -> e -> Except e ()
 a ?! b = unless a $ throwError b
 
