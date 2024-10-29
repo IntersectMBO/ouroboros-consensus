@@ -87,6 +87,7 @@ library unstable-protocol-testlib
   exposed-modules:
     Test.Consensus.Protocol.Serialisation.Generators
     Test.Ouroboros.Consensus.Protocol.Praos.Header
+
   build-depends:
     QuickCheck,
     aeson,
@@ -103,7 +104,7 @@ library unstable-protocol-testlib
     cardano-slotting,
     containers,
     ouroboros-consensus-protocol,
-    text
+    text,
 
 test-suite protocol-test
   import: common-test
