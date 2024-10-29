@@ -1,4 +1,4 @@
-module GenHeader.Parsers where
+module GenHeader.Parsers (parseOptions) where
 
 import           Cardano.Tools.Headers (Options (..))
 import           Data.Version (showVersion)
