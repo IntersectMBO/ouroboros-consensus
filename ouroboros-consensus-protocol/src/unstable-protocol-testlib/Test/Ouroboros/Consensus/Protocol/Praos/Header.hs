@@ -61,7 +61,6 @@ import           Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF, mkInputVRF,
 import           Ouroboros.Consensus.Protocol.TPraos (StandardCrypto)
 import           Test.QuickCheck (Gen, arbitrary, choose, frequency, generate,
                      getPositive, resize, shrinkList, sized, suchThat, vectorOf)
-import Debug.Trace (trace)
 
 -- * Test Vectors
 
@@ -453,8 +452,7 @@ genSlotAfterKESPeriod ocertKESPeriod praosMaxKESEvo praosSlotsPerKESPeriod = do
     -- ! =>
     -- kp >=  c0_ +  praosMaxKESEvo
     -- c0 <=  kp -  praosMaxKESEvo
-    s <- SlotNo <$> arbitrary `suchThat` (> threshold)
-    pure $ trace ("new slot no: " <> show s <> ", threshold: " <> show threshold ) $ s
+    SlotNo <$> arbitrary `suchThat` (> threshold)
   where
     threshold = (ocertKESPeriod + praosMaxKESEvo + 1) * praosSlotsPerKESPeriod
 

@@ -8,12 +8,9 @@
 module Cardano.Tools.Headers where
 
 import           Cardano.Crypto.DSIGN (deriveVerKeyDSIGN)
-import           Cardano.Crypto.Hash (Blake2b_256, hashToBytes)
 import           Cardano.Crypto.VRF
                      (VRFAlgorithm (deriveVerKeyVRF, hashVerKeyVRF))
-import           Cardano.Ledger.Api (ConwayEra, StandardCrypto, VRF)
-import           Cardano.Ledger.BaseTypes (BoundedRational (boundRational),
-                     PositiveUnitInterval, mkActiveSlotCoeff)
+import           Cardano.Ledger.Api (ConwayEra, StandardCrypto)
 import           Cardano.Ledger.Coin (Coin (..))
 import           Cardano.Ledger.Compactible (toCompact)
 import           Cardano.Ledger.Keys (VKey (..), hashKey)
@@ -22,17 +19,12 @@ import           Cardano.Prelude (ExitCode (..), exitWith, forM_, hPutStrLn,
                      stderr)
 import           Control.Monad.Except (runExcept)
 import qualified Data.Aeson as Json
-import qualified Data.ByteString.Base16 as Hex
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Map as Map
 import           Data.Maybe (fromJust)
-import           Data.Text (unpack)
-import           Data.Text.Encoding (decodeUtf8)
-import           Debug.Trace (trace)
 import           Ouroboros.Consensus.Block (validateView)
 import           Ouroboros.Consensus.Protocol.Praos (Praos,
                      doValidateKESSignature, doValidateVRFSignature)
-import qualified Ouroboros.Consensus.Protocol.Praos.Views as Views
 import           Ouroboros.Consensus.Shelley.HFEras ()
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock,
                      mkShelleyHeader)
@@ -72,9 +64,8 @@ validate context MutatedHeader{header, mutation} =
         (Right _, NoMutation) -> Valid NoMutation
         (Right _, mut) -> Invalid mut $ "Expected error from mutation " <> show mut <> ", but validation succeeded"
   where
-    GeneratorContext{praosSlotsPerKESPeriod, nonce, coldSignKey, vrfSignKey, ocertCounters, activeSlotCoeff} = context
+    GeneratorContext{praosSlotsPerKESPeriod, praosMaxKESEvo, nonce, coldSignKey, vrfSignKey, ocertCounters, activeSlotCoeff} = context
     -- TODO: get these from the context
-    maxKESEvo = 62
     coin = fromJust . toCompact . Coin
     ownsAllStake vrfKey = IndividualPoolStake 1 (coin 1) vrfKey
     poolDistr = Map.fromList [(poolId, ownsAllStake hashVRFKey)]
@@ -82,5 +73,5 @@ validate context MutatedHeader{header, mutation} =
     hashVRFKey = hashVerKeyVRF $ deriveVerKeyVRF vrfSignKey
 
     headerView = validateView @ConwayBlock undefined (mkShelleyHeader header)
-    validateKES = doValidateKESSignature maxKESEvo praosSlotsPerKESPeriod poolDistr ocertCounters headerView
+    validateKES = doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod poolDistr ocertCounters headerView
     validateVRF = doValidateVRFSignature nonce poolDistr activeSlotCoeff headerView
