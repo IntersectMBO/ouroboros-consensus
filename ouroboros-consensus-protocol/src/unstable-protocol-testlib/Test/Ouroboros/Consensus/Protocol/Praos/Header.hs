@@ -14,8 +14,8 @@ import           Cardano.Crypto.DSIGN
                      (DSIGNAlgorithm (SignKeyDSIGN, genKeyDSIGN, rawSerialiseSignKeyDSIGN),
                      Ed25519DSIGN, deriveVerKeyDSIGN,
                      rawDeserialiseSignKeyDSIGN)
-import           Cardano.Crypto.Hash (Blake2b_256, Hash, hashWith, hashFromBytes,
-                     hashToBytes)
+import           Cardano.Crypto.Hash (Blake2b_256, Hash, hashFromBytes,
+                     hashToBytes, hashWith)
 import qualified Cardano.Crypto.KES as KES
 import           Cardano.Crypto.KES.Class (genKeyKES, rawDeserialiseSignKeyKES,
                      rawSerialiseSignKeyKES)
@@ -28,8 +28,8 @@ import qualified Cardano.Crypto.VRF.Praos as VRF
 import           Cardano.Ledger.BaseTypes (ActiveSlotCoeff, Nonce (..),
                      PositiveUnitInterval, ProtVer (..), Version, activeSlotVal,
                      boundRational, mkActiveSlotCoeff, natVersion)
-import           Cardano.Ledger.Binary (MaxVersion, decCBOR, decodeFullAnnotator,
-                     serialize')
+import           Cardano.Ledger.Binary (MaxVersion, decCBOR,
+                     decodeFullAnnotator, serialize')
 import           Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer), VKey (..),
                      hashKey, signedDSIGN)
 import           Cardano.Protocol.TPraos.BHeader (HashHeader (..),
