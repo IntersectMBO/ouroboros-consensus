@@ -691,3 +691,5 @@ executable gen-header
   other-modules:
     GenHeader.Parsers
     Paths_ouroboros_consensus_cardano
+  autogen-modules:
+    Paths_ouroboros_consensus_cardano
