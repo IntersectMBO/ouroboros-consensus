@@ -41,6 +41,7 @@ import           Control.Applicative (Alternative (..))
 import qualified Control.Concurrent.Class.MonadMVar.Strict as Strict
 import qualified Control.Concurrent.Class.MonadSTM.Strict as Strict
 import           Control.Monad (MonadPlus, when)
+import           Control.Monad.Class.MonadSay
 import qualified Control.Monad.Class.MonadSTM.Internal as LazySTM
 import           Control.Monad.Class.MonadTime
 import qualified Control.Monad.Class.MonadTimer as MonadTimer
@@ -597,6 +598,9 @@ instance (MonadAsync m, MonadMask m, MonadThrow (STM m)) => MonadAsync (Override
 
   waitCatchSTM = OverrideDelaySTM . lift . waitCatchSTM . unOverrideDelayAsync
   pollSTM      = OverrideDelaySTM . lift . pollSTM . unOverrideDelayAsync
+
+instance MonadSay m => MonadSay (OverrideDelay m) where
+  say = OverrideDelay . lift . say
 
 instance (IOLike m, MonadDelay (OverrideDelay m)) => IOLike (OverrideDelay m) where
   forgetSignKeyKES = OverrideDelay . lift . forgetSignKeyKES

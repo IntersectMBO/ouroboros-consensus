@@ -1,1 +1,1 @@
-ShelleyEncoderUnsupportedQuery (SomeSecond GetBigLedgerPeerSnapshot) ShelleyNodeToClientVersion7
+ShelleyEncoderUnsupportedQuery (SomeBlockQuery GetBigLedgerPeerSnapshot) ShelleyNodeToClientVersion7

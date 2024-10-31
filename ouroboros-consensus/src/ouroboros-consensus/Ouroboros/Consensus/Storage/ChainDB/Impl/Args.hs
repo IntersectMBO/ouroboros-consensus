@@ -13,7 +13,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Args (
   , completeChainDbArgs
   , defaultArgs
   , ensureValidateAll
-  , updateDiskPolicyArgs
+  , updateSnapshotPolicyArgs
   , updateTracer
   ) where
 
@@ -26,15 +26,18 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture)
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.API (GetLoEFragment,
                      LoE (LoEDisabled))
-import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB as LedgerDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
                      (TraceEvent (..))
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
+import qualified Ouroboros.Consensus.Storage.LedgerDB.API.Config as LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args
+                     (LedgerDbFlavorArgs)
+import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl.Args as LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
@@ -47,7 +50,7 @@ import           System.FS.API
 data ChainDbArgs f m blk = ChainDbArgs {
     cdbImmDbArgs :: ImmutableDB.ImmutableDbArgs f m blk
   , cdbVolDbArgs :: VolatileDB.VolatileDbArgs f m blk
-  , cdbLgrDbArgs :: LedgerDB.LgrDbArgs f m blk
+  , cdbLgrDbArgs :: LedgerDB.LedgerDbArgs f m blk
   , cdbsArgs     :: ChainDbSpecificArgs f m blk
   }
 
@@ -153,7 +156,7 @@ completeChainDbArgs ::
   => ResourceRegistry m
   -> CheckInFuture m blk
   -> TopLevelConfig blk
-  -> ExtLedgerState blk
+  -> ExtLedgerState blk ValuesMK
      -- ^ Initial ledger
   -> ImmutableDB.ChunkInfo
   -> (blk -> Bool)
@@ -162,6 +165,7 @@ completeChainDbArgs ::
      -- ^ Immutable FS, see 'NodeDatabasePaths'
   -> (RelativeMountPoint -> SomeHasFS m)
      -- ^ Volatile  FS, see 'NodeDatabasePaths'
+  -> Complete LedgerDbFlavorArgs m
   -> Incomplete ChainDbArgs m blk
      -- ^ A set of incomplete arguments, possibly modified wrt @defaultArgs@
   -> Complete ChainDbArgs m blk
@@ -174,6 +178,7 @@ completeChainDbArgs
   checkIntegrity
   mkImmFS
   mkVolFS
+  flavorArgs
   defArgs
   = defArgs {
       cdbImmDbArgs = (cdbImmDbArgs defArgs) {
@@ -192,6 +197,8 @@ completeChainDbArgs
             LedgerDB.lgrGenesis    = pure initLedger
           , LedgerDB.lgrHasFS      = mkVolFS $ RelativeMountPoint "ledger"
           , LedgerDB.lgrConfig     = LedgerDB.configLedgerDb cdbsTopLevelConfig
+          , LedgerDB.lgrFlavorArgs = flavorArgs
+          , LedgerDB.lgrRegistry   = registry
           }
       , cdbsArgs = (cdbsArgs defArgs) {
             cdbsCheckInFuture
@@ -202,23 +209,23 @@ completeChainDbArgs
       }
 
 updateTracer ::
-     Tracer m (TraceEvent blk)
+  Tracer m (TraceEvent blk)
   -> ChainDbArgs f m blk
   -> ChainDbArgs f m blk
 updateTracer trcr args =
   args {
       cdbImmDbArgs = (cdbImmDbArgs args) { ImmutableDB.immTracer = TraceImmutableDBEvent >$< trcr }
     , cdbVolDbArgs = (cdbVolDbArgs args) { VolatileDB.volTracer  = TraceVolatileDBEvent  >$< trcr }
-    , cdbLgrDbArgs = (cdbLgrDbArgs args) { LedgerDB.lgrTracer    = TraceSnapshotEvent    >$< trcr }
+    , cdbLgrDbArgs = (cdbLgrDbArgs args) { LedgerDB.lgrTracer    = TraceLedgerDBEvent    >$< trcr }
     , cdbsArgs     = (cdbsArgs args)     { cdbsTracer            =                           trcr }
   }
 
-updateDiskPolicyArgs ::
-     DiskPolicyArgs
+updateSnapshotPolicyArgs ::
+  SnapshotPolicyArgs
   -> ChainDbArgs f m blk
   -> ChainDbArgs f m blk
-updateDiskPolicyArgs spa args =
-  args { cdbLgrDbArgs = (cdbLgrDbArgs args) { LedgerDB.lgrDiskPolicyArgs = spa } }
+updateSnapshotPolicyArgs spa args =
+  args { cdbLgrDbArgs = (cdbLgrDbArgs args) { LedgerDB.lgrSnapshotPolicyArgs = spa } }
 
 {-------------------------------------------------------------------------------
   Relative mount points
