@@ -140,7 +140,7 @@ library
     cardano-ledger-babbage ^>=1.10,
     cardano-ledger-binary ^>=1.4,
     cardano-ledger-byron ^>=1.0.1,
-    cardano-ledger-conway ^>=1.17,
+    cardano-ledger-conway ^>=1.17.2,
     cardano-ledger-core ^>=1.15,
     cardano-ledger-mary ^>=1.7,
     cardano-ledger-shelley ^>=1.14,
