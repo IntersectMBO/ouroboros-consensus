@@ -54,9 +54,8 @@ A proposal for a simplified HFC, eg neither Counting Blocks nor requiring Double
 
     - Even so, the above rules suffice to prevent the honest node from equivocating elections when CG is violated.
 
-    - It would be some what simpler to instead only mint according to the leadership schedule of the k+1 youngest block.
-      However, when CG is violated, this rule alone does not prevent an honest node from equivocating its elections.
-      The rules above are simple enough and also clearly prevent such equivocation.
+    - It would be some what simpler to instead only mint according to the leadership schedule of the k+1 youngest block, and the prevention of equivocation is obvious.
+      However, if the node's selection violates CG, the node might not be able to mint: the k+1 youngest block is not necessarily able to translate the wall clock to a slot number in the presence of a CG violation.
 
 - The interface exposed to clients by the node should make it extremely explicit when a subsequent chain switch might change the node's answer to a query (eg which upcoming slots the node leads).
 
