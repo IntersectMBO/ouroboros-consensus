@@ -626,12 +626,12 @@ data CardanoProtocolParams c = CardanoProtocolParams {
 
 -- | Create a 'ProtocolInfo' for 'CardanoBlock'
 --
--- NOTE: For testing and benchmarking purposes, the 'ShelleyGenesis' can contain
--- initial staking and funds. These are registered in the initial ledger state
--- /only if/ the given 'CardanoHardForkTriggers' tell us to skip the Byron era
--- and hard fork directly to Shelley or a later era by using
--- @TestXHardForkAtEpoch 0@. When @'SL.gNetworkId' == 'SL.Mainnet'@, the initial
--- staking and funds /must/ be empty.
+-- NOTE: For testing and benchmarking purposes, the genesis config can contain
+-- certain data to be registered in the initial ledger state, like initial
+-- staking and funds. These are registered /only if/ the given
+-- 'CardanoHardForkTriggers' tell us to skip the Byron era and hard fork
+-- directly to Shelley or a later era by using @TestXHardForkAtEpoch 0@. When
+-- @'SL.gNetworkId' == 'SL.Mainnet'@, no such data must be present.
 --
 -- PRECONDITION: only a single set of Shelley credentials is allowed when used
 -- for mainnet (check against @'SL.gNetworkId' == 'SL.Mainnet'@).
@@ -945,14 +945,10 @@ protocolInfoCardano paramsCardano
       , topLevelConfigCheckpoints = cardanoCheckpoints
       }
 
-    -- When the initial ledger state is not in the Byron era, register the
-    -- initial staking and initial funds (if provided in the genesis config) in
-    -- the ledger state.
-    --
-    -- NOTE: we hope this code might change in the future when the
-    -- Ledger layer provides an era-generic registration function,
-    -- which will abstract away the data to be registered for a given
-    -- era.
+    -- When the initial ledger state is not in the Byron era, register various
+    -- data from the genesis config (if provided) in the ledger state. For
+    -- example, this includes initial staking and initial funds (useful for
+    -- testing/benchmarking).
     initExtLedgerStateCardano :: ExtLedgerState (CardanoBlock c)
     initExtLedgerStateCardano = ExtLedgerState {
           headerState = initHeaderState
