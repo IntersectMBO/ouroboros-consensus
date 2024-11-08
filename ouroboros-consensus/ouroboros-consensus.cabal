@@ -278,7 +278,7 @@ library
     bytestring >=0.10 && <0.13,
     cardano-binary,
     cardano-crypto-class,
-    cardano-ledger-core ^>=1.15,
+    cardano-ledger-core >=1.15,
     cardano-prelude,
     cardano-slotting,
     cardano-strict-containers,
