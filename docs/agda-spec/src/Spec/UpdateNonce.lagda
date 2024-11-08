@@ -18,6 +18,7 @@ module Spec.UpdateNonce
   (crypto : _) (open Crypto crypto)
   (nonces : Nonces crypto) (open Nonces nonces)
   (es     : _) (open EpochStructure es)
+  (grindingf : Nonce → Nonce)
   where
 
 open import Ledger.Prelude
@@ -45,10 +46,11 @@ record UpdateNonceEnv : Type where
 record UpdateNonceState : Type where
 \end{code}
 \begin{code}[hide]
-  constructor ⟦_,_⟧ᵘˢ
+  constructor ⟦_,_,_⟧ᵘˢ
   field
 \end{code}
 \begin{code}
+    pre-ηc : Nonce -- evolving pre-nonce
     ηv : Nonce -- evolving nonce
     ηc : Nonce -- candidate nonce
 \end{code}
@@ -67,35 +69,63 @@ data
 
 The transition rule $\mathsf{UPDN}$ takes the slot \aarg{s} as signal and is shown in 
 Figure~\ref{fig:ts-rules:updatenonce}. There are
-two different cases for $\mathsf{UPDN}$: one where \aarg{s} is not yet
-\randomnessStabilisationWindow\footnote{Note that in pre-Conway eras \stabilityWindow
-was used instead of \randomnessStabilisationWindow.} slots from the beginning
-of the next epoch and one where \aarg{s} is less than \randomnessStabilisationWindow
-slots until the start of the next epoch.
+three different cases for $\mathsf{UPDN}$, all three of which always evolve the evolving nonce $ηv$
+by combining it with the VRF result $η$ from the block header :
 
-Note that in the first rule, the candidate nonce \aarg{ηc} transitions to
-\aarg{ηv} \agdaNonceOp \aarg{η}, not \aarg{ηc} \agdaNonceOp \aarg{η}. The reason for this is that even
-though the candidate nonce is frozen sometime during the epoch, we want the two
-nonces to again be equal at the start of a new epoch.
+\begin{itemize}
+
+\item[(iii)] $\mathsf{New-PreN}, where \aarg{s} is exactly the \RandomnessStabilisationWindowPlusOne
+slots until the start of the next epoch. A new pre-nonce is set equal to the (evolved) evolving nonce.
+The candidate nonce is set to the value of the current pre-nonce updated by the anti-griding function.
+
+\item[(i)] $\mathsf{Update-All}, where \aarg{s} is not yet
+\RandomnessStabilisationWindowPlusOne\footnote{Note that in pre-Conway eras \stabilityWindow
+was used instead of \RandomnessStabilisationWindowPlusOne.} slots from the beginning
+of the next epoch. The pre-nonce $\mathsf{pre-ηc}$
+is evolved by the anti-gringing function $\mathsf{grindingf}$.
+The candidate nonce \aarg{ηc} also transitions to
+\aarg{grindingf~pre-ηc}. The reason for this is that even
+though the candidate nonce is frozen sometime during the epoch, we want these two
+nonces to be equal during this (first) part of a new epoch. 
+
+\item[(ii)] $\mathsf{Keep-PreN}, where \aarg{s} is strictly less than the \RandomnessStabilisationWindowPlusOne
+slots before the start of the next epoch. The pre-nonce $\mathsf{pre-ηc}$ is updated by 
+the anti-grinding function to \aarg{grindingf~pre-ηc}. The candidate nonce \aarg{ηc} remains fixed.
+
+\end{itemize}
 
 \begin{figure*}[h]
 \begin{code}[hide]
 private variable
-  s       : Slot
-  η ηv ηc : Nonce
+  s              : Slot
+  η ηv ηc pre-ηc : Nonce
 
 data _⊢_⇀⦇_,UPDN⦈_ where
 \end{code}
 \begin{code}
-  Update-Both :
-    ∙ s + RandomnessStabilisationWindow < firstSlot (sucᵉ (epoch s))
+  -- applies at : one slot right before candidate becomes fixed
+  -- new pre-nonce from evolving nonce 
+  -- candidate nonce set to final update of current pre-nonce
+  New-PreN :
+    ∙ s + RandomnessStabilisationWindowPlusOne ≡ firstSlot (sucᵉ (epoch s))
     ────────────────────────────────
-    ⟦ η ⟧ᵘᵉ ⊢ ⟦ ηv , ηc ⟧ᵘˢ ⇀⦇ s ,UPDN⦈ ⟦ ηv ⋆ η , ηv ⋆ η ⟧ᵘˢ
+    ⟦ η ⟧ᵘᵉ ⊢ ⟦ pre-ηc , ηv , ηc ⟧ᵘˢ ⇀⦇ s ,UPDN⦈ ⟦ ηv ⋆ η , ηv ⋆ η , grindingf pre-ηc ⟧ᵘˢ
 
-  Only-Evolve :
-    ∙ s + RandomnessStabilisationWindow ≥ firstSlot (sucᵉ (epoch s))
+  -- applies at : all other slots before candidate is fixed
+  -- pre-nonce updated with grindingf
+  -- candidate nonce set the same as pre-nonce
+  Update-All :
+    ∙ s + RandomnessStabilisationWindowPlusOne < firstSlot (sucᵉ (epoch s))
     ────────────────────────────────
-    ⟦ η ⟧ᵘᵉ ⊢ ⟦ ηv , ηc ⟧ᵘˢ ⇀⦇ s ,UPDN⦈ ⟦ ηv ⋆ η , ηc ⟧ᵘˢ
+    ⟦ η ⟧ᵘᵉ ⊢ ⟦ pre-ηc , ηv , ηc ⟧ᵘˢ ⇀⦇ s ,UPDN⦈ ⟦ grindingf pre-ηc , ηv ⋆ η , grindingf pre-ηc ⟧ᵘˢ
+
+  -- applies at : within RandomnessStabilisationWindowPlusOne of next epoch
+  -- pre-nonce updated with grindingf
+  -- candidate nonce set the same as pre-nonce
+  Keep-PreN :
+    ∙ s + RandomnessStabilisationWindowPlusOne > firstSlot (sucᵉ (epoch s))
+    ────────────────────────────────
+    ⟦ η ⟧ᵘᵉ ⊢ ⟦ pre-ηc , ηv , ηc ⟧ᵘˢ ⇀⦇ s ,UPDN⦈ ⟦ grindingf pre-ηc , ηv ⋆ η , ηc ⟧ᵘˢ
 \end{code}
 \caption{Update Nonce transition system rules}
 \label{fig:ts-rules:updatenonce}

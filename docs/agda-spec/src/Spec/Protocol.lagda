@@ -13,6 +13,7 @@ Figure~\ref{fig:ts-types:prtcl} and consists of:
 Its state is shown in Figure~\ref{fig:ts-types:prtcl} and consists of
 \begin{itemize}
   \item The operational certificate issue number mapping \afld{cs}.
+  \item The pre-nonce \afld{pre-ηc}.  
   \item The evolving nonce \afld{ηv}.
   \item The candidate nonce for the next epoch \afld{ηc}.
 \end{itemize}
@@ -35,11 +36,12 @@ module Spec.Protocol
   (bs     : BlockStructure crypto nonces es ss) (open BlockStructure bs)
   (af     : _) (open AbstractFunctions af)
   (rs     : _) (open RationalExtStructure rs)
+  (grindingf : Nonce → Nonce)
   where
 
 open import InterfaceLibrary.Common.BaseTypes crypto using (PoolDistr; lookupPoolDistr)
 open import Spec.OperationalCertificate crypto nonces es ss bs af
-open import Spec.UpdateNonce crypto nonces es
+open import Spec.UpdateNonce crypto nonces es grindingf
 open import Spec.BaseTypes crypto using (OCertCounters)
 open import Data.Rational as ℚ using (ℚ; 0ℚ; 1ℚ)
 open import Ledger.Prelude
@@ -69,13 +71,14 @@ record PrtclEnv : Type where
 record PrtclState : Type where
 \end{code}
 \begin{code}[hide]
-  constructor ⟦_,_,_⟧ᵖˢ
+  constructor ⟦_,_,_,_⟧ᵖˢ
   field
 \end{code}
 \begin{code}
-    cs : OCertCounters -- operational certificate issues numbers
-    ηv : Nonce         -- evolving nonce
-    ηc : Nonce         -- candidate nonce
+    cs     : OCertCounters -- operational certificate issues numbers
+    pre-ηc : Nonce         -- pre-nonce
+    ηv     : Nonce         -- evolving nonce
+    ηc     : Nonce         -- candidate nonce
 \end{code}
 \end{AgdaSuppressSpace}
 \emph{Protocol transitions}
@@ -180,10 +183,10 @@ The function \afun{vrfChecks} has the following predicate failures:
 \begin{figure*}[h]
 \begin{code}[hide]
 private variable
-  pd               : PoolDistr
-  cs cs′           : OCertCounters
-  ηv ηc ηv′ ηc′ η₀ : Nonce
-  bh               : BHeader
+  pd                              : PoolDistr
+  cs cs′                          : OCertCounters
+  pre-ηc pre-ηc′ ηv ηc ηv′ ηc′ η₀ : Nonce
+  bh                              : BHeader
 
 data _⊢_⇀⦇_,PRTCL⦈_ where
 \end{code}
@@ -192,11 +195,11 @@ data _⊢_⇀⦇_,PRTCL⦈_ where
     let (bhb , σ) = bh; open BHBody bhb
         η = hBNonce bhb
     in
-    ∙ ⟦ η ⟧ᵘᵉ ⊢ ⟦ ηv , ηc ⟧ᵘˢ ⇀⦇ slot ,UPDN⦈ ⟦ ηv′ , ηc′ ⟧ᵘˢ
+    ∙ ⟦ η ⟧ᵘᵉ ⊢ ⟦ pre-ηc , ηv , ηc ⟧ᵘˢ ⇀⦇ slot ,UPDN⦈ ⟦ pre-ηc′ , ηv′ , ηc′ ⟧ᵘˢ
     ∙ dom (pd ˢ) ⊢ cs ⇀⦇ bh ,OCERT⦈ cs′
     ∙ vrfChecks η₀ pd ActiveSlotCoeff bhb
     ────────────────────────────────
-    ⟦ pd , η₀ ⟧ᵖᵉ ⊢ ⟦ cs , ηv , ηc ⟧ᵖˢ ⇀⦇ bh ,PRTCL⦈ ⟦ cs′ , ηv′ , ηc′ ⟧ᵖˢ
+    ⟦ pd , η₀ ⟧ᵖᵉ ⊢ ⟦ cs , pre-ηc , ηv , ηc ⟧ᵖˢ ⇀⦇ bh ,PRTCL⦈ ⟦ cs′ , pre-ηc′ , ηv′ , ηc′ ⟧ᵖˢ
 \end{code}
 \caption{Protocol transition system rules}
 \label{fig:ts-rules:prtcl}

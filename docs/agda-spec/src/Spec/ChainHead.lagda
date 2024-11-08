@@ -12,6 +12,7 @@ state is shown in Figure~\ref{fig:ts-types:chainhead} and it consists of the fol
 \begin{itemize}
   \item The operational certificate issue number map \afld{cs}.
   \item The epoch nonce \afld{η₀}.
+  \item The pre-nonce \afld{pre-ηc}.
   \item The evolving nonce \afld{ηv}.
   \item The candidate nonce \afld{ηc}.
   \item The previous epoch hash nonce \afld{ηh}.
@@ -40,12 +41,13 @@ module Spec.ChainHead
   (af     : _) (open AbstractFunctions af)
   (li     : LedgerInterface crypto es ss) (let open LedgerInterface li)
   (rs     : _) (open RationalExtStructure rs)  
+  (grindingf : Nonce → Nonce)
   where
 
 open import Spec.BaseTypes crypto using (OCertCounters)
 open import Spec.TickForecast crypto es ss li
 open import Spec.TickNonce crypto es nonces
-open import Spec.Protocol crypto nonces es ss bs af rs
+open import Spec.Protocol crypto nonces es ss bs af rs grindingf
 open import Ledger.PParams crypto es ss using (PParams; ProtVer)
 open import Ledger.Prelude
 
@@ -74,16 +76,17 @@ record LastAppliedBlock : Type where
 record ChainHeadState : Type where
 \end{code}
 \begin{code}[hide]
-  constructor ⟦_,_,_,_,_,_⟧ᶜˢ
+  constructor ⟦_,_,_,_,_,_,_⟧ᶜˢ
   field
 \end{code}
 \begin{code}  
-    cs  : OCertCounters          -- operational certificate issue numbers
-    η₀  : Nonce                  -- epoch nonce
-    ηv  : Nonce                  -- evolving nonce
-    ηc  : Nonce                  -- candidate nonce
-    ηh  : Nonce                  -- nonce from hash of last epoch’s last header
-    lab : Maybe LastAppliedBlock -- latest applied block
+    cs     : OCertCounters          -- operational certificate issue numbers
+    η₀     : Nonce                  -- epoch nonce
+    pre-ηc : Nonce                  -- pre-nonce
+    ηv     : Nonce                  -- evolving nonce
+    ηc     : Nonce                  -- candidate nonce
+    ηh     : Nonce                  -- nonce from hash of last epoch’s last header
+    lab    : Maybe LastAppliedBlock -- latest applied block
 \end{code}
 \end{AgdaSuppressSpace}
 \emph{Chain Head transitions}
@@ -136,11 +139,11 @@ The transition checks the following things
 \begin{figure*}[h]
 \begin{code}[hide]
 private variable
-  nes forecast                : NewEpochState
-  cs cs′                      : OCertCounters
-  η₀ ηv ηc ηh η₀′ ηv′ ηc′ ηh′ : Nonce
-  lab                         : Maybe LastAppliedBlock
-  bh                          : BHeader
+  nes forecast                               : NewEpochState
+  cs cs′                                     : OCertCounters
+  η₀ pre-ηc pre-ηc′ ηv ηc ηh η₀′ ηv′ ηc′ ηh′ : Nonce
+  lab                                        : Maybe LastAppliedBlock
+  bh                                         : BHeader
 
 data _⊢_⇀⦇_,CHAINHEAD⦈_ where
 \end{code}
@@ -159,10 +162,10 @@ data _⊢_⇀⦇_,CHAINHEAD⦈_ where
     ∙ _ ⊢ nes ⇀⦇ slot ,TICKF⦈ forecast
     ∙ chainChecks MaxMajorPV (pp .maxHeaderSize , pp .maxBlockSize , pp .pv) bh
     ∙ ⟦ ηc , nₚₕ ⟧ᵗᵉ ⊢ ⟦ η₀ , ηh ⟧ᵗˢ ⇀⦇ ne ,TICKN⦈ ⟦ η₀′ , ηh′ ⟧ᵗˢ
-    ∙ ⟦ pd , η₀′ ⟧ᵖᵉ ⊢ ⟦ cs , ηv , ηc ⟧ᵖˢ ⇀⦇ bh ,PRTCL⦈ ⟦ cs′ , ηv′ , ηc′ ⟧ᵖˢ
+    ∙ ⟦ pd , η₀′ ⟧ᵖᵉ ⊢ ⟦ cs , pre-ηc , ηv , ηc ⟧ᵖˢ ⇀⦇ bh ,PRTCL⦈ ⟦ cs′ , pre-ηc′ , ηv′ , ηc′ ⟧ᵖˢ
     ────────────────────────────────
-    nes ⊢ ⟦ cs  , η₀  , ηv  , ηc  , ηh  , lab  ⟧ᶜˢ ⇀⦇ bh ,CHAINHEAD⦈
-          ⟦ cs′ , η₀′ , ηv′ , ηc′ , ηh′ , lab′ ⟧ᶜˢ
+    nes ⊢ ⟦ cs  , η₀  , pre-ηc , ηv  , ηc  , ηh  , lab  ⟧ᶜˢ ⇀⦇ bh ,CHAINHEAD⦈
+          ⟦ cs′ , η₀′ , pre-ηc′ , ηv′ , ηc′ , ηh′ , lab′ ⟧ᶜˢ
 
 \end{code}
 \caption{Chain Head transition system rules}
