@@ -119,10 +119,10 @@ parseAnalysis = asum [
 
 storeLedgerParser :: Parser AnalysisName
 storeLedgerParser = do
-  slot <- SlotNo <$> option auto
+  slots <- map SlotNo <$> option auto
     (  long "store-ledger"
-    <> metavar "SLOT_NUMBER"
-    <> help "Store ledger state at specific slot number" )
+    <> metavar "SLOT_NUMBERS"
+    <> help "Store ledger state at these (ascending) slot numbers" )
   ledgerValidation <- flag LedgerReapply LedgerApply
     (  long "full-ledger-validation"
     <> help (  "Use full block application while applying blocks to ledger states, "
@@ -130,7 +130,7 @@ storeLedgerParser = do
             <> "This is much slower than block reapplication (the default)."
             )
     )
-  pure $ StoreLedgerStateAt slot ledgerValidation
+  pure $ StoreLedgerStateAt slots ledgerValidation
 
 checkNoThunksParser :: Parser AnalysisName
 checkNoThunksParser = CheckNoThunksEvery <$> option auto
