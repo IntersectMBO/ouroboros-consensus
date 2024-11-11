@@ -26,9 +26,7 @@
 -- a solid-state hard-drive). Secondly, when we load data from disk onto memory,
 -- we use ledger tables to /inject/ data into the /ledger state/. This mechanism
 -- allows us to keep most of the data on disk, which is rarely used, reducing
--- the memory usage of the Consensus layer. Ledger tables are used in the
--- 'Ouroboros.Consensus.Storage.LedgerDB.BackingStore' and
--- 'Ouroboros.Consensus.Storage.LedgerDB.DbChangelog' modules.
+-- the memory usage of the Consensus layer.
 --
 -- = __Example__
 --
@@ -88,7 +86,7 @@
 -- applying a block are defined in a way that it only needs the subset of the
 -- UTxO set that the block being applied will consume. See [the @DbChangelog@
 -- documentation for block
--- application](Ouroboros-Consensus-Storage-LedgerDB-DbChangelog.html#g:applying).
+-- application](Ouroboros-Consensus-Storage-LedgerDB-V1-DbChangelog.html#g:applying).
 --
 -- Now using 'Ouroboros.Consensus.Ledger.Tables.Utils.calculateDifference', we
 -- can compare two (successive) t'Ouroboros.Consensus.Ledger.Basics.LedgerState's
@@ -152,9 +150,9 @@
 -- @
 --
 -- We shall use those later on to read the txouts from some storage (which will
--- be the 'Ouroboros.Consensus.Storage.LedgerDB.BackingStore.BackingStore') and
+-- be the 'Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.BackingStore') and
 -- forward the resulting txouts through a sequence of differences (which will be
--- 'Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.adcDiffs').
+-- 'Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog.adcDiffs').
 --
 -- This example already covered most of the standard mapkinds, in particular:
 --
@@ -177,12 +175,19 @@ module Ouroboros.Consensus.Ledger.Tables (
     -- * Utilities
   , module Ouroboros.Consensus.Ledger.Tables.Combinators
     -- * Basic LedgerState classes
+    -- ** Stowing ledger tables
   , CanStowLedgerTables (..)
+  , trivialStowLedgerTables
+  , trivialUnstowLedgerTables
+    -- ** Extracting and injecting ledger tables
   , HasLedgerTables (..)
   , HasTickedLedgerTables
+  , trivialProjectLedgerTables
+  , trivialWithLedgerTables
     -- * Serialization
   , CanSerializeLedgerTables
   , codecLedgerTables
+  , defaultCodecLedgerTables
   , valuesMKDecoder
   , valuesMKEncoder
     -- * Special classes
@@ -228,11 +233,6 @@ class ( Ord (Key l)
        (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk)
     => l mk
     -> LedgerTables l mk
-  default projectLedgerTables ::
-         (ZeroableMK mk, LedgerTablesAreTrivial l)
-      => l mk
-      -> LedgerTables l mk
-  projectLedgerTables _ = trivialLedgerTables
 
   -- | Overwrite the tables in the given ledger state.
   --
@@ -249,12 +249,19 @@ class ( Ord (Key l)
     => l any
     -> LedgerTables l mk
     -> l mk
-  default withLedgerTables ::
-       LedgerTablesAreTrivial l
-    => l any
-    -> LedgerTables l mk
-    -> l mk
-  withLedgerTables st _ = convertMapKind st
+
+trivialProjectLedgerTables ::
+     (ZeroableMK mk, LedgerTablesAreTrivial l)
+  => l mk
+  -> LedgerTables l mk
+trivialProjectLedgerTables _ = trivialLedgerTables
+
+trivialWithLedgerTables ::
+     LedgerTablesAreTrivial l
+  => l any
+  -> LedgerTables l mk
+  -> l mk
+trivialWithLedgerTables st _ = convertMapKind st
 
 instance ( Ord (Key l)
          , Eq (Value l)
@@ -274,9 +281,9 @@ instance HasLedgerTables (Ticked1 l) => HasTickedLedgerTables l
 
 -- | LedgerTables are projections of data from a LedgerState and as such they
 -- can be injected back into a LedgerState. This is necessary because the Ledger
--- rules are unaware of UTxO-HD changes. Thus, by stowing the ledger tables, we are
--- able to provide a Ledger State with a restricted UTxO set that is enough to
--- execute the Ledger rules.
+-- rules are currently unaware of UTxO-HD changes. Thus, by stowing the ledger
+-- tables, we are able to provide a Ledger State with a restricted UTxO set that
+-- is enough to execute the Ledger rules.
 --
 -- In particular, HardForkBlock LedgerStates are never given diretly to the
 -- ledger but rather unwrapped and then it is the inner ledger state the one we
@@ -284,20 +291,20 @@ instance HasLedgerTables (Ticked1 l) => HasTickedLedgerTables l
 -- instance of this class, but HardForkBlocks might avoid doing so.
 type CanStowLedgerTables :: LedgerStateKind -> Constraint
 class CanStowLedgerTables l where
-
   stowLedgerTables     :: l ValuesMK -> l EmptyMK
-  default stowLedgerTables ::
-       (LedgerTablesAreTrivial l)
-    => l ValuesMK
-    -> l EmptyMK
-  stowLedgerTables = convertMapKind
-
   unstowLedgerTables   :: l EmptyMK  -> l ValuesMK
-  default unstowLedgerTables ::
-       (LedgerTablesAreTrivial l)
-    => l EmptyMK
-    -> l ValuesMK
-  unstowLedgerTables = convertMapKind
+
+trivialStowLedgerTables ::
+     (LedgerTablesAreTrivial l)
+  => l ValuesMK
+  -> l EmptyMK
+trivialStowLedgerTables = convertMapKind
+
+trivialUnstowLedgerTables ::
+     (LedgerTablesAreTrivial l)
+  => l EmptyMK
+  -> l ValuesMK
+trivialUnstowLedgerTables = convertMapKind
 
 {-------------------------------------------------------------------------------
   Serialization Codecs
@@ -310,12 +317,15 @@ class CanStowLedgerTables l where
 type CanSerializeLedgerTables :: LedgerStateKind -> Constraint
 class CanSerializeLedgerTables l where
   codecLedgerTables :: LedgerTables l CodecMK
-  default codecLedgerTables ::
-       ( FromCBOR (Key l), FromCBOR (Value l)
-       , ToCBOR   (Key l), ToCBOR   (Value l)
-       )
-    => LedgerTables l CodecMK
-  codecLedgerTables = LedgerTables $ CodecMK toCBOR toCBOR fromCBOR fromCBOR
+
+defaultCodecLedgerTables ::
+     ( FromCBOR (Key   l)
+     , FromCBOR (Value l)
+     , ToCBOR   (Key   l)
+     , ToCBOR   (Value l)
+     )
+  => LedgerTables l CodecMK
+defaultCodecLedgerTables = LedgerTables $ CodecMK toCBOR toCBOR fromCBOR fromCBOR
 
 -- | Default encoder of @'LedgerTables' l ''ValuesMK'@ to be used by the
 -- in-memory backing store.
