@@ -184,13 +184,20 @@ instance IsLedger (LedgerState ByronBlock) where
             byronLedgerTransition
         }
 
-type instance Key   (LedgerState ByronBlock) = Void
-type instance Value (LedgerState ByronBlock) = Void
+type instance TxIn  (LedgerState ByronBlock) = Void
+type instance TxOut (LedgerState ByronBlock) = Void
 
-instance HasLedgerTables (LedgerState ByronBlock)
-instance HasLedgerTables (Ticked1 (LedgerState ByronBlock))
-instance CanSerializeLedgerTables (LedgerState ByronBlock)
-instance CanStowLedgerTables (LedgerState ByronBlock)
+instance HasLedgerTables (LedgerState ByronBlock) where
+  projectLedgerTables = trivialProjectLedgerTables
+  withLedgerTables = trivialWithLedgerTables
+instance HasLedgerTables (Ticked1 (LedgerState ByronBlock)) where
+  projectLedgerTables = trivialProjectLedgerTables
+  withLedgerTables = trivialWithLedgerTables
+instance CanSerializeLedgerTables (LedgerState ByronBlock) where
+  codecLedgerTables = defaultCodecLedgerTables
+instance CanStowLedgerTables (LedgerState ByronBlock) where
+  stowLedgerTables = trivialStowLedgerTables
+  unstowLedgerTables = trivialUnstowLedgerTables
 instance LedgerTablesAreTrivial (LedgerState ByronBlock) where
   convertMapKind (ByronLedgerState x y z) = ByronLedgerState x y z
 instance LedgerTablesAreTrivial (Ticked1 (LedgerState ByronBlock)) where

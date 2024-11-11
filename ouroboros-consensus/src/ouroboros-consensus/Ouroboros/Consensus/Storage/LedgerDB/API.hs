@@ -349,7 +349,7 @@ instance (GetTip l, HeaderHash l ~ HeaderHash blk, MonadSTM m)
       => GetTipSTM m (Forker m l blk) where
   getTipSTM forker = castPoint . getTip <$> forkerGetLedgerState forker
 
-data RangeQueryPrevious l = NoPreviousQuery | PreviousQueryWasFinal | PreviousQueryWasUpTo (Key l)
+data RangeQueryPrevious l = NoPreviousQuery | PreviousQueryWasFinal | PreviousQueryWasUpTo (TxIn l)
 
 data RangeQuery l = RangeQuery {
     rqPrev  :: !(RangeQueryPrevious l)

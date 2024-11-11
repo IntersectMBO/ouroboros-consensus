@@ -462,8 +462,8 @@ instance LedgerSupportsPeerSelection (SimpleBlock c ext) where
   LedgerTables
 -------------------------------------------------------------------------------}
 
-type instance Key   (LedgerState (SimpleBlock c ext)) = Mock.TxIn
-type instance Value (LedgerState (SimpleBlock c ext)) = Mock.TxOut
+type instance TxIn  (LedgerState (SimpleBlock c ext)) = Mock.TxIn
+type instance TxOut (LedgerState (SimpleBlock c ext)) = Mock.TxOut
 
 instance HasLedgerTables (LedgerState (SimpleBlock c ext)) where
   projectLedgerTables = simpleLedgerTables
@@ -476,7 +476,8 @@ instance HasLedgerTables (Ticked1 (LedgerState (SimpleBlock c ext))) where
   withLedgerTables   (TickedSimpleLedgerState st) tables =
       TickedSimpleLedgerState $ withLedgerTables st $ castLedgerTables tables
 
-instance CanSerializeLedgerTables (LedgerState (SimpleBlock c ext))
+instance CanSerializeLedgerTables (LedgerState (SimpleBlock c ext)) where
+  codecLedgerTables = defaultCodecLedgerTables
 
 instance CanStowLedgerTables (LedgerState (SimpleBlock c ext)) where
   stowLedgerTables st =

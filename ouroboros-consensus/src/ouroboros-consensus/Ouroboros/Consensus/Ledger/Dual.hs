@@ -942,18 +942,18 @@ decodeDualLedgerState decodeMain = do
   Ledger Tables
 -------------------------------------------------------------------------------}
 
-type instance Key   (LedgerState (DualBlock m a)) = Key   (LedgerState m)
-type instance Value (LedgerState (DualBlock m a)) = Value (LedgerState m)
+type instance TxIn  (LedgerState (DualBlock m a)) = TxIn  (LedgerState m)
+type instance TxOut (LedgerState (DualBlock m a)) = TxOut (LedgerState m)
 
 instance (
     Bridge m a
 #if __GLASGOW_HASKELL__ >= 906
-  , NoThunks (Value (LedgerState m))
-  , NoThunks (Key (LedgerState m))
-  , Show (Value (LedgerState m))
-  , Show (Key (LedgerState m))
-  , Eq (Value (LedgerState m))
-  , Ord (Key (LedgerState m))
+  , NoThunks (TxOut (LedgerState m))
+  , NoThunks (TxIn (LedgerState m))
+  , Show (TxOut (LedgerState m))
+  , Show (TxIn (LedgerState m))
+  , Eq (TxOut (LedgerState m))
+  , Ord (TxIn (LedgerState m))
 #endif
   ) => HasLedgerTables (LedgerState (DualBlock m a)) where
   projectLedgerTables DualLedgerState{..} =
@@ -971,12 +971,12 @@ instance (
 instance (
     Bridge m a
 #if __GLASGOW_HASKELL__ >= 906
-  , NoThunks (Value (LedgerState m))
-  , NoThunks (Key (LedgerState m))
-  , Show (Value (LedgerState m))
-  , Show (Key (LedgerState m))
-  , Eq (Value (LedgerState m))
-  , Ord (Key (LedgerState m))
+  , NoThunks (TxOut (LedgerState m))
+  , NoThunks (TxIn (LedgerState m))
+  , Show (TxOut (LedgerState m))
+  , Show (TxIn (LedgerState m))
+  , Eq (TxOut (LedgerState m))
+  , Ord (TxIn (LedgerState m))
 #endif
   )=> HasLedgerTables (Ticked1 (LedgerState (DualBlock m a))) where
   projectLedgerTables TickedDualLedgerState{..} =

@@ -126,16 +126,23 @@ instance Ledger.TxLimits TestBlock where
 
 type instance Ledger.ApplyTxErr TestBlock = ()
 
-type instance Ledger.Key   (Ledger.LedgerState TestBlock) = Void
-type instance Ledger.Value (Ledger.LedgerState TestBlock) = Void
+type instance Ledger.TxIn  (Ledger.LedgerState TestBlock) = Void
+type instance Ledger.TxOut (Ledger.LedgerState TestBlock) = Void
 
-instance Ledger.HasLedgerTables (Ledger.LedgerState TestBlock)
-instance Ledger.HasLedgerTables (Ticked1 (Ledger.LedgerState TestBlock))
+instance Ledger.HasLedgerTables (Ledger.LedgerState TestBlock) where
+  projectLedgerTables = Ledger.trivialProjectLedgerTables
+  withLedgerTables = Ledger.withLedgerTables
+instance Ledger.HasLedgerTables (Ticked1 (Ledger.LedgerState TestBlock)) where
+  projectLedgerTables = Ledger.trivialProjectLedgerTables
+  withLedgerTables = Ledger.withLedgerTables
 instance Ledger.LedgerTablesAreTrivial (Ledger.LedgerState TestBlock) where
   convertMapKind (TestBlock.TestLedger x NoPayLoadDependentState) =
       TestBlock.TestLedger x NoPayLoadDependentState
 instance Ledger.LedgerTablesAreTrivial (Ticked1 (Ledger.LedgerState TestBlock)) where
   convertMapKind (TestBlock.TickedTestLedger x) =
       TestBlock.TickedTestLedger (Ledger.convertMapKind x)
-instance Ledger.CanStowLedgerTables (Ledger.LedgerState TestBlock)
-instance Ledger.CanSerializeLedgerTables (Ledger.LedgerState TestBlock)
+instance Ledger.CanStowLedgerTables (Ledger.LedgerState TestBlock) where
+  stowLedgerTables = Ledger.trivialStowLedgerTables
+  unstowLedgerTables = Ledger.trivialUnstowLedgerTables
+instance Ledger.CanSerializeLedgerTables (Ledger.LedgerState TestBlock) where
+  codecLedgerTables = Ledger.defaultCodecLedgerTables

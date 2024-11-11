@@ -68,7 +68,7 @@ import           Ouroboros.Consensus.HardFork.Combinator (HardForkBlock (..),
                      hardForkLedgerStatePerEra)
 import           Ouroboros.Consensus.HardFork.Combinator.State (currentState)
 import           Ouroboros.Consensus.HeaderValidation (HasAnnTip)
-import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.Abstract hiding (TxIn, TxOut)
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Shelley.HFEras ()
 import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley.Ledger

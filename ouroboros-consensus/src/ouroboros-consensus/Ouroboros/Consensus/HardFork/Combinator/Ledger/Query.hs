@@ -147,7 +147,7 @@ class ( All (Compose NoThunks WrapTxOut) xs
   queryLedgerGetTraversingFilter ::
        Index xs x
     -> BlockQuery x QFTraverseTables result
-    -> Value (LedgerState (HardForkBlock xs))
+    -> TxOut (LedgerState (HardForkBlock xs))
     -> Bool
 
 {-------------------------------------------------------------------------------

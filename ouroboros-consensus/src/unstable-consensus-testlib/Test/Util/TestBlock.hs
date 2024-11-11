@@ -510,20 +510,28 @@ instance ( Typeable ptype
       signKey :: SlotNo -> SignKeyDSIGN MockDSIGN
       signKey (SlotNo n) = SignKeyMockDSIGN $ n `mod` numCore
 
-type instance Key   (LedgerState TestBlock) = Void
-type instance Value (LedgerState TestBlock) = Void
+type instance TxIn  (LedgerState TestBlock) = Void
+type instance TxOut (LedgerState TestBlock) = Void
 
 instance HasLedgerTables (LedgerState TestBlock) where
+  projectLedgerTables = trivialProjectLedgerTables
+  withLedgerTables = trivialWithLedgerTables
+
 instance HasLedgerTables (Ticked1 (LedgerState TestBlock)) where
+  projectLedgerTables = trivialProjectLedgerTables
+  withLedgerTables = trivialWithLedgerTables
 
 instance LedgerTablesAreTrivial (LedgerState TestBlock) where
   convertMapKind (TestLedger x EmptyPLDS) = TestLedger x EmptyPLDS
 instance LedgerTablesAreTrivial (Ticked1 (LedgerState TestBlock)) where
   convertMapKind (TickedTestLedger x) = TickedTestLedger $ convertMapKind x
 
-instance CanSerializeLedgerTables (LedgerState TestBlock)
+instance CanSerializeLedgerTables (LedgerState TestBlock) where
+  codecLedgerTables = defaultCodecLedgerTables
 
-instance CanStowLedgerTables (LedgerState TestBlock)
+instance CanStowLedgerTables (LedgerState TestBlock) where
+  stowLedgerTables = trivialStowLedgerTables
+  unstowLedgerTables = trivialUnstowLedgerTables
 
 instance PayloadSemantics ptype
          => ApplyBlock (LedgerState (TestBlockWith ptype)) (TestBlockWith ptype) where

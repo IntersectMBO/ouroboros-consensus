@@ -417,8 +417,8 @@ instance ShelleyBasedEra era => SerializeHardForkTxOut '[ShelleyBlock proto era]
 
 instance ( ShelleyCompatible proto era
          , ShelleyBasedEra era
-         , Key (LedgerState (ShelleyBlock proto era)) ~ SL.TxIn (EraCrypto era)
-         , Value (LedgerState (ShelleyBlock proto era)) ~ SL.TxOut era
+         , TxIn (LedgerState (ShelleyBlock proto era)) ~ SL.TxIn (EraCrypto era)
+         , TxOut (LedgerState (ShelleyBlock proto era)) ~ SL.TxOut era
          , HasHardForkTxOut '[ShelleyBlock proto era]
          ) => BlockSupportsHFLedgerQuery '[ShelleyBlock proto era] where
 

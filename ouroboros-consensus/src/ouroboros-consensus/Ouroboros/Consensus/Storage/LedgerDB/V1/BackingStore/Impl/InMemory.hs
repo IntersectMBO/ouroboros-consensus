@@ -58,8 +58,8 @@ data BackingStoreContents m l =
       !(LedgerTables l ValuesMK)
   deriving (Generic)
 
-deriving instance ( NoThunks (Key l)
-                  , NoThunks (Value l)
+deriving instance ( NoThunks (TxIn l)
+                  , NoThunks (TxOut l)
                   ) => NoThunks (BackingStoreContents m l)
 
 -- | Use a 'TVar' as a trivial backing store

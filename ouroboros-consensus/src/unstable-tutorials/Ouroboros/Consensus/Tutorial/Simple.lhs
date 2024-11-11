@@ -131,34 +131,34 @@ Next, we instantiate the `ConsensusProtocol` for `SP`:
 
 > instance ConsensusProtocol SP where
 >   type SelectView    SP = BlockNo
->
+
 >   type LedgerView    SP = ()
->
+
 >   type IsLeader      SP = SP_IsLeader
 >   type CanBeLeader   SP = SP_CanBeLeader
->
+
 >   type ChainDepState SP = ()
 >   type ValidateView  SP = ()
 >   type ValidationErr SP = Void
->
+
 >   checkIsLeader cfg SP_CanBeLeader slot _tcds =
 >       if slot `Set.member` cfgsp_slotsLedByMe cfg
 >       then Just SP_IsLeader
 >       else Nothing
->
+
 >   protocolSecurityParam _cfg = k
->
+
 >   tickChainDepState _ _ _ _ = TickedTrivial
->
+
 >   updateChainDepState _ _ _ _ = return ()
->
+
 >   reupdateChainDepState _ _ _ _ = ()
 
 Finally we define a few extra things used in this instantiation:
 
 > data SP_CanBeLeader = SP_CanBeLeader -- Evidence that we /can/ be a leader
 > data SP_IsLeader = SP_IsLeader       -- Evidence that we /are/ leader
->
+
 > k :: SecurityParam
 > k = SecurityParam { maxRollbacks = 1 }
 
@@ -528,7 +528,7 @@ number, we materialize that number in the `LedgerState`.  We'll also need to
 keep track of some information about the most recent block we have seen.
 
 > data instance LedgerState BlockC mk =
->
+
 >   LedgerC
 >     -- the hash and slot number of the most recent block
 >     { lsbc_tip :: Point BlockC
@@ -563,7 +563,7 @@ types for a ledger.  Though we are here using
 > instance IsLedger (LedgerState BlockC) where
 >   type instance LedgerErr  (LedgerState BlockC) = Void
 >   type instance AuxLedgerEvent (LedgerState BlockC) = Void
->
+
 >   applyChainTickLedgerResult _cfg _slot ldgrSt =
 >     LedgerResult { lrEvents = []
 >                  , lrResult = TickedLedgerStateC $ convertMapKind ldgrSt
@@ -618,15 +618,15 @@ the `ApplyBlock` typeclass:
 >     pure $ LedgerResult { lrEvents = []
 >                         , lrResult = convertMapKind $ block `applyBlockTo` tickedLdgrSt
 >                         }
->
+
 >   reapplyBlockLedgerResult _ldgrCfg block tickedLdgrSt =
 >     LedgerResult { lrEvents = []
 >                  , lrResult = convertMapKind $ block `applyBlockTo` tickedLdgrSt
 >                  }
->
+
 >   getBlockKeySets = const trivialLedgerTables
->
->
+
+
 
 `applyBlockLedgerResult` tries to apply a block to the ledger and fails with a
 `LedgerErr` corresponding to the particular `LedgerState blk` if for whatever
@@ -736,13 +736,20 @@ the `LedgerTables`. For a Ledger state definition as simple as the one we are
 defining there the tables are trivially empty so the operations are all trivial
 and we use the default implementation
 
-> type instance Key   (LedgerState BlockC) = Void
-> type instance Value (LedgerState BlockC) = Void
->
-> instance HasLedgerTables (LedgerState BlockC)
-> instance HasLedgerTables (Ticked1 (LedgerState BlockC))
-> instance CanSerializeLedgerTables (LedgerState BlockC)
-> instance CanStowLedgerTables (LedgerState BlockC)
+> type instance TxIn  (LedgerState BlockC) = Void
+> type instance TxOut (LedgerState BlockC) = Void
+
+> instance HasLedgerTables (LedgerState BlockC) where
+>   projectLedgerTables = trivialProjectLedgerTables
+>   withLedgerTables = trivialWithLedgerTables
+> instance HasLedgerTables (Ticked1 (LedgerState BlockC)) where
+>   projectLedgerTables = trivialProjectLedgerTables
+>   withLedgerTables = trivialWithLedgerTables
+> instance CanSerializeLedgerTables (LedgerState BlockC) where
+>   codecLedgerTables = defaultCodecLedgerTables
+> instance CanStowLedgerTables (LedgerState BlockC) where
+>   stowLedgerTables = trivialStowLedgerTables
+>   unstowLedgerTables = trivialUnstowLedgerTables
 > instance LedgerTablesAreTrivial (LedgerState BlockC) where
 >   convertMapKind (LedgerC x y) = LedgerC x y
 > instance LedgerTablesAreTrivial (Ticked1 (LedgerState BlockC)) where

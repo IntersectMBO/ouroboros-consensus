@@ -46,8 +46,7 @@ import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Abstract
-import           Ouroboros.Consensus.Ledger.Abstract hiding (Key, Value)
-import qualified Ouroboros.Consensus.Ledger.Abstract as Ledger
+import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Ledger.Tables.Utils
@@ -193,8 +192,8 @@ queryKeys f (LedgerTables (ValuesMK utxovals)) = f utxovals
   Instances required for on-disk storage of ledger state tables
 -------------------------------------------------------------------------------}
 
-type instance Ledger.Key   (LedgerState TestBlock) = Token
-type instance Ledger.Value (LedgerState TestBlock) = TValue
+type instance TxIn  (LedgerState TestBlock) = Token
+type instance TxOut (LedgerState TestBlock) = TValue
 
 instance HasLedgerTables (LedgerState TestBlock) where
   projectLedgerTables st       = utxtoktables $ payloadDependentState st
@@ -208,7 +207,8 @@ instance HasLedgerTables (Ticked1 (LedgerState TestBlock)) where
   withLedgerTables    (TickedTestLedger st) tables =
     TickedTestLedger $ withLedgerTables st $ castLedgerTables tables
 
-instance CanSerializeLedgerTables (LedgerState TestBlock)
+instance CanSerializeLedgerTables (LedgerState TestBlock) where
+  codecLedgerTables = defaultCodecLedgerTables
 
 instance Serialise (LedgerTables (LedgerState TestBlock) EmptyMK) where
   encode (LedgerTables (_ :: EmptyMK Token TValue))

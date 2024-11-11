@@ -279,11 +279,11 @@ data DbChangelog l = DbChangelog {
   }
   deriving (Generic)
 
-deriving instance (Eq       (Key l), Eq       (Value l), Eq       (l EmptyMK))
+deriving instance (Eq       (TxIn l), Eq       (TxOut l), Eq       (l EmptyMK))
                =>  Eq       (DbChangelog l)
-deriving instance (NoThunks (Key l), NoThunks (Value l), NoThunks (l EmptyMK))
+deriving instance (NoThunks (TxIn l), NoThunks (TxOut l), NoThunks (l EmptyMK))
                =>  NoThunks (DbChangelog l)
-deriving instance (Show     (Key l), Show     (Value l), Show     (l EmptyMK))
+deriving instance (Show     (TxIn l), Show     (TxOut l), Show     (l EmptyMK))
                =>  Show     (DbChangelog l)
 
 -- | A 'DbChangelog' variant that contains only the information in memory. To

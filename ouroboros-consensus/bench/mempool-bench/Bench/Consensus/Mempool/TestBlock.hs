@@ -156,8 +156,8 @@ data instance Block.StorageConfig TestBlock = TestBlockStorageConfig
   Ledger tables
 -------------------------------------------------------------------------------}
 
-type instance Key   (LedgerState TestBlock) = Token
-type instance Value (LedgerState TestBlock) = ()
+type instance TxIn  (LedgerState TestBlock) = Token
+type instance TxOut (LedgerState TestBlock) = ()
 
 instance HasLedgerTables (LedgerState TestBlock) where
   projectLedgerTables st =
@@ -176,7 +176,8 @@ instance HasLedgerTables (Ticked1 (LedgerState TestBlock)) where
   withLedgerTables (TickedTestLedger st) tables =
     TickedTestLedger $ Ledger.withLedgerTables st $ Ledger.castLedgerTables tables
 
-instance CanSerializeLedgerTables (LedgerState TestBlock)
+instance CanSerializeLedgerTables (LedgerState TestBlock) where
+  codecLedgerTables = defaultCodecLedgerTables
 
 instance CanStowLedgerTables (LedgerState TestBlock) where
   stowLedgerTables     = error "unused: stowLedgerTables"

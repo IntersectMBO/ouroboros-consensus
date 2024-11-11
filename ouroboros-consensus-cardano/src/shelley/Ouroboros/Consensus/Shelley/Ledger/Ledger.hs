@@ -256,8 +256,8 @@ shelleyLedgerTipPoint = shelleyTipToPoint . shelleyLedgerTip
 
 instance ShelleyCompatible proto era => UpdateLedger (ShelleyBlock proto era)
 
-type instance Key   (LedgerState (ShelleyBlock proto era)) = SL.TxIn (EraCrypto era)
-type instance Value (LedgerState (ShelleyBlock proto era)) = Core.TxOut era
+type instance TxIn  (LedgerState (ShelleyBlock proto era)) = SL.TxIn (EraCrypto era)
+type instance TxOut (LedgerState (ShelleyBlock proto era)) = Core.TxOut era
 
 instance ShelleyBasedEra era
       => HasLedgerTables (LedgerState (ShelleyBlock proto era)) where

@@ -27,8 +27,7 @@ import qualified Data.Set as Set
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
-import           Ouroboros.Consensus.Ledger.Basics hiding (Key, LedgerState)
-import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Tables.Diff (fromAntiDiff)
 import           Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
@@ -102,8 +101,8 @@ instance StandardHash TestLedger
 
 deriving instance Eq (TestLedger EmptyMK)
 
-type instance Ledger.Key   TestLedger = Key
-type instance Ledger.Value TestLedger = Int
+type instance TxIn  TestLedger = Key
+type instance TxOut TestLedger = Int
 
 instance HasLedgerTables TestLedger where
   projectLedgerTables                     = LedgerTables . tlUtxos

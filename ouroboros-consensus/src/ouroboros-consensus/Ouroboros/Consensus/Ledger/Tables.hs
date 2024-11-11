@@ -217,12 +217,12 @@ import           Ouroboros.Consensus.Ticked
 -- | Extracting @'LedgerTables'@ from @l mk@ (which will share the same @mk@),
 -- or replacing the @'LedgerTables'@ associated to a particular @l@.
 type HasLedgerTables :: LedgerStateKind -> Constraint
-class ( Ord (Key l)
-      , Eq (Value l)
-      , Show (Key l)
-      , Show (Value l)
-      , NoThunks (Key l)
-      , NoThunks (Value l)
+class ( Ord (TxIn l)
+      , Eq (TxOut l)
+      , Show (TxIn l)
+      , Show (TxOut l)
+      , NoThunks (TxIn l)
+      , NoThunks (TxOut l)
       ) => HasLedgerTables l where
 
   -- | Extract the ledger tables from a ledger state
@@ -263,12 +263,12 @@ trivialWithLedgerTables ::
   -> l mk
 trivialWithLedgerTables st _ = convertMapKind st
 
-instance ( Ord (Key l)
-         , Eq (Value l)
-         , Show (Key l)
-         , Show (Value l)
-         , NoThunks (Key l)
-         , NoThunks (Value l)
+instance ( Ord (TxIn l)
+         , Eq (TxOut l)
+         , Show (TxIn l)
+         , Show (TxOut l)
+         , NoThunks (TxIn l)
+         , NoThunks (TxOut l)
          ) => HasLedgerTables (LedgerTables l) where
   projectLedgerTables = castLedgerTables
   withLedgerTables _ = castLedgerTables
@@ -319,10 +319,10 @@ class CanSerializeLedgerTables l where
   codecLedgerTables :: LedgerTables l CodecMK
 
 defaultCodecLedgerTables ::
-     ( FromCBOR (Key   l)
-     , FromCBOR (Value l)
-     , ToCBOR   (Key   l)
-     , ToCBOR   (Value l)
+     ( FromCBOR (TxIn  l)
+     , FromCBOR (TxOut l)
+     , ToCBOR   (TxIn  l)
+     , ToCBOR   (TxOut l)
      )
   => LedgerTables l CodecMK
 defaultCodecLedgerTables = LedgerTables $ CodecMK toCBOR toCBOR fromCBOR fromCBOR
@@ -383,7 +383,7 @@ valuesMKDecoder = do
 -- allows for easy manipulation of the types of @mk@ required at any step of the
 -- program.
 type LedgerTablesAreTrivial :: LedgerStateKind -> Constraint
-class (Key l ~ Void, Value l ~ Void) => LedgerTablesAreTrivial l where
+class (TxIn l ~ Void, TxOut l ~ Void) => LedgerTablesAreTrivial l where
   -- | If the ledger state is always in memory, then @l mk@ will be isomorphic
   -- to @l mk'@ for all @mk@, @mk'@. As a result, we can convert between ledgers
   -- states indexed by different map kinds.

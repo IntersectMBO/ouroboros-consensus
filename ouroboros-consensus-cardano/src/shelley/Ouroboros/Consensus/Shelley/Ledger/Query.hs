@@ -544,7 +544,7 @@ instance ( ShelleyCompatible proto era
     combUtxo (SL.UTxO l) vs = SL.UTxO $ Map.union l vs
 
     partial ::
-         (Value (LedgerState (ShelleyBlock proto era)) -> Bool)
+         (TxOut (LedgerState (ShelleyBlock proto era)) -> Bool)
       -> LedgerTables (ExtLedgerState (ShelleyBlock proto era)) ValuesMK
       -> Map (SL.TxIn (EraCrypto era)) (LC.TxOut era)
     partial queryPredicate (LedgerTables (ValuesMK vs)) =
@@ -1252,7 +1252,7 @@ answerShelleyTraversingQueries idx cfg q forker = case q of
     combUtxo (SL.UTxO l) vs = SL.UTxO $ Map.union l vs
 
     partial ::
-         (Value (LedgerState (HardForkBlock xs)) -> Bool)
+         (TxOut (LedgerState (HardForkBlock xs)) -> Bool)
       -> LedgerTables (ExtLedgerState (HardForkBlock xs)) ValuesMK
       -> Map (SL.TxIn (EraCrypto era)) (LC.TxOut era)
     partial queryPredicate (LedgerTables (ValuesMK vs)) =

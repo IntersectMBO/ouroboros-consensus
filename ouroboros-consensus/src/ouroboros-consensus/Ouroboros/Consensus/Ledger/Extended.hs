@@ -262,18 +262,18 @@ decodeDiskExtLedgerState cfg =
   Ledger Tables
 -------------------------------------------------------------------------------}
 
-type instance Key   (ExtLedgerState blk) = Key   (LedgerState blk)
-type instance Value (ExtLedgerState blk) = Value (LedgerState blk)
+type instance TxIn  (ExtLedgerState blk) = TxIn  (LedgerState blk)
+type instance TxOut (ExtLedgerState blk) = TxOut (LedgerState blk)
 
 instance (
     HasLedgerTables (LedgerState blk)
 #if __GLASGOW_HASKELL__ >= 906
-  , NoThunks (Value (LedgerState blk))
-  , NoThunks (Key (LedgerState blk))
-  , Show (Value (LedgerState blk))
-  , Show (Key (LedgerState blk))
-  , Eq (Value (LedgerState blk))
-  , Ord (Key (LedgerState blk))
+  , NoThunks (TxOut (LedgerState blk))
+  , NoThunks (TxIn (LedgerState blk))
+  , Show (TxOut (LedgerState blk))
+  , Show (TxIn (LedgerState blk))
+  , Eq (TxOut (LedgerState blk))
+  , Ord (TxIn (LedgerState blk))
 #endif
   ) => HasLedgerTables (ExtLedgerState blk) where
   projectLedgerTables (ExtLedgerState lstate _) =
@@ -299,12 +299,12 @@ instance LedgerTablesAreTrivial (Ticked1 (LedgerState blk))
 instance (
     HasLedgerTables (Ticked1 (LedgerState blk))
 #if __GLASGOW_HASKELL__ >= 906
-  , NoThunks (Value (LedgerState blk))
-  , NoThunks (Key (LedgerState blk))
-  , Show (Value (LedgerState blk))
-  , Show (Key (LedgerState blk))
-  , Eq (Value (LedgerState blk))
-  , Ord (Key (LedgerState blk))
+  , NoThunks (TxOut (LedgerState blk))
+  , NoThunks (TxIn (LedgerState blk))
+  , Show (TxOut (LedgerState blk))
+  , Show (TxIn (LedgerState blk))
+  , Eq (TxOut (LedgerState blk))
+  , Ord (TxIn (LedgerState blk))
 #endif
   ) => HasLedgerTables (Ticked1 (ExtLedgerState blk)) where
   projectLedgerTables (TickedExtLedgerState lstate _view _hstate) =

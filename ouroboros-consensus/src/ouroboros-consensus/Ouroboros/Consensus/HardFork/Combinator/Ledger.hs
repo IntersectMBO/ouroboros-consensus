@@ -862,7 +862,7 @@ instance ( HasCanonicalTxIn xs
           (decodeHardForkTxOut (Proxy @xs))
 
 -- | Warning: 'projectLedgerTables' and 'withLedgerTables' are prohibitively
--- expensive when using big tables or when used multiple times. See the 'Value'
+-- expensive when using big tables or when used multiple times. See the 'TxOut'
 -- instance for the 'HardForkBlock' for more information.
 instance ( HardForkHasLedgerTables xs
          , CanHardFork xs
@@ -957,8 +957,8 @@ instance ( HardForkHasLedgerTables xs
         $ castLedgerTables
         $ distribLedgerTables i (castLedgerTables tables)
 
-instance ( Key (LedgerState (HardForkBlock xs)) ~ Void
-         , Value (LedgerState (HardForkBlock xs)) ~ Void
+instance ( TxIn (LedgerState (HardForkBlock xs)) ~ Void
+         , TxOut (LedgerState (HardForkBlock xs)) ~ Void
          , All (Compose LedgerTablesAreTrivial LedgerState) xs
          ) => LedgerTablesAreTrivial (LedgerState (HardForkBlock xs)) where
   convertMapKind (HardForkLedgerState st) = HardForkLedgerState $
@@ -1006,16 +1006,16 @@ injectLedgerTables idx =
   . mapMK injTxOut
   . getLedgerTables
   where
-    injTxIn :: Key (LedgerState x) -> Key (LedgerState (HardForkBlock xs))
+    injTxIn :: TxIn (LedgerState x) -> TxIn (LedgerState (HardForkBlock xs))
     injTxIn = injectCanonicalTxIn idx
 
-    injTxOut :: Value (LedgerState x) -> Value (LedgerState (HardForkBlock xs))
+    injTxOut :: TxOut (LedgerState x) -> TxOut (LedgerState (HardForkBlock xs))
     injTxOut = injectHardForkTxOut idx
 
 distribLedgerTables ::
      forall xs x mk. (
           CanMapKeysMK mk
-        , Ord (Key (LedgerState x))
+        , Ord (TxIn (LedgerState x))
         , HasCanonicalTxIn xs
         , CanMapMK mk
         , HasHardForkTxOut xs
@@ -1035,7 +1035,7 @@ distribLedgerTables idx =
 
 -- | Defaults to a 'CannonicalTxIn' type, but this will probably change in the
 -- future to @NS 'WrapTxIn' xs@. See 'HasCanonicalTxIn'.
-type instance Key   (LedgerState (HardForkBlock xs)) = CanonicalTxIn xs
+type instance TxIn   (LedgerState (HardForkBlock xs)) = CanonicalTxIn xs
 
 -- | Canonical TxIn
 --
@@ -1055,14 +1055,14 @@ class ( Show (CanonicalTxIn xs)
   -- | Inject an era-specific 'TxIn' into a 'TxIn' for a 'HardForkBlock'.
   injectCanonicalTxIn ::
     Index xs x ->
-    Key (LedgerState x) ->
+    TxIn (LedgerState x) ->
     CanonicalTxIn xs
 
   -- | Distribute a 'TxIn' for a 'HardForkBlock' to an era-specific 'TxIn'.
   distribCanonicalTxIn ::
     Index xs x ->
     CanonicalTxIn xs ->
-    Key (LedgerState x)
+    TxIn (LedgerState x)
 
   encodeCanonicalTxIn :: CanonicalTxIn xs -> CBOR.Encoding
 
@@ -1073,7 +1073,7 @@ class ( Show (CanonicalTxIn xs)
 -------------------------------------------------------------------------------}
 
 -- | Defaults to the 'HardForkTxOut' type
-type instance Value (LedgerState (HardForkBlock xs)) = HardForkTxOut xs
+type instance TxOut (LedgerState (HardForkBlock xs)) = HardForkTxOut xs
 
 -- | This choice for 'HardForkTxOut' imposes some complications on the code.
 --
@@ -1090,7 +1090,7 @@ type instance Value (LedgerState (HardForkBlock xs)) = HardForkTxOut xs
 -- <<docs/haddocks/hard-fork-tables-per-block.svg>>
 --
 -- However, when we are carrying @'LedgerTables' ('HardForkBlock' xs) mk@ we are
--- instead carrying these tables, where the 'Value' is an 'NS'. This means that
+-- instead carrying these tables, where the 'TxOut' is an 'NS'. This means that
 -- whenever we are extracting these tables, we are effectively duplicating the
 -- UTxO set ('Data.Map.Map') inside, to create an identical one where every
 -- element has been translated to the most recent era and unwrapped from the
@@ -1154,12 +1154,12 @@ class HasHardForkTxOut xs where
   type HardForkTxOut xs :: Type
   type HardForkTxOut xs = DefaultHardForkTxOut xs
 
-  injectHardForkTxOut :: Index xs x -> Value (LedgerState x) -> HardForkTxOut xs
-  distribHardForkTxOut :: Index xs x -> HardForkTxOut xs -> Value (LedgerState x)
+  injectHardForkTxOut :: Index xs x -> TxOut (LedgerState x) -> HardForkTxOut xs
+  distribHardForkTxOut :: Index xs x -> HardForkTxOut xs -> TxOut (LedgerState x)
 
 injectHardForkTxOutDefault ::
      Index xs x
-  -> Value (LedgerState x)
+  -> TxOut (LedgerState x)
   -> DefaultHardForkTxOut xs
 injectHardForkTxOutDefault idx = injectNS idx . WrapTxOut
 
@@ -1167,7 +1167,7 @@ distribHardForkTxOutDefault ::
      CanHardFork xs
   => Index xs x
   -> DefaultHardForkTxOut xs
-  -> Value (LedgerState x)
+  -> TxOut (LedgerState x)
 distribHardForkTxOutDefault idx  =
     unwrapTxOut
   . apFn (projectNP idx $ composeTxOutTranslations $ ipTranslateTxOut hardForkEraTranslation)

@@ -19,10 +19,7 @@ module Test.Util.LedgerStateOnlyTables (
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Ledger.Basics (LedgerState)
-import           Ouroboros.Consensus.Ledger.Tables (CanSerializeLedgerTables,
-                     CanStowLedgerTables (..), HasLedgerTables (..), Key,
-                     LedgerTables (..), MapKind, Value, ValuesMK,
-                     ZeroableMK (..))
+import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 
 {-------------------------------------------------------------------------------
@@ -48,6 +45,7 @@ deriving stock instance (Show k, Show v, Show (mk k v))
 
 instance (ToCBOR k, FromCBOR k, ToCBOR v, FromCBOR v)
       => CanSerializeLedgerTables (OTLedgerState k v) where
+  codecLedgerTables = defaultCodecLedgerTables
 
 {-------------------------------------------------------------------------------
   Stowable
@@ -67,8 +65,8 @@ instance (Ord k, Eq v)
   Simple ledger tables
 -------------------------------------------------------------------------------}
 
-type instance Key   (OTLedgerState k v) = k
-type instance Value (OTLedgerState k v) = v
+type instance TxIn  (OTLedgerState k v) = k
+type instance TxOut (OTLedgerState k v) = v
 
 instance (Ord k, Eq v, Show k, Show v, NoThunks k, NoThunks v)
       => HasLedgerTables (OTLedgerState k v) where

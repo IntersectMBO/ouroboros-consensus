@@ -562,16 +562,20 @@ instance IsLedger (LedgerState TestBlock) where
                                  . TickedTestLedger
                                  . noNewTickingDiffs
 
-type instance Key   (LedgerState TestBlock) = Void
-type instance Value (LedgerState TestBlock) = Void
+type instance TxIn  (LedgerState TestBlock) = Void
+type instance TxOut (LedgerState TestBlock) = Void
 
-instance HasLedgerTables (LedgerState TestBlock)
-instance HasLedgerTables (Ticked1 (LedgerState TestBlock))
-
+instance HasLedgerTables (LedgerState TestBlock) where
+  projectLedgerTables = trivialProjectLedgerTables
+  withLedgerTables = trivialWithLedgerTables
+instance HasLedgerTables (Ticked1 (LedgerState TestBlock)) where
+  projectLedgerTables = trivialProjectLedgerTables
+  withLedgerTables = trivialWithLedgerTables
 instance CanSerializeLedgerTables (LedgerState TestBlock) where
-
+  codecLedgerTables = defaultCodecLedgerTables
 instance CanStowLedgerTables (LedgerState TestBlock) where
-
+  stowLedgerTables = trivialStowLedgerTables
+  unstowLedgerTables = trivialUnstowLedgerTables
 instance LedgerTablesAreTrivial (LedgerState TestBlock) where
   convertMapKind (TestLedger x y) = TestLedger x y
 instance LedgerTablesAreTrivial (Ticked1 (LedgerState TestBlock)) where

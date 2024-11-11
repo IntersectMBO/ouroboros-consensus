@@ -77,19 +77,19 @@ instance CardanoHardForkConstraints c
 -- https://downloads.haskell.org/ghc/latest/docs/users_guide/exts/pragmas.html#unpack-pragma
 data CardanoTxOut c =
 #if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
-    ShelleyTxOut {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (TPraos c) (ShelleyEra c))))
-  | AllegraTxOut {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (TPraos c) (AllegraEra c))))
-  | MaryTxOut    {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (TPraos c) (MaryEra c))))
-  | AlonzoTxOut  {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (TPraos c) (AlonzoEra c))))
-  | BabbageTxOut {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (Praos c) (BabbageEra c))))
-  | ConwayTxOut  {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (Praos c) (ConwayEra c))))
+    ShelleyTxOut {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) (ShelleyEra c))))
+  | AllegraTxOut {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) (AllegraEra c))))
+  | MaryTxOut    {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) (MaryEra c))))
+  | AlonzoTxOut  {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) (AlonzoEra c))))
+  | BabbageTxOut {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (Praos c) (BabbageEra c))))
+  | ConwayTxOut  {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (Praos c) (ConwayEra c))))
 #else
-    ShelleyTxOut {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (TPraos c) (ShelleyEra c))))
-  | AllegraTxOut {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (TPraos c) (AllegraEra c))))
-  | MaryTxOut    {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (TPraos c) (MaryEra c))))
-  | AlonzoTxOut  !(Value (LedgerState (ShelleyBlock (TPraos c) (AlonzoEra c))))
-  | BabbageTxOut !(Value (LedgerState (ShelleyBlock (Praos c) (BabbageEra c))))
-  | ConwayTxOut  !(Value (LedgerState (ShelleyBlock (Praos c) (ConwayEra c))))
+    ShelleyTxOut {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) (ShelleyEra c))))
+  | AllegraTxOut {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) (AllegraEra c))))
+  | MaryTxOut    {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) (MaryEra c))))
+  | AlonzoTxOut  !(TxOut (LedgerState (ShelleyBlock (TPraos c) (AlonzoEra c))))
+  | BabbageTxOut !(TxOut (LedgerState (ShelleyBlock (Praos c) (BabbageEra c))))
+  | ConwayTxOut  !(TxOut (LedgerState (ShelleyBlock (Praos c) (ConwayEra c))))
 #endif
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks

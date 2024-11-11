@@ -338,7 +338,7 @@ implForkerRangeReadTables env rq0 = do
         DiffMK
       $ case Set.lookupMax ks of
           Nothing -> ds
-          Just k  -> Diff.filterOnlyKey (> k) ds
+          Just k  -> Diff.filterWithKeyOnly (> k) ds
 
     -- NOTE: this is counting the deletions wrt disk.
     numDeletesDiffMK :: DiffMK k v -> Int
@@ -394,7 +394,7 @@ implForkerRangeReadTables env rq0 = do
             if definitelyNoMoreToFetch then includingAllKeys else
             Diff.applyDiff
               vs'
-               (Diff.filterOnlyKey (< k) ds)
+               (Diff.filterWithKeyOnly (< k) ds)
 
 implForkerGetLedgerState ::
      (MonadSTM m, GetTip l)

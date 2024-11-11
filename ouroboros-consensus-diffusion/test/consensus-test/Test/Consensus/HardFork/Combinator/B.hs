@@ -172,14 +172,20 @@ data instance LedgerState BlockB mk = LgrB {
   Ledger Tables
 -------------------------------------------------------------------------------}
 
+type instance TxIn  (LedgerState BlockB) = Void
+type instance TxOut (LedgerState BlockB) = Void
 
-type instance Key   (LedgerState BlockB) = Void
-type instance Value (LedgerState BlockB) = Void
-
-instance HasLedgerTables (LedgerState BlockB)
-instance HasLedgerTables (Ticked1 (LedgerState BlockB))
-instance CanSerializeLedgerTables (LedgerState BlockB)
-instance CanStowLedgerTables (LedgerState BlockB)
+instance HasLedgerTables (LedgerState BlockB) where
+  projectLedgerTables = trivialProjectLedgerTables
+  withLedgerTables = trivialWithLedgerTables
+instance HasLedgerTables (Ticked1 (LedgerState BlockB)) where
+  projectLedgerTables = trivialProjectLedgerTables
+  withLedgerTables = trivialWithLedgerTables
+instance CanSerializeLedgerTables (LedgerState BlockB) where
+  codecLedgerTables = defaultCodecLedgerTables
+instance CanStowLedgerTables (LedgerState BlockB) where
+  stowLedgerTables = trivialStowLedgerTables
+  unstowLedgerTables = trivialUnstowLedgerTables
 instance LedgerTablesAreTrivial (LedgerState BlockB) where
   convertMapKind (LgrB x) = LgrB x
 instance LedgerTablesAreTrivial (Ticked1 (LedgerState BlockB)) where

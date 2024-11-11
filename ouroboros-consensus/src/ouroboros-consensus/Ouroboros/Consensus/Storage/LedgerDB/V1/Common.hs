@@ -76,8 +76,8 @@ data LedgerDBState m l blk =
 deriving instance ( IOLike m
                   , LedgerSupportsProtocol blk
                   , NoThunks (l EmptyMK)
-                  , NoThunks (Key l)
-                  , NoThunks (Value l)
+                  , NoThunks (TxIn l)
+                  , NoThunks (TxOut l)
                   , NoThunks (LedgerCfg l)
                   ) => NoThunks (LedgerDBState m l blk)
 
@@ -133,8 +133,8 @@ data LedgerDBEnv m l blk = LedgerDBEnv {
 deriving instance ( IOLike m
                   , LedgerSupportsProtocol blk
                   , NoThunks (l EmptyMK)
-                  , NoThunks (Key l)
-                  , NoThunks (Value l)
+                  , NoThunks (TxIn l)
+                  , NoThunks (TxOut l)
                   , NoThunks (LedgerCfg l)
                   ) => NoThunks (LedgerDBEnv m l blk)
 
@@ -216,8 +216,8 @@ data ForkerEnv m l blk = ForkerEnv {
 deriving instance ( IOLike m
                   , LedgerSupportsProtocol blk
                   , NoThunks (l EmptyMK)
-                  , NoThunks (Key l)
-                  , NoThunks (Value l)
+                  , NoThunks (TxIn l)
+                  , NoThunks (TxOut l)
                   ) => NoThunks (ForkerEnv m l blk)
 
 getForkerEnv ::
