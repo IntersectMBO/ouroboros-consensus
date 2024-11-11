@@ -39,8 +39,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
     -- * Invalid blocks
   , InvalidBlockInfo (..)
   , InvalidBlocks
-    -- * Future blocks
-  , FutureBlocks
     -- * Blocks to add
   , BlockToAdd (..)
   , ChainSelMessage (..)
@@ -79,15 +77,14 @@ import           NoThunks.Class (OnlyCheckWhnfNamed (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Fragment.Diff (ChainDiff)
-import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture)
 import           Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      AddBlockResult (..), ChainDbError (..),
-                     ChainSelectionPromise (..), ChainType, InvalidBlockReason,
-                     LoE, StreamFrom, StreamTo, UnknownRange)
+                     ChainSelectionPromise (..), ChainType, LoE, StreamFrom,
+                     StreamTo, UnknownRange)
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
                      (InvalidBlockPunishment)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB (LgrDB,
@@ -248,27 +245,8 @@ data ChainDbEnv m blk = CDB
     -- garbage collections.
   , cdbKillBgThreads   :: !(StrictTVar m (m ()))
     -- ^ A handle to kill the background threads.
-  , cdbCheckInFuture   :: !(CheckInFuture m blk)
   , cdbChainSelQueue   :: !(ChainSelQueue m blk)
     -- ^ Queue of blocks that still have to be added.
-  , cdbFutureBlocks    :: !(StrictTVar m (FutureBlocks m blk))
-    -- ^ Blocks from the future
-    --
-    -- Blocks that were added to the ChainDB but that were from the future
-    -- according to 'CheckInFuture', without exceeding the clock skew
-    -- ('inFutureExceedsClockSkew'). Blocks exceeding the clock skew are
-    -- considered to be invalid ('InFutureExceedsClockSkew') and will be added
-    -- 'cdbInvalid'.
-    --
-    -- Whenever a block is added to the ChainDB, we first trigger chain
-    -- selection for all the blocks in this map so that blocks no longer from
-    -- the future can get adopted. Note that when no blocks are added to the
-    -- ChainDB, we will /not/ actively trigger chain selection for the blocks
-    -- in this map.
-    --
-    -- The number of blocks from the future is bounded by the number of
-    -- upstream peers multiplied by the max clock skew divided by the slot
-    -- length.
   , cdbLoE             :: !(m (LoE (AnchoredFragment (Header blk))))
     -- ^ Configure the Limit on Eagerness. If this is 'LoEEnabled', it contains
     -- an action that returns the LoE fragment, which indicates the latest rollback
@@ -422,19 +400,9 @@ type InvalidBlocks blk = Map (HeaderHash blk) (InvalidBlockInfo blk)
 -- VolatileDB for some slot @s@, the hashes older or equal to @s@ can be
 -- removed from this map.
 data InvalidBlockInfo blk = InvalidBlockInfo
-  { invalidBlockReason :: !(InvalidBlockReason blk)
+  { invalidBlockReason :: !(ExtValidationError blk)
   , invalidBlockSlotNo :: !SlotNo
   } deriving (Eq, Show, Generic, NoThunks)
-
-{-------------------------------------------------------------------------------
-  Future blocks
--------------------------------------------------------------------------------}
-
--- | Blocks from the future for which we still need to trigger chain
--- selection.
---
--- See 'cdbFutureBlocks' for more info.
-type FutureBlocks m blk = Map (HeaderHash blk) (Header blk, InvalidBlockPunishment m)
 
 {-------------------------------------------------------------------------------
   Blocks to add
@@ -649,7 +617,7 @@ data TraceAddBlockEvent blk =
   | IgnoreBlockAlreadyInVolatileDB (RealPoint blk)
 
     -- | A block that is know to be invalid was ignored.
-  | IgnoreInvalidBlock (RealPoint blk) (InvalidBlockReason blk)
+  | IgnoreInvalidBlock (RealPoint blk) (ExtValidationError blk)
 
     -- | The block was added to the queue and will be added to the ChainDB by
     -- the background thread. The size of the queue is included.
@@ -665,10 +633,6 @@ data TraceAddBlockEvent blk =
 
     -- | ChainSel will reprocess blocks that were postponed by the LoE.
   | PoppedReprocessLoEBlocksFromQueue
-
-    -- | The block is from the future, i.e., its slot number is greater than
-    -- the current slot (the second argument).
-  | BlockInTheFuture (RealPoint blk) SlotNo
 
     -- | A block was added to the Volatile DB
   | AddedBlockToVolatileDB (RealPoint blk) BlockNo IsEBB Enclosing
@@ -709,11 +673,6 @@ data TraceAddBlockEvent blk =
     -- | An event traced during validating performed while adding a block.
   | AddBlockValidation (TraceValidationEvent blk)
 
-    -- | Run chain selection for a block that was previously from the future.
-    -- This is done for all blocks from the future each time a new block is
-    -- added.
-  | ChainSelectionForFutureBlock (RealPoint blk)
-
     -- | The tentative header (in the context of diffusion pipelining) has been
     -- updated.
   | PipeliningEvent (TracePipeliningEvent blk)
@@ -744,21 +703,6 @@ data TraceValidationEvent blk =
     -- | A candidate chain was valid.
   | ValidCandidate (AnchoredFragment (Header blk))
 
-    -- | Candidate contains headers from the future which do no exceed the
-    -- clock skew.
-  | CandidateContainsFutureBlocks
-      (AnchoredFragment (Header blk))
-      -- ^ Candidate chain containing headers from the future
-      [Header blk]
-      -- ^ Headers from the future, not exceeding clock skew
-
-    -- | Candidate contains headers from the future which exceed the
-    -- clock skew, making them invalid.
-  | CandidateContainsFutureBlocksExceedingClockSkew
-      (AnchoredFragment (Header blk))
-      -- ^ Candidate chain containing headers from the future
-      [Header blk]
-      -- ^ Headers from the future, exceeding clock skew
   | UpdateLedgerDbTraceEvent (UpdateLedgerDbTraceEvent blk)
   deriving (Generic)
 

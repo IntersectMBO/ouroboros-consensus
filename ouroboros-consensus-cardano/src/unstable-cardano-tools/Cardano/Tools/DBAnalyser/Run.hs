@@ -18,7 +18,6 @@ import           Data.Singletons (Sing, SingI (..))
 import qualified Debug.Trace as Debug
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
-import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture
 import           Ouroboros.Consensus.Ledger.Extended
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as LedgerSupportsMempool
                      (HasTxs)
@@ -65,7 +64,6 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
               $ updateTracer chainDBTracer
               $ completeChainDbArgs
                   registry
-                  InFuture.dontCheck
                   cfg
                   genesisLedger
                   chunkInfo

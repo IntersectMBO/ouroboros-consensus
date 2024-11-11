@@ -65,7 +65,6 @@ import qualified Network.TypedProtocol.Codec as Codec
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
-import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Inspect
@@ -699,8 +698,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
 
         void $ addTxs mempool txs
 
-    mkArgs :: OracularClock m
-           -> ResourceRegistry m
+    mkArgs :: ResourceRegistry m
            -> TopLevelConfig blk
            -> ExtLedgerState blk
            -> Tracer m (RealPoint blk, ExtValidationError blk)
@@ -716,7 +714,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
            -> CoreNodeId
            -> ChainDbArgs Identity m blk
     mkArgs
-      clock registry
+      registry
       cfg initLedger
       invalidTracer addTracer selTracer updatesTracer pipeliningTracer
       nodeDBs _coreNodeId =
@@ -740,11 +738,8 @@ runThreadNetwork systemTime ThreadNetworkArgs
                       LedgerDB.lgrTracer = TraceSnapshotEvent >$< tr
                     }
                 , cdbsArgs = (cdbsArgs args) {
-                      cdbsCheckInFuture  = InFuture.reference (configLedger cfg)
-                                        InFuture.defaultClockSkew
-                                        (OracularClock.finiteSystemTime clock)
-                      -- TODO: Vary cdbsGcDelay, cdbsGcInterval, cdbsBlockToAddSize
-                    , cdbsGcDelay = 0
+                     -- TODO: Vary cdbsGcDelay, cdbsGcInterval, cdbsBlockToAddSize
+                      cdbsGcDelay = 0
                     , cdbsTracer = instrumentationTracer <> nullDebugTracer
                     }
                 }
@@ -826,7 +821,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
           headerAddTracer  = wrapTracer $ nodeEventsHeaderAdds nodeInfoEvents
           pipeliningTracer = nodeEventsPipelining nodeInfoEvents
       let chainDbArgs = mkArgs
-            clock registry
+            registry
             pInfoConfig pInfoInitLedger
             invalidTracer
             addTracer
@@ -1004,7 +999,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
             , initChainDB             = nodeInitChainDB
             , chainSyncFutureCheck    =
                   InFutureCheck.realHeaderInFutureCheck
-                    InFuture.defaultClockSkew
+                    InFutureCheck.defaultClockSkew
                     (OracularClock.finiteSystemTime clock)
             , chainSyncHistoricityCheck = \_getGsmState -> HistoricityCheck.noCheck
             , blockFetchSize          = estimateBlockSize

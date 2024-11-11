@@ -73,8 +73,6 @@ import           Network.TypedProtocol.Driver.Simple
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
-import           Ouroboros.Consensus.Fragment.InFuture (ClockSkew,
-                     clockSkewInSeconds, unClockSkew)
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import           Ouroboros.Consensus.HeaderStateHistory
                      (HeaderStateHistory (..))
@@ -92,6 +90,8 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
                      (HistoricityCheck, HistoricityCutoff (..))
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
+                     (ClockSkew, clockSkewInSeconds, unClockSkew)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Node.GsmState (GsmState (Syncing))
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -99,8 +99,6 @@ import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.NodeId
 import           Ouroboros.Consensus.Protocol.BFT
-import           Ouroboros.Consensus.Storage.ChainDB.API
-                     (InvalidBlockReason (ValidationError))
 import           Ouroboros.Consensus.Util (lastMaybe, whenJust)
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.IOLike
@@ -384,7 +382,6 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
               let isInvalidBlock hash =
                     if hash `Set.member` knownInvalid
                     then Just
-                       . ValidationError
                        . ExtValidationErrorLedger
                        $ TestBlock.InvalidBlock
                     else Nothing

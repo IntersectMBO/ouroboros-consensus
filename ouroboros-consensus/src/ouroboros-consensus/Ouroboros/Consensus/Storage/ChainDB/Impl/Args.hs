@@ -24,7 +24,6 @@ import           Data.Kind
 import           Data.Time.Clock (secondsToDiffTime)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
-import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture)
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.API (GetLoEFragment,
@@ -64,7 +63,6 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs {
       -- is the maximum number of blocks that could be kept in memory at the
       -- same time when the background thread processing the blocks can't keep
       -- up.
-    , cdbsCheckInFuture   :: HKD f (CheckInFuture m blk)
     , cdbsGcDelay         :: DiffTime
       -- ^ Delay between copying a block to the ImmutableDB and triggering a
       -- garbage collection for the corresponding slot on the VolatileDB.
@@ -92,7 +90,6 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs {
 --
 -- * 'cdbsTracer'
 -- * 'cdbsRegistry'
--- * 'cdbsCheckInFuture'
 --
 -- We a 'cdbsGcDelay' of 60 seconds and a 'cdbsGcInterval' of 10 seconds, this
 -- means (see the properties in "Test.Ouroboros.Storage.ChainDB.GcSchedule"):
@@ -111,7 +108,6 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs {
 defaultSpecificArgs :: Monad m => Incomplete ChainDbSpecificArgs m blk
 defaultSpecificArgs = ChainDbSpecificArgs {
       cdbsBlocksToAddSize = 10
-    , cdbsCheckInFuture   = noDefault
     , cdbsGcDelay         = secondsToDiffTime 60
     , cdbsGcInterval      = secondsToDiffTime 10
     , cdbsRegistry        = noDefault
@@ -151,7 +147,6 @@ ensureValidateAll args =
 completeChainDbArgs ::
      forall m blk. (ConsensusProtocol (BlockProtocol blk), IOLike m)
   => ResourceRegistry m
-  -> CheckInFuture m blk
   -> TopLevelConfig blk
   -> ExtLedgerState blk
      -- ^ Initial ledger
@@ -167,7 +162,6 @@ completeChainDbArgs ::
   -> Complete ChainDbArgs m blk
 completeChainDbArgs
   registry
-  cdbsCheckInFuture
   cdbsTopLevelConfig
   initLedger
   immChunkInfo
@@ -194,8 +188,7 @@ completeChainDbArgs
           , LedgerDB.lgrConfig     = LedgerDB.configLedgerDb cdbsTopLevelConfig
           }
       , cdbsArgs = (cdbsArgs defArgs) {
-            cdbsCheckInFuture
-          , cdbsRegistry       = registry
+            cdbsRegistry       = registry
           , cdbsTopLevelConfig
           , cdbsHasFSGsmDB     = mkVolFS $ RelativeMountPoint "gsm"
           }

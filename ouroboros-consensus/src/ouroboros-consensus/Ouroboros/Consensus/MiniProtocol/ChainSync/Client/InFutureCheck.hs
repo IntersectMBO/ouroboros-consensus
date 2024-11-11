@@ -12,6 +12,12 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck (
     -- * Real Implementation
   , HeaderArrivalException (..)
   , realHeaderInFutureCheck
+    -- * Clock skew
+  , clockSkewInSeconds
+  , defaultClockSkew
+    -- ** not exporting the constructor
+  , ClockSkew
+  , unClockSkew
   ) where
 
 import           Control.Exception (Exception)
@@ -27,14 +33,14 @@ import           Ouroboros.Consensus.Block.RealPoint (RealPoint,
                      headerRealPoint, realPointSlot)
 import           Ouroboros.Consensus.BlockchainTime.WallClock.Types
                      (RelativeTime, SystemTime, diffRelTime, systemTimeCurrent)
-import           Ouroboros.Consensus.Fragment.InFuture (ClockSkew, unClockSkew)
 import           Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory,
                      hardForkSummary)
 import           Ouroboros.Consensus.HardFork.History (PastHorizonException)
 import           Ouroboros.Consensus.HardFork.History.Qry (runQuery,
                      slotToWallclock)
 import           Ouroboros.Consensus.Ledger.Basics (LedgerConfig, LedgerState)
-import           Ouroboros.Consensus.Util.Time (nominalDelay)
+import           Ouroboros.Consensus.Util.Time (nominalDelay,
+                     secondsToNominalDiffTime)
 import           Ouroboros.Network.Block (HasHeader)
 
 {-------------------------------------------------------------------------------
@@ -152,3 +158,38 @@ realHeaderInFutureCheck skew systemTime =
           -- no exception if within skew
           pure onset
   }
+
+{-------------------------------------------------------------------------------
+  Clock skew
+-------------------------------------------------------------------------------}
+
+-- | Maximum permissible clock skew
+--
+-- When running NTP, systems clocks will never be perfectly synchronized. The
+-- maximum clock skew records how much of a difference we consider acceptable.
+--
+-- For example. Suppose
+--
+-- * Two nodes A and B
+-- * A's clock is 0.5 ahead of B's
+-- * A produces a block and sends it to B
+-- * When B translates the 'SlotNo' of that block to a time, it may find that
+--   it is 0.5 seconds ahead of its current clock (worst case).
+--
+-- The maximum permissible clock skew decides if B will consider this block to
+-- be valid (even if it will not yet consider it for chain seleciton) or as
+-- invalid (and disconnect from A, since A is sending it invalid blocks).
+--
+-- Use 'defaultClockSkew' when unsure.
+newtype ClockSkew = ClockSkew { unClockSkew :: NominalDiffTime }
+  deriving (Show, Eq, Ord)
+
+-- | Default maximum permissible clock skew
+--
+-- See 'ClockSkew' for details. We allow for 5 seconds skew by default.
+defaultClockSkew :: ClockSkew
+defaultClockSkew = clockSkewInSeconds 5
+
+-- | Specify maximum clock skew in seconds
+clockSkewInSeconds :: Double -> ClockSkew
+clockSkewInSeconds = ClockSkew . secondsToNominalDiffTime

@@ -27,8 +27,6 @@ module Test.Ouroboros.Storage.ChainDB.Model (
     -- * Queries
   , currentChain
   , currentLedger
-  , currentSlot
-  , futureBlocks
   , getBlock
   , getBlockByPoint
   , getBlockComponentByPoint
@@ -44,7 +42,6 @@ module Test.Ouroboros.Storage.ChainDB.Model (
   , isOpen
   , isValid
   , lastK
-  , maxClockSkew
   , tipBlock
   , tipPoint
   , volatileChain
@@ -61,7 +58,6 @@ module Test.Ouroboros.Storage.ChainDB.Model (
   , ModelSupportsBlock
     -- * Exported for testing purposes
   , ShouldGarbageCollect (GarbageCollect, DoNotGarbageCollect)
-  , advanceCurSlot
   , between
   , blocks
   , chains
@@ -108,9 +104,9 @@ import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.MockChainSel
 import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      AddBlockResult (..), BlockComponent (..),
-                     ChainDbError (..), InvalidBlockReason (..),
-                     IteratorResult (..), LoE (..), StreamFrom (..),
-                     StreamTo (..), UnknownRange (..), validBounds)
+                     ChainDbError (..), IteratorResult (..), LoE (..),
+                     StreamFrom (..), StreamTo (..), UnknownRange (..),
+                     validBounds)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanK)
 import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Util (repeatedly)
@@ -140,10 +136,7 @@ data Model blk = Model {
     , iterators        :: Map IteratorId [blk]
     , valid            :: Set (HeaderHash blk)
     , invalid          :: InvalidBlocks blk
-    , currentSlot      :: SlotNo
     , loeFragment      :: LoE (AnchoredFragment blk)
-    , maxClockSkew     :: Word64
-      -- ^ Max clock skew in terms of slots. A static configuration parameter.
     , isOpen           :: Bool
       -- ^ While the model tracks whether it is closed or not, the queries and
       -- other functions in this module ignore this for simplicity. The mock
@@ -161,7 +154,6 @@ deriving instance ( ToExpr blk
                   , ToExpr (Chain blk)
                   , ToExpr (ChainProducerState blk)
                   , ToExpr (ExtLedgerState blk)
-                  , ToExpr (InvalidBlockReason blk)
                   )
                  => ToExpr (Model blk)
 
@@ -179,10 +171,6 @@ immutableDbBlocks Model { immutableDbChain } = Map.fromList $
 
 blocks :: HasHeader blk => Model blk -> Map (HeaderHash blk) blk
 blocks m = volatileDbBlocks m <> immutableDbBlocks m
-
-futureBlocks :: HasHeader blk => Model blk -> Map (HeaderHash blk) blk
-futureBlocks m =
-    Map.filter ((currentSlot m <) . blockSlot) (volatileDbBlocks m)
 
 currentChain :: Model blk -> Chain blk
 currentChain = CPS.producerChain . cps
@@ -373,9 +361,8 @@ empty ::
      HasHeader blk
   => LoE ()
   -> ExtLedgerState blk
-  -> Word64   -- ^ Max clock skew in number of blocks
   -> Model blk
-empty loe initLedger maxClockSkew = Model {
+empty loe initLedger = Model {
       volatileDbBlocks = Map.empty
     , immutableDbChain = Chain.Genesis
     , cps              = CPS.initChainProducerState Chain.Genesis
@@ -384,18 +371,9 @@ empty loe initLedger maxClockSkew = Model {
     , iterators        = Map.empty
     , valid            = Set.empty
     , invalid          = Map.empty
-    , currentSlot      = 0
-    , maxClockSkew     = maxClockSkew
     , isOpen           = True
     , loeFragment      = loe $> Fragment.Empty Fragment.AnchorGenesis
     }
-
--- | Advance the 'currentSlot' of the model to the given 'SlotNo' if the
--- current slot of the model < the given 'SlotNo'.
-advanceCurSlot ::
-     SlotNo  -- ^ The new current slot
-  -> Model blk -> Model blk
-advanceCurSlot curSlot m = m { currentSlot = curSlot `max` currentSlot m }
 
 addBlock :: forall blk. LedgerSupportsProtocol blk
          => TopLevelConfig blk
@@ -431,8 +409,6 @@ chainSelection cfg m = Model {
     , iterators        = iterators  m
     , valid            = valid'
     , invalid          = invalid'
-    , currentSlot      = currentSlot  m
-    , maxClockSkew     = maxClockSkew m
     , isOpen           = True
     , loeFragment      = loeFragment m
     }
@@ -728,7 +704,7 @@ class ( HasHeader blk
   Internal auxiliary
 -------------------------------------------------------------------------------}
 
-type InvalidBlocks blk = Map (HeaderHash blk) (InvalidBlockReason blk, SlotNo)
+type InvalidBlocks blk = Map (HeaderHash blk) (ExtValidationError blk, SlotNo)
 
 -- | Result of 'validate', also used internally.
 data ValidatedChain blk =
@@ -747,10 +723,10 @@ validate :: forall blk. LedgerSupportsProtocol blk
          -> Model blk
          -> Chain blk
          -> ValidatedChain blk
-validate cfg Model { currentSlot, maxClockSkew, initLedger, invalid } chain =
+validate cfg Model { initLedger, invalid } chain =
     go initLedger Genesis (Chain.toOldestFirst chain)
   where
-    mkInvalid :: blk -> InvalidBlockReason blk -> InvalidBlocks blk
+    mkInvalid :: blk -> ExtValidationError blk -> InvalidBlocks blk
     mkInvalid b reason =
       Map.singleton (blockHash b) (reason, blockSlot b)
 
@@ -767,7 +743,7 @@ validate cfg Model { currentSlot, maxClockSkew, initLedger, invalid } chain =
           -> ValidatedChain
                validPrefix
                ledger
-               (invalid <> mkInvalid b (ValidationError e))
+               (invalid <> mkInvalid b e)
 
         -- Valid block according to the ledger
         Right ledger'
@@ -777,67 +753,9 @@ validate cfg Model { currentSlot, maxClockSkew, initLedger, invalid } chain =
           | Map.member (blockHash b) invalid
           -> ValidatedChain validPrefix ledger invalid
 
-          -- Block is in the future and exceeds the clock skew, it is
-          -- considered to be invalid
-          | blockSlot b > SlotNo (unSlotNo currentSlot + maxClockSkew)
-          -> ValidatedChain
-               validPrefix
-               ledger
-               (invalid <>
-                mkInvalid b (InFutureExceedsClockSkew (blockRealPoint b)))
-
-          -- Block is in the future but doesn't exceed the clock skew. It will
-          -- not be part of the chain, but we have to continue validation,
-          -- because the real implementation validates before truncating
-          -- future blocks, and we try to detect the same invalid blocks as
-          -- the real implementation.
-          | blockSlot b > currentSlot
-          -> ValidatedChain
-               validPrefix
-               ledger
-               (invalid <>
-                findInvalidBlockInTheFuture ledger' bs')
-
-          -- Block not in the future, this is the good path
+          -- This is the good path
           | otherwise
           -> go ledger' (validPrefix :> b) bs'
-
-    -- | Take the following chain:
-    --
-    -- A (valid) -> B (future) -> C (future) -> D (invalid)
-    --
-    -- where B and C are from the future, but don't exceed the max clock skew,
-    -- and D is invalid according to the ledger.
-    --
-    -- The real implementation would detect that B and C are from the future
-    -- (not exceeding clock skew), but it would also find that D is invalid
-    -- according to the ledger and record that. This is because the
-    -- implementation first validates using the ledger and then does the
-    -- future check, restarting chain selection for any invalid candidates and
-    -- revalidating them.
-    --
-    -- To keep things simple, we don't restart chain selection in this model,
-    -- so we want to return the 'ValidatedChain' corresponding to A, but we
-    -- also have to continue validating the future blocks B and C so that we
-    -- encounter D. That's why 'findInvalidBlockInTheFuture' is called in 'go'
-    -- when a block from the future is encountered.
-    --
-    -- Note that ledger validation stops at the first invalid block, so this
-    -- function should find 0 or 1 invalid blocks.
-    findInvalidBlockInTheFuture
-      :: ExtLedgerState blk
-      -> [blk]
-      -> InvalidBlocks blk
-    findInvalidBlockInTheFuture ledger = \case
-      []    -> Map.empty
-      b:bs' -> case runExcept (tickThenApply (ExtLedgerCfg cfg) b ledger) of
-        Left e        -> mkInvalid b (ValidationError e)
-        Right ledger'
-          | blockSlot b > SlotNo (unSlotNo currentSlot + maxClockSkew)
-          -> mkInvalid b (InFutureExceedsClockSkew (blockRealPoint b)) <>
-             findInvalidBlockInTheFuture ledger' bs'
-          | otherwise
-          -> findInvalidBlockInTheFuture ledger' bs'
 
 chains :: forall blk. (GetPrevHash blk)
        => Map (HeaderHash blk) blk -> [Chain blk]

@@ -60,7 +60,6 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client (
   , ChainSyncLoPBucketConfig (..)
   , ChainSyncLoPBucketEnabledConfig (..)
     -- * Trace events
-  , InvalidBlockReason
   , TraceChainSyncClientEvent (..)
     -- * State shared with other components
   , ChainSyncClientHandle (..)
@@ -114,8 +113,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
 import           Ouroboros.Consensus.Node.GsmState (GsmState (..))
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Protocol.Abstract
-import           Ouroboros.Consensus.Storage.ChainDB (ChainDB,
-                     InvalidBlockReason)
+import           Ouroboros.Consensus.Storage.ChainDB (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.AnchoredFragment (cross)
@@ -158,7 +156,7 @@ data ChainDbView m blk = ChainDbView {
     getIsInvalidBlock ::
       STM m
           (WithFingerprint
-              (HeaderHash blk -> Maybe (InvalidBlockReason blk)))
+              (HeaderHash blk -> Maybe (ExtValidationError blk)))
   }
 
 -- | Configuration of the leaky bucket when it is enabled.
@@ -1984,12 +1982,12 @@ invalidBlockRejector ::
   => Tracer m (TraceChainSyncClientEvent blk)
   -> NodeToNodeVersion
   -> DiffusionPipeliningSupport
-  -> STM m (WithFingerprint (HeaderHash blk -> Maybe (InvalidBlockReason blk)))
+  -> STM m (WithFingerprint (HeaderHash blk -> Maybe (ExtValidationError blk)))
      -- ^ Get the invalid block checker
   -> STM m (AnchoredFragment (Header blk))
      -- ^ Get the candidate
   -> Watcher m
-         (WithFingerprint (HeaderHash blk -> Maybe (InvalidBlockReason blk)))
+         (WithFingerprint (HeaderHash blk -> Maybe (ExtValidationError blk)))
          Fingerprint
 invalidBlockRejector tracer _version pipelining getIsInvalidBlock getCandidate =
     Watcher {
@@ -1999,7 +1997,7 @@ invalidBlockRejector tracer _version pipelining getIsInvalidBlock getCandidate =
       , wReader      = getIsInvalidBlock
       }
   where
-    checkInvalid :: (HeaderHash blk -> Maybe (InvalidBlockReason blk)) -> m ()
+    checkInvalid :: (HeaderHash blk -> Maybe (ExtValidationError blk)) -> m ()
     checkInvalid isInvalidBlock = do
         theirFrag <- atomically getCandidate
         -- The invalid block is likely to be a more recent block, so check from
@@ -2019,7 +2017,7 @@ invalidBlockRejector tracer _version pipelining getIsInvalidBlock getCandidate =
             )
           $ AF.toNewestFirst theirFrag
 
-    disconnect :: Header blk -> InvalidBlockReason blk -> m ()
+    disconnect :: Header blk -> ExtValidationError blk -> m ()
     disconnect invalidHeader reason = do
         let ex =
                 InvalidBlock
@@ -2157,7 +2155,7 @@ data ChainSyncClientException =
         (HeaderHash blk)
         -- ^ Invalid block. If pipelining was negotiated, this can be
         -- different from the previous argument.
-        (InvalidBlockReason blk)
+        (ExtValidationError blk)
     -- ^ The upstream node's chain contained a block that we know is invalid.
   |
     InFutureHeaderExceedsClockSkew !InFutureCheck.HeaderArrivalException

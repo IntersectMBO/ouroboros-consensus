@@ -51,8 +51,6 @@ module Ouroboros.Consensus.Storage.ChainDB.API (
   , streamFrom
   , traverseIterator
   , validBounds
-    -- * Invalid block reason
-  , InvalidBlockReason (..)
     -- * Followers
   , ChainType (..)
   , Follower (..)
@@ -134,6 +132,15 @@ data ChainDB m blk = ChainDB {
       -- use 'addBlock' to add the block synchronously.
       --
       -- NOTE: back pressure can be applied when overloaded.
+      --
+      -- PRECONDITON: the block to be added must not be from the future.
+      --
+      -- The current code ensures that the two sources of blocks
+      -- ('ChainSync' and forging) do not allow blocks from the future,
+      -- however this is not guaranteed when during initialization if the
+      -- VolatileDB contains blocks from the future. See:
+      -- https://github.com/IntersectMBO/ouroboros-consensus/blob/main/docs/website/contents/for-developers/HandlingBlocksFromTheFuture.md#handling-blocks-from-the-future
+      --
       addBlockAsync      :: InvalidBlockPunishment m -> blk -> m (AddBlockPromise m blk)
 
       -- | Trigger reprocessing of blocks postponed by the LoE.
@@ -338,7 +345,7 @@ data ChainDB m blk = ChainDB {
       -- In particular, this affects the watcher in 'bracketChainSyncClient',
       -- which rechecks the blocks in all candidate chains whenever a new
       -- invalid block is detected. These blocks are likely to be valid.
-    , getIsInvalidBlock :: STM m (WithFingerprint (HeaderHash blk -> Maybe (InvalidBlockReason blk)))
+    , getIsInvalidBlock :: STM m (WithFingerprint (HeaderHash blk -> Maybe (ExtValidationError blk)))
 
     , closeDB            :: m ()
 
@@ -440,6 +447,9 @@ addBlockWaitWrittenToDisk chainDB punish blk = do
 -- block died, in that case 'FailedToAddBlock' will be returned.
 --
 -- Note: this is a partial function, only to support tests.
+--
+-- PRECONDITION: the block to be added must not be from the future. See 'addBlockAsync'.
+--
 addBlock :: IOLike m => ChainDB m blk -> InvalidBlockPunishment m -> blk -> m (AddBlockResult blk)
 addBlock chainDB punish blk = do
     promise <- addBlockAsync chainDB punish blk
@@ -669,27 +679,6 @@ streamFrom from db registry blockComponent = do
         case errIt of
           Right it -> return it
           Left  e  -> error $ "failed to stream from genesis to tip: " <> show e
-
-{-------------------------------------------------------------------------------
-  Invalid block reason
--------------------------------------------------------------------------------}
-
--- | The reason why a block is invalid.
-data InvalidBlockReason blk
-  = ValidationError !(ExtValidationError blk)
-    -- ^ The ledger found the block to be invalid.
-  | InFutureExceedsClockSkew !(RealPoint blk)
-    -- ^ The block's slot is in the future, exceeding the allowed clock skew.
-    --
-    -- Possible causes, order by decreasing likelihood:
-    --
-    -- 1. Our clock is behind (significantly more likely than the others)
-    -- 2. Their clock is ahead
-    -- 3. It's intentional, i.e., an attack
-  deriving (Eq, Show, Generic)
-
-instance LedgerSupportsProtocol blk
-      => NoThunks (InvalidBlockReason blk)
 
 {-------------------------------------------------------------------------------
   Followers

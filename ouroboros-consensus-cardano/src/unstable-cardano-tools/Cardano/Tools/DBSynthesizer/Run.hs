@@ -26,7 +26,6 @@ import qualified Data.Set as Set
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.Node
 import           Ouroboros.Consensus.Config (TopLevelConfig, configStorage)
-import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture (dontCheck)
 import qualified Ouroboros.Consensus.Node as Node (stdMkChainDbHasFS)
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
                      (nodeImmutableDbChunkInfo)
@@ -127,7 +126,6 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
             dbArgs      =
              ChainDB.completeChainDbArgs
               registry
-              InFuture.dontCheck
               pInfoConfig
               pInfoInitLedger
               chunkInfo

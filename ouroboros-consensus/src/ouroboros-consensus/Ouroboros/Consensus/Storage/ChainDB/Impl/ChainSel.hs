@@ -21,7 +21,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (
   ) where
 
 import           Control.Exception (assert)
-import           Control.Monad (forM, forM_, unless, void, when)
+import           Control.Monad (forM, forM_, when)
 import           Control.Monad.Except ()
 import           Control.Monad.Trans.Class (lift)
 import           Control.Monad.Trans.State.Strict
@@ -29,7 +29,7 @@ import           Control.Tracer (Tracer, nullTracer, traceWith)
 import           Data.Foldable (for_)
 import           Data.Function (on)
 import           Data.Functor.Contravariant ((>$<))
-import           Data.List (partition, sortBy)
+import           Data.List (sortBy)
 import           Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
@@ -43,8 +43,6 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Fragment.Diff (ChainDiff (..))
 import qualified Ouroboros.Consensus.Fragment.Diff as Diff
-import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture (..))
-import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture
 import           Ouroboros.Consensus.Fragment.Validated (ValidatedFragment)
 import qualified Ouroboros.Consensus.Fragment.Validated as VF
 import           Ouroboros.Consensus.Fragment.ValidatedDiff
@@ -58,7 +56,7 @@ import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      AddBlockResult (..), BlockComponent (..), ChainType (..),
-                     InvalidBlockReason (..), LoE (..))
+                     LoE (..))
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
                      (InvalidBlockPunishment, noPunishment)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
@@ -92,7 +90,6 @@ import qualified Ouroboros.Network.AnchoredSeq as AS
 --
 -- Returns the chosen validated chain and corresponding ledger.
 --
--- See "## Initialization" in ChainDB.md.
 initialChainSelection ::
      forall m blk.
      ( IOLike m
@@ -105,14 +102,29 @@ initialChainSelection ::
   -> Tracer m (TraceInitChainSelEvent blk)
   -> TopLevelConfig blk
   -> StrictTVar m (WithFingerprint (InvalidBlocks blk))
-  -> StrictTVar m (FutureBlocks m blk)
-  -> CheckInFuture m blk
   -> LoE ()
   -> m (ChainAndLedger blk)
 initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
-                      varFutureBlocks futureCheck loE = do
-    -- We follow the steps from section "## Initialization" in ChainDB.md
-
+                      loE = do
+    -- TODO: Improve the user experience by trimming any potential
+    -- blocks from the future from the VolatileDB.
+    --
+    -- When we perform chain selection, it is theoretically possible
+    -- that the blocks in the VolatileDB are from the future, if for
+    -- some reason the clock of the node was set back (by a
+    -- significant amount of time). This is a rare situation, but can
+    -- arise for instance if the clock of the node was set in the
+    -- **far** future. In this case, node will be disconnected from
+    -- other peers when diffusing these blocks. Once the node is
+    -- restarted with a synchronized clock, it will diffuse said
+    -- blocks from the future again (assuming they're still from the
+    -- future after restart), which will cause other nodes to
+    -- disconnect. By trimming blocks from the future from the
+    -- VolatileDB we can prevent this inconvenient, albeit extremely
+    -- rare, situation. However, it does not pose any security risk,
+    -- and a node operator can correct the problem by either wiping
+    -- out the VolatileDB or waiting enough time until the blocks are
+    -- not from the **far** future anymore.
     (i :: Anchor blk, succsOf, ledger) <- atomically $ do
       invalid <- forgetFingerprint <$> readTVar varInvalid
       (,,)
@@ -218,8 +230,6 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
             { lgrDB
             , bcfg
             , varInvalid
-            , varFutureBlocks
-            , futureCheck
             , blockCache = BlockCache.empty
             , curChainAndLedger
             , validationTracer = InitChainSelValidation >$< tracer
@@ -239,12 +249,12 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
 --
 -- When the queue is full, this function will still block.
 --
--- An important advantage of this asynchronous approach over a synchronous
--- approach is that it doesn't have the following disadvantage: when a thread
--- adding a block to the ChainDB is killed, which can happen when
--- disconnecting from the corresponding node, we might have written the block
--- to disk, but not updated the corresponding in-memory state (e.g., that of
--- the VolatileDB), leaving both out of sync.
+-- Compared to a synchronous approach, the asynchronous counterpart
+-- doesn't have the following disadvantage: when a thread adding a
+-- block to the ChainDB is killed, which can happen when disconnecting
+-- from the corresponding node, we might have written the block to
+-- disk, but not updated the corresponding in-memory state (e.g., that
+-- of the VolatileDB), leaving both out of sync.
 --
 -- With this asynchronous approach, threads adding blocks asynchronously can
 -- be killed without worries, the background thread processing the blocks
@@ -253,6 +263,10 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
 -- in-memory state, it can't get out of sync with the file system state. On
 -- the next startup, a correct in-memory state will be reconstructed from the
 -- file system state.
+--
+-- PRECONDITON: the block to be added must not be from the future.
+-- See 'Ouroboros.Consensus.Storage.ChainDB.API.addBlockAsync'.
+--
 addBlockAsync ::
      forall m blk. (IOLike m, HasHeader blk)
   => ChainDbEnv m blk
@@ -324,7 +338,7 @@ chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = do
                 _ -> VolatileDB.getKnownBlockComponent cdbVolatileDB GetHeader hash
         loeHeaders <- lift (mapM getHeaderFromHash loeHashes)
         for_ loeHeaders $ \hdr ->
-          void (chainSelectionForBlock cdb BlockCache.empty hdr noPunishment)
+          chainSelectionForBlock cdb BlockCache.empty hdr noPunishment
     lift $ atomically $ putTMVar varProcessed ()
 
 chainSelSync cdb@CDB {..} (ChainSelAddBlock BlockToAdd { blockToAdd = b, .. }) = do
@@ -337,24 +351,14 @@ chainSelSync cdb@CDB {..} (ChainSelAddBlock BlockToAdd { blockToAdd = b, .. }) =
 
     -- We follow the steps from section "## Adding a block" in ChainDB.md
 
-    -- Note: we call 'chainSelectionForFutureBlocks' in all branches instead
-    -- of once, before branching, because we want to do it /after/ writing the
-    -- block to the VolatileDB and delivering the 'varBlockWrittenToDisk'
-    -- promise, as this is the promise the BlockFetch client waits for.
-    -- Otherwise, the BlockFetch client would have to wait for
-    -- 'chainSelectionForFutureBlocks'.
-
-    -- ### Ignore
-    newTip <- if
+    if
       | olderThanK hdr isEBB immBlockNo -> do
         lift $ traceWith addBlockTracer $ IgnoreBlockOlderThanK (blockRealPoint b)
         lift $ deliverWrittenToDisk False
-        chainSelectionForFutureBlocks cdb BlockCache.empty
 
       | isMember (blockHash b) -> do
         lift $ traceWith addBlockTracer $ IgnoreBlockAlreadyInVolatileDB (blockRealPoint b)
         lift $ deliverWrittenToDisk True
-        chainSelectionForFutureBlocks cdb BlockCache.empty
 
       | Just (InvalidBlockInfo reason _) <- Map.lookup (blockHash b) invalid -> do
         lift $ traceWith addBlockTracer $ IgnoreInvalidBlock (blockRealPoint b) reason
@@ -366,21 +370,15 @@ chainSelSync cdb@CDB {..} (ChainSelAddBlock BlockToAdd { blockToAdd = b, .. }) =
           blockPunish
           InvalidBlockPunishment.BlockItself
 
-        chainSelectionForFutureBlocks cdb BlockCache.empty
-
       -- The remaining cases
       | otherwise -> do
         let traceEv = AddedBlockToVolatileDB (blockRealPoint b) (blockNo b) isEBB
         lift $ encloseWith (traceEv >$< addBlockTracer) $
           VolatileDB.putBlock cdbVolatileDB b
         lift $ deliverWrittenToDisk True
+        chainSelectionForBlock cdb (BlockCache.singleton b) hdr blockPunish
 
-        let blockCache = BlockCache.singleton b
-        -- Do chain selection for future blocks before chain selection for the
-        -- new block. When some future blocks are now older than the current
-        -- block, we will do chain selection in a more chronological order.
-        void $ chainSelectionForFutureBlocks cdb blockCache
-        chainSelectionForBlock cdb blockCache hdr blockPunish
+    newTip <- lift $ atomically $ Query.getTipPoint cdb
 
     lift $ deliverProcessed newTip
   where
@@ -443,39 +441,11 @@ olderThanK hdr isEBB immBlockNo
 data ChainSwitchType = AddingBlocks | SwitchingToAFork
   deriving (Show, Eq)
 
--- | Return the new tip.
-chainSelectionForFutureBlocks ::
-     ( IOLike m
-     , LedgerSupportsProtocol blk
-     , BlockSupportsDiffusionPipelining blk
-     , InspectLedger blk
-     , HasHardForkHistory blk
-     , HasCallStack
-     )
-  => ChainDbEnv m blk -> BlockCache blk -> Electric m (Point blk)
-chainSelectionForFutureBlocks cdb@CDB{..} blockCache = do
-    -- Get 'cdbFutureBlocks' and empty the map in the TVar. It will be
-    -- repopulated with the blocks that are still from the future (but not the
-    -- ones no longer from the future) during chain selection for those
-    -- blocks.
-    futureBlockHeaders <- lift $ atomically $ do
-      futureBlocks <- readTVar cdbFutureBlocks
-      writeTVar cdbFutureBlocks Map.empty
-      return $ Map.elems futureBlocks
-    forM_ futureBlockHeaders $ \(hdr, punish) -> do
-      lift $ traceWith tracer $ ChainSelectionForFutureBlock (headerRealPoint hdr)
-      chainSelectionForBlock cdb blockCache hdr punish
-    lift $ atomically $ Query.getTipPoint cdb
-  where
-    tracer = TraceAddBlockEvent >$< cdbTracer
-
 -- | Trigger chain selection for the given block.
 --
 -- PRECONDITION: the block is in the VolatileDB.
 --
 -- PRECONDITION: the slot of the block <= the current (wall) slot
---
--- The new tip of the current chain is returned.
 --
 -- = Constructing candidate fragments
 --
@@ -514,7 +484,7 @@ chainSelectionForBlock ::
   -> BlockCache blk
   -> Header blk
   -> InvalidBlockPunishment m
-  -> Electric m (Point blk)
+  -> Electric m ()
 chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
     (invalid, succsOf', lookupBlockInfo, lookupBlockInfo', curChain, tipPoint, ledgerDB)
       <- atomically $ do
@@ -566,7 +536,6 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       -- block is older than @k@.
       | olderThanK hdr isEBB immBlockNo -> do
         traceWith addBlockTracer $ IgnoreBlockOlderThanK p
-        return tipPoint
 
       -- The block is invalid
       | Just (InvalidBlockInfo reason _) <- Map.lookup (headerHash hdr) invalid -> do
@@ -577,8 +546,6 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
         InvalidBlockPunishment.enact
           punish
           InvalidBlockPunishment.BlockItself
-
-        return tipPoint
 
       -- The block fits onto the end of our current chain
       | pointHash tipPoint == headerPrevHash hdr -> do
@@ -597,7 +564,6 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       | otherwise -> do
         -- ### Store but don't change the current chain
         traceWith addBlockTracer (StoreButDontChange p)
-        return tipPoint
 
     -- Note that we may have extended the chain, but have not trimmed it to
     -- @k@ blocks/headers. That is the job of the background thread, which
@@ -620,13 +586,11 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       { lgrDB                 = cdbLgrDB
       , bcfg                  = configBlock cdbTopLevelConfig
       , varInvalid            = cdbInvalid
-      , varFutureBlocks       = cdbFutureBlocks
       , varTentativeState     = cdbTentativeState
       , varTentativeHeader    = cdbTentativeHeader
       , getTentativeFollowers =
               filter ((TentativeChain ==) . fhChainType) . Map.elems
           <$> readTVar cdbFollowers
-      , futureCheck           = cdbCheckInFuture
       , blockCache            = blockCache
       , curChainAndLedger     = curChainAndLedger
       , validationTracer      =
@@ -645,7 +609,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
          -- ^ The current chain and ledger
       -> LoE (AnchoredFragment (Header blk))
          -- ^ LoE fragment
-      -> m (Point blk)
+      -> m ()
     addToCurrentChain succsOf curChainAndLedger loeFrag = do
         -- Extensions of @B@ that do not exceed the LoE
         let suffixesAfterB = Paths.maximalCandidates succsOf Nothing (realPointToPoint p)
@@ -685,11 +649,11 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
         -- candidate will be a two-block (the EBB and the new block)
         -- extension of the current chain.
         case chainDiffs of
-          Nothing          -> return curTip
+          Nothing          -> return ()
           Just chainDiffs' ->
             chainSelection chainSelEnv chainDiffs' >>= \case
               Nothing ->
-                return curTip
+                return ()
               Just validatedChainDiff ->
                 switchTo
                   validatedChainDiff
@@ -698,7 +662,6 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       where
         chainSelEnv = mkChainSelEnv curChainAndLedger
         curChain    = VF.validatedFragment curChainAndLedger
-        curTip      = castPoint $ AF.headPoint curChain
         curHead     = AF.headAnchor curChain
 
     -- | Trim the given candidate fragment to respect the LoE.
@@ -757,7 +720,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
          -- ^ LoE fragment
       -> ChainDiff (HeaderFields blk)
          -- ^ Header fields for @(x,b]@
-      -> m (Point blk)
+      -> m ()
     switchToAFork succsOf lookupBlockInfo curChainAndLedger loeFrag diff = do
         -- We use a cache to avoid reading the headers from disk multiple
         -- times in case they're part of multiple forks that go through @b@.
@@ -792,11 +755,11 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
 
         case NE.nonEmpty chainDiffs of
           -- No candidates preferred over the current chain
-          Nothing          -> return curTip
+          Nothing          -> return ()
           Just chainDiffs' ->
             chainSelection chainSelEnv chainDiffs' >>= \case
               Nothing                 ->
-                return curTip
+                return ()
               Just validatedChainDiff ->
                 switchTo
                   validatedChainDiff
@@ -805,7 +768,6 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       where
         chainSelEnv = mkChainSelEnv curChainAndLedger
         curChain    = VF.validatedFragment curChainAndLedger
-        curTip      = castPoint $ AF.headPoint curChain
 
     mkSelectionChangedInfo ::
          AnchoredFragment (Header blk) -- ^ old chain
@@ -862,7 +824,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       -> StrictTVar m (StrictMaybe (Header blk))
          -- ^ Tentative header
       -> ChainSwitchType
-      -> m (Point blk)
+      -> m ()
     switchTo vChainDiff varTentativeHeader chainSwitchType = do
         traceWith addBlockTracer $
             ChangingSelection
@@ -918,7 +880,6 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
         whenJust (strictMaybeToMaybe prevTentativeHeader) $ traceWith $
           PipeliningEvent . OutdatedTentativeHeader >$< addBlockTracer
 
-        return $ castPoint $ AF.headPoint newChain
       where
         -- Given the current chain and the new chain as chain fragments, and the
         -- intersection point (an optimization, since it has already been
@@ -976,18 +937,16 @@ data ChainSelEnv m blk = ChainSelEnv
     , pipeliningTracer      :: Tracer m (TracePipeliningEvent blk)
     , bcfg                  :: BlockConfig blk
     , varInvalid            :: StrictTVar m (WithFingerprint (InvalidBlocks blk))
-    , varFutureBlocks       :: StrictTVar m (FutureBlocks m blk)
     , varTentativeState     :: StrictTVar m (TentativeHeaderState blk)
     , varTentativeHeader    :: StrictTVar m (StrictMaybe (Header blk))
     , getTentativeFollowers :: STM m [FollowerHandle m blk]
-    , futureCheck           :: CheckInFuture m blk
     , blockCache            :: BlockCache blk
     , curChainAndLedger     :: ChainAndLedger blk
       -- | The block that this chain selection invocation is processing, and the
       -- punish action for the peer that sent that block; see
       -- 'InvalidBlockPunishment'.
       --
-      -- Two notable subtleties:
+      -- One subtlety:
       --
       -- o If a BlockFetch client adds an invalid block but that block isn't
       --   part of any desirable paths through the VolDB, then we won't attempt
@@ -996,14 +955,9 @@ data ChainSelEnv m blk = ChainSelEnv
       --   our focus to a another peer offering better blocks and so this peer
       --   is no longer causing us BlockFetch work.
       --
-      -- o If the block is frome the future but with clock skew, we'll add it to
-      --   'varFutureBlocks'. We retain the punishment information, so that if
-      --   the peer is still active once we do process that block, we're still
-      --   able to punish them.
-      --
-      -- Thus invalid blocks can be skipped entirely or somewhat-arbitrarily
-      -- delayed. This is part of the reason we bothered to restrict the
-      -- expressiveness of the 'InvalidBlockPunishment' combiantors.
+      -- Thus invalid blocks can be skipped entirely. This is part of
+      -- the reason we bothered to restrict the expressiveness of the
+      -- 'InvalidBlockPunishment' combinators.
     , punish                :: Maybe (RealPoint blk, InvalidBlockPunishment m)
     }
 
@@ -1072,8 +1026,8 @@ chainSelection chainSelEnv chainDiffs =
           ValidPrefix candidate' -> do
             whenJust mTentativeHeader clearTentativeHeader
             -- Prefix of the candidate because it contained rejected blocks
-            -- (invalid blocks and/or blocks from the future). Note that the
-            -- spec says go back to candidate selection, see [^whyGoBack],
+            -- (invalid blocks). Note that the
+            -- spec says go back to candidate selection,
             -- because there might still be some candidates that contain the
             -- same rejected block. To simplify the control flow, we do it
             -- differently: instead of recomputing the candidates taking
@@ -1132,20 +1086,15 @@ chainSelection chainSelEnv chainDiffs =
     -- blocks. Discard them if they are truncated so much that they are no
     -- longer preferred over the current chain.
     --
-    -- A block is rejected if:
-    --
-    -- * It is invalid (present in 'varInvalid', i.e., 'cdbInvalid').
-    -- * It is from the future (present in 'varFutureBlocks', i.e.,
-    --   'cdbFutureBlocks').
+    -- A block is rejected if it is invalid (present in 'varInvalid',
+    -- i.e., 'cdbInvalid').
     truncateRejectedBlocks ::
          [ChainDiff (Header blk)]
       -> m [ChainDiff (Header blk)]
     truncateRejectedBlocks cands = do
-      (invalid, futureBlocks) <-
-        atomically $ (,) <$> readTVar varInvalid <*> readTVar varFutureBlocks
+      invalid <- atomically $ readTVar varInvalid
       let isRejected hdr =
                Map.member (headerHash hdr) (forgetFingerprint invalid)
-            || Map.member (headerHash hdr) futureBlocks
       return $ filter (preferAnchoredCandidate bcfg curChain . Diff.getSuffix)
              $ map (Diff.takeWhileOldest (not . isRejected)) cands
 
@@ -1168,15 +1117,14 @@ chainSelection chainSelEnv chainDiffs =
 
 -- | Result of 'validateCandidate'.
 data ValidationResult blk =
-      -- | The entire candidate fragment was valid. No blocks were from the
-      -- future.
+      -- | The entire candidate fragment was valid.
       FullyValid (ValidatedChainDiff (Header blk) (LedgerDB' blk))
 
-      -- | The candidate fragment contained invalid blocks and/or blocks from
-      -- the future that had to be truncated from the fragment.
+      -- | The candidate fragment contained invalid blocks that had to
+      -- be truncated from the fragment.
     | ValidPrefix (ChainDiff (Header blk))
 
-      -- | After truncating the invalid blocks or blocks from the future from
+      -- | After truncating the invalid blocks from
       -- the 'ChainDiff', it no longer contains enough blocks in its suffix to
       -- compensate for the number of blocks it wants to roll back.
     | InsufficientSuffix
@@ -1271,92 +1219,10 @@ ledgerValidateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) =
     addInvalidBlock e (RealPoint slot hash) = atomically $
       modifyTVar varInvalid $ \(WithFingerprint invalid fp) ->
         WithFingerprint
-          (Map.insert hash (InvalidBlockInfo (ValidationError e) slot) invalid)
+          (Map.insert hash (InvalidBlockInfo e slot) invalid)
           (succ fp)
 
--- | Truncate any future headers from the candidate 'ValidatedChainDiff'.
---
--- Future headers that don't exceed the clock skew
--- ('inFutureExceedsClockSkew') are added to 'cdbFutureBlocks'.
---
--- Future headers that exceed the clock skew are added to 'cdbInvalid' with
--- 'InFutureExceedsClockSkew' as the reason.
---
--- When truncation happened, 'Left' is returned, otherwise 'Right'.
-futureCheckCandidate ::
-     forall m blk. (IOLike m, LedgerSupportsProtocol blk)
-  => ChainSelEnv m blk
-  -> ValidatedChainDiff (Header blk) (LedgerDB' blk)
-  -> m (Either (ChainDiff (Header blk))
-               (ValidatedChainDiff (Header blk) (LedgerDB' blk)))
-futureCheckCandidate chainSelEnv validatedChainDiff =
-    checkInFuture futureCheck validatedSuffix >>= \case
-
-      (suffix', []) ->
-        -- If no headers are in the future, then the fragment must be untouched
-        assert (AF.headPoint suffix == AF.headPoint suffix') $
-        return $ Right validatedChainDiff
-
-      (suffix', inFuture) -> do
-        let (exceedClockSkew, inNearFuture) =
-              partition InFuture.inFutureExceedsClockSkew inFuture
-        -- Record future blocks
-        unless (null inNearFuture) $ do
-          let futureBlocks = Map.fromList
-                [ (headerHash hdr, (hdr, InFuture.inFuturePunish x))
-                | x <- inNearFuture
-                , let hdr = InFuture.inFutureHeader x
-                ]
-          atomically $ modifyTVar varFutureBlocks $ flip Map.union futureBlocks
-          -- Trace the original @suffix@, as it contains the headers from the
-          -- future
-          traceWith validationTracer $
-            CandidateContainsFutureBlocks
-              suffix
-              (InFuture.inFutureHeader <$> inNearFuture)
-
-        -- Record any blocks exceeding the clock skew as invalid
-        unless (null exceedClockSkew) $ do
-          let invalidHeaders = InFuture.inFutureHeader <$> exceedClockSkew
-              invalidBlocks  = Map.fromList
-                [ (headerHash hdr, info)
-                | hdr <- invalidHeaders
-                , let reason = InFutureExceedsClockSkew (headerRealPoint hdr)
-                      info   = InvalidBlockInfo reason (blockSlot hdr)
-                ]
-          atomically $ modifyTVar varInvalid $ \(WithFingerprint invalid fp) ->
-            WithFingerprint (Map.union invalid invalidBlocks) (succ fp)
-          traceWith validationTracer $
-            CandidateContainsFutureBlocksExceedingClockSkew
-              -- Trace the original @suffix@, as it contains the headers
-              -- from the future
-              suffix
-              invalidHeaders
-
-          -- It's possible the block's prefix is invalid, but we can't know for
-          -- sure. So we use 'InvalidBlockPunishment.BlockItself' to be more
-          -- conservative.
-          forM_ exceedClockSkew $ \x -> do
-            InvalidBlockPunishment.enact
-              (InFuture.inFuturePunish x)
-              InvalidBlockPunishment.BlockItself
-
-        -- Truncate the original 'ChainDiff' to match the truncated
-        -- 'AnchoredFragment'.
-        return $ Left $ Diff.truncate (castPoint (AF.headPoint suffix')) chainDiff
-  where
-    ChainSelEnv { validationTracer, varInvalid, varFutureBlocks, futureCheck } =
-      chainSelEnv
-
-    ValidatedChainDiff chainDiff@(ChainDiff _ suffix) _ = validatedChainDiff
-
-    validatedSuffix :: ValidatedFragment (Header blk) (LedgerState blk)
-    validatedSuffix =
-      ledgerState . LgrDB.ledgerDbCurrent <$>
-      ValidatedDiff.toValidatedFragment validatedChainDiff
-
--- | Validate a candidate chain using 'ledgerValidateCandidate' and
--- 'futureCheck'.
+-- | Validate a candidate chain using 'ledgerValidateCandidate'.
 validateCandidate ::
      ( IOLike m
      , LedgerSupportsProtocol blk
@@ -1370,28 +1236,19 @@ validateCandidate chainSelEnv chainDiff =
       validatedChainDiff
         | ValidatedDiff.rollbackExceedsSuffix validatedChainDiff
         -> return InsufficientSuffix
+
+        | AF.length (Diff.getSuffix chainDiff) == AF.length (Diff.getSuffix chainDiff')
+        -- No truncation
+        -> return $ FullyValid validatedChainDiff
+
         | otherwise
-        -> futureCheckCandidate chainSelEnv validatedChainDiff >>= \case
-          Left chainDiff'
-              | Diff.rollbackExceedsSuffix chainDiff'
-              -> return InsufficientSuffix
-              | otherwise
-              -> return $ ValidPrefix chainDiff'
-          Right validatedChainDiff'
-              | ValidatedDiff.rollbackExceedsSuffix validatedChainDiff'
-              -> return InsufficientSuffix
-              | AF.length (Diff.getSuffix chainDiff) ==
-                AF.length (Diff.getSuffix chainDiff')
-                -- No truncation
-              -> return $ FullyValid validatedChainDiff'
-              | otherwise
-                -- In case of invalid blocks but no blocks from the future, we
-                -- throw away the ledger corresponding to the truncated
-                -- fragment and will have to validate it again, even when it's
-                -- the sole candidate.
-              -> return $ ValidPrefix chainDiff'
-            where
-              chainDiff' = ValidatedDiff.getChainDiff validatedChainDiff'
+        -- In case of invalid blocks, we throw away the ledger
+        -- corresponding to the truncated fragment and will have to
+        -- validate it again, even when it's the sole candidate.
+        -> return $ ValidPrefix chainDiff'
+
+        where
+          chainDiff' = ValidatedDiff.getChainDiff validatedChainDiff
 
 {-------------------------------------------------------------------------------
   'ChainAndLedger'

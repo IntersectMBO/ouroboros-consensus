@@ -18,8 +18,6 @@ import           Control.Tracer (nullTracer)
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Config
                      (TopLevelConfig (topLevelConfigLedger), configCodec)
-import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture (..))
-import qualified Ouroboros.Consensus.Fragment.Validated as VF
 import           Ouroboros.Consensus.HardFork.History.EraParams (eraEpochSize)
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import           Ouroboros.Consensus.Protocol.Abstract
@@ -123,8 +121,6 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
         }
     , cdbsArgs = ChainDbSpecificArgs {
           cdbsBlocksToAddSize = 1
-        , cdbsCheckInFuture   = CheckInFuture $ \vf -> pure (VF.validatedFragment vf, [])
-          -- Blocks are never in the future
         , cdbsGcDelay         = 1
         , cdbsHasFSGsmDB      = SomeHasFS $ simHasFS (nodeDBsGsm mcdbNodeDBs)
         , cdbsGcInterval      = 1

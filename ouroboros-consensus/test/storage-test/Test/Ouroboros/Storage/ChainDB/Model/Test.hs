@@ -49,11 +49,9 @@ tests = testGroup "Model" [
     ]
 
 addBlocks :: LoE () -> [TestBlock] -> M.Model TestBlock
-addBlocks loe blks = M.addBlocks cfg blks m
+addBlocks loe blks = M.addBlocks cfg blks (M.empty loe testInitExtLedger)
   where
     cfg = singleNodeTestConfig
-    -- Set the current slot to 'maxBound' so that no block is in the future
-    m   = M.advanceCurSlot maxBound (M.empty loe testInitExtLedger 0)
 
 prop_getBlock_addBlock :: LoE () -> BlockTree -> Permutation -> Property
 prop_getBlock_addBlock loe bt p =
