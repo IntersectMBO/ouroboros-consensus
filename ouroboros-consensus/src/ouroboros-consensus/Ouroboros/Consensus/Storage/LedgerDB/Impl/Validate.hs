@@ -4,6 +4,7 @@
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -17,6 +18,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Impl.Validate (
   , ResolvesBlocks (..)
     -- * Validation
   , ValidLedgerState (..)
+  , ValidateArgs (..)
   , validate
     -- * Testing
   , defaultResolveWithErrors
@@ -49,25 +51,38 @@ import           Ouroboros.Consensus.Util.IOLike
   Validation
 -------------------------------------------------------------------------------}
 
+data ValidateArgs m blk = ValidateArgs {
+    -- | How to retrieve blocks from headers
+    resolve :: !(ResolveBlock m blk)
+    -- | The config
+  , config :: !(TopLevelConfig blk)
+    -- | How to add a previously applied block to the set of known blocks
+  , addPrevApplied :: !([RealPoint blk] -> STM m ())
+    -- | Get the current set of previously applied blocks
+  , prevApplied :: !(STM m (Set (RealPoint blk)))
+    -- | Create a forker from the tip
+  , forkerAtFromTip :: !(ResourceRegistry m -> Word64 -> m (Either GetForkerError (Forker' m blk)))
+    -- | The resource registry
+  , rr :: !(ResourceRegistry m)
+    -- | A tracer for validate events
+  , trace :: !(TraceValidateEvent blk -> m ())
+    -- | The block cache
+  , blockCache :: BlockCache blk
+    -- | How many blocks to roll back before applying the blocks
+  , numRollbacks :: Word64
+    -- | The headers we want to apply
+  , hdrs :: [Header blk]
+  }
+
 validate ::
      forall m blk. (
        IOLike m
      , LedgerSupportsProtocol blk
      , HasCallStack
-     , MonadBase m m
      )
-  => ResolveBlock m blk
-  -> TopLevelConfig blk
-  -> ([RealPoint blk] -> STM m ())
-  -> STM m (Set (RealPoint blk))
-  -> (ResourceRegistry m -> Word64 -> m (Either ExceededRollback (Forker' m blk)))
-  -> ResourceRegistry m
-  -> (TraceValidateEvent blk -> m ())
-  -> BlockCache blk
-  -> Word64          -- ^ How many blocks to roll back
-  -> [Header blk]
+  => ValidateArgs m blk
   -> m (ValidateResult' m blk)
-validate resolve config addPrevApplied prevApplied forkerAtFromTip rr trace blockCache numRollbacks hdrs = do
+validate args = do
     aps <- mkAps <$> atomically prevApplied
     res <- fmap rewrap $ defaultResolveWithErrors resolve $
              switch
@@ -80,10 +95,24 @@ validate resolve config addPrevApplied prevApplied forkerAtFromTip rr trace bloc
     liftBase $ atomically $ addPrevApplied (validBlockPoints res (map headerRealPoint hdrs))
     return res
   where
-    rewrap :: Either (AnnLedgerError' n blk) (Either ExceededRollback (Forker' n blk))
+    ValidateArgs {
+        resolve
+      , config
+      , addPrevApplied
+      , prevApplied
+      , forkerAtFromTip
+      , rr
+      , trace
+      , blockCache
+      , numRollbacks
+      , hdrs
+      } = args
+
+    rewrap :: Either (AnnLedgerError' n blk) (Either GetForkerError (Forker' n blk))
            -> ValidateResult' n blk
     rewrap (Left         e)  = ValidateLedgerError      e
-    rewrap (Right (Left  e)) = ValidateExceededRollBack e
+    rewrap (Right (Left  (PointTooOld (Just e)))) = ValidateExceededRollBack e
+    rewrap (Right (Left  _)) = error "Unreachable, validating will always rollback from the tip"
     rewrap (Right (Right l)) = ValidateSuccessful       l
 
     mkAps :: forall bn n l. l ~ ExtLedgerState blk
@@ -114,13 +143,13 @@ validate resolve config addPrevApplied prevApplied forkerAtFromTip rr trace bloc
 -- new blocks.
 switch ::
      (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm)
-  => (ResourceRegistry bm -> Word64 -> bm (Either ExceededRollback (Forker bm l blk)))
+  => (ResourceRegistry bm -> Word64 -> bm (Either GetForkerError (Forker bm l blk)))
   -> ResourceRegistry bm
   -> LedgerCfg l
   -> Word64          -- ^ How many blocks to roll back
   -> (TraceValidateEvent blk -> m ())
   -> [Ap bm m l blk c]  -- ^ New blocks to apply
-  -> m (Either ExceededRollback (Forker bm l blk))
+  -> m (Either GetForkerError (Forker bm l blk))
 switch forkerAtFromTip rr cfg numRollbacks trace newBlocks = do
   foEith <- liftBase $ forkerAtFromTip rr numRollbacks
   case foEith of

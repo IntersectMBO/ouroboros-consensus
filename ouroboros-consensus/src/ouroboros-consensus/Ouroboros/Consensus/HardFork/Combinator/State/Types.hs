@@ -16,7 +16,6 @@ module Ouroboros.Consensus.HardFork.Combinator.State.Types (
   , Translate (..)
   , TranslateLedgerState (..)
   , TranslateLedgerTables (..)
-  , TranslateTxIn (..)
   , TranslateTxOut (..)
   , translateLedgerTablesWith
   ) where
@@ -166,17 +165,15 @@ data TranslateLedgerTables x y = TranslateLedgerTables {
     -- | Translate a 'TxIn' across an era transition.
     --
     -- See 'translateLedgerTablesWith'.
-    translateTxInWith  :: !(Key (LedgerState x) -> Key (LedgerState y))
+    translateTxInWith  :: !(TxIn (LedgerState x) -> TxIn (LedgerState y))
 
     -- | Translate a 'TxOut' across an era transition.
     --
     -- See 'translateLedgerTablesWith'.
-  , translateTxOutWith :: !(Value (LedgerState x) -> Value (LedgerState y))
+  , translateTxOutWith :: !(TxOut (LedgerState x) -> TxOut (LedgerState y))
   }
 
-newtype TranslateTxIn x y = TranslateTxIn (Key (LedgerState x) -> Key (LedgerState y))
-
-newtype TranslateTxOut x y = TranslateTxOut (Value (LedgerState x) -> Value (LedgerState y))
+newtype TranslateTxOut x y = TranslateTxOut (TxOut (LedgerState x) -> TxOut (LedgerState y))
 
 -- | Translate a 'LedgerTables' across an era transition.
 --
@@ -202,7 +199,7 @@ newtype TranslateTxOut x y = TranslateTxOut (Value (LedgerState x) -> Value (Led
 -- optimised to skip the 'Map.mapKeys' step and/or 'Map.map' step if
 -- 'translateTxInWith' and/or 'translateTxOutWith' are no-ops.
 translateLedgerTablesWith ::
-     Ord (Key (LedgerState y))
+     Ord (TxIn (LedgerState y))
   => TranslateLedgerTables x y
   -> LedgerTables (LedgerState x) DiffMK
   -> LedgerTables (LedgerState y) DiffMK

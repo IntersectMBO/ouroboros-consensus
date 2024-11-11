@@ -27,8 +27,7 @@ import qualified Data.Set as Set
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
-import           Ouroboros.Consensus.Ledger.Basics hiding (Key, LedgerState)
-import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Tables.Diff (fromAntiDiff)
 import           Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
@@ -85,7 +84,7 @@ nextState dblog = TestLedger {
             , tlUtxos = DiffMK mempty
             }
   where
-    old = DbChangelog.current $ anchorlessChangelog dblog
+    old = DbChangelog.current dblog
     nextSlot = At . withOrigin 1 (+1)
 
 
@@ -102,8 +101,8 @@ instance StandardHash TestLedger
 
 deriving instance Eq (TestLedger EmptyMK)
 
-type instance Ledger.Key   TestLedger = Key
-type instance Ledger.Value TestLedger = Int
+type instance TxIn  TestLedger = Key
+type instance TxOut TestLedger = Int
 
 instance HasLedgerTables TestLedger where
   projectLedgerTables                     = LedgerTables . tlUtxos
@@ -147,7 +146,7 @@ instance Arbitrary DbChangelogTestSetupWithRollbacks where
   arbitrary = do
     setup <- arbitrary
     let dblog = resultingDbChangelog setup
-    rolls <- chooseInt (0, AS.length (DbChangelog.adcStates $ DbChangelog.anchorlessChangelog dblog))
+    rolls <- chooseInt (0, AS.length (DbChangelog.changelogStates dblog))
     pure $ DbChangelogTestSetupWithRollbacks
       { testSetup = setup
       , rollbacks = rolls
@@ -158,7 +157,7 @@ instance Arbitrary DbChangelogTestSetupWithRollbacks where
       setups = shrink (testSetup setupWithRollback)
       shrinkRollback :: DbChangelogTestSetup -> Int -> Int
       shrinkRollback setup rollback =
-        AS.length (DbChangelog.adcStates $ DbChangelog.anchorlessChangelog $ resultingDbChangelog setup) `min` rollback
+        AS.length (DbChangelog.changelogStates $ resultingDbChangelog setup) `min` rollback
       toWithRollbacks setup = DbChangelogTestSetupWithRollbacks {
            testSetup = setup
          , rollbacks = shrinkRollback setup (rollbacks setupWithRollback)
@@ -173,8 +172,8 @@ resultingDbChangelog setup = applyOperations (operations setup) originalDbChange
 applyOperations :: (HasLedgerTables l, GetTip l)
   => [Operation l] -> DbChangelog l -> DbChangelog l
 applyOperations ops dblog = foldr' apply' dblog ops
-  where apply' (Extend newState) dblog' = DbChangelog.onChangelog (DbChangelog.extend newState) dblog'
-        apply' (Prune sp) dblog'        = DbChangelog.onChangelog (DbChangelog.prune sp) dblog'
+  where apply' (Extend newState) dblog' = DbChangelog.extend newState dblog'
+        apply' (Prune sp) dblog'        = DbChangelog.prune sp dblog'
 
 {-------------------------------------------------------------------------------
   Properties
@@ -189,13 +188,13 @@ prop_flushingSplitsTheChangelog setup = isNothing toFlush .||.
     .&&. fromAntiDiff (cumulativeDiff diffs) === toFlushDiffs <> fromAntiDiff (cumulativeDiff toKeepDiffs)
     )
   where
-    dblog                                    = resultingDbChangelog setup
-    (toFlush, toKeep)                        = DbChangelog.splitForFlushing dblog
-    toFlushTip                               = maybe undefined DbChangelog.toFlushSlot toFlush
-    toKeepTip                                = DbChangelog.immutableTipSlot $ anchorlessChangelog toKeep
-    LedgerTables (SeqDiffMK toKeepDiffs)  = DbChangelog.adcDiffs $ anchorlessChangelog toKeep
+    dblog                                 = resultingDbChangelog setup
+    (toFlush, toKeep)                     = DbChangelog.splitForFlushing dblog
+    toFlushTip                            = maybe undefined DbChangelog.toFlushSlot toFlush
+    toKeepTip                             = DbChangelog.immutableTipSlot toKeep
+    LedgerTables (SeqDiffMK toKeepDiffs)  = DbChangelog.changelogDiffs toKeep
     LedgerTables (DiffMK toFlushDiffs)    = maybe undefined DbChangelog.toFlushDiffs toFlush
-    LedgerTables (SeqDiffMK diffs)        = DbChangelog.adcDiffs $ anchorlessChangelog dblog
+    LedgerTables (SeqDiffMK diffs)        = DbChangelog.changelogDiffs dblog
 
 -- | Extending the changelog adds the correct head to the volatile states.
 prop_extendingAdvancesTipOfVolatileStates :: DbChangelogTestSetup -> Property
@@ -204,13 +203,13 @@ prop_extendingAdvancesTipOfVolatileStates setup =
   where
     dblog  = resultingDbChangelog setup
     state  = nextState dblog
-    dblog' = DbChangelog.onChangelog (DbChangelog.extend state) dblog
-    new    = AS.headAnchor (DbChangelog.adcStates $ anchorlessChangelog dblog')
+    dblog' = DbChangelog.extend state dblog
+    new    = AS.headAnchor (DbChangelog.changelogStates dblog')
 
 -- | Rolling back n extensions is the same as doing nothing.
 prop_rollbackAfterExtendIsNoop :: DbChangelogTestSetup -> Positive Int -> Property
 prop_rollbackAfterExtendIsNoop setup (Positive n) =
-    property (dblog == fromJust (DbChangelog.onChangelogM (DbChangelog.rollbackN (fromIntegral n)) $ nExtensions n dblog))
+    property (dblog == fromJust (DbChangelog.rollbackN (fromIntegral n) $ nExtensions n dblog))
   where
     dblog = resultingDbChangelog setup
 
@@ -218,10 +217,10 @@ prop_rollbackAfterExtendIsNoop setup (Positive n) =
 prop_pruningLeavesAtMostMaxRollbacksVolatileStates ::
   DbChangelogTestSetup -> SecurityParam -> Property
 prop_pruningLeavesAtMostMaxRollbacksVolatileStates setup sp@(SecurityParam k) =
-  property $ AS.length (DbChangelog.adcStates $ anchorlessChangelog dblog') <= fromIntegral k
+  property $ AS.length (DbChangelog.changelogStates dblog') <= fromIntegral k
   where
     dblog = resultingDbChangelog setup
-    dblog' = DbChangelog.onChangelog (DbChangelog.prune sp) dblog
+    dblog' = DbChangelog.prune sp dblog
 
 -- | The prefixBackToAnchor function rolls back all volatile states.
 prop_prefixBackToAnchorIsRollingBackVolatileStates :: DbChangelogTestSetup -> Property
@@ -229,9 +228,9 @@ prop_prefixBackToAnchorIsRollingBackVolatileStates setup =
   property $ rolledBack == toAnchor
   where
     dblog = resultingDbChangelog setup
-    n = AS.length (DbChangelog.adcStates $ anchorlessChangelog dblog)
-    rolledBack = fromJust $ DbChangelog.onChangelogM (DbChangelog.rollbackN (fromIntegral n)) dblog
-    toAnchor = DbChangelog.onChangelog DbChangelog.rollbackToAnchor dblog
+    n = AS.length (DbChangelog.changelogStates dblog)
+    rolledBack = fromJust $ DbChangelog.rollbackN (fromIntegral n) dblog
+    toAnchor = DbChangelog.rollbackToAnchor dblog
 
 -- | Rolling back to the last state is the same as doing nothing.
 prop_rollBackToVolatileTipIsNoop ::
@@ -239,12 +238,12 @@ prop_rollBackToVolatileTipIsNoop ::
 prop_rollBackToVolatileTipIsNoop (Positive n) setup = property $ Just dblog == dblog'
   where
     dblog = resultingDbChangelog setup
-    pt = getTip $ DbChangelog.current $ anchorlessChangelog dblog
-    dblog' = DbChangelog.onChangelogM (DbChangelog.rollbackToPoint pt) $ nExtensions n dblog
+    pt = getTip $ DbChangelog.current dblog
+    dblog' = DbChangelog.rollbackToPoint pt $ nExtensions n dblog
 
 nExtensions :: Int -> DbChangelog TestLedger -> DbChangelog TestLedger
 nExtensions n dblog = iterate ext dblog !! n
-  where ext dblog' = DbChangelog.onChangelog (DbChangelog.extend (nextState dblog')) dblog'
+  where ext dblog' = DbChangelog.extend (nextState dblog') dblog'
 
 {-------------------------------------------------------------------------------
   Generators

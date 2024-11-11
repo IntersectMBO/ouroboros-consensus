@@ -36,6 +36,9 @@ import           Ouroboros.Consensus.Util.IOLike (MonadSTM (..))
 -- INVARIANT:
 --
 -- > getTip chainDiff == ledgerTipPoint ledger
+--
+-- The invariant is only checked on construction, maintaining it afterwards is
+-- up to the user.
 data ValidatedChainDiff b l = UnsafeValidatedChainDiff
     { getChainDiff :: ChainDiff b
     , getLedger    :: l

@@ -54,6 +54,8 @@ class CanMapMK mk where
 
 type CanMapKeysMK :: MapKind -> Constraint
 class CanMapKeysMK mk where
+  -- | Instances defined for the standard mapkinds suffer from the same caveats
+  -- as 'Data.Map.Strict.mapKeys' or 'Data.Set.map'
   mapKeysMK :: Ord k' => (k -> k') -> mk k v -> mk k' v
 
 -- | For convenience, such that we don't have to include @QuantifiedConstraints@
@@ -159,7 +161,7 @@ instance ZeroableMK TrackingMK where
   emptyMK = TrackingMK mempty mempty
 
 instance CanMapMK TrackingMK where
-  mapMK f (TrackingMK vs d) = TrackingMK (fmap f vs) (fmap f d)
+  mapMK f (TrackingMK vs d) = TrackingMK (Map.map f vs) (fmap f d)
 
 instance CanMapKeysMK TrackingMK where
   mapKeysMK f (TrackingMK vs d) =
@@ -197,6 +199,9 @@ instance ZeroableMK SeqDiffMK where
 --
 -- See also 'HasCanonicalTxIn' in
 -- "Ouroboros.Consensus.HardFork.Combinator.Ledger".
+--
+-- We will serialize UTxO maps as unstowed ledger tables when storing snapshots
+-- while using an in-memory backend for the LedgerDB.
 data CodecMK k v = CodecMK {
     encodeKey   :: !(k -> CBOR.Encoding)
   , encodeValue :: !(v -> CBOR.Encoding)

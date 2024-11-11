@@ -48,6 +48,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots (
   , Flag (..)
     -- * Testing
   , decodeLBackwardsCompatible
+  , destroySnapshots
   , encodeL
   ) where
 
@@ -102,7 +103,7 @@ data DiskSnapshot = DiskSnapshot {
       -- | Snapshots can optionally have a suffix, separated by the snapshot
       -- number with an underscore, e.g., @4492799_last_Byron@. This suffix acts
       -- as metadata for the operator of the node. Snapshots with a suffix will
-      -- /not be trimmed/.
+      -- /not be deleted/.
     , dsSuffix :: Maybe String
     }
   deriving (Show, Eq, Generic)
@@ -113,7 +114,8 @@ instance Ord DiskSnapshot where
 data SnapshotFailure blk =
     -- | We failed to deserialise the snapshot
     --
-    -- This can happen due to data corruption in the ledger DB.
+    -- This can happen due to data corruption in the ledger DB or if the codecs
+    -- changed.
     InitFailureRead ReadSnapshotErr
 
     -- | This snapshot is too recent (ahead of the tip of the immutable chain)
@@ -172,6 +174,17 @@ deleteSnapshot (SomeHasFS HasFS{doesDirectoryExist, removeDirectoryRecursive}) s
   let p = snapshotToDirPath ss
   exists <- doesDirectoryExist p
   when exists (removeDirectoryRecursive p)
+
+-- | Testing only! Destroy all snapshots in the DB.
+destroySnapshots :: Monad m => SomeHasFS m -> m ()
+destroySnapshots (SomeHasFS fs) = do
+  dirs <- Set.lookupMax . Set.filter (isJust . snapshotFromPath) <$> listDirectory fs (mkFsPath [])
+  mapM_ ((\d -> do
+            isDir <- doesDirectoryExist fs d
+            if isDir
+              then removeDirectoryRecursive fs d
+              else removeFile fs d
+        ) . mkFsPath . (:[])) dirs
 
 -- | Read an extended ledger state from disk
 readExtLedgerState ::

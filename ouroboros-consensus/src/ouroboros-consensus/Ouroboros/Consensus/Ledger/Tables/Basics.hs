@@ -18,10 +18,10 @@ module Ouroboros.Consensus.Ledger.Tables.Basics (
     LedgerStateKind
   , MapKind
     -- * Ledger tables
-  , Castable
-  , Key
   , LedgerTables (..)
-  , Value
+  , SameUtxoTypes
+  , TxIn
+  , TxOut
   , castLedgerTables
   ) where
 
@@ -29,7 +29,7 @@ import           Data.Coerce (coerce)
 import           Data.Kind (Type)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
-import           Ouroboros.Consensus.Ticked (Ticked1)
+import           Ouroboros.Consensus.Ticked (Ticked)
 
 {-------------------------------------------------------------------------------
   Kinds
@@ -65,40 +65,39 @@ type LedgerStateKind = MapKind -> Type
 -- two type parameters, the key and the value.
 type LedgerTables :: LedgerStateKind -> MapKind -> Type
 newtype LedgerTables l mk = LedgerTables {
-    getLedgerTables :: mk (Key l) (Value l)
+    getLedgerTables :: mk (TxIn l) (TxOut l)
   }
   deriving stock Generic
 
-deriving stock instance Show (mk (Key l) (Value l))
+deriving stock instance Show (mk (TxIn l) (TxOut l))
                      => Show (LedgerTables l mk)
-deriving stock instance Eq (mk (Key l) (Value l))
+deriving stock instance Eq (mk (TxIn l) (TxOut l))
                      => Eq (LedgerTables l mk)
-deriving newtype instance NoThunks (mk (Key l) (Value l))
+deriving newtype instance NoThunks (mk (TxIn l) (TxOut l))
                        => NoThunks (LedgerTables l mk)
 
--- | Each @LedgerState@ instance will have the notion of a @Key@ for the tables.
--- For instance, if we only pulled out only the UTxO set from the ledger state,
--- this type would be @TxIn@. See
--- "Ouroboros.Consensus.HardFork.Combinator.Ledger".
-type Key :: LedgerStateKind -> Type
-type family Key l -- TODO: rename to TxIn
+-- | Each @LedgerState@ instance will have the notion of a @TxIn@ for the tables.
+--
+-- This will change once there is more than one table.
+type TxIn :: LedgerStateKind -> Type
+type family TxIn l
 
--- | Each @LedgerState@ instance will have the notion of a @Value@ for the
--- tables. For instance, if we only pulled out only the UTxO set from the ledger
--- state, this type would be @TxOut@ or @NS TxOut@.
-type Value :: LedgerStateKind -> Type
-type family Value l -- TODO: rename to TxOut
+-- | Each @LedgerState@ instance will have the notion of a @TxOut@ for the
+-- tables.
+--
+-- This will change once there is more than one table.
+type TxOut :: LedgerStateKind -> Type
+type family TxOut l
 
-type instance Key   (LedgerTables l) = Key l
-type instance Value (LedgerTables l) = Value l
-type instance Key   (Ticked1 l)      = Key l
-type instance Value (Ticked1 l)      = Value l
+type instance TxIn  (LedgerTables l) = TxIn l
+type instance TxOut (LedgerTables l) = TxOut l
+type instance TxIn  (Ticked l)      = TxIn l
+type instance TxOut (Ticked l)      = TxOut l
 
-type Castable l l' = (Key l ~ Key l', Value l ~ Value l')
+type SameUtxoTypes l l' = (TxIn l ~ TxIn l', TxOut l ~ TxOut l')
 
 castLedgerTables ::
-     forall l' l mk. Castable l l'
+     SameUtxoTypes l l'
   => LedgerTables l mk
   -> LedgerTables l' mk
 castLedgerTables = coerce
-

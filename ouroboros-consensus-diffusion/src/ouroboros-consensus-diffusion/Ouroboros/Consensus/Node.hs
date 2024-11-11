@@ -67,7 +67,6 @@ import           Codec.Serialise (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Control.DeepSeq (NFData)
 import           Control.Monad (forM_, when)
-import           Control.Monad.Base (MonadBase)
 import           Control.Monad.Class.MonadTime.SI (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.ResourceRegistry
@@ -429,7 +428,6 @@ runWith :: forall m addrNTN addrNTC versionDataNTN versionDataNTC blk p2p.
      , Hashable addrNTN -- the constraint comes from `initNodeKernel`
      , NetworkIO m
      , NetworkAddr addrNTN
-     , MonadBase m m
      )
   => RunNodeArgs m addrNTN addrNTC blk p2p
   -> (NodeToNodeVersion -> addrNTN -> CBOR.Encoding)
@@ -738,7 +736,7 @@ stdWithCheckedDB pb tracer databasePath networkMagic body = do
     hasFS      = ioHasFS mountPoint
 
 openChainDB ::
-     forall m blk. (RunNode blk, IOLike m, MonadBase m m)
+     forall m blk. (RunNode blk, IOLike m)
   => ResourceRegistry m
   -> TopLevelConfig blk
   -> ExtLedgerState blk ValuesMK

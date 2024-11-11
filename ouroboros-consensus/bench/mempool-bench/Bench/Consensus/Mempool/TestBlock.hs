@@ -116,7 +116,7 @@ instance PayloadSemantics Tx where
       let
         notFound = Set.filter (not . (`Map.member` tokMap)) consumed
       in if Set.null notFound
-        then Right $ TestPLDS (Ledger.rawAttachAndApplyDiffs fullDiff toks)
+        then Right $ TestPLDS (Ledger.rawAttachAndApplyDiffs toks fullDiff)
         else Left  $ TxApplicationError notFound
     where
       TestPLDS toks@(ValuesMK tokMap) = plds
@@ -129,9 +129,9 @@ instance PayloadSemantics Tx where
       fullDiff :: DiffMK Token ()
       fullDiff = DiffMK $ consumedDiff <> producedDiff
 
-  getPayloadKeySets tx = LedgerTables $ KeysMK $ consumed <> produced
+  getPayloadKeySets tx = LedgerTables $ KeysMK consumed
     where
-      Tx {consumed, produced} = tx
+      Tx {consumed} = tx
 
 deriving stock instance EqMK mk
                         => Eq (PayloadDependentState Tx mk)
@@ -141,8 +141,8 @@ deriving anyclass instance NoThunksMK mk
                         => NoThunks (PayloadDependentState Tx mk)
 
 instance Serialise (PayloadDependentState Tx EmptyMK) where
-  encode = error "unused: encode"
-  decode = error "unused: decode"
+  encode = error "Mempool bench TestBlock unused: encode"
+  decode = error "Mempool bench TestBlock unused: decode"
 
 -- | TODO: for the time being 'TestBlock' does not have any codec config
 data instance Block.CodecConfig TestBlock = TestBlockCodecConfig
@@ -156,8 +156,8 @@ data instance Block.StorageConfig TestBlock = TestBlockStorageConfig
   Ledger tables
 -------------------------------------------------------------------------------}
 
-type instance Key   (LedgerState TestBlock) = Token
-type instance Value (LedgerState TestBlock) = ()
+type instance TxIn  (LedgerState TestBlock) = Token
+type instance TxOut (LedgerState TestBlock) = ()
 
 instance HasLedgerTables (LedgerState TestBlock) where
   projectLedgerTables st =
@@ -170,17 +170,18 @@ instance HasLedgerTables (LedgerState TestBlock) where
     where
       TestLedger { payloadDependentState = plds } = st
 
-instance HasLedgerTables (Ticked1 (LedgerState TestBlock)) where
+instance HasLedgerTables (Ticked (LedgerState TestBlock)) where
   projectLedgerTables (TickedTestLedger st) = Ledger.castLedgerTables $
     Ledger.projectLedgerTables st
   withLedgerTables (TickedTestLedger st) tables =
     TickedTestLedger $ Ledger.withLedgerTables st $ Ledger.castLedgerTables tables
 
-instance CanSerializeLedgerTables (LedgerState TestBlock)
+instance CanSerializeLedgerTables (LedgerState TestBlock) where
+  codecLedgerTables = defaultCodecLedgerTables
 
 instance CanStowLedgerTables (LedgerState TestBlock) where
-  stowLedgerTables     = error "unused: stowLedgerTables"
-  unstowLedgerTables   = error "unused: unstowLedgerTables"
+  stowLedgerTables     = error "Mempool bench TestBlock unused: stowLedgerTables"
+  unstowLedgerTables   = error "Mempool bench TestBlock unused: unstowLedgerTables"
 
 {-------------------------------------------------------------------------------
   Mempool support
@@ -200,17 +201,16 @@ txSize (TestBlockGenTx tx) =
 
 instance Ledger.LedgerSupportsMempool TestBlock where
   applyTx _cfg _shouldIntervene _slot (TestBlockGenTx tx) tickedSt =
-    except $ fmap ((, ValidatedGenTx (TestBlockGenTx tx)) . Ledger.forgetTrackingValues)
+    except $ fmap ((, ValidatedGenTx (TestBlockGenTx tx)) . Ledger.trackingToDiffs)
            $ applyDirectlyToPayloadDependentState tickedSt tx
 
   reapplyTx cfg slot (ValidatedGenTx genTx) tickedSt =
-    Ledger.applyDiffs tickedSt . fst <$> Ledger.applyTx cfg Ledger.DoNotIntervene slot genTx tickedSt
+    Ledger.attachAndApplyDiffs tickedSt . fst <$> Ledger.applyTx cfg Ledger.DoNotIntervene slot genTx tickedSt
     -- FIXME: it is ok to use 'DoNotIntervene' here?
 
   txForgetValidated (ValidatedGenTx tx) = tx
 
-  getTransactionKeySets (TestBlockGenTx tx) = LedgerTables $
-    KeysMK $ consumed tx
+  getTransactionKeySets (TestBlockGenTx tx) = getPayloadKeySets tx
 
 instance Ledger.TxLimits TestBlock where
   type TxMeasure TestBlock = Ledger.IgnoringOverflow Ledger.ByteSize32

@@ -53,6 +53,7 @@ import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
+import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
@@ -273,15 +274,14 @@ protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
         }
 
     initLedgerState :: LedgerState (ShelleyBlock (TPraos c) era) ValuesMK
-    initLedgerState = ShelleyLedgerState {
+    initLedgerState = unstowLedgerTables ShelleyLedgerState {
         shelleyLedgerTip        = Origin
-      , shelleyLedgerState      = st `withUtxoSL` emptyMK
+      , shelleyLedgerState      =
+            L.injectIntoTestState transitionCfg
+          $ L.createInitialState  transitionCfg
       , shelleyLedgerTransition = ShelleyTransitionInfo {shelleyAfterVoting = 0}
-      , shelleyLedgerTables     = LedgerTables $ projectUtxoSL st
+      , shelleyLedgerTables     = emptyLedgerTables
       }
-     where
-      st = L.injectIntoTestState transitionCfg
-         $ L.createInitialState  transitionCfg
 
     initChainDepState :: TPraosState c
     initChainDepState = TPraosState Origin $

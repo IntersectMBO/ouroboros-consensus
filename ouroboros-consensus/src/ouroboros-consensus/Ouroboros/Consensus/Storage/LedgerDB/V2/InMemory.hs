@@ -16,7 +16,6 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE ViewPatterns #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory (
     -- * LedgerTablesHandle
@@ -51,7 +50,7 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
-import           Ouroboros.Consensus.Ledger.Tables.Utils
+import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Common
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
 import           Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
@@ -92,23 +91,23 @@ newInMemoryLedgerTablesHandle someFS@(SomeHasFS hasFS) l = do
   !tv <- newTVarIO (LedgerTablesHandleOpen l)
   pure LedgerTablesHandle {
       close =
-        atomically $ modifyTVar tv (\_ -> LedgerTablesHandleClosed)
+        atomically $ writeTVar tv LedgerTablesHandleClosed
     , duplicate = do
         hs <- readTVarIO tv
         !x <- guardClosed hs $ newInMemoryLedgerTablesHandle someFS
         pure x
     , read = \keys -> do
         hs <- readTVarIO tv
-        guardClosed hs (\st -> pure $ ltliftA2 rawRestrictValues st keys)
+        guardClosed hs (pure . flip (ltliftA2 (\(ValuesMK v) (KeysMK k) -> ValuesMK $ v `Map.restrictKeys` k)) keys)
     , readRange = \(f, t) -> do
         hs <- readTVarIO tv
         guardClosed hs (\(LedgerTables (ValuesMK m)) ->
                           pure . LedgerTables . ValuesMK . Map.take t . (maybe id (\g -> snd . Map.split g) f) $ m)
-    , write = \(!diffs) ->
+    , pushDiffs = \(!diffs) ->
         atomically
         $ modifyTVar tv
-        (\r -> guardClosed r (\st -> LedgerTablesHandleOpen (ltliftA2 rawApplyDiffs st diffs)))
-    , writeToDisk = \snapshotName -> do
+        (\r -> guardClosed r (LedgerTablesHandleOpen . flip (ltliftA2 (\(ValuesMK vals) (DiffMK d) -> ValuesMK (Diff.applyDiff vals d))) diffs))
+    , takeHandleSnapshot = \snapshotName -> do
         createDirectoryIfMissing hasFS True $ mkFsPath [snapshotName, "tables"]
         h <- readTVarIO tv
         guardClosed h $
@@ -119,7 +118,7 @@ newInMemoryLedgerTablesHandle someFS@(SomeHasFS hasFS) l = do
                    $ valuesMKEncoder values
     , tablesSize = do
         hs <- readTVarIO tv
-        guardClosed hs (\(getLedgerTables -> ValuesMK m) -> pure $ Just $ Map.size m)
+        guardClosed hs (pure . Just . Map.size . getValuesMK . getLedgerTables)
     , isOpen = do
         hs <- readTVarIO tv
         case hs of
@@ -151,7 +150,7 @@ writeSnapshot fs@(SomeHasFS hasFs) doChecksum encLedger ds st = do
     createDirectoryIfMissing hasFs True $ snapshotToDirPath ds
     crc1 <- writeExtLedgerState fs encLedger (snapshotToStatePath ds) $ state st
     -- TODO
-    _crc2 <- writeToDisk (tables st) $ snapshotToDirName ds
+    _crc2 <- takeHandleSnapshot (tables st) $ snapshotToDirName ds
     Monad.when (getFlag doChecksum) $
       withFile hasFs (snapshotToChecksumPath ds) (WriteMode MustBeNew) $ \h ->
         void $ hPutAll hasFs h . BS.toLazyByteString . BS.word32HexFixed $ getCRC crc1
@@ -164,16 +163,16 @@ takeSnapshot ::
   => CodecConfig blk
   -> Tracer m (TraceSnapshotEvent blk)
   -> SomeHasFS m
-  -> Maybe DiskSnapshot
+  -> Maybe String
   -> Flag "DoDiskSnapshotChecksum"
   -> StateRef m (ExtLedgerState blk)
   -> m (Maybe (DiskSnapshot, RealPoint blk))
-takeSnapshot ccfg tracer hasFS dsOverride doChecksum st = do
+takeSnapshot ccfg tracer hasFS suffix doChecksum st = do
   case pointToWithOriginRealPoint (castPoint (getTip $ state st)) of
     Origin -> return Nothing
     NotOrigin t -> do
       let number   = unSlotNo (realPointSlot t)
-          snapshot = fromMaybe (DiskSnapshot number Nothing) dsOverride
+          snapshot = DiskSnapshot number suffix
       diskSnapshots <- listSnapshots hasFS
       if List.any ((== number) . dsNumber) diskSnapshots then
         return Nothing

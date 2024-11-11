@@ -136,7 +136,7 @@ class ( -- Requirements on the ledger state itself
         -- See comment for 'applyChainTickLedgerResult' about the tip of the
         -- ticked ledger.
       , GetTip          l
-      , GetTip (Ticked1 l)
+      , GetTip (Ticked l)
       ) => IsLedger l where
   -- | Errors that can arise when updating the ledger
   --
@@ -185,7 +185,7 @@ class ( -- Requirements on the ledger state itself
        LedgerCfg l
     -> SlotNo
     -> l EmptyMK
-    -> LedgerResult l (Ticked1 l DiffMK)
+    -> LedgerResult l (Ticked l DiffMK)
 
 -- | 'lrResult' after 'applyChainTickLedgerResult'
 applyChainTick ::
@@ -193,7 +193,7 @@ applyChainTick ::
   => LedgerCfg l
   -> SlotNo
   -> l EmptyMK
-  -> Ticked1 l DiffMK
+  -> Ticked l DiffMK
 applyChainTick = lrResult ..: applyChainTickLedgerResult
 
 {-------------------------------------------------------------------------------
@@ -218,7 +218,7 @@ applyChainTick = lrResult ..: applyChainTickLedgerResult
 -- 'Ouroboros.Consensus.Ledger.Abstract.ApplyBlock').
 type LedgerState :: Type -> LedgerStateKind
 data family LedgerState blk mk
-type TickedLedgerState blk = Ticked1 (LedgerState blk)
+type TickedLedgerState blk = Ticked (LedgerState blk)
 
 type instance HeaderHash (LedgerState blk) = HeaderHash blk
 
