@@ -298,7 +298,7 @@ type CardanoHardForkConstraints c =
 -- ledger tables:
 --
 -- * Byron to Shelley: as Byron has no tables, the whole UTxO set is computed as
---     insertions, note that it uses 'calculateAdditions'
+--     insertions, note that it uses 'valuesAsDiffs'
 --
 -- * Shelley to Allegra: some special addresses (the so called /AVVM/
 --     addresses), were deleted in this transition, which influenced things like
@@ -464,8 +464,7 @@ translateLedgerStateByronToShelleyWrapper =
     $ \_ (WrapLedgerConfig cfgShelley) ->
         TranslateLedgerState {
             translateLedgerStateWith = \epochNo ledgerByron ->
-                forgetTrackingValues
-              . calculateAdditions
+                valuesAsDiffs
               . unstowLedgerTables
               $ ShelleyLedgerState {
                     shelleyLedgerTip =

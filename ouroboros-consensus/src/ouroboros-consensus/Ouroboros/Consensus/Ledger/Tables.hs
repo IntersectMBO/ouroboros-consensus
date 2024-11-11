@@ -160,8 +160,7 @@
 --
 --   ['ValuesMK']: Contains a @Data.Map@ from txin to txouts.
 --
---   ['DiffMK']: Contains a @Data.Map@ from txin to history of changes (see
---     "Data.Map.Diff.Strict").
+--   ['DiffMK']: Contains a @Data.Map@ from txin to a change on the value.
 --
 --   ['TrackingMK']: Contains both a 'ValuesMK' and 'DiffMK'.
 --
