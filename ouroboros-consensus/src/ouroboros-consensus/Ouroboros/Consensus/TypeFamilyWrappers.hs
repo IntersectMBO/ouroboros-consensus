@@ -85,8 +85,8 @@ newtype WrapTipInfo               blk = WrapTipInfo               { unwrapTipInf
 newtype WrapValidatedGenTx blk = WrapValidatedGenTx { unwrapValidatedGenTx :: Validated (GenTx blk) }
 newtype WrapTxMeasure      blk = WrapTxMeasure      { unwrapTxMeasure      :: TxMeasure        blk  }
 
-newtype WrapTxIn                  blk = WrapTxIn                  { unwrapTxIn                  :: Key            (LedgerState blk) }
-newtype WrapTxOut                 blk = WrapTxOut                 { unwrapTxOut                 :: Value          (LedgerState blk) }
+newtype WrapTxIn  blk = WrapTxIn  { unwrapTxIn  :: TxIn  (LedgerState blk) }
+newtype WrapTxOut blk = WrapTxOut { unwrapTxOut :: TxOut (LedgerState blk) }
 
 {-------------------------------------------------------------------------------
   Consensus based
@@ -148,15 +148,15 @@ deriving instance NoThunks (TentativeHeaderState     blk ) => NoThunks (WrapTent
 deriving instance NoThunks (TipInfo                  blk ) => NoThunks (WrapTipInfo              blk)
 deriving instance NoThunks (Validated (GenTx         blk)) => NoThunks (WrapValidatedGenTx       blk)
 
-deriving instance Show (Key (LedgerState blk)) => Show (WrapTxIn blk)
-deriving instance Eq (Key (LedgerState blk)) => Eq (WrapTxIn blk)
-deriving instance Ord (Key (LedgerState blk)) => Ord (WrapTxIn blk)
-deriving instance NoThunks (Key (LedgerState blk)) => NoThunks (WrapTxIn blk)
+deriving instance Show (TxIn (LedgerState blk)) => Show (WrapTxIn blk)
+deriving instance Eq (TxIn (LedgerState blk)) => Eq (WrapTxIn blk)
+deriving instance Ord (TxIn (LedgerState blk)) => Ord (WrapTxIn blk)
+deriving instance NoThunks (TxIn (LedgerState blk)) => NoThunks (WrapTxIn blk)
 
-deriving instance Show (Value (LedgerState blk)) => Show (WrapTxOut blk)
-deriving instance Eq (Value (LedgerState blk)) => Eq (WrapTxOut blk)
-deriving instance Ord (Value (LedgerState blk)) => Ord (WrapTxOut blk)
-deriving instance NoThunks (Value (LedgerState blk)) => NoThunks (WrapTxOut blk)
+deriving instance Show (TxOut (LedgerState blk)) => Show (WrapTxOut blk)
+deriving instance Eq (TxOut (LedgerState blk)) => Eq (WrapTxOut blk)
+deriving instance Ord (TxOut (LedgerState blk)) => Ord (WrapTxOut blk)
+deriving instance NoThunks (TxOut (LedgerState blk)) => NoThunks (WrapTxOut blk)
 
 {-------------------------------------------------------------------------------
   .. consensus based

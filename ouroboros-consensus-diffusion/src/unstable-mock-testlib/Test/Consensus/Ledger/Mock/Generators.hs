@@ -122,6 +122,9 @@ instance (SimpleCrypto c, Typeable ext)
     .   flip SimpleLedgerState emptyLedgerTables
     <$> arbitrary
 
+instance Arbitrary (LedgerTables (LedgerState (SimpleBlock c ext)) ValuesMK) where
+  arbitrary = LedgerTables . ValuesMK <$> arbitrary
+
 instance HashAlgorithm (SimpleHash c) => Arbitrary (AnnTip (SimpleBlock c ext)) where
   arbitrary = do
       annTipSlotNo  <- SlotNo  <$> arbitrary

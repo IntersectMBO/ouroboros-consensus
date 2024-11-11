@@ -4,6 +4,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE NamedFieldPuns #-}
 
 module Ouroboros.Consensus.Util.IOLike (
     IOLike (..)
@@ -53,10 +54,10 @@ import           Control.Applicative (Alternative)
 import           Control.Concurrent.Class.MonadMVar (MonadInspectMVar (..))
 import qualified Control.Concurrent.Class.MonadMVar.Strict as Strict
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
+import           Control.Monad.Base (MonadBase)
 import           Control.Monad.Class.MonadAsync
 import           Control.Monad.Class.MonadEventlog
 import           Control.Monad.Class.MonadFork
-import           Control.Monad.Class.MonadSay
 import           Control.Monad.Class.MonadST
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Class.MonadTime.SI
@@ -93,14 +94,15 @@ class ( MonadAsync              m
       , Alternative        (STM m)
       , MonadCatch         (STM m)
       , PrimMonad               m
-      , MonadSay                m
       , MonadLabelledSTM        m
+      , MonadBase               m m
       , forall a. NoThunks (m a)
       , forall a. NoThunks a => NoThunks (StrictSTM.StrictTVar m a)
       , forall a. NoThunks a => NoThunks (StrictSVar m a)
       , forall a. NoThunks a => NoThunks (Strict.StrictMVar m a)
       , forall a. NoThunks a => NoThunks (StrictTVar m a)
       , forall a. NoThunks a => NoThunks (StrictMVar m a)
+      , forall a. NoThunks a => NoThunks (StrictSTM.StrictTMVar m a)
       ) => IOLike m where
   -- | Securely forget a KES signing key.
   --
@@ -173,3 +175,10 @@ instance NoThunks a => NoThunks (Strict.StrictMVar IO a) where
   wNoThunks ctxt mvar = do
       aMay <- inspectMVar (Proxy :: Proxy IO) (Strict.toLazyMVar mvar)
       noThunks ctxt aMay
+
+
+instance NoThunks a => NoThunks (StrictSTM.StrictTMVar IO a) where
+  showTypeOf _ = "StrictTMVar IO"
+  wNoThunks ctxt tmvar  = do
+      a <- inspectTMVar (Proxy :: Proxy IO) $ toLazyTMVar tmvar
+      noThunks ctxt a

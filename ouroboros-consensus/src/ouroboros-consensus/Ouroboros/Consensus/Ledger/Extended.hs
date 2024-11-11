@@ -28,7 +28,7 @@ module Ouroboros.Consensus.Ledger.Extended (
   , encodeExtLedgerState
     -- * Type family instances
   , LedgerTables (..)
-  , Ticked1 (..)
+  , Ticked (..)
   ) where
 
 import           Codec.CBOR.Decoding (Decoder, decodeListLenOf)
@@ -46,7 +46,6 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.Serialisation
-import           Ouroboros.Consensus.Ticked
 
 {-------------------------------------------------------------------------------
   Extended ledger state
@@ -124,13 +123,13 @@ type instance LedgerCfg (ExtLedgerState blk) = ExtLedgerCfg blk
   The ticked extended ledger state
 -------------------------------------------------------------------------------}
 
-data instance Ticked1 (ExtLedgerState blk) mk = TickedExtLedgerState {
-      tickedLedgerState :: Ticked1 (LedgerState blk) mk
+data instance Ticked (ExtLedgerState blk) mk = TickedExtLedgerState {
+      tickedLedgerState :: Ticked (LedgerState blk) mk
     , ledgerView        :: LedgerView (BlockProtocol blk)
     , tickedHeaderState :: Ticked (HeaderState blk)
     }
 
-instance IsLedger (LedgerState blk) => GetTip (Ticked1 (ExtLedgerState blk)) where
+instance IsLedger (LedgerState blk) => GetTip (Ticked (ExtLedgerState blk)) where
   getTip = castPoint . getTip . tickedLedgerState
 
 {-------------------------------------------------------------------------------
@@ -262,18 +261,18 @@ decodeDiskExtLedgerState cfg =
   Ledger Tables
 -------------------------------------------------------------------------------}
 
-type instance Key   (ExtLedgerState blk) = Key   (LedgerState blk)
-type instance Value (ExtLedgerState blk) = Value (LedgerState blk)
+type instance TxIn  (ExtLedgerState blk) = TxIn  (LedgerState blk)
+type instance TxOut (ExtLedgerState blk) = TxOut (LedgerState blk)
 
 instance (
     HasLedgerTables (LedgerState blk)
 #if __GLASGOW_HASKELL__ >= 906
-  , NoThunks (Value (LedgerState blk))
-  , NoThunks (Key (LedgerState blk))
-  , Show (Value (LedgerState blk))
-  , Show (Key (LedgerState blk))
-  , Eq (Value (LedgerState blk))
-  , Ord (Key (LedgerState blk))
+  , NoThunks (TxOut (LedgerState blk))
+  , NoThunks (TxIn (LedgerState blk))
+  , Show (TxOut (LedgerState blk))
+  , Show (TxIn (LedgerState blk))
+  , Eq (TxOut (LedgerState blk))
+  , Ord (TxIn (LedgerState blk))
 #endif
   ) => HasLedgerTables (ExtLedgerState blk) where
   projectLedgerTables (ExtLedgerState lstate _) =
@@ -291,22 +290,22 @@ instance LedgerTablesAreTrivial (LedgerState blk)
       => LedgerTablesAreTrivial (ExtLedgerState blk) where
   convertMapKind (ExtLedgerState x y) = ExtLedgerState (convertMapKind x) y
 
-instance LedgerTablesAreTrivial (Ticked1 (LedgerState blk))
-      => LedgerTablesAreTrivial (Ticked1 (ExtLedgerState blk)) where
+instance LedgerTablesAreTrivial (Ticked (LedgerState blk))
+      => LedgerTablesAreTrivial (Ticked (ExtLedgerState blk)) where
   convertMapKind (TickedExtLedgerState x y z) =
       TickedExtLedgerState (convertMapKind x) y z
 
 instance (
-    HasLedgerTables (Ticked1 (LedgerState blk))
+    HasLedgerTables (Ticked (LedgerState blk))
 #if __GLASGOW_HASKELL__ >= 906
-  , NoThunks (Value (LedgerState blk))
-  , NoThunks (Key (LedgerState blk))
-  , Show (Value (LedgerState blk))
-  , Show (Key (LedgerState blk))
-  , Eq (Value (LedgerState blk))
-  , Ord (Key (LedgerState blk))
+  , NoThunks (TxOut (LedgerState blk))
+  , NoThunks (TxIn (LedgerState blk))
+  , Show (TxOut (LedgerState blk))
+  , Show (TxIn (LedgerState blk))
+  , Eq (TxOut (LedgerState blk))
+  , Ord (TxIn (LedgerState blk))
 #endif
-  ) => HasLedgerTables (Ticked1 (ExtLedgerState blk)) where
+  ) => HasLedgerTables (Ticked (ExtLedgerState blk)) where
   projectLedgerTables (TickedExtLedgerState lstate _view _hstate) =
       castLedgerTables (projectLedgerTables lstate)
   withLedgerTables

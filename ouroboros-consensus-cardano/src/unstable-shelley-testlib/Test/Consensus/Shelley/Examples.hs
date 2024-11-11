@@ -36,7 +36,7 @@ import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool
-import           Ouroboros.Consensus.Ledger.Tables
+import           Ouroboros.Consensus.Ledger.Tables hiding (TxIn)
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Protocol.Abstract (TranslateProto,
                      translateChainDepState)
@@ -97,6 +97,9 @@ mkLedgerTables tx =
             -- transaction output) in the example provided by
             -- cardano-ledger to make sure that we test the serialization
             -- of ledger tables with at least one non-trivial example.
+            --
+            -- Also all transactions in Cardano have at least one input for
+            -- automatic replay protection.
       xs -> xs
 
     exampleTxOuts :: [LC.TxOut era]

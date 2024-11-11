@@ -37,6 +37,12 @@ instance NoThunks a => NoThunks (StrictMVar (IOSim s) a) where
       aMay <- unsafeSTToIO $ lazyToStrictST $ inspectMVar (Proxy :: Proxy (IOSim s)) (toLazyMVar mvar)
       noThunks ctxt aMay
 
+instance NoThunks a => NoThunks (StrictTMVar (IOSim s) a) where
+  showTypeOf _ = "StrictTMVar IOSim"
+  wNoThunks ctxt mvar = do
+      aMay <- unsafeSTToIO $ lazyToStrictST $ inspectTMVar (Proxy :: Proxy (IOSim s)) (toLazyTMVar mvar)
+      noThunks ctxt aMay
+
 instance NoThunks (StrictMVar (IOSim s) a) => NoThunks (NormalForm.StrictMVar (IOSim s) a) where
   showTypeOf _ = "StrictMVar IOSim"
   wNoThunks ctxt mvar = wNoThunks ctxt (NormalForm.unsafeToUncheckedStrictMVar mvar)

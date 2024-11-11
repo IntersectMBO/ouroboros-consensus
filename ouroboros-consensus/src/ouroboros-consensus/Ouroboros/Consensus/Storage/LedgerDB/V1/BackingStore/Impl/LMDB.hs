@@ -18,11 +18,11 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB (
     -- * Errors
   , LMDBErr (..)
     -- * Internals exposed for @snapshot-converter@
-  , DbState (..)
+  , DbSeqNo (..)
   , LMDBMK (..)
   , getDb
   , initLMDBTable
-  , withDbStateRWMaybeNull
+  , withDbSeqNoRWMaybeNull
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo, WithOrigin (At))
@@ -71,7 +71,7 @@ data Db m l = Db {
     --
     -- The state is kept in an LDMB table with only one key and one value:
     -- The current sequence number of the @`Db`@.
-  , dbState         :: !(LMDB.Database () DbState)
+  , dbState         :: !(LMDB.Database () DbSeqNo)
     -- | The LMDB tables with the key-value stores.
   , dbBackingTables :: !(LedgerTables l LMDBMK)
   , dbFilePath      :: !FilePath
@@ -108,7 +108,7 @@ newtype LMDBLimits = MkLMDBLimits {unLMDBLimits :: LMDB.Limits}
 --
 -- * @'lmdbMaxDatabases'@ should be set to at least 2, since the backing store
 --    has 2 internal LMDB databases by default: 1 for the actual tables, and
---    1 for the database state @'DbState'@.
+--    1 for the database state @'DbSeqNo'@.
 pattern LMDBLimits :: Int -> Int -> Int -> LMDBLimits
 pattern LMDBLimits{lmdbMapSize, lmdbMaxDatabases, lmdbMaxReaders} =
   MkLMDBLimits LMDB.Limits {
@@ -120,14 +120,14 @@ pattern LMDBLimits{lmdbMapSize, lmdbMaxDatabases, lmdbMaxReaders} =
 -- | The database state consists of only the database sequence number @dbsSeq@.
 -- @dbsSeq@ represents the slot up to which we have flushed changes to disk.
 -- Note that we only flush changes to disk if they have become immutable.
-newtype DbState = DbState {
+newtype DbSeqNo = DbSeqNo {
     dbsSeq :: WithOrigin SlotNo
   }
   deriving stock (Show, Generic)
   deriving anyclass S.Serialise
 
--- | A 'MapKind' that represents an LMDB database
-data LMDBMK k v = LMDBMK String !(LMDB.Database k v)
+-- | A 'MapKind' that represents an LMDB database handle
+data LMDBMK k v = LMDBMK !String !(LMDB.Database k v)
 
 {-------------------------------------------------------------------------------
   Low-level API
@@ -139,16 +139,16 @@ getDb ::
   -> LMDB.Transaction mode (LMDBMK k v)
 getDb (K2 name) = LMDBMK name <$> LMDB.getDatabase (Just name)
 
--- | @'rangeRead' n db codec ksMay@ performs a range read of @count@ values from
--- database @db@, starting from some key depending on @ksMay@.
+-- | @'rangeRead' count dbMK codecMK ksMK@ performs a range read of @count@
+-- values from database @dbMK@, starting from some key depending on @ksMK@.
 --
 -- The @codec@ argument defines how to serialise/deserialise keys and values.
 --
 -- A range read can return less than @count@ values if there are not enough
 -- values to read.
 --
--- Note: See @`RangeQuery`@ for more information about range queries. In
--- particular, @'rqPrev'@ describes the role of @ksMay@.
+-- Note: See 'RangeQuery' for more information about range queries. In
+-- particular, 'rqPrev' describes the role of @ksMay@.
 --
 -- What the "first" key in the database is, and more generally in which order
 -- keys are read, depends on the lexographical ordering of the /serialised/
@@ -189,7 +189,7 @@ initLMDBTable ::
 initLMDBTable (LMDBMK tblName db) codecMK (ValuesMK utxoVals) =
     EmptyMK <$ lmdbInitTable
   where
-    lmdbInitTable  = do
+    lmdbInitTable = do
       isEmpty <- LMDB.null db
       unless isEmpty $ liftIO . throwIO $ LMDBErrInitialisingNonEmpty tblName
       void $ Map.traverseWithKey
@@ -229,28 +229,28 @@ writeLMDBTable (LMDBMK _ db) codecMK (DiffMK d) =
  Db state
 -------------------------------------------------------------------------------}
 
-readDbStateMaybeNull ::
-     LMDB.Database () DbState
-  -> LMDB.Transaction mode (Maybe DbState)
-readDbStateMaybeNull db = LMDB.get db ()
+readDbSeqNoMaybeNull ::
+     LMDB.Database () DbSeqNo
+  -> LMDB.Transaction mode (Maybe DbSeqNo)
+readDbSeqNoMaybeNull db = LMDB.get db ()
 
-readDbState ::
-     LMDB.Database () DbState
-  -> LMDB.Transaction mode DbState
-readDbState db = readDbStateMaybeNull db >>= maybe (liftIO . throwIO $ LMDBErrNoDbState) pure
+readDbSeqNo ::
+     LMDB.Database () DbSeqNo
+  -> LMDB.Transaction mode DbSeqNo
+readDbSeqNo db = readDbSeqNoMaybeNull db >>= maybe (liftIO . throwIO $ LMDBErrNoDbSeqNo) pure
 
-withDbStateRW ::
-     LMDB.Database () DbState
-  -> (DbState -> LMDB.Transaction LMDB.ReadWrite (a, DbState))
+withDbSeqNoRW ::
+     LMDB.Database () DbSeqNo
+  -> (DbSeqNo -> LMDB.Transaction LMDB.ReadWrite (a, DbSeqNo))
   -> LMDB.Transaction LMDB.ReadWrite a
-withDbStateRW db f = withDbStateRWMaybeNull db $ maybe (liftIO . throwIO $ LMDBErrNoDbState) f
+withDbSeqNoRW db f = withDbSeqNoRWMaybeNull db $ maybe (liftIO . throwIO $ LMDBErrNoDbSeqNo) f
 
-withDbStateRWMaybeNull ::
-      LMDB.Database () DbState
-   -> (Maybe DbState -> LMDB.Transaction LMDB.ReadWrite (a, DbState))
+withDbSeqNoRWMaybeNull ::
+      LMDB.Database () DbSeqNo
+   -> (Maybe DbSeqNo -> LMDB.Transaction LMDB.ReadWrite (a, DbSeqNo))
    -> LMDB.Transaction LMDB.ReadWrite a
-withDbStateRWMaybeNull db f  =
-  readDbStateMaybeNull db >>= f >>= \(r, sNew) -> LMDB.put db () (Just sNew) $> r
+withDbSeqNoRWMaybeNull db f  =
+  readDbSeqNoMaybeNull db >>= f >>= \(r, sNew) -> LMDB.put db () (Just sNew) $> r
 
 {-------------------------------------------------------------------------------
  Guards
@@ -260,13 +260,13 @@ data GuardDbDir  = DirMustExist | DirMustNotExist
 
 -- | Guard for the existence/non-existence of a database directory,
 -- and create it if missing.
-guardDbDir ::
+checkAndOpenDbDir ::
      (MonadIO m, IOLike m)
   => GuardDbDir
   -> FS.SomeHasFS m
   -> FS.FsPath
   -> m FilePath
-guardDbDir mustExistDir (FS.SomeHasFS fs) path = do
+checkAndOpenDbDir mustExistDir (FS.SomeHasFS fs) path = do
   fileEx <- FS.doesFileExist fs path
   when fileEx $
     throwIO $ LMDBErrNotADir path
@@ -276,12 +276,13 @@ guardDbDir mustExistDir (FS.SomeHasFS fs) path = do
   case dirEx of
     True  | DirMustNotExist <- mustExistDir -> throwIO $ LMDBErrDirExists filepath
           | not lmdbFileExists              -> throwIO $ LMDBErrDirIsNotLMDB filepath
+          | otherwise                       -> pure ()
     False | DirMustExist    <- mustExistDir -> throwIO $ LMDBErrDirDoesntExist filepath
-    _                              -> pure ()
+          | otherwise                       -> pure ()
   FS.createDirectoryIfMissing fs True path
   pure filepath
 
--- | Same as @`guardDbDir`@, but retries the guard if we can make meaningful
+-- | Same as @`checkAndOpenDbDir`@, but retries the guard if we can make meaningful
 -- changes to the filesystem before we perform the retry.
 --
 -- Note: We only retry if a database directory exists while it shoudn't. In
@@ -289,19 +290,19 @@ guardDbDir mustExistDir (FS.SomeHasFS fs) path = do
 -- This is necessary for initialisation of the LMDB backing store, since the
 -- (non-snapshot) tables will probably still be on-disk. These tables are not
 -- removed when stopping the node, so they should be "overwritten".
-guardDbDirWithRetry ::
+checkAndOpenDbDirWithRetry ::
      (MonadIO m, IOLike m)
   => GuardDbDir
   -> FS.SomeHasFS m
   -> FS.FsPath
   -> m FilePath
-guardDbDirWithRetry gdd shfs@(FS.SomeHasFS fs) path =
-    handle retryHandler (guardDbDir gdd shfs path)
+checkAndOpenDbDirWithRetry gdd shfs@(FS.SomeHasFS fs) path =
+    handle retryHandler (checkAndOpenDbDir gdd shfs path)
   where
     retryHandler e = case (gdd, e) of
       (DirMustNotExist, LMDBErrDirExists _path) -> do
         FS.removeDirectoryRecursive fs path
-        guardDbDir DirMustNotExist shfs path
+        checkAndOpenDbDir DirMustNotExist shfs path
       _ -> throwIO e
 
 {-------------------------------------------------------------------------------
@@ -318,16 +319,16 @@ initFromVals ::
      -- ^ The ledger tables to initialise the LMDB database tables with.
   -> LMDB.Environment LMDB.Internal.ReadWrite
      -- ^ The LMDB environment.
-  -> LMDB.Database () DbState
+  -> LMDB.Database () DbSeqNo
      -- ^ The state of the tables we are going to initialize the db with.
   -> LedgerTables l LMDBMK
   -> m ()
 initFromVals tracer dbsSeq vals env st backingTables = do
   Trace.traceWith tracer $ API.BSInitialisingFromValues dbsSeq
   liftIO $ LMDB.readWriteTransaction env $
-    withDbStateRWMaybeNull st $ \case
+    withDbSeqNoRWMaybeNull st $ \case
       Nothing -> ltzipWith3A initLMDBTable backingTables codecLedgerTables vals
-                 $> ((), DbState{dbsSeq})
+                 $> ((), DbSeqNo{dbsSeq})
       Just _ -> liftIO . throwIO $ LMDBErrInitialisingAlreadyHasState
   Trace.traceWith tracer $ API.BSInitialisedFromValues dbsSeq
 
@@ -348,12 +349,12 @@ initFromLMDBs ::
   -> m ()
 initFromLMDBs tracer limits (API.SnapshotsFS shfsFrom@(FS.SomeHasFS fsFrom)) from0 (API.LiveLMDBFS shfsTo) to0 = do
     Trace.traceWith tracer $ API.BSInitialisingFromCopy from0
-    from <- guardDbDir DirMustExist shfsFrom from0
+    from <- checkAndOpenDbDir DirMustExist shfsFrom from0
     -- On Windows, if we don't choose the mapsize carefully it will make the
     -- snapshot grow. Therefore we are using the current filesize as mapsize
     -- when opening the snapshot to avoid this.
     stat <- FS.withFile fsFrom (from0 { FS.fsPathToList = FS.fsPathToList from0 ++ [Strict.pack "data.mdb"] }) FS.ReadMode (FS.hGetSize fsFrom)
-    to <- guardDbDirWithRetry DirMustNotExist shfsTo to0
+    to <- checkAndOpenDbDirWithRetry DirMustNotExist shfsTo to0
     bracket
       (liftIO $ LMDB.openEnvironment from ((unLMDBLimits limits) { LMDB.mapSize = fromIntegral stat }))
       (liftIO . LMDB.closeEnvironment)
@@ -412,17 +413,17 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
      dbStatusLock  <- Status.new Open
 
      -- get the filepath for this db creates the directory if appropriate
-     dbFilePath <- guardDbDirWithRetry DirMustNotExist liveFS' path
+     dbFilePath <- checkAndOpenDbDirWithRetry DirMustNotExist liveFS' path
 
      -- copy from another lmdb path if appropriate
      case initFrom of
-       API.InitFromCopy fp -> initFromLMDBs dbTracer limits snapFS fp liveFS path
-       _                   -> pure ()
+       API.InitFromCopy fp  -> initFromLMDBs dbTracer limits snapFS fp liveFS path
+       API.InitFromValues{} -> pure ()
 
      -- open this database
      dbEnv <- liftIO $ LMDB.openEnvironment dbFilePath (unLMDBLimits limits)
 
-     -- The LMDB.Database that holds the @`DbState`@ (i.e. sequence number)
+     -- The LMDB.Database that holds the @`DbSeqNo`@ (i.e. sequence number)
      -- This transaction must be read-write because on initialisation it creates the database
      dbState <- liftIO $ LMDB.readWriteTransaction dbEnv $ LMDB.getDatabase (Just "_dbstate")
 
@@ -444,19 +445,19 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
                }
 
    maybePopulate :: LMDB.Internal.Environment  LMDB.Internal.ReadWrite
-                 -> LMDB.Internal.Database () DbState
+                 -> LMDB.Internal.Database () DbSeqNo
                  -> LedgerTables l LMDBMK
                  -> m ()
    maybePopulate dbEnv dbState dbBackingTables = do
      -- now initialise those tables if appropriate
      case initFrom of
        API.InitFromValues slot vals -> initFromVals dbTracer slot vals dbEnv dbState dbBackingTables
-       _                            -> pure ()
+       API.InitFromCopy{}           -> pure ()
 
    mkBackingStore :: HasCallStack => Db m l -> API.LedgerBackingStore m l
    mkBackingStore db =
        let bsClose :: m ()
-           bsClose = Status.withWriteAccess' dbStatusLock traceAlreadyClosed $ do
+           bsClose = Status.withWriteAccess dbStatusLock traceAlreadyClosed $ do
              Trace.traceWith dbTracer API.BSClosing
              openHandles <- IOLike.readTVarIO dbOpenHandles
              forM_ openHandles runCleanup
@@ -467,19 +468,22 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
             where
               traceAlreadyClosed = Trace.traceWith dbTracer API.BSAlreadyClosed
 
-           bsCopy bsp = Status.withReadAccess dbStatusLock LMDBErrClosed $ do
-             to <- guardDbDir DirMustNotExist snapFS' bsp
+           bsCopy bsp = Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
+             to <- checkAndOpenDbDir DirMustNotExist snapFS' bsp
              lmdbCopy path dbTracer dbEnv to
 
-           bsValueHandle = Status.withReadAccess dbStatusLock LMDBErrClosed $ do
+           bsValueHandle = Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
              mkLMDBBackingStoreValueHandle db
 
            bsWrite :: SlotNo -> LedgerTables l DiffMK -> m ()
            bsWrite slot diffs = do
              Trace.traceWith dbTracer $ API.BSWriting slot
-             Status.withReadAccess dbStatusLock LMDBErrClosed $ do
-               oldSlot <- liftIO $ LMDB.readWriteTransaction dbEnv $ withDbStateRW dbState $ \s@DbState{dbsSeq} -> do
-                 unless (dbsSeq <= At slot) $ liftIO . throwIO $ LMDBErrNonMonotonicSeq (At slot) dbsSeq
+             Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
+               oldSlot <- liftIO $ LMDB.readWriteTransaction dbEnv $ withDbSeqNoRW dbState $ \s@DbSeqNo{dbsSeq} -> do
+                 unless (dbsSeq <= At slot) $
+                   -- This inequality is non-strict because of EBBs having the
+                   -- same slot as its predecessor.
+                   liftIO . throwIO $ LMDBErrNonMonotonicSeq (At slot) dbsSeq
                  void $ ltzipWith3A writeLMDBTable dbBackingTables codecLedgerTables diffs
                  pure (dbsSeq, s {dbsSeq = At slot})
                Trace.traceWith dbTracer $ API.BSWritten oldSlot slot
@@ -499,8 +503,7 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
            } = db
 
 -- | Create a backing store value handle that has a consistent view of the
--- current database state (i.e., the database contents, not to be confused
--- with 'DbState').
+-- current database state.
 mkLMDBBackingStoreValueHandle ::
      forall l m.
      (HasLedgerTables l, CanSerializeLedgerTables l, MonadIO m, IOLike m, HasCallStack)
@@ -521,7 +524,7 @@ mkLMDBBackingStoreValueHandle db = do
   Trace.traceWith dbTracer API.BSCreatingValueHandle
 
   trh <- liftIO $ TrH.newReadOnly dbEnvRo
-  mbInitSlot <- liftIO $ TrH.submitReadOnly trh $ readDbStateMaybeNull dbState
+  mbInitSlot <- liftIO $ TrH.submitReadOnly trh $ readDbSeqNoMaybeNull dbState
   initSlot <- liftIO $ maybe (throwIO LMDBErrUnableToReadSeqNo) (pure . dbsSeq) mbInitSlot
 
   vhStatusLock <- Status.new Open
@@ -535,8 +538,8 @@ mkLMDBBackingStoreValueHandle db = do
 
     bsvhClose :: m ()
     bsvhClose =
-      Status.withReadAccess' dbStatusLock traceAlreadyClosed $ do
-      Status.withWriteAccess' vhStatusLock traceTVHAlreadyClosed $ do
+      Status.withReadAccess dbStatusLock traceAlreadyClosed $ do
+      Status.withWriteAccess vhStatusLock traceTVHAlreadyClosed $ do
         Trace.traceWith tracer API.BSVHClosing
         runCleanup cleanup
         IOLike.atomically $ IOLike.modifyTVar' dbOpenHandles (Map.delete vhId)
@@ -548,8 +551,8 @@ mkLMDBBackingStoreValueHandle db = do
 
     bsvhRead :: LedgerTables l KeysMK -> m (LedgerTables l ValuesMK)
     bsvhRead keys =
-      Status.withReadAccess dbStatusLock LMDBErrClosed $ do
-      Status.withReadAccess vhStatusLock (LMDBErrNoValueHandle vhId) $ do
+      Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
+      Status.withReadAccess vhStatusLock (throwIO (LMDBErrNoValueHandle vhId)) $ do
         Trace.traceWith tracer API.BSVHReading
         res <- liftIO $ TrH.submitReadOnly trh (ltzipWith3A readLMDBTable dbBackingTables codecLedgerTables keys)
         Trace.traceWith tracer API.BSVHRead
@@ -559,8 +562,8 @@ mkLMDBBackingStoreValueHandle db = do
          API.RangeQuery (LedgerTables l KeysMK)
       -> m (LedgerTables l ValuesMK)
     bsvhRangeRead rq =
-      Status.withReadAccess dbStatusLock LMDBErrClosed $ do
-      Status.withReadAccess vhStatusLock (LMDBErrNoValueHandle vhId) $ do
+      Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
+      Status.withReadAccess vhStatusLock (throwIO (LMDBErrNoValueHandle vhId)) $ do
         Trace.traceWith tracer API.BSVHRangeReading
 
         let
@@ -585,11 +588,11 @@ mkLMDBBackingStoreValueHandle db = do
 
     bsvhStat :: m API.Statistics
     bsvhStat =
-      Status.withReadAccess dbStatusLock LMDBErrClosed $ do
-      Status.withReadAccess vhStatusLock (LMDBErrNoValueHandle vhId) $ do
+      Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
+      Status.withReadAccess vhStatusLock (throwIO (LMDBErrNoValueHandle vhId)) $ do
         Trace.traceWith tracer API.BSVHStatting
         let transaction = do
-              DbState{dbsSeq} <- readDbState dbState
+              DbSeqNo{dbsSeq} <- readDbSeqNo dbState
               constn <- lttraverse (\(LMDBMK _ dbx) -> K2 <$> LMDB.size dbx) dbBackingTables
               let n = getSum $ ltcollapse $ ltmap (K2 . Sum . unK2) constn
               pure $ API.Statistics dbsSeq n
@@ -598,11 +601,11 @@ mkLMDBBackingStoreValueHandle db = do
         pure res
 
     bsvh = API.BackingStoreValueHandle { API.bsvhAtSlot = initSlot
-                                      , API.bsvhClose = bsvhClose
-                                      , API.bsvhRead = bsvhRead
-                                      , API.bsvhRangeRead = bsvhRangeRead
-                                      , API.bsvhStat = bsvhStat
-                                      }
+                                       , API.bsvhClose = bsvhClose
+                                       , API.bsvhRead = bsvhRead
+                                       , API.bsvhRangeRead = bsvhRangeRead
+                                       , API.bsvhStat = bsvhStat
+                                       }
 
   IOLike.atomically $ IOLike.modifyTVar' dbOpenHandles (Map.insert vhId cleanup)
 
@@ -632,7 +635,7 @@ newtype Cleanup m = Cleanup { runCleanup :: m () }
 -- is critical for the functioning of Consensus.
 data LMDBErr =
     -- | The database state can not be found on-disk.
-    LMDBErrNoDbState
+    LMDBErrNoDbSeqNo
     -- | The sequence number of a @`Db`@ should be monotonically increasing
     -- across calls to @`bsWrite`@, since we use @`bsWrite`@ to flush
     -- /immutable/ changes. That is, we can only flush with a newer sequence
@@ -642,7 +645,7 @@ data LMDBErr =
   | LMDBErrNonMonotonicSeq !(WithOrigin SlotNo) !(WithOrigin SlotNo)
     -- | The database table that is being initialised is non-empty.
   | LMDBErrInitialisingNonEmpty !String
-    -- | The database that is being initialized already had a DbState table
+    -- | The database that is being initialized already had a DbSeqNo table
   | LMDBErrInitialisingAlreadyHasState
     -- | Trying to use a non-existing value handle.
   | LMDBErrNoValueHandle !Int
@@ -682,7 +685,7 @@ instance Show LMDBErr where
 -- | Pretty print a @`LMDBErr`@ with a descriptive error message.
 prettyPrintLMDBErr :: LMDBErr -> String
 prettyPrintLMDBErr = \case
-  LMDBErrNoDbState ->
+  LMDBErrNoDbSeqNo ->
     "Can not find the database state on-disk."
   LMDBErrNonMonotonicSeq s1 s2 ->
     "Trying to write to the database with a non-monotonic sequence number: "

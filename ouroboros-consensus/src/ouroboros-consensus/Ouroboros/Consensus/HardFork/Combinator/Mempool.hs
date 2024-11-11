@@ -105,15 +105,17 @@ type instance ApplyTxErr (HardForkBlock xs) = HardForkApplyTxErr xs
 -- We do not define this as a new data type to reuse the @Applicative@ and
 -- friends instances of these type constructors, which are useful to
 -- @hsequence'@ a @HardForkState@ of this.
-type ComposedReapplyTxsResult xs =
+--
+-- This is also isomorphic to
+-- @'Ouroboros.Consensus.Ledger.SupportsMempool.ReapplyTxsResult' (HardForkBlock xs)@
+type DecomposedReapplyTxsResult xs =
   (,,)
     [Invalidated (HardForkBlock xs)]
     [Validated (GenTx (HardForkBlock xs))]
   :.:
-    FlipTickedLedgerState DiffMK
+    FlipTickedLedgerState TrackingMK
 
 instance ( CanHardFork xs
-         , HardForkHasLedgerTables xs
          , HasCanonicalTxIn xs
          , HasHardForkTxOut xs
          ) => LedgerSupportsMempool (HardForkBlock xs) where
@@ -134,7 +136,7 @@ instance ( CanHardFork xs
     slot
     vtxs
     (TickedHardForkLedgerState transition hardForkState) =
-      (\(err, val, st') ->
+        (\(err, val, st') ->
            ReapplyTxsResult (mismatched' ++ err) val (TickedHardForkLedgerState transition st'))
       . hsequence'
       $ hcizipWith proxySingle modeApplyCurrent cfgs matched
@@ -172,14 +174,14 @@ instance ( CanHardFork xs
         => Index xs                            blk
         -> WrapLedgerConfig                    blk
         -> Product
-             (ListOfTxs WrapValidatedGenTx xs)
+             ([] :.: WrapValidatedGenTx)
              (FlipTickedLedgerState ValuesMK)  blk
-        -> ComposedReapplyTxsResult xs         blk
+        -> DecomposedReapplyTxsResult xs         blk
       modeApplyCurrent index cfg (Pair txs (FlipTickedLedgerState st)) =
         let ReapplyTxsResult err val st' =
-              reapplyTxs (unwrapLedgerConfig cfg) slot [ unwrapValidatedGenTx t | TxsWithOriginal _ t <- txsList txs ] st
+              reapplyTxs (unwrapLedgerConfig cfg) slot [ unwrapValidatedGenTx t | t <- unComp txs ] st
         in Comp
-           ( map (\x -> flip Invalidated (injectApplyTxErr index $ getReason x) . injectValidatedGenTx index . getInvalidated $ x) err
+           ( [ injectValidatedGenTx index (getInvalidated x) `Invalidated` injectApplyTxErr index (getReason x) | x <- err ]
            , map (HardForkValidatedGenTx . OneEraValidatedGenTx . injectNS index . WrapValidatedGenTx) val
            , FlipTickedLedgerState st'
            )
@@ -284,11 +286,11 @@ data ApplyHelperMode :: (Type -> Type) -> Type where
 -- | 'applyHelper' has to return one of these, depending on the apply mode used.
 type family ApplyMK k where
   ApplyMK (ApplyHelperMode GenTx) = DiffMK
-  ApplyMK (ApplyHelperMode WrapValidatedGenTx) = ValuesMK
+  ApplyMK (ApplyHelperMode WrapValidatedGenTx) = TrackingMK
 
 -- | A private type used only to clarify the definition of 'applyHelper'
 data ApplyResult xs txIn blk = ApplyResult {
-    arState       :: Ticked1 (LedgerState blk) (ApplyMK (ApplyHelperMode txIn))
+    arState       :: Ticked (LedgerState blk) (ApplyMK (ApplyHelperMode txIn))
   , arValidatedTx :: Validated (GenTx (HardForkBlock xs))
   }
 

@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -37,9 +36,7 @@ import           Control.Concurrent.Class.MonadMVar (MVar, newMVar)
 import           Control.Concurrent.Class.MonadSTM.Strict.TMVar (newTMVarIO)
 import           Control.Monad.Trans.Except (runExcept)
 import           Control.Tracer
-#if __GLASGOW_HASKELL__ < 910
-import           Data.Foldable
-#endif
+import qualified Data.Foldable as Foldable
 import qualified Data.List.NonEmpty as NE
 import           Data.Set (Set)
 import qualified Data.Set as Set
@@ -188,8 +185,7 @@ chainDBLedgerInterface chainDB = LedgerInterface
         ledgerState <$> ChainDB.getCurrentLedger chainDB
     , getLedgerTablesAtFor = \pt txs -> do
         let keys = castLedgerTables
-                 $ foldl' (<>) emptyLedgerTables
-                 $ map getTransactionKeySets txs
+                 $ Foldable.foldMap' getTransactionKeySets txs
         fmap castLedgerTables <$> ChainDB.getLedgerTablesAtFor chainDB pt keys
     }
 
@@ -222,9 +218,8 @@ initMempoolEnv :: ( IOLike m
 initMempoolEnv ledgerInterface cfg capacityOverride tracer = do
     st <- atomically $ getCurrentLedgerState ledgerInterface
     let (slot, st') = tickLedgerState cfg (ForgeInUnknownSlot st)
-    isVar <-
-        newTMVarIO
-      $ initInternalState capacityOverride TxSeq.zeroTicketNo cfg slot st'
+    isVar <- newTMVarIO
+           $ initInternalState capacityOverride TxSeq.zeroTicketNo cfg slot st'
     addTxRemoteFifo <- newMVar ()
     addTxAllFifo    <- newMVar ()
     return MempoolEnv
@@ -275,6 +270,10 @@ validateNewTransaction
   -> GenTx blk
   -> TxMeasure blk
   -> TickedLedgerState blk ValuesMK
+     -- ^ This state is the internal state with the tables for this transaction
+     -- advanced through the diffs in the internal state. One could think we can
+     -- create this value here, but it is needed for some other uses like calling
+     -- 'txMeasure' before this function.
   -> InternalState blk
   -> ( Either (ApplyTxErr blk) (Validated (GenTx blk))
      , InternalState blk
@@ -317,7 +316,7 @@ revalidateTxsFor
      -- ^ The ticked ledger state againt which txs will be revalidated
   -> LedgerTables (LedgerState blk) ValuesMK
      -- ^ The tables with all the inputs for the transactions
-  -> TicketNo -- ^ 'isLastTicketNo' & 'vrLastTicketNo'
+  -> TicketNo -- ^ 'isLastTicketNo' and 'vrLastTicketNo'
   -> [TxTicket (TxMeasure blk) (Validated (GenTx blk))]
   -> RevalidateTxsResult blk
 revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
@@ -326,7 +325,7 @@ revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
         reapplyTxs cfg slot theTxs
         $ applyDiffForKeysOnTables
               values
-              (foldl (<>) emptyLedgerTables $ map (getTransactionKeySets . txForgetValidated) theTxs)
+              (Foldable.foldMap' (getTransactionKeySets . txForgetValidated) theTxs)
               st
 
       -- TODO: This is ugly, but I couldn't find a way to sneak the 'TxTicket' into
@@ -342,13 +341,13 @@ revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
 
   in RevalidateTxsResult
       (IS {
-         isTxs          = foldl (:>) TxSeq.Empty $ filterTxTickets txTickets val
+         isTxs          = TxSeq.fromList $ filterTxTickets txTickets val
        , isTxIds        = Set.fromList $ map (txId . txForgetValidated) val
-       , isLedgerState  = st'
+       , isLedgerState  = trackingToDiffs st'
        , isTip          = castPoint $ getTip st
        , isSlotNo       = slot
        , isLastTicketNo = lastTicketNo
-       , isCapacity     = computeMempoolCapacity cfg st capacityOverride
+       , isCapacity     = computeMempoolCapacity cfg st' capacityOverride
        })
        err
 
@@ -366,7 +365,7 @@ data RevalidateTxsResult blk =
 
 -- | Create a Mempool Snapshot from a given Internal State of the mempool.
 snapshotFromIS :: forall blk.
-     (HasTxId (GenTx blk), TxLimits blk)
+     (HasTxId (GenTx blk), TxLimits blk, GetTip (TickedLedgerState blk))
   => InternalState blk
   -> MempoolSnapshot blk
 snapshotFromIS is = MempoolSnapshot {
@@ -376,7 +375,7 @@ snapshotFromIS is = MempoolSnapshot {
     , snapshotHasTx       = implSnapshotHasTx          is
     , snapshotMempoolSize = implSnapshotGetMempoolSize is
     , snapshotSlotNo      = isSlotNo                   is
-    , snapshotState       = isLedgerState              is
+    , snapshotStateHash   = getTipHash $ isLedgerState is
     , snapshotTake        = implSnapshotTake           is
     }
  where
@@ -454,11 +453,27 @@ data TraceEventMempool blk
       -- ^ Emitted when the mempool is adjusted after the tip has changed.
       EnclosingTimed
       -- ^ How long the sync operation took.
+
+     -- | The mempool is going to attempt to sync with the LedgerDB, this will
+     -- be followed by either 'TraceMempoolSyncNotNeeded' or
+     -- 'TraceMempoolSyncDone'.
    | TraceMempoolAttemptingSync
-   | TraceMempoolSyncNotNeeded (Point blk) (Point blk)
+     -- | A sync is not needed, as the point at the tip of the LedgerDB and the
+     -- point at the mempool are the same.
+   | TraceMempoolSyncNotNeeded (Point blk)
+     -- | A sync was done.
    | TraceMempoolSyncDone
+     -- | We will try to add a transaction. Adding a transaction might need to
+     -- trigger a re-sync.
    | TraceMempoolAttemptingAdd (GenTx blk)
+     -- | When adding a transaction, the ledger state in the mempool was found
+     -- in the LedgerDB, and therefore we can read values, even if it is not the
+     -- tip of the LedgerDB. An async re-sync will be performed eventually in
+     -- that case.
    | TraceMempoolLedgerFound (Point blk)
+     -- | When adding a transaction, the ledger state in the mempool is gone
+     -- from the LedgerDB, so we cannot read values for the new
+     -- transaction. This forces an in-place re-sync.
    | TraceMempoolLedgerNotFound (Point blk)
   deriving (Generic)
 

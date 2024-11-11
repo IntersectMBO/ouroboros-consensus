@@ -4,6 +4,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -23,6 +24,9 @@ module Ouroboros.Consensus.Util.STM (
   , Sim (..)
   , simId
   , simStateT
+    -- * withTMVar
+  , withTMVar
+  , withTMVarAnd
   ) where
 
 import           Control.Monad (void)
@@ -178,3 +182,43 @@ withWatcher label watcher k =
     withAsync
       (do labelThisThread label; runWatcher watcher)
       (\h -> do link h; k)
+
+{-------------------------------------------------------------------------------
+  withTMVar
+-------------------------------------------------------------------------------}
+
+-- | Apply @f@ with the content of @tv@ as state, restoring the original value when an
+-- exception occurs
+withTMVar ::
+     IOLike m
+  => StrictTMVar m a
+  -> (a -> m (c, a))
+  -> m c
+withTMVar tv f = withTMVarAnd tv (const $ pure ()) (\a -> const $ f a)
+
+-- | Apply @f@ with the content of @tv@ as state, restoring the original value
+-- when an exception occurs. Additionally run a @STM@ action when acquiring the
+-- value.
+withTMVarAnd ::
+     IOLike m
+  => StrictTMVar m a
+  -> (a -> STM m b) -- ^ Additional STM action to run in the same atomically
+                    -- block as the TMVar is acquired
+  -> (a -> b -> m (c, a)) -- ^ Action
+  -> m c
+withTMVarAnd tv guard f =
+  fst . fst <$> generalBracket
+    (atomically $ do
+        istate <- takeTMVar tv
+        guarded <- guard istate
+        pure (istate, guarded)
+    )
+    (\(origState, _) -> \case
+        ExitCaseSuccess (_, newState)
+          -> atomically $ putTMVar tv newState
+        ExitCaseException _
+          -> atomically $ putTMVar tv origState
+        ExitCaseAbort
+          -> atomically $ putTMVar tv origState
+    )
+    (uncurry f)

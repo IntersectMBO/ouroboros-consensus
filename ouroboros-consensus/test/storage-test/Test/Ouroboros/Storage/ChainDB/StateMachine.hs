@@ -70,7 +70,6 @@ module Test.Ouroboros.Storage.ChainDB.StateMachine (
 
 import           Codec.Serialise (Serialise)
 import           Control.Monad (replicateM, void)
-import           Control.Monad.Base
 import           Control.ResourceRegistry
 import           Control.Tracer as CT
 import           Data.Bifoldable
@@ -356,7 +355,7 @@ data ChainDBEnv m blk = ChainDBEnv {
   }
 
 open ::
-     (IOLike m, TestConstraints blk, MonadBase m m)
+     (IOLike m, TestConstraints blk)
   => ChainDbArgs Identity m blk -> m (ChainDBState m blk)
 open args = do
     (chainDB, internal) <- openDBInternal args False
@@ -366,7 +365,7 @@ open args = do
 
 -- PRECONDITION: the ChainDB is closed
 reopen ::
-     (IOLike m, TestConstraints blk, MonadBase m m)
+     (IOLike m, TestConstraints blk)
   => ChainDBEnv m blk -> m ()
 reopen ChainDBEnv { varDB, args } = do
     chainDBState <- open args
@@ -378,7 +377,7 @@ close ChainDBState { chainDB, addBlockAsync } = do
     closeDB chainDB
 
 run :: forall m blk.
-       (IOLike m, TestConstraints blk, MonadBase m m)
+       (IOLike m, TestConstraints blk)
     => ChainDBEnv m blk
     ->    Cmd     blk (TestIterator m blk) (TestFollower m blk)
     -> m (Success blk (TestIterator m blk) (TestFollower m blk))
@@ -1239,7 +1238,7 @@ deriving instance ( ToExpr blk
                   , ToExpr (HeaderHash  blk)
                   , ToExpr (ChainDepState (BlockProtocol blk))
                   , ToExpr (TipInfo blk)
-                  , ToExpr (LedgerState blk EmptyMK) -- TODO why not mk?
+                  , ToExpr (LedgerState blk EmptyMK)
                   , ToExpr (ExtValidationError blk)
                   )
                  => ToExpr (Model blk IO Concrete)
@@ -1661,7 +1660,6 @@ traceEventName = \case
     TraceGCEvent                ev    -> "GC."                <> constrName ev
     TraceIteratorEvent          ev    -> "Iterator."          <> constrName ev
     TraceLedgerDBEvent          ev    -> "Ledger."            <> constrName ev
---    TraceLedgerReplayEvent      ev    -> "LedgerReplay."      <> constrName ev
     TraceImmutableDBEvent       ev    -> "ImmutableDB."       <> constrName ev
     TraceVolatileDBEvent        ev    -> "VolatileDB."        <> constrName ev
     TraceLastShutdownUnclean          -> "LastShutdownUnclean"

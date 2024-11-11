@@ -71,10 +71,12 @@
 -- When a new ledger state is appended to a fully saturated 'DbChangelog' (i.e.
 -- that contains \(k\) states), the ledger state at the anchor is dropped and
 -- the oldest element in the sequence becomes the new anchor, as it has become
--- immutable. This maintains the invariant that only the last \(k\) in-memory
--- ledger states are stored, /excluding/ the ledger state at the anchor. This
--- means that in practice, \(k + 1\) ledger states will be kept in memory. When
--- the 'DbChangelog' contains fewer than \(k\) elements, new ones are appended
+-- immutable. Note that we only refer here to the in-memory states, as the diffs
+-- from the anchor will remain in the 'DbChangelog' until flushing happens. This
+-- maintains the invariant that only the last \(k\) in-memory ledger states are
+-- stored, /excluding/ the ledger state at the anchor. This means that in
+-- practice, \(k + 1\) ledger states will be kept in memory. When the
+-- 'DbChangelog' contains fewer than \(k\) elements, new ones are appended
 -- without shifting the anchor until it is saturated.
 --
 -- == Getting and appending differences
@@ -107,21 +109,11 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog (
     -- * The DbChangelog
     DbChangelog (..)
   , DbChangelog'
-    -- ** Views
-  , AnchorlessDbChangelog (..)
-  , AnchorlessDbChangelog'
-  , StatesSequence
     -- * Construction
   , empty
   , pruneToImmTipOnly
-    -- * Mapping changelogs
-    --
-    -- | These functions are analogous to 'fmap' for modifying the inner
-    -- 'AnchorlessDbChangelog'.
-  , onChangelog
-  , onChangelogM
     -- * Updating a @DbChangelog@
-    -- ** Applying blocks #applying#
+    -- ** Applying blocks
     --
     -- | Applying blocks to the 'DbChangelog' will extend it if the result is
     -- successful.
@@ -145,13 +137,9 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog (
     -- 3. Forward those values by applying the differences in the 'DbChangelog' up to
     -- the requested point.
   , withKeysReadSets
-    -- **** Rewind
-  , RewoundTableKeySets (..)
-  , rewindTableKeySets
     -- **** Read
   , KeySetsReader
   , UnforwardedReadSets (..)
-  , getLedgerTablesFor
   , readKeySets
   , readKeySetsWith
   , trivialKeySetsReader
@@ -273,52 +261,32 @@ data DbChangelog l = DbChangelog {
     -- disk when we make a snapshot
     changelogLastFlushedState :: !(l EmptyMK)
 
-    -- | The in memory part of the DbChangelog. Most of the operations we do
-    -- with the @DbChangelog@ happen with the in-memory data only.
-  , anchorlessChangelog       :: !(AnchorlessDbChangelog l)
-  }
-  deriving (Generic)
-
-deriving instance (Eq       (Key l), Eq       (Value l), Eq       (l EmptyMK))
-               =>  Eq       (DbChangelog l)
-deriving instance (NoThunks (Key l), NoThunks (Value l), NoThunks (l EmptyMK))
-               =>  NoThunks (DbChangelog l)
-deriving instance (Show     (Key l), Show     (Value l), Show     (l EmptyMK))
-               =>  Show     (DbChangelog l)
-
--- | A 'DbChangelog' variant that contains only the information in memory. To
--- perform reads of Ledger Tables, this needs to be coupled with a
--- 'BackingStoreValueHandle' as done in
--- 'Ouroboros.Consensus.LedgerDB.API.LedgerDBView'.
-data AnchorlessDbChangelog l = AnchorlessDbChangelog {
-    -- | Slot of the last flushed changelog state from which this variant
-    -- originated. Used just for asserting correctness when forwarding.
-    adcLastFlushedSlot :: !(WithOrigin SlotNo)
     -- | The sequence of differences between the last flushed state
     -- ('changelogLastFlushedState') and the tip of the volatile sequence
-    -- ('adcStates').
-  , adcDiffs           :: !(LedgerTables l SeqDiffMK)
+    -- ('changelogStates').
+  , changelogDiffs           :: !(LedgerTables l SeqDiffMK)
     -- | The volatile sequence of states.
     --
     -- The anchor of this sequence is the immutable tip, so whenever we flush,
     -- we should do so up until that point. The length of this sequence will be
     -- @k@ except in abnormal circumstances like rollbacks or data corruption.
-  , adcStates          :: !(StatesSequence l)
-  } deriving (Generic)
+    --
+    -- Note that @length 'changelogDiffs' >= length 'changelogStates'@.
+  , changelogStates          :: !(AnchoredSeq
+                                  (WithOrigin SlotNo)
+                                  (l EmptyMK)
+                                  (l EmptyMK))
+  }
+  deriving (Generic)
 
-deriving instance (Eq       (LedgerTables l SeqDiffMK), Eq       (l EmptyMK))
-               =>  Eq       (AnchorlessDbChangelog l)
-deriving instance (NoThunks (LedgerTables l SeqDiffMK), NoThunks (l EmptyMK))
-               =>  NoThunks (AnchorlessDbChangelog l)
-deriving instance (Show     (LedgerTables l SeqDiffMK), Show     (l EmptyMK))
-               =>  Show     (AnchorlessDbChangelog l)
+deriving instance (Eq       (TxIn l), Eq       (TxOut l), Eq       (l EmptyMK))
+               =>  Eq       (DbChangelog l)
+deriving instance (NoThunks (TxIn l), NoThunks (TxOut l), NoThunks (l EmptyMK))
+               =>  NoThunks (DbChangelog l)
+deriving instance (Show     (TxIn l), Show     (TxOut l), Show     (l EmptyMK))
+               =>  Show     (DbChangelog l)
 
-type StatesSequence l = AnchoredSeq
-                        (WithOrigin SlotNo)
-                        (l EmptyMK)
-                        (l EmptyMK)
-
-type AnchorlessDbChangelog' blk = AnchorlessDbChangelog (ExtLedgerState blk)
+type DbChangelog' blk = DbChangelog (ExtLedgerState blk)
 
 instance GetTip l => AS.Anchorable (WithOrigin SlotNo) (l EmptyMK) (l EmptyMK) where
   asAnchor = id
@@ -329,25 +297,11 @@ instance IsLedger l => GetTip (K (DbChangelog l)) where
          . getTip
          . either id id
          . AS.head
-         . adcStates
-         . anchorlessChangelog
-         . unK
-
-instance IsLedger l => GetTip (K (AnchorlessDbChangelog l)) where
-  getTip = castPoint
-         . getTip
-         . either id id
-         . AS.head
-         . adcStates
+         . changelogStates
          . unK
 
 type instance HeaderHash (K @MapKind (DbChangelog l)) =
               HeaderHash l
-
-type instance HeaderHash (K @MapKind (AnchorlessDbChangelog l)) =
-              HeaderHash l
-
-type DbChangelog' blk = DbChangelog (ExtLedgerState blk)
 
 {-------------------------------------------------------------------------------
   Construction
@@ -360,56 +314,37 @@ empty ::
 empty theAnchor =
     DbChangelog {
         changelogLastFlushedState = theAnchor
-        , anchorlessChangelog     = AnchorlessDbChangelog {
-              adcLastFlushedSlot = pointSlot $ getTip theAnchor
-            , adcDiffs           = ltpure (SeqDiffMK DS.empty)
-            , adcStates          = AS.Empty theAnchor
-            }
+      , changelogDiffs            = ltpure (SeqDiffMK DS.empty)
+      , changelogStates           = AS.Empty theAnchor
       }
 
 {-------------------------------------------------------------------------------
   Mapping changelogs
 -------------------------------------------------------------------------------}
 
-onChangelog :: (AnchorlessDbChangelog l -> AnchorlessDbChangelog l)
-            -> DbChangelog l
-            -> DbChangelog l
-onChangelog f dbch = runIdentity $ onChangelogM (Identity . f) dbch
-
-onChangelogM :: Monad m
-             => (AnchorlessDbChangelog l -> m (AnchorlessDbChangelog l))
-             -> DbChangelog l
-             -> m (DbChangelog l)
-onChangelogM f dbch = do
-  anchorlessChangelog' <- f $ anchorlessChangelog dbch
-  pure dbch { anchorlessChangelog =  anchorlessChangelog' }
-
 reapplyBlock :: forall m l blk. (ApplyBlock l blk, Monad m)
            => LedgerCfg l
            -> blk
            -> KeySetsReader m l
-           -> AnchorlessDbChangelog l
+           -> DbChangelog l
            -> m (l DiffMK)
 reapplyBlock cfg b ksReader db =
    withKeysReadSets (current db) ksReader db (getBlockKeySets b) (return . tickThenReapply cfg b)
 
--- | If applying a block on top of the ledger state at the tip is succesful,
--- extend the DbChangelog with the resulting ledger state.
---
--- Note that we require @c@ (from the particular choice of @Ap m l blk c@) so
--- this sometimes can throw ledger errors.
+-- | Apply a block on top of the ledger state and extend the DbChangelog with
+-- the result ledger state.
 reapplyThenPush :: (Monad m, ApplyBlock l blk)
               => LedgerDbCfg l
               -> blk
               -> KeySetsReader m l
-              ->    AnchorlessDbChangelog l
-              -> m (AnchorlessDbChangelog l)
+              ->    DbChangelog l
+              -> m (DbChangelog l)
 reapplyThenPush cfg ap ksReader db =
     (\current' -> prune (ledgerDbCfgSecParam cfg) $ extend current' db) <$>
       reapplyBlock (ledgerDbCfg cfg) ap ksReader db
 
--- | Prune ledger states from the front until at we have at most @k@ in the
--- DbChangelog, excluding the one stored at the anchor.
+-- | Prune oldest ledger states until at we have at most @k@ in the DbChangelog,
+-- excluding the one stored at the anchor.
 --
 -- +--------------+----------------------------+----------------------+
 -- | lastFlushed  | states                     | tableDiffs           |
@@ -422,23 +357,25 @@ reapplyThenPush cfg ap ksReader db =
 -- +--------------+----------------------------+----------------------+
 prune :: GetTip l
       => SecurityParam
-      -> AnchorlessDbChangelog l
-      -> AnchorlessDbChangelog l
+      -> DbChangelog l
+      -> DbChangelog l
 prune (SecurityParam k) dblog =
-    dblog { adcStates = vol' }
+    dblog { changelogStates = vol' }
   where
-    AnchorlessDbChangelog { adcStates } = dblog
+    DbChangelog { changelogStates } = dblog
 
-    nvol = AS.length adcStates
+    nvol = AS.length changelogStates
 
     vol' =
       if toEnum nvol <= k
-      then adcStates
-      else snd $ AS.splitAt (nvol - fromEnum k) adcStates
+      then changelogStates
+      else snd $ AS.splitAt (nvol - fromEnum k) changelogStates
 
 -- NOTE: we must inline 'prune' otherwise we get unexplained thunks in
 -- 'DbChangelog' and thus a space leak. Alternatively, we could disable the
--- @-fstrictness@ optimisation (enabled by default for -O1). See #2532.
+-- @-fstrictness@ optimisation (enabled by default for -O1). See
+-- https://github.com/IntersectMBO/ouroboros-network/pull/2532.
+--
 -- NOTE (@js): this INLINE was inherited from before UTxO-HD, so maybe it is not
 -- needed anymore.
 {-# INLINE prune #-}
@@ -454,13 +391,13 @@ prune (SecurityParam k) dblog =
 -- +------+----------------------------+----------------------+
 extend :: (GetTip l, HasLedgerTables l)
        => l DiffMK
-       -> AnchorlessDbChangelog l
-       -> AnchorlessDbChangelog l
+       -> DbChangelog l
+       -> DbChangelog l
 extend newState dblog =
-  AnchorlessDbChangelog {
-      adcLastFlushedSlot = adcLastFlushedSlot
-    , adcDiffs           = ltliftA2 ext adcDiffs tablesDiff
-    , adcStates          = adcStates AS.:> l'
+  DbChangelog {
+      changelogLastFlushedState = changelogLastFlushedState
+    , changelogDiffs            = ltliftA2 ext changelogDiffs tablesDiff
+    , changelogStates           = changelogStates AS.:> l'
     }
   where
     slot = case getTipSlot l' of
@@ -478,31 +415,17 @@ extend newState dblog =
     l'         = forgetLedgerTables  newState
     tablesDiff = projectLedgerTables newState
 
-    AnchorlessDbChangelog {
-        adcLastFlushedSlot
-      , adcDiffs
-      , adcStates
+    DbChangelog {
+        changelogLastFlushedState
+      , changelogDiffs
+      , changelogStates
       } = dblog
-
-{-------------------------------------------------------------------------------
-  Rewind
--------------------------------------------------------------------------------}
-
-data RewoundTableKeySets l =
-    RewoundTableKeySets
-      !(WithOrigin SlotNo)   -- ^ the slot to which the keys were rewound
-      !(LedgerTables l KeysMK)
-
-rewindTableKeySets :: AnchorlessDbChangelog l
-                   -> LedgerTables l KeysMK
-                   -> RewoundTableKeySets l
-rewindTableKeySets = RewoundTableKeySets . adcLastFlushedSlot
 
 {-------------------------------------------------------------------------------
   Read
 -------------------------------------------------------------------------------}
 
-type KeySetsReader m l = RewoundTableKeySets l -> m (UnforwardedReadSets l)
+type KeySetsReader m l = LedgerTables l KeysMK -> m (UnforwardedReadSets l)
 
 readKeySets ::
      IOLike m
@@ -514,9 +437,9 @@ readKeySets backingStore rew = do
 readKeySetsWith ::
      Monad m
   => LedgerBackingStoreValueHandle m l
-  -> RewoundTableKeySets l
+  -> LedgerTables l KeysMK
   -> m (UnforwardedReadSets l)
-readKeySetsWith bsvh (RewoundTableKeySets _seqNo rew) = do
+readKeySetsWith bsvh rew = do
     values <- bsvhRead bsvh rew
     pure UnforwardedReadSets {
         ursSeqNo  = bsvhAtSlot bsvh
@@ -525,16 +448,15 @@ readKeySetsWith bsvh (RewoundTableKeySets _seqNo rew) = do
     }
 
 withKeysReadSets ::
-     (HasLedgerTables l, Monad m)
+     (HasLedgerTables l, Monad m, GetTip l)
   => l mk1
   -> KeySetsReader m l
-  -> AnchorlessDbChangelog l
+  -> DbChangelog l
   -> LedgerTables l KeysMK
   -> (l ValuesMK -> m a)
   -> m a
 withKeysReadSets st ksReader dbch ks f = do
-      let aks = rewindTableKeySets dbch ks
-      urs <- ksReader aks
+      urs <- ksReader ks
       case withHydratedLedgerState urs of
         Left err ->
           -- We performed the rewind;read;forward sequence in this function. So
@@ -556,26 +478,10 @@ withKeysReadSets st ksReader dbch ks f = do
       .   withLedgerTables st
       <$> forwardTableKeySets dbch urs
 
--- | The requested point is not found on the ledger db
-newtype PointNotFound blk = PointNotFound (Point blk) deriving (Eq, Show)
-
--- | Read and forward the values up to the tip of the given ledger db. Returns
--- Left if the anchor moved. If Left is returned, then the caller was just
--- unlucky and scheduling of events happened to move the backing store. Reading
--- again the LedgerDB and calling this function must eventually succeed.
-getLedgerTablesFor ::
-     (Monad m, HasLedgerTables l)
-  => AnchorlessDbChangelog l
-  -> LedgerTables l KeysMK
-  -> KeySetsReader m l
-  -> m (Either RewindReadFwdError (LedgerTables l ValuesMK))
-getLedgerTablesFor db keys ksRead = do
-  let aks = rewindTableKeySets db keys
-  urs <- ksRead aks
-  pure $ forwardTableKeySets db urs
-
-trivialKeySetsReader :: (Monad m, LedgerTablesAreTrivial l) => KeySetsReader m l
-trivialKeySetsReader (RewoundTableKeySets s _) =
+trivialKeySetsReader :: (Monad m, LedgerTablesAreTrivial l)
+                     => WithOrigin SlotNo
+                     -> KeySetsReader m l
+trivialKeySetsReader s _ =
   pure $ UnforwardedReadSets s trivialLedgerTables trivialLedgerTables
 
 {-------------------------------------------------------------------------------
@@ -621,15 +527,15 @@ forwardTableKeySets' seqNo chdiffs = \(UnforwardedReadSets seqNo' values keys) -
       ValuesMK $ AntiDiff.applyDiffForKeys values keys (DS.cumulativeDiff diffs)
 
 forwardTableKeySets ::
-     HasLedgerTables l
-  => AnchorlessDbChangelog l
+     (HasLedgerTables l, GetTip l)
+  => DbChangelog l
   -> UnforwardedReadSets l
   -> Either RewindReadFwdError
             (LedgerTables l ValuesMK)
 forwardTableKeySets dblog =
   forwardTableKeySets'
-    (adcLastFlushedSlot dblog)
-    (adcDiffs dblog)
+    (getTipSlot $ changelogLastFlushedState dblog)
+    (changelogDiffs dblog)
 
 {-------------------------------------------------------------------------------
   Reset
@@ -655,8 +561,8 @@ forwardTableKeySets dblog =
 -- |     @L0@     | @L4 :> [                ]@ | @[ D1, D2, D3, D4 ]@ |
 -- +--------------+----------------------------+----------------------+
 pruneToImmTipOnly :: GetTip l
-                  => AnchorlessDbChangelog l
-                  -> AnchorlessDbChangelog l
+                  => DbChangelog l
+                  -> DbChangelog l
 pruneToImmTipOnly = prune (SecurityParam 0)
 
 {-------------------------------------------------------------------------------
@@ -680,13 +586,13 @@ pruneToImmTipOnly = prune (SecurityParam 0)
 rollbackN ::
      (GetTip l, HasLedgerTables l)
   => Word64
-  -> AnchorlessDbChangelog l
-  -> Maybe (AnchorlessDbChangelog l)
+  -> DbChangelog l
+  -> Maybe (DbChangelog l)
 rollbackN n dblog
     | n <= maxRollback dblog
     = Just $ dblog {
-        adcDiffs  = ltmap truncSeqDiff adcDiffs
-      , adcStates = AS.dropNewest (fromIntegral n) adcStates
+        changelogDiffs  = ltmap truncSeqDiff changelogDiffs
+      , changelogStates = AS.dropNewest (fromIntegral n) changelogStates
       }
     | otherwise
     = Nothing
@@ -695,9 +601,9 @@ rollbackN n dblog
     truncSeqDiff (SeqDiffMK sq) =
       SeqDiffMK $ fst $ DS.splitAtFromEnd (fromIntegral n) sq
 
-    AnchorlessDbChangelog {
-        adcDiffs
-      , adcStates
+    DbChangelog {
+        changelogDiffs
+      , changelogStates
       } = dblog
 
 {-------------------------------------------------------------------------------
@@ -729,35 +635,27 @@ splitForFlushing dblog =
     else (Just ldblog, rdblog)
   where
     DbChangelog {
-        changelogLastFlushedState
-      , anchorlessChangelog = AnchorlessDbChangelog {
-            adcDiffs
-          , adcStates
-          }
+        changelogDiffs
+      , changelogStates
       } = dblog
 
-    immTip = AS.anchor adcStates
+    immTip = AS.anchor changelogStates
 
     splitSeqDiff ::
          (Ord k, Eq v)
       => SeqDiffMK k v
       -> (SeqDiffMK k v, SeqDiffMK k v)
     splitSeqDiff (SeqDiffMK sq) =
-       let numToFlush = DS.length sq - AS.length adcStates
+       let numToFlush = DS.length sq - AS.length changelogStates
        in bimap (maybe emptyMK SeqDiffMK) SeqDiffMK
         $ if numToFlush > 0
           then let (tf, tk) = DS.splitAt numToFlush sq
                in (Just tf, tk)
           else (Nothing, sq)
 
-    lr = ltmap (uncurry Pair2 . splitSeqDiff) adcDiffs
+    lr = ltmap (uncurry Pair2 . splitSeqDiff) changelogDiffs
     l  = ltmap (\(Pair2 x _) -> x) lr
     r  = ltmap (\(Pair2 _ y) -> y) lr
-
-    (newTip, newStates) =
-        if ltcollapse $ ltmap (\(SeqDiffMK sq) -> K2 $ 0 == DS.length sq) l
-        then (changelogLastFlushedState, adcStates)
-        else (immTip, adcStates)
 
     prj ::
          (Ord k, Eq v)
@@ -773,12 +671,9 @@ splitForFlushing dblog =
       }
 
     rdblog = DbChangelog {
-        changelogLastFlushedState = newTip
-      , anchorlessChangelog       = AnchorlessDbChangelog {
-            adcLastFlushedSlot = getTipSlot newTip
-          , adcDiffs           = r
-          , adcStates          = newStates
-          }
+        changelogLastFlushedState = immTip
+      , changelogDiffs            = r
+      , changelogStates           = changelogStates
       }
 
 {-------------------------------------------------------------------------------
@@ -786,42 +681,42 @@ splitForFlushing dblog =
 -------------------------------------------------------------------------------}
 
 -- | The ledger state at the tip of the chain
-current :: GetTip l => AnchorlessDbChangelog l -> l EmptyMK
+current :: GetTip l => DbChangelog l -> l EmptyMK
 current =
     either id id
   . AS.head
-  . adcStates
+  . changelogStates
 
 -- | The ledger state at the anchor of the Volatile chain (i.e. the immutable
 -- tip).
-anchor :: AnchorlessDbChangelog l -> l EmptyMK
+anchor :: DbChangelog l -> l EmptyMK
 anchor =
     AS.anchor
-  . adcStates
+  . changelogStates
 
 -- | All snapshots currently stored by the ledger DB (new to old)
 --
 -- This also includes the snapshot at the anchor. For each snapshot we also
 -- return the distance from the tip.
-snapshots :: AnchorlessDbChangelog l -> [(Word64, l EmptyMK)]
+snapshots :: DbChangelog l -> [(Word64, l EmptyMK)]
 snapshots =
       zip [0..]
     . AS.toNewestFirst
-    . adcStates
+    . changelogStates
 
 -- | How many blocks can we currently roll back?
-maxRollback :: GetTip l => AnchorlessDbChangelog l -> Word64
+maxRollback :: GetTip l => DbChangelog l -> Word64
 maxRollback =
     fromIntegral
   . AS.length
-  . adcStates
+  . changelogStates
 
 -- | Reference to the block at the tip of the chain
-tip :: GetTip l => AnchorlessDbChangelog l -> Point l
+tip :: GetTip l => DbChangelog l -> Point l
 tip = castPoint . getTip . current
 
 -- | Have we seen at least @k@ blocks?
-isSaturated :: GetTip l => SecurityParam -> AnchorlessDbChangelog l -> Bool
+isSaturated :: GetTip l => SecurityParam -> DbChangelog l -> Bool
 isSaturated (SecurityParam k) db =
     maxRollback db >= k
 
@@ -836,7 +731,7 @@ getPastLedgerAt ::
      , StandardHash l, HasLedgerTables l
      )
   => Point blk
-  -> AnchorlessDbChangelog l
+  -> DbChangelog l
   -> Maybe (l EmptyMK)
 getPastLedgerAt pt db = current <$> rollback pt db
 
@@ -846,47 +741,46 @@ rollbackToPoint ::
      , GetTip l
      , HasLedgerTables l
      )
-  => Point l -> AnchorlessDbChangelog l -> Maybe (AnchorlessDbChangelog l)
+  => Point l -> DbChangelog l -> Maybe (DbChangelog l)
 rollbackToPoint pt dblog = do
     vol' <-
       AS.rollback
         (pointSlot pt)
         ((== pt) . getTip . either id id)
-        adcStates
-    let ndropped = AS.length adcStates - AS.length vol'
-        diffs'   = ltmap (trunc ndropped) adcDiffs
-    Exn.assert (ndropped >= 0) $ pure AnchorlessDbChangelog {
-          adcLastFlushedSlot
-        , adcDiffs  = diffs'
-        , adcStates = vol'
+        changelogStates
+    let ndropped = AS.length changelogStates - AS.length vol'
+        diffs'   = ltmap (trunc ndropped) changelogDiffs
+    Exn.assert (ndropped >= 0) $ pure DbChangelog {
+          changelogLastFlushedState
+        , changelogDiffs  = diffs'
+        , changelogStates = vol'
         }
   where
-    AnchorlessDbChangelog {
-        adcLastFlushedSlot
-      , adcDiffs
-      , adcStates
+    DbChangelog {
+        changelogLastFlushedState
+      , changelogDiffs
+      , changelogStates
       } = dblog
 
 -- | Rollback the volatile states up to the volatile anchor.
 rollbackToAnchor ::
      (GetTip l, HasLedgerTables l)
-  => AnchorlessDbChangelog l -> AnchorlessDbChangelog l
+  => DbChangelog l -> DbChangelog l
 rollbackToAnchor dblog =
-    AnchorlessDbChangelog {
-        adcLastFlushedSlot
-      , adcDiffs  = diffs'
-      , adcStates = AS.Empty (AS.anchor vol)
+    DbChangelog {
+        changelogLastFlushedState
+      , changelogDiffs  = diffs'
+      , changelogStates = AS.Empty (AS.anchor vol)
       }
   where
-    AnchorlessDbChangelog {
-        adcLastFlushedSlot
-      , adcDiffs
-      , adcStates = vol
+    DbChangelog {
+        changelogLastFlushedState
+      , changelogDiffs
+      , changelogStates = vol
       } = dblog
 
     ndropped = AS.length vol
-    diffs'   =
-      ltmap (trunc ndropped) adcDiffs
+    diffs'   = ltmap (trunc ndropped) changelogDiffs
 
 trunc ::
      (Ord k, Eq v)
@@ -905,8 +799,8 @@ rollback ::
      , StandardHash l, HasLedgerTables l
      )
   => Point blk
-  -> AnchorlessDbChangelog l
-  -> Maybe (AnchorlessDbChangelog l)
+  -> DbChangelog l
+  -> Maybe (DbChangelog l)
 rollback pt db
     | pt == castPoint (getTip (anchor db))
     = Just $ rollbackToAnchor db
@@ -915,23 +809,23 @@ rollback pt db
 
 immutableTipSlot ::
      GetTip l
-  => AnchorlessDbChangelog l -> WithOrigin SlotNo
+  => DbChangelog l -> WithOrigin SlotNo
 immutableTipSlot =
       getTipSlot
     . AS.anchor
-    . adcStates
+    . changelogStates
 
 -- | How many diffs we can flush to the backing store?
 --
 -- NOTE: This will be wrong once we have more than one table.
 flushableLength :: (HasLedgerTables l, GetTip l)
-                => AnchorlessDbChangelog l
+                => DbChangelog l
                 -> Word64
 flushableLength chlog =
-    (\(Sum x) -> x - fromIntegral (AS.length (adcStates chlog)))
+    (\(Sum x) -> x - fromIntegral (AS.length (changelogStates chlog)))
   . ltcollapse
   . ltmap (K2 . f)
-  $ adcDiffs chlog
+  $ changelogDiffs chlog
  where
    f :: (Ord k, Eq v)
      => SeqDiffMK k v
@@ -947,36 +841,37 @@ volatileStatesBimap ::
   -> AS.AnchoredSeq (WithOrigin SlotNo) a b
 volatileStatesBimap f g =
       AS.bimap f g
-    . adcStates
-    . anchorlessChangelog
+    . changelogStates
 
 {-------------------------------------------------------------------------------
   Testing
 -------------------------------------------------------------------------------}
+
 reapplyThenPush' :: ApplyBlock l blk
                => LedgerDbCfg l
                -> blk
                -> KeySetsReader Identity l
-               -> AnchorlessDbChangelog l
-               -> AnchorlessDbChangelog l
+               -> DbChangelog l
+               -> DbChangelog l
 reapplyThenPush' cfg b bk = runIdentity . reapplyThenPush cfg b bk
 
-reapplyThenPushMany' :: ApplyBlock l blk
+reapplyThenPushMany' :: (ApplyBlock l blk, LedgerTablesAreTrivial l)
                    => LedgerDbCfg l
                    -> [blk]
-                   -> KeySetsReader Identity l
-                   -> AnchorlessDbChangelog l
-                   -> AnchorlessDbChangelog l
-reapplyThenPushMany' cfg bs bk =
-  runIdentity . reapplyThenPushMany cfg bs bk
+                   -> DbChangelog l
+                   -> DbChangelog l
+reapplyThenPushMany' cfg bs dblog =
+    runIdentity
+  . reapplyThenPushMany cfg bs (trivialKeySetsReader (getTipSlot (changelogLastFlushedState dblog)))
+  $ dblog
 
 reapplyThenPushMany ::
      (ApplyBlock l blk, Monad m)
   => LedgerDbCfg l
   -> [blk]
   -> KeySetsReader m l
-  -> AnchorlessDbChangelog l
-  -> m (AnchorlessDbChangelog l)
+  -> DbChangelog l
+  -> m (DbChangelog l)
 reapplyThenPushMany cfg aps ksReader =
   repeatedlyM (\ap -> reapplyThenPush cfg ap ksReader) aps
 
@@ -986,8 +881,8 @@ switch ::
   -> Word64
   -> [blk]
   -> KeySetsReader m l
-  -> AnchorlessDbChangelog l
-  -> m (Either ExceededRollback (AnchorlessDbChangelog l))
+  -> DbChangelog l
+  -> m (Either ExceededRollback (DbChangelog l))
 switch cfg numRollbacks newBlocks ksReader db =
   case rollbackN numRollbacks db of
       Nothing ->
@@ -995,23 +890,23 @@ switch cfg numRollbacks newBlocks ksReader db =
             rollbackMaximum   = maxRollback db
           , rollbackRequested = numRollbacks
           }
-      Just db' -> case newBlocks of
-        [] -> pure $ Right db'
+      Just db' ->
+        if null newBlocks
+        then pure $ Right db'
         -- no blocks to apply to ledger state, return current DbChangelog
-        _ -> Right <$> reapplyThenPushMany
+        else Right <$> reapplyThenPushMany
                       cfg
                       newBlocks
                       ksReader
                       db'
 
-switch' :: ApplyBlock l blk
+switch' :: (ApplyBlock l blk, LedgerTablesAreTrivial l)
         => LedgerDbCfg l
         -> Word64
         -> [blk]
-        -> KeySetsReader Identity l
-        -> AnchorlessDbChangelog l
-        -> Maybe (AnchorlessDbChangelog l)
-switch' cfg n bs bk db =
-  case runIdentity $ switch cfg n bs bk db of
+        -> DbChangelog l
+        -> Maybe (DbChangelog l)
+switch' cfg n bs db =
+  case runIdentity $ switch cfg n bs (trivialKeySetsReader (getTipSlot (changelogLastFlushedState db))) db of
     Left  ExceededRollback{} -> Nothing
     Right db'                -> Just db'

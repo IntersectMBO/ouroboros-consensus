@@ -57,8 +57,7 @@ data LedgerDbArgs f m blk = LedgerDbArgs {
 
 -- | Default arguments
 defaultArgs ::
-     ( Applicative m
-     )
+     Applicative m
   => Incomplete LedgerDbArgs m blk
 defaultArgs = LedgerDbArgs {
       lgrSnapshotPolicyArgs = SnapshotPolicyArgs DefaultSnapshotInterval DefaultNumOfDiskSnapshots
@@ -66,6 +65,8 @@ defaultArgs = LedgerDbArgs {
     , lgrHasFS              = NoDefault
     , lgrConfig             = NoDefault
     , lgrTracer             = nullTracer
+      -- This value is the closest thing to a pre-UTxO-HD node, and as such it
+      -- will be the default for end-users.
     , lgrFlavorArgs         = LedgerDbFlavorArgsV2 (V2.V2Args V2.InMemoryHandleArgs)
     , lgrRegistry           = NoDefault
     , lgrStartSnapshot      = Nothing

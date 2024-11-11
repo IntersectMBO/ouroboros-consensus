@@ -140,6 +140,8 @@ class ValuesLength vs where
 class MakeDiff vs d where
   diff :: vs -> vs -> d
 
+-- | Counts how many diffs are there. Not to be confused with how many values
+-- result from the diffs.
 class DiffSize d where
   diffSize :: d -> Int
 
@@ -192,7 +194,7 @@ mBSInitFromCopy bsp = do
     Just (sl, vs) -> modify (\m -> m {
         backingValues = vs
       , backingSeqNo  = sl
-  , isClosed      = False
+      , isClosed      = False
       })
 
 -- | Throw an error if the backing store has been closed.

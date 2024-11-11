@@ -57,8 +57,6 @@ module Ouroboros.Consensus.Util (
   , checkThat
     -- * Sets
   , allDisjoint
-    -- * Maps
-  , dimap
     -- * Composition
   , (......:)
   , (.....:)
@@ -79,9 +77,6 @@ module Ouroboros.Consensus.Util (
   , electric
   , newFuse
   , withFuse
-    -- * withTMVar
-  , withTMVar
-  , withTMVarAnd
   ) where
 
 import           Cardano.Crypto.Hash (Hash, HashAlgorithm, hashFromBytes,
@@ -99,8 +94,6 @@ import           Data.Functor.Product
 import           Data.Kind (Type)
 import           Data.List as List (foldl', maximumBy)
 import           Data.List.NonEmpty (NonEmpty (..), (<|))
-import           Data.Map (Map)
-import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
 import           Data.Set (Set)
 import qualified Data.Set as Set
@@ -355,15 +348,6 @@ allDisjoint = go Set.empty
     go acc (xs:xss) = Set.disjoint acc xs && go (Set.union acc xs) xss
 
 {-------------------------------------------------------------------------------
-  Maps
--------------------------------------------------------------------------------}
-
--- | Map over keys and values
-dimap :: Ord k2 => (k1 -> k2) -> (v1 -> v2) -> Map k1 v1 -> Map k2 v2
-dimap keyFn valFn = Map.foldlWithKey update Map.empty
-  where update m k1 v1 =  Map.insert (keyFn k1) (valFn v1) m
-
-{-------------------------------------------------------------------------------
   Composition
 -------------------------------------------------------------------------------}
 
@@ -466,43 +450,3 @@ withFuse (Fuse name m) (Electric io) = do
 newtype FuseBlownException = FuseBlownException Text
  deriving (Show)
  deriving anyclass (Exception)
-
-{-------------------------------------------------------------------------------
-  withTMVar
--------------------------------------------------------------------------------}
-
--- | Apply @f@ with the content of @tv@ as state, restoring the original value when an
--- exception occurs
-withTMVar ::
-     IOLike m
-  => StrictTMVar m a
-  -> (a -> m (c, a))
-  -> m c
-withTMVar tv f = withTMVarAnd tv (const $ pure ()) (\a -> const $ f a)
-
--- | Apply @f@ with the content of @tv@ as state, restoring the original value
--- when an exception occurs. Additionally run a @STM@ action when acquiring the
--- value.
-withTMVarAnd ::
-     IOLike m
-  => StrictTMVar m a
-  -> (a -> STM m b) -- ^ Additional STM action to run in the same atomically
-                    -- block as the TMVar is acquired
-  -> (a -> b -> m (c, a)) -- ^ Action
-  -> m c
-withTMVarAnd tv guard f =
-  fst . fst <$> generalBracket
-    (atomically $ do
-        istate <- takeTMVar tv
-        guarded <- guard istate
-        pure (istate, guarded)
-    )
-    (\(origState, _) -> \case
-        ExitCaseSuccess (_, newState)
-          -> atomically $ putTMVar tv newState
-        ExitCaseException _
-          -> atomically $ putTMVar tv origState
-        ExitCaseAbort
-          -> atomically $ putTMVar tv origState
-    )
-    (uncurry f)
