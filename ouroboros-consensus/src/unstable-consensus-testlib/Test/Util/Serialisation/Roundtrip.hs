@@ -550,8 +550,8 @@ roundtrip_SerialiseNodeToClient shouldCheckCBORvalidity ccfg =
           \(WithVersion version (SomeResult query result :: SomeResult blk)) ->
             roundtripAnd
               (shouldCheckCBORvalidity testLabel)
-              (encodeResult' ccfg version query)
-              (const <$> decodeResult' ccfg version query)
+              (encodeBlockQueryResult ccfg version query)
+              (const <$> decodeBlockQueryResult ccfg version query)
               result
     ]
   where

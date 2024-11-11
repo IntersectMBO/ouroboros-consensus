@@ -1,7 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
@@ -26,9 +25,7 @@
 -- a solid-state hard-drive). Secondly, when we load data from disk onto memory,
 -- we use ledger tables to /inject/ data into the /ledger state/. This mechanism
 -- allows us to keep most of the data on disk, which is rarely used, reducing
--- the memory usage of the Consensus layer. Ledger tables are used in the
--- 'Ouroboros.Consensus.Storage.LedgerDB.BackingStore' and
--- 'Ouroboros.Consensus.Storage.LedgerDB.DbChangelog' modules.
+-- the memory usage of the Consensus layer.
 --
 -- = __Example__
 --
@@ -86,9 +83,7 @@
 -- for us Consensus to manipulate, and we can then inject it back so that we
 -- provide the expected data to the ledger. Note that the Ledger rules for
 -- applying a block are defined in a way that it only needs the subset of the
--- UTxO set that the block being applied will consume. See [the @DbChangelog@
--- documentation for block
--- application](Ouroboros-Consensus-Storage-LedgerDB-DbChangelog.html#g:applying).
+-- UTxO set that the block being applied will consume.
 --
 -- Now using 'Ouroboros.Consensus.Ledger.Tables.Utils.calculateDifference', we
 -- can compare two (successive) t'Ouroboros.Consensus.Ledger.Basics.LedgerState's
@@ -106,41 +101,29 @@
 --     })
 -- ==
 --  'TrackingMK'
---    (Map.fromList [(\'a\', 100),      (\'c\', 200)])
---    (Map.fromList [(\'b\', [Delete]), (\'c\', [Insert 200])])
+--    (Map.fromList [(\'a\', 100),    (\'c\', 200)])
+--    (Map.fromList [(\'b\', Delete), (\'c\', Insert 200)])
 -- @
 --
 -- This operation provided a 'TrackingMK' which is in fact just a 'ValuesMK' and
 -- 'DiffMK' put together.
 --
--- We can then use those differences to /forward/ a set of values, so for
+-- We can then use those differences to /forward/ a collection of values, so for
 -- example (taking the example above):
 --
 -- @
--- let state1 = LedgerState {
---                 ...
---               , theTables = 'ValuesMK' (Map.fromList [(\'a\', 100), (\'b\', 100)])
---              }
---     state2 = LedgerState {
---                ...
---              , theTables = 'ValuesMK' (Map.fromList [(\'a\', 100), (\'c\', 200)])
---              }
---     state3 = LedgerState {
---                ...
---              , theTables = 'ValuesMK' (Map.fromList [])
---              }
+-- let tables1 = 'ValuesMK' (Map.fromList [(\'a\', 100), (\'b\', 100)])
+--     tables2 = 'ValuesMK' (Map.fromList [(\'a\', 100), (\'c\', 200)])
+--     diffs = 'Ouroboros.Consensus.Ledger.Tables.Utils.rawForgetTrackingValues'
+--           $ 'Ouroboros.Consensus.Ledger.Tables.Utils.rawCalculateDifference' tables1 tables2
 -- in
---   'Ouroboros.Consensus.Ledger.Tables.Utils.applyDiffs' state3 ('Ouroboros.Consensus.Ledger.Tables.Utils.forgetTrackingValues' $ 'Ouroboros.Consensus.Ledger.Tables.Utils.calculateDifference' state1 state2)
--- ==
---  LedgerState {
---      ...
---    , theTables = 'ValuesMK' (Map.fromList [(\'c\', 200)])
---    }
+--   'Ouroboros.Consensus.Ledger.Tables.Utils.rawApplyDiffs' tables1 diffs == tables2
 -- @
 --
--- Notice that we produced differences for @\'b\'@ and @\'c\'@, but as the input
--- state (@state3@) didn't contain @\'b\'@ the only difference that was applied
--- was the one of @\'c\'@.
+-- Note: we usually don't call the @raw*@ methods directly but instead call the
+-- corresponding function that operates on
+-- t'Ouroboros.Consensus.Ledger.Basics.LedgerState's. See
+-- "Ouroboros.Consensus.Ledger.Tables.Utils".
 --
 -- Also when applying a block that contains some transactions, we can produce
 -- 'LedgerTable's of @KeysMK@, by gathering the txins required by the
@@ -151,19 +134,17 @@
 --  == 'KeysMK' (Set.fromList [\'a\', \'b\'])
 -- @
 --
--- We shall use those later on to read the txouts from some storage (which will
--- be the 'Ouroboros.Consensus.Storage.LedgerDB.BackingStore.BackingStore') and
--- forward the resulting txouts through a sequence of differences (which will be
--- 'Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.adcDiffs').
+-- We shall use those later on to read the txouts from some storage.
 --
--- This example already covered most of the standard mapkinds, in particular:
+-- We call those types ending in \"MK\" mapkinds. They model the different types
+-- of collections and contained data in the tables. This example already covered
+-- most of the standard mapkinds, in particular:
 --
 --   ['EmptyMK']: A nullary data constructor, an empty table.
 --
 --   ['ValuesMK']: Contains a @Data.Map@ from txin to txouts.
 --
---   ['DiffMK']: Contains a @Data.Map@ from txin to history of changes (see
---     "Data.Map.Diff.Strict").
+--   ['DiffMK']: Contains a @Data.Map@ from txin to a change on the value.
 --
 --   ['TrackingMK']: Contains both a 'ValuesMK' and 'DiffMK'.
 --
@@ -177,16 +158,20 @@ module Ouroboros.Consensus.Ledger.Tables (
     -- * Utilities
   , module Ouroboros.Consensus.Ledger.Tables.Combinators
     -- * Basic LedgerState classes
+    -- ** Stowing ledger tables
   , CanStowLedgerTables (..)
+    -- ** Extracting and injecting ledger tables
   , HasLedgerTables (..)
   , HasTickedLedgerTables
     -- * Serialization
   , CanSerializeLedgerTables
   , codecLedgerTables
+  , defaultCodecLedgerTables
   , valuesMKDecoder
   , valuesMKEncoder
     -- * Special classes
   , LedgerTablesAreTrivial
+  , TrivialLedgerTables (..)
   , convertMapKind
   , trivialLedgerTables
   ) where
@@ -196,7 +181,7 @@ import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Control.Exception as Exn
 import           Control.Monad (replicateM)
-import           Data.Kind (Constraint)
+import           Data.Kind (Constraint, Type)
 import qualified Data.Map.Strict as Map
 import           Data.Void (Void)
 import           NoThunks.Class (NoThunks (..))
@@ -212,12 +197,12 @@ import           Ouroboros.Consensus.Ticked
 -- | Extracting @'LedgerTables'@ from @l mk@ (which will share the same @mk@),
 -- or replacing the @'LedgerTables'@ associated to a particular @l@.
 type HasLedgerTables :: LedgerStateKind -> Constraint
-class ( Ord (Key l)
-      , Eq (Value l)
-      , Show (Key l)
-      , Show (Value l)
-      , NoThunks (Key l)
-      , NoThunks (Value l)
+class ( Ord (TxIn l)
+      , Eq (TxOut l)
+      , Show (TxIn l)
+      , Show (TxOut l)
+      , NoThunks (TxIn l)
+      , NoThunks (TxOut l)
       ) => HasLedgerTables l where
 
   -- | Extract the ledger tables from a ledger state
@@ -228,11 +213,6 @@ class ( Ord (Key l)
        (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk)
     => l mk
     -> LedgerTables l mk
-  default projectLedgerTables ::
-         (ZeroableMK mk, LedgerTablesAreTrivial l)
-      => l mk
-      -> LedgerTables l mk
-  projectLedgerTables _ = trivialLedgerTables
 
   -- | Overwrite the tables in the given ledger state.
   --
@@ -249,34 +229,28 @@ class ( Ord (Key l)
     => l any
     -> LedgerTables l mk
     -> l mk
-  default withLedgerTables ::
-       LedgerTablesAreTrivial l
-    => l any
-    -> LedgerTables l mk
-    -> l mk
-  withLedgerTables st _ = convertMapKind st
 
-instance ( Ord (Key l)
-         , Eq (Value l)
-         , Show (Key l)
-         , Show (Value l)
-         , NoThunks (Key l)
-         , NoThunks (Value l)
+instance ( Ord (TxIn l)
+         , Eq (TxOut l)
+         , Show (TxIn l)
+         , Show (TxOut l)
+         , NoThunks (TxIn l)
+         , NoThunks (TxOut l)
          ) => HasLedgerTables (LedgerTables l) where
   projectLedgerTables = castLedgerTables
   withLedgerTables _ = castLedgerTables
 
 -- | Convenience class, useful for partially applying the composition of
--- 'HasLedgerTables' and 'Ticked1'.
+-- 'HasLedgerTables' and 'Ticked'.
 type HasTickedLedgerTables :: LedgerStateKind -> Constraint
-class HasLedgerTables (Ticked1 l) => HasTickedLedgerTables l where
-instance HasLedgerTables (Ticked1 l) => HasTickedLedgerTables l
+class HasLedgerTables (Ticked l) => HasTickedLedgerTables l where
+instance HasLedgerTables (Ticked l) => HasTickedLedgerTables l
 
 -- | LedgerTables are projections of data from a LedgerState and as such they
 -- can be injected back into a LedgerState. This is necessary because the Ledger
--- rules are unaware of UTxO-HD changes. Thus, by stowing the ledger tables, we are
--- able to provide a Ledger State with a restricted UTxO set that is enough to
--- execute the Ledger rules.
+-- rules are currently unaware of UTxO-HD changes. Thus, by stowing the ledger
+-- tables, we are able to provide a Ledger State with a restricted UTxO set that
+-- is enough to execute the Ledger rules.
 --
 -- In particular, HardForkBlock LedgerStates are never given diretly to the
 -- ledger but rather unwrapped and then it is the inner ledger state the one we
@@ -284,20 +258,8 @@ instance HasLedgerTables (Ticked1 l) => HasTickedLedgerTables l
 -- instance of this class, but HardForkBlocks might avoid doing so.
 type CanStowLedgerTables :: LedgerStateKind -> Constraint
 class CanStowLedgerTables l where
-
   stowLedgerTables     :: l ValuesMK -> l EmptyMK
-  default stowLedgerTables ::
-       (LedgerTablesAreTrivial l)
-    => l ValuesMK
-    -> l EmptyMK
-  stowLedgerTables = convertMapKind
-
   unstowLedgerTables   :: l EmptyMK  -> l ValuesMK
-  default unstowLedgerTables ::
-       (LedgerTablesAreTrivial l)
-    => l EmptyMK
-    -> l ValuesMK
-  unstowLedgerTables = convertMapKind
 
 {-------------------------------------------------------------------------------
   Serialization Codecs
@@ -310,12 +272,15 @@ class CanStowLedgerTables l where
 type CanSerializeLedgerTables :: LedgerStateKind -> Constraint
 class CanSerializeLedgerTables l where
   codecLedgerTables :: LedgerTables l CodecMK
-  default codecLedgerTables ::
-       ( FromCBOR (Key l), FromCBOR (Value l)
-       , ToCBOR   (Key l), ToCBOR   (Value l)
-       )
-    => LedgerTables l CodecMK
-  codecLedgerTables = LedgerTables $ CodecMK toCBOR toCBOR fromCBOR fromCBOR
+
+defaultCodecLedgerTables ::
+     ( FromCBOR (TxIn  l)
+     , FromCBOR (TxOut l)
+     , ToCBOR   (TxIn  l)
+     , ToCBOR   (TxOut l)
+     )
+  => LedgerTables l CodecMK
+defaultCodecLedgerTables = LedgerTables $ CodecMK toCBOR toCBOR fromCBOR fromCBOR
 
 -- | Default encoder of @'LedgerTables' l ''ValuesMK'@ to be used by the
 -- in-memory backing store.
@@ -373,7 +338,7 @@ valuesMKDecoder = do
 -- allows for easy manipulation of the types of @mk@ required at any step of the
 -- program.
 type LedgerTablesAreTrivial :: LedgerStateKind -> Constraint
-class (Key l ~ Void, Value l ~ Void) => LedgerTablesAreTrivial l where
+class (TxIn l ~ Void, TxOut l ~ Void) => LedgerTablesAreTrivial l where
   -- | If the ledger state is always in memory, then @l mk@ will be isomorphic
   -- to @l mk'@ for all @mk@, @mk'@. As a result, we can convert between ledgers
   -- states indexed by different map kinds.
@@ -386,3 +351,25 @@ trivialLedgerTables ::
      (ZeroableMK mk, LedgerTablesAreTrivial l)
   => LedgerTables l mk
 trivialLedgerTables = LedgerTables emptyMK
+
+-- | A newtype to @derive via@ the instances for blocks with trivial ledger
+-- tables.
+type TrivialLedgerTables :: LedgerStateKind -> MapKind -> Type
+newtype TrivialLedgerTables l mk = TrivialLedgerTables { untrivialLedgerTables :: l mk }
+
+type instance TxIn  (TrivialLedgerTables l) = TxIn  l
+type instance TxOut (TrivialLedgerTables l) = TxOut l
+
+instance LedgerTablesAreTrivial l => LedgerTablesAreTrivial (TrivialLedgerTables l) where
+  convertMapKind = TrivialLedgerTables . convertMapKind . untrivialLedgerTables
+
+instance LedgerTablesAreTrivial l => HasLedgerTables (TrivialLedgerTables l) where
+  projectLedgerTables _ = trivialLedgerTables
+  withLedgerTables st _ = convertMapKind st
+
+instance LedgerTablesAreTrivial l => CanStowLedgerTables (TrivialLedgerTables l) where
+  stowLedgerTables = convertMapKind
+  unstowLedgerTables = convertMapKind
+
+instance LedgerTablesAreTrivial l => CanSerializeLedgerTables (TrivialLedgerTables l) where
+  codecLedgerTables = defaultCodecLedgerTables

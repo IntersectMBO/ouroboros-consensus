@@ -41,14 +41,12 @@ import qualified Control.Concurrent.Class.MonadSTM as MonadSTM
 import           Control.Concurrent.Class.MonadSTM.Strict (newTMVar)
 import qualified Control.Exception as Exn
 import           Control.Monad
-import           Control.Monad.Base (MonadBase)
 import           Control.Monad.Class.MonadTime.SI (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import qualified Control.Monad.Except as Exc
 import           Control.ResourceRegistry
 import           Control.Tracer
 import qualified Data.ByteString.Lazy as Lazy
-import           Data.Either (isRight)
 import           Data.Functor.Contravariant ((>$<))
 import           Data.Functor.Identity (Identity)
 import qualified Data.List as List
@@ -302,7 +300,6 @@ runThreadNetwork :: forall m blk.
                     , TxGen blk
                     , TracingConstraints blk
                     , HasCallStack
-                    , MonadBase m m
                     )
                  => SystemTime m -> ThreadNetworkArgs m blk -> m (TestOutput blk)
 runThreadNetwork systemTime ThreadNetworkArgs
@@ -612,60 +609,22 @@ runThreadNetwork systemTime ThreadNetworkArgs
       -> SlotNo
       -> ResourceRegistry m
       -> (SlotNo -> STM m ())
-      -> LedgerConfig blk
       -> STM m (Point blk)
       -> (ResourceRegistry m -> m (ReadOnlyForker' m blk))
       -> Mempool m blk
       -> [GenTx blk]
          -- ^ valid transactions the node should immediately propagate
       -> m ()
-    forkCrucialTxs clock s0 registry unblockForge lcfg getTipPoint mforker mempool txs0 = do
+    forkCrucialTxs clock s0 registry unblockForge getTipPoint mforker mempool txs0 = do
       void $ forkLinkedThread registry "crucialTxs" $ withRegistry $ \reg -> do
-        let
-            wouldBeValid :: SlotNo
-                         -> (RangeQueryPrevious (ExtLedgerState blk) -> m (LedgerTables (ExtLedgerState blk) ValuesMK))
-                         -> Ticked1 (LedgerState blk) DiffMK
-                         -> GenTx blk
-                         -> m Bool
-            wouldBeValid slot doRangeQuery st tx = do
-              (fullLedgerSt :: Ticked1 (LedgerState blk) ValuesMK) <- do
-                -- FIXME: we know that the range query implemetation will add at
-                -- most 1 to the number of requested keys, hence the
-                -- subtraction. When we revisit the range query implementation
-                -- we should remove this workaround.
-                fullUTxO <- doRangeQuery NoPreviousQuery
-                pure $! applyDiffs fullUTxO st
-              pure $ isRight $ Exc.runExcept $ applyTx lcfg DoNotIntervene slot tx fullLedgerSt
-
-
-            checkSt slot doRangeQuery snap =
-                or <$> mapM (wouldBeValid slot doRangeQuery (snapshotState snap)) txs0
 
         let loop (slot, mempFp) = do
               forker <- mforker reg
               extLedger <- atomically $ roforkerGetLedgerState forker
               let ledger       = ledgerState extLedger
-                  doRangeQuery = roforkerRangeReadTables forker
-              -- This node would include these crucial txs if it leads in
-              -- this slot.
-              let ledger' = applyChainTick lcfg slot ledger
-                  readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
-              snap1 <- getSnapshotFor mempool slot ledger' readTables
-              -- Other nodes might include these crucial txs when leading
-              -- in the next slot.
-              let ledger'' = applyChainTick lcfg (succ slot) ledger
-              snap2 <- getSnapshotFor mempool (succ slot) ledger'' readTables
-
-
-              -- Don't attempt to add them if we're sure they'll be invalid.
-              -- That just risks blocking on a full mempool unnecessarily.
-              b1 <- checkSt slot doRangeQuery snap1
-              b2 <- checkSt (succ slot) doRangeQuery snap2
               roforkerClose forker
 
-              when (b1 || b2) $ do
-                _ <- addTxs mempool txs0
-                pure ()
+              _ <- addTxs mempool txs0
 
               -- See 'unblockForge' in 'forkNode'
               atomically $ unblockForge slot
@@ -723,10 +682,6 @@ runThreadNetwork systemTime ThreadNetworkArgs
           let emptySt      = emptySt'
               doRangeQuery = roforkerRangeReadTables forker
           fullLedgerSt <- fmap ledgerState $ do
-                -- FIXME: we know that the range query implemetation will add at
-                -- most 1 to the number of requested keys, hence the
-                -- subtraction. When we revisit the range query implementation
-                -- we should remove this workaround.
                 fullUTxO <- doRangeQuery NoPreviousQuery
                 pure $! withLedgerTables emptySt fullUTxO
           roforkerClose forker
@@ -1139,7 +1094,6 @@ runThreadNetwork systemTime ThreadNetworkArgs
         joinSlot
         registry
         unblockForge
-        (configLedger pInfoConfig)
         (ledgerTipPoint . ledgerState <$> ChainDB.getCurrentLedger chainDB)
         getForker
         mempool

@@ -8,9 +8,9 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 
--- | The 'BackingStore' is the component of the
--- 'Ouroboros.Consensus.Storage.LedgerDB.LedgerDB' implementation that stores a
--- key-value map with the 'LedgerTable's at a specific slot on the chain.
+-- | The 'BackingStore' is the component of the LedgerDB V1 implementation that
+-- stores a key-value map with the 'LedgerTable's at a specific slot on the
+-- chain.
 --
 -- It is used for storing 'Ouroboros.Consensus.Ledger.Basics.LedgerState' data
 -- structures, and updating them with t'Data.Map.Diff.Strict.Diff's produced by
@@ -219,10 +219,9 @@ data RangeQuery keys = RangeQuery {
       -- The query may return a different number of values than this even if it
       -- has not reached the last key. The only crucial invariant is that the
       -- query only returns an empty map if there are no more keys to read on
-      -- disk.
-      --
-      -- FIXME: #4398 can we satisfy this invariant if we read keys from disk
-      -- but all of them were deleted in the changelog?
+      -- disk, or if 'QueryBatchSize' consecutive values have been deleted in
+      -- the changelog, which is extremely unlikely due to the random access
+      -- pattern of the UTxO set.
     , rqCount :: !Int
     }
     deriving stock (Show, Eq)
@@ -265,7 +264,10 @@ data BackingStoreTrace =
   | BSCopying                !FS.FsPath
   | BSCopied                 !FS.FsPath
   | BSCreatingValueHandle
-  | BSValueHandleTrace       !(Maybe Int) !BackingStoreValueHandleTrace
+  | BSValueHandleTrace
+      -- | The index of the value handle
+      !(Maybe Int)
+      !BackingStoreValueHandleTrace
   | BSCreatedValueHandle
   | BSWriting                !SlotNo
   | BSWritten                !(WithOrigin SlotNo) !SlotNo

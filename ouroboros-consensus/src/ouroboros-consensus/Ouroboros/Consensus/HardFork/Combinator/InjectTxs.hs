@@ -11,13 +11,9 @@
 module Ouroboros.Consensus.HardFork.Combinator.InjectTxs (
     -- * Polymorphic
     InjectPolyTx (..)
-  , ListOfTxs (..)
-  , TelescopeWithTxList
-  , TxsWithOriginal (..)
   , cannotInjectPolyTx
   , matchPolyTx
   , matchPolyTxs
-  , matchPolyTxsNS
     -- * Unvalidated transactions
   , InjectTx
   , cannotInjectTx
@@ -106,16 +102,17 @@ matchPolyTx is tx =
 -- We use this to keep the original hard fork transaction around, as otherwise
 -- we would lose the index at which the transaction was originally, before
 -- translations.
-data TxsWithOriginal tx xs blk =
-  TxsWithOriginal { origTx :: !(NS tx xs)
-                  , blkTx  :: !(tx blk)
+data TxWithOriginal tx xs blk =
+  TxWithOriginal { origTx :: !(NS tx xs)
+                  , blkTx :: !(tx blk)
                   }
 
--- | A partially applied list of tuples.
+-- | A list of 'TxWithOriginal' that is ready to be partially applied by having
+-- @blk@ as the final argument.
 --
 -- In the end it represents @[(orig :: NS tx xs, t :: tx blk), ...]@ for some
 -- @blk@.
-newtype ListOfTxs tx xs blk = ListOfTxs { txsList :: [TxsWithOriginal tx xs blk] }
+newtype ListOfTxs tx xs blk = ListOfTxs [TxWithOriginal tx xs blk]
 
 -- | A special telescope. This type alias is used just for making this more
 -- readable.
@@ -141,14 +138,14 @@ matchPolyTxs' ::
   -> ( [(NS tx xs, Mismatch tx f xs)]
      , TelescopeWithTxList g f tx xs xs
      )
-matchPolyTxs' ips txs = go ips [ hmap (TxsWithOriginal x) x | x <- txs ]
+matchPolyTxs' ips txs = go ips [ hmap (TxWithOriginal x) x | x <- txs ]
   where
-    tipFst :: All Top xs => NS (TxsWithOriginal tx xs') xs -> NS tx xs'
+    tipFst :: All Top xs => NS (TxWithOriginal tx xs') xs -> NS tx xs'
     tipFst = hcollapse . hmap (K . origTx)
 
     go :: All Top xs
        => InPairs (InjectPolyTx tx) xs
-       -> [NS (TxsWithOriginal tx xs') xs]
+       -> [NS (TxWithOriginal tx xs') xs]
        -> Telescope g f xs
        -> ( [(NS tx xs', Mismatch tx f xs)]
           , TelescopeWithTxList g f tx xs' xs
@@ -167,12 +164,12 @@ matchPolyTxs' ips txs = go ips [ hmap (TxsWithOriginal x) x | x <- txs ]
       let (rejected, translated) =
               partitionEithers
             $ map (\case
-                      Z (TxsWithOriginal origx x) ->
+                      Z (TxWithOriginal origx x) ->
                         case injectTxWith i x of
                           -- The ones from this era that we cannot transport to
                           -- the next era are invalid
                           Nothing -> Left (origx, ML x (Telescope.tip f))
-                          Just x' -> Right $ Z (TxsWithOriginal origx x')
+                          Just x' -> Right $ Z (TxWithOriginal origx x')
                       S x -> Right x
                   ) txs'
           (nextRejected, nextState) = go is translated f
@@ -184,7 +181,7 @@ matchPolyTxs ::
   -> [NS tx xs]
   -> HardForkState f xs
   -> ( [(NS tx xs, Mismatch tx (Current f) xs)]
-     , HardForkState (Product (ListOfTxs tx xs) f) xs
+     , HardForkState (Product ([] :.: tx) f) xs
      )
 matchPolyTxs is tx =
       fmap (HardForkState . hmap distrib)
@@ -192,10 +189,10 @@ matchPolyTxs is tx =
     . getHardForkState
   where
     distrib :: Product (ListOfTxs tx xs) (Current f) blk
-            -> Current (Product (ListOfTxs tx xs) f) blk
-    distrib (Pair x Current{..}) = Current {
+            -> Current (Product ([] :.: tx) f) blk
+    distrib (Pair (ListOfTxs txs) Current{..}) = Current {
           currentStart = currentStart
-        , currentState = Pair x currentState
+        , currentState = Pair (Comp [blkTx t | t <- txs])  currentState
         }
 
 -- | Match transaction with an 'NS', attempting to inject where possible

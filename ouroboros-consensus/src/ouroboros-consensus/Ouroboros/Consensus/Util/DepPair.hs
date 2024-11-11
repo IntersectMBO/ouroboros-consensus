@@ -58,7 +58,7 @@ depPairFirst f (GenDepPair ix a) = GenDepPair (f ix) a
   Compare indices
 -------------------------------------------------------------------------------}
 
-type SameDepIndex :: (Type -> Type) -> Constraint
+type SameDepIndex :: (k -> Type) -> Constraint
 class SameDepIndex f where
   sameDepIndex :: f a -> f b -> Maybe (a :~: b)
 
@@ -74,8 +74,9 @@ class SameDepIndex2 f where
 -------------------------------------------------------------------------------}
 
 -- | A dependency is trivial if it always maps to the same type @b@
+type TrivialDependency :: (k -> Type) -> Constraint
 class TrivialDependency f where
-  type TrivialIndex f :: Type
+  type TrivialIndex f :: k
   hasSingleIndex :: f a -> f b -> a :~: b
   indexIsTrivial :: f (TrivialIndex f)
 

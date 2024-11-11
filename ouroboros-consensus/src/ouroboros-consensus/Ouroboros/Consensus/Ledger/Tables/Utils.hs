@@ -6,49 +6,42 @@
 
 -- | A collection of useful combinators to shorten the code in other places.
 --
--- TODO: #4394 provide better ergonomics. This whole module provides ways to
--- combine tables of two ledger states to produce another one. It is written
--- very much ad-hoc and we should probably think of some way to make this more
--- ergonomic. In particular for functions that take two ledger states, it is
--- unclear if it will keep the in-memory part of the first or the second one.
+-- This whole module provides ways to combine tables of two ledger states to
+-- produce another one. It is written very much ad-hoc and we should probably
+-- think of some way to make this more ergonomic. In particular for functions
+-- that take two ledger states, it is unclear if it will keep the in-memory part
+-- of the first or the second one.
 module Ouroboros.Consensus.Ledger.Tables.Utils (
     -- * Projection and injection
     ltprj
-  , over
-    -- * Utils aliases: tables
+  , ltwith
+    -- * Basic operations
+  , emptyLedgerTables
+  , forgetLedgerTables
+    -- * Operations on 'DiffMK'
+    -- ** Apply diffs
   , applyDiffForKeys
   , applyDiffForKeysOnTables
   , applyDiffs
-  , applyDiffs'
-  , attachAndApplyDiffs
-  , attachAndApplyDiffs'
-  , attachEmptyDiffs
-  , calculateAdditions
+    -- ** Create diffs
   , calculateDifference
-  , calculateDifference'
-  , emptyLedgerTables
-  , forgetLedgerTables
-  , forgetTrackingDiffs
-  , forgetTrackingValues
   , noNewTickingDiffs
+  , valuesAsDiffs
+    -- ** Combining diffs
   , prependDiffs
-  , prependDiffs'
+    -- * Operations on 'TrackingMK'
+    -- ** Augment
+  , attachAndApplyDiffs
+  , attachEmptyDiffs
   , prependTrackingDiffs
-  , prependTrackingDiffs'
-  , reapplyTracking
-  , restrictValues
-  , restrictValues'
+    -- ** Reduce
+  , trackingToDiffs
+  , trackingToValues
     -- * Testing
-  , rawApplyDiffs
-  , rawAttachAndApplyDiffs
-  , rawAttachEmptyDiffs
-  , rawCalculateDifference
-  , rawForgetTrackingDiffs
-  , rawForgetTrackingValues
-  , rawPrependDiffs
-  , rawPrependTrackingDiffs
-  , rawReapplyTracking
-  , rawRestrictValues
+  , applyDiffs'
+  , rawAttachAndApplyDiffs -- used in test
+  , rawCalculateDifference -- used in test
+  , restrictValues'
   ) where
 
 import qualified Data.Map.Strict as Map
@@ -59,7 +52,7 @@ import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
   Projection and injection
 -------------------------------------------------------------------------------}
 
-over ::
+ltwith ::
      ( HasLedgerTables l
      , CanMapMK mk'
      , CanMapKeysMK mk'
@@ -68,10 +61,10 @@ over ::
   => l mk
   -> LedgerTables l mk'
   -> l mk'
-over = withLedgerTables
+ltwith = withLedgerTables
 
 ltprj ::
-     (HasLedgerTables l, Castable l l', CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk)
+     (HasLedgerTables l, SameUtxoTypes l l', CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk)
   => l mk
   -> LedgerTables l' mk
 ltprj = castLedgerTables . projectLedgerTables
@@ -80,14 +73,14 @@ ltprj = castLedgerTables . projectLedgerTables
   Utils aliases: tables
 -------------------------------------------------------------------------------}
 
--- | When applying a block that is not on an era transition, ticking won't
--- generate new values, so this function can be used to wrap the call to the
--- ledger rules that perform the tick.
+-- | Replace tables with an empty diff. Can be used to specify that a ledger
+-- state tick produces no new UTXO entries.
 noNewTickingDiffs :: HasLedgerTables l
                   => l any
                   -> l DiffMK
 noNewTickingDiffs l = withLedgerTables l emptyLedgerTables
 
+-- | Remove the ledger tables
 forgetLedgerTables :: HasLedgerTables l => l mk -> l EmptyMK
 forgetLedgerTables l = withLedgerTables l emptyLedgerTables
 
@@ -99,21 +92,21 @@ emptyLedgerTables = ltpure emptyMK
 -- Forget parts of 'TrackingMK'
 --
 
-rawForgetTrackingValues :: TrackingMK k v -> DiffMK k v
-rawForgetTrackingValues (TrackingMK _vs d) = DiffMK d
+rawTrackingDiffs :: TrackingMK k v -> DiffMK k v
+rawTrackingDiffs (TrackingMK _vs d) = DiffMK d
 
-forgetTrackingValues :: (HasLedgerTables l, LedgerTableConstraints l) => l TrackingMK -> l DiffMK
-forgetTrackingValues l = over l $ ltmap rawForgetTrackingValues (ltprj l)
+trackingToDiffs :: (HasLedgerTables l, LedgerTableConstraints l) => l TrackingMK -> l DiffMK
+trackingToDiffs l = ltwith l $ ltmap rawTrackingDiffs (ltprj l)
 
 --
 -- Forget diffs
 --
 
-rawForgetTrackingDiffs :: TrackingMK k v -> ValuesMK k v
-rawForgetTrackingDiffs (TrackingMK vs _ds) = ValuesMK vs
+rawTrackingValues :: TrackingMK k v -> ValuesMK k v
+rawTrackingValues (TrackingMK vs _ds) = ValuesMK vs
 
-forgetTrackingDiffs :: (LedgerTableConstraints l, HasLedgerTables l) => l TrackingMK -> l ValuesMK
-forgetTrackingDiffs l = over l $ ltmap rawForgetTrackingDiffs (ltprj l)
+trackingToValues :: (LedgerTableConstraints l, HasLedgerTables l) => l TrackingMK -> l ValuesMK
+trackingToValues l = ltwith l $ ltmap rawTrackingValues (ltprj l)
 
 --
 -- Prepend diffs
@@ -129,16 +122,15 @@ rawPrependDiffs (DiffMK d1) (DiffMK d2) = DiffMK (d1 <> d2)
 -- | Prepend diffs from the first ledger state to the diffs from the second
 -- ledger state. Returns ledger tables.
 prependDiffs' ::
-     (Castable l l'', Castable l' l'', HasLedgerTables l, HasLedgerTables l')
+     (SameUtxoTypes l l'', SameUtxoTypes l' l'', HasLedgerTables l, HasLedgerTables l')
   => l DiffMK -> l' DiffMK -> LedgerTables l'' DiffMK
 prependDiffs' l1 l2 = ltliftA2 rawPrependDiffs (ltprj l1) (ltprj l2)
 
--- | Like 'prependDiffs'', but puts the ledger tables inside the second ledger
--- state.
+-- | Prepend the diffs from @l1@ to @l2@. Returns @l2@.
 prependDiffs ::
-     (Castable l l', HasLedgerTables l, HasLedgerTables l')
+     (SameUtxoTypes l l', HasLedgerTables l, HasLedgerTables l')
   => l DiffMK -> l' DiffMK -> l' DiffMK
-prependDiffs l1 l2 = over l2 $ prependDiffs' l1 l2
+prependDiffs l1 l2 = ltwith l2 $ prependDiffs' l1 l2
 
 --
 -- Apply diffs
@@ -154,16 +146,15 @@ rawApplyDiffs (ValuesMK vals) (DiffMK diffs) = ValuesMK (Diff.applyDiff vals dif
 -- | Apply diffs from the second ledger state to the values of the first ledger
 -- state. Returns ledger tables.
 applyDiffs' ::
-     (Castable l l'', Castable l' l'', HasLedgerTables l, HasLedgerTables l')
+     (SameUtxoTypes l l'', SameUtxoTypes l' l'', HasLedgerTables l, HasLedgerTables l')
   => l ValuesMK -> l' DiffMK -> LedgerTables l'' ValuesMK
 applyDiffs' l1 l2 = ltliftA2 rawApplyDiffs (ltprj l1) (ltprj l2)
 
--- | Like 'applyDiffs'', but puts the ledger tables inside the second ledger
--- state.
+-- | Apply diffs from @l2@ on values from @l1@. Returns @l2@.
 applyDiffs ::
-     (Castable l l', HasLedgerTables l, HasLedgerTables l')
+     (SameUtxoTypes l l', HasLedgerTables l, HasLedgerTables l')
   => l ValuesMK -> l' DiffMK -> l' ValuesMK
-applyDiffs l1 l2 = over l2 $ applyDiffs' l1 l2
+applyDiffs l1 l2 = ltwith l2 $ applyDiffs' l1 l2
 
 rawApplyDiffForKeys ::
      Ord k
@@ -174,25 +165,22 @@ rawApplyDiffForKeys ::
 rawApplyDiffForKeys (ValuesMK vals) (KeysMK keys) (DiffMK diffs) =
   ValuesMK (Diff.applyDiffForKeys vals keys diffs)
 
-applyDiffForKeys' ::
-     (Castable l l'', Castable l l', HasLedgerTables l, HasLedgerTables l')
-  => l ValuesMK -> LedgerTables l KeysMK -> l' DiffMK -> LedgerTables l'' ValuesMK
-applyDiffForKeys' l1 l2 l3 = ltliftA3 rawApplyDiffForKeys (ltprj l1) (castLedgerTables l2) (ltprj l3)
-
+-- | Apply diffs in @l3@ for keys in @l2@ and @l1@ on values from @l1@. Returns @l3@.
 applyDiffForKeys ::
-     (Castable l l', HasLedgerTables l, HasLedgerTables l')
+     (SameUtxoTypes l l', HasLedgerTables l, HasLedgerTables l')
   => l ValuesMK -> LedgerTables l KeysMK -> l' DiffMK -> l' ValuesMK
-applyDiffForKeys l1 l2 l3 = over l3 $ applyDiffForKeys' l1 l2 l3
+applyDiffForKeys l1 l2 l3 = ltwith l3 $ applyDiffForKeys' (ltprj l1) l2 l3
 
-applyDiffForKeys'onTables ::
-     (Castable l l'', Castable l l', HasLedgerTables l, HasLedgerTables l')
+applyDiffForKeys' ::
+     (SameUtxoTypes l l'', SameUtxoTypes l l', HasLedgerTables l, HasLedgerTables l')
   => LedgerTables l ValuesMK -> LedgerTables l KeysMK -> l' DiffMK -> LedgerTables l'' ValuesMK
-applyDiffForKeys'onTables l1 l2 l3 = ltliftA3 rawApplyDiffForKeys (castLedgerTables l1) (castLedgerTables l2) (ltprj l3)
+applyDiffForKeys' l1 l2 l3 = ltliftA3 rawApplyDiffForKeys (castLedgerTables l1) (castLedgerTables l2) (ltprj l3)
 
+-- | Apply diffs in @l3@ for keys in @l2@ and @l1@ on values from @l1@. Returns @l3@.
 applyDiffForKeysOnTables ::
-     (Castable l l', HasLedgerTables l, HasLedgerTables l')
+     (SameUtxoTypes l l', HasLedgerTables l, HasLedgerTables l')
   => LedgerTables l ValuesMK -> LedgerTables l KeysMK -> l' DiffMK -> l' ValuesMK
-applyDiffForKeysOnTables l1 l2 l3 = over l3 $ applyDiffForKeys'onTables l1 l2 l3
+applyDiffForKeysOnTables l1 l2 l3 = ltwith l3 $ applyDiffForKeys' l1 l2 l3
 
 --
 -- Calculate differences
@@ -205,25 +193,29 @@ rawCalculateDifference ::
   -> TrackingMK k v
 rawCalculateDifference (ValuesMK before) (ValuesMK after) = TrackingMK after (Diff.diff before after)
 
-calculateAdditions ::
+-- | Promote values to diffs, for cases in which all existing values must be
+-- considered diffs. In particular this is used when populating the ledger
+-- tables for the first time.
+valuesAsDiffs ::
      (LedgerTableConstraints l, HasLedgerTables l)
-  => l ValuesMK -> l TrackingMK
-calculateAdditions l = over l $ ltliftA (rawCalculateDifference emptyMK) (ltprj l)
+  => l ValuesMK -> l DiffMK
+valuesAsDiffs l = trackingToDiffs $ ltwith l $ ltliftA (rawCalculateDifference emptyMK) (ltprj l)
 
 -- | Calculate the differences between two ledger states. The first ledger state
 -- is considered /before/, the second ledger state is considered /after/.
 -- Returns ledger tables.
 calculateDifference' ::
-     (Castable l l'', Castable l' l'', HasLedgerTables l, HasLedgerTables l')
+     (SameUtxoTypes l l'', SameUtxoTypes l' l'', HasLedgerTables l, HasLedgerTables l')
   => l ValuesMK -> l' ValuesMK -> LedgerTables l'' TrackingMK
 calculateDifference' l1 l2 = ltliftA2 rawCalculateDifference (ltprj l1) (ltprj l2)
 
--- | Like 'calculcateDifference'', but puts the ledger tables inside the second
--- leger state.
+-- | Calculate the differences between two ledger states. The first ledger state
+-- is considered /before/, the second ledger state is considered /after/.
+-- Returns the second ledger state.
 calculateDifference ::
-     (Castable l l', HasLedgerTables l, HasLedgerTables l')
+     (SameUtxoTypes l l', HasLedgerTables l, HasLedgerTables l')
   => l ValuesMK -> l' ValuesMK -> l' TrackingMK
-calculateDifference l1 l2 = over l2 $ calculateDifference' l1 l2
+calculateDifference l1 l2 = ltwith l2 $ calculateDifference' l1 l2
 
 --
 -- Attaching and/or applying diffs
@@ -231,32 +223,33 @@ calculateDifference l1 l2 = over l2 $ calculateDifference' l1 l2
 
 rawAttachAndApplyDiffs ::
      Ord k
-  => DiffMK     k v
-  -> ValuesMK   k v
+  => ValuesMK   k v
+  -> DiffMK     k v
   -> TrackingMK k v
-rawAttachAndApplyDiffs (DiffMK d) (ValuesMK v) = TrackingMK (Diff.applyDiff v d) d
+rawAttachAndApplyDiffs (ValuesMK v) (DiffMK d) = TrackingMK (Diff.applyDiff v d) d
 
 -- | Apply the differences from the first ledger state to the values of the
 -- second ledger state, and returns the resulting values together with the
 -- applied diff.
 attachAndApplyDiffs' ::
-     (Castable l l'', Castable l' l'', HasLedgerTables l, HasLedgerTables l')
-  => l DiffMK -> l' ValuesMK -> LedgerTables l'' TrackingMK
+     (SameUtxoTypes l l'', SameUtxoTypes l' l'', HasLedgerTables l, HasLedgerTables l')
+  => l' ValuesMK -> l DiffMK -> LedgerTables l'' TrackingMK
 attachAndApplyDiffs' l1 l2 = ltliftA2 rawAttachAndApplyDiffs (ltprj l1) (ltprj l2)
 
--- | Like 'attachAndApplyDiffs'', but puts the ledger tables inside the first
--- leger state.
+-- | Apply the differences from the first ledger state to the values of the
+-- second ledger state. Returns the second ledger state with a 'TrackingMK' of
+-- the final values and all the diffs.
 attachAndApplyDiffs ::
-     (Castable l l', HasLedgerTables l, HasLedgerTables l')
-  => l DiffMK -> l' ValuesMK -> l TrackingMK
-attachAndApplyDiffs l1 l2 = over l1 $ attachAndApplyDiffs' l1 l2
+     (SameUtxoTypes l l', HasLedgerTables l, HasLedgerTables l')
+  => l ValuesMK -> l' DiffMK -> l' TrackingMK
+attachAndApplyDiffs l1 l2 = ltwith l2 $ attachAndApplyDiffs' l1 l2
 
 rawAttachEmptyDiffs :: Ord k => ValuesMK k v -> TrackingMK k v
 rawAttachEmptyDiffs (ValuesMK v) = TrackingMK v mempty
 
 -- | Make a 'TrackingMK' with empty diffs.
 attachEmptyDiffs :: HasLedgerTables l => l ValuesMK -> l TrackingMK
-attachEmptyDiffs l1 = over l1 $ ltmap rawAttachEmptyDiffs (ltprj l1)
+attachEmptyDiffs l1 = ltwith l1 $ ltmap rawAttachEmptyDiffs (ltprj l1)
 
 --
 -- Prepend tracking diffs
@@ -282,30 +275,19 @@ rawPrependTrackingDiffs (TrackingMK _ d1) (TrackingMK v d2) =
 --
 -- PRECONDITION:  See 'rawPrependTrackingDiffs'.
 prependTrackingDiffs' ::
-     (Castable l l'', Castable l' l'', HasLedgerTables l, HasLedgerTables l')
+     (SameUtxoTypes l l'', SameUtxoTypes l' l'', HasLedgerTables l, HasLedgerTables l')
   => l TrackingMK -> l' TrackingMK -> LedgerTables l'' TrackingMK
 prependTrackingDiffs' l1 l2 = ltliftA2 rawPrependTrackingDiffs (ltprj l1) (ltprj l2)
 
--- | Like 'prependTrackingDiffs'', but puts the ledger tables inside the second
--- leger state.
+-- | Prepend tracking diffs from the first ledger state to the tracking diffs
+-- from the second ledger state. Keep the tracking values of the second ledger
+-- state. Returns the second ledger state.
+--
+-- PRECONDITION:  See 'rawPrependTrackingDiffs'.
 prependTrackingDiffs ::
-     (Castable l l', HasLedgerTables l, HasLedgerTables l')
+     (SameUtxoTypes l l', HasLedgerTables l, HasLedgerTables l')
   => l TrackingMK -> l' TrackingMK -> l' TrackingMK
-prependTrackingDiffs l1 l2 = over l2 $ prependTrackingDiffs' l1 l2
-
--- Reapply tracking diffs
-
-rawReapplyTracking ::
-     Ord k
-  => TrackingMK k v
-  -> ValuesMK   k v
-  -> TrackingMK k v
-rawReapplyTracking (TrackingMK _v d) (ValuesMK v) = TrackingMK (Diff.applyDiff v d) d
-
--- | Replace the tables in the first parameter with the tables of the second
--- parameter after applying the differences in the first parameter to them
-reapplyTracking :: LedgerTableConstraints l => LedgerTables l TrackingMK -> LedgerTables l ValuesMK -> LedgerTables l TrackingMK
-reapplyTracking = ltliftA2 rawReapplyTracking
+prependTrackingDiffs l1 l2 = ltwith l2 $ prependTrackingDiffs' l1 l2
 
 -- Restrict values
 
@@ -317,11 +299,6 @@ rawRestrictValues ::
 rawRestrictValues (ValuesMK v) (KeysMK k) = ValuesMK $ v `Map.restrictKeys` k
 
 restrictValues' ::
-     (Castable l l'', Castable l' l'', HasLedgerTables l, HasLedgerTables l')
+     (SameUtxoTypes l l'', SameUtxoTypes l' l'', HasLedgerTables l, HasLedgerTables l')
   => l ValuesMK -> l' KeysMK -> LedgerTables l'' ValuesMK
 restrictValues' l1 l2 = ltliftA2 rawRestrictValues (ltprj l1) (ltprj l2)
-
-restrictValues ::
-     (Castable l l', HasLedgerTables l, HasLedgerTables l')
-  => l ValuesMK -> l' KeysMK -> l ValuesMK
-restrictValues l1 l2 = over l1 $ ltliftA2 rawRestrictValues (ltprj l1) (ltprj l2)

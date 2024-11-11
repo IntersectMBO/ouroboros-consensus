@@ -5,15 +5,15 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 
--- | See "Ouroboros.Consensus.Storage.LedgerDB.BackingStore.API" for the
+-- | See "Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API" for the
 -- documentation. This module just puts together the implementations for the
 -- API, currently two:
 --
--- * "Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.InMemory": a @TVar@
---   holding a "Data.Map".
+-- * "Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory": a
+--   @TVar@ holding a "Data.Map".
 --
--- * "Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB": an external
---   disk-based database.
+-- * "Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB": an
+--   external disk-based database.
 module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore (
     -- * API
     --
