@@ -32,8 +32,7 @@ import           Control.Concurrent.Class.MonadSTM.Strict.TChan
 import           Control.Monad (void)
 import           Control.Monad.Except (runExcept)
 import qualified Control.Tracer as CT (Tracer (..), traceWith)
-import           Data.Bool (bool)
-import           Data.Foldable hiding (toList)
+import qualified Data.Foldable as Foldable
 import           Data.Function (on)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
@@ -46,7 +45,7 @@ import qualified Data.TreeDiff.OMap as TD
 import           GHC.Generics
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation
-import           Ouroboros.Consensus.Ledger.Basics
+import           Ouroboros.Consensus.Ledger.Basics hiding (TxIn, TxOut)
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
@@ -86,7 +85,7 @@ import           Test.Util.ToExpr ()
 data ModifyDB = KeepDB | ClearDB deriving (Generic, ToExpr, NoThunks)
 
 instance Arbitrary ModifyDB where
-  arbitrary = bool KeepDB ClearDB <$> arbitrary
+  arbitrary = elements [KeepDB, ClearDB]
 
 keepsDB :: ModifyDB -> Bool
 keepsDB KeepDB  = True
@@ -365,8 +364,9 @@ doTryAddTxs ::
   -> Model blk r
 doTryAddTxs model [] = model
 doTryAddTxs model txs =
-    case find ((castPoint (getTip st) ==) . getTip)
-              (Set.insert modelLedgerDBTip modelReachableStates) of
+    case Foldable.find
+           ((castPoint (getTip st) ==) . getTip)
+           (Set.insert modelLedgerDBTip modelReachableStates) of
       Nothing -> doTryAddTxs (doSync model) txs
       Just _ ->
         let nextTicket = succ $ modelLastSeenTicketNo model
@@ -536,15 +536,14 @@ newLedgerInterface initialLedger = do
   pure (LedgerInterface {
       getCurrentLedgerState = forgetLedgerTables . ldbTip <$> readTVar t
     , getLedgerTablesAtFor  = \pt txs -> do
-        let keys = foldl' (<>) emptyLedgerTables
-                 $ map getTransactionKeySets txs
+        let keys = Foldable.foldMap' getTransactionKeySets txs
         MockedLedgerDB ti oldReachableTips _ <- atomically $ readTVar t
         if pt == castPoint (getTip ti) -- if asking for tables at the tip of the
                                        -- ledger db
         then
           let tbs = ltliftA2 f keys $ projectLedgerTables ti
           in  pure $ Just tbs
-        else case find ((castPoint pt ==). getTip) oldReachableTips of
+        else case Foldable.find ((castPoint pt ==). getTip) oldReachableTips of
            Nothing -> pure Nothing
            Just mtip ->
              if pt == castPoint (getTip mtip)

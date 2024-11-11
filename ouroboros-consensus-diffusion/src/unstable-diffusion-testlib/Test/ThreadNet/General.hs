@@ -851,6 +851,7 @@ prop_general_internal syncity pga testOutput =
     -- Check that all self-issued blocks are pipelined.
     prop_pipelining :: Property
     prop_pipelining = case syncity of
+      -- See #545 for why this is trivially true
       SemiSync -> property True
       Sync     -> conjoin
         [ counterexample ("Node " <> condense nid <> " did not pipeline") $

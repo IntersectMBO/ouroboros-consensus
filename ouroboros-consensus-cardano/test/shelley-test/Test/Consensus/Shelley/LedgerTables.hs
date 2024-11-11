@@ -1,17 +1,23 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Consensus.Shelley.LedgerTables (tests) where
 
-import           Cardano.Crypto.Hash (ShortHash)
+import qualified Cardano.Ledger.Api.Era as L
+import           Data.Proxy
+import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
+import           Data.SOP.Strict
+import           Ouroboros.Consensus.Cardano.Block (CardanoShelleyEras)
 import           Ouroboros.Consensus.Ledger.Tables
-import           Ouroboros.Consensus.Protocol.Praos (Praos)
-import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.HFEras ()
 import           Ouroboros.Consensus.Shelley.Ledger
@@ -21,42 +27,41 @@ import           Test.Cardano.Ledger.Babbage.Arbitrary ()
 import           Test.Cardano.Ledger.Babbage.Serialisation.Generators ()
 import           Test.Cardano.Ledger.Conway.Arbitrary ()
 import           Test.Consensus.Shelley.Generators ()
-import           Test.Consensus.Shelley.MockCrypto (CanMock, MockCrypto)
+import           Test.Consensus.Shelley.MockCrypto (CanMock)
 import           Test.LedgerTables
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 
-type Crypto = MockCrypto ShortHash
-type Proto  = TPraos Crypto
-
 tests :: TestTree
-tests = testGroup "LedgerTables"
-  [ testGroup "Shelley"
-    [ testProperty "Stowable laws" (prop_stowable_laws @(ShelleyBlock Proto (ShelleyEra Crypto)))
-    , testProperty "HasLedgerTables laws" (prop_hasledgertables_laws @(ShelleyBlock Proto (ShelleyEra Crypto)))
-    ]
-  , testGroup "Allegra"
-    [ testProperty "Stowable laws" (prop_stowable_laws @(ShelleyBlock Proto (AllegraEra Crypto)))
-    , testProperty "HasLedgerTables laws" (prop_hasledgertables_laws @(ShelleyBlock Proto (AllegraEra Crypto)))
-    ]
-  , testGroup "Mary"
-    [ testProperty "Stowable laws" (prop_stowable_laws @(ShelleyBlock Proto (MaryEra Crypto)))
-    , testProperty "HasLedgerTables laws" (prop_hasledgertables_laws @(ShelleyBlock Proto (MaryEra Crypto)))
-    ]
-  , testGroup "Alonzo"
-    [ testProperty "Stowable laws" (prop_stowable_laws @(ShelleyBlock Proto (AlonzoEra Crypto)))
-    , testProperty "HasLedgerTables laws" (prop_hasledgertables_laws @(ShelleyBlock Proto (AlonzoEra Crypto)))
-    ]
-  , testGroup "Babbage"
-    [ testProperty "Stowable laws" (prop_stowable_laws @(ShelleyBlock (Praos StandardCrypto) (BabbageEra StandardCrypto)))
-    , testProperty "HasLedgerTables laws" (prop_hasledgertables_laws @(ShelleyBlock (Praos StandardCrypto) (BabbageEra StandardCrypto)))
-    ]
-  , testGroup "Conway"
-    [ testProperty "Stowable laws" (prop_stowable_laws @(ShelleyBlock (Praos StandardCrypto) (ConwayEra StandardCrypto)))
-    , testProperty "HasLedgerTables laws" (prop_hasledgertables_laws @(ShelleyBlock (Praos StandardCrypto) (ConwayEra StandardCrypto)))
-    ]
-  ]
+tests =
+      testGroup "LedgerTables"
+    . hcollapse
+    . hcmap (Proxy @TestLedgerTables) (K . f)
+    $ (hpure Proxy :: NP Proxy (CardanoShelleyEras StandardCrypto))
+  where
+    f :: forall blk. TestLedgerTables blk => Proxy blk -> TestTree
+    f _ = testGroup (L.eraName @(ShelleyBlockLedgerEra blk))
+        [ testProperty "Stowable laws" (prop_stowable_laws @blk)
+        , testProperty "HasLedgerTables laws" (prop_hasledgertables_laws @blk)
+        ]
 
+class
+  ( HasLedgerTables (LedgerState blk)
+  , CanStowLedgerTables (LedgerState blk)
+  , (Show `And` Arbitrary) (LedgerState blk EmptyMK)
+  , (Show `And` Arbitrary) (LedgerState blk ValuesMK)
+  , (Show `And` Arbitrary) (LedgerTables (LedgerState blk) ValuesMK)
+  , L.Era (ShelleyBlockLedgerEra blk)
+  ) => TestLedgerTables blk
+
+instance
+  ( HasLedgerTables (LedgerState blk)
+  , CanStowLedgerTables (LedgerState blk)
+  , (Show `And` Arbitrary) (LedgerState blk EmptyMK)
+  , (Show `And` Arbitrary) (LedgerState blk ValuesMK)
+  , (Show `And` Arbitrary) (LedgerTables (LedgerState blk) ValuesMK)
+  , L.Era (ShelleyBlockLedgerEra blk)
+  ) => TestLedgerTables blk
 
 instance ( CanMock proto era
          , Arbitrary (LedgerState (ShelleyBlock proto era) EmptyMK)

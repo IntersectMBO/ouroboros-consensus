@@ -54,9 +54,9 @@ instance CardanoHardForkConstraints c
       IS (IS (IS (IS (IS IZ))))        -> CardanoTxIn shelleyTxIn
       IS (IS (IS (IS (IS (IS idx'))))) -> case idx' of {}
 
-  distribCanonicalTxIn IZ _                 =
-      error "distribCanonicalTxIn: Byron has no TxIns"
-  distribCanonicalTxIn (IS idx) cardanoTxIn = case idx of
+  ejectCanonicalTxIn IZ _                 =
+      error "ejectCanonicalTxIn: Byron has no TxIns"
+  ejectCanonicalTxIn (IS idx) cardanoTxIn = case idx of
       IZ                               -> getCardanoTxIn cardanoTxIn
       IS IZ                            -> getCardanoTxIn cardanoTxIn
       IS (IS IZ)                       -> getCardanoTxIn cardanoTxIn
@@ -77,24 +77,24 @@ instance CardanoHardForkConstraints c
 -- https://downloads.haskell.org/ghc/latest/docs/users_guide/exts/pragmas.html#unpack-pragma
 data CardanoTxOut c =
 #if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
-    ShelleyTxOut {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (TPraos c) (ShelleyEra c))))
-  | AllegraTxOut {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (TPraos c) (AllegraEra c))))
-  | MaryTxOut    {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (TPraos c) (MaryEra c))))
-  | AlonzoTxOut  {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (TPraos c) (AlonzoEra c))))
-  | BabbageTxOut {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (Praos c) (BabbageEra c))))
-  | ConwayTxOut  {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (Praos c) (ConwayEra c))))
+    ShelleyTxOut {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) (ShelleyEra c))))
+  | AllegraTxOut {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) (AllegraEra c))))
+  | MaryTxOut    {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) (MaryEra c))))
+  | AlonzoTxOut  {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) (AlonzoEra c))))
+  | BabbageTxOut {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (Praos c) (BabbageEra c))))
+  | ConwayTxOut  {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (Praos c) (ConwayEra c))))
 #else
-    ShelleyTxOut {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (TPraos c) (ShelleyEra c))))
-  | AllegraTxOut {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (TPraos c) (AllegraEra c))))
-  | MaryTxOut    {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (TPraos c) (MaryEra c))))
-  | AlonzoTxOut  !(Value (LedgerState (ShelleyBlock (TPraos c) (AlonzoEra c))))
-  | BabbageTxOut !(Value (LedgerState (ShelleyBlock (Praos c) (BabbageEra c))))
-  | ConwayTxOut  !(Value (LedgerState (ShelleyBlock (Praos c) (ConwayEra c))))
+    ShelleyTxOut {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) (ShelleyEra c))))
+  | AllegraTxOut {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) (AllegraEra c))))
+  | MaryTxOut    {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) (MaryEra c))))
+  | AlonzoTxOut  !(TxOut (LedgerState (ShelleyBlock (TPraos c) (AlonzoEra c))))
+  | BabbageTxOut !(TxOut (LedgerState (ShelleyBlock (Praos c) (BabbageEra c))))
+  | ConwayTxOut  !(TxOut (LedgerState (ShelleyBlock (Praos c) (ConwayEra c))))
 #endif
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
-instance CanHardFork (CardanoEras c) => HasHardForkTxOut (CardanoEras c) where
+instance CardanoHardForkConstraints c => HasHardForkTxOut (CardanoEras c) where
   type instance HardForkTxOut (CardanoEras c) = CardanoTxOut c
   injectHardForkTxOut IZ _txOut = error "Impossible: injecting TxOut from Byron"
   injectHardForkTxOut (IS IZ) txOut = ShelleyTxOut txOut
@@ -105,17 +105,17 @@ instance CanHardFork (CardanoEras c) => HasHardForkTxOut (CardanoEras c) where
   injectHardForkTxOut (IS (IS (IS (IS (IS (IS IZ)))))) txOut = ConwayTxOut txOut
   injectHardForkTxOut (IS (IS (IS (IS (IS (IS (IS idx))))))) _txOut = case idx of {}
 
-  distribHardForkTxOut IZ = error "Impossible: distributing TxOut to Byron"
-  distribHardForkTxOut (IS IZ) = \case
+  ejectHardForkTxOut IZ = error "Impossible: distributing TxOut to Byron"
+  ejectHardForkTxOut (IS IZ) = \case
     ShelleyTxOut txout -> txout
     _ -> error "Anachrony"
-  distribHardForkTxOut (IS (IS IZ)) = \case
+  ejectHardForkTxOut (IS (IS IZ)) = \case
     ShelleyTxOut txout ->
       case translateLedgerTables (hardForkEraTranslation @(CardanoEras c)) of
         InPairs.PCons _ (InPairs.PCons p _) -> translateTxOutWith p txout
     AllegraTxOut txout -> txout
     _ -> error "Anachrony"
-  distribHardForkTxOut (IS (IS (IS IZ))) = \case
+  ejectHardForkTxOut (IS (IS (IS IZ))) = \case
     ShelleyTxOut txout ->
       case translateLedgerTables (hardForkEraTranslation @(CardanoEras c)) of
         InPairs.PCons _ (InPairs.PCons p1 (InPairs.PCons p2 _)) -> translateTxOutWith p2 $ translateTxOutWith p1 txout
@@ -124,7 +124,7 @@ instance CanHardFork (CardanoEras c) => HasHardForkTxOut (CardanoEras c) where
         InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons p2 _)) -> translateTxOutWith p2 txout
     MaryTxOut txout -> txout
     _ -> error "Anachrony"
-  distribHardForkTxOut (IS (IS (IS (IS IZ)))) = \case
+  ejectHardForkTxOut (IS (IS (IS (IS IZ)))) = \case
     ShelleyTxOut txout ->
       case translateLedgerTables (hardForkEraTranslation @(CardanoEras c)) of
         InPairs.PCons _ (InPairs.PCons p1 (InPairs.PCons p2 (InPairs.PCons p3 _))) -> translateTxOutWith p3 $ translateTxOutWith p2 $ translateTxOutWith p1 txout
@@ -136,7 +136,7 @@ instance CanHardFork (CardanoEras c) => HasHardForkTxOut (CardanoEras c) where
         InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons p3 _))) -> translateTxOutWith p3 txout
     AlonzoTxOut txout -> txout
     _ -> error "Anachrony"
-  distribHardForkTxOut (IS (IS (IS (IS (IS IZ))))) = \case
+  ejectHardForkTxOut (IS (IS (IS (IS (IS IZ))))) = \case
     ShelleyTxOut txout ->
       case translateLedgerTables (hardForkEraTranslation @(CardanoEras c)) of
         InPairs.PCons _ (InPairs.PCons p1 (InPairs.PCons p2 (InPairs.PCons p3 (InPairs.PCons p4 _)))) -> translateTxOutWith p4 $ translateTxOutWith p3 $ translateTxOutWith p2 $ translateTxOutWith p1 txout
@@ -151,7 +151,7 @@ instance CanHardFork (CardanoEras c) => HasHardForkTxOut (CardanoEras c) where
         InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons p4 _)))) -> translateTxOutWith p4 txout
     BabbageTxOut txout -> txout
     _ -> error "Anachrony"
-  distribHardForkTxOut (IS (IS (IS (IS (IS (IS IZ)))))) = \case
+  ejectHardForkTxOut (IS (IS (IS (IS (IS (IS IZ)))))) = \case
     ShelleyTxOut txout ->
       case translateLedgerTables (hardForkEraTranslation @(CardanoEras c)) of
         InPairs.PCons _ (InPairs.PCons p1 (InPairs.PCons p2 (InPairs.PCons p3 (InPairs.PCons p4 (InPairs.PCons p5 _))))) -> translateTxOutWith p5 $ translateTxOutWith p4 $ translateTxOutWith p3 $ translateTxOutWith p2 $ translateTxOutWith p1 txout
@@ -168,7 +168,7 @@ instance CanHardFork (CardanoEras c) => HasHardForkTxOut (CardanoEras c) where
       case translateLedgerTables (hardForkEraTranslation @(CardanoEras c)) of
         InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons p5 _))))) -> translateTxOutWith p5 txout
     ConwayTxOut txout -> txout
-  distribHardForkTxOut (IS (IS (IS (IS (IS (IS (IS idx))))))) = case idx of {}
+  ejectHardForkTxOut (IS (IS (IS (IS (IS (IS (IS idx))))))) = case idx of {}
 
 instance CardanoHardForkConstraints c => SerializeHardForkTxOut (CardanoEras c) where
   encodeHardForkTxOut _ (ShelleyTxOut txout) =

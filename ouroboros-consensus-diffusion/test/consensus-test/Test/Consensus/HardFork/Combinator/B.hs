@@ -172,31 +172,35 @@ data instance LedgerState BlockB mk = LgrB {
   Ledger Tables
 -------------------------------------------------------------------------------}
 
+type instance TxIn  (LedgerState BlockB) = Void
+type instance TxOut (LedgerState BlockB) = Void
 
-type instance Key   (LedgerState BlockB) = Void
-type instance Value (LedgerState BlockB) = Void
-
-instance HasLedgerTables (LedgerState BlockB)
-instance HasLedgerTables (Ticked1 (LedgerState BlockB))
-instance CanSerializeLedgerTables (LedgerState BlockB)
-instance CanStowLedgerTables (LedgerState BlockB)
 instance LedgerTablesAreTrivial (LedgerState BlockB) where
   convertMapKind (LgrB x) = LgrB x
-instance LedgerTablesAreTrivial (Ticked1 (LedgerState BlockB)) where
+instance LedgerTablesAreTrivial (Ticked (LedgerState BlockB)) where
   convertMapKind (TickedLedgerStateB x) = TickedLedgerStateB (convertMapKind x)
+
+deriving via TrivialLedgerTables (LedgerState BlockB)
+    instance HasLedgerTables (LedgerState BlockB)
+deriving via TrivialLedgerTables (Ticked (LedgerState BlockB))
+    instance HasLedgerTables (Ticked (LedgerState BlockB))
+deriving via TrivialLedgerTables (LedgerState BlockB)
+    instance CanSerializeLedgerTables (LedgerState BlockB)
+deriving via TrivialLedgerTables (LedgerState BlockB)
+    instance CanStowLedgerTables (LedgerState BlockB)
 
 type instance LedgerCfg (LedgerState BlockB) = ()
 
 -- | Ticking has no state on the B ledger state
-newtype instance Ticked1 (LedgerState BlockB) mk = TickedLedgerStateB {
+newtype instance Ticked (LedgerState BlockB) mk = TickedLedgerStateB {
       getTickedLedgerStateB :: LedgerState BlockB mk
     }
-  deriving NoThunks via OnlyCheckWhnfNamed "TickedLgrB" (Ticked1 (LedgerState BlockB) mk)
+  deriving NoThunks via OnlyCheckWhnfNamed "TickedLgrB" (Ticked (LedgerState BlockB) mk)
 
 instance GetTip (LedgerState BlockB) where
   getTip = castPoint . lgrB_tip
 
-instance GetTip (Ticked1 (LedgerState BlockB)) where
+instance GetTip (Ticked (LedgerState BlockB)) where
   getTip = castPoint . getTip . getTickedLedgerStateB
 
 instance IsLedger (LedgerState BlockB) where
@@ -466,9 +470,9 @@ instance SerialiseNodeToClient BlockB Void where
   decodeNodeToClient _ _ = fail "no ApplyTxErr to be decoded"
 
 instance SerialiseNodeToClient BlockB (SomeBlockQuery (BlockQuery BlockB)) where
-  encodeNodeToClient _ _ (SomeBlockQuery q) = case q of {}
+  encodeNodeToClient _ _ = \case {}
   decodeNodeToClient _ _ = fail "there are no queries to be decoded"
 
-instance SerialiseResult' BlockB BlockQuery where
-  encodeResult' _ _ = \case {}
-  decodeResult' _ _ = \case {}
+instance SerialiseBlockQueryResult BlockB BlockQuery where
+  encodeBlockQueryResult _ _ = \case {}
+  decodeBlockQueryResult _ _ = \case {}

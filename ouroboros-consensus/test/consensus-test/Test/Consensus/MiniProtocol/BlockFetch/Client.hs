@@ -23,7 +23,6 @@
 module Test.Consensus.MiniProtocol.BlockFetch.Client (tests) where
 
 import           Control.Monad (replicateM)
-import           Control.Monad.Base
 import           Control.Monad.Class.MonadTime
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Monad.IOSim (runSimOrThrow)
@@ -44,7 +43,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as 
 import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDBImpl
-import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args
+import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.STM (blockUntilJust,
@@ -120,7 +119,7 @@ data BlockFetchClientOutcome = BlockFetchClientOutcome {
 
 runBlockFetchTest ::
      forall m.
-     (IOLike m, MonadTime m, MonadTimer m, MonadBase m m)
+     (IOLike m, MonadTime m, MonadTimer m)
   => BlockFetchClientTestSetup
   -> m BlockFetchClientOutcome
 runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
@@ -245,7 +244,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
                 , mcdbRegistry = registry
                 , mcdbNodeDBs = nodeDBs
                 }
-          pure $ updateTracer cdbTracer args
+          pure $ ChainDB.updateTracer cdbTracer args
         (_, (chainDB, ChainDBImpl.Internal{intAddBlockRunner})) <-
           allocate
             registry

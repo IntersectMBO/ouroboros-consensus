@@ -182,9 +182,9 @@ instance SerialiseNodeToClient ByronBlock (SomeBlockQuery (BlockQuery ByronBlock
   encodeNodeToClient _ _ (SomeBlockQuery q) = encodeByronQuery q
   decodeNodeToClient _ _               = decodeByronQuery
 
-instance SerialiseResult' ByronBlock BlockQuery where
-  encodeResult' _ _ = encodeByronResult
-  decodeResult' _ _ = decodeByronResult
+instance SerialiseBlockQueryResult ByronBlock BlockQuery where
+  encodeBlockQueryResult _ _ = encodeByronResult
+  decodeBlockQueryResult _ _ = decodeByronResult
 
 {-------------------------------------------------------------------------------
   Nested contents

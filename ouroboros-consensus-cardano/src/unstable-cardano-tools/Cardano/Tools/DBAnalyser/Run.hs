@@ -106,10 +106,23 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
           chunkInfo  = Node.nodeImmutableDbChunkInfo (configStorage cfg)
           flavargs = case ldbBackend of
             V1InMem -> LedgerDB.LedgerDbFlavorArgsV1
-               (LedgerDB.V1.V1Args LedgerDB.V1.DisableFlushing LedgerDB.V1.DisableQuerySize LedgerDB.V1.InMemoryBackingStoreArgs)
+               ( LedgerDB.V1.V1Args
+                   LedgerDB.V1.DisableFlushing
+                   LedgerDB.V1.DisableQuerySize
+                   LedgerDB.V1.InMemoryBackingStoreArgs
+               )
             V1LMDB  -> LedgerDB.LedgerDbFlavorArgsV1
-               (LedgerDB.V1.V1Args LedgerDB.V1.DisableFlushing LedgerDB.V1.DisableQuerySize (LedgerDB.V1.LMDBBackingStoreArgs (BS.LiveLMDBFS (shfs (ChainDB.RelativeMountPoint "lmdb"))) defaultLMDBLimits Dict.Dict))
-            V2InMem -> LedgerDB.LedgerDbFlavorArgsV2 (LedgerDB.V2.V2Args LedgerDB.V2.InMemoryHandleArgs)
+               ( LedgerDB.V1.V1Args
+                   LedgerDB.V1.DisableFlushing
+                   LedgerDB.V1.DisableQuerySize
+                   ( LedgerDB.V1.LMDBBackingStoreArgs
+                       (BS.LiveLMDBFS (shfs (ChainDB.RelativeMountPoint "lmdb")))
+                       defaultLMDBLimits
+                       Dict.Dict
+                   )
+               )
+            V2InMem -> LedgerDB.LedgerDbFlavorArgsV2
+                         (LedgerDB.V2.V2Args LedgerDB.V2.InMemoryHandleArgs)
           args' =
             ChainDB.completeChainDbArgs
               registry

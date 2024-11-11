@@ -1,5 +1,4 @@
 {-# LANGUAGE ApplicativeDo #-}
-{-# LANGUAGE CPP           #-}
 {-# LANGUAGE LambdaCase    #-}
 
 module DBAnalyser.Parsers (
@@ -14,9 +13,7 @@ import           Cardano.Tools.DBAnalyser.Block.Byron
 import           Cardano.Tools.DBAnalyser.Block.Cardano
 import           Cardano.Tools.DBAnalyser.Block.Shelley
 import           Cardano.Tools.DBAnalyser.Types
-#if __GLASGOW_HASKELL__ < 900
-import           Data.Foldable (asum)
-#endif
+import qualified Data.Foldable as Foldable
 import           Options.Applicative
 import           Ouroboros.Consensus.Block (SlotNo (..), WithOrigin (..))
 import           Ouroboros.Consensus.Byron.Node (PBftSignatureThreshold (..))
@@ -44,7 +41,7 @@ parseDBAnalyserConfig = DBAnalyserConfig
     <*> parseValidationPolicy
     <*> parseAnalysis
     <*> parseLimit
-    <*> asum [
+    <*> Foldable.asum [
           flag' V1InMem $ mconcat [
                 long "v1-in-mem"
               , help "use v1 in-memory backing store"
@@ -54,8 +51,8 @@ parseDBAnalyserConfig = DBAnalyserConfig
               , help "use v1 LMDB backing store"
               ]
           , flag' V2InMem $ mconcat [
-              long "in-mem"
-              , help "use new in-memory backend"
+              long "v2-in-mem"
+              , help "use v2 in-memory backend"
               ]
           ]
 

@@ -12,13 +12,11 @@ import           Data.SOP.Strict
 import           Ouroboros.Consensus.HardFork.Combinator.Abstract
 import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger
-                     (HardForkHasLedgerTables, HasCanonicalTxIn,
-                     HasHardForkTxOut)
+                     (HasCanonicalTxIn, HasHardForkTxOut)
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import           Ouroboros.Consensus.Ledger.CommonProtocolParams
 
 instance ( CanHardFork xs
-         , HardForkHasLedgerTables xs
          , HasCanonicalTxIn xs
          , HasHardForkTxOut xs
          ) => CommonProtocolParams (HardForkBlock xs) where

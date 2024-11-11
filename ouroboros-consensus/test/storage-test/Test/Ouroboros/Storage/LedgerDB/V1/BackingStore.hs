@@ -10,6 +10,7 @@
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -27,7 +28,6 @@ import           Control.Concurrent.Class.MonadSTM.Strict.TMVar
 import           Control.Monad (void)
 import           Control.Monad.Class.MonadThrow (Handler (..), catches)
 import           Control.Monad.IO.Class (MonadIO (..))
-import           Control.Monad.IOSim
 import           Control.Monad.Reader (runReaderT)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -43,6 +43,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB 
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike hiding (MonadMask (..),
                      newMVar, newTVarIO, readMVar)
+import           Ouroboros.Network.Testing.QuickCheck
 import qualified System.Directory as Dir
 import           System.FS.API hiding (Handle)
 import           System.FS.IO (ioHasFS)
@@ -52,10 +53,10 @@ import           System.IO.Temp (createTempDirectory)
 import           Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Lockstep
 import qualified Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock as Mock
 import           Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Registry
+import           Test.Ouroboros.Storage.LedgerDB.V1.LMDB
 import qualified Test.QuickCheck as QC
-import           Test.QuickCheck (Arbitrary (..), Property, Testable)
+import           Test.QuickCheck (Arbitrary (..), Property)
 import           "quickcheck-dynamic" Test.QuickCheck.Extras
-import           Test.QuickCheck.Gen.Unsafe
 import qualified Test.QuickCheck.Monadic as QC
 import           Test.QuickCheck.Monadic (PropertyM)
 import           Test.QuickCheck.StateModel as StateModel
@@ -86,25 +87,11 @@ tests = testGroup "BackingStore" [
   , adjustOption (scaleQuickCheckTests 2) $
       testProperty "LMDB IO IOHasFS" $ testWithIO $ do
         (fp, cleanup) <- setupTempDir
-        setupBSEnv (\x -> BS.LMDBBackingStoreArgs (BS.LiveLMDBFS x) testLMDBLimits Dict.Dict) (setupIOHasFS fp) cleanup
+        setupBSEnv (\x -> BS.LMDBBackingStoreArgs (BS.LiveLMDBFS x) (testLMDBLimits maxOpenValueHandles) Dict.Dict) (setupIOHasFS fp) cleanup
   ]
 
 scaleQuickCheckTests :: Int -> QuickCheckTests -> QuickCheckTests
 scaleQuickCheckTests c (QuickCheckTests n) = QuickCheckTests $ c * n
-
-testLMDBLimits :: LMDB.LMDBLimits
-testLMDBLimits = LMDB.LMDBLimits
-  { -- 100 MiB should be more than sufficient for the tests we're running here.
-    -- If the database were to grow beyond 100 Mebibytes, resulting in a test
-    -- error, then something in the LMDB backing store or tests has changed and
-    -- we should reconsider this value.
-    LMDB.lmdbMapSize = 100 * 1024 * 1024
-    -- 3 internal databases: 1 for the settings, 1 for the state, and 1 for the
-    -- ledger tables.
-  , LMDB.lmdbMaxDatabases = 3
-
-  , LMDB.lmdbMaxReaders = maxOpenValueHandles
-  }
 
 testWithIOSim :: Actions (Lockstep (BackingStoreState K V D)) -> Property
 testWithIOSim acts = monadicSim $ do
@@ -167,16 +154,16 @@ setupBSEnv ::
   -> m (SomeHasFS m)
   -> m ()
   -> m (BSEnv m K V D)
-setupBSEnv bss mkShfs cleanup = do
+setupBSEnv mkBsArgs mkShfs cleanup = do
   shfs@(SomeHasFS hfs) <- mkShfs
 
   createDirectory hfs (mkFsPath ["copies"])
 
-  let bsi = BS.newBackingStoreInitialiser mempty (bss shfs) (BS.SnapshotsFS shfs)
+  let bsi = BS.newBackingStoreInitialiser mempty (mkBsArgs shfs) (BS.SnapshotsFS shfs)
 
   bsVar <- newMVar =<< bsi (BS.InitFromValues Origin emptyLedgerTables)
 
-  rr <- initHandleRegistry
+  handleReg <- initHandleRegistry
 
   let
     bsCleanup = do
@@ -188,7 +175,7 @@ setupBSEnv bss mkShfs cleanup = do
       bsRealEnv = RealEnv {
           reBackingStoreInit = bsi
         , reBackingStore = bsVar
-        , reRegistry = rr
+        , reRegistry = handleReg
         }
     , bsCleanup
     }
@@ -199,10 +186,10 @@ closeHandlers :: IOLike m => [Handler m ()]
 closeHandlers = [
     Handler $ \case
       InMemory.InMemoryBackingStoreClosedExn -> pure ()
-      e                                  -> throwIO e
+      e                                      -> throwIO e
   , Handler $ \case
       LMDB.LMDBErrClosed -> pure ()
-      e                -> throwIO e
+      e                  -> throwIO e
   ]
 
 {-------------------------------------------------------------------------------
@@ -214,9 +201,9 @@ type T = BackingStoreState K V D
 pT :: Proxy T
 pT = Proxy
 
-type K = LedgerTables (OTLedgerState (Fixed Word) (Fixed Word)) KeysMK
-type V = LedgerTables (OTLedgerState (Fixed Word) (Fixed Word)) ValuesMK
-type D = LedgerTables (OTLedgerState (Fixed Word) (Fixed Word)) DiffMK
+type K = LedgerTables (OTLedgerState (QC.Fixed Word) (QC.Fixed Word)) KeysMK
+type V = LedgerTables (OTLedgerState (QC.Fixed Word) (QC.Fixed Word)) ValuesMK
+type D = LedgerTables (OTLedgerState (QC.Fixed Word) (QC.Fixed Word)) DiffMK
 
 {-------------------------------------------------------------------------------
   @'HasOps'@ instances
@@ -271,7 +258,7 @@ instance Mock.ValuesLength V where
     Map.size m
 
 instance Mock.MakeDiff V D where
-  diff t1 t2 = forgetTrackingValues $ calculateDifference t1 t2
+  diff t1 t2 = trackingToDiffs $ calculateDifference t1 t2
 
 instance Mock.DiffSize D where
   diffSize (LedgerTables (DiffMK (Diff.Diff m))) = Map.size m
@@ -292,16 +279,6 @@ runPropertyIOLikeMonad ::
 runPropertyIOLikeMonad p = QC.MkPropertyM $ \k -> do
   m <- QC.unPropertyM p $ fmap ioLikeMonad . k
   return $ unIOLikeMonad m
-
--- | Copied from @Ouroboros.Network.Testing.QuickCheck@.
-runSimGen :: (forall s. QC.Gen (IOSim s a)) -> QC.Gen a
-runSimGen f = do
-    Capture eval <- capture
-    return $ runSimOrThrow (eval f)
-
--- | Copied from @Ouroboros.Network.Testing.QuickCheck@.
-monadicSim :: Testable a => (forall s. PropertyM (IOSim s) a) -> Property
-monadicSim m = QC.property (runSimGen (QC.monadic' m))
 
 {-------------------------------------------------------------------------------
   Orphan Arbitrary instances
@@ -338,8 +315,12 @@ instance QC.Arbitrary ks => QC.Arbitrary (BS.RangeQuery ks) where
   arbitrary = BS.RangeQuery <$> QC.arbitrary <*> QC.arbitrary
   shrink (BS.RangeQuery x y) = BS.RangeQuery <$> QC.shrink x <*> QC.shrink y
 
-newtype Fixed a = Fixed a
-  deriving newtype (Show, Eq, Ord)
-  deriving newtype (NoThunks, ToCBOR, FromCBOR)
+instance NoThunks a => NoThunks (QC.Fixed a) where
+  wNoThunks ctxt = wNoThunks ctxt . QC.getFixed
+  showTypeOf _ = "Fixed " ++ showTypeOf (Proxy @a)
 
-deriving via QC.Fixed a instance QC.Arbitrary a => QC.Arbitrary (Fixed a)
+instance ToCBOR a => ToCBOR (QC.Fixed a) where
+  toCBOR = toCBOR . QC.getFixed
+
+instance FromCBOR a => FromCBOR (QC.Fixed a) where
+  fromCBOR = QC.Fixed <$> fromCBOR

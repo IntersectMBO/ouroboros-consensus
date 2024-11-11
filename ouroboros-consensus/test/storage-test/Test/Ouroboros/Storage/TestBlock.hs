@@ -549,7 +549,7 @@ type instance LedgerCfg (LedgerState TestBlock) = HardFork.EraParams
 instance GetTip (LedgerState TestBlock) where
   getTip = castPoint . lastAppliedPoint
 
-instance GetTip (Ticked1 (LedgerState TestBlock)) where
+instance GetTip (Ticked (LedgerState TestBlock)) where
   getTip = castPoint . getTip . getTickedTestLedger
 
 instance IsLedger (LedgerState TestBlock) where
@@ -562,20 +562,21 @@ instance IsLedger (LedgerState TestBlock) where
                                  . TickedTestLedger
                                  . noNewTickingDiffs
 
-type instance Key   (LedgerState TestBlock) = Void
-type instance Value (LedgerState TestBlock) = Void
-
-instance HasLedgerTables (LedgerState TestBlock)
-instance HasLedgerTables (Ticked1 (LedgerState TestBlock))
-
-instance CanSerializeLedgerTables (LedgerState TestBlock) where
-
-instance CanStowLedgerTables (LedgerState TestBlock) where
+type instance TxIn  (LedgerState TestBlock) = Void
+type instance TxOut (LedgerState TestBlock) = Void
 
 instance LedgerTablesAreTrivial (LedgerState TestBlock) where
   convertMapKind (TestLedger x y) = TestLedger x y
-instance LedgerTablesAreTrivial (Ticked1 (LedgerState TestBlock)) where
+instance LedgerTablesAreTrivial (Ticked (LedgerState TestBlock)) where
   convertMapKind (TickedTestLedger x) = TickedTestLedger (convertMapKind x)
+deriving via TrivialLedgerTables (LedgerState TestBlock)
+    instance HasLedgerTables (LedgerState TestBlock)
+deriving via TrivialLedgerTables (Ticked (LedgerState TestBlock))
+    instance HasLedgerTables (Ticked (LedgerState TestBlock))
+deriving via TrivialLedgerTables (LedgerState TestBlock)
+    instance CanSerializeLedgerTables (LedgerState TestBlock)
+deriving via TrivialLedgerTables (LedgerState TestBlock)
+    instance CanStowLedgerTables (LedgerState TestBlock)
 
 instance ApplyBlock (LedgerState TestBlock) TestBlock where
   applyBlockLedgerResult _ tb@TestBlock{..} (TickedTestLedger TestLedger{..})
@@ -601,7 +602,7 @@ data instance LedgerState TestBlock mk =
   deriving anyclass (Serialise, NoThunks)
 
 -- Ticking has no effect on the test ledger state
-newtype instance Ticked1 (LedgerState TestBlock) mk = TickedTestLedger {
+newtype instance Ticked (LedgerState TestBlock) mk = TickedTestLedger {
       getTickedTestLedger :: LedgerState TestBlock mk
     }
 

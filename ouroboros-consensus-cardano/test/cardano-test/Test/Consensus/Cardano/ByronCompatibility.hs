@@ -389,12 +389,12 @@ instance SerialiseNodeToClient ByronToCardano (SomeBlockQuery (BlockQuery ByronT
                          (Proxy @(SomeBlockQuery :.: BlockQuery))
                          (\(SomeBlockQuery (QueryIfCurrentByron q)) -> SomeBlockQuery (QueryB2C q))
 
-instance SerialiseResult' ByronToCardano BlockQuery where
-  encodeResult' (CodecConfigB2C ccfg) () (QueryB2C q) r =
-      encodeResult' ccfg byronNodeToClientVersion q r
-  decodeResult' (CodecConfigB2C ccfg) () (QueryB2C (q :: BlockQuery ByronBlock fp result)) =
+instance SerialiseBlockQueryResult ByronToCardano BlockQuery where
+  encodeBlockQueryResult (CodecConfigB2C ccfg) () (QueryB2C q) r =
+      encodeBlockQueryResult ccfg byronNodeToClientVersion q r
+  decodeBlockQueryResult (CodecConfigB2C ccfg) () (QueryB2C (q :: BlockQuery ByronBlock fp result)) =
       (\(QueryResultSuccess r) -> r) <$>
-        decodeResult'
+        decodeBlockQueryResult
           (toCardanoCodecConfig ccfg)
           cardanoNodeToClientVersion
           (QueryIfCurrentByron q :: CardanoQuery
@@ -682,15 +682,15 @@ instance SerialiseNodeToClient CardanoToByron (SomeBlockQuery (BlockQuery Cardan
         (Proxy @(SomeBlockQuery :.: BlockQuery))
         (\(SomeBlockQuery q) -> SomeBlockQuery (QueryC2B q))
 
-instance SerialiseResult' CardanoToByron BlockQuery where
-  encodeResult' (CodecConfigC2B ccfg) () (QueryC2B q) (r :: result) =
-      encodeResult'
+instance SerialiseBlockQueryResult CardanoToByron BlockQuery where
+  encodeBlockQueryResult (CodecConfigC2B ccfg) () (QueryC2B q) (r :: result) =
+      encodeBlockQueryResult
         (toCardanoCodecConfig ccfg)
         cardanoNodeToClientVersion
         (QueryIfCurrentByron q)
         (QueryResultSuccess r :: CardanoQueryResult Crypto result)
-  decodeResult' (CodecConfigC2B ccfg) () (QueryC2B q) =
-      decodeResult' ccfg byronNodeToClientVersion q
+  decodeBlockQueryResult (CodecConfigC2B ccfg) () (QueryC2B q) =
+      decodeBlockQueryResult ccfg byronNodeToClientVersion q
 
 instance SerialiseNodeToClientConstraints CardanoToByron
 

@@ -4,6 +4,7 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 
 {-# OPTIONS -Wno-orphans #-}
@@ -14,7 +15,7 @@ module Ouroboros.Consensus.ByronSpec.Ledger.Ledger (
     -- * Type family instances
   , LedgerState (..)
   , LedgerTables (..)
-  , Ticked1 (..)
+  , Ticked (..)
   ) where
 
 import qualified Byron.Spec.Chain.STS.Rule.Chain as Spec
@@ -33,12 +34,7 @@ import           Ouroboros.Consensus.ByronSpec.Ledger.Conversions
 import           Ouroboros.Consensus.ByronSpec.Ledger.Genesis (ByronSpecGenesis)
 import           Ouroboros.Consensus.ByronSpec.Ledger.Orphans ()
 import qualified Ouroboros.Consensus.ByronSpec.Ledger.Rules as Rules
-import           Ouroboros.Consensus.Ledger.Abstract (ApplyBlock (..),
-                     CanSerializeLedgerTables, CanStowLedgerTables, GetTip (..),
-                     HasLedgerTables, IsLedger (..), Key, LedgerCfg,
-                     LedgerState, LedgerTables (..),
-                     LedgerTablesAreTrivial (..), UpdateLedger, Value,
-                     VoidLedgerEvent, pureLedgerResult, (..:))
+import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.CommonProtocolParams
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Ticked
@@ -84,7 +80,7 @@ instance GetTip (LedgerState ByronSpecBlock) where
   getTip (ByronSpecLedgerState tip state) = castPoint $
       getByronSpecTip tip state
 
-instance GetTip (Ticked1 (LedgerState ByronSpecBlock)) where
+instance GetTip (Ticked (LedgerState ByronSpecBlock)) where
   getTip (TickedByronSpecLedgerState tip state) = castPoint $
       getByronSpecTip tip state
 
@@ -98,12 +94,12 @@ getByronSpecTip (Just slot) state = BlockPoint
   Ticking
 -------------------------------------------------------------------------------}
 
-data instance Ticked1 (LedgerState ByronSpecBlock) mk = TickedByronSpecLedgerState {
+data instance Ticked (LedgerState ByronSpecBlock) mk = TickedByronSpecLedgerState {
       untickedByronSpecLedgerTip :: Maybe SlotNo
     , tickedByronSpecLedgerState :: Spec.State Spec.CHAIN
     }
   deriving stock (Show, Eq)
-  deriving NoThunks via AllowThunk (Ticked1 (LedgerState ByronSpecBlock) mk)
+  deriving NoThunks via AllowThunk (Ticked (LedgerState ByronSpecBlock) mk)
 
 instance IsLedger (LedgerState ByronSpecBlock) where
   type LedgerErr (LedgerState ByronSpecBlock) = ByronSpecLedgerError
@@ -125,18 +121,22 @@ instance IsLedger (LedgerState ByronSpecBlock) where
   Ledger Tables
 -------------------------------------------------------------------------------}
 
-type instance Key   (LedgerState ByronSpecBlock) = Void
-type instance Value (LedgerState ByronSpecBlock) = Void
-instance HasLedgerTables (LedgerState ByronSpecBlock)
-instance HasLedgerTables (Ticked1 (LedgerState ByronSpecBlock))
-instance CanSerializeLedgerTables (LedgerState ByronSpecBlock)
+type instance TxIn  (LedgerState ByronSpecBlock) = Void
+type instance TxOut (LedgerState ByronSpecBlock) = Void
 instance LedgerTablesAreTrivial (LedgerState ByronSpecBlock) where
   convertMapKind (ByronSpecLedgerState x y) =
       ByronSpecLedgerState x y
-instance LedgerTablesAreTrivial (Ticked1 (LedgerState ByronSpecBlock)) where
+instance LedgerTablesAreTrivial (Ticked (LedgerState ByronSpecBlock)) where
   convertMapKind (TickedByronSpecLedgerState x y) =
       TickedByronSpecLedgerState x y
-instance CanStowLedgerTables (LedgerState ByronSpecBlock)
+deriving via TrivialLedgerTables (LedgerState ByronSpecBlock)
+    instance HasLedgerTables (LedgerState ByronSpecBlock)
+deriving via TrivialLedgerTables (Ticked (LedgerState ByronSpecBlock))
+    instance HasLedgerTables (Ticked (LedgerState ByronSpecBlock))
+deriving via TrivialLedgerTables (LedgerState ByronSpecBlock)
+    instance CanSerializeLedgerTables (LedgerState ByronSpecBlock)
+deriving via TrivialLedgerTables (LedgerState ByronSpecBlock)
+    instance CanStowLedgerTables (LedgerState ByronSpecBlock)
 
 {-------------------------------------------------------------------------------
   Applying blocks

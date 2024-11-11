@@ -61,8 +61,8 @@ import           Ouroboros.Consensus.Ledger.Query.Version
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
                      (BlockNodeToClientVersion)
 import           Ouroboros.Consensus.Node.Serialisation
-                     (SerialiseNodeToClient (..), SerialiseResult (..),
-                     SerialiseResult' (..))
+                     (SerialiseBlockQueryResult (..),
+                     SerialiseNodeToClient (..), SerialiseResult (..))
 import           Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Util (ShowProxy (..), SomeSecond (..))
@@ -106,7 +106,7 @@ instance SingI QFTraverseTables where
 
 type SomeBlockQuery :: (QueryFootprint -> Type -> Type) -> Type
 data SomeBlockQuery q =
-  forall footprint result. SingI footprint => SomeBlockQuery (q footprint result)
+  forall footprint result. SingI footprint => SomeBlockQuery !(q footprint result)
 
 {-------------------------------------------------------------------------------
   Block Queries
@@ -148,7 +148,7 @@ class
   -- queries faster.
   --
   -- For the hard fork block this will be instantiated to
-  -- @answerBlockQueryHFOne@.
+  -- 'Ouroboros.Consensus.HardFork.Combinator.Ledger.Query.answerBlockQueryHFLookup'.
   answerBlockQueryLookup ::
        MonadSTM m
     => ExtLedgerCfg blk
@@ -163,7 +163,7 @@ class
   -- tables thus making use of some utilities to make these queries faster.
   --
   -- For the hard fork block this will be instantiated to
-  -- @answerBlockQueryHFAll@.
+  -- 'Ouroboros.Consensus.HardFork.Combinator.Ledger.Query.answerBlockQueryHFTraverse'.
   answerBlockQueryTraverse ::
        MonadSTM m
     => ExtLedgerCfg blk
@@ -411,11 +411,11 @@ queryDecodeNodeToClient codecConfig queryVersion blockVersion
         blockVersion
       return (SomeSecond (BlockQuery blockQuery))
 
-instance ( SerialiseResult' blk BlockQuery
+instance ( SerialiseBlockQueryResult blk BlockQuery
          , Serialise (HeaderHash blk)
          ) => SerialiseResult blk Query where
   encodeResult codecConfig blockVersion (BlockQuery blockQuery) result
-    = encodeResult' codecConfig blockVersion blockQuery result
+    = encodeBlockQueryResult codecConfig blockVersion blockQuery result
   encodeResult _ _ GetSystemStart result
     = toCBOR result
   encodeResult _ _ GetChainBlockNo result
@@ -424,7 +424,7 @@ instance ( SerialiseResult' blk BlockQuery
     = encodePoint encode result
 
   decodeResult codecConfig blockVersion (BlockQuery query)
-    = decodeResult' codecConfig blockVersion query
+    = decodeBlockQueryResult codecConfig blockVersion query
   decodeResult _ _ GetSystemStart
     = fromCBOR
   decodeResult _ _ GetChainBlockNo

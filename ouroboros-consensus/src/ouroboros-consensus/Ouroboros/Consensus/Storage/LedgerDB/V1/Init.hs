@@ -9,26 +9,18 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
-#if __GLASGOW_HASKELL__ <= 906
-{-# OPTIONS_GHC -Wno-redundant-constraints #-}
-#endif
-
 module Ouroboros.Consensus.Storage.LedgerDB.V1.Init (mkInitDb) where
 
 import           Control.Monad
-import           Control.Monad.Base
 import           Control.ResourceRegistry
-import           Control.Tracer (nullTracer)
-#if __GLASGOW_HASKELL__ < 910
-import           Data.Foldable
-#endif
+import           Data.Bifunctor (first)
+import qualified Data.Foldable as Foldable
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Word
-import           NoThunks.Class
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Abstract
@@ -69,9 +61,8 @@ mkInitDb ::
   ( LedgerSupportsProtocol blk
   , IOLike m
   , LedgerDbSerialiseConstraints blk
-  , MonadBase m m
   , HasHardForkHistory blk
-#if __GLASGOW_HASKELL__ < 910
+#if __GLASGOW_HASKELL__ < 906
   , HasAnnTip blk
 #endif
   )
@@ -94,30 +85,30 @@ mkInitDb args bss getBlock =
       loadSnapshot bsTracer baArgs (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) lgrHasFS'
   , closeDb = bsClose . snd
   , initReapplyBlock = \cfg blk (chlog, bstore) -> do
-      !chlog' <- onChangelogM (reapplyThenPush cfg blk (readKeySets bstore)) chlog
+      !chlog' <- reapplyThenPush cfg blk (readKeySets bstore) chlog
       -- It's OK to flush without a lock here, since the `LedgerDB` has not
       -- finishined initializing: only this thread has access to the backing
       -- store.
       chlog'' <- unsafeIgnoreWriteLock
-        $ if defaultShouldFlush flushFreq (flushableLength $ anchorlessChangelog chlog')
+        $ if shouldFlush flushFreq (flushableLength chlog')
           then do
             let (toFlush, toKeep) = splitForFlushing chlog'
             mapM_ (flushIntoBackingStore bstore) toFlush
             pure toKeep
           else pure chlog'
       pure (chlog'', bstore)
-  , currentTip = ledgerState . current . anchorlessChangelog . fst
+  , currentTip = ledgerState . current . fst
+  , pruneDb = pure . first pruneToImmTipOnly
   , mkLedgerDb = \(db, lgrBackingStore) -> do
-      let dbPrunedToImmDBTip = onChangelog pruneToImmTipOnly db
       (varDB, prevApplied) <-
-        (,) <$> newTVarIO dbPrunedToImmDBTip <*> newTVarIO Set.empty
+        (,) <$> newTVarIO db <*> newTVarIO Set.empty
       flushLock <- mkLedgerDBLock
       forkers <- newTVarIO Map.empty
       nextForkerKey <- newTVarIO (ForkerKey 0)
       let env = LedgerDBEnv {
                  ldbChangelog       = varDB
                , ldbBackingStore    = lgrBackingStore
-               , ldbLock            = AllowThunk flushLock
+               , ldbLock            = flushLock
                , ldbPrevApplied     = prevApplied
                , ldbForkers         = forkers
                , ldbNextForkerKey   = nextForkerKey
@@ -125,15 +116,15 @@ mkInitDb args bss getBlock =
                , ldbTracer          = lgrTracer
                , ldbCfg             = lgrConfig
                , ldbHasFS           = lgrHasFS'
-               , ldbShouldFlush     = defaultShouldFlush flushFreq
-               , ldbQueryBatchSize  = queryBatchSize
+               , ldbShouldFlush     = shouldFlush flushFreq
+               , ldbQueryBatchSize  = queryBatchSizeArg
                , ldbResolveBlock    = getBlock
                }
       h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
       pure $ implMkLedgerDb h
   }
   where
-    bsTracer = nullTracer --LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV1 >$< lgrTracer
+    bsTracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV1 >$< lgrTracer
 
     LedgerDbArgs {
         lgrHasFS
@@ -146,7 +137,7 @@ mkInitDb args bss getBlock =
 
     lgrHasFS' = SnapshotsFS lgrHasFS
 
-    V1Args flushFreq queryBatchSize baArgs = bss
+    V1Args flushFreq queryBatchSizeArg baArgs = bss
 
 implMkLedgerDb ::
      forall m l blk.
@@ -155,10 +146,9 @@ implMkLedgerDb ::
      , StandardHash l
      , LedgerDbSerialiseConstraints blk
      , LedgerSupportsProtocol blk
-     , MonadBase m m
      , ApplyBlock l blk
      , l ~ ExtLedgerState blk
-#if __GLASGOW_HASKELL__ < 910
+#if __GLASGOW_HASKELL__ < 906
      , HasAnnTip blk
 #endif
      , HasHardForkHistory blk
@@ -170,8 +160,7 @@ implMkLedgerDb h = (LedgerDB {
     , getImmutableTip           = getEnvSTM  h implGetImmutableTip
     , getPastLedgerState        = getEnvSTM1 h implGetPastLedgerState
     , getHeaderStateHistory     = getEnvSTM  h implGetHeaderStateHistory
-    , getForkerAtWellKnownPoint = newForkerAtWellKnownPoint h
-    , getForkerAtPoint          = newForkerAtPoint h
+    , getForkerAtTarget         = newForkerAtTarget h
     , validate                  = getEnv5    h (implValidate h)
     , getPrevApplied            = getEnvSTM  h implGetPrevApplied
     , garbageCollect            = getEnvSTM1 h implGarbageCollect
@@ -184,19 +173,19 @@ implGetVolatileTip ::
      (MonadSTM m, GetTip l)
   => LedgerDBEnv m l blk
   -> STM m (l EmptyMK)
-implGetVolatileTip = fmap (current . anchorlessChangelog) . readTVar . ldbChangelog
+implGetVolatileTip = fmap current . readTVar . ldbChangelog
 
 implGetImmutableTip ::
      MonadSTM m
   => LedgerDBEnv m l blk
   -> STM m (l EmptyMK)
-implGetImmutableTip = fmap (anchor . anchorlessChangelog) . readTVar . ldbChangelog
+implGetImmutableTip = fmap anchor . readTVar . ldbChangelog
 
 implGetPastLedgerState ::
      ( MonadSTM m , HasHeader blk, IsLedger l, StandardHash l
      , HasLedgerTables l, HeaderHash l ~ HeaderHash blk )
   => LedgerDBEnv m l blk -> Point blk -> STM m (Maybe (l EmptyMK))
-implGetPastLedgerState env point = getPastLedgerAt point . anchorlessChangelog <$> readTVar (ldbChangelog env)
+implGetPastLedgerState env point = getPastLedgerAt point <$> readTVar (ldbChangelog env)
 
 implGetHeaderStateHistory ::
      ( MonadSTM m
@@ -207,7 +196,7 @@ implGetHeaderStateHistory ::
      )
   => LedgerDBEnv m l blk -> STM m (HeaderStateHistory blk)
 implGetHeaderStateHistory env = do
-    ldb <- anchorlessChangelog <$> readTVar (ldbChangelog env)
+    ldb <- readTVar (ldbChangelog env)
     let currentLedgerState = ledgerState $ current ldb
         -- This summary can convert all tip slots of the ledger states in the
         -- @ledgerDb@ as these are not newer than the tip slot of the current
@@ -219,7 +208,7 @@ implGetHeaderStateHistory env = do
     pure
       . HeaderStateHistory
       . AS.bimap mkHeaderStateWithTime' mkHeaderStateWithTime'
-      $ adcStates ldb
+      $ changelogStates ldb
 
 implValidate ::
      forall m l blk. (
@@ -227,7 +216,6 @@ implValidate ::
      , LedgerSupportsProtocol blk
      , HasCallStack
      , l ~ ExtLedgerState blk
-     , MonadBase m m
      )
   => LedgerDBHandle m l blk
   -> LedgerDBEnv m l blk
@@ -237,16 +225,21 @@ implValidate ::
   -> Word64
   -> [Header blk]
   -> m (ValidateResult m (ExtLedgerState blk) blk)
-implValidate h ldbEnv =
-  Validate.validate
-    (ldbResolveBlock ldbEnv)
-    (getExtLedgerCfg . ledgerDbCfg $ ldbCfg ldbEnv)
-    (\l -> do
-        prev <- readTVar (ldbPrevApplied ldbEnv)
-        writeTVar (ldbPrevApplied ldbEnv) (foldl' (flip Set.insert) prev l))
-    (readTVar (ldbPrevApplied ldbEnv))
-    (newForkerAtFromTip h)
-
+implValidate h ldbEnv rr tr cache rollbacks hdrs =
+  Validate.validate $
+    Validate.ValidateArgs
+      (ldbResolveBlock ldbEnv)
+      (getExtLedgerCfg . ledgerDbCfg $ ldbCfg ldbEnv)
+      (\l -> do
+          prev <- readTVar (ldbPrevApplied ldbEnv)
+          writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l))
+      (readTVar (ldbPrevApplied ldbEnv))
+      (newForkerByRollback h)
+      rr
+      tr
+      cache
+      rollbacks
+      hdrs
 
 implGetPrevApplied :: MonadSTM m => LedgerDBEnv m l blk -> STM m (Set (RealPoint blk))
 implGetPrevApplied env = readTVar (ldbPrevApplied env)
@@ -262,9 +255,9 @@ implTryTakeSnapshot ::
      , IOLike m, LedgerDbSerialiseConstraints blk, LedgerSupportsProtocol blk
      )
   => LedgerDBEnv m l blk -> Maybe (Time, Time) -> Word64 -> m SnapCounters
-implTryTakeSnapshot env@LedgerDBEnv{ldbLock = AllowThunk lock} mTime nrBlocks =
+implTryTakeSnapshot env mTime nrBlocks =
     if onDiskShouldTakeSnapshot (ldbSnapshotPolicy env) (uncurry (flip diffTime) <$> mTime) nrBlocks then do
-      void $ withReadLock lock (takeSnapshot
+      void $ withReadLock (ldbLock env) (takeSnapshot
                                           (ldbChangelog env)
                                           (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
                                           (LedgerDBSnapshotEvent >$< ldbTracer env)
@@ -285,11 +278,11 @@ implTryTakeSnapshot env@LedgerDBEnv{ldbLock = AllowThunk lock} mTime nrBlocks =
 implTryFlush ::
      (IOLike m, HasLedgerTables l, GetTip l)
   => LedgerDBEnv m l blk -> m ()
-implTryFlush env@LedgerDBEnv{ldbLock = AllowThunk lock} = do
+implTryFlush env = do
     ldb <- readTVarIO $ ldbChangelog env
-    when (ldbShouldFlush env $ DbCh.flushableLength $ anchorlessChangelog ldb)
+    when (ldbShouldFlush env $ DbCh.flushableLength ldb)
         (withWriteLock
-          lock
+          (ldbLock env)
           (flushLedgerDB (ldbChangelog env) (ldbBackingStore env))
         )
 
@@ -312,29 +305,16 @@ mkInternals ::
      , LedgerDbSerialiseConstraints blk
      , LedgerSupportsProtocol blk
      , ApplyBlock (ExtLedgerState blk) blk
-     , MonadBase m m
-
      )
   => LedgerDBHandle m (ExtLedgerState blk) blk
   -> TestInternals' m blk
 mkInternals h = TestInternals {
-      takeSnapshotNOW = getEnv1 h implIntTakeSnapshot
+      takeSnapshotNOW = getEnv2 h implIntTakeSnapshot
     , reapplyThenPushNOW = getEnv1 h implIntReapplyThenPushBlock
-    , wipeLedgerDB = getEnv h $ void . destroySnapshots . ldbHasFS
+    , wipeLedgerDB = getEnv h $ void . destroySnapshots . snapshotsFs . ldbHasFS
     , closeLedgerDB = getEnv h $ bsClose . ldbBackingStore
     , truncateSnapshots = getEnv h $ void . implIntTruncateSnapshots . ldbHasFS
     }
-
--- | Testing only! Destroy all snapshots in the DB.
-destroySnapshots :: Monad m => SnapshotsFS m -> m ()
-destroySnapshots (SnapshotsFS (SomeHasFS fs)) = do
-  dirs <- Set.lookupMax . Set.filter (isJust . snapshotFromPath) <$> listDirectory fs (mkFsPath [])
-  mapM_ ((\d -> do
-            isDir <- doesDirectoryExist fs d
-            if isDir
-              then removeDirectoryRecursive fs d
-              else removeFile fs d
-        ) . mkFsPath . (:[])) dirs
 
 -- | Testing only! Truncate all snapshots in the DB.
 implIntTruncateSnapshots :: MonadThrow m => SnapshotsFS m -> m ()
@@ -358,28 +338,28 @@ implIntTakeSnapshot ::
      , LedgerSupportsProtocol blk
      , l ~ ExtLedgerState blk
      )
-  => LedgerDBEnv m l blk -> Maybe DiskSnapshot -> m ()
-implIntTakeSnapshot env@LedgerDBEnv{ldbLock = AllowThunk lock} diskSnapshot = do
+  => LedgerDBEnv m l blk -> WhereToTakeSnapshot -> Maybe String -> m ()
+implIntTakeSnapshot env whereTo suffix = do
+  when (whereTo == TakeAtVolatileTip) $ atomically $ modifyTVar (ldbChangelog env) pruneToImmTipOnly
   withWriteLock
-          lock
+          (ldbLock env)
           (flushLedgerDB (ldbChangelog env) (ldbBackingStore env))
-  void $ withReadLock lock $
+  void $ withReadLock (ldbLock env) $
     takeSnapshot
       (ldbChangelog env)
       (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
       (LedgerDBSnapshotEvent >$< ldbTracer env)
       (ldbHasFS env)
       (ldbBackingStore env)
-      diskSnapshot
+      suffix
 
 implIntReapplyThenPushBlock ::
      ( IOLike m
      , ApplyBlock l blk
-     , MonadBase m m
      , l ~ ExtLedgerState blk
      )
   => LedgerDBEnv m l blk -> blk -> m ()
 implIntReapplyThenPushBlock env blk = do
   chlog <- readTVarIO $ ldbChangelog env
-  chlog' <- onChangelogM (reapplyThenPush (ldbCfg env)  blk (readKeySets (ldbBackingStore env))) chlog
+  chlog' <- reapplyThenPush (ldbCfg env)  blk (readKeySets (ldbBackingStore env)) chlog
   atomically $ writeTVar (ldbChangelog env) chlog'

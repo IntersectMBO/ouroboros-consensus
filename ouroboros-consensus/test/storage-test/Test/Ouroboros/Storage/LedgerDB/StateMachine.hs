@@ -60,7 +60,6 @@ import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Init
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
-import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Init as V1
 import           Ouroboros.Consensus.Storage.LedgerDB.V2.Args
 import           Ouroboros.Consensus.Storage.LedgerDB.V2.Init as V2
@@ -75,6 +74,7 @@ import qualified System.FS.Sim.MockFS as MockFS
 import           System.FS.Sim.STM
 import qualified System.IO.Temp as Temp
 import           Test.Ouroboros.Storage.LedgerDB.StateMachine.TestBlock
+import           Test.Ouroboros.Storage.LedgerDB.V1.LMDB
 import qualified Test.QuickCheck as QC
 import           "quickcheck-dynamic" Test.QuickCheck.Extras
 import qualified Test.QuickCheck.Monadic as QC
@@ -167,26 +167,13 @@ inMemV2TestArguments secParam _ =
     , argLedgerDbCfg = extLedgerDbConfig secParam
     }
 
-testLMDBLimits :: LMDBLimits
-testLMDBLimits = LMDBLimits
-  { -- 100 MiB should be more than sufficient for the tests we're running here.
-    -- If the database were to grow beyond 100 Mebibytes, resulting in a test
-    -- error, then something in the LMDB backing store or tests has changed and
-    -- we should reconsider this value.
-    lmdbMapSize = 100 * 1024 * 1024
-    -- 3 internal databases: 1 for the settings, 1 for the state, and 1 for the
-    -- ledger tables.
-  , lmdbMaxDatabases = 3
-  , lmdbMaxReaders = 16
-  }
-
 lmdbTestArguments ::
      SecurityParam
   -> SomeHasFS IO
   -> TestArguments IO
 lmdbTestArguments secParam fs =
   TestArguments {
-      argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing DisableQuerySize $ LMDBBackingStoreArgs (LiveLMDBFS fs) testLMDBLimits Dict.Dict
+      argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing DisableQuerySize $ LMDBBackingStoreArgs (LiveLMDBFS fs) (testLMDBLimits 16) Dict.Dict
     , argLedgerDbCfg = extLedgerDbConfig secParam
     }
 
@@ -268,10 +255,10 @@ instance StateModel Model where
                 , (2, pure $ Some ForceTakeSnapshot)
                 , (1, Some . DropAndRestore <$> QC.choose (0, fromIntegral $ AS.length chain))
                 , (4, Some <$> do
-                      let maxRollback = minimum [
-                            fromIntegral . AS.length $ chain
-                            , maxRollbacks secParam
-                            ]
+                      let maxRollback =
+                            min
+                              (fromIntegral . AS.length $ chain)
+                              (maxRollbacks secParam)
                       numRollback  <- QC.choose (0, maxRollback)
                       numNewBlocks <- QC.choose (numRollback, numRollback + 2)
                       let
@@ -331,8 +318,6 @@ data ChainDB m = ChainDB {
       dbBlocks :: StrictTVar m (Map (RealPoint TestBlock) TestBlock)
 
       -- | Current chain and corresponding ledger state
-      --
-      -- Invariant: all references @r@ here must be present in 'dbBlocks'.
     , dbChain  :: StrictTVar m [RealPoint TestBlock]
     }
 
@@ -487,7 +472,7 @@ instance RunModel Model (StateT Environment IO) where
 
   perform _ ForceTakeSnapshot _ = do
     Environment _ testInternals _ _ _ _ <- get
-    lift $ takeSnapshotNOW testInternals Nothing
+    lift $ takeSnapshotNOW testInternals TakeAtImmutableTip Nothing
 
   perform _ (ValidateAndCommit n blks) _ = do
       Environment ldb _ chainDb _ _ _ <- get

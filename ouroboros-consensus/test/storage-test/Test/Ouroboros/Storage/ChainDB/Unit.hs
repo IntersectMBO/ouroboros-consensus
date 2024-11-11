@@ -16,7 +16,6 @@ module Test.Ouroboros.Storage.ChainDB.Unit (tests) where
 
 import           Cardano.Slotting.Slot (WithOrigin (..))
 import           Control.Monad (replicateM, unless, void)
-import           Control.Monad.Base (MonadBase)
 import           Control.Monad.Except (Except, ExceptT, MonadError, runExcept,
                      runExceptT, throwError)
 import           Control.Monad.Reader (MonadReader, ReaderT, ask, runReaderT)
@@ -392,7 +391,7 @@ runSystem withChainDbEnv expr
 
 -- | Provide a standard ChainDbEnv for testing.
 withTestChainDbEnv ::
-     (IOLike m, TestConstraints blk, MonadBase m m)
+     (IOLike m, TestConstraints blk)
   => TopLevelConfig blk
   -> ImmutableDB.ChunkInfo
   -> ExtLedgerState blk ValuesMK

@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Operations that update the mempool. They are internally divided in the pure
 -- and impure sides of the operation.
@@ -17,6 +18,7 @@ import qualified Data.List.NonEmpty as NE
 import           Data.Maybe (fromMaybe)
 import qualified Data.Measure as Measure
 import qualified Data.Set as Set
+import           Data.Void
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
@@ -26,8 +28,9 @@ import           Ouroboros.Consensus.Mempool.Capacity
 import           Ouroboros.Consensus.Mempool.Impl.Common
 import           Ouroboros.Consensus.Mempool.TxSeq (TxTicket (..))
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
-import           Ouroboros.Consensus.Util (whenJust, withTMVarAnd)
+import           Ouroboros.Consensus.Util (whenJust)
 import           Ouroboros.Consensus.Util.IOLike hiding (withMVar)
+import           Ouroboros.Consensus.Util.STM
 import           Ouroboros.Network.Block
 
 {-------------------------------------------------------------------------------
@@ -67,7 +70,7 @@ implAddTx mpEnv onbehalf tx =
     case onbehalf of
       AddTxForRemotePeer ->
         withMVar remoteFifo $ \() ->
-         withMVar allFifo $ \() ->
+        withMVar allFifo $ \() ->
           -- This action can also block. Holding the MVars means
           -- there is only a single such thread blocking at once.
           implAddTx'
@@ -104,7 +107,7 @@ data TriedToAddTx blk =
     NotEnoughSpaceLeft
   | Processed (TransactionProcessed blk)
 
--- | A transaction was processed, either accepted or rejected.
+-- | The new state, if the transaction was accepted
 data TransactionProcessed blk =
   TransactionProcessingResult
     (Maybe (InternalState blk))
@@ -127,11 +130,11 @@ data TransactionProcessed blk =
 --
 -- See the necessary invariants on the Haddock for 'API.addTxs'.
 --
--- This function does not sync the Mempool contents with the ledger state in
--- case the latter changes in a way that doesn't invalidate the db changelog, it
--- relies on the background thread to do that. If the db changelog is
--- invalidated (by rolling back the last synced ledger state), it will sync
--- in-place.
+-- NOTE when using V1 LedgerDB: This function does not sync the Mempool contents
+-- with the ledger state in case the latter changes in a way that doesn't
+-- invalidate the db changelog, it relies on the background thread to do
+-- that. If the db changelog is invalidated (by rolling back the last synced
+-- ledger state), it will sync in-place.
 --
 -- INVARIANT: The code needs that read and writes on the state are coupled
 -- together or inconsistencies will arise.
@@ -156,12 +159,17 @@ doAddTx mpEnv wti tx =
       , mpEnvTracer = trcr
       } = mpEnv
 
-    doAddTx' s = do
+    doAddTx' mbPrevSize = do
       traceWith trcr $ TraceMempoolAttemptingAdd tx
-      res <- withTMVarAnd istate (\is ->
-        case s of
-          Nothing -> pure ()
-          Just s' -> check $ isMempoolSize is /= s')
+
+      -- If retrying, wait until the mempool size changes before attempting to
+      -- add the tx again
+      let additionalCheck is =
+            case mbPrevSize of
+              Nothing       -> pure ()
+              Just prevSize -> check $ isMempoolSize is /= prevSize
+
+      res <- withTMVarAnd istate additionalCheck
        $ \is () -> do
           mTbs <- getLedgerTablesAtFor ldgrInterface (isTip is) [tx]
           case mTbs of
@@ -182,20 +190,13 @@ doAddTx mpEnv wti tx =
         OK outcome -> pure outcome
         Resync -> do
           void $ implSyncWithLedger mpEnv
-          doAddTx' s
+          doAddTx' mbPrevSize
 
 data WithTMVarOutcome retry ok =
-    Retry retry
+    Retry !retry
   | OK ok
   | Resync
 
--- | Craft a 'TriedToAddTx' value containing the resulting state if
--- applicable, the tracing event and the result of adding this transaction. See
--- the documentation of 'implAddTx' for some more context.
---
--- It returns 'NoSpaceLeft' only when the current mempool size is bigger or
--- equal than then mempool capacity. Otherwise it will validate the transaction
--- and add it to the mempool if there is at least one byte free on the mempool.
 pureTryAddTx ::
      ( LedgerSupportsMempool blk
      , HasTxId (GenTx blk)
@@ -323,7 +324,7 @@ implRemoveTxs ::
    -> NE.NonEmpty (GenTxId blk)
    -> m ()
 implRemoveTxs mpEnv toRemove = do
-  out <- withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface)
+  (out :: WithTMVarOutcome Void ()) <- withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface)
    $ \is ls -> do
     let toKeep = filter
                  (   (`notElem` Set.fromList (NE.toList toRemove))
@@ -354,7 +355,6 @@ implRemoveTxs mpEnv toRemove = do
       void $ implSyncWithLedger mpEnv
       implRemoveTxs mpEnv toRemove
     OK ()   -> pure ()
-    Retry _ -> error "Impossible!"
   where
     MempoolEnv { mpEnvStateVar         = istate
                , mpEnvLedger           = ldgrInterface
@@ -409,13 +409,14 @@ implSyncWithLedger ::
   -> m (MempoolSnapshot blk)
 implSyncWithLedger mpEnv = do
   traceWith trcr TraceMempoolAttemptingSync
-  res <- withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface) $
+  (res :: WithTMVarOutcome Void (MempoolSnapshot blk)) <-
+   withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface) $
     \is ls -> do
     let (slot, ls') = tickLedgerState cfg $ ForgeInUnknownSlot ls
     if pointHash (isTip is) == castHash (getTipHash ls) && isSlotNo is == slot
       then do
         -- The tip didn't change, put the same state.
-        traceWith trcr $ TraceMempoolSyncNotNeeded (isTip is) (castPoint $ getTip ls)
+        traceWith trcr $ TraceMempoolSyncNotNeeded (isTip is)
         pure (OK (snapshotFromIS is), is)
       else do
         -- We need to revalidate
@@ -440,9 +441,8 @@ implSyncWithLedger mpEnv = do
             -- If the point is gone, resync
             pure (Resync, is)
   case res of
-    OK v    -> pure v
-    Resync  -> implSyncWithLedger mpEnv
-    Retry _ -> error "Impossible!"
+    OK v   -> pure v
+    Resync -> implSyncWithLedger mpEnv
   where
     MempoolEnv { mpEnvStateVar         = istate
                , mpEnvLedger           = ldgrInterface

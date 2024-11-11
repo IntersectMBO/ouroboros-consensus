@@ -79,7 +79,7 @@ class ( IsLedger l
       , HasHeader blk
       , HasHeader (Header blk)
       , HasLedgerTables l
-      , HasLedgerTables (Ticked1 l)
+      , HasLedgerTables (Ticked l)
       ) => ApplyBlock l blk where
 
   -- | Apply a block to the ledger state.
@@ -90,7 +90,7 @@ class ( IsLedger l
        HasCallStack
     => LedgerCfg l
     -> blk
-    -> Ticked1 l ValuesMK
+    -> Ticked l ValuesMK
     -> Except (LedgerErr l) (LedgerResult l (l DiffMK))
 
   -- | Re-apply a block to the very same ledger state it was applied in before.
@@ -106,7 +106,7 @@ class ( IsLedger l
        HasCallStack
     => LedgerCfg l
     -> blk
-    -> Ticked1 l ValuesMK
+    -> Ticked l ValuesMK
     -> LedgerResult l (l DiffMK)
 
   -- | Given a block, get the key-sets that we need to apply it to a ledger
@@ -125,7 +125,7 @@ applyLedgerBlock ::
      (ApplyBlock l blk, HasCallStack)
   => LedgerCfg l
   -> blk
-  -> Ticked1 l ValuesMK
+  -> Ticked l ValuesMK
   -> Except (LedgerErr l) (l DiffMK)
 applyLedgerBlock = fmap lrResult ..: applyBlockLedgerResult
 
@@ -134,7 +134,7 @@ reapplyLedgerBlock ::
      (ApplyBlock l blk, HasCallStack)
   => LedgerCfg l
   -> blk
-  -> Ticked1 l ValuesMK
+  -> Ticked l ValuesMK
   -> l DiffMK
 reapplyLedgerBlock = lrResult ..: reapplyBlockLedgerResult
 
