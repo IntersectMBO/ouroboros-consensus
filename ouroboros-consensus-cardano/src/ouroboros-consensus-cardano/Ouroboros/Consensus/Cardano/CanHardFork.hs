@@ -26,6 +26,7 @@ module Ouroboros.Consensus.Cardano.CanHardFork (
   , ShelleyPartialLedgerConfig (..)
   , crossEraForecastAcrossShelley
   , translateChainDepStateAcrossShelley
+  , translateLedgerStateByronToShelley
   ) where
 
 import qualified Cardano.Chain.Common as CC
@@ -41,6 +42,7 @@ import           Cardano.Ledger.Keys (DSignable, Hash)
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Ledger.Shelley.Translation
                      (toFromByronTranslationContext)
+import qualified Cardano.Ledger.Shelley.Translation as SL
 import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.Rules.Prtcl as SL
 import qualified Cardano.Protocol.TPraos.Rules.Tickn as SL
@@ -424,21 +426,33 @@ translateLedgerStateByronToShelleyWrapper ::
        ByronBlock
        (ShelleyBlock (TPraos c) (ShelleyEra c))
 translateLedgerStateByronToShelleyWrapper =
-    RequireBoth $ \_ (WrapLedgerConfig cfgShelley) ->
-    Translate   $ \epochNo ledgerByron ->
-      ShelleyLedgerState {
-        shelleyLedgerTip =
-          translatePointByronToShelley
-            (ledgerTipPoint ledgerByron)
-            (byronLedgerTipBlockNo ledgerByron)
-      , shelleyLedgerState =
-          SL.translateToShelleyLedgerState
-            (toFromByronTranslationContext (shelleyLedgerGenesis cfgShelley))
-            epochNo
-            (byronLedgerState ledgerByron)
-      , shelleyLedgerTransition =
-          ShelleyTransitionInfo{shelleyAfterVoting = 0}
-      }
+    RequireBoth $ \_ (WrapLedgerConfig cfgShelley) -> Translate $
+      translateLedgerStateByronToShelley
+        (toFromByronTranslationContext (shelleyLedgerGenesis cfgShelley))
+
+translateLedgerStateByronToShelley ::
+     ( ShelleyCompatible (TPraos c) (ShelleyEra c)
+     , HASH     c ~ Blake2b_256
+     , ADDRHASH c ~ Blake2b_224
+     )
+  => SL.FromByronTranslationContext c
+  -> EpochNo -- ^ Start of the new era
+  -> LedgerState ByronBlock
+  -> LedgerState (ShelleyBlock (TPraos c) (ShelleyEra c))
+translateLedgerStateByronToShelley ctx epochNo ledgerByron =
+    ShelleyLedgerState {
+      shelleyLedgerTip =
+        translatePointByronToShelley
+          (ledgerTipPoint ledgerByron)
+          (byronLedgerTipBlockNo ledgerByron)
+    , shelleyLedgerState =
+        SL.translateToShelleyLedgerState
+          ctx
+          epochNo
+          (byronLedgerState ledgerByron)
+    , shelleyLedgerTransition =
+        ShelleyTransitionInfo{shelleyAfterVoting = 0}
+    }
 
 translateChainDepStateByronToShelleyWrapper ::
      RequiringBoth

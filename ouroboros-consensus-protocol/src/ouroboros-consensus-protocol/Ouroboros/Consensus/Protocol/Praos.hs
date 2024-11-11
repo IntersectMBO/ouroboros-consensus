@@ -28,6 +28,7 @@ module Ouroboros.Consensus.Protocol.Praos (
   , PraosValidationErr (..)
   , Ticked (..)
   , forgePraosFields
+  , genesisPraosState
   , praosCheckCanForge
   ) where
 
@@ -36,7 +37,7 @@ import qualified Cardano.Crypto.DSIGN as DSIGN
 import qualified Cardano.Crypto.KES as KES
 import           Cardano.Crypto.VRF (hashVerKeyVRF)
 import qualified Cardano.Crypto.VRF as VRF
-import           Cardano.Ledger.BaseTypes (ActiveSlotCoeff, Nonce, (⭒))
+import           Cardano.Ledger.BaseTypes (ActiveSlotCoeff, Nonce (..), (⭒))
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Chain as SL
 import           Cardano.Ledger.Crypto (Crypto, DSIGN, KES, StandardCrypto, VRF)
@@ -58,8 +59,6 @@ import qualified Cardano.Protocol.TPraos.Rules.Prtcl as SL
 import qualified Cardano.Protocol.TPraos.Rules.Tickn as SL
 import           Cardano.Slotting.EpochInfo (EpochInfo, epochInfoEpoch,
                      epochInfoFirst, hoistEpochInfo)
-import           Cardano.Slotting.Slot (EpochNo (EpochNo), SlotNo (SlotNo),
-                     WithOrigin, unSlotNo)
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (Serialise (decode, encode))
 import           Control.Exception (throw)
@@ -69,13 +68,12 @@ import           Data.Coerce (coerce)
 import           Data.Functor.Identity (runIdentity)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Proxy (Proxy (Proxy))
 import qualified Data.Set as Set
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import           Numeric.Natural (Natural)
-import           Ouroboros.Consensus.Block (WithOrigin (NotOrigin))
+import           Ouroboros.Consensus.Block
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
@@ -258,6 +256,18 @@ data PraosState c = PraosState
     praosStateLastEpochBlockNonce :: !Nonce
   }
   deriving (Generic, Show, Eq)
+
+-- | Create the initial Praos state when starting from genesis.
+genesisPraosState :: Nonce -> PraosState c
+genesisPraosState initialNonce = PraosState {
+      praosStateLastSlot            = Origin
+    , praosStateOCertCounters       = Map.empty
+    , praosStateEvolvingNonce       = initialNonce
+    , praosStateCandidateNonce      = initialNonce
+    , praosStateEpochNonce          = initialNonce
+    , praosStateLabNonce            = NeutralNonce
+    , praosStateLastEpochBlockNonce = NeutralNonce
+    }
 
 instance PraosCrypto c => NoThunks (PraosState c)
 

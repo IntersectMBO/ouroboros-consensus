@@ -11,6 +11,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -22,6 +23,7 @@ module Ouroboros.Consensus.Shelley.ShelleyHFC (
   , crossEraForecastAcrossShelley
   , forecastAcrossShelley
   , translateChainDepStateAcrossShelley
+  , translateShelleyLedgerState
   ) where
 
 import qualified Cardano.Ledger.Api.Era as L
@@ -64,6 +66,7 @@ import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Inspect as Shelley.Inspect
 import           Ouroboros.Consensus.Shelley.Node ()
+import           Ouroboros.Consensus.Shelley.Protocol.Abstract
 import           Ouroboros.Consensus.TypeFamilyWrappers
 
 {-------------------------------------------------------------------------------
@@ -333,6 +336,22 @@ instance ( ShelleyBasedEra era
         , shelleyLedgerState      = state'
         , shelleyLedgerTransition = ShelleyTransitionInfo 0
         }
+
+translateShelleyLedgerState ::
+     ( eraFrom ~ SL.PreviousEra eraTo
+     , SL.TranslateEra eraTo SL.NewEpochState
+     , SL.TranslationError eraTo SL.NewEpochState ~ Void
+     , ProtoCrypto protoFrom ~ ProtoCrypto protoTo
+     )
+  => SL.TranslationContext eraTo
+  -> LedgerState (ShelleyBlock protoFrom eraFrom)
+  -> LedgerState (ShelleyBlock protoTo   eraTo  )
+translateShelleyLedgerState ctx (ShelleyLedgerState wo nes st) =
+    ShelleyLedgerState {
+        shelleyLedgerTip        = fmap castShelleyTip wo
+      , shelleyLedgerState      = SL.translateEra' ctx nes
+      , shelleyLedgerTransition = st
+      }
 
 instance ( ShelleyBasedEra era
          , SL.TranslateEra era WrapTx

@@ -66,6 +66,7 @@ import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Shelley.API as SL
+import qualified Cardano.Ledger.Shelley.Translation as SL
 import           Cardano.Prelude (cborError)
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..),
                      ocertKESPeriod)
@@ -96,6 +97,7 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.Embed.Nary
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation
+import           Ouroboros.Consensus.HardFork.Combinator.State.Types
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Extended
@@ -103,10 +105,12 @@ import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Node.Run
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
-import           Ouroboros.Consensus.Protocol.Praos (Praos, PraosParams (..))
+import           Ouroboros.Consensus.Protocol.Praos (Praos, PraosParams (..),
+                     genesisPraosState)
 import           Ouroboros.Consensus.Protocol.Praos.Common
                      (praosCanBeLeaderOpCert)
-import           Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosParams (..))
+import           Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosParams (..),
+                     genesisTPraosState)
 import qualified Ouroboros.Consensus.Protocol.TPraos as Shelley
 import           Ouroboros.Consensus.Shelley.HFEras ()
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
@@ -119,6 +123,8 @@ import           Ouroboros.Consensus.Shelley.Node.Common (ShelleyEraWithCrypto,
                      shelleyBlockIssuerVKey)
 import qualified Ouroboros.Consensus.Shelley.Node.Praos as Praos
 import qualified Ouroboros.Consensus.Shelley.Node.TPraos as TPraos
+import           Ouroboros.Consensus.Shelley.ShelleyHFC
+                     (translateShelleyLedgerState)
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util.Assert
@@ -575,6 +581,21 @@ pattern CardanoHardForkTriggers' {
       )
 {-# COMPLETE CardanoHardForkTriggers' #-}
 
+-- | Get the index of the first era which is not scheduled to end immediately
+-- via @'CardanoTriggerHardForkAtEpoch' 0@.
+--
+-- For mainnet, which starts in Byron, this returns
+--
+-- @'Z' 'Proxy' :: 'NS' 'Proxy' ('CardanoEras' c)@
+getInitialCardanoEra :: CardanoHardForkTriggers c -> NS Proxy (CardanoEras c)
+getInitialCardanoEra (CardanoHardForkTriggers triggers) =
+    go triggers
+  where
+    go :: NP CardanoHardForkTrigger xs -> NS Proxy (x : xs)
+    go = \case
+        CardanoTriggerHardForkAtEpoch (EpochNo 0) :* ts -> S $ go ts
+        _                                               -> Z Proxy
+
 -- | Parameters needed to run Cardano.
 --
 -- __On the relation between 'cardanoHardForkTriggers' and 'cardanoProtocolVersion'__:
@@ -656,7 +677,7 @@ protocolInfoCardano paramsCardano
     CardanoProtocolParams {
         byronProtocolParams
       , shelleyBasedProtocolParams
-      , cardanoHardForkTriggers = CardanoHardForkTriggers' {
+      , cardanoHardForkTriggers = cardanoHardForkTriggers@CardanoHardForkTriggers' {
           triggerHardForkShelley
         , triggerHardForkAllegra
         , triggerHardForkMary
@@ -687,6 +708,16 @@ protocolInfoCardano paramsCardano
     transitionConfigBabbage = transitionConfigConway  ^. L.tcPreviousEraConfigL
     transitionConfigConway  = cardanoLedgerTransitionConfig
 
+    transitionCfgs :: NP WrapTransitionConfig (CardanoShelleyEras c)
+    transitionCfgs =
+         WrapTransitionConfig transitionConfigShelley
+      :* WrapTransitionConfig transitionConfigAllegra
+      :* WrapTransitionConfig transitionConfigMary
+      :* WrapTransitionConfig transitionConfigAlonzo
+      :* WrapTransitionConfig transitionConfigBabbage
+      :* WrapTransitionConfig transitionConfigConway
+      :* Nil
+
     -- The major protocol version of the last era is the maximum major protocol
     -- version we support.
     --
@@ -701,7 +732,7 @@ protocolInfoCardano paramsCardano
           , topLevelConfigLedger   = ledgerConfigByron
           , topLevelConfigBlock    = blockConfigByron
           }
-      , pInfoInitLedger = initExtLedgerStateByron
+      , pInfoInitLedger = ExtLedgerState initLedgerStateByron initHeaderStateByron
       } = protocolInfoByron byronProtocolParams
 
     partialConsensusConfigByron :: PartialConsensusConfig (BlockProtocol ByronBlock)
@@ -944,42 +975,70 @@ protocolInfoCardano paramsCardano
       , topLevelConfigCheckpoints = cardanoCheckpoints
       }
 
-    -- When the initial ledger state is not in the Byron era, register various
-    -- data from the genesis config (if provided) in the ledger state. For
-    -- example, this includes initial staking and initial funds (useful for
-    -- testing/benchmarking).
+    -- See Note [Creating the initial extended ledger state for Cardano]
     initExtLedgerStateCardano :: ExtLedgerState (CardanoBlock c)
-    initExtLedgerStateCardano = ExtLedgerState {
-          headerState = initHeaderState
-        , ledgerState =
-              HardForkLedgerState
-            . hap (fn id :* registerAny)
-            $ hardForkLedgerStatePerEra initLedgerState
-        }
+    initExtLedgerStateCardano =
+          injectInitialExtLedgerState
+        $ hliftA3
+            (\(Fn injIntoTestState) (WrapChainDepState cds) lst ->
+              ExtLedgerState {
+                  ledgerState = injIntoTestState lst
+                , headerState = genesisHeaderState cds
+                })
+            injectIntoTestState
+            initChainDepStates
+            initLedgerState
       where
-        initHeaderState :: HeaderState (CardanoBlock c)
-        initLedgerState :: LedgerState (CardanoBlock c)
-        ExtLedgerState initLedgerState initHeaderState =
-          injectInitialExtLedgerState cfg initExtLedgerStateByron
+        initLedgerState :: NS LedgerState (CardanoEras c)
+        initLedgerState =
+            mkInitialStateViaTranslation
+              ledgerStateTranslations
+              initLedgerStateByron
+              (getInitialCardanoEra cardanoHardForkTriggers)
 
-        registerAny :: NP (LedgerState -.-> LedgerState) (CardanoShelleyEras c)
-        registerAny =
-            hcmap (Proxy @IsShelleyBlock) injectIntoTestState $
-                WrapTransitionConfig transitionConfigShelley
-             :* WrapTransitionConfig transitionConfigAllegra
-             :* WrapTransitionConfig transitionConfigMary
-             :* WrapTransitionConfig transitionConfigAlonzo
-             :* WrapTransitionConfig transitionConfigBabbage
-             :* WrapTransitionConfig transitionConfigConway
-             :* Nil
+        initChainDepStates :: NP WrapChainDepState (CardanoEras c)
+        initChainDepStates =
+             WrapChainDepState (headerStateChainDep initHeaderStateByron)
+          :* WrapChainDepState tpraos
+          :* WrapChainDepState tpraos
+          :* WrapChainDepState tpraos
+          :* WrapChainDepState tpraos
+          :* WrapChainDepState praos
+          :* WrapChainDepState praos
+          :* Nil
+          where
+            tpraos = genesisTPraosState initialNonceShelley
+            praos  = genesisPraosState  initialNonceShelley
 
-        injectIntoTestState ::
-             L.EraTransition era
-          => WrapTransitionConfig (ShelleyBlock proto era)
-          -> (LedgerState -.-> LedgerState) (ShelleyBlock proto era)
-        injectIntoTestState (WrapTransitionConfig cfg) = fn $ \st -> st {
-            Shelley.shelleyLedgerState = L.injectIntoTestState cfg (Shelley.shelleyLedgerState st)
-          }
+        ledgerStateTranslations :: InPairs (Translate LedgerState) (CardanoEras c)
+        ledgerStateTranslations =
+             PCons byronToShelleyTranslation
+           $ PCons (interShelleyTranslation transitionConfigAllegra)
+           $ PCons (interShelleyTranslation transitionConfigMary)
+           $ PCons (interShelleyTranslation transitionConfigAlonzo)
+           $ PCons (interShelleyTranslation transitionConfigBabbage)
+           $ PCons (interShelleyTranslation transitionConfigConway)
+             PNil
+           where
+             byronToShelleyTranslation =
+                 Translate $ translateLedgerStateByronToShelley ctx
+               where
+                 ctx = SL.toFromByronTranslationContext genesisShelley
+
+             interShelleyTranslation transitionConfig =
+                 Translate $ \_ -> translateShelleyLedgerState ctx
+               where
+                 ctx = transitionConfig ^. L.tcTranslationContextL
+
+        injectIntoTestState :: NP (LedgerState -.-> LedgerState) (CardanoEras c)
+        injectIntoTestState =
+             fn id -- do nothing in Byron
+          :* hcmap (Proxy @IsShelleyBlock)
+               (\(WrapTransitionConfig cfg) -> fn $ \st -> st {
+                   Shelley.shelleyLedgerState =
+                     L.injectIntoTestState cfg (Shelley.shelleyLedgerState st)
+                 })
+               transitionCfgs
 
     -- | For each element in the list, a block forging thread will be started.
     --
@@ -1064,6 +1123,32 @@ protocolInfoCardano paramsCardano
             praos  :*
             praos  :*
             Nil
+
+{- Note [Creating the initial extended ledger state for Cardano]
+   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+   For mainnet, this is a very simple operation: Create the initial Byron
+   extended ledger state, and wrap it in the HFC envelope.
+
+   However, for testing/benchmarks, we also want to support starting at genesis
+   from some /later/, non-Byron era, which is configured by triggering a hard
+   fork at epoch 0 for a prefix of all eras.
+
+   In this case, we construct the initial header state/chain-dependent state for
+   that era directly, due to their simple structure. In contrast, we construct
+   the initial ledger state by (potentially repeatedly) invoking the
+   Ledger-provided translation functions, in order to retain backwards
+   compatibility.
+
+   (If we want/can break backwards compatibility, it would be cleaner to
+   directly use Ledger's 'createInitialState' instead of the iterated
+   translation. However, this means that usages of eg @nonAvvmBalances@ in the
+   Byron genesis config would need to be replaced, which seems easy, but tedious
+   in particular for existing long-lived testnets like preview.)
+
+   Finally, if we start from a post-Byron era, we also register certain initial
+   data from the genesis config, for example initial staking/funds.
+-}
 
 protocolClientInfoCardano ::
      forall c.

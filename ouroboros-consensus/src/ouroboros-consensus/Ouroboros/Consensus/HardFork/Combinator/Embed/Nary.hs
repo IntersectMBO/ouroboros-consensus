@@ -17,6 +17,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Embed.Nary (
   , injectQuery
     -- * Initial 'ExtLedgerState'
   , injectInitialExtLedgerState
+  , mkInitialStateViaTranslation
   ) where
 
 import           Data.Bifunctor (first)
@@ -25,15 +26,13 @@ import           Data.SOP.BasicFunctors
 import           Data.SOP.Counting (Exactly (..))
 import           Data.SOP.Dict (Dict (..))
 import           Data.SOP.Index
-import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.Strict
 import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Combinator
+import           Ouroboros.Consensus.HardFork.Combinator.State (Translate (..))
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import qualified Ouroboros.Consensus.HardFork.History as History
-import           Ouroboros.Consensus.HeaderValidation (AnnTip, HeaderState (..),
-                     genesisHeaderState)
+import           Ouroboros.Consensus.HeaderValidation (AnnTip, HeaderState (..))
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.TypeFamilyWrappers
@@ -174,62 +173,34 @@ instance Inject ExtLedgerState where
   Initial ExtLedgerState
 -------------------------------------------------------------------------------}
 
--- | Inject the first era's initial 'ExtLedgerState' and trigger any
--- translations that should take place in the very first slot.
---
--- Performs any hard forks scheduled via 'TriggerHardForkAtEpoch'.
---
--- Note: we can translate across multiple eras when computing the initial ledger
--- state, but we do not support translation across multiple eras in general;
--- extending 'applyChainTick' to translate across more than one era is not
--- problematic, but extending 'ledgerViewForecastAt' is a lot more subtle; see
--- @forecastNotFinal@.
+-- | Inject the genesis 'ExtLedgerState' of some era into an 'ExtLedgerState'
+-- for a 'HardForkBlock'. All eras before @x@ (if any) are empty.
 injectInitialExtLedgerState ::
-     forall x xs. CanHardFork (x ': xs)
-  => TopLevelConfig (HardForkBlock (x ': xs))
-  -> ExtLedgerState x
-  -> ExtLedgerState (HardForkBlock (x ': xs))
-injectInitialExtLedgerState cfg extLedgerState0 =
-    ExtLedgerState {
-        ledgerState = targetEraLedgerState
-      , headerState = targetEraHeaderState
-      }
+     forall xs. CanHardFork xs
+  => NS ExtLedgerState xs
+  -> ExtLedgerState (HardForkBlock xs)
+injectInitialExtLedgerState =
+      hcollapse
+    . himap (K .: inject initBounds)
   where
-    cfgs :: NP TopLevelConfig (x ': xs)
-    cfgs =
-        distribTopLevelConfig
-          (State.epochInfoLedger
-             (configLedger cfg)
-             (hardForkLedgerStatePerEra targetEraLedgerState))
-          cfg
+    initBounds :: Exactly xs History.Bound
+    initBounds = Exactly $ hpure $ K History.initBound
 
-    targetEraLedgerState :: LedgerState (HardForkBlock (x ': xs))
-    targetEraLedgerState =
-        HardForkLedgerState $
-          -- We can immediately extend it to the right slot, executing any
-          -- scheduled hard forks in the first slot
-          State.extendToSlot
-            (configLedger cfg)
-            (SlotNo 0)
-            (initHardForkState (ledgerState extLedgerState0))
-
-    firstEraChainDepState :: HardForkChainDepState (x ': xs)
-    firstEraChainDepState =
-        initHardForkState $
-          WrapChainDepState $
-            headerStateChainDep $
-              headerState extLedgerState0
-
-    targetEraChainDepState :: HardForkChainDepState (x ': xs)
-    targetEraChainDepState =
-        -- Align the 'ChainDepState' with the ledger state of the target era.
-        State.align
-          (InPairs.requiringBoth
-            (hmap (WrapConsensusConfig . configConsensus) cfgs)
-            (translateChainDepState hardForkEraTranslation))
-          (hpure (fn_2 (\_ st -> st)))
-          (hardForkLedgerStatePerEra targetEraLedgerState)
-          firstEraChainDepState
-
-    targetEraHeaderState :: HeaderState (HardForkBlock (x ': xs))
-    targetEraHeaderState = genesisHeaderState targetEraChainDepState
+-- | Translate the given @f x@ until it has the same index as the n-ary sum. The
+-- translations happen at epoch 0.
+mkInitialStateViaTranslation ::
+     InPairs (Translate f) (x : xs)
+  -> f x
+  -> NS g (x : xs)
+  -> NS f (x : xs)
+mkInitialStateViaTranslation = go
+  where
+    go ::
+         InPairs (Translate f) (x : xs)
+      -> f x
+      -> NS g (x : xs)
+      -> NS f (x : xs)
+    go _            fx Z{}     = Z fx
+    go (PCons t ts) fx (S gxs) = S $ go ts fx' gxs
+      where
+        fx' = translateWith t (EpochNo 0) fx
