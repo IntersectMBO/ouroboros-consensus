@@ -70,7 +70,7 @@ prop_genesisCurrent :: Property
 prop_genesisCurrent =
     current genSnaps === convertMapKind testInitLedger
   where
-    genSnaps = anchorlessChangelog $ empty (convertMapKind testInitLedger)
+    genSnaps = empty (convertMapKind testInitLedger)
 
 {-------------------------------------------------------------------------------
   Constructing snapshots
@@ -105,8 +105,8 @@ prop_pastLedger setup@ChainSetup{..} =
     tip :: Point TestBlock
     tip = maybe GenesisPoint blockPoint (lastMaybe prefix)
 
-    afterPrefix :: AnchorlessDbChangelog (LedgerState TestBlock)
-    afterPrefix = reapplyThenPushMany' (csBlockConfig setup) prefix trivialKeySetsReader csGenSnaps
+    afterPrefix :: DbChangelog (LedgerState TestBlock)
+    afterPrefix = reapplyThenPushMany' (csBlockConfig setup) prefix csGenSnaps
 
     -- See 'prop_snapshotsMaxRollback'
     withinReach :: Bool
@@ -118,7 +118,7 @@ prop_pastLedger setup@ChainSetup{..} =
 
 prop_maxRollbackGenesisZero :: Property
 prop_maxRollbackGenesisZero =
-        maxRollback (anchorlessChangelog $ empty (convertMapKind testInitLedger))
+        maxRollback (empty (convertMapKind testInitLedger))
     === 0
 
 prop_snapshotsMaxRollback :: ChainSetup -> Property
@@ -136,7 +136,7 @@ prop_snapshotsMaxRollback setup@ChainSetup{..} =
 prop_switchSameChain :: SwitchSetup -> Property
 prop_switchSameChain setup@SwitchSetup{..} =
     classify (switchSetupSaturated setup) "saturated" $
-          switch' (csBlockConfig ssChainSetup) ssNumRollback blockInfo trivialKeySetsReader csPushed
+          switch' (csBlockConfig ssChainSetup) ssNumRollback blockInfo csPushed
       === Just csPushed
   where
     ChainSetup{csPushed} = ssChainSetup
@@ -172,8 +172,8 @@ prop_pastAfterSwitch setup@SwitchSetup{..} =
     tip :: Point TestBlock
     tip = maybe GenesisPoint blockPoint (lastMaybe prefix)
 
-    afterPrefix :: AnchorlessDbChangelog (LedgerState TestBlock)
-    afterPrefix = reapplyThenPushMany' (csBlockConfig ssChainSetup) prefix trivialKeySetsReader (csGenSnaps ssChainSetup)
+    afterPrefix :: DbChangelog (LedgerState TestBlock)
+    afterPrefix = reapplyThenPushMany' (csBlockConfig ssChainSetup) prefix (csGenSnaps ssChainSetup)
 
     -- See 'prop_snapshotsMaxRollback'
     withinReach :: Bool
@@ -199,13 +199,13 @@ data ChainSetup = ChainSetup {
     , csPrefixLen :: Word64
 
       -- | Derived: genesis snapshots
-    , csGenSnaps  :: AnchorlessDbChangelog (LedgerState TestBlock)
+    , csGenSnaps  :: DbChangelog (LedgerState TestBlock)
 
       -- | Derived: the actual blocks that got applied (old to new)
     , csChain     :: [TestBlock]
 
       -- | Derived: the snapshots after all blocks were applied
-    , csPushed    :: AnchorlessDbChangelog (LedgerState TestBlock)
+    , csPushed    :: DbChangelog (LedgerState TestBlock)
     }
   deriving (Show)
 
@@ -253,7 +253,7 @@ data SwitchSetup = SwitchSetup {
     , ssChain       :: [TestBlock]
 
       -- | Derived; the snapshots after the switch was performed
-    , ssSwitched    :: AnchorlessDbChangelog (LedgerState TestBlock)
+    , ssSwitched    :: DbChangelog (LedgerState TestBlock)
     }
   deriving (Show)
 
@@ -264,10 +264,10 @@ mkTestSetup :: SecurityParam -> Word64 -> Word64 -> ChainSetup
 mkTestSetup csSecParam csNumBlocks csPrefixLen =
     ChainSetup {..}
   where
-    csGenSnaps = anchorlessChangelog $ empty (convertMapKind testInitLedger)
+    csGenSnaps = empty (convertMapKind testInitLedger)
     csChain    = take (fromIntegral csNumBlocks) $
                    iterate successorBlock (firstBlock 0)
-    csPushed   = reapplyThenPushMany' (csBlockConfig' csSecParam) csChain trivialKeySetsReader csGenSnaps
+    csPushed   = reapplyThenPushMany' (csBlockConfig' csSecParam) csChain csGenSnaps
 
 mkRollbackSetup :: ChainSetup -> Word64 -> Word64 -> Word64 -> SwitchSetup
 mkRollbackSetup ssChainSetup ssNumRollback ssNumNew ssPrefixLen =
@@ -288,7 +288,7 @@ mkRollbackSetup ssChainSetup ssNumRollback ssNumNew ssPrefixLen =
                          take (fromIntegral (csNumBlocks - ssNumRollback)) csChain
                        , ssNewBlocks
                        ]
-    ssSwitched  = fromJust $ switch' (csBlockConfig ssChainSetup) ssNumRollback ssNewBlocks trivialKeySetsReader csPushed
+    ssSwitched  = fromJust $ switch' (csBlockConfig ssChainSetup) ssNumRollback ssNewBlocks csPushed
 
 instance Arbitrary ChainSetup where
   arbitrary = do

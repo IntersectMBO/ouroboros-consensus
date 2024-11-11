@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -33,9 +32,7 @@ import           Control.Monad.Except
 import           Data.ByteString.Short (ShortByteString)
 import           Data.Coerce (coerce)
 import           Data.DerivingVia (InstantiatedAt (..))
-#if __GLASGOW_HASKELL__ < 910
-import           Data.Foldable
-#endif
+import qualified Data.Foldable as Foldable
 import           Data.Kind (Type)
 import           Data.Measure (Measure)
 import qualified Data.Measure
@@ -100,11 +97,15 @@ class ( UpdateLedger blk
   -- The mempool expects that the ledger checks the sanity of the transaction'
   -- size. The mempool implementation will add any valid transaction as long as
   -- there is at least one byte free in the mempool.
+  --
+  -- The resulting ledger state contains the diffs produced by applying this
+  -- transaction alone.
   applyTx :: LedgerConfig blk
           -> WhetherToIntervene
           -> SlotNo -- ^ Slot number of the block containing the tx
           -> GenTx blk
           -> TickedLedgerState blk ValuesMK
+             -- ^ Contain only the values for the tx to apply
           -> Except (ApplyTxErr blk) (TickedLedgerState blk DiffMK, Validated (GenTx blk))
 
   -- | Apply a previously validated transaction to a potentially different
@@ -113,12 +114,17 @@ class ( UpdateLedger blk
   -- When we re-apply a transaction to a potentially different ledger state
   -- expensive checks such as cryptographic hashes can be skipped, but other
   -- checks (such as checking for double spending) must still be done.
+  --
+  -- The returned ledger state contains the resulting values too so that this
+  -- function can be used to reapply a list of transactions, providing as a
+  -- first state one that contains the values for all the transactions.
   reapplyTx :: HasCallStack
             => LedgerConfig blk
             -> SlotNo -- ^ Slot number of the block containing the tx
             -> Validated (GenTx blk)
             -> TickedLedgerState blk ValuesMK
-            -> Except (ApplyTxErr blk) (TickedLedgerState blk ValuesMK)
+               -- ^ Contains at least the values for the tx to reapply
+            -> Except (ApplyTxErr blk) (TickedLedgerState blk TrackingMK)
 
   -- | Apply a list of previously validated transactions to a new ledger state.
   --
@@ -146,19 +152,21 @@ class ( UpdateLedger blk
          ReapplyTxsResult
            err
            (reverse val)
-           (forgetTrackingValues . calculateDifference st $ st')
+           st'
       )
-    $ foldl' (\(accE, accV, st') tx ->
-                 case runExcept (reapplyTx cfg slot tx st') of
+    $ Foldable.foldl' (\(accE, accV, st') tx ->
+                 case runExcept (reapplyTx cfg slot tx $ trackingToValues st') of
                    Left err   -> (Invalidated tx err : accE, accV, st')
-                   Right st'' -> (accE, tx : accV, st'')
-             ) ([], [], st) txs
+                   Right st'' -> (accE, tx : accV, prependTrackingDiffs st' st'')
+             ) ([], [], attachEmptyDiffs st) txs
 
   -- | Discard the evidence that transaction has been previously validated
   txForgetValidated :: Validated (GenTx blk) -> GenTx blk
 
   -- | Given a transaction, get the key-sets that we need to apply it to a
-  -- ledger state.
+  -- ledger state. This is implemented in the Ledger. An example of non-obvious
+  -- needed keys in Cardano are those of reference scripts for computing the
+  -- transaction size.
   getTransactionKeySets :: GenTx blk -> LedgerTables (LedgerState blk) KeysMK
 
 data ReapplyTxsResult blk =
@@ -169,7 +177,7 @@ data ReapplyTxsResult blk =
       -- which txs were received
     , validatedTxs   :: ![Validated (GenTx blk)]
       -- | Resulting ledger state
-    , resultingState :: !(TickedLedgerState blk DiffMK)
+    , resultingState :: !(TickedLedgerState blk TrackingMK)
     }
 
 -- | A generalized transaction, 'GenTx', identifier.
@@ -271,6 +279,8 @@ class ( Measure     (TxMeasure blk)
        LedgerConfig blk
        -- ^ used at least by HFC's composition logic
     -> TickedLedgerState blk ValuesMK
+       -- ^ This state needs values as a transaction measure might depend on
+       -- those. For example in Cardano they look at the reference scripts.
     -> GenTx blk
     -> Except (ApplyTxErr blk) (TxMeasure blk)
 
@@ -345,6 +355,6 @@ instance HasByteSize ByteSize32 where
 
 -- | A transaction that was previously valid. Used to clarify the types on the
 -- 'reapplyTxs' function.
-data Invalidated blk = Invalidated { getInvalidated :: Validated (GenTx blk)
-                                   , getReason      ::  ApplyTxErr blk
+data Invalidated blk = Invalidated { getInvalidated :: !(Validated (GenTx blk))
+                                   , getReason      :: !(ApplyTxErr blk)
                                    }

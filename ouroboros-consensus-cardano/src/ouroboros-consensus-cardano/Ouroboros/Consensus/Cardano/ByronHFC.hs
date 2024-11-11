@@ -100,7 +100,7 @@ instance HasCanonicalTxIn '[ByronBlock] where
   injectCanonicalTxIn IZ key      = absurd key
   injectCanonicalTxIn (IS idx') _ = case idx' of {}
 
-  distribCanonicalTxIn _ key = absurd $ getByronHFCTxIn key
+  ejectCanonicalTxIn _ key = absurd $ getByronHFCTxIn key
 
   encodeCanonicalTxIn = toCBOR
 
@@ -110,8 +110,8 @@ instance HasHardForkTxOut '[ByronBlock] where
   type instance HardForkTxOut '[ByronBlock] = Void
   injectHardForkTxOut IZ txout    = absurd txout
   injectHardForkTxOut (IS idx') _ = case idx' of {}
-  distribHardForkTxOut IZ txout    = absurd txout
-  distribHardForkTxOut (IS idx') _ = case idx' of {}
+  ejectHardForkTxOut IZ txout    = absurd txout
+  ejectHardForkTxOut (IS idx') _ = case idx' of {}
 
 instance SerializeHardForkTxOut '[ByronBlock] where
   encodeHardForkTxOut _ = toCBOR

@@ -44,7 +44,6 @@ common common-lib
 
   if flag(asserts)
     ghc-options: -fno-ignore-asserts
-    cpp-options: -DENABLE_ASSERTIONS
 
 common common-test
   import: common-lib
@@ -104,7 +103,6 @@ library
     text,
     time,
     transformers,
-    transformers-base,
     typed-protocols,
     typed-protocols-stateful,
 
@@ -159,7 +157,6 @@ library unstable-diffusion-testlib
     strict-sop-core ^>=0.1,
     strict-stm,
     text,
-    transformers-base,
     typed-protocols,
 
 library unstable-mock-testlib
@@ -321,7 +318,6 @@ test-suite consensus-test
     tasty-quickcheck,
     temporary,
     time,
-    transformers-base,
     tree-diff,
     typed-protocols,
     unstable-diffusion-testlib,

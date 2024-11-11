@@ -814,6 +814,7 @@ protocolInfoCardano paramsCardano
           => WrapTransitionConfig (ShelleyBlock proto era)
           -> (Flip LedgerState ValuesMK -.-> Flip LedgerState ValuesMK) (ShelleyBlock proto era)
         injectIntoTestState (WrapTransitionConfig cfg) = fn $ \(Flip st) ->
+          -- We need to unstow the injected values
           Flip $ unstowLedgerTables $ forgetLedgerTables $ st {
             Shelley.shelleyLedgerState = L.injectIntoTestState cfg
               (Shelley.shelleyLedgerState $ stowLedgerTables st)

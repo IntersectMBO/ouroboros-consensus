@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -Wno-unused-imports #-}
 module Main (main) where
 
 import qualified Test.Consensus.BlockchainTime.Simple (tests)
@@ -31,10 +32,10 @@ tests =
   , Test.Consensus.MiniProtocol.ChainSync.Client.tests
   , Test.Consensus.MiniProtocol.LocalStateQuery.Server.tests
   , testGroup "Mempool"
-      [ Test.Consensus.Mempool.tests
-      , Test.Consensus.Mempool.Fairness.tests
-      , Test.Consensus.Mempool.StateMachine.tests
-      ]
+       [ Test.Consensus.Mempool.tests
+       , Test.Consensus.Mempool.Fairness.tests
+       , Test.Consensus.Mempool.StateMachine.tests
+       ]
   , Test.Consensus.Util.MonadSTM.NormalForm.tests
   , Test.Consensus.Util.Versioned.tests
   , testGroup "HardFork" [

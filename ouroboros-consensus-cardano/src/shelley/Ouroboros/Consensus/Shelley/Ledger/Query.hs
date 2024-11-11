@@ -528,6 +528,10 @@ instance ( ShelleyCompatible proto era
         . flip withLedgerTables values
         <$> atomically (LedgerDB.roforkerGetLedgerState forker)
     GetCBOR qry'     ->
+      -- We encode using the latest (@maxBound@) ShelleyNodeToClientVersion, as
+      -- the @GetCBOR@ query already is about opportunistically assuming both
+      -- client and server are running the same version; cf. the @GetCBOR@
+      -- Haddocks.
       mkSerialised (encodeShelleyResult maxBound qry') <$>
             answerBlockQueryLookup cfg qry' forker
 
@@ -535,6 +539,10 @@ instance ( ShelleyCompatible proto era
     GetUTxOByAddress addrs -> loop (filterGetUTxOByAddressOne addrs) NoPreviousQuery emptyUtxo
     GetUTxOWhole           -> loop (const True) NoPreviousQuery emptyUtxo
     GetCBOR q'             ->
+      -- We encode using the latest (@maxBound@) ShelleyNodeToClientVersion,
+      -- as the @GetCBOR@ query already is about opportunistically assuming
+      -- both client and server are running the same version; cf. the
+      -- @GetCBOR@ Haddocks.
       mkSerialised (encodeShelleyResult maxBound q') <$>
        answerBlockQueryTraverse cfg q' forker
    where
@@ -543,23 +551,23 @@ instance ( ShelleyCompatible proto era
     combUtxo (SL.UTxO l) vs = SL.UTxO $ Map.union l vs
 
     partial ::
-         (Value (LedgerState (ShelleyBlock proto era)) -> Bool)
+         (TxOut (LedgerState (ShelleyBlock proto era)) -> Bool)
       -> LedgerTables (ExtLedgerState (ShelleyBlock proto era)) ValuesMK
       -> Map (SL.TxIn (EraCrypto era)) (LC.TxOut era)
     partial queryPredicate (LedgerTables (ValuesMK vs)) =
         Map.filter queryPredicate vs
 
-    f :: ValuesMK k v -> Bool
-    f (ValuesMK vs) = Map.null vs
+    vnull :: ValuesMK k v -> Bool
+    vnull (ValuesMK vs) = Map.null vs
 
-    toKey (LedgerTables (ValuesMK vs)) = fst $ Map.findMax vs
+    toMaxKey (LedgerTables (ValuesMK vs)) = fst $ Map.findMax vs
 
     loop queryPredicate !prev !acc = do
       extValues <- LedgerDB.roforkerRangeReadTables forker prev
-      if ltcollapse $ ltmap (K2 . f) extValues
+      if ltcollapse $ ltmap (K2 . vnull) extValues
         then pure acc
         else loop queryPredicate
-               (PreviousQueryWasUpTo $ toKey extValues)
+               (PreviousQueryWasUpTo $ toMaxKey extValues)
                (combUtxo acc $ partial queryPredicate extValues)
 
 instance SameDepIndex2 (BlockQuery (ShelleyBlock proto era)) where
@@ -1166,6 +1174,10 @@ answerShelleyLookupQueries idx cfg q forker =
       GetUTxOByTxIn txins ->
         answerGetUtxOByTxIn txins
       GetCBOR q'          ->
+        -- We encode using the latest (@maxBound@) ShelleyNodeToClientVersion,
+        -- as the @GetCBOR@ query already is about opportunistically assuming
+        -- both client and server are running the same version; cf. the
+        -- @GetCBOR@ Haddocks.
             mkSerialised (encodeShelleyResult maxBound q')
         <$> answerBlockQueryHFLookup idx cfg q' forker
   where
@@ -1179,11 +1191,11 @@ answerShelleyLookupQueries idx cfg q forker =
           (castLedgerTables $ injectLedgerTables idx (LedgerTables $ KeysMK txins))
       pure
         $ SL.UTxO
-        $ Map.mapKeys (distribCanonicalTxIn idx)
+        $ Map.mapKeys (ejectCanonicalTxIn idx)
         $ Map.mapMaybeWithKey
             (\k v ->
-               if distribCanonicalTxIn idx k `Set.member` txins
-               then Just $ distribHardForkTxOut idx v
+               if ejectCanonicalTxIn idx k `Set.member` txins
+               then Just $ ejectHardForkTxOut idx v
                else Nothing)
             values
 
@@ -1208,7 +1220,6 @@ answerShelleyTraversingQueries ::
      , BlockSupportsHFLedgerQuery xs
      , HasCanonicalTxIn xs
      , HasHardForkTxOut xs
-     , HardForkHasLedgerTables xs
      , CanHardFork xs
      )
   => Monad m
@@ -1221,6 +1232,10 @@ answerShelleyTraversingQueries idx cfg q forker = case q of
     GetUTxOByAddress{} -> loop (queryLedgerGetTraversingFilter idx q) NoPreviousQuery emptyUtxo
     GetUTxOWhole       -> loop (queryLedgerGetTraversingFilter idx q) NoPreviousQuery emptyUtxo
     GetCBOR q'         ->
+      -- We encode using the latest (@maxBound@) ShelleyNodeToClientVersion,
+      -- as the @GetCBOR@ query already is about opportunistically assuming
+      -- both client and server are running the same version; cf. the
+      -- @GetCBOR@ Haddocks.
       mkSerialised (encodeShelleyResult maxBound q') <$>
        answerBlockQueryHFTraverse idx cfg q' forker
   where
@@ -1229,15 +1244,15 @@ answerShelleyTraversingQueries idx cfg q forker = case q of
     combUtxo (SL.UTxO l) vs = SL.UTxO $ Map.union l vs
 
     partial ::
-         (Value (LedgerState (HardForkBlock xs)) -> Bool)
+         (TxOut (LedgerState (HardForkBlock xs)) -> Bool)
       -> LedgerTables (ExtLedgerState (HardForkBlock xs)) ValuesMK
       -> Map (SL.TxIn (EraCrypto era)) (LC.TxOut era)
     partial queryPredicate (LedgerTables (ValuesMK vs)) =
-        Map.mapKeys (distribCanonicalTxIn idx)
+        Map.mapKeys (ejectCanonicalTxIn idx)
       $ Map.mapMaybeWithKey
           (\_k v ->
               if queryPredicate v
-              then Just $ distribHardForkTxOut idx v
+              then Just $ ejectHardForkTxOut idx v
               else Nothing)
           vs
 

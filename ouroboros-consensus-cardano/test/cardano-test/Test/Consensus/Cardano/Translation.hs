@@ -8,6 +8,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -16,23 +17,20 @@ module Test.Consensus.Cardano.Translation (tests) where
 import qualified Cardano.Chain.Block as Byron
 import qualified Cardano.Chain.UTxO as Byron
 import           Cardano.Ledger.Alonzo ()
-import           Cardano.Ledger.BaseTypes (Network (Testnet), TxIx (..))
+import           Cardano.Ledger.BaseTypes (TxIx (..))
 import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Crypto as Crypto
 import qualified Cardano.Ledger.Genesis as Genesis
 import           Cardano.Ledger.Shelley.API
                      (NewEpochState (stashedAVVMAddresses), ShelleyGenesis (..),
-                     ShelleyGenesisStaking (..), TxIn (..),
-                     translateCompactTxOutByronToShelley,
+                     TxIn (..), translateCompactTxOutByronToShelley,
                      translateTxIdByronToShelley)
 import           Cardano.Ledger.Shelley.LedgerState (esLState, lsUTxOState,
                      nesEs, utxosUtxo)
-import           Cardano.Ledger.Shelley.PParams (emptyPParams)
 import           Cardano.Ledger.Shelley.Translation
 import           Cardano.Ledger.Shelley.UTxO (UTxO (..))
 import           Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import           Cardano.Slotting.Slot (EpochNo (..))
-import qualified Data.ListMap as ListMap
 import qualified Data.Map.Strict as Map
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Functors
@@ -49,7 +47,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.State.Types
                      (TranslateLedgerState (TranslateLedgerState, translateLedgerStateWith))
 import           Ouroboros.Consensus.Ledger.Basics (LedgerCfg, LedgerConfig,
                      LedgerState)
-import           Ouroboros.Consensus.Ledger.Tables
+import           Ouroboros.Consensus.Ledger.Tables hiding (TxIn)
 import           Ouroboros.Consensus.Ledger.Tables.Diff (Diff)
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import           Ouroboros.Consensus.Ledger.Tables.Utils
@@ -62,11 +60,10 @@ import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock,
                      shelleyLedgerState, shelleyLedgerTables)
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import           Ouroboros.Consensus.TypeFamilyWrappers
-import           Ouroboros.Consensus.Util (dimap)
 import           Test.Cardano.Ledger.Alonzo.Serialisation.Generators ()
 import           Test.Cardano.Ledger.Babbage.Serialisation.Generators ()
 import           Test.Cardano.Ledger.Conway.Arbitrary ()
-import           Test.Cardano.Ledger.Shelley.Utils (unsafeBoundRational)
+import           Test.Cardano.Ledger.Shelley.Examples.Consensus
 import           Test.Consensus.Byron.Generators (genByronLedgerConfig,
                      genByronLedgerState)
 import           Test.Consensus.Cardano.MockCrypto (MockCryptoCompatByron)
@@ -75,7 +72,6 @@ import           Test.Consensus.Shelley.MockCrypto
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
-import           Test.Util.Time (dawnOfTime)
 
 -- Definitions to make the signatures a bit less unwieldy
 type Crypto = MockCryptoCompatByron
@@ -248,7 +244,7 @@ byronUtxosAreInsertsInShelleyUtxoDiff srcLedgerState destLedgerState =
         keyFn = translateTxInByronToShelley . Byron.fromCompactTxIn
         valFn = Diff.Insert . translateCompactTxOutByronToShelley
       in
-        Diff.Diff $ dimap keyFn valFn utxo
+        Diff.Diff $ Map.map valFn $ Map.mapKeys keyFn utxo
 
     translateTxInByronToShelley :: Byron.TxIn -> TxIn Crypto
     translateTxInByronToShelley byronTxIn =
@@ -269,7 +265,7 @@ shelleyAvvmAddressesAreDeletesInUtxoDiff srcLedgerState destLedgerState =
       :: LedgerState (ShelleyBlock Proto (ShelleyEra Crypto)) EmptyMK
       -> Diff.Diff (TxIn Crypto) (Core.TxOut (AllegraEra Crypto))
     toNextUtxoDiff = avvmAddressesToUtxoDiff . stashedAVVMAddresses . shelleyLedgerState
-    avvmAddressesToUtxoDiff (UTxO m) = Diff.Diff $ dimap id (\_ -> Diff.Delete) m
+    avvmAddressesToUtxoDiff (UTxO m) = Diff.Diff $ Map.map (\_ -> Diff.Delete) m
 
 utxoTablesAreEmpty
   :: LedgerState (ShelleyBlock srcProto srcEra) EmptyMK
@@ -371,26 +367,11 @@ genShelleyLedgerState = arbitrary
 -- | A fixed ledger config should be sufficient as the updating of the ledger
 -- tables on era transitions does not depend on the configurations of any of
 -- the ledgers involved.
-fixedShelleyLedgerConfig :: (Crypto.Crypto (EraCrypto era)) => Core.TranslationContext era -> ShelleyLedgerConfig era
+fixedShelleyLedgerConfig ::
+     forall era. (Crypto.Crypto (EraCrypto era))
+  => Core.TranslationContext era
+  -> ShelleyLedgerConfig era
 fixedShelleyLedgerConfig translationContext = mkShelleyLedgerConfig
-    shelleyGenesis
+    (testShelleyGenesis @(EraCrypto era))
     translationContext
-    (fixedEpochInfo (sgEpochLength shelleyGenesis) (slotLengthFromSec 2))
-  where
-    shelleyGenesis = ShelleyGenesis {
-        sgSystemStart       = dawnOfTime
-      , sgNetworkMagic      = 0
-      , sgNetworkId         = Testnet
-      , sgActiveSlotsCoeff  = unsafeBoundRational 0.8
-      , sgSecurityParam     = 10
-      , sgEpochLength       = 10
-      , sgSlotsPerKESPeriod = 10
-      , sgMaxKESEvolutions  = 10
-      , sgSlotLength        = 10
-      , sgUpdateQuorum      = 6
-      , sgMaxLovelaceSupply = 10
-      , sgProtocolParams    = emptyPParams
-      , sgGenDelegs         = Map.empty
-      , sgInitialFunds      = ListMap.empty
-      , sgStaking           = ShelleyGenesisStaking ListMap.empty ListMap.empty
-    }
+    (fixedEpochInfo (sgEpochLength (testShelleyGenesis @(EraCrypto era))) (slotLengthFromSec 2))

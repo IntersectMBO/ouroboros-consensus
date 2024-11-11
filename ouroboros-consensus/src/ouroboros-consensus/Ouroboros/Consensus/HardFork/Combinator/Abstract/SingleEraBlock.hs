@@ -45,7 +45,9 @@ import           Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Node.InitStorage
 import           Ouroboros.Consensus.Storage.Serialisation
+import           Ouroboros.Consensus.Ticked
 import           Ouroboros.Consensus.Util.Condense
+import           Ouroboros.Consensus.Util.IOLike
 
 {-------------------------------------------------------------------------------
   SingleEraBlock
@@ -67,7 +69,13 @@ class ( LedgerSupportsProtocol blk
       , NodeInitStorage blk
       , BlockSupportsDiffusionPipelining blk
       , BlockSupportsMetrics blk
+        -- LedgerTables
       , CanStowLedgerTables (LedgerState blk)
+      , HasLedgerTables (LedgerState blk)
+      , HasLedgerTables (Ticked (LedgerState blk))
+      , Eq (TxOut (LedgerState blk))
+      , Show (TxOut (LedgerState blk))
+      , NoThunks (TxOut (LedgerState blk))
         -- Instances required to support testing
       , Eq   (GenTx blk)
       , Eq   (Validated (GenTx blk))

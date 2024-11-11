@@ -22,7 +22,6 @@ module Test.Consensus.MiniProtocol.LocalStateQuery.Server (tests) where
 
 import           Cardano.Crypto.DSIGN.Mock
 import           Control.Concurrent.Class.MonadSTM.Strict.TMVar
-import           Control.Monad.Base
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.ResourceRegistry
 import           Control.Tracer
@@ -179,7 +178,7 @@ mkClient ::
 mkClient points = localStateQueryClient [(pt, BlockQuery QueryLedgerTip) | pt <- points]
 
 mkServer ::
-     (IOLike m, MonadBase m m)
+     IOLike m
   => ResourceRegistry m
   -> SecurityParam
   -> Chain TestBlock
@@ -205,7 +204,7 @@ streamAPI = StreamAPI {streamAfter}
 
 -- | Initialise a 'LedgerDB' with the given chain.
 initLedgerDB ::
-     (IOLike m, MonadBase m m)
+     IOLike m
   => SecurityParam
   -> Chain TestBlock
   -> m (LedgerDB' m TestBlock)

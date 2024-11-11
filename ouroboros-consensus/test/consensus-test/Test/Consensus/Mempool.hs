@@ -41,6 +41,7 @@ import           Control.Monad.State (State, evalState, get, modify)
 import           Control.Tracer (Tracer (..))
 import           Data.Bifunctor (first, second)
 import           Data.Either (isRight)
+import qualified Data.Foldable as Foldable
 import qualified Data.List as List
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
@@ -658,8 +659,7 @@ withTestMempool setup@TestSetup {..} prop =
       let ledgerInterface = LedgerInterface
             { getCurrentLedgerState = forgetLedgerTables <$> readTVar varCurrentLedgerState
             , getLedgerTablesAtFor = \pt txs -> do
-                let keys = List.foldl' (<>) emptyLedgerTables
-                      $ map getTransactionKeySets txs
+                let keys = Foldable.foldMap' getTransactionKeySets txs
                 st <- atomically $ readTVar varCurrentLedgerState
                 if castPoint (getTip st) == pt
                   then pure $ Just $ restrictValues' st keys
@@ -683,8 +683,8 @@ withTestMempool setup@TestSetup {..} prop =
       -- the invalid transactions are reported in the same order they were
       -- added, so the first error is not the result of a cascade
       sequence_
-        [ error $ "Invalid initial transaction: " <> condense invalidTx <> " because of error " <> show _err
-        | MempoolTxRejected invalidTx _err <- result
+        [ error $ "Invalid initial transaction: " <> condense invalidTx <> " because of error " <> show err
+        | MempoolTxRejected invalidTx err <- result
         ]
 
       -- Clear the trace
@@ -1032,14 +1032,15 @@ executeAction :: forall m. IOLike m => TestMempool m -> Action -> m Property
 executeAction testMempool action = case action of
     AddTxs txs -> do
       void $ addTxs mempool txs
-      tracedAddedTxs <- expectTraceEvent $ \case
-        TraceMempoolAddedTx tx _ _ -> Just tx
-        _                          -> Nothing
+      allTraces <- expectTraceEvent Just
+      let tracedAddedTxs = [ tx | TraceMempoolAddedTx tx _ _ <- allTraces ] -- expectTraceEvent $ \case
+        -- TraceMempoolAddedTx tx _ _ -> Just tx
+        -- _                          -> Nothing
       return $ if map txForgetValidated tracedAddedTxs == txs
         then property True
         else counterexample
           ("Expected TraceMempoolAddedTx events for " <> condense txs <>
-           " but got " <> condense (map txForgetValidated tracedAddedTxs))
+           " but got " <> condense (map txForgetValidated tracedAddedTxs) <> " evs: " <> show allTraces)
           False
 
     RemoveTxs txs -> do

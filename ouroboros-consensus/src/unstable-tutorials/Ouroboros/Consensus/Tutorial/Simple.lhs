@@ -50,7 +50,7 @@ First, some imports we'll need:
 >    HeaderHash, Point, StandardHash)
 > import Ouroboros.Consensus.Protocol.Abstract
 >   (SecurityParam(..), ConsensusConfig, ConsensusProtocol(..) )
-> import Ouroboros.Consensus.Ticked ( Ticked1, Ticked(TickedTrivial) )
+> import Ouroboros.Consensus.Ticked ( Ticked, Ticked(TickedTrivial) )
 > import Ouroboros.Consensus.Block
 >   (BlockSupportsProtocol (selectView, validateView))
 > import Ouroboros.Consensus.Ledger.Abstract
@@ -131,34 +131,34 @@ Next, we instantiate the `ConsensusProtocol` for `SP`:
 
 > instance ConsensusProtocol SP where
 >   type SelectView    SP = BlockNo
->
+
 >   type LedgerView    SP = ()
->
+
 >   type IsLeader      SP = SP_IsLeader
 >   type CanBeLeader   SP = SP_CanBeLeader
->
+
 >   type ChainDepState SP = ()
 >   type ValidateView  SP = ()
 >   type ValidationErr SP = Void
->
+
 >   checkIsLeader cfg SP_CanBeLeader slot _tcds =
 >       if slot `Set.member` cfgsp_slotsLedByMe cfg
 >       then Just SP_IsLeader
 >       else Nothing
->
+
 >   protocolSecurityParam _cfg = k
->
+
 >   tickChainDepState _ _ _ _ = TickedTrivial
->
+
 >   updateChainDepState _ _ _ _ = return ()
->
+
 >   reupdateChainDepState _ _ _ _ = ()
 
 Finally we define a few extra things used in this instantiation:
 
 > data SP_CanBeLeader = SP_CanBeLeader -- Evidence that we /can/ be a leader
 > data SP_IsLeader = SP_IsLeader       -- Evidence that we /are/ leader
->
+
 > k :: SecurityParam
 > k = SecurityParam { maxRollbacks = 1 }
 
@@ -528,7 +528,7 @@ number, we materialize that number in the `LedgerState`.  We'll also need to
 keep track of some information about the most recent block we have seen.
 
 > data instance LedgerState BlockC mk =
->
+
 >   LedgerC
 >     -- the hash and slot number of the most recent block
 >     { lsbc_tip :: Point BlockC
@@ -544,11 +544,11 @@ place in the blockchain - a pair of a slot and a block hash.
 ---------------------------------------
 
 Again, the slot abstraction defines a logical clock - and instances of the
-`Ticked1` family describe values that evolve with respect to this logical clock.
-As such, we will also need to define an instance of `Ticked1` for our ledger
+`Ticked` family describe values that evolve with respect to this logical clock.
+As such, we will also need to define an instance of `Ticked` for our ledger
 state.  In our example, this is essentially an `Identity` functor:
 
-> newtype instance Ticked1 (LedgerState BlockC) mk =
+> newtype instance Ticked (LedgerState BlockC) mk =
 >   TickedLedgerStateC
 >     { unTickedLedgerStateC :: LedgerState BlockC mk }
 >   deriving (Show, Eq, Generic, Serialise)
@@ -563,7 +563,7 @@ types for a ledger.  Though we are here using
 > instance IsLedger (LedgerState BlockC) where
 >   type instance LedgerErr  (LedgerState BlockC) = Void
 >   type instance AuxLedgerEvent (LedgerState BlockC) = Void
->
+
 >   applyChainTickLedgerResult _cfg _slot ldgrSt =
 >     LedgerResult { lrEvents = []
 >                  , lrResult = TickedLedgerStateC $ convertMapKind ldgrSt
@@ -592,7 +592,7 @@ A block `b` is said to have been `applied` to a `LedgerState` if that
 `LedgerState` is the result of having witnessed `b` at some point.  We can
 express this as a function:
 
-> applyBlockTo :: BlockC -> Ticked1 (LedgerState BlockC) mk -> LedgerState BlockC mk
+> applyBlockTo :: BlockC -> Ticked (LedgerState BlockC) mk -> LedgerState BlockC mk
 > applyBlockTo block tickedLedgerState =
 >   ledgerState { lsbc_tip = blockPoint block
 >               , lsbc_count = lsbc_count'
@@ -605,7 +605,7 @@ express this as a function:
 >         Inc -> i + 1
 >         Dec -> i - 1
 
-We use a `Ticked1 (LedgerState BlockC)` to enforce the invariant that we should
+We use a `Ticked (LedgerState BlockC)` to enforce the invariant that we should
 not apply two blocks in a row - at least one tick (aka slot) must have elapsed
 between block applications.
 
@@ -618,15 +618,15 @@ the `ApplyBlock` typeclass:
 >     pure $ LedgerResult { lrEvents = []
 >                         , lrResult = convertMapKind $ block `applyBlockTo` tickedLdgrSt
 >                         }
->
+
 >   reapplyBlockLedgerResult _ldgrCfg block tickedLdgrSt =
 >     LedgerResult { lrEvents = []
 >                  , lrResult = convertMapKind $ block `applyBlockTo` tickedLdgrSt
 >                  }
->
+
 >   getBlockKeySets = const trivialLedgerTables
->
->
+
+
 
 `applyBlockLedgerResult` tries to apply a block to the ledger and fails with a
 `LedgerErr` corresponding to the particular `LedgerState blk` if for whatever
@@ -661,7 +661,7 @@ The `GetTip` typeclass describes how to get the `Point` of the tip - which is
 the most recently applied block.  We need to implement this both for
 `LedgerState BlockC` as well as its ticked version:
 
-> instance GetTip (Ticked1 (LedgerState BlockC)) where
+> instance GetTip (Ticked (LedgerState BlockC)) where
 >    getTip = castPoint . lsbc_tip . unTickedLedgerStateC
 
 > instance GetTip (LedgerState BlockC) where
@@ -736,15 +736,19 @@ the `LedgerTables`. For a Ledger state definition as simple as the one we are
 defining there the tables are trivially empty so the operations are all trivial
 and we use the default implementation
 
-> type instance Key   (LedgerState BlockC) = Void
-> type instance Value (LedgerState BlockC) = Void
->
-> instance HasLedgerTables (LedgerState BlockC)
-> instance HasLedgerTables (Ticked1 (LedgerState BlockC))
-> instance CanSerializeLedgerTables (LedgerState BlockC)
-> instance CanStowLedgerTables (LedgerState BlockC)
+> type instance TxIn  (LedgerState BlockC) = Void
+> type instance TxOut (LedgerState BlockC) = Void
+
 > instance LedgerTablesAreTrivial (LedgerState BlockC) where
 >   convertMapKind (LedgerC x y) = LedgerC x y
-> instance LedgerTablesAreTrivial (Ticked1 (LedgerState BlockC)) where
+> instance LedgerTablesAreTrivial (Ticked (LedgerState BlockC)) where
 >   convertMapKind (TickedLedgerStateC x) =
 >       TickedLedgerStateC (convertMapKind x)
+> deriving via TrivialLedgerTables (LedgerState BlockC)
+>     instance HasLedgerTables (LedgerState BlockC)
+> deriving via TrivialLedgerTables (Ticked (LedgerState BlockC))
+>     instance HasLedgerTables (Ticked (LedgerState BlockC))
+> deriving via TrivialLedgerTables (LedgerState BlockC)
+>     instance CanSerializeLedgerTables (LedgerState BlockC)
+> deriving via TrivialLedgerTables (LedgerState BlockC)
+>     instance CanStowLedgerTables (LedgerState BlockC)

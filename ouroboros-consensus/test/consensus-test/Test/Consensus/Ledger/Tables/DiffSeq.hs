@@ -16,6 +16,7 @@ import           Data.Sequence.NonEmpty (NESeq (..))
 import           Data.Typeable
 import           Ouroboros.Consensus.Ledger.Tables.DiffSeq
 import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
+import           Test.Consensus.Ledger.Tables.Diff (lawsTestOne)
 import           Test.QuickCheck.Classes
 import           Test.QuickCheck.Classes.Semigroup.Cancellative
 import           Test.Tasty
@@ -40,18 +41,6 @@ tests = testGroup "Test.Consensus.Ledger.Tables.DiffSeq" [
 
 type Key = Small Int
 type Val = Small Int
-
-{------------------------------------------------------------------------------
-  Running laws in test trees
-------------------------------------------------------------------------------}
-
-lawsTest :: Laws -> TestTree
-lawsTest Laws{lawsTypeclass, lawsProperties} = testGroup lawsTypeclass $
-    fmap (uncurry testProperty) lawsProperties
-
-lawsTestOne :: Typeable a => Proxy a -> [Proxy a -> Laws] -> TestTree
-lawsTestOne p tts =
-    testGroup (show $ typeOf p) (fmap (\f -> lawsTest $ f p) tts)
 
 {------------------------------------------------------------------------------
   Diffs

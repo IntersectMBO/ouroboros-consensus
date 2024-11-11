@@ -5,6 +5,8 @@
 /docs/website/build/
 /ouroboros-consensus/docs/haddocks/
 
+haddocks/
+
 # GHC
 .ghcid
 .ghc.environment.*
