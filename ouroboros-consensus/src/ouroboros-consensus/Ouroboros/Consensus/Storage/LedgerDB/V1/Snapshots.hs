@@ -44,7 +44,7 @@
        >         ├── tables
        >         └── state
 
-       The @tables@ file is a serialization of the in-memory part of the ledger
+       The @state@ file is a serialization of the in-memory part of the ledger
        state with empty tables (i.e. a @ExtLedgerState blk EmptyMK@), and
        @tables@ will store a persistent copy of the 'LedgerTable's. Depending on
        the 'BackingStore' implementation in use, this might be a file or a
@@ -73,10 +73,11 @@
        DB, using an iterator.
 
        Note that we can /reapply/ these blocks, which is quicker than applying
-       them, as the existence of a snapshot newer than these blocks proves (unless
-       the on-disk database has been tampered with, but this is not an attack we
-       intend to protect against, as this would mean the machine has already been
-       compromised) that they have been successfully applied in the past.
+       them, as the existence of a snapshot newer than these blocks, and them
+       being in the immutable DB proves (unless the on-disk database has been
+       tampered with, but this is not an attack we intend to protect against, as
+       this would mean the machine has already been compromised) that they have
+       been successfully applied in the past.
 
   Reading and applying blocks is costly. Typically, very few blocks need to be
   reapplied in practice. However, there is one exception: when the serialisation
@@ -108,15 +109,15 @@
        the @\<slotNumber\>/tables@ file.
 
   3. There is a maximum number of snapshots that should exist in the disk at any
-     time, dictated by the @DiskPolicy@, so if needed, we will trim out old
+     time, dictated by the @SnapshotPolicy@, so if needed, we will trim out old
      snapshots.
 
   == Flush during startup and snapshot at the end of startup
 
-  Due to the nature of the database having to carry around all the differences
-  between the last snapshotted state and the current tip, there is a need to
-  flush when replaying the chain as otherwise, for example on a replay from
-  genesis to the tip, we would carry millions of differences in memory.
+  Due to the nature of the V1 LedgerDB having to carry around all the
+  differences between the last snapshotted state and the current tip, there is a
+  need to flush when replaying the chain as otherwise, for example on a replay
+  from genesis to the tip, we would carry millions of differences in memory.
 
   Because of this, when we are replaying blocks we will flush regularly. As the
   last snapshot that was taken lives in a @\<slotNumber\>/tables@ file, there is
@@ -140,7 +141,6 @@ import           Codec.Serialise
 import           Control.Monad.Except
 import           Control.Tracer
 import qualified Data.List as List
-import           Data.Maybe (fromMaybe)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
@@ -185,16 +185,16 @@ takeSnapshot ::
   -> Tracer m (TraceSnapshotEvent blk)
   -> SnapshotsFS m
   -> BackingStore' m blk
-  -> Maybe DiskSnapshot -- ^ Override for snapshot numbering
+  -> Maybe String -- ^ A suffix for the snapshot
   -> ReadLocked m (Maybe (DiskSnapshot, RealPoint blk))
-takeSnapshot ldbvar ccfg tracer (SnapshotsFS hasFS') backingStore dsOverride = readLocked $ do
+takeSnapshot ldbvar ccfg tracer (SnapshotsFS hasFS') backingStore suffix = readLocked $ do
     state <- changelogLastFlushedState <$> readTVarIO ldbvar
     case pointToWithOriginRealPoint (castPoint (getTip state)) of
       Origin ->
         return Nothing
       NotOrigin t -> do
         let number   = unSlotNo (realPointSlot t)
-            snapshot = fromMaybe (DiskSnapshot number Nothing) dsOverride
+            snapshot = DiskSnapshot number suffix
         diskSnapshots <- listSnapshots hasFS'
         if List.any ((== number) . dsNumber) diskSnapshots then
           return Nothing

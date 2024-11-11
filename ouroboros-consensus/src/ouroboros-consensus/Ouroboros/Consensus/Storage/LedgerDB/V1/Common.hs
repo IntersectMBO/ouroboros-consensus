@@ -76,8 +76,8 @@ data LedgerDBState m l blk =
 deriving instance ( IOLike m
                   , LedgerSupportsProtocol blk
                   , NoThunks (l EmptyMK)
-                  , NoThunks (Key l)
-                  , NoThunks (Value l)
+                  , NoThunks (TxIn l)
+                  , NoThunks (TxOut l)
                   , NoThunks (LedgerCfg l)
                   ) => NoThunks (LedgerDBState m l blk)
 
@@ -99,10 +99,10 @@ data LedgerDBEnv m l blk = LedgerDBEnv {
     --   'LocalStateQueryView' which, while live, must maintain a consistent view
     --   of the DB, and therefore we acquire a Read lock.
     --
-    -- - when taking a snapshot of the ledger db, we need to prevent others
-    --   from altering the backing store at the same time, thus we acquire a
-    --   Write lock.
-  , ldbLock           :: !(AllowThunk (LedgerDBLock m))
+    -- - when taking a snapshot of the ledger db, we need to prevent others (eg
+    --   ChainSel) from altering the backing store at the same time, thus we
+    --   acquire a Write lock.
+  , ldbLock           :: !(LedgerDBLock m)
     -- | INVARIANT: this set contains only points that are in the
     -- VolatileDB.
     --
@@ -125,6 +125,9 @@ data LedgerDBEnv m l blk = LedgerDBEnv {
   , ldbTracer         :: !(Tracer m (TraceLedgerDBEvent blk))
   , ldbCfg            :: !(LedgerDbCfg l)
   , ldbHasFS          :: !(SnapshotsFS m)
+    -- | Determine whether we should flush depending on the number of flushable
+    -- diffs that we currently have in the LedgerDB, based on the flush
+    -- frequency that was provided when opening the LedgerDB.
   , ldbShouldFlush    :: !(Word64 -> Bool)
   , ldbQueryBatchSize :: !QueryBatchSize
   , ldbResolveBlock   :: !(ResolveBlock m blk)
@@ -133,8 +136,8 @@ data LedgerDBEnv m l blk = LedgerDBEnv {
 deriving instance ( IOLike m
                   , LedgerSupportsProtocol blk
                   , NoThunks (l EmptyMK)
-                  , NoThunks (Key l)
-                  , NoThunks (Value l)
+                  , NoThunks (TxIn l)
+                  , NoThunks (TxOut l)
                   , NoThunks (LedgerCfg l)
                   ) => NoThunks (LedgerDBEnv m l blk)
 
@@ -200,15 +203,18 @@ getEnvSTM1 (LDBHandle varState) f a = readTVar varState >>= \case
 data ForkerEnv m l blk = ForkerEnv {
     -- | Local, consistent view of backing store
     foeBackingStoreValueHandle :: !(LedgerBackingStoreValueHandle m l)
-    -- | In memory db changelog
-  , foeChangelog               :: !(StrictTVar m (AnchorlessDbChangelog l))
-    -- | Points to 'ldbChangelog'.
+    -- | In memory db changelog, 'foeBackingStoreValueHandle' must refer to
+    -- the anchor of this changelog.
+  , foeChangelog               :: !(StrictTVar m (DbChangelog l))
+    -- | The same 'StrictTVar' as 'ldbChangelog'
+    --
+    -- The anchor of this and 'foeChangelog' might get out of sync if diffs are
+    -- flushed, but 'forkerCommit' will take care of this.
   , foeSwitchVar               :: !(StrictTVar m (DbChangelog l))
     -- | Config
   , foeSecurityParam           :: !SecurityParam
      -- | Config
   , foeQueryBatchSize          :: !QueryBatchSize
-    -- | Resource registry
   , foeTracer                  :: !(Tracer m TraceForkerEvent)
   }
   deriving Generic
@@ -216,8 +222,8 @@ data ForkerEnv m l blk = ForkerEnv {
 deriving instance ( IOLike m
                   , LedgerSupportsProtocol blk
                   , NoThunks (l EmptyMK)
-                  , NoThunks (Key l)
-                  , NoThunks (Value l)
+                  , NoThunks (TxIn l)
+                  , NoThunks (TxOut l)
                   ) => NoThunks (ForkerEnv m l blk)
 
 getForkerEnv ::
@@ -229,9 +235,9 @@ getForkerEnv ::
 getForkerEnv (LDBHandle varState) forkerKey f = do
     forkerEnv <- atomically $ readTVar varState >>= \case
       LedgerDBClosed   -> throwIO $ ClosedDBError @blk prettyCallStack
-      LedgerDBOpen env -> readTVar (ldbForkers env) >>= (Map.lookup forkerKey >>> \case
+      LedgerDBOpen env -> (Map.lookup forkerKey <$> readTVar (ldbForkers env)) >>= \case
         Nothing        -> throwSTM $ ClosedForkerError @blk forkerKey prettyCallStack
-        Just forkerEnv -> pure forkerEnv)
+        Just forkerEnv -> pure forkerEnv
 
     f forkerEnv
 

@@ -73,6 +73,7 @@ withReadLock (LedgerDBLock lock) m =
 newtype WriteLocked m a = WriteLocked { runWriteLocked :: m a }
   deriving newtype (Functor, Applicative, Monad)
 
+-- | Used safely, for example, during initialization.
 unsafeIgnoreWriteLock :: WriteLocked m a -> m a
 unsafeIgnoreWriteLock = runWriteLocked
 

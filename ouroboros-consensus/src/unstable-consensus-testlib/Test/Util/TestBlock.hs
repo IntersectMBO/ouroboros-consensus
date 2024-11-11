@@ -52,7 +52,7 @@ module Test.Util.TestBlock (
   , applyDirectlyToPayloadDependentState
     -- * LedgerState
   , LedgerState (TestLedger, payloadDependentState, lastAppliedPoint)
-  , Ticked1 (TickedTestLedger)
+  , Ticked (TickedTestLedger)
   , getTickedTestLedger
     -- * Chain
   , BlockChain (..)
@@ -389,7 +389,7 @@ class ( Typeable ptype
 
 
       , HasLedgerTables (LedgerState (TestBlockWith ptype))
-      , HasLedgerTables (Ticked1 (LedgerState (TestBlockWith ptype)))
+      , HasLedgerTables (Ticked (LedgerState (TestBlockWith ptype)))
       , CanStowLedgerTables (LedgerState (TestBlockWith ptype))
       , CanSerializeLedgerTables (LedgerState (TestBlockWith ptype))
 
@@ -435,10 +435,10 @@ instance PayloadSemantics () where
 -- ticked state, leaving the rest of the input ticked state unaltered.
 applyDirectlyToPayloadDependentState ::
      PayloadSemantics ptype
-  => Ticked1 (LedgerState (TestBlockWith ptype)) ValuesMK
+  => Ticked (LedgerState (TestBlockWith ptype)) ValuesMK
   -> ptype
   -> Either (PayloadDependentError ptype)
-            (Ticked1 (LedgerState (TestBlockWith ptype)) TrackingMK)
+            (Ticked (LedgerState (TestBlockWith ptype)) TrackingMK)
 applyDirectlyToPayloadDependentState (TickedTestLedger st) tx = do
     payloadDepSt' <- applyPayload (payloadDependentState st) tx
     pure $ TickedTestLedger $ st { payloadDependentState = payloadDepSt' }
@@ -510,20 +510,22 @@ instance ( Typeable ptype
       signKey :: SlotNo -> SignKeyDSIGN MockDSIGN
       signKey (SlotNo n) = SignKeyMockDSIGN $ n `mod` numCore
 
-type instance Key   (LedgerState TestBlock) = Void
-type instance Value (LedgerState TestBlock) = Void
-
-instance HasLedgerTables (LedgerState TestBlock) where
-instance HasLedgerTables (Ticked1 (LedgerState TestBlock)) where
+type instance TxIn  (LedgerState TestBlock) = Void
+type instance TxOut (LedgerState TestBlock) = Void
 
 instance LedgerTablesAreTrivial (LedgerState TestBlock) where
   convertMapKind (TestLedger x EmptyPLDS) = TestLedger x EmptyPLDS
-instance LedgerTablesAreTrivial (Ticked1 (LedgerState TestBlock)) where
+instance LedgerTablesAreTrivial (Ticked (LedgerState TestBlock)) where
   convertMapKind (TickedTestLedger x) = TickedTestLedger $ convertMapKind x
 
-instance CanSerializeLedgerTables (LedgerState TestBlock)
-
-instance CanStowLedgerTables (LedgerState TestBlock)
+deriving via TrivialLedgerTables (LedgerState TestBlock)
+    instance HasLedgerTables (LedgerState TestBlock)
+deriving via TrivialLedgerTables (LedgerState TestBlock)
+    instance HasLedgerTables (Ticked (LedgerState TestBlock))
+deriving via TrivialLedgerTables (LedgerState TestBlock)
+    instance CanSerializeLedgerTables (LedgerState TestBlock)
+deriving via TrivialLedgerTables (LedgerState TestBlock)
+    instance CanStowLedgerTables (LedgerState TestBlock)
 
 instance PayloadSemantics ptype
          => ApplyBlock (LedgerState (TestBlockWith ptype)) (TestBlockWith ptype) where
@@ -536,7 +538,7 @@ instance PayloadSemantics ptype
     = case applyPayload payloadDependentState tbPayload of
         Left err  -> throwError $ InvalidPayload err
         Right st' -> return     $ pureLedgerResult
-                                $ forgetTrackingValues
+                                $ trackingToDiffs
                                 $ TestLedger {
                                     lastAppliedPoint      = Chain.blockPoint tb
                                   , payloadDependentState = st'
@@ -546,7 +548,7 @@ instance PayloadSemantics ptype
     case applyPayload payloadDependentState tbPayload of
         Left err  -> error $ "Found an error when reapplying a block: " ++ show err
         Right st' ->              pureLedgerResult
-                                $ forgetTrackingValues
+                                $ trackingToDiffs
                                 $ TestLedger {
                                     lastAppliedPoint      = Chain.blockPoint tb
                                   , payloadDependentState = st'
@@ -582,13 +584,13 @@ testInitLedgerWithState ::
 testInitLedgerWithState = TestLedger GenesisPoint
 
 -- Ticking has no effect
-newtype instance Ticked1 (LedgerState (TestBlockWith ptype)) mk = TickedTestLedger {
+newtype instance Ticked (LedgerState (TestBlockWith ptype)) mk = TickedTestLedger {
       getTickedTestLedger :: LedgerState (TestBlockWith ptype) mk
     }
 
-deriving stock instance Generic (Ticked1 (LedgerState (TestBlockWith ptype)) mk)
+deriving stock instance Generic (Ticked (LedgerState (TestBlockWith ptype)) mk)
 deriving anyclass instance (NoThunksMK mk, NoThunks (PayloadDependentState ptype mk))
-                        => NoThunks  (Ticked1 (LedgerState (TestBlockWith ptype)) mk)
+                        => NoThunks  (Ticked (LedgerState (TestBlockWith ptype)) mk)
 
 testInitExtLedgerWithState ::
   PayloadDependentState ptype mk -> ExtLedgerState (TestBlockWith ptype) mk
@@ -614,7 +616,7 @@ type instance LedgerCfg (LedgerState (TestBlockWith ptype)) = TestBlockLedgerCon
 instance GetTip (LedgerState (TestBlockWith ptype)) where
   getTip = castPoint . lastAppliedPoint
 
-instance GetTip (Ticked1 (LedgerState (TestBlockWith ptype))) where
+instance GetTip (Ticked (LedgerState (TestBlockWith ptype))) where
   getTip = castPoint . lastAppliedPoint . getTickedTestLedger
 
 instance PayloadSemantics ptype => IsLedger (LedgerState (TestBlockWith ptype)) where

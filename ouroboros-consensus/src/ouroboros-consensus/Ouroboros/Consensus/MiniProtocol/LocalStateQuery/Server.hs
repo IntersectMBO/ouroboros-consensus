@@ -45,7 +45,7 @@ localStateQueryServer cfg getView =
         getView mpt <&> \case
           Right forker -> SendMsgAcquired $ acquired forker
           Left e -> case e of
-            PointTooOld ->
+            PointTooOld{} ->
               SendMsgFailure AcquireFailurePointTooOld idle
             PointNotOnChain ->
               SendMsgFailure AcquireFailurePointNotOnChain idle

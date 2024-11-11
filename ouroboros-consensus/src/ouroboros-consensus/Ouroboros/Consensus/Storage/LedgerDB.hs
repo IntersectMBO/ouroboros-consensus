@@ -13,7 +13,6 @@ module Ouroboros.Consensus.Storage.LedgerDB (
   , openDB
   ) where
 
-import           Control.Monad.Base
 import           Data.Word
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HardFork.Abstract
@@ -35,7 +34,6 @@ import           Ouroboros.Consensus.Util.IOLike
 openDB ::
   forall m blk.
   ( IOLike m
-  , MonadBase m m
   , LedgerSupportsProtocol blk
   , LedgerDbSerialiseConstraints blk
   , InspectLedger blk

@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -32,7 +31,7 @@ module Ouroboros.Consensus.Mempool.API (
   ) where
 
 import qualified Data.List.NonEmpty as NE
-import           Ouroboros.Consensus.Block (SlotNo)
+import           Ouroboros.Consensus.Block (ChainHash, SlotNo)
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Cap
@@ -187,20 +186,18 @@ data Mempool m blk = Mempool {
       -- the given ledger state
       --
       -- This does not update the state of the mempool.
+      --
+      -- The arguments:
+      --
+      -- - The current slot in which we want the snapshot
+      --
+      -- - The ledger state ticked to the given slot number (with the diffs from ticking)
+      --
+      -- - A function that reads values for keys at the unticked ledger state.
     , getSnapshotFor ::
            SlotNo
-#if __GLASGOW_HASKELL__ >= 902
-           -- ^ The current slot in which we want the snapshot
-#endif
         -> TickedLedgerState blk DiffMK
-#if __GLASGOW_HASKELL__ >= 902
-           -- ^ The ledger state ticked to the given slot number
-#endif
         -> (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK))
-#if __GLASGOW_HASKELL__ >= 902
-        -- ^ A function that returns values corresponding to the given keys for
-        -- the unticked ledger state.
-#endif
         -> m (MempoolSnapshot blk)
 
       -- | Get the mempool's capacity
@@ -363,5 +360,5 @@ data MempoolSnapshot blk = MempoolSnapshot {
 
     -- | The resulting state currently in the mempool after applying the
     -- transactions
-  , snapshotState       :: TickedLedgerState blk DiffMK
+  , snapshotStateHash   :: ChainHash (TickedLedgerState blk)
   }

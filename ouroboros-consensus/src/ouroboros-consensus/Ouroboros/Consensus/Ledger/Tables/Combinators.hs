@@ -77,7 +77,11 @@ import           Ouroboros.Consensus.Util ((...:), (..:), (.:))
   Common constraints
 -------------------------------------------------------------------------------}
 
-type LedgerTableConstraints l = (Ord (Key l), Eq (Value l))
+-- | The @Eq (TxOut l)@ constraint is here only because of
+-- 'Ouroboros.Consensus.Ledger.Tables.Diff.diff'. Once the ledger provides
+-- deltas instead of us being the ones that compute them, we can probably drop
+-- this constraint.
+type LedgerTableConstraints l = (Ord (TxIn l), Eq (TxOut l))
 
 {-------------------------------------------------------------------------------
   Functor

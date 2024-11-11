@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
@@ -25,6 +26,7 @@ import           Control.Concurrent.Class.MonadMVar (MVar, MonadMVar (..))
 import qualified Control.Concurrent.Class.MonadMVar.Strict as Strict
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Control.Monad
+import           Control.Monad.Base
 import           Control.Monad.Class.MonadAsync
 import           Control.Monad.Class.MonadEventlog
 import           Control.Monad.Class.MonadFork
@@ -66,6 +68,12 @@ instance NoThunks (StrictSTM.StrictTVar m a)
   wNoThunks ctxt tv = do
       wNoThunks ctxt (StrictSTM.castStrictTVar tv :: StrictSTM.StrictTVar m a)
 
+instance NoThunks (StrictSTM.StrictTMVar m a)
+      => NoThunks (StrictSTM.StrictTMVar (WithEarlyExit m) a) where
+  showTypeOf _ = "StrictTMVar (WithEarlyExit m)"
+  wNoThunks ctxt tv = do
+      wNoThunks ctxt (StrictSTM.castStrictTMVar tv :: StrictSTM.StrictTMVar m a)
+
 instance NoThunks (Strict.StrictMVar m a)
       => NoThunks (Strict.StrictMVar (WithEarlyExit m) a) where
   showTypeOf _ = "StrictMVar (WithEarlyExit m)"
@@ -92,13 +100,16 @@ collapse :: Maybe () -> ()
 collapse Nothing   = ()
 collapse (Just ()) = ()
 
-exitEarly :: Monad m => WithEarlyExit m a
+exitEarly :: Applicative m => WithEarlyExit m a
 exitEarly = earlyExit $ pure Nothing
 
 instance (forall a'. NoThunks (m a'))
       => NoThunks (WithEarlyExit m a) where
    showTypeOf _p = "WithEarlyExit " ++ showTypeOf (Proxy @(m a))
    wNoThunks ctxt = wNoThunks ctxt . withEarlyExit
+
+instance Monad m => MonadBase (WithEarlyExit m) (WithEarlyExit m) where
+  liftBase = id
 
 {-------------------------------------------------------------------------------
   Instances for io-classes

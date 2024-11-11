@@ -35,7 +35,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl (
   ) where
 
 import           Control.Monad (void, when)
-import           Control.Monad.Base (MonadBase)
 import           Control.Monad.Trans.Class (lift)
 import           Control.ResourceRegistry (WithTempRegistry, allocate,
                      runInnerWithTempRegistry, runWithTempRegistry,
@@ -86,7 +85,6 @@ withDB ::
      , HasHardForkHistory blk
      , ConvertRawHash blk
      , SerialiseDiskConstraints blk
-     , MonadBase m m
      )
   => Complete Args.ChainDbArgs m blk
   -> (ChainDB m blk -> m a)
@@ -102,7 +100,6 @@ openDB ::
      , HasHardForkHistory blk
      , ConvertRawHash blk
      , SerialiseDiskConstraints blk
-     , MonadBase m m
      )
   => Complete Args.ChainDbArgs m blk
   -> m (ChainDB m blk)
@@ -118,7 +115,6 @@ openDBInternal ::
      , ConvertRawHash blk
      , SerialiseDiskConstraints blk
      , HasCallStack
-     , MonadBase m m
      )
   => Complete Args.ChainDbArgs m blk
   -> Bool -- ^ 'True' = Launch background tasks
@@ -287,7 +283,6 @@ closeDB ::
      )
   => ChainDbHandle m blk -> m ()
 closeDB (CDBHandle varState) = do
-    traceMarkerIO "Closing ChainDB"
     mbOpenEnv <- atomically $ readTVar varState >>= \case
       -- Idempotent
       ChainDbClosed   -> return Nothing

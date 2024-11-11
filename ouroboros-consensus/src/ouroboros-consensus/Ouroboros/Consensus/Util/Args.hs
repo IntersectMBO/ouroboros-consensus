@@ -41,7 +41,7 @@ module Ouroboros.Consensus.Util.Args (
   ) where
 
 import           Data.Functor.Identity (Identity (..))
-import           Data.Kind (Type)
+import           Data.Kind
 
 data Defaults t = NoDefault
   deriving (Functor)

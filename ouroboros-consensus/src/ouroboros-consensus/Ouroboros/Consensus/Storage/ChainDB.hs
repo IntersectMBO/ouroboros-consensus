@@ -21,11 +21,11 @@
 --   volatile DB API.
 --
 -- * The __[Ledger DB]("Ouroboros.Consensus.Storage.LedgerDB")__, stores the
---   \(k\) last ledger states corresponding to the blocks in the volatile DB, as
---   well as the sequence of differences used to construct
---   'Ouroboros.Consensus.Ledger.Tables.Basics.LedgerTables' at any of those
---   ledger states. 'Ouroboros.Consensus.Storage.LedgerDB.LedgerDB' defines the
---   ledger DB API.
+--   \(k\) last ledger states corresponding to the blocks on the current chain
+--   (which are part of the volatile DB), and means to read
+--   'Ouroboros.Consensus.Ledger.Tables.Basics.LedgerTables' for
+--   them. 'Ouroboros.Consensus.Storage.LedgerDB.LedgerDB' defines the ledger DB
+--   API.
 --
 -- * The Chain DB finally combines all of these components. It makes decisions
 --   about which chains to adopt (chain selection), switches to forks when
@@ -48,7 +48,6 @@ module Ouroboros.Consensus.Storage.ChainDB (
     module Ouroboros.Consensus.Storage.ChainDB.API
   , module Ouroboros.Consensus.Storage.ChainDB.Impl
   ) where
-
 
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import           Ouroboros.Consensus.Storage.ChainDB.Impl
