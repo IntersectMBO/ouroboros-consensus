@@ -4,7 +4,6 @@
 
 module Test.Consensus.Ledger.Mock.LedgerTables (tests) where
 
-import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Mock.Ledger
 import           Ouroboros.Consensus.Protocol.PBFT
 import           Test.Consensus.Ledger.Mock.Generators ()
@@ -19,6 +18,3 @@ tests = testGroup "LedgerTables"
   [ testProperty "Stowable laws" (prop_stowable_laws @Block)
   , testProperty "HasLedgerTables laws" (prop_hasledgertables_laws @Block)
   ]
-
-instance Arbitrary (LedgerTables (LedgerState Block) ValuesMK) where
-  arbitrary = projectLedgerTables <$> arbitrary

@@ -44,7 +44,6 @@ import           Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
                      (noPunishment)
 import           Ouroboros.Consensus.Storage.LedgerDB.API
-import           Ouroboros.Consensus.Ticked
 import           Ouroboros.Consensus.Util.IOLike (atomically)
 import           Ouroboros.Network.AnchoredFragment as AF (Anchor (..),
                      AnchoredFragment, AnchoredSeq (..), headPoint)
@@ -63,7 +62,11 @@ initialForgeState :: ForgeState
 initialForgeState = ForgeState 0 0 0 0
 
 -- | An action to generate transactions for a given block
-type GenTxs blk mk = SlotNo -> (IO (ReadOnlyForker IO (ExtLedgerState blk) blk)) -> TickedLedgerState blk DiffMK -> IO [Validated (GenTx blk)]
+type GenTxs blk mk =
+     SlotNo
+  -> IO (ReadOnlyForker IO (ExtLedgerState blk) blk)
+  -> TickedLedgerState blk DiffMK
+  -> IO [Validated (GenTx blk)]
 
 -- DUPLICATE: runForge mirrors forging loop from ouroboros-consensus/src/Ouroboros/Consensus/NodeKernel.hs
 -- For an extensive commentary of the forging loop, see there.
@@ -163,7 +166,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
           _   -> exitEarly' "NoLeader"
 
         -- Tick the ledger state for the 'SlotNo' we're producing a block for
-        let tickedLedgerState :: Ticked1 (LedgerState blk) DiffMK
+        let tickedLedgerState :: Ticked (LedgerState blk) DiffMK
             tickedLedgerState =
               applyChainTick
                 (configLedger cfg)

@@ -42,6 +42,7 @@ import           Data.SOP.BasicFunctors
 import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.Index (Index (..))
 import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
+import           Data.SOP.Strict
 import qualified Data.Text as T (pack)
 import           Data.Void (Void)
 import           Data.Word
@@ -387,8 +388,8 @@ instance ShelleyBasedEra era
   injectCanonicalTxIn IZ txIn     = ShelleyBlockHFCTxIn txIn
   injectCanonicalTxIn (IS idx') _ = case idx' of {}
 
-  distribCanonicalTxIn IZ txIn     = getShelleyBlockHFCTxIn txIn
-  distribCanonicalTxIn (IS idx') _ = case idx' of {}
+  ejectCanonicalTxIn IZ txIn     = getShelleyBlockHFCTxIn txIn
+  ejectCanonicalTxIn (IS idx') _ = case idx' of {}
 
   encodeCanonicalTxIn (ShelleyBlockHFCTxIn txIn) = SL.toEraCBOR @era txIn
 
@@ -398,12 +399,13 @@ instance ShelleyBasedEra era
   HardForkTxOut
 -------------------------------------------------------------------------------}
 
-instance HasHardForkTxOut '[ShelleyBlock proto era] where
+instance SL.EraTxOut era => HasHardForkTxOut '[ShelleyBlock proto era] where
   type instance HardForkTxOut '[ShelleyBlock proto era] = SL.TxOut era
   injectHardForkTxOut IZ txOut    = txOut
   injectHardForkTxOut (IS idx') _ = case idx' of {}
-  distribHardForkTxOut IZ txOut    = txOut
-  distribHardForkTxOut (IS idx') _ = case idx' of {}
+  ejectHardForkTxOut IZ txOut    = txOut
+  ejectHardForkTxOut (IS idx') _ = case idx' of {}
+  txOutEjections = fn (unZ . unK) :* Nil
 
 instance ShelleyBasedEra era => SerializeHardForkTxOut '[ShelleyBlock proto era] where
   encodeHardForkTxOut _ = SL.toEraCBOR @era
@@ -415,8 +417,8 @@ instance ShelleyBasedEra era => SerializeHardForkTxOut '[ShelleyBlock proto era]
 
 instance ( ShelleyCompatible proto era
          , ShelleyBasedEra era
-         , Key (LedgerState (ShelleyBlock proto era)) ~ SL.TxIn (EraCrypto era)
-         , Value (LedgerState (ShelleyBlock proto era)) ~ SL.TxOut era
+         , TxIn (LedgerState (ShelleyBlock proto era)) ~ SL.TxIn (EraCrypto era)
+         , TxOut (LedgerState (ShelleyBlock proto era)) ~ SL.TxOut era
          , HasHardForkTxOut '[ShelleyBlock proto era]
          ) => BlockSupportsHFLedgerQuery '[ShelleyBlock proto era] where
 

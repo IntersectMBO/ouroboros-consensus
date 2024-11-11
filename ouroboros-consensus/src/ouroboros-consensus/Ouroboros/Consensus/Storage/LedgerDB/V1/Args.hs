@@ -15,8 +15,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Args (
   , LedgerDbFlavorArgs (..)
   , QueryBatchSize (..)
   , defaultLedgerDbFlavorArgs
-  , defaultQueryBatchSize
-  , defaultShouldFlush
+  , queryBatchSize
+  , shouldFlush
   ) where
 
 import           Control.Monad.IO.Class
@@ -45,8 +45,8 @@ import           Ouroboros.Consensus.Util.Args
 -- It is fine if the result of a range read contains less than this number of
 -- keys, but it should never return more.
 data QueryBatchSize =
-    -- | A default value, which is determined by a specific 'DiskPolicy'. See
-    -- 'defaultDiskPolicy' as an example.
+    -- | A default value, which is determined by a specific
+    -- 'SnapshotPolicy'. See 'defaultSnapshotPolicy' as an example.
     DefaultQueryBatchSize
     -- | A requested value: the number of keys to read from disk in each batch.
   | RequestedQueryBatchSize Word64
@@ -56,16 +56,14 @@ data QueryBatchSize =
   deriving (Show, Eq, Generic)
   deriving anyclass NoThunks
 
-defaultQueryBatchSize :: QueryBatchSize -> Word64
-defaultQueryBatchSize requestedQueryBatchSize = case requestedQueryBatchSize of
+queryBatchSize :: QueryBatchSize -> Word64
+queryBatchSize requestedQueryBatchSize = case requestedQueryBatchSize of
     RequestedQueryBatchSize value -> value
     DefaultQueryBatchSize         -> 100_000
     DisableQuerySize              -> 0
 
--- | The number of diffs in the immutable part of the chain that we have to see
--- before we flush the ledger state to disk. See 'onDiskShouldFlush'.
---
--- INVARIANT: Should be at least 0.
+-- | The number of blocks in the immutable part of the chain that we have to see
+-- before we flush the ledger tables to disk. See 'onDiskShouldFlush'.
 data FlushFrequency =
   -- | A default value, which is determined by a specific 'SnapshotPolicy'. See
     -- 'defaultSnapshotPolicy' as an example.
@@ -77,8 +75,8 @@ data FlushFrequency =
   | DisableFlushing
   deriving (Show, Eq, Generic)
 
-defaultShouldFlush :: FlushFrequency -> (Word64 -> Bool)
-defaultShouldFlush requestedFlushFrequency = case requestedFlushFrequency of
+shouldFlush :: FlushFrequency -> (Word64 -> Bool)
+shouldFlush requestedFlushFrequency = case requestedFlushFrequency of
       RequestedFlushFrequency value -> (>= value)
       DefaultFlushFrequency         -> (>= 100)
       DisableFlushing               -> const False

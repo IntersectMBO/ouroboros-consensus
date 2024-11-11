@@ -188,27 +188,31 @@ data instance LedgerState BlockA mk = LgrA {
   deriving NoThunks via OnlyCheckWhnfNamed "LgrA" (LedgerState BlockA mk)
 
 -- | Ticking has no state on the A ledger state
-newtype instance Ticked1 (LedgerState BlockA) mk = TickedLedgerStateA {
+newtype instance Ticked (LedgerState BlockA) mk = TickedLedgerStateA {
       getTickedLedgerStateA :: LedgerState BlockA mk
     }
   deriving stock (Generic, Show, Eq)
-  deriving NoThunks via OnlyCheckWhnfNamed "TickedLgrA" (Ticked1 (LedgerState BlockA) mk)
+  deriving NoThunks via OnlyCheckWhnfNamed "TickedLgrA" (Ticked (LedgerState BlockA) mk)
 
 {-------------------------------------------------------------------------------
   Ledger Tables
 -------------------------------------------------------------------------------}
 
-type instance Key   (LedgerState BlockA) = Void
-type instance Value (LedgerState BlockA) = Void
+type instance TxIn  (LedgerState BlockA) = Void
+type instance TxOut (LedgerState BlockA) = Void
 
-instance HasLedgerTables (LedgerState BlockA)
-instance HasLedgerTables (Ticked1 (LedgerState BlockA))
-instance CanSerializeLedgerTables (LedgerState BlockA)
-instance CanStowLedgerTables (LedgerState BlockA)
 instance LedgerTablesAreTrivial (LedgerState BlockA) where
   convertMapKind (LgrA x y) = LgrA x y
-instance LedgerTablesAreTrivial (Ticked1 (LedgerState BlockA)) where
+instance LedgerTablesAreTrivial (Ticked (LedgerState BlockA)) where
   convertMapKind (TickedLedgerStateA x) = TickedLedgerStateA (convertMapKind x)
+deriving via TrivialLedgerTables (LedgerState BlockA)
+    instance HasLedgerTables (LedgerState BlockA)
+deriving via TrivialLedgerTables (Ticked (LedgerState BlockA))
+    instance HasLedgerTables (Ticked (LedgerState BlockA))
+deriving via TrivialLedgerTables (LedgerState BlockA)
+    instance CanSerializeLedgerTables (LedgerState BlockA)
+deriving via TrivialLedgerTables (LedgerState BlockA)
+    instance CanStowLedgerTables (LedgerState BlockA)
 
 data PartialLedgerConfigA = LCfgA {
       lcfgA_k           :: SecurityParam
@@ -223,7 +227,7 @@ type instance LedgerCfg (LedgerState BlockA) =
 instance GetTip (LedgerState BlockA) where
   getTip = castPoint . lgrA_tip
 
-instance GetTip (Ticked1 (LedgerState BlockA)) where
+instance GetTip (Ticked (LedgerState BlockA)) where
   getTip = castPoint . getTip . getTickedLedgerStateA
 
 instance IsLedger (LedgerState BlockA) where
@@ -240,20 +244,11 @@ instance ApplyBlock (LedgerState BlockA) BlockA where
   applyBlockLedgerResult cfg blk =
         fmap (pureLedgerResult . convertMapKind . setTip)
       . repeatedlyM
-          applyTx'
+          (fmap (convertMapKind . fst) .: applyTx cfg DoNotIntervene (blockSlot blk))
           (blkA_body blk)
     where
       setTip :: TickedLedgerState BlockA mk -> LedgerState BlockA mk
       setTip (TickedLedgerStateA st) = st { lgrA_tip = blockPoint blk }
-
-      applyTx' :: GenTx BlockA
-               -> TickedLedgerState BlockA ValuesMK
-               -> Except
-                    (ApplyTxErr BlockA)
-                    (TickedLedgerState BlockA ValuesMK)
-      applyTx' b =
-          fmap (TickedLedgerStateA . convertMapKind . getTickedLedgerStateA . fst)
-        . applyTx cfg DoNotIntervene (blockSlot blk) b
 
   reapplyBlockLedgerResult =
       dontExpectError ..: applyBlockLedgerResult
@@ -356,7 +351,8 @@ instance LedgerSupportsMempool BlockA where
         InitiateAtoB -> do
           return (TickedLedgerStateA $ st { lgrA_transition = Just sno }, ValidatedGenTxA tx)
 
-  reapplyTx cfg slot tx st = applyDiffs st . fst <$> applyTx cfg DoNotIntervene slot (forgetValidatedGenTxA tx) st
+  reapplyTx cfg slot tx st =
+    attachAndApplyDiffs st . fst <$> applyTx cfg DoNotIntervene slot (forgetValidatedGenTxA tx) st
 
   txForgetValidated = forgetValidatedGenTxA
 
@@ -618,9 +614,9 @@ instance SerialiseNodeToClient BlockA Void where
   decodeNodeToClient _ _ = fail "no ApplyTxErr to be decoded"
 
 instance SerialiseNodeToClient BlockA (SomeBlockQuery (BlockQuery BlockA)) where
-  encodeNodeToClient _ _ (SomeBlockQuery q) = case q of {}
+  encodeNodeToClient _ _ = \case {}
   decodeNodeToClient _ _ = fail "there are no queries to be decoded"
 
-instance SerialiseResult' BlockA BlockQuery where
-  encodeResult' _ _ = \case {}
-  decodeResult' _ _ = \case {}
+instance SerialiseBlockQueryResult BlockA BlockQuery where
+  encodeBlockQueryResult _ _ = \case {}
+  decodeBlockQueryResult _ _ = \case {}

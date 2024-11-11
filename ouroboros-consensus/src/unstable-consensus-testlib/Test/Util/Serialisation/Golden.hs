@@ -64,8 +64,8 @@ import           Ouroboros.Consensus.Node.Run (SerialiseDiskConstraints,
                      SerialiseNodeToClientConstraints,
                      SerialiseNodeToNodeConstraints)
 import           Ouroboros.Consensus.Node.Serialisation
-                     (SerialiseNodeToClient (..), SerialiseNodeToNode (..),
-                     SerialiseResult' (..))
+                     (SerialiseBlockQueryResult (..),
+                     SerialiseNodeToClient (..), SerialiseNodeToNode (..))
 import           Ouroboros.Consensus.Storage.Serialisation (EncodeDisk (..))
 import           Ouroboros.Consensus.Util.CBOR (decodeAsFlatTerm)
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
@@ -357,7 +357,7 @@ goldenTest_SerialiseNodeToClient codecConfig goldenDir Examples {..} =
         enc' = encodeNodeToClient codecConfig blockVersion
 
         encRes :: SomeResult blk -> Encoding
-        encRes (SomeResult q r) = encodeResult' codecConfig blockVersion q r
+        encRes (SomeResult q r) = encodeBlockQueryResult codecConfig blockVersion q r
 
         test :: TestName -> Labelled a -> (a -> Encoding) -> TestTree
         test testName exampleValues enc =

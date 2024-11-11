@@ -1,5 +1,5 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -8,27 +8,19 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
-#if __GLASGOW_HASKELL__ <= 906
-{-# OPTIONS_GHC -Wno-redundant-constraints #-}
-#endif
-
 module Ouroboros.Consensus.Storage.LedgerDB.V2.Init (mkInitDb) where
 
 import           Control.Monad (void)
-import           Control.Monad.Base
 import qualified Control.RAWLock as RAWLock
 import           Control.ResourceRegistry
 import           Control.Tracer
-#if __GLASGOW_HASKELL__ < 910
-import           Data.Foldable
-#endif
+import qualified Data.Foldable as Foldable
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Word
-import           NoThunks.Class
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Abstract
@@ -61,10 +53,9 @@ import           System.FS.API
 mkInitDb :: forall m blk.
             ( LedgerSupportsProtocol blk
             , IOLike m
-            , MonadBase m m
             , LedgerDbSerialiseConstraints blk
             , HasHardForkHistory blk
-#if __GLASGOW_HASKELL__ < 910
+#if __GLASGOW_HASKELL__ < 906
             , HasAnnTip blk
 #endif
             )
@@ -75,38 +66,36 @@ mkInitDb :: forall m blk.
 mkInitDb args flavArgs getBlock =
   InitDB {
       initFromGenesis = emptyF =<< lgrGenesis
-    , initFromSnapshot = \doChecksum ds -> do
-        traceMarkerIO "Loading snapshot"
-        s <- loadSnapshot (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) lgrHasFS ds doChecksum
-        traceMarkerIO "Loaded snapshot"
-        pure s
+    , initFromSnapshot = \doChecksum ds ->
+        loadSnapshot (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) lgrHasFS ds doChecksum
     , closeDb = closeLedgerSeq
     , initReapplyBlock = \a b c -> do
-        (LedgerSeq x, y) <- reapplyThenPush lgrRegistry a b c
-        mapM_ (close . tables) (AS.toOldestFirst x)
+        (x, y) <- reapplyThenPush lgrRegistry a b c
+        closeLedgerSeq x
         pure y
     , currentTip = ledgerState . current
-    , mkLedgerDb = \lseq -> do
-        traceMarkerIO "Initialize LedgerDB"
+    , pruneDb = \lseq -> do
         let (LedgerSeq rel, dbPrunedToImmDBTip) = pruneToImmTipOnly lseq
         mapM_ (close . tables) (AS.toOldestFirst rel)
-        (varDB, prevApplied) <-
-          (,) <$> newTVarIO dbPrunedToImmDBTip <*> newTVarIO Set.empty
+        pure dbPrunedToImmDBTip
+    , mkLedgerDb = \lseq -> do
+        varDB <- newTVarIO lseq
+        prevApplied <- newTVarIO Set.empty
         forkers <- newTVarIO Map.empty
         nextForkerKey <- newTVarIO (ForkerKey 0)
         lock <- RAWLock.new LDBLock
         let env = LedgerDBEnv {
-                 ldbSeq            = varDB
-               , ldbPrevApplied    = prevApplied
-               , ldbForkers        = forkers
-               , ldbNextForkerKey  = nextForkerKey
-               , ldbSnapshotPolicy = defaultSnapshotPolicy (ledgerDbCfgSecParam lgrConfig) lgrSnapshotPolicyArgs
-               , ldbTracer         = lgrTracer
-               , ldbCfg            = lgrConfig
-               , ldbHasFS          = lgrHasFS
-               , ldbResolveBlock   = getBlock
-               , ldbQueryBatchSize = Nothing
-               , ldbReleaseLock    = AllowThunk lock
+                 ldbSeq             = varDB
+               , ldbPrevApplied     = prevApplied
+               , ldbForkers         = forkers
+               , ldbNextForkerKey   = nextForkerKey
+               , ldbSnapshotPolicy  = defaultSnapshotPolicy (ledgerDbCfgSecParam lgrConfig) lgrSnapshotPolicyArgs
+               , ldbTracer          = lgrTracer
+               , ldbCfg             = lgrConfig
+               , ldbHasFS           = lgrHasFS
+               , ldbResolveBlock    = getBlock
+               , ldbQueryBatchSize  = Nothing
+               , ldbOpenHandlesLock = lock
                }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h bss
@@ -151,7 +140,6 @@ implMkLedgerDb ::
 #endif
      , LedgerSupportsProtocol blk
      , LedgerDbSerialiseConstraints blk
-     , MonadBase m m
      , HasHardForkHistory blk
      )
   => LedgerDBHandle m l blk
@@ -160,74 +148,65 @@ implMkLedgerDb ::
 implMkLedgerDb h bss = (LedgerDB {
       getVolatileTip            = getEnvSTM  h implGetVolatileTip
     , getImmutableTip           = getEnvSTM  h implGetImmutableTip
-    , getPastLedgerState        = getEnvSTM1 h implGetPastLedgerState
+    , getPastLedgerState        = \s -> getEnvSTM  h (flip implGetPastLedgerState s)
     , getHeaderStateHistory     = getEnvSTM  h implGetHeaderStateHistory
-    , getForkerAtWellKnownPoint = newForkerAtWellKnownPoint h
-    , getForkerAtPoint          = newForkerAtPoint h
+    , getForkerAtTarget         = newForkerAtTarget h
     , validate                  = getEnv5    h (implValidate h)
     , getPrevApplied            = getEnvSTM  h implGetPrevApplied
-    , garbageCollect            = getEnvSTM1 h implGarbageCollect
+    , garbageCollect            = \s -> getEnvSTM  h (flip implGarbageCollect s)
     , tryTakeSnapshot           = getEnv2    h (implTryTakeSnapshot bss)
     , tryFlush                  = getEnv     h implTryFlush
     , closeDB                   = implCloseDB h
     }, mkInternals bss h)
 
 mkInternals ::
-     forall m blk. ( IOLike m
+     forall m blk.
+     ( IOLike m
      , LedgerDbSerialiseConstraints blk
      , LedgerSupportsProtocol blk
      , ApplyBlock (ExtLedgerState blk) blk
-#if __GLASGOW_HASKELL__ > 810
-     , MonadBase m m
-#endif
      )
   => HandleArgs
   -> LedgerDBHandle m (ExtLedgerState blk) blk
   -> TestInternals' m blk
 mkInternals bss h = TestInternals {
-      takeSnapshotNOW = \ds -> getEnv h $ \env -> do
-          void . takeSnapshot
+      takeSnapshotNOW = \whereTo suff -> getEnv h $ \env -> do
+          st <- (case whereTo of
+            TakeAtVolatileTip -> anchorHandle
+            TakeAtImmutableTip -> currentHandle) <$> readTVarIO (ldbSeq env)
+          void $ takeSnapshot
                 (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
                 (LedgerDBSnapshotEvent >$< ldbTracer env)
                 (ldbHasFS env)
-                ds
+                suff
                 (onDiskShouldChecksumSnapshots $ ldbSnapshotPolicy env)
-                . anchorHandle
-                =<< readTVarIO (ldbSeq env)
+                st
     , reapplyThenPushNOW = \blk -> getEnv h $ \env -> withRegistry $ \reg -> do
-          frk <- newForkerAtWellKnownPoint h reg VolatileTip
-          st <- atomically $ forkerGetLedgerState frk
-          tables <- forkerReadTables frk (getBlockKeySets blk)
-          let st' = tickThenReapply (ledgerDbCfg $ ldbCfg env) blk (st `withLedgerTables` tables)
-          forkerPush frk st' >> atomically (forkerCommit frk) >> forkerClose frk
+          eFrk <- newForkerAtTarget h reg VolatileTip
+          case eFrk of
+            Left {} -> error "Unreachable, Volatile tip MUST be in LedgerDB"
+            Right frk -> do
+              st <- atomically $ forkerGetLedgerState frk
+              tables <- forkerReadTables frk (getBlockKeySets blk)
+              let st' = tickThenReapply (ledgerDbCfg $ ldbCfg env) blk (st `withLedgerTables` tables)
+              forkerPush frk st' >> atomically (forkerCommit frk) >> forkerClose frk
     , wipeLedgerDB = getEnv h $ destroySnapshots . ldbHasFS
     , closeLedgerDB =
        let LDBHandle tvar = h in
-         atomically (modifyTVar tvar (const LedgerDBClosed))
+         atomically (writeTVar tvar LedgerDBClosed)
     , truncateSnapshots = getEnv h $ implIntTruncateSnapshots . ldbHasFS
     }
   where
      takeSnapshot :: CodecConfig blk
                   -> Tracer m (TraceSnapshotEvent blk)
                   -> SomeHasFS m
-                  -> Maybe DiskSnapshot
+                  -> Maybe String
                   -> Flag "DoDiskSnapshotChecksum"
                   -> StateRef m (ExtLedgerState blk)
                   -> m (Maybe (DiskSnapshot, RealPoint blk))
      takeSnapshot = case bss of
        InMemoryHandleArgs -> InMemory.takeSnapshot
        --TODO LSMHandleArgs      -> LSM.takeSnapshot
-
--- | Testing only! Destroy all snapshots in the DB.
-destroySnapshots :: Monad m => SomeHasFS m -> m ()
-destroySnapshots (SomeHasFS fs) = do
-  dirs <- Set.lookupMax . Set.filter (isJust . snapshotFromPath) <$> listDirectory fs (mkFsPath [])
-  mapM_ ((\d -> do
-            isDir <- doesDirectoryExist fs d
-            if isDir
-              then removeDirectoryRecursive fs d
-              else removeFile fs d
-        ) . mkFsPath . (:[])) dirs
 
 -- | Testing only! Truncate all snapshots in the DB.
 implIntTruncateSnapshots :: MonadThrow m => SomeHasFS m -> m ()
@@ -293,7 +272,6 @@ implValidate ::
      , LedgerSupportsProtocol blk
      , HasCallStack
      , l ~ ExtLedgerState blk
-     , MonadBase m m
      )
   => LedgerDBHandle m l blk
   -> LedgerDBEnv m l blk
@@ -303,15 +281,21 @@ implValidate ::
   -> Word64
   -> [Header blk]
   -> m (ValidateResult m (ExtLedgerState blk) blk)
-implValidate h ldbEnv =
-  Validate.validate
-    (ldbResolveBlock ldbEnv)
-    (getExtLedgerCfg . ledgerDbCfg $ ldbCfg ldbEnv)
-    (\l -> do
-        prev <- readTVar (ldbPrevApplied ldbEnv)
-        writeTVar (ldbPrevApplied ldbEnv) (foldl' (flip Set.insert) prev l))
-    (readTVar (ldbPrevApplied ldbEnv))
-    (newForkerAtFromTip h)
+implValidate h ldbEnv rr tr cache rollbacks hdrs =
+  Validate.validate $
+    Validate.ValidateArgs
+      (ldbResolveBlock ldbEnv)
+      (getExtLedgerCfg . ledgerDbCfg $ ldbCfg ldbEnv)
+      (\l -> do
+          prev <- readTVar (ldbPrevApplied ldbEnv)
+          writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l))
+      (readTVar (ldbPrevApplied ldbEnv))
+      (newForkerByRollback h)
+      rr
+      tr
+      cache
+      rollbacks
+      hdrs
 
 implGetPrevApplied :: MonadSTM m => LedgerDBEnv m l blk -> STM m (Set (RealPoint blk))
 implGetPrevApplied env = readTVar (ldbPrevApplied env)

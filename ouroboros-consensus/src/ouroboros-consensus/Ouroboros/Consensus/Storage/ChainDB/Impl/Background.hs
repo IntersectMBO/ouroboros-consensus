@@ -225,6 +225,8 @@ copyAndSnapshotRunner ::
   -> Fuse m
   -> m Void
 copyAndSnapshotRunner cdb@CDB{..} gcSchedule replayed fuse = do
+    -- this first flush will persist the differences that come from the initial
+    -- chain selection.
     LedgerDB.tryFlush cdbLedgerDB
     loop =<< LedgerDB.tryTakeSnapshot cdbLedgerDB Nothing replayed
   where
