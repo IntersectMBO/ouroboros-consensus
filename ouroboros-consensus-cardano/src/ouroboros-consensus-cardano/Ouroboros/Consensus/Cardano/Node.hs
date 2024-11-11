@@ -543,20 +543,19 @@ toTriggerHardFork = \case
     CardanoTriggerHardForkAtEpoch epochNo ->
       TriggerHardForkAtEpoch epochNo
 
-newtype CardanoHardForkTriggers = CardanoHardForkTriggers {
+newtype CardanoHardForkTriggers c = CardanoHardForkTriggers {
     getCardanoHardForkTriggers ::
-         NP CardanoHardForkTrigger (CardanoShelleyEras StandardCrypto)
+         NP CardanoHardForkTrigger (CardanoShelleyEras c)
   }
 
 pattern CardanoHardForkTriggers' ::
-     (c ~ StandardCrypto)
-  => CardanoHardForkTrigger (ShelleyBlock (TPraos c) (ShelleyEra  c))
+     CardanoHardForkTrigger (ShelleyBlock (TPraos c) (ShelleyEra  c))
   -> CardanoHardForkTrigger (ShelleyBlock (TPraos c) (AllegraEra  c))
   -> CardanoHardForkTrigger (ShelleyBlock (TPraos c) (MaryEra     c))
   -> CardanoHardForkTrigger (ShelleyBlock (TPraos c) (AlonzoEra   c))
   -> CardanoHardForkTrigger (ShelleyBlock (Praos  c) (BabbageEra  c))
   -> CardanoHardForkTrigger (ShelleyBlock (Praos  c) (ConwayEra   c))
-  -> CardanoHardForkTriggers
+  -> CardanoHardForkTriggers c
 pattern CardanoHardForkTriggers' {
         triggerHardForkShelley
       , triggerHardForkAllegra
@@ -602,7 +601,7 @@ pattern CardanoHardForkTriggers' {
 data CardanoProtocolParams c = CardanoProtocolParams {
     byronProtocolParams           :: ProtocolParamsByron
   , shelleyBasedProtocolParams    :: ProtocolParamsShelleyBased c
-  , cardanoHardForkTriggers       :: CardanoHardForkTriggers
+  , cardanoHardForkTriggers       :: CardanoHardForkTriggers c
   , cardanoLedgerTransitionConfig :: L.TransitionConfig (L.LatestKnownEra c)
   , cardanoCheckpoints            :: CheckpointsMap (CardanoBlock c)
     -- | The greatest protocol version that this node's software and config

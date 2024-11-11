@@ -90,12 +90,12 @@ protocolVersionZero = SL.ProtVer versionZero 0
     versionZero :: SL.Version
     versionZero = SL.natVersion @0
 
-hardForkOnDefaultProtocolVersions :: CardanoHardForkTriggers
+hardForkOnDefaultProtocolVersions :: CardanoHardForkTriggers c
 hardForkOnDefaultProtocolVersions =
       CardanoHardForkTriggers
     $ hpure CardanoTriggerHardForkAtDefaultVersion
 
-hardForkInto :: Era -> CardanoHardForkTriggers
+hardForkInto :: Era -> CardanoHardForkTriggers c
 hardForkInto Byron   = hardForkOnDefaultProtocolVersions
 hardForkInto Shelley =
     hardForkOnDefaultProtocolVersions
@@ -151,7 +151,7 @@ mkSimpleTestProtocolInfo ::
   -> ByronSlotLengthInSeconds
   -> ShelleySlotLengthInSeconds
   -> SL.ProtVer
-  -> CardanoHardForkTriggers
+  -> CardanoHardForkTriggers c
   -> ProtocolInfo (CardanoBlock c)
 mkSimpleTestProtocolInfo
     decentralizationParam
@@ -230,7 +230,7 @@ mkTestProtocolInfo ::
   -- ^ See 'protocolInfoCardano' for the details of what is the
   -- relation between this version and any 'TriggerHardForkAtVersion'
   -- that __might__ appear in the 'CardanoHardForkTriggers' parameter.
-  -> CardanoHardForkTriggers
+  -> CardanoHardForkTriggers c
   -- ^ Specification of the era to which the initial state should hard-fork to.
   -> (ProtocolInfo (CardanoBlock c), m [BlockForging m (CardanoBlock c)])
 mkTestProtocolInfo

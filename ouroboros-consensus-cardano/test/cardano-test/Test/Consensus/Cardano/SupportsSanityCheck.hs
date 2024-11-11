@@ -61,7 +61,7 @@ data SimpleTestProtocolInfoSetup = SimpleTestProtocolInfoSetup
   , securityParam         :: SecurityParam
   , byronSlotLength       :: ByronSlotLengthInSeconds
   , shelleySlotLength     :: ShelleySlotLengthInSeconds
-  , hardForkTriggers      :: CardanoHardForkTriggers
+  , hardForkTriggers      :: CardanoHardForkTriggers StandardCrypto
   }
 
 instance Arbitrary SimpleTestProtocolInfoSetup where
