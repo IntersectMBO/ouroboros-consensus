@@ -1082,8 +1082,8 @@ type instance TxOut (LedgerState (HardForkBlock xs)) = HardForkTxOut xs
 -- holding a @'NS' 'WrapTxOut' xs@ instead.
 --
 -- Whenever we are carrying a @'LedgerState' ('HardForkBlock' xs) mk@ (or
--- 'Ouroboros.Consensus.Ledger.Extended.ExtLedgerState'), the implied tables are
--- the ones inside the particular ledger state in the 'Telescope' of the
+-- 'Ouroboros.Consensus.Ledger.Extended.ExtLedgerState'), the tables are the
+-- ones inside the particular ledger state in the 'Telescope' of the
 -- 'HardForkState'.
 --
 -- <<docs/haddocks/hard-fork-tables-per-block.svg>>

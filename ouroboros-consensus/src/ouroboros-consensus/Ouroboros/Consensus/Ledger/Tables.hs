@@ -84,9 +84,7 @@
 -- for us Consensus to manipulate, and we can then inject it back so that we
 -- provide the expected data to the ledger. Note that the Ledger rules for
 -- applying a block are defined in a way that it only needs the subset of the
--- UTxO set that the block being applied will consume. See [the @DbChangelog@
--- documentation for block
--- application](Ouroboros-Consensus-Storage-LedgerDB-V1-DbChangelog.html#g:applying).
+-- UTxO set that the block being applied will consume.
 --
 -- Now using 'Ouroboros.Consensus.Ledger.Tables.Utils.calculateDifference', we
 -- can compare two (successive) t'Ouroboros.Consensus.Ledger.Basics.LedgerState's
@@ -104,8 +102,8 @@
 --     })
 -- ==
 --  'TrackingMK'
---    (Map.fromList [(\'a\', 100),      (\'c\', 200)])
---    (Map.fromList [(\'b\', [Delete]), (\'c\', [Insert 200])])
+--    (Map.fromList [(\'a\', 100),    (\'c\', 200)])
+--    (Map.fromList [(\'b\', Delete), (\'c\', Insert 200)])
 -- @
 --
 -- This operation provided a 'TrackingMK' which is in fact just a 'ValuesMK' and
@@ -149,12 +147,11 @@
 --  == 'KeysMK' (Set.fromList [\'a\', \'b\'])
 -- @
 --
--- We shall use those later on to read the txouts from some storage (which will
--- be the 'Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.BackingStore') and
--- forward the resulting txouts through a sequence of differences (which will be
--- 'Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog.adcDiffs').
+-- We shall use those later on to read the txouts from some storage.
 --
--- This example already covered most of the standard mapkinds, in particular:
+-- We call those types ending in "MK" mapkinds. They model the different types
+-- of collections and contained data in the tables. This example already covered
+-- most of the standard mapkinds, in particular:
 --
 --   ['EmptyMK']: A nullary data constructor, an empty table.
 --

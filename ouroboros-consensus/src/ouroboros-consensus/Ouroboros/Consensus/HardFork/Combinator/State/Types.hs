@@ -16,7 +16,6 @@ module Ouroboros.Consensus.HardFork.Combinator.State.Types (
   , Translate (..)
   , TranslateLedgerState (..)
   , TranslateLedgerTables (..)
-  , TranslateTxIn (..)
   , TranslateTxOut (..)
   , translateLedgerTablesWith
   ) where
@@ -173,8 +172,6 @@ data TranslateLedgerTables x y = TranslateLedgerTables {
     -- See 'translateLedgerTablesWith'.
   , translateTxOutWith :: !(TxOut (LedgerState x) -> TxOut (LedgerState y))
   }
-
-newtype TranslateTxIn x y = TranslateTxIn (TxIn (LedgerState x) -> TxIn (LedgerState y))
 
 newtype TranslateTxOut x y = TranslateTxOut (TxOut (LedgerState x) -> TxOut (LedgerState y))
 

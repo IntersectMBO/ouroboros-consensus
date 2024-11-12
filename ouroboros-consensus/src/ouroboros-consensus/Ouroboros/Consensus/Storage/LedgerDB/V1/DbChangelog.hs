@@ -121,7 +121,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog (
   , onChangelog
   , onChangelogM
     -- * Updating a @DbChangelog@
-    -- ** Applying blocks #applying#
+    -- ** Applying blocks
     --
     -- | Applying blocks to the 'DbChangelog' will extend it if the result is
     -- successful.
