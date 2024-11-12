@@ -42,6 +42,8 @@ import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation
+import           Ouroboros.Consensus.Ledger.SupportsMempool
+                     (ConvertRawTxId (..))
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.Serialisation (Some (..))
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
@@ -261,7 +263,11 @@ instance c ~ MockCryptoCompatByron
 instance c ~ MockCryptoCompatByron
       => Arbitrary (WithVersion (HardForkNodeToNodeVersion (CardanoEras c))
                                 (CardanoGenTxId c)) where
-  arbitrary = arbitraryNodeToNode GenTxIdByron GenTxIdShelley GenTxIdAllegra GenTxIdMary GenTxIdAlonzo GenTxIdBabbage GenTxIdConway
+  arbitrary = do
+    let fromByronGenTxId :: TxId (GenTx ByronBlock) -> CardanoGenTxId c
+        fromByronGenTxId = HardForkGenTxId . OneEraGenTxId . toRawTxIdHash
+    arbitraryNodeToNode fromByronGenTxId fromByronGenTxId fromByronGenTxId fromByronGenTxId fromByronGenTxId fromByronGenTxId fromByronGenTxId
+
 
 {-------------------------------------------------------------------------------
   NodeToClient
@@ -465,6 +471,14 @@ instance c ~ MockCryptoCompatByron
       => Arbitrary (WithVersion (HardForkNodeToClientVersion (CardanoEras c))
                                 (CardanoGenTx c)) where
   arbitrary = arbitraryNodeToClient GenTxByron GenTxShelley GenTxAllegra GenTxMary GenTxAlonzo GenTxBabbage GenTxConway
+
+instance c ~ MockCryptoCompatByron
+      => Arbitrary (WithVersion (HardForkNodeToClientVersion (CardanoEras c))
+                                (CardanoGenTxId c)) where
+  arbitrary = do
+    let fromByronGenTxId :: TxId (GenTx ByronBlock) -> CardanoGenTxId c
+        fromByronGenTxId = HardForkGenTxId . OneEraGenTxId . toRawTxIdHash
+    arbitraryNodeToClient fromByronGenTxId fromByronGenTxId fromByronGenTxId fromByronGenTxId fromByronGenTxId fromByronGenTxId fromByronGenTxId
 
 instance c ~ MockCryptoCompatByron
       => Arbitrary (WithVersion (HardForkNodeToClientVersion (CardanoEras c))

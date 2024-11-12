@@ -179,7 +179,7 @@ instance Inject Examples where
       , exampleSerialisedHeader = inj (Proxy @SerialisedHeader)        exampleSerialisedHeader
       , exampleHeaderHash       = inj (Proxy @WrapHeaderHash)          exampleHeaderHash
       , exampleGenTx            = inj (Proxy @GenTx)                   exampleGenTx
-      , exampleGenTxId          = inj (Proxy @WrapGenTxId)             exampleGenTxId
+      , exampleGenTxId          = inj (Proxy @WrapGenTxId) exampleGenTxId
       , exampleApplyTxErr       = inj (Proxy @WrapApplyTxErr)          exampleApplyTxErr
       , exampleQuery            = inj (Proxy @(SomeSecond BlockQuery)) exampleQuery
       , exampleResult           = inj (Proxy @SomeResult)              exampleResult

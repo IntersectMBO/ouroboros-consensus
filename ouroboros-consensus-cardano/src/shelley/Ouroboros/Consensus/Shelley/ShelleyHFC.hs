@@ -37,6 +37,7 @@ import           Data.Coerce
 import qualified Data.Map.Strict as Map
 import           Data.SOP.BasicFunctors
 import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
+import           Data.SOP.Strict.NS
 import qualified Data.Text as T (pack)
 import           Data.Void (Void)
 import           Data.Word
@@ -116,6 +117,9 @@ instance ( ShelleyCompatible proto era
 {-------------------------------------------------------------------------------
   SerialiseHFC instance
 -------------------------------------------------------------------------------}
+
+instance HasBlessedGenTxIdEra '[ShelleyBlock proto era] where
+  blessedGenTxIdEra = Z mempty
 
 -- | Use the default implementations. This means the serialisation of blocks
 -- includes an era wrapper. Each block should do this from the start to be

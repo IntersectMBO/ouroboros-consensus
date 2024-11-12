@@ -1367,4 +1367,4 @@ dlgTx cert =
               reAnnotate byronProtVer (Delegation.aEpoch cert)
           , Delegation.annotation = ann
           }
-    in Byron.ByronDlg (Delegation.recoverCertificateId cert') cert'
+    in Byron.ByronDlg (Byron.ByronGenTxId $ coerce $ Delegation.recoverCertificateId cert') cert'
