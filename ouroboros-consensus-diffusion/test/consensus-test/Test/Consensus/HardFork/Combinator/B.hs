@@ -475,6 +475,6 @@ instance SerialiseNodeToClient BlockB (SomeBlockQuery (BlockQuery BlockB)) where
   encodeNodeToClient _ _ = \case {}
   decodeNodeToClient _ _ = fail "there are no queries to be decoded"
 
-instance SerialiseResult' BlockB BlockQuery where
-  encodeResult' _ _ = \case {}
-  decodeResult' _ _ = \case {}
+instance SerialiseBlockQueryResult BlockB BlockQuery where
+  encodeBlockQueryResult _ _ = \case {}
+  decodeBlockQueryResult _ _ = \case {}

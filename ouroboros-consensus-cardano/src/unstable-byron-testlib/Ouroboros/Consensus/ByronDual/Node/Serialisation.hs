@@ -171,9 +171,9 @@ instance SerialiseNodeToClient DualByronBlock (SomeBlockQuery (BlockQuery DualBy
 
 instance SerialiseNodeToClient DualByronBlock SlotNo
 
-instance SerialiseResult' DualByronBlock BlockQuery where
-  encodeResult' _ _ = \case {}
-  decodeResult' _ _ = \case {}
+instance SerialiseBlockQueryResult DualByronBlock BlockQuery where
+  encodeBlockQueryResult _ _ = \case {}
+  decodeBlockQueryResult _ _ = \case {}
 
 {-------------------------------------------------------------------------------
   Auxiliary

@@ -62,7 +62,7 @@ import           Ouroboros.Consensus.Node.NetworkProtocolVersion
                      (BlockNodeToClientVersion)
 import           Ouroboros.Consensus.Node.Serialisation
                      (SerialiseNodeToClient (..), SerialiseResult (..),
-                     SerialiseResult' (..))
+                     SerialiseBlockQueryResult (..))
 import           Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Util (ShowProxy (..), SomeSecond (..))
@@ -411,11 +411,11 @@ queryDecodeNodeToClient codecConfig queryVersion blockVersion
         blockVersion
       return (SomeSecond (BlockQuery blockQuery))
 
-instance ( SerialiseResult' blk BlockQuery
+instance ( SerialiseBlockQueryResult blk BlockQuery
          , Serialise (HeaderHash blk)
          ) => SerialiseResult blk Query where
   encodeResult codecConfig blockVersion (BlockQuery blockQuery) result
-    = encodeResult' codecConfig blockVersion blockQuery result
+    = encodeBlockQueryResult codecConfig blockVersion blockQuery result
   encodeResult _ _ GetSystemStart result
     = toCBOR result
   encodeResult _ _ GetChainBlockNo result
@@ -424,7 +424,7 @@ instance ( SerialiseResult' blk BlockQuery
     = encodePoint encode result
 
   decodeResult codecConfig blockVersion (BlockQuery query)
-    = decodeResult' codecConfig blockVersion query
+    = decodeBlockQueryResult codecConfig blockVersion query
   decodeResult _ _ GetSystemStart
     = fromCBOR
   decodeResult _ _ GetChainBlockNo

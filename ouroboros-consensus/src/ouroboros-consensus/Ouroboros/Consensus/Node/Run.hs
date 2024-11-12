@@ -74,7 +74,7 @@ class ( Typeable blk
       , SerialiseNodeToClient blk SlotNo
       , SerialiseNodeToClient blk (ApplyTxErr blk)
       , SerialiseNodeToClient blk (SomeBlockQuery (BlockQuery blk))
-      , SerialiseResult'      blk BlockQuery
+      , SerialiseBlockQueryResult      blk BlockQuery
       ) => SerialiseNodeToClientConstraints blk
 
 class ( LedgerSupportsProtocol            blk

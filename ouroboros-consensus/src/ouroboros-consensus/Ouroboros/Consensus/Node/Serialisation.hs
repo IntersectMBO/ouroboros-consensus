@@ -20,7 +20,7 @@ module Ouroboros.Consensus.Node.Serialisation (
     SerialiseNodeToClient (..)
   , SerialiseNodeToNode (..)
   , SerialiseResult (..)
-  , SerialiseResult' (..)
+  , SerialiseBlockQueryResult (..)
     -- * Defaults
   , defaultDecodeCBORinCBOR
   , defaultEncodeCBORinCBOR
@@ -91,7 +91,7 @@ class SerialiseNodeToClient blk a where
   NodeToClient - SerialiseResult
 -------------------------------------------------------------------------------}
 
--- | How to serialise the result of the @result@ of a query.
+-- | How to serialise the @result@ of a query.
 --
 -- The @LocalStateQuery@ protocol is a node-to-client protocol, hence the
 -- 'NodeToClientVersion' argument.
@@ -110,15 +110,19 @@ class SerialiseResult blk query where
     -> query blk result
     -> forall s. Decoder s result
 
-type SerialiseResult' :: Type -> (Type -> k -> Type -> Type) -> Constraint
-class SerialiseResult' blk query where
-  encodeResult'
+-- | How to serialise the @result@ of a block query.
+--
+-- The @LocalStateQuery@ protocol is a node-to-client protocol, hence the
+-- 'NodeToClientVersion' argument.
+type SerialiseBlockQueryResult :: Type -> (Type -> k -> Type -> Type) -> Constraint
+class SerialiseBlockQueryResult blk query where
+  encodeBlockQueryResult
     :: forall fp result.
        CodecConfig blk
     -> BlockNodeToClientVersion blk
     -> query blk fp result
     -> result -> Encoding
-  decodeResult'
+  decodeBlockQueryResult
     :: forall fp result.
        CodecConfig blk
     -> BlockNodeToClientVersion blk
