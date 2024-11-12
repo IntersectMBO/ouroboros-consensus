@@ -25,6 +25,7 @@ module _ {a} {A : Set a} where
         using ()
         renaming (isEquivalence to ≈-isEquivalence; refl to ≤-refl; trans to ≤-trans)
 
+      open IsEquivalence ≈-isEquivalence using () renaming (sym to ≈-sym) public
 
       _≤?_ : ⦃ _≤_ ⁇² ⦄ → Decidable _≤_
       _≤?_ = dec²
@@ -57,6 +58,7 @@ module _ {a} {A : Set a} where
       field
         ⦃ hasPreorder ⦄ : HasPreorder
         ≤-antisym : Antisymmetric _≈_ _≤_
+        
 
       ≤-isPartialOrder : IsPartialOrder _≈_ _≤_
       ≤-isPartialOrder = record { isPreorder = ≤-isPreorder ; antisym = ≤-antisym }
@@ -64,8 +66,29 @@ module _ {a} {A : Set a} where
       <-asymmetric : Asymmetric _<_
       <-asymmetric = ≤-antisym⇒<-asym ≤-antisym
 
-      open IsEquivalence ≈-isEquivalence using () renaming (sym to ≈-sym) public
+      ≤∧≉⇒<' : ∀ x y → x ≤ y × ¬ (x ≈ y) → x < y
+      ≤∧≉⇒<' x y = ≤∧≉⇒< {x} {y}
 
+      ¬-sym : ∀ {x y} → ¬ (x ≈ y) → ¬ (y ≈ x)
+      ¬-sym ¬p q = ¬p (≈-sym q)
+      
+      ≥∧≉⇒>' : ∀ x y → x ≥ y × ¬ (x ≈ y) → (x ≥ y) ≡ (y ≤ x) → (y < x) ≡ (x > y) → x > y
+      ≥∧≉⇒>' x y (x≥y , ¬x=y) xy≥yx yxxy with xy≥yx | yxxy
+      ... | refl | refl = ≤∧≉⇒<' y x (x≥y , (¬-sym ¬x=y))
+
+      ≥∧≉⇒> : ∀ x y → x ≥ y × ¬ (x ≈ y) → x > y
+      ≥∧≉⇒> x y (x≥y , ¬x=y) = ≥∧≉⇒>' x y (x≥y , ¬x=y) refl refl
+
+      >⇒≉' : ∀ x y  → y > x → (y > x) ≡ (x < y) → ¬ (x ≈ y)
+      >⇒≉' x y y>x yxxy with yxxy 
+      ... | refl = (proj₂ (<⇒≤∧≉ y>x))
+
+      >⇒≉ : ∀ y x → y > x → ¬ (y ≈ x)
+      >⇒≉ y x y>x = ¬-sym (>⇒≉' x y y>x refl)
+
+      >⇒≉∧n< : ∀ y x → y > x → ¬ (y ≈ x) × ¬ (y < x)
+      >⇒≉∧n< y x y>x = (>⇒≉ y x y>x , <-asymmetric y>x)
+      
       <-trans : Transitive _<_
       <-trans i<j j<k =
         let

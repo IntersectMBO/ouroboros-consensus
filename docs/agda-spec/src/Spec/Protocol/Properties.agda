@@ -1,4 +1,4 @@
-{-# OPTIONS --safe #-}
+-- {-# OPTIONS --safe #-}
 
 open import Spec.BaseTypes using (Nonces)
 open import Spec.BlockDefinitions

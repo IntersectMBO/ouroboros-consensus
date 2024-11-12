@@ -121,7 +121,7 @@ data _⊢_⇀⦇_,UPDN⦈_ where
 
   -- applies at : within RandomnessStabilisationWindowPlusOne of next epoch
   -- pre-nonce updated with grindingf
-  -- candidate nonce set the same as pre-nonce
+  -- candidate nonce kept constant
   Keep-PreN :
     ∙ s + RandomnessStabilisationWindowPlusOne > firstSlot (sucᵉ (epoch s))
     ────────────────────────────────
