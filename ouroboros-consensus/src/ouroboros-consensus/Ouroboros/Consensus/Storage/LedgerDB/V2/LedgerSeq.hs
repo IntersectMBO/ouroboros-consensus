@@ -455,7 +455,7 @@ volatileStatesBimap f g =
 -------------------------------------------------------------------------------}
 
 -- $setup
--- >>> :set -XTypeFamilies -XUndecidableInstances
+-- >>> :set -XTypeFamilies -XUndecidableInstances -XFlexibleInstances
 -- >>> import qualified Ouroboros.Network.AnchoredSeq as AS
 -- >>> import Ouroboros.Network.Block
 -- >>> import Ouroboros.Network.Point
@@ -471,10 +471,9 @@ volatileStatesBimap f g =
 -- >>> type instance HeaderHash LS = Int
 -- >>> type instance HeaderHash B = HeaderHash LS
 -- >>> instance StandardHash LS
--- >>> type instance Key LS = Void
--- >>> type instance Value LS = Void
+-- >>> type instance TxIn LS = Void
+-- >>> type instance TxOut LS = Void
 -- >>> instance LedgerTablesAreTrivial LS where convertMapKind (LS p) = LS p
--- >>> instance HasLedgerTables LS
 -- >>> s = [LS (Point Origin), LS (Point (At (Block 0 0))), LS (Point (At (Block 1 1))), LS (Point (At (Block 2 2))), LS (Point (At (Block 3 3)))]
 -- >>> [l0s, l1s, l2s, l3s, l4s] = s
 -- >>> emptyHandle = LedgerTablesHandle undefined undefined undefined undefined undefined undefined undefined undefined
@@ -483,3 +482,8 @@ volatileStatesBimap f g =
 -- >>> instance Eq (LS EmptyMK) where LS p1 == LS p2 = p1 == p2
 -- >>> instance StandardHash B
 -- >>> instance HasHeader B where getHeaderFields = undefined
+-- >>> :{
+--  instance HasLedgerTables LS where
+--    projectLedgerTables = trivialProjectLedgerTables
+--    withLedgerTables = trivialWithLedgerTables
+-- :}

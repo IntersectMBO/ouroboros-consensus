@@ -69,7 +69,6 @@ import qualified Data.SOP.Match as Match
 import           Data.SOP.Strict
 import           Data.SOP.Telescope (Telescope (..))
 import qualified Data.SOP.Telescope as Telescope
-import           Data.Void
 import           Data.Word (Word8)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks (..))
@@ -188,6 +187,13 @@ instance CanHardFork xs => IsLedger (LedgerState (HardForkBlock xs)) where
       extended :: HardForkState (Flip LedgerState DiffMK) xs
       extended = State.extendToSlot cfg slot st
 
+-- | Ticking outside of era transitions for now does not generate differences
+-- now that we only have the UTxO table, but we need the same type regardless of
+-- whether we are crossing an era boundary or not.
+--
+-- This function ticks the ledger state using the particular block function, and
+-- prepends the diffs that might have been created if this tick crossed an era
+-- boundary.
 tickOne :: SingleEraBlock blk
         => EpochInfo (Except PastHorizonException)
         -> SlotNo
@@ -957,13 +963,6 @@ instance ( HardForkHasLedgerTables xs
         $ castLedgerTables
         $ distribLedgerTables i (castLedgerTables tables)
 
-instance ( TxIn (LedgerState (HardForkBlock xs)) ~ Void
-         , TxOut (LedgerState (HardForkBlock xs)) ~ Void
-         , All (Compose LedgerTablesAreTrivial LedgerState) xs
-         ) => LedgerTablesAreTrivial (LedgerState (HardForkBlock xs)) where
-  convertMapKind (HardForkLedgerState st) = HardForkLedgerState $
-      hcmap (Proxy @(Compose LedgerTablesAreTrivial LedgerState)) (Flip . convertMapKind . unFlip) st
-
 instance All (Compose CanStowLedgerTables LedgerState) xs
       => CanStowLedgerTables (LedgerState (HardForkBlock xs)) where
   stowLedgerTables ::
@@ -1033,7 +1032,7 @@ distribLedgerTables idx =
   HardForkTxIn
 -------------------------------------------------------------------------------}
 
--- | Defaults to a 'CannonicalTxIn' type, but this will probably change in the
+-- | Must be the 'CannonicalTxIn' type, but this will probably change in the
 -- future to @NS 'WrapTxIn' xs@. See 'HasCanonicalTxIn'.
 type instance TxIn   (LedgerState (HardForkBlock xs)) = CanonicalTxIn xs
 
@@ -1054,15 +1053,15 @@ class ( Show (CanonicalTxIn xs)
 
   -- | Inject an era-specific 'TxIn' into a 'TxIn' for a 'HardForkBlock'.
   injectCanonicalTxIn ::
-    Index xs x ->
-    TxIn (LedgerState x) ->
-    CanonicalTxIn xs
+       Index xs x
+    -> TxIn (LedgerState x)
+    -> CanonicalTxIn xs
 
   -- | Distribute a 'TxIn' for a 'HardForkBlock' to an era-specific 'TxIn'.
   distribCanonicalTxIn ::
-    Index xs x ->
-    CanonicalTxIn xs ->
-    TxIn (LedgerState x)
+       Index xs x
+    -> CanonicalTxIn xs
+    -> TxIn (LedgerState x)
 
   encodeCanonicalTxIn :: CanonicalTxIn xs -> CBOR.Encoding
 
@@ -1072,7 +1071,7 @@ class ( Show (CanonicalTxIn xs)
   HardForkTxOut
 -------------------------------------------------------------------------------}
 
--- | Defaults to the 'HardForkTxOut' type
+-- | Must be the 'HardForkTxOut' type
 type instance TxOut (LedgerState (HardForkBlock xs)) = HardForkTxOut xs
 
 -- | This choice for 'HardForkTxOut' imposes some complications on the code.

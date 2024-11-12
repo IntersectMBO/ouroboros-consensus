@@ -247,20 +247,11 @@ instance ApplyBlock (LedgerState BlockA) BlockA where
   applyBlockLedgerResult cfg blk =
         fmap (pureLedgerResult . convertMapKind . setTip)
       . repeatedlyM
-          applyTx'
+          (fmap (convertMapKind . fst) .: applyTx cfg DoNotIntervene (blockSlot blk))
           (blkA_body blk)
     where
       setTip :: TickedLedgerState BlockA mk -> LedgerState BlockA mk
       setTip (TickedLedgerStateA st) = st { lgrA_tip = blockPoint blk }
-
-      applyTx' :: GenTx BlockA
-               -> TickedLedgerState BlockA ValuesMK
-               -> Except
-                    (ApplyTxErr BlockA)
-                    (TickedLedgerState BlockA ValuesMK)
-      applyTx' b =
-          fmap (TickedLedgerStateA . convertMapKind . getTickedLedgerStateA . fst)
-        . applyTx cfg DoNotIntervene (blockSlot blk) b
 
   reapplyBlockLedgerResult =
       dontExpectError ..: applyBlockLedgerResult
@@ -625,7 +616,7 @@ instance SerialiseNodeToClient BlockA Void where
   decodeNodeToClient _ _ = fail "no ApplyTxErr to be decoded"
 
 instance SerialiseNodeToClient BlockA (SomeBlockQuery (BlockQuery BlockA)) where
-  encodeNodeToClient _ _ (SomeBlockQuery q) = case q of {}
+  encodeNodeToClient _ _ = \case {}
   decodeNodeToClient _ _ = fail "there are no queries to be decoded"
 
 instance SerialiseResult' BlockA BlockQuery where

@@ -106,7 +106,7 @@ instance SingI QFTraverseTables where
 
 type SomeBlockQuery :: (QueryFootprint -> Type -> Type) -> Type
 data SomeBlockQuery q =
-  forall footprint result. SingI footprint => SomeBlockQuery (q footprint result)
+  forall footprint result. SingI footprint => SomeBlockQuery !(q footprint result)
 
 {-------------------------------------------------------------------------------
   Block Queries

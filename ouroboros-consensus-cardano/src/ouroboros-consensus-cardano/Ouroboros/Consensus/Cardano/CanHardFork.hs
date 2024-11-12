@@ -618,8 +618,12 @@ translateLedgerStateShelleyToAllegraWrapper =
                   -- complex doing so, as we cannot perform operations with
                   -- 'LedgerTables l1 mk' and 'LedgerTables l2 mk'. Because of
                   -- this, for now we choose to generate the differences out of
-                  -- thin air and when the time comes in which ticking produces
-                  -- differences, we will have to revisit this.
+                  -- thin air as we know that in this era translation these are
+                  -- the only differences produced.
+                  --
+                  -- When adding more tables, this decision might need to be
+                  -- revisited, as there might be other diffs produced in the
+                  -- translation.
                   avvmsAsDeletions = LedgerTables
                                    . DiffMK
                                    . Diff.fromMapDeletes
@@ -899,7 +903,7 @@ translateLedgerStateBabbageToConwayWrapper =
             -- era/epoch boundary using Babbage logic, and set the governance
             -- state to the updated one /before/ translating.
             --
-            -- NOTE we are ignoring the differences created by the ticking that
+            -- NOTE we are ignoring the DiffMK created by the ticking that
             -- happens inside this function as we do not expect them to alter
             -- the LedgerTables, considering we will later on tick in Conway via
             -- the HFC normal ticking logic.
