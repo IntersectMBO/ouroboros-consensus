@@ -1,3 +1,4 @@
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -16,6 +17,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Impl.Validate (
     ResolveBlock
   , ResolvesBlocks (..)
     -- * Validation
+  , ValidateArgs (..)
   , ValidLedgerState (..)
   , validate
     -- * Testing
@@ -49,6 +51,29 @@ import           Ouroboros.Consensus.Util.IOLike
   Validation
 -------------------------------------------------------------------------------}
 
+data ValidateArgs m blk = ValidateArgs {
+    -- | How to retrieve blocks from headers
+    resolve :: !(ResolveBlock m blk)
+    -- | The config
+  , config :: !(TopLevelConfig blk)
+    -- | How to add a previously applied block to the set of known blocks
+  , addPrevApplied :: !([RealPoint blk] -> STM m ())
+    -- | Get the current set of previously applied blocks
+  , prevApplied :: !(STM m (Set (RealPoint blk)))
+    -- | Create a forker from the tip
+  , forkerAtFromTip :: !(ResourceRegistry m -> Word64 -> m (Either ExceededRollback (Forker' m blk)))
+    -- | The resource registry
+  , rr :: !(ResourceRegistry m)
+    -- | A tracer for validate events
+  , trace :: !(TraceValidateEvent blk -> m ())
+    -- | The block cache
+  , blockCache :: BlockCache blk
+    -- | How many blocks to roll back before applying the blocks
+  , numRollbacks :: Word64
+    -- | The headers we want to apply
+  , hdrs :: [Header blk]
+  }
+
 validate ::
      forall m blk. (
        IOLike m
@@ -56,18 +81,9 @@ validate ::
      , HasCallStack
      , MonadBase m m
      )
-  => ResolveBlock m blk
-  -> TopLevelConfig blk
-  -> ([RealPoint blk] -> STM m ())
-  -> STM m (Set (RealPoint blk))
-  -> (ResourceRegistry m -> Word64 -> m (Either ExceededRollback (Forker' m blk)))
-  -> ResourceRegistry m
-  -> (TraceValidateEvent blk -> m ())
-  -> BlockCache blk
-  -> Word64          -- ^ How many blocks to roll back
-  -> [Header blk]
+  => ValidateArgs m blk
   -> m (ValidateResult' m blk)
-validate resolve config addPrevApplied prevApplied forkerAtFromTip rr trace blockCache numRollbacks hdrs = do
+validate args = do
     aps <- mkAps <$> atomically prevApplied
     res <- fmap rewrap $ defaultResolveWithErrors resolve $
              switch
@@ -80,6 +96,19 @@ validate resolve config addPrevApplied prevApplied forkerAtFromTip rr trace bloc
     liftBase $ atomically $ addPrevApplied (validBlockPoints res (map headerRealPoint hdrs))
     return res
   where
+    ValidateArgs {
+        resolve
+      , config
+      , addPrevApplied
+      , prevApplied
+      , forkerAtFromTip
+      , rr
+      , trace
+      , blockCache
+      , numRollbacks
+      , hdrs
+      } = args
+
     rewrap :: Either (AnnLedgerError' n blk) (Either ExceededRollback (Forker' n blk))
            -> ValidateResult' n blk
     rewrap (Left         e)  = ValidateLedgerError      e

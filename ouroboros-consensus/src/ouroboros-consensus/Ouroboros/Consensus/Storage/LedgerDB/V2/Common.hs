@@ -33,7 +33,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.Common (
     -- * Forkers
   , newForkerAtFromTip
   , newForkerAtPoint
-  , newForkerAtWellKnownPoint
+  , newForkerAtTrustedTargetPoint
   ) where
 
 import           Control.Arrow
@@ -415,24 +415,24 @@ implForkerCommit env = do
 
 -- | This function must hold the 'LDBLock' such that handles are not released
 -- before they are duplicated.
-acquireAtWellKnownPoint ::
+acquireAtTrustedTargetPoint ::
      (IOLike m, GetTip l, StandardHash blk)
   => LedgerDBEnv m l blk
   -> Target (Point blk)
   -> LDBLock
   -> m (StateRef m l)
-acquireAtWellKnownPoint ldbEnv VolatileTip _ = do
+acquireAtTrustedTargetPoint ldbEnv VolatileTip _ = do
   l <- readTVarIO (ldbSeq ldbEnv)
   let StateRef st tbs = currentHandle l
   t <- duplicate tbs
   pure (StateRef st t)
-acquireAtWellKnownPoint ldbEnv ImmutableTip _ = do
+acquireAtTrustedTargetPoint ldbEnv ImmutableTip _ = do
   l <- readTVarIO (ldbSeq ldbEnv)
   let StateRef st tbs = anchorHandle l
   t <- duplicate tbs
   pure (StateRef st t)
-acquireAtWellKnownPoint _ (SpecificPoint pt) _ =
-  error $ "calling acquireAtWellKnownPoint for a not well-known point: " <> show pt
+acquireAtTrustedTargetPoint _ (SpecificPoint pt) _ =
+  error $ "calling acquireAtTrustedTargetPoint for a not well-known point: " <> show pt
 
 -- | This function must hold the 'LDBLock' such that handles are not released
 -- before they are duplicated.
@@ -479,7 +479,7 @@ acquireAtFromTip ldbEnv n _ = do
         Just (StateRef st tbs) ->
               Right . StateRef st <$> duplicate tbs
 
-newForkerAtWellKnownPoint ::
+newForkerAtTrustedTargetPoint ::
      ( IOLike m
      , IsLedger l
      , HasLedgerTables l
@@ -490,8 +490,8 @@ newForkerAtWellKnownPoint ::
   -> ResourceRegistry m
   -> Target (Point blk)
   -> m (Forker m l blk)
-newForkerAtWellKnownPoint h rr pt = getEnv h $ \ldbEnv@LedgerDBEnv{ldbReleaseLock = AllowThunk lock} -> do
-    RAWLock.withReadAccess lock (acquireAtWellKnownPoint ldbEnv pt) >>= newForker h ldbEnv rr
+newForkerAtTrustedTargetPoint h rr pt = getEnv h $ \ldbEnv@LedgerDBEnv{ldbReleaseLock = AllowThunk lock} -> do
+    RAWLock.withReadAccess lock (acquireAtTrustedTargetPoint ldbEnv pt) >>= newForker h ldbEnv rr
 
 newForkerAtPoint ::
      ( HeaderHash l ~ HeaderHash blk

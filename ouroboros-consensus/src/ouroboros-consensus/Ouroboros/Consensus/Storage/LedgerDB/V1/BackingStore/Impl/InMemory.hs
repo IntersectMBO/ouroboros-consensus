@@ -96,7 +96,7 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
       newTVarIO $ BackingStoreContents slot values
     traceWith tracer $ BSOpened Nothing
     pure BackingStore {
-        bsClose    = do
+        bsClose = do
             traceWith tracer BSClosing
             catch
               (atomically $ do
@@ -177,7 +177,7 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
                  }
           traceWith tracer BSCreatedValueHandle
           pure vh
-      , bsWrite    = \slot2 diff -> do
+      , bsWrite = \slot2 diff -> do
          traceWith tracer $ BSWriting slot2
          slot1 <- atomically $ do
           readTVar ref >>= \case

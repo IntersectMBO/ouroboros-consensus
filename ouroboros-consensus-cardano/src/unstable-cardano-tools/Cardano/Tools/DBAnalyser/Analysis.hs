@@ -394,7 +394,7 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
     process _ blk = do
       let ledgerCfg = ExtLedgerCfg cfg
       oldLedger <- IOLike.atomically $ LedgerDB.getVolatileTip initLedgerDB
-      frk <- LedgerDB.getForkerAtWellKnownPoint initLedgerDB registry VolatileTip
+      frk <- LedgerDB.getForkerAtTrustedTargetPoint initLedgerDB registry VolatileTip
       tbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
       LedgerDB.forkerClose frk
       case runExcept $ tickThenXApply ledgerCfg blk (oldLedger `withLedgerTables` tbs) of
@@ -471,7 +471,7 @@ checkNoThunksEvery
     process :: () -> blk -> IO ()
     process _ blk = do
       oldLedger <- IOLike.atomically $ LedgerDB.getVolatileTip ldb
-      frk <- LedgerDB.getForkerAtWellKnownPoint ldb registry VolatileTip
+      frk <- LedgerDB.getForkerAtTrustedTargetPoint ldb registry VolatileTip
       tbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
       LedgerDB.forkerClose frk
       let oldLedger' = oldLedger `withLedgerTables` tbs
@@ -528,7 +528,7 @@ traceLedgerProcessing
       -> blk
       -> IO ()
     process ledgerDB intLedgerDB _ blk = do
-      frk <- LedgerDB.getForkerAtWellKnownPoint ledgerDB registry VolatileTip
+      frk <- LedgerDB.getForkerAtTrustedTargetPoint ledgerDB registry VolatileTip
       oldLedgerSt <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
       oldLedgerTbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
       let oldLedger = oldLedgerSt `withLedgerTables` oldLedgerTbs
@@ -751,7 +751,7 @@ getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
       -> blk
       -> IO ()
     process ledgerDB intLedgerDB outFileHandle _ blk = do
-      frk <- LedgerDB.getForkerAtWellKnownPoint ledgerDB registry VolatileTip
+      frk <- LedgerDB.getForkerAtTrustedTargetPoint ledgerDB registry VolatileTip
       oldLedgerSt <- IOLike.atomically $ LedgerDB.forkerGetLedgerState frk
       oldLedgerTbs <- LedgerDB.forkerReadTables frk (getBlockKeySets blk)
       let oldLedger = oldLedgerSt `withLedgerTables` oldLedgerTbs

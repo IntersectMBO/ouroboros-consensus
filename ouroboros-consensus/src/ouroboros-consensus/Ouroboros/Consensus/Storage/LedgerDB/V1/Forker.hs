@@ -11,11 +11,11 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Forker (
     closeAllForkers
   , newForkerAtFromTip
   , newForkerAtPoint
-  , newForkerAtWellKnownPoint
+  , newForkerAtTrustedTargetPoint
     -- * Acquire consistent views
   , acquireAtFromTip
   , acquireAtPoint
-  , acquireAtWellKnownPoint
+  , acquireAtTrustedTargetPoint
   ) where
 
 import           Control.ResourceRegistry
@@ -50,7 +50,7 @@ import           Ouroboros.Network.Protocol.LocalStateQuery.Type
   Close
 -------------------------------------------------------------------------------}
 
-newForkerAtWellKnownPoint ::
+newForkerAtTrustedTargetPoint ::
      ( IOLike m
      , IsLedger l
      , HasLedgerTables l
@@ -60,8 +60,8 @@ newForkerAtWellKnownPoint ::
   -> ResourceRegistry m
   -> Target (Point blk)
   -> m (Forker m l blk)
-newForkerAtWellKnownPoint h rr pt = getEnv h $ \ldbEnv@LedgerDBEnv{ldbLock = AllowThunk lock} -> do
-    withReadLock lock (acquireAtWellKnownPoint ldbEnv rr pt) >>= newForker h ldbEnv
+newForkerAtTrustedTargetPoint h rr pt = getEnv h $ \ldbEnv@LedgerDBEnv{ldbLock = AllowThunk lock} -> do
+    withReadLock lock (acquireAtTrustedTargetPoint ldbEnv rr pt) >>= newForker h ldbEnv
 
 newForkerAtPoint ::
      ( HeaderHash l ~ HeaderHash blk
@@ -117,23 +117,23 @@ type Resources m l =
 
 -- | Acquire both a value handle and a db changelog at the tip. Holds a read lock
 -- while doing so.
-acquireAtWellKnownPoint ::
+acquireAtTrustedTargetPoint ::
      (IOLike m, StandardHash blk, GetTip l, HasLedgerTables l)
   => LedgerDBEnv m l blk
   -> ResourceRegistry m
   -> Target (Point blk)
   -> ReadLocked m (Resources m l)
-acquireAtWellKnownPoint ldbEnv rr VolatileTip =
+acquireAtTrustedTargetPoint ldbEnv rr VolatileTip =
     readLocked $ do
       dblog <- anchorlessChangelog <$> readTVarIO (ldbChangelog ldbEnv)
       (,dblog) <$> acquire ldbEnv rr dblog
-acquireAtWellKnownPoint ldbEnv rr ImmutableTip =
+acquireAtTrustedTargetPoint ldbEnv rr ImmutableTip =
     readLocked $ do
       dblog <- anchorlessChangelog <$> readTVarIO (ldbChangelog ldbEnv)
       (, rollbackToAnchor dblog)
         <$> acquire ldbEnv rr dblog
-acquireAtWellKnownPoint _ _ (SpecificPoint pt) =
-  error $ "calling acquireAtWellKnownPoint for a not well-known point: " <> show pt
+acquireAtTrustedTargetPoint _ _ (SpecificPoint pt) =
+  error $ "calling acquireAtTrustedTargetPoint for a not well-known point: " <> show pt
 
 -- | Acquire both a value handle and a db changelog at the requested point. Holds
 -- a read lock while doing so.
@@ -315,7 +315,7 @@ implForkerRangeReadTables env rq0 = do
   where
     lvh = foeBackingStoreValueHandle env
 
-    rq = BackingStore.RangeQuery rq1 (fromIntegral $ defaultQueryBatchSize $ foeQueryBatchSize env)
+    rq = BackingStore.RangeQuery rq1 (fromIntegral $ queryBatchSize $ foeQueryBatchSize env)
 
     rq1 = case rq0 of
       NoPreviousQuery        -> Nothing

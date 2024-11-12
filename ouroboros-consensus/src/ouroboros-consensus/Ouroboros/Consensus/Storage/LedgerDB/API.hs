@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
@@ -182,67 +181,75 @@ type LedgerDB :: (Type -> Type) -> LedgerStateKind -> Type -> Type
 data LedgerDB m l blk = LedgerDB {
     -- | Get the empty ledger state at the (volatile) tip of the LedgerDB.
     getVolatileTip         ::              STM m (l EmptyMK)
+
     -- | Get the empty ledger state at the immutable tip of the LedgerDB.
   , getImmutableTip        ::              STM m (l EmptyMK)
+
     -- | Get an empty ledger state at a requested point in the LedgerDB, if it
     -- exists.
   , getPastLedgerState     :: Point blk -> STM m (Maybe (l EmptyMK))
+
     -- | Get the header state history for all ledger states in the LedgerDB.
   , getHeaderStateHistory  ::
          (l ~ ExtLedgerState blk)
       => STM m (HeaderStateHistory blk)
+
     -- | Acquire a 'Forker' at the tip.
-  , getForkerAtWellKnownPoint  ::
+    --
+    -- We pass in the producer/consumer registry.
+  , getForkerAtTrustedTargetPoint  ::
          ResourceRegistry m
-#if __GLASGOW_HASKELL__ >= 902
-         -- ^ The producer/consumer registry.
-#endif
       -> Target (Point blk)
       -> m (Forker m l blk)
+
     -- | Acquire a 'Forker' at the requested point. If a ledger state associated
     -- with the requested point does not exist in the LedgerDB, it will return a
     -- 'GetForkerError'.
+    --
+    -- We pass in the producer/consumer registry.
   , getForkerAtPoint ::
          ResourceRegistry m
-#if __GLASGOW_HASKELL__ >= 902
-         -- ^ The producer/consumer registry.
-#endif
       -> Point blk
       -> m (Either GetForkerError (Forker m l blk))
+
+    -- | Try to apply a sequence of blocks on top of the LedgerDB, first rolling
+    -- back as many blocks as the passed @Word64@.
   , validate ::
          (l ~ ExtLedgerState blk)
       => ResourceRegistry m
-#if __GLASGOW_HASKELL__ >= 902
-         -- ^ The producer/consumer registry.
-#endif
       -> (TraceValidateEvent blk -> m ())
       -> BlockCache blk
       -> Word64
       -> [Header blk]
       -> m (ValidateResult m l blk)
+
     -- | Get the references to blocks that have previously been applied.
   , getPrevApplied :: STM m (Set (RealPoint blk))
+
     -- | Garbage collect references to old blocks that have been previously
-    -- applied.
+    -- applied and committed.
   , garbageCollect :: SlotNo -> STM m ()
-    -- | If the provided arguments indicate so (based on the DiskPolicy with
+
+    -- | If the provided arguments indicate so (based on the SnapshotPolicy with
     -- which this LedgerDB was opened), take a snapshot and delete stale ones.
+    --
+    -- The arguments are:
+    --
+    -- - If a snapshot has been taken already, the time at which it was taken
+    --   and the current time.
+    --
+    -- - How many blocks have been processed since the last snapshot.
   , tryTakeSnapshot ::
          (l ~ ExtLedgerState blk)
       => Maybe (Time, Time)
-#if __GLASGOW_HASKELL__ >= 902
-         -- ^ If a snapshot has been taken already, the time at which it was
-         -- taken and the current time.
-#endif
       -> Word64
-#if __GLASGOW_HASKELL__ >= 902
-         -- ^ How many blocks have been processed since the last snapshot.
-#endif
       -> m SnapCounters
+
     -- | Flush in-memory LedgerDB state to disk, if possible. This is a no-op
     -- for implementations that do not need an explicit flush function.
   , tryFlush :: m ()
-      -- | Close the ChainDB
+
+      -- | Close the LedgerDB
       --
       -- Idempotent.
       --
@@ -264,7 +271,7 @@ currentPoint ldb = castPoint . getTip <$> getVolatileTip ldb
 data TestInternals m l blk = TestInternals {
     wipeLedgerDB       :: m ()
   , takeSnapshotNOW    :: Maybe DiskSnapshot -> m ()
-  , reapplyThenPushNOW :: blk ->          m ()
+  , reapplyThenPushNOW :: blk -> m ()
   , truncateSnapshots  :: m ()
   , closeLedgerDB      :: m ()
   }
@@ -314,13 +321,19 @@ data Forker m l blk = Forker {
 
     -- | Read ledger tables from disk.
   , forkerReadTables :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
+
     -- | Range-read ledger tables from disk.
+    --
+    -- This range read will return as many values as the 'QueryBatchSize' that
+    -- was passed when opening the LedgerDB.
   , forkerRangeReadTables :: !(RangeQueryPrevious l -> m (LedgerTables l ValuesMK))
+
     -- | Get the full ledger state without tables.
     --
-    -- If empty ledger state is all you need, use 'getVolatileTip',
-    -- 'getImmutableTip', or 'getPastLedgerState' instead.
+    -- If an empty ledger state is all you need, use 'getVolatileTip',
+    -- 'getImmutableTip', or 'getPastLedgerState' instead of using a 'Forker'.
   , forkerGetLedgerState  :: !(STM m (l EmptyMK))
+
     -- | Get statistics about the current state of the handle if possible.
     --
     -- Returns 'Nothing' if the implementation is backed by @lsm-tree@.
@@ -331,6 +344,7 @@ data Forker m l blk = Forker {
     -- | Advance the fork handle by pushing a new ledger state to the tip of the
     -- current fork.
   , forkerPush :: !(l DiffMK -> m ())
+
     -- | Commit the fork, which was constructed using 'forkerPush', as the
     -- current version of the LedgerDB.
   , forkerCommit :: !(STM m ())
@@ -356,7 +370,11 @@ data RangeQuery l = RangeQuery {
   , rqCount :: !Int
   }
 
--- TODO: document
+-- | This type captures the size of the ledger tables at a particular point in
+-- the LedgerDB.
+--
+-- This is for now the only metric that was requested from other components, but
+-- this type might be augmented in the future with more statistics.
 newtype Statistics = Statistics {
     ledgerTableSize :: Int
   }
@@ -398,7 +416,7 @@ withTipForker ::
   => LedgerDB m l blk
   -> ResourceRegistry m
   -> (Forker m l blk -> m a) -> m a
-withTipForker ldb rr = bracket (getForkerAtWellKnownPoint ldb rr VolatileTip) forkerClose
+withTipForker ldb rr = bracket (getForkerAtTrustedTargetPoint ldb rr VolatileTip) forkerClose
 
 -- | Like 'withTipForker', but it uses a private registry to allocate and
 -- de-allocate the forker.
@@ -406,7 +424,7 @@ withPrivateTipForker ::
      IOLike m
   => LedgerDB m l blk
   -> (Forker m l blk -> m a) -> m a
-withPrivateTipForker ldb = bracketWithPrivateRegistry (\rr -> getForkerAtWellKnownPoint ldb rr VolatileTip) forkerClose
+withPrivateTipForker ldb = bracketWithPrivateRegistry (\rr -> getForkerAtTrustedTargetPoint ldb rr VolatileTip) forkerClose
 
 -- | Get statistics from the tip of the LedgerDB.
 getTipStatistics ::
@@ -463,9 +481,9 @@ getReadOnlyForker ::
   -> Target (Point blk)
   -> m (Either GetForkerError (ReadOnlyForker m l blk))
 getReadOnlyForker ldb rr = \case
-    VolatileTip -> Right . readOnlyForker <$> getForkerAtWellKnownPoint ldb rr VolatileTip
+    VolatileTip -> Right . readOnlyForker <$> getForkerAtTrustedTargetPoint ldb rr VolatileTip
     SpecificPoint pt -> fmap readOnlyForker <$> getForkerAtPoint ldb rr pt
-    ImmutableTip -> Right . readOnlyForker <$> getForkerAtWellKnownPoint ldb rr ImmutableTip
+    ImmutableTip -> Right . readOnlyForker <$> getForkerAtTrustedTargetPoint ldb rr ImmutableTip
 
 -- | Read a table of values at the requested point via a 'ReadOnlyForker'
 readLedgerTablesAtFor ::
@@ -478,9 +496,7 @@ readLedgerTablesAtFor ldb p ks =
     bracketWithPrivateRegistry
       (\rr -> fmap readOnlyForker <$> getForkerAtPoint ldb rr p)
       (mapM_ roforkerClose)
-      $ \foEith -> do
-        forM foEith $ \fo -> do
-          fo `roforkerReadTables` ks
+      $ \foEith -> forM foEith (`roforkerReadTables` ks)
 
 {-------------------------------------------------------------------------------
   Snapshots

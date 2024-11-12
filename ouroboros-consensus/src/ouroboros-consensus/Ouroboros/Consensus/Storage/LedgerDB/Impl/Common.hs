@@ -83,9 +83,6 @@ data TraceReplayEvent blk =
     deriving (Show, Eq)
 
 -- | Add the tip of the Immutable DB to the trace event
---
--- Between the tip of the immutable DB and the point of the starting block,
--- the node could (if it so desired) easily compute a "percentage complete".
 decorateReplayTracerWithGoal
   :: Point blk -- ^ Tip of the ImmutableDB
   -> Tracer m (TraceReplayProgressEvent blk)
@@ -93,8 +90,6 @@ decorateReplayTracerWithGoal
 decorateReplayTracerWithGoal immTip = (($ ReplayGoal immTip) >$<)
 
 -- | Add the block at which a replay started.
---
--- This allows to compute a "percentage complete" when tracing the events.
 decorateReplayTracerWithStart
   :: Point blk -- ^ Starting point of the replay
   -> Tracer m (ReplayGoal blk -> TraceReplayProgressEvent blk)
@@ -124,6 +119,9 @@ data TraceReplayStartEvent blk
 
 -- | We replayed the given block (reference) on the genesis snapshot during
 -- the initialisation of the LedgerDB. Used during ImmutableDB replay.
+--
+-- Using this trace the node could (if it so desired) easily compute a
+-- "percentage complete".
 data TraceReplayProgressEvent blk =
   ReplayedBlock
     (RealPoint blk)   -- ^ the block being replayed

@@ -71,7 +71,8 @@ data InitLog blk =
     --
     -- We record the reason why it was skipped.
     --
-    -- NOTE: We should /only/ see this if data corruption occurred.
+    -- NOTE: We should /only/ see this if data corruption occurred or codecs
+    -- for snapshots changed.
   | InitFailure DiskSnapshot (SnapshotFailure blk) (InitLog blk)
   deriving (Show, Eq, Generic)
 
@@ -89,6 +90,8 @@ data InitDB db m blk = InitDB {
     -- ^ Reapply a block from the immutable DB when initializing the DB.
   , currentTip       :: !(db -> LedgerState blk EmptyMK)
     -- ^ Getting the current tip for tracing the Ledger Events.
+  , pruneDb          :: !(db -> m db)
+    -- ^ Prune the database so that no immutable states are considered volatile.
   , mkLedgerDb       :: !(db -> m (LedgerDB m (ExtLedgerState blk) blk, TestInternals m (ExtLedgerState blk) blk))
     -- ^ Create a LedgerDB from the initialized data structures from previous
     -- steps.
@@ -108,10 +111,6 @@ data InitDB db m blk = InitDB {
 --
 -- * they are /ahead/ of the chain, they refer to a slot which is later than the
 --     last slot in the immutable db.
---
--- Note that after initialization, the ledger db should be pruned so that no
--- ledger states are considered volatile. Otherwise we would be able to rollback
--- the immutable DB.
 --
 -- We do /not/ attempt to use multiple ledger states from disk to construct the
 -- ledger DB. Instead we load only a /single/ ledger state from disk, and
@@ -172,8 +171,9 @@ initialize replayTracer
           closeDb initDb
           error $ "Invariant violation: invalid immutable chain " <> show err
         Right (db, replayed) -> do
+          db' <- pruneDb dbIface db
           return ( acc InitFromGenesis
-                 , db
+                 , db'
                  , replayed
                  )
 
@@ -204,7 +204,8 @@ initialize replayTracer
               closeDb initDb
               tryNewestFirst (acc . InitFailure s err) ss
             Right (db, replayed) -> do
-              return (acc (InitFromSnapshot s pt), db, replayed)
+              db' <- pruneDb dbIface db
+              return (acc (InitFromSnapshot s pt), db', replayed)
 
     replayTracer' = decorateReplayTracerWithGoal
                                        replayGoal

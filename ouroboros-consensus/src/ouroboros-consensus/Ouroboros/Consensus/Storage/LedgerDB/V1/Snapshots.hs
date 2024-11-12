@@ -108,7 +108,7 @@
        the @\<slotNumber\>/tables@ file.
 
   3. There is a maximum number of snapshots that should exist in the disk at any
-     time, dictated by the @DiskPolicy@, so if needed, we will trim out old
+     time, dictated by the @SnapshotPolicy@, so if needed, we will trim out old
      snapshots.
 
   == Flush during startup and snapshot at the end of startup

@@ -19,6 +19,7 @@ import           Control.Monad
 import           Control.Monad.Base
 import           Control.ResourceRegistry
 import           Control.Tracer (nullTracer)
+import           Data.Bifunctor (first)
 #if __GLASGOW_HASKELL__ < 910
 import           Data.Foldable
 #endif
@@ -99,7 +100,7 @@ mkInitDb args bss getBlock =
       -- finishined initializing: only this thread has access to the backing
       -- store.
       chlog'' <- unsafeIgnoreWriteLock
-        $ if defaultShouldFlush flushFreq (flushableLength $ anchorlessChangelog chlog')
+        $ if shouldFlush flushFreq (flushableLength $ anchorlessChangelog chlog')
           then do
             let (toFlush, toKeep) = splitForFlushing chlog'
             mapM_ (flushIntoBackingStore bstore) toFlush
@@ -107,10 +108,10 @@ mkInitDb args bss getBlock =
           else pure chlog'
       pure (chlog'', bstore)
   , currentTip = ledgerState . current . anchorlessChangelog . fst
+  , pruneDb = pure . first (onChangelog pruneToImmTipOnly)
   , mkLedgerDb = \(db, lgrBackingStore) -> do
-      let dbPrunedToImmDBTip = onChangelog pruneToImmTipOnly db
       (varDB, prevApplied) <-
-        (,) <$> newTVarIO dbPrunedToImmDBTip <*> newTVarIO Set.empty
+        (,) <$> newTVarIO db <*> newTVarIO Set.empty
       flushLock <- mkLedgerDBLock
       forkers <- newTVarIO Map.empty
       nextForkerKey <- newTVarIO (ForkerKey 0)
@@ -125,8 +126,8 @@ mkInitDb args bss getBlock =
                , ldbTracer          = lgrTracer
                , ldbCfg             = lgrConfig
                , ldbHasFS           = lgrHasFS'
-               , ldbShouldFlush     = defaultShouldFlush flushFreq
-               , ldbQueryBatchSize  = queryBatchSize
+               , ldbShouldFlush     = shouldFlush flushFreq
+               , ldbQueryBatchSize  = queryBatchSizeArg
                , ldbResolveBlock    = getBlock
                }
       h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
@@ -146,7 +147,7 @@ mkInitDb args bss getBlock =
 
     lgrHasFS' = SnapshotsFS lgrHasFS
 
-    V1Args flushFreq queryBatchSize baArgs = bss
+    V1Args flushFreq queryBatchSizeArg baArgs = bss
 
 implMkLedgerDb ::
      forall m l blk.
@@ -170,7 +171,7 @@ implMkLedgerDb h = (LedgerDB {
     , getImmutableTip           = getEnvSTM  h implGetImmutableTip
     , getPastLedgerState        = getEnvSTM1 h implGetPastLedgerState
     , getHeaderStateHistory     = getEnvSTM  h implGetHeaderStateHistory
-    , getForkerAtWellKnownPoint = newForkerAtWellKnownPoint h
+    , getForkerAtTrustedTargetPoint = newForkerAtTrustedTargetPoint h
     , getForkerAtPoint          = newForkerAtPoint h
     , validate                  = getEnv5    h (implValidate h)
     , getPrevApplied            = getEnvSTM  h implGetPrevApplied
@@ -237,16 +238,21 @@ implValidate ::
   -> Word64
   -> [Header blk]
   -> m (ValidateResult m (ExtLedgerState blk) blk)
-implValidate h ldbEnv =
-  Validate.validate
-    (ldbResolveBlock ldbEnv)
-    (getExtLedgerCfg . ledgerDbCfg $ ldbCfg ldbEnv)
-    (\l -> do
-        prev <- readTVar (ldbPrevApplied ldbEnv)
-        writeTVar (ldbPrevApplied ldbEnv) (foldl' (flip Set.insert) prev l))
-    (readTVar (ldbPrevApplied ldbEnv))
-    (newForkerAtFromTip h)
-
+implValidate h ldbEnv rr tr cache rollbacks hdrs =
+  Validate.validate $
+    Validate.ValidateArgs
+      (ldbResolveBlock ldbEnv)
+      (getExtLedgerCfg . ledgerDbCfg $ ldbCfg ldbEnv)
+      (\l -> do
+          prev <- readTVar (ldbPrevApplied ldbEnv)
+          writeTVar (ldbPrevApplied ldbEnv) (foldl' (flip Set.insert) prev l))
+      (readTVar (ldbPrevApplied ldbEnv))
+      (newForkerAtFromTip h)
+      rr
+      tr
+      cache
+      rollbacks
+      hdrs
 
 implGetPrevApplied :: MonadSTM m => LedgerDBEnv m l blk -> STM m (Set (RealPoint blk))
 implGetPrevApplied env = readTVar (ldbPrevApplied env)

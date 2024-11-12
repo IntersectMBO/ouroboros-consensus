@@ -86,12 +86,14 @@ mkInitDb args flavArgs getBlock =
         mapM_ (close . tables) (AS.toOldestFirst x)
         pure y
     , currentTip = ledgerState . current
-    , mkLedgerDb = \lseq -> do
-        traceMarkerIO "Initialize LedgerDB"
+    , pruneDb = \lseq -> do
         let (LedgerSeq rel, dbPrunedToImmDBTip) = pruneToImmTipOnly lseq
         mapM_ (close . tables) (AS.toOldestFirst rel)
+        pure dbPrunedToImmDBTip
+    , mkLedgerDb = \lseq -> do
+        traceMarkerIO "Initialize LedgerDB"
         (varDB, prevApplied) <-
-          (,) <$> newTVarIO dbPrunedToImmDBTip <*> newTVarIO Set.empty
+          (,) <$> newTVarIO lseq <*> newTVarIO Set.empty
         forkers <- newTVarIO Map.empty
         nextForkerKey <- newTVarIO (ForkerKey 0)
         lock <- RAWLock.new LDBLock
@@ -161,7 +163,7 @@ implMkLedgerDb h bss = (LedgerDB {
     , getImmutableTip           = getEnvSTM  h implGetImmutableTip
     , getPastLedgerState        = getEnvSTM1 h implGetPastLedgerState
     , getHeaderStateHistory     = getEnvSTM  h implGetHeaderStateHistory
-    , getForkerAtWellKnownPoint = newForkerAtWellKnownPoint h
+    , getForkerAtTrustedTargetPoint = newForkerAtTrustedTargetPoint h
     , getForkerAtPoint          = newForkerAtPoint h
     , validate                  = getEnv5    h (implValidate h)
     , getPrevApplied            = getEnvSTM  h implGetPrevApplied
@@ -193,7 +195,7 @@ mkInternals bss h = TestInternals {
                 . anchorHandle
                 =<< readTVarIO (ldbSeq env)
     , reapplyThenPushNOW = \blk -> getEnv h $ \env -> withRegistry $ \reg -> do
-          frk <- newForkerAtWellKnownPoint h reg VolatileTip
+          frk <- newForkerAtTrustedTargetPoint h reg VolatileTip
           st <- atomically $ forkerGetLedgerState frk
           tables <- forkerReadTables frk (getBlockKeySets blk)
           let st' = tickThenReapply (ledgerDbCfg $ ldbCfg env) blk (st `withLedgerTables` tables)
@@ -300,15 +302,21 @@ implValidate ::
   -> Word64
   -> [Header blk]
   -> m (ValidateResult m (ExtLedgerState blk) blk)
-implValidate h ldbEnv =
-  Validate.validate
-    (ldbResolveBlock ldbEnv)
-    (getExtLedgerCfg . ledgerDbCfg $ ldbCfg ldbEnv)
-    (\l -> do
-        prev <- readTVar (ldbPrevApplied ldbEnv)
-        writeTVar (ldbPrevApplied ldbEnv) (foldl' (flip Set.insert) prev l))
-    (readTVar (ldbPrevApplied ldbEnv))
-    (newForkerAtFromTip h)
+implValidate h ldbEnv rr tr cache rollbacks hdrs =
+  Validate.validate $
+    Validate.ValidateArgs
+      (ldbResolveBlock ldbEnv)
+      (getExtLedgerCfg . ledgerDbCfg $ ldbCfg ldbEnv)
+      (\l -> do
+          prev <- readTVar (ldbPrevApplied ldbEnv)
+          writeTVar (ldbPrevApplied ldbEnv) (foldl' (flip Set.insert) prev l))
+      (readTVar (ldbPrevApplied ldbEnv))
+      (newForkerAtFromTip h)
+      rr
+      tr
+      cache
+      rollbacks
+      hdrs
 
 implGetPrevApplied :: MonadSTM m => LedgerDBEnv m l blk -> STM m (Set (RealPoint blk))
 implGetPrevApplied env = readTVar (ldbPrevApplied env)

@@ -128,7 +128,7 @@ initialChainSelection immutableDB volatileDB lgrDB rr tracer cfg varInvalid
     --
     -- We don't use 'LedgerDB.withTipForker' here, because 'curForker' might be
     -- returned as part of the selected chain.
-    curForker <- LedgerDB.getForkerAtWellKnownPoint lgrDB rr VolatileTip
+    curForker <- LedgerDB.getForkerAtTrustedTargetPoint lgrDB rr VolatileTip
 
     chains <- constructChains i succsOf
 
