@@ -2,10 +2,14 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
-{-# OPTIONS_GHC -Wno-missing-export-lists #-}
 
 -- | Tooling to generate and validate (Praos) headers.
-module Cardano.Tools.Headers where
+module Cardano.Tools.Headers (
+    Options (..)
+  , ValidationResult (..)
+  , run
+  , validate
+  ) where
 
 import           Cardano.Crypto.DSIGN (deriveVerKeyDSIGN)
 import           Cardano.Crypto.VRF

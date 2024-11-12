@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE ImpredicativeTypes #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -6,9 +7,18 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeApplications #-}
-{-# OPTIONS_GHC -Wno-missing-export-lists #-}
 
-module Test.Ouroboros.Consensus.Protocol.Praos.Header where
+module Test.Ouroboros.Consensus.Protocol.Praos.Header (
+    GeneratorContext (..)
+  , MutatedHeader (..)
+  , Mutation (..)
+  , Sample (..)
+  , expectedError
+  , genContext
+  , genMutatedHeader
+  , genSample
+  , generateSamples
+  ) where
 
 import           Cardano.Crypto.DSIGN
                      (DSIGNAlgorithm (SignKeyDSIGN, genKeyDSIGN, rawSerialiseSignKeyDSIGN),
@@ -38,7 +48,7 @@ import           Cardano.Protocol.TPraos.OCert (KESPeriod (..), OCert (..),
                      OCertSignable (..))
 import           Cardano.Slotting.Block (BlockNo (..))
 import           Cardano.Slotting.Slot (SlotNo (..))
-import           Data.Aeson ((.:), (.=))
+import           Data.Aeson (defaultOptions, (.:), (.=))
 import qualified Data.Aeson as Json
 import           Data.Bifunctor (second)
 import           Data.ByteString (ByteString)
@@ -53,6 +63,7 @@ import           Data.Proxy (Proxy (..))
 import           Data.Ratio ((%))
 import           Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import           Data.Word (Word64)
+import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Protocol.Praos (PraosValidationErr (..))
 import           Ouroboros.Consensus.Protocol.Praos.Header (Header,
                      HeaderBody (..), pattern Header)
@@ -60,7 +71,7 @@ import           Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF, mkInputVRF,
                      vrfLeaderValue)
 import           Ouroboros.Consensus.Protocol.TPraos (StandardCrypto)
 import           Test.QuickCheck (Gen, arbitrary, choose, frequency, generate,
-                     getPositive, resize, shrinkList, sized, suchThat, vectorOf)
+                     getPositive, resize, sized, suchThat, vectorOf)
 
 -- * Test Vectors
 
@@ -92,9 +103,6 @@ genMutatedHeader context = do
     header <- genHeader context
     mutation <- genMutation header
     mutate context header mutation
-
-shrinkSample :: Sample -> [Sample]
-shrinkSample Sample{sample} = Sample <$> shrinkList (const []) sample
 
 mutate :: GeneratorContext -> Header StandardCrypto -> Mutation -> Gen (GeneratorContext, MutatedHeader)
 mutate context header mutation =
@@ -172,28 +180,12 @@ data Mutation
       MutateCounterOver1
     | -- | Mutate certificate counter to be lower than expected
       MutateCounterUnder
-    deriving (Eq, Show)
+    deriving (Eq, Show, Generic)
 
 instance Json.ToJSON Mutation where
-    toJSON = \case
-        NoMutation -> "NoMutation"
-        MutateKESKey -> "MutateKESKey"
-        MutateColdKey -> "MutateColdKey"
-        MutateKESPeriod -> "MutateKESPeriod"
-        MutateKESPeriodBefore -> "MutateKESPeriodBefore"
-        MutateCounterOver1 -> "MutateCounterOver1"
-        MutateCounterUnder -> "MutateCounterUnder"
+    toEncoding = Json.genericToEncoding defaultOptions
 
-instance Json.FromJSON Mutation where
-    parseJSON = \case
-        "NoMutation" -> pure NoMutation
-        "MutateKESKey" -> pure MutateKESKey
-        "MutateColdKey" -> pure MutateColdKey
-        "MutateKESPeriod" -> pure MutateKESPeriod
-        "MutateKESPeriodBefore" -> pure MutateKESPeriodBefore
-        "MutateCounterOver1" -> pure MutateCounterOver1
-        "MutateCounterUnder" -> pure MutateCounterUnder
-        _ -> fail "Invalid mutation"
+instance Json.FromJSON Mutation
 
 expectedError :: Mutation -> (PraosValidationErr StandardCrypto -> Bool)
 expectedError = \case
@@ -226,14 +218,15 @@ genMutation header =
         , (1, pure MutateKESPeriod)
         , (1, pure MutateKESPeriodBefore)
         , (1, pure MutateCounterUnder)
-        ] <> maybeCounterOver1
-     where
-       Header body _ = header
-       OCert{ocertN} = hbOCert body
-       maybeCounterOver1 =
-         if ocertN > 10
-           then [(1, pure MutateCounterOver1)]
-           else []
+        ]
+            <> maybeCounterOver1
+  where
+    Header body _ = header
+    OCert{ocertN} = hbOCert body
+    maybeCounterOver1 =
+        if ocertN > 10
+            then [(1, pure MutateCounterOver1)]
+            else []
 
 data MutatedHeader = MutatedHeader
     { header   :: !(Header StandardCrypto)
