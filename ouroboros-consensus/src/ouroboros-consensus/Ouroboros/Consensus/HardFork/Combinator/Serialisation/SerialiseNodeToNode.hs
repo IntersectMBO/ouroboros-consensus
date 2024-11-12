@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
@@ -139,5 +140,24 @@ instance SerialiseHFC xs
 
 instance SerialiseHFC xs
       => SerialiseNodeToNode (HardForkBlock xs) (GenTxId (HardForkBlock xs)) where
-  encodeNodeToNode = dispatchEncoder `after` (getOneEraGenTxId . getHardForkGenTxId)
-  decodeNodeToNode = fmap (HardForkGenTxId . OneEraGenTxId) .: dispatchDecoder
+  encodeNodeToNode cc v (HardForkGenTxId (OneEraGenTxId txid)) = do
+    case v of
+      HardForkNodeToNodeEnabled hfv _ | hfv >= HardForkSpecificNodeToNodeVersion2 ->
+        hcollapse $
+          hcmap
+            pSHFC
+            (K . Serialise.encode . toRawTxIdHash . unwrapGenTxId)
+            txid
+      _ -> dispatchEncoder cc v txid
+  decodeNodeToNode cc v =
+    case v of
+      HardForkNodeToNodeEnabled hfv vs | hfv >= HardForkSpecificNodeToNodeVersion2 -> do
+          let ccfgs = getPerEraCodecConfig $ hardForkCodecConfigPerEra cc
+          fmap (HardForkGenTxId . OneEraGenTxId) $
+            htraverse' unComp $
+              hcliftA3 pSHFC
+                (\ecc (WrapNodeToNodeVersion ev) _ -> Comp (decodeNodeToNode ecc ev))
+                ccfgs
+                vs
+                blessedGenTxIdDecodeEra
+      _ -> fmap (HardForkGenTxId . OneEraGenTxId) $ dispatchDecoder cc v

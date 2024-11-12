@@ -7,6 +7,7 @@
 module Ouroboros.Consensus.Cardano.ByronHFC (ByronBlockHFC) where
 
 import qualified Data.Map.Strict as Map
+import           Data.SOP.Strict.NS
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger
 import           Ouroboros.Consensus.Byron.Node ()
@@ -59,6 +60,9 @@ instance SupportedNetworkProtocolVersion ByronBlockHFC where
 {-------------------------------------------------------------------------------
   SerialiseHFC instance
 -------------------------------------------------------------------------------}
+
+instance HasBlessedGenTxIdDecodeEra '[ByronBlock] where
+  blessedGenTxIdDecodeEra = Z mempty
 
 -- | Forward to the ByronBlock instance, this means we don't add an era
 -- wrapper around blocks on disk. This makes sure we're compatible with the
