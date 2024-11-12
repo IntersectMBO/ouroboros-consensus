@@ -238,7 +238,7 @@ instance ( All SingleEraBlock xs
           cfgs = hmap ExtLedgerCfg $ distribTopLevelConfig ei cfg
       case qry of
         QueryIfCurrent queryIfCurrent ->
-          interpretQueryIfCurrentOne
+          interpretQueryIfCurrentLookup
                 cfgs
                 queryIfCurrent
                 forker
@@ -254,7 +254,7 @@ instance ( All SingleEraBlock xs
           cfgs = hmap ExtLedgerCfg $ distribTopLevelConfig ei cfg
       case qry of
         QueryIfCurrent queryIfCurrent ->
-          interpretQueryIfCurrentAll
+          interpretQueryIfCurrentTraverse
                 cfgs
                 queryIfCurrent
                 forker
@@ -353,13 +353,13 @@ interpretQueryIfCurrent = go
     go _         (QS qry) (Z (Flip st)) =
         Left $ MismatchEraInfo $ MR (hardForkQueryInfo qry) (ledgerInfo st)
 
-interpretQueryIfCurrentOne ::
+interpretQueryIfCurrentLookup ::
      forall result xs m. (MonadSTM m, BlockSupportsHFLedgerQuery xs, CanHardFork xs)
   => NP ExtLedgerCfg xs
   -> QueryIfCurrent xs QFLookupTables result
   -> ReadOnlyForker' m (HardForkBlock xs)
   -> m (HardForkQueryResult xs result)
-interpretQueryIfCurrentOne cfg q forker = do
+interpretQueryIfCurrentLookup cfg q forker = do
     st <- distribExtLedgerState <$> atomically (roforkerGetLedgerState forker)
     go indices cfg q st
   where
@@ -376,13 +376,13 @@ interpretQueryIfCurrentOne cfg q forker = do
     go _          _         (QS qry) (Z (Flip st)) =
         pure $ Left $ MismatchEraInfo $ MR (hardForkQueryInfo qry) (ledgerInfo st)
 
-interpretQueryIfCurrentAll ::
+interpretQueryIfCurrentTraverse ::
      forall result xs m. (MonadSTM m, BlockSupportsHFLedgerQuery xs, CanHardFork xs)
   => NP ExtLedgerCfg xs
   -> QueryIfCurrent xs QFTraverseTables result
   -> ReadOnlyForker' m (HardForkBlock xs)
   -> m (HardForkQueryResult xs result)
-interpretQueryIfCurrentAll cfg q forker = do
+interpretQueryIfCurrentTraverse cfg q forker = do
     st <- distribExtLedgerState <$> atomically (roforkerGetLedgerState forker)
     go indices cfg q st
   where

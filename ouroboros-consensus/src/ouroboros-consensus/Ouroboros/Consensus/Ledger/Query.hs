@@ -148,7 +148,7 @@ class
   -- queries faster.
   --
   -- For the hard fork block this will be instantiated to
-  -- @answerBlockQueryHFOne@.
+  -- 'Ouroboros.Consensus.HardFork.Combinator.Ledger.Query.answerBlockQueryHFLookup'.
   answerBlockQueryLookup ::
        MonadSTM m
     => ExtLedgerCfg blk
@@ -163,7 +163,7 @@ class
   -- tables thus making use of some utilities to make these queries faster.
   --
   -- For the hard fork block this will be instantiated to
-  -- @answerBlockQueryHFAll@.
+  -- 'Ouroboros.Consensus.HardFork.Combinator.Ledger.Query.answerBlockQueryHFTraverse'.
   answerBlockQueryTraverse ::
        MonadSTM m
     => ExtLedgerCfg blk
