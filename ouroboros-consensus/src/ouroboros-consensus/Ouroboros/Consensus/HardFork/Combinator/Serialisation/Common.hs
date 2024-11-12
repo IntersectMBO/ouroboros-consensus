@@ -17,6 +17,7 @@
 module Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common (
     -- * Conditions required by the HFC to support serialisation
     HardForkEncoderException (..)
+  , HasBlessedGenTxIdDecodeEra (..)
   , SerialiseConstraintsHFC
   , SerialiseHFC (..)
   , disabledEraException
@@ -133,8 +134,12 @@ notFirstEra = hcmap proxySingle aux
 
 -- | Versioning of the specific additions made by the HFC to the @NodeToNode@
 -- protocols, e.g., the era tag.
-data HardForkSpecificNodeToNodeVersion =
-    HardForkSpecificNodeToNodeVersion1
+data HardForkSpecificNodeToNodeVersion
+  = HardForkSpecificNodeToNodeVersion1
+
+    -- | Represent GenTxId as an era-agnostic ShortByteStrings
+  | HardForkSpecificNodeToNodeVersion2
+
   deriving (Eq, Ord, Show, Enum, Bounded)
 
 -- | Versioning of the specific additions made by the HFC to the @NodeToClient@
@@ -147,6 +152,9 @@ data HardForkSpecificNodeToClientVersion =
 
     -- | Include the Genesis window in 'EraParams'.
   | HardForkSpecificNodeToClientVersion3
+
+    -- | Represent GenTxId as an era-agnostic ShortByteString
+  | HardForkSpecificNodeToClientVersion4
   deriving (Eq, Ord, Show, Enum, Bounded)
 
 data HardForkNodeToNodeVersion xs where
@@ -210,6 +218,12 @@ isHardForkNodeToClientEnabled :: HardForkNodeToClientVersion xs -> Bool
 isHardForkNodeToClientEnabled HardForkNodeToClientEnabled {} = True
 isHardForkNodeToClientEnabled _                              = False
 
+
+-- absolutely horrible. should be HasLatestStableGenTxIdEra probably.
+-- especially nasty because it's
+class HasBlessedGenTxIdDecodeEra (xs :: [Type]) where
+  blessedGenTxIdDecodeEra :: NS (K ()) xs
+
 {-------------------------------------------------------------------------------
   Conditions required by the HFC to support serialisation
 -------------------------------------------------------------------------------}
@@ -250,6 +264,7 @@ pSHFC = Proxy
 --    This would then lead to problems with binary streaming, and we do not
 --    currently provide any provisions to resolve these.
 class ( CanHardFork xs
+      , HasBlessedGenTxIdDecodeEra xs
       , All SerialiseConstraintsHFC xs
         -- Required for HasNetworkProtocolVersion
       , All (Compose Show EraNodeToClientVersion) xs

@@ -463,6 +463,11 @@ instance c ~ MockCryptoCompatByron
 
 instance c ~ MockCryptoCompatByron
       => Arbitrary (WithVersion (HardForkNodeToClientVersion (CardanoEras c))
+                               (CardanoGenTxId c)) where
+  arbitrary = arbitraryNodeToClient GenTxIdByron GenTxIdShelley GenTxIdAllegra GenTxIdMary GenTxIdAlonzo GenTxIdBabbage GenTxIdConway
+
+instance c ~ MockCryptoCompatByron
+      => Arbitrary (WithVersion (HardForkNodeToClientVersion (CardanoEras c))
                                 (CardanoApplyTxErr c)) where
   arbitrary = frequency
       [ (8, arbitraryNodeToClient ApplyTxErrByron ApplyTxErrShelley ApplyTxErrAllegra ApplyTxErrMary ApplyTxErrAlonzo ApplyTxErrBabbage ApplyTxErrConway)
