@@ -124,7 +124,7 @@ import           Ouroboros.Network.NodeToClient (ConnectionId, LocalAddress,
                      LocalSocket, NodeToClientVersionData (..), combineVersions,
                      simpleSingletonVersions)
 import           Ouroboros.Network.NodeToNode (DiffusionMode (..),
-                     ExceptionInHandler (..), MiniProtocolParameters,
+                     ExceptionInHandler (..), MiniProtocolParameters (..),
                      NodeToNodeVersionData (..), RemoteAddress, Socket,
                      blockFetchPipeliningMax, defaultMiniProtocolParameters)
 import           Ouroboros.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
@@ -573,6 +573,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
           (gcChainSyncLoPBucketConfig llrnGenesisConfig)
           (gcCSJConfig llrnGenesisConfig)
           (reportMetric Diffusion.peerMetricsConfiguration peerMetrics)
+          (txDecisionPolicy $ miniProtocolParameters nodeKernelArgs)
           (NTN.mkHandlers nodeKernelArgs nodeKernel rnEnableNewTxSubmissionProtocol)
 
     mkNodeToClientApps

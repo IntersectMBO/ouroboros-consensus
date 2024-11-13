@@ -578,9 +578,10 @@ mkApps ::
   -> CsClient.ChainSyncLoPBucketConfig
   -> CsClient.CSJConfig
   -> ReportPeerMetrics m (ConnectionId addrNTN)
+  -> TxDecisionPolicy
   -> Handlers m addrNTN blk
   -> Apps m addrNTN bCS bBF bTX bKA bPS NodeToNodeInitiatorResult ()
-mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucketConfig csjConfig ReportPeerMetrics {..} Handlers {..} =
+mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucketConfig csjConfig ReportPeerMetrics {..} txDecisionPolicy Handlers {..} =
     Apps {..}
   where
     aChainSyncClient
@@ -746,6 +747,8 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
         Right newTxSubmissionServer ->
           withPeer (contramap (TraceLabelPeer them) tTxLogicTracer)
                    (getTxChannelsVar kernel)
+                   (getTxMempoolSem kernel)
+                   txDecisionPolicy
                    (getSharedTxStateVar kernel)
                    (mapTxSubmissionMempoolReader txForgetValidated
                    $ getMempoolReader (getMempool kernel))
