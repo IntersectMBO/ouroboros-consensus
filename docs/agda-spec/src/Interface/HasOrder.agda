@@ -103,7 +103,18 @@ module _ {a} {A : Set a} where
 
       ≥⇒≮ : ∀ {x y} → y ≤ x → ¬ (x < y)
       ≥⇒≮ y≤x x<y = contradiction (to ≤⇔<∨≈ y≤x) (<⇒¬>⊎≈ x<y)
+      deMorgan₂ : ∀ {A B} → ¬ (A ⊎ B) → ¬ A × ¬ B
+      deMorgan₂ n = (λ a → n (inj₁ a)) , (λ b → n (inj₂ b))
 
+      ≈⇒≮ : ∀ {x y} → x ≈ y → ¬ (x < y)
+      ≈⇒≮ x≈y = λ x<y → contradiction (≈-sym x≈y) (proj₂ (deMorgan₂ (<⇒¬>⊎≈ x<y)))
+
+      >⇒≮∧≉ : ∀ {x y} → x > y → ¬ (x < y) × ¬ (x ≈ y)
+      >⇒≮∧≉ x>y =
+        (λ x<y → contradiction x>y (proj₁ (deMorgan₂ (<⇒¬>⊎≈ x<y))))
+        ,
+        (λ x≈y → contradiction x>y (≈⇒≮ (≈-sym x≈y)))
+        
     open HasPartialOrder ⦃...⦄
 
     record HasDecPartialOrder : Set (sucˡ a) where

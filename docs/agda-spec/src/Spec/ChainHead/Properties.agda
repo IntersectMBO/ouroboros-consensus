@@ -31,6 +31,7 @@ open import Spec.Protocol crypto nonces es ss bs af rs grindingf
 open import Spec.Protocol.Properties crypto nonces es ss bs af rs grindingf
 open import Spec.ChainHead crypto nonces es ss bs af li rs grindingf
 
+
 instance
 
   prtlSeqChecks⁇ : prtlSeqChecks ⁇²
@@ -64,7 +65,7 @@ instance
     computePRTCL = comp {STS = _⊢_⇀⦇_,PRTCL⦈_}
     module Go
       (nes : NewEpochState)
-      (s   : ChainHeadState) (let ⟦ cs , pre-ηc , η₀ , ηv , ηc , ηh , lab ⟧ᶜˢ = s)
+      (s   : ChainHeadState) (let ⟦ cs , η₀ , pre-ηc , ηv , ηc , ηh , lab ⟧ᶜˢ = s)
       (bh  : BHeader)        (let (bhb , σ) = bh; open BHBody bhb)
       where
 
