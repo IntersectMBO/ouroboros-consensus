@@ -222,9 +222,8 @@ initMempoolEnv :: ( IOLike m
 initMempoolEnv ledgerInterface cfg capacityOverride tracer = do
     st <- atomically $ getCurrentLedgerState ledgerInterface
     let (slot, st') = tickLedgerState cfg (ForgeInUnknownSlot st)
-    isVar <-
-        newTMVarIO
-      $ initInternalState capacityOverride TxSeq.zeroTicketNo cfg slot st'
+    isVar <- newTMVarIO
+           $ initInternalState capacityOverride TxSeq.zeroTicketNo cfg slot st'
     addTxRemoteFifo <- newMVar ()
     addTxAllFifo    <- newMVar ()
     return MempoolEnv

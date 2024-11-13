@@ -782,7 +782,7 @@ mkHandler fhandler = Handler $
 -- | Map LMDB errors to mock errors.
 fromDbErr :: LMDB.LMDBErr -> Maybe Err
 fromDbErr = \case
-  LMDBErrNoDbState                   -> Nothing
+  LMDBErrNoDbSeqNo                   -> Nothing
   LMDBErrNonMonotonicSeq wo wo'      -> Just $ ErrNonMonotonicSeqNo wo wo'
   LMDBErrInitialisingNonEmpty _      -> Nothing
   LMDBErrNoValueHandle _             -> Just ErrBackingStoreValueHandleClosed

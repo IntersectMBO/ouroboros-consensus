@@ -739,19 +739,16 @@ and we use the default implementation
 > type instance TxIn  (LedgerState BlockC) = Void
 > type instance TxOut (LedgerState BlockC) = Void
 
-> instance HasLedgerTables (LedgerState BlockC) where
->   projectLedgerTables = trivialProjectLedgerTables
->   withLedgerTables = trivialWithLedgerTables
-> instance HasLedgerTables (Ticked1 (LedgerState BlockC)) where
->   projectLedgerTables = trivialProjectLedgerTables
->   withLedgerTables = trivialWithLedgerTables
-> instance CanSerializeLedgerTables (LedgerState BlockC) where
->   codecLedgerTables = defaultCodecLedgerTables
-> instance CanStowLedgerTables (LedgerState BlockC) where
->   stowLedgerTables = trivialStowLedgerTables
->   unstowLedgerTables = trivialUnstowLedgerTables
 > instance LedgerTablesAreTrivial (LedgerState BlockC) where
 >   convertMapKind (LedgerC x y) = LedgerC x y
 > instance LedgerTablesAreTrivial (Ticked1 (LedgerState BlockC)) where
 >   convertMapKind (TickedLedgerStateC x) =
 >       TickedLedgerStateC (convertMapKind x)
+> deriving via TrivialLedgerTables (LedgerState BlockC)
+>     instance HasLedgerTables (LedgerState BlockC)
+> deriving via TrivialLedgerTables (Ticked1 (LedgerState BlockC))
+>     instance HasLedgerTables (Ticked1 (LedgerState BlockC))
+> deriving via TrivialLedgerTables (LedgerState BlockC)
+>     instance CanSerializeLedgerTables (LedgerState BlockC)
+> deriving via TrivialLedgerTables (LedgerState BlockC)
+>     instance CanStowLedgerTables (LedgerState BlockC)

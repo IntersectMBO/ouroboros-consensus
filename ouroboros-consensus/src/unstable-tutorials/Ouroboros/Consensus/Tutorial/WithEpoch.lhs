@@ -679,19 +679,16 @@ For reference on these instances and their meaning, please see the appendix in
 > type instance TxIn  (LedgerState BlockD) = Void
 > type instance TxOut (LedgerState BlockD) = Void
 
-> instance HasLedgerTables (LedgerState BlockD) where
->   projectLedgerTables = trivialProjectLedgerTables
->   withLedgerTables = trivialWithLedgerTables
-> instance HasLedgerTables (Ticked1 (LedgerState BlockD)) where
->   projectLedgerTables = trivialProjectLedgerTables
->   withLedgerTables = trivialWithLedgerTables
-> instance CanSerializeLedgerTables (LedgerState BlockD) where
->   codecLedgerTables = defaultCodecLedgerTables
-> instance CanStowLedgerTables (LedgerState BlockD) where
->   stowLedgerTables = trivialStowLedgerTables
->   unstowLedgerTables = trivialUnstowLedgerTables
 > instance LedgerTablesAreTrivial (LedgerState BlockD) where
 >   convertMapKind (LedgerD x y z z') = LedgerD x y z z'
 > instance LedgerTablesAreTrivial (Ticked1 (LedgerState BlockD)) where
 >   convertMapKind (TickedLedgerStateD x) =
 >       TickedLedgerStateD (convertMapKind x)
+> deriving via TrivialLedgerTables (LedgerState BlockD)
+>     instance HasLedgerTables (LedgerState BlockD)
+> deriving via TrivialLedgerTables (Ticked1 (LedgerState BlockD))
+>     instance HasLedgerTables (Ticked1 (LedgerState BlockD))
+> deriving via TrivialLedgerTables (LedgerState BlockD)
+>     instance CanSerializeLedgerTables (LedgerState BlockD)
+> deriving via TrivialLedgerTables (LedgerState BlockD)
+>     instance CanStowLedgerTables (LedgerState BlockD)

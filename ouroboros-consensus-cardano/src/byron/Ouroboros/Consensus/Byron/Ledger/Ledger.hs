@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -187,21 +188,19 @@ instance IsLedger (LedgerState ByronBlock) where
 type instance TxIn  (LedgerState ByronBlock) = Void
 type instance TxOut (LedgerState ByronBlock) = Void
 
-instance HasLedgerTables (LedgerState ByronBlock) where
-  projectLedgerTables = trivialProjectLedgerTables
-  withLedgerTables = trivialWithLedgerTables
-instance HasLedgerTables (Ticked1 (LedgerState ByronBlock)) where
-  projectLedgerTables = trivialProjectLedgerTables
-  withLedgerTables = trivialWithLedgerTables
-instance CanSerializeLedgerTables (LedgerState ByronBlock) where
-  codecLedgerTables = defaultCodecLedgerTables
-instance CanStowLedgerTables (LedgerState ByronBlock) where
-  stowLedgerTables = trivialStowLedgerTables
-  unstowLedgerTables = trivialUnstowLedgerTables
 instance LedgerTablesAreTrivial (LedgerState ByronBlock) where
   convertMapKind (ByronLedgerState x y z) = ByronLedgerState x y z
 instance LedgerTablesAreTrivial (Ticked1 (LedgerState ByronBlock)) where
   convertMapKind (TickedByronLedgerState x y) = TickedByronLedgerState x y
+
+deriving via TrivialLedgerTables (LedgerState ByronBlock)
+    instance HasLedgerTables (LedgerState ByronBlock)
+deriving via TrivialLedgerTables (Ticked1 (LedgerState ByronBlock))
+    instance HasLedgerTables (Ticked1 (LedgerState ByronBlock))
+deriving via TrivialLedgerTables (LedgerState ByronBlock)
+    instance CanSerializeLedgerTables (LedgerState ByronBlock)
+deriving via TrivialLedgerTables (LedgerState ByronBlock)
+    instance CanStowLedgerTables (LedgerState ByronBlock)
 
 {-------------------------------------------------------------------------------
   Supporting the various consensus interfaces

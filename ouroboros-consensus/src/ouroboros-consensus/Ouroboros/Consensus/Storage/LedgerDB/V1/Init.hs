@@ -95,20 +95,20 @@ mkInitDb args bss getBlock =
       loadSnapshot bsTracer baArgs (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) lgrHasFS'
   , closeDb = bsClose . snd
   , initReapplyBlock = \cfg blk (chlog, bstore) -> do
-      !chlog' <- onChangelogM (reapplyThenPush cfg blk (readKeySets bstore)) chlog
+      !chlog' <- reapplyThenPush cfg blk (readKeySets bstore) chlog
       -- It's OK to flush without a lock here, since the `LedgerDB` has not
       -- finishined initializing: only this thread has access to the backing
       -- store.
       chlog'' <- unsafeIgnoreWriteLock
-        $ if shouldFlush flushFreq (flushableLength $ anchorlessChangelog chlog')
+        $ if shouldFlush flushFreq (flushableLength chlog')
           then do
             let (toFlush, toKeep) = splitForFlushing chlog'
             mapM_ (flushIntoBackingStore bstore) toFlush
             pure toKeep
           else pure chlog'
       pure (chlog'', bstore)
-  , currentTip = ledgerState . current . anchorlessChangelog . fst
-  , pruneDb = pure . first (onChangelog pruneToImmTipOnly)
+  , currentTip = ledgerState . current . fst
+  , pruneDb = pure . first pruneToImmTipOnly
   , mkLedgerDb = \(db, lgrBackingStore) -> do
       (varDB, prevApplied) <-
         (,) <$> newTVarIO db <*> newTVarIO Set.empty
@@ -185,19 +185,19 @@ implGetVolatileTip ::
      (MonadSTM m, GetTip l)
   => LedgerDBEnv m l blk
   -> STM m (l EmptyMK)
-implGetVolatileTip = fmap (current . anchorlessChangelog) . readTVar . ldbChangelog
+implGetVolatileTip = fmap current . readTVar . ldbChangelog
 
 implGetImmutableTip ::
      MonadSTM m
   => LedgerDBEnv m l blk
   -> STM m (l EmptyMK)
-implGetImmutableTip = fmap (anchor . anchorlessChangelog) . readTVar . ldbChangelog
+implGetImmutableTip = fmap anchor . readTVar . ldbChangelog
 
 implGetPastLedgerState ::
      ( MonadSTM m , HasHeader blk, IsLedger l, StandardHash l
      , HasLedgerTables l, HeaderHash l ~ HeaderHash blk )
   => LedgerDBEnv m l blk -> Point blk -> STM m (Maybe (l EmptyMK))
-implGetPastLedgerState env point = getPastLedgerAt point . anchorlessChangelog <$> readTVar (ldbChangelog env)
+implGetPastLedgerState env point = getPastLedgerAt point <$> readTVar (ldbChangelog env)
 
 implGetHeaderStateHistory ::
      ( MonadSTM m
@@ -208,7 +208,7 @@ implGetHeaderStateHistory ::
      )
   => LedgerDBEnv m l blk -> STM m (HeaderStateHistory blk)
 implGetHeaderStateHistory env = do
-    ldb <- anchorlessChangelog <$> readTVar (ldbChangelog env)
+    ldb <- readTVar (ldbChangelog env)
     let currentLedgerState = ledgerState $ current ldb
         -- This summary can convert all tip slots of the ledger states in the
         -- @ledgerDb@ as these are not newer than the tip slot of the current
@@ -220,7 +220,7 @@ implGetHeaderStateHistory env = do
     pure
       . HeaderStateHistory
       . AS.bimap mkHeaderStateWithTime' mkHeaderStateWithTime'
-      $ adcStates ldb
+      $ changelogStates ldb
 
 implValidate ::
      forall m l blk. (
@@ -293,7 +293,7 @@ implTryFlush ::
   => LedgerDBEnv m l blk -> m ()
 implTryFlush env@LedgerDBEnv{ldbLock = AllowThunk lock} = do
     ldb <- readTVarIO $ ldbChangelog env
-    when (ldbShouldFlush env $ DbCh.flushableLength $ anchorlessChangelog ldb)
+    when (ldbShouldFlush env $ DbCh.flushableLength ldb)
         (withWriteLock
           lock
           (flushLedgerDB (ldbChangelog env) (ldbBackingStore env))
@@ -387,5 +387,5 @@ implIntReapplyThenPushBlock ::
   => LedgerDBEnv m l blk -> blk -> m ()
 implIntReapplyThenPushBlock env blk = do
   chlog <- readTVarIO $ ldbChangelog env
-  chlog' <- onChangelogM (reapplyThenPush (ldbCfg env)  blk (readKeySets (ldbBackingStore env))) chlog
+  chlog' <- reapplyThenPush (ldbCfg env)  blk (readKeySets (ldbBackingStore env)) chlog
   atomically $ writeTVar (ldbChangelog env) chlog'

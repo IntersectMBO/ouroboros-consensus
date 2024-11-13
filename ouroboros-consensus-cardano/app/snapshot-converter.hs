@@ -233,10 +233,10 @@ store Config{to = LMDB, outpath} fs@(SomeHasFS hasFS) ccfg state = do
         LMDB.readWriteTransaction dbEnv $
             lttraverse Disk.getDb (ltpure $ K2 "utxo")
     LMDB.readWriteTransaction dbEnv $
-        Disk.withDbStateRWMaybeNull dbState $ \case
+        Disk.withDbSeqNoRWMaybeNull dbState $ \case
             Nothing ->
                 ltzipWith3A Disk.initLMDBTable dbBackingTables codecLedgerTables (projectLedgerTables state)
-                    $> ((), Disk.DbState{Disk.dbsSeq = pointSlot $ getTip state})
+                    $> ((), Disk.DbSeqNo{Disk.dbsSeq = pointSlot $ getTip state})
             Just _ -> liftIO $ throwIO $ Disk.LMDBErrInitialisingAlreadyHasState
 
 main :: IO ()

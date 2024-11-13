@@ -1,3 +1,5 @@
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
@@ -129,20 +131,20 @@ type instance Ledger.ApplyTxErr TestBlock = ()
 type instance Ledger.TxIn  (Ledger.LedgerState TestBlock) = Void
 type instance Ledger.TxOut (Ledger.LedgerState TestBlock) = Void
 
-instance Ledger.HasLedgerTables (Ledger.LedgerState TestBlock) where
-  projectLedgerTables = Ledger.trivialProjectLedgerTables
-  withLedgerTables = Ledger.withLedgerTables
-instance Ledger.HasLedgerTables (Ticked1 (Ledger.LedgerState TestBlock)) where
-  projectLedgerTables = Ledger.trivialProjectLedgerTables
-  withLedgerTables = Ledger.withLedgerTables
+deriving via Ledger.TrivialLedgerTables (Ledger.LedgerState TestBlock)
+    instance Ledger.HasLedgerTables (Ledger.LedgerState TestBlock)
+
+deriving via Ledger.TrivialLedgerTables (Ledger.LedgerState TestBlock)
+    instance Ledger.HasLedgerTables (Ticked1 (Ledger.LedgerState TestBlock))
+
 instance Ledger.LedgerTablesAreTrivial (Ledger.LedgerState TestBlock) where
   convertMapKind (TestBlock.TestLedger x NoPayLoadDependentState) =
       TestBlock.TestLedger x NoPayLoadDependentState
 instance Ledger.LedgerTablesAreTrivial (Ticked1 (Ledger.LedgerState TestBlock)) where
   convertMapKind (TestBlock.TickedTestLedger x) =
       TestBlock.TickedTestLedger (Ledger.convertMapKind x)
-instance Ledger.CanStowLedgerTables (Ledger.LedgerState TestBlock) where
-  stowLedgerTables = Ledger.trivialStowLedgerTables
-  unstowLedgerTables = Ledger.trivialUnstowLedgerTables
-instance Ledger.CanSerializeLedgerTables (Ledger.LedgerState TestBlock) where
-  codecLedgerTables = Ledger.defaultCodecLedgerTables
+deriving via Ledger.TrivialLedgerTables (Ledger.LedgerState TestBlock)
+    instance Ledger.CanStowLedgerTables (Ledger.LedgerState TestBlock)
+
+deriving via Ledger.TrivialLedgerTables (Ledger.LedgerState TestBlock)
+    instance Ledger.CanSerializeLedgerTables (Ledger.LedgerState TestBlock)

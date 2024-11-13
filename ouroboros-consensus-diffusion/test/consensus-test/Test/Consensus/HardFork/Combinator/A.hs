@@ -201,21 +201,18 @@ newtype instance Ticked1 (LedgerState BlockA) mk = TickedLedgerStateA {
 type instance TxIn  (LedgerState BlockA) = Void
 type instance TxOut (LedgerState BlockA) = Void
 
-instance HasLedgerTables (LedgerState BlockA) where
-  projectLedgerTables = trivialProjectLedgerTables
-  withLedgerTables = trivialWithLedgerTables
-instance HasLedgerTables (Ticked1 (LedgerState BlockA)) where
-  projectLedgerTables = trivialProjectLedgerTables
-  withLedgerTables = trivialWithLedgerTables
-instance CanSerializeLedgerTables (LedgerState BlockA) where
-  codecLedgerTables = defaultCodecLedgerTables
-instance CanStowLedgerTables (LedgerState BlockA) where
-  stowLedgerTables = trivialStowLedgerTables
-  unstowLedgerTables = trivialUnstowLedgerTables
 instance LedgerTablesAreTrivial (LedgerState BlockA) where
   convertMapKind (LgrA x y) = LgrA x y
 instance LedgerTablesAreTrivial (Ticked1 (LedgerState BlockA)) where
   convertMapKind (TickedLedgerStateA x) = TickedLedgerStateA (convertMapKind x)
+deriving via TrivialLedgerTables (LedgerState BlockA)
+    instance HasLedgerTables (LedgerState BlockA)
+deriving via TrivialLedgerTables (Ticked1 (LedgerState BlockA))
+    instance HasLedgerTables (Ticked1 (LedgerState BlockA))
+deriving via TrivialLedgerTables (LedgerState BlockA)
+    instance CanSerializeLedgerTables (LedgerState BlockA)
+deriving via TrivialLedgerTables (LedgerState BlockA)
+    instance CanStowLedgerTables (LedgerState BlockA)
 
 data PartialLedgerConfigA = LCfgA {
       lcfgA_k           :: SecurityParam

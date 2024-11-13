@@ -86,17 +86,19 @@ newForkerAtFromTip ::
      )
   => LedgerDBHandle m l blk
   -> ResourceRegistry m
+     -- | How many blocks to rollback from the tip
   -> Word64
   -> m (Either ExceededRollback (Forker m l blk))
 newForkerAtFromTip h rr n = getEnv h $ \ldbEnv@LedgerDBEnv{ldbLock = AllowThunk lock} -> do
     withReadLock lock (acquireAtFromTip ldbEnv rr n) >>= traverse (newForker h ldbEnv)
 
--- | Close all open block and header 'Follower's.
+-- | Close all open block and header 'Forker's.
 closeAllForkers ::
      IOLike m
   => LedgerDBEnv m l blk
   -> m ()
-closeAllForkers ldbEnv = do
+closeAllForkers ldbEnv =
+  do
     forkerEnvs <- atomically $ do
       forkerEnvs <- Map.elems <$> readTVar forkersVar
       writeTVar forkersVar Map.empty
@@ -113,7 +115,7 @@ closeForkerEnv ForkerEnv { foeBackingStoreValueHandle } = bsvhClose foeBackingSt
 -------------------------------------------------------------------------------}
 
 type Resources m l =
-    (LedgerBackingStoreValueHandle m l, AnchorlessDbChangelog l)
+    (LedgerBackingStoreValueHandle m l, DbChangelog l)
 
 -- | Acquire both a value handle and a db changelog at the tip. Holds a read lock
 -- while doing so.
@@ -125,11 +127,11 @@ acquireAtTrustedTargetPoint ::
   -> ReadLocked m (Resources m l)
 acquireAtTrustedTargetPoint ldbEnv rr VolatileTip =
     readLocked $ do
-      dblog <- anchorlessChangelog <$> readTVarIO (ldbChangelog ldbEnv)
+      dblog <- readTVarIO (ldbChangelog ldbEnv)
       (,dblog) <$> acquire ldbEnv rr dblog
 acquireAtTrustedTargetPoint ldbEnv rr ImmutableTip =
     readLocked $ do
-      dblog <- anchorlessChangelog <$> readTVarIO (ldbChangelog ldbEnv)
+      dblog <- readTVarIO (ldbChangelog ldbEnv)
       (, rollbackToAnchor dblog)
         <$> acquire ldbEnv rr dblog
 acquireAtTrustedTargetPoint _ _ (SpecificPoint pt) =
@@ -152,7 +154,7 @@ acquireAtPoint ::
   -> ReadLocked m (Either GetForkerError (Resources m l))
 acquireAtPoint ldbEnv rr pt =
     readLocked $ do
-      dblog <- anchorlessChangelog <$> readTVarIO (ldbChangelog ldbEnv)
+      dblog <- readTVarIO (ldbChangelog ldbEnv)
       let immTip = getTip $ anchor dblog
       case rollback pt dblog of
         Nothing     | pointSlot pt < pointSlot immTip -> pure $ Left PointTooOld
@@ -173,7 +175,7 @@ acquireAtFromTip ::
   -> ReadLocked m (Either ExceededRollback (Resources m l))
 acquireAtFromTip ldbEnv rr n =
     readLocked $ do
-      dblog <- anchorlessChangelog <$> readTVarIO (ldbChangelog ldbEnv)
+      dblog <- readTVarIO (ldbChangelog ldbEnv)
       case rollbackN n dblog of
         Nothing ->
           return $ Left $ ExceededRollback {
@@ -184,20 +186,23 @@ acquireAtFromTip ldbEnv rr n =
            Right . (,dblog') <$> acquire ldbEnv rr dblog'
 
 acquire ::
-     IOLike m
+     (IOLike m, GetTip l)
   => LedgerDBEnv m l blk
   -> ResourceRegistry m
-  -> AnchorlessDbChangelog l
+  -> DbChangelog l
   -> m (LedgerBackingStoreValueHandle m l)
 acquire ldbEnv rr dblog =  do
+  -- bsvhClose is idempotent, so we let the resource call it even if the value
+  -- handle might have been closed somewhere else
   (_, vh) <- allocate rr (\_ -> bsValueHandle $ ldbBackingStore ldbEnv) bsvhClose
-  if bsvhAtSlot vh == adcLastFlushedSlot dblog
+  let dblogSlot = getTipSlot (changelogLastFlushedState dblog)
+  if bsvhAtSlot vh == dblogSlot
     then pure vh
     else bsvhClose vh >>
          error (  "Critical error: Value handles are created at "
                 <> show (bsvhAtSlot vh)
                 <> " while the db changelog is at "
-                <> show (adcLastFlushedSlot dblog)
+                <> show dblogSlot
                 <> ". There is either a race condition or a logic bug"
                 )
 
@@ -265,15 +270,14 @@ implForkerClose (LDBHandle varState) forkerKey = do
     whenJust envMay closeForkerEnv
 
 implForkerReadTables ::
-     (MonadSTM m, HasLedgerTables l)
+     (MonadSTM m, HasLedgerTables l, GetTip l)
   => ForkerEnv m l blk
   -> LedgerTables l KeysMK
   -> m (LedgerTables l ValuesMK)
 implForkerReadTables env ks = do
     traceWith (foeTracer env) ForkerReadTablesStart
     chlog <- readTVarIO (foeChangelog env)
-    let rew = rewindTableKeySets chlog ks
-    unfwd <- readKeySetsWith lvh rew
+    unfwd <- readKeySetsWith lvh ks
     case forwardTableKeySets chlog unfwd of
       Left _err -> error "impossible!"
       Right vs  -> do
@@ -298,10 +302,11 @@ implForkerRangeReadTables env rq0 = do
             (ltliftA2 doDropLTE)
             (BackingStore.rqPrev rq)
             $ ltmap prj
-            $ adcDiffs ldb
-            -- (1) Ensure that we never delete everything read from disk (ie
-            --     if our result is non-empty then it contains something read
-            --     from disk).
+            $ changelogDiffs ldb
+            -- (1) Ensure that we never delete everything read from disk (ie if
+            --     our result is non-empty then it contains something read from
+            --     disk, as we only get an empty result if we reached the end of
+            --     the table).
             --
             -- (2) Also, read one additional key, which we will not include in
             --     the result but need in order to know which in-memory
@@ -405,29 +410,33 @@ implForkerGetLedgerState env = current <$> readTVar (foeChangelog env)
 -- | Obtain statistics for a combination of backing store value handle and
 -- changelog.
 implForkerReadStatistics ::
-     (MonadSTM m, HasLedgerTables l)
+     (MonadSTM m, HasLedgerTables l, GetTip l)
   => ForkerEnv m l blk
   -> m (Maybe API.Statistics)
 implForkerReadStatistics env = do
     traceWith (foeTracer env) ForkerReadStatistics
     dblog <- readTVarIO (foeChangelog env)
 
-    let seqNo = adcLastFlushedSlot dblog
+    let seqNo = getTipSlot $ changelogLastFlushedState dblog
     BackingStore.Statistics{sequenceNumber = seqNo', numEntries = n} <- bsvhStat lbsvh
     if seqNo /= seqNo' then
-      error $ show (seqNo, seqNo')
+      error $ "Statistics seqNo ("
+            ++ show seqNo'
+            ++ ") is different from the seqNo in the DbChangelog last flushed field ("
+            ++ show seqNo
+            ++ ")"
     else do
       let
-        diffs = adcDiffs dblog
+        diffs = changelogDiffs dblog
 
         nInserts = getSum
-                $ ltcollapse
-                $ ltmap (K2 . numInserts . getSeqDiffMK)
-                  diffs
+                 $ ltcollapse
+                 $ ltmap (K2 . numInserts . getSeqDiffMK)
+                   diffs
         nDeletes = getSum
-                $ ltcollapse
-                $ ltmap (K2 . numDeletes . getSeqDiffMK)
-                  diffs
+                 $ ltcollapse
+                 $ ltmap (K2 . numDeletes . getSeqDiffMK)
+                   diffs
       pure . Just $ API.Statistics {
           ledgerTableSize = n + nInserts - nDeletes
         }
@@ -444,7 +453,7 @@ implForkerPush env newState = do
   atomically $ do
     chlog <- readTVar (foeChangelog env)
     let chlog' = prune (foeSecurityParam env)
-                 $ extend newState chlog
+               $ extend newState chlog
     writeTVar (foeChangelog env) chlog'
   traceWith (foeTracer env) ForkerPushEnd
 
@@ -454,27 +463,29 @@ implForkerCommit ::
   -> STM m ()
 implForkerCommit env = do
   dblog <- readTVar (foeChangelog env)
-  modifyTVar (foeSwitchVar env) (\pruned ->
+  modifyTVar (foeSwitchVar env) $ \orig ->
+    -- We don't need to distinguish Origin from 0 because Origin has no diffs
+    -- (SeqDiffMK is a fingertree measured by slot so there cannot be an entry
+    -- for Origin).
     let s = fromWithOrigin 0
           . pointSlot
           . getTip
-          $ changelogLastFlushedState pruned
+          $ changelogLastFlushedState orig
     in DbChangelog {
-          changelogLastFlushedState = changelogLastFlushedState pruned
-        , anchorlessChangelog       = AnchorlessDbChangelog {
-              adcLastFlushedSlot = adcLastFlushedSlot $ anchorlessChangelog pruned
-            , adcStates          = adcStates dblog
-            , adcDiffs           =
-                ltliftA2 (f s) (adcDiffs $ anchorlessChangelog pruned) (adcDiffs dblog)
-            }
-        })
+          changelogLastFlushedState = changelogLastFlushedState orig
+        , changelogStates           = changelogStates dblog
+        , changelogDiffs            =
+                ltliftA2 (doPrune s) (changelogDiffs orig) (changelogDiffs dblog)
+        }
   where
-    f :: (Ord k, Eq v)
-      => SlotNo
-      -> SeqDiffMK k v
-      -> SeqDiffMK k v
-      -> SeqDiffMK k v
-    f s (SeqDiffMK prunedSeq) (SeqDiffMK extendedSeq) = SeqDiffMK $
+    -- Prune the diffs from the forker's log that have already been flushed to
+    -- disk
+    doPrune :: (Ord k, Eq v)
+          => SlotNo
+          -> SeqDiffMK k v
+          -> SeqDiffMK k v
+          -> SeqDiffMK k v
+    doPrune s (SeqDiffMK prunedSeq) (SeqDiffMK extendedSeq) = SeqDiffMK $
       if DS.minSlot prunedSeq == DS.minSlot extendedSeq
       then extendedSeq
       else snd $ DS.splitAtSlot s extendedSeq

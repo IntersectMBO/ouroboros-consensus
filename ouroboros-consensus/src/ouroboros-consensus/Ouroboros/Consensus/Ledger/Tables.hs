@@ -173,13 +173,9 @@ module Ouroboros.Consensus.Ledger.Tables (
     -- * Basic LedgerState classes
     -- ** Stowing ledger tables
   , CanStowLedgerTables (..)
-  , trivialStowLedgerTables
-  , trivialUnstowLedgerTables
     -- ** Extracting and injecting ledger tables
   , HasLedgerTables (..)
   , HasTickedLedgerTables
-  , trivialProjectLedgerTables
-  , trivialWithLedgerTables
     -- * Serialization
   , CanSerializeLedgerTables
   , codecLedgerTables
@@ -188,6 +184,7 @@ module Ouroboros.Consensus.Ledger.Tables (
   , valuesMKEncoder
     -- * Special classes
   , LedgerTablesAreTrivial
+  , TrivialLedgerTables(..)
   , convertMapKind
   , trivialLedgerTables
   ) where
@@ -197,7 +194,7 @@ import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Control.Exception as Exn
 import           Control.Monad (replicateM)
-import           Data.Kind (Constraint)
+import           Data.Kind (Constraint, Type)
 import qualified Data.Map.Strict as Map
 import           Data.Void (Void)
 import           NoThunks.Class (NoThunks (..))
@@ -246,19 +243,6 @@ class ( Ord (TxIn l)
     -> LedgerTables l mk
     -> l mk
 
-trivialProjectLedgerTables ::
-     (ZeroableMK mk, LedgerTablesAreTrivial l)
-  => l mk
-  -> LedgerTables l mk
-trivialProjectLedgerTables _ = trivialLedgerTables
-
-trivialWithLedgerTables ::
-     LedgerTablesAreTrivial l
-  => l any
-  -> LedgerTables l mk
-  -> l mk
-trivialWithLedgerTables st _ = convertMapKind st
-
 instance ( Ord (TxIn l)
          , Eq (TxOut l)
          , Show (TxIn l)
@@ -289,18 +273,6 @@ type CanStowLedgerTables :: LedgerStateKind -> Constraint
 class CanStowLedgerTables l where
   stowLedgerTables     :: l ValuesMK -> l EmptyMK
   unstowLedgerTables   :: l EmptyMK  -> l ValuesMK
-
-trivialStowLedgerTables ::
-     (LedgerTablesAreTrivial l)
-  => l ValuesMK
-  -> l EmptyMK
-trivialStowLedgerTables = convertMapKind
-
-trivialUnstowLedgerTables ::
-     (LedgerTablesAreTrivial l)
-  => l EmptyMK
-  -> l ValuesMK
-trivialUnstowLedgerTables = convertMapKind
 
 {-------------------------------------------------------------------------------
   Serialization Codecs
@@ -392,3 +364,25 @@ trivialLedgerTables ::
      (ZeroableMK mk, LedgerTablesAreTrivial l)
   => LedgerTables l mk
 trivialLedgerTables = LedgerTables emptyMK
+
+-- | A newtype to @derive via@ the instances for blocks with trivial ledger
+-- tables.
+type TrivialLedgerTables :: LedgerStateKind -> MapKind -> Type
+newtype TrivialLedgerTables l mk = TrivialLedgerTables { untrivialLedgerTables :: l mk }
+
+type instance TxIn  (TrivialLedgerTables l) = TxIn  l
+type instance TxOut (TrivialLedgerTables l) = TxOut l
+
+instance LedgerTablesAreTrivial l => LedgerTablesAreTrivial (TrivialLedgerTables l) where
+  convertMapKind = TrivialLedgerTables . convertMapKind . untrivialLedgerTables
+
+instance LedgerTablesAreTrivial l => HasLedgerTables (TrivialLedgerTables l) where
+  projectLedgerTables _ = trivialLedgerTables
+  withLedgerTables st _ = convertMapKind st
+
+instance LedgerTablesAreTrivial l => CanStowLedgerTables (TrivialLedgerTables l) where
+  stowLedgerTables = convertMapKind
+  unstowLedgerTables = convertMapKind
+
+instance LedgerTablesAreTrivial l => CanSerializeLedgerTables (TrivialLedgerTables l) where
+  codecLedgerTables = defaultCodecLedgerTables

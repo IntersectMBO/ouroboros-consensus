@@ -513,25 +513,19 @@ instance ( Typeable ptype
 type instance TxIn  (LedgerState TestBlock) = Void
 type instance TxOut (LedgerState TestBlock) = Void
 
-instance HasLedgerTables (LedgerState TestBlock) where
-  projectLedgerTables = trivialProjectLedgerTables
-  withLedgerTables = trivialWithLedgerTables
-
-instance HasLedgerTables (Ticked1 (LedgerState TestBlock)) where
-  projectLedgerTables = trivialProjectLedgerTables
-  withLedgerTables = trivialWithLedgerTables
-
 instance LedgerTablesAreTrivial (LedgerState TestBlock) where
   convertMapKind (TestLedger x EmptyPLDS) = TestLedger x EmptyPLDS
 instance LedgerTablesAreTrivial (Ticked1 (LedgerState TestBlock)) where
   convertMapKind (TickedTestLedger x) = TickedTestLedger $ convertMapKind x
 
-instance CanSerializeLedgerTables (LedgerState TestBlock) where
-  codecLedgerTables = defaultCodecLedgerTables
-
-instance CanStowLedgerTables (LedgerState TestBlock) where
-  stowLedgerTables = trivialStowLedgerTables
-  unstowLedgerTables = trivialUnstowLedgerTables
+deriving via TrivialLedgerTables (LedgerState TestBlock)
+    instance HasLedgerTables (LedgerState TestBlock)
+deriving via TrivialLedgerTables (LedgerState TestBlock)
+    instance HasLedgerTables (Ticked1 (LedgerState TestBlock))
+deriving via TrivialLedgerTables (LedgerState TestBlock)
+    instance CanSerializeLedgerTables (LedgerState TestBlock)
+deriving via TrivialLedgerTables (LedgerState TestBlock)
+    instance CanStowLedgerTables (LedgerState TestBlock)
 
 instance PayloadSemantics ptype
          => ApplyBlock (LedgerState (TestBlockWith ptype)) (TestBlockWith ptype) where

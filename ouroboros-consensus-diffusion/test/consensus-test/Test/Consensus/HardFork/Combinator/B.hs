@@ -175,21 +175,19 @@ data instance LedgerState BlockB mk = LgrB {
 type instance TxIn  (LedgerState BlockB) = Void
 type instance TxOut (LedgerState BlockB) = Void
 
-instance HasLedgerTables (LedgerState BlockB) where
-  projectLedgerTables = trivialProjectLedgerTables
-  withLedgerTables = trivialWithLedgerTables
-instance HasLedgerTables (Ticked1 (LedgerState BlockB)) where
-  projectLedgerTables = trivialProjectLedgerTables
-  withLedgerTables = trivialWithLedgerTables
-instance CanSerializeLedgerTables (LedgerState BlockB) where
-  codecLedgerTables = defaultCodecLedgerTables
-instance CanStowLedgerTables (LedgerState BlockB) where
-  stowLedgerTables = trivialStowLedgerTables
-  unstowLedgerTables = trivialUnstowLedgerTables
 instance LedgerTablesAreTrivial (LedgerState BlockB) where
   convertMapKind (LgrB x) = LgrB x
 instance LedgerTablesAreTrivial (Ticked1 (LedgerState BlockB)) where
   convertMapKind (TickedLedgerStateB x) = TickedLedgerStateB (convertMapKind x)
+
+deriving via TrivialLedgerTables (LedgerState BlockB)
+    instance HasLedgerTables (LedgerState BlockB)
+deriving via TrivialLedgerTables (Ticked1 (LedgerState BlockB))
+    instance HasLedgerTables (Ticked1 (LedgerState BlockB))
+deriving via TrivialLedgerTables (LedgerState BlockB)
+    instance CanSerializeLedgerTables (LedgerState BlockB)
+deriving via TrivialLedgerTables (LedgerState BlockB)
+    instance CanStowLedgerTables (LedgerState BlockB)
 
 type instance LedgerCfg (LedgerState BlockB) = ()
 

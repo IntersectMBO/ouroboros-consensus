@@ -44,7 +44,7 @@
        >         ├── tables
        >         └── state
 
-       The @tables@ file is a serialization of the in-memory part of the ledger
+       The @state@ file is a serialization of the in-memory part of the ledger
        state with empty tables (i.e. a @ExtLedgerState blk EmptyMK@), and
        @tables@ will store a persistent copy of the 'LedgerTable's. Depending on
        the 'BackingStore' implementation in use, this might be a file or a
@@ -73,10 +73,11 @@
        DB, using an iterator.
 
        Note that we can /reapply/ these blocks, which is quicker than applying
-       them, as the existence of a snapshot newer than these blocks proves (unless
-       the on-disk database has been tampered with, but this is not an attack we
-       intend to protect against, as this would mean the machine has already been
-       compromised) that they have been successfully applied in the past.
+       them, as the existence of a snapshot newer than these blocks, and them
+       being in the immutable DB proves (unless the on-disk database has been
+       tampered with, but this is not an attack we intend to protect against, as
+       this would mean the machine has already been compromised) that they have
+       been successfully applied in the past.
 
   Reading and applying blocks is costly. Typically, very few blocks need to be
   reapplied in practice. However, there is one exception: when the serialisation
@@ -113,10 +114,10 @@
 
   == Flush during startup and snapshot at the end of startup
 
-  Due to the nature of the database having to carry around all the differences
-  between the last snapshotted state and the current tip, there is a need to
-  flush when replaying the chain as otherwise, for example on a replay from
-  genesis to the tip, we would carry millions of differences in memory.
+  Due to the nature of the V1 LedgerDB having to carry around all the
+  differences between the last snapshotted state and the current tip, there is a
+  need to flush when replaying the chain as otherwise, for example on a replay
+  from genesis to the tip, we would carry millions of differences in memory.
 
   Because of this, when we are replaying blocks we will flush regularly. As the
   last snapshot that was taken lives in a @\<slotNumber\>/tables@ file, there is
