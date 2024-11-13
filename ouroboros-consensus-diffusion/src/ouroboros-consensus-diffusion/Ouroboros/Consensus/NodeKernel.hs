@@ -115,8 +115,9 @@ import           Ouroboros.Network.TxSubmission.Inbound
 import qualified Ouroboros.Network.TxSubmission.Inbound as Inbound
 import           Ouroboros.Network.TxSubmission.Inbound.Registry
                      (SharedTxStateVar, TxChannels (..), TxChannelsVar,
-                     decisionLogicThread, drainRejectionThread,
-                     newSharedTxStateVar)
+                     TxMempoolSem, decisionLogicThread,
+                     drainRejectionThread, newSharedTxStateVar,
+                     newTxMempoolSem)
 import           Ouroboros.Network.TxSubmission.Mempool.Reader
                      (TxSubmissionMempoolReader)
 import qualified Ouroboros.Network.TxSubmission.Mempool.Reader as MempoolReader
@@ -175,6 +176,9 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
     -- | Communication channels between `TxSubmission` client mini-protocol and
     -- decision logic.
     , getTxChannelsVar :: TxChannelsVar m (ConnectionId addrNTN) (GenTxId blk) (GenTx blk)
+
+    -- | Sync mechanism between `TxSubmission` threads
+    , getTxMempoolSem  :: TxMempoolSem m
 
     -- | Shared state of all `TxSubmission` clients.
     --
@@ -302,6 +306,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                         ps_POLICY_PEER_SHARE_MAX_PEERS
 
     txChannelsVar <- StrictSTM.newMVar (TxChannels Map.empty)
+    txMempoolSem <- newTxMempoolSem
     sharedTxStateVar <- newSharedTxStateVar txStateRng
 
     case gnkaGetLoEFragment genesisArgs of
@@ -346,6 +351,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
 
     void $ forkLinkedThread registry "NodeKernel.drainRejectionThread" $
       drainRejectionThread
+        (txDecisionPolicy miniProtocolParameters)
         sharedTxStateVar
 
     return NodeKernel
@@ -364,6 +370,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                 = varOutboundConnectionsState
       , getDiffusionPipeliningSupport
       , getTxChannelsVar        = txChannelsVar
+      , getTxMempoolSem         = txMempoolSem
       , getSharedTxStateVar     = sharedTxStateVar
       }
   where
