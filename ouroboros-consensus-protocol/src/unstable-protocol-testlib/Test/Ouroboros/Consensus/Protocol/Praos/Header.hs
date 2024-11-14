@@ -82,7 +82,7 @@ generateSamples n = generate (resize n genSample)
 testVersion :: Version
 testVersion = natVersion @MaxVersion
 
-data Sample = Sample {sample :: ![(GeneratorContext, MutatedHeader)]}
+newtype Sample = Sample {sample :: [(GeneratorContext, MutatedHeader)]}
     deriving (Show, Eq)
 
 instance Json.ToJSON Sample where
@@ -187,7 +187,7 @@ instance Json.ToJSON Mutation where
 
 instance Json.FromJSON Mutation
 
-expectedError :: Mutation -> (PraosValidationErr StandardCrypto -> Bool)
+expectedError :: Mutation -> PraosValidationErr StandardCrypto -> Bool
 expectedError = \case
     NoMutation -> const False
     MutateKESKey -> \case

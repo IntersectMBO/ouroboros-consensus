@@ -531,8 +531,8 @@ validateVRFSignature ::
   ActiveSlotCoeff ->
   Views.HeaderView c ->
   Except (PraosValidationErr c) ()
-validateVRFSignature eta0 (Views.lvPoolDistr -> SL.PoolDistr pd _) f =
-  doValidateVRFSignature eta0 pd f
+validateVRFSignature eta0 (Views.lvPoolDistr -> SL.PoolDistr pd _) =
+  doValidateVRFSignature eta0 pd
 
 -- NOTE: this function is much easier to test than 'validateVRFSignature' because we don't need
 -- to construct a 'PraosConfig' nor 'LedgerView' to test it.
