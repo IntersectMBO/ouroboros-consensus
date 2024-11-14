@@ -181,7 +181,7 @@ mkBlockFetchConsensusInterface ::
      -- ^ Slot forge time, see 'headerForgeUTCTime' and 'blockForgeUTCTime'.
   -> STM m FetchMode
      -- ^ See 'readFetchMode'.
-  -> BlockFetchConsensusInterface peer (HeaderWithTime blk) blk m
+  -> BlockFetchConsensusInterface peer (Header blk) (HeaderWithTime blk) blk m
 mkBlockFetchConsensusInterface
   bcfg chainDB getCandidates blockFetchSize slotForgeTime readFetchMode =
     BlockFetchConsensusInterface {
@@ -205,9 +205,9 @@ mkBlockFetchConsensusInterface
     readCandidateChains :: STM m (Map peer (AnchoredFragment (HeaderWithTime blk)))
     readCandidateChains = getCandidates
 
-    readCurrentChain :: STM m (AnchoredFragment (HeaderWithTime blk))
+    readCurrentChain :: STM m (AnchoredFragment (Header blk))
     -- FIXME: change the type once we adapt the code to the changes in BlockFetchConsensusInterface
-    readCurrentChain = undefined (getCurrentChain chainDB)
+    readCurrentChain = getCurrentChain chainDB
 
     readFetchedBlocks :: STM m (Point blk -> Bool)
     readFetchedBlocks = getIsFetched chainDB
@@ -287,7 +287,7 @@ mkBlockFetchConsensusInterface
     -- fragment, by the time the block fetch download logic considers the
     -- fragment, our current chain might have changed.
     plausibleCandidateChain :: HasCallStack
-                            => AnchoredFragment (HeaderWithTime blk)
+                            => AnchoredFragment (Header blk)
                             -> AnchoredFragment (HeaderWithTime blk)
                             -> Bool
     plausibleCandidateChain ours cand

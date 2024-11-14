@@ -230,9 +230,6 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
               , gsmTracer tracers
               )
 
-            -- TODO: this should be a library function if the idea of dropping time on the candidate fragment makes sense.
-            dropTime = undefined
-
         let gsm = GSM.realGsmEntryPoints gsmTracerArgs GSM.GsmView
               { GSM.antiThunderingHerd        = Just gsmAntiThunderingHerd
               , GSM.candidateOverSelection    = \(headers, _lst) state ->
@@ -245,7 +242,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                 (configBlock cfg)
                                 headers
                                 -- REVIEW: is it ok to drop the times here because we're initializing the node kernel?
-                                (dropTime $ csCandidate state)
+                                (csCandidate state)
               , GSM.peerIsIdle                = csIdling
               , GSM.durationUntilTooOld       =
                       gsmDurationUntilTooOld
@@ -353,7 +350,7 @@ data InternalState m addrNTN addrNTC blk = IS {
     , registry            :: ResourceRegistry m
     , btime               :: BlockchainTime m
     , chainDB             :: ChainDB m blk
-    , blockFetchInterface :: BlockFetchConsensusInterface (ConnectionId addrNTN) (HeaderWithTime blk) blk m
+    , blockFetchInterface :: BlockFetchConsensusInterface (ConnectionId addrNTN) (Header blk) (HeaderWithTime blk) blk m
     , fetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (HeaderWithTime blk) blk m
     , varChainSyncHandles :: StrictTVar m (Map (ConnectionId addrNTN) (ChainSyncClientHandle m blk))
     , varGsmState         :: StrictTVar m GSM.GsmState
@@ -401,7 +398,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
           (ChainDB.getCurrentChain chainDB)
           getUseBootstrapPeers
           (GSM.gsmStateToLedgerJudgement <$> readTVar varGsmState)
-        blockFetchInterface :: BlockFetchConsensusInterface (ConnectionId addrNTN) (HeaderWithTime blk) blk m
+        blockFetchInterface :: BlockFetchConsensusInterface (ConnectionId addrNTN) (Header blk) (HeaderWithTime blk) blk m
         blockFetchInterface = BlockFetchClientInterface.mkBlockFetchConsensusInterface
           (configBlock cfg)
           (BlockFetchClientInterface.defaultChainDbView chainDB)

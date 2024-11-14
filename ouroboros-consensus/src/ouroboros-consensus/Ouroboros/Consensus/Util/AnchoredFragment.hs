@@ -1,4 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeOperators #-}
 
 -- | Utility functions on anchored fragments
 --
@@ -129,22 +130,25 @@ compareAnchoredFragments cfg frag1 frag2 =
 -- from our tip, although the exact distance does not matter for
 -- 'compareAnchoredFragments').
 preferAnchoredCandidate ::
-     forall blk t.
+     forall blk t t'.
      ( BlockSupportsProtocol blk
      , HasCallStack
      , ProjectHeader t blk
      , HasHeader (t blk)
+     , ProjectHeader t' blk
+     , HasHeader (t' blk)
+     , HeaderHash (t blk) ~ HeaderHash (t' blk)
      )
   => BlockConfig blk
   -> AnchoredFragment (t blk) -- ^ Our chain
-  -> AnchoredFragment (t blk) -- ^ Candidate
+  -> AnchoredFragment (t' blk) -- ^ Candidate
   -> Bool
 preferAnchoredCandidate cfg ours cand =
     assertWithMsg (precondition ours cand) $
     case (ours, cand) of
       (_, Empty _) -> False
       (Empty ourAnchor, _ :> theirTip) ->
-        blockPoint theirTip /= AF.anchorToPoint ourAnchor
+        blockPoint theirTip /= castPoint (AF.anchorToPoint ourAnchor)
       (_ :> ourTip, _ :> theirTip) ->
         preferCandidate
           (projectChainOrderConfig cfg)
@@ -153,8 +157,8 @@ preferAnchoredCandidate cfg ours cand =
 
 -- For 'compareAnchoredFragment' and 'preferAnchoredCandidate'.
 precondition ::
-     forall blk t. (HasHeader (t blk))
-  => AnchoredFragment (t blk)
+     forall blk t t'. (HasHeader (t blk), HasHeader (t' blk), HeaderHash (t blk) ~ HeaderHash (t' blk))
+  => AnchoredFragment (t' blk)
   -> AnchoredFragment (t blk)
   -> Either String ()
 precondition frag1 frag2
