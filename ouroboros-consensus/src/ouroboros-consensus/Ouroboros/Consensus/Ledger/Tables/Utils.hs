@@ -23,7 +23,6 @@ module Ouroboros.Consensus.Ledger.Tables.Utils (
   , attachAndApplyDiffs
   , attachAndApplyDiffs'
   , attachEmptyDiffs
-  , valuesAsDiffs
   , calculateDifference
   , calculateDifference'
   , emptyLedgerTables
@@ -38,6 +37,7 @@ module Ouroboros.Consensus.Ledger.Tables.Utils (
   , reapplyTracking
   , restrictValues
   , restrictValues'
+  , valuesAsDiffs
     -- * Testing
   , rawApplyDiffs
   , rawAttachAndApplyDiffs

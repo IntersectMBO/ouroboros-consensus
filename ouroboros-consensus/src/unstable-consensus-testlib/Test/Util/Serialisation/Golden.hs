@@ -64,8 +64,8 @@ import           Ouroboros.Consensus.Node.Run (SerialiseDiskConstraints,
                      SerialiseNodeToClientConstraints,
                      SerialiseNodeToNodeConstraints)
 import           Ouroboros.Consensus.Node.Serialisation
-                     (SerialiseNodeToClient (..), SerialiseNodeToNode (..),
-                     SerialiseBlockQueryResult (..))
+                     (SerialiseBlockQueryResult (..),
+                     SerialiseNodeToClient (..), SerialiseNodeToNode (..))
 import           Ouroboros.Consensus.Storage.Serialisation (EncodeDisk (..))
 import           Ouroboros.Consensus.Util.CBOR (decodeAsFlatTerm)
 import           Ouroboros.Consensus.Util.Condense (Condense (..))

@@ -1,4 +1,3 @@
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -11,6 +10,7 @@
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -40,10 +40,10 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as BS
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
-import Test.Ouroboros.Storage.LedgerDB.V1.LMDB
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike hiding (MonadMask (..),
                      newMVar, newTVarIO, readMVar)
+import           Ouroboros.Network.Testing.QuickCheck
 import qualified System.Directory as Dir
 import           System.FS.API hiding (Handle)
 import           System.FS.IO (ioHasFS)
@@ -53,6 +53,7 @@ import           System.IO.Temp (createTempDirectory)
 import           Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Lockstep
 import qualified Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock as Mock
 import           Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Registry
+import           Test.Ouroboros.Storage.LedgerDB.V1.LMDB
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (Arbitrary (..), Property)
 import           "quickcheck-dynamic" Test.QuickCheck.Extras
@@ -66,7 +67,6 @@ import           Test.Tasty.QuickCheck (QuickCheckTests (..), testProperty)
 import           Test.Util.LedgerStateOnlyTables
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Orphans.IOLike ()
-import Ouroboros.Network.Testing.QuickCheck
 import           Test.Util.Orphans.ToExpr ()
 
 {-------------------------------------------------------------------------------

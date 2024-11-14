@@ -500,14 +500,14 @@ injectTx_AtoB =
 -------------------------------------------------------------------------------}
 
 instance BlockSupportsHFLedgerQuery '[BlockA, BlockB] where
-  answerBlockQueryHFLookup IZ _ q = case q of {}
-  answerBlockQueryHFLookup (IS IZ) _cfg q = case q of {}
+  answerBlockQueryHFLookup IZ _ q                = case q of {}
+  answerBlockQueryHFLookup (IS IZ) _cfg q        = case q of {}
   answerBlockQueryHFLookup (IS (IS idx)) _cfg _q = case idx of {}
 
-  answerBlockQueryHFTraverse IZ _cfg q = case q of {}
-  answerBlockQueryHFTraverse (IS IZ) _cfg q = case q of {}
+  answerBlockQueryHFTraverse IZ _cfg q             = case q of {}
+  answerBlockQueryHFTraverse (IS IZ) _cfg q        = case q of {}
   answerBlockQueryHFTraverse (IS (IS idx)) _cfg _q = case idx of {}
 
-  queryLedgerGetTraversingFilter IZ q = case q of {}
-  queryLedgerGetTraversingFilter (IS IZ) q = case q of {}
+  queryLedgerGetTraversingFilter IZ q             = case q of {}
+  queryLedgerGetTraversingFilter (IS IZ) q        = case q of {}
   queryLedgerGetTraversingFilter (IS (IS idx)) _q = case idx of {}

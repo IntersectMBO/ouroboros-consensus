@@ -61,8 +61,8 @@ import           Ouroboros.Consensus.Ledger.Query.Version
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
                      (BlockNodeToClientVersion)
 import           Ouroboros.Consensus.Node.Serialisation
-                     (SerialiseNodeToClient (..), SerialiseResult (..),
-                     SerialiseBlockQueryResult (..))
+                     (SerialiseBlockQueryResult (..),
+                     SerialiseNodeToClient (..), SerialiseResult (..))
 import           Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Util (ShowProxy (..), SomeSecond (..))

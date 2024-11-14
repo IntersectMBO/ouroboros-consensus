@@ -1,10 +1,10 @@
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -17,8 +17,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.Impl.Validate (
     ResolveBlock
   , ResolvesBlocks (..)
     -- * Validation
-  , ValidateArgs (..)
   , ValidLedgerState (..)
+  , ValidateArgs (..)
   , validate
     -- * Testing
   , defaultResolveWithErrors

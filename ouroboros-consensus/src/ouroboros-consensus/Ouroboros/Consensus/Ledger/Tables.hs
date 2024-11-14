@@ -184,7 +184,7 @@ module Ouroboros.Consensus.Ledger.Tables (
   , valuesMKEncoder
     -- * Special classes
   , LedgerTablesAreTrivial
-  , TrivialLedgerTables(..)
+  , TrivialLedgerTables (..)
   , convertMapKind
   , trivialLedgerTables
   ) where

@@ -39,8 +39,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots (
   , TraceSnapshotEvent (..)
     -- * Testing
   , decodeLBackwardsCompatible
-  , encodeL
   , destroySnapshots
+  , encodeL
   ) where
 
 import           Codec.CBOR.Decoding

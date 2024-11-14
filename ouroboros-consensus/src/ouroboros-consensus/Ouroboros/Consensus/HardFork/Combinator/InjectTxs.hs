@@ -104,7 +104,7 @@ matchPolyTx is tx =
 -- translations.
 data TxWithOriginal tx xs blk =
   TxWithOriginal { origTx :: !(NS tx xs)
-                  , blkTx  :: !(tx blk)
+                  , blkTx :: !(tx blk)
                   }
 
 -- | A list of 'TxWithOriginal' that is ready to be partially applied by having
