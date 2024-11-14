@@ -75,15 +75,11 @@ mkInitDb :: forall m blk.
 mkInitDb args flavArgs getBlock =
   InitDB {
       initFromGenesis = emptyF =<< lgrGenesis
-    , initFromSnapshot = \ds -> do
-        traceMarkerIO "Loading snapshot"
-        s <- loadSnapshot (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) lgrHasFS ds
-        traceMarkerIO "Loaded snapshot"
-        pure s
+    , initFromSnapshot = loadSnapshot (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) lgrHasFS
     , closeDb = closeLedgerSeq
     , initReapplyBlock = \a b c -> do
-        (LedgerSeq x, y) <- reapplyThenPush lgrRegistry a b c
-        mapM_ (close . tables) (AS.toOldestFirst x)
+        (x, y) <- reapplyThenPush lgrRegistry a b c
+        closeLedgerSeq x
         pure y
     , currentTip = ledgerState . current
     , pruneDb = \lseq -> do
@@ -91,9 +87,8 @@ mkInitDb args flavArgs getBlock =
         mapM_ (close . tables) (AS.toOldestFirst rel)
         pure dbPrunedToImmDBTip
     , mkLedgerDb = \lseq -> do
-        traceMarkerIO "Initialize LedgerDB"
-        (varDB, prevApplied) <-
-          (,) <$> newTVarIO lseq <*> newTVarIO Set.empty
+        varDB <- newTVarIO lseq
+        prevApplied <- newTVarIO Set.empty
         forkers <- newTVarIO Map.empty
         nextForkerKey <- newTVarIO (ForkerKey 0)
         lock <- RAWLock.new LDBLock
@@ -203,7 +198,7 @@ mkInternals bss h = TestInternals {
     , wipeLedgerDB = getEnv h $ destroySnapshots . ldbHasFS
     , closeLedgerDB =
        let LDBHandle tvar = h in
-         atomically (modifyTVar tvar (const LedgerDBClosed))
+         atomically (writeTVar tvar LedgerDBClosed)
     , truncateSnapshots = getEnv h $ implIntTruncateSnapshots . ldbHasFS
     }
   where
@@ -216,17 +211,6 @@ mkInternals bss h = TestInternals {
      takeSnapshot = case bss of
        InMemoryHandleArgs -> InMemory.takeSnapshot
        --TODO LSMHandleArgs      -> LSM.takeSnapshot
-
--- | Testing only! Destroy all snapshots in the DB.
-destroySnapshots :: Monad m => SomeHasFS m -> m ()
-destroySnapshots (SomeHasFS fs) = do
-  dirs <- Set.lookupMax . Set.filter (isJust . snapshotFromPath) <$> listDirectory fs (mkFsPath [])
-  mapM_ ((\d -> do
-            isDir <- doesDirectoryExist fs d
-            if isDir
-              then removeDirectoryRecursive fs d
-              else removeFile fs d
-        ) . mkFsPath . (:[])) dirs
 
 -- | Testing only! Truncate all snapshots in the DB.
 implIntTruncateSnapshots :: MonadThrow m => SomeHasFS m -> m ()

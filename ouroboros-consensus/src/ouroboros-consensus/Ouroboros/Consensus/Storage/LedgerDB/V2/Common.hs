@@ -203,7 +203,7 @@ data ForkerEnv m l blk = ForkerEnv {
     -- | Config
   , foeTracer             :: !(Tracer m TraceForkerEvent)
     -- | Release the resources
-  , foeResourcesToRelease :: !(StrictTVar m [m ()])
+  , foeResourcesToRelease :: !(StrictTVar m (m ()))
   }
   deriving Generic
 
@@ -211,7 +211,8 @@ closeForkerEnv :: IOLike m => (LedgerDBEnv m l blk, ForkerEnv m l blk) -> m ()
 closeForkerEnv (LedgerDBEnv{ldbReleaseLock = AllowThunk lock}, frkEnv) =
   RAWLock.withWriteAccess lock $
     const $ do
-      sequence_ =<< readTVarIO (foeResourcesToRelease frkEnv)
+      id =<< readTVarIO (foeResourcesToRelease frkEnv)
+      atomically $ writeTVar (foeResourcesToRelease frkEnv) (pure ())
       pure ((), LDBLock)
 
 deriving instance ( IOLike m
@@ -273,7 +274,7 @@ newForker h ldbEnv rr st = do
     let tr = LedgerDBForkerEvent . TraceForkerEventWithKey forkerKey >$< ldbTracer ldbEnv
     traceWith tr ForkerOpen
     lseqVar   <- newTVarIO . LedgerSeq . AS.Empty $ st
-    (_, toRelease) <- allocate rr (\_ -> newTVarIO []) (readTVarIO >=> sequence_)
+    (_, toRelease) <- allocate rr (\_ -> newTVarIO (pure ())) (readTVarIO >=> id)
     let forkerEnv = ForkerEnv {
         foeLedgerSeq          = lseqVar
       , foeSwitchVar          = ldbSeq ldbEnv
@@ -301,7 +302,7 @@ implForkerClose ::
   -> m ()
 implForkerClose (LDBHandle varState) forkerKey = do
     menv <- atomically $ readTVar varState >>= \case
-      LedgerDBClosed       -> pure Nothing
+      LedgerDBClosed      -> pure Nothing
       LedgerDBOpen ldbEnv -> fmap (ldbEnv,) <$>
         stateTVar
             (ldbForkers ldbEnv)
@@ -333,8 +334,7 @@ implForkerRangeReadTables env rq0 = do
       NoPreviousQuery -> readRange (tables $ currentHandle ldb) (Nothing, n)
       PreviousQueryWasFinal -> pure $ LedgerTables emptyMK
       PreviousQueryWasUpTo k -> do
-        LedgerTables (ValuesMK m) <- readRange (tables $ currentHandle ldb) (Just k, n)
-        let tbs = LedgerTables $ ValuesMK $ snd $ Map.split k m
+        tbs <- readRange (tables $ currentHandle ldb) (Just k, n)
         traceWith (foeTracer env) ForkerRangeReadTablesEnd
         pure tbs
 
@@ -366,14 +366,14 @@ implForkerPush env newState = do
     (duplicate (tables $ currentHandle lseq))
     close
     (\newtbs -> do
-        write newtbs tbs
+        pushDiffs newtbs tbs
 
         let lseq' = extend (StateRef st newtbs) lseq
 
         traceWith (foeTracer env) ForkerPushEnd
         atomically $ do
                writeTVar (foeLedgerSeq env) lseq'
-               modifyTVar (foeResourcesToRelease env) (close newtbs :)
+               modifyTVar (foeResourcesToRelease env) (>> close newtbs)
      )
 
 implForkerCommit ::
@@ -384,18 +384,26 @@ implForkerCommit env = do
   LedgerSeq lseq <- readTVar foeLedgerSeq
   let intersectionSlot = getTipSlot $ state $ AS.anchor lseq
   let predicate = (== getTipHash (state (AS.anchor lseq))) . getTipHash . state
-  (statesToClose, LedgerSeq statesDiscarded) <- do
+  (discardedBySelection, LedgerSeq discardedByPruning) <- do
     stateTVar
       foeSwitchVar
       (\(LedgerSeq olddb) -> fromMaybe theImpossible $ do
-         (olddb', toClose) <- AS.splitAfterMeasure intersectionSlot (either predicate predicate) olddb
-         newdb <- AS.join (const $ const True) olddb' lseq
-         let (l, s) = prune (foeSecurityParam env) (LedgerSeq newdb)
-         pure ((toClose, l), s)
+          -- Split the selection at the intersection point. The snd component will
+          -- have to be closed.
+          (olddb', toClose) <- AS.splitAfterMeasure intersectionSlot (either predicate predicate) olddb
+          -- Join the prefix of the selection with the sequence in the forker
+          newdb <- AS.join (const $ const True) olddb' lseq
+          -- Prune the resulting sequence to keep @k@ states
+          let (l, s) = prune (foeSecurityParam env) (LedgerSeq newdb)
+          pure ((toClose, l), s)
       )
 
+  -- We are discarding the previous value in the TVar because we had accumulated
+  -- actions for closing the states pushed to the forker. As we are committing
+  -- those we have to close the ones discarded in this function and forget about
+  -- those releasing actions.
   writeTVar foeResourcesToRelease $
-       map (close . tables) $ AS.toOldestFirst statesToClose ++ AS.toOldestFirst statesDiscarded
+       mapM_ (close . tables) $ AS.toOldestFirst discardedBySelection ++ AS.toOldestFirst discardedByPruning
 
   where
     ForkerEnv {
@@ -452,8 +460,8 @@ acquireAtPoint ldbEnv pt _ = do
       dblog <- readTVarIO (ldbSeq ldbEnv)
       let immTip = getTip $ anchor dblog
       case currentHandle <$> rollback pt dblog of
-        Nothing     | pointSlot pt < pointSlot immTip -> pure $ Left PointTooOld
-                    | otherwise   -> pure $ Left PointNotOnChain
+        Nothing | pointSlot pt < pointSlot immTip -> pure $ Left PointTooOld
+                | otherwise   -> pure $ Left PointNotOnChain
         Just (StateRef st tbs) ->
               Right . StateRef st <$> duplicate tbs
 
@@ -522,7 +530,7 @@ newForkerAtFromTip ::
 newForkerAtFromTip h rr n = getEnv h $ \ldbEnv@LedgerDBEnv{ldbReleaseLock = AllowThunk lock} -> do
     RAWLock.withReadAccess lock (acquireAtFromTip ldbEnv n) >>= traverse (newForker h ldbEnv rr)
 
--- | Close all open block and header 'Follower's.
+-- | Close all open 'Forker's.
 closeAllForkers ::
      IOLike m
   => LedgerDBEnv m l blk

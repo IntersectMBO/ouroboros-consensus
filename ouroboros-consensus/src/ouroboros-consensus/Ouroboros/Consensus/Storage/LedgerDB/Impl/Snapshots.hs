@@ -40,6 +40,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots (
     -- * Testing
   , decodeLBackwardsCompatible
   , encodeL
+  , destroySnapshots
   ) where
 
 import           Codec.CBOR.Decoding
@@ -145,6 +146,17 @@ deleteSnapshot (SomeHasFS HasFS{doesDirectoryExist, removeDirectoryRecursive}) s
   let p = snapshotToDirPath ss
   exists <- doesDirectoryExist p
   when exists (removeDirectoryRecursive p)
+
+-- | Testing only! Destroy all snapshots in the DB.
+destroySnapshots :: Monad m => SomeHasFS m -> m ()
+destroySnapshots (SomeHasFS fs) = do
+  dirs <- Set.lookupMax . Set.filter (isJust . snapshotFromPath) <$> listDirectory fs (mkFsPath [])
+  mapM_ ((\d -> do
+            isDir <- doesDirectoryExist fs d
+            if isDir
+              then removeDirectoryRecursive fs d
+              else removeFile fs d
+        ) . mkFsPath . (:[])) dirs
 
 -- | Read an extended ledger state from disk
 readExtLedgerState ::

@@ -326,21 +326,10 @@ mkInternals ::
 mkInternals h = TestInternals {
       takeSnapshotNOW = getEnv1 h implIntTakeSnapshot
     , reapplyThenPushNOW = getEnv1 h implIntReapplyThenPushBlock
-    , wipeLedgerDB = getEnv h $ void . destroySnapshots . ldbHasFS
+    , wipeLedgerDB = getEnv h $ void . destroySnapshots . snapshotsFs . ldbHasFS
     , closeLedgerDB = getEnv h $ bsClose . ldbBackingStore
     , truncateSnapshots = getEnv h $ void . implIntTruncateSnapshots . ldbHasFS
     }
-
--- | Testing only! Destroy all snapshots in the DB.
-destroySnapshots :: Monad m => SnapshotsFS m -> m ()
-destroySnapshots (SnapshotsFS (SomeHasFS fs)) = do
-  dirs <- Set.lookupMax . Set.filter (isJust . snapshotFromPath) <$> listDirectory fs (mkFsPath [])
-  mapM_ ((\d -> do
-            isDir <- doesDirectoryExist fs d
-            if isDir
-              then removeDirectoryRecursive fs d
-              else removeFile fs d
-        ) . mkFsPath . (:[])) dirs
 
 -- | Testing only! Truncate all snapshots in the DB.
 implIntTruncateSnapshots :: MonadThrow m => SnapshotsFS m -> m ()

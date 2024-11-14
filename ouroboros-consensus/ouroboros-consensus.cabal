@@ -260,7 +260,6 @@ library
     Ouroboros.Consensus.Storage.LedgerDB.V2.Common
     Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
     Ouroboros.Consensus.Storage.LedgerDB.V2.Init
-    Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
     Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
     Ouroboros.Consensus.Storage.Serialisation
     Ouroboros.Consensus.Storage.VolatileDB
@@ -705,6 +704,7 @@ test-suite storage-test
     Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Registry
     Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog.QuickCheck
     Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog.Unit
+    Test.Ouroboros.Storage.LedgerDB.V1.LMDB
     Test.Ouroboros.Storage.Orphans
     Test.Ouroboros.Storage.TestBlock
     Test.Ouroboros.Storage.VolatileDB
@@ -741,6 +741,7 @@ test-suite storage-test
     ouroboros-consensus,
     ouroboros-network-api,
     ouroboros-network-mock,
+    ouroboros-network-testing,
     pretty-show,
     quickcheck-dynamic,
     quickcheck-lockstep,

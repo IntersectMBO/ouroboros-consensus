@@ -16,7 +16,6 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE ViewPatterns #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory (
     -- * LedgerTablesHandle
@@ -87,7 +86,7 @@ newInMemoryLedgerTablesHandle someFS@(SomeHasFS hasFS) l = do
   !tv <- newTVarIO (LedgerTablesHandleOpen l)
   pure LedgerTablesHandle {
       close =
-        atomically $ modifyTVar tv (\_ -> LedgerTablesHandleClosed)
+        atomically $ writeTVar tv LedgerTablesHandleClosed
     , duplicate = do
         hs <- readTVarIO tv
         !x <- guardClosed hs $ newInMemoryLedgerTablesHandle someFS
@@ -99,11 +98,11 @@ newInMemoryLedgerTablesHandle someFS@(SomeHasFS hasFS) l = do
         hs <- readTVarIO tv
         guardClosed hs (\(LedgerTables (ValuesMK m)) ->
                           pure . LedgerTables . ValuesMK . Map.take t . (maybe id (\g -> snd . Map.split g) f) $ m)
-    , write = \(!diffs) ->
+    , pushDiffs = \(!diffs) ->
         atomically
         $ modifyTVar tv
         (\r -> guardClosed r (\st -> LedgerTablesHandleOpen (ltliftA2 rawApplyDiffs st diffs)))
-    , writeToDisk = \snapshotName -> do
+    , takeHandleSnapshot = \snapshotName -> do
         createDirectoryIfMissing hasFS True $ mkFsPath [snapshotName, "tables"]
         h <- readTVarIO tv
         guardClosed h $
@@ -114,7 +113,7 @@ newInMemoryLedgerTablesHandle someFS@(SomeHasFS hasFS) l = do
                    $ valuesMKEncoder values
     , tablesSize = do
         hs <- readTVarIO tv
-        guardClosed hs (\(getLedgerTables -> ValuesMK m) -> pure $ Just $ Map.size m)
+        guardClosed hs (pure . Just . Map.size . getValuesMK . getLedgerTables)
     , isOpen = do
         hs <- readTVarIO tv
         case hs of
@@ -144,7 +143,7 @@ writeSnapshot ::
 writeSnapshot fs@(SomeHasFS hasFs) encLedger ds st = do
     createDirectoryIfMissing hasFs True $ snapshotToDirPath ds
     writeExtLedgerState fs encLedger (snapshotToStatePath ds) $ state st
-    writeToDisk (tables st) $ snapshotToDirName ds
+    takeHandleSnapshot (tables st) $ snapshotToDirName ds
 
 takeSnapshot ::
      ( MonadThrow m
@@ -186,7 +185,6 @@ loadSnapshot _rr ccfg fs@(SomeHasFS hasFS) ds = do
   case eExtLedgerSt of
     Left err -> pure (Left $ InitFailureRead err)
     Right extLedgerSt -> do
-      traceMarkerIO "Loaded state"
       case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
         Origin        -> pure (Left InitFailureGenesis)
         NotOrigin pt -> do

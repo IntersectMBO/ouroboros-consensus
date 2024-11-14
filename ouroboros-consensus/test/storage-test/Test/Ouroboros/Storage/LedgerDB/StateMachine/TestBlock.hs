@@ -32,11 +32,10 @@ import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (Serialise)
 import qualified Codec.Serialise as S
 import           Data.Foldable (toList)
-import           Data.List.NonEmpty (nonEmpty)
+import           Data.List.NonEmpty (NonEmpty( (:|) ))
 import qualified Data.Map.Diff.Strict.Internal as DS
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromJust)
 import           Data.Maybe.Strict
 import           Data.Set (Set)
 import qualified Data.Set as Set
@@ -92,13 +91,11 @@ newtype Token = Token { unToken :: Point TestBlock }
 instance QC.Arbitrary (Point TestBlock) where
   arbitrary = do
     slot <- SlotNo <$> QC.arbitrary
-    hash <- TestHash . fromJust . nonEmpty . QC.getNonEmpty <$> QC.arbitrary
+    hash <- fmap TestHash $ (:|) <$> QC.arbitrary <*> QC.arbitrary
     pure $ Point $ WithOrigin.At $ Block slot hash
 
 -- | Unit of value associated with the output produced by a transaction.
---
--- This is analogous to @TxOut@: it's what the table maps 'Token's to.
-newtype TValue = TValue (WithOrigin SlotNo)
+newtype TValue = TValue ()
   deriving stock (Show, Eq, Ord, Generic)
   deriving newtype (Serialise, NoThunks, ToExpr)
 
@@ -279,12 +276,11 @@ instance HasHardForkHistory TestBlock where
   - The block payload consist of a single transaction:
       - input: Point
       - output: (Point, SlotNo)
-  - The ledger state is a map from Point to SlotNo.
-  - We start always in an initial state in which 'GenesisPoint' maps to slot 0.
+  - The ledger state is a map from Point to ().
+  - We start always in an initial state in which 'GenesisPoint' maps to ().
   - When we generate a block for point p, the payload of the block will be:
       - input: point p - 1
-      - ouptput: (point p, slot of point p)
-
+      - ouptput: (point p, ())
 
   A consequence of adopting the strategy above is that the initial state is
   coupled to the generator's semantics.
@@ -297,17 +293,13 @@ initialTestLedgerState :: PayloadDependentState Tx ValuesMK
 initialTestLedgerState = UTxTok {
     utxtoktables =   LedgerTables
                    $ ValuesMK
-                   $ Map.singleton initialToken (pointTValue initialToken)
+                   $ Map.singleton initialToken
+                   $ TValue ()
   , utxhist      = Set.singleton initialToken
 
   }
   where
     initialToken = Token GenesisPoint
-
--- | Get the token value associated to a given token. This is coupled to the
--- generators semantics.
-pointTValue :: Token -> TValue
-pointTValue = TValue . pointSlot . unToken
 
 genBlocks ::
      Word64
@@ -321,7 +313,7 @@ genBlock ::
      Point TestBlock -> TestBlock
 genBlock pt =
   mkBlockFrom pt Tx { consumed = Token pt
-                    , produced = ( Token pt', TValue (pointSlot pt'))
+                    , produced = ( Token pt', TValue ())
                     }
   where
     mkBlockFrom :: Point (TestBlockWith ptype) -> ptype -> TestBlockWith ptype

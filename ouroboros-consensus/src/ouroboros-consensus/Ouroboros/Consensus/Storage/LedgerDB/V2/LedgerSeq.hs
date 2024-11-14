@@ -72,24 +72,27 @@ import           Prelude hiding (read)
 -------------------------------------------------------------------------------}
 
 data LedgerTablesHandle m l = LedgerTablesHandle {
-    close       :: m ()
-  , duplicate   :: m (LedgerTablesHandle m l)
-  , read        :: LedgerTables l KeysMK -> m (LedgerTables l ValuesMK)
-  , readRange   :: (Maybe (TxIn l), Int) -> m (LedgerTables l ValuesMK)
-  , write       :: LedgerTables l DiffMK -> m ()
-  , writeToDisk :: String -> m ()
-  , tablesSize  :: m (Maybe Int)
-  , isOpen      :: m Bool
+    close              :: !(m ())
+    -- | It is expected that this operation takes constant time.
+  , duplicate          :: !(m (LedgerTablesHandle m l))
+  , read               :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
+  , readRange          :: !((Maybe (TxIn l), Int) -> m (LedgerTables l ValuesMK))
+  , pushDiffs          :: !(LedgerTables l DiffMK -> m ())
+  , takeHandleSnapshot :: !(String -> m ())
+    -- | Consult the size of the ledger tables in the database. This will return
+    -- 'Nothing' in backends that do not support this operation.
+  , tablesSize         :: !(m (Maybe Int))
+  , isOpen             :: !(m Bool)
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LedgerTablesHandle" (LedgerTablesHandle m l)
 
 {-------------------------------------------------------------------------------
-  StateRef, represents a full virtual ledger state
+  StateRef, represents a full ledger state, i.e. with a handle for its tables
 -------------------------------------------------------------------------------}
 
--- | For unary blocks, it would be the same to hold a stowed ledger state, an
--- unstowed one or a tuple with the state and the tables, however, for a n-ary
--- block, these are not equivalent.
+-- | For single era blocks, it would be the same to hold a stowed ledger state,
+-- an unstowed one or a tuple with the state and the tables, however, for a
+-- hard fork block, these are not equivalent.
 --
 -- If we were to hold a sequence of type @LedgerState blk EmptyMK@ with stowed
 -- values, we would have to translate the entirety of the tables on epoch
@@ -167,40 +170,41 @@ closeLedgerSeq = mapM_ (close . tables) . toOldestFirst . getLedgerSeq
   Apply blocks
 -------------------------------------------------------------------------------}
 
--- | If applying a block on top of the ledger state at the tip is succesful,
--- extend the DbChangelog with the resulting ledger state.
+-- | Apply a block on top of the ledger state and extend the LedgerSeq with
+-- the result ledger state.
 --
--- Note that we require @c@ (from the particular choice of @Ap m l blk c@) so
--- this sometimes can throw ledger errors.
+-- The @fst@ component of the result should be closed as it contains the pruned
+-- states.
 reapplyThenPush :: (IOLike m, ApplyBlock l blk)
-              => ResourceRegistry m
-              -> LedgerDbCfg l
-              -> blk
-              ->    LedgerSeq m l
-              -> m (LedgerSeq m l, LedgerSeq m l)
+                => ResourceRegistry m
+                -> LedgerDbCfg l
+                -> blk
+                ->    LedgerSeq m l
+                -> m (LedgerSeq m l, LedgerSeq m l)
 reapplyThenPush rr cfg ap db =
     (\current' -> prune (ledgerDbCfgSecParam cfg) $ extend current' db) <$>
       reapplyBlock (ledgerDbCfg cfg) ap rr db
 
 reapplyBlock :: forall m l blk. (ApplyBlock l blk, IOLike m)
-           => LedgerCfg l
-           -> blk
-           -> ResourceRegistry m
-           -> LedgerSeq m l
-           -> m (StateRef m l)
+             => LedgerCfg l
+             -> blk
+             -> ResourceRegistry m
+             -> LedgerSeq m l
+             -> m (StateRef m l)
 reapplyBlock cfg b _rr db = do
   let ks = getBlockKeySets b
-  case currentHandle db of
-    StateRef st tbs -> do
-      newtbs <- duplicate tbs
-      vals <- read newtbs ks
-      let st' = tickThenReapply cfg b (st `withLedgerTables` vals)
-      let (newst, diffs) = (forgetLedgerTables st', ltprj st')
-      write newtbs diffs
-      pure (StateRef newst newtbs)
+      StateRef st tbs = currentHandle db
+  newtbs <- duplicate tbs
+  vals <- read newtbs ks
+  let st' = tickThenReapply cfg b (st `withLedgerTables` vals)
+      (newst, diffs) = (forgetLedgerTables st', ltprj st')
+  pushDiffs newtbs diffs
+  pure (StateRef newst newtbs)
 
--- | Prune ledger states from the front until at we have at most @k@ in the
--- LedgerDB, excluding the one stored at the anchor.
+-- | Prune older ledger states until at we have at most @k@ volatile states in
+-- the LedgerDB, plus the one stored at the anchor.
+--
+-- The @fst@ component of the returned value has to be @close@ed.
 --
 -- >>> ldb  = LedgerSeq $ AS.fromOldestFirst l0 [l1, l2, l3]
 -- >>> ldb' = LedgerSeq $ AS.fromOldestFirst     l1 [l2, l3]
@@ -213,13 +217,18 @@ prune :: GetTip l
 prune (SecurityParam k) (LedgerSeq ldb) =
     if toEnum nvol <= k
     then (LedgerSeq $ Empty (AS.anchor ldb), LedgerSeq ldb)
-    else B.bimap (LedgerSeq . dropNewest 1) LedgerSeq $ AS.splitAt (nvol - fromEnum k) ldb
+    else
+      -- We remove the new anchor from the @fst@ component so that its handle is
+      -- not closed.
+      B.bimap (LedgerSeq . dropNewest 1) LedgerSeq $ AS.splitAt (nvol - fromEnum k) ldb
   where
     nvol = AS.length ldb
 
 -- NOTE: we must inline 'prune' otherwise we get unexplained thunks in
 -- 'LedgerSeq' and thus a space leak. Alternatively, we could disable the
--- @-fstrictness@ optimisation (enabled by default for -O1). See #2532.
+-- @-fstrictness@ optimisation (enabled by default for -O1). See
+-- https://github.com/IntersectMBO/ouroboros-network/issues/2532.
+--
 -- NOTE (@js): this INLINE was inherited from before UTxO-HD, so maybe it is not
 -- needed anymore.
 {-# INLINE prune #-}

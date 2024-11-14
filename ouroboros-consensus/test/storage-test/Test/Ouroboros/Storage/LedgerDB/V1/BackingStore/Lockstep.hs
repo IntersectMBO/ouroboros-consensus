@@ -590,24 +590,24 @@ runIO action lookUp = ReaderT $ \renv ->
         BSCopy bsp         -> catchErr $
           readMVar bsVar >>= \bs -> BS.bsCopy bs bsp
         BSValueHandle      -> catchErr $
-          readMVar bsVar >>= (BS.bsValueHandle >=> registerHandle rr)
+          readMVar bsVar >>= (BS.bsValueHandle >=> registerHandle handleReg)
         BSWrite sl d       -> catchErr $
           readMVar bsVar >>= \bs -> BS.bsWrite bs sl d
         BSVHClose h        -> catchErr $
-          readHandle rr (lookUp' h) >>= \vh -> BS.bsvhClose vh
+          readHandle handleReg (lookUp' h) >>= \vh -> BS.bsvhClose vh
         BSVHRangeRead h rq -> catchErr $ Values <$>
-          (readHandle rr (lookUp' h) >>= \vh -> BS.bsvhRangeRead vh rq)
+          (readHandle handleReg (lookUp' h) >>= \vh -> BS.bsvhRangeRead vh rq)
         BSVHRead h ks      -> catchErr $ Values <$>
-          (readHandle rr (lookUp' h) >>= \vh -> BS.bsvhRead vh ks)
+          (readHandle handleReg (lookUp' h) >>= \vh -> BS.bsvhRead vh ks)
         BSVHAtSlot h       -> catchErr $
-          readHandle rr (lookUp' h) >>= pure . BS.bsvhAtSlot
+          readHandle handleReg (lookUp' h) >>= pure . BS.bsvhAtSlot
         BSVHStat h         -> catchErr $
-          readHandle rr (lookUp' h) >>= \vh -> BS.bsvhStat vh
+          readHandle handleReg (lookUp' h) >>= \vh -> BS.bsvhStat vh
       where
         RealEnv{
             reBackingStoreInit = bsi
           , reBackingStore     = bsVar
-          , reRegistry         = rr
+          , reRegistry         = handleReg
           } = renv
 
         lookUp' :: BSVar ks vs d x -> Realized (RealMonad m ks vs d) x

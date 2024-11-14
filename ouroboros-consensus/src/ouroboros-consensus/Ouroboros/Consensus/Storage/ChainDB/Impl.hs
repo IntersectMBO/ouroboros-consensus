@@ -292,7 +292,6 @@ closeDB ::
      )
   => ChainDbHandle m blk -> m ()
 closeDB (CDBHandle varState) = do
-    traceMarkerIO "Closing ChainDB"
     mbOpenEnv <- atomically $ readTVar varState >>= \case
       -- Idempotent
       ChainDbClosed   -> return Nothing

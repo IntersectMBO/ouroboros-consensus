@@ -17,13 +17,13 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.Args (
 
 import           GHC.Generics
 import           NoThunks.Class
+import           Data.Void (Void)
 
 data LedgerDbFlavorArgs f m = V2Args HandleArgs
 
 data HandleArgs =
     InMemoryHandleArgs
-    -- TODO
-    --  | LSMHandleArgs
+  | LSMHandleArgs !Void
   deriving (Generic, NoThunks)
 
 data FlavorImplSpecificTrace =

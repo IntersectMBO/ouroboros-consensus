@@ -333,9 +333,6 @@ reapplyBlock cfg b ksReader db =
 
 -- | Apply a block on top of the ledger state and extend the DbChangelog with
 -- the result ledger state.
---
--- Note that we require @c@ (from the particular choice of @Ap m l blk c@) so
--- this sometimes can throw ledger errors.
 reapplyThenPush :: (Monad m, ApplyBlock l blk)
               => LedgerDbCfg l
               -> blk
