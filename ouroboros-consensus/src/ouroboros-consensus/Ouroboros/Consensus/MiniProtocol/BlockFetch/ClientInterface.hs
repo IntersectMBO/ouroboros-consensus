@@ -289,9 +289,12 @@ mkBlockFetchConsensusInterface
       --    precondition holds.
       --
       -- 4. Our chain's anchor can only move forward. We can detect this by
-      --    looking at the block numbers of the anchors.
+      --    looking at the block/slot numbers of the anchors: When the anchor
+      --    advances, either the block number increases (usual case), or the
+      --    block number stays the same, but the slot number increases (EBB
+      --    case).
       --
-      | AF.anchorBlockNo cand < AF.anchorBlockNo ours  -- (4)
+      | anchorBlockNoAndSlot cand < anchorBlockNoAndSlot ours  -- (4)
       = case (AF.null ours, AF.null cand) of
           -- Both are non-empty, the precondition trivially holds.
           (False, False) -> preferAnchoredCandidate bcfg ours cand
@@ -308,30 +311,16 @@ mkBlockFetchConsensusInterface
           -- fragment can't be empty.
           (True,  _)     -> error "impossible"
 
-      -- The precondition of 'compareAnchoredFragments' is that both fragments
-      -- are non-empty or they intersect. We are mostly satisfying that
-      -- precondition, but there is a corner case when considering EBBs where we
-      -- don't. Either our fragment or the candidate fragment could be anchored
-      -- at an EBB that shares the block number with the anchor of the other, in
-      -- which case the two fragments are not guaranteed to intersect. This can
-      -- happen even if one of the two fragments is empty while the other is
-      -- non-empty.
-      --
-      -- For example, consider an EBB @B@ that shares the block number with its
-      -- predecessor @A. Consider two fragments @f1 = B ] C@ and @f2 = A ]@.
-      -- @f1@ is anchored at @B@, @f2@ is anchored at @A@. @f1@ and @f2@ will
-      -- share the same anchor block number, such that @AF.anchorBlockNo f1 ==
-      -- AF.anchorBlockNo f2@. However, these fragments do not intersect, so
-      -- @preferAnchoredCandidate _ ours cand@ will fail.
-      --
-      -- For this to be a problem in practice, assertions would have to be
-      -- enabled (which isn't the case for a running node) and the current
-      -- evolving chain would have to be in the Byron era (which is not the
-      -- case). Since violation of the precondition is therefore highly
-      -- unlikely, we chose no to include a case for EBBs here because it would
-      -- complicate the code.
       | otherwise
       = preferAnchoredCandidate bcfg ours cand
+      where
+        anchorBlockNoAndSlot ::
+             AnchoredFragment (Header blk)
+          -> (WithOrigin BlockNo, WithOrigin SlotNo)
+        anchorBlockNoAndSlot frag =
+            (AF.anchorToBlockNo a, AF.anchorToSlotNo a)
+          where
+            a = AF.anchor frag
 
     compareCandidateChains :: AnchoredFragment (Header blk)
                            -> AnchoredFragment (Header blk)
