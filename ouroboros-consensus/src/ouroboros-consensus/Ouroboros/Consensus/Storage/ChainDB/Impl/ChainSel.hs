@@ -519,7 +519,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
 
     let
       sanitizeLoEFrag loeFrag0 =
-        case cross curChain loeFrag0 of
+        case AF.splitAfterPoint loeFrag0 (AF.anchorPoint curChain) of
             Just (_, frag) -> frag
             -- We don't crash if the LoE fragment doesn't intersect with the selection
             -- because we update the selection _after_ updating the LoE fragment, which
