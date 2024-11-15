@@ -77,6 +77,7 @@ import           Data.Functor.Identity
 import qualified Data.Text as Text
 import           Data.Word
 import           GHC.Generics (Generic)
+import           Lens.Micro
 import           Lens.Micro.Extras (view)
 import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Block
@@ -100,7 +101,6 @@ import           Ouroboros.Consensus.Shelley.Protocol.Abstract
 import           Ouroboros.Consensus.Util.CBOR (decodeWithOrigin,
                      encodeWithOrigin)
 import           Ouroboros.Consensus.Util.Versioned
-import Lens.Micro
 
 {-------------------------------------------------------------------------------
   Ledger errors

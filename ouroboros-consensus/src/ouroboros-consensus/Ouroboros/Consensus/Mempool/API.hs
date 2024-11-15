@@ -31,7 +31,7 @@ module Ouroboros.Consensus.Mempool.API (
   ) where
 
 import qualified Data.List.NonEmpty as NE
-import           Ouroboros.Consensus.Block (SlotNo, ChainHash)
+import           Ouroboros.Consensus.Block (ChainHash, SlotNo)
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Cap
