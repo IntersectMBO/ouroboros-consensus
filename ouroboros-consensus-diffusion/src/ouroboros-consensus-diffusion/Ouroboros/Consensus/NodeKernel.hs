@@ -558,9 +558,7 @@ forkBlockForging IS{..} blockForging =
       -- may not be adopted, but it won't be invalid.
       (mempoolHash, mempoolSlotNo) <- lift $ atomically $ do
         snap <- getSnapshot mempool   -- only used for its tip-like information
-        let h :: ChainHash blk
-            h = castHash $ getTipHash $ snapshotState snap
-        pure (h, snapshotSlotNo snap)
+        pure (castHash $ snapshotStateHash snap, snapshotSlotNo snap)
 
       let readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
 

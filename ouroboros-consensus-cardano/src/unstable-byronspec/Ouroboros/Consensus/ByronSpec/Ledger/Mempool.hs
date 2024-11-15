@@ -50,7 +50,7 @@ instance LedgerSupportsMempool ByronSpecBlock where
 
   -- Byron spec doesn't have multiple validation modes
   reapplyTx cfg slot vtx st =
-        applyDiffs st . fst
+        attachEmptyDiffs . applyDiffs st . fst
     <$> applyTx cfg DoNotIntervene slot (forgetValidatedByronSpecGenTx vtx) st
 
   txForgetValidated = forgetValidatedByronSpecGenTx

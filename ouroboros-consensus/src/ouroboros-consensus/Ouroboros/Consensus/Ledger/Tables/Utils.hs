@@ -230,25 +230,25 @@ calculateDifference l1 l2 = ltwith l2 $ calculateDifference' l1 l2
 
 rawAttachAndApplyDiffs ::
      Ord k
-  => DiffMK     k v
-  -> ValuesMK   k v
+  => ValuesMK   k v
+  -> DiffMK     k v
   -> TrackingMK k v
-rawAttachAndApplyDiffs (DiffMK d) (ValuesMK v) = TrackingMK (Diff.applyDiff v d) d
+rawAttachAndApplyDiffs (ValuesMK v) (DiffMK d) = TrackingMK (Diff.applyDiff v d) d
 
 -- | Apply the differences from the first ledger state to the values of the
 -- second ledger state, and returns the resulting values together with the
 -- applied diff.
 attachAndApplyDiffs' ::
      (SameUtxoTypes l l'', SameUtxoTypes l' l'', HasLedgerTables l, HasLedgerTables l')
-  => l DiffMK -> l' ValuesMK -> LedgerTables l'' TrackingMK
+  => l' ValuesMK -> l DiffMK -> LedgerTables l'' TrackingMK
 attachAndApplyDiffs' l1 l2 = ltliftA2 rawAttachAndApplyDiffs (ltprj l1) (ltprj l2)
 
--- | Like 'attachAndApplyDiffs'', but puts the ledger tables inside the first
+-- | Like 'attachAndApplyDiffs'', but puts the ledger tables inside the second
 -- leger state.
 attachAndApplyDiffs ::
      (SameUtxoTypes l l', HasLedgerTables l, HasLedgerTables l')
-  => l DiffMK -> l' ValuesMK -> l TrackingMK
-attachAndApplyDiffs l1 l2 = ltwith l1 $ attachAndApplyDiffs' l1 l2
+  => l ValuesMK -> l' DiffMK -> l' TrackingMK
+attachAndApplyDiffs l1 l2 = ltwith l2 $ attachAndApplyDiffs' l1 l2
 
 rawAttachEmptyDiffs :: Ord k => ValuesMK k v -> TrackingMK k v
 rawAttachEmptyDiffs (ValuesMK v) = TrackingMK v mempty

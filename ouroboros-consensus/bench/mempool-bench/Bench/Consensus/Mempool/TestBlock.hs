@@ -116,7 +116,7 @@ instance PayloadSemantics Tx where
       let
         notFound = Set.filter (not . (`Map.member` tokMap)) consumed
       in if Set.null notFound
-        then Right $ TestPLDS (Ledger.rawAttachAndApplyDiffs fullDiff toks)
+        then Right $ TestPLDS (Ledger.rawAttachAndApplyDiffs toks fullDiff)
         else Left  $ TxApplicationError notFound
     where
       TestPLDS toks@(ValuesMK tokMap) = plds
@@ -205,7 +205,7 @@ instance Ledger.LedgerSupportsMempool TestBlock where
            $ applyDirectlyToPayloadDependentState tickedSt tx
 
   reapplyTx cfg slot (ValidatedGenTx genTx) tickedSt =
-    Ledger.applyDiffs tickedSt . fst <$> Ledger.applyTx cfg Ledger.DoNotIntervene slot genTx tickedSt
+    Ledger.attachAndApplyDiffs tickedSt . fst <$> Ledger.applyTx cfg Ledger.DoNotIntervene slot genTx tickedSt
     -- FIXME: it is ok to use 'DoNotIntervene' here?
 
   txForgetValidated (ValidatedGenTx tx) = tx

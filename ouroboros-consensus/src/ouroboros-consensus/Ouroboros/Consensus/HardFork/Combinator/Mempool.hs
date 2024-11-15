@@ -113,7 +113,7 @@ type DecomposedReapplyTxsResult xs =
     [Invalidated (HardForkBlock xs)]
     [Validated (GenTx (HardForkBlock xs))]
   :.:
-    FlipTickedLedgerState DiffMK
+    FlipTickedLedgerState TrackingMK
 
 instance ( CanHardFork xs
          , HardForkHasLedgerTables xs
@@ -287,7 +287,7 @@ data ApplyHelperMode :: (Type -> Type) -> Type where
 -- | 'applyHelper' has to return one of these, depending on the apply mode used.
 type family ApplyMK k where
   ApplyMK (ApplyHelperMode GenTx) = DiffMK
-  ApplyMK (ApplyHelperMode WrapValidatedGenTx) = ValuesMK
+  ApplyMK (ApplyHelperMode WrapValidatedGenTx) = TrackingMK
 
 -- | A private type used only to clarify the definition of 'applyHelper'
 data ApplyResult xs txIn blk = ApplyResult {

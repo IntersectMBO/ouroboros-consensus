@@ -31,7 +31,7 @@ module Ouroboros.Consensus.Mempool.API (
   ) where
 
 import qualified Data.List.NonEmpty as NE
-import           Ouroboros.Consensus.Block (SlotNo)
+import           Ouroboros.Consensus.Block (SlotNo, ChainHash)
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Cap
@@ -360,5 +360,5 @@ data MempoolSnapshot blk = MempoolSnapshot {
 
     -- | The resulting state currently in the mempool after applying the
     -- transactions
-  , snapshotState       :: TickedLedgerState blk DiffMK
+  , snapshotStateHash   :: ChainHash (TickedLedgerState blk)
   }

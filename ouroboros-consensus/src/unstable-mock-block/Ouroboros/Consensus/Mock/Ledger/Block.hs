@@ -534,7 +534,7 @@ instance MockProtocolSpecific c ext
      return ( forgetTrackingValues $ calculateDifference st st''
              , ValidatedSimpleGenTx tx )
 
-  reapplyTx cfg slot vtx st = applyDiffs st . fst
+  reapplyTx cfg slot vtx st = attachAndApplyDiffs st . fst
     <$> applyTx cfg DoNotIntervene slot (forgetValidatedSimpleGenTx vtx) st
 
   txForgetValidated = forgetValidatedSimpleGenTx

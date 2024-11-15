@@ -185,8 +185,7 @@ chainDBLedgerInterface chainDB = LedgerInterface
         ledgerState <$> ChainDB.getCurrentLedger chainDB
     , getLedgerTablesAtFor = \pt txs -> do
         let keys = castLedgerTables
-                 $ Foldable.foldl' (<>) emptyLedgerTables
-                 $ map getTransactionKeySets txs
+                 $ Foldable.foldMap' getTransactionKeySets txs
         fmap castLedgerTables <$> ChainDB.getLedgerTablesAtFor chainDB pt keys
     }
 
@@ -271,6 +270,10 @@ validateNewTransaction
   -> GenTx blk
   -> TxMeasure blk
   -> TickedLedgerState blk ValuesMK
+     -- ^ This state is the internal state with the tables for this transaction
+     -- advanced through the diffs in the internal state. One could think we can
+     -- create this value here, but it is needed for some other uses like calling
+     -- 'txMeasure' before this function.
   -> InternalState blk
   -> ( Either (ApplyTxErr blk) (Validated (GenTx blk))
      , InternalState blk
@@ -313,7 +316,7 @@ revalidateTxsFor
      -- ^ The ticked ledger state againt which txs will be revalidated
   -> LedgerTables (LedgerState blk) ValuesMK
      -- ^ The tables with all the inputs for the transactions
-  -> TicketNo -- ^ 'isLastTicketNo' & 'vrLastTicketNo'
+  -> TicketNo -- ^ 'isLastTicketNo' and 'vrLastTicketNo'
   -> [TxTicket (TxMeasure blk) (Validated (GenTx blk))]
   -> RevalidateTxsResult blk
 revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
@@ -322,7 +325,7 @@ revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
         reapplyTxs cfg slot theTxs
         $ applyDiffForKeysOnTables
               values
-              (foldl (<>) emptyLedgerTables $ map (getTransactionKeySets . txForgetValidated) theTxs)
+              (Foldable.foldMap' (getTransactionKeySets . txForgetValidated) theTxs)
               st
 
       -- TODO: This is ugly, but I couldn't find a way to sneak the 'TxTicket' into
@@ -338,13 +341,13 @@ revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
 
   in RevalidateTxsResult
       (IS {
-         isTxs          = foldl (:>) TxSeq.Empty $ filterTxTickets txTickets val
+         isTxs          = TxSeq.fromList $ filterTxTickets txTickets val
        , isTxIds        = Set.fromList $ map (txId . txForgetValidated) val
-       , isLedgerState  = st'
+       , isLedgerState  = forgetTrackingValues st'
        , isTip          = castPoint $ getTip st
        , isSlotNo       = slot
        , isLastTicketNo = lastTicketNo
-       , isCapacity     = computeMempoolCapacity cfg st capacityOverride
+       , isCapacity     = computeMempoolCapacity cfg st' capacityOverride
        })
        err
 
@@ -362,7 +365,7 @@ data RevalidateTxsResult blk =
 
 -- | Create a Mempool Snapshot from a given Internal State of the mempool.
 snapshotFromIS :: forall blk.
-     (HasTxId (GenTx blk), TxLimits blk)
+     (HasTxId (GenTx blk), TxLimits blk, GetTip (TickedLedgerState blk))
   => InternalState blk
   -> MempoolSnapshot blk
 snapshotFromIS is = MempoolSnapshot {
@@ -372,7 +375,7 @@ snapshotFromIS is = MempoolSnapshot {
     , snapshotHasTx       = implSnapshotHasTx          is
     , snapshotMempoolSize = implSnapshotGetMempoolSize is
     , snapshotSlotNo      = isSlotNo                   is
-    , snapshotState       = isLedgerState              is
+    , snapshotStateHash   = getTipHash $ isLedgerState is
     , snapshotTake        = implSnapshotTake           is
     }
  where

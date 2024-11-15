@@ -807,8 +807,7 @@ reproMempoolForge numBlks env = do
                    <$> LedgerDB.forkerReadTables
                          fr
                          (  castLedgerTables
-                          $ Foldable.foldl' (<>) emptyLedgerTables
-                          $ map LedgerSupportsMempool.getTransactionKeySets txs
+                          $ Foldable.foldMap' LedgerSupportsMempool.getTransactionKeySets txs
                          )
                 LedgerDB.forkerClose fr
                 pure tbs
@@ -894,7 +893,7 @@ reproMempoolForge numBlks env = do
                 snap <- Mempool.getSnapshotFor mempool slot ticked $
                   fmap castLedgerTables . LedgerDB.forkerReadTables forker . castLedgerTables
 
-                pure $ length (Mempool.snapshotTxs snap) `seq` Mempool.snapshotState snap `seq` ()
+                pure $ length (Mempool.snapshotTxs snap) `seq` Mempool.snapshotStateHash snap `seq` ()
 
             let sizes = HasAnalysis.blockTxSizes blk
             traceWith tracer $

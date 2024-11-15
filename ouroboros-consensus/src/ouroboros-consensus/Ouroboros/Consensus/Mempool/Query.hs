@@ -3,14 +3,12 @@
 -- | Queries to the mempool
 module Ouroboros.Consensus.Mempool.Query (
     implGetSnapshotFor
-  , pureGetSnapshotFor
   ) where
 
 import qualified Data.Foldable as Foldable
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
-import           Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 import           Ouroboros.Consensus.Mempool.API
 import           Ouroboros.Consensus.Mempool.Capacity
 import           Ouroboros.Consensus.Mempool.Impl.Common
@@ -38,11 +36,11 @@ implGetSnapshotFor mpEnv slot ticked readUntickedTables = do
       -- have cached, then just return it.
       pure . snapshotFromIS $ is
     else do
-       let keys = Foldable.foldl' (<>) emptyLedgerTables
-                $ map getTransactionKeySets
-                $ [ txForgetValidated . TxSeq.txTicketTx $ tx
-                  | tx <- TxSeq.toList $ isTxs is
-                  ]
+       let keys = Foldable.foldMap'
+                    getTransactionKeySets
+                    [ txForgetValidated . TxSeq.txTicketTx $ tx
+                    | tx <- TxSeq.toList $ isTxs is
+                    ]
        values <- readUntickedTables keys
        pure $ getSnap is values
   where
