@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE FlexibleContexts #-}
 
 -- | Queries to the mempool
@@ -7,9 +6,7 @@ module Ouroboros.Consensus.Mempool.Query (
   , pureGetSnapshotFor
   ) where
 
-#if __GLASGOW_HASKELL__ < 910
-import           Data.Foldable (foldl')
-#endif
+import qualified Data.Foldable as Foldable
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
@@ -41,7 +38,7 @@ implGetSnapshotFor mpEnv slot ticked readUntickedTables = do
       -- have cached, then just return it.
       pure . snapshotFromIS $ is
     else do
-       let keys = foldl' (<>) emptyLedgerTables
+       let keys = Foldable.foldl' (<>) emptyLedgerTables
                 $ map getTransactionKeySets
                 $ [ txForgetValidated . TxSeq.txTicketTx $ tx
                   | tx <- TxSeq.toList $ isTxs is

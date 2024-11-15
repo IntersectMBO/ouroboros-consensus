@@ -70,6 +70,7 @@ import           Ouroboros.Consensus.Shelley.Node.Serialisation ()
 import           Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import           Ouroboros.Consensus.Util.Assert
 import           Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.Ledger.Tables.Utils
 
 {-------------------------------------------------------------------------------
   BlockForging
@@ -273,15 +274,14 @@ protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
         }
 
     initLedgerState :: LedgerState (ShelleyBlock (TPraos c) era) ValuesMK
-    initLedgerState = ShelleyLedgerState {
+    initLedgerState = unstowLedgerTables ShelleyLedgerState {
         shelleyLedgerTip        = Origin
-      , shelleyLedgerState      = st `withUtxoSL` emptyMK
+      , shelleyLedgerState      =
+            L.injectIntoTestState transitionCfg
+          $ L.createInitialState  transitionCfg
       , shelleyLedgerTransition = ShelleyTransitionInfo {shelleyAfterVoting = 0}
-      , shelleyLedgerTables     = LedgerTables $ projectUtxoSL st
+      , shelleyLedgerTables     = emptyLedgerTables
       }
-     where
-      st = L.injectIntoTestState transitionCfg
-         $ L.createInitialState  transitionCfg
 
     initChainDepState :: TPraosState c
     initChainDepState = TPraosState Origin $

@@ -38,9 +38,7 @@ import           Control.Monad (unless, void, when)
 import           Control.Monad.Except (runExcept)
 import           Control.ResourceRegistry
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
-#if __GLASGOW_HASKELL__ < 910
-import           Data.Foldable (foldl')
-#endif
+import qualified Data.Foldable as Foldable
 import           Data.Int (Int64)
 import           Data.List (intercalate)
 import qualified Data.Map.Strict as Map
@@ -625,10 +623,10 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv {db, registry, startFrom, 
         -- 'time' takes care of forcing the evaluation of its argument's result.
         (ldgrView, tForecast) <- time $ forecast            slot prevLedgerState
         (tkHdrSt,  tHdrTick)  <- time $ tickTheHeaderState  slot prevLedgerState ldgrView
-        (!_,   tHdrApp)   <- time $ applyTheHeader                            ldgrView tkHdrSt
+        (!_,   tHdrApp)       <- time $ applyTheHeader                           ldgrView tkHdrSt
         (tkLdgrSt, tBlkTick)  <- time $ tickTheLedgerState  slot prevLedgerState
         let !tkLdgrSt' = applyDiffs (prevLedgerState `withLedgerTables` tables) tkLdgrSt
-        (!_,  tBlkApp)   <- time $ applyTheBlock                                     tkLdgrSt'
+        (!_,  tBlkApp)        <- time $ applyTheBlock                                     tkLdgrSt'
 
         currentRtsStats <- GC.getRTSStats
         let
@@ -662,8 +660,6 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv {db, registry, startFrom, 
 
         LedgerDB.reapplyThenPushNOW intLedgerDB blk
         LedgerDB.tryFlush ledgerDB
-
-        pure ()
       where
         rp = blockRealPoint blk
 
@@ -807,7 +803,13 @@ reproMempoolForge numBlks env = do
             case frk of
               Left _ -> pure Nothing
               Right fr -> do
-                tbs <- Just . castLedgerTables <$> LedgerDB.forkerReadTables fr (castLedgerTables $ foldl' (<>) emptyLedgerTables $ map LedgerSupportsMempool.getTransactionKeySets txs)
+                tbs <- Just . castLedgerTables
+                   <$> LedgerDB.forkerReadTables
+                         fr
+                         (  castLedgerTables
+                          $ Foldable.foldl' (<>) emptyLedgerTables
+                          $ map LedgerSupportsMempool.getTransactionKeySets txs
+                         )
                 LedgerDB.forkerClose fr
                 pure tbs
 

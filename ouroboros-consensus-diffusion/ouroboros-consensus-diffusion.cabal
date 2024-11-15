@@ -44,7 +44,6 @@ common common-lib
 
   if flag(asserts)
     ghc-options: -fno-ignore-asserts
-    cpp-options: -DENABLE_ASSERTIONS
 
 common common-test
   import: common-lib

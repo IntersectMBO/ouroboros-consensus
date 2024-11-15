@@ -29,8 +29,6 @@ module Test.ThreadNet.Infra.ShelleyBasedHardFork (
     -- * Node
   , ShelleyBasedHardForkConstraints
   , protocolInfoShelleyBasedHardFork
-    -- * Data families
-  , LedgerTables (..)
   ) where
 
 import qualified Cardano.Ledger.Api.Transition as L

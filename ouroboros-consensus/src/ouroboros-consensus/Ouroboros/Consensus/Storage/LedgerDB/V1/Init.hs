@@ -9,10 +9,6 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
-#if __GLASGOW_HASKELL__ <= 906
-{-# OPTIONS_GHC -Wno-redundant-constraints #-}
-#endif
-
 module Ouroboros.Consensus.Storage.LedgerDB.V1.Init (mkInitDb) where
 
 import           Control.Monad
@@ -20,9 +16,7 @@ import           Control.Monad.Base
 import           Control.ResourceRegistry
 import           Control.Tracer (nullTracer)
 import           Data.Bifunctor (first)
-#if __GLASGOW_HASKELL__ < 910
-import           Data.Foldable
-#endif
+import qualified Data.Foldable as Foldable
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust)
@@ -72,7 +66,7 @@ mkInitDb ::
   , LedgerDbSerialiseConstraints blk
   , MonadBase m m
   , HasHardForkHistory blk
-#if __GLASGOW_HASKELL__ < 910
+#if __GLASGOW_HASKELL__ < 906
   , HasAnnTip blk
 #endif
   )
@@ -159,7 +153,7 @@ implMkLedgerDb ::
      , MonadBase m m
      , ApplyBlock l blk
      , l ~ ExtLedgerState blk
-#if __GLASGOW_HASKELL__ < 910
+#if __GLASGOW_HASKELL__ < 906
      , HasAnnTip blk
 #endif
      , HasHardForkHistory blk
@@ -245,7 +239,7 @@ implValidate h ldbEnv rr tr cache rollbacks hdrs =
       (getExtLedgerCfg . ledgerDbCfg $ ldbCfg ldbEnv)
       (\l -> do
           prev <- readTVar (ldbPrevApplied ldbEnv)
-          writeTVar (ldbPrevApplied ldbEnv) (foldl' (flip Set.insert) prev l))
+          writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l))
       (readTVar (ldbPrevApplied ldbEnv))
       (newForkerAtFromTip h)
       rr

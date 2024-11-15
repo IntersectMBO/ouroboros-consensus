@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -187,20 +186,18 @@ data Mempool m blk = Mempool {
       -- the given ledger state
       --
       -- This does not update the state of the mempool.
+      --
+      -- The arguments:
+      --
+      -- - The current slot in which we want the snapshot
+      --
+      -- - The ledger state ticked to the given slot number (with the diffs from ticking)
+      --
+      -- - A function that reads values for keys at the unticked ledger state.
     , getSnapshotFor ::
            SlotNo
-#if __GLASGOW_HASKELL__ >= 902
-           -- ^ The current slot in which we want the snapshot
-#endif
         -> TickedLedgerState blk DiffMK
-#if __GLASGOW_HASKELL__ >= 902
-           -- ^ The ledger state ticked to the given slot number
-#endif
         -> (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK))
-#if __GLASGOW_HASKELL__ >= 902
-        -- ^ A function that returns values corresponding to the given keys for
-        -- the unticked ledger state.
-#endif
         -> m (MempoolSnapshot blk)
 
       -- | Get the mempool's capacity

@@ -245,8 +245,10 @@ data LedgerDB m l blk = LedgerDB {
       -> Word64
       -> m SnapCounters
 
-    -- | Flush in-memory LedgerDB state to disk, if possible. This is a no-op
+    -- | Flush V1 in-memory LedgerDB state to disk, if possible. This is a no-op
     -- for implementations that do not need an explicit flush function.
+    --
+    -- Note that this is rate-limited by 'ldbShouldFlush'.
   , tryFlush :: m ()
 
       -- | Close the LedgerDB

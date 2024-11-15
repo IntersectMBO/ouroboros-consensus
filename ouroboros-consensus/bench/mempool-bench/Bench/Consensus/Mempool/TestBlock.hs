@@ -210,8 +210,8 @@ instance Ledger.LedgerSupportsMempool TestBlock where
 
   txForgetValidated (ValidatedGenTx tx) = tx
 
-  getTransactionKeySets (TestBlockGenTx tx) = LedgerTables $
-    KeysMK $ consumed tx
+  getTransactionKeySets (TestBlockGenTx tx) =
+    LedgerTables $ KeysMK $ consumed tx
 
 instance Ledger.TxLimits TestBlock where
   type TxMeasure TestBlock = Ledger.IgnoringOverflow Ledger.ByteSize32

@@ -282,6 +282,8 @@ instance (HasAnnTip (CardanoBlock StandardCrypto), GetPrevHash (CardanoBlock Sta
       , ("Block Number", \(WithLedgerState blk _preSt _postSt) ->
             pure $ Builder.decimal $ unBlockNo $ blockNo blk
         )
+      -- TODO the states will only contain the outputs produced by the block,
+      -- not the whole UTxO set, so there is a regression here.
       , ("UTxO size (via Compact)", \(WithLedgerState _blk _preSt postSt) -> do
             let compactSize utxo = do
                     compactedUtxo     <- Compact.compact utxo

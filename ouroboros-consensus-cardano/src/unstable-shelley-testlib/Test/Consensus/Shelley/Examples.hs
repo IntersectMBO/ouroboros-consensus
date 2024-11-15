@@ -97,6 +97,9 @@ mkLedgerTables tx =
             -- transaction output) in the example provided by
             -- cardano-ledger to make sure that we test the serialization
             -- of ledger tables with at least one non-trivial example.
+            --
+            -- Also all transactions in Cardano have at least one input for
+            -- automatic replay protection.
       xs -> xs
 
     exampleTxOuts :: [LC.TxOut era]

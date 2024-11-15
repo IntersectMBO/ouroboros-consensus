@@ -48,8 +48,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger (
   , encodeShelleyHeaderState
   , encodeShelleyLedgerState
     -- * Low-level UTxO manipulations
-  , projectUtxoSL
-  , withUtxoSL
+  , slUtxoL
   ) where
 
 import qualified Cardano.Ledger.BaseTypes as SL (epochInfoPure)
@@ -74,7 +73,6 @@ import qualified Control.Exception as Exception
 import           Control.Monad.Except
 import qualified Control.State.Transition.Extended as STS
 import           Data.Coerce (coerce)
-import           Data.Functor ((<&>))
 import           Data.Functor.Identity
 import qualified Data.Text as Text
 import           Data.Word
@@ -102,6 +100,7 @@ import           Ouroboros.Consensus.Shelley.Protocol.Abstract
 import           Ouroboros.Consensus.Util.CBOR (decodeWithOrigin,
                      encodeWithOrigin)
 import           Ouroboros.Consensus.Util.Versioned
+import Lens.Micro
 
 {-------------------------------------------------------------------------------
   Ledger errors
@@ -306,28 +305,27 @@ instance ShelleyBasedEra era
   stowLedgerTables st =
       ShelleyLedgerState {
           shelleyLedgerTip        = shelleyLedgerTip
-        , shelleyLedgerState      =
-            shelleyLedgerState `withUtxoSL` getLedgerTables shelleyLedgerTables
+        , shelleyLedgerState      = shelleyLedgerState'
         , shelleyLedgerTransition = shelleyLedgerTransition
         , shelleyLedgerTables     = emptyLedgerTables
         }
     where
+      (_, shelleyLedgerState') = shelleyLedgerState `slUtxoL` SL.UTxO m
       ShelleyLedgerState {
           shelleyLedgerTip
         , shelleyLedgerState
         , shelleyLedgerTransition
-        , shelleyLedgerTables
+        , shelleyLedgerTables = LedgerTables (ValuesMK m)
         } = st
   unstowLedgerTables st =
       ShelleyLedgerState {
           shelleyLedgerTip        = shelleyLedgerTip
-        , shelleyLedgerState      =
-            shelleyLedgerState `withUtxoSL` emptyMK
+        , shelleyLedgerState      = shelleyLedgerState'
         , shelleyLedgerTransition = shelleyLedgerTransition
-        , shelleyLedgerTables     =
-            LedgerTables $ projectUtxoSL shelleyLedgerState
+        , shelleyLedgerTables     = LedgerTables (ValuesMK (SL.unUTxO tbs))
         }
     where
+      (tbs, shelleyLedgerState') = shelleyLedgerState `slUtxoL` mempty
       ShelleyLedgerState {
           shelleyLedgerTip
         , shelleyLedgerState
@@ -340,63 +338,42 @@ instance ShelleyBasedEra era
       TickedShelleyLedgerState {
          untickedShelleyLedgerTip      = untickedShelleyLedgerTip
        , tickedShelleyLedgerTransition = tickedShelleyLedgerTransition
-       , tickedShelleyLedgerState      =
-           tickedShelleyLedgerState `withUtxoSL` getLedgerTables tickedShelleyLedgerTables
+       , tickedShelleyLedgerState      = tickedShelleyLedgerState'
        , tickedShelleyLedgerTables     = emptyLedgerTables
        }
     where
+      (_, tickedShelleyLedgerState') =
+         tickedShelleyLedgerState `slUtxoL` SL.UTxO tbs
       TickedShelleyLedgerState {
           untickedShelleyLedgerTip
         , tickedShelleyLedgerTransition
         , tickedShelleyLedgerState
-        , tickedShelleyLedgerTables
+        , tickedShelleyLedgerTables = LedgerTables (ValuesMK tbs)
       } = st
 
   unstowLedgerTables st =
       TickedShelleyLedgerState {
          untickedShelleyLedgerTip      = untickedShelleyLedgerTip
        , tickedShelleyLedgerTransition = tickedShelleyLedgerTransition
-       , tickedShelleyLedgerState      =
-           tickedShelleyLedgerState `withUtxoSL` emptyMK
-       , tickedShelleyLedgerTables     =
-           LedgerTables $ projectUtxoSL tickedShelleyLedgerState
+       , tickedShelleyLedgerState      = tickedShelleyLedgerState'
+       , tickedShelleyLedgerTables     = LedgerTables (ValuesMK (SL.unUTxO tbs))
        }
     where
+      (tbs, tickedShelleyLedgerState') = tickedShelleyLedgerState `slUtxoL` mempty
       TickedShelleyLedgerState {
           untickedShelleyLedgerTip
         , tickedShelleyLedgerTransition
         , tickedShelleyLedgerState
       } = st
 
-projectUtxoSL ::
-     SL.NewEpochState era
-  -> ValuesMK (SL.TxIn (EraCrypto era)) (Core.TxOut era)
-projectUtxoSL =
-      ValuesMK
-    . SL.unUTxO
-    . SL.utxosUtxo
-    . SL.lsUTxOState
-    . SL.esLState
-    . SL.nesEs
-
-withUtxoSL ::
-     SL.NewEpochState era
-  -> ValuesMK (SL.TxIn (EraCrypto era)) (Core.TxOut era)
-  -> SL.NewEpochState era
-withUtxoSL nes (ValuesMK m) =
-    nes {
-        SL.nesEs = es {
-            SL.esLState = us {
-                SL.lsUTxOState = utxo {
-                    SL.utxosUtxo = SL.UTxO m
-                  }
-              }
-          }
-      }
-  where
-    es   = SL.nesEs nes
-    us   = SL.esLState es
-    utxo = SL.lsUTxOState us
+slUtxoL :: SL.NewEpochState era -> SL.UTxO era -> (SL.UTxO era, SL.NewEpochState era)
+slUtxoL st vals =
+  st
+     & SL.nesEsL
+     . SL.esLStateL
+     . SL.lsUTxOStateL
+     . SL.utxosUtxoL
+  <<.~ vals
 
 {-------------------------------------------------------------------------------
   GetTip

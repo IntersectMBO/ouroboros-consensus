@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -37,9 +36,7 @@ import           Control.Concurrent.Class.MonadMVar (MVar, newMVar)
 import           Control.Concurrent.Class.MonadSTM.Strict.TMVar (newTMVarIO)
 import           Control.Monad.Trans.Except (runExcept)
 import           Control.Tracer
-#if __GLASGOW_HASKELL__ < 910
-import           Data.Foldable
-#endif
+import qualified Data.Foldable as Foldable
 import qualified Data.List.NonEmpty as NE
 import           Data.Set (Set)
 import qualified Data.Set as Set
@@ -188,7 +185,7 @@ chainDBLedgerInterface chainDB = LedgerInterface
         ledgerState <$> ChainDB.getCurrentLedger chainDB
     , getLedgerTablesAtFor = \pt txs -> do
         let keys = castLedgerTables
-                 $ foldl' (<>) emptyLedgerTables
+                 $ Foldable.foldl' (<>) emptyLedgerTables
                  $ map getTransactionKeySets txs
         fmap castLedgerTables <$> ChainDB.getLedgerTablesAtFor chainDB pt keys
     }
