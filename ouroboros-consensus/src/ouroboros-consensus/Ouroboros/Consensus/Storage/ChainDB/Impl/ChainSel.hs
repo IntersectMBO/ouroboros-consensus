@@ -518,13 +518,17 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
     assert (isJust $ lookupBlockInfo (headerHash hdr)) $ return ()
 
     let
+      -- Trim the LoE fragment to be anchored in the immutable tip, ie the
+      -- anchor of @curChain@. In particular, this establishes the property that
+      -- it intersects with the current chain.
       sanitizeLoEFrag loeFrag0 =
-        case cross curChain loeFrag0 of
+        case AF.splitAfterPoint loeFrag0 (AF.anchorPoint curChain) of
             Just (_, frag) -> frag
-            -- We don't crash if the LoE fragment doesn't intersect with the selection
-            -- because we update the selection _after_ updating the LoE fragment, which
-            -- means it could move to another fork or beyond the end of the LF, depending
-            -- on the implementation of @processLoE@.
+            -- As the (unsanitized) LoE fragment is rooted in a recent immutable
+            -- tip, this case means that it doesn't intersect with the current
+            -- chain. This can temporarily be the case; we are conservative and
+            -- use the empty fragment anchored at the immutable tip for chain
+            -- selection.
             Nothing        -> AF.Empty (AF.anchor curChain)
 
     loeFrag <- fmap sanitizeLoEFrag <$> cdbLoE
