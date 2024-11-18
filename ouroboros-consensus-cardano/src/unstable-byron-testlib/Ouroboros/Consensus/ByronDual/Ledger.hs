@@ -24,13 +24,13 @@ module Ouroboros.Consensus.ByronDual.Ledger (
   , forgeDualByronBlock
   ) where
 
-import           Data.Coerce
 import qualified Byron.Spec.Ledger.Core as Spec
 import qualified Byron.Spec.Ledger.UTxO as Spec
 import qualified Cardano.Chain.UTxO as Impl
 import           Cardano.Crypto.DSIGN.Class
 import           Codec.Serialise
 import           Data.ByteString (ByteString)
+import           Data.Coerce
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set

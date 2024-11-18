@@ -23,14 +23,14 @@ module Test.Consensus.Byron.Examples (
   , examples
   ) where
 
-import           Data.Coerce
 import qualified Cardano.Chain.Block as CC.Block
 import qualified Cardano.Chain.Byron.API as CC
 import qualified Cardano.Chain.Common as CC
-import qualified Cardano.Crypto.Hashing as Crypto
 import qualified Cardano.Chain.Update.Validation.Interface as CC.UPI
 import qualified Cardano.Chain.UTxO as CC
+import qualified Cardano.Crypto.Hashing as Crypto
 import           Control.Monad.Except (runExcept)
+import           Data.Coerce
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Crypto.DSIGN (SignKeyDSIGN (..))
