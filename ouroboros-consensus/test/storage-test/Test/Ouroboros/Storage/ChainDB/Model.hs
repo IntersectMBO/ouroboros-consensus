@@ -32,6 +32,7 @@ module Test.Ouroboros.Storage.ChainDB.Model (
   , getBlockComponentByPoint
   , getIsValid
   , getLedgerDB
+  , getLoEFragment
   , getMaxSlotNo
   , hasBlock
   , hasBlockByPoint
@@ -352,6 +353,9 @@ getLedgerDB cfg m@Model{..} =
           ledgerDbCfgSecParam = k
         , ledgerDbCfg         = ExtLedgerCfg cfg
         }
+
+getLoEFragment :: Model blk -> LoE (AnchoredFragment blk)
+getLoEFragment = loeFragment
 
 {-------------------------------------------------------------------------------
   Construction
