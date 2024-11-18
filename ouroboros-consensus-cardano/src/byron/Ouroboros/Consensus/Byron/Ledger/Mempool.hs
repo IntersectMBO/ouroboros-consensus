@@ -17,11 +17,11 @@ module Ouroboros.Consensus.Byron.Ledger.Mempool (
     -- * Mempool integration
     GenTx (..)
   , TxId (..)
-  , pattern ByronTxId
+  , Validated (..)
   , pattern ByronDlgId
+  , pattern ByronTxId
   , pattern ByronUpdateProposalId
   , pattern ByronUpdateVoteId
-  , Validated (..)
     -- * Transaction IDs
   , byronIdDlg
   , byronIdProp
@@ -41,7 +41,6 @@ module Ouroboros.Consensus.Byron.Ledger.Mempool (
   , countByronGenTxs
   ) where
 
-import Data.Coerce
 import qualified Cardano.Chain.Block as CC
 import qualified Cardano.Chain.Byron.API as CC
 import qualified Cardano.Chain.Delegation as Delegation
@@ -51,9 +50,8 @@ import qualified Cardano.Chain.UTxO as Utxo
 import qualified Cardano.Chain.ValidationMode as CC
 import           Cardano.Crypto (hashDecoded)
 import qualified Cardano.Crypto as CC
-import           Cardano.Ledger.Binary (ByteSpan,
-                     byronProtVer, fromByronCBOR, serialize, slice, toByronCBOR,
-                     unsafeDeserialize)
+import           Cardano.Ledger.Binary (ByteSpan, byronProtVer, fromByronCBOR,
+                     serialize, slice, toByronCBOR, unsafeDeserialize)
 import           Cardano.Prelude (Natural)
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding)
@@ -62,6 +60,7 @@ import           Control.Monad.Except (Except, throwError)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
+import           Data.Coerce
 import           Data.Maybe (maybeToList)
 import           Data.Word
 import           GHC.Generics (Generic)
