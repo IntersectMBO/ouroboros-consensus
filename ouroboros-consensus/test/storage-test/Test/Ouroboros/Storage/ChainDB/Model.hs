@@ -1016,6 +1016,10 @@ wipeVolatileDB cfg m =
       , cps              = CPS.switchFork newChain (cps m)
       , currentLedger    = newLedger
       , invalid          = Map.empty
+        -- The LoE fragment must be anchored in an immutable point. Wiping the
+        -- VolDB can invalidate this when some immutable blocks have not yet
+        -- been persisted.
+      , loeFragment      = Fragment.Empty Fragment.AnchorGenesis <$ loeFragment m
       }
 
     -- Get the chain ending at the ImmutableDB by doing chain selection on the

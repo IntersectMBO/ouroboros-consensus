@@ -432,7 +432,12 @@ run env@ChainDBEnv { varDB, .. } cmd =
     wipeVolatileDB :: ChainDBState m blk -> m (Point blk)
     wipeVolatileDB st = do
       close st
-      void $ atomically $ writeTMVar varVolatileDbFs Mock.empty
+      atomically $ do
+        writeTMVar varVolatileDbFs Mock.empty
+        -- The LoE fragment must be anchored in an immutable point. Wiping the
+        -- VolDB can invalidate this when some immutable blocks have not yet
+        -- been persisted.
+        writeTVar varLoEFragment $ AF.Empty AF.AnchorGenesis
       reopen env
       ChainDB { getTipPoint } <- chainDB <$> readTVarIO varDB
       atomically getTipPoint
