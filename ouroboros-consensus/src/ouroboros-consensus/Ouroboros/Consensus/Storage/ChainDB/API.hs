@@ -888,4 +888,7 @@ data LoE a =
   LoEEnabled !a
   deriving (Eq, Show, Generic, NoThunks, Functor, Foldable, Traversable)
 
+-- | Get the current LoE fragment (if the LoE is enabled), see 'LoE' for more
+-- details. This fragment must be anchored in a (recent) point on the immutable
+-- chain, just like candidate fragments.
 type GetLoEFragment m blk = m (LoE (AnchoredFragment (Header blk)))

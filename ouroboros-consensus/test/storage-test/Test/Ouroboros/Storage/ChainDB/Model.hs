@@ -32,6 +32,7 @@ module Test.Ouroboros.Storage.ChainDB.Model (
   , getBlockComponentByPoint
   , getIsValid
   , getLedgerDB
+  , getLoEFragment
   , getMaxSlotNo
   , hasBlock
   , hasBlockByPoint
@@ -352,6 +353,9 @@ getLedgerDB cfg m@Model{..} =
           ledgerDbCfgSecParam = k
         , ledgerDbCfg         = ExtLedgerCfg cfg
         }
+
+getLoEFragment :: Model blk -> LoE (AnchoredFragment blk)
+getLoEFragment = loeFragment
 
 {-------------------------------------------------------------------------------
   Construction
@@ -1012,6 +1016,10 @@ wipeVolatileDB cfg m =
       , cps              = CPS.switchFork newChain (cps m)
       , currentLedger    = newLedger
       , invalid          = Map.empty
+        -- The LoE fragment must be anchored in an immutable point. Wiping the
+        -- VolDB can invalidate this when some immutable blocks have not yet
+        -- been persisted.
+      , loeFragment      = Fragment.Empty Fragment.AnchorGenesis <$ loeFragment m
       }
 
     -- Get the chain ending at the ImmutableDB by doing chain selection on the

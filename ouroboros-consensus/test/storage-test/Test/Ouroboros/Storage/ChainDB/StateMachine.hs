@@ -432,7 +432,12 @@ run env@ChainDBEnv { varDB, .. } cmd =
     wipeVolatileDB :: ChainDBState m blk -> m (Point blk)
     wipeVolatileDB st = do
       close st
-      void $ atomically $ writeTMVar varVolatileDbFs Mock.empty
+      atomically $ do
+        writeTMVar varVolatileDbFs Mock.empty
+        -- The LoE fragment must be anchored in an immutable point. Wiping the
+        -- VolDB can invalidate this when some immutable blocks have not yet
+        -- been persisted.
+        writeTVar varLoEFragment $ AF.Empty AF.AnchorGenesis
       reopen env
       ChainDB { getTipPoint } <- chainDB <$> readTVarIO varDB
       atomically getTipPoint
@@ -1070,6 +1075,7 @@ precondition :: forall m blk. TestConstraints blk
 precondition Model {..} (At cmd) =
    forAll (iters cmd) (`member` RE.keys knownIters)   .&&
    forAll (flrs  cmd) (`member` RE.keys knownFollowers) .&&
+   loeHasImmutableAnchor .&&
    case cmd of
      -- Even though we ensure this in the generator, shrinking might change
      -- it.
@@ -1096,6 +1102,14 @@ precondition Model {..} (At cmd) =
     garbageCollectableIteratorNext :: IterRef blk m Symbolic -> Logic
     garbageCollectableIteratorNext it = Boolean $
       Model.garbageCollectableIteratorNext secParam dbModel (knownIters RE.! it)
+
+    loeHasImmutableAnchor :: Logic
+    loeHasImmutableAnchor = case Model.getLoEFragment dbModel of
+        LoEEnabled frag ->
+          Boolean $ Chain.pointOnChain (AF.anchorPoint frag) immChain
+        LoEDisabled     -> Top
+      where
+        immChain = Model.immutableChain secParam dbModel
 
     cfg :: TopLevelConfig blk
     cfg = unOpaque modelConfig
