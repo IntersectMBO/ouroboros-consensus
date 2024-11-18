@@ -24,6 +24,7 @@ module Ouroboros.Consensus.ByronDual.Ledger (
   , forgeDualByronBlock
   ) where
 
+import           Data.Coerce
 import qualified Byron.Spec.Ledger.Core as Spec
 import qualified Byron.Spec.Ledger.UTxO as Spec
 import qualified Cardano.Chain.UTxO as Impl
@@ -82,12 +83,16 @@ instance Monoid SpecToImplIds where
 -- | Construct singleton 'SpecToImplIds' for a transaction
 specToImplTx :: Spec.Tx -> Impl.ATxAux ByteString -> SpecToImplIds
 specToImplTx spec impl = SpecToImplIds $ Spec.Test.AbstractToConcreteIdMaps {
-      transactionIds = Map.singleton (specTxId spec) (byronIdTx impl)
+      transactionIds =
+        Map.singleton (specTxId spec) (byronGenTxIdToTxId $ byronIdTx impl)
     , proposalIds    = Map.empty
     }
   where
     specTxId :: Spec.Tx -> Spec.TxId
     specTxId = Spec.txid . Spec.body
+
+    byronGenTxIdToTxId :: TxId (GenTx ByronBlock) -> Impl.TxId
+    byronGenTxIdToTxId (ByronGenTxId i) = coerce i
 
 {-------------------------------------------------------------------------------
   Bridge
