@@ -89,7 +89,7 @@ data StaticCandidates =
   StaticCandidates {
     k        :: SecurityParam,
     sgen     :: GenesisWindow,
-    suffixes :: [(PeerId, AnchoredFragment (Header TestBlock))],
+    suffixes :: [(PeerId, AnchoredFragment (HeaderWithTime TestBlock))],
     tips     :: Map PeerId (Tip TestBlock),
     loeFrag  :: AnchoredFragment (Header TestBlock)
   }
@@ -113,7 +113,7 @@ staticCandidates GenesisTest {gtSecurityParam, gtGenesisWindow, gtBlockTree} =
       StaticCandidates {
         k = gtSecurityParam,
         sgen = gtGenesisWindow,
-        suffixes = fmap (second dropTime) suffixes,
+        suffixes = suffixes,
         tips,
         loeFrag = dropTime loeFrag
       }
@@ -140,16 +140,16 @@ staticCandidates GenesisTest {gtSecurityParam, gtGenesisWindow, gtBlockTree} =
 prop_densityDisconnectStatic :: Property
 prop_densityDisconnectStatic =
   forAll gen $ \ StaticCandidates {k, sgen, suffixes, loeFrag} -> do
-    let (disconnect, _) = densityDisconnect sgen k (mkState <$> Map.fromList suffixes) (fmap (second addBogusTimeToFragment) suffixes) (addBogusTimeToFragment loeFrag)
+    let (disconnect, _) = densityDisconnect sgen k (mkState <$> Map.fromList suffixes) suffixes (addBogusTimeToFragment loeFrag)
     counterexample "it should disconnect some node" (not (null disconnect))
       .&&.
      counterexample "it should not disconnect the honest peers"
        (not $ any isHonestPeerId disconnect)
   where
-    mkState :: AnchoredFragment (Header TestBlock) -> ChainSyncState TestBlock
+    mkState :: AnchoredFragment (HeaderWithTime TestBlock) -> ChainSyncState TestBlock
     mkState frag =
       ChainSyncState {
-        csCandidate = addBogusTimeToFragment frag,
+        csCandidate = frag,
         csLatestSlot = SJust (AF.headSlot frag),
         csIdling = False
       }
