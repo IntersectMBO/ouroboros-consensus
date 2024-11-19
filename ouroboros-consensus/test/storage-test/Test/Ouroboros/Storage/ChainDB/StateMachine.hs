@@ -155,6 +155,8 @@ import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.ChainDB
 import           Test.Util.ChunkInfo
+import           Test.Util.HeaderValidation (AddBogusTime,
+                     addBogusTimeToFragment)
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Orphans.ToExpr ()
 import           Test.Util.QuickCheck
@@ -330,6 +332,7 @@ type TestConstraints blk =
   , ConvertRawHash                    blk
   , HasHardForkHistory                blk
   , SerialiseDiskConstraints          blk
+  , AddBogusTime                      blk
   )
 
 deriving instance (TestConstraints blk, Eq   it, Eq   flr)
@@ -442,7 +445,7 @@ run env@ChainDBEnv { varDB, .. } cmd =
     updateLoE :: ChainDBState m blk -> AnchoredFragment blk -> m (Point blk)
     updateLoE ChainDBState { chainDB } frag = do
       let headersFrag = AF.mapAnchoredFragment getHeader frag
-      atomically $ writeTVar varLoEFragment headersFrag
+      atomically $ writeTVar varLoEFragment $ addBogusTimeToFragment headersFrag
       ChainDB.triggerChainSelection chainDB
       atomically $ getTipPoint chainDB
 

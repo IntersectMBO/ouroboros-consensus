@@ -60,6 +60,7 @@ import           Test.QuickCheck
 import           Test.QuickCheck.Extras (unsafeMapSuchThatJust)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
+import           Test.Util.HeaderValidation (addBogusTimeToFragment)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.PartialAccessors
 import           Test.Util.TersePrinting (terseHFragment, terseHeader)
@@ -94,11 +95,6 @@ data StaticCandidates =
   }
   deriving Show
 
-addTime ::
-     AnchoredFragment (Header TestBlock)
-  -> AnchoredFragment (HeaderWithTime TestBlock)
-addTime = undefined
-
 dropTime ::
      AnchoredFragment (HeaderWithTime blk)
   -> AnchoredFragment (Header blk)
@@ -123,7 +119,7 @@ staticCandidates GenesisTest {gtSecurityParam, gtGenesisWindow, gtBlockTree} =
       }
       where
         (loeFrag, suffixes) =
-          sharedCandidatePrefix curChain (second (addTime . toHeaders) <$> candidates)
+          sharedCandidatePrefix curChain (second (addBogusTimeToFragment . toHeaders) <$> candidates)
 
     selections = selection <$> branches
 
@@ -144,7 +140,7 @@ staticCandidates GenesisTest {gtSecurityParam, gtGenesisWindow, gtBlockTree} =
 prop_densityDisconnectStatic :: Property
 prop_densityDisconnectStatic =
   forAll gen $ \ StaticCandidates {k, sgen, suffixes, loeFrag} -> do
-    let (disconnect, _) = densityDisconnect sgen k (mkState <$> Map.fromList suffixes) (fmap (second addTime) suffixes) (addTime loeFrag)
+    let (disconnect, _) = densityDisconnect sgen k (mkState <$> Map.fromList suffixes) (fmap (second addBogusTimeToFragment) suffixes) (addBogusTimeToFragment loeFrag)
     counterexample "it should disconnect some node" (not (null disconnect))
       .&&.
      counterexample "it should not disconnect the honest peers"
@@ -153,7 +149,7 @@ prop_densityDisconnectStatic =
     mkState :: AnchoredFragment (Header TestBlock) -> ChainSyncState TestBlock
     mkState frag =
       ChainSyncState {
-        csCandidate = addTime frag,
+        csCandidate = addBogusTimeToFragment frag,
         csLatestSlot = SJust (AF.headSlot frag),
         csIdling = False
       }
@@ -388,12 +384,12 @@ evolveBranches EvolvingPeers {k, sgen, peers = initialPeers, fullTree} =
         states =
           candidates <&> \ csCandidate ->
             ChainSyncState {
-              csCandidate = addTime csCandidate,
+              csCandidate = addBogusTimeToFragment csCandidate,
               csIdling = False,
               csLatestSlot = SJust (AF.headSlot csCandidate)
             }
         -- Run GDD.
-        (loeFrag, suffixes) = sharedCandidatePrefix curChain (Map.toList $ fmap addTime candidates)
+        (loeFrag, suffixes) = sharedCandidatePrefix curChain (Map.toList $ fmap addBogusTimeToFragment candidates)
         (killedNow, bounds) = first Set.fromList $ densityDisconnect sgen k states suffixes loeFrag
         event = UpdateEvent {
           target,

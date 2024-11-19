@@ -349,6 +349,7 @@ library unstable-consensus-testlib
     Test.Util.FileLock
     Test.Util.HardFork.Future
     Test.Util.HardFork.OracularClock
+    Test.Util.HeaderValidation
     Test.Util.InvertedMap
     Test.Util.LogicalClock
     Test.Util.MockChain
@@ -391,6 +392,7 @@ library unstable-consensus-testlib
     cardano-binary:testlib,
     cardano-crypto-class,
     cardano-prelude,
+    cardano-slotting,
     cardano-slotting:testlib,
     cardano-strict-containers,
     cborg,
