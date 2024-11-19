@@ -299,7 +299,7 @@ runScheduler tracer varHandles ps@PointSchedule{psMinEndTime} peers lifecycle@No
 mkLoEVar ::
   IOLike m =>
   SchedulerConfig ->
-  m (LoE (StrictTVar m (AnchoredFragment (Header TestBlock))))
+  m (LoE (StrictTVar m (AnchoredFragment (HeaderWithTime TestBlock))))
 mkLoEVar SchedulerConfig {scEnableLoE}
   | scEnableLoE
   = LoEEnabled <$> newTVarIO (AF.Empty AF.AnchorGenesis)

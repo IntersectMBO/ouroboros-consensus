@@ -6,6 +6,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Operations involving chain selection: the initial chain selection and
@@ -52,6 +53,7 @@ import           Ouroboros.Consensus.Fragment.ValidatedDiff
 import qualified Ouroboros.Consensus.Fragment.ValidatedDiff as ValidatedDiff
 import           Ouroboros.Consensus.HardFork.Abstract
 import qualified Ouroboros.Consensus.HardFork.History as History
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Inspect
@@ -551,6 +553,8 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       -- Trim the LoE fragment to be anchored in the immutable tip, ie the
       -- anchor of @curChain@. In particular, this establishes the property that
       -- it intersects with the current chain.
+      sanitizeLoEFrag :: AnchoredFragment (HeaderWithTime blk)
+                      -> AnchoredFragment (HeaderWithTime blk)
       sanitizeLoEFrag loeFrag0 =
         case AF.splitAfterPoint loeFrag0 (AF.anchorPoint curChain) of
             Just (_, frag) -> frag
@@ -559,7 +563,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
             -- chain. This can temporarily be the case; we are conservative and
             -- use the empty fragment anchored at the immutable tip for chain
             -- selection.
-            Nothing        -> AF.Empty (AF.anchor curChain)
+            Nothing        ->  AF.Empty $ AF.castAnchor $ AF.anchor curChain
 
     loeFrag <- fmap sanitizeLoEFrag <$> cdbLoE
 
@@ -647,7 +651,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       => (ChainHash blk -> Set (HeaderHash blk))
       -> ChainAndLedger blk
          -- ^ The current chain and ledger
-      -> LoE (AnchoredFragment (Header blk))
+      -> LoE (AnchoredFragment (HeaderWithTime blk))
          -- ^ LoE fragment
       -> m (Point blk)
     addToCurrentChain succsOf curChainAndLedger loeFrag = do
@@ -726,7 +730,8 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
     -- 1. The given 'ChainDiff' can apply on top of the given 'ChainAndLedger'.
     -- 2. The LoE fragment intersects with the current selection.
     trimToLoE ::
-      LoE (AnchoredFragment (Header blk)) ->
+      (HasHeader blk', HeaderHash blk ~ HeaderHash blk') =>
+      LoE (AnchoredFragment blk') ->
       ChainAndLedger blk ->
       ChainDiff (Header blk) ->
       ChainDiff (Header blk)
@@ -757,7 +762,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       -> LookupBlockInfo blk
       -> ChainAndLedger blk
          -- ^ The current chain (anchored at @i@) and ledger
-      -> LoE (AnchoredFragment (Header blk))
+      -> LoE (AnchoredFragment (HeaderWithTime blk))
          -- ^ LoE fragment
       -> ChainDiff (HeaderFields blk)
          -- ^ Header fields for @(x,b]@

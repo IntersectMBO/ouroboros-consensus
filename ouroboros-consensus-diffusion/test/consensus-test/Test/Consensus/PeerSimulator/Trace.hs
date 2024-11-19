@@ -366,7 +366,7 @@ traceChainDBEventTestBlockWith tracer = \case
           trace $ "Ignored block older than k: " ++ terseRealPoint point
         ChainSelectionLoEDebug curChain (LoEEnabled loeFrag0) -> do
           trace $ "Current chain: " ++ terseHFragment curChain
-          trace $ "LoE fragment: " ++ terseHFragment loeFrag0
+          trace $ "LoE fragment: " ++ terseHWTFragment loeFrag0
         ChainSelectionLoEDebug _ LoEDisabled ->
           pure ()
         AddedReprocessLoEBlocksToQueue ->

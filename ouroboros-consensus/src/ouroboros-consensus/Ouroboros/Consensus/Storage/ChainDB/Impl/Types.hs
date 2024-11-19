@@ -79,6 +79,7 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Fragment.Diff (ChainDiff)
 import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture)
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import           Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -269,7 +270,7 @@ data ChainDbEnv m blk = CDB
     -- The number of blocks from the future is bounded by the number of
     -- upstream peers multiplied by the max clock skew divided by the slot
     -- length.
-  , cdbLoE             :: !(m (LoE (AnchoredFragment (Header blk))))
+  , cdbLoE             :: !(m (LoE (AnchoredFragment (HeaderWithTime blk))))
     -- ^ Configure the Limit on Eagerness. If this is 'LoEEnabled', it contains
     -- an action that returns the LoE fragment, which indicates the latest rollback
     -- point, i.e. we are not allowed to select a chain from which we could not
@@ -686,7 +687,7 @@ data TraceAddBlockEvent blk =
   | StoreButDontChange (RealPoint blk)
 
     -- | Debugging information about chain selection and LoE
-  | ChainSelectionLoEDebug (AnchoredFragment (Header blk)) (LoE (AnchoredFragment (Header blk)))
+  | ChainSelectionLoEDebug (AnchoredFragment (Header blk)) (LoE (AnchoredFragment (HeaderWithTime blk)))
 
     -- | The new block fits onto the current chain (first
     -- fragment) and we have successfully used it to extend our (new) current

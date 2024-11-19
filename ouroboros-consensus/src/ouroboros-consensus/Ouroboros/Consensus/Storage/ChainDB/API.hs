@@ -73,6 +73,7 @@ import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderStateHistory
                      (HeaderStateHistory (..))
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -899,4 +900,4 @@ data LoE a =
   LoEEnabled !a
   deriving (Eq, Show, Generic, NoThunks, Functor, Foldable, Traversable)
 
-type GetLoEFragment m blk = m (LoE (AnchoredFragment (Header blk)))
+type GetLoEFragment m blk = m (LoE (AnchoredFragment (HeaderWithTime blk)))

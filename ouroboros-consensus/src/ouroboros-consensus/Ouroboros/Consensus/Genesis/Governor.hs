@@ -94,7 +94,7 @@ gddWatcher ::
      -- changes, and when 'Syncing', whenever any of the candidate fragments
      -- changes. Also, we use this to disconnect from peers with insufficient
      -- densities.
-  -> StrictTVar m (AnchoredFragment (Header blk))
+  -> StrictTVar m (AnchoredFragment (HeaderWithTime blk))
      -- ^ The LoE fragment. It starts at a (recent) immutable tip and ends at
      -- the common intersection of the candidate fragments.
   -> Watcher m
@@ -178,7 +178,7 @@ evaluateGDD ::
   => TopLevelConfig blk
   -> Tracer m (TraceGDDEvent peer blk)
   -> GDDStateView m blk peer
-  -> m (AnchoredFragment (Header blk))
+  -> m (AnchoredFragment (HeaderWithTime blk))
 evaluateGDD cfg tracer stateView = do
     let GDDStateView {
             gddCtxCurChain          = curChain
@@ -228,7 +228,7 @@ evaluateGDD cfg tracer stateView = do
         traceWith tracer $ TraceGDDDisconnected losingPeersNE
 
     -- REVIEW: we should avoid this linear computation, but I don't see an alternative to changing the type of the LoE fragment.
-    pure $ dropTime loeFrag
+    pure loeFrag
 
 
 -- REVIEW: If dropping time is correct, this function will go into HeaderValidation most likely.

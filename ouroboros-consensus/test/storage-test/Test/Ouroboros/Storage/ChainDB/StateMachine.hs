@@ -363,7 +363,7 @@ data ChainDBEnv m blk = ChainDBEnv {
   , varVolatileDbFs :: StrictTMVar m MockFS
   , args            :: ChainDbArgs Identity m blk
     -- ^ Needed to reopen a ChainDB, i.e., open a new one.
-  , varLoEFragment  :: StrictTVar m (AnchoredFragment (Header blk))
+  , varLoEFragment  :: StrictTVar m (AnchoredFragment (HeaderWithTime blk))
   }
 
 open ::
@@ -1713,7 +1713,7 @@ mkArgs :: IOLike m
        -> CT.Tracer m (TraceEvent Blk)
        -> MaxClockSkew
        -> StrictTVar m SlotNo
-       -> LoE (StrictTVar m (AnchoredFragment (Header Blk)))
+       -> LoE (StrictTVar m (AnchoredFragment (HeaderWithTime Blk)))
        -> ChainDbArgs Identity m Blk
 mkArgs cfg chunkInfo initLedger registry nodeDBs tracer (MaxClockSkew maxClockSkew) varCurSlot varLoEFragment =
   let args = fromMinimalChainDbArgs MinimalChainDbArgs {
