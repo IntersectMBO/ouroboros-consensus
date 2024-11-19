@@ -20,13 +20,6 @@ data QueryVersion
 -- | Get the @QueryVersion@ supported by this @NodeToClientVersion@.
 nodeToClientVersionToQueryVersion :: NodeToClientVersion -> QueryVersion
 nodeToClientVersionToQueryVersion x = case x of
-  NodeToClientV_9  -> QueryVersion1
-  NodeToClientV_10 -> QueryVersion2
-  NodeToClientV_11 -> QueryVersion2
-  NodeToClientV_12 -> QueryVersion2
-  NodeToClientV_13 -> QueryVersion2
-  NodeToClientV_14 -> QueryVersion2
-  NodeToClientV_15 -> QueryVersion2
   NodeToClientV_16 -> QueryVersion2
   NodeToClientV_17 -> QueryVersion2
   NodeToClientV_18 -> QueryVersion2
