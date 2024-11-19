@@ -63,7 +63,7 @@ import           Test.Tasty.QuickCheck
 import           Test.Util.HeaderValidation (addBogusTimeToFragment)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.PartialAccessors
-import           Test.Util.TersePrinting (terseHFragment, terseHeader)
+import           Test.Util.TersePrinting (terseHFragment, terseHeader, terseHWTFragment)
 import           Test.Util.TestBlock (TestBlock)
 import           Test.Util.TestEnv (adjustQuickCheckMaxSize,
                      adjustQuickCheckTests)
@@ -94,11 +94,6 @@ data StaticCandidates =
     loeFrag  :: AnchoredFragment (HeaderWithTime TestBlock)
   }
   deriving Show
-
-dropTime ::
-     AnchoredFragment (HeaderWithTime blk)
-  -> AnchoredFragment (Header blk)
-dropTime = undefined
 
 -- | Define one selection for each branch of the given block tree, consisting of the first @k@ blocks (or what's
 -- available) of the branch's suffix.
@@ -174,7 +169,7 @@ data EvolvingPeers =
     k        :: SecurityParam,
     sgen     :: GenesisWindow,
     peers    :: Peers EvolvingPeer,
-    loeFrag  :: AnchoredFragment (Header TestBlock),
+    loeFrag  :: AnchoredFragment (HeaderWithTime TestBlock),
     fullTree :: BlockTree TestBlock
   }
   deriving Show
@@ -234,7 +229,7 @@ data UpdateEvent = UpdateEvent {
   , bounds   :: [(PeerId, DensityBounds TestBlock)]
     -- | The current chains
   , tree     :: BlockTree (Header TestBlock)
-  , loeFrag  :: AnchoredFragment (Header TestBlock)
+  , loeFrag  :: AnchoredFragment (HeaderWithTime TestBlock)
   , curChain :: AnchoredFragment (Header TestBlock)
   }
 
@@ -247,7 +242,7 @@ prettyUpdateEvent UpdateEvent {target, added, killed, bounds, tree, loeFrag, cur
   [
     "Extended " ++ condense target ++ " with " ++ terseHeader added,
     "        disconnect: " ++ show killed,
-    "        LoE frag: " ++ terseHFragment loeFrag,
+    "        LoE frag: " ++ terseHWTFragment loeFrag,
     "        selection: " ++ terseHFragment curChain
   ]
   ++ prettyDensityBounds bounds
@@ -397,13 +392,13 @@ evolveBranches EvolvingPeers {k, sgen, peers = initialPeers, fullTree} =
           killed = killedNow,
           bounds,
           tree = snapshotTree nextPeers,
-          loeFrag = dropTime loeFrag,
+          loeFrag = loeFrag,
           curChain
           }
         newEvents = event : events
         -- Check the termination condition and remove exhausted peers.
         updated = updatePeers sgen nextPeers killedBefore event
-      either (pure . result newEvents (dropTime loeFrag)) (step newEvents) updated
+      either (pure . result newEvents loeFrag) (step newEvents) updated
       where
         result evs f (res, final) = (res, EvolvingPeers {k, sgen, peers = final, loeFrag = f, fullTree}, reverse evs)
 
@@ -422,7 +417,7 @@ peerInfo EvolvingPeers {k = SecurityParam k, sgen = GenesisWindow sgen, loeFrag}
   [
     "k: " <> show k,
     "sgen: " <> show sgen,
-    "loeFrag: " <> terseHFragment loeFrag
+    "loeFrag: " <> terseHWTFragment loeFrag
   ]
 
 -- | Tests that when GDD disconnects a peer, it continues to disconnect it when
