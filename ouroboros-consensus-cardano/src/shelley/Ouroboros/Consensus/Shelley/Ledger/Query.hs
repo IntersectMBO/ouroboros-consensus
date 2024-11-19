@@ -1214,11 +1214,11 @@ answerShelleyLookupQueries idx cfg q forker =
           (castLedgerTables $ injectLedgerTables idx (LedgerTables $ KeysMK txins))
       pure
         $ SL.UTxO
-        $ Map.mapKeys (distribCanonicalTxIn idx)
+        $ Map.mapKeys (ejectCanonicalTxIn idx)
         $ Map.mapMaybeWithKey
             (\k v ->
-               if distribCanonicalTxIn idx k `Set.member` txins
-               then Just $ distribHardForkTxOut idx v
+               if ejectCanonicalTxIn idx k `Set.member` txins
+               then Just $ ejectHardForkTxOut idx v
                else Nothing)
             values
 
@@ -1243,7 +1243,6 @@ answerShelleyTraversingQueries ::
      , BlockSupportsHFLedgerQuery xs
      , HasCanonicalTxIn xs
      , HasHardForkTxOut xs
-     , HardForkHasLedgerTables xs
      , CanHardFork xs
      )
   => Monad m
@@ -1272,11 +1271,11 @@ answerShelleyTraversingQueries idx cfg q forker = case q of
       -> LedgerTables (ExtLedgerState (HardForkBlock xs)) ValuesMK
       -> Map (SL.TxIn (EraCrypto era)) (LC.TxOut era)
     partial queryPredicate (LedgerTables (ValuesMK vs)) =
-        Map.mapKeys (distribCanonicalTxIn idx)
+        Map.mapKeys (ejectCanonicalTxIn idx)
       $ Map.mapMaybeWithKey
           (\_k v ->
               if queryPredicate v
-              then Just $ distribHardForkTxOut idx v
+              then Just $ ejectHardForkTxOut idx v
               else Nothing)
           vs
 

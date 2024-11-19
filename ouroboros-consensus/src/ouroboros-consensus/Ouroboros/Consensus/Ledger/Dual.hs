@@ -620,7 +620,7 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
           )
       return $ TickedDualLedgerState {
           tickedDualLedgerStateMain    = main'
-        , tickedDualLedgerStateAux     = forgetTrackingDiffs aux'
+        , tickedDualLedgerStateAux     = trackingToValues aux'
         , tickedDualLedgerStateAuxOrig = tickedDualLedgerStateAuxOrig
         , tickedDualLedgerStateBridge  = updateBridgeWithTx
                                            tx

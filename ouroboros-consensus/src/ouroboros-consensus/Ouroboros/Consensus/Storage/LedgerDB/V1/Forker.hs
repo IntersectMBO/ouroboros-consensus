@@ -7,15 +7,9 @@
 {-# LANGUAGE TypeOperators #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V1.Forker (
-    -- * Main API
     closeAllForkers
-  , newForkerAtFromTip
-  , newForkerAtPoint
-  , newForkerAtTrustedTargetPoint
-    -- * Acquire consistent views
-  , acquireAtFromTip
-  , acquireAtPoint
-  , acquireAtTrustedTargetPoint
+  , newForkerAtTarget
+  , newForkerByRollback
   ) where
 
 import           Control.ResourceRegistry
@@ -50,20 +44,8 @@ import           Ouroboros.Network.Protocol.LocalStateQuery.Type
   Close
 -------------------------------------------------------------------------------}
 
-newForkerAtTrustedTargetPoint ::
-     ( IOLike m
-     , IsLedger l
-     , HasLedgerTables l
-     , LedgerSupportsProtocol blk
-     )
-  => LedgerDBHandle m l blk
-  -> ResourceRegistry m
-  -> Target (Point blk)
-  -> m (Forker m l blk)
-newForkerAtTrustedTargetPoint h rr pt = getEnv h $ \ldbEnv@LedgerDBEnv{ldbLock = AllowThunk lock} -> do
-    withReadLock lock (acquireAtTrustedTargetPoint ldbEnv rr pt) >>= newForker h ldbEnv
-
-newForkerAtPoint ::
+-- | Will call 'error' if the point is not on the LedgerDB
+newForkerAtTarget ::
      ( HeaderHash l ~ HeaderHash blk
      , IOLike m
      , IsLedger l
@@ -73,14 +55,16 @@ newForkerAtPoint ::
      )
   => LedgerDBHandle m l blk
   -> ResourceRegistry m
-  -> Point blk
-  -> m (Either GetForkerError (Forker m l blk))
-newForkerAtPoint h rr pt = getEnv h $ \ldbEnv@LedgerDBEnv{ldbLock = AllowThunk lock} -> do
-    withReadLock lock (acquireAtPoint ldbEnv rr pt) >>= traverse (newForker h ldbEnv)
+  -> Target (Point blk)
+  ->  m (Either GetForkerError (Forker m l blk))
+newForkerAtTarget h rr pt = getEnv h $ \ldbEnv@LedgerDBEnv{ldbLock = AllowThunk lock} ->
+    withReadLock lock (acquireAtTarget ldbEnv rr (Right pt)) >>= traverse (newForker h ldbEnv)
 
-newForkerAtFromTip ::
-     ( IOLike m
+newForkerByRollback ::
+     ( HeaderHash l ~ HeaderHash blk
+     , IOLike m
      , IsLedger l
+     , StandardHash l
      , HasLedgerTables l
      , LedgerSupportsProtocol blk
      )
@@ -88,9 +72,9 @@ newForkerAtFromTip ::
   -> ResourceRegistry m
      -- | How many blocks to rollback from the tip
   -> Word64
-  -> m (Either ExceededRollback (Forker m l blk))
-newForkerAtFromTip h rr n = getEnv h $ \ldbEnv@LedgerDBEnv{ldbLock = AllowThunk lock} -> do
-    withReadLock lock (acquireAtFromTip ldbEnv rr n) >>= traverse (newForker h ldbEnv)
+  -> m (Either GetForkerError (Forker m l blk))
+newForkerByRollback h rr n = getEnv h $ \ldbEnv@LedgerDBEnv{ldbLock = AllowThunk lock} -> do
+    withReadLock lock (acquireAtTarget ldbEnv rr (Left n)) >>= traverse (newForker h ldbEnv)
 
 -- | Close all open block and header 'Forker's.
 closeAllForkers ::
@@ -119,27 +103,7 @@ type Resources m l =
 
 -- | Acquire both a value handle and a db changelog at the tip. Holds a read lock
 -- while doing so.
-acquireAtTrustedTargetPoint ::
-     (IOLike m, StandardHash blk, GetTip l, HasLedgerTables l)
-  => LedgerDBEnv m l blk
-  -> ResourceRegistry m
-  -> Target (Point blk)
-  -> ReadLocked m (Resources m l)
-acquireAtTrustedTargetPoint ldbEnv rr VolatileTip =
-    readLocked $ do
-      dblog <- readTVarIO (ldbChangelog ldbEnv)
-      (,dblog) <$> acquire ldbEnv rr dblog
-acquireAtTrustedTargetPoint ldbEnv rr ImmutableTip =
-    readLocked $ do
-      dblog <- readTVarIO (ldbChangelog ldbEnv)
-      (, rollbackToAnchor dblog)
-        <$> acquire ldbEnv rr dblog
-acquireAtTrustedTargetPoint _ _ (SpecificPoint pt) =
-  error $ "calling acquireAtTrustedTargetPoint for a not well-known point: " <> show pt
-
--- | Acquire both a value handle and a db changelog at the requested point. Holds
--- a read lock while doing so.
-acquireAtPoint ::
+acquireAtTarget ::
      forall m l blk. (
        HeaderHash l ~ HeaderHash blk
      , IOLike m
@@ -150,35 +114,30 @@ acquireAtPoint ::
      )
   => LedgerDBEnv m l blk
   -> ResourceRegistry m
-  -> Point blk
+  -> Either Word64 (Target (Point blk))
   -> ReadLocked m (Either GetForkerError (Resources m l))
-acquireAtPoint ldbEnv rr pt =
+acquireAtTarget ldbEnv rr (Right VolatileTip) =
+    readLocked $ do
+      dblog <- readTVarIO (ldbChangelog ldbEnv)
+      Right . (,dblog) <$> acquire ldbEnv rr dblog
+acquireAtTarget ldbEnv rr (Right ImmutableTip) =
+    readLocked $ do
+      dblog <- readTVarIO (ldbChangelog ldbEnv)
+      Right . (, rollbackToAnchor dblog)
+        <$> acquire ldbEnv rr dblog
+acquireAtTarget ldbEnv rr (Right (SpecificPoint pt)) =
     readLocked $ do
       dblog <- readTVarIO (ldbChangelog ldbEnv)
       let immTip = getTip $ anchor dblog
       case rollback pt dblog of
-        Nothing     | pointSlot pt < pointSlot immTip -> pure $ Left PointTooOld
+        Nothing     | pointSlot pt < pointSlot immTip -> pure $ Left $ PointTooOld Nothing
                     | otherwise   -> pure $ Left PointNotOnChain
         Just dblog' -> Right . (,dblog') <$> acquire ldbEnv rr dblog'
-
--- | Acquire both a value handle and a db changelog at n blocks before the tip.
--- Holds a read lock while doing so.
-acquireAtFromTip ::
-     forall m l blk. (
-       IOLike m
-     , IsLedger l
-     , HasLedgerTables l
-     )
-  => LedgerDBEnv m l blk
-  -> ResourceRegistry m
-  -> Word64
-  -> ReadLocked m (Either ExceededRollback (Resources m l))
-acquireAtFromTip ldbEnv rr n =
-    readLocked $ do
+acquireAtTarget ldbEnv rr (Left n) = readLocked $ do
       dblog <- readTVarIO (ldbChangelog ldbEnv)
       case rollbackN n dblog of
         Nothing ->
-          return $ Left $ ExceededRollback {
+          return $ Left $ PointTooOld $ Just $ ExceededRollback {
               API.rollbackMaximum   = maxRollback dblog
             , API.rollbackRequested = n
             }

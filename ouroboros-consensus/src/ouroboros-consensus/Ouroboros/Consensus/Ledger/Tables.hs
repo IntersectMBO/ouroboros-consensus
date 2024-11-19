@@ -1,7 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
@@ -109,34 +108,22 @@
 -- This operation provided a 'TrackingMK' which is in fact just a 'ValuesMK' and
 -- 'DiffMK' put together.
 --
--- We can then use those differences to /forward/ a set of values, so for
+-- We can then use those differences to /forward/ a collection of values, so for
 -- example (taking the example above):
 --
 -- @
--- let state1 = LedgerState {
---                 ...
---               , theTables = 'ValuesMK' (Map.fromList [(\'a\', 100), (\'b\', 100)])
---              }
---     state2 = LedgerState {
---                ...
---              , theTables = 'ValuesMK' (Map.fromList [(\'a\', 100), (\'c\', 200)])
---              }
---     state3 = LedgerState {
---                ...
---              , theTables = 'ValuesMK' (Map.fromList [])
---              }
+-- let tables1 = 'ValuesMK' (Map.fromList [(\'a\', 100), (\'b\', 100)])
+--     tables2 = 'ValuesMK' (Map.fromList [(\'a\', 100), (\'c\', 200)])
+--     diffs = 'Ouroboros.Consensus.Ledger.Tables.Utils.rawForgetTrackingValues'
+--           $ 'Ouroboros.Consensus.Ledger.Tables.Utils.rawCalculateDifference' tables1 tables2
 -- in
---   'Ouroboros.Consensus.Ledger.Tables.Utils.applyDiffs' state3 ('Ouroboros.Consensus.Ledger.Tables.Utils.forgetTrackingValues' $ 'Ouroboros.Consensus.Ledger.Tables.Utils.calculateDifference' state1 state2)
--- ==
---  LedgerState {
---      ...
---    , theTables = 'ValuesMK' (Map.fromList [(\'c\', 200)])
---    }
+--   'Ouroboros.Consensus.Ledger.Tables.Utils.rawApplyDiffs' tables1 diffs == tables2
 -- @
 --
--- Notice that we produced differences for @\'b\'@ and @\'c\'@, but as the input
--- state (@state3@) didn't contain @\'b\'@ the only difference that was applied
--- was the one of @\'c\'@.
+-- Note: we usually don't call the @raw*@ methods directly but instead call the
+-- corresponding function that operates on
+-- t'Ouroboros.Consensus.Ledger.Basics.LedgerState's. See
+-- "Ouroboros.Consensus.Ledger.Tables.Utils".
 --
 -- Also when applying a block that contains some transactions, we can produce
 -- 'LedgerTable's of @KeysMK@, by gathering the txins required by the
@@ -149,7 +136,7 @@
 --
 -- We shall use those later on to read the txouts from some storage.
 --
--- We call those types ending in "MK" mapkinds. They model the different types
+-- We call those types ending in \"MK\" mapkinds. They model the different types
 -- of collections and contained data in the tables. This example already covered
 -- most of the standard mapkinds, in particular:
 --

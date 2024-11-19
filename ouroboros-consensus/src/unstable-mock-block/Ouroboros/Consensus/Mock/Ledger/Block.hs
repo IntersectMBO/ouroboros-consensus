@@ -365,7 +365,7 @@ instance MockProtocolSpecific c ext
       => ApplyBlock (LedgerState (SimpleBlock c ext)) (SimpleBlock c ext) where
   applyBlockLedgerResult a blk st =
       fmap ( pureLedgerResult
-           . forgetTrackingValues
+           . trackingToDiffs
            . calculateDifference st
            . unstowLedgerTables
            )
@@ -531,7 +531,7 @@ instance MockProtocolSpecific c ext
      let st' = stowLedgerTables st
      st'' <- unstowLedgerTables
              <$> updateSimpleUTxO cfg slot tx st'
-     return ( forgetTrackingValues $ calculateDifference st st''
+     return ( trackingToDiffs $ calculateDifference st st''
              , ValidatedSimpleGenTx tx )
 
   reapplyTx cfg slot vtx st = attachAndApplyDiffs st . fst

@@ -201,7 +201,7 @@ txSize (TestBlockGenTx tx) =
 
 instance Ledger.LedgerSupportsMempool TestBlock where
   applyTx _cfg _shouldIntervene _slot (TestBlockGenTx tx) tickedSt =
-    except $ fmap ((, ValidatedGenTx (TestBlockGenTx tx)) . Ledger.forgetTrackingValues)
+    except $ fmap ((, ValidatedGenTx (TestBlockGenTx tx)) . Ledger.trackingToDiffs)
            $ applyDirectlyToPayloadDependentState tickedSt tx
 
   reapplyTx cfg slot (ValidatedGenTx genTx) tickedSt =

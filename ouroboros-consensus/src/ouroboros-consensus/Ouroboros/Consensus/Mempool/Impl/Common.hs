@@ -343,7 +343,7 @@ revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
       (IS {
          isTxs          = TxSeq.fromList $ filterTxTickets txTickets val
        , isTxIds        = Set.fromList $ map (txId . txForgetValidated) val
-       , isLedgerState  = forgetTrackingValues st'
+       , isLedgerState  = trackingToDiffs st'
        , isTip          = castPoint $ getTip st
        , isSlotNo       = slot
        , isLastTicketNo = lastTicketNo

@@ -46,7 +46,7 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
-import           Ouroboros.Consensus.Ledger.Tables.Utils
+import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Common
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
 import           Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
@@ -93,7 +93,7 @@ newInMemoryLedgerTablesHandle someFS@(SomeHasFS hasFS) l = do
         pure x
     , read = \keys -> do
         hs <- readTVarIO tv
-        guardClosed hs (\st -> pure $ ltliftA2 rawRestrictValues st keys)
+        guardClosed hs (pure . flip (ltliftA2 (\(ValuesMK v) (KeysMK k) -> ValuesMK $ v `Map.restrictKeys` k)) keys)
     , readRange = \(f, t) -> do
         hs <- readTVarIO tv
         guardClosed hs (\(LedgerTables (ValuesMK m)) ->
@@ -101,7 +101,7 @@ newInMemoryLedgerTablesHandle someFS@(SomeHasFS hasFS) l = do
     , pushDiffs = \(!diffs) ->
         atomically
         $ modifyTVar tv
-        (\r -> guardClosed r (\st -> LedgerTablesHandleOpen (ltliftA2 rawApplyDiffs st diffs)))
+        (\r -> guardClosed r (LedgerTablesHandleOpen . flip (ltliftA2 (\(ValuesMK vals) (DiffMK d) -> ValuesMK (Diff.applyDiff vals d))) diffs))
     , takeHandleSnapshot = \snapshotName -> do
         createDirectoryIfMissing hasFS True $ mkFsPath [snapshotName, "tables"]
         h <- readTVarIO tv

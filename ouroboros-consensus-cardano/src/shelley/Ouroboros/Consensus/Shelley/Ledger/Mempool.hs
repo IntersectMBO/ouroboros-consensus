@@ -255,7 +255,7 @@ applyShelleyTx cfg wti slot (ShelleyTx _ tx) st0 = do
          tx
 
     let st' :: TickedLedgerState (ShelleyBlock proto era) DiffMK
-        st' = forgetTrackingValues
+        st' = trackingToDiffs
             $ calculateDifference st0
             $ unstowLedgerTables
             $ set theLedgerLens mempoolState' st1

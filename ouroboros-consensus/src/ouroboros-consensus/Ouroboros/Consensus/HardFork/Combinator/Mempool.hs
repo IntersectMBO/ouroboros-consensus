@@ -116,7 +116,6 @@ type DecomposedReapplyTxsResult xs =
     FlipTickedLedgerState TrackingMK
 
 instance ( CanHardFork xs
-         , HardForkHasLedgerTables xs
          , HasCanonicalTxIn xs
          , HasHardForkTxOut xs
          ) => LedgerSupportsMempool (HardForkBlock xs) where

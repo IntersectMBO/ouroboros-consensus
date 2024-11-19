@@ -457,7 +457,7 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
    mkBackingStore :: HasCallStack => Db m l -> API.LedgerBackingStore m l
    mkBackingStore db =
        let bsClose :: m ()
-           bsClose = Status.withWriteAccess' dbStatusLock traceAlreadyClosed $ do
+           bsClose = Status.withWriteAccess dbStatusLock traceAlreadyClosed $ do
              Trace.traceWith dbTracer API.BSClosing
              openHandles <- IOLike.readTVarIO dbOpenHandles
              forM_ openHandles runCleanup
@@ -468,17 +468,17 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
             where
               traceAlreadyClosed = Trace.traceWith dbTracer API.BSAlreadyClosed
 
-           bsCopy bsp = Status.withReadAccess dbStatusLock LMDBErrClosed $ do
+           bsCopy bsp = Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
              to <- checkAndOpenDbDir DirMustNotExist snapFS' bsp
              lmdbCopy path dbTracer dbEnv to
 
-           bsValueHandle = Status.withReadAccess dbStatusLock LMDBErrClosed $ do
+           bsValueHandle = Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
              mkLMDBBackingStoreValueHandle db
 
            bsWrite :: SlotNo -> LedgerTables l DiffMK -> m ()
            bsWrite slot diffs = do
              Trace.traceWith dbTracer $ API.BSWriting slot
-             Status.withReadAccess dbStatusLock LMDBErrClosed $ do
+             Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
                oldSlot <- liftIO $ LMDB.readWriteTransaction dbEnv $ withDbSeqNoRW dbState $ \s@DbSeqNo{dbsSeq} -> do
                  unless (dbsSeq <= At slot) $
                    -- This inequality is non-strict because of EBBs having the
@@ -538,8 +538,8 @@ mkLMDBBackingStoreValueHandle db = do
 
     bsvhClose :: m ()
     bsvhClose =
-      Status.withReadAccess' dbStatusLock traceAlreadyClosed $ do
-      Status.withWriteAccess' vhStatusLock traceTVHAlreadyClosed $ do
+      Status.withReadAccess dbStatusLock traceAlreadyClosed $ do
+      Status.withWriteAccess vhStatusLock traceTVHAlreadyClosed $ do
         Trace.traceWith tracer API.BSVHClosing
         runCleanup cleanup
         IOLike.atomically $ IOLike.modifyTVar' dbOpenHandles (Map.delete vhId)
@@ -551,8 +551,8 @@ mkLMDBBackingStoreValueHandle db = do
 
     bsvhRead :: LedgerTables l KeysMK -> m (LedgerTables l ValuesMK)
     bsvhRead keys =
-      Status.withReadAccess dbStatusLock LMDBErrClosed $ do
-      Status.withReadAccess vhStatusLock (LMDBErrNoValueHandle vhId) $ do
+      Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
+      Status.withReadAccess vhStatusLock (throwIO (LMDBErrNoValueHandle vhId)) $ do
         Trace.traceWith tracer API.BSVHReading
         res <- liftIO $ TrH.submitReadOnly trh (ltzipWith3A readLMDBTable dbBackingTables codecLedgerTables keys)
         Trace.traceWith tracer API.BSVHRead
@@ -562,8 +562,8 @@ mkLMDBBackingStoreValueHandle db = do
          API.RangeQuery (LedgerTables l KeysMK)
       -> m (LedgerTables l ValuesMK)
     bsvhRangeRead rq =
-      Status.withReadAccess dbStatusLock LMDBErrClosed $ do
-      Status.withReadAccess vhStatusLock (LMDBErrNoValueHandle vhId) $ do
+      Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
+      Status.withReadAccess vhStatusLock (throwIO (LMDBErrNoValueHandle vhId)) $ do
         Trace.traceWith tracer API.BSVHRangeReading
 
         let
@@ -588,8 +588,8 @@ mkLMDBBackingStoreValueHandle db = do
 
     bsvhStat :: m API.Statistics
     bsvhStat =
-      Status.withReadAccess dbStatusLock LMDBErrClosed $ do
-      Status.withReadAccess vhStatusLock (LMDBErrNoValueHandle vhId) $ do
+      Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
+      Status.withReadAccess vhStatusLock (throwIO (LMDBErrNoValueHandle vhId)) $ do
         Trace.traceWith tracer API.BSVHStatting
         let transaction = do
               DbSeqNo{dbsSeq} <- readDbSeqNo dbState

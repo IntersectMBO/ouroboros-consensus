@@ -128,7 +128,9 @@ initialChainSelection immutableDB volatileDB lgrDB rr tracer cfg varInvalid
     --
     -- We don't use 'LedgerDB.withTipForker' here, because 'curForker' might be
     -- returned as part of the selected chain.
-    curForker <- LedgerDB.getForkerAtTrustedTargetPoint lgrDB rr VolatileTip
+    curForker <- LedgerDB.getForkerAtTarget lgrDB rr VolatileTip >>= \case
+      Left{} -> error "Unreachable, VolatileTip MUST be in the LedgerDB"
+      Right frk -> pure frk
 
     chains <- constructChains i succsOf
 
@@ -142,6 +144,7 @@ initialChainSelection immutableDB volatileDB lgrDB rr tracer cfg varInvalid
       Nothing      -> return curChainAndLedger
       Just chains' ->
         chainSelection' curChainAndLedger chains' >>= \case
+          -- The returned forker will be closed in 'openDBInternal'.
           Nothing       -> pure curChainAndLedger
           Just newChain -> LedgerDB.forkerClose curForker >> toChainAndLedger newChain
   where

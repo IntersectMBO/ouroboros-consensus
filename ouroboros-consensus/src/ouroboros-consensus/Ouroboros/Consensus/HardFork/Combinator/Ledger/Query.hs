@@ -63,8 +63,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.HardFork.Combinator.Block
 import           Ouroboros.Consensus.HardFork.Combinator.Info
-import           Ouroboros.Consensus.HardFork.Combinator.Ledger
-                     (HardForkHasLedgerTables)
+import           Ouroboros.Consensus.HardFork.Combinator.Ledger ()
 import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import           Ouroboros.Consensus.HardFork.Combinator.State (Current (..),
                      Past (..), Situated (..))
@@ -198,7 +197,6 @@ instance All SingleEraBlock xs => SameDepIndex2 (BlockQuery (HardForkBlock xs)) 
 -------------------------------------------------------------------------------}
 
 instance ( All SingleEraBlock xs
-         , HardForkHasLedgerTables xs
          , BlockSupportsHFLedgerQuery xs
          , CanHardFork xs
          )

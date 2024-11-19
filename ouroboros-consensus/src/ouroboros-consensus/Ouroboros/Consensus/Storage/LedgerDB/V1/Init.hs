@@ -165,8 +165,7 @@ implMkLedgerDb h = (LedgerDB {
     , getImmutableTip           = getEnvSTM  h implGetImmutableTip
     , getPastLedgerState        = getEnvSTM1 h implGetPastLedgerState
     , getHeaderStateHistory     = getEnvSTM  h implGetHeaderStateHistory
-    , getForkerAtTrustedTargetPoint = newForkerAtTrustedTargetPoint h
-    , getForkerAtPoint          = newForkerAtPoint h
+    , getForkerAtTarget         = newForkerAtTarget h
     , validate                  = getEnv5    h (implValidate h)
     , getPrevApplied            = getEnvSTM  h implGetPrevApplied
     , garbageCollect            = getEnvSTM1 h implGarbageCollect
@@ -241,7 +240,7 @@ implValidate h ldbEnv rr tr cache rollbacks hdrs =
           prev <- readTVar (ldbPrevApplied ldbEnv)
           writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l))
       (readTVar (ldbPrevApplied ldbEnv))
-      (newForkerAtFromTip h)
+      (newForkerByRollback h)
       rr
       tr
       cache

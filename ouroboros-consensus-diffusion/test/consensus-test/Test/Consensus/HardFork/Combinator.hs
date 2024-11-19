@@ -379,7 +379,7 @@ instance HasCanonicalTxIn '[BlockA, BlockB] where
   injectCanonicalTxIn (IS IZ)        key = absurd key
   injectCanonicalTxIn (IS (IS idx')) _   = case idx' of {}
 
-  distribCanonicalTxIn _ key = absurd $ getBlockABTxIn key
+  ejectCanonicalTxIn _ key = absurd $ getBlockABTxIn key
 
   encodeCanonicalTxIn = toCBOR
 
@@ -388,7 +388,7 @@ instance HasCanonicalTxIn '[BlockA, BlockB] where
 instance HasHardForkTxOut '[BlockA, BlockB] where
   type HardForkTxOut '[BlockA, BlockB] = DefaultHardForkTxOut '[BlockA, BlockB]
   injectHardForkTxOut = injectHardForkTxOutDefault
-  distribHardForkTxOut = distribHardForkTxOutDefault
+  ejectHardForkTxOut = ejectHardForkTxOutDefault
 
 instance SerializeHardForkTxOut '[BlockA, BlockB] where
   encodeHardForkTxOut _ = encodeHardForkTxOutDefault

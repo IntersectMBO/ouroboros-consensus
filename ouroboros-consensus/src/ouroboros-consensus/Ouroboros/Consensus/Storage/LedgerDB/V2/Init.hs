@@ -152,8 +152,7 @@ implMkLedgerDb h bss = (LedgerDB {
     , getImmutableTip           = getEnvSTM  h implGetImmutableTip
     , getPastLedgerState        = getEnvSTM1 h implGetPastLedgerState
     , getHeaderStateHistory     = getEnvSTM  h implGetHeaderStateHistory
-    , getForkerAtTrustedTargetPoint = newForkerAtTrustedTargetPoint h
-    , getForkerAtPoint          = newForkerAtPoint h
+    , getForkerAtTarget         = newForkerAtTarget h
     , validate                  = getEnv5    h (implValidate h)
     , getPrevApplied            = getEnvSTM  h implGetPrevApplied
     , garbageCollect            = getEnvSTM1 h implGarbageCollect
@@ -184,11 +183,14 @@ mkInternals bss h = TestInternals {
                 . anchorHandle
                 =<< readTVarIO (ldbSeq env)
     , reapplyThenPushNOW = \blk -> getEnv h $ \env -> withRegistry $ \reg -> do
-          frk <- newForkerAtTrustedTargetPoint h reg VolatileTip
-          st <- atomically $ forkerGetLedgerState frk
-          tables <- forkerReadTables frk (getBlockKeySets blk)
-          let st' = tickThenReapply (ledgerDbCfg $ ldbCfg env) blk (st `withLedgerTables` tables)
-          forkerPush frk st' >> atomically (forkerCommit frk) >> forkerClose frk
+          eFrk <- newForkerAtTarget h reg VolatileTip
+          case eFrk of
+            Left {} -> error "Unreachable, Volatile tip MUST be in LedgerDB"
+            Right frk -> do
+              st <- atomically $ forkerGetLedgerState frk
+              tables <- forkerReadTables frk (getBlockKeySets blk)
+              let st' = tickThenReapply (ledgerDbCfg $ ldbCfg env) blk (st `withLedgerTables` tables)
+              forkerPush frk st' >> atomically (forkerCommit frk) >> forkerClose frk
     , wipeLedgerDB = getEnv h $ destroySnapshots . ldbHasFS
     , closeLedgerDB =
        let LDBHandle tvar = h in
@@ -289,7 +291,7 @@ implValidate h ldbEnv rr tr cache rollbacks hdrs =
           prev <- readTVar (ldbPrevApplied ldbEnv)
           writeTVar (ldbPrevApplied ldbEnv) (Foldable.foldl' (flip Set.insert) prev l))
       (readTVar (ldbPrevApplied ldbEnv))
-      (newForkerAtFromTip h)
+      (newForkerByRollback h)
       rr
       tr
       cache

@@ -155,7 +155,7 @@ class ( UpdateLedger blk
            st'
       )
     $ Foldable.foldl' (\(accE, accV, st') tx ->
-                 case runExcept (reapplyTx cfg slot tx $ forgetTrackingDiffs st') of
+                 case runExcept (reapplyTx cfg slot tx $ trackingToValues st') of
                    Left err   -> (Invalidated tx err : accE, accV, st')
                    Right st'' -> (accE, tx : accV, prependTrackingDiffs st' st'')
              ) ([], [], attachEmptyDiffs st) txs

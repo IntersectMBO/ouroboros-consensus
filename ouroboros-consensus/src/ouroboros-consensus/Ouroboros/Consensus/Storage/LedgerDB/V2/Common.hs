@@ -31,9 +31,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.Common (
   , getEnvSTM
   , getEnvSTM1
     -- * Forkers
-  , newForkerAtFromTip
-  , newForkerAtPoint
-  , newForkerAtTrustedTargetPoint
+  , newForkerAtTarget
+  , newForkerByRollback
   ) where
 
 import           Control.Arrow
@@ -423,72 +422,49 @@ implForkerCommit env = do
 
 -- | This function must hold the 'LDBLock' such that handles are not released
 -- before they are duplicated.
-acquireAtTrustedTargetPoint ::
-     (IOLike m, GetTip l, StandardHash blk)
-  => LedgerDBEnv m l blk
-  -> Target (Point blk)
-  -> LDBLock
-  -> m (StateRef m l)
-acquireAtTrustedTargetPoint ldbEnv VolatileTip _ = do
-  l <- readTVarIO (ldbSeq ldbEnv)
-  let StateRef st tbs = currentHandle l
-  t <- duplicate tbs
-  pure (StateRef st t)
-acquireAtTrustedTargetPoint ldbEnv ImmutableTip _ = do
-  l <- readTVarIO (ldbSeq ldbEnv)
-  let StateRef st tbs = anchorHandle l
-  t <- duplicate tbs
-  pure (StateRef st t)
-acquireAtTrustedTargetPoint _ (SpecificPoint pt) _ =
-  error $ "calling acquireAtTrustedTargetPoint for a not well-known point: " <> show pt
-
--- | This function must hold the 'LDBLock' such that handles are not released
--- before they are duplicated.
-acquireAtPoint ::
-     forall m l blk. (
-       HeaderHash l ~ HeaderHash blk
+acquireAtTarget ::
+     ( HeaderHash l ~ HeaderHash blk
      , IOLike m
-     , IsLedger l
+     , GetTip l
      , StandardHash l
      , LedgerSupportsProtocol blk
      )
   => LedgerDBEnv m l blk
-  -> Point blk
+  -> Either Word64 (Target (Point blk))
   -> LDBLock
   -> m (Either GetForkerError (StateRef m l))
-acquireAtPoint ldbEnv pt _ = do
-      dblog <- readTVarIO (ldbSeq ldbEnv)
-      let immTip = getTip $ anchor dblog
-      case currentHandle <$> rollback pt dblog of
-        Nothing | pointSlot pt < pointSlot immTip -> pure $ Left PointTooOld
-                | otherwise   -> pure $ Left PointNotOnChain
-        Just (StateRef st tbs) ->
-              Right . StateRef st <$> duplicate tbs
-
--- | This function must hold the 'LDBLock' such that handles are not released
--- before they are duplicated.
-acquireAtFromTip ::
-     forall m l blk. (
-       IOLike m
-     , IsLedger l
-     )
-  => LedgerDBEnv m l blk
-  -> Word64
-  -> LDBLock
-  -> m (Either ExceededRollback (StateRef m l))
-acquireAtFromTip ldbEnv n _ = do
+acquireAtTarget ldbEnv (Right VolatileTip) _ = do
+  l <- readTVarIO (ldbSeq ldbEnv)
+  let StateRef st tbs = currentHandle l
+  t <- duplicate tbs
+  pure $ Right $ StateRef st t
+acquireAtTarget ldbEnv (Right ImmutableTip) _ = do
+  l <- readTVarIO (ldbSeq ldbEnv)
+  let StateRef st tbs = anchorHandle l
+  t <- duplicate tbs
+  pure $ Right $ StateRef st t
+acquireAtTarget ldbEnv (Right (SpecificPoint pt)) _ = do
+  dblog <- readTVarIO (ldbSeq ldbEnv)
+  let immTip = getTip $ anchor dblog
+  case currentHandle <$> rollback pt dblog of
+    Nothing | pointSlot pt < pointSlot immTip -> pure $ Left $ PointTooOld Nothing
+            | otherwise   -> pure $ Left PointNotOnChain
+    Just (StateRef st tbs) ->
+          Right . StateRef st <$> duplicate tbs
+acquireAtTarget ldbEnv (Left n) _ = do
       dblog <- readTVarIO (ldbSeq ldbEnv)
       case currentHandle <$> rollbackN n dblog of
         Nothing ->
-          return $ Left $ ExceededRollback {
+          return $ Left $ PointTooOld $ Just $ ExceededRollback {
               rollbackMaximum   = maxRollback dblog
             , rollbackRequested = n
             }
         Just (StateRef st tbs) ->
               Right . StateRef st <$> duplicate tbs
 
-newForkerAtTrustedTargetPoint ::
-     ( IOLike m
+newForkerAtTarget ::
+     ( HeaderHash l ~ HeaderHash blk
+     , IOLike m
      , IsLedger l
      , HasLedgerTables l
      , LedgerSupportsProtocol blk
@@ -497,11 +473,11 @@ newForkerAtTrustedTargetPoint ::
   => LedgerDBHandle m l blk
   -> ResourceRegistry m
   -> Target (Point blk)
-  -> m (Forker m l blk)
-newForkerAtTrustedTargetPoint h rr pt = getEnv h $ \ldbEnv@LedgerDBEnv{ldbReleaseLock = AllowThunk lock} -> do
-    RAWLock.withReadAccess lock (acquireAtTrustedTargetPoint ldbEnv pt) >>= newForker h ldbEnv rr
+  -> m (Either GetForkerError (Forker m l blk))
+newForkerAtTarget h rr pt = getEnv h $ \ldbEnv@LedgerDBEnv{ldbReleaseLock = AllowThunk lock} ->
+    RAWLock.withReadAccess lock (acquireAtTarget ldbEnv (Right pt)) >>= traverse (newForker h ldbEnv rr)
 
-newForkerAtPoint ::
+newForkerByRollback ::
      ( HeaderHash l ~ HeaderHash blk
      , IOLike m
      , IsLedger l
@@ -511,24 +487,10 @@ newForkerAtPoint ::
      )
   => LedgerDBHandle m l blk
   -> ResourceRegistry m
-  -> Point blk
-  -> m (Either GetForkerError (Forker m l blk))
-newForkerAtPoint h rr pt = getEnv h $ \ldbEnv@LedgerDBEnv{ldbReleaseLock = AllowThunk lock} -> do
-    RAWLock.withReadAccess lock (acquireAtPoint ldbEnv pt) >>= traverse (newForker h ldbEnv rr)
-
-newForkerAtFromTip ::
-     ( IOLike m
-     , IsLedger l
-     , HasLedgerTables l
-     , LedgerSupportsProtocol blk
-     , StandardHash l
-     )
-  => LedgerDBHandle m l blk
-  -> ResourceRegistry m
   -> Word64
-  -> m (Either ExceededRollback (Forker m l blk))
-newForkerAtFromTip h rr n = getEnv h $ \ldbEnv@LedgerDBEnv{ldbReleaseLock = AllowThunk lock} -> do
-    RAWLock.withReadAccess lock (acquireAtFromTip ldbEnv n) >>= traverse (newForker h ldbEnv rr)
+  -> m (Either GetForkerError (Forker m l blk))
+newForkerByRollback h rr n = getEnv h $ \ldbEnv@LedgerDBEnv{ldbReleaseLock = AllowThunk lock} -> do
+    RAWLock.withReadAccess lock (acquireAtTarget ldbEnv (Left n)) >>= traverse (newForker h ldbEnv rr)
 
 -- | Close all open 'Forker's.
 closeAllForkers ::

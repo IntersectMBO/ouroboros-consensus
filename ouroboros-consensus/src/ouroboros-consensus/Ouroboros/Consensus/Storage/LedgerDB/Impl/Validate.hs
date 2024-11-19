@@ -61,7 +61,7 @@ data ValidateArgs m blk = ValidateArgs {
     -- | Get the current set of previously applied blocks
   , prevApplied :: !(STM m (Set (RealPoint blk)))
     -- | Create a forker from the tip
-  , forkerAtFromTip :: !(ResourceRegistry m -> Word64 -> m (Either ExceededRollback (Forker' m blk)))
+  , forkerAtFromTip :: !(ResourceRegistry m -> Word64 -> m (Either GetForkerError (Forker' m blk)))
     -- | The resource registry
   , rr :: !(ResourceRegistry m)
     -- | A tracer for validate events
@@ -109,10 +109,11 @@ validate args = do
       , hdrs
       } = args
 
-    rewrap :: Either (AnnLedgerError' n blk) (Either ExceededRollback (Forker' n blk))
+    rewrap :: Either (AnnLedgerError' n blk) (Either GetForkerError (Forker' n blk))
            -> ValidateResult' n blk
     rewrap (Left         e)  = ValidateLedgerError      e
-    rewrap (Right (Left  e)) = ValidateExceededRollBack e
+    rewrap (Right (Left  (PointTooOld (Just e)))) = ValidateExceededRollBack e
+    rewrap (Right (Left  _)) = error "Unreachable, validating will always rollback from the tip"
     rewrap (Right (Right l)) = ValidateSuccessful       l
 
     mkAps :: forall bn n l. l ~ ExtLedgerState blk
@@ -143,13 +144,13 @@ validate args = do
 -- new blocks.
 switch ::
      (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm)
-  => (ResourceRegistry bm -> Word64 -> bm (Either ExceededRollback (Forker bm l blk)))
+  => (ResourceRegistry bm -> Word64 -> bm (Either GetForkerError (Forker bm l blk)))
   -> ResourceRegistry bm
   -> LedgerCfg l
   -> Word64          -- ^ How many blocks to roll back
   -> (TraceValidateEvent blk -> m ())
   -> [Ap bm m l blk c]  -- ^ New blocks to apply
-  -> m (Either ExceededRollback (Forker bm l blk))
+  -> m (Either GetForkerError (Forker bm l blk))
 switch forkerAtFromTip rr cfg numRollbacks trace newBlocks = do
   foEith <- liftBase $ forkerAtFromTip rr numRollbacks
   case foEith of

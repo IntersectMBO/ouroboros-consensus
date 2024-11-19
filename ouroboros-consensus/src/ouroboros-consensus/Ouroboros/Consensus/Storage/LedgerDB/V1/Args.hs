@@ -45,8 +45,8 @@ import           Ouroboros.Consensus.Util.Args
 -- It is fine if the result of a range read contains less than this number of
 -- keys, but it should never return more.
 data QueryBatchSize =
-    -- | A default value, which is determined by a specific 'SnapshotPolicy'. See
-    -- 'defaultSnapshotPolicy' as an example.
+    -- | A default value, which is determined by a specific
+    -- 'SnapshotPolicy'. See 'defaultSnapshotPolicy' as an example.
     DefaultQueryBatchSize
     -- | A requested value: the number of keys to read from disk in each batch.
   | RequestedQueryBatchSize Word64

@@ -194,22 +194,14 @@ data LedgerDB m l blk = LedgerDB {
          (l ~ ExtLedgerState blk)
       => STM m (HeaderStateHistory blk)
 
-    -- | Acquire a 'Forker' at the tip.
-    --
-    -- We pass in the producer/consumer registry.
-  , getForkerAtTrustedTargetPoint  ::
-         ResourceRegistry m
-      -> Target (Point blk)
-      -> m (Forker m l blk)
-
     -- | Acquire a 'Forker' at the requested point. If a ledger state associated
     -- with the requested point does not exist in the LedgerDB, it will return a
     -- 'GetForkerError'.
     --
     -- We pass in the producer/consumer registry.
-  , getForkerAtPoint ::
+  , getForkerAtTarget  ::
          ResourceRegistry m
-      -> Point blk
+      -> Target (Point blk)
       -> m (Either GetForkerError (Forker m l blk))
 
     -- | Try to apply a sequence of blocks on top of the LedgerDB, first rolling
@@ -384,11 +376,12 @@ newtype Statistics = Statistics {
 -- | Errors that can be thrown while acquiring forkers.
 data GetForkerError =
     -- | The requested point was not found in the LedgerDB, but the point is
-    -- recent enough that the point is not in the immutable part of the chain
+    -- recent enough that the point is not in the immutable part of the chain,
+    -- i.e. it belongs to an unselected fork.
     PointNotOnChain
-    -- | The requested point was not found in the LedgerDB because the point is
-    -- in the immutable part of the chain.
-  | PointTooOld
+    -- | The requested point was not found in the LedgerDB because the point
+    -- older than the immutable tip.
+  | PointTooOld !(Maybe ExceededRollback)
   deriving (Show, Eq)
 
 -- | Exceeded maximum rollback supported by the current ledger DB state
@@ -401,7 +394,7 @@ data GetForkerError =
 data ExceededRollback = ExceededRollback {
       rollbackMaximum   :: Word64
     , rollbackRequested :: Word64
-    }
+    } deriving (Show, Eq)
 
 forkerCurrentPoint ::
      (GetTip l, HeaderHash l ~ HeaderHash blk, Functor (STM m))
@@ -417,8 +410,17 @@ withTipForker ::
      IOLike m
   => LedgerDB m l blk
   -> ResourceRegistry m
-  -> (Forker m l blk -> m a) -> m a
-withTipForker ldb rr = bracket (getForkerAtTrustedTargetPoint ldb rr VolatileTip) forkerClose
+  -> (Forker m l blk -> m a)
+  -> m a
+withTipForker ldb rr =
+  bracket
+    (do
+        eFrk <- getForkerAtTarget ldb rr VolatileTip
+        case eFrk of
+          Left {}   -> error "Unreachable, volatile tip MUST be in the LedgerDB"
+          Right frk -> pure frk
+    )
+    forkerClose
 
 -- | Like 'withTipForker', but it uses a private registry to allocate and
 -- de-allocate the forker.
@@ -426,7 +428,15 @@ withPrivateTipForker ::
      IOLike m
   => LedgerDB m l blk
   -> (Forker m l blk -> m a) -> m a
-withPrivateTipForker ldb = bracketWithPrivateRegistry (\rr -> getForkerAtTrustedTargetPoint ldb rr VolatileTip) forkerClose
+withPrivateTipForker ldb =
+  bracketWithPrivateRegistry
+    (\rr -> do
+        eFrk <- getForkerAtTarget ldb rr VolatileTip
+        case eFrk of
+          Left {}   -> error "Unreachable, volatile tip MUST be in the LedgerDB"
+          Right frk -> pure frk
+    )
+    forkerClose
 
 -- | Get statistics from the tip of the LedgerDB.
 getTipStatistics ::
@@ -482,10 +492,7 @@ getReadOnlyForker ::
   -> ResourceRegistry m
   -> Target (Point blk)
   -> m (Either GetForkerError (ReadOnlyForker m l blk))
-getReadOnlyForker ldb rr = \case
-    VolatileTip -> Right . readOnlyForker <$> getForkerAtTrustedTargetPoint ldb rr VolatileTip
-    SpecificPoint pt -> fmap readOnlyForker <$> getForkerAtPoint ldb rr pt
-    ImmutableTip -> Right . readOnlyForker <$> getForkerAtTrustedTargetPoint ldb rr ImmutableTip
+getReadOnlyForker ldb rr pt = fmap readOnlyForker <$> getForkerAtTarget ldb rr pt
 
 -- | Read a table of values at the requested point via a 'ReadOnlyForker'
 readLedgerTablesAtFor ::
@@ -496,7 +503,7 @@ readLedgerTablesAtFor ::
   -> m (Either GetForkerError (LedgerTables l ValuesMK))
 readLedgerTablesAtFor ldb p ks =
     bracketWithPrivateRegistry
-      (\rr -> fmap readOnlyForker <$> getForkerAtPoint ldb rr p)
+      (\rr -> fmap readOnlyForker <$> getForkerAtTarget ldb rr (SpecificPoint p))
       (mapM_ roforkerClose)
       $ \foEith -> forM foEith (`roforkerReadTables` ks)
 
