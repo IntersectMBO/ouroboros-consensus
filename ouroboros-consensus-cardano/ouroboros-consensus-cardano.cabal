@@ -549,6 +549,7 @@ library unstable-cardano-tools
     microlens,
     mtl,
     network,
+    network-mux,
     nothunks,
     ouroboros-consensus ^>=0.21,
     ouroboros-consensus-cardano,
