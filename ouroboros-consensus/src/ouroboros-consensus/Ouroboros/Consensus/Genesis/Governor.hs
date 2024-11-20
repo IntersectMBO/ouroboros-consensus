@@ -227,15 +227,7 @@ evaluateGDD cfg tracer stateView = do
         for_ losingPeersNE $ \peer -> killActions Map.! peer
         traceWith tracer $ TraceGDDDisconnected losingPeersNE
 
-    -- REVIEW: we should avoid this linear computation, but I don't see an alternative to changing the type of the LoE fragment.
     pure loeFrag
-
-
--- REVIEW: If dropping time is correct, this function will go into HeaderValidation most likely.
-dropTime ::
-     AnchoredFragment (HeaderWithTime blk)
-  -> AnchoredFragment (Header blk)
-dropTime = undefined
 
 -- | Compute the fragment @loeFrag@ between the immutable tip and the
 -- earliest intersection between @curChain@ and any of the @candidates@.
@@ -270,7 +262,7 @@ sharedCandidatePrefix curChain candidates =
 
 data DensityBounds blk =
   DensityBounds {
-    clippedFragment :: AnchoredFragment (Header blk),
+    clippedFragment :: AnchoredFragment (HeaderWithTime blk),
     offersMoreThanK :: Bool,
     lowerBound      :: Word64,
     upperBound      :: Word64,
@@ -360,7 +352,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
           offersMoreThanK = totalBlockCount > k
 
       pure (peer, DensityBounds {
-               clippedFragment = (dropTime clippedFragment), -- REVIEW: should we change the type of the clipped fragment?
+               clippedFragment = clippedFragment,
                offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot, idling})
 
     losingPeers = nubOrd $ densityBounds >>= \

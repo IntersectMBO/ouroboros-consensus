@@ -477,7 +477,7 @@ prettyDensityBounds bounds =
         -- the density comparison should not be applied to two peers if they share any headers after the LoE fragment.
         lastPoint =
           "point: " ++
-          tersePoint (castPoint @(Header TestBlock) @TestBlock (AF.lastPoint clippedFragment)) ++
+          tersePoint (castPoint @(HeaderWithTime TestBlock) @TestBlock (AF.lastPoint clippedFragment)) ++
           ", "
 
         showLatestSlot = \case
@@ -511,7 +511,7 @@ terseGDDEvent = \case
       [
       "      Candidate suffixes (bounds):"
       ] ++
-      showPeers (second (terseHFragment . clippedFragment) <$> bounds) ++
+      showPeers (second (terseHWTFragment . clippedFragment) <$> bounds) ++
       ["      Density bounds:"] ++
       prettyDensityBounds bounds ++
       ["      New candidate tips:"] ++
