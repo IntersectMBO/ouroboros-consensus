@@ -63,7 +63,8 @@ import           Test.Tasty.QuickCheck
 import           Test.Util.HeaderValidation (addBogusTimeToFragment)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.PartialAccessors
-import           Test.Util.TersePrinting (terseHFragment, terseHeader, terseHWTFragment)
+import           Test.Util.TersePrinting (terseHFragment, terseHWTFragment,
+                     terseHeader)
 import           Test.Util.TestBlock (TestBlock)
 import           Test.Util.TestEnv (adjustQuickCheckMaxSize,
                      adjustQuickCheckTests)

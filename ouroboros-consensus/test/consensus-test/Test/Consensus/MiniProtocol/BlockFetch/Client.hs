@@ -74,6 +74,7 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.ChainDB
 import           Test.Util.ChainUpdates
+import           Test.Util.HeaderValidation (addBogusTime)
 import qualified Test.Util.LogicalClock as LogicalClock
 import           Test.Util.LogicalClock (Tick (..))
 import           Test.Util.Orphans.IOLike ()
@@ -140,7 +141,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
 
         blockFetchConsensusInterface =
           mkTestBlockFetchConsensusInterface
-            (Map.map (AF.mapAnchoredFragment getHeader) <$> getCandidates)
+            (Map.map (AF.mapAnchoredFragment (addBogusTime . getHeader)) <$> getCandidates)
             chainDbView
 
     _ <- forkLinkedThread registry "BlockFetchLogic" $
@@ -275,14 +276,14 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
 
 
     mkTestBlockFetchConsensusInterface ::
-         STM m (Map PeerId (AnchoredFragment (Header TestBlock)))
+         STM m (Map PeerId (AnchoredFragment (HeaderWithTime TestBlock)))
       -> BlockFetchClientInterface.ChainDbView m TestBlock
       -> BlockFetchConsensusInterface PeerId (Header TestBlock) (HeaderWithTime TestBlock) TestBlock m
     mkTestBlockFetchConsensusInterface getCandidates chainDbView =
         BlockFetchClientInterface.mkBlockFetchConsensusInterface
           (TestBlockConfig numCoreNodes)
           chainDbView
-          (undefined getCandidates) -- TODO: adapt 'getCandidates' if the change to 'mkBlockFetchConsensusInterface' is correct.
+          getCandidates
           (\_hdr -> 1000) -- header size, only used for peer prioritization
           slotForgeTime
           (pure blockFetchMode)
