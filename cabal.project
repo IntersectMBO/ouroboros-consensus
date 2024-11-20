@@ -47,3 +47,10 @@ if(os(windows))
 
 -- https://github.com/ulidtko/cabal-doctest/issues/85
 constraints: Cabal < 3.13
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/ouroboros-network
+  -- branch: fraser-iohk/one-era-gen-tx-id-protocol-version-bump
+  tag: 5bbd1696304d82968c3055dfcf2380ee66bb56a0
+  subdir: ouroboros-network-api
