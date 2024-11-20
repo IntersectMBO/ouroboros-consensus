@@ -353,41 +353,51 @@ instance MaxTxSizeUTxO (ShelleyEra c) where
                  , mismatchExpected = txSizeLimit }
 
 instance MaxTxSizeUTxO (AllegraEra c) where
-  maxTxSizeUTxO x y =
+  maxTxSizeUTxO txSize txSizeLimit =
       SL.ApplyTxError . pure
     $ ShelleyEra.UtxowFailure
     $ ShelleyEra.UtxoFailure
-    $ AllegraEra.MaxTxSizeUTxO x y
+    $ AllegraEra.MaxTxSizeUTxO
+    $ L.Mismatch { mismatchSupplied = txSize
+                 , mismatchExpected = txSizeLimit }
 
 instance MaxTxSizeUTxO (MaryEra c) where
-  maxTxSizeUTxO x y =
+  maxTxSizeUTxO txSize txSizeLimit =
       SL.ApplyTxError . pure
     $ ShelleyEra.UtxowFailure
     $ ShelleyEra.UtxoFailure
-    $ AllegraEra.MaxTxSizeUTxO x y
+    $ AllegraEra.MaxTxSizeUTxO
+    $ L.Mismatch { mismatchSupplied = txSize
+                 , mismatchExpected = txSizeLimit }
 
 instance MaxTxSizeUTxO (AlonzoEra c) where
-  maxTxSizeUTxO x y =
+  maxTxSizeUTxO txSize txSizeLimit =
       SL.ApplyTxError . pure
     $ ShelleyEra.UtxowFailure
     $ AlonzoEra.ShelleyInAlonzoUtxowPredFailure
     $ ShelleyEra.UtxoFailure
-    $ AlonzoEra.MaxTxSizeUTxO x y
+    $ AlonzoEra.MaxTxSizeUTxO
+    $ L.Mismatch { mismatchSupplied = txSize
+                 , mismatchExpected = txSizeLimit }
 
 instance MaxTxSizeUTxO (BabbageEra c) where
-  maxTxSizeUTxO x y =
+  maxTxSizeUTxO txSize txSizeLimit =
       SL.ApplyTxError . pure
     $ ShelleyEra.UtxowFailure
     $ BabbageEra.UtxoFailure
     $ BabbageEra.AlonzoInBabbageUtxoPredFailure
-    $ AlonzoEra.MaxTxSizeUTxO x y
+    $ AlonzoEra.MaxTxSizeUTxO
+    $ L.Mismatch { mismatchSupplied = txSize
+                 , mismatchExpected = txSizeLimit }
 
 instance MaxTxSizeUTxO (ConwayEra c) where
-  maxTxSizeUTxO x y =
+  maxTxSizeUTxO txSize txSizeLimit =
       SL.ApplyTxError . pure
     $ ConwayEra.ConwayUtxowFailure
     $ ConwayEra.UtxoFailure
-    $ ConwayEra.MaxTxSizeUTxO x y
+    $ ConwayEra.MaxTxSizeUTxO
+    $ L.Mismatch { mismatchSupplied = txSize
+                 , mismatchExpected = txSizeLimit }
 
 -----
 
@@ -455,7 +465,7 @@ txMeasureAlonzo st tx@(ShelleyTx _txid tx') =
     limit   = pparams ^. L.ppMaxTxExUnitsL
 
     exunits =
-      validateMaybe (exUnitsTooBigUTxO limit txsz) $ do
+      validateMaybe (exUnitsTooBigUTxO txsz limit) $ do
         guard $ pointWiseExUnits (<=) txsz limit
         Just $ fromExUnits txsz
 
@@ -463,29 +473,35 @@ class ExUnitsTooBigUTxO era where
   exUnitsTooBigUTxO :: ExUnits -> ExUnits -> SL.ApplyTxError era
 
 instance Crypto c => ExUnitsTooBigUTxO (AlonzoEra c) where
-  exUnitsTooBigUTxO x y =
+  exUnitsTooBigUTxO txsz limit =
       SL.ApplyTxError . pure
     $ ShelleyEra.UtxowFailure
     $ AlonzoEra.ShelleyInAlonzoUtxowPredFailure
     $ ShelleyEra.UtxoFailure
-    $ AlonzoEra.ExUnitsTooBigUTxO x y
+    $ AlonzoEra.ExUnitsTooBigUTxO
+    $ L.Mismatch { mismatchSupplied = txsz
+                 , mismatchExpected = limit }
 
 instance Crypto c => ExUnitsTooBigUTxO (BabbageEra c) where
-  exUnitsTooBigUTxO x y =
+  exUnitsTooBigUTxO txsz limit =
       SL.ApplyTxError . pure
     $ ShelleyEra.UtxowFailure
     $ BabbageEra.AlonzoInBabbageUtxowPredFailure
     $ AlonzoEra.ShelleyInAlonzoUtxowPredFailure
     $ ShelleyEra.UtxoFailure
     $ BabbageEra.AlonzoInBabbageUtxoPredFailure
-    $ AlonzoEra.ExUnitsTooBigUTxO x y
+    $ AlonzoEra.ExUnitsTooBigUTxO
+    $ L.Mismatch { mismatchSupplied = txsz
+                 , mismatchExpected = limit }
 
 instance Crypto c => ExUnitsTooBigUTxO (ConwayEra c) where
-  exUnitsTooBigUTxO x y =
+  exUnitsTooBigUTxO txsz limit =
       SL.ApplyTxError . pure
     $ ConwayEra.ConwayUtxowFailure
     $ ConwayEra.UtxoFailure
-    $ ConwayEra.ExUnitsTooBigUTxO x y
+    $ ConwayEra.ExUnitsTooBigUTxO
+    $ L.Mismatch { mismatchSupplied = txsz
+                 , mismatchExpected = limit }
 
 -----
 
@@ -546,7 +562,7 @@ txMeasureConway st tx@(ShelleyTx _txid tx') =
     limit = SL.maxRefScriptSizePerTx
 
     refScriptBytes =
-      validateMaybe (txRefScriptsSizeTooBig limit txsz) $ do
+      validateMaybe (txRefScriptsSizeTooBig txsz limit) $ do
         guard $ txsz <= limit
         Just $ IgnoringOverflow $ ByteSize32 $ fromIntegral txsz
 
@@ -554,9 +570,11 @@ class TxRefScriptsSizeTooBig era where
   txRefScriptsSizeTooBig :: Int -> Int -> SL.ApplyTxError era
 
 instance Crypto c => TxRefScriptsSizeTooBig (ConwayEra c) where
-  txRefScriptsSizeTooBig x y =
+  txRefScriptsSizeTooBig txsz limit =
       SL.ApplyTxError . pure
-    $ ConwayEra.ConwayTxRefScriptsSizeTooBig x y
+    $ ConwayEra.ConwayTxRefScriptsSizeTooBig
+    $ L.Mismatch { mismatchSupplied = txsz
+                 , mismatchExpected = limit }
 
 -----
 
