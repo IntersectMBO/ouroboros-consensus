@@ -2039,8 +2039,13 @@ invalidBlockRejector tracer version getIsInvalidBlock getCandidate =
                      (hdr,) <$> isInvalidBlock (headerHash hdr)
                 )
           $ (   case isPipeliningEnabled version of
-                    ReceivingTentativeBlocks    -> drop 1 -- REVIEW: we could also use this opportunity to explain this.
-                    NotReceivingTentativeBlocks -> id
+                    ReceivingTentativeBlocks    ->
+                      -- As mentioned in the comment above, if the
+                      -- header is tentative we skip the fragment tip,
+                      -- dropping the first element.
+                      drop 1
+                    NotReceivingTentativeBlocks ->
+                      id
             )
           $ AF.toNewestFirst theirFrag
 
