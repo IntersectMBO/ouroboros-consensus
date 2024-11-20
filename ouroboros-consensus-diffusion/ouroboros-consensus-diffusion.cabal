@@ -89,6 +89,7 @@ library
     hashable,
     io-classes ^>=1.5,
     mtl,
+    network-mux ^>=0.5,
     ouroboros-consensus ^>=0.21,
     ouroboros-network ^>=0.18,
     ouroboros-network-api ^>=0.11,
