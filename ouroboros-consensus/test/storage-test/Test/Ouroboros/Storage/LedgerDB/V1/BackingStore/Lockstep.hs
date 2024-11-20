@@ -16,14 +16,9 @@
 {-# LANGUAGE TypeFamilies #-}
 
 module Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Lockstep (
-    -- * Facilitate running the tests in @'IO'@ or @'IOSim'@.
-    IOLikeMonad (..)
-  , IOLikeMonadC (..)
-  , RealMonad
-  , unIOLikeMonad
-    -- * Model state
-  , BackingStoreState (..)
+    BackingStoreState (..)
   , RealEnv (..)
+  , RealMonad
   , maxOpenValueHandles
   ) where
 
@@ -31,7 +26,6 @@ import           Cardano.Slotting.Slot
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Monad
 import           Control.Monad.Class.MonadThrow
-import           Control.Monad.IOSim
 import           Control.Monad.Reader
 import           Data.Bifunctor
 import           Data.Constraint
@@ -50,72 +44,20 @@ import           Test.Cardano.Ledger.Binary.Arbitrary ()
 import qualified Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock as Mock
 import           Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock (Err (..),
                      Mock (..), ValueHandle (..), runMockState)
-import           Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Registry
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (Gen)
 import           Test.QuickCheck.StateModel
 import           Test.QuickCheck.StateModel.Lockstep as Lockstep
 import           Test.QuickCheck.StateModel.Lockstep.Defaults as Lockstep
-import           Test.QuickCheck.StateModel.Lockstep.Op as Lockstep
 import           Test.QuickCheck.StateModel.Lockstep.Op.SumProd as Lockstep
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Orphans.ToExpr ()
 
 {-------------------------------------------------------------------------------
-  Facilitate running the tests in @'IO'@ or @'IOSim'@.
--------------------------------------------------------------------------------}
-
--- This wrapper allows us to run the tests both in @'IO'@ and @'IOSim'@, without
--- having to duplicate code for both @'IO'@ and @'IOSim'@.
-data IOLikeMonad m a where
-  RealIO :: IO a -> IOLikeMonad IO a
-  SimIO  :: IOSim s a -> IOLikeMonad (IOSim s) a
-
--- | Retrieve the wrapped @'IOLike'@ monad.
-unIOLikeMonad :: IOLikeMonad m a -> m a
-unIOLikeMonad (RealIO x) = x
-unIOLikeMonad (SimIO x)  = x
-
--- | Create a wrapper @'IOLike'@ monad.
-class IOLikeMonadC m where
-  ioLikeMonad :: m a -> IOLikeMonad m a
-
-instance IOLikeMonadC IO where
-  ioLikeMonad x = RealIO x
-
-instance IOLikeMonadC (IOSim s) where
-  ioLikeMonad x = SimIO x
-
-instance (Functor m, IOLikeMonadC m) => Functor (IOLikeMonad m) where
-  fmap f x = ioLikeMonad $ fmap f (unIOLikeMonad x)
-
-instance (Applicative m, IOLikeMonadC m) =>Applicative (IOLikeMonad m) where
-  x <*> y = ioLikeMonad $ unIOLikeMonad x <*> unIOLikeMonad y
-  pure = ioLikeMonad . pure
-
-instance (Monad m, IOLikeMonadC m) => Monad (IOLikeMonad m) where
-  m >>= fm = ioLikeMonad $ unIOLikeMonad m >>= unIOLikeMonad . fm
-
--- | Since the tests do not return any types specific to the underlying
--- @'IOLike'@ monad, @'Realized' ('IOLikeMonad' m)@ behaves just like
--- @'Realized' 'IO'@.
-type instance Realized (IOLikeMonad m) a = a
-
-{-------------------------------------------------------------------------------
   @'Values'@ wrapper
 -------------------------------------------------------------------------------}
 
--- | Wrapper for preventing nonsenical pattern matches.
---
--- A logical step is to have the @'BSVHRangeRead'@ and @'BSVHRead'@ actions
--- declare that the result of the action should be something of type @'vs'@.
--- However, this means that in theory @'vs'@ could be instantiated to any type
--- (like @'Handle'@). Consequentially, if we match on a value that is returned
--- by running an action, we would always have to match on the case where it is a
--- result of running @'BSVHRangeRead'@ and @'BSVHRead'@ as well, even if the
--- return type is @'Handle'@, which we don't expect to use as our @vs@ type. As
--- such, we define this wrapper to prevent having to match on this nonsensical
--- case.
+-- | Wrapper to prevent ambiguity in pattern matches.
 newtype Values vs = Values {unValues :: vs}
   deriving stock (Show, Eq, Ord, Typeable)
   deriving newtype QC.Arbitrary
@@ -154,10 +96,9 @@ type BackingStoreInitializer m ks vs d =
 data RealEnv m ks vs d = RealEnv {
     reBackingStoreInit :: BackingStoreInitializer m ks vs d
   , reBackingStore     :: StrictMVar m (BS.BackingStore m ks vs d)
-  , reRegistry         :: HandleRegistry m (BS.BackingStoreValueHandle m ks vs)
   }
 
-type RealMonad m ks vs d = ReaderT (RealEnv m ks vs d) (IOLikeMonad m)
+type RealMonad m ks vs d = ReaderT (RealEnv m ks vs d) m
 
 type BSAct ks vs d a =
   Action
@@ -184,22 +125,22 @@ instance ( Show ks, Show vs, Show d
     BSClose          :: BSAct ks vs d ()
     BSCopy           :: FS.FsPath
                      -> BSAct ks vs d ()
-    BSValueHandle    :: BSAct ks vs d Handle
+    BSValueHandle    :: BSAct ks vs d (BS.BackingStoreValueHandle IO ks vs)
     BSWrite          :: SlotNo
                      -> d
                      -> BSAct ks vs d ()
-    BSVHClose        :: BSVar ks vs d Handle
+    BSVHClose        :: BSVar ks vs d (BS.BackingStoreValueHandle IO ks vs)
                      -> BSAct ks vs d ()
-    BSVHRangeRead    :: BSVar ks vs d Handle
+    BSVHRangeRead    :: BSVar ks vs d (BS.BackingStoreValueHandle IO ks vs)
                      -> BS.RangeQuery ks
                      -> BSAct ks vs d (Values vs)
-    BSVHRead         :: BSVar ks vs d Handle
+    BSVHRead         :: BSVar ks vs d (BS.BackingStoreValueHandle IO ks vs)
                      -> ks
                      -> BSAct ks vs d (Values vs)
-    BSVHAtSlot       :: BSVar ks vs d Handle
+    BSVHAtSlot       :: BSVar ks vs d (BS.BackingStoreValueHandle IO ks vs)
                      -> BSAct ks vs d (WithOrigin SlotNo)
     -- | Corresponds to 'bsvhStat'
-    BSVHStat         :: BSVar ks vs d Handle
+    BSVHStat         :: BSVar ks vs d (BS.BackingStoreValueHandle IO ks vs)
                      -> BSAct ks vs d BS.Statistics
 
   initialState        = Lockstep.initialState initState
@@ -219,15 +160,13 @@ instance ( Show ks, Show vs, Show d
          , Typeable ks, Typeable vs, Typeable d
          , QC.Arbitrary ks, QC.Arbitrary vs, QC.Arbitrary d
          , QC.Arbitrary (BS.RangeQuery ks)
-         , IOLike m
          , Mock.HasOps ks vs d
-         , IOLikeMonadC m
          ) => RunModel
                 (Lockstep (BackingStoreState ks vs d))
-                (RealMonad m ks vs d) where
+                (RealMonad IO ks vs d) where
   perform       = \_st -> runIO
   postcondition = Lockstep.postcondition
-  monitoring    = Lockstep.monitoring (Proxy @(RealMonad m ks vs d))
+  monitoring    = Lockstep.monitoring (Proxy @(RealMonad IO ks vs d))
 
 -- | Custom precondition that prevents errors in the @'LMDB'@ backing store due
 -- to exceeding the maximum number of LMDB readers.
@@ -263,7 +202,7 @@ instance ( Show ks, Show vs, Show d
          ) => InLockstep (BackingStoreState ks vs d) where
 
   data instance ModelValue (BackingStoreState ks vs d) a where
-    MValueHandle :: ValueHandle vs -> BSVal ks vs d Handle
+    MValueHandle :: ValueHandle vs -> BSVal ks vs d (BS.BackingStoreValueHandle IO ks vs)
 
     MErr        :: Err
                 -> BSVal ks vs d Err
@@ -282,7 +221,7 @@ instance ( Show ks, Show vs, Show d
             -> BSVal ks vs d (a, b)
 
   data instance Observable (BackingStoreState ks vs d) a where
-    OValueHandle :: BSObs ks vs d Handle
+    OValueHandle :: BSObs ks vs d (BS.BackingStoreValueHandle IO ks vs)
     OValues :: (Show a, Eq a, Typeable a) => a -> BSObs ks vs d (Values a)
     OId     :: (Show a, Eq a, Typeable a) => a -> BSObs ks vs d a
     OEither :: Either (BSObs ks vs d a) (BSObs ks vs d b)
@@ -368,14 +307,12 @@ instance ( Show ks, Show vs, Show d
          , Typeable ks, Typeable vs, Typeable d
          , QC.Arbitrary ks, QC.Arbitrary vs, QC.Arbitrary d
          , QC.Arbitrary (BS.RangeQuery ks)
-         , IOLike m
          , Mock.HasOps ks vs d
-         , IOLikeMonadC m
-         ) => RunLockstep (BackingStoreState ks vs d) (RealMonad m ks vs d) where
+         ) => RunLockstep (BackingStoreState ks vs d) (RealMonad IO ks vs d) where
   observeReal ::
-       Proxy (RealMonad m ks vs d)
+       Proxy (RealMonad IO ks vs d)
     -> LockstepAction (BackingStoreState ks vs d) a
-    -> Realized (RealMonad m ks vs d) a
+    -> Realized (RealMonad IO ks vs d) a
     -> BSObs ks vs d a
   observeReal _proxy = \case
     BSInitFromValues _ _ -> OEither . bimap OId OId
@@ -391,15 +328,15 @@ instance ( Show ks, Show vs, Show d
     BSVHStat _           -> OEither . bimap OId OId
 
   showRealResponse ::
-       Proxy (RealMonad m ks vs d)
+       Proxy (RealMonad IO ks vs d)
     -> LockstepAction (BackingStoreState ks vs d) a
-    -> Maybe (Dict (Show (Realized (RealMonad m ks vs d) a)))
+    -> Maybe (Dict (Show (Realized (RealMonad IO ks vs d) a)))
   showRealResponse _proxy = \case
     BSInitFromValues _ _ -> Just Dict
     BSInitFromCopy _     -> Just Dict
     BSClose              -> Just Dict
     BSCopy _             -> Just Dict
-    BSValueHandle        -> Just Dict
+    BSValueHandle        -> Nothing
     BSWrite _ _          -> Just Dict
     BSVHClose _          -> Just Dict
     BSVHRangeRead _ _    -> Just Dict
@@ -449,7 +386,7 @@ runMock lookUp = \case
       -> (BSVal ks vs d (Either Err b), Mock vs)
     wrap f = first (MEither . bimap MErr f)
 
-    getHandle :: BSVal ks vs d Handle -> ValueHandle vs
+    getHandle :: BSVal ks vs d (BS.BackingStoreValueHandle IO ks vs) -> ValueHandle vs
     getHandle (MValueHandle h) = h
 
 {-------------------------------------------------------------------------------
@@ -458,7 +395,7 @@ runMock lookUp = \case
 
 arbitraryBackingStoreAction ::
      forall ks vs d.
-     ( Eq ks, Eq vs, Eq d, Typeable vs
+     ( Eq ks, Eq vs, Eq d, Typeable ks, Typeable vs
      , QC.Arbitrary ks, QC.Arbitrary vs
      , QC.Arbitrary (BS.RangeQuery ks)
      , Mock.MakeDiff vs d
@@ -469,7 +406,7 @@ arbitraryBackingStoreAction ::
 arbitraryBackingStoreAction findVars (BackingStoreState mock _stats) =
     QC.frequency $
          withoutVars
-      ++ case findVars (Proxy @(Either Err Handle)) of
+      ++ case findVars (Proxy @(Either Err (BS.BackingStoreValueHandle IO ks vs))) of
           []   -> []
           vars -> withVars (QC.elements vars)
   where
@@ -484,20 +421,18 @@ arbitraryBackingStoreAction findVars (BackingStoreState mock _stats) =
       ]
 
     withVars ::
-         Gen (BSVar ks vs d (Either Err Handle))
+         Gen (BSVar ks vs d (Either Err (BS.BackingStoreValueHandle IO ks vs)))
       -> [(Int, Gen (Any (LockstepAction (BackingStoreState ks vs d))))]
     withVars genVar = [
-          (5, fmap Some $ BSVHClose <$> (fhandle <$> genVar))
-        , (5, fmap Some $ BSVHRangeRead <$> (fhandle <$> genVar) <*> QC.arbitrary)
-        , (5, fmap Some $ BSVHRead <$> (fhandle <$> genVar) <*> QC.arbitrary)
-        , (5, fmap Some $ BSVHAtSlot <$> (fhandle <$> genVar))
-        , (5, fmap Some $ BSVHStat <$> (fhandle <$> genVar))
+          (5, fmap Some $ BSVHClose <$> (opFromRight <$> genVar))
+        , (5, fmap Some $ BSVHRangeRead <$> (opFromRight <$> genVar) <*> QC.arbitrary)
+        , (5, fmap Some $ BSVHRead <$> (opFromRight <$> genVar) <*> QC.arbitrary)
+        , (5, fmap Some $ BSVHAtSlot <$> (opFromRight <$> genVar))
+        , (5, fmap Some $ BSVHStat <$> (opFromRight <$> genVar))
         ]
       where
-        fhandle ::
-             GVar Op (Either Err Handle)
-          -> GVar Op Handle
-        fhandle = mapGVar (\op -> OpRight `OpComp` op)
+        opFromRight :: forall a. GVar Op (Either Err a) -> GVar Op a
+        opFromRight = mapGVar (\op -> OpRight `OpComp` op)
 
     genBackingStorePath :: Gen FS.FsPath
     genBackingStorePath = do
@@ -567,17 +502,17 @@ instance InterpretOp Op (ModelValue (BackingStoreState ks vs d)) where
 -------------------------------------------------------------------------------}
 
 runIO ::
-     forall m ks vs d a. (IOLike m, IOLikeMonadC m) =>
+     forall ks vs d a.
      LockstepAction (BackingStoreState ks vs d) a
-  -> LookUp (RealMonad m ks vs d)
-  -> RealMonad m ks vs d (Realized (RealMonad m ks vs d) a)
+  -> LookUp (RealMonad IO ks vs d)
+  -> RealMonad IO ks vs d (Realized (RealMonad IO ks vs d) a)
 runIO action lookUp = ReaderT $ \renv ->
-    ioLikeMonad $ aux renv action
+    aux renv action
   where
     aux ::
-         RealEnv m ks vs d
+         RealEnv IO ks vs d
       -> LockstepAction (BackingStoreState ks vs d) a
-      -> m a
+      -> IO a
     aux renv = \case
         BSInitFromValues sl (Values vs) -> catchErr $ do
           bs <- bsi (BS.InitFromValues sl vs)
@@ -590,31 +525,27 @@ runIO action lookUp = ReaderT $ \renv ->
         BSCopy bsp         -> catchErr $
           readMVar bsVar >>= \bs -> BS.bsCopy bs bsp
         BSValueHandle      -> catchErr $
-          readMVar bsVar >>= (BS.bsValueHandle >=> registerHandle handleReg)
+          readMVar bsVar >>= BS.bsValueHandle
         BSWrite sl d       -> catchErr $
           readMVar bsVar >>= \bs -> BS.bsWrite bs sl d
-        BSVHClose h        -> catchErr $
-          readHandle handleReg (lookUp' h) >>= \vh -> BS.bsvhClose vh
-        BSVHRangeRead h rq -> catchErr $ Values <$>
-          (readHandle handleReg (lookUp' h) >>= \vh -> BS.bsvhRangeRead vh rq)
-        BSVHRead h ks      -> catchErr $ Values <$>
-          (readHandle handleReg (lookUp' h) >>= \vh -> BS.bsvhRead vh ks)
-        BSVHAtSlot h       -> catchErr $
-          readHandle handleReg (lookUp' h) >>= pure . BS.bsvhAtSlot
-        BSVHStat h         -> catchErr $
-          readHandle handleReg (lookUp' h) >>= \vh -> BS.bsvhStat vh
+        BSVHClose var        -> catchErr $
+          BS.bsvhClose (lookUp' var)
+        BSVHRangeRead var rq -> catchErr $ Values <$>
+          BS.bsvhRangeRead (lookUp' var) rq
+        BSVHRead var ks      -> catchErr $ Values <$>
+          BS.bsvhRead (lookUp' var) ks
+        BSVHAtSlot var       -> catchErr $
+          pure (BS.bsvhAtSlot ((lookUp' var)))
+        BSVHStat var         -> catchErr $
+          BS.bsvhStat (lookUp' var)
       where
         RealEnv{
             reBackingStoreInit = bsi
           , reBackingStore     = bsVar
-          , reRegistry         = handleReg
           } = renv
 
-        lookUp' :: BSVar ks vs d x -> Realized (RealMonad m ks vs d) x
-        lookUp' = lookUpGVar (Proxy @(RealMonad m ks vs d)) lookUp
-
-instance InterpretOp Op (WrapRealized (IOLikeMonad m)) where
-  intOp = intOpRealizedId intOpId
+        lookUp' :: BSVar ks vs d x -> Realized (RealMonad IO ks vs d) x
+        lookUp' = lookUpGVar (Proxy @(RealMonad IO ks vs d)) lookUp
 
 catchErr :: forall m a. IOLike m => m a -> m (Either Err a)
 catchErr act = catches (Right <$> act)
@@ -660,7 +591,7 @@ updateStats action lookUp result stats@Stats{handleSlots, writeSlots} =
     . updateRangeReadAfterWrite
     $ stats
   where
-    getHandle :: BSVal ks vs d Handle -> ValueHandle vs
+    getHandle :: BSVal ks vs d (BS.BackingStoreValueHandle IO ks vs) -> ValueHandle vs
     getHandle (MValueHandle h) = h
 
     updateHandleSlots :: Stats ks vs d -> Stats ks vs d
