@@ -43,7 +43,7 @@ import qualified System.FS.API.Types as FS
 import           Test.Cardano.Ledger.Binary.Arbitrary ()
 import qualified Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock as Mock
 import           Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock (Err (..),
-                     Mock (..), ValueHandle (..), runMockState)
+                     Mock (..), ValueHandle (..), runMockMonad)
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (Gen)
 import           Test.QuickCheck.StateModel
@@ -290,8 +290,8 @@ instance ( Show ks, Show vs, Show d
     -> LockstepAction (BackingStoreState ks vs d) a
     -> BSVal ks vs d a
     -> [String]
-  tagStep (_before, BackingStoreState _ after) action val =
-    map show $ tagBSAction after action val
+  tagStep (BackingStoreState _ before, BackingStoreState _ after) action val =
+    map show $ tagBSAction before after action val
 
 deriving stock instance (Show ks, Show vs, Show d) => Show (BSVal ks vs d a)
 
@@ -358,27 +358,27 @@ runMock ::
      )
 runMock lookUp = \case
     BSInitFromValues sl (Values vs) ->
-      wrap MUnit . runMockState (Mock.mBSInitFromValues sl vs)
+      wrap MUnit . runMockMonad (Mock.mBSInitFromValues sl vs)
     BSInitFromCopy bsp ->
-      wrap MUnit . runMockState (Mock.mBSInitFromCopy bsp)
+      wrap MUnit . runMockMonad (Mock.mBSInitFromCopy bsp)
     BSClose            ->
-      wrap MUnit . runMockState Mock.mBSClose
+      wrap MUnit . runMockMonad Mock.mBSClose
     BSCopy bsp         ->
-      wrap MUnit . runMockState (Mock.mBSCopy bsp)
+      wrap MUnit . runMockMonad (Mock.mBSCopy bsp)
     BSValueHandle      ->
-      wrap MValueHandle . runMockState Mock.mBSValueHandle
+      wrap MValueHandle . runMockMonad Mock.mBSValueHandle
     BSWrite sl d       ->
-      wrap MUnit . runMockState (Mock.mBSWrite sl d)
+      wrap MUnit . runMockMonad (Mock.mBSWrite sl d)
     BSVHClose h        ->
-      wrap MUnit . runMockState (Mock.mBSVHClose (getHandle $ lookUp h))
+      wrap MUnit . runMockMonad (Mock.mBSVHClose (getHandle $ lookUp h))
     BSVHRangeRead h rq ->
-      wrap MValues . runMockState (Mock.mBSVHRangeRead (getHandle $ lookUp h) rq)
+      wrap MValues . runMockMonad (Mock.mBSVHRangeRead (getHandle $ lookUp h) rq)
     BSVHRead h ks      ->
-      wrap MValues . runMockState (Mock.mBSVHRead (getHandle $ lookUp h) ks)
+      wrap MValues . runMockMonad (Mock.mBSVHRead (getHandle $ lookUp h) ks)
     BSVHAtSlot h       ->
-      wrap MSlotNo . runMockState (Mock.mBSVHAtSlot (getHandle $ lookUp h))
+      wrap MSlotNo . runMockMonad (Mock.mBSVHAtSlot (getHandle $ lookUp h))
     BSVHStat h         ->
-      wrap MStatistics . runMockState (Mock.mBSVHStat (getHandle $ lookUp h))
+      wrap MStatistics . runMockMonad (Mock.mBSVHStat (getHandle $ lookUp h))
   where
     wrap ::
          (a -> BSVal ks vs d b)
@@ -396,7 +396,7 @@ runMock lookUp = \case
 arbitraryBackingStoreAction ::
      forall ks vs d.
      ( Eq ks, Eq vs, Eq d, Typeable ks, Typeable vs
-     , QC.Arbitrary ks, QC.Arbitrary vs
+     , QC.Arbitrary ks, QC.Arbitrary vs, QC.Arbitrary d
      , QC.Arbitrary (BS.RangeQuery ks)
      , Mock.MakeDiff vs d
      )
@@ -459,7 +459,7 @@ arbitraryBackingStoreAction findVars (BackingStoreState mock _stats) =
     genDiff :: Gen d
     genDiff = QC.frequency [
         (9, Mock.diff (backingValues mock) <$> QC.arbitrary)
-      --TODO: enable @, (1, QC.arbitrary)@
+      , (1, QC.arbitrary)
       ]
 
 {-------------------------------------------------------------------------------
@@ -677,10 +677,11 @@ data Tag =
 
 tagBSAction ::
      Stats ks vs d
+  -> Stats ks vs d
   -> LockstepAction (BackingStoreState ks vs d) a
   -> BSVal ks vs d a
   -> [Tag]
-tagBSAction stats action result =
+tagBSAction before after action result =
     globalTags ++ case (action, result) of
       (_, MEither (Left (MErr ErrBackingStoreClosed))) ->
         [ErrorBecauseBackingStoreIsClosed (tAction action)]
@@ -688,14 +689,14 @@ tagBSAction stats action result =
         [ErrorBecauseBackingStoreValueHandleIsClosed (tAction action)]
       _ -> []
   where
-    Stats{readAfterWrite, rangeReadAfterWrite} = stats
-
     globalTags = mconcat [
         [ ReadAfterWrite
-        | readAfterWrite
+        | not (readAfterWrite before)
+        , readAfterWrite after
         ]
       , [ RangeReadAfterWrite
-        | rangeReadAfterWrite
+        | not (rangeReadAfterWrite before)
+        , rangeReadAfterWrite after
         ]
       ]
 
