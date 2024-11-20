@@ -97,12 +97,7 @@ runner c r = runReaderT c $ bsRealEnv r
 
 -- | Generate minimal examples for each label.
 labelledExamples :: IO ()
-labelledExamples = do
-  -- TODO: the thread delay ensures that we do not start printing labelled
-  -- exampes throughout other test output, but it is not a very nice solution.
-  -- We should find a better alternative.
-  threadDelay 1
-  QC.labelledExamples $ tagActions pT
+labelledExamples = QC.labelledExamples $ tagActions pT
 
 {-------------------------------------------------------------------------------
   Resources
