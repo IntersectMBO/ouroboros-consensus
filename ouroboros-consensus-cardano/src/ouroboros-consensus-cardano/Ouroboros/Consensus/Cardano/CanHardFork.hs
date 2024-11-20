@@ -33,8 +33,8 @@ import qualified Cardano.Chain.Genesis as CC.Genesis
 import qualified Cardano.Chain.Update as CC.Update
 import           Cardano.Crypto.DSIGN (Ed25519DSIGN)
 import           Cardano.Crypto.Hash.Blake2b (Blake2b_224, Blake2b_256)
+import qualified Cardano.Ledger.Core as SL
 import           Cardano.Ledger.Crypto (ADDRHASH, Crypto, DSIGN, HASH)
-import qualified Cardano.Ledger.Era as SL
 import qualified Cardano.Ledger.Genesis as SL
 import           Cardano.Ledger.Hashes (EraIndependentTxBody)
 import           Cardano.Ledger.Keys (DSignable, Hash)
