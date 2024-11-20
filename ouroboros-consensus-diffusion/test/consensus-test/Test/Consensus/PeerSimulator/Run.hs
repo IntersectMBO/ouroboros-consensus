@@ -64,6 +64,7 @@ import           Test.Consensus.PointSchedule.NodeState (NodeState)
 import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId,
                      getPeerIds)
 import           Test.Util.ChainDB
+import           Test.Util.HeaderValidation (dropTimeFromFragment)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock)
 
@@ -318,8 +319,11 @@ mkStateTracer schedulerConfig GenesisTest {gtBlockTree} PeerSimulatorResources {
   , let getCandidates = viewChainSyncState psrHandles CSClient.csCandidate
         getCurrentChain = ChainDB.getCurrentChain chainDb
         getPoints = traverse readTVar (srCurrentState . prShared <$> psrPeers)
-    -- REVIEW: is it ok to drop time here?
-  = peerSimStateDiagramSTMTracerDebug gtBlockTree getCurrentChain (undefined getCandidates) getPoints
+  = peerSimStateDiagramSTMTracerDebug
+        gtBlockTree
+        getCurrentChain
+        (fmap (Map.map dropTimeFromFragment) getCandidates)
+        getPoints
   | otherwise
   = pure nullTracer
 

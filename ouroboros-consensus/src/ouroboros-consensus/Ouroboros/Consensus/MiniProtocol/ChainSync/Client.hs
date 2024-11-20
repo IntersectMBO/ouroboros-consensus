@@ -1142,12 +1142,6 @@ withTime ::
   -> AnchoredFragment (HeaderWithTime blk)
 withTime fragment history = undefined fragment history
 
-
--- dropTime ::
---      AnchoredFragment (HeaderWithTime blk)
---   -> AnchoredFragment (Header blk)
--- dropTime = undefined
-
 {-------------------------------------------------------------------------------
   Processing 'MsgRollForward' and 'MsgRollBackward'
 -------------------------------------------------------------------------------}

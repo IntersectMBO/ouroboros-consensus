@@ -7,6 +7,7 @@ module Test.Util.HeaderValidation (
     AddBogusTime
   , addBogusTime
   , addBogusTimeToFragment
+  , dropTimeFromFragment
   ) where
 
 import           Cardano.Slotting.Time (RelativeTime (..))
@@ -41,3 +42,8 @@ addBogusTimeToFragment :: (AF.HasHeader (Header blk), Typeable blk)
   => AnchoredFragment (Header blk)
   -> AnchoredFragment (HeaderWithTime blk)
 addBogusTimeToFragment = AF.mapAnchoredFragment addBogusTime
+
+dropTimeFromFragment :: (AF.HasHeader (Header blk))
+  => AnchoredFragment (HeaderWithTime blk)
+  -> AnchoredFragment (Header blk)
+dropTimeFromFragment  = AF.mapAnchoredFragment hwtHeader

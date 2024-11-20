@@ -130,6 +130,7 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.ChainUpdates (ChainUpdate (..), UpdateBehavior (..),
                      genChainUpdates, toChainUpdates)
+import           Test.Util.HeaderValidation (dropTimeFromFragment)
 import           Test.Util.LogicalClock (Tick (..))
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Orphans.IOLike ()
@@ -585,13 +586,10 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
           finalClientChain
         , finalServerChain
         , mbResult
-        , syncedFragment   = AF.mapAnchoredFragment testHeader (dropTime candidateFragment)
+        , syncedFragment   = AF.mapAnchoredFragment testHeader (dropTimeFromFragment candidateFragment)
         , traceEvents
         }
   where
-    -- TODO: this should be a library function if the idea of dropping time on the candidate fragment makes sense.
-    dropTime = undefined
-
     k = maxRollbacks securityParam
 
     toSkewedOnset :: SlotNo -> RelativeTime

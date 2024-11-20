@@ -241,7 +241,6 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                             preferAnchoredCandidate
                                 (configBlock cfg)
                                 headers
-                                -- REVIEW: is it ok to drop the times here because we're initializing the node kernel?
                                 (csCandidate state)
               , GSM.peerIsIdle                = csIdling
               , GSM.durationUntilTooOld       =
@@ -402,7 +401,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
         blockFetchInterface = BlockFetchClientInterface.mkBlockFetchConsensusInterface
           (configBlock cfg)
           (BlockFetchClientInterface.defaultChainDbView chainDB)
-          getCandidates -- REVIEW: note for myself. This is what enables the use of 'HeaderWithTime' to obtain the time slot of the header, removing the need of using the HFC to compute the header time.
+          getCandidates
           blockFetchSize
           slotForgeTimeOracle
           readFetchMode

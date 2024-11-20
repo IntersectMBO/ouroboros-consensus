@@ -41,9 +41,6 @@ data ChainSyncState blk = ChainSyncState {
 
     -- | The current candidate fragment.
     csCandidate  :: !(AnchoredFragment (HeaderWithTime blk))
-    --
-    -- REVIEW: See NodeKernel.initInternalState.blockFetchInterface, where we use getCandidates to remove the need for using the HFC to compute the header time.
-
     -- | Whether the last message sent by the peer was MsgAwaitReply.
     --
     -- This ChainSync client should ensure that its peer sets this flag while

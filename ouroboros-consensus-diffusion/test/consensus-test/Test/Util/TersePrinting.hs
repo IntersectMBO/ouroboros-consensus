@@ -30,8 +30,8 @@ import           Ouroboros.Network.AnchoredFragment (Anchor, AnchoredFragment,
                      anchor, anchorToPoint, mapAnchoredFragment, toOldestFirst)
 import           Ouroboros.Network.Block (Tip (..))
 import           Ouroboros.Network.Point (WithOrigin (..))
-import           Test.Util.TestBlock (Header (TestHeader, testHeader),
-                     TestBlock, TestHash (TestHash), unTestHash)
+import           Test.Util.TestBlock (Header (TestHeader), TestBlock,
+                     TestHash (TestHash), unTestHash)
 
 -- | Run-length encoding of a list. This groups consecutive duplicate elements,
 -- counting them. Only the first element of the equality is kept. For instance:
@@ -122,9 +122,8 @@ terseHFragment = terseFragment . mapAnchoredFragment (\(TestHeader block) -> blo
 
 -- | Same as 'terseFragment' for fragments of headers with time.
 --
--- TOOD: factor out common functionality if this function will stay.
 terseHWTFragment :: AnchoredFragment (HeaderWithTime TestBlock) -> String
-terseHWTFragment = terseFragment . mapAnchoredFragment (testHeader . hwtHeader)
+terseHWTFragment = terseHFragment . mapAnchoredFragment hwtHeader
 
 -- | Same as 'terseWithOrigin' for 'Maybe'.
 terseMaybe :: (a -> String) -> Maybe a -> String

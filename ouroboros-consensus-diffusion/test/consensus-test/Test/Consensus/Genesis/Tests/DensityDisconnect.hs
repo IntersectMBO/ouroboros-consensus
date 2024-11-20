@@ -109,9 +109,9 @@ staticCandidates GenesisTest {gtSecurityParam, gtGenesisWindow, gtBlockTree} =
       StaticCandidates {
         k = gtSecurityParam,
         sgen = gtGenesisWindow,
-        suffixes = suffixes,
+        suffixes,
         tips,
-        loeFrag = loeFrag
+        loeFrag
       }
       where
         (loeFrag, suffixes) =
@@ -393,7 +393,7 @@ evolveBranches EvolvingPeers {k, sgen, peers = initialPeers, fullTree} =
           killed = killedNow,
           bounds,
           tree = snapshotTree nextPeers,
-          loeFrag = loeFrag,
+          loeFrag,
           curChain
           }
         newEvents = event : events
