@@ -40,12 +40,12 @@ module Ouroboros.Consensus.Shelley.Ledger.Block (
 
 import qualified Cardano.Crypto.Hash as Crypto
 import           Cardano.Ledger.Binary (Annotator (..), DecCBOR (..),
-                     EncCBOR (..), FullByteString (..), serialize,
-                     toPlainDecoder)
+                     EncCBOR (..), FullByteString (..), serialize)
 import qualified Cardano.Ledger.Binary.Plain as Plain
-import           Cardano.Ledger.Core as SL (eraProtVerLow, toEraCBOR)
+import           Cardano.Ledger.Core as SL (eraDecoder, eraProtVerLow,
+                     toEraCBOR)
+import qualified Cardano.Ledger.Core as SL (hashTxSeq)
 import           Cardano.Ledger.Crypto (HASH)
-import qualified Cardano.Ledger.Era as SL (hashTxSeq)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import qualified Data.ByteString.Lazy as Lazy
@@ -274,7 +274,7 @@ encodeShelleyBlock = toEraCBOR @era
 decodeShelleyBlock ::
   forall proto era. ShelleyCompatible proto era
   => forall s. Plain.Decoder s (Lazy.ByteString -> ShelleyBlock proto era)
-decodeShelleyBlock = toPlainDecoder (eraProtVerLow @era) $ (. Full) . runAnnotator <$> decCBOR
+decodeShelleyBlock = eraDecoder @era $ (. Full) . runAnnotator <$> decCBOR
 
 shelleyBinaryBlockInfo :: forall proto era. ShelleyCompatible proto era => ShelleyBlock proto era -> BinaryBlockInfo
 shelleyBinaryBlockInfo blk = BinaryBlockInfo {
@@ -293,7 +293,7 @@ encodeShelleyHeader = toEraCBOR @era
 decodeShelleyHeader ::
   forall proto era. ShelleyCompatible proto era
   => forall s. Plain.Decoder s (Lazy.ByteString -> Header (ShelleyBlock proto era))
-decodeShelleyHeader = toPlainDecoder (eraProtVerLow @era) $ (. Full) . runAnnotator <$> decCBOR
+decodeShelleyHeader = eraDecoder @era $ (. Full) . runAnnotator <$> decCBOR
 
 {-------------------------------------------------------------------------------
   Condense
