@@ -700,7 +700,6 @@ test-suite storage-test
     Test.Ouroboros.Storage.LedgerDB.V1.BackingStore
     Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Lockstep
     Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock
-    Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Registry
     Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog.QuickCheck
     Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog.Unit
     Test.Ouroboros.Storage.LedgerDB.V1.LMDB
@@ -740,7 +739,6 @@ test-suite storage-test
     ouroboros-consensus,
     ouroboros-network-api,
     ouroboros-network-mock,
-    ouroboros-network-testing,
     pretty-show,
     quickcheck-dynamic,
     quickcheck-lockstep,
