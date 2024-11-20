@@ -206,7 +206,6 @@ mkBlockFetchConsensusInterface
     readCandidateChains = getCandidates
 
     readCurrentChain :: STM m (AnchoredFragment (Header blk))
-    -- FIXME: change the type once we adapt the code to the changes in BlockFetchConsensusInterface
     readCurrentChain = getCurrentChain chainDB
 
     readFetchedBlocks :: STM m (Point blk -> Bool)

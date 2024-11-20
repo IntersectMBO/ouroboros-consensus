@@ -514,12 +514,6 @@ deriving instance StandardHash blk => NoThunks (TipInfoIsEBB blk)
 
 -- | A header and the slot time at which it was received
 --
--- REVIEW: we originally talked about calling this time
--- 'ValidatedHeader' however this seems to be a misnomer since the
--- header is not validated at the point at which we construct this
--- value in 'Ouroboros.Consensus.MiniProtocol.ChainSync.Client'.
--- Furthermore, the reader might expect that 'validateHeader' returns
--- a 'ValidatedHeader' type, which is not the case.
 data HeaderWithTime blk = HeaderWithTime {
     hwtHeader           :: Header blk
   , hwtSlotRelativeTime :: RelativeTime

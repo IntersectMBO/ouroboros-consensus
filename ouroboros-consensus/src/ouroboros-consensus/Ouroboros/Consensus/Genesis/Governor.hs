@@ -302,8 +302,8 @@ densityDisconnect ::
   => GenesisWindow
   -> SecurityParam
   -> Map peer (ChainSyncState blk)
-  -> [(peer, AnchoredFragment (HeaderWithTime blk))] -- REVIEW: add a comment here? (in addition to the haddock above)
-  -> AnchoredFragment (HeaderWithTime blk)           -- REVIEW: add a comment here?
+  -> [(peer, AnchoredFragment (HeaderWithTime blk))]
+  -> AnchoredFragment (HeaderWithTime blk)
   -> ([peer], [(peer, DensityBounds blk)])
 densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixes loeFrag =
   (losingPeers, densityBounds)
