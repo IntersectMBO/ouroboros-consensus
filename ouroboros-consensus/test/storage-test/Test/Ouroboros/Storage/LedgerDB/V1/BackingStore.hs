@@ -6,7 +6,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE PackageImports #-}
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -25,7 +24,6 @@ import           Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import           Cardano.Slotting.Slot
 import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Concurrent.Class.MonadSTM.Strict.TMVar
-import           Control.Monad (void)
 import           Control.Monad.Class.MonadThrow (Handler (..), catches)
 import           Control.Monad.IO.Class (MonadIO (..))
 import           Control.Monad.Reader (runReaderT)
@@ -43,7 +41,6 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB 
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike hiding (MonadMask (..),
                      newMVar, newTVarIO, readMVar)
-import           Ouroboros.Network.Testing.QuickCheck
 import qualified System.Directory as Dir
 import           System.FS.API hiding (Handle)
 import           System.FS.IO (ioHasFS)
@@ -52,13 +49,9 @@ import           System.FS.Sim.STM
 import           System.IO.Temp (createTempDirectory)
 import           Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Lockstep
 import qualified Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock as Mock
-import           Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Registry
-import           Test.Ouroboros.Storage.LedgerDB.V1.LMDB
+import           Test.Ouroboros.Storage.LedgerDB.V1.LMDB (testLMDBLimits)
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (Arbitrary (..), Property)
-import           "quickcheck-dynamic" Test.QuickCheck.Extras
-import qualified Test.QuickCheck.Monadic as QC
-import           Test.QuickCheck.Monadic (PropertyM)
 import           Test.QuickCheck.StateModel as StateModel
 import           Test.QuickCheck.StateModel.Lockstep as Lockstep
 import           Test.QuickCheck.StateModel.Lockstep.Run as Lockstep
@@ -76,8 +69,6 @@ import           Test.Util.Orphans.ToExpr ()
 tests :: TestTree
 tests = testGroup "BackingStore" [
     adjustOption (scaleQuickCheckTests 10) $
-      testProperty "InMemory IOSim SimHasFS" testWithIOSim
-  , adjustOption (scaleQuickCheckTests 10) $
       testProperty "InMemory IO SimHasFS" $ testWithIO $
         setupBSEnv (const BS.InMemoryBackingStoreArgs) setupSimHasFS (pure ())
   , adjustOption (scaleQuickCheckTests 10) $
@@ -93,16 +84,6 @@ tests = testGroup "BackingStore" [
 scaleQuickCheckTests :: Int -> QuickCheckTests -> QuickCheckTests
 scaleQuickCheckTests c (QuickCheckTests n) = QuickCheckTests $ c * n
 
-testWithIOSim :: Actions (Lockstep (BackingStoreState K V D)) -> Property
-testWithIOSim acts = monadicSim $ do
-  BSEnv {bsRealEnv, bsCleanup} <-
-    QC.run (setupBSEnv (const BS.InMemoryBackingStoreArgs) setupSimHasFS (pure ()))
-  void $
-    runPropertyIOLikeMonad $
-      runPropertyReaderT (StateModel.runActions acts) bsRealEnv
-  QC.run bsCleanup
-  pure True
-
 testWithIO::
      IO (BSEnv IO K V D)
   -> Actions (Lockstep T) -> Property
@@ -112,7 +93,7 @@ runner ::
      RealMonad m ks vs d a
   -> BSEnv m ks vs d
   -> m a
-runner c r = unIOLikeMonad . runReaderT c $ bsRealEnv r
+runner c r = runReaderT c $ bsRealEnv r
 
 -- | Generate minimal examples for each label.
 labelledExamples :: IO ()
@@ -163,8 +144,6 @@ setupBSEnv mkBsArgs mkShfs cleanup = do
 
   bsVar <- newMVar =<< bsi (BS.InitFromValues Origin emptyLedgerTables)
 
-  handleReg <- initHandleRegistry
-
   let
     bsCleanup = do
       bs <- readMVar bsVar
@@ -175,7 +154,6 @@ setupBSEnv mkBsArgs mkShfs cleanup = do
       bsRealEnv = RealEnv {
           reBackingStoreInit = bsi
         , reBackingStore = bsVar
-        , reRegistry = handleReg
         }
     , bsCleanup
     }
@@ -267,18 +245,6 @@ instance Mock.KeysSize K where
   keysSize (LedgerTables (KeysMK s)) = Set.size s
 
 instance Mock.HasOps K V D
-
-{-------------------------------------------------------------------------------
-  Utilities
--------------------------------------------------------------------------------}
-
-runPropertyIOLikeMonad ::
-     IOLikeMonadC m
-  => PropertyM (IOLikeMonad m) a
-  -> PropertyM m a
-runPropertyIOLikeMonad p = QC.MkPropertyM $ \k -> do
-  m <- QC.unPropertyM p $ fmap ioLikeMonad . k
-  return $ unIOLikeMonad m
 
 {-------------------------------------------------------------------------------
   Orphan Arbitrary instances
