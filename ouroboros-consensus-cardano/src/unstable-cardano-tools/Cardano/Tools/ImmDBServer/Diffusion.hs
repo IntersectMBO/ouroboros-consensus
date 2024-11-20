@@ -11,6 +11,7 @@ import           Control.Tracer
 import qualified Data.ByteString.Lazy as BL
 import           Data.Functor.Contravariant ((>$<))
 import           Data.Void (Void)
+import qualified Network.Mux as Mux
 import           Network.Socket (SockAddr (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
@@ -40,7 +41,7 @@ import           System.FS.IO (ioHasFS)
 serve ::
      SockAddr
   -> N2N.Versions N2N.NodeToNodeVersion N2N.NodeToNodeVersionData
-       (OuroborosApplicationWithMinimalCtx 'ResponderMode SockAddr BL.ByteString IO Void ())
+       (OuroborosApplicationWithMinimalCtx 'Mux.ResponderMode SockAddr BL.ByteString IO Void ())
   -> IO Void
 serve sockAddr application = withIOManager \iocp -> do
     let sn     = Snocket.socketSnocket iocp
