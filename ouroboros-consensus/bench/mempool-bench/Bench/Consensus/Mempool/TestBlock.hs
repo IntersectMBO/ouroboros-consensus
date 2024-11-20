@@ -129,9 +129,9 @@ instance PayloadSemantics Tx where
       fullDiff :: DiffMK Token ()
       fullDiff = DiffMK $ consumedDiff <> producedDiff
 
-  getPayloadKeySets tx = LedgerTables $ KeysMK $ consumed <> produced
+  getPayloadKeySets tx = LedgerTables $ KeysMK consumed
     where
-      Tx {consumed, produced} = tx
+      Tx {consumed} = tx
 
 deriving stock instance EqMK mk
                         => Eq (PayloadDependentState Tx mk)
@@ -141,8 +141,8 @@ deriving anyclass instance NoThunksMK mk
                         => NoThunks (PayloadDependentState Tx mk)
 
 instance Serialise (PayloadDependentState Tx EmptyMK) where
-  encode = error "unused: encode"
-  decode = error "unused: decode"
+  encode = error "Mempool bench TestBlock unused: encode"
+  decode = error "Mempool bench TestBlock unused: decode"
 
 -- | TODO: for the time being 'TestBlock' does not have any codec config
 data instance Block.CodecConfig TestBlock = TestBlockCodecConfig
@@ -170,7 +170,7 @@ instance HasLedgerTables (LedgerState TestBlock) where
     where
       TestLedger { payloadDependentState = plds } = st
 
-instance HasLedgerTables (Ticked1 (LedgerState TestBlock)) where
+instance HasLedgerTables (Ticked (LedgerState TestBlock)) where
   projectLedgerTables (TickedTestLedger st) = Ledger.castLedgerTables $
     Ledger.projectLedgerTables st
   withLedgerTables (TickedTestLedger st) tables =
@@ -180,8 +180,8 @@ instance CanSerializeLedgerTables (LedgerState TestBlock) where
   codecLedgerTables = defaultCodecLedgerTables
 
 instance CanStowLedgerTables (LedgerState TestBlock) where
-  stowLedgerTables     = error "unused: stowLedgerTables"
-  unstowLedgerTables   = error "unused: unstowLedgerTables"
+  stowLedgerTables     = error "Mempool bench TestBlock unused: stowLedgerTables"
+  unstowLedgerTables   = error "Mempool bench TestBlock unused: unstowLedgerTables"
 
 {-------------------------------------------------------------------------------
   Mempool support
@@ -210,8 +210,7 @@ instance Ledger.LedgerSupportsMempool TestBlock where
 
   txForgetValidated (ValidatedGenTx tx) = tx
 
-  getTransactionKeySets (TestBlockGenTx tx) =
-    LedgerTables $ KeysMK $ consumed tx
+  getTransactionKeySets (TestBlockGenTx tx) = getPayloadKeySets tx
 
 instance Ledger.TxLimits TestBlock where
   type TxMeasure TestBlock = Ledger.IgnoringOverflow Ledger.ByteSize32

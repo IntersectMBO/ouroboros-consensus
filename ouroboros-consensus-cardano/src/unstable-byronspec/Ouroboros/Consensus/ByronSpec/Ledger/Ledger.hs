@@ -15,7 +15,7 @@ module Ouroboros.Consensus.ByronSpec.Ledger.Ledger (
     -- * Type family instances
   , LedgerState (..)
   , LedgerTables (..)
-  , Ticked1 (..)
+  , Ticked (..)
   ) where
 
 import qualified Byron.Spec.Chain.STS.Rule.Chain as Spec
@@ -80,7 +80,7 @@ instance GetTip (LedgerState ByronSpecBlock) where
   getTip (ByronSpecLedgerState tip state) = castPoint $
       getByronSpecTip tip state
 
-instance GetTip (Ticked1 (LedgerState ByronSpecBlock)) where
+instance GetTip (Ticked (LedgerState ByronSpecBlock)) where
   getTip (TickedByronSpecLedgerState tip state) = castPoint $
       getByronSpecTip tip state
 
@@ -94,12 +94,12 @@ getByronSpecTip (Just slot) state = BlockPoint
   Ticking
 -------------------------------------------------------------------------------}
 
-data instance Ticked1 (LedgerState ByronSpecBlock) mk = TickedByronSpecLedgerState {
+data instance Ticked (LedgerState ByronSpecBlock) mk = TickedByronSpecLedgerState {
       untickedByronSpecLedgerTip :: Maybe SlotNo
     , tickedByronSpecLedgerState :: Spec.State Spec.CHAIN
     }
   deriving stock (Show, Eq)
-  deriving NoThunks via AllowThunk (Ticked1 (LedgerState ByronSpecBlock) mk)
+  deriving NoThunks via AllowThunk (Ticked (LedgerState ByronSpecBlock) mk)
 
 instance IsLedger (LedgerState ByronSpecBlock) where
   type LedgerErr (LedgerState ByronSpecBlock) = ByronSpecLedgerError
@@ -126,13 +126,13 @@ type instance TxOut (LedgerState ByronSpecBlock) = Void
 instance LedgerTablesAreTrivial (LedgerState ByronSpecBlock) where
   convertMapKind (ByronSpecLedgerState x y) =
       ByronSpecLedgerState x y
-instance LedgerTablesAreTrivial (Ticked1 (LedgerState ByronSpecBlock)) where
+instance LedgerTablesAreTrivial (Ticked (LedgerState ByronSpecBlock)) where
   convertMapKind (TickedByronSpecLedgerState x y) =
       TickedByronSpecLedgerState x y
 deriving via TrivialLedgerTables (LedgerState ByronSpecBlock)
     instance HasLedgerTables (LedgerState ByronSpecBlock)
-deriving via TrivialLedgerTables (Ticked1 (LedgerState ByronSpecBlock))
-    instance HasLedgerTables (Ticked1 (LedgerState ByronSpecBlock))
+deriving via TrivialLedgerTables (Ticked (LedgerState ByronSpecBlock))
+    instance HasLedgerTables (Ticked (LedgerState ByronSpecBlock))
 deriving via TrivialLedgerTables (LedgerState ByronSpecBlock)
     instance CanSerializeLedgerTables (LedgerState ByronSpecBlock)
 deriving via TrivialLedgerTables (LedgerState ByronSpecBlock)

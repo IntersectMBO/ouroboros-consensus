@@ -453,11 +453,27 @@ data TraceEventMempool blk
       -- ^ Emitted when the mempool is adjusted after the tip has changed.
       EnclosingTimed
       -- ^ How long the sync operation took.
+
+     -- | The mempool is going to attempt to sync with the LedgerDB, this will
+     -- be followed by either 'TraceMempoolSyncNotNeeded' or
+     -- 'TraceMempoolSyncDone'.
    | TraceMempoolAttemptingSync
-   | TraceMempoolSyncNotNeeded (Point blk) (Point blk)
+     -- | A sync is not needed, as the point at the tip of the LedgerDB and the
+     -- point at the mempool are the same.
+   | TraceMempoolSyncNotNeeded (Point blk)
+     -- | A sync was done.
    | TraceMempoolSyncDone
+     -- | We will try to add a transaction. Adding a transaction might need to
+     -- trigger a re-sync.
    | TraceMempoolAttemptingAdd (GenTx blk)
+     -- | When adding a transaction, the ledger state in the mempool was found
+     -- in the LedgerDB, and therefore we can read values, even if it is not the
+     -- tip of the LedgerDB. An async re-sync will be performed eventually in
+     -- that case.
    | TraceMempoolLedgerFound (Point blk)
+     -- | When adding a transaction, the ledger state in the mempool is gone
+     -- from the LedgerDB, so we cannot read values for the new
+     -- transaction. This forces an in-place re-sync.
    | TraceMempoolLedgerNotFound (Point blk)
   deriving (Generic)
 

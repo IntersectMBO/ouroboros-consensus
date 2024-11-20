@@ -164,7 +164,9 @@ class ( UpdateLedger blk
   txForgetValidated :: Validated (GenTx blk) -> GenTx blk
 
   -- | Given a transaction, get the key-sets that we need to apply it to a
-  -- ledger state.
+  -- ledger state. This is implemented in the Ledger. An example of non-obvious
+  -- needed keys in Cardano are those of reference scripts for computing the
+  -- transaction size.
   getTransactionKeySets :: GenTx blk -> LedgerTables (LedgerState blk) KeysMK
 
 data ReapplyTxsResult blk =

@@ -75,7 +75,7 @@ And imports, of course:
 > import Ouroboros.Consensus.Protocol.Abstract
 >   (ConsensusConfig, SecurityParam, ConsensusProtocol (..))
 
-> import Ouroboros.Consensus.Ticked (Ticked1, Ticked)
+> import Ouroboros.Consensus.Ticked (Ticked, Ticked)
 > import Ouroboros.Consensus.Ledger.Abstract
 >   (LedgerState, LedgerCfg, GetTip, LedgerResult (..), ApplyBlock (..),
 >    UpdateLedger, IsLedger (..))
@@ -316,7 +316,7 @@ There is no interesting static configuration for this ledger:
 
 Our `GetTip` implementation retrieves the tip from the `lsbd_tip` field:
 
-> instance GetTip (Ticked1 (LedgerState BlockD)) where
+> instance GetTip (Ticked (LedgerState BlockD)) where
 >  getTip = castPoint . lsbd_tip . unTickedLedgerStateD
 
 > instance GetTip (LedgerState BlockD) where
@@ -325,10 +325,10 @@ Our `GetTip` implementation retrieves the tip from the `lsbd_tip` field:
 Ticking
 -------
 
-`LedgerState BlockD` also needs a corresponding `Ticked1` instance which is still
+`LedgerState BlockD` also needs a corresponding `Ticked` instance which is still
 very simple:
 
-> newtype instance Ticked1 (LedgerState BlockD) mk =
+> newtype instance Ticked (LedgerState BlockD) mk =
 >   TickedLedgerStateD {
 >     unTickedLedgerStateD :: LedgerState BlockD mk
 >   }
@@ -338,12 +338,12 @@ very simple:
 Because the ledger now needs to track the snapshots in `lsbd_snapshot1` and
 `lsbd_snapshot2` we can express this in terms of ticking a `LedgerState BlockD`.
 We'll write a function (that we'll use later) to express this relationship
-computing the `Ticked1 (LedgerState BlockD)` resulting from a starting
+computing the `Ticked (LedgerState BlockD)` resulting from a starting
 `LedgerState BlockD` being ticked to some slot in the future - assuming no
 intervening blocks are applied:
 
 > tickLedgerStateD ::
->   SlotNo -> LedgerState BlockD mk -> Ticked1 (LedgerState BlockD) mk
+>   SlotNo -> LedgerState BlockD mk -> Ticked (LedgerState BlockD) mk
 > tickLedgerStateD newSlot ldgrSt =
 >   TickedLedgerStateD $
 >     if isNewEpoch then
@@ -388,10 +388,10 @@ We can now use `tickLedgerStateD` to instantiate `IsLedger`:
 Applying Blocks
 ---------------
 
-Applying a `BlockD` to a `Ticked1 (LedgerState BlockD)` is (again) the result of
+Applying a `BlockD` to a `Ticked (LedgerState BlockD)` is (again) the result of
 applying each individual transaction - exactly as it was in for `BlockC`:
 
-> applyBlockTo :: BlockD -> Ticked1 (LedgerState BlockD) mk -> LedgerState BlockD mk
+> applyBlockTo :: BlockD -> Ticked (LedgerState BlockD) mk -> LedgerState BlockD mk
 > applyBlockTo block tickedLedgerState =
 >   ledgerState { lsbd_tip = blockPoint block
 >               , lsbd_count = lsbc_count'
@@ -486,7 +486,7 @@ specific to `PrtclD`:
 > data ChainDepStateD = ChainDepStateD
 >   deriving (Eq,Show,Generic,NoThunks)
 
-However, the `Ticked1` representation contains the `LedgerViewD` containing the
+However, the `Ticked` representation contains the `LedgerViewD` containing the
 epoch snapshot.  This is due to functions for `ConsensusProtocol` only taking
 the `LedgerView` as an argument in some cases:
 
@@ -681,13 +681,13 @@ For reference on these instances and their meaning, please see the appendix in
 
 > instance LedgerTablesAreTrivial (LedgerState BlockD) where
 >   convertMapKind (LedgerD x y z z') = LedgerD x y z z'
-> instance LedgerTablesAreTrivial (Ticked1 (LedgerState BlockD)) where
+> instance LedgerTablesAreTrivial (Ticked (LedgerState BlockD)) where
 >   convertMapKind (TickedLedgerStateD x) =
 >       TickedLedgerStateD (convertMapKind x)
 > deriving via TrivialLedgerTables (LedgerState BlockD)
 >     instance HasLedgerTables (LedgerState BlockD)
-> deriving via TrivialLedgerTables (Ticked1 (LedgerState BlockD))
->     instance HasLedgerTables (Ticked1 (LedgerState BlockD))
+> deriving via TrivialLedgerTables (Ticked (LedgerState BlockD))
+>     instance HasLedgerTables (Ticked (LedgerState BlockD))
 > deriving via TrivialLedgerTables (LedgerState BlockD)
 >     instance CanSerializeLedgerTables (LedgerState BlockD)
 > deriving via TrivialLedgerTables (LedgerState BlockD)

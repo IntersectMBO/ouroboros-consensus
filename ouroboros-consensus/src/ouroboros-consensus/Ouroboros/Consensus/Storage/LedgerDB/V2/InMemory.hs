@@ -153,15 +153,15 @@ takeSnapshot ::
   => CodecConfig blk
   -> Tracer m (TraceSnapshotEvent blk)
   -> SomeHasFS m
-  -> Maybe DiskSnapshot
+  -> Maybe String
   -> StateRef m (ExtLedgerState blk)
   -> m (Maybe (DiskSnapshot, RealPoint blk))
-takeSnapshot ccfg tracer hasFS dsOverride st = do
+takeSnapshot ccfg tracer hasFS suffix st = do
   case pointToWithOriginRealPoint (castPoint (getTip $ state st)) of
     Origin -> return Nothing
     NotOrigin t -> do
       let number   = unSlotNo (realPointSlot t)
-          snapshot = fromMaybe (DiskSnapshot number Nothing) dsOverride
+          snapshot = DiskSnapshot number suffix
       diskSnapshots <- listSnapshots hasFS
       if List.any ((== number) . dsNumber) diskSnapshots then
         return Nothing

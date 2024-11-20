@@ -56,7 +56,6 @@ import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Control.Monad.Class.MonadAsync
 import           Control.Monad.Class.MonadEventlog
 import           Control.Monad.Class.MonadFork
-import           Control.Monad.Class.MonadSay
 import           Control.Monad.Class.MonadST
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Class.MonadTime.SI
@@ -93,7 +92,6 @@ class ( MonadAsync              m
       , Alternative        (STM m)
       , MonadCatch         (STM m)
       , PrimMonad               m
-      , MonadSay                m
       , MonadLabelledSTM        m
       , forall a. NoThunks (m a)
       , forall a. NoThunks a => NoThunks (StrictSTM.StrictTVar m a)

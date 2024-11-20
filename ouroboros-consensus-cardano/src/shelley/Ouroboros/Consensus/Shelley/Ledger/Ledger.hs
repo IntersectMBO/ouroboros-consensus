@@ -27,7 +27,6 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger (
   , ShelleyTip (..)
   , ShelleyTransition (..)
   , Ticked (..)
-  , Ticked1 (..)
   , castShelleyTip
   , shelleyLedgerTipPoint
   , shelleyTipToPoint
@@ -276,7 +275,7 @@ instance ShelleyBasedEra era
         } = st
 
 instance ShelleyBasedEra era
-      => HasLedgerTables (Ticked1 (LedgerState (ShelleyBlock proto era))) where
+      => HasLedgerTables (Ticked (LedgerState (ShelleyBlock proto era))) where
   projectLedgerTables       = castLedgerTables . tickedShelleyLedgerTables
   withLedgerTables st tables =
       TickedShelleyLedgerState {
@@ -333,7 +332,7 @@ instance ShelleyBasedEra era
         } = st
 
 instance ShelleyBasedEra era
-      => CanStowLedgerTables (Ticked1 (LedgerState (ShelleyBlock proto era))) where
+      => CanStowLedgerTables (Ticked (LedgerState (ShelleyBlock proto era))) where
   stowLedgerTables st =
       TickedShelleyLedgerState {
          untickedShelleyLedgerTip      = untickedShelleyLedgerTip
@@ -382,7 +381,7 @@ slUtxoL st vals =
 instance GetTip (LedgerState (ShelleyBlock proto era)) where
   getTip = castPoint . shelleyLedgerTipPoint
 
-instance GetTip (Ticked1 (LedgerState (ShelleyBlock proto era))) where
+instance GetTip (Ticked (LedgerState (ShelleyBlock proto era))) where
   getTip = castPoint . untickedShelleyLedgerTipPoint
 
 {-------------------------------------------------------------------------------
@@ -390,7 +389,7 @@ instance GetTip (Ticked1 (LedgerState (ShelleyBlock proto era))) where
 -------------------------------------------------------------------------------}
 
 -- | Ticking only affects the state itself
-data instance Ticked1 (LedgerState (ShelleyBlock proto era)) mk = TickedShelleyLedgerState {
+data instance Ticked (LedgerState (ShelleyBlock proto era)) mk = TickedShelleyLedgerState {
       untickedShelleyLedgerTip      :: !(WithOrigin (ShelleyTip proto era))
       -- | We are counting blocks within an epoch, this means:
       --
@@ -429,6 +428,8 @@ instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) 
             else
               shelleyLedgerTransition
         , tickedShelleyLedgerState      = l'
+          -- The UTxO set is only mutated by block/transaction execution and
+          -- era translations, that is why we put empty tables here.
         , tickedShelleyLedgerTables     = emptyLedgerTables
         }
     where

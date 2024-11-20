@@ -46,7 +46,6 @@ module Ouroboros.Consensus.Mock.Ledger.Block (
   , LedgerState (..)
   , LedgerTables (..)
   , Ticked (..)
-  , Ticked1 (..)
   , genesisSimpleLedgerState
   , updateSimpleLedgerState
     -- * 'ApplyTx' (mempool support)
@@ -347,7 +346,7 @@ type instance LedgerCfg (LedgerState (SimpleBlock c ext)) = SimpleLedgerConfig c
 instance GetTip (LedgerState (SimpleBlock c ext)) where
   getTip (SimpleLedgerState st _) = castPoint $ mockTip st
 
-instance GetTip (Ticked1 (LedgerState (SimpleBlock c ext))) where
+instance GetTip (Ticked (LedgerState (SimpleBlock c ext))) where
   getTip = castPoint . getTip . getTickedSimpleLedgerState
 
 instance MockProtocolSpecific c ext
@@ -407,7 +406,7 @@ deriving instance ( SimpleCrypto c
                   => Show (LedgerState (SimpleBlock c ext) mk)
 
 -- Ticking has no effect on the simple ledger state
-newtype instance Ticked1 (LedgerState (SimpleBlock c ext)) mk = TickedSimpleLedgerState {
+newtype instance Ticked (LedgerState (SimpleBlock c ext)) mk = TickedSimpleLedgerState {
       getTickedSimpleLedgerState :: LedgerState (SimpleBlock c ext) mk
     }
   deriving (Generic)
@@ -415,12 +414,12 @@ newtype instance Ticked1 (LedgerState (SimpleBlock c ext)) mk = TickedSimpleLedg
 deriving anyclass instance ( SimpleCrypto c
                            , Typeable ext
                            )
-                           => NoThunks (Ticked1 (LedgerState (SimpleBlock c ext)) TrackingMK)
+                           => NoThunks (Ticked (LedgerState (SimpleBlock c ext)) TrackingMK)
 deriving instance ( SimpleCrypto c
                   , Typeable ext
                   , Show (LedgerState (SimpleBlock c ext) mk)
                   )
-                  => Show (Ticked1 (LedgerState (SimpleBlock c ext)) mk)
+                  => Show (Ticked (LedgerState (SimpleBlock c ext)) mk)
 
 instance MockProtocolSpecific c ext => UpdateLedger (SimpleBlock c ext)
 
@@ -469,7 +468,7 @@ instance HasLedgerTables (LedgerState (SimpleBlock c ext)) where
   projectLedgerTables = simpleLedgerTables
   withLedgerTables (SimpleLedgerState s _) = SimpleLedgerState s
 
-instance HasLedgerTables (Ticked1 (LedgerState (SimpleBlock c ext))) where
+instance HasLedgerTables (Ticked (LedgerState (SimpleBlock c ext))) where
   projectLedgerTables = castLedgerTables
                       . simpleLedgerTables
                       . getTickedSimpleLedgerState
@@ -502,7 +501,7 @@ instance CanStowLedgerTables (LedgerState (SimpleBlock c ext)) where
           simpleLedgerState
         } = st
 
-deriving newtype instance CanStowLedgerTables (Ticked1 (LedgerState (SimpleBlock c ext)))
+deriving newtype instance CanStowLedgerTables (Ticked (LedgerState (SimpleBlock c ext)))
 
 {-------------------------------------------------------------------------------
   Support for the mempool

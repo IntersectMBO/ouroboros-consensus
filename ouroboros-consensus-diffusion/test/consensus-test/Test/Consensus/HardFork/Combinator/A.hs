@@ -188,11 +188,11 @@ data instance LedgerState BlockA mk = LgrA {
   deriving NoThunks via OnlyCheckWhnfNamed "LgrA" (LedgerState BlockA mk)
 
 -- | Ticking has no state on the A ledger state
-newtype instance Ticked1 (LedgerState BlockA) mk = TickedLedgerStateA {
+newtype instance Ticked (LedgerState BlockA) mk = TickedLedgerStateA {
       getTickedLedgerStateA :: LedgerState BlockA mk
     }
   deriving stock (Generic, Show, Eq)
-  deriving NoThunks via OnlyCheckWhnfNamed "TickedLgrA" (Ticked1 (LedgerState BlockA) mk)
+  deriving NoThunks via OnlyCheckWhnfNamed "TickedLgrA" (Ticked (LedgerState BlockA) mk)
 
 {-------------------------------------------------------------------------------
   Ledger Tables
@@ -203,12 +203,12 @@ type instance TxOut (LedgerState BlockA) = Void
 
 instance LedgerTablesAreTrivial (LedgerState BlockA) where
   convertMapKind (LgrA x y) = LgrA x y
-instance LedgerTablesAreTrivial (Ticked1 (LedgerState BlockA)) where
+instance LedgerTablesAreTrivial (Ticked (LedgerState BlockA)) where
   convertMapKind (TickedLedgerStateA x) = TickedLedgerStateA (convertMapKind x)
 deriving via TrivialLedgerTables (LedgerState BlockA)
     instance HasLedgerTables (LedgerState BlockA)
-deriving via TrivialLedgerTables (Ticked1 (LedgerState BlockA))
-    instance HasLedgerTables (Ticked1 (LedgerState BlockA))
+deriving via TrivialLedgerTables (Ticked (LedgerState BlockA))
+    instance HasLedgerTables (Ticked (LedgerState BlockA))
 deriving via TrivialLedgerTables (LedgerState BlockA)
     instance CanSerializeLedgerTables (LedgerState BlockA)
 deriving via TrivialLedgerTables (LedgerState BlockA)
@@ -227,7 +227,7 @@ type instance LedgerCfg (LedgerState BlockA) =
 instance GetTip (LedgerState BlockA) where
   getTip = castPoint . lgrA_tip
 
-instance GetTip (Ticked1 (LedgerState BlockA)) where
+instance GetTip (Ticked (LedgerState BlockA)) where
   getTip = castPoint . getTip . getTickedLedgerStateA
 
 instance IsLedger (LedgerState BlockA) where

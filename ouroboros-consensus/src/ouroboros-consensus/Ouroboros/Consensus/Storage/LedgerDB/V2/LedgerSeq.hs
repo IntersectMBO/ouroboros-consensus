@@ -90,9 +90,11 @@ data LedgerTablesHandle m l = LedgerTablesHandle {
   StateRef, represents a full ledger state, i.e. with a handle for its tables
 -------------------------------------------------------------------------------}
 
--- | For single era blocks, it would be the same to hold a stowed ledger state,
--- an unstowed one or a tuple with the state and the tables, however, for a
--- hard fork block, these are not equivalent.
+-- | For single era blocks, it would be the same to hold a stowed ledger state
+-- (@'LedgerTables' ('LedgerState' blk) 'EmptyMK'@), an unstowed one
+-- (@'LedgerTables' ('LedgerState' blk) 'ValuesMK'@) or a tuple with the state
+-- and the tables ('LedgerState' blk 'EmptyMK', 'LedgerTables' ('LedgerState'
+-- blk) 'ValuesMK'), however, for a hard fork block, these are not equivalent.
 --
 -- If we were to hold a sequence of type @LedgerState blk EmptyMK@ with stowed
 -- values, we would have to translate the entirety of the tables on epoch

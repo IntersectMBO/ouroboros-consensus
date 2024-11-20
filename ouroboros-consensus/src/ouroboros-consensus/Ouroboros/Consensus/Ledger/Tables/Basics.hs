@@ -29,7 +29,7 @@ import           Data.Coerce (coerce)
 import           Data.Kind (Type)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
-import           Ouroboros.Consensus.Ticked (Ticked1)
+import           Ouroboros.Consensus.Ticked (Ticked)
 
 {-------------------------------------------------------------------------------
   Kinds
@@ -91,8 +91,8 @@ type family TxOut l
 
 type instance TxIn  (LedgerTables l) = TxIn l
 type instance TxOut (LedgerTables l) = TxOut l
-type instance TxIn  (Ticked1 l)      = TxIn l
-type instance TxOut (Ticked1 l)      = TxOut l
+type instance TxIn  (Ticked l)      = TxIn l
+type instance TxOut (Ticked l)      = TxOut l
 
 type SameUtxoTypes l l' = (TxIn l ~ TxIn l', TxOut l ~ TxOut l')
 

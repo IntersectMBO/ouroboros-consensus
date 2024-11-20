@@ -304,7 +304,8 @@ implForkerRangeReadTables env rq0 = do
           Nothing -> ds
           Just k  -> Diff.filterWithKeyOnly (> k) ds
 
-    -- NOTE: this is counting the deletions wrt disk.
+    -- NOTE: this is counting the deletions wrt disk because deletions of values
+    -- created along the diffs will have been collapsed to the empty diff.
     numDeletesDiffMK :: DiffMK k v -> Int
     numDeletesDiffMK (DiffMK d) =
       getSum $ Diff.foldMapDelta (Sum . oneIfDel) d

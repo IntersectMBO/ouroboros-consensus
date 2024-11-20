@@ -177,13 +177,13 @@ type instance TxOut (LedgerState BlockB) = Void
 
 instance LedgerTablesAreTrivial (LedgerState BlockB) where
   convertMapKind (LgrB x) = LgrB x
-instance LedgerTablesAreTrivial (Ticked1 (LedgerState BlockB)) where
+instance LedgerTablesAreTrivial (Ticked (LedgerState BlockB)) where
   convertMapKind (TickedLedgerStateB x) = TickedLedgerStateB (convertMapKind x)
 
 deriving via TrivialLedgerTables (LedgerState BlockB)
     instance HasLedgerTables (LedgerState BlockB)
-deriving via TrivialLedgerTables (Ticked1 (LedgerState BlockB))
-    instance HasLedgerTables (Ticked1 (LedgerState BlockB))
+deriving via TrivialLedgerTables (Ticked (LedgerState BlockB))
+    instance HasLedgerTables (Ticked (LedgerState BlockB))
 deriving via TrivialLedgerTables (LedgerState BlockB)
     instance CanSerializeLedgerTables (LedgerState BlockB)
 deriving via TrivialLedgerTables (LedgerState BlockB)
@@ -192,15 +192,15 @@ deriving via TrivialLedgerTables (LedgerState BlockB)
 type instance LedgerCfg (LedgerState BlockB) = ()
 
 -- | Ticking has no state on the B ledger state
-newtype instance Ticked1 (LedgerState BlockB) mk = TickedLedgerStateB {
+newtype instance Ticked (LedgerState BlockB) mk = TickedLedgerStateB {
       getTickedLedgerStateB :: LedgerState BlockB mk
     }
-  deriving NoThunks via OnlyCheckWhnfNamed "TickedLgrB" (Ticked1 (LedgerState BlockB) mk)
+  deriving NoThunks via OnlyCheckWhnfNamed "TickedLgrB" (Ticked (LedgerState BlockB) mk)
 
 instance GetTip (LedgerState BlockB) where
   getTip = castPoint . lgrB_tip
 
-instance GetTip (Ticked1 (LedgerState BlockB)) where
+instance GetTip (Ticked (LedgerState BlockB)) where
   getTip = castPoint . getTip . getTickedLedgerStateB
 
 instance IsLedger (LedgerState BlockB) where

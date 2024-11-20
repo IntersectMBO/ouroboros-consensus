@@ -241,10 +241,10 @@ instance ( Ord (TxIn l)
   withLedgerTables _ = castLedgerTables
 
 -- | Convenience class, useful for partially applying the composition of
--- 'HasLedgerTables' and 'Ticked1'.
+-- 'HasLedgerTables' and 'Ticked'.
 type HasTickedLedgerTables :: LedgerStateKind -> Constraint
-class HasLedgerTables (Ticked1 l) => HasTickedLedgerTables l where
-instance HasLedgerTables (Ticked1 l) => HasTickedLedgerTables l
+class HasLedgerTables (Ticked l) => HasTickedLedgerTables l where
+instance HasLedgerTables (Ticked l) => HasTickedLedgerTables l
 
 -- | LedgerTables are projections of data from a LedgerState and as such they
 -- can be injected back into a LedgerState. This is necessary because the Ledger

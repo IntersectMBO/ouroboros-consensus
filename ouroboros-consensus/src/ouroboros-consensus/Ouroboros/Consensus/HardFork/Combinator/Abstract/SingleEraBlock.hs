@@ -72,7 +72,7 @@ class ( LedgerSupportsProtocol blk
         -- LedgerTables
       , CanStowLedgerTables (LedgerState blk)
       , HasLedgerTables (LedgerState blk)
-      , HasLedgerTables (Ticked1 (LedgerState blk))
+      , HasLedgerTables (Ticked (LedgerState blk))
       , Eq (TxOut (LedgerState blk))
       , Show (TxOut (LedgerState blk))
       , NoThunks (TxOut (LedgerState blk))

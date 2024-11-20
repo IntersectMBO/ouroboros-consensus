@@ -80,7 +80,7 @@ import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Ledger
                      (ShelleyLedgerConfig (shelleyLedgerGlobals),
-                     Ticked1 (TickedShelleyLedgerState, tickedShelleyLedgerState),
+                     Ticked (TickedShelleyLedgerState, tickedShelleyLedgerState),
                      getPParams)
 import           Ouroboros.Consensus.Util (ShowProxy (..))
 import           Ouroboros.Consensus.Util.Condense

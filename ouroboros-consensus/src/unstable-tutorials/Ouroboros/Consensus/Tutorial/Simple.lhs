@@ -50,7 +50,7 @@ First, some imports we'll need:
 >    HeaderHash, Point, StandardHash)
 > import Ouroboros.Consensus.Protocol.Abstract
 >   (SecurityParam(..), ConsensusConfig, ConsensusProtocol(..) )
-> import Ouroboros.Consensus.Ticked ( Ticked1, Ticked(TickedTrivial) )
+> import Ouroboros.Consensus.Ticked ( Ticked, Ticked(TickedTrivial) )
 > import Ouroboros.Consensus.Block
 >   (BlockSupportsProtocol (selectView, validateView))
 > import Ouroboros.Consensus.Ledger.Abstract
@@ -544,11 +544,11 @@ place in the blockchain - a pair of a slot and a block hash.
 ---------------------------------------
 
 Again, the slot abstraction defines a logical clock - and instances of the
-`Ticked1` family describe values that evolve with respect to this logical clock.
-As such, we will also need to define an instance of `Ticked1` for our ledger
+`Ticked` family describe values that evolve with respect to this logical clock.
+As such, we will also need to define an instance of `Ticked` for our ledger
 state.  In our example, this is essentially an `Identity` functor:
 
-> newtype instance Ticked1 (LedgerState BlockC) mk =
+> newtype instance Ticked (LedgerState BlockC) mk =
 >   TickedLedgerStateC
 >     { unTickedLedgerStateC :: LedgerState BlockC mk }
 >   deriving (Show, Eq, Generic, Serialise)
@@ -592,7 +592,7 @@ A block `b` is said to have been `applied` to a `LedgerState` if that
 `LedgerState` is the result of having witnessed `b` at some point.  We can
 express this as a function:
 
-> applyBlockTo :: BlockC -> Ticked1 (LedgerState BlockC) mk -> LedgerState BlockC mk
+> applyBlockTo :: BlockC -> Ticked (LedgerState BlockC) mk -> LedgerState BlockC mk
 > applyBlockTo block tickedLedgerState =
 >   ledgerState { lsbc_tip = blockPoint block
 >               , lsbc_count = lsbc_count'
@@ -605,7 +605,7 @@ express this as a function:
 >         Inc -> i + 1
 >         Dec -> i - 1
 
-We use a `Ticked1 (LedgerState BlockC)` to enforce the invariant that we should
+We use a `Ticked (LedgerState BlockC)` to enforce the invariant that we should
 not apply two blocks in a row - at least one tick (aka slot) must have elapsed
 between block applications.
 
@@ -661,7 +661,7 @@ The `GetTip` typeclass describes how to get the `Point` of the tip - which is
 the most recently applied block.  We need to implement this both for
 `LedgerState BlockC` as well as its ticked version:
 
-> instance GetTip (Ticked1 (LedgerState BlockC)) where
+> instance GetTip (Ticked (LedgerState BlockC)) where
 >    getTip = castPoint . lsbc_tip . unTickedLedgerStateC
 
 > instance GetTip (LedgerState BlockC) where
@@ -741,13 +741,13 @@ and we use the default implementation
 
 > instance LedgerTablesAreTrivial (LedgerState BlockC) where
 >   convertMapKind (LedgerC x y) = LedgerC x y
-> instance LedgerTablesAreTrivial (Ticked1 (LedgerState BlockC)) where
+> instance LedgerTablesAreTrivial (Ticked (LedgerState BlockC)) where
 >   convertMapKind (TickedLedgerStateC x) =
 >       TickedLedgerStateC (convertMapKind x)
 > deriving via TrivialLedgerTables (LedgerState BlockC)
 >     instance HasLedgerTables (LedgerState BlockC)
-> deriving via TrivialLedgerTables (Ticked1 (LedgerState BlockC))
->     instance HasLedgerTables (Ticked1 (LedgerState BlockC))
+> deriving via TrivialLedgerTables (Ticked (LedgerState BlockC))
+>     instance HasLedgerTables (Ticked (LedgerState BlockC))
 > deriving via TrivialLedgerTables (LedgerState BlockC)
 >     instance CanSerializeLedgerTables (LedgerState BlockC)
 > deriving via TrivialLedgerTables (LedgerState BlockC)

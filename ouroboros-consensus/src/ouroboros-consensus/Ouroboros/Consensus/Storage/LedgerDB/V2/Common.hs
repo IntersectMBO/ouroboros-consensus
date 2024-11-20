@@ -29,7 +29,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.Common (
   , getEnv2
   , getEnv5
   , getEnvSTM
-  , getEnvSTM1
     -- * Forkers
   , newForkerAtTarget
   , newForkerByRollback
@@ -174,16 +173,6 @@ getEnvSTM ::
   -> STM m r
 getEnvSTM (LDBHandle varState) f = readTVar varState >>= \case
     LedgerDBOpen env -> f env
-    LedgerDBClosed   -> throwSTM $ ClosedDBError @blk prettyCallStack
-
--- | Variant of 'getEnv1' that works in 'STM'.
-getEnvSTM1 ::
-     forall m l blk a r. (IOLike m, HasCallStack, HasHeader blk)
-  => LedgerDBHandle m l blk
-  -> (LedgerDBEnv m l blk -> a -> STM m r)
-  -> a -> STM m r
-getEnvSTM1 (LDBHandle varState) f a = readTVar varState >>= \case
-    LedgerDBOpen env -> f env a
     LedgerDBClosed   -> throwSTM $ ClosedDBError @blk prettyCallStack
 
 {-------------------------------------------------------------------------------

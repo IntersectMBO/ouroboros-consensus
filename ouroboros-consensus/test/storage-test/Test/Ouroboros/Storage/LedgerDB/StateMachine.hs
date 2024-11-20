@@ -472,7 +472,7 @@ instance RunModel Model (StateT Environment IO) where
 
   perform _ ForceTakeSnapshot _ = do
     Environment _ testInternals _ _ _ _ <- get
-    lift $ takeSnapshotNOW testInternals Nothing
+    lift $ takeSnapshotNOW testInternals TakeAtImmutableTip Nothing
 
   perform _ (ValidateAndCommit n blks) _ = do
       Environment ldb _ chainDb _ _ _ <- get

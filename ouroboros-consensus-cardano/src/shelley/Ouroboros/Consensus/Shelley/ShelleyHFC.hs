@@ -41,6 +41,7 @@ import           Data.SOP.BasicFunctors
 import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.Index (Index (..))
 import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
+import           Data.SOP.Strict
 import qualified Data.Text as T (pack)
 import           Data.Void (Void)
 import           Data.Word
@@ -70,7 +71,6 @@ import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Inspect as Shelley.Inspect
 import           Ouroboros.Consensus.Shelley.Node ()
 import           Ouroboros.Consensus.TypeFamilyWrappers
-import Data.SOP.Strict
 
 {-------------------------------------------------------------------------------
   Synonym for convenience

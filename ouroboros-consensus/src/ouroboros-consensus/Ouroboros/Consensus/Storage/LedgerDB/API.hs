@@ -111,8 +111,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.API (
     -- * Main API
     LedgerDB (..)
   , LedgerDB'
-  , TestInternals (..)
-  , TestInternals'
   , currentPoint
     -- * Exceptions
   , LedgerDbError (..)
@@ -152,6 +150,10 @@ module Ouroboros.Consensus.Storage.LedgerDB.API (
     -- ** Forker events
   , TraceForkerEvent (..)
   , TraceForkerEventWithKey (..)
+    -- * Testing
+  , TestInternals (..)
+  , TestInternals'
+  , WhereToTakeSnapshot (..)
   ) where
 
 import           Control.Monad (forM)
@@ -167,7 +169,6 @@ import           Ouroboros.Consensus.HeaderStateHistory
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
@@ -262,9 +263,11 @@ currentPoint ::
   -> STM m (Point blk)
 currentPoint ldb = castPoint . getTip <$> getVolatileTip ldb
 
+data WhereToTakeSnapshot = TakeAtImmutableTip | TakeAtVolatileTip deriving Eq
+
 data TestInternals m l blk = TestInternals {
     wipeLedgerDB       :: m ()
-  , takeSnapshotNOW    :: Maybe DiskSnapshot -> m ()
+  , takeSnapshotNOW    :: WhereToTakeSnapshot -> Maybe String -> m ()
   , reapplyThenPushNOW :: blk -> m ()
   , truncateSnapshots  :: m ()
   , closeLedgerDB      :: m ()

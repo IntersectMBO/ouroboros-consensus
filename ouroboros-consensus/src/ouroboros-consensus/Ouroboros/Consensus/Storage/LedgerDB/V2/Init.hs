@@ -150,12 +150,12 @@ implMkLedgerDb ::
 implMkLedgerDb h bss = (LedgerDB {
       getVolatileTip            = getEnvSTM  h implGetVolatileTip
     , getImmutableTip           = getEnvSTM  h implGetImmutableTip
-    , getPastLedgerState        = getEnvSTM1 h implGetPastLedgerState
+    , getPastLedgerState        = \s -> getEnvSTM  h (flip implGetPastLedgerState s)
     , getHeaderStateHistory     = getEnvSTM  h implGetHeaderStateHistory
     , getForkerAtTarget         = newForkerAtTarget h
     , validate                  = getEnv5    h (implValidate h)
     , getPrevApplied            = getEnvSTM  h implGetPrevApplied
-    , garbageCollect            = getEnvSTM1 h implGarbageCollect
+    , garbageCollect            = \s -> getEnvSTM  h (flip implGarbageCollect s)
     , tryTakeSnapshot           = getEnv2    h (implTryTakeSnapshot bss)
     , tryFlush                  = getEnv     h implTryFlush
     , closeDB                   = implCloseDB h
@@ -174,14 +174,16 @@ mkInternals ::
   -> LedgerDBHandle m (ExtLedgerState blk) blk
   -> TestInternals' m blk
 mkInternals bss h = TestInternals {
-      takeSnapshotNOW = \ds -> getEnv h $ \env -> do
-          void . takeSnapshot
+      takeSnapshotNOW = \whereTo suff -> getEnv h $ \env -> do
+          st <- (case whereTo of
+            TakeAtVolatileTip -> anchorHandle
+            TakeAtImmutableTip -> currentHandle) <$> readTVarIO (ldbSeq env)
+          void $ takeSnapshot
                 (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
                 (LedgerDBSnapshotEvent >$< ldbTracer env)
                 (ldbHasFS env)
-                ds
-                . anchorHandle
-                =<< readTVarIO (ldbSeq env)
+                suff
+                st
     , reapplyThenPushNOW = \blk -> getEnv h $ \env -> withRegistry $ \reg -> do
           eFrk <- newForkerAtTarget h reg VolatileTip
           case eFrk of
@@ -201,7 +203,7 @@ mkInternals bss h = TestInternals {
      takeSnapshot :: CodecConfig blk
                   -> Tracer m (TraceSnapshotEvent blk)
                   -> SomeHasFS m
-                  -> Maybe DiskSnapshot
+                  -> Maybe String
                   -> StateRef m (ExtLedgerState blk)
                   -> m (Maybe (DiskSnapshot, RealPoint blk))
      takeSnapshot = case bss of

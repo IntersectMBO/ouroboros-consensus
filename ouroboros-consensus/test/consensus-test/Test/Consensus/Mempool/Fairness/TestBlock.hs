@@ -27,7 +27,7 @@ import           Ouroboros.Consensus.Ledger.Abstract (convertMapKind,
                      trivialLedgerTables)
 import qualified Ouroboros.Consensus.Ledger.Abstract as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
-import           Ouroboros.Consensus.Ticked (Ticked1)
+import           Ouroboros.Consensus.Ticked (Ticked)
 import qualified Test.Util.TestBlock as TestBlock
 import           Test.Util.TestBlock (TestBlockWith)
 
@@ -135,12 +135,12 @@ deriving via Ledger.TrivialLedgerTables (Ledger.LedgerState TestBlock)
     instance Ledger.HasLedgerTables (Ledger.LedgerState TestBlock)
 
 deriving via Ledger.TrivialLedgerTables (Ledger.LedgerState TestBlock)
-    instance Ledger.HasLedgerTables (Ticked1 (Ledger.LedgerState TestBlock))
+    instance Ledger.HasLedgerTables (Ticked (Ledger.LedgerState TestBlock))
 
 instance Ledger.LedgerTablesAreTrivial (Ledger.LedgerState TestBlock) where
   convertMapKind (TestBlock.TestLedger x NoPayLoadDependentState) =
       TestBlock.TestLedger x NoPayLoadDependentState
-instance Ledger.LedgerTablesAreTrivial (Ticked1 (Ledger.LedgerState TestBlock)) where
+instance Ledger.LedgerTablesAreTrivial (Ticked (Ledger.LedgerState TestBlock)) where
   convertMapKind (TestBlock.TickedTestLedger x) =
       TestBlock.TickedTestLedger (Ledger.convertMapKind x)
 deriving via Ledger.TrivialLedgerTables (Ledger.LedgerState TestBlock)

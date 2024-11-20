@@ -53,7 +53,7 @@ The `LedgerState (ShelleyBlock proto era)` data family instances are augmented
 with a new field which will hold these entries that will be extracted from and
 injected to the `NewEpochState` before calling the Ledger rules. This new field
 (which we call _ledger tables_) is a container-like structure parametrized by a
-`Key` and `Value` type families.
+`TxIn` and `TxOut` type families.
 
 ```diff haskell
 data instance LedgerState (ShelleyBlock proto era) mk = ShelleyLedgerState {
@@ -64,14 +64,14 @@ data instance LedgerState (ShelleyBlock proto era) mk = ShelleyLedgerState {
     }
 
 data LedgerTables l mk = LedgerTables {
-    getLedgerTables :: mk (Key l) (Value l)
+    getLedgerTables :: mk (TxIn l) (TxOut l)
 }
 ```
 
 For a Shelley block, these type families are mapped to the same types as above:
 
-- `Key (LedgerState (ShelleyBlock proto era)) = TxIn (EraCrypto era)`
-- `Value (LedgerState (ShelleyBlock proto era)) = TxOut era`
+- `TxIn (LedgerState (ShelleyBlock proto era)) = TxIn (EraCrypto era)`
+- `TxOut (LedgerState (ShelleyBlock proto era)) = TxOut era`
 
 To instantiate the `mk` type variable, some _mapkinds_ are defined:
 
@@ -99,12 +99,12 @@ The Consensus layer invokes essentially 4 Ledger operations: forecast, tick and
 applyBlock, applyTx. Each one of these rules have different requirements on the contents
 of the UTXO set.
 
-|             | Requirements                                                               | Input      | Output     |
-|-------------|----------------------------------------------------------------------------|------------|------------|
-| Forecasting | Doesn't use the UTXO set                                                   | `EmptyMK`  | `EmptyMK`  |
-| Ticking     | Doesn't use the UTXO set but might produce changes on it                   | `EmptyMK`  | `ValuesMK` |
-| ApplyBlock  | Consumes inputs for the transactions in the block and produces new entries | `ValuesMK` | `ValuesMK` |
-| ApplyTx     | Consumes inputs for the transactions in the block and produces new entries | `ValuesMK` | `ValuesMK` |
+|             | Requirements                                                               | Input to the Ledger layer | Output from the Ledger layer |
+|-------------|----------------------------------------------------------------------------|---------------------------|------------------------------|
+| Forecasting | Doesn't use the UTXO set                                                   | `EmptyMK`                 | `EmptyMK`                    |
+| Ticking     | Doesn't use the UTXO set but might produce changes on it                   | `EmptyMK`                 | `ValuesMK`                   |
+| ApplyBlock  | Consumes inputs for the transactions in the block and produces new entries | `ValuesMK`                | `ValuesMK`                   |
+| ApplyTx     | Consumes inputs for the transactions in the block and produces new entries | `ValuesMK`                | `ValuesMK`                   |
 
 When ticking and applying a block, the Consensus code computes the difference
 between the input and output sets producing `DiffMK` tables. The ticking and
@@ -130,10 +130,10 @@ disk or in memory:
 #### On-disk backend
 
 The on-disk backend uses the concept of an _anchor_ which is before or at the
-immutable tip. This _anchor_ contains a full UTXO set stored in the disk, in what we call the `BackingStore`. In
-order to get values for applying a particular block, the Consensus layer has to
-read those values from the anchored UTXO set and apply all the differences from
-that point to the tip of the chain.
+immutable tip. This _anchor_ contains a full UTXO set stored in the disk, in
+what we call the `BackingStore`. In order to get values for applying a
+particular block, the Consensus layer has to read those values from the anchored
+UTXO set and apply all the differences from that point to the tip of the chain.
 
 This means that to the pre-UTXO-HD LedgerDB that held the last `k` ledger
 states, a side sequence is added which holds the differences resulted from
@@ -217,13 +217,13 @@ provide fast access to it (see [#4678](https://github.com/IntersectMBO/cardano-n
 The Consensus layer is built around the concept of blocks, and for the specific
 case of Cardano, a special block is used: the `HardForkBlock`. A `HardForkBlock`
 is an n-ary sum type, which contains a particular block out of the list of
-blocks that exist in the Cardano blockchain.
+blocks that exist in the Cardano blockchain (Byron, Shelley, Allegra, etc).
 
-On the outside, a `HardForkBlock` is made in a way such that its usage is
-almost transparent for the Consensus layer, just as any other block, however for
-ledger tables there are some complications. Revisiting the
-`LedgerState (HardForkBlock xs)` instance, it is easy to spot
-that it is an n-ary sum of ledger states for each of the blocks:
+On the outside, a `HardForkBlock` is made in a way such that its usage is almost
+transparent for the Consensus layer, just as any other block, however for ledger
+tables there are some complications. Revisiting the `LedgerState (HardForkBlock
+xs)` instance, we can see that it is an n-ary sum of ledger states for each of
+the blocks:
 
 ```haskell
 newtype instance LedgerState (HardForkBlock xs) mk = HardForkLedgerState {
@@ -238,21 +238,21 @@ newtype HardForkState f xs = HardForkState {
 So, in reality, when holding a `LedgerState (HardForkBlock xs) ValuesMK`, it
 actually contains a `LedgerState a ValuesMK` for the particular era in the n-ary
 sum. This implies that the contents of the ledger tables are mappings from
-`Key a` to `Value a`, which change on each era.
+`TxIn a` to `TxOut a`, which change on each era.
 
 However, a value of type `LedgerTables (LedgerState (HardForkBlock xs)) ValuesMK`
-will hold mappings from `Key (LedgerState (HardForkBlock xs))` to
-`Value (LedgerState (HardForkBlock xs))`. When defining these type instances we
+will hold mappings from `TxIn (LedgerState (HardForkBlock xs))` to
+`TxOut (LedgerState (HardForkBlock xs))`. When defining these type instances we
 had two choices:
 
-- Make `Value (LedgerState (HardForkBlock xs))` equal to the `Value a` of the
+- Make `TxOut (LedgerState (HardForkBlock xs))` equal to the `TxOut a` of the
   particular era in the ledger state. Aside from the complications implementing this might
   impose (in terms of type-level machinery), this would mean that when transitioning from one era to the next
   one, the whole UTXO set in the tables would have to be updated to translate
   all the entries to the newer era. If this set was on the disk, this would be
   prohibitively costly.
 
-- Make `Value (LedgerState (HardForkBlock xs))` a sum type that can hold values of
+- Make `TxOut (LedgerState (HardForkBlock xs))` a sum type that can hold values of
   any eras. This solution makes it very easy to carry `LedgerTables` in the
   Consensus layer as values do not need to be translated, in fact
   values from older eras might co-exist with those of the current one. The
@@ -270,23 +270,27 @@ had two choices:
 
 It is important to note that for any era in the Cardano blockchain, the `EraCrypto`
 type family instance is the same (`StandardCrypto`), which makes all `TxIn (EraCrypto era)` keys equal. Thanks
-to this, we can define the `Key` for `HardForkBlocks` equal to this same type,
+to this, we can define the `TxIn` for `HardForkBlocks` equal to this same type,
 which we call a `CanonicalTxIn`.
 
 ### Storing snapshots
 
-Before UTXO-HD, ledger state snapshots were CBOR-serialized files containing a full
-`ExtLedgerState blk` value. Now there is a separation between the `ExtLedgerState blk EmptyMK` file and the `LedgerTables (ExtLedgerState blk) ValuesMK`. This means that snapshots from before UTXO-HD are
-incompatible with the UTXO-HD design and replaying the chain will be needed when
-enabling UTXO-HD. Moreover, snapshots created when using one of the UTXO-HD backends
-cannot be used with the other backend, and will require a replay.
+Before UTXO-HD, ledger state snapshots were CBOR-serialized files containing a
+full `ExtLedgerState blk` value. Now there is a separation between the
+`ExtLedgerState blk EmptyMK` file and the `LedgerTables (ExtLedgerState blk)
+ValuesMK`. This means that snapshots from before UTXO-HD are incompatible with
+the UTXO-HD design and replaying the chain will be needed when enabling UTXO-HD
+for the first time. Moreover, snapshots created when using one of the UTXO-HD
+backends cannot be used with the other backend, and will require a replay.
 
-| | `ExtLedgerState blk EmptyMK` | `LedgerTables (ExtLedgerState blk) ValuesMK` | Live tables |
-|--|--|--|--|
-| In-memory | `<db-root>/ledger/<slotno>/state` | `<db-root>/ledger/<slotno>/state/tables/tvar` | N/A |
+|           | `ExtLedgerState blk EmptyMK`      | `LedgerTables (ExtLedgerState blk) ValuesMK`      | Live tables                   |
+|-----------|-----------------------------------|---------------------------------------------------|-------------------------------|
+| In-memory | `<db-root>/ledger/<slotno>/state` | `<db-root>/ledger/<slotno>/state/tables/tvar`     | N/A                           |
 | On-disk   | `<db-root>/ledger/<slotno>/state` | `<db-root>/ledger/<slotno>/state/tables/data.mdb` | `<db-root>/ledgerdb/data.mdb` |
 
-In the tables part of the snapshot, the in-memory backend will store a serialization of the `Map (Key (CardanoBlock c)) (Value (CardanoBlock c))`, whereas the on-disk backend will store a copy of the LMDB database.
+In the tables part of the snapshot, the in-memory backend will store a
+serialization of the `Map (TxIn (CardanoBlock c)) (TxOut (CardanoBlock c))`,
+whereas the on-disk backend will store a copy of the LMDB database.
 
 ## Impact on the node
 
@@ -294,9 +298,19 @@ The **in-memory** backend should have very little impact in the node.
 
 The cardano-node will perform two operations on startup, and each of them suffer a varying impact for the **on-disk** backend:
 
-| | Impact | Estimated time difference |
-|--|--|--|
-| Syncing | Low, cryptographic operations dominate the performance | 16h vs 17h |
-| Replay | High | 2h vs 3.5h |
+|         | When                                             | Impact                                                 | Estimated time difference |
+|---------|--------------------------------------------------|--------------------------------------------------------|---------------------------|
+| Syncing | The node has no blocks                           | Low, cryptographic operations dominate the performance | 16h vs 17h                |
+| Replay  | The node does not have a valid LedgerDB snapshot | High                                                   | 2h vs 3.5h                |
 
-As for the behavior of a cardano-node that is synced to the tip of the chain, the impact of UTXO-HD should not be problematic because, given the pace at which blocks are produced (on average every 20s), there is enough time to perform the UTXO-HD operations.
+Note neither of these will be frequent scenarios.
+
+As for the behavior of a cardano-node that is synced to the tip of the chain,
+the impact of UTXO-HD should not be problematic because, given the pace at which
+blocks are produced (on average every 20s), there is enough time to perform the
+UTXO-HD operations.
+
+The mempool likely won't be able to sustain the same peak throughput as before
+UTxO-HD, but it should suffice for the typical load between blocks, and even
+between the third block, since the mempool buffers more transactions than fit in
+one block.

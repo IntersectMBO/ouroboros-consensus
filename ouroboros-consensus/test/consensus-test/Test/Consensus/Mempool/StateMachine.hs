@@ -32,7 +32,6 @@ import           Control.Concurrent.Class.MonadSTM.Strict.TChan
 import           Control.Monad (void)
 import           Control.Monad.Except (runExcept)
 import qualified Control.Tracer as CT (Tracer (..), traceWith)
-import           Data.Bool (bool)
 import qualified Data.Foldable as Foldable
 import           Data.Function (on)
 import qualified Data.Map.Strict as Map
@@ -86,7 +85,7 @@ import           Test.Util.ToExpr ()
 data ModifyDB = KeepDB | ClearDB deriving (Generic, ToExpr, NoThunks)
 
 instance Arbitrary ModifyDB where
-  arbitrary = bool KeepDB ClearDB <$> arbitrary
+  arbitrary = elements [KeepDB, ClearDB]
 
 keepsDB :: ModifyDB -> Bool
 keepsDB KeepDB  = True

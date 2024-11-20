@@ -70,9 +70,8 @@ computeMempoolCapacity cfg st override =
     blockCount = case override of
       NoMempoolCapacityBytesOverride              -> 2
       MempoolCapacityBytesOverride (ByteSize32 x) ->
-        -- This calculation is happening at Word32. Thus overflow is silently
-        -- accepted. Adding one less than the denominator to the numerator
-        -- effectively rounds up instead of down.
+        -- This calculation is happening at Word32. If it was to overflow, it
+        -- will round down instead.
         max 1 $ if x + oneBlockBytes < x
                 then x `div` oneBlockBytes
                 else (x + oneBlockBytes - 1) `div` oneBlockBytes

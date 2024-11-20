@@ -29,7 +29,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger (
   , HardForkLedgerWarning (..)
     -- * Type family instances
   , FlipTickedLedgerState (..)
-  , Ticked1 (..)
+  , Ticked (..)
     -- * Low-level API (exported for the benefit of testing)
   , AnnForecast (..)
   , mkHardForkForecast
@@ -95,7 +95,6 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Ledger.Tables.Utils
-import           Ouroboros.Consensus.Ticked
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util.Condense
 
@@ -127,7 +126,7 @@ instance CanHardFork xs => GetTip (LedgerState (HardForkBlock xs)) where
          . State.getTip (castPoint . getTip . unFlip)
          . hardForkLedgerStatePerEra
 
-instance CanHardFork xs => GetTip (Ticked1 (LedgerState (HardForkBlock xs))) where
+instance CanHardFork xs => GetTip (Ticked (LedgerState (HardForkBlock xs))) where
   getTip = castPoint
          . State.getTip (castPoint . getTip . getFlipTickedLedgerState)
          . tickedHardForkLedgerStatePerEra
@@ -137,10 +136,10 @@ instance CanHardFork xs => GetTip (Ticked1 (LedgerState (HardForkBlock xs))) whe
 -------------------------------------------------------------------------------}
 
 newtype FlipTickedLedgerState mk blk = FlipTickedLedgerState {
-    getFlipTickedLedgerState :: Ticked1 (LedgerState blk) mk
+    getFlipTickedLedgerState :: Ticked (LedgerState blk) mk
   }
 
-data instance Ticked1 (LedgerState (HardForkBlock xs)) mk =
+data instance Ticked (LedgerState (HardForkBlock xs)) mk =
     TickedHardForkLedgerState {
         tickedHardForkLedgerStateTransition :: !TransitionInfo
       , tickedHardForkLedgerStatePerEra     ::
@@ -895,11 +894,11 @@ instance ( CanHardFork xs
 instance ( CanHardFork xs
          , HasCanonicalTxIn xs
          , HasHardForkTxOut xs
-         ) => HasLedgerTables (Ticked1 (LedgerState (HardForkBlock xs))) where
+         ) => HasLedgerTables (Ticked (LedgerState (HardForkBlock xs))) where
   projectLedgerTables ::
        forall mk. (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk)
-    => Ticked1 (LedgerState (HardForkBlock xs)) mk
-    -> LedgerTables (Ticked1 (LedgerState (HardForkBlock xs))) mk
+    => Ticked (LedgerState (HardForkBlock xs)) mk
+    -> LedgerTables (Ticked (LedgerState (HardForkBlock xs))) mk
   projectLedgerTables st = hcollapse $
       hcimap
         (Proxy @(Compose HasTickedLedgerTables LedgerState))
@@ -910,7 +909,7 @@ instance ( CanHardFork xs
            Compose HasTickedLedgerTables LedgerState x
         => Index xs x
         -> FlipTickedLedgerState mk x
-        -> K (LedgerTables (Ticked1 (LedgerState (HardForkBlock xs))) mk) x
+        -> K (LedgerTables (Ticked (LedgerState (HardForkBlock xs))) mk) x
       projectOne i l =
           K
         $ castLedgerTables
@@ -921,9 +920,9 @@ instance ( CanHardFork xs
 
   withLedgerTables ::
        forall mk any. (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk)
-    => Ticked1 (LedgerState (HardForkBlock xs)) any
-    -> LedgerTables (Ticked1 (LedgerState (HardForkBlock xs))) mk
-    -> Ticked1 (LedgerState (HardForkBlock xs)) mk
+    => Ticked (LedgerState (HardForkBlock xs)) any
+    -> LedgerTables (Ticked (LedgerState (HardForkBlock xs))) mk
+    -> Ticked (LedgerState (HardForkBlock xs)) mk
   withLedgerTables st tables = st {
         tickedHardForkLedgerStatePerEra =
           hcimap

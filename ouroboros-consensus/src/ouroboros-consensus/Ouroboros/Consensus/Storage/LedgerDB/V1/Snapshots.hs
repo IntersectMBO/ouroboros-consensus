@@ -141,7 +141,6 @@ import           Codec.Serialise
 import           Control.Monad.Except
 import           Control.Tracer
 import qualified Data.List as List
-import           Data.Maybe (fromMaybe)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
@@ -186,16 +185,16 @@ takeSnapshot ::
   -> Tracer m (TraceSnapshotEvent blk)
   -> SnapshotsFS m
   -> BackingStore' m blk
-  -> Maybe DiskSnapshot -- ^ Override for snapshot numbering
+  -> Maybe String -- ^ A suffix for the snapshot
   -> ReadLocked m (Maybe (DiskSnapshot, RealPoint blk))
-takeSnapshot ldbvar ccfg tracer (SnapshotsFS hasFS') backingStore dsOverride = readLocked $ do
+takeSnapshot ldbvar ccfg tracer (SnapshotsFS hasFS') backingStore suffix = readLocked $ do
     state <- changelogLastFlushedState <$> readTVarIO ldbvar
     case pointToWithOriginRealPoint (castPoint (getTip state)) of
       Origin ->
         return Nothing
       NotOrigin t -> do
         let number   = unSlotNo (realPointSlot t)
-            snapshot = fromMaybe (DiskSnapshot number Nothing) dsOverride
+            snapshot = DiskSnapshot number suffix
         diskSnapshots <- listSnapshots hasFS'
         if List.any ((== number) . dsNumber) diskSnapshots then
           return Nothing

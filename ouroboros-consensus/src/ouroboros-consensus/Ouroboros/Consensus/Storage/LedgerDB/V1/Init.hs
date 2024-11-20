@@ -14,7 +14,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Init (mkInitDb) where
 import           Control.Monad
 import           Control.Monad.Base
 import           Control.ResourceRegistry
-import           Control.Tracer (nullTracer)
 import           Data.Bifunctor (first)
 import qualified Data.Foldable as Foldable
 import           Data.Functor.Contravariant ((>$<))
@@ -128,7 +127,7 @@ mkInitDb args bss getBlock =
       pure $ implMkLedgerDb h
   }
   where
-    bsTracer = nullTracer --LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV1 >$< lgrTracer
+    bsTracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV1 >$< lgrTracer
 
     LedgerDbArgs {
         lgrHasFS
@@ -317,7 +316,7 @@ mkInternals ::
   => LedgerDBHandle m (ExtLedgerState blk) blk
   -> TestInternals' m blk
 mkInternals h = TestInternals {
-      takeSnapshotNOW = getEnv1 h implIntTakeSnapshot
+      takeSnapshotNOW = getEnv2 h implIntTakeSnapshot
     , reapplyThenPushNOW = getEnv1 h implIntReapplyThenPushBlock
     , wipeLedgerDB = getEnv h $ void . destroySnapshots . snapshotsFs . ldbHasFS
     , closeLedgerDB = getEnv h $ bsClose . ldbBackingStore
@@ -346,8 +345,9 @@ implIntTakeSnapshot ::
      , LedgerSupportsProtocol blk
      , l ~ ExtLedgerState blk
      )
-  => LedgerDBEnv m l blk -> Maybe DiskSnapshot -> m ()
-implIntTakeSnapshot env@LedgerDBEnv{ldbLock = AllowThunk lock} diskSnapshot = do
+  => LedgerDBEnv m l blk -> WhereToTakeSnapshot -> Maybe String -> m ()
+implIntTakeSnapshot env@LedgerDBEnv{ldbLock = AllowThunk lock} whereTo suffix = do
+  when (whereTo == TakeAtVolatileTip) $ atomically $ modifyTVar (ldbChangelog env) pruneToImmTipOnly
   withWriteLock
           lock
           (flushLedgerDB (ldbChangelog env) (ldbBackingStore env))
@@ -358,7 +358,7 @@ implIntTakeSnapshot env@LedgerDBEnv{ldbLock = AllowThunk lock} diskSnapshot = do
       (LedgerDBSnapshotEvent >$< ldbTracer env)
       (ldbHasFS env)
       (ldbBackingStore env)
-      diskSnapshot
+      suffix
 
 implIntReapplyThenPushBlock ::
      ( IOLike m

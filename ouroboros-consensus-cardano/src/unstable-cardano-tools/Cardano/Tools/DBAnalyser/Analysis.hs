@@ -71,8 +71,6 @@ import           Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots as LedgerDB
-import           Ouroboros.Consensus.Ticked
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
 import           Ouroboros.Network.SizeInBytes
@@ -427,8 +425,7 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
     storeLedgerState :: ExtLedgerState blk mk -> IO ()
     storeLedgerState ledgerState = case pointSlot pt of
         NotOrigin slot -> do
-          let snapshot = LedgerDB.DiskSnapshot (unSlotNo slot) (Just "db-analyser")
-          LedgerDB.takeSnapshotNOW internal (Just snapshot)
+          LedgerDB.takeSnapshotNOW internal LedgerDB.TakeAtVolatileTip (Just "db-analyser")
           traceWith tracer $ SnapshotStoredEvent slot
         Origin -> pure ()
       where
@@ -705,7 +702,7 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv {db, registry, startFrom, 
         tickTheLedgerState ::
              SlotNo
           -> ExtLedgerState blk EmptyMK
-          -> IO (Ticked1 (LedgerState blk) DiffMK)
+          -> IO (Ticked (LedgerState blk) DiffMK)
         tickTheLedgerState slot st =
             pure $ applyChainTick lcfg slot (ledgerState st)
 

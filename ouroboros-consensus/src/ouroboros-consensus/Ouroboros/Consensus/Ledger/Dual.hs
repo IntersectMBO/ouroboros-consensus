@@ -43,7 +43,7 @@ module Ouroboros.Consensus.Ledger.Dual (
   , LedgerTables (..)
   , NestedCtxt_ (..)
   , StorageConfig (..)
-  , Ticked1 (..)
+  , Ticked (..)
   , TxId (..)
   , Validated (..)
     -- * Serialisation
@@ -336,15 +336,15 @@ type instance LedgerCfg (LedgerState (DualBlock m a)) = DualLedgerConfig m a
 instance Bridge m a => GetTip (LedgerState (DualBlock m a)) where
   getTip = castPoint . getTip . dualLedgerStateMain
 
-instance Bridge m a => GetTip (Ticked1 (LedgerState (DualBlock m a))) where
+instance Bridge m a => GetTip (Ticked (LedgerState (DualBlock m a))) where
   getTip = castPoint . getTip . tickedDualLedgerStateMain
 
 -- We only have tables on the main ledger state to be able to compare it to a
 -- reference spec implementation which doesn't use tables. The result should be
 -- the same.
-data instance Ticked1 (LedgerState (DualBlock m a)) mk = TickedDualLedgerState {
-      tickedDualLedgerStateMain    :: Ticked1 (LedgerState m) mk
-    , tickedDualLedgerStateAux     :: Ticked1 (LedgerState a) ValuesMK
+data instance Ticked (LedgerState (DualBlock m a)) mk = TickedDualLedgerState {
+      tickedDualLedgerStateMain    :: Ticked (LedgerState m) mk
+    , tickedDualLedgerStateAux     :: Ticked (LedgerState a) ValuesMK
     , tickedDualLedgerStateBridge  :: BridgeLedger m a
 
       -- | The original, unticked ledger for the auxiliary block
@@ -354,7 +354,7 @@ data instance Ticked1 (LedgerState (DualBlock m a)) mk = TickedDualLedgerState {
       -- no auxiliary block, the auxiliary ledger state remains unchanged.
     , tickedDualLedgerStateAuxOrig :: LedgerState a ValuesMK
     }
-  deriving NoThunks via AllowThunk (Ticked1 (LedgerState (DualBlock m a)) mk)
+  deriving NoThunks via AllowThunk (Ticked (LedgerState (DualBlock m a)) mk)
 
 instance Bridge m a => IsLedger (LedgerState (DualBlock m a)) where
   type LedgerErr (LedgerState (DualBlock m a)) = DualLedgerError   m a
@@ -978,7 +978,7 @@ instance (
   , Eq (TxOut (LedgerState m))
   , Ord (TxIn (LedgerState m))
 #endif
-  )=> HasLedgerTables (Ticked1 (LedgerState (DualBlock m a))) where
+  )=> HasLedgerTables (Ticked (LedgerState (DualBlock m a))) where
   projectLedgerTables TickedDualLedgerState{..} =
       castLedgerTables
         (projectLedgerTables tickedDualLedgerStateMain)

@@ -39,7 +39,7 @@ module Ouroboros.Consensus.Byron.Ledger.Ledger (
   , BlockQuery (..)
   , LedgerState (..)
   , LedgerTables (..)
-  , Ticked1 (..)
+  , Ticked (..)
     -- * Auxiliary
   , validationErrorImpossible
   ) where
@@ -147,7 +147,7 @@ initByronLedgerState genesis mUtxo = ByronLedgerState {
 instance GetTip (LedgerState ByronBlock) where
   getTip = castPoint . getByronTip . byronLedgerState
 
-instance GetTip (Ticked1 (LedgerState ByronBlock)) where
+instance GetTip (Ticked (LedgerState ByronBlock)) where
   getTip = castPoint . getByronTip . tickedByronLedgerState
 
 getByronTip :: CC.ChainValidationState -> Point ByronBlock
@@ -165,7 +165,7 @@ getByronTip state =
 -------------------------------------------------------------------------------}
 
 -- | The ticked Byron ledger state
-data instance Ticked1 (LedgerState ByronBlock) mk = TickedByronLedgerState {
+data instance Ticked (LedgerState ByronBlock) mk = TickedByronLedgerState {
       tickedByronLedgerState        :: !CC.ChainValidationState
     , untickedByronLedgerTransition :: !ByronTransition
     }
@@ -190,13 +190,13 @@ type instance TxOut (LedgerState ByronBlock) = Void
 
 instance LedgerTablesAreTrivial (LedgerState ByronBlock) where
   convertMapKind (ByronLedgerState x y z) = ByronLedgerState x y z
-instance LedgerTablesAreTrivial (Ticked1 (LedgerState ByronBlock)) where
+instance LedgerTablesAreTrivial (Ticked (LedgerState ByronBlock)) where
   convertMapKind (TickedByronLedgerState x y) = TickedByronLedgerState x y
 
 deriving via TrivialLedgerTables (LedgerState ByronBlock)
     instance HasLedgerTables (LedgerState ByronBlock)
-deriving via TrivialLedgerTables (Ticked1 (LedgerState ByronBlock))
-    instance HasLedgerTables (Ticked1 (LedgerState ByronBlock))
+deriving via TrivialLedgerTables (Ticked (LedgerState ByronBlock))
+    instance HasLedgerTables (Ticked (LedgerState ByronBlock))
 deriving via TrivialLedgerTables (LedgerState ByronBlock)
     instance CanSerializeLedgerTables (LedgerState ByronBlock)
 deriving via TrivialLedgerTables (LedgerState ByronBlock)

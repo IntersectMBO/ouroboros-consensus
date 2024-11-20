@@ -683,8 +683,8 @@ withTestMempool setup@TestSetup {..} prop =
       -- the invalid transactions are reported in the same order they were
       -- added, so the first error is not the result of a cascade
       sequence_
-        [ error $ "Invalid initial transaction: " <> condense invalidTx <> " because of error " <> show _err
-        | MempoolTxRejected invalidTx _err <- result
+        [ error $ "Invalid initial transaction: " <> condense invalidTx <> " because of error " <> show err
+        | MempoolTxRejected invalidTx err <- result
         ]
 
       -- Clear the trace

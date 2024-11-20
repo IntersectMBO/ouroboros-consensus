@@ -198,7 +198,7 @@ instance HasLedgerTables (LedgerState TestBlock) where
                                         (payloadDependentState st) {utxtoktables = table}
                                     }
 
-instance HasLedgerTables (Ticked1 (LedgerState TestBlock)) where
+instance HasLedgerTables (Ticked (LedgerState TestBlock)) where
   projectLedgerTables (TickedTestLedger st)        =
     castLedgerTables $ projectLedgerTables st
   withLedgerTables    (TickedTestLedger st) tables =
