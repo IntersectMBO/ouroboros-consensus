@@ -7,7 +7,7 @@
 module Ouroboros.Consensus.Shelley.Ledger.Forge (forgeShelleyBlock) where
 
 import qualified Cardano.Ledger.Core as Core (Tx)
-import qualified Cardano.Ledger.Era as SL (hashTxSeq, toTxSeq)
+import qualified Cardano.Ledger.Core as SL (hashTxSeq, toTxSeq)
 import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractTx)
 import qualified Cardano.Ledger.Shelley.BlockChain as SL (bBodySize)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
