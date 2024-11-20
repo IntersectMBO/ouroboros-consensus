@@ -27,8 +27,8 @@ module Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock (
   , MakeDiff (..)
   , ValuesLength (..)
     -- * State monad to run the mock in
-  , MockState (..)
-  , runMockState
+  , MockMonad (..)
+  , runMockMonad
     -- * Mocked @'BackingStore'@ operations
   , mBSClose
   , mBSCopy
@@ -47,7 +47,7 @@ module Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock (
 
 import           Control.Monad
 import           Control.Monad.Except (ExceptT (..), MonadError (throwError),
-                     catchError, runExceptT)
+                     runExceptT)
 import           Control.Monad.State (MonadState, State, StateT (StateT), gets,
                      modify, runState)
 import           Data.Map.Strict (Map)
@@ -153,8 +153,8 @@ class KeysSize ks where
 -------------------------------------------------------------------------------}
 
 -- | State within which the mock runs.
-newtype MockState ks vs d a =
-    MockState (ExceptT Err (State (Mock vs)) a)
+newtype MockMonad ks vs d a =
+    MockMonad (ExceptT Err (State (Mock vs)) a)
   deriving stock     Functor
   deriving newtype ( Applicative
                    , Monad
@@ -162,11 +162,11 @@ newtype MockState ks vs d a =
                    , MonadError Err
                    )
 
-runMockState ::
-     MockState ks vs d a
+runMockMonad ::
+     MockMonad ks vs d a
   -> Mock vs
   -> (Either Err a, Mock vs)
-runMockState (MockState t) = runState . runExceptT $ t
+runMockMonad (MockMonad t) = runState . runExceptT $ t
 
 {------------------------------------------------------------------------------
   Mocked @'BackingStore'@ operations
@@ -207,16 +207,14 @@ mGuardBSClosed = do
 -- | Close the backing store.
 --
 -- Closing is idempotent.
-mBSClose :: (MonadState (Mock vs) m, MonadError Err m) => m ()
-mBSClose = (mGuardBSClosed >> close) `catchError` handler
-  where
-    close = modify (\m -> m {
-        isClosed = True
-      , valueHandles = fmap (const ClosedByStore) (valueHandles m)
-      })
-    handler = \case
-      ErrBackingStoreClosed -> pure ()
-      e                     -> throwError e
+mBSClose :: MonadState (Mock vs) m => m ()
+mBSClose = do
+    closed <- gets isClosed
+    unless closed $
+      modify (\m -> m {
+          isClosed = True
+        , valueHandles = fmap (const ClosedByStore) (valueHandles m)
+        })
 
 -- | Copy the contents of the backing store to the given path.
 mBSCopy :: (MonadState (Mock vs) m, MonadError Err m) => FS.FsPath ->  m ()
@@ -271,34 +269,38 @@ mGuardBSVHClosed ::
   => ValueHandle vs
   -> m ()
 mGuardBSVHClosed vh = do
+  status <- mLookupValueHandle vh
+  case status of
+    ClosedByStore  -> throwError ErrBackingStoreClosed
+    ClosedByHandle -> throwError ErrBackingStoreValueHandleClosed
+    _              -> pure ()
+
+mLookupValueHandle ::
+     MonadState (Mock vs) m
+  => ValueHandle vs
+  -> m ValueHandleStatus
+mLookupValueHandle vh = do
   vhs <- gets valueHandles
   case Map.lookup (getId vh) vhs of
-    Nothing -> error "Value handle not found"
-    Just status ->
-      case status of
-        ClosedByStore  -> throwError ErrBackingStoreClosed
-        ClosedByHandle -> throwError ErrBackingStoreValueHandleClosed
-        _              -> pure ()
+    Nothing     -> error "Value handle not found"
+    Just status -> pure status
 
 -- | Close a backing store value handle.
 --
 -- Closing is idempotent.
 mBSVHClose ::
-     (MonadState (Mock vs) m, MonadError Err m)
+     MonadState (Mock vs) m
   => ValueHandle vs
   -> m ()
-mBSVHClose vh =
-    (mGuardBSClosed >> mGuardBSVHClosed vh >> close) `catchError` handler
-  where
-    close = do
-      vhs <- gets valueHandles
-      modify (\m -> m {
-          valueHandles = Map.adjust (const ClosedByHandle) (getId vh) vhs
-        })
-    handler = \case
-      ErrBackingStoreClosed            -> pure ()
-      ErrBackingStoreValueHandleClosed -> pure ()
-      e                                -> throwError e
+mBSVHClose vh = do
+    status <- mLookupValueHandle vh
+    case status of
+      ClosedByStore  -> pure ()
+      ClosedByHandle -> pure ()
+      _              ->
+        modify (\m -> m {
+            valueHandles = Map.adjust (const ClosedByHandle) (getId vh) (valueHandles m)
+          })
 
 -- | Perform a range read on a backing store value handle.
 mBSVHRangeRead ::
