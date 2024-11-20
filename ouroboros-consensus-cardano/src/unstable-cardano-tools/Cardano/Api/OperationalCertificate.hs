@@ -57,13 +57,13 @@ instance ToCBOR OperationalCertificate where
     toCBOR = CBOR.toPlainEncoding CBOR.shelleyProtVer . encCBOR
 
 instance FromCBOR OperationalCertificate where
-    fromCBOR = CBOR.toPlainDecoder CBOR.shelleyProtVer decCBOR
+    fromCBOR = CBOR.toPlainDecoder Nothing CBOR.shelleyProtVer decCBOR
 
 instance ToCBOR OperationalCertificateIssueCounter where
     toCBOR = CBOR.toPlainEncoding CBOR.shelleyProtVer . encCBOR
 
 instance FromCBOR OperationalCertificateIssueCounter where
-    fromCBOR = CBOR.toPlainDecoder CBOR.shelleyProtVer decCBOR
+    fromCBOR = CBOR.toPlainDecoder Nothing CBOR.shelleyProtVer decCBOR
 
 instance EncCBOR OperationalCertificate where
     encCBOR (OperationalCertificate ocert vkey) =
