@@ -47,3 +47,56 @@ if(os(windows))
 
 -- https://github.com/ulidtko/cabal-doctest/issues/85
 constraints: Cabal < 3.13
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-ledger.git
+  tag: c3e1728aeff05655123f431372e69a18c6b4f949
+  --sha256: sha256-73sHx7H2yA6sQOEMmIDC5qTyASP2ScPwTgs/nMfjE8w=
+  subdir:
+    eras/allegra/impl
+    eras/alonzo/impl
+    eras/alonzo/test-suite
+    eras/babbage/impl
+    eras/babbage/test-suite
+    eras/byron/chain/executable-spec
+    eras/byron/crypto
+    eras/byron/crypto/test
+    eras/byron/ledger/executable-spec
+    eras/byron/ledger/impl
+    eras/byron/ledger/impl/test
+    eras/conway/impl
+    eras/conway/test-suite
+    eras/mary/impl
+    eras/shelley/impl
+    eras/shelley-ma/test-suite
+    eras/shelley/test-suite
+    libs/cardano-data
+    libs/cardano-ledger-api
+    libs/cardano-ledger-binary
+    libs/cardano-ledger-core
+    libs/cardano-protocol-tpraos
+    libs/non-integral
+    libs/plutus-preprocessor
+    libs/set-algebra
+    libs/small-steps
+    libs/vector-map
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/ouroboros-network.git
+  tag: 7e8909f97d6ecc9fff320b3ac2b785aec74751c6
+  --sha256: sha256-Evv2EwaXbr2tXlxnHVr/AAV+QB7B8EWJbQR6t4IvOQ4=
+  subdir:
+    cardano-client
+    cardano-ping
+    monoidal-synchronisation
+    network-mux
+    ntp-client
+    ouroboros-network
+    ouroboros-network-api
+    ouroboros-network-framework
+    ouroboros-network-mock
+    ouroboros-network-protocols
+    ouroboros-network-testing
+    quickcheck-monoids
