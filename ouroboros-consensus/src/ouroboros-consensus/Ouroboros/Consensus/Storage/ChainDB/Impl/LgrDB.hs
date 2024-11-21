@@ -232,9 +232,11 @@ initFromDisk LgrDbArgs { lgrHasFS = hasFS, .. }
         lgrConfig
         lgrGenesis
         (streamAPI immutableDB)
+        doDiskSnapshotChecksum
     return (db, replayed)
   where
     ccfg = configCodec $ getExtLedgerCfg $ LedgerDB.ledgerDbCfg lgrConfig
+    LedgerDB.DiskPolicyArgs _ _ doDiskSnapshotChecksum = lgrDiskPolicyArgs
 
 -- | For testing purposes
 mkLgrDB :: StrictTVar m (LedgerDB' blk)
@@ -280,11 +282,12 @@ takeSnapshot ::
      , IsLedger (LedgerState blk)
      )
   => LgrDB m blk -> m (Maybe (LedgerDB.DiskSnapshot, RealPoint blk))
-takeSnapshot lgrDB@LgrDB{ cfg, tracer, hasFS } = wrapFailure (Proxy @blk) $ do
+takeSnapshot lgrDB@LgrDB{ cfg, tracer, hasFS, diskPolicy } = wrapFailure (Proxy @blk) $ do
     ledgerDB <- LedgerDB.ledgerDbAnchor <$> atomically (getCurrent lgrDB)
     LedgerDB.takeSnapshot
       tracer
       hasFS
+      (LedgerDB.onDiskShouldChecksumSnapshots diskPolicy)
       (encodeDiskExtLedgerState ccfg)
       ledgerDB
   where
