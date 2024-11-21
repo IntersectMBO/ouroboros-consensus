@@ -36,7 +36,6 @@ import           Data.Functor (($>), (<&>))
 import           Data.Functor.Contravariant ((>$<))
 import           Data.Map (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Monoid (Sum (..))
 import qualified Data.Set as Set
 import qualified Data.Text as Strict
 import qualified Database.LMDB.Simple as LMDB
@@ -594,7 +593,7 @@ mkLMDBBackingStoreValueHandle db = do
         let transaction = do
               DbSeqNo{dbsSeq} <- readDbSeqNo dbState
               constn <- lttraverse (\(LMDBMK _ dbx) -> K2 <$> LMDB.size dbx) dbBackingTables
-              let n = getSum $ ltcollapse $ ltmap (K2 . Sum . unK2) constn
+              let n = ltcollapse constn
               pure $ API.Statistics dbsSeq n
         res <- liftIO $ TrH.submitReadOnly trh transaction
         Trace.traceWith tracer API.BSVHStatted
