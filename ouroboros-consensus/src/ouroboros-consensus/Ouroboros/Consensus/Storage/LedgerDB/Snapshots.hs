@@ -1,9 +1,12 @@
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -12,9 +15,12 @@
 module Ouroboros.Consensus.Storage.LedgerDB.Snapshots (
     DiskSnapshot (..)
     -- * Read from disk
+  , ReadSnapshotErr (..)
   , SnapshotFailure (..)
   , diskSnapshotIsTemporary
   , listSnapshots
+  , pattern DiskSnapshotChecksum
+  , pattern NoDiskSnapshotChecksum
   , readSnapshot
     -- * Write to disk
   , takeSnapshot
@@ -34,13 +40,19 @@ import qualified Codec.CBOR.Write as CBOR
 import           Codec.Serialise.Decoding (Decoder)
 import qualified Codec.Serialise.Decoding as Dec
 import           Codec.Serialise.Encoding (Encoding)
-import           Control.Monad (forM, void)
-import           Control.Monad.Except (ExceptT (..))
+import           Control.Monad (forM, void, when)
+import           Control.Monad.Except (ExceptT (..), throwError, withExceptT)
 import           Control.Tracer
+import           Data.Bits
+import qualified Data.ByteString.Builder as BS
+import qualified Data.ByteString.Char8 as BSC
+import qualified Data.ByteString.Lazy as BSL
+import           Data.Char (ord)
+import           Data.Coerce (coerce)
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.List as List
 import           Data.Maybe (isJust, mapMaybe)
-import           Data.Ord (Down (..))
+import           Data.Ord (Down (..), comparing)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Word
@@ -50,12 +62,14 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
+import           Ouroboros.Consensus.Util (Flag (..))
 import           Ouroboros.Consensus.Util.CBOR (ReadIncrementalErr,
                      decodeWithOrigin, readIncremental)
 import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Versioned
 import           System.FS.API.Lazy
+import           System.FS.CRC (CRC (..), hPutAllCRC)
 import           Text.Read (readMaybe)
 
 {-------------------------------------------------------------------------------
@@ -66,7 +80,7 @@ data SnapshotFailure blk =
     -- | We failed to deserialise the snapshot
     --
     -- This can happen due to data corruption in the ledger DB.
-    InitFailureRead ReadIncrementalErr
+    InitFailureRead ReadSnapshotErr
 
     -- | This snapshot is too recent (ahead of the tip of the chain)
   | InitFailureTooRecent (RealPoint blk)
@@ -82,7 +96,9 @@ data TraceSnapshotEvent blk
   | TookSnapshot DiskSnapshot (RealPoint blk) EnclosingTimed
     -- ^ A snapshot was written to disk.
   | DeletedSnapshot DiskSnapshot
-    -- ^ An old or invalid on-disk snapshot was deleted
+    -- ^ An old or invalid on-disk snapshot was deleted.
+  | SnapshotMissingChecksum DiskSnapshot
+    -- ^ The checksum file for a snapshot was missing and was not checked
   deriving (Generic, Eq, Show)
 
 -- | Take a snapshot of the /oldest ledger state/ in the ledger DB
@@ -108,9 +124,10 @@ takeSnapshot ::
      forall m blk. (MonadThrow m, MonadMonotonicTime m, IsLedger (LedgerState blk))
   => Tracer m (TraceSnapshotEvent blk)
   -> SomeHasFS m
+  -> Flag "DiskSnapshotChecksum"
   -> (ExtLedgerState blk -> Encoding)
   -> ExtLedgerState blk -> m (Maybe (DiskSnapshot, RealPoint blk))
-takeSnapshot tracer hasFS encLedger oldest =
+takeSnapshot tracer hasFS doChecksum encLedger oldest =
     case pointToWithOriginRealPoint (castPoint (getTip oldest)) of
       Origin ->
         return Nothing
@@ -122,7 +139,7 @@ takeSnapshot tracer hasFS encLedger oldest =
           return Nothing
         else do
           encloseTimedWith (TookSnapshot snapshot tip >$< tracer)
-              $ writeSnapshot hasFS encLedger snapshot oldest
+              $ writeSnapshot hasFS doChecksum encLedger snapshot oldest
           return $ Just (snapshot, tip)
 
 -- | Trim the number of on disk snapshots so that at most 'onDiskNumSnapshots'
@@ -149,6 +166,9 @@ trimSnapshots tracer hasFS DiskPolicy{..} = do
   Internal: reading from disk
 -------------------------------------------------------------------------------}
 
+-- | Name of a disk snapshot.
+--
+--   The snapshot itself does not have to exist.
 data DiskSnapshot = DiskSnapshot {
       -- | Snapshots are numbered. We will try the snapshots with the highest
       -- number first.
@@ -169,7 +189,10 @@ data DiskSnapshot = DiskSnapshot {
       -- /not be trimmed/.
     , dsSuffix :: Maybe String
     }
-  deriving (Show, Eq, Ord, Generic)
+  deriving (Show, Eq, Generic)
+
+instance Ord DiskSnapshot where
+  compare = comparing dsNumber
 
 -- | Named snapshot are permanent, they will never be deleted when trimming.
 diskSnapshotIsPermanent :: DiskSnapshot -> Bool
@@ -180,39 +203,114 @@ diskSnapshotIsPermanent = isJust . dsSuffix
 diskSnapshotIsTemporary :: DiskSnapshot -> Bool
 diskSnapshotIsTemporary = not . diskSnapshotIsPermanent
 
--- | Read snapshot from disk
+data ReadSnapshotErr =
+    -- | Error while de-serialising data
+    ReadSnapshotFailed ReadIncrementalErr
+    -- | Checksum of read snapshot differs from the one tracked by
+    --   the corresponding '.checksum' file
+  | ReadSnapshotDataCorruption
+    -- | A '.checksum' file does not exist for a @'DiskSnapshot'@
+  | ReadSnapshotNoChecksumFile FsPath
+    -- | A '.checksum' file exists for a @'DiskSnapshot'@, but its contents is invalid
+  | ReadSnapshotInvalidChecksumFile FsPath
+  deriving (Eq, Show)
+
+pattern DiskSnapshotChecksum, NoDiskSnapshotChecksum :: Flag "DiskSnapshotChecksum"
+pattern DiskSnapshotChecksum = Flag True
+pattern NoDiskSnapshotChecksum = Flag False
+
+-- | Read snapshot from disk.
+--
+--   Fail on data corruption, i.e. when the checksum of the read data differs
+--   from the one tracked by @'DiskSnapshot'@.
 readSnapshot ::
      forall m blk. IOLike m
   => SomeHasFS m
   -> (forall s. Decoder s (ExtLedgerState blk))
   -> (forall s. Decoder s (HeaderHash blk))
+  -> Flag "DiskSnapshotChecksum"
   -> DiskSnapshot
-  -> ExceptT ReadIncrementalErr m (ExtLedgerState blk)
-readSnapshot hasFS decLedger decHash =
-      ExceptT
-    . readIncremental hasFS decoder
-    . snapshotToPath
+  -> ExceptT ReadSnapshotErr m (ExtLedgerState blk)
+readSnapshot someHasFS decLedger decHash doChecksum snapshotName = do
+  (ledgerState, mbChecksumAsRead) <- withExceptT ReadSnapshotFailed . ExceptT $
+      readIncremental someHasFS (coerce doChecksum) decoder (snapshotToPath snapshotName)
+  when (coerce doChecksum) $ do
+    !snapshotCRC <- readCRC someHasFS (snapshotToChecksumPath snapshotName)
+    when (mbChecksumAsRead /= Just snapshotCRC) $
+      throwError ReadSnapshotDataCorruption
+  pure ledgerState
   where
     decoder :: Decoder s (ExtLedgerState blk)
     decoder = decodeSnapshotBackwardsCompatible (Proxy @blk) decLedger decHash
 
--- | Write snapshot to disk
+    readCRC ::
+      SomeHasFS m
+      -> FsPath
+      -> ExceptT ReadSnapshotErr m CRC
+    readCRC (SomeHasFS hasFS) crcPath = ExceptT $ do
+        crcExists <- doesFileExist hasFS crcPath
+        if not crcExists
+          then pure (Left $ ReadSnapshotNoChecksumFile crcPath)
+          else do
+            withFile hasFS crcPath ReadMode $ \h -> do
+              str <- BSL.toStrict <$> hGetAll hasFS h
+              if not (BSC.length str == 8 && BSC.all isHexDigit str)
+                then pure (Left $ ReadSnapshotInvalidChecksumFile crcPath)
+                else pure . Right . CRC $ fromIntegral (hexdigitsToInt str)
+        -- TODO: remove the functions in the where clause when we start depending on lsm-tree
+      where
+        isHexDigit :: Char -> Bool
+        isHexDigit c = (c >= '0' && c <= '9')
+                    || (c >= 'a' && c <= 'f') --lower case only
+
+        -- Precondition: BSC.all isHexDigit
+        hexdigitsToInt :: BSC.ByteString -> Word
+        hexdigitsToInt =
+            BSC.foldl' accumdigit 0
+          where
+            accumdigit :: Word -> Char -> Word
+            accumdigit !a !c =
+              (a `shiftL` 4) .|. hexdigitToWord c
+
+
+        -- Precondition: isHexDigit
+        hexdigitToWord :: Char -> Word
+        hexdigitToWord c
+          | let !dec = fromIntegral (ord c - ord '0')
+          , dec <= 9  = dec
+
+          | let !hex = fromIntegral (ord c - ord 'a' + 10)
+          , otherwise = hex
+
+-- | Write a ledger state snapshot to disk
+--
+--   This function writes two files:
+--   * the snapshot file itself, with the name generated by @'snapshotToPath'@
+--   * the checksum file, with the name generated by @'snapshotToChecksumPath'@
 writeSnapshot ::
      forall m blk. MonadThrow m
   => SomeHasFS m
+  -> Flag "DiskSnapshotChecksum"
   -> (ExtLedgerState blk -> Encoding)
   -> DiskSnapshot
   -> ExtLedgerState blk -> m ()
-writeSnapshot (SomeHasFS hasFS) encLedger ss cs = do
-    withFile hasFS (snapshotToPath ss) (WriteMode MustBeNew) $ \h ->
-      void $ hPut hasFS h $ CBOR.toBuilder (encode cs)
+writeSnapshot (SomeHasFS hasFS) doChecksum encLedger ss cs = do
+    crc <- withFile hasFS (snapshotToPath ss) (WriteMode MustBeNew) $ \h ->
+      snd <$> hPutAllCRC hasFS h (CBOR.toLazyByteString $ encode cs)
+    when (coerce doChecksum) $
+      withFile hasFS (snapshotToChecksumPath ss) (WriteMode MustBeNew) $ \h ->
+        void $ hPutAll hasFS h . BS.toLazyByteString . BS.word32HexFixed $ getCRC crc
   where
     encode :: ExtLedgerState blk -> Encoding
     encode = encodeSnapshot encLedger
 
 -- | Delete snapshot from disk
-deleteSnapshot :: HasCallStack => SomeHasFS m -> DiskSnapshot -> m ()
-deleteSnapshot (SomeHasFS HasFS{..}) = removeFile . snapshotToPath
+deleteSnapshot :: Monad m => HasCallStack => SomeHasFS m -> DiskSnapshot -> m ()
+deleteSnapshot (SomeHasFS hasFS) snapshot = do
+  removeFile hasFS (snapshotToPath snapshot)
+  checksumFileExists <- doesFileExist hasFS (snapshotToChecksumPath snapshot)
+  when checksumFileExists $
+    removeFile hasFS (snapshotToChecksumPath snapshot)
 
 -- | List on-disk snapshots, highest number first.
 listSnapshots :: Monad m => SomeHasFS m -> m [DiskSnapshot]
@@ -220,7 +318,10 @@ listSnapshots (SomeHasFS HasFS{..}) =
     aux <$> listDirectory (mkFsPath [])
   where
     aux :: Set String -> [DiskSnapshot]
-    aux = List.sortOn (Down . dsNumber) . mapMaybe snapshotFromPath . Set.toList
+    aux = List.sortOn Down . mapMaybe snapshotFromPath . Set.toList
+
+snapshotToChecksumFileName :: DiskSnapshot -> String
+snapshotToChecksumFileName = (<> ".checksum") . snapshotToFileName
 
 snapshotToFileName :: DiskSnapshot -> String
 snapshotToFileName DiskSnapshot { dsNumber, dsSuffix } =
@@ -229,6 +330,9 @@ snapshotToFileName DiskSnapshot { dsNumber, dsSuffix } =
     suffix = case dsSuffix of
       Nothing -> ""
       Just s  -> "_" <> s
+
+snapshotToChecksumPath :: DiskSnapshot -> FsPath
+snapshotToChecksumPath = mkFsPath . (:[]) . snapshotToChecksumFileName
 
 snapshotToPath :: DiskSnapshot -> FsPath
 snapshotToPath = mkFsPath . (:[]) . snapshotToFileName

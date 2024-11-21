@@ -52,7 +52,7 @@ analyse ::
   => DBAnalyserConfig
   -> Args blk
   -> IO (Maybe AnalysisResult)
-analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbose} args =
+analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbose, diskSnapshotChecksum} args =
     withRegistry $ \registry -> do
       lock           <- newMVar ()
       chainDBTracer  <- mkTracer lock verbose
@@ -94,6 +94,7 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
                 ledgerDbFS
                 (decodeDiskExtLedgerState $ configCodec cfg)
                 decode
+                diskSnapshotChecksum
                 (DiskSnapshot slot (Just "db-analyser"))
                 -- TODO @readSnapshot@ has type @ExceptT ReadIncrementalErr m
                 -- (ExtLedgerState blk)@ but it also throws exceptions! This makes
