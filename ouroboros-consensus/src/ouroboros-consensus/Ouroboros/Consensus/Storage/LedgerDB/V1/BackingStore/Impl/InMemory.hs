@@ -28,7 +28,6 @@ import           Control.Monad.Class.MonadThrow (catch)
 import           Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Map.Strict as Map
-import           Data.Monoid (Sum (..))
 import qualified Data.Set as Set
 import           Data.String (fromString)
 import           GHC.Generics
@@ -252,10 +251,10 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
       ValuesMK (Diff.applyDiff values diff)
 
     count :: LedgerTables l ValuesMK -> Int
-    count = getSum . ltcollapse . ltmap (K2 . count')
+    count = ltcollapse . ltmap (K2 . count')
 
-    count' :: ValuesMK k v -> Sum Int
-    count' (ValuesMK values) = Sum $ Map.size values
+    count' :: ValuesMK k v -> Int
+    count' (ValuesMK values) = Map.size values
 
 guardClosed ::
      IOLike m
