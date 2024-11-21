@@ -1075,7 +1075,6 @@ precondition :: forall m blk. TestConstraints blk
 precondition Model {..} (At cmd) =
    forAll (iters cmd) (`member` RE.keys knownIters)   .&&
    forAll (flrs  cmd) (`member` RE.keys knownFollowers) .&&
-   loeHasImmutableAnchor .&&
    case cmd of
      -- Even though we ensure this in the generator, shrinking might change
      -- it.
@@ -1102,14 +1101,6 @@ precondition Model {..} (At cmd) =
     garbageCollectableIteratorNext :: IterRef blk m Symbolic -> Logic
     garbageCollectableIteratorNext it = Boolean $
       Model.garbageCollectableIteratorNext secParam dbModel (knownIters RE.! it)
-
-    loeHasImmutableAnchor :: Logic
-    loeHasImmutableAnchor = case Model.getLoEFragment dbModel of
-        LoEEnabled frag ->
-          Boolean $ Chain.pointOnChain (AF.anchorPoint frag) immChain
-        LoEDisabled     -> Top
-      where
-        immChain = Model.immutableChain secParam dbModel
 
     cfg :: TopLevelConfig blk
     cfg = unOpaque modelConfig
@@ -1139,7 +1130,8 @@ invariant ::
   -> Model blk m Concrete
   -> Logic
 invariant cfg Model {..} =
-    forAll ptsOnCurChain (Boolean . fromMaybe False . Model.getIsValid dbModel)
+    forAll ptsOnCurChain (Boolean . fromMaybe False . Model.getIsValid dbModel) .&&
+    loeHasImmutableAnchor
   where
     -- | The blocks occurring on the current volatile chain fragment
     ptsOnCurChain :: [RealPoint blk]
@@ -1148,6 +1140,14 @@ invariant cfg Model {..} =
         . AF.toOldestFirst
         . Model.volatileChain (configSecurityParam cfg) id
         $ dbModel
+
+    loeHasImmutableAnchor :: Logic
+    loeHasImmutableAnchor = case Model.getLoEFragment dbModel of
+        LoEEnabled frag ->
+          Boolean $ Chain.pointOnChain (AF.anchorPoint frag) immChain
+        LoEDisabled     -> Top
+      where
+        immChain = Model.immutableChain (configSecurityParam cfg) dbModel
 
 postcondition :: TestConstraints blk
               => Model   blk m Concrete
