@@ -389,13 +389,11 @@ implForkerReadStatistics env = do
       let
         diffs = changelogDiffs dblog
 
-        nInserts = getSum
-                 $ ltcollapse
-                 $ ltmap (K2 . numInserts . getSeqDiffMK)
+        nInserts = ltcollapse
+                 $ ltmap (K2 . getSum . numInserts . getSeqDiffMK)
                    diffs
-        nDeletes = getSum
-                 $ ltcollapse
-                 $ ltmap (K2 . numDeletes . getSeqDiffMK)
+        nDeletes = ltcollapse
+                 $ ltmap (K2 . getSum . numDeletes . getSeqDiffMK)
                    diffs
       pure . Just $ API.Statistics {
           ledgerTableSize = n + nInserts - nDeletes
