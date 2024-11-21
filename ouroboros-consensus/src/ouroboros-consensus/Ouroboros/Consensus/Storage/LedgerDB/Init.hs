@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -35,6 +36,7 @@ import           Ouroboros.Consensus.Storage.LedgerDB.LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.Query
 import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import           Ouroboros.Consensus.Storage.LedgerDB.Update
+import           Ouroboros.Consensus.Util (Flag)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Block (Point (Point))
 import           System.FS.API
@@ -112,12 +114,13 @@ initLedgerDB replayTracer
              getGenesisLedger
              stream = do
     snapshots <- listSnapshots hasFS
-    tryNewestFirst id snapshots
+    tryNewestFirst DiskSnapshotChecksum id snapshots
   where
-    tryNewestFirst :: (InitLog blk -> InitLog blk)
+    tryNewestFirst :: Flag "DiskSnapshotChecksum"
+                   -> (InitLog blk -> InitLog blk)
                    -> [DiskSnapshot]
                    -> m (InitLog blk, LedgerDB' blk, Word64)
-    tryNewestFirst acc [] = do
+    tryNewestFirst _ acc [] = do
         -- We're out of snapshots. Start at genesis
         traceWith replayTracer ReplayFromGenesis
         initDb <- ledgerDbWithAnchor <$> getGenesisLedger
@@ -126,8 +129,7 @@ initLedgerDB replayTracer
         case ml of
           Left _  -> error "invariant violation: invalid current chain"
           Right (l, replayed) -> return (acc InitFromGenesis, l, replayed)
-    tryNewestFirst acc (s:ss) = do
-        -- If we fail to use this snapshot, delete it and try an older one
+    tryNewestFirst doChecksum acc allSnapshot@(s:ss) = do
         ml <- runExceptT $ initFromSnapshot
                              replayTracer
                              hasFS
@@ -136,14 +138,23 @@ initLedgerDB replayTracer
                              cfg
                              stream
                              s
+                             doChecksum
         case ml of
+          -- If a checksum file is missing for a snapshot,
+          -- issue a warning and retry the same snapshot
+          -- ignoring the checksum
+          Left (InitFailureRead ReadSnapshotNoChecksumFile{}) -> do
+            traceWith tracer $ SnapshotMissingChecksum s
+            tryNewestFirst NoDiskSnapshotChecksum acc allSnapshot
+          -- If we fail to use this snapshot for any other reason, delete it and try an older one
           Left err -> do
             when (diskSnapshotIsTemporary s) $
               -- We don't delete permanent snapshots, even if we couldn't parse
               -- them
               deleteSnapshot hasFS s
             traceWith tracer $ InvalidSnapshot s err
-            tryNewestFirst (acc . InitFailure s err) ss
+            -- always reset checksum flag after failure
+            tryNewestFirst DiskSnapshotChecksum (acc . InitFailure s err) ss
           Right (r, l, replayed) ->
             return (acc (InitFromSnapshot s r), l, replayed)
 
@@ -170,10 +181,11 @@ initFromSnapshot ::
   -> LedgerDbCfg (ExtLedgerState blk)
   -> StreamAPI m blk blk
   -> DiskSnapshot
+  -> Flag "DiskSnapshotChecksum"
   -> ExceptT (SnapshotFailure blk) m (RealPoint blk, LedgerDB' blk, Word64)
-initFromSnapshot tracer hasFS decLedger decHash cfg stream ss = do
+initFromSnapshot tracer hasFS decLedger decHash cfg stream ss doChecksum = do
     initSS <- withExceptT InitFailureRead $
-                readSnapshot hasFS decLedger decHash ss
+                readSnapshot hasFS decLedger decHash doChecksum ss
     let replayStart = castPoint $ getTip initSS
     case pointToWithOriginRealPoint replayStart of
       Origin -> throwError InitFailureGenesis

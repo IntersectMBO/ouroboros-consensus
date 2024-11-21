@@ -1,3 +1,5 @@
+{-# LANGUAGE PatternSynonyms #-}
+
 module Main (main) where
 
 import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
@@ -8,6 +10,8 @@ import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
 import           Cardano.Tools.DBSynthesizer.Types
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Cardano.Block
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+                     (pattern NoDiskSnapshotChecksum)
 import qualified Test.Cardano.Tools.Headers
 import           Test.Tasty
 import           Test.Tasty.HUnit
@@ -68,6 +72,7 @@ testAnalyserConfig =
     , validation  = Just ValidateAllBlocks
     , analysis    = CountBlocks
     , confLimit   = Unlimited
+    , diskSnapshotChecksum = NoDiskSnapshotChecksum
     }
 
 testBlockArgs :: Cardano.Args (CardanoBlock StandardCrypto)

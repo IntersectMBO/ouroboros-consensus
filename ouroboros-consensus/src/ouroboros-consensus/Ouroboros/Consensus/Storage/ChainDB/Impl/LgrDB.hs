@@ -285,6 +285,7 @@ takeSnapshot lgrDB@LgrDB{ cfg, tracer, hasFS } = wrapFailure (Proxy @blk) $ do
     LedgerDB.takeSnapshot
       tracer
       hasFS
+      LedgerDB.DiskSnapshotChecksum
       (encodeDiskExtLedgerState ccfg)
       ledgerDB
   where
