@@ -30,6 +30,7 @@ import           Ouroboros.Network.Mock.Chain
 import           Ouroboros.Network.Mock.ProducerState
 import           Ouroboros.Network.Point
 import           System.FS.API
+import           System.FS.CRC (CRC (..))
 import           Test.Cardano.Slotting.TreeDiff ()
 import           Test.Util.ToExpr ()
 
@@ -66,6 +67,7 @@ instance ( ToExpr (TipInfo blk)
          ) => ToExpr (AnnTip blk)
 
 instance ToExpr SecurityParam
+instance ToExpr CRC
 instance ToExpr DiskSnapshot
 
 instance ToExpr ChunkSize

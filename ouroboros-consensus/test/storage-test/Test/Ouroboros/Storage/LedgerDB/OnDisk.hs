@@ -111,7 +111,7 @@ type TestBlock = TestBlockWith Tx
 data Tx = Tx {
     -- | Input that the transaction consumes.
     consumed :: Token
-    -- | Ouptupt that the transaction produces.
+    -- | Output that the transaction produces.
   , produced :: (Token, TValue)
   }
   deriving stock (Show, Eq, Ord, Generic)
@@ -292,7 +292,7 @@ data Cmd ss =
   | Switch Word64 [TestBlock]
 
     -- | Take a snapshot (write to disk)
-  | Snap
+  | Snap (Flag "DiskSnapshotChecksum")
 
     -- | Restore the DB from on-disk, then return it along with the init log
   | Restore
@@ -504,7 +504,7 @@ runMock cmd initMock =
       where
         initLog = mockInitLog mock
         mock'   = applyMockLog initLog mock
-    go Snap          mock = case mbSnapshot of
+    go Snap{}        mock = case mbSnapshot of
         Just pt
           | let mockSnap = MockSnap (unSlotNo (realPointSlot pt))
           , Map.notMember mockSnap (mockSnaps mock)
@@ -750,12 +750,13 @@ runDB standalone@DB{..} cmd =
                 (const $ pure ())
                 (map ApplyVal bs)
                 db
-    go hasFS Snap = do
+    go hasFS (Snap doChecksum) = do
         (_, db) <- atomically (readTVar dbState)
         Snapped <$>
           takeSnapshot
             nullTracer
             hasFS
+            doChecksum
             S.encode
             (ledgerDbAnchor db)
     go hasFS Restore = do
@@ -941,7 +942,7 @@ generator secParam (Model mock hs) = Just $ QC.oneof $ concat [
                                 numNewBlocks
                                 (lastAppliedPoint . ledgerState . mockCurrent $ afterRollback)
             return $ Switch numRollback blocks
-        , fmap At $ return Snap
+        , fmap At $ Snap <$> QC.arbitrary
         , fmap At $ return Restore
         , fmap At $ Drop <$> QC.choose (0, mockChainLength mock)
         ]
@@ -968,7 +969,7 @@ shrinker _ (At cmd) =
     case cmd of
       Current      -> []
       Push _b      -> []
-      Snap         -> []
+      Snap{}       -> []
       Restore      -> []
       Switch 0 [b] -> [At $ Push b]
       Switch n bs  -> if length bs > fromIntegral n
