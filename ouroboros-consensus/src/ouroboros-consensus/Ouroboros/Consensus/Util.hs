@@ -1,5 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
@@ -77,6 +78,8 @@ module Ouroboros.Consensus.Util (
   , electric
   , newFuse
   , withFuse
+    -- * Type-safe boolean flags
+  , Flag (..)
   ) where
 
 import           Cardano.Crypto.Hash (Hash, HashAlgorithm, hashFromBytes,
@@ -102,6 +105,7 @@ import           Data.Void
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           GHC.Stack
+import           GHC.TypeLits (Symbol)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Protocol.LocalStateQuery.Codec (Some (..))
 import           Ouroboros.Network.Util.ShowProxy (ShowProxy (..))
@@ -450,3 +454,16 @@ withFuse (Fuse name m) (Electric io) = do
 newtype FuseBlownException = FuseBlownException Text
  deriving (Show)
  deriving anyclass (Exception)
+
+{-------------------------------------------------------------------------------
+  Type-safe boolean flags
+-------------------------------------------------------------------------------}
+
+-- | Type-safe boolean flags with type level tags
+--
+-- It is recommended to create pattern synonyms for the true and false values.
+--
+-- See 'Ouroboros.Consensus.Storage.LedgerDB.Snapshots.DiskSnapshotChecksum'
+-- for an example.
+newtype Flag (name :: Symbol) = Flag {getFlag :: Bool}
+    deriving (Eq, Show, Generic)

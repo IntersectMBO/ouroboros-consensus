@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE NumericUnderscores #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RecordWildCards #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy (
@@ -13,6 +14,10 @@ module Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy (
   , TimeSinceLast (..)
   , defaultDiskPolicyArgs
   , mkDiskPolicy
+  , pattern DoDiskSnapshotChecksum
+  , pattern NoDoDiskSnapshotChecksum
+    -- * Re-exports
+  , Flag (..)
   ) where
 
 import           Control.Monad.Class.MonadTime.SI
@@ -21,6 +26,7 @@ import           Data.Word
 import           GHC.Generics
 import           NoThunks.Class (NoThunks, OnlyCheckWhnf (..))
 import           Ouroboros.Consensus.Config.SecurityParam
+import           Ouroboros.Consensus.Util (Flag (..))
 
 -- | Length of time, requested by the user, that has to pass after which
 -- a snapshot is taken. It can be:
@@ -41,7 +47,11 @@ data NumOfDiskSnapshots =
   | RequestedNumOfDiskSnapshots Word
   deriving stock (Eq, Generic, Show)
 
-data DiskPolicyArgs = DiskPolicyArgs SnapshotInterval NumOfDiskSnapshots
+pattern DoDiskSnapshotChecksum, NoDoDiskSnapshotChecksum :: Flag "DoDiskSnapshotChecksum"
+pattern DoDiskSnapshotChecksum = Flag True
+pattern NoDoDiskSnapshotChecksum = Flag False
+
+data DiskPolicyArgs = DiskPolicyArgs SnapshotInterval NumOfDiskSnapshots (Flag "DoDiskSnapshotChecksum")
 
 -- | On-disk policy
 --
@@ -67,7 +77,7 @@ data DiskPolicy = DiskPolicy {
       --        the next snapshot, we delete the oldest one, leaving the middle
       --        one available in case of truncation of the write. This is
       --        probably a sane value in most circumstances.
-      onDiskNumSnapshots       :: Word
+      onDiskNumSnapshots            :: Word
 
       -- | Should we write a snapshot of the ledger state to disk?
       --
@@ -87,7 +97,11 @@ data DiskPolicy = DiskPolicy {
       --   blocks had to be replayed.
       --
       -- See also 'mkDiskPolicy'
-    , onDiskShouldTakeSnapshot :: TimeSinceLast DiffTime -> Word64 -> Bool
+    , onDiskShouldTakeSnapshot      :: TimeSinceLast DiffTime -> Word64 -> Bool
+
+    -- | Whether or not to checksum the ledger snapshots to detect data corruption on disk.
+    -- "yes" if @'DoDiskSnapshotChecksum'@; "no" if @'NoDoDiskSnapshotChecksum'@.
+    , onDiskShouldChecksumSnapshots :: Flag "DoDiskSnapshotChecksum"
     }
   deriving NoThunks via OnlyCheckWhnf DiskPolicy
 
@@ -97,10 +111,10 @@ data TimeSinceLast time = NoSnapshotTakenYet | TimeSinceLast time
 -- | Default on-disk policy arguments suitable to use with cardano-node
 --
 defaultDiskPolicyArgs :: DiskPolicyArgs
-defaultDiskPolicyArgs = DiskPolicyArgs DefaultSnapshotInterval DefaultNumOfDiskSnapshots
+defaultDiskPolicyArgs = DiskPolicyArgs DefaultSnapshotInterval DefaultNumOfDiskSnapshots DoDiskSnapshotChecksum
 
 mkDiskPolicy :: SecurityParam -> DiskPolicyArgs -> DiskPolicy
-mkDiskPolicy (SecurityParam k) (DiskPolicyArgs reqInterval reqNumOfSnapshots) =
+mkDiskPolicy (SecurityParam k) (DiskPolicyArgs reqInterval reqNumOfSnapshots onDiskShouldChecksumSnapshots) =
   DiskPolicy {..}
   where
     onDiskNumSnapshots :: Word
