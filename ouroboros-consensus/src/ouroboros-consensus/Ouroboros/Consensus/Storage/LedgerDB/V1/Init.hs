@@ -12,7 +12,6 @@
 module Ouroboros.Consensus.Storage.LedgerDB.V1.Init (mkInitDb) where
 
 import           Control.Monad
-import           Control.Monad.Base
 import           Control.ResourceRegistry
 import           Data.Bifunctor (first)
 import qualified Data.Foldable as Foldable
@@ -63,7 +62,6 @@ mkInitDb ::
   ( LedgerSupportsProtocol blk
   , IOLike m
   , LedgerDbSerialiseConstraints blk
-  , MonadBase m m
   , HasHardForkHistory blk
 #if __GLASGOW_HASKELL__ < 906
   , HasAnnTip blk
@@ -149,7 +147,6 @@ implMkLedgerDb ::
      , StandardHash l
      , LedgerDbSerialiseConstraints blk
      , LedgerSupportsProtocol blk
-     , MonadBase m m
      , ApplyBlock l blk
      , l ~ ExtLedgerState blk
 #if __GLASGOW_HASKELL__ < 906
@@ -220,7 +217,6 @@ implValidate ::
      , LedgerSupportsProtocol blk
      , HasCallStack
      , l ~ ExtLedgerState blk
-     , MonadBase m m
      )
   => LedgerDBHandle m l blk
   -> LedgerDBEnv m l blk
@@ -310,8 +306,6 @@ mkInternals ::
      , LedgerDbSerialiseConstraints blk
      , LedgerSupportsProtocol blk
      , ApplyBlock (ExtLedgerState blk) blk
-     , MonadBase m m
-
      )
   => LedgerDBHandle m (ExtLedgerState blk) blk
   -> TestInternals' m blk
@@ -363,7 +357,6 @@ implIntTakeSnapshot env@LedgerDBEnv{ldbLock = AllowThunk lock} whereTo suffix = 
 implIntReapplyThenPushBlock ::
      ( IOLike m
      , ApplyBlock l blk
-     , MonadBase m m
      , l ~ ExtLedgerState blk
      )
   => LedgerDBEnv m l blk -> blk -> m ()

@@ -79,7 +79,6 @@ validate ::
        IOLike m
      , LedgerSupportsProtocol blk
      , HasCallStack
-     , MonadBase m m
      )
   => ValidateArgs m blk
   -> m (ValidateResult' m blk)

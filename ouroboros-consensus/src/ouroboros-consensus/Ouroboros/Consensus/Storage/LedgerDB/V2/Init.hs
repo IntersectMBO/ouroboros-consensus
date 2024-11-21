@@ -11,7 +11,6 @@
 module Ouroboros.Consensus.Storage.LedgerDB.V2.Init (mkInitDb) where
 
 import           Control.Monad (void)
-import           Control.Monad.Base
 import qualified Control.RAWLock as RAWLock
 import           Control.ResourceRegistry
 import           Control.Tracer
@@ -55,7 +54,6 @@ import           System.FS.API
 mkInitDb :: forall m blk.
             ( LedgerSupportsProtocol blk
             , IOLike m
-            , MonadBase m m
             , LedgerDbSerialiseConstraints blk
             , HasHardForkHistory blk
 #if __GLASGOW_HASKELL__ < 906
@@ -141,7 +139,6 @@ implMkLedgerDb ::
 #endif
      , LedgerSupportsProtocol blk
      , LedgerDbSerialiseConstraints blk
-     , MonadBase m m
      , HasHardForkHistory blk
      )
   => LedgerDBHandle m l blk
@@ -162,13 +159,11 @@ implMkLedgerDb h bss = (LedgerDB {
     }, mkInternals bss h)
 
 mkInternals ::
-     forall m blk. ( IOLike m
+     forall m blk.
+     ( IOLike m
      , LedgerDbSerialiseConstraints blk
      , LedgerSupportsProtocol blk
      , ApplyBlock (ExtLedgerState blk) blk
-#if __GLASGOW_HASKELL__ > 810
-     , MonadBase m m
-#endif
      )
   => HandleArgs
   -> LedgerDBHandle m (ExtLedgerState blk) blk
@@ -274,7 +269,6 @@ implValidate ::
      , LedgerSupportsProtocol blk
      , HasCallStack
      , l ~ ExtLedgerState blk
-     , MonadBase m m
      )
   => LedgerDBHandle m l blk
   -> LedgerDBEnv m l blk

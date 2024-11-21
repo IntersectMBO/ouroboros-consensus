@@ -53,6 +53,7 @@ import           Control.Applicative (Alternative)
 import           Control.Concurrent.Class.MonadMVar (MonadInspectMVar (..))
 import qualified Control.Concurrent.Class.MonadMVar.Strict as Strict
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
+import           Control.Monad.Base (MonadBase)
 import           Control.Monad.Class.MonadAsync
 import           Control.Monad.Class.MonadEventlog
 import           Control.Monad.Class.MonadFork
@@ -93,6 +94,7 @@ class ( MonadAsync              m
       , MonadCatch         (STM m)
       , PrimMonad               m
       , MonadLabelledSTM        m
+      , MonadBase               m m
       , forall a. NoThunks (m a)
       , forall a. NoThunks a => NoThunks (StrictSTM.StrictTVar m a)
       , forall a. NoThunks a => NoThunks (StrictSVar m a)

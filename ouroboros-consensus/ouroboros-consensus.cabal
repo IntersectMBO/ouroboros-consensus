@@ -759,7 +759,6 @@ test-suite storage-test
     text,
     time,
     transformers,
-    transformers-base,
     tree-diff,
     unstable-consensus-testlib,
     vector,

@@ -23,7 +23,6 @@
 module Test.Consensus.MiniProtocol.BlockFetch.Client (tests) where
 
 import           Control.Monad (replicateM)
-import           Control.Monad.Base
 import           Control.Monad.Class.MonadTime
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Monad.IOSim (runSimOrThrow)
@@ -120,7 +119,7 @@ data BlockFetchClientOutcome = BlockFetchClientOutcome {
 
 runBlockFetchTest ::
      forall m.
-     (IOLike m, MonadTime m, MonadTimer m, MonadBase m m)
+     (IOLike m, MonadTime m, MonadTimer m)
   => BlockFetchClientTestSetup
   -> m BlockFetchClientOutcome
 runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do

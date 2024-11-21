@@ -20,7 +20,6 @@
 module Test.Ouroboros.Storage.ChainDB.FollowerPromptness (tests) where
 
 import           Control.Monad (forever)
-import           Control.Monad.Base
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.ResourceRegistry
 import           Control.Tracer (Tracer (..), contramapM, traceWith)
@@ -113,7 +112,7 @@ data FollowerPromptnessOutcome = FollowerPromptnessOutcome {
   }
 
 runFollowerPromptnessTest ::
-     forall m. (IOLike m, MonadBase m m)
+     forall m. IOLike m
   => FollowerPromptnessTestSetup
   -> m FollowerPromptnessOutcome
 runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \registry -> do

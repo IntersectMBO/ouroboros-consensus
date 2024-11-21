@@ -41,7 +41,6 @@ import qualified Control.Concurrent.Class.MonadSTM as MonadSTM
 import           Control.Concurrent.Class.MonadSTM.Strict (newTMVar)
 import qualified Control.Exception as Exn
 import           Control.Monad
-import           Control.Monad.Base (MonadBase)
 import           Control.Monad.Class.MonadTime.SI (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import qualified Control.Monad.Except as Exc
@@ -302,7 +301,6 @@ runThreadNetwork :: forall m blk.
                     , TxGen blk
                     , TracingConstraints blk
                     , HasCallStack
-                    , MonadBase m m
                     )
                  => SystemTime m -> ThreadNetworkArgs m blk -> m (TestOutput blk)
 runThreadNetwork systemTime ThreadNetworkArgs
