@@ -181,7 +181,6 @@ import           Control.Exception as Exn
 import           Data.Bifunctor (bimap)
 import           Data.Functor.Identity
 import           Data.Map.Diff.Strict as AntiDiff (applyDiffForKeys)
-import           Data.Monoid (Sum (..))
 import           Data.SOP (K, unK)
 import           Data.SOP.Functors
 import           Data.Word
@@ -822,15 +821,15 @@ flushableLength :: (HasLedgerTables l, GetTip l)
                 => DbChangelog l
                 -> Word64
 flushableLength chlog =
-    (\(Sum x) -> x - fromIntegral (AS.length (changelogStates chlog)))
+    (\x -> x - fromIntegral (AS.length (changelogStates chlog)))
   . ltcollapse
   . ltmap (K2 . f)
   $ changelogDiffs chlog
  where
    f :: (Ord k, Eq v)
      => SeqDiffMK k v
-     -> Sum Word64
-   f (SeqDiffMK sq) = Sum $ fromIntegral $ DS.length sq
+     -> Word64
+   f (SeqDiffMK sq) = fromIntegral $ DS.length sq
 
 -- | Transform the underlying volatile 'AnchoredSeq' using the given functions.
 volatileStatesBimap ::

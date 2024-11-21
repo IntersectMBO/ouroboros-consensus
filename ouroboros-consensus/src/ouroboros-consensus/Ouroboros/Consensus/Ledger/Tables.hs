@@ -179,7 +179,6 @@ module Ouroboros.Consensus.Ledger.Tables (
 import           Cardano.Binary (FromCBOR (fromCBOR), ToCBOR (toCBOR))
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
-import qualified Control.Exception as Exn
 import           Control.Monad (replicateM)
 import           Data.Kind (Constraint, Type)
 import qualified Data.Map.Strict as Map
@@ -291,7 +290,7 @@ valuesMKEncoder ::
   => LedgerTables l ValuesMK
   -> CBOR.Encoding
 valuesMKEncoder tables =
-       CBOR.encodeListLen (ltcollapse $ ltmap (K2 . const 1) tables)
+       CBOR.encodeListLen 1
     <> ltcollapse (ltliftA2 (K2 .: go) codecLedgerTables tables)
   where
     go :: CodecMK k v -> ValuesMK k v -> CBOR.Encoding
@@ -307,15 +306,9 @@ valuesMKDecoder ::
      )
   => CBOR.Decoder s (LedgerTables l ValuesMK)
 valuesMKDecoder = do
-    numTables <- CBOR.decodeListLen
-    if numTables == 0
-      then
-        return $ ltpure emptyMK
-      else do
-        mapLen <- CBOR.decodeMapLen
-        ret    <- lttraverse (go mapLen) codecLedgerTables
-        Exn.assert (ltcollapse (ltmap (K2 . const 1) ret) == numTables)
-          $ return ret
+    _ <- CBOR.decodeListLenOf 1
+    mapLen <- CBOR.decodeMapLen
+    lttraverse (go mapLen) codecLedgerTables
  where
   go :: Ord k
      => Int
