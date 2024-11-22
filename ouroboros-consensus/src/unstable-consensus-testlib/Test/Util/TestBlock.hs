@@ -624,13 +624,11 @@ singleNodeTestConfigWith codecConfig storageConfig k genesisWindow = TopLevelCon
 
     ledgerCfgParams :: TestBlockLedgerConfig
     ledgerCfgParams = TestBlockLedgerConfig {
-      tblcHardForkParams = HardFork.defaultEraParams k slotLength,
+      tblcHardForkParams = (HardFork.defaultEraParams k slotLength) {
+          HardFork.eraGenesisWin = genesisWindow
+        },
       tblcForecastRange = SNothing
     }
-
-    _eraParams :: HardFork.EraParams
-    _eraParams = (HardFork.defaultEraParams k slotLength) {HardFork.eraGenesisWin = genesisWindow}
-
 
 {-------------------------------------------------------------------------------
   Test blocks without payload
