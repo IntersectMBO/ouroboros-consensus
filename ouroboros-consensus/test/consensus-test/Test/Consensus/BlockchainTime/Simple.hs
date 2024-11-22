@@ -389,6 +389,9 @@ deriving via AllowThunk (OverrideDelay s a)
 deriving via AllowThunk (StrictTVar (OverrideDelay s) a)
          instance NoThunks (StrictTVar (OverrideDelay s) a)
 
+deriving via AllowThunk (StrictTMVar (OverrideDelay s) a)
+         instance NoThunks (StrictTMVar (OverrideDelay s) a)
+
 deriving via AllowThunk (StrictSVar (OverrideDelay s) a)
          instance NoThunks (StrictSVar (OverrideDelay s) a)
 

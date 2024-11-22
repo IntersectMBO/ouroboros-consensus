@@ -68,6 +68,12 @@ instance NoThunks (StrictSTM.StrictTVar m a)
   wNoThunks ctxt tv = do
       wNoThunks ctxt (StrictSTM.castStrictTVar tv :: StrictSTM.StrictTVar m a)
 
+instance NoThunks (StrictSTM.StrictTMVar m a)
+      => NoThunks (StrictSTM.StrictTMVar (WithEarlyExit m) a) where
+  showTypeOf _ = "StrictTMVar (WithEarlyExit m)"
+  wNoThunks ctxt tv = do
+      wNoThunks ctxt (StrictSTM.castStrictTMVar tv :: StrictSTM.StrictTMVar m a)
+
 instance NoThunks (Strict.StrictMVar m a)
       => NoThunks (Strict.StrictMVar (WithEarlyExit m) a) where
   showTypeOf _ = "StrictMVar (WithEarlyExit m)"

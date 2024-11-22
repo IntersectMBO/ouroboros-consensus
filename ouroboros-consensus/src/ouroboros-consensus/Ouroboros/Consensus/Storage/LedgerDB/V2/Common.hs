@@ -79,7 +79,7 @@ type LedgerDBEnv :: (Type -> Type) -> LedgerStateKind -> Type -> Type
 data LedgerDBEnv m l blk = LedgerDBEnv {
     -- | INVARIANT: the tip of the 'LedgerDB' is always in sync with the tip of
     -- the current chain of the ChainDB.
-    ldbSeq            :: !(StrictTVar m (LedgerSeq m l))
+    ldbSeq             :: !(StrictTVar m (LedgerSeq m l))
     -- | INVARIANT: this set contains only points that are in the
     -- VolatileDB.
     --
@@ -91,20 +91,20 @@ data LedgerDBEnv m l blk = LedgerDBEnv {
     -- When a garbage-collection is performed on the VolatileDB, the points
     -- of the blocks eligible for garbage-collection should be removed from
     -- this set.
-  , ldbPrevApplied    :: !(StrictTVar m (Set (RealPoint blk)))
+  , ldbPrevApplied     :: !(StrictTVar m (Set (RealPoint blk)))
     -- | Open forkers.
     --
     -- INVARIANT: a forker is open iff its 'ForkerKey' is in this 'Map.
-  , ldbForkers        :: !(StrictTVar m (Map ForkerKey (ForkerEnv m l blk)))
-  , ldbNextForkerKey  :: !(StrictTVar m ForkerKey)
+  , ldbForkers         :: !(StrictTVar m (Map ForkerKey (ForkerEnv m l blk)))
+  , ldbNextForkerKey   :: !(StrictTVar m ForkerKey)
 
-  , ldbSnapshotPolicy :: !SnapshotPolicy
-  , ldbTracer         :: !(Tracer m (TraceLedgerDBEvent blk))
-  , ldbCfg            :: !(LedgerDbCfg l)
-  , ldbHasFS          :: !(SomeHasFS m)
-  , ldbResolveBlock   :: !(ResolveBlock m blk)
-  , ldbQueryBatchSize :: !(Maybe Int)
-  , ldbReleaseLock    :: !(AllowThunk (RAWLock m LDBLock))
+  , ldbSnapshotPolicy  :: !SnapshotPolicy
+  , ldbTracer          :: !(Tracer m (TraceLedgerDBEvent blk))
+  , ldbCfg             :: !(LedgerDbCfg l)
+  , ldbHasFS           :: !(SomeHasFS m)
+  , ldbResolveBlock    :: !(ResolveBlock m blk)
+  , ldbQueryBatchSize  :: !(Maybe Int)
+  , ldbOpenHandlesLock :: !(RAWLock m LDBLock)
   } deriving (Generic)
 
 deriving instance ( IOLike m
@@ -196,8 +196,8 @@ data ForkerEnv m l blk = ForkerEnv {
   deriving Generic
 
 closeForkerEnv :: IOLike m => (LedgerDBEnv m l blk, ForkerEnv m l blk) -> m ()
-closeForkerEnv (LedgerDBEnv{ldbReleaseLock = AllowThunk lock}, frkEnv) =
-  RAWLock.withWriteAccess lock $
+closeForkerEnv (LedgerDBEnv{ldbOpenHandlesLock}, frkEnv) =
+  RAWLock.withWriteAccess ldbOpenHandlesLock $
     const $ do
       id =<< readTVarIO (foeResourcesToRelease frkEnv)
       atomically $ writeTVar (foeResourcesToRelease frkEnv) (pure ())
@@ -463,7 +463,7 @@ newForkerAtTarget ::
   -> ResourceRegistry m
   -> Target (Point blk)
   -> m (Either GetForkerError (Forker m l blk))
-newForkerAtTarget h rr pt = getEnv h $ \ldbEnv@LedgerDBEnv{ldbReleaseLock = AllowThunk lock} ->
+newForkerAtTarget h rr pt = getEnv h $ \ldbEnv@LedgerDBEnv{ldbOpenHandlesLock = lock} ->
     RAWLock.withReadAccess lock (acquireAtTarget ldbEnv (Right pt)) >>= traverse (newForker h ldbEnv rr)
 
 newForkerByRollback ::
@@ -478,7 +478,7 @@ newForkerByRollback ::
   -> ResourceRegistry m
   -> Word64
   -> m (Either GetForkerError (Forker m l blk))
-newForkerByRollback h rr n = getEnv h $ \ldbEnv@LedgerDBEnv{ldbReleaseLock = AllowThunk lock} -> do
+newForkerByRollback h rr n = getEnv h $ \ldbEnv@LedgerDBEnv{ldbOpenHandlesLock = lock} -> do
     RAWLock.withReadAccess lock (acquireAtTarget ldbEnv (Left n)) >>= traverse (newForker h ldbEnv rr)
 
 -- | Close all open 'Forker's.

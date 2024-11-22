@@ -21,7 +21,6 @@ import           Data.Maybe (isJust)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Word
-import           NoThunks.Class
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Abstract
@@ -109,7 +108,7 @@ mkInitDb args bss getBlock =
       let env = LedgerDBEnv {
                  ldbChangelog       = varDB
                , ldbBackingStore    = lgrBackingStore
-               , ldbLock            = AllowThunk flushLock
+               , ldbLock            = flushLock
                , ldbPrevApplied     = prevApplied
                , ldbForkers         = forkers
                , ldbNextForkerKey   = nextForkerKey
@@ -256,9 +255,9 @@ implTryTakeSnapshot ::
      , IOLike m, LedgerDbSerialiseConstraints blk, LedgerSupportsProtocol blk
      )
   => LedgerDBEnv m l blk -> Maybe (Time, Time) -> Word64 -> m SnapCounters
-implTryTakeSnapshot env@LedgerDBEnv{ldbLock = AllowThunk lock} mTime nrBlocks =
+implTryTakeSnapshot env mTime nrBlocks =
     if onDiskShouldTakeSnapshot (ldbSnapshotPolicy env) (uncurry (flip diffTime) <$> mTime) nrBlocks then do
-      void $ withReadLock lock (takeSnapshot
+      void $ withReadLock (ldbLock env) (takeSnapshot
                                           (ldbChangelog env)
                                           (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
                                           (LedgerDBSnapshotEvent >$< ldbTracer env)
@@ -279,11 +278,11 @@ implTryTakeSnapshot env@LedgerDBEnv{ldbLock = AllowThunk lock} mTime nrBlocks =
 implTryFlush ::
      (IOLike m, HasLedgerTables l, GetTip l)
   => LedgerDBEnv m l blk -> m ()
-implTryFlush env@LedgerDBEnv{ldbLock = AllowThunk lock} = do
+implTryFlush env = do
     ldb <- readTVarIO $ ldbChangelog env
     when (ldbShouldFlush env $ DbCh.flushableLength ldb)
         (withWriteLock
-          lock
+          (ldbLock env)
           (flushLedgerDB (ldbChangelog env) (ldbBackingStore env))
         )
 
@@ -340,12 +339,12 @@ implIntTakeSnapshot ::
      , l ~ ExtLedgerState blk
      )
   => LedgerDBEnv m l blk -> WhereToTakeSnapshot -> Maybe String -> m ()
-implIntTakeSnapshot env@LedgerDBEnv{ldbLock = AllowThunk lock} whereTo suffix = do
+implIntTakeSnapshot env whereTo suffix = do
   when (whereTo == TakeAtVolatileTip) $ atomically $ modifyTVar (ldbChangelog env) pruneToImmTipOnly
   withWriteLock
-          lock
+          (ldbLock env)
           (flushLedgerDB (ldbChangelog env) (ldbBackingStore env))
-  void $ withReadLock lock $
+  void $ withReadLock (ldbLock env) $
     takeSnapshot
       (ldbChangelog env)
       (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)

@@ -594,14 +594,26 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
         | pointHash tipPoint == headerPrevHash hdr -> do
           -- ### Add to current chain
           traceWith addBlockTracer (TryAddToCurrentChain p)
-          addToCurrentChain rr succsOf' (LedgerDB.getVolatileTip cdbLedgerDB) curChainAndLedger loeFrag
+          addToCurrentChain
+            rr
+            succsOf'
+            (LedgerDB.getVolatileTip cdbLedgerDB)
+            curChainAndLedger
+            loeFrag
 
         -- The block is reachable from the current selection
         -- and it doesn't fit after the current selection
         | Just diff <- Paths.isReachable lookupBlockInfo' curChain p -> do
           -- ### Switch to a fork
           traceWith addBlockTracer (TrySwitchToAFork p diff)
-          switchToAFork rr succsOf' lookupBlockInfo' (LedgerDB.getVolatileTip cdbLedgerDB) curChainAndLedger loeFrag diff
+          switchToAFork
+            rr
+            succsOf'
+            lookupBlockInfo'
+            (LedgerDB.getVolatileTip cdbLedgerDB)
+            curChainAndLedger
+            loeFrag
+            diff
 
           -- We cannot reach the block from the current selection
         | otherwise -> do

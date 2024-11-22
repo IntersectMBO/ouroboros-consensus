@@ -1301,7 +1301,7 @@ deriving instance ( ToExpr blk
                   , ToExpr (HeaderHash  blk)
                   , ToExpr (ChainDepState (BlockProtocol blk))
                   , ToExpr (TipInfo blk)
-                  , ToExpr (LedgerState blk EmptyMK) -- TODO why not mk?
+                  , ToExpr (LedgerState blk EmptyMK)
                   , ToExpr (ExtValidationError blk)
                   )
                  => ToExpr (Model blk IO Concrete)
@@ -1728,7 +1728,6 @@ traceEventName = \case
     TraceGCEvent                ev    -> "GC."                <> constrName ev
     TraceIteratorEvent          ev    -> "Iterator."          <> constrName ev
     TraceLedgerDBEvent          ev    -> "Ledger."            <> constrName ev
---    TraceLedgerReplayEvent      ev    -> "LedgerReplay."      <> constrName ev
     TraceImmutableDBEvent       ev    -> "ImmutableDB."       <> constrName ev
     TraceVolatileDBEvent        ev    -> "VolatileDB."        <> constrName ev
     TraceLastShutdownUnclean          -> "LastShutdownUnclean"

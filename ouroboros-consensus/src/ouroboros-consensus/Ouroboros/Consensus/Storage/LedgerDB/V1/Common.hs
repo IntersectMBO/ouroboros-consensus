@@ -102,7 +102,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv {
     -- - when taking a snapshot of the ledger db, we need to prevent others (eg
     --   ChainSel) from altering the backing store at the same time, thus we
     --   acquire a Write lock.
-  , ldbLock           :: !(AllowThunk (LedgerDBLock m))
+  , ldbLock           :: !(LedgerDBLock m)
     -- | INVARIANT: this set contains only points that are in the
     -- VolatileDB.
     --

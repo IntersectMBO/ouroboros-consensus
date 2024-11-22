@@ -57,8 +57,8 @@ newForkerAtTarget ::
   -> ResourceRegistry m
   -> Target (Point blk)
   ->  m (Either GetForkerError (Forker m l blk))
-newForkerAtTarget h rr pt = getEnv h $ \ldbEnv@LedgerDBEnv{ldbLock = AllowThunk lock} ->
-    withReadLock lock (acquireAtTarget ldbEnv rr (Right pt)) >>= traverse (newForker h ldbEnv)
+newForkerAtTarget h rr pt = getEnv h $ \ldbEnv ->
+    withReadLock (ldbLock ldbEnv) (acquireAtTarget ldbEnv rr (Right pt)) >>= traverse (newForker h ldbEnv)
 
 newForkerByRollback ::
      ( HeaderHash l ~ HeaderHash blk
@@ -73,8 +73,8 @@ newForkerByRollback ::
      -- | How many blocks to rollback from the tip
   -> Word64
   -> m (Either GetForkerError (Forker m l blk))
-newForkerByRollback h rr n = getEnv h $ \ldbEnv@LedgerDBEnv{ldbLock = AllowThunk lock} -> do
-    withReadLock lock (acquireAtTarget ldbEnv rr (Left n)) >>= traverse (newForker h ldbEnv)
+newForkerByRollback h rr n = getEnv h $ \ldbEnv -> do
+    withReadLock (ldbLock ldbEnv) (acquireAtTarget ldbEnv rr (Left n)) >>= traverse (newForker h ldbEnv)
 
 -- | Close all open block and header 'Forker's.
 closeAllForkers ::
@@ -446,6 +446,9 @@ implForkerCommit env = do
           -> SeqDiffMK k v
           -> SeqDiffMK k v
     doPrune s (SeqDiffMK prunedSeq) (SeqDiffMK extendedSeq) = SeqDiffMK $
+      -- This is acceptable because Byron has no tables, so combination of Byron
+      -- block and EBB diffs will always result in the empty ledger table hence
+      -- it doesn't matter.
       if DS.minSlot prunedSeq == DS.minSlot extendedSeq
       then extendedSeq
       else snd $ DS.splitAtSlot s extendedSeq

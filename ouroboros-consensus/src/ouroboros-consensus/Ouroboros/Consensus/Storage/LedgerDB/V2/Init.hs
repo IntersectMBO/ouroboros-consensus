@@ -21,7 +21,6 @@ import           Data.Maybe (isJust)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Word
-import           NoThunks.Class
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Abstract
@@ -85,17 +84,17 @@ mkInitDb args flavArgs getBlock =
         nextForkerKey <- newTVarIO (ForkerKey 0)
         lock <- RAWLock.new LDBLock
         let env = LedgerDBEnv {
-                 ldbSeq            = varDB
-               , ldbPrevApplied    = prevApplied
-               , ldbForkers        = forkers
-               , ldbNextForkerKey  = nextForkerKey
-               , ldbSnapshotPolicy = defaultSnapshotPolicy (ledgerDbCfgSecParam lgrConfig) lgrSnapshotPolicyArgs
-               , ldbTracer         = lgrTracer
-               , ldbCfg            = lgrConfig
-               , ldbHasFS          = lgrHasFS
-               , ldbResolveBlock   = getBlock
-               , ldbQueryBatchSize = Nothing
-               , ldbReleaseLock    = AllowThunk lock
+                 ldbSeq             = varDB
+               , ldbPrevApplied     = prevApplied
+               , ldbForkers         = forkers
+               , ldbNextForkerKey   = nextForkerKey
+               , ldbSnapshotPolicy  = defaultSnapshotPolicy (ledgerDbCfgSecParam lgrConfig) lgrSnapshotPolicyArgs
+               , ldbTracer          = lgrTracer
+               , ldbCfg             = lgrConfig
+               , ldbHasFS           = lgrHasFS
+               , ldbResolveBlock    = getBlock
+               , ldbQueryBatchSize  = Nothing
+               , ldbOpenHandlesLock = lock
                }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h bss

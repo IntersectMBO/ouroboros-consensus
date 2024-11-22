@@ -74,7 +74,6 @@ import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (Serialise (..), serialise)
 import           Control.Monad.Except
 import qualified Data.ByteString.Lazy as Lazy
-import           Data.Foldable (foldMap')
 import           Data.Kind (Type)
 import           Data.Proxy
 import           Data.Typeable
@@ -380,8 +379,7 @@ instance MockProtocolSpecific c ext
       mustSucceed (Right st)  = st
 
   getBlockKeySets SimpleBlock{simpleBody = SimpleBody txs} =
-    foldMap' id
-     [ LedgerTables $ KeysMK ins | Mock.Tx _ ins _ <- txs ]
+    LedgerTables $ KeysMK $ Mock.txIns txs
 
 data instance LedgerState (SimpleBlock c ext) mk  = SimpleLedgerState {
       simpleLedgerState :: MockState (SimpleBlock c ext)
@@ -538,9 +536,8 @@ instance MockProtocolSpecific c ext
 
   txForgetValidated = forgetValidatedSimpleGenTx
 
-  getTransactionKeySets tx =
-    let Mock.Tx _ ins _ = simpleGenTx tx
-    in LedgerTables $ KeysMK ins
+  getTransactionKeySets =
+    LedgerTables . KeysMK . Mock.txIns . simpleGenTx
 
 instance TxLimits (SimpleBlock c ext) where
   type TxMeasure (SimpleBlock c ext) = IgnoringOverflow ByteSize32

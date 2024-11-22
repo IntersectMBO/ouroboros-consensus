@@ -683,10 +683,6 @@ runThreadNetwork systemTime ThreadNetworkArgs
           let emptySt      = emptySt'
               doRangeQuery = roforkerRangeReadTables forker
           fullLedgerSt <- fmap ledgerState $ do
-                -- FIXME: we know that the range query implemetation will add at
-                -- most 1 to the number of requested keys, hence the
-                -- subtraction. When we revisit the range query implementation
-                -- we should remove this workaround.
                 fullUTxO <- doRangeQuery NoPreviousQuery
                 pure $! withLedgerTables emptySt fullUTxO
           roforkerClose forker

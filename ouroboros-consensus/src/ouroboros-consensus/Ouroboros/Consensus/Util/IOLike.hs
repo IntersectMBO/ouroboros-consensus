@@ -4,6 +4,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE NamedFieldPuns #-}
 
 module Ouroboros.Consensus.Util.IOLike (
     IOLike (..)
@@ -101,6 +102,7 @@ class ( MonadAsync              m
       , forall a. NoThunks a => NoThunks (Strict.StrictMVar m a)
       , forall a. NoThunks a => NoThunks (StrictTVar m a)
       , forall a. NoThunks a => NoThunks (StrictMVar m a)
+      , forall a. NoThunks a => NoThunks (StrictSTM.StrictTMVar m a)
       ) => IOLike m where
   -- | Securely forget a KES signing key.
   --
@@ -173,3 +175,10 @@ instance NoThunks a => NoThunks (Strict.StrictMVar IO a) where
   wNoThunks ctxt mvar = do
       aMay <- inspectMVar (Proxy :: Proxy IO) (Strict.toLazyMVar mvar)
       noThunks ctxt aMay
+
+
+instance NoThunks a => NoThunks (StrictSTM.StrictTMVar IO a) where
+  showTypeOf _ = "StrictTMVar IO"
+  wNoThunks ctxt tmvar  = do
+      a <- inspectTMVar (Proxy :: Proxy IO) $ toLazyTMVar tmvar
+      noThunks ctxt a
