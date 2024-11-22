@@ -47,3 +47,16 @@ dropTimeFromFragment :: (AF.HasHeader (Header blk))
   => AnchoredFragment (HeaderWithTime blk)
   -> AnchoredFragment (Header blk)
 dropTimeFromFragment  = AF.mapAnchoredFragment hwtHeader
+
+attachSlotTime ::
+     (AF.HasHeader (Header blk), HasEraParams blk)
+  => TopLevelConfig blk
+  -> Header blk
+  -> HeaderWithTime blk
+attachSlotTime cfg hdr = HeaderWithTime {
+      hwtHeader           = hdr
+    , hwtSlotRelativeTime =
+        runIdentity $ epochInfoSlotToRelativeTime ei (blockSlot hdr)
+    }
+  where
+    ei = getEpochInfo cfg
