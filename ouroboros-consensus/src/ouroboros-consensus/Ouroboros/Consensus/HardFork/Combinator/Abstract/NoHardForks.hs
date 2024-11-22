@@ -1,6 +1,7 @@
 module Ouroboros.Consensus.HardFork.Combinator.Abstract.NoHardForks (
-    NoHardForks (..)
-  , noHardForksEpochInfo
+    HasEraParams (..)
+  , NoHardForks (..)
+  , getEpochInfo
   ) where
 
 import           Cardano.Slotting.EpochInfo
@@ -15,7 +16,7 @@ import           Ouroboros.Consensus.Ledger.Abstract
   Blocks that don't /have/ any transitions
 -------------------------------------------------------------------------------}
 
-class SingleEraBlock blk => NoHardForks blk where
+class HasEraParams blk where
   -- | Extract 'EraParams' from the top-level config
   --
   -- The HFC itself does not care about this, as it must be given the full shape
@@ -23,16 +24,18 @@ class SingleEraBlock blk => NoHardForks blk where
   getEraParams :: TopLevelConfig blk -> EraParams
 
 
+class (SingleEraBlock blk, HasEraParams blk) => NoHardForks blk where
   -- | Construct partial ledger config from full ledger config
   --
   -- See also 'toPartialConsensusConfig'
   toPartialLedgerConfig :: proxy blk
                         -> LedgerConfig blk -> PartialLedgerConfig blk
 
-noHardForksEpochInfo :: (Monad m, NoHardForks blk)
-                     => TopLevelConfig blk
-                     -> EpochInfo m
-noHardForksEpochInfo cfg =
+getEpochInfo ::
+     (Monad m, HasEraParams blk)
+  => TopLevelConfig blk
+  -> EpochInfo m
+getEpochInfo cfg =
       hoistEpochInfo (pure . runIdentity)
     $ fixedEpochInfo
         (History.eraEpochSize  params)

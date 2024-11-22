@@ -632,6 +632,9 @@ singleNodeTestConfigWith codecConfig storageConfig k genesisWindow = TopLevelCon
     _eraParams = (HardFork.defaultEraParams k slotLength) {HardFork.eraGenesisWin = genesisWindow}
 
 
+instance HasEraParams (TestBlockWith ptype) where
+    getEraParams = tblcHardForkParams . topLevelConfigLedger
+
 {-------------------------------------------------------------------------------
   Test blocks without payload
 -------------------------------------------------------------------------------}

@@ -267,7 +267,7 @@ instance Isomorphic TopLevelConfig where
         emptyCheckpointsMap
     where
       ei :: EpochInfo (Except PastHorizonException)
-      ei = noHardForksEpochInfo $ project tlc
+      ei = getEpochInfo $ project tlc
 
       auxLedger :: LedgerConfig (HardForkBlock '[blk]) -> LedgerConfig blk
       auxLedger =
@@ -423,7 +423,7 @@ instance Functor m => Isomorphic (BlockForging m) where
                                    (inject cfg)
                                    sno
                                    (injTickedChainDepSt
-                                     (noHardForksEpochInfo cfg)
+                                     (getEpochInfo cfg)
                                      tickedChainDepSt)
       , checkCanForge    = \cfg sno tickedChainDepSt isLeader forgeStateInfo ->
                                first (project' (Proxy @(WrapCannotForge blk))) $
@@ -431,7 +431,7 @@ instance Functor m => Isomorphic (BlockForging m) where
                                    (inject cfg)
                                    sno
                                    (injTickedChainDepSt
-                                     (noHardForksEpochInfo cfg)
+                                     (getEpochInfo cfg)
                                      tickedChainDepSt)
                                    (inject' (Proxy @(WrapIsLeader blk)) isLeader)
                                    (inject' (Proxy @(WrapForgeStateInfo blk)) forgeStateInfo)
