@@ -244,7 +244,6 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
                 , mcdbRegistry = registry
                 , mcdbNodeDBs = nodeDBs
                 }
-          -- TODO: Test with more interesting behaviour for cdbCheckInFuture
           pure $ ChainDB.updateTracer cdbTracer args
         (_, (chainDB, ChainDBImpl.Internal{intAddBlockRunner})) <-
           allocate
