@@ -261,14 +261,14 @@ cabal run exe:db-analyser -- cardano
 
 ##### Plotting the benchmark results
 
-Assuming you are at the top level of `ouroboros-network`, and the benchmark data
+Assuming you are at the top level of `ouroboros-consensus`, and the benchmark data
 has been written to a file named `ledger-ops-cost.csv`, a plot can be generated
 by running:
 
 ```sh
 gnuplot -e "bench_data='ledger-ops-cost.csv'" \
         -e "out_file='results.png'" \
-           ouroboros-consensus-cardano-tools/scripts/plot-ledger-ops-cost.gp
+           ouroboros-consensus-cardano/scripts/plot-ledger-ops-cost.gp
 ```
 
 The plot will be written to a file named `results.png`. See the script file for
