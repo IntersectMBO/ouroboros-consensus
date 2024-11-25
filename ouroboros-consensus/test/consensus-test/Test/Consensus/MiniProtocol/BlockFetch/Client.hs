@@ -74,7 +74,7 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.ChainDB
 import           Test.Util.ChainUpdates
-import           Test.Util.HeaderValidation (addBogusTime)
+import           Test.Util.HeaderValidation (attachSlotTime)
 import qualified Test.Util.LogicalClock as LogicalClock
 import           Test.Util.LogicalClock (Tick (..))
 import           Test.Util.Orphans.IOLike ()
@@ -141,7 +141,10 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
 
         blockFetchConsensusInterface =
           mkTestBlockFetchConsensusInterface
-            (Map.map (AF.mapAnchoredFragment (addBogusTime . getHeader)) <$> getCandidates)
+            (Map.map
+                 (AF.mapAnchoredFragment (attachSlotTime topLevelConfig . getHeader))
+             <$> getCandidates
+            )
             chainDbView
 
     _ <- forkLinkedThread registry "BlockFetchLogic" $
@@ -233,6 +236,11 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
 
     numCoreNodes = NumCoreNodes $ fromIntegral $ Map.size peerUpdates + 1
 
+    -- Needs to be larger than any chain length in this test, to ensure that
+    -- switching to any chain is never too deep.
+    securityParam  = SecurityParam 1000
+    topLevelConfig = singleNodeTestConfigWithK securityParam
+
     mkChainDbView ::
          ResourceRegistry m
       -> Tracer m String
@@ -264,16 +272,10 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
             addBlockWaitWrittenToDisk = ChainDB.addBlockWaitWrittenToDisk chainDB
         pure BlockFetchClientInterface.ChainDbView {..}
       where
-        -- Needs to be larger than any chain length in this test, to ensure that
-        -- switching to any chain is never too deep.
-        securityParam  = SecurityParam 1000
-        topLevelConfig = singleNodeTestConfigWithK securityParam
-
         cdbTracer = Tracer \case
             ChainDBImpl.TraceAddBlockEvent ev ->
               traceWith tracer $ "ChainDB: " <> show ev
             _ -> pure ()
-
 
     mkTestBlockFetchConsensusInterface ::
          STM m (Map PeerId (AnchoredFragment (HeaderWithTime TestBlock)))

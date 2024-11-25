@@ -88,6 +88,8 @@ import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Forecast
 import           Ouroboros.Consensus.HardFork.Abstract
+import           Ouroboros.Consensus.HardFork.Combinator.Abstract
+                     (HasEraParams (getEraParams))
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import           Ouroboros.Consensus.HardFork.History.EraParams
                      (EraParams (eraGenesisWin))
@@ -692,6 +694,9 @@ mkTestConfig k ChunkSize { chunkCanContainEBB, numRegularBlocks } =
       , eraSafeZone   = HardFork.StandardSafeZone (maxRollbacks k * 2)
       , eraGenesisWin = GenesisWindow (maxRollbacks k * 2)
       }
+
+instance HasEraParams TestBlock where
+    getEraParams = topLevelConfigLedger
 
 {-------------------------------------------------------------------------------
   NestedCtxt

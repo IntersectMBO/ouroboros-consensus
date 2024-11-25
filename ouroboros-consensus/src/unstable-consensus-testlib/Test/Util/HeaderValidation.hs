@@ -3,50 +3,40 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 
 module Test.Util.HeaderValidation (
-    -- * Bogus time
-    AddBogusTime
-  , addBogusTime
-  , addBogusTimeToFragment
+    -- * Enriching headers with a relative slot time
+    attachSlotTime
+  , attachSlotTimeToFragment
   , dropTimeFromFragment
   ) where
 
-import           Cardano.Slotting.Time (RelativeTime (..))
+import           Cardano.Slotting.EpochInfo.API (epochInfoSlotToRelativeTime)
+import           Data.Functor.Identity (runIdentity)
 import           Data.Typeable (Typeable)
-import           Ouroboros.Consensus.Block (Header)
+import           Ouroboros.Consensus.Block (Header, blockSlot)
+import           Ouroboros.Consensus.Config (TopLevelConfig)
+import           Ouroboros.Consensus.HardFork.Combinator.Abstract (HasEraParams,
+                     getEpochInfo)
 import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
 {-------------------------------------------------------------------------------
-  Bogus time
+  Enriching headers with a relative slot time
 -------------------------------------------------------------------------------}
-
--- REVIEW: I'm not sure about the name of this type class, and how safe it is to use it in testing code. What if suddenly a test decides to rely on the header's time?
-class AddBogusTime blk where
-  addBogusTime ::
-       Header blk
-    -> HeaderWithTime blk
-
--- REVIEW: I even wonder if this instance should be defined here and
--- at all: there might be use cases in which the 'TestBlock's are used
--- in tests that depend on the header having a meaningful time
--- associated with them.
---
-instance AddBogusTime blk where
-  addBogusTime testHeader = HeaderWithTime {
-      hwtHeader = testHeader
-    , hwtSlotRelativeTime = RelativeTime (error "Header time should not be used!")
-    }
-
-addBogusTimeToFragment :: (AF.HasHeader (Header blk), Typeable blk)
-  => AnchoredFragment (Header blk)
-  -> AnchoredFragment (HeaderWithTime blk)
-addBogusTimeToFragment = AF.mapAnchoredFragment addBogusTime
 
 dropTimeFromFragment :: (AF.HasHeader (Header blk))
   => AnchoredFragment (HeaderWithTime blk)
   -> AnchoredFragment (Header blk)
 dropTimeFromFragment  = AF.mapAnchoredFragment hwtHeader
+
+attachSlotTimeToFragment ::
+     ( AF.HasHeader (Header blk)
+     , Typeable blk
+     , HasEraParams blk)
+  => TopLevelConfig blk
+  -> AnchoredFragment (Header blk)
+  -> AnchoredFragment (HeaderWithTime blk)
+attachSlotTimeToFragment cfg = AF.mapAnchoredFragment (attachSlotTime cfg)
 
 attachSlotTime ::
      (AF.HasHeader (Header blk), HasEraParams blk)

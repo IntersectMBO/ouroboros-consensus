@@ -114,6 +114,8 @@ import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Forecast
 import           Ouroboros.Consensus.HardFork.Abstract
+import           Ouroboros.Consensus.HardFork.Combinator.Abstract
+                     (HasEraParams (getEraParams))
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
@@ -630,7 +632,6 @@ singleNodeTestConfigWith codecConfig storageConfig k genesisWindow = TopLevelCon
 
     _eraParams :: HardFork.EraParams
     _eraParams = (HardFork.defaultEraParams k slotLength) {HardFork.eraGenesisWin = genesisWindow}
-
 
 instance HasEraParams (TestBlockWith ptype) where
     getEraParams = tblcHardForkParams . topLevelConfigLedger

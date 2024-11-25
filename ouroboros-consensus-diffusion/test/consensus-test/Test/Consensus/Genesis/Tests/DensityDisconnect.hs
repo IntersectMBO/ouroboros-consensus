@@ -60,14 +60,15 @@ import           Test.QuickCheck
 import           Test.QuickCheck.Extras (unsafeMapSuchThatJust)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
-import           Test.Util.HeaderValidation (addBogusTimeToFragment)
+import           Test.Util.HeaderValidation (attachSlotTimeToFragment)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.PartialAccessors
 import           Test.Util.TersePrinting (terseHFragment, terseHWTFragment,
                      terseHeader)
-import           Test.Util.TestBlock (TestBlock)
+import           Test.Util.TestBlock (TestBlock, singleNodeTestConfig)
 import           Test.Util.TestEnv (adjustQuickCheckMaxSize,
                      adjustQuickCheckTests)
+
 
 tests :: TestTree
 tests =
@@ -115,7 +116,11 @@ staticCandidates GenesisTest {gtSecurityParam, gtGenesisWindow, gtBlockTree} =
       }
       where
         (loeFrag, suffixes) =
-          sharedCandidatePrefix curChain (second (addBogusTimeToFragment . toHeaders) <$> candidates)
+          sharedCandidatePrefix
+              curChain
+              (second (attachTimeUsingTestConfig . toHeaders)
+                <$> candidates
+              )
 
     selections = selection <$> branches
 
@@ -130,6 +135,15 @@ staticCandidates GenesisTest {gtSecurityParam, gtGenesisWindow, gtBlockTree} =
     chains = btTrunk gtBlockTree : (btbFull <$> branches)
 
     branches = btBranches gtBlockTree
+
+-- | Attach a relative slot time to a fragment of headers using the
+-- 'singleNodeTestConfig'. Since 'k' is not used for time conversions,
+-- it is safe to use this configuration even if other 'k' values are
+-- used in the tests that call this function.
+attachTimeUsingTestConfig ::
+  AnchoredFragment (Header TestBlock) ->
+  AnchoredFragment (HeaderWithTime TestBlock)
+attachTimeUsingTestConfig = attachSlotTimeToFragment singleNodeTestConfig
 
 -- | Check that the GDD disconnects from some peers for each full Genesis window starting at any of a block tree's
 -- intersections, and that it's not the honest peer.
@@ -380,12 +394,17 @@ evolveBranches EvolvingPeers {k, sgen, peers = initialPeers, fullTree} =
         states =
           candidates <&> \ csCandidate ->
             ChainSyncState {
-              csCandidate = addBogusTimeToFragment csCandidate,
+              csCandidate = attachTimeUsingTestConfig csCandidate,
               csIdling = False,
               csLatestSlot = SJust (AF.headSlot csCandidate)
             }
         -- Run GDD.
-        (loeFrag, suffixes) = sharedCandidatePrefix curChain (Map.toList $ fmap addBogusTimeToFragment candidates)
+        (loeFrag, suffixes) =
+          sharedCandidatePrefix
+             curChain
+             (Map.toList $
+               fmap attachTimeUsingTestConfig candidates
+             )
         (killedNow, bounds) = first Set.fromList $ densityDisconnect sgen k states suffixes loeFrag
         event = UpdateEvent {
           target,
