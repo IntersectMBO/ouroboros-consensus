@@ -60,7 +60,7 @@ import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Tables.Utils
-import           Ouroboros.Consensus.Storage.LedgerDB.API.Config
+import           Ouroboros.Consensus.Storage.LedgerDB.API
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.AnchoredSeq hiding (anchor, last, map,
                      rollback)

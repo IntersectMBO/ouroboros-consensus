@@ -235,7 +235,6 @@ library
     Ouroboros.Consensus.Storage.ImmutableDB.Stream
     Ouroboros.Consensus.Storage.LedgerDB
     Ouroboros.Consensus.Storage.LedgerDB.API
-    Ouroboros.Consensus.Storage.LedgerDB.API.Config
     Ouroboros.Consensus.Storage.LedgerDB.Impl.Args
     Ouroboros.Consensus.Storage.LedgerDB.Impl.Common
     Ouroboros.Consensus.Storage.LedgerDB.Impl.Init
@@ -728,6 +727,7 @@ test-suite storage-test
     contra-tracer,
     diff-containers,
     directory,
+    filepath,
     fs-api ^>=0.3,
     fs-sim ^>=0.3,
     generics-sop,

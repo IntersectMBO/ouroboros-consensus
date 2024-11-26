@@ -17,9 +17,9 @@ import           Control.Tracer
 import qualified Data.Foldable as Foldable
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (isJust)
 import           Data.Set (Set)
 import qualified Data.Set as Set
+import           Data.Void
 import           Data.Word
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
@@ -32,7 +32,6 @@ import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import           Ouroboros.Consensus.Storage.LedgerDB.API
-import           Ouroboros.Consensus.Storage.LedgerDB.API.Config
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Common
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Init
@@ -117,7 +116,7 @@ mkInitDb args flavArgs getBlock =
    emptyF st =
      empty' st $ case bss of
                   InMemoryHandleArgs -> InMemory.newInMemoryLedgerTablesHandle lgrHasFS
-                  --TODO LSMHandleArgs      -> LSM.newLSMLedgerTablesHandle
+                  LSMHandleArgs  x   -> absurd x
 
    loadSnapshot :: CodecConfig blk
                 -> SomeHasFS m
@@ -126,7 +125,7 @@ mkInitDb args flavArgs getBlock =
                 -> m (Either (SnapshotFailure blk) (LedgerSeq' m blk, RealPoint blk))
    loadSnapshot = case bss of
      InMemoryHandleArgs -> InMemory.loadSnapshot lgrRegistry
-     --TODO LSMHandleArgs      -> LSM.loadSnapshot
+     LSMHandleArgs x    -> absurd x
 
 implMkLedgerDb ::
      forall m l blk.
@@ -206,13 +205,12 @@ mkInternals bss h = TestInternals {
                   -> m (Maybe (DiskSnapshot, RealPoint blk))
      takeSnapshot = case bss of
        InMemoryHandleArgs -> InMemory.takeSnapshot
-       --TODO LSMHandleArgs      -> LSM.takeSnapshot
+       LSMHandleArgs x    -> absurd x
 
 -- | Testing only! Truncate all snapshots in the DB.
 implIntTruncateSnapshots :: MonadThrow m => SomeHasFS m -> m ()
-implIntTruncateSnapshots (SomeHasFS fs) = do
-  dirs <- Set.lookupMax . Set.filter (isJust . snapshotFromPath) <$> listDirectory fs (mkFsPath [])
-  mapM_ (truncateRecursively . (:[])) dirs
+implIntTruncateSnapshots sfs@(SomeHasFS fs) = do
+  snapshotsMapM_ sfs (truncateRecursively . (:[]))
   where
     truncateRecursively pre = do
       dirs <- listDirectory fs (mkFsPath pre)
@@ -348,7 +346,7 @@ implTryTakeSnapshot bss env mTime nrBlocks =
              Nothing
              (onDiskShouldChecksumSnapshots $ ldbSnapshotPolicy env)
              ref
-       --TODO LSMHandleArgs      -> LSM.takeSnapshot config trcr fs Nothing ref
+       LSMHandleArgs x    -> absurd x
 
 -- In the first version of the LedgerDB for UTxO-HD, there is a need to
 -- periodically flush the accumulated differences to the disk. However, in the
