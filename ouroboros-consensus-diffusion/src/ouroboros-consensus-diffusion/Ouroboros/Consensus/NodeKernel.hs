@@ -524,7 +524,6 @@ forkBlockForging IS{..} blockForging =
           ForgeStateUpdateError err -> do
             trace $ TraceForgeStateUpdateError currentSlot err
             lift $ roforkerClose forker
-            exitEarly
           CannotForge cannotForge -> do
             trace $ TraceNodeCannotForge currentSlot cannotForge
             lift $ roforkerClose forker

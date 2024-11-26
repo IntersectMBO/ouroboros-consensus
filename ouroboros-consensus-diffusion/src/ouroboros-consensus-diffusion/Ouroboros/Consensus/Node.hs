@@ -368,8 +368,8 @@ data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) = StdRunNodeArgs
     -- ^ A custom timeout for ChainSync.
 
     -- Ad hoc values to replace default ChainDB configurations
-  , srnSnapshotPolicyArgs :: SnapshotPolicyArgs
-  , srnLdbFlavorArgs      :: Complete LedgerDbFlavorArgs m -- TODO this will contain a fs?? it should probably not as the node doesn't know about those
+  , srnSnapshotPolicyArgs           :: SnapshotPolicyArgs
+  , srnLdbFlavorArgs                :: Complete LedgerDbFlavorArgs m
   }
 
 {-------------------------------------------------------------------------------

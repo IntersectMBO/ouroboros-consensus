@@ -49,7 +49,7 @@ samples = 1000
 
 tests :: TestTree
 tests = testGroup "DbChangelog"
-      [ testProperty "flushing" $ verboseShrinking $ withMaxSuccess samples $ conjoin
+      [ testProperty "flushing" $ withMaxSuccess samples $ conjoin
         [ counterexample "flushing keeps immutable tip"
           prop_flushingSplitsTheChangelog
         ]
