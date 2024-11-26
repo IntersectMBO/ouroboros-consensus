@@ -133,7 +133,7 @@ import           Ouroboros.Consensus.Util.IOLike
 instance SerialiseConstraintsHFC ByronBlock
 
 instance HasBlessedGenTxIdDecodeEra (CardanoShelleyEras c) where
-  blessedGenTxIdDecodeEra = S $ S $ S $ S $ Z mempty
+  blessedGenTxIdDecodeEra = Z mempty
 
 instance HasBlessedGenTxIdDecodeEra (CardanoEras c) where
   blessedGenTxIdDecodeEra = S blessedGenTxIdDecodeEra
