@@ -34,7 +34,6 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl.Args as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl.Init as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as LedgerDB.V1
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API as BS
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Init as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as LedgerDB.V2
@@ -116,7 +115,7 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
                    LedgerDB.V1.DisableFlushing
                    LedgerDB.V1.DisableQuerySize
                    ( LedgerDB.V1.LMDBBackingStoreArgs
-                       (BS.LiveLMDBFS (shfs (ChainDB.RelativeMountPoint "lmdb")))
+                       "lmdb"
                        defaultLMDBLimits
                        Dict.Dict
                    )

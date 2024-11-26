@@ -7,12 +7,12 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -112,6 +112,9 @@ module Ouroboros.Consensus.Storage.LedgerDB.API (
     LedgerDB (..)
   , LedgerDB'
   , currentPoint
+    -- * Configuration
+  , LedgerDbCfg (..)
+  , configLedgerDb
     -- * Exceptions
   , LedgerDbError (..)
     -- * Forker
@@ -165,9 +168,11 @@ import           Data.Word
 import           GHC.Generics
 import           NoThunks.Class
 import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HeaderStateHistory
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
@@ -275,6 +280,27 @@ data TestInternals m l blk = TestInternals {
   deriving NoThunks via OnlyCheckWhnfNamed "TestInternals" (TestInternals m l blk)
 
 type TestInternals' m blk = TestInternals m (ExtLedgerState blk) blk
+
+{-------------------------------------------------------------------------------
+  Config
+-------------------------------------------------------------------------------}
+
+data LedgerDbCfg l = LedgerDbCfg {
+      ledgerDbCfgSecParam :: !SecurityParam
+    , ledgerDbCfg         :: !(LedgerCfg l)
+    }
+  deriving (Generic)
+
+deriving instance NoThunks (LedgerCfg l) => NoThunks (LedgerDbCfg l)
+
+configLedgerDb ::
+     ConsensusProtocol (BlockProtocol blk)
+  => TopLevelConfig blk
+  -> LedgerDbCfg (ExtLedgerState blk)
+configLedgerDb config = LedgerDbCfg {
+      ledgerDbCfgSecParam    = configSecurityParam config
+    , ledgerDbCfg            = ExtLedgerCfg config
+    }
 
 {-------------------------------------------------------------------------------
   Exceptions

@@ -205,7 +205,7 @@ remover mempool total = do
         -- transactions.
         threadDelay 1000
         gtx <- atomically $ getATxFromTheMempool
-        Mempool.removeTxs mempool (Mempool.txId gtx :| [])
+        Mempool.removeTxsEvenIfValid mempool (Mempool.txId gtx :| [])
         loop (unGenTx gtx:txs) (n-1)
       where
         getATxFromTheMempool =

@@ -42,6 +42,7 @@ import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike hiding (MonadMask (..),
                      newMVar, newTVarIO, readMVar)
 import qualified System.Directory as Dir
+import qualified System.FilePath as FilePath
 import           System.FS.API hiding (Handle)
 import           System.FS.IO (ioHasFS)
 import qualified System.FS.Sim.MockFS as MockFS
@@ -70,21 +71,22 @@ tests :: TestTree
 tests = testGroup "BackingStore" [
     adjustOption (scaleQuickCheckTests 10) $
       testProperty "InMemory IO SimHasFS" $ testWithIO $
-        setupBSEnv (const BS.InMemoryBackingStoreArgs) setupSimHasFS (pure ())
+        setupBSEnv BS.InMemoryBackingStoreArgs setupSimHasFS (pure ())
   , adjustOption (scaleQuickCheckTests 10) $
       testProperty "InMemory IO IOHasFS" $ testWithIO $ do
         (fp, cleanup) <- setupTempDir
-        setupBSEnv (const BS.InMemoryBackingStoreArgs) (setupIOHasFS fp) cleanup
+        setupBSEnv BS.InMemoryBackingStoreArgs (setupIOHasFS fp) cleanup
   , adjustOption (scaleQuickCheckTests 2) $
       testProperty "LMDB IO IOHasFS" $ testWithIO $ do
         (fp, cleanup) <- setupTempDir
-        setupBSEnv (\x -> BS.LMDBBackingStoreArgs (BS.LiveLMDBFS x) (testLMDBLimits maxOpenValueHandles) Dict.Dict) (setupIOHasFS fp) cleanup
+        lmdbTmpDir <- (FilePath.</> "BS_LMDB") <$> Dir.getTemporaryDirectory
+        setupBSEnv (BS.LMDBBackingStoreArgs lmdbTmpDir (testLMDBLimits maxOpenValueHandles) Dict.Dict) (setupIOHasFS fp) (cleanup >> Dir.removeDirectoryRecursive lmdbTmpDir)
   ]
 
 scaleQuickCheckTests :: Int -> QuickCheckTests -> QuickCheckTests
 scaleQuickCheckTests c (QuickCheckTests n) = QuickCheckTests $ c * n
 
-testWithIO::
+testWithIO ::
      IO (BSEnv IO K V D)
   -> Actions (Lockstep T) -> Property
 testWithIO mkBSEnv = runActionsBracket pT mkBSEnv bsCleanup runner
@@ -126,7 +128,7 @@ setupTempDir = do
 
 setupBSEnv ::
      IOLike m
-  => (SomeHasFS m -> Complete BS.BackingStoreArgs m)
+  => Complete BS.BackingStoreArgs m
   -> m (SomeHasFS m)
   -> m ()
   -> m (BSEnv m K V D)
@@ -135,7 +137,7 @@ setupBSEnv mkBsArgs mkShfs cleanup = do
 
   createDirectory hfs (mkFsPath ["copies"])
 
-  let bsi = BS.newBackingStoreInitialiser mempty (mkBsArgs shfs) (BS.SnapshotsFS shfs)
+  let bsi = BS.newBackingStoreInitialiser mempty mkBsArgs (BS.SnapshotsFS shfs)
 
   bsVar <- newMVar =<< bsi (BS.InitFromValues Origin emptyLedgerTables)
 

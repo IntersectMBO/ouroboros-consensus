@@ -106,14 +106,14 @@ mkMempool ::
      )
   => MempoolEnv m blk -> Mempool m blk
 mkMempool mpEnv = Mempool
-    { addTx          = implAddTx mpEnv
-    , removeTxs      = implRemoveTxs mpEnv
-    , syncWithLedger = implSyncWithLedger mpEnv
-    , getSnapshot    = snapshotFromIS <$> readTMVar istate
-    , getSnapshotFor = implGetSnapshotFor mpEnv
-    , getCapacity    = isCapacity <$> readTMVar istate
+    { addTx                = implAddTx mpEnv
+    , removeTxsEvenIfValid = implRemoveTxsEvenIfValid mpEnv
+    , syncWithLedger       = implSyncWithLedger mpEnv
+    , getSnapshot          = snapshotFromIS <$> readTMVar istate
+    , getSnapshotFor       = implGetSnapshotFor mpEnv
+    , getCapacity          = isCapacity <$> readTMVar istate
     }
   where
     MempoolEnv {
-        mpEnvStateVar         = istate
+        mpEnvStateVar = istate
       } = mpEnv

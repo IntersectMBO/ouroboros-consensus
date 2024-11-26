@@ -7,7 +7,6 @@
 module Ouroboros.Consensus.Storage.LedgerDB (
     -- * API
     module Ouroboros.Consensus.Storage.LedgerDB.API
-  , module Ouroboros.Consensus.Storage.LedgerDB.API.Config
   , module Ouroboros.Consensus.Storage.LedgerDB.Impl.Common
     -- * Impl
   , openDB
@@ -20,7 +19,6 @@ import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream
 import           Ouroboros.Consensus.Storage.LedgerDB.API
-import           Ouroboros.Consensus.Storage.LedgerDB.API.Config
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Common
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl.Init as Init

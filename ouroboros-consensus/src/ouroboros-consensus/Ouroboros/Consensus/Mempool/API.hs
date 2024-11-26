@@ -157,7 +157,7 @@ data Mempool m blk = Mempool {
                  -> m (MempoolAddTxResult blk)
 
       -- | Manually remove the given transactions from the mempool.
-    , removeTxs      :: NE.NonEmpty (GenTxId blk) -> m ()
+    , removeTxsEvenIfValid :: NE.NonEmpty (GenTxId blk) -> m ()
 
       -- | Sync the transactions in the mempool with the current ledger state
       --  of the 'ChainDB'.
