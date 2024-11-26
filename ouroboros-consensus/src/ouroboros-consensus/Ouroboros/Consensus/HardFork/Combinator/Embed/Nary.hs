@@ -24,6 +24,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Embed.Nary (
 
 import           Data.Bifunctor (first)
 import           Data.Coerce (Coercible, coerce)
+import           Data.SOP (Compose)
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Counting (Exactly (..))
 import           Data.SOP.Dict (Dict (..))
@@ -38,6 +39,7 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation (AnnTip, HeaderState (..),
                      genesisHeaderState)
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
+import           Ouroboros.Consensus.Ledger.SupportsMempool (ConvertRawTxId(..))
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util ((.:))
@@ -190,7 +192,10 @@ instance Inject GenTx where
   inject = injectNS' (Proxy @GenTx) . forgetInjectionIndex
 
 instance Inject WrapGenTxId where
-  inject = injectNS' (Proxy @WrapGenTxId) . forgetInjectionIndex
+  inject ix w =
+    WrapGenTxId $ HardForkGenTxId $ OneEraGenTxId $
+    hcollapse $ hcmap proxySingle (K . toRawTxIdHash . unwrapGenTxId) $
+    injectNS (forgetInjectionIndex ix) w
 
 instance Inject WrapApplyTxErr where
   inject =

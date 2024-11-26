@@ -17,7 +17,7 @@
 module Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common (
     -- * Conditions required by the HFC to support serialisation
     HardForkEncoderException (..)
-  , HasBlessedGenTxIdDecodeEra (..)
+  , HasBlessedGenTxIdEra (..)
   , SerialiseConstraintsHFC
   , SerialiseHFC (..)
   , disabledEraException
@@ -215,9 +215,10 @@ isHardForkNodeToClientEnabled _                              = False
 
 
 -- absolutely horrible. should be HasLatestStableGenTxIdEra probably.
--- especially nasty because it's
-class HasBlessedGenTxIdDecodeEra (xs :: [Type]) where
-  blessedGenTxIdDecodeEra :: NS (K ()) xs
+-- especially nasty because it's a K () rather than an equivalent (but
+-- non-existent) 'Void :: (Type -> Type) -> Type'
+class HasBlessedGenTxIdEra (xs :: [Type]) where
+  blessedGenTxIdEra :: NS (K ()) xs
 
 {-------------------------------------------------------------------------------
   Conditions required by the HFC to support serialisation
@@ -259,7 +260,7 @@ pSHFC = Proxy
 --    This would then lead to problems with binary streaming, and we do not
 --    currently provide any provisions to resolve these.
 class ( CanHardFork xs
-      , HasBlessedGenTxIdDecodeEra xs
+      , HasBlessedGenTxIdEra xs
       , All SerialiseConstraintsHFC xs
         -- Required for HasNetworkProtocolVersion
       , All (Compose Show EraNodeToClientVersion) xs

@@ -45,6 +45,7 @@ import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util ((.:))
 import           Ouroboros.Network.Block (Serialised, unwrapCBORinCBOR,
                      wrapCBORinCBOR)
+import           Data.ByteString.Short (ShortByteString)
 
 instance SerialiseHFC xs => SerialiseNodeToClientConstraints (HardForkBlock xs)
 
@@ -164,41 +165,51 @@ instance SerialiseHFC xs
 
 instance SerialiseHFC xs
       => SerialiseNodeToClient (HardForkBlock xs) (GenTxId (HardForkBlock xs)) where
+  -- This instance can be massively simplified after we drop support for
+  -- 'NodeToClientVersion's earlier than 'NodeToClientV_19', since we no longer
+  -- need to handle the cases where 'ShortByteString's are serialised with
+  -- an era tag ('encodeNS').
+
   encodeNodeToClient cc v (HardForkGenTxId (OneEraGenTxId txid)) =
     case v of
       HardForkNodeToClientEnabled hfv _ | hfv >= HardForkSpecificNodeToClientVersion4 ->
-        unK $
-          hctraverse'
-            (Proxy :: Proxy SerialiseConstraintsHFC)
-            (K . Serialise.encode . toRawTxIdHash . unwrapGenTxId)
-            txid
-      _ ->
-        dispatchEncoder cc v txid
+        Serialise.encode txid
+      HardForkNodeToClientEnabled _ _ -> do
+        let blessedGenTxId :: NS (K ShortByteString) xs
+            blessedGenTxId = hmap (pure $ K txid) blessedGenTxIdEra
+        encodeNS (hpure $ Fn $ K . Serialise.encode . unK) blessedGenTxId
+      HardForkNodeToClientDisabled _ ->
+        Serialise.encode txid
   decodeNodeToClient cc v =
-    case v of
-      HardForkNodeToClientEnabled hfc vs
-        | hfc >= HardForkSpecificNodeToClientVersion4 -> do
-          let aux :: forall s blk . SerialiseConstraintsHFC blk
-                  => CodecConfig blk
-                  -> EraNodeToClientVersion blk
-                  -> K () blk
-                  -> (Decoder s :.: WrapGenTxId) blk
-              aux ecc vv _ = Comp $ case vv of
-                EraNodeToClientEnabled bv -> do
-                  decodeNodeToClient ecc bv
-                EraNodeToClientDisabled ->
-                  -- Is this sensible? What should the behaviour be when the
-                  -- blessed GenTxId era is disabled by EraNodeToClientDisabled?
-                  fail $ show $ disabledEraException (Proxy @blk)
-          fmap (HardForkGenTxId . OneEraGenTxId) $
-            htraverse' unComp $
-              hcliftA3 pSHFC
-                aux
-                (getPerEraCodecConfig (hardForkCodecConfigPerEra cc))
-                vs
-                blessedGenTxIdDecodeEra
-      _ ->
-        fmap (HardForkGenTxId . OneEraGenTxId) $ dispatchDecoder cc v
+    fmap (HardForkGenTxId . OneEraGenTxId) $
+      case v of
+        HardForkNodeToClientEnabled hfc vs
+          | hfc >= HardForkSpecificNodeToClientVersion4 -> do
+            Serialise.decode
+            -- let aux :: forall s blk . SerialiseConstraintsHFC blk
+            --         => CodecConfig blk
+            --         -> EraNodeToClientVersion blk
+            --         -> K () blk
+            --         -> (Decoder s :.: WrapGenTxId) blk
+            --     aux ecc vv _ = Comp $ case vv of
+            --       EraNodeToClientEnabled bv -> do
+            --         decodeNodeToClient ecc bv
+            --       EraNodeToClientDisabled ->
+            --         -- Is this sensible? What should the behaviour be when the
+            --         -- blessed GenTxId era is disabled by EraNodeToClientDisabled?
+            --         fail $ show $ disabledEraException (Proxy @blk)
+            -- htraverse' unComp $
+            --   hcliftA3 pSHFC
+            --     aux
+            --     (getPerEraCodecConfig (hardForkCodecConfigPerEra cc))
+            --     vs
+            --     blessedGenTxIdEra
+        HardForkNodeToClientEnabled _ _ ->do
+          let eraDecoders :: NP (Decoder s :.: K ShortByteString) xs
+              eraDecoders = hpure $ Comp $ K <$> Serialise.decode
+          hcollapse <$> decodeNS eraDecoders
+        HardForkNodeToClientDisabled _ ->
+          Serialise.decode
 
 instance SerialiseHFC xs
       => SerialiseNodeToClient (HardForkBlock xs) SlotNo where
