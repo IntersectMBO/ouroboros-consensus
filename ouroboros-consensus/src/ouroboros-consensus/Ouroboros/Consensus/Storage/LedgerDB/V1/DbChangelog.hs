@@ -194,7 +194,6 @@ import           Ouroboros.Consensus.Ledger.Tables.Diff (fromAntiDiff,
 import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Storage.LedgerDB.API
-import           Ouroboros.Consensus.Storage.LedgerDB.API.Config
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import           Ouroboros.Consensus.Util (repeatedlyM)
 import           Ouroboros.Consensus.Util.IOLike

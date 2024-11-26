@@ -4,6 +4,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 
 -- | See "Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API" for the
 -- documentation. This module just puts together the implementations for the
@@ -44,6 +45,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB 
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
 import           System.FS.API
+import           System.FS.IO
 
 type BackingStoreInitialiser m l =
      InitFrom (LedgerTables l ValuesMK)
@@ -96,7 +98,7 @@ newBackingStoreInitialiser trcr bss =
       LMDB.newLMDBBackingStore
         (FlavorImplSpecificTraceOnDisk . OnDiskBackingStoreTrace >$< trcr)
         limits
-        fs
+        (LiveLMDBFS $ SomeHasFS $ ioHasFS $ MountPoint fs)
     InMemoryBackingStoreArgs ->
       InMemory.newInMemoryBackingStore
         (FlavorImplSpecificTraceInMemory . InMemoryBackingStoreTrace >$< trcr)

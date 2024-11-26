@@ -33,7 +33,7 @@ import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Storage.LedgerDB.API.Config
+import           Ouroboros.Consensus.Storage.LedgerDB.API
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog hiding
                      (tip)
 import           Ouroboros.Consensus.Util
