@@ -12,7 +12,7 @@ module Test.Consensus.Mempool.Mocked (
     -- * Mempool API functions
   , addTx
   , getTxs
-  , removeTxs
+  , removeTxsEvenIfValid
   ) where
 
 import           Control.Concurrent.Class.MonadSTM.Strict (StrictTVar,
@@ -102,11 +102,11 @@ addTx ::
   -> m (MempoolAddTxResult blk)
 addTx = Mempool.addTx . getMempool
 
-removeTxs ::
+removeTxsEvenIfValid ::
      MockedMempool m blk
   -> NE.NonEmpty (Ledger.GenTxId blk)
   -> m ()
-removeTxs = Mempool.removeTxs . getMempool
+removeTxsEvenIfValid = Mempool.removeTxsEvenIfValid . getMempool
 
 getTxs :: forall blk.
      (Ledger.LedgerSupportsMempool blk)

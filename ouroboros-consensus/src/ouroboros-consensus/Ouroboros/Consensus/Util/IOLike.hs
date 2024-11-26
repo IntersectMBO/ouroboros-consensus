@@ -5,6 +5,7 @@
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Ouroboros.Consensus.Util.IOLike (
     IOLike (..)

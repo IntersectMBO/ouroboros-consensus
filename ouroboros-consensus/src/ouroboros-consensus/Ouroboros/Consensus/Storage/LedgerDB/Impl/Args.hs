@@ -23,7 +23,7 @@ import           Control.Tracer
 import           Data.Kind
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
-import           Ouroboros.Consensus.Storage.LedgerDB.API.Config
+import           Ouroboros.Consensus.Storage.LedgerDB.API
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Common
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as V1
