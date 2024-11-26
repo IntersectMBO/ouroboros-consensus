@@ -71,6 +71,7 @@ serve sockAddr application = withIOManager \iocp -> do
 run ::
      forall blk.
      ( GetPrevHash blk
+     , SupportsHeaderValidation blk
      , ShowProxy blk
      , SupportedNetworkProtocolVersion blk
      , SerialiseNodeToNodeConstraints blk

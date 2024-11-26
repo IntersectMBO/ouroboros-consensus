@@ -112,9 +112,11 @@ instance (CanMock (Praos crypto) era, crypto ~ EraCrypto era)
           }
           hSig = coerce bhSig
 
-instance (CanMock (TPraos crypto) era, crypto ~ EraCrypto era)
+instance ( CanMock (TPraos crypto) era
+         , crypto ~ EraCrypto era
+         , GetHeader (ShelleyBlock (TPraos crypto) era) (ShelleyBlock (TPraos crypto) era))
   => Arbitrary (Header (ShelleyBlock (TPraos crypto) era)) where
-  arbitrary = getHeader <$> arbitrary
+  arbitrary = getHeader <$> (arbitrary :: Gen (ShelleyBlock (TPraos crypto) era))
 
 instance (CanMock (Praos crypto) era, crypto ~ EraCrypto era)
   => Arbitrary (Header (ShelleyBlock (Praos crypto) era)) where

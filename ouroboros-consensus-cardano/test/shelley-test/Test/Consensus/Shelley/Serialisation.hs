@@ -11,6 +11,7 @@ import qualified Data.ByteString.Lazy as Lazy
 import           Data.Constraint
 import           Data.Proxy (Proxy (..))
 import           Data.Word (Word64)
+import           Ouroboros.Consensus.Block.Abstract (getHeader)
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import           Ouroboros.Consensus.Shelley.HFEras ()
 import           Ouroboros.Consensus.Shelley.Ledger

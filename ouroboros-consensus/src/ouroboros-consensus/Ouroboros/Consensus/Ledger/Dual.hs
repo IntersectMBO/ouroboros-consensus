@@ -138,9 +138,10 @@ instance ConvertRawHash m => ConvertRawHash (DualBlock m a) where
 newtype instance Header (DualBlock m a) = DualHeader { dualHeaderMain :: Header m }
   deriving NoThunks via AllowThunk (Header (DualBlock m a))
 
-instance Bridge m a => SupportsHeaderValidation (DualBlock m a) where
+instance Bridge m a => GetHeader (DualBlock m a) (DualBlock m a) where
   getHeader = DualHeader . getHeader . dualBlockMain
 
+instance Bridge m a => SupportsHeaderValidation (DualBlock m a) where
   blockMatchesHeader hdr =
       blockMatchesHeader (dualHeaderMain hdr) . dualBlockMain
 

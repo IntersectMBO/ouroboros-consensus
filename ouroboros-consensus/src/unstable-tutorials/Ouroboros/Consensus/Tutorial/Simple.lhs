@@ -45,7 +45,8 @@ First, some imports we'll need:
 > import NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
 > import Ouroboros.Consensus.Block.Abstract
 >   (blockNo, blockPoint, castHeaderFields, castPoint, BlockNo, SlotNo,
->    BlockConfig, BlockProtocol, CodecConfig, SupportsHeaderValidation(..), GetPrevHash(..),
+>    BlockConfig, BlockProtocol, CodecConfig, SupportsHeaderValidation(..),
+>    GetPrevHash(..), GetHeader (..),
 >    Header, StorageConfig, ChainHash, HasHeader(..), HeaderFields(..),
 >    HeaderHash, Point, StandardHash)
 > import Ouroboros.Consensus.Protocol.Abstract
@@ -393,15 +394,26 @@ this value.  We'll implement those typeclasses next.
 Interface to the Block Header
 -----------------------------
 
+**`GetHeader`**
+
+The `GetHeader` class describes how to project a header - which is a
+value of type `Header BlockC` in our example - out of a given value.
+Said value could be a block representation, but it does not have to.
+For instance, one could project a header out of a structure that
+contains a header and annotations pertaining to that header. The
+implementation for `getHeader` is fairly straightforward - we can just
+use the record accessor `bc_header`:
+
+> instance GetHeader BlockC BlockC where
+>    getHeader = bc_header
+
 **`SupportsHeaderValidation`**
 
-The `SupportsHeaderValidation` class describes how to project a header - which is a value of
-type `Header BlockC` in our example - out of a block representation.  The
-implementation for `getHeader` is fairly straightforward - we can just use the
-record accessor `bc_header`:
+The `SupportsHeaderValidation` class provides methods to check if the
+block matches its header, and to determine if the header correspondts
+to an EBB.
 
 > instance SupportsHeaderValidation BlockC where
->    getHeader = bc_header
 >    blockMatchesHeader = \_ _ -> True
 >    headerIsEBB = const Nothing
 

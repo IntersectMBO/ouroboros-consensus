@@ -313,8 +313,11 @@ instance (Typeable ptype, Eq ptype) => HasHeader (Header (TestBlockWith ptype)) 
       , headerFieldBlockNo = fromIntegral . NE.length . unTestHash $ tbHash
       }
 
-instance (Typeable ptype, Eq ptype) => SupportsHeaderValidation (TestBlockWith ptype) where
+instance (Typeable ptype, Eq ptype) => GetHeader (TestBlockWith ptype) (TestBlockWith ptype) where
   getHeader = TestHeader
+
+instance (Typeable ptype, Eq ptype) => SupportsHeaderValidation (TestBlockWith ptype) where
+
   blockMatchesHeader (TestHeader blk') blk = blk == blk'
   headerIsEBB = const Nothing
 

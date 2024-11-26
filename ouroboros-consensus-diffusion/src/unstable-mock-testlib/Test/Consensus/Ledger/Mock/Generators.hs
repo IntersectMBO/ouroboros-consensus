@@ -82,7 +82,7 @@ instance (SimpleCrypto c, Arbitrary ext, Serialise ext)
 
 instance (SimpleCrypto c, Arbitrary ext, Serialise ext, Typeable ext)
       => Arbitrary (Header (SimpleBlock c ext)) where
-  arbitrary = getHeader <$> arbitrary
+  arbitrary = getHeader <$> (arbitrary :: Gen (SimpleBlock c ext))
 
 instance (HashAlgorithm (SimpleHash c), Arbitrary ext, Serialise ext)
       => Arbitrary (SimpleStdHeader c ext) where

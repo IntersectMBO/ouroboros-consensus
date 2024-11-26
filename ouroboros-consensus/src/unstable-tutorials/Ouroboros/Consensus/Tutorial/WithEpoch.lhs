@@ -65,7 +65,7 @@ And imports, of course:
 > import Ouroboros.Network.Block ()
 > import Ouroboros.Consensus.Block.Abstract
 >  (Header, SlotNo (..), HeaderHash, ChainHash, SupportsHeaderValidation (..),
->   GetPrevHash (..), HasHeader (..), HeaderFields (..), StandardHash,
+>   GetHeader (..), GetPrevHash (..), HasHeader (..), HeaderFields (..), StandardHash,
 >   BlockProtocol, castHeaderFields, blockNo, BlockConfig, CodecConfig,
 >   StorageConfig, Point, castPoint, WithOrigin (..), EpochNo (EpochNo),
 >   pointSlot, blockPoint, BlockNo (..))
@@ -230,12 +230,14 @@ derive a suitable instance here:
 Block Header
 ------------
 
-As before, we to implement a few type families to fully specify the header -
-`SupportsHeaderValidation`, `GetPrevHash`, and `HasHeader`:
+As before, we to implement a few type families and classes to fully
+specify the header - `SupportsHeaderValidation`, `GetPrevHash`, and
+`HasHeader`:
 
-> instance SupportsHeaderValidation BlockD where
+> instance GetHeader BlockD BlockD where
 >   getHeader          = bd_header
 
+> instance SupportsHeaderValidation BlockD where
 >   blockMatchesHeader hdr blk =
 >     hbd_Hash hdr == computeBlockHash blk
 

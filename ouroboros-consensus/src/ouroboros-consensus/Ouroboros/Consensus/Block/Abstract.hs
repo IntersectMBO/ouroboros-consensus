@@ -1,7 +1,9 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -17,6 +19,7 @@ module Ouroboros.Consensus.Block.Abstract (
   , GetPrevHash (..)
   , blockPrevHash
     -- * Working with headers
+  , GetHeader (..)
   , Header
   , SupportsHeaderValidation (..)
   , blockIsEBB
@@ -112,7 +115,7 @@ data family StorageConfig blk :: Type
   Get hash of previous block
 -------------------------------------------------------------------------------}
 
-class (HasHeader blk, SupportsHeaderValidation blk) => GetPrevHash blk where
+class (HasHeader blk, GetHeader blk blk) => GetPrevHash blk where
   -- | Get the hash of the predecessor of this block
   headerPrevHash :: Header blk -> ChainHash blk
 
@@ -125,8 +128,10 @@ blockPrevHash = castHash . headerPrevHash . getHeader
 
 data family Header blk :: Type
 
-class HasHeader (Header blk) => SupportsHeaderValidation blk where
-  getHeader          :: blk -> Header blk
+class HasHeader (Header blk) => GetHeader a blk | a -> blk where
+  getHeader          :: a -> Header blk
+
+class (HasHeader (Header blk), GetHeader blk blk) => SupportsHeaderValidation blk where
   -- | Check whether the header is the header of the block.
   --
   -- For example, by checking whether the hash of the body stored in the

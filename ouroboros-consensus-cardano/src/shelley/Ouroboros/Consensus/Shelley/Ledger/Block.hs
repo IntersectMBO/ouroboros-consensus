@@ -166,12 +166,14 @@ deriving instance ShelleyCompatible proto era => NoThunks (Header (ShelleyBlock 
 instance (Typeable era, Typeable proto)
   => ShowProxy (Header (ShelleyBlock proto era)) where
 
-instance ShelleyCompatible proto era => SupportsHeaderValidation (ShelleyBlock proto era) where
+instance ShelleyCompatible proto era
+  => GetHeader (ShelleyBlock proto era) (ShelleyBlock proto era) where
   getHeader (ShelleyBlock rawBlk hdrHash) = ShelleyHeader {
       shelleyHeaderRaw  = SL.bheader rawBlk
     , shelleyHeaderHash = hdrHash
     }
 
+instance ShelleyCompatible proto era => SupportsHeaderValidation (ShelleyBlock proto era) where
   blockMatchesHeader hdr blk =
       -- Compute the hash the body of the block (the transactions) and compare
       -- that against the hash of the body stored in the header.

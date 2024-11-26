@@ -227,6 +227,7 @@ openDB ::
      forall m blk ans.
      ( IOLike m
      , GetPrevHash blk
+     , SupportsHeaderValidation blk
      , ConvertRawHash blk
      , ImmutableDbSerialiseConstraints blk
      , HasCallStack
@@ -246,6 +247,7 @@ openDBInternal ::
      forall m blk ans.
      ( IOLike m
      , GetPrevHash blk
+     , SupportsHeaderValidation blk
      , ConvertRawHash blk
      , ImmutableDbSerialiseConstraints blk
      , HasCallStack

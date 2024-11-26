@@ -75,6 +75,7 @@ parseChunkFile ::
      forall m blk h r.
      ( IOLike m
      , GetPrevHash blk
+     , SupportsHeaderValidation blk
      , HasBinaryBlockInfo blk
      , DecodeDisk blk (Lazy.ByteString -> blk)
      )

@@ -27,7 +27,7 @@ data WithLedgerState blk = WithLedgerState
   , wlsStateAfter  :: LedgerState blk
   }
 
-class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis blk where
+class (HasAnnTip blk, GetPrevHash blk, SupportsHeaderValidation blk, Condense (HeaderHash blk)) => HasAnalysis blk where
 
   countTxOutputs :: blk -> Int
   blockTxSizes   :: blk -> [SizeInBytes]

@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeFamilies #-}
 
@@ -51,13 +52,14 @@ data instance Header ByronSpecBlock = ByronSpecHeader {
     }
   deriving (Show, Eq, Generic, Serialise)
 
-instance SupportsHeaderValidation ByronSpecBlock where
+instance GetHeader ByronSpecBlock ByronSpecBlock where
   getHeader ByronSpecBlock{..} = ByronSpecHeader {
         byronSpecHeader     = Spec._bHeader byronSpecBlock
       , byronSpecHeaderNo   = byronSpecBlockNo
       , byronSpecHeaderHash = byronSpecBlockHash
       }
 
+instance SupportsHeaderValidation ByronSpecBlock where
   -- We don't care about integrity checks, so we don't bother checking whether
   -- the hashes of the body are correct
   blockMatchesHeader hdr blk = blockHash hdr == blockHash blk

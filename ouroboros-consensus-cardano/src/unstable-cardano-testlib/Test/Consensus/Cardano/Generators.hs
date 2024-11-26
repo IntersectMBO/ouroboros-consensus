@@ -111,7 +111,7 @@ instance Arbitrary (Coherent (CardanoBlock MockCryptoCompatByron)) where
       mk f = K $ Just $ f . getCoherent <$> arbitrary
 
 instance Arbitrary (CardanoHeader MockCryptoCompatByron) where
-  arbitrary = getHeader <$> arbitrary
+  arbitrary = getHeader <$> (arbitrary :: Gen (CardanoBlock MockCryptoCompatByron))
 
 instance (CanMock (TPraos c) (ShelleyEra c), CardanoHardForkConstraints c)
       => Arbitrary (OneEraHash (CardanoEras c)) where

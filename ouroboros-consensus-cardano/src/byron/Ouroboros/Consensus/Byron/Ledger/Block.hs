@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -132,7 +133,7 @@ data instance Header ByronBlock = ByronHeader {
     }
   deriving (Eq, Show, Generic)
 
-instance SupportsHeaderValidation ByronBlock where
+instance GetHeader ByronBlock ByronBlock where
   getHeader ByronBlock{..} = ByronHeader {
         byronHeaderRaw           = CC.abobHdrFromBlock byronBlockRaw
       , byronHeaderSlotNo        = byronBlockSlotNo
@@ -153,6 +154,7 @@ instance SupportsHeaderValidation ByronBlock where
       -- Which is 7 bytes, enough for up to 4294967295 bytes.
       overhead = 7 {- CBOR-in-CBOR -} + 2 {- EBB tag -}
 
+instance SupportsHeaderValidation ByronBlock where
   -- Check if a block matches its header
   --
   -- Note that we cannot check this for an EBB, as the EBB header doesn't

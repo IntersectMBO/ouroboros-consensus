@@ -121,8 +121,10 @@ data instance Header BlockB = HdrB {
   deriving anyclass (Serialise)
   deriving NoThunks via OnlyCheckWhnfNamed "HdrB" (Header BlockB)
 
-instance SupportsHeaderValidation BlockB where
+instance GetHeader BlockB BlockB where
   getHeader          = blkB_header
+
+instance SupportsHeaderValidation BlockB where
   blockMatchesHeader = \_ _ -> True -- We are not interested in integrity here
   headerIsEBB        = const Nothing
 

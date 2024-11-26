@@ -54,9 +54,10 @@ newtype instance Header (HardForkBlock xs) = HardForkHeader {
 
 instance Typeable xs => ShowProxy (Header (HardForkBlock xs)) where
 
-instance CanHardFork xs => SupportsHeaderValidation (HardForkBlock xs) where
+instance CanHardFork xs => GetHeader (HardForkBlock xs) (HardForkBlock xs) where
   getHeader = HardForkHeader . oneEraBlockHeader . getHardForkBlock
 
+instance CanHardFork xs => SupportsHeaderValidation (HardForkBlock xs) where
   blockMatchesHeader = \hdr blk ->
       case Match.matchNS
              (getOneEraHeader (getHardForkHeader hdr))
