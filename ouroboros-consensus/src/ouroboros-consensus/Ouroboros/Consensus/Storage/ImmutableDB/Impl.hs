@@ -485,7 +485,7 @@ getBlockComponentImpl dbEnv blockComponent pt =
 appendBlockImpl ::
      forall m blk.
      ( HasHeader blk
-     , GetHeader blk
+     , SupportsHeaderValidation blk
      , EncodeDisk blk blk
      , HasBinaryBlockInfo blk
      , IOLike m

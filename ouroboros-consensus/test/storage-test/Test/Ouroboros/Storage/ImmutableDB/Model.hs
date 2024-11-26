@@ -103,7 +103,7 @@ initDBModel chunkInfo codecConfig = DBModel {
     }
 
 insertInSlot ::
-     forall blk. (HasHeader blk, GetHeader blk, HasCallStack)
+     forall blk. (HasHeader blk, SupportsHeaderValidation blk, HasCallStack)
   => blk
   -> Map SlotNo (InSlot blk)
   -> Map SlotNo (InSlot blk)
@@ -130,7 +130,7 @@ dbmTipBlock DBModel { dbmSlots } =
           InSlotEBB       blk -> blk
           InSlotBoth _ebb blk -> blk
 
-dbmTip :: GetHeader blk => DBModel blk -> WithOrigin (Tip blk)
+dbmTip :: SupportsHeaderValidation blk => DBModel blk -> WithOrigin (Tip blk)
 dbmTip = fmap blockToTip . dbmTipBlock
 
 -- | Return a list of blocks in the same order as they appear on the \"virtual\"
@@ -183,7 +183,7 @@ computeBlockSize ccfg =
     . encodeDisk ccfg
 
 lookupBlock ::
-     (HasHeader blk, GetHeader blk)
+     (HasHeader blk, SupportsHeaderValidation blk)
   => RealPoint blk
   -> DBModel blk
   -> Either (MissingBlock blk) blk
@@ -216,7 +216,7 @@ lookupBlock pt@(RealPoint slot hash) dbm@DBModel { dbmSlots } =
 --
 -- PRECONDITION: the given tip must correspond to a block in the model
 rollBackToTip ::
-     forall blk. GetHeader blk
+     forall blk. SupportsHeaderValidation blk
   => WithOrigin (Tip blk) -> DBModel blk -> DBModel blk
 rollBackToTip tip dbm@DBModel { dbmSlots } =
     dbm { dbmSlots = Map.mapMaybe shouldKeep dbmSlots }
@@ -270,7 +270,7 @@ blocksInChunk chunk dbm = eq
   where
     (_lt, eq, _gt) = blocksBeforeInAfterChunk chunk dbm
 
-properTips :: GetHeader blk => DBModel blk -> [Tip blk]
+properTips :: SupportsHeaderValidation blk => DBModel blk -> [Tip blk]
 properTips = map blockToTip . concatMap go . Map.elems . dbmSlots
   where
     go :: InSlot blk -> [blk]
@@ -281,7 +281,7 @@ properTips = map blockToTip . concatMap go . Map.elems . dbmSlots
 -- | List all 'Tip's that point to a filled slot or an existing EBB in the
 -- model, including 'Origin'. The tips will be sorted from old to recent.
 tips ::
-     GetHeader blk
+     SupportsHeaderValidation blk
   => DBModel blk
   -> NonEmpty (WithOrigin (Tip blk))
 tips dbm = Origin NE.:| map NotOrigin (properTips dbm)
@@ -303,7 +303,7 @@ closeAllIterators dbm = dbm { dbmIterators = mempty }
 --
 -- Returns the new tip.
 simulateCorruptions ::
-     (HasHeader blk, GetHeader blk, EncodeDisk blk blk)
+     (HasHeader blk, SupportsHeaderValidation blk, EncodeDisk blk blk)
   => Corruptions
   -> DBModel blk
   -> (WithOrigin (Tip blk), DBModel blk)
@@ -332,14 +332,14 @@ instance StandardHash blk => Ord (RollBackPoint blk) where
       compare (CompareTip <$> t1) (CompareTip <$> t2)
 
 rollBack ::
-     GetHeader blk
+     SupportsHeaderValidation blk
   => RollBackPoint blk -> DBModel blk -> DBModel blk
 rollBack rbp dbm = case rbp of
     DontRollBack      -> dbm
     RollBackToTip tip -> rollBackToTip tip dbm
 
 findCorruptionRollBackPoint ::
-     (HasHeader blk, GetHeader blk, EncodeDisk blk blk)
+     (HasHeader blk, SupportsHeaderValidation blk, EncodeDisk blk blk)
   => FileCorruption
   -> FsPath
   -> DBModel blk
@@ -353,7 +353,7 @@ findCorruptionRollBackPoint corr file dbm =
       _                          -> error "Invalid file to corrupt"
 
 findCorruptionRollBackForChunk ::
-     (HasHeader blk, GetHeader blk, EncodeDisk blk blk)
+     (HasHeader blk, SupportsHeaderValidation blk, EncodeDisk blk blk)
   => FileCorruption
   -> ChunkNo
   -> DBModel blk
@@ -378,7 +378,7 @@ findCorruptionRollBackForChunk corr chunk dbm = case corr of
         $ dbm
 
 findRollBackPointForOffsetInChunk ::
-     forall blk. (HasHeader blk, GetHeader blk, EncodeDisk blk blk)
+     forall blk. (HasHeader blk, SupportsHeaderValidation blk, EncodeDisk blk blk)
   => Word64  -- ^ The number of valid bytes in the chunk, the corruption happens
              -- at the first byte after it.
   -> ChunkNo -> DBModel blk -> RollBackPoint blk
@@ -411,7 +411,7 @@ findRollBackPointForOffsetInChunk validBytes chunk dbm@DBModel { dbmCodecConfig 
               -> lastValid
 
 rollbackToLastFilledSlotBefore ::
-     (HasHeader blk, GetHeader blk)
+     (HasHeader blk, SupportsHeaderValidation blk)
   => ChunkNo -> DBModel blk -> RollBackPoint blk
 rollbackToLastFilledSlotBefore chunk dbm = case lastMaybe beforeChunk of
     Nothing              -> RollBackToTip Origin
@@ -425,18 +425,18 @@ rollbackToLastFilledSlotBefore chunk dbm = case lastMaybe beforeChunk of
 ------------------------------------------------------------------------------}
 
 getTipModel ::
-     GetHeader blk
+     SupportsHeaderValidation blk
   => DBModel blk -> WithOrigin (Tip blk)
 getTipModel = dbmTip
 
 -- | Close all open iterators and return the current tip
 reopenModel ::
-     GetHeader blk
+     SupportsHeaderValidation blk
   => DBModel blk -> (WithOrigin (Tip blk), DBModel blk)
 reopenModel dbm = (dbmTip dbm, closeAllIterators dbm)
 
 deleteAfterModel ::
-     GetHeader blk
+     SupportsHeaderValidation blk
   => WithOrigin (Tip blk) -> DBModel blk -> DBModel blk
 deleteAfterModel tip = rollBackToTip tip . closeAllIterators
 
@@ -452,7 +452,7 @@ getHashForSlotModel slotNo dbm = case Map.lookup slotNo (dbmSlots dbm) of
 extractBlockComponent ::
      forall blk b.
      ( HasHeader blk
-     , GetHeader blk
+     , SupportsHeaderValidation blk
      , EncodeDisk blk blk
      , HasNestedContent Header blk
      , EncodeDiskDep (NestedCtxt Header) blk
@@ -491,7 +491,7 @@ extractBlockComponent ccfg blk = \case
 
 getBlockComponentModel ::
      ( HasHeader blk
-     , GetHeader blk
+     , SupportsHeaderValidation blk
      , EncodeDisk blk blk
      , HasNestedContent Header blk
      , EncodeDiskDep (NestedCtxt Header) blk
@@ -507,7 +507,7 @@ getBlockComponentModel blockComponent pt dbm =
     DBModel { dbmCodecConfig = ccfg } = dbm
 
 appendBlockModel ::
-     forall blk. (HasHeader blk, GetHeader blk, HasCallStack)
+     forall blk. (HasHeader blk, SupportsHeaderValidation blk, HasCallStack)
   => blk
   -> DBModel blk
   -> Either (ImmutableDBError blk) (DBModel blk)
@@ -527,7 +527,7 @@ appendBlockModel blk dbm@DBModel { dbmSlots } = do
     blockTip = blockToTip blk
 
 streamModel ::
-     forall blk. (HasHeader blk, GetHeader blk, HasCallStack)
+     forall blk. (HasHeader blk, SupportsHeaderValidation blk, HasCallStack)
   => StreamFrom blk
   -> StreamTo   blk
   -> DBModel blk
@@ -592,7 +592,7 @@ streamModel from to dbm = swizzle $ do
 
 streamAllModel ::
      ( HasHeader blk
-     , GetHeader blk
+     , SupportsHeaderValidation blk
      , EncodeDisk blk blk
      , HasNestedContent Header blk
      , EncodeDiskDep (NestedCtxt Header) blk
@@ -607,7 +607,7 @@ streamAllModel blockComponent dbm@DBModel { dbmCodecConfig = ccfg } =
 
 iteratorNextModel ::
      ( HasHeader blk
-     , GetHeader blk
+     , SupportsHeaderValidation blk
      , EncodeDisk blk blk
      , HasNestedContent Header blk
      , EncodeDiskDep (NestedCtxt Header) blk

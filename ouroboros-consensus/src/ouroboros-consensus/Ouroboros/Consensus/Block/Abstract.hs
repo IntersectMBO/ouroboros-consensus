@@ -17,8 +17,8 @@ module Ouroboros.Consensus.Block.Abstract (
   , GetPrevHash (..)
   , blockPrevHash
     -- * Working with headers
-  , GetHeader (..)
   , Header
+  , SupportsHeaderValidation (..)
   , blockIsEBB
   , blockToIsEBB
   , getBlockHeaderFields
@@ -112,7 +112,7 @@ data family StorageConfig blk :: Type
   Get hash of previous block
 -------------------------------------------------------------------------------}
 
-class (HasHeader blk, GetHeader blk) => GetPrevHash blk where
+class (HasHeader blk, SupportsHeaderValidation blk) => GetPrevHash blk where
   -- | Get the hash of the predecessor of this block
   headerPrevHash :: Header blk -> ChainHash blk
 
@@ -125,7 +125,7 @@ blockPrevHash = castHash . headerPrevHash . getHeader
 
 data family Header blk :: Type
 
-class HasHeader (Header blk) => GetHeader blk where
+class HasHeader (Header blk) => SupportsHeaderValidation blk where
   getHeader          :: blk -> Header blk
   -- | Check whether the header is the header of the block.
   --
@@ -137,13 +137,13 @@ class HasHeader (Header blk) => GetHeader blk where
   -- its epoch number.
   headerIsEBB        :: Header blk -> Maybe EpochNo
 
-headerToIsEBB :: GetHeader blk => Header blk -> IsEBB
+headerToIsEBB :: SupportsHeaderValidation blk => Header blk -> IsEBB
 headerToIsEBB = toIsEBB . isJust . headerIsEBB
 
-blockIsEBB :: GetHeader blk => blk -> Maybe EpochNo
+blockIsEBB :: SupportsHeaderValidation blk => blk -> Maybe EpochNo
 blockIsEBB = headerIsEBB . getHeader
 
-blockToIsEBB :: GetHeader blk => blk -> IsEBB
+blockToIsEBB :: SupportsHeaderValidation blk => blk -> IsEBB
 blockToIsEBB = headerToIsEBB . getHeader
 
 type instance BlockProtocol (Header blk) = BlockProtocol blk
@@ -173,7 +173,7 @@ instance HasHeader blk => StandardHash (Header blk)
 -- >  ..
 --
 -- but we can't do that when we do things this way around.
-getBlockHeaderFields :: GetHeader blk => blk -> HeaderFields blk
+getBlockHeaderFields :: SupportsHeaderValidation blk => blk -> HeaderFields blk
 getBlockHeaderFields = castHeaderFields . getHeaderFields . getHeader
 
 {-------------------------------------------------------------------------------

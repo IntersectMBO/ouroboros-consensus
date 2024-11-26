@@ -125,7 +125,7 @@ copyToImmutableDB ::
      ( IOLike m
      , ConsensusProtocol (BlockProtocol blk)
      , HasHeader blk
-     , GetHeader blk
+     , SupportsHeaderValidation blk
      , HasCallStack
      )
   => ChainDbEnv m blk
@@ -219,7 +219,7 @@ copyAndSnapshotRunner ::
      ( IOLike m
      , ConsensusProtocol (BlockProtocol blk)
      , HasHeader blk
-     , GetHeader blk
+     , SupportsHeaderValidation blk
      , IsLedger (LedgerState blk)
      , LgrDbSerialiseConstraints blk
      )

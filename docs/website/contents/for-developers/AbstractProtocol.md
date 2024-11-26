@@ -169,12 +169,12 @@ Classes connected to headers and blocks:
  class (StandardHash blk, Typeable blk) => HasHeader blk where -- abstract over block headers
    getHeaderFields :: blk → HeaderFields blk    -- i.e., return three fields: slot, blockno, hash
 
- class HasHeader (Header blk) => GetHeader blk where
+ class HasHeader (Header blk) => SupportsHeaderValidation blk where
    getHeader          :: blk → Header blk             -- extract header from the block
    blockMatchesHeader :: Header blk → blk → Bool      -- check if the header is the header of the block
    headerIsEBB        :: Header blk → Maybe EpochNo   -- when the header of an Epoch Boundary Block (EBB), ...
 
- class (HasHeader blk, GetHeader blk) => GetPrevHash blk where
+ class (HasHeader blk, SupportsHeaderValidation blk) => GetPrevHash blk where
    headerPrevHash :: Header blk → ChainHash blk       -- get the hash of predecessor
 
  -- construct the two views on block 'b' required by protocol 'p'
@@ -278,8 +278,8 @@ blockNo = headerFieldBlockNo . getHeaderFields
    -  `p` in place of `BlockProtocol blk`
    -  `cds` in place of `ChainDepState p`
 
-- `a ───(X :: A→B)───▶ b` should be interpreted as `type family X A :: B` or 
-  `data family X A :: B`, where `a` and `b` are typical names for the type 
+- `a ───(X :: A→B)───▶ b` should be interpreted as `type family X A :: B` or
+  `data family X A :: B`, where `a` and `b` are typical names for the type
   family's index and result, respectively.
 
 - To reduce the "noise", these type-class constraints are being ignored:

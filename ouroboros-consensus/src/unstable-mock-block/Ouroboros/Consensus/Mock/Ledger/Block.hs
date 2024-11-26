@@ -155,7 +155,7 @@ instance (Typeable c, Typeable ext, Typeable ext')
     => ShowProxy (Header (SimpleBlock' c ext ext')) where
 
 instance (SimpleCrypto c, Typeable ext, Typeable ext')
-      => GetHeader (SimpleBlock' c ext ext') where
+      => SupportsHeaderValidation (SimpleBlock' c ext ext') where
   getHeader = simpleHeader
 
   blockMatchesHeader = matchesSimpleHeader

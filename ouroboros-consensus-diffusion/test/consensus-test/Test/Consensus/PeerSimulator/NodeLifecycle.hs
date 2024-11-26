@@ -190,7 +190,7 @@ lifecycleStart start liResources liResult = do
 -- | Shut down the node by killing all its threads after extracting the
 -- persistent state used to restart the node later.
 lifecycleStop ::
-  (IOLike m, GetHeader blk, Typeable blk) =>
+  (IOLike m, SupportsHeaderValidation blk, Typeable blk) =>
   LiveResources blk m ->
   LiveNode blk m ->
   m (LiveIntervalResult blk)

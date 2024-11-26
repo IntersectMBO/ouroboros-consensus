@@ -192,7 +192,7 @@ data TestBody = TestBody {
 newtype instance Header TestBlock = TestHeader' { unTestHeader :: TestHeader }
   deriving newtype (Eq, Show, NoThunks, Serialise)
 
-instance GetHeader TestBlock where
+instance SupportsHeaderValidation TestBlock where
   getHeader = TestHeader' . testHeader
 
   blockMatchesHeader (TestHeader' hdr) blk =

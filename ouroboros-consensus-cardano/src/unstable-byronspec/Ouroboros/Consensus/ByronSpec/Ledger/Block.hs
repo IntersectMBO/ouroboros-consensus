@@ -41,7 +41,7 @@ data ByronSpecBlock = ByronSpecBlock {
   deriving (Show, Eq, Generic, Serialise)
 
 {-------------------------------------------------------------------------------
-  GetHeader
+  SupportsHeaderValidation
 -------------------------------------------------------------------------------}
 
 data instance Header ByronSpecBlock = ByronSpecHeader {
@@ -51,7 +51,7 @@ data instance Header ByronSpecBlock = ByronSpecHeader {
     }
   deriving (Show, Eq, Generic, Serialise)
 
-instance GetHeader ByronSpecBlock where
+instance SupportsHeaderValidation ByronSpecBlock where
   getHeader ByronSpecBlock{..} = ByronSpecHeader {
         byronSpecHeader     = Spec._bHeader byronSpecBlock
       , byronSpecHeaderNo   = byronSpecBlockNo

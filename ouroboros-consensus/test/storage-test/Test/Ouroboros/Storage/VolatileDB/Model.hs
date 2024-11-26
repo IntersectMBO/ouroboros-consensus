@@ -256,7 +256,7 @@ reOpenModel dbm
 getBlockComponentModel ::
      forall blk b.
      ( HasHeader blk
-     , GetHeader blk
+     , SupportsHeaderValidation blk
      , HasBinaryBlockInfo blk
      , EncodeDisk blk blk
      , HasNestedContent Header blk

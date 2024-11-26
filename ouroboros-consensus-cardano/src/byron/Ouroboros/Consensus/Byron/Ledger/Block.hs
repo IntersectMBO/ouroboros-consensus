@@ -132,7 +132,7 @@ data instance Header ByronBlock = ByronHeader {
     }
   deriving (Eq, Show, Generic)
 
-instance GetHeader ByronBlock where
+instance SupportsHeaderValidation ByronBlock where
   getHeader ByronBlock{..} = ByronHeader {
         byronHeaderRaw           = CC.abobHdrFromBlock byronBlockRaw
       , byronHeaderSlotNo        = byronBlockSlotNo

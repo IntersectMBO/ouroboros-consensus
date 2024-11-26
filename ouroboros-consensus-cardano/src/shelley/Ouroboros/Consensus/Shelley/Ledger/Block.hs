@@ -15,14 +15,14 @@
 {-# LANGUAGE UndecidableSuperClasses #-}
 
 module Ouroboros.Consensus.Shelley.Ledger.Block (
-    GetHeader (..)
-  , Header (..)
+    Header (..)
   , IsShelleyBlock
   , NestedCtxt_ (..)
   , ShelleyBasedEra
   , ShelleyBlock (..)
   , ShelleyBlockLedgerEra
   , ShelleyHash (..)
+  , SupportsHeaderValidation (..)
     -- * Shelley Compatibility
   , ShelleyCompatible
   , mkShelleyBlock
@@ -166,7 +166,7 @@ deriving instance ShelleyCompatible proto era => NoThunks (Header (ShelleyBlock 
 instance (Typeable era, Typeable proto)
   => ShowProxy (Header (ShelleyBlock proto era)) where
 
-instance ShelleyCompatible proto era => GetHeader (ShelleyBlock proto era) where
+instance ShelleyCompatible proto era => SupportsHeaderValidation (ShelleyBlock proto era) where
   getHeader (ShelleyBlock rawBlk hdrHash) = ShelleyHeader {
       shelleyHeaderRaw  = SL.bheader rawBlk
     , shelleyHeaderHash = hdrHash

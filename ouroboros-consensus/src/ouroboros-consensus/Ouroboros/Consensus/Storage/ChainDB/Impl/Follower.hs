@@ -83,7 +83,7 @@ newFollower ::
      forall m blk b.
      ( IOLike m
      , HasHeader blk
-     , GetHeader blk
+     , SupportsHeaderValidation blk
      , HasNestedContent Header blk
      , EncodeDiskDep (NestedCtxt Header) blk
      )
@@ -122,7 +122,7 @@ makeNewFollower ::
      forall m blk b.
      ( IOLike m
      , HasHeader blk
-     , GetHeader blk
+     , SupportsHeaderValidation blk
      , HasNestedContent Header blk
      , EncodeDiskDep (NestedCtxt Header) blk
      )
@@ -200,7 +200,7 @@ instructionHelper ::
      forall m blk b f.
      ( IOLike m
      , HasHeader blk
-     , GetHeader blk
+     , SupportsHeaderValidation blk
      , HasNestedContent Header blk
      , EncodeDiskDep (NestedCtxt Header) blk
      , Traversable f, Applicative f

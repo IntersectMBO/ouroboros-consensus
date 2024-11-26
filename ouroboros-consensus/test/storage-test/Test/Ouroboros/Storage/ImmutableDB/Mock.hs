@@ -16,7 +16,7 @@ import           Test.Ouroboros.Storage.ImmutableDB.Model
 openDBMock ::
      forall m blk.
      ( HasHeader blk
-     , GetHeader blk
+     , SupportsHeaderValidation blk
      , EncodeDisk blk blk
      , HasNestedContent Header blk
      , EncodeDiskDep (NestedCtxt Header) blk

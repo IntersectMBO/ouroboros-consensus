@@ -91,7 +91,7 @@ data GenesisNodeKernelArgs m blk = GenesisNodeKernelArgs {
 -- 'ChainDB.GetLoEFragment' that will be replaced via 'setGetLoEFragment') and a
 -- function to update the 'ChainDbArgs' accordingly.
 mkGenesisNodeKernelArgs ::
-     forall m blk. (IOLike m, GetHeader blk, Typeable blk)
+     forall m blk. (IOLike m, SupportsHeaderValidation blk, Typeable blk)
   => GenesisConfig
   -> m ( GenesisNodeKernelArgs m blk
        , Complete ChainDbArgs m blk -> Complete ChainDbArgs m blk
@@ -115,7 +115,7 @@ mkGenesisNodeKernelArgs gcfg = do
 -- | Set 'gnkaGetLoEFragment' to the actual logic for determining the current
 -- LoE fragment.
 setGetLoEFragment ::
-     forall m blk. (IOLike m, GetHeader blk, Typeable blk)
+     forall m blk. (IOLike m, SupportsHeaderValidation blk, Typeable blk)
   => STM m GSM.GsmState
   -> STM m (AnchoredFragment (HeaderWithTime blk))
      -- ^ The LoE fragment.

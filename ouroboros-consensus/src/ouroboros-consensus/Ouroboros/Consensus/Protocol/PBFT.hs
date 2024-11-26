@@ -143,7 +143,7 @@ data PBftSelectView = PBftSelectView {
   deriving anyclass (NoThunks)
   deriving (ChainOrder) via SimpleChainOrder PBftSelectView
 
-mkPBftSelectView :: GetHeader blk => Header blk -> PBftSelectView
+mkPBftSelectView :: SupportsHeaderValidation blk => Header blk -> PBftSelectView
 mkPBftSelectView hdr = PBftSelectView {
       pbftSelectViewBlockNo = blockNo       hdr
     , pbftSelectViewIsEBB   = headerToIsEBB hdr
