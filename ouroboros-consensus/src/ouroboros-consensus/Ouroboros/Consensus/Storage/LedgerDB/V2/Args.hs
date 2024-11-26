@@ -23,7 +23,7 @@ data LedgerDbFlavorArgs f m = V2Args HandleArgs
 
 data HandleArgs =
     InMemoryHandleArgs
-  | LSMHandleArgs !Void
+  | LSMHandleArgs Void
   deriving (Generic, NoThunks)
 
 data FlavorImplSpecificTrace =
