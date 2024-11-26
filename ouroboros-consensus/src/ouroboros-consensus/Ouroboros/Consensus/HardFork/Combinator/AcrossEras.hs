@@ -124,7 +124,8 @@ newtype OneEraEnvelopeErr           xs = OneEraEnvelopeErr           { getOneEra
 newtype OneEraForgeStateInfo        xs = OneEraForgeStateInfo        { getOneEraForgeStateInfo        :: NS WrapForgeStateInfo        xs }
 newtype OneEraForgeStateUpdateError xs = OneEraForgeStateUpdateError { getOneEraForgeStateUpdateError :: NS WrapForgeStateUpdateError xs }
 newtype OneEraGenTx                 xs = OneEraGenTx                 { getOneEraGenTx                 :: NS GenTx                     xs }
-newtype OneEraGenTxId               xs = OneEraGenTxId               { getOneEraGenTxId               :: NS WrapGenTxId               xs }
+newtype OneEraGenTxId               xs = OneEraGenTxId               { getOneEraGenTxId               :: ShortByteString                 }
+  deriving (Show, Eq, Ord, Generic, NoThunks)
 newtype OneEraHeader                xs = OneEraHeader                { getOneEraHeader                :: NS Header                    xs }
 newtype OneEraIsLeader              xs = OneEraIsLeader              { getOneEraIsLeader              :: NS WrapIsLeader              xs }
 newtype OneEraLedgerError           xs = OneEraLedgerError           { getOneEraLedgerError           :: NS WrapLedgerErr             xs }
@@ -158,23 +159,6 @@ instance Show (OneEraHash xs) where
 
 instance Condense (OneEraHash xs) where
   condense = show
-
-{-------------------------------------------------------------------------------
-  OneEraGenTxId
--------------------------------------------------------------------------------}
-
--- | This instance compares the underlying raw hash ('toRawTxIdHash') of the
--- 'TxId'.
---
--- Note that this means that transactions in different eras can have equal
--- 'TxId's. This should only be the case when the transaction format is
--- backwards compatible from one era to the next.
-instance CanHardFork xs => Eq (OneEraGenTxId xs) where
-  (==) = (==) `on` oneEraGenTxIdRawHash
-
--- | See the corresponding 'Eq' instance.
-instance CanHardFork xs => Ord (OneEraGenTxId xs) where
-  compare = compare `on` oneEraGenTxIdRawHash
 
 {-------------------------------------------------------------------------------
   Value for two /different/ eras
@@ -266,10 +250,7 @@ getSameValue values =
         = throwError "differing values across hard fork"
 
 oneEraGenTxIdRawHash :: CanHardFork xs => OneEraGenTxId xs -> ShortByteString
-oneEraGenTxIdRawHash =
-      hcollapse
-    . hcmap proxySingle (K . toRawTxIdHash . unwrapGenTxId)
-    . getOneEraGenTxId
+oneEraGenTxIdRawHash = getOneEraGenTxId
 
 {-------------------------------------------------------------------------------
   NoThunks instances
@@ -295,9 +276,6 @@ deriving via LiftNamedNS "OneEraEnvelopeErr" WrapEnvelopeErr xs
 
 deriving via LiftNamedNS "OneEraGenTx" GenTx xs
          instance CanHardFork xs => NoThunks (OneEraGenTx xs)
-
-deriving via LiftNamedNS "OneEraGenTxId" WrapGenTxId xs
-         instance CanHardFork xs => NoThunks (OneEraGenTxId xs)
 
 deriving via LiftNamedNS "OneEraHeader" Header xs
          instance CanHardFork xs => NoThunks (OneEraHeader xs)
@@ -361,6 +339,5 @@ deriving via LiftNS WrapApplyTxErr  xs instance CanHardFork xs => Show (OneEraAp
 deriving via LiftNS I               xs instance CanHardFork xs => Show (OneEraBlock       xs)
 deriving via LiftNS WrapCannotForge xs instance CanHardFork xs => Show (OneEraCannotForge xs)
 deriving via LiftNS GenTx           xs instance CanHardFork xs => Show (OneEraGenTx       xs)
-deriving via LiftNS WrapGenTxId     xs instance CanHardFork xs => Show (OneEraGenTxId     xs)
 deriving via LiftNS Header          xs instance CanHardFork xs => Show (OneEraHeader      xs)
 deriving via LiftNS WrapSelectView  xs instance CanHardFork xs => Show (OneEraSelectView  xs)

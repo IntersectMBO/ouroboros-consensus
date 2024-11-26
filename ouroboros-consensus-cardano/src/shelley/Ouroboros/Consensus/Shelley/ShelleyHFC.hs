@@ -116,8 +116,8 @@ instance ( ShelleyCompatible proto era
   SerialiseHFC instance
 -------------------------------------------------------------------------------}
 
-instance HasBlessedGenTxIdDecodeEra '[ShelleyBlock proto era] where
-  blessedGenTxIdDecodeEra = Z mempty
+instance HasBlessedGenTxIdEra '[ShelleyBlock proto era] where
+  blessedGenTxIdEra = Z mempty
 
 -- | Use the default implementations. This means the serialisation of blocks
 -- includes an era wrapper. Each block should do this from the start to be
