@@ -37,6 +37,7 @@
 -- corresponding ledger state modelling the whole block chain since genesis.
 module Test.Ouroboros.Storage.LedgerDB.StateMachine (tests) where
 
+import           Control.Monad (when)
 import           Control.Monad.Except
 import           Control.Monad.State hiding (state)
 import           Control.ResourceRegistry
@@ -54,12 +55,10 @@ import           Ouroboros.Consensus.Ledger.Tables.Utils
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream
 import           Ouroboros.Consensus.Storage.LedgerDB.API as LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.API.Config
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args as Args
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Init
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
-import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Init as V1
 import           Ouroboros.Consensus.Storage.LedgerDB.V2.Args
 import           Ouroboros.Consensus.Storage.LedgerDB.V2.Init as V2
@@ -68,6 +67,7 @@ import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import qualified System.Directory as Dir
+import qualified System.FilePath as FilePath
 import           System.FS.API
 import qualified System.FS.IO as FSIO
 import qualified System.FS.Sim.MockFS as MockFS
@@ -87,22 +87,23 @@ import           Test.Util.TestBlock hiding (TestBlock, TestBlockCodecConfig,
 tests :: TestTree
 tests = testGroup "StateMachine" [
       testProperty "InMemV1" $
-          prop_sequential 100000 inMemV1TestArguments simulatedFS
+          prop_sequential 100000 inMemV1TestArguments noFilePath simulatedFS
     , testProperty "InMemV2" $
-          prop_sequential 100000 inMemV2TestArguments simulatedFS
+          prop_sequential 100000 inMemV2TestArguments noFilePath simulatedFS
     , testProperty "LMDB" $
-          prop_sequential 1000 lmdbTestArguments realFS
+          prop_sequential 1000 lmdbTestArguments realFilePath realFS
     ]
 
 prop_sequential ::
      Int
-  -> (SecurityParam -> SomeHasFS IO -> TestArguments IO)
+  -> (SecurityParam -> FilePath -> TestArguments IO)
+  -> IO (FilePath, IO ())
   -> IO (SomeHasFS IO, IO ())
   -> Actions Model
   -> QC.Property
-prop_sequential maxSuccess mkTestArguments fsOps as = QC.withMaxSuccess maxSuccess $
+prop_sequential maxSuccess mkTestArguments getLmdbDir fsOps as = QC.withMaxSuccess maxSuccess $
   QC.monadicIO $ do
-    ref <- lift $ initialEnvironment fsOps mkTestArguments =<< initChainDB
+    ref <- lift $ initialEnvironment fsOps getLmdbDir mkTestArguments =<< initChainDB
     (_, Environment _ testInternals _ _ _ clean) <- runPropertyStateT (runActions as) ref
     QC.run $ closeLedgerDB testInternals >> clean
     QC.assert True
@@ -114,18 +115,20 @@ prop_sequential maxSuccess mkTestArguments fsOps as = QC.withMaxSuccess maxSucce
 -- are trivial, but nevertheless they have to exist.
 initialEnvironment ::
      IO (SomeHasFS IO, IO ())
-  -> (SecurityParam ->  SomeHasFS IO -> TestArguments IO)
+  -> IO (FilePath, IO ())
+  -> (SecurityParam ->  FilePath -> TestArguments IO)
   -> ChainDB IO
   -> IO Environment
-initialEnvironment fsOps mkTestArguments cdb = do
+initialEnvironment fsOps getLmdbDir mkTestArguments cdb = do
   (sfs, cleanupFS) <- fsOps
+  (lmdbDir, cleanupLMDB) <- getLmdbDir
   pure $ Environment
     undefined
     (TestInternals undefined undefined undefined undefined (pure ()))
     cdb
-    (flip mkTestArguments sfs)
+    (flip mkTestArguments lmdbDir)
     sfs
-    cleanupFS
+    (cleanupFS >> cleanupLMDB)
 
 {-------------------------------------------------------------------------------
   Arguments
@@ -133,8 +136,18 @@ initialEnvironment fsOps mkTestArguments cdb = do
 
 data TestArguments m = TestArguments {
       argFlavorArgs  :: !(Complete Args.LedgerDbFlavorArgs m)
-    , argLedgerDbCfg :: !(LedgerDbCfg (ExtLedgerState TestBlock))
+    , argLedgerDbCfg :: !(LedgerDB.LedgerDbCfg (ExtLedgerState TestBlock))
     }
+
+noFilePath :: IO (FilePath, IO ())
+noFilePath = pure ("Bogus", pure ())
+
+realFilePath :: IO (FilePath, IO ())
+realFilePath = liftIO $ do
+  tmpdir <- (FilePath.</> "test_lmdb") <$> Dir.getTemporaryDirectory
+  pure (tmpdir, do
+           exists <- Dir.doesDirectoryExist tmpdir
+           when exists $ Dir.removeDirectoryRecursive tmpdir)
 
 simulatedFS :: IO (SomeHasFS IO, IO ())
 simulatedFS = do
@@ -149,7 +162,7 @@ realFS = liftIO $ do
 
 inMemV1TestArguments ::
      SecurityParam
-  -> SomeHasFS IO
+  -> FilePath
   -> TestArguments IO
 inMemV1TestArguments secParam _ =
   TestArguments {
@@ -159,7 +172,7 @@ inMemV1TestArguments secParam _ =
 
 inMemV2TestArguments ::
      SecurityParam
-  -> SomeHasFS IO
+  -> FilePath
   -> TestArguments IO
 inMemV2TestArguments secParam _ =
   TestArguments {
@@ -169,11 +182,11 @@ inMemV2TestArguments secParam _ =
 
 lmdbTestArguments ::
      SecurityParam
-  -> SomeHasFS IO
+  -> FilePath
   -> TestArguments IO
-lmdbTestArguments secParam fs =
+lmdbTestArguments secParam fp =
   TestArguments {
-      argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing DisableQuerySize $ LMDBBackingStoreArgs (LiveLMDBFS fs) (testLMDBLimits 16) Dict.Dict
+      argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing DisableQuerySize $ LMDBBackingStoreArgs fp (testLMDBLimits 16) Dict.Dict
     , argLedgerDbCfg = extLedgerDbConfig secParam
     }
 
@@ -398,7 +411,7 @@ blockNotFound = concat [
 openLedgerDB ::
      Complete Args.LedgerDbFlavorArgs IO
   -> ChainDB IO
-  -> LedgerDbCfg (ExtLedgerState TestBlock)
+  -> LedgerDB.LedgerDbCfg (ExtLedgerState TestBlock)
   -> SomeHasFS IO
   -> IO (LedgerDB' IO TestBlock, TestInternals' IO TestBlock)
 openLedgerDB flavArgs env cfg fs = do

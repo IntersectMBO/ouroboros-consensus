@@ -5,7 +5,7 @@
 -- and impure sides of the operation.
 module Ouroboros.Consensus.Mempool.Update (
     implAddTx
-  , implRemoveTxs
+  , implRemoveTxsEvenIfValid
   , implSyncWithLedger
   ) where
 
@@ -313,8 +313,8 @@ pureTryAddTx cfg wti tx is values =
   Remove transactions
 -------------------------------------------------------------------------------}
 
--- | See 'Ouroboros.Consensus.Mempool.API.removeTxs'.
-implRemoveTxs ::
+-- | See 'Ouroboros.Consensus.Mempool.API.removeTxsEvenIfValid'.
+implRemoveTxsEvenIfValid ::
      ( IOLike m
      , LedgerSupportsMempool blk
      , HasTxId (GenTx blk)
@@ -323,7 +323,7 @@ implRemoveTxs ::
    => MempoolEnv m blk
    -> NE.NonEmpty (GenTxId blk)
    -> m ()
-implRemoveTxs mpEnv toRemove = do
+implRemoveTxsEvenIfValid mpEnv toRemove = do
   (out :: WithTMVarOutcome Void ()) <- withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface)
    $ \is ls -> do
     let toKeep = filter
@@ -353,7 +353,7 @@ implRemoveTxs mpEnv toRemove = do
   case out of
     Resync  -> do
       void $ implSyncWithLedger mpEnv
-      implRemoveTxs mpEnv toRemove
+      implRemoveTxsEvenIfValid mpEnv toRemove
     OK ()   -> pure ()
   where
     MempoolEnv { mpEnvStateVar         = istate

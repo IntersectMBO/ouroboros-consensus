@@ -175,8 +175,8 @@ prop_Mempool_InvalidTxsNeverAdded setup =
 prop_Mempool_removeTxs :: TestSetupWithTxInMempool -> Property
 prop_Mempool_removeTxs (TestSetupWithTxInMempool testSetup txToRemove) =
     withTestMempool testSetup $ \TestMempool { mempool } -> do
-      let Mempool { removeTxs, getSnapshot } = mempool
-      removeTxs $ NE.fromList [txId txToRemove]
+      let Mempool { removeTxsEvenIfValid, getSnapshot } = mempool
+      removeTxsEvenIfValid $ NE.fromList [txId txToRemove]
       txsInMempoolAfter <- map prjTx . snapshotTxs <$> atomically getSnapshot
       return $ counterexample
         ("Transactions in the mempool after removing (" <>
@@ -188,11 +188,11 @@ prop_Mempool_removeTxs (TestSetupWithTxInMempool testSetup txToRemove) =
 prop_Mempool_semigroup_removeTxs :: TestSetupWithTxsInMempoolToRemove -> Property
 prop_Mempool_semigroup_removeTxs (TestSetupWithTxsInMempoolToRemove testSetup txsToRemove) =
   withTestMempool testSetup $ \TestMempool {mempool = mempool1} -> do
-  removeTxs mempool1 $ NE.map txId txsToRemove
+  removeTxsEvenIfValid mempool1 $ NE.map txId txsToRemove
   snapshot1 <- atomically (getSnapshot mempool1)
 
   return $ withTestMempool testSetup $ \TestMempool {mempool = mempool2} -> do
-    forM_ (NE.map txId txsToRemove) (removeTxs mempool2 . (NE.:| []))
+    forM_ (NE.map txId txsToRemove) (removeTxsEvenIfValid mempool2 . (NE.:| []))
     snapshot2 <- atomically (getSnapshot mempool2)
 
     return $ counterexample
@@ -1045,7 +1045,7 @@ executeAction testMempool action = case action of
 
     RemoveTxs txs -> do
       let txs' = NE.fromList $ map txId txs
-      removeTxs mempool txs'
+      removeTxsEvenIfValid mempool txs'
       tracedManuallyRemovedTxs <- expectTraceEvent $ \case
         TraceMempoolManuallyRemovedTxs txIds _ _ -> Just txIds
         _                                        -> Nothing
