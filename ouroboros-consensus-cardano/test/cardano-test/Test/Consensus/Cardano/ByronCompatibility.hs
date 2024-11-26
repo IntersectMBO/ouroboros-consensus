@@ -19,6 +19,7 @@
 --  existing roundtrip test functions.
 module Test.Consensus.Cardano.ByronCompatibility (tests) where
 
+import qualified Cardano.Crypto.Hashing as CC
 import qualified Cardano.Chain.Byron.API as CC
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding)
@@ -180,6 +181,10 @@ instance ShowQuery (BlockQuery ByronToCardano) where
 instance SameDepIndex (BlockQuery ByronToCardano) where
   sameDepIndex (QueryB2C q1) (QueryB2C q2) = sameDepIndex q1 q2
 
+cardanoGenTxIdToByron :: TxId (GenTx (CardanoBlock Crypto)) -> TxId (GenTx ByronToCardano)
+cardanoGenTxIdToByron txid =
+  GenTxIdB2C $ ByronGenTxId $ CC.unsafeAbstractHashFromShort $ toRawTxIdHash txid
+
 {------------------------------------------------------------------------------
   Byron to Cardano: Disk
 ------------------------------------------------------------------------------}
@@ -295,7 +300,7 @@ instance SerialiseNodeToNode ByronToCardano (GenTx ByronToCardano) where
 
 instance SerialiseNodeToNode ByronToCardano (GenTxId ByronToCardano) where
   encodeNodeToNode = encodeNodeToNodeB2C (Proxy @WrapGenTxId) unGenTxIdB2C
-  decodeNodeToNode = decodeNodeToNodeB2C (Proxy @WrapGenTxId) (\(GenTxIdByron txid) -> GenTxIdB2C txid)
+  decodeNodeToNode = decodeNodeToNodeB2C (Proxy @WrapGenTxId) cardanoGenTxIdToByron
 
 instance SerialiseNodeToNodeConstraints ByronToCardano where
   estimateBlockSize = estimateBlockSize . unHeaderB2C
@@ -371,7 +376,7 @@ instance SerialiseNodeToClient ByronToCardano (GenTx ByronToCardano) where
 
 instance SerialiseNodeToClient ByronToCardano (GenTxId ByronToCardano) where
   encodeNodeToClient = encodeNodeToClientB2C (Proxy @WrapGenTxId) unGenTxIdB2C
-  decodeNodeToClient = decodeNodeToClientB2C (Proxy @WrapGenTxId) (\(GenTxIdByron txid) -> GenTxIdB2C txid)
+  decodeNodeToClient = decodeNodeToClientB2C (Proxy @WrapGenTxId) cardanoGenTxIdToByron
 
 instance SerialiseNodeToClient ByronToCardano SlotNo
 
@@ -600,7 +605,7 @@ instance SerialiseNodeToNode CardanoToByron (GenTx CardanoToByron) where
   decodeNodeToNode = decodeNodeToNodeC2B (Proxy @GenTx) GenTxC2B
 
 instance SerialiseNodeToNode CardanoToByron (GenTxId CardanoToByron) where
-  encodeNodeToNode = encodeNodeToNodeC2B (Proxy @WrapGenTxId) (GenTxIdByron . unGenTxIdC2B)
+  encodeNodeToNode = encodeNodeToNodeC2B (Proxy @WrapGenTxId) (CardanoGenTxId . toRawTxIdHash . unGenTxIdC2B)
   decodeNodeToNode = decodeNodeToNodeC2B (Proxy @WrapGenTxId) GenTxIdC2B
 
 instance SerialiseNodeToNodeConstraints CardanoToByron where
@@ -660,7 +665,7 @@ instance SerialiseNodeToClient CardanoToByron (GenTx CardanoToByron) where
   decodeNodeToClient = decodeNodeToClientC2B (Proxy @GenTx) GenTxC2B
 
 instance SerialiseNodeToClient CardanoToByron (GenTxId CardanoToByron) where
-  encodeNodeToClient = encodeNodeToClientC2B (Proxy @WrapGenTxId) (GenTxIdByron . unGenTxIdC2B)
+  encodeNodeToClient = encodeNodeToClientC2B (Proxy @WrapGenTxId) (CardanoGenTxId . toRawTxIdHash . unGenTxIdC2B)
   decodeNodeToClient = decodeNodeToClientC2B (Proxy @WrapGenTxId) GenTxIdC2B
 
 instance SerialiseNodeToClient CardanoToByron SlotNo

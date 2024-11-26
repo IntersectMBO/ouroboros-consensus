@@ -132,11 +132,11 @@ import           Ouroboros.Consensus.Util.IOLike
 
 instance SerialiseConstraintsHFC ByronBlock
 
-instance HasBlessedGenTxIdDecodeEra (CardanoShelleyEras c) where
-  blessedGenTxIdDecodeEra = Z mempty
+instance HasBlessedGenTxIdEra (CardanoShelleyEras c) where
+  blessedGenTxIdEra = Z mempty
 
-instance HasBlessedGenTxIdDecodeEra (CardanoEras c) where
-  blessedGenTxIdDecodeEra = S blessedGenTxIdDecodeEra
+instance HasBlessedGenTxIdEra (CardanoEras c) where
+  blessedGenTxIdEra = S blessedGenTxIdEra
 
 -- | Important: we need to maintain binary compatibility with Byron blocks, as
 -- they are already stored on disk.
@@ -567,10 +567,9 @@ instance CardanoHardForkConstraints c
       , (NodeToClientV_17, CardanoNodeToClientVersion13)
       , (NodeToClientV_18, CardanoNodeToClientVersion14)
       , (NodeToClientV_19, CardanoNodeToClientVersion15)
-      , (NodeToClientV_20, CardanoNodeToClientVersion16)
       ]
 
-  latestReleasedNodeVersion _prx = (Just NodeToNodeV_15, Just NodeToClientV_20)
+  latestReleasedNodeVersion _prx = (Just NodeToNodeV_15, Just NodeToClientV_19)
 
 {-------------------------------------------------------------------------------
   ProtocolInfo

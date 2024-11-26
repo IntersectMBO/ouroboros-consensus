@@ -61,8 +61,8 @@ instance SupportedNetworkProtocolVersion ByronBlockHFC where
   SerialiseHFC instance
 -------------------------------------------------------------------------------}
 
-instance HasBlessedGenTxIdDecodeEra '[ByronBlock] where
-  blessedGenTxIdDecodeEra = Z mempty
+instance HasBlessedGenTxIdEra '[ByronBlock] where
+  blessedGenTxIdEra = Z mempty
 
 -- | Forward to the ByronBlock instance, this means we don't add an era
 -- wrapper around blocks on disk. This makes sure we're compatible with the
