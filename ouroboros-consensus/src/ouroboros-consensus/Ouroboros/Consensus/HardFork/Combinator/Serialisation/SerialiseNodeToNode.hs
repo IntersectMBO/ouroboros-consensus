@@ -38,6 +38,7 @@ import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util ((.:))
 import           Ouroboros.Network.Block (Serialised, unwrapCBORinCBOR,
                      wrapCBORinCBOR)
+import           Data.ByteString.Short (ShortByteString)
 
 instance SerialiseHFC xs => SerialiseNodeToNodeConstraints (HardForkBlock xs) where
   estimateBlockSize = estimateHfcBlockSize
@@ -138,26 +139,35 @@ instance SerialiseHFC xs
   encodeNodeToNode = dispatchEncoder `after` (getOneEraGenTx . getHardForkGenTx)
   decodeNodeToNode = fmap (HardForkGenTx . OneEraGenTx) .: dispatchDecoder
 
+
 instance SerialiseHFC xs
       => SerialiseNodeToNode (HardForkBlock xs) (GenTxId (HardForkBlock xs)) where
+  -- This instance can be massively simplified after we drop support for
+  -- 'NodeToNodeVersion's earlier than 'NodeToNodeV_15', since we no longer
+  -- need to handle the cases where 'ShortByteString's are serialised with
+  -- an era tag ('encodeNS').
+
   encodeNodeToNode cc v (HardForkGenTxId (OneEraGenTxId txid)) = do
     case v of
       HardForkNodeToNodeEnabled hfv _ | hfv >= HardForkSpecificNodeToNodeVersion2 ->
-        hcollapse $
-          hcmap
-            pSHFC
-            (K . Serialise.encode . toRawTxIdHash . unwrapGenTxId)
-            txid
-      _ -> dispatchEncoder cc v txid
+        Serialise.encode txid
+      HardForkNodeToNodeEnabled _ vs -> do
+
+        let blessedGenTxId :: NS (K ShortByteString) xs
+            blessedGenTxId = hmap (pure $ K txid) blessedGenTxIdEra
+        case blessedGenTxId of
+          Z i -> Serialise.encode $ unK i
+          S x -> encodeNS (hpure $ Fn $ K . Serialise.encode . unK) blessedGenTxId
+      HardForkNodeToNodeDisabled _ ->
+        Serialise.encode txid
   decodeNodeToNode cc v =
-    case v of
-      HardForkNodeToNodeEnabled hfv vs | hfv >= HardForkSpecificNodeToNodeVersion2 -> do
-          let ccfgs = getPerEraCodecConfig $ hardForkCodecConfigPerEra cc
-          fmap (HardForkGenTxId . OneEraGenTxId) $
-            htraverse' unComp $
-              hcliftA3 pSHFC
-                (\ecc (WrapNodeToNodeVersion ev) _ -> Comp (decodeNodeToNode ecc ev))
-                ccfgs
-                vs
-                blessedGenTxIdDecodeEra
-      _ -> fmap (HardForkGenTxId . OneEraGenTxId) $ dispatchDecoder cc v
+    fmap (HardForkGenTxId . OneEraGenTxId) $
+      case v of
+        HardForkNodeToNodeEnabled hfv vs | hfv >= HardForkSpecificNodeToNodeVersion2 ->
+          Serialise.decode
+        HardForkNodeToNodeEnabled _ _ -> do
+          let eraDecoders :: NP (Decoder s :.: K ShortByteString) xs
+              eraDecoders = hpure $ Comp $ K <$> Serialise.decode
+          hcollapse <$> decodeNS eraDecoders
+        HardForkNodeToNodeDisabled _ ->
+          Serialise.decode

@@ -163,8 +163,8 @@ instance TranslateTxMeasure AlonzoMeasure ConwayMeasure where
 instance TranslateTxMeasure ConwayMeasure ConwayMeasure where
   translateTxMeasure = id
 
-instance HasBlessedGenTxIdDecodeEra (ShelleyBasedHardForkEras proto1 era1 proto2 era2) where
-  blessedGenTxIdDecodeEra = S $ Z mempty
+instance HasBlessedGenTxIdEra (ShelleyBasedHardForkEras proto1 era1 proto2 era2) where
+  blessedGenTxIdEra = S $ Z mempty
 
 instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
       => SerialiseHFC (ShelleyBasedHardForkEras proto1 era1 proto2 era2)

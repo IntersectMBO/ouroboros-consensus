@@ -362,8 +362,8 @@ instance TxGen TestBlock where
 
 type TestBlock = HardForkBlock '[BlockA, BlockB]
 
-instance HasBlessedGenTxIdDecodeEra '[BlockA, BlockB] where
-  blessedGenTxIdDecodeEra = Z mempty
+instance HasBlessedGenTxIdEra '[BlockA, BlockB] where
+  blessedGenTxIdEra = Z mempty
 
 instance CanHardFork '[BlockA, BlockB] where
   type HardForkTxMeasure '[BlockA, BlockB] = IgnoringOverflow ByteSize32
