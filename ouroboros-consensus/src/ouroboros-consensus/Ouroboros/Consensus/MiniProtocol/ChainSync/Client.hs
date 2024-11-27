@@ -1155,7 +1155,7 @@ withTime fragment (HeaderStateHistory history) =
                    ++ ")"
       ) $
     AF.fromOldestFirst
-        (AF.castAnchor $ AF.headAnchor fragment)
+        (AF.castAnchor $ AF.anchor fragment)
         $ fmap addTimeToHeader $ zip (AF.toOldestFirst fragment) (AF.toOldestFirst history)
   where
      addTimeToHeader :: (Header blk, HeaderStateWithTime blk) -> HeaderWithTime blk
