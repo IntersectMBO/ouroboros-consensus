@@ -103,7 +103,7 @@ initDBModel chunkInfo codecConfig = DBModel {
     }
 
 insertInSlot ::
-     forall blk. (HasHeader blk, BlockSupportsHeader blk, HasCallStack)
+     forall blk. (BlockSupportsHeader blk, HasCallStack)
   => blk
   -> Map SlotNo (InSlot blk)
   -> Map SlotNo (InSlot blk)
@@ -183,7 +183,7 @@ computeBlockSize ccfg =
     . encodeDisk ccfg
 
 lookupBlock ::
-     (HasHeader blk, BlockSupportsHeader blk)
+     (BlockSupportsHeader blk)
   => RealPoint blk
   -> DBModel blk
   -> Either (MissingBlock blk) blk
@@ -303,7 +303,7 @@ closeAllIterators dbm = dbm { dbmIterators = mempty }
 --
 -- Returns the new tip.
 simulateCorruptions ::
-     (HasHeader blk, BlockSupportsHeader blk, EncodeDisk blk blk)
+     (BlockSupportsHeader blk, EncodeDisk blk blk)
   => Corruptions
   -> DBModel blk
   -> (WithOrigin (Tip blk), DBModel blk)
@@ -339,7 +339,7 @@ rollBack rbp dbm = case rbp of
     RollBackToTip tip -> rollBackToTip tip dbm
 
 findCorruptionRollBackPoint ::
-     (HasHeader blk, BlockSupportsHeader blk, EncodeDisk blk blk)
+     (BlockSupportsHeader blk, EncodeDisk blk blk)
   => FileCorruption
   -> FsPath
   -> DBModel blk
@@ -353,7 +353,7 @@ findCorruptionRollBackPoint corr file dbm =
       _                          -> error "Invalid file to corrupt"
 
 findCorruptionRollBackForChunk ::
-     (HasHeader blk, BlockSupportsHeader blk, EncodeDisk blk blk)
+     (BlockSupportsHeader blk, EncodeDisk blk blk)
   => FileCorruption
   -> ChunkNo
   -> DBModel blk
@@ -378,7 +378,7 @@ findCorruptionRollBackForChunk corr chunk dbm = case corr of
         $ dbm
 
 findRollBackPointForOffsetInChunk ::
-     forall blk. (HasHeader blk, BlockSupportsHeader blk, EncodeDisk blk blk)
+     forall blk. (BlockSupportsHeader blk, EncodeDisk blk blk)
   => Word64  -- ^ The number of valid bytes in the chunk, the corruption happens
              -- at the first byte after it.
   -> ChunkNo -> DBModel blk -> RollBackPoint blk
@@ -411,7 +411,7 @@ findRollBackPointForOffsetInChunk validBytes chunk dbm@DBModel { dbmCodecConfig 
               -> lastValid
 
 rollbackToLastFilledSlotBefore ::
-     (HasHeader blk, BlockSupportsHeader blk)
+     (BlockSupportsHeader blk)
   => ChunkNo -> DBModel blk -> RollBackPoint blk
 rollbackToLastFilledSlotBefore chunk dbm = case lastMaybe beforeChunk of
     Nothing              -> RollBackToTip Origin
@@ -451,8 +451,7 @@ getHashForSlotModel slotNo dbm = case Map.lookup slotNo (dbmSlots dbm) of
 
 extractBlockComponent ::
      forall blk b.
-     ( HasHeader blk
-     , BlockSupportsHeader blk
+     ( BlockSupportsHeader blk
      , EncodeDisk blk blk
      , HasNestedContent Header blk
      , EncodeDiskDep (NestedCtxt Header) blk
@@ -490,8 +489,7 @@ extractBlockComponent ccfg blk = \case
           )
 
 getBlockComponentModel ::
-     ( HasHeader blk
-     , BlockSupportsHeader blk
+     ( BlockSupportsHeader blk
      , EncodeDisk blk blk
      , HasNestedContent Header blk
      , EncodeDiskDep (NestedCtxt Header) blk
@@ -507,7 +505,7 @@ getBlockComponentModel blockComponent pt dbm =
     DBModel { dbmCodecConfig = ccfg } = dbm
 
 appendBlockModel ::
-     forall blk. (HasHeader blk, BlockSupportsHeader blk, HasCallStack)
+     forall blk. (BlockSupportsHeader blk, HasCallStack)
   => blk
   -> DBModel blk
   -> Either (ImmutableDBError blk) (DBModel blk)
@@ -527,7 +525,7 @@ appendBlockModel blk dbm@DBModel { dbmSlots } = do
     blockTip = blockToTip blk
 
 streamModel ::
-     forall blk. (HasHeader blk, BlockSupportsHeader blk, HasCallStack)
+     forall blk. (BlockSupportsHeader blk, HasCallStack)
   => StreamFrom blk
   -> StreamTo   blk
   -> DBModel blk
@@ -591,8 +589,7 @@ streamModel from to dbm = swizzle $ do
         takeUntil ((== pt) . blockRealPoint)
 
 streamAllModel ::
-     ( HasHeader blk
-     , BlockSupportsHeader blk
+     ( BlockSupportsHeader blk
      , EncodeDisk blk blk
      , HasNestedContent Header blk
      , EncodeDiskDep (NestedCtxt Header) blk
@@ -606,8 +603,7 @@ streamAllModel blockComponent dbm@DBModel { dbmCodecConfig = ccfg } =
     $ dbm
 
 iteratorNextModel ::
-     ( HasHeader blk
-     , BlockSupportsHeader blk
+     ( BlockSupportsHeader blk
      , EncodeDisk blk blk
      , HasNestedContent Header blk
      , EncodeDiskDep (NestedCtxt Header) blk

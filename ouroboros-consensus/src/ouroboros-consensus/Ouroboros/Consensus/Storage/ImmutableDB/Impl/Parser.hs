@@ -74,7 +74,6 @@ data BlockSummary blk = BlockSummary {
 parseChunkFile ::
      forall m blk h r.
      ( IOLike m
-     , GetPrevHash blk
      , BlockSupportsHeader blk
      , HasBinaryBlockInfo blk
      , DecodeDisk blk (Lazy.ByteString -> blk)

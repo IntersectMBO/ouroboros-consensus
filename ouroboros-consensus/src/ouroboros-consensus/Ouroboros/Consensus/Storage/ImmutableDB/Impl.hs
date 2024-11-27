@@ -226,7 +226,6 @@ getHashForSlot = getHashForSlot_
 openDB ::
      forall m blk ans.
      ( IOLike m
-     , GetPrevHash blk
      , BlockSupportsHeader blk
      , ConvertRawHash blk
      , ImmutableDbSerialiseConstraints blk
@@ -246,7 +245,6 @@ openDB args cont =
 openDBInternal ::
      forall m blk ans.
      ( IOLike m
-     , GetPrevHash blk
      , BlockSupportsHeader blk
      , ConvertRawHash blk
      , ImmutableDbSerialiseConstraints blk
@@ -486,8 +484,7 @@ getBlockComponentImpl dbEnv blockComponent pt =
 
 appendBlockImpl ::
      forall m blk.
-     ( HasHeader blk
-     , BlockSupportsHeader blk
+     ( BlockSupportsHeader blk
      , EncodeDisk blk blk
      , HasBinaryBlockInfo blk
      , IOLike m

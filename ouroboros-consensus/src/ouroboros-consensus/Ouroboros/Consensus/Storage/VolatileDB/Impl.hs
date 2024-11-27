@@ -188,7 +188,6 @@ openDB ::
      forall m blk ans.
      ( HasCallStack
      , IOLike m
-     , GetPrevHash blk
      , BlockSupportsHeader blk
      , VolatileDbSerialiseConstraints blk
      )
@@ -344,8 +343,7 @@ getBlockComponentImpl env@VolatileDBEnv { codecConfig, checkIntegrity } blockCom
 -- since this can affect garbage collection of files.
 putBlockImpl ::
      forall m blk.
-     ( GetPrevHash blk
-     , BlockSupportsHeader blk
+     ( BlockSupportsHeader blk
      , EncodeDisk blk blk
      , HasBinaryBlockInfo blk
      , HasNestedContent Header blk

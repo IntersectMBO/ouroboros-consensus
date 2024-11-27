@@ -17,7 +17,6 @@ import           Control.Tracer (Tracer (..), traceWith)
 import           Data.Functor (void)
 import           Data.Set (Set)
 import qualified Data.Set as Set
-import           Data.Typeable (Typeable)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
@@ -190,7 +189,7 @@ lifecycleStart start liResources liResult = do
 -- | Shut down the node by killing all its threads after extracting the
 -- persistent state used to restart the node later.
 lifecycleStop ::
-  (IOLike m, BlockSupportsHeader blk, Typeable blk) =>
+  (IOLike m, BlockSupportsHeader blk) =>
   LiveResources blk m ->
   LiveNode blk m ->
   m (LiveIntervalResult blk)

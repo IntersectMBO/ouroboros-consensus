@@ -124,7 +124,6 @@ copyToImmutableDB ::
      forall m blk.
      ( IOLike m
      , ConsensusProtocol (BlockProtocol blk)
-     , HasHeader blk
      , BlockSupportsHeader blk
      , HasCallStack
      )
@@ -218,7 +217,6 @@ copyAndSnapshotRunner ::
      forall m blk.
      ( IOLike m
      , ConsensusProtocol (BlockProtocol blk)
-     , HasHeader blk
      , BlockSupportsHeader blk
      , IsLedger (LedgerState blk)
      , LgrDbSerialiseConstraints blk

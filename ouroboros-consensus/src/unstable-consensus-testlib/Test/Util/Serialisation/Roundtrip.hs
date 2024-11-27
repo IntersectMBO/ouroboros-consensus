@@ -185,7 +185,6 @@ roundtrip_all
      , Show (BlockNodeToNodeVersion   blk)
      , Show (BlockNodeToClientVersion blk)
 
-     , StandardHash blk
      , BlockSupportsHeader blk
 
      , Arbitrary' blk
@@ -233,7 +232,6 @@ roundtrip_all_skipping
      , Show (BlockNodeToNodeVersion   blk)
      , Show (BlockNodeToClientVersion blk)
 
-     , StandardHash blk
      , BlockSupportsHeader blk
 
      , Arbitrary' blk

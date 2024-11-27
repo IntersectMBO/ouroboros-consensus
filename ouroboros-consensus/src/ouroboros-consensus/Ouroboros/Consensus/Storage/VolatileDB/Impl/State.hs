@@ -295,7 +295,6 @@ mkOpenState ::
      forall m blk h.
      ( HasCallStack
      , IOLike m
-     , GetPrevHash blk
      , BlockSupportsHeader blk
      , HasBinaryBlockInfo blk
      , HasNestedContent Header blk
@@ -348,7 +347,6 @@ mkOpenStateHelper ::
      forall blk m h.
      ( HasCallStack
      , IOLike m
-     , GetPrevHash blk
      , BlockSupportsHeader blk
      , HasBinaryBlockInfo blk
      , HasNestedContent Header blk

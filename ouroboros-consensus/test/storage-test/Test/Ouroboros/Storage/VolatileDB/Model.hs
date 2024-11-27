@@ -255,8 +255,7 @@ reOpenModel dbm
 
 getBlockComponentModel ::
      forall blk b.
-     ( HasHeader blk
-     , BlockSupportsHeader blk
+     ( BlockSupportsHeader blk
      , HasBinaryBlockInfo blk
      , EncodeDisk blk blk
      , HasNestedContent Header blk
@@ -340,7 +339,7 @@ filterByPredecessorModel dbm = whenOpen dbm $ \predecessor ->
       (getBlockToPredecessor dbm)
 
 getBlockInfoModel ::
-     (GetPrevHash blk, HasBinaryBlockInfo blk, BlockSupportsHeader blk)
+     (HasBinaryBlockInfo blk, BlockSupportsHeader blk)
   => DBModel blk
   -> Either (VolatileDBError blk) (HeaderHash blk -> Maybe (BlockInfo blk))
 getBlockInfoModel dbm = whenOpen dbm $ \hash ->

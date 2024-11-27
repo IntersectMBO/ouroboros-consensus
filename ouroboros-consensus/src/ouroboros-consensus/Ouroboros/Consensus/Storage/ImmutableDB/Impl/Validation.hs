@@ -71,7 +71,6 @@ data ValidateEnv m blk h = ValidateEnv {
 validateAndReopen ::
      forall m blk h.
      ( IOLike m
-     , GetPrevHash blk
      , BlockSupportsHeader blk
      , HasBinaryBlockInfo blk
      , DecodeDisk blk (Lazy.ByteString -> blk)
@@ -115,7 +114,6 @@ validateAndReopen validateEnv registry valPol = wrapFsError (Proxy @blk) $ do
 validate ::
      forall m blk h.
      ( IOLike m
-     , GetPrevHash blk
      , BlockSupportsHeader blk
      , HasBinaryBlockInfo blk
      , DecodeDisk blk (Lazy.ByteString -> blk)
@@ -171,7 +169,6 @@ validate validateEnv@ValidateEnv{ hasFS, tracer } valPol = do
 validateAllChunks ::
      forall m blk h.
      ( IOLike m
-     , GetPrevHash blk
      , BlockSupportsHeader blk
      , HasBinaryBlockInfo blk
      , DecodeDisk blk (Lazy.ByteString -> blk)
@@ -247,7 +244,6 @@ validateAllChunks validateEnv@ValidateEnv { hasFS, chunkInfo } validateTracer la
 validateMostRecentChunk ::
      forall m blk h.
      ( IOLike m
-     , GetPrevHash blk
      , BlockSupportsHeader blk
      , HasBinaryBlockInfo blk
      , DecodeDisk blk (Lazy.ByteString -> blk)
@@ -327,7 +323,6 @@ data ShouldBeFinalised =
 validateChunk ::
      forall m blk h.
      ( IOLike m
-     , GetPrevHash blk
      , BlockSupportsHeader blk
      , HasBinaryBlockInfo blk
      , DecodeDisk blk (Lazy.ByteString -> blk)

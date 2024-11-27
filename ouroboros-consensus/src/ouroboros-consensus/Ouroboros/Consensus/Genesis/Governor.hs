@@ -45,7 +45,6 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe, maybeToList)
 import           Data.Maybe.Strict (StrictMaybe)
-import           Data.Typeable (Typeable)
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (TopLevelConfig, configLedger,
@@ -237,7 +236,7 @@ evaluateGDD cfg tracer stateView = do
 -- The function also yields the suffixes of the intersection of @loeFrag@ with
 -- every candidate fragment.
 sharedCandidatePrefix ::
-  (Typeable blk, BlockSupportsHeader blk) =>
+  (BlockSupportsHeader blk) =>
   AnchoredFragment (Header blk) ->
   [(peer, AnchoredFragment (HeaderWithTime blk))] ->
   (AnchoredFragment (HeaderWithTime blk), [(peer, AnchoredFragment (HeaderWithTime blk))])

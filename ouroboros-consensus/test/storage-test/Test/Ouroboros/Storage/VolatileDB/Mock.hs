@@ -16,7 +16,6 @@ import           Test.Ouroboros.Storage.VolatileDB.Model
 openDBMock ::
      forall m blk.
      ( IOLike m
-     , GetPrevHash blk
      , BlockSupportsHeader blk
      , HasBinaryBlockInfo blk
      , EncodeDisk blk blk

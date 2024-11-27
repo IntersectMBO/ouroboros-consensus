@@ -154,11 +154,11 @@ data instance Header (SimpleBlock' c ext ext') = SimpleHeader {
 instance (Typeable c, Typeable ext, Typeable ext')
     => ShowProxy (Header (SimpleBlock' c ext ext')) where
 
-instance (SimpleCrypto c, Typeable ext, Typeable ext')
+instance (GetPrevHash (SimpleBlock' c ext ext'))
       => GetHeader (SimpleBlock' c ext ext') (SimpleBlock' c ext ext') where
   getHeader = simpleHeader
 
-instance (SimpleCrypto c, Typeable ext, Typeable ext')
+instance (SimpleCrypto c, GetPrevHash (SimpleBlock' c ext ext'))
       => BlockSupportsHeader (SimpleBlock' c ext ext') where
   blockMatchesHeader = matchesSimpleHeader
 
@@ -224,7 +224,7 @@ countSimpleGenTxs = fromIntegral . length . extractTxs
   HasHeader instance for SimpleHeader
 -------------------------------------------------------------------------------}
 
-instance (SimpleCrypto c, Typeable ext, Typeable ext')
+instance (GetPrevHash (SimpleBlock' c ext ext'))
       => HasHeader (Header (SimpleBlock' c ext ext')) where
   getHeaderFields hdr = HeaderFields {
         headerFieldHash    = simpleHeaderHash hdr
@@ -239,7 +239,7 @@ instance (SimpleCrypto c, Typeable ext, Typeable ext')
 type instance HeaderHash (SimpleBlock' c ext ext') =
   Hash (SimpleHash c) (Header (SimpleBlock' c ext ext'))
 
-instance (SimpleCrypto c, Typeable ext, Typeable ext')
+instance (SimpleCrypto c, Typeable ext, Typeable ext', GetPrevHash (SimpleBlock' c ext ext'))
       => HasHeader (SimpleBlock' c ext ext') where
   getHeaderFields = getBlockHeaderFields
 
@@ -624,7 +624,7 @@ instance (SimpleCrypto c, Serialise ext')
   decode = decodeSimpleHeader encode decode
 
 simpleBlockBinaryBlockInfo ::
-     (SimpleCrypto c, Serialise ext', Typeable ext, Typeable ext')
+     (SimpleCrypto c, Serialise ext', GetPrevHash (SimpleBlock' c ext ext'))
   => SimpleBlock' c ext ext' -> BinaryBlockInfo
 simpleBlockBinaryBlockInfo b = BinaryBlockInfo
     { headerOffset = 1 -- For the 'encodeListLen'

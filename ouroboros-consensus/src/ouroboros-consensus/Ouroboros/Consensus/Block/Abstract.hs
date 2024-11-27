@@ -131,7 +131,7 @@ data family Header blk :: Type
 class HasHeader (Header blk) => GetHeader a blk | a -> blk where
   getHeader          :: a -> Header blk
 
-class (HasHeader (Header blk), GetHeader blk blk) => BlockSupportsHeader blk where
+class (HasHeader (Header blk), GetHeader blk blk, GetPrevHash blk) => BlockSupportsHeader blk where
   -- | Check whether the header is the header of the block.
   --
   -- For example, by checking whether the hash of the body stored in the

@@ -82,7 +82,6 @@ getFollower1 h followerKey f a = getFollower h followerKey (\env -> f env a)
 newFollower ::
      forall m blk b.
      ( IOLike m
-     , HasHeader blk
      , BlockSupportsHeader blk
      , HasNestedContent Header blk
      , EncodeDiskDep (NestedCtxt Header) blk
@@ -121,7 +120,6 @@ newFollower h registry chainType blockComponent = getEnv h $ \CDB{..} -> do
 makeNewFollower ::
      forall m blk b.
      ( IOLike m
-     , HasHeader blk
      , BlockSupportsHeader blk
      , HasNestedContent Header blk
      , EncodeDiskDep (NestedCtxt Header) blk
@@ -199,7 +197,6 @@ closeFollowerState = \case
 instructionHelper ::
      forall m blk b f.
      ( IOLike m
-     , HasHeader blk
      , BlockSupportsHeader blk
      , HasNestedContent Header blk
      , EncodeDiskDep (NestedCtxt Header) blk

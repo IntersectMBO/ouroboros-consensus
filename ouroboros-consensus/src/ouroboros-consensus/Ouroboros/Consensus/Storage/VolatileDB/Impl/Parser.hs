@@ -48,7 +48,6 @@ data ParsedBlockInfo blk = ParsedBlockInfo {
 parseBlockFile ::
      forall m blk h.
      ( IOLike m
-     , GetPrevHash blk
      , BlockSupportsHeader blk
      , HasBinaryBlockInfo blk
      , HasNestedContent Header blk
@@ -102,7 +101,7 @@ parseBlockFile ccfg hasFS isNotCorrupt validationPolicy fsPath =
 -------------------------------------------------------------------------------}
 
 extractBlockInfo ::
-     (GetPrevHash blk, BlockSupportsHeader blk, HasBinaryBlockInfo blk)
+     (BlockSupportsHeader blk, HasBinaryBlockInfo blk)
   => blk
   -> BlockInfo blk
 extractBlockInfo blk = BlockInfo {
