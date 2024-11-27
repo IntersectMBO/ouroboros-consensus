@@ -19,8 +19,8 @@
 --  existing roundtrip test functions.
 module Test.Consensus.Cardano.ByronCompatibility (tests) where
 
-import qualified Cardano.Crypto.Hashing as CC
 import qualified Cardano.Chain.Byron.API as CC
+import qualified Cardano.Crypto.Hashing as CC
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding)
 import qualified Data.ByteString.Lazy as Lazy
