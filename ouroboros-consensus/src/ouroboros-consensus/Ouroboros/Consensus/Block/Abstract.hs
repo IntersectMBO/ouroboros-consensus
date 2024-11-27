@@ -1,5 +1,6 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -130,6 +131,9 @@ data family Header blk :: Type
 
 class HasHeader (Header blk) => GetHeader a blk | a -> blk where
   getHeader          :: a -> Header blk
+
+instance HasHeader (Header blk) => GetHeader (Header blk) blk where
+  getHeader = id
 
 class (HasHeader (Header blk), GetHeader blk blk, GetPrevHash blk) => BlockSupportsHeader blk where
   -- | Check whether the header is the header of the block.
