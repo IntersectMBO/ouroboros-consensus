@@ -1104,6 +1104,10 @@ findIntersectionTop cfgEnv dynEnv intEnv =
             (theirFrag, theirHeaderStateHistory) <- do
                 case attemptRollback
                          intersection
+                         -- We only perform the linear computation
+                         -- required by 'withTime' once when finding
+                         -- an intersection with a peer, so this
+                         -- should not impact the performance.
                          (ourFrag `withTime` ourHeaderStateHistory, ourHeaderStateHistory)
                   of
                     Just (c, d, _oldestRewound) -> return (c, d)
@@ -1137,10 +1141,28 @@ findIntersectionTop cfgEnv dynEnv intEnv =
 -- PRECONDITION: the fragment must be a prefix of the state history.
 --
 withTime ::
-     AnchoredFragment (Header blk)
+     (Typeable blk, HasHeader (Header blk))
+  => AnchoredFragment (Header blk)
   -> HeaderStateHistory blk
   -> AnchoredFragment (HeaderWithTime blk)
-withTime fragment history = undefined fragment history
+withTime fragment (HeaderStateHistory history) =
+    assertWithMsg (
+      if AF.length fragment == AF.length history
+      then Right ()
+      else Left $ "Fragment and history have different lengths (|fragment| = "
+                   ++ show (AF.length fragment)
+                   ++ ", |history| = " ++ show (AF.length history)
+                   ++ ")"
+      ) $
+    AF.fromOldestFirst
+        (AF.castAnchor $ AF.headAnchor fragment)
+        $ fmap addTimeToHeader $ zip (AF.toOldestFirst fragment) (AF.toOldestFirst history)
+  where
+     addTimeToHeader :: (Header blk, HeaderStateWithTime blk) -> HeaderWithTime blk
+     addTimeToHeader (hdr, hsWt) = HeaderWithTime {
+         hwtHeader = hdr
+       , hwtSlotRelativeTime = hswtSlotTime hsWt
+     }
 
 {-------------------------------------------------------------------------------
   Processing 'MsgRollForward' and 'MsgRollBackward'
