@@ -80,15 +80,18 @@ forksAtMostKBlocks k ours theirs = case ours `AF.intersect` theirs of
 -- these fragments intersect with our current chain, they must by transitivity
 -- also intersect each other.
 compareAnchoredFragments ::
-     forall blk t.
+     forall blk t t'.
      ( BlockSupportsProtocol blk
      , HasCallStack
      , GetHeader (t blk) blk
      , HasHeader (t blk)
+     , GetHeader (t' blk) blk
+     , HasHeader (t' blk)
+     , HeaderHash (t blk) ~ HeaderHash (t' blk)
      )
   => BlockConfig blk
   -> AnchoredFragment (t blk)
-  -> AnchoredFragment (t blk)
+  -> AnchoredFragment (t' blk)
   -> Ordering
 compareAnchoredFragments cfg frag1 frag2 =
     assertWithMsg (precondition frag1 frag2) $
@@ -104,12 +107,12 @@ compareAnchoredFragments cfg frag1 frag2 =
         -- fragments represent the same chain and are equally preferable. If
         -- not, the second chain is a strict extension of the first and is
         -- therefore strictly preferable.
-        if blockPoint tip' == AF.anchorToPoint anchor
+        if blockPoint tip' == AF.castPoint (AF.anchorToPoint anchor)
           then EQ
           else LT
       (_ :> tip, Empty anchor') ->
         -- This case is symmetric to the previous
-        if blockPoint tip == AF.anchorToPoint anchor'
+        if blockPoint tip == AF.castPoint (AF.anchorToPoint anchor')
           then EQ
           else GT
       (_ :> tip, _ :> tip') ->
