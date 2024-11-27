@@ -18,6 +18,7 @@ import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.Serialise as Serialise
 import           Control.Exception (throw)
+import           Data.ByteString.Short (ShortByteString)
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.NonEmpty (ProofNonEmpty (..), isNonEmpty)
@@ -38,7 +39,6 @@ import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util ((.:))
 import           Ouroboros.Network.Block (Serialised, unwrapCBORinCBOR,
                      wrapCBORinCBOR)
-import           Data.ByteString.Short (ShortByteString)
 
 instance SerialiseHFC xs => SerialiseNodeToNodeConstraints (HardForkBlock xs) where
   estimateBlockSize = estimateHfcBlockSize
