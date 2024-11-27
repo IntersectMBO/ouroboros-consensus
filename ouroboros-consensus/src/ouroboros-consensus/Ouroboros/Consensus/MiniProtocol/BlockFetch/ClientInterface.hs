@@ -172,6 +172,7 @@ mkBlockFetchConsensusInterface ::
      ( IOLike m
      , BlockSupportsDiffusionPipelining blk
      , BlockSupportsProtocol blk
+     , SupportsNode.ConfigSupportsNode blk
      )
   => BlockConfig blk
   -> ChainDbView m blk
@@ -353,5 +354,10 @@ mkBlockFetchConsensusInterface
                            -> Ordering
     compareCandidateChains = compareAnchoredFragments bcfg
 
-    headerForgeUTCTime = slotForgeTime . headerRealPoint . hwtHeader . unFromConsensus
+    headerForgeUTCTime  = pure
+                        . fromRelativeTime (SupportsNode.getSystemStart bcfg)
+                        . hwtSlotRelativeTime
+                        . unFromConsensus
+
+    -- NOTE: Once https://github.com/IntersectMBO/ouroboros-network/pull/5009 is integrated we can remove this.
     blockForgeUTCTime  = slotForgeTime . blockRealPoint  . unFromConsensus
