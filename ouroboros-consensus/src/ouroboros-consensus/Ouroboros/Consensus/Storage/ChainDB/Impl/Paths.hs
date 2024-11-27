@@ -378,7 +378,7 @@ computeReversePath lookupBlockInfo endHash =
 -- When the suffix of the 'ChainDiff' is non-empty, @P@ will be the last point
 -- in the suffix.
 isReachable
-  :: forall blk. (HasHeader blk, SupportsHeaderValidation blk)
+  :: forall blk. (HasHeader blk, BlockSupportsHeader blk)
   => LookupBlockInfo blk
   -> AnchoredFragment (Header blk) -- ^ Chain fragment to connect the point to
   -> RealPoint blk

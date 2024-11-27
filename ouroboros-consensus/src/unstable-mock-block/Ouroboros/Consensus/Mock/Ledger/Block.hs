@@ -159,7 +159,7 @@ instance (SimpleCrypto c, Typeable ext, Typeable ext')
   getHeader = simpleHeader
 
 instance (SimpleCrypto c, Typeable ext, Typeable ext')
-      => SupportsHeaderValidation (SimpleBlock' c ext ext') where
+      => BlockSupportsHeader (SimpleBlock' c ext ext') where
   blockMatchesHeader = matchesSimpleHeader
 
   headerIsEBB = const Nothing

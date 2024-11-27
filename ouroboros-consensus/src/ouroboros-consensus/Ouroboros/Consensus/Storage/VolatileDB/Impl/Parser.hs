@@ -49,7 +49,7 @@ parseBlockFile ::
      forall m blk h.
      ( IOLike m
      , GetPrevHash blk
-     , SupportsHeaderValidation blk
+     , BlockSupportsHeader blk
      , HasBinaryBlockInfo blk
      , HasNestedContent Header blk
      , DecodeDisk blk (Lazy.ByteString -> blk)
@@ -102,7 +102,7 @@ parseBlockFile ccfg hasFS isNotCorrupt validationPolicy fsPath =
 -------------------------------------------------------------------------------}
 
 extractBlockInfo ::
-     (GetPrevHash blk, SupportsHeaderValidation blk, HasBinaryBlockInfo blk)
+     (GetPrevHash blk, BlockSupportsHeader blk, HasBinaryBlockInfo blk)
   => blk
   -> BlockInfo blk
 extractBlockInfo blk = BlockInfo {

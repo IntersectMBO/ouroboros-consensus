@@ -186,7 +186,7 @@ roundtrip_all
      , Show (BlockNodeToClientVersion blk)
 
      , StandardHash blk
-     , SupportsHeaderValidation blk
+     , BlockSupportsHeader blk
 
      , Arbitrary' blk
      , Arbitrary' (Header blk)
@@ -234,7 +234,7 @@ roundtrip_all_skipping
      , Show (BlockNodeToClientVersion blk)
 
      , StandardHash blk
-     , SupportsHeaderValidation blk
+     , BlockSupportsHeader blk
 
      , Arbitrary' blk
      , Arbitrary' (Header blk)
@@ -661,7 +661,7 @@ prop_hashSize p h =
 -------------------------------------------------------------------------------}
 
 prop_estimateBlockSize ::
-     (SerialiseNodeToNodeConstraints blk, SupportsHeaderValidation blk)
+     (SerialiseNodeToNodeConstraints blk, BlockSupportsHeader blk)
   => CodecConfig blk
   -> WithVersion (BlockNodeToNodeVersion blk) (Coherent blk)
   -> Property

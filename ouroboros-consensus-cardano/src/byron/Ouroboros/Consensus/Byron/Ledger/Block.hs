@@ -154,7 +154,7 @@ instance GetHeader ByronBlock ByronBlock where
       -- Which is 7 bytes, enough for up to 4294967295 bytes.
       overhead = 7 {- CBOR-in-CBOR -} + 2 {- EBB tag -}
 
-instance SupportsHeaderValidation ByronBlock where
+instance BlockSupportsHeader ByronBlock where
   -- Check if a block matches its header
   --
   -- Note that we cannot check this for an EBB, as the EBB header doesn't

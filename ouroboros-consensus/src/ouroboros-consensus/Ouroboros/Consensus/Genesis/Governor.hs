@@ -237,7 +237,7 @@ evaluateGDD cfg tracer stateView = do
 -- The function also yields the suffixes of the intersection of @loeFrag@ with
 -- every candidate fragment.
 sharedCandidatePrefix ::
-  (Typeable blk, SupportsHeaderValidation blk) =>
+  (Typeable blk, BlockSupportsHeader blk) =>
   AnchoredFragment (Header blk) ->
   [(peer, AnchoredFragment (HeaderWithTime blk))] ->
   (AnchoredFragment (HeaderWithTime blk), [(peer, AnchoredFragment (HeaderWithTime blk))])
@@ -271,7 +271,7 @@ data DensityBounds blk =
     idling          :: Bool
   }
 
-deriving stock instance (Show (Header blk), SupportsHeaderValidation blk) => Show (DensityBounds blk)
+deriving stock instance (Show (Header blk), BlockSupportsHeader blk) => Show (DensityBounds blk)
 
 -- | @densityDisconnect genWin k states candidateSuffixes loeFrag@
 -- yields the list of peers which are known to lose the density comparison with
@@ -446,7 +446,7 @@ data GDDDebugInfo peer blk =
   }
 
 deriving stock instance
-  ( SupportsHeaderValidation blk, Show (Header blk), Show peer
+  ( BlockSupportsHeader blk, Show (Header blk), Show peer
   ) => Show (GDDDebugInfo peer blk)
 
 data TraceGDDEvent peer blk =
@@ -456,5 +456,5 @@ data TraceGDDEvent peer blk =
     TraceGDDDebug (GDDDebugInfo peer blk)
 
 deriving stock instance
-  ( SupportsHeaderValidation blk, Show (Header blk), Show peer
+  ( BlockSupportsHeader blk, Show (Header blk), Show peer
   ) => Show (TraceGDDEvent peer blk)

@@ -219,7 +219,7 @@ chainDiffForkTip =
     . Diff.getTip
 
 headerToBlockInfo ::
-     (GetPrevHash blk, SupportsHeaderValidation blk)
+     (GetPrevHash blk, BlockSupportsHeader blk)
   => Header blk
   -> VolatileDB.BlockInfo blk
 headerToBlockInfo hdr = VolatileDB.BlockInfo {
@@ -234,7 +234,7 @@ headerToBlockInfo hdr = VolatileDB.BlockInfo {
     }
 
 headersToBlockInfo ::
-     (GetPrevHash blk, Foldable f, SupportsHeaderValidation blk)
+     (GetPrevHash blk, Foldable f, BlockSupportsHeader blk)
   => f (Header blk)
   -> Map (HeaderHash blk) (VolatileDB.BlockInfo blk)
 headersToBlockInfo = foldMap $ \hdr ->

@@ -227,7 +227,7 @@ openDB ::
      forall m blk ans.
      ( IOLike m
      , GetPrevHash blk
-     , SupportsHeaderValidation blk
+     , BlockSupportsHeader blk
      , ConvertRawHash blk
      , ImmutableDbSerialiseConstraints blk
      , HasCallStack
@@ -247,7 +247,7 @@ openDBInternal ::
      forall m blk ans.
      ( IOLike m
      , GetPrevHash blk
-     , SupportsHeaderValidation blk
+     , BlockSupportsHeader blk
      , ConvertRawHash blk
      , ImmutableDbSerialiseConstraints blk
      , HasCallStack
@@ -487,7 +487,7 @@ getBlockComponentImpl dbEnv blockComponent pt =
 appendBlockImpl ::
      forall m blk.
      ( HasHeader blk
-     , SupportsHeaderValidation blk
+     , BlockSupportsHeader blk
      , EncodeDisk blk blk
      , HasBinaryBlockInfo blk
      , IOLike m

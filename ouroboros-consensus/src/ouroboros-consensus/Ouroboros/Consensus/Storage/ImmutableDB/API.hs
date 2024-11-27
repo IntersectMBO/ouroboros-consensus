@@ -278,7 +278,7 @@ tipToAnchor = \case
     NotOrigin (Tip { tipSlotNo, tipHash, tipBlockNo }) ->
       AF.Anchor tipSlotNo tipHash tipBlockNo
 
-headerToTip :: SupportsHeaderValidation blk => Header blk -> Tip blk
+headerToTip :: BlockSupportsHeader blk => Header blk -> Tip blk
 headerToTip hdr = Tip {
       tipSlotNo  = blockSlot     hdr
     , tipIsEBB   = headerToIsEBB hdr
@@ -286,7 +286,7 @@ headerToTip hdr = Tip {
     , tipHash    = blockHash     hdr
     }
 
-blockToTip :: SupportsHeaderValidation blk => blk -> Tip blk
+blockToTip :: BlockSupportsHeader blk => blk -> Tip blk
 blockToTip = headerToTip . getHeader
 
 -- | newtype with an 'Ord' instance that only uses 'tipSlotNo' and 'tipIsEBB'

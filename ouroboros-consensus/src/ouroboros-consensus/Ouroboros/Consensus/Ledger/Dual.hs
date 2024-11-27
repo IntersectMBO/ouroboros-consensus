@@ -141,7 +141,7 @@ newtype instance Header (DualBlock m a) = DualHeader { dualHeaderMain :: Header 
 instance Bridge m a => GetHeader (DualBlock m a) (DualBlock m a) where
   getHeader = DualHeader . getHeader . dualBlockMain
 
-instance Bridge m a => SupportsHeaderValidation (DualBlock m a) where
+instance Bridge m a => BlockSupportsHeader (DualBlock m a) where
   blockMatchesHeader hdr =
       blockMatchesHeader (dualHeaderMain hdr) . dualBlockMain
 
@@ -221,15 +221,15 @@ instance ( NoThunks (StorageConfig m)
 -- | Bridge the two ledgers
 class (
         -- Requirements on the main block
-        HasHeader                m
-      , SupportsHeaderValidation m
-      , HasHeader (Header        m)
-      , LedgerSupportsProtocol   m
-      , HasHardForkHistory       m
-      , LedgerSupportsMempool    m
-      , CommonProtocolParams     m
-      , HasTxId (GenTx           m)
-      , Show (ApplyTxErr         m)
+        HasHeader              m
+      , BlockSupportsHeader    m
+      , HasHeader (Header      m)
+      , LedgerSupportsProtocol m
+      , HasHardForkHistory     m
+      , LedgerSupportsMempool  m
+      , CommonProtocolParams   m
+      , HasTxId (GenTx         m)
+      , Show (ApplyTxErr       m)
 
         -- Requirements on the auxiliary block
         -- No 'LedgerSupportsProtocol' for @a@!

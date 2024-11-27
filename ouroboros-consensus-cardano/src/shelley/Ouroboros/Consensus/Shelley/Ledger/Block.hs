@@ -15,14 +15,14 @@
 {-# LANGUAGE UndecidableSuperClasses #-}
 
 module Ouroboros.Consensus.Shelley.Ledger.Block (
-    Header (..)
+    BlockSupportsHeader (..)
+  , Header (..)
   , IsShelleyBlock
   , NestedCtxt_ (..)
   , ShelleyBasedEra
   , ShelleyBlock (..)
   , ShelleyBlockLedgerEra
   , ShelleyHash (..)
-  , SupportsHeaderValidation (..)
     -- * Shelley Compatibility
   , ShelleyCompatible
   , mkShelleyBlock
@@ -173,7 +173,7 @@ instance ShelleyCompatible proto era
     , shelleyHeaderHash = hdrHash
     }
 
-instance ShelleyCompatible proto era => SupportsHeaderValidation (ShelleyBlock proto era) where
+instance ShelleyCompatible proto era => BlockSupportsHeader (ShelleyBlock proto era) where
   blockMatchesHeader hdr blk =
       -- Compute the hash the body of the block (the transactions) and compare
       -- that against the hash of the body stored in the header.

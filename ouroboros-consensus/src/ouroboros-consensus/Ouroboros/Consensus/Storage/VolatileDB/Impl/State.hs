@@ -296,7 +296,7 @@ mkOpenState ::
      ( HasCallStack
      , IOLike m
      , GetPrevHash blk
-     , SupportsHeaderValidation blk
+     , BlockSupportsHeader blk
      , HasBinaryBlockInfo blk
      , HasNestedContent Header blk
      , DecodeDisk blk (Lazy.ByteString -> blk)
@@ -349,7 +349,7 @@ mkOpenStateHelper ::
      ( HasCallStack
      , IOLike m
      , GetPrevHash blk
-     , SupportsHeaderValidation blk
+     , BlockSupportsHeader blk
      , HasBinaryBlockInfo blk
      , HasNestedContent Header blk
      , DecodeDisk blk (Lazy.ByteString -> blk)

@@ -124,7 +124,7 @@ data instance Header BlockB = HdrB {
 instance GetHeader BlockB BlockB where
   getHeader          = blkB_header
 
-instance SupportsHeaderValidation BlockB where
+instance BlockSupportsHeader BlockB where
   blockMatchesHeader = \_ _ -> True -- We are not interested in integrity here
   headerIsEBB        = const Nothing
 

@@ -19,9 +19,9 @@ module Ouroboros.Consensus.Block.Abstract (
   , GetPrevHash (..)
   , blockPrevHash
     -- * Working with headers
+  , BlockSupportsHeader (..)
   , GetHeader (..)
   , Header
-  , SupportsHeaderValidation (..)
   , blockIsEBB
   , blockToIsEBB
   , getBlockHeaderFields
@@ -131,7 +131,7 @@ data family Header blk :: Type
 class HasHeader (Header blk) => GetHeader a blk | a -> blk where
   getHeader          :: a -> Header blk
 
-class (HasHeader (Header blk), GetHeader blk blk) => SupportsHeaderValidation blk where
+class (HasHeader (Header blk), GetHeader blk blk) => BlockSupportsHeader blk where
   -- | Check whether the header is the header of the block.
   --
   -- For example, by checking whether the hash of the body stored in the
@@ -142,13 +142,13 @@ class (HasHeader (Header blk), GetHeader blk blk) => SupportsHeaderValidation bl
   -- its epoch number.
   headerIsEBB        :: Header blk -> Maybe EpochNo
 
-headerToIsEBB :: SupportsHeaderValidation blk => Header blk -> IsEBB
+headerToIsEBB :: BlockSupportsHeader blk => Header blk -> IsEBB
 headerToIsEBB = toIsEBB . isJust . headerIsEBB
 
-blockIsEBB :: SupportsHeaderValidation blk => blk -> Maybe EpochNo
+blockIsEBB :: BlockSupportsHeader blk => blk -> Maybe EpochNo
 blockIsEBB = headerIsEBB . getHeader
 
-blockToIsEBB :: SupportsHeaderValidation blk => blk -> IsEBB
+blockToIsEBB :: BlockSupportsHeader blk => blk -> IsEBB
 blockToIsEBB = headerToIsEBB . getHeader
 
 type instance BlockProtocol (Header blk) = BlockProtocol blk
@@ -178,7 +178,7 @@ instance HasHeader blk => StandardHash (Header blk)
 -- >  ..
 --
 -- but we can't do that when we do things this way around.
-getBlockHeaderFields :: SupportsHeaderValidation blk => blk -> HeaderFields blk
+getBlockHeaderFields :: BlockSupportsHeader blk => blk -> HeaderFields blk
 getBlockHeaderFields = castHeaderFields . getHeaderFields . getHeader
 
 {-------------------------------------------------------------------------------

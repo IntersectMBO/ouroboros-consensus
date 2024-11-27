@@ -72,7 +72,7 @@ validateAndReopen ::
      forall m blk h.
      ( IOLike m
      , GetPrevHash blk
-     , SupportsHeaderValidation blk
+     , BlockSupportsHeader blk
      , HasBinaryBlockInfo blk
      , DecodeDisk blk (Lazy.ByteString -> blk)
      , ConvertRawHash blk
@@ -116,7 +116,7 @@ validate ::
      forall m blk h.
      ( IOLike m
      , GetPrevHash blk
-     , SupportsHeaderValidation blk
+     , BlockSupportsHeader blk
      , HasBinaryBlockInfo blk
      , DecodeDisk blk (Lazy.ByteString -> blk)
      , ConvertRawHash blk
@@ -172,7 +172,7 @@ validateAllChunks ::
      forall m blk h.
      ( IOLike m
      , GetPrevHash blk
-     , SupportsHeaderValidation blk
+     , BlockSupportsHeader blk
      , HasBinaryBlockInfo blk
      , DecodeDisk blk (Lazy.ByteString -> blk)
      , ConvertRawHash blk
@@ -248,7 +248,7 @@ validateMostRecentChunk ::
      forall m blk h.
      ( IOLike m
      , GetPrevHash blk
-     , SupportsHeaderValidation blk
+     , BlockSupportsHeader blk
      , HasBinaryBlockInfo blk
      , DecodeDisk blk (Lazy.ByteString -> blk)
      , ConvertRawHash blk
@@ -328,7 +328,7 @@ validateChunk ::
      forall m blk h.
      ( IOLike m
      , GetPrevHash blk
-     , SupportsHeaderValidation blk
+     , BlockSupportsHeader blk
      , HasBinaryBlockInfo blk
      , DecodeDisk blk (Lazy.ByteString -> blk)
      , ConvertRawHash blk

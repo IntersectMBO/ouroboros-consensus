@@ -169,12 +169,12 @@ Classes connected to headers and blocks:
  class (StandardHash blk, Typeable blk) => HasHeader blk where -- abstract over block headers
    getHeaderFields :: blk → HeaderFields blk    -- i.e., return three fields: slot, blockno, hash
 
- class HasHeader (Header blk) => SupportsHeaderValidation blk where
+ class HasHeader (Header blk) => BlockSupportsHeader blk where
    getHeader          :: blk → Header blk             -- extract header from the block
    blockMatchesHeader :: Header blk → blk → Bool      -- check if the header is the header of the block
    headerIsEBB        :: Header blk → Maybe EpochNo   -- when the header of an Epoch Boundary Block (EBB), ...
 
- class (HasHeader blk, SupportsHeaderValidation blk) => GetPrevHash blk where
+ class (HasHeader blk, BlockSupportsHeader blk) => GetPrevHash blk where
    headerPrevHash :: Header blk → ChainHash blk       -- get the hash of predecessor
 
  -- construct the two views on block 'b' required by protocol 'p'

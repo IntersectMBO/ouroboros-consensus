@@ -14,7 +14,7 @@ import           Ouroboros.Consensus.Protocol.Abstract
 -------------------------------------------------------------------------------}
 
 -- | Evidence that a block supports its protocol
-class ( SupportsHeaderValidation blk
+class ( BlockSupportsHeader blk
       , GetPrevHash blk
       , ConsensusProtocol (BlockProtocol blk)
       , NoThunks (Header blk)

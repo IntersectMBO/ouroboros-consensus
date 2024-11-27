@@ -189,7 +189,7 @@ openDB ::
      ( HasCallStack
      , IOLike m
      , GetPrevHash blk
-     , SupportsHeaderValidation blk
+     , BlockSupportsHeader blk
      , VolatileDbSerialiseConstraints blk
      )
   => Complete VolatileDbArgs m blk
@@ -345,7 +345,7 @@ getBlockComponentImpl env@VolatileDBEnv { codecConfig, checkIntegrity } blockCom
 putBlockImpl ::
      forall m blk.
      ( GetPrevHash blk
-     , SupportsHeaderValidation blk
+     , BlockSupportsHeader blk
      , EncodeDisk blk blk
      , HasBinaryBlockInfo blk
      , HasNestedContent Header blk

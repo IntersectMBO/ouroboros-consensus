@@ -17,7 +17,7 @@ openDBMock ::
      forall m blk.
      ( IOLike m
      , GetPrevHash blk
-     , SupportsHeaderValidation blk
+     , BlockSupportsHeader blk
      , HasBinaryBlockInfo blk
      , EncodeDisk blk blk
      , HasNestedContent Header blk

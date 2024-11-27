@@ -42,7 +42,7 @@ data ByronSpecBlock = ByronSpecBlock {
   deriving (Show, Eq, Generic, Serialise)
 
 {-------------------------------------------------------------------------------
-  SupportsHeaderValidation
+  BlockSupportsHeader
 -------------------------------------------------------------------------------}
 
 data instance Header ByronSpecBlock = ByronSpecHeader {
@@ -59,7 +59,7 @@ instance GetHeader ByronSpecBlock ByronSpecBlock where
       , byronSpecHeaderHash = byronSpecBlockHash
       }
 
-instance SupportsHeaderValidation ByronSpecBlock where
+instance BlockSupportsHeader ByronSpecBlock where
   -- We don't care about integrity checks, so we don't bother checking whether
   -- the hashes of the body are correct
   blockMatchesHeader hdr blk = blockHash hdr == blockHash blk

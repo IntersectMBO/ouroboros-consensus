@@ -195,7 +195,7 @@ newtype instance Header TestBlock = TestHeader' { unTestHeader :: TestHeader }
 instance GetHeader TestBlock TestBlock where
   getHeader = TestHeader' . testHeader
 
-instance SupportsHeaderValidation TestBlock where
+instance BlockSupportsHeader TestBlock where
   blockMatchesHeader (TestHeader' hdr) blk =
       thBodyHash hdr == hashBody (testBody blk)
 

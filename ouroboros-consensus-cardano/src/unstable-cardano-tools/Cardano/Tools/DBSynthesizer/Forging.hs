@@ -203,7 +203,7 @@ blockContextFromPrevHeader hdr =
 -- current slot, ChainDB chain fragment, and ChainDB tip block number
 mkCurrentBlockContext ::
      forall blk.
-     ( SupportsHeaderValidation blk
+     ( BlockSupportsHeader blk
      , BasicEnvelopeValidation blk )
   => SlotNo
   -> AnchoredFragment (Header blk)

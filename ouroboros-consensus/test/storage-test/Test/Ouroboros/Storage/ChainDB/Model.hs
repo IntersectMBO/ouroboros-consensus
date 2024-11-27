@@ -717,7 +717,7 @@ followerClose flrId m
 -- | Functionality the block needs to support so that it can be used in the
 -- 'Model'.
 class ( HasHeader blk
-      , SupportsHeaderValidation blk
+      , BlockSupportsHeader blk
       , HasHeader (Header blk)
       , Serialise blk
       , Serialise (Header blk)

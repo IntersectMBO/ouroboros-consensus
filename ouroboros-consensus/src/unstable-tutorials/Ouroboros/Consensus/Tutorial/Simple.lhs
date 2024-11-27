@@ -45,7 +45,7 @@ First, some imports we'll need:
 > import NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
 > import Ouroboros.Consensus.Block.Abstract
 >   (blockNo, blockPoint, castHeaderFields, castPoint, BlockNo, SlotNo,
->    BlockConfig, BlockProtocol, CodecConfig, SupportsHeaderValidation(..),
+>    BlockConfig, BlockProtocol, CodecConfig, BlockSupportsHeader(..),
 >    GetPrevHash(..), GetHeader (..),
 >    Header, StorageConfig, ChainHash, HasHeader(..), HeaderFields(..),
 >    HeaderHash, Point, StandardHash)
@@ -407,13 +407,13 @@ use the record accessor `bc_header`:
 > instance GetHeader BlockC BlockC where
 >    getHeader = bc_header
 
-**`SupportsHeaderValidation`**
+**`BlockSupportsHeader`**
 
-The `SupportsHeaderValidation` class provides methods to check if the
+The `BlockSupportsHeader` class provides methods to check if the
 block matches its header, and to determine if the header correspondts
 to an EBB.
 
-> instance SupportsHeaderValidation BlockC where
+> instance BlockSupportsHeader BlockC where
 >    blockMatchesHeader = \_ _ -> True
 >    headerIsEBB = const Nothing
 

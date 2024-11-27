@@ -44,7 +44,7 @@ import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util (ShowProxy, (.:))
 
 {-------------------------------------------------------------------------------
-  SupportsHeaderValidation
+  BlockSupportsHeader
 -------------------------------------------------------------------------------}
 
 newtype instance Header (HardForkBlock xs) = HardForkHeader {
@@ -57,7 +57,7 @@ instance Typeable xs => ShowProxy (Header (HardForkBlock xs)) where
 instance CanHardFork xs => GetHeader (HardForkBlock xs) (HardForkBlock xs) where
   getHeader = HardForkHeader . oneEraBlockHeader . getHardForkBlock
 
-instance CanHardFork xs => SupportsHeaderValidation (HardForkBlock xs) where
+instance CanHardFork xs => BlockSupportsHeader (HardForkBlock xs) where
   blockMatchesHeader = \hdr blk ->
       case Match.matchNS
              (getOneEraHeader (getHardForkHeader hdr))
@@ -66,7 +66,7 @@ instance CanHardFork xs => SupportsHeaderValidation (HardForkBlock xs) where
         Right hdrAndBlk ->
           hcollapse $ hcliftA proxySingle matchesSingle hdrAndBlk
     where
-      matchesSingle :: SupportsHeaderValidation blk => Product Header I blk -> K Bool blk
+      matchesSingle :: BlockSupportsHeader blk => Product Header I blk -> K Bool blk
       matchesSingle (Pair hdr (I blk)) = K (blockMatchesHeader hdr blk)
 
   headerIsEBB =
