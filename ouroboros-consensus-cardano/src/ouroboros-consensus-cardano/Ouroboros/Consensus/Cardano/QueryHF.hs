@@ -10,7 +10,9 @@
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilyDependencies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
@@ -24,119 +26,96 @@
 
 module Ouroboros.Consensus.Cardano.QueryHF () where
 
+import           Data.Functor.Product
+import           Data.Proxy
+import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
 import           Data.SOP.Index
+import           Data.SOP.Strict
+import           NoThunks.Class
 import           Ouroboros.Consensus.Byron.Ledger
 import           Ouroboros.Consensus.Byron.Node ()
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.CanHardFork
 import           Ouroboros.Consensus.Cardano.Ledger
 import           Ouroboros.Consensus.HardFork.Combinator
+import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query
+import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Shelley.HFEras ()
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Node ()
 import           Ouroboros.Consensus.Shelley.Protocol.Praos ()
+import           Ouroboros.Consensus.Storage.LedgerDB.API
+import           Ouroboros.Consensus.TypeFamilyWrappers
+
+-- | Just to have the @x@ as the last type variable
+newtype FlipBlockQuery footprint result x =
+  FlipBlockQuery (BlockQuery x footprint result)
+
+answerCardanoQueryHF ::
+  ( xs ~ CardanoEras c
+  , CardanoHardForkConstraints c
+  , All (Compose NoThunks WrapTxOut) xs
+  )
+  => (   forall blk.
+         IsShelleyBlock blk
+      => Index xs blk
+      -> ExtLedgerCfg blk
+      -> BlockQuery blk footprint result
+      -> ReadOnlyForker' m (HardForkBlock xs)
+      -> m result
+     )
+  -> Index xs x
+  -> ExtLedgerCfg x
+  -> BlockQuery x footprint result
+  -> ReadOnlyForker' m (HardForkBlock xs)
+  -> m result
+answerCardanoQueryHF f idx cfg q dlv =
+  hcollapse $
+   hap
+   (   (Fn $ \(Pair _ (FlipBlockQuery q')) -> case q' of {})
+    :* hcmap
+         (Proxy @(IsShelleyBlock))
+         (\idx' -> Fn $ \(Pair cfg' (FlipBlockQuery q')) -> K $ f (IS idx') cfg' q' dlv)
+         indices
+   )
+   (injectNS idx (Pair cfg (FlipBlockQuery q)))
+
+shelleyCardanoFilter ::
+     forall proto era c result.
+     ( CardanoHardForkConstraints c
+     , EraCrypto era ~ c
+     , ShelleyCompatible proto era
+     )
+  => BlockQuery (ShelleyBlock proto era) QFTraverseTables result
+  -> TxOut (LedgerState (HardForkBlock (CardanoEras c)))
+  -> Bool
+shelleyCardanoFilter q = eliminateCardanoTxOut (\_ -> shelleyQFTraverseTablesPredicate q)
 
 instance CardanoHardForkConstraints c => BlockSupportsHFLedgerQuery (CardanoEras c) where
-  answerBlockQueryHFLookup IZ _cfg (q :: BlockQuery ByronBlock QFLookupTables result) _dlv =
-    case q of {}
-  answerBlockQueryHFLookup idx@(IS IZ) cfg q dlv =
-    answerShelleyLookupQueries idx cfg q dlv
-  answerBlockQueryHFLookup idx@(IS (IS IZ)) cfg q dlv =
-    answerShelleyLookupQueries idx cfg q dlv
-  answerBlockQueryHFLookup idx@(IS (IS (IS IZ))) cfg q dlv =
-    answerShelleyLookupQueries idx cfg q dlv
-  answerBlockQueryHFLookup idx@(IS (IS (IS (IS IZ)))) cfg q dlv =
-    answerShelleyLookupQueries idx cfg q dlv
-  answerBlockQueryHFLookup idx@(IS (IS (IS (IS (IS IZ))))) cfg q dlv =
-    answerShelleyLookupQueries idx cfg q dlv
-  answerBlockQueryHFLookup idx@(IS (IS (IS (IS (IS (IS IZ)))))) cfg q dlv =
-    answerShelleyLookupQueries idx cfg q dlv
-  answerBlockQueryHFLookup (IS (IS (IS (IS (IS (IS (IS idx))))))) _cfg _q _dlv =
-    case idx of {}
+  answerBlockQueryHFLookup   =
+    answerCardanoQueryHF
+      (\idx -> answerShelleyLookupQueries
+                (injectLedgerTables idx)
+                (ejectHardForkTxOut idx)
+                (ejectCanonicalTxIn idx)
+      )
+  answerBlockQueryHFTraverse =
+    answerCardanoQueryHF
+      (\idx -> answerShelleyTraversingQueries
+                (ejectHardForkTxOut idx)
+                (ejectCanonicalTxIn idx)
+                (queryLedgerGetTraversingFilter idx)
+      )
 
-  answerBlockQueryHFTraverse IZ _cfg (q :: BlockQuery ByronBlock QFTraverseTables result) _dlv =
-    case q of {}
-  answerBlockQueryHFTraverse idx@(IS IZ) cfg q dlv =
-    answerShelleyTraversingQueries idx cfg q dlv
-  answerBlockQueryHFTraverse idx@(IS (IS IZ)) cfg q dlv =
-    answerShelleyTraversingQueries idx cfg q dlv
-  answerBlockQueryHFTraverse idx@(IS (IS (IS IZ))) cfg q dlv =
-    answerShelleyTraversingQueries idx cfg q dlv
-  answerBlockQueryHFTraverse idx@(IS (IS (IS (IS IZ)))) cfg q dlv =
-    answerShelleyTraversingQueries idx cfg q dlv
-  answerBlockQueryHFTraverse idx@(IS (IS (IS (IS (IS IZ))))) cfg q dlv =
-    answerShelleyTraversingQueries idx cfg q dlv
-  answerBlockQueryHFTraverse idx@(IS (IS (IS (IS (IS (IS IZ)))))) cfg q dlv =
-    answerShelleyTraversingQueries idx cfg q dlv
-  answerBlockQueryHFTraverse (IS (IS (IS (IS (IS (IS (IS idx))))))) _cfg _q _dlv =
-    case idx of {}
-
-  queryLedgerGetTraversingFilter IZ (q :: BlockQuery ByronBlock QFTraverseTables result) = case q of {}
-  queryLedgerGetTraversingFilter idx@(IS IZ) q = case q of
-    GetUTxOByAddress addrs -> \case
-      ShelleyTxOut x -> filterGetUTxOByAddressOne addrs x
-      AllegraTxOut x -> filterGetUTxOByAddressOne addrs x
-      MaryTxOut x -> filterGetUTxOByAddressOne addrs x
-      AlonzoTxOut x -> filterGetUTxOByAddressOne addrs x
-      BabbageTxOut x -> filterGetUTxOByAddressOne addrs x
-      ConwayTxOut x -> filterGetUTxOByAddressOne addrs x
-    GetUTxOWhole ->
-      const True
-    GetCBOR q' -> queryLedgerGetTraversingFilter idx q'
-  queryLedgerGetTraversingFilter idx@(IS (IS IZ)) q = case q of
-    GetUTxOByAddress addrs -> \case
-      ShelleyTxOut x -> filterGetUTxOByAddressOne addrs x
-      AllegraTxOut x -> filterGetUTxOByAddressOne addrs x
-      MaryTxOut x -> filterGetUTxOByAddressOne addrs x
-      AlonzoTxOut x -> filterGetUTxOByAddressOne addrs x
-      BabbageTxOut x -> filterGetUTxOByAddressOne addrs x
-      ConwayTxOut x -> filterGetUTxOByAddressOne addrs x
-    GetUTxOWhole ->
-      const True
-    GetCBOR q' -> queryLedgerGetTraversingFilter idx q'
-  queryLedgerGetTraversingFilter idx@(IS (IS (IS IZ))) q = case q of
-    GetUTxOByAddress addrs -> \case
-      ShelleyTxOut x -> filterGetUTxOByAddressOne addrs x
-      AllegraTxOut x -> filterGetUTxOByAddressOne addrs x
-      MaryTxOut x -> filterGetUTxOByAddressOne addrs x
-      AlonzoTxOut x -> filterGetUTxOByAddressOne addrs x
-      BabbageTxOut x -> filterGetUTxOByAddressOne addrs x
-      ConwayTxOut x -> filterGetUTxOByAddressOne addrs x
-    GetUTxOWhole ->
-      const True
-    GetCBOR q' -> queryLedgerGetTraversingFilter idx q'
-  queryLedgerGetTraversingFilter idx@(IS (IS (IS (IS IZ)))) q = case q of
-    GetUTxOByAddress addrs -> \case
-      ShelleyTxOut x -> filterGetUTxOByAddressOne addrs x
-      AllegraTxOut x -> filterGetUTxOByAddressOne addrs x
-      MaryTxOut x -> filterGetUTxOByAddressOne addrs x
-      AlonzoTxOut x -> filterGetUTxOByAddressOne addrs x
-      BabbageTxOut x -> filterGetUTxOByAddressOne addrs x
-      ConwayTxOut x -> filterGetUTxOByAddressOne addrs x
-    GetUTxOWhole ->
-      const True
-    GetCBOR q' -> queryLedgerGetTraversingFilter idx q'
-  queryLedgerGetTraversingFilter idx@(IS (IS (IS (IS (IS IZ))))) q = case q of
-    GetUTxOByAddress addrs -> \case
-      ShelleyTxOut x -> filterGetUTxOByAddressOne addrs x
-      AllegraTxOut x -> filterGetUTxOByAddressOne addrs x
-      MaryTxOut x -> filterGetUTxOByAddressOne addrs x
-      AlonzoTxOut x -> filterGetUTxOByAddressOne addrs x
-      BabbageTxOut x -> filterGetUTxOByAddressOne addrs x
-      ConwayTxOut x -> filterGetUTxOByAddressOne addrs x
-    GetUTxOWhole ->
-      const True
-    GetCBOR q' -> queryLedgerGetTraversingFilter idx q'
-  queryLedgerGetTraversingFilter idx@(IS (IS (IS (IS (IS (IS IZ)))))) q = case q of
-    GetUTxOByAddress addrs -> \case
-      ShelleyTxOut x -> filterGetUTxOByAddressOne addrs x
-      AllegraTxOut x -> filterGetUTxOByAddressOne addrs x
-      MaryTxOut x -> filterGetUTxOByAddressOne addrs x
-      AlonzoTxOut x -> filterGetUTxOByAddressOne addrs x
-      BabbageTxOut x -> filterGetUTxOByAddressOne addrs x
-      ConwayTxOut x -> filterGetUTxOByAddressOne addrs x
-    GetUTxOWhole ->
-      const True
-    GetCBOR q' -> queryLedgerGetTraversingFilter idx q'
-  queryLedgerGetTraversingFilter (IS (IS (IS (IS (IS (IS (IS idx))))))) _ = case idx of {}
+  queryLedgerGetTraversingFilter idx q = case idx of
+    -- Byron
+    IZ                             -> case q of {}
+    -- Shelley based
+    IS IZ                          -> shelleyCardanoFilter q
+    IS (IS IZ)                     -> shelleyCardanoFilter q
+    IS (IS (IS IZ))                -> shelleyCardanoFilter q
+    IS (IS (IS (IS IZ)))           -> shelleyCardanoFilter q
+    IS (IS (IS (IS (IS IZ))))      -> shelleyCardanoFilter q
+    IS (IS (IS (IS (IS (IS IZ))))) -> shelleyCardanoFilter q
