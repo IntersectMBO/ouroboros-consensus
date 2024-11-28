@@ -9,6 +9,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -42,11 +43,12 @@ import           Data.SOP.BasicFunctors
 import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.Index (Index (..))
 import qualified Data.SOP.InPairs as InPairs
-import           Data.SOP.Strict (NP (..), NS (..))
+import           Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
 import           Data.Void (Void)
 import           Lens.Micro ((^.))
 import           NoThunks.Class (NoThunks)
+import           Ouroboros.Consensus.Block.Abstract (BlockProtocol)
 import           Ouroboros.Consensus.Block.Forging (BlockForging)
 import           Ouroboros.Consensus.Cardano.CanHardFork
                      (ShelleyPartialLedgerConfig (..),
@@ -59,6 +61,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import           Ouroboros.Consensus.HardFork.Combinator.State.Types as HFC
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
@@ -69,6 +72,7 @@ import           Ouroboros.Consensus.Protocol.TPraos
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Node
+import           Ouroboros.Consensus.Storage.LedgerDB.API
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util (eitherToMaybe)
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
@@ -156,6 +160,8 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
   , LedgerSupportsProtocol (ShelleyBlock proto2 era2)
   , TxLimits (ShelleyBlock proto1 era1)
   , TxLimits (ShelleyBlock proto2 era2)
+  , BlockProtocol (ShelleyBlock proto1 era1) ~ proto1
+  , BlockProtocol (ShelleyBlock proto2 era2) ~ proto2
   , TranslateTxMeasure (TxMeasure (ShelleyBlock proto1 era1)) (TxMeasure (ShelleyBlock proto2 era2))
   , SL.PreviousEra era2 ~ era1
 
@@ -287,36 +293,52 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
   Query HF
 -------------------------------------------------------------------------------}
 
+answerShelleyBasedQueryHF ::
+  ( xs ~ '[ShelleyBlock proto1 era1, ShelleyBlock proto2 era2]
+  , ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
+  )
+  => (   forall blk.
+         IsShelleyBlock blk
+      => Index xs blk
+      -> ExtLedgerCfg blk
+      -> BlockQuery blk footprint result
+      -> ReadOnlyForker' m (HardForkBlock xs)
+      -> m result
+     )
+  -> Index xs x
+  -> ExtLedgerCfg x
+  -> BlockQuery x footprint result
+  -> ReadOnlyForker' m (HardForkBlock xs)
+  -> m result
+answerShelleyBasedQueryHF f idx cfgs q forker = case idx of
+    IZ           -> f idx cfgs q forker
+    IS IZ        -> f idx cfgs q forker
+    IS (IS idx') -> case idx' of {}
+
 instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
       => BlockSupportsHFLedgerQuery '[ShelleyBlock proto1 era1, ShelleyBlock proto2 era2] where
-  answerBlockQueryHFLookup idx@IZ cfg q dlv =
-    answerShelleyLookupQueries idx cfg q dlv
-  answerBlockQueryHFLookup idx@(IS IZ) cfg q dlv =
-    answerShelleyLookupQueries idx cfg q dlv
-  answerBlockQueryHFLookup (IS (IS idx)) _cfg _q _dlv =
-    case idx of {}
+  answerBlockQueryHFLookup =
+    answerShelleyBasedQueryHF
+      (\idx -> answerShelleyLookupQueries
+                 (injectLedgerTables idx)
+                 (ejectHardForkTxOutDefault idx)
+                 (ejectCanonicalTxIn idx)
+      )
 
-  answerBlockQueryHFTraverse idx@IZ cfg q dlv =
-    answerShelleyTraversingQueries idx cfg q dlv
-  answerBlockQueryHFTraverse idx@(IS IZ) cfg q dlv =
-    answerShelleyTraversingQueries idx cfg q dlv
-  answerBlockQueryHFTraverse (IS (IS idx)) _cfg _q _dlv =
-    case idx of {}
+  answerBlockQueryHFTraverse =
+    answerShelleyBasedQueryHF
+      (\idx -> answerShelleyTraversingQueries
+                 (ejectHardForkTxOutDefault idx)
+                 (ejectCanonicalTxIn idx)
+                 (queryLedgerGetTraversingFilter @('[ShelleyBlock proto1 era1, ShelleyBlock proto2 era2]) idx)
+      )
 
-  queryLedgerGetTraversingFilter idx@IZ q = case q of
-    GetUTxOByAddress addrs -> \case
-      Z (WrapTxOut x) -> filterGetUTxOByAddressOne addrs x
-      S (Z (WrapTxOut x)) -> filterGetUTxOByAddressOne addrs x
-    GetUTxOWhole ->
-      const True
-    GetCBOR q' -> queryLedgerGetTraversingFilter idx q'
-  queryLedgerGetTraversingFilter idx@(IS IZ) q = case q of
-    GetUTxOByAddress addrs -> \case
-      Z (WrapTxOut x) -> filterGetUTxOByAddressOne addrs x
-      S (Z (WrapTxOut x)) -> filterGetUTxOByAddressOne addrs x
-    GetUTxOWhole ->
-      const True
-    GetCBOR q' -> queryLedgerGetTraversingFilter idx q'
+  queryLedgerGetTraversingFilter IZ q = \case
+    Z (WrapTxOut x) -> shelleyQFTraverseTablesPredicate q x
+    S (Z (WrapTxOut x)) -> shelleyQFTraverseTablesPredicate q x
+  queryLedgerGetTraversingFilter (IS IZ) q = \case
+    Z (WrapTxOut x) -> shelleyQFTraverseTablesPredicate q x
+    S (Z (WrapTxOut x)) -> shelleyQFTraverseTablesPredicate q x
   queryLedgerGetTraversingFilter (IS (IS idx)) _q = case idx of {}
 
 {-------------------------------------------------------------------------------
