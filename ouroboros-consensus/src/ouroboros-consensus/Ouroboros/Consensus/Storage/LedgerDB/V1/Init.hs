@@ -9,6 +9,9 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
+-- | Many functions here are very similar to the ones in
+-- "Ouroboros.Consensus.Storage.LedgerDB.V2.Init". When we delete V1, this
+-- module will be gone.
 module Ouroboros.Consensus.Storage.LedgerDB.V1.Init (mkInitDb) where
 
 import           Control.Monad
