@@ -68,7 +68,6 @@ import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as BSC
 import           Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as Short
-import           Data.Function (on)
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
@@ -248,9 +247,6 @@ getSameValue values =
         = return ()
         | otherwise
         = throwError "differing values across hard fork"
-
-oneEraGenTxIdRawHash :: CanHardFork xs => OneEraGenTxId xs -> ShortByteString
-oneEraGenTxIdRawHash = getOneEraGenTxId
 
 {-------------------------------------------------------------------------------
   NoThunks instances
