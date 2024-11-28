@@ -23,7 +23,6 @@ import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as Enc
 import qualified Codec.Serialise as Serialise
 import           Control.Exception (throw)
-import           Data.ByteString.Short (ShortByteString)
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
@@ -39,15 +38,14 @@ import           Ouroboros.Consensus.HardFork.Combinator.Mempool
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation.SerialiseDisk ()
 import           Ouroboros.Consensus.HardFork.History (EraParamsFormat (..))
-import           Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId,
-                     toRawTxIdHash)
+import           Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Node.Serialisation
-import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util ((.:))
 import           Ouroboros.Network.Block (Serialised, unwrapCBORinCBOR,
                      wrapCBORinCBOR)
+import           Data.ByteString.Short (ShortByteString)
 
 instance SerialiseHFC xs => SerialiseNodeToClientConstraints (HardForkBlock xs)
 
@@ -172,7 +170,7 @@ instance SerialiseHFC xs
   -- need to handle the cases where 'ShortByteString's are serialised with
   -- an era tag ('encodeNS').
 
-  encodeNodeToClient cc v (HardForkGenTxId (OneEraGenTxId txid)) =
+  encodeNodeToClient _cc v (HardForkGenTxId (OneEraGenTxId txid)) =
     case v of
       HardForkNodeToClientEnabled hfv _ | hfv >= HardForkSpecificNodeToClientVersion4 ->
         Serialise.encode txid
@@ -182,31 +180,13 @@ instance SerialiseHFC xs
         encodeNS (hpure $ Fn $ K . Serialise.encode . unK) blessedGenTxId
       HardForkNodeToClientDisabled _ ->
         Serialise.encode txid
-  decodeNodeToClient cc v =
+  decodeNodeToClient _cc v =
     fmap (HardForkGenTxId . OneEraGenTxId) $
       case v of
-        HardForkNodeToClientEnabled hfc vs
+        HardForkNodeToClientEnabled hfc _
           | hfc >= HardForkSpecificNodeToClientVersion4 -> do
             Serialise.decode
-            -- let aux :: forall s blk . SerialiseConstraintsHFC blk
-            --         => CodecConfig blk
-            --         -> EraNodeToClientVersion blk
-            --         -> K () blk
-            --         -> (Decoder s :.: WrapGenTxId) blk
-            --     aux ecc vv _ = Comp $ case vv of
-            --       EraNodeToClientEnabled bv -> do
-            --         decodeNodeToClient ecc bv
-            --       EraNodeToClientDisabled ->
-            --         -- Is this sensible? What should the behaviour be when the
-            --         -- blessed GenTxId era is disabled by EraNodeToClientDisabled?
-            --         fail $ show $ disabledEraException (Proxy @blk)
-            -- htraverse' unComp $
-            --   hcliftA3 pSHFC
-            --     aux
-            --     (getPerEraCodecConfig (hardForkCodecConfigPerEra cc))
-            --     vs
-            --     blessedGenTxIdEra
-        HardForkNodeToClientEnabled _ _ ->do
+        HardForkNodeToClientEnabled _ _ -> do
           let eraDecoders :: NP (Decoder s :.: K ShortByteString) xs
               eraDecoders = hpure $ Comp $ K <$> Serialise.decode
           hcollapse <$> decodeNS eraDecoders
