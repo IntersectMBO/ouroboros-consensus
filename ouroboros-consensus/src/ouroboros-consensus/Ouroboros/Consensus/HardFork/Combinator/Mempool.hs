@@ -139,7 +139,7 @@ instance ( CanHardFork xs
         (\(err, val, st') ->
            ReapplyTxsResult (mismatched' ++ err) val (TickedHardForkLedgerState transition st'))
       . hsequence'
-      $ hcizipWith proxySingle modeApplyCurrent cfgs matched
+      $ hcizipWith proxySingle modeApplyCurrent cfgs (State.HardForkState $ hmap flipCurrentAndProduct matched)
 
     where
       pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
@@ -149,13 +149,15 @@ instance ( CanHardFork xs
                 transition
                 hardForkState
 
+      flipCurrentAndProduct (Pair (State.Current c s) b) = State.Current c (Pair s b)
+
       -- Transactions are unwrapped into the particular era transactions.
       (mismatched, matched) =
-        matchPolyTxs
+        matchPolyTxsTele
           -- How to translate txs to later eras
           (InPairs.hmap snd2 (InPairs.requiringBoth cfgs hardForkInjectTxs))
+          (State.getHardForkState hardForkState)
           (map (getOneEraValidatedGenTx . getHardForkValidatedGenTx) vtxs)
-          hardForkState
 
       mismatched' :: [Invalidated (HardForkBlock xs)]
       mismatched' =
@@ -174,10 +176,10 @@ instance ( CanHardFork xs
         => Index xs                            blk
         -> WrapLedgerConfig                    blk
         -> Product
-             ([] :.: WrapValidatedGenTx)
-             (FlipTickedLedgerState ValuesMK)  blk
-        -> DecomposedReapplyTxsResult xs         blk
-      modeApplyCurrent index cfg (Pair txs (FlipTickedLedgerState st)) =
+             (FlipTickedLedgerState ValuesMK)
+             ([] :.: WrapValidatedGenTx)       blk
+        -> DecomposedReapplyTxsResult xs       blk
+      modeApplyCurrent index cfg (Pair (FlipTickedLedgerState st) txs) =
         let ReapplyTxsResult err val st' =
               reapplyTxs (unwrapLedgerConfig cfg) slot [ unwrapValidatedGenTx t | t <- unComp txs ] st
         in Comp

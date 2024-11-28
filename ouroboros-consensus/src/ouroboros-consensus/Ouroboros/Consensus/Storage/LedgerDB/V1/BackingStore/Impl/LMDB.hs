@@ -2,13 +2,14 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | A 'BackingStore' implementation based on [LMDB](http://www.lmdb.tech/doc/).
 module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB (
@@ -138,16 +139,13 @@ getDb ::
   -> LMDB.Transaction mode (LMDBMK k v)
 getDb (K2 name) = LMDBMK name <$> LMDB.getDatabase (Just name)
 
--- | @'rangeRead' count dbMK codecMK ksMK@ performs a range read of @count@
--- values from database @dbMK@, starting from some key depending on @ksMK@.
+-- | @'rangeRead' rq dbMK codecMK @ performs a range read of @rqCount rq@
+-- values from database @dbMK@, starting from some key depending on @rqPrev rq@.
 --
 -- The @codec@ argument defines how to serialise/deserialise keys and values.
 --
 -- A range read can return less than @count@ values if there are not enough
 -- values to read.
---
--- Note: See 'RangeQuery' for more information about range queries. In
--- particular, 'rqPrev' describes the role of @ksMay@.
 --
 -- What the "first" key in the database is, and more generally in which order
 -- keys are read, depends on the lexographical ordering of the /serialised/
@@ -155,25 +153,27 @@ getDb (K2 name) = LMDBMK name <$> LMDB.getDatabase (Just name)
 -- lexicographical ordering of the serialised keys, or the result of this
 -- function will be unexpected.
 rangeRead ::
-     forall k v mode. Ord k
-  => Int
-  -> LMDBMK k v
-  -> CodecMK k v
-  -> (Maybe :..: KeysMK) k v
-  -> LMDB.Transaction mode (ValuesMK k v)
-rangeRead count dbMK codecMK ksMK =
-    ValuesMK <$> case unComp2 ksMK of
+     forall mode l.
+     Ord (TxIn l)
+  => API.RangeQuery (LedgerTables l KeysMK)
+  -> LMDBMK (TxIn l) (TxOut l)
+  -> CodecMK (TxIn l) (TxOut l)
+  -> LMDB.Transaction mode (ValuesMK (TxIn l) (TxOut l))
+rangeRead rq dbMK codecMK =
+    ValuesMK <$> case ksMK of
       Nothing -> runCursorHelper Nothing
-      Just (KeysMK ks) -> case Set.lookupMax ks of
+      Just (LedgerTables (KeysMK ks)) -> case Set.lookupMax ks of
         Nothing -> pure mempty
         Just lastExcludedKey ->
           runCursorHelper $ Just (lastExcludedKey, LMDB.Cursor.Exclusive)
   where
     LMDBMK _ db = dbMK
 
+    API.RangeQuery ksMK count = rq
+
     runCursorHelper ::
-         Maybe (k, LMDB.Cursor.Bound)    -- ^ Lower bound on read range
-      -> LMDB.Transaction mode (Map k v)
+         Maybe (TxIn l, LMDB.Cursor.Bound)    -- ^ Lower bound on read range
+      -> LMDB.Transaction mode (Map (TxIn l) (TxOut l))
     runCursorHelper lb =
       Bridge.runCursorAsTransaction'
         (LMDB.Cursor.cgetMany lb count)
@@ -553,7 +553,8 @@ mkLMDBBackingStoreValueHandle db = do
       Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
       Status.withReadAccess vhStatusLock (throwIO (LMDBErrNoValueHandle vhId)) $ do
         Trace.traceWith tracer API.BSVHReading
-        res <- liftIO $ TrH.submitReadOnly trh (ltzipWith3A readLMDBTable dbBackingTables codecLedgerTables keys)
+        res <- liftIO $ TrH.submitReadOnly trh $
+          ltzipWith3A readLMDBTable dbBackingTables codecLedgerTables keys
         Trace.traceWith tracer API.BSVHRead
         pure res
 
@@ -564,26 +565,12 @@ mkLMDBBackingStoreValueHandle db = do
       Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
       Status.withReadAccess vhStatusLock (throwIO (LMDBErrNoValueHandle vhId)) $ do
         Trace.traceWith tracer API.BSVHRangeReading
-
-        let
-          outsideIn ::
-              Maybe (LedgerTables l mk1)
-            -> LedgerTables l (Maybe :..: mk1)
-          outsideIn Nothing       = ltpure (Comp2 Nothing)
-          outsideIn (Just tables) = ltmap (Comp2 . Just) tables
-
-          transaction =
-            ltzipWith3A
-              (rangeRead rqCount)
-              dbBackingTables
-              codecLedgerTables
-              (outsideIn rqPrev)
-
-        res <- liftIO $ TrH.submitReadOnly trh transaction
+        res <- liftIO $ TrH.submitReadOnly trh $
+          let dbMK = getLedgerTables dbBackingTables
+              codecMK = getLedgerTables (codecLedgerTables @l)
+          in LedgerTables <$> rangeRead rq dbMK codecMK
         Trace.traceWith tracer API.BSVHRangeRead
         pure res
-     where
-      API.RangeQuery rqPrev rqCount = rq
 
     bsvhStat :: m API.Statistics
     bsvhStat =

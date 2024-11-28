@@ -424,18 +424,16 @@ instance ( ShelleyCompatible proto era
          , HasHardForkTxOut '[ShelleyBlock proto era]
          ) => BlockSupportsHFLedgerQuery '[ShelleyBlock proto era] where
 
-  answerBlockQueryHFLookup IZ cfg q dlv   =
-    answerShelleyLookupQueries IZ cfg q dlv
-  answerBlockQueryHFLookup (IS idx) _ _ _ = case idx of  {}
+  answerBlockQueryHFLookup IZ =
+    answerShelleyLookupQueries (injectLedgerTables IZ) id (ejectCanonicalTxIn IZ)
+  answerBlockQueryHFLookup (IS idx) = case idx of  {}
 
-  answerBlockQueryHFTraverse IZ cfg q dlv   =
-    answerShelleyTraversingQueries IZ cfg q dlv
-  answerBlockQueryHFTraverse (IS idx) _ _ _ = case idx of {}
+  answerBlockQueryHFTraverse IZ =
+    answerShelleyTraversingQueries
+      id
+      (ejectCanonicalTxIn IZ)
+      (queryLedgerGetTraversingFilter @('[ShelleyBlock proto era]) IZ)
+  answerBlockQueryHFTraverse (IS idx) = case idx of {}
 
-  queryLedgerGetTraversingFilter idx@IZ       = \case
-    GetUTxOByAddress addrs ->
-      filterGetUTxOByAddressOne addrs
-    GetUTxOWhole ->
-      const True
-    GetCBOR q' -> queryLedgerGetTraversingFilter idx q'
+  queryLedgerGetTraversingFilter IZ       = shelleyFilter
   queryLedgerGetTraversingFilter (IS idx) = case idx of {}
