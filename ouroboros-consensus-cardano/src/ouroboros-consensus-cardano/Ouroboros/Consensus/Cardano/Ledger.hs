@@ -7,16 +7,22 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Ouroboros.Consensus.Cardano.Ledger (CardanoTxOut (..)) where
+module Ouroboros.Consensus.Cardano.Ledger (
+    CardanoTxOut (..)
+  , eliminateCardanoTxOut
+  ) where
 
 import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -27,6 +33,7 @@ import qualified Data.SOP.InPairs as InPairs
 import           Data.Void
 import           GHC.Generics
 import           NoThunks.Class
+import           Ouroboros.Consensus.Block (BlockProtocol)
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.CanHardFork
 import           Ouroboros.Consensus.HardFork.Combinator
@@ -34,7 +41,10 @@ import           Ouroboros.Consensus.HardFork.Combinator.State.Types
 import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
-import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
+import           Ouroboros.Consensus.Shelley.Ledger (IsShelleyBlock,
+                     ShelleyBlock, ShelleyBlockLedgerEra)
+import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
+import           Ouroboros.Consensus.TypeFamilyWrappers
 
 instance CardanoHardForkConstraints c
       => HasCanonicalTxIn (CardanoEras c) where
@@ -94,107 +104,70 @@ data CardanoTxOut c =
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
-instance CardanoHardForkConstraints c => HasHardForkTxOut (CardanoEras c) where
-  type instance HardForkTxOut (CardanoEras c) = CardanoTxOut c
-  injectHardForkTxOut IZ _txOut = error "Impossible: injecting TxOut from Byron"
-  injectHardForkTxOut (IS IZ) txOut = ShelleyTxOut txOut
-  injectHardForkTxOut (IS (IS IZ)) txOut = AllegraTxOut txOut
-  injectHardForkTxOut (IS (IS (IS IZ))) txOut = MaryTxOut txOut
-  injectHardForkTxOut (IS (IS (IS (IS IZ)))) txOut = AlonzoTxOut txOut
-  injectHardForkTxOut (IS (IS (IS (IS (IS IZ))))) txOut = BabbageTxOut txOut
-  injectHardForkTxOut (IS (IS (IS (IS (IS (IS IZ)))))) txOut = ConwayTxOut txOut
-  injectHardForkTxOut (IS (IS (IS (IS (IS (IS (IS idx))))))) _txOut = case idx of {}
+-- | Eliminate the wrapping of CardanoTxOut with the provided function. Similar
+-- to 'hcimap' on an 'NS'.
+eliminateCardanoTxOut ::
+     forall r c. CardanoHardForkConstraints c
+  => (forall x.
+         -- TODO ProtoCrypto constraint should be in IsShelleyBlock
+         ( IsShelleyBlock x
+         , ProtoCrypto (BlockProtocol x) ~ EraCrypto (ShelleyBlockLedgerEra x)
+         , EraCrypto (ShelleyBlockLedgerEra x) ~ c
+         )
+      => Index (CardanoEras c) x
+      -> TxOut (LedgerState x)
+      -> r
+     )
+  -> CardanoTxOut c -> r
+eliminateCardanoTxOut f = \case
+  ShelleyTxOut txout -> f (IS IZ) txout
+  AllegraTxOut txout -> f (IS (IS IZ)) txout
+  MaryTxOut txout    -> f (IS (IS (IS IZ))) txout
+  AlonzoTxOut txout  -> f (IS (IS (IS (IS IZ)))) txout
+  BabbageTxOut txout -> f (IS (IS (IS (IS (IS IZ))))) txout
+  ConwayTxOut txout  -> f (IS (IS (IS (IS (IS (IS IZ)))))) txout
 
-  ejectHardForkTxOut IZ = error "Impossible: distributing TxOut to Byron"
-  ejectHardForkTxOut (IS IZ) = \case
-    ShelleyTxOut txout -> txout
-    _ -> error "Anachrony"
-  ejectHardForkTxOut (IS (IS IZ)) = \case
-    ShelleyTxOut txout ->
-      case translateLedgerTables (hardForkEraTranslation @(CardanoEras c)) of
-        InPairs.PCons _ (InPairs.PCons p _) -> translateTxOutWith p txout
-    AllegraTxOut txout -> txout
-    _ -> error "Anachrony"
-  ejectHardForkTxOut (IS (IS (IS IZ))) = \case
-    ShelleyTxOut txout ->
-      case translateLedgerTables (hardForkEraTranslation @(CardanoEras c)) of
-        InPairs.PCons _ (InPairs.PCons p1 (InPairs.PCons p2 _)) -> translateTxOutWith p2 $ translateTxOutWith p1 txout
-    AllegraTxOut txout ->
-      case translateLedgerTables (hardForkEraTranslation @(CardanoEras c)) of
-        InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons p2 _)) -> translateTxOutWith p2 txout
-    MaryTxOut txout -> txout
-    _ -> error "Anachrony"
-  ejectHardForkTxOut (IS (IS (IS (IS IZ)))) = \case
-    ShelleyTxOut txout ->
-      case translateLedgerTables (hardForkEraTranslation @(CardanoEras c)) of
-        InPairs.PCons _ (InPairs.PCons p1 (InPairs.PCons p2 (InPairs.PCons p3 _))) -> translateTxOutWith p3 $ translateTxOutWith p2 $ translateTxOutWith p1 txout
-    AllegraTxOut txout ->
-      case translateLedgerTables (hardForkEraTranslation @(CardanoEras c)) of
-        InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons p2 (InPairs.PCons p3 _))) -> translateTxOutWith p3 $ translateTxOutWith p2 txout
-    MaryTxOut txout ->
-      case translateLedgerTables (hardForkEraTranslation @(CardanoEras c)) of
-        InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons p3 _))) -> translateTxOutWith p3 txout
-    AlonzoTxOut txout -> txout
-    _ -> error "Anachrony"
-  ejectHardForkTxOut (IS (IS (IS (IS (IS IZ))))) = \case
-    ShelleyTxOut txout ->
-      case translateLedgerTables (hardForkEraTranslation @(CardanoEras c)) of
-        InPairs.PCons _ (InPairs.PCons p1 (InPairs.PCons p2 (InPairs.PCons p3 (InPairs.PCons p4 _)))) -> translateTxOutWith p4 $ translateTxOutWith p3 $ translateTxOutWith p2 $ translateTxOutWith p1 txout
-    AllegraTxOut txout ->
-      case translateLedgerTables (hardForkEraTranslation @(CardanoEras c)) of
-        InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons p2 (InPairs.PCons p3 (InPairs.PCons p4 _)))) -> translateTxOutWith p4 $ translateTxOutWith p3 $ translateTxOutWith p2 txout
-    MaryTxOut txout ->
-      case translateLedgerTables (hardForkEraTranslation @(CardanoEras c)) of
-        InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons p3 (InPairs.PCons p4 _)))) -> translateTxOutWith p4 $ translateTxOutWith p3 txout
-    AlonzoTxOut txout ->
-      case translateLedgerTables (hardForkEraTranslation @(CardanoEras c)) of
-        InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons p4 _)))) -> translateTxOutWith p4 txout
-    BabbageTxOut txout -> txout
-    _ -> error "Anachrony"
-  ejectHardForkTxOut (IS (IS (IS (IS (IS (IS IZ)))))) = \case
-    ShelleyTxOut txout ->
-      case translateLedgerTables (hardForkEraTranslation @(CardanoEras c)) of
-        InPairs.PCons _ (InPairs.PCons p1 (InPairs.PCons p2 (InPairs.PCons p3 (InPairs.PCons p4 (InPairs.PCons p5 _))))) -> translateTxOutWith p5 $ translateTxOutWith p4 $ translateTxOutWith p3 $ translateTxOutWith p2 $ translateTxOutWith p1 txout
-    AllegraTxOut txout ->
-      case translateLedgerTables (hardForkEraTranslation @(CardanoEras c)) of
-        InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons p2 (InPairs.PCons p3 (InPairs.PCons p4 (InPairs.PCons p5 _))))) -> translateTxOutWith p5 $ translateTxOutWith p4 $ translateTxOutWith p3 $ translateTxOutWith p2 txout
-    MaryTxOut txout ->
-      case translateLedgerTables (hardForkEraTranslation @(CardanoEras c)) of
-        InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons p3 (InPairs.PCons p4 (InPairs.PCons p5 _))))) -> translateTxOutWith p5 $ translateTxOutWith p4 $ translateTxOutWith p3 txout
-    AlonzoTxOut txout ->
-      case translateLedgerTables (hardForkEraTranslation @(CardanoEras c)) of
-        InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons p4 (InPairs.PCons p5 _))))) -> translateTxOutWith p5 $ translateTxOutWith p4 txout
-    BabbageTxOut txout ->
-      case translateLedgerTables (hardForkEraTranslation @(CardanoEras c)) of
-        InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons _ (InPairs.PCons p5 _))))) -> translateTxOutWith p5 txout
-    ConwayTxOut txout -> txout
-  ejectHardForkTxOut (IS (IS (IS (IS (IS (IS (IS idx))))))) = case idx of {}
+instance CardanoHardForkConstraints c => HasHardForkTxOut (CardanoEras c) where
+
+  type instance HardForkTxOut (CardanoEras c) = CardanoTxOut c
+
+  injectHardForkTxOut idx txOut = case idx of
+    IZ                                    -> case txOut of {}
+    IS IZ                                 -> ShelleyTxOut txOut
+    IS (IS IZ)                            -> AllegraTxOut txOut
+    IS (IS (IS IZ))                       -> MaryTxOut    txOut
+    IS (IS (IS (IS IZ)))                  -> AlonzoTxOut  txOut
+    IS (IS (IS (IS (IS IZ))))             -> BabbageTxOut txOut
+    IS (IS (IS (IS (IS (IS IZ)))))        -> ConwayTxOut  txOut
+    IS (IS (IS (IS (IS (IS (IS idx')))))) -> case idx' of {}
+
+  ejectHardForkTxOut ::
+       forall y.
+       Index (CardanoEras c) y
+    -> HardForkTxOut (CardanoEras c)
+    -> TxOut (LedgerState y)
+  ejectHardForkTxOut targetIdx txOut =
+    let composeFromTo' :: Index (CardanoEras c) x -> WrapTxOut x -> Maybe (WrapTxOut y)
+        composeFromTo' originIdx =
+           InPairs.composeFromTo originIdx targetIdx
+             (InPairs.hmap
+                (\translator -> InPairs.Fn2 $ WrapTxOut . translateTxOutWith translator . unwrapTxOut )
+                (translateLedgerTables (hardForkEraTranslation @(CardanoEras c))))
+    in maybe (error "Anachrony") unwrapTxOut $
+        eliminateCardanoTxOut @(Maybe (WrapTxOut y)) (\idx -> composeFromTo' idx . WrapTxOut) txOut
 
 instance CardanoHardForkConstraints c => SerializeHardForkTxOut (CardanoEras c) where
-  encodeHardForkTxOut _ (ShelleyTxOut txout) =
-    CBOR.encodeListLen 2
-      <> CBOR.encodeWord8 1
-      <> encodeValue (getLedgerTables $ codecLedgerTables @(LedgerState (ShelleyBlock (TPraos c) (ShelleyEra c)))) txout
-  encodeHardForkTxOut _ (AllegraTxOut txout) =
-    CBOR.encodeListLen 2
-      <> CBOR.encodeWord8 2
-      <> encodeValue (getLedgerTables $ codecLedgerTables @(LedgerState (ShelleyBlock (TPraos c) (AllegraEra c)))) txout
-  encodeHardForkTxOut _ (MaryTxOut txout) =
-    CBOR.encodeListLen 2
-      <> CBOR.encodeWord8 3
-      <> encodeValue (getLedgerTables $ codecLedgerTables @(LedgerState (ShelleyBlock (TPraos c) (MaryEra c)))) txout
-  encodeHardForkTxOut _ (AlonzoTxOut txout) =
-    CBOR.encodeListLen 2
-      <> CBOR.encodeWord8 4
-      <> encodeValue (getLedgerTables $ codecLedgerTables @(LedgerState (ShelleyBlock (TPraos c) (AlonzoEra c)))) txout
-  encodeHardForkTxOut _ (BabbageTxOut txout) =
-    CBOR.encodeListLen 2
-      <> CBOR.encodeWord8 5
-      <> encodeValue (getLedgerTables $ codecLedgerTables @(LedgerState (ShelleyBlock (Praos c)  (BabbageEra c)))) txout
-  encodeHardForkTxOut _ (ConwayTxOut txout) =
-    CBOR.encodeListLen 2
-      <> CBOR.encodeWord8 6
-      <> encodeValue (getLedgerTables $ codecLedgerTables @(LedgerState (ShelleyBlock (Praos c)  (ConwayEra c)))) txout
+  encodeHardForkTxOut _ txOut =
+    let (idx, value) = case txOut of
+          ShelleyTxOut txOut' -> (1, encodeValue (getLedgerTables $ codecLedgerTables @(LedgerState (ShelleyBlock (TPraos c) (ShelleyEra c)))) txOut')
+          AllegraTxOut txOut' -> (2, encodeValue (getLedgerTables $ codecLedgerTables @(LedgerState (ShelleyBlock (TPraos c) (AllegraEra c)))) txOut')
+          MaryTxOut    txOut' -> (3, encodeValue (getLedgerTables $ codecLedgerTables @(LedgerState (ShelleyBlock (TPraos c) (MaryEra c)))) txOut')
+          AlonzoTxOut  txOut' -> (4, encodeValue (getLedgerTables $ codecLedgerTables @(LedgerState (ShelleyBlock (TPraos c) (AlonzoEra c)))) txOut')
+          BabbageTxOut txOut' -> (5, encodeValue (getLedgerTables $ codecLedgerTables @(LedgerState (ShelleyBlock (Praos c) (BabbageEra c)))) txOut')
+          ConwayTxOut  txOut' -> (6, encodeValue (getLedgerTables $ codecLedgerTables @(LedgerState (ShelleyBlock (Praos c) (ConwayEra c)))) txOut')
+    in CBOR.encodeListLen 2
+       <> CBOR.encodeWord8 idx
+       <> value
 
   decodeHardForkTxOut _ = do
     CBOR.decodeListLenOf 2
