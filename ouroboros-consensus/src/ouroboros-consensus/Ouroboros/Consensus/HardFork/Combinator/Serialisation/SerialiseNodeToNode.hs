@@ -147,23 +147,20 @@ instance SerialiseHFC xs
   -- need to handle the cases where 'ShortByteString's are serialised with
   -- an era tag ('encodeNS').
 
-  encodeNodeToNode cc v (HardForkGenTxId (OneEraGenTxId txid)) = do
+  encodeNodeToNode _cc v (HardForkGenTxId (OneEraGenTxId txid)) = do
     case v of
       HardForkNodeToNodeEnabled hfv _ | hfv >= HardForkSpecificNodeToNodeVersion2 ->
         Serialise.encode txid
-      HardForkNodeToNodeEnabled _ vs -> do
-
+      HardForkNodeToNodeEnabled _ _ -> do
         let blessedGenTxId :: NS (K ShortByteString) xs
             blessedGenTxId = hmap (pure $ K txid) blessedGenTxIdEra
-        case blessedGenTxId of
-          Z i -> Serialise.encode $ unK i
-          S x -> encodeNS (hpure $ Fn $ K . Serialise.encode . unK) blessedGenTxId
+        encodeNS (hpure $ Fn $ K . Serialise.encode . unK) blessedGenTxId
       HardForkNodeToNodeDisabled _ ->
         Serialise.encode txid
-  decodeNodeToNode cc v =
+  decodeNodeToNode _cc v =
     fmap (HardForkGenTxId . OneEraGenTxId) $
       case v of
-        HardForkNodeToNodeEnabled hfv vs | hfv >= HardForkSpecificNodeToNodeVersion2 ->
+        HardForkNodeToNodeEnabled hfv _ | hfv >= HardForkSpecificNodeToNodeVersion2 ->
           Serialise.decode
         HardForkNodeToNodeEnabled _ _ -> do
           let eraDecoders :: NP (Decoder s :.: K ShortByteString) xs
