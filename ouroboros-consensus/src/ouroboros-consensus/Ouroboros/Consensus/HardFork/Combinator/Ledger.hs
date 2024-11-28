@@ -1138,6 +1138,10 @@ class ( Show (HardForkTxOut xs)
   injectHardForkTxOut :: Index xs x -> TxOut (LedgerState x) -> HardForkTxOut xs
   ejectHardForkTxOut  :: Index xs x -> HardForkTxOut xs -> TxOut (LedgerState x)
 
+  -- | This method is a null-arity method in a typeclass to make it a CAF, such
+  -- that we only compute it once, then it is cached for the duration of the
+  -- program, as we will use it very often when converting from the
+  -- HardForkBlock to the particular @blk@.
   txOutEjections      :: NP (K (NS WrapTxOut xs) -.-> WrapTxOut) xs
   default txOutEjections :: CanHardFork xs => NP (K (NS WrapTxOut xs) -.-> WrapTxOut) xs
   txOutEjections = composeTxOutTranslations $ ipTranslateTxOut hardForkEraTranslation
