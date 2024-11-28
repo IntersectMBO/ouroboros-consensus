@@ -46,7 +46,6 @@ module Ouroboros.Consensus.Cardano.Node (
   , pattern CardanoNodeToClientVersion13
   , pattern CardanoNodeToClientVersion14
   , pattern CardanoNodeToClientVersion15
-  , pattern CardanoNodeToClientVersion16
   , pattern CardanoNodeToNodeVersion1
   , pattern CardanoNodeToNodeVersion2
   , pattern CardanoNodeToNodeVersion3
@@ -334,34 +333,20 @@ pattern CardanoNodeToClientVersion14 =
       :* Nil
       )
 
--- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo and Babbage
--- and Conway eras enabled, using 'ShelleyNodeToClientVersion11' for the
--- Shelley-based eras.
+-- | The hard fork enabled, using 'HardForkSpecificNodeToClientVersion4', and
+-- the Shelley, Allegra, Mary, Alonzo and Babbage and Conway eras enabled,
+-- using 'ShelleyNodeToClientVersion11' for the Shelley-based eras.
 pattern CardanoNodeToClientVersion15 :: BlockNodeToClientVersion (CardanoBlock c)
 pattern CardanoNodeToClientVersion15 =
     HardForkNodeToClientEnabled
-      HardForkSpecificNodeToClientVersion3
-      (  EraNodeToClientEnabled ByronNodeToClientVersion1
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
-      :* Nil
-      )
-
-pattern CardanoNodeToClientVersion16 :: BlockNodeToClientVersion (CardanoBlock c)
-pattern CardanoNodeToClientVersion16 =
-    HardForkNodeToClientEnabled
       HardForkSpecificNodeToClientVersion4
       (  EraNodeToClientEnabled ByronNodeToClientVersion1
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
       :* Nil
       )
 
