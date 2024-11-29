@@ -12,7 +12,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Arguments for LedgerDB initialization.
-module Ouroboros.Consensus.Storage.LedgerDB.Impl.Args (
+module Ouroboros.Consensus.Storage.LedgerDB.Args (
     LedgerDbArgs (..)
   , LedgerDbFlavorArgs (..)
   , defaultArgs
@@ -24,8 +24,8 @@ import           Data.Kind
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Storage.LedgerDB.API
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Common
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import           Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
 import           Ouroboros.Consensus.Util.Args
@@ -46,7 +46,7 @@ data LedgerDbArgs f m blk = LedgerDbArgs {
     , lgrGenesis            :: HKD f (m (ExtLedgerState blk ValuesMK))
     , lgrHasFS              :: HKD f (SomeHasFS m)
     , lgrConfig             :: HKD f (LedgerDbCfg (ExtLedgerState blk))
-    , lgrTracer             :: Tracer m (TraceLedgerDBEvent blk)
+    , lgrTracer             :: Tracer m (TraceEvent blk)
     , lgrFlavorArgs         :: LedgerDbFlavorArgs f m
     , lgrRegistry           :: HKD f (ResourceRegistry m)
       -- | If provided, the ledgerdb will start using said snapshot and fallback

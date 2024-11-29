@@ -13,7 +13,7 @@
 -- restart the node without having to replay the whole chain. Regardless of the
 -- actual LedgerDB implementation chosen, the general management of snapshots is
 -- common to all implementations.
-module Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots (
+module Ouroboros.Consensus.Storage.LedgerDB.Snapshots (
     -- * Snapshots
     DiskSnapshot (..)
   , NumOfDiskSnapshots (..)
