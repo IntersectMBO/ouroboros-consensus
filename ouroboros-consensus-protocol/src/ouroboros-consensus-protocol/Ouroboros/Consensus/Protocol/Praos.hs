@@ -37,7 +37,6 @@ module Ouroboros.Consensus.Protocol.Praos (
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..), enforceSize)
 import qualified Cardano.Crypto.DSIGN as DSIGN
 import qualified Cardano.Crypto.KES as KES
-import           Cardano.Crypto.VRF (hashVerKeyVRF)
 import qualified Cardano.Crypto.VRF as VRF
 import           Cardano.Ledger.BaseTypes (ActiveSlotCoeff, Nonce, (⭒))
 import qualified Cardano.Ledger.BaseTypes as SL
@@ -548,8 +547,10 @@ doValidateVRFSignature eta0 pd f b = do
   case Map.lookup hk pd of
     Nothing -> throwError $ VRFKeyUnknown hk
     Just (IndividualPoolStake sigma _totalPoolStake vrfHK) -> do
-      vrfHK == hashVerKeyVRF vrfK
-        ?! VRFKeyWrongVRFKey hk vrfHK (hashVerKeyVRF vrfK)
+      let vrfHKStake = SL.fromVRFVerKeyHash vrfHK
+          vrfHKBlock = VRF.hashVerKeyVRF vrfK
+      vrfHKStake == vrfHKBlock
+        ?! VRFKeyWrongVRFKey hk vrfHKStake vrfHKBlock
       VRF.verifyCertified
         ()
         vrfK
