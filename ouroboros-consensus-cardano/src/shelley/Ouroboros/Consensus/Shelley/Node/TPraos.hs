@@ -148,7 +148,7 @@ shelleySharedBlockForging hotKey slotToPeriod credentials =
 
     forgingVRFHash :: SL.Hash c (SL.VerKeyVRF c)
     forgingVRFHash =
-          SL.hashVerKeyVRF
+          VRF.hashVerKeyVRF
         . VRF.deriveVerKeyVRF
         . praosCanBeLeaderSignKeyVRF
         $ canBeLeader
