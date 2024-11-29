@@ -51,8 +51,8 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Common
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
+import           Ouroboros.Consensus.Storage.LedgerDB.API
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import           Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import           Ouroboros.Consensus.Util.IOLike
 import           Prelude hiding (read)

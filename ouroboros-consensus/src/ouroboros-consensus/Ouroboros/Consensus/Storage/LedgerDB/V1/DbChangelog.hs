@@ -82,7 +82,7 @@
 -- == Getting and appending differences
 --
 -- For the differences, the 'DbChangelog' contains a 'SeqDiffMK' (see
--- "Ouroboros.Consensus.Ledger.Tables.DiffSeq") which in turn is just an
+-- "Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq") which in turn is just an
 -- instantiation of a /root-measured finger tree/ (see
 -- [fingertree-rm](https://github.com/input-output-hk/anti-diffs/tree/main/fingertree-rm))
 -- which is a specialization of the finger trees that carries a root-measure
@@ -189,12 +189,11 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
-import           Ouroboros.Consensus.Ledger.Tables.Diff (fromAntiDiff,
-                     toAntiDiff)
-import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Storage.LedgerDB.API
+import           Ouroboros.Consensus.Storage.LedgerDB.Forker
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq as DS
 import           Ouroboros.Consensus.Util (repeatedlyM)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.AnchoredSeq (AnchoredSeq)
@@ -408,7 +407,7 @@ extend newState dblog =
       -> DiffMK    k v
       -> SeqDiffMK k v
     ext (SeqDiffMK sq) (DiffMK d) =
-      SeqDiffMK $ DS.extend sq slot $ toAntiDiff d
+      SeqDiffMK $ DS.extend sq slot $ DS.toAntiDiff d
 
     l'         = forgetLedgerTables  newState
     tablesDiff = projectLedgerTables newState
@@ -659,7 +658,7 @@ splitForFlushing dblog =
          (Ord k, Eq v)
       => SeqDiffMK k v
       -> DiffMK k v
-    prj (SeqDiffMK sq) = DiffMK (fromAntiDiff $ DS.cumulativeDiff sq)
+    prj (SeqDiffMK sq) = DiffMK (DS.fromAntiDiff $ DS.cumulativeDiff sq)
 
     ldblog = DiffsToFlush {
         toFlushDiffs = ltmap prj l

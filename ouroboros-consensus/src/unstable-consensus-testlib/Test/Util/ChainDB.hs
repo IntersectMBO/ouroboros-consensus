@@ -27,9 +27,8 @@ import           Ouroboros.Consensus.Storage.ChainDB hiding
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args
 import           Ouroboros.Consensus.Storage.ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import           Ouroboros.Consensus.Storage.LedgerDB (configLedgerDb)
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots as LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.V2.Args
 import           Ouroboros.Consensus.Storage.VolatileDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB

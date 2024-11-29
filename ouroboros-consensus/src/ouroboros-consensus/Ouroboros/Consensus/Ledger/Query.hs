@@ -64,7 +64,6 @@ import           Ouroboros.Consensus.Node.Serialisation
                      (SerialiseBlockQueryResult (..),
                      SerialiseNodeToClient (..), SerialiseResult (..))
 import           Ouroboros.Consensus.Storage.LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Util (ShowProxy (..), SomeSecond (..))
 import           Ouroboros.Consensus.Util.DepPair
 import           Ouroboros.Consensus.Util.IOLike
@@ -221,7 +220,7 @@ answerQuery config forker query = case query of
       case sing :: Sing footprint of
         SQFNoTables ->
           answerPureBlockQuery config blockQuery <$>
-            atomically (LedgerDB.roforkerGetLedgerState forker)
+            atomically (roforkerGetLedgerState forker)
         SQFLookupTables ->
           answerBlockQueryLookup config blockQuery forker
         SQFTraverseTables ->
@@ -230,10 +229,10 @@ answerQuery config forker query = case query of
       pure $ getSystemStart (topLevelConfigBlock (getExtLedgerCfg config))
     GetChainBlockNo ->
       headerStateBlockNo . headerState <$>
-        atomically (LedgerDB.roforkerGetLedgerState forker)
+        atomically (roforkerGetLedgerState forker)
     GetChainPoint ->
       headerStatePoint . headerState <$>
-        atomically (LedgerDB.roforkerGetLedgerState forker)
+        atomically (roforkerGetLedgerState forker)
 
 {-------------------------------------------------------------------------------
   Query instances
