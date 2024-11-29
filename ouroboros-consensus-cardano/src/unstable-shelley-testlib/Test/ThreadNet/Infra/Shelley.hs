@@ -36,18 +36,18 @@ module Test.ThreadNet.Infra.Shelley (
   ) where
 
 import           Cardano.Crypto.DSIGN (DSIGNAlgorithm (..), seedSizeDSIGN)
-import           Cardano.Crypto.Hash (Hash, HashAlgorithm)
+import           Cardano.Crypto.Hash (HashAlgorithm)
 import           Cardano.Crypto.KES (KESAlgorithm (..))
 import           Cardano.Crypto.Seed (mkSeedFromBytes)
 import qualified Cardano.Crypto.Seed as Cardano.Crypto
-import           Cardano.Crypto.VRF (SignKeyVRF, VRFAlgorithm, VerKeyVRF,
-                     deriveVerKeyVRF, genKeyVRF, seedSizeVRF)
+import           Cardano.Crypto.VRF (SignKeyVRF, deriveVerKeyVRF, genKeyVRF,
+                     seedSizeVRF)
 import qualified Cardano.Ledger.Allegra.Scripts as SL
 import           Cardano.Ledger.Alonzo (AlonzoEra)
 import           Cardano.Ledger.BaseTypes (boundRational)
 import           Cardano.Ledger.Crypto (Crypto, DSIGN, HASH, KES, VRF)
 import           Cardano.Ledger.Hashes (EraIndependentTxBody)
-import qualified Cardano.Ledger.Keys
+import qualified Cardano.Ledger.Keys as LK
 import qualified Cardano.Ledger.Mary.Core as SL
 import           Cardano.Ledger.SafeHash (HashAnnotated (..), SafeHash,
                      hashAnnotated)
@@ -182,7 +182,7 @@ genCoreNode startKESPeriod = do
     vrfKey <- genKeyVRF   <$> genSeed (seedSizeVRF   (Proxy @(VRF   c)))
     kesKey <- genKeyKES   <$> genSeed (seedSizeKES   (Proxy @(KES   c)))
     let kesPub = deriveVerKeyKES kesKey
-        sigma  = Cardano.Ledger.Keys.signedDSIGN
+        sigma  = LK.signedDSIGN
           @c
           delKey
           (SL.OCertSignable kesPub certificateIssueNumber startKESPeriod)
@@ -522,9 +522,9 @@ mkVerKey = SL.VKey . deriveVerKeyDSIGN
 mkKeyPair :: Crypto c => SL.SignKeyDSIGN c -> TL.KeyPair r c
 mkKeyPair sk = TL.KeyPair { vKey = mkVerKey sk, sKey = sk }
 
-mkKeyHashVrf :: (HashAlgorithm h, VRFAlgorithm vrf)
-             => SignKeyVRF vrf
-             -> Hash h (VerKeyVRF vrf)
+mkKeyHashVrf :: Crypto c
+             => SignKeyVRF (VRF c)
+             -> LK.VRFVerKeyHash (r :: LK.KeyRoleVRF) c
 mkKeyHashVrf = SL.hashVerKeyVRF . deriveVerKeyVRF
 
 networkId :: SL.Network

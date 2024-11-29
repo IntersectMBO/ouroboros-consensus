@@ -12,12 +12,11 @@ module Cardano.Tools.Headers (
   ) where
 
 import           Cardano.Crypto.DSIGN (deriveVerKeyDSIGN)
-import           Cardano.Crypto.VRF
-                     (VRFAlgorithm (deriveVerKeyVRF, hashVerKeyVRF))
+import           Cardano.Crypto.VRF (VRFAlgorithm (deriveVerKeyVRF))
 import           Cardano.Ledger.Api (ConwayEra, StandardCrypto)
 import           Cardano.Ledger.Coin (Coin (..))
 import           Cardano.Ledger.Compactible (toCompact)
-import           Cardano.Ledger.Keys (VKey (..), hashKey)
+import           Cardano.Ledger.Keys (VKey (..), hashKey, hashVerKeyVRF)
 import           Cardano.Ledger.PoolDistr (IndividualPoolStake (..))
 import           Cardano.Prelude (ExitCode (..), exitWith, forM_, hPutStrLn,
                      stderr)
