@@ -38,7 +38,7 @@ import           GHC.Generics (Generic)
 import           NoThunks.Class
 import           Ouroboros.Consensus.Ledger.Tables.Basics
 import           Ouroboros.Consensus.Ledger.Tables.Diff (Diff (..))
-import           Ouroboros.Consensus.Ledger.Tables.DiffSeq
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq
 
 {-------------------------------------------------------------------------------
   Classes

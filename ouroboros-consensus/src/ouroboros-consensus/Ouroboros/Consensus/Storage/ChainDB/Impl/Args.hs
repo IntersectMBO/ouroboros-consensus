@@ -32,11 +32,9 @@ import           Ouroboros.Consensus.Storage.ChainDB.API (GetLoEFragment,
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
                      (TraceEvent (..))
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.API as LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args
-                     (LedgerDbFlavorArgs)
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl.Args as LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
+import           Ouroboros.Consensus.Storage.LedgerDB (LedgerDbFlavorArgs)
+import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike

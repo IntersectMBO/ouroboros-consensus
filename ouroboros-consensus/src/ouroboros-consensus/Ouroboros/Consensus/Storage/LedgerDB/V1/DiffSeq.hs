@@ -97,13 +97,12 @@
   tree operations.
 
   TODO: I wonder if is worth it to keep using the root measured finger tree. The
-  V2 LedgerDB, which does not use 'DiffSeq', is intended to be the default.
-  Moreover, the root measured finger tree sacrifices computational complexity
-  for an algorithm that works well in pratice for @n=100@; given that the flush
-  frequency is configurable, using a value other than @100@ might lead to worse
-  performance than if we were to use a normal finger tree.
+  root measured finger tree sacrifices computational complexity for an algorithm
+  that works well in pratice for @n=100@; given that the flush frequency is
+  configurable, using a value other than @100@ might lead to worse performance
+  than if we were to use a normal finger tree.
 -}
-module Ouroboros.Consensus.Ledger.Tables.DiffSeq (
+module Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq (
     -- * Sequences of diffs
     DiffSeq (..)
   , Element (..)
@@ -131,6 +130,9 @@ module Ouroboros.Consensus.Ledger.Tables.DiffSeq (
   , splitAt
   , splitAtFromEnd
   , splitAtSlot
+    -- * Conversion
+  , fromAntiDiff
+  , toAntiDiff
   ) where
 
 import qualified Cardano.Slotting.Slot as Slot
@@ -138,8 +140,8 @@ import qualified Control.Exception as Exn
 import           Data.Bifunctor (Bifunctor (bimap))
 import           Data.FingerTree.RootMeasured.Strict hiding (split)
 import qualified Data.FingerTree.RootMeasured.Strict as RMFT (splitSized)
-import           Data.Map.Diff.Strict (Diff)
-import qualified Data.Map.Diff.Strict as Diff
+import qualified Data.Map.Diff.Strict.Internal as Anti
+import qualified Data.Map.Strict as Map
 import           Data.Maybe.Strict
 import           Data.Monoid (Sum (..))
 import           Data.Semigroup (Max (..), Min (..))
@@ -147,6 +149,7 @@ import           Data.Semigroup.Cancellative
 import           GHC.Generics (Generic)
 import           GHC.Stack (HasCallStack)
 import           NoThunks.Class (NoThunks)
+import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Prelude hiding (length, splitAt)
 
@@ -175,7 +178,7 @@ data RootMeasure k v = RootMeasure {
     -- | Cumulative length
     rmLength     :: {-# UNPACK #-} !Length
     -- | Cumulative diff
-  , rmDiff       :: !(Diff k v)
+  , rmDiff       :: !(Anti.Diff k v)
     -- | Cumulative number of inserts
   , rmNumInserts :: !(Sum Int)
     -- | Cumulative number of deletes
@@ -203,7 +206,7 @@ data InternalMeasure k v = InternalMeasure {
 
 data Element k v = Element {
     elSlotNo :: {-# UNPACK #-} !Slot.SlotNo
-  , elDiff   ::                !(Diff k v)
+  , elDiff   ::                !(Anti.Diff k v)
   }
   deriving stock (Generic, Show, Eq, Functor)
   deriving anyclass (NoThunks)
@@ -244,7 +247,7 @@ noSlotBoundsIntersect (SlotNoUB sl1) (SlotNoLB sl2) = sl1 <= sl2
 
 instance (Ord k, Eq v) => RootMeasured (RootMeasure k v) (Element k v) where
   measureRoot (Element _ d) =
-      RootMeasure 1 d (Sum $ Diff.numInserts d) (Sum $ Diff.numDeletes d)
+      RootMeasure 1 d (Sum $ Anti.numInserts d) (Sum $ Anti.numDeletes d)
 
 instance (Ord k, Eq v) => Semigroup (RootMeasure k v) where
   RootMeasure len1 d1 n1 m1 <> RootMeasure len2 d2 n2 m2 =
@@ -299,7 +302,7 @@ type SM k v =
 cumulativeDiff ::
      SM k v
   => DiffSeq k v
-  -> Diff k v
+  -> Anti.Diff k v
 cumulativeDiff (UnsafeDiffSeq ft) = rmDiff $ measureRoot ft
 
 length ::
@@ -325,7 +328,7 @@ extend ::
      SM k v
   => DiffSeq k v
   -> Slot.SlotNo
-  -> Diff k v
+  -> Anti.Diff k v
   -> DiffSeq k v
 extend (UnsafeDiffSeq ft) sl d =
     Exn.assert invariant $ UnsafeDiffSeq $ ft |> Element sl d
@@ -410,3 +413,20 @@ splitAtFromEnd n dseq =
     else error $ "Can't split a seq of length " ++ show len ++ " from end at " ++ show n
   where
     len = length dseq
+
+
+{-------------------------------------------------------------------------------
+  From-to diffs
+-------------------------------------------------------------------------------}
+
+fromAntiDiff :: Anti.Diff k v -> Diff.Diff k v
+fromAntiDiff (Anti.Diff d) = Diff.Diff (Map.map (f . Anti.last) d)
+  where
+    f (Anti.Insert v) = Diff.Insert v
+    f Anti.Delete{}   = Diff.Delete
+
+toAntiDiff :: Diff.Diff k v -> Anti.Diff k v
+toAntiDiff (Diff.Diff d) = Anti.Diff (Map.map f d)
+  where
+    f (Diff.Insert v) = Anti.singletonInsert v
+    f Diff.Delete     = Anti.singletonDelete
