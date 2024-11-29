@@ -53,15 +53,15 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
-import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream
-import           Ouroboros.Consensus.Storage.LedgerDB.API as LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args as Args
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Init
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
-import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
-import           Ouroboros.Consensus.Storage.LedgerDB.V1.Init as V1
-import           Ouroboros.Consensus.Storage.LedgerDB.V2.Args
-import           Ouroboros.Consensus.Storage.LedgerDB.V2.Init as V2
+import           Ouroboros.Consensus.Storage.ImmutableDB.Stream
+import           Ouroboros.Consensus.Storage.LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import           Ouroboros.Consensus.Storage.LedgerDB.V1 as V1
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args hiding
+                     (LedgerDbFlavorArgs)
+import           Ouroboros.Consensus.Storage.LedgerDB.V2 as V2
+import           Ouroboros.Consensus.Storage.LedgerDB.V2.Args hiding
+                     (LedgerDbFlavorArgs)
 import           Ouroboros.Consensus.Util hiding (Some)
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
@@ -135,8 +135,8 @@ initialEnvironment fsOps getLmdbDir mkTestArguments cdb = do
 -------------------------------------------------------------------------------}
 
 data TestArguments m = TestArguments {
-      argFlavorArgs  :: !(Complete Args.LedgerDbFlavorArgs m)
-    , argLedgerDbCfg :: !(LedgerDB.LedgerDbCfg (ExtLedgerState TestBlock))
+      argFlavorArgs  :: !(Complete LedgerDbFlavorArgs m)
+    , argLedgerDbCfg :: !(LedgerDbCfg (ExtLedgerState TestBlock))
     }
 
 noFilePath :: IO (FilePath, IO ())
@@ -409,9 +409,9 @@ blockNotFound = concat [
 -------------------------------------------------------------------------------}
 
 openLedgerDB ::
-     Complete Args.LedgerDbFlavorArgs IO
+     Complete LedgerDbFlavorArgs IO
   -> ChainDB IO
-  -> LedgerDB.LedgerDbCfg (ExtLedgerState TestBlock)
+  -> LedgerDbCfg (ExtLedgerState TestBlock)
   -> SomeHasFS IO
   -> IO (LedgerDB' IO TestBlock, TestInternals' IO TestBlock)
 openLedgerDB flavArgs env cfg fs = do
@@ -444,7 +444,7 @@ openLedgerDB flavArgs env cfg fs = do
         in
           openDBInternal args initDb stream replayGoal
   withRegistry $ \reg -> do
-    vr <- validate ldb reg (const $ pure ()) BlockCache.empty 0 (map getHeader volBlocks)
+    vr <- validateFork ldb reg (const $ pure ()) BlockCache.empty 0 (map getHeader volBlocks)
     case vr of
       ValidateSuccessful forker -> do
         atomically (forkerCommit forker)
@@ -493,7 +493,7 @@ instance RunModel Model (StateT Environment IO) where
         atomically $ modifyTVar (dbBlocks chainDb) $
            repeatedly (uncurry Map.insert) (map (\b -> (blockRealPoint b, b)) blks)
         withRegistry $ \rr -> do
-          vr <- validate ldb rr (const $ pure ()) BlockCache.empty n (map getHeader blks)
+          vr <- validateFork ldb rr (const $ pure ()) BlockCache.empty n (map getHeader blks)
           case vr of
             ValidateSuccessful forker -> do
               atomically $ modifyTVar (dbChain chainDb) (reverse (map blockRealPoint blks) ++)

@@ -100,8 +100,8 @@ import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB,
                      ImmutableDbSerialiseConstraints)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.LedgerDB (LedgerDB',
-                     LedgerDbSerialiseConstraints, TraceLedgerDBEvent,
-                     TraceValidateEvent)
+                     LedgerDbSerialiseConstraints)
+import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Storage.VolatileDB (VolatileDB,
                      VolatileDbSerialiseConstraints)
@@ -617,7 +617,7 @@ data TraceEvent blk
   | TraceInitChainSelEvent        (TraceInitChainSelEvent      blk)
   | TraceOpenEvent                (TraceOpenEvent              blk)
   | TraceIteratorEvent            (TraceIteratorEvent          blk)
-  | TraceLedgerDBEvent            (TraceLedgerDBEvent          blk)
+  | TraceLedgerDBEvent            (LedgerDB.TraceEvent         blk)
   | TraceImmutableDBEvent         (ImmutableDB.TraceEvent      blk)
   | TraceVolatileDBEvent          (VolatileDB.TraceEvent       blk)
   | TraceLastShutdownUnclean
@@ -805,7 +805,7 @@ data TraceValidationEvent blk =
     -- | A candidate chain was valid.
   | ValidCandidate (AnchoredFragment (Header blk))
 
-  | UpdateLedgerDbTraceEvent (TraceValidateEvent blk)
+  | UpdateLedgerDbTraceEvent (LedgerDB.TraceValidateEvent blk)
   deriving (Generic)
 
 deriving instance

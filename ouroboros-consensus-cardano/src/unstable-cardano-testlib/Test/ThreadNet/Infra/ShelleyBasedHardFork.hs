@@ -71,7 +71,7 @@ import           Ouroboros.Consensus.Protocol.TPraos
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Node
-import           Ouroboros.Consensus.Storage.LedgerDB.API
+import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util (eitherToMaybe)
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
