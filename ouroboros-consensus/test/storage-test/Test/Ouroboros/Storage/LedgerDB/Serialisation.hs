@@ -6,7 +6,7 @@ import           Codec.CBOR.FlatTerm (FlatTerm, TermToken (..), fromFlatTerm,
                      toFlatTerm)
 import           Codec.Serialise (decode, encode)
 import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import           Test.Tasty
 import           Test.Tasty.HUnit
 import           Test.Util.Orphans.Arbitrary ()
