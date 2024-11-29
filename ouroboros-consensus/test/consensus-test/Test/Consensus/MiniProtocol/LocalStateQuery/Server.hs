@@ -41,10 +41,9 @@ import           Ouroboros.Consensus.Protocol.BFT
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream hiding
                      (streamAPI)
-import           Ouroboros.Consensus.Storage.LedgerDB (LedgerDB')
+import           Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
 import           Ouroboros.Consensus.Util.IOLike hiding (newTVarIO)
 import           Ouroboros.Network.Mock.Chain (Chain (..))
@@ -231,7 +230,7 @@ initLedgerDB s c = do
     (Chain.headPoint c)
     (\rpt -> pure $ fromMaybe (error "impossible") $ Chain.findBlock ((rpt ==) . blockRealPoint) c)
 
-  result <- LedgerDB.validate ldb reg (const $ pure ()) BlockCache.empty 0 (map getHeader $ Chain.toOldestFirst c)
+  result <- LedgerDB.validateFork ldb reg (const $ pure ()) BlockCache.empty 0 (map getHeader $ Chain.toOldestFirst c)
   case result of
     LedgerDB.ValidateSuccessful forker -> do
       atomically $ LedgerDB.forkerCommit forker
