@@ -17,7 +17,6 @@ import           Control.Tracer
 import qualified Data.Foldable as Foldable
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (isJust)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Void
@@ -33,7 +32,6 @@ import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import           Ouroboros.Consensus.Storage.LedgerDB.API
-import           Ouroboros.Consensus.Storage.LedgerDB.API.Config
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Common
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Init
@@ -207,9 +205,8 @@ mkInternals bss h = TestInternals {
 
 -- | Testing only! Truncate all snapshots in the DB.
 implIntTruncateSnapshots :: MonadThrow m => SomeHasFS m -> m ()
-implIntTruncateSnapshots (SomeHasFS fs) = do
-  dirs <- Set.lookupMax . Set.filter (isJust . snapshotFromPath) <$> listDirectory fs (mkFsPath [])
-  mapM_ (truncateRecursively . (:[])) dirs
+implIntTruncateSnapshots sfs@(SomeHasFS fs) = do
+  snapshotsMapM_ sfs (truncateRecursively . (:[]))
   where
     truncateRecursively pre = do
       dirs <- listDirectory fs (mkFsPath pre)

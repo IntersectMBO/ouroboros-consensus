@@ -8,6 +8,8 @@
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V1.Args (
     BackingStoreArgs (..)
@@ -20,11 +22,11 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Args (
   ) where
 
 import           Control.Monad.IO.Class
+import           Control.Monad.Primitive
 import qualified Data.SOP.Dict as Dict
 import           Data.Word
 import           GHC.Generics
 import           NoThunks.Class
-import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
 import           Ouroboros.Consensus.Util.Args
 
@@ -88,8 +90,11 @@ data LedgerDbFlavorArgs f m = V1Args {
   }
 
 data BackingStoreArgs f m =
-    LMDBBackingStoreArgs (LiveLMDBFS m) (HKD f LMDBLimits) (Dict.Dict MonadIO m)
+    LMDBBackingStoreArgs FilePath (HKD f LMDBLimits) (Dict.Dict MonadIOPrim m)
   | InMemoryBackingStoreArgs
+
+class (MonadIO m, PrimState m ~ PrimState IO) => MonadIOPrim m
+instance (MonadIO m, PrimState m ~ PrimState IO) => MonadIOPrim m
 
 defaultLedgerDbFlavorArgs :: Incomplete LedgerDbFlavorArgs  m
 defaultLedgerDbFlavorArgs = V1Args DefaultFlushFrequency DefaultQueryBatchSize defaultBackingStoreArgs

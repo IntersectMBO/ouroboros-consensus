@@ -627,7 +627,7 @@ forkBlockForging IS{..} blockForging =
                 -- means that we'll throw away some good transactions in the
                 -- process.
                 whenJust (NE.nonEmpty txs) $
-                  lift . removeTxs mempool . NE.map (txId . txForgetValidated)
+                  lift . removeTxsEvenIfValid mempool . NE.map (txId . txForgetValidated)
             exitEarly
 
         -- We successfully produced /and/ adopted a block
