@@ -35,15 +35,12 @@ module Ouroboros.Consensus.Ledger.Tables.Diff (
     -- * Filter
   , filterWithKeyOnly
   , foldMapDelta
-  , fromAntiDiff
-  , toAntiDiff
   , traverseDeltaWithKey_
   ) where
 
 import           Control.Monad (void)
 import           Data.Bifunctor
 import           Data.Foldable (foldMap')
-import qualified Data.Map.Diff.Strict.Internal as Anti
 import qualified Data.Map.Merge.Strict as Merge
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -192,22 +189,6 @@ applyDiffForKeys m ks (Diff diffs) =
 
 filterWithKeyOnly :: (k -> Bool) -> Diff k v -> Diff k v
 filterWithKeyOnly f (Diff m) = Diff $ Map.filterWithKey (const . f) m
-
-{-------------------------------------------------------------------------------
-  From-to anti-diffs
--------------------------------------------------------------------------------}
-
-fromAntiDiff :: Anti.Diff k v -> Diff k v
-fromAntiDiff (Anti.Diff d) = Diff (Map.map (f . Anti.last) d)
-  where
-    f (Anti.Insert v) = Insert v
-    f Anti.Delete{}   = Delete
-
-toAntiDiff :: Diff k v -> Anti.Diff k v
-toAntiDiff (Diff d) = Anti.Diff (Map.map f d)
-  where
-    f (Insert v) = Anti.singletonInsert v
-    f Delete     = Anti.singletonDelete
 
 {-------------------------------------------------------------------------------
   Traversals and folds

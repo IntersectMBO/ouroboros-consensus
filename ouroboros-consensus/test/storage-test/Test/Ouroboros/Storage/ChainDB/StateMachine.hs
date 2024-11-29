@@ -113,7 +113,7 @@ import           Ouroboros.Consensus.Storage.Common (SizeInBytes)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
                      (unsafeChunkNoToEpochNo)
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl.Common as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.TraceEvent as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util (split)
@@ -1264,8 +1264,8 @@ deriving instance SOP.Generic         (TraceGCEvent blk)
 deriving instance SOP.HasDatatypeInfo (TraceGCEvent blk)
 deriving instance SOP.Generic         (TraceIteratorEvent blk)
 deriving instance SOP.HasDatatypeInfo (TraceIteratorEvent blk)
-deriving instance SOP.Generic         (LedgerDB.TraceLedgerDBEvent blk)
-deriving instance SOP.HasDatatypeInfo (LedgerDB.TraceLedgerDBEvent blk)
+deriving instance SOP.Generic         (LedgerDB.TraceEvent blk)
+deriving instance SOP.HasDatatypeInfo (LedgerDB.TraceEvent blk)
 deriving instance SOP.Generic         (ImmutableDB.TraceEvent blk)
 deriving instance SOP.HasDatatypeInfo (ImmutableDB.TraceEvent blk)
 deriving instance SOP.Generic         (VolatileDB.TraceEvent blk)
