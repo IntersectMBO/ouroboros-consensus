@@ -112,8 +112,8 @@ import           Ouroboros.Consensus.Storage.ChainDB (ChainDB, ChainDbArgs,
                      TraceEvent)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
+import           Ouroboros.Consensus.Storage.LedgerDB (LedgerDbFlavorArgs)
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()

@@ -44,8 +44,6 @@ import           Ouroboros.Consensus.Storage.ChainDB.API (BlockComponent (..),
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import           Ouroboros.Consensus.Storage.LedgerDB (GetForkerError,
-                     ReadOnlyForker', Statistics)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -227,7 +225,7 @@ getReadOnlyForkerAtPoint ::
   => ChainDbEnv m blk
   -> ResourceRegistry m
   -> Target (Point blk)
-  -> m (Either GetForkerError (ReadOnlyForker' m blk))
+  -> m (Either LedgerDB.GetForkerError (LedgerDB.ReadOnlyForker' m blk))
 getReadOnlyForkerAtPoint CDB{..} = LedgerDB.getReadOnlyForker cdbLedgerDB
 
 getLedgerTablesAtFor ::
@@ -240,7 +238,7 @@ getLedgerTablesAtFor =
       (\ldb pt ks -> eitherToMaybe <$> LedgerDB.readLedgerTablesAtFor ldb pt ks)
     . cdbLedgerDB
 
-getStatistics :: IOLike m => ChainDbEnv m blk -> m (Maybe Statistics)
+getStatistics :: IOLike m => ChainDbEnv m blk -> m (Maybe LedgerDB.Statistics)
 getStatistics CDB{..} = LedgerDB.getTipStatistics cdbLedgerDB
 
 {-------------------------------------------------------------------------------

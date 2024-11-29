@@ -28,11 +28,10 @@ import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
 import           Ouroboros.Consensus.Ledger.Basics
-import           Ouroboros.Consensus.Ledger.Tables.Diff (fromAntiDiff)
-import           Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
                      (DbChangelog (..))
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq as DS
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import           Ouroboros.Network.Block (HeaderHash, Point (..), SlotNo (..),
                      StandardHash, castPoint, pattern GenesisPoint)
@@ -185,7 +184,7 @@ applyOperations ops dblog = foldr' apply' dblog ops
 prop_flushingSplitsTheChangelog :: DbChangelogTestSetup -> Property
 prop_flushingSplitsTheChangelog setup = isNothing toFlush .||.
     (    toKeepTip            === At toFlushTip
-    .&&. fromAntiDiff (cumulativeDiff diffs) === toFlushDiffs <> fromAntiDiff (cumulativeDiff toKeepDiffs)
+    .&&. DS.fromAntiDiff (cumulativeDiff diffs) === toFlushDiffs <> DS.fromAntiDiff (cumulativeDiff toKeepDiffs)
     )
   where
     dblog                                 = resultingDbChangelog setup
@@ -291,7 +290,7 @@ genOperations slotNo nOps = gosOps <$> execStateT (replicateM_ nOps genOperation
     genExtend = do
       nextSlotNo <- advanceSlotNo =<< lift (chooseEnum (1, 5))
       d <- genUtxoDiff
-      pure $ Extend $ TestLedger (DiffMK $ fromAntiDiff d) (castPoint $ pointAtSlot nextSlotNo)
+      pure $ Extend $ TestLedger (DiffMK $ DS.fromAntiDiff d) (castPoint $ pointAtSlot nextSlotNo)
 
     advanceSlotNo :: SlotNo -> StateT GenOperationsState Gen (WithOrigin SlotNo)
     advanceSlotNo by = do
