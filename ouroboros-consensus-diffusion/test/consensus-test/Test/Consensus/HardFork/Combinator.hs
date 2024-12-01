@@ -18,7 +18,7 @@ module Test.Consensus.HardFork.Combinator (tests) where
 
 import qualified Data.Map.Strict as Map
 import           Data.SOP.Counting
-import           Data.SOP.InPairs (RequiringBoth (..))
+import           Data.SOP.InPairs (RequiringBoth, RequiringBoth' (..))
 import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.OptNP (OptNP (..))
 import           Data.SOP.Strict
@@ -366,9 +366,9 @@ instance CanHardFork '[BlockA, BlockB] where
   type HardForkTxMeasure '[BlockA, BlockB] = IgnoringOverflow ByteSize32
 
   hardForkEraTranslation = EraTranslation {
-        translateLedgerState   = PCons ledgerState_AtoB   PNil
-      , translateChainDepState = PCons chainDepState_AtoB PNil
-      , crossEraForecast       = PCons forecast_AtoB      PNil
+        crossEraTickLedgerState   = PCons ledgerState_AtoB   PNil
+      , crossEraTickChainDepState = PCons chainDepState_AtoB PNil
+      , crossEraForecast          = PCons forecast_AtoB      PNil
       }
   hardForkChainSel  = Tails.mk2 CompareBlockNo
   hardForkInjectTxs = InPairs.mk2 injectTx_AtoB
@@ -411,21 +411,26 @@ instance SerialiseHFC '[BlockA, BlockB]
 ledgerState_AtoB ::
      RequiringBoth
        WrapLedgerConfig
-       (Translate LedgerState)
+       CrossEraTickLedgerState
        BlockA
        BlockB
-ledgerState_AtoB = InPairs.ignoringBoth $ Translate $ \_ LgrA{..} -> LgrB {
-      lgrB_tip = castPoint lgrA_tip
-    }
+ledgerState_AtoB =
+    RequireBoth $ \_cfgA (WrapLedgerConfig cfgB) ->
+    CrossEraTickLedgerState $ \_ slot LgrA{..} ->
+      applyChainTickLedgerResult cfgB slot LgrB {
+        lgrB_tip = castPoint lgrA_tip
+      }
 
 chainDepState_AtoB ::
      RequiringBoth
        WrapConsensusConfig
-       (Translate WrapChainDepState)
+       CrossEraTickChainDepState
        BlockA
        BlockB
-chainDepState_AtoB = InPairs.ignoringBoth $ Translate $ \_ _ ->
-    WrapChainDepState ()
+chainDepState_AtoB =
+    InPairs.ignoringBoth $
+    CrossEraTickChainDepState $ \_ _ _ _ ->
+      TickedTrivial
 
 forecast_AtoB ::
       RequiringBoth

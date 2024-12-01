@@ -36,7 +36,6 @@ import qualified Cardano.Crypto.VRF as VRF
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.Shelley.API as SL
-import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import           Cardano.Slotting.EpochInfo
@@ -281,12 +280,8 @@ protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
       , shelleyLedgerTransition = ShelleyTransitionInfo {shelleyAfterVoting = 0}
       }
 
-    initChainDepState :: TPraosState c
-    initChainDepState = TPraosState Origin $
-      SL.initialChainDepState initialNonce (SL.sgGenDelegs genesis)
-
     initExtLedgerState :: ExtLedgerState (ShelleyBlock (TPraos c) era)
     initExtLedgerState = ExtLedgerState {
         ledgerState = initLedgerState
-      , headerState = genesisHeaderState initChainDepState
+      , headerState = genesisHeaderState $ genesisTPraosState initialNonce
       }
