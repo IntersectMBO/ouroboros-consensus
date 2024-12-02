@@ -169,7 +169,7 @@ import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
-import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream
+import           Ouroboros.Consensus.Storage.ImmutableDB.Stream
 import           Ouroboros.Consensus.Storage.LedgerDB.Forker
 import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import           Ouroboros.Consensus.Storage.Serialisation

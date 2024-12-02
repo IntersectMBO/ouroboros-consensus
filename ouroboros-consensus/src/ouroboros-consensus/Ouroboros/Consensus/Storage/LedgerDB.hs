@@ -22,7 +22,7 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HardFork.Abstract
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
-import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream
+import           Ouroboros.Consensus.Storage.ImmutableDB.Stream
 import           Ouroboros.Consensus.Storage.LedgerDB.API
 import           Ouroboros.Consensus.Storage.LedgerDB.Args
 import           Ouroboros.Consensus.Storage.LedgerDB.Forker

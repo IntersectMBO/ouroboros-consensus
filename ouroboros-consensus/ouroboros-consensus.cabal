@@ -229,7 +229,6 @@ library
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Iterator
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Parser
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.State
-    Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Types
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Util
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Validation

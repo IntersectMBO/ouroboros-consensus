@@ -53,7 +53,7 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
-import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream
+import           Ouroboros.Consensus.Storage.ImmutableDB.Stream
 import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import           Ouroboros.Consensus.Storage.LedgerDB.V1 as V1
