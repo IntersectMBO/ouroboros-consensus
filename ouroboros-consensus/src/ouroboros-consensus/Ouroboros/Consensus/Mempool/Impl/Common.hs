@@ -320,29 +320,20 @@ revalidateTxsFor
   -> [TxTicket (TxMeasure blk) (Validated (GenTx blk))]
   -> RevalidateTxsResult blk
 revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
-  let theTxs = map txTicketTx txTickets
+  let theTxs = map wrap txTickets
+      wrap = (\(TxTicket tx tk tz) -> (tx, (tk, tz)))
+      unwrap = (\(tx, (tk, tz)) -> TxTicket tx tk tz)
       ReapplyTxsResult err val st' =
         reapplyTxs cfg slot theTxs
         $ applyDiffForKeysOnTables
               values
-              (Foldable.foldMap' (getTransactionKeySets . txForgetValidated) theTxs)
+              (Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst) theTxs)
               st
-
-      -- TODO: This is ugly, but I couldn't find a way to sneak the 'TxTicket' into
-      -- 'reapplyTxs'.
-      filterTxTickets _ [] = []
-      filterTxTickets (t1 : t1s) t2ss@(t2 : t2s)
-        | txId (txForgetValidated $ txTicketTx t1) == txId (txForgetValidated t2)
-        = t1 : filterTxTickets t1s t2s
-        | otherwise
-        = filterTxTickets t1s t2ss
-      filterTxTickets [] _ =
-        error "There are less transactions given to the revalidate function than transactions revalidated! This is unacceptable (and impossible)!"
 
   in RevalidateTxsResult
       (IS {
-         isTxs          = TxSeq.fromList $ filterTxTickets txTickets val
-       , isTxIds        = Set.fromList $ map (txId . txForgetValidated) val
+         isTxs          = TxSeq.fromList $ map unwrap val
+       , isTxIds        = Set.fromList $ map (txId . txForgetValidated . fst) val
        , isLedgerState  = trackingToDiffs st'
        , isTip          = castPoint $ getTip st
        , isSlotNo       = slot

@@ -141,12 +141,11 @@ class ( UpdateLedger blk
   -- in the same order as they were given, as we will use those later on to
   -- filter a list of 'TxTicket's.
   reapplyTxs ::
-       HasCallStack
-    => LedgerConfig blk
+       LedgerConfig blk
     -> SlotNo -- ^ Slot number of the block containing the tx
-    -> [Validated (GenTx blk)]
+    -> [(Validated (GenTx blk), extra)]
     -> TickedLedgerState blk ValuesMK
-    -> ReapplyTxsResult blk
+    -> ReapplyTxsResult extra blk
   reapplyTxs cfg slot txs st =
       (\(err, val, st') ->
          ReapplyTxsResult
@@ -154,10 +153,10 @@ class ( UpdateLedger blk
            (reverse val)
            st'
       )
-    $ Foldable.foldl' (\(accE, accV, st') tx ->
+    $ Foldable.foldl' (\(accE, accV, st') (tx, extra) ->
                  case runExcept (reapplyTx cfg slot tx $ trackingToValues st') of
                    Left err   -> (Invalidated tx err : accE, accV, st')
-                   Right st'' -> (accE, tx : accV, prependTrackingDiffs st' st'')
+                   Right st'' -> (accE, (tx, extra) : accV, prependTrackingDiffs st' st'')
              ) ([], [], attachEmptyDiffs st) txs
 
   -- | Discard the evidence that transaction has been previously validated
@@ -169,13 +168,13 @@ class ( UpdateLedger blk
   -- transaction size.
   getTransactionKeySets :: GenTx blk -> LedgerTables (LedgerState blk) KeysMK
 
-data ReapplyTxsResult blk =
+data ReapplyTxsResult extra blk =
   ReapplyTxsResult {
       -- | txs that are now invalid. Order doesn't matter
       invalidatedTxs :: ![Invalidated blk]
       -- | txs that are valid again, order must be the same as the order in
       -- which txs were received
-    , validatedTxs   :: ![Validated (GenTx blk)]
+    , validatedTxs   :: ![(Validated (GenTx blk), extra)]
       -- | Resulting ledger state
     , resultingState :: !(TickedLedgerState blk TrackingMK)
     }
