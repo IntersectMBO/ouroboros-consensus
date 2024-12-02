@@ -1,5 +1,5 @@
 {-# LANGUAGE ApplicativeDo #-}
-{-# LANGUAGE LambdaCase    #-}
+{-# LANGUAGE LambdaCase #-}
 
 module DBAnalyser.Parsers (
     BlockType (..)
@@ -82,7 +82,7 @@ parseValidationPolicy =
         _                          -> Nothing
 
 parseAnalysis :: Parser AnalysisName
-parseAnalysis = asum [
+parseAnalysis = Foldable.asum [
       flag' ShowSlotBlockNo $ mconcat [
           long "show-slot-block-no"
         , help "Show slot and block number and hash of all blocks"
@@ -150,7 +150,7 @@ checkNoThunksParser = CheckNoThunksEvery <$> option auto
   <> help "Check the ledger state for thunks every n blocks" )
 
 parseLimit :: Parser Limit
-parseLimit = asum [
+parseLimit = Foldable.asum [
     Limit <$> option auto (mconcat [
         long "num-blocks-to-process"
       , help "Maximum number of blocks we want to process"
@@ -244,7 +244,7 @@ parseShelleyArgs = ShelleyBlockArgs
           , help "Path to config file"
           , metavar "PATH"
           ])
-    <*> asum [ Nonce  <$> parseNonce
+    <*> Foldable.asum [ Nonce  <$> parseNonce
              , pure NeutralNonce]
   where
     parseNonce = strOption (mconcat [

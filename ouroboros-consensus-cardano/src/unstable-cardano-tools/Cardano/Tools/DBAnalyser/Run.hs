@@ -105,13 +105,11 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
             V1InMem -> LedgerDB.LedgerDbFlavorArgsV1
                ( LedgerDB.V1.V1Args
                    LedgerDB.V1.DisableFlushing
-                   LedgerDB.V1.DisableQuerySize
                    LedgerDB.V1.InMemoryBackingStoreArgs
                )
             V1LMDB  -> LedgerDB.LedgerDbFlavorArgsV1
                ( LedgerDB.V1.V1Args
                    LedgerDB.V1.DisableFlushing
-                   LedgerDB.V1.DisableQuerySize
                    ( LedgerDB.V1.LMDBBackingStoreArgs
                        "lmdb"
                        defaultLMDBLimits
@@ -131,9 +129,23 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
               shfs
               flavargs $
             ChainDB.defaultArgs
-          chainDbArgs = maybeValidateAll $ ChainDB.updateTracer chainDBTracer args'
+          -- Set @k=1@ to reduce the memory usage of the LedgerDB. We only ever
+          -- go forward so we don't need to account for rollbacks.
+          args'' =
+            args' {
+              ChainDB.cdbLgrDbArgs =
+                (\x -> x {
+                    LedgerDB.lgrConfig =
+                      LedgerDB.LedgerDbCfg
+                        (SecurityParam 1)
+                        (LedgerDB.ledgerDbCfg $ LedgerDB.lgrConfig x)
+                    }
+                )
+                (ChainDB.cdbLgrDbArgs args')
+              }
+          chainDbArgs = maybeValidateAll $ ChainDB.updateTracer chainDBTracer args''
           immutableDbArgs = ChainDB.cdbImmDbArgs chainDbArgs
-          ldbArgs = ChainDB.cdbLgrDbArgs args'
+          ldbArgs = ChainDB.cdbLgrDbArgs args''
 
       withImmutableDB immutableDbArgs $ \(immutableDB, internal) -> do
         SomeAnalysis (Proxy :: Proxy startFrom) ana <- pure $ runAnalysis analysis

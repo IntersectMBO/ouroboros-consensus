@@ -1,8 +1,12 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
@@ -15,12 +19,17 @@
 module Ouroboros.Consensus.Storage.LedgerDB.Args (
     LedgerDbArgs (..)
   , LedgerDbFlavorArgs (..)
+  , QueryBatchSize (..)
   , defaultArgs
+  , defaultQueryBatchSize
   ) where
 
 import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.Kind
+import           Data.Word
+import           GHC.Generics (Generic)
+import           NoThunks.Class
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Storage.LedgerDB.API
@@ -49,6 +58,7 @@ data LedgerDbArgs f m blk = LedgerDbArgs {
     , lgrTracer             :: Tracer m (TraceEvent blk)
     , lgrFlavorArgs         :: LedgerDbFlavorArgs f m
     , lgrRegistry           :: HKD f (ResourceRegistry m)
+    , lgrQueryBatchSize     :: QueryBatchSize
       -- | If provided, the ledgerdb will start using said snapshot and fallback
       -- to genesis. It will ignore any other existing snapshots. Useful for
       -- db-analyser.
@@ -64,6 +74,7 @@ defaultArgs = LedgerDbArgs {
     , lgrGenesis            = NoDefault
     , lgrHasFS              = NoDefault
     , lgrConfig             = NoDefault
+    , lgrQueryBatchSize     = DefaultQueryBatchSize
     , lgrTracer             = nullTracer
       -- This value is the closest thing to a pre-UTxO-HD node, and as such it
       -- will be the default for end-users.
@@ -75,3 +86,37 @@ defaultArgs = LedgerDbArgs {
 data LedgerDbFlavorArgs f m =
     LedgerDbFlavorArgsV1 (V1.LedgerDbFlavorArgs f m)
   | LedgerDbFlavorArgsV2 (V2.LedgerDbFlavorArgs f m)
+
+
+{-------------------------------------------------------------------------------
+  QueryBatchSize
+-------------------------------------------------------------------------------}
+
+-- | The /maximum/ number of keys to read in a backing store range query.
+--
+-- When performing a ledger state query that involves on-disk parts of the
+-- ledger state, we might have to read ranges of key-value pair data (e.g.,
+-- UTxO) from disk using backing store range queries. Instead of reading all
+-- data in one go, we read it in batches. 'QueryBatchSize' determines the size
+-- of these batches.
+--
+-- INVARIANT: Should be at least 1.
+--
+-- It is fine if the result of a range read contains less than this number of
+-- keys, but it should never return more.
+data QueryBatchSize =
+    -- | A default value, which is determined by a specific
+    -- 'QueryBatchSize'. See 'defaultQueryBatchSize' as an example.
+    DefaultQueryBatchSize
+    -- | A requested value: the number of keys to read from disk in each batch.
+  | RequestedQueryBatchSize Word64
+  deriving (Show, Eq, Generic)
+  deriving anyclass NoThunks
+
+defaultQueryBatchSize :: QueryBatchSize -> Word64
+defaultQueryBatchSize requestedQueryBatchSize = case requestedQueryBatchSize of
+    RequestedQueryBatchSize value -> value
+    -- Experiments showed that 100_000 is a reasonable value, which yields
+    -- acceptable performance. We might want to tweak this further, but for now
+    -- this default seems good enough.
+    DefaultQueryBatchSize         -> 100_000
