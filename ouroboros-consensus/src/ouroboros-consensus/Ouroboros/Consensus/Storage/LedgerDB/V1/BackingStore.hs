@@ -4,7 +4,6 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 
 -- | See "Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API" for the
 -- documentation. This module just puts together the implementations for the
