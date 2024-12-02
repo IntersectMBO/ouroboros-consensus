@@ -126,7 +126,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
         let
             epochSize   = sgEpochLength confShelleyGenesis
             chunkInfo   = Node.nodeImmutableDbChunkInfo (configStorage pInfoConfig)
-            bss = LedgerDB.V1.V1Args LedgerDB.V1.DisableFlushing LedgerDB.V1.DisableQuerySize $ InMemoryBackingStoreArgs
+            bss = LedgerDB.V1.V1Args LedgerDB.V1.DisableFlushing InMemoryBackingStoreArgs
             flavargs = LedgerDB.LedgerDbFlavorArgsV1 bss
             dbArgs      =
              ChainDB.completeChainDbArgs
