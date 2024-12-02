@@ -696,8 +696,7 @@ test-suite storage-test
     Test.Ouroboros.Storage.LedgerDB.V1.BackingStore
     Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Lockstep
     Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock
-    Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog.QuickCheck
-    Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog.Unit
+    Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog
     Test.Ouroboros.Storage.LedgerDB.V1.LMDB
     Test.Ouroboros.Storage.Orphans
     Test.Ouroboros.Storage.TestBlock

@@ -34,7 +34,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger (
   , AnnForecast (..)
   , mkHardForkForecast
     -- * Ledger tables
-  , distribLedgerTables
+  , ejectLedgerTables
   , injectLedgerTables
     -- ** HardForkTxIn
   , HasCanonicalTxIn (..)
@@ -889,7 +889,7 @@ instance ( CanHardFork xs
       withLedgerTablesOne i l =
           Flip
         $ withLedgerTables (unFlip l)
-        $ distribLedgerTables i tables
+        $ ejectLedgerTables i tables
 
 instance ( CanHardFork xs
          , HasCanonicalTxIn xs
@@ -940,7 +940,7 @@ instance ( CanHardFork xs
           FlipTickedLedgerState
         $ withLedgerTables (getFlipTickedLedgerState l)
         $ castLedgerTables
-        $ distribLedgerTables i (castLedgerTables tables)
+        $ ejectLedgerTables i (castLedgerTables tables)
 
 instance All (Compose CanStowLedgerTables LedgerState) xs
       => CanStowLedgerTables (LedgerState (HardForkBlock xs)) where
@@ -979,18 +979,9 @@ injectLedgerTables ::
   -> LedgerTables (LedgerState                x  ) mk
   -> LedgerTables (LedgerState (HardForkBlock xs)) mk
 injectLedgerTables idx =
-    LedgerTables
-  . mapKeysMK injTxIn
-  . mapMK injTxOut
-  . getLedgerTables
-  where
-    injTxIn :: TxIn (LedgerState x) -> TxIn (LedgerState (HardForkBlock xs))
-    injTxIn = injectCanonicalTxIn idx
+    bimapLedgerTables (injectCanonicalTxIn idx) (injectHardForkTxOut idx)
 
-    injTxOut :: TxOut (LedgerState x) -> TxOut (LedgerState (HardForkBlock xs))
-    injTxOut = injectHardForkTxOut idx
-
-distribLedgerTables ::
+ejectLedgerTables ::
      forall xs x mk. (
           CanMapKeysMK mk
         , Ord (TxIn (LedgerState x))
@@ -1001,11 +992,8 @@ distribLedgerTables ::
   => Index xs x
   -> LedgerTables (LedgerState (HardForkBlock xs)) mk
   -> LedgerTables (LedgerState                x  ) mk
-distribLedgerTables idx =
-    LedgerTables
-  . mapKeysMK (ejectCanonicalTxIn idx)
-  . mapMK (ejectHardForkTxOut idx)
-  . getLedgerTables
+ejectLedgerTables idx =
+    bimapLedgerTables (ejectCanonicalTxIn idx) (ejectHardForkTxOut idx)
 
 {-------------------------------------------------------------------------------
   HardForkTxIn
