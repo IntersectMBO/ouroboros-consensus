@@ -1,9 +1,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -30,6 +28,7 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Ledger.Tables.Utils
+import           Ouroboros.Consensus.Storage.LedgerDB.Args
 import           Ouroboros.Consensus.Storage.LedgerDB.Forker
 import           Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import           Ouroboros.Consensus.Util.CallStack
@@ -49,8 +48,6 @@ data ForkerEnv m l blk = ForkerEnv {
   , foeSwitchVar          :: !(StrictTVar m (LedgerSeq m l))
     -- | Config
   , foeSecurityParam      :: !SecurityParam
-    -- | The batch size
-  , foeQueryBatchSize     :: !(Maybe Int)
     -- | Config
   , foeTracer             :: !(Tracer m TraceForkerEvent)
     -- | Release the resources
@@ -79,13 +76,14 @@ implForkerReadTables env ks = do
 
 implForkerRangeReadTables ::
      (MonadSTM m, GetTip l, HasLedgerTables l)
-  => ForkerEnv m l blk
+  => QueryBatchSize
+  -> ForkerEnv m l blk
   -> RangeQueryPrevious l
   -> m (LedgerTables l ValuesMK)
-implForkerRangeReadTables env rq0 = do
+implForkerRangeReadTables qbs env rq0 = do
     traceWith (foeTracer env) ForkerRangeReadTablesStart
     ldb <- readTVarIO $ foeLedgerSeq env
-    let n = maybe 100_000 id $ foeQueryBatchSize env
+    let n = fromIntegral $ defaultQueryBatchSize qbs
     case rq0 of
       NoPreviousQuery -> readRange (tables $ currentHandle ldb) (Nothing, n)
       PreviousQueryWasFinal -> pure $ LedgerTables emptyMK

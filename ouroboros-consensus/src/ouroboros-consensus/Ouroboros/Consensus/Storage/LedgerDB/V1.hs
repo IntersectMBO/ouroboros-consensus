@@ -1,5 +1,4 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -74,9 +73,6 @@ mkInitDb ::
   , IOLike m
   , LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
-#if __GLASGOW_HASKELL__ < 906
-  , HasAnnTip blk
-#endif
   )
   => Complete LedgerDbArgs m blk
   -> Complete V1.LedgerDbFlavorArgs m
@@ -129,7 +125,7 @@ mkInitDb args bss getBlock =
                , ldbCfg             = lgrConfig
                , ldbHasFS           = lgrHasFS'
                , ldbShouldFlush     = shouldFlush flushFreq
-               , ldbQueryBatchSize  = queryBatchSizeArg
+               , ldbQueryBatchSize  = lgrQueryBatchSize
                , ldbResolveBlock    = getBlock
                }
       h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
@@ -145,11 +141,12 @@ mkInitDb args bss getBlock =
       , lgrConfig
       , lgrGenesis
       , lgrRegistry
+      , lgrQueryBatchSize
       } = args
 
     lgrHasFS' = SnapshotsFS lgrHasFS
 
-    V1Args flushFreq queryBatchSizeArg baArgs = bss
+    V1Args flushFreq baArgs = bss
 
 implMkLedgerDb ::
      forall m l blk.
@@ -160,9 +157,6 @@ implMkLedgerDb ::
      , LedgerSupportsProtocol blk
      , ApplyBlock l blk
      , l ~ ExtLedgerState blk
-#if __GLASGOW_HASKELL__ < 906
-     , HasAnnTip blk
-#endif
      , HasHardForkHistory blk
      )
   => LedgerDBHandle m l blk
@@ -324,7 +318,8 @@ mkInternals ::
   -> TestInternals' m blk
 mkInternals h = TestInternals {
       takeSnapshotNOW = getEnv2 h implIntTakeSnapshot
-    , reapplyThenPushNOW = getEnv1 h implIntReapplyThenPushBlock
+    , push = getEnv1 h implIntPush
+    , reapplyThenPushNOW = getEnv1 h implIntReapplyThenPush
     , wipeLedgerDB = getEnv h $ void . destroySnapshots . snapshotsFs . ldbHasFS
     , closeLedgerDB = getEnv h $ bsClose . ldbBackingStore
     , truncateSnapshots = getEnv h $ void . implIntTruncateSnapshots . ldbHasFS
@@ -368,13 +363,24 @@ implIntTakeSnapshot env whereTo suffix = do
       suffix
       (onDiskShouldChecksumSnapshots $ ldbSnapshotPolicy env)
 
-implIntReapplyThenPushBlock ::
+implIntPush ::
+     ( IOLike m
+     , ApplyBlock l blk
+     , l ~ ExtLedgerState blk
+     )
+  => LedgerDBEnv m l blk -> l DiffMK -> m ()
+implIntPush env st = do
+  chlog <- readTVarIO $ ldbChangelog env
+  let chlog' = prune (ledgerDbCfgSecParam $ ldbCfg env) $ extend st chlog
+  atomically $ writeTVar (ldbChangelog env) chlog'
+
+implIntReapplyThenPush ::
      ( IOLike m
      , ApplyBlock l blk
      , l ~ ExtLedgerState blk
      )
   => LedgerDBEnv m l blk -> blk -> m ()
-implIntReapplyThenPushBlock env blk = do
+implIntReapplyThenPush env blk = do
   chlog <- readTVarIO $ ldbChangelog env
   chlog' <- reapplyThenPush (ldbCfg env)  blk (readKeySets (ldbBackingStore env)) chlog
   atomically $ writeTVar (ldbChangelog env) chlog'
@@ -721,12 +727,11 @@ newForker h ldbEnv (vh, dblog) = do
     , foeChangelog               = dblogVar
     , foeSwitchVar               = ldbChangelog ldbEnv
     , foeSecurityParam           = ledgerDbCfgSecParam $ ldbCfg ldbEnv
-    , foeQueryBatchSize          = ldbQueryBatchSize ldbEnv
     , foeTracer                  = LedgerDBForkerEvent . TraceForkerEventWithKey forkerKey >$< ldbTracer ldbEnv
     }
   atomically $ modifyTVar (ldbForkers ldbEnv) $ Map.insert forkerKey forkerEnv
   traceWith (foeTracer forkerEnv) ForkerOpen
-  pure $ mkForker h forkerKey
+  pure $ mkForker h (ldbQueryBatchSize ldbEnv) forkerKey
 
 mkForker ::
      ( IOLike m
@@ -735,12 +740,13 @@ mkForker ::
      , GetTip l
      )
   => LedgerDBHandle m l blk
+  -> QueryBatchSize
   -> ForkerKey
   -> Forker m l blk
-mkForker h forkerKey = Forker {
+mkForker h qbs forkerKey = Forker {
       forkerClose                  = implForkerClose h forkerKey
     , forkerReadTables             = getForkerEnv1   h forkerKey implForkerReadTables
-    , forkerRangeReadTables        = getForkerEnv1   h forkerKey implForkerRangeReadTables
+    , forkerRangeReadTables        = getForkerEnv1   h forkerKey (implForkerRangeReadTables qbs)
     , forkerGetLedgerState         = getForkerEnvSTM h forkerKey implForkerGetLedgerState
     , forkerReadStatistics         = getForkerEnv    h forkerKey implForkerReadStatistics
     , forkerPush                   = getForkerEnv1   h forkerKey implForkerPush

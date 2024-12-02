@@ -4,8 +4,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
-{-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE TypeOperators #-}
 
 module Ouroboros.Consensus.Util.IOLike (
     IOLike (..)
@@ -180,6 +178,6 @@ instance NoThunks a => NoThunks (Strict.StrictMVar IO a) where
 
 instance NoThunks a => NoThunks (StrictSTM.StrictTMVar IO a) where
   showTypeOf _ = "StrictTMVar IO"
-  wNoThunks ctxt tmvar  = do
-      a <- inspectTMVar (Proxy :: Proxy IO) $ toLazyTMVar tmvar
+  wNoThunks ctxt t  = do
+      a <- inspectTMVar (Proxy :: Proxy IO) $ toLazyTMVar t
       noThunks ctxt a

@@ -148,7 +148,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.API (
   ) where
 
 import           Codec.Serialise
-import           Control.Monad (forM, when)
+import qualified Control.Monad as Monad
 import           Control.Monad.Class.MonadTime.SI
 import           Control.Monad.Except
 import           Control.ResourceRegistry
@@ -287,6 +287,7 @@ data WhereToTakeSnapshot = TakeAtImmutableTip | TakeAtVolatileTip deriving Eq
 data TestInternals m l blk = TestInternals {
     wipeLedgerDB       :: m ()
   , takeSnapshotNOW    :: WhereToTakeSnapshot -> Maybe String -> m ()
+  , push               :: ExtLedgerState blk DiffMK -> m ()
   , reapplyThenPushNOW :: blk -> m ()
   , truncateSnapshots  :: m ()
   , closeLedgerDB      :: m ()
@@ -397,7 +398,7 @@ readLedgerTablesAtFor ldb p ks =
     bracketWithPrivateRegistry
       (\rr -> fmap readOnlyForker <$> getForkerAtTarget ldb rr (SpecificPoint p))
       (mapM_ roforkerClose)
-      $ \foEith -> forM foEith (`roforkerReadTables` ks)
+      $ \foEith -> Monad.forM foEith (`roforkerReadTables` ks)
 
 {-------------------------------------------------------------------------------
   Snapshots
@@ -556,7 +557,7 @@ initialize replayTracer
         -- If we fail to use this snapshot for any other reason, delete it and
         -- try an older one
         Left err -> do
-          when (diskSnapshotIsTemporary s || err == InitFailureGenesis) $
+          Monad.when (diskSnapshotIsTemporary s || err == InitFailureGenesis) $
             deleteSnapshot hasFS s
           traceWith snapTracer . InvalidSnapshot s $ err
           -- reset checksum flag to the initial state after failure
@@ -577,7 +578,7 @@ initialize replayTracer
           case eDB of
             Left err -> do
               traceWith snapTracer . InvalidSnapshot s $ err
-              when (diskSnapshotIsTemporary s) $ deleteSnapshot hasFS s
+              Monad.when (diskSnapshotIsTemporary s) $ deleteSnapshot hasFS s
               closeDb initDb
               tryNewestFirst doChecksum (acc . InitFailure s err) ss
             Right (db, replayed) -> do

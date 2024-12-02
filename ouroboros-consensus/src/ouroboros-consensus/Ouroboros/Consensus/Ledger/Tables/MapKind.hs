@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
@@ -17,6 +18,7 @@ module Ouroboros.Consensus.Ledger.Tables.MapKind (
   , NoThunksMK
   , ShowMK
   , ZeroableMK (..)
+  , bimapLedgerTables
     -- * Concrete MapKinds
   , CodecMK (..)
   , DiffMK (..)
@@ -73,6 +75,27 @@ class (forall k v. (Eq k, Eq v) => Eq (mk k v)) => EqMK mk
 type NoThunksMK :: MapKind -> Constraint
 class (forall k v. (NoThunks k, NoThunks v) => NoThunks (mk k v))
    => NoThunksMK mk
+
+-- | Map both keys and values in ledger tables.
+--
+-- For keys, it has the same caveats as 'Data.Map.Strict.mapKeys' or
+-- `Data.Set.map', namely that only injective functions are suitable to be used
+-- here.
+bimapLedgerTables ::
+     forall x y mk. (
+          CanMapKeysMK mk
+        , CanMapMK mk
+        , Ord (TxIn y)
+        )
+  => (TxIn x -> TxIn y)
+  -> (TxOut x -> TxOut y)
+  -> LedgerTables x mk
+  -> LedgerTables y mk
+bimapLedgerTables f g =
+    LedgerTables
+  . mapKeysMK f
+  . mapMK g
+  . getLedgerTables
 
 {-------------------------------------------------------------------------------
   EmptyMK

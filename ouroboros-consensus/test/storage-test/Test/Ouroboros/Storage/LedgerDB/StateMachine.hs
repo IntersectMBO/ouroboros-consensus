@@ -37,7 +37,7 @@
 -- corresponding ledger state modelling the whole block chain since genesis.
 module Test.Ouroboros.Storage.LedgerDB.StateMachine (tests) where
 
-import           Control.Monad (when)
+import qualified Control.Monad as Monad
 import           Control.Monad.Except
 import           Control.Monad.State hiding (state)
 import           Control.ResourceRegistry
@@ -124,7 +124,7 @@ initialEnvironment fsOps getLmdbDir mkTestArguments cdb = do
   (lmdbDir, cleanupLMDB) <- getLmdbDir
   pure $ Environment
     undefined
-    (TestInternals undefined undefined undefined undefined (pure ()))
+    (TestInternals undefined undefined undefined undefined undefined (pure ()))
     cdb
     (flip mkTestArguments lmdbDir)
     sfs
@@ -147,7 +147,7 @@ realFilePath = liftIO $ do
   tmpdir <- (FilePath.</> "test_lmdb") <$> Dir.getTemporaryDirectory
   pure (tmpdir, do
            exists <- Dir.doesDirectoryExist tmpdir
-           when exists $ Dir.removeDirectoryRecursive tmpdir)
+           Monad.when exists $ Dir.removeDirectoryRecursive tmpdir)
 
 simulatedFS :: IO (SomeHasFS IO, IO ())
 simulatedFS = do
@@ -166,7 +166,7 @@ inMemV1TestArguments ::
   -> TestArguments IO
 inMemV1TestArguments secParam _ =
   TestArguments {
-      argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing DisableQuerySize InMemoryBackingStoreArgs
+      argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing InMemoryBackingStoreArgs
     , argLedgerDbCfg = extLedgerDbConfig secParam
     }
 
@@ -186,7 +186,7 @@ lmdbTestArguments ::
   -> TestArguments IO
 lmdbTestArguments secParam fp =
   TestArguments {
-      argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing DisableQuerySize $ LMDBBackingStoreArgs fp (testLMDBLimits 16) Dict.Dict
+      argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing $ LMDBBackingStoreArgs fp (testLMDBLimits 16) Dict.Dict
     , argLedgerDbCfg = extLedgerDbConfig secParam
     }
 
@@ -427,6 +427,7 @@ openLedgerDB flavArgs env cfg fs = do
                nullTracer
                flavArgs
                rr
+               DefaultQueryBatchSize
                Nothing
   (ldb, _, od) <- case flavArgs of
     LedgerDbFlavorArgsV1 bss ->
