@@ -29,14 +29,14 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
-import           Ouroboros.Consensus.Ledger.Tables.DiffSeq (numDeletes,
-                     numInserts)
-import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Storage.LedgerDB.Forker as Forker
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API as BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq (numDeletes,
+                     numInserts)
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq as DS
 import           Ouroboros.Consensus.Util.IOLike
 
 {-------------------------------------------------------------------------------
@@ -143,7 +143,7 @@ implForkerRangeReadTables env rq0 = do
          (Ord k, Eq v)
       => SeqDiffMK k v
       -> DiffMK k v
-    prj (SeqDiffMK sq) = DiffMK (Diff.fromAntiDiff $ DS.cumulativeDiff sq)
+    prj (SeqDiffMK sq) = DiffMK (DS.fromAntiDiff $ DS.cumulativeDiff sq)
 
     -- Remove all diff elements that are <= to the greatest given key
     doDropLTE ::
