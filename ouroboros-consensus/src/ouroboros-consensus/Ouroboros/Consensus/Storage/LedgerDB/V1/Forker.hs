@@ -29,8 +29,8 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
+import           Ouroboros.Consensus.Storage.LedgerDB.Args
 import           Ouroboros.Consensus.Storage.LedgerDB.Forker as Forker
-import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API as BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
@@ -57,7 +57,6 @@ data ForkerEnv m l blk = ForkerEnv {
     -- | Config
   , foeSecurityParam           :: !SecurityParam
      -- | Config
-  , foeQueryBatchSize          :: !QueryBatchSize
   , foeTracer                  :: !(Tracer m TraceForkerEvent)
   }
   deriving Generic
@@ -100,10 +99,11 @@ implForkerReadTables env ks = do
 
 implForkerRangeReadTables ::
      (MonadSTM m, HasLedgerTables l)
-  => ForkerEnv m l blk
+  => QueryBatchSize
+  -> ForkerEnv m l blk
   -> RangeQueryPrevious l
   -> m (LedgerTables l ValuesMK)
-implForkerRangeReadTables env rq0 = do
+implForkerRangeReadTables qbs env rq0 = do
     traceWith (foeTracer env) ForkerRangeReadTablesStart
     ldb <- readTVarIO $ foeChangelog env
     let -- Get the differences without the keys that are greater or equal
@@ -132,7 +132,7 @@ implForkerRangeReadTables env rq0 = do
   where
     lvh = foeBackingStoreValueHandle env
 
-    rq = BackingStore.RangeQuery rq1 (fromIntegral $ queryBatchSize $ foeQueryBatchSize env)
+    rq = BackingStore.RangeQuery rq1 (fromIntegral $ defaultQueryBatchSize qbs)
 
     rq1 = case rq0 of
       NoPreviousQuery        -> Nothing

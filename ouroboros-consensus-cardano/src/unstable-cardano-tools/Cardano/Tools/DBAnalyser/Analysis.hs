@@ -400,7 +400,7 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
           when (blockSlot blk >= slotNo) $ storeLedgerState newLedger
           when (blockSlot blk > slotNo) $ issueWarning blk
           when ((unBlockNo $ blockNo blk) `mod` 1000 == 0) $ reportProgress blk
-          LedgerDB.reapplyThenPushNOW internal blk
+          LedgerDB.push internal newLedger
           LedgerDB.tryFlush initLedgerDB
           return (continue blk, ())
         Left err -> do
@@ -490,7 +490,7 @@ checkNoThunksEvery
         -- should catch any additional thunks in the values tables.
         IOLike.evaluate (ledgerState newLedger') >>= checkNoThunks bn
 
-      LedgerDB.reapplyThenPushNOW internal blk
+      LedgerDB.push internal newLedger
       LedgerDB.tryFlush ldb
 
 
@@ -515,18 +515,17 @@ traceLedgerProcessing ::
   Analysis blk StartFromLedgerState
 traceLedgerProcessing
   (AnalysisEnv {db, registry, startFrom, cfg, limit}) = do
-    void $ processAll db registry GetBlock startFrom limit () (process initLedger internal)
+    void $ processAll db registry GetBlock startFrom limit () (process initLedger)
     pure Nothing
   where
     FromLedgerState initLedger internal = startFrom
 
     process
       :: LedgerDB.LedgerDB' IO blk
-      -> LedgerDB.TestInternals' IO blk
       -> ()
       -> blk
       -> IO ()
-    process ledgerDB intLedgerDB _ blk = do
+    process ledgerDB _ blk = do
       frk <- LedgerDB.getForkerAtTarget ledgerDB registry VolatileTip >>= \case
         Left {} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
         Right f -> pure f
@@ -544,7 +543,7 @@ traceLedgerProcessing
               HasAnalysis.WithLedgerState blk (ledgerState oldLedger) (ledgerState newLedger'))
       mapM_ Debug.traceMarkerIO traces
 
-      LedgerDB.reapplyThenPushNOW intLedgerDB blk
+      LedgerDB.push internal newLedger
       LedgerDB.tryFlush ledgerDB
 
 {-------------------------------------------------------------------------------
@@ -626,10 +625,10 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv {db, registry, startFrom, 
         -- 'time' takes care of forcing the evaluation of its argument's result.
         (ldgrView, tForecast) <- time $ forecast            slot prevLedgerState
         (tkHdrSt,  tHdrTick)  <- time $ tickTheHeaderState  slot prevLedgerState ldgrView
-        (!_,   tHdrApp)       <- time $ applyTheHeader                           ldgrView tkHdrSt
+        (!newHeader,   tHdrApp)       <- time $ applyTheHeader                           ldgrView tkHdrSt
         (tkLdgrSt, tBlkTick)  <- time $ tickTheLedgerState  slot prevLedgerState
         let !tkLdgrSt' = applyDiffs (prevLedgerState `withLedgerTables` tables) tkLdgrSt
-        (!_,  tBlkApp)        <- time $ applyTheBlock                                     tkLdgrSt'
+        (!newLedger,  tBlkApp)        <- time $ applyTheBlock                                     tkLdgrSt'
 
         currentRtsStats <- GC.getRTSStats
         let
@@ -661,7 +660,7 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv {db, registry, startFrom, 
 
         F.writeDataPoint outFileHandle outFormat slotDataPoint
 
-        LedgerDB.reapplyThenPushNOW intLedgerDB blk
+        LedgerDB.push intLedgerDB $ ExtLedgerState newLedger newHeader
         LedgerDB.tryFlush ledgerDB
       where
         rp = blockRealPoint blk
@@ -772,7 +771,7 @@ getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
 
           IO.hFlush outFileHandle
 
-      LedgerDB.reapplyThenPushNOW intLedgerDB blk
+      LedgerDB.push intLedgerDB nextLedgerSt
       LedgerDB.tryFlush ledgerDB
 
       pure ()

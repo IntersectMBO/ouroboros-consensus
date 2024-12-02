@@ -1,9 +1,9 @@
-{-# LANGUAGE BlockArguments            #-}
-{-# LANGUAGE DerivingStrategies        #-}
+{-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE NamedFieldPuns            #-}
-{-# LANGUAGE RankNTypes                #-}
-{-# LANGUAGE ScopedTypeVariables       #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Test.Consensus.Genesis.Setup (
     module Test.Consensus.Genesis.Setup.GenChains

@@ -124,6 +124,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
         , lgrRegistry           = mcdbRegistry
         , lgrConfig             = configLedgerDb mcdbTopLevelConfig
         , lgrFlavorArgs         = LedgerDbFlavorArgsV2 (V2Args InMemoryHandleArgs)
+        , lgrQueryBatchSize     = DefaultQueryBatchSize
         , lgrStartSnapshot      = Nothing
         }
     , cdbsArgs = ChainDbSpecificArgs {

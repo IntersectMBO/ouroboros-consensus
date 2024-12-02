@@ -27,7 +27,7 @@
 module Ouroboros.Consensus.Cardano.QueryHF () where
 
 import           Data.Functor.Product
-import           Data.Proxy
+import           Data.Singletons
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
 import           Data.SOP.Index
@@ -54,10 +54,12 @@ newtype FlipBlockQuery footprint result x =
   FlipBlockQuery (BlockQuery x footprint result)
 
 answerCardanoQueryHF ::
-  ( xs ~ CardanoEras c
-  , CardanoHardForkConstraints c
-  , All (Compose NoThunks WrapTxOut) xs
-  )
+     forall x xs c footprint result m.
+     ( xs ~ CardanoEras c
+     , CardanoHardForkConstraints c
+     , All (Compose NoThunks WrapTxOut) xs
+     , SingI footprint
+     )
   => (   forall blk.
          IsShelleyBlock blk
       => Index xs blk
@@ -72,15 +74,18 @@ answerCardanoQueryHF ::
   -> ReadOnlyForker' m (HardForkBlock xs)
   -> m result
 answerCardanoQueryHF f idx cfg q dlv =
-  hcollapse $
-   hap
-   (   (Fn $ \(Pair _ (FlipBlockQuery q')) -> case q' of {})
-    :* hcmap
-         (Proxy @(IsShelleyBlock))
-         (\idx' -> Fn $ \(Pair cfg' (FlipBlockQuery q')) -> K $ f (IS idx') cfg' q' dlv)
-         indices
-   )
-   (injectNS idx (Pair cfg (FlipBlockQuery q)))
+  case sing :: Sing footprint of
+    SQFNoTables ->
+      error "answerCardanoQueryHF: unreachable, this was called with a QFNoTables query"
+    _ -> hcollapse $
+       hap
+       (   (Fn $ \(Pair _ (FlipBlockQuery q')) -> case q' of {})
+        :* hcmap
+             (Proxy @(IsShelleyBlock))
+             (\idx' -> Fn $ \(Pair cfg' (FlipBlockQuery q')) -> K $ f (IS idx') cfg' q' dlv)
+             indices
+       )
+       (injectNS idx (Pair cfg (FlipBlockQuery q)))
 
 shelleyCardanoFilter ::
      forall proto era c result.
@@ -111,11 +116,18 @@ instance CardanoHardForkConstraints c => BlockSupportsHFLedgerQuery (CardanoEras
 
   queryLedgerGetTraversingFilter idx q = case idx of
     -- Byron
-    IZ                             -> case q of {}
+    IZ                                    -> byronCardanoFilter q
     -- Shelley based
-    IS IZ                          -> shelleyCardanoFilter q
-    IS (IS IZ)                     -> shelleyCardanoFilter q
-    IS (IS (IS IZ))                -> shelleyCardanoFilter q
-    IS (IS (IS (IS IZ)))           -> shelleyCardanoFilter q
-    IS (IS (IS (IS (IS IZ))))      -> shelleyCardanoFilter q
-    IS (IS (IS (IS (IS (IS IZ))))) -> shelleyCardanoFilter q
+    IS IZ                                 -> shelleyCardanoFilter q
+    IS (IS IZ)                            -> shelleyCardanoFilter q
+    IS (IS (IS IZ))                       -> shelleyCardanoFilter q
+    IS (IS (IS (IS IZ)))                  -> shelleyCardanoFilter q
+    IS (IS (IS (IS (IS IZ))))             -> shelleyCardanoFilter q
+    IS (IS (IS (IS (IS (IS IZ)))))        -> shelleyCardanoFilter q
+    IS (IS (IS (IS (IS (IS (IS idx')))))) -> case idx' of {}
+
+byronCardanoFilter ::
+     BlockQuery ByronBlock QFTraverseTables result
+  -> TxOut (LedgerState (HardForkBlock (CardanoEras c)))
+  -> Bool
+byronCardanoFilter = \case {}

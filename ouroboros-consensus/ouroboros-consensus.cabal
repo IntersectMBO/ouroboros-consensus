@@ -233,10 +233,11 @@ library
     Ouroboros.Consensus.Storage.ImmutableDB.Stream
     Ouroboros.Consensus.Storage.LedgerDB
     Ouroboros.Consensus.Storage.LedgerDB.API
-    Ouroboros.Consensus.Storage.LedgerDB.Forker
     Ouroboros.Consensus.Storage.LedgerDB.Args
-    Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
+    Ouroboros.Consensus.Storage.LedgerDB.Forker
     Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+    Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
+    Ouroboros.Consensus.Storage.LedgerDB.V1
     Ouroboros.Consensus.Storage.LedgerDB.V1.Args
     Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
     Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
@@ -245,15 +246,14 @@ library
     Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Bridge
     Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Status
     Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
-    Ouroboros.Consensus.Storage.LedgerDB.V1.Forker
     Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq
-    Ouroboros.Consensus.Storage.LedgerDB.V1
+    Ouroboros.Consensus.Storage.LedgerDB.V1.Forker
     Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
     Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots
+    Ouroboros.Consensus.Storage.LedgerDB.V2
     Ouroboros.Consensus.Storage.LedgerDB.V2.Args
     Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
     Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
-    Ouroboros.Consensus.Storage.LedgerDB.V2
     Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
     Ouroboros.Consensus.Storage.Serialisation
     Ouroboros.Consensus.Storage.VolatileDB
@@ -695,8 +695,7 @@ test-suite storage-test
     Test.Ouroboros.Storage.LedgerDB.V1.BackingStore
     Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Lockstep
     Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock
-    Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog.QuickCheck
-    Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog.Unit
+    Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog
     Test.Ouroboros.Storage.LedgerDB.V1.LMDB
     Test.Ouroboros.Storage.Orphans
     Test.Ouroboros.Storage.TestBlock
@@ -707,7 +706,6 @@ test-suite storage-test
 
   build-depends:
     QuickCheck,
-    async,
     base,
     bifunctors,
     binary,
