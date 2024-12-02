@@ -1,9 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 
 -- | Queries to the mempool
-module Ouroboros.Consensus.Mempool.Query (
-    implGetSnapshotFor
-  ) where
+module Ouroboros.Consensus.Mempool.Query (implGetSnapshotFor) where
 
 import qualified Data.Foldable as Foldable
 import           Ouroboros.Consensus.Block.Abstract

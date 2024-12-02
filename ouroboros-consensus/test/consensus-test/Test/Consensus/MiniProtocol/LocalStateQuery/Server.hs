@@ -219,8 +219,9 @@ initLedgerDB s c = do
         , lgrHasFS              = SomeHasFS $ simHasFS fs
         , lgrGenesis            = return testInitExtLedger
         , lgrTracer             = nullTracer
-        , lgrFlavorArgs         = LedgerDbFlavorArgsV1 $ V1Args DefaultFlushFrequency DefaultQueryBatchSize InMemoryBackingStoreArgs
+        , lgrFlavorArgs         = LedgerDbFlavorArgsV1 $ V1Args DefaultFlushFrequency InMemoryBackingStoreArgs
         , lgrConfig             = LedgerDB.configLedgerDb $ testCfg s
+        , lgrQueryBatchSize     = DefaultQueryBatchSize
         , lgrRegistry           = reg
         , lgrStartSnapshot      = Nothing
         }

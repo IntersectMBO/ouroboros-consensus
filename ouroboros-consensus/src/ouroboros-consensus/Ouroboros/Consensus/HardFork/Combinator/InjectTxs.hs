@@ -119,31 +119,6 @@ matchPolyTxsTele is ns = go
            -> Telescope g (Product f ([] :.: tx)) xs
     insert = hmap (\(Pair tx (Pair f (Comp txs))) -> Pair f (Comp (tx:txs)))
 
--- -- | Match a list of transactions with an 'NS', attempting to inject where
--- -- possible
--- matchPolyTxsNS ::
---      forall tx f xs. SListI xs
---   => InPairs (InjectPolyTx tx) xs
---   -> NS f xs
---   -> [NS tx xs]
---   -> ( [(NS tx xs, Mismatch tx f xs)]
---      , NS (Product f ([] :.: tx)) xs
---      )
--- matchPolyTxsNS is ns = go
---   where
---     go :: [NS tx xs]
---        -> ([(NS tx xs, Mismatch tx f xs)], NS (Product f ([] :.: tx)) xs)
---     go []       = ([], hmap (`Pair` Comp []) ns)
---     go (tx:txs) =
---       let (mismatched, matched) = go txs
---       in case matchPolyTxNS is tx matched of
---            Left  err      -> ((tx, hmap pairFst err) : mismatched, matched)
---            Right matched' -> (mismatched, insert matched')
-
---     insert :: NS (Product tx (Product f ([] :.: tx))) xs
---            -> NS (Product f ([] :.: tx)) xs
---     insert = hmap $ \(Pair tx (Pair f (Comp txs))) -> Pair f (Comp (tx:txs))
-
 {-------------------------------------------------------------------------------
   Monomorphic aliases
 -------------------------------------------------------------------------------}
