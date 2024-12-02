@@ -35,6 +35,8 @@ const sidebars = {
         'for-developers/index',
         'for-developers/Glossary',
         'for-developers/ComponentDiagram',
+        'for-developers/CardanoPraosBasics',
+        'for-developers/CivicTime',
         'for-developers/AbstractProtocol',
         'for-developers/AddingAnEra',
         'for-developers/ChainSync',
