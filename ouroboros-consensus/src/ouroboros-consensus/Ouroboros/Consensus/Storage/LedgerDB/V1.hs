@@ -129,7 +129,7 @@ mkInitDb args bss getBlock =
                , ldbCfg             = lgrConfig
                , ldbHasFS           = lgrHasFS'
                , ldbShouldFlush     = shouldFlush flushFreq
-               , ldbQueryBatchSize  = queryBatchSizeArg
+               , ldbQueryBatchSize  = lgrQueryBatchSize
                , ldbResolveBlock    = getBlock
                }
       h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
@@ -145,11 +145,12 @@ mkInitDb args bss getBlock =
       , lgrConfig
       , lgrGenesis
       , lgrRegistry
+      , lgrQueryBatchSize
       } = args
 
     lgrHasFS' = SnapshotsFS lgrHasFS
 
-    V1Args flushFreq queryBatchSizeArg baArgs = bss
+    V1Args flushFreq baArgs = bss
 
 implMkLedgerDb ::
      forall m l blk.
@@ -718,12 +719,11 @@ newForker h ldbEnv (vh, dblog) = do
     , foeChangelog               = dblogVar
     , foeSwitchVar               = ldbChangelog ldbEnv
     , foeSecurityParam           = ledgerDbCfgSecParam $ ldbCfg ldbEnv
-    , foeQueryBatchSize          = ldbQueryBatchSize ldbEnv
     , foeTracer                  = LedgerDBForkerEvent . TraceForkerEventWithKey forkerKey >$< ldbTracer ldbEnv
     }
   atomically $ modifyTVar (ldbForkers ldbEnv) $ Map.insert forkerKey forkerEnv
   traceWith (foeTracer forkerEnv) ForkerOpen
-  pure $ mkForker h forkerKey
+  pure $ mkForker h (ldbQueryBatchSize ldbEnv) forkerKey
 
 mkForker ::
      ( IOLike m
@@ -732,12 +732,13 @@ mkForker ::
      , GetTip l
      )
   => LedgerDBHandle m l blk
+  -> QueryBatchSize
   -> ForkerKey
   -> Forker m l blk
-mkForker h forkerKey = Forker {
+mkForker h qbs forkerKey = Forker {
       forkerClose                  = implForkerClose h forkerKey
     , forkerReadTables             = getForkerEnv1   h forkerKey implForkerReadTables
-    , forkerRangeReadTables        = getForkerEnv1   h forkerKey implForkerRangeReadTables
+    , forkerRangeReadTables        = getForkerEnv1   h forkerKey (implForkerRangeReadTables qbs)
     , forkerGetLedgerState         = getForkerEnvSTM h forkerKey implForkerGetLedgerState
     , forkerReadStatistics         = getForkerEnv    h forkerKey implForkerReadStatistics
     , forkerPush                   = getForkerEnv1   h forkerKey implForkerPush

@@ -106,13 +106,11 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
             V1InMem -> LedgerDB.LedgerDbFlavorArgsV1
                ( LedgerDB.V1.V1Args
                    LedgerDB.V1.DisableFlushing
-                   LedgerDB.V1.DisableQuerySize
                    LedgerDB.V1.InMemoryBackingStoreArgs
                )
             V1LMDB  -> LedgerDB.LedgerDbFlavorArgsV1
                ( LedgerDB.V1.V1Args
                    LedgerDB.V1.DisableFlushing
-                   LedgerDB.V1.DisableQuerySize
                    ( LedgerDB.V1.LMDBBackingStoreArgs
                        "lmdb"
                        defaultLMDBLimits

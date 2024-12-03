@@ -166,7 +166,7 @@ inMemV1TestArguments ::
   -> TestArguments IO
 inMemV1TestArguments secParam _ =
   TestArguments {
-      argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing DisableQuerySize InMemoryBackingStoreArgs
+      argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing InMemoryBackingStoreArgs
     , argLedgerDbCfg = extLedgerDbConfig secParam
     }
 
@@ -186,7 +186,7 @@ lmdbTestArguments ::
   -> TestArguments IO
 lmdbTestArguments secParam fp =
   TestArguments {
-      argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing DisableQuerySize $ LMDBBackingStoreArgs fp (testLMDBLimits 16) Dict.Dict
+      argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing $ LMDBBackingStoreArgs fp (testLMDBLimits 16) Dict.Dict
     , argLedgerDbCfg = extLedgerDbConfig secParam
     }
 
@@ -427,6 +427,7 @@ openLedgerDB flavArgs env cfg fs = do
                nullTracer
                flavArgs
                rr
+               DefaultQueryBatchSize
                Nothing
   (ldb, _, od) <- case flavArgs of
     LedgerDbFlavorArgsV1 bss ->

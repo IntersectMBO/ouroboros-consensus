@@ -105,7 +105,7 @@ mkInitDb args flavArgs getBlock =
                , ldbCfg             = lgrConfig
                , ldbHasFS           = lgrHasFS
                , ldbResolveBlock    = getBlock
-               , ldbQueryBatchSize  = Nothing
+               , ldbQueryBatchSize  = lgrQueryBatchSize
                , ldbOpenHandlesLock = lock
                }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
@@ -118,6 +118,7 @@ mkInitDb args flavArgs getBlock =
      , lgrHasFS
      , lgrSnapshotPolicyArgs
      , lgrTracer
+     , lgrQueryBatchSize
      , lgrRegistry
      } = args
 
@@ -404,7 +405,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv {
   , ldbCfg             :: !(LedgerDbCfg l)
   , ldbHasFS           :: !(SomeHasFS m)
   , ldbResolveBlock    :: !(ResolveBlock m blk)
-  , ldbQueryBatchSize  :: !(Maybe Int)
+  , ldbQueryBatchSize  :: !QueryBatchSize
   , ldbOpenHandlesLock :: !(RAWLock m LDBLock)
   } deriving (Generic)
 
@@ -643,14 +644,13 @@ newForker h ldbEnv rr st = do
         foeLedgerSeq          = lseqVar
       , foeSwitchVar          = ldbSeq ldbEnv
       , foeSecurityParam      = ledgerDbCfgSecParam $ ldbCfg ldbEnv
-      , foeQueryBatchSize     = ldbQueryBatchSize ldbEnv
       , foeTracer             = tr
       , foeResourcesToRelease = toRelease
       }
     atomically $ modifyTVar (ldbForkers ldbEnv) $ Map.insert forkerKey forkerEnv
     pure $ Forker {
         forkerReadTables             = getForkerEnv1   h forkerKey implForkerReadTables
-      , forkerRangeReadTables        = getForkerEnv1   h forkerKey implForkerRangeReadTables
+      , forkerRangeReadTables        = getForkerEnv1   h forkerKey (implForkerRangeReadTables (ldbQueryBatchSize ldbEnv))
       , forkerGetLedgerState         = getForkerEnvSTM h forkerKey implForkerGetLedgerState
       , forkerReadStatistics         = getForkerEnv    h forkerKey implForkerReadStatistics
       , forkerPush                   = getForkerEnv1   h forkerKey implForkerPush

@@ -5,10 +5,12 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -25,7 +27,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Mempool (
   , hardForkApplyTxErrToEither
   ) where
 
-import           Control.Arrow ((+++))
+import           Control.Arrow (first, (+++))
 import           Control.Monad.Except
 import           Data.Functor.Product
 import           Data.Kind (Type)
@@ -108,10 +110,10 @@ type instance ApplyTxErr (HardForkBlock xs) = HardForkApplyTxErr xs
 --
 -- This is also isomorphic to
 -- @'Ouroboros.Consensus.Ledger.SupportsMempool.ReapplyTxsResult' (HardForkBlock xs)@
-type DecomposedReapplyTxsResult xs =
+type DecomposedReapplyTxsResult extra xs =
   (,,)
     [Invalidated (HardForkBlock xs)]
-    [Validated (GenTx (HardForkBlock xs))]
+    [(Validated (GenTx (HardForkBlock xs)), extra)]
   :.:
     FlipTickedLedgerState TrackingMK
 
@@ -131,6 +133,12 @@ instance ( CanHardFork xs
           (WrapValidatedGenTx vtx)
           tls
 
+  reapplyTxs :: forall extra.
+       LedgerConfig (HardForkBlock xs)
+    -> SlotNo -- ^ Slot number of the block containing the tx
+    -> [(Validated (GenTx (HardForkBlock xs)), extra)]
+    -> TickedLedgerState (HardForkBlock xs) ValuesMK
+    -> ReapplyTxsResult extra (HardForkBlock xs)
   reapplyTxs
     HardForkLedgerConfig{..}
     slot
@@ -155,9 +163,15 @@ instance ( CanHardFork xs
       (mismatched, matched) =
         matchPolyTxsTele
           -- How to translate txs to later eras
-          (InPairs.hmap snd2 (InPairs.requiringBoth cfgs hardForkInjectTxs))
+          (InPairs.hmap
+             (\(Pair2 _ (InjectPolyTx w)) -> InjectPolyTx (\(Comp (ex, tx)) -> Comp . (ex,) <$> w tx))
+             (InPairs.requiringBoth cfgs hardForkInjectTxs)
+          )
           (State.getHardForkState hardForkState)
-          (map (getOneEraValidatedGenTx . getHardForkValidatedGenTx) vtxs)
+          (map
+             (\(tx, extra) -> hmap (Comp . (extra,)) . getOneEraValidatedGenTx . getHardForkValidatedGenTx $ tx)
+             vtxs
+          )
 
       mismatched' :: [Invalidated (HardForkBlock xs)]
       mismatched' =
@@ -167,24 +181,25 @@ instance ( CanHardFork xs
                                     $ snd x)
                  . HardForkValidatedGenTx
                  . OneEraValidatedGenTx
+                 . hmap (snd . unComp)
                  . fst
                  $ x)
             mismatched
 
       modeApplyCurrent :: forall blk.
-           SingleEraBlock                      blk
-        => Index xs                            blk
-        -> WrapLedgerConfig                    blk
+           SingleEraBlock                              blk
+        => Index xs                                    blk
+        -> WrapLedgerConfig                            blk
         -> Product
              (FlipTickedLedgerState ValuesMK)
-             ([] :.: WrapValidatedGenTx)       blk
-        -> DecomposedReapplyTxsResult xs       blk
+             ([] :.: (,) extra :.: WrapValidatedGenTx) blk
+        -> DecomposedReapplyTxsResult extra xs         blk
       modeApplyCurrent index cfg (Pair (FlipTickedLedgerState st) txs) =
         let ReapplyTxsResult err val st' =
-              reapplyTxs (unwrapLedgerConfig cfg) slot [ unwrapValidatedGenTx t | t <- unComp txs ] st
+              reapplyTxs (unwrapLedgerConfig cfg) slot [ (unwrapValidatedGenTx tx, tk) | (Comp (tk,tx)) <- unComp txs ] st
         in Comp
            ( [ injectValidatedGenTx index (getInvalidated x) `Invalidated` injectApplyTxErr index (getReason x) | x <- err ]
-           , map (HardForkValidatedGenTx . OneEraValidatedGenTx . injectNS index . WrapValidatedGenTx) val
+           , map (first (HardForkValidatedGenTx . OneEraValidatedGenTx . injectNS index . WrapValidatedGenTx)) val
            , FlipTickedLedgerState st'
            )
 

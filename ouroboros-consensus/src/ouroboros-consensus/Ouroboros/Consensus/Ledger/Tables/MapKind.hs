@@ -76,6 +76,11 @@ type NoThunksMK :: MapKind -> Constraint
 class (forall k v. (NoThunks k, NoThunks v) => NoThunks (mk k v))
    => NoThunksMK mk
 
+-- | Map both keys and values in ledger tables.
+--
+-- For keys, it has the same caveats as 'Data.Map.Strict.mapKeys' or
+-- `Data.Set.map', namely that only injective functions are suitable to be used
+-- here.
 bimapLedgerTables ::
      forall x y mk. (
           CanMapKeysMK mk
