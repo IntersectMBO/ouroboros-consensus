@@ -323,7 +323,8 @@ mkInternals ::
   -> TestInternals' m blk
 mkInternals h = TestInternals {
       takeSnapshotNOW = getEnv2 h implIntTakeSnapshot
-    , reapplyThenPushNOW = getEnv1 h implIntReapplyThenPushBlock
+    , push = getEnv1 h implIntPush
+    , reapplyThenPushNOW = getEnv1 h implIntReapplyThenPush
     , wipeLedgerDB = getEnv h $ void . destroySnapshots . snapshotsFs . ldbHasFS
     , closeLedgerDB = getEnv h $ bsClose . ldbBackingStore
     , truncateSnapshots = getEnv h $ void . implIntTruncateSnapshots . ldbHasFS
@@ -366,13 +367,24 @@ implIntTakeSnapshot env whereTo suffix = do
       (ldbBackingStore env)
       suffix
 
-implIntReapplyThenPushBlock ::
+implIntPush ::
+     ( IOLike m
+     , ApplyBlock l blk
+     , l ~ ExtLedgerState blk
+     )
+  => LedgerDBEnv m l blk -> l DiffMK -> m ()
+implIntPush env st = do
+  chlog <- readTVarIO $ ldbChangelog env
+  let chlog' = prune (ledgerDbCfgSecParam $ ldbCfg env) $ extend st chlog
+  atomically $ writeTVar (ldbChangelog env) chlog'
+
+implIntReapplyThenPush ::
      ( IOLike m
      , ApplyBlock l blk
      , l ~ ExtLedgerState blk
      )
   => LedgerDBEnv m l blk -> blk -> m ()
-implIntReapplyThenPushBlock env blk = do
+implIntReapplyThenPush env blk = do
   chlog <- readTVarIO $ ldbChangelog env
   chlog' <- reapplyThenPush (ldbCfg env)  blk (readKeySets (ldbBackingStore env)) chlog
   atomically $ writeTVar (ldbChangelog env) chlog'

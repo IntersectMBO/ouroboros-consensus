@@ -191,6 +191,12 @@ mkInternals bss h = TestInternals {
                 (ldbHasFS env)
                 suff
                 st
+    , push = \st -> withRegistry $ \reg -> do
+          eFrk <- newForkerAtTarget h reg VolatileTip
+          case eFrk of
+            Left {} -> error "Unreachable, Volatile tip MUST be in LedgerDB"
+            Right frk ->
+              forkerPush frk st >> atomically (forkerCommit frk) >> forkerClose frk
     , reapplyThenPushNOW = \blk -> getEnv h $ \env -> withRegistry $ \reg -> do
           eFrk <- newForkerAtTarget h reg VolatileTip
           case eFrk of

@@ -124,7 +124,7 @@ initialEnvironment fsOps getLmdbDir mkTestArguments cdb = do
   (lmdbDir, cleanupLMDB) <- getLmdbDir
   pure $ Environment
     undefined
-    (TestInternals undefined undefined undefined undefined (pure ()))
+    (TestInternals undefined undefined undefined undefined undefined (pure ()))
     cdb
     (flip mkTestArguments lmdbDir)
     sfs

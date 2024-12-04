@@ -441,8 +441,8 @@ instance Arbitrary DbChangelogTestSetup where
       , dbChangelogStartsAt = slotNo
       }
 
-  -- TODO: Shrinking might not be optimal. Shrinking finds the shortest prefix of the list of
-  -- operations that result in a failed property, by simply testing prefixes in increasing order.
+  -- Shrinking finds the shortest prefix of the list of operations that result
+  -- in a failed property, by simply testing prefixes in increasing order.
   shrink setup = reverse $ takeWhileJust $ drop 1 (iterate reduce (Just setup))
     where
       reduce (Just (DbChangelogTestSetup (_:ops) dblog)) = Just $ DbChangelogTestSetup ops dblog

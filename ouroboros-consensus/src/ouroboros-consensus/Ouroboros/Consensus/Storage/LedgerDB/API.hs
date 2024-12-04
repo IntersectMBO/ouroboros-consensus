@@ -287,6 +287,7 @@ data WhereToTakeSnapshot = TakeAtImmutableTip | TakeAtVolatileTip deriving Eq
 data TestInternals m l blk = TestInternals {
     wipeLedgerDB       :: m ()
   , takeSnapshotNOW    :: WhereToTakeSnapshot -> Maybe String -> m ()
+  , push               :: ExtLedgerState blk DiffMK -> m ()
   , reapplyThenPushNOW :: blk -> m ()
   , truncateSnapshots  :: m ()
   , closeLedgerDB      :: m ()
