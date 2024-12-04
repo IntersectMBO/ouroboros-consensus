@@ -163,6 +163,7 @@ library
     ouroboros-consensus-protocol ^>=0.9,
     ouroboros-network-api ^>=0.11,
     serialise ^>=0.2,
+    singletons ^>=3.0,
     small-steps,
     sop-core ^>=0.5,
     sop-extras ^>=0.2,
