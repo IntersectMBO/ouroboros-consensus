@@ -52,6 +52,7 @@ import           Data.Hashable (Hashable)
 import           Data.Int (Int64)
 import           Data.Map.Strict (Map)
 import           Data.Void (Void)
+import qualified Network.Mux as Mux
 import           Network.TypedProtocol.Codec
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (DiffusionPipeliningSupport (..))
@@ -810,7 +811,7 @@ initiator ::
   -> NodeToNodeVersion
   -> PSTypes.PeerSharing
   -> Apps m addr b b b b b a c
-  -> OuroborosBundleWithExpandedCtx 'InitiatorMode addr b m a Void
+  -> OuroborosBundleWithExpandedCtx 'Mux.InitiatorMode addr b m a Void
 initiator miniProtocolParameters version ownPeerSharing Apps {..} =
     nodeToNodeProtocols
       miniProtocolParameters
@@ -845,7 +846,7 @@ initiatorAndResponder ::
   -> NodeToNodeVersion
   -> PSTypes.PeerSharing
   -> Apps m addr b b b b b a c
-  -> OuroborosBundleWithExpandedCtx 'InitiatorResponderMode addr b m a c
+  -> OuroborosBundleWithExpandedCtx 'Mux.InitiatorResponderMode addr b m a c
 initiatorAndResponder miniProtocolParameters version ownPeerSharing Apps {..} =
     nodeToNodeProtocols
       miniProtocolParameters

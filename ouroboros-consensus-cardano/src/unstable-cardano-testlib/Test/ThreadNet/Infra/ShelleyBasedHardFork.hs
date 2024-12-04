@@ -28,7 +28,7 @@ module Test.ThreadNet.Infra.ShelleyBasedHardFork (
   ) where
 
 import qualified Cardano.Ledger.Api.Transition as L
-import qualified Cardano.Ledger.Era as SL
+import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Control.Monad.Except (runExcept)
 import qualified Data.Map.Strict as Map
