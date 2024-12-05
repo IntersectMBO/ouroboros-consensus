@@ -158,9 +158,6 @@ implMkLedgerDb ::
      , LedgerSupportsProtocol blk
      , ApplyBlock l blk
      , l ~ ExtLedgerState blk
-#if __GLASGOW_HASKELL__ < 906
-     , HasAnnTip blk
-#endif
      , HasHardForkHistory blk
      )
   => LedgerDBHandle m l blk
