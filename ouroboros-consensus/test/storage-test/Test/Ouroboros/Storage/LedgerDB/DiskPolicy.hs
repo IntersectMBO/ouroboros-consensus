@@ -1,8 +1,8 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NumericUnderscores #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Test.Ouroboros.Storage.LedgerDB.DiskPolicy (tests) where
 
@@ -14,7 +14,8 @@ import           Ouroboros.Consensus.Storage.LedgerDB (DiskPolicy (..),
                      NumOfDiskSnapshots (..), SnapshotInterval (..),
                      TimeSinceLast (..), mkDiskPolicy)
 import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
-                     (DiskPolicyArgs (DiskPolicyArgs), pattern DiskSnapshotChecksum)
+                     (DiskPolicyArgs (DiskPolicyArgs),
+                     pattern DiskSnapshotChecksum)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
