@@ -108,6 +108,7 @@ initLedgerDB ::
   -> LedgerDbCfg (ExtLedgerState blk)
   -> m (ExtLedgerState blk) -- ^ Genesis ledger state
   -> StreamAPI m blk blk
+  -> Flag "DiskSnapshotChecksum"
   -> m (InitLog blk, LedgerDB' blk, Word64)
 initLedgerDB replayTracer
              tracer
@@ -116,9 +117,10 @@ initLedgerDB replayTracer
              decHash
              cfg
              getGenesisLedger
-             stream = do
+             stream
+             doDiskSnapshotChecksum = do
     snapshots <- listSnapshots hasFS
-    tryNewestFirst DiskSnapshotChecksum id snapshots
+    tryNewestFirst doDiskSnapshotChecksum id snapshots
   where
     tryNewestFirst :: Flag "DiskSnapshotChecksum"
                    -> (InitLog blk -> InitLog blk)
