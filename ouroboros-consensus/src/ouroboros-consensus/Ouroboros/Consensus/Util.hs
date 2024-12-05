@@ -462,9 +462,8 @@ newtype FuseBlownException = FuseBlownException Text
 -- | Type-safe boolean flags with type level tags
 --
 -- It is recommended to create pattern synonyms for the true and false values.
--- Use 'coerce' to unwrap for use in e.g. if-statements.
 --
 -- See 'Ouroboros.Consensus.Storage.LedgerDB.Snapshots.DiskSnapshotChecksum'
 -- for an example.
-newtype Flag (name :: Symbol) = Flag Bool
+newtype Flag (name :: Symbol) = Flag {getFlag :: Bool}
     deriving (Eq, Show, Generic)

@@ -48,7 +48,6 @@ import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Lazy as BSL
 import           Data.Char (ord)
-import           Data.Coerce (coerce)
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.List as List
 import           Data.Maybe (isJust, mapMaybe)
@@ -233,8 +232,8 @@ readSnapshot ::
   -> ExceptT ReadSnapshotErr m (ExtLedgerState blk)
 readSnapshot someHasFS decLedger decHash doChecksum snapshotName = do
   (ledgerState, mbChecksumAsRead) <- withExceptT ReadSnapshotFailed . ExceptT $
-      readIncremental someHasFS (coerce doChecksum) decoder (snapshotToPath snapshotName)
-  when (coerce doChecksum) $ do
+      readIncremental someHasFS (getFlag doChecksum) decoder (snapshotToPath snapshotName)
+  when (getFlag doChecksum) $ do
     !snapshotCRC <- readCRC someHasFS (snapshotToChecksumPath snapshotName)
     when (mbChecksumAsRead /= Just snapshotCRC) $
       throwError ReadSnapshotDataCorruption
@@ -297,7 +296,7 @@ writeSnapshot ::
 writeSnapshot (SomeHasFS hasFS) doChecksum encLedger ss cs = do
     crc <- withFile hasFS (snapshotToPath ss) (WriteMode MustBeNew) $ \h ->
       snd <$> hPutAllCRC hasFS h (CBOR.toLazyByteString $ encode cs)
-    when (coerce doChecksum) $
+    when (getFlag doChecksum) $
       withFile hasFS (snapshotToChecksumPath ss) (WriteMode MustBeNew) $ \h ->
         void $ hPutAll hasFS h . BS.toLazyByteString . BS.word32HexFixed $ getCRC crc
   where
