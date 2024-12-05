@@ -37,7 +37,7 @@
 -- corresponding ledger state modelling the whole block chain since genesis.
 module Test.Ouroboros.Storage.LedgerDB.StateMachine (tests) where
 
-import           Control.Monad (when)
+import qualified Control.Monad as Monad
 import           Control.Monad.Except
 import           Control.Monad.State hiding (state)
 import           Control.ResourceRegistry
@@ -147,7 +147,7 @@ realFilePath = liftIO $ do
   tmpdir <- (FilePath.</> "test_lmdb") <$> Dir.getTemporaryDirectory
   pure (tmpdir, do
            exists <- Dir.doesDirectoryExist tmpdir
-           when exists $ Dir.removeDirectoryRecursive tmpdir)
+           Monad.when exists $ Dir.removeDirectoryRecursive tmpdir)
 
 simulatedFS :: IO (SomeHasFS IO, IO ())
 simulatedFS = do
