@@ -22,7 +22,7 @@ import           Options.Applicative
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Node (PBftSignatureThreshold (..))
 import           Ouroboros.Consensus.Shelley.Node (Nonce (..))
-import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots (pattern DiskSnapshotChecksum, pattern NoDiskSnapshotChecksum)
+import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy (pattern DiskSnapshotChecksum, pattern NoDiskSnapshotChecksum)
 
 {-------------------------------------------------------------------------------
   Parsing

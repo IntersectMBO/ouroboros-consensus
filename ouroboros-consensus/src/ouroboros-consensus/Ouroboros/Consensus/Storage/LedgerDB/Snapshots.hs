@@ -19,8 +19,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots (
   , SnapshotFailure (..)
   , diskSnapshotIsTemporary
   , listSnapshots
-  , pattern DiskSnapshotChecksum
-  , pattern NoDiskSnapshotChecksum
   , readSnapshot
     -- * Write to disk
   , takeSnapshot
@@ -213,10 +211,6 @@ data ReadSnapshotErr =
     -- | A '.checksum' file exists for a @'DiskSnapshot'@, but its contents is invalid
   | ReadSnapshotInvalidChecksumFile FsPath
   deriving (Eq, Show)
-
-pattern DiskSnapshotChecksum, NoDiskSnapshotChecksum :: Flag "DiskSnapshotChecksum"
-pattern DiskSnapshotChecksum = Flag True
-pattern NoDiskSnapshotChecksum = Flag False
 
 -- | Read snapshot from disk.
 --
