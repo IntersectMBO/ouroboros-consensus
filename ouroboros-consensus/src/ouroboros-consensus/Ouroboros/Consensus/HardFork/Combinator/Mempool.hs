@@ -5,10 +5,12 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -25,7 +27,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Mempool (
   , hardForkApplyTxErrToEither
   ) where
 
-import           Control.Arrow ((+++))
+import           Control.Arrow (first, (+++))
 import           Control.Monad.Except
 import           Data.Functor.Product
 import           Data.Kind (Type)
@@ -105,15 +107,17 @@ type instance ApplyTxErr (HardForkBlock xs) = HardForkApplyTxErr xs
 -- We do not define this as a new data type to reuse the @Applicative@ and
 -- friends instances of these type constructors, which are useful to
 -- @hsequence'@ a @HardForkState@ of this.
-type ComposedReapplyTxsResult xs =
+--
+-- This is also isomorphic to
+-- @'Ouroboros.Consensus.Ledger.SupportsMempool.ReapplyTxsResult' (HardForkBlock xs)@
+type DecomposedReapplyTxsResult extra xs =
   (,,)
     [Invalidated (HardForkBlock xs)]
-    [Validated (GenTx (HardForkBlock xs))]
+    [(Validated (GenTx (HardForkBlock xs)), extra)]
   :.:
-    FlipTickedLedgerState DiffMK
+    FlipTickedLedgerState TrackingMK
 
 instance ( CanHardFork xs
-         , HardForkHasLedgerTables xs
          , HasCanonicalTxIn xs
          , HasHardForkTxOut xs
          ) => LedgerSupportsMempool (HardForkBlock xs) where
@@ -129,15 +133,21 @@ instance ( CanHardFork xs
           (WrapValidatedGenTx vtx)
           tls
 
+  reapplyTxs :: forall extra.
+       LedgerConfig (HardForkBlock xs)
+    -> SlotNo -- ^ Slot number of the block containing the tx
+    -> [(Validated (GenTx (HardForkBlock xs)), extra)]
+    -> TickedLedgerState (HardForkBlock xs) ValuesMK
+    -> ReapplyTxsResult extra (HardForkBlock xs)
   reapplyTxs
     HardForkLedgerConfig{..}
     slot
     vtxs
     (TickedHardForkLedgerState transition hardForkState) =
-      (\(err, val, st') ->
+        (\(err, val, st') ->
            ReapplyTxsResult (mismatched' ++ err) val (TickedHardForkLedgerState transition st'))
       . hsequence'
-      $ hcizipWith proxySingle modeApplyCurrent cfgs matched
+      $ hcizipWith proxySingle modeApplyCurrent cfgs (State.HardForkState $ hmap flipCurrentAndProduct matched)
 
     where
       pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
@@ -147,13 +157,21 @@ instance ( CanHardFork xs
                 transition
                 hardForkState
 
+      flipCurrentAndProduct (Pair (State.Current c s) b) = State.Current c (Pair s b)
+
       -- Transactions are unwrapped into the particular era transactions.
       (mismatched, matched) =
-        matchPolyTxs
+        matchPolyTxsTele
           -- How to translate txs to later eras
-          (InPairs.hmap snd2 (InPairs.requiringBoth cfgs hardForkInjectTxs))
-          (map (getOneEraValidatedGenTx . getHardForkValidatedGenTx) vtxs)
-          hardForkState
+          (InPairs.hmap
+             (\(Pair2 _ (InjectPolyTx w)) -> InjectPolyTx (\(Comp (ex, tx)) -> Comp . (ex,) <$> w tx))
+             (InPairs.requiringBoth cfgs hardForkInjectTxs)
+          )
+          (State.getHardForkState hardForkState)
+          (map
+             (\(tx, extra) -> hmap (Comp . (extra,)) . getOneEraValidatedGenTx . getHardForkValidatedGenTx $ tx)
+             vtxs
+          )
 
       mismatched' :: [Invalidated (HardForkBlock xs)]
       mismatched' =
@@ -163,24 +181,25 @@ instance ( CanHardFork xs
                                     $ snd x)
                  . HardForkValidatedGenTx
                  . OneEraValidatedGenTx
+                 . hmap (snd . unComp)
                  . fst
                  $ x)
             mismatched
 
       modeApplyCurrent :: forall blk.
-           SingleEraBlock                      blk
-        => Index xs                            blk
-        -> WrapLedgerConfig                    blk
+           SingleEraBlock                              blk
+        => Index xs                                    blk
+        -> WrapLedgerConfig                            blk
         -> Product
-             (ListOfTxs WrapValidatedGenTx xs)
-             (FlipTickedLedgerState ValuesMK)  blk
-        -> ComposedReapplyTxsResult xs         blk
-      modeApplyCurrent index cfg (Pair txs (FlipTickedLedgerState st)) =
+             (FlipTickedLedgerState ValuesMK)
+             ([] :.: (,) extra :.: WrapValidatedGenTx) blk
+        -> DecomposedReapplyTxsResult extra xs         blk
+      modeApplyCurrent index cfg (Pair (FlipTickedLedgerState st) txs) =
         let ReapplyTxsResult err val st' =
-              reapplyTxs (unwrapLedgerConfig cfg) slot [ unwrapValidatedGenTx t | TxsWithOriginal _ t <- txsList txs ] st
+              reapplyTxs (unwrapLedgerConfig cfg) slot [ (unwrapValidatedGenTx tx, tk) | (Comp (tk,tx)) <- unComp txs ] st
         in Comp
-           ( map (\x -> flip Invalidated (injectApplyTxErr index $ getReason x) . injectValidatedGenTx index . getInvalidated $ x) err
-           , map (HardForkValidatedGenTx . OneEraValidatedGenTx . injectNS index . WrapValidatedGenTx) val
+           ( [ injectValidatedGenTx index (getInvalidated x) `Invalidated` injectApplyTxErr index (getReason x) | x <- err ]
+           , map (first (HardForkValidatedGenTx . OneEraValidatedGenTx . injectNS index . WrapValidatedGenTx)) val
            , FlipTickedLedgerState st'
            )
 
@@ -284,11 +303,11 @@ data ApplyHelperMode :: (Type -> Type) -> Type where
 -- | 'applyHelper' has to return one of these, depending on the apply mode used.
 type family ApplyMK k where
   ApplyMK (ApplyHelperMode GenTx) = DiffMK
-  ApplyMK (ApplyHelperMode WrapValidatedGenTx) = ValuesMK
+  ApplyMK (ApplyHelperMode WrapValidatedGenTx) = TrackingMK
 
 -- | A private type used only to clarify the definition of 'applyHelper'
 data ApplyResult xs txIn blk = ApplyResult {
-    arState       :: Ticked1 (LedgerState blk) (ApplyMK (ApplyHelperMode txIn))
+    arState       :: Ticked (LedgerState blk) (ApplyMK (ApplyHelperMode txIn))
   , arValidatedTx :: Validated (GenTx (HardForkBlock xs))
   }
 

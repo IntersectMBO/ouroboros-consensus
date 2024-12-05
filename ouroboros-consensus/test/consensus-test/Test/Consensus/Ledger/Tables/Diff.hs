@@ -9,7 +9,10 @@
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Test.Consensus.Ledger.Tables.Diff (tests) where
+module Test.Consensus.Ledger.Tables.Diff (
+    lawsTestOne
+  , tests
+  ) where
 
 import           Data.Foldable as F
 import           Data.Map.Strict (Map)
@@ -20,6 +23,7 @@ import           Ouroboros.Consensus.Ledger.Tables.Diff
 import           Test.QuickCheck.Classes
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck hiding (Negative, Positive)
+import           Test.Util.QuickCheck (le)
 
 tests :: TestTree
 tests = testGroup "Test.Consensus.Ledger.Tables.Diff" [
@@ -93,8 +97,8 @@ prop_applyDiffNumInsertsDeletesExact m1 m2 =
 -- * The size of @m@ may /increase/ by up to the number of inserts in @d@. This
 --   if @d@ does not delete any existing keys.
 prop_applyDiffNumInsertsDeletes :: Map K V -> Diff K V -> Property
-prop_applyDiffNumInsertsDeletes m d = property $
-    lb <= n' && n' <= ub
+prop_applyDiffNumInsertsDeletes m d =
+    lb `le` n' .&&. n' `le` ub
   where
     n        = Map.size m
     nInserts = numInserts d

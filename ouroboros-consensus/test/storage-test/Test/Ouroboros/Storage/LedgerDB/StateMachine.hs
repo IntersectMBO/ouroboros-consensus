@@ -37,6 +37,7 @@
 -- corresponding ledger state modelling the whole block chain since genesis.
 module Test.Ouroboros.Storage.LedgerDB.StateMachine (tests) where
 
+import qualified Control.Monad as Monad
 import           Control.Monad.Except
 import           Control.Monad.State hiding (state)
 import           Control.ResourceRegistry
@@ -52,29 +53,28 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
-import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream
-import           Ouroboros.Consensus.Storage.LedgerDB.API as LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.API.Config
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args as Args
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Init
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
-import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
-import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
-import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
-import           Ouroboros.Consensus.Storage.LedgerDB.V1.Init as V1
-import           Ouroboros.Consensus.Storage.LedgerDB.V2.Args
-import           Ouroboros.Consensus.Storage.LedgerDB.V2.Init as V2
+import           Ouroboros.Consensus.Storage.ImmutableDB.Stream
+import           Ouroboros.Consensus.Storage.LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import           Ouroboros.Consensus.Storage.LedgerDB.V1 as V1
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args hiding
+                     (LedgerDbFlavorArgs)
+import           Ouroboros.Consensus.Storage.LedgerDB.V2 as V2
+import           Ouroboros.Consensus.Storage.LedgerDB.V2.Args hiding
+                     (LedgerDbFlavorArgs)
 import           Ouroboros.Consensus.Util hiding (Some)
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import qualified System.Directory as Dir
+import qualified System.FilePath as FilePath
 import           System.FS.API
 import qualified System.FS.IO as FSIO
 import qualified System.FS.Sim.MockFS as MockFS
 import           System.FS.Sim.STM
 import qualified System.IO.Temp as Temp
 import           Test.Ouroboros.Storage.LedgerDB.StateMachine.TestBlock
+import           Test.Ouroboros.Storage.LedgerDB.V1.LMDB
 import qualified Test.QuickCheck as QC
 import           "quickcheck-dynamic" Test.QuickCheck.Extras
 import qualified Test.QuickCheck.Monadic as QC
@@ -87,22 +87,23 @@ import           Test.Util.TestBlock hiding (TestBlock, TestBlockCodecConfig,
 tests :: TestTree
 tests = testGroup "StateMachine" [
       testProperty "InMemV1" $
-          prop_sequential 100000 inMemV1TestArguments simulatedFS
+          prop_sequential 100000 inMemV1TestArguments noFilePath simulatedFS
     , testProperty "InMemV2" $
-          prop_sequential 100000 inMemV2TestArguments simulatedFS
+          prop_sequential 100000 inMemV2TestArguments noFilePath simulatedFS
     , testProperty "LMDB" $
-          prop_sequential 1000 lmdbTestArguments realFS
+          prop_sequential 1000 lmdbTestArguments realFilePath realFS
     ]
 
 prop_sequential ::
      Int
-  -> (SecurityParam -> SomeHasFS IO -> TestArguments IO)
+  -> (SecurityParam -> FilePath -> TestArguments IO)
+  -> IO (FilePath, IO ())
   -> IO (SomeHasFS IO, IO ())
   -> Actions Model
   -> QC.Property
-prop_sequential maxSuccess mkTestArguments fsOps as = QC.withMaxSuccess maxSuccess $
+prop_sequential maxSuccess mkTestArguments getLmdbDir fsOps as = QC.withMaxSuccess maxSuccess $
   QC.monadicIO $ do
-    ref <- lift $ initialEnvironment fsOps mkTestArguments =<< initChainDB
+    ref <- lift $ initialEnvironment fsOps getLmdbDir mkTestArguments =<< initChainDB
     (_, Environment _ testInternals _ _ _ clean) <- runPropertyStateT (runActions as) ref
     QC.run $ closeLedgerDB testInternals >> clean
     QC.assert True
@@ -114,27 +115,39 @@ prop_sequential maxSuccess mkTestArguments fsOps as = QC.withMaxSuccess maxSucce
 -- are trivial, but nevertheless they have to exist.
 initialEnvironment ::
      IO (SomeHasFS IO, IO ())
-  -> (SecurityParam ->  SomeHasFS IO -> TestArguments IO)
+  -> IO (FilePath, IO ())
+  -> (SecurityParam ->  FilePath -> TestArguments IO)
   -> ChainDB IO
   -> IO Environment
-initialEnvironment fsOps mkTestArguments cdb = do
+initialEnvironment fsOps getLmdbDir mkTestArguments cdb = do
   (sfs, cleanupFS) <- fsOps
+  (lmdbDir, cleanupLMDB) <- getLmdbDir
   pure $ Environment
     undefined
-    (TestInternals undefined undefined undefined undefined (pure ()))
+    (TestInternals undefined undefined undefined undefined undefined (pure ()))
     cdb
-    (flip mkTestArguments sfs)
+    (flip mkTestArguments lmdbDir)
     sfs
-    cleanupFS
+    (cleanupFS >> cleanupLMDB)
 
 {-------------------------------------------------------------------------------
   Arguments
 -------------------------------------------------------------------------------}
 
 data TestArguments m = TestArguments {
-      argFlavorArgs  :: !(Complete Args.LedgerDbFlavorArgs m)
+      argFlavorArgs  :: !(Complete LedgerDbFlavorArgs m)
     , argLedgerDbCfg :: !(LedgerDbCfg (ExtLedgerState TestBlock))
     }
+
+noFilePath :: IO (FilePath, IO ())
+noFilePath = pure ("Bogus", pure ())
+
+realFilePath :: IO (FilePath, IO ())
+realFilePath = liftIO $ do
+  tmpdir <- (FilePath.</> "test_lmdb") <$> Dir.getTemporaryDirectory
+  pure (tmpdir, do
+           exists <- Dir.doesDirectoryExist tmpdir
+           Monad.when exists $ Dir.removeDirectoryRecursive tmpdir)
 
 simulatedFS :: IO (SomeHasFS IO, IO ())
 simulatedFS = do
@@ -149,17 +162,17 @@ realFS = liftIO $ do
 
 inMemV1TestArguments ::
      SecurityParam
-  -> SomeHasFS IO
+  -> FilePath
   -> TestArguments IO
 inMemV1TestArguments secParam _ =
   TestArguments {
-      argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing DisableQuerySize InMemoryBackingStoreArgs
+      argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing InMemoryBackingStoreArgs
     , argLedgerDbCfg = extLedgerDbConfig secParam
     }
 
 inMemV2TestArguments ::
      SecurityParam
-  -> SomeHasFS IO
+  -> FilePath
   -> TestArguments IO
 inMemV2TestArguments secParam _ =
   TestArguments {
@@ -167,26 +180,13 @@ inMemV2TestArguments secParam _ =
     , argLedgerDbCfg = extLedgerDbConfig secParam
     }
 
-testLMDBLimits :: LMDBLimits
-testLMDBLimits = LMDBLimits
-  { -- 100 MiB should be more than sufficient for the tests we're running here.
-    -- If the database were to grow beyond 100 Mebibytes, resulting in a test
-    -- error, then something in the LMDB backing store or tests has changed and
-    -- we should reconsider this value.
-    lmdbMapSize = 100 * 1024 * 1024
-    -- 3 internal databases: 1 for the settings, 1 for the state, and 1 for the
-    -- ledger tables.
-  , lmdbMaxDatabases = 3
-  , lmdbMaxReaders = 16
-  }
-
 lmdbTestArguments ::
      SecurityParam
-  -> SomeHasFS IO
+  -> FilePath
   -> TestArguments IO
-lmdbTestArguments secParam fs =
+lmdbTestArguments secParam fp =
   TestArguments {
-      argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing DisableQuerySize $ LMDBBackingStoreArgs (LiveLMDBFS fs) testLMDBLimits Dict.Dict
+      argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing $ LMDBBackingStoreArgs fp (testLMDBLimits 16) Dict.Dict
     , argLedgerDbCfg = extLedgerDbConfig secParam
     }
 
@@ -268,10 +268,10 @@ instance StateModel Model where
                 , (2, pure $ Some ForceTakeSnapshot)
                 , (1, Some . DropAndRestore <$> QC.choose (0, fromIntegral $ AS.length chain))
                 , (4, Some <$> do
-                      let maxRollback = minimum [
-                            fromIntegral . AS.length $ chain
-                            , maxRollbacks secParam
-                            ]
+                      let maxRollback =
+                            min
+                              (fromIntegral . AS.length $ chain)
+                              (maxRollbacks secParam)
                       numRollback  <- QC.choose (0, maxRollback)
                       numNewBlocks <- QC.choose (numRollback, numRollback + 2)
                       let
@@ -331,8 +331,6 @@ data ChainDB m = ChainDB {
       dbBlocks :: StrictTVar m (Map (RealPoint TestBlock) TestBlock)
 
       -- | Current chain and corresponding ledger state
-      --
-      -- Invariant: all references @r@ here must be present in 'dbBlocks'.
     , dbChain  :: StrictTVar m [RealPoint TestBlock]
     }
 
@@ -411,7 +409,7 @@ blockNotFound = concat [
 -------------------------------------------------------------------------------}
 
 openLedgerDB ::
-     Complete Args.LedgerDbFlavorArgs IO
+     Complete LedgerDbFlavorArgs IO
   -> ChainDB IO
   -> LedgerDbCfg (ExtLedgerState TestBlock)
   -> SomeHasFS IO
@@ -429,6 +427,7 @@ openLedgerDB flavArgs env cfg fs = do
                nullTracer
                flavArgs
                rr
+               DefaultQueryBatchSize
                Nothing
   (ldb, _, od) <- case flavArgs of
     LedgerDbFlavorArgsV1 bss ->
@@ -446,7 +445,7 @@ openLedgerDB flavArgs env cfg fs = do
         in
           openDBInternal args initDb stream replayGoal
   withRegistry $ \reg -> do
-    vr <- validate ldb reg (const $ pure ()) BlockCache.empty 0 (map getHeader volBlocks)
+    vr <- validateFork ldb reg (const $ pure ()) BlockCache.empty 0 (map getHeader volBlocks)
     case vr of
       ValidateSuccessful forker -> do
         atomically (forkerCommit forker)
@@ -487,7 +486,7 @@ instance RunModel Model (StateT Environment IO) where
 
   perform _ ForceTakeSnapshot _ = do
     Environment _ testInternals _ _ _ _ <- get
-    lift $ takeSnapshotNOW testInternals Nothing
+    lift $ takeSnapshotNOW testInternals TakeAtImmutableTip Nothing
 
   perform _ (ValidateAndCommit n blks) _ = do
       Environment ldb _ chainDb _ _ _ <- get
@@ -495,7 +494,7 @@ instance RunModel Model (StateT Environment IO) where
         atomically $ modifyTVar (dbBlocks chainDb) $
            repeatedly (uncurry Map.insert) (map (\b -> (blockRealPoint b, b)) blks)
         withRegistry $ \rr -> do
-          vr <- validate ldb rr (const $ pure ()) BlockCache.empty n (map getHeader blks)
+          vr <- validateFork ldb rr (const $ pure ()) BlockCache.empty n (map getHeader blks)
           case vr of
             ValidateSuccessful forker -> do
               atomically $ modifyTVar (dbChain chainDb) (reverse (map blockRealPoint blks) ++)

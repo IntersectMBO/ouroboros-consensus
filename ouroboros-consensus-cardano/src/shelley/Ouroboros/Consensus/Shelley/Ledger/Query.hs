@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
@@ -19,6 +20,12 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
+#if __GLASGOW_HASKELL__ <= 906
+{-# OPTIONS_GHC -Wno-incomplete-patterns
+                -Wno-incomplete-uni-patterns
+                -Wno-incomplete-record-updates
+                -Wno-overlapping-patterns #-}
+#endif
 
 module Ouroboros.Consensus.Shelley.Ledger.Query (
     BlockQuery (..)
@@ -34,7 +41,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Query (
     -- * BlockSupportsHFLedgerQuery instances
   , answerShelleyLookupQueries
   , answerShelleyTraversingQueries
-  , filterGetUTxOByAddressOne
+  , shelleyFilter
   ) where
 
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..), encodeListLen,
@@ -74,7 +81,6 @@ import           Data.Maybe (fromMaybe)
 import           Data.Sequence (Seq (..))
 import           Data.Set (Set)
 import qualified Data.Set as Set
-import           Data.SOP.Index
 import           Data.Typeable (Typeable)
 import qualified Data.VMap as VMap
 import           GHC.Generics (Generic)
@@ -82,9 +88,7 @@ import           Lens.Micro
 import           Lens.Micro.Extras (view)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
-import           Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork
 import           Ouroboros.Consensus.HardFork.Combinator.Basics
-import           Ouroboros.Consensus.HardFork.Combinator.Ledger
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Basics
@@ -107,7 +111,6 @@ import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import           Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Util (ShowProxy (..))
-import           Ouroboros.Consensus.Util.IOLike (MonadSTM (atomically))
 import           Ouroboros.Network.Block (Serialised (..), decodePoint,
                      encodePoint, mkSerialised)
 import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
@@ -519,49 +522,9 @@ instance ( ShelleyCompatible proto era
       hst = headerState ext
       st  = shelleyLedgerState lst
 
-  answerBlockQueryLookup cfg qry forker = case qry of
-    GetUTxOByTxIn ks -> do
-      values <- LedgerDB.roforkerReadTables forker $ LedgerTables $ KeysMK ks
-      flip SL.getUTxOSubset ks
-        . shelleyLedgerState
-        . ledgerState
-        . stowLedgerTables
-        . flip withLedgerTables values
-        <$> atomically (LedgerDB.roforkerGetLedgerState forker)
-    GetCBOR qry'     ->
-      mkSerialised (encodeShelleyResult maxBound qry') <$>
-            answerBlockQueryLookup cfg qry' forker
+  answerBlockQueryLookup = answerShelleyLookupQueries id id id
 
-  answerBlockQueryTraverse cfg qry forker = case qry of
-    GetUTxOByAddress addrs -> loop (filterGetUTxOByAddressOne addrs) NoPreviousQuery emptyUtxo
-    GetUTxOWhole           -> loop (const True) NoPreviousQuery emptyUtxo
-    GetCBOR q'             ->
-      mkSerialised (encodeShelleyResult maxBound q') <$>
-       answerBlockQueryTraverse cfg q' forker
-   where
-    emptyUtxo               = SL.UTxO Map.empty
-
-    combUtxo (SL.UTxO l) vs = SL.UTxO $ Map.union l vs
-
-    partial ::
-         (Value (LedgerState (ShelleyBlock proto era)) -> Bool)
-      -> LedgerTables (ExtLedgerState (ShelleyBlock proto era)) ValuesMK
-      -> Map (SL.TxIn (EraCrypto era)) (LC.TxOut era)
-    partial queryPredicate (LedgerTables (ValuesMK vs)) =
-        Map.filter queryPredicate vs
-
-    f :: ValuesMK k v -> Bool
-    f (ValuesMK vs) = Map.null vs
-
-    toKey (LedgerTables (ValuesMK vs)) = fst $ Map.findMax vs
-
-    loop queryPredicate !prev !acc = do
-      extValues <- LedgerDB.roforkerRangeReadTables forker prev
-      if ltcollapse $ ltmap (K2 . f) extValues
-        then pure acc
-        else loop queryPredicate
-               (PreviousQueryWasUpTo $ toKey extValues)
-               (combUtxo acc $ partial queryPredicate extValues)
+  answerBlockQueryTraverse = answerShelleyTraversingQueries id id shelleyFilter
 
 instance SameDepIndex2 (BlockQuery (ShelleyBlock proto era)) where
   sameDepIndex2 GetLedgerTip GetLedgerTip
@@ -1171,26 +1134,33 @@ instance
 -------------------------------------------------------------------------------}
 
 answerShelleyLookupQueries ::
-     forall xs proto era m result.
-     ( HasCanonicalTxIn xs
-     , HasHardForkTxOut xs
-     , CanHardFork xs
-     , BlockSupportsHFLedgerQuery xs
-     , Monad m
+     forall proto era m result blk'.
+     ( Monad m
      , ShelleyCompatible proto era
      )
-  => Index xs (ShelleyBlock proto era)
+  => (   LedgerTables (LedgerState (ShelleyBlock proto era)) KeysMK
+      -> LedgerTables (LedgerState blk')       KeysMK
+     )
+     -- ^ Inject ledger tables
+  -> (TxOut (LedgerState blk') -> LC.TxOut era)
+     -- ^ Eject TxOut
+  -> (TxIn (LedgerState blk') -> SL.TxIn (ProtoCrypto proto))
+     -- ^ Eject TxIn
   -> ExtLedgerCfg (ShelleyBlock proto era)
   -> BlockQuery (ShelleyBlock proto era) QFLookupTables result
-  -> ReadOnlyForker' m (HardForkBlock xs)
+  -> ReadOnlyForker' m blk'
   -> m result
-answerShelleyLookupQueries idx cfg q forker =
+answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q forker =
     case q of
       GetUTxOByTxIn txins ->
         answerGetUtxOByTxIn txins
       GetCBOR q'          ->
+        -- We encode using the latest (@maxBound@) ShelleyNodeToClientVersion,
+        -- as the @GetCBOR@ query already is about opportunistically assuming
+        -- both client and server are running the same version; cf. the
+        -- @GetCBOR@ Haddocks.
             mkSerialised (encodeShelleyResult maxBound q')
-        <$> answerBlockQueryHFLookup idx cfg q' forker
+        <$> answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q' forker
   where
     answerGetUtxOByTxIn ::
          Set.Set (SL.TxIn (EraCrypto era))
@@ -1199,80 +1169,99 @@ answerShelleyLookupQueries idx cfg q forker =
       LedgerTables (ValuesMK values) <-
         LedgerDB.roforkerReadTables
           forker
-          (castLedgerTables $ injectLedgerTables idx (LedgerTables $ KeysMK txins))
+          (castLedgerTables $ injTables (LedgerTables $ KeysMK txins))
       pure
         $ SL.UTxO
-        $ Map.mapKeys (distribCanonicalTxIn idx)
+        $ Map.mapKeys ejTxIn
         $ Map.mapMaybeWithKey
             (\k v ->
-               if distribCanonicalTxIn idx k `Set.member` txins
-               then Just $ distribHardForkTxOut idx v
+               if ejTxIn k `Set.member` txins
+               then Just $ ejTxOut v
                else Nothing)
             values
 
-filterGetUTxOByAddressOne ::
-     (ShelleyBasedEra era, EraCrypto era ~ c)
-  => Set (Addr c)
-  -> LC.TxOut era
+shelleyFilter ::
+     forall proto era proto' era' result.
+     (ShelleyBasedEra era, ShelleyBasedEra era', EraCrypto era' ~ EraCrypto era)
+  => BlockQuery (ShelleyBlock proto era) QFTraverseTables result
+  -> TxOut (LedgerState (ShelleyBlock proto' era'))
   -> Bool
-filterGetUTxOByAddressOne addrs =
-  let
-    compactAddrSet = Set.map compactAddr addrs
-    checkAddr out =
-      case out ^. SL.addrEitherTxOutL of
-        Left addr   -> addr `Set.member` addrs
-        Right cAddr -> cAddr `Set.member` compactAddrSet
-  in
-    checkAddr
+shelleyFilter q = case q of
+    GetUTxOByAddress addr -> filterGetUTxOByAddressOne addr
+    GetUTxOWhole          -> const True
+    GetCBOR q'            -> shelleyFilter q'
+  where
+    filterGetUTxOByAddressOne ::
+         Set (Addr (EraCrypto era))
+      -> LC.TxOut era'
+      -> Bool
+    filterGetUTxOByAddressOne addrs =
+      let
+        compactAddrSet = Set.map compactAddr addrs
+        checkAddr out =
+          case out ^. SL.addrEitherTxOutL of
+            Left addr   -> addr `Set.member` addrs
+            Right cAddr -> cAddr `Set.member` compactAddrSet
+      in
+        checkAddr
 
 answerShelleyTraversingQueries ::
-     forall xs proto era m result.
+     forall proto era m result blk'.
      ( ShelleyCompatible proto era
-     , BlockSupportsHFLedgerQuery xs
-     , HasCanonicalTxIn xs
-     , HasHardForkTxOut xs
-     , HardForkHasLedgerTables xs
-     , CanHardFork xs
+     , Ord (TxIn (LedgerState blk'))
+     , Eq (TxOut (LedgerState blk'))
      )
   => Monad m
-  => Index xs (ShelleyBlock proto era)
+  => (TxOut (LedgerState blk') -> LC.TxOut era)
+     -- ^ Eject TxOut
+  -> (TxIn (LedgerState blk') -> SL.TxIn (ProtoCrypto proto))
+     -- ^ Eject TxIn
+  -> (forall result'.
+         BlockQuery (ShelleyBlock proto era) QFTraverseTables result'
+      -> TxOut (LedgerState blk')
+      -> Bool)
+     -- ^ Get filter by query
   -> ExtLedgerCfg (ShelleyBlock proto era)
   -> BlockQuery (ShelleyBlock proto era) QFTraverseTables result
-  -> ReadOnlyForker' m (HardForkBlock xs)
+  -> ReadOnlyForker' m blk'
   -> m result
-answerShelleyTraversingQueries idx cfg q forker = case q of
-    GetUTxOByAddress{} -> loop (queryLedgerGetTraversingFilter idx q) NoPreviousQuery emptyUtxo
-    GetUTxOWhole       -> loop (queryLedgerGetTraversingFilter idx q) NoPreviousQuery emptyUtxo
+answerShelleyTraversingQueries ejTxOut ejTxIn filt cfg q forker = case q of
+    GetUTxOByAddress{} -> loop (filt q) NoPreviousQuery emptyUtxo
+    GetUTxOWhole       -> loop (filt q) NoPreviousQuery emptyUtxo
     GetCBOR q'         ->
+      -- We encode using the latest (@maxBound@) ShelleyNodeToClientVersion,
+      -- as the @GetCBOR@ query already is about opportunistically assuming
+      -- both client and server are running the same version; cf. the
+      -- @GetCBOR@ Haddocks.
       mkSerialised (encodeShelleyResult maxBound q') <$>
-       answerBlockQueryHFTraverse idx cfg q' forker
+       answerShelleyTraversingQueries ejTxOut ejTxIn filt cfg q' forker
   where
     emptyUtxo               = SL.UTxO Map.empty
 
     combUtxo (SL.UTxO l) vs = SL.UTxO $ Map.union l vs
 
     partial ::
-         (Value (LedgerState (HardForkBlock xs)) -> Bool)
-      -> LedgerTables (ExtLedgerState (HardForkBlock xs)) ValuesMK
+         (TxOut (LedgerState blk') -> Bool)
+      -> LedgerTables (ExtLedgerState blk') ValuesMK
       -> Map (SL.TxIn (EraCrypto era)) (LC.TxOut era)
     partial queryPredicate (LedgerTables (ValuesMK vs)) =
-        Map.mapKeys (distribCanonicalTxIn idx)
+        Map.mapKeys ejTxIn
       $ Map.mapMaybeWithKey
           (\_k v ->
               if queryPredicate v
-              then Just $ distribHardForkTxOut idx v
+              then Just $ ejTxOut v
               else Nothing)
           vs
 
-    f :: ValuesMK k v -> Bool
-    f (ValuesMK vs) = Map.null vs
+    vnull :: ValuesMK k v -> Bool
+    vnull (ValuesMK vs) = Map.null vs
 
-    toKey (LedgerTables (ValuesMK vs)) = fst $ Map.findMax vs
+    toMaxKey (LedgerTables (ValuesMK vs)) = fst $ Map.findMax vs
 
     loop queryPredicate !prev !acc = do
       extValues <- LedgerDB.roforkerRangeReadTables forker prev
-      if ltcollapse $ ltmap (K2 . f) extValues
+      if ltcollapse $ ltmap (K2 . vnull) extValues
         then pure acc
         else loop queryPredicate
-               (PreviousQueryWasUpTo $ toKey extValues)
+               (PreviousQueryWasUpTo $ toMaxKey extValues)
                (combUtxo acc $ partial queryPredicate extValues)

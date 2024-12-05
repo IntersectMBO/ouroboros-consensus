@@ -22,7 +22,6 @@ module Test.Consensus.MiniProtocol.LocalStateQuery.Server (tests) where
 
 import           Cardano.Crypto.DSIGN.Mock
 import           Control.Concurrent.Class.MonadSTM.Strict.TMVar
-import           Control.Monad.Base
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.ResourceRegistry
 import           Control.Tracer
@@ -40,12 +39,11 @@ import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import           Ouroboros.Consensus.NodeId
 import           Ouroboros.Consensus.Protocol.BFT
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
-import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream hiding
+import           Ouroboros.Consensus.Storage.ImmutableDB.Stream hiding
                      (streamAPI)
-import           Ouroboros.Consensus.Storage.LedgerDB (LedgerDB')
+import           Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
 import           Ouroboros.Consensus.Util.IOLike hiding (newTVarIO)
 import           Ouroboros.Network.Mock.Chain (Chain (..))
@@ -179,7 +177,7 @@ mkClient ::
 mkClient points = localStateQueryClient [(pt, BlockQuery QueryLedgerTip) | pt <- points]
 
 mkServer ::
-     (IOLike m, MonadBase m m)
+     IOLike m
   => ResourceRegistry m
   -> SecurityParam
   -> Chain TestBlock
@@ -205,7 +203,7 @@ streamAPI = StreamAPI {streamAfter}
 
 -- | Initialise a 'LedgerDB' with the given chain.
 initLedgerDB ::
-     (IOLike m, MonadBase m m)
+     IOLike m
   => SecurityParam
   -> Chain TestBlock
   -> m (LedgerDB' m TestBlock)
@@ -221,8 +219,9 @@ initLedgerDB s c = do
         , lgrHasFS              = SomeHasFS $ simHasFS fs
         , lgrGenesis            = return testInitExtLedger
         , lgrTracer             = nullTracer
-        , lgrFlavorArgs         = LedgerDbFlavorArgsV1 $ V1Args DefaultFlushFrequency DefaultQueryBatchSize InMemoryBackingStoreArgs
+        , lgrFlavorArgs         = LedgerDbFlavorArgsV1 $ V1Args DefaultFlushFrequency InMemoryBackingStoreArgs
         , lgrConfig             = LedgerDB.configLedgerDb $ testCfg s
+        , lgrQueryBatchSize     = DefaultQueryBatchSize
         , lgrRegistry           = reg
         , lgrStartSnapshot      = Nothing
         }
@@ -232,7 +231,7 @@ initLedgerDB s c = do
     (Chain.headPoint c)
     (\rpt -> pure $ fromMaybe (error "impossible") $ Chain.findBlock ((rpt ==) . blockRealPoint) c)
 
-  result <- LedgerDB.validate ldb reg (const $ pure ()) BlockCache.empty 0 (map getHeader $ Chain.toOldestFirst c)
+  result <- LedgerDB.validateFork ldb reg (const $ pure ()) BlockCache.empty 0 (map getHeader $ Chain.toOldestFirst c)
   case result of
     LedgerDB.ValidateSuccessful forker -> do
       atomically $ LedgerDB.forkerCommit forker

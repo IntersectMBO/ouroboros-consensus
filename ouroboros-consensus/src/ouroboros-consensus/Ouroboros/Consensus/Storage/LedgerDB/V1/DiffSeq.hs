@@ -10,57 +10,99 @@
 
 {- | Sequences of diffs for ledger tables.
 
-   These diff sequences are an instantiation of a strict finger tree with root
-   measures. The tree/sequence itself contains diffs and slot information, while
-   the root measure is the total sum of all diffs in the sequence. The internal
-   measure is used to keep track of sequence length and maximum slot numbers.
+  These diff sequences are an instantiation of a strict finger tree with root
+  measures. The tree/sequence itself contains diffs and slot information, while
+  the root measure is the total sum of all diffs in the sequence. The internal
+  measure is used to keep track of sequence length and maximum slot numbers.
 
-   The diff datatype that we use forms a cancellative monoid, which allows for
-   relatively efficient splitting of finger trees with respect to recomputing
-   measures by means of subtracting diffs using the 'stripPrefix' and
-   'stripSuffix' functions that cancellative monoids provide. Namely, if either
-   the left or right part of the split is small in comparison with the input
-   sequence, then we can subtract the diffs in the smaller part from the root
-   measure of the input to (quickly) compute the root measure of the /other/
-   part of the split. This is much faster than computing the root measures from
-   scratch by doing a linear-time pass over the elements of the split parts, or
-   a logarithmic-time pass over intermediate sums of diffs in case we store
-   cumulative diffs in the nodes of the finger tree.
+  The diff datatype that we use forms a cancellative monoid, which allows for
+  relatively efficient splitting of finger trees with respect to recomputing
+  measures by means of subtracting diffs using the 'stripPrefix' and
+  'stripSuffix' functions that cancellative monoids provide. Namely, if either
+  the left or right part of the split is small in comparison with the input
+  sequence, then we can subtract the diffs in the smaller part from the root
+  measure of the input to (quickly) compute the root measure of the /other/
+  part of the split. This is much faster than computing the root measures from
+  scratch by doing a linear-time pass over the elements of the split parts, or
+  a logarithmic-time pass over intermediate sums of diffs in case we store
+  cumulative diffs in the nodes of the finger tree.
 
-   === Example of fast splits
+  === Example of fast splits
 
-   As an analogy, consider this example: we have a sequence of consecutive
-   integer numbers @xs = [1..n]@ where @n@ is large, and we define the root
-   measure of the sequence to be the total sum of these numbers, @rmxs = sum
-   [1..n]@ (we assume @rmxs@ is fully evaluated). Say we split this sequence of
-   integer numbers at the index @2@, then we get /left/ and /right/ parts of the
-   split @ys@ and @zs@ respectively.
+  As an analogy, consider this example: we have a sequence of consecutive
+  integer numbers @xs = [1..n]@ where @n@ is large, and we define the root
+  measure of the sequence to be the total sum of these numbers, @rmxs = sum
+  [1..n]@ (we assume @rmxs@ is fully evaluated). Say we split this sequence of
+  integer numbers at the index @2@, then we get /left/ and /right/ parts of the
+  split @ys@ and @zs@ respectively.
 
-   > splitAt 2 xs = (ys, zs) = ([1..2], [3..n])
+  > splitAt 2 xs = (ys, zs) = ([1..2], [3..n])
 
-   How should we compute we the root measure @rmys@ of @ys@? Since @ys@ is
-   small, we can just compute @rmys = sum [1..2]@. How should we compute the
-   root measure @rmzs@ of @zs@? We should not compute @rmzs = sum [3..n]@ in
-   this case, since @n@ is large. Instead, we compute @rmzs = rmxs - rmys@,
-   which evaluates to its result in time that is linear in the length of @ys@,
-   in this case @O(1)@.
+  How should we compute we the root measure @rmys@ of @ys@? Since @ys@ is
+  small, we can just compute @rmys = sum [1..2]@. How should we compute the
+  root measure @rmzs@ of @zs@? We should not compute @rmzs = sum [3..n]@ in
+  this case, since @n@ is large. Instead, we compute @rmzs = rmxs - rmys@,
+  which evaluates to its result in time that is linear in the length of @ys@,
+  in this case @O(1)@.
 
-   === Why not store sums of diffs in the internal measure instead of the root
-       measure?
+  === Why not store sums of diffs in the internal measure instead of the root
+      measure?
 
-   We could also have used the interal measure of the strict finger tree to
-   store intermediate sums of diffs for all subtrees of the node. The subtree
-   rooted at the root of the tree would then store the total sum of diffs.
-   However, we would have now to recompute a possibly logarithmic number of sums
-   of diffs when we split or extend the sequence. Given that in @consensus@ we
-   use the total sum of diffs nearly as often as we split or extend the diff
-   sequence, this proved to be too costly. The single-instance root measure
-   reduces the overhead of this "caching" of intermediate sums of diffs by only
-   using a single total sum of diffs, though augmented with 'stripPrefix' and
-   'stripSuffix' operations to facilitate computing updated root measures.
+  We could also have used the interal measure of the strict finger tree to
+  store intermediate sums of diffs for all subtrees of the node. The subtree
+  rooted at the root of the tree would then store the total sum of diffs.
+  However, we would have now to recompute a possibly logarithmic number of sums
+  of diffs when we split or extend the sequence. Given that in @consensus@ we
+  use the total sum of diffs nearly as often as we split or extend the diff
+  sequence, this proved to be too costly. The single-instance root measure
+  reduces the overhead of this "caching" of intermediate sums of diffs by only
+  using a single total sum of diffs, though augmented with 'stripPrefix' and
+  'stripSuffix' operations to facilitate computing updated root measures.
 
+  === Root measures in practice
+
+  In consensus, we have the following access pattern. We perform @A@ then @B@ a
+  total of @n@ times, and then we perform @C(n)@ once. Repeat.
+
+  > A    = retrieve the total sum of diffs
+  > B    = snoc a diff to the sequence
+  > C(n) = split n diffs from the left of the sequence
+
+  In Cardano, @n == 100@ by default. That means we split roughly @2^7@ diffs
+  from a sequence of length roughly @2^11@. At first glance, it seems
+  counterintuitive that using a root measured finger tree would be quicker than
+  using a "normal" finger tree, because the former has a split function with a
+  linear cost. It needs to recompute the sum of @2^7@ diffs, instead of @7@
+  diffs if we were to use the normal finger tree split, which has logarithmic
+  complexity.
+
+  We wrote a benchmark that exercises the root measured finger tree and the
+  normal finger tree according to the described access pattern. It turned out
+  that the root measured fingertree was faster. If we look at the complexity of
+  these operations, then for a normal fingertree:
+
+  > A      = O(1)       amortised
+  > B      = O(1)       amortised
+  > C(100) = O(log 100) amortised
+
+  For a root measured fingertree:
+
+  > A      = O(1)   worst-case
+  > B      = O(1)   worst-case
+  > C(100) = O(100) worst-case
+
+  Complexity wise, the root measured finger tree looks worse, but in practice it
+  performs a bit better than the normal finger tree. It might mean there are
+  higher constants at play for the computational complexity of the normal finger
+  tree operations.
+
+  TODO: I wonder if is worth it to keep using the root measured finger tree. The
+  root measured finger tree sacrifices computational complexity for an algorithm
+  that works well in pratice for @n=100@; given that the flush frequency is
+  configurable, using a value other than @100@ might lead to worse performance
+  than if we were to use a normal finger tree.
 -}
-module Ouroboros.Consensus.Ledger.Tables.DiffSeq (
+module Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq (
     -- * Sequences of diffs
     DiffSeq (..)
   , Element (..)
@@ -88,6 +130,9 @@ module Ouroboros.Consensus.Ledger.Tables.DiffSeq (
   , splitAt
   , splitAtFromEnd
   , splitAtSlot
+    -- * Conversion
+  , fromAntiDiff
+  , toAntiDiff
   ) where
 
 import qualified Cardano.Slotting.Slot as Slot
@@ -95,8 +140,8 @@ import qualified Control.Exception as Exn
 import           Data.Bifunctor (Bifunctor (bimap))
 import           Data.FingerTree.RootMeasured.Strict hiding (split)
 import qualified Data.FingerTree.RootMeasured.Strict as RMFT (splitSized)
-import           Data.Map.Diff.Strict (Diff)
-import qualified Data.Map.Diff.Strict as Diff
+import qualified Data.Map.Diff.Strict.Internal as Anti
+import qualified Data.Map.Strict as Map
 import           Data.Maybe.Strict
 import           Data.Monoid (Sum (..))
 import           Data.Semigroup (Max (..), Min (..))
@@ -104,6 +149,7 @@ import           Data.Semigroup.Cancellative
 import           GHC.Generics (Generic)
 import           GHC.Stack (HasCallStack)
 import           NoThunks.Class (NoThunks)
+import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Prelude hiding (length, splitAt)
 
@@ -132,7 +178,7 @@ data RootMeasure k v = RootMeasure {
     -- | Cumulative length
     rmLength     :: {-# UNPACK #-} !Length
     -- | Cumulative diff
-  , rmDiff       :: !(Diff k v)
+  , rmDiff       :: !(Anti.Diff k v)
     -- | Cumulative number of inserts
   , rmNumInserts :: !(Sum Int)
     -- | Cumulative number of deletes
@@ -160,7 +206,7 @@ data InternalMeasure k v = InternalMeasure {
 
 data Element k v = Element {
     elSlotNo :: {-# UNPACK #-} !Slot.SlotNo
-  , elDiff   ::                !(Diff k v)
+  , elDiff   ::                !(Anti.Diff k v)
   }
   deriving stock (Generic, Show, Eq, Functor)
   deriving anyclass (NoThunks)
@@ -201,7 +247,7 @@ noSlotBoundsIntersect (SlotNoUB sl1) (SlotNoLB sl2) = sl1 <= sl2
 
 instance (Ord k, Eq v) => RootMeasured (RootMeasure k v) (Element k v) where
   measureRoot (Element _ d) =
-      RootMeasure 1 d (Sum $ Diff.numInserts d) (Sum $ Diff.numDeletes d)
+      RootMeasure 1 d (Sum $ Anti.numInserts d) (Sum $ Anti.numDeletes d)
 
 instance (Ord k, Eq v) => Semigroup (RootMeasure k v) where
   RootMeasure len1 d1 n1 m1 <> RootMeasure len2 d2 n2 m2 =
@@ -256,7 +302,7 @@ type SM k v =
 cumulativeDiff ::
      SM k v
   => DiffSeq k v
-  -> Diff k v
+  -> Anti.Diff k v
 cumulativeDiff (UnsafeDiffSeq ft) = rmDiff $ measureRoot ft
 
 length ::
@@ -282,7 +328,7 @@ extend ::
      SM k v
   => DiffSeq k v
   -> Slot.SlotNo
-  -> Diff k v
+  -> Anti.Diff k v
   -> DiffSeq k v
 extend (UnsafeDiffSeq ft) sl d =
     Exn.assert invariant $ UnsafeDiffSeq $ ft |> Element sl d
@@ -367,3 +413,20 @@ splitAtFromEnd n dseq =
     else error $ "Can't split a seq of length " ++ show len ++ " from end at " ++ show n
   where
     len = length dseq
+
+
+{-------------------------------------------------------------------------------
+  From-to diffs
+-------------------------------------------------------------------------------}
+
+fromAntiDiff :: Anti.Diff k v -> Diff.Diff k v
+fromAntiDiff (Anti.Diff d) = Diff.Diff (Map.map (f . Anti.last) d)
+  where
+    f (Anti.Insert v) = Diff.Insert v
+    f Anti.Delete{}   = Diff.Delete
+
+toAntiDiff :: Diff.Diff k v -> Anti.Diff k v
+toAntiDiff (Diff.Diff d) = Anti.Diff (Map.map f d)
+  where
+    f (Diff.Insert v) = Anti.singletonInsert v
+    f Diff.Delete     = Anti.singletonDelete

@@ -3,7 +3,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE InstanceSigs #-}
 
 module Ouroboros.Consensus.Ledger.Tables.Diff (
     -- * Types
@@ -33,17 +32,14 @@ module Ouroboros.Consensus.Ledger.Tables.Diff (
   , applyDiff
   , applyDiffForKeys
     -- * Filter
-  , filterOnlyKey
+  , filterWithKeyOnly
   , foldMapDelta
-  , fromAntiDiff
-  , toAntiDiff
   , traverseDeltaWithKey_
   ) where
 
 import           Control.Monad (void)
 import           Data.Bifunctor
 import           Data.Foldable (foldMap')
-import qualified Data.Map.Diff.Strict.Internal as Anti
 import qualified Data.Map.Merge.Strict as Merge
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -69,11 +65,9 @@ instance Functor (Diff k) where
   fmap f (Diff m) = Diff $ Map.map (fmap f) m
 
 instance Ord k => Semigroup (Diff k v) where
-  (<>) :: Diff k v -> Diff k v -> Diff k v
   (Diff m1) <> (Diff m2) = Diff $ Map.unionWith (<>) m1 m2
 
 instance Ord k => Monoid (Diff k v) where
-  mempty :: Diff k v
   mempty = Diff mempty
 
 data Delta v =
@@ -139,6 +133,7 @@ null (Diff m) = Map.null m
 
 size :: Diff k v -> Int
 size (Diff m) = Map.size m
+
 numInserts :: Diff k v -> Int
 numInserts (Diff m) = getSum $ foldMap' f m
   where
@@ -191,24 +186,8 @@ applyDiffForKeys m ks (Diff diffs) =
   Filter
 -------------------------------------------------------------------------------}
 
-filterOnlyKey :: (k -> Bool) -> Diff k v -> Diff k v
-filterOnlyKey f (Diff m) = Diff $ Map.filterWithKey (const . f) m
-
-{-------------------------------------------------------------------------------
-  From-to anti-diffs
--------------------------------------------------------------------------------}
-
-fromAntiDiff :: Anti.Diff k v -> Diff k v
-fromAntiDiff (Anti.Diff d) = Diff (Map.map (f . Anti.last) d)
-  where
-    f (Anti.Insert v) = Insert v
-    f Anti.Delete{}   = Delete
-
-toAntiDiff :: Diff k v -> Anti.Diff k v
-toAntiDiff (Diff d) = Anti.Diff (Map.map f d)
-  where
-    f (Insert v) = Anti.singletonInsert v
-    f Delete     = Anti.singletonDelete
+filterWithKeyOnly :: (k -> Bool) -> Diff k v -> Diff k v
+filterWithKeyOnly f (Diff m) = Diff $ Map.filterWithKey (const . f) m
 
 {-------------------------------------------------------------------------------
   Traversals and folds

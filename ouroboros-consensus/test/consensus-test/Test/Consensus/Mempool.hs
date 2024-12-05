@@ -41,6 +41,7 @@ import           Control.Monad.State (State, evalState, get, modify)
 import           Control.Tracer (Tracer (..))
 import           Data.Bifunctor (first, second)
 import           Data.Either (isRight)
+import qualified Data.Foldable as Foldable
 import qualified Data.List as List
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
@@ -174,8 +175,8 @@ prop_Mempool_InvalidTxsNeverAdded setup =
 prop_Mempool_removeTxs :: TestSetupWithTxInMempool -> Property
 prop_Mempool_removeTxs (TestSetupWithTxInMempool testSetup txToRemove) =
     withTestMempool testSetup $ \TestMempool { mempool } -> do
-      let Mempool { removeTxs, getSnapshot } = mempool
-      removeTxs $ NE.fromList [txId txToRemove]
+      let Mempool { removeTxsEvenIfValid, getSnapshot } = mempool
+      removeTxsEvenIfValid $ NE.fromList [txId txToRemove]
       txsInMempoolAfter <- map prjTx . snapshotTxs <$> atomically getSnapshot
       return $ counterexample
         ("Transactions in the mempool after removing (" <>
@@ -187,11 +188,11 @@ prop_Mempool_removeTxs (TestSetupWithTxInMempool testSetup txToRemove) =
 prop_Mempool_semigroup_removeTxs :: TestSetupWithTxsInMempoolToRemove -> Property
 prop_Mempool_semigroup_removeTxs (TestSetupWithTxsInMempoolToRemove testSetup txsToRemove) =
   withTestMempool testSetup $ \TestMempool {mempool = mempool1} -> do
-  removeTxs mempool1 $ NE.map txId txsToRemove
+  removeTxsEvenIfValid mempool1 $ NE.map txId txsToRemove
   snapshot1 <- atomically (getSnapshot mempool1)
 
   return $ withTestMempool testSetup $ \TestMempool {mempool = mempool2} -> do
-    forM_ (NE.map txId txsToRemove) (removeTxs mempool2 . (NE.:| []))
+    forM_ (NE.map txId txsToRemove) (removeTxsEvenIfValid mempool2 . (NE.:| []))
     snapshot2 <- atomically (getSnapshot mempool2)
 
     return $ counterexample
@@ -658,8 +659,7 @@ withTestMempool setup@TestSetup {..} prop =
       let ledgerInterface = LedgerInterface
             { getCurrentLedgerState = forgetLedgerTables <$> readTVar varCurrentLedgerState
             , getLedgerTablesAtFor = \pt txs -> do
-                let keys = List.foldl' (<>) emptyLedgerTables
-                      $ map getTransactionKeySets txs
+                let keys = Foldable.foldMap' getTransactionKeySets txs
                 st <- atomically $ readTVar varCurrentLedgerState
                 if castPoint (getTip st) == pt
                   then pure $ Just $ restrictValues' st keys
@@ -683,8 +683,8 @@ withTestMempool setup@TestSetup {..} prop =
       -- the invalid transactions are reported in the same order they were
       -- added, so the first error is not the result of a cascade
       sequence_
-        [ error $ "Invalid initial transaction: " <> condense invalidTx <> " because of error " <> show _err
-        | MempoolTxRejected invalidTx _err <- result
+        [ error $ "Invalid initial transaction: " <> condense invalidTx <> " because of error " <> show err
+        | MempoolTxRejected invalidTx err <- result
         ]
 
       -- Clear the trace
@@ -1032,19 +1032,20 @@ executeAction :: forall m. IOLike m => TestMempool m -> Action -> m Property
 executeAction testMempool action = case action of
     AddTxs txs -> do
       void $ addTxs mempool txs
-      tracedAddedTxs <- expectTraceEvent $ \case
-        TraceMempoolAddedTx tx _ _ -> Just tx
-        _                          -> Nothing
+      allTraces <- expectTraceEvent Just
+      let tracedAddedTxs = [ tx | TraceMempoolAddedTx tx _ _ <- allTraces ] -- expectTraceEvent $ \case
+        -- TraceMempoolAddedTx tx _ _ -> Just tx
+        -- _                          -> Nothing
       return $ if map txForgetValidated tracedAddedTxs == txs
         then property True
         else counterexample
           ("Expected TraceMempoolAddedTx events for " <> condense txs <>
-           " but got " <> condense (map txForgetValidated tracedAddedTxs))
+           " but got " <> condense (map txForgetValidated tracedAddedTxs) <> " evs: " <> show allTraces)
           False
 
     RemoveTxs txs -> do
       let txs' = NE.fromList $ map txId txs
-      removeTxs mempool txs'
+      removeTxsEvenIfValid mempool txs'
       tracedManuallyRemovedTxs <- expectTraceEvent $ \case
         TraceMempoolManuallyRemovedTxs txIds _ _ -> Just txIds
         _                                        -> Nothing

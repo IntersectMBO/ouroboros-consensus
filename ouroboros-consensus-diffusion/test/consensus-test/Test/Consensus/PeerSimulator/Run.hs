@@ -12,7 +12,6 @@ module Test.Consensus.PeerSimulator.Run (
   ) where
 
 import           Control.Monad (foldM, forM, void)
-import           Control.Monad.Base
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.ResourceRegistry
@@ -332,9 +331,6 @@ startNode ::
   ( IOLike m
   , MonadTime m
   , MonadTimer m
-#if __GLASGOW_HASKELL__ >= 900
-  , MonadBase m m
-#endif
   ) =>
   SchedulerConfig ->
   GenesisTestFull TestBlock ->
@@ -441,7 +437,7 @@ startNode schedulerConfig genesisTest interval = do
 
 -- | Set up all resources related to node start/shutdown.
 nodeLifecycle ::
-  (IOLike m, MonadTime m, MonadTimer m, MonadBase m m) =>
+  (IOLike m, MonadTime m, MonadTimer m) =>
   SchedulerConfig ->
   GenesisTestFull TestBlock ->
   Tracer m (TraceEvent TestBlock) ->
@@ -480,7 +476,7 @@ nodeLifecycle schedulerConfig genesisTest lrTracer lrRegistry lrPeerSim = do
 -- send all ticks in a 'PointSchedule' to all given peers in turn.
 runPointSchedule ::
   forall m.
-  (IOLike m, MonadTime m, MonadTimer m, MonadBase m m) =>
+  (IOLike m, MonadTime m, MonadTimer m) =>
   SchedulerConfig ->
   GenesisTestFull TestBlock ->
   Tracer m (TraceEvent TestBlock) ->

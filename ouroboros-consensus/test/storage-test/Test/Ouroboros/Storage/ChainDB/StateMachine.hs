@@ -81,7 +81,6 @@ module Test.Ouroboros.Storage.ChainDB.StateMachine (
 
 import           Codec.Serialise (Serialise)
 import           Control.Monad (replicateM, void)
-import           Control.Monad.Base
 import           Control.ResourceRegistry
 import           Control.Tracer as CT
 import           Data.Bifoldable
@@ -126,7 +125,7 @@ import           Ouroboros.Consensus.Storage.Common (SizeInBytes)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
                      (unsafeChunkNoToEpochNo)
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl.Common as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.TraceEvent as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util (split)
@@ -182,8 +181,6 @@ data Cmd blk it flr
     -- smaller than the block's slot number (such that the block is from the
     -- future) and larger or equal to the current slot, and add the block.
   | GetCurrentChain
-  -- TODO(js_ldb): reenable
-  --  GetLedgerDB
   | GetTipBlock
   | GetTipHeader
   | GetTipPoint
@@ -372,7 +369,7 @@ data ChainDBEnv m blk = ChainDBEnv {
   }
 
 open ::
-     (IOLike m, TestConstraints blk, MonadBase m m)
+     (IOLike m, TestConstraints blk)
   => ChainDbArgs Identity m blk -> m (ChainDBState m blk)
 open args = do
     (chainDB, internal) <- openDBInternal args False
@@ -382,7 +379,7 @@ open args = do
 
 -- PRECONDITION: the ChainDB is closed
 reopen ::
-     (IOLike m, TestConstraints blk, MonadBase m m)
+     (IOLike m, TestConstraints blk)
   => ChainDBEnv m blk -> m ()
 reopen ChainDBEnv { varDB, args } = do
     chainDBState <- open args
@@ -394,7 +391,7 @@ close ChainDBState { chainDB, addBlockAsync } = do
     closeDB chainDB
 
 run :: forall m blk.
-       (IOLike m, TestConstraints blk, MonadBase m m)
+       (IOLike m, TestConstraints blk)
     => ChainDBEnv m blk
     ->    Cmd     blk (TestIterator m blk) (TestFollower m blk)
     -> m (Success blk (TestIterator m blk) (TestFollower m blk))
@@ -403,7 +400,6 @@ run env@ChainDBEnv { varDB, .. } cmd =
       AddBlock blk             -> Point               <$> advanceAndAdd st (blockSlot blk) blk
       AddFutureBlock blk s     -> Point               <$> advanceAndAdd st s               blk
       GetCurrentChain          -> Chain               <$> atomically getCurrentChain
-      -- GetLedgerDB              -> LedgerDB . flush    <$> atomically getDbChangelog -- TODO(jdral_ldb)
       GetTipBlock              -> MbBlock             <$> getTipBlock
       GetTipHeader             -> MbHeader            <$> getTipHeader
       GetTipPoint              -> Point               <$> atomically getTipPoint
@@ -462,33 +458,6 @@ run env@ChainDBEnv { varDB, .. } cmd =
     giveWithEq :: a -> m (WithEq a)
     giveWithEq a =
       fmap (`WithEq` a) $ atomically $ stateTVar varNextId $ \i -> (i, succ i)
-
--- | When the model is asked for the ledger DB, it reconstructs it by applying
--- the blocks in the current chain, starting from the initial ledger state.
--- Before the introduction of UTxO HD, this approach resulted in a ledger DB
--- equivalent to the one maintained by the SUT. However, after UTxO HD, this is
--- no longer the case since the ledger DB can be altered as the result of taking
--- snapshots or opening the ledger DB (for instance when we process the
--- 'WipeVolatileDB' command). Taking snapshots or opening the ledger DB cause
--- the ledger DB to be flushed, which modifies its sequence of volatile and
--- immutable states.
---
--- The model does not have information about when the flushes occur and it
--- cannot infer that information in a reliable way since this depends on the low
--- level details of operations such as opening the ledger DB. Therefore, we
--- assume that the 'GetLedgerDB' command should return a flushed ledger DB, and
--- we use this function to implement such command both in the SUT and in the
--- model.
---
--- When we compare the SUT and model's ledger DBs, by flushing we are not
--- comparing the immutable parts of the SUT and model's ledger DBs. However,
--- this was already the case in before the introduction of UTxO HD: if the
--- current chain contained more than K blocks, then the ledger states before the
--- immutable tip were not compared by the 'GetLedgerDB' command.
--- flush ::
---      (LedgerSupportsProtocol blk)
---   => DbChangelog.DbChangelog' blk -> DbChangelog.DbChangelog' blk
--- flush = snd . DbChangelog.splitForFlushing
 
 persistBlks :: IOLike m => ShouldGarbageCollect -> ChainDB.Internal m blk -> m ()
 persistBlks collectGarbage ChainDB.Internal{..} = do
@@ -674,7 +643,6 @@ runPure cfg = \case
     AddBlock blk             -> ok  Point               $ update  (advanceAndAdd (blockSlot blk) blk)
     AddFutureBlock blk s     -> ok  Point               $ update  (advanceAndAdd s               blk)
     GetCurrentChain          -> ok  Chain               $ query   (Model.volatileChain k getHeader)
---    GetLedgerDB              -> ok  LedgerDB            $ query   (flush . Model.getDbChangelog cfg)
     GetTipBlock              -> ok  MbBlock             $ query    Model.tipBlock
     GetTipHeader             -> ok  MbHeader            $ query   (fmap getHeader . Model.tipBlock)
     GetTipPoint              -> ok  Point               $ query    Model.tipPoint
@@ -1302,7 +1270,7 @@ deriving instance ( ToExpr blk
                   , ToExpr (HeaderHash  blk)
                   , ToExpr (ChainDepState (BlockProtocol blk))
                   , ToExpr (TipInfo blk)
-                  , ToExpr (LedgerState blk EmptyMK) -- TODO why not mk?
+                  , ToExpr (LedgerState blk EmptyMK)
                   , ToExpr (ExtValidationError blk)
                   )
                  => ToExpr (Model blk IO Concrete)
@@ -1328,8 +1296,8 @@ deriving instance SOP.Generic         (TraceGCEvent blk)
 deriving instance SOP.HasDatatypeInfo (TraceGCEvent blk)
 deriving instance SOP.Generic         (TraceIteratorEvent blk)
 deriving instance SOP.HasDatatypeInfo (TraceIteratorEvent blk)
-deriving instance SOP.Generic         (LedgerDB.TraceLedgerDBEvent blk)
-deriving instance SOP.HasDatatypeInfo (LedgerDB.TraceLedgerDBEvent blk)
+deriving instance SOP.Generic         (LedgerDB.TraceEvent blk)
+deriving instance SOP.HasDatatypeInfo (LedgerDB.TraceEvent blk)
 deriving instance SOP.Generic         (ImmutableDB.TraceEvent blk)
 deriving instance SOP.HasDatatypeInfo (ImmutableDB.TraceEvent blk)
 deriving instance SOP.Generic         (VolatileDB.TraceEvent blk)
@@ -1729,7 +1697,6 @@ traceEventName = \case
     TraceGCEvent                ev    -> "GC."                <> constrName ev
     TraceIteratorEvent          ev    -> "Iterator."          <> constrName ev
     TraceLedgerDBEvent          ev    -> "Ledger."            <> constrName ev
---    TraceLedgerReplayEvent      ev    -> "LedgerReplay."      <> constrName ev
     TraceImmutableDBEvent       ev    -> "ImmutableDB."       <> constrName ev
     TraceVolatileDBEvent        ev    -> "VolatileDB."        <> constrName ev
     TraceLastShutdownUnclean          -> "LastShutdownUnclean"

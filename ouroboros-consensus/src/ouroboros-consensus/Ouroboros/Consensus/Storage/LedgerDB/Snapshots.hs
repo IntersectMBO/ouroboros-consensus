@@ -13,7 +13,7 @@
 -- restart the node without having to replay the whole chain. Regardless of the
 -- actual LedgerDB implementation chosen, the general management of snapshots is
 -- common to all implementations.
-module Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots (
+module Ouroboros.Consensus.Storage.LedgerDB.Snapshots (
     -- * Snapshots
     DiskSnapshot (..)
   , NumOfDiskSnapshots (..)
@@ -39,7 +39,9 @@ module Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots (
   , TraceSnapshotEvent (..)
     -- * Testing
   , decodeLBackwardsCompatible
+  , destroySnapshots
   , encodeL
+  , snapshotsMapM_
   ) where
 
 import           Codec.CBOR.Decoding
@@ -89,7 +91,7 @@ data DiskSnapshot = DiskSnapshot {
       -- | Snapshots can optionally have a suffix, separated by the snapshot
       -- number with an underscore, e.g., @4492799_last_Byron@. This suffix acts
       -- as metadata for the operator of the node. Snapshots with a suffix will
-      -- /not be trimmed/.
+      -- /not be deleted/.
     , dsSuffix :: Maybe String
     }
   deriving (Show, Eq, Ord, Generic)
@@ -97,7 +99,8 @@ data DiskSnapshot = DiskSnapshot {
 data SnapshotFailure blk =
     -- | We failed to deserialise the snapshot
     --
-    -- This can happen due to data corruption in the ledger DB.
+    -- This can happen due to data corruption in the ledger DB or if the codecs
+    -- changed.
     InitFailureRead ReadIncrementalErr
 
     -- | This snapshot is too recent (ahead of the tip of the immutable chain)
@@ -144,6 +147,20 @@ deleteSnapshot (SomeHasFS HasFS{doesDirectoryExist, removeDirectoryRecursive}) s
   let p = snapshotToDirPath ss
   exists <- doesDirectoryExist p
   when exists (removeDirectoryRecursive p)
+
+snapshotsMapM_ :: Monad m => SomeHasFS m -> (FilePath -> m a) -> m ()
+snapshotsMapM_ (SomeHasFS fs) f = do
+  mapM_ f =<< Set.lookupMax . Set.filter (isJust . snapshotFromPath) <$> listDirectory fs (mkFsPath [])
+
+-- | Testing only! Destroy all snapshots in the DB.
+destroySnapshots :: Monad m => SomeHasFS m -> m ()
+destroySnapshots sfs@(SomeHasFS fs) = do
+  snapshotsMapM_ sfs ((\d -> do
+            isDir <- doesDirectoryExist fs d
+            if isDir
+              then removeDirectoryRecursive fs d
+              else removeFile fs d
+        ) . mkFsPath . (:[]))
 
 -- | Read an extended ledger state from disk
 readExtLedgerState ::
@@ -273,8 +290,8 @@ data SnapshotInterval =
   deriving stock (Eq, Generic, Show)
 
 -- | Number of snapshots to be stored on disk. This is either the default value
--- as determined by the DiskPolicy, or it is provided by the user. See the
--- `DiskPolicy` documentation for more information.
+-- as determined by the SnapshotPolicy, or it is provided by the user. See the
+-- `SnapshotPolicy` documentation for more information.
 data NumOfDiskSnapshots =
     DefaultNumOfDiskSnapshots
   | RequestedNumOfDiskSnapshots Word

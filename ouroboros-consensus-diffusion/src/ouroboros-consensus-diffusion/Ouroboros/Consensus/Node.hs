@@ -64,7 +64,6 @@ import           Codec.Serialise (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Control.DeepSeq (NFData)
 import           Control.Monad (forM_, when)
-import           Control.Monad.Base (MonadBase)
 import           Control.Monad.Class.MonadTime.SI (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.ResourceRegistry
@@ -113,8 +112,8 @@ import           Ouroboros.Consensus.Storage.ChainDB (ChainDB, ChainDbArgs,
                      TraceEvent)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
+import           Ouroboros.Consensus.Storage.LedgerDB (LedgerDbFlavorArgs)
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
@@ -372,8 +371,8 @@ data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) = StdRunNodeArgs
     -- ^ A custom timeout for ChainSync.
 
     -- Ad hoc values to replace default ChainDB configurations
-  , srnSnapshotPolicyArgs :: SnapshotPolicyArgs
-  , srnLdbFlavorArgs      :: Complete LedgerDbFlavorArgs m -- TODO this will contain a fs?? it should probably not as the node doesn't know about those
+  , srnSnapshotPolicyArgs           :: SnapshotPolicyArgs
+  , srnLdbFlavorArgs                :: Complete LedgerDbFlavorArgs m
   }
 
 {-------------------------------------------------------------------------------
@@ -429,7 +428,6 @@ runWith :: forall m addrNTN addrNTC versionDataNTN versionDataNTC blk p2p.
      , Hashable addrNTN -- the constraint comes from `initNodeKernel`
      , NetworkIO m
      , NetworkAddr addrNTN
-     , MonadBase m m
      )
   => RunNodeArgs m addrNTN addrNTC blk p2p
   -> (NodeToNodeVersion -> addrNTN -> CBOR.Encoding)
@@ -745,7 +743,7 @@ stdWithCheckedDB pb tracer databasePath networkMagic body = do
     hasFS      = ioHasFS mountPoint
 
 openChainDB ::
-     forall m blk. (RunNode blk, IOLike m, MonadBase m m)
+     forall m blk. (RunNode blk, IOLike m)
   => ResourceRegistry m
   -> CheckInFuture m blk
   -> TopLevelConfig blk
