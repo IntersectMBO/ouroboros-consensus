@@ -164,7 +164,9 @@ module Ouroboros.Consensus.Storage.LedgerDB (
 import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
                      (DiskPolicy (..), DiskPolicyArgs (..),
                      NumOfDiskSnapshots (..), SnapshotInterval (..),
-                     TimeSinceLast (..), defaultDiskPolicyArgs, mkDiskPolicy)
+                     TimeSinceLast (..), defaultDiskPolicyArgs, mkDiskPolicy,
+                     pattern DiskSnapshotChecksum,
+                     pattern NoDiskSnapshotChecksum)
 import           Ouroboros.Consensus.Storage.LedgerDB.Init (InitLog (..),
                      ReplayGoal (..), ReplayStart (..), TraceReplayEvent (..),
                      decorateReplayTracerWithGoal,
@@ -178,10 +180,8 @@ import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
                      (DiskSnapshot (..), SnapshotFailure (..),
                      TraceSnapshotEvent (..), decodeSnapshotBackwardsCompatible,
                      deleteSnapshot, diskSnapshotIsTemporary, encodeSnapshot,
-                     listSnapshots, pattern DiskSnapshotChecksum,
-                     pattern NoDiskSnapshotChecksum, readSnapshot,
-                     snapshotToFileName, snapshotToPath, takeSnapshot,
-                     trimSnapshots, writeSnapshot)
+                     listSnapshots, readSnapshot, snapshotToFileName,
+                     snapshotToPath, takeSnapshot, trimSnapshots, writeSnapshot)
 import           Ouroboros.Consensus.Storage.LedgerDB.Update
                      (AnnLedgerError (..), AnnLedgerError', Ap (..),
                      ExceededRollback (..), PushGoal (..), PushStart (..),

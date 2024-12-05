@@ -10,7 +10,7 @@ import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
 import           Cardano.Tools.DBSynthesizer.Types
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Cardano.Block
-import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
                      (pattern NoDiskSnapshotChecksum)
 import qualified Test.Cardano.Tools.Headers
 import           Test.Tasty
