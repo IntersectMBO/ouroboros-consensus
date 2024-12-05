@@ -49,7 +49,7 @@ pattern DiskSnapshotChecksum, NoDiskSnapshotChecksum :: Flag "DiskSnapshotChecks
 pattern DiskSnapshotChecksum = Flag True
 pattern NoDiskSnapshotChecksum = Flag False
 
-data DiskPolicyArgs = DiskPolicyArgs SnapshotInterval NumOfDiskSnapshots
+data DiskPolicyArgs = DiskPolicyArgs SnapshotInterval NumOfDiskSnapshots (Flag "DiskSnapshotChecksum")
 
 -- | On-disk policy
 --
@@ -97,6 +97,8 @@ data DiskPolicy = DiskPolicy {
       -- See also 'mkDiskPolicy'
     , onDiskShouldTakeSnapshot      :: TimeSinceLast DiffTime -> Word64 -> Bool
 
+    -- | Whether or not to checksum the ledger snapshots to detect data corruption on disk.
+    -- "yes" if @'DiskSnapshotChecksum'@; "no" if @'NoDiskSnapshotChecksum'@.
     , onDiskShouldChecksumSnapshots :: Flag "DiskSnapshotChecksum"
     }
   deriving NoThunks via OnlyCheckWhnf DiskPolicy
@@ -107,10 +109,10 @@ data TimeSinceLast time = NoSnapshotTakenYet | TimeSinceLast time
 -- | Default on-disk policy arguments suitable to use with cardano-node
 --
 defaultDiskPolicyArgs :: DiskPolicyArgs
-defaultDiskPolicyArgs = DiskPolicyArgs DefaultSnapshotInterval DefaultNumOfDiskSnapshots
+defaultDiskPolicyArgs = DiskPolicyArgs DefaultSnapshotInterval DefaultNumOfDiskSnapshots DiskSnapshotChecksum
 
 mkDiskPolicy :: SecurityParam -> DiskPolicyArgs -> DiskPolicy
-mkDiskPolicy (SecurityParam k) (DiskPolicyArgs reqInterval reqNumOfSnapshots) =
+mkDiskPolicy (SecurityParam k) (DiskPolicyArgs reqInterval reqNumOfSnapshots onDiskShouldChecksumSnapshots) =
   DiskPolicy {..}
   where
     onDiskNumSnapshots :: Word
@@ -136,8 +138,6 @@ mkDiskPolicy (SecurityParam k) (DiskPolicyArgs reqInterval reqNumOfSnapshots) =
     onDiskShouldTakeSnapshot (TimeSinceLast timeSinceLast) blocksSinceLast =
          timeSinceLast >= snapshotInterval
       || substantialAmountOfBlocksWereProcessed blocksSinceLast timeSinceLast
-
-    onDiskShouldChecksumSnapshots = DiskSnapshotChecksum
 
     -- | We want to create a snapshot after a substantial amount of blocks were
     -- processed (hard-coded to 50k blocks). Given the fact that during bootstrap
