@@ -33,6 +33,7 @@ test-suite test
     main-is: Spec.hs
     other-modules:
         TickNonceSpec
+        UpdateNonceSpec
     build-depends:
         cardano-consensus-executable-spec,
         hspec,
