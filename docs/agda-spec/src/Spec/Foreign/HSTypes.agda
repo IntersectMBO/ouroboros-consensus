@@ -19,6 +19,40 @@ open import Data.Rational.Base
   import GHC.Real (Ratio(..))
 #-}
 
+-- * The empty type
+
+data Empty : Type where
+{-# COMPILE GHC Empty = data Void () #-}
+
+-- * Rational
+
+data Rational : Type where
+  _,_ : ℤ → ℕ → Rational
+{-# COMPILE GHC Rational = data Rational ((:%)) #-}
+
+-- We'll generate code with qualified references to Rational in this
+-- module, so make sure to define it.
+{-# FOREIGN GHC type Rational = Ratio Integer #-}
+
+-- * Maps and Sets
+
+record HSMap K V : Type where
+  constructor MkHSMap
+  field assocList : List (Pair K V)
+
+record HSSet A : Type where
+  constructor MkHSSet
+  field elems : List A
+
+{-# FOREIGN GHC
+  newtype HSMap k v = MkHSMap [(k, v)]
+    deriving (Generic, Show, Eq, Ord)
+  newtype HSSet a = MkHSSet [a]
+    deriving (Generic, Show, Eq, Ord)
+#-}
+{-# COMPILE GHC HSMap = data HSMap (MkHSMap) #-}
+{-# COMPILE GHC HSSet = data HSSet (MkHSSet) #-}
+
 -- * ComputationResult
 
 data ComputationResult E A : Type where
