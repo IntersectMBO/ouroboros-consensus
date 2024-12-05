@@ -141,8 +141,7 @@ class ( UpdateLedger blk
   -- in the same order as they were given, as we will use those later on to
   -- filter a list of 'TxTicket's.
   reapplyTxs ::
-       HasCallStack
-    => LedgerConfig blk
+       LedgerConfig blk
     -> SlotNo -- ^ Slot number of the block containing the tx
     -> [(Validated (GenTx blk), extra)]
     -> TickedLedgerState blk ValuesMK
