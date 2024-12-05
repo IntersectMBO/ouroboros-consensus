@@ -74,9 +74,6 @@ mkInitDb ::
   , IOLike m
   , LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
-#if __GLASGOW_HASKELL__ < 906
-  , HasAnnTip blk
-#endif
   )
   => Complete LedgerDbArgs m blk
   -> Complete V1.LedgerDbFlavorArgs m
