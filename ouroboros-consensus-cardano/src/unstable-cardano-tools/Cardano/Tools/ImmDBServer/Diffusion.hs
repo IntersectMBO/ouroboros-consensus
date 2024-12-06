@@ -11,6 +11,7 @@ import           Control.Tracer
 import qualified Data.ByteString.Lazy as BL
 import           Data.Functor.Contravariant ((>$<))
 import           Data.Void (Void)
+import           Network.Mux.Types (Mode (..))
 import           Network.Socket (SockAddr (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
