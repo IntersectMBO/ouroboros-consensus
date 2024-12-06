@@ -36,6 +36,8 @@ module Test.ThreadNet.Network (
   , TestOutput (..)
   ) where
 
+import           Cardano.Network.PeerSelection.Bootstrap
+                     (UseBootstrapPeers (..))
 import           Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM as MonadSTM
 import           Control.Concurrent.Class.MonadSTM.Strict (newTMVar)
@@ -110,8 +112,6 @@ import           Ouroboros.Network.Mock.Chain (Chain (Genesis))
 import           Ouroboros.Network.NodeToNode (ConnectionId (..),
                      ExpandedInitiatorContext (..), IsBigLedgerPeer (..),
                      MiniProtocolParameters (..), ResponderContext (..))
-import           Ouroboros.Network.PeerSelection.Bootstrap
-                     (UseBootstrapPeers (..))
 import           Ouroboros.Network.PeerSelection.Governor
                      (makePublicPeerSelectionStateVar)
 import           Ouroboros.Network.PeerSelection.PeerMetric (nullMetric)

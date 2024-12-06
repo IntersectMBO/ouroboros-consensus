@@ -3,6 +3,7 @@
 
 module Test.Consensus.GSM (tests) where
 
+import           Cardano.Network.Types (LedgerStateJudgement (..))
 import           Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked
 import           Control.Monad (replicateM_)
 import           Control.Monad.Class.MonadAsync (poll, withAsync)
@@ -17,8 +18,6 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Ouroboros.Consensus.Node.GSM as GSM
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
-import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
-                     (LedgerStateJudgement (..))
 import           Test.Consensus.GSM.Model
 import           Test.Consensus.IOSimQSM.Test.StateMachine.Sequential
                      (runCommands')
