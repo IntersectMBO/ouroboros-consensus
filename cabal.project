@@ -115,3 +115,5 @@ source-repository-package
       libs/set-algebra
       libs/small-steps
       libs/vector-map
+
+allow-newer: plutus-core:cardano-crypto-class
