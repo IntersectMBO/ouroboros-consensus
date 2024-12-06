@@ -42,6 +42,7 @@ import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.ByteString.Lazy (ByteString)
 import           Data.Void (Void)
+import           Network.Mux.Types (Mode (..))
 import           Network.TypedProtocol.Codec
 import qualified Network.TypedProtocol.Stateful.Codec as Stateful
 import           Ouroboros.Consensus.Block

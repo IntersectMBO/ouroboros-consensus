@@ -52,6 +52,7 @@ import           Data.Hashable (Hashable)
 import           Data.Int (Int64)
 import           Data.Map.Strict (Map)
 import           Data.Void (Void)
+import           Network.Mux.Types (Mode (..))
 import           Network.TypedProtocol.Codec
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (DiffusionPipeliningSupport (..))

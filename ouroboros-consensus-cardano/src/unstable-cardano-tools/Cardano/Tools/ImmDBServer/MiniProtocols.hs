@@ -26,6 +26,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Typeable (Typeable)
 import           Data.Void (Void)
 import           GHC.Generics (Generic)
+import           Network.Mux.Types (Mode (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
                      (blockFetchServer')
@@ -48,7 +49,7 @@ import           Ouroboros.Network.Driver (runPeer)
 import           Ouroboros.Network.KeepAlive (keepAliveServer)
 import           Ouroboros.Network.Magic (NetworkMagic)
 import           Ouroboros.Network.Mux (MiniProtocol (..), MiniProtocolCb (..),
-                     MuxMode (..), OuroborosApplication (..),
+                     OuroborosApplication (..),
                      OuroborosApplicationWithMinimalCtx, RunMiniProtocol (..))
 import           Ouroboros.Network.NodeToNode (NodeToNodeVersionData (..),
                      Versions (..))
