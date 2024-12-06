@@ -28,6 +28,7 @@ module Ouroboros.Consensus.Node.GSM (
   , module Ouroboros.Consensus.Node.GsmState
   ) where
 
+import           Cardano.Network.Types (LedgerStateJudgement (..))
 import qualified Cardano.Slotting.Slot as Slot
 import qualified Control.Concurrent.Class.MonadSTM.TVar as LazySTM
 import           Control.Monad (forever, join, unless)
@@ -49,8 +50,6 @@ import           Ouroboros.Consensus.Node.GsmState
 import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import           Ouroboros.Consensus.Util.NormalForm.StrictTVar (StrictTVar)
 import qualified Ouroboros.Consensus.Util.NormalForm.StrictTVar as StrictSTM
-import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
-                     (LedgerStateJudgement (..))
 import           System.FS.API (HasFS, createDirectoryIfMissing, doesFileExist,
                      removeFile, withFile)
 import           System.FS.API.Types (AllowExisting (..), FsPath, OpenMode (..),
