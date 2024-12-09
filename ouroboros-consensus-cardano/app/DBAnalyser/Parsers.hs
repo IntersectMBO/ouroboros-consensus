@@ -1,6 +1,7 @@
-{-# LANGUAGE ApplicativeDo #-}
-{-# LANGUAGE CPP           #-}
-{-# LANGUAGE LambdaCase    #-}
+{-# LANGUAGE ApplicativeDo      #-}
+{-# LANGUAGE CPP                #-}
+{-# LANGUAGE LambdaCase         #-}
+{-# LANGUAGE PatternSynonyms    #-}
 
 module DBAnalyser.Parsers (
     BlockType (..)
@@ -21,6 +22,7 @@ import           Options.Applicative
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Node (PBftSignatureThreshold (..))
 import           Ouroboros.Consensus.Shelley.Node (Nonce (..))
+import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy (pattern DoDiskSnapshotChecksum, pattern NoDoDiskSnapshotChecksum)
 
 {-------------------------------------------------------------------------------
   Parsing
@@ -44,6 +46,10 @@ parseDBAnalyserConfig = DBAnalyserConfig
     <*> parseValidationPolicy
     <*> parseAnalysis
     <*> parseLimit
+    <*> flag NoDoDiskSnapshotChecksum DoDiskSnapshotChecksum (mconcat [
+            long "do-disk-snapshot-checksum"
+          , help "Check the '.checksum' file if reading a ledger snapshot"
+          ])
 
 parseSelectDB :: Parser SelectDB
 parseSelectDB =

@@ -6,6 +6,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MonadComprehensions #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -51,6 +52,8 @@ module Ouroboros.Consensus.Node (
   , RunNodeArgs (..)
   , Tracers
   , Tracers' (..)
+  , pattern DoDiskSnapshotChecksum
+  , pattern NoDoDiskSnapshotChecksum
     -- * Internal helpers
   , mkNodeKernelArgs
   , nodeKernelArgsEnforceInvariants
@@ -107,7 +110,8 @@ import           Ouroboros.Consensus.Storage.ChainDB (ChainDB, ChainDbArgs,
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
-                     (DiskPolicyArgs (..))
+                     (DiskPolicyArgs (..), pattern DoDiskSnapshotChecksum,
+                     pattern NoDoDiskSnapshotChecksum)
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()

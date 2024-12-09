@@ -1,3 +1,5 @@
+{-# LANGUAGE PatternSynonyms #-}
+
 -- | The Ledger DB is responsible for the following tasks:
 --
 -- - __Maintaining the in-memory ledger state at the tip__: When we try to
@@ -134,6 +136,8 @@ module Ouroboros.Consensus.Storage.LedgerDB (
   , SnapshotFailure (..)
   , diskSnapshotIsTemporary
   , listSnapshots
+  , pattern DoDiskSnapshotChecksum
+  , pattern NoDoDiskSnapshotChecksum
   , readSnapshot
     -- ** Write to disk
   , takeSnapshot
@@ -160,7 +164,9 @@ module Ouroboros.Consensus.Storage.LedgerDB (
 import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
                      (DiskPolicy (..), DiskPolicyArgs (..),
                      NumOfDiskSnapshots (..), SnapshotInterval (..),
-                     TimeSinceLast (..), defaultDiskPolicyArgs, mkDiskPolicy)
+                     TimeSinceLast (..), defaultDiskPolicyArgs, mkDiskPolicy,
+                     pattern DoDiskSnapshotChecksum,
+                     pattern NoDoDiskSnapshotChecksum)
 import           Ouroboros.Consensus.Storage.LedgerDB.Init (InitLog (..),
                      ReplayGoal (..), ReplayStart (..), TraceReplayEvent (..),
                      decorateReplayTracerWithGoal,
