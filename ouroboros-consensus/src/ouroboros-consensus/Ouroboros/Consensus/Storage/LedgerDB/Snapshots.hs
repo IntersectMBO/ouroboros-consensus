@@ -58,7 +58,6 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
-import           Ouroboros.Consensus.Util (Flag (..))
 import           Ouroboros.Consensus.Util.CBOR (ReadIncrementalErr,
                      decodeWithOrigin, readIncremental)
 import           Ouroboros.Consensus.Util.Enclose

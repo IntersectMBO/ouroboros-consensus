@@ -16,6 +16,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy (
   , mkDiskPolicy
   , pattern DiskSnapshotChecksum
   , pattern NoDiskSnapshotChecksum
+    -- * Re-exports
+  , Flag (..)
   ) where
 
 import           Control.Monad.Class.MonadTime.SI
