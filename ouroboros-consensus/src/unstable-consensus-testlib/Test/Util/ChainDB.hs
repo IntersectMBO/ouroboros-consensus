@@ -113,7 +113,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
         , volValidationPolicy = VolatileDB.ValidateAll
         }
     , cdbLgrDbArgs = LgrDbArgs {
-          lgrDiskPolicyArgs   = LedgerDB.DiskPolicyArgs LedgerDB.DefaultSnapshotInterval LedgerDB.DefaultNumOfDiskSnapshots LedgerDB.DiskSnapshotChecksum
+          lgrDiskPolicyArgs   = LedgerDB.DiskPolicyArgs LedgerDB.DefaultSnapshotInterval LedgerDB.DefaultNumOfDiskSnapshots LedgerDB.DoDiskSnapshotChecksum
           -- Keep 2 ledger snapshots, and take a new snapshot at least every 2 *
           -- k seconds, where k is the security parameter.
         , lgrGenesis          = return mcdbInitLedger

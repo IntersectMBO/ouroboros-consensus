@@ -119,7 +119,7 @@ takeSnapshot ::
      forall m blk. (MonadThrow m, MonadMonotonicTime m, IsLedger (LedgerState blk))
   => Tracer m (TraceSnapshotEvent blk)
   -> SomeHasFS m
-  -> Flag "DiskSnapshotChecksum"
+  -> Flag "DoDiskSnapshotChecksum"
   -> (ExtLedgerState blk -> Encoding)
   -> ExtLedgerState blk -> m (Maybe (DiskSnapshot, RealPoint blk))
 takeSnapshot tracer hasFS doChecksum encLedger oldest =
@@ -219,7 +219,7 @@ readSnapshot ::
   => SomeHasFS m
   -> (forall s. Decoder s (ExtLedgerState blk))
   -> (forall s. Decoder s (HeaderHash blk))
-  -> Flag "DiskSnapshotChecksum"
+  -> Flag "DoDiskSnapshotChecksum"
   -> DiskSnapshot
   -> ExceptT ReadSnapshotErr m (ExtLedgerState blk)
 readSnapshot someHasFS decLedger decHash doChecksum snapshotName = do
@@ -281,7 +281,7 @@ readSnapshot someHasFS decLedger decHash doChecksum snapshotName = do
 writeSnapshot ::
      forall m blk. MonadThrow m
   => SomeHasFS m
-  -> Flag "DiskSnapshotChecksum"
+  -> Flag "DoDiskSnapshotChecksum"
   -> (ExtLedgerState blk -> Encoding)
   -> DiskSnapshot
   -> ExtLedgerState blk -> m ()

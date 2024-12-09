@@ -14,8 +14,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy (
   , TimeSinceLast (..)
   , defaultDiskPolicyArgs
   , mkDiskPolicy
-  , pattern DiskSnapshotChecksum
-  , pattern NoDiskSnapshotChecksum
+  , pattern DoDiskSnapshotChecksum
+  , pattern NoDoDiskSnapshotChecksum
     -- * Re-exports
   , Flag (..)
   ) where
@@ -47,11 +47,11 @@ data NumOfDiskSnapshots =
   | RequestedNumOfDiskSnapshots Word
   deriving stock (Eq, Generic, Show)
 
-pattern DiskSnapshotChecksum, NoDiskSnapshotChecksum :: Flag "DiskSnapshotChecksum"
-pattern DiskSnapshotChecksum = Flag True
-pattern NoDiskSnapshotChecksum = Flag False
+pattern DoDiskSnapshotChecksum, NoDoDiskSnapshotChecksum :: Flag "DoDiskSnapshotChecksum"
+pattern DoDiskSnapshotChecksum = Flag True
+pattern NoDoDiskSnapshotChecksum = Flag False
 
-data DiskPolicyArgs = DiskPolicyArgs SnapshotInterval NumOfDiskSnapshots (Flag "DiskSnapshotChecksum")
+data DiskPolicyArgs = DiskPolicyArgs SnapshotInterval NumOfDiskSnapshots (Flag "DoDiskSnapshotChecksum")
 
 -- | On-disk policy
 --
@@ -100,8 +100,8 @@ data DiskPolicy = DiskPolicy {
     , onDiskShouldTakeSnapshot      :: TimeSinceLast DiffTime -> Word64 -> Bool
 
     -- | Whether or not to checksum the ledger snapshots to detect data corruption on disk.
-    -- "yes" if @'DiskSnapshotChecksum'@; "no" if @'NoDiskSnapshotChecksum'@.
-    , onDiskShouldChecksumSnapshots :: Flag "DiskSnapshotChecksum"
+    -- "yes" if @'DoDiskSnapshotChecksum'@; "no" if @'NoDoDiskSnapshotChecksum'@.
+    , onDiskShouldChecksumSnapshots :: Flag "DoDiskSnapshotChecksum"
     }
   deriving NoThunks via OnlyCheckWhnf DiskPolicy
 
@@ -111,7 +111,7 @@ data TimeSinceLast time = NoSnapshotTakenYet | TimeSinceLast time
 -- | Default on-disk policy arguments suitable to use with cardano-node
 --
 defaultDiskPolicyArgs :: DiskPolicyArgs
-defaultDiskPolicyArgs = DiskPolicyArgs DefaultSnapshotInterval DefaultNumOfDiskSnapshots DiskSnapshotChecksum
+defaultDiskPolicyArgs = DiskPolicyArgs DefaultSnapshotInterval DefaultNumOfDiskSnapshots DoDiskSnapshotChecksum
 
 mkDiskPolicy :: SecurityParam -> DiskPolicyArgs -> DiskPolicy
 mkDiskPolicy (SecurityParam k) (DiskPolicyArgs reqInterval reqNumOfSnapshots onDiskShouldChecksumSnapshots) =

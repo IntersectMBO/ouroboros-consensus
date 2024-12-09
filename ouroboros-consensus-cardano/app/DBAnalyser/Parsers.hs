@@ -22,7 +22,7 @@ import           Options.Applicative
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Node (PBftSignatureThreshold (..))
 import           Ouroboros.Consensus.Shelley.Node (Nonce (..))
-import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy (pattern DiskSnapshotChecksum, pattern NoDiskSnapshotChecksum)
+import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy (pattern DoDiskSnapshotChecksum, pattern NoDoDiskSnapshotChecksum)
 
 {-------------------------------------------------------------------------------
   Parsing
@@ -46,8 +46,8 @@ parseDBAnalyserConfig = DBAnalyserConfig
     <*> parseValidationPolicy
     <*> parseAnalysis
     <*> parseLimit
-    <*> flag NoDiskSnapshotChecksum DiskSnapshotChecksum (mconcat [
-            long "disk-snapshot-checksum"
+    <*> flag NoDoDiskSnapshotChecksum DoDiskSnapshotChecksum (mconcat [
+            long "do-disk-snapshot-checksum"
           , help "Check the '.checksum' file if reading a ledger snapshot"
           ])
 

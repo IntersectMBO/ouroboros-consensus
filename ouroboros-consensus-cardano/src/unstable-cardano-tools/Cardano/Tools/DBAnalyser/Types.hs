@@ -17,7 +17,7 @@ data DBAnalyserConfig = DBAnalyserConfig {
   , validation           :: Maybe ValidateBlocks
   , analysis             :: AnalysisName
   , confLimit            :: Limit
-  , diskSnapshotChecksum :: Flag "DiskSnapshotChecksum"
+  , diskSnapshotChecksum :: Flag "DoDiskSnapshotChecksum"
   }
 
 data AnalysisName =

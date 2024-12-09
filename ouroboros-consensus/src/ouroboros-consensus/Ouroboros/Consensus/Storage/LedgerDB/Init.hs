@@ -34,8 +34,8 @@ import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.ImmutableDB.Stream
 import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
-                     (pattern DiskSnapshotChecksum,
-                     pattern NoDiskSnapshotChecksum)
+                     (pattern DoDiskSnapshotChecksum,
+                     pattern NoDoDiskSnapshotChecksum)
 import           Ouroboros.Consensus.Storage.LedgerDB.LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.Query
 import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
@@ -108,7 +108,7 @@ initLedgerDB ::
   -> LedgerDbCfg (ExtLedgerState blk)
   -> m (ExtLedgerState blk) -- ^ Genesis ledger state
   -> StreamAPI m blk blk
-  -> Flag "DiskSnapshotChecksum"
+  -> Flag "DoDiskSnapshotChecksum"
   -> m (InitLog blk, LedgerDB' blk, Word64)
 initLedgerDB replayTracer
              tracer
@@ -118,11 +118,11 @@ initLedgerDB replayTracer
              cfg
              getGenesisLedger
              stream
-             doDiskSnapshotChecksum = do
+             doDoDiskSnapshotChecksum = do
     snapshots <- listSnapshots hasFS
-    tryNewestFirst doDiskSnapshotChecksum id snapshots
+    tryNewestFirst doDoDiskSnapshotChecksum id snapshots
   where
-    tryNewestFirst :: Flag "DiskSnapshotChecksum"
+    tryNewestFirst :: Flag "DoDiskSnapshotChecksum"
                    -> (InitLog blk -> InitLog blk)
                    -> [DiskSnapshot]
                    -> m (InitLog blk, LedgerDB' blk, Word64)
@@ -151,7 +151,7 @@ initLedgerDB replayTracer
           -- ignoring the checksum
           Left (InitFailureRead ReadSnapshotNoChecksumFile{}) -> do
             traceWith tracer $ SnapshotMissingChecksum s
-            tryNewestFirst NoDiskSnapshotChecksum acc allSnapshot
+            tryNewestFirst NoDoDiskSnapshotChecksum acc allSnapshot
           -- If we fail to use this snapshot for any other reason, delete it and try an older one
           Left err -> do
             when (diskSnapshotIsTemporary s) $
@@ -160,7 +160,7 @@ initLedgerDB replayTracer
               deleteSnapshot hasFS s
             traceWith tracer $ InvalidSnapshot s err
             -- always reset checksum flag after failure
-            tryNewestFirst DiskSnapshotChecksum (acc . InitFailure s err) ss
+            tryNewestFirst DoDiskSnapshotChecksum (acc . InitFailure s err) ss
           Right (r, l, replayed) ->
             return (acc (InitFromSnapshot s r), l, replayed)
 
@@ -187,7 +187,7 @@ initFromSnapshot ::
   -> LedgerDbCfg (ExtLedgerState blk)
   -> StreamAPI m blk blk
   -> DiskSnapshot
-  -> Flag "DiskSnapshotChecksum"
+  -> Flag "DoDiskSnapshotChecksum"
   -> ExceptT (SnapshotFailure blk) m (RealPoint blk, LedgerDB' blk, Word64)
 initFromSnapshot tracer hasFS decLedger decHash cfg stream ss doChecksum = do
     initSS <- withExceptT InitFailureRead $

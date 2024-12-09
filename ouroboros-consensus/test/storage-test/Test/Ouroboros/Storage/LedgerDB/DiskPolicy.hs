@@ -15,7 +15,7 @@ import           Ouroboros.Consensus.Storage.LedgerDB (DiskPolicy (..),
                      TimeSinceLast (..), mkDiskPolicy)
 import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
                      (DiskPolicyArgs (DiskPolicyArgs),
-                     pattern DiskSnapshotChecksum)
+                     pattern DoDiskSnapshotChecksum)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -51,7 +51,7 @@ toDiskPolicy :: TestSetup -> DiskPolicy
 toDiskPolicy ts = mkDiskPolicy (tsK ts) diskPolicyArgs
   where
     diskPolicyArgs =
-      DiskPolicyArgs (tsSnapshotInterval ts) DefaultNumOfDiskSnapshots DiskSnapshotChecksum
+      DiskPolicyArgs (tsSnapshotInterval ts) DefaultNumOfDiskSnapshots DoDiskSnapshotChecksum
 
 -- | The result of the represented call to 'onDiskShouldTakeSnapshot'
 shouldTakeSnapshot :: TestSetup -> Bool

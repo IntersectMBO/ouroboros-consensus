@@ -292,10 +292,10 @@ data Cmd ss =
   | Switch Word64 [TestBlock]
 
     -- | Take a snapshot (write to disk)
-  | Snap (Flag "DiskSnapshotChecksum")
+  | Snap (Flag "DoDiskSnapshotChecksum")
 
     -- | Restore the DB from on-disk, then return it along with the init log
-  | Restore (Flag "DiskSnapshotChecksum")
+  | Restore (Flag "DoDiskSnapshotChecksum")
 
     -- | Corrupt a previously taken snapshot
   | Corrupt Corruption ss
@@ -568,7 +568,7 @@ runMock cmd initMock =
           Delete   -> Nothing
           Truncate -> Just (ref, SnapCorrupted)
     go (Drop n) mock =
-        go (Restore NoDiskSnapshotChecksum) $ mock {
+        go (Restore NoDoDiskSnapshotChecksum) $ mock {
             mockLedger = drop (fromIntegral n) (mockLedger mock)
           }
 
@@ -787,7 +787,7 @@ runDB standalone@DB{..} cmd =
         atomically $ do
             (rs, _db) <- readTVar dbState
             writeTVar dbState (drop (fromIntegral n) rs, error "ledger DB not initialized")
-        go hasFS (Restore NoDiskSnapshotChecksum)
+        go hasFS (Restore NoDoDiskSnapshotChecksum)
 
     push ::
          TestBlock

@@ -72,7 +72,7 @@ import           Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.LedgerDB (DiskSnapshot (..),
-                     pattern NoDiskSnapshotChecksum, writeSnapshot)
+                     pattern NoDoDiskSnapshotChecksum, writeSnapshot)
 import           Ouroboros.Consensus.Storage.Serialisation (encodeDisk)
 import           Ouroboros.Consensus.Util ((..:))
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike
@@ -423,7 +423,7 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
     storeLedgerState ledgerState = case pointSlot pt of
         NotOrigin slot -> do
           let snapshot = DiskSnapshot (unSlotNo slot) (Just "db-analyser")
-          writeSnapshot ledgerDbFS NoDiskSnapshotChecksum encLedger snapshot ledgerState
+          writeSnapshot ledgerDbFS NoDoDiskSnapshotChecksum encLedger snapshot ledgerState
           traceWith tracer $ SnapshotStoredEvent slot
         Origin -> pure ()
       where

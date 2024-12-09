@@ -222,7 +222,7 @@ initFromDisk ::
 initFromDisk LgrDbArgs { lgrHasFS = hasFS, .. }
              replayTracer
              immutableDB = wrapFailure (Proxy @blk) $ do
-    let LedgerDB.DiskPolicyArgs _ _ doDiskSnapshotChecksum  = lgrDiskPolicyArgs
+    let LedgerDB.DiskPolicyArgs _ _ doDiskSnapshotChecksum = lgrDiskPolicyArgs
     (_initLog, db, replayed) <-
       LedgerDB.initLedgerDB
         replayTracer
