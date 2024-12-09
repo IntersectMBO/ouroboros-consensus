@@ -53,7 +53,6 @@ import qualified Cardano.Protocol.TPraos.Rules.Prtcl as SL
 import qualified Cardano.Protocol.TPraos.Rules.Tickn as SL
 import           Control.Monad
 import           Control.Monad.Except (runExcept, throwError)
-import Data.Void
 import           Data.Coerce (coerce)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (listToMaybe, mapMaybe)
@@ -64,6 +63,7 @@ import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
 import qualified Data.SOP.Strict as SOP
 import           Data.SOP.Tails (Tails (..))
 import qualified Data.SOP.Tails as Tails
+import           Data.Void
 import           Data.Word
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
