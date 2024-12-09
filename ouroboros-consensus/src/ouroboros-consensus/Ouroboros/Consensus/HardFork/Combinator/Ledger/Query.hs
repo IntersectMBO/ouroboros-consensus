@@ -224,37 +224,34 @@ instance ( All SingleEraBlock xs
       lcfg = configLedger cfg
       ei   = State.epochInfoLedger lcfg hardForkState
 
-  answerBlockQueryLookup
-    (ExtLedgerCfg cfg)
-    qry
-    forker = do
-      hardForkState <- hardForkLedgerStatePerEra . ledgerState <$> atomically (roforkerGetLedgerState forker)
-      let ei   = State.epochInfoLedger lcfg hardForkState
-          cfgs = hmap ExtLedgerCfg $ distribTopLevelConfig ei cfg
-      case qry of
-        QueryIfCurrent queryIfCurrent ->
-          interpretQueryIfCurrentLookup
-                cfgs
-                queryIfCurrent
-                forker
-    where
-      lcfg = configLedger cfg
+  answerBlockQueryLookup   cfg (QueryIfCurrent q) =
+      answerBlockQueryHelper interpretQueryIfCurrentLookup   cfg q
+  answerBlockQueryTraverse cfg (QueryIfCurrent q) =
+      answerBlockQueryHelper interpretQueryIfCurrentTraverse cfg q
 
-  answerBlockQueryTraverse
-    (ExtLedgerCfg cfg)
-    qry
-    forker = do
-      hardForkState <- hardForkLedgerStatePerEra . ledgerState <$> atomically (roforkerGetLedgerState forker)
-      let ei   = State.epochInfoLedger lcfg hardForkState
-          cfgs = hmap ExtLedgerCfg $ distribTopLevelConfig ei cfg
-      case qry of
-        QueryIfCurrent queryIfCurrent ->
-          interpretQueryIfCurrentTraverse
-                cfgs
-                queryIfCurrent
-                forker
-    where
-      lcfg = configLedger cfg
+-- | NOT EXPORTED, for footprints other than 'QFNoTables'
+answerBlockQueryHelper ::
+       (MonadSTM m, BlockSupportsHFLedgerQuery xs, CanHardFork xs)
+    => (   NP ExtLedgerCfg xs
+        -> QueryIfCurrent xs footprint result
+        -> ReadOnlyForker' m (HardForkBlock xs)
+        -> m (HardForkQueryResult xs result)
+       )
+    -> ExtLedgerCfg (HardForkBlock xs)
+    -> QueryIfCurrent xs footprint result
+    -> ReadOnlyForker' m (HardForkBlock xs)
+    -> m (HardForkQueryResult xs result)
+answerBlockQueryHelper
+  f
+  (ExtLedgerCfg cfg)
+  qry
+  forker = do
+    hardForkState <- hardForkLedgerStatePerEra . ledgerState <$> atomically (roforkerGetLedgerState forker)
+    let ei   = State.epochInfoLedger lcfg hardForkState
+        cfgs = hmap ExtLedgerCfg $ distribTopLevelConfig ei cfg
+    f cfgs qry forker
+  where
+    lcfg = configLedger cfg
 
 -- | Precondition: the 'ledgerState' and 'headerState' should be from the same
 -- era. In practice, this is _always_ the case, unless the 'ExtLedgerState' was
