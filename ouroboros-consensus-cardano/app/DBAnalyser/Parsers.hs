@@ -1,6 +1,5 @@
 {-# LANGUAGE ApplicativeDo #-}
-{-# LANGUAGE CPP           #-}
-{-# LANGUAGE LambdaCase    #-}
+{-# LANGUAGE LambdaCase #-}
 
 module DBAnalyser.Parsers (
     BlockType (..)
@@ -14,9 +13,7 @@ import           Cardano.Tools.DBAnalyser.Block.Byron
 import           Cardano.Tools.DBAnalyser.Block.Cardano
 import           Cardano.Tools.DBAnalyser.Block.Shelley
 import           Cardano.Tools.DBAnalyser.Types
-#if __GLASGOW_HASKELL__ < 900
-import           Data.Foldable (asum)
-#endif
+import qualified Data.Foldable as Foldable
 import           Options.Applicative
 import           Ouroboros.Consensus.Block (SlotNo (..), WithOrigin (..))
 import           Ouroboros.Consensus.Byron.Node (PBftSignatureThreshold (..))
@@ -44,7 +41,7 @@ parseDBAnalyserConfig = DBAnalyserConfig
     <*> parseValidationPolicy
     <*> parseAnalysis
     <*> parseLimit
-    <*> asum [
+    <*> Foldable.asum [
           flag' V1InMem $ mconcat [
                 long "v1-in-mem"
               , help "use v1 in-memory backing store"
@@ -54,8 +51,8 @@ parseDBAnalyserConfig = DBAnalyserConfig
               , help "use v1 LMDB backing store"
               ]
           , flag' V2InMem $ mconcat [
-              long "in-mem"
-              , help "use new in-memory backend"
+              long "v2-in-mem"
+              , help "use v2 in-memory backend"
               ]
           ]
 
@@ -85,7 +82,7 @@ parseValidationPolicy =
         _                          -> Nothing
 
 parseAnalysis :: Parser AnalysisName
-parseAnalysis = asum [
+parseAnalysis = Foldable.asum [
       flag' ShowSlotBlockNo $ mconcat [
           long "show-slot-block-no"
         , help "Show slot and block number and hash of all blocks"
@@ -153,7 +150,7 @@ checkNoThunksParser = CheckNoThunksEvery <$> option auto
   <> help "Check the ledger state for thunks every n blocks" )
 
 parseLimit :: Parser Limit
-parseLimit = asum [
+parseLimit = Foldable.asum [
     Limit <$> option auto (mconcat [
         long "num-blocks-to-process"
       , help "Maximum number of blocks we want to process"
@@ -247,7 +244,7 @@ parseShelleyArgs = ShelleyBlockArgs
           , help "Path to config file"
           , metavar "PATH"
           ])
-    <*> asum [ Nonce  <$> parseNonce
+    <*> Foldable.asum [ Nonce  <$> parseNonce
              , pure NeutralNonce]
   where
     parseNonce = strOption (mconcat [

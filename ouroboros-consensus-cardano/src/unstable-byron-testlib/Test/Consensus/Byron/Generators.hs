@@ -34,7 +34,6 @@ import qualified Cardano.Chain.UTxO as CC.UTxO
 import           Cardano.Crypto (ProtocolMagicId (..))
 import           Cardano.Crypto.Hashing (Hash)
 import           Cardano.Ledger.Binary (decCBOR, encCBOR)
-import           Cardano.Slotting.Slot (WithOrigin (..))
 import           Control.Monad (replicateM)
 import           Data.Coerce (coerce)
 import qualified Data.Map.Strict as Map
@@ -299,7 +298,7 @@ genByronLedgerState = do
     genLedgerTipBlockNo ChainValidationState { cvsPreviousHash } =
       case cvsPreviousHash of
         Left _  -> pure Origin
-        Right _ -> At <$> arbitrary
+        Right _ -> NotOrigin <$> arbitrary
 
 instance ZeroableMK mk => Arbitrary (LedgerTables (LedgerState ByronBlock) mk) where
   arbitrary = pure emptyLedgerTables

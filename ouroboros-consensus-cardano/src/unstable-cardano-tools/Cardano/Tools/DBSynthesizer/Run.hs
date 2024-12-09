@@ -35,7 +35,7 @@ import           Ouroboros.Consensus.Shelley.Node (ShelleyGenesis (..),
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB (getTipPoint)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args as LedgerDB.V1
 import           Ouroboros.Consensus.Util.IOLike (atomically)
 import           Ouroboros.Network.Block
@@ -126,7 +126,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
         let
             epochSize   = sgEpochLength confShelleyGenesis
             chunkInfo   = Node.nodeImmutableDbChunkInfo (configStorage pInfoConfig)
-            bss = LedgerDB.V1.V1Args LedgerDB.V1.DisableFlushing LedgerDB.V1.DisableQuerySize $ InMemoryBackingStoreArgs
+            bss = LedgerDB.V1.V1Args LedgerDB.V1.DisableFlushing InMemoryBackingStoreArgs
             flavargs = LedgerDB.LedgerDbFlavorArgsV1 bss
             dbArgs      =
              ChainDB.completeChainDbArgs

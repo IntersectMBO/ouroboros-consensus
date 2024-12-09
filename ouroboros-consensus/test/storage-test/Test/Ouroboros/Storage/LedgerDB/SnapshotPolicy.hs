@@ -9,7 +9,7 @@ import           Data.Time.Clock (DiffTime, diffTimeToPicoseconds,
                      picosecondsToDiffTime, secondsToDiffTime)
 import           Data.Word
 import           Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck

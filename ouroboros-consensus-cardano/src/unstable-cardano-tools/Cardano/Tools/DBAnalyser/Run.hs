@@ -29,14 +29,11 @@ import           Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import qualified Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream as ImmutableDB
+import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl.Args as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl.Init as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1 as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as LedgerDB.V1
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API as BS
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Init as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as LedgerDB.V2
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
@@ -106,10 +103,21 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
           chunkInfo  = Node.nodeImmutableDbChunkInfo (configStorage cfg)
           flavargs = case ldbBackend of
             V1InMem -> LedgerDB.LedgerDbFlavorArgsV1
-               (LedgerDB.V1.V1Args LedgerDB.V1.DisableFlushing LedgerDB.V1.DisableQuerySize LedgerDB.V1.InMemoryBackingStoreArgs)
+               ( LedgerDB.V1.V1Args
+                   LedgerDB.V1.DisableFlushing
+                   LedgerDB.V1.InMemoryBackingStoreArgs
+               )
             V1LMDB  -> LedgerDB.LedgerDbFlavorArgsV1
-               (LedgerDB.V1.V1Args LedgerDB.V1.DisableFlushing LedgerDB.V1.DisableQuerySize (LedgerDB.V1.LMDBBackingStoreArgs (BS.LiveLMDBFS (shfs (ChainDB.RelativeMountPoint "lmdb"))) defaultLMDBLimits Dict.Dict))
-            V2InMem -> LedgerDB.LedgerDbFlavorArgsV2 (LedgerDB.V2.V2Args LedgerDB.V2.InMemoryHandleArgs)
+               ( LedgerDB.V1.V1Args
+                   LedgerDB.V1.DisableFlushing
+                   ( LedgerDB.V1.LMDBBackingStoreArgs
+                       "lmdb"
+                       defaultLMDBLimits
+                       Dict.Dict
+                   )
+               )
+            V2InMem -> LedgerDB.LedgerDbFlavorArgsV2
+                         (LedgerDB.V2.V2Args LedgerDB.V2.InMemoryHandleArgs)
           args' =
             ChainDB.completeChainDbArgs
               registry
@@ -121,9 +129,23 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
               shfs
               flavargs $
             ChainDB.defaultArgs
-          chainDbArgs = maybeValidateAll $ ChainDB.updateTracer chainDBTracer args'
+          -- Set @k=1@ to reduce the memory usage of the LedgerDB. We only ever
+          -- go forward so we don't need to account for rollbacks.
+          args'' =
+            args' {
+              ChainDB.cdbLgrDbArgs =
+                (\x -> x {
+                    LedgerDB.lgrConfig =
+                      LedgerDB.LedgerDbCfg
+                        (SecurityParam 1)
+                        (LedgerDB.ledgerDbCfg $ LedgerDB.lgrConfig x)
+                    }
+                )
+                (ChainDB.cdbLgrDbArgs args')
+              }
+          chainDbArgs = maybeValidateAll $ ChainDB.updateTracer chainDBTracer args''
           immutableDbArgs = ChainDB.cdbImmDbArgs chainDbArgs
-          ldbArgs = ChainDB.cdbLgrDbArgs args'
+          ldbArgs = ChainDB.cdbLgrDbArgs args''
 
       withImmutableDB immutableDbArgs $ \(immutableDB, internal) -> do
         SomeAnalysis (Proxy :: Proxy startFrom) ana <- pure $ runAnalysis analysis

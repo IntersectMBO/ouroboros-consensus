@@ -32,6 +32,9 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 -- INVARIANT:
 --
 -- > AF.headPoint validatedFragment == ledgerTipPoint validatedLedger
+--
+-- The invariant is only checked on construction, maintaining it afterwards is
+-- up to the user.
 data ValidatedFragment b l = UnsafeValidatedFragment {
       -- | Chain fragment
       validatedFragment :: !(AnchoredFragment b)

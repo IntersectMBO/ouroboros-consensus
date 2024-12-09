@@ -2,10 +2,10 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Main (main) where
 
@@ -30,13 +30,13 @@ import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Node.ProtocolInfo
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Common
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
+import           Ouroboros.Consensus.Storage.LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as Disk
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Bridge as LMDB.Bridge
 import           Ouroboros.Consensus.Util.CBOR
 import           Ouroboros.Consensus.Util.IOLike
-import           System.FilePath (isRelative)
+import           System.FilePath (splitFileName)
 import           System.FS.API
 import           System.FS.API.Lazy
 import           System.FS.IO
@@ -50,11 +50,11 @@ data Format
 data Config = Config
     { from    :: Format
     -- ^ Which format the input snapshot is in
-    , inpath  :: FsPath
+    , inpath  :: FilePath
     -- ^ Path to the input snapshot
     , to      :: Format
     -- ^ Which format the output snapshot must be in
-    , outpath :: FsPath
+    , outpath :: FilePath
     -- ^ Path to the output snapshot
     }
 
@@ -75,13 +75,12 @@ parseConfig =
                 , metavar "FORMAT-IN"
                 ]
             )
-        <*> argument
-               (eitherReader (\x -> if isRelative x then Right (mkFsPath [x]) else Left $ "Non-relative path in input path argument: " <> show x))
-                    ( mconcat
-                        [ help "Input dir/file. Use relative paths like ./100007913"
-                        , metavar "PATH-IN"
-                        ]
-                    )
+        <*> strArgument
+            ( mconcat
+                [ help "Input dir/file. Use relative paths like ./100007913"
+                , metavar "PATH-IN"
+                ]
+            )
 
         <*> argument
             auto
@@ -90,16 +89,19 @@ parseConfig =
                 , metavar "FORMAT-OUT"
                 ]
             )
-        <*> argument
-             (eitherReader (\x -> if isRelative x then Right (mkFsPath [x]) else Left $ "Non-relative path in output path argument: " <> show x))
-                    ( mconcat
-                        [ help "Output dir/file Use relative paths like ./100007913"
-                        , metavar "PATH-OUT"
-                        ]
-                    )
-
+        <*> strArgument
+            ( mconcat
+                [ help "Output dir/file Use relative paths like ./100007913"
+                , metavar "PATH-OUT"
+                ]
+            )
 
 -- Helpers
+
+pathToFS :: FilePath -> (SomeHasFS IO, FsPath)
+pathToFS path = (SomeHasFS $ ioHasFS $ MountPoint dir, mkFsPath [file])
+  where
+    (dir, file) = splitFileName path
 
 defaultLMDBLimits :: LMDB.Limits
 defaultLMDBLimits =
@@ -154,23 +156,22 @@ load ::
        , HasLedgerTables (LedgerState blk)
        )
     => Config
-    -> SomeHasFS IO
     -> CodecConfig blk
     -> IO (ExtLedgerState blk ValuesMK)
-load Config{from = Legacy, inpath} fs ccfg = do
-    checkSnapshot Legacy inpath fs
+load Config{from = Legacy, inpath = pathToFS -> (fs, path)} ccfg = do
+    checkSnapshot Legacy path fs
     eSt <- fmap unstowLedgerTables
-        <$> runExceptT (readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode inpath)
+        <$> runExceptT (readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode path)
     case eSt of
       Left err -> throwIO $ SnapshotError err
       Right st -> pure st
-load Config{from = Mem, inpath} fs@(SomeHasFS hasFS) ccfg = do
-    checkSnapshot Mem inpath fs
-    eExtLedgerSt <- runExceptT $ readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode (inpath </> mkFsPath ["state"])
+load Config{from = Mem, inpath = pathToFS -> (fs@(SomeHasFS hasFS), path)} ccfg = do
+    checkSnapshot Mem path fs
+    eExtLedgerSt <- runExceptT $ readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode (path </> mkFsPath ["state"])
     case eExtLedgerSt of
       Left err -> throwIO $ SnapshotError err
       Right extLedgerSt -> do
-        values <- withFile hasFS (inpath </> mkFsPath ["tables", "tvar"]) ReadMode $ \h -> do
+        values <- withFile hasFS (path </> mkFsPath ["tables", "tvar"]) ReadMode $ \h -> do
             bs <- hGetAll hasFS h
             case CBOR.deserialiseFromBytes valuesMKDecoder bs of
                 Left err -> throwIO $ TablesCantDeserializeError err
@@ -179,14 +180,14 @@ load Config{from = Mem, inpath} fs@(SomeHasFS hasFS) ccfg = do
                             then pure x
                             else throwIO TablesTrailingBytes
         pure (extLedgerSt `withLedgerTables` values)
-load Config{from = LMDB, inpath} fs ccfg = do
-    checkSnapshot LMDB inpath fs
-    eExtLedgerSt <- runExceptT $ readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode (inpath </> mkFsPath ["state"])
+load Config{from = LMDB, inpath = pathToFS -> (fs, path)} ccfg = do
+    checkSnapshot LMDB path fs
+    eExtLedgerSt <- runExceptT $ readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode (path </> mkFsPath ["state"])
     case eExtLedgerSt of
       Left err -> throwIO $ SnapshotError err
       Right extLedgerSt -> do
         values <- do
-            dbEnv <- LMDB.openEnvironment (fsToFilePath (MountPoint ".") (inpath </> mkFsPath ["tables"])) defaultLMDBLimits
+            dbEnv <- LMDB.openEnvironment (fsToFilePath (MountPoint ".") (path </> mkFsPath ["tables"])) defaultLMDBLimits
             Disk.LMDBMK _ dbBackingTables <- LMDB.readWriteTransaction dbEnv (Disk.getDb (K2 "utxo"))
             catch (LMDB.readOnlyTransaction dbEnv $
                       LMDB.Cursor.runCursorAsTransaction'
@@ -204,39 +205,38 @@ store ::
        , IsLedger (LedgerState blk)
        )
     => Config
-    -> SomeHasFS IO
     -> CodecConfig blk
     -> ExtLedgerState blk ValuesMK
     -> IO ()
-store Config{to = Legacy, outpath} fs ccfg state =
-    writeExtLedgerState fs (encodeDiskExtLedgerState ccfg) outpath (stowLedgerTables state)
-store Config{to = Mem, outpath} fs@(SomeHasFS hasFS) ccfg state = do
+store Config{to = Legacy, outpath = pathToFS -> (fs, path)} ccfg state =
+    writeExtLedgerState fs (encodeDiskExtLedgerState ccfg) path (stowLedgerTables state)
+store Config{to = Mem, outpath = pathToFS -> (fs@(SomeHasFS hasFS), path)} ccfg state = do
     -- write state
-    createDirectoryIfMissing hasFS True outpath
-    writeExtLedgerState fs (encodeDiskExtLedgerState ccfg) (outpath </> mkFsPath ["state"]) (forgetLedgerTables state)
+    createDirectoryIfMissing hasFS True path
+    writeExtLedgerState fs (encodeDiskExtLedgerState ccfg) (path </> mkFsPath ["state"]) (forgetLedgerTables state)
     -- write tables
-    createDirectoryIfMissing hasFS True $ outpath </> mkFsPath ["tables"]
-    withFile hasFS (outpath </> mkFsPath ["tables", "tvar"]) (WriteMode MustBeNew) $ \hf ->
+    createDirectoryIfMissing hasFS True $ path </> mkFsPath ["tables"]
+    withFile hasFS (path </> mkFsPath ["tables", "tvar"]) (WriteMode MustBeNew) $ \hf ->
         void $
             hPutAll hasFS hf $
                 CBOR.toLazyByteString $
                     valuesMKEncoder (projectLedgerTables state)
-store Config{to = LMDB, outpath} fs@(SomeHasFS hasFS) ccfg state = do
+store Config{to = LMDB, outpath = pathToFS -> (fs@(SomeHasFS hasFS), path)} ccfg state = do
     -- write state
-    createDirectoryIfMissing hasFS True outpath
-    writeExtLedgerState fs (encodeDiskExtLedgerState ccfg) (outpath </> mkFsPath ["state"]) (forgetLedgerTables state)
+    createDirectoryIfMissing hasFS True path
+    writeExtLedgerState fs (encodeDiskExtLedgerState ccfg) (path </> mkFsPath ["state"]) (forgetLedgerTables state)
     -- write tables
-    createDirectoryIfMissing hasFS True $ outpath </> mkFsPath ["tables"]
-    dbEnv <- LMDB.openEnvironment (fsToFilePath (MountPoint ".") $ outpath </> mkFsPath ["tables"]) defaultLMDBLimits
+    createDirectoryIfMissing hasFS True $ path </> mkFsPath ["tables"]
+    dbEnv <- LMDB.openEnvironment (fsToFilePath (MountPoint ".") $ path </> mkFsPath ["tables"]) defaultLMDBLimits
     dbState <- LMDB.readWriteTransaction dbEnv $ LMDB.getDatabase (Just "_dbstate")
     dbBackingTables <-
         LMDB.readWriteTransaction dbEnv $
             lttraverse Disk.getDb (ltpure $ K2 "utxo")
     LMDB.readWriteTransaction dbEnv $
-        Disk.withDbStateRWMaybeNull dbState $ \case
+        Disk.withDbSeqNoRWMaybeNull dbState $ \case
             Nothing ->
                 ltzipWith3A Disk.initLMDBTable dbBackingTables codecLedgerTables (projectLedgerTables state)
-                    $> ((), Disk.DbState{Disk.dbsSeq = pointSlot $ getTip state})
+                    $> ((), Disk.DbSeqNo{Disk.dbsSeq = pointSlot $ getTip state})
             Just _ -> liftIO $ throwIO $ Disk.LMDBErrInitialisingAlreadyHasState
 
 main :: IO ()
@@ -250,10 +250,9 @@ main = withStdTerminalHandles $ do
   where
     run conf args = do
         ccfg <- configCodec . pInfoConfig <$> mkProtocolInfo args
-        let fs = SomeHasFS $ ioHasFS $ MountPoint "."
         putStrLn "Loading snapshot..."
-        state <- load conf fs ccfg
+        state <- load conf ccfg
         putStrLn "Loaded snapshot"
         putStrLn "Writing snapshot..."
-        store conf fs ccfg state
+        store conf ccfg state
         putStrLn "Written snapshot"

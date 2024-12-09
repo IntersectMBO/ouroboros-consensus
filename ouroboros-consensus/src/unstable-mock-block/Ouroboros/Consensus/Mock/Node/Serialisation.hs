@@ -113,9 +113,9 @@ instance SerialiseNodeToClient (MockBlock ext) (SomeBlockQuery (BlockQuery (Mock
   encodeNodeToClient _ _ (SomeBlockQuery QueryLedgerTip) = encode ()
   decodeNodeToClient _ _ = (\() -> SomeBlockQuery QueryLedgerTip) <$> decode
 
-instance SerialiseResult' (MockBlock ext) BlockQuery where
-  encodeResult' _ _ QueryLedgerTip = encode
-  decodeResult' _ _ QueryLedgerTip = decode
+instance SerialiseBlockQueryResult (MockBlock ext) BlockQuery where
+  encodeBlockQueryResult _ _ QueryLedgerTip = encode
+  decodeBlockQueryResult _ _ QueryLedgerTip = decode
 
 {-------------------------------------------------------------------------------
   Nested contents

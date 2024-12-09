@@ -3,6 +3,7 @@
 set -e
 
 echo "The custom options for formatting this repo are:"
+stylish-haskell --version
 stylish-haskell --defaults | diff - ./.stylish-haskell.yaml | grep -E "^>.*[[:alnum:]]" | grep -v "#"
 printf "\nFormatting haskell files...\n"
 
@@ -26,30 +27,9 @@ esac
 
 $fdcmd --full-path "$path" \
        --extension hs \
-       --exclude Setup.hs \
-       --exclude ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/SupportsMempool.hs \
-       --exclude ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBAnalyser/Analysis.hs \
-       --exclude ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/LedgerDB/V2/Init.hs \
-       --exclude ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/LedgerDB/V1/Init.hs \
-       --exclude ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Mempool/Query.hs \
-       --exclude ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Mempool/Impl/Common.hs \
-       --exclude ouroboros-consensus-cardano/app/DBAnalyser/Parsers.hs \
        --exec-batch stylish-haskell -c .stylish-haskell.yaml -i
-
-# We don't want these pragmas to be removed accidentally
-f () {
-    grep "#if __GLASGOW_HASKELL__.*
-import" $1 >/dev/null 2>&1
-}
-f ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/SupportsMempool.hs
-f ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBAnalyser/Analysis.hs
-f ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/LedgerDB/V2/Init.hs
-f ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/LedgerDB/V1/Init.hs
-f ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Mempool/Query.hs
-f ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Mempool/Impl/Common.hs
-f ouroboros-consensus-cardano/app/DBAnalyser/Parsers.hs
 
 case "$(uname -s)" in
     MINGW*) git ls-files --eol | grep "w/crlf" | awk '{print $4}' | xargs dos2unix;;
     *) ;;
-esac
+esac || true

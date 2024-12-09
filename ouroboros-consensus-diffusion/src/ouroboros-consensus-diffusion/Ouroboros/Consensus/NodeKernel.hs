@@ -539,7 +539,7 @@ forkBlockForging IS{..} blockForging =
       trace $ TraceNodeIsLeader currentSlot
 
       -- Tick the ledger state for the 'SlotNo' we're producing a block for
-      let tickedLedgerState :: Ticked1 (LedgerState blk) DiffMK
+      let tickedLedgerState :: Ticked (LedgerState blk) DiffMK
           tickedLedgerState =
                 applyChainTick
                   (configLedger cfg)
@@ -558,9 +558,7 @@ forkBlockForging IS{..} blockForging =
       -- may not be adopted, but it won't be invalid.
       (mempoolHash, mempoolSlotNo) <- lift $ atomically $ do
         snap <- getSnapshot mempool   -- only used for its tip-like information
-        let h :: ChainHash blk
-            h = castHash $ getTipHash $ snapshotState snap
-        pure (h, snapshotSlotNo snap)
+        pure (castHash $ snapshotStateHash snap, snapshotSlotNo snap)
 
       let readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
 
@@ -630,18 +628,19 @@ forkBlockForging IS{..} blockForging =
               -- process.
               whenJust
                 (NE.nonEmpty (map (txId . txForgetValidated) txs))
-                (lift . removeTxs mempool)
+                (lift . removeTxsEvenIfValid mempool)
           exitEarly
 
         -- We successfully produced /and/ adopted a block
         --
         -- NOTE: we are tracing the transactions we retrieved from the Mempool,
-        -- not the transactions actually /in the block/. They should always
-        -- match, if they don't, that would be a bug. Unfortunately, we can't
+        -- not the transactions actually /in the block/.
+        -- The transactions in the block should be a prefix of the transactions
+        -- in the mempool. If this is not the case, this is a bug.
+        -- Unfortunately, we can't
         -- assert this here because the ability to extract transactions from a
         -- block, i.e., the @HasTxs@ class, is not implementable by all blocks,
         -- e.g., @DualBlock@.
-
         trace $ TraceAdoptedBlock currentSlot newBlock txs
 
     trace :: TraceForgeEvent blk -> WithEarlyExit m ()

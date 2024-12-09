@@ -53,7 +53,6 @@ import qualified Cardano.Protocol.TPraos.Rules.Prtcl as SL
 import qualified Cardano.Protocol.TPraos.Rules.Tickn as SL
 import           Control.Monad
 import           Control.Monad.Except (runExcept, throwError)
-import Data.Void
 import           Data.Coerce (coerce)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (listToMaybe, mapMaybe)
@@ -64,6 +63,7 @@ import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
 import qualified Data.SOP.Strict as SOP
 import           Data.SOP.Tails (Tails (..))
 import qualified Data.SOP.Tails as Tails
+import           Data.Void
 import           Data.Word
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
@@ -292,7 +292,7 @@ type CardanoHardForkConstraints c =
 -- ledger tables:
 --
 -- * Byron to Shelley: as Byron has no tables, the whole UTxO set is computed as
---     insertions, note that it uses 'calculateAdditions'
+--     insertions, note that it uses 'valuesAsDiffs'
 --
 -- * Shelley to Allegra: some special addresses (the so called /AVVM/
 --     addresses), were deleted in this transition, which influenced things like
@@ -458,8 +458,7 @@ translateLedgerStateByronToShelleyWrapper =
     $ \_ (WrapLedgerConfig cfgShelley) ->
         TranslateLedgerState {
             translateLedgerStateWith = \epochNo ledgerByron ->
-                forgetTrackingValues
-              . calculateAdditions
+                valuesAsDiffs
               . unstowLedgerTables
               $ ShelleyLedgerState {
                     shelleyLedgerTip =
@@ -613,8 +612,12 @@ translateLedgerStateShelleyToAllegraWrapper =
                   -- complex doing so, as we cannot perform operations with
                   -- 'LedgerTables l1 mk' and 'LedgerTables l2 mk'. Because of
                   -- this, for now we choose to generate the differences out of
-                  -- thin air and when the time comes in which ticking produces
-                  -- differences, we will have to revisit this.
+                  -- thin air as we know that in this era translation these are
+                  -- the only differences produced.
+                  --
+                  -- When adding more tables, this decision might need to be
+                  -- revisited, as there might be other diffs produced in the
+                  -- translation.
                   avvmsAsDeletions = LedgerTables
                                    . DiffMK
                                    . Diff.fromMapDeletes

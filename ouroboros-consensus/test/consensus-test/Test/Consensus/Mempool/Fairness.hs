@@ -98,7 +98,6 @@ testTxSizeFairness TestParams { mempoolMaxCapacity, smallTxSize, largeTxSize, nr
                    (testBlockLedgerConfigFrom eraParams)
                    (Mempool.mkCapacityBytesOverride mempoolMaxCapacity)
                    Tracer.nullTracer
-
     ----------------------------------------------------------------------------
     --  Add and collect transactions
     ----------------------------------------------------------------------------
@@ -108,7 +107,6 @@ testTxSizeFairness TestParams { mempoolMaxCapacity, smallTxSize, largeTxSize, nr
       , waitForSmallAddersToFillMempool >> adders  mempool largeTxSize
       , waitForSmallAddersToFillMempool >> remover mempool             nrOftxsToCollect
       ]
-
 
     ----------------------------------------------------------------------------
     --  Count the small and large transactions
@@ -207,7 +205,7 @@ remover mempool total = do
         -- transactions.
         threadDelay 1000
         gtx <- atomically $ getATxFromTheMempool
-        Mempool.removeTxs mempool (Mempool.txId gtx :| [])
+        Mempool.removeTxsEvenIfValid mempool (Mempool.txId gtx :| [])
         loop (unGenTx gtx:txs) (n-1)
       where
         getATxFromTheMempool =

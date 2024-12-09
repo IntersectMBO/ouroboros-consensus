@@ -429,5 +429,5 @@ instance Arbitrary a => Arbitrary (LoE a) where
 -------------------------------------------------------------------------------}
 
 instance Arbitrary SecurityParam where
-  arbitrary = SecurityParam <$> choose (0, 6)
-  shrink (SecurityParam k) = SecurityParam <$> shrink k
+  arbitrary = SecurityParam <$> choose (1, 6)
+  shrink (SecurityParam k) = [ SecurityParam x | x <- shrink k, x > 0 ]

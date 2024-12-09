@@ -71,8 +71,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import           Ouroboros.Consensus.Storage.LedgerDB (AnnLedgerError (..),
-                     Forker', LedgerDB', ValidateResult (..))
+import           Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -100,7 +99,7 @@ initialChainSelection ::
      )
   => ImmutableDB m blk
   -> VolatileDB m blk
-  -> LedgerDB' m blk
+  -> LedgerDB.LedgerDB' m blk
   -> ResourceRegistry m
   -> Tracer m (TraceInitChainSelEvent blk)
   -> TopLevelConfig blk
@@ -140,7 +139,9 @@ initialChainSelection immutableDB volatileDB lgrDB rr tracer cfg varInvalid
     --
     -- We don't use 'LedgerDB.withTipForker' here, because 'curForker' might be
     -- returned as part of the selected chain.
-    curForker <- LedgerDB.getForkerAtWellKnownPoint lgrDB rr VolatileTip
+    curForker <- LedgerDB.getForkerAtTarget lgrDB rr VolatileTip >>= \case
+      Left{} -> error "Unreachable, VolatileTip MUST be in the LedgerDB"
+      Right frk -> pure frk
 
     chains <- constructChains i succsOf
 
@@ -154,8 +155,9 @@ initialChainSelection immutableDB volatileDB lgrDB rr tracer cfg varInvalid
       Nothing      -> return curChainAndLedger
       Just chains' ->
         chainSelection' curChainAndLedger chains' >>= \case
+          -- The returned forker will be closed in 'openDBInternal'.
           Nothing       -> pure curChainAndLedger
-          Just newChain -> LedgerDB.forkerClose curForker >> toChainAndLedger newChain
+          Just newChain -> forkerClose curForker >> toChainAndLedger newChain
   where
     bcfg :: BlockConfig blk
     bcfg = configBlock cfg
@@ -225,7 +227,7 @@ initialChainSelection immutableDB volatileDB lgrDB rr tracer cfg varInvalid
          -- ^ Candidates anchored at @i@
       -> m (Maybe (ValidatedChainDiff (Header blk) (Forker' m blk)))
     chainSelection' curChainAndLedger candidates =
-        atomically (LedgerDB.forkerCurrentPoint ledger) >>= \curpt ->
+        atomically (forkerCurrentPoint ledger) >>= \curpt ->
         assert (all ((curpt ==) . castPoint . AF.anchorPoint) candidates) $
         assert (all (preferAnchoredCandidate bcfg curChain) candidates) $ do
           cse <- chainSelEnv
@@ -847,15 +849,15 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
           $ getChainDiff vChainDiff
         (curChain, newChain, events, prevTentativeHeader, newLedger) <- atomically $ do
           curChain  <- readTVar         cdbChain -- Not Query.getCurrentChain!
-          curLedger <- LedgerDB.getVolatileTip cdbLedgerDB
-          newLedger <- LedgerDB.forkerGetLedgerState newForker
+          curLedger <- getVolatileTip cdbLedgerDB
+          newLedger <- forkerGetLedgerState newForker
           case Diff.apply curChain chainDiff of
             -- Impossible, as described in the docstring
             Nothing       ->
               error "chainDiff doesn't fit onto current chain"
             Just newChain -> do
               writeTVar cdbChain newChain
-              LedgerDB.forkerCommit newForker
+              forkerCommit newForker
               -- Inspect the new ledger for potential problems
               let events :: [LedgerEvent blk]
                   events = inspectLedger
@@ -892,7 +894,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
         whenJust (strictMaybeToMaybe prevTentativeHeader) $ traceWith $
           PipeliningEvent . OutdatedTentativeHeader >$< addBlockTracer
 
-        LedgerDB.forkerClose newForker
+        forkerClose newForker
 
       where
         -- Given the current chain and the new chain as chain fragments, and the
@@ -946,7 +948,7 @@ getKnownHeaderThroughCache volatileDB hash = gets (Map.lookup hash) >>= \case
 
 -- | Environment used by 'chainSelection' and related functions.
 data ChainSelEnv m blk = ChainSelEnv
-    { lgrDB                 :: LedgerDB' m blk
+    { lgrDB                 :: LedgerDB.LedgerDB' m blk
     , validationTracer      :: Tracer m (TraceValidationEvent blk)
     , pipeliningTracer      :: Tracer m (TracePipeliningEvent blk)
     , bcfg                  :: BlockConfig blk
@@ -1172,7 +1174,7 @@ ledgerValidateCandidate ::
   -> ChainDiff (Header blk)
   -> m (ValidatedChainDiff (Header blk) (Forker' m blk))
 ledgerValidateCandidate chainSelEnv rr chainDiff@(ChainDiff rollback suffix) =
-    LedgerDB.validate lgrDB rr traceUpdate blockCache rollback newBlocks >>= \case
+    LedgerDB.validateFork lgrDB rr traceUpdate blockCache rollback newBlocks >>= \case
       ValidateExceededRollBack {} ->
         -- Impossible: we asked the LedgerDB to roll back past the immutable
         -- tip, which is impossible, since the candidates we construct must
@@ -1180,7 +1182,7 @@ ledgerValidateCandidate chainSelEnv rr chainDiff@(ChainDiff rollback suffix) =
         error "found candidate requiring rolling back past the immutable tip"
 
       ValidateLedgerError (AnnLedgerError ledger' pt e) -> do
-        lastValid <- atomically $ LedgerDB.forkerCurrentPoint ledger'
+        lastValid <- atomically $ forkerCurrentPoint ledger'
         let chainDiff' = Diff.truncate (castPoint lastValid) chainDiff
         traceWith validationTracer (InvalidBlock e pt)
         addInvalidBlock e pt
@@ -1270,7 +1272,7 @@ validateCandidate chainSelEnv rr chainDiff =
     -- leftover forker that we have to close so that its resources are correctly
     -- released.
     cleanup :: ValidatedChainDiff b (Forker' m blk) -> m ()
-    cleanup = LedgerDB.forkerClose . getLedger
+    cleanup = forkerClose . getLedger
 
 {-------------------------------------------------------------------------------
   'ChainAndLedger'

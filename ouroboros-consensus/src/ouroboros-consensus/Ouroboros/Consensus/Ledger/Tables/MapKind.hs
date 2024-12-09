@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
@@ -17,6 +18,7 @@ module Ouroboros.Consensus.Ledger.Tables.MapKind (
   , NoThunksMK
   , ShowMK
   , ZeroableMK (..)
+  , bimapLedgerTables
     -- * Concrete MapKinds
   , CodecMK (..)
   , DiffMK (..)
@@ -38,7 +40,7 @@ import           GHC.Generics (Generic)
 import           NoThunks.Class
 import           Ouroboros.Consensus.Ledger.Tables.Basics
 import           Ouroboros.Consensus.Ledger.Tables.Diff (Diff (..))
-import           Ouroboros.Consensus.Ledger.Tables.DiffSeq
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq
 
 {-------------------------------------------------------------------------------
   Classes
@@ -54,6 +56,8 @@ class CanMapMK mk where
 
 type CanMapKeysMK :: MapKind -> Constraint
 class CanMapKeysMK mk where
+  -- | Instances defined for the standard mapkinds suffer from the same caveats
+  -- as 'Data.Map.Strict.mapKeys' or 'Data.Set.map'
   mapKeysMK :: Ord k' => (k -> k') -> mk k v -> mk k' v
 
 -- | For convenience, such that we don't have to include @QuantifiedConstraints@
@@ -71,6 +75,27 @@ class (forall k v. (Eq k, Eq v) => Eq (mk k v)) => EqMK mk
 type NoThunksMK :: MapKind -> Constraint
 class (forall k v. (NoThunks k, NoThunks v) => NoThunks (mk k v))
    => NoThunksMK mk
+
+-- | Map both keys and values in ledger tables.
+--
+-- For keys, it has the same caveats as 'Data.Map.Strict.mapKeys' or
+-- `Data.Set.map', namely that only injective functions are suitable to be used
+-- here.
+bimapLedgerTables ::
+     forall x y mk. (
+          CanMapKeysMK mk
+        , CanMapMK mk
+        , Ord (TxIn y)
+        )
+  => (TxIn x -> TxIn y)
+  -> (TxOut x -> TxOut y)
+  -> LedgerTables x mk
+  -> LedgerTables y mk
+bimapLedgerTables f g =
+    LedgerTables
+  . mapKeysMK f
+  . mapMK g
+  . getLedgerTables
 
 {-------------------------------------------------------------------------------
   EmptyMK
@@ -159,7 +184,7 @@ instance ZeroableMK TrackingMK where
   emptyMK = TrackingMK mempty mempty
 
 instance CanMapMK TrackingMK where
-  mapMK f (TrackingMK vs d) = TrackingMK (fmap f vs) (fmap f d)
+  mapMK f (TrackingMK vs d) = TrackingMK (Map.map f vs) (fmap f d)
 
 instance CanMapKeysMK TrackingMK where
   mapKeysMK f (TrackingMK vs d) =
@@ -197,6 +222,9 @@ instance ZeroableMK SeqDiffMK where
 --
 -- See also 'HasCanonicalTxIn' in
 -- "Ouroboros.Consensus.HardFork.Combinator.Ledger".
+--
+-- We will serialize UTxO maps as unstowed ledger tables when storing snapshots
+-- while using an in-memory backend for the LedgerDB.
 data CodecMK k v = CodecMK {
     encodeKey   :: !(k -> CBOR.Encoding)
   , encodeValue :: !(v -> CBOR.Encoding)
