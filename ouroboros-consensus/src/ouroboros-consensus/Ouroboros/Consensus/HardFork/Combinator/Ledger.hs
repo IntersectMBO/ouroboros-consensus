@@ -10,7 +10,6 @@
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -1191,34 +1190,30 @@ encodeHardForkTxOutDefault =
     . hcimap (Proxy @(Compose CanSerializeLedgerTables LedgerState)) each
   where
     each ::
-          forall x. CanSerializeLedgerTables (LedgerState x)
+         CanSerializeLedgerTables (LedgerState x)
       => Index xs x
       -> WrapTxOut x
       -> K CBOR.Encoding x
     each idx (WrapTxOut txout) = K $
            CBOR.encodeListLen 2
         <> CBOR.encodeWord8 (toWord8 idx)
-        <> encodeValue (getLedgerTables $ codecLedgerTables @(LedgerState x)) txout
+        <> encodeValue (codecP idx) txout
 
 decodeHardForkTxOutDefault ::
      forall s xs. All (Compose CanSerializeLedgerTables LedgerState) xs
   => CBOR.Decoder s (DefaultHardForkTxOut xs)
 decodeHardForkTxOutDefault = do
     CBOR.decodeListLenOf 2
-    tag <- CBOR.decodeWord8
-    aDecoder tag
+    CBOR.decodeWord8 >>= go
   where
-    each ::
-         forall x. CanSerializeLedgerTables (LedgerState x)
-      => Index xs x
-      -> forall s'. (K () -.-> K (CBOR.Decoder s' (NS WrapTxOut xs))) x
-    each idx = fn
-      (\(K ()) -> K $ injectNS idx . WrapTxOut <$> decodeValue (getLedgerTables $ codecLedgerTables @(LedgerState x)))
+    go :: Word8 -> CBOR.Decoder s' (NS WrapTxOut xs)
+    go tag =
+        hctraverse'
+          (Proxy @(Compose CanSerializeLedgerTables LedgerState))
+          (fmap WrapTxOut . decodeValue . codecP)
+      $ fromMaybe (error "Unknown tag") (nsFromIndex tag)
 
-    aDecoder :: Word8 -> CBOR.Decoder s' (NS WrapTxOut xs)
-    aDecoder w =
-        hcollapse
-      $ flip hap (fromMaybe (error "Unkown tag") $ nsFromIndex w)
-      $ hcmap (Proxy @(Compose CanSerializeLedgerTables LedgerState))
-              each
-              (indices @xs)
+codecP ::
+     forall proxy x. CanSerializeLedgerTables (LedgerState x)
+  => proxy x -> CodecMK (TxIn (LedgerState x)) (TxOut (LedgerState x))
+codecP _ = getLedgerTables $ codecLedgerTables @(LedgerState x)
