@@ -12,7 +12,6 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
                      (pattern NoDoDiskSnapshotChecksum)
-import qualified Test.Cardano.Tools.Headers
 import           Test.Tasty
 import           Test.Tasty.HUnit
 import           Test.Util.TestEnv
