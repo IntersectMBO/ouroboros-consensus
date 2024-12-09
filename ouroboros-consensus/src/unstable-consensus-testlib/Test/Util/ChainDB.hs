@@ -19,16 +19,18 @@ import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Config
                      (TopLevelConfig (topLevelConfigLedger), configCodec)
 import           Ouroboros.Consensus.HardFork.History.EraParams (eraEpochSize)
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB hiding
                      (TraceFollowerEvent (..))
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args
-import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB
 import           Ouroboros.Consensus.Storage.ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.LedgerDB (configLedgerDb)
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy as LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args
+import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots as LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.V2.Args
 import           Ouroboros.Consensus.Storage.VolatileDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util.Args
@@ -53,18 +55,18 @@ data NodeDBs db = NodeDBs {
   deriving (Functor, Foldable, Traversable)
 
 emptyNodeDBs :: MonadSTM m => m (NodeDBs (StrictTMVar m MockFS))
-emptyNodeDBs = NodeDBs
-  <$> atomically (newTMVar Mock.empty)
-  <*> atomically (newTMVar Mock.empty)
-  <*> atomically (newTMVar Mock.empty)
-  <*> atomically (newTMVar Mock.empty)
+emptyNodeDBs = atomically $ NodeDBs
+  <$> newTMVar Mock.empty
+  <*> newTMVar Mock.empty
+  <*> newTMVar Mock.empty
+  <*> newTMVar Mock.empty
 
 -- | Minimal set of arguments for creating a ChainDB instance for testing purposes.
 data MinimalChainDbArgs m blk = MinimalChainDbArgs {
     mcdbTopLevelConfig :: TopLevelConfig blk
   , mcdbChunkInfo      :: ImmutableDB.ChunkInfo
   -- ^ Specifies the layout of the ImmutableDB on disk.
-  , mcdbInitLedger     :: ExtLedgerState blk
+  , mcdbInitLedger     :: ExtLedgerState blk ValuesMK
   -- ^ The initial ledger state.
   , mcdbRegistry       :: ResourceRegistry m
   -- ^ Keeps track of non-lexically scoped resources.
@@ -110,14 +112,17 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
         , volTracer           = nullTracer
         , volValidationPolicy = VolatileDB.ValidateAll
         }
-    , cdbLgrDbArgs = LgrDbArgs {
-          lgrDiskPolicyArgs   = LedgerDB.DiskPolicyArgs LedgerDB.DefaultSnapshotInterval LedgerDB.DefaultNumOfDiskSnapshots
+    , cdbLgrDbArgs = LedgerDbArgs {
+          lgrSnapshotPolicyArgs = LedgerDB.SnapshotPolicyArgs LedgerDB.DefaultSnapshotInterval LedgerDB.DefaultNumOfDiskSnapshots
           -- Keep 2 ledger snapshots, and take a new snapshot at least every 2 *
           -- k seconds, where k is the security parameter.
-        , lgrGenesis          = return mcdbInitLedger
-        , lgrHasFS            = SomeHasFS $ simHasFS (nodeDBsLgr mcdbNodeDBs)
-        , lgrTracer           = nullTracer
-        , lgrConfig           = configLedgerDb mcdbTopLevelConfig
+        , lgrGenesis            = return mcdbInitLedger
+        , lgrHasFS              = SomeHasFS $ simHasFS (nodeDBsLgr mcdbNodeDBs)
+        , lgrTracer             = nullTracer
+        , lgrRegistry           = mcdbRegistry
+        , lgrConfig             = configLedgerDb mcdbTopLevelConfig
+        , lgrFlavorArgs         = LedgerDbFlavorArgsV2 (V2Args InMemoryHandleArgs)
+        , lgrStartSnapshot      = Nothing
         }
     , cdbsArgs = ChainDbSpecificArgs {
           cdbsBlocksToAddSize = 1

@@ -79,6 +79,7 @@ import           Data.Functor.These (These1 (..))
 import qualified Data.Map.Strict as Map
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Counting
+import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.Index (Index (..))
 import           Data.SOP.OptNP (NonEmptyOptNP, OptNP (OptSkip))
 import qualified Data.SOP.OptNP as OptNP
@@ -93,6 +94,8 @@ import           Ouroboros.Consensus.Byron.Ledger.NetworkProtocolVersion
 import           Ouroboros.Consensus.Byron.Node
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.CanHardFork
+import           Ouroboros.Consensus.Cardano.Ledger ()
+import           Ouroboros.Consensus.Cardano.QueryHF ()
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.Embed.Nary
@@ -100,6 +103,8 @@ import           Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.Tables
+import           Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Node.Run
@@ -967,21 +972,22 @@ protocolInfoCardano paramsCardano
     -- data from the genesis config (if provided) in the ledger state. For
     -- example, this includes initial staking and initial funds (useful for
     -- testing/benchmarking).
-    initExtLedgerStateCardano :: ExtLedgerState (CardanoBlock c)
+    initExtLedgerStateCardano :: ExtLedgerState (CardanoBlock c) ValuesMK
     initExtLedgerStateCardano = ExtLedgerState {
           headerState = initHeaderState
-        , ledgerState =
-              HardForkLedgerState
-            . hap (fn id :* registerAny)
-            $ hardForkLedgerStatePerEra initLedgerState
+        , ledgerState = overShelleyBasedLedgerState initLedgerState
         }
       where
-        initHeaderState :: HeaderState (CardanoBlock c)
-        initLedgerState :: LedgerState (CardanoBlock c)
-        ExtLedgerState initLedgerState initHeaderState =
-          injectInitialExtLedgerState cfg initExtLedgerStateByron
+        overShelleyBasedLedgerState (HardForkLedgerState st) =
+          HardForkLedgerState $ hap (fn id :* registerAny) st
 
-        registerAny :: NP (LedgerState -.-> LedgerState) (CardanoShelleyEras c)
+        initHeaderState :: HeaderState (CardanoBlock c)
+        initLedgerState :: LedgerState (CardanoBlock c) ValuesMK
+        ExtLedgerState initLedgerState initHeaderState =
+            injectInitialExtLedgerState cfg
+          $ initExtLedgerStateByron
+
+        registerAny :: NP (Flip LedgerState ValuesMK -.-> Flip LedgerState ValuesMK) (CardanoShelleyEras c)
         registerAny =
             hcmap (Proxy @IsShelleyBlock) injectIntoTestState $
                 WrapTransitionConfig transitionConfigShelley
@@ -993,11 +999,13 @@ protocolInfoCardano paramsCardano
              :* Nil
 
         injectIntoTestState ::
-             L.EraTransition era
+             ShelleyBasedEra era
           => WrapTransitionConfig (ShelleyBlock proto era)
-          -> (LedgerState -.-> LedgerState) (ShelleyBlock proto era)
-        injectIntoTestState (WrapTransitionConfig cfg) = fn $ \st -> st {
-            Shelley.shelleyLedgerState = L.injectIntoTestState cfg (Shelley.shelleyLedgerState st)
+          -> (Flip LedgerState ValuesMK -.-> Flip LedgerState ValuesMK) (ShelleyBlock proto era)
+        injectIntoTestState (WrapTransitionConfig cfg) = fn $ \(Flip st) ->
+          Flip $ unstowLedgerTables $ forgetLedgerTables $ st {
+            Shelley.shelleyLedgerState = L.injectIntoTestState cfg
+              (Shelley.shelleyLedgerState $ stowLedgerTables st)
           }
 
     -- | For each element in the list, a block forging thread will be started.

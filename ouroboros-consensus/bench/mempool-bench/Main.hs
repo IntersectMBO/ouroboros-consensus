@@ -17,7 +17,6 @@ import           Data.Aeson
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Csv as Csv
 import           Data.Maybe (fromMaybe)
-import           Data.Set ()
 import qualified Data.Text as Text
 import qualified Data.Text.Read as Text.Read
 import           Main.Utf8 (withStdTerminalHandles)

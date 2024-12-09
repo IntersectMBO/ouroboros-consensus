@@ -15,14 +15,14 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
-import           Ouroboros.Consensus.Mempool.API
+import           Ouroboros.Consensus.Mempool.API (Mempool (..))
 import           Ouroboros.Consensus.Mempool.Capacity
 import           Ouroboros.Consensus.Mempool.Impl.Common
 import           Ouroboros.Consensus.Mempool.Query
 import           Ouroboros.Consensus.Mempool.Update
 import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.STM (Watcher (..), forkLinkedWatcher)
+import           Ouroboros.Consensus.Util.STM
 
 {-------------------------------------------------------------------------------
   Opening the mempool
@@ -106,17 +106,14 @@ mkMempool ::
      )
   => MempoolEnv m blk -> Mempool m blk
 mkMempool mpEnv = Mempool
-    { addTx          = implAddTx istate remoteFifo allFifo cfg trcr
+    { addTx          = implAddTx mpEnv
     , removeTxs      = implRemoveTxs mpEnv
     , syncWithLedger = implSyncWithLedger mpEnv
-    , getSnapshot    = snapshotFromIS <$> readTVar istate
-    , getSnapshotFor = \fls -> pureGetSnapshotFor cfg fls co <$> readTVar istate
-    , getCapacity    = isCapacity <$> readTVar istate
+    , getSnapshot    = snapshotFromIS <$> readTMVar istate
+    , getSnapshotFor = implGetSnapshotFor mpEnv
+    , getCapacity    = isCapacity <$> readTMVar istate
     }
-   where MempoolEnv { mpEnvStateVar = istate
-                    , mpEnvAddTxsRemoteFifo = remoteFifo
-                    , mpEnvAddTxsAllFifo = allFifo
-                    , mpEnvLedgerCfg = cfg
-                    , mpEnvTracer = trcr
-                    , mpEnvCapacityOverride = co
-                    } = mpEnv
+  where
+    MempoolEnv {
+        mpEnvStateVar         = istate
+      } = mpEnv
