@@ -2,7 +2,6 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Test.Consensus.Genesis.Setup.GenChains (
@@ -132,10 +131,11 @@ genChainsWithExtraHonestPeers genNumExtraHonest genNumForks = do
     gtSlotLength,
     gtChainSyncTimeouts = chainSyncTimeouts gtSlotLength asc,
     gtBlockFetchTimeouts = blockFetchTimeouts,
-    gtLoPBucketParams = LoPBucketParams { lbpCapacity = 100_000, lbpRate = 1_000 },
-    -- ^ REVIEW: Do we want to generate those randomly? For now, the chosen
-    -- values carry no special meaning. Someone needs to think about what values
-    -- would make for interesting tests.
+    gtLoPBucketParams = LoPBucketParams { lbpCapacity = 50, lbpRate = 10 },
+    -- These values give little enough leeway (5s) so that some adversaries get disconnected
+    -- by the LoP during the stalling attack test. Maybe we should design a way to override
+    -- those values for individual tests?
+    -- Also, we might want to generate these randomly.
     gtCSJParams = CSJParams $ fromIntegral scg,
     gtBlockTree = List.foldl' (flip BT.addBranch') (BT.mkTrunk goodChain) $ zipWith (genAdversarialFragment goodBlocks) [1..] alternativeChainSchemas,
     gtExtraHonestPeers,

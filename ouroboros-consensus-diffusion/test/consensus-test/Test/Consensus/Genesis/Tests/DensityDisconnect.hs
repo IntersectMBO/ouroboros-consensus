@@ -31,8 +31,7 @@ import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.Genesis.Governor (DensityBounds,
                      densityDisconnect, sharedCandidatePrefix)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
-                     (ChainSyncClientException (DensityTooLow),
-                     ChainSyncState (..))
+                     (ChainSyncClientException (..), ChainSyncState (..))
 import           Ouroboros.Consensus.Util.Condense (condense)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -68,7 +67,7 @@ import           Test.Util.TestEnv (adjustQuickCheckMaxSize,
 
 tests :: TestTree
 tests =
-  adjustQuickCheckTests (* 4) $
+  adjustQuickCheckTests (* 10) $
   adjustQuickCheckMaxSize (`div` 5) $
   testGroup "gdd" [
     testProperty "basic" prop_densityDisconnectStatic,
@@ -474,9 +473,10 @@ prop_densityDisconnectTriggersChainSel =
         let
           othersCount = Map.size (adversarialPeers $ psSchedule gtSchedule)
           exnCorrect = case exceptionsByComponent ChainSyncClient stateView of
-            [fromException -> Just DensityTooLow] -> True
-            []                 | othersCount == 0 -> True
-            _                                     -> False
+            [fromException -> Just DensityTooLow]        -> True
+            [fromException -> Just CandidateTooSparse{}] -> True
+            []                 | othersCount == 0        -> True
+            _                                            -> False
           tipPointCorrect = Just (getTrunkTip gtBlockTree) == svTipBlock
         in counterexample "Unexpected exceptions" exnCorrect
             .&&.
@@ -499,7 +499,8 @@ prop_densityDisconnectTriggersChainSel =
             (AF.Empty _)       -> Origin
             (_ AF.:> tipBlock) -> At tipBlock
           advTip = getOnlyBranchTip tree
-       in mkPointSchedule $ peers'
+       in PointSchedule {
+            psSchedule = peers'
             -- Eagerly serve the honest tree, but after the adversary has
             -- advertised its chain up to the intersection.
             [[(Time 0, scheduleTipPoint trunkTip),
@@ -514,4 +515,7 @@ prop_densityDisconnectTriggersChainSel =
               (Time 0, ScheduleBlockPoint intersect),
               (Time 1, scheduleHeaderPoint advTip),
               (Time 1, scheduleBlockPoint advTip)
-            ]]
+            ]],
+            psStartOrder = [],
+            psMinEndTime = Time 0
+          }
