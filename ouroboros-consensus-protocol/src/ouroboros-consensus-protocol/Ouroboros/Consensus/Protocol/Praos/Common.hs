@@ -261,11 +261,11 @@ data PraosCanBeLeader c = PraosCanBeLeader
   deriving (Generic)
 
 data PraosCredentialsSource c
-  = PraosCredentialsUnsound (OCert.OCert c) (SL.UnsoundPureSignKeyKES c)
+  = PraosCredentialsUnsound (OCert.OCert c) (KES.UnsoundPureSignKeyKES (KES c))
   deriving (Generic)
 
-instance (NoThunks (SL.UnsoundPureSignKeyKES c), Crypto c) => NoThunks (PraosCredentialsSource c)
-instance (NoThunks (SL.UnsoundPureSignKeyKES c), Crypto c) => NoThunks (PraosCanBeLeader c)
+instance (NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (PraosCredentialsSource c)
+instance (NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (PraosCanBeLeader c)
 
 instantiatePraosCredentials :: ( KES.UnsoundPureKESAlgorithm (KES c)
                                , MonadST m
