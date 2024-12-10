@@ -44,7 +44,6 @@ common common-lib
 
   if flag(asserts)
     ghc-options: -fno-ignore-asserts
-    cpp-options: -DENABLE_ASSERTIONS
 
 common common-test
   import: common-lib
@@ -201,6 +200,7 @@ test-suite mock-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.Ledger.Mock
+    Test.Consensus.Ledger.Mock.LedgerTables
     Test.ThreadNet.BFT
     Test.ThreadNet.LeaderSchedule
     Test.ThreadNet.PBFT
@@ -280,6 +280,7 @@ test-suite consensus-test
     base,
     binary,
     bytestring,
+    cardano-binary,
     cardano-crypto-class,
     cardano-slotting:{cardano-slotting, testlib},
     cardano-strict-containers,

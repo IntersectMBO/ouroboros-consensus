@@ -19,11 +19,13 @@ import           Control.Monad (forever, void)
 import qualified Control.Tracer as Tracer
 import           Data.Foldable (asum)
 import qualified Data.List as List
+import           Data.List.NonEmpty hiding (length)
 import           Data.Void (Void, vacuous)
 import           Ouroboros.Consensus.Config.SecurityParam as Consensus
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import           Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Mempool
+import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Mempool (Mempool)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool
@@ -81,9 +83,13 @@ testTxSizeFairness TestParams { mempoolMaxCapacity, smallTxSize, largeTxSize, nr
     --  Obtain a mempool.
     ----------------------------------------------------------------------------
     let
+      ledgerItf :: Mempool.LedgerInterface IO TestBlock
       ledgerItf = Mempool.LedgerInterface {
-              Mempool.getCurrentLedgerState = pure $ testInitLedgerWithState ()
-          }
+          Mempool.getCurrentLedgerState = pure $
+            testInitLedgerWithState NoPayLoadDependentState
+        , Mempool.getLedgerTablesAtFor = \_ _ -> pure $
+            Just emptyLedgerTables
+        }
 
       eraParams =
           HardFork.defaultEraParams (Consensus.SecurityParam 10) (Time.slotLengthFromSec 2)
@@ -92,7 +98,6 @@ testTxSizeFairness TestParams { mempoolMaxCapacity, smallTxSize, largeTxSize, nr
                    (testBlockLedgerConfigFrom eraParams)
                    (Mempool.mkCapacityBytesOverride mempoolMaxCapacity)
                    Tracer.nullTracer
-
     ----------------------------------------------------------------------------
     --  Add and collect transactions
     ----------------------------------------------------------------------------
@@ -102,7 +107,6 @@ testTxSizeFairness TestParams { mempoolMaxCapacity, smallTxSize, largeTxSize, nr
       , waitForSmallAddersToFillMempool >> adders  mempool largeTxSize
       , waitForSmallAddersToFillMempool >> remover mempool             nrOftxsToCollect
       ]
-
 
     ----------------------------------------------------------------------------
     --  Count the small and large transactions
@@ -201,7 +205,7 @@ remover mempool total = do
         -- transactions.
         threadDelay 1000
         gtx <- atomically $ getATxFromTheMempool
-        Mempool.removeTxs mempool [Mempool.txId gtx]
+        Mempool.removeTxsEvenIfValid mempool (Mempool.txId gtx :| [])
         loop (unGenTx gtx:txs) (n-1)
       where
         getATxFromTheMempool =
