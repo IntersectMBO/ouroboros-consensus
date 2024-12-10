@@ -35,6 +35,8 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation (AnnTip, HeaderState (..),
                      genesisHeaderState)
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
+import           Ouroboros.Consensus.Ledger.SupportsMempool
+                     (ConvertRawTxId (..))
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util ((.:))
@@ -135,7 +137,8 @@ instance Inject GenTx where
   inject _ = injectNS' (Proxy @GenTx)
 
 instance Inject WrapGenTxId where
-  inject _ = injectNS' (Proxy @WrapGenTxId)
+  inject _ ix w = WrapGenTxId $ HardForkGenTxId $ OneEraGenTxId $
+    hcollapse $ hcmap proxySingle (K . toRawTxIdHash . unwrapGenTxId) $ injectNS ix w
 
 instance Inject WrapApplyTxErr where
   inject _ =
