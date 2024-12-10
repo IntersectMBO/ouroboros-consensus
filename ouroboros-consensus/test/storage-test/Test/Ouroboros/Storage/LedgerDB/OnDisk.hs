@@ -10,6 +10,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -65,7 +66,8 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Storage.ImmutableDB.Stream
-import           Ouroboros.Consensus.Storage.LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB hiding
+                     (pattern NoDoDiskSnapshotChecksum)
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike
 import           Prelude hiding (elem)
@@ -111,7 +113,7 @@ type TestBlock = TestBlockWith Tx
 data Tx = Tx {
     -- | Input that the transaction consumes.
     consumed :: Token
-    -- | Ouptupt that the transaction produces.
+    -- | Output that the transaction produces.
   , produced :: (Token, TValue)
   }
   deriving stock (Show, Eq, Ord, Generic)
@@ -292,10 +294,10 @@ data Cmd ss =
   | Switch Word64 [TestBlock]
 
     -- | Take a snapshot (write to disk)
-  | Snap
+  | Snap (Flag "DoDiskSnapshotChecksum")
 
     -- | Restore the DB from on-disk, then return it along with the init log
-  | Restore
+  | Restore (Flag "DoDiskSnapshotChecksum")
 
     -- | Corrupt a previously taken snapshot
   | Corrupt Corruption ss
@@ -500,11 +502,11 @@ runMock cmd initMock =
     go Current       mock = (Ledger (cur (mockLedger mock)), mock)
     go (Push b)      mock = first MaybeErr $ mockUpdateLedger (push b)      mock
     go (Switch n bs) mock = first MaybeErr $ mockUpdateLedger (switch n bs) mock
-    go Restore       mock = (Restored (initLog, cur (mockLedger mock')), mock')
+    go Restore{}     mock = (Restored (initLog, cur (mockLedger mock')), mock')
       where
         initLog = mockInitLog mock
         mock'   = applyMockLog initLog mock
-    go Snap          mock = case mbSnapshot of
+    go Snap{}        mock = case mbSnapshot of
         Just pt
           | let mockSnap = MockSnap (unSlotNo (realPointSlot pt))
           , Map.notMember mockSnap (mockSnaps mock)
@@ -568,7 +570,9 @@ runMock cmd initMock =
           Delete   -> Nothing
           Truncate -> Just (ref, SnapCorrupted)
     go (Drop n) mock =
-        go Restore $ mock {
+        -- the model does not track checksums, but ask for it for
+        -- consistency with the real thing
+        go (Restore DoDiskSnapshotChecksum) $ mock {
             mockLedger = drop (fromIntegral n) (mockLedger mock)
           }
 
@@ -750,15 +754,16 @@ runDB standalone@DB{..} cmd =
                 (const $ pure ())
                 (map ApplyVal bs)
                 db
-    go hasFS Snap = do
+    go hasFS (Snap doChecksum) = do
         (_, db) <- atomically (readTVar dbState)
         Snapped <$>
           takeSnapshot
             nullTracer
             hasFS
+            doChecksum
             S.encode
             (ledgerDbAnchor db)
-    go hasFS Restore = do
+    go hasFS (Restore doChecksum) = do
         (initLog, db, _replayed) <-
           initLedgerDB
             nullTracer
@@ -769,6 +774,7 @@ runDB standalone@DB{..} cmd =
             dbLedgerDbCfg
             (return (testInitExtLedgerWithState initialTestLedgerState))
             stream
+            doChecksum
         atomically $ modifyTVar dbState (\(rs, _) -> (rs, db))
         return $ Restored (fromInitLog initLog, ledgerDbCurrent db)
     go hasFS (Corrupt c ss) =
@@ -785,7 +791,10 @@ runDB standalone@DB{..} cmd =
         atomically $ do
             (rs, _db) <- readTVar dbState
             writeTVar dbState (drop (fromIntegral n) rs, error "ledger DB not initialized")
-        go hasFS Restore
+        -- always attempt to check the snapshot checksum. The current implementation
+        -- will successfully restore even if the checksum is missing
+        -- (producing a warning trace).
+        go hasFS (Restore DoDiskSnapshotChecksum)
 
     push ::
          TestBlock
@@ -941,8 +950,8 @@ generator secParam (Model mock hs) = Just $ QC.oneof $ concat [
                                 numNewBlocks
                                 (lastAppliedPoint . ledgerState . mockCurrent $ afterRollback)
             return $ Switch numRollback blocks
-        , fmap At $ return Snap
-        , fmap At $ return Restore
+        , fmap At $ Snap <$> QC.arbitrary
+        , fmap At $ Restore <$> QC.arbitrary
         , fmap At $ Drop <$> QC.choose (0, mockChainLength mock)
         ]
 
@@ -968,8 +977,8 @@ shrinker _ (At cmd) =
     case cmd of
       Current      -> []
       Push _b      -> []
-      Snap         -> []
-      Restore      -> []
+      Snap{}       -> []
+      Restore{}    -> []
       Switch 0 [b] -> [At $ Push b]
       Switch n bs  -> if length bs > fromIntegral n
                         then [At $ Switch n (init bs)]
@@ -1165,8 +1174,8 @@ tagEvents k = C.classify [
         fmap (TagRestore mST . rangeK k) $ C.maximum $ \ev ->
           let mock = modelMock (eventBefore ev) in
           case eventCmd ev of
-            At Restore | mockRecentSnap mock == mST -> Just (mockChainLength mock)
-            _otherwise                              -> Nothing
+            At (Restore{}) | mockRecentSnap mock == mST -> Just (mockChainLength mock)
+            _otherwise                                  -> Nothing
 
 {-------------------------------------------------------------------------------
   Inspecting the labelling function

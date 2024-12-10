@@ -74,7 +74,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.LedgerDB (DiskSnapshot (..),
                      writeSnapshot)
 import           Ouroboros.Consensus.Storage.Serialisation (encodeDisk)
-import           Ouroboros.Consensus.Util ((..:))
+import           Ouroboros.Consensus.Util (Flag (..), (..:))
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import           Ouroboros.Network.SizeInBytes
 import           System.FS.API (SomeHasFS (..))
@@ -102,19 +102,19 @@ runAnalysis analysisName = case go analysisName of
       pure result
   where
     go :: AnalysisName -> SomeAnalysis blk
-    go ShowSlotBlockNo                                = mkAnalysis $ showSlotBlockNo
-    go CountTxOutputs                                 = mkAnalysis $ countTxOutputs
-    go ShowBlockHeaderSize                            = mkAnalysis $ showHeaderSize
-    go ShowBlockTxsSize                               = mkAnalysis $ showBlockTxsSize
-    go ShowEBBs                                       = mkAnalysis $ showEBBs
-    go OnlyValidation                                 = mkAnalysis @StartFromPoint $ \_ -> pure Nothing
-    go (StoreLedgerStateAt slotNo lgrAppMode)         = mkAnalysis $ storeLedgerStateAt slotNo lgrAppMode
-    go CountBlocks                                    = mkAnalysis $ countBlocks
-    go (CheckNoThunksEvery nBks)                      = mkAnalysis $ checkNoThunksEvery nBks
-    go TraceLedgerProcessing                          = mkAnalysis $ traceLedgerProcessing
-    go (ReproMempoolAndForge nBks)                    = mkAnalysis $ reproMempoolForge nBks
-    go (BenchmarkLedgerOps mOutfile lgrAppMode)       = mkAnalysis $ benchmarkLedgerOps mOutfile lgrAppMode
-    go (GetBlockApplicationMetrics nrBlocks mOutfile) = mkAnalysis $ getBlockApplicationMetrics nrBlocks mOutfile
+    go ShowSlotBlockNo                                   = mkAnalysis $ showSlotBlockNo
+    go CountTxOutputs                                    = mkAnalysis $ countTxOutputs
+    go ShowBlockHeaderSize                               = mkAnalysis $ showHeaderSize
+    go ShowBlockTxsSize                                  = mkAnalysis $ showBlockTxsSize
+    go ShowEBBs                                          = mkAnalysis $ showEBBs
+    go OnlyValidation                                    = mkAnalysis @StartFromPoint $ \_ -> pure Nothing
+    go (StoreLedgerStateAt slotNo lgrAppMode doChecksum) = mkAnalysis $ storeLedgerStateAt slotNo lgrAppMode doChecksum
+    go CountBlocks                                       = mkAnalysis $ countBlocks
+    go (CheckNoThunksEvery nBks)                         = mkAnalysis $ checkNoThunksEvery nBks
+    go TraceLedgerProcessing                             = mkAnalysis $ traceLedgerProcessing
+    go (ReproMempoolAndForge nBks)                       = mkAnalysis $ reproMempoolForge nBks
+    go (BenchmarkLedgerOps mOutfile lgrAppMode)          = mkAnalysis $ benchmarkLedgerOps mOutfile lgrAppMode
+    go (GetBlockApplicationMetrics nrBlocks mOutfile)    = mkAnalysis $ getBlockApplicationMetrics nrBlocks mOutfile
 
     mkAnalysis ::
          forall startFrom. SingI startFrom
@@ -382,8 +382,9 @@ storeLedgerStateAt ::
      )
   => SlotNo
   -> LedgerApplicationMode
+  -> Flag "DoDiskSnapshotChecksum"
   -> Analysis blk StartFromLedgerState
-storeLedgerStateAt slotNo ledgerAppMode env = do
+storeLedgerStateAt slotNo ledgerAppMode doChecksum env = do
     void $ processAllUntil db registry GetBlock startFrom limit initLedger process
     pure Nothing
   where
@@ -422,7 +423,7 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
     storeLedgerState ledgerState = case pointSlot pt of
         NotOrigin slot -> do
           let snapshot = DiskSnapshot (unSlotNo slot) (Just "db-analyser")
-          writeSnapshot ledgerDbFS encLedger snapshot ledgerState
+          writeSnapshot ledgerDbFS doChecksum encLedger snapshot ledgerState
           traceWith tracer $ SnapshotStoredEvent slot
         Origin -> pure ()
       where
