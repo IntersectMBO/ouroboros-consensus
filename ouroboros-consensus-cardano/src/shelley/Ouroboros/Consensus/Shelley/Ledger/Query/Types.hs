@@ -20,8 +20,8 @@ import           Cardano.Ledger.Binary (DecCBOR (..), EncCBOR (..),
                      decodeRecordNamed, encodeListLen)
 import           Cardano.Ledger.Crypto (Crypto)
 import           Cardano.Ledger.Keys (Hash)
+import qualified Cardano.Ledger.Keys as SL
 import qualified Cardano.Ledger.PoolDistr as SL
-import qualified Cardano.Ledger.Shelley.API as SL
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           GHC.Generics (Generic)
@@ -39,7 +39,7 @@ data IndividualPoolStake c = IndividualPoolStake {
 fromLedgerIndividualPoolStake :: SL.IndividualPoolStake c -> IndividualPoolStake c
 fromLedgerIndividualPoolStake ips = IndividualPoolStake {
       individualPoolStake    = SL.individualPoolStake ips
-    , individualPoolStakeVrf = SL.individualPoolStakeVrf ips
+    , individualPoolStakeVrf = SL.fromVRFVerKeyHash $ SL.individualPoolStakeVrf ips
     }
 
 instance Crypto c => EncCBOR (IndividualPoolStake c) where
