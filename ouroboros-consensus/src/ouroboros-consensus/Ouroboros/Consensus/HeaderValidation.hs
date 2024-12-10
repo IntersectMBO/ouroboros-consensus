@@ -58,6 +58,7 @@ module Ouroboros.Consensus.HeaderValidation (
   , Ticked (..)
     -- * Header with time
   , HeaderWithTime (..)
+  , mkHeaderWithTime
   ) where
 
 import           Cardano.Binary (enforceSize)
@@ -79,6 +80,10 @@ import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime (RelativeTime)
 import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.HardFork.Abstract
+                     (HasHardForkHistory (hardForkSummary))
+import qualified Ouroboros.Consensus.HardFork.History.Qry as Qry
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Ticked
 import           Ouroboros.Consensus.Util (whenJust)
@@ -543,6 +548,31 @@ instance (Typeable blk, HasHeader (Header blk), Show (HeaderHash blk))
 
 instance HasHeader (Header blk) => GetHeader (HeaderWithTime blk) blk where
   getHeader = hwtHeader
+
+-- | Convert 'Header' to 'HeaderWithTime'
+--
+-- PREREQ: The given ledger must be able to translate the slot of the given
+-- header.
+--
+-- This is INLINEed since the summary can usually be reused.
+mkHeaderWithTime ::
+      ( HasHardForkHistory blk
+      , HasHeader (Header blk)
+      )
+   => LedgerConfig blk
+   -> LedgerState blk
+   -> Header blk
+   -> HeaderWithTime blk
+{-# INLINE mkHeaderWithTime #-}
+mkHeaderWithTime cfg lst = \hdr ->
+    let summary       = hardForkSummary cfg lst
+        slot          = fromWithOrigin 0 $ pointSlot $ headerPoint hdr
+        qry           = Qry.slotToWallclock slot
+        (slotTime, _) = Qry.runQueryPure qry summary
+    in HeaderWithTime {
+        hwtHeader           = hdr
+      , hwtSlotRelativeTime = slotTime
+      }
 
 {-------------------------------------------------------------------------------
   Serialisation

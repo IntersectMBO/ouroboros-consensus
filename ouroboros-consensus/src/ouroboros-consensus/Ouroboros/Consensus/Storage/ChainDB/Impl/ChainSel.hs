@@ -53,7 +53,8 @@ import           Ouroboros.Consensus.Fragment.ValidatedDiff
 import qualified Ouroboros.Consensus.Fragment.ValidatedDiff as ValidatedDiff
 import           Ouroboros.Consensus.HardFork.Abstract
 import qualified Ouroboros.Consensus.HardFork.History as History
-import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..),
+                     mkHeaderWithTime)
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Inspect
@@ -880,14 +881,32 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
           $ getSuffix
           $ getChainDiff vChainDiff
         (curChain, newChain, events, prevTentativeHeader) <- atomically $ do
-          curChain  <- readTVar         cdbChain -- Not Query.getCurrentChain!
-          curLedger <- LgrDB.getCurrent cdbLgrDB
+          curChain          <- readTVar         cdbChain
+             -- Not Query.getCurrentChain!
+          curChainWithTime  <- readTVar         cdbChainWithTime
+          curLedger         <- LgrDB.getCurrent cdbLgrDB
           case Diff.apply curChain chainDiff of
             -- Impossible, as described in the docstring
             Nothing       ->
               error "chainDiff doesn't fit onto current chain"
             Just newChain -> do
-              writeTVar cdbChain newChain
+              let lcfg             = configLedger cdbTopLevelConfig
+                  diffWithTime     =
+                    -- the new ledger state can translate the slots of the new
+                    -- headers
+                    Diff.map
+                      (mkHeaderWithTime
+                         lcfg
+                         (ledgerState (LgrDB.ledgerDbCurrent newLedger))
+                      )
+                      chainDiff
+                  newChainWithTime =
+                    case Diff.apply curChainWithTime diffWithTime of
+                      Nothing -> error "chainDiff failed for HeaderWithTime"
+                      Just x  -> x
+
+              writeTVar cdbChain         newChain
+              writeTVar cdbChainWithTime newChainWithTime
               LgrDB.setCurrent cdbLgrDB newLedger
 
               -- Inspect the new ledger for potential problems

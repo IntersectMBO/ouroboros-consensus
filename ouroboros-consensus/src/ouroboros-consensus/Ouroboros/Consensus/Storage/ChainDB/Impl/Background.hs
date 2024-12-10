@@ -178,12 +178,15 @@ copyToImmutableDB CDB{..} = electric $ do
     removeFromChain :: Point blk -> STM m ()
     removeFromChain pt = do
       -- The chain might have been extended in the meantime.
-      curChain <- readTVar cdbChain
-      case curChain of
-        hdr :< curChain'
+      curChain         <- readTVar cdbChain
+      curChainWithTime <- readTVar cdbChainWithTime
+      case (curChain, curChainWithTime) of
+        (hdr :< curChain', _hwt :< curChainWithTime')
           | headerPoint hdr == pt
-          -> writeTVar cdbChain curChain'
-        -- We're the only one removing things from 'curChain', so this cannot
+          -> do
+              writeTVar cdbChain         curChain'
+              writeTVar cdbChainWithTime curChainWithTime'
+        -- We're the only one removing things from 'cdbChain', so this cannot
         -- happen if the precondition was satisfied.
         _ -> error "header to remove not on the current chain"
 

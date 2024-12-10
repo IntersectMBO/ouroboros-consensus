@@ -133,18 +133,15 @@ compareAnchoredFragments cfg frag1 frag2 =
 -- from our tip, although the exact distance does not matter for
 -- 'compareAnchoredFragments').
 preferAnchoredCandidate ::
-     forall blk t t'.
+     forall h blk.
      ( BlockSupportsProtocol blk
      , HasCallStack
-     , GetHeader (t blk) blk
-     , HasHeader (t blk)
-     , GetHeader (t' blk) blk
-     , HasHeader (t' blk)
-     , HeaderHash (t blk) ~ HeaderHash (t' blk)
+     , GetHeader (h blk) blk
+     , HasHeader (h blk)
      )
   => BlockConfig blk
-  -> AnchoredFragment (t blk) -- ^ Our chain
-  -> AnchoredFragment (t' blk) -- ^ Candidate
+  -> AnchoredFragment (h blk) -- ^ Our chain
+  -> AnchoredFragment (h blk) -- ^ Candidate
   -> Bool
 preferAnchoredCandidate cfg ours cand =
     assertWithMsg (precondition ours cand) $

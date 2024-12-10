@@ -205,6 +205,15 @@ data ChainDbEnv m blk = CDB
     --
     -- Note that the \"immutable\" block will /never/ be /more/ than @k@
     -- blocks back, as opposed to the anchor point of 'cdbChain'.
+  , cdbChainWithTime   :: !(StrictTVar m (AnchoredFragment (HeaderWithTime blk)))
+    -- ^ INVARIANT @fmap 'hwtHeader' 'cdbChainWithTime' = 'chbChain'@
+    --
+    -- This mutable variable is maintained separately --- but exactly in
+    -- parallel --- for performance reasons and modularity reasons, trading a
+    -- few thousand pointers to avoid extra allocation per use, more granular
+    -- interfaces (notably
+    -- 'Ouroboros.Network.BlockFetch.ConsensusInterface.BlockFetchConsensusInterface'),
+    -- etc.
   , cdbTentativeState  :: !(StrictTVar m (TentativeHeaderState blk))
   , cdbTentativeHeader :: !(StrictTVar m (StrictMaybe (Header blk)))
     -- ^ The tentative header, for diffusion pipelining.

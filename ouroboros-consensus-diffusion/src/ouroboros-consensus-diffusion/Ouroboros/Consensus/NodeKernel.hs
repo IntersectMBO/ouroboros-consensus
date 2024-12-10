@@ -250,8 +250,8 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
               , GSM.equivalent                = (==) `on` (AF.headPoint . fst)
               , GSM.getChainSyncStates        = fmap cschState <$> readTVar varChainSyncHandles
               , GSM.getCurrentSelection       = do
-                  headers        <- ChainDB.getCurrentChain  chainDB
-                  extLedgerState <- ChainDB.getCurrentLedger chainDB
+                  headers        <- ChainDB.getCurrentChainWithTime chainDB
+                  extLedgerState <- ChainDB.getCurrentLedger        chainDB
                   return (headers, ledgerState extLedgerState)
               , GSM.minCaughtUpDuration       = gsmMinCaughtUpDuration
               , GSM.setCaughtUpPersistentMark = \upd ->
@@ -349,7 +349,7 @@ data InternalState m addrNTN addrNTC blk = IS {
     , registry            :: ResourceRegistry m
     , btime               :: BlockchainTime m
     , chainDB             :: ChainDB m blk
-    , blockFetchInterface :: BlockFetchConsensusInterface (ConnectionId addrNTN) (Header blk) (HeaderWithTime blk) blk m
+    , blockFetchInterface :: BlockFetchConsensusInterface (ConnectionId addrNTN) (HeaderWithTime blk) blk m
     , fetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (HeaderWithTime blk) blk m
     , varChainSyncHandles :: StrictTVar m (Map (ConnectionId addrNTN) (ChainSyncClientHandle m blk))
     , varGsmState         :: StrictTVar m GSM.GsmState
@@ -397,7 +397,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
           (ChainDB.getCurrentChain chainDB)
           getUseBootstrapPeers
           (GSM.gsmStateToLedgerJudgement <$> readTVar varGsmState)
-        blockFetchInterface :: BlockFetchConsensusInterface (ConnectionId addrNTN) (Header blk) (HeaderWithTime blk) blk m
+        blockFetchInterface :: BlockFetchConsensusInterface (ConnectionId addrNTN) (HeaderWithTime blk) blk m
         blockFetchInterface = BlockFetchClientInterface.mkBlockFetchConsensusInterface
           (configBlock cfg)
           (BlockFetchClientInterface.defaultChainDbView chainDB)

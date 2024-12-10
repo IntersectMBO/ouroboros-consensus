@@ -9,6 +9,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query (
     -- * Queries
     getBlockComponent
   , getCurrentChain
+  , getCurrentChainWithTime
   , getHeaderStateHistory
   , getIsFetched
   , getIsInvalidBlock
@@ -31,7 +32,8 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import           Ouroboros.Consensus.HeaderStateHistory
                      (HeaderStateHistory (..), mkHeaderStateWithTimeFromSummary)
-import           Ouroboros.Consensus.HeaderValidation (HasAnnTip)
+import           Ouroboros.Consensus.HeaderValidation (HasAnnTip,
+                     HeaderWithTime)
 import           Ouroboros.Consensus.Ledger.Abstract (IsLedger, LedgerState)
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Protocol.Abstract
@@ -76,6 +78,20 @@ getCurrentChain ::
   -> STM m (AnchoredFragment (Header blk))
 getCurrentChain CDB{..} =
     AF.anchorNewest k <$> readTVar cdbChain
+  where
+    SecurityParam k = configSecurityParam cdbTopLevelConfig
+
+-- | Same as 'getCurrentChain', /mutatis mutandi/.
+getCurrentChainWithTime ::
+     forall m blk.
+     ( IOLike m
+     , HasHeader (HeaderWithTime blk)
+     , ConsensusProtocol (BlockProtocol blk)
+     )
+  => ChainDbEnv m blk
+  -> STM m (AnchoredFragment (HeaderWithTime blk))
+getCurrentChainWithTime CDB{..} =
+    AF.anchorNewest k <$> readTVar cdbChainWithTime
   where
     SecurityParam k = configSecurityParam cdbTopLevelConfig
 

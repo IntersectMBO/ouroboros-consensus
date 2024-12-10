@@ -50,7 +50,8 @@ import           Ouroboros.Network.SizeInBytes
 
 -- | Abstract over the ChainDB
 data ChainDbView m blk = ChainDbView {
-     getCurrentChain           :: STM m (AnchoredFragment (Header blk))
+     getCurrentChain           :: STM m (AnchoredFragment (Header         blk))
+   , getCurrentChainWithTime   :: STM m (AnchoredFragment (HeaderWithTime blk))
    , getIsFetched              :: STM m (Point blk -> Bool)
    , getMaxSlotNo              :: STM m MaxSlotNo
    , addBlockWaitWrittenToDisk :: InvalidBlockPunishment m -> blk -> m Bool
@@ -58,7 +59,8 @@ data ChainDbView m blk = ChainDbView {
 
 defaultChainDbView :: IOLike m => ChainDB m blk -> ChainDbView m blk
 defaultChainDbView chainDB = ChainDbView {
-    getCurrentChain           = ChainDB.getCurrentChain chainDB
+    getCurrentChain           = ChainDB.getCurrentChain         chainDB
+  , getCurrentChainWithTime   = ChainDB.getCurrentChainWithTime chainDB
   , getIsFetched              = ChainDB.getIsFetched chainDB
   , getMaxSlotNo              = ChainDB.getMaxSlotNo chainDB
   , addBlockWaitWrittenToDisk = ChainDB.addBlockWaitWrittenToDisk chainDB
@@ -182,7 +184,7 @@ mkBlockFetchConsensusInterface ::
      -- ^ Slot forge time, see 'headerForgeUTCTime' and 'blockForgeUTCTime'.
   -> STM m FetchMode
      -- ^ See 'readFetchMode'.
-  -> BlockFetchConsensusInterface peer (Header blk) (HeaderWithTime blk) blk m
+  -> BlockFetchConsensusInterface peer (HeaderWithTime blk) blk m
 mkBlockFetchConsensusInterface
   bcfg chainDB getCandidates blockFetchSize slotForgeTime readFetchMode =
     BlockFetchConsensusInterface {
@@ -206,8 +208,8 @@ mkBlockFetchConsensusInterface
     readCandidateChains :: STM m (Map peer (AnchoredFragment (HeaderWithTime blk)))
     readCandidateChains = getCandidates
 
-    readCurrentChain :: STM m (AnchoredFragment (Header blk))
-    readCurrentChain = getCurrentChain chainDB
+    readCurrentChain :: STM m (AnchoredFragment (HeaderWithTime blk))
+    readCurrentChain = getCurrentChainWithTime chainDB
 
     readFetchedBlocks :: STM m (Point blk -> Bool)
     readFetchedBlocks = getIsFetched chainDB
@@ -287,7 +289,7 @@ mkBlockFetchConsensusInterface
     -- fragment, by the time the block fetch download logic considers the
     -- fragment, our current chain might have changed.
     plausibleCandidateChain :: HasCallStack
-                            => AnchoredFragment (Header blk)
+                            => AnchoredFragment (HeaderWithTime blk)
                             -> AnchoredFragment (HeaderWithTime blk)
                             -> Bool
     plausibleCandidateChain ours cand

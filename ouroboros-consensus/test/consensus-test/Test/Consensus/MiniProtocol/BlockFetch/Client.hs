@@ -267,6 +267,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
         let -- Always return the empty chain such that the BlockFetch logic
             -- downloads all chains.
             getCurrentChain           = pure $ AF.Empty AF.AnchorGenesis
+            getCurrentChainWithTime   = pure $ AF.Empty AF.AnchorGenesis
             getIsFetched              = ChainDB.getIsFetched chainDB
             getMaxSlotNo              = ChainDB.getMaxSlotNo chainDB
             addBlockWaitWrittenToDisk = ChainDB.addBlockWaitWrittenToDisk chainDB
@@ -280,7 +281,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
     mkTestBlockFetchConsensusInterface ::
          STM m (Map PeerId (AnchoredFragment (HeaderWithTime TestBlock)))
       -> BlockFetchClientInterface.ChainDbView m TestBlock
-      -> BlockFetchConsensusInterface PeerId (Header TestBlock) (HeaderWithTime TestBlock) TestBlock m
+      -> BlockFetchConsensusInterface PeerId (HeaderWithTime TestBlock) TestBlock m
     mkTestBlockFetchConsensusInterface getCandidates chainDbView =
         BlockFetchClientInterface.mkBlockFetchConsensusInterface
           (TestBlockConfig numCoreNodes)

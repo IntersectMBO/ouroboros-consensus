@@ -171,6 +171,14 @@ data ChainDB m blk = ChainDB {
       -- fragment will move as the chain grows.
     , getCurrentChain    :: STM m (AnchoredFragment (Header blk))
 
+      -- | Exact same as 'getCurrentChain', except each header is annotated
+      -- with the 'RelativeTime' of the onset of its slot (translated according
+      -- to the chain it is on)
+      --
+      -- INVARIANT @'hwtHeader' <$> 'getCurrentChainWithTime' = 'getCurrentChain'@
+    , getCurrentChainWithTime
+                         :: STM m (AnchoredFragment (HeaderWithTime blk))
+
       -- | Return the LedgerDB containing the last @k@ ledger states.
     , getLedgerDB        :: STM m (LedgerDB' blk)
 
