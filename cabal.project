@@ -51,3 +51,57 @@ constraints:
      -- These constraints are only needed for cardano-ledger-core =< 1.15
    , quickcheck-instances < 0.3.32
    , data-default < 0.8
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/typed-protocols
+  tag: 3d785bc6fbfc727b667ea8735a3b1c044b39db2b
+  --sha256: sha256-vhLYZ58gY2PPio1O81/mhFvv+iTMSU/FiM33RkRMbf0=
+  subdir: typed-protocols
+          typed-protocols-cborg
+          typed-protocols-examples
+
+source-repository-package
+  type: git
+  location: https://github.com/intersectmbo/ouroboros-network
+  tag: 451bd396dd7a4d8cca5a84a2c9b056f7a2c17cec
+  --sha256: sha256-5hlQ3Fxqrcl6Muc7uxComFffCdtUU9zYJMYs3L0XRZ4=
+  subdir:
+    cardano-ping
+    monoidal-synchronisation
+    quickcheck-monoids
+    network-mux
+    ouroboros-network
+    ouroboros-network-api
+    ouroboros-network-framework
+    ouroboros-network-mock
+    ouroboros-network-protocols
+    ouroboros-network-testing
+    ntp-client
+    cardano-client
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/lsm-tree
+  tag: 21f4bf7838aeedb08021654790446cbd86d05fdb
+  --sha256: 0gwbxy1vl7l2438qaxfhfh766p5165hw9sm7fn6sxxhy7x9b08df
+
+if(os(linux))
+  source-repository-package
+    type: git
+    location: https://github.com/well-typed/blockio-uring
+    -- mega-batches
+    tag: ab50126701de7eac9b62c20ae11e9ad706e1e40a
+    --sha256: 1wiyyn6mhgad5szvjjpl3g29fmkcnr7z3z2whyyr7rzk1j7m1z14
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/io-classes-extra
+  tag: 59adbb1d012177d89656c1854ec8b126dde9be07
+  --sha256: 12psb23q5iziwhv9758gxmamxhayz10rl4dkl4wxvfjm1nf7r04i
+  subdir:
+    strict-checked-vars
+    resource-registry
+    rawlock
+
+allow-newer: contra-tracer
