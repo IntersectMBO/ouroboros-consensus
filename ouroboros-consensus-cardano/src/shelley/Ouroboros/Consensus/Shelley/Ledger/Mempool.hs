@@ -53,9 +53,8 @@ import           Cardano.Ledger.Binary (Annotator (..), DecCBOR (..),
 import qualified Cardano.Ledger.Conway.Rules as ConwayEra
 import qualified Cardano.Ledger.Conway.Rules as SL
 import qualified Cardano.Ledger.Conway.UTxO as SL
-import qualified Cardano.Ledger.Core as SL (txIdTxBody)
+import qualified Cardano.Ledger.Core as SL (allInputsTxBodyF, txIdTxBody)
 import           Cardano.Ledger.Crypto (Crypto)
-import qualified Cardano.Ledger.Era as SL (getAllTxInputs)
 import qualified Cardano.Ledger.SafeHash as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Rules as ShelleyEra
@@ -154,7 +153,7 @@ instance (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era))
   getTransactionKeySets (ShelleyTx _ tx) =
         LedgerTables
       $ KeysMK
-      $ SL.getAllTxInputs (tx ^. bodyTxL)
+        (tx ^. (bodyTxL . SL.allInputsTxBodyF))
 
 mkShelleyTx :: forall era proto. ShelleyBasedEra era => Tx era -> GenTx (ShelleyBlock proto era)
 mkShelleyTx tx = ShelleyTx (SL.txIdTxBody @era (tx ^. bodyTxL)) tx

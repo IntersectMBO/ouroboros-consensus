@@ -47,9 +47,6 @@ if(os(windows))
 
 -- https://github.com/ulidtko/cabal-doctest/issues/85
 constraints: Cabal < 3.13
-     -- These constraints are only needed for cardano-ledger-core =< 1.15
-   , quickcheck-instances < 0.3.32
-   , data-default < 0.8
 
 -- mempack support
 source-repository-package
