@@ -22,7 +22,6 @@ module Test.Consensus.Shelley.Examples (
 import qualified Cardano.Ledger.Block as SL
 import qualified Cardano.Ledger.Core as LC
 import           Cardano.Ledger.Crypto (Crypto)
-import           Cardano.Ledger.Era (getAllTxInputs)
 import           Cardano.Ledger.TxIn
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import           Data.Coerce (coerce)
@@ -91,7 +90,7 @@ mkLedgerTables tx =
     $ zip exampleTxIns exampleTxOuts
   where
     exampleTxIns :: [TxIn (EraCrypto era)]
-    exampleTxIns  = case toList $ getAllTxInputs (tx ^. LC.bodyTxL) of
+    exampleTxIns  = case toList (tx ^. (LC.bodyTxL . LC.allInputsTxBodyF)) of
       [] -> error "No transaction inputs were provided to construct the ledger tables"
             -- We require at least one transaction input (and one
             -- transaction output) in the example provided by
