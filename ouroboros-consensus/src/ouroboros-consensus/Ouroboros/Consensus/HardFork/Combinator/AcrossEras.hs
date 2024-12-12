@@ -123,8 +123,6 @@ newtype OneEraEnvelopeErr           xs = OneEraEnvelopeErr           { getOneEra
 newtype OneEraForgeStateInfo        xs = OneEraForgeStateInfo        { getOneEraForgeStateInfo        :: NS WrapForgeStateInfo        xs }
 newtype OneEraForgeStateUpdateError xs = OneEraForgeStateUpdateError { getOneEraForgeStateUpdateError :: NS WrapForgeStateUpdateError xs }
 newtype OneEraGenTx                 xs = OneEraGenTx                 { getOneEraGenTx                 :: NS GenTx                     xs }
-newtype OneEraGenTxId               xs = OneEraGenTxId               { getOneEraGenTxId               :: ShortByteString                 }
-  deriving (Show, Eq, Ord, Generic, NoThunks)
 newtype OneEraHeader                xs = OneEraHeader                { getOneEraHeader                :: NS Header                    xs }
 newtype OneEraIsLeader              xs = OneEraIsLeader              { getOneEraIsLeader              :: NS WrapIsLeader              xs }
 newtype OneEraLedgerError           xs = OneEraLedgerError           { getOneEraLedgerError           :: NS WrapLedgerErr             xs }
@@ -158,6 +156,22 @@ instance Show (OneEraHash xs) where
 
 instance Condense (OneEraHash xs) where
   condense = show
+
+{-------------------------------------------------------------------------------
+  GenTxId
+-------------------------------------------------------------------------------}
+
+-- | The GenTxId for an era
+--
+-- This type is special in effectively the same way as OneEraHash (and for
+-- basically the same reason, too) -- it doesn't use an NS, because we don't
+-- want to be able to differentiate eras' 'GenTxId's. Ideally, 'OneEraGenTxId'
+-- would be serialised simply as a 'ShortByteString', but for backwards
+-- compatibility reasons we /pretend/ that it's always a Shelley-era 'GenTxId'
+-- when we're communicating with other nodes or clients that don't support the
+-- new serialisation format.
+newtype OneEraGenTxId xs = OneEraGenTxId { getOneEraGenTxId :: ShortByteString }
+  deriving (Show, Eq, Ord, Generic, NoThunks)
 
 {-------------------------------------------------------------------------------
   Value for two /different/ eras
