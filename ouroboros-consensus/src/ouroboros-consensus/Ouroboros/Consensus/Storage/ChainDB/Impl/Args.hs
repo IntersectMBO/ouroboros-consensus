@@ -13,6 +13,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Args (
   , completeChainDbArgs
   , defaultArgs
   , ensureValidateAll
+  , updateQueryBatchSize
   , updateSnapshotPolicyArgs
   , updateTracer
   ) where
@@ -217,6 +218,13 @@ updateSnapshotPolicyArgs ::
   -> ChainDbArgs f m blk
 updateSnapshotPolicyArgs spa args =
   args { cdbLgrDbArgs = (cdbLgrDbArgs args) { LedgerDB.lgrSnapshotPolicyArgs = spa } }
+
+updateQueryBatchSize ::
+  LedgerDB.QueryBatchSize
+  -> ChainDbArgs f m blk
+  -> ChainDbArgs f m blk
+updateQueryBatchSize qbs args =
+  args { cdbLgrDbArgs = (cdbLgrDbArgs args) { LedgerDB.lgrQueryBatchSize = qbs } }
 
 {-------------------------------------------------------------------------------
   Relative mount points
