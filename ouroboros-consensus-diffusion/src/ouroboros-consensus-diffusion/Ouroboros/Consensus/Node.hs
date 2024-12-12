@@ -112,7 +112,7 @@ import           Ouroboros.Consensus.Storage.ChainDB (ChainDB, ChainDbArgs,
                      TraceEvent)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
-import           Ouroboros.Consensus.Storage.LedgerDB (LedgerDbFlavorArgs)
+import           Ouroboros.Consensus.Storage.LedgerDB.Args
 import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
@@ -372,6 +372,7 @@ data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) = StdRunNodeArgs
 
     -- Ad hoc values to replace default ChainDB configurations
   , srnSnapshotPolicyArgs           :: SnapshotPolicyArgs
+  , srnQueryBatchSize               :: QueryBatchSize
   , srnLdbFlavorArgs                :: Complete LedgerDbFlavorArgs m
   }
 
@@ -998,6 +999,7 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
       -> Incomplete ChainDbArgs IO blk
     updateChainDbDefaults =
           ChainDB.updateSnapshotPolicyArgs srnSnapshotPolicyArgs
+        . ChainDB.updateQueryBatchSize srnQueryBatchSize
         . ChainDB.updateTracer srnTraceChainDB
         . (if   not srnChainDbValidateOverride
            then id
