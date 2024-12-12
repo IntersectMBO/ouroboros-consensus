@@ -51,8 +51,8 @@ constraints: Cabal < 3.13
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger.git
-  tag: d9a2321c7e183be84355d26163c9cfc0b3cf9f4d
-  --sha256: sha256-BBtyPqjxrzGPAxPf3KOwmpRVtnIxqtSodely8pfrb9c=
+  tag: 3f5b0467f342fb46a22746bb46ad96cb2b0a9c42
+  --sha256: sha256-QU5CiiNY41HsN2ynCOgbpUvZPlYYeTanjgxVPFohKkE=
   subdir:
     eras/allegra/impl
     eras/alonzo/impl
