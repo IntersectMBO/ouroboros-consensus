@@ -219,11 +219,13 @@ isHardForkNodeToClientEnabled HardForkNodeToClientEnabled {} = True
 isHardForkNodeToClientEnabled _                              = False
 
 
--- absolutely horrible. should be HasLatestStableGenTxIdEra probably.
--- especially nasty because it's a K () rather than an equivalent (but
--- non-existent) 'Void :: (Type -> Type) -> Type'
+-- | 'HasBlessedGenTxIdEra' is used solely for backwards-compatibility reasons
+-- for when we're communicating with older node / client versions and need to
+-- serialise / deserialise era-tagged 'GenTxId's. The 'blessedGenTxIdEra' is
+-- used as the "default" era tag when we want to send a (non-era-tagged)
+-- 'GenTxId' to these nodes / clients.
 class HasBlessedGenTxIdEra (xs :: [Type]) where
-  blessedGenTxIdEra :: NS (K ()) xs
+  blessedGenTxIdEra :: NS Proxy xs
 
 {-------------------------------------------------------------------------------
   Conditions required by the HFC to support serialisation
