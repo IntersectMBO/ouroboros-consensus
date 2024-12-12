@@ -144,8 +144,6 @@ class HasTxId tx => ConvertRawTxId tx where
   -- properties as defined in the docs of 'txId'.
   toRawTxIdHash :: TxId tx -> ShortByteString
 
-  -- unsafeFromRawTxIdHash :: ShortByteString -> TxId tx
-
 -- | Shorthand: ID of a generalized transaction
 type GenTxId blk = TxId (GenTx blk)
 
