@@ -10,7 +10,6 @@ module Ouroboros.Consensus.Mempool.Init (
 import           Control.Monad (void)
 import           Control.ResourceRegistry
 import           Control.Tracer
-import           Data.Functor.Contravariant ((>$<))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
@@ -20,7 +19,6 @@ import           Ouroboros.Consensus.Mempool.Capacity
 import           Ouroboros.Consensus.Mempool.Impl.Common
 import           Ouroboros.Consensus.Mempool.Query
 import           Ouroboros.Consensus.Mempool.Update
-import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.STM
 
@@ -71,8 +69,7 @@ forkSyncStateOnTipPointChange registry menv =
   where
     action :: Point blk -> m ()
     action _tipPoint =
-      encloseTimedWith (TraceMempoolSynced >$< mpEnvTracer menv) $
-        void $ implSyncWithLedger menv
+      void $ implSyncWithLedger menv
 
     -- Using the tip ('Point') allows for quicker equality checks
     getCurrentTip :: STM m (Point blk)

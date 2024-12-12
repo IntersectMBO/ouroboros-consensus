@@ -445,15 +445,9 @@ data TraceEventMempool blk
       EnclosingTimed
       -- ^ How long the sync operation took.
 
-     -- | The mempool is going to attempt to sync with the LedgerDB, this will
-     -- be followed by either 'TraceMempoolSyncNotNeeded' or
-     -- 'TraceMempoolSyncDone'.
-   | TraceMempoolAttemptingSync
      -- | A sync is not needed, as the point at the tip of the LedgerDB and the
      -- point at the mempool are the same.
    | TraceMempoolSyncNotNeeded (Point blk)
-     -- | A sync was done.
-   | TraceMempoolSyncDone
      -- | We will try to add a transaction. Adding a transaction might need to
      -- trigger a re-sync.
    | TraceMempoolAttemptingAdd (GenTx blk)

@@ -14,6 +14,7 @@ import           Control.Concurrent.Class.MonadMVar (withMVar)
 import           Control.Monad (void)
 import           Control.Monad.Except (runExcept)
 import           Control.Tracer
+import           Data.Functor.Contravariant ((>$<))
 import qualified Data.List.NonEmpty as NE
 import           Data.Maybe (fromMaybe)
 import qualified Data.Measure as Measure
@@ -29,6 +30,7 @@ import           Ouroboros.Consensus.Mempool.Impl.Common
 import           Ouroboros.Consensus.Mempool.TxSeq (TxTicket (..))
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import           Ouroboros.Consensus.Util (whenJust)
+import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike hiding (withMVar)
 import           Ouroboros.Consensus.Util.STM
 import           Ouroboros.Network.Block
@@ -407,8 +409,7 @@ implSyncWithLedger ::
      )
   => MempoolEnv m blk
   -> m (MempoolSnapshot blk)
-implSyncWithLedger mpEnv = do
-  traceWith trcr TraceMempoolAttemptingSync
+implSyncWithLedger mpEnv = encloseTimedWith (TraceMempoolSynced >$< mpEnvTracer mpEnv) $ do
   (res :: WithTMVarOutcome Void (MempoolSnapshot blk)) <-
    withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface) $
     \is ls -> do
@@ -435,7 +436,6 @@ implSyncWithLedger mpEnv = do
                                   tbs
                                   is
             whenJust mTrace (traceWith trcr)
-            traceWith trcr TraceMempoolSyncDone
             pure (OK (snapshotFromIS is'), is')
           Nothing -> do
             -- If the point is gone, resync

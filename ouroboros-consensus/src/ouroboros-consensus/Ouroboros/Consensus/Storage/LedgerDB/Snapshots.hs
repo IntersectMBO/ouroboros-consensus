@@ -78,6 +78,7 @@ import           Ouroboros.Consensus.Util (Flag (..))
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.CBOR (ReadIncrementalErr,
                      decodeWithOrigin, readIncremental)
+import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Versioned
 import           System.FS.API
@@ -469,7 +470,7 @@ defaultSnapshotPolicy
 data TraceSnapshotEvent blk
   = InvalidSnapshot DiskSnapshot (SnapshotFailure blk)
     -- ^ An on disk snapshot was skipped because it was invalid.
-  | TookSnapshot DiskSnapshot (RealPoint blk)
+  | TookSnapshot DiskSnapshot (RealPoint blk) EnclosingTimed
     -- ^ A snapshot was written to disk.
   | DeletedSnapshot DiskSnapshot
     -- ^ An old or invalid on-disk snapshot was deleted

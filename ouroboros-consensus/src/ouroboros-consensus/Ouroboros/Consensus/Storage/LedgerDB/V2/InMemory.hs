@@ -40,6 +40,7 @@ import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Lazy as BSL
 import           Data.Char hiding (isHexDigit)
+import           Data.Functor.Contravariant ((>$<))
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import           Data.Maybe
@@ -54,6 +55,7 @@ import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import           Ouroboros.Consensus.Storage.LedgerDB.API
 import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import           Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
+import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike
 import           Prelude hiding (read)
 import           System.FS.API
@@ -156,7 +158,7 @@ writeSnapshot fs@(SomeHasFS hasFs) doChecksum encLedger ds st = do
         void $ hPutAll hasFs h . BS.toLazyByteString . BS.word32HexFixed $ getCRC crc1
 
 takeSnapshot ::
-     ( MonadThrow m
+     ( IOLike m
      , LedgerDbSerialiseConstraints blk
      , LedgerSupportsProtocol blk
      )
@@ -177,8 +179,8 @@ takeSnapshot ccfg tracer hasFS suffix doChecksum st = do
       if List.any ((== number) . dsNumber) diskSnapshots then
         return Nothing
         else do
-          writeSnapshot hasFS doChecksum (encodeDiskExtLedgerState ccfg) snapshot st
-          traceWith tracer $ TookSnapshot snapshot t
+          encloseTimedWith (TookSnapshot snapshot t >$< tracer)
+              $ writeSnapshot hasFS doChecksum (encodeDiskExtLedgerState ccfg) snapshot st
           return $ Just (snapshot, t)
 
 -- | Read snapshot from disk.
