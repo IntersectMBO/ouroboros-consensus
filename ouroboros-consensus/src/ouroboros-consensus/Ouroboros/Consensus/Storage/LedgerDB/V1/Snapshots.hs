@@ -142,6 +142,7 @@ import           Codec.CBOR.Encoding
 import           Codec.Serialise
 import           Control.Monad.Except
 import           Control.Tracer
+import           Data.Functor.Contravariant ((>$<))
 import qualified Data.List as List
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Abstract
@@ -155,6 +156,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as V1
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
 import           Ouroboros.Consensus.Util.Args (Complete)
+import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike
 import           System.FS.API
 import           Data.Bits
@@ -210,8 +212,8 @@ takeSnapshot ldbvar ccfg tracer (SnapshotsFS hasFS') backingStore suffix doCheck
         if List.any ((== number) . dsNumber) diskSnapshots then
           return Nothing
         else do
-          writeSnapshot hasFS' doChecksum backingStore (encodeDiskExtLedgerState ccfg) snapshot state
-          traceWith tracer $ TookSnapshot snapshot t
+          encloseTimedWith (TookSnapshot snapshot t >$< tracer)
+            $ writeSnapshot hasFS' doChecksum backingStore (encodeDiskExtLedgerState ccfg) snapshot state
           return $ Just (snapshot, t)
 
 -- | Write snapshot to disk

@@ -37,6 +37,9 @@ module Ouroboros.Consensus.Ledger.Tables.Utils (
     -- ** Reduce
   , trackingToDiffs
   , trackingToValues
+    -- * Exposed for @cardano-api@
+  , applyDiffsMK
+  , restrictValuesMK
     -- * Testing
   , applyDiffs'
   , rawAttachAndApplyDiffs -- used in test
@@ -136,19 +139,19 @@ prependDiffs l1 l2 = ltwith l2 $ prependDiffs' l1 l2
 -- Apply diffs
 --
 
-rawApplyDiffs ::
+applyDiffsMK ::
      Ord k
   => ValuesMK k v -- ^ Values to which differences are applied
   -> DiffMK   k v -- ^ Differences to apply
   -> ValuesMK k v
-rawApplyDiffs (ValuesMK vals) (DiffMK diffs) = ValuesMK (Diff.applyDiff vals diffs)
+applyDiffsMK (ValuesMK vals) (DiffMK diffs) = ValuesMK (Diff.applyDiff vals diffs)
 
 -- | Apply diffs from the second ledger state to the values of the first ledger
 -- state. Returns ledger tables.
 applyDiffs' ::
      (SameUtxoTypes l l'', SameUtxoTypes l' l'', HasLedgerTables l, HasLedgerTables l')
   => l ValuesMK -> l' DiffMK -> LedgerTables l'' ValuesMK
-applyDiffs' l1 l2 = ltliftA2 rawApplyDiffs (ltprj l1) (ltprj l2)
+applyDiffs' l1 l2 = ltliftA2 applyDiffsMK (ltprj l1) (ltprj l2)
 
 -- | Apply diffs from @l2@ on values from @l1@. Returns @l2@.
 applyDiffs ::
@@ -291,14 +294,14 @@ prependTrackingDiffs l1 l2 = ltwith l2 $ prependTrackingDiffs' l1 l2
 
 -- Restrict values
 
-rawRestrictValues ::
+restrictValuesMK ::
      Ord k
   => ValuesMK k v
   -> KeysMK k v
   -> ValuesMK k v
-rawRestrictValues (ValuesMK v) (KeysMK k) = ValuesMK $ v `Map.restrictKeys` k
+restrictValuesMK (ValuesMK v) (KeysMK k) = ValuesMK $ v `Map.restrictKeys` k
 
 restrictValues' ::
      (SameUtxoTypes l l'', SameUtxoTypes l' l'', HasLedgerTables l, HasLedgerTables l')
   => l ValuesMK -> l' KeysMK -> LedgerTables l'' ValuesMK
-restrictValues' l1 l2 = ltliftA2 rawRestrictValues (ltprj l1) (ltprj l2)
+restrictValues' l1 l2 = ltliftA2 restrictValuesMK (ltprj l1) (ltprj l2)
