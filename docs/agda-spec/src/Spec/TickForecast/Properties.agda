@@ -1,19 +1,17 @@
 {-# OPTIONS --safe #-}
 
 open import Ledger.Crypto
-open import Ledger.Script
 open import Ledger.Types.Epoch
 open import InterfaceLibrary.Ledger
 
 module Spec.TickForecast.Properties
   (crypto : Crypto)
   (es     : _) (open EpochStructure es)
-  (ss     : ScriptStructure crypto es) (open ScriptStructure ss)
-  (li     : LedgerInterface crypto es ss) (let open LedgerInterface li)
+  (li     : LedgerInterface crypto es) (let open LedgerInterface li)
   where
 
 open import Ledger.Prelude
-open import Spec.TickForecast crypto es ss li
+open import Spec.TickForecast crypto es li
 
 instance
 

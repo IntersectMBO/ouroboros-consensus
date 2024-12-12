@@ -11,7 +11,6 @@ Its state consists of the epoch nonce \afld{η₀} and the previous epoch's last
 {-# OPTIONS --safe #-}
 
 open import Ledger.Crypto
-open import Ledger.Script
 open import Ledger.Types.Epoch
 open import Spec.BaseTypes using (Nonces)
 
