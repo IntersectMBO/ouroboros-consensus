@@ -27,7 +27,6 @@ open import InterfaceLibrary.Ledger
 open import Spec.BaseTypes using (Nonces)
 open import Spec.BlockDefinitions
 open import Ledger.Crypto
-open import Ledger.Script
 open import Ledger.Types.Epoch
 open import Data.Rational.Ext
 
@@ -35,18 +34,17 @@ module Spec.ChainHead
   (crypto : _) (open Crypto crypto)
   (nonces : Nonces crypto) (open Nonces nonces)
   (es     : _) (open EpochStructure es)
-  (ss     : ScriptStructure crypto es) (open ScriptStructure ss)  
-  (bs     : BlockStructure crypto nonces es ss) (open BlockStructure bs)
+  (bs     : BlockStructure crypto nonces es) (open BlockStructure bs)
   (af     : _) (open AbstractFunctions af)
-  (li     : LedgerInterface crypto es ss) (let open LedgerInterface li)
+  (li     : LedgerInterface crypto es) (let open LedgerInterface li)
   (rs     : _) (open RationalExtStructure rs)  
   where
 
 open import Spec.BaseTypes crypto using (OCertCounters)
-open import Spec.TickForecast crypto es ss li
+open import Spec.TickForecast crypto es li
 open import Spec.TickNonce crypto es nonces
-open import Spec.Protocol crypto nonces es ss bs af rs
-open import Ledger.PParams crypto es ss using (PParams; ProtVer)
+open import Spec.Protocol crypto nonces es bs af rs
+open import Ledger.PParams using (PParams; ProtVer)
 open import Ledger.Prelude
 
 \end{code}
