@@ -18,7 +18,7 @@ instance
   Conv-UpdateNonceState = autoConvert UpdateNonceState
 
 module _ (ext : ExternalFunctions) where
-  open ExternalStructures ext hiding (Slot)
+  open import Spec.Foreign.HSConsensus.ExternalStructures ext hiding (Slot)
   open import Spec.UpdateNonce.Properties HSCrypto HSNonces HSEpochStructure
 
   updn-step : HsType (UpdateNonceEnv → UpdateNonceState → Slot → ComputationResult String UpdateNonceState)

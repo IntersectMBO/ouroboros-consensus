@@ -64,7 +64,7 @@ instance -- TODO: Complete
   Conv-ComputationResult : ConvertibleType ComputationResult F.ComputationResult
   Conv-ComputationResult = autoConvertible
 
-open ExternalStructures dummyExternalFunctions
+open import Spec.Foreign.HSConsensus.ExternalStructures dummyExternalFunctions
   renaming
     ( HSEpochStructure to DummyEpochStructure
     ; HSCrypto to DummyCrypto
