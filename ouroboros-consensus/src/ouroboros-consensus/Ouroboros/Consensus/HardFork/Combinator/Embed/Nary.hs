@@ -137,8 +137,14 @@ instance Inject GenTx where
   inject _ = injectNS' (Proxy @GenTx)
 
 instance Inject WrapGenTxId where
-  inject _ ix w = WrapGenTxId $ HardForkGenTxId $ OneEraGenTxId $
-    hcollapse $ hcmap proxySingle (K . toRawTxIdHash . unwrapGenTxId) $ injectNS ix w
+  inject _ (idx :: Index xs x) =
+    case dictIndexAll (Proxy @SingleEraBlock) idx of
+      Dict ->
+          WrapGenTxId
+        . HardForkGenTxId
+        . OneEraGenTxId
+        . toRawTxIdHash
+        . unwrapGenTxId
 
 instance Inject WrapApplyTxErr where
   inject _ =
