@@ -49,7 +49,7 @@ let
   };
 
   deps = [ agdaStdlib agdaStdlibClasses agdaStdlibMeta ];
-  agdaWithPkgs = p: customAgda.agda.withPackages { pkgs = p; ghc = pkgs.ghc; };
+  agdaWithPkgs = p: customAgda.agda.withPackages { pkgs = p; };
 
   attrs = pkgs.recurseIntoAttrs rec {
     agda = agdaWithPkgs deps;
@@ -83,7 +83,7 @@ let
     };
 
     shell = pkgs.mkShell {
-      packages = [ agda latex ];
+      packages = [ agda latex customAgda.ghc customAgda.cabal-install];
     };
   };
 in
