@@ -328,4 +328,3 @@ mkBlockFetchConsensusInterface
     compareCandidateChains = compareAnchoredFragments bcfg
 
     headerForgeUTCTime = slotForgeTime . headerRealPoint . unFromConsensus
-    blockForgeUTCTime  = slotForgeTime . blockRealPoint  . unFromConsensus
