@@ -1,7 +1,7 @@
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 {- | Snapshots
 
@@ -140,8 +140,14 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots (
 
 import           Codec.CBOR.Encoding
 import           Codec.Serialise
+import qualified Control.Monad as Monad
 import           Control.Monad.Except
 import           Control.Tracer
+import           Data.Bits
+import qualified Data.ByteString.Builder as BS
+import qualified Data.ByteString.Char8 as BSC
+import qualified Data.ByteString.Lazy as BSL
+import           Data.Char (ord)
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.List as List
 import           Ouroboros.Consensus.Block
@@ -159,14 +165,8 @@ import           Ouroboros.Consensus.Util.Args (Complete)
 import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike
 import           System.FS.API
-import           Data.Bits
-import qualified Data.ByteString.Builder as BS
-import qualified Data.ByteString.Char8 as BSC
-import qualified Control.Monad as Monad
-import System.FS.CRC
-import System.FS.API.Lazy
-import qualified Data.ByteString.Lazy as BSL
-import Data.Char (ord)
+import           System.FS.API.Lazy
+import           System.FS.CRC
 
 -- | Try to take a snapshot of the /oldest ledger state/ in the ledger DB
 --
