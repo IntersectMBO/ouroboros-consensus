@@ -10,8 +10,7 @@ import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
 import           Cardano.Tools.DBSynthesizer.Types
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Cardano.Block
-import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
-                     (pattern NoDoDiskSnapshotChecksum)
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import qualified Test.Cardano.Tools.Headers
 import           Test.Tasty
 import           Test.Tasty.HUnit
@@ -66,14 +65,15 @@ testImmutaliserConfig =
 testAnalyserConfig :: DBAnalyserConfig
 testAnalyserConfig =
   DBAnalyserConfig {
-      dbDir                      = chainDB
-    , ldbBackend                 = V2InMem
-    , verbose                    = False
-    , selectDB                   = SelectImmutableDB Origin
-    , validation                 = Just ValidateAllBlocks
-    , analysis                   = CountBlocks
-    , confLimit                  = Unlimited
-    , diskSnapshotChecksumOnRead = NoDoDiskSnapshotChecksum
+      dbDir                       = chainDB
+    , ldbBackend                  = V2InMem
+    , verbose                     = False
+    , selectDB                    = SelectImmutableDB Origin
+    , validation                  = Just ValidateAllBlocks
+    , analysis                    = CountBlocks
+    , confLimit                   = Unlimited
+    , diskSnapshotChecksumOnRead  = NoDoDiskSnapshotChecksum
+    , diskSnapshotChecksumOnWrite = NoDoDiskSnapshotChecksum
     }
 
 testBlockArgs :: Cardano.Args (CardanoBlock StandardCrypto)
