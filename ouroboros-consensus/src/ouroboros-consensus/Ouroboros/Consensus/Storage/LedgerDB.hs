@@ -26,6 +26,7 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.Stream
 import           Ouroboros.Consensus.Storage.LedgerDB.API
 import           Ouroboros.Consensus.Storage.LedgerDB.Args
 import           Ouroboros.Consensus.Storage.LedgerDB.Forker
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import           Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1 as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2 as V2
@@ -136,4 +137,4 @@ openDBInternal args@(LedgerDbArgs { lgrHasFS = SomeHasFS fs }) initDb stream rep
     replayTracer = LedgerReplayEvent     >$< lgrTracer
     snapTracer   = LedgerDBSnapshotEvent >$< lgrTracer
 
-    LedgerDB.SnapshotPolicyArgs _ _ doDiskSnapshotChecksum = lgrSnapshotPolicyArgs args
+    SnapshotPolicyArgs _ _ doDiskSnapshotChecksum = lgrSnapshotPolicyArgs args

@@ -210,12 +210,8 @@ initLedgerDB ::
 initLedgerDB s c = do
   reg <- unsafeNewRegistry
   fs <- newTMVarIO MockFS.empty
-  let snapshotPolicyArgs = SnapshotPolicyArgs
-        { spaInterval = DefaultSnapshotInterval
-        , spaNum = DefaultNumOfDiskSnapshots
-        }
-      args = LedgerDbArgs
-        { lgrSnapshotPolicyArgs = snapshotPolicyArgs
+  let args = LedgerDbArgs
+        { lgrSnapshotPolicyArgs = defaultSnapshotPolicyArgs
         , lgrHasFS              = SomeHasFS $ simHasFS fs
         , lgrGenesis            = return testInitExtLedger
         , lgrTracer             = nullTracer

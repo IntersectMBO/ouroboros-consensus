@@ -89,7 +89,7 @@ mkInitDb args bss getBlock =
           (\_ -> newBackingStore bsTracer baArgs lgrHasFS' (projectLedgerTables st))
           bsClose
       pure (chlog, backingStore)
-  , initFromSnapshot = \doChecksum ds
+  , initFromSnapshot = \doChecksum ds ->
       loadSnapshot bsTracer baArgs (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) lgrHasFS' ds doChecksum
   , closeDb = bsClose . snd
   , initReapplyBlock = \cfg blk (chlog, bstore) -> do

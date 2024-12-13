@@ -19,7 +19,7 @@ import           Options.Applicative
 import           Ouroboros.Consensus.Block (SlotNo (..), WithOrigin (..))
 import           Ouroboros.Consensus.Byron.Node (PBftSignatureThreshold (..))
 import           Ouroboros.Consensus.Shelley.Node (Nonce (..))
-import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy (pattern DoDiskSnapshotChecksum, pattern NoDoDiskSnapshotChecksum)
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 
 {-------------------------------------------------------------------------------
   Parsing
@@ -46,6 +46,13 @@ parseDBAnalyserConfig = DBAnalyserConfig
     <*> flag DoDiskSnapshotChecksum NoDoDiskSnapshotChecksum (mconcat [
             long "no-snapshot-checksum-on-read"
           , help "Don't check the '.checksum' file when reading a ledger snapshot"
+          ])
+    <*> flag DoDiskSnapshotChecksum NoDoDiskSnapshotChecksum (mconcat [
+            long "no-snapshot-checksum-on-write"
+          , help (unlines [ "Don't calculate the checksum and"
+                          , "write the '.checksum' file"
+                          , "when taking a ledger snapshot"
+                          ])
           ])
     <*> Foldable.asum [
           flag' V1InMem $ mconcat [
@@ -147,14 +154,7 @@ storeLedgerParser = do
             <> "This is much slower than block reapplication (the default)."
             )
     )
-  doChecksum <- flag DoDiskSnapshotChecksum NoDoDiskSnapshotChecksum
-    (mconcat [ long "no-snapshot-checksum-on-write"
-             , help (unlines [ "Don't calculate the checksum and"
-                             , "write the '.checksum' file"
-                             , "when taking a ledger snapshot"
-                             ])
-             ])
-  pure $ StoreLedgerStateAt slot ledgerValidation doChecksum
+  pure $ StoreLedgerStateAt slot ledgerValidation
 
 checkNoThunksParser :: Parser AnalysisName
 checkNoThunksParser = CheckNoThunksEvery <$> option auto

@@ -29,6 +29,7 @@ import           Ouroboros.Consensus.Mempool.TxSeq
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.API (LoE (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import           Ouroboros.Consensus.Util.STM (Fingerprint, WithFingerprint)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as Fragment
