@@ -46,7 +46,9 @@ if(os(windows))
     bitvec -simd
 
 -- https://github.com/ulidtko/cabal-doctest/issues/85
-constraints: Cabal < 3.13
+constraints:
+    Cabal < 3.13
+  , quickcheck-lockstep <0.6.0
 
 -- mempack support
 source-repository-package

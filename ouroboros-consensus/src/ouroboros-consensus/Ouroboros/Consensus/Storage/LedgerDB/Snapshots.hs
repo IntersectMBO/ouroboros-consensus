@@ -1,10 +1,10 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NumericUnderscores #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -19,8 +19,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots (
     -- * Snapshots
     DiskSnapshot (..)
   , NumOfDiskSnapshots (..)
-  , SnapshotFailure (..)
   , ReadSnapshotErr (..)
+  , SnapshotFailure (..)
   , SnapshotPolicyArgs (..)
   , defaultSnapshotPolicyArgs
     -- * Codec
@@ -361,7 +361,7 @@ data SnapshotPolicy = SnapshotPolicy {
       --        the next snapshot, we delete the oldest one, leaving the middle
       --        one available in case of truncation of the write. This is
       --        probably a sane value in most circumstances.
-      onDiskNumSnapshots       :: Word
+      onDiskNumSnapshots            :: Word
 
       -- | Should we write a snapshot of the ledger state to disk?
       --
@@ -381,7 +381,7 @@ data SnapshotPolicy = SnapshotPolicy {
       --   blocks had to be replayed.
       --
       -- See also 'defaultSnapshotPolicy'
-    , onDiskShouldTakeSnapshot :: Maybe DiffTime -> Word64 -> Bool
+    , onDiskShouldTakeSnapshot      :: Maybe DiffTime -> Word64 -> Bool
 
       -- | Whether or not to checksum the ledger snapshots to detect data
       -- corruption on disk.  "yes" if @'DoDiskSnapshotChecksum'@; "no" if
