@@ -336,20 +336,18 @@ data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) extraArgs extraState extraActio
                                          LocalAddress   NodeToClientVersion
                                          IO
   , srnDiffusionTracersExtra        :: Diffusion.ExtraTracers p2p extraState extraFlags extraPeers extraCounters IO
-  , srnSigUSR1SignalHandler         :: (forall (mode :: Mode) x y.
-                                       Common.NodeToNodeConnectionManager
-                                        mode Socket RemoteAddress NodeToNodeVersionData NodeToNodeVersion IO x y
-                                    -> StrictSTM.StrictTVar
-                                         IO
-                                         (PeerSelectionState
-                                            extraState
-                                            extraFlags
-                                            extraPeers
-                                            RemoteAddress
-                                            (Common.NodeToNodePeerConnectionHandle
-                                               mode RemoteAddress NodeToNodeVersionData IO x y))
-                                    -> PeerMetrics IO RemoteAddress
-                                    -> IO ())
+  , srnSigUSR1SignalHandler         :: ( forall (mode :: Mode) x y.
+                                         Common.NodeToNodeConnectionManager mode Socket
+                                           RemoteAddress NodeToNodeVersionData
+                                           NodeToNodeVersion IO x y
+                                       -> StrictSTM.StrictTVar IO
+                                            (PeerSelectionState extraState extraFlags extraPeers
+                                                                RemoteAddress
+                                                                (Common.NodeToNodePeerConnectionHandle
+                                                                    mode RemoteAddress
+                                                                    NodeToNodeVersionData IO x y))
+                                       -> PeerMetrics IO RemoteAddress
+                                       -> IO ())
   , srnEnableInDevelopmentVersions  :: Bool
     -- ^ If @False@, then the node will limit the negotiated NTN and NTC
     -- versions to the latest " official " release (as chosen by Network and
@@ -893,29 +891,73 @@ stdRunDataDiffusion
      , Exception exception
      )
   => ( forall (mode :: Mode) x y.
-         Common.NodeToNodeConnectionManager
-           mode Socket RemoteAddress NodeToNodeVersionData
-           NodeToNodeVersion IO x y
-         -> StrictSTM.StrictTVar IO
-              (PeerSelectionState extraState extraFlags
-                                 extraPeers RemoteAddress
-                                 (Common.NodeToNodePeerConnectionHandle
-                                    mode RemoteAddress
-                                    NodeToNodeVersionData
-                                    IO x y)
-              )
-         -> PeerMetrics IO RemoteAddress
-         -> IO ()
-     )
-  -> Common.Tracers RemoteAddress NodeToNodeVersion LocalAddress
-       NodeToClientVersion IO
-  -> Diffusion.ExtraTracers p2p extraState extraFlags extraPeers
-       extraCounters IO
-  -> Common.Arguments IO Socket RemoteAddress LocalSocket LocalAddress
-  -> Diffusion.ArgumentsExtra p2p extraArgs extraState extraActions
-       extraAPI extraPeers extraFlags extraChurnArgs
-       extraCounters exception RemoteAddress IO
-  -> Diffusion.Applications p2p RemoteAddress LocalAddress NodeToNodeVersionData NodeToClientVersionData extraAPI IO a
+       Common.NodeToNodeConnectionManager
+         mode
+         Socket
+         RemoteAddress
+         NodeToNodeVersionData
+         NodeToNodeVersion
+         IO
+         x
+         y
+     -> StrictSTM.StrictTVar
+         IO
+         (PeerSelectionState
+           extraState
+           extraFlags
+           extraPeers
+           RemoteAddress
+           (Common.NodeToNodePeerConnectionHandle
+             mode
+             RemoteAddress
+             NodeToNodeVersionData
+             IO
+             x
+             y)
+         )
+     -> PeerMetrics IO RemoteAddress
+     -> IO ()
+  ) -> Common.Tracers
+      RemoteAddress
+      NodeToNodeVersion
+      LocalAddress
+      NodeToClientVersion
+      IO
+  -> Diffusion.ExtraTracers
+      p2p
+      extraState
+      extraFlags
+      extraPeers
+      extraCounters
+      IO
+  -> Common.Arguments
+      IO
+      Socket
+      RemoteAddress
+      LocalSocket
+      LocalAddress
+  -> Diffusion.ArgumentsExtra
+      p2p
+      extraArgs
+      extraState
+      extraActions
+      extraAPI
+      extraPeers
+      extraFlags
+      extraChurnArgs
+      extraCounters
+      exception
+      RemoteAddress
+      IO
+  -> Diffusion.Applications
+      p2p
+      RemoteAddress
+      LocalAddress
+      NodeToNodeVersionData
+      NodeToClientVersionData
+      extraAPI
+      IO
+      a
   -> Diffusion.ApplicationsExtra p2p RemoteAddress IO a
   -> IO ()
 stdRunDataDiffusion = Diffusion.run

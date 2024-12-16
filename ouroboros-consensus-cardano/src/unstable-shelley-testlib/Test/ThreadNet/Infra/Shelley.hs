@@ -40,7 +40,8 @@ import           Cardano.Crypto.Hash (HashAlgorithm)
 import           Cardano.Crypto.KES (KESAlgorithm (..))
 import           Cardano.Crypto.Seed (mkSeedFromBytes)
 import qualified Cardano.Crypto.Seed as Cardano.Crypto
-import           Cardano.Crypto.VRF (SignKeyVRF, deriveVerKeyVRF, genKeyVRF, seedSizeVRF)
+import           Cardano.Crypto.VRF (SignKeyVRF, deriveVerKeyVRF, genKeyVRF,
+                     seedSizeVRF)
 import qualified Cardano.Ledger.Allegra.Scripts as SL
 import           Cardano.Ledger.Alonzo (AlonzoEra)
 import           Cardano.Ledger.BaseTypes (boundRational)
