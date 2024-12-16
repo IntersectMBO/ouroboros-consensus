@@ -37,6 +37,7 @@ import           Data.Functor (($>), (<&>))
 import           Data.Functor.Contravariant ((>$<))
 import           Data.Map (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Proxy
 import qualified Data.Set as Set
 import qualified Data.Text as Strict
 import qualified Database.LMDB.Simple as LMDB
@@ -138,6 +139,18 @@ getDb ::
   => K2 String k v
   -> LMDB.Transaction mode (LMDBMK k v)
 getDb (K2 name) = LMDBMK name <$> LMDB.getDatabase (Just name)
+
+readAll ::
+     Ord (TxIn l)
+  => Proxy l
+  -> LMDBMK (TxIn l) (TxOut l)
+  -> CodecMK (TxIn l) (TxOut l)
+  -> LMDB.Transaction mode (ValuesMK (TxIn l) (TxOut l))
+readAll _ (LMDBMK _ dbMK) codecMK =
+  ValuesMK <$> Bridge.runCursorAsTransaction'
+    LMDB.Cursor.cgetAll
+    dbMK
+    codecMK
 
 -- | @'rangeRead' rq dbMK codecMK @ performs a range read of @rqCount rq@
 -- values from database @dbMK@, starting from some key depending on @rqPrev rq@.
@@ -586,9 +599,22 @@ mkLMDBBackingStoreValueHandle db = do
         Trace.traceWith tracer API.BSVHStatted
         pure res
 
+    bsvhReadAll :: m (LedgerTables l ValuesMK)
+    bsvhReadAll =
+      Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
+      Status.withReadAccess vhStatusLock (throwIO (LMDBErrNoValueHandle vhId)) $ do
+        Trace.traceWith tracer API.BSVHRangeReading
+        res <- liftIO $ TrH.submitReadOnly trh $
+          let dbMK = getLedgerTables dbBackingTables
+              codecMK = getLedgerTables (codecLedgerTables @l)
+          in LedgerTables <$> readAll (Proxy @l) dbMK codecMK
+        Trace.traceWith tracer API.BSVHRangeRead
+        pure res
+
     bsvh = API.BackingStoreValueHandle { API.bsvhAtSlot = initSlot
                                        , API.bsvhClose = bsvhClose
                                        , API.bsvhRead = bsvhRead
+                                       , API.bsvhReadAll = bsvhReadAll
                                        , API.bsvhRangeRead = bsvhRangeRead
                                        , API.bsvhStat = bsvhStat
                                        }
