@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2 (mkInitDb) where
 
 import           Control.Arrow ((>>>))
 import           Control.Monad (void, (>=>))
+import           Control.Monad.Except
 import           Control.RAWLock
 import qualified Control.RAWLock as RAWLock
 import           Control.ResourceRegistry
@@ -75,8 +76,8 @@ mkInitDb :: forall m blk.
 mkInitDb args flavArgs getBlock =
   InitDB {
       initFromGenesis = emptyF =<< lgrGenesis
-    , initFromSnapshot = \doChecksum ds ->
-        loadSnapshot (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) lgrHasFS ds doChecksum
+    , initFromSnapshot =
+        loadSnapshot (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) lgrHasFS
     , closeDb = closeLedgerSeq
     , initReapplyBlock = \a b c -> do
         (x, y) <- reapplyThenPush lgrRegistry a b c
@@ -131,11 +132,11 @@ mkInitDb args flavArgs getBlock =
 
    loadSnapshot :: CodecConfig blk
                 -> SomeHasFS m
-                -> DiskSnapshot
                 -> Flag "DoDiskSnapshotChecksum"
+                -> DiskSnapshot
                 -> m (Either (SnapshotFailure blk) (LedgerSeq' m blk, RealPoint blk))
-   loadSnapshot = case bss of
-     InMemoryHandleArgs -> InMemory.loadSnapshot lgrRegistry
+   loadSnapshot ccfg fs f ds = case bss of
+     InMemoryHandleArgs -> runExceptT $ InMemory.loadSnapshot lgrRegistry ccfg fs f ds
      LSMHandleArgs x    -> absurd x
 
 implMkLedgerDb ::

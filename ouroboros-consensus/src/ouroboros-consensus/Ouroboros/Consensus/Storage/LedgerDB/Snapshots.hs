@@ -17,7 +17,8 @@
 -- common to all implementations.
 module Ouroboros.Consensus.Storage.LedgerDB.Snapshots (
     -- * Snapshots
-    DiskSnapshot (..)
+    CRCError (..)
+  , DiskSnapshot (..)
   , NumOfDiskSnapshots (..)
   , ReadSnapshotErr (..)
   , SnapshotFailure (..)
@@ -78,6 +79,7 @@ import           Ouroboros.Consensus.Util (Flag (..))
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.CBOR (ReadIncrementalErr,
                      decodeWithOrigin, readIncremental)
+import           Ouroboros.Consensus.Util.CRC
 import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Versioned
@@ -134,10 +136,8 @@ data ReadSnapshotErr =
     -- | Checksum of read snapshot differs from the one tracked by
     --   the corresponding '.checksum' file
   | ReadSnapshotDataCorruption
-    -- | A '.checksum' file does not exist for a @'DiskSnapshot'@
-  | ReadSnapshotNoChecksumFile FsPath
-    -- | A '.checksum' file exists for a @'DiskSnapshot'@, but its contents is invalid
-  | ReadSnapshotInvalidChecksumFile FsPath
+    -- | An error occurred while reading the CRC file
+  | ReadSnapshotCRCError FsPath CRCError
   deriving (Eq, Show)
 
 -- | Named snapshot are permanent, they will never be deleted even if failing to
@@ -391,9 +391,9 @@ data SnapshotPolicy = SnapshotPolicy {
   deriving NoThunks via OnlyCheckWhnf SnapshotPolicy
 
 data SnapshotPolicyArgs = SnapshotPolicyArgs {
-    spaInterval   :: SnapshotInterval
-  , spaNum        :: NumOfDiskSnapshots
-  , spaDoChecksum :: Flag "DoDiskSnapshotChecksum"
+    spaInterval   :: !(SnapshotInterval)
+  , spaNum        :: !(NumOfDiskSnapshots)
+  , spaDoChecksum :: !(Flag "DoDiskSnapshotChecksum")
   }
 
 defaultSnapshotPolicyArgs :: SnapshotPolicyArgs
