@@ -27,19 +27,14 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory (
   , takeSnapshot
   ) where
 import           Cardano.Binary as CBOR
-import qualified Codec.CBOR.Read as CBOR
 import qualified Codec.CBOR.Write as CBOR
 import           Codec.Serialise (decode)
-import           Control.Monad (unless, void)
 import qualified Control.Monad as Monad
+import           Control.Monad.Trans (lift)
 import           Control.Monad.Trans.Except
 import           Control.ResourceRegistry
 import           Control.Tracer
-import           Data.Bits
 import qualified Data.ByteString.Builder as BS
-import qualified Data.ByteString.Char8 as BSC
-import qualified Data.ByteString.Lazy as BSL
-import           Data.Char hiding (isHexDigit)
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
@@ -55,6 +50,8 @@ import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import           Ouroboros.Consensus.Storage.LedgerDB.API
 import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import           Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
+import           Ouroboros.Consensus.Util.CBOR (readIncremental)
+import           Ouroboros.Consensus.Util.CRC
 import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike
 import           Prelude hiding (read)
@@ -105,6 +102,9 @@ newInMemoryLedgerTablesHandle someFS@(SomeHasFS hasFS) l = do
         hs <- readTVarIO tv
         guardClosed hs (\(LedgerTables (ValuesMK m)) ->
                           pure . LedgerTables . ValuesMK . Map.take t . (maybe id (\g -> snd . Map.split g) f) $ m)
+    , readAll = do
+        hs <- readTVarIO tv
+        guardClosed hs pure
     , pushDiffs = \(!diffs) ->
         atomically
         $ modifyTVar tv
@@ -115,7 +115,7 @@ newInMemoryLedgerTablesHandle someFS@(SomeHasFS hasFS) l = do
         guardClosed h $
           \values ->
             withFile hasFS (mkFsPath [snapshotName, "tables", "tvar"]) (WriteMode MustBeNew) $ \hf ->
-              void $ hPutAll hasFS hf
+              fmap snd $ hPutAllCRC hasFS hf
                    $ CBOR.toLazyByteString
                    $ valuesMKEncoder values
     , tablesSize = do
@@ -151,11 +151,11 @@ writeSnapshot ::
 writeSnapshot fs@(SomeHasFS hasFs) doChecksum encLedger ds st = do
     createDirectoryIfMissing hasFs True $ snapshotToDirPath ds
     crc1 <- writeExtLedgerState fs encLedger (snapshotToStatePath ds) $ state st
-    -- TODO
-    _crc2 <- takeHandleSnapshot (tables st) $ snapshotToDirName ds
+    crc2 <- takeHandleSnapshot (tables st) $ snapshotToDirName ds
     Monad.when (getFlag doChecksum) $
       withFile hasFs (snapshotToChecksumPath ds) (WriteMode MustBeNew) $ \h ->
-        void $ hPutAll hasFs h . BS.toLazyByteString . BS.word32HexFixed $ getCRC crc1
+        Monad.void $ hPutAll hasFs h . BS.toLazyByteString . BS.word32HexFixed $
+           (getCRC $ crcOfConcat crc1 crc2)
 
 takeSnapshot ::
      ( IOLike m
@@ -195,75 +195,27 @@ loadSnapshot ::
     => ResourceRegistry m
     -> CodecConfig blk
     -> SomeHasFS m
-    -> DiskSnapshot
     -> Flag "DoDiskSnapshotChecksum"
-    -> m (Either (SnapshotFailure blk) (LedgerSeq' m blk, RealPoint blk))
-loadSnapshot _rr ccfg fs@(SomeHasFS hasFS) ds doChecksum = do
-  eExtLedgerSt <- runExceptT $ readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode doChecksum (snapshotToStatePath ds)
-  case eExtLedgerSt of
-    Left err -> pure (Left $ InitFailureRead $ ReadSnapshotFailed err)
-    Right (extLedgerSt, mbChecksumAsRead) ->
-      let cont =
-            case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
-              Origin        -> pure (Left InitFailureGenesis)
-              NotOrigin pt -> do
-                values <- withFile hasFS ( fsPathFromList
-                                         $ fsPathToList (snapshotToDirPath ds)
-                                         <> [fromString "tables", fromString "tvar"]) ReadMode $ \h -> do
-                  bs <- hGetAll hasFS h
-                  case CBOR.deserialiseFromBytes valuesMKDecoder bs of
-                    Left  err        -> error $ show err
-                    Right (extra, x) -> do
-                      unless (BSL.null extra) $ error "Trailing bytes in snapshot"
-                      pure x
-                Right . (,pt) <$> empty extLedgerSt values (newInMemoryLedgerTablesHandle fs)
-      in
-      if getFlag doChecksum
-        then do
-          !snapshotCRC <- runExceptT $ readCRC (snapshotToChecksumPath ds)
-          case snapshotCRC of
-            Left err -> pure $ Left $ InitFailureRead err
-            Right storedCrc ->
-              if mbChecksumAsRead /= Just storedCrc then
-                pure $ Left $ InitFailureRead $ ReadSnapshotDataCorruption
-              else cont
-        else cont
-
-  where
-    readCRC ::
-      FsPath
-      -> ExceptT ReadSnapshotErr m CRC
-    readCRC crcPath = ExceptT $ do
-        crcExists <- doesFileExist hasFS crcPath
-        if not crcExists
-          then pure (Left $ ReadSnapshotNoChecksumFile crcPath)
-          else do
-            withFile hasFS crcPath ReadMode $ \h -> do
-              str <- BSL.toStrict <$> hGetAll hasFS h
-              if not (BSC.length str == 8 && BSC.all isHexDigit str)
-                then pure (Left $ ReadSnapshotInvalidChecksumFile crcPath)
-                else pure . Right . CRC $ fromIntegral (hexdigitsToInt str)
-        -- TODO: remove the functions in the where clause when we start depending on lsm-tree
-      where
-        isHexDigit :: Char -> Bool
-        isHexDigit c = (c >= '0' && c <= '9')
-                    || (c >= 'a' && c <= 'f') --lower case only
-
-        -- Precondition: BSC.all isHexDigit
-        hexdigitsToInt :: BSC.ByteString -> Word
-        hexdigitsToInt =
-            BSC.foldl' accumdigit 0
-          where
-            accumdigit :: Word -> Char -> Word
-            accumdigit !a !c =
-              (a `shiftL` 4) .|. hexdigitToWord c
-
-
-        -- Precondition: isHexDigit
-        hexdigitToWord :: Char -> Word
-        hexdigitToWord c
-          | let !dec = fromIntegral (ord c - ord '0')
-          , dec <= 9  = dec
-
-          | let !hex = fromIntegral (ord c - ord 'a' + 10)
-          , otherwise = hex
+    -> DiskSnapshot
+    -> ExceptT (SnapshotFailure blk) m (LedgerSeq' m blk, RealPoint blk)
+loadSnapshot _rr ccfg fs@(SomeHasFS hasFS) doChecksum ds = do
+  (extLedgerSt, mbChecksumAsRead)  <- withExceptT
+      (InitFailureRead . ReadSnapshotFailed) $
+      readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode doChecksum (snapshotToStatePath ds)
+  case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
+    Origin        -> throwE InitFailureGenesis
+    NotOrigin pt -> do
+      (values, mbCrcTables)  <-
+        withExceptT (InitFailureRead . ReadSnapshotFailed) $
+          ExceptT $ readIncremental fs (getFlag doChecksum)
+                  valuesMKDecoder
+                  (fsPathFromList
+                    $ fsPathToList (snapshotToDirPath ds)
+                    <> [fromString "tables", fromString "tvar"])
+      Monad.when (getFlag doChecksum) $ do
+        let crcPath = snapshotToChecksumPath ds
+        !snapshotCRC <- withExceptT (InitFailureRead . ReadSnapshotCRCError crcPath) $ readCRC hasFS crcPath
+        let computedCRC = crcOfConcat <$> mbChecksumAsRead <*> mbCrcTables
+        Monad.when (computedCRC /= Just snapshotCRC) $
+          throwE $ InitFailureRead $ ReadSnapshotDataCorruption
+      (,pt) <$> lift (empty extLedgerSt values (newInMemoryLedgerTablesHandle fs))

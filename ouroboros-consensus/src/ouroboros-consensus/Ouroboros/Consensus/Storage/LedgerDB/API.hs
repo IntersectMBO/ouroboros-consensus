@@ -550,7 +550,7 @@ initialize replayTracer
         -- If a checksum file is missing for a snapshot,
         -- issue a warning and retry the same snapshot
         -- ignoring the checksum
-        Left (InitFailureRead ReadSnapshotNoChecksumFile{}) -> do
+        Left (InitFailureRead (ReadSnapshotCRCError _ CRCNoFile)) -> do
           traceWith snapTracer $ SnapshotMissingChecksum s
           tryNewestFirst NoDoDiskSnapshotChecksum acc allSnapshot
 

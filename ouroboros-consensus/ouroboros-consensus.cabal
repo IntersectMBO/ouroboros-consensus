@@ -272,6 +272,7 @@ library
     Ouroboros.Consensus.Util.Args
     Ouroboros.Consensus.Util.Assert
     Ouroboros.Consensus.Util.CBOR
+    Ouroboros.Consensus.Util.CRC
     Ouroboros.Consensus.Util.CallStack
     Ouroboros.Consensus.Util.Condense
     Ouroboros.Consensus.Util.DepPair
