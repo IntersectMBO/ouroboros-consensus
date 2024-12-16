@@ -66,6 +66,7 @@ import           Ouroboros.Network.AnchoredSeq hiding (anchor, last, map,
                      rollback)
 import qualified Ouroboros.Network.AnchoredSeq as AS hiding (map)
 import           Prelude hiding (read)
+import           System.FS.CRC (CRC)
 
 {-------------------------------------------------------------------------------
   LedgerTablesHandles
@@ -77,8 +78,11 @@ data LedgerTablesHandle m l = LedgerTablesHandle {
   , duplicate          :: !(m (LedgerTablesHandle m l))
   , read               :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
   , readRange          :: !((Maybe (TxIn l), Int) -> m (LedgerTables l ValuesMK))
+    -- | Costly read all operation, not to be used in Consensus but only in
+    -- snapshot-converter executable.
+  , readAll            :: !(m (LedgerTables l ValuesMK))
   , pushDiffs          :: !(LedgerTables l DiffMK -> m ())
-  , takeHandleSnapshot :: !(String -> m ())
+  , takeHandleSnapshot :: !(String -> m CRC)
     -- | Consult the size of the ledger tables in the database. This will return
     -- 'Nothing' in backends that do not support this operation.
   , tablesSize         :: !(m (Maybe Int))

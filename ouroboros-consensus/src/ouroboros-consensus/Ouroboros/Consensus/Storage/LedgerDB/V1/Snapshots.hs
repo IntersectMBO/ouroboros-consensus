@@ -142,12 +142,9 @@ import           Codec.CBOR.Encoding
 import           Codec.Serialise
 import qualified Control.Monad as Monad
 import           Control.Monad.Except
+import           Control.Monad.Trans (lift)
 import           Control.Tracer
-import           Data.Bits
 import qualified Data.ByteString.Builder as BS
-import qualified Data.ByteString.Char8 as BSC
-import qualified Data.ByteString.Lazy as BSL
-import           Data.Char (ord)
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.List as List
 import           Ouroboros.Consensus.Block
@@ -162,6 +159,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as V1
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
 import           Ouroboros.Consensus.Util.Args (Complete)
+import           Ouroboros.Consensus.Util.CRC
 import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike
 import           System.FS.API
@@ -259,68 +257,21 @@ loadSnapshot ::
   -> Complete BackingStoreArgs m
   -> CodecConfig blk
   -> SnapshotsFS m
-  -> DiskSnapshot
   -> Flag "DoDiskSnapshotChecksum"
-  -> m (Either
-         (SnapshotFailure blk)
-         ((DbChangelog' blk, LedgerBackingStore m (ExtLedgerState blk)), RealPoint blk))
-loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs'@(SomeHasFS fs'')) s doChecksum = do
-  eExtLedgerSt <- runExceptT $ readExtLedgerState fs' (decodeDiskExtLedgerState ccfg) decode doChecksum (snapshotToStatePath s)
-  case eExtLedgerSt of
-    Left err -> pure (Left $ InitFailureRead $ ReadSnapshotFailed err)
-    Right (extLedgerSt, mbChecksumAsRead) ->
-      let cont = case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
-            Origin        -> pure (Left InitFailureGenesis)
-            NotOrigin pt -> do
-              backingStore <- restoreBackingStore tracer bss fs (snapshotToTablesPath s)
-              let chlog  = empty extLedgerSt
-              pure (Right ((chlog, backingStore), pt))
-      in
-      if getFlag doChecksum
-      then do
-        !snapshotCRC <- runExceptT $ readCRC (snapshotToChecksumPath s)
-        case snapshotCRC of
-            Left err -> pure $ Left $ InitFailureRead err
-            Right storedCrc ->
-              if mbChecksumAsRead /= Just storedCrc then
-                pure $ Left $ InitFailureRead $ ReadSnapshotDataCorruption
-              else cont
-      else cont
-  where
-    readCRC ::
-      FsPath
-      -> ExceptT ReadSnapshotErr m CRC
-    readCRC crcPath = ExceptT $ do
-        crcExists <- doesFileExist fs'' crcPath
-        if not crcExists
-          then pure (Left $ ReadSnapshotNoChecksumFile crcPath)
-          else do
-            withFile fs'' crcPath ReadMode $ \h -> do
-              str <- BSL.toStrict <$> hGetAll fs'' h
-              if not (BSC.length str == 8 && BSC.all isHexDigit str)
-                then pure (Left $ ReadSnapshotInvalidChecksumFile crcPath)
-                else pure . Right . CRC $ fromIntegral (hexdigitsToInt str)
-        -- TODO: remove the functions in the where clause when we start depending on lsm-tree
-      where
-        isHexDigit :: Char -> Bool
-        isHexDigit c = (c >= '0' && c <= '9')
-                    || (c >= 'a' && c <= 'f') --lower case only
-
-        -- Precondition: BSC.all isHexDigit
-        hexdigitsToInt :: BSC.ByteString -> Word
-        hexdigitsToInt =
-            BSC.foldl' accumdigit 0
-          where
-            accumdigit :: Word -> Char -> Word
-            accumdigit !a !c =
-              (a `shiftL` 4) .|. hexdigitToWord c
-
-
-        -- Precondition: isHexDigit
-        hexdigitToWord :: Char -> Word
-        hexdigitToWord c
-          | let !dec = fromIntegral (ord c - ord '0')
-          , dec <= 9  = dec
-
-          | let !hex = fromIntegral (ord c - ord 'a' + 10)
-          , otherwise = hex
+  -> DiskSnapshot
+  -> ExceptT (SnapshotFailure blk) m ((DbChangelog' blk, LedgerBackingStore m (ExtLedgerState blk)), RealPoint blk)
+loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs'@(SomeHasFS fs'')) doChecksum s = do
+  (extLedgerSt, mbChecksumAsRead) <- withExceptT (InitFailureRead . ReadSnapshotFailed) $
+     readExtLedgerState fs' (decodeDiskExtLedgerState ccfg) decode doChecksum (snapshotToStatePath s)
+  Monad.when (getFlag doChecksum) $ do
+    let crcPath = snapshotToChecksumPath s
+    !snapshotCRC <- withExceptT (InitFailureRead . ReadSnapshotCRCError crcPath) $
+      readCRC fs'' crcPath
+    Monad.when (mbChecksumAsRead /= Just snapshotCRC) $
+      throwError $ InitFailureRead $ ReadSnapshotDataCorruption
+  case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
+    Origin        -> throwError InitFailureGenesis
+    NotOrigin pt -> do
+        backingStore <- lift (restoreBackingStore tracer bss fs (snapshotToTablesPath s))
+        let chlog  = empty extLedgerSt
+        pure ((chlog, backingStore), pt)

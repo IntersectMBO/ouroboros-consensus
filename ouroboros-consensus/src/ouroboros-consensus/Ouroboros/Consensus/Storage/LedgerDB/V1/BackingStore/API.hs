@@ -43,6 +43,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API (
   , BackingStoreValueHandleTrace (..)
     -- * 🧪 Testing
   , bsRead
+  , bsReadAll
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo, WithOrigin (..))
@@ -135,6 +136,9 @@ data BackingStoreValueHandle m keys values = BackingStoreValueHandle {
   , bsvhClose     :: !(m ())
     -- | See 'RangeQuery'
   , bsvhRangeRead :: !(RangeQuery keys -> m values)
+    -- | Costly read all operation, not to be used in Consensus but only in
+    -- snapshot-converter executable.
+  , bsvhReadAll   :: !(m values)
     -- | Read the given keys from the handle
     --
     -- Absent keys will merely not be present in the result instead of causing a
@@ -164,6 +168,7 @@ castBackingStoreValueHandle f g bsvh =
   BackingStoreValueHandle {
       bsvhAtSlot
     , bsvhClose
+    , bsvhReadAll = f <$> bsvhReadAll
     , bsvhRangeRead = \(RangeQuery prev count) ->
         fmap f . bsvhRangeRead $  RangeQuery (fmap g prev) count
     , bsvhRead = fmap f . bsvhRead . g
@@ -172,6 +177,7 @@ castBackingStoreValueHandle f g bsvh =
   where
     BackingStoreValueHandle {
         bsvhClose
+      , bsvhReadAll
       , bsvhAtSlot
       , bsvhRangeRead
       , bsvhRead
@@ -187,6 +193,12 @@ bsRead ::
 bsRead store keys = withBsValueHandle store $ \vh -> do
     values <- bsvhRead vh keys
     pure (bsvhAtSlot vh, values)
+
+bsReadAll ::
+     MonadThrow m
+  => BackingStore m keys values diff
+  -> m values
+bsReadAll store = withBsValueHandle store bsvhReadAll
 
 -- | A 'IOLike.bracket'ed 'bsValueHandle'
 withBsValueHandle ::

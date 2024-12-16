@@ -22,6 +22,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1 (mkInitDb) where
 
 import           Control.Arrow ((>>>))
 import           Control.Monad
+import           Control.Monad.Except
 import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.Bifunctor (first)
@@ -89,8 +90,8 @@ mkInitDb args bss getBlock =
           (\_ -> newBackingStore bsTracer baArgs lgrHasFS' (projectLedgerTables st))
           bsClose
       pure (chlog, backingStore)
-  , initFromSnapshot = \doChecksum ds ->
-      loadSnapshot bsTracer baArgs (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) lgrHasFS' ds doChecksum
+  , initFromSnapshot =
+      runExceptT .: loadSnapshot bsTracer baArgs (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) lgrHasFS'
   , closeDb = bsClose . snd
   , initReapplyBlock = \cfg blk (chlog, bstore) -> do
       !chlog' <- reapplyThenPush cfg blk (readKeySets bstore) chlog
