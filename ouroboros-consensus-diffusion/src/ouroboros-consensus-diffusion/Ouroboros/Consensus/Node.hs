@@ -318,7 +318,7 @@ nonImmutableDbPath (MultipleDbPaths _ vol) = vol
 -- some usual assumptions for realistic use cases such as in @cardano-node@.
 --
 -- See 'stdLowLevelRunNodeArgsIO'.
-data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) extraArgs extraState extraActions extraAPI extraPeers extraFlags extraChurnArgs extraCounters exception = StdRunNodeArgs
+data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) extraArgs extraState extraDebugState extraActions extraAPI extraPeers extraFlags extraChurnArgs extraCounters exception = StdRunNodeArgs
   { srnBfcMaxConcurrencyBulkSync    :: Maybe Word
   , srnBfcMaxConcurrencyDeadline    :: Maybe Word
   , srnChainDbValidateOverride      :: Bool
@@ -330,12 +330,12 @@ data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) extraArgs extraState extraActio
                                          IO
                                          Socket      RemoteAddress
                                          LocalSocket LocalAddress
-  , srnDiffusionArgumentsExtra      :: Diffusion.ArgumentsExtra p2p extraArgs extraState extraActions extraAPI extraPeers extraFlags extraChurnArgs extraCounters exception RemoteAddress IO
+  , srnDiffusionArgumentsExtra      :: Diffusion.ArgumentsExtra p2p extraArgs extraState extraDebugState extraActions extraAPI extraPeers extraFlags extraChurnArgs extraCounters exception RemoteAddress IO
   , srnDiffusionTracers             :: Common.Tracers
                                          RemoteAddress  NodeToNodeVersion
                                          LocalAddress   NodeToClientVersion
                                          IO
-  , srnDiffusionTracersExtra        :: Diffusion.ExtraTracers p2p extraState extraFlags extraPeers extraCounters IO
+  , srnDiffusionTracersExtra        :: Diffusion.ExtraTracers p2p extraState extraDebugState extraFlags extraPeers extraCounters IO
   , srnSigUSR1SignalHandler         :: ( forall (mode :: Mode) x y.
                                          Common.NodeToNodeConnectionManager mode Socket
                                            RemoteAddress NodeToNodeVersionData
@@ -376,7 +376,7 @@ deriving instance Show (NetworkP2PMode p2p)
 pure []
 
 -- | Combination of 'runWith' and 'stdLowLevelRunArgsIO'
-run :: forall blk p2p extraArgs extraState extraActions extraPeers extraFlags extraChurnArgs extraCounters exception.
+run :: forall blk p2p extraArgs extraState extraDebugState extraActions extraPeers extraFlags extraChurnArgs extraCounters exception.
     ( RunNode blk
      , Monoid extraPeers
      , Eq extraCounters
@@ -384,7 +384,7 @@ run :: forall blk p2p extraArgs extraState extraActions extraPeers extraFlags ex
      , Exception exception
      )
   => RunNodeArgs IO RemoteAddress LocalAddress blk p2p
-  -> StdRunNodeArgs IO blk p2p extraArgs extraState extraActions (CardanoLedgerPeersConsensusInterface IO) extraPeers extraFlags extraChurnArgs extraCounters exception
+  -> StdRunNodeArgs IO blk p2p extraArgs extraState extraDebugState extraActions (CardanoLedgerPeersConsensusInterface IO) extraPeers extraFlags extraChurnArgs extraCounters exception
   -> IO ()
 run args stdArgs = stdLowLevelRunNodeArgsIO args stdArgs >>= runWith args encodeRemoteAddress decodeRemoteAddress
 
@@ -926,6 +926,7 @@ stdRunDataDiffusion
   -> Diffusion.ExtraTracers
       p2p
       extraState
+      extraDebugState
       extraFlags
       extraPeers
       extraCounters
@@ -940,6 +941,7 @@ stdRunDataDiffusion
       p2p
       extraArgs
       extraState
+      extraDebugState
       extraActions
       extraAPI
       extraPeers
@@ -965,7 +967,7 @@ stdRunDataDiffusion = Diffusion.run
 -- | Conveniently packaged 'LowLevelRunNodeArgs' arguments from a standard
 -- non-testing invocation.
 stdLowLevelRunNodeArgsIO
-  :: forall blk p2p extraArgs extraState extraActions extraPeers extraFlags extraChurnArgs extraCounters exception.
+  :: forall blk p2p extraArgs extraState extraDebugState extraActions extraPeers extraFlags extraChurnArgs extraCounters exception.
   ( RunNode blk
   , Monoid extraPeers
   , Eq extraCounters
@@ -973,7 +975,7 @@ stdLowLevelRunNodeArgsIO
   , Exception exception
   )
   => RunNodeArgs IO RemoteAddress LocalAddress blk p2p
-  -> StdRunNodeArgs IO blk p2p extraArgs extraState extraActions (CardanoLedgerPeersConsensusInterface IO) extraPeers extraFlags extraChurnArgs extraCounters exception
+  -> StdRunNodeArgs IO blk p2p extraArgs extraState extraDebugState extraActions (CardanoLedgerPeersConsensusInterface IO) extraPeers extraFlags extraChurnArgs extraCounters exception
   -> IO (LowLevelRunNodeArgs
           IO
           RemoteAddress
