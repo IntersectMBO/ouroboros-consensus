@@ -56,15 +56,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Cabal check
-      run: |
-        for x in $(find . -name '*.cabal' | grep -vE 'dist-newstyle|asserts\.cabal' | cut -c 3-); do
-          (
-            d=$(dirname $x)
-            echo "== $d =="
-            cd $d
-            cabal check
-          )
-        done
+      run: ./scripts/ci/check-cabal-files.sh
 
   check-release-badges:
 
