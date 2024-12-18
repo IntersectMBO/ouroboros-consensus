@@ -1,21 +1,16 @@
 cabal-version:      3.0
 name:               cardano-consensus-executable-spec
 version:            0.1.0.0
-synopsis:
-
--- A longer description of the package.
--- description:
+synopsis: Executable Formal Specification of Ouroboros Consensus
+description: The Haskell code generated from the Agda executable formal specification of the consensus layer for the Ouroboros blockchain protocol
+license: Apache-2.0
+license-files:
+  LICENSE
+  NOTICE
 homepage:
-
--- A URL where users can report bugs.
--- bug-reports:
-license:            NONE
 author:             Javier Díaz
 maintainer:         javier.diaz@iohk.io
-
--- A copyright notice.
--- copyright:
--- category:
+category: Formal Specification
 
 common globalOptions
     default-language: Haskell2010
@@ -52,6 +47,7 @@ library
     exposed-modules:
         Lib
     build-depends:
+        base >=4.14 && <4.21,
         text,
         ieee
 -- This will be generated automatically when building with nix

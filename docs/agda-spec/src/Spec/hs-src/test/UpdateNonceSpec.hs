@@ -1,4 +1,3 @@
-{-# LANGUAGE StandaloneDeriving #-}
 {-# OPTIONS -Wno-orphans #-}
 module UpdateNonceSpec (spec) where
 
