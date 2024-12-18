@@ -19,7 +19,7 @@ module Ouroboros.Consensus.HardFork.Combinator.State.Infra (
     -- * Situated
   , Situated (..)
   , situate
-    -- * Aligning
+    -- * Extend and align
   , align
     -- * EpochInfo/Summary
   , reconstructSummary
@@ -29,7 +29,7 @@ import           Data.Functor.Product
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
 import           Data.SOP.Counting
-import           Data.SOP.InPairs (InPairs, Requiring (..))
+import           Data.SOP.InPairs (InPairs, RequiringBoth' (..))
 import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.Match (Mismatch)
 import qualified Data.SOP.Match as Match
@@ -38,12 +38,12 @@ import           Data.SOP.Strict
 import           Data.SOP.Telescope (Extend (..), Telescope (..))
 import qualified Data.SOP.Telescope as Telescope
 import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
 import           Ouroboros.Consensus.HardFork.Combinator.State.Lift
 import           Ouroboros.Consensus.HardFork.Combinator.State.Types
 import           Ouroboros.Consensus.HardFork.History (Bound (..), EraEnd (..),
                      EraParams (..), EraSummary (..), SafeZone (..))
 import qualified Ouroboros.Consensus.HardFork.History as History
+import           Ouroboros.Consensus.Util.CallStack
 import           Prelude hiding (sequence)
 
 {-------------------------------------------------------------------------------
@@ -114,19 +114,28 @@ situate ns = go ns . getHardForkState
   Aligning
 -------------------------------------------------------------------------------}
 
-align :: forall xs f f' f''. All SingleEraBlock xs
-      => InPairs (Translate f) xs
-      -> NP (f' -.-> f -.-> f'') xs
-      -> HardForkState f'  xs -- ^ State we are aligning with
-      -> HardForkState f   xs -- ^ State we are aligning
-      -> HardForkState f'' xs
-align fs updTip (HardForkState alignWith) (HardForkState toAlign) =
+-- TODO docs
+align ::
+     forall f f' f'' xs. (SListI xs, HasCallStack)
+  => InPairs (CrossEra f f' f'') xs
+     -- ^ How to cross the era boundary.
+  -> NP (f' -.-> f -.-> f'') xs
+     -- ^ What to do if the states are already in the same era.
+  -> HardForkState f'  xs
+     -- ^ State we are aligning with.
+  -> HardForkState f   xs
+     -- ^ State we are aligning. Must be exactly one era ahead if not already
+     -- aligned.
+  -> HardForkState f'' xs
+     -- ^ In the same era as the state we are aligning with, and therefore
+     -- either in the same era or one era ahead as the to-be-aligned state.
+align cross updTip (HardForkState alignWith) (HardForkState toAlign) =
     HardForkState . unI $
-      Telescope.alignExtend
-        (InPairs.hmap (\f    -> Require $
-                       \past -> Extend  $
-                       \cur  -> I       $
-                         newCurrent f past cur) fs)
+      Telescope.align
+        (InPairs.hmap (\(CrossEra f)    -> RequireBoth $
+                       \past newEra     -> Extend      $
+                       \(Current _ cur) -> I           $
+                         (past, newEra { currentState = f newEra cur })) cross)
         (hmap (fn_2 . liftUpdTip) updTip)
         alignWith
         toAlign
@@ -134,24 +143,6 @@ align fs updTip (HardForkState alignWith) (HardForkState toAlign) =
     liftUpdTip :: (f' -.-> f -.-> f'') blk
                -> Current f' blk -> Current f blk -> Current f'' blk
     liftUpdTip f = lift . apFn . apFn f . currentState
-
-    newCurrent :: Translate f blk blk'
-               -> K Past blk
-               -> Current f blk
-               -> (K Past blk, Current f blk')
-    newCurrent f (K past) curF = (
-          K Past  { pastStart    = currentStart curF
-                  , pastEnd      = curEnd
-                  }
-        , Current { currentStart = curEnd
-                  , currentState = translateWith f
-                                     (boundEpoch curEnd)
-                                     (currentState curF)
-                  }
-        )
-      where
-        curEnd :: Bound
-        curEnd = pastEnd past
 
 {-------------------------------------------------------------------------------
   Summary/EpochInfo
