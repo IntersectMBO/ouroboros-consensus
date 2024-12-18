@@ -178,7 +178,7 @@ encodeByronBlock blk = mconcat [
 -- | Inverse of 'encodeByronBlock'
 decodeByronBlock :: CC.EpochSlots -> Decoder s (Lazy.ByteString -> ByronBlock)
 decodeByronBlock epochSlots =
-    toPlainDecoder byronProtVer $
+    toPlainDecoder Nothing byronProtVer $
     flip (\bs -> mkByronBlock epochSlots
                . annotationBytes bs)
     <$> CC.decCBORABlockOrBoundary epochSlots
@@ -195,7 +195,7 @@ decodeByronBlock epochSlots =
 decodeByronRegularBlock :: CC.EpochSlots
                         -> Decoder s (Lazy.ByteString -> ByronBlock)
 decodeByronRegularBlock epochSlots =
-    toPlainDecoder byronProtVer $
+    toPlainDecoder Nothing byronProtVer $
     flip (\bs -> mkByronBlock epochSlots
                . annotationBytes bs
                . CC.ABOBBlock)
@@ -213,7 +213,7 @@ decodeByronRegularBlock epochSlots =
 decodeByronBoundaryBlock :: CC.EpochSlots
                          -> Decoder s (Lazy.ByteString -> ByronBlock)
 decodeByronBoundaryBlock epochSlots =
-    toPlainDecoder byronProtVer $
+    toPlainDecoder Nothing byronProtVer $
     flip (\bs -> mkByronBlock epochSlots
                . annotationBytes bs
                . CC.ABOBBoundary)
@@ -231,7 +231,7 @@ decodeByronRegularHeader ::
      CC.EpochSlots
   -> Decoder s (Lazy.ByteString -> RawHeader)
 decodeByronRegularHeader epochSlots =
-    toPlainDecoder byronProtVer $
+    toPlainDecoder Nothing byronProtVer $
     flip annotationBytes <$> CC.decCBORAHeader epochSlots
 
 -- | Encodes a raw Byron EBB header /without/ a tag indicating whether it's a
@@ -244,7 +244,7 @@ encodeByronBoundaryHeader = toByronCBOR . CBOR.encodePreEncoded . CC.boundaryHea
 -- | Inverse of 'encodeByronBoundaryHeader'
 decodeByronBoundaryHeader :: Decoder s (Lazy.ByteString -> RawBoundaryHeader)
 decodeByronBoundaryHeader =
-    toPlainDecoder byronProtVer $
+    toPlainDecoder Nothing byronProtVer $
     flip annotationBytes <$> CC.decCBORABoundaryHeader
 
 -- | The 'BinaryBlockInfo' of the given 'ByronBlock'.
@@ -325,7 +325,7 @@ encodeUnsizedHeader (UnsizedHeader raw _ _) = toByronCBOR $ CC.encCBORABlockOrBo
 decodeUnsizedHeader :: CC.EpochSlots
                     -> Decoder s (Lazy.ByteString -> UnsizedHeader)
 decodeUnsizedHeader epochSlots =
-    toPlainDecoder byronProtVer $
+    toPlainDecoder Nothing byronProtVer $
     fillInByteString <$> CC.decCBORABlockOrBoundaryHdr epochSlots
   where
     fillInByteString :: CC.ABlockOrBoundaryHdr ByteSpan

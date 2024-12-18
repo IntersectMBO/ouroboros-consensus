@@ -146,7 +146,7 @@ instance SerialiseAsRawBytes (SigningKey ByronKey) where
       either (const Nothing) (Just . ByronSigningKey . Byron.SigningKey)
              (snd <$> CBOR.deserialiseFromBytes decCBORXPrv (LB.fromStrict bs))
       where
-        decCBORXPrv = toPlainDecoder byronProtVer Byron.decCBORXPrv
+        decCBORXPrv = toPlainDecoder Nothing byronProtVer Byron.decCBORXPrv
 
 
 newtype instance Hash ByronKey = ByronKeyHash Byron.KeyHash

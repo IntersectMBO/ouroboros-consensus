@@ -178,7 +178,7 @@ instance Key VrfKey where
 
     verificationKeyHash :: VerificationKey VrfKey -> Hash VrfKey
     verificationKeyHash (VrfVerificationKey vkey) =
-        VrfKeyHash (Shelley.hashVerKeyVRF vkey)
+        VrfKeyHash (Crypto.hashVerKeyVRF vkey)
 
 instance SerialiseAsRawBytes (VerificationKey VrfKey) where
     serialiseToRawBytes (VrfVerificationKey vk) =

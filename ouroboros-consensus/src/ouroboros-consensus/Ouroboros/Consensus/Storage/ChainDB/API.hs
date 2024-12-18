@@ -91,6 +91,8 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (ChainUpdate, MaxSlotNo,
                      Serialised (..))
 import qualified Ouroboros.Network.Block as Network
+import           Ouroboros.Network.BlockFetch.ConsensusInterface
+                     (ChainSelStarvation (..))
 import           Ouroboros.Network.Mock.Chain (Chain (..))
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import           System.FS.API.Types (FsError)
@@ -210,7 +212,9 @@ data ChainDB m blk = ChainDB {
     , getBlockComponent  :: forall b. BlockComponent blk b
                          -> RealPoint blk -> m (Maybe b)
 
-      -- | Return membership check function for recent blocks
+      -- | Return membership check function for recent blocks. This includes
+      -- blocks in the VolatileDB and blocks that are currently being processed
+      -- or are waiting in a queue to be processed.
       --
       -- This check is only reliable for blocks up to @k@ away from the tip.
       -- For blocks older than that the results should be regarded as
@@ -236,7 +240,8 @@ data ChainDB m blk = ChainDB {
       --   are part of a shorter fork.
     , getIsValid         :: STM m (RealPoint blk -> Maybe Bool)
 
-      -- | Get the highest slot number stored in the ChainDB.
+      -- | Get the highest slot number stored in the ChainDB (this includes
+      -- blocks that are waiting in the background queue to be processed).
       --
       -- Note that the corresponding block doesn't have to be part of the
       -- current chain, it could be part of some fork, or even be a
@@ -346,6 +351,10 @@ data ChainDB m blk = ChainDB {
       -- which rechecks the blocks in all candidate chains whenever a new
       -- invalid block is detected. These blocks are likely to be valid.
     , getIsInvalidBlock :: STM m (WithFingerprint (HeaderHash blk -> Maybe (ExtValidationError blk)))
+
+      -- | Whether ChainSel is currently starved, or when was last time it
+      -- stopped being starved.
+    , getChainSelStarvation :: STM m ChainSelStarvation
 
     , closeDB            :: m ()
 

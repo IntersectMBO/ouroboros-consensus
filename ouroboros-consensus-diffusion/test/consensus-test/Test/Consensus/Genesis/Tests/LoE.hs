@@ -26,21 +26,30 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.PartialAccessors
-import           Test.Util.TestEnv (adjustQuickCheckTests)
+import           Test.Util.TestEnv (adjustQuickCheckMaxSize,
+                     adjustQuickCheckTests)
 
 tests :: TestTree
 tests =
+  adjustQuickCheckTests (* 10) $
   testGroup
     "LoE"
     [
-      adjustQuickCheckTests (`div` 5) $
+      adjustQuickCheckMaxSize (`div` 5) $
         testProperty "adversary does not hit timeouts" (prop_adversaryHitsTimeouts False),
-      adjustQuickCheckTests (`div` 5) $
+      adjustQuickCheckMaxSize (`div` 5) $
         testProperty "adversary hits timeouts" (prop_adversaryHitsTimeouts True)
     ]
 
 -- | Tests that the selection advances in presence of the LoE when a peer is
--- killed by something that is not LoE-aware, eg. the timeouts.
+-- killed by something that is not LoE-aware, eg. the timeouts. This test
+-- features an honest peer behaving normally and an adversarial peer behaving
+-- such that it will get killed by timeouts. We check that, after the adversary
+-- gets disconnected, the LoE gets updated to stop taking it into account. There
+-- are two variants of the test: one with timeouts enabled, and one without. In
+-- the case where timeouts are disabled, we check that we do in fact remain
+-- stuck at the intersection between trunk and other chain.
+--
 -- NOTE: Same as 'LoP.prop_delayAttack' with timeouts instead of LoP.
 prop_adversaryHitsTimeouts :: Bool -> Property
 prop_adversaryHitsTimeouts timeoutsEnabled =
@@ -115,4 +124,4 @@ prop_adversaryHitsTimeouts timeoutsEnabled =
             ]
           -- We want to wait more than the short wait timeout
           psMinEndTime = Time 11
-       in PointSchedule {psSchedule, psMinEndTime}
+       in PointSchedule {psSchedule, psStartOrder = [], psMinEndTime}
