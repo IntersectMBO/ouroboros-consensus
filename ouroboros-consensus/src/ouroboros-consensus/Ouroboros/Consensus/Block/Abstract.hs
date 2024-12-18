@@ -154,7 +154,7 @@ type instance BlockProtocol (Header blk) = BlockProtocol blk
 
 type instance HeaderHash (Header blk) = HeaderHash blk
 
-instance HasHeader blk => StandardHash (Header blk)
+instance StandardHash blk => StandardHash (Header blk)
 
 -- | Get the 'HeaderFields' of a block, without requiring 'HasHeader blk'
 --
