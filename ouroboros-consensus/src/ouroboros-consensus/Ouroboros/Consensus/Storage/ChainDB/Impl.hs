@@ -46,8 +46,11 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe.Strict (StrictMaybe (..))
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.Fragment.Validated as VF
 import           Ouroboros.Consensus.HardFork.Abstract
+import           Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
+import           Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
@@ -162,8 +165,20 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       let chain  = VF.validatedFragment chainAndLedger
           ledger = VF.validatedLedger   chainAndLedger
 
+          lcfg = configLedger (Args.cdbsTopLevelConfig cdbSpecificArgs)
+
+          -- the tip ledger state can translate the slots of the volatile
+          -- headers
+          chainWithTime =
+            AF.mapAnchoredFragment
+              (mkHeaderWithTime
+                 lcfg
+                 (ledgerState (LgrDB.ledgerDbCurrent ledger))
+              )
+              chain
+
       atomically $ LgrDB.setCurrent lgrDB ledger
-      varChain           <- newTVarIO chain
+      varChain           <- newTVarWithInvariantIO checkInternalChain $ InternalChain chain chainWithTime
       varTentativeState  <- newTVarIO $ initialTentativeHeaderState (Proxy @blk)
       varTentativeHeader <- newTVarIO SNothing
       varIterators       <- newTVarIO Map.empty
@@ -202,6 +217,8 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             { addBlockAsync         = getEnv2    h ChainSel.addBlockAsync
             , chainSelAsync         = getEnv     h ChainSel.triggerChainSelectionAsync
             , getCurrentChain       = getEnvSTM  h Query.getCurrentChain
+            , getCurrentChainWithTime
+                                    = getEnvSTM  h Query.getCurrentChainWithTime
             , getLedgerDB           = getEnvSTM  h Query.getLedgerDB
             , getHeaderStateHistory = getEnvSTM  h Query.getHeaderStateHistory
             , getTipBlock           = getEnv     h Query.getTipBlock
@@ -290,7 +307,7 @@ closeDB (CDBHandle varState) = do
       ImmutableDB.closeDB cdbImmutableDB
       VolatileDB.closeDB cdbVolatileDB
 
-      chain <- atomically $ readTVar cdbChain
+      chain <- atomically $ icWithoutTime <$> readTVar cdbChain
 
       traceWith cdbTracer $ TraceOpenEvent $ ClosedDB
         (castPoint $ AF.anchorPoint chain)
