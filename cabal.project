@@ -14,9 +14,9 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2024-10-22T14:26:27Z
+  , hackage.haskell.org 2024-12-10T00:00:00Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2024-10-30T11:23:17Z
+  , cardano-haskell-packages 2024-11-27T20:49:28Z
 
 packages:
   ouroboros-consensus
@@ -47,3 +47,82 @@ if(os(windows))
 
 -- https://github.com/ulidtko/cabal-doctest/issues/85
 constraints: Cabal < 3.13
+
+-- For the time being, we need to override some dependency bounds
+allow-newer: plutus-core:cardano-crypto-class
+           , cardano-slotting
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/cardano-base
+  tag: 391a2c5cfd30d2234097e000dbd8d9db21ef94d7
+  --sha256: sha256-cw1BmYagp37B1n4PVWJF4AJ8nc/MYjSRlTLEWwL+EEk=
+  subdir:
+    -- cardano-binary
+    cardano-crypto-class
+    cardano-crypto-tests
+    cardano-crypto-praos
+    cardano-mempool
+    -- cardano-slotting
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/formal-ledger-specifications.git
+  -- !WARNING!:
+  -- MAKE SURE THIS POINTS TO A COMMIT IN `MAlonzo-code` BEFORE MERGE!
+  subdir: generated
+  tag: cc93692f5a57a9a66956b232662152676f659954
+  --sha256: sha256-s9ikqfXmz1wBrk4qEFR/iOloKvMOPGTB5IpHO34NSLE=
+-- NOTE: If you would like to update the above, look for the `MAlonzo-code`
+-- branch in the `formal-ledger-specifications` repo and copy the SHA of
+-- the commit you need. The `MAlonzo-code` branch functions like an alternative
+-- `master / main` branch for the generated code, see the details here:
+-- https://github.com/IntersectMBO/formal-ledger-specifications/pull/530
+-- If you are working on something in `formal-ledger-specifications`
+-- and would like to see how they reflect here, just open a PR / draft PR
+-- in `formal-ledger-specifications` for your branch and that will
+-- automatically create a branch for the generated code that you can try here
+-- by editing the above SRP.
+-- Once your changes are merged in `formal-ledger-specifications`, the branch
+-- for the generated code will be merged into `MAlonzo-code` automatically.
+-- Before merging a PR in `cardano-ledger`, make sure that the above SRP
+-- points to a commit in `MAlonzo-code` if you were fiddling with the SRP
+-- as part of your PR.
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/cardano-ledger
+  tag: a549a45ef73ad9d71903ad1816f2b53360ab310d
+  --sha256: 0944wg2nqazmhlmsynwgdwxxj6ay0hb9qig9l128isb2cjia0hlp
+  subdir:
+      eras/allegra/impl
+      eras/alonzo/impl
+      eras/alonzo/test-suite
+      eras/babbage/impl
+      eras/babbage/test-suite
+      eras/byron/chain/executable-spec
+      eras/byron/crypto
+      eras/byron/crypto/test
+      eras/byron/ledger/executable-spec
+      eras/byron/ledger/impl
+      eras/byron/ledger/impl/test
+      eras/conway/impl
+      eras/conway/test-suite
+      eras/mary/impl
+      eras/shelley/impl
+      eras/shelley-ma/test-suite
+      eras/shelley/test-suite
+      libs/cardano-data
+      libs/cardano-ledger-api
+      libs/cardano-ledger-binary
+      libs/cardano-ledger-conformance
+      libs/cardano-ledger-core
+      libs/cardano-ledger-test
+      libs/cardano-protocol-tpraos
+      libs/constrained-generators
+      libs/ledger-state
+      libs/non-integral
+      libs/plutus-preprocessor
+      libs/set-algebra
+      libs/small-steps
+      libs/vector-map

@@ -74,6 +74,7 @@ library
     cardano-slotting,
     cborg,
     containers,
+    io-classes,
     mtl,
     nothunks,
     ouroboros-consensus ^>=0.21,
