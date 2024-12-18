@@ -35,7 +35,7 @@ else
     for p in "${tracked_libs[@]}"; do
         printf "\t- %s\n" "$p"
         if ! git diff --quiet --name-only "origin/${BASE_REF}" -- "$p/***.hs"; then
-            if ! git diff --quiet --name-only --diff-filter=A "origin/${BASE_REF}" -- "$p/changelog.d" ; then
+            if ! git diff --quiet --name-only --diff-filter=A "origin/${BASE_REF}" -- "$(echo $p | cut -d/ -f1)/changelog.d" ; then
                 printf "\t\tNew fragments found. OK.\n"
                 git diff --name-only --diff-filter=A "origin/${BASE_REF}" -- "$p/changelog.d" | sed 's/^/\t\t- /g'
             else
@@ -50,7 +50,7 @@ else
     for p in "${packages[@]}"; do
         printf "\t- %s\n" "$p"
         if ! git diff --quiet --name-only "origin/${BASE_REF}" -- "$p/***.cabal"; then
-            if ! git diff --quiet --name-only --diff-filter=A "origin/${BASE_REF}" -- "$p/changelog.d" ; then
+            if ! git diff --quiet --name-only --diff-filter=A "origin/${BASE_REF}" -- "$(echo $p | cut -d/ -f1)/changelog.d" ; then
                 printf "\t\tNew fragments found. OK.\n"
                 git diff --name-only --diff-filter=A "origin/${BASE_REF}" -- "$p/changelog.d" | sed 's/^/\t\t- /g'
             else
