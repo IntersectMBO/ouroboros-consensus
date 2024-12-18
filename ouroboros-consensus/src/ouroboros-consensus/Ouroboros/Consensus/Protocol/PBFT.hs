@@ -56,6 +56,7 @@ import           Codec.Serialise (Serialise (..))
 import qualified Control.Exception as Exn
 import           Control.Monad (unless)
 import           Control.Monad.Except (throwError)
+import           Control.ResourceRegistry ()
 import           Data.Bifunctor (first)
 import           Data.Bimap (Bimap)
 import qualified Data.Bimap as Bimap
