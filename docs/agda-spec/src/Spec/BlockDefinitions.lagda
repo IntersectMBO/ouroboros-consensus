@@ -7,17 +7,15 @@
 open import Spec.BaseTypes using (Nonces)
 open import Ledger.Prelude
 open import Ledger.Crypto
-open import Ledger.Script
 open import Ledger.Types.Epoch
 
 module Spec.BlockDefinitions
   (crypto : _) (open Crypto crypto)
   (nonces : Nonces crypto) (open Nonces nonces)  
   (es     : _) (open EpochStructure es)
-  (ss     : ScriptStructure crypto es) (open ScriptStructure ss)  
   where
 
-open import Ledger.PParams crypto es ss using (ProtVer)
+open import Ledger.PParams using (ProtVer)
 
 record BlockStructure : Type₁ where
   field
