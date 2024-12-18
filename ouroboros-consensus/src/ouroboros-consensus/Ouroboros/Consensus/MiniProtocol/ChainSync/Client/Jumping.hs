@@ -115,7 +115,7 @@
 --
 -- >                j       ╔════════╗
 -- >            ╭────────── ║ Dynamo ║ ◀─────────╮
--- >            │        ╭──╚════════╝           │f
+-- >            │        ╭─ ╚════════╝           │f
 -- >            ▼        │         ▲             │
 -- >    ┌────────────┐   │         │     k     ┌──────────┐
 -- >    │ Disengaged │ ◀─│─────────│────────── │ Objector │
@@ -124,18 +124,23 @@
 -- >                    l│  g│     │e         b  │    │ │
 -- >                     │   │     │       ╭─────╯   i│ │c
 -- >                 ╭╌╌╌▼╌╌╌▼╌╌╌╌╌╌╌╌╌╌╌╌╌│╌╌╌╌╌╌╌╌╌╌│╌▼╌╌╌╮
--- >                 ┆ ╔═══════╗  a   ┌──────┐  d   ┌─────┐ |
--- >                 ┆ ║ Happy ║ ───▶ │ LFI* │ ───▶ │ FI* │ |
--- >                 ┆ ╚═══════╝ ◀─╮  └──────┘      └─────┘ |
--- >                 ┆ Jumper      ╰─────┴────────────╯h    |
+-- >                 ┆ ╔═══════╗  a   ┌──────┐  d   ┌─────┐ ┆
+-- >                 ┆ ║ Happy ║ ───▶ │ LFI* │ ───▶ │ FI* │ ┆
+-- >                 ┆ ╚═══════╝ ◀─╮  └──────┘      └─────┘ ┆
+-- >                 ┆ Jumper      ╰─────┴────────────╯h    ┆
 -- >                 ╰╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╯
 --
 -- *: LookingForIntersection and FoundIntersection, abbreviated for this
 --    drawing only; this abbreviation will not be used elsewhere.
 --
+-- In the following walk-through, we will point to transitions in the drawing
+-- between parentheses, like so: (a) (b+c) (e|f). We will use `+` to express
+-- that both transitions happen simultaneously (for different peers) and `|` to
+-- express a choice.
+--
 -- A new peer starts as the dynamo if there is no other peer or as a Happy
 -- jumper otherwise. The dynamo periodically requests jumps from happy
--- jumpers who, in the ideal case, accept them.
+-- jumpers who, in the ideal case, accept them and remain happy jumpers.
 --
 -- In the event that a jumper rejects a jump, it goes from Happy to LFI* (a).
 -- From there starts a back-and-forth of intersection search messages until
@@ -143,29 +148,34 @@
 --
 -- Once the exact point of disagreement is found, and if there is no objector
 -- yet, the jumper becomes the objector (b). If there is an objector, then we
--- compare the intersections of the objector and the jumper. If the jumper's
--- intersection is strictly older, then the jumper replaces the objector (b+c).
+-- compare the intersection of the objector with the dynamo and the intersection
+-- of the jumper with the dynamo. If the jumper's intersection is strictly
+-- older, then the jumper replaces the objector, who is marked as FI* (b+c).
 -- Otherwise, the jumper is marked as FI* (d).
 --
 -- If the dynamo disconnects or is disengaged, one peer is elected as the new
--- dynamo (e|f) and all other peers revert to being happy jumpers (g+h).
+-- dynamo (e|f) and all the other peers revert to being happy jumpers (g+h).
 --
 -- If the objector disconnects or is disengaged, and there are FI* jumpers, then
 -- the one with the oldest intersection with the dynamo gets elected (i).
+-- Otherwise, we are left with no dynamo.
 --
 -- If the dynamo rolls back to a point older than the last jump it requested, it
--- is disengaged (j) and a new dynamo is elected (e|f).
+-- is disengaged (j), a new dynamo is elected (e|f), and all the other peers
+-- revert to being happy jumpers (g+h).
 --
 -- If the objector agrees with the dynamo, it is disengaged (k). If there are
 -- FI* jumpers, then one of them gets elected as the new objector (i).
+-- Otherwise, we are left with no dynamo.
 --
--- If dynamo or objector claim to have no more headers, they are disengaged
--- (j|k).
+-- If the dynamo or the objector claim to have no more headers, they are
+-- disengaged (j|k), triggering the same chain of effect as described in the two
+-- previous points.
 --
 -- The BlockFetch logic can ask to change the dynamo if it is not serving blocks
 -- fast enough. If there are other non-disengaged peers, the dynamo (and the
--- objector if there is one) is demoted to a jumper (l+g) and a new dynamo is
--- elected.
+-- objector if there is one, and all the other peers) is demoted to a happy
+-- jumper (l+g+h) and a new dynamo is elected (e).
 --
 module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping (
     Context
