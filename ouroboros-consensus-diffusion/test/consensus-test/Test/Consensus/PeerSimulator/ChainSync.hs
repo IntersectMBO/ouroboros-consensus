@@ -165,7 +165,7 @@ runChainSyncClient
         res <-
           try $
             runPipelinedPeerWithLimits
-              nullTracer
+              (Tracer $ traceWith tracer . TraceChainSyncSendRecvEvent peerId "Client")
               codecChainSyncId
               chainSyncNoSizeLimits
               (timeLimitsChainSync chainSyncTimeouts)
@@ -218,8 +218,8 @@ runChainSyncServer ::
   ChainSyncServer (Header blk) (Point blk) (Tip blk) m () ->
   Channel m (AnyMessage (ChainSync (Header blk) (Point blk) (Tip blk))) ->
   m ()
-runChainSyncServer _tracer peerId StateViewTracers {svtPeerSimulatorResultsTracer} server channel =
-  (try $ runPeer nullTracer codecChainSyncId channel (chainSyncServerPeer server)) >>= \case
+runChainSyncServer tracer peerId StateViewTracers {svtPeerSimulatorResultsTracer} server channel =
+  (try $ runPeer sendRecvTracer codecChainSyncId channel (chainSyncServerPeer server)) >>= \case
     Right ((), msgRes) -> traceWith svtPeerSimulatorResultsTracer $
       PeerSimulatorResult peerId $ SomeChainSyncServerResult $ Right msgRes
     Left exn -> do
@@ -228,3 +228,5 @@ runChainSyncServer _tracer peerId StateViewTracers {svtPeerSimulatorResultsTrace
       -- NOTE: here we are able to trace exceptions, as what is done in `runChainSyncClient`
       case fromException exn of
         (_ :: Maybe SomeException) -> pure ()
+  where
+    sendRecvTracer = Tracer $ traceWith tracer . TraceChainSyncSendRecvEvent peerId "Server"
