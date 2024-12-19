@@ -238,7 +238,7 @@ traceSchedulerEventTestBlockWith setTickTime tracer0 tracer = \case
     traceJumpingState = \case
       Dynamo initState lastJump ->
         let showInitState = case initState of
-              DynamoStarting ji -> terseJumpInfo ji
+              DynamoStarting ji -> "(DynamoStarting " ++ terseJumpInfo ji ++ ")"
               DynamoStarted     -> "DynamoStarted"
          in unwords ["Dynamo", showInitState, terseWithOrigin show lastJump]
       Objector initState goodJumpInfo badPoint -> unwords
