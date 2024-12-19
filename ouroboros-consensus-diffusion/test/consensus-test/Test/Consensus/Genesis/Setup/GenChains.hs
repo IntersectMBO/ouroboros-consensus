@@ -10,13 +10,12 @@ module Test.Consensus.Genesis.Setup.GenChains (
   , genChainsWithExtraHonestPeers
   ) where
 
-import           Cardano.Slotting.Time (SlotLength, getSlotLength,
-                     slotLengthFromSec)
+import           Cardano.Slotting.Time (slotLengthFromSec)
 import           Control.Monad (replicateM)
 import qualified Control.Monad.Except as Exn
 import           Data.List as List (foldl')
 import           Data.Proxy (Proxy (..))
-import           Data.Time.Clock (DiffTime, secondsToDiffTime)
+import           Data.Time.Clock (DiffTime)
 import qualified Data.Vector.Unboxed as Vector
 import           Data.Word (Word8)
 import           Ouroboros.Consensus.Block.Abstract hiding (Header)
@@ -110,7 +109,7 @@ genChains  = genChainsWithExtraHonestPeers (pure 0)
 -- However, in the future it could also be used to generate "short forks" near the tip of the trunk.
 genChainsWithExtraHonestPeers :: QC.Gen Word -> QC.Gen Word -> QC.Gen (GenesisTest TestBlock ())
 genChainsWithExtraHonestPeers genNumExtraHonest genNumForks = do
-  (asc, honestRecipe, someHonestChainSchema) <- genHonestChainSchema
+  (_, honestRecipe, someHonestChainSchema) <- genHonestChainSchema
 
   H.SomeHonestChainSchema _ _ honestChainSchema <- pure someHonestChainSchema
   let ChainSchema _ vH = honestChainSchema
@@ -128,8 +127,8 @@ genChainsWithExtraHonestPeers genNumExtraHonest genNumForks = do
     gtGenesisWindow = GenesisWindow (fromIntegral scg),
     gtForecastRange = ForecastRange (fromIntegral scg), -- REVIEW: Do we want to generate those randomly?
     gtDelay = delta,
-    gtSlotLength,
-    gtChainSyncTimeouts = chainSyncTimeouts gtSlotLength asc,
+    gtSlotLength = slotLengthFromSec 20,
+    gtChainSyncTimeouts = chainSyncTimeouts,
     gtBlockFetchTimeouts = blockFetchTimeouts,
     gtLoPBucketParams = LoPBucketParams { lbpCapacity = 50, lbpRate = 10 },
     -- These values give little enough leeway (5s) so that some adversaries get disconnected
@@ -143,8 +142,6 @@ genChainsWithExtraHonestPeers genNumExtraHonest genNumForks = do
     }
 
   where
-    gtSlotLength = slotLengthFromSec 20
-
     genAdversarialFragment :: [TestBlock] -> Int -> (Int, [S]) -> AnchoredFragment TestBlock
     genAdversarialFragment goodBlocks forkNo (prefixCount, slotsA)
       = mkTestFragment (mkTestBlocks prefix slotsA forkNo)
@@ -169,11 +166,8 @@ genChainsWithExtraHonestPeers genNumExtraHonest genNumForks = do
     incSlot :: SlotNo -> TestBlock -> TestBlock
     incSlot n b = b { tbSlot = tbSlot b + n }
 
-chainSyncTimeouts ::
-  SlotLength ->
-  Asc ->
-  ChainSyncTimeout
-chainSyncTimeouts t f =
+chainSyncTimeouts :: ChainSyncTimeout
+chainSyncTimeouts =
   ChainSyncTimeout
     { canAwaitTimeout,
       intersectTimeout,
@@ -186,21 +180,16 @@ chainSyncTimeouts t f =
     intersectTimeout :: Maybe DiffTime
     intersectTimeout = shortWait
     idleTimeout :: Maybe DiffTime
-    idleTimeout = Just 3673 -- taken from Ouroboros.Consensus.Node.stdChainSyncTimeout
-    -- | The following timeout is derived from the average length of a streak of
-    -- empty slots. If the probability of the election of a leader is @f@ and
-    -- @Y@ is a probability, then a streak of empty slots will be shorter than
-    -- @log (1 - Y) / log (1 - f)@ with probability @Y@. Main net nodes pick a
-    -- random value for @Y@ between 99.9% and 99.999%. For our use case, we
-    -- choose the tightest bound of 99.9%.
+    -- | The default from 'Ouroboros.Consensus.Node.stdChainSyncTimeout' is
+    -- 3673s, which is virtually infinite, so let us make it actually infinite
+    -- for our test environment.
+    idleTimeout = Nothing
+    -- | The 'mustReplyTimeout' must be disabled in our context, because the
+    -- chains are finite, and therefore an honest peer can only serve it all,
+    -- then send 'MsgAwaitReply' (therefore entering 'StMustReply'), and then
+    -- stall forever, and it must not be killed for it.
     mustReplyTimeout :: Maybe DiffTime
-    mustReplyTimeout =
-      Just $
-        secondsToDiffTime $
-          round $
-            realToFrac (getSlotLength t)
-              * log (1 - 0.999)
-              / log (1 - ascVal f)
+    mustReplyTimeout = Nothing
 
 blockFetchTimeouts :: BlockFetchTimeout
 blockFetchTimeouts =

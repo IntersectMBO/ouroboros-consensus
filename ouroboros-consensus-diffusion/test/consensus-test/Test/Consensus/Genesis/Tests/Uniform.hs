@@ -211,7 +211,7 @@ prop_leashingAttackStalling :: Property
 prop_leashingAttackStalling =
   forAllGenesisTest
 
-    (disableBoringTimeouts <$> genChains (QC.choose (1, 4)) `enrichedWith` genLeashingSchedule)
+    (genChains (QC.choose (1, 4)) `enrichedWith` genLeashingSchedule)
 
     defaultSchedulerConfig
       { scTrace = False
@@ -260,9 +260,7 @@ prop_leashingAttackTimeLimited :: Property
 prop_leashingAttackTimeLimited =
   forAllGenesisTest
 
-    (disableCanAwaitTimeout . disableBoringTimeouts <$>
-      genChains (QC.choose (1, 4)) `enrichedWith` genTimeLimitedSchedule
-    )
+    (genChains (QC.choose (1, 4)) `enrichedWith` genTimeLimitedSchedule)
 
     defaultSchedulerConfig
       { scTrace = False
@@ -336,15 +334,6 @@ prop_leashingAttackTimeLimited =
     fromTipPoint (t, ScheduleTipPoint bp) = Just (t, bp)
     fromTipPoint _                        = Nothing
 
-    disableCanAwaitTimeout :: GenesisTest blk schedule -> GenesisTest blk schedule
-    disableCanAwaitTimeout gt =
-      gt
-        { gtChainSyncTimeouts =
-            (gtChainSyncTimeouts gt)
-              { canAwaitTimeout = Nothing
-              }
-        }
-
 headCallStack :: HasCallStack => [a] -> a
 headCallStack = \case
   x:_ -> x
@@ -398,7 +387,7 @@ prop_loeStalling =
 prop_downtime :: Property
 prop_downtime = forAllGenesisTest
 
-    (disableBoringTimeouts <$> genChains (QC.choose (1, 4)) `enrichedWith` \ gt ->
+    (genChains (QC.choose (1, 4)) `enrichedWith` \ gt ->
       ensureScheduleDuration gt <$> stToGen (uniformPoints (pointsGeneratorParams gt) (gtBlockTree gt)))
 
     defaultSchedulerConfig
@@ -434,7 +423,7 @@ prop_downtime = forAllGenesisTest
 prop_blockFetchLeashingAttack :: Property
 prop_blockFetchLeashingAttack =
   forAllGenesisTest
-    (disableBoringTimeouts <$> genChains (pure 0) `enrichedWith` genBlockFetchLeashingSchedule)
+    (genChains (pure 0) `enrichedWith` genBlockFetchLeashingSchedule)
     defaultSchedulerConfig
       { scEnableLoE = True,
         scEnableLoP = True,
@@ -481,13 +470,3 @@ prop_blockFetchLeashingAttack =
 -- adversarial peer.
 addGracePeriodDelay :: Int -> Time -> Time
 addGracePeriodDelay adversaryCount = addTime (fromIntegral adversaryCount * 10)
-
-disableBoringTimeouts :: GenesisTest blk schedule -> GenesisTest blk schedule
-disableBoringTimeouts gt =
-    gt
-      { gtChainSyncTimeouts =
-          (gtChainSyncTimeouts gt)
-            { mustReplyTimeout = Nothing
-            , idleTimeout = Nothing
-            }
-      }
