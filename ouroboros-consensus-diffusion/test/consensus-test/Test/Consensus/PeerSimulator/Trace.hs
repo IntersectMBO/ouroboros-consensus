@@ -43,6 +43,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
                      (TraceAddBlockEvent (..))
 import           Ouroboros.Consensus.Util.Condense (condense)
+import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadMonotonicTime,
                      Time (Time), atomically, getMonotonicTime, readTVarIO,
                      uncheckedNewTVarM, writeTVar)
@@ -376,10 +377,10 @@ traceChainDBEventTestBlockWith tracer = \case
         AddedReprocessLoEBlocksToQueue ->
           trace $ "Requested ChainSel run"
         _ -> pure ()
-    ChainDB.TraceChainSelStarvationEvent (ChainDB.ChainSelStarvationStarted time) ->
-      trace $ "ChainSel starvation started at " ++ prettyTime time
-    ChainDB.TraceChainSelStarvationEvent (ChainDB.ChainSelStarvationEnded time pt) ->
-      trace $ "ChainSel starvation ended at " ++ prettyTime time ++ " thanks to " ++ terseRealPoint pt
+    ChainDB.TraceChainSelStarvationEvent (ChainDB.ChainSelStarvation RisingEdge) ->
+      trace "ChainSel starvation started"
+    ChainDB.TraceChainSelStarvationEvent (ChainDB.ChainSelStarvation (FallingEdgeWith pt)) ->
+      trace $ "ChainSel starvation ended thanks to " ++ terseRealPoint pt
     _ -> pure ()
   where
     trace = traceUnitWith tracer "ChainDB"
