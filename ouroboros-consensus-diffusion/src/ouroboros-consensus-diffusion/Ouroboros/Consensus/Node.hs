@@ -116,7 +116,7 @@ import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
-import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..))
+import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..), FetchMode)
 import qualified Ouroboros.Network.Diffusion as Diffusion
 import qualified Ouroboros.Network.Diffusion.Common as Common
 import qualified Ouroboros.Network.Diffusion.Configuration as Diffusion
@@ -151,6 +151,8 @@ import Control.Exception (IOException)
 import Cardano.Network.Types (LedgerStateJudgement (..))
 import Ouroboros.Network.Diffusion.Common (Applications(..))
 import Ouroboros.Cardano.Network.ArgumentsExtra (CardanoArgumentsExtra(..))
+import Ouroboros.Network.PeerSelection.RootPeersDNS.PublicRootPeers (TracePublicRootPeers)
+import Network.DNS.Resolver (Resolver)
 
 {-------------------------------------------------------------------------------
   The arguments to the Consensus Layer node functionality
@@ -274,7 +276,8 @@ data LowLevelRunNodeArgs m addrNTN addrNTC versionDataNTN versionDataNTC blk
       --
       -- 'run' will not return before this does.
     , llrnRunDataDiffusion ::
-           Diffusion.Applications p2p addrNTN addrNTC versionDataNTN versionDataNTC extraAPI m NodeToNodeInitiatorResult
+           NodeKernel m addrNTN (ConnectionId addrNTC) blk
+        -> Diffusion.Applications p2p addrNTN addrNTC versionDataNTN versionDataNTC extraAPI m NodeToNodeInitiatorResult
         -> Diffusion.ApplicationsExtra p2p addrNTN m NodeToNodeInitiatorResult
         -> m ()
 
@@ -335,7 +338,10 @@ data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) extraArgs extraState extraDebug
                                          IO
                                          Socket      RemoteAddress
                                          LocalSocket LocalAddress
-  , srnDiffusionArgumentsExtra      :: Diffusion.ArgumentsExtra p2p extraArgs extraState extraDebugState extraActions extraAPI extraPeers extraFlags extraChurnArgs extraCounters exception RemoteAddress IO
+  , srnDiffusionArgumentsExtra      :: Diffusion.P2PDecision p2p (Tracer IO TracePublicRootPeers) ()
+                                    -> Diffusion.P2PDecision p2p (STM IO FetchMode) ()
+                                    -> Diffusion.P2PDecision p2p extraAPI ()
+                                    -> Diffusion.ArgumentsExtra p2p extraArgs extraState extraDebugState extraActions extraAPI extraPeers extraFlags extraChurnArgs extraCounters exception RemoteAddress Resolver IOException IO
   , srnDiffusionTracers             :: Common.Tracers
                                          RemoteAddress  NodeToNodeVersion
                                          LocalAddress   NodeToClientVersion
@@ -557,7 +563,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                                         nodeKernel
                                         peerMetrics
 
-          llrnRunDataDiffusion apps appsExtra
+          llrnRunDataDiffusion nodeKernel apps appsExtra
   where
     ProtocolInfo
       { pInfoConfig       = cfg
@@ -965,6 +971,8 @@ stdRunDataDiffusion
       extraCounters
       exception
       RemoteAddress
+      Resolver
+      IOException
       IO
   -> Diffusion.Applications
       p2p
@@ -982,7 +990,7 @@ stdRunDataDiffusion = Diffusion.run
 -- | Conveniently packaged 'LowLevelRunNodeArgs' arguments from a standard
 -- non-testing invocation.
 stdLowLevelRunNodeArgsIO
-  :: forall blk p2p extraState extraActions extraPeers extraFlags extraChurnArgs extraCounters exception.
+  :: forall blk p2p extraState extraActions extraPeers extraFlags extraChurnArgs extraCounters exception .
   ( RunNode blk
   , Monoid extraPeers
   , Eq extraCounters
@@ -1022,25 +1030,31 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
       , llrnCustomiseChainDbArgs = id
       , llrnCustomiseNodeKernelArgs
       , llrnRunDataDiffusion =
-          \apps extraApps -> do
+          \kernel apps extraApps -> do
             case rnEnableP2P of
               EnabledP2PMode ->
-                case (apps, srnDiffusionArgumentsExtra, srnDiffusionTracersExtra) of
+                case (apps, srnDiffusionTracersExtra) of
                   ( Diffusion.P2PApplications apps'
-                   , Diffusion.P2PArguments extraArgs
                    , Diffusion.P2PTracers extraTracers
-                   ) -> stdRunDataDiffusion
-                         (srnSigUSR1SignalHandler
-                            extraTracers
-                            (Common.daReadUseLedgerPeers extraArgs)
-                            rnPeerSharing
-                            (caeReadUseBootstrapPeers (Common.daExtraArgs extraArgs))
-                            (clpciGetLedgerStateJudgement (lpExtraAPI (daLedgerPeersCtx apps'))))
-                         srnDiffusionTracers
-                         srnDiffusionTracersExtra
-                         srnDiffusionArguments
-                         srnDiffusionArgumentsExtra
-                         apps extraApps
+                   ) -> do
+                     let srnDiffusionArgumentsExtra' =
+                           srnDiffusionArgumentsExtra (Diffusion.P2PDecision (Common.dtTracePublicRootPeersTracer extraTracers))
+                                                      (Diffusion.P2PDecision (getFetchMode kernel))
+                                                      (Diffusion.P2PDecision (lpExtraAPI (daLedgerPeersCtx apps')))
+                     case srnDiffusionArgumentsExtra' of
+                       Diffusion.P2PArguments extraArgs ->
+                         stdRunDataDiffusion
+                             (srnSigUSR1SignalHandler
+                                extraTracers
+                                (Common.daReadUseLedgerPeers extraArgs)
+                                rnPeerSharing
+                                (caeReadUseBootstrapPeers (Common.daExtraArgs extraArgs))
+                                (clpciGetLedgerStateJudgement (lpExtraAPI (daLedgerPeersCtx apps'))))
+                             srnDiffusionTracers
+                             srnDiffusionTracersExtra
+                             srnDiffusionArguments
+                             srnDiffusionArgumentsExtra'
+                             apps extraApps
 
               DisabledP2PMode ->
                 stdRunDataDiffusion
@@ -1053,7 +1067,10 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
                  srnDiffusionTracers
                  srnDiffusionTracersExtra
                  srnDiffusionArguments
-                 srnDiffusionArgumentsExtra
+                 (srnDiffusionArgumentsExtra
+                    (Diffusion.NonP2PDecision ())
+                    (Diffusion.NonP2PDecision ())
+                    (Diffusion.NonP2PDecision ()))
                  apps extraApps
       , llrnVersionDataNTC =
           stdVersionDataNTC networkMagic
