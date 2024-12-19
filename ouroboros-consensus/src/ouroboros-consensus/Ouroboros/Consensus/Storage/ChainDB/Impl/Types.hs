@@ -541,15 +541,14 @@ getChainSelMessage starvationTracer starvationVar chainSelQueue =
     startStarvationMeasure = do
       prevStarvation <- atomically $ swapTVar starvationVar ChainSelStarvationOngoing
       when (prevStarvation /= ChainSelStarvationOngoing) $
-        traceWith starvationTracer . ChainSelStarvationStarted =<< getMonotonicTime
+        traceWith starvationTracer $ ChainSelStarvation RisingEdge
 
     terminateStarvationMeasure :: ChainSelMessage m blk -> m ()
     terminateStarvationMeasure = \case
       ChainSelAddBlock BlockToAdd{blockToAdd=block} -> do
-        tf <- getMonotonicTime
         let pt = blockRealPoint block
-        traceWith starvationTracer $ ChainSelStarvationEnded tf pt
-        atomically $ writeTVar starvationVar (ChainSelStarvationEndedAt tf)
+        traceWith starvationTracer $ ChainSelStarvation (FallingEdgeWith pt)
+        atomically . writeTVar starvationVar . ChainSelStarvationEndedAt =<< getMonotonicTime
       ChainSelReprocessLoEBlocks{} -> pure ()
 
 -- TODO Can't use tryReadTBQueue from io-classes because it is broken for IOSim
@@ -938,11 +937,11 @@ data TraceIteratorEvent blk
 -- This is the usual case and innocent while caught-up; but while syncing, it
 -- means that we are downloading blocks at a smaller rate than we can validate
 -- them, even though we generally expect to be CPU-bound.
-data TraceChainSelStarvationEvent blk
-    -- | A ChainSel starvation started at the given time.
-  = ChainSelStarvationStarted Time
-
-    -- | The last ChainSel starvation ended at the given time as a block wth the
-    -- given point has been received.
-  | ChainSelStarvationEnded Time (RealPoint blk)
+--
+-- TODO: Investigate why it happens regularly during syncing for very short
+-- times.
+--
+-- The point in the trace is the block that finished the starvation.
+newtype TraceChainSelStarvationEvent blk =
+  ChainSelStarvation (Enclosing' (RealPoint blk))
   deriving (Generic, Eq, Show)
