@@ -188,6 +188,12 @@ chainSyncTimeouts =
     -- chains are finite, and therefore an honest peer can only serve it all,
     -- then send 'MsgAwaitReply' (therefore entering 'StMustReply'), and then
     -- stall forever, and it must not be killed for it.
+    --
+    -- Note that this allows the adversaries to stall us forever in that same
+    -- situation. However, that peer is only allowed to send 'MsgAwaitReply'
+    -- when they have served their tip, which leaves them fully vulnerable to
+    -- the Genesis Density Disconnection (GDD) logic. A bug related to this
+    -- disabled timeout is in fact either a bug in the GDD or in the tests.
     mustReplyTimeout :: Maybe DiffTime
     mustReplyTimeout = Nothing
 
