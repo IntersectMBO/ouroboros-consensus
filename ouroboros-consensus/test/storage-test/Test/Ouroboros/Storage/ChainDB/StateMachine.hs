@@ -1241,8 +1241,8 @@ deriving instance SOP.Generic         (ImmutableDB.TraceEvent blk)
 deriving instance SOP.HasDatatypeInfo (ImmutableDB.TraceEvent blk)
 deriving instance SOP.Generic         (VolatileDB.TraceEvent blk)
 deriving instance SOP.HasDatatypeInfo (VolatileDB.TraceEvent blk)
-deriving instance SOP.Generic         (TraceChainSelStarvationEvent blk)
-deriving instance SOP.HasDatatypeInfo (TraceChainSelStarvationEvent blk)
+deriving anyclass instance SOP.Generic         (TraceChainSelStarvationEvent blk)
+deriving anyclass instance SOP.HasDatatypeInfo (TraceChainSelStarvationEvent blk)
 
 data Tag =
     TagGetIsValidJust
