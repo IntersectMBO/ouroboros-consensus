@@ -419,6 +419,8 @@ traceChainSyncClientEventTestBlockWith pid tracer = \case
       trace "Waiting for next instruction from the jumping governor"
     TraceJumpingInstructionIs instr ->
       trace $ "Received instruction: " ++ showInstr instr
+    TraceDrainingThePipe n ->
+      trace $ "Draining the pipe, remaining messages: " ++ show n
   where
     trace = traceUnitWith tracer ("ChainSyncClient " ++ condense pid)
 

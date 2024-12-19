@@ -917,7 +917,9 @@ chainSyncClient cfgEnv dynEnv =
                Nat n'
             -> s
             -> m (Consensus (ClientPipelinedStIdle n') blk m)
-          go n s = case n of
+          go n s = do
+            traceWith tracer $ TraceDrainingThePipe n
+            case n of
               Zero    -> continueWithState s m
               Succ n' -> return $ CollectResponse Nothing $ ClientStNext {
                   recvMsgRollForward  = \_hdr _tip -> go n' s
@@ -2334,12 +2336,8 @@ data TraceChainSyncClientEvent blk =
   |
     TraceJumpingInstructionIs (Jumping.Instruction blk)
     -- ^ ChainSync Jumping -- the ChainSync client got its next instruction.
-
-deriving instance
-  ( BlockSupportsProtocol blk
-  , Eq (Header blk)
-  )
-  => Eq (TraceChainSyncClientEvent blk)
+  |
+    forall n. TraceDrainingThePipe (Nat n)
 
 deriving instance
   ( BlockSupportsProtocol blk
