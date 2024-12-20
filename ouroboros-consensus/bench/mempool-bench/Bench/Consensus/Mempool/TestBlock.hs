@@ -23,12 +23,12 @@ module Bench.Consensus.Mempool.TestBlock (
   , txSize
   ) where
 
-import           Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import qualified Cardano.Slotting.Time as Time
 import           Codec.Serialise (Serialise (..))
 import           Control.DeepSeq (NFData)
 import           Control.Monad.Trans.Except (except)
 import qualified Data.Map.Strict as Map
+import           Data.MemPack
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.TreeDiff (ToExpr)
@@ -59,7 +59,7 @@ data Tx = Tx {
 
 newtype Token = Token { unToken :: Int  }
   deriving stock (Show, Eq, Ord, Generic)
-  deriving newtype (ToCBOR, FromCBOR, Num, Enum)
+  deriving newtype (MemPack, Num, Enum)
   deriving anyclass (NoThunks, ToExpr, Serialise, NFData)
 
 mkTx ::
@@ -175,9 +175,6 @@ instance HasLedgerTables (Ticked (LedgerState TestBlock)) where
     Ledger.projectLedgerTables st
   withLedgerTables (TickedTestLedger st) tables =
     TickedTestLedger $ Ledger.withLedgerTables st $ Ledger.castLedgerTables tables
-
-instance CanSerializeLedgerTables (LedgerState TestBlock) where
-  codecLedgerTables = defaultCodecLedgerTables
 
 instance CanStowLedgerTables (LedgerState TestBlock) where
   stowLedgerTables     = error "Mempool bench TestBlock unused: stowLedgerTables"

@@ -185,8 +185,6 @@ deriving via TrivialLedgerTables (LedgerState BlockB)
 deriving via TrivialLedgerTables (Ticked (LedgerState BlockB))
     instance HasLedgerTables (Ticked (LedgerState BlockB))
 deriving via TrivialLedgerTables (LedgerState BlockB)
-    instance CanSerializeLedgerTables (LedgerState BlockB)
-deriving via TrivialLedgerTables (LedgerState BlockB)
     instance CanStowLedgerTables (LedgerState BlockB)
 
 type instance LedgerCfg (LedgerState BlockB) = ()

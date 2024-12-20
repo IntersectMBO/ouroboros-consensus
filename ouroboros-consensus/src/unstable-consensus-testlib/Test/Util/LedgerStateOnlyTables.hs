@@ -16,7 +16,7 @@ module Test.Util.LedgerStateOnlyTables (
   , pattern OTLedgerState
   ) where
 
-import           Cardano.Binary (FromCBOR (..), ToCBOR (..))
+import           Data.MemPack
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import           Ouroboros.Consensus.Ledger.Tables
@@ -43,15 +43,11 @@ deriving instance (Ord k, Eq v, Eq (mk k v))
 deriving stock instance (Show k, Show v, Show (mk k v))
                      => Show (OTLedgerState k v mk)
 
-instance (ToCBOR k, FromCBOR k, ToCBOR v, FromCBOR v)
-      => CanSerializeLedgerTables (OTLedgerState k v) where
-  codecLedgerTables = defaultCodecLedgerTables
-
 {-------------------------------------------------------------------------------
   Stowable
 -------------------------------------------------------------------------------}
 
-instance (Ord k, Eq v)
+instance (Ord k, Eq v, MemPack k, MemPack v)
       => CanStowLedgerTables (OTLedgerState k v) where
   stowLedgerTables OTLedgerState{otlsLedgerTables} =
     OTLedgerState (getLedgerTables otlsLedgerTables) emptyLedgerTables
@@ -68,7 +64,7 @@ instance (Ord k, Eq v)
 type instance TxIn  (OTLedgerState k v) = k
 type instance TxOut (OTLedgerState k v) = v
 
-instance (Ord k, Eq v, Show k, Show v, NoThunks k, NoThunks v)
+instance (Ord k, Eq v, Show k, Show v, MemPack k, MemPack v, NoThunks k, NoThunks v)
       => HasLedgerTables (OTLedgerState k v) where
   projectLedgerTables OTLedgerState{otlsLedgerTables} =
     otlsLedgerTables

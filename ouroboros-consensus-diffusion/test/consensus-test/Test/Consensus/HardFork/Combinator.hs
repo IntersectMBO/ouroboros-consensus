@@ -19,8 +19,8 @@
 
 module Test.Consensus.HardFork.Combinator (tests) where
 
-import           Cardano.Binary (FromCBOR (fromCBOR), ToCBOR (toCBOR))
 import qualified Data.Map.Strict as Map
+import           Data.MemPack
 import           Data.SOP.Counting
 import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.Index (Index (..))
@@ -373,7 +373,7 @@ instance HasCanonicalTxIn '[BlockA, BlockB] where
       getBlockABTxIn :: Void
     }
     deriving stock (Show, Eq, Ord)
-    deriving newtype (NoThunks, FromCBOR, ToCBOR)
+    deriving newtype (NoThunks, MemPack)
 
   injectCanonicalTxIn IZ             key = absurd key
   injectCanonicalTxIn (IS IZ)        key = absurd key
@@ -381,18 +381,10 @@ instance HasCanonicalTxIn '[BlockA, BlockB] where
 
   ejectCanonicalTxIn _ key = absurd $ getBlockABTxIn key
 
-  encodeCanonicalTxIn = toCBOR
-
-  decodeCanonicalTxIn = fromCBOR
-
 instance HasHardForkTxOut '[BlockA, BlockB] where
   type HardForkTxOut '[BlockA, BlockB] = DefaultHardForkTxOut '[BlockA, BlockB]
   injectHardForkTxOut = injectHardForkTxOutDefault
   ejectHardForkTxOut = ejectHardForkTxOutDefault
-
-instance SerializeHardForkTxOut '[BlockA, BlockB] where
-  encodeHardForkTxOut _ = encodeHardForkTxOutDefault
-  decodeHardForkTxOut _ = decodeHardForkTxOutDefault
 
 {-------------------------------------------------------------------------------
   Hard fork
