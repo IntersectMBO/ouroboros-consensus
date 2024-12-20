@@ -391,7 +391,6 @@ class ( Typeable ptype
       , HasLedgerTables (LedgerState (TestBlockWith ptype))
       , HasLedgerTables (Ticked (LedgerState (TestBlockWith ptype)))
       , CanStowLedgerTables (LedgerState (TestBlockWith ptype))
-      , CanSerializeLedgerTables (LedgerState (TestBlockWith ptype))
 
       , Eq        (PayloadDependentError ptype)
       , Show      (PayloadDependentError ptype)
@@ -522,8 +521,6 @@ deriving via TrivialLedgerTables (LedgerState TestBlock)
     instance HasLedgerTables (LedgerState TestBlock)
 deriving via TrivialLedgerTables (LedgerState TestBlock)
     instance HasLedgerTables (Ticked (LedgerState TestBlock))
-deriving via TrivialLedgerTables (LedgerState TestBlock)
-    instance CanSerializeLedgerTables (LedgerState TestBlock)
 deriving via TrivialLedgerTables (LedgerState TestBlock)
     instance CanStowLedgerTables (LedgerState TestBlock)
 

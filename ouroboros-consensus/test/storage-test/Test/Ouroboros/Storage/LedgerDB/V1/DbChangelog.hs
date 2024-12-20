@@ -39,8 +39,11 @@ import qualified Data.Map.Diff.Strict.Internal as Diff
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, fromJust, isJust, isNothing)
+import           Data.MemPack
 import           Data.Set (Set)
 import qualified Data.Set as Set
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import           Data.Word
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
@@ -559,7 +562,12 @@ nExtensions n dblog = iterate ext dblog !! n
 pointAtSlot :: WithOrigin SlotNo -> Point TestLedger
 pointAtSlot = Point.withOrigin GenesisPoint (\slotNo -> Point $ At $ Point.Block slotNo H)
 
-type Key = String
+type Key = T.Text
+
+instance MemPack T.Text where
+  packM = packM . T.encodeUtf8
+  packedByteCount = packedByteCount . T.encodeUtf8
+  unpackM = T.decodeUtf8 <$> unpackM
 
 data GenOperationsState = GenOperationsState {
     -- | The current slot number on the sequence of generated operations
@@ -649,4 +657,4 @@ genOperations slotNo nOps = gosOps <$> execStateT (replicateM_ nOps genOperation
       pure (k, Diff.Insert v)
 
 genKey :: Gen Key
-genKey = replicateM 2 $ elements ['A'..'Z']
+genKey = T.pack <$> replicateM 2 (elements ['A'..'Z'])

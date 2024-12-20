@@ -574,8 +574,6 @@ deriving via TrivialLedgerTables (LedgerState TestBlock)
 deriving via TrivialLedgerTables (Ticked (LedgerState TestBlock))
     instance HasLedgerTables (Ticked (LedgerState TestBlock))
 deriving via TrivialLedgerTables (LedgerState TestBlock)
-    instance CanSerializeLedgerTables (LedgerState TestBlock)
-deriving via TrivialLedgerTables (LedgerState TestBlock)
     instance CanStowLedgerTables (LedgerState TestBlock)
 
 instance ApplyBlock (LedgerState TestBlock) TestBlock where

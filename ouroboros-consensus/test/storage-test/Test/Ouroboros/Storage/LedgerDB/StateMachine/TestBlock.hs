@@ -25,7 +25,8 @@ module Test.Ouroboros.Storage.LedgerDB.StateMachine.TestBlock (
   , genesis
   ) where
 
-import           Cardano.Binary (FromCBOR (..), ToCBOR (..))
+import           Cardano.Binary (FromCBOR (..), ToCBOR (..), serialize',
+                     unsafeDeserialize')
 import qualified Cardano.Slotting.Slot as WithOrigin
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
@@ -37,6 +38,7 @@ import qualified Data.Map.Diff.Strict.Internal as DS
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe.Strict
+import           Data.MemPack
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.TreeDiff
@@ -97,7 +99,7 @@ instance QC.Arbitrary (Point TestBlock) where
 -- | Unit of value associated with the output produced by a transaction.
 newtype TValue = TValue ()
   deriving stock (Show, Eq, Ord, Generic)
-  deriving newtype (Serialise, NoThunks, ToExpr)
+  deriving newtype (Serialise, NoThunks, ToExpr, MemPack)
 
 {-------------------------------------------------------------------------------
   A ledger semantics for TestBlock
@@ -204,9 +206,6 @@ instance HasLedgerTables (Ticked (LedgerState TestBlock)) where
   withLedgerTables    (TickedTestLedger st) tables =
     TickedTestLedger $ withLedgerTables st $ castLedgerTables tables
 
-instance CanSerializeLedgerTables (LedgerState TestBlock) where
-  codecLedgerTables = defaultCodecLedgerTables
-
 instance Serialise (LedgerTables (LedgerState TestBlock) EmptyMK) where
   encode (LedgerTables (_ :: EmptyMK Token TValue))
          = CBOR.encodeNull
@@ -218,11 +217,10 @@ instance ToCBOR Token where
 instance FromCBOR Token where
   fromCBOR = fmap Token S.decode
 
-instance ToCBOR TValue where
-  toCBOR (TValue v) = S.encode v
-
-instance FromCBOR TValue where
-  fromCBOR = fmap TValue S.decode
+instance MemPack Token where
+  packM = packM . serialize'
+  packedByteCount = packedByteCount . serialize'
+  unpackM = unsafeDeserialize' <$> unpackM
 
 instance CanStowLedgerTables (LedgerState TestBlock) where
   stowLedgerTables     = stowErr "stowLedgerTables"

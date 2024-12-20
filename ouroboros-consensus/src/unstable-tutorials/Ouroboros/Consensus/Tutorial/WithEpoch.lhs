@@ -689,6 +689,4 @@ For reference on these instances and their meaning, please see the appendix in
 > deriving via TrivialLedgerTables (Ticked (LedgerState BlockD))
 >     instance HasLedgerTables (Ticked (LedgerState BlockD))
 > deriving via TrivialLedgerTables (LedgerState BlockD)
->     instance CanSerializeLedgerTables (LedgerState BlockD)
-> deriving via TrivialLedgerTables (LedgerState BlockD)
 >     instance CanStowLedgerTables (LedgerState BlockD)

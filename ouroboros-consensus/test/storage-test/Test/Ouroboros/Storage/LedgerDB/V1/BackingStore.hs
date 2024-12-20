@@ -28,6 +28,7 @@ import           Control.Monad.Class.MonadThrow (Handler (..), catches)
 import           Control.Monad.IO.Class (MonadIO (..))
 import           Control.Monad.Reader (runReaderT)
 import qualified Data.Map.Strict as Map
+import           Data.MemPack
 import qualified Data.Set as Set
 import qualified Data.SOP.Dict as Dict
 import           Data.Typeable
@@ -282,8 +283,7 @@ instance NoThunks a => NoThunks (QC.Fixed a) where
   wNoThunks ctxt = wNoThunks ctxt . QC.getFixed
   showTypeOf _ = "Fixed " ++ showTypeOf (Proxy @a)
 
-instance ToCBOR a => ToCBOR (QC.Fixed a) where
-  toCBOR = toCBOR . QC.getFixed
 
-instance FromCBOR a => FromCBOR (QC.Fixed a) where
-  fromCBOR = QC.Fixed <$> fromCBOR
+deriving newtype instance MemPack a => MemPack (QC.Fixed a)
+deriving newtype instance FromCBOR a => FromCBOR (QC.Fixed a)
+deriving newtype instance ToCBOR a => ToCBOR (QC.Fixed a)

@@ -56,8 +56,9 @@ import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.HFEras ()
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock,
-                     ShelleyLedgerConfig, mkShelleyLedgerConfig,
-                     shelleyLedgerState, shelleyLedgerTables)
+                     ShelleyLedgerConfig, ShelleyTxIn (..),
+                     mkShelleyLedgerConfig, shelleyLedgerState,
+                     shelleyLedgerTables)
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Test.Cardano.Ledger.Alonzo.Serialisation.Generators ()
@@ -237,11 +238,11 @@ byronUtxosAreInsertsInShelleyUtxoDiff srcLedgerState destLedgerState =
   where
     toNextUtxoDiff
       :: LedgerState ByronBlock mk
-      -> Diff.Diff (TxIn Crypto) (Core.TxOut (ShelleyEra Crypto))
+      -> Diff.Diff (ShelleyTxIn (ShelleyEra Crypto)) (Core.TxOut (ShelleyEra Crypto))
     toNextUtxoDiff ledgerState =
       let
         Byron.UTxO utxo = Byron.cvsUtxo $ byronLedgerState ledgerState
-        keyFn = translateTxInByronToShelley . Byron.fromCompactTxIn
+        keyFn = ShelleyTxIn . translateTxInByronToShelley . Byron.fromCompactTxIn
         valFn = Diff.Insert . translateCompactTxOutByronToShelley
       in
         Diff.Diff $ Map.map valFn $ Map.mapKeys keyFn utxo
@@ -263,9 +264,9 @@ shelleyAvvmAddressesAreDeletesInUtxoDiff srcLedgerState destLedgerState =
   where
     toNextUtxoDiff
       :: LedgerState (ShelleyBlock Proto (ShelleyEra Crypto)) EmptyMK
-      -> Diff.Diff (TxIn Crypto) (Core.TxOut (AllegraEra Crypto))
+      -> Diff.Diff (ShelleyTxIn (AllegraEra Crypto)) (Core.TxOut (AllegraEra Crypto))
     toNextUtxoDiff = avvmAddressesToUtxoDiff . stashedAVVMAddresses . shelleyLedgerState
-    avvmAddressesToUtxoDiff (UTxO m) = Diff.Diff $ Map.map (\_ -> Diff.Delete) m
+    avvmAddressesToUtxoDiff (UTxO m) = Diff.Diff $ Map.map (\_ -> Diff.Delete) $ Map.mapKeys ShelleyTxIn m
 
 utxoTablesAreEmpty
   :: LedgerState (ShelleyBlock srcProto srcEra) EmptyMK
@@ -294,7 +295,7 @@ nonEmptyAvvmAddresses ledgerState =
 
 extractUtxoDiff
   :: LedgerState (ShelleyBlock proto era) DiffMK
-  -> Diff (TxIn (EraCrypto era)) (Core.TxOut era)
+  -> Diff (ShelleyTxIn era) (Core.TxOut era)
 extractUtxoDiff shelleyLedgerState =
   let DiffMK tables = getLedgerTables $ shelleyLedgerTables shelleyLedgerState
   in tables

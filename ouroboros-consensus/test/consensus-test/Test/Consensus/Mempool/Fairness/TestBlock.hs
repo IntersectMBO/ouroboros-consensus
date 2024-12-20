@@ -145,6 +145,3 @@ instance Ledger.LedgerTablesAreTrivial (Ticked (Ledger.LedgerState TestBlock)) w
       TestBlock.TickedTestLedger (Ledger.convertMapKind x)
 deriving via Ledger.TrivialLedgerTables (Ledger.LedgerState TestBlock)
     instance Ledger.CanStowLedgerTables (Ledger.LedgerState TestBlock)
-
-deriving via Ledger.TrivialLedgerTables (Ledger.LedgerState TestBlock)
-    instance Ledger.CanSerializeLedgerTables (Ledger.LedgerState TestBlock)
