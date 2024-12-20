@@ -103,7 +103,7 @@ instance Crypto c => ToCBOR (LegacyPParams (AlonzoEra c)) where
 
 instance Crypto c => FromCBOR (LegacyPParams (AlonzoEra c)) where
   fromCBOR =
-    toPlainDecoder (eraProtVerLow @(AlonzoEra c)) $
+    eraDecoder @(AlonzoEra c) $
       decode $
         RecD mkLegacyAlonzoPParams
           <! From -- appMinFeeA
@@ -173,7 +173,7 @@ instance Crypto c => ToCBOR (LegacyPParams (BabbageEra c)) where
 
 instance Crypto c => FromCBOR (LegacyPParams (BabbageEra c)) where
   fromCBOR =
-    toPlainDecoder (eraProtVerLow @(BabbageEra c)) $
+    eraDecoder @(BabbageEra c) $
       decode $
         RecD mkLegacyBabbagePParams
           <! From -- bppMinFeeA
