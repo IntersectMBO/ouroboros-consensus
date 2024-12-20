@@ -81,7 +81,6 @@ guardClosed (LedgerTablesHandleOpen st) f = f st
 newInMemoryLedgerTablesHandle ::
      ( IOLike m
      , HasLedgerTables l
-     , CanSerializeLedgerTables l
      )
   => SomeHasFS m
   -> LedgerTables l ValuesMK

@@ -71,6 +71,7 @@ import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.ByteString.Short as Short
 import           Data.Functor ((<&>))
 import           Data.Kind (Type)
+import           Data.MemPack (MemPack)
 import           Data.Typeable
 import           GHC.Generics (Generic)
 import           GHC.Stack
@@ -954,6 +955,8 @@ instance (
   , Show (TxIn (LedgerState m))
   , Eq (TxOut (LedgerState m))
   , Ord (TxIn (LedgerState m))
+  , MemPack (TxOut (LedgerState m))
+  , MemPack (TxIn (LedgerState m))
 #endif
   ) => HasLedgerTables (LedgerState (DualBlock m a)) where
   projectLedgerTables DualLedgerState{..} =
@@ -977,6 +980,8 @@ instance (
   , Show (TxIn (LedgerState m))
   , Eq (TxOut (LedgerState m))
   , Ord (TxIn (LedgerState m))
+  , MemPack (TxOut (LedgerState m))
+  , MemPack (TxIn (LedgerState m))
 #endif
   )=> HasLedgerTables (Ticked (LedgerState (DualBlock m a))) where
   projectLedgerTables TickedDualLedgerState{..} =
@@ -993,10 +998,6 @@ instance (
         , tickedDualLedgerStateBridge
         , tickedDualLedgerStateAuxOrig
         }
-
-instance CanSerializeLedgerTables (LedgerState m)
-      => CanSerializeLedgerTables (LedgerState (DualBlock m a)) where
-  codecLedgerTables = castLedgerTables $ codecLedgerTables @(LedgerState m)
 
 instance CanStowLedgerTables (LedgerState m)
       => CanStowLedgerTables (LedgerState (DualBlock m a)) where

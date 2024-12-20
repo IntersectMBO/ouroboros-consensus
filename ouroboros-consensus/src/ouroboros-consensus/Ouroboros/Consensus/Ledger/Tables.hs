@@ -1,12 +1,15 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | This module defines the 'LedgerTables', a portion of the Ledger notion of a
 -- /ledger state/ (not to confuse with our
@@ -164,9 +167,6 @@ module Ouroboros.Consensus.Ledger.Tables (
   , HasLedgerTables (..)
   , HasTickedLedgerTables
     -- * Serialization
-  , CanSerializeLedgerTables
-  , codecLedgerTables
-  , defaultCodecLedgerTables
   , valuesMKDecoder
   , valuesMKEncoder
     -- * Special classes
@@ -180,9 +180,11 @@ import           Cardano.Binary (FromCBOR (fromCBOR), ToCBOR (toCBOR))
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import           Control.Monad (replicateM)
+import           Data.ByteString (ByteString)
 import           Data.Kind (Constraint, Type)
 import qualified Data.Map.Strict as Map
-import           Data.Void (Void)
+import           Data.MemPack
+import           Data.Void (Void, absurd)
 import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Ledger.Tables.Basics
 import           Ouroboros.Consensus.Ledger.Tables.Combinators
@@ -202,6 +204,8 @@ class ( Ord (TxIn l)
       , Show (TxOut l)
       , NoThunks (TxIn l)
       , NoThunks (TxOut l)
+      , MemPack (TxIn l)
+      , MemPack (TxOut l)
       ) => HasLedgerTables l where
 
   -- | Extract the ledger tables from a ledger state
@@ -235,6 +239,8 @@ instance ( Ord (TxIn l)
          , Show (TxOut l)
          , NoThunks (TxIn l)
          , NoThunks (TxOut l)
+         , MemPack (TxIn l)
+         , MemPack (TxOut l)
          ) => HasLedgerTables (LedgerTables l) where
   projectLedgerTables = castLedgerTables
   withLedgerTables _ = castLedgerTables
@@ -264,62 +270,48 @@ class CanStowLedgerTables l where
   Serialization Codecs
 -------------------------------------------------------------------------------}
 
--- | This class provides a 'CodecMK' that can be used to encode/decode keys and
--- values on @'LedgerTables' l mk@
---
--- TODO: can this be removed in favour of EncodeDisk and DecodeDisk?
-type CanSerializeLedgerTables :: LedgerStateKind -> Constraint
-class CanSerializeLedgerTables l where
-  codecLedgerTables :: LedgerTables l CodecMK
-
-defaultCodecLedgerTables ::
-     ( FromCBOR (TxIn  l)
-     , FromCBOR (TxOut l)
-     , ToCBOR   (TxIn  l)
-     , ToCBOR   (TxOut l)
-     )
-  => LedgerTables l CodecMK
-defaultCodecLedgerTables = LedgerTables $ CodecMK toCBOR toCBOR fromCBOR fromCBOR
-
 -- | Default encoder of @'LedgerTables' l ''ValuesMK'@ to be used by the
 -- in-memory backing store.
 valuesMKEncoder ::
-     ( HasLedgerTables l
-     , CanSerializeLedgerTables l
-     )
+     forall l. (MemPack (TxIn l), MemPack (TxOut l))
   => LedgerTables l ValuesMK
   -> CBOR.Encoding
-valuesMKEncoder tables =
+valuesMKEncoder (LedgerTables tables) =
        CBOR.encodeListLen 1
-    <> ltcollapse (ltliftA2 (K2 .: go) codecLedgerTables tables)
+    <> go tables
   where
-    go :: CodecMK k v -> ValuesMK k v -> CBOR.Encoding
-    go (CodecMK encK encV _decK _decV) (ValuesMK m) =
+    go :: ValuesMK (TxIn l) (TxOut l) -> CBOR.Encoding
+    go (ValuesMK m) =
          CBOR.encodeMapLen (fromIntegral $ Map.size m)
-      <> Map.foldMapWithKey (\k v -> encK k <> encV v) m
+      <> Map.foldMapWithKey (\k v -> toCBOR (packByteString (k, v))) m
 
 -- | Default decoder of @'LedgerTables' l ''ValuesMK'@ to be used by the
 -- in-memory backing store.
 valuesMKDecoder ::
-     ( HasLedgerTables l
-     , CanSerializeLedgerTables l
-     )
+     forall l s. (Ord (TxIn l), MemPack (TxIn l), MemPack (TxOut l))
   => CBOR.Decoder s (LedgerTables l ValuesMK)
 valuesMKDecoder = do
     _ <- CBOR.decodeListLenOf 1
     mapLen <- CBOR.decodeMapLen
-    lttraverse (go mapLen) codecLedgerTables
+    LedgerTables <$> go mapLen
  where
-  go :: Ord k
-     => Int
-     -> CodecMK k v
-     -> CBOR.Decoder s (ValuesMK k v)
-  go len (CodecMK _encK _encV decK decV) =
+  go :: Int
+     -> CBOR.Decoder s (ValuesMK (TxIn l) (TxOut l))
+  go len =
     ValuesMK . Map.fromList
-      <$> replicateM len (do
-                               !k <- decK
-                               !v <- decV
-                               pure (k, v))
+      <$> replicateM len (unpackError @(TxIn l, TxOut l) @ByteString <$> fromCBOR)
+
+-- TODO these instances will be gone once we update our ref for mempack which
+-- @lehins will have to release.
+--
+-- Remove also the Wno-orphans above!
+instance MemPack Void where
+  packedByteCount = absurd
+  {-# INLINE packedByteCount #-}
+  packM = absurd
+  {-# INLINE packM #-}
+  unpackM = error "absurd"
+  {-# INLINE unpackM #-}
 
 {-------------------------------------------------------------------------------
   Special classes of ledger states
@@ -363,6 +355,3 @@ instance LedgerTablesAreTrivial l => HasLedgerTables (TrivialLedgerTables l) whe
 instance LedgerTablesAreTrivial l => CanStowLedgerTables (TrivialLedgerTables l) where
   stowLedgerTables = convertMapKind
   unstowLedgerTables = convertMapKind
-
-instance LedgerTablesAreTrivial l => CanSerializeLedgerTables (TrivialLedgerTables l) where
-  codecLedgerTables = defaultCodecLedgerTables

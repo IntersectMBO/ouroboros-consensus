@@ -35,6 +35,7 @@ import           Codec.CBOR.Decoding (Decoder, decodeListLenOf)
 import           Codec.CBOR.Encoding (Encoding, encodeListLen)
 import           Control.Monad.Except
 import           Data.Functor ((<&>))
+import           Data.MemPack
 import           Data.Proxy
 import           Data.Typeable
 import           GHC.Generics (Generic)
@@ -273,6 +274,8 @@ instance (
   , Show (TxIn (LedgerState blk))
   , Eq (TxOut (LedgerState blk))
   , Ord (TxIn (LedgerState blk))
+  , MemPack (TxOut (LedgerState blk))
+  , MemPack (TxIn (LedgerState blk))
 #endif
   ) => HasLedgerTables (ExtLedgerState blk) where
   projectLedgerTables (ExtLedgerState lstate _) =
@@ -281,10 +284,6 @@ instance (
       ExtLedgerState
         (lstate `withLedgerTables` castLedgerTables tables)
         hstate
-
-instance CanSerializeLedgerTables (LedgerState blk)
-      => CanSerializeLedgerTables (ExtLedgerState blk) where
-  codecLedgerTables = castLedgerTables $ codecLedgerTables @(LedgerState blk)
 
 instance LedgerTablesAreTrivial (LedgerState blk)
       => LedgerTablesAreTrivial (ExtLedgerState blk) where
@@ -304,6 +303,8 @@ instance (
   , Show (TxIn (LedgerState blk))
   , Eq (TxOut (LedgerState blk))
   , Ord (TxIn (LedgerState blk))
+  , MemPack (TxIn (LedgerState blk))
+  , MemPack (TxOut (LedgerState blk))
 #endif
   ) => HasLedgerTables (Ticked (ExtLedgerState blk)) where
   projectLedgerTables (TickedExtLedgerState lstate _view _hstate) =
