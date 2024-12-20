@@ -33,6 +33,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger (
   , ShelleyLedgerError (..)
   , ShelleyTip (..)
   , ShelleyTransition (..)
+  , ShelleyTxIn (..)
   , Ticked (..)
   , castShelleyTip
   , shelleyLedgerTipPoint
@@ -80,6 +81,9 @@ import           Control.Monad.Except
 import qualified Control.State.Transition.Extended as STS
 import           Data.Coerce (coerce)
 import           Data.Functor.Identity
+import qualified Data.Map.Strict as Map
+import           Data.MemPack
+import qualified Data.Set as Set
 import qualified Data.Text as Text
 import           Data.Word
 import           GHC.Generics (Generic)
@@ -261,8 +265,16 @@ shelleyLedgerTipPoint = shelleyTipToPoint . shelleyLedgerTip
 
 instance ShelleyCompatible proto era => UpdateLedger (ShelleyBlock proto era)
 
-type instance TxIn  (LedgerState (ShelleyBlock proto era)) = SL.TxIn (EraCrypto era)
+type instance TxIn  (LedgerState (ShelleyBlock proto era)) = ShelleyTxIn era
 type instance TxOut (LedgerState (ShelleyBlock proto era)) = Core.TxOut era
+
+newtype ShelleyTxIn era = ShelleyTxIn { getShelleyTxIn :: SL.TxIn (EraCrypto era) }
+  deriving newtype (Eq, Show, Generic, Ord, NoThunks)
+
+instance ShelleyBasedEra era => MemPack (ShelleyTxIn era) where
+  packM = packM . getShelleyTxIn
+  packedByteCount = packedByteCount . getShelleyTxIn
+  unpackM = ShelleyTxIn @era <$> unpackM
 
 instance ShelleyBasedEra era
       => HasLedgerTables (LedgerState (ShelleyBlock proto era)) where
@@ -299,14 +311,6 @@ instance ShelleyBasedEra era
         } = st
 
 instance ShelleyBasedEra era
-      => CanSerializeLedgerTables (LedgerState (ShelleyBlock proto era)) where
-    codecLedgerTables = LedgerTables (CodecMK
-                                       (Core.toEraCBOR @era)
-                                       (Core.toEraCBOR @era)
-                                       (Core.fromEraCBOR @era)
-                                       (Core.fromEraShareCBOR @era))
-
-instance ShelleyBasedEra era
       => CanStowLedgerTables (LedgerState (ShelleyBlock proto era)) where
   stowLedgerTables st =
       ShelleyLedgerState {
@@ -316,7 +320,7 @@ instance ShelleyBasedEra era
         , shelleyLedgerTables     = emptyLedgerTables
         }
     where
-      (_, shelleyLedgerState') = shelleyLedgerState `slUtxoL` SL.UTxO m
+      (_, shelleyLedgerState') = shelleyLedgerState `slUtxoL` SL.UTxO (Map.mapKeys getShelleyTxIn m)
       ShelleyLedgerState {
           shelleyLedgerTip
         , shelleyLedgerState
@@ -328,7 +332,7 @@ instance ShelleyBasedEra era
           shelleyLedgerTip        = shelleyLedgerTip
         , shelleyLedgerState      = shelleyLedgerState'
         , shelleyLedgerTransition = shelleyLedgerTransition
-        , shelleyLedgerTables     = LedgerTables (ValuesMK (SL.unUTxO tbs))
+        , shelleyLedgerTables     = LedgerTables (ValuesMK (Map.mapKeys ShelleyTxIn $ SL.unUTxO tbs))
         }
     where
       (tbs, shelleyLedgerState') = shelleyLedgerState `slUtxoL` mempty
@@ -349,7 +353,7 @@ instance ShelleyBasedEra era
        }
     where
       (_, tickedShelleyLedgerState') =
-         tickedShelleyLedgerState `slUtxoL` SL.UTxO tbs
+         tickedShelleyLedgerState `slUtxoL` SL.UTxO (Map.mapKeys getShelleyTxIn tbs)
       TickedShelleyLedgerState {
           untickedShelleyLedgerTip
         , tickedShelleyLedgerTransition
@@ -362,7 +366,7 @@ instance ShelleyBasedEra era
          untickedShelleyLedgerTip      = untickedShelleyLedgerTip
        , tickedShelleyLedgerTransition = tickedShelleyLedgerTransition
        , tickedShelleyLedgerState      = tickedShelleyLedgerState'
-       , tickedShelleyLedgerTables     = LedgerTables (ValuesMK (SL.unUTxO tbs))
+       , tickedShelleyLedgerTables     = LedgerTables (ValuesMK (Map.mapKeys ShelleyTxIn $ SL.unUTxO tbs))
        }
     where
       (tbs, tickedShelleyLedgerState') = tickedShelleyLedgerState `slUtxoL` mempty
@@ -524,6 +528,7 @@ instance ShelleyCompatible proto era
   getBlockKeySets =
         LedgerTables
       . KeysMK
+      . Set.map ShelleyTxIn
       . Core.neededTxInsForBlock
       . shelleyBlockRaw
 

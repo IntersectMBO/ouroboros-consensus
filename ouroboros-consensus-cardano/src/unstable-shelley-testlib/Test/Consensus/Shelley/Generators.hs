@@ -18,6 +18,7 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import           Data.Coerce (coerce)
+import qualified Data.Map.Strict as Map
 import           Generic.Random (genericArbitraryU)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation
@@ -201,7 +202,7 @@ instance CanMock proto era
     <$> arbitrary
     <*> arbitrary
     <*> arbitrary
-    <*> (LedgerTables . ValuesMK <$> arbitrary)
+    <*> (LedgerTables . ValuesMK . Map.mapKeys ShelleyTxIn <$> arbitrary)
 
 instance CanMock proto era => Arbitrary (AnnTip (ShelleyBlock proto era)) where
   arbitrary = AnnTip

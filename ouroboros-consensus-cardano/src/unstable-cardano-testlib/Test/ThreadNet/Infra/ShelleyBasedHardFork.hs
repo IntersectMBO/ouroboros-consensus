@@ -33,10 +33,12 @@ module Test.ThreadNet.Infra.ShelleyBasedHardFork (
   , protocolInfoShelleyBasedHardFork
   ) where
 
+import           Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Control.Monad.Except (runExcept)
+import           Data.Coerce
 import qualified Data.Map.Strict as Map
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Functors (Flip (..))
@@ -239,7 +241,7 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
              (ShelleyBlock proto1 era1)
              (ShelleyBlock proto2 era2)
       translateLedgerTables = HFC.TranslateLedgerTables {
-            translateTxInWith  = id
+            translateTxInWith  = coerce
           , translateTxOutWith = SL.upgradeTxOut
           }
 
@@ -321,14 +323,14 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
       (\idx -> answerShelleyLookupQueries
                  (injectLedgerTables idx)
                  (ejectHardForkTxOutDefault idx)
-                 (ejectCanonicalTxIn idx)
+                 (getShelleyTxIn . ejectCanonicalTxIn idx)
       )
 
   answerBlockQueryHFTraverse =
     answerShelleyBasedQueryHF
       (\idx -> answerShelleyTraversingQueries
                  (ejectHardForkTxOutDefault idx)
-                 (ejectCanonicalTxIn idx)
+                 (getShelleyTxIn . ejectCanonicalTxIn idx)
                  (queryLedgerGetTraversingFilter @('[ShelleyBlock proto1 era1, ShelleyBlock proto2 era2]) idx)
       )
 
@@ -448,31 +450,22 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
       => HasCanonicalTxIn (ShelleyBasedHardForkEras proto1 era1 proto2 era2) where
   newtype instance CanonicalTxIn (ShelleyBasedHardForkEras proto1 era1 proto2 era2) =
     ShelleyHFCTxIn {
-        getShelleyHFCTxIn :: SL.TxIn (EraCrypto era1)
+        getShelleyHFCTxIn :: ShelleyTxIn era1
       }
     deriving stock (Show, Eq, Ord)
-    deriving newtype NoThunks
+    deriving newtype (NoThunks, ToCBOR, FromCBOR)
 
   injectCanonicalTxIn IZ             txIn = ShelleyHFCTxIn txIn
-  injectCanonicalTxIn (IS IZ)        txIn = ShelleyHFCTxIn txIn
+  injectCanonicalTxIn (IS IZ)        txIn = ShelleyHFCTxIn (coerce txIn)
   injectCanonicalTxIn (IS (IS idx')) _    = case idx' of {}
 
-  ejectCanonicalTxIn IZ            txIn  = getShelleyHFCTxIn txIn
-  ejectCanonicalTxIn (IS IZ)        txIn = getShelleyHFCTxIn txIn
+  ejectCanonicalTxIn IZ             txIn = getShelleyHFCTxIn txIn
+  ejectCanonicalTxIn (IS IZ)        txIn = coerce (getShelleyHFCTxIn txIn)
   ejectCanonicalTxIn (IS (IS idx')) _    = case idx' of {}
 
-  encodeCanonicalTxIn = SL.toEraCBOR @era1 . getShelleyHFCTxIn
-
-  decodeCanonicalTxIn = ShelleyHFCTxIn <$> SL.fromEraCBOR @era1
-
-instance CanHardFork (ShelleyBasedHardForkEras proto1 era1 proto2 era2)
+instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
       => HasHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2) where
   type instance HardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2) =
                   DefaultHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2)
   injectHardForkTxOut = injectHardForkTxOutDefault
   ejectHardForkTxOut = ejectHardForkTxOutDefault
-
-instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
-      => SerializeHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2) where
-  encodeHardForkTxOut _ = encodeHardForkTxOutDefault
-  decodeHardForkTxOut _ = decodeHardForkTxOutDefault

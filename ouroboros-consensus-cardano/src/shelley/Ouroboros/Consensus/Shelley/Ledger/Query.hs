@@ -78,6 +78,7 @@ import           Data.Bifunctor (second)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
+import           Data.MemPack
 import           Data.Sequence (Seq (..))
 import           Data.Set (Set)
 import qualified Data.Set as Set
@@ -521,9 +522,9 @@ instance ( ShelleyCompatible proto era
       hst = headerState ext
       st  = shelleyLedgerState lst
 
-  answerBlockQueryLookup = answerShelleyLookupQueries id id id
+  answerBlockQueryLookup = answerShelleyLookupQueries id id getShelleyTxIn
 
-  answerBlockQueryTraverse = answerShelleyTraversingQueries id id shelleyQFTraverseTablesPredicate
+  answerBlockQueryTraverse = answerShelleyTraversingQueries id getShelleyTxIn shelleyQFTraverseTablesPredicate
 
 instance SameDepIndex2 (BlockQuery (ShelleyBlock proto era)) where
   sameDepIndex2 GetLedgerTip GetLedgerTip
@@ -1146,7 +1147,7 @@ answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q forker =
       LedgerTables (ValuesMK values) <-
         LedgerDB.roforkerReadTables
           forker
-          (castLedgerTables $ injTables (LedgerTables $ KeysMK txins))
+          (castLedgerTables $ injTables (LedgerTables $ KeysMK $ Set.map ShelleyTxIn txins))
       pure
         $ SL.UTxO
         $ Map.mapKeys ejTxIn
@@ -1187,6 +1188,8 @@ answerShelleyTraversingQueries ::
      ( ShelleyCompatible proto era
      , Ord (TxIn (LedgerState blk))
      , Eq (TxOut (LedgerState blk))
+     , MemPack (TxOut (LedgerState blk))
+     , MemPack (TxIn (LedgerState blk))
      )
   => Monad m
   => (TxOut (LedgerState blk) -> LC.TxOut era)
