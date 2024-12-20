@@ -620,6 +620,7 @@ translateLedgerStateShelleyToAllegraWrapper =
                   avvmsAsDeletions = LedgerTables
                                    . DiffMK
                                    . Diff.fromMapDeletes
+                                   . Map.mapKeys ShelleyTxIn
                                    . Map.map SL.upgradeTxOut
                                    $ avvms
 
@@ -631,6 +632,7 @@ translateLedgerStateShelleyToAllegraWrapper =
                               . withLedgerTables ls
                               . LedgerTables
                               . ValuesMK
+                              . Map.mapKeys ShelleyTxIn
                               $ avvms
 
                   resultingState = unFlip . unComp
@@ -647,7 +649,7 @@ translateLedgerTablesShelleyToAllegraWrapper ::
       (ShelleyBlock (TPraos c) (ShelleyEra c))
        (ShelleyBlock (TPraos c) (AllegraEra c))
 translateLedgerTablesShelleyToAllegraWrapper = TranslateLedgerTables {
-      translateTxInWith  = id
+      translateTxInWith  = coerce
     , translateTxOutWith = SL.upgradeTxOut
     }
 
@@ -696,7 +698,7 @@ translateLedgerTablesAllegraToMaryWrapper ::
        (ShelleyBlock (TPraos c) (AllegraEra c))
        (ShelleyBlock (TPraos c) (MaryEra c))
 translateLedgerTablesAllegraToMaryWrapper = TranslateLedgerTables {
-      translateTxInWith  = id
+      translateTxInWith  = coerce
     , translateTxOutWith = SL.upgradeTxOut
     }
 
@@ -745,7 +747,7 @@ translateLedgerTablesMaryToAlonzoWrapper ::
        (ShelleyBlock (TPraos c) (MaryEra c))
        (ShelleyBlock (TPraos c) (AlonzoEra c))
 translateLedgerTablesMaryToAlonzoWrapper = TranslateLedgerTables {
-      translateTxInWith  = id
+      translateTxInWith  = coerce
     , translateTxOutWith = SL.upgradeTxOut
     }
 
@@ -815,7 +817,7 @@ translateLedgerTablesAlonzoToBabbageWrapper ::
        (ShelleyBlock (TPraos c) (AlonzoEra c))
        (ShelleyBlock (Praos c) (BabbageEra c))
 translateLedgerTablesAlonzoToBabbageWrapper = TranslateLedgerTables {
-      translateTxInWith  = id
+      translateTxInWith  = coerce
     , translateTxOutWith = SL.upgradeTxOut
     }
 
@@ -884,7 +886,7 @@ translateLedgerTablesBabbageToConwayWrapper ::
        (ShelleyBlock (Praos c) (BabbageEra c))
        (ShelleyBlock (Praos c) (ConwayEra c))
 translateLedgerTablesBabbageToConwayWrapper = TranslateLedgerTables {
-      translateTxInWith  = id
+      translateTxInWith  = coerce
     , translateTxOutWith = SL.upgradeTxOut
     }
 

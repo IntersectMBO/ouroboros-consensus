@@ -11,8 +11,8 @@
 
 module Ouroboros.Consensus.Cardano.ByronHFC (ByronBlockHFC) where
 
-import           Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import qualified Data.Map.Strict as Map
+import           Data.MemPack
 import           Data.SOP.Index (Index (..))
 import           Data.Void (Void, absurd)
 import           NoThunks.Class (NoThunks)
@@ -95,16 +95,12 @@ instance HasCanonicalTxIn '[ByronBlock] where
       getByronHFCTxIn :: Void
     }
     deriving stock (Show, Eq, Ord)
-    deriving newtype (NoThunks, FromCBOR, ToCBOR)
+    deriving newtype (NoThunks, MemPack)
 
   injectCanonicalTxIn IZ key      = absurd key
   injectCanonicalTxIn (IS idx') _ = case idx' of {}
 
   ejectCanonicalTxIn _ key = absurd $ getByronHFCTxIn key
-
-  encodeCanonicalTxIn = toCBOR
-
-  decodeCanonicalTxIn = fromCBOR
 
 instance HasHardForkTxOut '[ByronBlock] where
   type instance HardForkTxOut '[ByronBlock] = Void
@@ -112,10 +108,6 @@ instance HasHardForkTxOut '[ByronBlock] where
   injectHardForkTxOut (IS idx') _ = case idx' of {}
   ejectHardForkTxOut IZ txout    = absurd txout
   ejectHardForkTxOut (IS idx') _ = case idx' of {}
-
-instance SerializeHardForkTxOut '[ByronBlock] where
-  encodeHardForkTxOut _ = toCBOR
-  decodeHardForkTxOut _ = fromCBOR
 
 instance BlockSupportsHFLedgerQuery '[ByronBlock] where
   answerBlockQueryHFLookup IZ      _cfg  (q :: BlockQuery ByronBlock QFLookupTables result) _dlv = case q of {}

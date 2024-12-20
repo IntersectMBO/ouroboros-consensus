@@ -65,6 +65,7 @@ import           Control.Monad.Identity (Identity (..))
 import           Data.DerivingVia (InstantiatedAt (..))
 import           Data.Foldable (toList)
 import           Data.Measure (Measure)
+import qualified Data.Set as Set
 import           Data.Typeable (Typeable)
 import qualified Data.Validation as V
 import           GHC.Generics (Generic)
@@ -79,6 +80,7 @@ import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Ledger
                      (ShelleyLedgerConfig (shelleyLedgerGlobals),
+                     ShelleyTxIn (..),
                      Ticked (TickedShelleyLedgerState, tickedShelleyLedgerState),
                      getPParams)
 import           Ouroboros.Consensus.Util (ShowProxy (..))
@@ -153,6 +155,7 @@ instance (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era))
   getTransactionKeySets (ShelleyTx _ tx) =
         LedgerTables
       $ KeysMK
+      $ Set.map ShelleyTxIn
         (tx ^. (bodyTxL . SL.allInputsTxBodyF))
 
 mkShelleyTx :: forall era proto. ShelleyBasedEra era => Tx era -> GenTx (ShelleyBlock proto era)
