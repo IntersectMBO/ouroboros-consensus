@@ -134,8 +134,6 @@ deriving via TrivialLedgerTables (LedgerState ByronSpecBlock)
 deriving via TrivialLedgerTables (Ticked (LedgerState ByronSpecBlock))
     instance HasLedgerTables (Ticked (LedgerState ByronSpecBlock))
 deriving via TrivialLedgerTables (LedgerState ByronSpecBlock)
-    instance CanSerializeLedgerTables (LedgerState ByronSpecBlock)
-deriving via TrivialLedgerTables (LedgerState ByronSpecBlock)
     instance CanStowLedgerTables (LedgerState ByronSpecBlock)
 
 {-------------------------------------------------------------------------------

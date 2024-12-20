@@ -407,9 +407,6 @@ deriving instance ( SimpleCrypto c
                   )
                   => Show (LedgerState (SimpleBlock c ext) mk)
 
-deriving anyclass instance KnownNat (Hash.SizeHash (SimpleHash c)) =>
-  Serialise (LedgerState (SimpleBlock c ext))
-
 -- Ticking has no effect on the simple ledger state
 newtype instance Ticked (LedgerState (SimpleBlock c ext)) mk = TickedSimpleLedgerState {
       getTickedSimpleLedgerState :: LedgerState (SimpleBlock c ext) mk
@@ -479,9 +476,6 @@ instance HasLedgerTables (Ticked (LedgerState (SimpleBlock c ext))) where
                       . getTickedSimpleLedgerState
   withLedgerTables   (TickedSimpleLedgerState st) tables =
       TickedSimpleLedgerState $ withLedgerTables st $ castLedgerTables tables
-
-instance CanSerializeLedgerTables (LedgerState (SimpleBlock c ext)) where
-  codecLedgerTables = defaultCodecLedgerTables
 
 instance CanStowLedgerTables (LedgerState (SimpleBlock c ext)) where
   stowLedgerTables st =

@@ -51,12 +51,10 @@ import           Data.Proxy (Proxy (..))
 import           Data.TreeDiff
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block (CodecConfig)
-import           Ouroboros.Consensus.Ledger.Abstract (LedgerState)
 import           Ouroboros.Consensus.Ledger.Extended (encodeExtLedgerState)
 import           Ouroboros.Consensus.Ledger.Query (QueryVersion,
                      nodeToClientVersionToQueryVersion)
-import           Ouroboros.Consensus.Ledger.Tables (HasLedgerTables,
-                     valuesMKEncoder)
+import           Ouroboros.Consensus.Ledger.Tables (valuesMKEncoder)
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
                      (HasNetworkProtocolVersion (..),
                      SupportedNetworkProtocolVersion (..))
@@ -224,7 +222,6 @@ goldenTest_all ::
      ( SerialiseDiskConstraints         blk
      , SerialiseNodeToNodeConstraints   blk
      , SerialiseNodeToClientConstraints blk
-     , HasLedgerTables     (LedgerState blk)
      , SupportedNetworkProtocolVersion  blk
 
      , ToGoldenDirectory (BlockNodeToNodeVersion   blk)
@@ -249,8 +246,7 @@ goldenTest_all codecConfig goldenDir examples =
 -- 'SerialiseDiskConstraints'?
 goldenTest_SerialiseDisk ::
      forall blk.
-     ( HasLedgerTables (LedgerState blk)
-     , SerialiseDiskConstraints blk
+     ( SerialiseDiskConstraints blk
      , HasCallStack
      )
   => CodecConfig blk

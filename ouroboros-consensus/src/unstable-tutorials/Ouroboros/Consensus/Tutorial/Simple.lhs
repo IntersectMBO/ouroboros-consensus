@@ -749,6 +749,4 @@ and we use the default implementation
 > deriving via TrivialLedgerTables (Ticked (LedgerState BlockC))
 >     instance HasLedgerTables (Ticked (LedgerState BlockC))
 > deriving via TrivialLedgerTables (LedgerState BlockC)
->     instance CanSerializeLedgerTables (LedgerState BlockC)
-> deriving via TrivialLedgerTables (LedgerState BlockC)
 >     instance CanStowLedgerTables (LedgerState BlockC)

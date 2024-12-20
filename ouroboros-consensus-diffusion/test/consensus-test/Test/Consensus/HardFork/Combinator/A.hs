@@ -210,8 +210,6 @@ deriving via TrivialLedgerTables (LedgerState BlockA)
 deriving via TrivialLedgerTables (Ticked (LedgerState BlockA))
     instance HasLedgerTables (Ticked (LedgerState BlockA))
 deriving via TrivialLedgerTables (LedgerState BlockA)
-    instance CanSerializeLedgerTables (LedgerState BlockA)
-deriving via TrivialLedgerTables (LedgerState BlockA)
     instance CanStowLedgerTables (LedgerState BlockA)
 
 data PartialLedgerConfigA = LCfgA {
