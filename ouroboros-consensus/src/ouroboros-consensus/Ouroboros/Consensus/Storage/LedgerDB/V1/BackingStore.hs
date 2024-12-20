@@ -54,7 +54,6 @@ type BackingStoreInitialiser m l =
 restoreBackingStore ::
      ( IOLike m
      , HasLedgerTables l
-     , CanSerializeLedgerTables l
      , HasCallStack
      )
   => Tracer m FlavorImplSpecificTrace
@@ -69,7 +68,6 @@ restoreBackingStore trcr bss fs loadPath =
 newBackingStore ::
      ( IOLike m
      , HasLedgerTables l
-     , CanSerializeLedgerTables l
      , HasCallStack
      )
   => Tracer m FlavorImplSpecificTrace
@@ -84,7 +82,6 @@ newBackingStoreInitialiser ::
      forall m l.
      ( IOLike m
      , HasLedgerTables l
-     , CanSerializeLedgerTables l
      , HasCallStack
      )
   => Tracer m FlavorImplSpecificTrace

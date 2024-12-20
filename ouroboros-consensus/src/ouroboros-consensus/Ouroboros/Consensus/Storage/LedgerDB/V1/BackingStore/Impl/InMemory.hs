@@ -65,7 +65,6 @@ deriving instance ( NoThunks (TxIn l)
 newInMemoryBackingStore ::
      forall l m.
      ( IOLike m
-     , CanSerializeLedgerTables l
      , HasLedgerTables l
      )
   => Tracer m BackingStoreTrace
