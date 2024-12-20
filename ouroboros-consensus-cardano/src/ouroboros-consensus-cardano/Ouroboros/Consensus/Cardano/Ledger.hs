@@ -31,14 +31,15 @@ module Ouroboros.Consensus.Cardano.Ledger (
   , eliminateCardanoTxOut
   ) where
 
-import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Shelley.API as SL
-import qualified Codec.CBOR.Decoding as CBOR
-import qualified Codec.CBOR.Encoding as CBOR
+import           Data.Maybe
+import           Data.MemPack
+import           Data.SOP.BasicFunctors
 import           Data.SOP.Index
 import qualified Data.SOP.InPairs as InPairs
+import           Data.SOP.Strict
 import           Data.Void
-import           GHC.Generics
+import           GHC.Generics (Generic)
 import           NoThunks.Class
 import           Ouroboros.Consensus.Block (BlockProtocol)
 import           Ouroboros.Consensus.Cardano.Block
@@ -49,7 +50,7 @@ import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import           Ouroboros.Consensus.Shelley.Ledger (IsShelleyBlock,
-                     ShelleyBlock, ShelleyBlockLedgerEra)
+                     ShelleyBlock, ShelleyBlockLedgerEra, ShelleyTxIn (..))
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import           Ouroboros.Consensus.TypeFamilyWrappers
 
@@ -63,28 +64,29 @@ instance CardanoHardForkConstraints c
 
   injectCanonicalTxIn IZ       byronTxIn   = absurd byronTxIn
   injectCanonicalTxIn (IS idx) shelleyTxIn = case idx of
-      IZ                               -> CardanoTxIn shelleyTxIn
-      IS IZ                            -> CardanoTxIn shelleyTxIn
-      IS (IS IZ)                       -> CardanoTxIn shelleyTxIn
-      IS (IS (IS IZ))                  -> CardanoTxIn shelleyTxIn
-      IS (IS (IS (IS IZ)))             -> CardanoTxIn shelleyTxIn
-      IS (IS (IS (IS (IS IZ))))        -> CardanoTxIn shelleyTxIn
+      IZ                               -> CardanoTxIn $ getShelleyTxIn shelleyTxIn
+      IS IZ                            -> CardanoTxIn $ getShelleyTxIn shelleyTxIn
+      IS (IS IZ)                       -> CardanoTxIn $ getShelleyTxIn shelleyTxIn
+      IS (IS (IS IZ))                  -> CardanoTxIn $ getShelleyTxIn shelleyTxIn
+      IS (IS (IS (IS IZ)))             -> CardanoTxIn $ getShelleyTxIn shelleyTxIn
+      IS (IS (IS (IS (IS IZ))))        -> CardanoTxIn $ getShelleyTxIn shelleyTxIn
       IS (IS (IS (IS (IS (IS idx'))))) -> case idx' of {}
 
   ejectCanonicalTxIn IZ _                 =
       error "ejectCanonicalTxIn: Byron has no TxIns"
   ejectCanonicalTxIn (IS idx) cardanoTxIn = case idx of
-      IZ                               -> getCardanoTxIn cardanoTxIn
-      IS IZ                            -> getCardanoTxIn cardanoTxIn
-      IS (IS IZ)                       -> getCardanoTxIn cardanoTxIn
-      IS (IS (IS IZ))                  -> getCardanoTxIn cardanoTxIn
-      IS (IS (IS (IS IZ)))             -> getCardanoTxIn cardanoTxIn
-      IS (IS (IS (IS (IS IZ))))        -> getCardanoTxIn cardanoTxIn
+      IZ                               -> ShelleyTxIn $ getCardanoTxIn cardanoTxIn
+      IS IZ                            -> ShelleyTxIn $ getCardanoTxIn cardanoTxIn
+      IS (IS IZ)                       -> ShelleyTxIn $ getCardanoTxIn cardanoTxIn
+      IS (IS (IS IZ))                  -> ShelleyTxIn $ getCardanoTxIn cardanoTxIn
+      IS (IS (IS (IS IZ)))             -> ShelleyTxIn $ getCardanoTxIn cardanoTxIn
+      IS (IS (IS (IS (IS IZ))))        -> ShelleyTxIn $ getCardanoTxIn cardanoTxIn
       IS (IS (IS (IS (IS (IS idx'))))) -> case idx' of {}
 
-  encodeCanonicalTxIn   = Core.toEraCBOR @(ShelleyEra c) . getCardanoTxIn
-
-  decodeCanonicalTxIn = CardanoTxIn <$> Core.fromEraCBOR @(ShelleyEra c)
+instance CardanoHardForkConstraints c => MemPack (CanonicalTxIn (CardanoEras c)) where
+  packM = packM . getCardanoTxIn
+  packedByteCount = packedByteCount . getCardanoTxIn
+  unpackM = CardanoTxIn <$> unpackM
 
 -- Unpacking the fields of the era-specific TxOuts could save a chunk of memory.
 -- However, unpacking of sum types is only possible on @ghc-9.6.1@ and later, so
@@ -163,27 +165,27 @@ instance CardanoHardForkConstraints c => HasHardForkTxOut (CardanoEras c) where
     in maybe (error "Anachrony") unwrapTxOut $
         eliminateCardanoTxOut @(Maybe (WrapTxOut y)) (\idx -> composeFromTo' idx . WrapTxOut) txOut
 
-instance CardanoHardForkConstraints c => SerializeHardForkTxOut (CardanoEras c) where
-  encodeHardForkTxOut _ txOut =
-    let (idx, value) = case txOut of
-          ShelleyTxOut txOut' -> (1, encodeValue (getLedgerTables $ codecLedgerTables @(LedgerState (ShelleyBlock (TPraos c) (ShelleyEra c)))) txOut')
-          AllegraTxOut txOut' -> (2, encodeValue (getLedgerTables $ codecLedgerTables @(LedgerState (ShelleyBlock (TPraos c) (AllegraEra c)))) txOut')
-          MaryTxOut    txOut' -> (3, encodeValue (getLedgerTables $ codecLedgerTables @(LedgerState (ShelleyBlock (TPraos c) (MaryEra c)))) txOut')
-          AlonzoTxOut  txOut' -> (4, encodeValue (getLedgerTables $ codecLedgerTables @(LedgerState (ShelleyBlock (TPraos c) (AlonzoEra c)))) txOut')
-          BabbageTxOut txOut' -> (5, encodeValue (getLedgerTables $ codecLedgerTables @(LedgerState (ShelleyBlock (Praos c) (BabbageEra c)))) txOut')
-          ConwayTxOut  txOut' -> (6, encodeValue (getLedgerTables $ codecLedgerTables @(LedgerState (ShelleyBlock (Praos c) (ConwayEra c)))) txOut')
-    in CBOR.encodeListLen 2
-       <> CBOR.encodeWord8 idx
-       <> value
+instance CardanoHardForkConstraints c => MemPack (CardanoTxOut c) where
+  packM = eliminateCardanoTxOut (\idx txout -> do
+                                    packM (toWord8 idx)
+                                    packM txout
+                                )
 
-  decodeHardForkTxOut _ = do
-    CBOR.decodeListLenOf 2
-    tag <- CBOR.decodeWord8
-    case tag of
-      1 -> ShelleyTxOut <$> decodeValue (getLedgerTables $ codecLedgerTables @(LedgerState (ShelleyBlock (TPraos c) (ShelleyEra c))))
-      2 -> AllegraTxOut <$> decodeValue (getLedgerTables $ codecLedgerTables @(LedgerState (ShelleyBlock (TPraos c) (AllegraEra c))))
-      3 -> MaryTxOut    <$> decodeValue (getLedgerTables $ codecLedgerTables @(LedgerState (ShelleyBlock (TPraos c) (MaryEra c))))
-      4 -> AlonzoTxOut  <$> decodeValue (getLedgerTables $ codecLedgerTables @(LedgerState (ShelleyBlock (TPraos c) (AlonzoEra c))))
-      5 -> BabbageTxOut <$> decodeValue (getLedgerTables $ codecLedgerTables @(LedgerState (ShelleyBlock (Praos c)  (BabbageEra c))))
-      6 -> ConwayTxOut  <$> decodeValue (getLedgerTables $ codecLedgerTables @(LedgerState (ShelleyBlock (Praos c)  (ConwayEra c))))
-      _ -> fail $ "Unkown TxOut tag: " <> show tag
+  packedByteCount = eliminateCardanoTxOut (\_ txout -> 1 + packedByteCount txout)
+
+  unpackM = do
+    tag <- unpackM
+    let
+      np = ( (error "unpacking a byron txout")
+          :* (Fn $ const $ Comp $ K . ShelleyTxOut <$> unpackM)
+          :* (Fn $ const $ Comp $ K . AllegraTxOut <$> unpackM)
+          :* (Fn $ const $ Comp $ K . MaryTxOut    <$> unpackM)
+          :* (Fn $ const $ Comp $ K . AlonzoTxOut  <$> unpackM)
+          :* (Fn $ const $ Comp $ K . BabbageTxOut <$> unpackM)
+          :* (Fn $ const $ Comp $ K . ConwayTxOut  <$> unpackM)
+          :* Nil
+          )
+    hcollapse <$>
+      (hsequence'
+      $ hap np
+      $ fromMaybe (error "Unknown tag") (nsFromIndex tag :: Maybe (NS (K ()) (CardanoEras c))))
