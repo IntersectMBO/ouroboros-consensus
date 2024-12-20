@@ -52,9 +52,9 @@ constraints:
 
 source-repository-package
   type: git
-  location: https://github.com/lehins/mempack.git
-  tag: f07b53fbfc3c56d4d60e072e277ffdf655aee59e
-  --sha256: sha256-tkgPmpFQ2h5hX8gh3tQ5T5H756tmqgUNGb2hLQUgLWc=
+  location: https://github.com/input-output-hk/lmdb-simple
+  tag: 147c83c35cd80e7beae3772885baebda2fac3944
+  --sha256: sha256-nMOjZwVGqxV4sO5agjbb5eTdTfrAGKdUgEwnEDAtSrM=
 
 source-repository-package
   type: git

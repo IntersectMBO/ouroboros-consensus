@@ -42,20 +42,15 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger (
   , HasHardForkTxOut (..)
   , ejectHardForkTxOutDefault
   , injectHardForkTxOutDefault
-    -- *** Serialisation
-  , SerializeHardForkTxOut (..)
-  , decodeHardForkTxOutDefault
-  , encodeHardForkTxOutDefault
   ) where
 
-import qualified Codec.CBOR.Decoding as CBOR
-import qualified Codec.CBOR.Encoding as CBOR
 import           Control.Monad (guard)
 import           Control.Monad.Except (throwError, withExcept)
 import           Data.Functor ((<&>))
 import           Data.Functor.Product
 import           Data.Kind (Type)
 import           Data.Maybe (fromMaybe)
+import           Data.MemPack
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
@@ -68,7 +63,7 @@ import qualified Data.SOP.Match as Match
 import           Data.SOP.Strict
 import           Data.SOP.Telescope (Telescope (..))
 import qualified Data.SOP.Telescope as Telescope
-import           Data.Word (Word8)
+import           Data.Typeable
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Block
@@ -831,22 +826,6 @@ injectLedgerEvent index =
   Ledger Tables for the Nary HardForkBlock
 -------------------------------------------------------------------------------}
 
--- | The Ledger and Consensus team discussed the fact that we need to be able
--- to reach the TxIn key for an entry from any era, regardless of the era in
--- which it was created, therefore we need to have a "canonical"
--- serialization that doesn't change between eras. For now we are using
--- @'toEraCBOR' \@('ShelleyEra' c)@ as a stop-gap, but Ledger will provide a
--- serialization function into something more efficient.
-instance ( HasCanonicalTxIn xs
-         , SerializeHardForkTxOut xs
-         ) => CanSerializeLedgerTables (LedgerState (HardForkBlock xs)) where
-    codecLedgerTables = LedgerTables $
-        CodecMK
-          encodeCanonicalTxIn
-          (encodeHardForkTxOut (Proxy @xs))
-          decodeCanonicalTxIn
-          (decodeHardForkTxOut (Proxy @xs))
-
 -- | Warning: 'projectLedgerTables' and 'withLedgerTables' are prohibitively
 -- expensive when using big tables or when used multiple times. See the 'TxOut'
 -- instance for the 'HardForkBlock' for more information.
@@ -1014,6 +993,7 @@ type HasCanonicalTxIn :: [Type] -> Constraint
 class ( Show (CanonicalTxIn xs)
       , Ord (CanonicalTxIn xs)
       , NoThunks (CanonicalTxIn xs)
+      , MemPack (CanonicalTxIn xs)
       ) => HasCanonicalTxIn xs where
   data family CanonicalTxIn (xs :: [Type]) :: Type
 
@@ -1028,10 +1008,6 @@ class ( Show (CanonicalTxIn xs)
        Index xs x
     -> CanonicalTxIn xs
     -> TxIn (LedgerState x)
-
-  encodeCanonicalTxIn :: CanonicalTxIn xs -> CBOR.Encoding
-
-  decodeCanonicalTxIn :: forall s. CBOR.Decoder s (CanonicalTxIn xs)
 
 {-------------------------------------------------------------------------------
   HardForkTxOut
@@ -1118,6 +1094,7 @@ type DefaultHardForkTxOut xs = NS WrapTxOut xs
 class ( Show (HardForkTxOut xs)
       , Eq (HardForkTxOut xs)
       , NoThunks (HardForkTxOut xs)
+      , MemPack (HardForkTxOut xs)
       ) => HasHardForkTxOut xs where
   type HardForkTxOut xs :: Type
   type HardForkTxOut xs = DefaultHardForkTxOut xs
@@ -1177,43 +1154,23 @@ composeTxOutTranslations = \case
       Z x -> l x
       S x -> r x
 
-class HasHardForkTxOut xs => SerializeHardForkTxOut xs where
-  encodeHardForkTxOut :: Proxy xs -> HardForkTxOut xs -> CBOR.Encoding
-  decodeHardForkTxOut :: Proxy xs -> CBOR.Decoder s (HardForkTxOut xs)
+instance (All (Compose HasLedgerTables LedgerState) xs, Typeable xs)
+      => MemPack (DefaultHardForkTxOut xs) where
+  packM =
+    hcollapse . hcimap
+      (Proxy @(Compose HasLedgerTables LedgerState))
+      (\idx (WrapTxOut txout) -> K $ do
+         packM (toWord8 idx)
+         packM txout
+      )
 
-encodeHardForkTxOutDefault ::
-     forall xs. All (Compose CanSerializeLedgerTables LedgerState) xs
-  => DefaultHardForkTxOut xs
-  -> CBOR.Encoding
-encodeHardForkTxOutDefault =
-      hcollapse
-    . hcimap (Proxy @(Compose CanSerializeLedgerTables LedgerState)) each
-  where
-    each ::
-         CanSerializeLedgerTables (LedgerState x)
-      => Index xs x
-      -> WrapTxOut x
-      -> K CBOR.Encoding x
-    each idx (WrapTxOut txout) = K $
-           CBOR.encodeListLen 2
-        <> CBOR.encodeWord8 (toWord8 idx)
-        <> encodeValue (codecP idx) txout
+  packedByteCount txout =
+    1 + hcollapse (hcmap (Proxy @(Compose HasLedgerTables LedgerState)) (K . packedByteCount . unwrapTxOut) txout)
 
-decodeHardForkTxOutDefault ::
-     forall s xs. All (Compose CanSerializeLedgerTables LedgerState) xs
-  => CBOR.Decoder s (DefaultHardForkTxOut xs)
-decodeHardForkTxOutDefault = do
-    CBOR.decodeListLenOf 2
-    CBOR.decodeWord8 >>= go
-  where
-    go :: Word8 -> CBOR.Decoder s' (NS WrapTxOut xs)
-    go tag =
-        hctraverse'
-          (Proxy @(Compose CanSerializeLedgerTables LedgerState))
-          (fmap WrapTxOut . decodeValue . codecP)
-      $ fromMaybe (error "Unknown tag") (nsFromIndex tag)
-
-codecP ::
-     forall proxy x. CanSerializeLedgerTables (LedgerState x)
-  => proxy x -> CodecMK (TxIn (LedgerState x)) (TxOut (LedgerState x))
-codecP _ = getLedgerTables $ codecLedgerTables @(LedgerState x)
+  unpackM = do
+    idx <- unpackM
+    hsequence'
+      $ hcmap
+          (Proxy @(Compose HasLedgerTables LedgerState))
+          (const $ Comp $ WrapTxOut <$> unpackM)
+          $ fromMaybe (error "Unknown tag") (nsFromIndex idx)
