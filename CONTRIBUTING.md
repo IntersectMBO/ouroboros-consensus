@@ -115,7 +115,7 @@ cabal run db-analyser
 To test all the packages in this repository run:
 
 ```sh
-cabal build all
+cabal test all
 ```
 
 in the command line, either inside `nix-shell` if you use `nix`, or in a

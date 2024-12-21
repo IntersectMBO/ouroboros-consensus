@@ -11,8 +11,8 @@
 
 module Test.Consensus.Shelley.Generators (SomeResult (..)) where
 
+import           Cardano.Ledger.Core (toTxSeq)
 import           Cardano.Ledger.Crypto (Crypto)
-import           Cardano.Ledger.Era (toTxSeq)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.BHeader as SL

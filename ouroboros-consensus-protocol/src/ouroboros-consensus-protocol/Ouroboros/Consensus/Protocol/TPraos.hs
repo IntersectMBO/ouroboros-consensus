@@ -324,7 +324,7 @@ instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
                      -- the overlay schedule, so we could set it to whatever we
                      -- want. We evaluate it as normal for simplicity's sake.
                    , tpraosIsLeaderProof      = coerce y
-                   , tpraosIsLeaderGenVRFHash = Just genDlgVRFHash
+                   , tpraosIsLeaderGenVRFHash = Just $ SL.fromVRFVerKeyHash genDlgVRFHash
                    }
               | otherwise
               -> Nothing
