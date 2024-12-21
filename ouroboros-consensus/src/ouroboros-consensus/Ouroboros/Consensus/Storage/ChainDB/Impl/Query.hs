@@ -22,6 +22,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query (
   , getAnyBlockComponent
   , getAnyKnownBlock
   , getAnyKnownBlockComponent
+  , getChainSelStarvation
   ) where
 
 import qualified Data.Map.Strict as Map
@@ -50,6 +51,8 @@ import           Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (MaxSlotNo, maxSlotNoFromWithOrigin)
+import           Ouroboros.Network.BlockFetch.ConsensusInterface
+                     (ChainSelStarvation (..))
 
 -- | Return the last @k@ headers.
 --
@@ -161,18 +164,15 @@ getBlockComponent ::
 getBlockComponent CDB{..} = getAnyBlockComponent cdbImmutableDB cdbVolatileDB
 
 getIsFetched ::
-     forall m blk. IOLike m
+     forall m blk. (IOLike m, HasHeader blk)
   => ChainDbEnv m blk -> STM m (Point blk -> Bool)
-getIsFetched CDB{..} = basedOnHash <$> VolatileDB.getIsMember cdbVolatileDB
-  where
-    -- The volatile DB indexes by hash only, not by points. However, it should
-    -- not be possible to have two points with the same hash but different
-    -- slot numbers.
-    basedOnHash :: (HeaderHash blk -> Bool) -> Point blk -> Bool
-    basedOnHash f p =
-        case pointHash p of
-          BlockHash hash -> f hash
-          GenesisHash    -> False
+getIsFetched CDB{..} = do
+    checkQueue <- memberChainSelQueue cdbChainSelQueue
+    checkVolDb <- VolatileDB.getIsMember cdbVolatileDB
+    return $ \pt ->
+      case pointToWithOriginRealPoint pt of
+        Origin        -> False
+        NotOrigin pt' -> checkQueue pt' || checkVolDb (realPointHash pt')
 
 getIsInvalidBlock ::
      forall m blk. (IOLike m, HasHeader blk)
@@ -180,6 +180,12 @@ getIsInvalidBlock ::
   -> STM m (WithFingerprint (HeaderHash blk -> Maybe (ExtValidationError blk)))
 getIsInvalidBlock CDB{..} =
   fmap (fmap (fmap invalidBlockReason) . flip Map.lookup) <$> readTVar cdbInvalid
+
+getChainSelStarvation ::
+     forall m blk. IOLike m
+  => ChainDbEnv m blk
+  -> STM m ChainSelStarvation
+getChainSelStarvation CDB {..} = readTVar cdbChainSelStarvation
 
 getIsValid ::
      forall m blk. (IOLike m, HasHeader blk)
@@ -209,10 +215,13 @@ getMaxSlotNo CDB{..} = do
     -- contains block 9'. The ImmutableDB contains blocks 1-10. The max slot
     -- of the current chain will be 10 (being the anchor point of the empty
     -- current chain), while the max slot of the VolatileDB will be 9.
+    --
+    -- Moreover, we have to look in 'ChainSelQueue' too.
     curChainMaxSlotNo <- maxSlotNoFromWithOrigin . AF.headSlot
                      <$> readTVar cdbChain
-    volatileDbMaxSlotNo    <- VolatileDB.getMaxSlotNo cdbVolatileDB
-    return $ curChainMaxSlotNo `max` volatileDbMaxSlotNo
+    volatileDbMaxSlotNo <- VolatileDB.getMaxSlotNo cdbVolatileDB
+    queuedMaxSlotNo <- getMaxSlotNoChainSelQueue cdbChainSelQueue
+    return $ curChainMaxSlotNo `max` volatileDbMaxSlotNo `max` queuedMaxSlotNo
 
 {-------------------------------------------------------------------------------
   Unifying interface over the immutable DB and volatile DB, but independent

@@ -18,11 +18,12 @@ module Test.Consensus.Genesis.Tests.Uniform (
 
 import           Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin (..))
 import           Control.Monad (replicateM)
-import           Control.Monad.Class.MonadTime.SI (Time, addTime)
-import           Data.List (intercalate, sort)
+import           Control.Monad.Class.MonadTime.SI (Time (..), addTime)
+import           Data.List (intercalate, sort, uncons)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe, mapMaybe)
+import qualified Data.Set as Set
 import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block.Abstract (WithOrigin (NotOrigin))
@@ -40,7 +41,8 @@ import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Peers (Peers (..), isHonestPeerId)
+import           Test.Consensus.PointSchedule.Peers (Peers (..), getPeerIds,
+                     isHonestPeerId, peers')
 import           Test.Consensus.PointSchedule.Shrinking
                      (shrinkByRemovingAdversaries, shrinkPeerSchedules)
 import           Test.Consensus.PointSchedule.SinglePeer
@@ -72,9 +74,15 @@ tests =
     -- because this test writes the immutable chain to disk and `instance Binary TestBlock`
     -- chokes on long chains.
     adjustQuickCheckMaxSize (const 10) $
-    testProperty "the node is shut down and restarted after some time" prop_downtime
+    testProperty "the node is shut down and restarted after some time" prop_downtime,
+    testProperty "block fetch leashing attack" prop_blockFetchLeashingAttack
     ]
 
+-- | The conjunction of
+--
+--  * no honest peer has been disconnected,
+--  * the immutable tip is on the best chain, and
+--  * the immutable tip is no older than s + d + 1 slots
 theProperty ::
   GenesisTestFull TestBlock ->
   StateView TestBlock ->
@@ -89,8 +97,8 @@ theProperty genesisTest stateView@StateView{svSelectedChain} =
   -- to the governor that the density is too low.
   longerThanGenesisWindow ==>
   conjoin [
-    counterexample "An honest peer was disconnected" (not $ any isHonestPeerId disconnected),
-    counterexample ("The immutable tip is not honest: " ++ show immutableTip) $
+    counterexample "Honest peers shouldn't be disconnected" (not $ any isHonestPeerId disconnected),
+    counterexample ("The immutable tip should be honest: " ++ show immutableTip) $
     property (isHonest immutableTipHash),
     immutableTipIsRecent
   ]
@@ -98,7 +106,7 @@ theProperty genesisTest stateView@StateView{svSelectedChain} =
     advCount = Map.size (adversarialPeers (psSchedule $ gtSchedule genesisTest))
 
     immutableTipIsRecent =
-      counterexample ("Age of the immutable tip: " ++ show immutableTipAge) $
+      counterexample ("The immutable tip is too old: " ++ show immutableTipAge) $
       immutableTipAge `le` s + fromIntegral d + 1
 
     SlotNo immutableTipAge = case (honestTipSlot, immutableTipSlot) of
@@ -203,13 +211,14 @@ prop_leashingAttackStalling :: Property
 prop_leashingAttackStalling =
   forAllGenesisTest
 
-    (disableBoringTimeouts <$> genChains (QC.choose (1, 4)) `enrichedWith` genLeashingSchedule)
+    (genChains (QC.choose (1, 4)) `enrichedWith` genLeashingSchedule)
 
     defaultSchedulerConfig
       { scTrace = False
       , scEnableLoE = True
       , scEnableLoP = True
       , scEnableCSJ = True
+      , scEnableBlockFetchTimeouts = False
       }
 
     shrinkPeerSchedules
@@ -228,47 +237,37 @@ prop_leashingAttackStalling =
       advs <- mapM dropRandomPoints $ adversarialPeers sch
       pure $ ps {psSchedule = sch {adversarialPeers = advs}}
 
-    disableBoringTimeouts gt =
-      gt { gtChainSyncTimeouts = (gtChainSyncTimeouts gt)
-            { mustReplyTimeout = Nothing
-            , idleTimeout = Nothing
-            }
-         }
-
-    dropRandomPoints :: [(Time, SchedulePoint blk)] -> QC.Gen [(Time, SchedulePoint blk)]
-    dropRandomPoints ps = do
+dropRandomPoints :: [(Time, SchedulePoint blk)] -> QC.Gen [(Time, SchedulePoint blk)]
+dropRandomPoints ps = do
       let lenps = length ps
-      dropCount <- QC.choose (0, max 1 $ div lenps 5)
+          dropsMax = max 1 $ lenps - 1
+      dropCount <- QC.choose (div dropsMax 2, dropsMax)
       let dedup = map NE.head . NE.group
       is <- fmap (dedup . sort) $ replicateM dropCount $ QC.choose (0, lenps - 1)
       pure $ dropElemsAt ps is
-
+  where
     dropElemsAt :: [a] -> [Int] -> [a]
-    dropElemsAt xs [] = xs
-    dropElemsAt xs (i:is) =
-      let (ys, zs) = splitAt i xs
-       in ys ++ dropElemsAt (drop 1 zs) is
+    dropElemsAt xs is' =
+      let is = Set.fromList is'
+      in map fst $ filter (\(_, i) -> not $ i `Set.member` is) (zip xs [0..])
 
 -- | Test that the leashing attacks do not delay the immutable tip after. The
 -- immutable tip needs to be advanced enough when the honest peer has offered
 -- all of its ticks.
---
--- This test is expected to fail because we don't test a genesis implementation
--- yet.
 --
 -- See Note [Leashing attacks]
 prop_leashingAttackTimeLimited :: Property
 prop_leashingAttackTimeLimited =
   forAllGenesisTest
 
-    (disableBoringTimeouts <$> genChains (QC.choose (1, 4)) `enrichedWith` genTimeLimitedSchedule)
+    (genChains (QC.choose (1, 4)) `enrichedWith` genTimeLimitedSchedule)
 
     defaultSchedulerConfig
       { scTrace = False
       , scEnableLoE = True
       , scEnableLoP = True
-      , scEnableBlockFetchTimeouts = False
       , scEnableCSJ = True
+      , scEnableBlockFetchTimeouts = False
       }
 
     shrinkPeerSchedules
@@ -285,21 +284,15 @@ prop_leashingAttackTimeLimited =
             (gtLoPBucketParams genesisTest)
             (getHonestPeer honests)
             (Map.elems advs0)
-          advs = fmap (takePointsUntil timeLimit) advs0
+          advs1 = fmap (takePointsUntil timeLimit) advs0
+      advs <- mapM dropRandomPoints advs1
       pure $ PointSchedule
         { psSchedule = Peers honests advs
-        , psMinEndTime = timeLimit
+        , psStartOrder = []
+        , psMinEndTime = addGracePeriodDelay (length advs) timeLimit
         }
 
     takePointsUntil limit = takeWhile ((<= limit) . fst)
-
-    disableBoringTimeouts gt =
-      gt { gtChainSyncTimeouts = (gtChainSyncTimeouts gt)
-            { canAwaitTimeout = Nothing
-            , mustReplyTimeout = Nothing
-            , idleTimeout = Nothing
-            }
-         }
 
     estimateTimeBound
       :: AF.HasHeader blk
@@ -346,11 +339,8 @@ headCallStack = \case
   x:_ -> x
   _   -> error "headCallStack: empty list"
 
--- | Test that enabling the LoE using the updater that sets the LoE fragment to
--- the shared prefix (as used by the GDDG) causes the selection to remain at
+-- | Test that enabling the LoE causes the selection to remain at
 -- the first fork intersection (keeping the immutable tip honest).
---
--- This is pretty slow since it relies on timeouts to terminate the test.
 prop_loeStalling :: Property
 prop_loeStalling =
   forAllGenesisTest
@@ -363,7 +353,8 @@ prop_loeStalling =
 
     defaultSchedulerConfig {
       scEnableLoE = True,
-      scEnableCSJ = True
+      scEnableCSJ = True,
+      scEnableBlockFetchTimeouts = False
     }
 
     shrinkPeerSchedules
@@ -404,14 +395,78 @@ prop_downtime = forAllGenesisTest
       , scEnableLoP = True
       , scDowntime = Just 11
       , scEnableCSJ = True
+      , scEnableBlockFetchTimeouts = False
       }
 
     shrinkPeerSchedules
 
-    theProperty
+    (\genesisTest stateView ->
+      counterexample (unlines
+        [ "TODO: Shutting down the node inserts delays in the simulation that"
+        , "are not reflected in the point schedule table. Reporting these delays"
+        , "correctly is still to be done."
+        ]) $
+        theProperty genesisTest stateView
+    )
 
   where
     pointsGeneratorParams gt = PointsGeneratorParams
       { pgpExtraHonestPeers = fromIntegral (gtExtraHonestPeers gt)
       , pgpDowntime = DowntimeWithSecurityParam (gtSecurityParam gt)
       }
+
+-- | Test that the block fetch leashing attack does not delay the immutable tip.
+-- This leashing attack consists in having adversarial peers that behave
+-- honestly when it comes to ChainSync but refuse to send blocks. A proper node
+-- under test should detect those behaviours as adversarial and find a way to
+-- make progress.
+prop_blockFetchLeashingAttack :: Property
+prop_blockFetchLeashingAttack =
+  forAllGenesisTest
+    (genChains (pure 0) `enrichedWith` genBlockFetchLeashingSchedule)
+    defaultSchedulerConfig
+      { scEnableLoE = True,
+        scEnableLoP = True,
+        scEnableCSJ = True,
+        scEnableBlockFetchTimeouts = False
+      }
+    shrinkPeerSchedules
+    theProperty
+  where
+    genBlockFetchLeashingSchedule :: GenesisTest TestBlock () -> QC.Gen (PointSchedule TestBlock)
+    genBlockFetchLeashingSchedule genesisTest = do
+      -- A schedule with several honest peers and no adversaries. We will then
+      -- keep one of those as honest and remove the block points from the
+      -- others, hence producing one honest peer and several adversaries.
+      PointSchedule {psSchedule} <-
+        stToGen $
+          uniformPoints
+            (PointsGeneratorParams {pgpExtraHonestPeers = 1, pgpDowntime = NoDowntime})
+            (gtBlockTree genesisTest)
+      peers <- QC.shuffle $ Map.elems $ honestPeers psSchedule
+      let (honest, adversaries) = fromMaybe (error "blockFetchLeashingAttack") $ uncons peers
+          adversaries' = map (filter (not . isBlockPoint . snd)) adversaries
+          psSchedule' = peers' [honest] adversaries'
+      -- Important to shuffle the order in which the peers start, otherwise the
+      -- honest peer starts first and systematically becomes dynamo.
+      psStartOrder <- shuffle $ getPeerIds psSchedule'
+      let maxTime = addGracePeriodDelay (length adversaries') $ maximum $
+            Time 0 : [ pt | s <- honest : adversaries', (pt, _) <- take 1 (reverse s) ]
+      pure $ PointSchedule {
+          psSchedule = psSchedule',
+          psStartOrder,
+          -- Allow to run the blockfetch decision logic after the last tick
+          -- 11 is the grace period for unresponsive peers that should send
+          -- blocks
+          psMinEndTime = addTime 11 maxTime
+        }
+
+    isBlockPoint :: SchedulePoint blk -> Bool
+    isBlockPoint (ScheduleBlockPoint _) = True
+    isBlockPoint _                      = False
+
+-- | Add a delay at the end of tests to account for retention of blocks
+-- by adversarial peers in blockfetch. This delay is 10 seconds per
+-- adversarial peer.
+addGracePeriodDelay :: Int -> Time -> Time
+addGracePeriodDelay adversaryCount = addTime (fromIntegral adversaryCount * 10)
