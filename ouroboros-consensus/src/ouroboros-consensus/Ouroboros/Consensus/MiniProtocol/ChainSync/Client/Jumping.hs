@@ -168,6 +168,7 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, fromMaybe)
 import           Data.Maybe.Strict (StrictMaybe (..))
+import           Data.Typeable (Typeable)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block (HasHeader (getHeaderFields), Header,
                      Point (..), castPoint, pointSlot, succWithOrigin)
@@ -305,8 +306,8 @@ data Instruction blk
     JumpInstruction !(JumpInstruction blk)
   deriving (Generic)
 
-deriving instance (HasHeader (Header blk), Eq (Header blk)) => Eq (Instruction blk)
-deriving instance (HasHeader (Header blk), Show (Header blk)) => Show (Instruction blk)
+deriving instance (Typeable blk, HasHeader (Header blk), Eq (Header blk)) => Eq (Instruction blk)
+deriving instance (Typeable blk, HasHeader (Header blk), Show (Header blk)) => Show (Instruction blk)
 deriving anyclass instance
   ( HasHeader blk,
     LedgerSupportsProtocol blk,
@@ -321,8 +322,8 @@ data JumpInstruction blk
     JumpToGoodPoint !(JumpInfo blk)
   deriving (Generic)
 
-deriving instance (HasHeader (Header blk), Eq (Header blk)) => Eq (JumpInstruction blk)
-instance (HasHeader (Header blk), Show (Header blk)) => Show (JumpInstruction blk) where
+deriving instance (Typeable blk, HasHeader (Header blk), Eq (Header blk)) => Eq (JumpInstruction blk)
+instance (Typeable blk, HasHeader (Header blk), Show (Header blk)) => Show (JumpInstruction blk) where
   showsPrec p = \case
     JumpTo jumpInfo ->
       showParen (p > 10) $ showString "JumpTo " . shows (AF.headPoint $ jTheirFragment jumpInfo)
@@ -341,8 +342,8 @@ data JumpResult blk
   | RejectedJump !(JumpInstruction blk)
   deriving (Generic)
 
-deriving instance (HasHeader (Header blk), Eq (Header blk)) => Eq (JumpResult blk)
-deriving instance (HasHeader (Header blk), Show (Header blk)) => Show (JumpResult blk)
+deriving instance (Typeable blk, HasHeader (Header blk), Eq (Header blk)) => Eq (JumpResult blk)
+deriving instance (Typeable blk, HasHeader (Header blk), Show (Header blk)) => Show (JumpResult blk)
 
 deriving anyclass instance
   ( HasHeader blk,
@@ -620,7 +621,7 @@ processJumpResult context jumpResult =
         -- intersection is the good point.
         -- Clear any subsequent jumps requested by the dynamo.
         writeTVar nextJumpVar Nothing
-        maybeElectNewObjector nextJumpVar goodJumpInfo (AF.headPoint badFragment)
+        maybeElectNewObjector nextJumpVar goodJumpInfo (AF.castPoint $ AF.headPoint badFragment)
       else do
         let middlePoint = len `div` 2
             theirFragment = AF.dropNewest middlePoint badFragment
@@ -629,6 +630,11 @@ processJumpResult context jumpResult =
         writeTVar (cschJumping (handle context)) $
           Jumper nextJumpVar (LookingForIntersection goodJumpInfo badJumpInfo)
 
+    maybeElectNewObjector ::
+         StrictTVar m (Maybe (JumpInfo blk))
+      -> JumpInfo blk
+      -> Point (Header blk)
+      -> STM m ()
     maybeElectNewObjector nextJumpVar goodJumpInfo badPoint = do
       findObjector (stripContext context) >>= \case
         Nothing ->

@@ -79,12 +79,16 @@ type ShelleyBlockHFC proto era = HardForkBlock '[ShelleyBlock proto era]
 
 instance ( ShelleyCompatible proto era
          , LedgerSupportsProtocol (ShelleyBlock proto era)
-         , TxLimits               (ShelleyBlock proto era)
-         ) => NoHardForks (ShelleyBlock proto era) where
-  getEraParams =
+         ) => ImmutableEraParams (ShelleyBlock proto era) where
+  immutableEraParams =
         shelleyEraParamsNeverHardForks
       . shelleyLedgerGenesis
       . configLedger
+
+instance ( ShelleyCompatible proto era
+         , LedgerSupportsProtocol (ShelleyBlock proto era)
+         , TxLimits               (ShelleyBlock proto era)
+         ) => NoHardForks (ShelleyBlock proto era) where
   toPartialLedgerConfig _ cfg = ShelleyPartialLedgerConfig {
         shelleyLedgerConfig    = cfg
       , shelleyTriggerHardFork = TriggerHardForkNotDuringThisExecution

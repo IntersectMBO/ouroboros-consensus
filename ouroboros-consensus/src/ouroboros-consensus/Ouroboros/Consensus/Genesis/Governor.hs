@@ -45,6 +45,7 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe, maybeToList)
 import           Data.Maybe.Strict (StrictMaybe)
+import           Data.Typeable (Typeable)
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (TopLevelConfig, configLedger,
@@ -54,6 +55,7 @@ import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import           Ouroboros.Consensus.HardFork.History.Qry (qryFromExpr,
                      runQuery, slotToGenesisWindow)
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState,
                      ledgerState)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -92,7 +94,7 @@ gddWatcher ::
      -- changes, and when 'Syncing', whenever any of the candidate fragments
      -- changes. Also, we use this to disconnect from peers with insufficient
      -- densities.
-  -> StrictTVar m (AnchoredFragment (Header blk))
+  -> StrictTVar m (AnchoredFragment (HeaderWithTime blk))
      -- ^ The LoE fragment. It starts at a (recent) immutable tip and ends at
      -- the common intersection of the candidate fragments.
   -> Watcher m
@@ -176,7 +178,7 @@ evaluateGDD ::
   => TopLevelConfig blk
   -> Tracer m (TraceGDDEvent peer blk)
   -> GDDStateView m blk peer
-  -> m (AnchoredFragment (Header blk))
+  -> m (AnchoredFragment (HeaderWithTime blk))
 evaluateGDD cfg tracer stateView = do
     let GDDStateView {
             gddCtxCurChain          = curChain
@@ -216,10 +218,19 @@ evaluateGDD cfg tracer stateView = do
       let
         (losingPeers, bounds) =
           densityDisconnect sgen (configSecurityParam cfg) states candidateSuffixes loeFrag
-        loeHead = AF.headAnchor loeFrag
+        loeHead = AF.castAnchor $ AF.headAnchor loeFrag
 
-      traceWith tracer $ TraceGDDDebug
-        GDDDebugInfo {sgen, curChain, bounds, candidates, candidateSuffixes, losingPeers, loeHead}
+        dropTimes = map (second (AF.mapAnchoredFragment hwtHeader))
+
+      traceWith tracer $ TraceGDDDebug $ GDDDebugInfo
+        { sgen
+        , curChain
+        , bounds
+        , candidates        = dropTimes candidates
+        , candidateSuffixes = dropTimes candidateSuffixes
+        , losingPeers
+        , loeHead
+        }
 
       whenJust (NE.nonEmpty losingPeers) $ \losingPeersNE -> do
         for_ losingPeersNE $ \peer -> killActions Map.! peer
@@ -235,13 +246,13 @@ evaluateGDD cfg tracer stateView = do
 -- The function also yields the suffixes of the intersection of @loeFrag@ with
 -- every candidate fragment.
 sharedCandidatePrefix ::
-  GetHeader blk =>
+  (GetHeader blk, Typeable blk) =>
   AnchoredFragment (Header blk) ->
-  [(peer, AnchoredFragment (Header blk))] ->
-  (AnchoredFragment (Header blk), [(peer, AnchoredFragment (Header blk))])
+  [(peer, AnchoredFragment (HeaderWithTime blk))] ->
+  (AnchoredFragment (HeaderWithTime blk), [(peer, AnchoredFragment (HeaderWithTime blk))])
 sharedCandidatePrefix curChain candidates =
   second getCompose $
-  stripCommonPrefix (AF.anchor curChain) $
+  stripCommonPrefix (AF.castAnchor $ AF.anchor curChain) $
   Compose immutableTipSuffixes
   where
     immutableTip = AF.anchorPoint curChain
@@ -260,7 +271,7 @@ sharedCandidatePrefix curChain candidates =
 
 data DensityBounds blk =
   DensityBounds {
-    clippedFragment :: AnchoredFragment (Header blk),
+    clippedFragment :: AnchoredFragment (HeaderWithTime blk),
     offersMoreThanK :: Bool,
     lowerBound      :: Word64,
     upperBound      :: Word64,
@@ -300,8 +311,8 @@ densityDisconnect ::
   => GenesisWindow
   -> SecurityParam
   -> Map peer (ChainSyncState blk)
-  -> [(peer, AnchoredFragment (Header blk))]
-  -> AnchoredFragment (Header blk)
+  -> [(peer, AnchoredFragment (HeaderWithTime blk))]
+  -> AnchoredFragment (HeaderWithTime blk)
   -> ([peer], [(peer, DensityBounds blk)])
 densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixes loeFrag =
   (losingPeers, densityBounds)

@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Initialization of the 'BlockFetchConsensusInterface'
@@ -24,6 +24,7 @@ import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.Config.SupportsNode as SupportsNode
 import qualified Ouroboros.Consensus.HardFork.Abstract as History
 import qualified Ouroboros.Consensus.HardFork.History as History
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
@@ -48,7 +49,8 @@ import           Ouroboros.Network.SizeInBytes
 
 -- | Abstract over the ChainDB
 data ChainDbView m blk = ChainDbView {
-     getCurrentChain           :: STM m (AnchoredFragment (Header blk))
+     getCurrentChain           :: STM m (AnchoredFragment (Header         blk))
+   , getCurrentChainWithTime   :: STM m (AnchoredFragment (HeaderWithTime blk))
    , getIsFetched              :: STM m (Point blk -> Bool)
    , getMaxSlotNo              :: STM m MaxSlotNo
    , addBlockWaitWrittenToDisk :: InvalidBlockPunishment m -> blk -> m Bool
@@ -56,7 +58,8 @@ data ChainDbView m blk = ChainDbView {
 
 defaultChainDbView :: IOLike m => ChainDB m blk -> ChainDbView m blk
 defaultChainDbView chainDB = ChainDbView {
-    getCurrentChain           = ChainDB.getCurrentChain chainDB
+    getCurrentChain           = ChainDB.getCurrentChain         chainDB
+  , getCurrentChainWithTime   = ChainDB.getCurrentChainWithTime chainDB
   , getIsFetched              = ChainDB.getIsFetched chainDB
   , getMaxSlotNo              = ChainDB.getMaxSlotNo chainDB
   , addBlockWaitWrittenToDisk = ChainDB.addBlockWaitWrittenToDisk chainDB
@@ -170,29 +173,43 @@ mkBlockFetchConsensusInterface ::
      ( IOLike m
      , BlockSupportsDiffusionPipelining blk
      , BlockSupportsProtocol blk
+     , SupportsNode.ConfigSupportsNode blk
      )
   => BlockConfig blk
   -> ChainDbView m blk
-  -> STM m (Map peer (AnchoredFragment (Header blk)))
+  -> STM m (Map peer (AnchoredFragment (HeaderWithTime blk)))
   -> (Header blk -> SizeInBytes)
   -> SlotForgeTimeOracle m blk
      -- ^ Slot forge time, see 'headerForgeUTCTime' and 'blockForgeUTCTime'.
   -> STM m FetchMode
      -- ^ See 'readFetchMode'.
   -> DiffusionPipeliningSupport
-  -> BlockFetchConsensusInterface peer (Header blk) blk m
+  -> BlockFetchConsensusInterface peer (HeaderWithTime blk) blk m
 mkBlockFetchConsensusInterface
   bcfg chainDB getCandidates blockFetchSize slotForgeTime readFetchMode pipelining =
-    BlockFetchConsensusInterface {..}
+    BlockFetchConsensusInterface {
+        readCandidateChains
+      , readCurrentChain
+      , readFetchMode
+      , readFetchedBlocks
+      , mkAddFetchedBlock
+      , readFetchedMaxSlotNo
+      , plausibleCandidateChain
+      , compareCandidateChains
+      , blockFetchSize =  blockFetchSize . hwtHeader
+      , blockMatchesHeader
+      , headerForgeUTCTime
+      , blockForgeUTCTime
+    }
   where
-    blockMatchesHeader :: Header blk -> blk -> Bool
-    blockMatchesHeader = Block.blockMatchesHeader
+    blockMatchesHeader :: HeaderWithTime blk -> blk -> Bool
+    blockMatchesHeader hwt b = Block.blockMatchesHeader (hwtHeader hwt) b
 
-    readCandidateChains :: STM m (Map peer (AnchoredFragment (Header blk)))
+    readCandidateChains :: STM m (Map peer (AnchoredFragment (HeaderWithTime blk)))
     readCandidateChains = getCandidates
 
-    readCurrentChain :: STM m (AnchoredFragment (Header blk))
-    readCurrentChain = getCurrentChain chainDB
+    readCurrentChain :: STM m (AnchoredFragment (HeaderWithTime blk))
+    readCurrentChain = getCurrentChainWithTime chainDB
 
     readFetchedBlocks :: STM m (Point blk -> Bool)
     readFetchedBlocks = getIsFetched chainDB
@@ -271,8 +288,8 @@ mkBlockFetchConsensusInterface
     -- fragment, by the time the block fetch download logic considers the
     -- fragment, our current chain might have changed.
     plausibleCandidateChain :: HasCallStack
-                            => AnchoredFragment (Header blk)
-                            -> AnchoredFragment (Header blk)
+                            => AnchoredFragment (HeaderWithTime blk)
+                            -> AnchoredFragment (HeaderWithTime blk)
                             -> Bool
     plausibleCandidateChain ours cand
       -- 1. The ChainDB maintains the invariant that the anchor of our fragment
@@ -315,17 +332,22 @@ mkBlockFetchConsensusInterface
       = preferAnchoredCandidate bcfg ours cand
       where
         anchorBlockNoAndSlot ::
-             AnchoredFragment (Header blk)
+             AnchoredFragment (HeaderWithTime blk)
           -> (WithOrigin BlockNo, WithOrigin SlotNo)
         anchorBlockNoAndSlot frag =
             (AF.anchorToBlockNo a, AF.anchorToSlotNo a)
           where
             a = AF.anchor frag
 
-    compareCandidateChains :: AnchoredFragment (Header blk)
-                           -> AnchoredFragment (Header blk)
+    compareCandidateChains :: AnchoredFragment (HeaderWithTime blk)
+                           -> AnchoredFragment (HeaderWithTime blk)
                            -> Ordering
     compareCandidateChains = compareAnchoredFragments bcfg
 
-    headerForgeUTCTime = slotForgeTime . headerRealPoint . unFromConsensus
+    headerForgeUTCTime  = pure
+                        . fromRelativeTime (SupportsNode.getSystemStart bcfg)
+                        . hwtSlotRelativeTime
+                        . unFromConsensus
+
+    -- NOTE: Once https://github.com/IntersectMBO/ouroboros-network/pull/5009 is integrated we can remove this.
     blockForgeUTCTime  = slotForgeTime . blockRealPoint  . unFromConsensus

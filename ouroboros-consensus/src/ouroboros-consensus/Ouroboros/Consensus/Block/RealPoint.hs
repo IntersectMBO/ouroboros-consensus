@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -87,17 +86,15 @@ blockRealPoint blk = RealPoint s h
     HeaderFields { headerFieldSlot = s, headerFieldHash = h } = getHeaderFields blk
 
 headerRealPoint ::
-    ( HasHeader (Header blk)
-#if __GLASGOW_HASKELL__ >= 904
--- GHC 9.4+ considers these constraints insufficient.
-    , HasHeader blk
-#endif
-    )
+       forall blk. HasHeader (Header blk)
     => Header blk
     -> RealPoint blk
 headerRealPoint hdr = RealPoint s h
   where
-    HeaderFields { headerFieldSlot = s, headerFieldHash = h } = getHeaderFields hdr
+    HeaderFields { headerFieldSlot = s, headerFieldHash = h } = hf
+
+    hf :: HeaderFields (Header blk)
+    hf = getHeaderFields hdr
 
 realPointToPoint :: RealPoint blk -> Point blk
 realPointToPoint (RealPoint s h) = BlockPoint s h

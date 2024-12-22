@@ -128,6 +128,7 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.ChainUpdates (ChainUpdate (..), UpdateBehavior (..),
                      genChainUpdates, toChainUpdates)
+import           Test.Util.HeaderValidation (dropTimeFromFragment)
 import           Test.Util.LogicalClock (Tick (..))
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Orphans.IOLike ()
@@ -588,7 +589,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
           finalClientChain
         , finalServerChain
         , mbResult
-        , syncedFragment   = AF.mapAnchoredFragment testHeader candidateFragment
+        , syncedFragment   = AF.mapAnchoredFragment testHeader (dropTimeFromFragment candidateFragment)
         , traceEvents
         }
   where
