@@ -75,7 +75,7 @@ immDBServer ::
   -> ImmutableDB m blk
   -> NetworkMagic
   -> Versions NodeToNodeVersion NodeToNodeVersionData
-       (OuroborosApplicationWithMinimalCtx 'Mux.ResponderMode addr BL.ByteString m Void ())
+       (OuroborosApplicationWithMinimalCtx 'Mux.ResponderMode () addr BL.ByteString m Void ())
 immDBServer codecCfg encAddr decAddr immDB networkMagic = do
     forAllVersions application
   where
@@ -99,7 +99,7 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic = do
     application ::
          NodeToNodeVersion
       -> BlockNodeToNodeVersion blk
-      -> OuroborosApplicationWithMinimalCtx 'Mux.ResponderMode addr BL.ByteString m Void ()
+      -> OuroborosApplicationWithMinimalCtx 'Mux.ResponderMode () addr BL.ByteString m Void ()
     application version blockVersion =
         OuroborosApplication miniprotocols
       where

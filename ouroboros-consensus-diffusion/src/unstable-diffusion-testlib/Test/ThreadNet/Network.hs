@@ -113,7 +113,7 @@ import           Ouroboros.Network.NodeToNode (ConnectionId (..),
 import           Ouroboros.Network.PeerSelection.Bootstrap
                      (UseBootstrapPeers (..))
 import           Ouroboros.Network.PeerSelection.Governor
-                     (makePublicPeerSelectionStateVar)
+                     (newCapturePublicStateVar)
 import           Ouroboros.Network.PeerSelection.PeerMetric (nullMetric)
 import           Ouroboros.Network.Point (WithOrigin (..))
 import qualified Ouroboros.Network.Protocol.ChainSync.Type as CS
@@ -989,7 +989,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
       let rng = case seed of
                     Seed s -> mkStdGen s
           (kaRng, psRng) = split rng
-      publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
+      capturePublicStateVar <- newCapturePublicStateVar
       let nodeKernelArgs = NodeKernelArgs
             { tracers
             , registry
@@ -1033,7 +1033,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
                 , gsmMinCaughtUpDuration = 0
                 }
             , getUseBootstrapPeers = pure DontUseBootstrapPeers
-            , publicPeerSelectionStateVar
+            , capturePublicStateVar
             , genesisArgs          = GenesisNodeKernelArgs {
                   gnkaLoEAndGDDArgs = LoEAndGDDDisabled
                 }

@@ -69,6 +69,7 @@ import           Ouroboros.Network.Block (Serialised, decodePoint, decodeTip,
 import           Ouroboros.Network.BlockFetch
 import           Ouroboros.Network.Channel
 import           Ouroboros.Network.Context
+import qualified Ouroboros.Network.Diffusion as Diff (NodeToClientApplication)
 import           Ouroboros.Network.Driver
 import qualified Ouroboros.Network.Driver.Stateful as Stateful
 import           Ouroboros.Network.Mux
@@ -465,8 +466,8 @@ mkApps kernel Tracers {..} Codecs {..} Handlers {..} =
 -- 'OuroborosApplication' for the node-to-client protocols.
 responder ::
      N.NodeToClientVersion
-  -> Apps m (ConnectionId peer) b b b b a
-  -> OuroborosApplicationWithMinimalCtx 'Mux.ResponderMode peer b m Void a
+  -> Apps m (ConnectionId ntcAddr) b b b b a
+  -> Diff.NodeToClientApplication Mux.ResponderMode ntnAddr ntcAddr b m Void a
 responder version Apps {..} =
     nodeToClientProtocols
       (NodeToClientProtocols {

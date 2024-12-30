@@ -82,6 +82,7 @@ import           Ouroboros.Network.BlockFetch.Client (BlockFetchClient,
 import           Ouroboros.Network.Channel
 import           Ouroboros.Network.Context
 import           Ouroboros.Network.DeltaQ
+import qualified Ouroboros.Network.Diffusion as Diff (NodeToNodeApplication)
 import           Ouroboros.Network.Driver
 import           Ouroboros.Network.Driver.Limits
 import           Ouroboros.Network.KeepAlive
@@ -811,7 +812,7 @@ initiator ::
   -> NodeToNodeVersion
   -> PSTypes.PeerSharing
   -> Apps m addr b b b b b a c
-  -> OuroborosBundleWithExpandedCtx 'Mux.InitiatorMode addr b m a Void
+  -> Diff.NodeToNodeApplication 'Mux.InitiatorMode addr b m a Void
 initiator miniProtocolParameters version ownPeerSharing Apps {..} =
     nodeToNodeProtocols
       miniProtocolParameters
@@ -846,7 +847,7 @@ initiatorAndResponder ::
   -> NodeToNodeVersion
   -> PSTypes.PeerSharing
   -> Apps m addr b b b b b a c
-  -> OuroborosBundleWithExpandedCtx 'Mux.InitiatorResponderMode addr b m a c
+  -> Diff.NodeToNodeApplication 'Mux.InitiatorResponderMode addr b m a c
 initiatorAndResponder miniProtocolParameters version ownPeerSharing Apps {..} =
     nodeToNodeProtocols
       miniProtocolParameters

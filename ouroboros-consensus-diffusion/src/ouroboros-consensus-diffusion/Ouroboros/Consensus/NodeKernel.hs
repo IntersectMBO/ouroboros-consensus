@@ -28,7 +28,6 @@ module Ouroboros.Consensus.NodeKernel (
 
 
 import qualified Control.Concurrent.Class.MonadSTM as LazySTM
-import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Control.DeepSeq (force)
 import           Control.Monad
 import qualified Control.Monad.Class.MonadTimer.SI as SI
@@ -96,7 +95,6 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (castTip, tipFromHeader)
 import           Ouroboros.Network.BlockFetch
 import           Ouroboros.Network.ConsensusMode (ConsensusMode (..))
-import           Ouroboros.Network.Diffusion (PublicPeerSelectionState)
 import           Ouroboros.Network.NodeToNode (ConnectionId,
                      MiniProtocolParameters (..))
 import           Ouroboros.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
@@ -104,6 +102,7 @@ import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
                      (LedgerStateJudgement (..))
 import           Ouroboros.Network.PeerSelection.LocalRootPeers
                      (OutboundConnectionsState (..))
+import           Ouroboros.Network.PeerSelection.Governor (CapturePublicStateVar)
 import           Ouroboros.Network.PeerSharing (PeerSharingAPI,
                      PeerSharingRegistry, newPeerSharingAPI,
                      newPeerSharingRegistry, ps_POLICY_PEER_SHARE_MAX_PEERS,
@@ -188,8 +187,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs {
     , gsmArgs                 :: GsmNodeKernelArgs m blk
     , getUseBootstrapPeers    :: STM m UseBootstrapPeers
     , peerSharingRng          :: StdGen
-    , publicPeerSelectionStateVar
-                              :: StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
+    , capturePublicStateVar   :: CapturePublicStateVar addrNTN m
     , genesisArgs             :: GenesisNodeKernelArgs m blk
     , getDiffusionPipeliningSupport    :: DiffusionPipeliningSupport
     }
@@ -210,7 +208,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                    , blockFetchConfiguration
                                    , gsmArgs
                                    , peerSharingRng
-                                   , publicPeerSelectionStateVar
+                                   , capturePublicStateVar
                                    , genesisArgs
                                    , getDiffusionPipeliningSupport
                                    } = do
@@ -280,7 +278,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
           TooOld      -> GSM.enterPreSyncing gsm
           YoungEnough -> GSM.enterCaughtUp   gsm
 
-    peerSharingAPI <- newPeerSharingAPI publicPeerSelectionStateVar
+    peerSharingAPI <- newPeerSharingAPI capturePublicStateVar
                                         peerSharingRng
                                         ps_POLICY_PEER_SHARE_STICKY_TIME
                                         ps_POLICY_PEER_SHARE_MAX_PEERS
