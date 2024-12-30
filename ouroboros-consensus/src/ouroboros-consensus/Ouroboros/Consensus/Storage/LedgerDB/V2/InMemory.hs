@@ -175,7 +175,7 @@ takeSnapshot ccfg tracer hasFS suffix doChecksum st = do
       let number   = unSlotNo (realPointSlot t)
           snapshot = DiskSnapshot number suffix
       diskSnapshots <- listSnapshots hasFS
-      if List.any ((== number) . dsNumber) diskSnapshots then
+      if List.any (== DiskSnapshot number suffix) diskSnapshots then
         return Nothing
         else do
           encloseTimedWith (TookSnapshot snapshot t >$< tracer)
