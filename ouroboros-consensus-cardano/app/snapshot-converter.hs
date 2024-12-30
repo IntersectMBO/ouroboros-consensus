@@ -67,8 +67,9 @@ data Config = Config
     -- ^ Which format the output snapshot must be in
     , outpath    :: FilePath
     -- ^ Path to the output snapshot
-    , doChecksum :: Flag "DoDiskSnapshotChecksum"
+    , writeChecksum :: Flag "DoDiskSnapshotChecksum"
     -- ^ Write and check checksums
+    , checkChecksum :: Flag "DoDiskSnapshotChecksum"
     }
 
 getCommandLineConfig :: IO (Config, BlockType)
@@ -110,8 +111,14 @@ parseConfig =
             )
         <*> flag DoDiskSnapshotChecksum NoDoDiskSnapshotChecksum
             ( mconcat
-                [ long "no-checksum"
-                , help "Disable checking and writing checksums"
+                [ long "no-write-checksum"
+                , help "Disable writing checksums"
+                ]
+            )
+        <*> flag DoDiskSnapshotChecksum NoDoDiskSnapshotChecksum
+            ( mconcat
+                [ long "no-read-checksum"
+                , help "Disable checking checksums"
                 ]
             )
 
@@ -187,8 +194,8 @@ load config@Config{inpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), pa
              first unstowLedgerTables
          <$> withExceptT
                (SnapshotError . InitFailureRead . ReadSnapshotFailed)
-               (readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode doChecksum path)
-      Monad.when (getFlag doChecksum) $ do
+               (readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode checkChecksum path)
+      Monad.when (getFlag checkChecksum) $ do
         let crcPath = path <.> "checksum"
         snapshotCRC <-
             withExceptT (SnapshotError . InitFailureRead . ReadSnapshotCRCError crcPath) $
@@ -198,7 +205,7 @@ load config@Config{inpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), pa
       pure (forgetLedgerTables st, projectLedgerTables st)
     Mem -> do
       checkSnapshotFileStructure Mem path fs
-      (ls, _) <- withExceptT SnapshotError $ V2.loadSnapshot rr ccfg fs doChecksum ds
+      (ls, _) <- withExceptT SnapshotError $ V2.loadSnapshot rr ccfg fs checkChecksum ds
       let h = V2.currentHandle ls
       (V2.state h,) <$> lift (V2.readAll (V2.tables h))
     LMDB -> do
@@ -210,11 +217,11 @@ load config@Config{inpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), pa
           (V1.LMDBBackingStoreArgs tempFP defaultLMDBLimits Dict.Dict)
           ccfg
           (V1.SnapshotsFS fs)
-          doChecksum
+          checkChecksum
           ds
       (V1.current dbch,) <$> lift (V1.bsReadAll bstore)
   where
-    Config { doChecksum } = config
+    Config { checkChecksum } = config
 load _ _ _ _ = error "Malformed input path!"
 
 store ::
@@ -227,25 +234,25 @@ store ::
     -> (ExtLedgerState blk EmptyMK, LedgerTables (ExtLedgerState blk) ValuesMK)
     -> SomeHasFS IO
     -> IO ()
-store config@Config{outpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), path, _)} ccfg (state, tbs) tempFS =
+store config@Config{outpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), path, DiskSnapshot _ suffix)} ccfg (state, tbs) tempFS =
    case to config of
     Legacy -> do
       crc <- writeExtLedgerState fs (encodeDiskExtLedgerState ccfg) path (stowLedgerTables $ state `withLedgerTables` tbs)
-      Monad.when (getFlag doChecksum) $
+      Monad.when (getFlag writeChecksum) $
         withFile hasFS (path <.> "checksum") (WriteMode MustBeNew) $ \h ->
           Monad.void $ hPutAll hasFS h . BS.toLazyByteString . BS.word32HexFixed $ getCRC crc
     Mem -> do
       lseq <- V2.empty state tbs $ V2.newInMemoryLedgerTablesHandle fs
       let h = V2.currentHandle lseq
-      Monad.void $ V2.takeSnapshot ccfg nullTracer fs Nothing doChecksum h
+      Monad.void $ V2.takeSnapshot ccfg nullTracer fs suffix writeChecksum h
     LMDB -> do
       chlog <- newTVarIO (V1.empty state)
       lock <- V1.mkLedgerDBLock
       bs <- V1.newLMDBBackingStore nullTracer defaultLMDBLimits (V1.LiveLMDBFS tempFS) (V1.SnapshotsFS fs) (V1.InitFromValues (pointSlot $ getTip state) tbs)
       Monad.void $ V1.withReadLock lock $ do
-        V1.takeSnapshot chlog ccfg nullTracer (V1.SnapshotsFS fs) bs Nothing doChecksum
+        V1.takeSnapshot chlog ccfg nullTracer (V1.SnapshotsFS fs) bs suffix writeChecksum
   where
-   Config { doChecksum } = config
+   Config { writeChecksum } = config
 store _ _ _ _ = error "Malformed output path!"
 
 main :: IO ()

@@ -176,7 +176,7 @@ instance CardanoHardForkConstraints c => MemPack (CardanoTxOut c) where
   unpackM = do
     tag <- unpackM
     let
-      np = ( (error "unpacking a byron txout")
+      np = ( (Fn $ const $ error "unpacking a byron txout")
           :* (Fn $ const $ Comp $ K . ShelleyTxOut <$> unpackM)
           :* (Fn $ const $ Comp $ K . AllegraTxOut <$> unpackM)
           :* (Fn $ const $ Comp $ K . MaryTxOut    <$> unpackM)
