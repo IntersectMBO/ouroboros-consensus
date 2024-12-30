@@ -88,13 +88,14 @@ import           Ouroboros.Network.Protocol.LocalTxMonitor.Type
 import           Ouroboros.Network.Protocol.LocalTxSubmission.Codec
 import           Ouroboros.Network.Protocol.LocalTxSubmission.Server
 import           Ouroboros.Network.Protocol.LocalTxSubmission.Type
+import qualified Ouroboros.Network.PublicState as Public
 
 {-------------------------------------------------------------------------------
   Handlers
 -------------------------------------------------------------------------------}
 
 -- | Protocol handlers for node-to-client (local) communication
-data Handlers m peer blk = Handlers {
+data Handlers m addrNTN peer blk = Handlers {
       hChainSyncServer
         :: ChainDB.Follower m blk (ChainDB.WithPoint blk (Serialised blk))
         -> ChainSyncServer (Serialised blk) (Point blk) (Tip blk) m ()
@@ -103,7 +104,8 @@ data Handlers m peer blk = Handlers {
         :: LocalTxSubmissionServer (GenTx blk) (ApplyTxErr blk) m ()
 
     , hStateQueryServer
-        :: LocalStateQueryServer blk (Point blk) (Query blk) m ()
+        :: m (Public.NetworkState addrNTN)
+        -> LocalStateQueryServer blk (Point blk) (Query blk) m ()
 
     , hTxMonitorServer
         :: LocalTxMonitorServer (GenTxId blk) (GenTx blk) SlotNo m ()
@@ -119,7 +121,7 @@ mkHandlers ::
      )
   => NodeKernelArgs m addrNTN addrNTC blk
   -> NodeKernel     m addrNTN addrNTC blk
-  -> Handlers       m         addrNTC blk
+  -> Handlers       m addrNTN addrNTC blk
 mkHandlers NodeKernelArgs {cfg, tracers} NodeKernel {getChainDB, getMempool} =
     Handlers {
         hChainSyncServer =
@@ -130,9 +132,10 @@ mkHandlers NodeKernelArgs {cfg, tracers} NodeKernel {getChainDB, getMempool} =
           localTxSubmissionServer
             (Node.localTxSubmissionServerTracer tracers)
             getMempool
-      , hStateQueryServer =
+      , hStateQueryServer = \getNetworkState ->
           localStateQueryServer
             (ExtLedgerCfg cfg)
+            getNetworkState
             (ChainDB.getTipPoint getChainDB)
             (ChainDB.getPastLedger getChainDB)
             (castPoint . AF.anchorPoint <$> ChainDB.getCurrentChain getChainDB)
@@ -370,18 +373,19 @@ type App m peer bytes a = peer -> Channel m bytes -> m (a, Maybe bytes)
 -- | Applications for the node-to-client (i.e., local) protocols
 --
 -- See 'Network.Mux.Types.MuxApplication'
-data Apps m peer bCS bTX bSQ bTM a = Apps {
+data Apps m addrNTN addrNTC bCS bTX bSQ bTM a = Apps {
       -- | Start a local chain sync server.
-      aChainSyncServer    :: App m peer bCS a
+      aChainSyncServer    :: App m addrNTC bCS a
 
       -- | Start a local transaction submission server.
-    , aTxSubmissionServer :: App m peer bTX a
+    , aTxSubmissionServer :: App m addrNTC bTX a
 
       -- | Start a local state query server.
-    , aStateQueryServer   :: App m peer bSQ a
+    , aStateQueryServer   :: m (Public.NetworkState addrNTN)
+                          -> App m addrNTC bSQ a
 
       -- | Start a local transaction monitor server
-    , aTxMonitorServer    :: App m peer bTM a
+    , aTxMonitorServer    :: App m addrNTC bTM a
     }
 
 -- | Construct the 'NetworkApplication' for the node-to-client protocols
@@ -399,8 +403,8 @@ mkApps ::
   => NodeKernel m addrNTN addrNTC blk
   -> Tracers m addrNTC blk e
   -> Codecs blk e m bCS bTX bSQ bTM
-  -> Handlers m addrNTC blk
-  -> Apps m addrNTC bCS bTX bSQ bTM ()
+  -> Handlers m addrNTN addrNTC blk
+  -> Apps m addrNTN addrNTC bCS bTX bSQ bTM ()
 mkApps kernel Tracers {..} Codecs {..} Handlers {..} =
     Apps {..}
   where
@@ -434,17 +438,18 @@ mkApps kernel Tracers {..} Codecs {..} Handlers {..} =
         (localTxSubmissionServerPeer (pure hTxSubmissionServer))
 
     aStateQueryServer
-      :: addrNTC
+      :: m (Public.NetworkState addrNTN)
+      -> addrNTC
       -> Channel m bSQ
       -> m ((), Maybe bSQ)
-    aStateQueryServer them channel = do
+    aStateQueryServer getNetworkState them channel = do
       labelThisThread "LocalStateQueryServer"
       Stateful.runPeer
         (contramap (TraceLabelPeer them) tStateQueryTracer)
         cStateQueryCodec
         channel
         LocalStateQuery.StateIdle
-        (localStateQueryServerPeer hStateQueryServer)
+        (localStateQueryServerPeer (hStateQueryServer getNetworkState))
 
     aTxMonitorServer
       :: addrNTC
@@ -466,7 +471,7 @@ mkApps kernel Tracers {..} Codecs {..} Handlers {..} =
 -- 'OuroborosApplication' for the node-to-client protocols.
 responder ::
      N.NodeToClientVersion
-  -> Apps m (ConnectionId ntcAddr) b b b b a
+  -> Apps m ntnAddr (ConnectionId ntcAddr) b b b b a
   -> Diff.NodeToClientApplication Mux.ResponderMode ntnAddr ntcAddr b m Void a
 responder version Apps {..} =
     nodeToClientProtocols
@@ -478,8 +483,8 @@ responder version Apps {..} =
             ResponderProtocolOnly $ MiniProtocolCb $ \ctx ->
               aTxSubmissionServer (rcConnectionId ctx),
           localStateQueryProtocol =
-            ResponderProtocolOnly $ MiniProtocolCb $ \ctx ->
-              aStateQueryServer (rcConnectionId ctx),
+            ResponderProtocolOnlyWithState $ MiniProtocolCb $ \(getNetworkState, ctx) ->
+              aStateQueryServer getNetworkState (rcConnectionId ctx),
           localTxMonitorProtocol =
             ResponderProtocolOnly $ MiniProtocolCb $ \ctx ->
               aTxMonitorServer (rcConnectionId ctx)

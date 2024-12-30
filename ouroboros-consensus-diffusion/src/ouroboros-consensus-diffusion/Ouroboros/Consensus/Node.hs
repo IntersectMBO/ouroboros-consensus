@@ -551,7 +551,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
       -> NodeKernel     m addrNTN (ConnectionId addrNTC) blk
       -> BlockNodeToClientVersion blk
       -> NodeToClientVersion
-      -> NTC.Apps m (ConnectionId addrNTC) ByteString ByteString ByteString ByteString ()
+      -> NTC.Apps m addrNTN (ConnectionId addrNTC) ByteString ByteString ByteString ByteString ()
     mkNodeToClientApps nodeKernelArgs nodeKernel blockVersion networkVersion =
         NTC.mkApps
           nodeKernel
@@ -576,7 +576,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
       -> (   BlockNodeToClientVersion blk
           -> NodeToClientVersion
           -> NTC.Apps
-               m (ConnectionId addrNTC) ByteString ByteString ByteString ByteString ()
+               m addrNTN (ConnectionId addrNTC) ByteString ByteString ByteString ByteString ()
         )
       -> NodeKernel m addrNTN (ConnectionId addrNTC) blk
       -> PeerMetrics m addrNTN

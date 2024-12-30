@@ -11,10 +11,13 @@ import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Protocol.LocalStateQuery.Server
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
                      (AcquireFailure (..), Target (..))
+import qualified Ouroboros.Network.PublicState as Public
 
 localStateQueryServer ::
-     forall m blk. (IOLike m, BlockSupportsLedgerQuery blk, ConfigSupportsNode blk, HasAnnTip blk)
+     forall m addrNTN blk. (IOLike m, BlockSupportsLedgerQuery blk, ConfigSupportsNode blk, HasAnnTip blk)
   => ExtLedgerCfg blk
+  -> m (Public.NetworkState addrNTN)
+     -- ^ Get public network state
   -> STM m (Point blk)
      -- ^ Get tip point
   -> (Point blk -> STM m (Maybe (ExtLedgerState blk)))
@@ -22,7 +25,7 @@ localStateQueryServer ::
   -> STM m (Point blk)
      -- ^ Get the immutable point
   -> LocalStateQueryServer blk (Point blk) (Query blk) m ()
-localStateQueryServer cfg getTipPoint getPastLedger getImmutablePoint =
+localStateQueryServer cfg _getNetworkState getTipPoint getPastLedger getImmutablePoint =
     LocalStateQueryServer $ return idle
   where
     idle :: ServerStIdle blk (Point blk) (Query blk) m ()
