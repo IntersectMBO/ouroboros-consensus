@@ -5,7 +5,7 @@ module Ouroboros.Consensus.Ledger.Query.Version (
 
 import           Ouroboros.Network.NodeToClient.Version
 
--- | Version of the `Query blk` type.
+-- | Version of the `Query blk addr` type.
 --
 -- Multiple top level queries are now supported. The encoding now has
 -- constructor tags for the different top level queries for QueryVersion1 onwards.
@@ -15,6 +15,9 @@ data QueryVersion
 
   -- Adds support for 'GetChainBlockNo' and 'GetChainPoint'.
   | QueryVersion2
+
+  -- Adds support for 'GetNetworkState`
+  | QueryVersion3
   deriving (Eq, Ord, Enum, Bounded, Show)
 
 -- | Get the @QueryVersion@ supported by this @NodeToClientVersion@.
@@ -24,4 +27,4 @@ nodeToClientVersionToQueryVersion x = case x of
   NodeToClientV_17 -> QueryVersion2
   NodeToClientV_18 -> QueryVersion2
   NodeToClientV_19 -> QueryVersion2
-  NodeToClientV_20 -> QueryVersion2
+  NodeToClientV_20 -> QueryVersion3

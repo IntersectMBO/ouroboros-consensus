@@ -558,7 +558,7 @@ test-suite consensus-test
     nothunks,
     ouroboros-consensus,
     ouroboros-network,
-    ouroboros-network-api,
+    ouroboros-network-api:{ouroboros-network-api, testlib},
     ouroboros-network-mock,
     ouroboros-network-protocols:{ouroboros-network-protocols, testlib},
     quiet,

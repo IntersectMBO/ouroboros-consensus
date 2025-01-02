@@ -26,6 +26,7 @@ module Ouroboros.Consensus.Block.NestedContent (
     -- * Convenience re-exports
   , module Ouroboros.Consensus.Util.DepPair
   , SomeSecond (..)
+  , SomeThird (..)
   ) where
 
 import           Data.Kind (Type)
@@ -34,7 +35,7 @@ import           Data.Proxy
 import           Data.Type.Equality
 import           Data.Typeable (Typeable)
 import           NoThunks.Class (InspectHeap (..), NoThunks)
-import           Ouroboros.Consensus.Util (SomeSecond (..))
+import           Ouroboros.Consensus.Util (SomeSecond (..), SomeThird (..))
 import           Ouroboros.Consensus.Util.DepPair
 
 {-------------------------------------------------------------------------------

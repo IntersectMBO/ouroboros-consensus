@@ -23,6 +23,7 @@ module Ouroboros.Consensus.Util (
   , Some (..)
   , SomePair (..)
   , SomeSecond (..)
+  , SomeThird (..)
   , mustBeRight
     -- * Folding variations
   , foldlM'
@@ -128,6 +129,14 @@ data SomePair (f :: k -> Type) (g :: k -> Type) where
 type SomeSecond :: (k1 -> k2 -> Type) -> k1 -> Type
 data SomeSecond f a where
   SomeSecond :: !(f a b) -> SomeSecond f a
+
+-- | Hide the second type argument of some functor
+--
+-- @SomeSecond f a@ is isomorphic to @Some (f a)@, but is more convenient in
+-- partial applications.
+type SomeThird :: (k1 -> k2 -> k3 -> Type) -> k1 -> k2 -> Type
+data SomeThird f a b where
+  SomeThird :: !(f a b c) -> SomeThird f a b
 
 mustBeRight :: Either Void a -> a
 mustBeRight (Left  v) = absurd v

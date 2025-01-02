@@ -52,6 +52,8 @@ import           Ouroboros.Network.Protocol.LocalStateQuery.Examples
 import           Ouroboros.Network.Protocol.LocalStateQuery.Server
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
                      (AcquireFailure (..), State (..), Target (..))
+import qualified Ouroboros.Network.PublicState as Public
+import           Test.Ouroboros.Network.PublicState.Generators ()
 import           System.FS.API (HasFS, SomeHasFS (..))
 import           Test.QuickCheck hiding (Result)
 import           Test.Tasty
@@ -72,6 +74,8 @@ tests = testGroup "LocalStateQueryServer"
   Main property
 -------------------------------------------------------------------------------}
 
+type Addr = Int
+
 -- | Plan:
 -- * Preseed the LgrDB of the server with the preferred chain of the
 --  'BlockTree'.
@@ -84,8 +88,9 @@ prop_localStateQueryServer
   -> BlockTree
   -> Permutation
   -> Positive (Small Int)
+  -> Public.NetworkState Addr
   -> Property
-prop_localStateQueryServer k bt p (Positive (Small n)) = checkOutcome k chain actualOutcome
+prop_localStateQueryServer k bt p (Positive (Small n)) ns = checkOutcome k chain actualOutcome
   where
     chain :: Chain TestBlock
     chain = treePreferredChain bt
@@ -98,7 +103,7 @@ prop_localStateQueryServer k bt p (Positive (Small n)) = checkOutcome k chain ac
     actualOutcome :: [(Target (Point TestBlock), Either AcquireFailure (Point TestBlock))]
     actualOutcome = runSimOrThrow $ do
       let client = mkClient points
-      server <- mkServer k chain
+      server <- mkServer k ns chain
       (\(a, _, _) -> a) <$>
         connect
           StateIdle
@@ -166,7 +171,7 @@ mkClient
   -> LocalStateQueryClient
        TestBlock
        (Point TestBlock)
-       (Query TestBlock)
+       (Query TestBlock Addr)
        m
        [(Target (Point TestBlock), Either AcquireFailure (Point TestBlock))]
 mkClient points = localStateQueryClient [(pt, BlockQuery QueryLedgerTip) | pt <- points]
@@ -174,13 +179,15 @@ mkClient points = localStateQueryClient [(pt, BlockQuery QueryLedgerTip) | pt <-
 mkServer ::
      IOLike m
   => SecurityParam
+  -> Public.NetworkState Addr
   -> Chain TestBlock
-  -> m (LocalStateQueryServer TestBlock (Point TestBlock) (Query TestBlock) m ())
-mkServer k chain = do
+  -> m (LocalStateQueryServer TestBlock (Point TestBlock) (Query TestBlock Addr) m ())
+mkServer k ns chain = do
     lgrDB <- initLgrDB k chain
     return $
       localStateQueryServer
         cfg
+        (return ns)
         (castPoint . LgrDB.ledgerDbTip <$> LgrDB.getCurrent lgrDB)
         (\pt -> LgrDB.ledgerDbPast pt <$> LgrDB.getCurrent lgrDB)
         getImmutablePoint

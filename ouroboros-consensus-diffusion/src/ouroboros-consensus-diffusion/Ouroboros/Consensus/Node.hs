@@ -1,6 +1,7 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
@@ -60,7 +61,7 @@ module Ouroboros.Consensus.Node (
 
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
-import           Codec.Serialise (DeserialiseFailure)
+import           Codec.Serialise (Serialise, DeserialiseFailure)
 import           Control.Exception (IOException)
 import           Control.DeepSeq (NFData)
 import           Control.Monad (forM_, when)
@@ -133,6 +134,7 @@ import           Ouroboros.Network.PeerSelection.LedgerPeers
 import           Ouroboros.Network.PeerSelection.PeerMetric (PeerMetrics,
                      newPeerMetric, reportMetric)
 import           Ouroboros.Network.PeerSelection.PeerSharing (PeerSharing)
+import qualified Ouroboros.Network.PublicState as Public
 import           Ouroboros.Network.RemoteAddress.Codec (decodeRemoteAddress,
                      encodeRemoteAddress)
 import           Ouroboros.Network.RethrowPolicy
@@ -178,7 +180,7 @@ data RunNodeArgs m addrNTN addrNTC blk = RunNodeArgs {
     , rnTraceNTN :: NTN.Tracers m (ConnectionId addrNTN) blk DeserialiseFailure
 
       -- | Protocol tracers for node-to-client communication
-    , rnTraceNTC :: NTC.Tracers m (ConnectionId addrNTC) blk DeserialiseFailure
+    , rnTraceNTC :: NTC.Tracers m addrNTN (ConnectionId addrNTC) blk DeserialiseFailure
 
       -- | Protocol info
     , rnProtocolInfo :: ProtocolInfo blk
@@ -366,10 +368,12 @@ type NetworkIO m = (
 
 -- | Extra constraints used by `ouroboros-network`.
 type NetworkAddr addr = (
+      Show addr,
       Ord addr,
       Typeable addr,
       NoThunks addr,
-      NFData addr
+      NFData addr,
+      Serialise (Public.RemoteAddressEncoding addr)
     )
 
 -- | Start a node.

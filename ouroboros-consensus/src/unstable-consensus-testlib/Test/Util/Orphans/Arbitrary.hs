@@ -392,10 +392,10 @@ instance Arbitrary QueryVersion where
   shrink v = if v == minBound then [] else [pred v]
 
 instance Arbitrary (SomeSecond BlockQuery blk)
-      => Arbitrary (SomeSecond Query blk) where
+      => Arbitrary (SomeThird Query blk addr) where
   arbitrary = do
     SomeSecond someBlockQuery <- arbitrary
-    return (SomeSecond (BlockQuery someBlockQuery))
+    return (SomeThird (BlockQuery someBlockQuery))
 
 
 instance Arbitrary Index.CacheConfig where

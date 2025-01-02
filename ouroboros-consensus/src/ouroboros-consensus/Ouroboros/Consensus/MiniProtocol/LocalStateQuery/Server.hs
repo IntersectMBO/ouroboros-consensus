@@ -24,18 +24,18 @@ localStateQueryServer ::
      -- ^ Get a past ledger
   -> STM m (Point blk)
      -- ^ Get the immutable point
-  -> LocalStateQueryServer blk (Point blk) (Query blk) m ()
-localStateQueryServer cfg _getNetworkState getTipPoint getPastLedger getImmutablePoint =
+  -> LocalStateQueryServer blk (Point blk) (Query blk addrNTN) m ()
+localStateQueryServer cfg getNetworkState getTipPoint getPastLedger getImmutablePoint =
     LocalStateQueryServer $ return idle
   where
-    idle :: ServerStIdle blk (Point blk) (Query blk) m ()
+    idle :: ServerStIdle blk (Point blk) (Query blk addrNTN) m ()
     idle = ServerStIdle {
           recvMsgAcquire = handleAcquire
         , recvMsgDone    = return ()
         }
 
     handleAcquire :: Target (Point blk)
-                  -> m (ServerStAcquiring blk (Point blk) (Query blk) m ())
+                  -> m (ServerStAcquiring blk (Point blk) (Query blk addrNTN) m ())
     handleAcquire tpt = do
         (pt, mPastLedger, immutablePoint) <- atomically $ do
           pt <- case tpt of
@@ -54,7 +54,7 @@ localStateQueryServer cfg _getNetworkState getTipPoint getPastLedger getImmutabl
             -> SendMsgFailure AcquireFailurePointNotOnChain idle
 
     acquired :: ExtLedgerState blk
-             -> ServerStAcquired blk (Point blk) (Query blk) m ()
+             -> ServerStAcquired blk (Point blk) (Query blk addrNTN) m ()
     acquired st = ServerStAcquired {
           recvMsgQuery     = handleQuery st
         , recvMsgReAcquire = handleAcquire
@@ -63,9 +63,10 @@ localStateQueryServer cfg _getNetworkState getTipPoint getPastLedger getImmutabl
 
     handleQuery ::
          ExtLedgerState blk
-      -> Query blk result
-      -> m (ServerStQuerying blk (Point blk) (Query blk) m () result)
-    handleQuery st query = return $
-        SendMsgResult
-          (answerQuery cfg query st)
+      -> Query blk addrNTN result
+      -> m (ServerStQuerying blk (Point blk) (Query blk addrNTN) m () result)
+    handleQuery st query = do
+        result <- answerQueryM cfg query st getNetworkState
+        return $ SendMsgResult
+          result
           (acquired st)

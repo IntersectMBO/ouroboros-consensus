@@ -42,6 +42,7 @@ import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.ByteString.Lazy (ByteString)
 import           Data.Void (Void)
+import           Data.Typeable (Typeable)
 import qualified Network.Mux as Mux
 import           Network.TypedProtocol.Codec
 import qualified Network.TypedProtocol.Stateful.Codec as Stateful
@@ -95,7 +96,7 @@ import qualified Ouroboros.Network.PublicState as Public
 -------------------------------------------------------------------------------}
 
 -- | Protocol handlers for node-to-client (local) communication
-data Handlers m addrNTN peer blk = Handlers {
+data Handlers m addrNTN addrNTC blk = Handlers {
       hChainSyncServer
         :: ChainDB.Follower m blk (ChainDB.WithPoint blk (Serialised blk))
         -> ChainSyncServer (Serialised blk) (Point blk) (Tip blk) m ()
@@ -105,7 +106,7 @@ data Handlers m addrNTN peer blk = Handlers {
 
     , hStateQueryServer
         :: m (Public.NetworkState addrNTN)
-        -> LocalStateQueryServer blk (Point blk) (Query blk) m ()
+        -> LocalStateQueryServer blk (Point blk) (Query blk addrNTN) m ()
 
     , hTxMonitorServer
         :: LocalTxMonitorServer (GenTxId blk) (GenTx blk) SlotNo m ()
@@ -150,19 +151,19 @@ mkHandlers NodeKernelArgs {cfg, tracers} NodeKernel {getChainDB, getMempool} =
 -------------------------------------------------------------------------------}
 
 -- | Node-to-client protocol codecs needed to run 'Handlers'.
-data Codecs' blk serialisedBlk e m bCS bTX bSQ bTM = Codecs {
+data Codecs' blk serialisedBlk addrNTN e m bCS bTX bSQ bTM = Codecs {
       cChainSyncCodec    :: Codec (ChainSync serialisedBlk (Point blk) (Tip blk))   e m bCS
     , cTxSubmissionCodec :: Codec (LocalTxSubmission (GenTx blk) (ApplyTxErr blk))  e m bTX
-    , cStateQueryCodec   :: Stateful.Codec (LocalStateQuery blk (Point blk) (Query blk)) e LocalStateQuery.State m bSQ
+    , cStateQueryCodec   :: Stateful.Codec (LocalStateQuery blk (Point blk) (Query blk addrNTN)) e LocalStateQuery.State m bSQ
     , cTxMonitorCodec    :: Codec (LocalTxMonitor (GenTxId blk) (GenTx blk) SlotNo) e m bTM
     }
 
-type Codecs blk e m bCS bTX bSQ bTM =
-    Codecs' blk (Serialised blk) e m bCS bTX bSQ bTM
-type DefaultCodecs blk m =
-    Codecs' blk (Serialised blk) DeserialiseFailure m ByteString ByteString ByteString ByteString
-type ClientCodecs blk  m =
-    Codecs' blk blk DeserialiseFailure m ByteString ByteString ByteString ByteString
+type Codecs blk addrNTN e m bCS bTX bSQ bTM =
+    Codecs' blk (Serialised blk) addrNTN e m bCS bTX bSQ bTM
+type DefaultCodecs blk addrNTN m =
+    Codecs' blk (Serialised blk) addrNTN DeserialiseFailure m ByteString ByteString ByteString ByteString
+type ClientCodecs blk addrNTN m =
+    Codecs' blk blk addrNTN DeserialiseFailure m ByteString ByteString ByteString ByteString
 
 -- | Protocol codecs for the node-to-client protocols
 --
@@ -180,17 +181,21 @@ type ClientCodecs blk  m =
 -- Implementation mode: currently none of the consensus encoders/decoders do
 -- anything different based on the version, so @_version@ is unused; it's just
 -- that not all codecs are used, depending on the version number.
-defaultCodecs :: forall m blk.
+defaultCodecs :: forall m blk addrNTN.
                  ( MonadST m
                  , SerialiseNodeToClientConstraints blk
                  , ShowQuery (BlockQuery blk)
                  , StandardHash blk
                  , Serialise (HeaderHash blk)
+                 , Show addrNTN
+                 , Ord addrNTN
+                 , Typeable addrNTN
+                 , Serialise (Public.RemoteAddressEncoding addrNTN)
                  )
               => CodecConfig blk
               -> BlockNodeToClientVersion blk
               -> N.NodeToClientVersion
-              -> DefaultCodecs blk m
+              -> DefaultCodecs blk addrNTN m
 defaultCodecs ccfg version networkVersion = Codecs {
       cChainSyncCodec =
         codecChainSync
@@ -213,8 +218,8 @@ defaultCodecs ccfg version networkVersion = Codecs {
           networkVersion
           (encodePoint (encodeRawHash p))
           (decodePoint (decodeRawHash p))
-          (queryEncodeNodeToClient ccfg queryVersion version . SomeSecond)
-          ((\(SomeSecond qry) -> Some qry) <$> queryDecodeNodeToClient ccfg queryVersion version)
+          (queryEncodeNodeToClient ccfg queryVersion version . SomeThird)
+          ((\(SomeThird qry) -> Some qry) <$> queryDecodeNodeToClient ccfg queryVersion version)
           (encodeResult ccfg version)
           (decodeResult ccfg version)
 
@@ -240,17 +245,21 @@ defaultCodecs ccfg version networkVersion = Codecs {
 -- | Protocol codecs for the node-to-client protocols which serialise
 -- / deserialise blocks in /chain-sync/ protocol.
 --
-clientCodecs :: forall m blk.
+clientCodecs :: forall m blk addrNTN.
                 ( MonadST m
                 , SerialiseNodeToClientConstraints blk
                 , ShowQuery (BlockQuery blk)
                 , StandardHash blk
                 , Serialise (HeaderHash blk)
+                , Show addrNTN
+                , Ord addrNTN
+                , Serialise (Public.RemoteAddressEncoding addrNTN)
+                , Typeable addrNTN
                 )
              => CodecConfig blk
              -> BlockNodeToClientVersion blk
              -> N.NodeToClientVersion
-             -> ClientCodecs blk m
+             -> ClientCodecs blk addrNTN m
 clientCodecs ccfg version networkVersion = Codecs {
       cChainSyncCodec =
         codecChainSync
@@ -273,8 +282,8 @@ clientCodecs ccfg version networkVersion = Codecs {
           networkVersion
           (encodePoint (encodeRawHash p))
           (decodePoint (decodeRawHash p))
-          (queryEncodeNodeToClient ccfg queryVersion version . SomeSecond)
-          ((\(SomeSecond qry) -> Some qry) <$> queryDecodeNodeToClient ccfg queryVersion version)
+          (queryEncodeNodeToClient ccfg queryVersion version . SomeThird)
+          ((\(SomeThird qry) -> Some qry) <$> queryDecodeNodeToClient ccfg queryVersion version)
           (encodeResult ccfg version)
           (decodeResult ccfg version)
 
@@ -299,10 +308,10 @@ clientCodecs ccfg version networkVersion = Codecs {
 
 -- | Identity codecs used in tests.
 identityCodecs :: (Monad m, BlockSupportsLedgerQuery blk)
-               => Codecs blk CodecFailure m
+               => Codecs blk addrNTN CodecFailure m
                     (AnyMessage (ChainSync (Serialised blk) (Point blk) (Tip blk)))
                     (AnyMessage (LocalTxSubmission (GenTx blk) (ApplyTxErr blk)))
-                    (Stateful.AnyMessage (LocalStateQuery blk (Point blk) (Query blk)) LocalStateQuery.State)
+                    (Stateful.AnyMessage (LocalStateQuery blk (Point blk) (Query blk addrNTN)) LocalStateQuery.State)
                     (AnyMessage (LocalTxMonitor (GenTxId blk) (GenTx blk) SlotNo))
 identityCodecs = Codecs {
       cChainSyncCodec    = codecChainSyncId
@@ -316,17 +325,17 @@ identityCodecs = Codecs {
 -------------------------------------------------------------------------------}
 
 -- | A record of 'Tracer's for the different protocols.
-type Tracers m peer blk e =
-     Tracers'  peer blk e (Tracer m)
+type Tracers m addrNTN addrNTC blk e =
+     Tracers'  addrNTN addrNTC blk e (Tracer m)
 
-data Tracers' peer blk e f = Tracers {
-      tChainSyncTracer    :: f (TraceLabelPeer peer (TraceSendRecv (ChainSync (Serialised blk) (Point blk) (Tip blk))))
-    , tTxSubmissionTracer :: f (TraceLabelPeer peer (TraceSendRecv (LocalTxSubmission (GenTx blk) (ApplyTxErr blk))))
-    , tStateQueryTracer   :: f (TraceLabelPeer peer (Stateful.TraceSendRecv (LocalStateQuery blk (Point blk) (Query blk)) LocalStateQuery.State))
-    , tTxMonitorTracer    :: f (TraceLabelPeer peer (TraceSendRecv (LocalTxMonitor (GenTxId blk) (GenTx blk) SlotNo)))
+data Tracers' addrNTN addrNTC blk e f = Tracers {
+      tChainSyncTracer    :: f (TraceLabelPeer addrNTC (TraceSendRecv (ChainSync (Serialised blk) (Point blk) (Tip blk))))
+    , tTxSubmissionTracer :: f (TraceLabelPeer addrNTC (TraceSendRecv (LocalTxSubmission (GenTx blk) (ApplyTxErr blk))))
+    , tStateQueryTracer   :: f (TraceLabelPeer addrNTC (Stateful.TraceSendRecv (LocalStateQuery blk (Point blk) (Query blk addrNTN)) LocalStateQuery.State))
+    , tTxMonitorTracer    :: f (TraceLabelPeer addrNTC (TraceSendRecv (LocalTxMonitor (GenTxId blk) (GenTx blk) SlotNo)))
     }
 
-instance (forall a. Semigroup (f a)) => Semigroup (Tracers' peer blk e f) where
+instance (forall a. Semigroup (f a)) => Semigroup (Tracers' addrNTN addrNTC blk e f) where
   l <> r = Tracers {
         tChainSyncTracer    = f tChainSyncTracer
       , tTxSubmissionTracer = f tTxSubmissionTracer
@@ -335,12 +344,12 @@ instance (forall a. Semigroup (f a)) => Semigroup (Tracers' peer blk e f) where
       }
     where
       f :: forall a. Semigroup a
-        => (Tracers' peer blk e f -> a)
+        => (Tracers' addrNTN addrNTC blk e f -> a)
         -> a
       f prj = prj l <> prj r
 
 -- | Use a 'nullTracer' for each protocol.
-nullTracers :: Monad m => Tracers m peer blk e
+nullTracers :: Monad m => Tracers m addrNTN addrNTC blk e
 nullTracers = Tracers {
       tChainSyncTracer    = nullTracer
     , tTxSubmissionTracer = nullTracer
@@ -348,14 +357,15 @@ nullTracers = Tracers {
     , tTxMonitorTracer    = nullTracer
     }
 
-showTracers :: ( Show peer
+showTracers :: ( Show addrNTC
+               , Show addrNTN
                , Show (GenTx blk)
                , Show (GenTxId blk)
                , Show (ApplyTxErr blk)
                , ShowQuery (BlockQuery blk)
                , HasHeader blk
                )
-            => Tracer m String -> Tracers m peer blk e
+            => Tracer m String -> Tracers m addrNTC addrNTN blk e
 showTracers tr = Tracers {
       tChainSyncTracer    = showTracing tr
     , tTxSubmissionTracer = showTracing tr
@@ -368,7 +378,7 @@ showTracers tr = Tracers {
 -------------------------------------------------------------------------------}
 
 -- | A node-to-client application
-type App m peer bytes a = peer -> Channel m bytes -> m (a, Maybe bytes)
+type App m addrNTC bytes a = addrNTC -> Channel m bytes -> m (a, Maybe bytes)
 
 -- | Applications for the node-to-client (i.e., local) protocols
 --
@@ -401,8 +411,8 @@ mkApps ::
      , ShowQuery (BlockQuery blk)
      )
   => NodeKernel m addrNTN addrNTC blk
-  -> Tracers m addrNTC blk e
-  -> Codecs blk e m bCS bTX bSQ bTM
+  -> Tracers m addrNTN addrNTC blk e
+  -> Codecs blk addrNTN e m bCS bTX bSQ bTM
   -> Handlers m addrNTN addrNTC blk
   -> Apps m addrNTN addrNTC bCS bTX bSQ bTM ()
 mkApps kernel Tracers {..} Codecs {..} Handlers {..} =

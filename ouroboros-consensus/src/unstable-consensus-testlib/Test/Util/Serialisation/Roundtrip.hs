@@ -177,7 +177,7 @@ type Arbitrary' a = (Arbitrary a, Eq a, Show a)
 
 -- | All roundtrip tests
 roundtrip_all
-  :: forall blk.
+  :: forall blk addr.
      ( SerialiseDiskConstraints         blk
      , SerialiseNodeToNodeConstraints   blk
      , SerialiseNodeToClientConstraints blk
@@ -207,7 +207,9 @@ roundtrip_all
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (ApplyTxErr blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeSecond BlockQuery blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeResult blk)
-     , ArbitraryWithVersion (QueryVersion, BlockNodeToClientVersion blk) (SomeSecond Query blk)
+     , ArbitraryWithVersion (QueryVersion, BlockNodeToClientVersion blk) (SomeThird Query blk addr)
+
+     , addr ~ Int
      )
   => CodecConfig blk
   -> (forall a. NestedCtxt_ blk Header a -> Dict (Eq a, Show a))
@@ -225,7 +227,7 @@ roundtrip_all = roundtrip_all_skipping (const CheckCBORValidity)
 --   [this issue](https://github.com/IntersectMBO/cardano-ledger/issues/3800).
 --
 roundtrip_all_skipping
-  :: forall blk.
+  :: forall blk addr.
      ( SerialiseDiskConstraints         blk
      , SerialiseNodeToNodeConstraints   blk
      , SerialiseNodeToClientConstraints blk
@@ -255,7 +257,9 @@ roundtrip_all_skipping
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (ApplyTxErr blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeSecond BlockQuery blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeResult blk)
-     , ArbitraryWithVersion (QueryVersion, BlockNodeToClientVersion blk) (SomeSecond Query blk)
+     , ArbitraryWithVersion (QueryVersion, BlockNodeToClientVersion blk) (SomeThird Query blk addr)
+
+     , addr ~ Int
      )
   => (TestName -> ShouldCheckCBORValidity)
   -> CodecConfig blk
@@ -330,8 +334,9 @@ type ArbitraryWithVersion v a = (Arbitrary (WithVersion v a), Eq a, Show a)
 instance ( blockVersion ~ BlockNodeToClientVersion blk
          , Arbitrary blockVersion
          , Arbitrary (WithVersion (BlockNodeToClientVersion blk) (SomeSecond BlockQuery blk))
+         , addr ~ Int
          )
-      => Arbitrary (WithVersion (QueryVersion, blockVersion) (SomeSecond Query blk)) where
+      => Arbitrary (WithVersion (QueryVersion, blockVersion) (SomeThird Query blk addr)) where
   arbitrary = do
     queryVersion <- arbitrary
     case queryVersion of
@@ -340,14 +345,15 @@ instance ( blockVersion ~ BlockNodeToClientVersion blk
       -- support such top level `Query` constructors in this Arbitrary instance.
       Query.QueryVersion1 -> genTopLevelQuery1
       Query.QueryVersion2 -> genTopLevelQuery2
+      Query.QueryVersion3 -> genTopLevelQuery3
     where
       mkEntry :: QueryVersion
-        -> Query blk query
+        -> Query blk addr query
         -> Gen
-            (WithVersion (QueryVersion, blockVersion) (SomeSecond Query blk))
+            (WithVersion (QueryVersion, blockVersion) (SomeThird Query blk addr))
       mkEntry qv q = do
         blockV <- arbitrary
-        return (WithVersion (qv, blockV) (SomeSecond q))
+        return (WithVersion (qv, blockV) (SomeThird q))
 
       genTopLevelQuery1 =
         let version = Query.QueryVersion1
@@ -365,13 +371,23 @@ instance ( blockVersion ~ BlockNodeToClientVersion blk
               , (1 , mkEntry version GetChainPoint  )
               ]
 
+      genTopLevelQuery3 =
+        let version = Query.QueryVersion2
+        in  frequency
+              [ (15, arbitraryBlockQuery version    )
+              , (1 , mkEntry version GetSystemStart )
+              , (1 , mkEntry version GetChainBlockNo)
+              , (1 , mkEntry version GetChainPoint  )
+              , (1,  mkEntry version GetNetworkState)
+              ]
+
       arbitraryBlockQuery :: QueryVersion
                           -> Gen (WithVersion (QueryVersion, blockVersion)
-                                              (SomeSecond Query blk))
+                                              (SomeThird Query blk addr))
       arbitraryBlockQuery queryVersion = do
         WithVersion blockV (SomeSecond someBlockQuery) <- arbitrary
         return (WithVersion (queryVersion, blockV)
-                            (SomeSecond (BlockQuery someBlockQuery)))
+                            (SomeThird (BlockQuery someBlockQuery)))
 
 -- | This is @OVERLAPPABLE@ because we have to override the default behaviour
 -- for e.g. 'Query's.
@@ -488,7 +504,7 @@ roundtrip_SerialiseNodeToNode ccfg =
 -- TODO how can we ensure that we have a test for each constraint listed in
 -- 'SerialiseNodeToClientConstraints'?
 roundtrip_SerialiseNodeToClient
-  :: forall blk.
+  :: forall blk addr.
      ( SerialiseNodeToClientConstraints blk
      , Show (BlockNodeToClientVersion blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) blk
@@ -496,11 +512,12 @@ roundtrip_SerialiseNodeToClient
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (ApplyTxErr blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeSecond BlockQuery blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeResult blk)
-     , ArbitraryWithVersion (QueryVersion, BlockNodeToClientVersion blk) (SomeSecond Query blk)
+     , ArbitraryWithVersion (QueryVersion, BlockNodeToClientVersion blk) (SomeThird Query blk addr)
 
        -- Needed for testing the @Serialised blk@
      , EncodeDisk blk blk
      , DecodeDisk blk (Lazy.ByteString -> blk)
+     , addr ~ Int
      )
   => (TestName -> ShouldCheckCBORValidity)
   -> CodecConfig blk
@@ -511,7 +528,7 @@ roundtrip_SerialiseNodeToClient shouldCheckCBORvalidity ccfg =
     , rt (Proxy @(ApplyTxErr blk))            "ApplyTxErr"
     , rt (Proxy @(SomeSecond BlockQuery blk)) "BlockQuery"
     , rtWith
-        @(SomeSecond Query blk)
+        @(SomeThird Query blk addr)
         @(QueryVersion, BlockNodeToClientVersion blk)
         (\(queryVersion, blockVersion) query -> Query.queryEncodeNodeToClient
                           ccfg
