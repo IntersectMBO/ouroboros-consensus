@@ -16,7 +16,7 @@ index-state:
   -- Bump this if you need newer packages from Hackage
   , hackage.haskell.org 2024-12-10T16:20:07Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2024-12-18T14:29:04Z
+  , cardano-haskell-packages 2025-01-02T14:22:02Z
 
 packages:
   ouroboros-consensus
@@ -47,13 +47,3 @@ if(os(windows))
 
 -- https://github.com/ulidtko/cabal-doctest/issues/85
 constraints: Cabal < 3.13
-
-source-repository-package
-  type: git
-  location: https://github.com/IntersectMBO/ouroboros-network
-  tag: bb0a7d0ff41e265a8ec47bc94377cb4d65e0b498
-  --sha256: sha256-P7m+nsjtogNQsdpXQnaH1kWxYibEWa0UC6iNGg0+bH4=
-  subdir:
-    ouroboros-network
-    ouroboros-network-api
-    ouroboros-network-protocols
