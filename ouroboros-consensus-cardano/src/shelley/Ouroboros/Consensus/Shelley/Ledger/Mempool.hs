@@ -328,9 +328,9 @@ txInBlockSize ::
 txInBlockSize st (ShelleyTx _txid tx') =
     validateMaybe (maxTxSizeUTxO txsz limit) $ do
       guard $ txsz <= limit
-      Just $ IgnoringOverflow $ ByteSize32 $ fromIntegral txsz
+      Just $ IgnoringOverflow $ ByteSize32 $ fromIntegral txsz + perTxOverhead
   where
-    txsz = perTxOverhead + (tx' ^. sizeTxF)
+    txsz = tx' ^. sizeTxF
 
     pparams = getPParams $ tickedShelleyLedgerState st
     limit   = fromIntegral (pparams ^. L.ppMaxTxSizeL) :: Integer
