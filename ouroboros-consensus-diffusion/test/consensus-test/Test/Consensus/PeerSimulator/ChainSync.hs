@@ -13,7 +13,6 @@ module Test.Consensus.PeerSimulator.ChainSync (
 import           Control.Exception (SomeException)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer (Tracer), nullTracer, traceWith)
-import           Data.Map.Strict (Map)
 import           Data.Proxy (Proxy (..))
 import           Network.TypedProtocol.Codec (AnyMessage)
 import           Ouroboros.Consensus.Block (Header, Point)
@@ -23,16 +22,17 @@ import           Ouroboros.Consensus.Config (DiffusionPipeliningSupport (..),
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
-                     (CSJConfig (..), ChainDbView, ChainSyncClientHandle,
-                     ChainSyncLoPBucketConfig, ChainSyncStateView (..),
-                     Consensus, bracketChainSyncClient, chainSyncClient)
+                     (CSJConfig (..), ChainDbView,
+                     ChainSyncClientHandleCollection, ChainSyncLoPBucketConfig,
+                     ChainSyncStateView (..), Consensus, bracketChainSyncClient,
+                     chainSyncClient)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Node.GsmState (GsmState (Syncing))
 import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
-                     IOLike, MonadCatch (try), StrictTVar)
+                     IOLike, MonadCatch (try))
 import           Ouroboros.Network.Block (Tip)
 import           Ouroboros.Network.Channel (Channel)
 import           Ouroboros.Network.ControlMessage (ControlMessage (..))
@@ -134,7 +134,7 @@ runChainSyncClient ::
   -- ^ Configuration for ChainSync Jumping
   StateViewTracers blk m ->
   -- ^ Tracers used to record information for the future 'StateView'.
-  StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
+  ChainSyncClientHandleCollection PeerId m blk ->
   -- ^ A TVar containing a map of states for each peer. This
   -- function will (via 'bracketChainSyncClient') register and de-register a
   -- TVar for the state of the peer.
@@ -165,7 +165,7 @@ runChainSyncClient
         res <-
           try $
             runPipelinedPeerWithLimits
-              nullTracer
+              (Tracer $ traceWith tracer . TraceChainSyncSendRecvEvent peerId "Client")
               codecChainSyncId
               chainSyncNoSizeLimits
               (timeLimitsChainSync chainSyncTimeouts)
@@ -218,8 +218,8 @@ runChainSyncServer ::
   ChainSyncServer (Header blk) (Point blk) (Tip blk) m () ->
   Channel m (AnyMessage (ChainSync (Header blk) (Point blk) (Tip blk))) ->
   m ()
-runChainSyncServer _tracer peerId StateViewTracers {svtPeerSimulatorResultsTracer} server channel =
-  (try $ runPeer nullTracer codecChainSyncId channel (chainSyncServerPeer server)) >>= \case
+runChainSyncServer tracer peerId StateViewTracers {svtPeerSimulatorResultsTracer} server channel =
+  (try $ runPeer sendRecvTracer codecChainSyncId channel (chainSyncServerPeer server)) >>= \case
     Right ((), msgRes) -> traceWith svtPeerSimulatorResultsTracer $
       PeerSimulatorResult peerId $ SomeChainSyncServerResult $ Right msgRes
     Left exn -> do
@@ -228,3 +228,5 @@ runChainSyncServer _tracer peerId StateViewTracers {svtPeerSimulatorResultsTrace
       -- NOTE: here we are able to trace exceptions, as what is done in `runChainSyncClient`
       case fromException exn of
         (_ :: Maybe SomeException) -> pure ()
+  where
+    sendRecvTracer = Tracer $ traceWith tracer . TraceChainSyncSendRecvEvent peerId "Server"

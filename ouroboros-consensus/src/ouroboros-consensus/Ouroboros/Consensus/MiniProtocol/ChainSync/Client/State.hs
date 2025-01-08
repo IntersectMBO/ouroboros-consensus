@@ -9,6 +9,7 @@
 
 module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (
     ChainSyncClientHandle (..)
+  , ChainSyncClientHandleCollection (..)
   , ChainSyncJumpingJumperState (..)
   , ChainSyncJumpingState (..)
   , ChainSyncState (..)
@@ -17,11 +18,16 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (
   , JumpInfo (..)
   , JumperInitState (..)
   , ObjectorInitState (..)
+  , newChainSyncClientHandleCollection
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo, WithOrigin)
 import           Data.Function (on)
+import           Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import           Data.Maybe.Strict (StrictMaybe (..))
+import           Data.Sequence.Strict (StrictSeq)
+import qualified Data.Sequence.Strict as Seq
 import           Data.Typeable (Proxy (..), typeRep)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block (HasHeader, Header, Point)
@@ -30,7 +36,7 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.Node.GsmState (GsmState)
 import           Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks (..), STM,
-                     StrictTVar, Time)
+                     StrictTVar, Time, modifyTVar, newTVar, readTVar)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      headPoint)
 
@@ -96,9 +102,74 @@ deriving anyclass instance (
   NoThunks (Header blk)
   ) => NoThunks (ChainSyncClientHandle m blk)
 
+-- | A collection of ChainSync client handles for the peers of this node.
+--
+-- Sometimes we want to see the collection as a Map, and sometimes as a sequence.
+-- The implementation keeps both views in sync.
+data ChainSyncClientHandleCollection peer m blk = ChainSyncClientHandleCollection {
+    -- | A map containing the handles for the peers in the collection
+    cschcMap :: !(STM m (Map peer (ChainSyncClientHandle m blk)))
+    -- | A sequence containing the handles for the peers in the collection
+  , cschcSeq :: !(STM m (StrictSeq (peer, ChainSyncClientHandle m blk)))
+    -- | Add the handle for the given peer to the collection
+    -- PRECONDITION: The peer is not already in the collection
+  , cschcAddHandle  :: !(peer -> ChainSyncClientHandle m blk -> STM m ())
+    -- | Remove the handle for the given peer from the collection
+  , cschcRemoveHandle :: !(peer -> STM m ())
+    -- | Moves the handle for the given peer to the end of the sequence
+  , cschcRotateHandle :: !(peer -> STM m ())
+    -- | Remove all the handles from the collection
+  , cschcRemoveAllHandles :: !(STM m ())
+  }
+  deriving stock (Generic)
+
+deriving anyclass instance (
+  IOLike m,
+  HasHeader blk,
+  LedgerSupportsProtocol blk,
+  NoThunks (STM m ()),
+  NoThunks (Header blk),
+  NoThunks (STM m (Map peer (ChainSyncClientHandle m blk))),
+  NoThunks (STM m (StrictSeq (peer, ChainSyncClientHandle m blk)))
+  ) => NoThunks (ChainSyncClientHandleCollection peer m blk)
+
+newChainSyncClientHandleCollection ::
+     ( Ord peer,
+       IOLike m,
+       LedgerSupportsProtocol blk,
+       NoThunks peer
+     )
+  => STM m (ChainSyncClientHandleCollection peer m blk)
+newChainSyncClientHandleCollection = do
+  handlesMap <- newTVar mempty
+  handlesSeq <- newTVar mempty
+
+  return ChainSyncClientHandleCollection {
+      cschcMap = readTVar handlesMap
+    , cschcSeq = readTVar handlesSeq
+    , cschcAddHandle = \peer handle -> do
+        modifyTVar handlesMap (Map.insert peer handle)
+        modifyTVar handlesSeq (Seq.|> (peer, handle))
+    , cschcRemoveHandle = \peer -> do
+        modifyTVar handlesMap (Map.delete peer)
+        modifyTVar handlesSeq $ \s ->
+          let (xs, ys) = Seq.spanl ((/= peer) . fst) s
+           in xs Seq.>< Seq.drop 1 ys
+    , cschcRotateHandle = \peer ->
+        modifyTVar handlesSeq $ \s ->
+          let (xs, ys) = Seq.spanl ((/= peer) . fst) s
+           in xs Seq.>< Seq.drop 1 ys Seq.>< Seq.take 1 ys
+    , cschcRemoveAllHandles = do
+        modifyTVar handlesMap (const mempty)
+        modifyTVar handlesSeq (const mempty)
+    }
+
 data DynamoInitState blk
-  = -- | The dynamo has not yet started jumping and we first need to jump to the
-    -- given jump info to set the intersection of the ChainSync server.
+  = -- | The dynamo still has to set the intersection of the ChainSync server
+    -- before it can resume downloading headers. This is because
+    -- the message pipeline might be drained to do jumps, and this causes
+    -- the intersection on the ChainSync server to diverge from the tip of
+    -- the candidate fragment.
     DynamoStarting !(JumpInfo blk)
   | DynamoStarted
   deriving (Generic)
@@ -111,7 +182,10 @@ deriving anyclass instance
 
 data ObjectorInitState
   = -- | The objector still needs to set the intersection of the ChainSync
-    -- server before resuming retrieval of headers.
+    -- server before resuming retrieval of headers. This is mainly because
+    -- the message pipeline might be drained to do jumps, and this causes
+    -- the intersection on the ChainSync server to diverge from the tip of
+    -- the candidate fragment.
     Starting
   | Started
   deriving (Generic, Show, NoThunks)

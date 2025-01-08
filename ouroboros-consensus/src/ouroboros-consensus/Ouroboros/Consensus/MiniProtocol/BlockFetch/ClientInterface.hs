@@ -14,6 +14,7 @@ module Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface (
   ) where
 
 import           Control.Monad
+import           Control.Tracer (Tracer)
 import           Data.Map.Strict (Map)
 import           Data.Time.Clock (UTCTime)
 import           GHC.Stack (HasCallStack)
@@ -26,7 +27,12 @@ import qualified Ouroboros.Consensus.HardFork.Abstract as History
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
-import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
+                     (LedgerSupportsProtocol)
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as CSJumping
+import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise,
+                     ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
                      (InvalidBlockPunishment)
@@ -38,8 +44,10 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (MaxSlotNo)
 import           Ouroboros.Network.BlockFetch.ConsensusInterface
-                     (BlockFetchConsensusInterface (..), FetchMode (..),
-                     FromConsensus (..))
+                     (BlockFetchConsensusInterface (..),
+                     ChainSelStarvation (..), FetchMode (..),
+                     FromConsensus (..), PraosFetchMode (..), mkReadFetchMode)
+import           Ouroboros.Network.ConsensusMode (ConsensusMode)
 import           Ouroboros.Network.PeerSelection.Bootstrap (UseBootstrapPeers,
                      requiresBootstrapPeers)
 import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
@@ -51,15 +59,17 @@ data ChainDbView m blk = ChainDbView {
      getCurrentChain           :: STM m (AnchoredFragment (Header blk))
    , getIsFetched              :: STM m (Point blk -> Bool)
    , getMaxSlotNo              :: STM m MaxSlotNo
-   , addBlockWaitWrittenToDisk :: InvalidBlockPunishment m -> blk -> m Bool
+   , addBlockAsync             :: InvalidBlockPunishment m -> blk -> m (AddBlockPromise m blk)
+   , getChainSelStarvation     :: STM m ChainSelStarvation
    }
 
-defaultChainDbView :: IOLike m => ChainDB m blk -> ChainDbView m blk
+defaultChainDbView :: ChainDB m blk -> ChainDbView m blk
 defaultChainDbView chainDB = ChainDbView {
     getCurrentChain           = ChainDB.getCurrentChain chainDB
   , getIsFetched              = ChainDB.getIsFetched chainDB
   , getMaxSlotNo              = ChainDB.getMaxSlotNo chainDB
-  , addBlockWaitWrittenToDisk = ChainDB.addBlockWaitWrittenToDisk chainDB
+  , addBlockAsync             = ChainDB.addBlockAsync chainDB
+  , getChainSelStarvation     = ChainDB.getChainSelStarvation chainDB
   }
 
 -- | How to get the wall-clock time of a slot. Note that this is a very
@@ -133,47 +143,53 @@ initSlotForgeTimeOracle cfg chainDB = do
 
 readFetchModeDefault ::
      (MonadSTM m, HasHeader blk)
-  => BlockchainTime m
+  => ConsensusMode
+  -> BlockchainTime m
   -> STM m (AnchoredFragment blk)
   -> STM m UseBootstrapPeers
   -> STM m LedgerStateJudgement
   -> STM m FetchMode
-readFetchModeDefault btime getCurrentChain
-                     getUseBootstrapPeers getLedgerStateJudgement = do
-    mCurSlot <- getCurrentSlot btime
-    usingBootstrapPeers <- requiresBootstrapPeers <$> getUseBootstrapPeers
-                                                  <*> getLedgerStateJudgement
+readFetchModeDefault consensusMode btime getCurrentChain
+                     getUseBootstrapPeers getLedgerStateJudgement =
+    mkReadFetchMode consensusMode getLedgerStateJudgement praosFetchMode
+  where
+    praosFetchMode = do
+      mCurSlot <- getCurrentSlot btime
+      usingBootstrapPeers <- requiresBootstrapPeers <$> getUseBootstrapPeers
+                                                    <*> getLedgerStateJudgement
 
-    -- This logic means that when the node is using bootstrap peers and is in
-    -- TooOld state it will always return BulkSync. Otherwise if the node
-    -- isn't using bootstrap peers (i.e. has them disabled it will use the old
-    -- logic of returning BulkSync if behind 1000 slots
-    case (usingBootstrapPeers, mCurSlot) of
-      (True, _)                    -> return FetchModeBulkSync
-      (False, CurrentSlotUnknown)  -> return FetchModeBulkSync
-      (False, CurrentSlot curSlot) -> do
-        curChainSlot <- AF.headSlot <$> getCurrentChain
-        let slotsBehind = case curChainSlot of
-              -- There's nothing in the chain. If the current slot is 0, then
-              -- we're 1 slot behind.
-              Origin         -> unSlotNo curSlot + 1
-              NotOrigin slot -> unSlotNo curSlot - unSlotNo slot
-            maxSlotsBehind = 1000
-        return $ if slotsBehind < maxSlotsBehind
-          -- When the current chain is near to "now", use deadline mode,
-          -- when it is far away, use bulk sync mode.
-          then FetchModeDeadline
-          else FetchModeBulkSync
+      -- This logic means that when the node is using bootstrap peers and is in
+      -- TooOld state it will always return BulkSync. Otherwise if the node
+      -- isn't using bootstrap peers (i.e. has them disabled it will use the old
+      -- logic of returning BulkSync if behind 1000 slots
+      case (usingBootstrapPeers, mCurSlot) of
+        (True, _)                    -> return FetchModeBulkSync
+        (False, CurrentSlotUnknown)  -> return FetchModeBulkSync
+        (False, CurrentSlot curSlot) -> do
+          curChainSlot <- AF.headSlot <$> getCurrentChain
+          let slotsBehind = case curChainSlot of
+                -- There's nothing in the chain. If the current slot is 0, then
+                -- we're 1 slot behind.
+                Origin         -> unSlotNo curSlot + 1
+                NotOrigin slot -> unSlotNo curSlot - unSlotNo slot
+              maxSlotsBehind = 1000
+          return $ if slotsBehind < maxSlotsBehind
+            -- When the current chain is near to "now", use deadline mode,
+            -- when it is far away, use bulk sync mode.
+            then FetchModeDeadline
+            else FetchModeBulkSync
 
 mkBlockFetchConsensusInterface ::
      forall m peer blk.
      ( IOLike m
      , BlockSupportsDiffusionPipelining blk
-     , BlockSupportsProtocol blk
+     , Ord peer
+     , LedgerSupportsProtocol blk
      )
-  => BlockConfig blk
+  => Tracer m (CSJumping.TraceEvent peer)
+  -> BlockConfig blk
   -> ChainDbView m blk
-  -> STM m (Map peer (AnchoredFragment (Header blk)))
+  -> CSClient.ChainSyncClientHandleCollection peer m blk
   -> (Header blk -> SizeInBytes)
   -> SlotForgeTimeOracle m blk
      -- ^ Slot forge time, see 'headerForgeUTCTime' and 'blockForgeUTCTime'.
@@ -182,9 +198,12 @@ mkBlockFetchConsensusInterface ::
   -> DiffusionPipeliningSupport
   -> BlockFetchConsensusInterface peer (Header blk) blk m
 mkBlockFetchConsensusInterface
-  bcfg chainDB getCandidates blockFetchSize slotForgeTime readFetchMode pipelining =
+  csjTracer bcfg chainDB csHandlesCol blockFetchSize slotForgeTime readFetchMode pipelining =
     BlockFetchConsensusInterface {..}
   where
+    getCandidates :: STM m (Map peer (AnchoredFragment (Header blk)))
+    getCandidates = CSClient.viewChainSyncState (CSClient.cschcMap csHandlesCol) CSClient.csCandidate
+
     blockMatchesHeader :: Header blk -> blk -> Bool
     blockMatchesHeader = Block.blockMatchesHeader
 
@@ -204,8 +223,8 @@ mkBlockFetchConsensusInterface
       pipeliningPunishment <- InvalidBlockPunishment.mkForDiffusionPipelining
       pure $ mkAddFetchedBlock_ pipeliningPunishment pipelining
 
-    -- Waits until the block has been written to disk, but not until chain
-    -- selection has processed the block.
+    -- Hand over the block to the ChainDB, but don't wait until it has been
+    -- written to disk or processed.
     mkAddFetchedBlock_ ::
          (   BlockConfig blk
           -> Header blk
@@ -249,7 +268,7 @@ mkBlockFetchConsensusInterface
                DiffusionPipeliningOff -> disconnect
                DiffusionPipeliningOn  ->
                  pipeliningPunishment bcfg (getHeader blk) disconnect
-       addBlockWaitWrittenToDisk
+       addBlockAsync
          chainDB
          punishment
          blk
@@ -329,3 +348,8 @@ mkBlockFetchConsensusInterface
 
     headerForgeUTCTime = slotForgeTime . headerRealPoint . unFromConsensus
     blockForgeUTCTime  = slotForgeTime . blockRealPoint  . unFromConsensus
+
+    readChainSelStarvation = getChainSelStarvation chainDB
+
+    demoteChainSyncJumpingDynamo :: peer -> m ()
+    demoteChainSyncJumpingDynamo = CSJumping.rotateDynamo csjTracer csHandlesCol

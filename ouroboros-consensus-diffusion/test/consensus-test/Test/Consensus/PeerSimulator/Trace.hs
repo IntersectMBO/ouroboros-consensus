@@ -25,6 +25,7 @@ import           Data.Bifunctor (second)
 import           Data.List (intersperse)
 import qualified Data.List.NonEmpty as NE
 import           Data.Time.Clock (DiffTime, diffTimeToPicoseconds)
+import           Network.TypedProtocol.Codec (AnyMessage (..))
 import           Ouroboros.Consensus.Block (GenesisWindow (..), Header, Point,
                      WithOrigin (NotOrigin, Origin), succWithOrigin)
 import           Ouroboros.Consensus.Genesis.Governor (DensityBounds (..),
@@ -42,6 +43,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
                      (TraceAddBlockEvent (..))
 import           Ouroboros.Consensus.Util.Condense (condense)
+import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadMonotonicTime,
                      Time (Time), atomically, getMonotonicTime, readTVarIO,
                      uncheckedNewTVarM, writeTVar)
@@ -49,6 +51,9 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      headPoint)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (SlotNo (SlotNo), Tip, castPoint)
+import           Ouroboros.Network.Driver.Simple (TraceSendRecv (..))
+import           Ouroboros.Network.Protocol.ChainSync.Type (ChainSync,
+                     Message (..))
 import           Test.Consensus.PointSchedule.NodeState (NodeState)
 import           Test.Consensus.PointSchedule.Peers (Peer (Peer), PeerId)
 import           Test.Util.TersePrinting (terseAnchor, terseBlock,
@@ -130,6 +135,7 @@ data TraceEvent blk
   | TraceChainSyncClientTerminationEvent PeerId TraceChainSyncClientTerminationEvent
   | TraceBlockFetchClientTerminationEvent PeerId TraceBlockFetchClientTerminationEvent
   | TraceGenesisDDEvent (TraceGDDEvent PeerId blk)
+  | TraceChainSyncSendRecvEvent PeerId String (TraceSendRecv (ChainSync (Header blk) (Point blk) (Tip blk)))
   | TraceOther String
 
 -- * 'TestBlock'-specific tracers for the peer simulator
@@ -182,6 +188,7 @@ traceEventTestBlockWith setTickTime tracer0 tracer = \case
     TraceChainSyncClientTerminationEvent peerId traceEvent -> traceChainSyncClientTerminationEventTestBlockWith peerId tracer traceEvent
     TraceBlockFetchClientTerminationEvent peerId traceEvent -> traceBlockFetchClientTerminationEventTestBlockWith peerId tracer traceEvent
     TraceGenesisDDEvent gddEvent -> traceWith tracer (terseGDDEvent gddEvent)
+    TraceChainSyncSendRecvEvent peerId peerType traceEvent -> traceChainSyncSendRecvEventTestBlockWith peerId peerType tracer traceEvent
     TraceOther msg -> traceWith tracer msg
 
 traceSchedulerEventTestBlockWith ::
@@ -191,7 +198,7 @@ traceSchedulerEventTestBlockWith ::
   Tracer m String ->
   TraceSchedulerEvent TestBlock ->
   m ()
-traceSchedulerEventTestBlockWith setTickTime tracer0 _tracer = \case
+traceSchedulerEventTestBlockWith setTickTime tracer0 tracer = \case
     TraceBeginningOfTime ->
       traceWith tracer0 "Running point schedule ..."
     TraceEndOfTime ->
@@ -222,13 +229,13 @@ traceSchedulerEventTestBlockWith setTickTime tracer0 _tracer = \case
           "  jumping states:\n" ++ traceJumpingStates jumpingStates
         ]
     TraceNodeShutdownStart immTip ->
-      traceWith tracer0 ("  Initiating node shutdown with immutable tip at slot " ++ condense immTip)
+      traceWith tracer ("  Initiating node shutdown with immutable tip at slot " ++ condense immTip)
     TraceNodeShutdownComplete ->
-      traceWith tracer0 "  Node shutdown complete"
+      traceWith tracer "  Node shutdown complete"
     TraceNodeStartupStart ->
-      traceWith tracer0 "  Initiating node startup"
+      traceWith tracer "  Initiating node startup"
     TraceNodeStartupComplete selection ->
-      traceWith tracer0 ("  Node startup complete with selection " ++ terseHFragment selection)
+      traceWith tracer ("  Node startup complete with selection " ++ terseHFragment selection)
 
   where
     traceJumpingStates :: [(PeerId, ChainSyncJumpingState m TestBlock)] -> String
@@ -238,7 +245,7 @@ traceSchedulerEventTestBlockWith setTickTime tracer0 _tracer = \case
     traceJumpingState = \case
       Dynamo initState lastJump ->
         let showInitState = case initState of
-              DynamoStarting ji -> terseJumpInfo ji
+              DynamoStarting ji -> "(DynamoStarting " ++ terseJumpInfo ji ++ ")"
               DynamoStarted     -> "DynamoStarted"
          in unwords ["Dynamo", showInitState, terseWithOrigin show lastJump]
       Objector initState goodJumpInfo badPoint -> unwords
@@ -370,6 +377,10 @@ traceChainDBEventTestBlockWith tracer = \case
         AddedReprocessLoEBlocksToQueue ->
           trace $ "Requested ChainSel run"
         _ -> pure ()
+    ChainDB.TraceChainSelStarvationEvent (ChainDB.ChainSelStarvation RisingEdge) ->
+      trace "ChainSel starvation started"
+    ChainDB.TraceChainSelStarvationEvent (ChainDB.ChainSelStarvation (FallingEdgeWith pt)) ->
+      trace $ "ChainSel starvation ended thanks to " ++ terseRealPoint pt
     _ -> pure ()
   where
     trace = traceUnitWith tracer "ChainDB"
@@ -415,6 +426,8 @@ traceChainSyncClientEventTestBlockWith pid tracer = \case
       trace "Waiting for next instruction from the jumping governor"
     TraceJumpingInstructionIs instr ->
       trace $ "Received instruction: " ++ showInstr instr
+    TraceDrainingThePipe n ->
+      trace $ "Draining the pipe, remaining messages: " ++ show n
   where
     trace = traceUnitWith tracer ("ChainSyncClient " ++ condense pid)
 
@@ -457,6 +470,33 @@ traceBlockFetchClientTerminationEventTestBlockWith pid tracer = \case
       trace "Terminated because of time limit exceeded."
   where
     trace = traceUnitWith tracer ("BlockFetchClient " ++ condense pid)
+
+-- | Trace all the SendRecv events of the ChainSync mini-protocol.
+traceChainSyncSendRecvEventTestBlockWith ::
+  Applicative m =>
+  PeerId ->
+  String ->
+  Tracer m String ->
+  TraceSendRecv (ChainSync (Header TestBlock) (Point TestBlock) (Tip TestBlock)) ->
+  m ()
+traceChainSyncSendRecvEventTestBlockWith pid ptp tracer = \case
+    TraceSendMsg amsg -> traceMsg "send" amsg
+    TraceRecvMsg amsg -> traceMsg "recv" amsg
+  where
+    -- This can be very verbose and is only useful in rare situations, so it
+    -- does nothing by default.
+    -- trace = traceUnitWith tracer ("ChainSync " ++ condense pid) . ((ptp ++ " ") ++)
+    trace = (\_ _ _ -> const (pure ())) pid ptp tracer
+    traceMsg kd amsg = trace $ kd ++ " " ++ case amsg of
+      AnyMessage msg -> case msg of
+        MsgRequestNext -> "MsgRequestNext"
+        MsgAwaitReply -> "MsgAwaitReply"
+        MsgRollForward header tip -> "MsgRollForward " ++ terseHeader header ++ " " ++ terseTip tip
+        MsgRollBackward point tip -> "MsgRollBackward " ++ tersePoint point ++ " " ++ terseTip tip
+        MsgFindIntersect points -> "MsgFindIntersect [" ++ unwords (map tersePoint points) ++ "]"
+        MsgIntersectFound point tip -> "MsgIntersectFound " ++ tersePoint point ++ " " ++ terseTip tip
+        MsgIntersectNotFound tip -> "MsgIntersectNotFound " ++ terseTip tip
+        MsgDone -> "MsgDone"
 
 prettyDensityBounds :: [(PeerId, DensityBounds TestBlock)] -> [String]
 prettyDensityBounds bounds =
