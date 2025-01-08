@@ -26,6 +26,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Typeable (Typeable)
 import           Data.Void (Void)
 import           GHC.Generics (Generic)
+import qualified Network.Mux as Mux
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
                      (blockFetchServer')
@@ -48,7 +49,7 @@ import           Ouroboros.Network.Driver (runPeer)
 import           Ouroboros.Network.KeepAlive (keepAliveServer)
 import           Ouroboros.Network.Magic (NetworkMagic)
 import           Ouroboros.Network.Mux (MiniProtocol (..), MiniProtocolCb (..),
-                     MuxMode (..), OuroborosApplication (..),
+                     OuroborosApplication (..),
                      OuroborosApplicationWithMinimalCtx, RunMiniProtocol (..))
 import           Ouroboros.Network.NodeToNode (NodeToNodeVersionData (..),
                      Versions (..))
@@ -74,7 +75,7 @@ immDBServer ::
   -> ImmutableDB m blk
   -> NetworkMagic
   -> Versions NodeToNodeVersion NodeToNodeVersionData
-       (OuroborosApplicationWithMinimalCtx 'ResponderMode addr BL.ByteString m Void ())
+       (OuroborosApplicationWithMinimalCtx 'Mux.ResponderMode addr BL.ByteString m Void ())
 immDBServer codecCfg encAddr decAddr immDB networkMagic = do
     forAllVersions application
   where
@@ -98,7 +99,7 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic = do
     application ::
          NodeToNodeVersion
       -> BlockNodeToNodeVersion blk
-      -> OuroborosApplicationWithMinimalCtx 'ResponderMode addr BL.ByteString m Void ()
+      -> OuroborosApplicationWithMinimalCtx 'Mux.ResponderMode addr BL.ByteString m Void ()
     application version blockVersion =
         OuroborosApplication miniprotocols
       where

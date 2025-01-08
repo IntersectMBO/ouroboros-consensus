@@ -4,8 +4,8 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NumericUnderscores #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Ouroboros.Consensus.Node.Genesis (
     -- * 'GenesisConfig'
@@ -69,10 +69,10 @@ data GenesisConfigFlags = GenesisConfigFlags
   { gcfEnableCSJ             :: Bool
   , gcfEnableLoEAndGDD       :: Bool
   , gcfEnableLoP             :: Bool
-  , gcfBlockFetchGracePeriod :: Maybe Integer
+  , gcfBlockFetchGracePeriod :: Maybe DiffTime
   , gcfBucketCapacity        :: Maybe Integer
   , gcfBucketRate            :: Maybe Integer
-  , gcfCSJJumpSize           :: Maybe Integer
+  , gcfCSJJumpSize           :: Maybe SlotNo
   , gcfGDDRateLimit          :: Maybe DiffTime
   } deriving stock (Eq, Generic, Show)
 
@@ -106,7 +106,7 @@ mkGenesisConfig Nothing = -- disable Genesis
     , gcLoEAndGDDConfig          = LoEAndGDDDisabled
     , gcHistoricityCutoff        = Nothing
     }
-mkGenesisConfig (Just GenesisConfigFlags{..}) =
+mkGenesisConfig (Just cfg) =
   GenesisConfig
     { gcBlockFetchConfig = GenesisBlockFetchConfiguration
         { gbfcGracePeriod
@@ -131,6 +131,17 @@ mkGenesisConfig (Just GenesisConfigFlags{..}) =
       gcHistoricityCutoff = Just $ HistoricityCutoff $ 3 * 2160 * 20 + 3600
     }
   where
+    GenesisConfigFlags {
+        gcfEnableLoP
+      , gcfEnableCSJ
+      , gcfEnableLoEAndGDD
+      , gcfBlockFetchGracePeriod
+      , gcfBucketCapacity
+      , gcfBucketRate
+      , gcfCSJJumpSize
+      , gcfGDDRateLimit
+      } = cfg
+
     -- The minimum amount of time during which the Genesis BlockFetch logic will
     -- download blocks from a specific peer (even if it is not performing well
     -- during that period).
@@ -153,10 +164,10 @@ mkGenesisConfig (Just GenesisConfigFlags{..}) =
     -- Limiting the performance impact of the GDD.
     defaultGDDRateLimit        = 1.0 -- seconds
 
-    gbfcGracePeriod = fromInteger $ fromMaybe defaultBlockFetchGracePeriod gcfBlockFetchGracePeriod
-    csbcCapacity    = fromInteger $ fromMaybe defaultCapacity gcfBucketCapacity
-    csbcRate        = fromInteger $ fromMaybe defaultRate gcfBucketRate
-    csjcJumpSize    = fromInteger $ fromMaybe defaultCSJJumpSize gcfCSJJumpSize
+    gbfcGracePeriod = fromMaybe defaultBlockFetchGracePeriod gcfBlockFetchGracePeriod
+    csbcCapacity    = fromMaybe defaultCapacity gcfBucketCapacity
+    csbcRate        = maybe defaultRate (fromInteger @Rational) gcfBucketRate
+    csjcJumpSize    = fromMaybe defaultCSJJumpSize gcfCSJJumpSize
     lgpGDDRateLimit = fromMaybe defaultGDDRateLimit gcfGDDRateLimit
 
 newtype LoEAndGDDParams = LoEAndGDDParams

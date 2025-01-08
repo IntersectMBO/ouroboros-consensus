@@ -42,6 +42,7 @@ import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.ByteString.Lazy (ByteString)
 import           Data.Void (Void)
+import qualified Network.Mux as Mux
 import           Network.TypedProtocol.Codec
 import qualified Network.TypedProtocol.Stateful.Codec as Stateful
 import           Ouroboros.Consensus.Block
@@ -465,7 +466,7 @@ mkApps kernel Tracers {..} Codecs {..} Handlers {..} =
 responder ::
      N.NodeToClientVersion
   -> Apps m (ConnectionId peer) b b b b a
-  -> OuroborosApplicationWithMinimalCtx 'ResponderMode peer b m Void a
+  -> OuroborosApplicationWithMinimalCtx 'Mux.ResponderMode peer b m Void a
 responder version Apps {..} =
     nodeToClientProtocols
       (NodeToClientProtocols {
