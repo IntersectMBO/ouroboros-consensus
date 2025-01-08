@@ -2,6 +2,20 @@
 
 # Changelog entries
 
+<a id='changelog-0.10.0.0'></a>
+## 0.10.0.0 — 2025-01-08
+
+### Patch
+
+- Expose functions to simplify thorough testing of header validation
+  logic, and introduce generators and properties to actually test it.
+
+* Use the `VRFVerKeyHash` type from `cardano-ledger-core-1.16`
+
+### Breaking
+
+- Removed unused fields from `PraosParams`.
+
 <a id='changelog-0.9.0.2'></a>
 ## 0.9.0.2 — 2024-10-14
 
