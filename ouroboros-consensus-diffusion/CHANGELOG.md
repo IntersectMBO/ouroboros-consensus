@@ -2,6 +2,26 @@
 
 # Changelog entries
 
+<a id='changelog-0.19.0.0'></a>
+## 0.19.0.0 — 2025-01-08
+
+### Patch
+
+- Remove references to `Ouroboros.Consensus.Fragment.InFuture`.
+
+- Depend on `network-mux` from `ouroboros-network` and use its types.
+
+* Use [`resource-registry`](https://hackage.haskell.org/package/resource-registry).
+
+### Breaking
+
+- Adapted to Genesis-related changes in `ouroboros-consensus` ([#1179](https://github.com/IntersectMBO/ouroboros-consensus/pull/1179)).
+
+- Remove `CheckInFuture m blk` argument from `openChainDB`.
+
+- Updated to `typed-protocols-0.3.0.0`
+- Added `KeepAlive` tracer to `Tracers'` data type.
+
 <a id='changelog-0.18.0.0'></a>
 ## 0.18.0.0 — 2024-10-14
 
