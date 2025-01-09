@@ -63,7 +63,6 @@ import           Ouroboros.Consensus.Protocol.Praos.Common
                      (PraosChainSelectView)
 import           Ouroboros.Consensus.Protocol.Signed (SignedHeader)
 import           Ouroboros.Consensus.Shelley.Eras
-import           Ouroboros.Consensus.Shelley.Ledger.Query.PParamsLegacyEncoder
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto,
                      ProtocolHeaderSupportsEnvelope (pHeaderPrevHash),
                      ProtocolHeaderSupportsProtocol (CannotForgeError),
@@ -101,10 +100,6 @@ class
     -- Hard-fork related constraints
   , HasPartialConsensusConfig proto
   , DecCBOR (SL.PState era)
-
-    -- Backwards compatibility
-  , Plain.FromCBOR (LegacyPParams era)
-  , Plain.ToCBOR (LegacyPParams era)
   ) => ShelleyCompatible proto era
 
 instance ShelleyCompatible proto era => ConvertRawHash (ShelleyBlock proto era) where

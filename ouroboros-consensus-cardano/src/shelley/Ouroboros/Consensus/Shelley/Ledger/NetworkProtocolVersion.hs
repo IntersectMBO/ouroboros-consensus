@@ -15,28 +15,8 @@ data ShelleyNodeToNodeVersion = ShelleyNodeToNodeVersion1
   deriving (Show, Eq, Ord, Enum, Bounded)
 
 data ShelleyNodeToClientVersion =
-    ShelleyNodeToClientVersion1
-
-    -- | New queries introduced
-  | ShelleyNodeToClientVersion2
-
-    -- | New query introduced
-  | ShelleyNodeToClientVersion3
-
-    -- | New queries introduced
-  | ShelleyNodeToClientVersion4
-
-    -- | New queries introduced: GetRewardInfoPools
-  | ShelleyNodeToClientVersion5
-
-    -- | New queries introduced: GetPoolDistr, GetPoolState, GetStakeSnapshots
-  | ShelleyNodeToClientVersion6
-
-    -- | New queries introduced: GetStakeDelegDeposits
-  | ShelleyNodeToClientVersion7
-
     -- | New queries introduced: GetConstitutionHash, GetFilteredVoteDelegatees
-  | ShelleyNodeToClientVersion8
+    ShelleyNodeToClientVersion8
 
     -- | New queries introduced: GetProposals, GetRatifyState
   | ShelleyNodeToClientVersion9

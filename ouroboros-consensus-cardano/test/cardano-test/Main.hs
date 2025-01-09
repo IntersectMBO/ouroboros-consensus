@@ -1,7 +1,6 @@
 module Main (main) where
 
 import           System.IO (BufferMode (LineBuffering), hSetBuffering, stdout)
-import qualified Test.Consensus.Cardano.ByronCompatibility
 import qualified Test.Consensus.Cardano.DiffusionPipelining
 import qualified Test.Consensus.Cardano.Golden
 import qualified Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server
@@ -24,8 +23,7 @@ main = do
 tests :: TestTree
 tests =
   testGroup "cardano"
-  [ Test.Consensus.Cardano.ByronCompatibility.tests
-  , Test.Consensus.Cardano.DiffusionPipelining.tests
+  [ Test.Consensus.Cardano.DiffusionPipelining.tests
   , Test.Consensus.Cardano.Golden.tests
   , Test.Consensus.Cardano.Serialisation.tests
   , Test.Consensus.Cardano.SupportedNetworkProtocolVersion.tests

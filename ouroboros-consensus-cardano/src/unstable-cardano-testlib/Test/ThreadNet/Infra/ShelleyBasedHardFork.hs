@@ -10,6 +10,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ViewPatterns #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -95,25 +96,35 @@ pattern GenTxShelley2 tx = HardForkGenTx (OneEraGenTx (S (Z tx)))
 
 {-# COMPLETE GenTxShelley1, GenTxShelley2 #-}
 
-pattern ShelleyBasedHardForkNodeToNodeVersion1 ::
+pattern ShelleyBasedHardForkNodeToNodeVersionMax ::
      BlockNodeToNodeVersion (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)
-pattern ShelleyBasedHardForkNodeToNodeVersion1 =
+pattern ShelleyBasedHardForkNodeToNodeVersionMax =
     HardForkNodeToNodeEnabled
       HardForkSpecificNodeToNodeVersion1
-      (  WrapNodeToNodeVersion ShelleyNodeToNodeVersion1
-      :* WrapNodeToNodeVersion ShelleyNodeToNodeVersion1
+      (  WrapNodeToNodeVersion ShelleyNodeToNodeVersionMax
+      :* WrapNodeToNodeVersion ShelleyNodeToNodeVersionMax
       :* Nil
       )
 
-pattern ShelleyBasedHardForkNodeToClientVersion1 ::
+pattern ShelleyNodeToNodeVersionMax :: ShelleyNodeToNodeVersion
+pattern ShelleyNodeToNodeVersionMax <- ((== maxBound) -> True)
+  where
+    ShelleyNodeToNodeVersionMax = maxBound
+
+pattern ShelleyBasedHardForkNodeToClientVersionMax ::
      BlockNodeToClientVersion (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)
-pattern ShelleyBasedHardForkNodeToClientVersion1 =
+pattern ShelleyBasedHardForkNodeToClientVersionMax =
     HardForkNodeToClientEnabled
       HardForkSpecificNodeToClientVersion2
-      (  EraNodeToClientEnabled ShelleyNodeToClientVersion2
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion2
+      (  EraNodeToClientEnabled ShelleyNodeToClientVersionMax
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersionMax
       :* Nil
       )
+
+pattern ShelleyNodeToClientVersionMax :: ShelleyNodeToClientVersion
+pattern ShelleyNodeToClientVersionMax <- ((== maxBound) -> True)
+  where
+    ShelleyNodeToClientVersionMax = maxBound
 
 {-------------------------------------------------------------------------------
   Consensus instances
@@ -229,11 +240,11 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
 instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
       => SupportedNetworkProtocolVersion (ShelleyBasedHardForkBlock proto1 era1 proto2 era2) where
   supportedNodeToNodeVersions _ = Map.fromList $
-      [ (maxBound, ShelleyBasedHardForkNodeToNodeVersion1)
+      [ (maxBound, ShelleyBasedHardForkNodeToNodeVersionMax)
       ]
 
   supportedNodeToClientVersions _ = Map.fromList $
-      [ (maxBound, ShelleyBasedHardForkNodeToClientVersion1)
+      [ (maxBound, ShelleyBasedHardForkNodeToClientVersionMax)
       ]
 
   latestReleasedNodeVersion = latestReleasedNodeVersionDefault
