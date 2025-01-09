@@ -2,7 +2,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -15,8 +14,6 @@ module Ouroboros.Consensus.HardFork.History.EraParams (
   , SafeZone (..)
     -- * Defaults
   , defaultEraParams
-    -- * Serialisation
-  , EraParamsFormat (..)
   ) where
 
 import           Cardano.Binary (enforceSize)
@@ -24,7 +21,6 @@ import           Codec.CBOR.Decoding (Decoder, decodeListLen, decodeWord8)
 import           Codec.CBOR.Encoding (Encoding, encodeListLen, encodeWord8)
 import           Codec.Serialise (Serialise (..))
 import           Control.Monad (void)
-import           Data.Reflection (Given (..))
 import           Data.Word
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
@@ -233,44 +229,19 @@ decodeSafeBeforeEpoch = do
       (2, 1) -> void $ decode @EpochNo
       _      -> fail $ "SafeBeforeEpoch: invalid size and tag " <> show (size, tag)
 
--- | Older versions are not aware of the Genesis window as part of 'EraParams',
--- so we need to stay backwards-compatible for now. This type can be removed
--- once mainnet is in Conway (as we can then always use the behavior of
--- 'EraParamsWithGenesisWindow').
-data EraParamsFormat =
-    EraParamsWithoutGenesisWindow
-  | EraParamsWithGenesisWindow
-  deriving stock (Show, Eq)
-
-instance Given EraParamsFormat => Serialise EraParams where
+instance Serialise EraParams where
   encode EraParams{..} = mconcat $ [
-        encodeListLen $ case epf of
-          EraParamsWithoutGenesisWindow -> 3
-          EraParamsWithGenesisWindow    -> 4
+        encodeListLen 4
       , encode (unEpochSize eraEpochSize)
       , encode eraSlotLength
       , encode eraSafeZone
-      ] <> case epf of
-        EraParamsWithoutGenesisWindow -> []
-        EraParamsWithGenesisWindow    ->
-          [encode (unGenesisWindow eraGenesisWin)]
-    where
-      epf :: EraParamsFormat
-      epf = given
+      , encode (unGenesisWindow eraGenesisWin)
+      ]
 
   decode = do
-      enforceSize "EraParams" $ case epf of
-        EraParamsWithoutGenesisWindow -> 3
-        EraParamsWithGenesisWindow    -> 4
+      enforceSize "EraParams" 4
       eraEpochSize  <- EpochSize <$> decode
       eraSlotLength <- decode
       eraSafeZone   <- decode
-      eraGenesisWin <- GenesisWindow <$> case epf of
-        -- Note that only the client will ever decode 'EraParams', as part of the
-        -- 'GetInterpreter' query.
-        EraParamsWithoutGenesisWindow -> pure 0
-        EraParamsWithGenesisWindow    -> decode
+      eraGenesisWin <- GenesisWindow <$> decode
       return EraParams{..}
-    where
-      epf :: EraParamsFormat
-      epf = given

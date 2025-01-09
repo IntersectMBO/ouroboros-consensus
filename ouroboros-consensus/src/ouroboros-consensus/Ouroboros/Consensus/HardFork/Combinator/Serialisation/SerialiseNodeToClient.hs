@@ -37,7 +37,6 @@ import           Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
 import           Ouroboros.Consensus.HardFork.Combinator.Mempool
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation.SerialiseDisk ()
-import           Ouroboros.Consensus.HardFork.History (EraParamsFormat (..))
 import           Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.Run
@@ -185,15 +184,12 @@ encodeQueryHardFork ::
      HardForkSpecificNodeToClientVersion
   -> Some (QueryHardFork xs)
   -> Encoding
-encodeQueryHardFork vHfc = \case
+encodeQueryHardFork _vHfc = \case
     Some GetInterpreter -> mconcat [
         Enc.encodeListLen 1
       , Enc.encodeWord8 0
       ]
-    Some GetCurrentEra
-      | vHfc < HardForkSpecificNodeToClientVersion2 ->
-        throw HardForkEncoderQueryWrongVersion
-      | otherwise -> mconcat [
+    Some GetCurrentEra -> mconcat [
         Enc.encodeListLen 1
       , Enc.encodeWord8 1
       ]
@@ -296,10 +292,8 @@ instance SerialiseHFC xs
     where
       ccfgs = getPerEraCodecConfig $ hardForkCodecConfigPerEra ccfg
 
-  encodeResult _ _       (QueryAnytime qry _) = encodeQueryAnytimeResult      qry
-  encodeResult _ version (QueryHardFork qry)  = encodeQueryHardForkResult epf qry
-    where
-      epf = eraParamsFormatFromVersion version
+  encodeResult _ _ (QueryAnytime qry _) = encodeQueryAnytimeResult  qry
+  encodeResult _ _ (QueryHardFork qry)  = encodeQueryHardForkResult qry
 
   decodeResult ccfg version (QueryIfCurrent qry) =
       case isNonEmpty (Proxy @xs) of
@@ -315,17 +309,8 @@ instance SerialiseHFC xs
     where
       ccfgs = getPerEraCodecConfig $ hardForkCodecConfigPerEra ccfg
 
-  decodeResult _ _       (QueryAnytime qry _) = decodeQueryAnytimeResult      qry
-  decodeResult _ version (QueryHardFork qry)  = decodeQueryHardForkResult epf qry
-    where
-      epf = eraParamsFormatFromVersion version
-
-eraParamsFormatFromVersion :: HardForkNodeToClientVersion xs -> EraParamsFormat
-eraParamsFormatFromVersion = \case
-    HardForkNodeToClientDisabled _ -> throw HardForkEncoderQueryHfcDisabled
-    HardForkNodeToClientEnabled v _
-      | v >= HardForkSpecificNodeToClientVersion3 -> EraParamsWithGenesisWindow
-      | otherwise                                 -> EraParamsWithoutGenesisWindow
+  decodeResult _ _ (QueryAnytime qry _) = decodeQueryAnytimeResult  qry
+  decodeResult _ _ (QueryHardFork qry)  = decodeQueryHardForkResult qry
 
 encodeQueryIfCurrentResult ::
      All SerialiseConstraintsHFC xs

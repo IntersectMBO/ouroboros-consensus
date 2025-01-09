@@ -49,7 +49,6 @@ import           Data.Fixed (divMod')
 import           Data.Foldable (toList)
 import           Data.Functor.Identity
 import           Data.Kind (Type)
-import           Data.Reflection (Given)
 import           Data.SOP.NonEmpty (NonEmpty (..))
 import           Data.SOP.Sing (SListI)
 import           Data.Time hiding (UTCTime)
@@ -423,7 +422,7 @@ runQueryPure q = either throw id . runQuery q
 newtype Interpreter xs = Interpreter (Summary xs)
   deriving (Eq)
 
-deriving instance (SListI xs, Given EraParamsFormat) => Serialise (Interpreter xs)
+deriving instance SListI xs => Serialise (Interpreter xs)
 
 instance Show (Interpreter xs) where
   show _ = "<Interpreter>"

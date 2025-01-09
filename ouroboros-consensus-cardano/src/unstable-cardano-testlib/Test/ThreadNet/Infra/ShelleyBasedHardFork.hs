@@ -100,11 +100,16 @@ pattern ShelleyBasedHardForkNodeToNodeVersionMax ::
      BlockNodeToNodeVersion (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)
 pattern ShelleyBasedHardForkNodeToNodeVersionMax =
     HardForkNodeToNodeEnabled
-      HardForkSpecificNodeToNodeVersion1
+      HardForkSpecificNodeToNodeVersionMax
       (  WrapNodeToNodeVersion ShelleyNodeToNodeVersionMax
       :* WrapNodeToNodeVersion ShelleyNodeToNodeVersionMax
       :* Nil
       )
+
+pattern HardForkSpecificNodeToNodeVersionMax :: HardForkSpecificNodeToNodeVersion
+pattern HardForkSpecificNodeToNodeVersionMax <- ((== maxBound) -> True)
+  where
+    HardForkSpecificNodeToNodeVersionMax = maxBound
 
 pattern ShelleyNodeToNodeVersionMax :: ShelleyNodeToNodeVersion
 pattern ShelleyNodeToNodeVersionMax <- ((== maxBound) -> True)
@@ -115,11 +120,16 @@ pattern ShelleyBasedHardForkNodeToClientVersionMax ::
      BlockNodeToClientVersion (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)
 pattern ShelleyBasedHardForkNodeToClientVersionMax =
     HardForkNodeToClientEnabled
-      HardForkSpecificNodeToClientVersion2
+      HardForkSpecificNodeToClientVersionMax
       (  EraNodeToClientEnabled ShelleyNodeToClientVersionMax
       :* EraNodeToClientEnabled ShelleyNodeToClientVersionMax
       :* Nil
       )
+
+pattern HardForkSpecificNodeToClientVersionMax :: HardForkSpecificNodeToClientVersion
+pattern HardForkSpecificNodeToClientVersionMax <- ((== maxBound) -> True)
+  where
+    HardForkSpecificNodeToClientVersionMax = maxBound
 
 pattern ShelleyNodeToClientVersionMax :: ShelleyNodeToClientVersion
 pattern ShelleyNodeToClientVersionMax <- ((== maxBound) -> True)
