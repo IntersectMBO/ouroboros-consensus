@@ -1,4 +1,4 @@
-# UTXO-HD
+# UTXO-HD in depth
 
 This document aims to provide an comprehensive guide on UTXO-HD, why we are
 implementing this feature, what brings to Cardano and what it implies.
@@ -13,20 +13,16 @@ an address which is the one that can spend it.
 The UTXO set is an always growing data structure. Currently the `cardano-node`
 uses a fair amount of RAM but this amount will keep growing as more traffic
 takes place on the network (transactions per second, transaction size, block
-size, ...). This is bad for decentralization and sustainability of
-the network as eventually only powerful machines would be able to participate on
-it.
+size, ...). This is bad for decentralization and sustainability of the network
+as eventually only powerful machines would be able to participate on it.
 
 To improve decentralization, a decision was made to move this data to persistent
 storage which, albeit slower, is much cheaper than RAM. The Consensus layer is
 reworked so that the flow of data now allows for UTXO entries to come from some
 backend storage, which might be on disk or in memory trading memory for speed.
 
-The UTXO-HD feature provides two backends which can be chosen in `cardano-node`'s
-configuration file:
-
-- `LedgerDBBackend: V2InMemory`
-- `LedgerDBBackend: V1LMDB`
+The UTXO-HD feature provides two backends (`V2InMemory` and `V1LMDB`) which can
+be chosen in `cardano-node`'s configuration file.
 
 How these backends work is shown below in this document.
 
@@ -35,17 +31,19 @@ How these backends work is shown below in this document.
 > ℹ️ We are going to focus on Shelley based eras, ignoring Byron for now.
 
 ### The `NewEpochState` data structure
-The Ledger layer defines the data structure that holds the state of the blockchain
-after applying some number of blocks, the `NewEpochState`. Among other things,
-this data structure holds a UTXO set which is a `Map` from
-`TxIn (EraCrypto era)` to `TxOut era`.
+
+The Ledger layer defines the data structure that holds the state of the
+blockchain after applying some number of blocks, the `NewEpochState`. Among
+other things, this data structure holds a UTXO set which is a `Map` from `TxIn
+(EraCrypto era)` to `TxOut era`.
 
 In order to apply the different Ledger operations, there is no need for this set
-to be complete at all times, as only entries consumed by the transactions will be
-accessed. When given a block or a transaction, the Ledger code provides functions
-for getting the set of keys that would be necessary to exist in the UTXO set for
-that block or transaction to apply correctly.Taking advantage of this, the Consensus layer will modify this
-container such that it only contains the entries necessary for the Ledger rules.
+to be complete at all times, as only entries consumed by the transactions will
+be accessed. When given a block or a transaction, the Ledger code provides
+functions for getting the set of keys that would be necessary to exist in the
+UTXO set for that block or transaction to apply correctly. Taking advantage of
+this, the Consensus layer will modify this container such that it only contains
+the entries necessary for the Ledger rules.
 
 ### Shelley instantiation and ledger tables
 
@@ -70,34 +68,42 @@ data LedgerTables l mk = LedgerTables {
 
 For a Shelley block, these type families are mapped to the same types as above:
 
-- `TxIn (LedgerState (ShelleyBlock proto era)) = TxIn (EraCrypto era)`
-- `TxOut (LedgerState (ShelleyBlock proto era)) = TxOut era`
+- `TxIn (LedgerState (ShelleyBlock proto era)) = SL.TxIn (EraCrypto era)`
+- `TxOut (LedgerState (ShelleyBlock proto era)) = SL.TxOut era`
 
 To instantiate the `mk` type variable, some _mapkinds_ are defined:
 
-| `MapKind :: Type -> Type -> Type` | Container                     | Used  for                                                         |
-|-----------------------------------|-------------------------------|------------------------------------------------------------------|
-| `ValuesMK k v`                    | `Map k v`                     | Ledger states passed to and from the Ledger rules                |
-| `KeysMK k v`                      | `Set k`                       | Querying the disk for the values needed by a block               |
-| `DiffMK k v`                      | `Map k (Delta v)`             | Carrying the differences created by applying a block             |
-| `EmptyMK k v`                     | $\emptyset$                   | When not needing info about the UTxO set, or the values are inside the `NewEpochState`                         |
+| `MapKind :: Type -> Type -> Type` | Container         | Used  for                                                                              |
+|-----------------------------------|-------------------|----------------------------------------------------------------------------------------|
+| `ValuesMK k v`                    | `Map k v`         | Ledger states passed to and from the Ledger rules                                      |
+| `KeysMK k v`                      | `Set k`           | Querying the disk for the values needed by a block                                     |
+| `DiffMK k v`                      | `Map k (Delta v)` | Carrying the differences created by applying a block                                   |
+| `EmptyMK k v`                     | $\emptyset$       | When not needing info about the UTxO set, or the values are inside the `NewEpochState` |
 
-The actual invocation of the ledger rules make use of a `NewEpochState` which is unaware of any of this machinery. We use
-the `stowLedgerTables`/`unstowLedgerTables` functions to inject and project the values in the
-`NewEpochState` to the ledger tables, making this completely transparent for the Ledger layer.
+The actual invocation of the ledger rules make use of a `NewEpochState` which is
+unaware of any of this machinery. We use the `stowLedgerTables` /
+`unstowLedgerTables` functions to inject and project the values in the
+`NewEpochState` to the ledger tables, making this completely transparent for the
+Ledger layer.
 
 ```haskell
 stowLedgerTables   :: l ValuesMK -> l EmptyMK
 unstowLedgerTables :: l EmptyMK  -> l ValuesMK
 ```
 
-> ⚠️ It is very important to note that `EmptyMK` just means that _the ledger tables are empty_. This says nothing about whether there are values in the `NewEpochState`'s UTXO set. In the Consensus layer we take much care to ensure that the combination of `EmptyMK` having values in the internal UTXO set only happens at the Ledger layer boundary (via `stowLedgerTables`). Any other instance of `l EmptyMK` will mean that there are no values in the tables nor in the `NewEpochState`.
+> ⚠️ It is very important to note that `EmptyMK` just means that _the ledger
+> tables are empty_. This says nothing about whether there are values in the
+> `NewEpochState`'s UTXO set. In the Consensus layer we take much care to ensure
+> that the combination of `EmptyMK` having values in the internal UTXO set only
+> happens at the Ledger layer boundary (via `stowLedgerTables`). Any other
+> instance of `l EmptyMK` will mean that there are no values in the tables nor
+> in the `NewEpochState`.
 
 ### Interacting with the Ledger layer (high level)
 
 The Consensus layer invokes essentially 4 Ledger operations: forecast, tick and
-applyBlock, applyTx. Each one of these rules have different requirements on the contents
-of the UTXO set.
+applyBlock, applyTx. Each one of these rules have different requirements on the
+contents of the UTXO set.
 
 |             | Requirements                                                               | Input to the Ledger layer | Output from the Ledger layer |
 |-------------|----------------------------------------------------------------------------|---------------------------|------------------------------|
@@ -108,9 +114,9 @@ of the UTXO set.
 
 When ticking and applying a block, the Consensus code computes the difference
 between the input and output sets producing `DiffMK` tables. The ticking and
-applying steps are executed in sequence, producing a `DiffMK` for the
-combined operation. The Consensus layer uses this `DiffMK` to influence the
-values that are used when dealing with later blocks.
+applying steps are executed in sequence, producing a `DiffMK` for the combined
+operation. The Consensus layer uses this `DiffMK` to influence the values that
+are used when dealing with later blocks.
 
 
 ### Managing the differences
@@ -180,37 +186,37 @@ Previously, the mempool cached the latest ledger state and therefore we
 could run a separate thread that would sync the mempool with the LedgerDB and
 revalidate all the transactions asynchronously once the tip of the LedgerDB had changed.
 
-Now, we might not be able to
-apply a transaction if the `LedgerState` on top of which we had applied the
-others is gone from the LedgerDB as we would have lost the differences from
-the anchored UTXO to that particular state. Therefore, adding a transaction might in some
-cases trigger a sync with the LedgerDB and therefore a revalidation of the
-previous transactions.
+Now, we might not be able to apply a transaction if the `LedgerState` on top of
+which we had applied the others is gone from the LedgerDB as we would have lost
+the differences from the anchored UTXO to that particular state. Therefore,
+adding a transaction might in some cases trigger a sync with the LedgerDB and
+therefore a revalidation of the previous transactions.
 
-It is important to note that the old behavior (only the thread monitoring the LedgerDB
-would trigger a resync) was not crucial, now there is just an innocuous race
-between the trigger that monitors the LedgerDB and the process that adds the
-transaction, which will result in the same final state regardless of which of
-those wins the race.
+It is important to note that the old behavior (only the thread monitoring the
+LedgerDB would trigger a resync) was not crucial, now there is just an innocuous
+race between the trigger that monitors the LedgerDB and the process that adds
+the transaction, which will result in the same final state regardless of which
+of those wins the race.
 
 ### Ledger state queries
 
 > TODO: revisit, I think these are much much faster now
 
-Most of the queries don't require the UTXO set, but there are three in particular
-that do: `GetUTxOByTxIn`, `GetUTxOWhole` and `GetUTxOByAddress`. We assume that
-`GetUTxOWhole` is considered to be a debug query so we don't worry about its performance. For
-`GetUTxOByTxIn`, the query is fast because we are accessing explicit entries in
-the UTXO set.
+Most of the queries don't require the UTXO set, but there are three in
+particular that do: `GetUTxOByTxIn`, `GetUTxOWhole` and `GetUTxOByAddress`. We
+assume that `GetUTxOWhole` is considered to be a debug query so we don't worry
+about its performance. For `GetUTxOByTxIn`, the query is fast because we are
+accessing explicit entries in the UTXO set.
 
 However, it is `GetUTxOByAddress` that poses a real problem, as we need to query
 the whole UTxO set, apply all the differences to it and then traverse it
-entirely to find out the UTxOs belonging to an address. This query is quite
-slow even without UTxO-HD and in fact its usage is already discouraged. It
-should not be a responsibility of the node to maintain access to this if it is
-not needed by the logic that runs the blockchain, so the plan is to move this
-into a separate process/client that runs an index of UTxOs by address that can
-provide fast access to it (see [#4678](https://github.com/IntersectMBO/cardano-node/issues/4678)).
+entirely to find out the UTxOs belonging to an address. This query is quite slow
+even without UTxO-HD and in fact its usage is already discouraged. It should not
+be a responsibility of the node to maintain access to this if it is not needed
+by the logic that runs the blockchain, so the plan is to move this into a
+separate process/client that runs an index of UTxOs by address that can provide
+fast access to it (see
+[#4678](https://github.com/IntersectMBO/cardano-node/issues/4678)).
 
 ### The `CardanoBlock`
 
@@ -246,20 +252,21 @@ will hold mappings from `TxIn (LedgerState (HardForkBlock xs))` to
 had two choices:
 
 - Make `TxOut (LedgerState (HardForkBlock xs))` equal to the `TxOut a` of the
-  particular era in the ledger state. Aside from the complications implementing this might
-  impose (in terms of type-level machinery), this would mean that when transitioning from one era to the next
-  one, the whole UTXO set in the tables would have to be updated to translate
-  all the entries to the newer era. If this set was on the disk, this would be
-  prohibitively costly.
+  particular era in the ledger state. Aside from the complications implementing
+  this might impose (in terms of type-level machinery), this would mean that
+  when transitioning from one era to the next one, the whole UTXO set in the
+  tables would have to be updated to translate all the entries to the newer
+  era. If this set was on the disk, this would be prohibitively costly.
 
-- Make `TxOut (LedgerState (HardForkBlock xs))` a sum type that can hold values of
-  any eras. This solution makes it very easy to carry `LedgerTables` in the
-  Consensus layer as values do not need to be translated, in fact
-  values from older eras might co-exist with those of the current one. The
-  disadvantage of this solution is that injecting the ledger tables in the
-  ledger state (so `withLedgerTables :: LedgerTables ... mk -> LedgerState ... anymk -> LedgerState ... mk`)
-  implies that we are going from hard-fork keys and values to keys and values of
-  the particular era, making the necessary era translations on-the-fly.
+- Make `TxOut (LedgerState (HardForkBlock xs))` a sum type that can hold values
+  of any eras. This solution makes it very easy to carry `LedgerTables` in the
+  Consensus layer as values do not need to be translated, in fact values from
+  older eras might co-exist with those of the current one. The disadvantage of
+  this solution is that injecting the ledger tables in the ledger state (so
+  `withLedgerTables :: LedgerTables ... mk -> LedgerState ... anymk ->
+  LedgerState ... mk`) implies that we are going from hard-fork keys and values
+  to keys and values of the particular era, making the necessary era
+  translations on-the-fly.
 
   This tradeoff was considered acceptable and because of it we put much care
   in only injecting small tables, such as the set of values needed to apply a
@@ -268,10 +275,10 @@ had two choices:
   great care in not violating it for example by injecting and projecting the whole
   UTXO set on every block which would simply blow up the memory consumption.
 
-It is important to note that for any era in the Cardano blockchain, the `EraCrypto`
-type family instance is the same (`StandardCrypto`), which makes all `TxIn (EraCrypto era)` keys equal. Thanks
-to this, we can define the `TxIn` for `HardForkBlocks` equal to this same type,
-which we call a `CanonicalTxIn`.
+It is important to note that for any era in the Cardano blockchain, the
+`EraCrypto` type family instance is the same (`StandardCrypto`), which makes all
+`TxIn (EraCrypto era)` keys equal. Thanks to this, we can define the `TxIn` for
+`HardForkBlocks` equal to this same type, which we call a `CanonicalTxIn`.
 
 ### Storing snapshots
 
@@ -296,12 +303,13 @@ whereas the on-disk backend will store a copy of the LMDB database.
 
 The **in-memory** backend should have very little impact in the node.
 
-The cardano-node will perform two operations on startup, and each of them suffer a varying impact for the **on-disk** backend:
+The cardano-node will perform two operations on startup, and each of them suffer
+a varying impact for the **on-disk** backend:
 
-|         | When                                             | Impact                                                 | Estimated time difference |
-|---------|--------------------------------------------------|--------------------------------------------------------|---------------------------|
-| Syncing | The node has no blocks                           | Low, cryptographic operations dominate the performance | 16h vs 17h                |
-| Replay  | The node does not have a valid LedgerDB snapshot | High                                                   | 2h vs 3.5h                |
+|         | When                                             | Impact                                                 |
+|---------|--------------------------------------------------|--------------------------------------------------------|
+| Syncing | The node has no blocks                           | Low, cryptographic operations dominate the performance |
+| Replay  | The node does not have a valid LedgerDB snapshot | High                                                   |
 
 Note neither of these will be frequent scenarios.
 

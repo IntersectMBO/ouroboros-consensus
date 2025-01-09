@@ -35,7 +35,9 @@ import           Codec.CBOR.Decoding (Decoder, decodeListLenOf)
 import           Codec.CBOR.Encoding (Encoding, encodeListLen)
 import           Control.Monad.Except
 import           Data.Functor ((<&>))
+#if __GLASGOW_HASKELL__ >= 906
 import           Data.MemPack
+#endif
 import           Data.Proxy
 import           Data.Typeable
 import           GHC.Generics (Generic)
