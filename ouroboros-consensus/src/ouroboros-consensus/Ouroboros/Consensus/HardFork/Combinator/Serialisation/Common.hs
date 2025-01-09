@@ -140,13 +140,8 @@ data HardForkSpecificNodeToNodeVersion =
 -- | Versioning of the specific additions made by the HFC to the @NodeToClient@
 -- protocols, e.g., the era tag or the hard-fork specific queries.
 data HardForkSpecificNodeToClientVersion =
-    HardForkSpecificNodeToClientVersion1
-
-    -- | Enable the 'GetCurrentEra' query in 'QueryHardFork'.
-  | HardForkSpecificNodeToClientVersion2
-
     -- | Include the Genesis window in 'EraParams'.
-  | HardForkSpecificNodeToClientVersion3
+    HardForkSpecificNodeToClientVersion3
   deriving (Eq, Ord, Show, Enum, Bounded)
 
 data HardForkNodeToNodeVersion xs where

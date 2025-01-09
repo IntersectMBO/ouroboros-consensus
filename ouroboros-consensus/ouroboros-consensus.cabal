@@ -301,7 +301,6 @@ library
     psqueues ^>=0.2.3,
     quiet ^>=0.2,
     rawlock ^>=0.1,
-    reflection,
     resource-registry ^>=0.1,
     semialign >=1.1,
     serialise ^>=0.2,

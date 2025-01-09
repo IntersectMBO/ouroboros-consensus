@@ -87,7 +87,6 @@ import           Ouroboros.Consensus.Shelley.Ledger.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
                      (ShelleyNodeToClientVersion (..))
 import           Ouroboros.Consensus.Shelley.Ledger.PeerSelection ()
-import           Ouroboros.Consensus.Shelley.Ledger.Query.PParamsLegacyEncoder
 import           Ouroboros.Consensus.Shelley.Ledger.Query.Types
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import           Ouroboros.Consensus.Util (ShowProxy (..))
@@ -699,29 +698,29 @@ instance ShelleyCompatible proto era => ShowQuery (BlockQuery (ShelleyBlock prot
 -- | Is the given query supported by the given 'ShelleyNodeToClientVersion'?
 querySupportedVersion :: BlockQuery (ShelleyBlock proto era) result -> ShelleyNodeToClientVersion -> Bool
 querySupportedVersion = \case
-    GetLedgerTip                               -> (>= v1)
-    GetEpochNo                                 -> (>= v1)
-    GetNonMyopicMemberRewards {}               -> (>= v1)
-    GetCurrentPParams                          -> (>= v1)
-    GetProposedPParamsUpdates                  -> (>= v1)
-    GetStakeDistribution                       -> (>= v1)
-    GetUTxOByAddress {}                        -> (>= v1)
-    GetUTxOWhole                               -> (>= v1)
-    DebugEpochState                            -> (>= v1)
+    GetLedgerTip                               -> const True
+    GetEpochNo                                 -> const True
+    GetNonMyopicMemberRewards {}               -> const True
+    GetCurrentPParams                          -> const True
+    GetProposedPParamsUpdates                  -> const True
+    GetStakeDistribution                       -> const True
+    GetUTxOByAddress {}                        -> const True
+    GetUTxOWhole                               -> const True
+    DebugEpochState                            -> const True
     GetCBOR q                                  -> querySupportedVersion q
-    GetFilteredDelegationsAndRewardAccounts {} -> (>= v1)
-    GetGenesisConfig                           -> (>= v2)
-    DebugNewEpochState                         -> (>= v2)
-    DebugChainDepState                         -> (>= v2)
-    GetRewardProvenance                        -> (>= v3)
-    GetUTxOByTxIn {}                           -> (>= v4)
-    GetStakePools                              -> (>= v4)
-    GetStakePoolParams {}                      -> (>= v4)
-    GetRewardInfoPools                         -> (>= v5)
-    GetPoolState {}                            -> (>= v6)
-    GetStakeSnapshots {}                       -> (>= v6)
-    GetPoolDistr {}                            -> (>= v6)
-    GetStakeDelegDeposits {}                   -> (>= v7)
+    GetFilteredDelegationsAndRewardAccounts {} -> const True
+    GetGenesisConfig                           -> const True
+    DebugNewEpochState                         -> const True
+    DebugChainDepState                         -> const True
+    GetRewardProvenance                        -> const True
+    GetUTxOByTxIn {}                           -> const True
+    GetStakePools                              -> const True
+    GetStakePoolParams {}                      -> const True
+    GetRewardInfoPools                         -> const True
+    GetPoolState {}                            -> const True
+    GetStakeSnapshots {}                       -> const True
+    GetPoolDistr {}                            -> const True
+    GetStakeDelegDeposits {}                   -> const True
     GetConstitution                            -> (>= v8)
     GetGovState                                -> (>= v8)
     GetDRepState {}                            -> (>= v8)
@@ -737,13 +736,6 @@ querySupportedVersion = \case
     -- WARNING: when adding a new query, a new @ShelleyNodeToClientVersionX@
     -- must be added. See #2830 for a template on how to do this.
   where
-    v1  = ShelleyNodeToClientVersion1
-    v2  = ShelleyNodeToClientVersion2
-    v3  = ShelleyNodeToClientVersion3
-    v4  = ShelleyNodeToClientVersion4
-    v5  = ShelleyNodeToClientVersion5
-    v6  = ShelleyNodeToClientVersion6
-    v7  = ShelleyNodeToClientVersion7
     v8  = ShelleyNodeToClientVersion8
     v9  = ShelleyNodeToClientVersion9
     v10 = ShelleyNodeToClientVersion10
@@ -938,11 +930,11 @@ encodeShelleyResult ::
      forall proto era result. ShelleyCompatible proto era
   => ShelleyNodeToClientVersion
   -> BlockQuery (ShelleyBlock proto era) result -> result -> Encoding
-encodeShelleyResult v query = case query of
+encodeShelleyResult _v query = case query of
     GetLedgerTip                               -> encodePoint encode
     GetEpochNo                                 -> toCBOR
     GetNonMyopicMemberRewards {}               -> toCBOR
-    GetCurrentPParams                          -> fst $ currentPParamsEnDecoding v
+    GetCurrentPParams                          -> toCBOR
     GetProposedPParamsUpdates                  -> toCBOR
     GetStakeDistribution                       -> LC.toEraCBOR @era
     GetUTxOByAddress {}                        -> toCBOR
@@ -980,11 +972,11 @@ decodeShelleyResult ::
   => ShelleyNodeToClientVersion
   -> BlockQuery (ShelleyBlock proto era) result
   -> forall s. Decoder s result
-decodeShelleyResult v query = case query of
+decodeShelleyResult _v query = case query of
     GetLedgerTip                               -> decodePoint decode
     GetEpochNo                                 -> fromCBOR
     GetNonMyopicMemberRewards {}               -> fromCBOR
-    GetCurrentPParams                          -> snd $ currentPParamsEnDecoding v
+    GetCurrentPParams                          -> fromCBOR
     GetProposedPParamsUpdates                  -> fromCBOR
     GetStakeDistribution                       -> LC.fromEraCBOR @era
     GetUTxOByAddress {}                        -> fromCBOR
@@ -1016,21 +1008,6 @@ decodeShelleyResult v query = case query of
     GetRatifyState {}                          -> LC.fromEraCBOR @era
     GetFuturePParams {}                        -> LC.fromEraCBOR @era
     GetBigLedgerPeerSnapshot                   -> fromCBOR
-
-currentPParamsEnDecoding ::
-     forall era s.
-     ( FromCBOR (LC.PParams era)
-     , ToCBOR (LC.PParams era)
-     , FromCBOR (LegacyPParams era)
-     , ToCBOR (LegacyPParams era)
-     )
-  => ShelleyNodeToClientVersion
-  -> (LC.PParams era -> Encoding, Decoder s (LC.PParams era))
-currentPParamsEnDecoding v
-  | v >= ShelleyNodeToClientVersion7
-  = (toCBOR, fromCBOR)
-  | otherwise
-  = (encodeLegacyPParams, decodeLegacyPParams)
 
 -- | The stake snapshot returns information about the mark, set, go ledger snapshots for a pool,
 -- plus the total active stake for each snapshot that can be used in a 'sigma' calculation.

@@ -291,11 +291,11 @@ instance CardanoHardForkConstraints c
 --
 -- PRECONDITION: 'supportedNodeToClientVersions' must include a version that
 -- satisfies this condition.
-genWithHardForkSpecificNodeToClientVersion ::
+_genWithHardForkSpecificNodeToClientVersion ::
      forall c. CardanoHardForkConstraints c
   => (HardForkSpecificNodeToClientVersion -> Bool)
   -> Gen (HardForkNodeToClientVersion (CardanoEras c))
-genWithHardForkSpecificNodeToClientVersion p =
+_genWithHardForkSpecificNodeToClientVersion p =
       elements
     . filter p'
     . Map.elems
@@ -488,8 +488,7 @@ instance CardanoHardForkConstraints c
   arbitrary = frequency
       [ (1, do version <- getHardForkEnabledNodeToClientVersion <$> arbitrary
                return $ WithVersion version (Some GetInterpreter))
-      , (1, do version <- genWithHardForkSpecificNodeToClientVersion
-                            (>= HardForkSpecificNodeToClientVersion2)
+      , (1, do version <- getHardForkEnabledNodeToClientVersion <$> arbitrary
                return $ WithVersion version (Some GetCurrentEra))
       ]
 
@@ -700,8 +699,7 @@ instance c ~ MockCryptoCompatByron
                             (SomeResult (CardanoBlock c)))
       genQueryHardForkResult = oneof
           [ WithVersion
-              <$> genWithHardForkSpecificNodeToClientVersion
-                    (>= HardForkSpecificNodeToClientVersion3)
+              <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
               <*> (SomeResult (QueryHardFork GetInterpreter) <$> arbitrary)
           , WithVersion
               <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)

@@ -123,9 +123,6 @@ library
     Ouroboros.Consensus.Shelley.Protocol.TPraos
     Ouroboros.Consensus.Shelley.ShelleyHFC
 
-  other-modules:
-    Ouroboros.Consensus.Shelley.Ledger.Query.PParamsLegacyEncoder
-
   build-depends:
     base >=4.14 && <4.21,
     base-deriving-via,
@@ -416,7 +413,6 @@ test-suite cardano-test
   hs-source-dirs: test/cardano-test
   main-is: Main.hs
   other-modules:
-    Test.Consensus.Cardano.ByronCompatibility
     Test.Consensus.Cardano.DiffusionPipelining
     Test.Consensus.Cardano.Golden
     Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.ByteStringTxParser

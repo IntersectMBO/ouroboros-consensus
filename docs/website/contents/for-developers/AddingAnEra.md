@@ -94,8 +94,6 @@ be adding is the Alonzo era, which comes after the Mary era.
 
 ### `test`
 
-* In `Test.Consensus.Cardano.ByronCompatibility`, update `toCardanoCodecConfig`.
-
 * In `Test.Consensus.Cardano.Serialisation`, update `testCodecCfg` and
   `dictNestedHdr`.
 

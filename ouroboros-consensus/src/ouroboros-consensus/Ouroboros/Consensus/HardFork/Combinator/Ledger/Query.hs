@@ -41,7 +41,6 @@ import           Data.Bifunctor
 import           Data.Functor.Product
 import           Data.Kind (Type)
 import           Data.Proxy
-import           Data.Reflection (give)
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
 import           Data.SOP.Counting (getExactly)
@@ -65,8 +64,6 @@ import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import           Ouroboros.Consensus.HardFork.History (Bound (..), EraParams,
                      Shape (..))
 import qualified Ouroboros.Consensus.HardFork.History as History
-import           Ouroboros.Consensus.HardFork.History.EraParams
-                     (EraParamsFormat (..))
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query
@@ -366,18 +363,16 @@ decodeQueryAnytimeResult GetEraStart = decode
 
 encodeQueryHardForkResult ::
      SListI xs
-  => EraParamsFormat
-  -> QueryHardFork xs result -> result -> Encoding
-encodeQueryHardForkResult epf = \case
-    GetInterpreter -> give epf encode
+  => QueryHardFork xs result -> result -> Encoding
+encodeQueryHardForkResult = \case
+    GetInterpreter -> encode
     GetCurrentEra  -> encode
 
 decodeQueryHardForkResult ::
      SListI xs
-  => EraParamsFormat
-  -> QueryHardFork xs result -> forall s. Decoder s result
-decodeQueryHardForkResult epf = \case
-    GetInterpreter -> give epf decode
+  => QueryHardFork xs result -> forall s. Decoder s result
+decodeQueryHardForkResult = \case
+    GetInterpreter -> decode
     GetCurrentEra  -> decode
 
 {-------------------------------------------------------------------------------
