@@ -142,7 +142,7 @@ import           Codec.CBOR.Encoding
 import           Codec.Serialise
 import qualified Control.Monad as Monad
 import           Control.Monad.Except
-import           Control.Monad.Trans (lift)
+import qualified Control.Monad.Trans as Trans (lift)
 import           Control.Tracer
 import qualified Data.ByteString.Builder as BS
 import           Data.Functor.Contravariant ((>$<))
@@ -272,6 +272,6 @@ loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs'@(SomeHasFS fs'')) doChecksum s 
   case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
     Origin        -> throwError InitFailureGenesis
     NotOrigin pt -> do
-        backingStore <- lift (restoreBackingStore tracer bss fs (snapshotToTablesPath s))
+        backingStore <- Trans.lift (restoreBackingStore tracer bss fs (snapshotToTablesPath s))
         let chlog  = empty extLedgerSt
         pure ((chlog, backingStore), pt)

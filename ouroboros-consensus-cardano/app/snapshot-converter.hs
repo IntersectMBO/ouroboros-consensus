@@ -16,7 +16,7 @@ import           Cardano.Tools.DBAnalyser.HasAnalysis (mkProtocolInfo)
 import           Codec.Serialise
 import qualified Control.Monad as Monad
 import           Control.Monad.Except
-import           Control.Monad.Trans (lift)
+import qualified Control.Monad.Trans as Trans (lift)
 import           Control.ResourceRegistry (ResourceRegistry)
 import qualified Control.ResourceRegistry as RR
 import           Control.Tracer (nullTracer)
@@ -158,7 +158,7 @@ checkSnapshotFileStructure m p (SomeHasFS fs) = case m of
   where
     want :: (FsPath -> IO Bool) -> FsPath -> String -> ExceptT (Error blk) IO ()
     want fileType path err = do
-        exists <- lift $ fileType path
+        exists <- Trans.lift $ fileType path
         Monad.unless exists $ throwError $ SnapshotFormatMismatch m err
 
     isDir        = (doesDirectoryExist, [],             "is NOT a directory")
@@ -207,7 +207,7 @@ load config@Config{inpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), pa
       checkSnapshotFileStructure Mem path fs
       (ls, _) <- withExceptT SnapshotError $ V2.loadSnapshot rr ccfg fs checkChecksum ds
       let h = V2.currentHandle ls
-      (V2.state h,) <$> lift (V2.readAll (V2.tables h))
+      (V2.state h,) <$> Trans.lift (V2.readAll (V2.tables h))
     LMDB -> do
       checkSnapshotFileStructure LMDB path fs
       ((dbch, bstore), _) <-
@@ -219,7 +219,7 @@ load config@Config{inpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), pa
           (V1.SnapshotsFS fs)
           checkChecksum
           ds
-      (V1.current dbch,) <$> lift (V1.bsReadAll bstore)
+      (V1.current dbch,) <$> Trans.lift (V1.bsReadAll bstore)
   where
     Config { checkChecksum } = config
 load _ _ _ _ = error "Malformed input path!"

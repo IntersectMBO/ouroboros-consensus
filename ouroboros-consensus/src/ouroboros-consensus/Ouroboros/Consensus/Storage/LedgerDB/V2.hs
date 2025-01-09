@@ -18,7 +18,7 @@
 module Ouroboros.Consensus.Storage.LedgerDB.V2 (mkInitDb) where
 
 import           Control.Arrow ((>>>))
-import           Control.Monad (void, (>=>))
+import qualified Control.Monad as Monad (void, (>=>))
 import           Control.Monad.Except
 import           Control.RAWLock
 import qualified Control.RAWLock as RAWLock
@@ -185,7 +185,7 @@ mkInternals bss h = TestInternals {
           st <- (case whereTo of
             TakeAtVolatileTip  -> anchorHandle
             TakeAtImmutableTip -> currentHandle) <$> readTVarIO (ldbSeq env)
-          void $ takeSnapshot
+          Monad.void $ takeSnapshot
                 (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
                 (LedgerDBSnapshotEvent >$< ldbTracer env)
                 (ldbHasFS env)
@@ -336,13 +336,13 @@ implTryTakeSnapshot ::
   -> m SnapCounters
 implTryTakeSnapshot bss env mTime nrBlocks =
     if onDiskShouldTakeSnapshot (ldbSnapshotPolicy env) (uncurry (flip diffTime) <$> mTime) nrBlocks then do
-      void . takeSnapshot
+      Monad.void . takeSnapshot
                 (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
                 (LedgerDBSnapshotEvent >$< ldbTracer env)
                 (ldbHasFS env)
                 . anchorHandle
                 =<< readTVarIO (ldbSeq env)
-      void $ trimSnapshots
+      Monad.void $ trimSnapshots
                 (LedgerDBSnapshotEvent >$< ldbTracer env)
                 (ldbHasFS env)
                 (ldbSnapshotPolicy env)
@@ -654,7 +654,7 @@ newForker h ldbEnv rr st = do
     let tr = LedgerDBForkerEvent . TraceForkerEventWithKey forkerKey >$< ldbTracer ldbEnv
     traceWith tr ForkerOpen
     lseqVar   <- newTVarIO . LedgerSeq . AS.Empty $ st
-    (_, toRelease) <- allocate rr (\_ -> newTVarIO (pure ())) (readTVarIO >=> id)
+    (_, toRelease) <- allocate rr (\_ -> newTVarIO (pure ())) (readTVarIO Monad.>=> id)
     let forkerEnv = ForkerEnv {
         foeLedgerSeq          = lseqVar
       , foeSwitchVar          = ldbSeq ldbEnv

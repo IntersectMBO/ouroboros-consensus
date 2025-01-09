@@ -71,7 +71,9 @@ import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.ByteString.Short as Short
 import           Data.Functor ((<&>))
 import           Data.Kind (Type)
+#if __GLASGOW_HASKELL__ >= 906
 import           Data.MemPack (MemPack)
+#endif
 import           Data.Typeable
 import           GHC.Generics (Generic)
 import           GHC.Stack
