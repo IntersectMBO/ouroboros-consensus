@@ -27,6 +27,8 @@ esac
 
 $fdcmd --full-path "$path" \
        --extension hs \
+       --exclude ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Dual.hs \
+       --exclude ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Extended.hs \
        --exec-batch stylish-haskell -c .stylish-haskell.yaml -i
 
 case "$(uname -s)" in

@@ -1,12 +1,10 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 
 module Main (main) where
@@ -59,13 +57,13 @@ data Format
     deriving (Show, Read)
 
 data Config = Config
-    { from       :: Format
+    { from          :: Format
     -- ^ Which format the input snapshot is in
-    , inpath     :: FilePath
+    , inpath        :: FilePath
     -- ^ Path to the input snapshot
-    , to         :: Format
+    , to            :: Format
     -- ^ Which format the output snapshot must be in
-    , outpath    :: FilePath
+    , outpath       :: FilePath
     -- ^ Path to the output snapshot
     , writeChecksum :: Flag "DoDiskSnapshotChecksum"
     -- ^ Write and check checksums

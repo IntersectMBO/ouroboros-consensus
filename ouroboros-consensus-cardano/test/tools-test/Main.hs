@@ -1,5 +1,3 @@
-{-# LANGUAGE PatternSynonyms #-}
-
 module Main (main) where
 
 import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
