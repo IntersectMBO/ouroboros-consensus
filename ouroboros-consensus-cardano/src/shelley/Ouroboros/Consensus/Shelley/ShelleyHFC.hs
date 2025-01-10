@@ -1,8 +1,12 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -34,9 +38,14 @@ import           Control.Monad (guard)
 import           Control.Monad.Except (runExcept, throwError, withExceptT)
 import           Data.Coerce
 import qualified Data.Map.Strict as Map
+import           Data.MemPack
 import           Data.SOP.BasicFunctors
+import           Data.SOP.Functors (Flip (..))
+import           Data.SOP.Index (Index (..))
 import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
+import           Data.SOP.Strict
 import qualified Data.Text as T (pack)
+import           Data.Typeable
 import           Data.Void (Void)
 import           Data.Word
 import           GHC.Generics (Generic)
@@ -138,10 +147,10 @@ type ProtocolShelley = HardForkProtocol '[ ShelleyBlock (TPraos StandardCrypto) 
 -------------------------------------------------------------------------------}
 
 shelleyTransition ::
-     forall era proto. ShelleyCompatible proto era
+     forall era proto mk. ShelleyCompatible proto era
   => PartialLedgerConfig (ShelleyBlock proto era)
   -> Word16   -- ^ Next era's initial major protocol version
-  -> LedgerState (ShelleyBlock proto era)
+  -> LedgerState (ShelleyBlock proto era) mk
   -> Maybe EpochNo
 shelleyTransition ShelleyPartialLedgerConfig{..}
                   transitionMajorVersionRaw
@@ -269,7 +278,7 @@ crossEraForecastAcrossShelley = coerce forecastAcrossShelley
 
 -- | Forecast from a Shelley-based era to the next Shelley-based era.
 forecastAcrossShelley ::
-     forall protoFrom protoTo eraFrom eraTo.
+     forall protoFrom protoTo eraFrom eraTo mk.
      ( TranslateProto protoFrom protoTo
      , LedgerSupportsProtocol (ShelleyBlock protoFrom eraFrom)
      )
@@ -277,7 +286,7 @@ forecastAcrossShelley ::
   -> ShelleyLedgerConfig eraTo
   -> Bound  -- ^ Transition between the two eras
   -> SlotNo -- ^ Forecast for this slot
-  -> LedgerState (ShelleyBlock protoFrom eraFrom)
+  -> LedgerState (ShelleyBlock protoFrom eraFrom) mk
   -> Except OutsideForecastRange (WrapLedgerView (ShelleyBlock protoTo eraTo))
 forecastAcrossShelley cfgFrom cfgTo transition forecastFor ledgerStateFrom
     | forecastFor < maxFor
@@ -321,18 +330,35 @@ instance ( ShelleyBasedEra era
       return $ ShelleyTip sno bno (ShelleyHash hash)
 
 instance ( ShelleyBasedEra era
+         , ShelleyBasedEra (SL.PreviousEra era)
          , SL.TranslateEra era (ShelleyTip proto)
          , SL.TranslateEra era SL.NewEpochState
          , SL.TranslationError era SL.NewEpochState ~ Void
-         ) => SL.TranslateEra era (LedgerState :.: ShelleyBlock proto) where
-  translateEra ctxt (Comp (ShelleyLedgerState tip state _transition)) = do
+         , EraCrypto (SL.PreviousEra era) ~ EraCrypto era
+         , CanMapMK mk
+         , CanMapKeysMK mk
+         ) => SL.TranslateEra era (Flip LedgerState mk :.: ShelleyBlock proto) where
+  translateEra ctxt (Comp (Flip (ShelleyLedgerState tip state _transition tables))) = do
       tip'   <- mapM (SL.translateEra ctxt) tip
       state' <- SL.translateEra ctxt state
-      return $ Comp $ ShelleyLedgerState {
+      return $ Comp $ Flip $ ShelleyLedgerState {
           shelleyLedgerTip        = tip'
         , shelleyLedgerState      = state'
         , shelleyLedgerTransition = ShelleyTransitionInfo 0
+        , shelleyLedgerTables     = translateShelleyTables tables
         }
+
+translateShelleyTables ::
+     ( EraCrypto (SL.PreviousEra era) ~ EraCrypto era
+     , CanMapMK mk
+     , CanMapKeysMK mk
+     , ShelleyBasedEra era
+     , ShelleyBasedEra (SL.PreviousEra era)
+     )
+  => LedgerTables (LedgerState (ShelleyBlock proto (SL.PreviousEra era))) mk
+  -> LedgerTables (LedgerState (ShelleyBlock proto                 era))  mk
+translateShelleyTables (LedgerTables utxoTable) =
+      LedgerTables $ mapKeysMK coerce $ mapMK SL.upgradeTxOut utxoTable
 
 instance ( ShelleyBasedEra era
          , SL.TranslateEra era WrapTx
@@ -350,3 +376,58 @@ instance ( ShelleyBasedEra era
         Comp . WrapValidatedGenTx
       . mkShelleyValidatedTx . SL.coerceValidated
     <$> SL.translateValidated @era @WrapTx ctxt (SL.coerceValidated vtx)
+
+{-------------------------------------------------------------------------------
+  Canonical TxIn
+-------------------------------------------------------------------------------}
+
+instance (ShelleyBasedEra era)
+      => HasCanonicalTxIn '[ShelleyBlock proto era] where
+  newtype instance CanonicalTxIn '[ShelleyBlock proto era] = ShelleyBlockHFCTxIn {
+      getShelleyBlockHFCTxIn :: ShelleyTxIn era
+    }
+    deriving stock (Show, Eq, Ord)
+    deriving newtype (NoThunks, MemPack)
+
+  injectCanonicalTxIn IZ txIn     = ShelleyBlockHFCTxIn txIn
+  injectCanonicalTxIn (IS idx') _ = case idx' of {}
+
+  ejectCanonicalTxIn IZ txIn     = getShelleyBlockHFCTxIn txIn
+  ejectCanonicalTxIn (IS idx') _ = case idx' of {}
+
+{-------------------------------------------------------------------------------
+  HardForkTxOut
+-------------------------------------------------------------------------------}
+
+instance SL.EraTxOut era => HasHardForkTxOut '[ShelleyBlock proto era] where
+  type instance HardForkTxOut '[ShelleyBlock proto era] = SL.TxOut era
+  injectHardForkTxOut IZ txOut    = txOut
+  injectHardForkTxOut (IS idx') _ = case idx' of {}
+  ejectHardForkTxOut IZ txOut    = txOut
+  ejectHardForkTxOut (IS idx') _ = case idx' of {}
+  txOutEjections = fn (unZ . unK) :* Nil
+
+{-------------------------------------------------------------------------------
+  Queries
+-------------------------------------------------------------------------------}
+
+instance ( ShelleyCompatible proto era
+         , ShelleyBasedEra era
+         , TxOut (LedgerState (ShelleyBlock proto era)) ~ SL.TxOut era
+         , HasHardForkTxOut '[ShelleyBlock proto era]
+         ) => BlockSupportsHFLedgerQuery '[ShelleyBlock proto era] where
+
+  answerBlockQueryHFLookup = \case
+    IZ -> answerShelleyLookupQueries (injectLedgerTables IZ) id (getShelleyTxIn . ejectCanonicalTxIn IZ)
+    IS idx -> case idx of {}
+
+  answerBlockQueryHFTraverse = \case
+    IZ -> answerShelleyTraversingQueries
+      id
+      (getShelleyTxIn . ejectCanonicalTxIn IZ)
+      (queryLedgerGetTraversingFilter @('[ShelleyBlock proto era]) IZ)
+    IS idx -> case idx of {}
+
+  queryLedgerGetTraversingFilter = \case
+    IZ -> shelleyQFTraverseTablesPredicate
+    IS idx -> case idx of {}

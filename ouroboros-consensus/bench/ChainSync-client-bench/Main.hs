@@ -184,7 +184,7 @@ inTheYearOneBillion = SystemTime {
         * 1e9
   }
 
-oracularLedgerDB :: Point B -> Extended.ExtLedgerState B
+oracularLedgerDB :: Point B -> Extended.ExtLedgerState B mk
 oracularLedgerDB p =
     Extended.ExtLedgerState {
         Extended.headerState = HV.HeaderState {
@@ -200,7 +200,7 @@ oracularLedgerDB p =
           }
       , Extended.ledgerState = TB.TestLedger {
             TB.lastAppliedPoint      = p
-          , TB.payloadDependentState = ()
+          , TB.payloadDependentState = TB.EmptyPLDS
           }
     }
 

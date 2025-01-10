@@ -1,6 +1,8 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -36,6 +38,7 @@ module Ouroboros.Consensus.Byron.Ledger.Ledger (
     -- * Type family instances
   , BlockQuery (..)
   , LedgerState (..)
+  , LedgerTables (..)
   , Ticked (..)
     -- * Auxiliary
   , validationErrorImpossible
@@ -60,9 +63,9 @@ import           Codec.Serialise (decode, encode)
 import           Control.Monad (replicateM)
 import           Control.Monad.Except (Except, runExcept, throwError)
 import           Data.ByteString (ByteString)
-import           Data.Kind (Type)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Void (Void)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
@@ -82,14 +85,14 @@ import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
-import           Ouroboros.Consensus.Protocol.PBFT
-import           Ouroboros.Consensus.Util (ShowProxy (..), (..:))
+import           Ouroboros.Consensus.Ledger.Tables.Utils
+import           Ouroboros.Consensus.Util (ShowProxy (..))
 
 {-------------------------------------------------------------------------------
   LedgerState
 -------------------------------------------------------------------------------}
 
-data instance LedgerState ByronBlock = ByronLedgerState {
+data instance LedgerState ByronBlock mk = ByronLedgerState {
       byronLedgerTipBlockNo :: !(WithOrigin BlockNo)
     , byronLedgerState      :: !CC.ChainValidationState
     , byronLedgerTransition :: !ByronTransition
@@ -119,7 +122,7 @@ type instance LedgerCfg (LedgerState ByronBlock) = Gen.Config
 
 initByronLedgerState :: Gen.Config
                      -> Maybe CC.UTxO -- ^ Optionally override UTxO
-                     -> LedgerState ByronBlock
+                     -> LedgerState ByronBlock mk
 initByronLedgerState genesis mUtxo = ByronLedgerState {
       byronLedgerState      = override mUtxo initState
     , byronLedgerTipBlockNo = Origin
@@ -162,7 +165,7 @@ getByronTip state =
 -------------------------------------------------------------------------------}
 
 -- | The ticked Byron ledger state
-data instance Ticked (LedgerState ByronBlock) = TickedByronLedgerState {
+data instance Ticked (LedgerState ByronBlock) mk = TickedByronLedgerState {
       tickedByronLedgerState        :: !CC.ChainValidationState
     , untickedByronLedgerTransition :: !ByronTransition
     }
@@ -182,6 +185,21 @@ instance IsLedger (LedgerState ByronBlock) where
             byronLedgerTransition
         }
 
+type instance TxIn  (LedgerState ByronBlock) = Void
+type instance TxOut (LedgerState ByronBlock) = Void
+
+instance LedgerTablesAreTrivial (LedgerState ByronBlock) where
+  convertMapKind (ByronLedgerState x y z) = ByronLedgerState x y z
+instance LedgerTablesAreTrivial (Ticked (LedgerState ByronBlock)) where
+  convertMapKind (TickedByronLedgerState x y) = TickedByronLedgerState x y
+
+deriving via TrivialLedgerTables (LedgerState ByronBlock)
+    instance HasLedgerTables (LedgerState ByronBlock)
+deriving via TrivialLedgerTables (Ticked (LedgerState ByronBlock))
+    instance HasLedgerTables (Ticked (LedgerState ByronBlock))
+deriving via TrivialLedgerTables (LedgerState ByronBlock)
+    instance CanStowLedgerTables (LedgerState ByronBlock)
+
 {-------------------------------------------------------------------------------
   Supporting the various consensus interfaces
 -------------------------------------------------------------------------------}
@@ -197,20 +215,26 @@ instance ApplyBlock (LedgerState ByronBlock) ByronBlock where
     where
       validationMode = CC.fromBlockValidationMode CC.NoBlockValidation
 
-data instance BlockQuery ByronBlock :: Type -> Type where
-  GetUpdateInterfaceState :: BlockQuery ByronBlock UPI.State
+  getBlockKeySets _ = emptyLedgerTables
+
+data instance BlockQuery ByronBlock fp result where
+  GetUpdateInterfaceState :: BlockQuery ByronBlock QFNoTables UPI.State
 
 instance BlockSupportsLedgerQuery ByronBlock where
-  answerBlockQuery _cfg GetUpdateInterfaceState (ExtLedgerState ledgerState _) =
-    CC.cvsUpdateState (byronLedgerState ledgerState)
+  answerPureBlockQuery _cfg GetUpdateInterfaceState dlv =
+      CC.cvsUpdateState (byronLedgerState ledgerState)
+    where
+      ExtLedgerState { ledgerState } = dlv
+  answerBlockQueryLookup _cfg q _dlv = case q of {}
+  answerBlockQueryTraverse _cfg q _dlv = case q of {}
 
-instance SameDepIndex (BlockQuery ByronBlock) where
-  sameDepIndex GetUpdateInterfaceState GetUpdateInterfaceState = Just Refl
+instance SameDepIndex2 (BlockQuery ByronBlock) where
+  sameDepIndex2 GetUpdateInterfaceState GetUpdateInterfaceState = Just Refl
 
-deriving instance Eq (BlockQuery ByronBlock result)
-deriving instance Show (BlockQuery ByronBlock result)
+deriving instance Eq (BlockQuery ByronBlock fp result)
+deriving instance Show (BlockQuery ByronBlock fp result)
 
-instance ShowQuery (BlockQuery ByronBlock) where
+instance ShowQuery (BlockQuery ByronBlock fp) where
   showResult GetUpdateInterfaceState = show
 
 instance ShowProxy (BlockQuery ByronBlock) where
@@ -223,7 +247,7 @@ instance CommonProtocolParams ByronBlock where
   maxTxSize     = fromIntegral . Update.ppMaxTxSize     . getProtocolParameters
 
 -- | Return the protocol parameters adopted by the given ledger.
-getProtocolParameters :: LedgerState ByronBlock -> Update.ProtocolParameters
+getProtocolParameters :: LedgerState ByronBlock mk -> Update.ProtocolParameters
 getProtocolParameters =
       CC.adoptedProtocolParameters
     . CC.cvsUpdateState
@@ -326,8 +350,8 @@ validationErrorImpossible = cantBeError . runExcept
 applyByronBlock :: CC.ValidationMode
                 -> LedgerConfig ByronBlock
                 -> ByronBlock
-                -> TickedLedgerState ByronBlock
-                -> Except (LedgerError ByronBlock) (LedgerState ByronBlock)
+                -> TickedLedgerState ByronBlock mk1
+                -> Except (LedgerError ByronBlock) (LedgerState ByronBlock mk2)
 applyByronBlock validationMode
                 cfg
                 blk@(ByronBlock raw _ (ByronHash blkHash))
@@ -344,8 +368,8 @@ applyABlock :: CC.ValidationMode
             -> CC.ABlock ByteString
             -> CC.HeaderHash
             -> BlockNo
-            -> Ticked (LedgerState (ByronBlock))
-            -> Except (LedgerError ByronBlock) (LedgerState ByronBlock)
+            -> TickedLedgerState ByronBlock mk1
+            -> Except (LedgerError ByronBlock) (LedgerState ByronBlock mk2)
 applyABlock validationMode cfg blk blkHash blkNo TickedByronLedgerState{..} = do
     st' <- CC.validateBlock cfg validationMode blk blkHash tickedByronLedgerState
 
@@ -384,8 +408,8 @@ applyABlock validationMode cfg blk blkHash blkNo TickedByronLedgerState{..} = do
 applyABoundaryBlock :: Gen.Config
                     -> CC.ABoundaryBlock ByteString
                     -> BlockNo
-                    -> Ticked (LedgerState ByronBlock)
-                    -> Except (LedgerError ByronBlock) (LedgerState ByronBlock)
+                    -> TickedLedgerState ByronBlock mk1
+                    -> Except (LedgerError ByronBlock) (LedgerState ByronBlock mk2)
 applyABoundaryBlock cfg blk blkNo TickedByronLedgerState{..} = do
     st' <- CC.validateBoundary cfg blk tickedByronLedgerState
     return ByronLedgerState {
@@ -404,7 +428,7 @@ encodeByronAnnTip = encodeAnnTipIsEBB encodeByronHeaderHash
 decodeByronAnnTip :: Decoder s (AnnTip ByronBlock)
 decodeByronAnnTip = decodeAnnTipIsEBB decodeByronHeaderHash
 
-encodeByronExtLedgerState :: ExtLedgerState ByronBlock -> Encoding
+encodeByronExtLedgerState :: ExtLedgerState ByronBlock mk -> Encoding
 encodeByronExtLedgerState = encodeExtLedgerState
     encodeByronLedgerState
     encodeByronChainDepState
@@ -468,7 +492,7 @@ decodeByronTransition = do
         bno     <- decode
         return (Update.ProtocolVersion { pvMajor, pvMinor, pvAlt }, bno)
 
-encodeByronLedgerState :: LedgerState ByronBlock -> Encoding
+encodeByronLedgerState :: LedgerState ByronBlock mk -> Encoding
 encodeByronLedgerState ByronLedgerState{..} = mconcat [
       encodeListLen 3
     , encode byronLedgerTipBlockNo
@@ -476,7 +500,7 @@ encodeByronLedgerState ByronLedgerState{..} = mconcat [
     , encodeByronTransition byronLedgerTransition
     ]
 
-decodeByronLedgerState :: Decoder s (LedgerState ByronBlock)
+decodeByronLedgerState :: Decoder s (LedgerState ByronBlock mk)
 decodeByronLedgerState = do
     enforceSize "ByronLedgerState" 3
     ByronLedgerState
@@ -484,22 +508,22 @@ decodeByronLedgerState = do
       <*> decode
       <*> decodeByronTransition
 
-encodeByronQuery :: BlockQuery ByronBlock result -> Encoding
+encodeByronQuery :: BlockQuery ByronBlock fp result -> Encoding
 encodeByronQuery query = case query of
     GetUpdateInterfaceState -> CBOR.encodeWord8 0
 
-decodeByronQuery :: Decoder s (SomeSecond BlockQuery ByronBlock)
+decodeByronQuery :: Decoder s (SomeBlockQuery (BlockQuery ByronBlock))
 decodeByronQuery = do
     tag <- CBOR.decodeWord8
     case tag of
-      0 -> return $ SomeSecond GetUpdateInterfaceState
+      0 -> return $ SomeBlockQuery GetUpdateInterfaceState
       _ -> fail $ "decodeByronQuery: invalid tag " <> show tag
 
-encodeByronResult :: BlockQuery ByronBlock result -> result -> Encoding
+encodeByronResult :: BlockQuery ByronBlock fp result -> result -> Encoding
 encodeByronResult query = case query of
     GetUpdateInterfaceState -> toByronCBOR
 
-decodeByronResult :: BlockQuery ByronBlock result
+decodeByronResult :: BlockQuery ByronBlock fp result
                   -> forall s. Decoder s result
 decodeByronResult query = case query of
     GetUpdateInterfaceState -> fromByronCBOR
