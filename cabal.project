@@ -44,6 +44,3 @@ package ouroboros-network
 if(os(windows))
   constraints:
     bitvec -simd
-
--- https://github.com/ulidtko/cabal-doctest/issues/85
-constraints: Cabal < 3.13
