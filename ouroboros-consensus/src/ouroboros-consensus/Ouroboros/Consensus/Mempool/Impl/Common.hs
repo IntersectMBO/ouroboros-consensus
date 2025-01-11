@@ -38,8 +38,8 @@ import           Control.Monad.Trans.Except (runExcept)
 import           Control.Tracer
 import qualified Data.Foldable as Foldable
 import qualified Data.List.NonEmpty as NE
-import           Data.Set (Set)
-import qualified Data.Set as Set
+import           Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import           Data.Typeable
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
@@ -80,7 +80,7 @@ data InternalState blk = IS {
       -- 'MempoolSnapshot' (see 'snapshotHasTx').
       --
       -- This should always be in-sync with the transactions in 'isTxs'.
-    , isTxIds        :: !(Set (GenTxId blk))
+    , isTxIds        :: !(Map (GenTxId blk) (Validated (GenTx blk)))
 
       -- | The cached ledger state after applying the transactions in the
       -- Mempool against the chain's ledger state. New transactions will be
@@ -150,7 +150,7 @@ initInternalState ::
   -> InternalState blk
 initInternalState capacityOverride lastTicketNo cfg slot st = IS {
       isTxs          = TxSeq.Empty
-    , isTxIds        = Set.empty
+    , isTxIds        = Map.empty
     , isLedgerState  = st
     , isTip          = castPoint $ getTip st
     , isSlotNo       = slot
@@ -279,17 +279,25 @@ validateNewTransaction
      , InternalState blk
      )
 validateNewTransaction cfg wti tx txsz st is =
-    case runExcept (applyTx cfg wti isSlotNo tx st) of
+    case runExcept res of
       Left err         -> ( Left err, is )
       Right (st', vtx) ->
         ( Right vtx
         , is { isTxs          = isTxs :> TxTicket vtx nextTicketNo txsz
-             , isTxIds        = Set.insert (txId tx) isTxIds
+             , isTxIds        = Map.insert (txId tx) vtx isTxIds
              , isLedgerState  = prependDiffs isLedgerState st'
              , isLastTicketNo = nextTicketNo
              }
         )
   where
+    res = case Map.lookup (txId tx) isTxIds of
+      Nothing  -> applyTx cfg wti isSlotNo tx st
+      Just vtx -> do
+        _ <- reapplyTx cfg isSlotNo vtx st
+        -- that must have failed, since every tx must consume at least one
+        -- input and this one is necessarily a double-spend
+        pure $ error "unreachable"
+
     IS {
         isTxs
       , isTxIds
@@ -333,7 +341,7 @@ revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
   in RevalidateTxsResult
       (IS {
          isTxs          = TxSeq.fromList $ map unwrap val
-       , isTxIds        = Set.fromList $ map (txId . txForgetValidated . fst) val
+       , isTxIds        = Map.fromList $ map (\(vtx, _) -> (txId $ txForgetValidated vtx, vtx)) val
        , isLedgerState  = trackingToDiffs st'
        , isTip          = castPoint $ getTip st
        , isSlotNo       = slot
@@ -394,7 +402,7 @@ snapshotFromIS is = MempoolSnapshot {
   implSnapshotHasTx :: InternalState blk
                     -> GenTxId blk
                     -> Bool
-  implSnapshotHasTx IS{isTxIds} = flip Set.member isTxIds
+  implSnapshotHasTx IS{isTxIds} = flip Map.member isTxIds
 
   implSnapshotGetMempoolSize :: InternalState blk
                              -> MempoolSize
