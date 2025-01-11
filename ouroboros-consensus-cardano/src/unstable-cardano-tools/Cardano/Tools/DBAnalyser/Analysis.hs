@@ -30,7 +30,7 @@ import qualified Cardano.Slotting.Slot as Slotting
 import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.FileWriting as F
 import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint as DP
 import           Cardano.Tools.DBAnalyser.CSV (computeAndWriteLine,
-                     writeHeaderLine)
+                     writeHeaderLine, writeLine)
 import           Cardano.Tools.DBAnalyser.HasAnalysis (HasAnalysis)
 import qualified Cardano.Tools.DBAnalyser.HasAnalysis as HasAnalysis
 import           Cardano.Tools.DBAnalyser.Types
@@ -45,6 +45,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Singletons
 import           Data.Word (Word16, Word32, Word64)
 import qualified Debug.Trace as Debug
+import           GHC.Profiling
 import qualified GHC.Stats as GC
 import           NoThunks.Class (noThunks)
 import           Ouroboros.Consensus.Block
@@ -75,6 +76,7 @@ import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
 import           Ouroboros.Network.SizeInBytes
 import qualified System.IO as IO
+import qualified Text.Builder as Builder
 
 {-------------------------------------------------------------------------------
   Run the requested analysis
@@ -825,7 +827,10 @@ reproMempoolForge numBlks env = do
       )
       nullTracer
 
-    void $ processAll db registry GetBlock startFrom limit Nothing (process howManyBlocks mempool)
+    hdl <- IO.openFile "readd-txs.csv" IO.WriteMode
+    writeLine hdl "\t" ["txid", "dur", "mut", "gc"]
+    void $ processAll db registry GetBlock startFrom limit Nothing (process howManyBlocks hdl mempool)
+    IO.hFlush hdl
     pure Nothing
   where
     AnalysisEnv {
@@ -834,7 +839,6 @@ reproMempoolForge numBlks env = do
     , db
     , registry
     , limit
-    , tracer
     } = env
 
     lCfg :: LedgerConfig blk
@@ -855,14 +859,16 @@ reproMempoolForge numBlks env = do
 
     process
       :: ReproMempoolForgeHowManyBlks
+      -> IO.Handle
       -> Mempool.Mempool IO blk
       -> Maybe blk
       -> blk
       -> IO (Maybe blk)
-    process howManyBlocks mempool mbBlk blk' = (\() -> Just blk') <$> do
+    process howManyBlocks hdl mempool mbBlk blk' = (\() -> Just blk') <$> do
+      let txs = LedgerSupportsMempool.extractTxs blk'
       -- add this block's transactions to the mempool
       do
-        results <- Mempool.addTxs mempool $ LedgerSupportsMempool.extractTxs blk'
+        results <- Mempool.addTxs mempool txs
         let rejs =
               [ (LedgerSupportsMempool.txId tx, rej)
               | rej@(Mempool.MempoolTxRejected tx _) <- results
@@ -877,42 +883,33 @@ reproMempoolForge numBlks env = do
                    , "Consider trying again with `--repro-mempool-and-forge 1`."
                    ]
 
+      Foldable.for_ txs $ \tx -> do
+        let isInteresting = show (LedgerSupportsMempool.txId tx) `elem` intTxs
+              where
+                intTxs =
+                  [ "HardForkGenTxId {getHardForkGenTxId = S (S (S (S (S (S (Z (WrapGenTxId {unwrapGenTxId = txid: TxId {unTxId = SafeHash \"0dc72224c84ed853231c6a7790e9d4ac4e31dc13824779dedb59330e8b177804\"}})))))))}"
+                  , "HardForkGenTxId {getHardForkGenTxId = S (S (S (S (S (S (Z (WrapGenTxId {unwrapGenTxId = txid: TxId {unTxId = SafeHash \"681db1ffb477e9a52adafd8ce643eb01a6bceb5abc7ae4a503d76936c54feea0\"}})))))))}"
+                  ]
+        when isInteresting startProfTimer
+        (res, dur, mut, gc) <- timed $ Mempool.addTx mempool Mempool.AddTxForRemotePeer tx
+        when isInteresting stopProfTimer
+        case res of
+          Mempool.MempoolTxRejected {} -> pure ()
+          Mempool.MempoolTxAdded {}    -> fail "unexpected success"
+
+        writeLine hdl "\t"
+          [ Builder.string $ show $ LedgerSupportsMempool.txId tx
+          , Builder.decimal $ round @_ @Int $ dur * 1000000
+          , Builder.decimal $ mut
+          , Builder.decimal gc
+          ]
+
       let scrutinee = case howManyBlocks of
             ReproMempoolForgeOneBlk  -> Just blk'
             ReproMempoolForgeTwoBlks -> mbBlk
       case scrutinee of
         Nothing  -> pure ()
         Just blk -> do
-          LedgerDB.withPrivateTipForker ledgerDB $ \forker -> do
-            st <- IOLike.atomically $ LedgerDB.forkerGetLedgerState forker
-
-            -- time the suspected slow parts of the forge thread that created
-            -- this block
-            --
-            -- Primary caveat: that thread's mempool may have had more transactions in it.
-            let slot = blockSlot blk
-            (ticked, durTick, mutTick, gcTick) <- timed $ IOLike.evaluate $
-                applyChainTick lCfg slot (ledgerState st)
-            ((), durSnap, mutSnap, gcSnap) <- timed $ do
-                snap <- Mempool.getSnapshotFor mempool slot ticked $
-                  fmap castLedgerTables . LedgerDB.forkerReadTables forker . castLedgerTables
-
-                pure $ length (Mempool.snapshotTxs snap) `seq` Mempool.snapshotStateHash snap `seq` ()
-
-            let sizes = HasAnalysis.blockTxSizes blk
-            traceWith tracer $
-              BlockMempoolAndForgeRepro
-                (blockNo blk)
-                slot
-                (length sizes)
-                (sum sizes)
-                durTick
-                mutTick
-                gcTick
-                durSnap
-                mutSnap
-                gcSnap
-
           -- advance the ledger state to include this block
           --
           -- TODO We could inline/reuse parts of the IsLedger ExtLedgerState

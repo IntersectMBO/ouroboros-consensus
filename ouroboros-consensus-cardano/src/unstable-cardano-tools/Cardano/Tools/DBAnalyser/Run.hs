@@ -35,6 +35,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1 as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2 as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as LedgerDB.V2
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
@@ -68,8 +69,17 @@ openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs=LedgerDB.Led
       emptyStream
       genesisPoint
   pure (ledgerDB, intLedgerDB)
-openLedgerDB LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs=LedgerDB.LedgerDbFlavorArgsV2{}} =
-  error "not defined for v2, use v1 instead for now!"
+openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs=LedgerDB.LedgerDbFlavorArgsV2 args} = do
+  (ledgerDB, _, intLedgerDB) <-
+    LedgerDB.openDBInternal
+      lgrDbArgs
+      (LedgerDB.V2.mkInitDb
+        lgrDbArgs
+        args
+        (\_ -> error "no replay"))
+      emptyStream
+      genesisPoint
+  pure (ledgerDB, intLedgerDB)
 
 emptyStream :: Applicative m => ImmutableDB.StreamAPI m blk a
 emptyStream = ImmutableDB.StreamAPI $ \_ k -> k $ Right $ pure ImmutableDB.NoMoreItems
