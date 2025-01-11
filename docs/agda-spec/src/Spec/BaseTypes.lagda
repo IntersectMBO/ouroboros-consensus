@@ -22,4 +22,7 @@ open import Data.Nat using (ℕ)
 OCertCounters : Type
 OCertCounters = KeyHashˢ ⇀ ℕ
 
+Slot   = ℕ
+Epoch  = ℕ
+
 \end{code}

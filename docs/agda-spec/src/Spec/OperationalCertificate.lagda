@@ -10,7 +10,6 @@ and consists of the mapping of operation certificate issue numbers. Its signal i
 \begin{code}[hide]
 {-# OPTIONS --safe #-}
 open import Ledger.Crypto
-open import Ledger.Script
 open import Ledger.Types.Epoch
 open import Spec.BaseTypes using (Nonces)
 open import Spec.BlockDefinitions
@@ -19,8 +18,7 @@ module Spec.OperationalCertificate
   (crypto : _) (open Crypto crypto)
   (nonces : Nonces crypto) (open Nonces nonces)
   (es     : _) (open EpochStructure es)
-  (ss     : ScriptStructure crypto es) (open ScriptStructure ss)  
-  (bs     : BlockStructure crypto nonces es ss) (open BlockStructure bs)
+  (bs     : BlockStructure crypto nonces es) (open BlockStructure bs)
   (af     : _) (open AbstractFunctions af)
   where
 

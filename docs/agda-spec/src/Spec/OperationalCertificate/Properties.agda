@@ -1,7 +1,6 @@
 {-# OPTIONS --safe #-}
 
 open import Ledger.Crypto
-open import Ledger.Script
 open import Ledger.Types.Epoch
 open import Spec.BaseTypes using (Nonces)
 open import Spec.BlockDefinitions
@@ -10,14 +9,13 @@ module Spec.OperationalCertificate.Properties
   (crypto : _) (open Crypto crypto)
   (nonces : Nonces crypto) (open Nonces nonces)
   (es     : _) (open EpochStructure es)
-  (ss     : ScriptStructure crypto es) (open ScriptStructure ss)
-  (bs     : BlockStructure crypto nonces es ss) (open BlockStructure bs)
+  (bs     : BlockStructure crypto nonces es) (open BlockStructure bs)
   (af     : _) (open AbstractFunctions af)
   where
 
 open import Ledger.Prelude
 open import Data.Maybe.Relation.Unary.Any as M
-open import Spec.OperationalCertificate crypto nonces es ss bs af
+open import Spec.OperationalCertificate crypto nonces es bs af
 
 instance
 
