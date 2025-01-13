@@ -43,12 +43,12 @@ import           Ouroboros.Consensus.Block.Forging (BlockForging)
 import           Ouroboros.Consensus.Cardano.CanHardFork
                      (ShelleyPartialLedgerConfig (..),
                      crossEraForecastAcrossShelley,
-                     translateChainDepStateAcrossShelley)
+                     tickChainDepStateAcrossShelley,
+                     tickLedgerStateAcrossShelley)
 import           Ouroboros.Consensus.Cardano.Node (TriggerHardFork (..))
 import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.Embed.Binary
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation
-import qualified Ouroboros.Consensus.HardFork.Combinator.State.Types as HFC
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
 import           Ouroboros.Consensus.Ledger.SupportsMempool
@@ -194,25 +194,10 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
       TxMeasure (ShelleyBlock proto2 era2)
 
   hardForkEraTranslation = EraTranslation {
-        translateLedgerState   = PCons translateLedgerState                PNil
-      , translateChainDepState = PCons translateChainDepStateAcrossShelley PNil
-      , crossEraForecast       = PCons crossEraForecastAcrossShelley       PNil
+        crossEraTickLedgerState   = PCons tickLedgerStateAcrossShelley   PNil
+      , crossEraTickChainDepState = PCons tickChainDepStateAcrossShelley PNil
+      , crossEraForecast          = PCons crossEraForecastAcrossShelley  PNil
       }
-    where
-      translateLedgerState ::
-           InPairs.RequiringBoth
-             WrapLedgerConfig
-             (HFC.Translate LedgerState)
-             (ShelleyBlock proto1 era1)
-             (ShelleyBlock proto2 era2)
-      translateLedgerState =
-          InPairs.RequireBoth
-        $ \_cfg1 cfg2 -> HFC.Translate
-        $ \_epochNo ->
-              unComp
-            . SL.translateEra'
-                (shelleyLedgerTranslationContext (unwrapLedgerConfig cfg2))
-            . Comp
 
   hardForkChainSel = Tails.mk2 CompareSameSelectView
 

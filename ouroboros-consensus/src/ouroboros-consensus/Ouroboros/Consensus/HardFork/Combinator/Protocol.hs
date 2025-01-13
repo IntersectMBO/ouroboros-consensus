@@ -50,10 +50,11 @@ import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import           Ouroboros.Consensus.HardFork.Combinator.Protocol.ChainSel
 import           Ouroboros.Consensus.HardFork.Combinator.Protocol.LedgerView
                      (HardForkLedgerView, HardForkLedgerView_ (..))
-import           Ouroboros.Consensus.HardFork.Combinator.State (HardForkState,
-                     Translate (..))
+import           Ouroboros.Consensus.HardFork.Combinator.State (CrossEra (..),
+                     CrossEraTickChainDepState (..), Current (..),
+                     HardForkState)
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
-import           Ouroboros.Consensus.HardFork.Combinator.Translation as HFTranslation
+import qualified Ouroboros.Consensus.HardFork.Combinator.Translation as HFTranslation
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util ((.:))
@@ -181,7 +182,7 @@ tick cfg@HardForkConsensusConfig{..}
       tickedHardForkChainDepStateEpochInfo = ei
     , tickedHardForkChainDepStatePerEra =
          State.align
-           (translateConsensus ei cfg)
+           (crossEraTickChainDepState ei cfg slot)
            (hcmap proxySingle (fn_2 . tickOne) cfgs)
            ledgerView
            chainDepState
@@ -367,13 +368,25 @@ chainDepStateInfo :: forall blk. SingleEraBlock blk
                   => (Ticked :.: WrapChainDepState) blk -> SingleEraInfo blk
 chainDepStateInfo _ = singleEraInfo (Proxy @blk)
 
-translateConsensus :: forall xs. CanHardFork xs
-                   => EpochInfo (Except PastHorizonException)
-                   -> ConsensusConfig (HardForkProtocol xs)
-                   -> InPairs (Translate WrapChainDepState) xs
-translateConsensus ei HardForkConsensusConfig{..} =
-    InPairs.requiringBoth cfgs $
-       HFTranslation.translateChainDepState hardForkEraTranslation
+type CrossEraTickChainDepState' =
+  CrossEra
+    WrapChainDepState
+    WrapLedgerView
+    (Ticked :.: WrapChainDepState)
+
+crossEraTickChainDepState ::
+     forall xs. CanHardFork xs
+  => EpochInfo (Except PastHorizonException)
+  -> ConsensusConfig (HardForkProtocol xs)
+  -> SlotNo
+  -> InPairs CrossEraTickChainDepState' xs
+crossEraTickChainDepState ei HardForkConsensusConfig{..} slot =
+      InPairs.hmap (\(CrossEraTickChainDepState f) ->
+        CrossEra $ \(Current start view) cds ->
+          Comp $ WrapTickedChainDepState $
+            f start (unwrapLedgerView view) slot (unwrapChainDepState cds))
+    $ InPairs.requiringBoth cfgs
+    $ HFTranslation.crossEraTickChainDepState hardForkEraTranslation
   where
     pcfgs = getPerEraConsensusConfig hardForkConsensusConfigPerEra
     cfgs  = hcmap proxySingle (completeConsensusConfig'' ei) pcfgs
