@@ -80,6 +80,10 @@ class ( IsLedger l
       , HasHeader (Header blk)
       , HasLedgerTables l
       , HasLedgerTables (Ticked l)
+      , LedgerTablesOp l
+      , LedgerTablesOp (Ticked l)
+      , SameUTxOTypes l (Ticked l)
+      , SameUTxOTypes (Ticked l) l
       ) => ApplyBlock l blk where
 
   -- | Apply a block to the ledger state.

@@ -249,11 +249,11 @@ instance (Ord k, Eq v) => RootMeasured (RootMeasure k v) (Element k v) where
   measureRoot (Element _ d) =
       RootMeasure 1 d (Sum $ Anti.numInserts d) (Sum $ Anti.numDeletes d)
 
-instance (Ord k, Eq v) => Semigroup (RootMeasure k v) where
+instance Ord k => Semigroup (RootMeasure k v) where
   RootMeasure len1 d1 n1 m1 <> RootMeasure len2 d2 n2 m2 =
       RootMeasure (len1 <> len2) (d1 <> d2) (n1 <> n2) (m1 <> m2)
 
-instance (Ord k, Eq v) => Monoid (RootMeasure k v) where
+instance Ord k => Monoid (RootMeasure k v) where
   mempty = RootMeasure mempty mempty mempty mempty
 
 instance (Ord k, Eq v) => LeftReductive (RootMeasure k v) where
@@ -338,7 +338,7 @@ extend (UnsafeDiffSeq ft) sl d =
       SJust slR -> noSlotBoundsIntersect slR (SlotNoLB sl)
 
 append ::
-     (Ord k, Eq v)
+     Ord k
   => DiffSeq k v
   -> DiffSeq k v
   -> DiffSeq k v
@@ -352,7 +352,7 @@ append (UnsafeDiffSeq ft1) (UnsafeDiffSeq ft2) =
       SJust v  -> v
 
 empty ::
-     (Ord k, Eq v)
+     Ord k
   => DiffSeq k v
 empty = UnsafeDiffSeq mempty
 

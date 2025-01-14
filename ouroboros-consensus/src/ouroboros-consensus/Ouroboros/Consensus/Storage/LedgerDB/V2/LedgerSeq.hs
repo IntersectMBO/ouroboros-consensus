@@ -77,7 +77,7 @@ data LedgerTablesHandle m l = LedgerTablesHandle {
     -- | It is expected that this operation takes constant time.
   , duplicate          :: !(m (LedgerTablesHandle m l))
   , read               :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
-  , readRange          :: !((Maybe (TxIn l), Int) -> m (LedgerTables l ValuesMK))
+  , readRange          :: !((LedgerTables l (Maybe :..: KeysMK), Int) -> m (LedgerTables l ValuesMK))
     -- | Costly read all operation, not to be used in Consensus but only in
     -- snapshot-converter executable.
   , readAll            :: !(m (LedgerTables l ValuesMK))
@@ -163,6 +163,7 @@ empty' ::
      ( GetTip l
      , IOLike m
      , HasLedgerTables l
+     , LedgerTablesOp l
      )
   => l ValuesMK
   -> (LedgerTables l ValuesMK -> m (LedgerTablesHandle m l))

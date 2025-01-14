@@ -55,6 +55,8 @@ restoreBackingStore ::
      ( IOLike m
      , HasLedgerTables l
      , HasCallStack
+     , LedgerTablesOp l
+     , NoThunks (LedgerTables l ValuesMK)
      )
   => Tracer m FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m
@@ -69,6 +71,8 @@ newBackingStore ::
      ( IOLike m
      , HasLedgerTables l
      , HasCallStack
+     , LedgerTablesOp l
+     , NoThunks (LedgerTables l ValuesMK)
      )
   => Tracer m FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m
@@ -83,6 +87,8 @@ newBackingStoreInitialiser ::
      ( IOLike m
      , HasLedgerTables l
      , HasCallStack
+     , LedgerTablesOp l
+     , NoThunks (LedgerTables l ValuesMK)
      )
   => Tracer m FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m

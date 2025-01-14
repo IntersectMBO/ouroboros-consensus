@@ -19,16 +19,15 @@ module Ouroboros.Consensus.Ledger.Tables.Basics (
   , MapKind
     -- * Ledger tables
   , LedgerTables (..)
-  , SameUtxoTypes
   , TxIn
   , TxOut
-  , castLedgerTables
+  -- , castLedgerTables
   ) where
 
-import           Data.Coerce (coerce)
+-- import           Data.Coerce (coerce)
 import           Data.Kind (Type)
-import           GHC.Generics (Generic)
-import           NoThunks.Class (NoThunks)
+-- import           GHC.Generics (Generic)
+-- import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Ticked (Ticked)
 
 {-------------------------------------------------------------------------------
@@ -64,17 +63,17 @@ type LedgerStateKind = MapKind -> Type
 -- The @mk@ can be instantiated to anything that is map-like, i.e. that expects
 -- two type parameters, the key and the value.
 type LedgerTables :: LedgerStateKind -> MapKind -> Type
-newtype LedgerTables l mk = LedgerTables {
-    getLedgerTables :: mk (TxIn l) (TxOut l)
-  }
-  deriving stock Generic
+data family LedgerTables l mk -- = LedgerTables {
+--     getLedgerTables :: mk (TxIn l) (TxOut l)
+--   }
+--   deriving stock Generic
 
-deriving stock instance Show (mk (TxIn l) (TxOut l))
-                     => Show (LedgerTables l mk)
-deriving stock instance Eq (mk (TxIn l) (TxOut l))
-                     => Eq (LedgerTables l mk)
-deriving newtype instance NoThunks (mk (TxIn l) (TxOut l))
-                       => NoThunks (LedgerTables l mk)
+-- deriving stock instance Show (mk (TxIn l) (TxOut l))
+--                      => Show (LedgerTables l mk)
+-- deriving stock instance Eq (mk (TxIn l) (TxOut l))
+--                      => Eq (LedgerTables l mk)
+-- deriving newtype instance NoThunks (mk (TxIn l) (TxOut l))
+--                        => NoThunks (LedgerTables l mk)
 
 -- | Each @LedgerState@ instance will have the notion of a @TxIn@ for the tables.
 --
@@ -94,10 +93,12 @@ type instance TxOut (LedgerTables l) = TxOut l
 type instance TxIn  (Ticked l)      = TxIn l
 type instance TxOut (Ticked l)      = TxOut l
 
-type SameUtxoTypes l l' = (TxIn l ~ TxIn l', TxOut l ~ TxOut l')
+newtype instance LedgerTables (Ticked l) mk = TickedLedgerTables {
+  getTickedLedgerTables :: LedgerTables l mk
+  }
 
-castLedgerTables ::
-     SameUtxoTypes l l'
-  => LedgerTables l mk
-  -> LedgerTables l' mk
-castLedgerTables = coerce
+-- castLedgerTables ::
+--      SameUtxoTypes l l'
+--   => LedgerTables l mk
+--   -> LedgerTables l' mk
+-- castLedgerTables = coerce

@@ -264,6 +264,26 @@ decodeDiskExtLedgerState cfg =
   Ledger Tables
 -------------------------------------------------------------------------------}
 
+newtype instance LedgerTables (ExtLedgerState blk) mk = ExtLedgerTables {
+   getExtLedgerTables :: LedgerTables (LedgerState blk) mk
+   } deriving (Generic)
+
+deriving instance NoThunks (LedgerTables (LedgerState blk) mk)
+               => NoThunks (LedgerTables (ExtLedgerState blk) mk)
+
+instance LedgerTablesOp (LedgerState blk) => LedgerTablesOp (ExtLedgerState blk) where
+  ltmap f = ExtLedgerTables . ltmap f . getExtLedgerTables
+  lttraverse f = fmap ExtLedgerTables . lttraverse f . getExtLedgerTables
+  ltprod (ExtLedgerTables a) (ExtLedgerTables b) = ExtLedgerTables (ltprod a b)
+  ltpure f = ExtLedgerTables $ ltpure f
+  ltcollapse = ltcollapse . getExtLedgerTables
+
+instance SameUTxOTypes (LedgerState blk) (ExtLedgerState blk) where
+  castLedgerTables = ExtLedgerTables
+
+instance SameUTxOTypes (ExtLedgerState blk) (LedgerState blk) where
+  castLedgerTables = getExtLedgerTables
+
 type instance TxIn  (ExtLedgerState blk) = TxIn  (LedgerState blk)
 type instance TxOut (ExtLedgerState blk) = TxOut (LedgerState blk)
 
@@ -310,12 +330,12 @@ instance (
 #endif
   ) => HasLedgerTables (Ticked (ExtLedgerState blk)) where
   projectLedgerTables (TickedExtLedgerState lstate _view _hstate) =
-      castLedgerTables (projectLedgerTables lstate)
+      TickedLedgerTables (ExtLedgerTables $ getTickedLedgerTables $ projectLedgerTables lstate)
   withLedgerTables
     (TickedExtLedgerState lstate view hstate)
     tables =
       TickedExtLedgerState
-        (lstate `withLedgerTables` castLedgerTables tables)
+        (lstate `withLedgerTables` (TickedLedgerTables $ getExtLedgerTables $ getTickedLedgerTables (castLedgerTables tables)))
         view
         hstate
 

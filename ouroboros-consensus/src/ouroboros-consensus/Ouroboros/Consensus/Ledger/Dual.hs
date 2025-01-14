@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ConstraintKinds #-}
 #if __GLASGOW_HASKELL__ < 900
@@ -945,6 +946,26 @@ decodeDualLedgerState decodeMain = do
   Ledger Tables
 -------------------------------------------------------------------------------}
 
+newtype instance LedgerTables (LedgerState (DualBlock m a)) mk = DualLedgerTables {
+  getDualLedgerTables :: LedgerTables (LedgerState m) mk
+  } deriving (Generic)
+
+deriving instance NoThunks (LedgerTables (LedgerState blk) mk)
+               => NoThunks (LedgerTables (LedgerState (DualBlock blk a)) mk)
+
+instance LedgerTablesOp (LedgerState m) => LedgerTablesOp (LedgerState (DualBlock m a)) where
+  ltmap f = DualLedgerTables . ltmap f . getDualLedgerTables
+  lttraverse f = fmap DualLedgerTables . lttraverse f . getDualLedgerTables
+  ltprod (DualLedgerTables a) (DualLedgerTables b) = DualLedgerTables (ltprod a b)
+  ltpure f = DualLedgerTables $ ltpure f
+  ltcollapse = ltcollapse . getDualLedgerTables
+
+instance SameUTxOTypes (LedgerState blk) (LedgerState (DualBlock blk a)) where
+  castLedgerTables = DualLedgerTables
+
+instance SameUTxOTypes (LedgerState (DualBlock blk a)) (LedgerState blk) where
+  castLedgerTables = getDualLedgerTables
+
 type instance TxIn  (LedgerState (DualBlock m a)) = TxIn  (LedgerState m)
 type instance TxOut (LedgerState (DualBlock m a)) = TxOut (LedgerState m)
 
@@ -987,15 +1008,14 @@ instance (
 #endif
   )=> HasLedgerTables (Ticked (LedgerState (DualBlock m a))) where
   projectLedgerTables TickedDualLedgerState{..} =
-      castLedgerTables
-        (projectLedgerTables tickedDualLedgerStateMain)
+      TickedLedgerTables $ DualLedgerTables $ getTickedLedgerTables $ projectLedgerTables tickedDualLedgerStateMain
 
   withLedgerTables
     TickedDualLedgerState{..}
     main =
       TickedDualLedgerState {
           tickedDualLedgerStateMain   =
-            withLedgerTables tickedDualLedgerStateMain $ castLedgerTables main
+            withLedgerTables tickedDualLedgerStateMain $ TickedLedgerTables $ getDualLedgerTables $ getTickedLedgerTables main
         , tickedDualLedgerStateAux
         , tickedDualLedgerStateBridge
         , tickedDualLedgerStateAuxOrig

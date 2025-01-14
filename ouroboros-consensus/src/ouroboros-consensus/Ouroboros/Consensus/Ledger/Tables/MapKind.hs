@@ -18,7 +18,7 @@ module Ouroboros.Consensus.Ledger.Tables.MapKind (
   , NoThunksMK
   , ShowMK
   , ZeroableMK (..)
-  , bimapLedgerTables
+  -- , bimapLedgerTables
     -- * Concrete MapKinds
   , CodecMK (..)
   , DiffMK (..)
@@ -48,7 +48,7 @@ import           Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq
 
 type ZeroableMK :: MapKind -> Constraint
 class ZeroableMK mk where
-  emptyMK :: forall k v. (Ord k, Eq v) => mk k v
+  emptyMK :: forall k v. Ord k => mk k v
 
 type CanMapMK :: MapKind -> Constraint
 class CanMapMK mk where
@@ -76,26 +76,28 @@ type NoThunksMK :: MapKind -> Constraint
 class (forall k v. (NoThunks k, NoThunks v) => NoThunks (mk k v))
    => NoThunksMK mk
 
--- | Map both keys and values in ledger tables.
---
--- For keys, it has the same caveats as 'Data.Map.Strict.mapKeys' or
--- `Data.Set.map', namely that only injective functions are suitable to be used
--- here.
-bimapLedgerTables ::
-     forall x y mk. (
-          CanMapKeysMK mk
-        , CanMapMK mk
-        , Ord (TxIn y)
-        )
-  => (TxIn x -> TxIn y)
-  -> (TxOut x -> TxOut y)
-  -> LedgerTables x mk
-  -> LedgerTables y mk
-bimapLedgerTables f g =
-    LedgerTables
-  . mapKeysMK f
-  . mapMK g
-  . getLedgerTables
+-- -- | Map both keys and values in ledger tables.
+-- --
+-- -- For keys, it has the same caveats as 'Data.Map.Strict.mapKeys' or
+-- -- `Data.Set.map', namely that only injective functions are suitable to be used
+-- -- here.
+-- bimapLedgerTables ::
+--      forall x y mk. (
+--           CanMapKeysMK mk
+--         , CanMapMK mk
+--         , Ord (TxIn y)
+--         )
+--   => (TxIn x -> TxIn y)
+--   -> (TxOut x -> TxOut y)
+--   -> LedgerTables x mk
+--   -> LedgerTables y mk
+-- bimapLedgerTables f g =
+--     -- LedgerTables
+--   -- .
+--   ltmap
+--     (mapKeysMK f
+--   . mapMK g
+--   . getLedgerTables)
 
 {-------------------------------------------------------------------------------
   EmptyMK
@@ -119,7 +121,7 @@ instance CanMapKeysMK EmptyMK where
   KeysMK
 -------------------------------------------------------------------------------}
 
-newtype KeysMK k v = KeysMK (Set k)
+newtype KeysMK k v = KeysMK { getKeysMK :: Set k }
   deriving stock (Generic, Eq, Show)
   deriving newtype (Semigroup, Monoid)
   deriving anyclass NoThunks

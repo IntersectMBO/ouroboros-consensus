@@ -68,6 +68,7 @@ mkInitDb :: forall m blk.
             , IOLike m
             , LedgerDbSerialiseConstraints blk
             , HasHardForkHistory blk
+            , NoThunks (LedgerTables (LedgerState blk) ValuesMK)
             )
          => Complete LedgerDbArgs m blk
          -> Complete V2.LedgerDbFlavorArgs m
@@ -545,6 +546,7 @@ newForkerAtTarget ::
      , HasLedgerTables l
      , LedgerSupportsProtocol blk
      , StandardHash l
+     , LedgerTablesOp l
      )
   => LedgerDBHandle m l blk
   -> ResourceRegistry m
@@ -560,6 +562,7 @@ newForkerByRollback ::
      , StandardHash l
      , HasLedgerTables l
      , LedgerSupportsProtocol blk
+     , LedgerTablesOp l
      )
   => LedgerDBHandle m l blk
   -> ResourceRegistry m
@@ -643,6 +646,7 @@ newForker ::
      , NoThunks (l EmptyMK)
      , GetTip l
      , StandardHash l
+     , LedgerTablesOp l
      )
   => LedgerDBHandle m l blk
   -> LedgerDBEnv m l blk

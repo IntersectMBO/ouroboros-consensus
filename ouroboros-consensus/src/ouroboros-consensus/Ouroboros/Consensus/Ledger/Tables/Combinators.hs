@@ -1,3 +1,5 @@
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DerivingStrategies #-}
@@ -34,14 +36,10 @@ module Ouroboros.Consensus.Ledger.Tables.Combinators (
     -- * Common constraints
     LedgerTableConstraints
     -- * Functor
-  , ltmap
     -- * Traversable
-  , lttraverse
     -- ** Utility functions
   , ltsequence
     -- * Applicative
-  , ltprod
-  , ltpure
     -- ** Utility functions
   , ltap
   , ltliftA
@@ -51,7 +49,6 @@ module Ouroboros.Consensus.Ledger.Tables.Combinators (
     -- * Applicative and Traversable
   , ltzipWith2A
     -- * Collapsing
-  , ltcollapse
     -- * Lifted functions
   , fn2_1
   , fn2_2
@@ -65,6 +62,10 @@ module Ouroboros.Consensus.Ledger.Tables.Combinators (
     -- * Basic bifunctors
   , K2 (..)
   , type (:..:) (..)
+    -- * New
+  , LedgerTablesOp (..)
+  , BiMapLedgerTables (..)
+  , SameUTxOTypes (..)
   ) where
 
 import           Data.Bifunctor
@@ -73,6 +74,7 @@ import           Data.MemPack (MemPack)
 import           Data.SOP.Functors
 import           Ouroboros.Consensus.Ledger.Tables.Basics
 import           Ouroboros.Consensus.Util ((...:), (..:), (.:))
+import Ouroboros.Consensus.Ticked
 
 {-------------------------------------------------------------------------------
   Common constraints
@@ -83,38 +85,100 @@ import           Ouroboros.Consensus.Util ((...:), (..:), (.:))
 -- deltas instead of us being the ones that compute them, we can probably drop
 -- this constraint.
 type LedgerTableConstraints l = (Ord (TxIn l), Eq (TxOut l), MemPack (TxOut l), MemPack (TxIn l))
-type LedgerTableConstraints' k v = (Ord k, Eq v, MemPack v, MemPack k)
+-- type LedgerTableConstraints' k v = (Ord k, Eq v, MemPack v, MemPack k)
 
 {-------------------------------------------------------------------------------
   Functor
 -------------------------------------------------------------------------------}
 
--- | Like 'bmap', but for ledger tables.
-ltmap ::
-     LedgerTableConstraints l
-  => (forall k v. (LedgerTableConstraints' k v) => mk1 k v -> mk2 k v)
-  -> LedgerTables l mk1
-  -> LedgerTables l mk2
-ltmap f (LedgerTables x) = LedgerTables $ f x
+class LedgerTablesOp l where
+  ltmap ::
+       (forall k v. (Ord k, Eq v, MemPack k, MemPack v) => mk1 k v -> mk2 k v)
+    -> LedgerTables l mk1
+    -> LedgerTables l mk2
+
+  lttraverse ::
+       Applicative f
+    => (forall k v. (Ord k, MemPack k, MemPack v) => mk1 k v -> f (mk2 k v))
+    -> LedgerTables l mk1
+    -> f (LedgerTables l mk2)
+
+  ltprod ::
+       LedgerTables l f
+    -> LedgerTables l g
+    -> LedgerTables l (f `Product2` g)
+
+  ltpure ::
+       ((Ord k, Eq v, MemPack k, MemPack v) => mk k v)
+    -> LedgerTables l mk
+
+  ltcollapse ::
+       LedgerTables l (K2 a)
+    -> a
+
+class BiMapLedgerTables l l' where
+   bimapLedgerTables ::
+       (TxIn l -> TxIn l')
+    -> (TxOut l -> TxOut l')
+    -> LedgerTables l mk
+    -> LedgerTables l' mk
+
+
+class (TxIn l ~ TxIn l', TxOut l ~ TxOut l') => SameUTxOTypes l l' where
+  castLedgerTables :: LedgerTables l mk -> LedgerTables l' mk
+
+instance SameUTxOTypes l l where
+  castLedgerTables = id
+
+instance SameUTxOTypes l (Ticked l) where
+  castLedgerTables = TickedLedgerTables
+
+instance SameUTxOTypes (Ticked l) l where
+  castLedgerTables = getTickedLedgerTables
+
+instance LedgerTablesOp l => LedgerTablesOp (Ticked l) where
+  ltmap f = TickedLedgerTables . ltmap f . getTickedLedgerTables
+  lttraverse f = fmap TickedLedgerTables . lttraverse f . getTickedLedgerTables
+  ltprod (TickedLedgerTables a) (TickedLedgerTables b) = TickedLedgerTables (ltprod a b)
+  ltpure f = TickedLedgerTables $ ltpure f
+  ltcollapse = ltcollapse . getTickedLedgerTables
+
+-- instance SameUTxOTypes l (Ticked l) where
+--   castLedgerTables = coerce
+
+  --   -- LedgerTables
+  -- -- .
+  -- ltmap
+  --   (mapKeysMK f
+  -- . mapMK g
+  -- . getLedgerTables)
+-- ltcollapse = unK2 . getLedgerTables
+-- -- | Like 'bmap', but for ledger tables.
+-- ltmap ::
+--      LedgerTableConstraints l
+--   => (forall k v. (LedgerTableConstraints' k v) => mk1 k v -> mk2 k v)
+--   -> LedgerTables l mk1
+--   -> LedgerTables l mk2
+-- ltmap f (LedgerTables x) = LedgerTables $ f x
 
 {-------------------------------------------------------------------------------
   Traversable
 -------------------------------------------------------------------------------}
 
--- | Like 'btraverse', but for ledger tables.
-lttraverse ::
-     (Applicative f, LedgerTableConstraints l)
-  => (forall k v. (LedgerTableConstraints' k v) => mk1 k v -> f (mk2 k v))
-  -> LedgerTables l mk1
-  -> f (LedgerTables l mk2)
-lttraverse f (LedgerTables x) = LedgerTables <$> f x
+-- -- | Like 'btraverse', but for ledger tables.
+-- lttraverse ::
+--      (Applicative f, LedgerTableConstraints l)
+--   => (forall k v. (LedgerTableConstraints' k v) => mk1 k v -> f (mk2 k v))
+--   -> LedgerTables l mk1
+--   -> f (LedgerTables l mk2)
+-- lttraverse f (LedgerTables x) = LedgerTables <$> f x
 
 --
 -- Utility functions
 --
 
 ltsequence ::
-     (Applicative f, LedgerTableConstraints l)
+     (Applicative f, LedgerTablesOp l)
   => LedgerTables l (f :..: mk)
   -> f (LedgerTables l mk)
 ltsequence = lttraverse unComp2
@@ -123,23 +187,23 @@ ltsequence = lttraverse unComp2
   Applicative
 -------------------------------------------------------------------------------}
 
--- | Like 'bpure', but for ledger tables.
-ltpure ::
-       LedgerTableConstraints l
-    => (forall k v. (LedgerTableConstraints' k v) => mk k v)
-    -> LedgerTables l mk
-ltpure = LedgerTables
+-- -- | Like 'bpure', but for ledger tables.
+-- ltpure ::
+--        LedgerTableConstraints l
+--     => (forall k v. (LedgerTableConstraints' k v) => mk k v)
+--     -> LedgerTables l mk
+-- ltpure = LedgerTables
 
--- | Like 'bprod', but for ledger tables.
-ltprod :: LedgerTables l f -> LedgerTables l g -> LedgerTables l (f `Product2` g)
-ltprod (LedgerTables x) (LedgerTables y) = LedgerTables (Pair2 x y)
+-- -- | Like 'bprod', but for ledger tables.
+-- ltprod :: LedgerTables l f -> LedgerTables l g -> LedgerTables l (f `Product2` g)
+-- ltprod (LedgerTables x) (LedgerTables y) = LedgerTables (Pair2 x y)
 
 --
 -- Utility functions
 --
 
 ltap ::
-     LedgerTableConstraints l
+     LedgerTablesOp l
   => LedgerTables l (mk1 -..-> mk2)
   -> LedgerTables l mk1
   -> LedgerTables l mk2
@@ -147,23 +211,23 @@ ltap f x = ltmap g $ ltprod f x
   where g (Pair2 f' x') = apFn2 f' x'
 
 ltliftA ::
-     LedgerTableConstraints l
-  => (forall k v. (LedgerTableConstraints' k v) => mk1 k v -> mk2 k v)
+     LedgerTablesOp l
+  => (forall k v. (Ord k, Eq v) => mk1 k v -> mk2 k v)
   -> LedgerTables l mk1
   -> LedgerTables l mk2
 ltliftA f x = ltpure (fn2_1 f) `ltap` x
 
 ltliftA2 ::
-     LedgerTableConstraints l
-  => (forall k v. (LedgerTableConstraints' k v) => mk1 k v -> mk2 k v -> mk3 k v)
+     LedgerTablesOp l
+  => (forall k v. (Ord k, Eq v, MemPack k, MemPack v) => mk1 k v -> mk2 k v -> mk3 k v)
   -> LedgerTables l mk1
   -> LedgerTables l mk2
   -> LedgerTables l mk3
 ltliftA2 f x x' = ltpure (fn2_2 f) `ltap` x `ltap` x'
 
 ltliftA3 ::
-     LedgerTableConstraints l
-  => (forall k v. (LedgerTableConstraints' k v) => mk1 k v -> mk2 k v -> mk3 k v -> mk4 k v)
+     LedgerTablesOp l
+  => (forall k v. (Eq v, Ord k) => mk1 k v -> mk2 k v -> mk3 k v -> mk4 k v)
   -> LedgerTables l mk1
   -> LedgerTables l mk2
   -> LedgerTables l mk3
@@ -171,9 +235,8 @@ ltliftA3 ::
 ltliftA3 f x x' x'' = ltpure (fn2_3 f) `ltap` x `ltap` x' `ltap` x''
 
 ltliftA4 ::
-     LedgerTableConstraints l
-  => (    forall k v. (LedgerTableConstraints' k v)
-       => mk1 k v -> mk2 k v -> mk3 k v -> mk4 k v -> mk5 k v
+     LedgerTablesOp l
+  => (forall k v. mk1 k v -> mk2 k v -> mk3 k v -> mk4 k v -> mk5 k v
      )
   -> LedgerTables l mk1
   -> LedgerTables l mk2
@@ -188,8 +251,8 @@ ltliftA4 f x x' x'' x''' =
 -------------------------------------------------------------------------------}
 
 ltzipWith2A ::
-     (Applicative f, LedgerTableConstraints l)
-  => (forall k v. (Ord k, MemPack v, MemPack k) => mk1 k v -> mk2 k v -> f (mk3 k v))
+     (Applicative f, LedgerTablesOp l)
+  => (forall k v. (Ord k, MemPack k, MemPack v) => mk1 k v -> mk2 k v -> f (mk3 k v))
   -> LedgerTables l mk1
   -> LedgerTables l mk2
   -> f (LedgerTables l mk3)
@@ -199,21 +262,20 @@ ltzipWith2A f = ltsequence .: ltliftA2 (Comp2 .: f)
   Collapsing
 -------------------------------------------------------------------------------}
 
-ltcollapse :: LedgerTables l (K2 a) -> a
-ltcollapse = unK2 . getLedgerTables
+
 
 {-------------------------------------------------------------------------------
   Semigroup and Monoid
 -------------------------------------------------------------------------------}
 
-instance ( forall k v. (LedgerTableConstraints' k v) => Semigroup (mk k v)
-         , LedgerTableConstraints l
+instance ( forall k v. Semigroup (mk k v)
+         , LedgerTablesOp l
          ) => Semigroup (LedgerTables l mk) where
   (<>) :: LedgerTables l mk -> LedgerTables l mk -> LedgerTables l mk
   (<>) = ltliftA2 (<>)
 
-instance ( forall k v. (LedgerTableConstraints' k v) => Monoid (mk k v)
-         , LedgerTableConstraints l
+instance ( forall k v. Monoid (mk k v)
+         , LedgerTablesOp l
          ) => Monoid (LedgerTables l mk) where
   mempty :: LedgerTables l mk
   mempty = ltpure mempty

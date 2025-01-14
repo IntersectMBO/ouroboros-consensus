@@ -276,11 +276,11 @@ data DbChangelog l = DbChangelog {
   }
   deriving (Generic)
 
-deriving instance (Eq       (TxIn l), Eq       (TxOut l), Eq       (l EmptyMK))
+deriving instance (Eq       (LedgerTables l SeqDiffMK), Eq (l EmptyMK))
                =>  Eq       (DbChangelog l)
-deriving instance (NoThunks (TxIn l), NoThunks (TxOut l), NoThunks (l EmptyMK))
+deriving instance (NoThunks (LedgerTables l SeqDiffMK), NoThunks (l EmptyMK))
                =>  NoThunks (DbChangelog l)
-deriving instance (Show     (TxIn l), Show     (TxOut l), Show     (l EmptyMK))
+deriving instance (Show     (LedgerTables l SeqDiffMK), Show     (l EmptyMK))
                =>  Show     (DbChangelog l)
 
 type DbChangelog' blk = DbChangelog (ExtLedgerState blk)
@@ -306,7 +306,7 @@ type instance HeaderHash (K @MapKind (DbChangelog l)) =
 
 -- | Creates an empty @DbChangelog@.
 empty ::
-     (HasLedgerTables l, GetTip l)
+     (GetTip l, LedgerTablesOp l)
   => l EmptyMK -> DbChangelog l
 empty theAnchor =
     DbChangelog {
@@ -386,7 +386,7 @@ prune (SecurityParam k) dblog =
 -- +------+----------------------------+----------------------+
 -- | @L2@ | @L2 :> [ L3, L4, L5, L6 ]@ | @[ D3, D4, D5, D6 ]@ |
 -- +------+----------------------------+----------------------+
-extend :: (GetTip l, HasLedgerTables l)
+extend :: (GetTip l, HasLedgerTables l, LedgerTablesOp l)
        => l DiffMK
        -> DbChangelog l
        -> DbChangelog l
@@ -445,7 +445,7 @@ readKeySetsWith bsvh rew = do
     }
 
 withKeysReadSets ::
-     (HasLedgerTables l, Monad m, GetTip l)
+     (HasLedgerTables l, Monad m, GetTip l, LedgerTablesOp l)
   => l mk1
   -> KeySetsReader m l
   -> DbChangelog l
@@ -475,7 +475,7 @@ withKeysReadSets st ksReader dbch ks f = do
       .   withLedgerTables st
       <$> forwardTableKeySets dbch urs
 
-trivialKeySetsReader :: (Monad m, LedgerTablesAreTrivial l)
+trivialKeySetsReader :: (Monad m, LedgerTablesOp l)
                      => WithOrigin SlotNo
                      -> KeySetsReader m l
 trivialKeySetsReader s _ =
@@ -503,7 +503,7 @@ data RewindReadFwdError = RewindReadFwdError {
   } deriving Show
 
 forwardTableKeySets' ::
-     HasLedgerTables l
+     LedgerTablesOp l
   => WithOrigin SlotNo
   -> LedgerTables l SeqDiffMK
   -> UnforwardedReadSets l
@@ -524,7 +524,7 @@ forwardTableKeySets' seqNo chdiffs = \(UnforwardedReadSets seqNo' values keys) -
       ValuesMK $ AntiDiff.applyDiffForKeys values keys (DS.cumulativeDiff diffs)
 
 forwardTableKeySets ::
-     (HasLedgerTables l, GetTip l)
+     (GetTip l, LedgerTablesOp l)
   => DbChangelog l
   -> UnforwardedReadSets l
   -> Either RewindReadFwdError
@@ -581,7 +581,7 @@ pruneToImmTipOnly = prune (SecurityParam 0)
 -- |     @L2@     | @L3 :> [ ]           @ | @[ D2, D3             ]@ |
 -- +--------------+------------------------+--------------------------+
 rollbackN ::
-     (GetTip l, HasLedgerTables l)
+     (GetTip l, LedgerTablesOp l)
   => Word64
   -> DbChangelog l
   -> Maybe (DbChangelog l)
@@ -623,7 +623,7 @@ rollbackN n dblog
 -- +--------------+------------------------+------------------------------------------+
 splitForFlushing ::
      forall l.
-     (GetTip l, HasLedgerTables l)
+     (GetTip l, LedgerTablesOp l)
   => DbChangelog l
   -> (Maybe (DiffsToFlush l), DbChangelog l)
 splitForFlushing dblog =
@@ -725,7 +725,7 @@ isSaturated (SecurityParam k) db =
 -- returned.
 getPastLedgerAt ::
      ( HasHeader blk, IsLedger l, HeaderHash l ~ HeaderHash blk
-     , StandardHash l, HasLedgerTables l
+     , StandardHash l, LedgerTablesOp l
      )
   => Point blk
   -> DbChangelog l
@@ -736,7 +736,7 @@ getPastLedgerAt pt db = current <$> rollback pt db
 rollbackToPoint ::
      ( StandardHash l
      , GetTip l
-     , HasLedgerTables l
+     , LedgerTablesOp l
      )
   => Point l -> DbChangelog l -> Maybe (DbChangelog l)
 rollbackToPoint pt dblog = do
@@ -761,7 +761,7 @@ rollbackToPoint pt dblog = do
 
 -- | Rollback the volatile states up to the volatile anchor.
 rollbackToAnchor ::
-     (GetTip l, HasLedgerTables l)
+     (GetTip l, LedgerTablesOp l)
   => DbChangelog l -> DbChangelog l
 rollbackToAnchor dblog =
     DbChangelog {
@@ -793,7 +793,7 @@ trunc n (SeqDiffMK sq) =
 -- returned.
 rollback ::
      ( HasHeader blk, IsLedger l, HeaderHash l ~ HeaderHash blk
-     , StandardHash l, HasLedgerTables l
+     , StandardHash l, LedgerTablesOp l
      )
   => Point blk
   -> DbChangelog l
@@ -815,7 +815,7 @@ immutableTipSlot =
 -- | How many diffs we can flush to the backing store?
 --
 -- NOTE: This will be wrong once we have more than one table.
-flushableLength :: (HasLedgerTables l, GetTip l)
+flushableLength :: (GetTip l, LedgerTablesOp l)
                 => DbChangelog l
                 -> Word64
 flushableLength chlog =
@@ -852,7 +852,7 @@ reapplyThenPush' :: ApplyBlock l blk
                -> DbChangelog l
 reapplyThenPush' cfg b bk = runIdentity . reapplyThenPush cfg b bk
 
-reapplyThenPushMany' :: (ApplyBlock l blk, LedgerTablesAreTrivial l)
+reapplyThenPushMany' :: ApplyBlock l blk
                    => LedgerDbCfg l
                    -> [blk]
                    -> DbChangelog l
@@ -897,7 +897,7 @@ switch cfg numRollbacks newBlocks ksReader db =
                       ksReader
                       db'
 
-switch' :: (ApplyBlock l blk, LedgerTablesAreTrivial l)
+switch' :: ApplyBlock l blk
         => LedgerDbCfg l
         -> Word64
         -> [blk]

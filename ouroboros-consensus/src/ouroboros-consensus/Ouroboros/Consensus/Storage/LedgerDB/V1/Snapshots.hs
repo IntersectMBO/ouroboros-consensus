@@ -252,6 +252,7 @@ loadSnapshot ::
      forall m blk. ( IOLike m
      , LedgerDbSerialiseConstraints blk
      , LedgerSupportsProtocol blk
+     , NoThunks (LedgerTables (LedgerState blk) ValuesMK)
      )
   => Tracer m V1.FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m

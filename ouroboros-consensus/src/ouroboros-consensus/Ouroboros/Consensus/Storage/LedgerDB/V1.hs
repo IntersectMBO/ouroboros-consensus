@@ -74,6 +74,8 @@ mkInitDb ::
   , IOLike m
   , LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
+  , NoThunks (LedgerTables (LedgerState blk) ValuesMK)
+  , NoThunks (LedgerTables (LedgerState blk) SeqDiffMK)
   )
   => Complete LedgerDbArgs m blk
   -> Complete V1.LedgerDbFlavorArgs m
@@ -159,6 +161,7 @@ implMkLedgerDb ::
      , ApplyBlock l blk
      , l ~ ExtLedgerState blk
      , HasHardForkHistory blk
+     , NoThunks (LedgerTables l SeqDiffMK)
      )
   => LedgerDBHandle m l blk
   -> (LedgerDB' m blk, TestInternals' m blk)
@@ -190,7 +193,7 @@ implGetImmutableTip = fmap anchor . readTVar . ldbChangelog
 
 implGetPastLedgerState ::
      ( MonadSTM m , HasHeader blk, IsLedger l, StandardHash l
-     , HasLedgerTables l, HeaderHash l ~ HeaderHash blk )
+     , HeaderHash l ~ HeaderHash blk, LedgerTablesOp l)
   => LedgerDBEnv m l blk -> Point blk -> STM m (Maybe (l EmptyMK))
 implGetPastLedgerState env point = getPastLedgerAt point <$> readTVar (ldbChangelog env)
 
@@ -223,6 +226,7 @@ implValidate ::
      , LedgerSupportsProtocol blk
      , HasCallStack
      , l ~ ExtLedgerState blk
+     , NoThunks (LedgerTables l SeqDiffMK)
      )
   => LedgerDBHandle m l blk
   -> LedgerDBEnv m l blk
@@ -285,7 +289,7 @@ implTryTakeSnapshot env mTime nrBlocks =
 -- with which this LedgerDB was opened), flush differences to the backing
 -- store. Note this acquires a write lock on the backing store.
 implTryFlush ::
-     (IOLike m, HasLedgerTables l, GetTip l)
+     (IOLike m, GetTip l, LedgerTablesOp l)
   => LedgerDBEnv m l blk -> m ()
 implTryFlush env = do
     ldb <- readTVarIO $ ldbChangelog env
@@ -390,7 +394,7 @@ implIntReapplyThenPush env blk = do
   Flushing
 -------------------------------------------------------------------------------}
 
-flushLedgerDB :: (MonadSTM m, GetTip l, HasLedgerTables l)
+flushLedgerDB :: (MonadSTM m, GetTip l, LedgerTablesOp l)
               => StrictTVar m (DbChangelog l)
               -> LedgerBackingStore m l
               -> WriteLocked m ()
@@ -432,8 +436,7 @@ data LedgerDBState m l blk =
 deriving instance ( IOLike m
                   , LedgerSupportsProtocol blk
                   , NoThunks (l EmptyMK)
-                  , NoThunks (TxIn l)
-                  , NoThunks (TxOut l)
+                  , NoThunks (LedgerTables l SeqDiffMK)
                   , NoThunks (LedgerCfg l)
                   ) => NoThunks (LedgerDBState m l blk)
 
@@ -492,8 +495,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv {
 deriving instance ( IOLike m
                   , LedgerSupportsProtocol blk
                   , NoThunks (l EmptyMK)
-                  , NoThunks (TxIn l)
-                  , NoThunks (TxOut l)
+                  , NoThunks (LedgerTables l SeqDiffMK)
                   , NoThunks (LedgerCfg l)
                   ) => NoThunks (LedgerDBEnv m l blk)
 
@@ -599,6 +601,8 @@ newForkerAtTarget ::
      , StandardHash l
      , HasLedgerTables l
      , LedgerSupportsProtocol blk
+     , LedgerTablesOp l
+     , NoThunks (LedgerTables l SeqDiffMK)
      )
   => LedgerDBHandle m l blk
   -> ResourceRegistry m
@@ -614,6 +618,8 @@ newForkerByRollback ::
      , StandardHash l
      , HasLedgerTables l
      , LedgerSupportsProtocol blk
+     , LedgerTablesOp l
+     , NoThunks (LedgerTables l SeqDiffMK)
      )
   => LedgerDBHandle m l blk
   -> ResourceRegistry m
@@ -649,8 +655,8 @@ acquireAtTarget ::
      , IOLike m
      , IsLedger l
      , StandardHash l
-     , HasLedgerTables l
      , LedgerSupportsProtocol blk
+     , LedgerTablesOp l
      )
   => LedgerDBEnv m l blk
   -> ResourceRegistry m
@@ -715,6 +721,8 @@ newForker ::
      , LedgerSupportsProtocol blk
      , NoThunks (l EmptyMK)
      , GetTip l
+     , NoThunks (LedgerTables l SeqDiffMK)
+     , LedgerTablesOp l
      )
   => LedgerDBHandle m l blk
   -> LedgerDBEnv m l blk
@@ -739,6 +747,7 @@ mkForker ::
      , HasHeader blk
      , HasLedgerTables l
      , GetTip l
+     , LedgerTablesOp l
      )
   => LedgerDBHandle m l blk
   -> QueryBatchSize

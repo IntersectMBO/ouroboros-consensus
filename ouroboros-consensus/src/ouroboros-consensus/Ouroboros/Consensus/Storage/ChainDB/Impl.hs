@@ -75,6 +75,8 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.BlockFetch.ConsensusInterface
                      (ChainSelStarvation (..))
 
+import Ouroboros.Consensus.Ledger.Basics
+
 {-------------------------------------------------------------------------------
   Initialization
 -------------------------------------------------------------------------------}
@@ -88,6 +90,8 @@ withDB ::
      , HasHardForkHistory blk
      , ConvertRawHash blk
      , SerialiseDiskConstraints blk
+     , NoThunks (LedgerTables (LedgerState blk) ValuesMK)
+     , NoThunks (LedgerTables (LedgerState blk) SeqDiffMK)
      )
   => Complete Args.ChainDbArgs m blk
   -> (ChainDB m blk -> m a)
@@ -103,6 +107,8 @@ openDB ::
      , HasHardForkHistory blk
      , ConvertRawHash blk
      , SerialiseDiskConstraints blk
+     , NoThunks (LedgerTables (LedgerState blk) ValuesMK)
+     , NoThunks (LedgerTables (LedgerState blk) SeqDiffMK)
      )
   => Complete Args.ChainDbArgs m blk
   -> m (ChainDB m blk)
@@ -118,6 +124,8 @@ openDBInternal ::
      , ConvertRawHash blk
      , SerialiseDiskConstraints blk
      , HasCallStack
+     , NoThunks (LedgerTables (LedgerState blk) ValuesMK)
+     , NoThunks (LedgerTables (LedgerState blk) SeqDiffMK)
      )
   => Complete Args.ChainDbArgs m blk
   -> Bool -- ^ 'True' = Launch background tasks

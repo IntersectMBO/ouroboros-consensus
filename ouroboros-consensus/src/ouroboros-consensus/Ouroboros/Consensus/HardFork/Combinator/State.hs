@@ -257,7 +257,7 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
         guard (slot >= History.boundSlot endBound)
         return endBound
 
-    howExtend :: (HasLedgerTables (LedgerState blk), HasLedgerTables (LedgerState blk'))
+    howExtend :: forall blk blk'. (HasLedgerTables (LedgerState blk), HasLedgerTables (LedgerState blk'))
               => TranslateLedgerState  blk blk'
               -> TranslateLedgerTables blk blk'
               -> History.Bound
@@ -278,8 +278,9 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
                   -- will just be a no-op. See the haddock for
                   -- 'translateLedgerTablesWith' and 'extendToSlot' for more
                   -- information.
-                . prependDiffs ( translateLedgerTablesWith f'
-                               . projectLedgerTables
+                . prependDiffs (
+                                 bimapLedgerTables @(LedgerState blk) @(LedgerState blk') (translateTxInWith f') (translateTxOutWith f')
+                               . ltprj
                                . unFlip
                                . currentState
                                $ cur

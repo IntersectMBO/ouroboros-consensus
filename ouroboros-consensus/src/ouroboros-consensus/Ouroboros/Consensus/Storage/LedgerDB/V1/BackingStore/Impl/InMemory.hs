@@ -57,8 +57,7 @@ data BackingStoreContents m l =
       !(LedgerTables l ValuesMK)
   deriving (Generic)
 
-deriving instance ( NoThunks (TxIn l)
-                  , NoThunks (TxOut l)
+deriving instance ( NoThunks (LedgerTables l ValuesMK)
                   ) => NoThunks (BackingStoreContents m l)
 
 -- | Use a 'TVar' as a trivial backing store
@@ -66,6 +65,8 @@ newInMemoryBackingStore ::
      forall l m.
      ( IOLike m
      , HasLedgerTables l
+     , LedgerTablesOp l
+     , NoThunks (LedgerTables l ValuesMK)
      )
   => Tracer m BackingStoreTrace
   -> SnapshotsFS m

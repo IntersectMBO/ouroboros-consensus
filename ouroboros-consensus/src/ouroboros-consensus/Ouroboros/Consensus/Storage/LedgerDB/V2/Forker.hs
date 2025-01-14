@@ -36,6 +36,7 @@ import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.NormalForm.StrictTVar ()
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import           Prelude hiding (read)
+import qualified Data.Set as Set
 
 {-------------------------------------------------------------------------------
   Forker operations
@@ -75,7 +76,7 @@ implForkerReadTables env ks = do
     pure tbs
 
 implForkerRangeReadTables ::
-     (MonadSTM m, GetTip l, HasLedgerTables l)
+     (MonadSTM m, GetTip l, LedgerTablesOp l)
   => QueryBatchSize
   -> ForkerEnv m l blk
   -> RangeQueryPrevious l
@@ -85,10 +86,10 @@ implForkerRangeReadTables qbs env rq0 = do
     ldb <- readTVarIO $ foeLedgerSeq env
     let n = fromIntegral $ defaultQueryBatchSize qbs
     case rq0 of
-      NoPreviousQuery -> readRange (tables $ currentHandle ldb) (Nothing, n)
-      PreviousQueryWasFinal -> pure $ LedgerTables emptyMK
+      NoPreviousQuery -> readRange (tables $ currentHandle ldb) (ltpure (Comp2 Nothing), n)
+      PreviousQueryWasFinal -> pure $ ltpure emptyMK
       PreviousQueryWasUpTo k -> do
-        tbs <- readRange (tables $ currentHandle ldb) (Just k, n)
+        tbs <- readRange (tables $ currentHandle ldb) (ltpure $ Comp2 $ Just (KeysMK $ Set.singleton k), n)
         traceWith (foeTracer env) ForkerRangeReadTablesEnd
         pure tbs
 
@@ -107,7 +108,7 @@ implForkerReadStatistics env = do
   fmap (fmap Statistics) . tablesSize . tables . currentHandle =<< readTVarIO (foeLedgerSeq env)
 
 implForkerPush ::
-     (IOLike m, GetTip l, HasLedgerTables l, HasCallStack)
+     (IOLike m, GetTip l, HasLedgerTables l, HasCallStack, LedgerTablesOp l)
   => ForkerEnv m l blk
   -> l DiffMK
   -> m ()

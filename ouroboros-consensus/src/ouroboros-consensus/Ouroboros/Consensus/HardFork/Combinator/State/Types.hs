@@ -21,7 +21,6 @@ module Ouroboros.Consensus.HardFork.Combinator.State.Types (
   ) where
 
 import           Control.Monad.Except
-import qualified Data.Map.Strict as Map
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
 import           Data.SOP.Strict
@@ -33,7 +32,6 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Forecast
 import           Ouroboros.Consensus.HardFork.History (Bound)
 import           Ouroboros.Consensus.Ledger.Basics
-import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 
 {-------------------------------------------------------------------------------
   Types
@@ -200,21 +198,13 @@ newtype TranslateTxOut x y = TranslateTxOut (TxOut (LedgerState x) -> TxOut (Led
 -- previous eras, so it will be called only when crossing era boundaries,
 -- therefore the translation won't be equivalent to 'id'.
 translateLedgerTablesWith ::
-     Ord (TxIn (LedgerState y))
+     (Ord (TxIn (LedgerState y)))
   => TranslateLedgerTables x y
-  -> LedgerTables (LedgerState x) DiffMK
-  -> LedgerTables (LedgerState y) DiffMK
+  -> DiffMK (TxIn (LedgerState x)) (TxOut (LedgerState x))
+  -> DiffMK (TxIn (LedgerState y)) (TxOut (LedgerState y))
 translateLedgerTablesWith f =
-      LedgerTables
-    . DiffMK
-    . Diff.Diff
-    . Map.mapKeys (translateTxInWith f)
-    . getDiff
-    . getDiffMK
+      mapKeysMK (translateTxInWith f)
     . mapMK (translateTxOutWith f)
-    . getLedgerTables
-  where
-    getDiff (Diff.Diff m) = m
 
 -- | Knowledge in a particular era of the transition to the next era
 data TransitionInfo =

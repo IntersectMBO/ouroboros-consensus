@@ -64,8 +64,7 @@ data ForkerEnv m l blk = ForkerEnv {
 deriving instance ( IOLike m
                   , LedgerSupportsProtocol blk
                   , NoThunks (l EmptyMK)
-                  , NoThunks (TxIn l)
-                  , NoThunks (TxOut l)
+                  , NoThunks (LedgerTables l SeqDiffMK)
                   ) => NoThunks (ForkerEnv m l blk)
 
 {-------------------------------------------------------------------------------
@@ -81,7 +80,7 @@ closeForkerEnv ForkerEnv { foeBackingStoreValueHandle } = bsvhClose foeBackingSt
 -------------------------------------------------------------------------------}
 
 implForkerReadTables ::
-     (MonadSTM m, HasLedgerTables l, GetTip l)
+     (MonadSTM m, GetTip l, LedgerTablesOp l)
   => ForkerEnv m l blk
   -> LedgerTables l KeysMK
   -> m (LedgerTables l ValuesMK)
@@ -98,7 +97,7 @@ implForkerReadTables env ks = do
     lvh = foeBackingStoreValueHandle env
 
 implForkerRangeReadTables ::
-     (MonadSTM m, HasLedgerTables l)
+     (MonadSTM m, LedgerTablesOp l)
   => QueryBatchSize
   -> ForkerEnv m l blk
   -> RangeQueryPrevious l
@@ -136,8 +135,8 @@ implForkerRangeReadTables qbs env rq0 = do
 
     rq1 = case rq0 of
       NoPreviousQuery        -> Nothing
-      PreviousQueryWasFinal  -> Just (LedgerTables $ KeysMK Set.empty)
-      PreviousQueryWasUpTo k -> Just (LedgerTables $ KeysMK $ Set.singleton k)
+      PreviousQueryWasFinal  -> Just (ltpure $ KeysMK Set.empty)
+      PreviousQueryWasUpTo k -> Just (ltpure $ KeysMK $ Set.singleton k)
 
     prj ::
          (Ord k, Eq v)
@@ -223,7 +222,7 @@ implForkerGetLedgerState env = current <$> readTVar (foeChangelog env)
 -- | Obtain statistics for a combination of backing store value handle and
 -- changelog.
 implForkerReadStatistics ::
-     (MonadSTM m, HasLedgerTables l, GetTip l)
+     (MonadSTM m, GetTip l, LedgerTablesOp l)
   => ForkerEnv m l blk
   -> m (Maybe Forker.Statistics)
 implForkerReadStatistics env = do
@@ -255,7 +254,7 @@ implForkerReadStatistics env = do
     lbsvh = foeBackingStoreValueHandle env
 
 implForkerPush ::
-     (MonadSTM m, GetTip l, HasLedgerTables l)
+     (MonadSTM m, GetTip l, HasLedgerTables l, LedgerTablesOp l)
   => ForkerEnv m l blk
   -> l DiffMK
   -> m ()
@@ -269,7 +268,7 @@ implForkerPush env newState = do
   traceWith (foeTracer env) ForkerPushEnd
 
 implForkerCommit ::
-     (MonadSTM m, GetTip l, HasLedgerTables l)
+     (MonadSTM m, GetTip l, LedgerTablesOp l)
   => ForkerEnv m l blk
   -> STM m ()
 implForkerCommit env = do

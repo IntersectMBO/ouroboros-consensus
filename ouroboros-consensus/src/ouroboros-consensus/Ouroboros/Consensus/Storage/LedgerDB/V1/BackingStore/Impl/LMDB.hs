@@ -142,14 +142,14 @@ getDb ::
 getDb (K2 name) = LMDBMK name <$> LMDB.getDatabase (Just name)
 
 readAll ::
-     (Ord (TxIn l), MemPack (TxIn l), MemPack (TxOut l))
+     LedgerTablesOp l
   => Proxy l
-  -> LMDBMK (TxIn l) (TxOut l)
-  -> LMDB.Transaction mode (ValuesMK (TxIn l) (TxOut l))
-readAll _ (LMDBMK _ dbMK) =
+  -> LedgerTables l LMDBMK
+  -> LMDB.Transaction mode (LedgerTables l ValuesMK)
+readAll _ = lttraverse (\(LMDBMK _ dbMK) ->
   ValuesMK <$> Bridge.runCursorAsTransaction'
     LMDB.Cursor.cgetAll
-    dbMK
+    dbMK)
 
 -- | @'rangeRead' rq dbMK@ performs a range read of @rqCount rq@
 -- values from database @dbMK@, starting from some key depending on @rqPrev rq@.
@@ -166,29 +166,31 @@ readAll _ (LMDBMK _ dbMK) =
 -- function will be unexpected.
 rangeRead ::
      forall mode l.
-     (Ord (TxIn l), MemPack (TxIn l), MemPack (TxOut l))
+     LedgerTablesOp l
   => API.RangeQuery (LedgerTables l KeysMK)
-  -> LMDBMK (TxIn l) (TxOut l)
-  -> LMDB.Transaction mode (ValuesMK (TxIn l) (TxOut l))
-rangeRead rq dbMK =
-    ValuesMK <$> case ksMK of
-      Nothing -> runCursorHelper Nothing
-      Just (LedgerTables (KeysMK ks)) -> case Set.lookupMax ks of
-        Nothing -> pure mempty
-        Just lastExcludedKey ->
-          runCursorHelper $ Just (lastExcludedKey, LMDB.Cursor.Exclusive)
+  -> LedgerTables l LMDBMK
+  -> LMDB.Transaction mode (LedgerTables l ValuesMK)
+rangeRead rq =
+    case ksMK of
+      Nothing -> lttraverse (\(LMDBMK _ db) -> runCursorHelper db Nothing)
+      Just lts -> ltzipWith2A (\(KeysMK ks) (LMDBMK _ db) ->
+                              case Set.lookupMax ks of
+                                Nothing -> pure $ ValuesMK mempty
+                                Just lastExcludedKey ->
+                                  runCursorHelper db $ Just (lastExcludedKey, LMDB.Cursor.Exclusive)) lts
   where
-    LMDBMK _ db = dbMK
 
     API.RangeQuery ksMK count = rq
 
     runCursorHelper ::
-         Maybe (TxIn l, LMDB.Cursor.Bound)    -- ^ Lower bound on read range
-      -> LMDB.Transaction mode (Map (TxIn l) (TxOut l))
-    runCursorHelper lb =
-      Bridge.runCursorAsTransaction'
-        (LMDB.Cursor.cgetMany lb count)
-        db
+         (MemPack k, Ord k , MemPack v)
+      => LMDB.Database k v
+      -> Maybe (k, LMDB.Cursor.Bound)    -- ^ Lower bound on read range
+      -> LMDB.Transaction mode (ValuesMK k v)
+    runCursorHelper db lb =
+      ValuesMK <$> Bridge.runCursorAsTransaction'
+                   (LMDB.Cursor.cgetMany lb count)
+                   db
 
 initLMDBTable ::
      (MemPack v, MemPack k)
@@ -321,7 +323,7 @@ checkAndOpenDbDirWithRetry gdd shfs@(FS.SomeHasFS fs) path =
 -- | Initialise an LMDB database from these provided values.
 initFromVals ::
      forall l m.
-     (HasLedgerTables l, MonadIO m)
+     (MonadIO m, LedgerTablesOp l)
   => Trace.Tracer m API.BackingStoreTrace
   -> WithOrigin SlotNo
      -- ^ The slot number up to which the ledger tables contain values.
@@ -387,7 +389,7 @@ lmdbCopy from0 tracer e to = do
 
 -- | Initialise a backing store.
 newLMDBBackingStore ::
-     forall m l. (HasCallStack, HasLedgerTables l, MonadIO m, IOLike m)
+     forall m l. (HasCallStack, MonadIO m, IOLike m, LedgerTablesOp l)
   => Trace.Tracer m API.BackingStoreTrace
   -> LMDBLimits
      -- ^ Configuration parameters for the LMDB database that we
@@ -516,7 +518,7 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
 -- current database state.
 mkLMDBBackingStoreValueHandle ::
      forall l m.
-     (HasLedgerTables l, MonadIO m, IOLike m, HasCallStack)
+     (MonadIO m, IOLike m, HasCallStack, LedgerTablesOp l)
   => Db m l
      -- ^ The LMDB database for which the backing store value handle is
      -- created.
@@ -576,9 +578,7 @@ mkLMDBBackingStoreValueHandle db = do
       Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
       Status.withReadAccess vhStatusLock (throwIO (LMDBErrNoValueHandle vhId)) $ do
         Trace.traceWith tracer API.BSVHRangeReading
-        res <- liftIO $ TrH.submitReadOnly trh $
-          let dbMK = getLedgerTables dbBackingTables
-          in LedgerTables <$> rangeRead rq dbMK
+        res <- liftIO $ TrH.submitReadOnly trh $ rangeRead rq dbBackingTables
         Trace.traceWith tracer API.BSVHRangeRead
         pure res
 
@@ -601,9 +601,7 @@ mkLMDBBackingStoreValueHandle db = do
       Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
       Status.withReadAccess vhStatusLock (throwIO (LMDBErrNoValueHandle vhId)) $ do
         Trace.traceWith tracer API.BSVHRangeReading
-        res <- liftIO $ TrH.submitReadOnly trh $
-          let dbMK = getLedgerTables dbBackingTables
-          in LedgerTables <$> readAll (Proxy @l) dbMK
+        res <- liftIO $ TrH.submitReadOnly trh $ readAll (Proxy @l) dbBackingTables
         Trace.traceWith tracer API.BSVHRangeRead
         pure res
 

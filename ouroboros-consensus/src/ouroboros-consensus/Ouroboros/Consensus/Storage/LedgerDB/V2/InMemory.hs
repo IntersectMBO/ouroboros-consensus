@@ -56,6 +56,7 @@ import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike
 import           Prelude hiding (read)
 import           System.FS.API
+import qualified Data.Set as Set
 import           System.FS.API.Lazy
 import           System.FS.CRC
 
@@ -81,6 +82,8 @@ guardClosed (LedgerTablesHandleOpen st) f = f st
 newInMemoryLedgerTablesHandle ::
      ( IOLike m
      , HasLedgerTables l
+     , NoThunks (LedgerTables l ValuesMK)
+     , LedgerTablesOp l
      )
   => SomeHasFS m
   -> LedgerTables l ValuesMK
@@ -99,8 +102,11 @@ newInMemoryLedgerTablesHandle someFS@(SomeHasFS hasFS) l = do
         guardClosed hs (pure . flip (ltliftA2 (\(ValuesMK v) (KeysMK k) -> ValuesMK $ v `Map.restrictKeys` k)) keys)
     , readRange = \(f, t) -> do
         hs <- readTVarIO tv
-        guardClosed hs (\(LedgerTables (ValuesMK m)) ->
-                          pure . LedgerTables . ValuesMK . Map.take t . (maybe id (\g -> snd . Map.split g) f) $ m)
+        guardClosed hs (ltzipWith2A (\(Comp2 vs) (ValuesMK m) ->
+             pure
+             . ValuesMK
+             . Map.take t
+             . (maybe id (\g -> snd . Map.split g) ((Set.lookupMax . getKeysMK) =<< vs)) $ m) f)
     , readAll = do
         hs <- readTVarIO tv
         guardClosed hs pure
@@ -119,7 +125,7 @@ newInMemoryLedgerTablesHandle someFS@(SomeHasFS hasFS) l = do
                    $ valuesMKEncoder values
     , tablesSize = do
         hs <- readTVarIO tv
-        guardClosed hs (pure . Just . Map.size . getValuesMK . getLedgerTables)
+        guardClosed hs (pure . Just . ltcollapse . ltmap (K2 . Map.size . getValuesMK))
     , isOpen = do
         hs <- readTVarIO tv
         case hs of
@@ -190,6 +196,7 @@ loadSnapshot ::
     forall blk m. ( LedgerDbSerialiseConstraints blk
     , LedgerSupportsProtocol blk
     , IOLike m
+    , NoThunks (LedgerTables (LedgerState blk) ValuesMK)
     )
     => ResourceRegistry m
     -> CodecConfig blk

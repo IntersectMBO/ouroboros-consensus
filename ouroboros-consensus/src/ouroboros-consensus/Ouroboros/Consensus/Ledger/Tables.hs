@@ -233,17 +233,17 @@ class ( Ord (TxIn l)
     -> LedgerTables l mk
     -> l mk
 
-instance ( Ord (TxIn l)
-         , Eq (TxOut l)
-         , Show (TxIn l)
-         , Show (TxOut l)
-         , NoThunks (TxIn l)
-         , NoThunks (TxOut l)
-         , MemPack (TxIn l)
-         , MemPack (TxOut l)
-         ) => HasLedgerTables (LedgerTables l) where
-  projectLedgerTables = castLedgerTables
-  withLedgerTables _ = castLedgerTables
+-- instance ( Ord (TxIn l)
+--          , Eq (TxOut l)
+--          , Show (TxIn l)
+--          , Show (TxOut l)
+--          , NoThunks (TxIn l)
+--          , NoThunks (TxOut l)
+--          , MemPack (TxIn l)
+--          , MemPack (TxOut l)
+--          ) => HasLedgerTables (LedgerTables l) where
+--   projectLedgerTables = castLedgerTables
+--   withLedgerTables _ = castLedgerTables
 
 -- | Convenience class, useful for partially applying the composition of
 -- 'HasLedgerTables' and 'Ticked'.
@@ -273,27 +273,27 @@ class CanStowLedgerTables l where
 -- | Default encoder of @'LedgerTables' l ''ValuesMK'@ to be used by the
 -- in-memory backing store.
 valuesMKEncoder ::
-     forall l. (MemPack (TxIn l), MemPack (TxOut l))
+     forall l. LedgerTablesOp l
   => LedgerTables l ValuesMK
   -> CBOR.Encoding
-valuesMKEncoder (LedgerTables tables) =
+valuesMKEncoder tables =
        CBOR.encodeListLen 1
-    <> go tables
+    <> ltcollapse (ltmap go tables)
   where
-    go :: ValuesMK (TxIn l) (TxOut l) -> CBOR.Encoding
+    go :: (MemPack k, MemPack v) => ValuesMK k v -> K2 CBOR.Encoding k v
     go (ValuesMK m) =
-         CBOR.encodeMapLen (fromIntegral $ Map.size m)
+         K2 $ CBOR.encodeMapLen (fromIntegral $ Map.size m)
       <> Map.foldMapWithKey (\k v -> toCBOR (packByteString (k, v))) m
 
 -- | Default decoder of @'LedgerTables' l ''ValuesMK'@ to be used by the
 -- in-memory backing store.
 valuesMKDecoder ::
-     forall l s. (Ord (TxIn l), MemPack (TxIn l), MemPack (TxOut l))
+     forall l s. (Ord (TxIn l), MemPack (TxIn l), MemPack (TxOut l), LedgerTablesOp l)
   => CBOR.Decoder s (LedgerTables l ValuesMK)
 valuesMKDecoder = do
     _ <- CBOR.decodeListLenOf 1
     mapLen <- CBOR.decodeMapLen
-    LedgerTables <$> go mapLen
+    ltpure <$> go mapLen
  where
   go :: Int
      -> CBOR.Decoder s (ValuesMK (TxIn l) (TxOut l))
@@ -333,9 +333,9 @@ class (TxIn l ~ Void, TxOut l ~ Void) => LedgerTablesAreTrivial l where
   convertMapKind :: l mk -> l mk'
 
 trivialLedgerTables ::
-     (ZeroableMK mk, LedgerTablesAreTrivial l)
+     (ZeroableMK mk, LedgerTablesOp l)
   => LedgerTables l mk
-trivialLedgerTables = LedgerTables emptyMK
+trivialLedgerTables = ltpure emptyMK
 
 -- | A newtype to @derive via@ the instances for blocks with trivial ledger
 -- tables.
@@ -344,6 +344,13 @@ newtype TrivialLedgerTables l mk = TrivialLedgerTables { untrivialLedgerTables :
 
 type instance TxIn  (TrivialLedgerTables l) = TxIn  l
 type instance TxOut (TrivialLedgerTables l) = TxOut l
+
+instance LedgerTablesAreTrivial l => LedgerTablesOp (TrivialLedgerTables l) where
+  ltmap _ = undefined
+  lttraverse _ = undefined
+  ltprod _ = undefined
+  ltpure _f = undefined
+  ltcollapse = undefined
 
 instance LedgerTablesAreTrivial l => LedgerTablesAreTrivial (TrivialLedgerTables l) where
   convertMapKind = TrivialLedgerTables . convertMapKind . untrivialLedgerTables

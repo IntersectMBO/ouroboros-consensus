@@ -25,6 +25,8 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.ImmutableDB.Stream
 import           Ouroboros.Consensus.Storage.LedgerDB.API
 import           Ouroboros.Consensus.Storage.LedgerDB.Args
+import           Ouroboros.Consensus.Ledger.Tables
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Storage.LedgerDB.Forker
 import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import           Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
@@ -43,6 +45,8 @@ openDB ::
   , InspectLedger blk
   , HasCallStack
   , HasHardForkHistory blk
+  , NoThunks (LedgerTables (LedgerState blk) ValuesMK)
+  , NoThunks (LedgerTables (LedgerState blk) SeqDiffMK)
   )
   => Complete LedgerDbArgs m blk
   -- ^ Stateless initializaton arguments
