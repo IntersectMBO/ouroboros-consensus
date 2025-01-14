@@ -13,6 +13,7 @@ import           Data.SOP.BasicFunctors
 import           Data.SOP.Strict
 import           GHC.Stack
 import           Ouroboros.Consensus.Config.SupportsNode
+import           Ouroboros.Consensus.Ledger.Tables.Combinators
 import           Ouroboros.Consensus.HardFork.Combinator.Abstract
 import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import           Ouroboros.Consensus.HardFork.Combinator.Basics
@@ -61,7 +62,7 @@ getSameConfigValue getValue blockConfig = getSameValue values
 
 instance ( CanHardFork xs
          , HasCanonicalTxIn xs
-         , HasHardForkTxOut xs
+         , LedgerTablesOp (LedgerState (HardForkBlock xs))
          , BlockSupportsHFLedgerQuery xs
          , SupportedNetworkProtocolVersion (HardForkBlock xs)
          , SerialiseHFC xs

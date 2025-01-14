@@ -161,7 +161,7 @@ newtype TranslateLedgerState x y = TranslateLedgerState {
 
 -- | Transate a 'LedgerTables' across an era transition.
 data TranslateLedgerTables x y =
-  TranslateLedgerTables (forall mk. LedgerTables (LedgerState x) mk -> LedgerTables (LedgerState y) mk)
+  TranslateLedgerTables { getTranslateLedgerTables :: forall mk. LedgerTables (LedgerState x) mk -> LedgerTables (LedgerState y) mk }
   -- TranslateLedgerTables {
   --   -- | Translate a 'TxIn' across an era transition.
   --   --

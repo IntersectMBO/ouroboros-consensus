@@ -64,26 +64,26 @@ deriving instance ( NoThunks (LedgerTables l ValuesMK)
 newInMemoryBackingStore ::
      forall l m.
      ( IOLike m
-     , HasLedgerTables l
      , LedgerTablesOp l
      , NoThunks (LedgerTables l ValuesMK)
+     , EncodeLedgerTables l
      )
   => Tracer m BackingStoreTrace
   -> SnapshotsFS m
-  -> InitFrom (LedgerTables l ValuesMK)
+  -> InitFrom l (LedgerTables l ValuesMK)
   -> m (LedgerBackingStore m l)
 newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
     traceWith tracer BSOpening
     ref <- do
       (slot, values) <- case initialization of
-        InitFromCopy path -> do
+        InitFromCopy st path -> do
           traceWith tracer $ BSInitialisingFromCopy path
           tvarFileExists <- doesFileExist fs (extendPath path)
           unless tvarFileExists $
             throwIO . StoreDirIsIncompatible $ mkFsErrorPath fs path
           withFile fs (extendPath path) ReadMode $ \h -> do
             bs <- hGetAll fs h
-            case CBOR.deserialiseFromBytes ((,) <$> CBOR.fromCBOR <*> valuesMKDecoder) bs of
+            case CBOR.deserialiseFromBytes ((,) <$> CBOR.fromCBOR <*> valuesMKDecoder st) bs of
               Left  err        -> throwIO $ InMemoryBackingStoreDeserialiseExn err
               Right (extra, x) -> do
                 unless (BSL.null extra) $ throwIO InMemoryIncompleteDeserialiseExn

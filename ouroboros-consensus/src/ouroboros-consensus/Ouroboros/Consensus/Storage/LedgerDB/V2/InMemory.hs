@@ -84,6 +84,7 @@ newInMemoryLedgerTablesHandle ::
      , HasLedgerTables l
      , NoThunks (LedgerTables l ValuesMK)
      , LedgerTablesOp l
+     , EncodeLedgerTables l
      )
   => SomeHasFS m
   -> LedgerTables l ValuesMK
@@ -214,7 +215,7 @@ loadSnapshot _rr ccfg fs@(SomeHasFS hasFS) doChecksum ds = do
       (values, mbCrcTables)  <-
         withExceptT (InitFailureRead . ReadSnapshotFailed) $
           ExceptT $ readIncremental fs (getFlag doChecksum)
-                  valuesMKDecoder
+                  (valuesMKDecoder extLedgerSt)
                   (fsPathFromList
                     $ fsPathToList (snapshotToDirPath ds)
                     <> [fromString "tables", fromString "tvar"])

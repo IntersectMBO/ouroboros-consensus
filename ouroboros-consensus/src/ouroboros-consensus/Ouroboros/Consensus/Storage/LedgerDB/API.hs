@@ -155,7 +155,6 @@ import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.Functor.Contravariant ((>$<))
 import           Data.Kind
-import           Data.MemPack
 import           Data.Set (Set)
 import           Data.Word
 import           GHC.Generics (Generic)
@@ -194,8 +193,7 @@ type LedgerDbSerialiseConstraints blk =
   , DecodeDisk blk (AnnTip      blk)
   , EncodeDisk blk (ChainDepState (BlockProtocol blk))
   , DecodeDisk blk (ChainDepState (BlockProtocol blk))
-  , MemPack (TxOut (LedgerState blk))
-  , MemPack (TxIn (LedgerState blk))
+  , EncodeLedgerTables (LedgerState blk)
   )
 
 -- | The core API of the LedgerDB component

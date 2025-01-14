@@ -27,6 +27,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Mempool (
   , hardForkApplyTxErrToEither
   ) where
 
+import qualified Data.SOP.Telescope as Telescope
 import           Control.Arrow (first, (+++))
 import           Control.Monad.Except
 import           Data.Functor.Product
@@ -119,7 +120,7 @@ type DecomposedReapplyTxsResult extra xs =
 
 instance ( CanHardFork xs
          , HasCanonicalTxIn xs
-         , HasHardForkTxOut xs
+         , LedgerTablesOp (LedgerState (HardForkBlock xs))
          ) => LedgerSupportsMempool (HardForkBlock xs) where
   applyTx = applyHelper ModeApply
 
@@ -219,7 +220,7 @@ instance ( CanHardFork xs
         => Index                                       xs           x
         -> GenTx                                                    x
         -> K (LedgerTables (LedgerState (HardForkBlock xs)) KeysMK) x
-      f idx tx = K $ injectLedgerTables idx $ getTransactionKeySets tx
+      f idx tx = K $ HardForkLedgerTables $ Telescope.fromTip $ injectNS idx $ Flip . LedgerTablesLedgerState $ getTransactionKeySets tx
 
 instance CanHardFork xs => TxLimits (HardForkBlock xs) where
   type TxMeasure (HardForkBlock xs) = HardForkTxMeasure xs

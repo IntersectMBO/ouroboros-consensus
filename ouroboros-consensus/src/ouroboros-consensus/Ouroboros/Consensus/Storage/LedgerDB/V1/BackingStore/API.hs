@@ -110,12 +110,12 @@ type LedgerBackingStore m l =
 type BackingStore' m blk = LedgerBackingStore m (ExtLedgerState blk)
 
 -- | Choose how to initialize the backing store
-data InitFrom values =
+data InitFrom l values =
     -- | Initialize from a set of values, at the given slot.
     InitFromValues !(WithOrigin SlotNo) !values
     -- | Use a snapshot at the given path to overwrite the set of values in the
     -- opened database.
-  | InitFromCopy !FS.FsPath
+  | InitFromCopy !(l EmptyMK) !FS.FsPath
 
 {-------------------------------------------------------------------------------
   Value handles

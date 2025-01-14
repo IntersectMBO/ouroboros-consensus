@@ -47,32 +47,33 @@ import           System.FS.API
 import           System.FS.IO
 
 type BackingStoreInitialiser m l =
-     InitFrom (LedgerTables l ValuesMK)
+     InitFrom l (LedgerTables l ValuesMK)
   -> m (LedgerBackingStore m l)
 
 -- | Overwrite the 'BackingStore' tables with the snapshot's tables
 restoreBackingStore ::
      ( IOLike m
-     , HasLedgerTables l
      , HasCallStack
      , LedgerTablesOp l
      , NoThunks (LedgerTables l ValuesMK)
+     , EncodeLedgerTables l
      )
   => Tracer m FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m
   -> SnapshotsFS m
+  -> l EmptyMK
   -> FsPath
   -> m (LedgerBackingStore m l)
-restoreBackingStore trcr bss fs loadPath =
-    newBackingStoreInitialiser trcr bss fs (InitFromCopy loadPath)
+restoreBackingStore trcr bss fs st loadPath =
+    newBackingStoreInitialiser trcr bss fs (InitFromCopy st loadPath)
 
 -- | Create a 'BackingStore' from the given initial tables.
 newBackingStore ::
      ( IOLike m
-     , HasLedgerTables l
      , HasCallStack
      , LedgerTablesOp l
      , NoThunks (LedgerTables l ValuesMK)
+     , EncodeLedgerTables l
      )
   => Tracer m FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m
@@ -85,10 +86,10 @@ newBackingStore trcr bss fs tables =
 newBackingStoreInitialiser ::
      forall m l.
      ( IOLike m
-     , HasLedgerTables l
      , HasCallStack
      , LedgerTablesOp l
      , NoThunks (LedgerTables l ValuesMK)
+     , EncodeLedgerTables l
      )
   => Tracer m FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m

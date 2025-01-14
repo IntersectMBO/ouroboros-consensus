@@ -86,6 +86,7 @@ class ( UpdateLedger blk
       , Show (GenTx blk)
       , Show (Validated (GenTx blk))
       , Show (ApplyTxErr blk)
+      , Monoid (LedgerTables (LedgerState blk) KeysMK)
       ) => LedgerSupportsMempool blk where
 
   -- | Check whether the internal invariants of the transaction hold.

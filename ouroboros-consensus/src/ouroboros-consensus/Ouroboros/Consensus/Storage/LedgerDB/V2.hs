@@ -428,8 +428,6 @@ data LedgerDBEnv m l blk = LedgerDBEnv {
 deriving instance ( IOLike m
                   , LedgerSupportsProtocol blk
                   , NoThunks (l EmptyMK)
-                  , NoThunks (TxIn l)
-                  , NoThunks (TxOut l)
                   , NoThunks (LedgerCfg l)
                   ) => NoThunks (LedgerDBEnv m l blk)
 
@@ -450,8 +448,6 @@ data LedgerDBState m l blk =
 deriving instance ( IOLike m
                   , LedgerSupportsProtocol blk
                   , NoThunks (l EmptyMK)
-                  , NoThunks (TxIn l)
-                  , NoThunks (TxOut l)
                   , NoThunks (LedgerCfg l)
                   ) => NoThunks (LedgerDBState m l blk)
 

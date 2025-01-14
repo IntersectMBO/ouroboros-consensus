@@ -267,17 +267,17 @@ ltzipWith2A f = ltsequence .: ltliftA2 (Comp2 .: f)
   Semigroup and Monoid
 -------------------------------------------------------------------------------}
 
-instance ( forall k v. Semigroup (mk k v)
-         , LedgerTablesOp l
-         ) => Semigroup (LedgerTables l mk) where
-  (<>) :: LedgerTables l mk -> LedgerTables l mk -> LedgerTables l mk
-  (<>) = ltliftA2 (<>)
+-- instance ( forall k v. Semigroup (mk k v)
+--          , LedgerTablesOp l
+--          ) => Semigroup (LedgerTables l mk) where
+--   (<>) :: LedgerTables l mk -> LedgerTables l mk -> LedgerTables l mk
+--   (<>) = ltliftA2 (<>)
 
-instance ( forall k v. Monoid (mk k v)
-         , LedgerTablesOp l
-         ) => Monoid (LedgerTables l mk) where
-  mempty :: LedgerTables l mk
-  mempty = ltpure mempty
+-- instance ( forall k v. Monoid (mk k v)
+--          , LedgerTablesOp l
+--          ) => Monoid (LedgerTables l mk) where
+--   mempty :: LedgerTables l mk
+--   mempty = ltpure mempty
 
 {-------------------------------------------------------------------------------
   Lifted functions

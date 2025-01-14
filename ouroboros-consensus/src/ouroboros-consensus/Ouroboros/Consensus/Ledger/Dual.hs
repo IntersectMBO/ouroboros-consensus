@@ -72,9 +72,6 @@ import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.ByteString.Short as Short
 import           Data.Functor ((<&>))
 import           Data.Kind (Type)
-#if __GLASGOW_HASKELL__ >= 906
-import           Data.MemPack (MemPack)
-#endif
 import           Data.Typeable
 import           GHC.Generics (Generic)
 import           GHC.Stack
@@ -953,6 +950,14 @@ newtype instance LedgerTables (LedgerState (DualBlock m a)) mk = DualLedgerTable
 deriving instance NoThunks (LedgerTables (LedgerState blk) mk)
                => NoThunks (LedgerTables (LedgerState (DualBlock blk a)) mk)
 
+
+
+instance Semigroup (LedgerTables (LedgerState m) KeysMK) => Semigroup (LedgerTables (LedgerState (DualBlock m a)) KeysMK) where
+  DualLedgerTables a <> DualLedgerTables b = DualLedgerTables (a <> b)
+
+instance Monoid (LedgerTables (LedgerState m) KeysMK) => Monoid (LedgerTables (LedgerState (DualBlock m a)) KeysMK) where
+  mempty = DualLedgerTables mempty
+
 instance LedgerTablesOp (LedgerState m) => LedgerTablesOp (LedgerState (DualBlock m a)) where
   ltmap f = DualLedgerTables . ltmap f . getDualLedgerTables
   lttraverse f = fmap DualLedgerTables . lttraverse f . getDualLedgerTables
@@ -971,16 +976,6 @@ type instance TxOut (LedgerState (DualBlock m a)) = TxOut (LedgerState m)
 
 instance (
     Bridge m a
-#if __GLASGOW_HASKELL__ >= 906
-  , NoThunks (TxOut (LedgerState m))
-  , NoThunks (TxIn (LedgerState m))
-  , Show (TxOut (LedgerState m))
-  , Show (TxIn (LedgerState m))
-  , Eq (TxOut (LedgerState m))
-  , Ord (TxIn (LedgerState m))
-  , MemPack (TxOut (LedgerState m))
-  , MemPack (TxIn (LedgerState m))
-#endif
   ) => HasLedgerTables (LedgerState (DualBlock m a)) where
   projectLedgerTables DualLedgerState{..} =
       castLedgerTables
@@ -996,16 +991,6 @@ instance (
 
 instance (
     Bridge m a
-#if __GLASGOW_HASKELL__ >= 906
-  , NoThunks (TxOut (LedgerState m))
-  , NoThunks (TxIn (LedgerState m))
-  , Show (TxOut (LedgerState m))
-  , Show (TxIn (LedgerState m))
-  , Eq (TxOut (LedgerState m))
-  , Ord (TxIn (LedgerState m))
-  , MemPack (TxOut (LedgerState m))
-  , MemPack (TxIn (LedgerState m))
-#endif
   )=> HasLedgerTables (Ticked (LedgerState (DualBlock m a))) where
   projectLedgerTables TickedDualLedgerState{..} =
       TickedLedgerTables $ DualLedgerTables $ getTickedLedgerTables $ projectLedgerTables tickedDualLedgerStateMain

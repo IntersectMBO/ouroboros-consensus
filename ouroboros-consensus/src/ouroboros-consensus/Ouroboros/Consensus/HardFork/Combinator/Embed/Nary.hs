@@ -48,7 +48,7 @@ import           Ouroboros.Consensus.TypeFamilyWrappers
 
 class Inject f where
   inject ::
-       forall x xs. (CanHardFork xs, HasCanonicalTxIn xs, HasHardForkTxOut xs)
+       forall x xs. (CanHardFork xs, HasCanonicalTxIn xs)
     => Exactly xs History.Bound
        -- ^ Start bound of each era
     -> Index xs x
@@ -60,7 +60,6 @@ inject' ::
      ( Inject f
      , CanHardFork xs
      , HasCanonicalTxIn xs
-     , HasHardForkTxOut xs
      , Coercible a (f x)
      , Coercible b (f (HardForkBlock xs))
      )
@@ -191,7 +190,11 @@ instance Inject (Flip ExtLedgerState mk) where
 -- problematic, but extending 'ledgerViewForecastAt' is a lot more subtle; see
 -- @forecastNotFinal@.
 injectInitialExtLedgerState ::
-     forall x xs. (CanHardFork (x ': xs), HasLedgerTables (LedgerState (HardForkBlock (x : xs))))
+     forall x xs.
+     ( CanHardFork (x ': xs)
+     , LedgerTablesOp (LedgerState (HardForkBlock (x ': xs)))
+     , HasLedgerTables (LedgerState (HardForkBlock (x : xs)))
+     )
   => TopLevelConfig (HardForkBlock (x ': xs))
   -> ExtLedgerState x ValuesMK
   -> ExtLedgerState (HardForkBlock (x ': xs)) ValuesMK

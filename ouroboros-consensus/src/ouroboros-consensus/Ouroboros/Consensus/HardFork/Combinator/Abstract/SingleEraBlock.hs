@@ -47,7 +47,6 @@ import           Ouroboros.Consensus.Node.InitStorage
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Ticked
 import           Ouroboros.Consensus.Util.Condense
-import           Ouroboros.Consensus.Util.IOLike
 
 {-------------------------------------------------------------------------------
   SingleEraBlock
@@ -73,9 +72,10 @@ class ( LedgerSupportsProtocol blk
       , CanStowLedgerTables (LedgerState blk)
       , HasLedgerTables (LedgerState blk)
       , HasLedgerTables (Ticked (LedgerState blk))
-      , Eq (TxOut (LedgerState blk))
-      , Show (TxOut (LedgerState blk))
-      , NoThunks (TxOut (LedgerState blk))
+      , EncodeLedgerTables (LedgerState blk)
+      -- , Eq (TxOut (LedgerState blk))
+      -- , Show (TxOut (LedgerState blk))
+      -- , NoThunks (TxOut (LedgerState blk))
         -- Instances required to support testing
       , Eq   (GenTx blk)
       , Eq   (Validated (GenTx blk))
@@ -86,6 +86,7 @@ class ( LedgerSupportsProtocol blk
       , Show (ForgeStateInfo blk)
       , Show (ForgeStateUpdateError blk)
       , SameUTxOTypes (LedgerTables (LedgerState blk)) (LedgerState blk)
+      , Monoid (LedgerTables (LedgerState blk) KeysMK)
       ) => SingleEraBlock blk where
 
   -- | Era transition

@@ -35,9 +35,6 @@ import           Codec.CBOR.Decoding (Decoder, decodeListLenOf)
 import           Codec.CBOR.Encoding (Encoding, encodeListLen)
 import           Control.Monad.Except
 import           Data.Functor ((<&>))
-#if __GLASGOW_HASKELL__ >= 906
-import           Data.MemPack
-#endif
 import           Data.Proxy
 import           Data.Typeable
 import           GHC.Generics (Generic)
@@ -271,6 +268,10 @@ newtype instance LedgerTables (ExtLedgerState blk) mk = ExtLedgerTables {
 deriving instance NoThunks (LedgerTables (LedgerState blk) mk)
                => NoThunks (LedgerTables (ExtLedgerState blk) mk)
 
+instance EncodeLedgerTables (LedgerState blk) => EncodeLedgerTables (ExtLedgerState blk) where
+  valuesMKEncoder = valuesMKEncoder . getExtLedgerTables
+  valuesMKDecoder (ExtLedgerState st _) = ExtLedgerTables <$> valuesMKDecoder st
+
 instance LedgerTablesOp (LedgerState blk) => LedgerTablesOp (ExtLedgerState blk) where
   ltmap f = ExtLedgerTables . ltmap f . getExtLedgerTables
   lttraverse f = fmap ExtLedgerTables . lttraverse f . getExtLedgerTables
@@ -289,16 +290,6 @@ type instance TxOut (ExtLedgerState blk) = TxOut (LedgerState blk)
 
 instance (
     HasLedgerTables (LedgerState blk)
-#if __GLASGOW_HASKELL__ >= 906
-  , NoThunks (TxOut (LedgerState blk))
-  , NoThunks (TxIn (LedgerState blk))
-  , Show (TxOut (LedgerState blk))
-  , Show (TxIn (LedgerState blk))
-  , Eq (TxOut (LedgerState blk))
-  , Ord (TxIn (LedgerState blk))
-  , MemPack (TxOut (LedgerState blk))
-  , MemPack (TxIn (LedgerState blk))
-#endif
   ) => HasLedgerTables (ExtLedgerState blk) where
   projectLedgerTables (ExtLedgerState lstate _) =
       castLedgerTables (projectLedgerTables lstate)
@@ -318,16 +309,6 @@ instance LedgerTablesAreTrivial (Ticked (LedgerState blk))
 
 instance (
     HasLedgerTables (Ticked (LedgerState blk))
-#if __GLASGOW_HASKELL__ >= 906
-  , NoThunks (TxOut (LedgerState blk))
-  , NoThunks (TxIn (LedgerState blk))
-  , Show (TxOut (LedgerState blk))
-  , Show (TxIn (LedgerState blk))
-  , Eq (TxOut (LedgerState blk))
-  , Ord (TxIn (LedgerState blk))
-  , MemPack (TxIn (LedgerState blk))
-  , MemPack (TxOut (LedgerState blk))
-#endif
   ) => HasLedgerTables (Ticked (ExtLedgerState blk)) where
   projectLedgerTables (TickedExtLedgerState lstate _view _hstate) =
       TickedLedgerTables (ExtLedgerTables $ getTickedLedgerTables $ projectLedgerTables lstate)

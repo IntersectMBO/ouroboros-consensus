@@ -399,7 +399,7 @@ newLMDBBackingStore ::
   -> API.LiveLMDBFS m
      -- ^ The FS for the LMDB live database
   -> API.SnapshotsFS m
-  -> API.InitFrom (LedgerTables l ValuesMK)
+  -> API.InitFrom l (LedgerTables l ValuesMK)
   -> m (API.LedgerBackingStore m l)
 newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.SnapshotsFS snapFS') initFrom = do
    Trace.traceWith dbTracer API.BSOpening
@@ -429,8 +429,8 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
 
      -- copy from another lmdb path if appropriate
      case initFrom of
-       API.InitFromCopy fp  -> initFromLMDBs dbTracer limits snapFS fp liveFS path
-       API.InitFromValues{} -> pure ()
+       API.InitFromCopy _ fp -> initFromLMDBs dbTracer limits snapFS fp liveFS path
+       API.InitFromValues{}  -> pure ()
 
      -- open this database
      dbEnv <- liftIO $ LMDB.openEnvironment dbFilePath (unLMDBLimits limits)

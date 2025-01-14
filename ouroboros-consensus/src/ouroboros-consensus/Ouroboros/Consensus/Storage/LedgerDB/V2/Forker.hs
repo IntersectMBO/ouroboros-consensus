@@ -59,8 +59,6 @@ data ForkerEnv m l blk = ForkerEnv {
 deriving instance ( IOLike m
                   , LedgerSupportsProtocol blk
                   , NoThunks (l EmptyMK)
-                  , NoThunks (TxIn l)
-                  , NoThunks (TxOut l)
                   ) => NoThunks (ForkerEnv m l blk)
 
 implForkerReadTables ::

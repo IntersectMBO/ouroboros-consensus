@@ -166,26 +166,28 @@ module Ouroboros.Consensus.Ledger.Tables (
     -- ** Extracting and injecting ledger tables
   , HasLedgerTables (..)
   , HasTickedLedgerTables
-    -- * Serialization
-  , valuesMKDecoder
-  , valuesMKEncoder
+  --   -- * Serialization
+  -- , valuesMKDecoder
+  -- , valuesMKEncoder
     -- * Special classes
   , LedgerTablesAreTrivial
   , TrivialLedgerTables (..)
   , convertMapKind
   , trivialLedgerTables
+  , EncodeLedgerTables (..)
+  , LedgerTables (..)
   ) where
 
-import           Cardano.Binary (FromCBOR (fromCBOR), ToCBOR (toCBOR))
+-- import           Cardano.Binary (FromCBOR (fromCBOR), ToCBOR (toCBOR))
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
-import           Control.Monad (replicateM)
-import           Data.ByteString (ByteString)
+-- import           Control.Monad (replicateM)
+-- import           Data.ByteString (ByteString)
 import           Data.Kind (Constraint, Type)
-import qualified Data.Map.Strict as Map
-import           Data.MemPack
+-- import qualified Data.Map.Strict as Map
+-- import           Data.MemPack
 import           Data.Void (Void, absurd)
-import           NoThunks.Class (NoThunks (..))
+-- import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Ledger.Tables.Basics
 import           Ouroboros.Consensus.Ledger.Tables.Combinators
 import           Ouroboros.Consensus.Ledger.Tables.MapKind
@@ -198,15 +200,7 @@ import           Ouroboros.Consensus.Ticked
 -- | Extracting @'LedgerTables'@ from @l mk@ (which will share the same @mk@),
 -- or replacing the @'LedgerTables'@ associated to a particular @l@.
 type HasLedgerTables :: LedgerStateKind -> Constraint
-class ( Ord (TxIn l)
-      , Eq (TxOut l)
-      , Show (TxIn l)
-      , Show (TxOut l)
-      , NoThunks (TxIn l)
-      , NoThunks (TxOut l)
-      , MemPack (TxIn l)
-      , MemPack (TxOut l)
-      ) => HasLedgerTables l where
+class HasLedgerTables l where
 
   -- | Extract the ledger tables from a ledger state
   --
@@ -270,48 +264,36 @@ class CanStowLedgerTables l where
   Serialization Codecs
 -------------------------------------------------------------------------------}
 
+class EncodeLedgerTables l where
+
 -- | Default encoder of @'LedgerTables' l ''ValuesMK'@ to be used by the
 -- in-memory backing store.
-valuesMKEncoder ::
-     forall l. LedgerTablesOp l
-  => LedgerTables l ValuesMK
-  -> CBOR.Encoding
-valuesMKEncoder tables =
-       CBOR.encodeListLen 1
-    <> ltcollapse (ltmap go tables)
-  where
-    go :: (MemPack k, MemPack v) => ValuesMK k v -> K2 CBOR.Encoding k v
-    go (ValuesMK m) =
-         K2 $ CBOR.encodeMapLen (fromIntegral $ Map.size m)
-      <> Map.foldMapWithKey (\k v -> toCBOR (packByteString (k, v))) m
+  valuesMKEncoder ::
+       LedgerTables l ValuesMK
+    -> CBOR.Encoding
+-- valuesMKEncoder tables =
+--        CBOR.encodeListLen 1
+--     <> ltcollapse (ltmap go tables)
+--   where
+--     go :: (MemPack k, MemPack v) => ValuesMK k v -> K2 CBOR.Encoding k v
+--     go (ValuesMK m) =
+--          K2 $ CBOR.encodeMapLen (fromIntegral $ Map.size m)
+--       <> Map.foldMapWithKey (\k v -> toCBOR (packByteString (k, v))) m
 
 -- | Default decoder of @'LedgerTables' l ''ValuesMK'@ to be used by the
 -- in-memory backing store.
-valuesMKDecoder ::
-     forall l s. (Ord (TxIn l), MemPack (TxIn l), MemPack (TxOut l), LedgerTablesOp l)
-  => CBOR.Decoder s (LedgerTables l ValuesMK)
-valuesMKDecoder = do
-    _ <- CBOR.decodeListLenOf 1
-    mapLen <- CBOR.decodeMapLen
-    ltpure <$> go mapLen
- where
-  go :: Int
-     -> CBOR.Decoder s (ValuesMK (TxIn l) (TxOut l))
-  go len =
-    ValuesMK . Map.fromList
-      <$> replicateM len (unpackError @(TxIn l, TxOut l) @ByteString <$> fromCBOR)
-
--- TODO these instances will be gone once we update our ref for mempack which
--- @lehins will have to release.
---
--- Remove also the Wno-orphans above!
-instance MemPack Void where
-  packedByteCount = absurd
-  {-# INLINE packedByteCount #-}
-  packM = absurd
-  {-# INLINE packM #-}
-  unpackM = error "absurd"
-  {-# INLINE unpackM #-}
+  valuesMKDecoder ::
+       l EmptyMK -> CBOR.Decoder s (LedgerTables l ValuesMK)
+-- valuesMKDecoder = do
+--     _ <- CBOR.decodeListLenOf 1
+--     mapLen <- CBOR.decodeMapLen
+--     ltpure <$> go mapLen
+--  where
+--   go :: Int
+--      -> CBOR.Decoder s (ValuesMK (TxIn l) (TxOut l))
+--   go len =
+--     ValuesMK . Map.fromList
+--       <$> replicateM len (unpackError @(TxIn l, TxOut l) @ByteString <$> fromCBOR)
 
 {-------------------------------------------------------------------------------
   Special classes of ledger states
@@ -342,15 +324,17 @@ trivialLedgerTables = ltpure emptyMK
 type TrivialLedgerTables :: LedgerStateKind -> MapKind -> Type
 newtype TrivialLedgerTables l mk = TrivialLedgerTables { untrivialLedgerTables :: l mk }
 
+newtype instance LedgerTables (TrivialLedgerTables l) mk = NoLedgerTables { noLedgerTables :: Void }
+
 type instance TxIn  (TrivialLedgerTables l) = TxIn  l
 type instance TxOut (TrivialLedgerTables l) = TxOut l
 
 instance LedgerTablesAreTrivial l => LedgerTablesOp (TrivialLedgerTables l) where
-  ltmap _ = undefined
-  lttraverse _ = undefined
-  ltprod _ = undefined
-  ltpure _f = undefined
-  ltcollapse = undefined
+  ltmap _  = absurd . noLedgerTables
+  lttraverse _ = absurd . noLedgerTables
+  ltprod = absurd . noLedgerTables
+  ltpure _ = error "Absurd"
+  ltcollapse = absurd . noLedgerTables
 
 instance LedgerTablesAreTrivial l => LedgerTablesAreTrivial (TrivialLedgerTables l) where
   convertMapKind = TrivialLedgerTables . convertMapKind . untrivialLedgerTables
