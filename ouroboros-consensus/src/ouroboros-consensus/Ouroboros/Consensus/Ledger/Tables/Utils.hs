@@ -30,6 +30,7 @@ module Ouroboros.Consensus.Ledger.Tables.Utils (
   , valuesAsDiffs
     -- ** Combining diffs
   , prependDiffs
+  , prependDiffs''
     -- * Operations on 'TrackingMK'
     -- ** Augment
   , attachAndApplyDiffs
@@ -135,6 +136,17 @@ prependDiffs' ::
      )
   => l DiffMK -> l' DiffMK -> LedgerTables l'' DiffMK
 prependDiffs' l1 l2 = ltliftA2 rawPrependDiffs (ltprj l1) (ltprj l2)
+
+-- | Prepend diffs from the first ledger state to the diffs from the second
+-- ledger state. Returns ledger tables.
+prependDiffs'' ::
+     forall l l'.
+     ( SameUTxOTypes l l'
+     , HasLedgerTables l'
+     , LedgerTablesOp l'
+     )
+  => LedgerTables l DiffMK -> l' DiffMK -> l' DiffMK
+prependDiffs'' l1 l2 = ltwith l2 $ ltliftA2 rawPrependDiffs (castLedgerTables l1) (ltprj l2)
 
 -- | Prepend the diffs from @l1@ to @l2@. Returns @l2@.
 prependDiffs ::

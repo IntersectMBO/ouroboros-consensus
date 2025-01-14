@@ -202,7 +202,7 @@ epochInfoPrecomputedTransitionInfo shape transition st =
 -- 4. Attach the diffs resulting from step 3 to the @era3@ ledger state from
 --    step 2, and return it.
 extendToSlot :: forall xs.
-                (CanHardFork xs)
+                CanHardFork xs
              => HardForkLedgerConfig xs
              -> SlotNo
              -> HardForkState (Flip LedgerState EmptyMK) xs
@@ -257,7 +257,11 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
         guard (slot >= History.boundSlot endBound)
         return endBound
 
-    howExtend :: forall blk blk'. (HasLedgerTables (LedgerState blk), HasLedgerTables (LedgerState blk'))
+    howExtend :: forall blk blk'.
+                 ( HasLedgerTables (LedgerState blk)
+                 , LedgerTablesOp (LedgerState blk)
+                 , SingleEraBlock blk'
+                 )
               => TranslateLedgerState  blk blk'
               -> TranslateLedgerTables blk blk'
               -> History.Bound
@@ -278,13 +282,10 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
                   -- will just be a no-op. See the haddock for
                   -- 'translateLedgerTablesWith' and 'extendToSlot' for more
                   -- information.
-                . prependDiffs (
-                                 bimapLedgerTables @(LedgerState blk) @(LedgerState blk') (translateTxInWith f') (translateTxOutWith f')
-                               . ltprj
-                               . unFlip
-                               . currentState
-                               $ cur
-                               )
+                . prependDiffs'' (
+                    translateLedgerTablesWith f'
+                      $ ltprj $ unFlip $ currentState $ cur
+                    )
                 . translateLedgerStateWith f (History.boundEpoch currentEnd)
                 . forgetLedgerTables
                 . unFlip

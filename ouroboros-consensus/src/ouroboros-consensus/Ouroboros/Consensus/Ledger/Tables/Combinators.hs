@@ -64,7 +64,7 @@ module Ouroboros.Consensus.Ledger.Tables.Combinators (
   , type (:..:) (..)
     -- * New
   , LedgerTablesOp (..)
-  , BiMapLedgerTables (..)
+  , UpgradeLedgerTables (..)
   , SameUTxOTypes (..)
   ) where
 
@@ -116,10 +116,9 @@ class LedgerTablesOp l where
        LedgerTables l (K2 a)
     -> a
 
-class BiMapLedgerTables l l' where
-   bimapLedgerTables ::
-       (TxIn l -> TxIn l')
-    -> (TxOut l -> TxOut l')
+class UpgradeLedgerTables l l' where
+   upgradeLedgerTables ::
+       (mk (TxIn l) (TxOut l) -> mk (TxIn l') (TxOut l'))
     -> LedgerTables l mk
     -> LedgerTables l' mk
 

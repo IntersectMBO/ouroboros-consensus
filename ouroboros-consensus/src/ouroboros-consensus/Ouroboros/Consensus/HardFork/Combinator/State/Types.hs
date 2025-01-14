@@ -1,3 +1,4 @@
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -159,17 +160,19 @@ newtype TranslateLedgerState x y = TranslateLedgerState {
   }
 
 -- | Transate a 'LedgerTables' across an era transition.
-data TranslateLedgerTables x y = TranslateLedgerTables {
-    -- | Translate a 'TxIn' across an era transition.
-    --
-    -- See 'translateLedgerTablesWith'.
-    translateTxInWith  :: !(TxIn (LedgerState x) -> TxIn (LedgerState y))
+data TranslateLedgerTables x y =
+  TranslateLedgerTables (forall mk. LedgerTables (LedgerState x) mk -> LedgerTables (LedgerState y) mk)
+  -- TranslateLedgerTables {
+  --   -- | Translate a 'TxIn' across an era transition.
+  --   --
+  --   -- See 'translateLedgerTablesWith'.
+  --   translateTxInWith  :: !(TxIn (LedgerState x) -> TxIn (LedgerState y))
 
-    -- | Translate a 'TxOut' across an era transition.
-    --
-    -- See 'translateLedgerTablesWith'.
-  , translateTxOutWith :: !(TxOut (LedgerState x) -> TxOut (LedgerState y))
-  }
+  --   -- | Translate a 'TxOut' across an era transition.
+  --   --
+  --   -- See 'translateLedgerTablesWith'.
+  -- , translateTxOutWith :: !(TxOut (LedgerState x) -> TxOut (LedgerState y))
+  -- }
 
 newtype TranslateTxOut x y = TranslateTxOut (TxOut (LedgerState x) -> TxOut (LedgerState y))
 
@@ -198,13 +201,15 @@ newtype TranslateTxOut x y = TranslateTxOut (TxOut (LedgerState x) -> TxOut (Led
 -- previous eras, so it will be called only when crossing era boundaries,
 -- therefore the translation won't be equivalent to 'id'.
 translateLedgerTablesWith ::
-     (Ord (TxIn (LedgerState y)))
-  => TranslateLedgerTables x y
-  -> DiffMK (TxIn (LedgerState x)) (TxOut (LedgerState x))
-  -> DiffMK (TxIn (LedgerState y)) (TxOut (LedgerState y))
-translateLedgerTablesWith f =
-      mapKeysMK (translateTxInWith f)
-    . mapMK (translateTxOutWith f)
+     TranslateLedgerTables x y
+  -> LedgerTables (LedgerState x) DiffMK
+  -> LedgerTables (LedgerState y) DiffMK
+translateLedgerTablesWith (TranslateLedgerTables f) = f
+
+  -- upgradeLedgerTables
+  --   ( mapKeysMK (translateTxInWith f)
+  --   . mapMK (translateTxOutWith f)
+  --   )
 
 -- | Knowledge in a particular era of the transition to the next era
 data TransitionInfo =

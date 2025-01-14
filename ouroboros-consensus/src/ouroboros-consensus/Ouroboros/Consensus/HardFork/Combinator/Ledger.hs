@@ -946,32 +946,32 @@ instance All (Compose CanStowLedgerTables LedgerState) xs
         -> Flip LedgerState ValuesMK x
       unstowOne = Flip . unstowLedgerTables . unFlip
 
-injectLedgerTables ::
-     forall xs x mk. (
-          CanMapKeysMK mk
-        , CanMapMK mk
-        , HasCanonicalTxIn xs
-        , HasHardForkTxOut xs
-        )
-  => Index xs x
-  -> LedgerTables (LedgerState                x  ) mk
-  -> LedgerTables (LedgerState (HardForkBlock xs)) mk
-injectLedgerTables idx =
-    bimapLedgerTables (injectCanonicalTxIn idx) (injectHardForkTxOut idx)
+-- injectLedgerTables ::
+--      forall xs x mk. (
+--           CanMapKeysMK mk
+--         , CanMapMK mk
+--         , HasCanonicalTxIn xs
+--         , HasHardForkTxOut xs
+--         )
+--   => Index xs x
+--   -> LedgerTables (LedgerState                x  ) mk
+--   -> LedgerTables (LedgerState (HardForkBlock xs)) mk
+-- injectLedgerTables idx =
+--     bimapLedgerTables (injectCanonicalTxIn idx) (injectHardForkTxOut idx)
 
-ejectLedgerTables ::
-     forall xs x mk. (
-          CanMapKeysMK mk
-        , Ord (TxIn (LedgerState x))
-        , HasCanonicalTxIn xs
-        , CanMapMK mk
-        , HasHardForkTxOut xs
-        )
-  => Index xs x
-  -> LedgerTables (LedgerState (HardForkBlock xs)) mk
-  -> LedgerTables (LedgerState                x  ) mk
-ejectLedgerTables idx =
-    bimapLedgerTables (ejectCanonicalTxIn idx) (ejectHardForkTxOut idx)
+-- ejectLedgerTables ::
+--      forall xs x mk. (
+--           CanMapKeysMK mk
+--         , Ord (TxIn (LedgerState x))
+--         , HasCanonicalTxIn xs
+--         , CanMapMK mk
+--         , HasHardForkTxOut xs
+--         )
+--   => Index xs x
+--   -> LedgerTables (LedgerState (HardForkBlock xs)) mk
+--   -> LedgerTables (LedgerState                x  ) mk
+-- ejectLedgerTables idx =
+--     bimapLedgerTables (ejectCanonicalTxIn idx) (ejectHardForkTxOut idx)
 
 {-------------------------------------------------------------------------------
   HardForkTxIn

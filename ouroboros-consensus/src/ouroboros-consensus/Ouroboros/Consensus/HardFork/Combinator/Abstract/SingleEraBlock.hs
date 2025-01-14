@@ -85,6 +85,7 @@ class ( LedgerSupportsProtocol blk
       , Show (CannotForge blk)
       , Show (ForgeStateInfo blk)
       , Show (ForgeStateUpdateError blk)
+      , SameUTxOTypes (LedgerTables (LedgerState blk)) (LedgerState blk)
       ) => SingleEraBlock blk where
 
   -- | Era transition
