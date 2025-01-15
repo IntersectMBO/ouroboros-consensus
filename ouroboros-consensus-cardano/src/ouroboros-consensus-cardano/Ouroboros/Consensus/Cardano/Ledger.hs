@@ -59,7 +59,7 @@ instance CardanoHardForkConstraints c => LedgerTablesOp (LedgerState (CardanoBlo
   ltap (HardForkLedgerTables f) (HardForkLedgerTables v) =
     HardForkLedgerTables $ runIdentity $
       Tele.alignExtend
-        (InPairs.hmap
+        (InPairs.hcmap proxySingle
           (\x -> InPairs.ignoring
                  $ Tele.Extend
                  $ pure

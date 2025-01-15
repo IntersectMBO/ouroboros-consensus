@@ -475,8 +475,10 @@ translateLedgerStateByronToShelleyWrapper =
           }
 
 translateLedgerTablesByronToShelleyWrapper ::
+  (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody)) =>
      TranslateLedgerTables ByronBlock (ShelleyBlock (TPraos c) (ShelleyEra c))
-translateLedgerTablesByronToShelleyWrapper = TranslateLedgerTables undefined
+translateLedgerTablesByronToShelleyWrapper =
+  TranslateLedgerTables $ \NoByronTables -> emptyLedgerTables
 
 translateChainDepStateByronToShelleyWrapper ::
      RequiringBoth
