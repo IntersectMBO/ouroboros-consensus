@@ -66,7 +66,7 @@ import qualified Cardano.Ledger.BaseTypes as SL (epochInfoPure)
 import qualified Cardano.Ledger.BHeaderView as SL (BHeaderView)
 import           Cardano.Ledger.Binary.Plain (FromCBOR (..), ToCBOR (..),
                      enforceSize)
-import Data.SOP.Functors
+-- import Data.SOP.Functors
 import qualified Cardano.Ledger.Block as Core
 import           Cardano.Ledger.Core (Era, ppMaxBHSizeL, ppMaxTxSizeL)
 import qualified Cardano.Ledger.Core as Core
@@ -402,7 +402,9 @@ slUtxoL st vals =
 instance ShelleyBasedEra era => LedgerTablesOp (LedgerState (ShelleyBlock proto era)) where
   ltmap f (ShelleyLedgerTables mk) = ShelleyLedgerTables (f mk)
   lttraverse f (ShelleyLedgerTables mk) = ShelleyLedgerTables <$> f mk
-  ltprod (ShelleyLedgerTables mk1) (ShelleyLedgerTables mk2) = ShelleyLedgerTables $ Pair2 mk1 mk2
+--  ltprod (ShelleyLedgerTables mk1) (ShelleyLedgerTables mk2) = ShelleyLedgerTables $ Pair2 mk1 mk2
+  ltap (ShelleyLedgerTables mk1) (ShelleyLedgerTables mk2) =
+     ShelleyLedgerTables $ apFn2 mk1 mk2 -- where g (Pair2 f' x') = apFn2 f' x'
   ltpure _f = ShelleyLedgerTables $ undefined
   ltcollapse = unK2 . getShelleyLedgerTables
 

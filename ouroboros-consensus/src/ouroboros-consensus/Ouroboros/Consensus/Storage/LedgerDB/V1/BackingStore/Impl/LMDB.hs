@@ -26,6 +26,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB (
   , withDbSeqNoRWMaybeNull
   ) where
 
+import Data.Coerce
 import           Cardano.Slotting.Slot (SlotNo, WithOrigin (At))
 import qualified Codec.Serialise as S (Serialise (..))
 import qualified Control.Concurrent.Class.MonadSTM.TVar as IOLike
@@ -130,6 +131,12 @@ newtype DbSeqNo = DbSeqNo {
 
 -- | A 'MapKind' that represents an LMDB database handle
 data LMDBMK k v = LMDBMK !String !(LMDB.Database k v)
+
+instance CanMapKeysMK LMDBMK where
+  mapKeysMK _ (LMDBMK s db) = LMDBMK s $ coerce db
+
+instance CanMapMK LMDBMK where
+  mapMK _ (LMDBMK s db) = LMDBMK s $ coerce db
 
 {-------------------------------------------------------------------------------
   Low-level API

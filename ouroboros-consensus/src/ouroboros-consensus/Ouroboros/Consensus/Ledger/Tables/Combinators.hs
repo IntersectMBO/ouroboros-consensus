@@ -41,7 +41,6 @@ module Ouroboros.Consensus.Ledger.Tables.Combinators (
   , ltsequence
     -- * Applicative
     -- ** Utility functions
-  , ltap
   , ltliftA
   , ltliftA2
   , ltliftA3
@@ -72,8 +71,8 @@ module Ouroboros.Consensus.Ledger.Tables.Combinators (
 import           Data.Bifunctor
 import           Data.Kind
 import           Data.MemPack (MemPack)
-import           Data.SOP.Functors
 import           Ouroboros.Consensus.Ledger.Tables.Basics
+import           Ouroboros.Consensus.Ledger.Tables.MapKind
 import           Ouroboros.Consensus.Util ((...:), (..:), (.:))
 import Ouroboros.Consensus.Ticked
 
@@ -104,14 +103,22 @@ class LedgerTablesOp l where
     -> LedgerTables l mk1
     -> f (LedgerTables l mk2)
 
-  ltprod ::
-       LedgerTables l f
-    -> LedgerTables l g
-    -> LedgerTables l (f `Product2` g)
+  -- ltprod ::
+  --      (CanMapKeysMK f, CanMapKeysMK g) => LedgerTables l f
+  --   -> LedgerTables l g
+  --   -> LedgerTables l (f `Product2` g)
 
   ltpure ::
        ((Ord k, Eq v, MemPack k, MemPack v) => mk k v)
     -> LedgerTables l mk
+
+  ltap ::
+       (CanMapKeysMK mk1, CanMapMK mk1)
+    => LedgerTables l (mk1 -..-> mk2)
+    -> LedgerTables l mk1
+    -> LedgerTables l mk2
+-- ltap f x = ltmap g $ ltprod f x
+--   where g (Pair2 f' x') = apFn2 f' x'
 
   ltcollapse ::
        LedgerTables l (K2 a)
@@ -147,9 +154,10 @@ instance SameUTxOTypes (Ticked l) l where
 instance LedgerTablesOp l => LedgerTablesOp (Ticked l) where
   ltmap f = TickedLedgerTables . ltmap f . getTickedLedgerTables
   lttraverse f = fmap TickedLedgerTables . lttraverse f . getTickedLedgerTables
-  ltprod (TickedLedgerTables a) (TickedLedgerTables b) = TickedLedgerTables (ltprod a b)
+--  ltprod (TickedLedgerTables a) (TickedLedgerTables b) = TickedLedgerTables (ltprod a b)
   ltpure f = TickedLedgerTables $ ltpure f
   ltcollapse = ltcollapse . getTickedLedgerTables
+  ltap (TickedLedgerTables f) (TickedLedgerTables a) = TickedLedgerTables (ltap f a)
 
 -- instance SameUTxOTypes l (Ticked l) where
 --   castLedgerTables = coerce
@@ -210,23 +218,17 @@ ltsequence = lttraverse unComp2
 -- Utility functions
 --
 
-ltap ::
-     LedgerTablesOp l
-  => LedgerTables l (mk1 -..-> mk2)
-  -> LedgerTables l mk1
-  -> LedgerTables l mk2
-ltap f x = ltmap g $ ltprod f x
-  where g (Pair2 f' x') = apFn2 f' x'
+
 
 ltliftA ::
-     LedgerTablesOp l
+     (CanMapMK mk1, CanMapKeysMK mk1, LedgerTablesOp l)
   => (forall k v. (Ord k, Eq v) => mk1 k v -> mk2 k v)
   -> LedgerTables l mk1
   -> LedgerTables l mk2
 ltliftA f x = ltpure (fn2_1 f) `ltap` x
 
 ltliftA2 ::
-     LedgerTablesOp l
+     (CanMapMK mk1, CanMapMK mk2, CanMapKeysMK mk1, CanMapKeysMK mk2, LedgerTablesOp l)
   => (forall k v. (Ord k, Eq v, MemPack k, MemPack v) => mk1 k v -> mk2 k v -> mk3 k v)
   -> LedgerTables l mk1
   -> LedgerTables l mk2
@@ -234,7 +236,7 @@ ltliftA2 ::
 ltliftA2 f x x' = ltpure (fn2_2 f) `ltap` x `ltap` x'
 
 ltliftA3 ::
-     LedgerTablesOp l
+     (CanMapMK mk1, CanMapMK mk2, CanMapMK mk3, CanMapKeysMK mk1, CanMapKeysMK mk2, CanMapKeysMK mk3, LedgerTablesOp l)
   => (forall k v. (Eq v, Ord k) => mk1 k v -> mk2 k v -> mk3 k v -> mk4 k v)
   -> LedgerTables l mk1
   -> LedgerTables l mk2
@@ -243,7 +245,7 @@ ltliftA3 ::
 ltliftA3 f x x' x'' = ltpure (fn2_3 f) `ltap` x `ltap` x' `ltap` x''
 
 ltliftA4 ::
-     LedgerTablesOp l
+     (CanMapMK mk1, CanMapMK mk2, CanMapMK mk3, CanMapMK mk4, CanMapKeysMK mk1, CanMapKeysMK mk2, CanMapKeysMK mk3, CanMapKeysMK mk4, LedgerTablesOp l)
   => (forall k v. mk1 k v -> mk2 k v -> mk3 k v -> mk4 k v -> mk5 k v
      )
   -> LedgerTables l mk1
@@ -259,12 +261,21 @@ ltliftA4 f x x' x'' x''' =
 -------------------------------------------------------------------------------}
 
 ltzipWith2A ::
-     (Applicative f, LedgerTablesOp l)
+     (CanMapMK mk1, CanMapMK mk2, CanMapKeysMK mk1, CanMapKeysMK mk2, Applicative f, LedgerTablesOp l)
   => (forall k v. (Ord k, MemPack k, MemPack v) => mk1 k v -> mk2 k v -> f (mk3 k v))
   -> LedgerTables l mk1
   -> LedgerTables l mk2
   -> f (LedgerTables l mk3)
 ltzipWith2A f = ltsequence .: ltliftA2 (Comp2 .: f)
+
+
+instance CanMapKeysMK (Maybe :..: KeysMK) where
+  mapKeysMK f (Comp2 (Just ks)) = Comp2 $ Just $ mapKeysMK f ks
+  mapKeysMK _f (Comp2 Nothing) = Comp2 Nothing
+
+instance CanMapMK (Maybe :..: KeysMK) where
+  mapMK f (Comp2 (Just ks)) = Comp2 $ Just $ mapMK f ks
+  mapMK _f (Comp2 Nothing) = Comp2 Nothing
 
 {-------------------------------------------------------------------------------
   Collapsing

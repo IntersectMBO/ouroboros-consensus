@@ -47,6 +47,7 @@ module Data.SOP.Telescope (
   , alignExtend
   , alignExtendWithMe
   , alignExtendNS
+  , alignLongest
   , extendIf
   , retractIf
     -- * Additional API
@@ -554,3 +555,47 @@ instance ( All (Compose NoThunks g) xs
                    noThunks ("g" : "TS" : ctxt) g
                  , noThunks ("t" : "TS" : ctxt) t
                  ]
+
+-- alignWithLongest :: (Monad m, HasCallStack)
+--             => InPairs (Requiring g (Extend m g f)) xs  -- ^ How to extend
+--             -> NP (f -.-> f -.-> f) xs  -- ^ Function to apply at the tip
+--             -> Telescope g f xs          -- ^ Telescope we are aligning with
+--             -> Telescope g f xs -> m (Telescope g f xs)
+-- alignWithLongest es atTip = npToSListI atTip $
+--     alignLongest es atTip
+--   where
+--     precondition :: String
+--     precondition = "alignExtend: precondition violated"
+
+-- | Align a telescope with another, then apply a function to the tips
+--
+-- Aligning is a combination of extension and retraction, extending or
+-- retracting the telescope as required to match up with the other telescope.
+alignLongest :: forall m f g h xs. Monad m
+      => InPairs (Extend  m (K ()) f) xs  -- ^ How to extend
+      -> InPairs (Extend  m (K ()) g) xs  -- ^ How to extend
+      -> NP (f -.-> g -.-> h) xs
+      -> (Telescope (K ()) f xs, Telescope (K ()) g xs)           -- ^ Telescope we are aligning with
+      -> m (Telescope (K ()) h xs)
+alignLongest = \es1 es2 np ->
+    npToSListI np $ go es1 es2 np
+  where
+    go :: SListI xs'
+       => InPairs (Extend  m (K ()) f) xs'
+       -> InPairs (Extend  m (K ()) g) xs'
+       -> NP (f -.-> g -.-> h) xs'
+       -> (Telescope (K ()) f xs', Telescope (K ()) g xs')
+       -> m (Telescope (K ()) h xs')
+    go _ _  (f :* _) (TZ f'x, TZ fx) =
+        return $ TZ (f `apFn` f'x `apFn` fx)
+
+    go (PCons _ esf) (PCons _ esg) (_ :* fs) (TS _ f'x, TS _ fx) =
+        TS (K ()) <$> go esf esg fs (f'x, fx)
+
+    go (PCons e esf) (PCons _ esg) (_ :* fs) (TZ f'x, TS _ fx) = do
+        (_, fy) <- extendWith e f'x
+        TS (K ()) <$> go esf esg fs ((TZ fy), fx)
+
+    go (PCons _ esf) (PCons e esg) (_ :* fs) (TS _ t'x, TZ fx) = do
+        (_, fy) <- extendWith e fx
+        TS (K ()) <$> go esf esg fs (t'x, (TZ fy))

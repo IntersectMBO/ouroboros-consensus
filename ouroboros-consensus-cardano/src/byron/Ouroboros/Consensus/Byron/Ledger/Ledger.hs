@@ -201,7 +201,8 @@ instance LedgerTablesAreTrivial (Ticked (LedgerState ByronBlock)) where
 instance LedgerTablesOp (LedgerState ByronBlock) where
   ltmap _  NoByronTables = NoByronTables
   lttraverse _ NoByronTables = pure NoByronTables
-  ltprod NoByronTables NoByronTables = NoByronTables
+--   ltprod NoByronTables NoByronTables = NoByronTables
+  ltap NoByronTables NoByronTables = NoByronTables
   ltpure _ = NoByronTables
   ltcollapse = error "Absurd"
 

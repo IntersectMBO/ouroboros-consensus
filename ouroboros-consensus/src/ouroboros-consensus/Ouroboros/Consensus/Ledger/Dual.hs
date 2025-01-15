@@ -961,9 +961,10 @@ instance Monoid (LedgerTables (LedgerState m) KeysMK) => Monoid (LedgerTables (L
 instance LedgerTablesOp (LedgerState m) => LedgerTablesOp (LedgerState (DualBlock m a)) where
   ltmap f = DualLedgerTables . ltmap f . getDualLedgerTables
   lttraverse f = fmap DualLedgerTables . lttraverse f . getDualLedgerTables
-  ltprod (DualLedgerTables a) (DualLedgerTables b) = DualLedgerTables (ltprod a b)
+--  ltprod (DualLedgerTables a) (DualLedgerTables b) = DualLedgerTables (ltprod a b)
   ltpure f = DualLedgerTables $ ltpure f
   ltcollapse = ltcollapse . getDualLedgerTables
+  ltap (DualLedgerTables f) (DualLedgerTables a) = DualLedgerTables (ltap f a)
 
 instance SameUTxOTypes (LedgerState blk) (LedgerState (DualBlock blk a)) where
   castLedgerTables = DualLedgerTables

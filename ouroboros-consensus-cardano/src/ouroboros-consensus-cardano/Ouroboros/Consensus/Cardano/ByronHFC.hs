@@ -12,10 +12,6 @@
 module Ouroboros.Consensus.Cardano.ByronHFC (ByronBlockHFC) where
 
 import qualified Data.Map.Strict as Map
-import           Data.MemPack
-import           Data.SOP.Index (Index (..))
-import           Data.Void (Void, absurd)
-import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger
 import           Ouroboros.Consensus.Byron.Node ()
@@ -25,7 +21,6 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.Degenerate
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
-import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Storage.Serialisation
 
@@ -90,31 +85,31 @@ instance SerialiseHFC '[ByronBlock] where
   Canonical TxIn
 -------------------------------------------------------------------------------}
 
-instance HasCanonicalTxIn '[ByronBlock] where
-  newtype instance CanonicalTxIn '[ByronBlock] = ByronHFCTxIn {
-      getByronHFCTxIn :: Void
-    }
-    deriving stock (Show, Eq, Ord)
-    deriving newtype (NoThunks, MemPack)
+-- instance HasCanonicalTxIn '[ByronBlock] where
+--   newtype instance CanonicalTxIn '[ByronBlock] = ByronHFCTxIn {
+--       getByronHFCTxIn :: Void
+--     }
+--     deriving stock (Show, Eq, Ord)
+--     deriving newtype (NoThunks, MemPack)
 
-  injectCanonicalTxIn IZ key      = absurd key
-  injectCanonicalTxIn (IS idx') _ = case idx' of {}
+--   injectCanonicalTxIn IZ key      = absurd key
+--   injectCanonicalTxIn (IS idx') _ = case idx' of {}
 
-  ejectCanonicalTxIn _ key = absurd $ getByronHFCTxIn key
+--   ejectCanonicalTxIn _ key = absurd $ getByronHFCTxIn key
 
-instance HasHardForkTxOut '[ByronBlock] where
-  type instance HardForkTxOut '[ByronBlock] = Void
-  injectHardForkTxOut IZ txout    = absurd txout
-  injectHardForkTxOut (IS idx') _ = case idx' of {}
-  ejectHardForkTxOut IZ txout    = absurd txout
-  ejectHardForkTxOut (IS idx') _ = case idx' of {}
+-- instance HasHardForkTxOut '[ByronBlock] where
+--   type instance HardForkTxOut '[ByronBlock] = Void
+--   injectHardForkTxOut IZ txout    = absurd txout
+--   injectHardForkTxOut (IS idx') _ = case idx' of {}
+--   ejectHardForkTxOut IZ txout    = absurd txout
+--   ejectHardForkTxOut (IS idx') _ = case idx' of {}
 
-instance BlockSupportsHFLedgerQuery '[ByronBlock] where
-  answerBlockQueryHFLookup IZ      _cfg  (q :: BlockQuery ByronBlock QFLookupTables result) _dlv = case q of {}
-  answerBlockQueryHFLookup (IS is) _cfg _q _dlv = case is of {}
+-- instance BlockSupportsHFLedgerQuery '[ByronBlock] where
+--   answerBlockQueryHFLookup IZ      _cfg  (q :: BlockQuery ByronBlock QFLookupTables result) _dlv = case q of {}
+--   answerBlockQueryHFLookup (IS is) _cfg _q _dlv = case is of {}
 
-  answerBlockQueryHFTraverse IZ      _cfg  (q :: BlockQuery ByronBlock QFTraverseTables result) _dlv = case q of {}
-  answerBlockQueryHFTraverse (IS is) _cfg _q _dlv = case is of {}
+--   answerBlockQueryHFTraverse IZ      _cfg  (q :: BlockQuery ByronBlock QFTraverseTables result) _dlv = case q of {}
+--   answerBlockQueryHFTraverse (IS is) _cfg _q _dlv = case is of {}
 
-  queryLedgerGetTraversingFilter IZ (q :: BlockQuery ByronBlock QFTraverseTables result) = case q of {}
-  queryLedgerGetTraversingFilter (IS is) _q = case is of {}
+--   queryLedgerGetTraversingFilter IZ (q :: BlockQuery ByronBlock QFTraverseTables result) = case q of {}
+--   queryLedgerGetTraversingFilter (IS is) _q = case is of {}

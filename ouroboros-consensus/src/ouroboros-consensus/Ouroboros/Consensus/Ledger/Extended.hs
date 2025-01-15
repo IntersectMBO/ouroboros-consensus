@@ -275,9 +275,10 @@ instance EncodeLedgerTables (LedgerState blk) => EncodeLedgerTables (ExtLedgerSt
 instance LedgerTablesOp (LedgerState blk) => LedgerTablesOp (ExtLedgerState blk) where
   ltmap f = ExtLedgerTables . ltmap f . getExtLedgerTables
   lttraverse f = fmap ExtLedgerTables . lttraverse f . getExtLedgerTables
-  ltprod (ExtLedgerTables a) (ExtLedgerTables b) = ExtLedgerTables (ltprod a b)
+--  ltprod (ExtLedgerTables a) (ExtLedgerTables b) = ExtLedgerTables (ltprod a b)
   ltpure f = ExtLedgerTables $ ltpure f
   ltcollapse = ltcollapse . getExtLedgerTables
+  ltap (ExtLedgerTables f) (ExtLedgerTables a) = ExtLedgerTables (ltap f a)
 
 instance SameUTxOTypes (LedgerState blk) (ExtLedgerState blk) where
   castLedgerTables = ExtLedgerTables

@@ -1,3 +1,4 @@
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
@@ -32,29 +33,17 @@ module Ouroboros.Consensus.Cardano.Ledger (
   ) where
 
 
+import Data.Functor.Identity
 
-import qualified Cardano.Ledger.Shelley.API as SL
-import           Data.Maybe
-import           Data.MemPack
+
 import           Data.SOP.BasicFunctors
-import           Data.SOP.Index
 import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.Strict
-import           Data.Void
-import           GHC.Generics (Generic)
-import           NoThunks.Class
-import           Ouroboros.Consensus.Block (BlockProtocol)
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.CanHardFork
 import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.State.Types
 import           Ouroboros.Consensus.Ledger.Tables
-import           Ouroboros.Consensus.Protocol.Praos (Praos)
-import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
-import           Ouroboros.Consensus.Shelley.Ledger (IsShelleyBlock,
-                     ShelleyBlock, ShelleyBlockLedgerEra, ShelleyTxIn (..))
-import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
-import           Ouroboros.Consensus.TypeFamilyWrappers
 import Data.SOP.Functors
 import qualified Data.SOP.Telescope as Tele
 
@@ -67,11 +56,26 @@ instance CardanoHardForkConstraints c => LedgerTablesOp (LedgerState (CardanoBlo
     HardForkLedgerTables
       <$> hctraverse' proxySingle (fmap (Flip . LedgerTablesLedgerState) . lttraverse f . getLedgerTables .unFlip)  tbs
 
-  ltprod -- (HardForkLedgerTables tbs) (HardForkLedgerTables tbs2)
-    =
-    undefined
+  ltap (HardForkLedgerTables f) (HardForkLedgerTables v) =
+    HardForkLedgerTables $ runIdentity $
+      Tele.alignExtend
+        (InPairs.hmap
+          (\x -> InPairs.ignoring
+                 $ Tele.Extend
+                 $ pure
+                 . (K (),)
+                 . Flip
+                 . LedgerTablesLedgerState
+                 . getTranslateLedgerTables x
+                 . getLedgerTables
+                 . unFlip
+          ) $ translateLedgerTables hardForkEraTranslation)
+        (hcpure proxySingle (Fn $ \(Flip (LedgerTablesLedgerState t1)) -> Fn $ \(Flip (LedgerTablesLedgerState t2)) -> Flip $ LedgerTablesLedgerState $ ltap t1 t2))
+        f
+        v
   ltpure _ = undefined
-  ltcollapse = undefined
+  ltcollapse (HardForkLedgerTables tbs) =
+    hcollapse $ hcmap proxySingle (K . ltcollapse . getLedgerTables . unFlip) $ Tele.tip tbs
 -- instance CardanoHardForkConstraints c
 --       => HasCanonicalTxIn (CardanoEras c) where
 --   newtype instance CanonicalTxIn (CardanoEras c) = CardanoTxIn {

@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -205,6 +206,12 @@ newtype SeqDiffMK  k v = SeqDiffMK { getSeqDiffMK :: DiffSeq k v }
 
 instance ZeroableMK SeqDiffMK where
   emptyMK = SeqDiffMK empty
+
+instance CanMapKeysMK SeqDiffMK where
+  mapKeysMK _f (SeqDiffMK _ds) = undefined
+
+instance CanMapMK SeqDiffMK where
+  mapMK = undefined
 
 {-------------------------------------------------------------------------------
   CodecMK
