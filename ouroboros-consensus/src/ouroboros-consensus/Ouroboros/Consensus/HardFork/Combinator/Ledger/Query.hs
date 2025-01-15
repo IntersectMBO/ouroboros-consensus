@@ -21,7 +21,7 @@
 
 module Ouroboros.Consensus.HardFork.Combinator.Ledger.Query (
     BlockQuery (..)
-  , BlockSupportsHFLedgerQuery (..)
+  -- , BlockSupportsHFLedgerQuery (..)
   , HardForkQueryResult
   , QueryAnytime (..)
   , QueryHardFork (..)
@@ -53,7 +53,6 @@ import           Data.SOP.Match (Mismatch (..), mustMatchNS)
 import           Data.SOP.Strict
 import           Data.Type.Equality
 import           Data.Typeable (Typeable)
-import           NoThunks.Class
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Abstract (hardForkSummary)
@@ -76,8 +75,7 @@ import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Node.Serialisation (Some (..))
 import           Ouroboros.Consensus.Storage.LedgerDB
-import           Ouroboros.Consensus.TypeFamilyWrappers (WrapChainDepState (..),
-                     WrapTxOut)
+import           Ouroboros.Consensus.TypeFamilyWrappers (WrapChainDepState (..))
 import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Consensus.Util.IOLike (MonadSTM (atomically))
 
@@ -108,43 +106,43 @@ data instance BlockQuery (HardForkBlock xs) footprint result where
     => QueryHardFork (x ': xs) result
     -> BlockQuery (HardForkBlock (x ': xs)) QFNoTables result
 
--- | Queries that use ledger tables usually can be implemented faster if we work
--- with the hard fork tables rather than projecting everything to the
--- appropriate era before we process the query. This class should be used to
--- implement how these queries that have a footprint which is not @QFNoTables@
--- are answered.
-class ( All (Compose NoThunks WrapTxOut) xs
-      , All (Compose Show WrapTxOut) xs
-      , All (Compose Eq WrapTxOut) xs
-      , All (Compose HasTickedLedgerTables LedgerState) xs
-      , All (Compose HasLedgerTables LedgerState) xs
-      ) => BlockSupportsHFLedgerQuery xs where
-  answerBlockQueryHFLookup ::
-       All SingleEraBlock xs
-    => Monad m
-    => Index xs x
-    -> ExtLedgerCfg x
-    -> BlockQuery x QFLookupTables result
-    -> ReadOnlyForker' m (HardForkBlock xs)
-    -> m result
+-- -- | Queries that use ledger tables usually can be implemented faster if we work
+-- -- with the hard fork tables rather than projecting everything to the
+-- -- appropriate era before we process the query. This class should be used to
+-- -- implement how these queries that have a footprint which is not @QFNoTables@
+-- -- are answered.
+-- class ( All (Compose NoThunks WrapTxOut) xs
+--       , All (Compose Show WrapTxOut) xs
+--       , All (Compose Eq WrapTxOut) xs
+--       , All (Compose HasTickedLedgerTables LedgerState) xs
+--       , All (Compose HasLedgerTables LedgerState) xs
+--       ) => BlockSupportsHFLedgerQuery xs where
+--   answerBlockQueryHFLookup ::
+--        All SingleEraBlock xs
+--     => Monad m
+--     => Index xs x
+--     -> ExtLedgerCfg x
+--     -> BlockQuery x QFLookupTables result
+--     -> ReadOnlyForker' m (HardForkBlock xs)
+--     -> m result
 
-  answerBlockQueryHFTraverse ::
-       All SingleEraBlock xs
-    => Monad m
-    => Index xs x
-    -> ExtLedgerCfg x
-    -> BlockQuery x QFTraverseTables result
-    -> ReadOnlyForker' m (HardForkBlock xs)
-    -> m result
+--   answerBlockQueryHFTraverse ::
+--        All SingleEraBlock xs
+--     => Monad m
+--     => Index xs x
+--     -> ExtLedgerCfg x
+--     -> BlockQuery x QFTraverseTables result
+--     -> ReadOnlyForker' m (HardForkBlock xs)
+--     -> m result
 
-  -- | The @QFTraverseTables@ queries consist of some filter on the @TxOut@. This class
-  -- provides that filter so that @answerBlockQueryHFAll@ can be implemented
-  -- in an abstract manner depending on this function.
-  queryLedgerGetTraversingFilter ::
-       Index xs x
-    -> BlockQuery x QFTraverseTables result
-    -> TxOut (LedgerState (HardForkBlock xs))
-    -> Bool
+--   -- | The @QFTraverseTables@ queries consist of some filter on the @TxOut@. This class
+--   -- provides that filter so that @answerBlockQueryHFAll@ can be implemented
+--   -- in an abstract manner depending on this function.
+--   queryLedgerGetTraversingFilter ::
+--        Index xs x
+--     -> BlockQuery x QFTraverseTables result
+--     -> TxOut (LedgerState (HardForkBlock xs))
+--     -> Bool
 
 {-------------------------------------------------------------------------------
   Instances
@@ -194,7 +192,7 @@ instance All SingleEraBlock xs => SameDepIndex2 (BlockQuery (HardForkBlock xs)) 
 -------------------------------------------------------------------------------}
 
 instance ( All SingleEraBlock xs
-         , BlockSupportsHFLedgerQuery xs
+--         , BlockSupportsHFLedgerQuery xs
          , CanHardFork xs
          )
       => BlockSupportsLedgerQuery (HardForkBlock xs) where
@@ -231,7 +229,7 @@ instance ( All SingleEraBlock xs
 
 -- | NOT EXPORTED, for footprints other than 'QFNoTables'
 answerBlockQueryHelper ::
-       (MonadSTM m, BlockSupportsHFLedgerQuery xs, CanHardFork xs)
+       (MonadSTM m, CanHardFork xs) --BlockSupportsHFLedgerQuery xs, CanHardFork xs)
     => (   NP ExtLedgerCfg xs
         -> QueryIfCurrent xs footprint result
         -> ReadOnlyForker' m (HardForkBlock xs)
@@ -346,7 +344,8 @@ interpretQueryIfCurrent = go
         Left $ MismatchEraInfo $ MR (hardForkQueryInfo qry) (ledgerInfo st)
 
 interpretQueryIfCurrentLookup ::
-     forall result xs m. (MonadSTM m, BlockSupportsHFLedgerQuery xs, CanHardFork xs)
+     forall result xs m. (MonadSTM m-- , BlockSupportsHFLedgerQuery xs
+                         , CanHardFork xs)
   => NP ExtLedgerCfg xs
   -> QueryIfCurrent xs QFLookupTables result
   -> ReadOnlyForker' m (HardForkBlock xs)
@@ -362,14 +361,15 @@ interpretQueryIfCurrentLookup cfg q forker = do
        -> NS (Flip ExtLedgerState EmptyMK) xs'
        -> m (HardForkQueryResult xs' result)
     go (idx :* _) (c :* _)  (QZ qry) _ =
-        Right <$> answerBlockQueryHFLookup idx c qry forker
+        Right <$> answerBlockQueryLookup c qry (singleEraForker idx forker)
     go (_ :* idx) (_ :* cs) (QS qry) (S st) =
         first shiftMismatch <$> go idx cs qry st
     go _          _         (QS qry) (Z (Flip st)) =
         pure $ Left $ MismatchEraInfo $ MR (hardForkQueryInfo qry) (ledgerInfo st)
 
 interpretQueryIfCurrentTraverse ::
-     forall result xs m. (MonadSTM m, BlockSupportsHFLedgerQuery xs, CanHardFork xs)
+     forall result xs m. (MonadSTM m-- , BlockSupportsHFLedgerQuery xs
+                         , CanHardFork xs)
   => NP ExtLedgerCfg xs
   -> QueryIfCurrent xs QFTraverseTables result
   -> ReadOnlyForker' m (HardForkBlock xs)
@@ -385,11 +385,14 @@ interpretQueryIfCurrentTraverse cfg q forker = do
        -> NS (Flip ExtLedgerState EmptyMK) xs'
        -> m (HardForkQueryResult xs' result)
     go (idx :* _) (c :* _)  (QZ qry) _ =
-        Right <$> answerBlockQueryHFTraverse idx c qry forker
+        Right <$> answerBlockQueryTraverse c qry (singleEraForker idx forker)
     go (_ :* idx) (_ :* cs) (QS qry) (S st) =
         first shiftMismatch <$> go idx cs qry st
     go _          _         (QS qry) (Z (Flip st)) =
         pure $ Left $ MismatchEraInfo $ MR (hardForkQueryInfo qry) (ledgerInfo st)
+
+singleEraForker :: Index xs x -> ReadOnlyForker' m (HardForkBlock xs) -> ReadOnlyForker' m x
+singleEraForker = undefined
 
 {-------------------------------------------------------------------------------
   Any era queries

@@ -62,7 +62,6 @@ import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
 import qualified Data.SOP.Strict as SOP
 import           Data.SOP.Tails (Tails (..))
 import qualified Data.SOP.Tails as Tails
-import           Data.Void
 import           Data.Word
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
@@ -477,10 +476,7 @@ translateLedgerStateByronToShelleyWrapper =
 
 translateLedgerTablesByronToShelleyWrapper ::
      TranslateLedgerTables ByronBlock (ShelleyBlock (TPraos c) (ShelleyEra c))
-translateLedgerTablesByronToShelleyWrapper = TranslateLedgerTables {
-      translateTxInWith  = absurd
-    , translateTxOutWith = absurd
-    }
+translateLedgerTablesByronToShelleyWrapper = TranslateLedgerTables undefined
 
 translateChainDepStateByronToShelleyWrapper ::
      RequiringBoth
@@ -617,7 +613,7 @@ translateLedgerStateShelleyToAllegraWrapper =
                   -- When adding more tables, this decision might need to be
                   -- revisited, as there might be other diffs produced in the
                   -- translation.
-                  avvmsAsDeletions = LedgerTables
+                  avvmsAsDeletions = ShelleyLedgerTables
                                    . DiffMK
                                    . Diff.fromMapDeletes
                                    . Map.mapKeys ShelleyTxIn
@@ -630,7 +626,7 @@ translateLedgerStateShelleyToAllegraWrapper =
                   -- them, modifying the reserves accordingly.
                   stowedState = stowLedgerTables
                               . withLedgerTables ls
-                              . LedgerTables
+                              . ShelleyLedgerTables
                               . ValuesMK
                               . Map.mapKeys ShelleyTxIn
                               $ avvms
@@ -644,14 +640,13 @@ translateLedgerStateShelleyToAllegraWrapper =
         }
 
 translateLedgerTablesShelleyToAllegraWrapper ::
-     PraosCrypto c
+     forall c. PraosCrypto c
   => TranslateLedgerTables
       (ShelleyBlock (TPraos c) (ShelleyEra c))
        (ShelleyBlock (TPraos c) (AllegraEra c))
-translateLedgerTablesShelleyToAllegraWrapper = TranslateLedgerTables {
-      translateTxInWith  = coerce
-    , translateTxOutWith = SL.upgradeTxOut
-    }
+translateLedgerTablesShelleyToAllegraWrapper = TranslateLedgerTables
+  $ \(ShelleyLedgerTables mk) ->
+     ShelleyLedgerTables $ mapKeysMK coerce . mapMK SL.upgradeTxOut $ mk
 
 translateTxShelleyToAllegraWrapper ::
      (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
@@ -697,10 +692,9 @@ translateLedgerTablesAllegraToMaryWrapper ::
   => TranslateLedgerTables
        (ShelleyBlock (TPraos c) (AllegraEra c))
        (ShelleyBlock (TPraos c) (MaryEra c))
-translateLedgerTablesAllegraToMaryWrapper = TranslateLedgerTables {
-      translateTxInWith  = coerce
-    , translateTxOutWith = SL.upgradeTxOut
-    }
+translateLedgerTablesAllegraToMaryWrapper = TranslateLedgerTables
+  $ \(ShelleyLedgerTables mk) ->
+     ShelleyLedgerTables $ mapKeysMK coerce . mapMK SL.upgradeTxOut $ mk
 
 translateTxAllegraToMaryWrapper ::
      (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
@@ -746,10 +740,9 @@ translateLedgerTablesMaryToAlonzoWrapper ::
   => TranslateLedgerTables
        (ShelleyBlock (TPraos c) (MaryEra c))
        (ShelleyBlock (TPraos c) (AlonzoEra c))
-translateLedgerTablesMaryToAlonzoWrapper = TranslateLedgerTables {
-      translateTxInWith  = coerce
-    , translateTxOutWith = SL.upgradeTxOut
-    }
+translateLedgerTablesMaryToAlonzoWrapper = TranslateLedgerTables
+  $ \(ShelleyLedgerTables mk) ->
+     ShelleyLedgerTables $ mapKeysMK coerce . mapMK SL.upgradeTxOut $ mk
 
 getAlonzoTranslationContext ::
      WrapLedgerConfig (ShelleyBlock (TPraos c) (AlonzoEra c))
@@ -816,10 +809,9 @@ translateLedgerTablesAlonzoToBabbageWrapper ::
   => TranslateLedgerTables
        (ShelleyBlock (TPraos c) (AlonzoEra c))
        (ShelleyBlock (Praos c) (BabbageEra c))
-translateLedgerTablesAlonzoToBabbageWrapper = TranslateLedgerTables {
-      translateTxInWith  = coerce
-    , translateTxOutWith = SL.upgradeTxOut
-    }
+translateLedgerTablesAlonzoToBabbageWrapper = TranslateLedgerTables
+  $ \(ShelleyLedgerTables mk) ->
+     ShelleyLedgerTables $ mapKeysMK coerce . mapMK SL.upgradeTxOut $ mk
 
 translateTxAlonzoToBabbageWrapper ::
      (Praos.PraosCrypto c)
@@ -885,10 +877,9 @@ translateLedgerTablesBabbageToConwayWrapper ::
   => TranslateLedgerTables
        (ShelleyBlock (Praos c) (BabbageEra c))
        (ShelleyBlock (Praos c) (ConwayEra c))
-translateLedgerTablesBabbageToConwayWrapper = TranslateLedgerTables {
-      translateTxInWith  = coerce
-    , translateTxOutWith = SL.upgradeTxOut
-    }
+translateLedgerTablesBabbageToConwayWrapper = TranslateLedgerTables
+  $ \(ShelleyLedgerTables mk) ->
+     ShelleyLedgerTables $ mapKeysMK coerce . mapMK SL.upgradeTxOut $ mk
 
 getConwayTranslationContext ::
      WrapLedgerConfig (ShelleyBlock (Praos c) (ConwayEra c))

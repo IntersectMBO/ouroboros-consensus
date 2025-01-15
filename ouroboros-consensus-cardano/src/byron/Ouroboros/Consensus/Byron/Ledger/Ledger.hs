@@ -188,17 +188,44 @@ instance IsLedger (LedgerState ByronBlock) where
 type instance TxIn  (LedgerState ByronBlock) = Void
 type instance TxOut (LedgerState ByronBlock) = Void
 
+data instance LedgerTables (LedgerState ByronBlock) mk = NoByronTables deriving Generic
+
+deriving instance NoThunks (LedgerTables (LedgerState ByronBlock) ValuesMK)
+deriving instance NoThunks (LedgerTables (LedgerState ByronBlock) SeqDiffMK)
+
 instance LedgerTablesAreTrivial (LedgerState ByronBlock) where
   convertMapKind (ByronLedgerState x y z) = ByronLedgerState x y z
 instance LedgerTablesAreTrivial (Ticked (LedgerState ByronBlock)) where
   convertMapKind (TickedByronLedgerState x y) = TickedByronLedgerState x y
 
-deriving via TrivialLedgerTables (LedgerState ByronBlock)
-    instance HasLedgerTables (LedgerState ByronBlock)
-deriving via TrivialLedgerTables (Ticked (LedgerState ByronBlock))
-    instance HasLedgerTables (Ticked (LedgerState ByronBlock))
-deriving via TrivialLedgerTables (LedgerState ByronBlock)
-    instance CanStowLedgerTables (LedgerState ByronBlock)
+instance LedgerTablesOp (LedgerState ByronBlock) where
+  ltmap _  NoByronTables = NoByronTables
+  lttraverse _ NoByronTables = pure NoByronTables
+  ltprod NoByronTables NoByronTables = NoByronTables
+  ltpure _ = NoByronTables
+  ltcollapse = error "Absurd"
+
+instance Semigroup (LedgerTables (LedgerState ByronBlock) KeysMK) where
+  NoByronTables <> NoByronTables = NoByronTables
+
+instance Monoid (LedgerTables (LedgerState ByronBlock) KeysMK) where
+  mempty = NoByronTables
+
+instance EncodeLedgerTables (LedgerState ByronBlock) where
+  valuesMKEncoder NoByronTables = mempty
+  valuesMKDecoder _ = pure NoByronTables
+
+instance HasLedgerTables (LedgerState ByronBlock) where
+  projectLedgerTables _ = NoByronTables
+  withLedgerTables s NoByronTables = convertMapKind s
+
+instance HasLedgerTables (Ticked (LedgerState ByronBlock)) where
+  projectLedgerTables _ = TickedLedgerTables NoByronTables
+  withLedgerTables s (TickedLedgerTables NoByronTables) = convertMapKind s
+
+instance CanStowLedgerTables (LedgerState ByronBlock) where
+  stowLedgerTables = convertMapKind
+  unstowLedgerTables = convertMapKind
 
 {-------------------------------------------------------------------------------
   Supporting the various consensus interfaces

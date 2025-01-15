@@ -66,6 +66,7 @@ module Ouroboros.Consensus.Ledger.Tables.Combinators (
   , LedgerTablesOp (..)
   , UpgradeLedgerTables (..)
   , SameUTxOTypes (..)
+  -- , LedgerTablesOp' (..)
   ) where
 
 import           Data.Bifunctor
@@ -122,6 +123,14 @@ class UpgradeLedgerTables l l' where
     -> LedgerTables l mk
     -> LedgerTables l' mk
 
+-- class LedgerTablesOp' l where
+--   ltpure ::
+--        ((Ord k, Eq v, MemPack k, MemPack v) => mk k v)
+--     -> LedgerTables l mk
+  -- ltmap' ::
+  --      (mk1 (TxIn l) (TxOut l) -> mk2 (TxIn l) (TxOut l))
+  --   -> LedgerTables l mk1
+  --   -> LedgerTables l mk2
 
 class (TxIn l ~ TxIn l', TxOut l ~ TxOut l') => SameUTxOTypes l l' where
   castLedgerTables :: LedgerTables l mk -> LedgerTables l' mk

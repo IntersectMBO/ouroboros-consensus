@@ -171,7 +171,7 @@ module Ouroboros.Consensus.Ledger.Tables (
   -- , valuesMKEncoder
     -- * Special classes
   , LedgerTablesAreTrivial
-  , TrivialLedgerTables (..)
+--  , TrivialLedgerTables (..)
   , convertMapKind
   , trivialLedgerTables
   , EncodeLedgerTables (..)
@@ -183,10 +183,10 @@ import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 -- import           Control.Monad (replicateM)
 -- import           Data.ByteString (ByteString)
-import           Data.Kind (Constraint, Type)
+import           Data.Kind (Constraint) --, Type)
 -- import qualified Data.Map.Strict as Map
 -- import           Data.MemPack
-import           Data.Void (Void, absurd)
+import           Data.Void (Void) --, absurd)
 -- import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Ledger.Tables.Basics
 import           Ouroboros.Consensus.Ledger.Tables.Combinators
@@ -318,31 +318,3 @@ trivialLedgerTables ::
      (ZeroableMK mk, LedgerTablesOp l)
   => LedgerTables l mk
 trivialLedgerTables = ltpure emptyMK
-
--- | A newtype to @derive via@ the instances for blocks with trivial ledger
--- tables.
-type TrivialLedgerTables :: LedgerStateKind -> MapKind -> Type
-newtype TrivialLedgerTables l mk = TrivialLedgerTables { untrivialLedgerTables :: l mk }
-
-newtype instance LedgerTables (TrivialLedgerTables l) mk = NoLedgerTables { noLedgerTables :: Void }
-
-type instance TxIn  (TrivialLedgerTables l) = TxIn  l
-type instance TxOut (TrivialLedgerTables l) = TxOut l
-
-instance LedgerTablesAreTrivial l => LedgerTablesOp (TrivialLedgerTables l) where
-  ltmap _  = absurd . noLedgerTables
-  lttraverse _ = absurd . noLedgerTables
-  ltprod = absurd . noLedgerTables
-  ltpure _ = error "Absurd"
-  ltcollapse = absurd . noLedgerTables
-
-instance LedgerTablesAreTrivial l => LedgerTablesAreTrivial (TrivialLedgerTables l) where
-  convertMapKind = TrivialLedgerTables . convertMapKind . untrivialLedgerTables
-
-instance LedgerTablesAreTrivial l => HasLedgerTables (TrivialLedgerTables l) where
-  projectLedgerTables _ = trivialLedgerTables
-  withLedgerTables st _ = convertMapKind st
-
-instance LedgerTablesAreTrivial l => CanStowLedgerTables (TrivialLedgerTables l) where
-  stowLedgerTables = convertMapKind
-  unstowLedgerTables = convertMapKind

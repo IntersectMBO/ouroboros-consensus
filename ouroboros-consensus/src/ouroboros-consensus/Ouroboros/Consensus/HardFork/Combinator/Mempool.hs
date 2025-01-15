@@ -119,7 +119,8 @@ type DecomposedReapplyTxsResult extra xs =
     FlipTickedLedgerState TrackingMK
 
 instance ( CanHardFork xs
-         , HasCanonicalTxIn xs
+--         , HasCanonicalTxIn xs
+         , Monoid (LedgerTables (LedgerState (HardForkBlock xs)) KeysMK)
          , LedgerTablesOp (LedgerState (HardForkBlock xs))
          ) => LedgerSupportsMempool (HardForkBlock xs) where
   applyTx = applyHelper ModeApply

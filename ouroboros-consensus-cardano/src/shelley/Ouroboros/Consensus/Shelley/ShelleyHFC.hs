@@ -38,12 +38,9 @@ import           Control.Monad (guard)
 import           Control.Monad.Except (runExcept, throwError, withExceptT)
 import           Data.Coerce
 import qualified Data.Map.Strict as Map
-import           Data.MemPack
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Functors (Flip (..))
-import           Data.SOP.Index (Index (..))
 import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
-import           Data.SOP.Strict
 import qualified Data.Text as T (pack)
 import           Data.Typeable
 import           Data.Void (Void)
@@ -357,8 +354,8 @@ translateShelleyTables ::
      )
   => LedgerTables (LedgerState (ShelleyBlock proto (SL.PreviousEra era))) mk
   -> LedgerTables (LedgerState (ShelleyBlock proto                 era))  mk
-translateShelleyTables (LedgerTables utxoTable) =
-      LedgerTables $ mapKeysMK coerce $ mapMK SL.upgradeTxOut utxoTable
+translateShelleyTables (ShelleyLedgerTables utxoTable) =
+      ShelleyLedgerTables $ mapKeysMK coerce $ mapMK SL.upgradeTxOut utxoTable
 
 instance ( ShelleyBasedEra era
          , SL.TranslateEra era WrapTx
@@ -377,57 +374,60 @@ instance ( ShelleyBasedEra era
       . mkShelleyValidatedTx . SL.coerceValidated
     <$> SL.translateValidated @era @WrapTx ctxt (SL.coerceValidated vtx)
 
+-- instance SameUTxOTypes (LedgerTables (LedgerState (ShelleyBlock proto era))) (LedgerState (ShelleyBlock proto era))
+--   castLedgerTables
+
 {-------------------------------------------------------------------------------
   Canonical TxIn
 -------------------------------------------------------------------------------}
 
-instance (ShelleyBasedEra era)
-      => HasCanonicalTxIn '[ShelleyBlock proto era] where
-  newtype instance CanonicalTxIn '[ShelleyBlock proto era] = ShelleyBlockHFCTxIn {
-      getShelleyBlockHFCTxIn :: ShelleyTxIn era
-    }
-    deriving stock (Show, Eq, Ord)
-    deriving newtype (NoThunks, MemPack)
+-- instance (ShelleyBasedEra era)
+--       => HasCanonicalTxIn '[ShelleyBlock proto era] where
+--   newtype instance CanonicalTxIn '[ShelleyBlock proto era] = ShelleyBlockHFCTxIn {
+--       getShelleyBlockHFCTxIn :: ShelleyTxIn era
+--     }
+--     deriving stock (Show, Eq, Ord)
+--     deriving newtype (NoThunks, MemPack)
 
-  injectCanonicalTxIn IZ txIn     = ShelleyBlockHFCTxIn txIn
-  injectCanonicalTxIn (IS idx') _ = case idx' of {}
+--   injectCanonicalTxIn IZ txIn     = ShelleyBlockHFCTxIn txIn
+--   injectCanonicalTxIn (IS idx') _ = case idx' of {}
 
-  ejectCanonicalTxIn IZ txIn     = getShelleyBlockHFCTxIn txIn
-  ejectCanonicalTxIn (IS idx') _ = case idx' of {}
+--   ejectCanonicalTxIn IZ txIn     = getShelleyBlockHFCTxIn txIn
+--   ejectCanonicalTxIn (IS idx') _ = case idx' of {}
 
 {-------------------------------------------------------------------------------
   HardForkTxOut
 -------------------------------------------------------------------------------}
 
-instance SL.EraTxOut era => HasHardForkTxOut '[ShelleyBlock proto era] where
-  type instance HardForkTxOut '[ShelleyBlock proto era] = SL.TxOut era
-  injectHardForkTxOut IZ txOut    = txOut
-  injectHardForkTxOut (IS idx') _ = case idx' of {}
-  ejectHardForkTxOut IZ txOut    = txOut
-  ejectHardForkTxOut (IS idx') _ = case idx' of {}
-  txOutEjections = fn (unZ . unK) :* Nil
+-- instance SL.EraTxOut era => HasHardForkTxOut '[ShelleyBlock proto era] where
+--   type instance HardForkTxOut '[ShelleyBlock proto era] = SL.TxOut era
+--   injectHardForkTxOut IZ txOut    = txOut
+--   injectHardForkTxOut (IS idx') _ = case idx' of {}
+--   ejectHardForkTxOut IZ txOut    = txOut
+--   ejectHardForkTxOut (IS idx') _ = case idx' of {}
+--   txOutEjections = fn (unZ . unK) :* Nil
 
 {-------------------------------------------------------------------------------
   Queries
 -------------------------------------------------------------------------------}
 
-instance ( ShelleyCompatible proto era
-         , ShelleyBasedEra era
-         , TxOut (LedgerState (ShelleyBlock proto era)) ~ SL.TxOut era
-         , HasHardForkTxOut '[ShelleyBlock proto era]
-         ) => BlockSupportsHFLedgerQuery '[ShelleyBlock proto era] where
+-- instance ( ShelleyCompatible proto era
+--          , ShelleyBasedEra era
+--          , TxOut (LedgerState (ShelleyBlock proto era)) ~ SL.TxOut era
+-- --         , HasHardForkTxOut '[ShelleyBlock proto era]
+--          ) => BlockSupportsHFLedgerQuery '[ShelleyBlock proto era] where
 
-  answerBlockQueryHFLookup = \case
-    IZ -> answerShelleyLookupQueries (injectLedgerTables IZ) id (getShelleyTxIn . ejectCanonicalTxIn IZ)
-    IS idx -> case idx of {}
+--   answerBlockQueryHFLookup = \case
+--     IZ -> answerShelleyLookupQueries (injectLedgerTables IZ) id (getShelleyTxIn . ejectCanonicalTxIn IZ)
+--     IS idx -> case idx of {}
 
-  answerBlockQueryHFTraverse = \case
-    IZ -> answerShelleyTraversingQueries
-      id
-      (getShelleyTxIn . ejectCanonicalTxIn IZ)
-      (queryLedgerGetTraversingFilter @('[ShelleyBlock proto era]) IZ)
-    IS idx -> case idx of {}
+--   answerBlockQueryHFTraverse = \case
+--     IZ -> answerShelleyTraversingQueries
+--       id
+--       (getShelleyTxIn . ejectCanonicalTxIn IZ)
+--       (queryLedgerGetTraversingFilter @('[ShelleyBlock proto era]) IZ)
+--     IS idx -> case idx of {}
 
-  queryLedgerGetTraversingFilter = \case
-    IZ -> shelleyQFTraverseTablesPredicate
-    IS idx -> case idx of {}
+--   queryLedgerGetTraversingFilter = \case
+--     IZ -> shelleyQFTraverseTablesPredicate
+--     IS idx -> case idx of {}

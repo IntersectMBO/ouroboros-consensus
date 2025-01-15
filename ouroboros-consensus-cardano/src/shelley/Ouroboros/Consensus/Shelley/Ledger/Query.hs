@@ -78,7 +78,6 @@ import           Data.Bifunctor (second)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
-import           Data.MemPack
 import           Data.Sequence (Seq (..))
 import           Data.Set (Set)
 import qualified Data.Set as Set
@@ -522,9 +521,9 @@ instance ( ShelleyCompatible proto era
       hst = headerState ext
       st  = shelleyLedgerState lst
 
-  answerBlockQueryLookup = answerShelleyLookupQueries id id getShelleyTxIn
+  answerBlockQueryLookup = answerShelleyLookupQueries
 
-  answerBlockQueryTraverse = answerShelleyTraversingQueries id getShelleyTxIn shelleyQFTraverseTablesPredicate
+  answerBlockQueryTraverse = answerShelleyTraversingQueries shelleyQFTraverseTablesPredicate
 
 instance SameDepIndex2 (BlockQuery (ShelleyBlock proto era)) where
   sameDepIndex2 GetLedgerTip GetLedgerTip
@@ -1112,23 +1111,24 @@ instance
 -------------------------------------------------------------------------------}
 
 answerShelleyLookupQueries ::
-     forall proto era m result blk.
+     forall proto era m result. -- blk.
      ( Monad m
      , ShelleyCompatible proto era
      )
-  => (   LedgerTables (LedgerState (ShelleyBlock proto era)) KeysMK
-      -> LedgerTables (LedgerState blk)       KeysMK
-     )
-     -- ^ Inject ledger tables
-  -> (TxOut (LedgerState blk) -> LC.TxOut era)
-     -- ^ Eject TxOut
-  -> (TxIn (LedgerState blk) -> SL.TxIn (ProtoCrypto proto))
-     -- ^ Eject TxIn
-  -> ExtLedgerCfg (ShelleyBlock proto era)
+  => -- (   LedgerTables (ExtLedgerState (ShelleyBlock proto era)) KeysMK
+  --     -> LedgerTables (ExtLedgerState blk)       KeysMK
+  --    )
+  --    -- ^ Inject ledger tables
+  -- -> (TxOut (LedgerState blk) -> LC.TxOut era)
+  --    -- ^ Eject TxOut
+  -- -> (TxIn (LedgerState blk) -> SL.TxIn (ProtoCrypto proto))
+  --    -- ^ Eject TxIn
+  -- ->
+     ExtLedgerCfg (ShelleyBlock proto era)
   -> BlockQuery (ShelleyBlock proto era) QFLookupTables result
-  -> ReadOnlyForker' m blk
+  -> ReadOnlyForker' m (ShelleyBlock proto era)
   -> m result
-answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q forker =
+answerShelleyLookupQueries cfg q forker =
     case q of
       GetUTxOByTxIn txins ->
         answerGetUtxOByTxIn txins
@@ -1138,25 +1138,25 @@ answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q forker =
         -- both client and server are running the same version; cf. the
         -- @GetCBOR@ Haddocks.
             mkSerialised (encodeShelleyResult maxBound q')
-        <$> answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q' forker
+        <$> answerShelleyLookupQueries cfg q' forker
   where
     answerGetUtxOByTxIn ::
          Set.Set (SL.TxIn (EraCrypto era))
       -> m (SL.UTxO era)
     answerGetUtxOByTxIn txins = do
-      LedgerTables (ValuesMK values) <-
+      ShelleyLedgerTables (ValuesMK vs) <- getExtLedgerTables <$>
         LedgerDB.roforkerReadTables
           forker
-          (castLedgerTables $ injTables (LedgerTables $ KeysMK $ Set.map ShelleyTxIn txins))
-      pure
-        $ SL.UTxO
-        $ Map.mapKeys ejTxIn
-        $ Map.mapMaybeWithKey
+          (ExtLedgerTables $ ShelleyLedgerTables $ KeysMK $ Set.map ShelleyTxIn txins)
+      pure $
+        SL.UTxO
+        . Map.mapKeys getShelleyTxIn
+        . Map.mapMaybeWithKey
             (\k v ->
-               if ejTxIn k `Set.member` txins
-               then Just $ ejTxOut v
+               if getShelleyTxIn k `Set.member` txins
+               then Just v
                else Nothing)
-            values
+        $ vs
 
 shelleyQFTraverseTablesPredicate ::
      forall proto era proto' era' result.
@@ -1184,28 +1184,29 @@ shelleyQFTraverseTablesPredicate q = case q of
         checkAddr
 
 answerShelleyTraversingQueries ::
-     forall proto era m result blk.
+     forall proto era m result. -- blk.
      ( ShelleyCompatible proto era
-     , Ord (TxIn (LedgerState blk))
-     , Eq (TxOut (LedgerState blk))
-     , MemPack (TxOut (LedgerState blk))
-     , MemPack (TxIn (LedgerState blk))
+     -- , Ord (TxIn (LedgerState blk))
+     -- , Eq (TxOut (LedgerState blk))
+     -- , MemPack (TxOut (LedgerState blk))
+     -- , MemPack (TxIn (LedgerState blk))
      )
   => Monad m
-  => (TxOut (LedgerState blk) -> LC.TxOut era)
-     -- ^ Eject TxOut
-  -> (TxIn (LedgerState blk) -> SL.TxIn (ProtoCrypto proto))
-     -- ^ Eject TxIn
-  -> (forall result'.
+  => -- (TxOut (LedgerState blk) -> LC.TxOut era)
+  --    -- ^ Eject TxOut
+  -- -> (TxIn (LedgerState blk) -> SL.TxIn (ProtoCrypto proto))
+  --    -- ^ Eject TxIn
+ --
+ (forall result'.
          BlockQuery (ShelleyBlock proto era) QFTraverseTables result'
-      -> TxOut (LedgerState blk)
+      -> TxOut (LedgerState (ShelleyBlock proto era))
       -> Bool)
      -- ^ Get filter by query
   -> ExtLedgerCfg (ShelleyBlock proto era)
   -> BlockQuery (ShelleyBlock proto era) QFTraverseTables result
-  -> ReadOnlyForker' m blk
+  -> ReadOnlyForker' m (ShelleyBlock proto era)
   -> m result
-answerShelleyTraversingQueries ejTxOut ejTxIn filt cfg q forker = case q of
+answerShelleyTraversingQueries filt cfg q forker = case q of
     GetUTxOByAddress{} -> loop (filt q) NoPreviousQuery emptyUtxo
     GetUTxOWhole       -> loop (filt q) NoPreviousQuery emptyUtxo
     GetCBOR q'         ->
@@ -1214,29 +1215,29 @@ answerShelleyTraversingQueries ejTxOut ejTxIn filt cfg q forker = case q of
       -- both client and server are running the same version; cf. the
       -- @GetCBOR@ Haddocks.
       mkSerialised (encodeShelleyResult maxBound q') <$>
-       answerShelleyTraversingQueries ejTxOut ejTxIn filt cfg q' forker
+       answerShelleyTraversingQueries filt cfg q' forker
   where
     emptyUtxo               = SL.UTxO Map.empty
 
     combUtxo (SL.UTxO l) vs = SL.UTxO $ Map.union l vs
 
     partial ::
-         (TxOut (LedgerState blk) -> Bool)
-      -> LedgerTables (ExtLedgerState blk) ValuesMK
+         (TxOut (LedgerState (ShelleyBlock proto era)) -> Bool)
+      -> LedgerTables (ExtLedgerState (ShelleyBlock proto era)) ValuesMK
       -> Map (SL.TxIn (EraCrypto era)) (LC.TxOut era)
-    partial queryPredicate (LedgerTables (ValuesMK vs)) =
-        Map.mapKeys ejTxIn
-      $ Map.mapMaybeWithKey
+    partial queryPredicate (ExtLedgerTables (ShelleyLedgerTables (ValuesMK vs))) =
+        Map.mapKeys getShelleyTxIn
+      . Map.mapMaybeWithKey
           (\_k v ->
               if queryPredicate v
-              then Just $ ejTxOut v
+              then Just v
               else Nothing)
-          vs
+      $ vs
 
     vnull :: ValuesMK k v -> Bool
     vnull (ValuesMK vs) = Map.null vs
 
-    toMaxKey (LedgerTables (ValuesMK vs)) = fst $ Map.findMax vs
+    toMaxKey (ExtLedgerTables (ShelleyLedgerTables (ValuesMK vs))) = fst $ Map.findMax vs
 
     loop queryPredicate !prev !acc = do
       extValues <- LedgerDB.roforkerRangeReadTables forker prev

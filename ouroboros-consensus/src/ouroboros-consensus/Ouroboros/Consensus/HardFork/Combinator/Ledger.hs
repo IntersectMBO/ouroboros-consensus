@@ -37,7 +37,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger (
   -- , ejectLedgerTables
   -- , injectLedgerTables
     -- ** HardForkTxIn
-  , HasCanonicalTxIn (..)
+--  , HasCanonicalTxIn (..)
   , LedgerTables (..)
     -- ** HardForkTxOut
   -- , DefaultHardForkTxOut
@@ -51,9 +51,9 @@ import           Control.Monad (guard)
 import           Control.Monad.Except (throwError, withExcept)
 import           Data.Functor ((<&>))
 import           Data.Functor.Product
-import           Data.Kind (Type)
+-- import           Data.Kind (Type)
 -- import           Data.Maybe (fromMaybe)
-import           Data.MemPack
+-- import           Data.MemPack
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
@@ -973,12 +973,12 @@ instance CanHardFork xs => EncodeLedgerTables (LedgerState (HardForkBlock xs)) w
   valuesMKDecoder (HardForkLedgerState (HardForkState st)) =
     HardForkLedgerTables <$> (Telescope.sequence $ Telescope.bihcmap proxySingle (const (K ())) (Comp . fmap (Flip . LedgerTablesLedgerState) . valuesMKDecoder . unFlip . currentState) st)
 
-instance CanHardFork xs => Semigroup (LedgerTables (LedgerState (HardForkBlock xs)) KeysMK) where
-  HardForkLedgerTables _ <> HardForkLedgerTables _ = undefined
-    -- HardForkLedgerTables
+-- instance CanHardFork xs => Semigroup (LedgerTables (LedgerState (HardForkBlock xs)) KeysMK) where
+--   HardForkLedgerTables _ <> HardForkLedgerTables _ = undefined
+--     -- HardForkLedgerTables
 
-instance CanHardFork xs => Monoid (LedgerTables (LedgerState (HardForkBlock xs)) KeysMK) where
-  mempty = undefined
+-- instance CanHardFork xs => Monoid (LedgerTables (LedgerState (HardForkBlock xs)) KeysMK) where
+--   mempty = undefined
 
 
 -- injectLedgerTables ::
@@ -1012,37 +1012,37 @@ instance CanHardFork xs => Monoid (LedgerTables (LedgerState (HardForkBlock xs))
   HardForkTxIn
 -------------------------------------------------------------------------------}
 
--- | Must be the 'CannonicalTxIn' type, but this will probably change in the
--- future to @NS 'WrapTxIn' xs@. See 'HasCanonicalTxIn'.
-type instance TxIn   (LedgerState (HardForkBlock xs)) = CanonicalTxIn xs
+-- -- | Must be the 'CannonicalTxIn' type, but this will probably change in the
+-- -- future to @NS 'WrapTxIn' xs@. See 'HasCanonicalTxIn'.
+-- type instance TxIn   (LedgerState (HardForkBlock xs)) = CanonicalTxIn xs
 
--- | Canonical TxIn
---
--- The Ledger and Consensus team discussed the fact that we need to be able to
--- reach the TxIn key for an entry from any era, regardless of the era in which
--- it was created, therefore we need to have a "canonical" serialization that
--- doesn't change between eras. For now we are requiring that a 'HardForkBlock'
--- has only one associated 'TxIn' type as a stop-gap, but Ledger will provide a
--- serialization function into something more efficient.
-type HasCanonicalTxIn :: [Type] -> Constraint
-class ( Show (CanonicalTxIn xs)
-      , Ord (CanonicalTxIn xs)
-      , NoThunks (CanonicalTxIn xs)
-      , MemPack (CanonicalTxIn xs)
-      ) => HasCanonicalTxIn xs where
-  data family CanonicalTxIn (xs :: [Type]) :: Type
+-- -- | Canonical TxIn
+-- --
+-- -- The Ledger and Consensus team discussed the fact that we need to be able to
+-- -- reach the TxIn key for an entry from any era, regardless of the era in which
+-- -- it was created, therefore we need to have a "canonical" serialization that
+-- -- doesn't change between eras. For now we are requiring that a 'HardForkBlock'
+-- -- has only one associated 'TxIn' type as a stop-gap, but Ledger will provide a
+-- -- serialization function into something more efficient.
+-- type HasCanonicalTxIn :: [Type] -> Constraint
+-- class ( Show (CanonicalTxIn xs)
+--       , Ord (CanonicalTxIn xs)
+--       , NoThunks (CanonicalTxIn xs)
+--       , MemPack (CanonicalTxIn xs)
+--       ) => HasCanonicalTxIn xs where
+--   data family CanonicalTxIn (xs :: [Type]) :: Type
 
-  -- | Inject an era-specific 'TxIn' into a 'TxIn' for a 'HardForkBlock'.
-  injectCanonicalTxIn ::
-       Index xs x
-    -> TxIn (LedgerState x)
-    -> CanonicalTxIn xs
+--   -- | Inject an era-specific 'TxIn' into a 'TxIn' for a 'HardForkBlock'.
+--   injectCanonicalTxIn ::
+--        Index xs x
+--     -> TxIn (LedgerState x)
+--     -> CanonicalTxIn xs
 
-  -- | Distribute a 'TxIn' for a 'HardForkBlock' to an era-specific 'TxIn'.
-  ejectCanonicalTxIn ::
-       Index xs x
-    -> CanonicalTxIn xs
-    -> TxIn (LedgerState x)
+--   -- | Distribute a 'TxIn' for a 'HardForkBlock' to an era-specific 'TxIn'.
+--   ejectCanonicalTxIn ::
+--        Index xs x
+--     -> CanonicalTxIn xs
+--     -> TxIn (LedgerState x)
 
 {-------------------------------------------------------------------------------
   HardForkTxOut

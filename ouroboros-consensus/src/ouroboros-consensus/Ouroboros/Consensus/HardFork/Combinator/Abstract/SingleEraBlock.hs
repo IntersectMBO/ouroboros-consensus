@@ -85,7 +85,7 @@ class ( LedgerSupportsProtocol blk
       , Show (CannotForge blk)
       , Show (ForgeStateInfo blk)
       , Show (ForgeStateUpdateError blk)
-      , SameUTxOTypes (LedgerTables (LedgerState blk)) (LedgerState blk)
+--       , SameUTxOTypes (LedgerTables (LedgerState blk)) (LedgerState blk)
       , Monoid (LedgerTables (LedgerState blk) KeysMK)
       ) => SingleEraBlock blk where
 

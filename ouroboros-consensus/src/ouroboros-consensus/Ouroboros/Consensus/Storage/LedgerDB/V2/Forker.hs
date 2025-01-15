@@ -1,3 +1,6 @@
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -74,7 +77,7 @@ implForkerReadTables env ks = do
     pure tbs
 
 implForkerRangeReadTables ::
-     (MonadSTM m, GetTip l, LedgerTablesOp l)
+     forall m l blk. (MonadSTM m, GetTip l, LedgerTablesOp l)
   => QueryBatchSize
   -> ForkerEnv m l blk
   -> RangeQueryPrevious l
