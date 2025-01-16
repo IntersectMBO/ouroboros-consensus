@@ -97,6 +97,7 @@ import           Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..),
 import           Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE,
                      (..:))
 import           Ouroboros.Consensus.Util.Condense
+import           Ouroboros.Consensus.Util.Orphans
 import           Test.Util.Orphans.Serialise ()
 
 {-------------------------------------------------------------------------------

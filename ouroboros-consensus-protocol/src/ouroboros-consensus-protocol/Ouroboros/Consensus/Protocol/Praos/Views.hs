@@ -8,7 +8,8 @@ module Ouroboros.Consensus.Protocol.Praos.Views (
 import           Cardano.Crypto.KES (SignedKES)
 import           Cardano.Crypto.VRF (CertifiedVRF, VRFAlgorithm (VerKeyVRF))
 import           Cardano.Ledger.BaseTypes (ProtVer)
-import           Cardano.Ledger.Crypto (KES, VRF)
+-- import           Cardano.Ledger.Crypto (KES, VRF)
+import           Cardano.Protocol.Crypto (Crypto (VRF, KES))
 import           Cardano.Ledger.Keys (KeyRole (BlockIssuer), VKey)
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Protocol.TPraos.BHeader (PrevHash)
@@ -21,9 +22,9 @@ import           Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF)
 -- | View of the block header required by the Praos protocol.
 data HeaderView crypto = HeaderView
   { -- | Hash of the previous block
-    hvPrevHash  :: !(PrevHash crypto),
+    hvPrevHash  :: !PrevHash,
     -- | verification key of block issuer
-    hvVK        :: !(VKey 'BlockIssuer crypto),
+    hvVK        :: !(VKey 'BlockIssuer),
     -- | VRF verification key for block issuer
     hvVrfVK     :: !(VerKeyVRF (VRF crypto)),
     -- | VRF result
@@ -40,7 +41,7 @@ data HeaderView crypto = HeaderView
 
 data LedgerView crypto = LedgerView
   { -- | Stake distribution
-    lvPoolDistr       :: SL.PoolDistr crypto,
+    lvPoolDistr       :: SL.PoolDistr,
     -- | Maximum header size
     lvMaxHeaderSize   :: !Word16,
     -- | Maximum block body size

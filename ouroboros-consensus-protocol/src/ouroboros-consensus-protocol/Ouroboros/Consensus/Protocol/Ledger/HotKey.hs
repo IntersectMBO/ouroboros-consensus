@@ -24,9 +24,8 @@ module Ouroboros.Consensus.Protocol.Ledger.HotKey (
   , sign
   ) where
 
-import qualified Cardano.Crypto.KES as Relative (Period)
-import           Cardano.Ledger.Crypto (Crypto)
-import qualified Cardano.Ledger.Keys as SL
+import qualified Cardano.Crypto.KES as Relative
+import           Cardano.Protocol.Crypto (Crypto (KES))
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
@@ -135,20 +134,20 @@ data HotKey c m = HotKey {
       -- PRECONDITION: the key is not poisoned.
       --
       -- POSTCONDITION: the signature is in normal form.
-    , sign_      :: forall toSign. (SL.KESignable c toSign, HasCallStack)
-                 => toSign -> m (SL.SignedKES c toSign)
+    , sign_      :: forall toSign. (Relative.Signable (KES c) toSign, HasCallStack)
+                 => toSign -> m (Relative.SignedKES (KES c) toSign)
     }
 
 sign ::
-     (SL.KESignable c toSign, HasCallStack)
+     (Relative.Signable (KES c) toSign, HasCallStack)
   => HotKey c m
-  -> toSign -> m (SL.SignedKES c toSign)
+  -> toSign -> m (Relative.SignedKES (KES c) toSign)
 sign = sign_
 
 -- | The actual KES key, unless it expired, in which case it is replaced by
 -- \"poison\".
 data KESKey c =
-    KESKey !(SL.SignKeyKES c)
+    KESKey !(Relative.SignKeyKES (KES c))
   | KESKeyPoisoned
   deriving (Generic)
 
@@ -168,7 +167,7 @@ instance Crypto c => NoThunks (KESState c)
 
 mkHotKey ::
      forall m c. (Crypto c, IOLike m)
-  => SL.SignKeyKES c
+  => Relative.UnsoundPureSignKeyKES (KES c)
   -> Absolute.KESPeriod  -- ^ Start period
   -> Word64              -- ^ Max KES evolutions
   -> m (HotKey c m)
@@ -184,7 +183,7 @@ mkHotKey initKey startPeriod@(Absolute.KESPeriod start) maxKESEvolutions = do
             KESKeyPoisoned -> error "trying to sign with a poisoned key"
             KESKey key     -> do
               let evolution = kesEvolution kesStateInfo
-                  signed    = SL.signedKES () evolution toSign key
+                  signed    = Relative.unsoundPureSignedKES () evolution toSign key
               -- Force the signature to WHNF (for 'SignedKES', WHNF implies
               -- NF) so that we don't have any thunks holding on to a key that
               -- might be destructively updated when evolved.
@@ -260,12 +259,12 @@ evolveKey varKESState targetPeriod = modifyMVar varKESState $ \kesState -> do
     -- | PRECONDITION:
     --
     -- > targetEvolution >= curEvolution
-    go :: KESEvolution -> KESInfo -> SL.SignKeyKES c -> m (KESState c)
+    go :: KESEvolution -> KESInfo -> Relative.UnsoundPureSignKeyKES (KES c) -> m (KESState c)
     go targetEvolution info key
       | targetEvolution <= curEvolution
       = return $ KESState { kesStateInfo = info, kesStateKey = KESKey key }
       | otherwise
-      = case SL.updateKES () key curEvolution of
+      = case Relative.unsoundPureUpdateKES () key curEvolution of
           -- This cannot happen
           Nothing    -> error "Could not update KES key"
           Just !key' -> do
