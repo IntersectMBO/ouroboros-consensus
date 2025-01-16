@@ -166,6 +166,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
                              :: StrictTVar m OutboundConnectionsState
     , getDiffusionPipeliningSupport
                              :: DiffusionPipeliningSupport
+    , getBlockchainTime      :: BlockchainTime m
     }
 
 -- | Arguments required when initializing a node
@@ -208,6 +209,7 @@ initNodeKernel ::
 initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                    , chainDB, initChainDB
                                    , blockFetchConfiguration
+                                   , btime
                                    , gsmArgs
                                    , peerSharingRng
                                    , publicPeerSelectionStateVar
@@ -333,6 +335,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
       , getOutboundConnectionsState
                                 = varOutboundConnectionsState
       , getDiffusionPipeliningSupport
+      , getBlockchainTime       = btime
       }
   where
     blockForgingController :: InternalState m remotePeer localPeer blk
