@@ -25,6 +25,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory (
   , snapshotToStatePath
   , snapshotToTablePath
   , takeSnapshot
+    -- * Upgrading ledger tables
+  , CanUpgradeLedgerTables (..)
   ) where
 import           Cardano.Binary as CBOR
 import qualified Codec.CBOR.Write as CBOR
@@ -40,6 +42,7 @@ import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import           Data.Maybe
 import           Data.String (fromString)
+import           Data.Void (absurd)
 import           GHC.Generics
 import           NoThunks.Class
 import           Ouroboros.Consensus.Block
@@ -59,7 +62,6 @@ import           System.FS.API
 import           System.FS.API.Lazy
 import           System.FS.CRC
 
-
 {-------------------------------------------------------------------------------
   InMemory implementation of LedgerTablesHandles
 -------------------------------------------------------------------------------}
@@ -78,9 +80,37 @@ guardClosed :: LedgerTablesHandleState l -> (LedgerTables l ValuesMK -> a) -> a
 guardClosed LedgerTablesHandleClosed    _ = error $ show InMemoryClosedExn
 guardClosed (LedgerTablesHandleOpen st) f = f st
 
+-- | When pushing differences on V2, we will sometimes need to update ledger
+-- tables to the latest era. For unary blocks this is a no-op, but for the
+-- Cardano block, we will need to upgrade all TxOuts in memory.
+--
+-- No correctness property relies on this, as Consensus can work with TxOuts
+-- from multiple eras, but the performance depends on it as otherwise we will be
+-- upgrading the TxOuts every time we consult them.
+class CanUpgradeLedgerTables l where
+  upgradeTables ::
+       l mk1 -- ^ The original ledger state before the upgrade. This will be the
+             -- tip before applying the block.
+    -> l mk2 -- ^ The ledger state after the upgrade, which might be in a
+             -- different era than the one above.
+    -> LedgerTables l ValuesMK -- ^ The tables we want to maybe upgrade.
+    -> LedgerTables l ValuesMK
+
+instance CanUpgradeLedgerTables (LedgerState blk)
+      => CanUpgradeLedgerTables (ExtLedgerState blk) where
+  upgradeTables (ExtLedgerState st0 _) (ExtLedgerState st1 _) =
+    castLedgerTables . upgradeTables st0 st1 . castLedgerTables
+
+instance LedgerTablesAreTrivial l
+      => CanUpgradeLedgerTables (TrivialLedgerTables l) where
+  upgradeTables _ _ (LedgerTables (ValuesMK mk)) =
+    LedgerTables (ValuesMK (Map.map absurd mk))
+
 newInMemoryLedgerTablesHandle ::
+     forall m l.
      ( IOLike m
      , HasLedgerTables l
+     , CanUpgradeLedgerTables l
      )
   => SomeHasFS m
   -> LedgerTables l ValuesMK
@@ -104,10 +134,10 @@ newInMemoryLedgerTablesHandle someFS@(SomeHasFS hasFS) l = do
     , readAll = do
         hs <- readTVarIO tv
         guardClosed hs pure
-    , pushDiffs = \(!diffs) ->
+    , pushDiffs = \st0 !diffs ->
         atomically
         $ modifyTVar tv
-        (\r -> guardClosed r (LedgerTablesHandleOpen . flip (ltliftA2 (\(ValuesMK vals) (DiffMK d) -> ValuesMK (Diff.applyDiff vals d))) diffs))
+        (\r -> guardClosed r (LedgerTablesHandleOpen . flip (ltliftA2 (\(ValuesMK vals) (DiffMK d) -> ValuesMK (Diff.applyDiff vals d))) (projectLedgerTables diffs) . upgradeTables st0 diffs))
     , takeHandleSnapshot = \snapshotName -> do
         createDirectoryIfMissing hasFS True $ mkFsPath [snapshotName, "tables"]
         h <- readTVarIO tv
@@ -190,6 +220,7 @@ loadSnapshot ::
     forall blk m. ( LedgerDbSerialiseConstraints blk
     , LedgerSupportsProtocol blk
     , IOLike m
+    , CanUpgradeLedgerTables (LedgerState blk)
     )
     => ResourceRegistry m
     -> CodecConfig blk

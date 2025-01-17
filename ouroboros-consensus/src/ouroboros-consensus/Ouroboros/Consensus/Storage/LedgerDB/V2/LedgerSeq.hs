@@ -81,7 +81,12 @@ data LedgerTablesHandle m l = LedgerTablesHandle {
     -- | Costly read all operation, not to be used in Consensus but only in
     -- snapshot-converter executable.
   , readAll            :: !(m (LedgerTables l ValuesMK))
-  , pushDiffs          :: !(LedgerTables l DiffMK -> m ())
+    -- | Push some diffs into the ledger tables handle.
+    --
+    -- The first argument has to be the ledger state before applying the block,
+    -- so that it might be in the era before the second ledger state. See
+    -- 'CanUpgradeLedgerTables'.
+  , pushDiffs          :: !(forall mk. l mk -> l DiffMK -> m ())
   , takeHandleSnapshot :: !(String -> m CRC)
     -- | Consult the size of the ledger tables in the database. This will return
     -- 'Nothing' in backends that do not support this operation.
@@ -203,8 +208,9 @@ reapplyBlock cfg b _rr db = do
   newtbs <- duplicate tbs
   vals <- read newtbs ks
   let st' = tickThenReapply cfg b (st `withLedgerTables` vals)
-      (newst, diffs) = (forgetLedgerTables st', ltprj st')
-  pushDiffs newtbs diffs
+      newst = forgetLedgerTables st'
+
+  pushDiffs newtbs st st'
   pure (StateRef newst newtbs)
 
 -- | Prune older ledger states until at we have at most @k@ volatile states in
