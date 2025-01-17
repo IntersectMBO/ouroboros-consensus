@@ -86,6 +86,7 @@ import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Ledger.Tables.Utils
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as V2
 import           Ouroboros.Consensus.Util (ShowProxy (..))
 
 {-------------------------------------------------------------------------------
@@ -527,3 +528,6 @@ decodeByronResult :: BlockQuery ByronBlock fp result
                   -> forall s. Decoder s result
 decodeByronResult query = case query of
     GetUpdateInterfaceState -> fromByronCBOR
+
+instance V2.CanUpgradeLedgerTables (LedgerState ByronBlock) where
+  upgradeTables _ _ = id
