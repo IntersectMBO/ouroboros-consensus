@@ -66,7 +66,7 @@ If you'd like to opt-in to that or similar, add a `cabal.project.local` file.
     #NNNN`. See the [GitHub documentation][gh-auto-link-issue] for similar
     keywords and syntax that will trigger useful automatic behaviors.
 
-    [gh-auto-link-issue]: https://docs.github.com/en/issues/tracking-your-work-with-issues/linking-a-pull-request-to-an-issue#linking-a-pull-request-to-an-issue-using-a-keyword
+    [gh-auto-link-issue]: https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue#linking-a-pull-request-to-an-issue-using-a-keyword
 
   * Your PR should be a [Draft PR][github-draft-pr] until you think it is ready
     for final review and merging. I often open my PR as Draft PR in order to get
@@ -76,7 +76,7 @@ If you'd like to opt-in to that or similar, add a `cabal.project.local` file.
     This is far superior to including "WIP" or "DO NOT MERGE" in the PR title,
     or a WIP label, etc.
 
-    [github-draft-pr]: https://github.blog/2019-02-14-introducing-draft-pull-requests/
+    [github-draft-pr]: https://github.blog/news-insights/product-news/introducing-draft-pull-requests/
 
   * Your branch name is impermanent, so it's less important than the above.
     However, we prefer the format `username/issue-NNNN-short-description` or

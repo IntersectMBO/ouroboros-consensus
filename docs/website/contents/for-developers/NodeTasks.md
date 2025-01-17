@@ -1,5 +1,6 @@
 # Overview of the tasks of a caught-up node
 
+<!-- xrefcheck: ignore link -->
 This document gives an overview of the tasks of a [caught-up](./Glossary.md#honest-caught-up-parties) node, both as a relay and as a block producer.
 
 ## In a single node
@@ -22,7 +23,8 @@ The selection is made up of an immutable and a volatile part:
  - The volatile part of the selection are the newest $k$ blocks.
    They are stored in the VolatileDB, together with other blocks that could be on a fork we might switch to in the future.
 
-Additionally, the LedgerDB contains the ledger state corresponding to all [points](./Glossary/#point) on the volatile part of the chain as well as the tip of the immutable chain, in order to validate new blocks and potential forks.
+<!-- xrefcheck: ignore link -->
+Additionally, the LedgerDB contains the ledger state corresponding to all [points](./Glossary.md#point) on the volatile part of the chain as well as the tip of the immutable chain, in order to validate new blocks and potential forks.
 
 The flow of information is depicted in the following diagram.
 Rectangular boxes stand for logical components, and hexagons correspond to Haskell RTS threads.
