@@ -88,6 +88,7 @@ withDB ::
      , HasHardForkHistory blk
      , ConvertRawHash blk
      , SerialiseDiskConstraints blk
+     , LedgerDB.LedgerSupportsV2LedgerDB blk
      )
   => Complete Args.ChainDbArgs m blk
   -> (ChainDB m blk -> m a)
@@ -103,6 +104,7 @@ openDB ::
      , HasHardForkHistory blk
      , ConvertRawHash blk
      , SerialiseDiskConstraints blk
+     , LedgerDB.LedgerSupportsV2LedgerDB blk
      )
   => Complete Args.ChainDbArgs m blk
   -> m (ChainDB m blk)
@@ -118,6 +120,7 @@ openDBInternal ::
      , ConvertRawHash blk
      , SerialiseDiskConstraints blk
      , HasCallStack
+     , LedgerDB.LedgerSupportsV2LedgerDB blk
      )
   => Complete Args.ChainDbArgs m blk
   -> Bool -- ^ 'True' = Launch background tasks

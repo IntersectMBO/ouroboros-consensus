@@ -99,6 +99,7 @@ import           Ouroboros.Consensus.Mock.Ledger.State
 import qualified Ouroboros.Consensus.Mock.Ledger.UTxO as Mock
 import           Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..),
                      SizeInBytes)
+import           Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 import           Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE)
 import           Ouroboros.Consensus.Util.Condense
 import           Test.Util.Orphans.Serialise ()
@@ -465,6 +466,9 @@ instance LedgerSupportsPeerSelection (SimpleBlock c ext) where
 
 type instance TxIn  (LedgerState (SimpleBlock c ext)) = Mock.TxIn
 type instance TxOut (LedgerState (SimpleBlock c ext)) = Mock.TxOut
+
+instance CanUpgradeLedgerTables (LedgerState (SimpleBlock c ext)) where
+  upgradeTables _ _ = id
 
 instance HasLedgerTables (LedgerState (SimpleBlock c ext)) where
   projectLedgerTables = simpleLedgerTables

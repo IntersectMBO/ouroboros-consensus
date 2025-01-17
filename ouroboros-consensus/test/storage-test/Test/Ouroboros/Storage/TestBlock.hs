@@ -107,6 +107,7 @@ import           Ouroboros.Consensus.Protocol.ModChainSel
 import           Ouroboros.Consensus.Protocol.Signed
 import           Ouroboros.Consensus.Storage.ImmutableDB (Tip)
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks
+import           Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Storage.VolatileDB
 import           Ouroboros.Consensus.Util.Condense
@@ -575,6 +576,8 @@ deriving via TrivialLedgerTables (Ticked (LedgerState TestBlock))
     instance HasLedgerTables (Ticked (LedgerState TestBlock))
 deriving via TrivialLedgerTables (LedgerState TestBlock)
     instance CanStowLedgerTables (LedgerState TestBlock)
+deriving via TrivialLedgerTables (LedgerState TestBlock)
+    instance CanUpgradeLedgerTables (LedgerState TestBlock)
 
 instance ApplyBlock (LedgerState TestBlock) TestBlock where
   applyBlockLedgerResult _ tb@TestBlock{..} (TickedTestLedger TestLedger{..})
