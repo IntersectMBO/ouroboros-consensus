@@ -68,6 +68,7 @@ import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Node.Serialisation
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
+import           Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.Orphans ()
@@ -186,6 +187,8 @@ deriving via TrivialLedgerTables (Ticked (LedgerState BlockB))
     instance HasLedgerTables (Ticked (LedgerState BlockB))
 deriving via TrivialLedgerTables (LedgerState BlockB)
     instance CanStowLedgerTables (LedgerState BlockB)
+deriving via TrivialLedgerTables (LedgerState BlockB)
+    instance CanUpgradeLedgerTables (LedgerState BlockB)
 
 type instance LedgerCfg (LedgerState BlockB) = ()
 

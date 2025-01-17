@@ -134,6 +134,7 @@ import           Ouroboros.Consensus.Protocol.BFT
 import           Ouroboros.Consensus.Protocol.MockChainSel
 import           Ouroboros.Consensus.Protocol.Signed
 import           Ouroboros.Consensus.Storage.ChainDB (SerialiseDiskConstraints)
+import           Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util (ShowProxy (..))
 import           Ouroboros.Consensus.Util.Condense
@@ -145,7 +146,6 @@ import qualified System.Random as R
 import           Test.QuickCheck hiding (Result)
 import           Test.Util.Orphans.SignableRepresentation ()
 import           Test.Util.Orphans.ToExpr ()
-
 {-------------------------------------------------------------------------------
   Test infrastructure: test block
 -------------------------------------------------------------------------------}
@@ -523,6 +523,8 @@ deriving via TrivialLedgerTables (LedgerState TestBlock)
     instance HasLedgerTables (Ticked (LedgerState TestBlock))
 deriving via TrivialLedgerTables (LedgerState TestBlock)
     instance CanStowLedgerTables (LedgerState TestBlock)
+deriving via TrivialLedgerTables (LedgerState TestBlock)
+    instance CanUpgradeLedgerTables (LedgerState TestBlock)
 
 instance PayloadSemantics ptype
          => ApplyBlock (LedgerState (TestBlockWith ptype)) (TestBlockWith ptype) where

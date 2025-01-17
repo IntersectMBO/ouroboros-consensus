@@ -115,6 +115,7 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
                      (unsafeChunkNoToEpochNo)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.TraceEvent as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
+import           Ouroboros.Consensus.Storage.LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util (split)
 import           Ouroboros.Consensus.Util.CallStack
@@ -316,6 +317,7 @@ type TestConstraints blk =
   , SerialiseDiskConstraints            blk
   , Show (LedgerState                   blk EmptyMK)
   , LedgerTablesAreTrivial (LedgerState blk)
+  , LedgerSupportsV2LedgerDB            blk
   )
 
 deriving instance (TestConstraints blk, Eq   it, Eq   flr)
