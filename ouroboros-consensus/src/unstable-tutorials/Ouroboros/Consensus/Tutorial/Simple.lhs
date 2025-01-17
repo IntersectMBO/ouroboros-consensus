@@ -63,6 +63,7 @@ First, some imports we'll need:
 > import Ouroboros.Consensus.HeaderValidation
 >   (ValidateEnvelope, BasicEnvelopeValidation, HasAnnTip)
 > import Ouroboros.Consensus.Ledger.Tables
+> import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 
 Conceptual Overview and Definitions of Key Terms
 ================================================
@@ -750,3 +751,5 @@ and we use the default implementation
 >     instance HasLedgerTables (Ticked (LedgerState BlockC))
 > deriving via TrivialLedgerTables (LedgerState BlockC)
 >     instance CanStowLedgerTables (LedgerState BlockC)
+> deriving via TrivialLedgerTables (LedgerState BlockC)
+>     instance CanUpgradeLedgerTables (LedgerState BlockC)

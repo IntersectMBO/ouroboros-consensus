@@ -91,6 +91,7 @@ And imports, of course:
 > import Ouroboros.Consensus.Ledger.Basics (GetTip(..))
 > import Ouroboros.Consensus.Ledger.Tables
 
+> import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 
 Epochs
 ------
@@ -690,3 +691,5 @@ For reference on these instances and their meaning, please see the appendix in
 >     instance HasLedgerTables (Ticked (LedgerState BlockD))
 > deriving via TrivialLedgerTables (LedgerState BlockD)
 >     instance CanStowLedgerTables (LedgerState BlockD)
+> deriving via TrivialLedgerTables (LedgerState BlockD)
+>     instance CanUpgradeLedgerTables (LedgerState BlockD)

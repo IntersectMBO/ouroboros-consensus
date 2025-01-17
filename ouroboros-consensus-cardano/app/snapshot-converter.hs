@@ -39,6 +39,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB 
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Lock as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as V1
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2 as V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq as V2
 import           Ouroboros.Consensus.Util.CRC
@@ -178,6 +179,7 @@ load ::
        ( LedgerDbSerialiseConstraints blk
        , CanStowLedgerTables (LedgerState blk)
        , LedgerSupportsProtocol blk
+       , V2.LedgerSupportsV2LedgerDB blk
        )
     => Config
     -> ResourceRegistry IO
@@ -226,6 +228,7 @@ store ::
        ( LedgerDbSerialiseConstraints blk
        , CanStowLedgerTables (LedgerState blk)
        , LedgerSupportsProtocol blk
+       , V2.LedgerSupportsV2LedgerDB blk
        )
     => Config
     -> CodecConfig blk

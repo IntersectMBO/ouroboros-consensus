@@ -253,7 +253,7 @@ byronUtxosAreInsertsInShelleyUtxoDiff srcLedgerState destLedgerState =
         Byron.TxInUtxo txId txIx = byronTxIn
         shelleyTxId' = translateTxIdByronToShelley txId
       in
-        TxIn shelleyTxId' (TxIx $ fromIntegral txIx)
+        TxIn shelleyTxId' (TxIx txIx)
 
 shelleyAvvmAddressesAreDeletesInUtxoDiff
   :: LedgerState (ShelleyBlock Proto (ShelleyEra Crypto)) EmptyMK
