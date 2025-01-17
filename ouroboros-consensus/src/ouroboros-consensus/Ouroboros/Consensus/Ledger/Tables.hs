@@ -9,8 +9,6 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-{-# OPTIONS_GHC -Wno-orphans #-}
-
 -- | This module defines the 'LedgerTables', a portion of the Ledger notion of a
 -- /ledger state/ (not to confuse with our
 -- 'Ouroboros.Consensus.Ledger.Basics.LedgerState') that together with it,
@@ -184,7 +182,7 @@ import           Data.ByteString (ByteString)
 import           Data.Kind (Constraint, Type)
 import qualified Data.Map.Strict as Map
 import           Data.MemPack
-import           Data.Void (Void, absurd)
+import           Data.Void (Void)
 import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Ledger.Tables.Basics
 import           Ouroboros.Consensus.Ledger.Tables.Combinators
@@ -300,18 +298,6 @@ valuesMKDecoder = do
   go len =
     ValuesMK . Map.fromList
       <$> replicateM len (unpackError @(TxIn l, TxOut l) @ByteString <$> fromCBOR)
-
--- TODO these instances will be gone once we update our ref for mempack which
--- @lehins will have to release.
---
--- Remove also the Wno-orphans above!
-instance MemPack Void where
-  packedByteCount = absurd
-  {-# INLINE packedByteCount #-}
-  packM = absurd
-  {-# INLINE packM #-}
-  unpackM = error "absurd"
-  {-# INLINE unpackM #-}
 
 {-------------------------------------------------------------------------------
   Special classes of ledger states

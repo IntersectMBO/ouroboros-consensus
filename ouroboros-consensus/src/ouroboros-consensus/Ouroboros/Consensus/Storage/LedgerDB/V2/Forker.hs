@@ -114,13 +114,15 @@ implForkerPush ::
 implForkerPush env newState = do
   traceWith (foeTracer env) ForkerPushStart
   lseq <- readTVarIO (foeLedgerSeq env)
-  let (st, tbs) = (forgetLedgerTables newState, ltprj newState)
+
+  let st0 = current lseq
+      st = forgetLedgerTables newState
 
   bracketOnError
     (duplicate (tables $ currentHandle lseq))
     close
     (\newtbs -> do
-        pushDiffs newtbs tbs
+        pushDiffs newtbs st0 newState
 
         let lseq' = extend (StateRef st newtbs) lseq
 

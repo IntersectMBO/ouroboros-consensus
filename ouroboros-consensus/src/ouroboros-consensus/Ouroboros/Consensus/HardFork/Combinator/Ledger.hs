@@ -49,6 +49,7 @@ import           Control.Monad.Except (throwError, withExcept)
 import           Data.Functor ((<&>))
 import           Data.Functor.Product
 import           Data.Kind (Type)
+import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
 import           Data.MemPack
 import           Data.Proxy
@@ -89,6 +90,7 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Ledger.Tables.Utils
+import           Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util.Condense
 
@@ -1109,6 +1111,43 @@ class ( Show (HardForkTxOut xs)
   txOutEjections      :: NP (K (NS WrapTxOut xs) -.-> WrapTxOut) xs
   default txOutEjections :: CanHardFork xs => NP (K (NS WrapTxOut xs) -.-> WrapTxOut) xs
   txOutEjections = composeTxOutTranslations $ ipTranslateTxOut hardForkEraTranslation
+
+instance (CanHardFork xs, HasHardForkTxOut xs)
+      => CanUpgradeLedgerTables (LedgerState (HardForkBlock xs)) where
+  upgradeTables
+    (HardForkLedgerState (HardForkState hs0))
+    (HardForkLedgerState (HardForkState hs1))
+    orig@(LedgerTables (ValuesMK vs)) =
+      if (nsToIndex $ Telescope.tip hs0) /= (nsToIndex t1)
+      then LedgerTables $ ValuesMK $ extendTables (hmap (const (K ())) t1) vs
+      else orig
+   where
+     t1 = Telescope.tip hs1
+
+extendTables ::
+        forall xs.
+        (CanHardFork xs, HasHardForkTxOut xs)
+     => NS (K ()) xs
+     -> Map.Map
+          (TxIn (LedgerState (HardForkBlock xs)))
+          (TxOut (LedgerState (HardForkBlock xs)))
+     -> Map.Map
+          (TxIn (LedgerState (HardForkBlock xs)))
+          (TxOut (LedgerState (HardForkBlock xs)))
+extendTables st =
+    Map.map
+      (\txout ->
+          hcollapse
+        $ hcimap
+            proxySingle
+            (\idxTarget (K ()) ->
+                 K
+               . injectHardForkTxOut idxTarget
+               . ejectHardForkTxOut idxTarget
+               $ txout)
+            st
+      )
+
 
 injectHardForkTxOutDefault ::
      Index xs x

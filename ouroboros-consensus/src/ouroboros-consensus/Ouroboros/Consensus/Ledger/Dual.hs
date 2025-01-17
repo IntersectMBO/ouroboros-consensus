@@ -61,6 +61,7 @@ module Ouroboros.Consensus.Ledger.Dual (
   , encodeDualLedgerState
   ) where
 
+import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 import           Cardano.Binary (enforceSize)
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding, encodeListLen)
@@ -947,6 +948,9 @@ decodeDualLedgerState decodeMain = do
 
 type instance TxIn  (LedgerState (DualBlock m a)) = TxIn  (LedgerState m)
 type instance TxOut (LedgerState (DualBlock m a)) = TxOut (LedgerState m)
+
+instance CanUpgradeLedgerTables (LedgerState (DualBlock m a)) where
+  upgradeTables _ _ = id
 
 instance (
     Bridge m a
