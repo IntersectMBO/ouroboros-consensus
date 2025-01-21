@@ -82,7 +82,7 @@ import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Node.Serialisation
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
-import           Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
+import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util (repeatedlyM)
 import           Ouroboros.Consensus.Util.Condense

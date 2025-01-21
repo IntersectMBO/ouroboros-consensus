@@ -27,7 +27,7 @@ import           Ouroboros.Consensus.Ledger.Abstract (convertMapKind,
                      trivialLedgerTables)
 import qualified Ouroboros.Consensus.Ledger.Abstract as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
-import           Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
+import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Ticked (Ticked)
 import qualified Test.Util.TestBlock as TestBlock
 import           Test.Util.TestBlock (TestBlockWith)
