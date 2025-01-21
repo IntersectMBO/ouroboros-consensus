@@ -40,12 +40,15 @@ import           Control.Monad.Except (runExcept)
 import           Data.Coerce
 import qualified Data.Map.Strict as Map
 import           Data.MemPack
+import           Data.Proxy
 import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
 import           Data.SOP.Functors (Flip (..))
-import           Data.SOP.Index (Index (..))
+import           Data.SOP.Index (Index (..), hcimap)
 import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
+import qualified Data.SOP.Telescope as Telescope
 import           Data.Void (Void)
 import           Lens.Micro ((^.))
 import           NoThunks.Class (NoThunks)
@@ -76,6 +79,7 @@ import           Ouroboros.Consensus.Shelley.Node
 import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util (eitherToMaybe)
+import           Ouroboros.Consensus.Util.IndexedMemPack
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
 import           Test.ThreadNet.TxGen
 import           Test.ThreadNet.TxGen.Shelley ()
@@ -469,3 +473,21 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
                   DefaultHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2)
   injectHardForkTxOut = injectHardForkTxOutDefault
   ejectHardForkTxOut = ejectHardForkTxOutDefault
+
+instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
+      => IndexedMemPack (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)) EmptyMK) (DefaultHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2)) where
+  indexedTypeName _ = typeName @(DefaultHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
+  indexedPackedByteCount _ txout =
+    hcollapse (hcmap (Proxy @(Compose HasLedgerTables LedgerState)) (K . packedByteCount . unwrapTxOut) txout)
+  indexedPackM _ =
+    hcollapse . hcimap
+      (Proxy @(Compose HasLedgerTables LedgerState))
+      (\_ (WrapTxOut txout) -> K $ do
+         packM txout
+      )
+  indexedUnpackM (HardForkLedgerState (HardForkState idx)) = do
+    hsequence'
+      $ hcmap
+          (Proxy @(Compose HasLedgerTables LedgerState))
+          (const $ Comp $ WrapTxOut <$> unpackM)
+          $ Telescope.tip idx
