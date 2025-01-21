@@ -106,7 +106,7 @@ class ( LedgerSupportsProtocol            blk
       , ShowProxy             (BlockQuery blk)
       , ShowProxy            (TxId (GenTx blk))
       , (forall fp. ShowQuery (BlockQuery blk fp))
-      , LedgerSupportsInMemoryLedgerDB    blk
+      , LedgerSupportsLedgerDB            blk
       ) => RunNode blk
   -- This class is intentionally empty. It is not necessarily compositional - ie
   -- the instance for 'HardForkBlock' might do more than merely delegate to the

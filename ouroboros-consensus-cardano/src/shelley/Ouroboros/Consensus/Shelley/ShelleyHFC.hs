@@ -74,6 +74,7 @@ import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Inspect as Shelley.Inspect
 import           Ouroboros.Consensus.Shelley.Node ()
 import           Ouroboros.Consensus.TypeFamilyWrappers
+import           Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
   Synonym for convenience
@@ -431,3 +432,10 @@ instance ( ShelleyCompatible proto era
   queryLedgerGetTraversingFilter = \case
     IZ -> shelleyQFTraverseTablesPredicate
     IS idx -> case idx of {}
+
+instance (txout ~ SL.TxOut era, MemPack (SL.TxOut era))
+      => IndexedMemPack (LedgerState (HardForkBlock '[ShelleyBlock proto era]) EmptyMK) txout where
+  indexedTypeName _ = typeName @txout
+  indexedPackedByteCount _ = packedByteCount
+  indexedPackM _ = packM
+  indexedUnpackM _ = unpackM

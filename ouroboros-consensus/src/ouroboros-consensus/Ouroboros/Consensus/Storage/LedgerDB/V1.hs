@@ -74,7 +74,7 @@ mkInitDb ::
   , IOLike m
   , LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
-  , LedgerSupportsInMemoryLedgerDB blk
+  , LedgerSupportsLedgerDB blk
   )
   => Complete LedgerDbArgs m blk
   -> Complete V1.LedgerDbFlavorArgs m

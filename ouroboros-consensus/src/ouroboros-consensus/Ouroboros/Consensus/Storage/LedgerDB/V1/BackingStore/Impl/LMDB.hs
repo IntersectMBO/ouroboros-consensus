@@ -56,6 +56,7 @@ import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.
                      (Status (..), StatusLock)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Status as Status
 import           Ouroboros.Consensus.Util (foldlM')
+import           Ouroboros.Consensus.Util.IndexedMemPack
 import           Ouroboros.Consensus.Util.IOLike (Exception (..), IOLike,
                      MonadCatch (..), MonadThrow (..), bracket)
 import qualified System.FS.API as FS
@@ -76,6 +77,7 @@ data Db m l = Db {
   , dbState         :: !(LMDB.Database () DbSeqNo)
     -- | The LMDB tables with the key-value stores.
   , dbBackingTables :: !(LedgerTables l LMDBMK)
+  , dbLedgerState   :: !(IOLike.TVar m (l EmptyMK))
   , dbFilePath      :: !FilePath
   , dbTracer        :: !(Trace.Tracer m API.BackingStoreTrace)
     -- | Status of the LMDB backing store. When 'Closed', all backing store
@@ -142,12 +144,13 @@ getDb ::
 getDb (K2 name) = LMDBMK name <$> LMDB.getDatabase (Just name)
 
 readAll ::
-     (Ord (TxIn l), MemPack (TxIn l), MemPack (TxOut l))
+     (Ord (TxIn l), MemPack (TxIn l), IndexedMemPack (l EmptyMK) (TxOut l))
   => Proxy l
+  -> l EmptyMK
   -> LMDBMK (TxIn l) (TxOut l)
   -> LMDB.Transaction mode (ValuesMK (TxIn l) (TxOut l))
-readAll _ (LMDBMK _ dbMK) =
-  ValuesMK <$> Bridge.runCursorAsTransaction'
+readAll _ st (LMDBMK _ dbMK) =
+  ValuesMK <$> Bridge.runCursorAsTransaction' st
     LMDB.Cursor.cgetAll
     dbMK
 
@@ -166,11 +169,12 @@ readAll _ (LMDBMK _ dbMK) =
 -- function will be unexpected.
 rangeRead ::
      forall mode l.
-     (Ord (TxIn l), MemPack (TxIn l), MemPack (TxOut l))
+     (Ord (TxIn l), MemPack (TxIn l), IndexedMemPack (l EmptyMK) (TxOut l))
   => API.RangeQuery (LedgerTables l KeysMK)
+  -> l EmptyMK
   -> LMDBMK (TxIn l) (TxOut l)
   -> LMDB.Transaction mode (ValuesMK (TxIn l) (TxOut l))
-rangeRead rq dbMK =
+rangeRead rq st dbMK =
     ValuesMK <$> case ksMK of
       Nothing -> runCursorHelper Nothing
       Just (LedgerTables (KeysMK ks)) -> case Set.lookupMax ks of
@@ -186,53 +190,56 @@ rangeRead rq dbMK =
          Maybe (TxIn l, LMDB.Cursor.Bound)    -- ^ Lower bound on read range
       -> LMDB.Transaction mode (Map (TxIn l) (TxOut l))
     runCursorHelper lb =
-      Bridge.runCursorAsTransaction'
+      Bridge.runCursorAsTransaction' st
         (LMDB.Cursor.cgetMany lb count)
         db
 
 initLMDBTable ::
-     (MemPack v, MemPack k)
-  => LMDBMK   k v
+     (IndexedMemPack (l EmptyMK) v, MemPack k)
+  => l EmptyMK
+  -> LMDBMK   k v
   -> ValuesMK k v
   -> LMDB.Transaction LMDB.ReadWrite (EmptyMK k v)
-initLMDBTable (LMDBMK tblName db) (ValuesMK utxoVals) =
+initLMDBTable st (LMDBMK tblName db) (ValuesMK utxoVals) =
     EmptyMK <$ lmdbInitTable
   where
     lmdbInitTable = do
       isEmpty <- LMDB.null db
       unless isEmpty $ liftIO . throwIO $ LMDBErrInitialisingNonEmpty tblName
       void $ Map.traverseWithKey
-                 (Bridge.put db)
+                 (Bridge.indexedPut st db)
                  utxoVals
 
 readLMDBTable ::
-     (MemPack v, MemPack k)
+     (IndexedMemPack (l EmptyMK) v, MemPack k)
   => Ord k
-  => LMDBMK  k v
+  => l EmptyMK
+  -> LMDBMK  k v
   -> KeysMK  k v
   -> LMDB.Transaction mode (ValuesMK k v)
-readLMDBTable (LMDBMK _ db) (KeysMK keys) =
+readLMDBTable st (LMDBMK _ db) (KeysMK keys) =
     ValuesMK <$> lmdbReadTable
   where
     lmdbReadTable = foldlM' go Map.empty (Set.toList keys)
       where
-        go m k = Bridge.get db k <&> \case
+        go m k = Bridge.indexedGet st db k <&> \case
           Nothing -> m
           Just v  -> Map.insert k v m
 
 writeLMDBTable ::
-     (MemPack v, MemPack k)
-  => LMDBMK  k v
+     (IndexedMemPack (l EmptyMK) v, MemPack k)
+  => l EmptyMK
+  -> LMDBMK  k v
   -> DiffMK  k v
   -> LMDB.Transaction LMDB.ReadWrite (EmptyMK k v)
-writeLMDBTable (LMDBMK _ db) (DiffMK d) =
+writeLMDBTable st (LMDBMK _ db) (DiffMK d) =
     EmptyMK <$ lmdbWriteTable
   where
     lmdbWriteTable = void $ Diff.traverseDeltaWithKey_ go d
       where
         go k de = case de of
           Diff.Delete   -> void $ Bridge.delete db k
-          Diff.Insert v -> Bridge.put db k v
+          Diff.Insert v -> Bridge.indexedPut st db k v
 
 {-------------------------------------------------------------------------------
  Db state
@@ -321,7 +328,7 @@ checkAndOpenDbDirWithRetry gdd shfs@(FS.SomeHasFS fs) path =
 -- | Initialise an LMDB database from these provided values.
 initFromVals ::
      forall l m.
-     (HasLedgerTables l, MonadIO m)
+     (HasLedgerTables l, MonadIO m, IndexedMemPack (l EmptyMK) (TxOut l))
   => Trace.Tracer m API.BackingStoreTrace
   -> WithOrigin SlotNo
      -- ^ The slot number up to which the ledger tables contain values.
@@ -330,14 +337,15 @@ initFromVals ::
   -> LMDB.Environment LMDB.Internal.ReadWrite
      -- ^ The LMDB environment.
   -> LMDB.Database () DbSeqNo
+  -> l EmptyMK
      -- ^ The state of the tables we are going to initialize the db with.
   -> LedgerTables l LMDBMK
   -> m ()
-initFromVals tracer dbsSeq vals env st backingTables = do
+initFromVals tracer dbsSeq vals env st lst backingTables = do
   Trace.traceWith tracer $ API.BSInitialisingFromValues dbsSeq
   liftIO $ LMDB.readWriteTransaction env $
     withDbSeqNoRWMaybeNull st $ \case
-      Nothing -> ltzipWith2A initLMDBTable backingTables vals
+      Nothing -> ltzipWith2A' (initLMDBTable lst) backingTables vals
                  $> ((), DbSeqNo{dbsSeq})
       Just _ -> liftIO . throwIO $ LMDBErrInitialisingAlreadyHasState
   Trace.traceWith tracer $ API.BSInitialisedFromValues dbsSeq
@@ -387,7 +395,7 @@ lmdbCopy from0 tracer e to = do
 
 -- | Initialise a backing store.
 newLMDBBackingStore ::
-     forall m l. (HasCallStack, HasLedgerTables l, MonadIO m, IOLike m)
+     forall m l. (HasCallStack, HasLedgerTables l, MonadIO m, IOLike m, IndexedMemPack (l EmptyMK) (TxOut l))
   => Trace.Tracer m API.BackingStoreTrace
   -> LMDBLimits
      -- ^ Configuration parameters for the LMDB database that we
@@ -415,6 +423,10 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
  where
 
    path = FS.mkFsPath ["tables"]
+
+   st = case initFrom of
+       API.InitFromCopy st' _     -> st'
+       API.InitFromValues _ st' _ -> st'
 
    createOrGetDB :: m (Db m l)
    createOrGetDB = do
@@ -444,9 +456,12 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
 
      dbNextId <- IOLike.newTVarIO 0
 
+     dbLedgerState <- IOLike.newTVarIO st
+
      pure $ Db { dbEnv
                , dbState
                , dbBackingTables
+               , dbLedgerState
                , dbFilePath
                , dbTracer
                , dbStatusLock
@@ -461,8 +476,8 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
    maybePopulate dbEnv dbState dbBackingTables = do
      -- now initialise those tables if appropriate
      case initFrom of
-       API.InitFromValues slot vals -> initFromVals dbTracer slot vals dbEnv dbState dbBackingTables
-       API.InitFromCopy{}           -> pure ()
+       API.InitFromValues slot _ vals -> initFromVals dbTracer slot vals dbEnv dbState st dbBackingTables
+       API.InitFromCopy{}             -> pure ()
 
    mkBackingStore :: HasCallStack => Db m l -> API.LedgerBackingStore m l
    mkBackingStore db =
@@ -485,8 +500,8 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
            bsValueHandle = Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
              mkLMDBBackingStoreValueHandle db
 
-           bsWrite :: SlotNo -> (l EmptyMK, l EmptyMK) -> LedgerTables l DiffMK -> m ()
-           bsWrite slot _ diffs = do
+           bsWrite :: SlotNo -> l EmptyMK -> LedgerTables l DiffMK -> m ()
+           bsWrite slot st' diffs = do
              Trace.traceWith dbTracer $ API.BSWriting slot
              Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
                oldSlot <- liftIO $ LMDB.readWriteTransaction dbEnv $ withDbSeqNoRW dbState $ \s@DbSeqNo{dbsSeq} -> do
@@ -494,8 +509,9 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
                    -- This inequality is non-strict because of EBBs having the
                    -- same slot as its predecessor.
                    liftIO . throwIO $ LMDBErrNonMonotonicSeq (At slot) dbsSeq
-                 void $ ltzipWith2A writeLMDBTable dbBackingTables diffs
+                 void $ ltzipWith2A' (writeLMDBTable st') dbBackingTables diffs
                  pure (dbsSeq, s {dbsSeq = At slot})
+               IOLike.atomically $ IOLike.writeTVar dbLedgerState st'
                Trace.traceWith dbTracer $ API.BSWritten oldSlot slot
 
        in API.BackingStore { API.bsClose       = bsClose
@@ -508,6 +524,7 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
         Db { dbEnv
            , dbState
            , dbBackingTables
+           , dbLedgerState
            , dbStatusLock
            , dbOpenHandles
            } = db
@@ -516,7 +533,7 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
 -- current database state.
 mkLMDBBackingStoreValueHandle ::
      forall l m.
-     (HasLedgerTables l, MonadIO m, IOLike m, HasCallStack)
+     (HasLedgerTables l, MonadIO m, IOLike m, HasCallStack, IndexedMemPack (l EmptyMK) (TxOut l))
   => Db m l
      -- ^ The LMDB database for which the backing store value handle is
      -- created.
@@ -536,7 +553,7 @@ mkLMDBBackingStoreValueHandle db = do
   trh <- liftIO $ TrH.newReadOnly dbEnvRo
   mbInitSlot <- liftIO $ TrH.submitReadOnly trh $ readDbSeqNoMaybeNull dbState
   initSlot <- liftIO $ maybe (throwIO LMDBErrUnableToReadSeqNo) (pure . dbsSeq) mbInitSlot
-
+  st <- IOLike.readTVarIO dbLedgerState
   vhStatusLock <- Status.new Open
 
   let
@@ -565,7 +582,7 @@ mkLMDBBackingStoreValueHandle db = do
       Status.withReadAccess vhStatusLock (throwIO (LMDBErrNoValueHandle vhId)) $ do
         Trace.traceWith tracer API.BSVHReading
         res <- liftIO $ TrH.submitReadOnly trh $
-          ltzipWith2A readLMDBTable dbBackingTables keys
+          ltzipWith2A' (readLMDBTable st) dbBackingTables keys
         Trace.traceWith tracer API.BSVHRead
         pure res
 
@@ -578,7 +595,7 @@ mkLMDBBackingStoreValueHandle db = do
         Trace.traceWith tracer API.BSVHRangeReading
         res <- liftIO $ TrH.submitReadOnly trh $
           let dbMK = getLedgerTables dbBackingTables
-          in LedgerTables <$> rangeRead rq dbMK
+          in LedgerTables <$> rangeRead rq st dbMK
         Trace.traceWith tracer API.BSVHRangeRead
         pure res
 
@@ -603,7 +620,7 @@ mkLMDBBackingStoreValueHandle db = do
         Trace.traceWith tracer API.BSVHRangeReading
         res <- liftIO $ TrH.submitReadOnly trh $
           let dbMK = getLedgerTables dbBackingTables
-          in LedgerTables <$> readAll (Proxy @l) dbMK
+          in LedgerTables <$> readAll (Proxy @l) st dbMK
         Trace.traceWith tracer API.BSVHRangeRead
         pure res
 
@@ -626,6 +643,7 @@ mkLMDBBackingStoreValueHandle db = do
       , dbState
       , dbOpenHandles
       , dbBackingTables
+      , dbLedgerState
       , dbNextId
       , dbStatusLock
       } = db
