@@ -74,6 +74,7 @@ mkInitDb ::
   , IOLike m
   , LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
+  , LedgerSupportsInMemoryLedgerDB blk
   )
   => Complete LedgerDbArgs m blk
   -> Complete V1.LedgerDbFlavorArgs m
@@ -87,7 +88,7 @@ mkInitDb args bss getBlock =
       (_, backingStore) <-
         allocate
           lgrRegistry
-          (\_ -> newBackingStore bsTracer baArgs lgrHasFS' (projectLedgerTables st))
+          (\_ -> newBackingStore bsTracer baArgs lgrHasFS' (forgetLedgerTables st) (projectLedgerTables st))
           bsClose
       pure (chlog, backingStore)
   , initFromSnapshot =
@@ -415,6 +416,7 @@ flushIntoBackingStore backingStore dblog = writeLocked $
   bsWrite
     backingStore
     (toFlushSlot dblog)
+    (toFlushState dblog)
     (toFlushDiffs dblog)
 
 {-------------------------------------------------------------------------------

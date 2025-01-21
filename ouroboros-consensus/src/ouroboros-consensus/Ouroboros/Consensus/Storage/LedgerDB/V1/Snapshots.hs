@@ -252,6 +252,7 @@ loadSnapshot ::
      forall m blk. ( IOLike m
      , LedgerDbSerialiseConstraints blk
      , LedgerSupportsProtocol blk
+     , LedgerSupportsInMemoryLedgerDB blk
      )
   => Tracer m V1.FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m
@@ -272,6 +273,6 @@ loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs'@(SomeHasFS fs'')) doChecksum s 
   case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
     Origin        -> throwError InitFailureGenesis
     NotOrigin pt -> do
-        backingStore <- Trans.lift (restoreBackingStore tracer bss fs (snapshotToTablesPath s))
+        backingStore <- Trans.lift (restoreBackingStore tracer bss fs extLedgerSt (snapshotToTablesPath s))
         let chlog  = empty extLedgerSt
         pure ((chlog, backingStore), pt)

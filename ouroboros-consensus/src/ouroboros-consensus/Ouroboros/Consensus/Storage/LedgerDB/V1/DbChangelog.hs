@@ -662,6 +662,7 @@ splitForFlushing dblog =
 
     ldblog = DiffsToFlush {
         toFlushDiffs = ltmap prj l
+      , toFlushState = immTip
       , toFlushSlot  =
             fromWithOrigin (error "Flushing a DbChangelog at origin should never happen")
           $ getTipSlot immTip
