@@ -310,6 +310,7 @@ test-suite consensus-test
     serialise,
     si-timers,
     sop-extras,
+    sop-core,
     strict-checked-vars,
     strict-sop-core,
     strict-stm,

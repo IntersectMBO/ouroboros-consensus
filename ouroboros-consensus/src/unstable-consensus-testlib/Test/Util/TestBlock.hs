@@ -138,6 +138,7 @@ import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util (ShowProxy (..))
 import           Ouroboros.Consensus.Util.Condense
+import           Ouroboros.Consensus.Util.IndexedMemPack
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Network.Magic (NetworkMagic (..))
 import           Ouroboros.Network.Mock.Chain (Chain (..))
@@ -146,6 +147,7 @@ import qualified System.Random as R
 import           Test.QuickCheck hiding (Result)
 import           Test.Util.Orphans.SignableRepresentation ()
 import           Test.Util.Orphans.ToExpr ()
+
 {-------------------------------------------------------------------------------
   Test infrastructure: test block
 -------------------------------------------------------------------------------}
@@ -525,6 +527,12 @@ deriving via TrivialLedgerTables (LedgerState TestBlock)
     instance CanStowLedgerTables (LedgerState TestBlock)
 deriving via TrivialLedgerTables (LedgerState TestBlock)
     instance CanUpgradeLedgerTables (LedgerState TestBlock)
+
+instance IndexedMemPack (LedgerState TestBlock EmptyMK) Void where
+  indexedTypeName _ = typeName @Void
+  indexedPackedByteCount _ = packedByteCount
+  indexedPackM _ = packM
+  indexedUnpackM _ = unpackM
 
 instance PayloadSemantics ptype
          => ApplyBlock (LedgerState (TestBlockWith ptype)) (TestBlockWith ptype) where
@@ -956,7 +964,12 @@ instance Serialise ptype => HasBinaryBlockInfo (TestBlockWith ptype) where
       , headerSize   = fromIntegral . BL.length . serialise $ blk
       }
 
-instance (Serialise ptype, PayloadSemantics ptype) => SerialiseDiskConstraints (TestBlockWith ptype)
+instance ( Serialise ptype
+         , PayloadSemantics ptype
+         , IndexedMemPack
+             (LedgerState (TestBlockWith ptype) EmptyMK)
+             (TxOut (LedgerState (TestBlockWith ptype)))
+         ) => SerialiseDiskConstraints (TestBlockWith ptype)
 
 -----
 

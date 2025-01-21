@@ -31,6 +31,7 @@ This example uses several extensions:
 > {-# LANGUAGE DeriveAnyClass             #-}
 > {-# LANGUAGE MultiParamTypeClasses      #-}
 > {-# LANGUAGE StandaloneDeriving         #-}
+> {-# LANGUAGE TypeApplications           #-}
 
 > module Ouroboros.Consensus.Tutorial.Simple () where
 
@@ -64,6 +65,7 @@ First, some imports we'll need:
 >   (ValidateEnvelope, BasicEnvelopeValidation, HasAnnTip)
 > import Ouroboros.Consensus.Ledger.Tables
 > import Ouroboros.Consensus.Storage.LedgerDB
+> import Ouroboros.Consensus.Util.IndexedMemPack
 
 Conceptual Overview and Definitions of Key Terms
 ================================================
@@ -747,6 +749,11 @@ and we use the default implementation
 >       TickedLedgerStateC (convertMapKind x)
 > deriving via TrivialLedgerTables (LedgerState BlockC)
 >     instance HasLedgerTables (LedgerState BlockC)
+> instance IndexedMemPack (LedgerState BlockC EmptyMK) Void where
+>   indexedTypeName _ = typeName @Void
+>   indexedPackedByteCount _ = packedByteCount
+>   indexedPackM _ = packM
+>   indexedUnpackM _ = unpackM
 > deriving via TrivialLedgerTables (Ticked (LedgerState BlockC))
 >     instance HasLedgerTables (Ticked (LedgerState BlockC))
 > deriving via TrivialLedgerTables (LedgerState BlockC)
