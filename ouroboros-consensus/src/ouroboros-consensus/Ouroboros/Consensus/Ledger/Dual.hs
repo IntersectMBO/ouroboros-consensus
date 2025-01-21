@@ -61,7 +61,7 @@ module Ouroboros.Consensus.Ledger.Dual (
   , encodeDualLedgerState
   ) where
 
-import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
+import           Ouroboros.Consensus.Storage.LedgerDB
 import           Cardano.Binary (enforceSize)
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding, encodeListLen)

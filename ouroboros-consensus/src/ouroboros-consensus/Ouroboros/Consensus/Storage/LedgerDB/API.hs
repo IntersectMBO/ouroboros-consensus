@@ -111,9 +111,11 @@
 --
 module Ouroboros.Consensus.Storage.LedgerDB.API (
     -- * Main API
-    LedgerDB (..)
+    CanUpgradeLedgerTables (..)
+  , LedgerDB (..)
   , LedgerDB'
   , LedgerDbSerialiseConstraints
+  , LedgerSupportsInMemoryLedgerDB
   , ResolveBlock
   , currentPoint
     -- * Initialization
@@ -155,8 +157,10 @@ import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.Functor.Contravariant ((>$<))
 import           Data.Kind
+import qualified Data.Map.Strict as Map
 import           Data.MemPack
 import           Data.Set (Set)
+import           Data.Void (absurd)
 import           Data.Word
 import           GHC.Generics (Generic)
 import           NoThunks.Class
@@ -687,3 +691,36 @@ data TraceReplayProgressEvent blk =
     (ReplayStart blk) -- ^ the block at which this replay started
     (ReplayGoal blk)  -- ^ the block at the tip of the ImmutableDB
   deriving (Generic, Eq, Show)
+
+{-------------------------------------------------------------------------------
+  Updating ledger tables
+-------------------------------------------------------------------------------}
+
+type LedgerSupportsInMemoryLedgerDB blk =
+  (CanUpgradeLedgerTables (LedgerState blk))
+
+-- | When pushing differences on InMemory Ledger DBs, we will sometimes need to
+-- update ledger tables to the latest era. For unary blocks this is a no-op, but
+-- for the Cardano block, we will need to upgrade all TxOuts in memory.
+--
+-- No correctness property relies on this, as Consensus can work with TxOuts
+-- from multiple eras, but the performance depends on it as otherwise we will be
+-- upgrading the TxOuts every time we consult them.
+class CanUpgradeLedgerTables l where
+  upgradeTables ::
+       l mk1 -- ^ The original ledger state before the upgrade. This will be the
+             -- tip before applying the block.
+    -> l mk2 -- ^ The ledger state after the upgrade, which might be in a
+             -- different era than the one above.
+    -> LedgerTables l ValuesMK -- ^ The tables we want to maybe upgrade.
+    -> LedgerTables l ValuesMK
+
+instance CanUpgradeLedgerTables (LedgerState blk)
+      => CanUpgradeLedgerTables (ExtLedgerState blk) where
+  upgradeTables (ExtLedgerState st0 _) (ExtLedgerState st1 _) =
+    castLedgerTables . upgradeTables st0 st1 . castLedgerTables
+
+instance LedgerTablesAreTrivial l
+      => CanUpgradeLedgerTables (TrivialLedgerTables l) where
+  upgradeTables _ _ (LedgerTables (ValuesMK mk)) =
+    LedgerTables (ValuesMK (Map.map absurd mk))

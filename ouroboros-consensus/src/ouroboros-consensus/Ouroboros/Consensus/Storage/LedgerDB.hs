@@ -12,7 +12,6 @@ module Ouroboros.Consensus.Storage.LedgerDB (
   , module Ouroboros.Consensus.Storage.LedgerDB.Forker
   , module Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
     -- * Impl
-  , V2.LedgerSupportsV2LedgerDB
   , openDB
   , openDBInternal
   ) where
@@ -44,7 +43,7 @@ openDB ::
   , InspectLedger blk
   , HasCallStack
   , HasHardForkHistory blk
-  , V2.LedgerSupportsV2LedgerDB blk
+  , LedgerSupportsInMemoryLedgerDB blk
   )
   => Complete LedgerDbArgs m blk
   -- ^ Stateless initializaton arguments

@@ -72,12 +72,15 @@ newtype LiveLMDBFS m = LiveLMDBFS { liveLMDBFs :: SomeHasFS m }
 data DiffsToFlush l = DiffsToFlush {
     -- | The set of differences that should be flushed into the 'BackingStore'
     toFlushDiffs :: !(LedgerTables l DiffMK)
+    -- | The state at which the above differences end. This will be
+    -- the immutable tip.
+  , toFlushState :: !(l EmptyMK)
     -- | At which slot the diffs were split. This must be the slot of the state
     -- considered as "last flushed" in the kept 'DbChangelog'
   , toFlushSlot  :: !SlotNo
   }
 
-data BackingStore m keys values diff = BackingStore {
+data BackingStore m keys values diff st = BackingStore {
     -- | Close the backing store
     --
     -- Other methods throw exceptions if called on a closed store. 'bsClose'
@@ -95,27 +98,33 @@ data BackingStore m keys values diff = BackingStore {
     -- entire database
   , bsValueHandle :: !(m (BackingStoreValueHandle m keys values))
     -- | Apply a valid diff to the contents of the backing store
-  , bsWrite       :: !(SlotNo -> diff -> m ())
+    --
+    -- We pass in the final state at the end of the diffs such that we
+    -- can perform an upgrade in-place of the ledger tables. See
+    -- 'CanUpgradeLedgerTables'.
+  , bsWrite       :: !(SlotNo -> st -> diff -> m ())
   }
 
-deriving via OnlyCheckWhnfNamed "BackingStore" (BackingStore m keys values diff)
-  instance NoThunks (BackingStore m keys values diff)
+deriving via OnlyCheckWhnfNamed "BackingStore" (BackingStore m keys values diff st)
+  instance NoThunks (BackingStore m keys values diff st)
 
 type LedgerBackingStore m l =
   BackingStore m
     (LedgerTables l KeysMK)
     (LedgerTables l ValuesMK)
     (LedgerTables l DiffMK)
+    (l EmptyMK)
+
 
 type BackingStore' m blk = LedgerBackingStore m (ExtLedgerState blk)
 
 -- | Choose how to initialize the backing store
-data InitFrom values =
+data InitFrom l values =
     -- | Initialize from a set of values, at the given slot.
-    InitFromValues !(WithOrigin SlotNo) !values
+    InitFromValues !(WithOrigin SlotNo) !(l EmptyMK) !values
     -- | Use a snapshot at the given path to overwrite the set of values in the
     -- opened database.
-  | InitFromCopy !FS.FsPath
+  | InitFromCopy !(l EmptyMK) !FS.FsPath
 
 {-------------------------------------------------------------------------------
   Value handles
@@ -187,7 +196,7 @@ castBackingStoreValueHandle f g bsvh =
 -- | A combination of 'bsValueHandle' and 'bsvhRead'
 bsRead ::
      MonadThrow m
-  => BackingStore m keys values diff
+  => BackingStore m keys values diff st
   -> keys
   -> m (WithOrigin SlotNo, values)
 bsRead store keys = withBsValueHandle store $ \vh -> do
@@ -196,14 +205,14 @@ bsRead store keys = withBsValueHandle store $ \vh -> do
 
 bsReadAll ::
      MonadThrow m
-  => BackingStore m keys values diff
+  => BackingStore m keys values diff st
   -> m values
 bsReadAll store = withBsValueHandle store bsvhReadAll
 
 -- | A 'IOLike.bracket'ed 'bsValueHandle'
 withBsValueHandle ::
      MonadThrow m
-  => BackingStore m keys values diff
+  => BackingStore m keys values diff st
   -> (BackingStoreValueHandle m keys values -> m a)
   -> m a
 withBsValueHandle store =
