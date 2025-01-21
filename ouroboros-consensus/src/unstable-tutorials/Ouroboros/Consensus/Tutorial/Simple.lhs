@@ -63,7 +63,7 @@ First, some imports we'll need:
 > import Ouroboros.Consensus.HeaderValidation
 >   (ValidateEnvelope, BasicEnvelopeValidation, HasAnnTip)
 > import Ouroboros.Consensus.Ledger.Tables
-> import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
+> import Ouroboros.Consensus.Storage.LedgerDB
 
 Conceptual Overview and Definitions of Key Terms
 ================================================
