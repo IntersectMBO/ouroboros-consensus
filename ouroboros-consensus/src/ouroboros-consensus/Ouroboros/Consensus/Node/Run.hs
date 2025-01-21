@@ -33,10 +33,9 @@ import           Ouroboros.Consensus.Node.InitStorage
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.Serialisation
 import           Ouroboros.Consensus.Storage.ChainDB
-                     (ImmutableDbSerialiseConstraints,
-                     LedgerDbSerialiseConstraints, SerialiseDiskConstraints,
+                     (ImmutableDbSerialiseConstraints, SerialiseDiskConstraints,
                      VolatileDbSerialiseConstraints)
-import           Ouroboros.Consensus.Storage.LedgerDB.V2
+import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Network.Block (Serialised)
@@ -107,7 +106,7 @@ class ( LedgerSupportsProtocol            blk
       , ShowProxy             (BlockQuery blk)
       , ShowProxy            (TxId (GenTx blk))
       , (forall fp. ShowQuery (BlockQuery blk fp))
-      , LedgerSupportsV2LedgerDB          blk
+      , LedgerSupportsInMemoryLedgerDB    blk
       ) => RunNode blk
   -- This class is intentionally empty. It is not necessarily compositional - ie
   -- the instance for 'HardForkBlock' might do more than merely delegate to the

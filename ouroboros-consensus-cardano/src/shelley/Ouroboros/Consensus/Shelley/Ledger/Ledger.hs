@@ -108,7 +108,7 @@ import           Ouroboros.Consensus.Shelley.Ledger.Config
 import           Ouroboros.Consensus.Shelley.Ledger.Protocol ()
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract
                      (EnvelopeCheckError, envelopeChecks, mkHeaderView)
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as V2
+import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Util.CBOR (decodeWithOrigin,
                      encodeWithOrigin)
 import           Ouroboros.Consensus.Util.Versioned
@@ -756,5 +756,5 @@ decodeShelleyLedgerState = decodeVersion [
         , shelleyLedgerTables = emptyLedgerTables
         }
 
-instance V2.CanUpgradeLedgerTables (LedgerState (ShelleyBlock proto era)) where
+instance CanUpgradeLedgerTables (LedgerState (ShelleyBlock proto era)) where
   upgradeTables _ _ = id

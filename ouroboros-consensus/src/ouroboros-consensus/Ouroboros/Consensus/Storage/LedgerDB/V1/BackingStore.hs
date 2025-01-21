@@ -37,6 +37,7 @@ import           Data.Functor.Contravariant
 import           Data.SOP.Dict (Dict (..))
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Ledger.Basics
+import           Ouroboros.Consensus.Storage.LedgerDB.API
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as InMemory
@@ -47,7 +48,7 @@ import           System.FS.API
 import           System.FS.IO
 
 type BackingStoreInitialiser m l =
-     InitFrom (LedgerTables l ValuesMK)
+     InitFrom l (LedgerTables l ValuesMK)
   -> m (LedgerBackingStore m l)
 
 -- | Overwrite the 'BackingStore' tables with the snapshot's tables
@@ -55,34 +56,42 @@ restoreBackingStore ::
      ( IOLike m
      , HasLedgerTables l
      , HasCallStack
+     , NoThunks (l EmptyMK)
+     , CanUpgradeLedgerTables l
      )
   => Tracer m FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m
   -> SnapshotsFS m
+  -> l EmptyMK
   -> FsPath
   -> m (LedgerBackingStore m l)
-restoreBackingStore trcr bss fs loadPath =
-    newBackingStoreInitialiser trcr bss fs (InitFromCopy loadPath)
+restoreBackingStore trcr bss fs l loadPath =
+    newBackingStoreInitialiser trcr bss fs (InitFromCopy l loadPath)
 
 -- | Create a 'BackingStore' from the given initial tables.
 newBackingStore ::
      ( IOLike m
      , HasLedgerTables l
      , HasCallStack
+     , NoThunks (l EmptyMK)
+     , CanUpgradeLedgerTables l
      )
   => Tracer m FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m
   -> SnapshotsFS m
+  -> l EmptyMK
   -> LedgerTables l ValuesMK
   -> m (LedgerBackingStore m l)
-newBackingStore trcr bss fs tables =
-    newBackingStoreInitialiser trcr bss fs (InitFromValues Origin tables)
+newBackingStore trcr bss fs st tables =
+    newBackingStoreInitialiser trcr bss fs (InitFromValues Origin st tables)
 
 newBackingStoreInitialiser ::
      forall m l.
      ( IOLike m
      , HasLedgerTables l
      , HasCallStack
+     , NoThunks (l EmptyMK)
+     , CanUpgradeLedgerTables l
      )
   => Tracer m FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m

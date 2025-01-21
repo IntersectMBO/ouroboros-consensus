@@ -33,6 +33,7 @@ import           Data.String (fromString)
 import           GHC.Generics
 import           Ouroboros.Consensus.Ledger.Basics
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
+import           Ouroboros.Consensus.Storage.LedgerDB.API
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import           Ouroboros.Consensus.Util.IOLike (Exception, IOLike,
                      MonadSTM (STM, atomically), MonadThrow (throwIO), NoThunks,
@@ -54,11 +55,13 @@ data BackingStoreContents m l =
     BackingStoreContentsClosed
   | BackingStoreContents
       !(WithOrigin SlotNo)
+      !(l EmptyMK)
       !(LedgerTables l ValuesMK)
   deriving (Generic)
 
 deriving instance ( NoThunks (TxIn l)
                   , NoThunks (TxOut l)
+                  , NoThunks (l EmptyMK)
                   ) => NoThunks (BackingStoreContents m l)
 
 -- | Use a 'TVar' as a trivial backing store
@@ -66,16 +69,18 @@ newInMemoryBackingStore ::
      forall l m.
      ( IOLike m
      , HasLedgerTables l
+     , NoThunks (l EmptyMK)
+     , CanUpgradeLedgerTables l
      )
   => Tracer m BackingStoreTrace
   -> SnapshotsFS m
-  -> InitFrom (LedgerTables l ValuesMK)
+  -> InitFrom l (LedgerTables l ValuesMK)
   -> m (LedgerBackingStore m l)
 newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
     traceWith tracer BSOpening
     ref <- do
-      (slot, values) <- case initialization of
-        InitFromCopy path -> do
+      (st, (slot, values)) <- case initialization of
+        InitFromCopy l path -> do
           traceWith tracer $ BSInitialisingFromCopy path
           tvarFileExists <- doesFileExist fs (extendPath path)
           unless tvarFileExists $
@@ -87,11 +92,11 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
               Right (extra, x) -> do
                 unless (BSL.null extra) $ throwIO InMemoryIncompleteDeserialiseExn
                 traceWith tracer $ BSInitialisedFromCopy path
-                pure x
-        InitFromValues slot values -> do
+                pure (l, x)
+        InitFromValues slot st values -> do
           traceWith tracer $ BSInitialisingFromValues slot
-          pure (slot, values)
-      newTVarIO $ BackingStoreContents slot values
+          pure (st, (slot, values))
+      newTVarIO $ BackingStoreContents slot st values
     traceWith tracer $ BSOpened Nothing
     pure BackingStore {
         bsClose = do
@@ -112,7 +117,7 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
             readTVar ref >>= \case
               BackingStoreContentsClosed       ->
                 throwSTM InMemoryBackingStoreClosedExn
-              BackingStoreContents slot values -> pure $ do
+              BackingStoreContents slot _ values -> pure $ do
                 exists <- doesDirectoryExist fs path
                 when exists $ throwIO InMemoryBackingStoreDirectoryExists
                 createDirectory fs path
@@ -127,7 +132,7 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
            readTVar ref >>= \case
              BackingStoreContentsClosed       ->
                throwSTM InMemoryBackingStoreClosedExn
-             BackingStoreContents slot values -> pure $ do
+             BackingStoreContents slot _ values -> pure $ do
                refHandleClosed <- newTVarIO False
                pure $ BackingStoreValueHandle {
                    bsvhAtSlot    = slot
@@ -180,19 +185,20 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
                  }
           traceWith tracer BSCreatedValueHandle
           pure vh
-      , bsWrite = \slot2 diff -> do
+      , bsWrite = \slot2 st' diff -> do
          traceWith tracer $ BSWriting slot2
          slot1 <- atomically $ do
           readTVar ref >>= \case
             BackingStoreContentsClosed        ->
               throwSTM InMemoryBackingStoreClosedExn
-            BackingStoreContents slot1 values -> do
+            BackingStoreContents slot1 st values -> do
               unless (slot1 <= At slot2) $
                 throwSTM $ InMemoryBackingStoreNonMonotonicSeq (At slot2) slot1
               writeTVar ref $
                 BackingStoreContents
                   (At slot2)
-                  (forwardValues values diff)
+                  st'
+                  (upgradeTables st st' (appDiffs values diff))
               pure slot1
          traceWith tracer $ BSWritten slot1 slot2
       }
@@ -241,10 +247,10 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
           Nothing -> ValuesMK Map.empty
           Just  k -> ValuesMK  $ Map.take n $ snd $ Map.split k vs
 
-    forwardValues :: LedgerTables l ValuesMK
-                  -> LedgerTables l DiffMK
-                  -> LedgerTables l ValuesMK
-    forwardValues = ltliftA2 applyDiff_
+    appDiffs :: LedgerTables l ValuesMK
+             -> LedgerTables l DiffMK
+             -> LedgerTables l ValuesMK
+    appDiffs = ltliftA2 applyDiff_
 
     applyDiff_ ::
          Ord k
@@ -266,7 +272,7 @@ guardClosed ::
   -> STM m ()
 guardClosed ref = readTVar ref >>= \case
   BackingStoreContentsClosed -> throwSTM InMemoryBackingStoreClosedExn
-  BackingStoreContents _ _   -> pure ()
+  BackingStoreContents _ _ _ -> pure ()
 
 guardHandleClosed ::
      IOLike m
