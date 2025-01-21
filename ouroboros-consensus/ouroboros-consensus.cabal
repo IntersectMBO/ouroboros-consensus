@@ -281,6 +281,7 @@ library
     Ouroboros.Consensus.Util.FileLock
     Ouroboros.Consensus.Util.HList
     Ouroboros.Consensus.Util.IOLike
+    Ouroboros.Consensus.Util.IndexedMemPack
     Ouroboros.Consensus.Util.LeakyBucket
     Ouroboros.Consensus.Util.MonadSTM.NormalForm
     Ouroboros.Consensus.Util.MonadSTM.StrictSVar
@@ -312,6 +313,7 @@ library
     contra-tracer,
     deepseq,
     diff-containers >=1.2,
+    FailT ^>= 0.1.2,
     filelock,
     fingertree-rm >=1.0,
     fs-api ^>=0.3,

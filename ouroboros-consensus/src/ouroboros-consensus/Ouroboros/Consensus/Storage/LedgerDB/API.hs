@@ -116,6 +116,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.API (
   , LedgerDB'
   , LedgerDbSerialiseConstraints
   , LedgerSupportsInMemoryLedgerDB
+  , LedgerSupportsLedgerDB
+  , LedgerSupportsOnDiskLedgerDB
   , ResolveBlock
   , currentPoint
     -- * Initialization
@@ -179,6 +181,7 @@ import           Ouroboros.Consensus.Storage.LedgerDB.Forker
 import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util.CallStack
+import           Ouroboros.Consensus.Util.IndexedMemPack
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Block
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
@@ -198,8 +201,11 @@ type LedgerDbSerialiseConstraints blk =
   , DecodeDisk blk (AnnTip      blk)
   , EncodeDisk blk (ChainDepState (BlockProtocol blk))
   , DecodeDisk blk (ChainDepState (BlockProtocol blk))
+    -- For InMemory LedgerDBs
   , MemPack (TxOut (LedgerState blk))
   , MemPack (TxIn (LedgerState blk))
+    -- For OnDisk LedgerDBs
+  , IndexedMemPack (LedgerState blk EmptyMK) (TxOut (LedgerState blk))
   )
 
 -- | The core API of the LedgerDB component
@@ -696,8 +702,7 @@ data TraceReplayProgressEvent blk =
   Updating ledger tables
 -------------------------------------------------------------------------------}
 
-type LedgerSupportsInMemoryLedgerDB blk =
-  (CanUpgradeLedgerTables (LedgerState blk))
+type LedgerSupportsInMemoryLedgerDB blk = (CanUpgradeLedgerTables (LedgerState blk))
 
 -- | When pushing differences on InMemory Ledger DBs, we will sometimes need to
 -- update ledger tables to the latest era. For unary blocks this is a no-op, but
@@ -724,3 +729,16 @@ instance LedgerTablesAreTrivial l
       => CanUpgradeLedgerTables (TrivialLedgerTables l) where
   upgradeTables _ _ (LedgerTables (ValuesMK mk)) =
     LedgerTables (ValuesMK (Map.map absurd mk))
+
+{-------------------------------------------------------------------------------
+  Supporting On-Disk backing stores
+-------------------------------------------------------------------------------}
+
+type LedgerSupportsOnDiskLedgerDB blk =
+  ( IndexedMemPack (LedgerState blk EmptyMK) (TxOut (LedgerState blk))
+  )
+
+type LedgerSupportsLedgerDB blk =
+  ( LedgerSupportsOnDiskLedgerDB blk
+  , LedgerSupportsInMemoryLedgerDB blk
+  )

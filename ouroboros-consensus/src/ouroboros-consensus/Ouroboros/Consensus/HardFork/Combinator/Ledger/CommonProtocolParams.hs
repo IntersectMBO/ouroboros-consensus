@@ -12,7 +12,7 @@ import           Data.SOP.Strict
 import           Ouroboros.Consensus.HardFork.Combinator.Abstract
 import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger
-                     (HasCanonicalTxIn, HasHardForkTxOut)
+                     (HasCanonicalTxIn, HasHardForkTxOut (..))
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import           Ouroboros.Consensus.Ledger.CommonProtocolParams
 

@@ -49,6 +49,7 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.Serialisation
+import           Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
   Extended ledger state
@@ -326,3 +327,10 @@ instance CanStowLedgerTables (LedgerState blk)
 
    unstowLedgerTables (ExtLedgerState lstate hstate) =
      ExtLedgerState (unstowLedgerTables lstate) hstate
+
+instance (txout ~ (TxOut (LedgerState blk)), IndexedMemPack (LedgerState blk EmptyMK) (TxOut (LedgerState blk)))
+      => IndexedMemPack (ExtLedgerState blk EmptyMK) txout where
+  indexedTypeName (ExtLedgerState st _) = indexedTypeName @(LedgerState blk EmptyMK) @txout st
+  indexedPackedByteCount (ExtLedgerState st _) = indexedPackedByteCount st
+  indexedPackM (ExtLedgerState st _) = indexedPackM st
+  indexedUnpackM (ExtLedgerState st _) = indexedUnpackM st

@@ -64,8 +64,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
-import           Ouroboros.Consensus.Storage.LedgerDB
-                     (LedgerSupportsInMemoryLedgerDB)
+import           Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util (newFuse, whenJust, withFuse)
@@ -90,7 +89,7 @@ withDB ::
      , HasHardForkHistory blk
      , ConvertRawHash blk
      , SerialiseDiskConstraints blk
-     , LedgerSupportsInMemoryLedgerDB blk
+     , LedgerSupportsLedgerDB blk
      )
   => Complete Args.ChainDbArgs m blk
   -> (ChainDB m blk -> m a)
@@ -106,7 +105,7 @@ openDB ::
      , HasHardForkHistory blk
      , ConvertRawHash blk
      , SerialiseDiskConstraints blk
-     , LedgerSupportsInMemoryLedgerDB blk
+     , LedgerSupportsLedgerDB blk
      )
   => Complete Args.ChainDbArgs m blk
   -> m (ChainDB m blk)
@@ -122,7 +121,7 @@ openDBInternal ::
      , ConvertRawHash blk
      , SerialiseDiskConstraints blk
      , HasCallStack
-     , LedgerSupportsInMemoryLedgerDB blk
+     , LedgerSupportsLedgerDB blk
      )
   => Complete Args.ChainDbArgs m blk
   -> Bool -- ^ 'True' = Launch background tasks

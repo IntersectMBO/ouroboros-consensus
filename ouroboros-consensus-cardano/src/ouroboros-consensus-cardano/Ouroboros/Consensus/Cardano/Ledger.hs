@@ -38,6 +38,7 @@ import           Data.SOP.BasicFunctors
 import           Data.SOP.Index
 import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.Strict
+import qualified Data.SOP.Telescope as Telescope
 import           Data.Void
 import           GHC.Generics (Generic)
 import           NoThunks.Class
@@ -53,6 +54,7 @@ import           Ouroboros.Consensus.Shelley.Ledger (IsShelleyBlock,
                      ShelleyBlock, ShelleyBlockLedgerEra, ShelleyTxIn (..))
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import           Ouroboros.Consensus.TypeFamilyWrappers
+import           Ouroboros.Consensus.Util.IndexedMemPack
 
 instance CardanoHardForkConstraints c
       => HasCanonicalTxIn (CardanoEras c) where
@@ -189,3 +191,29 @@ instance CardanoHardForkConstraints c => MemPack (CardanoTxOut c) where
       (hsequence'
       $ hap np
       $ fromMaybe (error "Unknown tag") (nsFromIndex tag :: Maybe (NS (K ()) (CardanoEras c))))
+
+instance CardanoHardForkConstraints c
+      => IndexedMemPack (LedgerState (HardForkBlock (CardanoEras c)) EmptyMK) (CardanoTxOut c) where
+  indexedTypeName _ = typeName @(CardanoTxOut c)
+  indexedPackM _ = eliminateCardanoTxOut (\_ txout -> do
+                                           packM txout
+                                         )
+
+  indexedPackedByteCount _ = eliminateCardanoTxOut (\_ txout -> packedByteCount txout)
+
+  indexedUnpackM (HardForkLedgerState (HardForkState idx)) = do
+    let
+      np = ( (Fn $ const $ error "unpacking a byron txout")
+          :* (Fn $ const $ Comp $ K . ShelleyTxOut <$> unpackM)
+          :* (Fn $ const $ Comp $ K . AllegraTxOut <$> unpackM)
+          :* (Fn $ const $ Comp $ K . MaryTxOut    <$> unpackM)
+          :* (Fn $ const $ Comp $ K . AlonzoTxOut  <$> unpackM)
+          :* (Fn $ const $ Comp $ K . BabbageTxOut <$> unpackM)
+          :* (Fn $ const $ Comp $ K . ConwayTxOut  <$> unpackM)
+          :* Nil
+          )
+    hcollapse <$>
+      (hsequence'
+      $ hap np
+      $ Telescope.tip idx
+      )

@@ -111,6 +111,7 @@ import           Ouroboros.Consensus.Shelley.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Util.CBOR (decodeWithOrigin,
                      encodeWithOrigin)
+import           Ouroboros.Consensus.Util.IndexedMemPack
 import           Ouroboros.Consensus.Util.Versioned
 
 {-------------------------------------------------------------------------------
@@ -276,6 +277,13 @@ instance ShelleyBasedEra era => MemPack (ShelleyTxIn era) where
   packM = packM . getShelleyTxIn
   packedByteCount = packedByteCount . getShelleyTxIn
   unpackM = ShelleyTxIn @era <$> unpackM
+
+instance (txout ~ Core.TxOut era, MemPack txout)
+      => IndexedMemPack (LedgerState (ShelleyBlock proto era) EmptyMK) txout where
+  indexedTypeName _ = typeName @txout
+  indexedPackedByteCount _ = packedByteCount
+  indexedPackM _ = packM
+  indexedUnpackM _ = unpackM
 
 instance ShelleyBasedEra era
       => HasLedgerTables (LedgerState (ShelleyBlock proto era)) where
