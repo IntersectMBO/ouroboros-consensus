@@ -93,7 +93,7 @@ testWithIO ::
 testWithIO mkBSEnv = runActionsBracket pT mkBSEnv bsCleanup runner
 
 runner ::
-     RealMonad m ks vs d a
+     RealMonad m ks vs d (OTLedgerState (QC.Fixed Word) (QC.Fixed Word)) a
   -> BSEnv m ks vs d
   -> m a
 runner c r = runReaderT c $ bsRealEnv r
@@ -107,7 +107,7 @@ labelledExamples = QC.labelledExamples $ tagActions pT
 -------------------------------------------------------------------------------}
 
 data BSEnv m ks vs d = BSEnv {
-    bsRealEnv :: RealEnv m ks vs d
+    bsRealEnv :: RealEnv m ks vs d (OTLedgerState (QC.Fixed Word) (QC.Fixed Word))
   , bsCleanup :: m ()
   }
 
@@ -140,7 +140,7 @@ setupBSEnv mkBsArgs mkShfs cleanup = do
 
   let bsi = BS.newBackingStoreInitialiser mempty mkBsArgs (BS.SnapshotsFS shfs)
 
-  bsVar <- newMVar =<< bsi (BS.InitFromValues Origin emptyLedgerTables)
+  bsVar <- newMVar =<< bsi (BS.InitFromValues Origin (OTLedgerState emptyMK emptyLedgerTables) emptyLedgerTables)
 
   let
     bsCleanup = do
@@ -172,7 +172,7 @@ closeHandlers = [
   Types under test
 -------------------------------------------------------------------------------}
 
-type T = BackingStoreState K V D
+type T = BackingStoreState K V D (OTLedgerState (QC.Fixed Word) (QC.Fixed Word))
 
 pT :: Proxy T
 pT = Proxy

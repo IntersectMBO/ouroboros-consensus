@@ -1,4 +1,6 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -17,10 +19,13 @@ module Test.Util.LedgerStateOnlyTables (
   ) where
 
 import           Data.MemPack
+import           GHC.Generics
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
+import           Ouroboros.Consensus.Storage.LedgerDB.API
+import           Test.QuickCheck
 
 {-------------------------------------------------------------------------------
   Simple ledger state
@@ -36,12 +41,20 @@ data OTBlock k v
 data instance LedgerState (OTBlock k v) (mk :: MapKind) = OTLedgerState {
     otlsLedgerState  :: ValuesMK k v
   , otlsLedgerTables :: OTLedgerTables k v mk
-  }
+  } deriving Generic
 
 deriving instance (Ord k, Eq v, Eq (mk k v))
                => Eq (OTLedgerState k v mk)
 deriving stock instance (Show k, Show v, Show (mk k v))
                      => Show (OTLedgerState k v mk)
+deriving instance (NoThunks k, NoThunks v, NoThunks (mk k v))
+                => NoThunks (OTLedgerState k v mk)
+
+instance (Ord k, Eq v, MemPack k, MemPack v) => Arbitrary (LedgerState (OTBlock k v) EmptyMK) where
+  arbitrary = pure $ OTLedgerState emptyMK emptyLedgerTables
+
+instance CanUpgradeLedgerTables (LedgerState (OTBlock k v)) where
+  upgradeTables _ _ = id
 
 {-------------------------------------------------------------------------------
   Stowable

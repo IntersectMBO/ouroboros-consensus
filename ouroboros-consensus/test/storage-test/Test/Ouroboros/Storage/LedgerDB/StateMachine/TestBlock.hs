@@ -52,7 +52,6 @@ import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Storage.LedgerDB.API
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq as DS
-import           Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Block (Point (Point))
 import           Ouroboros.Network.Point (Block (Block))
