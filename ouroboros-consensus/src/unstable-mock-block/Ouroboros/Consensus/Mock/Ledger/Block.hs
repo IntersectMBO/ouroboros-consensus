@@ -102,6 +102,7 @@ import           Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..),
 import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE)
 import           Ouroboros.Consensus.Util.Condense
+import           Ouroboros.Consensus.Util.IndexedMemPack
 import           Test.Util.Orphans.Serialise ()
 
 {-------------------------------------------------------------------------------
@@ -469,6 +470,12 @@ type instance TxOut (LedgerState (SimpleBlock c ext)) = Mock.TxOut
 
 instance CanUpgradeLedgerTables (LedgerState (SimpleBlock c ext)) where
   upgradeTables _ _ = id
+
+instance IndexedMemPack (LedgerState (SimpleBlock c ext) EmptyMK) Mock.TxOut where
+  indexedTypeName _ = typeName @Mock.TxOut
+  indexedPackedByteCount _ = packedByteCount
+  indexedPackM _ = packM
+  indexedUnpackM _ = unpackM
 
 instance HasLedgerTables (LedgerState (SimpleBlock c ext)) where
   projectLedgerTables = simpleLedgerTables

@@ -3,9 +3,12 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 -- | A simple ledger state that only holds ledger tables (and values).
@@ -26,6 +29,7 @@ import           Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 import           Ouroboros.Consensus.Storage.LedgerDB.API
+import           Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
   Simple ledger state
@@ -57,6 +61,13 @@ emptyOTLedgerState = OTLedgerState emptyMK emptyLedgerTables
 
 instance CanUpgradeLedgerTables (LedgerState (OTBlock k v)) where
   upgradeTables _ _ = id
+
+instance MemPack v
+      => IndexedMemPack (LedgerState (OTBlock k v) EmptyMK) v where
+  indexedTypeName _ = typeName @v
+  indexedPackedByteCount _ = packedByteCount
+  indexedPackM _ = packM
+  indexedUnpackM _ = unpackM
 
 {-------------------------------------------------------------------------------
   Stowable

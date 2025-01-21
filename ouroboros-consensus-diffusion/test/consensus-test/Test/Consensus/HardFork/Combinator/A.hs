@@ -12,6 +12,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -86,6 +87,7 @@ import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util (repeatedlyM)
 import           Ouroboros.Consensus.Util.Condense
+import           Ouroboros.Consensus.Util.IndexedMemPack
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Network.Block (Serialised, unwrapCBORinCBOR,
                      wrapCBORinCBOR)
@@ -206,6 +208,12 @@ instance LedgerTablesAreTrivial (LedgerState BlockA) where
   convertMapKind (LgrA x y) = LgrA x y
 instance LedgerTablesAreTrivial (Ticked (LedgerState BlockA)) where
   convertMapKind (TickedLedgerStateA x) = TickedLedgerStateA (convertMapKind x)
+instance IndexedMemPack (LedgerState BlockA EmptyMK) Void where
+  indexedTypeName _ = typeName @Void
+  indexedPackedByteCount _ = packedByteCount
+  indexedPackM _ = packM
+  indexedUnpackM _ = unpackM
+
 deriving via TrivialLedgerTables (LedgerState BlockA)
     instance HasLedgerTables (LedgerState BlockA)
 deriving via TrivialLedgerTables (Ticked (LedgerState BlockA))

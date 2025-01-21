@@ -43,12 +43,13 @@ As before, we require a few language extensions:
 > {-# LANGUAGE TypeFamilies               #-}
 > {-# LANGUAGE DerivingVia                #-}
 > {-# LANGUAGE DataKinds                  #-}
+> {-# LANGUAGE DeriveAnyClass             #-}
 > {-# LANGUAGE DeriveGeneric              #-}
 > {-# LANGUAGE FlexibleInstances          #-}
 > {-# LANGUAGE MultiParamTypeClasses      #-}
 > {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-> {-# LANGUAGE DeriveAnyClass #-}
 > {-# LANGUAGE StandaloneDeriving         #-}
+> {-# LANGUAGE TypeApplications           #-}
 
 > module Ouroboros.Consensus.Tutorial.WithEpoch () where
 
@@ -92,6 +93,7 @@ And imports, of course:
 > import Ouroboros.Consensus.Ledger.Tables
 
 > import Ouroboros.Consensus.Storage.LedgerDB
+> import Ouroboros.Consensus.Util.IndexedMemPack
 
 Epochs
 ------
@@ -689,6 +691,11 @@ For reference on these instances and their meaning, please see the appendix in
 >     instance HasLedgerTables (LedgerState BlockD)
 > deriving via TrivialLedgerTables (Ticked (LedgerState BlockD))
 >     instance HasLedgerTables (Ticked (LedgerState BlockD))
+> instance IndexedMemPack (LedgerState BlockD EmptyMK) Void where
+>   indexedTypeName _ = typeName @Void
+>   indexedPackedByteCount _ = packedByteCount
+>   indexedPackM _ = packM
+>   indexedUnpackM _ = unpackM
 > deriving via TrivialLedgerTables (LedgerState BlockD)
 >     instance CanStowLedgerTables (LedgerState BlockD)
 > deriving via TrivialLedgerTables (LedgerState BlockD)

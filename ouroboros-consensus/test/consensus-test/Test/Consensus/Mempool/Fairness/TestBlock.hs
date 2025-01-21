@@ -6,6 +6,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Test.Consensus.Mempool.Fairness.TestBlock (
@@ -23,12 +24,13 @@ import           Data.Void (Void)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import qualified Ouroboros.Consensus.Block as Block
-import           Ouroboros.Consensus.Ledger.Abstract (convertMapKind,
-                     trivialLedgerTables)
+import           Ouroboros.Consensus.Ledger.Abstract (EmptyMK, LedgerState,
+                     convertMapKind, trivialLedgerTables)
 import qualified Ouroboros.Consensus.Ledger.Abstract as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Ticked (Ticked)
+import           Ouroboros.Consensus.Util.IndexedMemPack
 import qualified Test.Util.TestBlock as TestBlock
 import           Test.Util.TestBlock (TestBlockWith)
 
@@ -137,6 +139,12 @@ deriving via Ledger.TrivialLedgerTables (Ledger.LedgerState TestBlock)
 
 deriving via Ledger.TrivialLedgerTables (Ledger.LedgerState TestBlock)
     instance Ledger.HasLedgerTables (Ticked (Ledger.LedgerState TestBlock))
+
+instance IndexedMemPack (LedgerState TestBlock EmptyMK) Void where
+  indexedTypeName _ = typeName @Void
+  indexedPackedByteCount _ = packedByteCount
+  indexedPackM _ = packM
+  indexedUnpackM _ = unpackM
 
 instance Ledger.LedgerTablesAreTrivial (Ledger.LedgerState TestBlock) where
   convertMapKind (TestBlock.TestLedger x NoPayLoadDependentState) =

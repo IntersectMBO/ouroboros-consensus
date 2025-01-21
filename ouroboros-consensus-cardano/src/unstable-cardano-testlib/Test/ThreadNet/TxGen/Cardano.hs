@@ -34,6 +34,7 @@ import           Ouroboros.Consensus.Block (SlotNo (..))
 import           Ouroboros.Consensus.Cardano
 import           Ouroboros.Consensus.Cardano.Block (CardanoEras, GenTx (..),
                      ShelleyEra)
+import           Ouroboros.Consensus.Cardano.Ledger ()
 import           Ouroboros.Consensus.Cardano.Node (CardanoHardForkConstraints)
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger

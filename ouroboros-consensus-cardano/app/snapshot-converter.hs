@@ -178,7 +178,7 @@ load ::
        ( LedgerDbSerialiseConstraints blk
        , CanStowLedgerTables (LedgerState blk)
        , LedgerSupportsProtocol blk
-       , LedgerSupportsInMemoryLedgerDB blk
+       , LedgerSupportsLedgerDB blk
        )
     => Config
     -> ResourceRegistry IO
@@ -227,7 +227,7 @@ store ::
        ( LedgerDbSerialiseConstraints blk
        , CanStowLedgerTables (LedgerState blk)
        , LedgerSupportsProtocol blk
-       , LedgerSupportsInMemoryLedgerDB blk
+       , LedgerSupportsLedgerDB blk
        )
     => Config
     -> CodecConfig blk
