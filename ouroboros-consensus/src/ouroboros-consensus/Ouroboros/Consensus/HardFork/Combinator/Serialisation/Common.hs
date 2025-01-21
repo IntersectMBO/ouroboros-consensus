@@ -89,6 +89,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.HardFork.Combinator.Block
 import           Ouroboros.Consensus.HardFork.Combinator.Info
+import           Ouroboros.Consensus.HardFork.Combinator.Ledger
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
 import           Ouroboros.Consensus.HardFork.Combinator.State
 import           Ouroboros.Consensus.HardFork.Combinator.State.Instances
@@ -98,6 +99,7 @@ import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.TypeFamilyWrappers
+import           Ouroboros.Consensus.Util.IndexedMemPack
 import           Ouroboros.Network.Block (Serialised)
 
 {-------------------------------------------------------------------------------
@@ -260,6 +262,7 @@ class ( CanHardFork xs
         -- LedgerTables on the HardForkBlock might not be compositionally
         -- defined, but we need to require this instances for any instantiation.
       , HasLedgerTables (LedgerState (HardForkBlock xs))
+      , IndexedMemPack (LedgerState (HardForkBlock xs) EmptyMK) (HardForkTxOut xs)
       ) => SerialiseHFC xs where
 
   encodeDiskHfcBlock :: CodecConfig (HardForkBlock xs)

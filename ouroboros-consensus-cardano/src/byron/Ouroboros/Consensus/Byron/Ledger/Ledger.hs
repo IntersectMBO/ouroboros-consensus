@@ -13,6 +13,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -88,6 +89,7 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Util (ShowProxy (..))
+import           Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
   LedgerState
@@ -193,6 +195,12 @@ instance LedgerTablesAreTrivial (LedgerState ByronBlock) where
   convertMapKind (ByronLedgerState x y z) = ByronLedgerState x y z
 instance LedgerTablesAreTrivial (Ticked (LedgerState ByronBlock)) where
   convertMapKind (TickedByronLedgerState x y) = TickedByronLedgerState x y
+
+instance IndexedMemPack (LedgerState ByronBlock EmptyMK) Void where
+  indexedTypeName _ = typeName @Void
+  indexedPackedByteCount _ = packedByteCount
+  indexedPackM _ = packM
+  indexedUnpackM _ = unpackM
 
 deriving via TrivialLedgerTables (LedgerState ByronBlock)
     instance HasLedgerTables (LedgerState ByronBlock)
