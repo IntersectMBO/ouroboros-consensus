@@ -2,6 +2,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
@@ -188,6 +189,7 @@ import           Ouroboros.Consensus.Ledger.Tables.Basics
 import           Ouroboros.Consensus.Ledger.Tables.Combinators
 import           Ouroboros.Consensus.Ledger.Tables.MapKind
 import           Ouroboros.Consensus.Ticked
+import           Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
   Basic LedgerState classes
@@ -341,3 +343,9 @@ instance LedgerTablesAreTrivial l => HasLedgerTables (TrivialLedgerTables l) whe
 instance LedgerTablesAreTrivial l => CanStowLedgerTables (TrivialLedgerTables l) where
   stowLedgerTables = convertMapKind
   unstowLedgerTables = convertMapKind
+
+instance IndexedMemPack (TrivialLedgerTables l EmptyMK) Void where
+  indexedTypeName _ = typeName @Void
+  indexedPackedByteCount _ = packedByteCount
+  indexedPackM _ = packM
+  indexedUnpackM _ = unpackM

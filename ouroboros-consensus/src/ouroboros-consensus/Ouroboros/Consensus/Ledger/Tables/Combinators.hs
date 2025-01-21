@@ -50,6 +50,7 @@ module Ouroboros.Consensus.Ledger.Tables.Combinators (
   , ltliftA4
     -- * Applicative and Traversable
   , ltzipWith2A
+  , ltzipWith2A'
     -- * Collapsing
   , ltcollapse
     -- * Lifted functions
@@ -69,10 +70,11 @@ module Ouroboros.Consensus.Ledger.Tables.Combinators (
 
 import           Data.Bifunctor
 import           Data.Kind
-import           Data.MemPack (MemPack)
 import           Data.SOP.Functors
 import           Ouroboros.Consensus.Ledger.Tables.Basics
+import           Ouroboros.Consensus.Ledger.Tables.MapKind
 import           Ouroboros.Consensus.Util ((...:), (..:), (.:))
+import           Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
   Common constraints
@@ -130,6 +132,12 @@ ltpure ::
     -> LedgerTables l mk
 ltpure = LedgerTables
 
+ltpure' ::
+       (LedgerTableConstraints l, IndexedMemPack (l EmptyMK) (TxOut l))
+    => (forall k v. (LedgerTableConstraints' k v, IndexedMemPack (l EmptyMK) v) => mk k v)
+    -> LedgerTables l mk
+ltpure' = LedgerTables
+
 -- | Like 'bprod', but for ledger tables.
 ltprod :: LedgerTables l f -> LedgerTables l g -> LedgerTables l (f `Product2` g)
 ltprod (LedgerTables x) (LedgerTables y) = LedgerTables (Pair2 x y)
@@ -160,6 +168,14 @@ ltliftA2 ::
   -> LedgerTables l mk2
   -> LedgerTables l mk3
 ltliftA2 f x x' = ltpure (fn2_2 f) `ltap` x `ltap` x'
+
+ltliftA2' ::
+     (LedgerTableConstraints l, IndexedMemPack (l EmptyMK) (TxOut l))
+  => (forall k v. (LedgerTableConstraints' k v, IndexedMemPack (l EmptyMK) v) => mk1 k v -> mk2 k v -> mk3 k v)
+  -> LedgerTables l mk1
+  -> LedgerTables l mk2
+  -> LedgerTables l mk3
+ltliftA2' f x x' = ltpure' (fn2_2 f) `ltap` x `ltap` x'
 
 ltliftA3 ::
      LedgerTableConstraints l
@@ -194,6 +210,15 @@ ltzipWith2A ::
   -> LedgerTables l mk2
   -> f (LedgerTables l mk3)
 ltzipWith2A f = ltsequence .: ltliftA2 (Comp2 .: f)
+
+ltzipWith2A' ::
+     (Applicative f, LedgerTableConstraints l, IndexedMemPack (l EmptyMK) (TxOut l))
+  => (forall k v. (Ord k, MemPack v, MemPack k, IndexedMemPack (l EmptyMK) v) => mk1 k v -> mk2 k v -> f (mk3 k v))
+  -> LedgerTables l mk1
+  -> LedgerTables l mk2
+  -> f (LedgerTables l mk3)
+ltzipWith2A' f = ltsequence .: ltliftA2' (Comp2 .: f)
+
 
 {-------------------------------------------------------------------------------
   Collapsing

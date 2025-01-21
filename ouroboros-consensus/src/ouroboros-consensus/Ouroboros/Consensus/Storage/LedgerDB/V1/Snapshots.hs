@@ -166,6 +166,7 @@ import           System.FS.API
 import           System.FS.API.Lazy
 import           System.FS.CRC
 
+
 -- | Try to take a snapshot of the /oldest ledger state/ in the ledger DB
 --
 -- We write the /oldest/ ledger state to disk because the intention is to only
@@ -249,10 +250,11 @@ snapshotToTablesPath = mkFsPath . (\x -> [x, "tables"]) . snapshotToDirName
 --   Fail on data corruption, i.e. when the checksum of the read data differs
 --   from the one tracked by @'DiskSnapshot'@.
 loadSnapshot ::
-     forall m blk. ( IOLike m
+     forall m blk.
+     ( IOLike m
      , LedgerDbSerialiseConstraints blk
      , LedgerSupportsProtocol blk
-     , LedgerSupportsInMemoryLedgerDB blk
+     , LedgerSupportsLedgerDB blk
      )
   => Tracer m V1.FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m

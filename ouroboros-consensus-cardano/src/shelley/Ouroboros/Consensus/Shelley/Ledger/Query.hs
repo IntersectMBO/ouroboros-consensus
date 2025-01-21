@@ -111,6 +111,7 @@ import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import           Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Util (ShowProxy (..))
+import           Ouroboros.Consensus.Util.IndexedMemPack
 import           Ouroboros.Network.Block (Serialised (..), decodePoint,
                      encodePoint, mkSerialised)
 import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
@@ -1189,6 +1190,7 @@ answerShelleyTraversingQueries ::
      , Ord (TxIn (LedgerState blk))
      , Eq (TxOut (LedgerState blk))
      , MemPack (TxOut (LedgerState blk))
+     , IndexedMemPack (LedgerState blk EmptyMK) (TxOut (LedgerState blk))
      , MemPack (TxIn (LedgerState blk))
      )
   => Monad m

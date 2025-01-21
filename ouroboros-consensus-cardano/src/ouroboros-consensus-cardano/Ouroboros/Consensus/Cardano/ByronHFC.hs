@@ -3,6 +3,7 @@
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -26,8 +27,10 @@ import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.Degenerate
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
 import           Ouroboros.Consensus.Ledger.Query
+import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Storage.Serialisation
+import           Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
   Synonym for convenience
@@ -108,6 +111,12 @@ instance HasHardForkTxOut '[ByronBlock] where
   injectHardForkTxOut (IS idx') _ = case idx' of {}
   ejectHardForkTxOut IZ txout    = absurd txout
   ejectHardForkTxOut (IS idx') _ = case idx' of {}
+
+instance IndexedMemPack (LedgerState (HardForkBlock '[ByronBlock]) EmptyMK) Void where
+  indexedTypeName _ = typeName @Void
+  indexedPackedByteCount _ = packedByteCount
+  indexedPackM _ = packM
+  indexedUnpackM _ = unpackM
 
 instance BlockSupportsHFLedgerQuery '[ByronBlock] where
   answerBlockQueryHFLookup IZ      _cfg  (q :: BlockQuery ByronBlock QFLookupTables result) _dlv = case q of {}

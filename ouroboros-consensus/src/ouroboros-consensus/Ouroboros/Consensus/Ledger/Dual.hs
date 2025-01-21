@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE TypeOperators #-}
 #if __GLASGOW_HASKELL__ < 900
 {-# LANGUAGE DataKinds #-}
 #endif
@@ -61,7 +62,6 @@ module Ouroboros.Consensus.Ledger.Dual (
   , encodeDualLedgerState
   ) where
 
-import           Ouroboros.Consensus.Storage.LedgerDB
 import           Cardano.Binary (enforceSize)
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding, encodeListLen)
@@ -72,9 +72,6 @@ import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.ByteString.Short as Short
 import           Data.Functor ((<&>))
 import           Data.Kind (Type)
-#if __GLASGOW_HASKELL__ >= 906
-import           Data.MemPack (MemPack)
-#endif
 import           Data.Typeable
 import           GHC.Generics (Generic)
 import           GHC.Stack
@@ -93,9 +90,11 @@ import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Ledger.Tables.Utils
+import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util (ShowProxy (..))
 import           Ouroboros.Consensus.Util.Condense
+import           Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
   Block
@@ -951,6 +950,13 @@ type instance TxOut (LedgerState (DualBlock m a)) = TxOut (LedgerState m)
 
 instance CanUpgradeLedgerTables (LedgerState (DualBlock m a)) where
   upgradeTables _ _ = id
+
+instance (txout ~ TxOut (LedgerState m), IndexedMemPack (LedgerState m EmptyMK) (TxOut (LedgerState m)))
+      => IndexedMemPack (LedgerState (DualBlock m a) EmptyMK) txout where
+  indexedTypeName (DualLedgerState st _ _) = indexedTypeName @(LedgerState m EmptyMK) @txout st
+  indexedPackedByteCount (DualLedgerState st _ _) = indexedPackedByteCount st
+  indexedPackM (DualLedgerState st _ _) = indexedPackM st
+  indexedUnpackM (DualLedgerState st _ _) = indexedUnpackM st
 
 instance (
     Bridge m a
