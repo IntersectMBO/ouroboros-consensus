@@ -16,10 +16,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Ouroboros.Consensus.Storage.LedgerDB.V2 (
-    LedgerSupportsV2LedgerDB
-  , mkInitDb
-  ) where
+module Ouroboros.Consensus.Storage.LedgerDB.V2 (mkInitDb) where
 
 import           Control.Arrow ((>>>))
 import qualified Control.Monad as Monad (void, (>=>))
@@ -67,15 +64,12 @@ import           Ouroboros.Network.Protocol.LocalStateQuery.Type
 import           Prelude hiding (read)
 import           System.FS.API
 
-type LedgerSupportsV2LedgerDB blk =
-  (InMemory.CanUpgradeLedgerTables (LedgerState blk))
-
 mkInitDb :: forall m blk.
             ( LedgerSupportsProtocol blk
             , IOLike m
             , LedgerDbSerialiseConstraints blk
             , HasHardForkHistory blk
-            , InMemory.CanUpgradeLedgerTables (LedgerState blk)
+            , LedgerSupportsInMemoryLedgerDB blk
             )
          => Complete LedgerDbArgs m blk
          -> Complete V2.LedgerDbFlavorArgs m

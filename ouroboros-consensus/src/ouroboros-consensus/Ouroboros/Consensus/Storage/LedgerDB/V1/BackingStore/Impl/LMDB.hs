@@ -397,7 +397,7 @@ newLMDBBackingStore ::
   -> API.LiveLMDBFS m
      -- ^ The FS for the LMDB live database
   -> API.SnapshotsFS m
-  -> API.InitFrom (LedgerTables l ValuesMK)
+  -> API.InitFrom l (LedgerTables l ValuesMK)
   -> m (API.LedgerBackingStore m l)
 newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.SnapshotsFS snapFS') initFrom = do
    Trace.traceWith dbTracer API.BSOpening
@@ -427,7 +427,7 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
 
      -- copy from another lmdb path if appropriate
      case initFrom of
-       API.InitFromCopy fp  -> initFromLMDBs dbTracer limits snapFS fp liveFS path
+       API.InitFromCopy _ fp  -> initFromLMDBs dbTracer limits snapFS fp liveFS path
        API.InitFromValues{} -> pure ()
 
      -- open this database
@@ -461,8 +461,8 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
    maybePopulate dbEnv dbState dbBackingTables = do
      -- now initialise those tables if appropriate
      case initFrom of
-       API.InitFromValues slot vals -> initFromVals dbTracer slot vals dbEnv dbState dbBackingTables
-       API.InitFromCopy{}           -> pure ()
+       API.InitFromValues slot _ vals -> initFromVals dbTracer slot vals dbEnv dbState dbBackingTables
+       API.InitFromCopy{}             -> pure ()
 
    mkBackingStore :: HasCallStack => Db m l -> API.LedgerBackingStore m l
    mkBackingStore db =
@@ -485,8 +485,8 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
            bsValueHandle = Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
              mkLMDBBackingStoreValueHandle db
 
-           bsWrite :: SlotNo -> LedgerTables l DiffMK -> m ()
-           bsWrite slot diffs = do
+           bsWrite :: SlotNo -> l EmptyMK -> LedgerTables l DiffMK -> m ()
+           bsWrite slot _ diffs = do
              Trace.traceWith dbTracer $ API.BSWriting slot
              Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
                oldSlot <- liftIO $ LMDB.readWriteTransaction dbEnv $ withDbSeqNoRW dbState $ \s@DbSeqNo{dbsSeq} -> do
