@@ -99,7 +99,7 @@ import           Ouroboros.Consensus.Mock.Ledger.State
 import qualified Ouroboros.Consensus.Mock.Ledger.UTxO as Mock
 import           Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..),
                      SizeInBytes)
-import           Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
+import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE)
 import           Ouroboros.Consensus.Util.Condense
 import           Test.Util.Orphans.Serialise ()

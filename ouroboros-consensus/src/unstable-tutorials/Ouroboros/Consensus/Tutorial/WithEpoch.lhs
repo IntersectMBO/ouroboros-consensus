@@ -91,7 +91,7 @@ And imports, of course:
 > import Ouroboros.Consensus.Ledger.Basics (GetTip(..))
 > import Ouroboros.Consensus.Ledger.Tables
 
-> import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
+> import Ouroboros.Consensus.Storage.LedgerDB
 
 Epochs
 ------

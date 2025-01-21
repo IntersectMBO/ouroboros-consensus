@@ -52,6 +52,7 @@ import           Control.Monad.State (MonadState, State, StateT (StateT), gets,
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block.Abstract (SlotNo, WithOrigin (..))
+import           Ouroboros.Consensus.Ledger.Tables
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
 import qualified System.FS.API.Types as FS
 
@@ -172,21 +173,23 @@ runMockMonad (MockMonad t) = runState . runExceptT $ t
 ------------------------------------------------------------------------------}
 
 mBSInitFromValues ::
-     forall vs m. (MonadState (Mock vs) m)
+     forall vs l m. (MonadState (Mock vs) m)
   => WithOrigin SlotNo
+  -> l EmptyMK
   -> vs
   -> m ()
-mBSInitFromValues sl vs = modify (\m -> m {
+mBSInitFromValues sl _ vs = modify (\m -> m {
     backingValues = vs
   , backingSeqNo  = sl
   , isClosed      = False
   })
 
 mBSInitFromCopy ::
-     forall vs m. (MonadState (Mock vs) m, MonadError Err m)
-  => FS.FsPath
+     forall vs l m. (MonadState (Mock vs) m, MonadError Err m)
+  => l EmptyMK
+  -> FS.FsPath
   -> m ()
-mBSInitFromCopy bsp = do
+mBSInitFromCopy _ bsp = do
   cps <- gets copies
   case Map.lookup bsp cps of
     Nothing       -> throwError ErrCopyPathDoesNotExist
@@ -249,9 +252,10 @@ mBSValueHandle = do
 mBSWrite ::
      (MonadState (Mock vs) m, MonadError Err m, ApplyDiff vs d)
   => SlotNo
+  -> l EmptyMK
   -> d
   -> m ()
-mBSWrite sl d = do
+mBSWrite sl _ d = do
   mGuardBSClosed
   vs <- gets backingValues
   seqNo <- gets backingSeqNo
