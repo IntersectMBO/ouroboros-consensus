@@ -4,10 +4,12 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -56,6 +58,7 @@ import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog hiding
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq as DS
 import           Ouroboros.Consensus.Util
+import           Ouroboros.Consensus.Util.IndexedMemPack
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import           Ouroboros.Network.Block (Point (..))
 import qualified Ouroboros.Network.Point as Point
@@ -415,6 +418,12 @@ type instance TxOut TestLedger = Int
 instance HasLedgerTables TestLedger where
   projectLedgerTables                     = LedgerTables . tlUtxos
   withLedgerTables st    (LedgerTables x) = st { tlUtxos = x }
+
+instance IndexedMemPack (TestLedger EmptyMK) Int where
+  indexedTypeName _ = typeName @Int
+  indexedPackedByteCount _ = packedByteCount
+  indexedPackM _ = packM
+  indexedUnpackM _ = unpackM
 
 data DbChangelogTestSetup = DbChangelogTestSetup {
   -- The operations are applied on the right, i.e., the newest operation is at the head of the list.

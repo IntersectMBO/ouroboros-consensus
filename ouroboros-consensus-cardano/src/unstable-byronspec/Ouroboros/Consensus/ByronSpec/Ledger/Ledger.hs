@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 {-# OPTIONS -Wno-orphans #-}
@@ -38,6 +39,7 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.CommonProtocolParams
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Ticked
+import           Ouroboros.Consensus.Util.IndexedMemPack
 
 {-------------------------------------------------------------------------------
   State
@@ -129,6 +131,11 @@ instance LedgerTablesAreTrivial (LedgerState ByronSpecBlock) where
 instance LedgerTablesAreTrivial (Ticked (LedgerState ByronSpecBlock)) where
   convertMapKind (TickedByronSpecLedgerState x y) =
       TickedByronSpecLedgerState x y
+instance IndexedMemPack (LedgerState ByronSpecBlock EmptyMK) Void where
+  indexedTypeName _ = typeName @Void
+  indexedPackedByteCount _ = packedByteCount
+  indexedPackM _ = packM
+  indexedUnpackM _ = unpackM
 deriving via TrivialLedgerTables (LedgerState ByronSpecBlock)
     instance HasLedgerTables (LedgerState ByronSpecBlock)
 deriving via TrivialLedgerTables (Ticked (LedgerState ByronSpecBlock))

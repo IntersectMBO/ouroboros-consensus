@@ -9,10 +9,12 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -52,6 +54,7 @@ import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Storage.LedgerDB.API
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq as DS
+import           Ouroboros.Consensus.Util.IndexedMemPack
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Block (Point (Point))
 import           Ouroboros.Network.Point (Block (Block))
@@ -62,6 +65,7 @@ import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.TestBlock hiding (TestBlock, TestBlockCodecConfig,
                      TestBlockStorageConfig)
 import           Test.Util.ToExpr ()
+
 
 {-------------------------------------------------------------------------------
   TestBlock
@@ -196,6 +200,12 @@ type instance TxOut (LedgerState TestBlock) = TValue
 
 instance CanUpgradeLedgerTables (LedgerState TestBlock) where
   upgradeTables _ _ = id
+
+instance IndexedMemPack (LedgerState TestBlock EmptyMK) TValue where
+  indexedTypeName _ = typeName @TValue
+  indexedPackedByteCount _ = packedByteCount
+  indexedPackM _ = packM
+  indexedUnpackM _ = unpackM
 
 instance HasLedgerTables (LedgerState TestBlock) where
   projectLedgerTables st       = utxtoktables $ payloadDependentState st

@@ -113,8 +113,7 @@ import           Ouroboros.Consensus.Storage.Common (SizeInBytes)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
                      (unsafeChunkNoToEpochNo)
-import           Ouroboros.Consensus.Storage.LedgerDB
-                     (LedgerSupportsInMemoryLedgerDB)
+import           Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.TraceEvent as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -318,7 +317,7 @@ type TestConstraints blk =
   , SerialiseDiskConstraints            blk
   , Show (LedgerState                   blk EmptyMK)
   , LedgerTablesAreTrivial (LedgerState blk)
-  , LedgerSupportsInMemoryLedgerDB      blk
+  , LedgerSupportsLedgerDB              blk
   )
 
 deriving instance (TestConstraints blk, Eq   it, Eq   flr)
