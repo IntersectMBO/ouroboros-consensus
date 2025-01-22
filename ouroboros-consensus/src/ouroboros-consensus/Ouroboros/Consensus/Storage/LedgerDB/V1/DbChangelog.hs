@@ -632,7 +632,8 @@ splitForFlushing dblog =
     else (Just ldblog, rdblog)
   where
     DbChangelog {
-        changelogDiffs
+        changelogLastFlushedState
+      , changelogDiffs
       , changelogStates
       } = dblog
 
@@ -662,7 +663,7 @@ splitForFlushing dblog =
 
     ldblog = DiffsToFlush {
         toFlushDiffs = ltmap prj l
-      , toFlushState = immTip
+      , toFlushState = (changelogLastFlushedState, immTip)
       , toFlushSlot  =
             fromWithOrigin (error "Flushing a DbChangelog at origin should never happen")
           $ getTipSlot immTip

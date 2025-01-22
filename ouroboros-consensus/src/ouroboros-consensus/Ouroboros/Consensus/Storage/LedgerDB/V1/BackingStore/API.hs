@@ -6,6 +6,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | The 'BackingStore' is the component of the LedgerDB V1 implementation that
@@ -26,6 +27,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API (
   , BackingStore (..)
   , BackingStore'
   , DiffsToFlush (..)
+  , ExtraState
   , InitFrom (..)
   , LedgerBackingStore
     -- * Value handle
@@ -47,6 +49,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API (
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo, WithOrigin (..))
+import           Data.Kind
 import           GHC.Generics
 import           NoThunks.Class (OnlyCheckWhnfNamed (..))
 import           Ouroboros.Consensus.Ledger.Basics
@@ -72,15 +75,15 @@ newtype LiveLMDBFS m = LiveLMDBFS { liveLMDBFs :: SomeHasFS m }
 data DiffsToFlush l = DiffsToFlush {
     -- | The set of differences that should be flushed into the 'BackingStore'
     toFlushDiffs :: !(LedgerTables l DiffMK)
-    -- | The state at which the above differences end. This will be
-    -- the immutable tip.
-  , toFlushState :: !(l EmptyMK)
+    -- | The last flushed state and the newly flushed state. This will be the
+    -- immutable tip.
+  , toFlushState :: !(l EmptyMK, l EmptyMK)
     -- | At which slot the diffs were split. This must be the slot of the state
     -- considered as "last flushed" in the kept 'DbChangelog'
   , toFlushSlot  :: !SlotNo
   }
 
-data BackingStore m keys values diff st = BackingStore {
+data BackingStore m keys values diff = BackingStore {
     -- | Close the backing store
     --
     -- Other methods throw exceptions if called on a closed store. 'bsClose'
@@ -98,33 +101,34 @@ data BackingStore m keys values diff st = BackingStore {
     -- entire database
   , bsValueHandle :: !(m (BackingStoreValueHandle m keys values))
     -- | Apply a valid diff to the contents of the backing store
-    --
-    -- We pass in the final state at the end of the diffs such that we
-    -- can perform an upgrade in-place of the ledger tables. See
-    -- 'CanUpgradeLedgerTables'.
-  , bsWrite       :: !(SlotNo -> st -> diff -> m ())
+  , bsWrite       :: !(SlotNo -> ExtraState values -> diff -> m ())
   }
 
-deriving via OnlyCheckWhnfNamed "BackingStore" (BackingStore m keys values diff st)
-  instance NoThunks (BackingStore m keys values diff st)
+deriving via OnlyCheckWhnfNamed "BackingStore" (BackingStore m keys values diff)
+  instance NoThunks (BackingStore m keys values diff)
 
 type LedgerBackingStore m l =
   BackingStore m
     (LedgerTables l KeysMK)
     (LedgerTables l ValuesMK)
     (LedgerTables l DiffMK)
-    (l EmptyMK)
-
 
 type BackingStore' m blk = LedgerBackingStore m (ExtLedgerState blk)
 
+type instance ExtraState (LedgerTables l ValuesMK) = (l EmptyMK, l EmptyMK)
+
+-- | Extra state for 'bsWrite'
+--
+-- TODO: better name?
+type family ExtraState values :: Type
+
 -- | Choose how to initialize the backing store
-data InitFrom l values =
+data InitFrom values =
     -- | Initialize from a set of values, at the given slot.
-    InitFromValues !(WithOrigin SlotNo) !(l EmptyMK) !values
+    InitFromValues !(WithOrigin SlotNo) !values
     -- | Use a snapshot at the given path to overwrite the set of values in the
     -- opened database.
-  | InitFromCopy !(l EmptyMK) !FS.FsPath
+  | InitFromCopy !FS.FsPath
 
 {-------------------------------------------------------------------------------
   Value handles
@@ -196,7 +200,7 @@ castBackingStoreValueHandle f g bsvh =
 -- | A combination of 'bsValueHandle' and 'bsvhRead'
 bsRead ::
      MonadThrow m
-  => BackingStore m keys values diff st
+  => BackingStore m keys values diff
   -> keys
   -> m (WithOrigin SlotNo, values)
 bsRead store keys = withBsValueHandle store $ \vh -> do
@@ -205,14 +209,14 @@ bsRead store keys = withBsValueHandle store $ \vh -> do
 
 bsReadAll ::
      MonadThrow m
-  => BackingStore m keys values diff st
+  => BackingStore m keys values diff
   -> m values
 bsReadAll store = withBsValueHandle store bsvhReadAll
 
 -- | A 'IOLike.bracket'ed 'bsValueHandle'
 withBsValueHandle ::
      MonadThrow m
-  => BackingStore m keys values diff st
+  => BackingStore m keys values diff
   -> (BackingStoreValueHandle m keys values -> m a)
   -> m a
 withBsValueHandle store =

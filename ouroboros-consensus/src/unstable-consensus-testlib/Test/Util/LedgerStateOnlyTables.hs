@@ -15,6 +15,7 @@
 module Test.Util.LedgerStateOnlyTables (
     OTLedgerState
   , OTLedgerTables
+  , emptyOTLedgerState
   , pattern OTLedgerState
   ) where
 
@@ -25,7 +26,6 @@ import           Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 import           Ouroboros.Consensus.Storage.LedgerDB.API
-import           Test.QuickCheck
 
 {-------------------------------------------------------------------------------
   Simple ledger state
@@ -50,8 +50,10 @@ deriving stock instance (Show k, Show v, Show (mk k v))
 deriving instance (NoThunks k, NoThunks v, NoThunks (mk k v))
                 => NoThunks (OTLedgerState k v mk)
 
-instance (Ord k, Eq v, MemPack k, MemPack v) => Arbitrary (LedgerState (OTBlock k v) EmptyMK) where
-  arbitrary = pure $ OTLedgerState emptyMK emptyLedgerTables
+emptyOTLedgerState ::
+     (Ord k, Eq v, MemPack k, MemPack v, ZeroableMK mk)
+  => LedgerState (OTBlock k v) mk
+emptyOTLedgerState = OTLedgerState emptyMK emptyLedgerTables
 
 instance CanUpgradeLedgerTables (LedgerState (OTBlock k v)) where
   upgradeTables _ _ = id
