@@ -243,8 +243,11 @@ instance Mock.DiffSize D where
 instance Mock.KeysSize K where
   keysSize (LedgerTables (KeysMK s)) = Set.size s
 
-instance Mock.MakeExtraState V where
-  makeExtraState _ = (emptyOTLedgerState, emptyOTLedgerState)
+instance Mock.MakeWriteHint D where
+  makeWriteHint _ = (emptyOTLedgerState, emptyOTLedgerState)
+
+instance Mock.MakeReadHint V where
+  makeReadHint _ = emptyOTLedgerState
 
 instance Mock.HasOps K V D
 

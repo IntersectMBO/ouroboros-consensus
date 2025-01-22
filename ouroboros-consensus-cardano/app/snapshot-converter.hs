@@ -218,7 +218,7 @@ load config@Config{inpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), pa
           (V1.SnapshotsFS fs)
           checkChecksum
           ds
-      (V1.current dbch,) <$> Trans.lift (V1.bsReadAll bstore)
+      (V1.current dbch,) <$> Trans.lift (V1.bsReadAll bstore (V1.changelogLastFlushedState dbch))
   where
     Config { checkChecksum } = config
 load _ _ _ _ = error "Malformed input path!"
