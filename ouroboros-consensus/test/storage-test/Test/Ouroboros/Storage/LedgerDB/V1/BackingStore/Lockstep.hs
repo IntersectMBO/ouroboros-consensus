@@ -14,6 +14,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Lockstep (
     BackingStoreState (..)
@@ -29,11 +30,9 @@ import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Reader
 import           Data.Bifunctor
 import           Data.Constraint
-import           Data.Kind (Type)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Typeable
-import           Ouroboros.Consensus.Ledger.Tables
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as BS
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
@@ -68,13 +67,13 @@ newtype Values vs = Values {unValues :: vs}
   Model state
 -------------------------------------------------------------------------------}
 
-data BackingStoreState ks vs d (l :: (Type -> Type -> Type) -> Type) = BackingStoreState {
+data BackingStoreState ks vs d = BackingStoreState {
     bssMock  :: Mock vs
   , bssStats :: Stats ks vs d
   }
   deriving (Show, Eq)
 
-initState :: Mock.EmptyValues vs  => BackingStoreState ks vs d l
+initState :: Mock.EmptyValues vs  => BackingStoreState ks vs d
 initState = BackingStoreState {
     bssMock  = Mock.emptyMock
   , bssStats = initStats
@@ -91,62 +90,60 @@ maxOpenValueHandles = 32
   @'StateModel'@ and @'RunModel'@ instances
 -------------------------------------------------------------------------------}
 
-type BackingStoreInitializer m ks vs d l =
-     BS.InitFrom l vs
-  -> m (BS.BackingStore m ks vs d (l EmptyMK))
+type BackingStoreInitializer m ks vs d =
+     BS.InitFrom vs
+  -> m (BS.BackingStore m ks vs d)
 
-data RealEnv m ks vs d l = RealEnv {
-    reBackingStoreInit :: BackingStoreInitializer m ks vs d l
-  , reBackingStore     :: StrictMVar m (BS.BackingStore m ks vs d (l EmptyMK))
+data RealEnv m ks vs d = RealEnv {
+    reBackingStoreInit :: BackingStoreInitializer m ks vs d
+  , reBackingStore     :: StrictMVar m (BS.BackingStore m ks vs d)
   }
 
-type RealMonad m ks vs d l = ReaderT (RealEnv m ks vs d l) m
+type RealMonad m ks vs d = ReaderT (RealEnv m ks vs d) m
 
-type BSAct ks vs d l a =
+type BSAct ks vs d a =
   Action
-    (Lockstep (BackingStoreState ks vs d l))
+    (Lockstep (BackingStoreState ks vs d))
     (Either Err a)
-type BSVar ks vs d l a =
-  ModelVar (BackingStoreState ks vs d l) a
+type BSVar ks vs d a =
+  ModelVar (BackingStoreState ks vs d) a
 
-instance ( Show ks, Show vs, Show d, Show (l EmptyMK)
-         , Eq ks, Eq vs, Eq d, Eq (l EmptyMK)
-         , Typeable ks, Typeable vs, Typeable d , Typeable l
-         , QC.Arbitrary ks, QC.Arbitrary vs, QC.Arbitrary d, QC.Arbitrary (l EmptyMK)
+instance ( Show ks, Show vs, Show d, Show (BS.ExtraState vs)
+         , Eq ks, Eq vs, Eq d, Eq (BS.ExtraState vs)
+         , Typeable ks, Typeable vs, Typeable d, Typeable (BS.ExtraState vs)
+         , QC.Arbitrary ks, QC.Arbitrary vs, QC.Arbitrary d
          , QC.Arbitrary (BS.RangeQuery ks)
          , Mock.HasOps ks vs d
-         ) => StateModel (Lockstep (BackingStoreState ks vs d l)) where
-  data Action (Lockstep (BackingStoreState ks vs d l)) a where
+         ) => StateModel (Lockstep (BackingStoreState ks vs d)) where
+  data Action (Lockstep (BackingStoreState ks vs d)) a where
     -- Reopen a backing store by intialising from values.
     BSInitFromValues :: WithOrigin SlotNo
-                     -> l EmptyMK
                      -> Values vs
-                     -> BSAct ks vs d l ()
+                     -> BSAct ks vs d ()
     -- Reopen a backing store by initialising from a copy.
-    BSInitFromCopy   :: l EmptyMK
-                     -> FS.FsPath
-                     -> BSAct ks vs d l ()
-    BSClose          :: BSAct ks vs d l ()
+    BSInitFromCopy   :: FS.FsPath
+                     -> BSAct ks vs d ()
+    BSClose          :: BSAct ks vs d ()
     BSCopy           :: FS.FsPath
-                     -> BSAct ks vs d l ()
-    BSValueHandle    :: BSAct ks vs d l (BS.BackingStoreValueHandle IO ks vs)
+                     -> BSAct ks vs d ()
+    BSValueHandle    :: BSAct ks vs d (BS.BackingStoreValueHandle IO ks vs)
     BSWrite          :: SlotNo
-                     -> l EmptyMK
+                     -> BS.ExtraState vs
                      -> d
-                     -> BSAct ks vs d l ()
-    BSVHClose        :: BSVar ks vs d l (BS.BackingStoreValueHandle IO ks vs)
-                     -> BSAct ks vs d l ()
-    BSVHRangeRead    :: BSVar ks vs d l (BS.BackingStoreValueHandle IO ks vs)
+                     -> BSAct ks vs d ()
+    BSVHClose        :: BSVar ks vs d (BS.BackingStoreValueHandle IO ks vs)
+                     -> BSAct ks vs d ()
+    BSVHRangeRead    :: BSVar ks vs d (BS.BackingStoreValueHandle IO ks vs)
                      -> BS.RangeQuery ks
-                     -> BSAct ks vs d l (Values vs)
-    BSVHRead         :: BSVar ks vs d l (BS.BackingStoreValueHandle IO ks vs)
+                     -> BSAct ks vs d (Values vs)
+    BSVHRead         :: BSVar ks vs d (BS.BackingStoreValueHandle IO ks vs)
                      -> ks
-                     -> BSAct ks vs d l (Values vs)
-    BSVHAtSlot       :: BSVar ks vs d l (BS.BackingStoreValueHandle IO ks vs)
-                     -> BSAct ks vs d l (WithOrigin SlotNo)
+                     -> BSAct ks vs d (Values vs)
+    BSVHAtSlot       :: BSVar ks vs d (BS.BackingStoreValueHandle IO ks vs)
+                     -> BSAct ks vs d (WithOrigin SlotNo)
     -- | Corresponds to 'bsvhStat'
-    BSVHStat         :: BSVar ks vs d l (BS.BackingStoreValueHandle IO ks vs)
-                     -> BSAct ks vs d l BS.Statistics
+    BSVHStat         :: BSVar ks vs d (BS.BackingStoreValueHandle IO ks vs)
+                     -> BSAct ks vs d BS.Statistics
 
   initialState        = Lockstep.initialState initState
   nextState           = Lockstep.nextState
@@ -155,38 +152,38 @@ instance ( Show ks, Show vs, Show d, Show (l EmptyMK)
   arbitraryAction     = Lockstep.arbitraryAction
   shrinkAction        = Lockstep.shrinkAction
 
-deriving stock instance (Show ks, Show vs, Show d, Show (l EmptyMK))
-                     => Show (LockstepAction (BackingStoreState ks vs d l) a)
-deriving stock instance (Eq ks, Eq vs, Eq d, Eq (l EmptyMK))
-                     => Eq (LockstepAction (BackingStoreState ks vs d l) a)
+deriving stock instance (Show ks, Show vs, Show d, Show (BS.ExtraState vs))
+                     => Show (LockstepAction (BackingStoreState ks vs d) a)
+deriving stock instance (Eq ks, Eq vs, Eq d, Eq (BS.ExtraState vs))
+                     => Eq (LockstepAction (BackingStoreState ks vs d) a)
 
-instance ( Show ks, Show vs, Show d, Show (l EmptyMK)
-         , Eq ks, Eq vs, Eq d, Eq (l EmptyMK)
-         , Typeable ks, Typeable vs, Typeable d, Typeable l
-         , QC.Arbitrary ks, QC.Arbitrary vs, QC.Arbitrary d, QC.Arbitrary (l EmptyMK)
+instance ( Show ks, Show vs, Show d, Show (BS.ExtraState vs)
+         , Eq ks, Eq vs, Eq d, Eq (BS.ExtraState vs)
+         , Typeable ks, Typeable vs, Typeable d, Typeable (BS.ExtraState vs)
+         , QC.Arbitrary ks, QC.Arbitrary vs, QC.Arbitrary d
          , QC.Arbitrary (BS.RangeQuery ks)
          , Mock.HasOps ks vs d
          ) => RunModel
-                (Lockstep (BackingStoreState ks vs d l))
-                (RealMonad IO ks vs d l) where
+                (Lockstep (BackingStoreState ks vs d))
+                (RealMonad IO ks vs d) where
   perform       = \_st -> runIO
   postcondition = Lockstep.postcondition
-  monitoring    = Lockstep.monitoring (Proxy @(RealMonad IO ks vs d l))
+  monitoring    = Lockstep.monitoring (Proxy @(RealMonad IO ks vs d))
 
 -- | Custom precondition that prevents errors in the @'LMDB'@ backing store due
 -- to exceeding the maximum number of LMDB readers.
 --
 -- See @'maxOpenValueHandles'@.
 modelPrecondition ::
-       BackingStoreState ks vs d l
-    -> LockstepAction (BackingStoreState ks vs d l) a
+       BackingStoreState ks vs d
+    -> LockstepAction (BackingStoreState ks vs d) a
     -> Bool
 modelPrecondition (BackingStoreState mock _stats) action = case action of
-    BSInitFromValues _ _ _ -> isClosed mock
-    BSInitFromCopy _ _     -> isClosed mock
-    BSCopy _               -> canOpenReader
-    BSValueHandle          -> canOpenReader
-    _                      -> True
+    BSInitFromValues _ _ -> isClosed mock
+    BSInitFromCopy _     -> isClosed mock
+    BSCopy _             -> canOpenReader
+    BSValueHandle        -> canOpenReader
+    _                    -> True
   where
     canOpenReader         = Map.size openValueHandles < maxOpenValueHandles
     openValueHandles      = Map.filter (==Mock.Open) (valueHandles mock)
@@ -195,45 +192,45 @@ modelPrecondition (BackingStoreState mock _stats) action = case action of
   @'InLockstep'@ instance
 -------------------------------------------------------------------------------}
 
-type BSVal ks vs d l a = ModelValue (BackingStoreState ks vs d l) a
-type BSObs ks vs d l a = Observable (BackingStoreState ks vs d l) a
+type BSVal ks vs d a = ModelValue (BackingStoreState ks vs d) a
+type BSObs ks vs d a = Observable (BackingStoreState ks vs d) a
 
-instance ( Show ks, Show vs, Show d, Show (l EmptyMK)
-         , Eq ks, Eq vs, Eq d, Eq (l EmptyMK)
-         , Typeable ks, Typeable vs, Typeable d, Typeable l
-         , QC.Arbitrary ks, QC.Arbitrary vs, QC.Arbitrary d, QC.Arbitrary (l EmptyMK)
+instance ( Show ks, Show vs, Show d, Show (BS.ExtraState vs)
+         , Eq ks, Eq vs, Eq d, Eq (BS.ExtraState vs)
+         , Typeable ks, Typeable vs, Typeable d, Typeable (BS.ExtraState vs)
+         , QC.Arbitrary ks, QC.Arbitrary vs, QC.Arbitrary d
          , QC.Arbitrary (BS.RangeQuery ks)
          , Mock.HasOps ks vs d
-         ) => InLockstep (BackingStoreState ks vs d l) where
+         ) => InLockstep (BackingStoreState ks vs d) where
 
-  data instance ModelValue (BackingStoreState ks vs d l) a where
-    MValueHandle :: ValueHandle vs -> BSVal ks vs d l (BS.BackingStoreValueHandle IO ks vs)
+  data instance ModelValue (BackingStoreState ks vs d) a where
+    MValueHandle :: ValueHandle vs -> BSVal ks vs d (BS.BackingStoreValueHandle IO ks vs)
 
     MErr        :: Err
-                -> BSVal ks vs d l Err
+                -> BSVal ks vs d Err
     MSlotNo     :: WithOrigin SlotNo
-                -> BSVal ks vs d l (WithOrigin SlotNo)
+                -> BSVal ks vs d (WithOrigin SlotNo)
     MValues     :: vs
-                -> BSVal ks vs d l (Values vs)
+                -> BSVal ks vs d (Values vs)
     MUnit       :: ()
-                -> BSVal ks vs d l ()
+                -> BSVal ks vs d ()
     MStatistics :: BS.Statistics
-                -> BSVal ks vs d l BS.Statistics
+                -> BSVal ks vs d BS.Statistics
 
-    MEither :: Either (BSVal ks vs d l a) (BSVal ks vs d l b)
-            -> BSVal ks vs d l (Either a b)
-    MPair   :: (BSVal ks vs d l a, BSVal ks vs d l b)
-            -> BSVal ks vs d l (a, b)
+    MEither :: Either (BSVal ks vs d a) (BSVal ks vs d b)
+            -> BSVal ks vs d (Either a b)
+    MPair   :: (BSVal ks vs d a, BSVal ks vs d b)
+            -> BSVal ks vs d (a, b)
 
-  data instance Observable (BackingStoreState ks vs d l) a where
-    OValueHandle :: BSObs ks vs d l (BS.BackingStoreValueHandle IO ks vs)
-    OValues :: (Show a, Eq a, Typeable a) => a -> BSObs ks vs d l (Values a)
-    OId     :: (Show a, Eq a, Typeable a) => a -> BSObs ks vs d l a
-    OEither :: Either (BSObs ks vs d l a) (BSObs ks vs d l b)
-            -> BSObs ks vs d l (Either a b)
-    OPair   :: (BSObs ks vs d l a, BSObs ks vs d l b) -> BSObs ks vs d l (a, b)
+  data instance Observable (BackingStoreState ks vs d) a where
+    OValueHandle :: BSObs ks vs d (BS.BackingStoreValueHandle IO ks vs)
+    OValues :: (Show a, Eq a, Typeable a) => a -> BSObs ks vs d (Values a)
+    OId     :: (Show a, Eq a, Typeable a) => a -> BSObs ks vs d a
+    OEither :: Either (BSObs ks vs d a) (BSObs ks vs d b)
+            -> BSObs ks vs d (Either a b)
+    OPair   :: (BSObs ks vs d a, BSObs ks vs d b) -> BSObs ks vs d (a, b)
 
-  observeModel :: BSVal ks vs d l a -> BSObs ks vs d l a
+  observeModel :: BSVal ks vs d a -> BSObs ks vs d a
   observeModel = \case
     MValueHandle _ -> OValueHandle
     MErr x         -> OId x
@@ -245,109 +242,109 @@ instance ( Show ks, Show vs, Show d, Show (l EmptyMK)
     MPair x        -> OPair   $ bimap observeModel observeModel x
 
   modelNextState :: forall a.
-       LockstepAction (BackingStoreState ks vs d l) a
-    -> ModelLookUp (BackingStoreState ks vs d l)
-    -> BackingStoreState ks vs d l -> (BSVal ks vs d l a, BackingStoreState ks vs d l)
+       LockstepAction (BackingStoreState ks vs d) a
+    -> ModelLookUp (BackingStoreState ks vs d)
+    -> BackingStoreState ks vs d -> (BSVal ks vs d a, BackingStoreState ks vs d)
   modelNextState action lookUp (BackingStoreState mock stats) =
       auxStats $ runMock lookUp action mock
     where
       auxStats ::
-           (BSVal ks vs d l a, Mock vs)
-        -> (BSVal ks vs d l a, BackingStoreState ks vs d l)
+           (BSVal ks vs d a, Mock vs)
+        -> (BSVal ks vs d a, BackingStoreState ks vs d)
       auxStats (result, state') =
           ( result
           , BackingStoreState state' $ updateStats action lookUp result stats
           )
 
-  type ModelOp (BackingStoreState ks vs d l) = Op
+  type ModelOp (BackingStoreState ks vs d) = Op
 
   usedVars ::
-       LockstepAction (BackingStoreState ks vs d l) a
-    -> [AnyGVar (ModelOp (BackingStoreState ks vs d l))]
+       LockstepAction (BackingStoreState ks vs d) a
+    -> [AnyGVar (ModelOp (BackingStoreState ks vs d))]
   usedVars = \case
-    BSInitFromValues _ _ _ -> []
-    BSInitFromCopy _ _     -> []
-    BSClose                -> []
-    BSCopy _               -> []
-    BSValueHandle          -> []
-    BSWrite _ _ _          -> []
-    BSVHClose h            -> [SomeGVar h]
-    BSVHRangeRead h _      -> [SomeGVar h]
-    BSVHRead h _           -> [SomeGVar h]
-    BSVHAtSlot h           -> [SomeGVar h]
-    BSVHStat h             -> [SomeGVar h]
+    BSInitFromValues _ _ -> []
+    BSInitFromCopy _     -> []
+    BSClose              -> []
+    BSCopy _             -> []
+    BSValueHandle        -> []
+    BSWrite _ _ _        -> []
+    BSVHClose h          -> [SomeGVar h]
+    BSVHRangeRead h _    -> [SomeGVar h]
+    BSVHRead h _         -> [SomeGVar h]
+    BSVHAtSlot h         -> [SomeGVar h]
+    BSVHStat h           -> [SomeGVar h]
 
   arbitraryWithVars ::
-       ModelFindVariables (BackingStoreState ks vs d l)
-    -> BackingStoreState ks vs d l
-    -> Gen (Any (LockstepAction (BackingStoreState ks vs d l)))
+       ModelFindVariables (BackingStoreState ks vs d)
+    -> BackingStoreState ks vs d
+    -> Gen (Any (LockstepAction (BackingStoreState ks vs d)))
   arbitraryWithVars = arbitraryBackingStoreAction
 
   shrinkWithVars ::
-       ModelFindVariables (BackingStoreState ks vs d l)
-    -> BackingStoreState ks vs d l
-    -> LockstepAction (BackingStoreState ks vs d l) a
-    -> [Any (LockstepAction (BackingStoreState ks vs d l))]
+       ModelFindVariables (BackingStoreState ks vs d)
+    -> BackingStoreState ks vs d
+    -> LockstepAction (BackingStoreState ks vs d) a
+    -> [Any (LockstepAction (BackingStoreState ks vs d))]
   shrinkWithVars = shrinkBackingStoreAction
 
   tagStep ::
-       (BackingStoreState ks vs d l, BackingStoreState ks vs d l)
-    -> LockstepAction (BackingStoreState ks vs d l) a
-    -> BSVal ks vs d l a
+       (BackingStoreState ks vs d, BackingStoreState ks vs d)
+    -> LockstepAction (BackingStoreState ks vs d) a
+    -> BSVal ks vs d a
     -> [String]
   tagStep (BackingStoreState _ before, BackingStoreState _ after) action val =
     map show $ tagBSAction before after action val
 
-deriving stock instance (Show ks, Show vs, Show d, Show (l EmptyMK)) => Show (BSVal ks vs d l a)
+deriving stock instance (Show ks, Show vs, Show d, Show (BS.ExtraState vs)) => Show (BSVal ks vs d a)
 
-deriving stock instance (Show ks, Show vs, Show d, Show (l EmptyMK)) => Show (BSObs ks vs d l a)
-deriving stock instance (Eq ks, Eq vs, Eq d, Eq (l EmptyMK)) => Eq (BSObs ks vs d l a)
+deriving stock instance (Show ks, Show vs, Show d, Show (BS.ExtraState vs)) => Show (BSObs ks vs d a)
+deriving stock instance (Eq ks, Eq vs, Eq d, Eq (BS.ExtraState vs)) => Eq (BSObs ks vs d a)
 
 {-------------------------------------------------------------------------------
   @'RunLockstep'@ instance
 -------------------------------------------------------------------------------}
 
-instance ( Show ks, Show vs, Show d, Show (l EmptyMK)
-         , Eq ks, Eq vs, Eq d, Eq (l EmptyMK)
-         , Typeable ks, Typeable vs, Typeable d, Typeable l
-         , QC.Arbitrary ks, QC.Arbitrary vs, QC.Arbitrary d, QC.Arbitrary (l EmptyMK)
+instance ( Show ks, Show vs, Show d, Show (BS.ExtraState vs)
+         , Eq ks, Eq vs, Eq d, Eq (BS.ExtraState vs)
+         , Typeable ks, Typeable vs, Typeable d, Typeable (BS.ExtraState vs)
+         , QC.Arbitrary ks, QC.Arbitrary vs, QC.Arbitrary d
          , QC.Arbitrary (BS.RangeQuery ks)
          , Mock.HasOps ks vs d
-         ) => RunLockstep (BackingStoreState ks vs d l) (RealMonad IO ks vs d l) where
+         ) => RunLockstep (BackingStoreState ks vs d) (RealMonad IO ks vs d) where
   observeReal ::
-       Proxy (RealMonad IO ks vs d l)
-    -> LockstepAction (BackingStoreState ks vs d l) a
-    -> Realized (RealMonad IO ks vs d l) a
-    -> BSObs ks vs d l a
+       Proxy (RealMonad IO ks vs d)
+    -> LockstepAction (BackingStoreState ks vs d) a
+    -> Realized (RealMonad IO ks vs d) a
+    -> BSObs ks vs d a
   observeReal _proxy = \case
-    BSInitFromValues _ _ _ -> OEither . bimap OId OId
-    BSInitFromCopy _ _     -> OEither . bimap OId OId
-    BSClose                -> OEither . bimap OId OId
-    BSCopy _               -> OEither . bimap OId OId
-    BSValueHandle          -> OEither . bimap OId (const OValueHandle)
-    BSWrite _ _ _          -> OEither . bimap OId OId
-    BSVHClose _            -> OEither . bimap OId OId
-    BSVHRangeRead _ _      -> OEither . bimap OId (OValues . unValues)
-    BSVHRead _ _           -> OEither . bimap OId (OValues . unValues)
-    BSVHAtSlot _           -> OEither . bimap OId OId
-    BSVHStat _             -> OEither . bimap OId OId
+    BSInitFromValues _ _ -> OEither . bimap OId OId
+    BSInitFromCopy _     -> OEither . bimap OId OId
+    BSClose              -> OEither . bimap OId OId
+    BSCopy _             -> OEither . bimap OId OId
+    BSValueHandle        -> OEither . bimap OId (const OValueHandle)
+    BSWrite _ _ _        -> OEither . bimap OId OId
+    BSVHClose _          -> OEither . bimap OId OId
+    BSVHRangeRead _ _    -> OEither . bimap OId (OValues . unValues)
+    BSVHRead _ _         -> OEither . bimap OId (OValues . unValues)
+    BSVHAtSlot _         -> OEither . bimap OId OId
+    BSVHStat _           -> OEither . bimap OId OId
 
   showRealResponse ::
-       Proxy (RealMonad IO ks vs d l)
-    -> LockstepAction (BackingStoreState ks vs d l) a
-    -> Maybe (Dict (Show (Realized (RealMonad IO ks vs d l) a)))
+       Proxy (RealMonad IO ks vs d)
+    -> LockstepAction (BackingStoreState ks vs d) a
+    -> Maybe (Dict (Show (Realized (RealMonad IO ks vs d) a)))
   showRealResponse _proxy = \case
-    BSInitFromValues _ _ _ -> Just Dict
-    BSInitFromCopy _ _     -> Just Dict
-    BSClose                -> Just Dict
-    BSCopy _               -> Just Dict
-    BSValueHandle          -> Nothing
-    BSWrite _ _ _          -> Just Dict
-    BSVHClose _            -> Just Dict
-    BSVHRangeRead _ _      -> Just Dict
-    BSVHRead _ _           -> Just Dict
-    BSVHAtSlot _           -> Just Dict
-    BSVHStat _             -> Just Dict
+    BSInitFromValues _ _ -> Just Dict
+    BSInitFromCopy _     -> Just Dict
+    BSClose              -> Just Dict
+    BSCopy _             -> Just Dict
+    BSValueHandle        -> Nothing
+    BSWrite _ _ _        -> Just Dict
+    BSVHClose _          -> Just Dict
+    BSVHRangeRead _ _    -> Just Dict
+    BSVHRead _ _         -> Just Dict
+    BSVHAtSlot _         -> Just Dict
+    BSVHStat _           -> Just Dict
 
 {-------------------------------------------------------------------------------
   Interpreter against the model
@@ -355,17 +352,17 @@ instance ( Show ks, Show vs, Show d, Show (l EmptyMK)
 
 runMock ::
      Mock.HasOps ks vs d
-  => ModelLookUp (BackingStoreState ks vs d l)
-  -> Action (Lockstep (BackingStoreState ks vs d l)) a
+  => ModelLookUp (BackingStoreState ks vs d)
+  -> Action (Lockstep (BackingStoreState ks vs d)) a
   -> Mock vs
-  -> ( BSVal ks vs d l a
+  -> ( BSVal ks vs d a
      , Mock vs
      )
 runMock lookUp = \case
-    BSInitFromValues sl st (Values vs) ->
-      wrap MUnit . runMockMonad (Mock.mBSInitFromValues sl st vs)
-    BSInitFromCopy st bsp ->
-      wrap MUnit . runMockMonad (Mock.mBSInitFromCopy st bsp)
+    BSInitFromValues sl (Values vs) ->
+      wrap MUnit . runMockMonad (Mock.mBSInitFromValues sl vs)
+    BSInitFromCopy bsp ->
+      wrap MUnit . runMockMonad (Mock.mBSInitFromCopy bsp)
     BSClose            ->
       wrap MUnit . runMockMonad Mock.mBSClose
     BSCopy bsp         ->
@@ -386,12 +383,12 @@ runMock lookUp = \case
       wrap MStatistics . runMockMonad (Mock.mBSVHStat (getHandle $ lookUp h))
   where
     wrap ::
-         (a -> BSVal ks vs d l b)
+         (a -> BSVal ks vs d b)
       -> (Either Err a, Mock vs)
-      -> (BSVal ks vs d l (Either Err b), Mock vs)
+      -> (BSVal ks vs d (Either Err b), Mock vs)
     wrap f = first (MEither . bimap MErr f)
 
-    getHandle :: BSVal ks vs d l (BS.BackingStoreValueHandle IO ks vs) -> ValueHandle vs
+    getHandle :: BSVal ks vs d (BS.BackingStoreValueHandle IO ks vs) -> ValueHandle vs
     getHandle (MValueHandle h) = h
 
 {-------------------------------------------------------------------------------
@@ -399,15 +396,16 @@ runMock lookUp = \case
 -------------------------------------------------------------------------------}
 
 arbitraryBackingStoreAction ::
-     forall ks vs d l.
-     ( Eq ks, Eq vs, Eq d, Eq (l EmptyMK), Typeable ks, Typeable vs
-     , QC.Arbitrary ks, QC.Arbitrary vs, QC.Arbitrary d, QC.Arbitrary (l EmptyMK)
+     forall ks vs d.
+     ( Eq ks, Eq vs, Eq d, Eq (BS.ExtraState vs), Typeable ks, Typeable vs
+     , QC.Arbitrary ks, QC.Arbitrary vs, QC.Arbitrary d
      , QC.Arbitrary (BS.RangeQuery ks)
      , Mock.MakeDiff vs d
+     , Mock.MakeExtraState vs
      )
-  => ModelFindVariables (BackingStoreState ks vs d l)
-  -> BackingStoreState ks vs d l
-  -> Gen (Any (LockstepAction (BackingStoreState ks vs d l)))
+  => ModelFindVariables (BackingStoreState ks vs d)
+  -> BackingStoreState ks vs d
+  -> Gen (Any (LockstepAction (BackingStoreState ks vs d)))
 arbitraryBackingStoreAction findVars (BackingStoreState mock _stats) =
     QC.frequency $
          withoutVars
@@ -415,19 +413,19 @@ arbitraryBackingStoreAction findVars (BackingStoreState mock _stats) =
           []   -> []
           vars -> withVars (QC.elements vars)
   where
-    withoutVars :: [(Int, Gen (Any (LockstepAction (BackingStoreState ks vs d l))))]
+    withoutVars :: [(Int, Gen (Any (LockstepAction (BackingStoreState ks vs d))))]
     withoutVars = [
-        (5, fmap Some $ BSInitFromValues <$> QC.arbitrary <*> QC.arbitrary <*> (Values <$> QC.arbitrary))
-      , (5, fmap Some $ BSInitFromCopy <$> QC.arbitrary <*> genBackingStorePath)
+        (5, fmap Some $ BSInitFromValues <$> QC.arbitrary <*> (Values <$> QC.arbitrary))
+      , (5, fmap Some $ BSInitFromCopy <$> genBackingStorePath)
       , (2, pure $ Some BSClose)
       , (5, fmap Some $ BSCopy <$> genBackingStorePath)
       , (5, pure $ Some BSValueHandle)
-      , (5, fmap Some $ BSWrite <$> genSlotNo <*> QC.arbitrary <*> genDiff)
+      , (5, fmap Some $ BSWrite <$> genSlotNo <*> pure (Mock.makeExtraState (Proxy @vs)) <*> genDiff)
       ]
 
     withVars ::
-         Gen (BSVar ks vs d l (Either Err (BS.BackingStoreValueHandle IO ks vs)))
-      -> [(Int, Gen (Any (LockstepAction (BackingStoreState ks vs d l))))]
+         Gen (BSVar ks vs d (Either Err (BS.BackingStoreValueHandle IO ks vs)))
+      -> [(Int, Gen (Any (LockstepAction (BackingStoreState ks vs d))))]
     withVars genVar = [
           (5, fmap Some $ BSVHClose <$> (opFromRight <$> genVar))
         , (5, fmap Some $ BSVHRangeRead <$> (opFromRight <$> genVar) <*> QC.arbitrary)
@@ -472,17 +470,17 @@ arbitraryBackingStoreAction findVars (BackingStoreState mock _stats) =
 -------------------------------------------------------------------------------}
 
 shrinkBackingStoreAction ::
-       forall ks vs d l a.
-       ( Typeable vs, Eq ks, Eq vs, Eq d, Eq (l EmptyMK)
+       forall ks vs d a.
+       ( Typeable vs, Eq ks, Eq vs, Eq d, Eq (BS.ExtraState vs)
        , QC.Arbitrary d, QC.Arbitrary (BS.RangeQuery ks), QC.Arbitrary ks
        )
-    => ModelFindVariables (BackingStoreState ks vs d l)
-    -> BackingStoreState ks vs d l
-    -> LockstepAction (BackingStoreState ks vs d l) a
-    -> [Any (LockstepAction (BackingStoreState ks vs d l))]
+    => ModelFindVariables (BackingStoreState ks vs d)
+    -> BackingStoreState ks vs d
+    -> LockstepAction (BackingStoreState ks vs d) a
+    -> [Any (LockstepAction (BackingStoreState ks vs d))]
 shrinkBackingStoreAction _findVars (BackingStoreState _mock _) = \case
   BSWrite sl st d ->
-       [Some $ BSWrite sl st d'  | d' <- QC.shrink d]
+       [Some $ BSWrite sl  st d' | d' <- QC.shrink d]
     ++ [Some $ BSWrite sl' st d  | sl' <- QC.shrink sl]
   BSVHRangeRead h rq ->
     [Some $ BSVHRangeRead h rq' | rq' <- QC.shrink rq]
@@ -494,7 +492,7 @@ shrinkBackingStoreAction _findVars (BackingStoreState _mock _) = \case
   Interpret @'Op'@ against @'ModelValue'@
 -------------------------------------------------------------------------------}
 
-instance InterpretOp Op (ModelValue (BackingStoreState ks vs d l)) where
+instance InterpretOp Op (ModelValue (BackingStoreState ks vs d)) where
   intOp OpId         = Just
   intOp OpFst        = \case MPair   x -> Just (fst x)
   intOp OpSnd        = \case MPair   x -> Just (snd x)
@@ -507,23 +505,23 @@ instance InterpretOp Op (ModelValue (BackingStoreState ks vs d l)) where
 -------------------------------------------------------------------------------}
 
 runIO ::
-     forall ks vs d l a.
-     LockstepAction (BackingStoreState ks vs d l) a
-  -> LookUp (RealMonad IO ks vs d l)
-  -> RealMonad IO ks vs d l (Realized (RealMonad IO ks vs d l) a)
+     forall ks vs d a.
+     LockstepAction (BackingStoreState ks vs d) a
+  -> LookUp (RealMonad IO ks vs d)
+  -> RealMonad IO ks vs d (Realized (RealMonad IO ks vs d) a)
 runIO action lookUp = ReaderT $ \renv ->
     aux renv action
   where
     aux ::
-         RealEnv IO ks vs d l
-      -> LockstepAction (BackingStoreState ks vs d l) a
+         RealEnv IO ks vs d
+      -> LockstepAction (BackingStoreState ks vs d) a
       -> IO a
     aux renv = \case
-        BSInitFromValues sl st (Values vs) -> catchErr $ do
-          bs <- bsi (BS.InitFromValues sl st vs)
+        BSInitFromValues sl (Values vs) -> catchErr $ do
+          bs <- bsi (BS.InitFromValues sl vs)
           void $ swapMVar bsVar bs
-        BSInitFromCopy st bsp -> catchErr $ do
-          bs <- bsi (BS.InitFromCopy st bsp)
+        BSInitFromCopy bsp -> catchErr $ do
+          bs <- bsi (BS.InitFromCopy bsp)
           void $ swapMVar bsVar bs
         BSClose            -> catchErr $
           readMVar bsVar >>= BS.bsClose
@@ -549,8 +547,8 @@ runIO action lookUp = ReaderT $ \renv ->
           , reBackingStore     = bsVar
           } = renv
 
-        lookUp' :: BSVar ks vs d l x -> Realized (RealMonad IO ks vs d l) x
-        lookUp' = lookUpGVar (Proxy @(RealMonad IO ks vs d l)) lookUp
+        lookUp' :: BSVar ks vs d x -> Realized (RealMonad IO ks vs d) x
+        lookUp' = lookUpGVar (Proxy @(RealMonad IO ks vs d)) lookUp
 
 catchErr :: forall m a. IOLike m => m a -> m (Either Err a)
 catchErr act = catches (Right <$> act)
@@ -583,10 +581,10 @@ initStats = Stats {
   }
 
 updateStats ::
-     forall ks vs d l a. Mock.HasOps ks vs d
-  => LockstepAction (BackingStoreState ks vs d l) a
-  -> ModelLookUp (BackingStoreState ks vs d l)
-  -> BSVal ks vs d l a
+     forall ks vs d a. Mock.HasOps ks vs d
+  => LockstepAction (BackingStoreState ks vs d) a
+  -> ModelLookUp (BackingStoreState ks vs d)
+  -> BSVal ks vs d a
   -> Stats ks vs d
   -> Stats ks vs d
 updateStats action lookUp result stats@Stats{handleSlots, writeSlots} =
@@ -596,7 +594,7 @@ updateStats action lookUp result stats@Stats{handleSlots, writeSlots} =
     . updateRangeReadAfterWrite
     $ stats
   where
-    getHandle :: BSVal ks vs d l (BS.BackingStoreValueHandle IO ks vs) -> ValueHandle vs
+    getHandle :: BSVal ks vs d (BS.BackingStoreValueHandle IO ks vs) -> ValueHandle vs
     getHandle (MValueHandle h) = h
 
     updateHandleSlots :: Stats ks vs d -> Stats ks vs d
@@ -655,19 +653,19 @@ data TagAction =
   deriving (Show, Eq, Ord, Bounded, Enum)
 
 -- | Identify actions by their constructor.
-tAction :: LockstepAction (BackingStoreState ks vs d l) a -> TagAction
+tAction :: LockstepAction (BackingStoreState ks vs d) a -> TagAction
 tAction = \case
-  BSInitFromValues _ _ _ -> TBSInitFromValues
-  BSInitFromCopy _ _     -> TBSInitFromCopy
-  BSClose                -> TBSClose
-  BSCopy _               -> TBSCopy
-  BSValueHandle          -> TBSValueHandle
-  BSWrite _ _ _          -> TBSWrite
-  BSVHClose _            -> TBSVHClose
-  BSVHRangeRead _ _      -> TBSVHRangeRead
-  BSVHRead _ _           -> TBSVHRead
-  BSVHAtSlot _           -> TBSVHAtSlot
-  BSVHStat _             -> TBSVHStat
+  BSInitFromValues _ _ -> TBSInitFromValues
+  BSInitFromCopy _     -> TBSInitFromCopy
+  BSClose              -> TBSClose
+  BSCopy _             -> TBSCopy
+  BSValueHandle        -> TBSValueHandle
+  BSWrite _ _ _        -> TBSWrite
+  BSVHClose _          -> TBSVHClose
+  BSVHRangeRead _ _    -> TBSVHRangeRead
+  BSVHRead _ _         -> TBSVHRead
+  BSVHAtSlot _         -> TBSVHAtSlot
+  BSVHStat _           -> TBSVHStat
 
 data Tag =
     -- | A value handle is created before a write, and read after the write. The
@@ -683,8 +681,8 @@ data Tag =
 tagBSAction ::
      Stats ks vs d
   -> Stats ks vs d
-  -> LockstepAction (BackingStoreState ks vs d l) a
-  -> BSVal ks vs d l a
+  -> LockstepAction (BackingStoreState ks vs d) a
+  -> BSVal ks vs d a
   -> [Tag]
 tagBSAction before after action result =
     globalTags ++ case (action, result) of

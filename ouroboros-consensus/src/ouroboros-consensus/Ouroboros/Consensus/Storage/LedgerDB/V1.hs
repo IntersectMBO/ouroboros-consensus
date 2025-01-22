@@ -88,7 +88,7 @@ mkInitDb args bss getBlock =
       (_, backingStore) <-
         allocate
           lgrRegistry
-          (\_ -> newBackingStore bsTracer baArgs lgrHasFS' (forgetLedgerTables st) (projectLedgerTables st))
+          (\_ -> newBackingStore bsTracer baArgs lgrHasFS' (projectLedgerTables st))
           bsClose
       pure (chlog, backingStore)
   , initFromSnapshot =

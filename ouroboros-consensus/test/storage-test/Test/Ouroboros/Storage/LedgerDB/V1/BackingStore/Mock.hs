@@ -6,6 +6,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock (
     -- * Types
@@ -24,6 +25,7 @@ module Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock (
   , LookupKeys (..)
   , LookupKeysRange (..)
   , MakeDiff (..)
+  , MakeExtraState (..)
   , ValuesLength (..)
     -- * State monad to run the mock in
   , MockMonad (..)
@@ -49,10 +51,10 @@ import           Control.Monad.Except (ExceptT (..), MonadError (throwError),
                      runExceptT)
 import           Control.Monad.State (MonadState, State, StateT (StateT), gets,
                      modify, runState)
+import           Data.Data (Proxy)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block.Abstract (SlotNo, WithOrigin (..))
-import           Ouroboros.Consensus.Ledger.Tables
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
 import qualified System.FS.API.Types as FS
 
@@ -119,7 +121,7 @@ data Err =
 -- | Abstract over interactions between values, keys and diffs.
 class ( EmptyValues vs, ApplyDiff vs d, LookupKeysRange ks vs
       , LookupKeys ks vs, ValuesLength vs, MakeDiff vs d
-      , DiffSize d, KeysSize ks
+      , DiffSize d, KeysSize ks, MakeExtraState vs
       ) => HasOps ks vs d
 
 class EmptyValues vs where
@@ -148,6 +150,9 @@ class DiffSize d where
 class KeysSize ks where
   keysSize :: ks -> Int
 
+class MakeExtraState vs where
+  makeExtraState :: Proxy vs -> BS.ExtraState vs
+
 {-------------------------------------------------------------------------------
   State monad to run the mock in
 -------------------------------------------------------------------------------}
@@ -173,23 +178,21 @@ runMockMonad (MockMonad t) = runState . runExceptT $ t
 ------------------------------------------------------------------------------}
 
 mBSInitFromValues ::
-     forall vs l m. (MonadState (Mock vs) m)
+     forall vs m. (MonadState (Mock vs) m)
   => WithOrigin SlotNo
-  -> l EmptyMK
   -> vs
   -> m ()
-mBSInitFromValues sl _ vs = modify (\m -> m {
+mBSInitFromValues sl vs = modify (\m -> m {
     backingValues = vs
   , backingSeqNo  = sl
   , isClosed      = False
   })
 
 mBSInitFromCopy ::
-     forall vs l m. (MonadState (Mock vs) m, MonadError Err m)
-  => l EmptyMK
-  -> FS.FsPath
+     forall vs m. (MonadState (Mock vs) m, MonadError Err m)
+  => FS.FsPath
   -> m ()
-mBSInitFromCopy _ bsp = do
+mBSInitFromCopy bsp = do
   cps <- gets copies
   case Map.lookup bsp cps of
     Nothing       -> throwError ErrCopyPathDoesNotExist
@@ -252,10 +255,10 @@ mBSValueHandle = do
 mBSWrite ::
      (MonadState (Mock vs) m, MonadError Err m, ApplyDiff vs d)
   => SlotNo
-  -> l EmptyMK
+  -> BS.ExtraState vs
   -> d
   -> m ()
-mBSWrite sl _ d = do
+mBSWrite sl _st d = do
   mGuardBSClosed
   vs <- gets backingValues
   seqNo <- gets backingSeqNo
