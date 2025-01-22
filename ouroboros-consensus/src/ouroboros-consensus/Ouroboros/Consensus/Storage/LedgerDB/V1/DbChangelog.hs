@@ -422,22 +422,21 @@ extend newState dblog =
   Read
 -------------------------------------------------------------------------------}
 
-type KeySetsReader m l = LedgerTables l KeysMK -> m (UnforwardedReadSets l)
+type KeySetsReader m l = l EmptyMK -> LedgerTables l KeysMK -> m (UnforwardedReadSets l)
 
 readKeySets ::
      IOLike m
   => LedgerBackingStore m l
   -> KeySetsReader m l
-readKeySets backingStore rew = do
-    withBsValueHandle backingStore (`readKeySetsWith` rew)
+readKeySets backingStore st rew = do
+    withBsValueHandle backingStore (\bsvh -> readKeySetsWith bsvh st rew)
 
 readKeySetsWith ::
      Monad m
   => LedgerBackingStoreValueHandle m l
-  -> LedgerTables l KeysMK
-  -> m (UnforwardedReadSets l)
-readKeySetsWith bsvh rew = do
-    values <- bsvhRead bsvh rew
+  -> KeySetsReader m l
+readKeySetsWith bsvh st rew = do
+    values <- bsvhRead bsvh st rew
     pure UnforwardedReadSets {
         ursSeqNo  = bsvhAtSlot bsvh
       , ursValues = values
@@ -446,14 +445,14 @@ readKeySetsWith bsvh rew = do
 
 withKeysReadSets ::
      (HasLedgerTables l, Monad m, GetTip l)
-  => l mk1
+  => l EmptyMK
   -> KeySetsReader m l
   -> DbChangelog l
   -> LedgerTables l KeysMK
   -> (l ValuesMK -> m a)
   -> m a
 withKeysReadSets st ksReader dbch ks f = do
-      urs <- ksReader ks
+      urs <- ksReader st ks
       case withHydratedLedgerState urs of
         Left err ->
           -- We performed the rewind;read;forward sequence in this function. So
@@ -478,7 +477,7 @@ withKeysReadSets st ksReader dbch ks f = do
 trivialKeySetsReader :: (Monad m, LedgerTablesAreTrivial l)
                      => WithOrigin SlotNo
                      -> KeySetsReader m l
-trivialKeySetsReader s _ =
+trivialKeySetsReader s _st _ =
   pure $ UnforwardedReadSets s trivialLedgerTables trivialLedgerTables
 
 {-------------------------------------------------------------------------------

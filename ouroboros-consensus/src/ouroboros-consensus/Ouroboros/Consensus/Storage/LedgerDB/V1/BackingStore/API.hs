@@ -7,6 +7,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | The 'BackingStore' is the component of the LedgerDB V1 implementation that
@@ -27,9 +28,10 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API (
   , BackingStore (..)
   , BackingStore'
   , DiffsToFlush (..)
-  , ExtraState
   , InitFrom (..)
   , LedgerBackingStore
+  , ReadHint
+  , WriteHint
     -- * Value handle
   , BackingStoreValueHandle (..)
   , BackingStoreValueHandle'
@@ -101,7 +103,7 @@ data BackingStore m keys values diff = BackingStore {
     -- entire database
   , bsValueHandle :: !(m (BackingStoreValueHandle m keys values))
     -- | Apply a valid diff to the contents of the backing store
-  , bsWrite       :: !(SlotNo -> ExtraState values -> diff -> m ())
+  , bsWrite       :: !(SlotNo -> WriteHint diff -> diff -> m ())
   }
 
 deriving via OnlyCheckWhnfNamed "BackingStore" (BackingStore m keys values diff)
@@ -115,12 +117,11 @@ type LedgerBackingStore m l =
 
 type BackingStore' m blk = LedgerBackingStore m (ExtLedgerState blk)
 
-type instance ExtraState (LedgerTables l ValuesMK) = (l EmptyMK, l EmptyMK)
+type family WriteHint values :: Type
+type instance WriteHint (LedgerTables l DiffMK) = (l EmptyMK, l EmptyMK)
 
--- | Extra state for 'bsWrite'
---
--- TODO: better name?
-type family ExtraState values :: Type
+type family ReadHint values :: Type
+type instance ReadHint (LedgerTables l ValuesMK) = l EmptyMK
 
 -- | Choose how to initialize the backing store
 data InitFrom values =
@@ -148,15 +149,15 @@ data BackingStoreValueHandle m keys values = BackingStoreValueHandle {
     -- itself is idempotent.
   , bsvhClose     :: !(m ())
     -- | See 'RangeQuery'
-  , bsvhRangeRead :: !(RangeQuery keys -> m values)
+  , bsvhRangeRead :: !(ReadHint values -> RangeQuery keys -> m values)
     -- | Costly read all operation, not to be used in Consensus but only in
     -- snapshot-converter executable.
-  , bsvhReadAll   :: !(m values)
+  , bsvhReadAll   :: !(ReadHint values -> m values)
     -- | Read the given keys from the handle
     --
     -- Absent keys will merely not be present in the result instead of causing a
     -- failure or an exception.
-  , bsvhRead      :: !(keys -> m values)
+  , bsvhRead      :: !(ReadHint values -> keys -> m values)
     -- | Retrieve statistics
   , bsvhStat      :: !(m Statistics)
   }
@@ -172,7 +173,7 @@ type LedgerBackingStoreValueHandle m l =
 type BackingStoreValueHandle' m blk = LedgerBackingStoreValueHandle m (ExtLedgerState blk)
 
 castBackingStoreValueHandle ::
-     Functor m
+     (Functor m, ReadHint values ~ ReadHint values')
   => (values -> values')
   -> (keys' -> keys)
   -> BackingStoreValueHandle m keys values
@@ -181,10 +182,10 @@ castBackingStoreValueHandle f g bsvh =
   BackingStoreValueHandle {
       bsvhAtSlot
     , bsvhClose
-    , bsvhReadAll = f <$> bsvhReadAll
-    , bsvhRangeRead = \(RangeQuery prev count) ->
-        fmap f . bsvhRangeRead $  RangeQuery (fmap g prev) count
-    , bsvhRead = fmap f . bsvhRead . g
+    , bsvhReadAll = \s -> f <$> bsvhReadAll s
+    , bsvhRangeRead = \s (RangeQuery prev count) ->
+        fmap f . bsvhRangeRead s $  RangeQuery (fmap g prev) count
+    , bsvhRead = \s -> fmap f . bsvhRead s . g
     , bsvhStat
     }
   where
@@ -201,17 +202,19 @@ castBackingStoreValueHandle f g bsvh =
 bsRead ::
      MonadThrow m
   => BackingStore m keys values diff
+  -> ReadHint values
   -> keys
   -> m (WithOrigin SlotNo, values)
-bsRead store keys = withBsValueHandle store $ \vh -> do
-    values <- bsvhRead vh keys
+bsRead store rhint keys = withBsValueHandle store $ \vh -> do
+    values <- bsvhRead vh rhint keys
     pure (bsvhAtSlot vh, values)
 
 bsReadAll ::
      MonadThrow m
   => BackingStore m keys values diff
+  -> ReadHint values
   -> m values
-bsReadAll store = withBsValueHandle store bsvhReadAll
+bsReadAll store rhint = withBsValueHandle store $ \vh -> bsvhReadAll vh rhint
 
 -- | A 'IOLike.bracket'ed 'bsValueHandle'
 withBsValueHandle ::
