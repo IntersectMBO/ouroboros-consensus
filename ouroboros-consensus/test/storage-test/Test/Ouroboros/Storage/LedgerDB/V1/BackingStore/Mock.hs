@@ -25,7 +25,8 @@ module Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock (
   , LookupKeys (..)
   , LookupKeysRange (..)
   , MakeDiff (..)
-  , MakeExtraState (..)
+  , MakeReadHint (..)
+  , MakeWriteHint (..)
   , ValuesLength (..)
     -- * State monad to run the mock in
   , MockMonad (..)
@@ -121,7 +122,7 @@ data Err =
 -- | Abstract over interactions between values, keys and diffs.
 class ( EmptyValues vs, ApplyDiff vs d, LookupKeysRange ks vs
       , LookupKeys ks vs, ValuesLength vs, MakeDiff vs d
-      , DiffSize d, KeysSize ks, MakeExtraState vs
+      , DiffSize d, KeysSize ks, MakeWriteHint d, MakeReadHint vs
       ) => HasOps ks vs d
 
 class EmptyValues vs where
@@ -150,8 +151,11 @@ class DiffSize d where
 class KeysSize ks where
   keysSize :: ks -> Int
 
-class MakeExtraState vs where
-  makeExtraState :: Proxy vs -> BS.ExtraState vs
+class MakeWriteHint d where
+  makeWriteHint :: Proxy d -> BS.WriteHint d
+
+class MakeReadHint vs where
+  makeReadHint :: Proxy vs -> BS.ReadHint vs
 
 {-------------------------------------------------------------------------------
   State monad to run the mock in
@@ -255,7 +259,7 @@ mBSValueHandle = do
 mBSWrite ::
      (MonadState (Mock vs) m, MonadError Err m, ApplyDiff vs d)
   => SlotNo
-  -> BS.ExtraState vs
+  -> BS.WriteHint d
   -> d
   -> m ()
 mBSWrite sl _st d = do
@@ -312,9 +316,10 @@ mBSVHClose vh = do
 mBSVHRangeRead ::
      (MonadState (Mock vs) m, MonadError Err m, LookupKeysRange ks vs)
   => ValueHandle vs
+  -> BS.ReadHint vs
   -> BS.RangeQuery ks
   -> m vs
-mBSVHRangeRead vh BS.RangeQuery{BS.rqPrev, BS.rqCount} = do
+mBSVHRangeRead vh _ BS.RangeQuery{BS.rqPrev, BS.rqCount} = do
   mGuardBSClosed
   mGuardBSVHClosed vh
   let
@@ -325,9 +330,10 @@ mBSVHRangeRead vh BS.RangeQuery{BS.rqPrev, BS.rqCount} = do
 mBSVHRead ::
      (MonadState (Mock vs) m, MonadError Err m, LookupKeys ks vs)
   => ValueHandle vs
+  -> BS.ReadHint vs
   -> ks
   -> m vs
-mBSVHRead vh ks = do
+mBSVHRead vh _ ks = do
   mGuardBSClosed
   mGuardBSVHClosed vh
   let vs = values vh

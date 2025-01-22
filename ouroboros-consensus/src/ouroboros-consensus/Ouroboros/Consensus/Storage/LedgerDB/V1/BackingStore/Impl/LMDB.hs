@@ -77,7 +77,6 @@ data Db m l = Db {
   , dbState         :: !(LMDB.Database () DbSeqNo)
     -- | The LMDB tables with the key-value stores.
   , dbBackingTables :: !(LedgerTables l LMDBMK)
-  , dbLedgerState   :: !(IOLike.TVar m (l EmptyMK))
   , dbFilePath      :: !FilePath
   , dbTracer        :: !(Trace.Tracer m API.BackingStoreTrace)
     -- | Status of the LMDB backing store. When 'Closed', all backing store
@@ -195,19 +194,18 @@ rangeRead rq st dbMK =
         db
 
 initLMDBTable ::
-     (IndexedMemPack (l EmptyMK) v, MemPack k)
-  => l EmptyMK
-  -> LMDBMK   k v
+     (MemPack v, MemPack k)
+  => LMDBMK   k v
   -> ValuesMK k v
   -> LMDB.Transaction LMDB.ReadWrite (EmptyMK k v)
-initLMDBTable st (LMDBMK tblName db) (ValuesMK utxoVals) =
+initLMDBTable (LMDBMK tblName db) (ValuesMK utxoVals) =
     EmptyMK <$ lmdbInitTable
   where
     lmdbInitTable = do
       isEmpty <- LMDB.null db
       unless isEmpty $ liftIO . throwIO $ LMDBErrInitialisingNonEmpty tblName
       void $ Map.traverseWithKey
-                 (Bridge.indexedPut st db)
+                 (Bridge.put db)
                  utxoVals
 
 readLMDBTable ::
@@ -337,15 +335,13 @@ initFromVals ::
   -> LMDB.Environment LMDB.Internal.ReadWrite
      -- ^ The LMDB environment.
   -> LMDB.Database () DbSeqNo
-  -> l EmptyMK
-     -- ^ The state of the tables we are going to initialize the db with.
   -> LedgerTables l LMDBMK
   -> m ()
-initFromVals tracer dbsSeq vals env st lst backingTables = do
+initFromVals tracer dbsSeq vals env st backingTables = do
   Trace.traceWith tracer $ API.BSInitialisingFromValues dbsSeq
   liftIO $ LMDB.readWriteTransaction env $
     withDbSeqNoRWMaybeNull st $ \case
-      Nothing -> ltzipWith2A' (initLMDBTable lst) backingTables vals
+      Nothing -> ltzipWith2A' initLMDBTable backingTables vals
                  $> ((), DbSeqNo{dbsSeq})
       Just _ -> liftIO . throwIO $ LMDBErrInitialisingAlreadyHasState
   Trace.traceWith tracer $ API.BSInitialisedFromValues dbsSeq
@@ -424,10 +420,6 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
 
    path = FS.mkFsPath ["tables"]
 
-   st = case initFrom of
-       API.InitFromCopy st' _     -> st'
-       API.InitFromValues _ st' _ -> st'
-
    createOrGetDB :: m (Db m l)
    createOrGetDB = do
 
@@ -456,12 +448,9 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
 
      dbNextId <- IOLike.newTVarIO 0
 
-     dbLedgerState <- IOLike.newTVarIO st
-
      pure $ Db { dbEnv
                , dbState
                , dbBackingTables
-               , dbLedgerState
                , dbFilePath
                , dbTracer
                , dbStatusLock
@@ -476,8 +465,8 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
    maybePopulate dbEnv dbState dbBackingTables = do
      -- now initialise those tables if appropriate
      case initFrom of
-       API.InitFromValues slot _ vals -> initFromVals dbTracer slot vals dbEnv dbState st dbBackingTables
-       API.InitFromCopy{}             -> pure ()
+       API.InitFromValues slot vals -> initFromVals dbTracer slot vals dbEnv dbState dbBackingTables
+       API.InitFromCopy{}           -> pure ()
 
    mkBackingStore :: HasCallStack => Db m l -> API.LedgerBackingStore m l
    mkBackingStore db =
@@ -500,8 +489,8 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
            bsValueHandle = Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
              mkLMDBBackingStoreValueHandle db
 
-           bsWrite :: SlotNo -> l EmptyMK -> LedgerTables l DiffMK -> m ()
-           bsWrite slot st' diffs = do
+           bsWrite :: SlotNo -> (l EmptyMK, l EmptyMK) -> LedgerTables l DiffMK -> m ()
+           bsWrite slot (_st, st') diffs = do
              Trace.traceWith dbTracer $ API.BSWriting slot
              Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
                oldSlot <- liftIO $ LMDB.readWriteTransaction dbEnv $ withDbSeqNoRW dbState $ \s@DbSeqNo{dbsSeq} -> do
@@ -511,7 +500,6 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
                    liftIO . throwIO $ LMDBErrNonMonotonicSeq (At slot) dbsSeq
                  void $ ltzipWith2A' (writeLMDBTable st') dbBackingTables diffs
                  pure (dbsSeq, s {dbsSeq = At slot})
-               IOLike.atomically $ IOLike.writeTVar dbLedgerState st'
                Trace.traceWith dbTracer $ API.BSWritten oldSlot slot
 
        in API.BackingStore { API.bsClose       = bsClose
@@ -524,7 +512,6 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
         Db { dbEnv
            , dbState
            , dbBackingTables
-           , dbLedgerState
            , dbStatusLock
            , dbOpenHandles
            } = db
@@ -553,7 +540,6 @@ mkLMDBBackingStoreValueHandle db = do
   trh <- liftIO $ TrH.newReadOnly dbEnvRo
   mbInitSlot <- liftIO $ TrH.submitReadOnly trh $ readDbSeqNoMaybeNull dbState
   initSlot <- liftIO $ maybe (throwIO LMDBErrUnableToReadSeqNo) (pure . dbsSeq) mbInitSlot
-  st <- IOLike.readTVarIO dbLedgerState
   vhStatusLock <- Status.new Open
 
   let
@@ -576,8 +562,8 @@ mkLMDBBackingStoreValueHandle db = do
         traceAlreadyClosed    = Trace.traceWith dbTracer API.BSAlreadyClosed
         traceTVHAlreadyClosed = Trace.traceWith tracer API.BSVHAlreadyClosed
 
-    bsvhRead :: LedgerTables l KeysMK -> m (LedgerTables l ValuesMK)
-    bsvhRead keys =
+    bsvhRead :: l EmptyMK -> LedgerTables l KeysMK -> m (LedgerTables l ValuesMK)
+    bsvhRead st keys =
       Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
       Status.withReadAccess vhStatusLock (throwIO (LMDBErrNoValueHandle vhId)) $ do
         Trace.traceWith tracer API.BSVHReading
@@ -587,9 +573,10 @@ mkLMDBBackingStoreValueHandle db = do
         pure res
 
     bsvhRangeRead ::
-         API.RangeQuery (LedgerTables l KeysMK)
+         l EmptyMK
+      -> API.RangeQuery (LedgerTables l KeysMK)
       -> m (LedgerTables l ValuesMK)
-    bsvhRangeRead rq =
+    bsvhRangeRead st rq =
       Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
       Status.withReadAccess vhStatusLock (throwIO (LMDBErrNoValueHandle vhId)) $ do
         Trace.traceWith tracer API.BSVHRangeReading
@@ -613,8 +600,8 @@ mkLMDBBackingStoreValueHandle db = do
         Trace.traceWith tracer API.BSVHStatted
         pure res
 
-    bsvhReadAll :: m (LedgerTables l ValuesMK)
-    bsvhReadAll =
+    bsvhReadAll :: l EmptyMK -> m (LedgerTables l ValuesMK)
+    bsvhReadAll st =
       Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
       Status.withReadAccess vhStatusLock (throwIO (LMDBErrNoValueHandle vhId)) $ do
         Trace.traceWith tracer API.BSVHRangeReading
@@ -643,7 +630,6 @@ mkLMDBBackingStoreValueHandle db = do
       , dbState
       , dbOpenHandles
       , dbBackingTables
-      , dbLedgerState
       , dbNextId
       , dbStatusLock
       } = db
