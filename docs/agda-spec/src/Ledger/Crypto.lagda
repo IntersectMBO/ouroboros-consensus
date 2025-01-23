@@ -209,7 +209,6 @@ record Crypto : Type₁ where
   field ⦃ khsˢ ⦄    : isHashableSet VKeyˢ
         ⦃ khsᵛ ⦄    : isHashableSet VKeyᵛ
         ⦃ shs  ⦄    : isHashableSet Ser
-        ScriptHash : Type; ⦃ DecEq-ScriptHash ⦄ : DecEq ScriptHash
 
   open isHashableSet khsˢ renaming (THash to KeyHashˢ) hiding (DecEq-T) public
   open isHashableSet khsᵛ renaming (THash to KeyHashᵛ) hiding (DecEq-T) public

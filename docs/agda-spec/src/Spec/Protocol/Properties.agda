@@ -71,7 +71,7 @@ instance
     module Go
       (Γ  : PrtclEnv)   (let ⟦ pd , η₀ ⟧ᵖᵉ = Γ)
       (s  : PrtclState) (let ⟦ cs , ηv , ηc ⟧ᵖˢ = s)
-      (bh : BHeader)    (let (bhb , σ) = bh; open BHBody bhb)
+      (bh : BHeader)    (let 〖 bhb , σ 〗 = bh; open BHBody bhb)
       where
 
       η      = hBNonce bhb

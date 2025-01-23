@@ -187,7 +187,7 @@ data _⊢_⇀⦇_,PRTCL⦈_ where
 \end{code}
 \begin{code}
   Evolve-Prtcl :
-    let (bhb , σ) = bh; open BHBody bhb
+    let 〖 bhb , σ 〗 = bh; open BHBody bhb
         η = hBNonce bhb
     in
     ∙ ⟦ η ⟧ᵘᵉ ⊢ ⟦ ηv , ηc ⟧ᵘˢ ⇀⦇ slot ,UPDN⦈ ⟦ ηv′ , ηc′ ⟧ᵘˢ

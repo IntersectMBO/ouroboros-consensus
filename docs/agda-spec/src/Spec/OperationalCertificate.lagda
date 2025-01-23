@@ -102,7 +102,7 @@ data _⊢_⇀⦇_,OCERT⦈_ where
 \end{code}
 \begin{code}
   Update-OCert :
-    let (bhb , σ) = bh; open BHBody bhb
+    let 〖 bhb , σ 〗 = bh; open BHBody bhb
         ⟦ vkₕ , n , c₀ , τ ⟧ᵒᶜ = oc
         hk = hash issuerVk
         kp = kesPeriod slot

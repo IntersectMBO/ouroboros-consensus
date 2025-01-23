@@ -69,9 +69,12 @@ open import Spec.Foreign.HSConsensus.ExternalStructures dummyExternalFunctions
     ( HSEpochStructure to DummyEpochStructure
     ; HSCrypto to DummyCrypto
     ; HSNonces to DummyNonces
+    ; HSBlockStructure to DummyBlockStructure
+    ; HSAbstractFunctions to DummyAbstractFunctions
     )
   public
 
 unquoteDecl = do
   hsTypeAlias Slot
   hsTypeAlias Epoch
+  hsTypeAlias KeyHashˢ ⊣ withName "KeyHashS"
