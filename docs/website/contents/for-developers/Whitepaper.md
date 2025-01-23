@@ -27,6 +27,12 @@ Pros: enables massive code reuse and forces the code to be structured in the way
 
 Cons: abstraction is a double-edged sword and may be difficult to encode in some programming languages. Engineers require extended onboarding to be productive.
 
+## Replaying history of multiple eras
+
+When replaying the chain in `ouroboros-consensus`, as I understand, we use the same code of the HardFork combinator that is used when actually producing/validating these blocks. This is nice because we do not have to have separate code path for the historic chain and caught-up protocol participation.
+
+But obviously we don not have to use the HFC. What would be a reasonable way to enable a non-HFC node to catch up with the chain? Would this hypothetical node be able to enjoy code reuse for the historic and non-historic blocks? In the worst case, we should be able to hard-code the historical eras.
+
 ## The Hard Fork Combinator: a uniform way to support multiple eras}
 
 Ideally, this would be a short section that should outline the core ideas behind the HFC without a single line of Haskell. The purpose should be to demonstrate the benefits of having an abstract interface for describing mixed-era blocks. The interested reader would be then referred to an extended, Haskell-enabled document that described the HFC in its full glory.
