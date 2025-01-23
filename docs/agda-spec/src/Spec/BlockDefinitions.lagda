@@ -77,7 +77,11 @@ record BlockStructure : Type₁ where
 \end{AgdaSuppressSpace}
 \emph{Block Types}
 \begin{code}
-  BHeader = BHBody × Sigᵏ -- block header
+  record BHeader : Type where
+    constructor 〖_,_〗
+    field
+      body : BHBody
+      sig  : Sigᵏ
 \end{code}
 \emph{Abstract functions}
 \begin{code}[hide]

@@ -44,6 +44,16 @@ record HSSet A : Type where
   constructor MkHSSet
   field elems : List A
 
+instance
+  Show-HSPair : ∀ {a b} {A : Set a} {B : Set b} → ⦃ Show A ⦄ → ⦃ Show B ⦄ → Show (Pair A B)
+  Show-HSPair .show (x , y) = Show-× .show (x , y)
+
+  Show-HSMap : ∀ {K V} → ⦃ Show K ⦄ → ⦃ Show V ⦄ → Show (HSMap K V)
+  Show-HSMap .show (record { assocList = al }) = "HSMap " ◇ (Show-List .show al)
+
+  Show-HSSet : ∀ {A} → ⦃ Show A ⦄ → Show (HSSet A)
+  Show-HSSet .show (record { elems = es }) = "HSSet " ◇ (Show-List .show es)
+
 {-# FOREIGN GHC
   newtype HSMap k v = MkHSMap [(k, v)]
     deriving (Generic, Show, Eq, Ord)
@@ -58,6 +68,11 @@ record HSSet A : Type where
 data ComputationResult E A : Type where
   Success : A → ComputationResult E A
   Failure : E → ComputationResult E A
+
+instance
+  Show-ComputationResult : ∀ {E} {A} → ⦃ Show E ⦄ → ⦃ Show A ⦄ → Show (ComputationResult E A)
+  Show-ComputationResult .show (Success x) = "Success " ◇ show x
+  Show-ComputationResult .show (Failure e) = "Failure " ◇ show e
 
 {-# FOREIGN GHC
   data ComputationResult e a = Success a | Failure e

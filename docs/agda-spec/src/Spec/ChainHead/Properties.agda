@@ -37,7 +37,7 @@ instance
     bℓ + 1 ≟  blockNo    ×-dec
     ph     ≟  prevHeader
     where
-      open BHBody (proj₁ bh)
+      open BHeader; open BHBody (bh .body)
       ph = lastAppliedHash lab
 
 chainChecks? : ∀ maxpv ps bh → Dec (chainChecks maxpv ps bh)
@@ -47,7 +47,7 @@ chainChecks? maxpv (maxBHSize , maxBBSize , protocolVersion) bh =
   bodySize      ≤? maxBBSize
   where
     m = proj₁ protocolVersion
-    open BHBody (proj₁ bh)
+    open BHeader; open BHBody (bh .body)
 
 instance
 
@@ -62,7 +62,7 @@ instance
     module Go
       (nes : NewEpochState)
       (s   : ChainHeadState) (let ⟦ cs , η₀ , ηv , ηc , ηh , lab ⟧ᶜˢ = s)
-      (bh  : BHeader)        (let (bhb , σ) = bh; open BHBody bhb)
+      (bh  : BHeader)        (let 〖 bhb , σ 〗 = bh; open BHBody bhb)
       where
 
       e₁      = getEpoch nes

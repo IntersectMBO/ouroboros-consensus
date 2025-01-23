@@ -98,7 +98,7 @@ chainChecks maxpv (maxBHSize , maxBBSize , protocolVersion) bh =
   m ≤ maxpv × headerSize bh ≤ maxBHSize × bodySize ≤ maxBBSize
   where
     m = proj₁ protocolVersion
-    open BHBody (proj₁ bh)
+    open BHeader; open BHBody (bh .body)
 
 lastAppliedHash : Maybe LastAppliedBlock → Maybe HashHeader
 lastAppliedHash nothing               = nothing
@@ -108,7 +108,7 @@ prtlSeqChecks : Maybe LastAppliedBlock → BHeader → Type
 prtlSeqChecks nothing                    bh = ⊤
 prtlSeqChecks lab@(just ⟦ bℓ , sℓ , _ ⟧ℓ) bh = sℓ < slot × bℓ + 1 ≡ blockNo × ph ≡ prevHeader
   where
-    open BHBody (proj₁ bh)
+    open BHeader; open BHBody (bh .body)
     ph = lastAppliedHash lab
 \end{code}
 \end{AgdaAlign}
@@ -144,7 +144,7 @@ data _⊢_⇀⦇_,CHAINHEAD⦈_ where
 \end{code}
 \begin{code}
   Chain-Head :
-    let (bhb , _) = bh; open BHBody bhb
+    let 〖 bhb , _ 〗 = bh; open BHBody bhb
         e₁   = getEpoch nes
         e₂   = getEpoch forecast
         ne   = (e₁ ≠ e₂)

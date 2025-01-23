@@ -24,16 +24,15 @@ open import Data.Integer using (_≤_; _<_)
 ½≤1 : ½ ≤ℚ 1ℚ
 ½≤1 = _≤ℚ_.*≤* (_≤_.+≤+ (s≤s z≤n))
 
-module _ {A : Type} ⦃ _ : DecEq A ⦄ ⦃ _ : Show A ⦄ where instance
-  ∀Hashable : Hashable A A
-  ∀Hashable = λ where .hash → id
-
-  ∀isHashableSet : isHashableSet A
-  ∀isHashableSet = mkIsHashableSet A
-
 instance
   Hashable-⊤ : Hashable ⊤ ℕ
   Hashable-⊤ = λ where .hash tt → 0
+
+  Hashable-ℕ : Hashable ℕ ℕ
+  Hashable-ℕ = λ where .hash → suc
+
+  isHashableSet-ℕ : isHashableSet ℕ
+  isHashableSet-ℕ = mkIsHashableSet ℕ
 
 module Implementation where
   -- Global constants
@@ -51,5 +50,3 @@ module Implementation where
 
   -- VRFs and nonces
   Seed = ℕ
-
-module ExternalStructures (externalFunctions : ExternalFunctions) where

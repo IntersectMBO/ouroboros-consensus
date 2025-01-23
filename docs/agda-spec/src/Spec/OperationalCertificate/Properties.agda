@@ -16,14 +16,14 @@ module Spec.OperationalCertificate.Properties
 open import Ledger.Prelude
 open import Data.Maybe.Relation.Unary.Any as M
 open import Spec.OperationalCertificate crypto nonces es bs af
+open import Tactic.GenError using (genError)
 
 instance
 
   Computational-OCERT : Computational _⊢_⇀⦇_,OCERT⦈_ String
   Computational-OCERT = record {Go} where
     module Go (stpools : OCertEnv) (cs : OCertState) (bh : BHeader) where
-      bhb = bh .proj₁; open BHBody bhb
-      σ = bh .proj₂
+      open BHeader; bhb = bh .body; σ = bh .sig; open BHBody bhb
       open OCert oc renaming (σ to τ)
       hk = hash issuerVk
       kp = kesPeriod slot
@@ -37,7 +37,7 @@ instance
 
       computeProof : ComputationResult String (∃[ cs′ ] stpools ⊢ cs ⇀⦇ bh ,OCERT⦈ cs′)
       computeProof with hyps
-      ... | no ¬p = failure "Failed in OCERT"
+      ... | no ¬p = failure (genError)
       ... | yes (p₁ , p₂ , p₃ , p₄ , p₅) = success (-, Update-OCert (p₁ , p₂ , satisfied× p₃ , p₄ , p₅))
         where
           satisfied× : ∀ {a p} {A : Set a} {y : Maybe A} {P : Pred A p} → M.Any P y → ∃[ x ] just x ≡ y × P x
