@@ -30,7 +30,9 @@ import           Cardano.Crypto.VRF (CertifiedVRF (certifiedOutput),
                      OutputVRF (..), getOutputVRFBytes)
 import           Cardano.Ledger.BaseTypes (Nonce (NeutralNonce, Nonce))
 import           Cardano.Ledger.Binary (runByteBuilder)
-import           Cardano.Ledger.Crypto (Crypto (HASH, VRF))
+-- import           Cardano.Ledger.Crypto (Crypto (HASH, VRF))
+import           Cardano.Ledger.Hashes (HASH)
+import           Cardano.Protocol.Crypto (VRF)
 import           Cardano.Ledger.Slot (SlotNo (SlotNo))
 import           Cardano.Protocol.TPraos.BHeader (BoundedNatural,
                      assertBoundedNatural)
@@ -86,11 +88,10 @@ data VRFResult (v :: VRFUsage)
 -- | Compute a hash of the unified VRF output appropriate to its usage.
 hashVRF ::
   forall (v :: VRFUsage) c proxy.
-  (Crypto c) =>
   proxy c ->
   SVRFUsage v ->
   CertifiedVRF (VRF c) InputVRF ->
-  Hash (HASH c) (VRFResult v)
+  Hash HASH (VRFResult v)
 hashVRF _ use certVRF =
   let vrfOutputAsBytes = getOutputVRFBytes $ certifiedOutput certVRF
    in case use of
@@ -101,20 +102,18 @@ hashVRF _ use certVRF =
 -- hash. See section 4.1 of the linked paper for details.
 vrfLeaderValue ::
   forall c proxy.
-  Crypto c =>
   proxy c ->
   CertifiedVRF (VRF c) InputVRF ->
   BoundedNatural
 vrfLeaderValue p cvrf =
   assertBoundedNatural
-    ((2 :: Natural) ^ (8 * sizeHash (Proxy @(HASH c))))
+    ((2 :: Natural) ^ (8 * sizeHash (Proxy @HASH)))
     (bytesToNatural . hashToBytes $ hashVRF p SVRFLeader cvrf)
 
 -- | Range-extend a VRF output to be used for the evolving nonce. See section
 -- 4.1 of the linked paper for details.
 vrfNonceValue ::
   forall c proxy.
-  Crypto c =>
   proxy c ->
   CertifiedVRF (VRF c) InputVRF ->
   Nonce

@@ -97,7 +97,9 @@ import           Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..),
 import           Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE,
                      (..:))
 import           Ouroboros.Consensus.Util.Condense
+import           Ouroboros.Consensus.Util.Orphans ()
 import           Test.Util.Orphans.Serialise ()
+import GHC.TypeLits (KnownNat)
 
 {-------------------------------------------------------------------------------
   Definition of a block
@@ -170,7 +172,12 @@ data SimpleStdHeader c ext = SimpleStdHeader {
     , simpleBodySize :: SizeInBytes
     }
   deriving stock    (Generic, Show, Eq)
-  deriving anyclass (Serialise, NoThunks)
+  -- deriving anyclass (Serialise, NoThunks)
+  deriving anyclass (NoThunks)
+
+deriving instance
+  KnownNat (Hash.SizeHash (SimpleHash c)) =>
+  Serialise (SimpleStdHeader c ext)
 
 data SimpleBody = SimpleBody {
       simpleTxs :: [Mock.Tx]
@@ -367,7 +374,12 @@ newtype instance LedgerState (SimpleBlock c ext) = SimpleLedgerState {
       simpleLedgerState :: MockState (SimpleBlock c ext)
     }
   deriving stock   (Generic, Show, Eq)
-  deriving newtype (Serialise, NoThunks)
+  -- deriving newtype (Serialise, NoThunks)
+  deriving newtype (NoThunks)
+
+deriving newtype instance
+  KnownNat (Hash.SizeHash (SimpleHash c)) =>
+  Serialise (LedgerState (SimpleBlock c ext))
 
 -- Ticking has no effect on the simple ledger state
 newtype instance Ticked (LedgerState (SimpleBlock c ext)) = TickedSimpleLedgerState {
@@ -598,7 +610,8 @@ instance Condense ext' => Condense (SimpleBlock' c ext ext') where
 instance ToCBOR SimpleBody where
   toCBOR = encode
 
-encodeSimpleHeader :: (ext' -> CBOR.Encoding)
+encodeSimpleHeader :: KnownNat (Hash.SizeHash (SimpleHash c))
+                   => (ext' -> CBOR.Encoding)
                    -> Header (SimpleBlock' c ext ext')
                    -> CBOR.Encoding
 encodeSimpleHeader encodeExt SimpleHeader{..} =  mconcat [

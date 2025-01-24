@@ -34,15 +34,27 @@ import           Cardano.Crypto.Util
 import           Cardano.Ledger.BaseTypes (ProtVer (pvMajor))
 import           Cardano.Ledger.Binary (Annotator (..), CBORGroup (unCBORGroup),
                      DecCBOR (decCBOR), EncCBOR (..), ToCBOR (..),
-                     encodedSigKESSizeExpr, serialize', withSlice)
+                     encodedSigKESSizeExpr, serialize', withSlice,
+                    )
+import           Cardano.Ledger.Binary.Crypto (
+                     decodeSignedKES, encodeSignedKES,
+                     decodeVerKeyVRF, encodeVerKeyVRF,
+                    )
 import           Cardano.Ledger.Binary.Coders
 import qualified Cardano.Ledger.Binary.Plain as Plain
-import           Cardano.Ledger.Crypto (Crypto (HASH))
+import           Cardano.Protocol.Crypto (Crypto (..), VRF)
 import           Cardano.Ledger.Hashes (EraIndependentBlockBody,
-                     EraIndependentBlockHeader)
-import           Cardano.Ledger.Keys (CertifiedVRF, Hash, KeyRole (BlockIssuer),
-                     SignedKES, VKey, VerKeyVRF, decodeSignedKES,
-                     decodeVerKeyVRF, encodeSignedKES, encodeVerKeyVRF)
+                     EraIndependentBlockHeader, HASH)
+import           Cardano.Ledger.Keys (
+                     -- CertifiedVRF, 
+                     -- Hash, 
+                     KeyRole (BlockIssuer),
+                     -- SignedKES, 
+                     VKey, 
+                     -- VerKeyVRF,
+                     -- decodeSignedKES,
+                     -- decodeVerKeyVRF, encodeSignedKES, encodeVerKeyVRF
+                    )
 import           Cardano.Protocol.TPraos.BHeader (PrevHash)
 import           Cardano.Protocol.TPraos.OCert (OCert)
 import           Cardano.Slotting.Block (BlockNo)
@@ -53,6 +65,8 @@ import           Data.Word (Word32)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (AllowThunksIn (..), NoThunks (..))
 import           Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF)
+import           Cardano.Crypto.VRF (VerKeyVRF, CertifiedVRF)
+import           Cardano.Crypto.Hash (Hash)
 
 -- | The body of the header is the part which gets hashed to form the hash
 -- chain.
@@ -62,17 +76,17 @@ data HeaderBody crypto = HeaderBody
     -- | block slot
     hbSlotNo   :: !SlotNo,
     -- | Hash of the previous block header
-    hbPrev     :: !(PrevHash crypto),
+    hbPrev     :: !(PrevHash),
     -- | verification key of block issuer
-    hbVk       :: !(VKey 'BlockIssuer crypto),
+    hbVk       :: !(VKey 'BlockIssuer),
     -- | VRF verification key for block issuer
-    hbVrfVk    :: !(VerKeyVRF crypto),
+    hbVrfVk    :: !(VerKeyVRF (VRF crypto)),
     -- | Certified VRF value
-    hbVrfRes   :: !(CertifiedVRF crypto InputVRF),
+    hbVrfRes   :: !(CertifiedVRF (VRF crypto) InputVRF),
     -- | Size of the block body
     hbBodySize :: !Word32,
     -- | Hash of block body
-    hbBodyHash :: !(Hash crypto EraIndependentBlockBody),
+    hbBodyHash :: !(Hash HASH EraIndependentBlockBody),
     -- | operational certificate
     hbOCert    :: !(OCert crypto),
     -- | protocol version
@@ -96,7 +110,7 @@ instance
 
 data HeaderRaw crypto = HeaderRaw
   { headerRawBody :: !(HeaderBody crypto),
-    headerRawSig  :: !(SignedKES crypto (HeaderBody crypto))
+    headerRawSig  :: !(KES.SignedKES (KES crypto) (HeaderBody crypto))
   }
   deriving (Show, Generic)
 
@@ -124,7 +138,7 @@ data Header crypto = HeaderConstr
 pattern Header ::
   Crypto crypto =>
   HeaderBody crypto ->
-  SignedKES crypto (HeaderBody crypto) ->
+  KES.SignedKES (KES crypto) (HeaderBody crypto) ->
   Header crypto
 pattern Header {headerBody, headerSig} <-
   HeaderConstr {
@@ -155,7 +169,7 @@ headerSize (HeaderConstr _ bytes) = BS.length bytes
 headerHash ::
   Crypto crypto =>
   Header crypto ->
-  Hash.Hash (HASH crypto) EraIndependentBlockHeader
+  Hash.Hash HASH EraIndependentBlockHeader
 headerHash = Hash.castHash . Hash.hashWithSerialiser toCBOR
 
 --------------------------------------------------------------------------------

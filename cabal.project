@@ -44,3 +44,46 @@ package ouroboros-network
 if(os(windows))
   constraints:
     bitvec -simd
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/cardano-ledger
+  -- Before removing crypto parameterisation
+  -- tag: 81330ef22a401146b6e46c57426af3b47aaa1dba 
+  -- From master
+  tag: 7683b73971a800b36ca7317601552685fa0701ed
+  --sha256: sha256-ix4VNneNgEYYipzrAtrRIQUP+ofz4D+R4zFlBylEMLc=
+  subdir:
+    eras/allegra/impl
+    eras/alonzo/impl
+    eras/alonzo/test-suite
+    eras/babbage/impl
+    eras/babbage/test-suite
+    eras/byron/chain/executable-spec
+    eras/byron/crypto
+    eras/byron/crypto/test
+    eras/byron/ledger/executable-spec
+    eras/byron/ledger/impl
+    eras/byron/ledger/impl/test
+    eras/conway/impl
+    eras/conway/test-suite
+    eras/mary/impl
+    eras/shelley/impl
+    eras/shelley-ma/test-suite
+    eras/shelley/test-suite
+    libs/cardano-data
+    libs/cardano-ledger-api
+    libs/cardano-ledger-binary
+    -- libs/cardano-ledger-conformance
+    libs/cardano-ledger-core
+    -- libs/cardano-ledger-test
+    libs/cardano-protocol-tpraos
+    libs/constrained-generators
+    -- libs/ledger-state
+    libs/non-integral
+    -- libs/plutus-preprocessor
+    libs/set-algebra
+    libs/small-steps
+    libs/vector-map
+
+allow-newer: all
