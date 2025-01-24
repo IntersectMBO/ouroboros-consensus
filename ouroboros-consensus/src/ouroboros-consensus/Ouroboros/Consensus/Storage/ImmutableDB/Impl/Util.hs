@@ -8,8 +8,7 @@
 
 module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Util (
     -- * Utilities
-    Two (..)
-  , checkChecksum
+    checkChecksum
   , dbFilesOnDisk
   , fsPathChunkFile
   , fsPathPrimaryIndexFile
@@ -46,11 +45,6 @@ import           Text.Read (readMaybe)
 {------------------------------------------------------------------------------
   Utilities
 ------------------------------------------------------------------------------}
-
--- | Useful when you have exactly two values of some type and want to
--- 'traverse' over both of them (which is not possible with a tuple).
-data Two a = Two a a
-  deriving (Functor, Foldable, Traversable)
 
 fsPathChunkFile :: ChunkNo -> FsPath
 fsPathChunkFile = renderFile "chunk"

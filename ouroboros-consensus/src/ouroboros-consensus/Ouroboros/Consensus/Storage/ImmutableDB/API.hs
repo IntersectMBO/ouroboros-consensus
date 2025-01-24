@@ -88,23 +88,19 @@ type SecondaryOffset = Word32
 -- | API for the 'ImmutableDB'.
 --
 -- The 'ImmutableDB' stores blocks in 'SlotNo's. Nevertheless, lookups use
--- 'RealPoint', primarily because Epoch Boundary Blocks (EBBs) have the same
--- 'SlotNo' as the regular block after them (unless that slot is empty), so that
--- we have to use the hash of the block to distinguish the two (hence
--- 'RealPoint'). But also to avoid reading the wrong block, i.e., when we expect
+-- 'RealPoint', to avoid reading the wrong block, i.e., when we expect
 -- a block with a different hash.
 --
 -- The database is append-only, so you cannot append a block to a slot in the
 -- past. You can, however, skip slots, e.g., append to slot 0 and then to slot
 -- 5, but afterwards, you can no longer append to slots 1-4. You can only store
--- at most one block in each slot, except for EBBs, which are stored separately,
--- at the start of each epoch/chunk.
+-- at most one block in each slot.
 --
 -- The block stored in a slot can be queried with 'getBlockComponent'. Block
 -- components can also be streamed using 'Iterator's, see 'stream'.
 --
 -- The 'Tip' of the database can be queried with 'getTip'. This tip will
--- always point to a filled slot or an EBB that is present.
+-- always point to a filled slot.
 --
 -- The database can be explicitly closed, but can also be automatically closed
 -- in case of an 'UnexpectedFailure'.
@@ -118,16 +114,14 @@ data ImmutableDB m blk = ImmutableDB {
 
       -- | Return the tip of the database.
       --
-      -- The tip of the database will never point to an unfilled slot or missing
-      -- EBB.
+      -- The tip of the database will never point to an unfilled slot.
       --
       -- Throws a 'ClosedDBError' if the database is closed.
     , getTip_ :: HasCallStack => STM m (WithOrigin (Tip blk))
 
       -- | Get the block component of the block with the given 'Point'.
       --
-      -- The hash of the point is used to distinguish a potential EBB from the
-      -- regular block in the same slot.
+      -- The hash of the point is used only for error checking.
       --
       -- Returns a 'MissingBlockError' if no block was stored with the given
       -- 'Point', either because the slot was empty or because the block stored
@@ -183,7 +177,7 @@ data Iterator m blk b = Iterator {
       -- | Steps an 'Iterator' yielding an 'IteratorResult'.
       --
       -- After returning the block component as an 'IteratorResult', the
-      -- iterator is advanced to the next non-empty slot or non-empty EBB.
+      -- iterator is advanced to the next non-empty slot.
       --
       -- Throws a 'ClosedDBError' if the database is closed.
       --
@@ -253,7 +247,6 @@ emptyIterator = Iterator {
 -- | Information about the tip of the ImmutableDB.
 data Tip blk = Tip {
       tipSlotNo  :: !SlotNo
-    , tipIsEBB   :: !IsEBB
     , tipBlockNo :: !BlockNo
     , tipHash    :: !(HeaderHash blk)
     }
@@ -281,7 +274,6 @@ tipToAnchor = \case
 headerToTip :: GetHeader blk => Header blk -> Tip blk
 headerToTip hdr = Tip {
       tipSlotNo  = blockSlot     hdr
-    , tipIsEBB   = headerToIsEBB hdr
     , tipBlockNo = blockNo       hdr
     , tipHash    = blockHash     hdr
     }
@@ -289,7 +281,7 @@ headerToTip hdr = Tip {
 blockToTip :: GetHeader blk => blk -> Tip blk
 blockToTip = headerToTip . getHeader
 
--- | newtype with an 'Ord' instance that only uses 'tipSlotNo' and 'tipIsEBB'
+-- | newtype with an 'Ord' instance that only uses 'tipSlotNo'
 -- and ignores the other fields.
 newtype CompareTip blk = CompareTip { getCompareTip :: Tip blk }
 
@@ -297,16 +289,7 @@ instance Eq (CompareTip blk) where
   a == b = compare a b == EQ
 
 instance Ord (CompareTip blk) where
-  compare = mconcat [
-        compare      `on` tipSlotNo . getCompareTip
-      , compareIsEBB `on` tipIsEBB  . getCompareTip
-      ]
-    where
-      -- When a block and an EBB share a slot number, the EBB is "older".
-      compareIsEBB :: IsEBB -> IsEBB -> Ordering
-      compareIsEBB IsEBB    IsNotEBB = LT
-      compareIsEBB IsNotEBB IsEBB    = GT
-      compareIsEBB _        _        = EQ
+  compare = compare `on` (tipSlotNo . getCompareTip)
 
 {-------------------------------------------------------------------------------
   Errors
@@ -416,7 +399,7 @@ data MissingBlock blk
        (Maybe (StrictSeq SecondaryOffset))
          -- ^ Which offsets are known if we are looking at the current (probably cached) chunk
 
-    -- | The block and/or EBB in the slot of the given point have a different
+    -- | The block in the slot of the given point have a different
     -- hash. We return the 'HeaderHash' for each block we found with the
     -- corresponding slot number.
   | WrongHash (RealPoint blk) (NonEmpty (HeaderHash blk))

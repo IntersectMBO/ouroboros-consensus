@@ -18,8 +18,8 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Iterator (
   ) where
 
 import           Control.Monad (unless, when)
-import           Control.Monad.Except (ExceptT (..), catchError, runExceptT,
-                     throwError, withExceptT)
+import           Control.Monad.Except (ExceptT (..), runExceptT, throwError,
+                     withExceptT)
 import           Control.Monad.Trans.Class (lift)
 import           Control.ResourceRegistry (ResourceRegistry)
 import           Control.Tracer
@@ -257,7 +257,7 @@ newIterator itEnv@IteratorEnv{..} getItEnv registry blockComponent from to = do
           => ExceptT (UnknownRange blk) m (Iterator m blk b)
     start = lift (atomically (ImmutableDB.getTip itImmutableDB)) >>= \case
       Origin -> findPathInVolatileDB
-      NotOrigin ImmutableDB.Tip { tipSlotNo, tipHash, tipIsEBB } ->
+      NotOrigin ImmutableDB.Tip { tipSlotNo, tipHash } ->
         case realPointSlot endPoint `compare` tipSlotNo of
           -- The end point is < the tip of the ImmutableDB
           LT -> streamFromImmutableDB
@@ -266,54 +266,8 @@ newIterator itEnv@IteratorEnv{..} getItEnv registry blockComponent from to = do
                 -- The end point == the tip of the ImmutableDB
              -> streamFromImmutableDB
 
-             -- The end point /= the tip of the ImmutableDB.
-             --
-             -- The end point can be a regular block or EBB. So can the tip of
-             -- the ImmutableDB. We distinguish the following for cases where
-             -- each block and EBB has the same slot number, and a block or
-             -- EBB /not/ on the current chain is indicated with a '.
-             --
-             -- 1. ImmutableDB: .. :> EBB :> B
-             --    end point: B'
-             --    desired outcome: ForkTooOld
-             --
-             -- 2. ImmutableDB: .. :> EBB :> B
-             --    end point: EBB'
-             --    desired outcome: ForkTooOld
-             --
-             -- 3. ImmutableDB: .. :> EBB :> B
-             --    end point: EBB
-             --    desired outcome: stream from ImmutableDB
-             --
-             -- 4. ImmutableDB: .. :> EBB
-             --    end point: B
-             --    desired outcome: find path in the VolatileDB
-             --
-             -- 5. ImmutableDB: .. :> EBB
-             --    end point: B'
-             --    desired outcome: ForkTooOld
-             --
-             -- 6. ImmutableDB: .. :> EBB
-             --    end point: EBB'
-             --    desired outcome: ForkTooOld
-             --
-             -- We don't know upfront whether the given end point refers to a
-             -- block or EBB nor whether it is part of the current chain or
-             -- not. This means we don't know yet with which case we are
-             -- dealing. The only thing we know for sure, is whether the
-             -- ImmutableDB tip ends with a regular block (1-3) or an EBB
-             -- (4-6).
-
-             | IsNotEBB <- tipIsEBB  -- Cases 1-3
-             -> streamFromImmutableDB `catchError`
-                -- We also use 'streamFromImmutableDB' to check whether the
-                -- block or EBB is in the ImmutableDB. If that's not the case,
-                -- 'streamFromImmutableDB' will return 'MissingBlock'. Instead
-                -- of returning that, we should return 'ForkTooOld', which is
-                -- more correct.
-                const (throwError $ ForkTooOld from)
-             | otherwise  -- Cases 4-6
-             -> findPathInVolatileDB
+             | otherwise
+             -> throwError $ ForkTooOld from
 
           -- The end point is > the tip of the ImmutableDB
           GT -> findPathInVolatileDB

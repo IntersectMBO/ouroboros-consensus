@@ -30,8 +30,6 @@ import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block hiding (hashSize)
 import           Ouroboros.Consensus.Storage.ImmutableDB.API
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks
-import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
-                     (unChunkNo, unsafeEpochNoToChunkNo)
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index
                      (cachedIndex)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index as Index
@@ -315,7 +313,7 @@ data ShouldBeFinalised =
 --
 -- * When an invalid block needs to be truncated, trailing empty slots are
 --   also truncated so that the tip of the database will always point to a
---   valid block or EBB.
+--   valid block.
 --
 -- * All but the most recent chunk in the database should be finalised, i.e.
 --   padded to the size of the chunk.
@@ -360,12 +358,12 @@ validateChunk ValidateEnv{..} shouldBeFinalised chunk mbPrevHash validationTrace
         -- Note the 'maxBound': it is used to calculate the block size for
         -- each entry, but we don't care about block sizes here, so we use
         -- some dummy value.
-        (Secondary.readAllEntries hasFS 0 chunk (const False) maxBound IsEBB) >>= \case
+        (Secondary.readAllEntries hasFS 0 chunk (const False) maxBound) >>= \case
           Left _                -> do
             traceWith validationTracer $ InvalidSecondaryIndex chunk
             return []
           Right entriesFromFile ->
-            return $ fixupEBB (map withoutBlockSize entriesFromFile)
+            return $ map withoutBlockSize entriesFromFile
       else do
         traceWith validationTracer $ MissingSecondaryIndex chunk
         return []
@@ -428,7 +426,7 @@ validateChunk ValidateEnv{..} shouldBeFinalised chunk mbPrevHash validationTrace
                            chunkInfo
                            shouldBeFinalised
                            chunk
-                           (map Secondary.blockOrEBB entries)
+                           (map Secondary.entrySlot entries)
       primaryIndexFileExists  <- doesFileExist primaryIndexFile
       primaryIndexFileMatches <- if primaryIndexFileExists
         then tryJust isInvalidFileError (Primary.load (Proxy @blk) hasFS chunk) >>= \case
@@ -455,7 +453,6 @@ validateChunk ValidateEnv{..} shouldBeFinalised chunk mbPrevHash validationTrace
     summaryToTipInfo :: BlockSummary blk -> Tip blk
     summaryToTipInfo BlockSummary {..} = Tip {
           tipSlotNo  = summarySlotNo
-        , tipIsEBB   = isBlockOrEBB $ Secondary.blockOrEBB summaryEntry
         , tipBlockNo = summaryBlockNo
         , tipHash    = Secondary.headerHash summaryEntry
         }
@@ -467,51 +464,6 @@ validateChunk ValidateEnv{..} shouldBeFinalised chunk mbPrevHash validationTrace
       UnexpectedFailure (InvalidFileError {}) -> Just ()
       _                                       -> Nothing
 
-    -- | When reading the entries from the secondary index file, we need to
-    -- pass in a value of type 'IsEBB' so we know whether the first entry
-    -- corresponds to an EBB or a regular block. We need this information to
-    -- correctly interpret the deserialised 'Word64' as a 'BlockOrEBB': if
-    -- it's an EBB, it's the 'EpochNo' ('Word64'), if it's a regular block,
-    -- it's a 'SlotNo' ('Word64').
-    --
-    -- However, at the point we are reading the secondary index file, we don't
-    -- yet know whether the first block will be an EBB or a regular block. We
-    -- will find that out when we read the actual block from the chunk file.
-    --
-    -- Fortunately, we can make a /very/ good guess: if the 'Word64' of the
-    -- 'BlockOrEBB' matches the chunk number, it is almost certainly an EBB,
-    -- as the slot numbers increase @10k@ times faster than chunk numbers
-    -- (remember that for EBBs, chunk numbers and epoch numbers must line up).
-    -- Property: for every chunk @e > 0@, for all slot numbers @s@ in chunk
-    -- @e@ we have @s > e@. The only exception is chunk 0, which contains a
-    -- slot number 0. From this follows that it's an EBB if and only if the
-    -- 'Word64' matches the chunk number.
-    --
-    -- E.g., the first slot number in chunk 1 will be 21600 if @k = 2160@. We
-    -- could only make the wrong guess in the first very first chunk, i.e.,
-    -- chunk 0, as the first slot number is also 0. However, we know that the
-    -- real blockchain starts with an EBB, so even in that case we're fine.
-    --
-    -- If the chunk size were 1, then we would make the wrong guess for each
-    -- chunk that contains an EBB, which is a rather unrealistic scenario.
-    --
-    -- Note that even making the wrong guess is not a problem. The (CRC)
-    -- checksums are the only thing we extract from the secondary index file.
-    -- These are passed to the 'ChunkFileParser'. We then reconstruct the
-    -- secondary index using the output of the 'ChunkFileParser'. If that
-    -- output doesn't match the parsed secondary index file, we will overwrite
-    -- the secondary index file.
-    --
-    -- So the only thing that wouldn't go according to plan is that we will
-    -- needlessly overwrite the secondary index file.
-    fixupEBB :: forall hash. [Secondary.Entry hash] -> [Secondary.Entry hash]
-    fixupEBB = \case
-      entry@Secondary.Entry { blockOrEBB = EBB epoch' }:rest
-        | let chunk' = unsafeEpochNoToChunkNo epoch'
-        , chunk' /= chunk
-        -> entry { Secondary.blockOrEBB = Block (SlotNo (unChunkNo chunk')) }:rest
-      entries -> entries
-
 -- | Reconstruct a 'PrimaryIndex' based on a list of 'Secondary.Entry's.
 reconstructPrimaryIndex ::
      forall blk. (ConvertRawHash blk, HasCallStack)
@@ -519,13 +471,13 @@ reconstructPrimaryIndex ::
   -> ChunkInfo
   -> ShouldBeFinalised
   -> ChunkNo
-  -> [BlockOrEBB]
+  -> [SlotNo]
   -> PrimaryIndex
-reconstructPrimaryIndex pb chunkInfo shouldBeFinalised chunk blockOrEBBs =
+reconstructPrimaryIndex pb chunkInfo shouldBeFinalised chunk entrySlots =
     fromMaybe (error nonIncreasing) $
       Primary.mk chunk . (0:) $
-        go (NextRelativeSlot (firstBlockOrEBB chunkInfo chunk)) 0 $
-          map (chunkRelative . chunkSlotForBlockOrEBB chunkInfo) blockOrEBBs
+        go (NextRelativeSlot (firstBlock chunkInfo chunk)) 0 $
+          map (chunkRelative . chunkSlotForSlot chunkInfo) entrySlots
   where
     nonIncreasing :: String
     nonIncreasing = "blocks have non-increasing slot numbers"
@@ -594,7 +546,7 @@ reconstructPrimaryIndex pb chunkInfo shouldBeFinalised chunk blockOrEBBs =
 -- * The only difference with the version after it was that chunk files were
 --   named "XXXXX.epoch" instead of "XXXXX.chunk". The contents of all files
 --   remain identical because we chose the chunk size to be equal to the Byron
---   epoch size and allowed EBBs in the chunk.
+--   epoch size.
 --
 -- We don't include versions before the first release, as we don't have to
 -- migrate from them.

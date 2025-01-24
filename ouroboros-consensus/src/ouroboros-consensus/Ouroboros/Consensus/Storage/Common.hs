@@ -123,15 +123,9 @@ newtype StreamTo blk =
 validBounds :: StandardHash blk => StreamFrom blk -> StreamTo blk -> Bool
 validBounds from (StreamToInclusive (RealPoint sto hto)) =
     case from of
-      StreamFromExclusive GenesisPoint         -> True
-      -- EBBs spoil the fun again: when 'StreamFromExclusive' refers to an EBB
-      -- in slot X and 'StreamToInclusive' to the regular block in the same slot
-      -- X, the bound is still valid. Without EBBs, we would have @sfrom < sto@.
-      --
-      -- We /can/ rule out streaming exclusively from the block to the same
-      -- block.
-      StreamFromExclusive (BlockPoint sfrom hfrom) -> hfrom /= hto && sfrom <= sto
-      StreamFromInclusive (RealPoint  sfrom _)     -> sfrom <= sto
+      StreamFromExclusive GenesisPoint             -> True
+      StreamFromExclusive (BlockPoint sfrom hfrom) -> hfrom /= hto && sfrom < sto
+      StreamFromInclusive (RealPoint  sfrom _)     -> sfrom < sto
 
 {-------------------------------------------------------------------------------
   BlockComponent
@@ -152,7 +146,6 @@ data BlockComponent blk a where
   GetRawHeader     :: BlockComponent blk ByteString
   GetHash          :: BlockComponent blk (HeaderHash blk)
   GetSlot          :: BlockComponent blk SlotNo
-  GetIsEBB         :: BlockComponent blk IsEBB
   -- TODO: use `SizeInBytes` rather than Word32
   GetBlockSize     :: BlockComponent blk SizeInBytes
   GetHeaderSize    :: BlockComponent blk Word16

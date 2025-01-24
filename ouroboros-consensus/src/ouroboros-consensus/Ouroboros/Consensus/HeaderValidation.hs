@@ -44,14 +44,10 @@ module Ouroboros.Consensus.HeaderValidation (
     -- * Errors
   , HeaderError (..)
   , castHeaderError
-    -- * TipInfoIsEBB
-  , TipInfoIsEBB (..)
     -- * Serialization
-  , decodeAnnTipIsEBB
   , decodeHeaderState
   , defaultDecodeAnnTip
   , defaultEncodeAnnTip
-  , encodeAnnTipIsEBB
   , encodeHeaderState
     -- * Type family instances
   , Ticked (..)
@@ -487,19 +483,6 @@ revalidateHeader cfg ledgerView hdr st =
           hdr
 
 {-------------------------------------------------------------------------------
-  TipInfoIsEBB
--------------------------------------------------------------------------------}
-
--- | Reusable strict data type for 'TipInfo' in case the 'TipInfo' should
--- contain 'IsEBB' in addition to the 'HeaderHash'.
-data TipInfoIsEBB blk = TipInfoIsEBB !(HeaderHash blk) !IsEBB
-  deriving (Generic)
-
-deriving instance StandardHash blk => Eq   (TipInfoIsEBB blk)
-deriving instance StandardHash blk => Show (TipInfoIsEBB blk)
-deriving instance StandardHash blk => NoThunks (TipInfoIsEBB blk)
-
-{-------------------------------------------------------------------------------
   Serialisation
 -------------------------------------------------------------------------------}
 
@@ -522,36 +505,6 @@ defaultDecodeAnnTip decodeHash = do
     annTipInfo    <- decodeHash
     annTipBlockNo <- decode
     return AnnTip{..}
-
-encodeAnnTipIsEBB :: TipInfo blk ~ TipInfoIsEBB blk
-                  => (HeaderHash blk -> Encoding)
-                  -> (AnnTip     blk -> Encoding)
-encodeAnnTipIsEBB encodeHash AnnTip{..} = mconcat [
-      encodeListLen 4
-    , encode     annTipSlotNo
-    , encodeHash hash
-    , encode     annTipBlockNo
-    , encodeInfo isEBB
-    ]
-  where
-    TipInfoIsEBB hash isEBB = annTipInfo
-
-    encodeInfo :: IsEBB -> Encoding
-    encodeInfo = encode
-
-decodeAnnTipIsEBB :: TipInfo blk ~ TipInfoIsEBB blk
-                  => (forall s. Decoder s (HeaderHash blk))
-                  -> (forall s. Decoder s (AnnTip     blk))
-decodeAnnTipIsEBB decodeHash = do
-    enforceSize "AnnTip" 4
-    annTipSlotNo  <- decode
-    hash          <- decodeHash
-    annTipBlockNo <- decode
-    isEBB         <- decodeInfo
-    return AnnTip{annTipInfo = TipInfoIsEBB hash isEBB, ..}
-  where
-    decodeInfo :: forall s. Decoder s IsEBB
-    decodeInfo = decode
 
 encodeHeaderState :: (ChainDepState (BlockProtocol blk) -> Encoding)
                   -> (AnnTip      blk -> Encoding)

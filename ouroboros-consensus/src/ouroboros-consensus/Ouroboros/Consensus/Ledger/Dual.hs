@@ -101,7 +101,7 @@ import           Ouroboros.Consensus.Util.Condense
 --
 -- The auxiliary block is optional; this can be used if some " main " blocks
 -- should have no effect on the auxiliary ledger state at all. The motivating
--- example is EBBs: if the main blocks are real Byron blocks, and the auxiliary
+-- example is EBBs (before they were removed from the codebase): if the main blocks are real Byron blocks, and the auxiliary
 -- blocks are Byron spec blocks, then regular Byron blocks correspond to Byron
 -- spec blocks, but EBBs don't correspond to a spec block at all and should
 -- leave the Byron spec ledger state unchanged.
@@ -143,9 +143,6 @@ instance Bridge m a => GetHeader (DualBlock m a) where
 
   blockMatchesHeader hdr =
       blockMatchesHeader (dualHeaderMain hdr) . dualBlockMain
-
-  -- We can look at the concrete header to see if this is an EBB
-  headerIsEBB = headerIsEBB . dualHeaderMain
 
 type DualHeader m a = Header (DualBlock m a)
 

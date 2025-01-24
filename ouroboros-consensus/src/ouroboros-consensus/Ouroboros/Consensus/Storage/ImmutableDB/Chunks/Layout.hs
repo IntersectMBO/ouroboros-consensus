@@ -14,11 +14,10 @@
 module Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Layout (
     -- * Relative slots
     NextRelativeSlot (..)
-  , firstBlockOrEBB
+  , firstBlock
   , maxRelativeSlot
   , nextRelativeSlot
-  , nthBlockOrEBB
-  , relativeSlotIsEBB
+  , nthBlock
   , unsafeNextRelativeSlot
     -- ** Opaque
   , RelativeSlot
@@ -28,30 +27,20 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Layout (
   , ChunkSlot (..)
   , pattern ChunkSlot
     -- ** Translation /to/ 'ChunkSlot'
-  , chunkSlotForBlockOrEBB
-  , chunkSlotForBoundaryBlock
-  , chunkSlotForRegularBlock
+  , chunkSlotForSlot
   , chunkSlotForRelativeSlot
   , chunkSlotForTip
   , chunkSlotForUnknownBlock
     -- ** Translation /from/ 'ChunkSlot'
-  , chunkSlotToBlockOrEBB
   , chunkSlotToSlot
-    -- ** Support for EBBs
-  , slotMightBeEBB
-  , slotNoOfBlockOrEBB
-  , slotNoOfEBB
   ) where
 
-import           Control.Monad
 import           GHC.Generics (Generic)
 import           GHC.Stack
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Storage.ImmutableDB.API (Tip (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
-import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Types
-                     (BlockOrEBB (..))
 
 {-------------------------------------------------------------------------------
   Relative slots
@@ -64,27 +53,14 @@ maxRelativeSlot ci chunk =
   where
     size = getChunkSize ci chunk
 
--- | Is this relative slot reserved for an EBB?
-relativeSlotIsEBB :: RelativeSlot -> IsEBB
-relativeSlotIsEBB RelativeSlot{..}
-  | relativeSlotIndex == 0
-  , chunkCanContainEBB relativeSlotChunkSize
-  = IsEBB
-  | otherwise
-  = IsNotEBB
-
 -- | The @n@'th relative slot for an arbitrary block
---
--- NOTE: Offset @0@ refers to an EBB only if the 'ChunkSize' supports it.
-nthBlockOrEBB :: (HasCallStack, Integral a)
-              => ChunkInfo -> ChunkNo -> a -> RelativeSlot
-nthBlockOrEBB ci chunk = mkRelativeSlot ci chunk . fromIntegral
+nthBlock :: (HasCallStack, Integral a)
+         => ChunkInfo -> ChunkNo -> a -> RelativeSlot
+nthBlock ci chunk = mkRelativeSlot ci chunk . fromIntegral
 
 -- | The first relative slot
---
--- NOTE: This refers to an EBB only if the 'ChunkSize' supports it.
-firstBlockOrEBB :: ChunkInfo -> ChunkNo -> RelativeSlot
-firstBlockOrEBB ci chunk = mkRelativeSlot ci chunk 0
+firstBlock :: ChunkInfo -> ChunkNo -> RelativeSlot
+firstBlock ci chunk = mkRelativeSlot ci chunk 0
 
 -- | Result of 'nextRelativeSlot'
 data NextRelativeSlot =
@@ -119,7 +95,7 @@ unsafeNextRelativeSlot s@RelativeSlot{..} =
 
 chunkIndexOfSlot :: ChunkInfo -> SlotNo -> ChunkNo
 chunkIndexOfSlot (UniformChunkSize ChunkSize{..}) (SlotNo slot) = ChunkNo $
-    slot `div` numRegularBlocks
+    slot `div` numBlocks
 
 {-------------------------------------------------------------------------------
   Slot within an epoch
@@ -155,64 +131,30 @@ instance Show ChunkSlot where
 -------------------------------------------------------------------------------}
 
 -- | Chunk slot for an unknown block
---
--- This returns /two/ 'ChunkSlot's: one in case the block could be an EBB,
--- and one in case the block is a regular block. In addition, it also returns
--- the 'ChunkNo' that both of these 'ChunkSlot's must necessarily share.
-chunkSlotForUnknownBlock :: HasCallStack
-                         => ChunkInfo
+chunkSlotForUnknownBlock :: ChunkInfo
                          -> SlotNo
-                         -> (ChunkNo, Maybe ChunkSlot, ChunkSlot)
+                         -> (ChunkNo, ChunkSlot)
 chunkSlotForUnknownBlock ci slot = (
-      (case mIfBoundary of
-         Nothing         -> id
-         Just ifBoundary -> assertSameChunk (chunkIndex ifBoundary)
-                                            (chunkIndex ifRegular)) $
-        chunkIndex ifRegular
-    , mIfBoundary
-    , ifRegular
+      chunkIndex cslot
+    , cslot
     )
   where
-    ifRegular   = chunkSlotForRegularBlock  ci slot
-    mIfBoundary = chunkSlotForBoundaryBlock ci <$> slotMightBeEBB ci slot
+    cslot = chunkSlotForSlot ci slot
 
--- | Chunk slot for a regular block (i.e., not an EBB)
-chunkSlotForRegularBlock :: ChunkInfo -> SlotNo -> ChunkSlot
-chunkSlotForRegularBlock (UniformChunkSize sz@ChunkSize{..}) (SlotNo slot) =
+-- | Chunk slot for a slot
+chunkSlotForSlot :: ChunkInfo -> SlotNo -> ChunkSlot
+chunkSlotForSlot (UniformChunkSize sz@ChunkSize{..}) (SlotNo slot) =
     UnsafeChunkSlot {
         chunkIndex    = ChunkNo chunk
-      , chunkRelative = RelativeSlot (ChunkNo chunk) sz $
-                          if chunkCanContainEBB
-                            then withinChunk + 1
-                            else withinChunk
+      , chunkRelative = RelativeSlot (ChunkNo chunk) sz $ withinChunk
       }
   where
-    (chunk, withinChunk) = slot `divMod` numRegularBlocks
-
--- | Chunk slot for EBB
-chunkSlotForBoundaryBlock :: HasCallStack => ChunkInfo -> EpochNo -> ChunkSlot
-chunkSlotForBoundaryBlock ci epoch =
-    assertChunkCanContainEBB chunk size $
-      UnsafeChunkSlot chunk $ firstBlockOrEBB ci chunk
-  where
-    chunk = unsafeEpochNoToChunkNo epoch
-    size  = getChunkSize ci chunk
-
--- | Chunk slot for 'BlockOrEBB'
-chunkSlotForBlockOrEBB :: ChunkInfo -> BlockOrEBB -> ChunkSlot
-chunkSlotForBlockOrEBB ci = \case
-    Block slot  -> chunkSlotForRegularBlock  ci slot
-    EBB   epoch -> chunkSlotForBoundaryBlock ci epoch
+    (chunk, withinChunk) = slot `divMod` numBlocks
 
 -- | Chunk slot for 'Tip'
 chunkSlotForTip :: ChunkInfo -> Tip blk -> ChunkSlot
-chunkSlotForTip ci Tip { tipSlotNo, tipIsEBB } = case tipIsEBB of
-    IsNotEBB -> chunkSlotForRegularBlock ci tipSlotNo
-    IsEBB    -> assertChunkCanContainEBB chunkIndex relativeSlotChunkSize $
-                 UnsafeChunkSlot chunkIndex $ firstBlockOrEBB ci chunkIndex
-  where
-    UnsafeChunkSlot{..} = chunkSlotForRegularBlock ci tipSlotNo
-    RelativeSlot{..}    = chunkRelative
+chunkSlotForTip ci Tip { tipSlotNo } =
+    chunkSlotForSlot ci tipSlotNo
 
 chunkSlotForRelativeSlot :: ChunkNo -> RelativeSlot -> ChunkSlot
 chunkSlotForRelativeSlot chunk relSlot =
@@ -221,49 +163,12 @@ chunkSlotForRelativeSlot chunk relSlot =
 
 {-------------------------------------------------------------------------------
   Translation /from/ 'ChunkSlot'
-
-  Reminder:
-
-  * EBB shares its slot number with its successor
-  * EBB shares its block number with its predecessor
 -------------------------------------------------------------------------------}
 
 -- | From relative to absolute slot
---
--- This can be used for EBBs and regular blocks, since they don't share a
--- relative slot.
 chunkSlotToSlot :: ChunkInfo -> ChunkSlot -> SlotNo
 chunkSlotToSlot (UniformChunkSize ChunkSize{..}) UnsafeChunkSlot{..} = SlotNo $
-      chunk * numRegularBlocks
-    + case (chunkCanContainEBB, relativeSlotIndex) of
-        (_    , 0) -> 0
-        (True , n) -> n - 1
-        (False, n) -> n
+      chunk * numBlocks + relativeSlotIndex
   where
     ChunkNo chunk    = chunkIndex
     RelativeSlot{..} = chunkRelative
-
-chunkSlotToBlockOrEBB :: ChunkInfo -> ChunkSlot -> BlockOrEBB
-chunkSlotToBlockOrEBB chunkInfo chunkSlot@(ChunkSlot chunk relSlot) =
-    case relativeSlotIsEBB relSlot of
-      IsEBB    -> EBB   $ unsafeChunkNoToEpochNo chunk
-      IsNotEBB -> Block $ chunkSlotToSlot chunkInfo chunkSlot
-
-{-------------------------------------------------------------------------------
-  Support for EBBs
--------------------------------------------------------------------------------}
-
-slotNoOfEBB :: HasCallStack => ChunkInfo -> EpochNo -> SlotNo
-slotNoOfEBB ci = chunkSlotToSlot ci . chunkSlotForBoundaryBlock ci
-
-slotMightBeEBB :: ChunkInfo -> SlotNo -> Maybe EpochNo
-slotMightBeEBB ci slot = do
-    guard $ chunkCanContainEBB relativeSlotChunkSize && relativeSlotIndex == 1
-    return $ unsafeChunkNoToEpochNo chunkIndex
-  where
-    UnsafeChunkSlot{..} = chunkSlotForRegularBlock ci slot
-    RelativeSlot{..}    = chunkRelative
-
-slotNoOfBlockOrEBB :: ChunkInfo -> BlockOrEBB -> SlotNo
-slotNoOfBlockOrEBB _  (Block slot)  = slot
-slotNoOfBlockOrEBB ci (EBB   epoch) = slotNoOfEBB ci epoch

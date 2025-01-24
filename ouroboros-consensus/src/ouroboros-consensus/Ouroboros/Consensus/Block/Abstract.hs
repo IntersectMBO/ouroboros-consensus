@@ -19,12 +19,9 @@ module Ouroboros.Consensus.Block.Abstract (
     -- * Working with headers
   , GetHeader (..)
   , Header
-  , blockIsEBB
-  , blockToIsEBB
   , getBlockHeaderFields
   , headerHash
   , headerPoint
-  , headerToIsEBB
     -- * Raw hash
   , ConvertRawHash (..)
   , decodeRawHash
@@ -73,10 +70,8 @@ import qualified Data.ByteString as Strict
 import           Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as Short
 import           Data.Kind (Type)
-import           Data.Maybe (isJust)
 import           Data.Word (Word32, Word64)
 import           NoThunks.Class (NoThunks)
-import           Ouroboros.Consensus.Block.EBB
 import           Ouroboros.Network.Block (ChainHash (..), HasHeader (..),
                      HeaderFields (..), HeaderHash, Point, StandardHash,
                      blockHash, blockNo, blockPoint, blockSlot, castHash,
@@ -132,19 +127,6 @@ class HasHeader (Header blk) => GetHeader blk where
   -- For example, by checking whether the hash of the body stored in the
   -- header matches that of the block.
   blockMatchesHeader :: Header blk -> blk -> Bool
-
-  -- | When the given header is the header of an Epoch Boundary Block, returns
-  -- its epoch number.
-  headerIsEBB        :: Header blk -> Maybe EpochNo
-
-headerToIsEBB :: GetHeader blk => Header blk -> IsEBB
-headerToIsEBB = toIsEBB . isJust . headerIsEBB
-
-blockIsEBB :: GetHeader blk => blk -> Maybe EpochNo
-blockIsEBB = headerIsEBB . getHeader
-
-blockToIsEBB :: GetHeader blk => blk -> IsEBB
-blockToIsEBB = headerToIsEBB . getHeader
 
 type instance BlockProtocol (Header blk) = BlockProtocol blk
 

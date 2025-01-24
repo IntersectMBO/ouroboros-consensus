@@ -352,7 +352,7 @@ chainSelSync cdb@CDB {..} (ChainSelAddBlock BlockToAdd { blockToAdd = b, .. }) =
     -- We follow the steps from section "## Adding a block" in ChainDB.md
 
     if
-      | olderThanK hdr isEBB immBlockNo -> do
+      | olderThanK hdr immBlockNo -> do
         lift $ traceWith addBlockTracer $ IgnoreBlockOlderThanK (blockRealPoint b)
         lift $ deliverWrittenToDisk False
 
@@ -372,7 +372,7 @@ chainSelSync cdb@CDB {..} (ChainSelAddBlock BlockToAdd { blockToAdd = b, .. }) =
 
       -- The remaining cases
       | otherwise -> do
-        let traceEv = AddedBlockToVolatileDB (blockRealPoint b) (blockNo b) isEBB
+        let traceEv = AddedBlockToVolatileDB (blockRealPoint b) (blockNo b)
         lift $ encloseWith (traceEv >$< addBlockTracer) $
           VolatileDB.putBlock cdbVolatileDB b
         lift $ deliverWrittenToDisk True
@@ -387,9 +387,6 @@ chainSelSync cdb@CDB {..} (ChainSelAddBlock BlockToAdd { blockToAdd = b, .. }) =
 
     hdr :: Header blk
     hdr = getHeader b
-
-    isEBB :: IsEBB
-    isEBB = headerToIsEBB hdr
 
     -- | Fill in the 'TMVar' for the 'varBlockWrittenToDisk' of the block's
     -- 'AddBlockPromise' with the given 'Bool'.
@@ -407,34 +404,15 @@ chainSelSync cdb@CDB {..} (ChainSelAddBlock BlockToAdd { blockToAdd = b, .. }) =
 -- because it is too old, i.e., we wouldn't be able to switch to a chain
 -- containing the corresponding block because its block number is more than
 -- @k@ blocks or exactly @k@ blocks back.
---
--- Special case: the header corresponds to an EBB which has the same block
--- number as the block @k@ blocks back (the most recent \"immutable\" block).
--- As EBBs share their block number with the block before them, the EBB is not
--- too old in that case and can be adopted as part of our chain.
---
--- This special case can occur, for example, when the VolatileDB is empty
--- (because of corruption). The \"immutable\" block is then also the tip of
--- the chain. If we then try to add the EBB after it, it will have the same
--- block number, so we must allow it.
 olderThanK ::
      HasHeader (Header blk)
   => Header blk
      -- ^ Header of the block to add
-  -> IsEBB
-     -- ^ Whether the block is an EBB or not
   -> WithOrigin BlockNo
      -- ^ The block number of the most recent \"immutable\" block, i.e., the
      -- block @k@ blocks back.
   -> Bool
-olderThanK hdr isEBB immBlockNo
-    | NotOrigin bNo == immBlockNo
-    , isEBB == IsEBB
-    = False
-    | otherwise
-    = NotOrigin bNo <= immBlockNo
-  where
-    bNo = blockNo hdr
+olderThanK hdr immBlockNo = NotOrigin (blockNo hdr) <= immBlockNo
 
 -- | When we switch to a new selected chain, we are either extending the current
 -- chain by adding blocks on top or we are switching to a fork.
@@ -538,7 +516,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
     if
       -- The chain might have grown since we added the block such that the
       -- block is older than @k@.
-      | olderThanK hdr isEBB immBlockNo -> do
+      | olderThanK hdr immBlockNo -> do
         traceWith addBlockTracer $ IgnoreBlockOlderThanK p
 
       -- The block is invalid
@@ -578,9 +556,6 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
 
     p :: RealPoint blk
     p = headerRealPoint hdr
-
-    isEBB :: IsEBB
-    isEBB = headerToIsEBB hdr
 
     addBlockTracer :: Tracer m (TraceAddBlockEvent blk)
     addBlockTracer = TraceAddBlockEvent >$< cdbTracer
@@ -640,18 +615,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
               $ fmap Diff.extend
               $ NE.toList candidates
         -- All candidates are longer than the current chain, so they will be
-        -- preferred over it, /unless/ the block we just added is an EBB,
-        -- which has the same 'BlockNo' as the block before it, so when
-        -- using the 'BlockNo' as the proxy for the length (note that some
-        -- protocols might do it differently), the candidate with the EBB
-        -- appended will not be preferred over the current chain.
-        --
-        -- The consequence of this is that when adding an EBB, it will not
-        -- be selected by chain selection and thus not appended to the chain
-        -- until the block after it is added, which will again result in a
-        -- candidate preferred over the current chain. In this case, the
-        -- candidate will be a two-block (the EBB and the new block)
-        -- extension of the current chain.
+        -- preferred over it.
         case chainDiffs of
           Nothing          -> return ()
           Just chainDiffs' ->

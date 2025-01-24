@@ -57,7 +57,6 @@ module Ouroboros.Consensus.Storage.ChainDB.API (
   , traverseFollower
     -- * Recovery
   , ChainDbFailure (..)
-  , IsEBB (..)
     -- * Exceptions
   , ChainDbError (..)
     -- * Genesis

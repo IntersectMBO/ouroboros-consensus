@@ -134,17 +134,10 @@ streamImpl dbEnv registry blockComponent = \from to ->
         checkLowerBound currentIndex currentTip from
 
       lift $ do
-        -- 'validBounds' will catch nearly all invalid ranges, except for one:
-        -- streaming from the regular block to the EBB in the same slot. The
-        -- EBB comes before the regular block, so these bounds are invalid.
-        -- However, to distinguish the EBB from the regular block, as both
-        -- have the same slot number, we need to look at the hashes.
-        -- 'validateBounds' doesn't have enough information to do that.
-        when (startChunkSlot > endChunkSlot) $
+        when (startChunkSlot >= endChunkSlot) $
           throwApiMisuse $ InvalidIteratorRangeError from to
 
-        let ChunkSlot startChunk startRelSlot = startChunkSlot
-            startIsEBB = relativeSlotIsEBB startRelSlot
+        let ChunkSlot startChunk _startRelSlot = startChunkSlot
             currentChunkInfo = CurrentChunkInfo currentChunk currentChunkOffset
             endHash = case to of
               StreamToInclusive (RealPoint _slot hash) -> hash
@@ -158,7 +151,6 @@ streamImpl dbEnv registry blockComponent = \from to ->
             endHash
             startChunk
             secondaryOffset
-            startIsEBB
 
         varIteratorState <- newTVarIO $ IteratorStateOpen iteratorState
 
@@ -246,12 +238,12 @@ streamImpl dbEnv registry blockComponent = \from to ->
           Nothing      -> go (nextChunkNo chunk)
           Just relSlot -> return (0, chunkSlotForRelativeSlot chunk relSlot)
 
--- | Get information about the block or EBB at the given slot with the given
+-- | Get information about the block at the given slot with the given
 -- hash. If no such block exists, because the slot is empty, it contains a block
--- and/or EBB with a different hash, or it is newer than the current tip, return
+-- with a different hash, or it is newer than the current tip, return
 -- a 'MissingBlock'.
 --
--- Return the 'ChunkSlot' corresponding to the block or EBB, the corresponding
+-- Return the 'ChunkSlot' corresponding to the block, the corresponding
 -- entry (and 'BlockSize') from the secondary index file, and the
 -- 'SecondaryOffset' of that entry.
 --
@@ -270,7 +262,7 @@ getSlotInfo ::
              , SecondaryOffset
              )
 getSlotInfo chunkInfo index currentTip pt@(RealPoint slot hash) = do
-    let (chunk, mIfBoundary, ifRegular) =
+    let (chunk, chunkSlot) =
           chunkSlotForUnknownBlock chunkInfo slot
 
     case currentTip of
@@ -281,30 +273,15 @@ getSlotInfo chunkInfo index currentTip pt@(RealPoint slot hash) = do
         -> throwError $ NewerThanTip pt (tipToPoint currentTip)
 
     -- Obtain the offsets in the secondary index file from the primary index
-    -- file. The block /could/ still correspond to an EBB, a regular block or
-    -- both. We will know which one it is when we can check the hashes from
-    -- the secondary index file with the hash we have.
-    toRead :: NonEmpty (IsEBB, SecondaryOffset) <- case mIfBoundary of
-      Just ifBoundary -> do
-        let relatives@(Two relb relr) = chunkRelative <$> Two ifBoundary ifRegular
-        (offsets, s) <- lift $ Index.readOffsets index chunk relatives
-        case offsets of
-          Two Nothing Nothing                   ->
-            throwError $ EmptySlot pt chunk [relb, relr] s
-          Two (Just ebbOffset) (Just blkOffset) ->
-            return ((IsEBB, ebbOffset) NE.:| [(IsNotEBB, blkOffset)])
-          Two (Just ebbOffset) Nothing          ->
-            return ((IsEBB, ebbOffset) NE.:| [])
-          Two Nothing (Just blkOffset)          ->
-            return ((IsNotEBB, blkOffset) NE.:| [])
-      Nothing -> do
-        let relr = chunkRelative ifRegular
+    -- file.
+    toRead :: NonEmpty SecondaryOffset <- do
+        let relr = chunkRelative chunkSlot
         (offset, s) <- lift $ Index.readOffset index chunk relr
         case offset of
           Nothing        ->
             throwError $ EmptySlot pt chunk [relr] s
           Just blkOffset ->
-            return ((IsNotEBB, blkOffset) NE.:| [])
+            return (blkOffset NE.:| [])
 
     entriesWithBlockSizes :: NonEmpty (Secondary.Entry blk, BlockSize) <-
       lift $ Index.readEntries index chunk toRead
@@ -313,17 +290,12 @@ getSlotInfo chunkInfo index currentTip pt@(RealPoint slot hash) = do
     -- expected hash.
     (secondaryOffset, (entry, blockSize)) <-
       case find ((== hash) . Secondary.headerHash . fst . snd)
-                (NE.zip (fmap snd toRead) entriesWithBlockSizes) of
+                (NE.zip toRead entriesWithBlockSizes) of
         Just found -> return found
         Nothing    -> throwError $ WrongHash pt hashes
           where
             hashes = Secondary.headerHash . fst <$> entriesWithBlockSizes
 
-    -- Use the secondary index entry to determine whether the slot + hash
-    -- correspond to an EBB or a regular block.
-    let chunkSlot = case (mIfBoundary, Secondary.blockOrEBB entry) of
-                      (Just ifBoundary, EBB _) -> ifBoundary
-                      _otherwise               -> ifRegular
     return (chunkSlot, (entry, blockSize), secondaryOffset)
 
 
@@ -377,16 +349,16 @@ stepIterator registry currentChunkInfo
         -- cannot loop forever as an error would be thrown when opening the
         -- index file(s) of a non-existing chunk.
         Nothing      -> openNextChunk (nextChunkNo chunk)
-        Just relSlot -> do
-          -- Note that the only reason we actually open the primary index file
-          -- is to see whether the first block in the chunk is an EBB or not.
+        Just{} -> do
+          -- TODO Note that the only reason we actually open the primary index file
+          -- was to see whether the first block in the chunk is an EBB or not.
           -- To see whether the chunk is empty, we could open the secondary
-          -- index file directly and see whether it contains any blocks. The
-          -- 'secondaryOffset' will be 0, as the first entry in the secondary
-          -- index file always starts at offset 0. The same is true for
-          -- 'findFirstFilledSlot'.
-          let firstIsEBB      = relativeSlotIsEBB relSlot
-              secondaryOffset = 0
+          -- index file directly and see whether it contains any blocks.
+          --
+          -- The 'secondaryOffset' will be 0, as the first entry in the
+          -- secondary index file always starts at offset 0. The same is true
+          -- for 'findFirstFilledSlot'.
+          let secondaryOffset = 0
 
           iteratorStateForChunk
             ithHasFS
@@ -396,7 +368,6 @@ stepIterator registry currentChunkInfo
             ithEndHash
             chunk
             secondaryOffset
-            firstIsEBB
 
 
 iteratorNextImpl ::
@@ -446,7 +417,7 @@ iteratorHasNextImpl ::
   => ImmutableDBEnv m blk
   -> IteratorHandle m blk h
   -> STM m (Maybe (RealPoint blk))
-iteratorHasNextImpl ImmutableDBEnv { chunkInfo } IteratorHandle { ithVarState } =
+iteratorHasNextImpl _immutableDBEnv IteratorHandle { ithVarState } =
     readTVar ithVarState <&> \case
       IteratorStateExhausted -> Nothing
       IteratorStateOpen IteratorState { itsChunkEntries } ->
@@ -455,7 +426,7 @@ iteratorHasNextImpl ImmutableDBEnv { chunkInfo } IteratorHandle { ithVarState } 
           WithBlockSize _ nextEntry NE.:| _ = itsChunkEntries
 
           slotNo :: SlotNo
-          slotNo = slotNoOfBlockOrEBB chunkInfo (Secondary.blockOrEBB nextEntry)
+          slotNo = Secondary.entrySlot nextEntry
 
 iteratorCloseImpl ::
      (HasCallStack, IOLike m)
@@ -496,12 +467,10 @@ iteratorStateForChunk ::
   -> ChunkNo
   -> SecondaryOffset
      -- ^ Where to start in the secondary index
-  -> IsEBB
-     -- ^ Whether the first expected block will be an EBB or not.
   -> m (IteratorState m blk h)
 iteratorStateForChunk hasFS index registry
                       (CurrentChunkInfo curChunk curChunkOffset) endHash
-                      chunk secondaryOffset firstIsEBB = do
+                      chunk secondaryOffset = do
     -- Open the chunk file. Allocate the handle in the registry so that it
     -- will be closed in case of an exception.
     (key, eHnd) <- allocate
@@ -539,7 +508,7 @@ iteratorStateForChunk hasFS index registry
       else hGetSize eHnd
 
     entries <- Index.readAllEntries index secondaryOffset chunk
-      ((== endHash) . Secondary.headerHash) chunkFileSize firstIsEBB
+      ((== endHash) . Secondary.headerHash) chunkFileSize
 
     case NE.nonEmpty entries of
       -- We still haven't encountered the end bound, so it cannot be
@@ -574,14 +543,13 @@ extractBlockComponent ::
   -> WithBlockSize (Secondary.Entry blk)
   -> BlockComponent blk b
   -> m b
-extractBlockComponent hasFS chunkInfo chunk ccfg checkIntegrity eHnd
+extractBlockComponent hasFS _chunkInfo chunk ccfg checkIntegrity eHnd
                       (WithBlockSize blockSize entry) = go
   where
     go :: forall b'. BlockComponent blk b' -> m b'
     go = \case
         GetHash          -> return headerHash
         GetSlot          -> return slotNo
-        GetIsEBB         -> return $ isBlockOrEBB blockOrEBB
         GetBlockSize     -> return $ SizeInBytes blockSize
         GetHeaderSize    -> return $ fromIntegral $ Secondary.unHeaderSize headerSize
         GetRawBlock      -> readBlock
@@ -605,11 +573,11 @@ extractBlockComponent hasFS chunkInfo chunk ccfg checkIntegrity eHnd
         , headerHash
         , headerSize
         , headerOffset
-        , blockOrEBB
+        , entrySlot
         } = entry
 
     slotNo :: SlotNo
-    slotNo = slotNoOfBlockOrEBB chunkInfo blockOrEBB
+    slotNo = entrySlot
 
     pt :: RealPoint blk
     pt = RealPoint slotNo headerHash
