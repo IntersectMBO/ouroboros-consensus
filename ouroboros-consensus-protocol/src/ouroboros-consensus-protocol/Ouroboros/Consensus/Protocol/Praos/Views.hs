@@ -8,10 +8,9 @@ module Ouroboros.Consensus.Protocol.Praos.Views (
 import           Cardano.Crypto.KES (SignedKES)
 import           Cardano.Crypto.VRF (CertifiedVRF, VRFAlgorithm (VerKeyVRF))
 import           Cardano.Ledger.BaseTypes (ProtVer)
--- import           Cardano.Ledger.Crypto (KES, VRF)
-import           Cardano.Protocol.Crypto (Crypto (VRF, KES))
 import           Cardano.Ledger.Keys (KeyRole (BlockIssuer), VKey)
 import qualified Cardano.Ledger.Shelley.API as SL
+import           Cardano.Protocol.Crypto (Crypto (KES, VRF))
 import           Cardano.Protocol.TPraos.BHeader (PrevHash)
 import           Cardano.Protocol.TPraos.OCert (OCert)
 import           Cardano.Slotting.Slot (SlotNo)

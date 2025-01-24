@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -13,20 +14,24 @@ module Ouroboros.Consensus.Protocol.Praos.Common (
   , PraosChainSelectView (..)
   , VRFTiebreakerFlavor (..)
     -- * node support
+  , PraosCredentialsSource (..)
   , PraosNonces (..)
   , PraosProtocolSupportsNode (..)
+  , instantiatePraosCredentials
   ) where
 
+import qualified Cardano.Crypto.KES.Class as KES
 import qualified Cardano.Crypto.VRF as VRF
-import           Cardano.Ledger.BaseTypes (Nonce)
+import           Cardano.Ledger.BaseTypes (Nonce, Version)
 import qualified Cardano.Ledger.BaseTypes as SL
--- import           Cardano.Ledger.Crypto (Crypto, VRF)
 import           Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer))
 import qualified Cardano.Ledger.Shelley.API as SL
+import           Cardano.Protocol.Crypto (Crypto (KES, VRF))
 import qualified Cardano.Protocol.TPraos.OCert as OCert
-import           Cardano.Protocol.Crypto (Crypto (VRF))
 import           Cardano.Slotting.Block (BlockNo)
 import           Cardano.Slotting.Slot (SlotNo)
+import           Control.Monad.Class.MonadST (MonadST)
+import           Control.Monad.Class.MonadThrow (MonadThrow)
 import           Data.Function (on)
 import           Data.Map.Strict (Map)
 import           Data.Ord (Down (Down))
@@ -245,16 +250,31 @@ instance Crypto c => ChainOrder (PraosChainSelectView c) where
   preferCandidate cfg ours cand = comparePraos cfg ours cand == LT
 
 data PraosCanBeLeader c = PraosCanBeLeader
-  { -- | Certificate delegating rights from the stake pool cold key (or
-    -- genesis stakeholder delegate cold key) to the online KES key.
-    praosCanBeLeaderOpCert     :: !(OCert.OCert c),
-    -- | Stake pool cold key or genesis stakeholder delegate cold key.
-    praosCanBeLeaderColdVerKey :: !(SL.VKey 'SL.BlockIssuer),
-    praosCanBeLeaderSignKeyVRF :: !(VRF.SignKeyVRF (VRF c))
+  { -- | Stake pool cold key or genesis stakeholder delegate cold key.
+    praosCanBeLeaderColdVerKey        :: !(SL.VKey 'SL.BlockIssuer),
+    praosCanBeLeaderSignKeyVRF        :: !(VRF.SignKeyVRF (VRF c)),
+    praosCanBeLeaderCredentialsSource :: !(PraosCredentialsSource c)
+    -- praosCanBeLeaderOCert :: !(OCert.OCert c),
+    -- praosCanBeLeaderKESKey :: !(SL.SignKeyKES c)
   }
   deriving (Generic)
 
-instance Crypto c => NoThunks (PraosCanBeLeader c)
+data PraosCredentialsSource c
+  = PraosCredentialsUnsound (OCert.OCert c) (KES.UnsoundPureSignKeyKES (KES c))
+  deriving (Generic)
+
+instance (NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (PraosCredentialsSource c)
+instance (NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (PraosCanBeLeader c)
+
+instantiatePraosCredentials :: ( KES.UnsoundPureKESAlgorithm (KES c)
+                               , MonadST m
+                               , MonadThrow m
+                               )
+                            => PraosCredentialsSource c
+                            -> m (OCert.OCert c, SL.SignKeyKES c)
+instantiatePraosCredentials (PraosCredentialsUnsound ocert skUnsound) = do
+  sk <- KES.unsoundPureSignKeyKESToSoundSignKeyKES skUnsound
+  return (ocert, sk)
 
 -- | See 'PraosProtocolSupportsNode'
 data PraosNonces = PraosNonces {

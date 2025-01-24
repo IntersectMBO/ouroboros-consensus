@@ -27,34 +27,24 @@ module Ouroboros.Consensus.Protocol.Praos.Header (
   , headerSize
   ) where
 
+import           Cardano.Crypto.Hash (Hash)
 import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Crypto.KES as KES
 import           Cardano.Crypto.Util
                      (SignableRepresentation (getSignableRepresentation))
+import           Cardano.Crypto.VRF (CertifiedVRF, VerKeyVRF)
 import           Cardano.Ledger.BaseTypes (ProtVer (pvMajor))
 import           Cardano.Ledger.Binary (Annotator (..), CBORGroup (unCBORGroup),
                      DecCBOR (decCBOR), EncCBOR (..), ToCBOR (..),
-                     encodedSigKESSizeExpr, serialize', withSlice,
-                    )
-import           Cardano.Ledger.Binary.Crypto (
-                     decodeSignedKES, encodeSignedKES,
-                     decodeVerKeyVRF, encodeVerKeyVRF,
-                    )
+                     encodedSigKESSizeExpr, serialize', withSlice)
 import           Cardano.Ledger.Binary.Coders
+import           Cardano.Ledger.Binary.Crypto (decodeSignedKES, decodeVerKeyVRF,
+                     encodeSignedKES, encodeVerKeyVRF)
 import qualified Cardano.Ledger.Binary.Plain as Plain
-import           Cardano.Protocol.Crypto (Crypto (..), VRF)
 import           Cardano.Ledger.Hashes (EraIndependentBlockBody,
                      EraIndependentBlockHeader, HASH)
-import           Cardano.Ledger.Keys (
-                     -- CertifiedVRF, 
-                     -- Hash, 
-                     KeyRole (BlockIssuer),
-                     -- SignedKES, 
-                     VKey, 
-                     -- VerKeyVRF,
-                     -- decodeSignedKES,
-                     -- decodeVerKeyVRF, encodeSignedKES, encodeVerKeyVRF
-                    )
+import           Cardano.Ledger.Keys (KeyRole (BlockIssuer), VKey)
+import           Cardano.Protocol.Crypto (Crypto (..), VRF)
 import           Cardano.Protocol.TPraos.BHeader (PrevHash)
 import           Cardano.Protocol.TPraos.OCert (OCert)
 import           Cardano.Slotting.Block (BlockNo)
@@ -65,8 +55,6 @@ import           Data.Word (Word32)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (AllowThunksIn (..), NoThunks (..))
 import           Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF)
-import           Cardano.Crypto.VRF (VerKeyVRF, CertifiedVRF)
-import           Cardano.Crypto.Hash (Hash)
 
 -- | The body of the header is the part which gets hashed to form the hash
 -- chain.

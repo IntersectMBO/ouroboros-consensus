@@ -100,8 +100,8 @@ data Praos c
 
 class
   ( Crypto c,
-    DSIGN.Signable (DSIGN c) (OCertSignable c),
-    DSIGN.Signable (DSIGN c) (SL.Hash c EraIndependentTxBody),
+    DSIGN.Signable DSIGN (OCertSignable c),
+    DSIGN.Signable DSIGN (SL.Hash EraIndependentTxBody),
     KES.Signable (KES c) (HeaderBody c),
     VRF.Signable (VRF c) InputVRF
   ) =>
@@ -131,7 +131,7 @@ deriving instance
 -- the block signature.
 data PraosToSign c = PraosToSign
   { -- | Verification key for the issuer of this block.
-    praosToSignIssuerVK :: SL.VKey 'SL.BlockIssuer c,
+    praosToSignIssuerVK :: SL.VKey 'SL.BlockIssuer,
     praosToSignVrfVK    :: SL.VerKeyVRF c,
     -- | Verifiable random value. This is used both to prove the issuer is
     -- eligible to issue a block, and to contribute to the evolving nonce.
@@ -160,27 +160,25 @@ forgePraosFields
   hotKey
   PraosCanBeLeader
     { praosCanBeLeaderColdVerKey,
-      praosCanBeLeaderSignKeyVRF,
-      praosCanBeLeaderOpCert
+      praosCanBeLeaderSignKeyVRF
     }
   PraosIsLeader {praosIsLeaderVrfRes}
   mkToSign = do
+    ocert <- HotKey.getOCert hotKey
+    let signedFields =
+          PraosToSign
+            { praosToSignIssuerVK = praosCanBeLeaderColdVerKey,
+              praosToSignVrfVK = VRF.deriveVerKeyVRF praosCanBeLeaderSignKeyVRF,
+              praosToSignVrfRes = praosIsLeaderVrfRes,
+              praosToSignOCert = ocert
+            }
+        toSign = mkToSign signedFields
     signature <- HotKey.sign hotKey toSign
     return
       PraosFields
         { praosSignature = signature,
           praosToSign = toSign
         }
-    where
-      toSign = mkToSign signedFields
-
-      signedFields =
-        PraosToSign
-          { praosToSignIssuerVK = praosCanBeLeaderColdVerKey,
-            praosToSignVrfVK = VRF.deriveVerKeyVRF praosCanBeLeaderSignKeyVRF,
-            praosToSignVrfRes = praosIsLeaderVrfRes,
-            praosToSignOCert = praosCanBeLeaderOpCert
-          }
 
 {-------------------------------------------------------------------------------
   Protocol proper
@@ -246,7 +244,7 @@ type PraosValidateView c = Views.HeaderView c
 data PraosState c = PraosState
   { praosStateLastSlot            :: !(WithOrigin SlotNo),
     -- | Operation Certificate counters
-    praosStateOCertCounters       :: !(Map (KeyHash 'BlockIssuer c) Word64),
+    praosStateOCertCounters       :: !(Map (KeyHash 'BlockIssuer) Word64),
     -- | Evolving nonce
     praosStateEvolvingNonce       :: !Nonce,
     -- | Candidate nonce
@@ -315,11 +313,11 @@ data instance Ticked (PraosState c) = TickedPraosState
 -- | Errors which we might encounter
 data PraosValidationErr c
   = VRFKeyUnknown
-      !(KeyHash SL.StakePool c) -- unknown VRF keyhash (not registered)
+      !(KeyHash SL.StakePool) -- unknown VRF keyhash (not registered)
   | VRFKeyWrongVRFKey
-      !(KeyHash SL.StakePool c) -- KeyHash of block issuer
-      !(SL.Hash c (SL.VerKeyVRF c)) -- VRF KeyHash registered with stake pool
-      !(SL.Hash c (SL.VerKeyVRF c)) -- VRF KeyHash from Header
+      !(KeyHash SL.StakePool) -- KeyHash of block issuer
+      !(SL.Hash (SL.VerKeyVRF c)) -- VRF KeyHash registered with stake pool
+      !(SL.Hash (SL.VerKeyVRF c)) -- VRF KeyHash from Header
   | VRFKeyBadProof
       !SlotNo -- Slot used for VRF calculation
       !Nonce -- Epoch nonce used for VRF calculation
@@ -350,7 +348,7 @@ data PraosValidationErr c
       !Word64 -- max KES evolutions
       !String -- error message given by Consensus Layer
   | NoCounterForKeyHashOCERT
-      !(KeyHash 'BlockIssuer c) -- stake pool key hash
+      !(KeyHash 'BlockIssuer) -- stake pool key hash
   deriving (Generic)
 
 deriving instance PraosCrypto c => Eq (PraosValidationErr c)
@@ -503,7 +501,7 @@ meetsLeaderThreshold ::
   PraosCrypto c =>
   ConsensusConfig (Praos c) ->
   LedgerView (Praos c) ->
-  SL.KeyHash 'SL.StakePool c ->
+  SL.KeyHash 'SL.StakePool ->
   VRF.CertifiedVRF (VRF c) InputVRF ->
   Bool
 meetsLeaderThreshold
@@ -539,7 +537,7 @@ doValidateVRFSignature ::
   forall c.
   PraosCrypto c =>
   Nonce ->
-  Map (KeyHash SL.StakePool c) (IndividualPoolStake c) ->
+  Map (KeyHash SL.StakePool) IndividualPoolStake ->
   ActiveSlotCoeff ->
   Views.HeaderView c ->
   Except (PraosValidationErr c) ()
@@ -570,7 +568,7 @@ validateKESSignature ::
   PraosCrypto c =>
   ConsensusConfig (Praos c) ->
   LedgerView (Praos c) ->
-  Map (KeyHash 'BlockIssuer c) Word64 ->
+  Map (KeyHash 'BlockIssuer) Word64 ->
   Views.HeaderView c ->
   Except (PraosValidationErr c) ()
 validateKESSignature
@@ -588,8 +586,8 @@ doValidateKESSignature ::
   PraosCrypto c =>
   Word64 ->
   Word64 ->
-  Map (KeyHash SL.StakePool c) (IndividualPoolStake c) ->
-  Map (KeyHash BlockIssuer c) Word64 ->
+  Map (KeyHash SL.StakePool) IndividualPoolStake ->
+  Map (KeyHash BlockIssuer) Word64 ->
   Views.HeaderView c ->
   Except (PraosValidationErr c) ()
 doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod stakeDistribution ocertCounters b =
@@ -681,7 +679,7 @@ praosCheckCanForge
 -------------------------------------------------------------------------------}
 
 instance PraosCrypto c => PraosProtocolSupportsNode (Praos c) where
-  type PraosProtocolSupportsNodeCrypto (Praos c) = c
+  -- type PraosProtocolSupportsNodeCrypto (Praos c) = c
 
   getPraosNonces _prx cdst =
       PraosNonces {
@@ -729,12 +727,12 @@ instance
           Views.lvProtocolVersion = SL.ccProtocolVersion lvChainChecks
         }
       where
-        coercePoolDistr :: SL.PoolDistr c1 -> SL.PoolDistr c2
+        coercePoolDistr :: SL.PoolDistr -> SL.PoolDistr
         coercePoolDistr (SL.PoolDistr m totalActiveStake) =
           SL.PoolDistr
             (Map.mapKeysMonotonic coerce (Map.map coerceIndividualPoolStake m))
             totalActiveStake
-        coerceIndividualPoolStake :: SL.IndividualPoolStake c1 -> SL.IndividualPoolStake c2
+        coerceIndividualPoolStake :: SL.IndividualPoolStake -> SL.IndividualPoolStake
         coerceIndividualPoolStake (SL.IndividualPoolStake stake totalStake vrf) =
           SL.IndividualPoolStake stake totalStake (coerce vrf)
 

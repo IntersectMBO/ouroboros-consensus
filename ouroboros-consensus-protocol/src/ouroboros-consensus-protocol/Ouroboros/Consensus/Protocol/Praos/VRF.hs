@@ -30,10 +30,9 @@ import           Cardano.Crypto.VRF (CertifiedVRF (certifiedOutput),
                      OutputVRF (..), getOutputVRFBytes)
 import           Cardano.Ledger.BaseTypes (Nonce (NeutralNonce, Nonce))
 import           Cardano.Ledger.Binary (runByteBuilder)
--- import           Cardano.Ledger.Crypto (Crypto (HASH, VRF))
 import           Cardano.Ledger.Hashes (HASH)
-import           Cardano.Protocol.Crypto (VRF)
 import           Cardano.Ledger.Slot (SlotNo (SlotNo))
+import           Cardano.Protocol.Crypto (VRF)
 import           Cardano.Protocol.TPraos.BHeader (BoundedNatural,
                      assertBoundedNatural)
 import qualified Data.ByteString.Builder as BS

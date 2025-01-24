@@ -7,6 +7,10 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module Test.Ouroboros.Consensus.Protocol.Praos.Header (
     GeneratorContext (..)
@@ -257,6 +261,8 @@ instance Json.FromJSON MutatedHeader where
 -- * Generators
 type KESKey = KES.SignKeyKES (KES.Sum6KES Ed25519DSIGN Blake2b_256)
 
+deriving instance Show KESKey
+
 newVRFSigningKey :: ByteString -> (VRF.SignKeyVRF VRF.PraosVRF, VRF.VerKeyVRF VRF.PraosVRF)
 newVRFSigningKey = VRF.genKeyPairVRF . mkSeedFromBytes
 
@@ -265,13 +271,13 @@ newKESSigningKey = genKeyKES . mkSeedFromBytes
 
 data GeneratorContext = GeneratorContext
     { praosSlotsPerKESPeriod :: !Word64
-    , praosMaxKESEvo :: !Word64
-    , kesSignKey :: !KESKey
-    , coldSignKey :: !(SignKeyDSIGN Ed25519DSIGN)
-    , vrfSignKey :: !(VRF.SignKeyVRF VRF.PraosVRF)
-    , nonce :: !Nonce
-    , ocertCounters :: !(Map.Map (KeyHash BlockIssuer StandardCrypto) Word64)
-    , activeSlotCoeff :: !ActiveSlotCoeff
+    , praosMaxKESEvo         :: !Word64
+    , kesSignKey             :: !KESKey
+    , coldSignKey            :: !(SignKeyDSIGN Ed25519DSIGN)
+    , vrfSignKey             :: !(VRF.SignKeyVRF VRF.PraosVRF)
+    , nonce                  :: !Nonce
+    , ocertCounters          :: !(Map.Map (KeyHash BlockIssuer) Word64)
+    , activeSlotCoeff        :: !ActiveSlotCoeff
     }
     deriving (Show)
 

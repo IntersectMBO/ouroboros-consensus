@@ -1,4 +1,6 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -6,8 +8,10 @@
 -- to be semantically correct at all, only structurally correct.
 module Test.Consensus.Protocol.Serialisation.Generators () where
 
-import           Cardano.Crypto.KES (signedKES)
+import           Cardano.Crypto.KES (UnsoundPureKESAlgorithm,
+                     unsoundPureSignedKES)
 import           Cardano.Crypto.VRF (evalCertified)
+import           Cardano.Protocol.Crypto (KES)
 import           Cardano.Protocol.TPraos.BHeader (HashHeader, PrevHash (..))
 import           Cardano.Protocol.TPraos.OCert (KESPeriod (KESPeriod),
                      OCert (OCert))
@@ -27,7 +31,7 @@ import           Test.QuickCheck (Arbitrary (..), Gen, choose, oneof)
 instance Arbitrary InputVRF where
   arbitrary = mkInputVRF <$> arbitrary <*> arbitrary
 
-instance Praos.PraosCrypto c => Arbitrary (HeaderBody c) where
+instance (Praos.PraosCrypto c, UnsoundPureKESAlgorithm (KES c)) => Arbitrary (HeaderBody c) where
   arbitrary =
     let ocert =
           OCert
@@ -45,7 +49,7 @@ instance Praos.PraosCrypto c => Arbitrary (HeaderBody c) where
           <*> (SlotNo <$> choose (1, 10))
           <*> oneof
             [ pure GenesisHash,
-              BlockHash <$> (arbitrary :: Gen (HashHeader c))
+              BlockHash <$> (arbitrary :: Gen HashHeader)
             ]
           <*> arbitrary
           <*> arbitrary
@@ -55,12 +59,12 @@ instance Praos.PraosCrypto c => Arbitrary (HeaderBody c) where
           <*> ocert
           <*> arbitrary
 
-instance Praos.PraosCrypto c => Arbitrary (Header c) where
+instance (Praos.PraosCrypto c, UnsoundPureKESAlgorithm (KES c)) => Arbitrary (Header c) where
   arbitrary = do
     hBody <- arbitrary
     period <- arbitrary
     sKey <- arbitrary
-    let hSig = signedKES () period hBody sKey
+    let hSig = unsoundPureSignedKES () period hBody sKey
     pure $ Header hBody hSig
 
 instance Praos.PraosCrypto c => Arbitrary (PraosState c) where
