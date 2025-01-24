@@ -12,6 +12,7 @@ module Ouroboros.Consensus.Node.DbLock (
   , withLockDB_
   ) where
 
+import           Control.Monad.Class.MonadFork
 import           Control.Monad.Class.MonadTimer.SI
 import qualified Data.Time.Clock as Time
 import           Ouroboros.Consensus.Util.FileLock
@@ -70,7 +71,9 @@ withLockDB_ fileLock mountPoint lockFsPath lockTimeout action =
     -- lock, the whole process will soon die.
     acquireLock :: m (m ())
     acquireLock = do
-      lockFileAsync <- async (lockFile fileLock lockFilePath)
+      lockFileAsync <- async (do
+                                 labelThisThread "ChainDB lock"
+                                 lockFile fileLock lockFilePath)
       timeout lockTimeout (wait lockFileAsync) >>= \case
         -- We timed out while waiting on the lock. The db is still locked.
         Nothing     -> throwIO $ DbLocked lockFilePath
