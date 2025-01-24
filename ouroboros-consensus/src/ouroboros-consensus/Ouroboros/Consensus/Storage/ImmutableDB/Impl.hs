@@ -13,8 +13,7 @@
 -- = Internal format
 --
 -- The API of the ImmutableDB uses 'SlotNo' to indicate a location in the
--- chain\/immutable database. To distinguish EBBs from regular blocks, the hash
--- is used (together they form a 'RealPoint'). The contents of the database are
+-- chain\/immutable database. The contents of the database are
 -- not stored in one big file that is appended to in eternity, but a separate
 -- file is created for each 'ChunkNo'.
 --
@@ -33,9 +32,7 @@
 -- >                 │   │   │   │   │   │ │   │   │   │   │
 -- >                 └───┴───┴───┴───┴───┘ └───┴───┴───┴───┘
 -- > 'RelativeSlot':   0   1   2   3   4     0   1   2   3
--- > 'SlotNo':        EBB  0   1   2   3    EBB  4   5   6
---
--- Not all chunks can contain EBBs; see 'ChunkInfo' for details.
+-- > 'SlotNo':         0   1   2   3   4     5   6   7   8
 --
 -- = Errors
 --
@@ -76,7 +73,7 @@
 --     nothing is stored for empty slots.
 --
 --   * A \"secondary index file\" that stores information about each block: its
---     hash, the slot number or epoch number in case of an EBB, a checksum of
+--     hash, the slot number, a checksum of
 --     the block, the offset of the block in the chunk file, and more. This
 --     index is sparse to save space.
 --
@@ -202,8 +199,7 @@ data Internal m blk = Internal {
     --
     -- Throws a 'ClosedDBError' if the database is closed.
     deleteAfter_    :: HasCallStack => WithOrigin (Tip blk) -> m ()
-    -- | Get the hash of the block in the given slot. If the slot contains both
-    -- an EBB and a non-EBB, return the hash of the non-EBB.
+    -- | Get the hash of the block in the given slot.
   , getHashForSlot_ :: HasCallStack => SlotNo -> m (Maybe (HeaderHash blk))
   }
 

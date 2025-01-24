@@ -1147,17 +1147,7 @@ ledgerValidateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) =
                 $ if addedPt == pt
                   then InvalidBlockPunishment.BlockItself
                   else InvalidBlockPunishment.BlockPrefix
-          case realPointSlot pt `compare` realPointSlot addedPt of
-            LT -> m
-            GT -> pure ()
-            EQ -> when (lastValid /= realPointToPoint addedPt) m
-              -- If pt and addedPt have the same slot, and addedPt is the tip of
-              -- the ledger that pt was validated against, then addedPt is an
-              -- EBB and is valid.
-              --
-              -- Otherwise, either pt == addedPt or addedPt comes after pt, so
-              -- we should punish. (Tacit assumption made here: it's impossible
-              -- three blocks in a row have the same slot.)
+          when (realPointSlot pt <= realPointSlot addedPt) m
 
         return $ ValidatedDiff.new chainDiff' ledger'
 

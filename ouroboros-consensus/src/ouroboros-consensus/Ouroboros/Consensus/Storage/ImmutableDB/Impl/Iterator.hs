@@ -350,10 +350,8 @@ stepIterator registry currentChunkInfo
         -- index file(s) of a non-existing chunk.
         Nothing      -> openNextChunk (nextChunkNo chunk)
         Just{} -> do
-          -- TODO Note that the only reason we actually open the primary index file
-          -- was to see whether the first block in the chunk is an EBB or not.
-          -- To see whether the chunk is empty, we could open the secondary
-          -- index file directly and see whether it contains any blocks.
+          -- TODO Skip opening the primary index merely to check for emptiness;
+          -- that can be noticed when opening the secondary index instead.
           --
           -- The 'secondaryOffset' will be 0, as the first entry in the
           -- secondary index file always starts at offset 0. The same is true

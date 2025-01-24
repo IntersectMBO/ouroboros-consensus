@@ -272,8 +272,7 @@ newIterator itEnv@IteratorEnv{..} getItEnv registry blockComponent from to = do
           -- The end point is > the tip of the ImmutableDB
           GT -> findPathInVolatileDB
 
-    -- | PRECONDITION: the upper bound >= the tip of the ImmutableDB.
-    -- Greater or /equal/, because of EBBs :(
+    -- | PRECONDITION: the upper bound > the tip of the ImmutableDB.
     findPathInVolatileDB ::
          HasCallStack => ExceptT (UnknownRange blk) m (Iterator m blk b)
     findPathInVolatileDB = do
