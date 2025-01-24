@@ -76,6 +76,7 @@ import           Data.Proxy
 import           Data.Typeable
 import           Data.Word
 import           GHC.Generics (Generic)
+import           GHC.TypeLits (KnownNat)
 import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
@@ -99,7 +100,6 @@ import           Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE,
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Test.Util.Orphans.Serialise ()
-import GHC.TypeLits (KnownNat)
 
 {-------------------------------------------------------------------------------
   Definition of a block

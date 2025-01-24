@@ -26,6 +26,7 @@ import qualified Data.IntPSQ as PSQ
 import           Data.MultiSet (MultiSet)
 import qualified Data.MultiSet as MultiSet
 import           Data.SOP.BasicFunctors
+import           GHC.TypeLits (KnownNat)
 import           NoThunks.Class (InspectHeap (..), InspectHeapNamed (..),
                      NoThunks (..), OnlyCheckWhnfNamed (..), allNoThunks,
                      noThunksInKeysAndValues)
@@ -33,7 +34,6 @@ import           Ouroboros.Network.Util.ShowProxy
 import           System.FS.API (SomeHasFS)
 import           System.FS.API.Types (FsPath, Handle)
 import           System.FS.CRC (CRC (CRC))
-import           GHC.TypeLits (KnownNat)
 
 {-------------------------------------------------------------------------------
   Serialise
