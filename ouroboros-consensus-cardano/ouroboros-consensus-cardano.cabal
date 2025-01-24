@@ -542,6 +542,7 @@ library unstable-cardano-tools
     filepath,
     fs-api ^>=0.3,
     githash,
+    lz4,
     microlens,
     mtl,
     network,

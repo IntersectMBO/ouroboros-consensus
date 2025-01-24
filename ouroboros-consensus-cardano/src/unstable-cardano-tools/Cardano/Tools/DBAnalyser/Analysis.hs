@@ -25,6 +25,8 @@ module Cardano.Tools.DBAnalyser.Analysis (
   , runAnalysis
   ) where
 
+import qualified Codec.Compression.LZ4 as LZ4
+
 import qualified Cardano.Slotting.Slot as Slotting
 import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.FileWriting as F
 import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint as DP
@@ -38,6 +40,7 @@ import           Control.Monad (unless, void, when)
 import           Control.Monad.Except (runExcept)
 import           Control.ResourceRegistry
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
+import qualified Data.ByteString.Lazy as BL
 import           Data.Int (Int64)
 import           Data.List (intercalate)
 import qualified Data.Map.Strict as Map
@@ -174,11 +177,15 @@ data TraceEvent blk =
     --   * slot number when the block was forged
     --   * cumulative tx output
     --   * count tx output
-  | EbbEvent (HeaderHash blk) (ChainHash blk) Bool
+  | EbbEvent (HeaderHash blk) (ChainHash blk) Bool Int SizeInBytes SizeInBytes SizeInBytes
     -- ^ triggered when EBB block has been found, it holds:
     --   * its hash,
     --   * hash of previous block
     --   * flag whether the EBB is known
+    --   * number of preceding EBBs
+    --   * header size
+    --   * its size
+    --   * its size after LZ4
   | CountedBlocksEvent Int
     -- ^ triggered once during CountBLocks analysis,
     --   when blocks were counted
@@ -233,10 +240,14 @@ instance (HasAnalysis blk, LedgerSupportsProtocol blk) => Show (TraceEvent blk) 
     , "cumulative: " <> show cumulative
     , "count: " <> show count
     ]
-  show (EbbEvent ebb previous known)      = intercalate "\t" [
+  show (EbbEvent ebb previous known i hsz sz sz2)      = intercalate "\t" [
       "EBB: "   <> show ebb
     , "Prev: "  <> show previous
     , "Known: " <> show known
+    , "Index: " <> show i
+    , "ByteSizeHeader: " <> show (getSizeInBytes hsz)
+    , "ByteSize: " <> show (getSizeInBytes sz)
+    , "ByteSizeLZ4: " <> show (getSizeInBytes sz2)
     ]
   show (CountedBlocksEvent counted)       = "Counted " <> show counted <> " blocks."
   show (HeaderSizeEvent bn sn hSz bSz)    = intercalate "\t" $ [
@@ -355,20 +366,25 @@ showBlockTxsSize AnalysisEnv { db, registry, startFrom, limit, tracer } = do
 
 showEBBs :: forall blk. HasAnalysis blk => Analysis blk StartFromPoint
 showEBBs AnalysisEnv { db, registry, startFrom, limit, tracer } = do
-    processAll_ db registry GetBlock startFrom limit process
+    _ <- processAll db registry ((,,) <$> GetBlock <*> GetRawBlock <*> GetRawHeader) startFrom limit (0, BL.empty, BL.empty) process
     pure Nothing
   where
-    process :: blk -> IO ()
-    process blk =
+    process :: (Int, BL.ByteString, BL.ByteString) -> (blk, BL.ByteString, BL.ByteString) -> IO (Int, BL.ByteString, BL.ByteString)
+    process (!i, cacc, hacc) (blk, bbytes, hbytes) =
         case blockIsEBB blk of
           Just _epoch -> do
+            let cbytes = maybe undefined BL.fromStrict $ LZ4.compressHC $ BL.toStrict bbytes
             let known =  Map.lookup
                             (blockHash blk)
                             (HasAnalysis.knownEBBs (Proxy @blk))
                        == Just (blockPrevHash blk)
-                event = EbbEvent (blockHash blk) (blockPrevHash blk) known
+                event = EbbEvent (blockHash blk) (blockPrevHash blk) known i (SizeInBytes $ fromIntegral $ BL.length hbytes) (SizeInBytes $ fromIntegral $ BL.length bbytes) (SizeInBytes $ fromIntegral $ BL.length cbytes)
             traceWith tracer event
-          _otherwise -> return () -- Skip regular blocks
+            when (i == 175) $ do
+              BL.writeFile "EbbsHcConcat.bin" (cacc <> cbytes)
+              BL.writeFile "EbbHeadersConcat.bin" (hacc <> hbytes)
+            pure $ (i+1, cacc <> cbytes, hacc <> hbytes)
+          _otherwise -> return (i, cacc, hacc) -- Skip regular blocks
 
 {-------------------------------------------------------------------------------
   Analysis: store a ledger at specific slot
