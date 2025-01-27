@@ -83,7 +83,6 @@ import           Ouroboros.Consensus.Byron.Ledger.NetworkProtocolVersion
 import           Ouroboros.Consensus.Byron.Node
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.CanHardFork
-import           Ouroboros.Consensus.Cardano.Ledger ()
 import           Ouroboros.Consensus.Cardano.QueryHF ()
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Combinator

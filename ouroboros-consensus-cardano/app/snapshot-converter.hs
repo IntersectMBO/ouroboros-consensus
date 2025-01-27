@@ -246,7 +246,7 @@ store config@Config{outpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), 
       let h = V2.currentHandle lseq
       Monad.void $ V2.takeSnapshot ccfg nullTracer fs suffix writeChecksum h
     LMDB -> do
-      chlog <- newTVarIO (V1.empty (forgetLedgerTables state))
+      chlog <- newTVarIO (V1.empty state)
       lock <- V1.mkLedgerDBLock
       bs <- V1.newLMDBBackingStore nullTracer defaultLMDBLimits (V1.LiveLMDBFS tempFS) (V1.SnapshotsFS fs) (V1.InitFromValues (pointSlot $ getTip state) state tbs)
       Monad.void $ V1.withReadLock lock $ do

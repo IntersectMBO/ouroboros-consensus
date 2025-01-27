@@ -433,7 +433,7 @@ instance ( ShelleyCompatible proto era
     IZ -> shelleyQFTraverseTablesPredicate
     IS idx -> case idx of {}
 
-instance (txout ~ SL.TxOut era, MemPack (SL.TxOut era))
+instance (txout ~ SL.TxOut era, MemPack txout)
       => IndexedMemPack (LedgerState (HardForkBlock '[ShelleyBlock proto era]) EmptyMK) txout where
   indexedTypeName _ = typeName @txout
   indexedPackedByteCount _ = packedByteCount

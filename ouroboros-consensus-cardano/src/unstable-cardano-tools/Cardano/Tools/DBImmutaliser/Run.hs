@@ -28,7 +28,6 @@ import qualified Data.List.NonEmpty as NE
 import           Data.Semigroup (Arg (..), ArgMax, Max (..))
 import           Data.Traversable (for)
 import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Cardano.Ledger ()
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Node.InitStorage

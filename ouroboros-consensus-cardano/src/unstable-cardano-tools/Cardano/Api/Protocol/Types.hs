@@ -23,7 +23,6 @@ import           Ouroboros.Consensus.Block.Forging (BlockForging)
 import           Ouroboros.Consensus.Cardano
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.ByronHFC (ByronBlockHFC)
-import           Ouroboros.Consensus.Cardano.Ledger ()
 import           Ouroboros.Consensus.Cardano.Node
 import           Ouroboros.Consensus.HardFork.Combinator.Embed.Unary
 import qualified Ouroboros.Consensus.Ledger.SupportsProtocol as Consensus
@@ -36,7 +35,6 @@ import qualified Ouroboros.Consensus.Shelley.Eras as Consensus (ShelleyEra)
 import           Ouroboros.Consensus.Shelley.HFEras ()
 import qualified Ouroboros.Consensus.Shelley.Ledger.Block as Consensus
                      (ShelleyBlock)
-import           Ouroboros.Consensus.Shelley.Ledger.Ledger ()
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import           Ouroboros.Consensus.Shelley.ShelleyHFC (ShelleyBlockHFC)
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
