@@ -84,11 +84,12 @@ mkInitDb args bss getBlock =
   InitDB {
     initFromGenesis = do
       st <- lgrGenesis
-      let chlog = DbCh.empty (forgetLedgerTables st)
+      let genesis = forgetLedgerTables st
+          chlog = DbCh.empty genesis
       (_, backingStore) <-
         allocate
           lgrRegistry
-          (\_ -> newBackingStore bsTracer baArgs lgrHasFS' (projectLedgerTables st))
+          (\_ -> newBackingStore bsTracer baArgs lgrHasFS' genesis (projectLedgerTables st))
           bsClose
       pure (chlog, backingStore)
   , initFromSnapshot =

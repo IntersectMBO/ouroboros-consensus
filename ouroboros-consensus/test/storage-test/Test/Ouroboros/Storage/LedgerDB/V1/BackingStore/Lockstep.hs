@@ -118,10 +118,12 @@ instance ( Show ks, Show vs, Show d, Show (BS.WriteHint d), Show (BS.ReadHint vs
   data Action (Lockstep (BackingStoreState ks vs d)) a where
     -- Reopen a backing store by intialising from values.
     BSInitFromValues :: WithOrigin SlotNo
+                     -> BS.ReadHint vs
                      -> Values vs
                      -> BSAct ks vs d ()
     -- Reopen a backing store by initialising from a copy.
-    BSInitFromCopy   :: FS.FsPath
+    BSInitFromCopy   :: BS.ReadHint vs
+                     -> FS.FsPath
                      -> BSAct ks vs d ()
     BSClose          :: BSAct ks vs d ()
     BSCopy           :: FS.FsPath
@@ -181,11 +183,11 @@ modelPrecondition ::
     -> LockstepAction (BackingStoreState ks vs d) a
     -> Bool
 modelPrecondition (BackingStoreState mock _stats) action = case action of
-    BSInitFromValues _ _ -> isClosed mock
-    BSInitFromCopy _     -> isClosed mock
-    BSCopy _             -> canOpenReader
-    BSValueHandle        -> canOpenReader
-    _                    -> True
+    BSInitFromValues _ _ _ -> isClosed mock
+    BSInitFromCopy _ _     -> isClosed mock
+    BSCopy _               -> canOpenReader
+    BSValueHandle          -> canOpenReader
+    _                      -> True
   where
     canOpenReader         = Map.size openValueHandles < maxOpenValueHandles
     openValueHandles      = Map.filter (==Mock.Open) (valueHandles mock)
@@ -264,17 +266,17 @@ instance ( Show ks, Show vs, Show d, Show (BS.WriteHint d), Show (BS.ReadHint vs
        LockstepAction (BackingStoreState ks vs d) a
     -> [AnyGVar (ModelOp (BackingStoreState ks vs d))]
   usedVars = \case
-    BSInitFromValues _ _ -> []
-    BSInitFromCopy _     -> []
-    BSClose              -> []
-    BSCopy _             -> []
-    BSValueHandle        -> []
-    BSWrite _ _ _        -> []
-    BSVHClose h          -> [SomeGVar h]
-    BSVHRangeRead h _ _  -> [SomeGVar h]
-    BSVHRead h _ _       -> [SomeGVar h]
-    BSVHAtSlot h         -> [SomeGVar h]
-    BSVHStat h           -> [SomeGVar h]
+    BSInitFromValues _ _ _ -> []
+    BSInitFromCopy _ _     -> []
+    BSClose                -> []
+    BSCopy _               -> []
+    BSValueHandle          -> []
+    BSWrite _ _ _          -> []
+    BSVHClose h            -> [SomeGVar h]
+    BSVHRangeRead h _ _    -> [SomeGVar h]
+    BSVHRead h _ _         -> [SomeGVar h]
+    BSVHAtSlot h           -> [SomeGVar h]
+    BSVHStat h             -> [SomeGVar h]
 
   arbitraryWithVars ::
        ModelFindVariables (BackingStoreState ks vs d)
@@ -319,41 +321,41 @@ instance ( Show ks, Show vs, Show d, Show (BS.WriteHint d), Show (BS.ReadHint vs
     -> Realized (RealMonad IO ks vs d) a
     -> BSObs ks vs d a
   observeReal _proxy = \case
-    BSInitFromValues _ _ -> OEither . bimap OId OId
-    BSInitFromCopy _     -> OEither . bimap OId OId
-    BSClose              -> OEither . bimap OId OId
-    BSCopy _             -> OEither . bimap OId OId
-    BSValueHandle        -> OEither . bimap OId (const OValueHandle)
-    BSWrite _ _ _        -> OEither . bimap OId OId
-    BSVHClose _          -> OEither . bimap OId OId
-    BSVHRangeRead _ _ _  -> OEither . bimap OId (OValues . unValues)
-    BSVHRead _ _ _       -> OEither . bimap OId (OValues . unValues)
-    BSVHAtSlot _         -> OEither . bimap OId OId
-    BSVHStat _           -> OEither . bimap OId OId
+    BSInitFromValues _ _ _ -> OEither . bimap OId OId
+    BSInitFromCopy _ _     -> OEither . bimap OId OId
+    BSClose                -> OEither . bimap OId OId
+    BSCopy _               -> OEither . bimap OId OId
+    BSValueHandle          -> OEither . bimap OId (const OValueHandle)
+    BSWrite _ _ _          -> OEither . bimap OId OId
+    BSVHClose _            -> OEither . bimap OId OId
+    BSVHRangeRead _ _ _    -> OEither . bimap OId (OValues . unValues)
+    BSVHRead _ _ _         -> OEither . bimap OId (OValues . unValues)
+    BSVHAtSlot _           -> OEither . bimap OId OId
+    BSVHStat _             -> OEither . bimap OId OId
 
   showRealResponse ::
        Proxy (RealMonad IO ks vs d)
     -> LockstepAction (BackingStoreState ks vs d) a
     -> Maybe (Dict (Show (Realized (RealMonad IO ks vs d) a)))
   showRealResponse _proxy = \case
-    BSInitFromValues _ _ -> Just Dict
-    BSInitFromCopy _     -> Just Dict
-    BSClose              -> Just Dict
-    BSCopy _             -> Just Dict
-    BSValueHandle        -> Nothing
-    BSWrite _ _ _        -> Just Dict
-    BSVHClose _          -> Just Dict
-    BSVHRangeRead _ _ _  -> Just Dict
-    BSVHRead _ _ _       -> Just Dict
-    BSVHAtSlot _         -> Just Dict
-    BSVHStat _           -> Just Dict
+    BSInitFromValues _ _ _ -> Just Dict
+    BSInitFromCopy _ _     -> Just Dict
+    BSClose                -> Just Dict
+    BSCopy _               -> Just Dict
+    BSValueHandle          -> Nothing
+    BSWrite _ _ _          -> Just Dict
+    BSVHClose _            -> Just Dict
+    BSVHRangeRead _ _ _    -> Just Dict
+    BSVHRead _ _ _         -> Just Dict
+    BSVHAtSlot _           -> Just Dict
+    BSVHStat _             -> Just Dict
 
 {-------------------------------------------------------------------------------
   Interpreter against the model
 -------------------------------------------------------------------------------}
 
 runMock ::
-     Mock.HasOps ks vs d
+     forall ks vs d a. Mock.HasOps ks vs d
   => ModelLookUp (BackingStoreState ks vs d)
   -> Action (Lockstep (BackingStoreState ks vs d)) a
   -> Mock vs
@@ -361,10 +363,10 @@ runMock ::
      , Mock vs
      )
 runMock lookUp = \case
-    BSInitFromValues sl (Values vs) ->
-      wrap MUnit . runMockMonad (Mock.mBSInitFromValues sl vs)
-    BSInitFromCopy bsp ->
-      wrap MUnit . runMockMonad (Mock.mBSInitFromCopy bsp)
+    BSInitFromValues sl h (Values vs) ->
+      wrap MUnit . runMockMonad (Mock.mBSInitFromValues sl h vs)
+    BSInitFromCopy h bsp ->
+      wrap MUnit . runMockMonad (Mock.mBSInitFromCopy h bsp)
     BSClose            ->
       wrap MUnit . runMockMonad Mock.mBSClose
     BSCopy bsp         ->
@@ -384,10 +386,6 @@ runMock lookUp = \case
     BSVHStat h         ->
       wrap MStatistics . runMockMonad (Mock.mBSVHStat (getHandle $ lookUp h))
   where
-    wrap ::
-         (a -> BSVal ks vs d b)
-      -> (Either Err a, Mock vs)
-      -> (BSVal ks vs d (Either Err b), Mock vs)
     wrap f = first (MEither . bimap MErr f)
 
     getHandle :: BSVal ks vs d (BS.BackingStoreValueHandle IO ks vs) -> ValueHandle vs
@@ -418,8 +416,8 @@ arbitraryBackingStoreAction findVars (BackingStoreState mock _stats) =
   where
     withoutVars :: [(Int, Gen (Any (LockstepAction (BackingStoreState ks vs d))))]
     withoutVars = [
-        (5, fmap Some $ BSInitFromValues <$> QC.arbitrary <*> (Values <$> QC.arbitrary))
-      , (5, fmap Some $ BSInitFromCopy <$> genBackingStorePath)
+        (5, fmap Some $ BSInitFromValues <$> QC.arbitrary <*> pure (Mock.makeReadHint (Proxy @vs)) <*> (Values <$> QC.arbitrary))
+      , (5, fmap Some $ BSInitFromCopy <$> pure (Mock.makeReadHint (Proxy @vs)) <*> genBackingStorePath)
       , (2, pure $ Some BSClose)
       , (5, fmap Some $ BSCopy <$> genBackingStorePath)
       , (5, pure $ Some BSValueHandle)
@@ -520,11 +518,11 @@ runIO action lookUp = ReaderT $ \renv ->
       -> LockstepAction (BackingStoreState ks vs d) a
       -> IO a
     aux renv = \case
-        BSInitFromValues sl (Values vs) -> catchErr $ do
-          bs <- bsi (BS.InitFromValues sl vs)
+        BSInitFromValues sl h (Values vs) -> catchErr $ do
+          bs <- bsi (BS.InitFromValues sl h vs)
           void $ swapMVar bsVar bs
-        BSInitFromCopy bsp -> catchErr $ do
-          bs <- bsi (BS.InitFromCopy bsp)
+        BSInitFromCopy h bsp -> catchErr $ do
+          bs <- bsi (BS.InitFromCopy h bsp)
           void $ swapMVar bsVar bs
         BSClose            -> catchErr $
           readMVar bsVar >>= BS.bsClose
@@ -658,17 +656,17 @@ data TagAction =
 -- | Identify actions by their constructor.
 tAction :: LockstepAction (BackingStoreState ks vs d) a -> TagAction
 tAction = \case
-  BSInitFromValues _ _ -> TBSInitFromValues
-  BSInitFromCopy _     -> TBSInitFromCopy
-  BSClose              -> TBSClose
-  BSCopy _             -> TBSCopy
-  BSValueHandle        -> TBSValueHandle
-  BSWrite _ _ _        -> TBSWrite
-  BSVHClose _          -> TBSVHClose
-  BSVHRangeRead _ _ _  -> TBSVHRangeRead
-  BSVHRead _ _ _       -> TBSVHRead
-  BSVHAtSlot _         -> TBSVHAtSlot
-  BSVHStat _           -> TBSVHStat
+  BSInitFromValues _ _ _ -> TBSInitFromValues
+  BSInitFromCopy _ _     -> TBSInitFromCopy
+  BSClose                -> TBSClose
+  BSCopy _               -> TBSCopy
+  BSValueHandle          -> TBSValueHandle
+  BSWrite _ _ _          -> TBSWrite
+  BSVHClose _            -> TBSVHClose
+  BSVHRangeRead _ _ _    -> TBSVHRangeRead
+  BSVHRead _ _ _         -> TBSVHRead
+  BSVHAtSlot _           -> TBSVHAtSlot
+  BSVHStat _             -> TBSVHStat
 
 data Tag =
     -- | A value handle is created before a write, and read after the write. The

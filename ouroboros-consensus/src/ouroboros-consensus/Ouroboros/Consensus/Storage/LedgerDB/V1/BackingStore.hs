@@ -63,10 +63,11 @@ restoreBackingStore ::
   => Tracer m FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m
   -> SnapshotsFS m
+  -> l EmptyMK
   -> FsPath
   -> m (LedgerBackingStore m l)
-restoreBackingStore trcr bss fs loadPath =
-    newBackingStoreInitialiser trcr bss fs (InitFromCopy loadPath)
+restoreBackingStore trcr bss fs st loadPath =
+    newBackingStoreInitialiser trcr bss fs (InitFromCopy st loadPath)
 
 -- | Create a 'BackingStore' from the given initial tables.
 newBackingStore ::
@@ -79,10 +80,11 @@ newBackingStore ::
   => Tracer m FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m
   -> SnapshotsFS m
+  -> l EmptyMK
   -> LedgerTables l ValuesMK
   -> m (LedgerBackingStore m l)
-newBackingStore trcr bss fs tables =
-    newBackingStoreInitialiser trcr bss fs (InitFromValues Origin tables)
+newBackingStore trcr bss fs st tables =
+    newBackingStoreInitialiser trcr bss fs (InitFromValues Origin st tables)
 
 newBackingStoreInitialiser ::
      forall m l.

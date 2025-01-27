@@ -194,18 +194,19 @@ rangeRead rq st dbMK =
         db
 
 initLMDBTable ::
-     (MemPack v, MemPack k)
-  => LMDBMK   k v
+     (IndexedMemPack (l EmptyMK) v, MemPack k)
+  => l EmptyMK
+  -> LMDBMK   k v
   -> ValuesMK k v
   -> LMDB.Transaction LMDB.ReadWrite (EmptyMK k v)
-initLMDBTable (LMDBMK tblName db) (ValuesMK utxoVals) =
+initLMDBTable st (LMDBMK tblName db) (ValuesMK utxoVals) =
     EmptyMK <$ lmdbInitTable
   where
     lmdbInitTable = do
       isEmpty <- LMDB.null db
       unless isEmpty $ liftIO . throwIO $ LMDBErrInitialisingNonEmpty tblName
       void $ Map.traverseWithKey
-                 (Bridge.put db)
+                 (Bridge.indexedPut st db)
                  utxoVals
 
 readLMDBTable ::
@@ -335,13 +336,14 @@ initFromVals ::
   -> LMDB.Environment LMDB.Internal.ReadWrite
      -- ^ The LMDB environment.
   -> LMDB.Database () DbSeqNo
+  -> l EmptyMK
   -> LedgerTables l LMDBMK
   -> m ()
-initFromVals tracer dbsSeq vals env st backingTables = do
+initFromVals tracer dbsSeq vals env st lst backingTables = do
   Trace.traceWith tracer $ API.BSInitialisingFromValues dbsSeq
   liftIO $ LMDB.readWriteTransaction env $
     withDbSeqNoRWMaybeNull st $ \case
-      Nothing -> ltzipWith2A' initLMDBTable backingTables vals
+      Nothing -> ltzipWith2A' (initLMDBTable lst) backingTables vals
                  $> ((), DbSeqNo{dbsSeq})
       Just _ -> liftIO . throwIO $ LMDBErrInitialisingAlreadyHasState
   Trace.traceWith tracer $ API.BSInitialisedFromValues dbsSeq
@@ -420,6 +422,10 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
 
    path = FS.mkFsPath ["tables"]
 
+   st = case initFrom of
+       API.InitFromCopy st' _     -> st'
+       API.InitFromValues _ st' _ -> st'
+
    createOrGetDB :: m (Db m l)
    createOrGetDB = do
 
@@ -431,8 +437,8 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
 
      -- copy from another lmdb path if appropriate
      case initFrom of
-       API.InitFromCopy fp  -> initFromLMDBs dbTracer limits snapFS fp liveFS path
-       API.InitFromValues{} -> pure ()
+       API.InitFromCopy _ fp -> initFromLMDBs dbTracer limits snapFS fp liveFS path
+       API.InitFromValues{}  -> pure ()
 
      -- open this database
      dbEnv <- liftIO $ LMDB.openEnvironment dbFilePath (unLMDBLimits limits)
@@ -465,8 +471,8 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
    maybePopulate dbEnv dbState dbBackingTables = do
      -- now initialise those tables if appropriate
      case initFrom of
-       API.InitFromValues slot vals -> initFromVals dbTracer slot vals dbEnv dbState dbBackingTables
-       API.InitFromCopy{}           -> pure ()
+       API.InitFromValues slot _ vals -> initFromVals dbTracer slot vals dbEnv dbState st dbBackingTables
+       API.InitFromCopy{}               -> pure ()
 
    mkBackingStore :: HasCallStack => Db m l -> API.LedgerBackingStore m l
    mkBackingStore db =

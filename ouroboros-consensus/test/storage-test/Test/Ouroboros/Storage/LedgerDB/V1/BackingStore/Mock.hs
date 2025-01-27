@@ -184,9 +184,10 @@ runMockMonad (MockMonad t) = runState . runExceptT $ t
 mBSInitFromValues ::
      forall vs m. (MonadState (Mock vs) m)
   => WithOrigin SlotNo
+  -> BS.ReadHint vs
   -> vs
   -> m ()
-mBSInitFromValues sl vs = modify (\m -> m {
+mBSInitFromValues sl _st vs = modify (\m -> m {
     backingValues = vs
   , backingSeqNo  = sl
   , isClosed      = False
@@ -194,9 +195,10 @@ mBSInitFromValues sl vs = modify (\m -> m {
 
 mBSInitFromCopy ::
      forall vs m. (MonadState (Mock vs) m, MonadError Err m)
-  => FS.FsPath
+  => BS.ReadHint vs
+  -> FS.FsPath
   -> m ()
-mBSInitFromCopy bsp = do
+mBSInitFromCopy _st bsp = do
   cps <- gets copies
   case Map.lookup bsp cps of
     Nothing       -> throwError ErrCopyPathDoesNotExist

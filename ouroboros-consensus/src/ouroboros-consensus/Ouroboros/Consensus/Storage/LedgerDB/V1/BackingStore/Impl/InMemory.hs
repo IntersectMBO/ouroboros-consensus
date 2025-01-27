@@ -77,7 +77,7 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
     traceWith tracer BSOpening
     ref <- do
       (slot, values) <- case initialization of
-        InitFromCopy path -> do
+        InitFromCopy _ path -> do
           traceWith tracer $ BSInitialisingFromCopy path
           tvarFileExists <- doesFileExist fs (extendPath path)
           unless tvarFileExists $
@@ -90,7 +90,7 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
                 unless (BSL.null extra) $ throwIO InMemoryIncompleteDeserialiseExn
                 traceWith tracer $ BSInitialisedFromCopy path
                 pure x
-        InitFromValues slot values -> do
+        InitFromValues slot _ values -> do
           traceWith tracer $ BSInitialisingFromValues slot
           pure (slot, values)
       newTVarIO $ BackingStoreContents slot values

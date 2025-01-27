@@ -117,7 +117,7 @@ type LedgerBackingStore m l =
 
 type BackingStore' m blk = LedgerBackingStore m (ExtLedgerState blk)
 
-type family WriteHint values :: Type
+type family WriteHint diffs :: Type
 type instance WriteHint (LedgerTables l DiffMK) = (l EmptyMK, l EmptyMK)
 
 type family ReadHint values :: Type
@@ -126,10 +126,10 @@ type instance ReadHint (LedgerTables l ValuesMK) = l EmptyMK
 -- | Choose how to initialize the backing store
 data InitFrom values =
     -- | Initialize from a set of values, at the given slot.
-    InitFromValues !(WithOrigin SlotNo) !values
+    InitFromValues !(WithOrigin SlotNo) !(ReadHint values) !values
     -- | Use a snapshot at the given path to overwrite the set of values in the
     -- opened database.
-  | InitFromCopy !FS.FsPath
+  | InitFromCopy !(ReadHint values) !FS.FsPath
 
 {-------------------------------------------------------------------------------
   Value handles
