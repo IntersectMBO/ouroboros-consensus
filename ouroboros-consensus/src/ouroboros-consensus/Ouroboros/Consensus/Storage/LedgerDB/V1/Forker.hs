@@ -88,7 +88,7 @@ implForkerReadTables ::
 implForkerReadTables env ks = do
     traceWith (foeTracer env) ForkerReadTablesStart
     chlog <- readTVarIO (foeChangelog env)
-    unfwd <- readKeySetsWith lvh (current chlog) ks
+    unfwd <- readKeySetsWith lvh (changelogLastFlushedState chlog) ks
     case forwardTableKeySets chlog unfwd of
       Left _err -> error "impossible!"
       Right vs  -> do
@@ -98,7 +98,7 @@ implForkerReadTables env ks = do
     lvh = foeBackingStoreValueHandle env
 
 implForkerRangeReadTables ::
-     (MonadSTM m, HasLedgerTables l, GetTip l)
+     (MonadSTM m, HasLedgerTables l)
   => QueryBatchSize
   -> ForkerEnv m l blk
   -> RangeQueryPrevious l
@@ -126,7 +126,7 @@ implForkerRangeReadTables qbs env rq0 = do
         maxDeletes = ltcollapse $ ltmap (K2 . numDeletesDiffMK) diffs
         nrequested = 1 + max (BackingStore.rqCount rq) (1 + maxDeletes)
 
-    let st = current ldb
+    let st = changelogLastFlushedState ldb
     values <- BackingStore.bsvhRangeRead lvh st (rq{BackingStore.rqCount = nrequested})
     traceWith (foeTracer env) ForkerRangeReadTablesEnd
     pure $ ltliftA2 (doFixupReadResult nrequested) diffs values

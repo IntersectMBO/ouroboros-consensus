@@ -50,7 +50,7 @@ import           Data.Functor ((<&>))
 import           Data.Functor.Product
 import           Data.Kind (Type)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromMaybe)
+import           Data.Maybe (fromMaybe, isJust)
 import           Data.MemPack
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
@@ -1118,7 +1118,7 @@ instance (CanHardFork xs, HasHardForkTxOut xs)
     (HardForkLedgerState (HardForkState hs0))
     (HardForkLedgerState (HardForkState hs1))
     orig@(LedgerTables (ValuesMK vs)) =
-      if (nsToIndex $ Telescope.tip hs0) /= (nsToIndex t1)
+      if isJust $ Match.telescopesMismatch hs0 hs1
       then LedgerTables $ ValuesMK $ extendTables (hmap (const (K ())) t1) vs
       else orig
    where

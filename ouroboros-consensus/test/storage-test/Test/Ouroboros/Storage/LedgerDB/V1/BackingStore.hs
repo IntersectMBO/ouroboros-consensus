@@ -141,7 +141,7 @@ setupBSEnv mkBsArgs mkShfs cleanup = do
 
   let bsi = BS.newBackingStoreInitialiser mempty mkBsArgs (BS.SnapshotsFS shfs)
 
-  bsVar <- newMVar =<< bsi (BS.InitFromValues Origin emptyLedgerTables)
+  bsVar <- newMVar =<< bsi (BS.InitFromValues Origin emptyOTLedgerState emptyLedgerTables)
 
   let
     bsCleanup = do

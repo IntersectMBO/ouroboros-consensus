@@ -83,9 +83,9 @@ data LedgerTablesHandle m l = LedgerTablesHandle {
   , readAll            :: !(m (LedgerTables l ValuesMK))
     -- | Push some diffs into the ledger tables handle.
     --
-    -- The first argument has to be the ledger state before applying the block,
-    -- so that it might be in the era before the second ledger state. See
-    -- 'CanUpgradeLedgerTables'.
+    -- The first argument has to be the ledger state before applying
+    -- the block, the second argument should be the ledger state after
+    -- applying a block. See 'CanUpgradeLedgerTables'.
   , pushDiffs          :: !(forall mk. l mk -> l DiffMK -> m ())
   , takeHandleSnapshot :: !(String -> m CRC)
     -- | Consult the size of the ledger tables in the database. This will return
