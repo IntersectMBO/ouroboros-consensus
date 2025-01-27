@@ -328,7 +328,7 @@ instance CanStowLedgerTables (LedgerState blk)
    unstowLedgerTables (ExtLedgerState lstate hstate) =
      ExtLedgerState (unstowLedgerTables lstate) hstate
 
-instance (txout ~ (TxOut (LedgerState blk)), IndexedMemPack (LedgerState blk EmptyMK) (TxOut (LedgerState blk)))
+instance (txout ~ (TxOut (LedgerState blk)), IndexedMemPack (LedgerState blk EmptyMK) txout)
       => IndexedMemPack (ExtLedgerState blk EmptyMK) txout where
   indexedTypeName (ExtLedgerState st _) = indexedTypeName @(LedgerState blk EmptyMK) @txout st
   indexedPackedByteCount (ExtLedgerState st _) = indexedPackedByteCount st

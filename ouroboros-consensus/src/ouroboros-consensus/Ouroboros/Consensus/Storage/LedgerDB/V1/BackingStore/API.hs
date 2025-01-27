@@ -182,10 +182,10 @@ castBackingStoreValueHandle f g bsvh =
   BackingStoreValueHandle {
       bsvhAtSlot
     , bsvhClose
-    , bsvhReadAll = \s -> f <$> bsvhReadAll s
-    , bsvhRangeRead = \s (RangeQuery prev count) ->
-        fmap f . bsvhRangeRead s $  RangeQuery (fmap g prev) count
-    , bsvhRead = \s -> fmap f . bsvhRead s . g
+    , bsvhReadAll = \rhint -> f <$> bsvhReadAll rhint
+    , bsvhRangeRead = \rhint (RangeQuery prev count) ->
+        fmap f . bsvhRangeRead rhint $  RangeQuery (fmap g prev) count
+    , bsvhRead = \rhint -> fmap f . bsvhRead rhint . g
     , bsvhStat
     }
   where

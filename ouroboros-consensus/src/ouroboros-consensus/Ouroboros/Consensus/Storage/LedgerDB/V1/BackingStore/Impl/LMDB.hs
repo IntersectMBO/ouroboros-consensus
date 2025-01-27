@@ -143,9 +143,9 @@ getDb ::
 getDb (K2 name) = LMDBMK name <$> LMDB.getDatabase (Just name)
 
 readAll ::
-     (Ord (TxIn l), MemPack (TxIn l), IndexedMemPack (l EmptyMK) (TxOut l))
+     (Ord (TxIn l), MemPack (TxIn l), IndexedMemPack idx (TxOut l))
   => Proxy l
-  -> l EmptyMK
+  -> idx
   -> LMDBMK (TxIn l) (TxOut l)
   -> LMDB.Transaction mode (ValuesMK (TxIn l) (TxOut l))
 readAll _ st (LMDBMK _ dbMK) =
@@ -167,10 +167,10 @@ readAll _ st (LMDBMK _ dbMK) =
 -- lexicographical ordering of the serialised keys, or the result of this
 -- function will be unexpected.
 rangeRead ::
-     forall mode l.
-     (Ord (TxIn l), MemPack (TxIn l), IndexedMemPack (l EmptyMK) (TxOut l))
+     forall mode l idx.
+     (Ord (TxIn l), MemPack (TxIn l), IndexedMemPack idx (TxOut l))
   => API.RangeQuery (LedgerTables l KeysMK)
-  -> l EmptyMK
+  -> idx
   -> LMDBMK (TxIn l) (TxOut l)
   -> LMDB.Transaction mode (ValuesMK (TxIn l) (TxOut l))
 rangeRead rq st dbMK =
@@ -194,8 +194,8 @@ rangeRead rq st dbMK =
         db
 
 initLMDBTable ::
-     (IndexedMemPack (l EmptyMK) v, MemPack k)
-  => l EmptyMK
+     (IndexedMemPack idx v, MemPack k)
+  => idx
   -> LMDBMK   k v
   -> ValuesMK k v
   -> LMDB.Transaction LMDB.ReadWrite (EmptyMK k v)
@@ -210,9 +210,9 @@ initLMDBTable st (LMDBMK tblName db) (ValuesMK utxoVals) =
                  utxoVals
 
 readLMDBTable ::
-     (IndexedMemPack (l EmptyMK) v, MemPack k)
+     (IndexedMemPack idx v, MemPack k)
   => Ord k
-  => l EmptyMK
+  => idx
   -> LMDBMK  k v
   -> KeysMK  k v
   -> LMDB.Transaction mode (ValuesMK k v)
@@ -226,8 +226,8 @@ readLMDBTable st (LMDBMK _ db) (KeysMK keys) =
           Just v  -> Map.insert k v m
 
 writeLMDBTable ::
-     (IndexedMemPack (l EmptyMK) v, MemPack k)
-  => l EmptyMK
+     (IndexedMemPack idx v, MemPack k)
+  => idx
   -> LMDBMK  k v
   -> DiffMK  k v
   -> LMDB.Transaction LMDB.ReadWrite (EmptyMK k v)
@@ -393,7 +393,10 @@ lmdbCopy from0 tracer e to = do
 
 -- | Initialise a backing store.
 newLMDBBackingStore ::
-     forall m l. (HasCallStack, HasLedgerTables l, MonadIO m, IOLike m, IndexedMemPack (l EmptyMK) (TxOut l))
+     forall m l. (
+       HasCallStack, HasLedgerTables l, MonadIO m
+     , IOLike m, IndexedMemPack (l EmptyMK) (TxOut l)
+     )
   => Trace.Tracer m API.BackingStoreTrace
   -> LMDBLimits
      -- ^ Configuration parameters for the LMDB database that we

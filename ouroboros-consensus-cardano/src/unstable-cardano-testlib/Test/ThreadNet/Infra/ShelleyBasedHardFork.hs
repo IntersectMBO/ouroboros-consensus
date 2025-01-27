@@ -475,10 +475,16 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
   ejectHardForkTxOut = ejectHardForkTxOutDefault
 
 instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
-      => IndexedMemPack (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)) EmptyMK) (DefaultHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2)) where
-  indexedTypeName _ = typeName @(DefaultHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
+      => IndexedMemPack
+          (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)) EmptyMK)
+          (DefaultHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2)) where
+  indexedTypeName _ =
+    typeName @(DefaultHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
   indexedPackedByteCount _ txout =
-    hcollapse (hcmap (Proxy @(Compose HasLedgerTables LedgerState)) (K . packedByteCount . unwrapTxOut) txout)
+    hcollapse $
+    hcmap (Proxy @(Compose HasLedgerTables LedgerState))
+      (K . packedByteCount . unwrapTxOut)
+      txout
   indexedPackM _ =
     hcollapse . hcimap
       (Proxy @(Compose HasLedgerTables LedgerState))

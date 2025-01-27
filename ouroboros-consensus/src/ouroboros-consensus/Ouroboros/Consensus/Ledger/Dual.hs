@@ -951,7 +951,7 @@ type instance TxOut (LedgerState (DualBlock m a)) = TxOut (LedgerState m)
 instance CanUpgradeLedgerTables (LedgerState (DualBlock m a)) where
   upgradeTables _ _ = id
 
-instance (txout ~ TxOut (LedgerState m), IndexedMemPack (LedgerState m EmptyMK) (TxOut (LedgerState m)))
+instance (txout ~ TxOut (LedgerState m), IndexedMemPack (LedgerState m EmptyMK) txout)
       => IndexedMemPack (LedgerState (DualBlock m a) EmptyMK) txout where
   indexedTypeName (DualLedgerState st _ _) = indexedTypeName @(LedgerState m EmptyMK) @txout st
   indexedPackedByteCount (DualLedgerState st _ _) = indexedPackedByteCount st

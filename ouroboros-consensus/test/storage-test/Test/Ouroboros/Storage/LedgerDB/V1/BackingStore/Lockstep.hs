@@ -299,10 +299,17 @@ instance ( Show ks, Show vs, Show d, Show (BS.WriteHint d), Show (BS.ReadHint vs
   tagStep (BackingStoreState _ before, BackingStoreState _ after) action val =
     map show $ tagBSAction before after action val
 
-deriving stock instance (Show ks, Show vs, Show d, Show (BS.WriteHint d), Show (BS.ReadHint vs)) => Show (BSVal ks vs d a)
+deriving stock instance ( Show ks, Show vs, Show d
+                        , Show (BS.WriteHint d), Show (BS.ReadHint vs)
+                        ) => Show (BSVal ks vs d a)
 
-deriving stock instance (Show ks, Show vs, Show d, Show (BS.WriteHint d), Show (BS.ReadHint vs)) => Show (BSObs ks vs d a)
-deriving stock instance (Eq ks, Eq vs, Eq d, Eq (BS.WriteHint d), Eq (BS.ReadHint vs)) => Eq (BSObs ks vs d a)
+deriving stock instance (Show ks, Show vs, Show d
+                        , Show (BS.WriteHint d), Show (BS.ReadHint vs)
+                        ) => Show (BSObs ks vs d a)
+
+deriving stock instance (Eq ks, Eq vs, Eq d
+                        , Eq (BS.WriteHint d), Eq (BS.ReadHint vs)
+                        ) => Eq (BSObs ks vs d a)
 
 {-------------------------------------------------------------------------------
   @'RunLockstep'@ instance
@@ -397,7 +404,8 @@ runMock lookUp = \case
 
 arbitraryBackingStoreAction ::
      forall ks vs d.
-     ( Eq ks, Eq vs, Eq d, Eq (BS.WriteHint d), Eq (BS.ReadHint vs), Typeable ks, Typeable vs
+     ( Eq ks, Eq vs, Eq d, Typeable ks, Typeable vs
+     , Eq (BS.WriteHint d), Eq (BS.ReadHint vs)
      , QC.Arbitrary ks, QC.Arbitrary vs, QC.Arbitrary d
      , QC.Arbitrary (BS.RangeQuery ks)
      , Mock.MakeDiff vs d
@@ -416,12 +424,15 @@ arbitraryBackingStoreAction findVars (BackingStoreState mock _stats) =
   where
     withoutVars :: [(Int, Gen (Any (LockstepAction (BackingStoreState ks vs d))))]
     withoutVars = [
-        (5, fmap Some $ BSInitFromValues <$> QC.arbitrary <*> pure (Mock.makeReadHint (Proxy @vs)) <*> (Values <$> QC.arbitrary))
-      , (5, fmap Some $ BSInitFromCopy <$> pure (Mock.makeReadHint (Proxy @vs)) <*> genBackingStorePath)
+        (5, fmap Some $ BSInitFromValues <$> QC.arbitrary <*>
+              pure (Mock.makeReadHint (Proxy @vs)) <*> (Values <$> QC.arbitrary))
+      , (5, fmap Some $ BSInitFromCopy <$>
+              pure (Mock.makeReadHint (Proxy @vs)) <*> genBackingStorePath)
       , (2, pure $ Some BSClose)
       , (5, fmap Some $ BSCopy <$> genBackingStorePath)
       , (5, pure $ Some BSValueHandle)
-      , (5, fmap Some $ BSWrite <$> genSlotNo <*> pure (Mock.makeWriteHint (Proxy @d)) <*> genDiff)
+      , (5, fmap Some $ BSWrite <$> genSlotNo <*>
+              pure (Mock.makeWriteHint (Proxy @d)) <*> genDiff)
       ]
 
     withVars ::
@@ -429,8 +440,10 @@ arbitraryBackingStoreAction findVars (BackingStoreState mock _stats) =
       -> [(Int, Gen (Any (LockstepAction (BackingStoreState ks vs d))))]
     withVars genVar = [
           (5, fmap Some $ BSVHClose <$> (opFromRight <$> genVar))
-        , (5, fmap Some $ BSVHRangeRead <$> (opFromRight <$> genVar) <*> pure (Mock.makeReadHint (Proxy @vs)) <*> QC.arbitrary)
-        , (5, fmap Some $ BSVHRead <$> (opFromRight <$> genVar) <*> pure (Mock.makeReadHint (Proxy @vs)) <*> QC.arbitrary)
+        , (5, fmap Some $ BSVHRangeRead <$> (opFromRight <$> genVar) <*>
+                pure (Mock.makeReadHint (Proxy @vs)) <*> QC.arbitrary)
+        , (5, fmap Some $ BSVHRead <$> (opFromRight <$> genVar) <*>
+                pure (Mock.makeReadHint (Proxy @vs)) <*> QC.arbitrary)
         , (5, fmap Some $ BSVHAtSlot <$> (opFromRight <$> genVar))
         , (5, fmap Some $ BSVHStat <$> (opFromRight <$> genVar))
         ]
