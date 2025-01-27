@@ -243,6 +243,9 @@ instance Mock.DiffSize D where
 instance Mock.KeysSize K where
   keysSize (LedgerTables (KeysMK s)) = Set.size s
 
+instance Mock.MakeInitHint V where
+  makeInitHint _ = emptyOTLedgerState
+
 instance Mock.MakeWriteHint D where
   makeWriteHint _ = (emptyOTLedgerState, emptyOTLedgerState)
 

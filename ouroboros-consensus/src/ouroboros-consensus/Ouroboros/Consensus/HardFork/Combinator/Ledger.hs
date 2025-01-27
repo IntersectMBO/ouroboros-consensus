@@ -93,6 +93,7 @@ import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util.Condense
+import           Ouroboros.Consensus.Util.IndexedMemPack (IndexedMemPack)
 
 -- $setup
 -- >>> import Image.LaTeX.Render
@@ -1097,6 +1098,7 @@ class ( Show (HardForkTxOut xs)
       , Eq (HardForkTxOut xs)
       , NoThunks (HardForkTxOut xs)
       , MemPack (HardForkTxOut xs)
+      , IndexedMemPack (LedgerState (HardForkBlock xs) EmptyMK) (HardForkTxOut xs)
       ) => HasHardForkTxOut xs where
   type HardForkTxOut xs :: Type
   type HardForkTxOut xs = DefaultHardForkTxOut xs

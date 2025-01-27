@@ -29,6 +29,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API (
   , BackingStore'
   , DiffsToFlush (..)
   , InitFrom (..)
+  , InitHint
   , LedgerBackingStore
   , ReadHint
   , WriteHint
@@ -117,6 +118,9 @@ type LedgerBackingStore m l =
 
 type BackingStore' m blk = LedgerBackingStore m (ExtLedgerState blk)
 
+type family InitHint values :: Type
+type instance InitHint (LedgerTables l ValuesMK) = l EmptyMK
+
 type family WriteHint diffs :: Type
 type instance WriteHint (LedgerTables l DiffMK) = (l EmptyMK, l EmptyMK)
 
@@ -126,10 +130,10 @@ type instance ReadHint (LedgerTables l ValuesMK) = l EmptyMK
 -- | Choose how to initialize the backing store
 data InitFrom values =
     -- | Initialize from a set of values, at the given slot.
-    InitFromValues !(WithOrigin SlotNo) !(ReadHint values) !values
+    InitFromValues !(WithOrigin SlotNo) !(InitHint values) !values
     -- | Use a snapshot at the given path to overwrite the set of values in the
     -- opened database.
-  | InitFromCopy !(ReadHint values) !FS.FsPath
+  | InitFromCopy !(InitHint values) !FS.FsPath
 
 {-------------------------------------------------------------------------------
   Value handles

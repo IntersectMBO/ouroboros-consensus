@@ -25,6 +25,7 @@ module Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock (
   , LookupKeys (..)
   , LookupKeysRange (..)
   , MakeDiff (..)
+  , MakeInitHint (..)
   , MakeReadHint (..)
   , MakeWriteHint (..)
   , ValuesLength (..)
@@ -122,7 +123,8 @@ data Err =
 -- | Abstract over interactions between values, keys and diffs.
 class ( EmptyValues vs, ApplyDiff vs d, LookupKeysRange ks vs
       , LookupKeys ks vs, ValuesLength vs, MakeDiff vs d
-      , DiffSize d, KeysSize ks, MakeWriteHint d, MakeReadHint vs
+      , DiffSize d, KeysSize ks
+      , MakeInitHint vs, MakeWriteHint d, MakeReadHint vs
       ) => HasOps ks vs d
 
 class EmptyValues vs where
@@ -150,6 +152,9 @@ class DiffSize d where
 
 class KeysSize ks where
   keysSize :: ks -> Int
+
+class MakeInitHint vs where
+  makeInitHint :: Proxy vs -> BS.InitHint vs
 
 class MakeWriteHint d where
   makeWriteHint :: Proxy d -> BS.WriteHint d
@@ -184,7 +189,7 @@ runMockMonad (MockMonad t) = runState . runExceptT $ t
 mBSInitFromValues ::
      forall vs m. (MonadState (Mock vs) m)
   => WithOrigin SlotNo
-  -> BS.ReadHint vs
+  -> BS.InitHint vs
   -> vs
   -> m ()
 mBSInitFromValues sl _st vs = modify (\m -> m {
@@ -195,7 +200,7 @@ mBSInitFromValues sl _st vs = modify (\m -> m {
 
 mBSInitFromCopy ::
      forall vs m. (MonadState (Mock vs) m, MonadError Err m)
-  => BS.ReadHint vs
+  => BS.InitHint vs
   -> FS.FsPath
   -> m ()
 mBSInitFromCopy _st bsp = do

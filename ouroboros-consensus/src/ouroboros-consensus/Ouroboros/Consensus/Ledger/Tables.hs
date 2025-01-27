@@ -206,6 +206,7 @@ class ( Ord (TxIn l)
       , NoThunks (TxOut l)
       , MemPack (TxIn l)
       , MemPack (TxOut l)
+      , IndexedMemPack (MemPackIdx l EmptyMK) (TxOut l)
       ) => HasLedgerTables l where
 
   -- | Extract the ledger tables from a ledger state
@@ -241,6 +242,7 @@ instance ( Ord (TxIn l)
          , NoThunks (TxOut l)
          , MemPack (TxIn l)
          , MemPack (TxOut l)
+         , IndexedMemPack (MemPackIdx l EmptyMK) (TxOut l)
          ) => HasLedgerTables (LedgerTables l) where
   projectLedgerTables = castLedgerTables
   withLedgerTables _ = castLedgerTables

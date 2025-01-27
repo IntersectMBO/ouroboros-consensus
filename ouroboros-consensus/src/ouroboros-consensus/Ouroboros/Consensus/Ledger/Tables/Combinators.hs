@@ -50,7 +50,6 @@ module Ouroboros.Consensus.Ledger.Tables.Combinators (
   , ltliftA4
     -- * Applicative and Traversable
   , ltzipWith2A
-  , ltzipWith2A'
     -- * Collapsing
   , ltcollapse
     -- * Lifted functions
@@ -84,8 +83,17 @@ import           Ouroboros.Consensus.Util.IndexedMemPack
 -- 'Ouroboros.Consensus.Ledger.Tables.Diff.diff'. Once the ledger provides
 -- deltas instead of us being the ones that compute them, we can probably drop
 -- this constraint.
-type LedgerTableConstraints l = (Ord (TxIn l), Eq (TxOut l), MemPack (TxOut l), MemPack (TxIn l))
-type LedgerTableConstraints' k v = (Ord k, Eq v, MemPack v, MemPack k)
+type LedgerTableConstraints l =
+  ( Ord (TxIn l), Eq (TxOut l)
+  , MemPack (TxOut l), MemPack (TxIn l)
+  , IndexedMemPack (MemPackIdx l EmptyMK) (TxOut l)
+  )
+
+type LedgerTableConstraints' l k v =
+  ( Ord k, Eq v
+  , MemPack v, MemPack k
+  , IndexedMemPack (MemPackIdx l EmptyMK) v
+  )
 
 {-------------------------------------------------------------------------------
   Functor
@@ -94,7 +102,7 @@ type LedgerTableConstraints' k v = (Ord k, Eq v, MemPack v, MemPack k)
 -- | Like 'bmap', but for ledger tables.
 ltmap ::
      LedgerTableConstraints l
-  => (forall k v. (LedgerTableConstraints' k v) => mk1 k v -> mk2 k v)
+  => (forall k v. (LedgerTableConstraints' l k v) => mk1 k v -> mk2 k v)
   -> LedgerTables l mk1
   -> LedgerTables l mk2
 ltmap f (LedgerTables x) = LedgerTables $ f x
@@ -106,7 +114,7 @@ ltmap f (LedgerTables x) = LedgerTables $ f x
 -- | Like 'btraverse', but for ledger tables.
 lttraverse ::
      (Applicative f, LedgerTableConstraints l)
-  => (forall k v. (LedgerTableConstraints' k v) => mk1 k v -> f (mk2 k v))
+  => (forall k v. (LedgerTableConstraints' l k v) => mk1 k v -> f (mk2 k v))
   -> LedgerTables l mk1
   -> f (LedgerTables l mk2)
 lttraverse f (LedgerTables x) = LedgerTables <$> f x
@@ -128,15 +136,9 @@ ltsequence = lttraverse unComp2
 -- | Like 'bpure', but for ledger tables.
 ltpure ::
        LedgerTableConstraints l
-    => (forall k v. (LedgerTableConstraints' k v) => mk k v)
+    => (forall k v. (LedgerTableConstraints' l k v) => mk k v)
     -> LedgerTables l mk
 ltpure = LedgerTables
-
-ltpure' ::
-       (LedgerTableConstraints l, IndexedMemPack (l EmptyMK) (TxOut l))
-    => (forall k v. (LedgerTableConstraints' k v, IndexedMemPack (l EmptyMK) v) => mk k v)
-    -> LedgerTables l mk
-ltpure' = LedgerTables
 
 -- | Like 'bprod', but for ledger tables.
 ltprod :: LedgerTables l f -> LedgerTables l g -> LedgerTables l (f `Product2` g)
@@ -156,30 +158,22 @@ ltap f x = ltmap g $ ltprod f x
 
 ltliftA ::
      LedgerTableConstraints l
-  => (forall k v. (LedgerTableConstraints' k v) => mk1 k v -> mk2 k v)
+  => (forall k v. (LedgerTableConstraints' l k v) => mk1 k v -> mk2 k v)
   -> LedgerTables l mk1
   -> LedgerTables l mk2
 ltliftA f x = ltpure (fn2_1 f) `ltap` x
 
 ltliftA2 ::
      LedgerTableConstraints l
-  => (forall k v. (LedgerTableConstraints' k v) => mk1 k v -> mk2 k v -> mk3 k v)
+  => (forall k v. (LedgerTableConstraints' l k v) => mk1 k v -> mk2 k v -> mk3 k v)
   -> LedgerTables l mk1
   -> LedgerTables l mk2
   -> LedgerTables l mk3
 ltliftA2 f x x' = ltpure (fn2_2 f) `ltap` x `ltap` x'
 
-ltliftA2' ::
-     (LedgerTableConstraints l, IndexedMemPack (l EmptyMK) (TxOut l))
-  => (forall k v. (LedgerTableConstraints' k v, IndexedMemPack (l EmptyMK) v) => mk1 k v -> mk2 k v -> mk3 k v)
-  -> LedgerTables l mk1
-  -> LedgerTables l mk2
-  -> LedgerTables l mk3
-ltliftA2' f x x' = ltpure' (fn2_2 f) `ltap` x `ltap` x'
-
 ltliftA3 ::
      LedgerTableConstraints l
-  => (forall k v. (LedgerTableConstraints' k v) => mk1 k v -> mk2 k v -> mk3 k v -> mk4 k v)
+  => (forall k v. (LedgerTableConstraints' l k v) => mk1 k v -> mk2 k v -> mk3 k v -> mk4 k v)
   -> LedgerTables l mk1
   -> LedgerTables l mk2
   -> LedgerTables l mk3
@@ -188,7 +182,7 @@ ltliftA3 f x x' x'' = ltpure (fn2_3 f) `ltap` x `ltap` x' `ltap` x''
 
 ltliftA4 ::
      LedgerTableConstraints l
-  => (    forall k v. (LedgerTableConstraints' k v)
+  => (    forall k v. (LedgerTableConstraints' l k v)
        => mk1 k v -> mk2 k v -> mk3 k v -> mk4 k v -> mk5 k v
      )
   -> LedgerTables l mk1
@@ -205,20 +199,11 @@ ltliftA4 f x x' x'' x''' =
 
 ltzipWith2A ::
      (Applicative f, LedgerTableConstraints l)
-  => (forall k v. (Ord k, MemPack v, MemPack k) => mk1 k v -> mk2 k v -> f (mk3 k v))
+  => (forall k v. LedgerTableConstraints' l k v => mk1 k v -> mk2 k v -> f (mk3 k v))
   -> LedgerTables l mk1
   -> LedgerTables l mk2
   -> f (LedgerTables l mk3)
 ltzipWith2A f = ltsequence .: ltliftA2 (Comp2 .: f)
-
-ltzipWith2A' ::
-     (Applicative f, LedgerTableConstraints l, IndexedMemPack (l EmptyMK) (TxOut l))
-  => (forall k v. (Ord k, MemPack v, MemPack k, IndexedMemPack (l EmptyMK) v) => mk1 k v -> mk2 k v -> f (mk3 k v))
-  -> LedgerTables l mk1
-  -> LedgerTables l mk2
-  -> f (LedgerTables l mk3)
-ltzipWith2A' f = ltsequence .: ltliftA2' (Comp2 .: f)
-
 
 {-------------------------------------------------------------------------------
   Collapsing
@@ -231,13 +216,13 @@ ltcollapse = unK2 . getLedgerTables
   Semigroup and Monoid
 -------------------------------------------------------------------------------}
 
-instance ( forall k v. (LedgerTableConstraints' k v) => Semigroup (mk k v)
+instance ( forall k v. (LedgerTableConstraints' l k v) => Semigroup (mk k v)
          , LedgerTableConstraints l
          ) => Semigroup (LedgerTables l mk) where
   (<>) :: LedgerTables l mk -> LedgerTables l mk -> LedgerTables l mk
   (<>) = ltliftA2 (<>)
 
-instance ( forall k v. (LedgerTableConstraints' k v) => Monoid (mk k v)
+instance ( forall k v. (LedgerTableConstraints' l k v) => Monoid (mk k v)
          , LedgerTableConstraints l
          ) => Monoid (LedgerTables l mk) where
   mempty :: LedgerTables l mk

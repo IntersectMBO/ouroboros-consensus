@@ -4,6 +4,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 
 -- | See "Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API" for the
 -- documentation. This module just puts together the implementations for the
@@ -43,7 +44,6 @@ import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
 import           Ouroboros.Consensus.Util.Args
-import           Ouroboros.Consensus.Util.IndexedMemPack
 import           Ouroboros.Consensus.Util.IOLike
 import           System.FS.API
 import           System.FS.IO
@@ -58,7 +58,7 @@ restoreBackingStore ::
      , HasLedgerTables l
      , HasCallStack
      , CanUpgradeLedgerTables l
-     , IndexedMemPack (l EmptyMK) (TxOut l)
+     , MemPackIdx l EmptyMK ~ l EmptyMK
      )
   => Tracer m FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m
@@ -75,7 +75,7 @@ newBackingStore ::
      , HasLedgerTables l
      , HasCallStack
      , CanUpgradeLedgerTables l
-     , IndexedMemPack (l EmptyMK) (TxOut l)
+     , MemPackIdx l EmptyMK ~ l EmptyMK
      )
   => Tracer m FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m
@@ -92,7 +92,7 @@ newBackingStoreInitialiser ::
      , HasLedgerTables l
      , HasCallStack
      , CanUpgradeLedgerTables l
-     , IndexedMemPack (l EmptyMK) (TxOut l)
+     , MemPackIdx l EmptyMK ~ l EmptyMK
      )
   => Tracer m FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m
