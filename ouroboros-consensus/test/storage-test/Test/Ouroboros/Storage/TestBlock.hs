@@ -580,11 +580,8 @@ deriving via TrivialLedgerTables (LedgerState TestBlock)
     instance CanStowLedgerTables (LedgerState TestBlock)
 deriving via TrivialLedgerTables (LedgerState TestBlock)
     instance CanUpgradeLedgerTables (LedgerState TestBlock)
-instance IndexedMemPack (LedgerState TestBlock EmptyMK) Void where
-  indexedTypeName _ = typeName @Void
-  indexedPackedByteCount _ = packedByteCount
-  indexedPackM _ = packM
-  indexedUnpackM _ = unpackM
+deriving via Void
+    instance IndexedMemPack (LedgerState TestBlock EmptyMK) Void
 
 instance ApplyBlock (LedgerState TestBlock) TestBlock where
   applyBlockLedgerResult _ tb@TestBlock{..} (TickedTestLedger TestLedger{..})

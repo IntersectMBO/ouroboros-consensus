@@ -1,10 +1,11 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
@@ -112,11 +113,8 @@ instance HasHardForkTxOut '[ByronBlock] where
   ejectHardForkTxOut IZ txout    = absurd txout
   ejectHardForkTxOut (IS idx') _ = case idx' of {}
 
-instance IndexedMemPack (LedgerState (HardForkBlock '[ByronBlock]) EmptyMK) Void where
-  indexedTypeName _ = typeName @Void
-  indexedPackedByteCount _ = packedByteCount
-  indexedPackM _ = packM
-  indexedUnpackM _ = unpackM
+deriving via Void
+    instance IndexedMemPack (LedgerState (HardForkBlock '[ByronBlock]) EmptyMK) Void
 
 instance BlockSupportsHFLedgerQuery '[ByronBlock] where
   answerBlockQueryHFLookup IZ      _cfg  (q :: BlockQuery ByronBlock QFLookupTables result) _dlv = case q of {}

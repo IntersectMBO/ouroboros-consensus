@@ -131,11 +131,8 @@ instance LedgerTablesAreTrivial (LedgerState ByronSpecBlock) where
 instance LedgerTablesAreTrivial (Ticked (LedgerState ByronSpecBlock)) where
   convertMapKind (TickedByronSpecLedgerState x y) =
       TickedByronSpecLedgerState x y
-instance IndexedMemPack (LedgerState ByronSpecBlock EmptyMK) Void where
-  indexedTypeName _ = typeName @Void
-  indexedPackedByteCount _ = packedByteCount
-  indexedPackM _ = packM
-  indexedUnpackM _ = unpackM
+deriving via Void
+    instance IndexedMemPack (LedgerState ByronSpecBlock EmptyMK) Void
 deriving via TrivialLedgerTables (LedgerState ByronSpecBlock)
     instance HasLedgerTables (LedgerState ByronSpecBlock)
 deriving via TrivialLedgerTables (Ticked (LedgerState ByronSpecBlock))
