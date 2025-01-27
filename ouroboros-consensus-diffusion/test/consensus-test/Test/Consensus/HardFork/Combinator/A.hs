@@ -208,12 +208,8 @@ instance LedgerTablesAreTrivial (LedgerState BlockA) where
   convertMapKind (LgrA x y) = LgrA x y
 instance LedgerTablesAreTrivial (Ticked (LedgerState BlockA)) where
   convertMapKind (TickedLedgerStateA x) = TickedLedgerStateA (convertMapKind x)
-instance IndexedMemPack (LedgerState BlockA EmptyMK) Void where
-  indexedTypeName _ = typeName @Void
-  indexedPackedByteCount _ = packedByteCount
-  indexedPackM _ = packM
-  indexedUnpackM _ = unpackM
-
+deriving via Void
+    instance IndexedMemPack (LedgerState BlockA EmptyMK) Void
 deriving via TrivialLedgerTables (LedgerState BlockA)
     instance HasLedgerTables (LedgerState BlockA)
 deriving via TrivialLedgerTables (Ticked (LedgerState BlockA))

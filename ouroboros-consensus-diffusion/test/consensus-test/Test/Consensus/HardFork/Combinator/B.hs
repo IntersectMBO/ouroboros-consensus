@@ -191,11 +191,8 @@ deriving via TrivialLedgerTables (LedgerState BlockB)
     instance CanStowLedgerTables (LedgerState BlockB)
 deriving via TrivialLedgerTables (LedgerState BlockB)
     instance CanUpgradeLedgerTables (LedgerState BlockB)
-instance IndexedMemPack (LedgerState BlockB EmptyMK) Void where
-  indexedTypeName _ = typeName @Void
-  indexedPackedByteCount _ = packedByteCount
-  indexedPackM _ = packM
-  indexedUnpackM _ = unpackM
+deriving via Void
+    instance IndexedMemPack (LedgerState BlockB EmptyMK) Void
 
 type instance LedgerCfg (LedgerState BlockB) = ()
 

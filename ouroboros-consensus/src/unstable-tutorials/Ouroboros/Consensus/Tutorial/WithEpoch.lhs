@@ -691,11 +691,8 @@ For reference on these instances and their meaning, please see the appendix in
 >     instance HasLedgerTables (LedgerState BlockD)
 > deriving via TrivialLedgerTables (Ticked (LedgerState BlockD))
 >     instance HasLedgerTables (Ticked (LedgerState BlockD))
-> instance IndexedMemPack (LedgerState BlockD EmptyMK) Void where
->   indexedTypeName _ = typeName @Void
->   indexedPackedByteCount _ = packedByteCount
->   indexedPackM _ = packM
->   indexedUnpackM _ = unpackM
+> deriving via Void
+>     instance IndexedMemPack (LedgerState BlockD EmptyMK) Void
 > deriving via TrivialLedgerTables (LedgerState BlockD)
 >     instance CanStowLedgerTables (LedgerState BlockD)
 > deriving via TrivialLedgerTables (LedgerState BlockD)

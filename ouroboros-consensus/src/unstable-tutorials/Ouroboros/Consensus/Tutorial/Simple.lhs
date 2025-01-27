@@ -749,11 +749,8 @@ and we use the default implementation
 >       TickedLedgerStateC (convertMapKind x)
 > deriving via TrivialLedgerTables (LedgerState BlockC)
 >     instance HasLedgerTables (LedgerState BlockC)
-> instance IndexedMemPack (LedgerState BlockC EmptyMK) Void where
->   indexedTypeName _ = typeName @Void
->   indexedPackedByteCount _ = packedByteCount
->   indexedPackM _ = packM
->   indexedUnpackM _ = unpackM
+> deriving via Void
+>   instance IndexedMemPack (LedgerState BlockC EmptyMK) Void
 > deriving via TrivialLedgerTables (Ticked (LedgerState BlockC))
 >     instance HasLedgerTables (Ticked (LedgerState BlockC))
 > deriving via TrivialLedgerTables (LedgerState BlockC)
