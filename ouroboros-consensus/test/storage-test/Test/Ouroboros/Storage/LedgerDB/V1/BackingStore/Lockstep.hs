@@ -108,8 +108,10 @@ type BSAct ks vs d a =
 type BSVar ks vs d a =
   ModelVar (BackingStoreState ks vs d) a
 
-instance ( Show ks, Show vs, Show d, Show (BS.WriteHint d), Show (BS.ReadHint vs)
-         , Eq ks, Eq vs, Eq d, Eq (BS.WriteHint d), Eq (BS.ReadHint vs)
+instance ( Show ks, Show vs, Show d
+         , Show (BS.InitHint vs), Show (BS.WriteHint d), Show (BS.ReadHint vs)
+         , Eq ks, Eq vs, Eq d
+         , Eq (BS.InitHint vs), Eq (BS.WriteHint d), Eq (BS.ReadHint vs)
          , Typeable ks, Typeable vs, Typeable d, Typeable (BS.WriteHint d)
          , QC.Arbitrary ks, QC.Arbitrary vs, QC.Arbitrary d
          , QC.Arbitrary (BS.RangeQuery ks)
@@ -118,11 +120,11 @@ instance ( Show ks, Show vs, Show d, Show (BS.WriteHint d), Show (BS.ReadHint vs
   data Action (Lockstep (BackingStoreState ks vs d)) a where
     -- Reopen a backing store by intialising from values.
     BSInitFromValues :: WithOrigin SlotNo
-                     -> BS.ReadHint vs
+                     -> BS.InitHint vs
                      -> Values vs
                      -> BSAct ks vs d ()
     -- Reopen a backing store by initialising from a copy.
-    BSInitFromCopy   :: BS.ReadHint vs
+    BSInitFromCopy   :: BS.InitHint vs
                      -> FS.FsPath
                      -> BSAct ks vs d ()
     BSClose          :: BSAct ks vs d ()
@@ -156,13 +158,17 @@ instance ( Show ks, Show vs, Show d, Show (BS.WriteHint d), Show (BS.ReadHint vs
   arbitraryAction     = Lockstep.arbitraryAction
   shrinkAction        = Lockstep.shrinkAction
 
-deriving stock instance (Show ks, Show vs, Show d, Show (BS.WriteHint d), Show (BS.ReadHint vs))
-                     => Show (LockstepAction (BackingStoreState ks vs d) a)
-deriving stock instance (Eq ks, Eq vs, Eq d, Eq (BS.WriteHint d), Eq (BS.ReadHint vs))
-                     => Eq (LockstepAction (BackingStoreState ks vs d) a)
+deriving stock instance ( Show ks, Show vs, Show d
+                        , Show (BS.InitHint vs), Show (BS.WriteHint d), Show (BS.ReadHint vs)
+                        ) => Show (LockstepAction (BackingStoreState ks vs d) a)
+deriving stock instance ( Eq ks, Eq vs, Eq d
+                        , Eq (BS.InitHint vs), Eq (BS.WriteHint d), Eq (BS.ReadHint vs)
+                        ) => Eq (LockstepAction (BackingStoreState ks vs d) a)
 
-instance ( Show ks, Show vs, Show d, Show (BS.WriteHint d), Show (BS.ReadHint vs)
-         , Eq ks, Eq vs, Eq d, Eq (BS.WriteHint d), Eq (BS.ReadHint vs)
+instance ( Show ks, Show vs, Show d
+         , Show (BS.InitHint vs), Show (BS.WriteHint d), Show (BS.ReadHint vs)
+         , Eq ks, Eq vs, Eq d
+         , Eq (BS.InitHint vs), Eq (BS.WriteHint d), Eq (BS.ReadHint vs)
          , Typeable ks, Typeable vs, Typeable d, Typeable (BS.WriteHint d)
          , QC.Arbitrary ks, QC.Arbitrary vs, QC.Arbitrary d
          , QC.Arbitrary (BS.RangeQuery ks)
@@ -199,8 +205,10 @@ modelPrecondition (BackingStoreState mock _stats) action = case action of
 type BSVal ks vs d a = ModelValue (BackingStoreState ks vs d) a
 type BSObs ks vs d a = Observable (BackingStoreState ks vs d) a
 
-instance ( Show ks, Show vs, Show d, Show (BS.WriteHint d), Show (BS.ReadHint vs)
-         , Eq ks, Eq vs, Eq d, Eq (BS.WriteHint d), Eq (BS.ReadHint vs)
+instance ( Show ks, Show vs, Show d
+         , Show (BS.InitHint vs), Show (BS.WriteHint d), Show (BS.ReadHint vs)
+         , Eq ks, Eq vs, Eq d
+         , Eq (BS.InitHint vs), Eq (BS.WriteHint d), Eq (BS.ReadHint vs)
          , Typeable ks, Typeable vs, Typeable d, Typeable (BS.WriteHint d)
          , QC.Arbitrary ks, QC.Arbitrary vs, QC.Arbitrary d
          , QC.Arbitrary (BS.RangeQuery ks)
@@ -315,8 +323,10 @@ deriving stock instance (Eq ks, Eq vs, Eq d
   @'RunLockstep'@ instance
 -------------------------------------------------------------------------------}
 
-instance ( Show ks, Show vs, Show d, Show (BS.WriteHint d), Show (BS.ReadHint vs)
-         , Eq ks, Eq vs, Eq d, Eq (BS.WriteHint d), Eq (BS.ReadHint vs)
+instance ( Show ks, Show vs, Show d
+         , Show (BS.InitHint vs), Show (BS.WriteHint d), Show (BS.ReadHint vs)
+         , Eq ks, Eq vs, Eq d
+         , Eq (BS.InitHint vs), Eq (BS.WriteHint d), Eq (BS.ReadHint vs)
          , Typeable ks, Typeable vs, Typeable d, Typeable (BS.WriteHint d)
          , QC.Arbitrary ks, QC.Arbitrary vs, QC.Arbitrary d
          , QC.Arbitrary (BS.RangeQuery ks)
@@ -405,10 +415,11 @@ runMock lookUp = \case
 arbitraryBackingStoreAction ::
      forall ks vs d.
      ( Eq ks, Eq vs, Eq d, Typeable ks, Typeable vs
-     , Eq (BS.WriteHint d), Eq (BS.ReadHint vs)
+     , Eq (BS.InitHint vs), Eq (BS.WriteHint d), Eq (BS.ReadHint vs)
      , QC.Arbitrary ks, QC.Arbitrary vs, QC.Arbitrary d
      , QC.Arbitrary (BS.RangeQuery ks)
      , Mock.MakeDiff vs d
+     , Mock.MakeInitHint vs
      , Mock.MakeWriteHint d
      , Mock.MakeReadHint vs
      )
@@ -425,9 +436,9 @@ arbitraryBackingStoreAction findVars (BackingStoreState mock _stats) =
     withoutVars :: [(Int, Gen (Any (LockstepAction (BackingStoreState ks vs d))))]
     withoutVars = [
         (5, fmap Some $ BSInitFromValues <$> QC.arbitrary <*>
-              pure (Mock.makeReadHint (Proxy @vs)) <*> (Values <$> QC.arbitrary))
+              pure (Mock.makeInitHint (Proxy @vs)) <*> (Values <$> QC.arbitrary))
       , (5, fmap Some $ BSInitFromCopy <$>
-              pure (Mock.makeReadHint (Proxy @vs)) <*> genBackingStorePath)
+              pure (Mock.makeInitHint (Proxy @vs)) <*> genBackingStorePath)
       , (2, pure $ Some BSClose)
       , (5, fmap Some $ BSCopy <$> genBackingStorePath)
       , (5, pure $ Some BSValueHandle)
@@ -485,7 +496,8 @@ arbitraryBackingStoreAction findVars (BackingStoreState mock _stats) =
 
 shrinkBackingStoreAction ::
        forall ks vs d a.
-       ( Typeable vs, Eq ks, Eq vs, Eq d, Eq (BS.WriteHint d), Eq (BS.ReadHint vs)
+       ( Typeable vs, Eq ks, Eq vs, Eq d
+       , Eq (BS.InitHint vs), Eq (BS.WriteHint d), Eq (BS.ReadHint vs)
        , QC.Arbitrary d, QC.Arbitrary (BS.RangeQuery ks), QC.Arbitrary ks
        )
     => ModelFindVariables (BackingStoreState ks vs d)

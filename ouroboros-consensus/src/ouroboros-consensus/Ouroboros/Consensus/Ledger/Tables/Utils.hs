@@ -1,8 +1,10 @@
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 
 -- | A collection of useful combinators to shorten the code in other places.
 --
@@ -125,7 +127,7 @@ rawPrependDiffs (DiffMK d1) (DiffMK d2) = DiffMK (d1 <> d2)
 -- | Prepend diffs from the first ledger state to the diffs from the second
 -- ledger state. Returns ledger tables.
 prependDiffs' ::
-     (SameUtxoTypes l l'', SameUtxoTypes l' l'', HasLedgerTables l, HasLedgerTables l')
+     (SameUtxoTypes l l'', SameUtxoTypes l' l'', HasLedgerTables l, HasLedgerTables l', HasLedgerTables l'')
   => l DiffMK -> l' DiffMK -> LedgerTables l'' DiffMK
 prependDiffs' l1 l2 = ltliftA2 rawPrependDiffs (ltprj l1) (ltprj l2)
 
@@ -149,7 +151,7 @@ applyDiffsMK (ValuesMK vals) (DiffMK diffs) = ValuesMK (Diff.applyDiff vals diff
 -- | Apply diffs from the second ledger state to the values of the first ledger
 -- state. Returns ledger tables.
 applyDiffs' ::
-     (SameUtxoTypes l l'', SameUtxoTypes l' l'', HasLedgerTables l, HasLedgerTables l')
+     (SameUtxoTypes l l'', SameUtxoTypes l' l'', HasLedgerTables l, HasLedgerTables l', HasLedgerTables l'')
   => l ValuesMK -> l' DiffMK -> LedgerTables l'' ValuesMK
 applyDiffs' l1 l2 = ltliftA2 applyDiffsMK (ltprj l1) (ltprj l2)
 
@@ -175,7 +177,7 @@ applyDiffForKeys ::
 applyDiffForKeys l1 l2 l3 = ltwith l3 $ applyDiffForKeys' (ltprj l1) l2 l3
 
 applyDiffForKeys' ::
-     (SameUtxoTypes l l'', SameUtxoTypes l l', HasLedgerTables l, HasLedgerTables l')
+     (SameUtxoTypes l l'', SameUtxoTypes l l', HasLedgerTables l, HasLedgerTables l', HasLedgerTables l'')
   => LedgerTables l ValuesMK -> LedgerTables l KeysMK -> l' DiffMK -> LedgerTables l'' ValuesMK
 applyDiffForKeys' l1 l2 l3 = ltliftA3 rawApplyDiffForKeys (castLedgerTables l1) (castLedgerTables l2) (ltprj l3)
 
@@ -208,7 +210,7 @@ valuesAsDiffs l = trackingToDiffs $ ltwith l $ ltliftA (rawCalculateDifference e
 -- is considered /before/, the second ledger state is considered /after/.
 -- Returns ledger tables.
 calculateDifference' ::
-     (SameUtxoTypes l l'', SameUtxoTypes l' l'', HasLedgerTables l, HasLedgerTables l')
+     (SameUtxoTypes l l'', SameUtxoTypes l' l'', HasLedgerTables l, HasLedgerTables l', HasLedgerTables l'')
   => l ValuesMK -> l' ValuesMK -> LedgerTables l'' TrackingMK
 calculateDifference' l1 l2 = ltliftA2 rawCalculateDifference (ltprj l1) (ltprj l2)
 
@@ -235,7 +237,7 @@ rawAttachAndApplyDiffs (ValuesMK v) (DiffMK d) = TrackingMK (Diff.applyDiff v d)
 -- second ledger state, and returns the resulting values together with the
 -- applied diff.
 attachAndApplyDiffs' ::
-     (SameUtxoTypes l l'', SameUtxoTypes l' l'', HasLedgerTables l, HasLedgerTables l')
+     (SameUtxoTypes l l'', SameUtxoTypes l' l'', HasLedgerTables l, HasLedgerTables l', HasLedgerTables l'')
   => l' ValuesMK -> l DiffMK -> LedgerTables l'' TrackingMK
 attachAndApplyDiffs' l1 l2 = ltliftA2 rawAttachAndApplyDiffs (ltprj l1) (ltprj l2)
 
@@ -278,7 +280,7 @@ rawPrependTrackingDiffs (TrackingMK _ d1) (TrackingMK v d2) =
 --
 -- PRECONDITION:  See 'rawPrependTrackingDiffs'.
 prependTrackingDiffs' ::
-     (SameUtxoTypes l l'', SameUtxoTypes l' l'', HasLedgerTables l, HasLedgerTables l')
+     (SameUtxoTypes l l'', SameUtxoTypes l' l'', HasLedgerTables l, HasLedgerTables l', HasLedgerTables l'')
   => l TrackingMK -> l' TrackingMK -> LedgerTables l'' TrackingMK
 prependTrackingDiffs' l1 l2 = ltliftA2 rawPrependTrackingDiffs (ltprj l1) (ltprj l2)
 
@@ -302,6 +304,6 @@ restrictValuesMK ::
 restrictValuesMK (ValuesMK v) (KeysMK k) = ValuesMK $ v `Map.restrictKeys` k
 
 restrictValues' ::
-     (SameUtxoTypes l l'', SameUtxoTypes l' l'', HasLedgerTables l, HasLedgerTables l')
+     (SameUtxoTypes l l'', SameUtxoTypes l' l'', HasLedgerTables l, HasLedgerTables l', HasLedgerTables l'')
   => l ValuesMK -> l' KeysMK -> LedgerTables l'' ValuesMK
 restrictValues' l1 l2 = ltliftA2 restrictValuesMK (ltprj l1) (ltprj l2)

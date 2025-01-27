@@ -10,6 +10,7 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 
 -- | A 'BackingStore' implementation based on [LMDB](http://www.lmdb.tech/doc/).
 module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB (
@@ -327,7 +328,7 @@ checkAndOpenDbDirWithRetry gdd shfs@(FS.SomeHasFS fs) path =
 -- | Initialise an LMDB database from these provided values.
 initFromVals ::
      forall l m.
-     (HasLedgerTables l, MonadIO m, IndexedMemPack (l EmptyMK) (TxOut l))
+     (HasLedgerTables l, MonadIO m, MemPackIdx l EmptyMK ~ l EmptyMK)
   => Trace.Tracer m API.BackingStoreTrace
   -> WithOrigin SlotNo
      -- ^ The slot number up to which the ledger tables contain values.
@@ -343,7 +344,7 @@ initFromVals tracer dbsSeq vals env st lst backingTables = do
   Trace.traceWith tracer $ API.BSInitialisingFromValues dbsSeq
   liftIO $ LMDB.readWriteTransaction env $
     withDbSeqNoRWMaybeNull st $ \case
-      Nothing -> ltzipWith2A' (initLMDBTable lst) backingTables vals
+      Nothing -> ltzipWith2A (initLMDBTable lst) backingTables vals
                  $> ((), DbSeqNo{dbsSeq})
       Just _ -> liftIO . throwIO $ LMDBErrInitialisingAlreadyHasState
   Trace.traceWith tracer $ API.BSInitialisedFromValues dbsSeq
@@ -395,7 +396,7 @@ lmdbCopy from0 tracer e to = do
 newLMDBBackingStore ::
      forall m l. (
        HasCallStack, HasLedgerTables l, MonadIO m
-     , IOLike m, IndexedMemPack (l EmptyMK) (TxOut l)
+     , IOLike m, MemPackIdx l EmptyMK ~ l EmptyMK
      )
   => Trace.Tracer m API.BackingStoreTrace
   -> LMDBLimits
@@ -507,7 +508,7 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
                    -- This inequality is non-strict because of EBBs having the
                    -- same slot as its predecessor.
                    liftIO . throwIO $ LMDBErrNonMonotonicSeq (At slot) dbsSeq
-                 void $ ltzipWith2A' (writeLMDBTable st') dbBackingTables diffs
+                 void $ ltzipWith2A (writeLMDBTable st') dbBackingTables diffs
                  pure (dbsSeq, s {dbsSeq = At slot})
                Trace.traceWith dbTracer $ API.BSWritten oldSlot slot
 
@@ -529,7 +530,7 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
 -- current database state.
 mkLMDBBackingStoreValueHandle ::
      forall l m.
-     (HasLedgerTables l, MonadIO m, IOLike m, HasCallStack, IndexedMemPack (l EmptyMK) (TxOut l))
+     (HasLedgerTables l, MonadIO m, IOLike m, HasCallStack, MemPackIdx l EmptyMK ~ l EmptyMK)
   => Db m l
      -- ^ The LMDB database for which the backing store value handle is
      -- created.
@@ -577,12 +578,12 @@ mkLMDBBackingStoreValueHandle db = do
       Status.withReadAccess vhStatusLock (throwIO (LMDBErrNoValueHandle vhId)) $ do
         Trace.traceWith tracer API.BSVHReading
         res <- liftIO $ TrH.submitReadOnly trh $
-          ltzipWith2A' (readLMDBTable st) dbBackingTables keys
+          ltzipWith2A (readLMDBTable st) dbBackingTables keys
         Trace.traceWith tracer API.BSVHRead
         pure res
 
     bsvhRangeRead ::
-         l EmptyMK
+          l EmptyMK
       -> API.RangeQuery (LedgerTables l KeysMK)
       -> m (LedgerTables l ValuesMK)
     bsvhRangeRead st rq =

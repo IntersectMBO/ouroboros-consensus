@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Ledger.Tables.Basics (
   , MapKind
     -- * Ledger tables
   , LedgerTables (..)
+  , MemPackIdx
   , SameUtxoTypes
   , TxIn
   , TxOut
@@ -93,6 +94,13 @@ type instance TxIn  (LedgerTables l) = TxIn l
 type instance TxOut (LedgerTables l) = TxOut l
 type instance TxIn  (Ticked l)      = TxIn l
 type instance TxOut (Ticked l)      = TxOut l
+
+-- | Auxiliary information for @IndexedMemPack@.
+type MemPackIdx :: LedgerStateKind -> MapKind -> Type
+type family MemPackIdx l mk where
+  MemPackIdx (LedgerTables l) mk = MemPackIdx l mk
+  MemPackIdx (Ticked l) mk = MemPackIdx l mk
+  MemPackIdx l mk = l mk
 
 type SameUtxoTypes l l' = (TxIn l ~ TxIn l', TxOut l ~ TxOut l')
 
