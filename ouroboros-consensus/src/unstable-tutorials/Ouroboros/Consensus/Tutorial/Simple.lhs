@@ -31,7 +31,6 @@ This example uses several extensions:
 > {-# LANGUAGE DeriveAnyClass             #-}
 > {-# LANGUAGE MultiParamTypeClasses      #-}
 > {-# LANGUAGE StandaloneDeriving         #-}
-> {-# LANGUAGE TypeApplications           #-}
 
 > module Ouroboros.Consensus.Tutorial.Simple () where
 

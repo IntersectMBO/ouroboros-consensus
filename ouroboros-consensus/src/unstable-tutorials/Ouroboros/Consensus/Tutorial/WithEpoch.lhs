@@ -49,7 +49,6 @@ As before, we require a few language extensions:
 > {-# LANGUAGE MultiParamTypeClasses      #-}
 > {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 > {-# LANGUAGE StandaloneDeriving         #-}
-> {-# LANGUAGE TypeApplications           #-}
 
 > module Ouroboros.Consensus.Tutorial.WithEpoch () where
 
