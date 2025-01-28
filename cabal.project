@@ -47,33 +47,35 @@ if(os(windows))
 
 source-repository-package
   type: git
-  location: https://github.com/IntersectMBO/cardano-ledger
-  tag: c50d89688d9f30ea2dbd01afb19dbcaaf03e3da7
-  --sha256: sha256-3OVXLYCKSN4HPd3nsObK2mG8mB28AX46vuMqs+Jn3kw=
+  location: https://github.com/input-output-hk/cardano-ledger
+  tag: 92007c180df876775c48c3c5128323eb5449c2c2
+  --sha256: sha256-rZUw+rn0xqe8ee7vUlCQm9fYXCDiWZtZNqorWAtwiFY=
   subdir:
-    eras/allegra/impl
-    eras/alonzo/impl
-    eras/alonzo/test-suite
-    eras/babbage/impl
-    eras/babbage/test-suite
-    eras/conway/impl
-    eras/conway/test-suite
-    eras/mary/impl
-    eras/shelley/impl
-    eras/shelley/test-suite
-    eras/shelley-ma/test-suite
-    libs/cardano-ledger-api
-    libs/cardano-ledger-core
-    libs/cardano-ledger-binary
-    libs/cardano-protocol-tpraos
-    libs/non-integral
-    libs/small-steps
-    libs/cardano-data
-    libs/set-algebra
-    libs/vector-map
-    eras/byron/chain/executable-spec
-    eras/byron/ledger/executable-spec
-    eras/byron/ledger/impl
-    eras/byron/ledger/impl/test
-    eras/byron/crypto
-    eras/byron/crypto/test
+      eras/allegra/impl
+      eras/alonzo/impl
+      eras/alonzo/test-suite
+      eras/babbage/impl
+      eras/babbage/test-suite
+      eras/byron/chain/executable-spec
+      eras/byron/crypto
+      eras/byron/crypto/test
+      eras/byron/ledger/executable-spec
+      eras/byron/ledger/impl
+      eras/byron/ledger/impl/test
+      eras/conway/impl
+      eras/conway/test-suite
+      eras/mary/impl
+      eras/shelley/impl
+      eras/shelley-ma/test-suite
+      eras/shelley/test-suite
+      libs/cardano-data
+      libs/cardano-ledger-api
+      libs/cardano-ledger-binary
+      libs/cardano-ledger-core
+      libs/cardano-ledger-test
+      libs/cardano-protocol-tpraos
+      libs/constrained-generators
+      libs/non-integral
+      libs/set-algebra
+      libs/small-steps
+      libs/vector-map
