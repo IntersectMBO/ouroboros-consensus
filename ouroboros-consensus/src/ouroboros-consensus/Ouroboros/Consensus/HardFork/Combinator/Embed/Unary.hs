@@ -434,6 +434,7 @@ instance Functor m => Isomorphic (BlockForging m) where
     BlockForging
       { forgeLabel = forgeLabel
       , canBeLeader = project' (Proxy @(WrapCanBeLeader blk)) canBeLeader
+      , finalize = finalize
       , updateForgeState = \cfg sno tickedChainDepSt ->
           project
             <$> updateForgeState
@@ -485,6 +486,7 @@ instance Functor m => Isomorphic (BlockForging m) where
     BlockForging
       { forgeLabel = forgeLabel
       , canBeLeader = inject' (Proxy @(WrapCanBeLeader blk)) canBeLeader
+      , finalize = finalize
       , updateForgeState = \cfg sno tickedChainDepSt ->
           inject
             <$> updateForgeState
