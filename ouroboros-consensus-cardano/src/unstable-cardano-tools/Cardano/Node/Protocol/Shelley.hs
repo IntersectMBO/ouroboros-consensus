@@ -53,6 +53,7 @@ import qualified Data.Text as T
 import qualified Ouroboros.Consensus.Cardano as Consensus
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( PraosCanBeLeader (..)
+  , PraosCredentialsSource (..)
   )
 import Ouroboros.Consensus.Shelley.Node
   ( Nonce (..)
@@ -201,12 +202,14 @@ opCertKesKeyCheck ::
   FilePath ->
   -- | Operational certificate
   FilePath ->
-  ExceptT PraosLeaderCredentialsError IO (OperationalCertificate, SigningKey KesKey)
+  ExceptT PraosLeaderCredentialsError IO (OperationalCertificate, SigningKey UnsoundPureKesKey)
 opCertKesKeyCheck kesFile certFile = do
   opCert <-
     firstExceptT FileError (newExceptT $ readFileTextEnvelope AsOperationalCertificate certFile)
   kesSKey <-
-    firstExceptT FileError (newExceptT $ readFileTextEnvelope (AsSigningKey AsKesKey) kesFile)
+    firstExceptT
+      FileError
+      (newExceptT $ readFileTextEnvelope (AsSigningKey AsUnsoundPureKesKey) kesFile)
   let opCertSpecifiedKesKeyhash = verificationKeyHash $ getHotKey opCert
       suppliedKesKeyHash = verificationKeyHash $ getVerificationKey kesSKey
   -- Specified KES key in operational certificate should match the one
@@ -231,11 +234,11 @@ readLeaderCredentialsBulk ProtocolFilepaths{shelleyBulkCredsFile = mfp} =
   parseShelleyCredentials ::
     ShelleyCredentials ->
     ExceptT PraosLeaderCredentialsError IO (ShelleyLeaderCredentials StandardCrypto)
-  parseShelleyCredentials ShelleyCredentials{scCert, scVrf, scKes} = do
+  parseShelleyCredentials ShelleyCredentials{scCert, scVrf, scKes} =
     mkPraosLeaderCredentials
       <$> parseEnvelope AsOperationalCertificate scCert
       <*> parseEnvelope (AsSigningKey AsVrfKey) scVrf
-      <*> parseEnvelope (AsSigningKey AsKesKey) scKes
+      <*> parseEnvelope (AsSigningKey AsUnsoundPureKesKey) scKes
 
   readBulkFile ::
     Maybe FilePath ->
@@ -265,7 +268,7 @@ readLeaderCredentialsBulk ProtocolFilepaths{shelleyBulkCredsFile = mfp} =
 mkPraosLeaderCredentials ::
   OperationalCertificate ->
   SigningKey VrfKey ->
-  SigningKey KesKey ->
+  SigningKey UnsoundPureKesKey ->
   ShelleyLeaderCredentials StandardCrypto
 mkPraosLeaderCredentials
   (OperationalCertificate opcert (StakePoolVerificationKey vkey))
@@ -274,11 +277,10 @@ mkPraosLeaderCredentials
     ShelleyLeaderCredentials
       { shelleyLeaderCredentialsCanBeLeader =
           PraosCanBeLeader
-            { praosCanBeLeaderOpCert = opcert
-            , praosCanBeLeaderColdVerKey = coerceKeyRole vkey
+            { praosCanBeLeaderColdVerKey = coerceKeyRole vkey
             , praosCanBeLeaderSignKeyVRF = vrfKey
+            , praosCanBeLeaderCredentialsSource = PraosCredentialsUnsound opcert kesKey
             }
-      , shelleyLeaderCredentialsInitSignKey = kesKey
       , shelleyLeaderCredentialsLabel = "Shelley"
       }
 

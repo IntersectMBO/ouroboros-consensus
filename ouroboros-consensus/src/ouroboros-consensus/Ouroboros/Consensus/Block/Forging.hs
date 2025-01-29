@@ -20,6 +20,7 @@ module Ouroboros.Consensus.Block.Forging
   , forgeStateUpdateInfoFromUpdateInfo
 
     -- * 'UpdateInfo'
+  , KESTracer
   , UpdateInfo (..)
   ) where
 
@@ -73,6 +74,8 @@ castForgeStateUpdateInfo = \case
   ForgeStateUpdated x -> ForgeStateUpdated x
   ForgeStateUpdateFailed x -> ForgeStateUpdateFailed x
   ForgeStateUpdateSuppressed -> ForgeStateUpdateSuppressed
+
+type family KESTracer blk
 
 -- | Stateful wrapper around block production
 --
@@ -141,6 +144,13 @@ data BlockForging m blk = BlockForging
   -- even when used as part of the hard fork combinator.
   --
   -- PRECONDITION: 'checkCanForge' returned @Right ()@.
+  , finalize :: m ()
+  -- ^ Clean up any unmanaged resources.
+  --
+  -- Such resources may include KES keys that require explicit erasing
+  -- ("secure forgetting"), and threads that connect to a KES agent.
+  -- This method will be run once when the block forging thread
+  -- terminates, whether cleanly or due to an exception.
   }
 
 data ShouldForge blk

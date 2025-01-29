@@ -96,7 +96,7 @@ instance HasTypeProxy OperationalCertificateIssueCounter where
 instance HasTextEnvelope OperationalCertificate where
   textEnvelopeType _ = "NodeOperationalCertificate"
 
-getHotKey :: OperationalCertificate -> VerificationKey KesKey
+getHotKey :: OperationalCertificate -> VerificationKey UnsoundPureKesKey
 getHotKey (OperationalCertificate cert _) = KesVerificationKey $ Shelley.ocertVkHot cert
 
 getKesPeriod :: OperationalCertificate -> Word

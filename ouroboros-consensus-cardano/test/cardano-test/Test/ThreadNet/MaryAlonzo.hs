@@ -25,6 +25,7 @@ import qualified Cardano.Ledger.Shelley.Core as SL
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import Cardano.Slotting.Slot (EpochSize (..), SlotNo (..))
 import Control.Monad (replicateM)
+import Control.Tracer (nullTracer)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (maybeToList)
 import Data.Proxy (Proxy (..))
@@ -283,7 +284,7 @@ prop_simple_allegraAlonzo_convergence
                                 (SlotNo $ unNumSlots numSlots) -- never expire
                                 setupD -- unchanged
                     , tniProtocolInfo = protocolInfo
-                    , tniBlockForging = blockForging
+                    , tniBlockForging = blockForging nullTracer
                     }
           , mkRekeyM = Nothing
           }

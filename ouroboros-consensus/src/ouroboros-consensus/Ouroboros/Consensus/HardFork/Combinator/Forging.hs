@@ -14,9 +14,12 @@ module Ouroboros.Consensus.HardFork.Combinator.Forging
   , hardForkBlockForging
   ) where
 
+import Control.Monad (void)
 import Data.Functor.Product
 import Data.Maybe (fromMaybe)
+import Data.SOP (Top)
 import Data.SOP.BasicFunctors
+import Data.SOP.Constraint (All)
 import Data.SOP.Functors (Product2 (..))
 import Data.SOP.InPairs (InPairs)
 import qualified Data.SOP.InPairs as InPairs
@@ -89,6 +92,7 @@ hardForkBlockForging label blockForging =
     , updateForgeState = hardForkUpdateForgeState blockForging
     , checkCanForge = hardForkCheckCanForge blockForging
     , forgeBlock = hardForkForgeBlock blockForging
+    , finalize = hardForkFinalize blockForging
     }
 
 hardForkCanBeLeader ::
@@ -97,6 +101,12 @@ hardForkCanBeLeader ::
 hardForkCanBeLeader =
   SomeErasCanBeLeader
     . hmap (WrapCanBeLeader . canBeLeader)
+
+hardForkFinalize ::
+  (Monad m, All Top xs) =>
+  NonEmptyOptNP (BlockForging m) xs -> m ()
+hardForkFinalize blockForging =
+  void $ htraverse_ finalize blockForging
 
 -- | POSTCONDITION: the returned 'ForgeStateUpdateInfo' is from the same era as
 -- the ticked 'ChainDepState'.
