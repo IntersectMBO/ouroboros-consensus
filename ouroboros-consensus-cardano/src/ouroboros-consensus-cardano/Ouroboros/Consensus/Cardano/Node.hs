@@ -313,19 +313,19 @@ pattern CardanoNodeToClientVersion14 =
       )
 
 -- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo and Babbage
--- and Conway eras enabled, using 'ShelleyNodeToClientVersion11' for the
+-- and Conway eras enabled, using 'ShelleyNodeToClientVersion12' for the
 -- Shelley-based eras.
 pattern CardanoNodeToClientVersion15 :: BlockNodeToClientVersion (CardanoBlock c)
 pattern CardanoNodeToClientVersion15 =
     HardForkNodeToClientEnabled
       HardForkSpecificNodeToClientVersion3
       (  EraNodeToClientEnabled ByronNodeToClientVersion1
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
       :* Nil
       )
 
