@@ -12,6 +12,7 @@ module Ouroboros.Consensus.Util.STM
   ( -- * 'Watcher'
     Watcher (..)
   , forkLinkedWatcher
+  , forkLinkedWatcherFinalize
   , withWatcher
 
     -- * Misc
@@ -180,6 +181,22 @@ forkLinkedWatcher ::
   m (Thread m Void)
 forkLinkedWatcher registry label watcher =
   forkLinkedThread registry label $ runWatcher watcher
+
+-- | Spawn a new thread that runs a 'Watcher', executing a finalizer when the
+-- thread terminates.
+--
+-- The thread will be linked to the registry.
+forkLinkedWatcherFinalize ::
+  forall m a fp.
+  (IOLike m, Eq fp, HasCallStack) =>
+  ResourceRegistry m ->
+  -- | Label for the thread
+  String ->
+  Watcher m a fp ->
+  m () ->
+  m (Thread m Void)
+forkLinkedWatcherFinalize registry label watcher finalizer =
+  forkLinkedThread registry label $ runWatcher watcher `finally` finalizer
 
 -- | Spawn a new thread that runs a 'Watcher'
 --

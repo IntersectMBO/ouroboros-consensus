@@ -374,6 +374,7 @@ instance MonadSay m => MonadSay (WithEarlyExit m) where
 
 instance (MonadInspectSTM m, Monad (InspectMonadSTM m)) => MonadInspectSTM (WithEarlyExit m) where
   type InspectMonadSTM (WithEarlyExit m) = InspectMonadSTM m
+
   inspectTVar _ = inspectTVar (Proxy @m)
   inspectTMVar _ = inspectTMVar (Proxy @m)
 

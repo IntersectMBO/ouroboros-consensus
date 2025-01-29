@@ -3,10 +3,12 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.Embed.Binary (protocolInfoBinary) where
 
 import Control.Exception (assert)
+import qualified Control.Tracer as Tracer
 import Data.Align (alignWith)
 import Data.SOP.Counting (exactlyTwo)
 import Data.SOP.Functors (Flip (..))
@@ -30,21 +32,21 @@ import Ouroboros.Consensus.TypeFamilyWrappers
 
 protocolInfoBinary ::
   forall m blk1 blk2.
-  (CanHardFork '[blk1, blk2], Monad m) =>
+  (CanHardFork '[blk1, blk2], Monad m, KESTracer blk1 ~ KESTracer blk2) =>
   -- First era
   ProtocolInfo blk1 ->
-  m [BlockForging m blk1] ->
+  (Tracer.Tracer m (KESTracer blk1) -> m [BlockForging m blk1]) ->
   History.EraParams ->
   (ConsensusConfig (BlockProtocol blk1) -> PartialConsensusConfig (BlockProtocol blk1)) ->
   (LedgerConfig blk1 -> PartialLedgerConfig blk1) ->
   -- Second era
   ProtocolInfo blk2 ->
-  m [BlockForging m blk2] ->
+  (Tracer.Tracer m (KESTracer blk2) -> m [BlockForging m blk2]) ->
   History.EraParams ->
   (ConsensusConfig (BlockProtocol blk2) -> PartialConsensusConfig (BlockProtocol blk2)) ->
   (LedgerConfig blk2 -> PartialLedgerConfig blk2) ->
   ( ProtocolInfo (HardForkBlock '[blk1, blk2])
-  , m [BlockForging m (HardForkBlock '[blk1, blk2])]
+  , Tracer.Tracer m (KESTracer blk1) -> m [BlockForging m (HardForkBlock '[blk1, blk2])]
   )
 protocolInfoBinary
   protocolInfo1
@@ -107,7 +109,7 @@ protocolInfoBinary
                         headerStateChainDep initHeaderState1
               }
         }
-    , alignWith alignBlockForging <$> blockForging1 <*> blockForging2
+    , \tr -> alignWith alignBlockForging <$> blockForging1 tr <*> blockForging2 tr
     )
    where
     ProtocolInfo
