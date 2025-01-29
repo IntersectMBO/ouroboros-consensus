@@ -143,6 +143,7 @@ byronBlockForging creds =
           slot
           tickedPBftState
     , forgeBlock = \cfg -> return ....: forgeByronBlock cfg
+    , finalize = pure ()
     }
  where
   canBeLeader = mkPBftCanBeLeader creds

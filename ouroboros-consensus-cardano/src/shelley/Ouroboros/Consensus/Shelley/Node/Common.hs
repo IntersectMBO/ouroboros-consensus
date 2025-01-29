@@ -19,12 +19,10 @@ module Ouroboros.Consensus.Shelley.Node.Common
   , shelleyBlockIssuerVKey
   ) where
 
-import Cardano.Crypto.KES (UnsoundPureSignKeyKES)
 import Cardano.Ledger.BaseTypes (unNonZero)
 import qualified Cardano.Ledger.Keys as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Ledger.Slot
-import Cardano.Protocol.Crypto
 import Data.Text (Text)
 import Ouroboros.Consensus.Block
   ( CannotForge
@@ -59,12 +57,7 @@ import Ouroboros.Consensus.Storage.ImmutableDB
 -------------------------------------------------------------------------------}
 
 data ShelleyLeaderCredentials c = ShelleyLeaderCredentials
-  { shelleyLeaderCredentialsInitSignKey :: UnsoundPureSignKeyKES (KES c)
-  -- ^ The unevolved signing KES key (at evolution 0).
-  --
-  -- Note that this is not inside 'ShelleyCanBeLeader' since it gets evolved
-  -- automatically, whereas 'ShelleyCanBeLeader' does not change.
-  , shelleyLeaderCredentialsCanBeLeader :: PraosCanBeLeader c
+  { shelleyLeaderCredentialsCanBeLeader :: PraosCanBeLeader c
   , shelleyLeaderCredentialsLabel :: Text
   -- ^ Identifier for this set of credentials.
   --
