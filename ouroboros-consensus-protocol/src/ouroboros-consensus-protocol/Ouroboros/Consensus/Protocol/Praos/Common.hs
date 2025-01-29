@@ -2,8 +2,14 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Various things common to iterations of the Praos protocol.
@@ -15,26 +21,34 @@ module Ouroboros.Consensus.Protocol.Praos.Common
   , VRFTiebreakerFlavor (..)
 
     -- * node support
+  , PraosCredentialsSource (..)
   , PraosNonces (..)
   , PraosProtocolSupportsNode (..)
+  , instantiatePraosCredentials
   ) where
 
+import qualified Cardano.Crypto.KES.Class as KES
+import Cardano.Crypto.VRF
 import qualified Cardano.Crypto.VRF as VRF
+import qualified Cardano.KESAgent.KES.Crypto as Agent
 import Cardano.Ledger.BaseTypes (Nonce)
 import qualified Cardano.Ledger.BaseTypes as SL
 import Cardano.Ledger.Binary (FromCBOR, ToCBOR)
-import Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer))
+import Cardano.Ledger.Keys (DSIGN, KeyHash, KeyRole (BlockIssuer))
 import qualified Cardano.Ledger.Shelley.API as SL
-import Cardano.Protocol.Crypto (Crypto, VRF)
+import Cardano.Protocol.Crypto (Crypto, KES, VRF)
 import qualified Cardano.Protocol.TPraos.OCert as OCert
 import Cardano.Slotting.Slot (SlotNo)
+import qualified Control.Tracer as Tracer
 import Data.Function (on)
 import Data.Map.Strict (Map)
 import Data.Ord (Down (Down))
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import NoThunks.Class (NoThunks)
+import NoThunks.Class
 import Ouroboros.Consensus.Protocol.Abstract
+import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
+import Ouroboros.Consensus.Protocol.Praos.AgentClient
 
 -- | The maximum major protocol version.
 --
@@ -240,16 +254,66 @@ instance Crypto c => ChainOrder (PraosTiebreakerView c) where
   preferCandidate cfg ours cand = comparePraos cfg ours cand == LT
 
 data PraosCanBeLeader c = PraosCanBeLeader
-  { praosCanBeLeaderOpCert :: !(OCert.OCert c)
-  -- ^ Certificate delegating rights from the stake pool cold key (or
-  -- genesis stakeholder delegate cold key) to the online KES key.
-  , praosCanBeLeaderColdVerKey :: !(SL.VKey 'SL.BlockIssuer)
+  { praosCanBeLeaderColdVerKey :: !(SL.VKey 'SL.BlockIssuer)
   -- ^ Stake pool cold key or genesis stakeholder delegate cold key.
-  , praosCanBeLeaderSignKeyVRF :: !(VRF.SignKeyVRF (VRF c))
+  , praosCanBeLeaderSignKeyVRF :: !(SignKeyVRF (VRF c))
+  , praosCanBeLeaderCredentialsSource :: !(PraosCredentialsSource c)
+  -- ^ How to obtain KES credentials (ocert + sign key)
   }
   deriving Generic
 
-instance Crypto c => NoThunks (PraosCanBeLeader c)
+instance
+  (NoThunks (SignKeyVRF (VRF c)), NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) =>
+  NoThunks (PraosCanBeLeader c)
+
+-- | Defines a method for obtaining Praos credentials (opcert + KES signing
+-- key).
+data PraosCredentialsSource c where
+  -- | Pass an opcert and sign key directly. This uses
+  -- 'KES.UnsoundPureSignKeyKES', which does not provide mlocking guarantees,
+  -- violating the rule that KES secrets must never be stored on disk, but
+  -- allows the sign key to be loaded from a local file. This method is
+  -- provided for backwards compatibility.
+  PraosCredentialsUnsound ::
+    OCert.OCert c -> KES.UnsoundPureSignKeyKES (KES c) -> PraosCredentialsSource c
+  -- | Connect to a KES agent listening on a service socket at the given path.
+  PraosCredentialsAgent :: Agent.DSIGN (ACrypto c) ~ DSIGN => FilePath -> PraosCredentialsSource c
+
+instance (NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (PraosCredentialsSource c) where
+  wNoThunks ctxt = \case
+    PraosCredentialsUnsound oca k ->
+      allNoThunks
+        [ noThunks ctxt oca
+        , noThunks ctxt k
+        ]
+    PraosCredentialsAgent fp -> noThunks ctxt fp
+
+  showTypeOf _ = "PraosCredentialsSource"
+
+instantiatePraosCredentials ::
+  forall m c.
+  KESAgentContext c m =>
+  Word64 ->
+  Tracer.Tracer m KESAgentClientTrace ->
+  PraosCredentialsSource c ->
+  m (HotKey.HotKey c m)
+instantiatePraosCredentials maxKESEvolutions _ (PraosCredentialsUnsound ocert skUnsound) = do
+  sk <- KES.unsoundPureSignKeyKESToSoundSignKeyKES skUnsound
+  let startPeriod :: OCert.KESPeriod
+      startPeriod = OCert.ocertKESPeriod ocert
+
+  HotKey.mkHotKey
+    ocert
+    sk
+    startPeriod
+    maxKESEvolutions
+instantiatePraosCredentials maxKESEvolutions tr (PraosCredentialsAgent path) = do
+  HotKey.mkDynamicHotKey
+    maxKESEvolutions
+    ( Just $ \handleKey handleDrop -> do
+        runKESAgentClient tr path handleKey handleDrop
+    )
+    (pure ())
 
 -- | See 'PraosProtocolSupportsNode'
 data PraosNonces = PraosNonces

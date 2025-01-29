@@ -10,6 +10,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 {-# LANGUAGE ViewPatterns #-}
@@ -187,25 +188,23 @@ forgePraosFields
   PraosCanBeLeader
     { praosCanBeLeaderColdVerKey
     , praosCanBeLeaderSignKeyVRF
-    , praosCanBeLeaderOpCert
     }
   PraosIsLeader{praosIsLeaderVrfRes}
   mkToSign = do
+    ocert <- HotKey.getOCert hotKey
+    let signedFields =
+          PraosToSign
+            { praosToSignIssuerVK = praosCanBeLeaderColdVerKey
+            , praosToSignVrfVK = VRF.deriveVerKeyVRF praosCanBeLeaderSignKeyVRF
+            , praosToSignVrfRes = praosIsLeaderVrfRes
+            , praosToSignOCert = ocert
+            }
+        toSign = mkToSign signedFields
     signature <- HotKey.sign hotKey toSign
     return
       PraosFields
         { praosSignature = signature
         , praosToSign = toSign
-        }
-   where
-    toSign = mkToSign signedFields
-
-    signedFields =
-      PraosToSign
-        { praosToSignIssuerVK = praosCanBeLeaderColdVerKey
-        , praosToSignVrfVK = VRF.deriveVerKeyVRF praosCanBeLeaderSignKeyVRF
-        , praosToSignVrfRes = praosIsLeaderVrfRes
-        , praosToSignOCert = praosCanBeLeaderOpCert
         }
 
 {-------------------------------------------------------------------------------
