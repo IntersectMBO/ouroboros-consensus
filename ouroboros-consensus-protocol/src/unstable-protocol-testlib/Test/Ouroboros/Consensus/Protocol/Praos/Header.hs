@@ -132,7 +132,7 @@ mutate context header mutation =
                             { hbOCert =
                                 oldOCert
                                     { ocertKESPeriod = newKESPeriod
-                                    , ocertSigma = signedDSIGN @StandardCrypto coldSignKey (OCertSignable ocertVkHot ocertN newKESPeriod)
+                                    , ocertSigma = signedDSIGN coldSignKey $ OCertSignable ocertVkHot ocertN newKESPeriod
                                     }
                             }
                 let sig' = KES.unsoundPureSignKES () kesPeriod' newBody kesSignKey
@@ -263,13 +263,13 @@ newKESSigningKey = KES.unsoundPureGenKeyKES . mkSeedFromBytes
 
 data GeneratorContext = GeneratorContext
     { praosSlotsPerKESPeriod :: !Word64
-    , praosMaxKESEvo :: !Word64
-    , kesSignKey :: !KESKey
-    , coldSignKey :: !(SignKeyDSIGN Ed25519DSIGN)
-    , vrfSignKey :: !(VRF.SignKeyVRF VRF.PraosVRF)
-    , nonce :: !Nonce
-    , ocertCounters :: !(Map.Map (KeyHash BlockIssuer StandardCrypto) Word64)
-    , activeSlotCoeff :: !ActiveSlotCoeff
+    , praosMaxKESEvo         :: !Word64
+    , kesSignKey             :: !KESKey
+    , coldSignKey            :: !(SignKeyDSIGN Ed25519DSIGN)
+    , vrfSignKey             :: !(VRF.SignKeyVRF VRF.PraosVRF)
+    , nonce                  :: !Nonce
+    , ocertCounters          :: !(Map.Map (KeyHash BlockIssuer) Word64)
+    , activeSlotCoeff        :: !ActiveSlotCoeff
     }
     deriving (Show)
 
@@ -423,7 +423,7 @@ genCert slotNo context = do
         poolId = coerce $ hashKey $ VKey $ deriveVerKeyDSIGN coldSignKey
         ocertN = fromMaybe 0 $ Map.lookup poolId ocertCounters
     ocertKESPeriod <- genValidKESPeriod slotNo praosSlotsPerKESPeriod
-    let ocertSigma = signedDSIGN @StandardCrypto coldSignKey (OCertSignable ocertVkHot ocertN ocertKESPeriod)
+    let ocertSigma = signedDSIGN coldSignKey $ OCertSignable ocertVkHot ocertN ocertKESPeriod
     pure (OCert{..}, ocertKESPeriod)
   where
     GeneratorContext{kesSignKey, praosSlotsPerKESPeriod, coldSignKey, ocertCounters} = context
