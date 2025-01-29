@@ -10,6 +10,20 @@ We need to take both advantage of the rigorous structure we have in the code bas
 
 The key typeclass we need to instantiate is ConsensusProtocol.
 
+## Outline of the Consensus components
+
+The section 5.2 of the `network-design` document can be imported into the whitepaper almost wholesale. It gives a good outline of the tasks that the consensus layer is supposed to be able to perform.
+
+## Interaction with the Networking layer
+
+Here we need to talk about what parts of the networking layer Consensus relies on. What is are the interfaces between the Consensus and Network? The answer is, as I understand, typed mini protocols. How to describe these interfaces in a language-agnostic way?
+
+The implementations of the mini-protocols are here: `ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol`
+
+## Storage Subsystem
+
+This section should describe the concepts necessary to implement the storage subsystem of a Cardano node. The description should focus on things that are necessary to keep track of to implement i.e. Praos, but do not go into the details about how these things are stored. No need to discuss in-memory vs on-dist storage and mutable vs persistent data structures, as we have separate documents for this.
+
 # Multi-era Considerations
 
 With the blokchain network evolving, the block format and ledger rules are bound to change. In Cardano, every significant change starts a new "era". There are several ways to deal with multiple eras in the node software, associated here with some of the DnD alignments:
@@ -36,5 +50,3 @@ But obviously we don not have to use the HFC. What would be a reasonable way to 
 ## The Hard Fork Combinator: a uniform way to support multiple eras}
 
 Ideally, this would be a short section that should outline the core ideas behind the HFC without a single line of Haskell. The purpose should be to demonstrate the benefits of having an abstract interface for describing mixed-era blocks. The interested reader would be then referred to an extended, Haskell-enabled document that described the HFC in its full glory.
-
-
