@@ -41,6 +41,10 @@ import           Cardano.Crypto.DSIGN (DSIGNAlgorithm (..), SignKeyDSIGN,
 import           Cardano.Crypto.KES (KESAlgorithm (..), UnsoundPureSignKeyKES,
                      seedSizeKES, unsoundPureDeriveVerKeyKES,
                      unsoundPureGenKeyKES)
+import           Cardano.Crypto.DSIGN (DSIGNAlgorithm (..), seedSizeDSIGN)
+import           Cardano.Crypto.Hash (HashAlgorithm)
+import           Cardano.Crypto.KES (UnsoundPureSignKeyKES, KESAlgorithm (..),
+                     seedSizeKES, unsoundPureGenKeyKES, unsoundPureDeriveVerKeyKES)
 import           Cardano.Crypto.Seed (mkSeedFromBytes)
 import qualified Cardano.Crypto.Seed as Cardano.Crypto
 import           Cardano.Crypto.VRF (SignKeyVRF, deriveVerKeyVRF, genKeyVRF,
@@ -140,7 +144,7 @@ data CoreNode c = CoreNode {
     , cnStakingKey  :: !(SignKeyDSIGN LK.DSIGN)
       -- ^ The hash of the corresponding verification (public) key will be
       -- used as the staking credential.
-    , cnVRF         :: !(SignKeyVRF   (VRF c))
+    , cnVRF         :: !(SL.SignKeyVRF   c)
     , cnKES         :: !(UnsoundPureSignKeyKES (KES c))
     , cnOCert       :: !(SL.OCert        c)
     }
@@ -179,12 +183,11 @@ genCoreNode ::
      Crypto c
   => SL.KESPeriod
   -> Gen (CoreNode c)
-genCoreNode startKESPeriod = do
-    genKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @LK.DSIGN))
-    delKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @LK.DSIGN))
-    stkKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @LK.DSIGN))
-    vrfKey <- genKeyVRF   <$> genSeed (seedSizeVRF   (Proxy @(VRF c)))
-    kesKey <- unsoundPureGenKeyKES <$> genSeed (seedSizeKES (Proxy @(KES c)))
+    genKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @(DSIGN c)))
+    delKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @(DSIGN c)))
+    stkKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @(DSIGN c)))
+    vrfKey <- genKeyVRF   <$> genSeed (seedSizeVRF   (Proxy @(VRF   c)))
+    kesKey <- unsoundPureGenKeyKES <$> genSeed (seedSizeKES   (Proxy @(KES   c)))
     let kesPub = unsoundPureDeriveVerKeyKES kesKey
         sigma  = LK.signedDSIGN
           delKey
