@@ -45,7 +45,7 @@ instance Praos.PraosCrypto c => Arbitrary (HeaderBody c) where
           <*> (SlotNo <$> choose (1, 10))
           <*> oneof
             [ pure GenesisHash,
-              BlockHash <$> (arbitrary :: Gen (HashHeader c))
+              BlockHash <$> (arbitrary :: Gen HashHeader)
             ]
           <*> arbitrary
           <*> arbitrary
