@@ -78,7 +78,9 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/input-output-hk/cardano-ledger
-  tag: 9d380ab7d6ae52ff66aae9a19dbb3036b1b13c94
+  -- This tag is from Alexey's PR that is based on an older version
+  -- tag: 9d380ab7d6ae52ff66aae9a19dbb3036b1b13c94
+  tag: 4b2721c8abdf704c6f8de042e8fb1f3f6b3f1aed
   --sha256: sha256-N4XRVqC+UgWej+J16RPh3EO6MSIE3wmJvmP5/nRgIuw=
   subdir:
       eras/allegra/impl
