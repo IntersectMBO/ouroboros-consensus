@@ -227,4 +227,3 @@ instance HasTextEnvelope (SigningKey VrfKey) where
       where
         proxy :: Proxy (VRF StandardCrypto)
         proxy = Proxy
-
