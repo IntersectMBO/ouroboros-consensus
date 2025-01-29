@@ -119,7 +119,7 @@ test-suite protocol-test
     base,
     cardano-crypto-class,
     cardano-ledger-binary:testlib,
-    cardano-ledger-core ^>=1.16,
+    cardano-ledger-core ^>=1.17,
     containers,
     ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib},
     ouroboros-consensus-protocol,
