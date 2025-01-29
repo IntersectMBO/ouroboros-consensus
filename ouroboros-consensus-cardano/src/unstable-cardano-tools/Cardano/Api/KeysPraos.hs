@@ -31,7 +31,7 @@ import qualified Cardano.Crypto.DSIGN.Class as Crypto
 import qualified Cardano.Crypto.Hash.Class as Crypto
 import qualified Cardano.Crypto.KES.Class as Crypto
 import qualified Cardano.Crypto.VRF.Class as Crypto
-import           Cardano.Ledger.Crypto (StandardCrypto)
+import           Cardano.Ledger.Crypto (Crypto(..), StandardCrypto)
 import qualified Cardano.Ledger.Crypto as Shelley (KES, VRF)
 import qualified Cardano.Ledger.Keys as Shelley
 import           Data.String (IsString (..))
@@ -56,15 +56,15 @@ instance Key KesKey where
       deriving anyclass SerialiseAsCBOR
 
     newtype SigningKey KesKey =
-        KesSigningKey (Shelley.SignKeyKES StandardCrypto)
+        KesSigningKey (Crypto.UnsoundPureSignKeyKES (KES StandardCrypto))
       deriving (Show, IsString) via UsingRawBytesHex (SigningKey KesKey)
-      deriving newtype (EncCBOR, DecCBOR, ToCBOR, FromCBOR)
-      deriving anyclass SerialiseAsCBOR
+      deriving newtype (ToCBOR, FromCBOR)
+      deriving anyclass (EncCBOR, DecCBOR, SerialiseAsCBOR)
 
     --This loses the mlock safety of the seed, since it starts from a normal in-memory seed.
     deterministicSigningKey :: AsType KesKey -> Crypto.Seed -> SigningKey KesKey
     deterministicSigningKey AsKesKey =
-        KesSigningKey . Crypto.genKeyKES
+        KesSigningKey . Crypto.unsoundPureGenKeyKES
 
     deterministicSigningKeySeedSize :: AsType KesKey -> Word
     deterministicSigningKeySeedSize AsKesKey =
@@ -75,7 +75,7 @@ instance Key KesKey where
 
     getVerificationKey :: SigningKey KesKey -> VerificationKey KesKey
     getVerificationKey (KesSigningKey sk) =
-        KesVerificationKey (Crypto.deriveVerKeyKES sk)
+        KesVerificationKey (Crypto.unsoundPureDeriveVerKeyKES sk)
 
     verificationKeyHash :: VerificationKey KesKey -> Hash KesKey
     verificationKeyHash (KesVerificationKey vkey) =
@@ -92,10 +92,10 @@ instance SerialiseAsRawBytes (VerificationKey KesKey) where
 
 instance SerialiseAsRawBytes (SigningKey KesKey) where
     serialiseToRawBytes (KesSigningKey sk) =
-      Crypto.rawSerialiseSignKeyKES sk
+      Crypto.rawSerialiseUnsoundPureSignKeyKES sk
 
     deserialiseFromRawBytes (AsSigningKey AsKesKey) bs =
-      KesSigningKey <$> Crypto.rawDeserialiseSignKeyKES bs
+      KesSigningKey <$> Crypto.rawDeserialiseUnsoundPureSignKeyKES bs
 
 instance SerialiseAsBech32 (VerificationKey KesKey) where
     bech32PrefixFor         _ =  "kes_vk"

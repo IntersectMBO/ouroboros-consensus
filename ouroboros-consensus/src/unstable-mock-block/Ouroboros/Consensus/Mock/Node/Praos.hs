@@ -104,7 +104,7 @@ blockForgingPraos numCoreNodes nid = sequence [praosBlockForging nid initHotKey]
     initHotKey =
         HotKey
           0
-          (SignKeyMockKES
+          (UnsoundPureSignKeyMockKES
             -- key ID
             (fst $ verKeys Map.! nid)
             -- KES initial slot

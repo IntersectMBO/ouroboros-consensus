@@ -47,9 +47,17 @@ if(os(windows))
 
 source-repository-package
   type: git
+  location: https://github.com/input-output-hk/cardano-base
+  tag: b2cec3fbcde4bacb9c961e5510d5a1d3754c4e2b
+  --sha256: sha256-TDEBINZ3SkhpRNomMdt53bR3gdzgkWR9jIlAr8yrU6o=
+  subdir:
+      cardano-crypto-class
+
+source-repository-package
+  type: git
   location: https://github.com/input-output-hk/cardano-ledger
-  tag: 92007c180df876775c48c3c5128323eb5449c2c2
-  --sha256: sha256-rZUw+rn0xqe8ee7vUlCQm9fYXCDiWZtZNqorWAtwiFY=
+  tag: 9d380ab7d6ae52ff66aae9a19dbb3036b1b13c94
+  --sha256: sha256-N4XRVqC+UgWej+J16RPh3EO6MSIE3wmJvmP5/nRgIuw=
   subdir:
       eras/allegra/impl
       eras/alonzo/impl

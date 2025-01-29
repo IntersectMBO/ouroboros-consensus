@@ -37,7 +37,8 @@ module Test.ThreadNet.Infra.Shelley (
 
 import           Cardano.Crypto.DSIGN (DSIGNAlgorithm (..), seedSizeDSIGN)
 import           Cardano.Crypto.Hash (HashAlgorithm)
-import           Cardano.Crypto.KES (KESAlgorithm (..))
+import           Cardano.Crypto.KES (UnsoundPureSignKeyKES, KESAlgorithm (..),
+                     seedSizeKES, unsoundPureGenKeyKES, unsoundPureDeriveVerKeyKES)
 import           Cardano.Crypto.Seed (mkSeedFromBytes)
 import qualified Cardano.Crypto.Seed as Cardano.Crypto
 import           Cardano.Crypto.VRF (SignKeyVRF, deriveVerKeyVRF, genKeyVRF,
@@ -138,7 +139,7 @@ data CoreNode c = CoreNode {
       -- ^ The hash of the corresponding verification (public) key will be
       -- used as the staking credential.
     , cnVRF         :: !(SL.SignKeyVRF   c)
-    , cnKES         :: !(SL.SignKeyKES   c)
+    , cnKES         :: !(UnsoundPureSignKeyKES (KES c))
     , cnOCert       :: !(SL.OCert        c)
     }
 
@@ -180,8 +181,8 @@ genCoreNode startKESPeriod = do
     delKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @(DSIGN c)))
     stkKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @(DSIGN c)))
     vrfKey <- genKeyVRF   <$> genSeed (seedSizeVRF   (Proxy @(VRF   c)))
-    kesKey <- genKeyKES   <$> genSeed (seedSizeKES   (Proxy @(KES   c)))
-    let kesPub = deriveVerKeyKES kesKey
+    kesKey <- unsoundPureGenKeyKES <$> genSeed (seedSizeKES   (Proxy @(KES   c)))
+    let kesPub = unsoundPureDeriveVerKeyKES kesKey
         sigma  = LK.signedDSIGN
           @c
           delKey

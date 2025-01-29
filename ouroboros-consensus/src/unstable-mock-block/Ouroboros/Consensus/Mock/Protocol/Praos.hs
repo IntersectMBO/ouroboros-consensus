@@ -43,7 +43,7 @@ module Ouroboros.Consensus.Mock.Protocol.Praos (
   ) where
 
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..), serialize')
-import           Cardano.Crypto.DSIGN.Ed448 (Ed448DSIGN)
+import           Cardano.Crypto.DSIGN.Ed25519 (Ed25519DSIGN)
 import           Cardano.Crypto.Hash.Class (HashAlgorithm (..), hashToBytes,
                      hashWithSerialiser, sizeHash)
 import           Cardano.Crypto.Hash.SHA256 (SHA256)
@@ -203,12 +203,14 @@ praosValidateView getFields hdr =
 data HotKey c =
     HotKey
       !Period  -- ^ Absolute period of the KES key
-      !(SignKeyKES (PraosKES c))
+      !(UnsoundPureSignKeyKES (PraosKES c))
   | HotKeyPoisoned
   deriving (Generic)
 
 instance PraosCrypto c => NoThunks (HotKey c)
-deriving instance PraosCrypto c => Show (HotKey c)
+instance PraosCrypto c => Show (HotKey c) where
+  show (HotKey p _) = "HotKey " ++ show p ++ " <SignKeyKES: hidden>"
+  show HotKeyPoisoned = "HotKeyPoisoned"
 
 -- | The 'HotKey' could not be evolved to the given 'Period'.
 newtype HotKeyEvolutionError = HotKeyEvolutionError Period
@@ -229,7 +231,7 @@ evolveKey slotNo hotKey = case hotKey of
       | keyPeriod >= targetPeriod
       -> (hotKey, Updated hotKey)
       | otherwise
-      -> case updateKES () oldKey keyPeriod of
+      -> case unsoundPureUpdateKES () oldKey keyPeriod of
            Nothing     ->
              (HotKeyPoisoned, UpdateFailed $ HotKeyEvolutionError targetPeriod)
            Just newKey ->
@@ -255,7 +257,7 @@ forgePraosFields :: ( PraosCrypto c
 forgePraosFields PraosProof{..} hotKey mkToSign =
     case hotKey of
       HotKey kesPeriod key -> PraosFields {
-          praosSignature   = signedKES () kesPeriod (mkToSign fieldsToSign) key
+          praosSignature   = unsoundPureSignedKES () kesPeriod (mkToSign fieldsToSign) key
         , praosExtraFields = fieldsToSign
         }
       HotKeyPoisoned -> error "trying to sign with a poisoned key"
@@ -591,7 +593,7 @@ rhoYT st xs s nid =
   Crypto models
 -------------------------------------------------------------------------------}
 
-class ( KESAlgorithm  (PraosKES  c)
+class ( UnsoundPureKESAlgorithm  (PraosKES  c)
       , VRFAlgorithm  (PraosVRF  c)
       , HashAlgorithm (PraosHash c)
       , Typeable c
@@ -609,7 +611,7 @@ data PraosStandardCrypto
 data PraosMockCrypto
 
 instance PraosCrypto PraosStandardCrypto where
-  type PraosKES  PraosStandardCrypto = SimpleKES Ed448DSIGN 1000
+  type PraosKES  PraosStandardCrypto = SimpleKES Ed25519DSIGN 1000
   type PraosVRF  PraosStandardCrypto = SimpleVRF
   type PraosHash PraosStandardCrypto = SHA256
 
