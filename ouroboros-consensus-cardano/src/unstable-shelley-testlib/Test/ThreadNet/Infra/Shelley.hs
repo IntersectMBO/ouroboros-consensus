@@ -37,8 +37,9 @@ module Test.ThreadNet.Infra.Shelley (
 
 import           Cardano.Crypto.DSIGN (DSIGNAlgorithm (..), seedSizeDSIGN)
 import           Cardano.Crypto.Hash (HashAlgorithm)
-import           Cardano.Crypto.KES (UnsoundPureSignKeyKES, KESAlgorithm (..),
-                     seedSizeKES, unsoundPureGenKeyKES, unsoundPureDeriveVerKeyKES)
+import           Cardano.Crypto.KES (KESAlgorithm (..), UnsoundPureSignKeyKES,
+                     seedSizeKES, unsoundPureDeriveVerKeyKES,
+                     unsoundPureGenKeyKES)
 import           Cardano.Crypto.Seed (mkSeedFromBytes)
 import qualified Cardano.Crypto.Seed as Cardano.Crypto
 import           Cardano.Crypto.VRF (SignKeyVRF, deriveVerKeyVRF, genKeyVRF,
