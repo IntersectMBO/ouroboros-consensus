@@ -157,7 +157,7 @@ mkGenEnv whetherPPUs coreNodes = Gen.GenEnv keySpace scriptSpace constants
     keySpace :: Gen.KeySpace ShelleyEra
     keySpace =
       Gen.KeySpace
-        (cnkiCoreNode <$> cn)
+        (cnkiCoreNode @MockCrypto <$> cn)
         ksGenesisDelegates
         ksStakePools
         (ksKeyPairs <> (cnkiKeyPair <$> cn))
