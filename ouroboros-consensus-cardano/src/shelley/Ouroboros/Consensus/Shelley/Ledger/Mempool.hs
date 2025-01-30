@@ -54,10 +54,10 @@ import qualified Cardano.Ledger.Conway.Rules as ConwayEra
 import qualified Cardano.Ledger.Conway.Rules as SL
 import qualified Cardano.Ledger.Conway.UTxO as SL
 import qualified Cardano.Ledger.Core as SL (txIdTxBody)
-import           Cardano.Ledger.Crypto (Crypto)
-import qualified Cardano.Ledger.SafeHash as SL
+import qualified Cardano.Ledger.Hashes as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Rules as ShelleyEra
+import           Cardano.Protocol.Crypto (Crypto)
 import           Control.Arrow ((+++))
 import           Control.Monad (guard)
 import           Control.Monad.Except (Except, liftEither)
@@ -84,7 +84,7 @@ import           Ouroboros.Consensus.Util (ShowProxy (..))
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Network.Block (unwrapCBORinCBOR, wrapCBORinCBOR)
 
-data instance GenTx (ShelleyBlock proto era) = ShelleyTx !(SL.TxId (EraCrypto era)) !(Tx era)
+data instance GenTx (ShelleyBlock proto era) = ShelleyTx !SL.TxId !(Tx era)
   deriving stock    (Generic)
 
 deriving instance ShelleyBasedEra era => NoThunks (GenTx (ShelleyBlock proto era))
@@ -96,7 +96,7 @@ instance (Typeable era, Typeable proto)
 
 data instance Validated (GenTx (ShelleyBlock proto era)) =
     ShelleyValidatedTx
-      !(SL.TxId (EraCrypto era))
+      !SL.TxId
       !(SL.Validated (Tx era))
   deriving stock (Generic)
 
@@ -160,12 +160,12 @@ mkShelleyValidatedTx vtx = ShelleyValidatedTx txid vtx
   where
     txid = SL.txIdTxBody @era (SL.extractTx vtx ^. bodyTxL)
 
-newtype instance TxId (GenTx (ShelleyBlock proto era)) = ShelleyTxId (SL.TxId (EraCrypto era))
+newtype instance TxId (GenTx (ShelleyBlock proto era)) = ShelleyTxId SL.TxId
   deriving newtype (Eq, Ord, NoThunks)
 
-deriving newtype instance (Crypto (EraCrypto era), Typeable era, Typeable proto)
+deriving newtype instance (Crypto StandardCrypto, Typeable era, Typeable proto)
                        => EncCBOR (TxId (GenTx (ShelleyBlock proto era)))
-deriving newtype instance (Crypto (EraCrypto era), Typeable era, Typeable proto)
+deriving newtype instance (Crypto StandardCrypto, Typeable era, Typeable proto)
                        => DecCBOR (TxId (GenTx (ShelleyBlock proto era)))
 
 instance (Typeable era, Typeable proto)
@@ -343,7 +343,7 @@ class MaxTxSizeUTxO era where
        -- ^ Maximum transaction size
     -> SL.ApplyTxError era
 
-instance MaxTxSizeUTxO (ShelleyEra c) where
+instance MaxTxSizeUTxO ShelleyEra where
   maxTxSizeUTxO txSize txSizeLimit =
       SL.ApplyTxError . pure
     $ ShelleyEra.UtxowFailure
@@ -352,7 +352,7 @@ instance MaxTxSizeUTxO (ShelleyEra c) where
     $ L.Mismatch { mismatchSupplied = txSize
                  , mismatchExpected = txSizeLimit }
 
-instance MaxTxSizeUTxO (AllegraEra c) where
+instance MaxTxSizeUTxO AllegraEra where
   maxTxSizeUTxO txSize txSizeLimit =
       SL.ApplyTxError . pure
     $ ShelleyEra.UtxowFailure
@@ -361,7 +361,7 @@ instance MaxTxSizeUTxO (AllegraEra c) where
     $ L.Mismatch { mismatchSupplied = txSize
                  , mismatchExpected = txSizeLimit }
 
-instance MaxTxSizeUTxO (MaryEra c) where
+instance MaxTxSizeUTxO MaryEra where
   maxTxSizeUTxO txSize txSizeLimit =
       SL.ApplyTxError . pure
     $ ShelleyEra.UtxowFailure
@@ -370,7 +370,7 @@ instance MaxTxSizeUTxO (MaryEra c) where
     $ L.Mismatch { mismatchSupplied = txSize
                  , mismatchExpected = txSizeLimit }
 
-instance MaxTxSizeUTxO (AlonzoEra c) where
+instance MaxTxSizeUTxO AlonzoEra where
   maxTxSizeUTxO txSize txSizeLimit =
       SL.ApplyTxError . pure
     $ ShelleyEra.UtxowFailure
@@ -380,7 +380,7 @@ instance MaxTxSizeUTxO (AlonzoEra c) where
     $ L.Mismatch { mismatchSupplied = txSize
                  , mismatchExpected = txSizeLimit }
 
-instance MaxTxSizeUTxO (BabbageEra c) where
+instance MaxTxSizeUTxO BabbageEra where
   maxTxSizeUTxO txSize txSizeLimit =
       SL.ApplyTxError . pure
     $ ShelleyEra.UtxowFailure
@@ -390,7 +390,7 @@ instance MaxTxSizeUTxO (BabbageEra c) where
     $ L.Mismatch { mismatchSupplied = txSize
                  , mismatchExpected = txSizeLimit }
 
-instance MaxTxSizeUTxO (ConwayEra c) where
+instance MaxTxSizeUTxO ConwayEra where
   maxTxSizeUTxO txSize txSizeLimit =
       SL.ApplyTxError . pure
     $ ConwayEra.ConwayUtxowFailure
@@ -401,18 +401,18 @@ instance MaxTxSizeUTxO (ConwayEra c) where
 
 -----
 
-instance ShelleyCompatible p (ShelleyEra c) => TxLimits (ShelleyBlock p (ShelleyEra c)) where
-  type TxMeasure (ShelleyBlock p (ShelleyEra c)) = IgnoringOverflow ByteSize32
+instance ShelleyCompatible p ShelleyEra => TxLimits (ShelleyBlock p ShelleyEra) where
+  type TxMeasure (ShelleyBlock p ShelleyEra) = IgnoringOverflow ByteSize32
   txMeasure              _cfg st tx = runValidation $ txInBlockSize st tx
   blockCapacityTxMeasure _cfg       = txsMaxBytes
 
-instance ShelleyCompatible p (AllegraEra c) => TxLimits (ShelleyBlock p (AllegraEra c)) where
-  type TxMeasure (ShelleyBlock p (AllegraEra c)) = IgnoringOverflow ByteSize32
+instance ShelleyCompatible p AllegraEra => TxLimits (ShelleyBlock p AllegraEra) where
+  type TxMeasure (ShelleyBlock p AllegraEra) = IgnoringOverflow ByteSize32
   txMeasure              _cfg st tx = runValidation $ txInBlockSize st tx
   blockCapacityTxMeasure _cfg       = txsMaxBytes
 
-instance ShelleyCompatible p (MaryEra c) => TxLimits (ShelleyBlock p (MaryEra c)) where
-  type TxMeasure (ShelleyBlock p (MaryEra c)) = IgnoringOverflow ByteSize32
+instance ShelleyCompatible p MaryEra => TxLimits (ShelleyBlock p MaryEra) where
+  type TxMeasure (ShelleyBlock p MaryEra) = IgnoringOverflow ByteSize32
   txMeasure              _cfg st tx = runValidation $ txInBlockSize st tx
   blockCapacityTxMeasure _cfg       = txsMaxBytes
 
@@ -472,7 +472,7 @@ txMeasureAlonzo st tx@(ShelleyTx _txid tx') =
 class ExUnitsTooBigUTxO era where
   exUnitsTooBigUTxO :: ExUnits -> ExUnits -> SL.ApplyTxError era
 
-instance Crypto c => ExUnitsTooBigUTxO (AlonzoEra c) where
+instance ExUnitsTooBigUTxO AlonzoEra where
   exUnitsTooBigUTxO txsz limit =
       SL.ApplyTxError . pure
     $ ShelleyEra.UtxowFailure
@@ -482,7 +482,7 @@ instance Crypto c => ExUnitsTooBigUTxO (AlonzoEra c) where
     $ L.Mismatch { mismatchSupplied = txsz
                  , mismatchExpected = limit }
 
-instance Crypto c => ExUnitsTooBigUTxO (BabbageEra c) where
+instance ExUnitsTooBigUTxO BabbageEra where
   exUnitsTooBigUTxO txsz limit =
       SL.ApplyTxError . pure
     $ ShelleyEra.UtxowFailure
@@ -494,7 +494,7 @@ instance Crypto c => ExUnitsTooBigUTxO (BabbageEra c) where
     $ L.Mismatch { mismatchSupplied = txsz
                  , mismatchExpected = limit }
 
-instance Crypto c => ExUnitsTooBigUTxO (ConwayEra c) where
+instance ExUnitsTooBigUTxO ConwayEra where
   exUnitsTooBigUTxO txsz limit =
       SL.ApplyTxError . pure
     $ ConwayEra.ConwayUtxowFailure
@@ -505,10 +505,10 @@ instance Crypto c => ExUnitsTooBigUTxO (ConwayEra c) where
 
 -----
 
-instance ( ShelleyCompatible p (AlonzoEra c)
-         ) => TxLimits (ShelleyBlock p (AlonzoEra c)) where
+instance ( ShelleyCompatible p AlonzoEra
+         ) => TxLimits (ShelleyBlock p AlonzoEra) where
 
-  type TxMeasure (ShelleyBlock p (AlonzoEra c)) = AlonzoMeasure
+  type TxMeasure (ShelleyBlock p AlonzoEra) = AlonzoMeasure
   txMeasure              _cfg st tx = runValidation $ txMeasureAlonzo st tx
   blockCapacityTxMeasure _cfg       = blockCapacityAlonzoMeasure
 
@@ -569,7 +569,7 @@ txMeasureConway st tx@(ShelleyTx _txid tx') =
 class TxRefScriptsSizeTooBig era where
   txRefScriptsSizeTooBig :: Int -> Int -> SL.ApplyTxError era
 
-instance Crypto c => TxRefScriptsSizeTooBig (ConwayEra c) where
+instance TxRefScriptsSizeTooBig ConwayEra where
   txRefScriptsSizeTooBig txsz limit =
       SL.ApplyTxError . pure
     $ ConwayEra.ConwayTxRefScriptsSizeTooBig
@@ -604,16 +604,16 @@ txMeasureBabbage st tx@(ShelleyTx _txid tx') =
       $ fromIntegral (SL.txNonDistinctRefScriptsSize utxo tx' :: Int)
 
 -- | We anachronistically use 'ConwayMeasure' in Babbage.
-instance ( ShelleyCompatible p (BabbageEra c)
-         ) => TxLimits (ShelleyBlock p (BabbageEra c)) where
+instance ( ShelleyCompatible p BabbageEra
+         ) => TxLimits (ShelleyBlock p BabbageEra) where
 
-  type TxMeasure (ShelleyBlock p (BabbageEra c)) = ConwayMeasure
+  type TxMeasure (ShelleyBlock p BabbageEra) = ConwayMeasure
   txMeasure              _cfg st tx = runValidation $ txMeasureBabbage st tx
   blockCapacityTxMeasure _cfg       = blockCapacityConwayMeasure
 
-instance ( ShelleyCompatible p (ConwayEra c)
-         ) => TxLimits (ShelleyBlock p (ConwayEra c)) where
+instance ( ShelleyCompatible p ConwayEra
+         ) => TxLimits (ShelleyBlock p ConwayEra) where
 
-  type TxMeasure (ShelleyBlock p (ConwayEra c)) = ConwayMeasure
+  type TxMeasure (ShelleyBlock p ConwayEra) = ConwayMeasure
   txMeasure              _cfg st tx = runValidation $ txMeasureConway st tx
   blockCapacityTxMeasure _cfg       = blockCapacityConwayMeasure

@@ -39,12 +39,12 @@ import           Cardano.Api.Any
 import           Cardano.Api.Key
 import           Cardano.Api.SerialiseTextEnvelope
 import           Cardano.Api.SerialiseUsing
+import           Cardano.Crypto.DSIGN (SignKeyDSIGN)
 import qualified Cardano.Crypto.DSIGN.Class as Crypto
 import qualified Cardano.Crypto.Hash.Class as Crypto
 import qualified Cardano.Crypto.Seed as Crypto
 import qualified Cardano.Crypto.Wallet as Crypto.HD
-import           Cardano.Ledger.Crypto (StandardCrypto)
-import qualified Cardano.Ledger.Crypto as Shelley (DSIGN)
+import           Cardano.Ledger.Keys (DSIGN)
 import qualified Cardano.Ledger.Keys as Shelley
 import           Data.Aeson.Types (FromJSON (..), ToJSON (..), ToJSONKey (..),
                      toJSONKeyText, withText)
@@ -72,14 +72,14 @@ instance HasTypeProxy PaymentKey where
 instance Key PaymentKey where
 
     newtype VerificationKey PaymentKey =
-        PaymentVerificationKey (Shelley.VKey Shelley.Payment StandardCrypto)
+        PaymentVerificationKey (Shelley.VKey Shelley.Payment)
       deriving stock (Eq)
       deriving (Show, IsString) via UsingRawBytesHex (VerificationKey PaymentKey)
       deriving newtype (ToCBOR, FromCBOR)
       deriving anyclass SerialiseAsCBOR
 
     newtype SigningKey PaymentKey =
-        PaymentSigningKey (Shelley.SignKeyDSIGN StandardCrypto)
+        PaymentSigningKey (SignKeyDSIGN DSIGN)
       deriving (Show, IsString) via UsingRawBytesHex (SigningKey PaymentKey)
       deriving newtype (ToCBOR, FromCBOR)
       deriving anyclass SerialiseAsCBOR
@@ -92,7 +92,7 @@ instance Key PaymentKey where
     deterministicSigningKeySeedSize AsPaymentKey =
         Crypto.seedSizeDSIGN proxy
       where
-        proxy :: Proxy (Shelley.DSIGN StandardCrypto)
+        proxy :: Proxy Shelley.DSIGN
         proxy = Proxy
 
     getVerificationKey :: SigningKey PaymentKey -> VerificationKey PaymentKey
@@ -127,7 +127,7 @@ instance SerialiseAsBech32 (SigningKey PaymentKey) where
     bech32PrefixesPermitted _ = ["addr_sk"]
 
 newtype instance Hash PaymentKey =
-    PaymentKeyHash (Shelley.KeyHash Shelley.Payment StandardCrypto)
+    PaymentKeyHash (Shelley.KeyHash Shelley.Payment)
   deriving stock (Eq, Ord)
   deriving (Show, IsString) via UsingRawBytesHex (Hash PaymentKey)
   deriving (ToCBOR, FromCBOR) via UsingRawBytes (Hash PaymentKey)
@@ -144,14 +144,14 @@ instance HasTextEnvelope (VerificationKey PaymentKey) where
     textEnvelopeType _ = "PaymentVerificationKeyShelley_"
                       <> fromString (Crypto.algorithmNameDSIGN proxy)
       where
-        proxy :: Proxy (Shelley.DSIGN StandardCrypto)
+        proxy :: Proxy Shelley.DSIGN
         proxy = Proxy
 
 instance HasTextEnvelope (SigningKey PaymentKey) where
     textEnvelopeType _ = "PaymentSigningKeyShelley_"
                       <> fromString (Crypto.algorithmNameDSIGN proxy)
       where
-        proxy :: Proxy (Shelley.DSIGN StandardCrypto)
+        proxy :: Proxy Shelley.DSIGN
         proxy = Proxy
 
 
@@ -269,7 +269,7 @@ instance SerialiseAsBech32 (SigningKey PaymentExtendedKey) where
 
 
 newtype instance Hash PaymentExtendedKey =
-    PaymentExtendedKeyHash (Shelley.KeyHash Shelley.Payment StandardCrypto)
+    PaymentExtendedKeyHash (Shelley.KeyHash Shelley.Payment)
   deriving stock (Eq, Ord)
   deriving (Show, IsString) via UsingRawBytesHex (Hash PaymentExtendedKey)
   deriving (ToCBOR, FromCBOR) via UsingRawBytes (Hash PaymentExtendedKey)
@@ -314,14 +314,14 @@ instance HasTypeProxy StakeKey where
 instance Key StakeKey where
 
     newtype VerificationKey StakeKey =
-        StakeVerificationKey (Shelley.VKey Shelley.Staking StandardCrypto)
+        StakeVerificationKey (Shelley.VKey Shelley.Staking)
       deriving stock (Eq)
       deriving newtype (ToCBOR, FromCBOR)
       deriving anyclass SerialiseAsCBOR
       deriving (Show, IsString) via UsingRawBytesHex (VerificationKey StakeKey)
 
     newtype SigningKey StakeKey =
-        StakeSigningKey (Shelley.SignKeyDSIGN StandardCrypto)
+        StakeSigningKey (SignKeyDSIGN DSIGN)
       deriving newtype (ToCBOR, FromCBOR)
       deriving anyclass SerialiseAsCBOR
       deriving (Show, IsString) via UsingRawBytesHex (SigningKey StakeKey)
@@ -334,7 +334,7 @@ instance Key StakeKey where
     deterministicSigningKeySeedSize AsStakeKey =
         Crypto.seedSizeDSIGN proxy
       where
-        proxy :: Proxy (Shelley.DSIGN StandardCrypto)
+        proxy :: Proxy Shelley.DSIGN
         proxy = Proxy
 
     getVerificationKey :: SigningKey StakeKey -> VerificationKey StakeKey
@@ -371,7 +371,7 @@ instance SerialiseAsBech32 (SigningKey StakeKey) where
 
 
 newtype instance Hash StakeKey =
-    StakeKeyHash (Shelley.KeyHash Shelley.Staking StandardCrypto)
+    StakeKeyHash (Shelley.KeyHash Shelley.Staking)
   deriving stock (Eq, Ord)
   deriving (Show, IsString) via UsingRawBytesHex (Hash StakeKey)
   deriving (ToCBOR, FromCBOR) via UsingRawBytes (Hash StakeKey)
@@ -388,14 +388,14 @@ instance HasTextEnvelope (VerificationKey StakeKey) where
     textEnvelopeType _ = "StakeVerificationKeyShelley_"
                       <> fromString (Crypto.algorithmNameDSIGN proxy)
       where
-        proxy :: Proxy (Shelley.DSIGN StandardCrypto)
+        proxy :: Proxy Shelley.DSIGN
         proxy = Proxy
 
 instance HasTextEnvelope (SigningKey StakeKey) where
     textEnvelopeType _ = "StakeSigningKeyShelley_"
                       <> fromString (Crypto.algorithmNameDSIGN proxy)
       where
-        proxy :: Proxy (Shelley.DSIGN StandardCrypto)
+        proxy :: Proxy Shelley.DSIGN
         proxy = Proxy
 
 
@@ -513,7 +513,7 @@ instance SerialiseAsBech32 (SigningKey StakeExtendedKey) where
 
 
 newtype instance Hash StakeExtendedKey =
-    StakeExtendedKeyHash (Shelley.KeyHash Shelley.Staking StandardCrypto)
+    StakeExtendedKeyHash (Shelley.KeyHash Shelley.Staking)
   deriving stock (Eq, Ord)
   deriving (Show, IsString) via UsingRawBytesHex (Hash StakeExtendedKey)
   deriving (ToCBOR, FromCBOR) via UsingRawBytes (Hash StakeExtendedKey)
@@ -558,14 +558,14 @@ instance HasTypeProxy GenesisKey where
 instance Key GenesisKey where
 
     newtype VerificationKey GenesisKey =
-        GenesisVerificationKey (Shelley.VKey Shelley.Genesis StandardCrypto)
+        GenesisVerificationKey (Shelley.VKey Shelley.Genesis)
       deriving stock (Eq)
       deriving (Show, IsString) via UsingRawBytesHex (VerificationKey GenesisKey)
       deriving newtype (ToCBOR, FromCBOR)
       deriving anyclass SerialiseAsCBOR
 
     newtype SigningKey GenesisKey =
-        GenesisSigningKey (Shelley.SignKeyDSIGN StandardCrypto)
+        GenesisSigningKey (SignKeyDSIGN DSIGN)
       deriving (Show, IsString) via UsingRawBytesHex (SigningKey GenesisKey)
       deriving newtype (ToCBOR, FromCBOR)
       deriving anyclass SerialiseAsCBOR
@@ -578,7 +578,7 @@ instance Key GenesisKey where
     deterministicSigningKeySeedSize AsGenesisKey =
         Crypto.seedSizeDSIGN proxy
       where
-        proxy :: Proxy (Shelley.DSIGN StandardCrypto)
+        proxy :: Proxy Shelley.DSIGN
         proxy = Proxy
 
     getVerificationKey :: SigningKey GenesisKey -> VerificationKey GenesisKey
@@ -607,7 +607,7 @@ instance SerialiseAsRawBytes (SigningKey GenesisKey) where
 
 
 newtype instance Hash GenesisKey =
-    GenesisKeyHash (Shelley.KeyHash Shelley.Genesis StandardCrypto)
+    GenesisKeyHash (Shelley.KeyHash Shelley.Genesis)
   deriving stock (Eq, Ord)
   deriving (Show, IsString) via UsingRawBytesHex (Hash GenesisKey)
   deriving (ToCBOR, FromCBOR) via UsingRawBytes (Hash GenesisKey)
@@ -624,14 +624,14 @@ instance HasTextEnvelope (VerificationKey GenesisKey) where
     textEnvelopeType _ = "GenesisVerificationKey_"
                       <> fromString (Crypto.algorithmNameDSIGN proxy)
       where
-        proxy :: Proxy (Shelley.DSIGN StandardCrypto)
+        proxy :: Proxy Shelley.DSIGN
         proxy = Proxy
 
 instance HasTextEnvelope (SigningKey GenesisKey) where
     textEnvelopeType _ = "GenesisSigningKey_"
                       <> fromString (Crypto.algorithmNameDSIGN proxy)
       where
-        proxy :: Proxy (Shelley.DSIGN StandardCrypto)
+        proxy :: Proxy Shelley.DSIGN
         proxy = Proxy
 
 
@@ -738,7 +738,7 @@ instance SerialiseAsRawBytes (SigningKey GenesisExtendedKey) where
 
 
 newtype instance Hash GenesisExtendedKey =
-    GenesisExtendedKeyHash (Shelley.KeyHash Shelley.Staking StandardCrypto)
+    GenesisExtendedKeyHash (Shelley.KeyHash Shelley.Staking)
   deriving stock (Eq, Ord)
   deriving (Show, IsString) via UsingRawBytesHex (Hash GenesisExtendedKey)
   deriving (ToCBOR, FromCBOR) via UsingRawBytes (Hash GenesisExtendedKey)
@@ -784,14 +784,14 @@ instance HasTypeProxy GenesisDelegateKey where
 instance Key GenesisDelegateKey where
 
     newtype VerificationKey GenesisDelegateKey =
-        GenesisDelegateVerificationKey (Shelley.VKey Shelley.GenesisDelegate StandardCrypto)
+        GenesisDelegateVerificationKey (Shelley.VKey Shelley.GenesisDelegate)
       deriving stock (Eq)
       deriving (Show, IsString) via UsingRawBytesHex (VerificationKey GenesisDelegateKey)
       deriving newtype (ToCBOR, FromCBOR)
       deriving anyclass SerialiseAsCBOR
 
     newtype SigningKey GenesisDelegateKey =
-        GenesisDelegateSigningKey (Shelley.SignKeyDSIGN StandardCrypto)
+        GenesisDelegateSigningKey ((SignKeyDSIGN DSIGN))
       deriving (Show, IsString) via UsingRawBytesHex (SigningKey GenesisDelegateKey)
       deriving newtype (ToCBOR, FromCBOR)
       deriving anyclass SerialiseAsCBOR
@@ -804,7 +804,7 @@ instance Key GenesisDelegateKey where
     deterministicSigningKeySeedSize AsGenesisDelegateKey =
         Crypto.seedSizeDSIGN proxy
       where
-        proxy :: Proxy (Shelley.DSIGN StandardCrypto)
+        proxy :: Proxy Shelley.DSIGN
         proxy = Proxy
 
     getVerificationKey :: SigningKey GenesisDelegateKey -> VerificationKey GenesisDelegateKey
@@ -833,7 +833,7 @@ instance SerialiseAsRawBytes (SigningKey GenesisDelegateKey) where
 
 
 newtype instance Hash GenesisDelegateKey =
-    GenesisDelegateKeyHash (Shelley.KeyHash Shelley.GenesisDelegate StandardCrypto)
+    GenesisDelegateKeyHash (Shelley.KeyHash Shelley.GenesisDelegate)
   deriving stock (Eq, Ord)
   deriving (Show, IsString) via UsingRawBytesHex (Hash GenesisDelegateKey)
   deriving (ToCBOR, FromCBOR) via UsingRawBytes (Hash GenesisDelegateKey)
@@ -850,14 +850,14 @@ instance HasTextEnvelope (VerificationKey GenesisDelegateKey) where
     textEnvelopeType _ = "GenesisDelegateVerificationKey_"
                       <> fromString (Crypto.algorithmNameDSIGN proxy)
       where
-        proxy :: Proxy (Shelley.DSIGN StandardCrypto)
+        proxy :: Proxy Shelley.DSIGN
         proxy = Proxy
 
 instance HasTextEnvelope (SigningKey GenesisDelegateKey) where
     textEnvelopeType _ = "GenesisDelegateSigningKey_"
                       <> fromString (Crypto.algorithmNameDSIGN proxy)
       where
-        proxy :: Proxy (Shelley.DSIGN StandardCrypto)
+        proxy :: Proxy Shelley.DSIGN
         proxy = Proxy
 
 instance CastVerificationKeyRole GenesisDelegateKey StakePoolKey where
@@ -972,7 +972,7 @@ instance SerialiseAsRawBytes (SigningKey GenesisDelegateExtendedKey) where
 
 
 newtype instance Hash GenesisDelegateExtendedKey =
-    GenesisDelegateExtendedKeyHash (Shelley.KeyHash Shelley.Staking StandardCrypto)
+    GenesisDelegateExtendedKeyHash (Shelley.KeyHash Shelley.Staking)
   deriving stock (Eq, Ord)
   deriving (Show, IsString) via UsingRawBytesHex (Hash GenesisDelegateExtendedKey)
   deriving (ToCBOR, FromCBOR) via UsingRawBytes (Hash GenesisDelegateExtendedKey)
@@ -1018,14 +1018,14 @@ instance HasTypeProxy GenesisUTxOKey where
 instance Key GenesisUTxOKey where
 
     newtype VerificationKey GenesisUTxOKey =
-        GenesisUTxOVerificationKey (Shelley.VKey Shelley.Payment StandardCrypto)
+        GenesisUTxOVerificationKey (Shelley.VKey Shelley.Payment)
       deriving stock (Eq)
       deriving (Show, IsString) via UsingRawBytesHex (VerificationKey GenesisUTxOKey)
       deriving newtype (ToCBOR, FromCBOR)
       deriving anyclass SerialiseAsCBOR
 
     newtype SigningKey GenesisUTxOKey =
-        GenesisUTxOSigningKey (Shelley.SignKeyDSIGN StandardCrypto)
+        GenesisUTxOSigningKey (SignKeyDSIGN DSIGN)
       deriving (Show, IsString) via UsingRawBytesHex (SigningKey GenesisUTxOKey)
       deriving newtype (ToCBOR, FromCBOR)
       deriving anyclass SerialiseAsCBOR
@@ -1038,7 +1038,7 @@ instance Key GenesisUTxOKey where
     deterministicSigningKeySeedSize AsGenesisUTxOKey =
         Crypto.seedSizeDSIGN proxy
       where
-        proxy :: Proxy (Shelley.DSIGN StandardCrypto)
+        proxy :: Proxy Shelley.DSIGN
         proxy = Proxy
 
     getVerificationKey :: SigningKey GenesisUTxOKey -> VerificationKey GenesisUTxOKey
@@ -1067,7 +1067,7 @@ instance SerialiseAsRawBytes (SigningKey GenesisUTxOKey) where
 
 
 newtype instance Hash GenesisUTxOKey =
-    GenesisUTxOKeyHash (Shelley.KeyHash Shelley.Payment StandardCrypto)
+    GenesisUTxOKeyHash (Shelley.KeyHash Shelley.Payment)
   deriving stock (Eq, Ord)
   deriving (Show, IsString) via UsingRawBytesHex (Hash GenesisUTxOKey)
   deriving (ToCBOR, FromCBOR) via UsingRawBytes (Hash GenesisUTxOKey)
@@ -1084,14 +1084,14 @@ instance HasTextEnvelope (VerificationKey GenesisUTxOKey) where
     textEnvelopeType _ = "GenesisUTxOVerificationKey_"
                       <> fromString (Crypto.algorithmNameDSIGN proxy)
       where
-        proxy :: Proxy (Shelley.DSIGN StandardCrypto)
+        proxy :: Proxy Shelley.DSIGN
         proxy = Proxy
 
 instance HasTextEnvelope (SigningKey GenesisUTxOKey) where
     textEnvelopeType _ = "GenesisUTxOSigningKey_"
                       <> fromString (Crypto.algorithmNameDSIGN proxy)
       where
-        proxy :: Proxy (Shelley.DSIGN StandardCrypto)
+        proxy :: Proxy Shelley.DSIGN
         proxy = Proxy
     -- TODO: use a different type from the stake pool key, since some operations
     -- need a genesis key specifically
@@ -1118,14 +1118,14 @@ instance HasTypeProxy StakePoolKey where
 instance Key StakePoolKey where
 
     newtype VerificationKey StakePoolKey =
-        StakePoolVerificationKey (Shelley.VKey Shelley.StakePool StandardCrypto)
+        StakePoolVerificationKey (Shelley.VKey Shelley.StakePool)
       deriving stock (Eq)
       deriving (Show, IsString) via UsingRawBytesHex (VerificationKey StakePoolKey)
       deriving newtype (EncCBOR, DecCBOR, ToCBOR, FromCBOR)
       deriving anyclass SerialiseAsCBOR
 
     newtype SigningKey StakePoolKey =
-        StakePoolSigningKey (Shelley.SignKeyDSIGN StandardCrypto)
+        StakePoolSigningKey (SignKeyDSIGN DSIGN)
       deriving (Show, IsString) via UsingRawBytesHex (SigningKey StakePoolKey)
       deriving newtype (ToCBOR, FromCBOR)
       deriving anyclass SerialiseAsCBOR
@@ -1138,7 +1138,7 @@ instance Key StakePoolKey where
     deterministicSigningKeySeedSize AsStakePoolKey =
         Crypto.seedSizeDSIGN proxy
       where
-        proxy :: Proxy (Shelley.DSIGN StandardCrypto)
+        proxy :: Proxy Shelley.DSIGN
         proxy = Proxy
 
     getVerificationKey :: SigningKey StakePoolKey -> VerificationKey StakePoolKey
@@ -1173,7 +1173,7 @@ instance SerialiseAsBech32 (SigningKey StakePoolKey) where
     bech32PrefixesPermitted _ = ["pool_sk"]
 
 newtype instance Hash StakePoolKey =
-    StakePoolKeyHash (Shelley.KeyHash Shelley.StakePool StandardCrypto)
+    StakePoolKeyHash (Shelley.KeyHash Shelley.StakePool)
   deriving stock (Eq, Ord)
   deriving (Show, IsString) via UsingRawBytesHex (Hash StakePoolKey)
   deriving (ToCBOR, FromCBOR) via UsingRawBytes (Hash StakePoolKey)
@@ -1208,13 +1208,13 @@ instance HasTextEnvelope (VerificationKey StakePoolKey) where
     textEnvelopeType _ = "StakePoolVerificationKey_"
                       <> fromString (Crypto.algorithmNameDSIGN proxy)
       where
-        proxy :: Proxy (Shelley.DSIGN StandardCrypto)
+        proxy :: Proxy Shelley.DSIGN
         proxy = Proxy
 
 instance HasTextEnvelope (SigningKey StakePoolKey) where
     textEnvelopeType _ = "StakePoolSigningKey_"
                       <> fromString (Crypto.algorithmNameDSIGN proxy)
       where
-        proxy :: Proxy (Shelley.DSIGN StandardCrypto)
+        proxy :: Proxy Shelley.DSIGN
         proxy = Proxy
 

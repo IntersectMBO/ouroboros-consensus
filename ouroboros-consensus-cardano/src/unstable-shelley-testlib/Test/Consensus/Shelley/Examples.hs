@@ -20,7 +20,7 @@ module Test.Consensus.Shelley.Examples (
   ) where
 
 import qualified Cardano.Ledger.Block as SL
-import           Cardano.Ledger.Crypto (Crypto)
+import           Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import           Data.Coerce (coerce)
 import           Data.List.NonEmpty (NonEmpty ((:|)))
@@ -73,9 +73,9 @@ codecConfig :: CodecConfig StandardShelleyBlock
 codecConfig = ShelleyCodecConfig
 
 fromShelleyLedgerExamples ::
-     ShelleyCompatible (TPraos (EraCrypto era)) era
+     ShelleyCompatible (TPraos StandardCrypto) era
   => ShelleyLedgerExamples era
-  -> Examples (ShelleyBlock (TPraos (EraCrypto era)) era)
+  -> Examples (ShelleyBlock (TPraos StandardCrypto) era)
 fromShelleyLedgerExamples ShelleyLedgerExamples {
                             sleResultExamples = ShelleyResultExamples{..}
                             , ..} =
@@ -151,11 +151,11 @@ fromShelleyLedgerExamples ShelleyLedgerExamples {
 -- | TODO Factor this out into something nicer.
 fromShelleyLedgerExamplesPraos ::
   forall era.
-  ( ShelleyCompatible (Praos (EraCrypto era)) era,
-    TranslateProto (TPraos (EraCrypto era)) (Praos (EraCrypto era))
+  ( ShelleyCompatible (Praos StandardCrypto) era,
+    TranslateProto (TPraos StandardCrypto) (Praos StandardCrypto)
   )
   => ShelleyLedgerExamples era
-  -> Examples (ShelleyBlock (Praos (EraCrypto era)) era)
+  -> Examples (ShelleyBlock (Praos StandardCrypto) era)
 fromShelleyLedgerExamplesPraos ShelleyLedgerExamples {
                             sleResultExamples = ShelleyResultExamples{..}
                             , ..} =
@@ -236,7 +236,7 @@ fromShelleyLedgerExamplesPraos ShelleyLedgerExamples {
     , shelleyLedgerState      = sleNewEpochState
     , shelleyLedgerTransition = ShelleyTransitionInfo {shelleyAfterVoting = 0}
     }
-    chainDepState = translateChainDepState (Proxy @(TPraos (EraCrypto era), Praos (EraCrypto era)))
+    chainDepState = translateChainDepState (Proxy @(TPraos StandardCrypto, Praos StandardCrypto))
       $ TPraosState (NotOrigin 1) sleChainDepState
     extLedgerState = ExtLedgerState
                        ledgerState

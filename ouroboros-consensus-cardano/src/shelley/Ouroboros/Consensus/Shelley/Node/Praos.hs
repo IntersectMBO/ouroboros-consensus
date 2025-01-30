@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Shelley.Node.Praos (
   ) where
 
 import qualified Cardano.Ledger.Api.Era as L
+import           Cardano.Protocol.Crypto (StandardCrypto)
 import qualified Cardano.Protocol.TPraos.OCert as Absolute
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import qualified Data.Text as T
@@ -30,7 +31,6 @@ import           Ouroboros.Consensus.Protocol.Praos (Praos, PraosParams (..),
                      praosCheckCanForge)
 import           Ouroboros.Consensus.Protocol.Praos.Common
                      (PraosCanBeLeader (praosCanBeLeaderOpCert))
-import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock,
                      ShelleyCompatible, forgeShelleyBlock)
 import           Ouroboros.Consensus.Shelley.Node.Common (ShelleyEraWithCrypto,
@@ -46,12 +46,12 @@ import           Ouroboros.Consensus.Util.IOLike (IOLike)
 praosBlockForging ::
      forall m era c.
      ( ShelleyCompatible (Praos c) era
-     , c ~ EraCrypto era
+     , c ~ StandardCrypto
      , Mempool.TxLimits (ShelleyBlock (Praos c) era)
      , IOLike m
      )
   => PraosParams
-  -> ShelleyLeaderCredentials (EraCrypto era)
+  -> ShelleyLeaderCredentials StandardCrypto
   -> m (BlockForging m (ShelleyBlock (Praos c) era))
 praosBlockForging praosParams credentials = do
     hotKey <- HotKey.mkHotKey @m @c initSignKey startPeriod praosMaxKESEvo

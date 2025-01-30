@@ -22,7 +22,6 @@ import           Cardano.Ledger.Babbage (BabbageEra)
 import qualified Cardano.Ledger.BaseTypes as CL (natVersion)
 import           Cardano.Ledger.Conway (ConwayEra)
 import qualified Cardano.Ledger.Core as Core
-import           Cardano.Ledger.Crypto (Crypto)
 import           Cardano.Ledger.Mary (MaryEra)
 import           Cardano.Ledger.Shelley (ShelleyEra)
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -106,24 +105,21 @@ instance ( ShelleyCompatible proto era
 class PerEraAnalysis era where
     txExUnitsSteps :: Maybe (Core.Tx era -> Word64)
 
-instance PerEraAnalysis (ShelleyEra c) where txExUnitsSteps = Nothing
-instance PerEraAnalysis (AllegraEra c) where txExUnitsSteps = Nothing
-instance PerEraAnalysis (MaryEra    c) where txExUnitsSteps = Nothing
+instance PerEraAnalysis ShelleyEra where txExUnitsSteps = Nothing
+instance PerEraAnalysis AllegraEra where txExUnitsSteps = Nothing
+instance PerEraAnalysis MaryEra    where txExUnitsSteps = Nothing
 
-instance (Crypto c)
-      => PerEraAnalysis (AlonzoEra c) where
+instance PerEraAnalysis AlonzoEra where
     txExUnitsSteps = Just $ \tx ->
         let (Alonzo.ExUnits _mem steps) = Alonzo.totExUnits tx
         in toEnum $ fromEnum steps
 
-instance (Crypto c)
-      => PerEraAnalysis (BabbageEra c) where
+instance PerEraAnalysis BabbageEra where
     txExUnitsSteps = Just $ \tx ->
         let (Alonzo.ExUnits _mem steps) = Alonzo.totExUnits tx
         in toEnum $ fromEnum steps
 
-instance (Crypto c)
-      => PerEraAnalysis (ConwayEra c) where
+instance PerEraAnalysis ConwayEra where
     txExUnitsSteps = Just $ \tx ->
         let (Alonzo.ExUnits _mem steps) = Alonzo.totExUnits tx
         in toEnum $ fromEnum steps
@@ -144,7 +140,7 @@ instance HasProtocolInfo (ShelleyBlock (TPraos StandardCrypto) StandardShelley) 
 type ShelleyBlockArgs = Args (ShelleyBlock (TPraos StandardCrypto) StandardShelley)
 
 mkShelleyProtocolInfo ::
-     ShelleyGenesis StandardCrypto
+     ShelleyGenesis
   -> Nonce
   -> ProtocolInfo (ShelleyBlock (TPraos StandardCrypto) StandardShelley)
 mkShelleyProtocolInfo genesis initialNonce =

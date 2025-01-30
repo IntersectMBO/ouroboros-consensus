@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -20,8 +21,8 @@ module Ouroboros.Consensus.Shelley.HFEras (
 
 import           Cardano.Crypto.DSIGN (Signable)
 import           Cardano.Crypto.Hash (Hash)
-import           Cardano.Ledger.Crypto (DSIGN, HASH)
-import           Cardano.Ledger.Hashes (EraIndependentTxBody)
+import           Cardano.Ledger.Hashes (EraIndependentTxBody, HASH)
+import           Cardano.Ledger.Keys (DSIGN)
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import           Ouroboros.Consensus.Protocol.TPraos (StandardCrypto, TPraos)
@@ -58,37 +59,37 @@ type StandardConwayBlock = ShelleyBlock (Praos StandardCrypto) StandardConway
 -------------------------------------------------------------------------------}
 
 instance
-  (TPraos.PraosCrypto c, Signable (DSIGN c) (Hash (HASH c) EraIndependentTxBody)) =>
-  ShelleyCompatible (TPraos c) (ShelleyEra c)
+  (TPraos.PraosCrypto c, c ~ StandardCrypto, Signable DSIGN (Hash HASH EraIndependentTxBody)) =>
+  ShelleyCompatible (TPraos c) ShelleyEra
 
 instance
-  (TPraos.PraosCrypto c, Signable (DSIGN c) (Hash (HASH c) EraIndependentTxBody)) =>
-  ShelleyCompatible (TPraos c) (AllegraEra c)
+  (TPraos.PraosCrypto c, c ~ StandardCrypto, Signable DSIGN (Hash HASH EraIndependentTxBody)) =>
+  ShelleyCompatible (TPraos c) AllegraEra
 
 instance
-  (TPraos.PraosCrypto c, Signable (DSIGN c) (Hash (HASH c) EraIndependentTxBody)) =>
-  ShelleyCompatible (TPraos c) (MaryEra c)
+  (TPraos.PraosCrypto c, c ~ StandardCrypto, Signable DSIGN (Hash HASH EraIndependentTxBody)) =>
+  ShelleyCompatible (TPraos c) MaryEra
 
 instance
-  (TPraos.PraosCrypto c, Signable (DSIGN c) (Hash (HASH c) EraIndependentTxBody)) =>
-  ShelleyCompatible (TPraos c) (AlonzoEra c)
+  (TPraos.PraosCrypto c, c ~ StandardCrypto, Signable DSIGN (Hash HASH EraIndependentTxBody)) =>
+  ShelleyCompatible (TPraos c) AlonzoEra
 
 -- This instance is required since the ledger view forecast function for
 -- Praos/Babbage still goes through the forecast for TPraos. Once this is
 -- addressed, we could remove this instance.
 instance
-  (Praos.PraosCrypto c, TPraos.PraosCrypto c) =>
-  ShelleyCompatible (TPraos c) (BabbageEra c)
+  (Praos.PraosCrypto c, c ~ StandardCrypto, TPraos.PraosCrypto c, c ~ StandardCrypto) =>
+  ShelleyCompatible (TPraos c) BabbageEra
 
 instance
-  (Praos.PraosCrypto c) => ShelleyCompatible (Praos c) (BabbageEra c)
+  (Praos.PraosCrypto c, c ~ StandardCrypto) => ShelleyCompatible (Praos c) BabbageEra
 
 -- This instance is required since the ledger view forecast function for
 -- Praos/Conway still goes through the forecast for TPraos. Once this is
 -- addressed, we could remove this instance.
 instance
-  (Praos.PraosCrypto c, TPraos.PraosCrypto c) =>
-  ShelleyCompatible (TPraos c) (ConwayEra c)
+  (Praos.PraosCrypto c, c ~ StandardCrypto, TPraos.PraosCrypto c, c ~ StandardCrypto) =>
+  ShelleyCompatible (TPraos c) ConwayEra
 
 instance
-  (Praos.PraosCrypto c) => ShelleyCompatible (Praos c) (ConwayEra c)
+  (Praos.PraosCrypto c, c ~ StandardCrypto) => ShelleyCompatible (Praos c) ConwayEra

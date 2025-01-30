@@ -33,7 +33,7 @@ import           Ouroboros.Consensus.Shelley.Protocol.Abstract
 -- pipelining.
 data HotIdentity c = HotIdentity {
     -- | Hash of the cold key.
-    hiIssuer  :: !(SL.KeyHash SL.BlockIssuer c)
+    hiIssuer  :: !(SL.KeyHash SL.BlockIssuer)
   , -- | The issue number/opcert counter. Even if the opcert was compromised and
     -- hence an attacker forges blocks with a specific cold identity, the owner
     -- of the cold key can issue a new opcert with an incremented counter, and
