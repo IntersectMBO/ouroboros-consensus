@@ -32,10 +32,13 @@ module Ouroboros.Consensus.Shelley.Node.TPraos (
   , validateGenesis
   ) where
 
+import           Cardano.Crypto.Hash (Hash)
 import qualified Cardano.Crypto.VRF as VRF
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
+import           Cardano.Ledger.Hashes (HASH)
 import qualified Cardano.Ledger.Shelley.API as SL
+import           Cardano.Protocol.Crypto (VRF)
 import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
 import qualified Cardano.Protocol.TPraos.OCert as SL
@@ -83,12 +86,12 @@ shelleyBlockForging ::
      forall m era c.
       ( ShelleyCompatible (TPraos c) era
       , PraosCrypto c
-      , c ~ EraCrypto era
+      , c ~ StandardCrypto
       , TxLimits (ShelleyBlock (TPraos c) era)
       , IOLike m
       )
   => TPraosParams
-  -> ShelleyLeaderCredentials (EraCrypto era)
+  -> ShelleyLeaderCredentials StandardCrypto
   -> m (BlockForging m (ShelleyBlock (TPraos c) era))
 shelleyBlockForging tpraosParams credentials = do
     hotKey <- HotKey.mkHotKey @m @c initSignKey startPeriod tpraosMaxKESEvo
@@ -114,8 +117,7 @@ shelleyBlockForging tpraosParams credentials = do
 -- 'forgeLabel'.
 shelleySharedBlockForging ::
      forall m c era.
-     ( PraosCrypto c
-     , ShelleyEraWithCrypto c (TPraos c) era
+     ( ShelleyEraWithCrypto c (TPraos c) era
      , IOLike m
      )
   => HotKey c m
@@ -146,7 +148,7 @@ shelleySharedBlockForging hotKey slotToPeriod credentials =
       , shelleyLeaderCredentialsLabel       = label
       } = credentials
 
-    forgingVRFHash :: SL.Hash c (SL.VerKeyVRF c)
+    forgingVRFHash :: Hash HASH (VRF.VerKeyVRF (VRF c))
     forgingVRFHash =
           VRF.hashVerKeyVRF
         . VRF.deriveVerKeyVRF
@@ -159,9 +161,7 @@ shelleySharedBlockForging hotKey slotToPeriod credentials =
 
 -- | Check the validity of the genesis config. To be used in conjunction with
 -- 'assertWithMsg'.
-validateGenesis ::
-     PraosCrypto c
-  => SL.ShelleyGenesis c -> Either String ()
+validateGenesis :: SL.ShelleyGenesis -> Either String ()
 validateGenesis = first errsToString . SL.validateGenesis
   where
     errsToString :: [SL.ValidationErr] -> String
@@ -173,14 +173,14 @@ protocolInfoShelley ::
      forall m c.
       ( IOLike m
       , PraosCrypto c
-      , ShelleyCompatible (TPraos c) (ShelleyEra c)
-      , TxLimits (ShelleyBlock (TPraos c) (ShelleyEra c))
+      , ShelleyCompatible (TPraos c) ShelleyEra
+      , TxLimits (ShelleyBlock (TPraos c) ShelleyEra)
       )
-  => SL.ShelleyGenesis c
+  => SL.ShelleyGenesis
   -> ProtocolParamsShelleyBased c
   -> SL.ProtVer
-  -> ( ProtocolInfo (ShelleyBlock (TPraos c) (ShelleyEra c) )
-     , m [BlockForging m (ShelleyBlock (TPraos c) (ShelleyEra c))]
+  -> ( ProtocolInfo (ShelleyBlock (TPraos c) ShelleyEra)
+     , m [BlockForging m (ShelleyBlock (TPraos c) ShelleyEra)]
      )
 protocolInfoShelley shelleyGenesis
                     protocolParamsShelleyBased
@@ -196,7 +196,7 @@ protocolInfoTPraosShelleyBased ::
       , PraosCrypto c
       , ShelleyCompatible (TPraos c) era
       , TxLimits (ShelleyBlock (TPraos c) era)
-      , c ~ EraCrypto era
+      , c ~ StandardCrypto
       )
   => ProtocolParamsShelleyBased c
   -> L.TransitionConfig era
@@ -221,7 +221,7 @@ protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
         credentialss
     )
   where
-    genesis :: SL.ShelleyGenesis c
+    genesis :: SL.ShelleyGenesis
     genesis = transitionCfg ^. L.tcShelleyGenesisL
 
     maxMajorProtVer :: MaxMajorProtVer

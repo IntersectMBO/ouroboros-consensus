@@ -85,11 +85,11 @@ instance CardanoHardForkConstraints StandardCrypto => ProtocolClient (CardanoBlo
 instance ( IOLike m
          , Consensus.LedgerSupportsProtocol
              (Consensus.ShelleyBlock
-                (Consensus.TPraos StandardCrypto) (ShelleyEra StandardCrypto))
+                (Consensus.TPraos StandardCrypto) ShelleyEra)
          )
   => Protocol m (ShelleyBlockHFC (Consensus.TPraos StandardCrypto) StandardShelley) where
   data ProtocolInfoArgs m (ShelleyBlockHFC (Consensus.TPraos StandardCrypto) StandardShelley) = ProtocolInfoArgsShelley
-    (ShelleyGenesis StandardCrypto)
+    ShelleyGenesis
     (ProtocolParamsShelleyBased StandardCrypto)
     ProtVer
   protocolInfo (ProtocolInfoArgsShelley genesis shelleyBasedProtocolParams' protVer) =
@@ -97,7 +97,7 @@ instance ( IOLike m
 
 instance Consensus.LedgerSupportsProtocol
           (Consensus.ShelleyBlock
-            (Consensus.TPraos StandardCrypto) (Consensus.ShelleyEra StandardCrypto))
+            (Consensus.TPraos StandardCrypto) Consensus.ShelleyEra)
   => ProtocolClient (ShelleyBlockHFC (Consensus.TPraos StandardCrypto) StandardShelley) where
   data ProtocolClientInfoArgs (ShelleyBlockHFC (Consensus.TPraos StandardCrypto) StandardShelley) =
     ProtocolClientInfoArgsShelley

@@ -48,6 +48,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger (
   ) where
 
 import qualified Cardano.Ledger.BaseTypes as SL (epochInfoPure)
+import           Cardano.Ledger.BaseTypes.NonZero (unNonZero)
 import qualified Cardano.Ledger.BHeaderView as SL (BHeaderView)
 import           Cardano.Ledger.Binary.Plain (FromCBOR (..), ToCBOR (..),
                      enforceSize)
@@ -56,6 +57,7 @@ import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Governance as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
+import           Cardano.Protocol.Crypto (StandardCrypto)
 import           Cardano.Slotting.EpochInfo
 import           Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -85,7 +87,6 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.CommonProtocolParams
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
-import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Config
 import           Ouroboros.Consensus.Shelley.Ledger.Protocol ()
@@ -113,7 +114,7 @@ instance ShelleyBasedEra era => NoThunks (ShelleyLedgerError era)
 -------------------------------------------------------------------------------}
 
 data ShelleyLedgerConfig era = ShelleyLedgerConfig {
-      shelleyLedgerCompactGenesis     :: !(CompactGenesis (EraCrypto era))
+      shelleyLedgerCompactGenesis     :: !(CompactGenesis StandardCrypto)
       -- | Derived from 'shelleyLedgerGenesis' but we store a cached version
       -- because it used very often.
     , shelleyLedgerGlobals            :: !SL.Globals
@@ -124,11 +125,11 @@ data ShelleyLedgerConfig era = ShelleyLedgerConfig {
 deriving instance (NoThunks (Core.TranslationContext era), Era era) =>
     NoThunks (ShelleyLedgerConfig era)
 
-shelleyLedgerGenesis :: ShelleyLedgerConfig era -> SL.ShelleyGenesis (EraCrypto era)
+shelleyLedgerGenesis :: ShelleyLedgerConfig era -> SL.ShelleyGenesis
 shelleyLedgerGenesis = getCompactGenesis . shelleyLedgerCompactGenesis
 
 shelleyEraParams ::
-     SL.ShelleyGenesis c
+     SL.ShelleyGenesis
   -> HardFork.EraParams
 shelleyEraParams genesis = HardFork.EraParams {
       eraEpochSize  = SL.sgEpochLength genesis
@@ -139,11 +140,11 @@ shelleyEraParams genesis = HardFork.EraParams {
   where
     stabilityWindow =
         SL.computeStabilityWindow
-          (SL.sgSecurityParam genesis)
+          (unNonZero $ SL.sgSecurityParam genesis)
           (SL.sgActiveSlotCoeff genesis)
 
 -- | Separate variant of 'shelleyEraParams' to be used for a Shelley-only chain.
-shelleyEraParamsNeverHardForks :: SL.ShelleyGenesis c -> HardFork.EraParams
+shelleyEraParamsNeverHardForks :: SL.ShelleyGenesis -> HardFork.EraParams
 shelleyEraParamsNeverHardForks genesis = HardFork.EraParams {
       eraEpochSize  = SL.sgEpochLength genesis
     , eraSlotLength = mkSlotLength $ SL.fromNominalDiffTimeMicro $ SL.sgSlotLength genesis
@@ -153,11 +154,11 @@ shelleyEraParamsNeverHardForks genesis = HardFork.EraParams {
   where
     stabilityWindow =
         SL.computeStabilityWindow
-          (SL.sgSecurityParam genesis)
+          (unNonZero $ SL.sgSecurityParam genesis)
           (SL.sgActiveSlotCoeff genesis)
 
 mkShelleyLedgerConfig ::
-     SL.ShelleyGenesis (EraCrypto era)
+     SL.ShelleyGenesis
   -> Core.TranslationContext era
   -> EpochInfo (Except HardFork.PastHorizonException)
   -> ShelleyLedgerConfig era
@@ -391,7 +392,7 @@ applyHelper ::
      (ShelleyCompatible proto era, Monad m)
   => (   SL.Globals
       -> SL.NewEpochState era
-      -> SL.Block (SL.BHeaderView (EraCrypto era)) era
+      -> SL.Block SL.BHeaderView era
       -> m (LedgerResult
               (LedgerState (ShelleyBlock proto era))
               (SL.NewEpochState era)

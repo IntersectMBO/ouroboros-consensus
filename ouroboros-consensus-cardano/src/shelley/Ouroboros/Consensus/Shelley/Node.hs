@@ -39,7 +39,6 @@ import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.TPraos
-import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Inspect ()
 import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion ()
@@ -101,8 +100,8 @@ instance ShelleyCompatible proto era => BlockSupportsMetrics (ShelleyBlock proto
         -> IsNotSelfIssued
     where
 
-      issuerVKeys :: Map (SL.KeyHash 'SL.BlockIssuer (EraCrypto era))
-                         (SL.VKey 'SL.BlockIssuer (EraCrypto era))
+      issuerVKeys :: Map (SL.KeyHash 'SL.BlockIssuer)
+                         (SL.VKey 'SL.BlockIssuer)
       issuerVKeys = shelleyBlockIssuerVKeys cfg
 
 instance ConsensusProtocol proto => BlockSupportsSanityCheck (ShelleyBlock proto era) where

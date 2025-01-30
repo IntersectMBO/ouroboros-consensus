@@ -10,6 +10,7 @@ import qualified Cardano.Ledger.Core as Core (Tx)
 import qualified Cardano.Ledger.Core as SL (hashTxSeq, toTxSeq)
 import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractTx)
 import qualified Cardano.Ledger.Shelley.BlockChain as SL (bBodySize)
+import           Cardano.Protocol.Crypto (StandardCrypto)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import           Control.Exception
 import qualified Data.Sequence.Strict as Seq
@@ -19,7 +20,6 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Protocol.Abstract (CanBeLeader, IsLeader)
 import           Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
-import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Config
                      (shelleyProtocolVersion)
@@ -36,7 +36,7 @@ import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto,
 forgeShelleyBlock ::
      forall m era proto.
      (ShelleyCompatible proto era, Monad m)
-  => HotKey (EraCrypto era) m
+  => HotKey StandardCrypto m
   -> CanBeLeader proto
   -> TopLevelConfig (ShelleyBlock proto era)
   -> BlockNo                                      -- ^ Current block number
@@ -73,9 +73,9 @@ forgeShelleyBlock
     extractTx :: Validated (GenTx (ShelleyBlock proto era)) -> Core.Tx era
     extractTx (ShelleyValidatedTx _txid vtx) = SL.extractTx vtx
 
-    prevHash :: SL.PrevHash (EraCrypto era)
+    prevHash :: SL.PrevHash
     prevHash =
-        toShelleyPrevHash @era @proto
+        toShelleyPrevHash @proto
       . castHash
       . getTipHash
       $ tickedLedger
