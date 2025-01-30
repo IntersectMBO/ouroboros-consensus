@@ -49,7 +49,7 @@ instance Crypto MockCrypto where
   type VRF      MockCrypto = MockVRF
 
 instance SL.PraosCrypto MockCrypto
-instance Praos.PraosCrypto MockCrypto
+-- instance Praos.PraosCrypto MockCrypto
 
 -- instance SneakilyContainResult InputVRF where
 --   type Payload InputVRF = InputVRF
