@@ -21,10 +21,10 @@ module Ouroboros.Consensus.Shelley.Node.Common (
   ) where
 
 import           Cardano.Crypto.KES (UnsoundPureSignKeyKES)
-import           Cardano.Ledger.Crypto
 import qualified Cardano.Ledger.Keys as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Ledger.Slot
+import           Cardano.Protocol.Crypto
 import           Data.Text (Text)
 import           Ouroboros.Consensus.Block (CannotForge, ForgeStateInfo,
                      ForgeStateUpdateError)
@@ -35,7 +35,6 @@ import           Ouroboros.Consensus.Node.InitStorage
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import           Ouroboros.Consensus.Protocol.Praos.Common
                      (PraosCanBeLeader (praosCanBeLeaderColdVerKey))
-import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock,
                      ShelleyCompatible, shelleyNetworkMagic,
                      shelleyStorageConfigSecurityParam,
@@ -63,7 +62,7 @@ data ShelleyLeaderCredentials c = ShelleyLeaderCredentials
   }
 
 shelleyBlockIssuerVKey ::
-  ShelleyLeaderCredentials c -> SL.VKey 'SL.BlockIssuer c
+  ShelleyLeaderCredentials c -> SL.VKey 'SL.BlockIssuer
 shelleyBlockIssuerVKey =
   praosCanBeLeaderColdVerKey . shelleyLeaderCredentialsCanBeLeader
 
@@ -80,11 +79,11 @@ type instance ForgeStateUpdateError (ShelleyBlock proto era) = HotKey.KESEvoluti
 -- | Needed in '*SharedBlockForging' because we can't partially apply
 -- equality constraints.
 class
-  (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era), EraCrypto era ~ c) =>
+  (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era), StandardCrypto ~ c) =>
   ShelleyEraWithCrypto c proto era
 
 instance
-  (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era), EraCrypto era ~ c) =>
+  (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era), StandardCrypto ~ c) =>
   ShelleyEraWithCrypto c proto era
 
 {-------------------------------------------------------------------------------
