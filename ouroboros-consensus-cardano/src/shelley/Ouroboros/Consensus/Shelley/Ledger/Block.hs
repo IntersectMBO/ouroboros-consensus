@@ -45,7 +45,7 @@ import qualified Cardano.Ledger.Binary.Plain as Plain
 import           Cardano.Ledger.Core as SL (eraDecoder, eraProtVerLow,
                      toEraCBOR)
 import qualified Cardano.Ledger.Core as SL (hashTxSeq)
-import           Cardano.Ledger.Crypto (HASH)
+import           Cardano.Ledger.Hashes (HASH)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import qualified Data.ByteString.Lazy as Lazy
@@ -89,14 +89,14 @@ class
   , DecCBOR (Annotator (ShelleyProtocolHeader proto))
   , Show (CannotForgeError proto)
     -- Currently the chain select view is identical
-  , SelectView proto ~ PraosChainSelectView (EraCrypto era)
+  , SelectView proto ~ PraosChainSelectView StandardCrypto
     -- Need to be able to sign the protocol header
   , SignedHeader (ShelleyProtocolHeader proto)
     -- ChainDepState needs to be serialisable
   , DecodeDisk (ShelleyBlock proto era) (ChainDepState proto)
   , EncodeDisk (ShelleyBlock proto era) (ChainDepState proto)
     -- Era and proto crypto must coincide
-  , EraCrypto era ~ ProtoCrypto proto
+  , StandardCrypto ~ ProtoCrypto proto
     -- Hard-fork related constraints
   , HasPartialConsensusConfig proto
   , DecCBOR (SL.PState era)
@@ -105,7 +105,7 @@ class
 instance ShelleyCompatible proto era => ConvertRawHash (ShelleyBlock proto era) where
   toShortRawHash   _ = Crypto.hashToBytesShort . unShelleyHash
   fromShortRawHash _ = ShelleyHash . hashFromBytesShortE
-  hashSize         _ = fromIntegral $ Crypto.sizeHash (Proxy @(HASH (EraCrypto era)))
+  hashSize         _ = fromIntegral $ Crypto.sizeHash (Proxy @HASH)
 
 {-------------------------------------------------------------------------------
   Shelley blocks and headers
@@ -116,7 +116,7 @@ instance ShelleyCompatible proto era => ConvertRawHash (ShelleyBlock proto era) 
 -- This block is parametrised over both the (ledger) era and the protocol.
 data ShelleyBlock proto era = ShelleyBlock {
       shelleyBlockRaw        :: !(SL.Block (ShelleyProtocolHeader proto) era)
-    , shelleyBlockHeaderHash :: !(ShelleyHash (ProtoCrypto proto))
+    , shelleyBlockHeaderHash :: !ShelleyHash
     }
 
 deriving instance ShelleyCompatible proto era => Show (ShelleyBlock proto era)
@@ -125,7 +125,7 @@ deriving instance ShelleyCompatible proto era => Eq   (ShelleyBlock proto era)
 instance (Typeable era, Typeable proto)
   => ShowProxy (ShelleyBlock proto era) where
 
-type instance HeaderHash (ShelleyBlock proto era) = ShelleyHash (ProtoCrypto proto)
+type instance HeaderHash (ShelleyBlock proto era) = ShelleyHash
 
 mkShelleyBlock ::
      ShelleyCompatible proto era
@@ -151,7 +151,7 @@ type family ShelleyBlockLedgerEra blk where
 
 data instance Header (ShelleyBlock proto era) = ShelleyHeader {
       shelleyHeaderRaw  :: !(ShelleyProtocolHeader proto)
-    , shelleyHeaderHash :: !(ShelleyHash (ProtoCrypto proto))
+    , shelleyHeaderHash :: !ShelleyHash
     }
   deriving (Generic)
 
@@ -216,14 +216,14 @@ instance ShelleyCompatible proto era => HasAnnTip (ShelleyBlock proto era)
 -------------------------------------------------------------------------------}
 
 -- | From @cardano-ledger-specs@ to @ouroboros-consensus@
-fromShelleyPrevHash :: EraCrypto era ~ ProtoCrypto proto =>
-  SL.PrevHash (EraCrypto era) -> ChainHash (ShelleyBlock proto era)
+fromShelleyPrevHash :: StandardCrypto ~ ProtoCrypto proto =>
+  SL.PrevHash -> ChainHash (ShelleyBlock proto era)
 fromShelleyPrevHash SL.GenesisHash   = GenesisHash
 fromShelleyPrevHash (SL.BlockHash h) = BlockHash (ShelleyHash $ SL.unHashHeader h)
 
 -- | From @ouroboros-consensus@ to @cardano-ledger-specs@
-toShelleyPrevHash :: EraCrypto era ~ ProtoCrypto proto =>
-  ChainHash (Header (ShelleyBlock proto era)) -> SL.PrevHash (EraCrypto era)
+toShelleyPrevHash :: StandardCrypto ~ ProtoCrypto proto =>
+  ChainHash (Header (ShelleyBlock proto era)) -> SL.PrevHash
 toShelleyPrevHash GenesisHash                 = SL.GenesisHash
 toShelleyPrevHash (BlockHash (ShelleyHash h)) = SL.BlockHash $ SL.HashHeader h
 

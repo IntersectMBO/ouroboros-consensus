@@ -25,6 +25,7 @@ module Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol () where
 
 import qualified Cardano.Ledger.Core as LedgerCore
 import qualified Cardano.Ledger.Shelley.API as SL
+import           Cardano.Protocol.Crypto (StandardCrypto)
 import qualified Cardano.Protocol.TPraos.API as SL
 import           Control.Monad.Except (MonadError (throwError))
 import           Data.Coerce (coerce)
@@ -40,7 +41,6 @@ import           Ouroboros.Consensus.Protocol.Abstract (TranslateProto,
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Praos
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
-import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Protocol ()
@@ -49,7 +49,7 @@ import           Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import           Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 
 instance
-  (ShelleyCompatible (TPraos crypto) era, crypto ~ EraCrypto era) =>
+  (ShelleyCompatible (TPraos crypto) era, crypto ~ StandardCrypto) =>
   LedgerSupportsProtocol (ShelleyBlock (TPraos crypto) era)
   where
   protocolLedgerView _cfg = SL.currentLedgerView . tickedShelleyLedgerState
@@ -75,7 +75,7 @@ instance
       swindow = SL.stabilityWindow globals
       at = ledgerTipSlot ledgerState
 
-      futureLedgerView :: SlotNo -> SL.LedgerView (EraCrypto era)
+      futureLedgerView :: SlotNo -> SL.LedgerView
       futureLedgerView =
         either
           (\e -> error ("futureLedgerView failed: " <> show e))
@@ -89,7 +89,7 @@ instance
 instance
   ( ShelleyCompatible (Praos crypto) era,
     ShelleyCompatible (TPraos crypto) era,
-    crypto ~ EraCrypto era,
+    crypto ~ StandardCrypto,
     TranslateProto (TPraos crypto) (Praos crypto)
   ) =>
   LedgerSupportsProtocol (ShelleyBlock (Praos crypto) era)

@@ -12,14 +12,15 @@ module Cardano.Tools.Headers (
   ) where
 
 import           Cardano.Crypto.DSIGN (deriveVerKeyDSIGN)
-import           Cardano.Crypto.VRF (VRFAlgorithm (deriveVerKeyVRF))
-import           Cardano.Ledger.Api (ConwayEra, StandardCrypto)
+import           Cardano.Crypto.VRF.Class (deriveVerKeyVRF)
+import           Cardano.Ledger.Api (ConwayEra)
 import           Cardano.Ledger.Coin (Coin (..))
 import           Cardano.Ledger.Compactible (toCompact)
-import           Cardano.Ledger.Keys (VKey (..), hashKey, hashVerKeyVRF)
+import           Cardano.Ledger.Keys (VKey (..), hashKey)
 import           Cardano.Ledger.PoolDistr (IndividualPoolStake (..))
 import           Cardano.Prelude (ExitCode (..), exitWith, forM_, hPutStrLn,
                      stderr)
+import           Cardano.Protocol.Crypto (StandardCrypto, hashVerKeyVRF)
 import           Control.Monad.Except (runExcept)
 import qualified Data.Aeson as Json
 import qualified Data.ByteString.Lazy as LBS
@@ -37,7 +38,7 @@ import           Test.Ouroboros.Consensus.Protocol.Praos.Header
                      Sample (..), expectedError, generateSamples, header,
                      mutation)
 
-type ConwayBlock = ShelleyBlock (Praos StandardCrypto) (ConwayEra StandardCrypto)
+type ConwayBlock = ShelleyBlock (Praos StandardCrypto) ConwayEra
 
 -- * Running Generator
 data Options
@@ -73,7 +74,7 @@ validate context MutatedHeader{header, mutation} =
     ownsAllStake vrfKey = IndividualPoolStake 1 (coin 1) vrfKey
     poolDistr = Map.fromList [(poolId, ownsAllStake hashVRFKey)]
     poolId = hashKey $ VKey $ deriveVerKeyDSIGN coldSignKey
-    hashVRFKey = hashVerKeyVRF $ deriveVerKeyVRF vrfSignKey
+    hashVRFKey = hashVerKeyVRF @StandardCrypto $ deriveVerKeyVRF vrfSignKey
 
     headerView = validateView @ConwayBlock undefined (mkShelleyHeader header)
     validateKES = doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod poolDistr ocertCounters headerView

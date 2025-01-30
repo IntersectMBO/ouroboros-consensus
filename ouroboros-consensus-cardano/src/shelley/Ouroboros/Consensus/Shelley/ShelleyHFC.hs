@@ -25,7 +25,7 @@ module Ouroboros.Consensus.Shelley.ShelleyHFC (
   ) where
 
 import qualified Cardano.Ledger.Api.Era as L
-import qualified Cardano.Ledger.BaseTypes as SL (mkVersion)
+import qualified Cardano.Ledger.BaseTypes as SL (mkVersion, unNonZero)
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Protocol.TPraos.API as SL
@@ -154,11 +154,11 @@ shelleyTransition ShelleyPartialLedgerConfig{..}
 
     -- 'shelleyLedgerConfig' contains a dummy 'EpochInfo' but this does not
     -- matter for extracting the genesis config
-    genesis :: SL.ShelleyGenesis (EraCrypto era)
+    genesis :: SL.ShelleyGenesis
     genesis = shelleyLedgerGenesis shelleyLedgerConfig
 
     k :: Word64
-    k = SL.sgSecurityParam genesis
+    k = SL.unNonZero $ SL.sgSecurityParam genesis
 
     isTransition :: ShelleyLedgerUpdate era -> Maybe EpochNo
     isTransition (ShelleyUpdatedPParams maybePParams newPParamsEpochNo) = do
@@ -315,7 +315,6 @@ forecastAcrossShelley cfgFrom cfgTo transition forecastFor ledgerStateFrom
 instance ( ShelleyBasedEra era
          , ShelleyBasedEra (SL.PreviousEra era)
          , SL.Era (SL.PreviousEra era)
-         , EraCrypto (SL.PreviousEra era) ~ EraCrypto era
          ) => SL.TranslateEra era (ShelleyTip proto) where
   translateEra _ (ShelleyTip sno bno (ShelleyHash hash)) =
       return $ ShelleyTip sno bno (ShelleyHash hash)

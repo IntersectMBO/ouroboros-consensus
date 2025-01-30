@@ -378,12 +378,12 @@ newtype CardanoHardForkTriggers = CardanoHardForkTriggers {
 
 pattern CardanoHardForkTriggers' ::
      (c ~ StandardCrypto)
-  => CardanoHardForkTrigger (ShelleyBlock (TPraos c) (ShelleyEra  c))
-  -> CardanoHardForkTrigger (ShelleyBlock (TPraos c) (AllegraEra  c))
-  -> CardanoHardForkTrigger (ShelleyBlock (TPraos c) (MaryEra     c))
-  -> CardanoHardForkTrigger (ShelleyBlock (TPraos c) (AlonzoEra   c))
-  -> CardanoHardForkTrigger (ShelleyBlock (Praos  c) (BabbageEra  c))
-  -> CardanoHardForkTrigger (ShelleyBlock (Praos  c) (ConwayEra   c))
+  => CardanoHardForkTrigger (ShelleyBlock (TPraos c) ShelleyEra)
+  -> CardanoHardForkTrigger (ShelleyBlock (TPraos c) AllegraEra)
+  -> CardanoHardForkTrigger (ShelleyBlock (TPraos c) MaryEra)
+  -> CardanoHardForkTrigger (ShelleyBlock (TPraos c) AlonzoEra)
+  -> CardanoHardForkTrigger (ShelleyBlock (Praos  c) BabbageEra)
+  -> CardanoHardForkTrigger (ShelleyBlock (Praos  c) ConwayEra)
   -> CardanoHardForkTriggers
 pattern CardanoHardForkTriggers' {
         triggerHardForkShelley
@@ -431,7 +431,7 @@ data CardanoProtocolParams c = CardanoProtocolParams {
     byronProtocolParams           :: ProtocolParamsByron
   , shelleyBasedProtocolParams    :: ProtocolParamsShelleyBased c
   , cardanoHardForkTriggers       :: CardanoHardForkTriggers
-  , cardanoLedgerTransitionConfig :: L.TransitionConfig (L.LatestKnownEra c)
+  , cardanoLedgerTransitionConfig :: L.TransitionConfig L.LatestKnownEra
   , cardanoCheckpoints            :: CheckpointsMap (CardanoBlock c)
     -- | The greatest protocol version that this node's software and config
     -- files declare to handle correctly.
@@ -560,20 +560,20 @@ protocolInfoCardano paramsCardano
     praosParams = PraosParams
       { praosSlotsPerKESPeriod = SL.sgSlotsPerKESPeriod genesisShelley,
         praosLeaderF = SL.mkActiveSlotCoeff $ SL.sgActiveSlotsCoeff genesisShelley,
-        praosSecurityParam = SecurityParam $ SL.sgSecurityParam genesisShelley,
+        praosSecurityParam = SecurityParam $ SL.unNonZero $ SL.sgSecurityParam genesisShelley,
         praosMaxKESEvo = SL.sgMaxKESEvolutions genesisShelley,
         praosMaxMajorPV = maxMajorProtVer,
         praosRandomnessStabilisationWindow =
           -- This value is used for all Praos eras /except/ Babbage, see
           -- 'partialConsensusConfigBabbage'.
           SL.computeRandomnessStabilisationWindow
-            (SL.sgSecurityParam genesisShelley)
+            (SL.unNonZero $ SL.sgSecurityParam genesisShelley)
             (SL.mkActiveSlotCoeff $ SL.sgActiveSlotsCoeff genesisShelley)
       }
 
     PraosParams { praosSlotsPerKESPeriod, praosMaxKESEvo } = praosParams
 
-    blockConfigShelley :: BlockConfig (ShelleyBlock (TPraos c) (ShelleyEra c))
+    blockConfigShelley :: BlockConfig (ShelleyBlock (TPraos c) ShelleyEra)
     blockConfigShelley =
         Shelley.mkShelleyBlockConfig
           cardanoProtocolVersion
@@ -581,21 +581,21 @@ protocolInfoCardano paramsCardano
           (shelleyBlockIssuerVKey <$> credssShelleyBased)
 
     partialConsensusConfigShelley ::
-         PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) (ShelleyEra c)))
+         PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) ShelleyEra))
     partialConsensusConfigShelley = tpraosParams
 
-    partialLedgerConfigShelley :: PartialLedgerConfig (ShelleyBlock (TPraos c) (ShelleyEra c))
+    partialLedgerConfigShelley :: PartialLedgerConfig (ShelleyBlock (TPraos c) ShelleyEra)
     partialLedgerConfigShelley =
         mkPartialLedgerConfigShelley
           transitionConfigShelley
           (toTriggerHardFork triggerHardForkAllegra)
 
     kShelley :: SecurityParam
-    kShelley = SecurityParam $ sgSecurityParam genesisShelley
+    kShelley = SecurityParam $ SL.unNonZero $ sgSecurityParam genesisShelley
 
     -- Allegra
 
-    blockConfigAllegra :: BlockConfig (ShelleyBlock (TPraos c) (AllegraEra c))
+    blockConfigAllegra :: BlockConfig (ShelleyBlock (TPraos c) AllegraEra)
     blockConfigAllegra =
         Shelley.mkShelleyBlockConfig
           cardanoProtocolVersion
@@ -603,10 +603,10 @@ protocolInfoCardano paramsCardano
           (shelleyBlockIssuerVKey <$> credssShelleyBased)
 
     partialConsensusConfigAllegra ::
-         PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) (AllegraEra c)))
+         PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) AllegraEra))
     partialConsensusConfigAllegra = tpraosParams
 
-    partialLedgerConfigAllegra :: PartialLedgerConfig (ShelleyBlock (TPraos c) (AllegraEra c))
+    partialLedgerConfigAllegra :: PartialLedgerConfig (ShelleyBlock (TPraos c) AllegraEra)
     partialLedgerConfigAllegra =
         mkPartialLedgerConfigShelley
           transitionConfigAllegra
@@ -614,7 +614,7 @@ protocolInfoCardano paramsCardano
 
     -- Mary
 
-    blockConfigMary :: BlockConfig (ShelleyBlock (TPraos c) (MaryEra c))
+    blockConfigMary :: BlockConfig (ShelleyBlock (TPraos c) MaryEra)
     blockConfigMary =
         Shelley.mkShelleyBlockConfig
           cardanoProtocolVersion
@@ -622,10 +622,10 @@ protocolInfoCardano paramsCardano
           (shelleyBlockIssuerVKey <$> credssShelleyBased)
 
     partialConsensusConfigMary ::
-         PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) (MaryEra c)))
+         PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) MaryEra))
     partialConsensusConfigMary = tpraosParams
 
-    partialLedgerConfigMary :: PartialLedgerConfig (ShelleyBlock (TPraos c) (MaryEra c))
+    partialLedgerConfigMary :: PartialLedgerConfig (ShelleyBlock (TPraos c) MaryEra)
     partialLedgerConfigMary =
         mkPartialLedgerConfigShelley
           transitionConfigMary
@@ -633,7 +633,7 @@ protocolInfoCardano paramsCardano
 
     -- Alonzo
 
-    blockConfigAlonzo :: BlockConfig (ShelleyBlock (TPraos c) (AlonzoEra c))
+    blockConfigAlonzo :: BlockConfig (ShelleyBlock (TPraos c) AlonzoEra)
     blockConfigAlonzo =
         Shelley.mkShelleyBlockConfig
           cardanoProtocolVersion
@@ -641,10 +641,10 @@ protocolInfoCardano paramsCardano
           (shelleyBlockIssuerVKey <$> credssShelleyBased)
 
     partialConsensusConfigAlonzo ::
-         PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) (AlonzoEra c)))
+         PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) AlonzoEra))
     partialConsensusConfigAlonzo = tpraosParams
 
-    partialLedgerConfigAlonzo :: PartialLedgerConfig (ShelleyBlock (TPraos c) (AlonzoEra c))
+    partialLedgerConfigAlonzo :: PartialLedgerConfig (ShelleyBlock (TPraos c) AlonzoEra)
     partialLedgerConfigAlonzo =
         mkPartialLedgerConfigShelley
           transitionConfigAlonzo
@@ -652,7 +652,7 @@ protocolInfoCardano paramsCardano
 
     -- Babbage
 
-    blockConfigBabbage :: BlockConfig (ShelleyBlock (Praos c) (BabbageEra c))
+    blockConfigBabbage :: BlockConfig (ShelleyBlock (Praos c) BabbageEra)
     blockConfigBabbage =
         Shelley.mkShelleyBlockConfig
           cardanoProtocolVersion
@@ -660,7 +660,7 @@ protocolInfoCardano paramsCardano
           (shelleyBlockIssuerVKey <$> credssShelleyBased)
 
     partialConsensusConfigBabbage ::
-         PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c) (BabbageEra c)))
+         PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c) BabbageEra))
     partialConsensusConfigBabbage = praosParams {
           -- For Praos in Babbage (just as in all TPraos eras) we use the
           -- smaller (3k/f vs 4k/f slots) stability window here for
@@ -668,12 +668,12 @@ protocolInfoCardano paramsCardano
           -- specs for context.
           praosRandomnessStabilisationWindow =
             SL.computeStabilityWindow
-              (SL.sgSecurityParam genesisShelley)
+              (SL.unNonZero $ SL.sgSecurityParam genesisShelley)
               (SL.mkActiveSlotCoeff $ SL.sgActiveSlotsCoeff genesisShelley)
         }
 
 
-    partialLedgerConfigBabbage :: PartialLedgerConfig (ShelleyBlock (Praos c) (BabbageEra c))
+    partialLedgerConfigBabbage :: PartialLedgerConfig (ShelleyBlock (Praos c) BabbageEra)
     partialLedgerConfigBabbage =
         mkPartialLedgerConfigShelley
           transitionConfigBabbage
@@ -681,7 +681,7 @@ protocolInfoCardano paramsCardano
 
     -- Conway
 
-    blockConfigConway :: BlockConfig (ShelleyBlock (Praos c) (ConwayEra c))
+    blockConfigConway :: BlockConfig (ShelleyBlock (Praos c) ConwayEra)
     blockConfigConway =
         Shelley.mkShelleyBlockConfig
           cardanoProtocolVersion
@@ -689,10 +689,10 @@ protocolInfoCardano paramsCardano
           (shelleyBlockIssuerVKey <$> credssShelleyBased)
 
     partialConsensusConfigConway ::
-         PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c) (ConwayEra c)))
+         PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c) ConwayEra))
     partialConsensusConfigConway = praosParams
 
-    partialLedgerConfigConway :: PartialLedgerConfig (ShelleyBlock (Praos c) (ConwayEra c))
+    partialLedgerConfigConway :: PartialLedgerConfig (ShelleyBlock (Praos c) ConwayEra)
     partialLedgerConfigConway =
         mkPartialLedgerConfigShelley
           transitionConfigConway
