@@ -24,8 +24,8 @@ module Ouroboros.Consensus.Shelley.Ledger.Config (
   ) where
 
 import           Cardano.Ledger.Binary (FromCBOR, ToCBOR)
-import           Cardano.Ledger.Crypto (Crypto)
 import qualified Cardano.Ledger.Shelley.API as SL
+import           Cardano.Protocol.Crypto (Crypto)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Word (Word64)
@@ -36,7 +36,7 @@ import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Protocol.Praos.Common
                      (VRFTiebreakerFlavor (..))
-import           Ouroboros.Consensus.Shelley.Eras (EraCrypto, isBeforeConway)
+import           Ouroboros.Consensus.Shelley.Eras (isBeforeConway)
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Network.Magic (NetworkMagic (..))
 
@@ -53,8 +53,8 @@ data instance BlockConfig (ShelleyBlock proto era) = ShelleyConfig {
       -- | For nodes that can produce blocks, this should be set to the
       -- verification key(s) corresponding to the node's signing key(s). For non
       -- block producing nodes, this can be set to the empty map.
-    , shelleyBlockIssuerVKeys    :: !(Map (SL.KeyHash 'SL.BlockIssuer (EraCrypto era))
-                                          (SL.VKey 'SL.BlockIssuer (EraCrypto era)))
+    , shelleyBlockIssuerVKeys    :: !(Map (SL.KeyHash 'SL.BlockIssuer)
+                                          (SL.VKey 'SL.BlockIssuer))
     , shelleyVRFTiebreakerFlavor :: !VRFTiebreakerFlavor
     }
   deriving stock (Generic)
@@ -65,8 +65,8 @@ deriving instance ShelleyBasedEra era => NoThunks (BlockConfig (ShelleyBlock pro
 mkShelleyBlockConfig ::
      forall proto era. ShelleyBasedEra era
   => SL.ProtVer
-  -> SL.ShelleyGenesis (EraCrypto era)
-  -> [SL.VKey 'SL.BlockIssuer (EraCrypto era)]
+  -> SL.ShelleyGenesis
+  -> [SL.VKey 'SL.BlockIssuer]
   -> BlockConfig (ShelleyBlock proto era)
 mkShelleyBlockConfig protVer genesis blockIssuerVKeys = ShelleyConfig {
       shelleyProtocolVersion     = protVer
@@ -122,15 +122,14 @@ data instance StorageConfig (ShelleyBlock proto era) = ShelleyStorageConfig {
 -- * The 'sgStaking' field is erased. It is only used to register initial stake
 --   pools in tests and benchmarks.
 newtype CompactGenesis c = CompactGenesis {
-      getCompactGenesis :: SL.ShelleyGenesis c
-    }
+      getCompactGenesis :: SL.ShelleyGenesis    }
   deriving stock (Eq, Show, Generic)
   deriving newtype (ToCBOR, FromCBOR)
 
 deriving anyclass instance Crypto c => NoThunks (CompactGenesis c)
 
 -- | Compacts the given 'SL.ShelleyGenesis'.
-compactGenesis :: SL.ShelleyGenesis c -> CompactGenesis c
+compactGenesis :: SL.ShelleyGenesis -> CompactGenesis c
 compactGenesis genesis = CompactGenesis $
     genesis {
         SL.sgInitialFunds = mempty

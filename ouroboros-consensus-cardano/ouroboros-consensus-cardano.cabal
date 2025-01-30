@@ -301,6 +301,7 @@ library unstable-shelley-testlib
     cardano-ledger-alonzo,
     cardano-ledger-alonzo-test,
     cardano-ledger-babbage-test,
+    cardano-ledger-binary,
     cardano-ledger-conway-test >=1.2.1,
     cardano-ledger-core:{cardano-ledger-core, testlib},
     cardano-ledger-mary,
