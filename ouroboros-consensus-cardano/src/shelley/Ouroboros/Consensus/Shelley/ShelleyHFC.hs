@@ -44,6 +44,7 @@ import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.Index (Index (..))
 import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
 import           Data.SOP.Strict
+import qualified Data.SOP.Tails as Tails
 import qualified Data.Text as T (pack)
 import           Data.Typeable
 import           Data.Void (Void)
@@ -407,6 +408,7 @@ instance SL.EraTxOut era => HasHardForkTxOut '[ShelleyBlock proto era] where
   ejectHardForkTxOut IZ txOut    = txOut
   ejectHardForkTxOut (IS idx') _ = case idx' of {}
   txOutEjections = fn (unZ . unK) :* Nil
+  txOutTranslations = Tails.mk1
 
 {-------------------------------------------------------------------------------
   Queries

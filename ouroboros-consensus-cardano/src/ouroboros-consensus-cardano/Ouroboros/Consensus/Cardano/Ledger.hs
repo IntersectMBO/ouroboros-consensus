@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
@@ -32,12 +33,12 @@ module Ouroboros.Consensus.Cardano.Ledger (
   , eliminateCardanoTxOut
   ) where
 
+import qualified Data.SOP.Tails as Tails
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Data.Maybe
 import           Data.MemPack
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Index
-import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.Strict
 import qualified Data.SOP.Telescope as Telescope
 import           Data.Void
@@ -47,7 +48,6 @@ import           Ouroboros.Consensus.Block (BlockProtocol)
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.CanHardFork
 import           Ouroboros.Consensus.HardFork.Combinator
-import           Ouroboros.Consensus.HardFork.Combinator.State.Types
 import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
@@ -134,17 +134,16 @@ eliminateCardanoTxOut ::
 eliminateCardanoTxOut f = \case
   ShelleyTxOut txout -> f (IS IZ) txout
   AllegraTxOut txout -> f (IS (IS IZ)) txout
-  MaryTxOut txout    -> f (IS (IS (IS IZ))) txout
-  AlonzoTxOut txout  -> f (IS (IS (IS (IS IZ)))) txout
+  MaryTxOut    txout -> f (IS (IS (IS IZ))) txout
+  AlonzoTxOut  txout -> f (IS (IS (IS (IS IZ)))) txout
   BabbageTxOut txout -> f (IS (IS (IS (IS (IS IZ))))) txout
-  ConwayTxOut txout  -> f (IS (IS (IS (IS (IS (IS IZ)))))) txout
+  ConwayTxOut  txout -> f (IS (IS (IS (IS (IS (IS IZ)))))) txout
 
 instance CardanoHardForkConstraints c => HasHardForkTxOut (CardanoEras c) where
 
   type instance HardForkTxOut (CardanoEras c) = CardanoTxOut c
 
-  injectHardForkTxOut idx txOut = case idx of
-    IZ                                    -> case txOut of {}
+  injectHardForkTxOut idx !txOut = case idx of
     IS IZ                                 -> ShelleyTxOut txOut
     IS (IS IZ)                            -> AllegraTxOut txOut
     IS (IS (IS IZ))                       -> MaryTxOut    txOut
@@ -158,15 +157,14 @@ instance CardanoHardForkConstraints c => HasHardForkTxOut (CardanoEras c) where
        Index (CardanoEras c) y
     -> HardForkTxOut (CardanoEras c)
     -> TxOut (LedgerState y)
-  ejectHardForkTxOut targetIdx txOut =
-    let composeFromTo' :: Index (CardanoEras c) x -> WrapTxOut x -> Maybe (WrapTxOut y)
-        composeFromTo' originIdx =
-           InPairs.composeFromTo originIdx targetIdx
-             (InPairs.hmap
-                (\translator -> InPairs.Fn2 $ WrapTxOut . translateTxOutWith translator . unwrapTxOut )
-                (translateLedgerTables (hardForkEraTranslation @(CardanoEras c))))
-    in maybe (error "Anachrony") unwrapTxOut $
-        eliminateCardanoTxOut @(Maybe (WrapTxOut y)) (\idx -> composeFromTo' idx . WrapTxOut) txOut
+  ejectHardForkTxOut targetIdx =
+    eliminateCardanoTxOut
+      (\origIdx ->
+           unwrapTxOut
+         . maybe (error "anachrony") id
+         . Tails.extendWithTails origIdx targetIdx txOutTranslations
+         . WrapTxOut
+      )
 
 instance CardanoHardForkConstraints c => MemPack (CardanoTxOut c) where
   packM = eliminateCardanoTxOut (\idx txout -> do
@@ -196,12 +194,8 @@ instance CardanoHardForkConstraints c => MemPack (CardanoTxOut c) where
 instance CardanoHardForkConstraints c
       => IndexedMemPack (LedgerState (HardForkBlock (CardanoEras c)) EmptyMK) (CardanoTxOut c) where
   indexedTypeName _ = typeName @(CardanoTxOut c)
-  indexedPackM _ = eliminateCardanoTxOut (\_ txout -> do
-                                           packM txout
-                                         )
-
-  indexedPackedByteCount _ = eliminateCardanoTxOut (\_ txout -> packedByteCount txout)
-
+  indexedPackM _ = eliminateCardanoTxOut (const packM)
+  indexedPackedByteCount _ = eliminateCardanoTxOut (const packedByteCount)
   indexedUnpackM (HardForkLedgerState (HardForkState idx)) = do
     let
       np = ( (Fn $ const $ error "unpacking a byron txout")
@@ -213,8 +207,4 @@ instance CardanoHardForkConstraints c
           :* (Fn $ const $ Comp $ K . ConwayTxOut  <$> unpackM)
           :* Nil
           )
-    hcollapse <$>
-      (hsequence'
-      $ hap np
-      $ Telescope.tip idx
-      )
+    hcollapse <$> (hsequence' $ hap np $ Telescope.tip idx)

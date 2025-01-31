@@ -24,8 +24,12 @@ module Data.SOP.Tails (
   , hcpure
   , hmap
   , hpure
+  , inPairsToTails
+  , extendWithTails
   ) where
 
+import           Data.SOP.Index
+import qualified Data.SOP.InPairs as InPairs
 import           Data.Kind (Type)
 import           Data.Proxy
 import           Data.SOP.Constraint
@@ -86,3 +90,36 @@ hcpure p f = go sList
     go :: All c xs' => SList xs' -> Tails f xs'
     go SNil  = TNil
     go SCons = TCons (SOP.hcpure p f) (go sList)
+
+inPairsToTails ::
+     forall f xs .
+     All Top xs
+  => InPairs.InPairs (InPairs.Fn2 f) xs
+  -> Tails (InPairs.Fn2 f) xs
+inPairsToTails = go
+  where
+    go ::
+         forall xs'.
+         All Top xs'
+      => InPairs.InPairs (InPairs.Fn2 f) xs'
+      -> Tails (InPairs.Fn2 f) xs'
+    go InPairs.PNil = mk1
+    go (InPairs.PCons (InPairs.Fn2 f) n) =
+      case go n of
+        n'@(TCons np _) ->
+          TCons
+            (   InPairs.Fn2 f
+             :* SOP.hmap (\(InPairs.Fn2 g) ->
+                            InPairs.Fn2 (g . f)) np
+            ) n'
+
+extendWithTails ::
+     Index xs x
+  -> Index xs y
+  -> Tails (InPairs.Fn2 f) xs
+  -> f x
+  -> Maybe (f y)
+extendWithTails IZ        IZ        _           = Just . id
+extendWithTails IZ        (IS idx)  (TCons t _) = Just . InPairs.apFn2 (projectNP idx t)
+extendWithTails (IS idx1) (IS idx2) (TCons _ n) = extendWithTails idx1 idx2 n
+extendWithTails IS{}      IZ        _           = const Nothing
