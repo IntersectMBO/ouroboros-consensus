@@ -62,6 +62,8 @@ import           Data.SOP.InPairs (InPairs (..))
 import qualified Data.SOP.InPairs as InPairs
 import qualified Data.SOP.Match as Match
 import           Data.SOP.Strict
+import           Data.SOP.Tails (Tails)
+import qualified Data.SOP.Tails as Tails
 import           Data.SOP.Telescope (Telescope (..))
 import qualified Data.SOP.Telescope as Telescope
 import           Data.Typeable
@@ -1113,6 +1115,14 @@ class ( Show (HardForkTxOut xs)
   txOutEjections      :: NP (K (NS WrapTxOut xs) -.-> WrapTxOut) xs
   default txOutEjections :: CanHardFork xs => NP (K (NS WrapTxOut xs) -.-> WrapTxOut) xs
   txOutEjections = composeTxOutTranslations $ ipTranslateTxOut hardForkEraTranslation
+
+  txOutTails :: Tails (InPairs.Fn2 WrapTxOut) xs
+  default txOutTails :: CanHardFork xs => Tails (InPairs.Fn2 WrapTxOut) xs
+  txOutTails =
+    Tails.inPairsToTails
+     $ InPairs.hmap
+      (\translator -> InPairs.Fn2 $ WrapTxOut . translateTxOutWith translator . unwrapTxOut)
+      (translateLedgerTables (hardForkEraTranslation @xs))
 
 instance (CanHardFork xs, HasHardForkTxOut xs)
       => CanUpgradeLedgerTables (LedgerState (HardForkBlock xs)) where
