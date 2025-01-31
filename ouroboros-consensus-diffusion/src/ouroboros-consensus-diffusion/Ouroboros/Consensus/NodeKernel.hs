@@ -578,7 +578,10 @@ forkBlockForging IS{..} blockForging =
 
       lift $ roforkerClose forker
 
-      let txs = [ tx | (tx, _, _) <- snapshotTxs mempoolSnapshot ]
+      let txs = snapshotTake mempoolSnapshot
+              $ blockCapacityTxMeasure (configLedger cfg) tickedLedgerState
+                -- NB respect the capacity of the ledger state we're extending,
+                -- which is /not/ 'snapshotLedgerState'
 
       -- force the mempool's computation before the tracer event
       _ <- evaluate (length txs)
