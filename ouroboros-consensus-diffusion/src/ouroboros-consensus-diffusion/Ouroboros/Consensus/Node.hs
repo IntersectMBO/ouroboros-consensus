@@ -128,7 +128,8 @@ import           Ouroboros.Network.NodeToClient (ConnectionId, LocalAddress,
 import           Ouroboros.Network.NodeToNode (DiffusionMode (..),
                      ExceptionInHandler (..), MiniProtocolParameters,
                      NodeToNodeVersionData (..), RemoteAddress, Socket,
-                     blockFetchPipeliningMax, defaultMiniProtocolParameters)
+                     blockFetchPipeliningMax, defaultMiniProtocolParameters,
+                     peerSharingFilter)
 import           Ouroboros.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
 import           Ouroboros.Network.PeerSelection.LedgerPeers
                      (LedgerPeersConsensusInterface (..))
@@ -137,6 +138,7 @@ import           Ouroboros.Network.PeerSelection.PeerMetric (PeerMetrics,
 import           Ouroboros.Network.PeerSelection.PeerSharing (PeerSharing)
 import           Ouroboros.Network.PeerSelection.PeerSharing.Codec
                      (decodeRemoteAddress, encodeRemoteAddress)
+import           Ouroboros.Network.Protocol.Handshake.Version (contramapBidirectionalFilterData)
 import           Ouroboros.Network.RethrowPolicy
 import qualified SafeWildCards
 import           System.Exit (ExitCode (..))
@@ -278,6 +280,7 @@ data LowLevelRunNodeArgs m addrNTN addrNTC versionDataNTN versionDataNTC blk
     , llrnVersionDataNTC :: versionDataNTC
 
     , llrnVersionDataNTN :: versionDataNTN
+    , llrnVersionDataNTNPS :: (versionDataNTN -> PeerSharing)
 
       -- | node-to-node protocol versions to run.
     , llrnNodeToNodeVersions :: Map NodeToNodeVersion (BlockNodeToNodeVersion blk)
@@ -664,6 +667,12 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                     (NTC.responder version $ ntcApps blockVersion version)
                 | (version, blockVersion) <- Map.toList llrnNodeToClientVersions
                 ],
+            Diffusion.daApplicationsFilterInitiatorMode =
+              contramapBidirectionalFilterData llrnVersionDataNTNPS peerSharingFilter,
+            Diffusion.daApplicationsFilterInitiatorAndResponderMode =
+              contramapBidirectionalFilterData llrnVersionDataNTNPS peerSharingFilter,
+              -- contramapBidirectionalFilterData rnPeerSharing peerSharingFilter,
+              -- contramapBidirectionalFilterData undefined peerSharingFilter,
             Diffusion.daLedgerPeersCtx =
               LedgerPeersConsensusInterface {
                   lpGetLatestSlot = getImmTipSlot kernel,
@@ -942,6 +951,7 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
                DisabledP2PMode -> InitiatorOnlyDiffusionMode
             )
             rnPeerSharing
+      , llrnVersionDataNTNPS = peerSharing
       , llrnNodeToNodeVersions =
           limitToLatestReleasedVersion
             fst
