@@ -809,10 +809,11 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
 initiator ::
      MiniProtocolParameters
   -> NodeToNodeVersion
+  -> NodeToNodeVersionData
   -> PSTypes.PeerSharing
   -> Apps m addr b b b b b a c
   -> OuroborosBundleWithExpandedCtx 'Mux.InitiatorMode addr b m a Void
-initiator miniProtocolParameters version ownPeerSharing Apps {..} =
+initiator miniProtocolParameters version versionData ownPeerSharing Apps {..} =
     nodeToNodeProtocols
       miniProtocolParameters
       -- TODO: currently consensus is using 'ConnectionId' for its 'peer' type.
@@ -834,6 +835,7 @@ initiator miniProtocolParameters version ownPeerSharing Apps {..} =
             (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aPeerSharingClient version ctx)))
         })
       version
+      versionData
       ownPeerSharing
 
 -- | A bi-directional network application.
@@ -844,10 +846,11 @@ initiator miniProtocolParameters version ownPeerSharing Apps {..} =
 initiatorAndResponder ::
      MiniProtocolParameters
   -> NodeToNodeVersion
+  -> NodeToNodeVersionData
   -> PSTypes.PeerSharing
   -> Apps m addr b b b b b a c
   -> OuroborosBundleWithExpandedCtx 'Mux.InitiatorResponderMode addr b m a c
-initiatorAndResponder miniProtocolParameters version ownPeerSharing Apps {..} =
+initiatorAndResponder miniProtocolParameters version versionData ownPeerSharing Apps {..} =
     nodeToNodeProtocols
       miniProtocolParameters
       (NodeToNodeProtocols {
@@ -874,4 +877,5 @@ initiatorAndResponder miniProtocolParameters version ownPeerSharing Apps {..} =
               (MiniProtocolCb (\responderCtx -> aPeerSharingServer version responderCtx)))
         })
       version
+      versionData
       ownPeerSharing

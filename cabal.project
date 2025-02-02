@@ -44,3 +44,10 @@ package ouroboros-network
 if(os(windows))
   constraints:
     bitvec -simd
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/ouroboros-network
+  tag: c94071617d66dae245aaaebedea5ad4026fbd156
+  subdir: ouroboros-network-framework
+          ouroboros-network
