@@ -554,7 +554,7 @@ library unstable-cardano-tools
     ouroboros-consensus-protocol ^>=0.10,
     ouroboros-network,
     ouroboros-network-api,
-    ouroboros-network-framework ^>=0.15,
+    ouroboros-network-framework ^>=0.16,
     ouroboros-network-protocols,
     resource-registry,
     serialise ^>=0.2,
