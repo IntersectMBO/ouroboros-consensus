@@ -89,7 +89,6 @@ import           Ouroboros.Network.Mux
 import           Ouroboros.Network.NodeToNode
 import           Ouroboros.Network.PeerSelection.PeerMetric.Type
                      (FetchedMetricsTracer, ReportPeerMetrics (..))
-import qualified Ouroboros.Network.PeerSelection.PeerSharing as PSTypes
 import           Ouroboros.Network.PeerSharing (PeerSharingController,
                      bracketPeerSharingClient, peerSharingClient,
                      peerSharingServer)
@@ -809,10 +808,10 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
 initiator ::
      MiniProtocolParameters
   -> NodeToNodeVersion
-  -> PSTypes.PeerSharing
+  -> NodeToNodeVersionData
   -> Apps m addr b b b b b a c
   -> OuroborosBundleWithExpandedCtx 'Mux.InitiatorMode addr b m a Void
-initiator miniProtocolParameters version ownPeerSharing Apps {..} =
+initiator miniProtocolParameters version versionData Apps {..} =
     nodeToNodeProtocols
       miniProtocolParameters
       -- TODO: currently consensus is using 'ConnectionId' for its 'peer' type.
@@ -834,7 +833,7 @@ initiator miniProtocolParameters version ownPeerSharing Apps {..} =
             (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aPeerSharingClient version ctx)))
         })
       version
-      ownPeerSharing
+      versionData
 
 -- | A bi-directional network application.
 --
@@ -844,10 +843,10 @@ initiator miniProtocolParameters version ownPeerSharing Apps {..} =
 initiatorAndResponder ::
      MiniProtocolParameters
   -> NodeToNodeVersion
-  -> PSTypes.PeerSharing
+  -> NodeToNodeVersionData
   -> Apps m addr b b b b b a c
   -> OuroborosBundleWithExpandedCtx 'Mux.InitiatorResponderMode addr b m a c
-initiatorAndResponder miniProtocolParameters version ownPeerSharing Apps {..} =
+initiatorAndResponder miniProtocolParameters version versionData Apps {..} =
     nodeToNodeProtocols
       miniProtocolParameters
       (NodeToNodeProtocols {
@@ -874,4 +873,4 @@ initiatorAndResponder miniProtocolParameters version ownPeerSharing Apps {..} =
               (MiniProtocolCb (\responderCtx -> aPeerSharingServer version responderCtx)))
         })
       version
-      ownPeerSharing
+      versionData
