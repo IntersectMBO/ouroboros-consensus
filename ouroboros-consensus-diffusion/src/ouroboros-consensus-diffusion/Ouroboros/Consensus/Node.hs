@@ -177,7 +177,7 @@ data RunNodeArgs m addrNTN addrNTC blk (p2p :: Diffusion.P2P) = RunNodeArgs {
       rnTraceConsensus :: Tracers m (ConnectionId addrNTN) (ConnectionId addrNTC) blk
 
       -- | Protocol tracers for node-to-node communication
-    , rnTraceNTN :: NTN.Tracers m (ConnectionId addrNTN) blk DeserialiseFailure
+    , rnTraceNTN :: NTN.Tracers m addrNTN blk DeserialiseFailure
 
       -- | Protocol tracers for node-to-client communication
     , rnTraceNTC :: NTC.Tracers m (ConnectionId addrNTC) blk DeserialiseFailure
