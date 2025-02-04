@@ -163,9 +163,9 @@ mkShelleyValidatedTx vtx = ShelleyValidatedTx txid vtx
 newtype instance TxId (GenTx (ShelleyBlock proto era)) = ShelleyTxId SL.TxId
   deriving newtype (Eq, Ord, NoThunks)
 
-deriving newtype instance (Crypto StandardCrypto, Typeable era, Typeable proto)
+deriving newtype instance (Typeable era, Typeable proto)
                        => EncCBOR (TxId (GenTx (ShelleyBlock proto era)))
-deriving newtype instance (Crypto StandardCrypto, Typeable era, Typeable proto)
+deriving newtype instance (Typeable era, Typeable proto)
                        => DecCBOR (TxId (GenTx (ShelleyBlock proto era)))
 
 instance (Typeable era, Typeable proto)

@@ -74,7 +74,7 @@ validate context MutatedHeader{header, mutation} =
     ownsAllStake vrfKey = IndividualPoolStake 1 (coin 1) vrfKey
     poolDistr = Map.fromList [(poolId, ownsAllStake hashVRFKey)]
     poolId = hashKey $ VKey $ deriveVerKeyDSIGN coldSignKey
-    hashVRFKey = hashVerKeyVRF @StandardCrypto $ deriveVerKeyVRF vrfSignKey
+    hashVRFKey = hashVerKeyVRF {- @StandardCrypto -} $ deriveVerKeyVRF vrfSignKey
 
     headerView = validateView @ConwayBlock undefined (mkShelleyHeader header)
     validateKES = doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod poolDistr ocertCounters headerView
