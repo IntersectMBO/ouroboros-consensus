@@ -86,12 +86,12 @@ shelleyBlockForging ::
      forall m era c.
       ( ShelleyCompatible (TPraos c) era
       , PraosCrypto c
-      , c ~ StandardCrypto
+      -- , c ~ StandardCrypto
       , TxLimits (ShelleyBlock (TPraos c) era)
       , IOLike m
       )
   => TPraosParams
-  -> ShelleyLeaderCredentials StandardCrypto
+  -> ShelleyLeaderCredentials c
   -> m (BlockForging m (ShelleyBlock (TPraos c) era))
 shelleyBlockForging tpraosParams credentials = do
     hotKey <- HotKey.mkHotKey @m @c initSignKey startPeriod tpraosMaxKESEvo
@@ -196,7 +196,7 @@ protocolInfoTPraosShelleyBased ::
       , PraosCrypto c
       , ShelleyCompatible (TPraos c) era
       , TxLimits (ShelleyBlock (TPraos c) era)
-      , c ~ StandardCrypto
+      -- , c ~ StandardCrypto
       )
   => ProtocolParamsShelleyBased c
   -> L.TransitionConfig era
