@@ -59,37 +59,37 @@ type StandardConwayBlock = ShelleyBlock (Praos StandardCrypto) StandardConway
 -------------------------------------------------------------------------------}
 
 instance
-  (TPraos.PraosCrypto c, c ~ StandardCrypto, Signable DSIGN (Hash HASH EraIndependentTxBody)) =>
+  (TPraos.PraosCrypto c, Signable DSIGN (Hash HASH EraIndependentTxBody)) =>
   ShelleyCompatible (TPraos c) ShelleyEra
 
 instance
-  (TPraos.PraosCrypto c, c ~ StandardCrypto, Signable DSIGN (Hash HASH EraIndependentTxBody)) =>
+  (TPraos.PraosCrypto c, Signable DSIGN (Hash HASH EraIndependentTxBody)) =>
   ShelleyCompatible (TPraos c) AllegraEra
 
 instance
-  (TPraos.PraosCrypto c, c ~ StandardCrypto, Signable DSIGN (Hash HASH EraIndependentTxBody)) =>
+  (TPraos.PraosCrypto c, Signable DSIGN (Hash HASH EraIndependentTxBody)) =>
   ShelleyCompatible (TPraos c) MaryEra
 
 instance
-  (TPraos.PraosCrypto c, c ~ StandardCrypto, Signable DSIGN (Hash HASH EraIndependentTxBody)) =>
+  (TPraos.PraosCrypto c, Signable DSIGN (Hash HASH EraIndependentTxBody)) =>
   ShelleyCompatible (TPraos c) AlonzoEra
 
 -- This instance is required since the ledger view forecast function for
 -- Praos/Babbage still goes through the forecast for TPraos. Once this is
 -- addressed, we could remove this instance.
 instance
-  (Praos.PraosCrypto c, c ~ StandardCrypto, TPraos.PraosCrypto c, c ~ StandardCrypto) =>
+  (Praos.PraosCrypto c, TPraos.PraosCrypto c) =>
   ShelleyCompatible (TPraos c) BabbageEra
 
 instance
-  (Praos.PraosCrypto c, c ~ StandardCrypto) => ShelleyCompatible (Praos c) BabbageEra
+  (Praos.PraosCrypto c) => ShelleyCompatible (Praos c) BabbageEra
 
 -- This instance is required since the ledger view forecast function for
 -- Praos/Conway still goes through the forecast for TPraos. Once this is
 -- addressed, we could remove this instance.
 instance
-  (Praos.PraosCrypto c, c ~ StandardCrypto, TPraos.PraosCrypto c, c ~ StandardCrypto) =>
+  (Praos.PraosCrypto c, TPraos.PraosCrypto c) =>
   ShelleyCompatible (TPraos c) ConwayEra
 
 instance
-  (Praos.PraosCrypto c, c ~ StandardCrypto) => ShelleyCompatible (Praos c) ConwayEra
+  (Praos.PraosCrypto c) => ShelleyCompatible (Praos c) ConwayEra

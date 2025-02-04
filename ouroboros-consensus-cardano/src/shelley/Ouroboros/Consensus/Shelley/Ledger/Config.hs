@@ -121,15 +121,15 @@ data instance StorageConfig (ShelleyBlock proto era) = ShelleyStorageConfig {
 --
 -- * The 'sgStaking' field is erased. It is only used to register initial stake
 --   pools in tests and benchmarks.
-newtype CompactGenesis c = CompactGenesis {
+newtype CompactGenesis = CompactGenesis {
       getCompactGenesis :: SL.ShelleyGenesis    }
   deriving stock (Eq, Show, Generic)
   deriving newtype (ToCBOR, FromCBOR)
 
-deriving anyclass instance Crypto c => NoThunks (CompactGenesis c)
+deriving anyclass instance NoThunks CompactGenesis
 
 -- | Compacts the given 'SL.ShelleyGenesis'.
-compactGenesis :: SL.ShelleyGenesis -> CompactGenesis c
+compactGenesis :: SL.ShelleyGenesis -> CompactGenesis
 compactGenesis genesis = CompactGenesis $
     genesis {
         SL.sgInitialFunds = mempty

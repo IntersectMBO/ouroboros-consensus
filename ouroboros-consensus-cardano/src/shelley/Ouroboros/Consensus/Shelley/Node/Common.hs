@@ -79,11 +79,11 @@ type instance ForgeStateUpdateError (ShelleyBlock proto era) = HotKey.KESEvoluti
 -- | Needed in '*SharedBlockForging' because we can't partially apply
 -- equality constraints.
 class
-  (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era), StandardCrypto ~ c) =>
+  (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era), ProtoCrypto proto ~ c) =>
   ShelleyEraWithCrypto c proto era
 
 instance
-  (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era), StandardCrypto ~ c) =>
+  (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era), ProtoCrypto proto ~ c) =>
   ShelleyEraWithCrypto c proto era
 
 {-------------------------------------------------------------------------------
