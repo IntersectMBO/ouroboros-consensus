@@ -81,7 +81,7 @@ source-repository-package
   -- This tag is from Alexey's PR that is based on an older version
   -- tag: 9d380ab7d6ae52ff66aae9a19dbb3036b1b13c94
   tag: 4b2721c8abdf704c6f8de042e8fb1f3f6b3f1aed
-  --sha256: sha256-N4XRVqC+UgWej+J16RPh3EO6MSIE3wmJvmP5/nRgIuw=
+  --sha256: sha256-t9PKhr7kOIgn8yzDj47f70Sj6TNwdWXjvEN4TXL9jdM=
   subdir:
       eras/allegra/impl
       eras/alonzo/impl
