@@ -61,7 +61,7 @@ import           Test.Util.Serialisation.SomeResult (SomeResult (..))
 
 -- | The upstream 'Arbitrary' instance for Shelley blocks does not generate
 -- coherent blocks, so neither does this.
-instance (CanMock (TPraos crypto) era, Praos.PraosCrypto crypto, crypto ~ MockCrypto)
+instance (CanMock (TPraos crypto) era{-, Praos.PraosCrypto crypto, crypto ~ MockCrypto-})
   => Arbitrary (ShelleyBlock (TPraos crypto) era) where
   arbitrary = do
     let allPoolKeys = map snd (coreNodeKeys defaultConstants)
@@ -74,7 +74,7 @@ instance (Praos.PraosCrypto crypto, CanMock (Praos crypto) era)
 
 -- | This uses a different upstream generator to ensure the header and block
 -- body relate as expected.
-instance (CanMock (TPraos crypto) era, Praos.PraosCrypto crypto)
+instance (CanMock (TPraos crypto) era{-, Praos.PraosCrypto crypto-})
   => Arbitrary (Coherent (ShelleyBlock (TPraos crypto) era)) where
   arbitrary = do
     let allPoolKeys = map snd (coreNodeKeys defaultConstants)
@@ -84,7 +84,7 @@ instance (CanMock (TPraos crypto) era, Praos.PraosCrypto crypto)
 --
 --   TODO Establish a coherent block without doing this translation from a
 --   TPraos header.
-instance (CanMock (Praos crypto) era, Praos.PraosCrypto crypto)
+instance (CanMock (Praos crypto) era{-, Praos.PraosCrypto crypto-})
   => Arbitrary (Coherent (ShelleyBlock (Praos crypto) era)) where
   arbitrary = Coherent . mkBlk <$> genCoherentBlock allPoolKeys
     where
@@ -110,11 +110,11 @@ instance (CanMock (Praos crypto) era, Praos.PraosCrypto crypto)
           }
           hSig = coerce bhSig
 
-instance (CanMock (TPraos crypto) era, Praos.PraosCrypto crypto)
+instance (CanMock (TPraos crypto) era{-, Praos.PraosCrypto crypto-})
   => Arbitrary (Header (ShelleyBlock (TPraos crypto) era)) where
   arbitrary = getHeader <$> arbitrary
 
-instance (CanMock (Praos crypto) era, Praos.PraosCrypto crypto)
+instance (CanMock (Praos crypto) era{-, Praos.PraosCrypto crypto-})
   => Arbitrary (Header (ShelleyBlock (Praos crypto) era)) where
   arbitrary = do
     hdr <- arbitrary
