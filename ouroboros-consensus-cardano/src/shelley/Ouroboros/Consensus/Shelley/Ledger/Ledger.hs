@@ -114,7 +114,7 @@ instance ShelleyBasedEra era => NoThunks (ShelleyLedgerError era)
 -------------------------------------------------------------------------------}
 
 data ShelleyLedgerConfig era = ShelleyLedgerConfig {
-      shelleyLedgerCompactGenesis     :: !(CompactGenesis StandardCrypto)
+      shelleyLedgerCompactGenesis     :: !CompactGenesis
       -- | Derived from 'shelleyLedgerGenesis' but we store a cached version
       -- because it used very often.
     , shelleyLedgerGlobals            :: !SL.Globals

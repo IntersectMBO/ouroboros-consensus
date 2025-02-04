@@ -51,7 +51,7 @@ import qualified Cardano.Ledger.Shelley.RewardProvenance as SL
                      (RewardProvenance)
 import           Cardano.Ledger.UMap (UMap (..), rdReward, umElemDRep,
                      umElemRDPair, umElemSPool)
-import           Cardano.Protocol.Crypto (Crypto, StandardCrypto)
+import           Cardano.Protocol.Crypto (Crypto)
 import           Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
 import           Codec.CBOR.Encoding (Encoding)
@@ -121,7 +121,7 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   -- credentials. See 'SL.getNonMyopicMemberRewards'
   GetNonMyopicMemberRewards
     :: Set (Either SL.Coin (SL.Credential 'SL.Staking))
-    -> BlockQuery (ShelleyBlock proto era) (NonMyopicMemberRewards StandardCrypto)
+    -> BlockQuery (ShelleyBlock proto era) (NonMyopicMemberRewards (ProtoCrypto proto))
   GetCurrentPParams
     :: BlockQuery (ShelleyBlock proto era) (LC.PParams era)
   GetProposedPParamsUpdates
@@ -133,7 +133,7 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   -- an endpoint that provides all the information that the wallet wants about
   -- pools, in an extensible fashion.
   GetStakeDistribution
-    :: BlockQuery (ShelleyBlock proto era) (PoolDistr StandardCrypto)
+    :: BlockQuery (ShelleyBlock proto era) (PoolDistr (ProtoCrypto proto))
 
   -- | Get a subset of the UTxO, filtered by address. Although this will
   -- typically return a lot less data than 'GetUTxOWhole', it requires a linear
@@ -176,10 +176,10 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   GetFilteredDelegationsAndRewardAccounts
     :: Set (SL.Credential 'SL.Staking)
     -> BlockQuery (ShelleyBlock proto era)
-             (Delegations StandardCrypto, SL.RewardAccounts)
+             (Delegations (ProtoCrypto proto), SL.RewardAccounts)
 
   GetGenesisConfig
-    :: BlockQuery (ShelleyBlock proto era) (CompactGenesis StandardCrypto)
+    :: BlockQuery (ShelleyBlock proto era) CompactGenesis
 
   -- | Only for debugging purposes, we make no effort to ensure binary
   -- compatibility (cf the comment on 'GetCBOR'). Moreover, it is huge.
@@ -224,12 +224,12 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   GetStakeSnapshots
     :: Maybe (Set (SL.KeyHash 'SL.StakePool))
     -> BlockQuery (ShelleyBlock proto era)
-                  (StakeSnapshots StandardCrypto)
+                  (StakeSnapshots (ProtoCrypto proto))
 
   GetPoolDistr
     :: Maybe (Set (SL.KeyHash 'SL.StakePool))
     -> BlockQuery (ShelleyBlock proto era)
-                  (PoolDistr StandardCrypto)
+                  (PoolDistr (ProtoCrypto proto))
 
   GetStakeDelegDeposits
     :: Set StakeCredential
@@ -286,7 +286,7 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   GetFilteredVoteDelegatees
     :: CG.ConwayEraGov era
     => Set (SL.Credential 'SL.Staking)
-    -> BlockQuery (ShelleyBlock proto era) (VoteDelegatees StandardCrypto)
+    -> BlockQuery (ShelleyBlock proto era) (VoteDelegatees (ProtoCrypto proto))
 
   GetAccountState
     :: BlockQuery (ShelleyBlock proto era) AccountState
@@ -338,7 +338,7 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
 instance (Typeable era, Typeable proto)
   => ShowProxy (BlockQuery (ShelleyBlock proto era)) where
 
-instance (ShelleyCompatible proto era, ProtoCrypto proto ~ crypto)
+instance (ShelleyCompatible proto era, ProtoCrypto proto ~ crypto, Typeable crypto)
       => BlockSupportsLedgerQuery (ShelleyBlock proto era) where
   answerBlockQuery cfg query ext =
       case query of
@@ -762,7 +762,7 @@ getDState = SL.certDState . SL.lsCertState . SL.esLState . SL.nesEs
 getFilteredDelegationsAndRewardAccounts ::
      SL.NewEpochState era
   -> Set (SL.Credential 'SL.Staking)
-  -> (Delegations StandardCrypto, SL.RewardAccounts)
+  -> (Delegations (ProtoCrypto proto), SL.RewardAccounts)
 getFilteredDelegationsAndRewardAccounts ss creds =
     (filteredDelegations, filteredRwdAcnts)
   where
@@ -776,7 +776,7 @@ getFilteredDelegationsAndRewardAccounts ss creds =
 getFilteredVoteDelegatees ::
      SL.NewEpochState era
   -> Set (SL.Credential 'SL.Staking)
-  -> VoteDelegatees StandardCrypto
+  -> VoteDelegatees (ProtoCrypto proto)
 getFilteredVoteDelegatees ss creds = Map.mapMaybe umElemDRep umElemsRestricted
   where
     UMap umElems _ = SL.dsUnified $ getDState ss
@@ -925,7 +925,7 @@ decodeShelleyQuery = do
       _       -> failmsg "invalid"
 
 encodeShelleyResult ::
-     forall proto era result. ShelleyCompatible proto era
+     forall proto era result. (ShelleyCompatible proto era, Typeable (ProtoCrypto proto))
   => ShelleyNodeToClientVersion
   -> BlockQuery (ShelleyBlock proto era) result -> result -> Encoding
 encodeShelleyResult _v query = case query of

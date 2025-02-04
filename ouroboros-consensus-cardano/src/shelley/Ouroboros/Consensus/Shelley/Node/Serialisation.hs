@@ -59,16 +59,16 @@ instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) (Led
   decodeDisk _ = decodeShelleyLedgerState
 
 -- | @'ChainDepState' ('BlockProtocol' ('ShelleyBlock' era))@
-instance (ShelleyCompatible proto era, StandardCrypto ~ c, SL.PraosCrypto c) => EncodeDisk (ShelleyBlock proto era) (TPraosState c) where
+instance (ShelleyCompatible proto era, ProtoCrypto ~ c, SL.PraosCrypto c) => EncodeDisk (ShelleyBlock proto era) (TPraosState c) where
   encodeDisk _ = encode
 -- | @'ChainDepState' ('BlockProtocol' ('ShelleyBlock' era))@
-instance (ShelleyCompatible proto era, StandardCrypto ~ c, SL.PraosCrypto c) => DecodeDisk (ShelleyBlock proto era) (TPraosState c) where
+instance (ShelleyCompatible proto era, ProtoCrypto ~ c, SL.PraosCrypto c) => DecodeDisk (ShelleyBlock proto era) (TPraosState c) where
   decodeDisk _ = decode
 
-instance (ShelleyCompatible proto era, StandardCrypto ~ c, Praos.PraosCrypto c) => EncodeDisk (ShelleyBlock proto era) (PraosState c) where
+instance (ShelleyCompatible proto era, ProtoCrypto ~ c, Praos.PraosCrypto c) => EncodeDisk (ShelleyBlock proto era) (PraosState c) where
   encodeDisk _ = encode
 -- | @'ChainDepState' ('BlockProtocol' ('ShelleyBlock' era))@
-instance (ShelleyCompatible proto era, StandardCrypto ~ c, Praos.PraosCrypto c) => DecodeDisk (ShelleyBlock proto era) (PraosState c) where
+instance (ShelleyCompatible proto era, ProtoCrypto ~ c, Praos.PraosCrypto c) => DecodeDisk (ShelleyBlock proto era) (PraosState c) where
   decodeDisk _ = decode
 instance ShelleyCompatible proto era
   => EncodeDisk (ShelleyBlock proto era) (AnnTip (ShelleyBlock proto era)) where

@@ -73,9 +73,9 @@ codecConfig :: CodecConfig StandardShelleyBlock
 codecConfig = ShelleyCodecConfig
 
 fromShelleyLedgerExamples ::
-     ShelleyCompatible (TPraos StandardCrypto) era
+     ShelleyCompatible (TPraos c) era
   => ShelleyLedgerExamples era
-  -> Examples (ShelleyBlock (TPraos StandardCrypto) era)
+  -> Examples (ShelleyBlock (TPraos c) era)
 fromShelleyLedgerExamples ShelleyLedgerExamples {
                             sleResultExamples = ShelleyResultExamples{..}
                             , ..} =
@@ -150,12 +150,12 @@ fromShelleyLedgerExamples ShelleyLedgerExamples {
 
 -- | TODO Factor this out into something nicer.
 fromShelleyLedgerExamplesPraos ::
-  forall era.
-  ( ShelleyCompatible (Praos StandardCrypto) era,
-    TranslateProto (TPraos StandardCrypto) (Praos StandardCrypto)
+  forall era c.
+  ( ShelleyCompatible (Praos c) era,
+    TranslateProto (TPraos c) (Praos c)
   )
   => ShelleyLedgerExamples era
-  -> Examples (ShelleyBlock (Praos StandardCrypto) era)
+  -> Examples (ShelleyBlock (Praos c) era)
 fromShelleyLedgerExamplesPraos ShelleyLedgerExamples {
                             sleResultExamples = ShelleyResultExamples{..}
                             , ..} =
@@ -236,7 +236,7 @@ fromShelleyLedgerExamplesPraos ShelleyLedgerExamples {
     , shelleyLedgerState      = sleNewEpochState
     , shelleyLedgerTransition = ShelleyTransitionInfo {shelleyAfterVoting = 0}
     }
-    chainDepState = translateChainDepState (Proxy @(TPraos StandardCrypto, Praos StandardCrypto))
+    chainDepState = translateChainDepState (Proxy @(TPraos c, Praos c))
       $ TPraosState (NotOrigin 1) sleChainDepState
     extLedgerState = ExtLedgerState
                        ledgerState
