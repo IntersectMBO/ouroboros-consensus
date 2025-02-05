@@ -89,14 +89,13 @@ class
   , DecCBOR (Annotator (ShelleyProtocolHeader proto))
   , Show (CannotForgeError proto)
     -- Currently the chain select view is identical
+    -- Era and proto crypto must coincide
   , SelectView proto ~ PraosChainSelectView (ProtoCrypto proto)
     -- Need to be able to sign the protocol header
   , SignedHeader (ShelleyProtocolHeader proto)
     -- ChainDepState needs to be serialisable
   , DecodeDisk (ShelleyBlock proto era) (ChainDepState proto)
   , EncodeDisk (ShelleyBlock proto era) (ChainDepState proto)
-    -- Era and proto crypto must coincide
-  -- , StandardCrypto ~ ProtoCrypto proto
     -- Hard-fork related constraints
   , HasPartialConsensusConfig proto
   , DecCBOR (SL.PState era)
@@ -215,13 +214,13 @@ instance ShelleyCompatible proto era => HasAnnTip (ShelleyBlock proto era)
 -------------------------------------------------------------------------------}
 
 -- | From @cardano-ledger-specs@ to @ouroboros-consensus@
-fromShelleyPrevHash :: {-ProtoCrypto proto =>-}
+fromShelleyPrevHash ::
   SL.PrevHash -> ChainHash (ShelleyBlock proto era)
 fromShelleyPrevHash SL.GenesisHash   = GenesisHash
 fromShelleyPrevHash (SL.BlockHash h) = BlockHash (ShelleyHash $ SL.unHashHeader h)
 
 -- | From @ouroboros-consensus@ to @cardano-ledger-specs@
-toShelleyPrevHash :: {-ProtoCrypto proto =>-}
+toShelleyPrevHash ::
   ChainHash (Header (ShelleyBlock proto era)) -> SL.PrevHash
 toShelleyPrevHash GenesisHash                 = SL.GenesisHash
 toShelleyPrevHash (BlockHash (ShelleyHash h)) = SL.BlockHash $ SL.HashHeader h
