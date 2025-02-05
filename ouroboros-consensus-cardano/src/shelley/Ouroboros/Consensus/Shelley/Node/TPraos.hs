@@ -10,7 +10,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
@@ -118,6 +117,7 @@ shelleyBlockForging tpraosParams credentials = do
 shelleySharedBlockForging ::
      forall m c era.
      ( ShelleyEraWithCrypto c (TPraos c) era
+     , PraosCrypto c
      , IOLike m
      )
   => HotKey c m

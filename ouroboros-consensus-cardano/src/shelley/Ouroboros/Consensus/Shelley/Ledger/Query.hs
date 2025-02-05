@@ -16,6 +16,7 @@
 {-# LANGUAGE TypeOperators #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Shelley.Ledger.Query (
     BlockQuery (..)
@@ -338,7 +339,7 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
 instance (Typeable era, Typeable proto)
   => ShowProxy (BlockQuery (ShelleyBlock proto era)) where
 
-instance (ShelleyCompatible proto era, ProtoCrypto proto ~ crypto, Typeable crypto)
+instance (ShelleyCompatible proto era, Crypto (ProtoCrypto proto))
       => BlockSupportsLedgerQuery (ShelleyBlock proto era) where
   answerBlockQuery cfg query ext =
       case query of
@@ -925,7 +926,7 @@ decodeShelleyQuery = do
       _       -> failmsg "invalid"
 
 encodeShelleyResult ::
-     forall proto era result. (ShelleyCompatible proto era, Typeable (ProtoCrypto proto))
+     forall proto era result. (ShelleyCompatible proto era, Crypto (ProtoCrypto proto))
   => ShelleyNodeToClientVersion
   -> BlockQuery (ShelleyBlock proto era) result -> result -> Encoding
 encodeShelleyResult _v query = case query of
@@ -966,7 +967,7 @@ encodeShelleyResult _v query = case query of
     GetBigLedgerPeerSnapshot                   -> toCBOR
 
 decodeShelleyResult ::
-     forall proto era result. ShelleyCompatible proto era
+     forall proto era result. (ShelleyCompatible proto era, Crypto (ProtoCrypto proto))
   => ShelleyNodeToClientVersion
   -> BlockQuery (ShelleyBlock proto era) result
   -> forall s. Decoder s result

@@ -45,7 +45,8 @@ import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion ()
 import           Ouroboros.Consensus.Shelley.Node.DiffusionPipelining ()
 import           Ouroboros.Consensus.Shelley.Node.Serialisation ()
 import           Ouroboros.Consensus.Shelley.Node.TPraos
-import           Ouroboros.Consensus.Shelley.Protocol.Abstract (pHeaderIssuer)
+import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto,
+                     pHeaderIssuer)
 
 {-------------------------------------------------------------------------------
   ProtocolInfo
@@ -111,5 +112,6 @@ instance ( ShelleyCompatible                      proto era
          , LedgerSupportsProtocol   (ShelleyBlock proto era)
          , BlockSupportsSanityCheck (ShelleyBlock proto era)
          , TxLimits                 (ShelleyBlock proto era)
+         , PraosCrypto (ProtoCrypto proto)
          )
       => RunNode (ShelleyBlock proto era)

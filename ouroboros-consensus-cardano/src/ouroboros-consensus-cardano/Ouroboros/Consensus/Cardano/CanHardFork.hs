@@ -14,6 +14,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 
 module Ouroboros.Consensus.Cardano.CanHardFork (
     CardanoHardForkConstraints
@@ -25,8 +26,8 @@ module Ouroboros.Consensus.Cardano.CanHardFork (
   ) where
 
 import           Cardano.Crypto.DSIGN (Ed25519DSIGN)
-import           Cardano.Crypto.Hash.Blake2b (Blake2b_224, Blake2b_256)
 import           Cardano.Crypto.Hash (Hash)
+import           Cardano.Crypto.Hash.Blake2b (Blake2b_224, Blake2b_256)
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Genesis as SL
 import           Cardano.Ledger.Hashes (ADDRHASH, EraIndependentTxBody, HASH)
@@ -225,6 +226,7 @@ translateHeaderHashByronToShelley =
     _ = keepRedundantConstraint (Proxy @(HASH ~ Blake2b_256))
 
 translatePointByronToShelley ::
+     forall c.
      ( ShelleyCompatible (TPraos c) ShelleyEra
      )
   => Point ByronBlock
@@ -237,7 +239,7 @@ translatePointByronToShelley point bNo =
       (BlockPoint s h, NotOrigin n) -> NotOrigin ShelleyTip {
           shelleyTipSlotNo  = s
         , shelleyTipBlockNo = n
-        , shelleyTipHash    = translateHeaderHashByronToShelley h
+        , shelleyTipHash    = translateHeaderHashByronToShelley @c h
         }
       _otherwise ->
         error "translatePointByronToShelley: invalid Byron state"
