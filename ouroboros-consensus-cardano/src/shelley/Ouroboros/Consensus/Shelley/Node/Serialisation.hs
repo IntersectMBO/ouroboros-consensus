@@ -6,6 +6,8 @@
 {-# LANGUAGE TypeOperators #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Shelley.Node.Serialisation () where
 
@@ -28,8 +30,8 @@ import           Ouroboros.Consensus.Protocol.TPraos
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion ()
-import           Ouroboros.Consensus.Shelley.Protocol.Abstract
-                     (pHeaderBlockSize, pHeaderSize)
+import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto,
+                     pHeaderBlockSize, pHeaderSize)
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Network.Block (Serialised, unwrapCBORinCBOR,
                      wrapCBORinCBOR)
@@ -59,16 +61,16 @@ instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) (Led
   decodeDisk _ = decodeShelleyLedgerState
 
 -- | @'ChainDepState' ('BlockProtocol' ('ShelleyBlock' era))@
-instance (ShelleyCompatible proto era, ProtoCrypto ~ c, SL.PraosCrypto c) => EncodeDisk (ShelleyBlock proto era) (TPraosState c) where
+instance (ShelleyCompatible proto era, ProtoCrypto proto ~ c, SL.PraosCrypto c) => EncodeDisk (ShelleyBlock proto era) (TPraosState c) where
   encodeDisk _ = encode
 -- | @'ChainDepState' ('BlockProtocol' ('ShelleyBlock' era))@
-instance (ShelleyCompatible proto era, ProtoCrypto ~ c, SL.PraosCrypto c) => DecodeDisk (ShelleyBlock proto era) (TPraosState c) where
+instance (ShelleyCompatible proto era, ProtoCrypto proto ~ c, SL.PraosCrypto c) => DecodeDisk (ShelleyBlock proto era) (TPraosState c) where
   decodeDisk _ = decode
 
-instance (ShelleyCompatible proto era, ProtoCrypto ~ c, Praos.PraosCrypto c) => EncodeDisk (ShelleyBlock proto era) (PraosState c) where
+instance (ShelleyCompatible proto era, ProtoCrypto proto ~ c, Praos.PraosCrypto c) => EncodeDisk (ShelleyBlock proto era) (PraosState c) where
   encodeDisk _ = encode
 -- | @'ChainDepState' ('BlockProtocol' ('ShelleyBlock' era))@
-instance (ShelleyCompatible proto era, ProtoCrypto ~ c, Praos.PraosCrypto c) => DecodeDisk (ShelleyBlock proto era) (PraosState c) where
+instance (ShelleyCompatible proto era, ProtoCrypto proto ~ c, Praos.PraosCrypto c) => DecodeDisk (ShelleyBlock proto era) (PraosState c) where
   decodeDisk _ = decode
 instance ShelleyCompatible proto era
   => EncodeDisk (ShelleyBlock proto era) (AnnTip (ShelleyBlock proto era)) where
@@ -146,7 +148,7 @@ data ShelleyEncoderException era proto =
 instance (Typeable era, Typeable proto)
   => Exception (ShelleyEncoderException era proto)
 
-instance ShelleyCompatible proto era
+instance (ShelleyCompatible proto era, PraosCrypto (ProtoCrypto proto))
   => SerialiseNodeToClientConstraints (ShelleyBlock proto era)
 
 -- | CBOR-in-CBOR for the annotation. This also makes it compatible with the
@@ -185,7 +187,7 @@ instance ShelleyCompatible proto era
     = throw $ ShelleyEncoderUnsupportedQuery (SomeSecond q) version
   decodeNodeToClient _ _ = decodeShelleyQuery
 
-instance ShelleyCompatible proto era => SerialiseResult (ShelleyBlock proto era) (BlockQuery (ShelleyBlock proto era)) where
+instance (ShelleyCompatible proto era, PraosCrypto (ProtoCrypto proto)) => SerialiseResult (ShelleyBlock proto era) (BlockQuery (ShelleyBlock proto era)) where
   encodeResult _ = encodeShelleyResult
   decodeResult _ = decodeShelleyResult
 

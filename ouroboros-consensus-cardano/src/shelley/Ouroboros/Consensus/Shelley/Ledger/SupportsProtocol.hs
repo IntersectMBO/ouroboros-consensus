@@ -25,7 +25,6 @@ module Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol () where
 
 import qualified Cardano.Ledger.Core as LedgerCore
 import qualified Cardano.Ledger.Shelley.API as SL
--- import           Cardano.Protocol.Crypto (StandardCrypto)
 import qualified Cardano.Protocol.TPraos.API as SL
 import           Control.Monad.Except (MonadError (throwError))
 import           Data.Coerce (coerce)
