@@ -1,6 +1,63 @@
-In this technical report, we describe the necessary components comprising the consensus layer of a Cardano blockchain node. The main goal of this report is to provide guidance to software engineers that intend to implement the Consensus layer of a Cardano node from scratch.
+In this document, we describe the necessary components comprising the Consensus layer of a Cardano blockchain node. The main goal of this report is to provide guidance to software engineers that intend to implement the Consensus layer of a Cardano node from scratch.
 
 # Introduction
+
+# What does Consensus and Storage need to do: responsibilities and requirements
+
+## Responsibilities of the Consensus Layer
+
+The Consensus layer is responsible to choose among the different chains that might
+co-exist on the network. The candidate chains may arise both from honest and adversarial participation.
+The Consensus layer must implement the consensus protocol or the current Cardano era to replicate the blockchain across all Cardano nodes.
+
+Also for the new blocks to include meaningful data, Consensus has to receive and maintain a list of submitted transactions that are not in the chain yet.
+
+Blocks can be theoretically forged every slot (e.g. every second on Cardano mainnet), so the Consensus layer must be
+extremely fast in producing the blocks once it knows it has to do so.
+
+In terms of security, Consensus tries to not expose meaningful advantages for adversaries that could trigger a worst-case situation in which the amount of computation to be performed would block the node.
+This is generally achieved by trying to respect the following principle:
+
+- The cost of the worst case should be no greater than the cost of the average
+  case.
+
+| Component                          | Responsibility                                                                     |   |   |
+|:-----------------------------------|:-----------------------------------------------------------------------------------|:--|:--|
+| Forging Loop                       | Extend the Cardano chain by minting new blocks                                     |   |   |
+| Forging Loop                       | Block forging must be as fast as possible, to not delay later diffusion  block.    |   |   |
+| Mempool                            | Maintain a list of valid transactions to include in new blocks                     |   |   |
+| ChainSync, BlockFetch              | Establish means of gathering chains from peers                                     |   |   |
+| ChaineSel                          | Among all forks that can be fetched from peers, must identify the best chain.      |   |   |
+| N2N TxSubmission, N2C TxSubmission | Accept transactions from peers and store them into Mempool  for further processing |   |   |
+|                                    |                                                                                    |   |   |
+|                                    |                                                                                    |   |   |
+|                                    |                                                                                    |   |   |
+
+TODO(georgy): ChainSync, BlockFetch, N2N TxSubmission, N2C TxSubmission --- aren't those part of network? Do we need to describe them here? How do we put the emphasis right?
+
+## Responsibilities of the Storage Layer
+
+In order to switch to an alternative chain, Consensus needs to evaluate the
+validity of such a chain. In order to evaluate the validity of a block, we need to have a Ledger state at the
+predecessor block. As applying blocks is not an inversible operation, this is usually solved by maintaining the last `k` ledger states in memory.
+
+
+| Component   | Responsibility                                                                                            |   |   |
+|:------------|:----------------------------------------------------------------------------------------------------------|:--|:--|
+| ImmutableDB | Store definitive blocks on disk and provide iterator access to them for new syncing peers.                |   |   |
+| VolatileDB  | Store non-definitive blocks on disk, provide them to peers (random access?),                              |   |   |
+|             | efficiently switch to a different suffix of the chain if needed                                           |   |   |
+| LedgerDB    | Maintaining the last `k` (2160 on Cardano mainnet) ledger states in memory to facilitate chain selection. |   |   |
+|             |                                                                                                           |   |   |
+
+## Requirements imposed onto the Networking/Diffusion layer
+
+To maximize the probability of the block being included in the definitive chain,
+the Consensus layer has to strive to mint new blocks on top of the best block
+that exists in the network. Therefore it necessitates of a fast diffusion layer
+for blocks to arrive on time to the next block minters.
+
+Transmit chains as fast as possible so that blocks arrive to the next forger in time.
 
 # Single-era Consensus Layer
 
@@ -26,6 +83,17 @@ This section should describe the concepts necessary to implement the storage sub
 
 # Multi-era Considerations
 
+| Responsibility           | Timing                                             | Description                                                                                          |   |   |
+|:-------------------------|:---------------------------------------------------|:-----------------------------------------------------------------------------------------------------|:--|:--|
+| Process historical chain | slot number of the era boundaries known statically | switch and translate between the statically known historical sequence of revisions of block formats, |   |   |
+|                          |                                                    | ledger rules and protocols                                                                           |   |   |
+| Transition to a new era  | slot number of the era boundary unknown            | during the era transition:                                                                           |   |   |
+|                          |                                                    | * switch the consensus protocol, block format, ledger rules                                          |   |   |
+|                          |                                                    | * translate transactions received from prevoios-era peers                                            |   |   |
+|                          |                                                    | into the format of the current era for them included in a new block                                  |   |   |
+
+## Approaches to handle protocol changes
+
 With the blokchain network evolving, the block format and ledger rules are bound to change. In Cardano, every significant change starts a new "era". There are several ways to deal with multiple eras in the node software, associated here with some of the DnD alignments:
 
 * Chaotic Evil: the node software only ever implements one era. When the protocol needs to be updated, all participants must update the software or risk being ejected from the network. Most importantly, the decision to transition to the new era needs to happen off-chain.
@@ -50,3 +118,23 @@ But obviously we don not have to use the HFC. What would be a reasonable way to 
 ## The Hard Fork Combinator: a uniform way to support multiple eras}
 
 Ideally, this would be a short section that should outline the core ideas behind the HFC without a single line of Haskell. The purpose should be to demonstrate the benefits of having an abstract interface for describing mixed-era blocks. The interested reader would be then referred to an extended, Haskell-enabled document that described the HFC in its full glory.
+
+Cardano has the peculiarity of being a multi-era network, in which at given
+points in the chain, new backwards-incompatible features were added to the
+ledger. Consensus, as it needs to be able to replay the whole chain, needs to
+implement some mechanism to switch the logic used for each of the eras, in
+particular the Ledger layer exposes different implementations for each one of
+the ledger eras.
+
+*Hard Fork Combinator (HFC)* is mechanism that handles era transitions, including changes to ledger rules, block formats and even consensus protocols. It automates translations between different eras and provides a minimal interface for defining specific translations that obey rigorous laws.
+
+| Component           | Responsibility           |                                                    | Description                                                                                          |   |   |
+|:--------------------|:-------------------------|:---------------------------------------------------|:-----------------------------------------------------------------------------------------------------|:--|:--|
+| HFC-historical-eras | Process historical chain | slot number of the era boundaries known statically | switch and translate between the statically known historical sequence of revisions of block formats, |   |   |
+|                     |                          |                                                    | ledger rules and protocols                                                                           |   |   |
+| HFC-new-era,HFC-tx  | Transition to a new era  | slot number of the era boundary unknown            | during the era transition:                                                                           |   |   |
+|                     |                          |                                                    | * switch the consensus protocol, block format, ledger rules                                          |   |   |
+|                     |                          |                                                    | * translate transactions received from prevoios-era peers                                            |   |   |
+|                     |                          |                                                    | into the format of the current era for them included in a new block                                  |   |   |
+
+# Glossary
