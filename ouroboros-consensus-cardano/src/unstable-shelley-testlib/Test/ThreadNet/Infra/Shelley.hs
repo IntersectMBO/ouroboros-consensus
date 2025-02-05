@@ -36,27 +36,27 @@ module Test.ThreadNet.Infra.Shelley (
   , tpraosSlotLength
   ) where
 
-import           Cardano.Crypto.DSIGN (DSIGNAlgorithm (..), seedSizeDSIGN, SignKeyDSIGN)
+import           Cardano.Crypto.DSIGN (DSIGNAlgorithm (..), SignKeyDSIGN,
+                     seedSizeDSIGN)
 import           Cardano.Crypto.KES (KESAlgorithm (..), UnsoundPureSignKeyKES,
                      seedSizeKES, unsoundPureDeriveVerKeyKES,
                      unsoundPureGenKeyKES)
 import           Cardano.Crypto.Seed (mkSeedFromBytes)
-import           Cardano.Ledger.BaseTypes.NonZero (nonZeroOr, knownNonZeroBounded)
 import qualified Cardano.Crypto.Seed as Cardano.Crypto
 import           Cardano.Crypto.VRF (SignKeyVRF, deriveVerKeyVRF, genKeyVRF,
                      seedSizeVRF)
 import qualified Cardano.Ledger.Allegra.Scripts as SL
-import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import           Cardano.Ledger.Alonzo (AlonzoEra)
 import           Cardano.Ledger.BaseTypes (boundRational)
-import           Cardano.Protocol.Crypto (Crypto, KES, VRF, hashVerKeyVRF)
-import           Cardano.Ledger.Hashes (EraIndependentTxBody, HashAnnotated (..), SafeHash, hashAnnotated)
+import           Cardano.Ledger.BaseTypes.NonZero (knownNonZeroBounded,
+                     nonZeroOr)
+import           Cardano.Ledger.Hashes (EraIndependentTxBody,
+                     HashAnnotated (..), SafeHash, hashAnnotated)
 import qualified Cardano.Ledger.Keys as LK
 import qualified Cardano.Ledger.Mary.Core as SL
--- import           Cardano.Ledger.SafeHash (HashAnnotated (..), SafeHash,
---                      hashAnnotated)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Val as SL
+import           Cardano.Protocol.Crypto (Crypto, KES, VRF, hashVerKeyVRF)
 import           Cardano.Protocol.TPraos.OCert
                      (OCert (ocertKESPeriod, ocertN, ocertSigma, ocertVkHot))
 import qualified Cardano.Protocol.TPraos.OCert as SL (KESPeriod, OCert (OCert),
@@ -90,6 +90,7 @@ import           Ouroboros.Consensus.Shelley.Ledger (GenTx (..),
                      ShelleyBasedEra, ShelleyBlock, ShelleyCompatible,
                      mkShelleyTx)
 import           Ouroboros.Consensus.Shelley.Node
+import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import           Ouroboros.Consensus.Util.Assert
 import           Ouroboros.Consensus.Util.IOLike
 import           Quiet (Quiet (..))
