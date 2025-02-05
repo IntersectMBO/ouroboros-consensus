@@ -37,7 +37,6 @@ import           Ouroboros.Consensus.Protocol.Praos.Header
 import qualified Ouroboros.Consensus.Protocol.Praos.Header as Praos
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos,
                      TPraosState (TPraosState))
-import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.HFEras
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Query.Types
@@ -73,12 +72,13 @@ codecConfig :: CodecConfig StandardShelleyBlock
 codecConfig = ShelleyCodecConfig
 
 fromShelleyLedgerExamples ::
-     ShelleyCompatible (TPraos c) era
+     (ShelleyCompatible (TPraos c) era)
   => ShelleyLedgerExamples era
   -> Examples (ShelleyBlock (TPraos c) era)
-fromShelleyLedgerExamples ShelleyLedgerExamples {
-                            sleResultExamples = ShelleyResultExamples{..}
-                            , ..} =
+fromShelleyLedgerExamples
+  ShelleyLedgerExamples
+    { sleResultExamples = ShelleyResultExamples{..}
+    , ..} =
   Examples {
       exampleBlock            = unlabelled blk
     , exampleSerialisedBlock  = unlabelled serialisedBlock
@@ -177,8 +177,9 @@ fromShelleyLedgerExamplesPraos ShelleyLedgerExamples {
     , exampleSlotNo           = unlabelled slotNo
     }
   where
-    blk = mkShelleyBlock $ let
-      SL.Block hdr1 bdy = sleBlock in SL.Block (translateHeader hdr1) bdy
+    blk = mkShelleyBlock $
+      let SL.Block hdr1 bdy = sleBlock
+       in SL.Block (translateHeader hdr1) bdy
 
     translateHeader :: Crypto c => SL.BHeader c -> Praos.Header c
     translateHeader (SL.BHeader bhBody bhSig) =

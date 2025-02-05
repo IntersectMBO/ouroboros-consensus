@@ -164,7 +164,7 @@ instance CanMock proto era => Arbitrary (SomeResult (ShelleyBlock proto era)) wh
     , SomeResult DebugNewEpochState <$> arbitrary
     ]
 
-instance PraosCrypto c => Arbitrary (NonMyopicMemberRewards c) where
+instance Arbitrary NonMyopicMemberRewards where
   arbitrary = NonMyopicMemberRewards <$> arbitrary
 
 instance CanMock proto era => Arbitrary (Point (ShelleyBlock proto era)) where
