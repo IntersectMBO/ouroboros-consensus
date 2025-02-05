@@ -57,7 +57,6 @@ import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Governance as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
-import           Cardano.Protocol.Crypto (StandardCrypto)
 import           Cardano.Slotting.EpochInfo
 import           Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -190,9 +189,7 @@ shelleyTipToPoint Origin          = GenesisPoint
 shelleyTipToPoint (NotOrigin tip) = BlockPoint (shelleyTipSlotNo tip)
                                                (shelleyTipHash   tip)
 
-castShelleyTip ::
-     HeaderHash (ShelleyBlock proto era) ~ HeaderHash (ShelleyBlock proto' era')
-  => ShelleyTip proto era -> ShelleyTip proto' era'
+castShelleyTip :: ShelleyTip proto era -> ShelleyTip proto' era'
 castShelleyTip (ShelleyTip sn bn hh) = ShelleyTip {
       shelleyTipSlotNo  = sn
     , shelleyTipBlockNo = bn
@@ -503,14 +500,10 @@ getPParams = view $ SL.newEpochStateGovStateL . SL.curPParamsGovStateL
 serialisationFormatVersion2 :: VersionNumber
 serialisationFormatVersion2 = 2
 
-encodeShelleyAnnTip ::
-     ShelleyCompatible proto era
-  => AnnTip (ShelleyBlock proto era) -> Encoding
+encodeShelleyAnnTip :: AnnTip (ShelleyBlock proto era) -> Encoding
 encodeShelleyAnnTip = defaultEncodeAnnTip toCBOR
 
-decodeShelleyAnnTip ::
-     ShelleyCompatible proto era
-  => Decoder s (AnnTip (ShelleyBlock proto era))
+decodeShelleyAnnTip :: Decoder s (AnnTip (ShelleyBlock proto era))
 decodeShelleyAnnTip = defaultDecodeAnnTip fromCBOR
 
 encodeShelleyHeaderState ::
@@ -521,7 +514,7 @@ encodeShelleyHeaderState = encodeHeaderState
     encode
     encodeShelleyAnnTip
 
-encodeShelleyTip :: ShelleyCompatible proto era => ShelleyTip proto era -> Encoding
+encodeShelleyTip :: ShelleyTip proto era -> Encoding
 encodeShelleyTip ShelleyTip {
                      shelleyTipSlotNo
                    , shelleyTipBlockNo
@@ -533,7 +526,7 @@ encodeShelleyTip ShelleyTip {
     , encode shelleyTipHash
     ]
 
-decodeShelleyTip :: ShelleyCompatible proto era => Decoder s (ShelleyTip proto era)
+decodeShelleyTip :: Decoder s (ShelleyTip proto era)
 decodeShelleyTip = do
     enforceSize "ShelleyTip" 3
     shelleyTipSlotNo  <- decode

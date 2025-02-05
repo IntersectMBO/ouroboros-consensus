@@ -99,7 +99,7 @@ import           Ouroboros.Network.PeerSelection.LedgerPeers.Utils
   QueryLedger
 -------------------------------------------------------------------------------}
 
-newtype NonMyopicMemberRewards c = NonMyopicMemberRewards {
+newtype NonMyopicMemberRewards = NonMyopicMemberRewards {
       unNonMyopicMemberRewards ::
         Map (Either SL.Coin (SL.Credential 'SL.Staking))
             (Map (SL.KeyHash 'SL.StakePool) SL.Coin)
@@ -107,13 +107,9 @@ newtype NonMyopicMemberRewards c = NonMyopicMemberRewards {
   deriving stock   (Show)
   deriving newtype (Eq, ToCBOR, FromCBOR)
 
-type Delegations c =
-  Map (SL.Credential 'SL.Staking)
-      (SL.KeyHash 'SL.StakePool)
+type Delegations = Map (SL.Credential 'SL.Staking) (SL.KeyHash 'SL.StakePool)
 
-type VoteDelegatees c =
-  Map (SL.Credential 'SL.Staking)
-      SL.DRep
+type VoteDelegatees = Map (SL.Credential 'SL.Staking) SL.DRep
 
 data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   GetLedgerTip :: BlockQuery (ShelleyBlock proto era) (Point (ShelleyBlock proto era))
@@ -122,7 +118,7 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   -- credentials. See 'SL.getNonMyopicMemberRewards'
   GetNonMyopicMemberRewards
     :: Set (Either SL.Coin (SL.Credential 'SL.Staking))
-    -> BlockQuery (ShelleyBlock proto era) (NonMyopicMemberRewards (ProtoCrypto proto))
+    -> BlockQuery (ShelleyBlock proto era) NonMyopicMemberRewards
   GetCurrentPParams
     :: BlockQuery (ShelleyBlock proto era) (LC.PParams era)
   GetProposedPParamsUpdates
@@ -177,7 +173,7 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   GetFilteredDelegationsAndRewardAccounts
     :: Set (SL.Credential 'SL.Staking)
     -> BlockQuery (ShelleyBlock proto era)
-             (Delegations (ProtoCrypto proto), SL.RewardAccounts)
+             (Delegations, SL.RewardAccounts)
 
   GetGenesisConfig
     :: BlockQuery (ShelleyBlock proto era) CompactGenesis
@@ -287,7 +283,7 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   GetFilteredVoteDelegatees
     :: CG.ConwayEraGov era
     => Set (SL.Credential 'SL.Staking)
-    -> BlockQuery (ShelleyBlock proto era) (VoteDelegatees (ProtoCrypto proto))
+    -> BlockQuery (ShelleyBlock proto era) VoteDelegatees
 
   GetAccountState
     :: BlockQuery (ShelleyBlock proto era) AccountState
@@ -763,7 +759,7 @@ getDState = SL.certDState . SL.lsCertState . SL.esLState . SL.nesEs
 getFilteredDelegationsAndRewardAccounts ::
      SL.NewEpochState era
   -> Set (SL.Credential 'SL.Staking)
-  -> (Delegations (ProtoCrypto proto), SL.RewardAccounts)
+  -> (Delegations, SL.RewardAccounts)
 getFilteredDelegationsAndRewardAccounts ss creds =
     (filteredDelegations, filteredRwdAcnts)
   where
@@ -777,7 +773,7 @@ getFilteredDelegationsAndRewardAccounts ss creds =
 getFilteredVoteDelegatees ::
      SL.NewEpochState era
   -> Set (SL.Credential 'SL.Staking)
-  -> VoteDelegatees (ProtoCrypto proto)
+  -> VoteDelegatees
 getFilteredVoteDelegatees ss creds = Map.mapMaybe umElemDRep umElemsRestricted
   where
     UMap umElems _ = SL.dsUnified $ getDState ss
