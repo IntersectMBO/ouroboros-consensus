@@ -64,6 +64,7 @@ import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Inspect as Shelley.Inspect
 import           Ouroboros.Consensus.Shelley.Node ()
+import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import           Ouroboros.Consensus.TypeFamilyWrappers
 
 {-------------------------------------------------------------------------------
@@ -80,6 +81,7 @@ type ShelleyBlockHFC proto era = HardForkBlock '[ShelleyBlock proto era]
 instance ( ShelleyCompatible proto era
          , LedgerSupportsProtocol (ShelleyBlock proto era)
          , TxLimits               (ShelleyBlock proto era)
+         , SL.PraosCrypto (ProtoCrypto proto)
          ) => NoHardForks (ShelleyBlock proto era) where
   getEraParams =
         shelleyEraParamsNeverHardForks
@@ -100,6 +102,7 @@ instance ( ShelleyCompatible proto era
 instance ( ShelleyCompatible proto era
          , LedgerSupportsProtocol (ShelleyBlock proto era)
          , TxLimits               (ShelleyBlock proto era)
+         , SL.PraosCrypto (ProtoCrypto proto)
          ) => SupportedNetworkProtocolVersion (ShelleyBlockHFC proto era) where
   supportedNodeToNodeVersions _ =
       Map.map HardForkNodeToNodeDisabled $
@@ -121,10 +124,12 @@ instance ( ShelleyCompatible proto era
 instance ( ShelleyCompatible proto era
          , LedgerSupportsProtocol (ShelleyBlock proto era)
          , TxLimits               (ShelleyBlock proto era)
+         , SL.PraosCrypto (ProtoCrypto proto)
          ) => SerialiseHFC '[ShelleyBlock proto era]
 instance ( ShelleyCompatible proto era
          , LedgerSupportsProtocol (ShelleyBlock proto era)
          , TxLimits               (ShelleyBlock proto era)
+         , SL.PraosCrypto (ProtoCrypto proto)
          ) => SerialiseConstraintsHFC (ShelleyBlock proto era)
 
 {-------------------------------------------------------------------------------
@@ -172,6 +177,7 @@ shelleyTransition ShelleyPartialLedgerConfig{..}
 instance ( ShelleyCompatible proto era
          , LedgerSupportsProtocol (ShelleyBlock proto era)
          , TxLimits               (ShelleyBlock proto era)
+         , SL.PraosCrypto (ProtoCrypto proto)
          ) => SingleEraBlock (ShelleyBlock proto era) where
   singleEraTransition pcfg _eraParams _eraStart ledgerState =
       -- TODO: We might be evaluating 'singleEraTransition' more than once when

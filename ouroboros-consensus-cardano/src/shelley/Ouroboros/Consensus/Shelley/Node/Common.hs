@@ -40,8 +40,8 @@ import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock,
                      shelleyStorageConfigSecurityParam,
                      shelleyStorageConfigSlotsPerKESPeriod, shelleySystemStart,
                      verifyBlockIntegrity)
-import           Ouroboros.Consensus.Shelley.Protocol.Abstract
-                     (ProtocolHeaderSupportsProtocol (CannotForgeError))
+import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto,
+                     ProtocolHeaderSupportsProtocol (CannotForgeError))
 import           Ouroboros.Consensus.Storage.ImmutableDB
 
 {-------------------------------------------------------------------------------
