@@ -83,6 +83,7 @@ import           Ouroboros.Consensus.Shelley.Ledger.Ledger
 import           Ouroboros.Consensus.Util (ShowProxy (..))
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Network.Block (unwrapCBORinCBOR, wrapCBORinCBOR)
+import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 
 data instance GenTx (ShelleyBlock proto era) = ShelleyTx !SL.TxId !(Tx era)
   deriving stock    (Generic)
@@ -163,9 +164,9 @@ mkShelleyValidatedTx vtx = ShelleyValidatedTx txid vtx
 newtype instance TxId (GenTx (ShelleyBlock proto era)) = ShelleyTxId SL.TxId
   deriving newtype (Eq, Ord, NoThunks)
 
-deriving newtype instance (Typeable era, Typeable proto)
+deriving newtype instance (Typeable era, Typeable proto, Crypto (ProtoCrypto proto))
                        => EncCBOR (TxId (GenTx (ShelleyBlock proto era)))
-deriving newtype instance (Typeable era, Typeable proto)
+deriving newtype instance (Typeable era, Typeable proto, Crypto (ProtoCrypto proto))
                        => DecCBOR (TxId (GenTx (ShelleyBlock proto era)))
 
 instance (Typeable era, Typeable proto)
