@@ -2,8 +2,8 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -16,23 +16,20 @@ module Test.Consensus.Shelley.MockCrypto (
 
 import           Cardano.Crypto.KES (MockKES)
 import           Cardano.Crypto.VRF (MockVRF)
--- import           Test.Cardano.Protocol.Crypto.VRF.Fake (SneakilyContainResult)
--- import           Cardano.Crypto.Hash (hashToBytes)
-import           Cardano.Protocol.Crypto (Crypto (..))
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as Core
 import           Cardano.Ledger.Shelley.LedgerState (StashedAVVMAddresses)
--- import           Cardano.Ledger.BaseTypes (shelleyProtVer)
--- import Cardano.Ledger.Binary (DecCBOR (..), EncCBOR (..), hashWithEncoder, encCBOR)
+import           Cardano.Protocol.Crypto (Crypto (..))
 import qualified Cardano.Protocol.TPraos.API as SL
 import           Control.State.Transition.Extended (PredicateFailure)
-import           Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol)
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
+                     (LedgerSupportsProtocol)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
--- import           Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF)
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import           Ouroboros.Consensus.Shelley.Eras (ShelleyEra)
+import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock,
+                     ShelleyCompatible)
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
-import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock, ShelleyCompatible)
 import           Test.QuickCheck (Arbitrary)
 -- import           Test.Cardano.Ledger.Shelley.ConcreteCryptoTypes (MockCrypto)
 
@@ -60,7 +57,7 @@ instance SL.PraosCrypto MockCrypto
 --       $ encCBOR s <> encCBOR sk
 --   unsneakilyExtractPayload = id
 
---   -- sneakilyExtractResult :: a -> SignKeyVRF FakeVRF -> OutputVRF FakeVRF 
+--   -- sneakilyExtractResult :: a -> SignKeyVRF FakeVRF -> OutputVRF FakeVRF
 --   -- unsneakilyExtractPayload :: a -> Payload a
 
 type Block = ShelleyBlock (TPraos MockCrypto) ShelleyEra
