@@ -14,6 +14,7 @@ module Ouroboros.Consensus.Shelley.Node.Serialisation () where
 import           Cardano.Ledger.Binary (fromCBOR, toCBOR)
 import           Cardano.Ledger.Core (fromEraCBOR, toEraCBOR)
 import qualified Cardano.Ledger.Shelley.API as SL
+import           Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.API as SL
 import           Codec.Serialise (decode, encode)
 import           Control.Exception (Exception, throw)
@@ -83,7 +84,7 @@ instance ShelleyCompatible proto era
   SerialiseNodeToNode
 -------------------------------------------------------------------------------}
 
-instance ShelleyCompatible proto era
+instance (ShelleyCompatible proto era, Crypto (ProtoCrypto proto))
   => SerialiseNodeToNodeConstraints (ShelleyBlock proto era) where
   estimateBlockSize hdr = overhead + hdrSize + bodySize
     where
@@ -127,7 +128,7 @@ instance ShelleyCompatible proto era
   encodeNodeToNode _ _ = toCBOR
   decodeNodeToNode _ _ = fromCBOR
 
-instance ShelleyCompatible proto era
+instance (ShelleyCompatible proto era, Crypto (ProtoCrypto proto))
   => SerialiseNodeToNode (ShelleyBlock proto era) (GenTxId (ShelleyBlock proto era)) where
   encodeNodeToNode _ _ = toEraCBOR @era
   decodeNodeToNode _ _ = fromEraCBOR @era
@@ -148,7 +149,7 @@ data ShelleyEncoderException era proto =
 instance (Typeable era, Typeable proto)
   => Exception (ShelleyEncoderException era proto)
 
-instance (ShelleyCompatible proto era, PraosCrypto (ProtoCrypto proto))
+instance (ShelleyCompatible proto era, Crypto (ProtoCrypto proto))
   => SerialiseNodeToClientConstraints (ShelleyBlock proto era)
 
 -- | CBOR-in-CBOR for the annotation. This also makes it compatible with the
@@ -168,7 +169,7 @@ instance ShelleyCompatible proto era
   encodeNodeToClient _ _ = toCBOR
   decodeNodeToClient _ _ = fromCBOR
 
-instance ShelleyCompatible proto era
+instance (ShelleyCompatible proto era, Crypto (ProtoCrypto proto))
   => SerialiseNodeToClient (ShelleyBlock proto era) (GenTxId (ShelleyBlock proto era)) where
   encodeNodeToClient _ _ = toEraCBOR @era
   decodeNodeToClient _ _ = fromEraCBOR @era
@@ -187,7 +188,7 @@ instance ShelleyCompatible proto era
     = throw $ ShelleyEncoderUnsupportedQuery (SomeSecond q) version
   decodeNodeToClient _ _ = decodeShelleyQuery
 
-instance (ShelleyCompatible proto era, PraosCrypto (ProtoCrypto proto)) => SerialiseResult (ShelleyBlock proto era) (BlockQuery (ShelleyBlock proto era)) where
+instance (ShelleyCompatible proto era, Crypto (ProtoCrypto proto)) => SerialiseResult (ShelleyBlock proto era) (BlockQuery (ShelleyBlock proto era)) where
   encodeResult _ = encodeShelleyResult
   decodeResult _ = decodeShelleyResult
 

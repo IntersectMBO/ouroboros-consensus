@@ -28,6 +28,7 @@ import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.BaseTypes as SL (mkVersion, unNonZero)
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
+import           Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.API as SL
 import           Cardano.Slotting.EpochInfo (hoistEpochInfo)
 import           Control.Monad (guard)
@@ -81,7 +82,7 @@ type ShelleyBlockHFC proto era = HardForkBlock '[ShelleyBlock proto era]
 instance ( ShelleyCompatible proto era
          , LedgerSupportsProtocol (ShelleyBlock proto era)
          , TxLimits               (ShelleyBlock proto era)
-         , SL.PraosCrypto (ProtoCrypto proto)
+         , Crypto (ProtoCrypto proto)
          ) => NoHardForks (ShelleyBlock proto era) where
   getEraParams =
         shelleyEraParamsNeverHardForks
@@ -102,7 +103,7 @@ instance ( ShelleyCompatible proto era
 instance ( ShelleyCompatible proto era
          , LedgerSupportsProtocol (ShelleyBlock proto era)
          , TxLimits               (ShelleyBlock proto era)
-         , SL.PraosCrypto (ProtoCrypto proto)
+         , Crypto (ProtoCrypto proto)
          ) => SupportedNetworkProtocolVersion (ShelleyBlockHFC proto era) where
   supportedNodeToNodeVersions _ =
       Map.map HardForkNodeToNodeDisabled $
@@ -124,12 +125,12 @@ instance ( ShelleyCompatible proto era
 instance ( ShelleyCompatible proto era
          , LedgerSupportsProtocol (ShelleyBlock proto era)
          , TxLimits               (ShelleyBlock proto era)
-         , SL.PraosCrypto (ProtoCrypto proto)
+         , Crypto (ProtoCrypto proto)
          ) => SerialiseHFC '[ShelleyBlock proto era]
 instance ( ShelleyCompatible proto era
          , LedgerSupportsProtocol (ShelleyBlock proto era)
          , TxLimits               (ShelleyBlock proto era)
-         , SL.PraosCrypto (ProtoCrypto proto)
+         , Crypto (ProtoCrypto proto)
          ) => SerialiseConstraintsHFC (ShelleyBlock proto era)
 
 {-------------------------------------------------------------------------------
@@ -177,7 +178,7 @@ shelleyTransition ShelleyPartialLedgerConfig{..}
 instance ( ShelleyCompatible proto era
          , LedgerSupportsProtocol (ShelleyBlock proto era)
          , TxLimits               (ShelleyBlock proto era)
-         , SL.PraosCrypto (ProtoCrypto proto)
+         , Crypto (ProtoCrypto proto)
          ) => SingleEraBlock (ShelleyBlock proto era) where
   singleEraTransition pcfg _eraParams _eraStart ledgerState =
       -- TODO: We might be evaluating 'singleEraTransition' more than once when
