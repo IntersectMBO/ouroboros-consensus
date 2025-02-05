@@ -28,6 +28,7 @@ module Ouroboros.Consensus.Shelley.Node (
   ) where
 
 import qualified Cardano.Ledger.Shelley.API as SL
+import           Cardano.Protocol.Crypto (Crypto)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block
@@ -112,6 +113,6 @@ instance ( ShelleyCompatible                      proto era
          , LedgerSupportsProtocol   (ShelleyBlock proto era)
          , BlockSupportsSanityCheck (ShelleyBlock proto era)
          , TxLimits                 (ShelleyBlock proto era)
-         , PraosCrypto (ProtoCrypto proto)
+         , Crypto (ProtoCrypto proto)
          )
       => RunNode (ShelleyBlock proto era)

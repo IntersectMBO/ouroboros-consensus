@@ -221,7 +221,7 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   GetStakeSnapshots
     :: Maybe (Set (SL.KeyHash 'SL.StakePool))
     -> BlockQuery (ShelleyBlock proto era)
-                  (StakeSnapshots (ProtoCrypto proto))
+                  StakeSnapshots
 
   GetPoolDistr
     :: Maybe (Set (SL.KeyHash 'SL.StakePool))
@@ -335,8 +335,13 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
 instance (Typeable era, Typeable proto)
   => ShowProxy (BlockQuery (ShelleyBlock proto era)) where
 
-instance (ShelleyCompatible proto era, Crypto (ProtoCrypto proto))
-      => BlockSupportsLedgerQuery (ShelleyBlock proto era) where
+instance
+  ( ShelleyCompatible proto era
+  , ProtoCrypto proto ~ crypto
+  , Crypto crypto
+  ) =>
+  BlockSupportsLedgerQuery (ShelleyBlock proto era)
+  where
   answerBlockQuery cfg query ext =
       case query of
         GetLedgerTip ->
@@ -412,7 +417,7 @@ instance (ShelleyCompatible proto era, Crypto (ProtoCrypto proto))
               totalGoByPoolId :: Map (KeyHash 'StakePool) Coin
               totalGoByPoolId = SL.sumStakePerPool (SL.ssDelegations ssStakeGo) (SL.ssStake ssStakeGo)
 
-              getPoolStakes :: Set (KeyHash 'StakePool) -> Map (KeyHash 'StakePool) (StakeSnapshot crypto)
+              getPoolStakes :: Set (KeyHash 'StakePool) -> Map (KeyHash 'StakePool) StakeSnapshot
               getPoolStakes poolIds = Map.fromSet mkStakeSnapshot poolIds
                 where mkStakeSnapshot poolId = StakeSnapshot
                         { ssMarkPool = Map.findWithDefault mempty poolId totalMarkByPoolId
@@ -1010,17 +1015,16 @@ decodeShelleyResult _v query = case query of
 -- Each snapshot is taken at the end of a different era. The go snapshot is the current one and
 -- was taken two epochs earlier, set was taken one epoch ago, and mark was taken immediately
 -- before the start of the current epoch.
-data StakeSnapshot crypto = StakeSnapshot
+data StakeSnapshot = StakeSnapshot
   { ssMarkPool :: !SL.Coin
   , ssSetPool  :: !SL.Coin
   , ssGoPool   :: !SL.Coin
   } deriving (Eq, Show, Generic)
 
-instance NFData (StakeSnapshot crypto)
+instance NFData StakeSnapshot
 
 instance
-  Crypto crypto =>
-  ToCBOR (StakeSnapshot crypto)
+  ToCBOR StakeSnapshot
   where
   toCBOR
     StakeSnapshot
@@ -1033,8 +1037,7 @@ instance
       <> toCBOR ssGoPool
 
 instance
-  Crypto crypto =>
-  FromCBOR (StakeSnapshot crypto)
+  FromCBOR StakeSnapshot
   where
   fromCBOR = do
     enforceSize "StakeSnapshot" 3
@@ -1043,18 +1046,17 @@ instance
       <*> fromCBOR
       <*> fromCBOR
 
-data StakeSnapshots crypto = StakeSnapshots
-  { ssStakeSnapshots :: !(Map (SL.KeyHash 'SL.StakePool) (StakeSnapshot crypto))
+data StakeSnapshots = StakeSnapshots
+  { ssStakeSnapshots :: !(Map (SL.KeyHash 'SL.StakePool) StakeSnapshot)
   , ssMarkTotal      :: !SL.Coin
   , ssSetTotal       :: !SL.Coin
   , ssGoTotal        :: !SL.Coin
   } deriving (Eq, Show, Generic)
 
-instance NFData (StakeSnapshots crypto)
+instance NFData StakeSnapshots
 
 instance
-  Crypto crypto =>
-  ToCBOR (StakeSnapshots crypto)
+  ToCBOR StakeSnapshots
   where
   toCBOR
     StakeSnapshots
@@ -1069,8 +1071,7 @@ instance
       <> toCBOR ssGoTotal
 
 instance
-  Crypto crypto =>
-  FromCBOR (StakeSnapshots crypto)
+  FromCBOR StakeSnapshots
   where
   fromCBOR = do
     enforceSize "StakeSnapshots" 4
