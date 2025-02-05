@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Shelley.Node.Praos (
   ) where
 
 import qualified Cardano.Ledger.Api.Era as L
+import           Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.OCert as Absolute
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import qualified Data.Text as T
@@ -79,7 +80,7 @@ praosBlockForging praosParams credentials = do
 praosSharedBlockForging ::
      forall m c era.
      ( ShelleyEraWithCrypto c (Praos c) era
-     , PraosCrypto c
+     , Crypto c
      , IOLike m
      )
   => HotKey.HotKey c m

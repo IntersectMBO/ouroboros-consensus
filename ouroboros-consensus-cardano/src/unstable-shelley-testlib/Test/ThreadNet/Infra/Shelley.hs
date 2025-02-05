@@ -48,8 +48,7 @@ import           Cardano.Crypto.VRF (SignKeyVRF, deriveVerKeyVRF, genKeyVRF,
 import qualified Cardano.Ledger.Allegra.Scripts as SL
 import           Cardano.Ledger.Alonzo (AlonzoEra)
 import           Cardano.Ledger.BaseTypes (boundRational)
-import           Cardano.Ledger.BaseTypes.NonZero (knownNonZeroBounded,
-                     nonZeroOr)
+import           Cardano.Ledger.BaseTypes.NonZero (nonZeroOr)
 import           Cardano.Ledger.Hashes (EraIndependentTxBody,
                      HashAnnotated (..), SafeHash, hashAnnotated)
 import qualified Cardano.Ledger.Keys as LK
@@ -297,7 +296,7 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
     , sgNetworkMagic          = 0
     , sgNetworkId             = networkId
     , sgActiveSlotsCoeff      = unsafeBoundRational f
-    , sgSecurityParam         = nonZeroOr (maxRollbacks k) (knownNonZeroBounded @1)
+    , sgSecurityParam         = nonZeroOr (maxRollbacks k) $ error "The security parameter cannot be zero."
     , sgEpochLength           = mkEpochSize k f
     , sgSlotsPerKESPeriod     = slotsPerEvolution kesCfg
     , sgMaxKESEvolutions      = maxEvolutions     kesCfg
