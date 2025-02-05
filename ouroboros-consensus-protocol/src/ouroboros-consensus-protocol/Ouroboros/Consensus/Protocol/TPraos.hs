@@ -44,8 +44,7 @@ import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Crypto.KES as KES
 import qualified Cardano.Crypto.VRF as VRF
 import qualified Cardano.Ledger.BaseTypes as SL (ActiveSlotCoeff, Seed)
-import           Cardano.Ledger.BaseTypes.NonZero (knownNonZeroBounded,
-                     nonZeroOr, unNonZero)
+import           Cardano.Ledger.BaseTypes.NonZero (nonZeroOr, unNonZero)
 import           Cardano.Ledger.Hashes (HASH)
 import qualified Cardano.Ledger.Keys as SL
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -398,7 +397,7 @@ mkShelleyGlobals TPraosConfig{..} = SL.Globals {
     , slotsPerKESPeriod             = tpraosSlotsPerKESPeriod
     , stabilityWindow               = SL.computeStabilityWindow               k tpraosLeaderF
     , randomnessStabilisationWindow = SL.computeRandomnessStabilisationWindow k tpraosLeaderF
-    , securityParameter             = nonZeroOr k $ knownNonZeroBounded @1
+    , securityParameter             = nonZeroOr k $ error "The security parameter cannot be zero."
     , maxKESEvo                     = tpraosMaxKESEvo
     , quorum                        = tpraosQuorum
     , maxLovelaceSupply             = tpraosMaxLovelaceSupply

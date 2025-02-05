@@ -80,10 +80,10 @@ import           Ouroboros.Consensus.Shelley.Ledger.Ledger
                      (ShelleyLedgerConfig (shelleyLedgerGlobals),
                      Ticked (TickedShelleyLedgerState, tickedShelleyLedgerState),
                      getPParams)
+import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import           Ouroboros.Consensus.Util (ShowProxy (..))
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Network.Block (unwrapCBORinCBOR, wrapCBORinCBOR)
-import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 
 data instance GenTx (ShelleyBlock proto era) = ShelleyTx !SL.TxId !(Tx era)
   deriving stock    (Generic)
