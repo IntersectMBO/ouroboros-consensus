@@ -14,6 +14,7 @@ import           Control.Concurrent.Class.MonadMVar (withMVar)
 import           Control.Monad (void)
 import           Control.Monad.Except (runExcept)
 import           Control.Tracer
+import qualified Data.Foldable as Foldable
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.List.NonEmpty as NE
 import           Data.Maybe (fromMaybe)
@@ -173,7 +174,7 @@ doAddTx mpEnv wti tx =
 
       res <- withTMVarAnd istate additionalCheck
        $ \is () -> do
-          mTbs <- getLedgerTablesAtFor ldgrInterface (isTip is) [tx]
+          mTbs <- getLedgerTablesAtFor ldgrInterface (isTip is) (getTransactionKeySets tx)
           case mTbs of
             Just tbs -> do
               traceWith trcr $ TraceMempoolLedgerFound (isTip is)
@@ -289,7 +290,7 @@ pureTryAddTx cfg wti tx is values =
         NotEnoughSpaceLeft
       | otherwise
       ->
-        case validateNewTransaction cfg wti tx txsz st is of
+        case validateNewTransaction cfg wti tx txsz values st is of
           (Left err, _) ->
             Processed $ TransactionProcessingResult
               Nothing
@@ -336,7 +337,7 @@ implRemoveTxsEvenIfValid mpEnv toRemove = do
                  )
                  (TxSeq.toList $ isTxs is)
         (slot, ticked) = tickLedgerState cfg (ForgeInUnknownSlot ls)
-        toKeep' = [ txForgetValidated . TxSeq.txTicketTx $ tx | tx <- toKeep ]
+        toKeep' = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . TxSeq.txTicketTx) toKeep
     mTbs <- getLedgerTablesAtFor ldgrInterface (castPoint (getTip ls)) toKeep'
     case mTbs of
       Nothing -> pure (Resync, is)
@@ -422,10 +423,7 @@ implSyncWithLedger mpEnv = encloseTimedWith (TraceMempoolSynced >$< mpEnvTracer 
       else do
         -- We need to revalidate
         let pt = castPoint (getTip ls)
-            txs = [ txForgetValidated . TxSeq.txTicketTx $ tx
-                  | tx <- TxSeq.toList $ isTxs is
-                  ]
-        mTbs <- getLedgerTablesAtFor ldgrInterface pt txs
+        mTbs <- getLedgerTablesAtFor ldgrInterface pt (isTxKeys is)
         case mTbs of
           Just tbs -> do
             let (is', mTrace) = pureSyncWithLedger

@@ -38,7 +38,6 @@ import           Control.Monad (unless, void, when)
 import           Control.Monad.Except (runExcept)
 import           Control.ResourceRegistry
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
-import qualified Data.Foldable as Foldable
 import           Data.Int (Int64)
 import           Data.List (intercalate)
 import qualified Data.Map.Strict as Map
@@ -802,17 +801,13 @@ reproMempoolForge numBlks env = do
     mempool <- Mempool.openMempoolWithoutSyncThread
       Mempool.LedgerInterface {
           Mempool.getCurrentLedgerState = ledgerState <$> LedgerDB.getVolatileTip ledgerDB
-        , Mempool.getLedgerTablesAtFor = \pt txs -> do
+        , Mempool.getLedgerTablesAtFor = \pt keys -> do
             frk <- LedgerDB.getForkerAtTarget ledgerDB registry (SpecificPoint pt)
             case frk of
               Left _ -> pure Nothing
               Right fr -> do
                 tbs <- Just . castLedgerTables
-                   <$> LedgerDB.forkerReadTables
-                         fr
-                         (  castLedgerTables
-                          $ Foldable.foldMap' LedgerSupportsMempool.getTransactionKeySets txs
-                         )
+                   <$> LedgerDB.forkerReadTables fr (castLedgerTables keys)
                 LedgerDB.forkerClose fr
                 pure tbs
 
