@@ -8,7 +8,6 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 -- | Transitional Praos.
@@ -250,25 +249,25 @@ instance SL.PraosCrypto c => NoThunks (ConsensusConfig (TPraos c))
 --
 -- In addition to the 'ChainDepState' provided by the ledger, we track the slot
 -- number of the last applied header.
-data TPraosState c = TPraosState {
+data TPraosState = TPraosState {
       tpraosStateLastSlot      :: !(WithOrigin SlotNo)
     , tpraosStateChainDepState :: !SL.ChainDepState
     }
   deriving (Generic, Show, Eq)
 
-instance SL.PraosCrypto c => NoThunks (TPraosState c)
+instance NoThunks TPraosState
 
 -- | Version 0 supported rollback, removed in #2575.
 serialisationFormatVersion1 :: VersionNumber
 serialisationFormatVersion1 = 1
 
-instance SL.PraosCrypto c => ToCBOR (TPraosState c) where
+instance ToCBOR TPraosState where
   toCBOR = encode
 
-instance SL.PraosCrypto c => FromCBOR (TPraosState c) where
+instance FromCBOR TPraosState where
   fromCBOR = decode
 
-instance SL.PraosCrypto c => Serialise (TPraosState c) where
+instance Serialise TPraosState where
   encode (TPraosState slot chainDepState) =
     encodeVersion serialisationFormatVersion1 $ mconcat [
         CBOR.encodeListLen 2
@@ -283,13 +282,13 @@ instance SL.PraosCrypto c => Serialise (TPraosState c) where
         enforceSize "TPraosState" 2
         TPraosState <$> fromCBOR <*> fromCBOR
 
-data instance Ticked (TPraosState c) = TickedChainDepState {
+data instance Ticked TPraosState = TickedChainDepState {
       tickedTPraosStateChainDepState :: SL.ChainDepState
-    , tickedTPraosStateLedgerView    :: LedgerView (TPraos c)
+    , tickedTPraosStateLedgerView    :: SL.LedgerView
     }
 
 instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
-  type ChainDepState (TPraos c) = TPraosState c
+  type ChainDepState (TPraos c) = TPraosState
   type IsLeader      (TPraos c) = TPraosIsLeader c
   type CanBeLeader   (TPraos c) = PraosCanBeLeader c
   type SelectView    (TPraos c) = PraosChainSelectView c
