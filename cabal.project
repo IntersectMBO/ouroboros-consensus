@@ -48,8 +48,8 @@ if(os(windows))
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/ouroboros-network.git
-  tag: a93342566c7dd66c90e917dde28036fe62e73991
-  --sha256: 065k3b4098drfjmjbdz0swyzm510wybagp1rq8746c0yq5d44hq8
+  tag: 9411643578880565f5b06f862937e00c0f3efcb7
+  --sha256: 035i50k0gd45qkq3v1c495a3bmmmcy63ib61xj3lzza440bx91bh
   subdir:
     -- cardano-client
     -- cardano-ping
@@ -57,7 +57,7 @@ source-repository-package
     -- network-mux
     -- ntp-client
     -- ouroboros-network
-    -- ouroboros-network-api
+    ouroboros-network-api
     -- ouroboros-network-framework
     -- ouroboros-network-mock
     ouroboros-network-protocols
