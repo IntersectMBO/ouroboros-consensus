@@ -33,7 +33,6 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger (
   , ShelleyLedgerError (..)
   , ShelleyTip (..)
   , ShelleyTransition (..)
-  , ShelleyTxIn (..)
   , Ticked (..)
   , castShelleyTip
   , shelleyLedgerTipPoint
@@ -81,9 +80,7 @@ import           Control.Monad.Except
 import qualified Control.State.Transition.Extended as STS
 import           Data.Coerce (coerce)
 import           Data.Functor.Identity
-import qualified Data.Map.Strict as Map
 import           Data.MemPack
-import qualified Data.Set as Set
 import qualified Data.Text as Text
 import           Data.Word
 import           GHC.Generics (Generic)
@@ -267,16 +264,8 @@ shelleyLedgerTipPoint = shelleyTipToPoint . shelleyLedgerTip
 
 instance ShelleyCompatible proto era => UpdateLedger (ShelleyBlock proto era)
 
-type instance TxIn  (LedgerState (ShelleyBlock proto era)) = ShelleyTxIn era
+type instance TxIn  (LedgerState (ShelleyBlock proto era)) = SL.TxIn (EraCrypto era)
 type instance TxOut (LedgerState (ShelleyBlock proto era)) = Core.TxOut era
-
-newtype ShelleyTxIn era = ShelleyTxIn { getShelleyTxIn :: SL.TxIn (EraCrypto era) }
-  deriving newtype (Eq, Show, Generic, Ord, NoThunks)
-
-instance ShelleyBasedEra era => MemPack (ShelleyTxIn era) where
-  packM = packM . getShelleyTxIn
-  packedByteCount = packedByteCount . getShelleyTxIn
-  unpackM = ShelleyTxIn @era <$> unpackM
 
 instance (txout ~ Core.TxOut era, MemPack txout)
       => IndexedMemPack (LedgerState (ShelleyBlock proto era) EmptyMK) txout where
@@ -329,7 +318,7 @@ instance ShelleyBasedEra era
         , shelleyLedgerTables     = emptyLedgerTables
         }
     where
-      (_, shelleyLedgerState') = shelleyLedgerState `slUtxoL` SL.UTxO (Map.mapKeys getShelleyTxIn m)
+      (_, shelleyLedgerState') = shelleyLedgerState `slUtxoL` SL.UTxO m
       ShelleyLedgerState {
           shelleyLedgerTip
         , shelleyLedgerState
@@ -341,7 +330,7 @@ instance ShelleyBasedEra era
           shelleyLedgerTip        = shelleyLedgerTip
         , shelleyLedgerState      = shelleyLedgerState'
         , shelleyLedgerTransition = shelleyLedgerTransition
-        , shelleyLedgerTables     = LedgerTables (ValuesMK (Map.mapKeys ShelleyTxIn $ SL.unUTxO tbs))
+        , shelleyLedgerTables     = LedgerTables (ValuesMK (SL.unUTxO tbs))
         }
     where
       (tbs, shelleyLedgerState') = shelleyLedgerState `slUtxoL` mempty
@@ -362,7 +351,7 @@ instance ShelleyBasedEra era
        }
     where
       (_, tickedShelleyLedgerState') =
-         tickedShelleyLedgerState `slUtxoL` SL.UTxO (Map.mapKeys getShelleyTxIn tbs)
+         tickedShelleyLedgerState `slUtxoL` SL.UTxO tbs
       TickedShelleyLedgerState {
           untickedShelleyLedgerTip
         , tickedShelleyLedgerTransition
@@ -375,7 +364,7 @@ instance ShelleyBasedEra era
          untickedShelleyLedgerTip      = untickedShelleyLedgerTip
        , tickedShelleyLedgerTransition = tickedShelleyLedgerTransition
        , tickedShelleyLedgerState      = tickedShelleyLedgerState'
-       , tickedShelleyLedgerTables     = LedgerTables (ValuesMK (Map.mapKeys ShelleyTxIn $ SL.unUTxO tbs))
+       , tickedShelleyLedgerTables     = LedgerTables (ValuesMK (SL.unUTxO tbs))
        }
     where
       (tbs, tickedShelleyLedgerState') = tickedShelleyLedgerState `slUtxoL` mempty
@@ -537,7 +526,6 @@ instance ShelleyCompatible proto era
   getBlockKeySets =
         LedgerTables
       . KeysMK
-      . Set.map ShelleyTxIn
       . Core.neededTxInsForBlock
       . shelleyBlockRaw
 

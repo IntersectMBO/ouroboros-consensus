@@ -52,7 +52,7 @@ import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import           Ouroboros.Consensus.Shelley.Ledger (IsShelleyBlock,
-                     ShelleyBlock, ShelleyBlockLedgerEra, ShelleyTxIn (..))
+                     ShelleyBlock, ShelleyBlockLedgerEra)
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util.IndexedMemPack
@@ -67,23 +67,23 @@ instance CardanoHardForkConstraints c
 
   injectCanonicalTxIn IZ       byronTxIn   = absurd byronTxIn
   injectCanonicalTxIn (IS idx) shelleyTxIn = case idx of
-      IZ                               -> CardanoTxIn $ getShelleyTxIn shelleyTxIn
-      IS IZ                            -> CardanoTxIn $ getShelleyTxIn shelleyTxIn
-      IS (IS IZ)                       -> CardanoTxIn $ getShelleyTxIn shelleyTxIn
-      IS (IS (IS IZ))                  -> CardanoTxIn $ getShelleyTxIn shelleyTxIn
-      IS (IS (IS (IS IZ)))             -> CardanoTxIn $ getShelleyTxIn shelleyTxIn
-      IS (IS (IS (IS (IS IZ))))        -> CardanoTxIn $ getShelleyTxIn shelleyTxIn
+      IZ                               -> CardanoTxIn shelleyTxIn
+      IS IZ                            -> CardanoTxIn shelleyTxIn
+      IS (IS IZ)                       -> CardanoTxIn shelleyTxIn
+      IS (IS (IS IZ))                  -> CardanoTxIn shelleyTxIn
+      IS (IS (IS (IS IZ)))             -> CardanoTxIn shelleyTxIn
+      IS (IS (IS (IS (IS IZ))))        -> CardanoTxIn shelleyTxIn
       IS (IS (IS (IS (IS (IS idx'))))) -> case idx' of {}
 
   ejectCanonicalTxIn IZ _                 =
       error "ejectCanonicalTxIn: Byron has no TxIns"
   ejectCanonicalTxIn (IS idx) cardanoTxIn = case idx of
-      IZ                               -> ShelleyTxIn $ getCardanoTxIn cardanoTxIn
-      IS IZ                            -> ShelleyTxIn $ getCardanoTxIn cardanoTxIn
-      IS (IS IZ)                       -> ShelleyTxIn $ getCardanoTxIn cardanoTxIn
-      IS (IS (IS IZ))                  -> ShelleyTxIn $ getCardanoTxIn cardanoTxIn
-      IS (IS (IS (IS IZ)))             -> ShelleyTxIn $ getCardanoTxIn cardanoTxIn
-      IS (IS (IS (IS (IS IZ))))        -> ShelleyTxIn $ getCardanoTxIn cardanoTxIn
+      IZ                               -> getCardanoTxIn cardanoTxIn
+      IS IZ                            -> getCardanoTxIn cardanoTxIn
+      IS (IS IZ)                       -> getCardanoTxIn cardanoTxIn
+      IS (IS (IS IZ))                  -> getCardanoTxIn cardanoTxIn
+      IS (IS (IS (IS IZ)))             -> getCardanoTxIn cardanoTxIn
+      IS (IS (IS (IS (IS IZ))))        -> getCardanoTxIn cardanoTxIn
       IS (IS (IS (IS (IS (IS idx'))))) -> case idx' of {}
 
 instance CardanoHardForkConstraints c => MemPack (CanonicalTxIn (CardanoEras c)) where
