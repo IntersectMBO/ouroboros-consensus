@@ -68,11 +68,8 @@ import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Slots (NumSlots (..))
 import           Test.Util.TestEnv
 
--- | No Byron era, so our crypto can be trivial.
-type Crypto = MockCrypto ShortHash
-
 type ShelleyAllegraBlock =
-  ShelleyBasedHardForkBlock (TPraos Crypto) (ShelleyEra Crypto) (TPraos Crypto) (AllegraEra Crypto)
+  ShelleyBasedHardForkBlock (TPraos MockCrypto) ShelleyEra (TPraos MockCrypto) AllegraEra
 
 -- | The varying data of this test
 --
@@ -277,7 +274,7 @@ prop_simple_shelleyAllegra_convergence TestSetup
     initialKESPeriod :: SL.KESPeriod
     initialKESPeriod = SL.KESPeriod 0
 
-    coreNodes :: [Shelley.CoreNode Crypto]
+    coreNodes :: [Shelley.CoreNode MockCrypto]
     coreNodes = runGen initSeed $
         replicateM (fromIntegral n) $
           Shelley.genCoreNode initialKESPeriod
@@ -288,7 +285,7 @@ prop_simple_shelleyAllegra_convergence TestSetup
     maxLovelaceSupply =
       fromIntegral (length coreNodes) * Shelley.initialLovelacePerCoreNode
 
-    genesisShelley :: ShelleyGenesis Crypto
+    genesisShelley :: ShelleyGenesis MockCrypto
     genesisShelley =
         Shelley.mkGenesisConfig
           (SL.ProtVer majorVersion1 0)
@@ -297,7 +294,7 @@ prop_simple_shelleyAllegra_convergence TestSetup
           setupD
           maxLovelaceSupply
           setupSlotLength
-          (Shelley.mkKesConfig (Proxy @Crypto) numSlots)
+          (Shelley.mkKesConfig (Proxy @MockCrypto) numSlots)
           coreNodes
 
     -- the Shelley ledger is designed to use a fixed epoch size, so this test

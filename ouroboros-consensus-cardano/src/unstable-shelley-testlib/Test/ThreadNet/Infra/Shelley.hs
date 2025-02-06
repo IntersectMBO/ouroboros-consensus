@@ -97,6 +97,7 @@ import qualified Test.Cardano.Ledger.Core.KeyPair as TL (KeyPair (..),
                      mkWitnessesVKey)
 import qualified Test.Cardano.Ledger.Shelley.Generator.Core as Gen
 import           Test.Cardano.Ledger.Shelley.Utils (unsafeBoundRational)
+import           Test.Consensus.Shelley.MockCrypto (MockCrypto)
 import           Test.QuickCheck
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Slots (NumSlots (..))
@@ -176,15 +177,14 @@ coreNodeKeys CoreNode{cnGenesisKey, cnDelegateKey, cnStakingKey} =
       }
 
 genCoreNode ::
-     forall c. PraosCrypto c
-  => SL.KESPeriod
-  -> Gen (CoreNode c)
+     SL.KESPeriod
+  -> Gen (CoreNode MockCrypto)
 genCoreNode startKESPeriod = do
     genKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @LK.DSIGN))
     delKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @LK.DSIGN))
     stkKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @LK.DSIGN))
-    vrfKey <- genKeyVRF   <$> genSeed (seedSizeVRF   (Proxy @(VRF   c)))
-    kesKey <- unsoundPureGenKeyKES <$> genSeed (seedSizeKES   (Proxy @(KES   c)))
+    vrfKey <- genKeyVRF   <$> genSeed (seedSizeVRF   (Proxy @(VRF MockCrypto)))
+    kesKey <- unsoundPureGenKeyKES <$> genSeed (seedSizeKES (Proxy @(KES MockCrypto)))
     let kesPub = unsoundPureDeriveVerKeyKES kesKey
         sigma  = LK.signedDSIGN
           delKey
