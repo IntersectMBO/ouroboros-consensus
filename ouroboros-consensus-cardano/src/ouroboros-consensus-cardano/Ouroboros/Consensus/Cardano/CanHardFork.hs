@@ -620,7 +620,6 @@ translateLedgerStateShelleyToAllegraWrapper =
                   avvmsAsDeletions = LedgerTables
                                    . DiffMK
                                    . Diff.fromMapDeletes
-                                   . Map.mapKeys ShelleyTxIn
                                    . Map.map SL.upgradeTxOut
                                    $ avvms
 
@@ -632,7 +631,6 @@ translateLedgerStateShelleyToAllegraWrapper =
                               . withLedgerTables ls
                               . LedgerTables
                               . ValuesMK
-                              . Map.mapKeys ShelleyTxIn
                               $ avvms
 
                   resultingState = unFlip . unComp

@@ -523,9 +523,9 @@ instance ( ShelleyCompatible proto era
       hst = headerState ext
       st  = shelleyLedgerState lst
 
-  answerBlockQueryLookup = answerShelleyLookupQueries id id getShelleyTxIn
+  answerBlockQueryLookup = answerShelleyLookupQueries id id id
 
-  answerBlockQueryTraverse = answerShelleyTraversingQueries id getShelleyTxIn shelleyQFTraverseTablesPredicate
+  answerBlockQueryTraverse = answerShelleyTraversingQueries id id shelleyQFTraverseTablesPredicate
 
 instance SameDepIndex2 (BlockQuery (ShelleyBlock proto era)) where
   sameDepIndex2 GetLedgerTip GetLedgerTip
@@ -1148,7 +1148,7 @@ answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q forker =
       LedgerTables (ValuesMK values) <-
         LedgerDB.roforkerReadTables
           forker
-          (castLedgerTables $ injTables (LedgerTables $ KeysMK $ Set.map ShelleyTxIn txins))
+          (castLedgerTables $ injTables (LedgerTables $ KeysMK txins))
       pure
         $ SL.UTxO
         $ Map.mapKeys ejTxIn

@@ -383,19 +383,21 @@ instance ( ShelleyBasedEra era
   Canonical TxIn
 -------------------------------------------------------------------------------}
 
-instance (ShelleyBasedEra era)
+instance (ShelleyCompatible proto era, ShelleyBasedEra era)
       => HasCanonicalTxIn '[ShelleyBlock proto era] where
   newtype instance CanonicalTxIn '[ShelleyBlock proto era] = ShelleyBlockHFCTxIn {
-      getShelleyBlockHFCTxIn :: ShelleyTxIn era
+      getShelleyBlockHFCTxIn :: SL.TxIn (EraCrypto era)
     }
     deriving stock (Show, Eq, Ord)
-    deriving newtype (NoThunks, MemPack)
+    deriving newtype (NoThunks)
 
   injectCanonicalTxIn IZ txIn     = ShelleyBlockHFCTxIn txIn
   injectCanonicalTxIn (IS idx') _ = case idx' of {}
 
   ejectCanonicalTxIn IZ txIn     = getShelleyBlockHFCTxIn txIn
   ejectCanonicalTxIn (IS idx') _ = case idx' of {}
+
+deriving newtype instance L.Crypto (EraCrypto era) => MemPack (CanonicalTxIn '[ShelleyBlock proto era])
 
 {-------------------------------------------------------------------------------
   HardForkTxOut
@@ -421,13 +423,13 @@ instance ( ShelleyCompatible proto era
          ) => BlockSupportsHFLedgerQuery '[ShelleyBlock proto era] where
 
   answerBlockQueryHFLookup = \case
-    IZ -> answerShelleyLookupQueries (injectLedgerTables IZ) id (getShelleyTxIn . ejectCanonicalTxIn IZ)
+    IZ -> answerShelleyLookupQueries (injectLedgerTables IZ) id (ejectCanonicalTxIn IZ)
     IS idx -> case idx of {}
 
   answerBlockQueryHFTraverse = \case
     IZ -> answerShelleyTraversingQueries
       id
-      (getShelleyTxIn . ejectCanonicalTxIn IZ)
+      (ejectCanonicalTxIn IZ)
       (queryLedgerGetTraversingFilter @('[ShelleyBlock proto era]) IZ)
     IS idx -> case idx of {}
 

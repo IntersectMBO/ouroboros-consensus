@@ -104,13 +104,13 @@ instance CardanoHardForkConstraints c => BlockSupportsHFLedgerQuery (CardanoEras
       (\idx -> answerShelleyLookupQueries
                 (injectLedgerTables idx)
                 (ejectHardForkTxOut idx)
-                (getShelleyTxIn . ejectCanonicalTxIn idx)
+                (ejectCanonicalTxIn idx)
       )
   answerBlockQueryHFTraverse =
     answerCardanoQueryHF
       (\idx -> answerShelleyTraversingQueries
                 (ejectHardForkTxOut idx)
-                (getShelleyTxIn . ejectCanonicalTxIn idx)
+                (ejectCanonicalTxIn idx)
                 (queryLedgerGetTraversingFilter idx)
       )
 
