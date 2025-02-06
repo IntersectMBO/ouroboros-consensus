@@ -32,13 +32,8 @@ module Ouroboros.Consensus.Cardano.CanHardFork (
 import qualified Cardano.Chain.Common as CC
 import qualified Cardano.Chain.Genesis as CC.Genesis
 import qualified Cardano.Chain.Update as CC.Update
-import           Cardano.Crypto.DSIGN (Ed25519DSIGN)
-import           Cardano.Crypto.Hash (Hash)
-import           Cardano.Crypto.Hash.Blake2b (Blake2b_224, Blake2b_256)
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Genesis as SL
-import           Cardano.Ledger.Hashes (ADDRHASH, EraIndependentTxBody, HASH)
-import           Cardano.Ledger.Keys (DSIGN, DSignable)
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Ledger.Shelley.Translation
                      (toFromByronTranslationContext)
@@ -89,7 +84,6 @@ import           Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import           Ouroboros.Consensus.Shelley.ShelleyHFC
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util (eitherToMaybe)
-import           Ouroboros.Consensus.Util.RedundantConstraints
 
 {-------------------------------------------------------------------------------
   Figure out the transition point for Byron
@@ -268,13 +262,6 @@ type CardanoHardForkConstraints c =
   , LedgerSupportsProtocol (ShelleyBlock (Praos c) BabbageEra)
   , ShelleyCompatible (Praos c) ConwayEra
   , LedgerSupportsProtocol (ShelleyBlock (Praos c) ConwayEra)
-    -- These equalities allow the transition from Byron to Shelley, since
-    -- @cardano-ledger-shelley@ requires Ed25519 for Byron bootstrap addresses and
-    -- the current Byron-to-Shelley translation requires a 224-bit hash for
-    -- address and a 256-bit hash for header hashes.
-  , HASH ~ Blake2b_256
-  , ADDRHASH ~ Blake2b_224
-  , DSIGN ~ Ed25519DSIGN
   )
 
 instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
@@ -390,9 +377,6 @@ translateHeaderHashByronToShelley ::
 translateHeaderHashByronToShelley =
       fromShortRawHash (Proxy @(ShelleyBlock (TPraos c) ShelleyEra))
     . toShortRawHash   (Proxy @ByronBlock)
-  where
-    -- Byron uses 'Blake2b_256' for header hashes
-    _ = keepRedundantConstraint (Proxy @(HASH ~ Blake2b_256))
 
 translatePointByronToShelley ::
      forall c.
@@ -454,7 +438,7 @@ translateChainDepStateByronToShelley ::
      forall bc c.
      ConsensusConfig (TPraos c)
   -> PBftState bc
-  -> TPraosState c
+  -> TPraosState
 translateChainDepStateByronToShelley TPraosConfig { tpraosParams } pbftState =
     -- Note that the 'PBftState' doesn't know about EBBs. So if the last slot of
     -- the Byron era were occupied by an EBB (and no regular block in that same
@@ -540,8 +524,7 @@ crossEraForecastByronToShelleyWrapper =
 -------------------------------------------------------------------------------}
 
 translateLedgerStateShelleyToAllegraWrapper ::
-     DSignable (Hash HASH EraIndependentTxBody)
-  => RequiringBoth
+  RequiringBoth
        WrapLedgerConfig
        (Translate LedgerState)
        (ShelleyBlock (TPraos c) ShelleyEra)
@@ -552,16 +535,14 @@ translateLedgerStateShelleyToAllegraWrapper =
         unComp . SL.translateEra' SL.NoGenesis . Comp
 
 translateTxShelleyToAllegraWrapper ::
-     DSignable (Hash HASH EraIndependentTxBody)
-  => InjectTx
+  InjectTx
        (ShelleyBlock (TPraos c) ShelleyEra)
        (ShelleyBlock (TPraos c) AllegraEra)
 translateTxShelleyToAllegraWrapper = InjectTx $
     fmap unComp . eitherToMaybe . runExcept . SL.translateEra SL.NoGenesis . Comp
 
 translateValidatedTxShelleyToAllegraWrapper ::
-     DSignable (Hash HASH EraIndependentTxBody)
-  => InjectValidatedTx
+     InjectValidatedTx
        (ShelleyBlock (TPraos c) ShelleyEra)
        (ShelleyBlock (TPraos c) AllegraEra)
 translateValidatedTxShelleyToAllegraWrapper = InjectValidatedTx $
@@ -572,8 +553,7 @@ translateValidatedTxShelleyToAllegraWrapper = InjectValidatedTx $
 -------------------------------------------------------------------------------}
 
 translateLedgerStateAllegraToMaryWrapper ::
-     DSignable (Hash HASH EraIndependentTxBody)
-  => RequiringBoth
+     RequiringBoth
        WrapLedgerConfig
        (Translate LedgerState)
        (ShelleyBlock (TPraos c) AllegraEra)
@@ -584,16 +564,14 @@ translateLedgerStateAllegraToMaryWrapper =
         unComp . SL.translateEra' SL.NoGenesis . Comp
 
 translateTxAllegraToMaryWrapper ::
-     DSignable (Hash HASH EraIndependentTxBody)
-  => InjectTx
+     InjectTx
        (ShelleyBlock (TPraos c) AllegraEra)
        (ShelleyBlock (TPraos c) MaryEra)
 translateTxAllegraToMaryWrapper = InjectTx $
     fmap unComp . eitherToMaybe . runExcept . SL.translateEra SL.NoGenesis . Comp
 
 translateValidatedTxAllegraToMaryWrapper ::
-     DSignable (Hash HASH EraIndependentTxBody)
-  => InjectValidatedTx
+     InjectValidatedTx
        (ShelleyBlock (TPraos c) AllegraEra)
        (ShelleyBlock (TPraos c) MaryEra)
 translateValidatedTxAllegraToMaryWrapper = InjectValidatedTx $
@@ -604,8 +582,7 @@ translateValidatedTxAllegraToMaryWrapper = InjectValidatedTx $
 -------------------------------------------------------------------------------}
 
 translateLedgerStateMaryToAlonzoWrapper ::
-     DSignable (Hash HASH EraIndependentTxBody)
-  => RequiringBoth
+     RequiringBoth
        WrapLedgerConfig
        (Translate LedgerState)
        (ShelleyBlock (TPraos c) MaryEra)
@@ -622,8 +599,7 @@ getAlonzoTranslationContext =
     shelleyLedgerTranslationContext . unwrapLedgerConfig
 
 translateTxMaryToAlonzoWrapper ::
-     DSignable (Hash HASH EraIndependentTxBody)
-  => SL.TranslationContext AlonzoEra
+     SL.TranslationContext AlonzoEra
   -> InjectTx
        (ShelleyBlock (TPraos c) MaryEra)
        (ShelleyBlock (TPraos c) AlonzoEra)
@@ -632,8 +608,7 @@ translateTxMaryToAlonzoWrapper ctxt = InjectTx $
 
 translateValidatedTxMaryToAlonzoWrapper ::
      forall c.
-     DSignable (Hash HASH EraIndependentTxBody)
-  => SL.TranslationContext AlonzoEra
+     SL.TranslationContext AlonzoEra
   -> InjectValidatedTx
        (ShelleyBlock (TPraos c) MaryEra)
        (ShelleyBlock (TPraos c) AlonzoEra)

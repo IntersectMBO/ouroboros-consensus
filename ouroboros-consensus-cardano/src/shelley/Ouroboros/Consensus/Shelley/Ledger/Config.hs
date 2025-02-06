@@ -25,7 +25,6 @@ module Ouroboros.Consensus.Shelley.Ledger.Config (
 
 import           Cardano.Ledger.Binary (FromCBOR, ToCBOR)
 import qualified Cardano.Ledger.Shelley.API as SL
-import           Cardano.Protocol.Crypto (Crypto)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Word (Word64)
@@ -121,8 +120,7 @@ data instance StorageConfig (ShelleyBlock proto era) = ShelleyStorageConfig {
 --
 -- * The 'sgStaking' field is erased. It is only used to register initial stake
 --   pools in tests and benchmarks.
-newtype CompactGenesis = CompactGenesis {
-      getCompactGenesis :: SL.ShelleyGenesis    }
+newtype CompactGenesis = CompactGenesis { getCompactGenesis :: SL.ShelleyGenesis }
   deriving stock (Eq, Show, Generic)
   deriving newtype (ToCBOR, FromCBOR)
 

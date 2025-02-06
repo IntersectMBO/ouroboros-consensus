@@ -15,7 +15,6 @@ import           Cardano.Ledger.Binary (fromCBOR, toCBOR)
 import           Cardano.Ledger.Core (fromEraCBOR, toEraCBOR)
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Protocol.Crypto (Crypto)
-import qualified Cardano.Protocol.TPraos.API as SL
 import           Codec.Serialise (decode, encode)
 import           Control.Exception (Exception, throw)
 import qualified Data.ByteString.Lazy as Lazy
@@ -26,7 +25,6 @@ import           Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Node.Serialisation
 import           Ouroboros.Consensus.Protocol.Praos (PraosState)
-import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import           Ouroboros.Consensus.Protocol.TPraos
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger
@@ -62,16 +60,16 @@ instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) (Led
   decodeDisk _ = decodeShelleyLedgerState
 
 -- | @'ChainDepState' ('BlockProtocol' ('ShelleyBlock' era))@
-instance (ShelleyCompatible proto era, ProtoCrypto proto ~ c, SL.PraosCrypto c) => EncodeDisk (ShelleyBlock proto era) (TPraosState c) where
+instance ShelleyCompatible proto era => EncodeDisk (ShelleyBlock proto era) TPraosState where
   encodeDisk _ = encode
 -- | @'ChainDepState' ('BlockProtocol' ('ShelleyBlock' era))@
-instance (ShelleyCompatible proto era, ProtoCrypto proto ~ c, SL.PraosCrypto c) => DecodeDisk (ShelleyBlock proto era) (TPraosState c) where
+instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) TPraosState where
   decodeDisk _ = decode
 
-instance (ShelleyCompatible proto era, ProtoCrypto proto ~ c, Praos.PraosCrypto c) => EncodeDisk (ShelleyBlock proto era) (PraosState c) where
+instance ShelleyCompatible proto era => EncodeDisk (ShelleyBlock proto era) PraosState where
   encodeDisk _ = encode
 -- | @'ChainDepState' ('BlockProtocol' ('ShelleyBlock' era))@
-instance (ShelleyCompatible proto era, ProtoCrypto proto ~ c, Praos.PraosCrypto c) => DecodeDisk (ShelleyBlock proto era) (PraosState c) where
+instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) PraosState where
   decodeDisk _ = decode
 instance ShelleyCompatible proto era
   => EncodeDisk (ShelleyBlock proto era) (AnnTip (ShelleyBlock proto era)) where
