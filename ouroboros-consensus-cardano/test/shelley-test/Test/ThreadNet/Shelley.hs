@@ -48,9 +48,6 @@ import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Slots (NumSlots (..))
 import           Test.Util.TestEnv
 
-type Era   = MockShelley ShortHash
-type Proto = TPraos (MockCrypto ShortHash)
-
 data TestSetup = TestSetup
   { setupD            :: DecentralizationParam
   , setupD2           :: DecentralizationParam
@@ -65,7 +62,7 @@ data TestSetup = TestSetup
     -- This test varies it too ensure it explores different leader schedules.
   , setupK            :: SecurityParam
   , setupTestConfig   :: TestConfig
-  , setupVersion      :: (NodeToNodeVersion, BlockNodeToNodeVersion (ShelleyBlock Proto Era))
+  , setupVersion      :: (NodeToNodeVersion, BlockNodeToNodeVersion (ShelleyBlock (TPraos MockCrypto) ShelleyEra))
   }
   deriving (Show)
 
@@ -92,7 +89,7 @@ instance Arbitrary TestSetup where
 
       setupTestConfig <- arbitrary
 
-      setupVersion <- genVersion (Proxy @(ShelleyBlock Proto Era))
+      setupVersion <- genVersion (Proxy @(ShelleyBlock (TPraos MockCrypto) ShelleyEra))
 
       pure TestSetup
         { setupD
@@ -197,7 +194,7 @@ prop_simple_real_tpraos_convergence TestSetup
       , numSlots
       } = setupTestConfig
 
-    testConfigB :: TestConfigB (ShelleyBlock Proto Era)
+    testConfigB :: TestConfigB (ShelleyBlock (TPraos MockCrypto) ShelleyEra)
     testConfigB = TestConfigB
       { forgeEbbEnv  = Nothing
       , future       = singleEraFuture tpraosSlotLength epochSize
@@ -352,11 +349,11 @@ prop_simple_real_tpraos_convergence TestSetup
             DoGeneratePPUs    -> True
             DoNotGeneratePPUs -> False
 
-        finalLedgers :: [(NodeId, LedgerState (ShelleyBlock Proto Era))]
+        finalLedgers :: [(NodeId, LedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra))]
         finalLedgers =
             Map.toList $ nodeOutputFinalLedger <$> testOutputNodes testOutput
 
-        ledgerConfig :: LedgerConfig (ShelleyBlock Proto Era)
+        ledgerConfig :: LedgerConfig (ShelleyBlock (TPraos MockCrypto) ShelleyEra)
         ledgerConfig = Shelley.mkShelleyLedgerConfig
             genesisConfig
             (SL.toFromByronTranslationContext genesisConfig)  -- trivial translation context
