@@ -137,7 +137,7 @@ instance ( ShelleyCompatible proto era
   Protocol type definition
 -------------------------------------------------------------------------------}
 
-type ProtocolShelley = HardForkProtocol '[ ShelleyBlock (TPraos StandardCrypto) StandardShelley ]
+type ProtocolShelley = HardForkProtocol '[ ShelleyBlock (TPraos StandardCrypto) ShelleyEra ]
 
 {-------------------------------------------------------------------------------
   SingleEraBlock Shelley

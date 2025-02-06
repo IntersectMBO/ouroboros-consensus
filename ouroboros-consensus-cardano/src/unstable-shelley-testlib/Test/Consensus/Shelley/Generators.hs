@@ -170,7 +170,7 @@ instance Arbitrary NonMyopicMemberRewards where
 instance CanMock proto era => Arbitrary (Point (ShelleyBlock proto era)) where
   arbitrary = BlockPoint <$> arbitrary <*> arbitrary
 
-instance PraosCrypto c => Arbitrary (TPraosState c) where
+instance Arbitrary TPraosState where
   arbitrary = do
       lastSlot <- frequency
         [ (1, return Origin)

@@ -38,8 +38,7 @@ import           Lens.Micro ((^.))
 import           Lens.Micro.Extras (view)
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
-import           Ouroboros.Consensus.Shelley.Eras (StandardCrypto,
-                     StandardShelley)
+import           Ouroboros.Consensus.Shelley.Eras (StandardCrypto)
 import           Ouroboros.Consensus.Shelley.HFEras ()
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyCompatible,
                      shelleyLedgerState)
@@ -125,8 +124,8 @@ instance PerEraAnalysis ConwayEra where
         in toEnum $ fromEnum steps
 
 -- | Shelley-era specific
-instance HasProtocolInfo (ShelleyBlock (TPraos StandardCrypto) StandardShelley) where
-  data Args (ShelleyBlock (TPraos StandardCrypto) StandardShelley) = ShelleyBlockArgs {
+instance HasProtocolInfo (ShelleyBlock (TPraos StandardCrypto) ShelleyEra) where
+  data Args (ShelleyBlock (TPraos StandardCrypto) ShelleyEra) = ShelleyBlockArgs {
         configFileShelley :: FilePath
       , initialNonce      :: Nonce
       }
@@ -137,12 +136,12 @@ instance HasProtocolInfo (ShelleyBlock (TPraos StandardCrypto) StandardShelley) 
       Aeson.eitherDecodeFileStrict' configFileShelley
     return $ mkShelleyProtocolInfo config initialNonce
 
-type ShelleyBlockArgs = Args (ShelleyBlock (TPraos StandardCrypto) StandardShelley)
+type ShelleyBlockArgs = Args (ShelleyBlock (TPraos StandardCrypto) ShelleyEra)
 
 mkShelleyProtocolInfo ::
      ShelleyGenesis
   -> Nonce
-  -> ProtocolInfo (ShelleyBlock (TPraos StandardCrypto) StandardShelley)
+  -> ProtocolInfo (ShelleyBlock (TPraos StandardCrypto) ShelleyEra)
 mkShelleyProtocolInfo genesis initialNonce =
     fst $ protocolInfoShelley @IO
       genesis

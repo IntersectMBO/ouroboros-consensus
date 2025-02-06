@@ -56,7 +56,6 @@ import qualified Cardano.Ledger.Conway.Rules as SL
                      (ConwayLedgerPredFailure (..))
 import qualified Cardano.Ledger.Conway.Translation as Conway
 import           Cardano.Ledger.Core as Core
-import           Cardano.Ledger.Keys (DSignable)
 import           Cardano.Ledger.Mary (MaryEra)
 import           Cardano.Ledger.Mary.Translation ()
 import           Cardano.Ledger.Shelley (ShelleyEra)
@@ -81,21 +80,27 @@ import           Ouroboros.Consensus.Ledger.SupportsMempool
 
 -- | The Shelley era with standard crypto
 type StandardShelley = ShelleyEra
+{-# DEPRECATED StandardShelley "In favor of `ShelleyEra`" #-}
 
 -- | The Allegra era with standard crypto
 type StandardAllegra = AllegraEra
+{-# DEPRECATED StandardAllegra "In favor of `AllegraEra`" #-}
 
 -- | The Mary era with standard crypto
 type StandardMary = MaryEra
+{-# DEPRECATED StandardMary "In favor of `MaryEra`" #-}
 
 -- | The Alonzo era with standard crypto
 type StandardAlonzo = AlonzoEra
+{-# DEPRECATED StandardAlonzo "In favor of `AlonzoEra`" #-}
 
 -- | The Babbage era with standard crypto
 type StandardBabbage = BabbageEra
+{-# DEPRECATED StandardBabbage "In favor of `BabbageEra`" #-}
 
 -- | The Conway era with standard crypto
 type StandardConway = ConwayEra
+{-# DEPRECATED StandardConway "In favor of `ConwayEra`" #-}
 
 {-------------------------------------------------------------------------------
   Era polymorphism
@@ -138,7 +143,6 @@ class ( Core.EraSegWits era
       , DecCBOR (PredicateFailure (EraRule "UTXOW" era))
       , EncCBOR (PredicateFailure (EraRule "UTXOW" era))
 
-      , DSignable (Hash HASH EraIndependentTxBody)
       , NoThunks (PredicateFailure (Core.EraRule "BBODY" era))
       , NoThunks (Core.TranslationContext era)
 
@@ -190,26 +194,22 @@ defaultApplyShelleyBasedTx globals ledgerEnv mempoolState _wti tx = do
 defaultGetConwayEraGovDict :: proxy era -> Maybe (ConwayEraGovDict era)
 defaultGetConwayEraGovDict _ = Nothing
 
-instance DSignable (Hash HASH EraIndependentTxBody)
-  => ShelleyBasedEra ShelleyEra where
+instance ShelleyBasedEra ShelleyEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
-instance DSignable (Hash HASH EraIndependentTxBody)
-  => ShelleyBasedEra AllegraEra where
+instance ShelleyBasedEra AllegraEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
-instance DSignable (Hash HASH EraIndependentTxBody)
-  => ShelleyBasedEra MaryEra where
+instance ShelleyBasedEra MaryEra where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
-instance DSignable (Hash HASH EraIndependentTxBody)
-  => ShelleyBasedEra AlonzoEra where
+instance ShelleyBasedEra AlonzoEra where
   applyShelleyBasedTx = applyAlonzoBasedTx
 
   getConwayEraGovDict = defaultGetConwayEraGovDict

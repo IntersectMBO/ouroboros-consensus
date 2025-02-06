@@ -1,6 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -28,9 +27,7 @@ import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import           Ouroboros.Consensus.Protocol.TPraos (StandardCrypto, TPraos)
 import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 import           Ouroboros.Consensus.Shelley.Eras (AllegraEra, AlonzoEra,
-                     BabbageEra, ConwayEra, MaryEra, ShelleyEra,
-                     StandardAllegra, StandardAlonzo, StandardBabbage,
-                     StandardConway, StandardMary, StandardShelley)
+                     BabbageEra, ConwayEra, MaryEra, ShelleyEra)
 import           Ouroboros.Consensus.Shelley.Ledger.Block (ShelleyBlock,
                      ShelleyCompatible)
 import           Ouroboros.Consensus.Shelley.Ledger.Protocol ()
@@ -42,17 +39,17 @@ import           Ouroboros.Consensus.Shelley.ShelleyHFC ()
   Hard fork eras
 -------------------------------------------------------------------------------}
 
-type StandardShelleyBlock = ShelleyBlock (TPraos StandardCrypto) StandardShelley
+type StandardShelleyBlock = ShelleyBlock (TPraos StandardCrypto) ShelleyEra
 
-type StandardAllegraBlock = ShelleyBlock (TPraos StandardCrypto) StandardAllegra
+type StandardAllegraBlock = ShelleyBlock (TPraos StandardCrypto) AllegraEra
 
-type StandardMaryBlock = ShelleyBlock (TPraos StandardCrypto) StandardMary
+type StandardMaryBlock = ShelleyBlock (TPraos StandardCrypto) MaryEra
 
-type StandardAlonzoBlock = ShelleyBlock (TPraos StandardCrypto) StandardAlonzo
+type StandardAlonzoBlock = ShelleyBlock (TPraos StandardCrypto) AlonzoEra
 
-type StandardBabbageBlock = ShelleyBlock (Praos StandardCrypto) StandardBabbage
+type StandardBabbageBlock = ShelleyBlock (Praos StandardCrypto) BabbageEra
 
-type StandardConwayBlock = ShelleyBlock (Praos StandardCrypto) StandardConway
+type StandardConwayBlock = ShelleyBlock (Praos StandardCrypto) ConwayEra
 
 {-------------------------------------------------------------------------------
   ShelleyCompatible
