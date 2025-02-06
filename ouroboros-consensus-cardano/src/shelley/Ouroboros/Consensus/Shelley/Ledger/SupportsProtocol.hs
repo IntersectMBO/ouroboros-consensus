@@ -12,7 +12,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -35,8 +34,7 @@ import           Ouroboros.Consensus.HardFork.History.Util
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol (..))
-import           Ouroboros.Consensus.Protocol.Abstract (TranslateProto,
-                     translateLedgerView)
+import           Ouroboros.Consensus.Protocol.Abstract (translateLedgerView)
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Praos
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
@@ -87,9 +85,7 @@ instance
 
 instance
   ( ShelleyCompatible (Praos crypto) era,
-    ShelleyCompatible (TPraos crypto) era,
-    -- crypto ~ StandardCrypto,
-    TranslateProto (TPraos crypto) (Praos crypto)
+    ShelleyCompatible (TPraos crypto) era
   ) =>
   LedgerSupportsProtocol (ShelleyBlock (Praos crypto) era)
   where

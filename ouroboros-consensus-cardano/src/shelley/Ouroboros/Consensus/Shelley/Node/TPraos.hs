@@ -281,7 +281,7 @@ protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
       , shelleyLedgerTransition = ShelleyTransitionInfo {shelleyAfterVoting = 0}
       }
 
-    initChainDepState :: TPraosState c
+    initChainDepState :: TPraosState
     initChainDepState = TPraosState Origin $
       SL.initialChainDepState initialNonce (SL.sgGenDelegs genesis)
 
