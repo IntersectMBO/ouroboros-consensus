@@ -15,7 +15,6 @@ module Test.ThreadNet.TxGen.Shelley (
   , mkGenEnv
   ) where
 
-import           Cardano.Crypto.Hash (HashAlgorithm)
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Control.Monad.Except (runExcept)
 import           Ouroboros.Consensus.Block
