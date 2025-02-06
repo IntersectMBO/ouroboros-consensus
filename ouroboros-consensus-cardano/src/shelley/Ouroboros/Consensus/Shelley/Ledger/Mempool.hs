@@ -266,12 +266,13 @@ applyShelleyTx cfg wti slot (ShelleyTx _ tx) st0 = do
 
 reapplyShelleyTx ::
      ShelleyBasedEra era
-  => LedgerConfig (ShelleyBlock proto era)
+  => ComputeDiffs
+  -> LedgerConfig (ShelleyBlock proto era)
   -> SlotNo
   -> Validated (GenTx (ShelleyBlock proto era))
   -> TickedLedgerState (ShelleyBlock proto era) ValuesMK
   -> Except (ApplyTxErr (ShelleyBlock proto era)) (TickedLedgerState (ShelleyBlock proto era) TrackingMK)
-reapplyShelleyTx cfg slot vgtx st0 = do
+reapplyShelleyTx doDiffs cfg slot vgtx st0 = do
     let st1     = stowLedgerTables st0
         innerSt = tickedShelleyLedgerState st1
 
@@ -282,7 +283,10 @@ reapplyShelleyTx cfg slot vgtx st0 = do
           (SL.mkMempoolState innerSt)
           vtx
 
-    pure $ calculateDifference st0
+    pure $ (case doDiffs of
+              ComputeDiffs -> calculateDifference st0
+              IgnoreDiffs -> attachEmptyDiffs
+           )
          $ unstowLedgerTables
          $ set theLedgerLens mempoolState' st1
 

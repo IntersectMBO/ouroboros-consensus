@@ -38,6 +38,8 @@ module Ouroboros.Consensus.Ledger.Tables.Utils (
     -- ** Reduce
   , trackingToDiffs
   , trackingToValues
+    -- * Union values
+  , unionValues
     -- * Exposed for @cardano-api@
   , applyDiffsMK
   , restrictValuesMK
@@ -306,3 +308,15 @@ restrictValues' ::
      (SameUtxoTypes l l'', SameUtxoTypes l' l'', HasLedgerTables l, HasLedgerTables l', HasLedgerTables l'')
   => l ValuesMK -> l' KeysMK -> LedgerTables l'' ValuesMK
 restrictValues' l1 l2 = ltliftA2 restrictValuesMK (ltprj l1) (ltprj l2)
+
+---
+
+-- | For this first UTxO-HD iteration, there can't be two keys with
+-- different values on the tables, thus there will never be
+-- conflicting collisions.
+unionValues ::
+     Ord k
+  => ValuesMK k v
+  -> ValuesMK k v
+  -> ValuesMK k v
+unionValues (ValuesMK m1) (ValuesMK m2) = ValuesMK $ Map.union m1 m2

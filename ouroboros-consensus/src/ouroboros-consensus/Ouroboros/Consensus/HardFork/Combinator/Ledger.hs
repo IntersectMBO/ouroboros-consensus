@@ -1112,13 +1112,20 @@ class ( Show (HardForkTxOut xs)
   -- that we only compute it once, then it is cached for the duration of the
   -- program, as we will use it very often when converting from the
   -- HardForkBlock to the particular @blk@.
+  --
+  -- This particular method is useful when our HardForkBlock uses
+  -- DefaultHardForkTxOut, so that we can implement inject and project.
   txOutEjections      :: NP (K (NS WrapTxOut xs) -.-> WrapTxOut) xs
   default txOutEjections :: CanHardFork xs => NP (K (NS WrapTxOut xs) -.-> WrapTxOut) xs
   txOutEjections = composeTxOutTranslations $ ipTranslateTxOut hardForkEraTranslation
 
-  txOutTails :: Tails (InPairs.Fn2 WrapTxOut) xs
-  default txOutTails :: CanHardFork xs => Tails (InPairs.Fn2 WrapTxOut) xs
-  txOutTails =
+  -- | This method is a null-arity method in a typeclass to make it a CAF, such
+  -- that we only compute it once, then it is cached for the duration of the
+  -- program, as we will use it very often when converting from the
+  -- HardForkBlock to the particular @blk@.
+  txOutTranslations :: Tails (InPairs.Fn2 WrapTxOut) xs
+  default txOutTranslations :: CanHardFork xs => Tails (InPairs.Fn2 WrapTxOut) xs
+  txOutTranslations =
     Tails.inPairsToTails
      $ InPairs.hmap
       (\translator -> InPairs.Fn2 $ WrapTxOut . translateTxOutWith translator . unwrapTxOut)

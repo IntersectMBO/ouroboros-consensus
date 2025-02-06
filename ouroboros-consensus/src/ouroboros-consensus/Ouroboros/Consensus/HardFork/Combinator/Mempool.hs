@@ -121,12 +121,13 @@ instance ( CanHardFork xs
          , HasCanonicalTxIn xs
          , HasHardForkTxOut xs
          ) => LedgerSupportsMempool (HardForkBlock xs) where
-  applyTx = applyHelper ModeApply
+  applyTx = applyHelper ModeApply ComputeDiffs
 
-  reapplyTx cfg slot vtx tls =
+  reapplyTx doDiffs cfg slot vtx tls =
           fst
       <$> applyHelper
           ModeReapply
+          doDiffs
           cfg
           DoNotIntervene
           slot
@@ -134,12 +135,14 @@ instance ( CanHardFork xs
           tls
 
   reapplyTxs :: forall extra.
-       LedgerConfig (HardForkBlock xs)
+       ComputeDiffs
+    -> LedgerConfig (HardForkBlock xs)
     -> SlotNo -- ^ Slot number of the block containing the tx
     -> [(Validated (GenTx (HardForkBlock xs)), extra)]
     -> TickedLedgerState (HardForkBlock xs) ValuesMK
     -> ReapplyTxsResult extra (HardForkBlock xs)
   reapplyTxs
+    doDiffs
     HardForkLedgerConfig{..}
     slot
     vtxs
@@ -196,7 +199,7 @@ instance ( CanHardFork xs
         -> DecomposedReapplyTxsResult extra xs         blk
       modeApplyCurrent index cfg (Pair (FlipTickedLedgerState st) txs) =
         let ReapplyTxsResult err val st' =
-              reapplyTxs (unwrapLedgerConfig cfg) slot [ (unwrapValidatedGenTx tx, tk) | (Comp (tk,tx)) <- unComp txs ] st
+              reapplyTxs doDiffs (unwrapLedgerConfig cfg) slot [ (unwrapValidatedGenTx tx, tk) | (Comp (tk,tx)) <- unComp txs ] st
         in Comp
            ( [ injectValidatedGenTx index (getInvalidated x) `Invalidated` injectApplyTxErr index (getReason x) | x <- err ]
            , map (first (HardForkValidatedGenTx . OneEraValidatedGenTx . injectNS index . WrapValidatedGenTx)) val
@@ -317,6 +320,7 @@ data ApplyResult xs txIn blk = ApplyResult {
 -- 'ApplyHelperMode'.
 applyHelper :: forall xs txIn. CanHardFork xs
   => ApplyHelperMode txIn
+  -> ComputeDiffs
   -> LedgerConfig (HardForkBlock xs)
   -> WhetherToIntervene
   -> SlotNo
@@ -328,6 +332,7 @@ applyHelper :: forall xs txIn. CanHardFork xs
       , Validated (GenTx (HardForkBlock xs))
       )
 applyHelper mode
+            doDiffs
             HardForkLedgerConfig{..}
             wti
             slot
@@ -420,7 +425,7 @@ applyHelper mode
                   }
               ModeReapply -> do
                   let vtx' = unwrapValidatedGenTx tx'
-                  st' <- reapplyTx lcfg slot vtx' st
+                  st' <- reapplyTx doDiffs lcfg slot vtx' st
                   -- provide the given transaction, which was already validated
                   pure ApplyResult {
                       arValidatedTx = injectValidatedGenTx index vtx'

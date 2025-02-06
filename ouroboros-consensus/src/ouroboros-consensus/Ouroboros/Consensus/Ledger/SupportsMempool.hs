@@ -12,6 +12,7 @@ module Ouroboros.Consensus.Ledger.SupportsMempool (
   , ByteSize32 (..)
   , ConvertRawTxId (..)
   , GenTx
+  , ComputeDiffs (..)
   , GenTxId
   , HasByteSize (..)
   , HasTxId (..)
@@ -79,6 +80,29 @@ data WhetherToIntervene
     -- them for it.
     deriving (Show)
 
+-- | Whether to keep track of the diffs produced by applying the transactions.
+--
+-- When getting a mempool snapshot, we will revalidate all the
+-- transactions but we won't do anything useful with the resulting
+-- state. We can safely omit computing the differences in this case.
+--
+-- This optimization is worthwile as snapshotting is in the critical
+-- path of block minting, and we don't make use of the resulting
+-- state, only of the transactions that remain valid.
+--
+-- Eventually, the Ledger rules will construct the differences for us,
+-- so this optimization will no longer be needed. That's why we chose
+-- to go with a boolean isomorph instead of something fancier.
+data ComputeDiffs
+  =
+    -- | This option should be used when syncing the mempool with the
+    -- LedgerDB, to store a useful state in the mempool.
+    ComputeDiffs
+    -- | This option should be used only when snapshotting the mempool,
+    -- as we discard the resulting state anyways.
+  | IgnoreDiffs
+  deriving (Show)
+
 class ( UpdateLedger blk
       , TxLimits blk
       , NoThunks (GenTx blk)
@@ -119,7 +143,8 @@ class ( UpdateLedger blk
   -- function can be used to reapply a list of transactions, providing as a
   -- first state one that contains the values for all the transactions.
   reapplyTx :: HasCallStack
-            => LedgerConfig blk
+            => ComputeDiffs
+            -> LedgerConfig blk
             -> SlotNo -- ^ Slot number of the block containing the tx
             -> Validated (GenTx blk)
             -> TickedLedgerState blk ValuesMK
@@ -141,12 +166,13 @@ class ( UpdateLedger blk
   -- in the same order as they were given, as we will use those later on to
   -- filter a list of 'TxTicket's.
   reapplyTxs ::
-       LedgerConfig blk
+       ComputeDiffs
+    -> LedgerConfig blk
     -> SlotNo -- ^ Slot number of the block containing the tx
     -> [(Validated (GenTx blk), extra)]
     -> TickedLedgerState blk ValuesMK
     -> ReapplyTxsResult extra blk
-  reapplyTxs cfg slot txs st =
+  reapplyTxs doDiffs cfg slot txs st =
       (\(err, val, st') ->
          ReapplyTxsResult
            err
@@ -154,9 +180,13 @@ class ( UpdateLedger blk
            st'
       )
     $ Foldable.foldl' (\(accE, accV, st') (tx, extra) ->
-                 case runExcept (reapplyTx cfg slot tx $ trackingToValues st') of
+                 case runExcept (reapplyTx doDiffs cfg slot tx $ trackingToValues st') of
                    Left err   -> (Invalidated tx err : accE, accV, st')
-                   Right st'' -> (accE, (tx, extra) : accV, prependTrackingDiffs st' st'')
+                   Right st'' -> (accE, (tx, extra) : accV,
+                                  case doDiffs of
+                                    ComputeDiffs -> prependTrackingDiffs st' st''
+                                    IgnoreDiffs -> st''
+                                 )
              ) ([], [], attachEmptyDiffs st) txs
 
   -- | Discard the evidence that transaction has been previously validated

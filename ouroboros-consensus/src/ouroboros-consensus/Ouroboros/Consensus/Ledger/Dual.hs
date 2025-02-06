@@ -604,18 +604,20 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
         }, vtx)
 
 
-  reapplyTx DualLedgerConfig{..}
+  reapplyTx doDiffs DualLedgerConfig{..}
             slot
             tx@ValidatedDualGenTx{..}
             TickedDualLedgerState{..} = do
       (main', aux') <-
         agreeOnError DualGenTxErr (
             reapplyTx
+              doDiffs
               dualLedgerConfigMain
               slot
               vDualGenTxMain
               tickedDualLedgerStateMain
           , reapplyTx
+              doDiffs
               dualLedgerConfigAux
               slot
               vDualGenTxAux
