@@ -22,7 +22,7 @@ import           Cardano.Ledger.Binary (DecCBOR (..), EncCBOR (..),
                      decodeRecordNamed, encodeListLen)
 import           Cardano.Ledger.Hashes (HASH)
 import qualified Cardano.Ledger.Keys as SL
-import qualified Cardano.Ledger.PoolDistr as SL
+import qualified Cardano.Ledger.State as SL
 import           Cardano.Protocol.Crypto (Crypto, VRF)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map

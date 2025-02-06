@@ -40,16 +40,16 @@ import           Cardano.Ledger.Coin (Coin)
 import           Cardano.Ledger.Compactible (Compactible (fromCompact))
 import qualified Cardano.Ledger.Conway.Governance as CG
 import           Cardano.Ledger.Credential (StakeCredential)
-import qualified Cardano.Ledger.EpochBoundary as SL
 import           Cardano.Ledger.Keys (KeyHash, KeyRole (..))
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as LC
 import           Cardano.Ledger.Shelley.LedgerState (AccountState)
-import qualified Cardano.Ledger.Shelley.LedgerState as SL (RewardAccounts,
-                     newEpochStateGovStateL)
+import qualified Cardano.Ledger.Shelley.LedgerState as SL
+                     (newEpochStateGovStateL)
 import qualified Cardano.Ledger.Shelley.PParams as SL (emptyPPPUpdates)
 import qualified Cardano.Ledger.Shelley.RewardProvenance as SL
                      (RewardProvenance)
+import qualified Cardano.Ledger.State as SL
 import           Cardano.Ledger.UMap (UMap (..), rdReward, umElemDRep,
                      umElemRDPair, umElemSPool)
 import           Cardano.Protocol.Crypto (Crypto)
@@ -173,7 +173,7 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   GetFilteredDelegationsAndRewardAccounts
     :: Set (SL.Credential 'SL.Staking)
     -> BlockQuery (ShelleyBlock proto era)
-             (Delegations, SL.RewardAccounts)
+             (Delegations, Map (SL.Credential 'Staking) Coin)
 
   GetGenesisConfig
     :: BlockQuery (ShelleyBlock proto era) CompactGenesis
@@ -764,7 +764,7 @@ getDState = SL.certDState . SL.lsCertState . SL.esLState . SL.nesEs
 getFilteredDelegationsAndRewardAccounts ::
      SL.NewEpochState era
   -> Set (SL.Credential 'SL.Staking)
-  -> (Delegations, SL.RewardAccounts)
+  -> (Delegations, Map (SL.Credential 'Staking) Coin)
 getFilteredDelegationsAndRewardAccounts ss creds =
     (filteredDelegations, filteredRwdAcnts)
   where

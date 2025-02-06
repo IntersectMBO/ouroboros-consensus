@@ -3,7 +3,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -11,8 +10,8 @@ module Ouroboros.Consensus.Shelley.Ledger.PeerSelection () where
 
 import           Cardano.Ledger.BaseTypes
 import qualified Cardano.Ledger.Keys as SL
-import qualified Cardano.Ledger.PoolDistr as SL
 import qualified Cardano.Ledger.Shelley.API as SL
+import qualified Cardano.Ledger.State as SL
 import           Control.DeepSeq (force)
 import           Data.Bifunctor (second)
 import           Data.Foldable (toList)

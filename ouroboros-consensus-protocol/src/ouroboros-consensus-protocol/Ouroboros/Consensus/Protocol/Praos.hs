@@ -46,10 +46,8 @@ import           Cardano.Ledger.Hashes (HASH)
 import           Cardano.Ledger.Keys (DSIGN, KeyHash, KeyRole (BlockIssuer),
                      VKey (VKey), coerceKeyRole, hashKey)
 import qualified Cardano.Ledger.Keys as SL
-import           Cardano.Ledger.PoolDistr
-                     (IndividualPoolStake (IndividualPoolStake))
-import qualified Cardano.Ledger.PoolDistr as SL
 import           Cardano.Ledger.Slot (Duration (Duration), (+*))
+import qualified Cardano.Ledger.State as SL
 import           Cardano.Protocol.Crypto (Crypto, KES, StandardCrypto, VRF)
 import qualified Cardano.Protocol.TPraos.API as SL
 import           Cardano.Protocol.TPraos.BHeader (BoundedNatural (bvValue),
@@ -538,14 +536,14 @@ doValidateVRFSignature ::
   forall c.
   PraosCrypto c =>
   Nonce ->
-  Map (KeyHash SL.StakePool) IndividualPoolStake ->
+  Map (KeyHash SL.StakePool) SL.IndividualPoolStake ->
   ActiveSlotCoeff ->
   Views.HeaderView c ->
   Except (PraosValidationErr c) ()
 doValidateVRFSignature eta0 pd f b = do
   case Map.lookup hk pd of
     Nothing -> throwError $ VRFKeyUnknown hk
-    Just (IndividualPoolStake sigma _totalPoolStake vrfHK) -> do
+    Just (SL.IndividualPoolStake sigma _totalPoolStake vrfHK) -> do
       let vrfHKStake = SL.fromVRFVerKeyHash vrfHK
           vrfHKBlock = VRF.hashVerKeyVRF vrfK
       vrfHKStake == vrfHKBlock
@@ -587,7 +585,7 @@ doValidateKESSignature ::
   PraosCrypto c =>
   Word64 ->
   Word64 ->
-  Map (KeyHash SL.StakePool) IndividualPoolStake ->
+  Map (KeyHash SL.StakePool) SL.IndividualPoolStake ->
   Map (KeyHash BlockIssuer) Word64 ->
   Views.HeaderView c ->
   Except (PraosValidationErr c) ()
