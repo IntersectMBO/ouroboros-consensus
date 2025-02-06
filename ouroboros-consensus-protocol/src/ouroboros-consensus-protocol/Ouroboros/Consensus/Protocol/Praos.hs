@@ -42,7 +42,7 @@ import qualified Cardano.Crypto.VRF as VRF
 import           Cardano.Ledger.BaseTypes (ActiveSlotCoeff, Nonce, (⭒))
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Chain as SL
-import           Cardano.Ledger.Hashes (EraIndependentTxBody, HASH)
+import           Cardano.Ledger.Hashes (HASH)
 import           Cardano.Ledger.Keys (DSIGN, KeyHash, KeyRole (BlockIssuer),
                      VKey (VKey), coerceKeyRole, hashKey)
 import qualified Cardano.Ledger.Keys as SL
@@ -102,7 +102,6 @@ data Praos c
 class
   ( Crypto c,
     DSIGN.Signable DSIGN (OCertSignable c),
-    DSIGN.Signable DSIGN (Hash.Hash HASH EraIndependentTxBody),
     KES.Signable (KES c) (HeaderBody c),
     VRF.Signable (VRF c) InputVRF
   ) =>
@@ -244,7 +243,7 @@ type PraosValidateView c = Views.HeaderView c
 -- We track the last slot and the counters for operational certificates, as well
 -- as a series of nonces which get updated in different ways over the course of
 -- an epoch.
-data PraosState c = PraosState
+data PraosState = PraosState
   { praosStateLastSlot            :: !(WithOrigin SlotNo),
     -- | Operation Certificate counters
     praosStateOCertCounters       :: !(Map (KeyHash 'BlockIssuer) Word64),
@@ -262,15 +261,15 @@ data PraosState c = PraosState
   }
   deriving (Generic, Show, Eq)
 
-instance PraosCrypto c => NoThunks (PraosState c)
+instance NoThunks PraosState
 
-instance PraosCrypto c => ToCBOR (PraosState c) where
+instance ToCBOR PraosState where
   toCBOR = encode
 
-instance PraosCrypto c => FromCBOR (PraosState c) where
+instance FromCBOR PraosState where
   fromCBOR = decode
 
-instance PraosCrypto c => Serialise (PraosState c) where
+instance Serialise PraosState where
   encode
     PraosState
       { praosStateLastSlot,
@@ -308,8 +307,8 @@ instance PraosCrypto c => Serialise (PraosState c) where
           <*> fromCBOR
           <*> fromCBOR
 
-data instance Ticked (PraosState c) = TickedPraosState
-  { tickedPraosStateChainDepState :: PraosState c,
+data instance Ticked PraosState = TickedPraosState
+  { tickedPraosStateChainDepState :: PraosState,
     tickedPraosStateLedgerView :: Views.LedgerView
   }
 
@@ -361,7 +360,7 @@ deriving instance PraosCrypto c => NoThunks (PraosValidationErr c)
 deriving instance PraosCrypto c => Show (PraosValidationErr c)
 
 instance PraosCrypto c => ConsensusProtocol (Praos c) where
-  type ChainDepState (Praos c) = PraosState c
+  type ChainDepState (Praos c) = PraosState
   type IsLeader (Praos c) = PraosIsLeader c
   type CanBeLeader (Praos c) = PraosCanBeLeader c
   type SelectView (Praos c) = PraosChainSelectView c
@@ -718,25 +717,15 @@ instance PraosCrypto c => PraosProtocolSupportsNode (Praos c) where
 -- - They share the same DSIGN verification keys
 -- - They share the same VRF verification keys
 instance
-  ( c1 ~ c2 ) =>
-  TranslateProto (TPraos c1) (Praos c2)
+  TranslateProto (TPraos c) (Praos c)
   where
   translateLedgerView _ SL.LedgerView {SL.lvPoolDistr, SL.lvChainChecks} =
       Views.LedgerView
-        { Views.lvPoolDistr = coercePoolDistr lvPoolDistr,
+        { Views.lvPoolDistr = lvPoolDistr,
           Views.lvMaxHeaderSize = SL.ccMaxBHSize lvChainChecks,
           Views.lvMaxBodySize = SL.ccMaxBBSize lvChainChecks,
           Views.lvProtocolVersion = SL.ccProtocolVersion lvChainChecks
         }
-      where
-        coercePoolDistr :: SL.PoolDistr -> SL.PoolDistr
-        coercePoolDistr (SL.PoolDistr m totalActiveStake) =
-          SL.PoolDistr
-            (Map.mapKeysMonotonic coerce (Map.map coerceIndividualPoolStake m))
-            totalActiveStake
-        coerceIndividualPoolStake :: SL.IndividualPoolStake -> SL.IndividualPoolStake
-        coerceIndividualPoolStake (SL.IndividualPoolStake stake totalStake vrf) =
-          SL.IndividualPoolStake stake totalStake (coerce vrf)
 
   translateChainDepState _ tpState =
     PraosState

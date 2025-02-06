@@ -63,7 +63,7 @@ instance Praos.PraosCrypto c => Arbitrary (Header c) where
     let hSig = unsoundPureSignedKES () period hBody sKey
     pure $ Header hBody hSig
 
-instance Praos.PraosCrypto c => Arbitrary (PraosState c) where
+instance Arbitrary PraosState where
   arbitrary = PraosState
     <$> oneof [
         pure Origin,
