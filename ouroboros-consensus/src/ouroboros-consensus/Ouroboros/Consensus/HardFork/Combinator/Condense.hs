@@ -57,7 +57,7 @@ instance All CondenseConstraints xs => Condense (GenTx (HardForkBlock xs)) where
   condense = defaultCondenseNS (Proxy @GenTx) . coerce
 
 instance All CondenseConstraints xs => Condense (TxId (GenTx (HardForkBlock xs))) where
-  condense = defaultCondenseNS (Proxy @WrapGenTxId) . coerce
+  condense (HardForkGenTxId (OneEraGenTxId txid)) = show txid
 
 {-------------------------------------------------------------------------------
   Forwarding

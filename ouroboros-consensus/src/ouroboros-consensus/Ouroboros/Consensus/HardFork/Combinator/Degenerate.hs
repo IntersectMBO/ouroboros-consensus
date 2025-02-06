@@ -28,7 +28,6 @@ module Ouroboros.Consensus.HardFork.Combinator.Degenerate (
   , LedgerState (DegenLedgerState)
   , OneEraTipInfo (DegenTipInfo)
   , TopLevelConfig (DegenTopLevelConfig)
-  , TxId (DegenGenTxId)
   ) where
 
 import           Data.SOP.Strict
@@ -61,7 +60,6 @@ import           Ouroboros.Consensus.TypeFamilyWrappers
 {-# COMPLETE DegenBlockConfig              #-}
 {-# COMPLETE DegenCodecConfig              #-}
 {-# COMPLETE DegenGenTx                    #-}
-{-# COMPLETE DegenGenTxId                  #-}
 {-# COMPLETE DegenHeader                   #-}
 {-# COMPLETE DegenLedgerError              #-}
 {-# COMPLETE DegenLedgerState              #-}
@@ -93,14 +91,6 @@ pattern DegenGenTx ::
 pattern DegenGenTx x <- (project -> x)
   where
     DegenGenTx x = inject x
-
-pattern DegenGenTxId ::
-     forall b. NoHardForks b
-  => GenTxId b
-  -> GenTxId (HardForkBlock '[b])
-pattern DegenGenTxId x <- (project' (Proxy @(WrapGenTxId b)) -> x)
-  where
-    DegenGenTxId x = inject' (Proxy @(WrapGenTxId b)) x
 
 pattern DegenApplyTxErr ::
      forall b. NoHardForks b
