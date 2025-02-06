@@ -23,9 +23,9 @@ module Test.Consensus.Cardano.ProtocolInfo (
 
 import qualified Cardano.Chain.Genesis as CC.Genesis
 import qualified Cardano.Chain.Update as CC.Update
-import           Cardano.Ledger.Api.Era (StandardCrypto)
 import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
+import           Cardano.Protocol.Crypto (StandardCrypto)
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import qualified Cardano.Slotting.Time as Time
 import           Data.Proxy (Proxy (..))
@@ -190,7 +190,7 @@ mkSimpleTestProtocolInfo
     (genesisByron, generatedSecretsByron) =
         Byron.generateGenesisConfig (toSlotLength byronSlotLenghtInSeconds) pbftParams
 
-    shelleyGenesis :: ShelleyGenesis c
+    shelleyGenesis :: ShelleyGenesis
     shelleyGenesis =
         Shelley.mkGenesisConfig
           protocolVersion
@@ -199,7 +199,7 @@ mkSimpleTestProtocolInfo
           decentralizationParam
           maxLovelaceSupply
           (toSlotLength shelleySlotLengthInSeconds)
-          (Shelley.mkKesConfig (Proxy @c) numSlots)
+          (Shelley.mkKesConfig (Proxy @StandardCrypto) numSlots)
           [coreNodeShelley]
       where
         maxLovelaceSupply :: Word64
@@ -217,7 +217,7 @@ mkTestProtocolInfo ::
    . (CardanoHardForkConstraints c, IOLike m, c ~ StandardCrypto)
   => (CoreNodeId, Shelley.CoreNode c)
   -- ^ Id of the node for which the protocol info will be elaborated.
-  -> ShelleyGenesis c
+  -> ShelleyGenesis
   -- ^ These nodes will be part of the initial delegation mapping, and funds
   --   will be allocated to these nodes.
   -> CC.Update.ProtocolVersion

@@ -113,7 +113,7 @@ instance Arbitrary (Coherent (CardanoBlock MockCryptoCompatByron)) where
 instance Arbitrary (CardanoHeader MockCryptoCompatByron) where
   arbitrary = getHeader <$> arbitrary
 
-instance (CanMock (TPraos c) (ShelleyEra c), CardanoHardForkConstraints c)
+instance (CanMock (TPraos c) ShelleyEra, CardanoHardForkConstraints c)
       => Arbitrary (OneEraHash (CardanoEras c)) where
   arbitrary = inj <$> arbitrary
     where
@@ -125,7 +125,7 @@ instance (CanMock (TPraos c) (ShelleyEra c), CardanoHardForkConstraints c)
         => WrapHeaderHash blk -> K (OneEraHash (CardanoEras c)) blk
       aux = K . OneEraHash . toShortRawHash (Proxy @blk) . unwrapHeaderHash
 
-instance (c ~ MockCryptoCompatByron, ShelleyBasedEra (ShelleyEra c))
+instance (c ~ MockCryptoCompatByron, ShelleyBasedEra ShelleyEra)
       => Arbitrary (AnnTip (CardanoBlock c)) where
   arbitrary = AnnTip
       <$> (SlotNo <$> arbitrary)

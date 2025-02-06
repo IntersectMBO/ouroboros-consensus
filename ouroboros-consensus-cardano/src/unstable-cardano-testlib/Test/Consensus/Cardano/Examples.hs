@@ -149,22 +149,22 @@ byronEraParams :: History.EraParams
 byronEraParams = Byron.byronEraParams Byron.ledgerConfig
 
 shelleyEraParams :: History.EraParams
-shelleyEraParams = Shelley.shelleyEraParams @StandardCrypto Shelley.testShelleyGenesis
+shelleyEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
 
 allegraEraParams :: History.EraParams
-allegraEraParams = Shelley.shelleyEraParams @StandardCrypto Shelley.testShelleyGenesis
+allegraEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
 
 maryEraParams :: History.EraParams
-maryEraParams = Shelley.shelleyEraParams @StandardCrypto Shelley.testShelleyGenesis
+maryEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
 
 alonzoEraParams :: History.EraParams
-alonzoEraParams = Shelley.shelleyEraParams @StandardCrypto Shelley.testShelleyGenesis
+alonzoEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
 
 babbageEraParams :: History.EraParams
-babbageEraParams = Shelley.shelleyEraParams @StandardCrypto Shelley.testShelleyGenesis
+babbageEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
 
 conwayEraParams :: History.EraParams
-conwayEraParams = Shelley.shelleyEraParams @StandardCrypto Shelley.testShelleyGenesis
+conwayEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
 
 -- | We use 10, 20, 30, 40, ... as the transition epochs
 shelleyTransitionEpoch :: EpochNo
@@ -251,8 +251,8 @@ summary =
 eraInfoByron :: SingleEraInfo ByronBlock
 eraInfoByron = singleEraInfo (Proxy @ByronBlock)
 
-eraInfoShelley :: SingleEraInfo (ShelleyBlock (TPraos StandardCrypto) StandardShelley)
-eraInfoShelley = singleEraInfo (Proxy @(ShelleyBlock (TPraos StandardCrypto) StandardShelley))
+eraInfoShelley :: SingleEraInfo (ShelleyBlock (TPraos StandardCrypto) ShelleyEra)
+eraInfoShelley = singleEraInfo (Proxy @(ShelleyBlock (TPraos StandardCrypto) ShelleyEra))
 
 codecConfig :: CardanoCodecConfig Crypto
 codecConfig =
