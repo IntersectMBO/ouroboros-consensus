@@ -17,7 +17,7 @@ import           Cardano.Ledger.Api (ConwayEra)
 import           Cardano.Ledger.Coin (Coin (..))
 import           Cardano.Ledger.Compactible (toCompact)
 import           Cardano.Ledger.Keys (VKey (..), hashKey)
-import           Cardano.Ledger.PoolDistr (IndividualPoolStake (..))
+import           Cardano.Ledger.State (IndividualPoolStake (..))
 import           Cardano.Prelude (ExitCode (..), exitWith, forM_, hPutStrLn,
                      stderr)
 import           Cardano.Protocol.Crypto (StandardCrypto, hashVerKeyVRF)
@@ -74,7 +74,7 @@ validate context MutatedHeader{header, mutation} =
     ownsAllStake vrfKey = IndividualPoolStake 1 (coin 1) vrfKey
     poolDistr = Map.fromList [(poolId, ownsAllStake hashVRFKey)]
     poolId = hashKey $ VKey $ deriveVerKeyDSIGN coldSignKey
-    hashVRFKey = hashVerKeyVRF {- @StandardCrypto -} $ deriveVerKeyVRF vrfSignKey
+    hashVRFKey = hashVerKeyVRF @StandardCrypto $ deriveVerKeyVRF vrfSignKey
 
     headerView = validateView @ConwayBlock undefined (mkShelleyHeader header)
     validateKES = doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod poolDistr ocertCounters headerView
