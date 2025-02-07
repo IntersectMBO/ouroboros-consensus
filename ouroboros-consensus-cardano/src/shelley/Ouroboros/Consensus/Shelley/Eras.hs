@@ -359,25 +359,25 @@ instance ShelleyBasedEra AllegraEra => Core.TranslateEra AllegraEra WrapTx where
   type TranslationError AllegraEra WrapTx = Core.TranslationError AllegraEra SL.ShelleyTx
   translateEra ctxt = fmap WrapTx . Core.translateEra ctxt . unwrapTx
 
-instance ShelleyBasedEra MaryEra => Core.TranslateEra MaryEra WrapTx where
+instance Core.TranslateEra MaryEra WrapTx where
   type TranslationError MaryEra WrapTx = Core.TranslationError MaryEra SL.ShelleyTx
   translateEra ctxt = fmap WrapTx . Core.translateEra ctxt . unwrapTx
 
-instance ShelleyBasedEra AlonzoEra => Core.TranslateEra AlonzoEra WrapTx where
+instance Core.TranslateEra AlonzoEra WrapTx where
   type TranslationError AlonzoEra WrapTx = Core.TranslationError AlonzoEra Alonzo.Tx
   translateEra ctxt =
         fmap (WrapTx . Alonzo.unTx)
       . Core.translateEra @AlonzoEra ctxt
       . Alonzo.Tx . unwrapTx
 
-instance ShelleyBasedEra BabbageEra => Core.TranslateEra BabbageEra WrapTx where
+instance Core.TranslateEra BabbageEra WrapTx where
   type TranslationError BabbageEra WrapTx = Core.TranslationError BabbageEra Babbage.Tx
   translateEra ctxt =
         fmap (WrapTx . Babbage.unTx)
       . Core.translateEra @BabbageEra ctxt
       . Babbage.Tx . unwrapTx
 
-instance ShelleyBasedEra ConwayEra => Core.TranslateEra ConwayEra WrapTx where
+instance Core.TranslateEra ConwayEra WrapTx where
   type TranslationError ConwayEra WrapTx = Core.TranslationError ConwayEra Conway.Tx
   translateEra ctxt =
         fmap (WrapTx . Conway.unTx)
