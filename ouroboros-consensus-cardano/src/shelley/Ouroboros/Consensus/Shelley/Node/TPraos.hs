@@ -85,7 +85,6 @@ shelleyBlockForging ::
      forall m era c.
       ( ShelleyCompatible (TPraos c) era
       , PraosCrypto c
-      -- , c ~ StandardCrypto
       , TxLimits (ShelleyBlock (TPraos c) era)
       , IOLike m
       )
@@ -196,7 +195,6 @@ protocolInfoTPraosShelleyBased ::
       , PraosCrypto c
       , ShelleyCompatible (TPraos c) era
       , TxLimits (ShelleyBlock (TPraos c) era)
-      -- , c ~ StandardCrypto
       )
   => ProtocolParamsShelleyBased c
   -> L.TransitionConfig era

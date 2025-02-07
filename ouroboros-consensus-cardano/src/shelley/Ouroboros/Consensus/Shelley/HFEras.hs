@@ -56,19 +56,19 @@ type StandardConwayBlock = ShelleyBlock (Praos StandardCrypto) ConwayEra
 -------------------------------------------------------------------------------}
 
 instance
-  (TPraos.PraosCrypto c, Signable DSIGN (Hash HASH EraIndependentTxBody)) =>
+  TPraos.PraosCrypto c =>
   ShelleyCompatible (TPraos c) ShelleyEra
 
 instance
-  (TPraos.PraosCrypto c, Signable DSIGN (Hash HASH EraIndependentTxBody)) =>
+  TPraos.PraosCrypto c =>
   ShelleyCompatible (TPraos c) AllegraEra
 
 instance
-  (TPraos.PraosCrypto c, Signable DSIGN (Hash HASH EraIndependentTxBody)) =>
+  TPraos.PraosCrypto c =>
   ShelleyCompatible (TPraos c) MaryEra
 
 instance
-  (TPraos.PraosCrypto c, Signable DSIGN (Hash HASH EraIndependentTxBody)) =>
+  TPraos.PraosCrypto c =>
   ShelleyCompatible (TPraos c) AlonzoEra
 
 -- This instance is required since the ledger view forecast function for
