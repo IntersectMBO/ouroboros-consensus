@@ -55,10 +55,6 @@ instance
   Monad-ComputationResult ._>>=_ (success a) m = m a
   Monad-ComputationResult ._>>=_ (failure e) _ = failure e
 
-  Show-ComputationResult : ∀ {l} {E : Type} {A : Type l} → ⦃ Show E ⦄ → ⦃ Show A ⦄ → Show (ComputationResult E A)
-  Show-ComputationResult .show (success x) = "success " ◇ show x
-  Show-ComputationResult .show (failure e) = "failure " ◇ show e
-
 map-failure : ∀ {A B C : Type} {f : A → B} {x : C} {ma} → ma ≡ failure x → map f ma ≡ failure x
 map-failure refl = refl
 

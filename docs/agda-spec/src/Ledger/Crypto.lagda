@@ -31,7 +31,8 @@ record Serializer : Type₁ where
 \end{code}
 \emph{Properties}
 \begin{code}[hide]
-        ⦃ DecEq-Ser ⦄ : DecEq Ser
+        ⦃ DecEq-Ser  ⦄ : DecEq Ser
+        ⦃ Show-Ser   ⦄ : Show Ser
         enc-dec-correct :
 \end{code}
 \begin{code}
@@ -77,6 +78,13 @@ record PKScheme : Type₁ where
 
   KeyPair = Σ[ sk ∈ SKey ] Σ[ vk ∈ VKey ] isKeyPair sk vk
 \end{code}
+\begin{code}[hide]
+  field
+        ⦃ DecEq-SKey  ⦄ : DecEq SKey
+        ⦃ DecEq-VKey  ⦄ : DecEq VKey
+        ⦃ Show-SKey   ⦄ : Show SKey
+        ⦃ Show-VKey   ⦄ : Show VKey
+\end{code}
 \caption{Definitions for the public-key cryptographic system}
 \label{fig:defs:pkscheme}
 \end{figure*}
@@ -113,6 +121,7 @@ record DSigScheme (srl : Serializer) : Type₁ where
 \end{code}
 \begin{code}[hide]
         ⦃ DecEq-Sig  ⦄ : DecEq Sig
+        ⦃ Show-Sig   ⦄ : Show Sig
 \end{code}        
 \caption{Definitions for the digital signature scheme}
 \label{fig:defs:dsigscheme}
@@ -151,6 +160,7 @@ record KESScheme (srl : Serializer) : Type₁ where
 \end{code}
 \begin{code}[hide]          
         ⦃ DecEq-Sig  ⦄ : DecEq Sig
+        ⦃ Show-Sig   ⦄ : Show Sig
 \end{code}        
 \caption{Definitions for key-evolving signatures}
 \label{fig:defs:kesscheme}
@@ -189,6 +199,8 @@ record VRFScheme : Type₁ where
 \begin{code}[hide]         
         ⦃ DecEq-Seed  ⦄ : DecEq Seed
         ⦃ DecEq-Proof ⦄ : DecEq Proof
+        ⦃ Show-Seed   ⦄ : Show Seed
+        ⦃ Show-Proof  ⦄ : Show Proof
 \end{code}        
 \caption{Definitions for verifiable random functions}
 \label{fig:defs:vrfscheme}

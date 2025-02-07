@@ -15,6 +15,8 @@ record Nonces : Type₁ where
     Nonce       : Type                  -- nonce
     _⋆_         : Nonce → Nonce → Nonce -- binary nonce operation (BLAKE2b-256 hash of the concatenation of the operands)
     nonceToSeed : Nonce → Seed          -- big-endian encoding of the nonce number in 8 bytes
+    ⦃ DecEq-Nonce ⦄ : DecEq Nonce
+    ⦃ Show-Nonce  ⦄ : Show Nonce
 
 open import Data.Nat using (ℕ)
 

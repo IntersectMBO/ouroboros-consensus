@@ -272,15 +272,12 @@ private
   hsImports : String
   hsImports = "import GHC.Generics (Generic)\nimport Text.Show.Functions\n"
 
-  hsInstances : String
-  hsInstances = "instance Eq (a -> b) where _ == _ = False\n" -- functions are never equal
-
   -- Take the name of a simple data type and generate the COMPILE and
   -- FOREIGN pragmas to bind to Haskell.
   bindHsType : NameEnv → Name → Name → TC ⊤
   bindHsType env agdaName hsName = getDefinition hsName >>= λ where
     (data-type pars cs) → do
-      pragmaForeign "GHC" (hsImports & "\n" & hsInstances)
+      pragmaForeign "GHC" hsImports
       pragmaCompile "GHC" hsName $ compilePragma hsName cs
       getDefinition agdaName >>= λ where
         (data-type _ _)    → pragmaForeign "GHC" =<< foreignPragma hsName cs

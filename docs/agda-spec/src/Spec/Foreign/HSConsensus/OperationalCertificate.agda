@@ -30,13 +30,6 @@ module _ (ext : ExternalFunctions) where
   open import Spec.Foreign.HSConsensus.BlockDefinitions
   open import Spec.Foreign.HSTypes using () renaming (ComputationResult to HSComputationResult)
 
-  instance
-    -- TODO: Use the version from Class.Show.Instances when available
-    -- (see https://github.com/agda/agda-stdlib-classes/pull/13).
-    Show-Maybe : ∀ {a} {A : Set a} → ⦃ Show A ⦄ → Show (Maybe A)
-    Show-Maybe .show nothing  = "nothing"
-    Show-Maybe .show (just x) = "just " ◇ show x
-
   open import Data.Nat renaming (_≤_ to _≤ℕ_; _<_ to _<ℕ_)
 
   ocert-debug : HsType (OCertEnv → OCertState → BHeader → String)
@@ -63,7 +56,7 @@ module _ (ext : ExternalFunctions) where
         ∷ ("n = " +ˢ show n)
         ∷ ("c₀ = " +ˢ show c₀)
         ∷ ("c₀ +ᵏ MaxKESEvo = " +ˢ show (c₀ +ᵏ MaxKESEvo))
-        ∷ ("currentIssueNo stpools cs hk = " +ˢ show (currentIssueNo (from stpools) (from cs) hk))
+        ∷ ("currentIssueNo stpools cs hk = " +ˢ Show-Maybe .show (currentIssueNo (from stpools) (from cs) hk))
         ∷ ("encode (vkₕ , n , c₀) = " +ˢ show (encode (vkₕ , n , c₀)))
         ∷ ("c₀ ≤ kp = " +ˢ show (⌊ ¿ c₀ ≤ℕ kp ¿ ⌋))
         ∷ ("kp < c₀ +ᵏ MaxKESEvo = " +ˢ show (⌊ ¿ kp <ℕ c₀ +ᵏ MaxKESEvo ¿ ⌋))
