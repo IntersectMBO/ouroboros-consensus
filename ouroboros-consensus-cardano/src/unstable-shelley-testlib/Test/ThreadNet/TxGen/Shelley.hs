@@ -128,7 +128,7 @@ data WhetherToGeneratePPUs = DoNotGeneratePPUs | DoGeneratePPUs
 
 mkGenEnv ::
      WhetherToGeneratePPUs
-  -> [CoreNode MockCrypto]
+  -> [CoreNode c]
   -> Gen.GenEnv ShelleyEra
 mkGenEnv whetherPPUs coreNodes = Gen.GenEnv keySpace scriptSpace constants
   where
