@@ -104,7 +104,7 @@ instance Ledger.LedgerSupportsMempool TestBlock where
     , ValidatedGenTx gtx
     )
 
-  reapplyTx _cfg _slot _gtx gst = pure
+  reapplyTx _ _cfg _slot _gtx gst = pure
     $ TestBlock.TickedTestLedger
     $ convertMapKind
     $ TestBlock.getTickedTestLedger

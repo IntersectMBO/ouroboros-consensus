@@ -22,6 +22,7 @@ module Test.Consensus.Shelley.Examples (
 import qualified Cardano.Ledger.Block as SL
 import qualified Cardano.Ledger.Core as LC
 import           Cardano.Ledger.Crypto (Crypto)
+import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import           Data.Coerce (coerce)
 import           Data.Foldable (toList)
@@ -88,7 +89,7 @@ mkLedgerTables tx =
     $ Map.fromList
     $ zip exampleTxIns exampleTxOuts
   where
-    exampleTxIns :: [ShelleyTxIn era]
+    exampleTxIns :: [SL.TxIn (EraCrypto era)]
     exampleTxIns  = case toList (tx ^. (LC.bodyTxL . LC.allInputsTxBodyF)) of
       [] -> error "No transaction inputs were provided to construct the ledger tables"
             -- We require at least one transaction input (and one
@@ -98,7 +99,7 @@ mkLedgerTables tx =
             --
             -- Also all transactions in Cardano have at least one input for
             -- automatic replay protection.
-      xs -> map ShelleyTxIn xs
+      xs -> xs
 
     exampleTxOuts :: [LC.TxOut era]
     exampleTxOuts = case toList (tx ^. (LC.bodyTxL . LC.outputsTxBodyL)) of

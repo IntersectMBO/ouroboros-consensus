@@ -22,9 +22,9 @@ module Ouroboros.Consensus.Mempool.Impl.Common (
   , chainDBLedgerInterface
     -- * Validation
   , RevalidateTxsResult (..)
+  , computeSnapshot
   , revalidateTxsFor
   , validateNewTransaction
-  , computeSnapshot
     -- * Tracing
   , TraceEventMempool (..)
     -- * Conversions

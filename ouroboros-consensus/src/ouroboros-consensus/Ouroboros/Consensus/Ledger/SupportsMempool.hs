@@ -10,9 +10,9 @@
 module Ouroboros.Consensus.Ledger.SupportsMempool (
     ApplyTxErr
   , ByteSize32 (..)
+  , ComputeDiffs (..)
   , ConvertRawTxId (..)
   , GenTx
-  , ComputeDiffs (..)
   , GenTxId
   , HasByteSize (..)
   , HasTxId (..)

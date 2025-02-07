@@ -11,6 +11,7 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -327,14 +328,14 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
       (\idx -> answerShelleyLookupQueries
                  (injectLedgerTables idx)
                  (ejectHardForkTxOutDefault idx)
-                 (getShelleyTxIn . ejectCanonicalTxIn idx)
+                 (ejectCanonicalTxIn idx)
       )
 
   answerBlockQueryHFTraverse =
     answerShelleyBasedQueryHF
       (\idx -> answerShelleyTraversingQueries
                  (ejectHardForkTxOutDefault idx)
-                 (getShelleyTxIn . ejectCanonicalTxIn idx)
+                 (ejectCanonicalTxIn idx)
                  (queryLedgerGetTraversingFilter @('[ShelleyBlock proto1 era1, ShelleyBlock proto2 era2]) idx)
       )
 
@@ -454,10 +455,10 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
       => HasCanonicalTxIn (ShelleyBasedHardForkEras proto1 era1 proto2 era2) where
   newtype instance CanonicalTxIn (ShelleyBasedHardForkEras proto1 era1 proto2 era2) =
     ShelleyHFCTxIn {
-        getShelleyHFCTxIn :: ShelleyTxIn era1
+        getShelleyHFCTxIn :: SL.TxIn (EraCrypto era1)
       }
     deriving stock (Show, Eq, Ord)
-    deriving newtype (NoThunks, MemPack)
+    deriving newtype (NoThunks)
 
   injectCanonicalTxIn IZ             txIn = ShelleyHFCTxIn txIn
   injectCanonicalTxIn (IS IZ)        txIn = ShelleyHFCTxIn (coerce txIn)
@@ -466,6 +467,10 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
   ejectCanonicalTxIn IZ             txIn = getShelleyHFCTxIn txIn
   ejectCanonicalTxIn (IS IZ)        txIn = coerce (getShelleyHFCTxIn txIn)
   ejectCanonicalTxIn (IS (IS idx')) _    = case idx' of {}
+
+deriving newtype instance
+  ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
+  => MemPack (CanonicalTxIn (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
 
 instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
       => HasHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2) where

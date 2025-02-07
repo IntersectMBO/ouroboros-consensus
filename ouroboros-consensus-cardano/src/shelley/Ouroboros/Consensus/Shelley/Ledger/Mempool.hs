@@ -282,7 +282,7 @@ reapplyShelleyTx doDiffs cfg slot vgtx st0 = do
 
     pure $ (case doDiffs of
               ComputeDiffs -> calculateDifference st0
-              IgnoreDiffs -> attachEmptyDiffs
+              IgnoreDiffs  -> attachEmptyDiffs
            )
          $ unstowLedgerTables
          $ set theLedgerLens mempoolState' st1

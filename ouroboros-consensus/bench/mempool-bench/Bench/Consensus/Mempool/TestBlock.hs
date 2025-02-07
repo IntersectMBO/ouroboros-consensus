@@ -210,7 +210,7 @@ instance Ledger.LedgerSupportsMempool TestBlock where
     except $ fmap ((, ValidatedGenTx (TestBlockGenTx tx)) . Ledger.trackingToDiffs)
            $ applyDirectlyToPayloadDependentState tickedSt tx
 
-  reapplyTx cfg slot (ValidatedGenTx genTx) tickedSt =
+  reapplyTx _ cfg slot (ValidatedGenTx genTx) tickedSt =
     Ledger.attachAndApplyDiffs tickedSt . fst <$> Ledger.applyTx cfg Ledger.DoNotIntervene slot genTx tickedSt
     -- FIXME: it is ok to use 'DoNotIntervene' here?
 
