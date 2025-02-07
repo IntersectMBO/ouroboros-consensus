@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -178,7 +179,6 @@ module Ouroboros.Consensus.Ledger.Tables (
 import           Cardano.Binary (FromCBOR (fromCBOR), ToCBOR (toCBOR))
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
-import           Control.Monad (replicateM)
 import           Data.ByteString (ByteString)
 import           Data.Kind (Constraint, Type)
 import qualified Data.Map.Strict as Map
@@ -295,13 +295,15 @@ valuesMKDecoder ::
 valuesMKDecoder = do
     _ <- CBOR.decodeListLenOf 1
     mapLen <- CBOR.decodeMapLen
-    LedgerTables <$> go mapLen
+    LedgerTables . ValuesMK <$> go mapLen Map.empty
  where
   go :: Int
-     -> CBOR.Decoder s (ValuesMK (TxIn l) (TxOut l))
-  go len =
-    ValuesMK . Map.fromList
-      <$> replicateM len (unpackError @(TxIn l, TxOut l) @ByteString <$> fromCBOR)
+     -> Map.Map (TxIn l) (TxOut l)
+     -> CBOR.Decoder s (Map.Map (TxIn l) (TxOut l))
+  go 0 m = pure m
+  go len !m = do
+    (ti, to) <- unpackError @(TxIn l, TxOut l) @ByteString <$> fromCBOR
+    go (len - 1) (Map.insert ti to m)
 
 {-------------------------------------------------------------------------------
   Special classes of ledger states
