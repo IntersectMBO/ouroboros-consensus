@@ -46,7 +46,7 @@ import           Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import           Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 
 instance
-  (ShelleyCompatible (TPraos crypto) era{-, crypto ~ StandardCrypto-}) =>
+  (ShelleyCompatible (TPraos crypto) era) =>
   LedgerSupportsProtocol (ShelleyBlock (TPraos crypto) era)
   where
   protocolLedgerView _cfg = SL.currentLedgerView . tickedShelleyLedgerState
