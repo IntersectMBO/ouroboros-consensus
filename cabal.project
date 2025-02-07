@@ -83,7 +83,7 @@ source-repository-package
   -- This tag is before genIssuerKeys
   -- tag: 4b2721c8abdf704c6f8de042e8fb1f3f6b3f1aed
   tag: a0d93ad3134a8c5fe04ddaacffdaf39e1af8b8cf
-  --sha256: sha256-t9PKhr7kOIgn8yzDj47f70Sj6TNwdWXjvEN4TXL9jdM=
+  --sha256: sha256-RUepCSj3u/28Si0FHism2eshEKCmJUoqzeyKfsXMpgk=
   subdir:
       eras/allegra/impl
       eras/alonzo/impl
