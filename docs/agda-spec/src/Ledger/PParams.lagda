@@ -87,8 +87,6 @@ paramsWF-elim pp pwf 0 0∈ = ⊥-elim (pwf (to ∈-fromList 0∈))
 \end{figure*}
 \begin{code}[hide]
 instance
-  Show-ℚ = Show _ ∋ record {M}
-    where import Data.Rational.Show as M
   unquoteDecl DecEq-PParams        = derive-DecEq
     ((quote PParams , DecEq-PParams) ∷ [])
   unquoteDecl Show-PParams        = derive-Show

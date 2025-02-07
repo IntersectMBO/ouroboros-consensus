@@ -31,6 +31,11 @@ record BlockStructure : Type₁ where
 \end{code}
 \begin{code}[hide]
     ⦃ DecEq-HashHeader ⦄ : DecEq HashHeader
+    ⦃ DecEq-HashBBody  ⦄ : DecEq HashBBody
+    ⦃ DecEq-VRFRes     ⦄ : DecEq VRFRes
+    ⦃ Show-HashHeader  ⦄ : Show HashHeader
+    ⦃ Show-HashBBody   ⦄ : Show HashBBody
+    ⦃ Show-VRFRes      ⦄ : Show VRFRes
 \end{code}
 \emph{Concrete types}
 \begin{code}
@@ -95,6 +100,25 @@ record BlockStructure : Type₁ where
       prevHashToNonce : Maybe HashHeader → Nonce
       serHashToℕ      : SerHash → Certifiedℕ
       serHashToNonce  : SerHash → Nonce
+\end{code}
+\begin{code}[hide]
+open BlockStructure
+open import Tactic.Derive.Show
+
+instance
+  _ = Show-Maybe
+
+  Show-Certifiedℕ : ∀ {bs} → Show (Certifiedℕ bs)
+  Show-Certifiedℕ .show = show ∘ proj₁
+
+  unquoteDecl Show-OCert = derive-Show
+    [(quote OCert , Show-OCert)]
+
+  unquoteDecl Show-BHBody = derive-Show
+    [(quote BHBody , Show-BHBody)]
+
+  unquoteDecl Show-BHeader = derive-Show
+    [(quote BHeader , Show-BHeader)]
 \end{code}
 \end{AgdaAlign}
 \caption{Block definitions}

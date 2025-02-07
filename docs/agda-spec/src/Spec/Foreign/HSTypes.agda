@@ -19,6 +19,11 @@ open import Data.Rational.Base
   import GHC.Real (Ratio(..))
 #-}
 
+-- We don't want for function fields to interfere with `deriving Eq`,
+-- so we will regard instances of data types including function fields
+-- as *not* equal.
+{-# FOREIGN GHC instance Eq (a -> b) where _ == _ = False #-}
+
 -- * The empty type
 
 data Empty : Type where
@@ -33,6 +38,10 @@ data Rational : Type where
 -- We'll generate code with qualified references to Rational in this
 -- module, so make sure to define it.
 {-# FOREIGN GHC type Rational = Ratio Integer #-}
+
+instance
+  Show-Rational : Show Rational
+  Show-Rational .show (n , d) = show n ◇ " / " ◇ show d
 
 -- * Maps and Sets
 

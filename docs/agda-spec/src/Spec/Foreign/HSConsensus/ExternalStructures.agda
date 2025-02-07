@@ -115,3 +115,16 @@ instance
     }
 
 open AbstractFunctions HSAbstractFunctions public
+
+open import Data.Rational.Ext using (RationalExtStructure)
+
+instance
+  HSRationalExtStructure : RationalExtStructure
+  HSRationalExtStructure = record
+    { exp = λ p → from (extExp (to p))
+    ; ln  = λ p ⦃ p>0 ⦄ → from (extLn (to p))
+    }
+    where
+      open ExternalFunctions externalFunctions
+
+open RationalExtStructure HSRationalExtStructure public

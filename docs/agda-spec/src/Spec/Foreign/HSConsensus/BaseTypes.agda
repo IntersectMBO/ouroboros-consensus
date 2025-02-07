@@ -9,6 +9,7 @@ import Spec.Foreign.HSTypes as F
 instance
   iConvTop    = Convertible-Refl {⊤}
   iConvNat    = Convertible-Refl {ℕ}
+  iConvRat    = Convertible-Refl {ℚ}
   iConvString = Convertible-Refl {String}
   iConvBool   = Convertible-Refl {Bool}
 
@@ -20,15 +21,6 @@ instance -- TODO: Complete
   Conv-⊥ = autoConvert ⊥
 
   HsTy-⊤ = MkHsType ⊤ ⊤
-
-  -- * Rational numbers
-
-  HsTy-Rational = MkHsType ℚ F.Rational
-  Conv-Rational : HsConvertible ℚ
-  Conv-Rational = λ where
-    .to (mkℚ n d _)       → n F., suc d
-    .from (n F., zero)    → 0ℚ -- TODO is there a safer way to do this?
-    .from (n F., (suc d)) → n Data.Rational./ suc d
 
   -- * Maps and Sets
 
@@ -71,6 +63,7 @@ open import Spec.Foreign.HSConsensus.ExternalStructures dummyExternalFunctions
     ; HSNonces to DummyNonces
     ; HSBlockStructure to DummyBlockStructure
     ; HSAbstractFunctions to DummyAbstractFunctions
+    ; HSRationalExtStructure to DummyRationalExtStructure
     )
   public
 
@@ -78,3 +71,4 @@ unquoteDecl = do
   hsTypeAlias Slot
   hsTypeAlias Epoch
   hsTypeAlias KeyHashˢ ⊣ withName "KeyHashS"
+  hsTypeAlias KeyHashᵛ ⊣ withName "KeyHashV"

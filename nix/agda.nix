@@ -23,12 +23,12 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "omelkonian";
       repo = "agda-stdlib-classes";
-      rev = "v2.0";
-      hash = "sha256-PcieRRnctjCzFCi+gUYAgyIAicMOAZPl8Sw35fZdt0E=";
+      rev = "73f4da05aeea040fea4587629f9fd83a8f04e656";
+      hash = "sha256-Uj3bmgMtdBJYGW7K+0rqxexm6M47odBuWyRo0aoYmZg=";
     };
     meta = { };
     libraryFile = "agda-stdlib-classes.agda-lib";
-    everythingFile = "Classes.agda";
+    everythingFile = "standard-library-classes.agda";
     buildInputs = [ agdaStdlib ];
   };
 
