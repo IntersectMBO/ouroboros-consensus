@@ -19,7 +19,6 @@ import           Control.Concurrent.Class.MonadSTM.Strict (StrictTVar,
                      atomically, newTVarIO, readTVar, readTVarIO, writeTVar)
 import           Control.DeepSeq (NFData (rnf))
 import           Control.Tracer (Tracer)
-import           Data.Foldable (Foldable (foldMap'))
 import qualified Data.List.NonEmpty as NE
 import           Ouroboros.Consensus.Block (castPoint)
 import           Ouroboros.Consensus.HeaderValidation as Header
@@ -70,8 +69,7 @@ openMockedMempool capacityOverride tracer initialParams = do
     currentLedgerStateTVar <- newTVarIO (immpInitialState initialParams)
     let ledgerItf = Mempool.LedgerInterface {
           Mempool.getCurrentLedgerState = forgetLedgerTables <$> readTVar currentLedgerStateTVar
-        , Mempool.getLedgerTablesAtFor  = \pt txs -> do
-            let keys = foldMap' Ledger.getTransactionKeySets txs
+        , Mempool.getLedgerTablesAtFor  = \pt keys -> do
             st <- readTVarIO currentLedgerStateTVar
             if castPoint (getTip st) == pt
               then pure $ Just $ restrictValues' st keys

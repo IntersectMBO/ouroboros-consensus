@@ -291,7 +291,7 @@ type instance ApplyTxErr BlockB = Void
 
 instance LedgerSupportsMempool BlockB where
   applyTx   = \_ _ _wti tx -> case tx of {}
-  reapplyTx = \_ _ vtx -> case vtx of {}
+  reapplyTx = \_ _ _ vtx -> case vtx of {}
 
   txForgetValidated = \case {}
 

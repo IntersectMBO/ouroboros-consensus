@@ -33,13 +33,13 @@ module Ouroboros.Consensus.Cardano.Ledger (
   , eliminateCardanoTxOut
   ) where
 
-import qualified Data.SOP.Tails as Tails
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Data.Maybe
 import           Data.MemPack
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Index
 import           Data.SOP.Strict
+import qualified Data.SOP.Tails as Tails
 import qualified Data.SOP.Telescope as Telescope
 import           Data.Void
 import           GHC.Generics (Generic)

@@ -20,19 +20,19 @@ module Data.SOP.Tails (
   , mk2
   , mk3
     -- * SOP-like operators
+  , extendWithTails
   , hcmap
   , hcpure
   , hmap
   , hpure
   , inPairsToTails
-  , extendWithTails
   ) where
 
-import           Data.SOP.Index
-import qualified Data.SOP.InPairs as InPairs
 import           Data.Kind (Type)
 import           Data.Proxy
 import           Data.SOP.Constraint
+import           Data.SOP.Index
+import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.Sing
 import           Data.SOP.Strict hiding (hcmap, hcpure, hmap, hpure)
 import qualified Data.SOP.Strict as SOP

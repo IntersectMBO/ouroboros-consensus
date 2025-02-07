@@ -535,8 +535,7 @@ newLedgerInterface initialLedger = do
   t <- newTVarIO $ MockedLedgerDB initialLedger Set.empty Set.empty
   pure (LedgerInterface {
       getCurrentLedgerState = forgetLedgerTables . ldbTip <$> readTVar t
-    , getLedgerTablesAtFor  = \pt txs -> do
-        let keys = Foldable.foldMap' getTransactionKeySets txs
+    , getLedgerTablesAtFor  = \pt keys -> do
         MockedLedgerDB ti oldReachableTips _ <- atomically $ readTVar t
         if pt == castPoint (getTip ti) -- if asking for tables at the tip of the
                                        -- ledger db

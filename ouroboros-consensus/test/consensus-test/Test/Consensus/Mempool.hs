@@ -41,7 +41,6 @@ import           Control.Monad.State (State, evalState, get, modify)
 import           Control.Tracer (Tracer (..))
 import           Data.Bifunctor (first, second)
 import           Data.Either (isRight)
-import qualified Data.Foldable as Foldable
 import qualified Data.List as List
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
@@ -658,8 +657,7 @@ withTestMempool setup@TestSetup {..} prop =
       varCurrentLedgerState <- uncheckedNewTVarM testLedgerState
       let ledgerInterface = LedgerInterface
             { getCurrentLedgerState = forgetLedgerTables <$> readTVar varCurrentLedgerState
-            , getLedgerTablesAtFor = \pt txs -> do
-                let keys = Foldable.foldMap' getTransactionKeySets txs
+            , getLedgerTablesAtFor = \pt keys -> do
                 st <- atomically $ readTVar varCurrentLedgerState
                 if castPoint (getTip st) == pt
                   then pure $ Just $ restrictValues' st keys
