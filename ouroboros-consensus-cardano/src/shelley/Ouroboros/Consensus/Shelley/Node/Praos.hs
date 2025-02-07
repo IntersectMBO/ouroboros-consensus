@@ -46,13 +46,12 @@ import           Ouroboros.Consensus.Util.IOLike (IOLike)
 praosBlockForging ::
      forall m era c.
      ( ShelleyCompatible (Praos c) era
-     -- , c ~ StandardCrypto
-     , PraosCrypto c
+     -- , PraosCrypto c
+     , Crypto c
      , Mempool.TxLimits (ShelleyBlock (Praos c) era)
      , IOLike m
      )
   => PraosParams
-  -- -> ShelleyLeaderCredentials StandardCrypto
   -> ShelleyLeaderCredentials c
   -> m (BlockForging m (ShelleyBlock (Praos c) era))
 praosBlockForging praosParams credentials = do
@@ -80,7 +79,7 @@ praosBlockForging praosParams credentials = do
 praosSharedBlockForging ::
      forall m c era.
      ( ShelleyEraWithCrypto c (Praos c) era
-     , Crypto c
+     -- , Crypto c
      , IOLike m
      )
   => HotKey.HotKey c m
