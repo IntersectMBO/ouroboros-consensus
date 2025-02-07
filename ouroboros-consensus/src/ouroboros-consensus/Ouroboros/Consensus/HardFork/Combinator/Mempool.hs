@@ -29,6 +29,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Mempool (
 
 import           Control.Arrow (first, (+++))
 import           Control.Monad.Except
+import           Data.Functor.Identity
 import           Data.Functor.Product
 import           Data.Kind (Type)
 import qualified Data.Measure as Measure
@@ -40,6 +41,7 @@ import           Data.SOP.InPairs (InPairs)
 import qualified Data.SOP.InPairs as InPairs
 import qualified Data.SOP.Match as Match
 import           Data.SOP.Strict
+import qualified Data.SOP.Telescope as Tele
 import           Data.Typeable (Typeable)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
@@ -223,6 +225,50 @@ instance ( CanHardFork xs
         -> GenTx                                                    x
         -> K (LedgerTables (LedgerState (HardForkBlock xs)) KeysMK) x
       f idx tx = K $ injectLedgerTables idx $ getTransactionKeySets tx
+
+  -- This optimization is worthwile because we can save the projection and
+  -- injection of ledger tables.
+  --
+  -- These operations are used when adding new transactions to the mempool,
+  -- which is _not_ in the critical path for the forging loop but still will
+  -- make adoption of new transactions faster. As adding a transaction takes a
+  -- TMVar, it is interesting to hold it for as short of a time as possible.
+  prependMempoolDiffs
+    (TickedHardForkLedgerState _ (State.HardForkState st1))
+    (TickedHardForkLedgerState tr (State.HardForkState st2))
+    = TickedHardForkLedgerState
+          tr
+        $ State.HardForkState
+        $ runIdentity
+         (Tele.alignExtend
+         (InPairs.hpure (error "When prepending mempool diffs we used to un-aligned states, this should be impossible!"))
+         (hcpure proxySingle $ fn_2 $ \(State.Current _ a) (State.Current start b) -> State.Current start $
+                         FlipTickedLedgerState
+                       $ prependMempoolDiffs
+                          (getFlipTickedLedgerState a)
+                          (getFlipTickedLedgerState b)
+                      )
+         st1
+         st2)
+
+  -- This optimization is worthwile because we can save the projection and
+  -- injection of ledger tables.
+  --
+  -- These operations are used when adding new transactions to the mempool,
+  -- which is _not_ in the critical path for the forging loop but still will
+  -- make adoption of new transactions faster. As adding a transaction takes a
+  -- TMVar, it is interesting to hold it for as short of a time as possible.
+  applyMempoolDiffs
+    vals keys (TickedHardForkLedgerState tr (State.HardForkState st)) =
+    TickedHardForkLedgerState tr $ State.HardForkState $ hcimap
+      proxySingle
+      (\idx (State.Current start (FlipTickedLedgerState a)) ->
+         State.Current start $ FlipTickedLedgerState
+         $ applyMempoolDiffs
+           (ejectLedgerTables idx vals)
+           (ejectLedgerTables idx keys) a )
+      st
+
 
 instance CanHardFork xs => TxLimits (HardForkBlock xs) where
   type TxMeasure (HardForkBlock xs) = HardForkTxMeasure xs
