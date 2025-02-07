@@ -24,7 +24,6 @@ import           Data.Void
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
-import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Mempool.API
 import           Ouroboros.Consensus.Mempool.Capacity
 import           Ouroboros.Consensus.Mempool.Impl.Common
@@ -214,7 +213,7 @@ pureTryAddTx ::
   -> LedgerTables (LedgerState blk) ValuesMK
   -> TriedToAddTx blk
 pureTryAddTx cfg wti tx is values =
-  let st = applyDiffForKeysOnTables values (getTransactionKeySets tx) (isLedgerState is) in
+  let st = applyMempoolDiffs values (getTransactionKeySets tx) (isLedgerState is) in
   case runExcept $ txMeasure cfg st tx of
     Left err ->
       -- The transaction does not have a valid measure (eg its ExUnits is

@@ -305,7 +305,7 @@ validateNewTransaction cfg wti tx txsz origValues st is =
              , isTxKeys       = isTxKeys <> getTransactionKeySets tx
              , isTxValues     = ltliftA2 unionValues isTxValues origValues
              , isTxIds        = Set.insert (txId tx) isTxIds
-             , isLedgerState  = prependDiffs isLedgerState st'
+             , isLedgerState  = prependMempoolDiffs isLedgerState st'
              , isLastTicketNo = nextTicketNo
              }
         )
@@ -347,7 +347,7 @@ revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
       unwrap = (\(tx, (tk, tz)) -> TxTicket tx tk tz)
       ReapplyTxsResult err val st' =
         reapplyTxs ComputeDiffs cfg slot theTxs
-        $ applyDiffForKeysOnTables
+        $ applyMempoolDiffs
               values
               (Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst) theTxs)
               st
@@ -395,7 +395,7 @@ computeSnapshot capacityOverride cfg slot st values lastTicketNo txTickets =
       unwrap = (\(tx, (tk, tz)) -> TxTicket tx tk tz)
       ReapplyTxsResult _ val st' =
         reapplyTxs IgnoreDiffs cfg slot theTxs
-        $ applyDiffForKeysOnTables
+        $ applyMempoolDiffs
               values
               (Foldable.foldMap' (getTransactionKeySets . txForgetValidated . fst) theTxs)
               st

@@ -198,6 +198,33 @@ class ( UpdateLedger blk
   -- transaction size.
   getTransactionKeySets :: GenTx blk -> LedgerTables (LedgerState blk) KeysMK
 
+  -- Mempools live in a single slot so in the hard fork block case
+  -- it is cheaper to perform these operations on LedgerStates, saving
+  -- the time of projecting and injecting ledger tables.
+  --
+  -- The cost of this when adding transactions is very small compared
+  -- to eg the networking costs of mempool synchronization, but still
+  -- it is worthwile locking the mempool for as short as possible.
+  --
+  -- Eventually the Ledger will provide these diffs, so we might even
+  -- be able to remove this optimization altogether.
+
+  -- | Prepend diffs on ledger states
+  prependMempoolDiffs ::
+       TickedLedgerState blk DiffMK
+    -> TickedLedgerState blk DiffMK
+    -> TickedLedgerState blk DiffMK
+  prependMempoolDiffs = prependDiffs
+
+  -- | Apply diffs on ledger states
+  applyMempoolDiffs ::
+       LedgerTables (LedgerState blk) ValuesMK
+    -> LedgerTables (LedgerState blk) KeysMK
+    -> TickedLedgerState blk DiffMK
+    -> TickedLedgerState blk ValuesMK
+  applyMempoolDiffs = applyDiffForKeysOnTables
+
+
 data ReapplyTxsResult extra blk =
   ReapplyTxsResult {
       -- | txs that are now invalid. Order doesn't matter
