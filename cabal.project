@@ -60,8 +60,10 @@ source-repository-package
   -- tag: 9d380ab7d6ae52ff66aae9a19dbb3036b1b13c94
   -- This tag is before genIssuerKeys
   -- tag: 4b2721c8abdf704c6f8de042e8fb1f3f6b3f1aed
-  tag: a0d93ad3134a8c5fe04ddaacffdaf39e1af8b8cf
-  --sha256: sha256-RUepCSj3u/28Si0FHism2eshEKCmJUoqzeyKfsXMpgk=
+  -- This tag is before parameterising KeySpace and GenEnv over some (Crypto c)
+  -- tag: a0d93ad3134a8c5fe04ddaacffdaf39e1af8b8cf
+  tag: 0d750d882181b12fad62ff28de056ee85c7e0c0e
+  --sha256: sha256-LLp+FHSuVG2IsnXDv0aGMRaX19+trs5AT1gql6oji0U=
   subdir:
       eras/allegra/impl
       eras/alonzo/impl
