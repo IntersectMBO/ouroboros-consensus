@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.21.0.1'></a>
+## 0.21.0.1 — 2025-02-10
+
+### Patch
+
+- Bump to ouroboros-network-framework 0.16.
+
 <a id='changelog-0.21.0.0'></a>
 ## 0.21.0.0 — 2025-01-08
 
