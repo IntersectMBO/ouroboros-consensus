@@ -47,3 +47,8 @@ if(os(windows))
 
 -- https://github.com/ulidtko/cabal-doctest/issues/85
 constraints: Cabal < 3.13
+constraints:
+   -- There was a regression in 1.38 which was discarded for node 10.2. We don't
+   -- depend directly on plutus so we have to declare the bound here as a
+   -- constraint.
+   plutus ^>=1.37
