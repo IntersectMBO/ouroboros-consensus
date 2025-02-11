@@ -14,7 +14,6 @@
 
 module Test.ThreadNet.ShelleyAllegra (tests) where
 
-import           Cardano.Crypto.Hash (ShortHash)
 import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Shelley.Core as SL
@@ -285,7 +284,7 @@ prop_simple_shelleyAllegra_convergence TestSetup
     maxLovelaceSupply =
       fromIntegral (length coreNodes) * Shelley.initialLovelacePerCoreNode
 
-    genesisShelley :: ShelleyGenesis MockCrypto
+    genesisShelley :: ShelleyGenesis
     genesisShelley =
         Shelley.mkGenesisConfig
           (SL.ProtVer majorVersion1 0)
