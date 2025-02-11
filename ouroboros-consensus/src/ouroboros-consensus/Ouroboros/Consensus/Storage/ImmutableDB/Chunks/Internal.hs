@@ -8,7 +8,6 @@
 
 module Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal (
     ChunkInfo (..)
-  , chunkInfoSupportsEBBs
   , simpleChunkInfo
   , singleChunkInfo
     -- * Chunk number
@@ -20,8 +19,6 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal (
   , firstChunkNo
   , nextChunkNo
   , prevChunkNo
-  , unsafeChunkNoToEpochNo
-  , unsafeEpochNoToChunkNo
     -- * Chunk size
   , ChunkSize (..)
   , getChunkSize
@@ -33,7 +30,6 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal (
   , mkRelativeSlot
     -- * Assertions
   , ChunkAssertionFailure
-  , assertChunkCanContainEBB
   , assertSameChunk
   , assertWithinBounds
   ) where
@@ -55,11 +51,6 @@ import           Ouroboros.Consensus.Util.RedundantConstraints
 -- <https://github.com/IntersectMBO/ouroboros-network/issues/1754>
 data ChunkInfo =
     -- | A single, uniform, chunk size
-    --
-    -- If EBBs are present, the chunk size must line up precisely with the
-    -- epoch size (that is, the number of regular blocks in the chunk must equal
-    -- the number of regular blocks in an epoch).
-    --
     UniformChunkSize !ChunkSize
   deriving stock    (Show, Generic)
   deriving anyclass (NoThunks)
@@ -70,7 +61,7 @@ data ChunkInfo =
 -- 'ChunkSize': the translation from 'EpochSize' to 'ChunkSize' (number of
 -- available entries in a chunk) should not be done by client code.
 simpleChunkInfo :: EpochSize -> ChunkInfo
-simpleChunkInfo (EpochSize sz) = UniformChunkSize (ChunkSize True sz)
+simpleChunkInfo (EpochSize sz) = UniformChunkSize (ChunkSize sz)
 
 -- | 'ChunkInfo' for a single 'ChunkSize'
 --
@@ -78,28 +69,16 @@ simpleChunkInfo (EpochSize sz) = UniformChunkSize (ChunkSize True sz)
 singleChunkInfo :: ChunkSize -> ChunkInfo
 singleChunkInfo = UniformChunkSize
 
--- | Can we store EBBs in the chunks described by this 'ChunkInfo'?
---
--- This is only used for tests. This API will need to change (and the tests will
--- become more complicated) once we support non-uniform 'ChunkInfo'.
-chunkInfoSupportsEBBs :: ChunkInfo -> Bool
-chunkInfoSupportsEBBs (UniformChunkSize chunkSize) =
-    chunkCanContainEBB chunkSize
-
 {-------------------------------------------------------------------------------
   Queries
 -------------------------------------------------------------------------------}
 
 -- | Size of a chunk
 --
--- The total number of slots available in a chunk is equal to 'numRegularBlocks'
--- if @not@ 'chunkCanContainEBB', and 'numRegularBlocks' @+ 1@ otherwise.
+-- The total number of slots available in a chunk is equal to 'numBlocks'
 data ChunkSize = ChunkSize {
-      -- | Does this chunk also accomodate an EBB?
-      chunkCanContainEBB :: !Bool
-
-      -- | The number of regular blocks in this chunk
-    , numRegularBlocks   :: !Word64
+      -- | The number of blocks in this chunk
+      numBlocks :: !Word64
     }
   deriving stock    (Show, Generic)
   deriving anyclass (NoThunks)
@@ -146,21 +125,6 @@ chunksBetween :: ChunkNo -> ChunkNo -> [ChunkNo]
 chunksBetween (ChunkNo a) (ChunkNo b) = map ChunkNo $
                                           if a >= b then [a .. b] else [b .. a]
 
--- | Translate 'EpochNo' to 'ChunkNo'
---
--- This should /ONLY/ be used to translate the 'EpochNo' of an EBB, since the
--- invariant says EBBs can only exist in the first period of the DB, where the
--- chunk size must equal the epoch size. See 'ChunkInfo' for details.
-unsafeEpochNoToChunkNo :: EpochNo -> ChunkNo
-unsafeEpochNoToChunkNo (EpochNo n) = ChunkNo n
-
--- | Translate 'ChunkNo' to 'EpochNo'
---
--- This should /ONLY/ be used for chunks that contain EBBs.
--- See 'unsafeEpochNoToChunkNo' and 'ChunkInfo' for details.
-unsafeChunkNoToEpochNo :: ChunkNo -> EpochNo
-unsafeChunkNoToEpochNo (ChunkNo n) = EpochNo n
-
 getChunkSize :: ChunkInfo -> ChunkNo -> ChunkSize
 getChunkSize chunkInfo _chunk =
     case chunkInfo of
@@ -184,8 +148,7 @@ data RelativeSlot = RelativeSlot {
 
     -- | The size of the chunk that this slot is in
     --
-    -- We record this for bounds checking as well as to be able to answer
-    -- questions such as 'relativeSlotIsEBB'.
+    -- We record this for bounds checking
   , relativeSlotChunkSize :: !ChunkSize
 
     -- | The index within the chunk
@@ -196,9 +159,7 @@ data RelativeSlot = RelativeSlot {
 
 -- | Maximum relative index within a chunk
 maxRelativeIndex :: ChunkSize -> Word64
-maxRelativeIndex ChunkSize{..}
-  | chunkCanContainEBB = numRegularBlocks
-  | otherwise          = numRegularBlocks - 1
+maxRelativeIndex ChunkSize{..} = numBlocks - 1
 
 -- | Smart constructor for 'RelativeSlot'
 mkRelativeSlot :: HasCallStack => ChunkInfo -> ChunkNo -> Word64 -> RelativeSlot
@@ -245,7 +206,6 @@ assertRelativeSlotInChunk chunk relSlot =
 data ChunkAssertionFailure =
     NotSameChunk ChunkNo ChunkNo PrettyCallStack
   | NotWithinBounds Word64 ChunkSize PrettyCallStack
-  | ChunkCannotContainEBBs ChunkNo PrettyCallStack
   deriving (Show)
 
 instance Exception ChunkAssertionFailure
@@ -268,17 +228,6 @@ assertWithinBounds ix sz
   | otherwise                 = throw $ NotWithinBounds ix sz prettyCallStack
 #else
 assertWithinBounds _ _ = id
-#endif
-  where
-    _ = keepRedundantConstraint (Proxy @HasCallStack)
-
-assertChunkCanContainEBB :: HasCallStack => ChunkNo -> ChunkSize -> a -> a
-#if ENABLE_ASSERTIONS
-assertChunkCanContainEBB chunk size
-  | chunkCanContainEBB size = id
-  | otherwise               = throw $ ChunkCannotContainEBBs chunk prettyCallStack
-#else
-assertChunkCanContainEBB _ _ = id
 #endif
   where
     _ = keepRedundantConstraint (Proxy @HasCallStack)
