@@ -27,6 +27,7 @@ module Ouroboros.Consensus.Ledger.Basics (
   , LedgerError
   , LedgerState
   , TickedLedgerState
+  , Proxy (..)
   ) where
 
 import           Data.Kind (Type)
@@ -34,6 +35,7 @@ import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ticked
 import           Ouroboros.Consensus.Util ((...:))
+import           Data.Proxy (Proxy (..))
 
 {-------------------------------------------------------------------------------
   Tip
@@ -163,6 +165,12 @@ class ( -- Requirements on the ledger state itself
     -> SlotNo
     -> l
     -> LedgerResult l (Ticked l)
+
+  fastSTSOpts :: Proxy l -> STSOptions l
+
+  accurateSTSOpts :: Proxy l -> STSOptions l
+
+  enableSTSEvents :: Proxy l -> STSOptions l -> STSOptions l
 
 -- | 'lrResult' after 'applyChainTickLedgerResult'
 applyChainTick :: IsLedger l => STSOptions l -> LedgerCfg l -> SlotNo -> l -> Ticked l

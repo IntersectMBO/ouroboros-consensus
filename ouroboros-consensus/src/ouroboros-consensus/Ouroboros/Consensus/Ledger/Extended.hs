@@ -146,6 +146,10 @@ instance ( LedgerSupportsProtocol blk
 
       ledgerResult = applyChainTickLedgerResult sts lcfg slot ledger
 
+  fastSTSOpts _ = fastSTSOpts (Proxy @(LedgerState blk))
+  accurateSTSOpts _ = accurateSTSOpts (Proxy @(LedgerState blk))
+  enableSTSEvents _ = enableSTSEvents (Proxy @(LedgerState blk))
+
 instance LedgerSupportsProtocol blk => ApplyBlock (ExtLedgerState blk) blk where
   applyBlockLedgerResult sts cfg blk TickedExtLedgerState{..} = do
     ledgerResult <-
@@ -163,11 +167,13 @@ instance LedgerSupportsProtocol blk => ApplyBlock (ExtLedgerState blk) blk where
           tickedHeaderState
     pure $ (\l -> ExtLedgerState l hdr) <$> castLedgerResult ledgerResult
 
-  reapplyBlockLedgerResult sts cfg blk TickedExtLedgerState{..} =
+  reapplyResult = undefined
+
+  reapplyBlockLedgerResult cfg blk TickedExtLedgerState{..} =
       (\l -> ExtLedgerState l hdr) <$> castLedgerResult ledgerResult
     where
       ledgerResult =
-        reapplyBlockLedgerResult sts
+        reapplyBlockLedgerResult
           (configLedger $ getExtLedgerCfg cfg)
           blk
           tickedLedgerState

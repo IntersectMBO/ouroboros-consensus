@@ -25,6 +25,7 @@ module Ouroboros.Consensus.Byron.Node (
   , protocolInfoByron
   ) where
 
+import qualified Cardano.Chain.ValidationMode as Validation
 import qualified Cardano.Chain.Delegation as Delegation
 import qualified Cardano.Chain.Genesis as Genesis
 import           Cardano.Chain.ProtocolConstants (kEpochSlots)
@@ -178,13 +179,16 @@ data ProtocolParamsByron = ProtocolParamsByron {
     }
 
 protocolInfoByron :: ProtocolParamsByron
+                  -> Validation.ValidationMode
                   -> ProtocolInfo ByronBlock
 protocolInfoByron ProtocolParamsByron {
                       byronGenesis                = genesisConfig
                     , byronPbftSignatureThreshold = mSigThresh
                     , byronProtocolVersion        = pVer
                     , byronSoftwareVersion        = sVer
-                    } =
+                    }
+                  sts
+  =
     ProtocolInfo {
         pInfoConfig = TopLevelConfig {
             topLevelConfigProtocol = PBftConfig {
@@ -195,7 +199,7 @@ protocolInfoByron ProtocolParamsByron {
           , topLevelConfigCodec       = mkByronCodecConfig compactedGenesisConfig
           , topLevelConfigStorage     = ByronStorageConfig blockConfig
           , topLevelConfigCheckpoints = emptyCheckpointsMap
-          , topLevelConfigSTS         = ()
+          , topLevelConfigSTS         = sts
           }
       , pInfoInitLedger = ExtLedgerState {
             -- Important: don't pass the compacted genesis config to

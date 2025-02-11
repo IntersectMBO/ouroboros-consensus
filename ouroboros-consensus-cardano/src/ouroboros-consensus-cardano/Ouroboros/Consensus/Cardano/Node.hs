@@ -532,7 +532,7 @@ protocolInfoCardano paramsCardano
           , topLevelConfigBlock    = blockConfigByron
           }
       , pInfoInitLedger = initExtLedgerStateByron
-      } = protocolInfoByron byronProtocolParams
+      } = protocolInfoByron byronProtocolParams undefined
 
     partialConsensusConfigByron :: PartialConsensusConfig (BlockProtocol ByronBlock)
     partialConsensusConfigByron = consensusConfigByron

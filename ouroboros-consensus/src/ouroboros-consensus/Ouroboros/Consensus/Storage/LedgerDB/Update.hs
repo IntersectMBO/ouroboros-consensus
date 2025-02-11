@@ -117,14 +117,14 @@ applyBlock :: forall m c l blk. (ApplyBlock l blk, Monad m, c)
 applyBlock sts cfg ap db = case ap of
     ReapplyVal b ->
       return $
-        tickThenReapply sts cfg b l
+        tickThenReapply cfg b l
     ApplyVal b ->
       either (throwLedgerError db (blockRealPoint b)) return $ runExcept $
         tickThenApply sts cfg b l
     ReapplyRef r  -> do
       b <- doResolveBlock r
       return $
-        tickThenReapply sts cfg b l
+        tickThenReapply cfg b l
     ApplyRef r -> do
       b <- doResolveBlock r
       either (throwLedgerError db r) return $ runExcept $

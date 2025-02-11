@@ -179,7 +179,7 @@ protocolInfoShelley ::
   => SL.ShelleyGenesis c
   -> ProtocolParamsShelleyBased c
   -> SL.ProtVer
-  -> Bool
+  -> SomeSTSOpts
   -> ( ProtocolInfo (ShelleyBlock (TPraos c) (ShelleyEra c) )
      , m [BlockForging m (ShelleyBlock (TPraos c) (ShelleyEra c))]
      )
@@ -205,7 +205,7 @@ protocolInfoTPraosShelleyBased ::
   -> L.TransitionConfig era
   -> SL.ProtVer
      -- ^ see 'shelleyProtVer', mutatis mutandi
-  -> Bool
+  -> SomeSTSOpts
   -> ( ProtocolInfo (ShelleyBlock (TPraos c) era)
      , m [BlockForging m (ShelleyBlock (TPraos c) era)]
      )
@@ -215,7 +215,7 @@ protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
                            }
                          transitionCfg
                          protVer
-                         doEvents
+                         sts
   =
     assertWithMsg (validateGenesis genesis) $
     ( ProtocolInfo {
@@ -241,7 +241,7 @@ protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
       , topLevelConfigCodec       = ShelleyCodecConfig
       , topLevelConfigStorage     = storageConfig
       , topLevelConfigCheckpoints = emptyCheckpointsMap
-      , topLevelConfigSTS         = someEpSing doEvents
+      , topLevelConfigSTS         = sts
       }
 
     consensusConfig :: ConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) era))

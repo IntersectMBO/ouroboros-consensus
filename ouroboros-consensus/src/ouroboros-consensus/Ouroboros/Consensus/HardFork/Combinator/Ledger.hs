@@ -158,6 +158,21 @@ instance CanHardFork xs => IsLedger (LedgerState (HardForkBlock xs)) where
       extended :: HardForkState LedgerState xs
       extended = State.extendToSlot cfg slot st
 
+  fastSTSOpts _ = PerEraSTSOptions (hcpure proxySingle f)
+    where
+      f :: forall blk. IsLedger (LedgerState blk) => WrapSTSOptions blk
+      f = WrapSTSOptions $ fastSTSOpts (Proxy @(LedgerState blk))
+
+  accurateSTSOpts _ = PerEraSTSOptions (hcpure proxySingle f)
+    where
+      f :: forall blk. IsLedger (LedgerState blk) => WrapSTSOptions blk
+      f = WrapSTSOptions $ accurateSTSOpts (Proxy @(LedgerState blk))
+
+  enableSTSEvents _ = PerEraSTSOptions . hcmap proxySingle f . getPerEraSTSOptions
+    where
+      f :: forall blk. IsLedger (LedgerState blk) => WrapSTSOptions blk -> WrapSTSOptions blk
+      f = WrapSTSOptions . enableSTSEvents (Proxy @(LedgerState blk)) . unwrapSTSOptions
+
 tickOne :: SingleEraBlock blk
         => EpochInfo (Except PastHorizonException)
         -> SlotNo
@@ -199,24 +214,10 @@ instance CanHardFork xs
                transition
                st
 
-  reapplyBlockLedgerResult sts cfg
-                      (HardForkBlock (OneEraBlock block))
-                      (TickedHardForkLedgerState transition st) =
-      case State.match block st of
-        Left _mismatch ->
-          -- We already applied this block to this ledger state,
-          -- so it can't be from the wrong era
-          error "reapplyBlockLedgerResult: can't be from other era"
-        Right matched ->
-            fmap HardForkLedgerState
-          $ sequenceHardForkState
-          $ hcizipWith proxySingle reapply (hzipWith (\s c -> Pair s c) (getPerEraSTSOptions sts) cfgs) matched
-    where
-      cfgs = distribLedgerConfig ei cfg
-      ei   = State.epochInfoPrecomputedTransitionInfo
-               (hardForkLedgerConfigShape cfg)
-               transition
-               st
+  reapplyResult _ _ =
+    -- We already applied this block to this ledger state,
+    -- so it can't be from the wrong era
+    error "reapplyBlockLedgerResult: can't be from other era"
 
 apply :: SingleEraBlock blk
       => Index xs                                           blk
@@ -231,18 +232,6 @@ apply index (Pair (WrapSTSOptions sts) (WrapLedgerConfig cfg)) (Pair (I block) (
     $ withExcept (injectLedgerError index)
     $ fmap (Comp . embedLedgerResult (injectLedgerEvent index))
     $ applyBlockLedgerResult sts cfg block st
-
-reapply :: SingleEraBlock blk
-        => Index xs                                           blk
-        -> Product WrapSTSOptions WrapLedgerConfig            blk
-        -> Product I (Ticked :.: LedgerState)                 blk
-        -> (    LedgerResult (LedgerState (HardForkBlock xs))
-            :.: LedgerState
-           )                                                  blk
-reapply index (Pair (WrapSTSOptions sts) (WrapLedgerConfig cfg)) (Pair (I block) (Comp st)) =
-      Comp
-    $ embedLedgerResult (injectLedgerEvent index)
-    $ reapplyBlockLedgerResult sts cfg block st
 
 {-------------------------------------------------------------------------------
   UpdateLedger

@@ -386,6 +386,10 @@ instance Bridge m a => IsLedger (LedgerState (DualBlock m a)) where
                        slot
                        dualLedgerStateMain
 
+  fastSTSOpts _ = fastSTSOpts (Proxy @(LedgerState m))
+  accurateSTSOpts _ = accurateSTSOpts (Proxy @(LedgerState m))
+  enableSTSEvents _ = enableSTSEvents (Proxy @(LedgerState m))
+
 instance Bridge m a => ApplyBlock (LedgerState (DualBlock m a)) (DualBlock m a) where
 
   applyBlockLedgerResult sts cfg
@@ -411,12 +415,14 @@ instance Bridge m a => ApplyBlock (LedgerState (DualBlock m a)) (DualBlock m a) 
                                     tickedDualLedgerStateBridge
         }
 
-  reapplyBlockLedgerResult sts cfg
+  reapplyResult = undefined
+
+  reapplyBlockLedgerResult cfg
                            block@DualBlock{..}
                            TickedDualLedgerState{..} =
     castLedgerResult ledgerResult <&> \main' -> DualLedgerState {
         dualLedgerStateMain   = main'
-      , dualLedgerStateAux    = reapplyMaybeBlock sts
+      , dualLedgerStateAux    = reapplyMaybeBlock
                                   (dualLedgerConfigAux cfg)
                                   dualBlockAux
                                   tickedDualLedgerStateAux
@@ -426,7 +432,7 @@ instance Bridge m a => ApplyBlock (LedgerState (DualBlock m a)) (DualBlock m a) 
                                   tickedDualLedgerStateBridge
       }
     where
-      ledgerResult = reapplyBlockLedgerResult sts
+      ledgerResult = reapplyBlockLedgerResult
                        (dualLedgerConfigMain cfg)
                        dualBlockMain
                        tickedDualLedgerStateMain
@@ -788,14 +794,13 @@ applyMaybeBlock sts cfg (Just block) tst _  = applyLedgerBlock sts cfg block tst
 --
 -- See also 'applyMaybeBlock'
 reapplyMaybeBlock :: UpdateLedger blk
-                  => STSOptions (LedgerState blk)
-                  -> LedgerConfig blk
+                  => LedgerConfig blk
                   -> Maybe blk
                   -> TickedLedgerState blk
                   -> LedgerState blk
                   -> LedgerState blk
-reapplyMaybeBlock _ _   Nothing      _   st = st
-reapplyMaybeBlock sts cfg (Just block) tst _  = reapplyLedgerBlock sts cfg block tst
+reapplyMaybeBlock _   Nothing      _   st = st
+reapplyMaybeBlock cfg (Just block) tst _  = reapplyLedgerBlock cfg block tst
 
 -- | Used when the concrete and abstract implementation should agree on errors
 --

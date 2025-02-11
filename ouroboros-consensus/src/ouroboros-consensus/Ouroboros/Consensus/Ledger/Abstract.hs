@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -91,22 +92,16 @@ class ( IsLedger l
     -> Ticked l
     -> Except (LedgerErr l) (LedgerResult l l)
 
-  -- | Re-apply a block to the very same ledger state it was applied in before.
-  --
-  -- Since a block can only be applied to a single, specific, ledger state,
-  -- if we apply a previously applied block again it will be applied in the
-  -- very same ledger state, and therefore can't possibly fail.
-  --
-  -- It is worth noting that since we already know that the block is valid in
-  -- the provided ledger state, the ledger layer should not perform /any/
-  -- validation checks.
+  reapplyResult :: Proxy blk -> Except (LedgerErr l) (LedgerResult l l) -> LedgerResult l l
+
   reapplyBlockLedgerResult ::
        HasCallStack
-    => STSOptions l
-    -> LedgerCfg l
+    => LedgerCfg l
     -> blk
     -> Ticked l
     -> LedgerResult l l
+  reapplyBlockLedgerResult =
+    reapplyResult (Proxy @blk) ..: applyBlockLedgerResult (fastSTSOpts (Proxy @l))
 
 -- | Interaction with the ledger layer
 class ApplyBlock (LedgerState blk) blk => UpdateLedger blk
@@ -117,6 +112,7 @@ class ApplyBlock (LedgerState blk) blk => UpdateLedger blk
 
 -- | 'lrResult' after 'applyBlockLedgerResult'
 applyLedgerBlock ::
+     forall l blk.
      (ApplyBlock l blk, HasCallStack)
   => STSOptions l
   -> LedgerCfg l
@@ -127,13 +123,14 @@ applyLedgerBlock = fmap lrResult ...: applyBlockLedgerResult
 
 -- | 'lrResult' after 'reapplyBlockLedgerResult'
 reapplyLedgerBlock ::
+     forall l blk.
      (ApplyBlock l blk, HasCallStack)
-  => STSOptions l
-  -> LedgerCfg l
+  => LedgerCfg l
   -> blk
   -> Ticked l
   -> l
-reapplyLedgerBlock = lrResult ...: reapplyBlockLedgerResult
+reapplyLedgerBlock =
+  lrResult ..: reapplyBlockLedgerResult
 
 tickThenApplyLedgerResult ::
      ApplyBlock l blk
@@ -151,21 +148,22 @@ tickThenApplyLedgerResult stsOpts cfg blk l = do
     }
 
 tickThenReapplyLedgerResult ::
+     forall l blk.
      ApplyBlock l blk
-  => STSOptions l
-  -> LedgerCfg l
+  => LedgerCfg l
   -> blk
   -> l
   -> LedgerResult l l
-tickThenReapplyLedgerResult stsOpts cfg blk l =
-  let lrTick  = applyChainTickLedgerResult stsOpts cfg (blockSlot blk) l
-      lrBlock = reapplyBlockLedgerResult   stsOpts cfg            blk (lrResult lrTick)
+tickThenReapplyLedgerResult cfg blk l =
+  let lrTick  = applyChainTickLedgerResult (fastSTSOpts (Proxy @l)) cfg (blockSlot blk) l
+      lrBlock = reapplyBlockLedgerResult                            cfg            blk (lrResult lrTick)
   in LedgerResult {
       lrEvents = lrEvents lrTick <> lrEvents lrBlock
     , lrResult = lrResult lrBlock
     }
 
 tickThenApply ::
+     forall l blk.
      ApplyBlock l blk
   => STSOptions l
   -> LedgerCfg l
@@ -175,13 +173,13 @@ tickThenApply ::
 tickThenApply = fmap lrResult ...: tickThenApplyLedgerResult
 
 tickThenReapply ::
+     forall l blk.
      ApplyBlock l blk
-  => STSOptions l
-  -> LedgerCfg l
+  => LedgerCfg l
   -> blk
   -> l
   -> l
-tickThenReapply = lrResult ...: tickThenReapplyLedgerResult
+tickThenReapply = lrResult ..: tickThenReapplyLedgerResult
 
 foldLedger ::
      ApplyBlock l blk
@@ -190,8 +188,8 @@ foldLedger = repeatedlyM .: tickThenApply
 
 refoldLedger ::
      ApplyBlock l blk
-  => STSOptions l -> LedgerCfg l -> [blk] -> l -> l
-refoldLedger = repeatedly .: tickThenReapply
+  => LedgerCfg l -> [blk] -> l -> l
+refoldLedger = repeatedly . tickThenReapply
 
 {-------------------------------------------------------------------------------
   Short-hand

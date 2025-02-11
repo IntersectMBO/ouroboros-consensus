@@ -174,7 +174,7 @@ instance IsLedger (LedgerState ByronBlock) where
   type AuxLedgerEvent (LedgerState ByronBlock) =
     VoidLedgerEvent (LedgerState ByronBlock)
 
-  type STSOptions (LedgerState ByronBlock) = ()
+  type STSOptions (LedgerState ByronBlock) = CC.ValidationMode
 
   applyChainTickLedgerResult _ cfg slotNo ByronLedgerState{..} = pureLedgerResult $
       TickedByronLedgerState {
@@ -184,20 +184,25 @@ instance IsLedger (LedgerState ByronBlock) where
             byronLedgerTransition
         }
 
+  fastSTSOpts _ = CC.fromBlockValidationMode CC.NoBlockValidation
+  accurateSTSOpts _ = CC.fromBlockValidationMode CC.BlockValidation
+  enableSTSEvents _ = id
+
+deriving instance Generic CC.ValidationMode
+instance NoThunks CC.ValidationMode
+deriving instance Generic CC.BlockValidationMode
+instance NoThunks CC.BlockValidationMode
+deriving instance Generic CC.TxValidationMode
+instance NoThunks CC.TxValidationMode
+
 {-------------------------------------------------------------------------------
   Supporting the various consensus interfaces
 -------------------------------------------------------------------------------}
 
 instance ApplyBlock (LedgerState ByronBlock) ByronBlock where
-  applyBlockLedgerResult _ = fmap pureLedgerResult ..: applyByronBlock validationMode
-    where
-      validationMode = CC.fromBlockValidationMode CC.BlockValidation
+  applyBlockLedgerResult sts = fmap pureLedgerResult ..: applyByronBlock sts
 
-  reapplyBlockLedgerResult _ =
-          (pureLedgerResult . validationErrorImpossible)
-      ..: applyByronBlock validationMode
-    where
-      validationMode = CC.fromBlockValidationMode CC.NoBlockValidation
+  reapplyResult _ = validationErrorImpossible
 
 data instance BlockQuery ByronBlock :: Type -> Type where
   GetUpdateInterfaceState :: BlockQuery ByronBlock UPI.State
