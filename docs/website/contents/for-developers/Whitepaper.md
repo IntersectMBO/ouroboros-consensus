@@ -37,7 +37,7 @@ The following table outlines the informal components of the Haskell reference im
 
 ## Responsibilities of the Storage Layer
 
-The Consensus layer needs to keep track of a significant amount of data to maintain the Cardano network. Some of this data is "hot" and relates to the candidate chains and other data is cold and relates to the historical chain.
+The Consensus layer needs to keep track of a significant amount of data to maintain the Cardano network. Some of this data is "hot" and relates to the candidate chains and other data is "cold" and relates to the historical chain.
 
 ```mermaid
 flowchart TD
@@ -45,15 +45,13 @@ flowchart TD
     A("Storage") -- Random Access --> C("Volatile Chain")
     A("Storage") -- Random Access --> D("Recent Leder States")
 
-    subgraph noteB ["Hot - Efficient Rollback"]
+    subgraph noteA ["Hot - Efficient Rollback"]
         C
         D
-
+    end
     subgraph noteB ["Cold - Efficient Storage"]
         B
-
     end
-
 ```
 
 In order to switch to an alternative chain, Consensus needs to evaluate the validity of such a chain. In order to evaluate the validity of a block, we need to have a Ledger state at the predecessor block. As applying blocks is not an inversible operation, this is usually solved by maintaining the last `k` ledger states in memory.
