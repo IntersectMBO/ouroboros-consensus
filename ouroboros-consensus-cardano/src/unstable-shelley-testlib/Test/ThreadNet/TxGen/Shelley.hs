@@ -39,7 +39,7 @@ import           Test.ThreadNet.TxGen (TxGen (..))
 
 data ShelleyTxGenExtra = ShelleyTxGenExtra
   { -- | Generator environment.
-    stgeGenEnv  :: Gen.GenEnv ShelleyEra
+    stgeGenEnv  :: Gen.GenEnv MockCrypto ShelleyEra
     -- | Generate no transactions before this slot.
   , stgeStartAt :: SlotNo
   }
@@ -90,7 +90,7 @@ genTx ::
      TopLevelConfig (ShelleyBlock (TPraos MockCrypto) ShelleyEra)
   -> SlotNo
   -> TickedLedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra)
-  -> Gen.GenEnv ShelleyEra
+  -> Gen.GenEnv MockCrypto ShelleyEra
   -> Gen (Maybe (GenTx (ShelleyBlock (TPraos MockCrypto) ShelleyEra)))
 genTx _cfg slotNo TickedShelleyLedgerState { tickedShelleyLedgerState } genEnv =
     Just . mkShelleyTx <$> Gen.genTx
@@ -128,8 +128,8 @@ data WhetherToGeneratePPUs = DoNotGeneratePPUs | DoGeneratePPUs
 
 mkGenEnv ::
      WhetherToGeneratePPUs
-  -> [CoreNode c]
-  -> Gen.GenEnv ShelleyEra
+  -> [CoreNode MockCrypto]
+  -> Gen.GenEnv MockCrypto ShelleyEra
 mkGenEnv whetherPPUs coreNodes = Gen.GenEnv keySpace scriptSpace constants
   where
     -- Configuration of the transaction generator
@@ -153,7 +153,7 @@ mkGenEnv whetherPPUs coreNodes = Gen.GenEnv keySpace scriptSpace constants
             DoGeneratePPUs    -> cs
             DoNotGeneratePPUs -> cs{ Gen.frequencyTxUpdates = 0 }
 
-    keySpace :: Gen.KeySpace ShelleyEra
+    keySpace :: Gen.KeySpace MockCrypto ShelleyEra
     keySpace =
       Gen.KeySpace
         (cnkiCoreNode <$> cn)

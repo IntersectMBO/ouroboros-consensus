@@ -14,15 +14,17 @@ module Test.ThreadNet.TxGen.Cardano (CardanoTxGenExtra (..)) where
 import qualified Cardano.Chain.Common as Byron
 import           Cardano.Chain.Genesis (GeneratedSecrets (..))
 import           Cardano.Crypto (toVerification)
+import qualified Cardano.Crypto.DSIGN as DSIGN
 import qualified Cardano.Crypto.Signing as Byron
+import qualified Cardano.Crypto.VRF as VRF
 import qualified Cardano.Ledger.Address as SL (BootstrapAddress (..))
 import qualified Cardano.Ledger.Hashes as SL
+import           Cardano.Ledger.Keys (DSIGN)
 import qualified Cardano.Ledger.Keys.Bootstrap as SL (makeBootstrapWitness)
-import qualified Cardano.Ledger.SafeHash as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as SL
 import           Cardano.Ledger.Val ((<->))
-import           Cardano.Protocol.Crypto (StandardCrypto)
+import           Cardano.Protocol.Crypto (VRF)
 import           Control.Exception (assert)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -100,7 +102,7 @@ instance CardanoHardForkConstraints c => TxGen (CardanoBlock c) where
 
       -- Reuse the payment key as the pool key, since it's an individual
       -- stake pool and the namespaces are separate.
-      poolSK :: SL.SignKeyDSIGN
+      poolSK :: DSIGN.SignKeyDSIGN DSIGN
       poolSK = paymentSK
 
 -- | See 'migrateUTxO'
@@ -109,10 +111,10 @@ data MigrationInfo c = MigrationInfo
     -- ^ Needed for creating a Byron address.
   , byronSK    :: Byron.SigningKey
     -- ^ The core node's Byron secret.
-  , paymentSK  :: SL.SignKeyDSIGN
-  , poolSK     :: SL.SignKeyDSIGN
-  , stakingSK  :: SL.SignKeyDSIGN
-  , vrfSK      :: SL.SignKeyVRF c
+  , paymentSK  :: DSIGN.SignKeyDSIGN DSIGN
+  , poolSK     :: DSIGN.SignKeyDSIGN DSIGN
+  , stakingSK  :: DSIGN.SignKeyDSIGN DSIGN
+  , vrfSK      :: VRF.SignKeyVRF (VRF c)
     -- ^ To be re-used by the individual pool.
   }
 
@@ -126,7 +128,9 @@ data MigrationInfo c = MigrationInfo
 -- It returns 'Nothing' if the core node does not have any utxo in its
 -- 'byronAddr' (eg if this transaction has already been applied).
 migrateUTxO ::
-     forall c. CardanoHardForkConstraints c
+     forall c.
+     ( CardanoHardForkConstraints c
+     )
   => MigrationInfo c
   -> SlotNo
   -> LedgerConfig (CardanoBlock c)
@@ -249,7 +253,7 @@ migrateUTxO migrationInfo curSlot lcfg lst
         , SL.ppRewardAccount =
             SL.RewardAccount Shelley.networkId $ Shelley.mkCredential poolSK
         , SL.ppRelays        = StrictSeq.empty
-        , SL.ppVrf           = Shelley.mkKeyHashVrf @StandardCrypto vrfSK
+        , SL.ppVrf           = Shelley.mkKeyHashVrf @c vrfSK
         }
 
 -----
