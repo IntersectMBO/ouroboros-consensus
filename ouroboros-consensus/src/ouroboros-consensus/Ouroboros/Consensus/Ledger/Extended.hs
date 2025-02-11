@@ -167,7 +167,7 @@ instance LedgerSupportsProtocol blk => ApplyBlock (ExtLedgerState blk) blk where
           tickedHeaderState
     pure $ (\l -> ExtLedgerState l hdr) <$> castLedgerResult ledgerResult
 
-  reapplyResult = undefined
+  reapplyResult = error "Unimplemented as not needed"
 
   reapplyBlockLedgerResult cfg blk TickedExtLedgerState{..} =
       (\l -> ExtLedgerState l hdr) <$> castLedgerResult ledgerResult

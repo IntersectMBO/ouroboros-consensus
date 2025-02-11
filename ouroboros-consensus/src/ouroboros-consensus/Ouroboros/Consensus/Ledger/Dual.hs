@@ -415,7 +415,7 @@ instance Bridge m a => ApplyBlock (LedgerState (DualBlock m a)) (DualBlock m a) 
                                     tickedDualLedgerStateBridge
         }
 
-  reapplyResult = undefined
+  reapplyResult = error "Unimplemented as not needed"
 
   reapplyBlockLedgerResult cfg
                            block@DualBlock{..}

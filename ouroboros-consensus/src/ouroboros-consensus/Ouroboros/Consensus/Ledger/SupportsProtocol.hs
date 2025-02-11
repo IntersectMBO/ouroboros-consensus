@@ -74,16 +74,17 @@ _lemma_ledgerViewForecastAt_applyChainTick
   :: ( LedgerSupportsProtocol blk
      , Eq (LedgerView (BlockProtocol blk))
      )
-  => LedgerConfig blk
+  => STSOptions (LedgerState blk)
+  -> LedgerConfig blk
   -> LedgerState blk
   -> Forecast (LedgerView (BlockProtocol blk))
   -> SlotNo
   -> Either String ()
-_lemma_ledgerViewForecastAt_applyChainTick cfg st forecast for
+_lemma_ledgerViewForecastAt_applyChainTick sts cfg st forecast for
     | NotOrigin for >= ledgerTipSlot st
     , let lhs = forecastFor forecast for
           rhs = protocolLedgerView cfg
-              . applyChainTick undefined cfg for
+              . applyChainTick sts cfg for
               $ st
     , Right lhs' <- runExcept lhs
     , lhs' /= rhs

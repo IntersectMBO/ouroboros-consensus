@@ -17,7 +17,7 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Combinator
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation
-import           Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
+import           Ouroboros.Consensus.Ledger.Basics (LedgerConfig, STSOptions)
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Protocol.Abstract (protocolSecurityParam)
@@ -42,11 +42,14 @@ protocolInfoBinary ::
   -> History.EraParams
   -> (ConsensusConfig (BlockProtocol blk2) -> PartialConsensusConfig (BlockProtocol blk2))
   -> (LedgerConfig blk2 -> PartialLedgerConfig blk2)
+  -> STSOptions (LedgerState (HardForkBlock '[blk1, blk2]))
   -> ( ProtocolInfo (HardForkBlock '[blk1, blk2])
      , m [BlockForging m (HardForkBlock '[blk1, blk2])]
      )
 protocolInfoBinary protocolInfo1 blockForging1 eraParams1 toPartialConsensusConfig1 toPartialLedgerConfig1
-                   protocolInfo2 blockForging2 eraParams2 toPartialConsensusConfig2 toPartialLedgerConfig2 =
+                   protocolInfo2 blockForging2 eraParams2 toPartialConsensusConfig2 toPartialLedgerConfig2
+                   sts
+   =
     ( ProtocolInfo {
         pInfoConfig = TopLevelConfig {
             topLevelConfigProtocol = HardForkConsensusConfig {
@@ -79,7 +82,7 @@ protocolInfoBinary protocolInfo1 blockForging1 eraParams1 toPartialConsensusConf
                 PerEraStorageConfig $
                   (storageConfig1 :* storageConfig2 :* Nil)
           , topLevelConfigCheckpoints = emptyCheckpointsMap
-          , topLevelConfigSTS         = undefined
+          , topLevelConfigSTS         = sts
           }
       , pInfoInitLedger = ExtLedgerState {
             ledgerState =

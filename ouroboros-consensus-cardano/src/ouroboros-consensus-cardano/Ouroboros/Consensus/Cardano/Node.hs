@@ -68,12 +68,13 @@ import           Data.Functor.These (These1 (..))
 import qualified Data.Map.Strict as Map
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Counting
-import           Data.SOP.Index (Index (..))
+import           Data.SOP.Index (Index (..), projectNP)
 import           Data.SOP.OptNP (NonEmptyOptNP, OptNP (OptSkip))
 import qualified Data.SOP.OptNP as OptNP
 import           Data.SOP.Strict
 import           Data.Word (Word16, Word64)
 import           Lens.Micro ((^.))
+import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger (ByronBlock)
 import qualified Ouroboros.Consensus.Byron.Ledger as Byron
@@ -89,6 +90,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Node.Run
@@ -451,6 +453,7 @@ data CardanoProtocolParams c = CardanoProtocolParams {
     -- /intra-era hard fork/ (ie conditionals in the ledger rules).
     --
   , cardanoProtocolVersion        :: ProtVer
+  , cardanoSTS                    :: STSOptions (LedgerState (CardanoBlock c))
   }
 
 -- | Create a 'ProtocolInfo' for 'CardanoBlock'
@@ -497,6 +500,7 @@ protocolInfoCardano paramsCardano
       , cardanoLedgerTransitionConfig
       , cardanoCheckpoints
       , cardanoProtocolVersion
+      , cardanoSTS = sts
       } = paramsCardano
 
     genesisShelley = cardanoLedgerTransitionConfig ^. L.tcShelleyGenesisL
@@ -532,7 +536,7 @@ protocolInfoCardano paramsCardano
           , topLevelConfigBlock    = blockConfigByron
           }
       , pInfoInitLedger = initExtLedgerStateByron
-      } = protocolInfoByron byronProtocolParams undefined
+      } = protocolInfoByron byronProtocolParams $ unwrapSTSOptions $ projectNP IZ $ getPerEraSTSOptions sts
 
     partialConsensusConfigByron :: PartialConsensusConfig (BlockProtocol ByronBlock)
     partialConsensusConfigByron = consensusConfigByron
@@ -772,7 +776,7 @@ protocolInfoCardano paramsCardano
             (Shelley.ShelleyStorageConfig tpraosSlotsPerKESPeriod k)
             (Shelley.ShelleyStorageConfig tpraosSlotsPerKESPeriod k)
       , topLevelConfigCheckpoints = cardanoCheckpoints
-      , topLevelConfigSTS = undefined
+      , topLevelConfigSTS = sts
       }
 
     -- When the initial ledger state is not in the Byron era, register various
