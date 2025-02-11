@@ -56,6 +56,8 @@ flowchart TD
 
 In order to switch to an alternative chain, Consensus needs to evaluate the validity of such a chain. In order to evaluate the validity of a block, we need to have a Ledger state at the predecessor block. As applying blocks is not an inversible operation, this is usually solved by maintaining the last `k` ledger states in memory.
 
+Here and further, `k` is the **security parameter**. In the Praos consensus algorithm, `k` is the parameter of the Common Prefix theorem that bounds how many blocks would exist on a well-connected honest node's selections after its intersection with another well-connected honest node. See the Ouroboros Praos [paper](https://iohk.io/en/research/library/papers/ouroboros-praos-an-adaptively-secure-semi-synchronous-proof-of-stake-protocol/) for more details. For the purposes of implementing a Cardano node today, it is sufficient to know that `k`'s value on mainnet is 2160, and it denotes the amount of ledger states the implementation needs to keep track of in order to perform chain selection.
+
 In the Haskell reference implementation, the Storage layer is implemented by the `ChainDB` components, which comprises the `ImmutableDB`, `VolatileDB` and `LedgerDB` subcomponents:
 
 | Component   | Responsibility                                                                                            |
@@ -65,7 +67,7 @@ In the Haskell reference implementation, the Storage layer is implemented by the
 |             | efficiently switch to a different suffix of the chain if needed                                           |
 | LedgerDB    | Maintaining the last `k` (2160 on Cardano mainnet) ledger states in memory to facilitate chain selection. |
 
-**TODO**: refile requirements on access patterns for Immutable and Volatile databases. Read/write access? When do we need random access and where we do not? What does it mean specifically to efficiently switch chains?
+**TODO**: refine requirements on access patterns for Immutable and Volatile databases. Read/write access? When do we need random access and where we do not? What does it mean specifically to efficiently switch chains?
 
 ## Requirements and Constraints for the Consensus and Storage Layers
 
