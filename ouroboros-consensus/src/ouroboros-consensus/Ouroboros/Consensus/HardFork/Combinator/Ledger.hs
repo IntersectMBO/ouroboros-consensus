@@ -214,7 +214,8 @@ instance CanHardFork xs
                transition
                st
 
-  reapplyResult _ _ =
+instance ThrowLedgerReapplyError (LedgerState (HardForkBlock xs)) where
+  reapplyResult _ =
     -- We already applied this block to this ledger state,
     -- so it can't be from the wrong era
     error "reapplyBlockLedgerResult: can't be from other era"

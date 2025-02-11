@@ -93,7 +93,7 @@ import           Ouroboros.Consensus.Shelley.Ledger.Config
 import           Ouroboros.Consensus.Shelley.Ledger.Protocol ()
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract
                      (EnvelopeCheckError, envelopeChecks, mkHeaderView, ProtoCrypto)
-import           Ouroboros.Consensus.Util ((..:), (.:))
+import           Ouroboros.Consensus.Util ((..:))
 import           Ouroboros.Consensus.Util.CBOR (decodeWithOrigin,
                      encodeWithOrigin)
 import           Ouroboros.Consensus.Util.Versioned
@@ -426,7 +426,9 @@ instance ShelleyCompatible proto era
       appBlk =
         SL.applyBlockOpts
 
-  reapplyResult _ = either (\err -> Exception.throw $! ShelleyReapplyException @era err) id . runExcept
+instance ShelleyCompatible proto era
+      => ThrowLedgerReapplyError (LedgerState (ShelleyBlock proto era)) where
+  reapplyResult = either (\err -> Exception.throw $! ShelleyReapplyException @era err) id . runExcept
 
 data ShelleyReapplyException =
   forall era. Show (ShelleyLedgerError era)

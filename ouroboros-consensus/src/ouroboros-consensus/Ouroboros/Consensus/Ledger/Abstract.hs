@@ -1,3 +1,4 @@
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -18,6 +19,7 @@ module Ouroboros.Consensus.Ledger.Abstract (
     Validated
     -- * Apply block
   , ApplyBlock (..)
+  , ThrowLedgerReapplyError (..)
   , UpdateLedger
     -- * Derived
   , applyLedgerBlock
@@ -92,16 +94,23 @@ class ( IsLedger l
     -> Ticked l
     -> Except (LedgerErr l) (LedgerResult l l)
 
-  reapplyResult :: Proxy blk -> Except (LedgerErr l) (LedgerResult l l) -> LedgerResult l l
-
   reapplyBlockLedgerResult ::
        HasCallStack
     => LedgerCfg l
     -> blk
     -> Ticked l
     -> LedgerResult l l
+  default reapplyBlockLedgerResult ::
+       (HasCallStack, ThrowLedgerReapplyError l)
+    => LedgerCfg l
+    -> blk
+    -> Ticked l
+    -> LedgerResult l l
   reapplyBlockLedgerResult =
-    reapplyResult (Proxy @blk) ..: applyBlockLedgerResult (fastSTSOpts (Proxy @l))
+    reapplyResult ..: applyBlockLedgerResult (fastSTSOpts (Proxy @l))
+
+class ThrowLedgerReapplyError l where
+  reapplyResult :: Except (LedgerErr l) (LedgerResult l l) -> LedgerResult l l
 
 -- | Interaction with the ledger layer
 class ApplyBlock (LedgerState blk) blk => UpdateLedger blk

@@ -83,7 +83,7 @@ import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.PBFT
-import           Ouroboros.Consensus.Util (ShowProxy (..), (..:), (...:))
+import           Ouroboros.Consensus.Util (ShowProxy (..), (..:))
 
 {-------------------------------------------------------------------------------
   LedgerState
@@ -202,7 +202,8 @@ instance NoThunks CC.TxValidationMode
 instance ApplyBlock (LedgerState ByronBlock) ByronBlock where
   applyBlockLedgerResult sts = fmap pureLedgerResult ..: applyByronBlock sts
 
-  reapplyResult _ = validationErrorImpossible
+instance ThrowLedgerReapplyError (LedgerState ByronBlock) where
+  reapplyResult = validationErrorImpossible
 
 data instance BlockQuery ByronBlock :: Type -> Type where
   GetUpdateInterfaceState :: BlockQuery ByronBlock UPI.State
