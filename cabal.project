@@ -45,6 +45,12 @@ if(os(windows))
   constraints:
     bitvec -simd
 
+
+allow-newer:
+  network-mux:network,
+  ouroboros-network-framework:network,
+  ouroboros-network:network,
+
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/ouroboros-network.git
