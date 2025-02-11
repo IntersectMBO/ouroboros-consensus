@@ -4,9 +4,9 @@
 
 module Test.ThreadNet.Shelley (tests) where
 
-import           Cardano.Crypto.Hash (ShortHash)
 import qualified Cardano.Ledger.BaseTypes as SL (UnitInterval,
                      mkNonceFromNumber, shelleyProtVer, unboundRational)
+import           Cardano.Ledger.Shelley (ShelleyEra)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as SL
 import qualified Cardano.Ledger.Shelley.Translation as SL
@@ -25,12 +25,11 @@ import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.NodeId
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
-import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import           Ouroboros.Consensus.Shelley.Node
-import           Test.Consensus.Shelley.MockCrypto (MockCrypto, MockShelley)
+import           Test.Consensus.Shelley.MockCrypto (MockCrypto)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -268,7 +267,7 @@ prop_simple_real_tpraos_convergence TestSetup
     initialKESPeriod :: SL.KESPeriod
     initialKESPeriod = SL.KESPeriod 0
 
-    coreNodes :: [CoreNode (EraCrypto Era)]
+    coreNodes :: [CoreNode MockCrypto]
     coreNodes = runGen initSeed $
         replicateM (fromIntegral n) $
           genCoreNode initialKESPeriod
@@ -279,7 +278,7 @@ prop_simple_real_tpraos_convergence TestSetup
     maxLovelaceSupply =
       fromIntegral (length coreNodes) * initialLovelacePerCoreNode
 
-    genesisConfig :: ShelleyGenesis (EraCrypto Era)
+    genesisConfig :: ShelleyGenesis
     genesisConfig =
         mkGenesisConfig
           genesisProtVer
@@ -288,7 +287,7 @@ prop_simple_real_tpraos_convergence TestSetup
           setupD
           maxLovelaceSupply
           tpraosSlotLength
-          (mkKesConfig (Proxy @(EraCrypto Era)) numSlots)
+          (mkKesConfig (Proxy @MockCrypto) numSlots)
           coreNodes
 
     epochSize :: EpochSize

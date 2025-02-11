@@ -316,7 +316,7 @@ prop_simple_cardano_convergence TestSetup
     maxLovelaceSupply :: Word64
     maxLovelaceSupply = 45000000000000000
 
-    genesisShelley :: ShelleyGenesis Crypto
+    genesisShelley :: ShelleyGenesis
     genesisShelley =
         Shelley.mkGenesisConfig
           (SL.ProtVer shelleyMajorVersion 0)
@@ -442,7 +442,7 @@ mkProtocolCardanoAndHardForkTxs ::
   -> CC.Genesis.GeneratedSecrets
   -> CC.Update.ProtocolVersion
      -- Shelley
-  -> ShelleyGenesis c
+  -> ShelleyGenesis
   -> SL.Nonce
   -> Shelley.CoreNode c
   -> TestNodeInitialization m (CardanoBlock c)
@@ -503,7 +503,7 @@ byronInitialMinorVersion = 0
 -- | The (first) major protocol version of the Shelley era, as used by
 -- 'hardForkOnDefaultProtocolVersions'.
 shelleyMajorVersion :: SL.Version
-shelleyMajorVersion = L.eraProtVerLow @(ShelleyEra StandardCrypto)
+shelleyMajorVersion = L.eraProtVerLow @ShelleyEra
 
 {-------------------------------------------------------------------------------
   Miscellany

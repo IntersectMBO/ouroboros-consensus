@@ -3,7 +3,6 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeOperators #-}
 
 -- | Utility functions to elaborate a Cardano 'ProtocolInfo' from certain parameters.
 module Test.Consensus.Cardano.ProtocolInfo (
@@ -144,7 +143,7 @@ hardForkInto Conway =
 --
 mkSimpleTestProtocolInfo ::
      forall c
-   . (CardanoHardForkConstraints c, c ~ StandardCrypto)
+   . (CardanoHardForkConstraints c)
   => Shelley.DecentralizationParam
   -- ^ Network decentralization parameter.
   -> SecurityParam
@@ -175,6 +174,7 @@ mkSimpleTestProtocolInfo
     aByronProtocolVersion =
         CC.Update.ProtocolVersion 0 0 0
 
+    coreNodeShelley :: Shelley.CoreNode c
     coreNodeShelley = runGen initSeed $ Shelley.genCoreNode initialKESPeriod
       where
         initSeed :: Seed
@@ -214,7 +214,7 @@ mkSimpleTestProtocolInfo
 --
 mkTestProtocolInfo ::
      forall m c
-   . (CardanoHardForkConstraints c, IOLike m, c ~ StandardCrypto)
+   . (CardanoHardForkConstraints c, IOLike m) --, c ~ StandardCrypto)
   => (CoreNodeId, Shelley.CoreNode c)
   -- ^ Id of the node for which the protocol info will be elaborated.
   -> ShelleyGenesis
