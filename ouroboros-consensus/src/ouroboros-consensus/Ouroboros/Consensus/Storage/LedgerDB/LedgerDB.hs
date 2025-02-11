@@ -119,10 +119,11 @@ instance GetTip l => Anchorable (WithOrigin SlotNo) (Checkpoint l) (Checkpoint l
 data LedgerDbCfg l = LedgerDbCfg {
       ledgerDbCfgSecParam :: !SecurityParam
     , ledgerDbCfg         :: !(LedgerCfg l)
+    , ledgerDbSTSOptions  :: !(STSOptions l)
     }
   deriving (Generic)
 
-deriving instance NoThunks (LedgerCfg l) => NoThunks (LedgerDbCfg l)
+deriving instance (NoThunks (STSOptions l), NoThunks (LedgerCfg l)) => NoThunks (LedgerDbCfg l)
 
 configLedgerDb ::
      ConsensusProtocol (BlockProtocol blk)
@@ -131,4 +132,5 @@ configLedgerDb ::
 configLedgerDb cfg = LedgerDbCfg {
       ledgerDbCfgSecParam = configSecurityParam cfg
     , ledgerDbCfg         = ExtLedgerCfg cfg
+    , ledgerDbSTSOptions  = topLevelConfigSTS cfg
     }

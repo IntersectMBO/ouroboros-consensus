@@ -39,6 +39,7 @@ module Ouroboros.Consensus.TypeFamilyWrappers (
   , WrapNodeToNodeVersion (..)
     -- * Type family instances
   , Ticked (..)
+  , WrapSTSOptions (..)
   ) where
 
 import           Codec.Serialise (Serialise)
@@ -64,6 +65,7 @@ newtype WrapGenTxId               blk = WrapGenTxId               { unwrapGenTxI
 newtype WrapHeaderHash            blk = WrapHeaderHash            { unwrapHeaderHash            :: HeaderHash                  blk  }
 newtype WrapLedgerConfig          blk = WrapLedgerConfig          { unwrapLedgerConfig          :: LedgerConfig                blk  }
 newtype WrapLedgerEvent           blk = WrapLedgerEvent           { unwrapLedgerEvent           :: AuxLedgerEvent (LedgerState blk) }
+newtype WrapSTSOptions            blk = WrapSTSOptions            { unwrapSTSOptions            :: STSOptions (LedgerState blk) }
 newtype WrapLedgerErr             blk = WrapLedgerErr             { unwrapLedgerErr             :: LedgerError                 blk  }
 newtype WrapLedgerUpdate          blk = WrapLedgerUpdate          { unwrapLedgerUpdate          :: LedgerUpdate                blk  }
 newtype WrapLedgerWarning         blk = WrapLedgerWarning         { unwrapLedgerWarning         :: LedgerWarning               blk  }
@@ -117,6 +119,7 @@ deriving instance Eq (OtherHeaderEnvelopeError blk ) => Eq (WrapEnvelopeErr     
 deriving instance Eq (TentativeHeaderState     blk ) => Eq (WrapTentativeHeaderState blk)
 deriving instance Eq (TentativeHeaderView      blk ) => Eq (WrapTentativeHeaderView  blk)
 deriving instance Eq (TipInfo                  blk ) => Eq (WrapTipInfo              blk)
+deriving instance Eq (STSOptions  (LedgerState blk)) => Eq (WrapSTSOptions            blk)
 deriving instance Eq (Validated (GenTx         blk)) => Eq (WrapValidatedGenTx       blk)
 
 deriving instance Ord (GenTxId blk)              => Ord (WrapGenTxId              blk)
@@ -134,6 +137,7 @@ deriving instance Show (OtherHeaderEnvelopeError blk ) => Show (WrapEnvelopeErr 
 deriving instance Show (TentativeHeaderState     blk ) => Show (WrapTentativeHeaderState  blk)
 deriving instance Show (TentativeHeaderView      blk ) => Show (WrapTentativeHeaderView   blk)
 deriving instance Show (TipInfo                  blk ) => Show (WrapTipInfo               blk)
+deriving instance Show (STSOptions  (LedgerState blk)) => Show (WrapSTSOptions            blk)
 deriving instance Show (Validated (GenTx         blk)) => Show (WrapValidatedGenTx        blk)
 
 deriving instance NoThunks (GenTxId                  blk ) => NoThunks (WrapGenTxId              blk)
@@ -142,6 +146,7 @@ deriving instance NoThunks (OtherHeaderEnvelopeError blk ) => NoThunks (WrapEnve
 deriving instance NoThunks (TentativeHeaderState     blk ) => NoThunks (WrapTentativeHeaderState blk)
 deriving instance NoThunks (TipInfo                  blk ) => NoThunks (WrapTipInfo              blk)
 deriving instance NoThunks (Validated (GenTx         blk)) => NoThunks (WrapValidatedGenTx       blk)
+deriving instance NoThunks (STSOptions  (LedgerState blk)) => NoThunks (WrapSTSOptions            blk)
 
 {-------------------------------------------------------------------------------
   .. consensus based

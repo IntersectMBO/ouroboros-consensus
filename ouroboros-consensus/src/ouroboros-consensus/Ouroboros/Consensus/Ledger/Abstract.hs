@@ -41,7 +41,7 @@ import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ticked
-import           Ouroboros.Consensus.Util (repeatedly, repeatedlyM, (..:))
+import           Ouroboros.Consensus.Util (repeatedly, repeatedlyM, (..:), (...:), (.:))
 
 -- | " Validated " transaction or block
 --
@@ -85,7 +85,8 @@ class ( IsLedger l
   -- 'applyChainTickLedgerResult' has already been called.
   applyBlockLedgerResult ::
        HasCallStack
-    => LedgerCfg l
+    => STSOptions l
+    -> LedgerCfg l
     -> blk
     -> Ticked l
     -> Except (LedgerErr l) (LedgerResult l l)
@@ -101,7 +102,8 @@ class ( IsLedger l
   -- validation checks.
   reapplyBlockLedgerResult ::
        HasCallStack
-    => LedgerCfg l
+    => STSOptions l
+    -> LedgerCfg l
     -> blk
     -> Ticked l
     -> LedgerResult l l
@@ -116,30 +118,33 @@ class ApplyBlock (LedgerState blk) blk => UpdateLedger blk
 -- | 'lrResult' after 'applyBlockLedgerResult'
 applyLedgerBlock ::
      (ApplyBlock l blk, HasCallStack)
-  => LedgerCfg l
+  => STSOptions l
+  -> LedgerCfg l
   -> blk
   -> Ticked l
   -> Except (LedgerErr l) l
-applyLedgerBlock = fmap lrResult ..: applyBlockLedgerResult
+applyLedgerBlock = fmap lrResult ...: applyBlockLedgerResult
 
 -- | 'lrResult' after 'reapplyBlockLedgerResult'
 reapplyLedgerBlock ::
      (ApplyBlock l blk, HasCallStack)
-  => LedgerCfg l
+  => STSOptions l
+  -> LedgerCfg l
   -> blk
   -> Ticked l
   -> l
-reapplyLedgerBlock = lrResult ..: reapplyBlockLedgerResult
+reapplyLedgerBlock = lrResult ...: reapplyBlockLedgerResult
 
 tickThenApplyLedgerResult ::
      ApplyBlock l blk
-  => LedgerCfg l
+  => STSOptions l
+  -> LedgerCfg l
   -> blk
   -> l
   -> Except (LedgerErr l) (LedgerResult l l)
-tickThenApplyLedgerResult cfg blk l = do
-  let lrTick = applyChainTickLedgerResult cfg (blockSlot blk) l
-  lrBlock <-   applyBlockLedgerResult     cfg            blk  (lrResult lrTick)
+tickThenApplyLedgerResult stsOpts cfg blk l = do
+  let lrTick = applyChainTickLedgerResult stsOpts cfg (blockSlot blk) l
+  lrBlock <-   applyBlockLedgerResult     stsOpts cfg            blk  (lrResult lrTick)
   pure LedgerResult {
       lrEvents = lrEvents lrTick <> lrEvents lrBlock
     , lrResult = lrResult lrBlock
@@ -147,13 +152,14 @@ tickThenApplyLedgerResult cfg blk l = do
 
 tickThenReapplyLedgerResult ::
      ApplyBlock l blk
-  => LedgerCfg l
+  => STSOptions l
+  -> LedgerCfg l
   -> blk
   -> l
   -> LedgerResult l l
-tickThenReapplyLedgerResult cfg blk l =
-  let lrTick  = applyChainTickLedgerResult cfg (blockSlot blk) l
-      lrBlock = reapplyBlockLedgerResult   cfg            blk (lrResult lrTick)
+tickThenReapplyLedgerResult stsOpts cfg blk l =
+  let lrTick  = applyChainTickLedgerResult stsOpts cfg (blockSlot blk) l
+      lrBlock = reapplyBlockLedgerResult   stsOpts cfg            blk (lrResult lrTick)
   in LedgerResult {
       lrEvents = lrEvents lrTick <> lrEvents lrBlock
     , lrResult = lrResult lrBlock
@@ -161,29 +167,31 @@ tickThenReapplyLedgerResult cfg blk l =
 
 tickThenApply ::
      ApplyBlock l blk
-  => LedgerCfg l
+  => STSOptions l
+  -> LedgerCfg l
   -> blk
   -> l
   -> Except (LedgerErr l) l
-tickThenApply = fmap lrResult ..: tickThenApplyLedgerResult
+tickThenApply = fmap lrResult ...: tickThenApplyLedgerResult
 
 tickThenReapply ::
      ApplyBlock l blk
-  => LedgerCfg l
+  => STSOptions l
+  -> LedgerCfg l
   -> blk
   -> l
   -> l
-tickThenReapply = lrResult ..: tickThenReapplyLedgerResult
+tickThenReapply = lrResult ...: tickThenReapplyLedgerResult
 
 foldLedger ::
      ApplyBlock l blk
-  => LedgerCfg l -> [blk] -> l -> Except (LedgerErr l) l
-foldLedger = repeatedlyM . tickThenApply
+  => STSOptions l -> LedgerCfg l -> [blk] -> l -> Except (LedgerErr l) l
+foldLedger = repeatedlyM .: tickThenApply
 
 refoldLedger ::
      ApplyBlock l blk
-  => LedgerCfg l -> [blk] -> l -> l
-refoldLedger = repeatedly . tickThenReapply
+  => STSOptions l -> LedgerCfg l -> [blk] -> l -> l
+refoldLedger = repeatedly .: tickThenReapply
 
 {-------------------------------------------------------------------------------
   Short-hand

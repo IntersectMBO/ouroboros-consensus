@@ -195,6 +195,7 @@ protocolInfoByron ProtocolParamsByron {
           , topLevelConfigCodec       = mkByronCodecConfig compactedGenesisConfig
           , topLevelConfigStorage     = ByronStorageConfig blockConfig
           , topLevelConfigCheckpoints = emptyCheckpointsMap
+          , topLevelConfigSTS         = ()
           }
       , pInfoInitLedger = ExtLedgerState {
             -- Important: don't pass the compacted genesis config to

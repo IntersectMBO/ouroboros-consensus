@@ -194,6 +194,7 @@ data MempoolEnv m blk = MempoolEnv {
     , mpEnvAddTxsAllFifo    :: MVar m ()
     , mpEnvTracer           :: Tracer m (TraceEventMempool blk)
     , mpEnvCapacityOverride :: MempoolCapacityBytesOverride
+    , mpEnvSTSOptions       :: STSOptions (LedgerState blk)
     }
 
 initMempoolEnv :: ( IOLike m
@@ -202,13 +203,14 @@ initMempoolEnv :: ( IOLike m
                   , ValidateEnvelope blk
                   )
                => LedgerInterface m blk
+               -> STSOptions (LedgerState blk)
                -> LedgerConfig blk
                -> MempoolCapacityBytesOverride
                -> Tracer m (TraceEventMempool blk)
                -> m (MempoolEnv m blk)
-initMempoolEnv ledgerInterface cfg capacityOverride tracer = do
+initMempoolEnv ledgerInterface sts cfg capacityOverride tracer = do
     st <- atomically $ getCurrentLedgerState ledgerInterface
-    let (slot, st') = tickLedgerState cfg (ForgeInUnknownSlot st)
+    let (slot, st') = tickLedgerState sts cfg (ForgeInUnknownSlot st)
     isVar <-
         newTVarIO
       $ initInternalState capacityOverride TxSeq.zeroTicketNo cfg slot st'
@@ -222,6 +224,7 @@ initMempoolEnv ledgerInterface cfg capacityOverride tracer = do
       , mpEnvAddTxsAllFifo    = addTxAllFifo
       , mpEnvTracer           = tracer
       , mpEnvCapacityOverride = capacityOverride
+      , mpEnvSTSOptions       = sts
       }
 
 {-------------------------------------------------------------------------------
@@ -231,12 +234,13 @@ initMempoolEnv ledgerInterface cfg capacityOverride tracer = do
 -- | Tick the 'LedgerState' using the given 'BlockSlot'.
 tickLedgerState ::
      forall blk. (UpdateLedger blk, ValidateEnvelope blk)
-  => LedgerConfig     blk
+  => STSOptions (LedgerState blk)
+  -> LedgerConfig     blk
   -> ForgeLedgerState blk
   -> (SlotNo, TickedLedgerState blk)
-tickLedgerState _cfg (ForgeInKnownSlot slot st) = (slot, st)
-tickLedgerState  cfg (ForgeInUnknownSlot st) =
-    (slot, applyChainTick cfg slot st)
+tickLedgerState _sts _cfg (ForgeInKnownSlot slot st) = (slot, st)
+tickLedgerState sts  cfg (ForgeInUnknownSlot st) =
+    (slot, applyChainTick sts cfg slot st)
   where
     -- Optimistically assume that the transactions will be included in a block
     -- in the next available slot
@@ -476,11 +480,12 @@ snapshotFromIS is = MempoolSnapshot {
 validateStateFor ::
      (LedgerSupportsMempool blk, HasTxId (GenTx blk), ValidateEnvelope blk)
   => MempoolCapacityBytesOverride
+  -> STSOptions (LedgerState blk)
   -> LedgerConfig     blk
   -> ForgeLedgerState blk
   -> InternalState    blk
   -> ValidationResult (Validated (GenTx blk)) blk
-validateStateFor capacityOverride cfg blockLedgerState is
+validateStateFor capacityOverride sts cfg blockLedgerState is
     | isTip    == castHash (getTipHash st')
     , isSlotNo == slot
     = validationResultFromIS is
@@ -494,7 +499,7 @@ validateStateFor capacityOverride cfg blockLedgerState is
         (TxSeq.toList isTxs)
   where
     IS { isTxs, isTip, isSlotNo, isLastTicketNo } = is
-    (slot, st') = tickLedgerState cfg blockLedgerState
+    (slot, st') = tickLedgerState sts cfg blockLedgerState
 
 -- | Revalidate the given transactions (@['TxTicket' ('GenTx' blk)]@), which
 -- are /all/ the transactions in the Mempool against the given ticked ledger

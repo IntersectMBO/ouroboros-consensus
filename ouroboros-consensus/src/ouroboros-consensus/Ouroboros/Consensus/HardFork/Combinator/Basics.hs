@@ -209,7 +209,9 @@ distribTopLevelConfig ei tlc =
              -- where it comes from the TopLevelConfig of the HardForkBlock.
              --
              -- The checkpoints of the underlying blocks are not used.
-             emptyCheckpointsMap))
+             emptyCheckpointsMap
+             undefined
+            ))
     `hap`
       (getPerEraConsensusConfig $
          hardForkConsensusConfigPerEra (configConsensus tlc))

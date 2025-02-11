@@ -79,6 +79,7 @@ protocolInfoBinary protocolInfo1 blockForging1 eraParams1 toPartialConsensusConf
                 PerEraStorageConfig $
                   (storageConfig1 :* storageConfig2 :* Nil)
           , topLevelConfigCheckpoints = emptyCheckpointsMap
+          , topLevelConfigSTS         = undefined
           }
       , pInfoInitLedger = ExtLedgerState {
             ledgerState =

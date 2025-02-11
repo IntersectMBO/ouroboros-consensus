@@ -33,7 +33,7 @@ import           Data.Kind (Type)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ticked
-import           Ouroboros.Consensus.Util ((..:))
+import           Ouroboros.Consensus.Util ((...:))
 
 {-------------------------------------------------------------------------------
   Tip
@@ -103,6 +103,7 @@ class ( -- Requirements on the ledger state itself
       , NoThunks l
         -- Requirements on 'LedgerCfg'
       , NoThunks (LedgerCfg l)
+      , NoThunks (STSOptions l)
         -- Requirements on 'LedgerErr'
       , Show     (LedgerErr l)
       , Eq       (LedgerErr l)
@@ -126,6 +127,8 @@ class ( -- Requirements on the ledger state itself
   -- 'InspectLedger'. When that module is rewritten to make use of ledger
   -- derived events, we may rename this type.
   type family AuxLedgerEvent l :: Type
+
+  type family STSOptions l :: Type
 
   -- | Apply "slot based" state transformations
   --
@@ -155,14 +158,15 @@ class ( -- Requirements on the ledger state itself
   -- >    ledgerTipPoint (applyChainTick cfg slot st)
   -- > == ledgerTipPoint st
   applyChainTickLedgerResult ::
-       LedgerCfg l
+       STSOptions l
+    -> LedgerCfg l
     -> SlotNo
     -> l
     -> LedgerResult l (Ticked l)
 
 -- | 'lrResult' after 'applyChainTickLedgerResult'
-applyChainTick :: IsLedger l => LedgerCfg l -> SlotNo -> l -> Ticked l
-applyChainTick = lrResult ..: applyChainTickLedgerResult
+applyChainTick :: IsLedger l => STSOptions l -> LedgerCfg l -> SlotNo -> l -> Ticked l
+applyChainTick = lrResult ...: applyChainTickLedgerResult
 
 {-------------------------------------------------------------------------------
   Link block to its ledger

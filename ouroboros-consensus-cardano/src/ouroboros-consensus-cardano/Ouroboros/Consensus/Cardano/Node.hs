@@ -772,6 +772,7 @@ protocolInfoCardano paramsCardano
             (Shelley.ShelleyStorageConfig tpraosSlotsPerKESPeriod k)
             (Shelley.ShelleyStorageConfig tpraosSlotsPerKESPeriod k)
       , topLevelConfigCheckpoints = cardanoCheckpoints
+      , topLevelConfigSTS = undefined
       }
 
     -- When the initial ledger state is not in the Byron era, register various
