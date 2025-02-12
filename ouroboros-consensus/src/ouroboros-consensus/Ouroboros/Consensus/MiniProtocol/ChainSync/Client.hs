@@ -74,6 +74,7 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client (
   , viewChainSyncState
   ) where
 
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Control.Monad (join, void)
 import           Control.Monad.Class.MonadTimer (MonadTimer)
 import           Control.Monad.Except (runExcept, throwError)
@@ -694,7 +695,7 @@ checkKnownIntersectionInvariants cfg kis
     -- 'ourFrag' invariants
     | let nbHeaders      = AF.length ourFrag
           ourAnchorPoint = AF.anchorPoint ourFrag
-    , nbHeaders < fromIntegral k
+    , nbHeaders < fromIntegral (unNonZero k)
     , ourAnchorPoint /= GenesisPoint
     = throwError $ unwords
       [ "ourFrag contains fewer than k headers and not close to genesis:"
@@ -1967,7 +1968,7 @@ mkOffsets :: SecurityParam -> Word64 -> [Word64]
 mkOffsets (SecurityParam k) maxOffset =
     [0] ++ takeWhile (< l) [fib n | n <- [2..]] ++ [l]
   where
-    l = k `min` maxOffset
+    l = unNonZero k `min` maxOffset
 
 ourTipFromChain ::
      HasHeader (Header blk)

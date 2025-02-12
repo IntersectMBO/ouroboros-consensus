@@ -23,6 +23,7 @@ high-level concepts in `ouroboros-consensus`
 This example uses several extensions:
 
 > {-# OPTIONS_GHC -Wno-unused-top-binds   #-}
+> {-# LANGUAGE TypeApplications           #-}
 > {-# LANGUAGE TypeFamilies               #-}
 > {-# LANGUAGE DerivingVia                #-}
 > {-# LANGUAGE DataKinds                  #-}
@@ -43,6 +44,7 @@ First, some imports we'll need:
 > import GHC.Generics (Generic)
 > import Codec.Serialise (Serialise)
 > import NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
+> import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 > import Ouroboros.Consensus.Block.Abstract
 >   (blockNo, blockPoint, castHeaderFields, castPoint, BlockNo, SlotNo,
 >    BlockConfig, BlockProtocol, CodecConfig, GetHeader(..), GetPrevHash(..),
@@ -159,7 +161,7 @@ Finally we define a few extra things used in this instantiation:
 > data SP_IsLeader = SP_IsLeader       -- Evidence that we /are/ leader
 >
 > k :: SecurityParam
-> k = SecurityParam { maxRollbacks = 1 }
+> k = SecurityParam { maxRollbacks = knownNonZeroBounded @1 }
 
 Let's examine each of these in turn:
 
