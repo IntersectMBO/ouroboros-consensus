@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Query (
   , ledgerDbTip
   ) where
 
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Data.Foldable (find)
 import           Data.Word
 import           Ouroboros.Consensus.Block
@@ -59,7 +60,7 @@ ledgerDbTip = castPoint . getTip . ledgerDbCurrent
 -- | Have we seen at least @k@ blocks?
 ledgerDbIsSaturated :: GetTip l => SecurityParam -> LedgerDB l -> Bool
 ledgerDbIsSaturated (SecurityParam k) db =
-    ledgerDbMaxRollback db >= k
+    ledgerDbMaxRollback db >= unNonZero k
 
 -- | Get a past ledger state
 --
