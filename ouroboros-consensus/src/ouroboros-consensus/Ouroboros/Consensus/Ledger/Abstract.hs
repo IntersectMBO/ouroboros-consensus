@@ -22,12 +22,12 @@ module Ouroboros.Consensus.Ledger.Abstract (
   , ThrowLedgerReapplyError (..)
   , UpdateLedger
     -- * Derived
-  , applyLedgerBlock
+  , applyLedgerBlockWithSTSOpts
   , foldLedger
   , reapplyLedgerBlock
   , refoldLedger
-  , tickThenApply
-  , tickThenApplyLedgerResult
+  , tickThenApplyWithSTSOpts
+  , tickThenApplyLedgerResultWithSTSOpts
   , tickThenReapply
   , tickThenReapplyLedgerResult
     -- ** Short-hand
@@ -86,7 +86,7 @@ class ( IsLedger l
   --
   -- This is passed the ledger state ticked to the slot of the given block, so
   -- 'applyChainTickLedgerResult' has already been called.
-  applyBlockLedgerResult ::
+  applyBlockLedgerResultWithSTSOpts ::
        HasCallStack
     => STSOptions l
     -> LedgerCfg l
@@ -107,7 +107,7 @@ class ( IsLedger l
     -> Ticked l
     -> LedgerResult l l
   reapplyBlockLedgerResult =
-    reapplyResult ..: applyBlockLedgerResult (fastSTSOpts (Proxy @l))
+    reapplyResult ..: applyBlockLedgerResultWithSTSOpts (fastSTSOpts (Proxy @l))
 
 class ThrowLedgerReapplyError l where
   reapplyResult :: Except (LedgerErr l) (LedgerResult l l) -> LedgerResult l l
@@ -120,7 +120,7 @@ class ApplyBlock (LedgerState blk) blk => UpdateLedger blk
 -------------------------------------------------------------------------------}
 
 -- | 'lrResult' after 'applyBlockLedgerResult'
-applyLedgerBlock ::
+applyLedgerBlockWithSTSOpts ::
      forall l blk.
      (ApplyBlock l blk, HasCallStack)
   => STSOptions l
@@ -128,7 +128,7 @@ applyLedgerBlock ::
   -> blk
   -> Ticked l
   -> Except (LedgerErr l) l
-applyLedgerBlock = fmap lrResult ...: applyBlockLedgerResult
+applyLedgerBlockWithSTSOpts = fmap lrResult ...: applyBlockLedgerResultWithSTSOpts
 
 -- | 'lrResult' after 'reapplyBlockLedgerResult'
 reapplyLedgerBlock ::
@@ -141,16 +141,16 @@ reapplyLedgerBlock ::
 reapplyLedgerBlock =
   lrResult ..: reapplyBlockLedgerResult
 
-tickThenApplyLedgerResult ::
+tickThenApplyLedgerResultWithSTSOpts ::
      ApplyBlock l blk
   => STSOptions l
   -> LedgerCfg l
   -> blk
   -> l
   -> Except (LedgerErr l) (LedgerResult l l)
-tickThenApplyLedgerResult stsOpts cfg blk l = do
-  let lrTick = applyChainTickLedgerResult stsOpts cfg (blockSlot blk) l
-  lrBlock <-   applyBlockLedgerResult     stsOpts cfg            blk  (lrResult lrTick)
+tickThenApplyLedgerResultWithSTSOpts stsOpts cfg blk l = do
+  let lrTick = applyChainTickLedgerResultWithSTSOpts stsOpts cfg (blockSlot blk) l
+  lrBlock <-   applyBlockLedgerResultWithSTSOpts     stsOpts cfg            blk  (lrResult lrTick)
   pure LedgerResult {
       lrEvents = lrEvents lrTick <> lrEvents lrBlock
     , lrResult = lrResult lrBlock
@@ -164,14 +164,14 @@ tickThenReapplyLedgerResult ::
   -> l
   -> LedgerResult l l
 tickThenReapplyLedgerResult cfg blk l =
-  let lrTick  = applyChainTickLedgerResult (fastSTSOpts (Proxy @l)) cfg (blockSlot blk) l
-      lrBlock = reapplyBlockLedgerResult                            cfg            blk (lrResult lrTick)
+  let lrTick  = applyChainTickLedgerResultWithSTSOpts (fastSTSOpts (Proxy @l)) cfg (blockSlot blk) l
+      lrBlock = reapplyBlockLedgerResult                                       cfg            blk (lrResult lrTick)
   in LedgerResult {
       lrEvents = lrEvents lrTick <> lrEvents lrBlock
     , lrResult = lrResult lrBlock
     }
 
-tickThenApply ::
+tickThenApplyWithSTSOpts ::
      forall l blk.
      ApplyBlock l blk
   => STSOptions l
@@ -179,7 +179,7 @@ tickThenApply ::
   -> blk
   -> l
   -> Except (LedgerErr l) l
-tickThenApply = fmap lrResult ...: tickThenApplyLedgerResult
+tickThenApplyWithSTSOpts = fmap lrResult ...: tickThenApplyLedgerResultWithSTSOpts
 
 tickThenReapply ::
      forall l blk.
@@ -193,7 +193,7 @@ tickThenReapply = lrResult ..: tickThenReapplyLedgerResult
 foldLedger ::
      ApplyBlock l blk
   => STSOptions l -> LedgerCfg l -> [blk] -> l -> Except (LedgerErr l) l
-foldLedger = repeatedlyM .: tickThenApply
+foldLedger = repeatedlyM .: tickThenApplyWithSTSOpts
 
 refoldLedger ::
      ApplyBlock l blk

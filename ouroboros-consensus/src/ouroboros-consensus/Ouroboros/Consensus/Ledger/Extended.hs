@@ -127,7 +127,7 @@ instance ( LedgerSupportsProtocol blk
 
   type STSOptions (ExtLedgerState blk) = STSOptions (LedgerState blk)
 
-  applyChainTickLedgerResult sts cfg slot (ExtLedgerState ledger header) =
+  applyChainTickLedgerResultWithSTSOpts sts cfg slot (ExtLedgerState ledger header) =
       castLedgerResult ledgerResult <&> \tickedLedgerState ->
       let ledgerView :: LedgerView (BlockProtocol blk)
           ledgerView = protocolLedgerView lcfg tickedLedgerState
@@ -144,17 +144,17 @@ instance ( LedgerSupportsProtocol blk
       lcfg :: LedgerConfig blk
       lcfg = configLedger $ getExtLedgerCfg cfg
 
-      ledgerResult = applyChainTickLedgerResult sts lcfg slot ledger
+      ledgerResult = applyChainTickLedgerResultWithSTSOpts sts lcfg slot ledger
 
   fastSTSOpts _ = fastSTSOpts (Proxy @(LedgerState blk))
   accurateSTSOpts _ = accurateSTSOpts (Proxy @(LedgerState blk))
   enableSTSEvents _ = enableSTSEvents (Proxy @(LedgerState blk))
 
 instance LedgerSupportsProtocol blk => ApplyBlock (ExtLedgerState blk) blk where
-  applyBlockLedgerResult sts cfg blk TickedExtLedgerState{..} = do
+  applyBlockLedgerResultWithSTSOpts sts cfg blk TickedExtLedgerState{..} = do
     ledgerResult <-
         withExcept ExtValidationErrorLedger
-      $ applyBlockLedgerResult sts
+      $ applyBlockLedgerResultWithSTSOpts sts
           (configLedger $ getExtLedgerCfg cfg)
           blk
           tickedLedgerState

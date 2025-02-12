@@ -21,7 +21,7 @@ module Ouroboros.Consensus.Ledger.Basics (
     -- * Definition of a ledger independent of a choice of block
   , IsLedger (..)
   , LedgerCfg
-  , applyChainTick
+  , applyChainTickWithSTSOpts
     -- * Link block to its ledger
   , LedgerConfig
   , LedgerError
@@ -159,7 +159,7 @@ class ( -- Requirements on the ledger state itself
   --
   -- >    ledgerTipPoint (applyChainTick cfg slot st)
   -- > == ledgerTipPoint st
-  applyChainTickLedgerResult ::
+  applyChainTickLedgerResultWithSTSOpts ::
        STSOptions l
     -> LedgerCfg l
     -> SlotNo
@@ -173,8 +173,8 @@ class ( -- Requirements on the ledger state itself
   enableSTSEvents :: Proxy l -> STSOptions l -> STSOptions l
 
 -- | 'lrResult' after 'applyChainTickLedgerResult'
-applyChainTick :: IsLedger l => STSOptions l -> LedgerCfg l -> SlotNo -> l -> Ticked l
-applyChainTick = lrResult ...: applyChainTickLedgerResult
+applyChainTickWithSTSOpts :: IsLedger l => STSOptions l -> LedgerCfg l -> SlotNo -> l -> Ticked l
+applyChainTickWithSTSOpts = lrResult ...: applyChainTickLedgerResultWithSTSOpts
 
 {-------------------------------------------------------------------------------
   Link block to its ledger

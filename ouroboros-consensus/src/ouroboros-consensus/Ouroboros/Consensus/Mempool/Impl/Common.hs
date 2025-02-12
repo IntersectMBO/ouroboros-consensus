@@ -240,7 +240,7 @@ tickLedgerState ::
   -> (SlotNo, TickedLedgerState blk)
 tickLedgerState _sts _cfg (ForgeInKnownSlot slot st) = (slot, st)
 tickLedgerState sts  cfg (ForgeInUnknownSlot st) =
-    (slot, applyChainTick sts cfg slot st)
+    (slot, applyChainTickWithSTSOpts sts cfg slot st)
   where
     -- Optimistically assume that the transactions will be included in a block
     -- in the next available slot

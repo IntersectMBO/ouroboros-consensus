@@ -367,13 +367,13 @@ instance Bridge m a => IsLedger (LedgerState (DualBlock m a)) where
 
   type STSOptions (LedgerState (DualBlock m a)) = STSOptions (LedgerState m)
 
-  applyChainTickLedgerResult sts
+  applyChainTickLedgerResultWithSTSOpts sts
                              DualLedgerConfig{..}
                              slot
                              DualLedgerState{..} =
       castLedgerResult ledgerResult <&> \main -> TickedDualLedgerState {
           tickedDualLedgerStateMain    = main
-        , tickedDualLedgerStateAux     = applyChainTick sts
+        , tickedDualLedgerStateAux     = applyChainTickWithSTSOpts sts
                                            dualLedgerConfigAux
                                            slot
                                           dualLedgerStateAux
@@ -381,7 +381,7 @@ instance Bridge m a => IsLedger (LedgerState (DualBlock m a)) where
         , tickedDualLedgerStateBridge  = dualLedgerStateBridge
         }
     where
-      ledgerResult = applyChainTickLedgerResult sts
+      ledgerResult = applyChainTickLedgerResultWithSTSOpts sts
                        dualLedgerConfigMain
                        slot
                        dualLedgerStateMain
@@ -392,12 +392,12 @@ instance Bridge m a => IsLedger (LedgerState (DualBlock m a)) where
 
 instance Bridge m a => ApplyBlock (LedgerState (DualBlock m a)) (DualBlock m a) where
 
-  applyBlockLedgerResult sts cfg
+  applyBlockLedgerResultWithSTSOpts sts cfg
                          block@DualBlock{..}
                          TickedDualLedgerState{..} = do
       (ledgerResult, aux') <-
         agreeOnError DualLedgerError (
-            applyBlockLedgerResult sts
+            applyBlockLedgerResultWithSTSOpts sts
               (dualLedgerConfigMain cfg)
               dualBlockMain
               tickedDualLedgerStateMain
@@ -786,7 +786,7 @@ applyMaybeBlock :: UpdateLedger blk
                 -> LedgerState blk
                 -> Except (LedgerError blk) (LedgerState blk)
 applyMaybeBlock _ _   Nothing      _   st = return st
-applyMaybeBlock sts cfg (Just block) tst _  = applyLedgerBlock sts cfg block tst
+applyMaybeBlock sts cfg (Just block) tst _  = applyLedgerBlockWithSTSOpts sts cfg block tst
 
 -- | Lift 'reapplyLedgerBlock' to @Maybe blk@
 --

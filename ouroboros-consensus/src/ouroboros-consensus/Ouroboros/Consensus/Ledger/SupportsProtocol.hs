@@ -84,7 +84,7 @@ _lemma_ledgerViewForecastAt_applyChainTick sts cfg st forecast for
     | NotOrigin for >= ledgerTipSlot st
     , let lhs = forecastFor forecast for
           rhs = protocolLedgerView cfg
-              . applyChainTick sts cfg for
+              . applyChainTickWithSTSOpts sts cfg for
               $ st
     , Right lhs' <- runExcept lhs
     , lhs' /= rhs

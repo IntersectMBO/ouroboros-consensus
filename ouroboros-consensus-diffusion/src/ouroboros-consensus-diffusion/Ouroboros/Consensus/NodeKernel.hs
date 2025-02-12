@@ -541,7 +541,7 @@ forkBlockForging IS{..} blockForging =
         -- Tick the ledger state for the 'SlotNo' we're producing a block for
         let tickedLedgerState :: Ticked (LedgerState blk)
             tickedLedgerState =
-              applyChainTick
+              applyChainTickWithSTSOpts
                 (topLevelConfigSTS cfg)
                 (configLedger cfg)
                 currentSlot

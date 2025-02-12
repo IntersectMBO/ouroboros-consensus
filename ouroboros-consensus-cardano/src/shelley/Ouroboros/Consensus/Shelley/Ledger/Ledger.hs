@@ -307,7 +307,7 @@ instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) 
 
   type STSOptions (LedgerState (ShelleyBlock proto era)) = SomeSTSOpts
 
-  applyChainTickLedgerResult (SomeSTSOpts opts@(STS.ApplySTSOpts _ _ ep)) cfg slotNo ShelleyLedgerState{
+  applyChainTickLedgerResultWithSTSOpts (SomeSTSOpts opts@(STS.ApplySTSOpts _ _ ep)) cfg slotNo ShelleyLedgerState{
                                 shelleyLedgerTip
                               , shelleyLedgerState
                               , shelleyLedgerTransition
@@ -388,7 +388,7 @@ instance ShelleyCompatible proto era
   --    - 'updateChainDepState': executes the @PRTCL@ transition
   -- + 'applyBlockLedgerResult': executes the @BBODY@ transition
   --
-  applyBlockLedgerResult (SomeSTSOpts opts@(STS.ApplySTSOpts _ _ ep)) cfg =
+  applyBlockLedgerResultWithSTSOpts (SomeSTSOpts opts@(STS.ApplySTSOpts _ _ ep)) cfg =
       applyHelper (swizzle ep ..: appBlk opts) cfg
     where
       swizzle ::

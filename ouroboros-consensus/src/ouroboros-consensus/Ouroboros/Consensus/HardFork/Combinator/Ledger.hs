@@ -119,7 +119,7 @@ instance CanHardFork xs => IsLedger (LedgerState (HardForkBlock xs)) where
 
   type STSOptions (LedgerState (HardForkBlock xs)) = PerEraSTSOptions xs
 
-  applyChainTickLedgerResult sts cfg@HardForkLedgerConfig{..} slot (HardForkLedgerState st) =
+  applyChainTickLedgerResultWithSTSOpts sts cfg@HardForkLedgerConfig{..} slot (HardForkLedgerState st) =
       sequenceHardForkState
         (hcizipWith
           proxySingle
@@ -184,7 +184,7 @@ tickOne :: SingleEraBlock blk
            )                                                  blk
 tickOne ei slot index (Pair sts pcfg) st = Comp $ fmap Comp $
       embedLedgerResult (injectLedgerEvent index)
-    $ applyChainTickLedgerResult (unwrapSTSOptions sts) (completeLedgerConfig' ei pcfg) slot st
+    $ applyChainTickLedgerResultWithSTSOpts (unwrapSTSOptions sts) (completeLedgerConfig' ei pcfg) slot st
 
 {-------------------------------------------------------------------------------
   ApplyBlock
@@ -193,7 +193,7 @@ tickOne ei slot index (Pair sts pcfg) st = Comp $ fmap Comp $
 instance CanHardFork xs
       => ApplyBlock (LedgerState (HardForkBlock xs)) (HardForkBlock xs) where
 
-  applyBlockLedgerResult sts cfg
+  applyBlockLedgerResultWithSTSOpts sts cfg
                     (HardForkBlock (OneEraBlock block))
                     (TickedHardForkLedgerState transition st) =
       case State.match block st of
@@ -232,7 +232,7 @@ apply index (Pair (WrapSTSOptions sts) (WrapLedgerConfig cfg)) (Pair (I block) (
       Comp
     $ withExcept (injectLedgerError index)
     $ fmap (Comp . embedLedgerResult (injectLedgerEvent index))
-    $ applyBlockLedgerResult sts cfg block st
+    $ applyBlockLedgerResultWithSTSOpts sts cfg block st
 
 {-------------------------------------------------------------------------------
   UpdateLedger

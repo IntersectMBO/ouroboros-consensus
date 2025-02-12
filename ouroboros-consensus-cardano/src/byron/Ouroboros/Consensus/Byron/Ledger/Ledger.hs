@@ -176,7 +176,7 @@ instance IsLedger (LedgerState ByronBlock) where
 
   type STSOptions (LedgerState ByronBlock) = CC.ValidationMode
 
-  applyChainTickLedgerResult _ cfg slotNo ByronLedgerState{..} = pureLedgerResult $
+  applyChainTickLedgerResultWithSTSOpts _ cfg slotNo ByronLedgerState{..} = pureLedgerResult $
       TickedByronLedgerState {
           tickedByronLedgerState =
             CC.applyChainTick cfg (toByronSlotNo slotNo) byronLedgerState
@@ -200,7 +200,7 @@ instance NoThunks CC.TxValidationMode
 -------------------------------------------------------------------------------}
 
 instance ApplyBlock (LedgerState ByronBlock) ByronBlock where
-  applyBlockLedgerResult sts = fmap pureLedgerResult ..: applyByronBlock sts
+  applyBlockLedgerResultWithSTSOpts sts = fmap pureLedgerResult ..: applyByronBlock sts
 
 instance ThrowLedgerReapplyError (LedgerState ByronBlock) where
   reapplyResult = validationErrorImpossible
