@@ -104,6 +104,7 @@ instance ( ConsensusProtocol (BlockProtocol blk)
          , NoThunks (LedgerConfig  blk)
          , NoThunks (StorageConfig blk)
          , NoThunks (HeaderHash    blk)
+         , NoThunks (STSOptions (LedgerState blk))
          ) => NoThunks (ExtLedgerCfg blk)
 
 type instance LedgerCfg (ExtLedgerState blk) = ExtLedgerCfg blk
@@ -117,13 +118,18 @@ instance IsLedger (LedgerState blk) => GetTip (Ticked (ExtLedgerState blk)) wher
   getTip = castPoint . getTip . tickedLedgerState
 
 instance ( LedgerSupportsProtocol blk
+         , NoThunks (STSOptions (LedgerState blk))
+         , Show (STSOptions (LedgerState blk))
+         , Eq (STSOptions (LedgerState blk))
          )
       => IsLedger (ExtLedgerState blk) where
   type LedgerErr (ExtLedgerState blk) = ExtValidationError blk
 
   type AuxLedgerEvent (ExtLedgerState blk) = AuxLedgerEvent (LedgerState blk)
 
-  applyChainTickLedgerResult cfg slot (ExtLedgerState ledger header) =
+  type STSOptions (ExtLedgerState blk) = STSOptions (LedgerState blk)
+
+  applyChainTickLedgerResultWithSTSOpts sts cfg slot (ExtLedgerState ledger header) =
       castLedgerResult ledgerResult <&> \tickedLedgerState ->
       let ledgerView :: LedgerView (BlockProtocol blk)
           ledgerView = protocolLedgerView lcfg tickedLedgerState
@@ -140,13 +146,17 @@ instance ( LedgerSupportsProtocol blk
       lcfg :: LedgerConfig blk
       lcfg = configLedger $ getExtLedgerCfg cfg
 
-      ledgerResult = applyChainTickLedgerResult lcfg slot ledger
+      ledgerResult = applyChainTickLedgerResultWithSTSOpts sts lcfg slot ledger
+
+  fastSTSOpts _ = fastSTSOpts (Proxy @(LedgerState blk))
+  accurateSTSOpts _ = accurateSTSOpts (Proxy @(LedgerState blk))
+  enableSTSEvents _ = enableSTSEvents (Proxy @(LedgerState blk))
 
 instance LedgerSupportsProtocol blk => ApplyBlock (ExtLedgerState blk) blk where
-  applyBlockLedgerResult cfg blk TickedExtLedgerState{..} = do
+  applyBlockLedgerResultWithSTSOpts sts cfg blk TickedExtLedgerState{..} = do
     ledgerResult <-
         withExcept ExtValidationErrorLedger
-      $ applyBlockLedgerResult
+      $ applyBlockLedgerResultWithSTSOpts sts
           (configLedger $ getExtLedgerCfg cfg)
           blk
           tickedLedgerState

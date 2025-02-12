@@ -265,9 +265,17 @@ instance Isomorphic TopLevelConfig where
         (project      $ configCodec     tlc)
         (project      $ configStorage   tlc)
         emptyCheckpointsMap
+        (auxSTS       $ topLevelConfigSTS tlc)
     where
       ei :: EpochInfo (Except PastHorizonException)
       ei = noHardForksEpochInfo $ project tlc
+
+      auxSTS :: STSOptions (LedgerState (HardForkBlock '[blk])) ->
+                STSOptions (LedgerState blk)
+      auxSTS =
+            unwrapSTSOptions
+          . hd
+          . getPerEraSTSOptions
 
       auxLedger :: LedgerConfig (HardForkBlock '[blk]) -> LedgerConfig blk
       auxLedger =
@@ -296,8 +304,14 @@ instance Isomorphic TopLevelConfig where
         (inject       $ configCodec     tlc)
         (inject       $ configStorage   tlc)
         emptyCheckpointsMap
+        (auxSTS       $ topLevelConfigSTS tlc)
     where
       eraParams = getEraParams tlc
+
+      auxSTS :: STSOptions (LedgerState blk) ->
+                STSOptions (LedgerState (HardForkBlock '[blk]))
+      auxSTS =
+        PerEraSTSOptions . (:* Nil) . WrapSTSOptions
 
       auxLedger :: LedgerConfig blk -> LedgerConfig (HardForkBlock '[blk])
       auxLedger cfg = HardForkLedgerConfig {

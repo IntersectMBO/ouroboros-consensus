@@ -74,6 +74,7 @@ import qualified Data.SOP.OptNP as OptNP
 import           Data.SOP.Strict
 import           Data.Word (Word16, Word64)
 import           Lens.Micro ((^.))
+import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger (ByronBlock)
 import qualified Ouroboros.Consensus.Byron.Ledger as Byron
@@ -451,6 +452,7 @@ data CardanoProtocolParams c = CardanoProtocolParams {
     -- /intra-era hard fork/ (ie conditionals in the ledger rules).
     --
   , cardanoProtocolVersion        :: ProtVer
+  , cardanoSTS                    :: PerEraSTSOptions (CardanoShelleyEras c)
   }
 
 -- | Create a 'ProtocolInfo' for 'CardanoBlock'
@@ -466,7 +468,7 @@ data CardanoProtocolParams c = CardanoProtocolParams {
 -- for mainnet (check against @'SL.gNetworkId' == 'SL.Mainnet'@).
 protocolInfoCardano ::
      forall c m. (IOLike m, CardanoHardForkConstraints c)
-  => CardanoProtocolParams c
+  => 1CardanoProtocolParams c
   -> ( ProtocolInfo      (CardanoBlock c)
      , m [BlockForging m (CardanoBlock c)]
      )
@@ -497,6 +499,7 @@ protocolInfoCardano paramsCardano
       , cardanoLedgerTransitionConfig
       , cardanoCheckpoints
       , cardanoProtocolVersion
+      , cardanoSTS = sts
       } = paramsCardano
 
     genesisShelley = cardanoLedgerTransitionConfig ^. L.tcShelleyGenesisL
@@ -772,6 +775,9 @@ protocolInfoCardano paramsCardano
             (Shelley.ShelleyStorageConfig tpraosSlotsPerKESPeriod k)
             (Shelley.ShelleyStorageConfig tpraosSlotsPerKESPeriod k)
       , topLevelConfigCheckpoints = cardanoCheckpoints
+      , topLevelConfigSTS = PerEraSTSOptions $
+              WrapSTSOptions (byronSTSOptions byronProtocolParams)
+           :* getPerEraSTSOptions sts
       }
 
     -- When the initial ledger state is not in the Byron era, register various

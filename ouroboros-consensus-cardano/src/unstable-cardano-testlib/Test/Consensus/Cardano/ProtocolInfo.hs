@@ -272,6 +272,7 @@ mkTestProtocolInfo
           )
           emptyCheckpointsMap
           protocolVersion
+          undefined -- TODO @js
         )
 
   where

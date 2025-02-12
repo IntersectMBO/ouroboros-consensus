@@ -45,6 +45,8 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger (
   , encodeShelleyAnnTip
   , encodeShelleyHeaderState
   , encodeShelleyLedgerState
+  -- * STS
+  , SomeSTSOpts (..)
   ) where
 
 import qualified Cardano.Ledger.BaseTypes as SL (epochInfoPure)
@@ -90,7 +92,7 @@ import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Config
 import           Ouroboros.Consensus.Shelley.Ledger.Protocol ()
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract
-                     (EnvelopeCheckError, envelopeChecks, mkHeaderView)
+                     (EnvelopeCheckError, envelopeChecks, mkHeaderView, ProtoCrypto)
 import           Ouroboros.Consensus.Util ((..:))
 import           Ouroboros.Consensus.Util.CBOR (decodeWithOrigin,
                      encodeWithOrigin)
@@ -274,17 +276,49 @@ untickedShelleyLedgerTipPoint ::
   -> Point (ShelleyBlock proto era)
 untickedShelleyLedgerTipPoint = shelleyTipToPoint . untickedShelleyLedgerTip
 
+data SomeSTSOpts where
+  SomeSTSOpts :: (NoThunks (STS.SingEP ep), STS.EventReturnTypeRep ep) => STS.SingEP ep -> SomeSTSOpts
+
+instance Show SomeSTSOpts where
+  show _ = "SomeSTS"
+
+instance Eq SomeSTSOpts where
+  _ == _ = True
+
+instance NoThunks (STS.SingEP STS.EventPolicyReturn) where
+  wNoThunks _ STS.EPReturn = pure Nothing
+  showTypeOf _ = "SingEP EventPolicyReturn"
+
+instance NoThunks (STS.SingEP STS.EventPolicyDiscard) where
+  wNoThunks _ STS.EPDiscard = pure Nothing
+  showTypeOf _ = "SingEP EventPolicyDiscard"
+
+deriving instance Generic (STS.ApplySTSOpts ep)
+deriving instance NoThunks (STS.SingEP ep) => NoThunks (STS.ApplySTSOpts ep)
+
+deriving instance Generic STS.AssertionPolicy
+deriving instance Generic STS.ValidationPolicy
+
+deriving instance NoThunks STS.AssertionPolicy
+deriving instance NoThunks STS.ValidationPolicy
+
+instance NoThunks SomeSTSOpts where
+  wNoThunks ctxt (SomeSTSOpts ep) = wNoThunks ctxt ep
+  showTypeOf _ = "SomeSTSOpts"
+
 instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) where
   type LedgerErr (LedgerState (ShelleyBlock proto era)) = ShelleyLedgerError era
 
   type AuxLedgerEvent (LedgerState (ShelleyBlock proto era)) = ShelleyLedgerEvent era
 
-  applyChainTickLedgerResult cfg slotNo ShelleyLedgerState{
+  type STSOptions (LedgerState (ShelleyBlock proto era)) = SomeSTSOpts
+
+  applyChainTickLedgerResultWithSTSOpts (SomeSTSOpts ep) cfg slotNo ShelleyLedgerState{
                                 shelleyLedgerTip
                               , shelleyLedgerState
                               , shelleyLedgerTransition
                               } =
-      swizzle appTick <&> \l' ->
+      swizzle ep (appTick ep) <&> \l' ->
       TickedShelleyLedgerState {
           untickedShelleyLedgerTip =
             shelleyLedgerTip
@@ -302,22 +336,44 @@ instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) 
       ei :: EpochInfo Identity
       ei = SL.epochInfoPure globals
 
-      swizzle (l, events) =
+      swizzle ::
+           STS.SingEP ep
+        -> STS.EventReturnType ep (Core.EraRule "TICK" era) (SL.NewEpochState era)
+        -> LedgerResult (LedgerState (ShelleyBlock proto era)) (SL.NewEpochState era)
+      swizzle STS.EPDiscard l =
+          LedgerResult {
+              lrEvents = []
+            , lrResult = l
+            }
+      swizzle STS.EPReturn (l, events) =
           LedgerResult {
               lrEvents = map ShelleyLedgerEventTICK events
             , lrResult = l
             }
 
-      appTick =
+      appTick ::
+           STS.SingEP ep
+        -> STS.EventReturnType ep (Core.EraRule "TICK" era) (SL.NewEpochState era)
+      appTick ep' =
         SL.applyTickOpts
           STS.ApplySTSOpts {
-              asoAssertions = STS.globalAssertionPolicy
-            , asoValidation = STS.ValidateAll
-            , asoEvents     = STS.EPReturn
+              asoAssertions = STS.AssertionsOff
+            , asoValidation = STS.ValidateNone
+            , asoEvents     = ep'
             }
           globals
           shelleyLedgerState
           slotNo
+
+  fastSTSOpts _ = SomeSTSOpts $ undefined
+
+  accurateSTSOpts _ = SomeSTSOpts $ STS.ApplySTSOpts {
+              asoAssertions = STS.globalAssertionPolicy
+            , asoValidation = STS.ValidateAll
+            , asoEvents     = STS.EPDiscard
+            }
+
+  enableSTSEvents _ (SomeSTSOpts opts) = SomeSTSOpts $ opts { STS.asoEvents = STS.EPReturn }
 
 -- | All events emitted by the Shelley ledger API
 data ShelleyLedgerEvent era =
@@ -338,49 +394,51 @@ instance ShelleyCompatible proto era
   --    - 'updateChainDepState': executes the @PRTCL@ transition
   -- + 'applyBlockLedgerResult': executes the @BBODY@ transition
   --
-  applyBlockLedgerResult =
-      applyHelper (swizzle ..: appBlk)
+  applyBlockLedgerResultWithSTSOpts (SomeSTSOpts opts@(STS.ApplySTSOpts _ _ ep)) cfg =
+      applyHelper (swizzle ep ..: appBlk opts) cfg
     where
-      swizzle m =
+      swizzle ::
+           STS.SingEP ep
+        -> Except
+             (SL.BlockTransitionError era)
+             (STS.EventReturnType ep (Core.EraRule "BBODY" era) (SL.NewEpochState era))
+        -> Except
+             (ShelleyLedgerError era)
+             (LedgerResult (LedgerState (ShelleyBlock proto era)) (SL.NewEpochState era))
+      swizzle STS.EPDiscard m =
+        withExcept BBodyError m <&> \l ->
+          LedgerResult {
+              lrEvents = []
+            , lrResult = l
+            }
+      swizzle STS.EPReturn m =
         withExcept BBodyError m <&> \(l, events) ->
           LedgerResult {
               lrEvents = map ShelleyLedgerEventBBODY events
             , lrResult = l
             }
 
+
       -- Apply the BBODY transition using the ticked state
+      appBlk ::
+           STS.EventReturnTypeRep ep
+        => STS.ApplySTSOpts ep
+        -> SL.Globals
+        -> SL.NewEpochState era
+        -> SL.Block (SL.BHeaderView (ProtoCrypto proto)) era
+        -> Except
+             (SL.BlockTransitionError era)
+             (STS.EventReturnType ep (Core.EraRule "BBODY" era) (SL.NewEpochState era))
       appBlk =
         SL.applyBlockOpts
-          STS.ApplySTSOpts {
-              asoAssertions = STS.globalAssertionPolicy
-            , asoValidation = STS.ValidateAll
-            , asoEvents     = STS.EPReturn
-            }
 
-  reapplyBlockLedgerResult =
-      runIdentity ..: applyHelper (swizzle ..: reappBlk)
-    where
-      swizzle m = case runExcept m of
-        Left err          ->
-          Exception.throw $! ShelleyReapplyException @era err
-        Right (l, events) ->
-          pure LedgerResult {
-              lrEvents = map ShelleyLedgerEventBBODY events
-            , lrResult = l
-            }
-
-      -- Reapply the BBODY transition using the ticked state
-      reappBlk =
-        SL.applyBlockOpts
-          STS.ApplySTSOpts {
-                  asoAssertions = STS.AssertionsOff
-                , asoValidation = STS.ValidateNone
-                , asoEvents     = STS.EPReturn
-                }
+instance ShelleyCompatible proto era
+      => ThrowLedgerReapplyError (LedgerState (ShelleyBlock proto era)) where
+  reapplyResult err = Exception.throw $! ShelleyReapplyException @era err
 
 data ShelleyReapplyException =
-  forall era. Show (SL.BlockTransitionError era)
-  => ShelleyReapplyException (SL.BlockTransitionError era)
+  forall era. Show (ShelleyLedgerError era)
+  => ShelleyReapplyException (ShelleyLedgerError era)
 
 instance Show ShelleyReapplyException where
   show (ShelleyReapplyException err) = "(ShelleyReapplyException " <> show err <> ")"

@@ -49,6 +49,7 @@ data TopLevelConfig blk = TopLevelConfig {
     , topLevelConfigCodec       :: !(CodecConfig blk)
     , topLevelConfigStorage     :: !(StorageConfig blk)
     , topLevelConfigCheckpoints :: !(CheckpointsMap blk)
+    , topLevelConfigSTS         :: !(STSOptions (LedgerState blk))
     }
   deriving (Generic)
 
@@ -58,6 +59,7 @@ instance ( ConsensusProtocol (BlockProtocol blk)
          , NoThunks (CodecConfig   blk)
          , NoThunks (StorageConfig blk)
          , NoThunks (HeaderHash    blk)
+         , NoThunks (STSOptions    (LedgerState blk))
          ) => NoThunks (TopLevelConfig blk)
 
 -- | Checkpoints are block hashes that are expected to be present in the honest
@@ -91,9 +93,10 @@ mkTopLevelConfig ::
   -> CodecConfig    blk
   -> StorageConfig  blk
   -> CheckpointsMap blk
+  -> STSOptions (LedgerState blk)
   -> TopLevelConfig blk
-mkTopLevelConfig prtclCfg ledgerCfg blockCfg codecCfg storageCfg checkpointsMap =
-    TopLevelConfig prtclCfg ledgerCfg blockCfg codecCfg storageCfg checkpointsMap
+mkTopLevelConfig prtclCfg ledgerCfg blockCfg codecCfg storageCfg checkpointsMaps s =
+    TopLevelConfig prtclCfg ledgerCfg blockCfg codecCfg storageCfg checkpointsMaps s
 
 configConsensus :: TopLevelConfig blk -> ConsensusConfig (BlockProtocol blk)
 configConsensus = topLevelConfigProtocol
@@ -122,6 +125,7 @@ castTopLevelConfig ::
      , Coercible (CodecConfig   blk) (CodecConfig   blk')
      , Coercible (StorageConfig blk) (StorageConfig blk')
      , Coercible (HeaderHash    blk) (HeaderHash    blk')
+     , Coercible (STSOptions (LedgerState blk)) (STSOptions (LedgerState    blk'))
      )
   => TopLevelConfig blk -> TopLevelConfig blk'
 castTopLevelConfig TopLevelConfig{..} = TopLevelConfig{
@@ -131,6 +135,7 @@ castTopLevelConfig TopLevelConfig{..} = TopLevelConfig{
     , topLevelConfigCodec       = coerce topLevelConfigCodec
     , topLevelConfigStorage     = coerce topLevelConfigStorage
     , topLevelConfigCheckpoints = coerce topLevelConfigCheckpoints
+    , topLevelConfigSTS         = coerce topLevelConfigSTS
     }
 
 castCheckpointsMap ::

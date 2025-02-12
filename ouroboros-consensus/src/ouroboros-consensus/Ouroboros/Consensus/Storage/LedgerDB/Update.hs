@@ -109,17 +109,18 @@ toRealPoint (Weaken ap)      = toRealPoint ap
 -- | Apply block to the current ledger state
 --
 -- We take in the entire 'LedgerDB' because we record that as part of errors.
-applyBlock :: forall m c l blk. (ApplyBlock l blk, Monad m, c)
-           => LedgerCfg l
+applyBlockWithSTSOpts :: forall m c l blk. (ApplyBlock l blk, Monad m, c)
+           => STSOptions l
+           -> LedgerCfg l
            -> Ap m l blk c
            -> LedgerDB l -> m l
-applyBlock cfg ap db = case ap of
+applyBlockWithSTSOpts sts cfg ap db = case ap of
     ReapplyVal b ->
       return $
         tickThenReapply cfg b l
     ApplyVal b ->
       either (throwLedgerError db (blockRealPoint b)) return $ runExcept $
-        tickThenApply cfg b l
+        tickThenApplyWithSTSOpts sts cfg b l
     ReapplyRef r  -> do
       b <- doResolveBlock r
       return $
@@ -127,9 +128,9 @@ applyBlock cfg ap db = case ap of
     ApplyRef r -> do
       b <- doResolveBlock r
       either (throwLedgerError db r) return $ runExcept $
-        tickThenApply cfg b l
+        tickThenApplyWithSTSOpts sts cfg b l
     Weaken ap' ->
-      applyBlock cfg ap' db
+      applyBlockWithSTSOpts sts cfg ap' db
   where
     l :: l
     l = ledgerDbCurrent db
@@ -293,7 +294,7 @@ ledgerDbPush :: forall m c l blk. (ApplyBlock l blk, Monad m, c)
              -> Ap m l blk c -> LedgerDB l -> m (LedgerDB l)
 ledgerDbPush cfg ap db =
     (\current' -> pushLedgerState (ledgerDbCfgSecParam cfg) current' db) <$>
-      applyBlock (ledgerDbCfg cfg) ap db
+      applyBlockWithSTSOpts (ledgerDbSTSOptions cfg) (ledgerDbCfg cfg) ap db
 
 -- | Push a bunch of blocks (oldest first)
 ledgerDbPushMany ::
@@ -383,4 +384,3 @@ ledgerDbSwitch' cfg n bs db =
     case runIdentity $ ledgerDbSwitch cfg n (const $ pure ()) (map pureBlock bs) db of
       Left  ExceededRollback{} -> Nothing
       Right db'                -> Just db'
-

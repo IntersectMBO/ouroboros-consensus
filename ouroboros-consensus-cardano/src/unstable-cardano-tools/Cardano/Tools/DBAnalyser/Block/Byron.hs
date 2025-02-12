@@ -22,6 +22,7 @@ import           Cardano.Tools.DBAnalyser.HasAnalysis
 import           Control.Monad.Except
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as BL
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Byron.Ledger (ByronBlock)
 import qualified Ouroboros.Consensus.Byron.Ledger as Byron
 import           Ouroboros.Consensus.Byron.Node (PBftSignatureThreshold (..),
@@ -48,10 +49,11 @@ instance HasProtocolInfo ByronBlock where
         , requiresNetworkMagic :: RequiresNetworkMagic
         , genesisHash          :: Maybe (Crypto.Hash Raw)
         , threshold            :: Maybe PBftSignatureThreshold
+        , stsOpts              :: STSOptions (LedgerState ByronBlock)
         }
     mkProtocolInfo args = do
       config <- openGenesisByron (configFile args) (genesisHash args) (requiresNetworkMagic args)
-      return $ mkByronProtocolInfo config (threshold args)
+      return $ mkByronProtocolInfo config (threshold args) (stsOpts args)
 
 type ByronBlockArgs = Args ByronBlock
 
@@ -105,12 +107,14 @@ openGenesisByron configFile mHash requiresNetworkMagic = do
 
 mkByronProtocolInfo :: Genesis.Config
                     -> Maybe PBftSignatureThreshold
+                    -> STSOptions (LedgerState ByronBlock)
                     -> ProtocolInfo ByronBlock
-mkByronProtocolInfo genesisConfig signatureThreshold =
-    protocolInfoByron $ ProtocolParamsByron {
+mkByronProtocolInfo genesisConfig signatureThreshold sts =
+    protocolInfoByron ProtocolParamsByron {
         byronGenesis                = genesisConfig
       , byronPbftSignatureThreshold = signatureThreshold
       , byronProtocolVersion        = Update.ProtocolVersion 1 0 0
       , byronSoftwareVersion        = Update.SoftwareVersion (Update.ApplicationName "db-analyser") 2
       , byronLeaderCredentials      = Nothing
+      , byronSTSOptions             = sts
       }

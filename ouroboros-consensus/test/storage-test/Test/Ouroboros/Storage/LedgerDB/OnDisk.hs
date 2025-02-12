@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
@@ -258,6 +259,7 @@ extLedgerDbConfig :: SecurityParam -> LedgerDbCfg (ExtLedgerState TestBlock)
 extLedgerDbConfig secParam = LedgerDbCfg {
       ledgerDbCfgSecParam = secParam
     , ledgerDbCfg         = ExtLedgerCfg $ singleNodeTestConfigWith TestBlockCodecConfig TestBlockStorageConfig secParam (GenesisWindow (2 * maxRollbacks secParam))
+    , ledgerDbSTSOptions  = fastSTSOpts (Proxy @(LedgerState TestBlock))
     }
 
 
@@ -579,7 +581,7 @@ runMock cmd initMock =
     push :: TestBlock -> StateT MockLedger (Except (ExtValidationError TestBlock)) ()
     push b = do
         ls <- State.get
-        l' <- State.lift $ tickThenApply (ledgerDbCfg cfg) b (cur ls)
+        l' <- State.lift $ tickThenApplyWithSTSOpts (ledgerDbSTSOptions cfg) (ledgerDbCfg cfg) b (cur ls)
         State.put ((b, l'):ls)
 
     switch :: Word64

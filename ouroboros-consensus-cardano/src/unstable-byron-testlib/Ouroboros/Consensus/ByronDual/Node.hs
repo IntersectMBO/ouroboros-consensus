@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -106,6 +107,7 @@ protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
               , dualStorageConfigAux  = ByronSpecStorageConfig
               }
           , topLevelConfigCheckpoints = emptyCheckpointsMap
+          , topLevelConfigSTS         = fastSTSOpts (Proxy @(LedgerState ByronBlock))
           }
       , pInfoInitLedger = ExtLedgerState {
              ledgerState = DualLedgerState {

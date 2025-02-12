@@ -1,3 +1,4 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -336,6 +337,7 @@ isValid :: forall blk. LedgerSupportsProtocol blk
 isValid = flip getIsValid
 
 getLedgerDB ::
+     forall blk.
      LedgerSupportsProtocol blk
   => TopLevelConfig blk
   -> Model blk
@@ -352,6 +354,7 @@ getLedgerDB cfg m@Model{..} =
     ledgerDbCfg = LedgerDbCfg {
           ledgerDbCfgSecParam = k
         , ledgerDbCfg         = ExtLedgerCfg cfg
+        , ledgerDbSTSOptions  = fastSTSOpts (Proxy @(LedgerState blk))
         }
 
 getLoEFragment :: Model blk -> LoE (AnchoredFragment blk)
@@ -741,7 +744,7 @@ validate cfg Model { initLedger, invalid } chain =
     go ledger validPrefix = \case
       -- Return 'mbFinal' if it contains an "earlier" result
       []    -> ValidatedChain validPrefix ledger invalid
-      b:bs' -> case runExcept (tickThenApply (ExtLedgerCfg cfg) b ledger) of
+      b:bs' -> case runExcept (tickThenApplyWithSTSOpts (topLevelConfigSTS cfg) (ExtLedgerCfg cfg) b ledger) of
         -- Invalid block according to the ledger
         Left e
           -> ValidatedChain

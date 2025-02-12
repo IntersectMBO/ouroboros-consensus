@@ -174,7 +174,9 @@ instance IsLedger (LedgerState ByronBlock) where
   type AuxLedgerEvent (LedgerState ByronBlock) =
     VoidLedgerEvent (LedgerState ByronBlock)
 
-  applyChainTickLedgerResult cfg slotNo ByronLedgerState{..} = pureLedgerResult $
+  type STSOptions (LedgerState ByronBlock) = CC.ValidationMode
+
+  applyChainTickLedgerResultWithSTSOpts _ cfg slotNo ByronLedgerState{..} = pureLedgerResult $
       TickedByronLedgerState {
           tickedByronLedgerState =
             CC.applyChainTick cfg (toByronSlotNo slotNo) byronLedgerState
@@ -182,20 +184,27 @@ instance IsLedger (LedgerState ByronBlock) where
             byronLedgerTransition
         }
 
+  fastSTSOpts _ = CC.fromBlockValidationMode CC.NoBlockValidation
+  accurateSTSOpts _ = CC.fromBlockValidationMode CC.BlockValidation
+  enableSTSEvents _ = id
+
+deriving instance Generic CC.ValidationMode
+instance NoThunks CC.ValidationMode
+deriving instance Eq CC.ValidationMode
+deriving instance Generic CC.BlockValidationMode
+instance NoThunks CC.BlockValidationMode
+deriving instance Generic CC.TxValidationMode
+instance NoThunks CC.TxValidationMode
+
 {-------------------------------------------------------------------------------
   Supporting the various consensus interfaces
 -------------------------------------------------------------------------------}
 
 instance ApplyBlock (LedgerState ByronBlock) ByronBlock where
-  applyBlockLedgerResult = fmap pureLedgerResult ..: applyByronBlock validationMode
-    where
-      validationMode = CC.fromBlockValidationMode CC.BlockValidation
+  applyBlockLedgerResultWithSTSOpts sts = fmap pureLedgerResult ..: applyByronBlock sts
 
-  reapplyBlockLedgerResult =
-          (pureLedgerResult . validationErrorImpossible)
-      ..: applyByronBlock validationMode
-    where
-      validationMode = CC.fromBlockValidationMode CC.NoBlockValidation
+instance ThrowLedgerReapplyError (LedgerState ByronBlock) where
+  reapplyResult = validationErrorImpossible
 
 data instance BlockQuery ByronBlock :: Type -> Type where
   GetUpdateInterfaceState :: BlockQuery ByronBlock UPI.State
@@ -309,12 +318,8 @@ instance HasHardForkHistory ByronBlock where
 -- the event it is given a 'BlockValidationMode' of 'BlockValidation', it still
 -- /looks/ like it can fail (since its type doesn't change based on the
 -- 'ValidationMode') and we must still treat it as such.
-validationErrorImpossible :: forall err a. Except err a -> a
-validationErrorImpossible = cantBeError . runExcept
-  where
-    cantBeError :: Either err a -> a
-    cantBeError (Left  _) = error "validationErrorImpossible: unexpected error"
-    cantBeError (Right a) = a
+validationErrorImpossible :: forall err a. err -> a
+validationErrorImpossible _ = error "validationErrorImpossible: unexpected error"
 
 {-------------------------------------------------------------------------------
   Applying a block

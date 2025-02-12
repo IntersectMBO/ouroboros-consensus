@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
@@ -826,6 +827,7 @@ withTestMempool setup@TestSetup {..} prop =
       mempool <-
         openMempoolWithoutSyncThread
           ledgerInterface
+          (fastSTSOpts (Proxy @(LedgerState TestBlock)))
           testLedgerCfg
           testMempoolCapOverride
           tracer

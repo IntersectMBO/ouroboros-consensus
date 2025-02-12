@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -23,6 +24,7 @@ import           Ouroboros.Consensus.Block.Forging (BlockForging)
 import           Ouroboros.Consensus.Byron.Crypto.DSIGN (ByronDSIGN,
                      SignKeyDSIGN (..))
 import           Ouroboros.Consensus.Byron.Ledger (ByronBlock)
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Byron.Node
 import           Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
@@ -34,10 +36,11 @@ mkProtocolByron ::
   -> CoreNodeId
   -> Genesis.Config
   -> Genesis.GeneratedSecrets
+  -> STSOptions (LedgerState ByronBlock)
   -> (ProtocolInfo ByronBlock, [BlockForging m ByronBlock], SignKeyDSIGN ByronDSIGN)
      -- ^ We return the signing key which is needed in some tests, because it
      -- cannot easily be extracted from the 'ProtocolInfo'.
-mkProtocolByron params coreNodeId genesisConfig genesisSecrets =
+mkProtocolByron params coreNodeId genesisConfig genesisSecrets sts =
     (protocolInfo, blockForging, signingKey)
   where
     leaderCredentials :: ByronLeaderCredentials
@@ -65,6 +68,7 @@ mkProtocolByron params coreNodeId genesisConfig genesisSecrets =
           , byronProtocolVersion        = theProposedProtocolVersion
           , byronSoftwareVersion        = theProposedSoftwareVersion
           , byronLeaderCredentials      = Just leaderCredentials
+          , byronSTSOptions             = sts
           }
 
 mkLeaderCredentials ::

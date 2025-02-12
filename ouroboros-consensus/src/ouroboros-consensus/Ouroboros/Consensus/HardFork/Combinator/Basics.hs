@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -192,13 +193,14 @@ distribLedgerConfig ei cfg =
       (completeLedgerConfig'' ei)
       (getPerEraLedgerConfig $ hardForkLedgerConfigPerEra cfg)
 
-distribTopLevelConfig :: All SingleEraBlock xs
+distribTopLevelConfig :: (STSOptions (LedgerState (HardForkBlock xs))
+                        ~ PerEraSTSOptions xs, All SingleEraBlock xs)
                       => EpochInfo (Except PastHorizonException)
                       -> TopLevelConfig (HardForkBlock xs)
                       -> NP TopLevelConfig xs
 distribTopLevelConfig ei tlc =
     hcpure proxySingle
-      (fn_5 (\cfgConsensus cfgLedger cfgBlock cfgCodec cfgStorage ->
+      (fn_6 (\cfgConsensus cfgLedger cfgBlock cfgCodec cfgStorage sts ->
            mkTopLevelConfig
              (completeConsensusConfig' ei cfgConsensus)
              (completeLedgerConfig'    ei cfgLedger)
@@ -209,7 +211,9 @@ distribTopLevelConfig ei tlc =
              -- where it comes from the TopLevelConfig of the HardForkBlock.
              --
              -- The checkpoints of the underlying blocks are not used.
-             emptyCheckpointsMap))
+             emptyCheckpointsMap
+             (unwrapSTSOptions sts)
+            ))
     `hap`
       (getPerEraConsensusConfig $
          hardForkConsensusConfigPerEra (configConsensus tlc))
@@ -225,3 +229,5 @@ distribTopLevelConfig ei tlc =
     `hap`
       (getPerEraStorageConfig $
          hardForkStorageConfigPerEra (configStorage tlc))
+    `hap`
+      (getPerEraSTSOptions $ topLevelConfigSTS tlc)

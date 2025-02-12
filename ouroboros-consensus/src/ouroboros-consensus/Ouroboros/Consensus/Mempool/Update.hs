@@ -295,7 +295,7 @@ implRemoveTxs menv txs
     tr <- atomically $ do
         is <- readTVar istate
         ls <- getCurrentLedgerState ldgrInterface
-        let WriteRemoveTxs is' t = pureRemoveTxs cfg co txs is ls
+        let WriteRemoveTxs is' t = pureRemoveTxs sts cfg co txs is ls
         writeTVar istate is'
         pure t
     whenJust tr (traceWith trcr)
@@ -305,6 +305,7 @@ implRemoveTxs menv txs
                , mpEnvTracer = trcr
                , mpEnvLedgerCfg = cfg
                , mpEnvCapacityOverride = co
+               , mpEnvSTSOptions = sts
                } = menv
 
 -- | Craft a 'RemoveTxs' that manually removes the given transactions from the
@@ -314,13 +315,14 @@ pureRemoveTxs ::
      , HasTxId (GenTx blk)
      , ValidateEnvelope blk
      )
-  => LedgerConfig blk
+  => STSOptions (LedgerState blk)
+  -> LedgerConfig blk
   -> MempoolCapacityBytesOverride
   -> [GenTxId blk]
   -> InternalState blk
   -> LedgerState blk
   -> RemoveTxs blk
-pureRemoveTxs cfg capacityOverride txIds is lstate =
+pureRemoveTxs sts cfg capacityOverride txIds is lstate =
     -- Filtering is O(n), but this function will rarely be used, as it is an
     -- escape hatch when there's an inconsistency between the ledger and the
     -- mempool.
@@ -332,7 +334,7 @@ pureRemoveTxs cfg capacityOverride txIds is lstate =
                              . txTicketTx
                            )
                            (TxSeq.toList (isTxs is))
-        (slot, ticked) = tickLedgerState cfg (ForgeInUnknownSlot lstate)
+        (slot, ticked) = tickLedgerState sts cfg (ForgeInUnknownSlot lstate)
         vr             = revalidateTxsFor
                            capacityOverride
                            cfg
@@ -376,7 +378,7 @@ implSyncWithLedger menv = do
     (mTrace, mp) <- atomically $ do
       is <- readTVar istate
       ls <- getCurrentLedgerState ldgrInterface
-      let NewSyncedState is' msp mTrace = pureSyncWithLedger is ls cfg co
+      let NewSyncedState is' msp mTrace = pureSyncWithLedger is ls sts cfg co
       writeTVar istate is'
       return (mTrace, msp)
     whenJust mTrace (traceWith trcr)
@@ -387,6 +389,7 @@ implSyncWithLedger menv = do
                , mpEnvTracer = trcr
                , mpEnvLedgerCfg = cfg
                , mpEnvCapacityOverride = co
+               , mpEnvSTSOptions = sts
                } = menv
 
 -- | Create a 'SyncWithLedger' value representing the values that will need to
@@ -397,12 +400,14 @@ pureSyncWithLedger ::
      (LedgerSupportsMempool blk, HasTxId (GenTx blk), ValidateEnvelope blk)
   => InternalState blk
   -> LedgerState blk
+  -> STSOptions (LedgerState blk)
   -> LedgerConfig blk
   -> MempoolCapacityBytesOverride
   -> SyncWithLedger blk
-pureSyncWithLedger istate lstate lcfg capacityOverride =
+pureSyncWithLedger istate lstate sts lcfg capacityOverride =
     let vr          = validateStateFor
                         capacityOverride
+                        sts
                         lcfg
                         (ForgeInUnknownSlot lstate)
                         istate

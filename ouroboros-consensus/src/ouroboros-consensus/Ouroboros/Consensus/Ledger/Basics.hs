@@ -21,19 +21,21 @@ module Ouroboros.Consensus.Ledger.Basics (
     -- * Definition of a ledger independent of a choice of block
   , IsLedger (..)
   , LedgerCfg
-  , applyChainTick
+  , applyChainTickWithSTSOpts
     -- * Link block to its ledger
   , LedgerConfig
   , LedgerError
   , LedgerState
   , TickedLedgerState
+  , Proxy (..)
   ) where
 
 import           Data.Kind (Type)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ticked
-import           Ouroboros.Consensus.Util ((..:))
+import           Ouroboros.Consensus.Util ((...:))
+import           Data.Proxy (Proxy (..))
 
 {-------------------------------------------------------------------------------
   Tip
@@ -97,12 +99,15 @@ pureLedgerResult a = LedgerResult {
 -- Types that inhabit this family will come from the Ledger code.
 type family LedgerCfg l :: Type
 
+data ComputeLedgerEvents = ComputeLedgerEvents | OmitLedgerEvents
+
 class ( -- Requirements on the ledger state itself
         Show     l
       , Eq       l
       , NoThunks l
         -- Requirements on 'LedgerCfg'
       , NoThunks (LedgerCfg l)
+      , NoThunks (STSOptions l)
         -- Requirements on 'LedgerErr'
       , Show     (LedgerErr l)
       , Eq       (LedgerErr l)
@@ -113,6 +118,9 @@ class ( -- Requirements on the ledger state itself
         -- ticked ledger.
       , GetTip l
       , GetTip (Ticked l)
+
+      , Show (STSOptions l)
+      , Eq (STSOptions l)
       ) => IsLedger l where
   -- | Errors that can arise when updating the ledger
   --
@@ -155,14 +163,15 @@ class ( -- Requirements on the ledger state itself
   -- >    ledgerTipPoint (applyChainTick cfg slot st)
   -- > == ledgerTipPoint st
   applyChainTickLedgerResult ::
-       LedgerCfg l
+       ComputeLedgerEvents
+    -> LedgerCfg l
     -> SlotNo
     -> l
     -> LedgerResult l (Ticked l)
 
 -- | 'lrResult' after 'applyChainTickLedgerResult'
-applyChainTick :: IsLedger l => LedgerCfg l -> SlotNo -> l -> Ticked l
-applyChainTick = lrResult ..: applyChainTickLedgerResult
+applyChainTickWithSTSOpts :: IsLedger l => STSOptions l -> LedgerCfg l -> SlotNo -> l -> Ticked l
+applyChainTickWithSTSOpts = lrResult ...: applyChainTickLedgerResultWithSTSOpts
 
 {-------------------------------------------------------------------------------
   Link block to its ledger

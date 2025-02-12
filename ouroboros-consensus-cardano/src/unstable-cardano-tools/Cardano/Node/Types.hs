@@ -37,7 +37,12 @@ import           Data.String (IsString)
 import           Data.Text as Text (Text, pack, unpack)
 import           Data.Word (Word16, Word8)
 import           Ouroboros.Consensus.Block.Abstract (EpochNo)
-
+import Ouroboros.Consensus.Byron.Ledger
+import Ouroboros.Consensus.Shelley.Ledger
+import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
+import Ouroboros.Consensus.Cardano.Block
+import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Protocol.TPraos
 
 -- | Errors for the cardano-config module.
 data ConfigError =
@@ -114,12 +119,13 @@ newtype GenesisHash = GenesisHash (Crypto.Hash Crypto.Blake2b_256 Crypto.ByteStr
 data NodeProtocolConfiguration =
        NodeProtocolConfigurationByron   NodeByronProtocolConfiguration
      | NodeProtocolConfigurationShelley NodeShelleyProtocolConfiguration
+                                        (STSOptions (LedgerState (ShelleyBlock (TPraos StandardCrypto) StandardShelley)))
      | NodeProtocolConfigurationCardano NodeByronProtocolConfiguration
                                         NodeShelleyProtocolConfiguration
                                         NodeAlonzoProtocolConfiguration
                                         NodeConwayProtocolConfiguration
                                         NodeHardForkProtocolConfiguration
-  deriving (Eq, Show)
+                                        (PerEraSTSOptions (CardanoShelleyEras StandardCrypto))
 
 data NodeShelleyProtocolConfiguration =
      NodeShelleyProtocolConfiguration {
@@ -160,6 +166,7 @@ data NodeByronProtocolConfiguration =
      , npcByronSupportedProtocolVersionMajor :: !Word16
      , npcByronSupportedProtocolVersionMinor :: !Word16
      , npcByronSupportedProtocolVersionAlt   :: !Word8
+     , npcByronSTSOptions                    :: !(STSOptions (LedgerState ByronBlock))
      }
   deriving (Eq, Show)
 
@@ -236,15 +243,16 @@ instance AdjustFilePaths NodeProtocolConfiguration where
   adjustFilePaths f (NodeProtocolConfigurationByron pc) =
     NodeProtocolConfigurationByron (adjustFilePaths f pc)
 
-  adjustFilePaths f (NodeProtocolConfigurationShelley pc) =
-    NodeProtocolConfigurationShelley (adjustFilePaths f pc)
+  adjustFilePaths f (NodeProtocolConfigurationShelley pc sts) =
+    NodeProtocolConfigurationShelley (adjustFilePaths f pc) sts
 
-  adjustFilePaths f (NodeProtocolConfigurationCardano pcb pcs pca pcc pch) =
+  adjustFilePaths f (NodeProtocolConfigurationCardano pcb pcs pca pcc pch sts) =
     NodeProtocolConfigurationCardano (adjustFilePaths f pcb)
                                      (adjustFilePaths f pcs)
                                      (adjustFilePaths f pca)
                                      (adjustFilePaths f pcc)
                                      pch
+                                     sts
 
 instance AdjustFilePaths NodeByronProtocolConfiguration where
   adjustFilePaths f x@NodeByronProtocolConfiguration {

@@ -62,7 +62,7 @@ instance HashAlgorithm h => TxGen (ShelleyBlock (TPraos (MockCrypto h)) (MockShe
         then pure []
         else do
           n <- choose (0, 20)
-          go [] n $ applyChainTick lcfg curSlotNo lst
+          go [] n $ applyChainTickWithSTSOpts (topLevelConfigSTS cfg) lcfg curSlotNo lst
     where
       ShelleyTxGenExtra
         { stgeGenEnv

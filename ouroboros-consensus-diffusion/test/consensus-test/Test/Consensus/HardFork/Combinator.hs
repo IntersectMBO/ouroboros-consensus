@@ -282,6 +282,7 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
                 :* Nil
             }
         , topLevelConfigCheckpoints = emptyCheckpointsMap
+        , topLevelConfigSTS         = fastSTSOpts (Proxy @(LedgerState (HardForkBlock '[BlockA, BlockB])))
         }
 
     consensusConfigA :: CoreNodeId -> ConsensusConfig ProtocolA

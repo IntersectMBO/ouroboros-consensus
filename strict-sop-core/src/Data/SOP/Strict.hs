@@ -7,6 +7,7 @@ module Data.SOP.Strict (
   , module Data.SOP.Strict.NS
     -- * fn
   , fn_5
+  , fn_6
     -- * Reexports
   , module Data.SOP.Classes
   ) where
@@ -27,3 +28,13 @@ fn_5 f = Fn $ \x0 ->
          Fn $ \x3 ->
          Fn $ \x4 ->
          f x0 x1 x2 x3 x4
+
+fn_6 :: (f0 a -> f1 a -> f2 a -> f3 a -> f4 a -> f5 a -> f6 a)
+     -> (f0 -.-> f1 -.-> f2 -.-> f3 -.-> f4 -.-> f5 -.-> f6) a
+fn_6 f = Fn $ \x0 ->
+         Fn $ \x1 ->
+         Fn $ \x2 ->
+         Fn $ \x3 ->
+         Fn $ \x4 ->
+         Fn $ \x5 ->
+         f x0 x1 x2 x3 x4 x5

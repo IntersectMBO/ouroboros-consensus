@@ -159,7 +159,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
         -- Tick the ledger state for the 'SlotNo' we're producing a block for
         let tickedLedgerState :: Ticked (LedgerState blk)
             tickedLedgerState =
-              applyChainTick
+              applyChainTickWithSTSOpts (fastSTSOpts (Proxy @(LedgerState blk)))
                 (configLedger cfg)
                 currentSlot
                 (ledgerState unticked)

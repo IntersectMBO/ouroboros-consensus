@@ -49,8 +49,9 @@ import           Ouroboros.Consensus.Protocol.Praos.Common
 import           Ouroboros.Consensus.Shelley.Node (Nonce (..),
                      ProtocolParamsShelleyBased (..), ShelleyGenesis (..),
                      ShelleyLeaderCredentials (..))
-import           Prelude (String, id)
-
+import           Prelude (String, id, undefined)
+import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Shelley.HFEras
 
 ------------------------------------------------------------------------------
 -- Shelley protocol
@@ -65,12 +66,14 @@ import           Prelude (String, id)
 mkSomeConsensusProtocolShelley ::
      NodeShelleyProtocolConfiguration
   -> Maybe ProtocolFilepaths
+  -> STSOptions (LedgerState StandardShelleyBlock)
   -> ExceptT ShelleyProtocolInstantiationError IO SomeConsensusProtocol
 mkSomeConsensusProtocolShelley NodeShelleyProtocolConfiguration {
                                   npcShelleyGenesisFile,
                                   npcShelleyGenesisFileHash
                                 }
-                          files = do
+                          files
+                          sts = do
     (genesis, genesisHash) <- firstExceptT GenesisReadError $
                               readGenesis npcShelleyGenesisFile
                                           npcShelleyGenesisFileHash
@@ -86,6 +89,7 @@ mkSomeConsensusProtocolShelley NodeShelleyProtocolConfiguration {
             leaderCredentials
       }
       (ProtVer (natVersion @2) 0)
+      (PerEraSTSOptions $ WrapSTSOptions sts :* Nil)
 
 genesisHashToPraosNonce :: GenesisHash -> Nonce
 genesisHashToPraosNonce (GenesisHash h) = Nonce (Crypto.castHash h)

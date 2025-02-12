@@ -97,6 +97,7 @@ import           Test.QuickCheck
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Slots (NumSlots (..))
 import           Test.Util.Time (dawnOfTime)
+import Ouroboros.Consensus.Ledger.Basics
 
 {-------------------------------------------------------------------------------
   The decentralization parameter
@@ -409,11 +410,12 @@ mkProtocolShelley ::
   => ShelleyGenesis c
   -> SL.Nonce
   -> ProtVer
+  -> STSOptions (LedgerState (ShelleyBlock (TPraos c) (ShelleyEra c)))
   -> CoreNode c
   -> ( ProtocolInfo (ShelleyBlock (TPraos c) (ShelleyEra c))
      , m [BlockForging m (ShelleyBlock (TPraos c) (ShelleyEra c))]
      )
-mkProtocolShelley genesis initialNonce protVer coreNode =
+mkProtocolShelley genesis initialNonce protVer sts coreNode =
     protocolInfoShelley
       genesis
       ProtocolParamsShelleyBased {
@@ -421,6 +423,8 @@ mkProtocolShelley genesis initialNonce protVer coreNode =
         , shelleyBasedLeaderCredentials = [mkLeaderCredentials coreNode]
         }
       protVer
+      sts
+
 {-------------------------------------------------------------------------------
   Necessary transactions for updating the 'DecentralizationParam'
 -------------------------------------------------------------------------------}

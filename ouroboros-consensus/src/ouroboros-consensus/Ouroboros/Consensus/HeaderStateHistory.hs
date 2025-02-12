@@ -259,4 +259,3 @@ fromChain cfg initState chain =
             initState
         . Chain.toOldestFirst
         $ chain
-

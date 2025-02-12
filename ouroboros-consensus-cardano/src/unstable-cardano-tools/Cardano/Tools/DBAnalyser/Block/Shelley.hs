@@ -37,6 +37,7 @@ import           Data.Sequence.Strict (StrictSeq)
 import           Data.Word (Word64)
 import           Lens.Micro ((^.))
 import           Lens.Micro.Extras (view)
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import           Ouroboros.Consensus.Shelley.Eras (StandardCrypto,
@@ -133,21 +134,23 @@ instance HasProtocolInfo (ShelleyBlock (TPraos StandardCrypto) StandardShelley) 
   data Args (ShelleyBlock (TPraos StandardCrypto) StandardShelley) = ShelleyBlockArgs {
         configFileShelley :: FilePath
       , initialNonce      :: Nonce
+      , stsOpts           :: STSOptions (LedgerState (ShelleyBlock (TPraos StandardCrypto) StandardShelley))
       }
     deriving (Show)
 
-  mkProtocolInfo ShelleyBlockArgs{configFileShelley, initialNonce} = do
+  mkProtocolInfo ShelleyBlockArgs{configFileShelley, initialNonce, stsOpts} = do
     config <- either (error . show) return =<<
       Aeson.eitherDecodeFileStrict' configFileShelley
-    return $ mkShelleyProtocolInfo config initialNonce
+    return $ mkShelleyProtocolInfo config initialNonce stsOpts
 
 type ShelleyBlockArgs = Args (ShelleyBlock (TPraos StandardCrypto) StandardShelley)
 
 mkShelleyProtocolInfo ::
      ShelleyGenesis StandardCrypto
   -> Nonce
+  -> STSOptions (LedgerState (ShelleyBlock (TPraos StandardCrypto) StandardShelley))
   -> ProtocolInfo (ShelleyBlock (TPraos StandardCrypto) StandardShelley)
-mkShelleyProtocolInfo genesis initialNonce =
+mkShelleyProtocolInfo genesis initialNonce sts =
     fst $ protocolInfoShelley @IO
       genesis
       ProtocolParamsShelleyBased {
@@ -155,3 +158,4 @@ mkShelleyProtocolInfo genesis initialNonce =
         , shelleyBasedLeaderCredentials = []
         }
       (SL.ProtVer (CL.natVersion @2) 0)
+      sts

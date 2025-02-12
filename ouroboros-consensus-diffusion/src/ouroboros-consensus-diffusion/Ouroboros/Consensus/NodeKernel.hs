@@ -395,6 +395,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
     varChainSyncHandles <- atomically newChainSyncClientHandleCollection
     mempool       <- openMempool registry
                                  (chainDBLedgerInterface chainDB)
+                                 (topLevelConfigSTS cfg)
                                  (configLedger cfg)
                                  mempoolCapacityOverride
                                  (mempoolTracer tracers)
@@ -540,7 +541,8 @@ forkBlockForging IS{..} blockForging =
         -- Tick the ledger state for the 'SlotNo' we're producing a block for
         let tickedLedgerState :: Ticked (LedgerState blk)
             tickedLedgerState =
-              applyChainTick
+              applyChainTickWithSTSOpts
+                (topLevelConfigSTS cfg)
                 (configLedger cfg)
                 currentSlot
                 (ledgerState unticked)

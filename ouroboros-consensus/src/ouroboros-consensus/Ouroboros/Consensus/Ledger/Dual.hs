@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
@@ -56,6 +57,7 @@ module Ouroboros.Consensus.Ledger.Dual (
   , encodeDualLedgerState
   ) where
 
+import Data.Coerce
 import           Cardano.Binary (enforceSize)
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding, encodeListLen)
@@ -181,6 +183,7 @@ dualTopLevelConfigMain TopLevelConfig{..} = TopLevelConfig{
     , topLevelConfigCodec       = dualCodecConfigMain   topLevelConfigCodec
     , topLevelConfigStorage     = dualStorageConfigMain topLevelConfigStorage
     , topLevelConfigCheckpoints = castCheckpointsMap topLevelConfigCheckpoints
+    , topLevelConfigSTS         = coerce     topLevelConfigSTS
     }
 
 {-------------------------------------------------------------------------------
@@ -247,6 +250,11 @@ class (
       , Serialise (BridgeBlock  m a)
       , Serialise (BridgeTx     m a)
       , Show      (BridgeTx     m a)
+
+      , NoThunks (STSOptions (LedgerState m))
+      , STSOptions (LedgerState a) ~ ()
+      , Show (STSOptions (LedgerState m))
+      , Eq (STSOptions (LedgerState m))
       ) => Bridge m a where
 
   -- | Additional information relating both ledgers
@@ -359,12 +367,15 @@ instance Bridge m a => IsLedger (LedgerState (DualBlock m a)) where
   -- any events. So we make this easy choice for for now.
   type AuxLedgerEvent (LedgerState (DualBlock m a)) = AuxLedgerEvent (LedgerState m)
 
-  applyChainTickLedgerResult DualLedgerConfig{..}
+  type STSOptions (LedgerState (DualBlock m a)) = STSOptions (LedgerState m)
+
+  applyChainTickLedgerResultWithSTSOpts sts
+                             DualLedgerConfig{..}
                              slot
                              DualLedgerState{..} =
       castLedgerResult ledgerResult <&> \main -> TickedDualLedgerState {
           tickedDualLedgerStateMain    = main
-        , tickedDualLedgerStateAux     = applyChainTick
+        , tickedDualLedgerStateAux     = applyChainTickWithSTSOpts ()
                                            dualLedgerConfigAux
                                            slot
                                           dualLedgerStateAux
@@ -372,23 +383,27 @@ instance Bridge m a => IsLedger (LedgerState (DualBlock m a)) where
         , tickedDualLedgerStateBridge  = dualLedgerStateBridge
         }
     where
-      ledgerResult = applyChainTickLedgerResult
+      ledgerResult = applyChainTickLedgerResultWithSTSOpts sts
                        dualLedgerConfigMain
                        slot
                        dualLedgerStateMain
 
+  fastSTSOpts _ = fastSTSOpts (Proxy @(LedgerState m))
+  accurateSTSOpts _ = accurateSTSOpts (Proxy @(LedgerState m))
+  enableSTSEvents _ = enableSTSEvents (Proxy @(LedgerState m))
+
 instance Bridge m a => ApplyBlock (LedgerState (DualBlock m a)) (DualBlock m a) where
 
-  applyBlockLedgerResult cfg
+  applyBlockLedgerResultWithSTSOpts sts cfg
                          block@DualBlock{..}
                          TickedDualLedgerState{..} = do
       (ledgerResult, aux') <-
         agreeOnError DualLedgerError (
-            applyBlockLedgerResult
+            applyBlockLedgerResultWithSTSOpts sts
               (dualLedgerConfigMain cfg)
               dualBlockMain
               tickedDualLedgerStateMain
-          , applyMaybeBlock
+          , applyMaybeBlock ()
               (dualLedgerConfigAux cfg)
               dualBlockAux
               tickedDualLedgerStateAux
@@ -766,13 +781,14 @@ type instance ForgeStateUpdateError (DualBlock m a) = ForgeStateUpdateError m
 --
 -- Returns state unchanged on 'Nothing'
 applyMaybeBlock :: UpdateLedger blk
-                => LedgerConfig blk
+                => STSOptions (LedgerState blk)
+                -> LedgerConfig blk
                 -> Maybe blk
                 -> TickedLedgerState blk
                 -> LedgerState blk
                 -> Except (LedgerError blk) (LedgerState blk)
-applyMaybeBlock _   Nothing      _   st = return st
-applyMaybeBlock cfg (Just block) tst _  = applyLedgerBlock cfg block tst
+applyMaybeBlock _ _   Nothing      _   st = return st
+applyMaybeBlock sts cfg (Just block) tst _  = applyLedgerBlockWithSTSOpts sts cfg block tst
 
 -- | Lift 'reapplyLedgerBlock' to @Maybe blk@
 --

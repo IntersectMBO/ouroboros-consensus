@@ -73,16 +73,16 @@ And imports, of course:
 >   (BlockSupportsProtocol (..))
 > import Ouroboros.Consensus.Protocol.Abstract
 >   (ConsensusConfig, SecurityParam, ConsensusProtocol (..))
->
+
 > import Ouroboros.Consensus.Ticked (Ticked)
 > import Ouroboros.Consensus.Ledger.Abstract
 >   (LedgerState, LedgerCfg, GetTip, LedgerResult (..), ApplyBlock (..),
 >    UpdateLedger, IsLedger (..))
->
+
 > import Ouroboros.Consensus.Ledger.SupportsMempool ()
 > import Ouroboros.Consensus.Ledger.SupportsProtocol
 >   (LedgerSupportsProtocol (..))
->
+
 > import Ouroboros.Consensus.HeaderValidation
 >   (ValidateEnvelope, BasicEnvelopeValidation, HasAnnTip)
 > import Ouroboros.Consensus.Forecast
@@ -235,10 +235,10 @@ As before, we to implement a few type families to fully specify the header -
 
 > instance GetHeader BlockD where
 >   getHeader          = bd_header
->
+
 >   blockMatchesHeader hdr blk =
 >     hbd_Hash hdr == computeBlockHash blk
->
+
 >   headerIsEBB      _ = Nothing
 
 > instance GetPrevHash BlockD where
@@ -353,7 +353,7 @@ intervening blocks are applied:
 >             }
 >     else
 >       ldgrSt
->
+
 >   where
 >   isNewEpoch =
 >     case compare
@@ -373,11 +373,17 @@ We can now use `tickLedgerStateD` to instantiate `IsLedger`:
 > instance IsLedger (LedgerState BlockD) where
 >   type instance LedgerErr (LedgerState BlockD) = String
 >   type instance AuxLedgerEvent (LedgerState BlockD) = ()
->
->   applyChainTickLedgerResult _cfg slot ldgrSt =
+>   type instance STSOptions (LedgerState BlockD) = ()
+
+>   applyChainTickLedgerResultWithSTSOpts _sts _cfg slot ldgrSt =
 >     LedgerResult { lrEvents = []
 >                  , lrResult = tickLedgerStateD slot ldgrSt
 >                  }
+
+>   fastSTSOpts _ = ()
+>   accurateSTSOpts _ = ()
+>   enableSTSEvents _ = id
+
 
 `UpdateLedger` is necessary but its implementation is always empty:
 
@@ -403,11 +409,11 @@ applying each individual transaction - exactly as it was in for `BlockC`:
 >         Dec -> i - 1
 
 > instance ApplyBlock (LedgerState BlockD) BlockD where
->   applyBlockLedgerResult _ldgrCfg b tickedLdgrSt =
+>   applyBlockLedgerResultWithSTSOpts _sts _ldgrCfg b tickedLdgrSt =
 >     pure LedgerResult { lrResult = b `applyBlockTo` tickedLdgrSt
 >                       , lrEvents = []
 >                       }
->
+
 >   reapplyBlockLedgerResult _ldgrCfg b tickedLdgrSt =
 >     LedgerResult { lrResult = b `applyBlockTo` tickedLdgrSt
 >                  , lrEvents = []
@@ -454,7 +460,7 @@ instance of the `ConsensusProtocol` should be running as:
 >   PrtclD_Config
 >     { ccpd_securityParam :: SecurityParam  -- ^ i.e., 'k'
 >     , ccpd_mbCanBeLeader :: Maybe PrtclD_CanBeLeader
->
+
 >       -- ^ To lead, a node must have a 'ccpd_mbCanBeLeader' equal to
 >       -- `Just (PrtclD_CanBeLeader nodeid)`.
 >       -- We expect this value would be extracted from a config file.
@@ -513,24 +519,24 @@ Now we can instantiate `ConsensusProtocol PrtclD` proper with the types and
 functions defined above:
 
 > instance ConsensusProtocol PrtclD where
->
+
 >   type ChainDepState PrtclD = ChainDepStateD
 >   type IsLeader PrtclD = PrtclD_IsLeader
 >   type CanBeLeader PrtclD = PrtclD_CanBeLeader
->
+
 >   -- | View on a block header required for chain selection.  Here, BlockNo is
 >   --   sufficient. (BlockNo is also the default type for this type family.)
 >   type SelectView PrtclD = BlockNo
->
+
 >   -- | View on the ledger required by the protocol
 >   type LedgerView PrtclD = LedgerViewD
->
+
 >   -- | View on a block header required for header validation
 >   type ValidateView  PrtclD = NodeId  -- need this for the leader check
 >                                       -- currently not doing other checks
->
+
 >   type ValidationErr PrtclD = String
->
+
 >   -- | checkIsLeader - Am I the leader this slot?
 >   checkIsLeader cfg _cbl slot tcds =
 >     case ccpd_mbCanBeLeader cfg of
@@ -538,23 +544,23 @@ functions defined above:
 >         -- not providing any cryptographic proof
 >         | isLeader nodeId slot (tickedChainDepLV tcds) -> Just PrtclD_IsLeader
 >       _                             -> Nothing
->
+
 >   protocolSecurityParam = ccpd_securityParam
->
+
 >   tickChainDepState _cfg lv _slot _cds = TickedChainDepStateD lv
->
+
 >   -- | apply the header (hdrView) and do a header check.
 >   --
 >   -- Here we check the block's claim to lead the slot (though in Protocol D,
 >   -- this doesn't give us too much confidence, as there is nothing that
 >   -- precludes a node from masquerading as any other node).
->
+
 >   updateChainDepState _cfg hdrView slot tcds =
 >     if isLeader hdrView slot (tickedChainDepLV tcds) then
 >       return ChainDepStateD
 >     else
 >       throwError $ "leader check failed: " ++ show (hdrView,slot)
->
+
 >   reupdateChainDepState _ _ _ _ = ChainDepStateD
 
 Integration
@@ -569,7 +575,7 @@ from the block header, and `selectView` projecting out the block number:
 
 > instance BlockSupportsProtocol BlockD where
 >   validateView _bcfg hdr = hbd_nodeId hdr
->
+
 >   selectView _bcfg hdr = blockNo hdr
 
 All that remains is to establish `PrtclD` as the protocol for
@@ -590,7 +596,7 @@ ledger view: (1) the slot (`for` in the code below) is in the current epoch and
 >   protocolLedgerView _ldgrCfg (TickedLedgerStateD ldgrSt) =
 >     LVD $ lsbd_snapshot2 ldgrSt
 >       -- note that we use the snapshot from 2 epochs ago.
->
+
 >   -- | Borrowing somewhat from Ouroboros/Consensus/Byron/Ledger/Ledger.hs
 >   ledgerViewForecastAt _lccf ldgrSt =
 >     Forecast { forecastAt = at
@@ -617,12 +623,12 @@ ledger view: (1) the slot (`for` in the code below) is in the current epoch and
 >                            -- we can forecast into the following epoch because
 >                            -- we have the snapshot from 1 epoch ago.
 >              }
->
+
 >     where
 >     -- | the current slot that the ledger reflects
 >     at :: WithOrigin SlotNo
 >     at = pointSlot $ lsbd_tip ldgrSt
->
+
 >     -- | 'maxFor' is the "exclusive upper bound on the range of the forecast"
 >     -- (the name "max" does seem wrong, but we are following suit with the names
 >     -- and terminology in the 'Ouroboros.Consensus.Forecast' module)

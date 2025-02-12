@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiWayIf #-}
@@ -41,6 +42,7 @@ import qualified Ouroboros.Consensus.Byron.Crypto.DSIGN as Crypto
 import           Ouroboros.Consensus.Byron.Ledger (ByronBlock)
 import qualified Ouroboros.Consensus.Byron.Ledger as Byron
 import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..),
                      ProtocolInfo (..))
 import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
@@ -384,7 +386,7 @@ mkProtocolByronAndHardForkTxs
     blockForging :: [BlockForging m ByronBlock]
     opKey :: Crypto.SigningKey
     (pInfo, blockForging, Crypto.SignKeyByronDSIGN opKey) =
-        mkProtocolByron params cid genesisConfig genesisSecrets
+        mkProtocolByron params cid genesisConfig genesisSecrets (fastSTSOpts $ Proxy @(LedgerState ByronBlock))
 
     proposals :: [Byron.GenTx ByronBlock]
     proposals =
@@ -437,7 +439,7 @@ mkHardForkProposal params genesisConfig genesisSecrets propPV =
     _blockForging :: [BlockForging Identity ByronBlock]
     opKey :: Crypto.SigningKey
     (pInfo, _blockForging, Crypto.SignKeyByronDSIGN opKey) =
-        mkProtocolByron params (CoreNodeId 0) genesisConfig genesisSecrets
+        mkProtocolByron params (CoreNodeId 0) genesisConfig genesisSecrets (fastSTSOpts $ Proxy @(LedgerState ByronBlock))
 
     ProtocolInfo{pInfoConfig} = pInfo
     bcfg = configBlock pInfoConfig

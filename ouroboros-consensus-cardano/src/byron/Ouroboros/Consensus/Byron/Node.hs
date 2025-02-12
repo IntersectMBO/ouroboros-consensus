@@ -175,6 +175,7 @@ data ProtocolParamsByron = ProtocolParamsByron {
     , byronProtocolVersion        :: Update.ProtocolVersion
     , byronSoftwareVersion        :: Update.SoftwareVersion
     , byronLeaderCredentials      :: Maybe ByronLeaderCredentials
+    , byronSTSOptions             :: STSOptions (LedgerState ByronBlock)
     }
 
 protocolInfoByron :: ProtocolParamsByron
@@ -184,6 +185,7 @@ protocolInfoByron ProtocolParamsByron {
                     , byronPbftSignatureThreshold = mSigThresh
                     , byronProtocolVersion        = pVer
                     , byronSoftwareVersion        = sVer
+                    , byronSTSOptions             = sts
                     } =
     ProtocolInfo {
         pInfoConfig = TopLevelConfig {
@@ -195,6 +197,7 @@ protocolInfoByron ProtocolParamsByron {
           , topLevelConfigCodec       = mkByronCodecConfig compactedGenesisConfig
           , topLevelConfigStorage     = ByronStorageConfig blockConfig
           , topLevelConfigCheckpoints = emptyCheckpointsMap
+          , topLevelConfigSTS         = sts
           }
       , pInfoInitLedger = ExtLedgerState {
             -- Important: don't pass the compacted genesis config to

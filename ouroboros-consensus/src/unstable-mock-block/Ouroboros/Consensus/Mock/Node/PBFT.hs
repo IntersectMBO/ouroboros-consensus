@@ -42,6 +42,7 @@ protocolInfoMockPBFT params eraParams =
           , topLevelConfigCodec       = SimpleCodecConfig
           , topLevelConfigStorage     = SimpleStorageConfig (pbftSecurityParam params)
           , topLevelConfigCheckpoints = emptyCheckpointsMap
+          , topLevelConfigSTS         = ()
           }
       , pInfoInitLedger = ExtLedgerState (genesisSimpleLedgerState addrDist)
                                          (genesisHeaderState S.empty)

@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NumericUnderscores #-}
@@ -24,6 +25,7 @@ import           Ouroboros.Consensus.Config.SecurityParam as Consensus
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import           Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32 (..))
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Mempool
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Mempool (Mempool)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool
@@ -89,6 +91,7 @@ testTxSizeFairness TestParams { mempoolMaxCapacity, smallTxSize, largeTxSize, nr
           HardFork.defaultEraParams (Consensus.SecurityParam 10) (Time.slotLengthFromSec 2)
     mempool <- Mempool.openMempoolWithoutSyncThread
                    ledgerItf
+                   (fastSTSOpts (Proxy @(LedgerState TestBlock)))
                    (testBlockLedgerConfigFrom eraParams)
                    (Mempool.mkCapacityBytesOverride mempoolMaxCapacity)
                    Tracer.nullTracer

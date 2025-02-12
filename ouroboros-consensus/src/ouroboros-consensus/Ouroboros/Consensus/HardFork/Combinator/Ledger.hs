@@ -117,9 +117,15 @@ instance CanHardFork xs => IsLedger (LedgerState (HardForkBlock xs)) where
 
   type AuxLedgerEvent (LedgerState (HardForkBlock xs)) = OneEraLedgerEvent xs
 
-  applyChainTickLedgerResult cfg@HardForkLedgerConfig{..} slot (HardForkLedgerState st) =
+  type STSOptions (LedgerState (HardForkBlock xs)) = PerEraSTSOptions xs
+
+  applyChainTickLedgerResultWithSTSOpts sts cfg@HardForkLedgerConfig{..} slot (HardForkLedgerState st) =
       sequenceHardForkState
-        (hcizipWith proxySingle (tickOne ei slot) cfgs extended) <&> \l' ->
+        (hcizipWith
+          proxySingle
+          (tickOne ei slot)
+          (hzipWith (\s c -> Pair s c) (getPerEraSTSOptions sts) cfgs)
+          extended) <&> \l' ->
       TickedHardForkLedgerState {
           tickedHardForkLedgerStateTransition =
             -- We are bundling a 'TransitionInfo' with a /ticked/ ledger state,
@@ -152,18 +158,33 @@ instance CanHardFork xs => IsLedger (LedgerState (HardForkBlock xs)) where
       extended :: HardForkState LedgerState xs
       extended = State.extendToSlot cfg slot st
 
+  fastSTSOpts _ = PerEraSTSOptions (hcpure proxySingle f)
+    where
+      f :: forall blk. IsLedger (LedgerState blk) => WrapSTSOptions blk
+      f = WrapSTSOptions $ fastSTSOpts (Proxy @(LedgerState blk))
+
+  accurateSTSOpts _ = PerEraSTSOptions (hcpure proxySingle f)
+    where
+      f :: forall blk. IsLedger (LedgerState blk) => WrapSTSOptions blk
+      f = WrapSTSOptions $ accurateSTSOpts (Proxy @(LedgerState blk))
+
+  enableSTSEvents _ = PerEraSTSOptions . hcmap proxySingle f . getPerEraSTSOptions
+    where
+      f :: forall blk. IsLedger (LedgerState blk) => WrapSTSOptions blk -> WrapSTSOptions blk
+      f = WrapSTSOptions . enableSTSEvents (Proxy @(LedgerState blk)) . unwrapSTSOptions
+
 tickOne :: SingleEraBlock blk
         => EpochInfo (Except PastHorizonException)
         -> SlotNo
         -> Index xs                                           blk
-        -> WrapPartialLedgerConfig                            blk
+        -> Product WrapSTSOptions WrapPartialLedgerConfig                            blk
         -> LedgerState                                        blk
         -> (    LedgerResult (LedgerState (HardForkBlock xs))
             :.: (Ticked :.: LedgerState)
            )                                                  blk
-tickOne ei slot index pcfg st = Comp $ fmap Comp $
+tickOne ei slot index (Pair sts pcfg) st = Comp $ fmap Comp $
       embedLedgerResult (injectLedgerEvent index)
-    $ applyChainTickLedgerResult (completeLedgerConfig' ei pcfg) slot st
+    $ applyChainTickLedgerResultWithSTSOpts (unwrapSTSOptions sts) (completeLedgerConfig' ei pcfg) slot st
 
 {-------------------------------------------------------------------------------
   ApplyBlock
@@ -172,7 +193,7 @@ tickOne ei slot index pcfg st = Comp $ fmap Comp $
 instance CanHardFork xs
       => ApplyBlock (LedgerState (HardForkBlock xs)) (HardForkBlock xs) where
 
-  applyBlockLedgerResult cfg
+  applyBlockLedgerResultWithSTSOpts sts cfg
                     (HardForkBlock (OneEraBlock block))
                     (TickedHardForkLedgerState transition st) =
       case State.match block st of
@@ -185,7 +206,7 @@ instance CanHardFork xs
         Right matched ->
             fmap (fmap HardForkLedgerState . sequenceHardForkState)
           $ hsequence'
-          $ hcizipWith proxySingle apply cfgs matched
+          $ hcizipWith proxySingle apply (hzipWith (\s c -> Pair s c) (getPerEraSTSOptions sts) cfgs) matched
     where
       cfgs = distribLedgerConfig ei cfg
       ei   = State.epochInfoPrecomputedTransitionInfo
@@ -193,50 +214,25 @@ instance CanHardFork xs
                transition
                st
 
-  reapplyBlockLedgerResult cfg
-                      (HardForkBlock (OneEraBlock block))
-                      (TickedHardForkLedgerState transition st) =
-      case State.match block st of
-        Left _mismatch ->
-          -- We already applied this block to this ledger state,
-          -- so it can't be from the wrong era
-          error "reapplyBlockLedgerResult: can't be from other era"
-        Right matched ->
-            fmap HardForkLedgerState
-          $ sequenceHardForkState
-          $ hcizipWith proxySingle reapply cfgs matched
-    where
-      cfgs = distribLedgerConfig ei cfg
-      ei   = State.epochInfoPrecomputedTransitionInfo
-               (hardForkLedgerConfigShape cfg)
-               transition
-               st
+instance ThrowLedgerReapplyError (LedgerState (HardForkBlock xs)) where
+  reapplyResult _ =
+    -- We already applied this block to this ledger state,
+    -- so it can't be from the wrong era
+    error "reapplyBlockLedgerResult: can't be from other era"
 
 apply :: SingleEraBlock blk
       => Index xs                                           blk
-      -> WrapLedgerConfig                                   blk
+      -> Product WrapSTSOptions WrapLedgerConfig            blk
       -> Product I (Ticked :.: LedgerState)                 blk
       -> (    Except (HardForkLedgerError xs)
           :.: LedgerResult (LedgerState (HardForkBlock xs))
           :.: LedgerState
          )                                                  blk
-apply index (WrapLedgerConfig cfg) (Pair (I block) (Comp st)) =
+apply index (Pair (WrapSTSOptions sts) (WrapLedgerConfig cfg)) (Pair (I block) (Comp st)) =
       Comp
     $ withExcept (injectLedgerError index)
     $ fmap (Comp . embedLedgerResult (injectLedgerEvent index))
-    $ applyBlockLedgerResult cfg block st
-
-reapply :: SingleEraBlock blk
-        => Index xs                                           blk
-        -> WrapLedgerConfig                                   blk
-        -> Product I (Ticked :.: LedgerState)                 blk
-        -> (    LedgerResult (LedgerState (HardForkBlock xs))
-            :.: LedgerState
-           )                                                  blk
-reapply index (WrapLedgerConfig cfg) (Pair (I block) (Comp st)) =
-      Comp
-    $ embedLedgerResult (injectLedgerEvent index)
-    $ reapplyBlockLedgerResult cfg block st
+    $ applyBlockLedgerResultWithSTSOpts sts cfg block st
 
 {-------------------------------------------------------------------------------
   UpdateLedger

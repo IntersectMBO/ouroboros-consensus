@@ -17,13 +17,13 @@ pureGetSnapshotFor ::
      , HasTxId (GenTx blk)
      , ValidateEnvelope blk
      )
-  => LedgerConfig blk
+  => STSOptions (LedgerState blk)
+  -> LedgerConfig blk
   -> ForgeLedgerState blk
   -> MempoolCapacityBytesOverride
   -> InternalState blk
   -> MempoolSnapshot blk
-pureGetSnapshotFor cfg blockLedgerState capacityOverride =
+pureGetSnapshotFor sts cfg blockLedgerState capacityOverride =
       snapshotFromIS
     . internalStateFromVR
-    . validateStateFor capacityOverride cfg blockLedgerState
-
+    . validateStateFor capacityOverride sts cfg blockLedgerState

@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -30,6 +32,7 @@ import           Data.Traversable (for)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Node.InitStorage
 import           Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import           Ouroboros.Consensus.Protocol.Abstract
@@ -48,6 +51,8 @@ import           Ouroboros.Network.Block (MaxSlotNo)
 import           System.FS.API (SomeHasFS (..))
 import           System.FS.API.Types (MountPoint (..))
 import           System.FS.IO (ioHasFS)
+import           Ouroboros.Consensus.Cardano.Block (CardanoBlock)
+import           Cardano.Ledger.Crypto (StandardCrypto)
 
 data Opts = Opts {
     dbDirs     :: DBDirs FilePath
@@ -57,7 +62,7 @@ data Opts = Opts {
 run :: Opts -> IO ()
 run Opts {dbDirs, configFile} = do
     let dbDirs' = SomeHasFS . ioHasFS . MountPoint <$> dbDirs
-        args    = Cardano.CardanoBlockArgs configFile Nothing
+        args    = Cardano.CardanoBlockArgs configFile Nothing (fastSTSOpts $ Proxy @(LedgerState (CardanoBlock StandardCrypto)))
     ProtocolInfo{pInfoConfig = cfg} <- mkProtocolInfo args
     withRegistry $ \registry ->
       withDBs cfg registry dbDirs' $

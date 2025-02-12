@@ -17,9 +17,13 @@ module Cardano.Api.Protocol.Types (
   , ProtocolInfoArgs (..)
   ) where
 
+import Ouroboros.Consensus.TypeFamilyWrappers
+import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
+import Data.SOP.Index
 import           Cardano.Chain.Slotting (EpochSlots)
 import           Data.Bifunctor (bimap)
 import           Ouroboros.Consensus.Block.Forging (BlockForging)
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Cardano
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.ByronHFC (ByronBlockHFC)
@@ -92,8 +96,10 @@ instance ( IOLike m
     (ShelleyGenesis StandardCrypto)
     (ProtocolParamsShelleyBased StandardCrypto)
     ProtVer
-  protocolInfo (ProtocolInfoArgsShelley genesis shelleyBasedProtocolParams' protVer) =
+    (STSOptions (LedgerState (ShelleyBlockHFC (Consensus.TPraos StandardCrypto) StandardShelley)))
+  protocolInfo (ProtocolInfoArgsShelley genesis shelleyBasedProtocolParams' protVer sts) =
     bimap inject (fmap $ map inject) $ protocolInfoShelley genesis shelleyBasedProtocolParams' protVer
+     $ unwrapSTSOptions $ projectNP IZ $ getPerEraSTSOptions sts
 
 instance Consensus.LedgerSupportsProtocol
           (Consensus.ShelleyBlock

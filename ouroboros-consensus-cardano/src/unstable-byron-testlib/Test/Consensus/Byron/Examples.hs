@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -122,7 +123,7 @@ exampleBlock =
       cfg
       (BlockNo 1)
       (SlotNo 1)
-      (applyChainTick ledgerConfig (SlotNo 1) ledgerStateAfterEBB)
+      (applyChainTickWithSTSOpts (fastSTSOpts (Proxy @(LedgerState ByronBlock))) ledgerConfig (SlotNo 1) ledgerStateAfterEBB)
       [ValidatedByronTx exampleGenTx]
       (fakeMkIsLeader leaderCredentials)
   where
@@ -181,13 +182,13 @@ emptyLedgerState = ByronLedgerState {
 ledgerStateAfterEBB :: LedgerState ByronBlock
 ledgerStateAfterEBB =
       reapplyLedgerBlock ledgerConfig exampleEBB
-    . applyChainTick ledgerConfig (SlotNo 0)
+    . applyChainTickWithSTSOpts (fastSTSOpts (Proxy @(LedgerState ByronBlock))) ledgerConfig (SlotNo 0)
     $ emptyLedgerState
 
 exampleLedgerState :: LedgerState ByronBlock
 exampleLedgerState =
       reapplyLedgerBlock ledgerConfig exampleBlock
-    . applyChainTick ledgerConfig (SlotNo 1)
+    . applyChainTickWithSTSOpts (fastSTSOpts (Proxy @(LedgerState ByronBlock))) ledgerConfig (SlotNo 1)
     $ ledgerStateAfterEBB
 
 exampleHeaderState :: HeaderState ByronBlock

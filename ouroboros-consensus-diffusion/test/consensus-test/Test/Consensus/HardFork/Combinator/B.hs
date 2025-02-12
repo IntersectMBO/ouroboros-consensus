@@ -186,11 +186,19 @@ instance IsLedger (LedgerState BlockB) where
   type AuxLedgerEvent (LedgerState BlockB) =
     VoidLedgerEvent (LedgerState BlockB)
 
-  applyChainTickLedgerResult _ _ = pureLedgerResult . TickedLedgerStateB
+  type STSOptions (LedgerState BlockB) = ()
+
+  applyChainTickLedgerResultWithSTSOpts _ _ _ = pureLedgerResult . TickedLedgerStateB
+
+  fastSTSOpts _ = ()
+  accurateSTSOpts _ = ()
+  enableSTSEvents _ = id
 
 instance ApplyBlock (LedgerState BlockB) BlockB where
-  applyBlockLedgerResult   = \_ b _ -> return $ pureLedgerResult $ LgrB (blockPoint b)
-  reapplyBlockLedgerResult = \_ b _ ->          pureLedgerResult $ LgrB (blockPoint b)
+  applyBlockLedgerResultWithSTSOpts = \_ _ b _ -> return $ pureLedgerResult $ LgrB (blockPoint b)
+
+instance ThrowLedgerReapplyError (LedgerState BlockB) where
+  reapplyResult = absurd
 
 instance UpdateLedger BlockB
 
