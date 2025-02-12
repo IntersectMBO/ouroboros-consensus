@@ -4,7 +4,6 @@ open import InterfaceLibrary.Ledger
 open import Spec.BaseTypes using (Nonces)
 open import Spec.BlockDefinitions
 open import Ledger.Crypto
-open import Ledger.Script
 open import Ledger.Types.Epoch
 open import Data.Rational.Ext
 
@@ -12,23 +11,22 @@ module Spec.ChainHead.Properties
   (crypto : _) (open Crypto crypto)
   (nonces : Nonces crypto) (open Nonces nonces)
   (es     : _) (open EpochStructure es)
-  (ss     : ScriptStructure crypto es) (open ScriptStructure ss)
-  (bs     : BlockStructure crypto nonces es ss) (open BlockStructure bs)
+  (bs     : BlockStructure crypto nonces es) (open BlockStructure bs)
   (af     : _) (open AbstractFunctions af)
-  (li     : LedgerInterface crypto es ss) (let open LedgerInterface li)
+  (li     : LedgerInterface crypto es) (let open LedgerInterface li)
   (rs     : _) (open RationalExtStructure rs)
   where
 
 open import Tactic.GenError
 open import Ledger.Prelude
-open import Ledger.PParams crypto es ss using (PParams; ProtVer)
-open import Spec.TickForecast crypto es ss li
-open import Spec.TickForecast.Properties crypto es ss li
+open import Ledger.PParams using (PParams; ProtVer)
+open import Spec.TickForecast crypto es li
+open import Spec.TickForecast.Properties crypto es li
 open import Spec.TickNonce crypto es nonces
 open import Spec.TickNonce.Properties crypto es nonces
-open import Spec.Protocol crypto nonces es ss bs af rs
-open import Spec.Protocol.Properties crypto nonces es ss bs af rs
-open import Spec.ChainHead crypto nonces es ss bs af li rs
+open import Spec.Protocol crypto nonces es bs af rs
+open import Spec.Protocol.Properties crypto nonces es bs af rs
+open import Spec.ChainHead crypto nonces es bs af li rs
 
 instance
 
@@ -39,7 +37,7 @@ instance
     bℓ + 1 ≟  blockNo    ×-dec
     ph     ≟  prevHeader
     where
-      open BHBody (proj₁ bh)
+      open BHeader; open BHBody (bh .body)
       ph = lastAppliedHash lab
 
 chainChecks? : ∀ maxpv ps bh → Dec (chainChecks maxpv ps bh)
@@ -49,7 +47,7 @@ chainChecks? maxpv (maxBHSize , maxBBSize , protocolVersion) bh =
   bodySize      ≤? maxBBSize
   where
     m = proj₁ protocolVersion
-    open BHBody (proj₁ bh)
+    open BHeader; open BHBody (bh .body)
 
 instance
 
@@ -64,7 +62,7 @@ instance
     module Go
       (nes : NewEpochState)
       (s   : ChainHeadState) (let ⟦ cs , η₀ , ηv , ηc , ηh , lab ⟧ᶜˢ = s)
-      (bh  : BHeader)        (let (bhb , σ) = bh; open BHBody bhb)
+      (bh  : BHeader)        (let 〖 bhb , σ 〗 = bh; open BHBody bhb)
       where
 
       e₁      = getEpoch nes
