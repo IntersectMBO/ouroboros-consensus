@@ -25,7 +25,8 @@ module Ouroboros.Consensus.Protocol.Ledger.HotKey (
   ) where
 
 import qualified Cardano.Crypto.KES as Relative (Period)
-import           Cardano.Ledger.Crypto (Crypto)
+import           Cardano.Crypto.KES
+import           Cardano.Ledger.Crypto (Crypto (..))
 import qualified Cardano.Ledger.Keys as SL
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
 import           Data.Word (Word64)
@@ -148,7 +149,7 @@ sign = sign_
 -- | The actual KES key, unless it expired, in which case it is replaced by
 -- \"poison\".
 data KESKey c =
-    KESKey !(SL.SignKeyKES c)
+    KESKey !(UnsoundPureSignKeyKES (KES c))
   | KESKeyPoisoned
   deriving (Generic)
 
@@ -168,7 +169,7 @@ instance Crypto c => NoThunks (KESState c)
 
 mkHotKey ::
      forall m c. (Crypto c, IOLike m)
-  => SL.SignKeyKES c
+  => UnsoundPureSignKeyKES (KES c)
   -> Absolute.KESPeriod  -- ^ Start period
   -> Word64              -- ^ Max KES evolutions
   -> m (HotKey c m)
@@ -184,7 +185,7 @@ mkHotKey initKey startPeriod@(Absolute.KESPeriod start) maxKESEvolutions = do
             KESKeyPoisoned -> error "trying to sign with a poisoned key"
             KESKey key     -> do
               let evolution = kesEvolution kesStateInfo
-                  signed    = SL.signedKES () evolution toSign key
+                  signed    = unsoundPureSignedKES () evolution toSign key
               -- Force the signature to WHNF (for 'SignedKES', WHNF implies
               -- NF) so that we don't have any thunks holding on to a key that
               -- might be destructively updated when evolved.
@@ -260,17 +261,18 @@ evolveKey varKESState targetPeriod = modifyMVar varKESState $ \kesState -> do
     -- | PRECONDITION:
     --
     -- > targetEvolution >= curEvolution
-    go :: KESEvolution -> KESInfo -> SL.SignKeyKES c -> m (KESState c)
+    go :: KESEvolution -> KESInfo -> UnsoundPureSignKeyKES (KES c) -> m (KESState c)
     go targetEvolution info key
       | targetEvolution <= curEvolution
       = return $ KESState { kesStateInfo = info, kesStateKey = KESKey key }
       | otherwise
-      = case SL.updateKES () key curEvolution of
+      = case unsoundPureUpdateKES () key curEvolution of
           -- This cannot happen
           Nothing    -> error "Could not update KES key"
           Just !key' -> do
             -- Clear the memory associated with the old key
-            forgetSignKeyKES key
+            -- FIXME: Here we want to forget, but it was never implemented
+            -- forgetSignKeyKES key
             let info' = info { kesEvolution = curEvolution + 1 }
             go targetEvolution info' key'
       where
