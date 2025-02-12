@@ -139,6 +139,7 @@ mkShelleyBlock raw = ShelleyBlock {
 class
   ( ShelleyCompatible (BlockProtocol blk) (ShelleyBlockLedgerEra blk)
   , blk ~ ShelleyBlock (BlockProtocol blk) (ShelleyBlockLedgerEra blk)
+  , ProtoCrypto (BlockProtocol blk) ~ EraCrypto (ShelleyBlockLedgerEra blk)
   ) => IsShelleyBlock blk
 
 instance ( proto ~ BlockProtocol (ShelleyBlock proto era)
