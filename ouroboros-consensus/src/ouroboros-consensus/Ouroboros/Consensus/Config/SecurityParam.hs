@@ -4,6 +4,7 @@
 
 module Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..)) where
 
+import           Cardano.Ledger.BaseTypes (NonZero)
 import           Data.Word
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
@@ -18,6 +19,6 @@ import           Quiet
 --
 -- NOTE: This talks about the number of /blocks/ we can roll back, not
 -- the number of /slots/.
-newtype SecurityParam = SecurityParam { maxRollbacks :: Word64 }
+newtype SecurityParam = SecurityParam { maxRollbacks :: NonZero Word64 }
   deriving (Eq, Generic, NoThunks)
   deriving Show via Quiet SecurityParam

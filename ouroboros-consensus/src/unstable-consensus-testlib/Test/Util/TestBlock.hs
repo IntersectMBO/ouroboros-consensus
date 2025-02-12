@@ -83,6 +83,7 @@ module Test.Util.TestBlock (
   ) where
 
 import           Cardano.Crypto.DSIGN
+import           Cardano.Ledger.BaseTypes (knownNonZeroBounded, unNonZero)
 import           Codec.Serialise (Serialise (..), serialise)
 import           Control.DeepSeq (force)
 import           Control.Monad (guard, replicateM, replicateM_)
@@ -673,11 +674,11 @@ testInitExtLedger = testInitExtLedgerWithState ()
 
 -- | Trivial test configuration with a single core node
 singleNodeTestConfig :: TopLevelConfig TestBlock
-singleNodeTestConfig = singleNodeTestConfigWithK (SecurityParam 4)
+singleNodeTestConfig = singleNodeTestConfigWithK (SecurityParam $ knownNonZeroBounded @4)
 
 singleNodeTestConfigWithK :: SecurityParam -> TopLevelConfig TestBlock
 singleNodeTestConfigWithK k =
-  singleNodeTestConfigWith TestBlockCodecConfig TestBlockStorageConfig k (GenesisWindow (2 * maxRollbacks k))
+  singleNodeTestConfigWith TestBlockCodecConfig TestBlockStorageConfig k (GenesisWindow (2 * unNonZero (maxRollbacks k)))
 
 {-------------------------------------------------------------------------------
   Chain of blocks (without payload)

@@ -20,6 +20,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy (
   , Flag (..)
   ) where
 
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Control.Monad.Class.MonadTime.SI
 import           Data.Time.Clock (secondsToDiffTime)
 import           Data.Word
@@ -139,7 +140,7 @@ mkDiskPolicy (SecurityParam k) (DiskPolicyArgs reqInterval reqNumOfSnapshots onD
       -- take a snapshot roughly every @k@ blocks. It does mean the possibility of
       -- an extra unnecessary snapshot during syncing (if the node is restarted), but
       -- that is not a big deal.
-      blocksSinceLast >= k
+      blocksSinceLast >= unNonZero k
 
     onDiskShouldTakeSnapshot (TimeSinceLast timeSinceLast) blocksSinceLast =
          timeSinceLast >= snapshotInterval
@@ -163,4 +164,4 @@ mkDiskPolicy (SecurityParam k) (DiskPolicyArgs reqInterval reqNumOfSnapshots onD
     -- defaults to 72 minutes.
     snapshotInterval = case reqInterval of
       RequestedSnapshotInterval value -> value
-      DefaultSnapshotInterval           -> secondsToDiffTime $ fromIntegral $ k * 2
+      DefaultSnapshotInterval           -> secondsToDiffTime $ fromIntegral $ unNonZero k * 2

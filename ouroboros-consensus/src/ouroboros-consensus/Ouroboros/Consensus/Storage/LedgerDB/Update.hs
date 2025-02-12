@@ -48,6 +48,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Update (
   , UpdateLedgerDbTraceEvent (..)
   ) where
 
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Control.Monad.Except (ExceptT, runExcept, runExceptT,
                      throwError)
 import           Control.Monad.Reader (ReaderT (..), runReaderT)
@@ -60,6 +61,7 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Storage.Common (LedgerDBPruneTip (..))
 import           Ouroboros.Consensus.Storage.LedgerDB.LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.Query
 import           Ouroboros.Consensus.Util
@@ -231,10 +233,15 @@ ledgerDbBimap f g =
 
 -- | Prune snapshots until at we have at most @k@ snapshots in the LedgerDB,
 -- excluding the snapshots stored at the anchor.
-ledgerDbPrune :: GetTip l => SecurityParam -> LedgerDB l -> LedgerDB l
-ledgerDbPrune (SecurityParam k) db = db {
-      ledgerDbCheckpoints = AS.anchorNewest k (ledgerDbCheckpoints db)
-    }
+ledgerDbPrune :: GetTip l => LedgerDBPruneTip -> LedgerDB l -> LedgerDB l
+ledgerDbPrune tip db =
+  let tip' =
+        case tip of
+          LedgerDBPruneTipZero               -> 0
+          LedgerDBPruneTip (SecurityParam k) -> unNonZero k
+   in db {
+        ledgerDbCheckpoints = AS.anchorNewest tip' (ledgerDbCheckpoints db)
+      }
 
  -- NOTE: we must inline 'ledgerDbPrune' otherwise we get unexplained thunks in
  -- 'LedgerDB' and thus a space leak. Alternatively, we could disable the
@@ -252,7 +259,7 @@ pushLedgerState ::
   -> l -- ^ Updated ledger state
   -> LedgerDB l -> LedgerDB l
 pushLedgerState secParam current' db@LedgerDB{..}  =
-    ledgerDbPrune secParam $ db {
+    ledgerDbPrune (LedgerDBPruneTip secParam) $ db {
         ledgerDbCheckpoints = ledgerDbCheckpoints AS.:> Checkpoint current'
       }
 

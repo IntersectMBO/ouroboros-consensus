@@ -50,6 +50,7 @@
 module Test.Consensus.MiniProtocol.ChainSync.Client (tests) where
 
 import           Cardano.Crypto.DSIGN.Mock
+import           Cardano.Ledger.BaseTypes (nonZero, unNonZero)
 import           Cardano.Slotting.Slot (WithOrigin (..))
 import           Control.Monad (forM_, unless, void, when)
 import           Control.Monad.Class.MonadThrow (Handler (..), catches)
@@ -199,7 +200,7 @@ prop_chainSync testSetup@ChainSyncClientSetup {
         counterexample "Synced fragment doesn't have the same anchor as the client fragment"
         (AF.anchorPoint clientFragment === AF.anchorPoint syncedFragment)
   where
-    k = maxRollbacks securityParam
+    k = unNonZero $ maxRollbacks securityParam
 
     ChainSyncOutcome {
         finalClientChain
@@ -594,7 +595,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
         , traceEvents
         }
   where
-    k = maxRollbacks securityParam
+    k = unNonZero $ maxRollbacks securityParam
 
     toSkewedOnset :: SlotNo -> RelativeTime
     toSkewedOnset slot =
@@ -755,7 +756,7 @@ computePastLedger cfg pt chain
     | otherwise
     = Nothing
   where
-    SecurityParam k = configSecurityParam cfg
+    k = unNonZero $ maxRollbacks $ configSecurityParam cfg
 
     curFrag :: AnchoredFragment TestBlock
     curFrag =
@@ -789,7 +790,7 @@ computeHeaderStateHistory cfg =
       HeaderStateHistory.trim (fromIntegral k)
     . HeaderStateHistory.fromChain cfg testInitExtLedger
   where
-    SecurityParam k = configSecurityParam cfg
+    k = unNonZero $ maxRollbacks $ configSecurityParam cfg
 
 {-------------------------------------------------------------------------------
   ChainSyncClientSetup
@@ -838,7 +839,7 @@ data ChainSyncClientSetup = ChainSyncClientSetup
 
 instance Arbitrary ChainSyncClientSetup where
   arbitrary = do
-    securityParam  <- SecurityParam <$> choose (2, 5)
+    securityParam  <- SecurityParam <$> choose (2, 5) `suchThatMap` nonZero
     clientUpdates0 <- ClientUpdates <$>
       genUpdateSchedule SelectedChainBehavior securityParam
     serverUpdates  <- ServerUpdates <$>
