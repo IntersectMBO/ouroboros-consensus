@@ -33,7 +33,6 @@ import qualified Ouroboros.Consensus.ByronSpec.Ledger.Rules as Rules
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.CommonProtocolParams
 import           Ouroboros.Consensus.Ticked
-import           Ouroboros.Consensus.Util ((..:))
 
 {-------------------------------------------------------------------------------
   State
@@ -103,7 +102,9 @@ instance IsLedger (LedgerState ByronSpecBlock) where
   type AuxLedgerEvent (LedgerState ByronSpecBlock) =
     VoidLedgerEvent (LedgerState ByronSpecBlock)
 
-  applyChainTickLedgerResult cfg slot (ByronSpecLedgerState tip state) =
+  type STSOptions (LedgerState ByronSpecBlock) = ()
+
+  applyChainTickLedgerResultWithSTSOpts _ cfg slot (ByronSpecLedgerState tip state) =
         pureLedgerResult
       $ TickedByronSpecLedgerState {
             untickedByronSpecLedgerTip = tip
@@ -113,12 +114,16 @@ instance IsLedger (LedgerState ByronSpecBlock) where
                                            state
           }
 
+  fastSTSOpts _ = ()
+  accurateSTSOpts _ = ()
+  enableSTSEvents _ = id
+
 {-------------------------------------------------------------------------------
   Applying blocks
 -------------------------------------------------------------------------------}
 
 instance ApplyBlock (LedgerState ByronSpecBlock) ByronSpecBlock where
-  applyBlockLedgerResult cfg block (TickedByronSpecLedgerState _tip state) =
+  applyBlockLedgerResultWithSTSOpts _ cfg block (TickedByronSpecLedgerState _tip state) =
         withExcept ByronSpecLedgerError
       $ fmap (pureLedgerResult . ByronSpecLedgerState (Just (blockSlot block)))
       $ -- Note that the CHAIN rule also applies the chain tick. So even
@@ -131,14 +136,8 @@ instance ApplyBlock (LedgerState ByronSpecBlock) ByronSpecBlock where
           (byronSpecBlock block)
           state
 
-  reapplyBlockLedgerResult =
-      -- The spec doesn't have a "reapply" mode
-      dontExpectError ..: applyBlockLedgerResult
-    where
-      dontExpectError :: Except a b -> b
-      dontExpectError mb = case runExcept mb of
-        Left  _ -> error "reapplyBlockLedgerResult: unexpected error"
-        Right b -> b
+instance ThrowLedgerReapplyError (LedgerState ByronSpecBlock) where
+  reapplyResult _ = error "reapplyBlockLedgerResult: unexpected error"
 
 {-------------------------------------------------------------------------------
   CommonProtocolParams

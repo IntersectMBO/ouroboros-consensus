@@ -99,6 +99,8 @@ pureLedgerResult a = LedgerResult {
 -- Types that inhabit this family will come from the Ledger code.
 type family LedgerCfg l :: Type
 
+data ComputeLedgerEvents = ComputeLedgerEvents | OmitLedgerEvents
+
 class ( -- Requirements on the ledger state itself
         Show     l
       , Eq       l
@@ -116,6 +118,9 @@ class ( -- Requirements on the ledger state itself
         -- ticked ledger.
       , GetTip l
       , GetTip (Ticked l)
+
+      , Show (STSOptions l)
+      , Eq (STSOptions l)
       ) => IsLedger l where
   -- | Errors that can arise when updating the ledger
   --
@@ -129,8 +134,6 @@ class ( -- Requirements on the ledger state itself
   -- 'InspectLedger'. When that module is rewritten to make use of ledger
   -- derived events, we may rename this type.
   type family AuxLedgerEvent l :: Type
-
-  type family STSOptions l :: Type
 
   -- | Apply "slot based" state transformations
   --
@@ -159,18 +162,12 @@ class ( -- Requirements on the ledger state itself
   --
   -- >    ledgerTipPoint (applyChainTick cfg slot st)
   -- > == ledgerTipPoint st
-  applyChainTickLedgerResultWithSTSOpts ::
-       STSOptions l
+  applyChainTickLedgerResult ::
+       ComputeLedgerEvents
     -> LedgerCfg l
     -> SlotNo
     -> l
     -> LedgerResult l (Ticked l)
-
-  fastSTSOpts :: Proxy l -> STSOptions l
-
-  accurateSTSOpts :: Proxy l -> STSOptions l
-
-  enableSTSEvents :: Proxy l -> STSOptions l -> STSOptions l
 
 -- | 'lrResult' after 'applyChainTickLedgerResult'
 applyChainTickWithSTSOpts :: IsLedger l => STSOptions l -> LedgerCfg l -> SlotNo -> l -> Ticked l

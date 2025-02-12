@@ -252,7 +252,9 @@ class (
       , Show      (BridgeTx     m a)
 
       , NoThunks (STSOptions (LedgerState m))
-      , STSOptions (LedgerState m) ~ STSOptions (LedgerState a)
+      , STSOptions (LedgerState a) ~ ()
+      , Show (STSOptions (LedgerState m))
+      , Eq (STSOptions (LedgerState m))
       ) => Bridge m a where
 
   -- | Additional information relating both ledgers
@@ -373,7 +375,7 @@ instance Bridge m a => IsLedger (LedgerState (DualBlock m a)) where
                              DualLedgerState{..} =
       castLedgerResult ledgerResult <&> \main -> TickedDualLedgerState {
           tickedDualLedgerStateMain    = main
-        , tickedDualLedgerStateAux     = applyChainTickWithSTSOpts sts
+        , tickedDualLedgerStateAux     = applyChainTickWithSTSOpts ()
                                            dualLedgerConfigAux
                                            slot
                                           dualLedgerStateAux
@@ -401,7 +403,7 @@ instance Bridge m a => ApplyBlock (LedgerState (DualBlock m a)) (DualBlock m a) 
               (dualLedgerConfigMain cfg)
               dualBlockMain
               tickedDualLedgerStateMain
-          , applyMaybeBlock sts
+          , applyMaybeBlock ()
               (dualLedgerConfigAux cfg)
               dualBlockAux
               tickedDualLedgerStateAux

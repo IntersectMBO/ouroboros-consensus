@@ -107,10 +107,10 @@ class ( IsLedger l
     -> Ticked l
     -> LedgerResult l l
   reapplyBlockLedgerResult =
-    reapplyResult ..: applyBlockLedgerResultWithSTSOpts (fastSTSOpts (Proxy @l))
+    (either reapplyResult id . runExcept) ..: applyBlockLedgerResultWithSTSOpts (fastSTSOpts (Proxy @l))
 
 class ThrowLedgerReapplyError l where
-  reapplyResult :: Except (LedgerErr l) (LedgerResult l l) -> LedgerResult l l
+  reapplyResult :: LedgerErr l -> LedgerResult l l
 
 -- | Interaction with the ledger layer
 class ApplyBlock (LedgerState blk) blk => UpdateLedger blk

@@ -60,7 +60,8 @@ mkSomeConsensusProtocolByron NodeByronProtocolConfiguration {
                            npcByronApplicationVersion,
                            npcByronSupportedProtocolVersionMajor,
                            npcByronSupportedProtocolVersionMinor,
-                           npcByronSupportedProtocolVersionAlt
+                           npcByronSupportedProtocolVersionAlt,
+                           npcByronSTSOptions
                          }
                          files = do
     genesisConfig <- readGenesis npcByronGenesisFile
@@ -82,7 +83,8 @@ mkSomeConsensusProtocolByron NodeByronProtocolConfiguration {
           Update.SoftwareVersion
             npcByronApplicationName
             npcByronApplicationVersion,
-        byronLeaderCredentials = optionalLeaderCredentials
+        byronLeaderCredentials = optionalLeaderCredentials,
+        byronSTSOptions = npcByronSTSOptions
         }
 
 readGenesis :: GenesisFile
@@ -195,4 +197,3 @@ instance Error ByronProtocolInstantiationError where
         "Signing key deserialisation error in: " <> toS fp
   displayError SigningKeyFilepathNotSpecified =
         "Signing key filepath not specified"
-

@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -53,6 +54,7 @@ data InitialMempoolAndModelParams blk = MempoolAndModelParams {
     }
 
 openMockedMempool ::
+     forall blk.
      ( Ledger.LedgerSupportsMempool blk
      , Ledger.HasTxId (Ledger.GenTx blk)
      , Header.ValidateEnvelope blk
@@ -68,6 +70,7 @@ openMockedMempool capacityOverride tracer initialParams = do
         }
     mempool <- Mempool.openMempoolWithoutSyncThread
                    ledgerItf
+                   (Ledger.fastSTSOpts (Ledger.Proxy @(LedgerState blk)))
                    (immpLedgerConfig initialParams)
                    capacityOverride
                    tracer

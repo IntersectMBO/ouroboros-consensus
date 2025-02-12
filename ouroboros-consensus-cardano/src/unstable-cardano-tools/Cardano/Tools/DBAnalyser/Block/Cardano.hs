@@ -128,9 +128,10 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
   data Args (CardanoBlock StandardCrypto) = CardanoBlockArgs {
           configFile           :: FilePath
         , threshold            :: Maybe PBftSignatureThreshold
+        , stsOpts              :: STSOptions (LedgerState (CardanoBlock StandardCrypto))
         }
 
-  mkProtocolInfo CardanoBlockArgs{configFile, threshold} = do
+  mkProtocolInfo CardanoBlockArgs{configFile, threshold, stsOpts} = do
     relativeToConfig :: (FilePath -> FilePath) <-
         (</>) . takeDirectory <$> makeAbsolute configFile
 
@@ -167,6 +168,7 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
           transCfg
           initialNonce
           (cfgHardForkTriggers cc)
+          stsOpts
 
 data CardanoConfig = CardanoConfig {
     -- | @RequiresNetworkMagic@ field
@@ -364,8 +366,9 @@ mkCardanoProtocolInfo ::
   -> SL.TransitionConfig (L.LatestKnownEra StandardCrypto)
   -> Nonce
   -> CardanoHardForkTriggers
+  -> STSOptions (LedgerState (CardanoBlock StandardCrypto))
   -> ProtocolInfo (CardanoBlock StandardCrypto)
-mkCardanoProtocolInfo genesisByron signatureThreshold transitionConfig initialNonce triggers =
+mkCardanoProtocolInfo genesisByron signatureThreshold transitionConfig initialNonce triggers (WrapSTSOptions stsByron :* stsShelley) =
     fst $ protocolInfoCardano @_ @IO
       (CardanoProtocolParams
         ProtocolParamsByron {
@@ -374,6 +377,7 @@ mkCardanoProtocolInfo genesisByron signatureThreshold transitionConfig initialNo
           , byronProtocolVersion        = Byron.Update.ProtocolVersion 1 2 0
           , byronSoftwareVersion        = Byron.Update.SoftwareVersion (Byron.Update.ApplicationName "db-analyser") 2
           , byronLeaderCredentials      = Nothing
+          , byronSTSOptions             = stsByron
           }
         ProtocolParamsShelleyBased {
             shelleyBasedInitialNonce      = initialNonce
@@ -383,8 +387,8 @@ mkCardanoProtocolInfo genesisByron signatureThreshold transitionConfig initialNo
         transitionConfig
         emptyCheckpointsMap
         (ProtVer (L.eraProtVerHigh @(L.LatestKnownEra StandardCrypto)) 0)
+        stsShelley
       )
-  where
 
 castHeaderHash ::
      HeaderHash ByronBlock

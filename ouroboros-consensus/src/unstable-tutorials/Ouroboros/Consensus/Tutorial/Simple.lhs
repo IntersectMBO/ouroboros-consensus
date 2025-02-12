@@ -130,34 +130,34 @@ Next, we instantiate the `ConsensusProtocol` for `SP`:
 
 > instance ConsensusProtocol SP where
 >   type SelectView    SP = BlockNo
->
+
 >   type LedgerView    SP = ()
->
+
 >   type IsLeader      SP = SP_IsLeader
 >   type CanBeLeader   SP = SP_CanBeLeader
->
+
 >   type ChainDepState SP = ()
 >   type ValidateView  SP = ()
 >   type ValidationErr SP = Void
->
+
 >   checkIsLeader cfg SP_CanBeLeader slot _tcds =
 >       if slot `Set.member` cfgsp_slotsLedByMe cfg
 >       then Just SP_IsLeader
 >       else Nothing
->
+
 >   protocolSecurityParam _cfg = k
->
+
 >   tickChainDepState _ _ _ _ = TickedTrivial
->
+
 >   updateChainDepState _ _ _ _ = return ()
->
+
 >   reupdateChainDepState _ _ _ _ = ()
 
 Finally we define a few extra things used in this instantiation:
 
 > data SP_CanBeLeader = SP_CanBeLeader -- Evidence that we /can/ be a leader
 > data SP_IsLeader = SP_IsLeader       -- Evidence that we /are/ leader
->
+
 > k :: SecurityParam
 > k = SecurityParam { maxRollbacks = 1 }
 
@@ -523,7 +523,7 @@ number, we materialize that number in the `LedgerState`.  We'll also need to
 keep track of some information about the most recent block we have seen.
 
 > data instance LedgerState BlockC =
->
+
 >   LedgerC
 >     -- the hash and slot number of the most recent block
 >     { lsbc_tip :: Point BlockC
@@ -558,11 +558,16 @@ types for a ledger.  Though we are here using
 > instance IsLedger (LedgerState BlockC) where
 >   type instance LedgerErr  (LedgerState BlockC) = Void
 >   type instance AuxLedgerEvent (LedgerState BlockC) = Void
->
->   applyChainTickLedgerResult _cfg _slot ldgrSt =
+>   type instance STSOptions (LedgerState BlockC) = ()
+
+>   applyChainTickLedgerResultWithSTSOpts _sts _cfg _slot ldgrSt =
 >     LedgerResult { lrEvents = []
 >                  , lrResult = TickedLedgerStateC ldgrSt
 >                  }
+
+>   fastSTSOpts _ = ()
+>   accurateSTSOpts _ = ()
+>   enableSTSEvents _ = id
 
 The `LedgerErr` type is the type of errors associated with this ledger that can
 be thrown while applying blocks or transactions.  In the case of `LedgerState
@@ -609,17 +614,15 @@ The interface used by the rest of the ledger infrastructure to access this is
 the `ApplyBlock` typeclass:
 
 > instance ApplyBlock (LedgerState BlockC) BlockC where
->   applyBlockLedgerResult _ldgrCfg block tickedLdgrSt =
+>   applyBlockLedgerResultWithSTSOpts _sts _ldgrCfg block tickedLdgrSt =
 >     pure $ LedgerResult { lrEvents = []
 >                         , lrResult = block `applyBlockTo` tickedLdgrSt
 >                         }
->
+
 >   reapplyBlockLedgerResult _ldgrCfg block tickedLdgrSt =
 >     LedgerResult { lrEvents = []
 >                  , lrResult = block `applyBlockTo` tickedLdgrSt
 >                  }
->
->
 
 `applyBlockLedgerResult` tries to apply a block to the ledger and fails with a
 `LedgerErr` corresponding to the particular `LedgerState blk` if for whatever
@@ -630,9 +633,10 @@ example, `BlockC` contains a slot number - what if we try to apply a block
 labelled with a slot that is already in the past?  However, this is something
 that should be checked by callers of this code.
 
-`reapplyBlockLedgerResult` similar but is meant to be called by code path that
-has previously established that the application of a block would not fail, so it
-admits no possibility for failure.
+There is another method defaulted in the class:
+`reapplyBlockLedgerResult` which similar but is meant to be called by
+code path that has previously established that the application of a
+block would not fail, so it admits no possibility for failure.
 
 Both of these return a `LedgerResult` record containing both the updated state
 as well as a list of `AuxLedgerEvent (LedgerState BlockC)` - the

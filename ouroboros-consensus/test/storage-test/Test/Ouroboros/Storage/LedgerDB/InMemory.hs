@@ -278,6 +278,7 @@ csBlockConfig' secParam = LedgerDbCfg {
     , ledgerDbCfg         =
           testBlockLedgerConfigFrom
         $ HardFork.defaultEraParams secParam slotLength
+    , ledgerDbSTSOptions  = fastSTSOpts (Proxy @(LedgerState TestBlock))
     }
   where
     slotLength = slotLengthFromSec 20

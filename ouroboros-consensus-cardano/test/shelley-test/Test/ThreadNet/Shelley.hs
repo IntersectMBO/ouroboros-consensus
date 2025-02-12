@@ -253,6 +253,7 @@ prop_simple_real_tpraos_convergence TestSetup
                       genesisConfig
                       setupInitialNonce
                       nextProtVer
+                      (accurateSTSOpts (Proxy @(LedgerState (ShelleyBlock Proto Era))))
                       (coreNodes !! fromIntegral nid)
                in TestNodeInitialization
                     { tniProtocolInfo = protocolInfo
@@ -314,7 +315,7 @@ prop_simple_real_tpraos_convergence TestSetup
                   -- slots to reach the epoch transition but the last several
                   -- slots end up empty.
                   Shelley.tickedShelleyLedgerState $
-                  applyChainTick ledgerConfig sentinel lsUnticked
+                  applyChainTickWithSTSOpts undefined ledgerConfig sentinel lsUnticked
 
               msg =
                   "The ticked final ledger state of " <> show nid <>

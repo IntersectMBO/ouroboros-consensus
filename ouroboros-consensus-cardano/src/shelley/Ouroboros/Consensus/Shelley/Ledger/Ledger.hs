@@ -45,7 +45,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger (
   , encodeShelleyAnnTip
   , encodeShelleyHeaderState
   , encodeShelleyLedgerState
---  , someEpSing
+  -- * STS
   , SomeSTSOpts (..)
   ) where
 
@@ -277,7 +277,13 @@ untickedShelleyLedgerTipPoint ::
 untickedShelleyLedgerTipPoint = shelleyTipToPoint . untickedShelleyLedgerTip
 
 data SomeSTSOpts where
-  SomeSTSOpts :: (NoThunks (STS.SingEP ep), STS.EventReturnTypeRep ep) => STS.ApplySTSOpts ep -> SomeSTSOpts
+  SomeSTSOpts :: (NoThunks (STS.SingEP ep), STS.EventReturnTypeRep ep) => STS.SingEP ep -> SomeSTSOpts
+
+instance Show SomeSTSOpts where
+  show _ = "SomeSTS"
+
+instance Eq SomeSTSOpts where
+  _ == _ = True
 
 instance NoThunks (STS.SingEP STS.EventPolicyReturn) where
   wNoThunks _ STS.EPReturn = pure Nothing
@@ -307,12 +313,12 @@ instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) 
 
   type STSOptions (LedgerState (ShelleyBlock proto era)) = SomeSTSOpts
 
-  applyChainTickLedgerResultWithSTSOpts (SomeSTSOpts opts@(STS.ApplySTSOpts _ _ ep)) cfg slotNo ShelleyLedgerState{
+  applyChainTickLedgerResultWithSTSOpts (SomeSTSOpts ep) cfg slotNo ShelleyLedgerState{
                                 shelleyLedgerTip
                               , shelleyLedgerState
                               , shelleyLedgerTransition
                               } =
-      swizzle ep (appTick opts) <&> \l' ->
+      swizzle ep (appTick ep) <&> \l' ->
       TickedShelleyLedgerState {
           untickedShelleyLedgerTip =
             shelleyLedgerTip
@@ -346,20 +352,20 @@ instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) 
             }
 
       appTick ::
-           STS.ApplySTSOpts ep
+           STS.SingEP ep
         -> STS.EventReturnType ep (Core.EraRule "TICK" era) (SL.NewEpochState era)
       appTick ep' =
         SL.applyTickOpts
-          ep'
+          STS.ApplySTSOpts {
+              asoAssertions = STS.AssertionsOff
+            , asoValidation = STS.ValidateNone
+            , asoEvents     = ep'
+            }
           globals
           shelleyLedgerState
           slotNo
 
-  fastSTSOpts _ = SomeSTSOpts $ STS.ApplySTSOpts {
-              asoAssertions = STS.AssertionsOff
-            , asoValidation = STS.ValidateNone
-            , asoEvents     = STS.EPDiscard
-            }
+  fastSTSOpts _ = SomeSTSOpts $ undefined
 
   accurateSTSOpts _ = SomeSTSOpts $ STS.ApplySTSOpts {
               asoAssertions = STS.globalAssertionPolicy
@@ -428,7 +434,7 @@ instance ShelleyCompatible proto era
 
 instance ShelleyCompatible proto era
       => ThrowLedgerReapplyError (LedgerState (ShelleyBlock proto era)) where
-  reapplyResult = either (\err -> Exception.throw $! ShelleyReapplyException @era err) id . runExcept
+  reapplyResult err = Exception.throw $! ShelleyReapplyException @era err
 
 data ShelleyReapplyException =
   forall era. Show (ShelleyLedgerError era)

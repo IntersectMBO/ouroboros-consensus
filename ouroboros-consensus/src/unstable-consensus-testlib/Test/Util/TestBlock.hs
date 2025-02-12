@@ -490,7 +490,7 @@ instance ( Typeable ptype
 
 instance PayloadSemantics ptype
          => ApplyBlock (LedgerState (TestBlockWith ptype)) (TestBlockWith ptype) where
-  applyBlockLedgerResult _ tb@TestBlockWith{..} (TickedTestLedger TestLedger{..})
+  applyBlockLedgerResultWithSTSOpts _ _ tb@TestBlockWith{..} (TickedTestLedger TestLedger{..})
     | blockPrevHash tb /= pointHash lastAppliedPoint
     = throwError $ InvalidHash (pointHash lastAppliedPoint) (blockPrevHash tb)
     | tbValid == Invalid
@@ -504,15 +504,9 @@ instance PayloadSemantics ptype
                                   , payloadDependentState = st'
                                   }
 
-  reapplyBlockLedgerResult _ tb@TestBlockWith{..} (TickedTestLedger TestLedger{..}) =
-    case applyPayload payloadDependentState tbPayload of
-        Left err  -> error $ "Found an error when reapplying a block: " ++ show err
-        Right st' ->              pureLedgerResult
-                                $ TestLedger {
-                                    lastAppliedPoint      = Chain.blockPoint tb
-                                  , payloadDependentState = st'
-                                  }
-
+instance PayloadSemantics ptype
+         => ThrowLedgerReapplyError (LedgerState (TestBlockWith ptype)) where
+  reapplyResult err = error $ "Found an error when reapplying a block: " ++ show err
 
 data instance LedgerState (TestBlockWith ptype) =
     TestLedger {
@@ -573,7 +567,13 @@ instance PayloadSemantics ptype => IsLedger (LedgerState (TestBlockWith ptype)) 
   type AuxLedgerEvent (LedgerState (TestBlockWith ptype)) =
     VoidLedgerEvent (LedgerState (TestBlockWith ptype))
 
-  applyChainTickLedgerResult _ _ = pureLedgerResult . TickedTestLedger
+  type STSOptions (LedgerState (TestBlockWith ptype)) = ()
+
+  applyChainTickLedgerResultWithSTSOpts _ _ _ = pureLedgerResult . TickedTestLedger
+
+  fastSTSOpts _ = ()
+  accurateSTSOpts _ = ()
+  enableSTSEvents _ = id
 
 instance PayloadSemantics ptype => UpdateLedger (TestBlockWith ptype)
 
@@ -614,6 +614,7 @@ singleNodeTestConfigWith codecConfig storageConfig k genesisWindow = TopLevelCon
     , topLevelConfigCodec       = codecConfig
     , topLevelConfigStorage     = storageConfig
     , topLevelConfigCheckpoints = emptyCheckpointsMap
+    , topLevelConfigSTS         = ()
     }
   where
     slotLength :: SlotLength

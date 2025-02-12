@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -20,6 +21,7 @@ import           Ouroboros.Consensus.Byron.Ledger hiding (byronProtocolVersion,
                      byronSoftwareVersion)
 import           Ouroboros.Consensus.Byron.Node
 import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Node.Serialisation ()
 import           Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..))
@@ -91,12 +93,13 @@ testCfg = pInfoConfig protocolInfo
   where
     protocolInfo :: ProtocolInfo ByronBlock
     protocolInfo =
-      protocolInfoByron $ ProtocolParamsByron {
+      protocolInfoByron ProtocolParamsByron {
           byronGenesis                = CC.dummyConfig
         , byronPbftSignatureThreshold = Just (PBftSignatureThreshold 0.5)
         , byronProtocolVersion        = CC.Update.ProtocolVersion 1 0 0
         , byronSoftwareVersion        = CC.Update.SoftwareVersion (CC.Update.ApplicationName "Cardano Test") 2
         , byronLeaderCredentials      = Nothing
+        , byronSTSOptions             = fastSTSOpts (Proxy @(LedgerState ByronBlock))
         }
 
 -- | Matches the values used for the generators.

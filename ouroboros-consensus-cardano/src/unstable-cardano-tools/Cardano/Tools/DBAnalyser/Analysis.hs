@@ -54,8 +54,8 @@ import           Ouroboros.Consensus.HeaderValidation (HasAnnTip (..),
                      tickHeaderState, validateHeader)
 import           Ouroboros.Consensus.Ledger.Abstract
                      (ApplyBlock (reapplyBlockLedgerResult), LedgerCfg,
-                     LedgerConfig, applyBlockLedgerResult, applyChainTick,
-                     tickThenApply, tickThenApplyLedgerResult, tickThenReapply)
+                     LedgerConfig, applyBlockLedgerResultWithSTSOpts, applyChainTickWithSTSOpts,
+                     tickThenApplyWithSTSOpts, tickThenApplyLedgerResultWithSTSOpts, tickThenReapply)
 import           Ouroboros.Consensus.Ledger.Basics (LedgerResult (..),
                      LedgerState, getTipSlot)
 import           Ouroboros.Consensus.Ledger.Extended

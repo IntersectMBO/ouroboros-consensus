@@ -190,6 +190,7 @@ instance IsLedger (LedgerState ByronBlock) where
 
 deriving instance Generic CC.ValidationMode
 instance NoThunks CC.ValidationMode
+deriving instance Eq CC.ValidationMode
 deriving instance Generic CC.BlockValidationMode
 instance NoThunks CC.BlockValidationMode
 deriving instance Generic CC.TxValidationMode
@@ -317,12 +318,8 @@ instance HasHardForkHistory ByronBlock where
 -- the event it is given a 'BlockValidationMode' of 'BlockValidation', it still
 -- /looks/ like it can fail (since its type doesn't change based on the
 -- 'ValidationMode') and we must still treat it as such.
-validationErrorImpossible :: forall err a. Except err a -> a
-validationErrorImpossible = cantBeError . runExcept
-  where
-    cantBeError :: Either err a -> a
-    cantBeError (Left  _) = error "validationErrorImpossible: unexpected error"
-    cantBeError (Right a) = a
+validationErrorImpossible :: forall err a. err -> a
+validationErrorImpossible _ = error "validationErrorImpossible: unexpected error"
 
 {-------------------------------------------------------------------------------
   Applying a block

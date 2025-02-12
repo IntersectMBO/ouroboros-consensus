@@ -31,15 +31,16 @@ mkConsensusProtocol ncProtocolConfig mProtocolFiles =
         firstExceptT ByronProtocolInstantiationError $
           mkSomeConsensusProtocolByron config mProtocolFiles
 
-      NodeProtocolConfigurationShelley config ->
+      NodeProtocolConfigurationShelley config sts ->
         firstExceptT ShelleyProtocolInstantiationError $
-          mkSomeConsensusProtocolShelley config mProtocolFiles
+          mkSomeConsensusProtocolShelley config mProtocolFiles sts
 
       NodeProtocolConfigurationCardano byronConfig
                                        shelleyConfig
                                        alonzoConfig
                                        conwayConfig
-                                       hardForkConfig ->
+                                       hardForkConfig
+                                       sts ->
         firstExceptT CardanoProtocolInstantiationError $
           mkSomeConsensusProtocolCardano
             byronConfig

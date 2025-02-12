@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
@@ -56,6 +57,7 @@ import           Ouroboros.Network.Protocol.ChainSync.Server
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Orphans.IOLike ()
 import qualified Test.Util.TestBlock as TB
+import Ouroboros.Consensus.Ledger.Basics
 
 type B = TB.TestBlock
 type H = Header B
@@ -252,6 +254,7 @@ topConfig = TopLevelConfig {
   , topLevelConfigCodec       = TB.TestBlockCodecConfig
   , topLevelConfigStorage     = TB.TestBlockStorageConfig
   , topLevelConfigCheckpoints = emptyCheckpointsMap
+  , topLevelConfigSTS         = accurateSTSOpts (Proxy @(LedgerState B))
   }
   where
     eraParams :: HardFork.EraParams

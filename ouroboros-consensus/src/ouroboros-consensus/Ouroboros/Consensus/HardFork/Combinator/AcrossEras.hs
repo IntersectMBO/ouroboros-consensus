@@ -342,6 +342,8 @@ deriving via LiftNS WrapSelectView     xs instance CanHardFork xs => Eq (OneEraS
 deriving via LiftNS WrapTipInfo        xs instance CanHardFork xs => Eq (OneEraTipInfo        xs)
 deriving via LiftNS WrapValidatedGenTx xs instance CanHardFork xs => Eq (OneEraValidatedGenTx xs)
 deriving via LiftNS WrapValidationErr  xs instance CanHardFork xs => Eq (OneEraValidationErr  xs)
+deriving via LiftNP WrapSTSOptions     xs instance CanHardFork xs => Eq (PerEraSTSOptions     xs)
+deriving via LiftNP WrapSTSOptions     xs instance CanHardFork xs => Show (PerEraSTSOptions     xs)
 
 deriving via LiftNS WrapEnvelopeErr           xs instance CanHardFork xs => Show (OneEraEnvelopeErr           xs)
 deriving via LiftNS WrapForgeStateInfo        xs instance CanHardFork xs => Show (OneEraForgeStateInfo        xs)

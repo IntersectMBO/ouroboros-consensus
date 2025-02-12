@@ -25,7 +25,6 @@ module Ouroboros.Consensus.Byron.Node (
   , protocolInfoByron
   ) where
 
-import qualified Cardano.Chain.ValidationMode as Validation
 import qualified Cardano.Chain.Delegation as Delegation
 import qualified Cardano.Chain.Genesis as Genesis
 import           Cardano.Chain.ProtocolConstants (kEpochSlots)
@@ -176,19 +175,18 @@ data ProtocolParamsByron = ProtocolParamsByron {
     , byronProtocolVersion        :: Update.ProtocolVersion
     , byronSoftwareVersion        :: Update.SoftwareVersion
     , byronLeaderCredentials      :: Maybe ByronLeaderCredentials
+    , byronSTSOptions             :: STSOptions (LedgerState ByronBlock)
     }
 
 protocolInfoByron :: ProtocolParamsByron
-                  -> Validation.ValidationMode
                   -> ProtocolInfo ByronBlock
 protocolInfoByron ProtocolParamsByron {
                       byronGenesis                = genesisConfig
                     , byronPbftSignatureThreshold = mSigThresh
                     , byronProtocolVersion        = pVer
                     , byronSoftwareVersion        = sVer
-                    }
-                  sts
-  =
+                    , byronSTSOptions             = sts
+                    } =
     ProtocolInfo {
         pInfoConfig = TopLevelConfig {
             topLevelConfigProtocol = PBftConfig {

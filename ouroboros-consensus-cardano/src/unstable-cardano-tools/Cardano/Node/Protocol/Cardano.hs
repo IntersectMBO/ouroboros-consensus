@@ -17,6 +17,7 @@ module Cardano.Node.Protocol.Cardano (
   , CardanoProtocolInstantiationError (..)
   ) where
 
+import Ouroboros.Consensus.Shelley.HFEras
 import           Cardano.Api.Any
 import           Cardano.Api.Protocol.Types
 import qualified Cardano.Chain.Update as Byron
@@ -31,12 +32,19 @@ import           Cardano.Node.Types
 import           Control.Monad.Trans.Except (ExceptT)
 import           Control.Monad.Trans.Except.Extra (firstExceptT)
 import           Ouroboros.Consensus.Cardano
+import           Ouroboros.Consensus.TypeFamilyWrappers
+import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
+import           Data.SOP.Strict
+import           Ouroboros.Consensus.Ledger.Basics
 import qualified Ouroboros.Consensus.Cardano as Consensus
 import           Ouroboros.Consensus.Cardano.Condense ()
+import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams (..))
 import           Ouroboros.Consensus.Config (emptyCheckpointsMap)
 import           Ouroboros.Consensus.HardFork.Combinator.Condense ()
+import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.Shelley.Crypto (StandardCrypto)
+import Ouroboros.Consensus.Byron.Ledger (ByronBlock)
 
 
 ------------------------------------------------------------------------------
@@ -62,9 +70,10 @@ mkSomeConsensusProtocolCardano ::
   -> NodeConwayProtocolConfiguration
   -> NodeHardForkProtocolConfiguration
   -> Maybe ProtocolFilepaths
+  -> PerEraSTSOptions (CardanoShelleyEras StandardCrypto)
   -> ExceptT CardanoProtocolInstantiationError IO SomeConsensusProtocol
-mkSomeConsensusProtocolCardano nbpc nspc napc ncpc nhpc files = do
-    params <- mkConsensusProtocolCardano nbpc nspc napc ncpc nhpc files
+mkSomeConsensusProtocolCardano nbpc nspc napc ncpc nhpc files sts = do
+    params <- mkConsensusProtocolCardano nbpc nspc napc ncpc nhpc files sts
     return $!
       SomeConsensusProtocol CardanoBlockType $ ProtocolInfoArgsCardano params
 
@@ -75,6 +84,7 @@ mkConsensusProtocolCardano ::
   -> NodeConwayProtocolConfiguration
   -> NodeHardForkProtocolConfiguration
   -> Maybe ProtocolFilepaths
+  -> PerEraSTSOptions (CardanoShelleyEras StandardCrypto)
   -> ExceptT CardanoProtocolInstantiationError IO (CardanoProtocolParams StandardCrypto)
 mkConsensusProtocolCardano NodeByronProtocolConfiguration {
                              npcByronGenesisFile,
@@ -113,7 +123,8 @@ mkConsensusProtocolCardano NodeByronProtocolConfiguration {
                              npcTestBabbageHardForkAtEpoch,
                              npcTestConwayHardForkAtEpoch
                            }
-                           files = do
+                           files
+                           sts = do
     byronGenesis <-
       firstExceptT CardanoProtocolInstantiationErrorByron $
         Byron.readGenesis npcByronGenesisFile
@@ -172,7 +183,8 @@ mkConsensusProtocolCardano NodeByronProtocolConfiguration {
             Byron.SoftwareVersion
               npcByronApplicationName
               npcByronApplicationVersion,
-          byronLeaderCredentials = byronLeaderCredentials
+          byronLeaderCredentials = byronLeaderCredentials,
+          byronSTSOptions        = fastSTSOpts (Proxy @(LedgerState ByronBlock))
         }
         Consensus.ProtocolParamsShelleyBased {
           shelleyBasedInitialNonce      = Shelley.genesisHashToPraosNonce
@@ -240,7 +252,19 @@ mkConsensusProtocolCardano NodeByronProtocolConfiguration {
         transitionLedgerConfig
         emptyCheckpointsMap
         (ProtVer (L.eraProtVerHigh @(L.LatestKnownEra StandardCrypto)) 0)
+        sts
 
+{-
+(PerEraSTSOptions $
+             WrapSTSOptions (fastSTSOpts (Proxy @(LedgerState StandardShelleyBlock)))
+          :* WrapSTSOptions (fastSTSOpts (Proxy @(LedgerState StandardAllegraBlock)))
+          :* WrapSTSOptions (fastSTSOpts (Proxy @(LedgerState StandardMaryBlock)))
+          :* WrapSTSOptions (fastSTSOpts (Proxy @(LedgerState StandardAlonzoBlock)))
+          :* WrapSTSOptions (fastSTSOpts (Proxy @(LedgerState StandardBabbageBlock)))
+          :* WrapSTSOptions (fastSTSOpts (Proxy @(LedgerState StandardConwayBlock)))
+          :* Nil
+        )
+-}
 ------------------------------------------------------------------------------
 -- Errors
 --

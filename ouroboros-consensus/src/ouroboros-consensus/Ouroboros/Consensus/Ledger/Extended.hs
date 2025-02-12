@@ -119,6 +119,8 @@ instance IsLedger (LedgerState blk) => GetTip (Ticked (ExtLedgerState blk)) wher
 
 instance ( LedgerSupportsProtocol blk
          , NoThunks (STSOptions (LedgerState blk))
+         , Show (STSOptions (LedgerState blk))
+         , Eq (STSOptions (LedgerState blk))
          )
       => IsLedger (ExtLedgerState blk) where
   type LedgerErr (ExtLedgerState blk) = ExtValidationError blk
