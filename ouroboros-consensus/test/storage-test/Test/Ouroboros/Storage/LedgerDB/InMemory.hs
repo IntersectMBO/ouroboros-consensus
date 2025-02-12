@@ -27,6 +27,7 @@
 --
 module Test.Ouroboros.Storage.LedgerDB.InMemory (tests) where
 
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Codec.CBOR.FlatTerm (FlatTerm, TermToken (..), fromFlatTerm,
                      toFlatTerm)
 import           Codec.Serialise (decode, encode)
@@ -191,7 +192,7 @@ prop_snapshotsMaxRollback setup@ChainSetup{..} =
         , (ledgerDbMaxRollback csPushed) `le` k
         ]
   where
-    SecurityParam k = csSecParam
+    k = unNonZero $ maxRollbacks csSecParam
 
 prop_switchSameChain :: SwitchSetup -> Property
 prop_switchSameChain setup@SwitchSetup{..} =
@@ -353,7 +354,7 @@ mkRollbackSetup ssChainSetup ssNumRollback ssNumNew ssPrefixLen =
 instance Arbitrary ChainSetup where
   arbitrary = do
       secParam <- arbitrary
-      let k = maxRollbacks secParam
+      let k = unNonZero $ maxRollbacks secParam
       numBlocks <- choose (0, k * 2)
       prefixLen <- choose (0, numBlocks)
       return $ mkTestSetup secParam numBlocks prefixLen

@@ -65,7 +65,9 @@ instance ( ToExpr (ChainDepState (BlockProtocol blk))
 instance ( ToExpr (TipInfo blk)
          ) => ToExpr (AnnTip blk)
 
-instance ToExpr SecurityParam
+instance ToExpr SecurityParam where
+  toExpr = defaultExprViaShow
+
 instance ToExpr CRC
 instance ToExpr DiskSnapshot
 
