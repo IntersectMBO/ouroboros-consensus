@@ -60,6 +60,7 @@ import           Ouroboros.Consensus.Protocol.TPraos
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Node
+import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util (eitherToMaybe)
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
@@ -156,9 +157,9 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
   , SL.TranslationError   era2 SL.NewEpochState ~ Void
 
     -- At the moment, fix the protocols together
-  , EraCrypto era1 ~ EraCrypto era2
-  , PraosCrypto (EraCrypto era1)
-  , proto1 ~ TPraos (EraCrypto era1)
+  , ProtoCrypto proto1 ~ ProtoCrypto proto2
+  , PraosCrypto (ProtoCrypto proto1)
+  , proto1 ~ TPraos (ProtoCrypto proto1)
   , proto1 ~ proto2
   )
 
@@ -266,7 +267,7 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
 protocolInfoShelleyBasedHardFork ::
      forall m proto1 era1 proto2 era2.
      (IOLike m, ShelleyBasedHardForkConstraints proto1 era1 proto2 era2)
-  => ProtocolParamsShelleyBased (EraCrypto era1)
+  => ProtocolParamsShelleyBased (ProtoCrypto proto1)
   -> SL.ProtVer
   -> SL.ProtVer
   -> L.TransitionConfig era2
@@ -300,7 +301,7 @@ protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
 
     -- Era 1
 
-    genesis :: SL.ShelleyGenesis (EraCrypto era1)
+    genesis :: SL.ShelleyGenesis
     genesis = transCfg2 ^. L.tcShelleyGenesisL
 
     protocolInfo1 :: ProtocolInfo (ShelleyBlock proto1 era1)

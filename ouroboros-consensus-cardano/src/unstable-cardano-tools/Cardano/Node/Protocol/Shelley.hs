@@ -32,12 +32,12 @@ import qualified Cardano.Api.Protocol.Types as Protocol
 import           Cardano.Api.SerialiseTextEnvelope
 import qualified Cardano.Crypto.Hash.Class as Crypto
 import           Cardano.Ledger.BaseTypes (ProtVer (..), natVersion)
-import           Cardano.Ledger.Crypto (StandardCrypto)
 import           Cardano.Ledger.Keys (coerceKeyRole)
 import qualified Cardano.Ledger.Shelley.Genesis as Shelley
 import           Cardano.Node.Protocol.Types
 import           Cardano.Node.Types
 import           Cardano.Prelude
+import           Cardano.Protocol.Crypto (StandardCrypto)
 import           Control.Monad.Trans.Except.Extra (firstExceptT,
                      handleIOExceptT, hoistEither, left, newExceptT)
 import qualified Data.Aeson as Aeson (FromJSON (..), eitherDecodeStrict')
@@ -93,7 +93,7 @@ genesisHashToPraosNonce (GenesisHash h) = Nonce (Crypto.castHash h)
 readGenesis :: GenesisFile
             -> Maybe GenesisHash
             -> ExceptT GenesisReadError IO
-                       (ShelleyGenesis StandardCrypto, GenesisHash)
+                       (ShelleyGenesis, GenesisHash)
 readGenesis = readGenesisAny
 
 readGenesisAny :: Aeson.FromJSON genesis
@@ -117,7 +117,7 @@ readGenesisAny (GenesisFile file) mbExpectedGenesisHash = do
           -> throwError (GenesisHashMismatch actual expected)
         _ -> return ()
 
-validateGenesis :: ShelleyGenesis StandardCrypto
+validateGenesis :: ShelleyGenesis
                 -> ExceptT GenesisValidationError IO ()
 validateGenesis genesis =
     firstExceptT GenesisValidationErrors . hoistEither $

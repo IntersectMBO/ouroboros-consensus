@@ -6,11 +6,9 @@
 
 module Test.Consensus.Cardano.MockCrypto (MockCryptoCompatByron) where
 
-import           Cardano.Crypto.DSIGN (Ed25519DSIGN)
-import           Cardano.Crypto.Hash (Blake2b_224, Blake2b_256)
 import           Cardano.Crypto.KES (MockKES)
 import           Cardano.Crypto.VRF (MockVRF)
-import           Cardano.Ledger.Crypto (Crypto (..))
+import           Cardano.Protocol.Crypto (Crypto (..))
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 
@@ -35,9 +33,6 @@ import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 data MockCryptoCompatByron
 
 instance Crypto MockCryptoCompatByron where
-  type ADDRHASH MockCryptoCompatByron = Blake2b_224
-  type DSIGN    MockCryptoCompatByron = Ed25519DSIGN
-  type HASH     MockCryptoCompatByron = Blake2b_256
   type KES      MockCryptoCompatByron = MockKES 10
   type VRF      MockCryptoCompatByron = MockVRF
 

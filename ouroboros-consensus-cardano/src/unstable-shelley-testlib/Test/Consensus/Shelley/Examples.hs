@@ -20,7 +20,7 @@ module Test.Consensus.Shelley.Examples (
   ) where
 
 import qualified Cardano.Ledger.Block as SL
-import           Cardano.Ledger.Crypto (Crypto)
+import           Cardano.Protocol.Crypto (StandardCrypto)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import           Data.Coerce (coerce)
 import           Data.List.NonEmpty (NonEmpty ((:|)))
@@ -29,15 +29,13 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsMempool
-import           Ouroboros.Consensus.Protocol.Abstract (TranslateProto,
-                     translateChainDepState)
+import           Ouroboros.Consensus.Protocol.Abstract (translateChainDepState)
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
 import           Ouroboros.Consensus.Protocol.Praos.Header
                      (HeaderBody (HeaderBody))
 import qualified Ouroboros.Consensus.Protocol.Praos.Header as Praos
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos,
                      TPraosState (TPraosState))
-import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.HFEras
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Query.Types
@@ -73,12 +71,13 @@ codecConfig :: CodecConfig StandardShelleyBlock
 codecConfig = ShelleyCodecConfig
 
 fromShelleyLedgerExamples ::
-     ShelleyCompatible (TPraos (EraCrypto era)) era
+     ShelleyCompatible (TPraos StandardCrypto) era
   => ShelleyLedgerExamples era
-  -> Examples (ShelleyBlock (TPraos (EraCrypto era)) era)
-fromShelleyLedgerExamples ShelleyLedgerExamples {
-                            sleResultExamples = ShelleyResultExamples{..}
-                            , ..} =
+  -> Examples (ShelleyBlock (TPraos StandardCrypto) era)
+fromShelleyLedgerExamples
+  ShelleyLedgerExamples
+    { sleResultExamples = ShelleyResultExamples{..}
+    , ..} =
   Examples {
       exampleBlock            = unlabelled blk
     , exampleSerialisedBlock  = unlabelled serialisedBlock
@@ -151,11 +150,9 @@ fromShelleyLedgerExamples ShelleyLedgerExamples {
 -- | TODO Factor this out into something nicer.
 fromShelleyLedgerExamplesPraos ::
   forall era.
-  ( ShelleyCompatible (Praos (EraCrypto era)) era,
-    TranslateProto (TPraos (EraCrypto era)) (Praos (EraCrypto era))
-  )
+  ShelleyCompatible (Praos StandardCrypto) era
   => ShelleyLedgerExamples era
-  -> Examples (ShelleyBlock (Praos (EraCrypto era)) era)
+  -> Examples (ShelleyBlock (Praos StandardCrypto) era)
 fromShelleyLedgerExamplesPraos ShelleyLedgerExamples {
                             sleResultExamples = ShelleyResultExamples{..}
                             , ..} =
@@ -177,10 +174,11 @@ fromShelleyLedgerExamplesPraos ShelleyLedgerExamples {
     , exampleSlotNo           = unlabelled slotNo
     }
   where
-    blk = mkShelleyBlock $ let
-      SL.Block hdr1 bdy = sleBlock in SL.Block (translateHeader hdr1) bdy
+    blk = mkShelleyBlock $
+      let SL.Block hdr1 bdy = sleBlock
+       in SL.Block (translateHeader hdr1) bdy
 
-    translateHeader :: Crypto c => SL.BHeader c -> Praos.Header c
+    translateHeader :: SL.BHeader StandardCrypto -> Praos.Header StandardCrypto
     translateHeader (SL.BHeader bhBody bhSig) =
         Praos.Header hBody hSig
       where
@@ -236,7 +234,7 @@ fromShelleyLedgerExamplesPraos ShelleyLedgerExamples {
     , shelleyLedgerState      = sleNewEpochState
     , shelleyLedgerTransition = ShelleyTransitionInfo {shelleyAfterVoting = 0}
     }
-    chainDepState = translateChainDepState (Proxy @(TPraos (EraCrypto era), Praos (EraCrypto era)))
+    chainDepState = translateChainDepState (Proxy @(TPraos StandardCrypto, Praos StandardCrypto))
       $ TPraosState (NotOrigin 1) sleChainDepState
     extLedgerState = ExtLedgerState
                        ledgerState

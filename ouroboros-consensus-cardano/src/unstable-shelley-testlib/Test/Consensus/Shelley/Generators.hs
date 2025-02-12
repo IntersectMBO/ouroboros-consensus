@@ -4,7 +4,6 @@
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -12,10 +11,11 @@
 module Test.Consensus.Shelley.Generators (SomeResult (..)) where
 
 import           Cardano.Ledger.Core (toTxSeq)
-import           Cardano.Ledger.Crypto (Crypto)
 import qualified Cardano.Ledger.Shelley.API as SL
+import           Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.BHeader as SL
+import           Control.Monad (replicateM)
 import           Data.Coerce (coerce)
 import           Generic.Random (genericArbitraryU)
 import           Ouroboros.Consensus.Block
@@ -26,8 +26,7 @@ import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import qualified Ouroboros.Consensus.Protocol.Praos.Header as Praos
-import           Ouroboros.Consensus.Protocol.TPraos (PraosCrypto, TPraos,
-                     TPraosState (..))
+import           Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosState (..))
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Query.Types
@@ -37,9 +36,9 @@ import           Ouroboros.Network.Block (mkSerialised)
 import           Test.Cardano.Ledger.AllegraEraGen ()
 import           Test.Cardano.Ledger.Alonzo.AlonzoEraGen ()
 import           Test.Cardano.Ledger.MaryEraGen ()
-import           Test.Cardano.Ledger.Shelley.ConcreteCryptoTypes as SL
-import           Test.Cardano.Ledger.Shelley.Constants (defaultConstants)
-import           Test.Cardano.Ledger.Shelley.Generator.Presets (coreNodeKeys)
+import           Test.Cardano.Ledger.Shelley.Constants (defaultConstants,
+                     numCoreNodes)
+import           Test.Cardano.Ledger.Shelley.Generator.Presets (genIssuerKeys)
 import           Test.Cardano.Ledger.Shelley.Generator.ShelleyEraGen ()
 import           Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators
                      (genCoherentBlock)
@@ -63,34 +62,42 @@ import           Test.Util.Serialisation.SomeResult (SomeResult (..))
 
 -- | The upstream 'Arbitrary' instance for Shelley blocks does not generate
 -- coherent blocks, so neither does this.
-instance (CanMock (TPraos crypto) era, crypto ~ EraCrypto era)
+instance (CanMock (TPraos crypto) era)
   => Arbitrary (ShelleyBlock (TPraos crypto) era) where
   arbitrary = do
-    let allPoolKeys = map snd (coreNodeKeys defaultConstants)
+    allPoolKeys <-
+      replicateM (fromIntegral $ numCoreNodes defaultConstants)
+      $ genIssuerKeys defaultConstants
     mkShelleyBlock <$> genBlock allPoolKeys
 
-instance (Praos.PraosCrypto crypto, CanMock (Praos crypto) era, crypto ~ EraCrypto era)
+instance (Praos.PraosCrypto crypto, CanMock (Praos crypto) era)
     =>  Arbitrary (ShelleyBlock (Praos crypto) era) where
   arbitrary = mkShelleyBlock <$> blk
     where blk = SL.Block <$> arbitrary <*> (toTxSeq @era <$> arbitrary)
 
 -- | This uses a different upstream generator to ensure the header and block
 -- body relate as expected.
-instance (CanMock (TPraos crypto) era, crypto ~ EraCrypto era)
+instance (CanMock (TPraos crypto) era)
   => Arbitrary (Coherent (ShelleyBlock (TPraos crypto) era)) where
   arbitrary = do
-    let allPoolKeys = map snd (coreNodeKeys defaultConstants)
+    allPoolKeys <-
+      replicateM (fromIntegral $ numCoreNodes defaultConstants)
+      $ genIssuerKeys defaultConstants
     Coherent . mkShelleyBlock <$> genCoherentBlock allPoolKeys
 
 -- | Create a coherent Praos block
 --
 --   TODO Establish a coherent block without doing this translation from a
 --   TPraos header.
-instance (CanMock (Praos crypto) era, crypto ~ EraCrypto era)
+instance (CanMock (Praos crypto) era)
   => Arbitrary (Coherent (ShelleyBlock (Praos crypto) era)) where
-  arbitrary = Coherent . mkBlk <$> genCoherentBlock allPoolKeys
+  arbitrary = do
+    allPoolKeys <-
+      replicateM (fromIntegral $ numCoreNodes defaultConstants)
+      $ genIssuerKeys defaultConstants
+    blk <- genCoherentBlock allPoolKeys
+    Coherent . mkBlk <$> pure blk
     where
-      allPoolKeys = map snd (coreNodeKeys defaultConstants)
       mkBlk sleBlock = mkShelleyBlock $ let
         SL.Block hdr1 bdy = sleBlock in SL.Block (translateHeader hdr1) bdy
 
@@ -112,17 +119,17 @@ instance (CanMock (Praos crypto) era, crypto ~ EraCrypto era)
           }
           hSig = coerce bhSig
 
-instance (CanMock (TPraos crypto) era, crypto ~ EraCrypto era)
+instance (CanMock (TPraos crypto) era)
   => Arbitrary (Header (ShelleyBlock (TPraos crypto) era)) where
   arbitrary = getHeader <$> arbitrary
 
-instance (CanMock (Praos crypto) era, crypto ~ EraCrypto era)
+instance (CanMock (Praos crypto) era)
   => Arbitrary (Header (ShelleyBlock (Praos crypto) era)) where
   arbitrary = do
     hdr <- arbitrary
     pure $ ShelleyHeader hdr (ShelleyHash $ Praos.headerHash hdr)
 
-instance SL.Mock c => Arbitrary (ShelleyHash c) where
+instance Arbitrary ShelleyHash where
   arbitrary = ShelleyHash <$> arbitrary
 
 instance CanMock proto era => Arbitrary (GenTx (ShelleyBlock proto era)) where
@@ -163,13 +170,13 @@ instance CanMock proto era => Arbitrary (SomeResult (ShelleyBlock proto era)) wh
     , SomeResult DebugNewEpochState <$> arbitrary
     ]
 
-instance PraosCrypto c => Arbitrary (NonMyopicMemberRewards c) where
+instance Arbitrary NonMyopicMemberRewards where
   arbitrary = NonMyopicMemberRewards <$> arbitrary
 
 instance CanMock proto era => Arbitrary (Point (ShelleyBlock proto era)) where
   arbitrary = BlockPoint <$> arbitrary <*> arbitrary
 
-instance PraosCrypto c => Arbitrary (TPraosState c) where
+instance Arbitrary TPraosState where
   arbitrary = do
       lastSlot <- frequency
         [ (1, return Origin)
@@ -212,7 +219,7 @@ instance ShelleyBasedEra era
   Generators for cardano-ledger-specs
 -------------------------------------------------------------------------------}
 
-instance PraosCrypto c => Arbitrary (SL.ChainDepState c) where
+instance Arbitrary SL.ChainDepState where
   arbitrary = genericArbitraryU
   shrink = genericShrink
 

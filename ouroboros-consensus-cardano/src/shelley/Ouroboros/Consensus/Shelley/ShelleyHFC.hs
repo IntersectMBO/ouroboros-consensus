@@ -25,9 +25,10 @@ module Ouroboros.Consensus.Shelley.ShelleyHFC (
   ) where
 
 import qualified Cardano.Ledger.Api.Era as L
-import qualified Cardano.Ledger.BaseTypes as SL (mkVersion)
+import qualified Cardano.Ledger.BaseTypes as SL (mkVersion, unNonZero)
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
+import           Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.API as SL
 import           Cardano.Slotting.EpochInfo (hoistEpochInfo)
 import           Control.Monad (guard)
@@ -64,6 +65,7 @@ import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Inspect as Shelley.Inspect
 import           Ouroboros.Consensus.Shelley.Node ()
+import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import           Ouroboros.Consensus.TypeFamilyWrappers
 
 {-------------------------------------------------------------------------------
@@ -80,6 +82,7 @@ type ShelleyBlockHFC proto era = HardForkBlock '[ShelleyBlock proto era]
 instance ( ShelleyCompatible proto era
          , LedgerSupportsProtocol (ShelleyBlock proto era)
          , TxLimits               (ShelleyBlock proto era)
+         , Crypto (ProtoCrypto proto)
          ) => NoHardForks (ShelleyBlock proto era) where
   getEraParams =
         shelleyEraParamsNeverHardForks
@@ -100,6 +103,7 @@ instance ( ShelleyCompatible proto era
 instance ( ShelleyCompatible proto era
          , LedgerSupportsProtocol (ShelleyBlock proto era)
          , TxLimits               (ShelleyBlock proto era)
+         , Crypto (ProtoCrypto proto)
          ) => SupportedNetworkProtocolVersion (ShelleyBlockHFC proto era) where
   supportedNodeToNodeVersions _ =
       Map.map HardForkNodeToNodeDisabled $
@@ -121,17 +125,19 @@ instance ( ShelleyCompatible proto era
 instance ( ShelleyCompatible proto era
          , LedgerSupportsProtocol (ShelleyBlock proto era)
          , TxLimits               (ShelleyBlock proto era)
+         , Crypto (ProtoCrypto proto)
          ) => SerialiseHFC '[ShelleyBlock proto era]
 instance ( ShelleyCompatible proto era
          , LedgerSupportsProtocol (ShelleyBlock proto era)
          , TxLimits               (ShelleyBlock proto era)
+         , Crypto (ProtoCrypto proto)
          ) => SerialiseConstraintsHFC (ShelleyBlock proto era)
 
 {-------------------------------------------------------------------------------
   Protocol type definition
 -------------------------------------------------------------------------------}
 
-type ProtocolShelley = HardForkProtocol '[ ShelleyBlock (TPraos StandardCrypto) StandardShelley ]
+type ProtocolShelley = HardForkProtocol '[ ShelleyBlock (TPraos StandardCrypto) ShelleyEra ]
 
 {-------------------------------------------------------------------------------
   SingleEraBlock Shelley
@@ -154,11 +160,11 @@ shelleyTransition ShelleyPartialLedgerConfig{..}
 
     -- 'shelleyLedgerConfig' contains a dummy 'EpochInfo' but this does not
     -- matter for extracting the genesis config
-    genesis :: SL.ShelleyGenesis (EraCrypto era)
+    genesis :: SL.ShelleyGenesis
     genesis = shelleyLedgerGenesis shelleyLedgerConfig
 
     k :: Word64
-    k = SL.sgSecurityParam genesis
+    k = SL.unNonZero $ SL.sgSecurityParam genesis
 
     isTransition :: ShelleyLedgerUpdate era -> Maybe EpochNo
     isTransition (ShelleyUpdatedPParams maybePParams newPParamsEpochNo) = do
@@ -172,6 +178,7 @@ shelleyTransition ShelleyPartialLedgerConfig{..}
 instance ( ShelleyCompatible proto era
          , LedgerSupportsProtocol (ShelleyBlock proto era)
          , TxLimits               (ShelleyBlock proto era)
+         , Crypto (ProtoCrypto proto)
          ) => SingleEraBlock (ShelleyBlock proto era) where
   singleEraTransition pcfg _eraParams _eraStart ledgerState =
       -- TODO: We might be evaluating 'singleEraTransition' more than once when
@@ -315,7 +322,6 @@ forecastAcrossShelley cfgFrom cfgTo transition forecastFor ledgerStateFrom
 instance ( ShelleyBasedEra era
          , ShelleyBasedEra (SL.PreviousEra era)
          , SL.Era (SL.PreviousEra era)
-         , EraCrypto (SL.PreviousEra era) ~ EraCrypto era
          ) => SL.TranslateEra era (ShelleyTip proto) where
   translateEra _ (ShelleyTip sno bno (ShelleyHash hash)) =
       return $ ShelleyTip sno bno (ShelleyHash hash)

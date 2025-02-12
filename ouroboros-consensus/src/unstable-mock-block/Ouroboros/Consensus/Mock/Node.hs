@@ -16,6 +16,7 @@ module Ouroboros.Consensus.Mock.Node (
   , simpleBlockForging
   ) where
 
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Codec.Serialise (Serialise)
 import qualified Data.Map.Strict as Map
 import           Data.Void (Void)
@@ -48,7 +49,7 @@ instance SupportedNetworkProtocolVersion (SimpleBlock SimpleMockCrypto ext) wher
 
 instance NodeInitStorage (SimpleBlock SimpleMockCrypto ext) where
   nodeImmutableDbChunkInfo (SimpleStorageConfig secParam) = simpleChunkInfo $
-      EpochSize $ 10 * maxRollbacks secParam
+      EpochSize $ 10 * unNonZero (maxRollbacks secParam)
 
   nodeCheckIntegrity _ _ = True
 

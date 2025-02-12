@@ -28,14 +28,14 @@ module Ouroboros.Consensus.Shelley.Protocol.Abstract (
   ) where
 
 import           Cardano.Binary (FromCBOR (fromCBOR), ToCBOR (toCBOR))
+import qualified Cardano.Crypto.Hash as Hash
 import           Cardano.Crypto.VRF (OutputVRF)
 import           Cardano.Ledger.BaseTypes (ProtVer)
 import           Cardano.Ledger.BHeaderView (BHeaderView)
-import           Cardano.Ledger.Crypto (Crypto, VRF)
 import           Cardano.Ledger.Hashes (EraIndependentBlockBody,
-                     EraIndependentBlockHeader)
-import           Cardano.Ledger.Keys (Hash, KeyRole (BlockIssuer), VKey)
-import qualified Cardano.Ledger.Keys as SL (Hash)
+                     EraIndependentBlockHeader, HASH)
+import           Cardano.Ledger.Keys (KeyRole (BlockIssuer), VKey)
+import           Cardano.Protocol.Crypto (Crypto, VRF)
 import           Cardano.Protocol.TPraos.BHeader (PrevHash)
 import           Cardano.Slotting.Block (BlockNo)
 import           Cardano.Slotting.Slot (SlotNo)
@@ -64,25 +64,24 @@ type family ProtoCrypto proto :: Type
   Header hash
 -------------------------------------------------------------------------------}
 
-newtype ShelleyHash crypto = ShelleyHash
-  { unShelleyHash :: SL.Hash crypto EraIndependentBlockHeader
+newtype ShelleyHash = ShelleyHash
+  { unShelleyHash :: Hash.Hash HASH EraIndependentBlockHeader
   }
   deriving stock (Eq, Ord, Show, Generic)
   deriving anyclass (NoThunks)
 
-deriving newtype instance Crypto crypto => ToCBOR (ShelleyHash crypto)
+deriving newtype instance ToCBOR ShelleyHash
 
-deriving newtype instance Crypto crypto => FromCBOR (ShelleyHash crypto)
+deriving newtype instance FromCBOR ShelleyHash
 
 instance
-  Crypto crypto =>
-  Serialise (ShelleyHash crypto)
+  Serialise ShelleyHash
   where
   encode = toCBOR
   decode = fromCBOR
 
 
-instance Condense (ShelleyHash crypto) where
+instance Condense ShelleyHash where
   condense = show . unShelleyHash
 
 {-------------------------------------------------------------------------------
@@ -103,9 +102,9 @@ class
   ) =>
   ProtocolHeaderSupportsEnvelope proto
   where
-  pHeaderHash :: ShelleyProtocolHeader proto -> ShelleyHash (ProtoCrypto proto)
-  pHeaderPrevHash :: ShelleyProtocolHeader proto -> PrevHash (ProtoCrypto proto)
-  pHeaderBodyHash :: ShelleyProtocolHeader proto -> Hash (ProtoCrypto proto) EraIndependentBlockBody
+  pHeaderHash :: ShelleyProtocolHeader proto -> ShelleyHash
+  pHeaderPrevHash :: ShelleyProtocolHeader proto -> PrevHash
+  pHeaderBodyHash :: ShelleyProtocolHeader proto -> Hash.Hash HASH EraIndependentBlockBody
   pHeaderSlot :: ShelleyProtocolHeader proto -> SlotNo
   pHeaderBlock :: ShelleyProtocolHeader proto -> BlockNo
   pHeaderSize :: ShelleyProtocolHeader proto -> Natural
@@ -152,9 +151,9 @@ class ProtocolHeaderSupportsKES proto where
     -- | Block no
     BlockNo ->
     -- | Hash of the previous block
-    PrevHash crypto ->
+    PrevHash ->
     -- | Hash of the block body to include in the header
-    Hash crypto EraIndependentBlockBody ->
+    Hash.Hash HASH EraIndependentBlockBody ->
     -- | Size of the block body
     Int ->
     -- | Protocol version
@@ -171,7 +170,7 @@ class ProtocolHeaderSupportsProtocol proto where
     ShelleyProtocolHeader proto -> ValidateView proto
 
   pHeaderIssuer ::
-    ShelleyProtocolHeader proto -> VKey 'BlockIssuer (ProtoCrypto proto)
+    ShelleyProtocolHeader proto -> VKey 'BlockIssuer
   pHeaderIssueNo ::
     ShelleyProtocolHeader proto -> Word64
   -- | A VRF value in the header, used to choose between otherwise equally
@@ -183,7 +182,7 @@ class ProtocolHeaderSupportsProtocol proto where
 -- to generalise this if, in the future, the ledger requires different things
 -- from the protocol.
 class ProtocolHeaderSupportsLedger proto where
-  mkHeaderView :: ShelleyProtocolHeader proto -> BHeaderView (ProtoCrypto proto)
+  mkHeaderView :: ShelleyProtocolHeader proto -> BHeaderView
 
 
 {-------------------------------------------------------------------------------

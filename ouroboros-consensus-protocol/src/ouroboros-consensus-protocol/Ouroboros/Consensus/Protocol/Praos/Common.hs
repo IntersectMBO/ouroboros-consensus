@@ -20,9 +20,9 @@ module Ouroboros.Consensus.Protocol.Praos.Common (
 import qualified Cardano.Crypto.VRF as VRF
 import           Cardano.Ledger.BaseTypes (Nonce)
 import qualified Cardano.Ledger.BaseTypes as SL
-import           Cardano.Ledger.Crypto (Crypto, VRF)
 import           Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer))
 import qualified Cardano.Ledger.Shelley.API as SL
+import           Cardano.Protocol.Crypto (Crypto, VRF)
 import qualified Cardano.Protocol.TPraos.OCert as OCert
 import           Cardano.Slotting.Block (BlockNo)
 import           Cardano.Slotting.Slot (SlotNo)
@@ -64,7 +64,7 @@ newtype MaxMajorProtVer = MaxMajorProtVer
 data PraosChainSelectView c = PraosChainSelectView
   { csvChainLength :: BlockNo,
     csvSlotNo      :: SlotNo,
-    csvIssuer      :: SL.VKey 'SL.BlockIssuer c,
+    csvIssuer      :: SL.VKey 'SL.BlockIssuer,
     csvIssueNo     :: Word64,
     csvTieBreakVRF :: VRF.OutputVRF (VRF c)
   }
@@ -100,8 +100,7 @@ data VRFTiebreakerFlavor =
 
 -- Used to implement the 'Ord' and 'ChainOrder' instances for Praos.
 comparePraos ::
-     Crypto c
-  => VRFTiebreakerFlavor
+     VRFTiebreakerFlavor
   -> PraosChainSelectView c
   -> PraosChainSelectView c
   -> Ordering
@@ -249,8 +248,8 @@ data PraosCanBeLeader c = PraosCanBeLeader
     -- genesis stakeholder delegate cold key) to the online KES key.
     praosCanBeLeaderOpCert     :: !(OCert.OCert c),
     -- | Stake pool cold key or genesis stakeholder delegate cold key.
-    praosCanBeLeaderColdVerKey :: !(SL.VKey 'SL.BlockIssuer c),
-    praosCanBeLeaderSignKeyVRF :: !(SL.SignKeyVRF c)
+    praosCanBeLeaderColdVerKey :: !(SL.VKey 'SL.BlockIssuer),
+    praosCanBeLeaderSignKeyVRF :: !(VRF.SignKeyVRF (VRF c))
   }
   deriving (Generic)
 
@@ -279,4 +278,4 @@ class ConsensusProtocol p => PraosProtocolSupportsNode p where
 
   getPraosNonces :: proxy p -> ChainDepState p -> PraosNonces
 
-  getOpCertCounters :: proxy p -> ChainDepState p -> Map (KeyHash 'BlockIssuer (PraosProtocolSupportsNodeCrypto p)) Word64
+  getOpCertCounters :: proxy p -> ChainDepState p -> Map (KeyHash 'BlockIssuer) Word64

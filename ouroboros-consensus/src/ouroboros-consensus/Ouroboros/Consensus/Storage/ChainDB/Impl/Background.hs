@@ -36,6 +36,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background (
   , addBlockRunner
   ) where
 
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Control.Exception (assert)
 import           Control.Monad (forM_, forever, void)
 import           Control.Monad.Trans.Class (lift)
@@ -133,7 +134,7 @@ copyToImmutableDB ::
 copyToImmutableDB CDB{..} = electric $ do
     toCopy <- atomically $ do
       curChain <- readTVar cdbChain
-      let nbToCopy = max 0 (AF.length curChain - fromIntegral k)
+      let nbToCopy = max 0 (AF.length curChain - fromIntegral (unNonZero k))
           toCopy :: [Point blk]
           toCopy = map headerPoint
                  $ AF.toOldestFirst
@@ -244,8 +245,8 @@ copyAndSnapshotRunner cdb@CDB{..} gcSchedule replayed fuse =
       -- Wait for the chain to grow larger than @k@
       numToWrite <- atomically $ do
         curChain <- readTVar cdbChain
-        check $ fromIntegral (AF.length curChain) > k
-        return $ fromIntegral (AF.length curChain) - k
+        check $ fromIntegral (AF.length curChain) > unNonZero k
+        return $ fromIntegral (AF.length curChain) - unNonZero k
 
       -- Copy blocks to ImmutableDB
       --

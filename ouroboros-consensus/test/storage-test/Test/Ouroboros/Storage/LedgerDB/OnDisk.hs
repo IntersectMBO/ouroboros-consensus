@@ -42,6 +42,7 @@ module Test.Ouroboros.Storage.LedgerDB.OnDisk (
   , tests
   ) where
 
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Codec.Serialise (Serialise)
 import qualified Codec.Serialise as S
 import           Control.Concurrent.Class.MonadSTM.Strict (newTMVar)
@@ -257,7 +258,7 @@ genBlockFromLedgerState = pure . genBlock . lastAppliedPoint . ledgerState
 extLedgerDbConfig :: SecurityParam -> LedgerDbCfg (ExtLedgerState TestBlock)
 extLedgerDbConfig secParam = LedgerDbCfg {
       ledgerDbCfgSecParam = secParam
-    , ledgerDbCfg         = ExtLedgerCfg $ singleNodeTestConfigWith TestBlockCodecConfig TestBlockStorageConfig secParam (GenesisWindow (2 * maxRollbacks secParam))
+    , ledgerDbCfg         = ExtLedgerCfg $ singleNodeTestConfigWith TestBlockCodecConfig TestBlockStorageConfig secParam (GenesisWindow (2 * unNonZero (maxRollbacks secParam)))
     }
 
 
@@ -549,7 +550,7 @@ runMock cmd initMock =
                             NotOrigin pt -> Just pt  -- 2b
           where
             k :: Int
-            k = fromIntegral $ maxRollbacks $ mockSecParam mock
+            k = fromIntegral $ unNonZero $ maxRollbacks $ mockSecParam mock
 
             -- The snapshots from new to old until 'mockRestore' (inclusive)
             untilRestore :: [(TestBlock, ExtLedgerState TestBlock)]
@@ -940,7 +941,7 @@ generator secParam (Model mock hs) = Just $ QC.oneof $ concat [
         , fmap At $ do
             let maxRollback = minimum [
                     mockMaxRollback mock
-                  , maxRollbacks secParam
+                  , unNonZero $ maxRollbacks secParam
                   ]
             numRollback  <- QC.choose (0, maxRollback)
             numNewBlocks <- QC.choose (numRollback, numRollback + 2)

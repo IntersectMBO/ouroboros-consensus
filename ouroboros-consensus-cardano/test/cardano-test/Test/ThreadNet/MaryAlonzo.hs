@@ -12,7 +12,6 @@
 
 module Test.ThreadNet.MaryAlonzo (tests) where
 
-import           Cardano.Crypto.Hash (ShortHash)
 import           Cardano.Ledger.Alonzo.Genesis (AlonzoGenesis)
 import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL (Version, getVersion,
@@ -70,11 +69,8 @@ import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Slots (NumSlots (..))
 import           Test.Util.TestEnv
 
--- | No Byron era, so our crypto can be trivial.
-type Crypto = MockCrypto ShortHash
-
 type MaryAlonzoBlock =
-  ShelleyBasedHardForkBlock (TPraos Crypto) (MaryEra Crypto) (TPraos Crypto) (AlonzoEra Crypto)
+  ShelleyBasedHardForkBlock (TPraos MockCrypto) MaryEra (TPraos MockCrypto) AlonzoEra
 
 -- | The varying data of this test
 --
@@ -273,7 +269,7 @@ prop_simple_allegraAlonzo_convergence TestSetup
     initialKESPeriod :: SL.KESPeriod
     initialKESPeriod = SL.KESPeriod 0
 
-    coreNodes :: [Shelley.CoreNode Crypto]
+    coreNodes :: [Shelley.CoreNode MockCrypto]
     coreNodes = runGen initSeed $
         replicateM (fromIntegral n) $
           Shelley.genCoreNode initialKESPeriod
@@ -284,7 +280,7 @@ prop_simple_allegraAlonzo_convergence TestSetup
     maxLovelaceSupply =
       fromIntegral (length coreNodes) * Shelley.initialLovelacePerCoreNode
 
-    shelleyGenesis :: ShelleyGenesis Crypto
+    shelleyGenesis :: ShelleyGenesis
     shelleyGenesis =
         Shelley.mkGenesisConfig
           (SL.ProtVer majorVersion1 0)
@@ -293,7 +289,7 @@ prop_simple_allegraAlonzo_convergence TestSetup
           setupD
           maxLovelaceSupply
           setupSlotLength
-          (Shelley.mkKesConfig (Proxy @Crypto) numSlots)
+          (Shelley.mkKesConfig (Proxy @MockCrypto) numSlots)
           coreNodes
 
     alonzoGenesis :: AlonzoGenesis

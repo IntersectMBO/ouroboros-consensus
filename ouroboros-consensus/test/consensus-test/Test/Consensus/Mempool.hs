@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
@@ -7,6 +8,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 
@@ -34,6 +36,7 @@ module Test.Consensus.Mempool (tests) where
 
 import           Cardano.Binary (Encoding, toCBOR)
 import           Cardano.Crypto.Hash
+import           Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import           Control.Exception (assert)
 import           Control.Monad (foldM, forM, forM_, guard, void)
 import           Control.Monad.Except (Except, runExcept)
@@ -333,7 +336,7 @@ mkTestLedgerConfig mockCfg = SimpleLedgerConfig {
       simpleMockLedgerConfig = ()
     , simpleLedgerEraParams  =
         HardFork.defaultEraParams
-          (SecurityParam 4)
+          (SecurityParam $ knownNonZeroBounded @4)
           (slotLengthFromSec 20)
     , simpleLedgerMockConfig = mockCfg
     }
