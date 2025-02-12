@@ -24,6 +24,7 @@
 --
 module Test.Ouroboros.Storage.ChainDB.Model.Test (tests) where
 
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           GHC.Stack
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
@@ -97,7 +98,7 @@ prop_alwaysPickPreferredChain bt p =
 
     preferCandidate' candidate =
         AF.preferAnchoredCandidate bcfg curFragment candFragment &&
-        AF.forksAtMostKBlocks k curFragment candFragment
+        AF.forksAtMostKBlocks (unNonZero k) curFragment candFragment
       where
         candFragment = Chain.toAnchoredFragment (getHeader <$> candidate)
 

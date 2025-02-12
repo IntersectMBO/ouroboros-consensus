@@ -1,4 +1,5 @@
 {-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
@@ -23,6 +24,7 @@
 -- also model malicious/erroneous behavior.
 module Test.Consensus.MiniProtocol.BlockFetch.Client (tests) where
 
+import           Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import           Control.Monad (replicateM)
 import           Control.Monad.Class.MonadTime
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
@@ -269,7 +271,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
       where
         -- Needs to be larger than any chain length in this test, to ensure that
         -- switching to any chain is never too deep.
-        securityParam  = SecurityParam 1000
+        securityParam  = SecurityParam $ knownNonZeroBounded @1000
         topLevelConfig = singleNodeTestConfigWithK securityParam
 
         cdbTracer = Tracer \case
@@ -393,7 +395,7 @@ instance Arbitrary BlockFetchClientTestSetup where
             DiffusionPipeliningOff -> SelectedChainBehavior
 
       -- Only use a small k to avoid rolling forward by a big chain.
-      maxRollback = SecurityParam 5
+      maxRollback = SecurityParam $ knownNonZeroBounded @5
 
   shrink BlockFetchClientTestSetup{..} =
       -- If we have multiple peers, check if removing the peer still

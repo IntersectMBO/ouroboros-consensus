@@ -68,6 +68,7 @@ module Test.Ouroboros.Storage.ChainDB.StateMachine (
   , tests
   ) where
 
+import           Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import           Codec.Serialise (Serialise)
 import           Control.Monad (replicateM, void)
 import           Control.ResourceRegistry
@@ -1436,7 +1437,7 @@ genBlk chunkInfo Model{..} = frequency
 
 mkTestCfg :: ImmutableDB.ChunkInfo -> TopLevelConfig TestBlock
 mkTestCfg (ImmutableDB.UniformChunkSize chunkSize) =
-    mkTestConfig (SecurityParam 2) chunkSize
+    mkTestConfig (SecurityParam $ knownNonZeroBounded @2) chunkSize
 
 envUnused :: ChainDBEnv m blk
 envUnused = error "ChainDBEnv used during command generation"
