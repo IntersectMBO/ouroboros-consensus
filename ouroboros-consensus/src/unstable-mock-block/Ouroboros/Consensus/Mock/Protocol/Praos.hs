@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -Wno-orphans            #-}
+
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
@@ -43,10 +45,12 @@ module Ouroboros.Consensus.Mock.Protocol.Praos (
   ) where
 
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..), serialize')
+import           Cardano.Crypto.DSIGN.Ed25519 (Ed25519DSIGN)
 import           Cardano.Crypto.DSIGN.Ed448 (Ed448DSIGN)
 import           Cardano.Crypto.Hash.Class (HashAlgorithm (..), hashToBytes,
                      hashWithSerialiser, sizeHash)
 import           Cardano.Crypto.Hash.SHA256 (SHA256)
+import           Cardano.Crypto.DSIGN.Class
 import           Cardano.Crypto.KES.Class
 import           Cardano.Crypto.KES.Mock
 import           Cardano.Crypto.KES.Simple
@@ -54,6 +58,9 @@ import           Cardano.Crypto.Util
 import           Cardano.Crypto.VRF.Class
 import           Cardano.Crypto.VRF.Mock (MockVRF)
 import           Cardano.Crypto.VRF.Simple (SimpleVRF)
+import           Cardano.Crypto.Libsodium.MLockedSeed (mlockedSeedUseAsCPtr)
+import           Cardano.Crypto.Libsodium.Memory (packByteStringCStringLen)
+import           Cardano.Crypto.Seed (mkSeedFromBytes)
 import           Cardano.Slotting.EpochInfo
 import           Codec.CBOR.Decoding (decodeListLenOf)
 import           Codec.CBOR.Encoding (encodeListLen)
@@ -66,6 +73,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
 import           Data.Typeable
 import           Data.Word (Word64)
+import           Foreign.Ptr (castPtr)
 import           GHC.Generics (Generic)
 import           GHC.Stack (HasCallStack)
 import           NoThunks.Class (NoThunks (..))
@@ -76,7 +84,6 @@ import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.Signed
 import           Ouroboros.Consensus.Util.Condense
-import           Test.Cardano.Slotting.Numeric ()
 
 -- The Praos paper can be located at https://ia.cr/2017/573
 --
@@ -203,12 +210,14 @@ praosValidateView getFields hdr =
 data HotKey c =
     HotKey
       !Period  -- ^ Absolute period of the KES key
-      !(SignKeyKES (PraosKES c))
+      !(UnsoundPureSignKeyKES (PraosKES c))
   | HotKeyPoisoned
   deriving (Generic)
 
 instance PraosCrypto c => NoThunks (HotKey c)
-deriving instance PraosCrypto c => Show (HotKey c)
+instance PraosCrypto c => Show (HotKey c) where
+  show (HotKey p _) = "HotKey " ++ show p ++ " <SignKeyKES: hidden>"
+  show HotKeyPoisoned = "HotKeyPoisoned"
 
 -- | The 'HotKey' could not be evolved to the given 'Period'.
 newtype HotKeyEvolutionError = HotKeyEvolutionError Period
@@ -229,7 +238,7 @@ evolveKey slotNo hotKey = case hotKey of
       | keyPeriod >= targetPeriod
       -> (hotKey, Updated hotKey)
       | otherwise
-      -> case updateKES () oldKey keyPeriod of
+      -> case unsoundPureUpdateKES () oldKey keyPeriod of
            Nothing     ->
              (HotKeyPoisoned, UpdateFailed $ HotKeyEvolutionError targetPeriod)
            Just newKey ->
@@ -251,11 +260,11 @@ forgePraosFields :: ( PraosCrypto c
                  => PraosProof c
                  -> HotKey c
                  -> (PraosExtraFields c -> toSign)
-                 -> PraosFields c toSign
+                 -> (PraosFields c toSign)
 forgePraosFields PraosProof{..} hotKey mkToSign =
     case hotKey of
       HotKey kesPeriod key -> PraosFields {
-          praosSignature   = signedKES () kesPeriod (mkToSign fieldsToSign) key
+          praosSignature   = unsoundPureSignedKES () kesPeriod (mkToSign fieldsToSign) key
         , praosExtraFields = fieldsToSign
         }
       HotKeyPoisoned -> error "trying to sign with a poisoned key"
@@ -406,14 +415,14 @@ infosEta :: forall c. (PraosCrypto c)
          -> [BlockInfo c]
          -> EpochNo
          -> Natural
-infosEta l _  0 =
+infosEta l _  (EpochNo 0) =
     praosInitialEta l
-infosEta l@PraosConfig{praosParams = PraosParams{..}} xs e =
+infosEta l@PraosConfig{praosParams = PraosParams{..}} xs (EpochNo e) =
     let e'   = e - 1
         -- the η from the previous epoch
-        eta' = infosEta l xs e'
+        eta' = infosEta l xs (EpochNo e')
         -- the first slot in previous epoch
-        from = epochFirst l e'
+        from = epochFirst l (EpochNo e')
         -- 2/3 of the slots per epoch
         n    = div (2 * praosSlotsPerEpoch) 3
         -- the last of the 2/3 of slots in this epoch
@@ -591,7 +600,7 @@ rhoYT st xs s nid =
   Crypto models
 -------------------------------------------------------------------------------}
 
-class ( KESAlgorithm  (PraosKES  c)
+class ( UnsoundPureKESAlgorithm  (PraosKES  c)
       , VRFAlgorithm  (PraosVRF  c)
       , HashAlgorithm (PraosHash c)
       , Typeable c
@@ -609,7 +618,7 @@ data PraosStandardCrypto
 data PraosMockCrypto
 
 instance PraosCrypto PraosStandardCrypto where
-  type PraosKES  PraosStandardCrypto = SimpleKES Ed448DSIGN 1000
+  type PraosKES  PraosStandardCrypto = SimpleKES Ed25519DSIGN 1000
   type PraosVRF  PraosStandardCrypto = SimpleVRF
   type PraosHash PraosStandardCrypto = SHA256
 
@@ -617,6 +626,40 @@ instance PraosCrypto PraosMockCrypto where
   type PraosKES  PraosMockCrypto = MockKES 10000
   type PraosVRF  PraosMockCrypto = MockVRF
   type PraosHash PraosMockCrypto = SHA256
+
+{-------------------------------------------------------------------------------
+  Orphan instances to make Ed448 look like a proper mlocked DSIGN
+-------------------------------------------------------------------------------}
+
+instance DSIGNMAlgorithm Ed448DSIGN where
+  data SignKeyDSIGNM Ed448DSIGN = SignKeyDSIGNMEd448 (SignKeyDSIGN Ed448DSIGN)
+    deriving (Generic)
+
+  deriveVerKeyDSIGNM (SignKeyDSIGNMEd448 sk) =
+    return $ deriveVerKeyDSIGN sk
+
+  signDSIGNM context signable (SignKeyDSIGNMEd448 sk) =
+    return $ signDSIGN context signable sk
+
+  genKeyDSIGNMWith _ mlockedSeed = do
+    seed <- mlockedSeedUseAsCPtr mlockedSeed $ \seedPtr -> do
+      mkSeedFromBytes <$> packByteStringCStringLen (castPtr seedPtr, fromIntegral $ seedSizeDSIGN (Proxy :: Proxy Ed448DSIGN))
+    return . SignKeyDSIGNMEd448 $ genKeyDSIGN seed
+
+  cloneKeyDSIGNMWith _ sk = return sk
+
+  getSeedDSIGNMWith _ _ _ =
+    error "getSeed not implemented for Ed448"
+
+  forgetSignKeyDSIGNMWith _ _ =
+    -- This is fake mlocking, so just don't forget anything
+    return ()
+
+deriving instance NoThunks (SignKeyDSIGNM Ed448DSIGN)
+
+instance UnsoundDSIGNMAlgorithm Ed448DSIGN where
+  rawSerialiseSignKeyDSIGNM = error "Not implemented: rawSerialiseSignKeyDSIGNM"
+  rawDeserialiseSignKeyDSIGNMWith = error "Not implemented: rawDeserialiseSignKeyDSIGNMWith"
 
 {-------------------------------------------------------------------------------
   Condense
