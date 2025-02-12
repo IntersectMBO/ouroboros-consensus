@@ -431,12 +431,12 @@ snapshotFromIS is = MempoolSnapshot {
     }
  where
   implSnapshotGetTxs :: InternalState blk
-                     -> [(Validated (GenTx blk), TicketNo, ByteSize32)]
+                     -> [(Validated (GenTx blk), TicketNo, TxMeasure blk)]
   implSnapshotGetTxs = flip implSnapshotGetTxsAfter TxSeq.zeroTicketNo
 
   implSnapshotGetTxsAfter :: InternalState blk
                           -> TicketNo
-                          -> [(Validated (GenTx blk), TicketNo, ByteSize32)]
+                          -> [(Validated (GenTx blk), TicketNo, TxMeasure blk)]
   implSnapshotGetTxsAfter IS{isTxs} =
     TxSeq.toTuples . snd . TxSeq.splitAfterTicketNo isTxs
 

@@ -44,3 +44,28 @@ package ouroboros-network
 if(os(windows))
   constraints:
     bitvec -simd
+
+
+allow-newer:
+  network-mux:network,
+  ouroboros-network-framework:network,
+  ouroboros-network:network,
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/ouroboros-network.git
+  tag: 9411643578880565f5b06f862937e00c0f3efcb7
+  --sha256: 035i50k0gd45qkq3v1c495a3bmmmcy63ib61xj3lzza440bx91bh
+  subdir:
+    -- cardano-client
+    -- cardano-ping
+    -- monoidal-synchronisation
+    -- network-mux
+    -- ntp-client
+    -- ouroboros-network
+    ouroboros-network-api
+    -- ouroboros-network-framework
+    -- ouroboros-network-mock
+    ouroboros-network-protocols
+    -- ouroboros-network-testing
+    -- quickcheck-monoids
