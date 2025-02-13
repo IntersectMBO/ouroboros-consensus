@@ -64,6 +64,7 @@ open import Spec.Foreign.HSConsensus.ExternalStructures dummyExternalFunctions
     ; HSBlockStructure to DummyBlockStructure
     ; HSAbstractFunctions to DummyAbstractFunctions
     ; HSRationalExtStructure to DummyRationalExtStructure
+    ; HSLedgerInterface to DummyLedgerInterface
     )
   public
 
