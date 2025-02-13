@@ -84,10 +84,6 @@ instance
     ; nonceToSeed = id
     }
 
-  open EpochStructure HSEpochStructure public
-  open Crypto HSCrypto public
-  open Nonces HSNonces public
-
 open import Spec.BlockDefinitions it it it
 
 instance
@@ -114,8 +110,6 @@ instance
     ; serHashToNonce  = id
     }
 
-open AbstractFunctions HSAbstractFunctions public
-
 open import Data.Rational.Ext using (RationalExtStructure)
 
 instance
@@ -127,4 +121,39 @@ instance
     where
       open ExternalFunctions externalFunctions
 
+-- TODO: Move to its own file Spec.Foreign.HSConsensus.InterfaceLibrary.Ledger
+
+open import InterfaceLibrary.Ledger HSCrypto HSEpochStructure
+open import Ledger.PParams using (PParams)
+
+-- NOTE: Dummy for now
+DummyNEWEPOCH : ⊤ → ℕ → ℕ → ℕ → Type
+DummyNEWEPOCH _ n _ n′ = n′ ≡ suc n
+
+instance
+  Computational-DummyNEWEPOCH : Computational DummyNEWEPOCH String
+  Computational-DummyNEWEPOCH .computeProof _ n _ = success (suc n , refl)
+  Computational-DummyNEWEPOCH .completeness _ n _ n′ eq
+    with n′ ≟ suc n
+  ... | yes p rewrite p = refl
+  ... | no ¬p = contradiction eq ¬p
+
+  HSLedgerInterface : LedgerInterface
+  HSLedgerInterface = record
+    { NewEpochState      = ℕ
+    ; getPParams         = const $ record { maxHeaderSize = 1; maxBlockSize = 2; pv = 1 , 0 }
+    ; getEpoch           = const 1
+    ; getPoolDistr       = const ❴ 457 , (ℤ.+ 1 ℚ./ 3 , 568) ❵
+    ; adoptGenesisDelegs = _+_
+    ; _⊢_⇀⦇_,NEWEPOCH⦈_  = DummyNEWEPOCH
+    }
+    where
+      import Data.Integer.Base as ℤ using (+_)
+      import Data.Rational.Base as ℚ using (_/_)
+
+open EpochStructure HSEpochStructure public
+open Crypto HSCrypto public
+open Nonces HSNonces public
+open AbstractFunctions HSAbstractFunctions public
 open RationalExtStructure HSRationalExtStructure public
+open LedgerInterface HSLedgerInterface public

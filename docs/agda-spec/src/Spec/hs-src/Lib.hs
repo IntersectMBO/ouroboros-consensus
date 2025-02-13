@@ -15,6 +15,8 @@ import MAlonzo.Code.Spec.Foreign.HSConsensus.OperationalCertificate            a
   (OCertEnv(..), OCertState(..), OCertCounters, ocertStep, ocertDebug)
 import MAlonzo.Code.Spec.Foreign.HSConsensus.Protocol                          as X
   (PrtclEnv(..), PrtclState(..), prtclStep, prtclDebug, PoolDistr)
+import MAlonzo.Code.Spec.Foreign.HSConsensus.TickForecast                      as X
+  (tickfStep, NewEpochState)
 import MAlonzo.Code.Spec.Foreign.HSConsensus.BaseTypes                         as X
   (Slot, Epoch, KeyHashS, KeyHashV)
 import MAlonzo.Code.Spec.Foreign.ExternalFunctions                             as X
