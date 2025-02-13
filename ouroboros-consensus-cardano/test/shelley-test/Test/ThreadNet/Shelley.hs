@@ -4,6 +4,7 @@
 
 module Test.ThreadNet.Shelley (tests) where
 
+import           Cardano.Ledger.BaseTypes (nonZero)
 import qualified Cardano.Ledger.BaseTypes as SL (UnitInterval,
                      mkNonceFromNumber, shelleyProtVer, unboundRational)
 import           Cardano.Ledger.Shelley (ShelleyEra)
@@ -84,7 +85,7 @@ instance Arbitrary TestSetup where
         , (9, SL.mkNonceFromNumber <$> arbitrary)
         ]
 
-      setupK  <- SecurityParam <$> choose (minK, maxK)
+      setupK  <- SecurityParam <$> choose (minK, maxK) `suchThatMap` nonZero
 
       setupTestConfig <- arbitrary
 

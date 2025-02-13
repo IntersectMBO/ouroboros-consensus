@@ -1,12 +1,15 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Test that we can submit transactions to the mempool using the local
 -- submission server, in different Cardano eras.
 --
 module Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server (tests) where
 
+import           Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import           Control.Monad (void)
 import           Control.Tracer (Tracer, nullTracer, stdoutTracer)
 import           Data.Functor.Contravariant ((>$<))
@@ -56,7 +59,7 @@ tests =
             pInfo :: ProtocolInfo (CardanoBlock StandardCrypto)
             pInfo = mkSimpleTestProtocolInfo
                         (Shelley.DecentralizationParam 1)
-                        (Consensus.SecurityParam 10)
+                        (Consensus.SecurityParam $ knownNonZeroBounded @10)
                         (ByronSlotLengthInSeconds 1)
                         (ShelleySlotLengthInSeconds 1)
                         protocolVersionZero

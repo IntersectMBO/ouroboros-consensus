@@ -18,6 +18,7 @@ import           Cardano.Chain.Slotting (unEpochSlots)
 import qualified Cardano.Chain.Update as CC.Update
 import qualified Cardano.Chain.Update.Validation.Interface as CC
 import qualified Cardano.Ledger.Api.Era as L
+import           Cardano.Ledger.BaseTypes (nonZero, unNonZero)
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as SL
@@ -110,7 +111,7 @@ instance Arbitrary TestSetup where
                 -- Shelley epoch, since stake pools can only be created and
                 -- delegated to via Shelley transactions.
                 `suchThat` ((/= 0) . Shelley.decentralizationParamToRational)
-    setupK <- SecurityParam <$> choose (8, 10)
+    setupK <- SecurityParam <$> choose (8, 10) `suchThatMap` nonZero
                 -- If k < 8, common prefix violations become too likely in
                 -- Praos mode for thin overlay schedules (ie low d), even for
                 -- f=0.2.
@@ -267,7 +268,7 @@ prop_simple_cardano_convergence TestSetup
           -- fails, we should figure out why not. Even with @k=2 ncn=5 d=0.1@
           -- fixed the deepest fork I'm seeing is ~2.5% @k-1@
           -- 'finalIntersectionDepth'.
-          maxRollbacks setupK
+          unNonZero $ maxRollbacks setupK
         else
           -- Recall that all nodes join ASAP, so the partition is the only
           -- potential cause for a fork during Byron. See the reasoning in
@@ -396,7 +397,7 @@ prop_simple_cardano_convergence TestSetup
         TestOutput{testOutputNodes} = testOutput
 
         k :: Word64
-        k = maxRollbacks setupK
+        k = unNonZero $ maxRollbacks setupK
 
         coeff :: SL.ActiveSlotCoeff
         coeff = SL.sgActiveSlotCoeff genesisShelley
@@ -431,7 +432,7 @@ prop_simple_cardano_convergence TestSetup
             show (nodeOutputFinalChain <$> testOutputNodes testOutput)
           ) $
         counterexample "CP violation in final chains!" $
-        property $ maxRollbacks setupK >= finalIntersectionDepth
+        property $ unNonZero (maxRollbacks setupK) >= finalIntersectionDepth
 
 mkProtocolCardanoAndHardForkTxs ::
      forall c m. (IOLike m, c ~ StandardCrypto)
@@ -511,7 +512,7 @@ shelleyMajorVersion = L.eraProtVerLow @ShelleyEra
 
 byronEpochSize :: SecurityParam -> Word64
 byronEpochSize (SecurityParam k) =
-    unEpochSlots $ kEpochSlots $ CC.Common.BlockCount k
+    unEpochSlots $ kEpochSlots $ CC.Common.BlockCount $ unNonZero k
 
 -- | By default, the initial major Byron protocol version is @0@, but we want to
 -- set it to 'byronMajorVersion'.
