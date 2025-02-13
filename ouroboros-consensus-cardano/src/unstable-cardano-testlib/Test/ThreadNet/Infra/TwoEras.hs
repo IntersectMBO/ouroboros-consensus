@@ -35,6 +35,7 @@ module Test.ThreadNet.Infra.TwoEras (
 import qualified Cardano.Chain.Common as CC.Common
 import           Cardano.Chain.ProtocolConstants (kEpochSlots)
 import           Cardano.Chain.Slotting (unEpochSlots)
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Protocol.TPraos.Rules.Overlay as SL
 import           Cardano.Slotting.EpochInfo
@@ -91,7 +92,7 @@ genTestConfig k (EpochSize epochSize1, EpochSize epochSize2) = do
     initSeed <- arbitrary
 
     numSlots <- do
-      let wiggle = min epochSize1 (2 * maxRollbacks k)
+      let wiggle = min epochSize1 (2 * unNonZero (maxRollbacks k))
 
           approachSecondEra     =
               choose (0, wiggle)     <&> \t -> epochSize1 + t - wiggle
@@ -140,9 +141,11 @@ genTestConfig k (EpochSize epochSize1, EpochSize epochSize2) = do
 
 -- | Generate 'setupPartition'
 genPartition :: NumCoreNodes -> NumSlots -> SecurityParam -> Gen Partition
-genPartition (NumCoreNodes n) (NumSlots t) (SecurityParam k) = do
+genPartition (NumCoreNodes n) (NumSlots t) (SecurityParam k') = do
     let ultimateSlot :: Word64
         ultimateSlot = assert (t > 0) $ t - 1
+
+        k = unNonZero k'
 
         crop :: Word64 -> Word64
         crop s = min ultimateSlot s
@@ -227,7 +230,7 @@ genPartition (NumCoreNodes n) (NumSlots t) (SecurityParam k) = do
           , (1,  Just $ 4 * k + 1)
           , (1,  Just $ 4 * k + 1 + quorum)
           , (20, assert (numFirstEraEpochs == (1 :: Int)) $
-                 Just $ byronEpochSize (SecurityParam k))
+                 Just $ byronEpochSize (SecurityParam k'))
           ]
 
     -- Position the partition so that it at least abuts the focus slot.
@@ -448,7 +451,7 @@ mkMessageDelay part = CalcMessageDelay $
 
 byronEpochSize :: SecurityParam -> Word64
 byronEpochSize (SecurityParam k) =
-    unEpochSlots $ kEpochSlots $ CC.Common.BlockCount k
+    unEpochSlots $ kEpochSlots $ CC.Common.BlockCount $ unNonZero k
 
 shelleyEpochSize :: SecurityParam -> Word64
 shelleyEpochSize k = unEpochSize $ Shelley.mkEpochSize k activeSlotCoeff
@@ -463,15 +466,15 @@ isFirstEraBlock = \case
 -- PREREQUISITE: The number must not be greater than @k@.
 diffK :: SecurityParam -> Word64 -> String
 diffK (SecurityParam k) v =
-    assert (k >= v) $
-    "k - " <> show (k - v)
+    assert (unNonZero k >= v) $
+    "k - " <> show (unNonZero k - v)
 
 -- | Render a number as the nearest tenths of @k@
 approxFracK :: SecurityParam -> Word64 -> String
 approxFracK (SecurityParam k) v =
     "k * " <> show (fromIntegral tenths / 10 :: Double)
   where
-    ratio  = toRational v / toRational k
+    ratio  = toRational v / toRational (unNonZero k)
     tenths = round (ratio * 10) :: Int
 
 -- | <https://en.wikipedia.org/wiki/Monus>

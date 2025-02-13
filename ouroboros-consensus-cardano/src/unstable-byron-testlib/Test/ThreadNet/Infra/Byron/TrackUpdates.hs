@@ -24,6 +24,7 @@ import qualified Cardano.Chain.Update.Validation.Registration as Registration
 import           Cardano.Chain.Update.Vote (AVote)
 import qualified Cardano.Chain.Update.Vote as Vote
 import qualified Cardano.Crypto as Crypto
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Cardano.Ledger.Binary (ByteSpan, DecCBOR (..), EncCBOR (..))
 import           Control.Exception (assert)
 import           Control.Monad (guard)
@@ -106,7 +107,7 @@ mkUpdateLabels params numSlots genesisConfig nodeJoinPlan topology result
     -- a block forged in slot @s@ becomes immutable/stable in slot @s + twoK@
     -- according to the Byron Chain Density invariant
     twoK :: SlotNo
-    twoK = SlotNo $ 2 * maxRollbacks pbftSecurityParam
+    twoK = SlotNo $ 2 * unNonZero (maxRollbacks pbftSecurityParam)
 
     -- the number of slots in an epoch
     epochSlots :: SlotNo
