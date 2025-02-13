@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Shelley.Node.Common (
   ) where
 
 import           Cardano.Crypto.KES (UnsoundPureSignKeyKES)
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import qualified Cardano.Ledger.Keys as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Ledger.Slot
@@ -106,6 +107,7 @@ instance ShelleyCompatible proto era => NodeInitStorage (ShelleyBlock proto era)
     simpleChunkInfo
       . EpochSize
       . (* 10)
+      . unNonZero
       . maxRollbacks
       . shelleyStorageConfigSecurityParam
 

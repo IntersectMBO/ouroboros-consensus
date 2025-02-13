@@ -10,6 +10,7 @@ import qualified Cardano.Chain.Common as Common
 import qualified Cardano.Chain.Genesis as Genesis
 import qualified Cardano.Chain.Update as Update
 import qualified Cardano.Crypto as Crypto
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Control.Monad.Except (runExceptT)
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Byron.Ledger.Conversions
@@ -37,7 +38,7 @@ byronPBftParams paramK numCoreNodes = PBftParams
       n = fromIntegral x where NumCoreNodes x = numCoreNodes
 
       k :: Num a => a
-      k = fromIntegral x where SecurityParam x = paramK
+      k = fromIntegral x where x = unNonZero $ maxRollbacks paramK
 
 -- Instead of using 'Dummy.dummyConfig', which hard codes the number of rich
 -- men (= CoreNodes for us) to 4, we generate a dummy config with the given
@@ -62,7 +63,7 @@ generateGenesisConfig slotLen params =
                 -- The nodes are the richmen
                 { Genesis.tboRichmen = fromIntegral numCoreNodes }
           }
-        , Genesis.gsK = Common.BlockCount $ maxRollbacks pbftSecurityParam
+        , Genesis.gsK = Common.BlockCount $ unNonZero $ maxRollbacks pbftSecurityParam
         , Genesis.gsProtocolParameters = gsProtocolParameters
           { Update.ppSlotDuration = toByronSlotLength slotLen
           }

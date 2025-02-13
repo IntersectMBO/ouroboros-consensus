@@ -5,6 +5,7 @@ module Test.ThreadNet.Util.Expectations (
   , determineForkLength
   ) where
 
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Data.Foldable as Foldable (foldl')
 import qualified Data.Map.Strict as Map
 import           Data.Word (Word64)
@@ -121,7 +122,7 @@ determineForkLength k (NodeJoinPlan joinPlan) (LeaderSchedule sched) =
 
         update
             -- too late to reach consensus, so further diverge
-          | maxForkLength > maxRollbacks k = grow
+          | maxForkLength > unNonZero (maxRollbacks k) = grow
 
             -- assume (common) worst-case: each leader creates a unique longer
             -- chain
