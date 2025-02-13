@@ -1,5 +1,7 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
 
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 
@@ -28,6 +30,7 @@ import qualified Cardano.Chain.Byron.API as CC
 import qualified Cardano.Chain.Common as CC
 import qualified Cardano.Chain.Update.Validation.Interface as CC.UPI
 import qualified Cardano.Chain.UTxO as CC
+import           Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import           Control.Monad.Except (runExcept)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block
@@ -62,7 +65,7 @@ import           Test.Util.Serialisation.SomeResult (SomeResult (..))
 -- 'S.WindowSize', because 'decodeByronChainDepState' only takes the
 -- 'SecurityParam' and uses it as the basis for the 'S.WindowSize'.
 secParam :: SecurityParam
-secParam = SecurityParam 2
+secParam = SecurityParam $ knownNonZeroBounded @2
 
 windowSize :: S.WindowSize
 windowSize = S.WindowSize 2

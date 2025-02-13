@@ -50,6 +50,7 @@ import qualified Cardano.Chain.Update.Validation.Endorsement as UPE
 import qualified Cardano.Chain.Update.Validation.Interface as UPI
 import qualified Cardano.Chain.UTxO as CC
 import qualified Cardano.Chain.ValidationMode as CC
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Cardano.Ledger.Binary (fromByronCBOR, toByronCBOR)
 import           Cardano.Ledger.Binary.Plain (encodeListLen, enforceSize)
 import           Codec.CBOR.Decoding (Decoder)
@@ -263,7 +264,7 @@ instance LedgerSupportsProtocol ByronBlock where
             , outsideForecastFor    = for
             }
     where
-      SecurityParam k = genesisSecurityParam cfg
+      k = unNonZero $ maxRollbacks $ genesisSecurityParam cfg
       lastSlot        = fromByronSlotNo $ CC.cvsLastSlot st
       at              = NotOrigin lastSlot
 
@@ -282,7 +283,7 @@ byronEraParams genesis = HardFork.EraParams {
     , eraGenesisWin = GenesisWindow (2 * k)
     }
   where
-    SecurityParam k = genesisSecurityParam genesis
+    k = unNonZero $ maxRollbacks $ genesisSecurityParam genesis
 
 -- | Separate variant of 'byronEraParams' to be used for a Byron-only chain.
 byronEraParamsNeverHardForks :: Gen.Config -> HardFork.EraParams

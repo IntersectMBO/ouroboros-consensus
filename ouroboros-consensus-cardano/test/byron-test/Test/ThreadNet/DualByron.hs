@@ -15,6 +15,7 @@ import qualified Byron.Spec.Ledger.Core as Spec
 import qualified Byron.Spec.Ledger.UTxO as Spec
 import qualified Cardano.Chain.ProtocolConstants as Impl
 import qualified Cardano.Chain.UTxO as Impl
+import           Cardano.Ledger.BaseTypes (nonZeroOr)
 import           Control.Monad.Except
 import qualified Control.State.Transition.Extended as Spec
 import           Data.ByteString (ByteString)
@@ -242,9 +243,10 @@ genSpecGenesis slotLen (NumSlots numSlots) = fmap fromEnv . hedgehog $
 
 byronPBftParams :: ByronSpecGenesis -> PBftParams
 byronPBftParams ByronSpecGenesis{..} =
-    Byron.byronPBftParams (SecurityParam k) numCoreNodes
+    Byron.byronPBftParams (SecurityParam k') numCoreNodes
   where
     Spec.BlockCount k = byronSpecGenesisSecurityParam
+    k' = nonZeroOr k $ error "Got zero. Expected nonzero."
 
     numCoreNodes :: NumCoreNodes
     numCoreNodes = NumCoreNodes $

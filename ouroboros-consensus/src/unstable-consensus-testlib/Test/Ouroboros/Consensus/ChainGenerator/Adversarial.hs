@@ -171,6 +171,7 @@ checkAdversarialChain recipe adv = do
         let pc = BV.countActivesInV S.notInverted vA
         when (C.toVar pc <= 0) $ Exn.throwError BadCount
 
+
     -- the youngest slot in which the adversarial schedule cannot have accelerated
     --
     -- (IE @s@ past the first active adversarial slot, or @d@ past the @k+1@st

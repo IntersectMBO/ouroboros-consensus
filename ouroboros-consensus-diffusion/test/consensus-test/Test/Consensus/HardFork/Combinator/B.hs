@@ -34,6 +34,7 @@ module Test.Consensus.HardFork.Combinator.B (
   , TxId (..)
   ) where
 
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Codec.Serialise
 import qualified Data.Binary as B
 import qualified Data.ByteString as Strict
@@ -248,7 +249,7 @@ blockForgingB = BlockForging {
 -- safezone. However, we give it a default one anyway, since that makes the
 -- test more realistic.
 safeZoneB :: SecurityParam -> History.SafeZone
-safeZoneB (SecurityParam k) = History.StandardSafeZone k
+safeZoneB (SecurityParam k) = History.StandardSafeZone $ unNonZero k
 
 data instance GenTx BlockB
   deriving (Show, Eq, Generic, NoThunks, Serialise)

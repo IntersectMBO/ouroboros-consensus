@@ -3,6 +3,7 @@
 
 module Test.ThreadNet.Praos (tests) where
 
+import           Cardano.Ledger.BaseTypes (nonZero)
 import           Control.Monad (replicateM)
 import qualified Data.Map.Strict as Map
 import           Data.Word (Word64)
@@ -68,7 +69,7 @@ genEvolvingStake epochSize TestConfig {numSlots, numCoreNodes} = do
 instance Arbitrary TestSetup where
   arbitrary = do
       -- TODO k > 1 as a workaround for Issue #1511.
-      k          <- SecurityParam <$> choose (2, 10)
+      k          <- SecurityParam <$> choose (2, 10) `suchThatMap` nonZero
       epochSize  <- EpochSize     <$> choose (1, 10)
       slotLength <- arbitrary
 

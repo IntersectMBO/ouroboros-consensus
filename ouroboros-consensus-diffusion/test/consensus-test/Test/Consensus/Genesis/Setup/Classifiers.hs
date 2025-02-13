@@ -14,6 +14,7 @@ module Test.Consensus.Genesis.Setup.Classifiers (
   , simpleHash
   ) where
 
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Cardano.Slotting.Slot (WithOrigin (..))
 import           Data.List (sortOn, tails)
 import qualified Data.List.NonEmpty as NonEmpty
@@ -102,7 +103,7 @@ classifiers GenesisTest {gtBlockTree, gtSecurityParam = SecurityParam k, gtGenes
     allAdversariesSelectable =
       all isSelectable branches
 
-    isSelectable bt = AF.length (btbSuffix bt) > fromIntegral k
+    isSelectable bt = AF.length (btbSuffix bt) > fromIntegral (unNonZero k)
 
     allAdversariesForecastable =
       all isForecastable branches
@@ -125,7 +126,7 @@ classifiers GenesisTest {gtBlockTree, gtSecurityParam = SecurityParam k, gtGenes
       -- Distinguish `scg` vs. `sgen` vs. `sfor` and use the latter here.
       let forecastSlot = succWithOrigin (anchorToSlotNo $ anchor btbSuffix) + SlotNo scg
           forecastBlocks = AF.takeWhileOldest (\b -> blockSlot b < forecastSlot) btbSuffix
-       in AF.length forecastBlocks >= fromIntegral k + 1
+       in AF.length forecastBlocks >= fromIntegral (unNonZero k) + 1
 
     SlotNo goodTipSlot = withOrigin 0 id (headSlot goodChain)
 

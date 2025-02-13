@@ -1,4 +1,5 @@
 {-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -10,6 +11,7 @@ module Test.Consensus.Genesis.Setup.GenChains (
   , genChainsWithExtraHonestPeers
   ) where
 
+import           Cardano.Ledger.BaseTypes (nonZeroOr)
 import           Cardano.Slotting.Time (slotLengthFromSec)
 import           Control.Monad (replicateM)
 import qualified Control.Monad.Except as Exn
@@ -123,7 +125,10 @@ genChainsWithExtraHonestPeers genNumExtraHonest genNumForks = do
   gtExtraHonestPeers <- genNumExtraHonest
   alternativeChainSchemas <- replicateM (fromIntegral numForks) (genAlternativeChainSchema (honestRecipe, honestChainSchema))
   pure $ GenesisTest {
-    gtSecurityParam = SecurityParam (fromIntegral kcp),
+    gtSecurityParam =
+      SecurityParam $
+        -- As long as `genKSD` generates a `k` that is > 0, this won't lead to an ErrorCall.
+        nonZeroOr (fromIntegral kcp) $ error "Generated Kcp was zero. Cannot construct a NonZero value for the SecurityParam.",
     gtGenesisWindow = GenesisWindow (fromIntegral scg),
     gtForecastRange = ForecastRange (fromIntegral scg), -- REVIEW: Do we want to generate those randomly?
     gtDelay = delta,
