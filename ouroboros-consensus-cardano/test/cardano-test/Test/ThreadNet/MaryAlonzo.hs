@@ -14,6 +14,7 @@ module Test.ThreadNet.MaryAlonzo (tests) where
 
 import           Cardano.Ledger.Alonzo.Genesis (AlonzoGenesis)
 import qualified Cardano.Ledger.Api.Transition as L
+import           Cardano.Ledger.BaseTypes (nonZero, unNonZero)
 import qualified Cardano.Ledger.BaseTypes as SL (Version, getVersion,
                      natVersion)
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -100,7 +101,7 @@ instance Arbitrary TestSetup where
                 -- Shelley epoch, since stake pools can only be created and
                 -- delegated to via Shelley transactions.
                 `suchThat` ((/= 0) . Shelley.decentralizationParamToRational)
-    setupK <- SecurityParam <$> choose (8, 10)
+    setupK <- SecurityParam <$> choose (8, 10) `suchThatMap` nonZero
                 -- If k < 8, common prefix violations become too likely in
                 -- Praos mode for thin overlay schedules (ie low d), even for
                 -- f=0.2.
@@ -264,7 +265,7 @@ prop_simple_allegraAlonzo_convergence TestSetup
           }
 
     maxForkLength :: NumBlocks
-    maxForkLength = NumBlocks $ maxRollbacks setupK
+    maxForkLength = NumBlocks $ unNonZero $ maxRollbacks setupK
 
     initialKESPeriod :: SL.KESPeriod
     initialKESPeriod = SL.KESPeriod 0
@@ -361,7 +362,7 @@ prop_simple_allegraAlonzo_convergence TestSetup
             show (nodeOutputFinalChain <$> testOutputNodes testOutput)
           ) $
         counterexample "CP violation in final chains!" $
-        property $ maxRollbacks setupK >= finalIntersectionDepth
+        property $ unNonZero (maxRollbacks setupK) >= finalIntersectionDepth
 
 {-------------------------------------------------------------------------------
   Constants

@@ -560,7 +560,7 @@ protocolInfoCardano paramsCardano
     praosParams = PraosParams
       { praosSlotsPerKESPeriod = SL.sgSlotsPerKESPeriod genesisShelley,
         praosLeaderF = SL.mkActiveSlotCoeff $ SL.sgActiveSlotsCoeff genesisShelley,
-        praosSecurityParam = SecurityParam $ SL.unNonZero $ SL.sgSecurityParam genesisShelley,
+        praosSecurityParam = SecurityParam $ SL.sgSecurityParam genesisShelley,
         praosMaxKESEvo = SL.sgMaxKESEvolutions genesisShelley,
         praosMaxMajorPV = maxMajorProtVer,
         praosRandomnessStabilisationWindow =
@@ -591,7 +591,7 @@ protocolInfoCardano paramsCardano
           (toTriggerHardFork triggerHardForkAllegra)
 
     kShelley :: SecurityParam
-    kShelley = SecurityParam $ SL.unNonZero $ sgSecurityParam genesisShelley
+    kShelley = SecurityParam $ sgSecurityParam genesisShelley
 
     -- Allegra
 

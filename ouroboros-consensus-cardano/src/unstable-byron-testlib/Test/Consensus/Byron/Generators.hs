@@ -1,5 +1,7 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE TypeApplications #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -28,6 +30,7 @@ import qualified Cardano.Chain.Update.Validation.Registration as CC.Reg
 import qualified Cardano.Chain.UTxO as CC.UTxO
 import           Cardano.Crypto (ProtocolMagicId (..))
 import           Cardano.Crypto.Hashing (Hash)
+import           Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import           Cardano.Ledger.Binary (decCBOR, encCBOR)
 import           Control.Monad (replicateM)
 import           Data.Coerce (coerce)
@@ -63,7 +66,7 @@ import           Test.Util.Serialisation.SomeResult (SomeResult (..))
 
 -- | Matches that from the 'CC.dummyConfig'
 k :: SecurityParam
-k = SecurityParam 10
+k = SecurityParam $ knownNonZeroBounded @10
 
 -- | Matches that from the 'CC.dummyConfig'
 epochSlots :: EpochSlots

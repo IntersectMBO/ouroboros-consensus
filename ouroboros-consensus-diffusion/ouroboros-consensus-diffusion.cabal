@@ -133,6 +133,7 @@ library unstable-diffusion-testlib
     QuickCheck,
     base,
     bytestring,
+    cardano-ledger-core,
     cborg,
     containers,
     contra-tracer,
@@ -190,6 +191,7 @@ test-suite infra-test
   other-modules: Test.ThreadNet.Util.Tests
   build-depends:
     base,
+    cardano-ledger-core,
     ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib},
     tasty,
     tasty-quickcheck,
@@ -211,6 +213,7 @@ test-suite mock-test
     QuickCheck,
     base,
     bytestring,
+    cardano-ledger-core,
     cborg,
     constraints,
     containers,
@@ -284,6 +287,7 @@ test-suite consensus-test
     cardano-crypto-class ^>=2.2,
     cardano-slotting:{cardano-slotting, testlib},
     cardano-strict-containers,
+    cardano-ledger-core,
     containers,
     contra-tracer,
     directory,

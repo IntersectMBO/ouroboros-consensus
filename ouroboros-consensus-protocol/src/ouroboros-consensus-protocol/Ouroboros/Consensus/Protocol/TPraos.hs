@@ -215,7 +215,7 @@ mkTPraosParams maxMajorPV initialNonce genesis = TPraosParams {
     , tpraosSystemStart       = systemStart
     }
   where
-    securityParam = SecurityParam $ unNonZero $ SL.sgSecurityParam genesis
+    securityParam = SecurityParam $ SL.sgSecurityParam genesis
     systemStart   = SystemStart   $ SL.sgSystemStart   genesis
 
 -- | Assembled proof that the issuer has the right to issue a block in the
@@ -405,7 +405,7 @@ mkShelleyGlobals TPraosConfig{..} = SL.Globals {
     , systemStart                   = tpraosSystemStart
     }
   where
-    SecurityParam k  = tpraosSecurityParam
+    k  = unNonZero $ maxRollbacks tpraosSecurityParam
     TPraosParams{..} = tpraosParams
 
 -- | Check whether this node meets the leader threshold to issue a block.

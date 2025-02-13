@@ -38,6 +38,7 @@ module Test.Consensus.HardFork.Combinator.A (
   , TxId (..)
   ) where
 
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Cardano.Slotting.EpochInfo
 import           Codec.Serialise
 import           Control.Monad (guard)
@@ -296,13 +297,13 @@ blockForgingA = BlockForging {
 
 -- | See 'Ouroboros.Consensus.HardFork.History.EraParams.safeFromTip'
 safeFromTipA :: SecurityParam -> Word64
-safeFromTipA (SecurityParam k) = k
+safeFromTipA (SecurityParam k) = unNonZero k
 
 -- | This mock ledger assumes that every node is honest and online, every slot
 -- has a single leader, and ever message arrives before the next slot. So a run
 -- of @k@ slots is guaranteed to extend the chain by @k@ blocks.
 stabilityWindowA :: SecurityParam -> Word64
-stabilityWindowA (SecurityParam k) = k
+stabilityWindowA (SecurityParam k) = unNonZero k
 
 data instance GenTx BlockA = TxA {
        txA_id      :: TxId (GenTx BlockA)

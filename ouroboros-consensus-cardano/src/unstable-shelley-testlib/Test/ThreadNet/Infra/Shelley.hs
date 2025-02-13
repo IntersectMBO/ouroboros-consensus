@@ -47,8 +47,7 @@ import           Cardano.Crypto.VRF (SignKeyVRF, deriveVerKeyVRF, genKeyVRF,
                      seedSizeVRF)
 import qualified Cardano.Ledger.Allegra.Scripts as SL
 import           Cardano.Ledger.Alonzo (AlonzoEra)
-import           Cardano.Ledger.BaseTypes (boundRational)
-import           Cardano.Ledger.BaseTypes.NonZero (nonZeroOr)
+import           Cardano.Ledger.BaseTypes (boundRational, unNonZero)
 import           Cardano.Ledger.Hashes (EraIndependentTxBody,
                      HashAnnotated (..), SafeHash, hashAnnotated)
 import qualified Cardano.Ledger.Keys as LK
@@ -272,7 +271,7 @@ mkEpochSize (SecurityParam k) f =
     n = numerator   f
     d = denominator f
 
-    (q, r) = quotRem (10 * k * fromInteger d) (fromInteger n)
+    (q, r) = quotRem (10 * unNonZero k * fromInteger d) (fromInteger n)
 
 -- | Note: a KES algorithm supports a particular max number of KES evolutions,
 -- but we can configure a potentially lower maximum for the ledger, that's why
@@ -297,7 +296,7 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
     , sgNetworkMagic          = 0
     , sgNetworkId             = networkId
     , sgActiveSlotsCoeff      = unsafeBoundRational f
-    , sgSecurityParam         = nonZeroOr (maxRollbacks k) $ error "The security parameter cannot be zero."
+    , sgSecurityParam         = maxRollbacks k
     , sgEpochLength           = mkEpochSize k f
     , sgSlotsPerKESPeriod     = slotsPerEvolution kesCfg
     , sgMaxKESEvolutions      = maxEvolutions     kesCfg

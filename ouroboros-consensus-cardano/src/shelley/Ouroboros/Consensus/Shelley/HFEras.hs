@@ -18,10 +18,6 @@ module Ouroboros.Consensus.Shelley.HFEras (
   , StandardShelleyBlock
   ) where
 
-import           Cardano.Crypto.DSIGN (Signable)
-import           Cardano.Crypto.Hash (Hash)
-import           Cardano.Ledger.Hashes (EraIndependentTxBody, HASH)
-import           Cardano.Ledger.Keys (DSIGN)
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import           Ouroboros.Consensus.Protocol.TPraos (StandardCrypto, TPraos)
