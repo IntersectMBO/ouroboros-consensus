@@ -88,6 +88,8 @@ jobs:
     - name: Record dependencies to be used as cache keys
       id: record-deps
       run: |
+        cat cabal.project
+        cat cabal.project.local
         cabal build all --dry-run --minimize-conflict-set
         cat dist-newstyle/cache/plan.json \
         | jq '.["install-plan"][].id' \
