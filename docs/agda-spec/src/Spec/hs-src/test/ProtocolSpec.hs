@@ -24,7 +24,7 @@ ps :: PrtclState
 ps = MkPrtclState
   { psCs = MkHSMap [ hk  .-> 233 , 999 .-> 888 ]
   , psΗv = 3
-  , psΗc = 4
+  , psΗc = 5
   }
 
 oc :: OCert
@@ -64,7 +64,7 @@ hkv = 568
 
 ps' :: PrtclState
 ps' = MkPrtclState
-  { psCs = MkHSMap [(457, 234), (999, 888)],
+  { psCs = MkHSMap [(hk, 234), (999, 888)],
     psΗv = 4,
     psΗc = 4
   }
@@ -82,7 +82,7 @@ ps' = MkPrtclState
                   = id 1
                   = 1
 
-  ∙ ⟦ 1 ⟧ᵘᵉ ⊢ ⟦ 3 , 4 ⟧ᵘˢ ⇀⦇ 0 ,UPDN⦈ ⟦ 3 + 1 , 4 ⟧ᵘˢ
+  ∙ ⟦ 1 ⟧ᵘᵉ ⊢ ⟦ 3 , 5 ⟧ᵘˢ ⇀⦇ 0 ,UPDN⦈ ⟦ 3 + 1 , 3 + 1 ⟧ᵘˢ
 
   ∙ { hk } ⊢ [ hk .-> 233 , 999 .-> 888 ] ⇀⦇ bh ,OCERT⦈ [ hk .-> 234 , 999 .-> 888 ]
 
@@ -142,7 +142,7 @@ ps' = MkPrtclState
               = 0
   ===>
 
-  ⟦ pd , 2 ⟧ᵖᵉ ⊢ ⟦ [ hk .-> 233 , 999 .-> 888 ] , 3 , 4 ⟧ᵖˢ ⇀⦇ bh ,PRTCL⦈ ⟦ [ hk .-> 234 , 999 .-> 888 ] , 4 , 4 ⟧ᵖˢ
+  ⟦ pd , 2 ⟧ᵖᵉ ⊢ ⟦ [ hk .-> 233 , 999 .-> 888 ] , 3 , 5 ⟧ᵖˢ ⇀⦇ bh ,PRTCL⦈ ⟦ [ hk .-> 234 , 999 .-> 888 ] , 4 , 4 ⟧ᵖˢ
 
 -}
 
