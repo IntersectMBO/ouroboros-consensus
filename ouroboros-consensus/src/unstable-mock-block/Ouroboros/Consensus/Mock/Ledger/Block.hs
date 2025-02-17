@@ -355,17 +355,16 @@ instance MockProtocolSpecific c ext
 
   type AuxLedgerEvent (LedgerState (SimpleBlock c ext)) = VoidLedgerEvent (SimpleBlock c ext)
 
-  applyChainTickLedgerResult _ _ = pureLedgerResult . TickedSimpleLedgerState
+  applyChainTickLedgerResult _ _ _ = pureLedgerResult . TickedSimpleLedgerState
 
 instance MockProtocolSpecific c ext
       => ApplyBlock (LedgerState (SimpleBlock c ext)) (SimpleBlock c ext) where
-  applyBlockLedgerResult = fmap pureLedgerResult ..: updateSimpleLedgerState
+  applyBlockLedgerResultWithValidation _validation _events =
+    fmap pureLedgerResult ..: updateSimpleLedgerState
 
+  applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult =
-      (mustSucceed . runExcept) ..: applyBlockLedgerResult
-    where
-      mustSucceed (Left  err) = error ("reapplyBlockLedgerResult: unexpected error: " <> show err)
-      mustSucceed (Right st)  = st
+    defaultReapplyBlockLedgerResult (error . ("reapplyBlockLedgerResult: unexpected error: " <>) . show)
 
 newtype instance LedgerState (SimpleBlock c ext) = SimpleLedgerState {
       simpleLedgerState :: MockState (SimpleBlock c ext)

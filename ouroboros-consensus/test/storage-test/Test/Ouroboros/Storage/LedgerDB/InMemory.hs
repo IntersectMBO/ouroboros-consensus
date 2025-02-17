@@ -141,7 +141,7 @@ prop_pushExpectedLedger :: ChainSetup -> Property
 prop_pushExpectedLedger setup@ChainSetup{..} =
     classify (chainSetupSaturated setup) "saturated" $
       conjoin [
-          l === refoldLedger cfg (expectedChain o) testInitLedger
+          l === refoldLedger OmitLedgerEvents cfg (expectedChain o) testInitLedger
         | (o, l) <- ledgerDbSnapshots csPushed
         ]
   where
@@ -207,7 +207,7 @@ prop_switchExpectedLedger :: SwitchSetup -> Property
 prop_switchExpectedLedger setup@SwitchSetup{..} =
     classify (switchSetupSaturated setup) "saturated" $
       conjoin [
-          l === refoldLedger cfg (expectedChain o) testInitLedger
+          l === refoldLedger OmitLedgerEvents cfg (expectedChain o) testInitLedger
         | (o, l) <- ledgerDbSnapshots ssSwitched
         ]
   where
@@ -275,10 +275,11 @@ csBlockConfig = csBlockConfig' . csSecParam
 
 csBlockConfig' :: SecurityParam -> LedgerDbCfg (LedgerState TestBlock)
 csBlockConfig' secParam = LedgerDbCfg {
-      ledgerDbCfgSecParam = secParam
-    , ledgerDbCfg         =
+      ledgerDbCfgSecParam            = secParam
+    , ledgerDbCfg                    =
           testBlockLedgerConfigFrom
         $ HardFork.defaultEraParams secParam slotLength
+    , ledgerDbCfgComputeLedgerEvents = OmitLedgerEvents
     }
   where
     slotLength = slotLengthFromSec 20

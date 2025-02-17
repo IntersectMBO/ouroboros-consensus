@@ -311,7 +311,7 @@ prop_simple_real_tpraos_convergence TestSetup
                   -- slots to reach the epoch transition but the last several
                   -- slots end up empty.
                   Shelley.tickedShelleyLedgerState $
-                  applyChainTick ledgerConfig sentinel lsUnticked
+                  applyChainTick OmitLedgerEvents ledgerConfig sentinel lsUnticked
 
               msg =
                   "The ticked final ledger state of " <> show nid <>

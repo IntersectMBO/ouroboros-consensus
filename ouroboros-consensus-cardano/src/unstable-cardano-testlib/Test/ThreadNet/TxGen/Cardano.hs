@@ -45,8 +45,8 @@ import           Ouroboros.Consensus.HardFork.Combinator.Ledger
                      (tickedHardForkLedgerStatePerEra)
 import           Ouroboros.Consensus.HardFork.Combinator.State.Types
                      (currentState, getHardForkState)
-import           Ouroboros.Consensus.Ledger.Basics (LedgerConfig, LedgerState,
-                     applyChainTick)
+import           Ouroboros.Consensus.Ledger.Basics (ComputeLedgerEvents (..),
+                     LedgerConfig, LedgerState, applyChainTick)
 import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock, mkShelleyTx)
@@ -217,7 +217,7 @@ migrateUTxO migrationInfo curSlot lcfg lst
     mbUTxO =
         fmap getUTxOShelley $
         ejectShelleyTickedLedgerState $
-        applyChainTick lcfg curSlot $
+        applyChainTick OmitLedgerEvents lcfg curSlot $
         lst
 
     MigrationInfo

@@ -125,7 +125,7 @@ exampleBlock =
       cfg
       (BlockNo 1)
       (SlotNo 1)
-      (applyChainTick ledgerConfig (SlotNo 1) ledgerStateAfterEBB)
+      (applyChainTick OmitLedgerEvents ledgerConfig (SlotNo 1) ledgerStateAfterEBB)
       [ValidatedByronTx exampleGenTx]
       (fakeMkIsLeader leaderCredentials)
   where
@@ -183,14 +183,14 @@ emptyLedgerState = ByronLedgerState {
 
 ledgerStateAfterEBB :: LedgerState ByronBlock
 ledgerStateAfterEBB =
-      reapplyLedgerBlock ledgerConfig exampleEBB
-    . applyChainTick ledgerConfig (SlotNo 0)
+      reapplyLedgerBlock OmitLedgerEvents ledgerConfig exampleEBB
+    . applyChainTick OmitLedgerEvents ledgerConfig (SlotNo 0)
     $ emptyLedgerState
 
 exampleLedgerState :: LedgerState ByronBlock
 exampleLedgerState =
-      reapplyLedgerBlock ledgerConfig exampleBlock
-    . applyChainTick ledgerConfig (SlotNo 1)
+      reapplyLedgerBlock OmitLedgerEvents ledgerConfig exampleBlock
+    . applyChainTick OmitLedgerEvents ledgerConfig (SlotNo 1)
     $ ledgerStateAfterEBB
 
 exampleHeaderState :: HeaderState ByronBlock

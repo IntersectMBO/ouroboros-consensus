@@ -62,7 +62,7 @@ instance TxGen (ShelleyBlock (TPraos MockCrypto) ShelleyEra) where
         then pure []
         else do
           n <- choose (0, 20)
-          go [] n $ applyChainTick lcfg curSlotNo lst
+          go [] n $ applyChainTick OmitLedgerEvents lcfg curSlotNo lst
     where
       ShelleyTxGenExtra
         { stgeGenEnv
