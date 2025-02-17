@@ -128,7 +128,7 @@ data LgrDbArgs f m blk = LgrDbArgs {
       lgrDiskPolicyArgs :: LedgerDB.DiskPolicyArgs
     , lgrGenesis        :: HKD f (m (ExtLedgerState blk))
     , lgrHasFS          :: HKD f (SomeHasFS m)
-    , lgrConfig         :: HKD f (LedgerDB.LedgerDbCfg (ExtLedgerState blk))
+    , lgrConfig         :: LedgerDB.LedgerDbCfgF f (ExtLedgerState blk)
     , lgrTracer         :: Tracer m (LedgerDB.TraceSnapshotEvent blk)
     }
 
@@ -138,7 +138,7 @@ defaultArgs = LgrDbArgs {
       lgrDiskPolicyArgs = LedgerDB.defaultDiskPolicyArgs
     , lgrGenesis        = noDefault
     , lgrHasFS          = noDefault
-    , lgrConfig         = noDefault
+    , lgrConfig         = LedgerDB.LedgerDbCfg noDefault noDefault OmitLedgerEvents
     , lgrTracer         = nullTracer
     }
 

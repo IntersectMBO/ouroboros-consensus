@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -23,17 +25,21 @@ module Ouroboros.Consensus.Ledger.Basics (
   , LedgerCfg
   , applyChainTick
     -- * Link block to its ledger
+  , ComputeLedgerEvents (..)
   , LedgerConfig
   , LedgerError
   , LedgerState
+  , Proxy (..)
   , TickedLedgerState
   ) where
 
 import           Data.Kind (Type)
+import           Data.Proxy (Proxy (..))
+import           GHC.Generics
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ticked
-import           Ouroboros.Consensus.Util ((..:))
+import           Ouroboros.Consensus.Util ((...:))
 
 {-------------------------------------------------------------------------------
   Tip
@@ -97,6 +103,18 @@ pureLedgerResult a = LedgerResult {
 -- Types that inhabit this family will come from the Ledger code.
 type family LedgerCfg l :: Type
 
+-- | Whether we tell the ledger layer to compute ledger events
+--
+-- At the moment events are not emitted in any case in the consensus
+-- layer (i.e. there is no handler for those events, nor are they
+-- traced), so they are not really forced, we always discard
+-- them. This behavior does not incur big costs thanks to laziness.
+--
+-- By passing 'OmitLedgerEvents' we tell the Ledger layer to not even
+-- allocate thunks for those events, as we explicitly don't want them.
+data ComputeLedgerEvents = ComputeLedgerEvents | OmitLedgerEvents
+  deriving (Eq, Show, Generic, NoThunks)
+
 class ( -- Requirements on the ledger state itself
         Show     l
       , Eq       l
@@ -155,14 +173,15 @@ class ( -- Requirements on the ledger state itself
   -- >    ledgerTipPoint (applyChainTick cfg slot st)
   -- > == ledgerTipPoint st
   applyChainTickLedgerResult ::
-       LedgerCfg l
+       ComputeLedgerEvents
+    -> LedgerCfg l
     -> SlotNo
     -> l
     -> LedgerResult l (Ticked l)
 
 -- | 'lrResult' after 'applyChainTickLedgerResult'
-applyChainTick :: IsLedger l => LedgerCfg l -> SlotNo -> l -> Ticked l
-applyChainTick = lrResult ..: applyChainTickLedgerResult
+applyChainTick :: IsLedger l => ComputeLedgerEvents -> LedgerCfg l -> SlotNo -> l -> Ticked l
+applyChainTick = lrResult ...: applyChainTickLedgerResult
 
 {-------------------------------------------------------------------------------
   Link block to its ledger
