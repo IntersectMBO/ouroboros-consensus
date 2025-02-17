@@ -42,7 +42,6 @@ import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Cardano.Slotting.EpochInfo
 import           Codec.Serialise
 import           Control.Monad (guard)
-import           Control.Monad.Except (runExcept)
 import qualified Data.Binary as B
 import           Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
@@ -82,7 +81,7 @@ import           Ouroboros.Consensus.Node.Serialisation
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import           Ouroboros.Consensus.Storage.Serialisation
-import           Ouroboros.Consensus.Util (repeatedlyM, (..:), (.:))
+import           Ouroboros.Consensus.Util (repeatedlyM, (.:))
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Network.Block (Serialised, unwrapCBORinCBOR,
@@ -214,10 +213,10 @@ instance IsLedger (LedgerState BlockA) where
   type AuxLedgerEvent (LedgerState BlockA) =
     VoidLedgerEvent (LedgerState BlockA)
 
-  applyChainTickLedgerResult _ _ = pureLedgerResult . TickedLedgerStateA
+  applyChainTickLedgerResult _ _ _ = pureLedgerResult . TickedLedgerStateA
 
 instance ApplyBlock (LedgerState BlockA) BlockA where
-  applyBlockLedgerResult cfg blk =
+  applyBlockLedgerResultWithValidation _ _ cfg blk =
         fmap (pureLedgerResult . setTip)
       . repeatedlyM
           (fmap fst .: applyTx cfg DoNotIntervene (blockSlot blk))
@@ -226,13 +225,9 @@ instance ApplyBlock (LedgerState BlockA) BlockA where
       setTip :: TickedLedgerState BlockA -> LedgerState BlockA
       setTip (TickedLedgerStateA st) = st { lgrA_tip = blockPoint blk }
 
+  applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult =
-      dontExpectError ..: applyBlockLedgerResult
-    where
-      dontExpectError :: Except a b -> b
-      dontExpectError mb = case runExcept mb of
-        Left  _ -> error "reapplyBlockLedgerResult: unexpected error"
-        Right b -> b
+    defaultReapplyBlockLedgerResult absurd
 
 instance UpdateLedger BlockA
 

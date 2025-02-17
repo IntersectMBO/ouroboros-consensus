@@ -622,11 +622,11 @@ runThreadNetwork systemTime ThreadNetworkArgs
                 snap1 <- getSnapshotFor mempool $
                   -- This node would include these crucial txs if it leads in
                   -- this slot.
-                  ForgeInKnownSlot slot $ applyChainTick lcfg slot ledger
+                  ForgeInKnownSlot slot $ applyChainTick OmitLedgerEvents lcfg slot ledger
                 snap2 <- getSnapshotFor mempool $
                   -- Other nodes might include these crucial txs when leading
                   -- in the next slot.
-                  ForgeInKnownSlot (succ slot) $ applyChainTick lcfg (succ slot) ledger
+                  ForgeInKnownSlot (succ slot) $ applyChainTick OmitLedgerEvents lcfg (succ slot) ledger
                 -- This loop will repeat for the next slot, so we only need to
                 -- check for this one and the next.
                 pure (snap1, snap2)
@@ -887,10 +887,10 @@ runThreadNetwork systemTime ThreadNetworkArgs
 
                   -- fail if the EBB is invalid
                   -- if it is valid, we retick to the /same/ slot
-                  let apply = applyLedgerBlock (configLedger pInfoConfig)
+                  let apply = applyLedgerBlock OmitLedgerEvents (configLedger pInfoConfig)
                   tickedLdgSt' <- case Exc.runExcept $ apply ebb tickedLdgSt of
                     Left e   -> Exn.throw $ JitEbbError @blk e
-                    Right st -> pure $ applyChainTick
+                    Right st -> pure $ applyChainTick OmitLedgerEvents
                                         (configLedger pInfoConfig)
                                         currentSlot
                                         st
