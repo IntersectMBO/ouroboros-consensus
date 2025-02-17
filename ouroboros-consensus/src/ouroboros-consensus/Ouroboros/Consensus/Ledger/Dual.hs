@@ -359,12 +359,13 @@ instance Bridge m a => IsLedger (LedgerState (DualBlock m a)) where
   -- any events. So we make this easy choice for for now.
   type AuxLedgerEvent (LedgerState (DualBlock m a)) = AuxLedgerEvent (LedgerState m)
 
-  applyChainTickLedgerResult DualLedgerConfig{..}
+  applyChainTickLedgerResult evs
+                             DualLedgerConfig{..}
                              slot
                              DualLedgerState{..} =
       castLedgerResult ledgerResult <&> \main -> TickedDualLedgerState {
           tickedDualLedgerStateMain    = main
-        , tickedDualLedgerStateAux     = applyChainTick
+        , tickedDualLedgerStateAux     = applyChainTick evs
                                            dualLedgerConfigAux
                                            slot
                                           dualLedgerStateAux
@@ -372,23 +373,32 @@ instance Bridge m a => IsLedger (LedgerState (DualBlock m a)) where
         , tickedDualLedgerStateBridge  = dualLedgerStateBridge
         }
     where
-      ledgerResult = applyChainTickLedgerResult
+      ledgerResult = applyChainTickLedgerResult evs
                        dualLedgerConfigMain
                        slot
                        dualLedgerStateMain
 
-instance Bridge m a => ApplyBlock (LedgerState (DualBlock m a)) (DualBlock m a) where
-
-  applyBlockLedgerResult cfg
-                         block@DualBlock{..}
-                         TickedDualLedgerState{..} = do
+applyHelper ::
+     Bridge m a
+  => (   ComputeLedgerEvents
+      -> LedgerCfg (LedgerState m)
+      -> m
+      -> Ticked (LedgerState m)
+      -> Except (LedgerErr (LedgerState m)) (LedgerResult (LedgerState m) (LedgerState m))
+     )
+  -> ComputeLedgerEvents
+  -> DualLedgerConfig m a
+  -> DualBlock m a
+  -> Ticked (LedgerState (DualBlock m a))
+  -> Except (DualLedgerError m a) (LedgerResult (LedgerState (DualBlock m a)) (LedgerState (DualBlock m a)))
+applyHelper f opts cfg block@DualBlock{..} TickedDualLedgerState{..} = do
       (ledgerResult, aux') <-
         agreeOnError DualLedgerError (
-            applyBlockLedgerResult
+             f opts
               (dualLedgerConfigMain cfg)
               dualBlockMain
               tickedDualLedgerStateMain
-          , applyMaybeBlock
+          , applyMaybeBlock opts
               (dualLedgerConfigAux cfg)
               dualBlockAux
               tickedDualLedgerStateAux
@@ -402,12 +412,20 @@ instance Bridge m a => ApplyBlock (LedgerState (DualBlock m a)) (DualBlock m a) 
                                     tickedDualLedgerStateBridge
         }
 
-  reapplyBlockLedgerResult cfg
+instance Bridge m a => ApplyBlock (LedgerState (DualBlock m a)) (DualBlock m a) where
+
+  applyBlockLedgerResultWithValidation doValidate =
+    applyHelper (applyBlockLedgerResultWithValidation doValidate)
+
+  applyBlockLedgerResult =
+    applyHelper applyBlockLedgerResult
+
+  reapplyBlockLedgerResult evs cfg
                            block@DualBlock{..}
                            TickedDualLedgerState{..} =
     castLedgerResult ledgerResult <&> \main' -> DualLedgerState {
         dualLedgerStateMain   = main'
-      , dualLedgerStateAux    = reapplyMaybeBlock
+      , dualLedgerStateAux    = reapplyMaybeBlock evs
                                   (dualLedgerConfigAux cfg)
                                   dualBlockAux
                                   tickedDualLedgerStateAux
@@ -417,7 +435,7 @@ instance Bridge m a => ApplyBlock (LedgerState (DualBlock m a)) (DualBlock m a) 
                                   tickedDualLedgerStateBridge
       }
     where
-      ledgerResult = reapplyBlockLedgerResult
+      ledgerResult = reapplyBlockLedgerResult evs
                        (dualLedgerConfigMain cfg)
                        dualBlockMain
                        tickedDualLedgerStateMain
@@ -766,25 +784,27 @@ type instance ForgeStateUpdateError (DualBlock m a) = ForgeStateUpdateError m
 --
 -- Returns state unchanged on 'Nothing'
 applyMaybeBlock :: UpdateLedger blk
-                => LedgerConfig blk
+                => ComputeLedgerEvents
+                -> LedgerConfig blk
                 -> Maybe blk
                 -> TickedLedgerState blk
                 -> LedgerState blk
                 -> Except (LedgerError blk) (LedgerState blk)
-applyMaybeBlock _   Nothing      _   st = return st
-applyMaybeBlock cfg (Just block) tst _  = applyLedgerBlock cfg block tst
+applyMaybeBlock _    _   Nothing      _   st = return st
+applyMaybeBlock opts cfg (Just block) tst _  = applyLedgerBlock opts cfg block tst
 
 -- | Lift 'reapplyLedgerBlock' to @Maybe blk@
 --
 -- See also 'applyMaybeBlock'
 reapplyMaybeBlock :: UpdateLedger blk
-                  => LedgerConfig blk
+                  => ComputeLedgerEvents
+                  -> LedgerConfig blk
                   -> Maybe blk
                   -> TickedLedgerState blk
                   -> LedgerState blk
                   -> LedgerState blk
-reapplyMaybeBlock _   Nothing      _   st = st
-reapplyMaybeBlock cfg (Just block) tst _  = reapplyLedgerBlock cfg block tst
+reapplyMaybeBlock _   _   Nothing      _   st = st
+reapplyMaybeBlock evs cfg (Just block) tst _  = reapplyLedgerBlock evs cfg block tst
 
 -- | Used when the concrete and abstract implementation should agree on errors
 --
