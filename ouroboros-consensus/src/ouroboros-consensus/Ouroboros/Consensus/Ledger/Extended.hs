@@ -36,6 +36,7 @@ import           Data.Functor ((<&>))
 import           Data.Proxy
 import           Data.Typeable
 import           GHC.Generics (Generic)
+import           GHC.Stack (HasCallStack)
 import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
@@ -116,14 +117,13 @@ instance IsLedger (LedgerState blk) => GetTip (ExtLedgerState blk) where
 instance IsLedger (LedgerState blk) => GetTip (Ticked (ExtLedgerState blk)) where
   getTip = castPoint . getTip . tickedLedgerState
 
-instance ( LedgerSupportsProtocol blk
-         )
+instance LedgerSupportsProtocol blk
       => IsLedger (ExtLedgerState blk) where
   type LedgerErr (ExtLedgerState blk) = ExtValidationError blk
 
   type AuxLedgerEvent (ExtLedgerState blk) = AuxLedgerEvent (LedgerState blk)
 
-  applyChainTickLedgerResult cfg slot (ExtLedgerState ledger header) =
+  applyChainTickLedgerResult evs cfg slot (ExtLedgerState ledger header) =
       castLedgerResult ledgerResult <&> \tickedLedgerState ->
       let ledgerView :: LedgerView (BlockProtocol blk)
           ledgerView = protocolLedgerView lcfg tickedLedgerState
@@ -140,13 +140,31 @@ instance ( LedgerSupportsProtocol blk
       lcfg :: LedgerConfig blk
       lcfg = configLedger $ getExtLedgerCfg cfg
 
-      ledgerResult = applyChainTickLedgerResult lcfg slot ledger
+      ledgerResult = applyChainTickLedgerResult evs lcfg slot ledger
 
-instance LedgerSupportsProtocol blk => ApplyBlock (ExtLedgerState blk) blk where
-  applyBlockLedgerResult cfg blk TickedExtLedgerState{..} = do
+applyHelper ::
+     forall blk.
+     (HasCallStack, LedgerSupportsProtocol blk)
+  => (   HasCallStack
+      => ComputeLedgerEvents
+      -> LedgerCfg (LedgerState blk)
+      -> blk
+      -> Ticked (LedgerState blk)
+      -> Except
+           (LedgerErr (LedgerState blk))
+           (LedgerResult (LedgerState blk) (LedgerState blk))
+     )
+  -> ComputeLedgerEvents
+  -> LedgerCfg (ExtLedgerState blk)
+  -> blk
+  -> Ticked (ExtLedgerState blk)
+  -> Except
+       (LedgerErr (ExtLedgerState blk))
+       (LedgerResult (ExtLedgerState blk) (ExtLedgerState blk))
+applyHelper f opts cfg blk TickedExtLedgerState{..} = do
     ledgerResult <-
         withExcept ExtValidationErrorLedger
-      $ applyBlockLedgerResult
+      $ f opts
           (configLedger $ getExtLedgerCfg cfg)
           blk
           tickedLedgerState
@@ -159,11 +177,18 @@ instance LedgerSupportsProtocol blk => ApplyBlock (ExtLedgerState blk) blk where
           tickedHeaderState
     pure $ (\l -> ExtLedgerState l hdr) <$> castLedgerResult ledgerResult
 
-  reapplyBlockLedgerResult cfg blk TickedExtLedgerState{..} =
+instance LedgerSupportsProtocol blk => ApplyBlock (ExtLedgerState blk) blk where
+  applyBlockLedgerResultWithValidation doValidate =
+    applyHelper (applyBlockLedgerResultWithValidation doValidate)
+
+  applyBlockLedgerResult =
+    applyHelper applyBlockLedgerResult
+
+  reapplyBlockLedgerResult evs cfg blk TickedExtLedgerState{..} =
       (\l -> ExtLedgerState l hdr) <$> castLedgerResult ledgerResult
     where
       ledgerResult =
-        reapplyBlockLedgerResult
+        reapplyBlockLedgerResult evs
           (configLedger $ getExtLedgerCfg cfg)
           blk
           tickedLedgerState

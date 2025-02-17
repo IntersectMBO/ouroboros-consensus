@@ -541,6 +541,7 @@ forkBlockForging IS{..} blockForging =
         let tickedLedgerState :: Ticked (LedgerState blk)
             tickedLedgerState =
               applyChainTick
+                OmitLedgerEvents
                 (configLedger cfg)
                 currentSlot
                 (ledgerState unticked)
