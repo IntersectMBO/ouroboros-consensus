@@ -491,7 +491,7 @@ instance ( Typeable ptype
 
 instance PayloadSemantics ptype
          => ApplyBlock (LedgerState (TestBlockWith ptype)) (TestBlockWith ptype) where
-  applyBlockLedgerResult _ tb@TestBlockWith{..} (TickedTestLedger TestLedger{..})
+  applyBlockLedgerResultWithValidation _validation _events _ tb@TestBlockWith{..} (TickedTestLedger TestLedger{..})
     | blockPrevHash tb /= pointHash lastAppliedPoint
     = throwError $ InvalidHash (pointHash lastAppliedPoint) (blockPrevHash tb)
     | tbValid == Invalid
@@ -505,15 +505,9 @@ instance PayloadSemantics ptype
                                   , payloadDependentState = st'
                                   }
 
-  reapplyBlockLedgerResult _ tb@TestBlockWith{..} (TickedTestLedger TestLedger{..}) =
-    case applyPayload payloadDependentState tbPayload of
-        Left err  -> error $ "Found an error when reapplying a block: " ++ show err
-        Right st' ->              pureLedgerResult
-                                $ TestLedger {
-                                    lastAppliedPoint      = Chain.blockPoint tb
-                                  , payloadDependentState = st'
-                                  }
-
+  applyBlockLedgerResult = defaultApplyBlockLedgerResult
+  reapplyBlockLedgerResult =
+    defaultReapplyBlockLedgerResult (error . ("Found an error when reapplying a block: " ++) . show)
 
 data instance LedgerState (TestBlockWith ptype) =
     TestLedger {
@@ -574,7 +568,7 @@ instance PayloadSemantics ptype => IsLedger (LedgerState (TestBlockWith ptype)) 
   type AuxLedgerEvent (LedgerState (TestBlockWith ptype)) =
     VoidLedgerEvent (LedgerState (TestBlockWith ptype))
 
-  applyChainTickLedgerResult _ _ = pureLedgerResult . TickedTestLedger
+  applyChainTickLedgerResult _ _ _ = pureLedgerResult . TickedTestLedger
 
 instance PayloadSemantics ptype => UpdateLedger (TestBlockWith ptype)
 
