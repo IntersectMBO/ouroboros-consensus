@@ -354,8 +354,9 @@ getLedgerDB cfg m@Model{..} =
     k = configSecurityParam cfg
 
     ledgerDbCfg = LedgerDbCfg {
-          ledgerDbCfgSecParam = k
-        , ledgerDbCfg         = ExtLedgerCfg cfg
+          ledgerDbCfgSecParam            = k
+        , ledgerDbCfg                    = ExtLedgerCfg cfg
+        , ledgerDbCfgComputeLedgerEvents = OmitLedgerEvents
         }
 
     tip =
@@ -753,7 +754,7 @@ validate cfg Model { initLedger, invalid } chain =
     go ledger validPrefix = \case
       -- Return 'mbFinal' if it contains an "earlier" result
       []    -> ValidatedChain validPrefix ledger invalid
-      b:bs' -> case runExcept (tickThenApply (ExtLedgerCfg cfg) b ledger) of
+      b:bs' -> case runExcept (tickThenApply OmitLedgerEvents (ExtLedgerCfg cfg) b ledger) of
         -- Invalid block according to the ledger
         Left e
           -> ValidatedChain

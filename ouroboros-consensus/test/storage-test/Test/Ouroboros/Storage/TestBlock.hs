@@ -557,10 +557,10 @@ instance IsLedger (LedgerState TestBlock) where
   type AuxLedgerEvent (LedgerState TestBlock) =
     VoidLedgerEvent (LedgerState TestBlock)
 
-  applyChainTickLedgerResult _ _ = pureLedgerResult . TickedTestLedger
+  applyChainTickLedgerResult _ _ _ = pureLedgerResult . TickedTestLedger
 
 instance ApplyBlock (LedgerState TestBlock) TestBlock where
-  applyBlockLedgerResult _ tb@TestBlock{..} (TickedTestLedger TestLedger{..})
+  applyBlockLedgerResultWithValidation _ _ _ tb@TestBlock{..} (TickedTestLedger TestLedger{..})
     | blockPrevHash tb /= lastAppliedHash
     = throwError $ InvalidHash lastAppliedHash (blockPrevHash tb)
     | not $ tbIsValid testBody
@@ -568,8 +568,9 @@ instance ApplyBlock (LedgerState TestBlock) TestBlock where
     | otherwise
     = return     $ pureLedgerResult $ TestLedger (Chain.blockPoint tb) (BlockHash (blockHash tb))
 
-  reapplyBlockLedgerResult _ tb _ =
-                   pureLedgerResult $ TestLedger (Chain.blockPoint tb) (BlockHash (blockHash tb))
+  applyBlockLedgerResult = defaultApplyBlockLedgerResult
+  reapplyBlockLedgerResult =
+    defaultReapplyBlockLedgerResult (error . ("reapplyBlockLedgerResult: impossible " <>) . show)
 
 data instance LedgerState TestBlock =
     TestLedger {

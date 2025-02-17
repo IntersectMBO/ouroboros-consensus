@@ -777,7 +777,7 @@ computePastLedger cfg pt chain
         | castPoint (getTip st) == pt
         = st
         | blk:blks' <- blks
-        = go (tickThenReapply (ExtLedgerCfg cfg) blk st) blks'
+        = go (tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk st) blks'
         | otherwise
         = error "point not in the list of blocks"
 
