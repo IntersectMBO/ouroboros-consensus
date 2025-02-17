@@ -1,3 +1,4 @@
+{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -17,7 +18,10 @@ module Ouroboros.Consensus.Ledger.Abstract (
     Validated
     -- * Apply block
   , ApplyBlock (..)
+  , ComputeLedgerEvents (..)
   , UpdateLedger
+  , defaultApplyBlockLedgerResult
+  , defaultReapplyBlockLedgerResult
     -- * Derived
   , applyLedgerBlock
   , foldLedger
@@ -36,12 +40,13 @@ module Ouroboros.Consensus.Ledger.Abstract (
   ) where
 
 import           Control.Monad.Except
+import qualified Control.State.Transition.Extended as STS
 import           Data.Kind (Type)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ticked
-import           Ouroboros.Consensus.Util (repeatedly, repeatedlyM, (..:))
+import           Ouroboros.Consensus.Util
 
 -- | " Validated " transaction or block
 --
@@ -83,9 +88,28 @@ class ( IsLedger l
   --
   -- This is passed the ledger state ticked to the slot of the given block, so
   -- 'applyChainTickLedgerResult' has already been called.
+  --
+  -- Users of this function can set any validation level allowed by the
+  -- @small-steps@ package. See "Control.State.Transition.Extended".
+  applyBlockLedgerResultWithValidation ::
+       HasCallStack
+    => STS.ValidationPolicy
+    -> ComputeLedgerEvents
+    -> LedgerCfg l
+    -> blk
+    -> Ticked l
+    -> Except (LedgerErr l) (LedgerResult l l)
+
+  -- | Apply a block to the ledger state.
+  --
+  -- This is passed the ledger state ticked to the slot of the given block, so
+  -- 'applyChainTickLedgerResult' has already been called.
+  --
+  -- This function will use 'ValidateAll' policy for calling the ledger rules.
   applyBlockLedgerResult ::
        HasCallStack
-    => LedgerCfg l
+    => ComputeLedgerEvents
+    -> LedgerCfg l
     -> blk
     -> Ticked l
     -> Except (LedgerErr l) (LedgerResult l l)
@@ -98,13 +122,37 @@ class ( IsLedger l
   --
   -- It is worth noting that since we already know that the block is valid in
   -- the provided ledger state, the ledger layer should not perform /any/
-  -- validation checks.
+  -- validation checks. Thus this function will call the ledger rules with
+  -- 'ValidateNone' policy.
   reapplyBlockLedgerResult ::
        HasCallStack
-    => LedgerCfg l
+    => ComputeLedgerEvents
+    -> LedgerCfg l
     -> blk
     -> Ticked l
     -> LedgerResult l l
+
+defaultApplyBlockLedgerResult ::
+     (HasCallStack, ApplyBlock l blk)
+  => ComputeLedgerEvents
+  -> LedgerCfg l
+  -> blk
+  -> Ticked l
+  -> Except (LedgerErr l) (LedgerResult l l)
+defaultApplyBlockLedgerResult =
+  applyBlockLedgerResultWithValidation STS.ValidateAll
+
+defaultReapplyBlockLedgerResult ::
+     (HasCallStack, ApplyBlock l blk)
+  => (LedgerErr l -> LedgerResult l l)
+  -> ComputeLedgerEvents
+  -> LedgerCfg l
+  -> blk
+  -> Ticked l
+  -> LedgerResult l l
+defaultReapplyBlockLedgerResult throwReapplyError =
+       (either throwReapplyError id . runExcept)
+  ...: applyBlockLedgerResultWithValidation STS.ValidateNone
 
 -- | Interaction with the ledger layer
 class ApplyBlock (LedgerState blk) blk => UpdateLedger blk
@@ -115,75 +163,87 @@ class ApplyBlock (LedgerState blk) blk => UpdateLedger blk
 
 -- | 'lrResult' after 'applyBlockLedgerResult'
 applyLedgerBlock ::
+     forall l blk.
      (ApplyBlock l blk, HasCallStack)
-  => LedgerCfg l
+  => ComputeLedgerEvents
+  -> LedgerCfg l
   -> blk
   -> Ticked l
   -> Except (LedgerErr l) l
-applyLedgerBlock = fmap lrResult ..: applyBlockLedgerResult
+applyLedgerBlock = fmap lrResult ...: applyBlockLedgerResult
 
 -- | 'lrResult' after 'reapplyBlockLedgerResult'
 reapplyLedgerBlock ::
+     forall l blk.
      (ApplyBlock l blk, HasCallStack)
-  => LedgerCfg l
+  => ComputeLedgerEvents
+  -> LedgerCfg l
   -> blk
   -> Ticked l
   -> l
-reapplyLedgerBlock = lrResult ..: reapplyBlockLedgerResult
+reapplyLedgerBlock =
+  lrResult ...: reapplyBlockLedgerResult
 
 tickThenApplyLedgerResult ::
      ApplyBlock l blk
-  => LedgerCfg l
+  => ComputeLedgerEvents
+  -> LedgerCfg l
   -> blk
   -> l
   -> Except (LedgerErr l) (LedgerResult l l)
-tickThenApplyLedgerResult cfg blk l = do
-  let lrTick = applyChainTickLedgerResult cfg (blockSlot blk) l
-  lrBlock <-   applyBlockLedgerResult     cfg            blk  (lrResult lrTick)
+tickThenApplyLedgerResult opts cfg blk l = do
+  let lrTick = applyChainTickLedgerResult opts cfg (blockSlot blk) l
+  lrBlock <-   applyBlockLedgerResult     opts cfg            blk  (lrResult lrTick)
   pure LedgerResult {
       lrEvents = lrEvents lrTick <> lrEvents lrBlock
     , lrResult = lrResult lrBlock
     }
 
 tickThenReapplyLedgerResult ::
+     forall l blk.
      ApplyBlock l blk
-  => LedgerCfg l
+  => ComputeLedgerEvents
+  -> LedgerCfg l
   -> blk
   -> l
   -> LedgerResult l l
-tickThenReapplyLedgerResult cfg blk l =
-  let lrTick  = applyChainTickLedgerResult cfg (blockSlot blk) l
-      lrBlock = reapplyBlockLedgerResult   cfg            blk (lrResult lrTick)
+tickThenReapplyLedgerResult evs cfg blk l =
+  let lrTick  = applyChainTickLedgerResult evs cfg (blockSlot blk) l
+      lrBlock = reapplyBlockLedgerResult   evs cfg            blk (lrResult lrTick)
   in LedgerResult {
       lrEvents = lrEvents lrTick <> lrEvents lrBlock
     , lrResult = lrResult lrBlock
     }
 
 tickThenApply ::
+     forall l blk.
      ApplyBlock l blk
-  => LedgerCfg l
+  => ComputeLedgerEvents
+  -> LedgerCfg l
   -> blk
   -> l
   -> Except (LedgerErr l) l
-tickThenApply = fmap lrResult ..: tickThenApplyLedgerResult
+tickThenApply = fmap lrResult ...: tickThenApplyLedgerResult
 
 tickThenReapply ::
+     forall l blk.
      ApplyBlock l blk
-  => LedgerCfg l
+  => ComputeLedgerEvents
+  -> LedgerCfg l
   -> blk
   -> l
   -> l
-tickThenReapply = lrResult ..: tickThenReapplyLedgerResult
+tickThenReapply = lrResult ...: tickThenReapplyLedgerResult
 
 foldLedger ::
      ApplyBlock l blk
-  => LedgerCfg l -> [blk] -> l -> Except (LedgerErr l) l
-foldLedger = repeatedlyM . tickThenApply
+  => ComputeLedgerEvents -> LedgerCfg l -> [blk] -> l -> Except (LedgerErr l) l
+foldLedger = repeatedlyM .: tickThenApply
 
 refoldLedger ::
      ApplyBlock l blk
-  => LedgerCfg l -> [blk] -> l -> l
-refoldLedger = repeatedly . tickThenReapply
+  => ComputeLedgerEvents -> LedgerCfg l -> [blk] -> l -> l
+refoldLedger = repeatedly .: tickThenReapply
 
 {-------------------------------------------------------------------------------
   Short-hand

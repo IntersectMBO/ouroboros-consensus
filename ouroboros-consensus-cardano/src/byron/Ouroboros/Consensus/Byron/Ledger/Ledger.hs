@@ -60,6 +60,7 @@ import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (decode, encode)
 import           Control.Monad (replicateM)
 import           Control.Monad.Except (Except, runExcept, throwError)
+import qualified Control.State.Transition.Extended as STS
 import           Data.ByteString (ByteString)
 import           Data.Kind (Type)
 import           Data.Map.Strict (Map)
@@ -175,7 +176,7 @@ instance IsLedger (LedgerState ByronBlock) where
   type AuxLedgerEvent (LedgerState ByronBlock) =
     VoidLedgerEvent (LedgerState ByronBlock)
 
-  applyChainTickLedgerResult cfg slotNo ByronLedgerState{..} = pureLedgerResult $
+  applyChainTickLedgerResult _ cfg slotNo ByronLedgerState{..} = pureLedgerResult $
       TickedByronLedgerState {
           tickedByronLedgerState =
             CC.applyChainTick cfg (toByronSlotNo slotNo) byronLedgerState
@@ -188,15 +189,10 @@ instance IsLedger (LedgerState ByronBlock) where
 -------------------------------------------------------------------------------}
 
 instance ApplyBlock (LedgerState ByronBlock) ByronBlock where
-  applyBlockLedgerResult = fmap pureLedgerResult ..: applyByronBlock validationMode
-    where
-      validationMode = CC.fromBlockValidationMode CC.BlockValidation
-
-  reapplyBlockLedgerResult =
-          (pureLedgerResult . validationErrorImpossible)
-      ..: applyByronBlock validationMode
-    where
-      validationMode = CC.fromBlockValidationMode CC.NoBlockValidation
+  applyBlockLedgerResultWithValidation doValidation opts =
+    fmap pureLedgerResult ..: applyByronBlock doValidation opts
+  applyBlockLedgerResult = defaultApplyBlockLedgerResult
+  reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult validationErrorImpossible
 
 data instance BlockQuery ByronBlock :: Type -> Type where
   GetUpdateInterfaceState :: BlockQuery ByronBlock UPI.State
@@ -310,12 +306,8 @@ instance HasHardForkHistory ByronBlock where
 -- the event it is given a 'BlockValidationMode' of 'BlockValidation', it still
 -- /looks/ like it can fail (since its type doesn't change based on the
 -- 'ValidationMode') and we must still treat it as such.
-validationErrorImpossible :: forall err a. Except err a -> a
-validationErrorImpossible = cantBeError . runExcept
-  where
-    cantBeError :: Either err a -> a
-    cantBeError (Left  _) = error "validationErrorImpossible: unexpected error"
-    cantBeError (Right a) = a
+validationErrorImpossible :: forall err a. err -> a
+validationErrorImpossible _ = error "validationErrorImpossible: unexpected error"
 
 {-------------------------------------------------------------------------------
   Applying a block
@@ -324,21 +316,29 @@ validationErrorImpossible = cantBeError . runExcept
   the right arguments, and maintain the snapshots.
 -------------------------------------------------------------------------------}
 
-applyByronBlock :: CC.ValidationMode
+applyByronBlock :: STS.ValidationPolicy
+                -> ComputeLedgerEvents
                 -> LedgerConfig ByronBlock
                 -> ByronBlock
                 -> TickedLedgerState ByronBlock
                 -> Except (LedgerError ByronBlock) (LedgerState ByronBlock)
-applyByronBlock validationMode
+applyByronBlock doValidation
+                _doEvents
                 cfg
                 blk@(ByronBlock raw _ (ByronHash blkHash))
                 ls =
     case raw of
-      CC.ABOBBlock    raw' -> applyABlock validationMode cfg raw' blkHash blkNo ls
-      CC.ABOBBoundary raw' -> applyABoundaryBlock        cfg raw'         blkNo ls
+      CC.ABOBBlock    raw' -> applyABlock byronOpts cfg raw' blkHash blkNo ls
+      CC.ABOBBoundary raw' -> applyABoundaryBlock   cfg raw'         blkNo ls
   where
     blkNo :: BlockNo
     blkNo = blockNo blk
+
+    byronOpts =
+      CC.fromBlockValidationMode $ case doValidation of
+        STS.ValidateAll        -> CC.BlockValidation
+        STS.ValidateNone       -> CC.NoBlockValidation
+        STS.ValidateSuchThat _ -> CC.BlockValidation
 
 applyABlock :: CC.ValidationMode
             -> Gen.Config
