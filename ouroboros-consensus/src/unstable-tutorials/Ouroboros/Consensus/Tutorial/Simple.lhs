@@ -37,7 +37,7 @@ This example uses several extensions:
 
 First, some imports we'll need:
 
-> import Data.Void(Void)
+> import Data.Void(Void, absurd)
 > import Data.Set(Set)
 > import qualified Data.Set as Set
 > import Data.Word(Word64, Word8)
@@ -58,7 +58,8 @@ First, some imports we'll need:
 > import Ouroboros.Consensus.Ledger.Abstract
 >   (GetTip(..), IsLedger(..), LedgerCfg,
 >    LedgerResult(LedgerResult, lrEvents, lrResult),
->    LedgerState, ApplyBlock(..), UpdateLedger)
+>    LedgerState, ApplyBlock(..), UpdateLedger,
+>    defaultApplyBlockLedgerResult, defaultReapplyBlockLedgerResult)
 > import Ouroboros.Consensus.Ledger.SupportsProtocol
 >   (LedgerSupportsProtocol(..))
 > import Ouroboros.Consensus.Forecast (trivialForecast)
@@ -561,7 +562,8 @@ types for a ledger.  Though we are here using
 >   type instance LedgerErr  (LedgerState BlockC) = Void
 >   type instance AuxLedgerEvent (LedgerState BlockC) = Void
 >
->   applyChainTickLedgerResult _cfg _slot ldgrSt =
+
+>   applyChainTickLedgerResult _events _cfg _slot ldgrSt =
 >     LedgerResult { lrEvents = []
 >                  , lrResult = TickedLedgerStateC ldgrSt
 >                  }
@@ -611,17 +613,14 @@ The interface used by the rest of the ledger infrastructure to access this is
 the `ApplyBlock` typeclass:
 
 > instance ApplyBlock (LedgerState BlockC) BlockC where
->   applyBlockLedgerResult _ldgrCfg block tickedLdgrSt =
+>   applyBlockLedgerResultWithValidation _validation _events _ldgrCfg block tickedLdgrSt =
 >     pure $ LedgerResult { lrEvents = []
 >                         , lrResult = block `applyBlockTo` tickedLdgrSt
 >                         }
 >
->   reapplyBlockLedgerResult _ldgrCfg block tickedLdgrSt =
->     LedgerResult { lrEvents = []
->                  , lrResult = block `applyBlockTo` tickedLdgrSt
->                  }
 >
->
+>   applyBlockLedgerResult = defaultApplyBlockLedgerResult
+>   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult absurd
 
 `applyBlockLedgerResult` tries to apply a block to the ledger and fails with a
 `LedgerErr` corresponding to the particular `LedgerState blk` if for whatever
