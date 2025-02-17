@@ -10,8 +10,10 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -22,7 +24,6 @@
 module Ouroboros.Consensus.Shelley.Ledger.Ledger (
     LedgerState (..)
   , ShelleyBasedEra
-  , ShelleyLedgerError (..)
   , ShelleyTip (..)
   , ShelleyTransition (..)
   , Ticked (..)
@@ -63,7 +64,7 @@ import qualified Codec.CBOR.Decoding as CBOR
 import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (decode, encode)
-import           Control.Arrow (left)
+import           Control.Arrow (left, second)
 import qualified Control.Exception as Exception
 import           Control.Monad.Except
 import qualified Control.State.Transition.Extended as STS
@@ -90,23 +91,12 @@ import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Config
 import           Ouroboros.Consensus.Shelley.Ledger.Protocol ()
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract
-                     (EnvelopeCheckError, envelopeChecks, mkHeaderView)
+                     (EnvelopeCheckError, ProtoCrypto, envelopeChecks,
+                     mkHeaderView)
 import           Ouroboros.Consensus.Util ((..:))
 import           Ouroboros.Consensus.Util.CBOR (decodeWithOrigin,
                      encodeWithOrigin)
 import           Ouroboros.Consensus.Util.Versioned
-
-{-------------------------------------------------------------------------------
-  Ledger errors
--------------------------------------------------------------------------------}
-
-newtype ShelleyLedgerError era = BBodyError (SL.BlockTransitionError era)
-  deriving (Generic)
-
-deriving instance ShelleyBasedEra era => Eq   (ShelleyLedgerError era)
-deriving instance ShelleyBasedEra era => Show (ShelleyLedgerError era)
-
-instance ShelleyBasedEra era => NoThunks (ShelleyLedgerError era)
 
 {-------------------------------------------------------------------------------
   Config
@@ -273,16 +263,16 @@ untickedShelleyLedgerTipPoint ::
 untickedShelleyLedgerTipPoint = shelleyTipToPoint . untickedShelleyLedgerTip
 
 instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) where
-  type LedgerErr (LedgerState (ShelleyBlock proto era)) = ShelleyLedgerError era
+  type LedgerErr (LedgerState (ShelleyBlock proto era)) = SL.BlockTransitionError era
 
   type AuxLedgerEvent (LedgerState (ShelleyBlock proto era)) = ShelleyLedgerEvent era
 
-  applyChainTickLedgerResult cfg slotNo ShelleyLedgerState{
+  applyChainTickLedgerResult evs cfg slotNo ShelleyLedgerState{
                                 shelleyLedgerTip
                               , shelleyLedgerState
                               , shelleyLedgerTransition
                               } =
-      swizzle appTick <&> \l' ->
+     appTick globals shelleyLedgerState slotNo <&> \l' ->
       TickedShelleyLedgerState {
           untickedShelleyLedgerTip =
             shelleyLedgerTip
@@ -300,22 +290,14 @@ instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) 
       ei :: EpochInfo Identity
       ei = SL.epochInfoPure globals
 
-      swizzle (l, events) =
-          LedgerResult {
-              lrEvents = map ShelleyLedgerEventTICK events
-            , lrResult = l
-            }
-
       appTick =
-        SL.applyTickOpts
-          STS.ApplySTSOpts {
-              asoAssertions = STS.globalAssertionPolicy
-            , asoValidation = STS.ValidateAll
-            , asoEvents     = STS.EPReturn
-            }
-          globals
-          shelleyLedgerState
-          slotNo
+        uncurry (flip LedgerResult) ..: case evs of
+          ComputeLedgerEvents ->
+            second (map ShelleyLedgerEventTICK) ..:
+              applyTick STS.EPReturn
+          OmitLedgerEvents ->
+            (,[]) ..: applyTickNoEvents
+
 
 -- | All events emitted by the Shelley ledger API
 data ShelleyLedgerEvent era =
@@ -323,6 +305,54 @@ data ShelleyLedgerEvent era =
     ShelleyLedgerEventBBODY (STS.Event (Core.EraRule "BBODY" era))
     -- | An event emitted during the chain tick
   | ShelleyLedgerEventTICK  (STS.Event (Core.EraRule "TICK"  era))
+
+--------------------------------------------------------------------------------
+--  ↓↓↓ REMOVE ↓↓↓
+--
+-- This code comes from https://github.com/IntersectMBO/cardano-ledger/pull/4889
+-- and must be removed before merging!!
+--------------------------------------------------------------------------------
+
+applyTickNoEvents ::
+  SL.Globals ->
+  SL.NewEpochState era ->
+  SlotNo ->
+  SL.NewEpochState era
+applyTickNoEvents = undefined
+
+applyTick ::
+  STS.SingEP ep ->
+  SL.Globals ->
+  SL.NewEpochState era ->
+  SlotNo ->
+  (SL.NewEpochState era, [STS.Event (Core.EraRule "TICK" era)])
+applyTick = undefined
+
+applyBlockEither ::
+  -- IMPORTANT: I had to add this proto parameter. It won't be needed because
+  -- the ledger removed the argument to BHeaderView, so whoever integrates this
+  -- must remove the Proxy from the calls below.
+  Proxy proto ->
+  STS.SingEP ep ->
+  STS.ValidationPolicy ->
+  SL.Globals ->
+  SL.NewEpochState era ->
+  SL.Block (SL.BHeaderView (ProtoCrypto proto)) era ->
+  Either (SL.BlockTransitionError era) (SL.NewEpochState era, [STS.Event (Core.EraRule "BBODY" era)])
+applyBlockEither = undefined
+
+applyBlockEitherNoEvents ::
+  Proxy proto ->
+  STS.ValidationPolicy ->
+  SL.Globals ->
+  SL.NewEpochState era ->
+  SL.Block (SL.BHeaderView (ProtoCrypto proto)) era ->
+  Either (SL.BlockTransitionError era) (SL.NewEpochState era)
+applyBlockEitherNoEvents = undefined
+
+--------------------------------------------------------------------------------
+-- ↑↑↑ REMOVE ↑↑↑
+--------------------------------------------------------------------------------
 
 instance ShelleyCompatible proto era
       => ApplyBlock (LedgerState (ShelleyBlock proto era)) (ShelleyBlock proto era) where
@@ -336,45 +366,24 @@ instance ShelleyCompatible proto era
   --    - 'updateChainDepState': executes the @PRTCL@ transition
   -- + 'applyBlockLedgerResult': executes the @BBODY@ transition
   --
-  applyBlockLedgerResult =
-      applyHelper (swizzle ..: appBlk)
+  applyBlockLedgerResultWithValidation doValidate evs =
+      liftEither ..: applyHelper appBlk
     where
-      swizzle m =
-        withExcept BBodyError m <&> \(l, events) ->
-          LedgerResult {
-              lrEvents = map ShelleyLedgerEventBBODY events
-            , lrResult = l
-            }
-
       -- Apply the BBODY transition using the ticked state
       appBlk =
-        SL.applyBlockOpts
-          STS.ApplySTSOpts {
-              asoAssertions = STS.globalAssertionPolicy
-            , asoValidation = STS.ValidateAll
-            , asoEvents     = STS.EPReturn
-            }
+        fmap (uncurry (flip LedgerResult)) ..: case evs of
+          ComputeLedgerEvents ->
+              fmap (second (map ShelleyLedgerEventBBODY)) ..:
+                applyBlockEither (Proxy @proto) STS.EPReturn doValidate
+          OmitLedgerEvents ->
+              fmap (,[]) ..:
+                applyBlockEitherNoEvents (Proxy @proto) doValidate
+
+
+  applyBlockLedgerResult = defaultApplyBlockLedgerResult
 
   reapplyBlockLedgerResult =
-      runIdentity ..: applyHelper (swizzle ..: reappBlk)
-    where
-      swizzle m = case runExcept m of
-        Left err          ->
-          Exception.throw $! ShelleyReapplyException @era err
-        Right (l, events) ->
-          pure LedgerResult {
-              lrEvents = map ShelleyLedgerEventBBODY events
-            , lrResult = l
-            }
-
-      -- Reapply the BBODY transition using the ticked state
-      reappBlk =
-        SL.applyBlockOpts
-          STS.ApplySTSOpts {
-                  asoAssertions = STS.AssertionsOff
-                , asoValidation = STS.ValidateNone
-                , asoEvents     = STS.EPReturn
-                }
+    defaultReapplyBlockLedgerResult (\err -> Exception.throw $! ShelleyReapplyException @era err)
 
 data ShelleyReapplyException =
   forall era. Show (SL.BlockTransitionError era)
@@ -386,11 +395,13 @@ instance Show ShelleyReapplyException where
 instance Exception.Exception ShelleyReapplyException where
 
 applyHelper ::
-     (ShelleyCompatible proto era, Monad m)
+     ShelleyCompatible proto era
   => (   SL.Globals
       -> SL.NewEpochState era
       -> SL.Block SL.BHeaderView era
-      -> m (LedgerResult
+      -> Either
+           (SL.BlockTransitionError era)
+           (LedgerResult
               (LedgerState (ShelleyBlock proto era))
               (SL.NewEpochState era)
            )
@@ -398,7 +409,9 @@ applyHelper ::
   -> LedgerConfig (ShelleyBlock proto era)
   -> ShelleyBlock proto era
   -> Ticked (LedgerState (ShelleyBlock proto era))
-  -> m (LedgerResult
+  -> Either
+       (SL.BlockTransitionError era)
+       (LedgerResult
           (LedgerState (ShelleyBlock proto era))
           (LedgerState (ShelleyBlock proto era)))
 applyHelper f cfg blk TickedShelleyLedgerState{

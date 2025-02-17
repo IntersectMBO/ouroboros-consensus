@@ -305,6 +305,7 @@ library
     semialign >=1.1,
     serialise ^>=0.2,
     si-timers ^>=1.5,
+    small-steps ^>=1.1,
     sop-core ^>=0.5,
     sop-extras ^>=0.2,
     streaming,
