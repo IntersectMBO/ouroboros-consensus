@@ -8,15 +8,15 @@ It also raises the question of what behaviors the node should exhibit when the P
 
 ## Pre-Ouroboros Chronos
 
-The Ouroboros Chronos protocol has not been implemented, but some of its basic rules have already been implmemented.
+The Ouroboros Chronos protocol has not been implemented, but some of its basic rules have already been implemented.
 Today's node behaviors related to Chronos can be summarized as follows (see [`./HandlingBlocksFromTheFuture.md`](./HandlingBlocksFromTheFuture.md) for details).
 
 - The node trusts NTP.
-  (A full Ouroboros Chronos implementatino would not.)
+  (A full Ouroboros Chronos implementation would not.)
 
 - The node silently ignores the wall clock moving backwards by a small amount.
   It crashes if the wall clock moves backward by a large amount.
-  (This would be a NTP failure/attack vector.)
+  (This would be an NTP failure/attack vector.)
 
 - The node enforces a small bound for acceptable clock skew with respect to some peer's apparent clock.
 
@@ -27,7 +27,7 @@ Today's node behaviors related to Chronos can be summarized as follows (see [`./
 An honest node will not fetch a block before validating the corresponding header, so the above rule prevents a node from receiving a block before the wall clock has reached the onset of its slot.
 
 *Aside*.
-It is possibly that a block from the future is already in the database when the node starts.
+It is possible that a block from the future is already in the database when the node starts.
 That's a corner case that seems unlikely to matter in practice.
 
 ## Time Translations
@@ -51,7 +51,7 @@ Those uses are listed in the following table.
 
  - Every use involves some translation, whether it be from slot-to-civic or vice versa (which is always the wall clock as a slot).
 
- - This table excludes some uses that the Conensus Team is in the processing of removing (eg those that could be replaced by annotating validated headers with their slot onset).
+ - This table excludes some uses that the Consensus Team is in the processing of removing (eg those that could be replaced by annotating validated headers with their slot onset).
 
  - The rightmost column of the table judges whether the use obviously involves some entity that obviously determines which ledger state to use for the translations.
    The column is for the benefit of a section below, but the key idea is that the translations are inherently chain-dependent, but users and most developers are blissfully unaware of that and, moreover, such a dependency is fundamentally contrary to human intuitions about time.
@@ -167,7 +167,7 @@ The exact thought process was not recorded during the design work, but this is a
     This was not originally a "requirement", but the behavior was eventually discovered and has so far been accepted as reasonable and potentially even desirable.
 
 **{Iteration 1}**.
-The ImmutableTranslations and NonemptyForecastRange requirements are simple to achieve without the rest.
+The ImmutableTranslations (excluding RollbackInsensitiveTranslations) and NonemptyForecastRange requirements are simple to achieve without the rest.
 
   - Refuse to translate a slot/civic time that is after the enactment of a governance outcome if using a ledger state that is before the corresponding voting deadline.
 
