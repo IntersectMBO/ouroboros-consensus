@@ -53,15 +53,16 @@ module Ouroboros.Consensus.Cardano.Node (
   , pattern CardanoNodeToNodeVersion2
   ) where
 
+import qualified Cardano.Crypto.KES.Class as KES
 import           Cardano.Binary (DecoderError (..), enforceSize)
 import           Cardano.Chain.Slotting (EpochSlots)
+import qualified Cardano.KESAgent.Serialization.DirectCodec as Agent
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Prelude (cborError)
-import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..),
-                     ocertKESPeriod)
+import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
 import qualified Codec.CBOR.Decoding as CBOR
 import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
@@ -69,13 +70,14 @@ import           Control.Exception (assert)
 import qualified Data.ByteString.Short as Short
 import           Data.Functor.These (These1 (..))
 import qualified Data.Map.Strict as Map
+import qualified Data.SerDoc.Class as SerDoc
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Counting
 import           Data.SOP.Index (Index (..))
 import           Data.SOP.OptNP (NonEmptyOptNP, OptNP (OptSkip))
 import qualified Data.SOP.OptNP as OptNP
 import           Data.SOP.Strict
-import           Data.Word (Word16, Word64)
+import           Data.Word (Word16)
 import           Lens.Micro ((^.))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger (ByronBlock)
@@ -97,6 +99,7 @@ import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Protocol.Praos (Praos, PraosParams (..))
 import           Ouroboros.Consensus.Protocol.Praos.Common (PraosCanBeLeader (..), instantiatePraosCredentials)
+import           Ouroboros.Consensus.Protocol.Praos.AgentClient
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosParams (..))
 import qualified Ouroboros.Consensus.Protocol.TPraos as Shelley
 import           Ouroboros.Consensus.Shelley.HFEras ()
@@ -105,7 +108,7 @@ import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley
 import           Ouroboros.Consensus.Shelley.Ledger.Block (IsShelleyBlock,
                      ShelleyBlockLedgerEra)
 import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
-import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
+import           Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import           Ouroboros.Consensus.Shelley.Node
 import           Ouroboros.Consensus.Shelley.Node.Common (ShelleyEraWithCrypto, shelleyBlockIssuerVKey)
 import qualified Ouroboros.Consensus.Shelley.Node.Praos as Praos
@@ -114,6 +117,7 @@ import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util.Assert
 import           Ouroboros.Consensus.Util.IOLike
+
 {-------------------------------------------------------------------------------
   SerialiseHFC
 -------------------------------------------------------------------------------}
@@ -466,7 +470,16 @@ data CardanoProtocolParams c = CardanoProtocolParams {
 -- PRECONDITION: only a single set of Shelley credentials is allowed when used
 -- for mainnet (check against @'SL.gNetworkId' == 'SL.Mainnet'@).
 protocolInfoCardano ::
-     forall c m. (IOLike m, CardanoHardForkConstraints c)
+     forall c m.
+     ( IOLike m
+     , MonadKESAgent m
+     , MonadFail m
+     , Show (Addr m)
+     , CardanoHardForkConstraints c
+     , AgentCrypto c
+     , SerDoc.HasInfo (Agent.DirectCodec m) (KES.VerKeyKES (L.KES c))
+     , SerDoc.HasInfo (Agent.DirectCodec m) (KES.SignKeyKES (L.KES c))
+     )
   => CardanoProtocolParams c
   -> ( ProtocolInfo      (CardanoBlock c)
      , m [BlockForging m (CardanoBlock c)]
@@ -556,7 +569,7 @@ protocolInfoCardano paramsCardano
           initialNonceShelley
           genesisShelley
 
-    TPraosParams { tpraosSlotsPerKESPeriod, tpraosMaxKESEvo } = tpraosParams
+    TPraosParams { tpraosSlotsPerKESPeriod } = tpraosParams
 
     praosParams :: PraosParams
     praosParams = PraosParams
@@ -573,7 +586,7 @@ protocolInfoCardano paramsCardano
             (SL.mkActiveSlotCoeff $ SL.sgActiveSlotsCoeff genesisShelley)
       }
 
-    PraosParams { praosSlotsPerKESPeriod, praosMaxKESEvo } = praosParams
+    PraosParams { praosSlotsPerKESPeriod } = praosParams
 
     blockConfigShelley :: BlockConfig (ShelleyBlock (TPraos c) (ShelleyEra c))
     blockConfigShelley =
@@ -861,19 +874,7 @@ protocolInfoCardano paramsCardano
             slotToPeriod (SlotNo slot) = assert (tpraosSlotsPerKESPeriod == praosSlotsPerKESPeriod) $
               Absolute.KESPeriod $ fromIntegral $ slot `div` praosSlotsPerKESPeriod
 
-        (ocert, sk) <- instantiatePraosCredentials (praosCanBeLeaderCredentialsSource canBeLeader)
-
-        let startPeriod :: Absolute.KESPeriod
-            startPeriod = Absolute.ocertKESPeriod ocert
-
-        let maxKESEvo :: Word64
-            maxKESEvo = assert (tpraosMaxKESEvo == praosMaxKESEvo) praosMaxKESEvo
-
-        hotKey :: HotKey.HotKey c m <- HotKey.mkHotKey
-                    ocert
-                    sk
-                    startPeriod
-                    maxKESEvo
+        hotKey :: HotKey c m <- instantiatePraosCredentials (praosCanBeLeaderCredentialsSource canBeLeader)
 
         let tpraos :: forall era.
                  ShelleyEraWithCrypto c       (TPraos c) era

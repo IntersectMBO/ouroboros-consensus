@@ -6,6 +6,9 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Various things common to iterations of the Praos protocol.
 module Ouroboros.Consensus.Protocol.Praos.Common (
@@ -30,15 +33,18 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Protocol.TPraos.OCert as OCert
 import           Cardano.Slotting.Block (BlockNo)
 import           Cardano.Slotting.Slot (SlotNo)
-import           Control.Monad.Class.MonadST (MonadST)
-import           Control.Monad.Class.MonadThrow (MonadThrow)
 import           Data.Function (on)
 import           Data.Map.Strict (Map)
 import           Data.Ord (Down (Down))
+import           Data.Proxy
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
-import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Protocol.Abstract
+import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
+import           Ouroboros.Consensus.Protocol.Praos.AgentClient
+import qualified Data.SerDoc.Class as SerDoc
+import           Ouroboros.Consensus.Util.IOLike
+import qualified Cardano.KESAgent.Serialization.DirectCodec as Agent
 
 -- | The maximum major protocol version.
 --
@@ -262,20 +268,47 @@ data PraosCanBeLeader c = PraosCanBeLeader
 
 data PraosCredentialsSource c
   = PraosCredentialsUnsound (OCert.OCert c) (KES.UnsoundPureSignKeyKES (KES c))
+  | PraosCredentialsAgent FilePath
   deriving (Generic)
 
 instance (NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (PraosCredentialsSource c)
 instance (NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (PraosCanBeLeader c)
 
-instantiatePraosCredentials :: ( KES.UnsoundPureKESAlgorithm (KES c)
-                               , MonadST m
-                               , MonadThrow m
+instantiatePraosCredentials :: forall m c.
+                               ( AgentCrypto c
+                               , IOLike m
+                               , MonadKESAgent m
+                               , MonadFail m
+                               , Show (Addr m)
+                               , SerDoc.HasInfo (Agent.DirectCodec m) (KES.VerKeyKES (KES c))
+                               , SerDoc.HasInfo (Agent.DirectCodec m) (KES.SignKeyKES (KES c))
                                )
                             => PraosCredentialsSource c
-                            -> m (OCert.OCert c, SL.SignKeyKES c)
+                            -> m (HotKey.HotKey c m)
 instantiatePraosCredentials (PraosCredentialsUnsound ocert skUnsound) = do
   sk <- KES.unsoundPureSignKeyKESToSoundSignKeyKES skUnsound
-  return (ocert, sk)
+  let startPeriod :: OCert.KESPeriod
+      startPeriod = OCert.ocertKESPeriod ocert
+
+  HotKey.mkHotKey
+              ocert
+              sk
+              startPeriod
+              (fromIntegral $ KES.totalPeriodsKES (Proxy @(KES c)))
+
+instantiatePraosCredentials (PraosCredentialsAgent path) = do
+  cancelSignal <- newEmptyMVar
+
+  hk <- HotKey.mkEmptyHotKey
+                (fromIntegral $ KES.totalPeriodsKES (Proxy @(KES c)))
+                (putMVar cancelSignal ())
+  let handleKey ocert sk p = do
+        HotKey.set hk ocert sk p (OCert.ocertKESPeriod ocert)
+  _ <- async $
+        race_
+          (runKESAgentClient path handleKey)
+          (readMVar cancelSignal)
+  return hk
 
 -- | See 'PraosProtocolSupportsNode'
 data PraosNonces = PraosNonces {
