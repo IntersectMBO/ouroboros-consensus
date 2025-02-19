@@ -96,7 +96,7 @@ combineEras = mconcat . hcollapse . hap eraInjections
       -> Examples (CardanoBlock Crypto)
     injExamples eraName idx =
           prefixExamples eraName
-        . inject exampleStartBounds idx
+        . inject (oracularInjectionIndex exampleStartBounds idx)
 
 {-------------------------------------------------------------------------------
   Inject instances
@@ -105,14 +105,16 @@ combineEras = mconcat . hcollapse . hap eraInjections
 -- | In reality, an era tag would be prepended, but we're testing that the
 -- encoder doesn't care what the bytes are.
 instance Inject Serialised where
-  inject _ _ (Serialised _) = Serialised "<CARDANO_BLOCK>"
+  inject _ (Serialised _) = Serialised "<CARDANO_BLOCK>"
 
 instance Inject SomeResult where
-  inject _ idx (SomeResult q r) =
-      SomeResult (QueryIfCurrent (injectQuery idx q)) (Right r)
+  inject iidx (SomeResult q r) =
+      SomeResult
+        (QueryIfCurrent (injectQuery (forgetInjectionIndex iidx) q))
+        (Right r)
 
 instance Inject Examples where
-  inject startBounds (idx :: Index xs x) Examples {..} = Examples {
+  inject (iidx :: InjectionIndex xs x) Examples {..} = Examples {
         exampleBlock            = inj (Proxy @I)                       exampleBlock
       , exampleSerialisedBlock  = inj (Proxy @Serialised)              exampleSerialisedBlock
       , exampleHeader           = inj (Proxy @Header)                  exampleHeader
@@ -137,7 +139,7 @@ instance Inject Examples where
            , Coercible b (f (HardForkBlock xs))
            )
         => Proxy f -> Labelled a -> Labelled b
-      inj p = fmap (fmap (inject' p startBounds idx))
+      inj p = map (fmap (inject' p iidx))
 
 {-------------------------------------------------------------------------------
   Setup
