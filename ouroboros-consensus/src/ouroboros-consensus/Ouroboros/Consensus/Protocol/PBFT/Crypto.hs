@@ -38,6 +38,7 @@ class ( Typeable c
       , Show (PBftVerKeyHash c)
       , NoThunks (PBftVerKeyHash c)
       , NoThunks (PBftDelegationCert c)
+      , Serialise (PBftVerKeyHash c)
       ) => PBftCrypto c where
   type family PBftDSIGN          c :: Type
   type family PBftDelegationCert c = (d :: Type) | d -> c
