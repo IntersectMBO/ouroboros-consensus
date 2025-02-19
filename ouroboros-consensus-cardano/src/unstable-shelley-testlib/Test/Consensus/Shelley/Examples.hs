@@ -19,9 +19,16 @@ module Test.Consensus.Shelley.Examples (
   , examplesShelley
   ) where
 
+
 import qualified Cardano.Ledger.Block as SL
 import           Cardano.Protocol.Crypto (StandardCrypto)
+import           Cardano.Ledger.Crypto (Crypto)
+import           Cardano.Ledger.Core
+import           Cardano.Ledger.Crypto (Crypto)
+import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Protocol.TPraos.BHeader as SL
+import           Cardano.Slotting.EpochInfo (fixedEpochInfo)
+import           Cardano.Slotting.Time (mkSlotLength)
 import           Data.Coerce (coerce)
 import           Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Set as Set
@@ -41,6 +48,7 @@ import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Query.Types
 import           Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import           Ouroboros.Consensus.Storage.Serialisation
+import           Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
 import           Ouroboros.Network.Block (Serialised (..))
 import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
 import           Ouroboros.Network.PeerSelection.RelayAccessPoint
@@ -94,6 +102,7 @@ fromShelleyLedgerExamples
     , exampleChainDepState    = unlabelled chainDepState
     , exampleExtLedgerState   = unlabelled extLedgerState
     , exampleSlotNo           = unlabelled slotNo
+    , exampleLedgerConfig     = unlabelled ledgerConfig
     }
   where
     blk = mkShelleyBlock sleBlock
@@ -145,6 +154,8 @@ fromShelleyLedgerExamples
                        ledgerState
                        (genesisHeaderState chainDepState)
 
+    ledgerConfig = exampleShelleyLedgerConfig sleTranslationContext
+
 -- | TODO Factor this out into something nicer.
 fromShelleyLedgerExamplesPraos ::
   forall era.
@@ -170,6 +181,7 @@ fromShelleyLedgerExamplesPraos ShelleyLedgerExamples {
     , exampleChainDepState    = unlabelled chainDepState
     , exampleExtLedgerState   = unlabelled extLedgerState
     , exampleSlotNo           = unlabelled slotNo
+    , exampleLedgerConfig     = unlabelled ledgerConfig
     }
   where
     blk = mkShelleyBlock $
@@ -236,7 +248,7 @@ fromShelleyLedgerExamplesPraos ShelleyLedgerExamples {
                        ledgerState
                        (genesisHeaderState chainDepState)
 
-
+    ledgerConfig = exampleShelleyLedgerConfig sleTranslationContext
 
 examplesShelley :: Examples StandardShelleyBlock
 examplesShelley = fromShelleyLedgerExamples ledgerExamplesShelley
@@ -255,3 +267,15 @@ examplesBabbage = fromShelleyLedgerExamplesPraos ledgerExamplesBabbage
 
 examplesConway :: Examples StandardConwayBlock
 examplesConway = fromShelleyLedgerExamplesPraos ledgerExamplesConway
+
+exampleShelleyLedgerConfig :: forall era. ShelleyBasedEra era => TranslationContext era -> ShelleyLedgerConfig era
+exampleShelleyLedgerConfig translationContext = ShelleyLedgerConfig {
+      shelleyLedgerCompactGenesis = compactGenesis testShelleyGenesis
+    , shelleyLedgerGlobals = SL.mkShelleyGlobals
+        (testShelleyGenesis @(EraCrypto era))
+        epochInfo
+    , shelleyLedgerTranslationContext = translationContext
+    }
+  where
+    epochInfo  = fixedEpochInfo (EpochSize 4) slotLength
+    slotLength = mkSlotLength (secondsToNominalDiffTime 7)

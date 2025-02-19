@@ -40,13 +40,14 @@ module Test.Consensus.HardFork.Combinator.A (
 
 import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Cardano.Slotting.EpochInfo
+import           Cardano.Slotting.EpochInfo
 import           Codec.Serialise
 import           Control.Monad (guard)
 import qualified Data.Binary as B
 import           Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.ByteString.Short as SBS
-import           Data.Functor.Identity (Identity)
+import           Data.Functor.Identity
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Set (Set)
@@ -197,6 +198,10 @@ data PartialLedgerConfigA = LCfgA {
     , lcfgA_forgeTxs    :: Map SlotNo [GenTx BlockA]
     }
   deriving NoThunks via OnlyCheckWhnfNamed "LCfgA" PartialLedgerConfigA
+  deriving Generic
+  deriving Serialise
+
+deriving newtype instance Serialise SecurityParam
 
 type instance LedgerCfg (LedgerState BlockA) =
     (EpochInfo Identity, PartialLedgerConfigA)
@@ -514,6 +519,17 @@ instance HasBinaryBlockInfo BlockA where
       , headerSize   = fromIntegral $ Lazy.length (serialise blkA_header)
       }
 
+
+instance SerialiseNodeToClient BlockA PartialLedgerConfigA
+
+-- NOTE: we will never use BlockA as a SingleEraBlock, however in order to fulfill the
+-- constraints we need to be able to provide this instance.
+--
+-- We could follow what is done for Shelley and serialise a fixed EpochInfo, but it is
+-- not worth the effort, we will never call these methods.
+instance SerialiseNodeToClient BlockA (EpochInfo Identity, PartialLedgerConfigA) where
+  encodeNodeToClient = error "BlockA being used as a SingleEraBlock"
+  decodeNodeToClient = error "BlockA being used as a SingleEraBlock"
 
 instance SerialiseConstraintsHFC          BlockA
 instance SerialiseDiskConstraints         BlockA

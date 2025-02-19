@@ -180,7 +180,6 @@ library unstable-mock-testlib
     cardano-crypto-tests ^>=2.2,
     containers,
     ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib, unstable-mock-block},
-    ouroboros-network-protocols:testlib,
     serialise,
     unstable-diffusion-testlib,
 
