@@ -14,6 +14,7 @@ import           Control.Monad (guard)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Ouroboros.Consensus.Byron.Crypto.DSIGN
+import           Ouroboros.Consensus.Byron.Ledger.Orphans ()
 import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import           Ouroboros.Consensus.Protocol.PBFT
 

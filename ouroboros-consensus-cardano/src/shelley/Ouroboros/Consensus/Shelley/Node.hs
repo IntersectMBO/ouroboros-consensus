@@ -109,10 +109,11 @@ instance ShelleyCompatible proto era => BlockSupportsMetrics (ShelleyBlock proto
 instance ConsensusProtocol proto => BlockSupportsSanityCheck (ShelleyBlock proto era) where
   configAllSecurityParams = pure . protocolSecurityParam . topLevelConfigProtocol
 
-instance ( ShelleyCompatible                      proto era
-         , LedgerSupportsProtocol   (ShelleyBlock proto era)
-         , BlockSupportsSanityCheck (ShelleyBlock proto era)
-         , TxLimits                 (ShelleyBlock proto era)
+instance ( ShelleyCompatible                              proto era
+         , LedgerSupportsProtocol           (ShelleyBlock proto era)
+         , BlockSupportsSanityCheck         (ShelleyBlock proto era)
+         , TxLimits                         (ShelleyBlock proto era)
+         , SerialiseNodeToClientConstraints (ShelleyBlock proto era)
          , Crypto (ProtoCrypto proto)
          )
       => RunNode (ShelleyBlock proto era)

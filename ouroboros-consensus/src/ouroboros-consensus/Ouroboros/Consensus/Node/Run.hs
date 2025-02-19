@@ -21,6 +21,7 @@ import           Data.Typeable (Typeable)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config.SupportsNode
 import           Ouroboros.Consensus.HardFork.Abstract
+import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.CommonProtocolParams
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.Query
@@ -72,7 +73,9 @@ class ( Typeable blk
       , SerialiseNodeToClient blk SlotNo
       , SerialiseNodeToClient blk (ApplyTxErr blk)
       , SerialiseNodeToClient blk (SomeSecond BlockQuery blk)
+      , SerialiseNodeToClient blk (LedgerConfig blk)
       , SerialiseResult       blk (BlockQuery blk)
+      , SerialiseNodeToClient blk (LedgerConfig blk)
       ) => SerialiseNodeToClientConstraints blk
 
 class ( LedgerSupportsProtocol           blk

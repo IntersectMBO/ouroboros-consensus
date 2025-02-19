@@ -12,6 +12,8 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
+{-# OPTIONS_GHC -Wno-orphans #-}
+
 module Ouroboros.Consensus.Shelley.Eras (
     -- * Eras based on the Shelley ledger
     AllegraEra
@@ -37,6 +39,7 @@ module Ouroboros.Consensus.Shelley.Eras (
   , StandardCrypto
   ) where
 
+import           Cardano.Binary
 import           Cardano.Ledger.Allegra (AllegraEra)
 import           Cardano.Ledger.Allegra.Translation ()
 import           Cardano.Ledger.Alonzo (AlonzoEra)
@@ -50,11 +53,19 @@ import qualified Cardano.Ledger.Babbage.Translation as Babbage
 import           Cardano.Ledger.BaseTypes
 import           Cardano.Ledger.Binary (DecCBOR, EncCBOR)
 import           Cardano.Ledger.Conway (ConwayEra)
+import           Cardano.Ledger.Conway.Genesis
 import qualified Cardano.Ledger.Conway.Governance as CG
 import qualified Cardano.Ledger.Conway.Rules as Conway
 import qualified Cardano.Ledger.Conway.Rules as SL
                      (ConwayLedgerPredFailure (..))
 import qualified Cardano.Ledger.Conway.Translation as Conway
+import           Cardano.Ledger.Core as Core
+import           Cardano.Ledger.Crypto (StandardCrypto)
+import           Cardano.Ledger.Keys (DSignable, Hash)
+import           Cardano.Ledger.Core as Core
+import           Cardano.Ledger.Crypto (StandardCrypto)
+import           Cardano.Ledger.Genesis
+import           Cardano.Ledger.Keys (DSignable, Hash)
 import           Cardano.Ledger.Mary (MaryEra)
 import           Cardano.Ledger.Mary.Translation ()
 import           Cardano.Ledger.Shelley (ShelleyEra)
@@ -64,11 +75,13 @@ import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import qualified Cardano.Ledger.Shelley.Rules as SL
 import qualified Cardano.Ledger.Shelley.Transition as SL
 import           Cardano.Protocol.Crypto (StandardCrypto)
+import           Cardano.Ledger.Shelley.Translation
 import qualified Cardano.Protocol.TPraos.API as SL
 import           Control.Monad.Except
 import           Control.State.Transition (PredicateFailure)
 import           Data.Data (Proxy (Proxy))
 import           Data.List.NonEmpty (NonEmpty ((:|)))
+import           Data.Typeable (Typeable)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Ledger.SupportsMempool
                      (WhetherToIntervene (..))
@@ -145,6 +158,9 @@ class ( Core.EraSegWits era
       , Show (PredicateFailure (EraRule "BBODY" era))
       , NoThunks (PredicateFailure (EraRule "BBODY" era))
       , NoThunks (Core.TranslationContext era)
+
+      , ToCBOR (Core.TranslationContext era)
+      , FromCBOR (Core.TranslationContext era)
 
       ) => ShelleyBasedEra era where
 
