@@ -266,10 +266,6 @@ mkDynamicHotKey ::
      )
   -> m ()
   -> m (HotKey c m)
--- | Create a new 'HotKey' that runs a key-producer action on a separate thread.
--- The key producer action will receive a callback that can be used to pass
--- keys into the HotKey; the HotKey will dynamically update its internal state
--- to reflect new keys as they arrive.
 mkDynamicHotKey = mkHotKeyWith Nothing
 
 -- | The most general function for creating a new 'HotKey', accepting an initial
