@@ -143,6 +143,7 @@ library unstable-diffusion-testlib
     io-sim,
     mtl,
     ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib},
+    ouroboros-consensus-protocol,
     ouroboros-consensus-diffusion,
     ouroboros-network,
     ouroboros-network-api,

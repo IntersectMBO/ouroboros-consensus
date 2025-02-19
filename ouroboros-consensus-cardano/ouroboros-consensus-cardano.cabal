@@ -313,6 +313,7 @@ library unstable-shelley-testlib
     cardano-strict-containers,
     containers,
     generic-random,
+    kes-agent,
     microlens,
     mtl,
     ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib},
@@ -321,6 +322,7 @@ library unstable-shelley-testlib
     ouroboros-consensus-protocol:{ouroboros-consensus-protocol, unstable-protocol-testlib},
     ouroboros-network-api,
     quiet ^>=0.2,
+    serdoc-core,
     small-steps,
 
 test-suite shelley-test
@@ -559,6 +561,7 @@ library unstable-cardano-tools
     ouroboros-network-framework ^>=0.16,
     ouroboros-network-protocols,
     resource-registry,
+    serdoc-core,
     serialise ^>=0.2,
     singletons,
     sop-core,

@@ -9,11 +9,13 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE ConstraintKinds #-}
 
 module Ouroboros.Consensus.Protocol.Praos.AgentClient (
   runKESAgentClient,
-  AgentCrypto,
-  MonadKESAgent (..)
+  AgentCrypto (..),
+  MonadKESAgent (..),
+  KESAgentContext,
 )
 where
 
@@ -50,6 +52,14 @@ import Control.Monad.IOSim
 import qualified Simulation.Network.Snocket as SimSnocket
 import Test.Ouroboros.Network.Data.AbsBearerInfo as ABI
 
+type KESAgentContext c m =
+      ( AgentCrypto c
+      , MonadKESAgent m
+      , SerDoc.HasInfo (Agent.DirectCodec m) (VerKeyKES (KES c))
+      , SerDoc.HasInfo (Agent.DirectCodec m) (SignKeyKES (KES c))
+      , IOLike m
+      )
+
 class ( Crypto c
       , Agent.Crypto (ACrypto c)
       , Agent.NamedCrypto (ACrypto c)
@@ -79,7 +89,7 @@ convertOCert oca =
     , OCert.ocertSigma = coerce (Agent.ocertSigma oca)
     }
 
-class MonadKESAgent m where
+class (MonadFail m, Show (Addr m)) => MonadKESAgent m where
   type FD m :: Type
   type Addr m :: Type
   withAgentContext :: (Snocket m (FD m) (Addr m) -> m a) -> m a
@@ -112,13 +122,7 @@ instance SimSnocket.GlobalAddressScheme FilePath where
   ephemeralAddress _ty num = TestAddress $ "simSnocket_" <> show num
 
 runKESAgentClient :: forall m c.
-                     ( AgentCrypto c
-                     , MonadKESAgent m
-                     , IOLike m
-                     , MonadFail m
-                     , Show (Addr m)
-                     , SerDoc.HasInfo (Agent.DirectCodec m) (VerKeyKES (KES c))
-                     , SerDoc.HasInfo (Agent.DirectCodec m) (SignKeyKES (KES c))
+                     ( KESAgentContext c m
                      )
                   => FilePath
                   -> (OCert.OCert c -> SignKeyKES (KES c) -> Word -> m ())

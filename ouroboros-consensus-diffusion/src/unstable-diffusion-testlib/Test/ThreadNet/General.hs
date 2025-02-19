@@ -52,13 +52,14 @@ import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.NodeId
 import           Ouroboros.Consensus.Protocol.Abstract (LedgerView)
 import           Ouroboros.Consensus.Protocol.LeaderSchedule
+import           Ouroboros.Consensus.Protocol.Praos.AgentClient (MonadKESAgent)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.Enclose (pattern FallingEdge)
-import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Consensus.Util.RedundantConstraints
+import           Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.Mock.Chain as MockChain
 import qualified System.FS.Sim.MockFS as Mock
 import           System.FS.Sim.MockFS (MockFS)
@@ -206,7 +207,7 @@ runTestNetwork ::
      )
   => TestConfig
   -> TestConfigB blk
-  -> (forall m. IOLike m => TestConfigMB m blk)
+  -> (forall m. (IOLike m, MonadKESAgent m) => TestConfigMB m blk)
   -> TestOutput blk
 runTestNetwork TestConfig
   { numCoreNodes

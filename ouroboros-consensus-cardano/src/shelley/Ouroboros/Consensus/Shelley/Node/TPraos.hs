@@ -176,8 +176,6 @@ protocolInfoShelley ::
       , ShelleyCompatible (TPraos c) (ShelleyEra c)
       , TxLimits (ShelleyBlock (TPraos c) (ShelleyEra c))
       , MonadKESAgent m
-      , MonadFail m
-      , Show (Addr m)
       , SerDoc.HasInfo (Agent.DirectCodec m) (KES.VerKeyKES (KES c))
       , SerDoc.HasInfo (Agent.DirectCodec m) (KES.SignKeyKES (KES c))
       )
@@ -197,17 +195,11 @@ protocolInfoShelley shelleyGenesis
 
 protocolInfoTPraosShelleyBased ::
      forall m era c.
-      ( IOLike m
-      , PraosCrypto c
-      , AgentCrypto c
+      ( PraosCrypto c
       , ShelleyCompatible (TPraos c) era
       , TxLimits (ShelleyBlock (TPraos c) era)
       , c ~ EraCrypto era
-      , MonadKESAgent m
-      , MonadFail m
-      , Show (Addr m)
-      , SerDoc.HasInfo (Agent.DirectCodec m) (KES.VerKeyKES (L.KES c))
-      , SerDoc.HasInfo (Agent.DirectCodec m) (KES.SignKeyKES (L.KES c))
+      , KESAgentContext c m
       )
   => ProtocolParamsShelleyBased c
   -> L.TransitionConfig era

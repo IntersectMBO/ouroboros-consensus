@@ -42,9 +42,7 @@ import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Protocol.Abstract
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import           Ouroboros.Consensus.Protocol.Praos.AgentClient
-import qualified Data.SerDoc.Class as SerDoc
 import           Ouroboros.Consensus.Util.IOLike
-import qualified Cardano.KESAgent.Serialization.DirectCodec as Agent
 
 -- | The maximum major protocol version.
 --
@@ -275,13 +273,7 @@ instance (NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (P
 instance (NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (PraosCanBeLeader c)
 
 instantiatePraosCredentials :: forall m c.
-                               ( AgentCrypto c
-                               , IOLike m
-                               , MonadKESAgent m
-                               , MonadFail m
-                               , Show (Addr m)
-                               , SerDoc.HasInfo (Agent.DirectCodec m) (KES.VerKeyKES (KES c))
-                               , SerDoc.HasInfo (Agent.DirectCodec m) (KES.SignKeyKES (KES c))
+                               ( KESAgentContext c m
                                )
                             => PraosCredentialsSource c
                             -> m (HotKey.HotKey c m)

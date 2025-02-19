@@ -53,10 +53,8 @@ module Ouroboros.Consensus.Cardano.Node (
   , pattern CardanoNodeToNodeVersion2
   ) where
 
-import qualified Cardano.Crypto.KES.Class as KES
 import           Cardano.Binary (DecoderError (..), enforceSize)
 import           Cardano.Chain.Slotting (EpochSlots)
-import qualified Cardano.KESAgent.Serialization.DirectCodec as Agent
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
@@ -70,7 +68,6 @@ import           Control.Exception (assert)
 import qualified Data.ByteString.Short as Short
 import           Data.Functor.These (These1 (..))
 import qualified Data.Map.Strict as Map
-import qualified Data.SerDoc.Class as SerDoc
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Counting
 import           Data.SOP.Index (Index (..))
@@ -116,7 +113,6 @@ import qualified Ouroboros.Consensus.Shelley.Node.TPraos as TPraos
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util.Assert
-import           Ouroboros.Consensus.Util.IOLike
 
 {-------------------------------------------------------------------------------
   SerialiseHFC
@@ -471,14 +467,8 @@ data CardanoProtocolParams c = CardanoProtocolParams {
 -- for mainnet (check against @'SL.gNetworkId' == 'SL.Mainnet'@).
 protocolInfoCardano ::
      forall c m.
-     ( IOLike m
-     , MonadKESAgent m
-     , MonadFail m
-     , Show (Addr m)
-     , CardanoHardForkConstraints c
-     , AgentCrypto c
-     , SerDoc.HasInfo (Agent.DirectCodec m) (KES.VerKeyKES (L.KES c))
-     , SerDoc.HasInfo (Agent.DirectCodec m) (KES.SignKeyKES (L.KES c))
+     ( CardanoHardForkConstraints c
+     , KESAgentContext c m
      )
   => CardanoProtocolParams c
   -> ( ProtocolInfo      (CardanoBlock c)
