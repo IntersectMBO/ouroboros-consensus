@@ -18,6 +18,7 @@ import           Ouroboros.Consensus.Shelley.Node ()
 import           Ouroboros.Consensus.Shelley.Node.Serialisation ()
 import           Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import           Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..))
+import           Test.Consensus.Cardano.Generators ()
 import           Test.Consensus.Shelley.Generators ()
 import           Test.Consensus.Shelley.MockCrypto
 import           Test.Tasty

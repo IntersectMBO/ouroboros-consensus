@@ -18,7 +18,7 @@ import           Data.Bifunctor (first)
 import           Ouroboros.Consensus.Block (BlockProtocol, Header, HeaderHash,
                      SlotNo, SomeSecond)
 import           Ouroboros.Consensus.HeaderValidation (AnnTip)
-import           Ouroboros.Consensus.Ledger.Abstract (LedgerState)
+import           Ouroboros.Consensus.Ledger.Abstract (LedgerConfig, LedgerState)
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import           Ouroboros.Consensus.Ledger.Query (BlockQuery)
 import           Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr, GenTx,
@@ -48,6 +48,7 @@ data Examples blk = Examples {
     , exampleChainDepState    :: Labelled (ChainDepState (BlockProtocol blk))
     , exampleExtLedgerState   :: Labelled (ExtLedgerState blk)
     , exampleSlotNo           :: Labelled SlotNo
+    , exampleLedgerConfig     :: Labelled (LedgerConfig blk)
     }
 
 emptyExamples :: Examples blk
@@ -67,6 +68,7 @@ emptyExamples = Examples {
     , exampleChainDepState    = mempty
     , exampleExtLedgerState   = mempty
     , exampleSlotNo           = mempty
+    , exampleLedgerConfig     = mempty
     }
 
 combineExamples ::
@@ -91,6 +93,7 @@ combineExamples f e1 e2 = Examples {
     , exampleChainDepState    = combine exampleChainDepState
     , exampleExtLedgerState   = combine exampleExtLedgerState
     , exampleSlotNo           = combine exampleSlotNo
+    , exampleLedgerConfig     = combine exampleLedgerConfig
     }
   where
     combine :: (Examples blk -> Labelled a) -> Labelled a
