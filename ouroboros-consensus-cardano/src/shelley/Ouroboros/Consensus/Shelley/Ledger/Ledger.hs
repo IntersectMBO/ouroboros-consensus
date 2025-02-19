@@ -31,6 +31,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger (
   , shelleyTipToPoint
     -- * Ledger config
   , ShelleyLedgerConfig (..)
+  , ShelleyPartialLedgerConfig (..)
   , mkShelleyLedgerConfig
   , shelleyEraParams
   , shelleyEraParamsNeverHardForks
@@ -54,6 +55,7 @@ import           Cardano.Ledger.Binary.Plain (FromCBOR (..), ToCBOR (..),
                      enforceSize)
 import           Cardano.Ledger.Core (Era, ppMaxBHSizeL, ppMaxTxSizeL)
 import qualified Cardano.Ledger.Core as Core
+import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Governance as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
@@ -70,6 +72,7 @@ import qualified Control.State.Transition.Extended as STS
 import           Data.Coerce (coerce)
 import           Data.Functor ((<&>))
 import           Data.Functor.Identity
+import qualified Data.Text as T
 import qualified Data.Text as Text
 import           Data.Word
 import           GHC.Generics (Generic)
@@ -79,8 +82,10 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime.WallClock.Types
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Abstract
+import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import           Ouroboros.Consensus.HardFork.History.Util
+import           Ouroboros.Consensus.HardFork.Simple
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.CommonProtocolParams
@@ -160,6 +165,36 @@ mkShelleyLedgerConfig genesis transCtxt epochInfo =
       }
 
 type instance LedgerCfg (LedgerState (ShelleyBlock proto era)) = ShelleyLedgerConfig era
+
+data ShelleyPartialLedgerConfig era = ShelleyPartialLedgerConfig {
+      -- | We cache the non-partial ledger config containing a dummy
+      -- 'EpochInfo' that needs to be replaced with the correct one.
+      --
+      -- We do this to avoid recomputing the ledger config each time
+      -- 'completeLedgerConfig' is called, as 'mkShelleyLedgerConfig' does
+      -- some rather expensive computations that shouldn't be repeated too
+      -- often (e.g., 'sgActiveSlotCoeff').
+      shelleyLedgerConfig    :: !(ShelleyLedgerConfig era)
+    , shelleyTriggerHardFork :: !TriggerHardFork
+    }
+  deriving (Generic)
+
+deriving instance (NoThunks (SL.TranslationContext era), SL.Era era) =>
+    NoThunks (ShelleyPartialLedgerConfig era)
+
+instance ShelleyCompatible proto era => HasPartialLedgerConfig (ShelleyBlock proto era) where
+  type PartialLedgerConfig (ShelleyBlock proto era) = ShelleyPartialLedgerConfig era
+
+  -- Replace the dummy 'EpochInfo' with the real one
+  completeLedgerConfig _ epochInfo (ShelleyPartialLedgerConfig cfg _) =
+      cfg {
+          shelleyLedgerGlobals = (shelleyLedgerGlobals cfg) {
+              SL.epochInfo =
+                  hoistEpochInfo
+                    (runExcept . withExceptT (T.pack . show))
+                    epochInfo
+            }
+        }
 
 {-------------------------------------------------------------------------------
   LedgerState

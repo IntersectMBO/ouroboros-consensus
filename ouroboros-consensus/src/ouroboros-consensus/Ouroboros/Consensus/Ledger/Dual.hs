@@ -47,12 +47,14 @@ module Ouroboros.Consensus.Ledger.Dual (
   , decodeDualGenTxErr
   , decodeDualGenTxId
   , decodeDualHeader
+  , decodeDualLedgerConfig
   , decodeDualLedgerState
   , encodeDualBlock
   , encodeDualGenTx
   , encodeDualGenTxErr
   , encodeDualGenTxId
   , encodeDualHeader
+  , encodeDualLedgerConfig
   , encodeDualLedgerState
   ) where
 
@@ -74,6 +76,7 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Config.SupportsNode
 import           Ouroboros.Consensus.HardFork.Abstract
+import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.CommonProtocolParams
@@ -326,6 +329,8 @@ data DualLedgerConfig m a = DualLedgerConfig {
   deriving NoThunks via AllowThunk (DualLedgerConfig m a)
 
 type instance LedgerCfg (LedgerState (DualBlock m a)) = DualLedgerConfig m a
+
+instance Bridge m a => HasPartialLedgerConfig (DualBlock m a)
 
 instance Bridge m a => GetTip (LedgerState (DualBlock m a)) where
   getTip = castPoint . getTip . dualLedgerStateMain
@@ -830,6 +835,25 @@ agreeOnError f (ma, mb) =
 
   For now we just require 'Serialise' for the auxiliary block.
 -------------------------------------------------------------------------------}
+
+encodeDualLedgerConfig :: (LedgerCfg (LedgerState m) -> Encoding)
+                       -> (LedgerCfg (LedgerState a) -> Encoding)
+                       -> DualLedgerConfig m a
+                       -> Encoding
+encodeDualLedgerConfig encodeM encodeA (DualLedgerConfig m a) = mconcat [
+      encodeListLen 2
+    , encodeM m
+    , encodeA a
+    ]
+
+decodeDualLedgerConfig :: Decoder s (LedgerCfg (LedgerState m))
+                       -> Decoder s (LedgerCfg (LedgerState a))
+                       -> Decoder s (DualLedgerConfig m a)
+decodeDualLedgerConfig decodeM decodeA = do
+  enforceSize "DualLedgerConfig" 2
+  DualLedgerConfig
+    <$> decodeM
+    <*> decodeA
 
 encodeDualBlock :: (Bridge m a, Serialise a)
                 => (m -> Encoding)
