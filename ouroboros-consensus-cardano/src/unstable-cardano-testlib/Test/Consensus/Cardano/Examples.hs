@@ -1,5 +1,7 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -27,22 +29,23 @@ module Test.Consensus.Cardano.Examples (
   , examples
   ) where
 
-import           Data.Coerce (Coercible)
+import           Data.Coerce (Coercible, coerce)
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Counting (Exactly (..))
-import           Data.SOP.Index (Index (..))
+import           Data.SOP.Index (Index (..), himap)
 import           Data.SOP.Strict
 import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.Byron.ByronHFC
 import           Ouroboros.Consensus.Byron.Ledger (ByronBlock)
 import qualified Ouroboros.Consensus.Byron.Ledger as Byron
 import           Ouroboros.Consensus.Cardano.Block
-import           Ouroboros.Consensus.Cardano.CanHardFork ()
+import           Ouroboros.Consensus.Cardano.CanHardFork
 import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.Embed.Nary
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import qualified Ouroboros.Consensus.HardFork.History as History
-import           Ouroboros.Consensus.HeaderValidation (AnnTip)
-import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
+import           Ouroboros.Consensus.HeaderValidation
+import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr)
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
@@ -75,28 +78,83 @@ eraExamples =
 combineEras ::
      NP Examples (CardanoEras Crypto)
   -> Examples (CardanoBlock Crypto)
-combineEras = mconcat . hcollapse . hap eraInjections
+combineEras perEraExamples = Examples {
+        exampleBlock            = coerce $ viaInject @I                 (coerce exampleBlock)
+      , exampleSerialisedBlock  =          viaInject                            exampleSerialisedBlock
+      , exampleHeader           =          viaInject                            exampleHeader
+      , exampleSerialisedHeader =          viaInject                            exampleSerialisedHeader
+      , exampleHeaderHash       = coerce $ viaInject @WrapHeaderHash    (coerce exampleHeaderHash)
+      , exampleGenTx            =          viaInject                            exampleGenTx
+      , exampleGenTxId          = coerce $ viaInject @WrapGenTxId       (coerce exampleGenTxId)
+      , exampleApplyTxErr       = coerce $ viaInject @WrapApplyTxErr    (coerce exampleApplyTxErr)
+      , exampleQuery            =          viaInject                            exampleQuery
+      , exampleResult           =          viaInject                            exampleResult
+      , exampleAnnTip           =          viaInject                            exampleAnnTip
+      , exampleLedgerState      =          viaInject                            exampleLedgerState
+      , exampleChainDepState    = coerce $ viaInject @WrapChainDepState (coerce exampleChainDepState)
+      , exampleExtLedgerState   =          viaInject                            exampleExtLedgerState
+      , exampleSlotNo           = coerce $ viaInject @(K SlotNo)        (coerce exampleSlotNo)
+      , exampleLedgerConfig     = exampleLedgerConfigCardano
+      }
   where
-    eraInjections :: NP (Examples -.-> K (Examples (CardanoBlock Crypto)))
-                        (CardanoEras Crypto)
-    eraInjections =
-           fn (K . injExamples "Byron"   IZ)
-        :* fn (K . injExamples "Shelley" (IS IZ))
-        :* fn (K . injExamples "Allegra" (IS (IS IZ)))
-        :* fn (K . injExamples "Mary"    (IS (IS (IS IZ))))
-        :* fn (K . injExamples "Alonzo"  (IS (IS (IS (IS IZ)))))
-        :* fn (K . injExamples "Babbage" (IS (IS (IS (IS (IS IZ))))))
-        :* fn (K . injExamples "Conway"  (IS (IS (IS (IS (IS (IS IZ)))))))
-        :* Nil
+    viaInject ::
+         forall f. Inject f
+      => (forall blk. Examples blk -> Labelled (f blk))
+      -> Labelled (f (CardanoBlock Crypto))
+    viaInject getExamples =
+          mconcat
+        $ hcollapse
+        $ himap (\ix -> K . inj ix . getExamples) perEraExamplesPrefixed
+      where
+        inj :: forall blk. Index (CardanoEras Crypto) blk -> Labelled (f blk) -> Labelled (f (CardanoBlock Crypto))
+        inj idx = fmap (fmap (inject exampleStartBounds idx))
 
-    injExamples ::
-         String
-      -> Index (CardanoEras Crypto) blk
-      -> Examples blk
-      -> Examples (CardanoBlock Crypto)
-    injExamples eraName idx =
-          prefixExamples eraName
-        . inject (oracularInjectionIndex exampleStartBounds idx)
+    perEraExamplesPrefixed :: NP Examples (CardanoEras Crypto)
+    perEraExamplesPrefixed = hzipWith (\(K eraName) es -> prefixExamples eraName es) perEraNames perEraExamples
+      where
+        perEraNames = K "Byron"
+                   :* K "Shelley"
+                   :* K "Allegra"
+                   :* K "Mary"
+                   :* K "Alonzo"
+                   :* K "Babbage"
+                   :* K "Conway"
+                   :* Nil
+
+    exampleLedgerConfigCardano ::
+         Labelled (HardForkLedgerConfig (CardanoEras Crypto))
+    exampleLedgerConfigCardano = [
+        ( Nothing
+        , HardForkLedgerConfig
+            cardanoShape
+            (PerEraLedgerConfig (
+                 WrapPartialLedgerConfig (ByronPartialLedgerConfig   lcByron   (TriggerHardForkAtEpoch shelleyTransitionEpoch))
+              :* WrapPartialLedgerConfig (ShelleyPartialLedgerConfig lcShelley (TriggerHardForkAtEpoch (History.boundEpoch allegraStartBound)))
+              :* WrapPartialLedgerConfig (ShelleyPartialLedgerConfig lcAllegra (TriggerHardForkAtEpoch (History.boundEpoch maryStartBound)))
+              :* WrapPartialLedgerConfig (ShelleyPartialLedgerConfig lcMary    (TriggerHardForkAtEpoch (History.boundEpoch alonzoStartBound)))
+              :* WrapPartialLedgerConfig (ShelleyPartialLedgerConfig lcAlonzo  (TriggerHardForkAtEpoch (History.boundEpoch babbageStartBound)))
+              :* WrapPartialLedgerConfig (ShelleyPartialLedgerConfig lcBabbage (TriggerHardForkAtEpoch (History.boundEpoch conwayStartBound)))
+              :* WrapPartialLedgerConfig (ShelleyPartialLedgerConfig lcConway  TriggerHardForkNotDuringThisExecution)
+              :* Nil))
+        )
+      | WrapLedgerConfig lcByron   <- labelledLcByron
+      , WrapLedgerConfig lcShelley <- labelledLcShelley
+      , WrapLedgerConfig lcAllegra <- labelledLcAllegra
+      , WrapLedgerConfig lcMary    <- labelledLcMary
+      , WrapLedgerConfig lcAlonzo  <- labelledLcAlonzo
+      , WrapLedgerConfig lcBabbage <- labelledLcBabbage
+      , WrapLedgerConfig lcConway  <- labelledLcConway
+      ]
+      where
+        (    Comp labelledLcByron
+          :* Comp labelledLcShelley
+          :* Comp labelledLcAllegra
+          :* Comp labelledLcMary
+          :* Comp labelledLcAlonzo
+          :* Comp labelledLcBabbage
+          :* Comp labelledLcConway
+          :* Nil
+          ) = hmap (Comp . fmap (WrapLedgerConfig . snd) . exampleLedgerConfig) perEraExamples
 
 {-------------------------------------------------------------------------------
   Inject instances
@@ -130,6 +188,8 @@ instance Inject Examples where
       , exampleChainDepState    = inj (Proxy @WrapChainDepState)       exampleChainDepState
       , exampleExtLedgerState   = inj (Proxy @ExtLedgerState)          exampleExtLedgerState
       , exampleSlotNo           =                                      exampleSlotNo
+        -- We cannot create a HF Ledger Config out of just one of the eras
+      , exampleLedgerConfig     = mempty
       }
     where
       inj ::
@@ -140,6 +200,8 @@ instance Inject Examples where
            )
         => Proxy f -> Labelled a -> Labelled b
       inj p = map (fmap (inject' p iidx))
+
+
 
 {-------------------------------------------------------------------------------
   Setup

@@ -337,6 +337,7 @@ goldenTest_SerialiseNodeToClient codecConfig goldenDir Examples {..} =
         , test "ApplyTxErr"      exampleApplyTxErr      enc'
         , test "Query"           exampleQuery           enc'
         , test "SlotNo"          exampleSlotNo          enc'
+        , test "LedgerConfig"    exampleLedgerConfig    enc'
         , test "Result"          exampleResult          encRes
         ]
       where

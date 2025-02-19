@@ -4,6 +4,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -94,7 +95,8 @@ instance SerialiseNodeToNode (MockBlock ext) (GenTxId (MockBlock ext))
   possible.
 -------------------------------------------------------------------------------}
 
-instance (Serialise ext, Typeable ext) => SerialiseNodeToClientConstraints (MockBlock ext)
+instance (Serialise ext, Typeable ext, Serialise (MockLedgerConfig SimpleMockCrypto ext))
+      => SerialiseNodeToClientConstraints (MockBlock ext)
 
 instance Serialise ext => SerialiseNodeToClient (MockBlock ext) (MockBlock ext) where
   encodeNodeToClient _ _ = defaultEncodeCBORinCBOR

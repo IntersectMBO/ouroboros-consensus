@@ -81,6 +81,7 @@ import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Abstract
+import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
@@ -93,6 +94,7 @@ import           Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import           Ouroboros.Consensus.Mock.Ledger.Address
 import           Ouroboros.Consensus.Mock.Ledger.State
 import qualified Ouroboros.Consensus.Mock.Ledger.UTxO as Mock
+import           Ouroboros.Consensus.Node.Serialisation
 import           Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..),
                      SizeInBytes)
 import           Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE,
@@ -316,9 +318,10 @@ instance HasHardForkHistory (SimpleBlock c ext) where
 -------------------------------------------------------------------------------}
 
 class ( SimpleCrypto c
-      , Typeable ext
-      , Show     (MockLedgerConfig c ext)
-      , NoThunks (MockLedgerConfig c ext)
+      , Typeable  ext
+      , Show      (MockLedgerConfig c ext)
+      , NoThunks  (MockLedgerConfig c ext)
+      , Serialise (MockLedgerConfig c ext)
       ) => MockProtocolSpecific c ext where
   type family MockLedgerConfig c ext :: Type
 
@@ -338,10 +341,18 @@ data SimpleLedgerConfig c ext = SimpleLedgerConfig {
   deriving (Generic)
 
 deriving instance Show (MockLedgerConfig c ext) => Show (SimpleLedgerConfig c ext)
-deriving instance NoThunks (MockLedgerConfig c ext)
+deriving instance Eq   (MockLedgerConfig c ext) => Eq   (SimpleLedgerConfig c ext)
+deriving instance NoThunks (MockLedgerConfig   c ext)
                => NoThunks (SimpleLedgerConfig c ext)
+deriving instance Serialise (MockLedgerConfig   c ext)
+               => Serialise (SimpleLedgerConfig c ext)
 
 type instance LedgerCfg (LedgerState (SimpleBlock c ext)) = SimpleLedgerConfig c ext
+
+instance MockProtocolSpecific c ext => HasPartialLedgerConfig (SimpleBlock c ext)
+
+instance (Serialise (MockLedgerConfig c ext))
+  => SerialiseNodeToClient (SimpleBlock c ext) (SimpleLedgerConfig c ext)
 
 instance GetTip (LedgerState (SimpleBlock c ext)) where
   getTip (SimpleLedgerState st) = castPoint $ mockTip st

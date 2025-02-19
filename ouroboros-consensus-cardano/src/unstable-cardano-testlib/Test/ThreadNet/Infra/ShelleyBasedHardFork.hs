@@ -41,8 +41,7 @@ import           Data.Void (Void)
 import           Lens.Micro ((^.))
 import           Ouroboros.Consensus.Block.Forging (BlockForging)
 import           Ouroboros.Consensus.Cardano.CanHardFork
-                     (ShelleyPartialLedgerConfig (..),
-                     crossEraForecastAcrossShelley,
+                     (crossEraForecastAcrossShelley,
                      translateChainDepStateAcrossShelley)
 import           Ouroboros.Consensus.Cardano.Node (TriggerHardFork (..))
 import           Ouroboros.Consensus.HardFork.Combinator
