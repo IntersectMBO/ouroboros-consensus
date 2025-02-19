@@ -31,6 +31,9 @@ import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import           Ouroboros.Consensus.Shelley.Node
 import           Test.Consensus.Shelley.MockCrypto (MockCrypto)
+import           Test.Consensus.Shelley.MockCrypto (MockCrypto, MockShelley)
+import           Ouroboros.Consensus.Shelley.ShelleyHFC ()
+import           Test.Consensus.Shelley.MockCrypto (MockCrypto, MockShelley)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck

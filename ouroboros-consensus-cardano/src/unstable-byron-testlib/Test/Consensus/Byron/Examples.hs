@@ -107,6 +107,7 @@ examples = Examples {
     , exampleQuery            = unlabelled exampleQuery
     , exampleResult           = unlabelled exampleResult
     , exampleAnnTip           = unlabelled exampleAnnTip
+    , exampleLedgerConfig     = unlabelled ledgerConfig
     , exampleLedgerState      = unlabelled exampleLedgerState
     , exampleChainDepState    = unlabelled exampleChainDepState
     , exampleExtLedgerState   = unlabelled exampleExtLedgerState

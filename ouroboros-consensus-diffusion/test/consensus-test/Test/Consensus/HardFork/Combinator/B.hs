@@ -167,7 +167,9 @@ data instance LedgerState BlockB = LgrB {
   deriving (Show, Eq, Generic, Serialise)
   deriving NoThunks via OnlyCheckWhnfNamed "LgrB" (LedgerState BlockB)
 
-type instance LedgerCfg (LedgerState BlockB) = ()
+type PartialLedgerCfgB = ()
+
+type instance LedgerCfg (LedgerState BlockB) = PartialLedgerCfgB
 
 -- | Ticking has no state on the B ledger state
 newtype instance Ticked (LedgerState BlockB) = TickedLedgerStateB {
@@ -435,6 +437,10 @@ instance SerialiseNodeToClient BlockB (Serialised BlockB)
 instance SerialiseNodeToClient BlockB (GenTx BlockB)
 instance SerialiseNodeToClient BlockB (GenTxId BlockB)
 instance SerialiseNodeToClient BlockB SlotNo
+
+instance SerialiseNodeToClient BlockB PartialLedgerCfgB where
+  encodeNodeToClient _ _ = encode
+  decodeNodeToClient _ _ = decode
 
 instance SerialiseNodeToClient BlockB Void where
   encodeNodeToClient _ _ = absurd

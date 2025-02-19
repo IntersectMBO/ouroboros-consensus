@@ -192,6 +192,7 @@ library unstable-byronspec
     bimap >=0.4 && <0.6,
     byron-spec-chain,
     byron-spec-ledger,
+    cardano-binary,
     cardano-ledger-binary,
     cardano-ledger-byron-test,
     cborg >=0.2.2 && <0.3,
@@ -222,8 +223,11 @@ library unstable-byron-testlib
   build-depends:
     QuickCheck,
     base,
+    base64-bytestring,
     byron-spec-ledger,
     bytestring,
+    cardano-binary,
+    cardano-crypto,
     cardano-crypto-class,
     cardano-crypto-test,
     cardano-crypto-wrapper,
@@ -239,6 +243,7 @@ library unstable-byron-testlib
     ouroboros-consensus-diffusion:unstable-diffusion-testlib,
     ouroboros-network-api,
     serialise,
+    text,
     unstable-byronspec,
 
 test-suite byron-test
@@ -310,6 +315,7 @@ library unstable-shelley-testlib
     cardano-ledger-shelley-ma-test,
     cardano-ledger-shelley-test,
     cardano-protocol-tpraos:{cardano-protocol-tpraos, testlib},
+    cardano-slotting,
     cardano-strict-containers,
     containers,
     generic-random,
@@ -360,6 +366,7 @@ test-suite shelley-test
     tasty,
     tasty-hunit,
     tasty-quickcheck,
+    unstable-cardano-testlib,
     unstable-shelley-testlib,
 
 library unstable-cardano-testlib
@@ -384,6 +391,7 @@ library unstable-cardano-testlib
     base,
     cardano-crypto-class,
     cardano-crypto-wrapper,
+    cardano-ledger-alonzo:testlib,
     cardano-ledger-alonzo-test,
     cardano-ledger-api,
     cardano-ledger-byron,
