@@ -289,18 +289,14 @@ instantiatePraosCredentials (PraosCredentialsUnsound ocert skUnsound) = do
               (fromIntegral $ KES.totalPeriodsKES (Proxy @(KES c)))
 
 instantiatePraosCredentials (PraosCredentialsAgent path) = do
-  cancelSignal <- newEmptyMVar
-
-  hk <- HotKey.mkEmptyHotKey
-                (fromIntegral $ KES.totalPeriodsKES (Proxy @(KES c)))
-                (putMVar cancelSignal ())
-  let handleKey ocert sk p = do
-        HotKey.set hk ocert sk p (OCert.ocertKESPeriod ocert)
-  _ <- async $
-        race_
-          (runKESAgentClient path handleKey)
-          (readMVar cancelSignal)
-  return hk
+  HotKey.mkDynamicHotKey
+      (fromIntegral $ KES.totalPeriodsKES (Proxy @(KES c)))
+      (Just $ \send -> do
+        let handleKey ocert sk p = do
+              send ocert sk p (OCert.ocertKESPeriod ocert)
+        runKESAgentClient path handleKey
+      )
+      (pure ())
 
 -- | See 'PraosProtocolSupportsNode'
 data PraosNonces = PraosNonces {

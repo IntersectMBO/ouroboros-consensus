@@ -29,6 +29,7 @@ module Ouroboros.Consensus.Protocol.Ledger.HotKey (
   , mkHotKeyEv
   , mkEmptyHotKey
   , mkShelleyHotKey
+  , mkDynamicHotKey
   , sign
   ) where
 
@@ -238,8 +239,45 @@ mkEmptyHotKey ::
   => Word64              -- ^ Max KES evolutions
   -> m ()
   -> m (HotKey c m)
-mkEmptyHotKey maxKESEvolutions finalizer = do
+mkEmptyHotKey maxKESEvolutions =
+  mkDynamicHotKey maxKESEvolutions Nothing
+
+mkKESState :: Word64 -> OCert.OCert c -> SL.SignKeyKES c -> Word -> Absolute.KESPeriod -> KESState c
+mkKESState maxKESEvolutions newOCert newKey evolution startPeriod@(Absolute.KESPeriod start) =
+    KESState {
+      kesStateInfo = KESInfo {
+          kesStartPeriod = startPeriod
+        , kesEndPeriod   = Absolute.KESPeriod (start + fromIntegral maxKESEvolutions)
+        , kesEvolution   = evolution
+      }
+      , kesStateKey = KESKey newOCert newKey
+    }
+
+-- | Create a new 'HotKey' that 
+mkDynamicHotKey ::
+     forall m c. (Crypto c, IOLike m)
+  => Word64              -- ^ Max KES evolutions
+  -> Maybe (
+        (OCert.OCert c -> SL.SignKeyKES c -> Word -> Absolute.KESPeriod -> m ())
+        -> m ()
+     )
+  -> m ()
+  -> m (HotKey c m)
+mkDynamicHotKey maxKESEvolutions keyThreadMay finalizer = do
     varKESState <- newMVar initKESState
+
+    finalizer' <- case keyThreadMay of
+      Just keyThread -> do
+        keyThreadAsync <- async
+          (keyThread $
+            \newOCert newKey evolution startPeriod ->
+                modifyMVar_ varKESState $ \oldState -> do
+                  _ <- poisonState oldState
+                  return $ mkKESState maxKESEvolutions newOCert newKey evolution startPeriod
+          )
+        return (cancel keyThreadAsync >> finalizer)
+      Nothing ->
+        return finalizer
 
     return HotKey {
         evolve     = evolveKey varKESState
@@ -259,18 +297,11 @@ mkEmptyHotKey maxKESEvolutions finalizer = do
                 SL.signedKES () evolution toSign key
       , forget = do
           modifyMVar_ varKESState $ poisonState
-      , set = \newOCert newKey evolution startPeriod@(Absolute.KESPeriod start) -> do
+      , set = \newOCert newKey evolution startPeriod -> do
           modifyMVar_ varKESState $ \oldState -> do
             _ <- poisonState oldState
-            return $ KESState {
-              kesStateInfo = KESInfo {
-                  kesStartPeriod = startPeriod
-                , kesEndPeriod   = Absolute.KESPeriod (start + fromIntegral maxKESEvolutions)
-                , kesEvolution   = evolution
-              }
-              , kesStateKey = KESKey newOCert newKey
-            }
-      , finalize = finalizer
+            return $ mkKESState maxKESEvolutions newOCert newKey evolution startPeriod
+      , finalize = finalizer'
       }
   where
     initKESState :: KESState c
