@@ -25,6 +25,7 @@ module Ouroboros.Consensus.Protocol.TPraos (
   , TPraosToSign (..)
   , TPraosValidateView
   , forgeTPraosFields
+  , genesisTPraosState
   , mkShelleyGlobals
   , mkTPraosParams
     -- * Crypto
@@ -250,6 +251,17 @@ data TPraosState c = TPraosState {
     , tpraosStateChainDepState :: !(SL.ChainDepState c)
     }
   deriving (Generic, Show, Eq)
+
+-- | Create the initial TPraos state when starting from genesis.
+genesisTPraosState :: SL.Nonce -> TPraosState c
+genesisTPraosState initialNonce = TPraosState {
+      tpraosStateLastSlot      = Origin
+    , tpraosStateChainDepState =
+        -- The second argument, the map of genesis delegates, is only used to
+        -- set the OCert counters; however, this is redundant because the OCERT
+        -- rule also handles the case when they are absent.
+        SL.initialChainDepState initialNonce Map.empty
+    }
 
 instance SL.PraosCrypto c => NoThunks (TPraosState c)
 

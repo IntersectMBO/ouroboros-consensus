@@ -189,7 +189,7 @@ data CardanoConfig = CardanoConfig {
   , conwayGenesisPath    :: FilePath
 
     -- | @Test*HardForkAtEpoch@ for each Shelley era
-  , cfgHardForkTriggers  :: CardanoHardForkTriggers
+  , cfgHardForkTriggers  :: CardanoHardForkTriggers StandardCrypto
   }
 
 instance AdjustFilePaths CardanoConfig where
@@ -363,7 +363,7 @@ mkCardanoProtocolInfo ::
   -> Maybe PBftSignatureThreshold
   -> SL.TransitionConfig (L.LatestKnownEra StandardCrypto)
   -> Nonce
-  -> CardanoHardForkTriggers
+  -> CardanoHardForkTriggers StandardCrypto
   -> ProtocolInfo (CardanoBlock StandardCrypto)
 mkCardanoProtocolInfo genesisByron signatureThreshold transitionConfig initialNonce triggers =
     fst $ protocolInfoCardano @_ @IO

@@ -11,9 +11,11 @@ module Ouroboros.Consensus.HardFork.Combinator.State.Types (
   , Past (..)
   , sequenceHardForkState
     -- * Supporting types
+  , CrossEra (..)
   , CrossEraForecaster (..)
+  , CrossEraTickChainDepState (..)
+  , CrossEraTickLedgerState (..)
   , TransitionInfo (..)
-  , Translate (..)
   ) where
 
 import           Control.Monad.Except
@@ -27,6 +29,9 @@ import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Forecast
 import           Ouroboros.Consensus.HardFork.History (Bound)
+import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Protocol.Abstract
+import           Ouroboros.Consensus.Ticked
 import           Prelude
 
 {-------------------------------------------------------------------------------
@@ -108,11 +113,30 @@ sequenceHardForkState (HardForkState tel) =
   Supporting types
 -------------------------------------------------------------------------------}
 
--- | Translate @f x@ to @f y@ across an era transition
---
--- Typically @f@ will be 'LedgerState' or 'WrapChainDepState'.
-newtype Translate f x y = Translate {
-      translateWith :: EpochNo -> f x -> f y
+newtype CrossEra f f' f'' x y = CrossEra {
+      crossEra ::
+           Current f' y  -- State that already is in the new era
+        -> f          x  -- State in the old era
+        -> f''        y  -- State to compute for the new era
+    }
+
+-- TODO docs
+newtype CrossEraTickLedgerState x y = CrossEraTickLedgerState {
+      crossEraTickLedgerStateWith ::
+           Bound -- 'Bound' of the transition (start of the new era)
+        -> SlotNo -- 'SlotNo' we are ticking to
+        -> LedgerState x
+        -> LedgerResult (LedgerState y) (TickedLedgerState y)
+    }
+
+-- TODO docs
+newtype CrossEraTickChainDepState x y = CrossEraTickChainDepState {
+      crossEraTickChainDepStateWith ::
+           Bound -- 'Bound' of the transition (start of the new era)
+        -> LedgerView (BlockProtocol y)
+        -> SlotNo -- 'SlotNo' we are ticking to
+        -> ChainDepState (BlockProtocol x)
+        -> Ticked (ChainDepState (BlockProtocol y))
     }
 
 -- | Forecast a @view y@ from a @state x@ across an era transition.

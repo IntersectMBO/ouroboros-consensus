@@ -28,7 +28,8 @@ module Data.SOP.InPairs (
   , hpure
     -- * Requiring
   , Requiring (..)
-  , RequiringBoth (..)
+  , RequiringBoth
+  , RequiringBoth' (..)
   , ignoring
   , ignoringBoth
   , requiring
@@ -117,14 +118,16 @@ newtype Requiring h f x y = Require {
       provide :: h x -> f x y
     }
 
-newtype RequiringBoth h f x y = RequireBoth {
-      provideBoth :: h x -> h y -> f x y
+newtype RequiringBoth' h h' f x y = RequireBoth {
+      provideBoth :: h x -> h' y -> f x y
     }
+
+type RequiringBoth h = RequiringBoth' h h
 
 ignoring :: f x y -> Requiring h f x y
 ignoring fxy = Require $ const fxy
 
-ignoringBoth :: f x y -> RequiringBoth h f x y
+ignoringBoth :: f x y -> RequiringBoth' h h' f x y
 ignoringBoth fxy = RequireBoth $ \_ _ -> fxy
 
 requiring :: SListI xs => NP h xs -> InPairs (Requiring h f) xs -> InPairs f xs
