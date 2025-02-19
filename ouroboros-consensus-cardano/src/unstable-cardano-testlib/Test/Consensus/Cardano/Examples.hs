@@ -96,7 +96,7 @@ combineEras = mconcat . hcollapse . hap eraInjections
       -> Examples (CardanoBlock Crypto)
     injExamples eraName idx =
           prefixExamples eraName
-        . inject exampleStartBounds idx
+        . inject (InjectionContext exampleStartBounds) idx
 
 {-------------------------------------------------------------------------------
   Inject instances

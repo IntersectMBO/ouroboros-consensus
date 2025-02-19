@@ -10,6 +10,7 @@
 
 module Ouroboros.Consensus.HardFork.Combinator.Embed.Nary (
     Inject (..)
+  , InjectionContext (InjectionContext)
   , inject'
     -- * Defaults
   , injectHardForkState
@@ -43,11 +44,23 @@ import           Ouroboros.Consensus.Util ((.:))
   Injection for a single block into a HardForkBlock
 -------------------------------------------------------------------------------}
 
+-- | Start bound of each era
+--
+-- This data is oracular, since the later eras in @xs@ might have not yet
+-- started. However, it can be known in test code.
+--
+-- Moreover, the result of the 'inject' function must be independent of the
+-- 'History.Bound' values given for eras strictly /after/ the given 'Index'
+-- argument. No code currently relies on that invariant, but eg
+-- 'injectInitialExtLedgerState' could soundly do so, since in that case the
+-- given 'Index' would identify a prefix of the eras that /all/ start at the
+-- onset of slot 0.
+newtype InjectionContext xs = InjectionContext (Exactly xs History.Bound)
+
 class Inject f where
   inject ::
        forall x xs. CanHardFork xs
-    => Exactly xs History.Bound
-       -- ^ Start bound of each era
+    => InjectionContext xs
     -> Index xs x
     -> f x
     -> f (HardForkBlock xs)
@@ -59,7 +72,7 @@ inject' ::
      , Coercible a (f x)
      , Coercible b (f (HardForkBlock xs))
      )
-  => Proxy f -> Exactly xs History.Bound -> Index xs x -> a -> b
+  => Proxy f -> InjectionContext xs -> Index xs x -> a -> b
 inject' _ startBounds idx = coerce . inject @f startBounds idx . coerce
 
 {-------------------------------------------------------------------------------
@@ -86,12 +99,11 @@ injectQuery idx q = case idx of
 
 injectHardForkState ::
      forall f x xs.
-     Exactly xs History.Bound
-     -- ^ Start bound of each era
+     InjectionContext xs
   -> Index xs x
   -> f x
   -> HardForkState f xs
-injectHardForkState startBounds idx x =
+injectHardForkState (InjectionContext startBounds) idx x =
     HardForkState $ go startBounds idx
   where
     go ::
@@ -184,6 +196,9 @@ instance Inject ExtLedgerState where
 -- extending 'applyChainTick' to translate across more than one era is not
 -- problematic, but extending 'ledgerViewForecastAt' is a lot more subtle; see
 -- @forecastNotFinal@.
+--
+-- Note: this function is an /alternative/ to the 'Inject' class above. It does
+-- not rely on that class.
 injectInitialExtLedgerState ::
      forall x xs. CanHardFork (x ': xs)
   => TopLevelConfig (HardForkBlock (x ': xs))
