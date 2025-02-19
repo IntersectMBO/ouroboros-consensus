@@ -230,6 +230,7 @@ protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
                   instantiatePraosCredentials
                     (tpraosMaxKESEvo tpraosParams)
                     (praosCanBeLeaderCredentialsSource canBeLeader)
+
       return $ shelleyBlockForging tpraosParams hotKey credentials
 
     genesis :: SL.ShelleyGenesis c
