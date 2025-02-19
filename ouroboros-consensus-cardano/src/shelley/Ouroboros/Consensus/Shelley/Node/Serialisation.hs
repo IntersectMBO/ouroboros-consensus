@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -10,14 +11,27 @@
 
 module Ouroboros.Consensus.Shelley.Node.Serialisation () where
 
-import           Cardano.Ledger.Binary (fromCBOR, toCBOR)
+import           Cardano.Binary
+import           Cardano.Ledger.BaseTypes
 import           Cardano.Ledger.Core (fromEraCBOR, toEraCBOR)
+import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
+import qualified Cardano.Protocol.TPraos.API as SL
+import           Cardano.Slotting.EpochInfo (epochInfoSize,
+                     epochInfoSlotToRelativeTime, fixedEpochInfo,
+                     hoistEpochInfo)
+import           Cardano.Slotting.Time
 import           Codec.Serialise (decode, encode)
 import           Control.Exception (Exception, throw)
 import qualified Data.ByteString.Lazy as Lazy
+import           Data.Functor.Identity
 import           Data.Typeable (Typeable)
+import           Data.Word
 import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.HardFork.Combinator.Abstract.NoHardForks
+import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
+import           Ouroboros.Consensus.HardFork.History.EpochInfo
+import           Ouroboros.Consensus.HardFork.Simple
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
 import           Ouroboros.Consensus.Node.Run
@@ -145,7 +159,7 @@ data ShelleyEncoderException era proto =
 instance (Typeable era, Typeable proto)
   => Exception (ShelleyEncoderException era proto)
 
-instance (ShelleyCompatible proto era) -- , Crypto (ProtoCrypto proto))
+instance (NoHardForks (ShelleyBlock proto era), ShelleyCompatible proto era)
   => SerialiseNodeToClientConstraints (ShelleyBlock proto era)
 
 -- | CBOR-in-CBOR for the annotation. This also makes it compatible with the
@@ -154,6 +168,130 @@ instance ShelleyCompatible proto era
   => SerialiseNodeToClient (ShelleyBlock proto era) (ShelleyBlock proto era) where
   encodeNodeToClient _ _ = wrapCBORinCBOR   encodeShelleyBlock
   decodeNodeToClient _ _ = unwrapCBORinCBOR decodeShelleyBlock
+
+--------------------------------------------------------------------------------
+--  ↓↓↓ REMOVE ↓↓↓
+--
+-- This code fills the holes from
+-- https://github.com/IntersectMBO/cardano-ledger/issues/4893 and must
+-- be removed before merging!!
+--------------------------------------------------------------------------------
+
+instance FromCBOR ActiveSlotCoeff where
+  fromCBOR = undefined
+instance FromCBOR Network where
+  fromCBOR = undefined
+instance ToCBOR ActiveSlotCoeff where
+  toCBOR = undefined
+instance ToCBOR Network where
+  toCBOR = undefined
+
+--------------------------------------------------------------------------------
+-- ↑↑↑ REMOVE ↑↑↑
+--------------------------------------------------------------------------------
+
+-- | This instance uses the invariant that the 'EpochInfo' in a
+-- 'ShelleyLedgerConfig' is fixed i.e. has a constant 'EpochSize' and
+-- 'SlotLength'. This is not true in the case of the HFC in a
+-- 'ShelleyPartialLedgerConfig', but that is handled correctly in the respective
+-- 'SerialiseNodeToClient' instance for 'ShelleyPartialLedgerConfig'.
+instance (NoHardForks (ShelleyBlock proto era), ShelleyCompatible proto era)
+      => SerialiseNodeToClient (ShelleyBlock proto era) (ShelleyLedgerConfig era) where
+  decodeNodeToClient ccfg version = do
+    enforceSize "ShelleyLedgerConfig" 3
+    partialConfig <- decodeNodeToClient
+      @_
+      @(ShelleyPartialLedgerConfig era)
+      ccfg
+      version
+    epochSize     <- fromCBOR @EpochSize
+    slotLength    <- decode @SlotLength
+    return $ completeLedgerConfig
+      (Proxy @(ShelleyBlock proto era))
+      (fixedEpochInfo epochSize slotLength)
+      partialConfig
+
+  encodeNodeToClient ccfg version ledgerConfig = mconcat [
+      encodeListLen 3
+    , encodeNodeToClient
+        @_
+        @(ShelleyPartialLedgerConfig era)
+        ccfg
+        version
+        (toPartialLedgerConfig (Proxy @(ShelleyBlock proto era)) ledgerConfig)
+    , toCBOR @EpochSize epochSize
+    , encode @SlotLength slotLength
+    ]
+    where
+      unwrap          = either
+                        (error "ShelleyLedgerConfig contains a non-fixed EpochInfo")
+                        id
+      ei              = epochInfo (shelleyLedgerGlobals ledgerConfig)
+      epochSize       = unwrap $ epochInfoSize ei (EpochNo 0)
+      RelativeTime t1 = unwrap $ epochInfoSlotToRelativeTime ei 1
+      slotLength      = mkSlotLength t1
+
+-- | This instance uses the invariant that the 'EpochInfo' in a
+-- 'ShelleyPartialLedgerConfig' is always just a dummy value.
+instance ShelleyBasedEra era
+      => SerialiseNodeToClient (ShelleyBlock proto era) (ShelleyPartialLedgerConfig era) where
+  decodeNodeToClient ccfg version = do
+    enforceSize "ShelleyPartialLedgerConfig era" 14
+    ShelleyPartialLedgerConfig
+      <$> ( ShelleyLedgerConfig
+        <$> fromCBOR @(CompactGenesis (EraCrypto era))
+        <*> (SL.Globals
+              (hoistEpochInfo (Right . runIdentity) $ toPureEpochInfo dummyEpochInfo)
+              <$> fromCBOR @Word64
+              <*> fromCBOR @Word64
+              <*> fromCBOR @Word64
+              <*> fromCBOR @Word64
+              <*> fromCBOR @Word64
+              <*> fromCBOR @Word64
+              <*> fromCBOR @Word64
+              <*> fromCBOR @ActiveSlotCoeff
+              <*> fromCBOR @SL.Network
+              <*> fromCBOR @SystemStart
+            )
+        <*> fromCBOR @(SL.TranslationContext era)
+      )
+      <*> decodeNodeToClient @(ShelleyBlock proto era) @TriggerHardFork ccfg version
+
+  encodeNodeToClient ccfg version
+    (ShelleyPartialLedgerConfig
+      (ShelleyLedgerConfig
+        myCompactGenesis
+        (SL.Globals
+          _epochInfo
+          slotsPerKESPeriod'
+          stabilityWindow'
+          randomnessStabilisationWindow'
+          securityParameter'
+          maxKESEvo'
+          quorum'
+          maxLovelaceSupply'
+          activeSlotCoeff'
+          networkId'
+          systemStart'
+        )
+        translationContext
+      )
+      triggerHardFork
+    )
+      = encodeListLen 14
+        <> toCBOR @(CompactGenesis (EraCrypto era)) myCompactGenesis
+        <> toCBOR @Word64 slotsPerKESPeriod'
+        <> toCBOR @Word64 stabilityWindow'
+        <> toCBOR @Word64 randomnessStabilisationWindow'
+        <> toCBOR @Word64 securityParameter'
+        <> toCBOR @Word64 maxKESEvo'
+        <> toCBOR @Word64 quorum'
+        <> toCBOR @Word64 maxLovelaceSupply'
+        <> toCBOR @ActiveSlotCoeff activeSlotCoeff'
+        <> toCBOR @SL.Network networkId'
+        <> toCBOR @SystemStart systemStart'
+        <> toCBOR @(SL.TranslationContext era) translationContext
+        <> encodeNodeToClient @(ShelleyBlock proto era) @TriggerHardFork ccfg version triggerHardFork
 
 -- | 'Serialised' uses CBOR-in-CBOR by default.
 instance SerialiseNodeToClient (ShelleyBlock proto era) (Serialised (ShelleyBlock proto era))
