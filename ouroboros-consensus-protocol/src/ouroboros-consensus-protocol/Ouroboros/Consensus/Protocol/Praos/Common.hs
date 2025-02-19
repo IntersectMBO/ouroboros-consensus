@@ -36,7 +36,6 @@ import           Cardano.Slotting.Slot (SlotNo)
 import           Data.Function (on)
 import           Data.Map.Strict (Map)
 import           Data.Ord (Down (Down))
-import           Data.Proxy
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Protocol.Abstract
@@ -275,9 +274,10 @@ instance (NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (P
 instantiatePraosCredentials :: forall m c.
                                ( KESAgentContext c m
                                )
-                            => PraosCredentialsSource c
+                            => Word64
+                            -> PraosCredentialsSource c
                             -> m (HotKey.HotKey c m)
-instantiatePraosCredentials (PraosCredentialsUnsound ocert skUnsound) = do
+instantiatePraosCredentials maxKESEvolutions (PraosCredentialsUnsound ocert skUnsound) = do
   sk <- KES.unsoundPureSignKeyKESToSoundSignKeyKES skUnsound
   let startPeriod :: OCert.KESPeriod
       startPeriod = OCert.ocertKESPeriod ocert
@@ -286,11 +286,11 @@ instantiatePraosCredentials (PraosCredentialsUnsound ocert skUnsound) = do
               ocert
               sk
               startPeriod
-              (fromIntegral $ KES.totalPeriodsKES (Proxy @(KES c)))
+              maxKESEvolutions
 
-instantiatePraosCredentials (PraosCredentialsAgent path) = do
+instantiatePraosCredentials maxKESEvolutions (PraosCredentialsAgent path) = do
   HotKey.mkDynamicHotKey
-      (fromIntegral $ KES.totalPeriodsKES (Proxy @(KES c)))
+      maxKESEvolutions
       (Just $ \send -> do
         let handleKey ocert sk p = do
               send ocert sk p (OCert.ocertKESPeriod ocert)

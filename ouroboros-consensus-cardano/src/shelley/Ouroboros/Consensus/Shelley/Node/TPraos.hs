@@ -226,7 +226,10 @@ protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
     mkBlockForging credentials = do
       let canBeLeader = shelleyLeaderCredentialsCanBeLeader credentials
 
-      hotKey :: HotKey c m <- instantiatePraosCredentials (praosCanBeLeaderCredentialsSource canBeLeader)
+      hotKey :: HotKey c m <-
+                  instantiatePraosCredentials
+                    (tpraosMaxKESEvo tpraosParams)
+                    (praosCanBeLeaderCredentialsSource canBeLeader)
 
       return $ shelleyBlockForging tpraosParams hotKey credentials
 

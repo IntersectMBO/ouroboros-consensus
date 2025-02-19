@@ -864,7 +864,13 @@ protocolInfoCardano paramsCardano
             slotToPeriod (SlotNo slot) = assert (tpraosSlotsPerKESPeriod == praosSlotsPerKESPeriod) $
               Absolute.KESPeriod $ fromIntegral $ slot `div` praosSlotsPerKESPeriod
 
-        hotKey :: HotKey c m <- instantiatePraosCredentials (praosCanBeLeaderCredentialsSource canBeLeader)
+        let maxKESEvo = assert (tpraosMaxKESEvo tpraosParams == praosMaxKESEvo praosParams) $
+                        tpraosMaxKESEvo tpraosParams
+
+        hotKey :: HotKey c m <-
+                    instantiatePraosCredentials
+                    maxKESEvo
+                    (praosCanBeLeaderCredentialsSource canBeLeader)
 
         let tpraos :: forall era.
                  ShelleyEraWithCrypto c       (TPraos c) era
