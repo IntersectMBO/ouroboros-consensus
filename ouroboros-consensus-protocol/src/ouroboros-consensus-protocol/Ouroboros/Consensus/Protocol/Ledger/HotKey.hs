@@ -44,6 +44,7 @@ import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block.Forging (UpdateInfo (..))
 import           Ouroboros.Consensus.Util.IOLike
 import           NoThunks.Class (OnlyCheckWhnfNamed (..))
+import           Control.Monad (forM_)
 
 {-------------------------------------------------------------------------------
   KES Info
@@ -150,19 +151,10 @@ data HotKey c m = HotKey {
     , sign_      :: forall toSign. (SL.KESignable c toSign, HasCallStack)
                  => toSign
                  -> m (SL.SignedKES c toSign)
+
       -- | Securely erase the key and release its memory.
     , forget :: m ()
 
-      -- | Set a new sign key.
-    , set :: OCert.OCert c
-             -- ^ The new OCert
-          -> SL.SignKeyKES c
-             -- ^ The new KES key
-          -> Word
-             -- ^ The new KES key's current evolution
-          -> Absolute.KESPeriod
-             -- ^ Start period (relative to the KES key's 0th evolution)
-          -> m ()
     , finalize :: m ()
     }
 
@@ -212,10 +204,7 @@ mkHotKey ::
   -> Absolute.KESPeriod  -- ^ Start period
   -> Word64              -- ^ Max KES evolutions
   -> m (HotKey c m)
-mkHotKey ocert initKey startPeriod maxKESEvolutions = do
-  hotKey <- mkEmptyHotKey maxKESEvolutions (pure ())
-  set hotKey ocert initKey 0 startPeriod
-  return hotKey
+mkHotKey = mkHotKeyEv 0
 
 -- Create a new 'HotKey' and initialize it to the given initial KES key. The
 -- initial key should be at the given evolution.
@@ -227,10 +216,12 @@ mkHotKeyEv ::
   -> Absolute.KESPeriod  -- ^ Start period
   -> Word64              -- ^ Max KES evolutions
   -> m (HotKey c m)
-mkHotKeyEv evolution ocert initKey startPeriod maxKESEvolutions = do
-  hotKey <- mkEmptyHotKey maxKESEvolutions (pure ())
-  set hotKey ocert initKey evolution startPeriod
-  return hotKey
+mkHotKeyEv evolution ocert initKey startPeriod maxKESEvolutions =
+  mkHotKeyWith
+    (Just (ocert, initKey, evolution, startPeriod))
+    maxKESEvolutions
+    Nothing
+    (pure ())
 
 -- | Create a new 'HotKey' and initialize it to a poisoned state (containing no
 -- valid KES sign key).
@@ -253,7 +244,10 @@ mkKESState maxKESEvolutions newOCert newKey evolution startPeriod@(Absolute.KESP
       , kesStateKey = KESKey newOCert newKey
     }
 
--- | Create a new 'HotKey' that 
+-- | Create a new 'HotKey' that runs a key-producer action on a separate thread.
+-- The key producer action will receive a callback that can be used to pass
+-- keys into the HotKey; the HotKey will dynamically update its internal state
+-- to reflect new keys as they arrive.
 mkDynamicHotKey ::
      forall m c. (Crypto c, IOLike m)
   => Word64              -- ^ Max KES evolutions
@@ -263,18 +257,39 @@ mkDynamicHotKey ::
      )
   -> m ()
   -> m (HotKey c m)
-mkDynamicHotKey maxKESEvolutions keyThreadMay finalizer = do
+-- | Create a new 'HotKey' that runs a key-producer action on a separate thread.
+-- The key producer action will receive a callback that can be used to pass
+-- keys into the HotKey; the HotKey will dynamically update its internal state
+-- to reflect new keys as they arrive.
+mkDynamicHotKey = mkHotKeyWith Nothing
+
+-- | The most general function for creating a new 'HotKey', accepting an initial
+-- set of credentials, a key producer action, and a custom finalizer.
+mkHotKeyWith ::
+     forall m c. (Crypto c, IOLike m)
+  => Maybe (OCert.OCert c, SL.SignKeyKES c, Word, Absolute.KESPeriod)
+  -> Word64              -- ^ Max KES evolutions
+  -> Maybe (
+        (OCert.OCert c -> SL.SignKeyKES c -> Word -> Absolute.KESPeriod -> m ())
+        -> m ()
+     )
+  -> m ()
+  -> m (HotKey c m)
+mkHotKeyWith initialStateMay maxKESEvolutions keyThreadMay finalizer = do
     varKESState <- newMVar initKESState
+
+    let set newOCert newKey evolution startPeriod =
+          modifyMVar_ varKESState $ \oldState -> do
+            _ <- poisonState oldState
+            return $ mkKESState maxKESEvolutions newOCert newKey evolution startPeriod
+
+    forM_ initialStateMay $ \(newOCert, newKey, evolution, startPeriod) ->
+            set newOCert newKey evolution startPeriod
 
     finalizer' <- case keyThreadMay of
       Just keyThread -> do
         keyThreadAsync <- async
-          (keyThread $
-            \newOCert newKey evolution startPeriod ->
-                modifyMVar_ varKESState $ \oldState -> do
-                  _ <- poisonState oldState
-                  return $ mkKESState maxKESEvolutions newOCert newKey evolution startPeriod
-          )
+          (keyThread set)
         return (cancel keyThreadAsync >> finalizer)
       Nothing ->
         return finalizer
@@ -297,10 +312,6 @@ mkDynamicHotKey maxKESEvolutions keyThreadMay finalizer = do
                 SL.signedKES () evolution toSign key
       , forget = do
           modifyMVar_ varKESState $ poisonState
-      , set = \newOCert newKey evolution startPeriod -> do
-          modifyMVar_ varKESState $ \oldState -> do
-            _ <- poisonState oldState
-            return $ mkKESState maxKESEvolutions newOCert newKey evolution startPeriod
       , finalize = finalizer'
       }
   where
