@@ -164,6 +164,8 @@ data HotKey c m = HotKey {
       -- | Securely erase the key and release its memory.
     , forget :: m ()
 
+      -- | Release any resources held by the 'HotKey'. Must be run exactly once
+      -- per 'HotKey'.
     , finalize :: m ()
     }
 
