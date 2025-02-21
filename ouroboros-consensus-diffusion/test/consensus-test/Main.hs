@@ -1,7 +1,7 @@
 module Main (main) where
 
 import qualified Test.Consensus.Genesis.Tests (tests)
-import qualified Test.Consensus.GSM (tests)
+import qualified Test.Consensus.GSM.QSM (tests)
 import qualified Test.Consensus.HardFork.Combinator (tests)
 import qualified Test.Consensus.Node (tests)
 import qualified Test.Consensus.PeerSimulator.Tests (tests)
@@ -24,7 +24,7 @@ tests =
           ]
       ]
   , Test.Consensus.Genesis.Tests.tests
-  , testGroup "GSM" Test.Consensus.GSM.tests
+  , testGroup "GSM" Test.Consensus.GSM.QSM.tests
   , Test.Consensus.PeerSimulator.Tests.tests
   , Test.Consensus.PointSchedule.Shrinking.Tests.tests
   , Test.Consensus.PointSchedule.Tests.tests

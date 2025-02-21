@@ -1,7 +1,9 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE Rank2Types #-}
 
-module Test.Consensus.GSM (tests) where
+-- | Tests for the Genesis State Machine using the quickcheck-state-machine library
+
+module Test.Consensus.GSM.QSM (tests) where
 
 import           Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked
 import           Control.Monad (replicateM_)
@@ -19,7 +21,7 @@ import qualified Ouroboros.Consensus.Node.GSM as GSM
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
 import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
                      (LedgerStateJudgement (..))
-import           Test.Consensus.GSM.Model
+import           Test.Consensus.GSM.QSM.Model
 import           Test.Consensus.IOSimQSM.Test.StateMachine.Sequential
                      (runCommands')
 import qualified Test.QuickCheck as QC
