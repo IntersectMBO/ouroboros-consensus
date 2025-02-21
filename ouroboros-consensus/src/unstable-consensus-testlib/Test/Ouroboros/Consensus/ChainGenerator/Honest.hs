@@ -46,7 +46,7 @@ import           Test.Ouroboros.Consensus.ChainGenerator.Slot
                      (E (ActiveSlotE, SlotE), S)
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Some as Some
 import qualified Test.QuickCheck as QC
-import           Test.QuickCheck.Extras (sized1)
+import           Test.Ouroboros.Consensus.QuickCheck.Extras (sized1)
 
 -----
 
