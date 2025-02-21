@@ -13,7 +13,6 @@ module Ouroboros.Consensus.Block.Abstract (
   , BlockConfig
   , CodecConfig
   , StorageConfig
-  , BlockForgingCredentials
     -- * Previous hash
   , GetPrevHash (..)
   , blockPrevHash
@@ -108,10 +107,6 @@ data family CodecConfig blk :: Type
 -- 'Ouroboros.Consensus.Node.InitStorage.NodeInitStorage' class. Defined here to
 -- avoid circular dependencies.
 data family StorageConfig blk :: Type
-
--- | Credentials needed for block forging. In eras that use KES, this will be
--- a pair of KES sign key and OpCert; in other eras, it should be 'Void'.
-type family BlockForgingCredentials blk :: Type
 
 {-------------------------------------------------------------------------------
   Get hash of previous block

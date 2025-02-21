@@ -38,9 +38,6 @@ module Ouroboros.Consensus.Cardano.Node (
   , CardanoHardForkTriggers (.., CardanoHardForkTriggers', triggerHardForkShelley, triggerHardForkAllegra, triggerHardForkMary, triggerHardForkAlonzo, triggerHardForkBabbage, triggerHardForkConway)
   , CardanoProtocolParams (..)
   , MaxMajorProtVer (..)
-  , ProtocolParamsByron
-  , ProtocolParamsShelleyBased
-  , CheckpointsMap
   , TriggerHardFork (..)
   , protocolClientInfoCardano
   , protocolInfoCardano
@@ -74,7 +71,7 @@ import           Data.SOP.Index (Index (..))
 import           Data.SOP.OptNP (NonEmptyOptNP, OptNP (OptSkip))
 import qualified Data.SOP.OptNP as OptNP
 import           Data.SOP.Strict
-import           Data.Word (Word16)
+import           Data.Word (Word16, Word64)
 import           Lens.Micro ((^.))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger (ByronBlock)
@@ -479,7 +476,7 @@ protocolInfoCardano paramsCardano
   , length credssShelleyBased > 1
   = error "Multiple Shelley-based credentials not allowed for mainnet"
   | otherwise
-  = assertWithMsg (validateGenesis genesisShelley) $
+  = assertWithMsg (validateGenesis genesisShelley)
     ( ProtocolInfo {
         pInfoConfig       = cfg
       , pInfoInitLedger   = initExtLedgerStateCardano
@@ -559,7 +556,7 @@ protocolInfoCardano paramsCardano
           initialNonceShelley
           genesisShelley
 
-    TPraosParams { tpraosSlotsPerKESPeriod } = tpraosParams
+    TPraosParams { tpraosSlotsPerKESPeriod, tpraosMaxKESEvo } = tpraosParams
 
     praosParams :: PraosParams
     praosParams = PraosParams
@@ -576,7 +573,7 @@ protocolInfoCardano paramsCardano
             (SL.mkActiveSlotCoeff $ SL.sgActiveSlotsCoeff genesisShelley)
       }
 
-    PraosParams { praosSlotsPerKESPeriod } = praosParams
+    PraosParams { praosSlotsPerKESPeriod, praosMaxKESEvo } = praosParams
 
     blockConfigShelley :: BlockConfig (ShelleyBlock (TPraos c) (ShelleyEra c))
     blockConfigShelley =
@@ -831,7 +828,7 @@ protocolInfoCardano paramsCardano
     -- credentials. If there are multiple Shelley credentials, we merge the
     -- Byron credentials with the first Shelley one but still have separate
     -- threads for the remaining Shelley ones.
-    mkBlockForgings :: m ([BlockForging m (CardanoBlock c)])
+    mkBlockForgings :: m [BlockForging m (CardanoBlock c)]
     mkBlockForgings = do
         shelleyBased <- traverse blockForgingShelleyBased credssShelleyBased
         let blockForgings :: [NonEmptyOptNP (BlockForging m) (CardanoEras c)]
@@ -864,8 +861,8 @@ protocolInfoCardano paramsCardano
             slotToPeriod (SlotNo slot) = assert (tpraosSlotsPerKESPeriod == praosSlotsPerKESPeriod) $
               Absolute.KESPeriod $ fromIntegral $ slot `div` praosSlotsPerKESPeriod
 
-        let maxKESEvo = assert (tpraosMaxKESEvo tpraosParams == praosMaxKESEvo praosParams) $
-                        tpraosMaxKESEvo tpraosParams
+        let maxKESEvo :: Word64
+            maxKESEvo = assert (tpraosMaxKESEvo == praosMaxKESEvo) praosMaxKESEvo
 
         hotKey :: HotKey c m <-
                     instantiatePraosCredentials

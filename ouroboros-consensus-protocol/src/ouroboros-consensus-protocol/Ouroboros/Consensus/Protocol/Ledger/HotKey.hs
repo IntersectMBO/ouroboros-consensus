@@ -28,7 +28,6 @@ module Ouroboros.Consensus.Protocol.Ledger.HotKey (
   , mkHotKey
   , mkHotKeyEv
   , mkEmptyHotKey
-  , mkShelleyHotKey
   , mkDynamicHotKey
   , sign
   ) where
@@ -138,11 +137,21 @@ data HotKey c m = HotKey {
       --
       -- When the key cannot evolve anymore, we poison it.
       evolve     :: Absolute.KESPeriod -> m KESEvolutionInfo
+
       -- | Return 'KESInfo' of the signing key.
     , getInfo    :: m KESInfo
-      -- | Return 'True' when the signing key is poisoned because it expired.
+
+      -- | Return the 'OCert' corresponding to the KES signing key, if any.
     , getOCertMaybe :: m (Maybe (OCert.OCert c))
+
+      -- | Check whether a valid KES signing key exists. "Poisoned" means no
+      -- key exists; reasons for this could be:
+      -- - no signing key has been set yet
+      -- - the signing key has been explicitly erased ('forget')
+      -- - the signing key has been evolved past the end of the available
+      --   evolutions
     , isPoisoned :: m Bool
+
       -- | Sign the given @toSign@ with the current signing key.
       --
       -- PRECONDITION: the key is not poisoned.
@@ -187,8 +196,8 @@ kesKeyIsPoisoned KESKeyPoisoned = True
 kesKeyIsPoisoned (KESKey _ _)     = False
 
 data KESState c = KESState {
-      kesStateInfo  :: !KESInfo
-    , kesStateKey   :: !(KESKey c)
+      kesStateInfo :: !KESInfo
+    , kesStateKey  :: !(KESKey c)
     }
   deriving (Generic)
 
@@ -325,15 +334,6 @@ mkHotKeyWith initialStateMay maxKESEvolutions keyThreadMay finalizer = do
           }
       , kesStateKey = KESKeyPoisoned
       }
-
-mkShelleyHotKey :: forall m c. (Crypto c, IOLike m)
-                => OCert.OCert c
-                -> SL.SignKeyKES c
-                -> Absolute.KESPeriod
-                -> Word64
-                -> m (HotKey c m)
-mkShelleyHotKey ocert sk startPeriod maxEvolutions =
-  mkHotKey ocert sk startPeriod maxEvolutions
 
 poisonState :: forall m c. (Crypto c, IOLike m)
             => KESState c -> m (KESState c)

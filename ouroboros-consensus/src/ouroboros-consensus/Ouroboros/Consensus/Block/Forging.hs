@@ -144,6 +144,12 @@ data BlockForging m blk = BlockForging {
         -> IsLeader (BlockProtocol blk) -- Proof we are leader
         -> m blk
 
+      -- | Clean up any unmanaged resources.
+      --
+      -- Such resources may include KES keys that require explicit erasing
+      -- ("secure forgetting"), and threads that connect to a KES agent.
+      -- This method will be run once when the block forging thread
+      -- terminates, whether cleanly or due to an exception.
     , finalize :: m ()
 
     }

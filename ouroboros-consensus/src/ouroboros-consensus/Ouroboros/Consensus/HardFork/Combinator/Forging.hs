@@ -106,7 +106,6 @@ hardForkCanBeLeader =
 hardForkFinalize :: (Monad m, All Top xs)
                  => NonEmptyOptNP (BlockForging m) xs -> m ()
 hardForkFinalize blockForging =
-  -- pure ()
   void $ htraverse_ finalize blockForging
 
 -- | POSTCONDITION: the returned 'ForgeStateUpdateInfo' is from the same era as

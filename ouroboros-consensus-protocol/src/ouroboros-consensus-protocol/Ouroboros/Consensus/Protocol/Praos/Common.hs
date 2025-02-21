@@ -258,18 +258,17 @@ data PraosCanBeLeader c = PraosCanBeLeader
     praosCanBeLeaderColdVerKey :: !(SL.VKey 'SL.BlockIssuer c),
     praosCanBeLeaderSignKeyVRF :: !(SL.SignKeyVRF c),
     praosCanBeLeaderCredentialsSource :: !(PraosCredentialsSource c)
-    -- praosCanBeLeaderOCert :: !(OCert.OCert c),
-    -- praosCanBeLeaderKESKey :: !(SL.SignKeyKES c)
   }
   deriving (Generic)
+
+instance (NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (PraosCanBeLeader c)
 
 data PraosCredentialsSource c
   = PraosCredentialsUnsound (OCert.OCert c) (KES.UnsoundPureSignKeyKES (KES c))
   | PraosCredentialsAgent FilePath
   deriving (Generic)
 
-instance (Crypto c) => NoThunks (PraosCredentialsSource c)
-instance (Crypto c) => NoThunks (PraosCanBeLeader c)
+instance (NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (PraosCredentialsSource c)
 
 instantiatePraosCredentials :: forall m c.
                                ( KESAgentContext c m
