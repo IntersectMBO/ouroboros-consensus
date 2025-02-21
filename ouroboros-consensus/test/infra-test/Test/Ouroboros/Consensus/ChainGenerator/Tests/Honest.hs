@@ -22,7 +22,7 @@ import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc,
                      Delta (Delta), Kcp (Kcp), Len (Len), Scg (Scg), genAsc,
                      genKSD)
 import qualified Test.QuickCheck as QC
-import           Test.QuickCheck.Extras (sized1, unsafeMapSuchThatJust)
+import           Test.Ouroboros.Consensus.QuickCheck.Extras (sized1, unsafeMapSuchThatJust)
 import           Test.QuickCheck.Random (QCGen)
 import qualified Test.Tasty as TT
 import qualified Test.Tasty.QuickCheck as TT
