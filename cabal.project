@@ -26,6 +26,8 @@ packages:
   sop-extras
   strict-sop-core
 
+allow-newer: plutus-core:cardano-crypto-class
+
 -- We want to always build the test-suites and benchmarks
 tests: true
 benchmarks: true
@@ -44,14 +46,6 @@ package ouroboros-network
 if(os(windows))
   constraints:
     bitvec -simd
-
-source-repository-package
-  type: git
-  location: https://github.com/input-output-hk/cardano-base
-  tag: b2cec3fbcde4bacb9c961e5510d5a1d3754c4e2b
-  --sha256: sha256-TDEBINZ3SkhpRNomMdt53bR3gdzgkWR9jIlAr8yrU6o=
-  subdir:
-      cardano-crypto-class
 
 source-repository-package
   type: git

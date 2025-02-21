@@ -207,7 +207,8 @@ data HotKey c =
   | HotKeyPoisoned
   deriving (Generic)
 
-instance PraosCrypto c => NoThunks (HotKey c)
+instance (PraosCrypto c, NoThunks (UnsoundPureSignKeyKES (PraosKES c))) => NoThunks (HotKey c)
+
 instance PraosCrypto c => Show (HotKey c) where
   show (HotKey p _) = "HotKey " ++ show p ++ " <SignKeyKES: hidden>"
   show HotKeyPoisoned = "HotKeyPoisoned"
