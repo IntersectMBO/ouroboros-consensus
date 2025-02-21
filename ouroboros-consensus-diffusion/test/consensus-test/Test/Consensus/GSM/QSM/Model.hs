@@ -11,7 +11,7 @@
 
 -- | The definition of the GSM QSM model and its auxiliaries
 
-module Test.Consensus.GSM.Model (module Test.Consensus.GSM.Model) where
+module Test.Consensus.GSM.QSM.Model (module Test.Consensus.GSM.QSM.Model) where
 
 import           Cardano.Network.Types (LedgerStateJudgement (..))
 import qualified Control.Monad.Class.MonadTime.SI as SI
