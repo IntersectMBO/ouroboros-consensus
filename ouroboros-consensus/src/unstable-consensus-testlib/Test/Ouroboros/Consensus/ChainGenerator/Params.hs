@@ -16,7 +16,7 @@ module Test.Ouroboros.Consensus.ChainGenerator.Params (
 import qualified Data.Bits as B
 import           Data.Word (Word8)
 import qualified Test.QuickCheck as QC
-import           Test.QuickCheck.Extras (sized1)
+import           Test.Ouroboros.Consensus.QuickCheck.Extras (sized1)
 
 -----
 

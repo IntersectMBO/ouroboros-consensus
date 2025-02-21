@@ -55,7 +55,7 @@ import           Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..),
                      scheduleBlockPoint, scheduleHeaderPoint, scheduleTipPoint)
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck
-import           Test.QuickCheck.Extras (unsafeMapSuchThatJust)
+import           Test.Ouroboros.Consensus.QuickCheck.Extras (unsafeMapSuchThatJust)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
