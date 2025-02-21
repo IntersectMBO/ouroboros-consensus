@@ -1,5 +1,3 @@
-{-# OPTIONS_GHC -Wno-orphans            #-}
-
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
@@ -46,21 +44,17 @@ module Ouroboros.Consensus.Mock.Protocol.Praos (
 
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..), serialize')
 import           Cardano.Crypto.DSIGN.Ed25519 (Ed25519DSIGN)
-import           Cardano.Crypto.DSIGN.Ed448 (Ed448DSIGN)
 import           Cardano.Crypto.Hash.Class (HashAlgorithm (..), hashToBytes,
                      hashWithSerialiser, sizeHash)
 import           Cardano.Crypto.Hash.SHA256 (SHA256)
-import           Cardano.Crypto.DSIGN.Class
 import           Cardano.Crypto.KES.Class
+
 import           Cardano.Crypto.KES.Mock
 import           Cardano.Crypto.KES.Simple
 import           Cardano.Crypto.Util
 import           Cardano.Crypto.VRF.Class
 import           Cardano.Crypto.VRF.Mock (MockVRF)
 import           Cardano.Crypto.VRF.Simple (SimpleVRF)
-import           Cardano.Crypto.Libsodium.MLockedSeed (mlockedSeedUseAsCPtr)
-import           Cardano.Crypto.Libsodium.Memory (packByteStringCStringLen)
-import           Cardano.Crypto.Seed (mkSeedFromBytes)
 import           Cardano.Slotting.EpochInfo
 import           Codec.CBOR.Decoding (decodeListLenOf)
 import           Codec.CBOR.Encoding (encodeListLen)
@@ -73,7 +67,6 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
 import           Data.Typeable
 import           Data.Word (Word64)
-import           Foreign.Ptr (castPtr)
 import           GHC.Generics (Generic)
 import           GHC.Stack (HasCallStack)
 import           NoThunks.Class (NoThunks (..))
@@ -626,40 +619,6 @@ instance PraosCrypto PraosMockCrypto where
   type PraosKES  PraosMockCrypto = MockKES 10000
   type PraosVRF  PraosMockCrypto = MockVRF
   type PraosHash PraosMockCrypto = SHA256
-
-{-------------------------------------------------------------------------------
-  Orphan instances to make Ed448 look like a proper mlocked DSIGN
--------------------------------------------------------------------------------}
-
-instance DSIGNMAlgorithm Ed448DSIGN where
-  data SignKeyDSIGNM Ed448DSIGN = SignKeyDSIGNMEd448 (SignKeyDSIGN Ed448DSIGN)
-    deriving (Generic)
-
-  deriveVerKeyDSIGNM (SignKeyDSIGNMEd448 sk) =
-    return $ deriveVerKeyDSIGN sk
-
-  signDSIGNM context signable (SignKeyDSIGNMEd448 sk) =
-    return $ signDSIGN context signable sk
-
-  genKeyDSIGNMWith _ mlockedSeed = do
-    seed <- mlockedSeedUseAsCPtr mlockedSeed $ \seedPtr -> do
-      mkSeedFromBytes <$> packByteStringCStringLen (castPtr seedPtr, fromIntegral $ seedSizeDSIGN (Proxy :: Proxy Ed448DSIGN))
-    return . SignKeyDSIGNMEd448 $ genKeyDSIGN seed
-
-  cloneKeyDSIGNMWith _ sk = return sk
-
-  getSeedDSIGNMWith _ _ _ =
-    error "getSeed not implemented for Ed448"
-
-  forgetSignKeyDSIGNMWith _ _ =
-    -- This is fake mlocking, so just don't forget anything
-    return ()
-
-deriving instance NoThunks (SignKeyDSIGNM Ed448DSIGN)
-
-instance UnsoundDSIGNMAlgorithm Ed448DSIGN where
-  rawSerialiseSignKeyDSIGNM = error "Not implemented: rawSerialiseSignKeyDSIGNM"
-  rawDeserialiseSignKeyDSIGNMWith = error "Not implemented: rawDeserialiseSignKeyDSIGNMWith"
 
 {-------------------------------------------------------------------------------
   Condense

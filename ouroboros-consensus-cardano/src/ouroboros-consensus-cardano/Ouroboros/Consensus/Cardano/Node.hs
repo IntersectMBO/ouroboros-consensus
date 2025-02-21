@@ -38,9 +38,6 @@ module Ouroboros.Consensus.Cardano.Node (
   , CardanoHardForkTriggers (.., CardanoHardForkTriggers', triggerHardForkShelley, triggerHardForkAllegra, triggerHardForkMary, triggerHardForkAlonzo, triggerHardForkBabbage, triggerHardForkConway)
   , CardanoProtocolParams (..)
   , MaxMajorProtVer (..)
-  , ProtocolParamsByron
-  , ProtocolParamsShelleyBased
-  , CheckpointsMap
   , TriggerHardFork (..)
   , protocolClientInfoCardano
   , protocolInfoCardano
@@ -476,7 +473,7 @@ protocolInfoCardano paramsCardano
   , length credssShelleyBased > 1
   = error "Multiple Shelley-based credentials not allowed for mainnet"
   | otherwise
-  = assertWithMsg (validateGenesis genesisShelley) $
+  = assertWithMsg (validateGenesis genesisShelley)
     ( ProtocolInfo {
         pInfoConfig       = cfg
       , pInfoInitLedger   = initExtLedgerStateCardano
@@ -828,7 +825,7 @@ protocolInfoCardano paramsCardano
     -- credentials. If there are multiple Shelley credentials, we merge the
     -- Byron credentials with the first Shelley one but still have separate
     -- threads for the remaining Shelley ones.
-    mkBlockForgings :: m ([BlockForging m (CardanoBlock c)])
+    mkBlockForgings :: m [BlockForging m (CardanoBlock c)]
     mkBlockForgings = do
         shelleyBased <- traverse blockForgingShelleyBased credssShelleyBased
         let blockForgings :: [NonEmptyOptNP (BlockForging m) (CardanoEras c)]
@@ -869,7 +866,7 @@ protocolInfoCardano paramsCardano
         let maxKESEvo :: Word64
             maxKESEvo = assert (tpraosMaxKESEvo == praosMaxKESEvo) praosMaxKESEvo
 
-        hotKey :: HotKey.HotKey c m <- HotKey.mkHotKey
+        hotKey <- HotKey.mkHotKey
                     ocert
                     sk
                     startPeriod
