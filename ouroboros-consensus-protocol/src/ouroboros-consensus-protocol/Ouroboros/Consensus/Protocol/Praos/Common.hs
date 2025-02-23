@@ -33,6 +33,7 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Protocol.TPraos.OCert as OCert
 import           Cardano.Slotting.Block (BlockNo)
 import           Cardano.Slotting.Slot (SlotNo)
+import           Control.Tracer (nullTracer)
 import           Data.Function (on)
 import           Data.Map.Strict (Map)
 import           Data.Ord (Down (Down))
@@ -293,7 +294,7 @@ instantiatePraosCredentials maxKESEvolutions (PraosCredentialsAgent path) = do
       (Just $ \send -> do
         let handleKey ocert sk p = do
               send ocert sk p (OCert.ocertKESPeriod ocert)
-        runKESAgentClient path handleKey
+        runKESAgentClient nullTracer path handleKey
       )
       (pure ())
 

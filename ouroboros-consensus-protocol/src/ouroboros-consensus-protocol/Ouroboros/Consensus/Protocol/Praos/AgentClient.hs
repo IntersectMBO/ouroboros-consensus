@@ -16,6 +16,7 @@ module Ouroboros.Consensus.Protocol.Praos.AgentClient (
   AgentCrypto (..),
   MonadKESAgent (..),
   KESAgentContext,
+  KESAgentClientTrace (..),
 )
 where
 
@@ -59,6 +60,11 @@ type KESAgentContext c m =
       , SerDoc.HasInfo (Agent.DirectCodec m) (SignKeyKES (KES c))
       , IOLike m
       )
+
+data KESAgentClientTrace
+  = KESAgentClientException SomeException
+  | KESAgentClientTrace Agent.ServiceClientTrace
+  deriving (Show)
 
 class ( Crypto c
       , Agent.Crypto (ACrypto c)
@@ -124,12 +130,12 @@ instance SimSnocket.GlobalAddressScheme FilePath where
 runKESAgentClient :: forall m c.
                      ( KESAgentContext c m
                      )
-                  => FilePath
+                  => Tracer m KESAgentClientTrace
+                  -> FilePath
                   -> (OCert.OCert c -> SignKeyKES (KES c) -> Word -> m ())
                   -> m ()
-runKESAgentClient path handleKey = do
+runKESAgentClient tracer path handleKey = do
   withAgentContext $ \snocket -> do
-    let tracer = nullTracer -- TODO
     forever $ do
       Agent.runServiceClient
         (Proxy @(ACrypto c))
@@ -148,12 +154,12 @@ runKESAgentClient path handleKey = do
               handleKey (convertOCert ocert) sk p
             return Agent.RecvOK
         )
-        tracer
+        (contramap KESAgentClientTrace tracer)
         `catch` ( \(_e :: AsyncCancelled) ->
                     return ()
                 )
         `catch` ( \(e :: SomeException) ->
-                    traceWith tracer e
+                    traceWith tracer (KESAgentClientException e)
                 )
       threadDelay 10000000
 

@@ -102,7 +102,6 @@ import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley
 import           Ouroboros.Consensus.Shelley.Ledger.Block (IsShelleyBlock,
                      ShelleyBlockLedgerEra)
 import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
-import           Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import           Ouroboros.Consensus.Shelley.Node
 import           Ouroboros.Consensus.Shelley.Node.Common (ShelleyEraWithCrypto, shelleyBlockIssuerVKey)
 import qualified Ouroboros.Consensus.Shelley.Node.Praos as Praos
@@ -861,11 +860,10 @@ protocolInfoCardano paramsCardano
             slotToPeriod (SlotNo slot) = assert (tpraosSlotsPerKESPeriod == praosSlotsPerKESPeriod) $
               Absolute.KESPeriod $ fromIntegral $ slot `div` praosSlotsPerKESPeriod
 
-        let maxKESEvo :: Word64
+            maxKESEvo :: Word64
             maxKESEvo = assert (tpraosMaxKESEvo == praosMaxKESEvo) praosMaxKESEvo
 
-        hotKey :: HotKey c m <-
-                    instantiatePraosCredentials
+        hotKey <- instantiatePraosCredentials
                     maxKESEvo
                     (praosCanBeLeaderCredentialsSource canBeLeader)
 
