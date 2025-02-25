@@ -40,6 +40,7 @@ const sidebars = {
         'for-developers/CivicTime',
         'for-developers/AbstractProtocol',
         'for-developers/HardForks',
+        'for-developers/ProtoclVersioning',
         'for-developers/AddingAnEra',
         'for-developers/ChainSync',
         'for-developers/HardWonWisdom',
