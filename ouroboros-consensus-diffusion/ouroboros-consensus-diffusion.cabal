@@ -231,6 +231,7 @@ test-suite consensus-test
     Test.Consensus.BlockTree
     Test.Consensus.GSM.QSM
     Test.Consensus.GSM.QSM.Model
+    Test.Consensus.GSM.QD
     Test.Consensus.Genesis.Setup
     Test.Consensus.Genesis.Setup.Classifiers
     Test.Consensus.Genesis.Setup.GenChains
