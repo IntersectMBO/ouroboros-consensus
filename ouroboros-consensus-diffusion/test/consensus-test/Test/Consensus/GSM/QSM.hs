@@ -6,9 +6,7 @@
 module Test.Consensus.GSM.QSM (tests) where
 
 import           Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked
-import           Control.Monad (replicateM_)
 import           Control.Monad.Class.MonadAsync (poll, withAsync)
-import           Control.Monad.Class.MonadFork (MonadFork, yield)
 import           Control.Monad.Class.MonadSTM
 import qualified Control.Monad.Class.MonadTime.SI as SI
 import qualified Control.Monad.Class.MonadTimer.SI as SI
@@ -22,6 +20,7 @@ import           Ouroboros.Consensus.Util.IOLike (IOLike)
 import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
                      (LedgerStateJudgement (..))
 import           Test.Consensus.GSM.QSM.Model
+import           Test.Consensus.GSM.Common
 import           Test.Consensus.IOSimQSM.Test.StateMachine.Sequential
                      (runCommands')
 import qualified Test.QuickCheck as QC
@@ -296,69 +295,6 @@ prop_sequential1 ctx cmds = runSimQC $ do
 
 -----
 
-durationUntilTooOld :: Selection -> IOSim.IOSim s GSM.DurationFromNow
-durationUntilTooOld sel = do
-    let expiryAge = ageLimit `SI.addTime` onset sel
-    now <- SI.getMonotonicTime
-    pure $ case compare expiryAge now of
-        LT -> GSM.Already
-        GT -> GSM.After $ realToFrac $ expiryAge `SI.diffTime` now
-
-        -- 'boringDur' cannot prevent this case. In particular, this case
-        -- necessarily arises in the GSM itself during a 'TimePasses' that
-        -- incurs a so-called /flicker/ event, in which the anti-thrashing
-        -- timer expires and yet the node state at that moment still
-        -- _immediately_ indicates that it's CaughtUp. For the specific case of
-        -- this test suite, the answer here must be 'GSM.Already'.
-        EQ -> GSM.Already
-
------
-
--- | Ensure the GSM thread's transactions quiesce
---
--- I'm unsure how many 'yield's are actually necessary, but ten is both small
--- and also seems likely to suffice.
---
--- Despite the crudeness, this seems much more compositional than invasive
--- explicit synchronization.
-yieldSeveralTimes :: MonadFork m => m ()
-yieldSeveralTimes = replicateM_ 10 yield
-
-{-
-
-Note [Why yield after the command]
-
-For this 'prop_sequential1' repro
-
-@
-   YoungEnough
-
-   Command (NewCandidate Amara (B 1)) Unit []
-   Command (StartIdling Amara) Unit []
-   Command (TimePasses 61) Unit []
-   Command (ExtendSelection (S (-4))) Unit []
-   Command ReadMarker (ReadThisMarker Absent) []
-
-   (Command ReadGsmState _ [])   -- this last command is baked into the property
-@
-
-If we yield after the command, then both GSM flicker writes happen during the
-'ExtendSelection'.
-
-If we yield before the command, then both GSM flicker writes happen during the
-'ReadMarker'.
-
-If we don't yield, one write happens during the ReadMarker and the other
-happens /between/ 'ReadMarker' and 'ReadGsmState'.
-
-It seems most intuitive for the updates to happen "as part of" the
-'ExtendSelection', so I'm favoring yielding after.
-
-And since we're yielding after the command, we should also yield before the
-first command, for consistency.
-
--}
-
 -- | Test the example from the Note [Why yield after the command]
 --
 -- This property fails when 'yieldSeveralTimes' is removed/redefined to @pure
@@ -407,9 +343,6 @@ push (EvRecorder var) ev = do
     now <- SI.getMonotonicTime
     atomically $ modifyTVar var $ (:) (now, ev)
 
-isIdling :: PeerState -> Bool
-isIdling (PeerState {psIdling = Idling i}) = i
-
 -----
 
 -- | merely a tidy bundle of arguments
@@ -419,12 +352,6 @@ data Vars m = Vars
     (StrictTVar m GSM.GsmState)
     (StrictTVar m MarkerState)
     (EvRecorder m)
-
-newtype Idling = Idling Bool
-  deriving (Eq, Ord, Show)
-
-data PeerState = PeerState { psCandidate :: !Candidate, psIdling :: !Idling }
-  deriving (Eq, Ord, Show)
 
 -----
 

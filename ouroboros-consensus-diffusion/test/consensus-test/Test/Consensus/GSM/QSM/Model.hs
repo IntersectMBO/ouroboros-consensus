@@ -1,10 +1,8 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -18,7 +16,6 @@ import           Data.Kind (Type)
 import           Data.List ((\\))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import           Data.Time (diffTimeToPicoseconds)
 import qualified Data.TreeDiff as TD
 import           GHC.Generics (Generic, Generic1)
 import qualified Ouroboros.Consensus.Node.GSM as GSM
@@ -30,6 +27,8 @@ import qualified Test.StateMachine as QSM
 import           Test.StateMachine (Concrete, Symbolic)
 import qualified Test.StateMachine.Types.Rank2 as QSM
 import           Test.Util.Orphans.ToExpr ()
+
+import Test.Consensus.GSM.Common
 
 ----- the QSM model
 
@@ -97,12 +96,6 @@ data Response r =
     Unit
   deriving stock    (Generic1, Read, Show)
   deriving anyclass (QSM.Foldable, QSM.Functor, QSM.Traversable)
-
-data Context = Context {
-    cInitialJudgement :: LedgerStateJudgement
-  ,
-    cIsHaaSatisfied   :: Set.Set UpstreamPeer -> Bool
-  }
 
 type Model :: (Type -> Type) -> Type
 data Model r = Model {
@@ -507,142 +500,14 @@ mock model = \case
 
 -----
 
--- | A block count
-newtype B = B Int
-  deriving stock    (Eq, Ord, Generic, Read, Show)
-  deriving newtype  (Enum, Num)
-  deriving anyclass (TD.ToExpr)
-
--- | A slot count
-newtype S = S Int
-  deriving stock    (Eq, Ord, Generic, Read, Show)
-  deriving newtype  (Enum, Num)
-  deriving anyclass (TD.ToExpr)
-
-data UpstreamPeer = Amara | Bao | Cait | Dhani | Eric
-  deriving stock    (Bounded, Enum, Eq, Ord, Generic, Read, Show)
-  deriving anyclass (TD.ToExpr, QC.CoArbitrary, QC.Function)
-
--- | The cumulative growth relative to whatever length the initial selection
--- was and the slot relative to the start of the test (which is assumed to be
--- the exact onset of some slot)
-data Selection = Selection !B !S
-  deriving stock    (Eq, Ord, Generic, Show)
-  deriving anyclass (TD.ToExpr)
-
--- | The age of the candidate is irrelevant, only its length matters
-newtype Candidate = Candidate B
-  deriving stock    (Eq, Ord, Generic, Show)
-  deriving anyclass (TD.ToExpr)
-
-data MarkerState = Present | Absent
-  deriving stock    (Eq, Ord, Generic, Read, Show)
-  deriving anyclass (TD.ToExpr)
-
-newtype WhetherPrevTimePasses = WhetherPrevTimePasses Bool
-  deriving stock    (Eq, Ord, Generic, Show)
-  deriving anyclass (TD.ToExpr)
-
-data ModelState =
-    ModelPreSyncing
-  |
-    ModelSyncing
-  |
-    ModelCaughtUp !SI.Time
-    -- ^ when the model most recently transitioned to 'GSM.CaughtUp'.
-  deriving stock    (Eq, Ord, Generic, Show)
-  deriving anyclass (TD.ToExpr)
-
------
-
--- | Interesting events to record /within the model/
---
--- TODO some less superficial ones (eg even just combinations of these)
-data Notable =
-    BigDurN
-    -- ^ there was a "big" 'TimesPasses' command
-  |
-    CaughtUpN
-    -- ^ the node transitioned from Syncing to CaughtUp
-  |
-    FellBehindN
-    -- ^ the node transitioned from CaughtUp to PreSyncing
-  |
-    SyncingToPreSyncingN
-    -- ^ the node transition from Syncing to PreSyncing
-  |
-    PreSyncingToSyncingN
-    -- ^ the node transition from PreSyncing to Syncing
-  |
-    FlickerN
-    -- ^ the node transitioned from CaughtUp to PreSyncing to Syncing and back
-    -- to CaughtUp "instantly"
-  |
-    NotThrashingN
-    -- ^ the anti-thrashing would have allowed 'FellBehindN', but the selection
-    -- wasn't old enough
-  |
-    TooOldN
-    -- ^ the selection was old enough for 'FellBehindN', but the anti-thrashing
-    -- prevented it
-  deriving (Eq, Ord, Show)
-
-instance TD.ToExpr Notable where toExpr = TD.defaultExprViaShow
-
------ orphans
-
-deriving instance Read LedgerStateJudgement
-
-instance QC.Arbitrary LedgerStateJudgement where
-    arbitrary = elements [TooOld, YoungEnough]
-    shrink    = \case
-        TooOld      -> [YoungEnough]
-        YoungEnough -> []
-
-instance QC.Arbitrary MarkerState where
-    arbitrary = elements [Absent, Present]
-    shrink    = \case
-        Absent  -> [Present]
-        Present -> []
-
------
-
-candidateOverSelection ::
-     Selection
-  -> Candidate
-  -> GSM.CandidateVersusSelection
-candidateOverSelection (Selection b _s) (Candidate b') =
-    -- TODO this ignores CandidateDoesNotIntersect, which seems harmless, but
-    -- I'm not quite sure
-    GSM.WhetherCandidateIsBetter (b < b')
-
------
-
-toGsmState :: ModelState -> GSM.GsmState
-toGsmState = \case
-    ModelPreSyncing -> GSM.PreSyncing
-    ModelSyncing    -> GSM.Syncing
-    ModelCaughtUp{} -> GSM.CaughtUp
-
-toMarker :: GSM.GsmState -> MarkerState
-toMarker = \case
-    GSM.PreSyncing -> Absent
-    GSM.Syncing    -> Absent
-    GSM.CaughtUp   -> Present
-
------
+data Context = Context {
+    cInitialJudgement :: LedgerStateJudgement
+  ,
+    cIsHaaSatisfied   :: Set.Set UpstreamPeer -> Bool
+  }
 
 atom :: String -> Bool -> QSM.Logic
 atom s b = QSM.Boolean b QSM..// s
-
-onset :: Selection -> SI.Time
-onset (Selection _b (S s)) = SI.Time $ fromIntegral s
-
-ageLimit :: Num a => a
-ageLimit = 10   -- seconds
-
-thrashLimit :: Num a => a
-thrashLimit = 8   -- seconds
 
 selectionIsBehind :: Model r -> Bool
 selectionIsBehind model =
@@ -664,15 +529,9 @@ selectionIsNotEarly model =
         mSelection = sel
       } = model
 
--- | Checks that a 'TimePasses' command does not end exactly when a timeout
--- could fire and that a 'ExtendSelection' does not incur a timeout that would
--- fire immediately
---
--- This insulates the test from race conditions that are innocuous in the real
--- world.
+-- | See 'boringDurImpl'
 boringDur :: Model r -> Int -> QSM.Logic
-boringDur model dur =
-    boringSelection QSM..&& boringState
+boringDur model = QSM.Boolean . boringDurImpl clk sel st
   where
     Model {
         mClock = clk
@@ -681,26 +540,3 @@ boringDur model dur =
       ,
         mState = st
       } = model
-
-    -- the first time the node would transition to PreSyncing
-    expiry          timestamp = expiryAge `max` expiryThrashing timestamp
-    expiryAge                 = SI.addTime ageLimit (onset sel)
-    expiryThrashing timestamp = SI.addTime thrashLimit timestamp
-
-    clk' = SI.addTime (0.1 * fromIntegral dur) clk
-
-    boringSelection = "boringDur selection" `atom` (clk' /= expiryAge)
-
-    boringState = case st of
-        ModelPreSyncing         -> QSM.Top
-        ModelSyncing            -> QSM.Top
-        ModelCaughtUp timestamp ->
-            let gap = clk' `SI.diffTime` expiry timestamp
-                n   =
-                  mod
-                      (diffTimeToPicoseconds gap)
-                      (secondsToPicoseconds thrashLimit)
-            in
-            "boringDur state" `atom` (gap < 0 || 0 /= n)
-
-    secondsToPicoseconds x = x * 10 ^ (12 :: Int)
