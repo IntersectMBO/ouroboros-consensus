@@ -302,6 +302,8 @@ test-suite consensus-test
     ouroboros-network-mock,
     ouroboros-network-protocols,
     pretty-show,
+    quickcheck-dynamic,
+    quickcheck-dynamic-iosim,
     quickcheck-state-machine:no-vendored-treediff,
     quiet,
     random,
