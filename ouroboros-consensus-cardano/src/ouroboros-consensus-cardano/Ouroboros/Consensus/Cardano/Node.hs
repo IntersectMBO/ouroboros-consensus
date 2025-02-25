@@ -48,6 +48,7 @@ module Ouroboros.Consensus.Cardano.Node (
   , pattern CardanoNodeToClientVersion15
   , pattern CardanoNodeToNodeVersion1
   , pattern CardanoNodeToNodeVersion2
+  , pattern CardanoNodeToNodeVersion3
   ) where
 
 import           Cardano.Binary (DecoderError (..), enforceSize)
@@ -118,6 +119,12 @@ import           Ouroboros.Consensus.Util.IOLike
 -------------------------------------------------------------------------------}
 
 instance SerialiseConstraintsHFC ByronBlock
+
+instance HasBlessedGenTxIdEra (CardanoShelleyEras c) where
+  blessedGenTxIdEra = Z mempty
+
+instance HasBlessedGenTxIdEra (CardanoEras c) where
+  blessedGenTxIdEra = S blessedGenTxIdEra
 
 -- | Important: we need to maintain binary compatibility with Byron blocks, as
 -- they are already stored on disk.
@@ -261,6 +268,20 @@ pattern CardanoNodeToNodeVersion2 =
       :* Nil
       )
 
+pattern CardanoNodeToNodeVersion3 :: BlockNodeToNodeVersion (CardanoBlock c)
+pattern CardanoNodeToNodeVersion3 =
+    HardForkNodeToNodeEnabled
+      HardForkSpecificNodeToNodeVersion2
+      (  WrapNodeToNodeVersion ByronNodeToNodeVersion2
+      :* WrapNodeToNodeVersion ShelleyNodeToNodeVersion1
+      :* WrapNodeToNodeVersion ShelleyNodeToNodeVersion1
+      :* WrapNodeToNodeVersion ShelleyNodeToNodeVersion1
+      :* WrapNodeToNodeVersion ShelleyNodeToNodeVersion1
+      :* WrapNodeToNodeVersion ShelleyNodeToNodeVersion1
+      :* WrapNodeToNodeVersion ShelleyNodeToNodeVersion1
+      :* Nil
+      )
+
 -- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo and Babbage
 -- and Conway eras enabled, using 'ShelleyNodeToClientVersion8' for the
 -- Shelley-based eras.
@@ -312,13 +333,13 @@ pattern CardanoNodeToClientVersion14 =
       :* Nil
       )
 
--- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo and Babbage
--- and Conway eras enabled, using 'ShelleyNodeToClientVersion11' for the
--- Shelley-based eras.
+-- | The hard fork enabled, using 'HardForkSpecificNodeToClientVersion4', and
+-- the Shelley, Allegra, Mary, Alonzo and Babbage and Conway eras enabled,
+-- using 'ShelleyNodeToClientVersion11' for the Shelley-based eras.
 pattern CardanoNodeToClientVersion15 :: BlockNodeToClientVersion (CardanoBlock c)
 pattern CardanoNodeToClientVersion15 =
     HardForkNodeToClientEnabled
-      HardForkSpecificNodeToClientVersion3
+      HardForkSpecificNodeToClientVersion4
       (  EraNodeToClientEnabled ByronNodeToClientVersion1
       :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
       :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
@@ -334,6 +355,7 @@ instance CardanoHardForkConstraints c
   supportedNodeToNodeVersions _ = Map.fromList $
       [ (NodeToNodeV_13, CardanoNodeToNodeVersion2)
       , (NodeToNodeV_14, CardanoNodeToNodeVersion2)
+      , (NodeToNodeV_15, CardanoNodeToNodeVersion3)
       ]
 
   supportedNodeToClientVersions _ = Map.fromList $
@@ -343,7 +365,7 @@ instance CardanoHardForkConstraints c
       , (NodeToClientV_19, CardanoNodeToClientVersion15)
       ]
 
-  latestReleasedNodeVersion _prx = (Just NodeToNodeV_14, Just NodeToClientV_19)
+  latestReleasedNodeVersion _prx = (Just NodeToNodeV_15, Just NodeToClientV_19)
 
 {-------------------------------------------------------------------------------
   ProtocolInfo

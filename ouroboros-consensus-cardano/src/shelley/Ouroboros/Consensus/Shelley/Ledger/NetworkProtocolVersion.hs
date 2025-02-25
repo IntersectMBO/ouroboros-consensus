@@ -37,12 +37,14 @@ instance SupportedNetworkProtocolVersion (ShelleyBlock proto era) where
   supportedNodeToNodeVersions   _ = Map.fromList [
         (NodeToNodeV_13, ShelleyNodeToNodeVersion1)
       , (NodeToNodeV_14, ShelleyNodeToNodeVersion1)
+      , (NodeToNodeV_15, ShelleyNodeToNodeVersion1)
       ]
   supportedNodeToClientVersions _ = Map.fromList [
         (NodeToClientV_16, ShelleyNodeToClientVersion8)
       , (NodeToClientV_17, ShelleyNodeToClientVersion9)
       , (NodeToClientV_18, ShelleyNodeToClientVersion10)
       , (NodeToClientV_19, ShelleyNodeToClientVersion11)
+      , (NodeToClientV_20, ShelleyNodeToClientVersion11)
       ]
 
   latestReleasedNodeVersion = latestReleasedNodeVersionDefault

@@ -163,10 +163,6 @@ instance Isomorphic WrapIsLeader where
   project = defaultProjectNS
   inject  = defaultInjectNS
 
-instance Isomorphic WrapGenTxId where
-  project = defaultProjectNS
-  inject  = defaultInjectNS
-
 instance Isomorphic WrapValidatedGenTx where
   project = defaultProjectNS
   inject  = defaultInjectNS

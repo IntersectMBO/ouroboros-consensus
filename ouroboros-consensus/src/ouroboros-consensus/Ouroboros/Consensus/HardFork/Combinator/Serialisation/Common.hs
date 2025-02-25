@@ -17,6 +17,7 @@
 module Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common (
     -- * Conditions required by the HFC to support serialisation
     HardForkEncoderException (..)
+  , HasBlessedGenTxIdEra (..)
   , SerialiseConstraintsHFC
   , SerialiseHFC (..)
   , disabledEraException
@@ -133,8 +134,12 @@ notFirstEra = hcmap proxySingle aux
 
 -- | Versioning of the specific additions made by the HFC to the @NodeToNode@
 -- protocols, e.g., the era tag.
-data HardForkSpecificNodeToNodeVersion =
-    HardForkSpecificNodeToNodeVersion1
+data HardForkSpecificNodeToNodeVersion
+  = HardForkSpecificNodeToNodeVersion1
+
+    -- | Represent GenTxId as an era-agnostic ShortByteStrings
+  | HardForkSpecificNodeToNodeVersion2
+
   deriving (Eq, Ord, Show, Enum, Bounded)
 
 -- | Versioning of the specific additions made by the HFC to the @NodeToClient@
@@ -142,6 +147,9 @@ data HardForkSpecificNodeToNodeVersion =
 data HardForkSpecificNodeToClientVersion =
     -- | Include the Genesis window in 'EraParams'.
     HardForkSpecificNodeToClientVersion3
+
+    -- | Represent GenTxId as an era-agnostic ShortByteString
+  | HardForkSpecificNodeToClientVersion4
   deriving (Eq, Ord, Show, Enum, Bounded)
 
 data HardForkNodeToNodeVersion xs where
@@ -205,6 +213,15 @@ isHardForkNodeToClientEnabled :: HardForkNodeToClientVersion xs -> Bool
 isHardForkNodeToClientEnabled HardForkNodeToClientEnabled {} = True
 isHardForkNodeToClientEnabled _                              = False
 
+
+-- | 'HasBlessedGenTxIdEra' is used solely for backwards-compatibility reasons
+-- for when we're communicating with older node / client versions and need to
+-- serialise / deserialise era-tagged 'GenTxId's. The 'blessedGenTxIdEra' is
+-- used as the "default" era tag when we want to send a (non-era-tagged)
+-- 'GenTxId' to these nodes / clients.
+class HasBlessedGenTxIdEra (xs :: [Type]) where
+  blessedGenTxIdEra :: NS Proxy xs
+
 {-------------------------------------------------------------------------------
   Conditions required by the HFC to support serialisation
 -------------------------------------------------------------------------------}
@@ -245,6 +262,7 @@ pSHFC = Proxy
 --    This would then lead to problems with binary streaming, and we do not
 --    currently provide any provisions to resolve these.
 class ( CanHardFork xs
+      , HasBlessedGenTxIdEra xs
       , All SerialiseConstraintsHFC xs
         -- Required for HasNetworkProtocolVersion
       , All (Compose Show EraNodeToClientVersion) xs
