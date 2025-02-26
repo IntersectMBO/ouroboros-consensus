@@ -76,6 +76,7 @@ localTxMonitorServer mempool =
           pure $ serverStAcquiring s'
       , recvMsgRelease =
           pure serverStIdle
+      , recvMsgGetMeasures = undefined -- TODO
       }
 
     -- Are two snapshots equal? (from the perspective of this protocol)
