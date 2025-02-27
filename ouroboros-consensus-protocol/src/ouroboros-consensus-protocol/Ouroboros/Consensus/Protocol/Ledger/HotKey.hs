@@ -288,8 +288,9 @@ mkHotKeyWith initialStateMay maxKESEvolutions keyThreadMay finalizer = do
 
     finalizer' <- case keyThreadMay of
       Just keyThread -> do
-        keyThreadAsync <- async
-          (keyThread set)
+        keyThreadAsync <- async $ do
+                            labelThisThread "HotKey receiver"
+                            keyThread set
         return (cancel keyThreadAsync >> finalizer)
       Nothing ->
         return finalizer
