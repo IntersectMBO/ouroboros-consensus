@@ -268,8 +268,8 @@ data PraosCredentialsSource c
   | PraosCredentialsAgent FilePath
   deriving (Generic)
 
-instance (NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (PraosCredentialsSource c)
-instance (NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (PraosCanBeLeader c)
+instance (Crypto c) => NoThunks (PraosCredentialsSource c)
+instance (Crypto c) => NoThunks (PraosCanBeLeader c)
 
 instantiatePraosCredentials :: forall m c.
                                ( KESAgentContext c m

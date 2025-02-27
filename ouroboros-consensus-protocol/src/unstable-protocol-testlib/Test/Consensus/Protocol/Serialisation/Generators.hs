@@ -8,9 +8,8 @@
 -- to be semantically correct at all, only structurally correct.
 module Test.Consensus.Protocol.Serialisation.Generators () where
 
-import           Cardano.Crypto.KES (UnsoundPureKESAlgorithm, unsoundPureSignedKES)
+import           Cardano.Crypto.KES (unsoundPureSignedKES)
 import           Cardano.Crypto.VRF (evalCertified)
-import           Cardano.Ledger.Crypto (KES)
 import           Cardano.Protocol.TPraos.BHeader (HashHeader, PrevHash (..))
 import           Cardano.Protocol.TPraos.OCert (KESPeriod (KESPeriod),
                      OCert (OCert))
@@ -30,7 +29,7 @@ import           Test.QuickCheck (Arbitrary (..), Gen, choose, oneof)
 instance Arbitrary InputVRF where
   arbitrary = mkInputVRF <$> arbitrary <*> arbitrary
 
-instance (Praos.PraosCrypto c, UnsoundPureKESAlgorithm (KES c)) => Arbitrary (HeaderBody c) where
+instance (Praos.PraosCrypto c) => Arbitrary (HeaderBody c) where
   arbitrary =
     let ocert =
           OCert
@@ -58,7 +57,7 @@ instance (Praos.PraosCrypto c, UnsoundPureKESAlgorithm (KES c)) => Arbitrary (He
           <*> ocert
           <*> arbitrary
 
-instance (Praos.PraosCrypto c, UnsoundPureKESAlgorithm (KES c)) => Arbitrary (Header c) where
+instance (Praos.PraosCrypto c) => Arbitrary (Header c) where
   arbitrary = do
     hBody <- arbitrary
     period <- arbitrary

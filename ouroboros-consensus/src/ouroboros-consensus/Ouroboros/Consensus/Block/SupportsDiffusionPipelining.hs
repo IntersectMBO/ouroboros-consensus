@@ -253,7 +253,6 @@ deriving anyclass instance ConsensusProtocol proto => NoThunks (SelectViewTentat
 
 instance
   ( BlockSupportsProtocol blk
-  , Show (SelectView (BlockProtocol blk))
   ) => BlockSupportsDiffusionPipelining (SelectViewDiffusionPipelining blk) where
   type TentativeHeaderState (SelectViewDiffusionPipelining blk) =
     SelectViewTentativeState (BlockProtocol blk)
