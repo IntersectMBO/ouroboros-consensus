@@ -26,7 +26,7 @@ The following is taken for granted.
 - {Scg} is the `s` parameter of the [Chain Growth](Glossary#chain-growth-property) property of Ouroboros Praos: the greatest possible number of slots it might take for the honest chain to grow by Kcp.
 
 - {Sgen} is the s parameter of the [Ouroboros Genesis chain selection rule](Glossary#genesis-chain-selection-rule): how many slots after an intersection are considered when comparing two competing chains' densities.
-  This document assumes Sgen equals Scg, though other possibilites will be discussed in Parameter Tuning below.
+  This document assumes Sgen equals Scg, though other possibilites will be discussed in [Parameter Tuning](#parameter-tuning) below.
 
 ## Requirements
 
@@ -153,7 +153,7 @@ The transitions are triggered as follows.
      This trigger is notably not time based, because an adversary is free to create an alternative chain with a very young tip in order to cause the node to lower its defenses by selecting it.
      This is especially true in the context of an adversarial CSJ Dynamo (see below), which has a temporarily disproportionate influence over the syncing nodes selection.
    - The GSM transitions from CaughtUp to PreSyncing only when the node's selection is older than MaxCaughtUpAge (eg the node was offline for a few hours).
-     The MaxCaughtUpAge duration is a parameter of this design; see Parameter Tuning below for constraints on it.
+     The MaxCaughtUpAge duration is a parameter of this design; see [Parameter Tuning](#parameter-tuning) below for constraints on it.
      Moreover, this transition is delayed by some small random duration (eg <5 minutes) in order to avoid an undesired simultaneity amongst honest nodes within a struggling honest network.
 - But that path is not necessarily guaranteed.
    - The GSM transitions from Syncing to PreSyncing if the Diffusion Layer indicates the HAA is no longer satisfied.
@@ -252,7 +252,7 @@ The LoP component (in the next section) ensures that peers sending an alternativ
 
 In the "with CSJ" section below, the GDD is enriched beyond its primary responsibility for the sake of the CSJ design.
 
-To prevent this component from spoiling Sync Liveness, this relatively-expensive calculation is rate-limited with a parameter {GddRateLimit}; see the Parameter Tuning section.
+To prevent this component from spoiling Sync Liveness, this relatively-expensive calculation is rate-limited with a parameter {GddRateLimit}; see the [Parameter Tuning](#parameter-tuning) section.
 
 ### The Limit on Patience Component
 
@@ -266,7 +266,7 @@ The bucket drips unless the peer has most recently sent MsgAwaitReply or their l
 If the bucket is ever empty, the LoP disconnects from the peer.
 A token is added to the bucket whenever the peer sends a valid header that is longer (a la the block number) than any header they had previously sent, but it's discarded if the bucket is already full.
 
-The rate TDRIP at which the bucket drips and its maximum capacity TCAP are design parameters that must be tuned, see Parameter Tuning below.
+The rate TDRIP at which the bucket drips and its maximum capacity TCAP are design parameters that must be tuned, see [Parameter Tuning](#parameter-tuning) below.
 
 This component contibutes to Sync Liveness because it forces a peer to enable a GDD decision within a duration of at most TDRIP × (TCAP + L), where L is the number of headers that can be in their alternative chain's GDD window before the GDD disconnects them.
 Parameter Tuning will ensure this is less than one minute per adversarial peer, for example.
@@ -304,7 +304,7 @@ Peers are added to the end of the queue when they are first connected to.
 (The Devoted BlockFetch component specified below will also introduce an event that causes a peer to be moved to the end of this queue.)
 This is named the {Dynamo candidate queue}.
 
-The Dynamo offers a jump whenever its header chain has advanced by {MinJumpSlots} slots since it last offered a jump; the value of the MinJumpSlots design parameter is discussed in the Parameter Tuning section.
+The Dynamo offers a jump whenever its header chain has advanced by {MinJumpSlots} slots since it last offered a jump; the value of the MinJumpSlots design parameter is discussed in the [Parameter Tuning](#parameter-tuning) section.
 To offer a jump, the Dynamo makes a copy of its current candidate chain C and (via the CSJ governor) sends a corresponding MsgFindIntersect to every Jumper.
 If a Jumper accepts the entire jump, it's header chain is updated to C.
 If a Jumper refuses, additional bisecting MsgFindIntersect messages are sent to that peer in order to determine the exact intersection of its selection with C, and the peer becomes a PreObjector.
@@ -319,7 +319,7 @@ If an Objector or a Dynamo sends MsgAwaitReply or MsgRollBack, then it immediate
 In order to prevent adversarial peers from using MsgAwaitReply or MsgRollBack in order to waste the syncing nodes bandwidth and CPU by running full ChainSync for the historical chain, CSJ also enforces a {Limit on the Age of MsgAwaitReply/MsgRollBack}.
 This cannot be a perfect mitigation, since it's possible that an honest peer would need to rollback a header that is at most Scg slots old, even though that's very unlikely.
 But it's sufficient to simply limit that extra CPU cost to the final Scg window of the sync, instead of potentially paying that cost for the entire age of the chain.
-The maximum allowed age of a rolled back header is HistoricityCutoff, which cannot be less than Scg; see the Parameter Tuning section below for more details.
+The maximum allowed age of a rolled back header is HistoricityCutoff, which cannot be less than Scg; see the [Parameter Tuning](#parameter-tuning) section below for more details.
 Any MsgRollBack that rolls back a header older than HistoricityCutoff (according to the wall clock) and any MsgAwaitReply that is sent when the candidate fragment tip is older than HistoricityCutoff immediately incurs a disconnection from that peer.
 
 The Dynamo, Objector, and every Disengaged peer are continually subject to the standard LoP.
@@ -414,7 +414,7 @@ There are two additional concerns.
 
 - The first time the syncing node sends a request to some peer, that peer will of course not be able to instantly respond.
   A naive implementation of the above rule would therefore irrationally penalize that peer for "starving" the node.
-  This motivates the {BlockFetchGracePeriod} in the logic below; see Parameter Tuning for constraints on its value.
+  This motivates the {BlockFetchGracePeriod} in the logic below; see [Parameter Tuning](#parameter-tuning) for constraints on its value.
 
 - The syncing BlockFetch logic should, like the normal Praos BlockFetch logic, still only request blocks from a peer that are on that peer's header chain.
   The syncing node's peers may have sent different header chains; they might disagree or merely be prefixes of one another.
@@ -498,7 +498,7 @@ This component contibutes to Sync Liveness for two reasons.
 
 This component also contributes to Limited Sync Load, since it avoids unnecessarily fetching a block from multiple honest peers.
 
-To prevent this component from spoiling Sync Liveness, this relatively-expensive calculation is rate-limited with a parameter {DbfRateLimit}; see the Parameter Tuning section.
+To prevent this component from spoiling Sync Liveness, this relatively-expensive calculation is rate-limited with a parameter {DbfRateLimit}; see the [Parameter Tuning](#parameter-tuning) section.
 
 ### The Node Versus Environment Tests Component
 
