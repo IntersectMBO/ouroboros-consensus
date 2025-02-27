@@ -1,12 +1,12 @@
 # Cardano Genesis
 
-This document is the High-Level Design for the addition of Ouroboros Genesis to the existing Cardano implementation of Ouroboros Praos.
+This document contains the High-Level Design for adding Ouroboros Genesis to the existing Cardano implementation of Ouroboros Praos.
 
 ## Prerequisites
 
 The following is taken for granted.
 
-- The reader is familir with the core architecture of the existing Praos implementation (ChainSync mini protocol, Block Fetch mini protocol and decision logic, etc).
+- The reader is familir with the core architecture of the existing Praos implementation ([ChainSync](Glossary#chainsync) mini protocol, [BlockFetch](Glossary#blockfetch) mini protocol and decision logic, etc).
 - The reader is aware of the motivation for Ouroboros Genesis ([paper](https://iohk.io/en/research/library/papers/ouroboros-genesis-composable-proof-of-stake-blockchains-with-dynamic-availability/) & [blog post](https://iohk.io/en/blog/posts/2023/02/09/ouroboros-genesis-enhanced-security-in-a-dynamic-environment/)) over Ouroboros Praos ([paper](https://iohk.io/en/research/library/papers/ouroboros-praos-an-adaptively-secure-semi-synchronous-proof-of-stake-protocol/)), ie safe decentralized syncing.
 
 ## Notation
@@ -17,15 +17,15 @@ The following is taken for granted.
 
 - {Valency} is the number of upstream peers.
 
-- {Kcp} is the k parameter of the Common Prefix property of Ouroboros Praos: how many blocks a well-connected honest node might possibly need to roll back in order to adopt the honest network's latest best chain.
+- {Kcp} is the `k` [security parameter](Glossary#security-parameter) parameter of the Common Prefix property of Ouroboros Praos: how many blocks a well-connected honest node might possibly need to roll back in order to adopt the honest network's latest best chain.
 
 - {Δ} is the parameter from Ouroboros Praos's security argument: the maximum delay before a block reaches every well-connected honest node.
 
 - {∩} is the intersection operator: X∩Y is the longest chain that is a prefix of both X and Y.
 
-- {Scg} is the s parameter of the Chain Growth property of Ouroboros Praos: the greatest possible number of slots it might take for the honest chain to grow by Kcp.
+- {Scg} is the `s` parameter of the [Chain Growth](Glossary#chain-growth-property) property of Ouroboros Praos: the greatest possible number of slots it might take for the honest chain to grow by Kcp.
 
-- {Sgen} is the s parameter of the Ouroboros Genesis chain selection rule: how many slots after an intersection are considered when comparing two competing chains' densities.
+- {Sgen} is the s parameter of the [Ouroboros Genesis chain selection rule](Glossary#genesis-chain-selection-rule): how many slots after an intersection are considered when comparing two competing chains' densities.
   This document assumes Sgen equals Scg, though other possibilites will be discussed in Parameter Tuning below.
 
 ## Requirements
@@ -37,7 +37,7 @@ Any implementation of Genesis in Cardano must satisfy the following requirements
 - {Sync Safety}: If the syncing node always has at least one peer that is honest, not itself syncing, and connected with reasonable latency and bandwidth to the syncing node as well as the honest network, then the syncing node will never select more than Kcp blocks of a chain that is not extended by a recent selection of some honest nodes in the network (ie approximately within Δ).
   The antecedent of that implication is the {Honest Availability Assumption} ({HAA}).
   It is beyond the scope of this design to ensure the HAA, but it seems viable even if non-trivial (see the Diffusion Layer's _Ledger Peers_ design).
-  It is important that the Sync Safety requirement directly prevents the original motivation for Ouroboros Genesis, the _long-range attack_.
+  It is important to note that the Sync Safety requirement directly prevents the _long-range attack_, which was the original motivation for Ouroboros Genesis.
 
 - {Sync Liveness}: The upper bound of unnecessary delay incurred during some interval of the sync is proportional to how many of the syncing node's upstream peers in that same interval are adversarial.
   It is beyond the scope of this design to ensure that count of adversarial peers remains below some reasonable bound (eg 50).
@@ -113,9 +113,9 @@ Each subsection specifies the high-level design of one component.
 The Lightweight Checkpointing is one of the simplest components.
 The node configuration data will include a list of pairs of block number[^checkpoint-block-vs-slot-no] (ie chain length) and hash.
 
-[^checkpoint-block-vs-slot-no]: We decided to use pairs of block numbers and hashes as the resulting semantics are very simple, in particular due to the fact that any sufficiently long chain will contain a block with a given block number, in contrast to slot numbers (as slots can be empty). Depending on the exact context, one scheme or the other might be more convenient.
+[^checkpoint-block-vs-slot-no]: We decided to use pairs of block numbers and hashes as the resulting semantics are very simple, in particular because that any sufficiently long chain will contain a block with a given block number, in contrast to slot numbers (as slots can be empty). Depending on the exact context, one scheme or the other might be more convenient.
 
-Each pair N and H incurs an additional predicate to that node's header validation: if a header's block number is equal to N, then the header is invalid if its hash is not H.
+Each pair N and H incurs an additional predicate to that node's header validation: if a header's block number is equal to N, then the header is valid if its hash is H.
 
 If some interval of the desired historical chain is sufficiently sparse that the GDD might not prefer it, then checkpoints can be used to prevent the GDD from being aware of any competing alternative chains.
 There are two main options.
@@ -687,7 +687,7 @@ The following additional work on Genesis is suggested, as priorities and resourc
    - Adjust genesis tests to allow for a non-zero GDD rate limit.
      [WIP code here](https://github.com/IntersectMBO/ouroboros-consensus/commit/4ff3138e6b6bfaf06f7f9ba49bab4d8b1e77a969).
    - Implement mutation testing for Genesis implementation (see test plan).
-   - Standalone unit/state machine tests for CSJ; test for more CSJ invariants (like [here](https://github.com/IntersectMBO/ouroboros-consensus/pull/1108)).
+   - Standalone unit/state machine tests for CSJ; test for more CSJ invariants (like [here](https://github.com/IntersectMBO/ouroboros-consensus/blob/b14da83d982224edc1700b0bed31ebd96c9ceaf8/ouroboros-consensus-diffusion/test/consensus-test/Test/Consensus/PeerSimulator/CSJInvariants.hs).
 - Define finer grained coverage for Genesis and Praos, make plans to measure it, and then measure it.
 - Small optimizations that didn't turn out to be necessary so far:
    - Only compute the LoE anchor amongst the Ledger Peers.
