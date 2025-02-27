@@ -148,6 +148,11 @@ Due to the incremental nature of ChainSync, we often only know a *prefix* of the
 
 A rule to compare two chains `C` and `D`: prefer the chain that has the higher density in the interval after `C ∩ D` of length `sgen`.
 
+## ;Eclipse attack
+
+An attack on a blockchain (or any other peer-to-peer network) system in which malicious actors attempt to isolate one or several hones participants from the rest of the network. See [this paper](https://www.usenix.org/conference/usenixsecurity15/technical-sessions/presentation/heilman) for an example attack on Bitcoin.
+
+
 ## ;Election proof
 
 A cryptographic proof that the [Ouroboros](#ouroboros) protocol did indeed assign the [block](#block)'s issuer to lead the block's [slot](#slot).

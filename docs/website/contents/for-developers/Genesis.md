@@ -47,7 +47,7 @@ Any implementation of Genesis in Cardano must satisfy the following requirements
 
 - {Disaster Tolerance}: Given sufficient configuration (that is hopefully temporary), the new behaviors should work even despite a disaster on the Cardano network.
 
-## Decomposition
+## Components
 
 This design consists of the following components.
 
@@ -77,7 +77,7 @@ This design consists of the following components.
 
 TODO links to entrypoints in the Haddock once the Genesis work is merged
 
-## Correctness Proof Sketch
+## How Components satisfy Requirements
 
 At a high-level, those requirements are satisfied by those components for the following reasons.
 
@@ -88,7 +88,7 @@ At a high-level, those requirements are satisfied by those components for the fo
   As a side benefit, this means the initial Genesis deployment can include checkpoints that cover the Byron era, which has different density characteristics, and some portions of the historical chain that are unusually sparse.
   Without checkpoints, it's theoretically possible that the "missing" blocks all ended up on some unknown adversarial chain that the GDD would actually prefer to today's Cardano network's chain.
 
-- The GSM directly ensures No Praos Disruption (unless the node becomes eclipsed or the honest chain actually stops growing for too long).
+- The GSM directly ensures No Praos Disruption (unless the node becomes [eclipsed](Glossary#eclipse-attack) or the honest chain actually stops growing for too long).
 
 - The LoE directly ensures Sync Safety, because the Honest Availability Assumption ensures that the LoE anchor is a prefix of the latest honest chain.
 
