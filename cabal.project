@@ -60,7 +60,7 @@ source-repository-package
 source-repository-package
   type: git
   location: git@github.com:input-output-hk/kes-agent
-  tag: 660de3128d953fc81aec0c52f5677c0387e0ca4a
+  tag: 7d3517d61004b3e0867b62f1b4cf02ae5eee5589
   --sha256: sha256-N4XRVqC+UgWej+J16RPh3EO6MSIE3wmJvmP5/nRgIuw=
   subdir:
       kes-agent
