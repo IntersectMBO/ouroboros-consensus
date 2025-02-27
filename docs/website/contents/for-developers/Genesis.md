@@ -37,7 +37,7 @@ Any implementation of Genesis in Cardano must satisfy the following requirements
 - {Sync Safety}: If the syncing node always has at least one peer that is honest, not itself syncing, and connected with reasonable latency and bandwidth to the syncing node as well as the honest network, then the syncing node will never select more than Kcp blocks of a chain that is not extended by a recent selection of some honest nodes in the network (ie approximately within Δ).
   The antecedent of that implication is the {Honest Availability Assumption} ({HAA}).
   It is beyond the scope of this design to ensure the HAA, but it seems viable even if non-trivial (see the Diffusion Layer's _Ledger Peers_ design).
-  It is important to note that the Sync Safety requirement directly prevents the _long-range attack_, which was the original motivation for Ouroboros Genesis.
+  It is important to note that the Sync Safety requirement directly prevents the [_long-range attack_](Glossary#long-range-attack), which was the original motivation for Ouroboros Genesis.
 
 - {Sync Liveness}: The upper bound of unnecessary delay incurred during some interval of the sync is proportional to how many of the syncing node's upstream peers in that same interval are adversarial.
   It is beyond the scope of this design to ensure that count of adversarial peers remains below some reasonable bound (eg 50).
