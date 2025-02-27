@@ -33,8 +33,6 @@ module Ouroboros.Consensus.Node (
   , stdVersionDataNTC
   , stdVersionDataNTN
   , stdWithCheckedDB
-    -- ** P2P Switch
-  , NetworkP2PMode (..)
     -- * Exposed by 'run' et al
   , ChainDB.RelativeMountPoint (..)
   , ChainDB.TraceEvent (..)
@@ -80,6 +78,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe, isNothing)
 import           Data.Time (NominalDiffTime)
 import           Data.Typeable (Typeable)
+import           Data.Void (Void)
 import           Network.Mux.Types
 
 import           Cardano.Network.Types (LedgerStateJudgement (..))
@@ -97,7 +96,6 @@ import qualified Ouroboros.Consensus.Network.NodeToClient as NTC
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
 import           Ouroboros.Consensus.Node.DbLock
 import           Ouroboros.Consensus.Node.DbMarker
-import           Ouroboros.Consensus.Node.ErrorPolicy
 import           Ouroboros.Consensus.Node.ExitPolicy
 import           Ouroboros.Consensus.Node.Genesis (GenesisConfig (..),
                      GenesisNodeKernelArgs, mkGenesisNodeKernelArgs)
@@ -124,10 +122,8 @@ import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
 import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..), FetchMode)
 import qualified Ouroboros.Network.Diffusion as Diffusion
-import qualified Ouroboros.Network.Diffusion.Common as Diffusion
+import qualified Ouroboros.Network.Diffusion.Types as Diffusion
 import qualified Ouroboros.Network.Diffusion.Configuration as Diffusion
-import qualified Ouroboros.Network.Diffusion.P2P as Diffusion.P2P
-import qualified Ouroboros.Network.Diffusion.NonP2P as NonP2P
 import           Ouroboros.Network.Magic
 import           Ouroboros.Network.NodeToClient (ConnectionId, LocalAddress,
                      LocalSocket, NodeToClientVersionData (..), combineVersions,
@@ -145,7 +141,6 @@ import           Ouroboros.Network.PeerSelection.PeerMetric (PeerMetrics,
 import           Ouroboros.Network.PeerSelection.PeerSharing (PeerSharing)
 import           Ouroboros.Network.PeerSelection.PeerSharing.Codec
                      (decodeRemoteAddress, encodeRemoteAddress)
-import           Ouroboros.Network.RethrowPolicy
 import qualified SafeWildCards
 import           System.Exit (ExitCode (..))
 import           System.FilePath ((</>))
@@ -184,7 +179,7 @@ import Network.DNS.Resolver (Resolver)
 
 -- | Arguments expected from any invocation of 'runWith', whether by deployed
 -- code, tests, etc.
-data RunNodeArgs m addrNTN addrNTC blk (p2p :: Diffusion.P2P) = RunNodeArgs {
+data RunNodeArgs m addrNTN addrNTC blk = RunNodeArgs {
       -- | Consensus tracers
       rnTraceConsensus :: Tracers m (ConnectionId addrNTN) (ConnectionId addrNTC) blk
 
@@ -205,9 +200,6 @@ data RunNodeArgs m addrNTN addrNTC blk (p2p :: Diffusion.P2P) = RunNodeArgs {
                        -> NodeKernel m addrNTN (ConnectionId addrNTC) blk
                        -> m ()
 
-      -- | Network P2P Mode switch
-    , rnEnableP2P :: NetworkP2PMode p2p
-
       -- | Network PeerSharing miniprotocol willingness flag
     , rnPeerSharing :: PeerSharing
 
@@ -223,8 +215,7 @@ data RunNodeArgs m addrNTN addrNTC blk (p2p :: Diffusion.P2P) = RunNodeArgs {
 -- 'runWith'. The @cardano-node@, for example, instead calls the 'run'
 -- abbreviation, which uses 'stdLowLevelRunNodeArgsIO' to indirectly specify
 -- these low-level values from the higher-level 'StdRunNodeArgs'.
-data LowLevelRunNodeArgs m addrNTN addrNTC blk
-                         (p2p :: Diffusion.P2P) extraAPI =
+data LowLevelRunNodeArgs m addrNTN addrNTC blk extraAPI =
    LowLevelRunNodeArgs {
 
       -- | An action that will receive a marker indicating whether the previous
@@ -285,8 +276,7 @@ data LowLevelRunNodeArgs m addrNTN addrNTC blk
              addrNTN NodeToNodeVersion   NodeToNodeVersionData
              addrNTC NodeToClientVersion NodeToClientVersionData
              extraAPI m NodeToNodeInitiatorResult
-        -> Diffusion.ApplicationsExtra p2p addrNTN m NodeToNodeInitiatorResult
-        -> m ()
+        -> m Void
 
     , llrnVersionDataNTC :: NodeToClientVersionData
 
@@ -333,7 +323,7 @@ nonImmutableDbPath (MultipleDbPaths _ vol) = vol
 -- some usual assumptions for realistic use cases such as in @cardano-node@.
 --
 -- See 'stdLowLevelRunNodeArgsIO'.
-data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) extraArgs extraState extraDebugState extraActions extraAPI extraPeers extraFlags extraChurnArgs extraCounters exception = StdRunNodeArgs
+data StdRunNodeArgs m blk extraArgs extraState extraDebugState extraActions extraAPI extraPeers extraFlags extraChurnArgs extraCounters exception = StdRunNodeArgs
   { srnBfcMaxConcurrencyBulkSync    :: Maybe Word
   , srnBfcMaxConcurrencyDeadline    :: Maybe Word
   , srnChainDbValidateOverride      :: Bool
@@ -341,41 +331,52 @@ data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) extraArgs extraState extraDebug
   , srnDiskPolicyArgs               :: DiskPolicyArgs
   , srnDatabasePath                 :: NodeDatabasePaths
     -- ^ Location of the DBs
-  , srnDiffusionArguments           :: Diffusion.Arguments
-                                         IO
-                                         Socket      RemoteAddress
-                                         LocalSocket LocalAddress
-  , srnDiffusionArgumentsExtra      :: Diffusion.P2PDecision p2p (Tracer IO TracePublicRootPeers) ()
-                                    -> Diffusion.P2PDecision p2p (STM IO FetchMode) ()
-                                    -> Diffusion.P2PDecision p2p extraAPI ()
-                                    -> Diffusion.ArgumentsExtra p2p
-                                         extraArgs extraState extraDebugState
+  , srnDiffusionMode                :: DiffusionMode
+    -- ^ This is also available in Diffusion.Arguments, however we can't have
+    -- access to it unless we pass the required arguments to
+    -- 'srnDiffusionArguments' and those might not be available outside a
+    -- closure with access to Applications and NodeKernel. This value doesn't
+    -- depend on either so we can require it earlier
+
+  , srnPublicPeerSelectionVar       :: StrictSTM.StrictTVar m (PublicPeerSelectionState RemoteAddress)
+    -- ^ This is also available in Diffusion.Arguments, however we can't have
+    -- access to it unless we pass the required arguments to
+    -- 'srnDiffusionArguments' and those might not be available outside a
+    -- closure with access to Applications and NodeKernel. This value doesn't
+    -- depend on either so we can require it earlier
+
+  , srnDiffusionArguments           :: Tracer IO TracePublicRootPeers
+                                    -> STM IO FetchMode
+                                    -> extraAPI
+                                    -> Diffusion.Arguments
+                                         extraState extraDebugState
                                          extraFlags extraPeers extraAPI
                                          extraChurnArgs extraCounters
-                                         exception RemoteAddress LocalAddress
-                                         Resolver IOException IO
+                                         exception Resolver IOException
+                                         IO Socket RemoteAddress LocalSocket
+                                         LocalAddress
   , srnDiffusionTracers             :: Diffusion.Tracers
-                                         RemoteAddress  NodeToNodeVersion
-                                         LocalAddress   NodeToClientVersion
-                                         IO
-  , srnDiffusionTracersExtra        :: Diffusion.ExtraTracers p2p extraState extraDebugState extraFlags extraPeers extraCounters IO
+                                         RemoteAddress  NodeToNodeVersion   NodeToNodeVersionData
+                                         LocalAddress   NodeToClientVersion NodeToClientVersionData
+                                         IOException extraState extraDebugState
+                                         extraFlags extraPeers extraCounters IO
   , srnSigUSR1SignalHandler         :: ( forall (mode :: Mode) x y.
-                                          Diffusion.ExtraTracers p2p
-                                                                 extraState
-                                                                 Cardano.DebugPeerSelectionState
-                                                                 extraFlags extraPeers extraCounters
-                                                                 IO
+                                          Diffusion.Tracers
+                                            RemoteAddress  NodeToNodeVersion   NodeToNodeVersionData
+                                            LocalAddress   NodeToClientVersion NodeToClientVersionData
+                                            IOException extraState extraDebugState
+                                            extraFlags extraPeers extraCounters IO
                                        -> STM IO UseLedgerPeers
                                        -> PeerSharing
                                        -> STM IO UseBootstrapPeers
                                        -> STM IO LedgerStateJudgement
-                                       -> Diffusion.P2P.NodeToNodeConnectionManager mode Socket
+                                       -> Diffusion.NodeToNodeConnectionManager mode Socket
                                             RemoteAddress NodeToNodeVersionData
                                             NodeToNodeVersion IO x y
                                        -> StrictSTM.StrictTVar IO
                                             (PeerSelectionState extraState extraFlags extraPeers
                                                                 RemoteAddress
-                                                                (Diffusion.P2P.NodeToNodePeerConnectionHandle
+                                                                (Diffusion.NodeToNodePeerConnectionHandle
                                                                     mode RemoteAddress
                                                                     NodeToNodeVersionData IO x y))
                                        -> PeerMetrics IO RemoteAddress
@@ -396,29 +397,34 @@ data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) extraArgs extraState extraDebug
   Entrypoints to the Consensus Layer node functionality
 -------------------------------------------------------------------------------}
 
--- | P2P Switch
---
-data NetworkP2PMode (p2p :: Diffusion.P2P) where
-    EnabledP2PMode  :: NetworkP2PMode 'Diffusion.P2P
-    DisabledP2PMode :: NetworkP2PMode 'Diffusion.NonP2P
-
-deriving instance Eq   (NetworkP2PMode p2p)
-deriving instance Show (NetworkP2PMode p2p)
-
 pure []
 
 -- | Combination of 'runWith' and 'stdLowLevelRunArgsIO'
-run :: forall blk p2p extraState extraActions extraPeers extraFlags extraChurnArgs extraCounters exception.
+run :: forall blk extraState extraActions extraPeers extraFlags extraChurnArgs extraCounters exception.
     ( RunNode blk
      , Monoid extraPeers
      , Eq extraCounters
      , Eq extraFlags
      , Exception exception
      )
-  => RunNodeArgs IO RemoteAddress LocalAddress blk p2p
-  -> StdRunNodeArgs IO blk p2p (Cardano.ExtraArguments IO) extraState Cardano.DebugPeerSelectionState extraActions (Cardano.LedgerPeersConsensusInterface IO) extraPeers extraFlags extraChurnArgs extraCounters exception
-  -> IO ()
-run args stdArgs = stdLowLevelRunNodeArgsIO args stdArgs >>= runWith args encodeRemoteAddress decodeRemoteAddress
+  => RunNodeArgs IO RemoteAddress LocalAddress blk
+  -> StdRunNodeArgs
+      IO
+      blk
+      (Cardano.ExtraArguments IO)
+      extraState
+      Cardano.DebugPeerSelectionState
+      extraActions
+      (Cardano.LedgerPeersConsensusInterface IO)
+      extraPeers
+      extraFlags
+      extraChurnArgs
+      extraCounters
+      exception
+  -> IO Void
+run args stdArgs =
+  stdLowLevelRunNodeArgsIO args stdArgs
+    >>= runWith args encodeRemoteAddress decodeRemoteAddress
 
 
 -- | Extra constraints used by `ouroboros-network`.
@@ -443,18 +449,18 @@ type NetworkAddr addr = (
 -- network layer.
 --
 -- This function runs forever unless an exception is thrown.
-runWith :: forall m addrNTN addrNTC blk p2p.
+runWith :: forall m addrNTN addrNTC blk.
      ( RunNode blk
      , IOLike m
      , Hashable addrNTN -- the constraint comes from `initNodeKernel`
      , NetworkIO m
      , NetworkAddr addrNTN
      )
-  => RunNodeArgs m addrNTN addrNTC blk p2p
+  => RunNodeArgs m addrNTN addrNTC blk
   -> (NodeToNodeVersion -> addrNTN -> CBOR.Encoding)
   -> (NodeToNodeVersion -> forall s . CBOR.Decoder s addrNTN)
-  -> LowLevelRunNodeArgs m addrNTN addrNTC blk p2p (Cardano.LedgerPeersConsensusInterface m)
-  -> m ()
+  -> LowLevelRunNodeArgs m addrNTN addrNTC blk (Cardano.LedgerPeersConsensusInterface m)
+  -> m Void
 runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
 
     llrnWithCheckedDB $ \(LastShutDownWasClean lastShutDownWasClean) continueWithCleanChainDB ->
@@ -566,15 +572,14 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
           peerMetrics <- newPeerMetric Diffusion.peerMetricsConfiguration
           let ntnApps = mkNodeToNodeApps   nodeKernelArgs nodeKernel peerMetrics encAddrNtN decAddrNtN
               ntcApps = mkNodeToClientApps nodeKernelArgs nodeKernel
-              (apps, appsExtra) =
-                mkDiffusionApplications rnEnableP2P
-                                        (miniProtocolParameters nodeKernelArgs)
+              apps   =
+                mkDiffusionApplications (miniProtocolParameters nodeKernelArgs)
                                         ntnApps
                                         ntcApps
                                         nodeKernel
                                         peerMetrics
 
-          llrnRunDataDiffusion nodeKernel apps appsExtra
+          llrnRunDataDiffusion nodeKernel apps
   where
     ProtocolInfo
       { pInfoConfig       = cfg
@@ -626,8 +631,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
           (NTC.mkHandlers nodeKernelArgs nodeKernel)
 
     mkDiffusionApplications
-      :: NetworkP2PMode p2p
-      -> MiniProtocolParameters
+      :: MiniProtocolParameters
       -> (   BlockNodeToNodeVersion blk
           -> NTN.Apps
                m
@@ -647,89 +651,69 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
         )
       -> NodeKernel m addrNTN (ConnectionId addrNTC) blk
       -> PeerMetrics m addrNTN
-      -> ( Diffusion.Applications
-             addrNTN NodeToNodeVersion   NodeToNodeVersionData
-             addrNTC NodeToClientVersion NodeToClientVersionData
-             (Cardano.LedgerPeersConsensusInterface m)
-             m NodeToNodeInitiatorResult
-         , Diffusion.ApplicationsExtra p2p addrNTN m NodeToNodeInitiatorResult
-         )
+      -> Diffusion.Applications
+          addrNTN NodeToNodeVersion   NodeToNodeVersionData
+          addrNTC NodeToClientVersion NodeToClientVersionData
+          (Cardano.LedgerPeersConsensusInterface m)
+          m NodeToNodeInitiatorResult
     mkDiffusionApplications
-      enP2P
       miniProtocolParams
       ntnApps
       ntcApps
       kernel
       peerMetrics =
-      case enP2P of
-        EnabledP2PMode ->
-          ( apps
-          , Diffusion.P2PApplicationsExtra
-              Diffusion.P2P.ApplicationsExtra {
-                Diffusion.P2P.daRethrowPolicy       = consensusRethrowPolicy (Proxy @blk),
-                Diffusion.P2P.daReturnPolicy        = returnPolicy,
-                Diffusion.P2P.daLocalRethrowPolicy  = localRethrowPolicy,
-                Diffusion.P2P.daPeerMetrics         = peerMetrics,
-                Diffusion.P2P.daPeerSharingRegistry = getPeerSharingRegistry kernel
-              }
-          )
-        DisabledP2PMode ->
-          ( apps
-          , Diffusion.NonP2PApplicationsExtra
-              NonP2P.ApplicationsExtra {
-                NonP2P.daErrorPolicies = consensusErrorPolicy (Proxy @blk)
-              }
-          )
-      where
-        apps = Diffusion.Applications {
-            Diffusion.daApplicationInitiatorMode =
-              combineVersions
-                [ simpleSingletonVersions
-                    version
-                    llrnVersionDataNTN
-                    (\versionData ->
-                      NTN.initiator miniProtocolParams version versionData
-                      -- Initiator side won't start responder side of Peer
-                      -- Sharing protocol so we give a dummy implementation
-                      -- here.
-                      $ ntnApps blockVersion)
-                | (version, blockVersion) <- Map.toList llrnNodeToNodeVersions
-                ],
-            Diffusion.daApplicationInitiatorResponderMode =
-              combineVersions
-                [ simpleSingletonVersions
-                    version
-                    llrnVersionDataNTN
-                    (\versionData ->
-                        NTN.initiatorAndResponder miniProtocolParams version versionData
-                      $ ntnApps blockVersion)
-                | (version, blockVersion) <- Map.toList llrnNodeToNodeVersions
-                ],
-            Diffusion.daLocalResponderApplication =
-              combineVersions
-                [ simpleSingletonVersions
-                    version
-                    llrnVersionDataNTC
-                    (\versionData -> NTC.responder version versionData $ ntcApps blockVersion version)
-                | (version, blockVersion) <- Map.toList llrnNodeToClientVersions
-                ],
-            Diffusion.daLedgerPeersCtx =
-              LedgerPeersConsensusInterface {
-                  lpGetLatestSlot = getImmTipSlot kernel,
-                  lpGetLedgerPeers = fromMaybe [] <$> getPeersFromCurrentLedger kernel (const True),
-                  lpExtraAPI =
-                    Cardano.LedgerPeersConsensusInterface {
-                      Cardano.getLedgerStateJudgement = GSM.gsmStateToLedgerJudgement <$> getGsmState kernel
-                    , Cardano.updateOutboundConnectionsState =
-                        let varOcs = getOutboundConnectionsState kernel in \newOcs -> do
-                          oldOcs <- readTVar varOcs
-                          when (newOcs /= oldOcs) $ writeTVar varOcs newOcs
-                    }
-                }
-          }
-
-        localRethrowPolicy :: RethrowPolicy
-        localRethrowPolicy = mempty
+        Diffusion.Applications {
+          Diffusion.daApplicationInitiatorMode =
+            combineVersions
+              [ simpleSingletonVersions
+                  version
+                  llrnVersionDataNTN
+                  (\versionData ->
+                    NTN.initiator miniProtocolParams version versionData
+                    -- Initiator side won't start responder side of Peer
+                    -- Sharing protocol so we give a dummy implementation
+                    -- here.
+                    $ ntnApps blockVersion)
+              | (version, blockVersion) <- Map.toList llrnNodeToNodeVersions
+              ],
+          Diffusion.daApplicationInitiatorResponderMode =
+            combineVersions
+              [ simpleSingletonVersions
+                  version
+                  llrnVersionDataNTN
+                  (\versionData ->
+                      NTN.initiatorAndResponder miniProtocolParams version versionData
+                    $ ntnApps blockVersion)
+              | (version, blockVersion) <- Map.toList llrnNodeToNodeVersions
+              ],
+          Diffusion.daLocalResponderApplication =
+            combineVersions
+              [ simpleSingletonVersions
+                  version
+                  llrnVersionDataNTC
+                  (\versionData -> NTC.responder version versionData $ ntcApps blockVersion version)
+              | (version, blockVersion) <- Map.toList llrnNodeToClientVersions
+              ],
+          Diffusion.daLedgerPeersCtx =
+            LedgerPeersConsensusInterface {
+                lpGetLatestSlot = getImmTipSlot kernel,
+                lpGetLedgerPeers = fromMaybe [] <$> getPeersFromCurrentLedger kernel (const True),
+                lpExtraAPI =
+                  Cardano.LedgerPeersConsensusInterface {
+                    Cardano.getLedgerStateJudgement = GSM.gsmStateToLedgerJudgement <$> getGsmState kernel
+                  , Cardano.updateOutboundConnectionsState =
+                      let varOcs = getOutboundConnectionsState kernel in \newOcs -> do
+                        oldOcs <- readTVar varOcs
+                        when (newOcs /= oldOcs) $ writeTVar varOcs newOcs
+                  }
+              },
+          Diffusion.daRethrowPolicy       = consensusRethrowPolicy (Proxy @blk),
+          Diffusion.daReturnPolicy        = returnPolicy,
+          Diffusion.daLocalRethrowPolicy  = mempty,
+          Diffusion.daPeerMetrics         = peerMetrics,
+          Diffusion.daPeerSharingRegistry = getPeerSharingRegistry kernel,
+          Diffusion.daBlockFetchMode      = getFetchMode kernel
+        }
 
     runPredicate :: Predicate a -> a -> Maybe a
     runPredicate (Predicate p) err = if p err then Just err else Nothing
@@ -926,7 +910,7 @@ stdRunDataDiffusion
      , Exception exception
      )
   => ( forall (mode :: Mode) x y.
-       Diffusion.P2P.NodeToNodeConnectionManager
+       Diffusion.NodeToNodeConnectionManager
          mode
          Socket
          RemoteAddress
@@ -942,7 +926,7 @@ stdRunDataDiffusion
            extraFlags
            extraPeers
            RemoteAddress
-           (Diffusion.P2P.NodeToNodePeerConnectionHandle
+           (Diffusion.NodeToNodePeerConnectionHandle
              mode
              RemoteAddress
              NodeToNodeVersionData
@@ -952,14 +936,15 @@ stdRunDataDiffusion
          )
      -> PeerMetrics IO RemoteAddress
      -> IO ()
-  ) -> Diffusion.Tracers
+     )
+  -> Diffusion.Tracers
       RemoteAddress
       NodeToNodeVersion
+      NodeToNodeVersionData
       LocalAddress
       NodeToClientVersion
-      IO
-  -> Diffusion.ExtraTracers
-      p2p
+      NodeToClientVersionData
+      IOException
       extraState
       extraDebugState
       extraFlags
@@ -967,14 +952,6 @@ stdRunDataDiffusion
       extraCounters
       IO
   -> Diffusion.Arguments
-      IO
-      Socket
-      RemoteAddress
-      LocalSocket
-      LocalAddress
-  -> Diffusion.ArgumentsExtra
-      p2p
-      extraArgs
       extraState
       extraDebugState
       extraFlags
@@ -983,40 +960,57 @@ stdRunDataDiffusion
       extraChurnArgs
       extraCounters
       exception
-      RemoteAddress
-      LocalAddress
       Resolver
       IOException
       IO
+      Socket
+      RemoteAddress
+      LocalSocket
+      LocalAddress
   -> Diffusion.Applications
-      RemoteAddress NodeToNodeVersion   NodeToNodeVersionData
-      LocalAddress  NodeToClientVersion NodeToClientVersionData
-      extraAPI IO a
-  -> Diffusion.ApplicationsExtra p2p RemoteAddress IO a
-  -> IO ()
+      RemoteAddress
+      NodeToNodeVersion
+      NodeToNodeVersionData
+      LocalAddress
+      NodeToClientVersion
+      NodeToClientVersionData
+      extraAPI
+      IO
+      a
+  -> IO Void
 stdRunDataDiffusion = Diffusion.run
 
 -- | Conveniently packaged 'LowLevelRunNodeArgs' arguments from a standard
 -- non-testing invocation.
 stdLowLevelRunNodeArgsIO
-  :: forall blk p2p extraState extraActions extraPeers extraFlags extraChurnArgs extraCounters exception .
+  :: forall blk extraState extraActions extraPeers extraFlags extraChurnArgs extraCounters exception .
   ( RunNode blk
   , Monoid extraPeers
   , Eq extraCounters
   , Eq extraFlags
   , Exception exception
   )
-  => RunNodeArgs IO RemoteAddress LocalAddress blk p2p
-  -> StdRunNodeArgs IO blk p2p (Cardano.ExtraArguments IO) extraState Cardano.DebugPeerSelectionState extraActions (Cardano.LedgerPeersConsensusInterface IO) extraPeers extraFlags extraChurnArgs extraCounters exception
+  => RunNodeArgs IO RemoteAddress LocalAddress blk
+  -> StdRunNodeArgs
+      IO
+      blk
+      (Cardano.ExtraArguments IO)
+      extraState
+      Cardano.DebugPeerSelectionState
+      extraActions
+      (Cardano.LedgerPeersConsensusInterface IO)
+      extraPeers
+      extraFlags
+      extraChurnArgs
+      extraCounters
+      exception
   -> IO (LowLevelRunNodeArgs
           IO
           RemoteAddress
           LocalAddress
           blk
-          p2p
           (Cardano.LedgerPeersConsensusInterface IO))
 stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
-                                    , rnEnableP2P
                                     , rnPeerSharing
                                     , rnGenesisConfig
                                     , rnGetUseBootstrapPeers
@@ -1038,59 +1032,28 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
       , llrnCustomiseChainDbArgs = id
       , llrnCustomiseNodeKernelArgs
       , llrnRunDataDiffusion =
-          \kernel apps extraApps -> do
-            case rnEnableP2P of
-              EnabledP2PMode ->
-                case srnDiffusionTracersExtra of
-                   Diffusion.P2PTracers extraTracers -> do
-                     let srnDiffusionArgumentsExtra' =
-                           srnDiffusionArgumentsExtra (Diffusion.P2PDecision (Diffusion.P2P.dtTracePublicRootPeersTracer extraTracers))
-                                                      (Diffusion.P2PDecision (getFetchMode kernel))
-                                                      (Diffusion.P2PDecision (lpExtraAPI (Diffusion.daLedgerPeersCtx apps)))
-                     case srnDiffusionArgumentsExtra' of
-                       Diffusion.P2PArguments extraArgs ->
-                         stdRunDataDiffusion
-                             (srnSigUSR1SignalHandler
-                                srnDiffusionTracersExtra
-                                (Diffusion.P2P.daReadUseLedgerPeers extraArgs)
-                                rnPeerSharing
-                                rnGetUseBootstrapPeers
-                                (GSM.gsmStateToLedgerJudgement <$> getGsmState kernel))
-                             srnDiffusionTracers
-                             srnDiffusionTracersExtra
-                             srnDiffusionArguments
-                             srnDiffusionArgumentsExtra'
-                             apps extraApps
+          \kernel apps -> do
+            let srnDiffusionArguments' =
+                  srnDiffusionArguments (Diffusion.dtTracePublicRootPeersTracer srnDiffusionTracers)
+                                        (getFetchMode kernel)
+                                        (lpExtraAPI (Diffusion.daLedgerPeersCtx apps))
+            stdRunDataDiffusion
+              (srnSigUSR1SignalHandler
+                srnDiffusionTracers
+                (Diffusion.daReadUseLedgerPeers srnDiffusionArguments')
+                rnPeerSharing
+                rnGetUseBootstrapPeers
+                (GSM.gsmStateToLedgerJudgement <$> getGsmState kernel))
+              srnDiffusionTracers
+              srnDiffusionArguments'
+              apps
 
-              DisabledP2PMode ->
-                stdRunDataDiffusion
-                 (srnSigUSR1SignalHandler
-                    (Diffusion.NonP2PTracers NonP2P.nullTracers)
-                    (pure DontUseLedgerPeers)
-                    rnPeerSharing
-                    (pure DontUseBootstrapPeers)
-                    (pure TooOld))
-                 srnDiffusionTracers
-                 srnDiffusionTracersExtra
-                 srnDiffusionArguments
-                 (srnDiffusionArgumentsExtra
-                    (Diffusion.NonP2PDecision ())
-                    (Diffusion.NonP2PDecision ())
-                    (Diffusion.NonP2PDecision ()))
-                 apps extraApps
       , llrnVersionDataNTC =
           stdVersionDataNTC networkMagic
       , llrnVersionDataNTN =
           stdVersionDataNTN
             networkMagic
-            (case rnEnableP2P of
-               EnabledP2PMode  -> Diffusion.daMode srnDiffusionArguments
-               -- Every connection in non-p2p mode is unidirectional; We connect
-               -- from an ephemeral port.  We still pass `srnDiffusionArguments`
-               -- to the diffusion layer, so the server side will be run also in
-               -- `InitiatorAndResponderDiffusionMode`.
-               DisabledP2PMode -> InitiatorOnlyDiffusionMode
-            )
+            srnDiffusionMode
             rnPeerSharing
       , llrnNodeToNodeVersions =
           limitToLatestReleasedVersion
@@ -1108,7 +1071,7 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
       , llrnMaxClockSkew =
           InFutureCheck.defaultClockSkew
       , llrnPublicPeerSelectionStateVar =
-          Diffusion.daPublicPeerSelectionVar srnDiffusionArguments
+          srnPublicPeerSelectionVar
       }
   where
     networkMagic :: NetworkMagic
