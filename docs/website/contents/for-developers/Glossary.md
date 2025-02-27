@@ -557,6 +557,10 @@ The process of becoming synchronized with the system, either from scratch or due
 If a slot has multiple leaders or if the leader of a slot hadn't received the latest block, then they will issue multiple blocks that all claim to have the same predecessor.A [block body](#header-and-body) is just a sequence of transactions.
 -Each one modifies the [ledger state](#ledger-state) in a way determined by the [ledger rules](#block-validity-and-ledger-rules-ledger-rules).
 
+## ;Valency
+
+The number of peers the node maintains a connection to.
+
 ## ;Verifiable Random Functions, ;VRF
 
 Verifiable Random Functions are used to ensure that even the proofs don't leak the issuers' private credentials. The VRF's output is determined by the issuer's private credentials, the slot number, and the nonce and stake distribution of the epoch that contains that slot.
