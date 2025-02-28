@@ -10,7 +10,6 @@ import qualified Cardano.Ledger.Core as Core (Tx)
 import qualified Cardano.Ledger.Core as SL (hashTxSeq, toTxSeq)
 import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractTx)
 import qualified Cardano.Ledger.Shelley.BlockChain as SL (bBodySize)
-import           Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import           Control.Exception
 import qualified Data.Sequence.Strict as Seq
@@ -35,7 +34,7 @@ import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto,
 
 forgeShelleyBlock ::
      forall m era proto.
-     (ShelleyCompatible proto era, Monad m, Crypto (ProtoCrypto proto))
+     (ShelleyCompatible proto era, Monad m)
   => HotKey (ProtoCrypto proto) m
   -> CanBeLeader proto
   -> TopLevelConfig (ShelleyBlock proto era)

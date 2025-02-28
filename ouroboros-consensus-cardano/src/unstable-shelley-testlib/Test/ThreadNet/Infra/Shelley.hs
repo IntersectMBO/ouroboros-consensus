@@ -408,7 +408,7 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
 
 mkProtocolShelley ::
      forall m c.
-     (IOLike m, PraosCrypto c, ShelleyCompatible (TPraos c) ShelleyEra)
+     (IOLike m, ShelleyCompatible (TPraos c) ShelleyEra)
   => ShelleyGenesis
   -> SL.Nonce
   -> ProtVer

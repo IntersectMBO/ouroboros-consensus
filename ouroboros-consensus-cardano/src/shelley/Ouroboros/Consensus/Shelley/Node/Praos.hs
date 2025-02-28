@@ -18,7 +18,6 @@ module Ouroboros.Consensus.Shelley.Node.Praos (
   ) where
 
 import qualified Cardano.Ledger.Api.Era as L
-import           Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.OCert as Absolute
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import qualified Data.Text as T
@@ -45,8 +44,6 @@ import           Ouroboros.Consensus.Util.IOLike (IOLike)
 praosBlockForging ::
      forall m era c.
      ( ShelleyCompatible (Praos c) era
-     -- , PraosCrypto c
-     , Crypto c
      , Mempool.TxLimits (ShelleyBlock (Praos c) era)
      , IOLike m
      )
