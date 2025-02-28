@@ -84,7 +84,6 @@ import           Ouroboros.Consensus.Util.IOLike
 shelleyBlockForging ::
      forall m era c.
       ( ShelleyCompatible (TPraos c) era
-      , PraosCrypto c
       , TxLimits (ShelleyBlock (TPraos c) era)
       , IOLike m
       )
@@ -116,7 +115,6 @@ shelleyBlockForging tpraosParams credentials = do
 shelleySharedBlockForging ::
      forall m c era.
      ( ShelleyEraWithCrypto c (TPraos c) era
-     , PraosCrypto c
      , IOLike m
      )
   => HotKey c m
@@ -171,7 +169,6 @@ validateGenesis = first errsToString . SL.validateGenesis
 protocolInfoShelley ::
      forall m c.
       ( IOLike m
-      , PraosCrypto c
       , ShelleyCompatible (TPraos c) ShelleyEra
       , TxLimits (ShelleyBlock (TPraos c) ShelleyEra)
       )
@@ -192,7 +189,6 @@ protocolInfoShelley shelleyGenesis
 protocolInfoTPraosShelleyBased ::
      forall m era c.
       ( IOLike m
-      , PraosCrypto c
       , ShelleyCompatible (TPraos c) era
       , TxLimits (ShelleyBlock (TPraos c) era)
       )
