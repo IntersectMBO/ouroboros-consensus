@@ -44,9 +44,6 @@ import           Cardano.Ledger.Keys (KeyHash, KeyRole (..))
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as LC
 import           Cardano.Ledger.Shelley.LedgerState (AccountState)
-import qualified Cardano.Ledger.Shelley.LedgerState as SL
-                     (newEpochStateGovStateL)
-import qualified Cardano.Ledger.Shelley.PParams as SL (emptyPPPUpdates)
 import qualified Cardano.Ledger.Shelley.RewardProvenance as SL
                      (RewardProvenance)
 import qualified Cardano.Ledger.State as SL
@@ -63,7 +60,6 @@ import           Data.Bifunctor (second)
 import           Data.Kind (Type)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromMaybe)
 import           Data.Sequence (Seq (..))
 import           Data.Set (Set)
 import qualified Data.Set as Set
@@ -121,8 +117,6 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
     -> BlockQuery (ShelleyBlock proto era) NonMyopicMemberRewards
   GetCurrentPParams
     :: BlockQuery (ShelleyBlock proto era) (LC.PParams era)
-  GetProposedPParamsUpdates
-    :: BlockQuery (ShelleyBlock proto era) (SL.ProposedPPUpdates era)
   -- | This gets the stake distribution, but not in terms of _active_ stake
   -- (which we need for the leader schedule), but rather in terms of _total_
   -- stake, which is relevant for rewards. It is used by the wallet to show
@@ -353,8 +347,6 @@ instance
             SL.getNonMyopicMemberRewards globals st creds
         GetCurrentPParams ->
           getPParams st
-        GetProposedPParamsUpdates ->
-          getProposedPPUpdates st
         GetStakeDistribution ->
           fromLedgerPoolDistr $ SL.poolsByTotalStakeFraction globals st
         GetUTxOByAddress addrs ->
@@ -389,7 +381,7 @@ instance
         GetRewardInfoPools ->
           SL.getRewardInfoPools globals st
         GetPoolState mPoolIds ->
-          let certPState = SL.certPState . SL.lsCertState . SL.esLState . SL.nesEs $ st in
+          let certPState = view SL.certPStateL . SL.lsCertState . SL.esLState . SL.nesEs $ st in
           case mPoolIds of
             Just poolIds ->
               SL.PState
@@ -457,7 +449,7 @@ instance
             SL.calculatePoolDistr' (maybe (const True) (flip Set.member) mPoolIds) stakeSet
         GetStakeDelegDeposits stakeCreds ->
           let lookupDeposit =
-                lookupDepositDState (SL.certDState $ SL.lsCertState $ SL.esLState $ SL.nesEs st)
+                lookupDepositDState (view SL.certDStateL $ SL.lsCertState $ SL.esLState $ SL.nesEs st)
               lookupInsert acc cred =
                 case lookupDeposit cred of
                   Nothing      -> acc
@@ -523,10 +515,6 @@ instance SameDepIndex (BlockQuery (ShelleyBlock proto era)) where
   sameDepIndex GetCurrentPParams GetCurrentPParams
     = Just Refl
   sameDepIndex GetCurrentPParams _
-    = Nothing
-  sameDepIndex GetProposedPParamsUpdates GetProposedPParamsUpdates
-    = Just Refl
-  sameDepIndex GetProposedPParamsUpdates _
     = Nothing
   sameDepIndex GetStakeDistribution GetStakeDistribution
     = Just Refl
@@ -663,7 +651,6 @@ instance ShelleyCompatible proto era => ShowQuery (BlockQuery (ShelleyBlock prot
       GetEpochNo                                 -> show
       GetNonMyopicMemberRewards {}               -> show
       GetCurrentPParams                          -> show
-      GetProposedPParamsUpdates                  -> show
       GetStakeDistribution                       -> show
       GetUTxOByAddress {}                        -> show
       GetUTxOWhole                               -> show
@@ -702,7 +689,6 @@ querySupportedVersion = \case
     GetEpochNo                                 -> const True
     GetNonMyopicMemberRewards {}               -> const True
     GetCurrentPParams                          -> const True
-    GetProposedPParamsUpdates                  -> const True
     GetStakeDistribution                       -> const True
     GetUTxOByAddress {}                        -> const True
     GetUTxOWhole                               -> const True
@@ -745,24 +731,16 @@ querySupportedVersion = \case
   Auxiliary
 -------------------------------------------------------------------------------}
 
--- | /Note/ - This query will be deprecated starting with Conway era
-getProposedPPUpdates ::
-     ShelleyBasedEra era
-  => SL.NewEpochState era -> SL.ProposedPPUpdates era
-getProposedPPUpdates =
-      fromMaybe SL.emptyPPPUpdates
-    . LC.getProposedPPUpdates
-    . view SL.newEpochStateGovStateL
-
 -- Get the current 'EpochState.' This is mainly for debugging.
 getEpochState :: SL.NewEpochState era -> SL.EpochState era
 getEpochState = SL.nesEs
 
-getDState :: SL.NewEpochState era -> SL.DState era
-getDState = SL.certDState . SL.lsCertState . SL.esLState . SL.nesEs
+getDState :: SL.EraCertState era => SL.NewEpochState era -> SL.DState era
+getDState = view SL.certDStateL . SL.lsCertState . SL.esLState . SL.nesEs
 
 getFilteredDelegationsAndRewardAccounts ::
-     SL.NewEpochState era
+     SL.EraCertState era
+  => SL.NewEpochState era
   -> Set (SL.Credential 'SL.Staking)
   -> (Delegations, Map (SL.Credential 'Staking) Coin)
 getFilteredDelegationsAndRewardAccounts ss creds =
@@ -776,7 +754,8 @@ getFilteredDelegationsAndRewardAccounts ss creds =
       Map.mapMaybe (\e -> fromCompact . rdReward <$> umElemRDPair e) umElemsRestricted
 
 getFilteredVoteDelegatees ::
-     SL.NewEpochState era
+     SL.EraCertState era
+  => SL.NewEpochState era
   -> Set (SL.Credential 'SL.Staking)
   -> VoteDelegatees
 getFilteredVoteDelegatees ss creds = Map.mapMaybe umElemDRep umElemsRestricted
@@ -800,8 +779,6 @@ encodeShelleyQuery query = case query of
       CBOR.encodeListLen 2 <> CBOR.encodeWord8 2 <> toCBOR creds
     GetCurrentPParams ->
       CBOR.encodeListLen 1 <> CBOR.encodeWord8 3
-    GetProposedPParamsUpdates ->
-      CBOR.encodeListLen 1 <> CBOR.encodeWord8 4
     GetStakeDistribution ->
       CBOR.encodeListLen 1 <> CBOR.encodeWord8 5
     GetUTxOByAddress addrs ->
@@ -888,7 +865,6 @@ decodeShelleyQuery = do
       (1, 1)  ->             return $ SomeSecond GetEpochNo
       (2, 2)  ->             SomeSecond . GetNonMyopicMemberRewards <$> fromCBOR
       (1, 3)  ->             return $ SomeSecond GetCurrentPParams
-      (1, 4)  ->             return $ SomeSecond GetProposedPParamsUpdates
       (1, 5)  ->             return $ SomeSecond GetStakeDistribution
       (2, 6)  ->             SomeSecond . GetUTxOByAddress <$> LC.fromEraCBOR @era
       (1, 7)  ->             return $ SomeSecond GetUTxOWhole
@@ -935,7 +911,6 @@ encodeShelleyResult _v query = case query of
     GetEpochNo                                 -> toCBOR
     GetNonMyopicMemberRewards {}               -> toCBOR
     GetCurrentPParams                          -> toCBOR
-    GetProposedPParamsUpdates                  -> toCBOR
     GetStakeDistribution                       -> LC.toEraCBOR @era
     GetUTxOByAddress {}                        -> toCBOR
     GetUTxOWhole                               -> toCBOR
@@ -977,7 +952,6 @@ decodeShelleyResult _v query = case query of
     GetEpochNo                                 -> fromCBOR
     GetNonMyopicMemberRewards {}               -> fromCBOR
     GetCurrentPParams                          -> fromCBOR
-    GetProposedPParamsUpdates                  -> fromCBOR
     GetStakeDistribution                       -> LC.fromEraCBOR @era
     GetUTxOByAddress {}                        -> fromCBOR
     GetUTxOWhole                               -> fromCBOR
