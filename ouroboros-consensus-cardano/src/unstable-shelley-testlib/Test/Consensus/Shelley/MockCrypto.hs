@@ -63,6 +63,8 @@ type CanMock proto era =
   , SignableRepresentation Seed
   , SignableRepresentation (SL.BHBody (ProtoCrypto proto))
   , KES.Signable (KES (ProtoCrypto proto)) ~ SignableRepresentation
+  , Eq (PredicateFailure (Core.EraRule "LEDGER" era))
+  , Show (PredicateFailure (Core.EraRule "LEDGER" era))
   , Arbitrary (Core.TxAuxData era)
   , Arbitrary (Core.PParams era)
   , Arbitrary (Core.PParamsUpdate era)
@@ -75,4 +77,5 @@ type CanMock proto era =
   , Arbitrary (Core.TxWits era)
   , Arbitrary (StashedAVVMAddresses era)
   , Arbitrary (Core.GovState era)
+  , Arbitrary (SL.CertState era)
   )
