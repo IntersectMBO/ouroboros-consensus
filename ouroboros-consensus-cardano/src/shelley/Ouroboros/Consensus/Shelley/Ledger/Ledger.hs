@@ -91,8 +91,7 @@ import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Config
 import           Ouroboros.Consensus.Shelley.Ledger.Protocol ()
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract
-                     (EnvelopeCheckError, ProtoCrypto, envelopeChecks,
-                     mkHeaderView)
+                     (EnvelopeCheckError, envelopeChecks, mkHeaderView)
 import           Ouroboros.Consensus.Util ((..:))
 import           Ouroboros.Consensus.Util.CBOR (decodeWithOrigin,
                      encodeWithOrigin)
@@ -337,7 +336,7 @@ applyBlockEither ::
   STS.ValidationPolicy ->
   SL.Globals ->
   SL.NewEpochState era ->
-  SL.Block (SL.BHeaderView (ProtoCrypto proto)) era ->
+  SL.Block SL.BHeaderView era ->
   Either (SL.BlockTransitionError era) (SL.NewEpochState era, [STS.Event (Core.EraRule "BBODY" era)])
 applyBlockEither = undefined
 
@@ -346,7 +345,7 @@ applyBlockEitherNoEvents ::
   STS.ValidationPolicy ->
   SL.Globals ->
   SL.NewEpochState era ->
-  SL.Block (SL.BHeaderView (ProtoCrypto proto)) era ->
+  SL.Block SL.BHeaderView era ->
   Either (SL.BlockTransitionError era) (SL.NewEpochState era)
 applyBlockEitherNoEvents = undefined
 

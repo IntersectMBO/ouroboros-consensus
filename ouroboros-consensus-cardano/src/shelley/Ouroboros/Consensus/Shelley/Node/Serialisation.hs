@@ -14,7 +14,6 @@ module Ouroboros.Consensus.Shelley.Node.Serialisation () where
 import           Cardano.Ledger.Binary (fromCBOR, toCBOR)
 import           Cardano.Ledger.Core (fromEraCBOR, toEraCBOR)
 import qualified Cardano.Ledger.Shelley.API as SL
-import           Cardano.Protocol.Crypto (Crypto)
 import           Codec.Serialise (decode, encode)
 import           Control.Exception (Exception, throw)
 import qualified Data.ByteString.Lazy as Lazy
@@ -29,8 +28,7 @@ import           Ouroboros.Consensus.Protocol.TPraos
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion ()
-import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto,
-                     pHeaderBlockSize, pHeaderSize)
+import           Ouroboros.Consensus.Shelley.Protocol.Abstract (pHeaderBlockSize, pHeaderSize)
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Network.Block (Serialised, unwrapCBORinCBOR,
                      wrapCBORinCBOR)
