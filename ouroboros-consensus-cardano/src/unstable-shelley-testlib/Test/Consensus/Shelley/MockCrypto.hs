@@ -22,6 +22,7 @@ import           Cardano.Ledger.BaseTypes (Seed)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as Core
 import           Cardano.Ledger.Shelley.LedgerState (StashedAVVMAddresses)
+import           Cardano.Ledger.State (InstantStake)
 import           Cardano.Protocol.Crypto (Crypto (..))
 import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.BHeader as SL
@@ -78,4 +79,5 @@ type CanMock proto era =
   , Arbitrary (StashedAVVMAddresses era)
   , Arbitrary (Core.GovState era)
   , Arbitrary (SL.CertState era)
+  , Arbitrary (InstantStake era)
   )
