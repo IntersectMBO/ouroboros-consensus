@@ -293,9 +293,9 @@ instance ShelleyBasedEra era => IsLedger (LedgerState (ShelleyBlock proto era)) 
         uncurry (flip LedgerResult) ..: case evs of
           ComputeLedgerEvents ->
             second (map ShelleyLedgerEventTICK) ..:
-              applyTick STS.EPReturn
+              SL.applyTick STS.EPReturn
           OmitLedgerEvents ->
-            (,[]) ..: applyTickNoEvents
+            (,[]) ..: SL.applyTickNoEvents
 
 
 -- | All events emitted by the Shelley ledger API
@@ -304,54 +304,6 @@ data ShelleyLedgerEvent era =
     ShelleyLedgerEventBBODY (STS.Event (Core.EraRule "BBODY" era))
     -- | An event emitted during the chain tick
   | ShelleyLedgerEventTICK  (STS.Event (Core.EraRule "TICK"  era))
-
---------------------------------------------------------------------------------
---  ↓↓↓ REMOVE ↓↓↓
---
--- This code comes from https://github.com/IntersectMBO/cardano-ledger/pull/4889
--- and must be removed before merging!!
---------------------------------------------------------------------------------
-
-applyTickNoEvents ::
-  SL.Globals ->
-  SL.NewEpochState era ->
-  SlotNo ->
-  SL.NewEpochState era
-applyTickNoEvents = undefined
-
-applyTick ::
-  STS.SingEP ep ->
-  SL.Globals ->
-  SL.NewEpochState era ->
-  SlotNo ->
-  (SL.NewEpochState era, [STS.Event (Core.EraRule "TICK" era)])
-applyTick = undefined
-
-applyBlockEither ::
-  -- IMPORTANT: I had to add this proto parameter. It won't be needed because
-  -- the ledger removed the argument to BHeaderView, so whoever integrates this
-  -- must remove the Proxy from the calls below.
-  Proxy proto ->
-  STS.SingEP ep ->
-  STS.ValidationPolicy ->
-  SL.Globals ->
-  SL.NewEpochState era ->
-  SL.Block (SL.BHeaderView (ProtoCrypto proto)) era ->
-  Either (SL.BlockTransitionError era) (SL.NewEpochState era, [STS.Event (Core.EraRule "BBODY" era)])
-applyBlockEither = undefined
-
-applyBlockEitherNoEvents ::
-  Proxy proto ->
-  STS.ValidationPolicy ->
-  SL.Globals ->
-  SL.NewEpochState era ->
-  SL.Block (SL.BHeaderView (ProtoCrypto proto)) era ->
-  Either (SL.BlockTransitionError era) (SL.NewEpochState era)
-applyBlockEitherNoEvents = undefined
-
---------------------------------------------------------------------------------
--- ↑↑↑ REMOVE ↑↑↑
---------------------------------------------------------------------------------
 
 instance ShelleyCompatible proto era
       => ApplyBlock (LedgerState (ShelleyBlock proto era)) (ShelleyBlock proto era) where
@@ -373,10 +325,10 @@ instance ShelleyCompatible proto era
         fmap (uncurry (flip LedgerResult)) ..: case evs of
           ComputeLedgerEvents ->
               fmap (second (map ShelleyLedgerEventBBODY)) ..:
-                applyBlockEither (Proxy @proto) STS.EPReturn doValidate
+                SL.applyBlockEither STS.EPReturn doValidate
           OmitLedgerEvents ->
               fmap (,[]) ..:
-                applyBlockEitherNoEvents (Proxy @proto) doValidate
+                SL.applyBlockEitherNoEvents doValidate
 
 
   applyBlockLedgerResult = defaultApplyBlockLedgerResult
