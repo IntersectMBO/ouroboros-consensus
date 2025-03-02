@@ -144,7 +144,6 @@ instance CanMock proto era => Arbitrary (SomeSecond BlockQuery (ShelleyBlock pro
     , pure $ SomeSecond GetEpochNo
     , SomeSecond . GetNonMyopicMemberRewards <$> arbitrary
     , pure $ SomeSecond GetCurrentPParams
-    , pure $ SomeSecond GetProposedPParamsUpdates
     , pure $ SomeSecond GetStakeDistribution
     , pure $ SomeSecond DebugEpochState
     , (\(SomeSecond q) -> SomeSecond (GetCBOR q)) <$> arbitrary
@@ -159,7 +158,6 @@ instance CanMock proto era => Arbitrary (SomeResult (ShelleyBlock proto era)) wh
     , SomeResult GetEpochNo <$> arbitrary
     , SomeResult <$> (GetNonMyopicMemberRewards <$> arbitrary) <*> arbitrary
     , SomeResult GetCurrentPParams <$> arbitrary
-    , SomeResult GetProposedPParamsUpdates <$> arbitrary
     , SomeResult GetStakeDistribution . fromLedgerPoolDistr <$> arbitrary
     , SomeResult DebugEpochState <$> arbitrary
     , (\(SomeResult q r) ->

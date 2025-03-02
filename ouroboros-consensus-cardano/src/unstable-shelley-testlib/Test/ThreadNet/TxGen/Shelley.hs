@@ -108,7 +108,6 @@ genTx _cfg slotNo TickedShelleyLedgerState { tickedShelleyLedgerState } genEnv =
       , ledgerIx       = minBound
       , ledgerPp       = getPParams tickedShelleyLedgerState
       , ledgerAccount  = SL.esAccountState epochState
-      , ledgerMempool  = True
       }
 
     utxoSt :: SL.UTxOState ShelleyEra
