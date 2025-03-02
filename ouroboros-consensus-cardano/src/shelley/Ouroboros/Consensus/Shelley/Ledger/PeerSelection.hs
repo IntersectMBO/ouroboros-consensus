@@ -22,11 +22,12 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, mapMaybe)
 import           Data.Ord (Down (..))
 import           Data.Text.Encoding (encodeUtf8)
+import           Lens.Micro.Extras (view)
 import           Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Ledger
 
-instance LedgerSupportsPeerSelection (ShelleyBlock proto era) where
+instance SL.EraCertState era => LedgerSupportsPeerSelection (ShelleyBlock proto era) where
   getPeers ShelleyLedgerState { shelleyLedgerState } = catMaybes
       [ (poolStake,) <$> Map.lookup stakePool poolRelayAccessPoints
       | (stakePool, poolStake) <- orderByStake poolDistr
@@ -52,7 +53,7 @@ instance LedgerSupportsPeerSelection (ShelleyBlock proto era) where
         where
           pstate :: SL.PState era
           pstate =
-                SL.certPState
+                view SL.certPStateL
               . SL.lsCertState
               . SL.esLState
               . SL.nesEs
