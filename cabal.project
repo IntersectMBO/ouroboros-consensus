@@ -94,4 +94,12 @@ source-repository-package
       libs/small-steps
       libs/vector-map
 
-allow-newer: plutus-core:cardano-crypto-class
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/plutus
+  tag: be9ccfc7f8ecc6ebc577dcf3374a30530ecdb168
+  --sha256: sha256-R7t5Luc1d9l2tXKg5Jgqye+vQAEONwCrQ9/JDkFCu9M=
+  subdir:
+    plutus-core
+    plutus-ledger-api
+    plutus-tx
