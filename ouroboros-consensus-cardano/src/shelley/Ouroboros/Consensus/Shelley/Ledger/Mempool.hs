@@ -257,6 +257,7 @@ reapplyShelleyTx ::
   -> Except (ApplyTxErr (ShelleyBlock proto era)) (TickedLedgerState (ShelleyBlock proto era))
 reapplyShelleyTx cfg slot vgtx st = do
     mempoolState' <-
+        liftEither $
         SL.reapplyTx
           (shelleyLedgerGlobals cfg)
           (SL.mkMempoolEnv   innerSt slot)

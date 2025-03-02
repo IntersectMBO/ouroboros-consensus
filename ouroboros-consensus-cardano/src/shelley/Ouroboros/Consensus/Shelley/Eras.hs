@@ -55,7 +55,6 @@ import qualified Cardano.Ledger.Conway.Rules as Conway
 import qualified Cardano.Ledger.Conway.Rules as SL
                      (ConwayLedgerPredFailure (..))
 import qualified Cardano.Ledger.Conway.Translation as Conway
-import           Cardano.Ledger.Core as Core
 import           Cardano.Ledger.Mary (MaryEra)
 import           Cardano.Ledger.Mary.Translation ()
 import           Cardano.Ledger.Shelley (ShelleyEra)
@@ -142,8 +141,9 @@ class ( Core.EraSegWits era
       , EncCBOR (PredicateFailure (EraRule "LEDGER" era))
       , DecCBOR (PredicateFailure (EraRule "UTXOW" era))
       , EncCBOR (PredicateFailure (EraRule "UTXOW" era))
-
-      , NoThunks (PredicateFailure (Core.EraRule "BBODY" era))
+      , Eq (PredicateFailure (EraRule "BBODY" era))
+      , Show (PredicateFailure (EraRule "BBODY" era))
+      , NoThunks (PredicateFailure (EraRule "BBODY" era))
       , NoThunks (Core.TranslationContext era)
 
       ) => ShelleyBasedEra era where
@@ -184,7 +184,8 @@ defaultApplyShelleyBasedTx ::
        ( SL.LedgerState era
        , SL.Validated (Core.Tx era)
        )
-defaultApplyShelleyBasedTx globals ledgerEnv mempoolState _wti tx = do
+defaultApplyShelleyBasedTx globals ledgerEnv mempoolState _wti tx =
+    liftEither $
     SL.applyTx
       globals
       ledgerEnv
