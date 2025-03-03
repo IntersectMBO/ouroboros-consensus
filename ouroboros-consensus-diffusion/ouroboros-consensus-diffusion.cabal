@@ -229,6 +229,7 @@ test-suite consensus-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.BlockTree
+    Test.Consensus.GSM.Common
     Test.Consensus.GSM.QSM
     Test.Consensus.GSM.QSM.Model
     Test.Consensus.GSM.QD
@@ -304,7 +305,6 @@ test-suite consensus-test
     ouroboros-network-protocols,
     pretty-show,
     quickcheck-dynamic,
-    quickcheck-dynamic-iosim,
     quickcheck-state-machine:no-vendored-treediff,
     quiet,
     random,

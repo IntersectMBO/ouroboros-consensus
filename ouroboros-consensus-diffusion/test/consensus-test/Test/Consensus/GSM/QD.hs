@@ -3,13 +3,11 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
-{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE Rank2Types #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -18,16 +16,13 @@
 
 module Test.Consensus.GSM.QD (tests) where
 
-import Data.Maybe (fromMaybe)
-import Control.Exception (SomeException (..))
-import Test.QuickCheck.Gen.Unsafe (Capture (Capture), capture)
+import           Data.Maybe (fromMaybe)
+import           Control.Exception (SomeException (..))
+import           Test.QuickCheck.Gen.Unsafe (Capture (Capture), capture)
 import           Control.Monad.Reader
 import           Data.List ((\\))
-import           Data.Time (diffTimeToPicoseconds)
 import           Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked
-import           Control.Monad (replicateM_)
 import           Control.Monad.Class.MonadAsync (poll, async)
-import           Control.Monad.Class.MonadFork (MonadFork, yield)
 import           Control.Monad.Class.MonadSTM
 import qualified Control.Monad.Class.MonadTime.SI as SI
 import qualified Control.Monad.Class.MonadTimer.SI as SI
@@ -48,105 +43,9 @@ import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestEnv (adjustQuickCheckTests)
 import           Test.Util.ToExpr ()
 import qualified Test.QuickCheck.StateModel as QD
-import qualified Data.TreeDiff as TD
 import           Test.Util.Orphans.ToExpr ()
-import           GHC.Generics (Generic)
 
-----
-
--- | A block count
-newtype B = B Int
-  deriving stock    (Eq, Ord, Generic, Read, Show)
-  deriving newtype  (Enum, Num)
-  deriving anyclass (TD.ToExpr)
-
--- | A slot count
-newtype S = S Int
-  deriving stock    (Eq, Ord, Generic, Read, Show)
-  deriving newtype  (Enum, Num)
-  deriving anyclass (TD.ToExpr)
-
-data UpstreamPeer = Amara | Bao | Cait | Dhani | Eric
-  deriving stock    (Bounded, Enum, Eq, Ord, Generic, Read, Show)
-  deriving anyclass (TD.ToExpr, QC.CoArbitrary, QC.Function)
-
--- | The cumulative growth relative to whatever length the initial selection
--- was and the slot relative to the start of the test (which is assumed to be
--- the exact onset of some slot)
-data Selection = Selection !B !S
-  deriving stock    (Eq, Ord, Generic, Show)
-  deriving anyclass (TD.ToExpr)
-
--- | The age of the candidate is irrelevant, only its length matters
-newtype Candidate = Candidate B
-  deriving stock    (Eq, Ord, Generic, Show)
-  deriving anyclass (TD.ToExpr)
-
-data MarkerState = Present | Absent
-  deriving stock    (Eq, Ord, Generic, Read, Show)
-  deriving anyclass (TD.ToExpr)
-
-newtype WhetherPrevTimePasses = WhetherPrevTimePasses Bool
-  deriving stock    (Eq, Ord, Generic, Show)
-  deriving anyclass (TD.ToExpr)
-
-data ModelState =
-    ModelPreSyncing
-  |
-    ModelSyncing
-  |
-    ModelCaughtUp !SI.Time
-    -- ^ when the model most recently transitioned to 'GSM.CaughtUp'.
-  deriving stock    (Eq, Ord, Generic, Show)
-  deriving anyclass (TD.ToExpr)
-
--- | Interesting events to record /within the model/
---
--- TODO some less superficial ones (eg even just combinations of these)
-data Notable =
-    BigDurN
-    -- ^ there was a "big" 'TimesPasses' command
-  |
-    CaughtUpN
-    -- ^ the node transitioned from Syncing to CaughtUp
-  |
-    FellBehindN
-    -- ^ the node transitioned from CaughtUp to PreSyncing
-  |
-    SyncingToPreSyncingN
-    -- ^ the node transition from Syncing to PreSyncing
-  |
-    PreSyncingToSyncingN
-    -- ^ the node transition from PreSyncing to Syncing
-  |
-    FlickerN
-    -- ^ the node transitioned from CaughtUp to PreSyncing to Syncing and back
-    -- to CaughtUp "instantly"
-  |
-    NotThrashingN
-    -- ^ the anti-thrashing would have allowed 'FellBehindN', but the selection
-    -- wasn't old enough
-  |
-    TooOldN
-    -- ^ the selection was old enough for 'FellBehindN', but the anti-thrashing
-    -- prevented it
-  deriving stock (Eq, Ord, Show, Generic)
-
-instance TD.ToExpr Notable where toExpr = TD.defaultExprViaShow
-
-instance QC.Arbitrary LedgerStateJudgement where
-    arbitrary = QC.elements [TooOld, YoungEnough]
-    shrink    = \case
-        TooOld      -> [YoungEnough]
-        YoungEnough -> []
-
------
-
-data Context = Context {
-    cInitialJudgement :: LedgerStateJudgement
-  ,
-    cIsHaaSatisfied   :: Set.Set UpstreamPeer -> Bool
-  }
+import Test.Consensus.GSM.Common
 
 data Model = Model {
     mCandidates :: Map.Map UpstreamPeer Candidate
@@ -163,23 +62,14 @@ data Model = Model {
   ,
     mState      :: ModelState
   ,
-  --- these fields are immutable
-    mInitialJudgement :: Maybe LedgerStateJudgement
+  -- these fields are immutable
+    mInitialJudgement  :: Maybe LedgerStateJudgement
   ,
-    mIsHaaSatisfied :: Maybe (Opaque (Set.Set UpstreamPeer -> Bool))
+    mIsHaaSatisfied    :: Maybe (Opaque (Set.Set UpstreamPeer -> Bool))
   ,
     mUpstreamPeerBound :: Maybe UpstreamPeer
   }
   deriving (Show)
-  -- deriving anyclass (TD.ToExpr)
-
-newtype Opaque a = Opaque a
-
-applyOpaqueFun :: Opaque (a -> b) -> a -> b
-applyOpaqueFun (Opaque f) = f
-
-instance Show (Opaque a) where
-  show _ = "<opaque>"
 
 deriving instance Show (QD.Action Model a)
 deriving instance Eq (QD.Action Model a)
@@ -259,9 +149,7 @@ selectionIsNotEarly model =
         mSelection = sel
       } = model
 
-generator ::
-  Model
-  -> QC.Gen (QD.Any (QD.Action Model))
+generator :: Model -> QC.Gen (QD.Any (QD.Action Model))
 generator model = QC.frequency $
     [ (,) 5 $  QD.Some . Disconnect <$> QC.elements old | notNull old ]
  <>
@@ -373,10 +261,8 @@ shrinker _model = \case
 
 transition :: Model -> QD.Action Model a -> Model
 transition model cmd =
-  let ctx = Context{ cInitialJudgement = fromMaybe (error "transition: mInitialJudgement is Nothing") $ mInitialJudgement model
-                   , cIsHaaSatisfied = applyOpaqueFun (fromMaybe (Opaque $ const False) $ mIsHaaSatisfied model)
-                   }
-   in fixupModelState ctx cmd $
+  let isHaaSatisfied = applyOpaqueFun (fromMaybe (Opaque $ const False) $ mIsHaaSatisfied model)
+   in fixupModelState isHaaSatisfied cmd $
        case cmd of
          InitState upstreamPeerBound initStateInitialJudgement initStateIsHaaSatisfied ->
            let initialS = S $ case initStateInitialJudgement of
@@ -439,8 +325,9 @@ transition model cmd =
 
 -- | Update the 'mState', assuming that's the only stale field in the given
 -- 'Model'
-fixupModelState :: Context -> QD.Action Model a -> Model -> Model
-fixupModelState ctx cmd model =
+--
+fixupModelState :: (Set.Set UpstreamPeer -> Bool) -> QD.Action Model a -> Model -> Model
+fixupModelState isHaaSatisfied cmd model =
     case st of
         ModelPreSyncing
           | haaSatisfied ->
@@ -491,10 +378,6 @@ fixupModelState ctx cmd model =
         mState = st
       } = model
 
-    Context {
-        cIsHaaSatisfied = isHaaSatisfied
-      } = ctx
-
     haaSatisfied         = isHaaSatisfied $ Map.keysSet cands
     caughtUp             = some && allIdling && all ok cands
     fellBehind timestamp = expiry timestamp < clk   -- NB 'boringDur' prevents ==
@@ -544,7 +427,7 @@ fixupModelState ctx cmd model =
              <>
                 show cmd
 
-    avoidTransientState = fixupModelState ctx cmd
+    avoidTransientState = fixupModelState isHaaSatisfied cmd
 
 instance Eq (Opaque (Set.Set UpstreamPeer -> Bool)) where
   _ == _ = False
@@ -631,9 +514,6 @@ push (EvRecorder var) ev = do
     now <- SI.getMonotonicTime
     atomically $ modifyTVar var $ (:) (now, ev)
 
-isIdling :: PeerState -> Bool
-isIdling (PeerState {psIdling = Idling i}) = i
-
 -- | merely a tidy bundle of arguments
 data Vars m = Vars
     (StrictTVar m Selection)
@@ -641,15 +521,6 @@ data Vars m = Vars
     (StrictTVar m GSM.GsmState)
     (StrictTVar m MarkerState)
     (EvRecorder m)
-
-newtype Idling = Idling Bool
-  deriving (Eq, Ord, Show)
-
-data PeerState = PeerState { psCandidate :: !Candidate, psIdling :: !Idling }
-  deriving (Eq, Ord, Show)
-
-yieldSeveralTimes :: MonadFork m => m ()
-yieldSeveralTimes = replicateM_ 10 yield
 
 newtype RunMonad m a = RunMonad {runMonad :: ReaderT (Vars m) m a}
   deriving newtype (Functor, Applicative, Monad, MonadReader (Vars m))
@@ -722,18 +593,6 @@ instance IOLike m => QD.RunModel Model (RunMonad m) where
         TimePasses dur -> do
             SI.threadDelay (0.1 * fromIntegral dur)
             pure ()
-
-toMarker :: GSM.GsmState -> MarkerState
-toMarker = \case
-    GSM.PreSyncing -> Absent
-    GSM.Syncing    -> Absent
-    GSM.CaughtUp   -> Present
-
-toGsmState :: ModelState -> GSM.GsmState
-toGsmState = \case
-  ModelPreSyncing -> GSM.PreSyncing
-  ModelSyncing -> GSM.Syncing
-  ModelCaughtUp{} -> GSM.CaughtUp
 
 ---
 
@@ -941,16 +800,9 @@ prop_sequential_iosim1 upstreamPeerBound initialJudgement (QC.Fn isHaaSatisfied)
              )
        $ initStateCheck QC..&&. noExn QC..&&. finalStateCheck
 
-
--- | Checks that a 'TimePasses' command does not end exactly when a timeout
--- could fire and that a 'ExtendSelection' does not incur a timeout that would
--- fire immediately
---
--- This insulates the test from race conditions that are innocuous in the real
--- world.
+-- | See 'boringDurImpl'
 boringDur :: Model -> Int -> Bool
-boringDur model dur =
-    boringSelection && boringState
+boringDur model = boringDurImpl clk sel st
   where
     Model {
         mClock = clk
@@ -960,58 +812,13 @@ boringDur model dur =
         mState = st
       } = model
 
-    -- the first time the node would transition to PreSyncing
-    expiry          timestamp = expiryAge `max` expiryThrashing timestamp
-    expiryAge                 = SI.addTime ageLimit (onset sel)
-    expiryThrashing timestamp = SI.addTime thrashLimit timestamp
+---
 
-    clk' = SI.addTime (0.1 * fromIntegral dur) clk
+-- | The 'Opaque' type exists to give a 'Show' instance to functions
+newtype Opaque a = Opaque a
 
-    boringSelection = clk' /= expiryAge
+instance Show (Opaque a) where
+  show _ = "<opaque>"
 
-    boringState = case st of
-        ModelPreSyncing         -> True
-        ModelSyncing            -> True
-        ModelCaughtUp timestamp ->
-            let gap = clk' `SI.diffTime` expiry timestamp
-                n   =
-                  mod
-                      (diffTimeToPicoseconds gap)
-                      (secondsToPicoseconds thrashLimit)
-            in gap < 0 || 0 /= n
-
-    secondsToPicoseconds x = x * 10 ^ (12 :: Int)
-
-onset :: Selection -> SI.Time
-onset (Selection _b (S s)) = SI.Time $ fromIntegral s
-
-ageLimit :: Num a => a
-ageLimit = 10   -- seconds
-
-thrashLimit :: Num a => a
-thrashLimit = 8   -- seconds
-
-candidateOverSelection ::
-     Selection
-  -> Candidate
-  -> GSM.CandidateVersusSelection
-candidateOverSelection (Selection b _s) (Candidate b') =
-    -- TODO this ignores CandidateDoesNotIntersect, which seems harmless, but
-    -- I'm not quite sure
-    GSM.WhetherCandidateIsBetter (b < b')
-
-durationUntilTooOld :: Selection -> IOSim.IOSim s GSM.DurationFromNow
-durationUntilTooOld sel = do
-    let expiryAge = ageLimit `SI.addTime` onset sel
-    now <- SI.getMonotonicTime
-    pure $ case compare expiryAge now of
-        LT -> GSM.Already
-        GT -> GSM.After $ realToFrac $ expiryAge `SI.diffTime` now
-
-        -- 'boringDur' cannot prevent this case. In particular, this case
-        -- necessarily arises in the GSM itself during a 'TimePasses' that
-        -- incurs a so-called /flicker/ event, in which the anti-thrashing
-        -- timer expires and yet the node state at that moment still
-        -- _immediately_ indicates that it's CaughtUp. For the specific case of
-        -- this test suite, the answer here must be 'GSM.Already'.
-        EQ -> GSM.Already
+applyOpaqueFun :: Opaque (a -> b) -> a -> b
+applyOpaqueFun (Opaque f) = f
