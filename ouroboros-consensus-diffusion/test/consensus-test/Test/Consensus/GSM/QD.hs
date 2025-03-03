@@ -637,10 +637,17 @@ runIOSimProp p =
       (QC.Gen (RunMonad (IOSim.IOSim s) a) -> (RunMonad (IOSim.IOSim s) a)) ->
       IOSim.IOSim s a
     sim eval = do
-      let initialGsmState = GSM.PreSyncing
+      vars <- setupVars TooOld
+      runReaderT (runMonad (eval f)) vars
+
+setupVars :: IOLike m => LedgerStateJudgement -> m (Vars m)
+setupVars initStateInitialJudgement = do
+      let initialGsmState = case initStateInitialJudgement of
+                                  TooOld      -> GSM.PreSyncing
+                                  YoungEnough -> GSM.CaughtUp
 
       -- these variables are part of the 'GSM.GsmView'
-      varSelection  <- newTVarIO (mSelection initModel)
+      varSelection  <- newTVarIO (initialSelection . Just $ initStateInitialJudgement)
       varStates     <- newTVarIO Map.empty
       varGsmState   <- newTVarIO initialGsmState
       varMarker     <- newTVarIO (toMarker initialGsmState)
@@ -649,14 +656,12 @@ runIOSimProp p =
       varEvents <- newRecorder
       -- let tracer = Tracer $ push varEvents . EvGsm
 
-      let vars =
-              Vars
-                  varSelection
-                  varStates
-                  varGsmState
-                  varMarker
-                  varEvents
-      runReaderT (runMonad (eval f)) vars
+      pure $
+        Vars varSelection
+             varStates
+             varGsmState
+             varMarker
+             varEvents
 
 -- | Test the example from the Note [Why yield after the command]
 --
