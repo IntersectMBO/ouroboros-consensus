@@ -303,6 +303,7 @@ test-suite consensus-test
     ouroboros-network-framework,
     ouroboros-network-mock,
     ouroboros-network-protocols,
+    pretty,
     pretty-show,
     quickcheck-dynamic,
     quickcheck-state-machine:no-vendored-treediff,

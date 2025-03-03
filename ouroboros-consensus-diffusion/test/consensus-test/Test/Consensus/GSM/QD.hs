@@ -1,4 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -17,6 +19,9 @@
 
 module Test.Consensus.GSM.QD (tests) where
 
+import           GHC.Generics (Generic)
+import qualified Text.PrettyPrint as Pretty
+import qualified Data.TreeDiff as TD
 import           Data.Maybe (fromMaybe)
 import           Control.Exception (SomeException (..))
 import           Test.QuickCheck.Gen.Unsafe (Capture (Capture), capture)
@@ -70,7 +75,8 @@ data Model = Model {
   ,
     mUpstreamPeerBound :: Maybe UpstreamPeer
   }
-  deriving (Show)
+  deriving (Show, Generic)
+  deriving anyclass (TD.ToExpr)
 
 initialSelection :: Maybe LedgerStateJudgement -> Selection
 initialSelection initStateInitialJudgement = Selection 0 s
@@ -434,9 +440,6 @@ fixupModelState isHaaSatisfied cmd model =
 
     avoidTransientState = fixupModelState isHaaSatisfied cmd
 
-instance Eq (Opaque (Set.Set UpstreamPeer -> Bool)) where
-  _ == _ = False
-
 instance QD.StateModel Model where
   data Action Model a where
     Disconnect :: UpstreamPeer -> QD.Action Model ()
@@ -666,13 +669,18 @@ setupVars initStateInitialJudgement = do
              varEvents
 
 -- | Execute an action in both the model and the system under test, returning
---   the new model and a property that checks that the action brought the model and the SUT into the same state
-takeActionInBoth :: IOLike m => Model -> QD.Action Model GSM.GsmState -> QC.PropertyM (RunMonad m) (QC.Property, Model)
-takeActionInBoth model action = do
-    actual <- lift $ QD.perform model action undefined
-    let expected = QD.nextState model action undefined
-    pure (QC.counterexample ("Lockstep " <> show action) $
-          ((toGsmState . mState $ expected) QC.=== actual), expected)
+--   the modified model and a property that checks that the action brought
+--   the model and the SUT into the same state.
+takeActionInBoth :: IOLike m => String -> Model -> QD.Action Model GSM.GsmState  -> QC.PropertyM (RunMonad m) (QC.Property, Model)
+takeActionInBoth conterexampleMessage model action = do
+  -- run the action in the model
+  let expected = QD.nextState model action impossibleError
+  -- run the action in the real system under test
+  actual <- lift $ QD.perform model action impossibleError
+  -- check that the states are the same after
+  pure (QC.counterexample conterexampleMessage $
+        ((toGsmState . mState $ expected) QC.=== actual), expected)
+  where impossibleError = error "Impossible: unused argument"
 
 -- | Test the example from the Note [Why yield after the command]
 --
@@ -753,8 +761,11 @@ prop_sequential_iosim1 upstreamPeerBound initialJudgement (QC.Fn isHaaSatisfied)
   lift . lift $ yieldSeveralTimes
 
   -- effectively add a 'InitState' to as the first command
-  (initStateCheck, modelAfterInitState) <- takeActionInBoth model $
-    InitState upstreamPeerBound initialJudgement (Opaque isHaaSatisfied)
+  let initStateAction = InitState upstreamPeerBound initialJudgement (Opaque isHaaSatisfied)
+  (initStateCheck, modelAfterInitState) <-
+    takeActionInBoth ("Difference after initial action " <> show initStateAction)
+                     model
+                     initStateAction
 
   -- TODO: figure out how to do withAsync here
   hGSM <- lift . lift $ async gsmEntryPoint
@@ -786,7 +797,11 @@ prop_sequential_iosim1 upstreamPeerBound initialJudgement (QC.Fn isHaaSatisfied)
           Just exn -> QC.counterexample (show exn) False
 
   -- effectively add a 'ReadGsmState' to the end of the command list
-  (finalStateCheck, finalModelState) <- takeActionInBoth modelStateAfterActions ReadGsmState
+  let readFinalStateAction = ReadGsmState
+  (finalStateCheck, finalModelState) <-
+    takeActionInBoth ("Difference after final action "  <> show readFinalStateAction)
+                     modelStateAfterActions
+                     readFinalStateAction
 
   watcherEvents <- lift . lift $ dumpEvents varEvents
 
@@ -796,8 +811,9 @@ prop_sequential_iosim1 upstreamPeerBound initialJudgement (QC.Fn isHaaSatisfied)
                $ map (("    " <>) . show)
                $ watcherEvents
             )
-       $ QC.counterexample ("Initial " <> show modelAfterInitState)
-       $ QC.counterexample ("Final " <> show finalModelState)
+       $ QC.counterexample (("ediff Initial Final " <>)
+                           . Pretty.render . TD.prettyEditExpr
+                           $ TD.ediff modelAfterInitState finalModelState)
        $ QC.tabulate
              "Notables"
              (case Set.toList $ mNotables finalModelState of
@@ -825,6 +841,14 @@ newtype Opaque a = Opaque a
 
 instance Show (Opaque a) where
   show _ = "<opaque>"
+
+instance TD.ToExpr (Opaque a) where
+  toExpr _ = TD.App "<opaque>" []
+
+instance Eq (Opaque (Set.Set UpstreamPeer -> Bool)) where
+  _ == _ = False
+
+
 
 applyOpaqueFun :: Opaque (a -> b) -> a -> b
 applyOpaqueFun (Opaque f) = f
