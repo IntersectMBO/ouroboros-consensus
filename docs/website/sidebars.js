@@ -39,6 +39,8 @@ const sidebars = {
         'for-developers/Ticking',
         'for-developers/CivicTime',
         'for-developers/AbstractProtocol',
+        'for-developers/HardForks',
+        'for-developers/ProtocolVersioning',
         'for-developers/AddingAnEra',
         'for-developers/ChainSync',
         'for-developers/HardWonWisdom',
