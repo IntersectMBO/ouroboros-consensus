@@ -1,4 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -6,7 +8,7 @@
 -- to be semantically correct at all, only structurally correct.
 module Test.Consensus.Protocol.Serialisation.Generators () where
 
-import           Cardano.Crypto.KES (signedKES)
+import           Cardano.Crypto.KES (unsoundPureSignedKES)
 import           Cardano.Crypto.VRF (evalCertified)
 import           Cardano.Protocol.TPraos.BHeader (HashHeader, PrevHash (..))
 import           Cardano.Protocol.TPraos.OCert (KESPeriod (KESPeriod),
@@ -27,7 +29,7 @@ import           Test.QuickCheck (Arbitrary (..), Gen, choose, oneof)
 instance Arbitrary InputVRF where
   arbitrary = mkInputVRF <$> arbitrary <*> arbitrary
 
-instance Praos.PraosCrypto c => Arbitrary (HeaderBody c) where
+instance (Praos.PraosCrypto c) => Arbitrary (HeaderBody c) where
   arbitrary =
     let ocert =
           OCert
@@ -55,12 +57,12 @@ instance Praos.PraosCrypto c => Arbitrary (HeaderBody c) where
           <*> ocert
           <*> arbitrary
 
-instance Praos.PraosCrypto c => Arbitrary (Header c) where
+instance (Praos.PraosCrypto c) => Arbitrary (Header c) where
   arbitrary = do
     hBody <- arbitrary
     period <- arbitrary
     sKey <- arbitrary
-    let hSig = signedKES () period hBody sKey
+    let hSig = unsoundPureSignedKES () period hBody sKey
     pure $ Header hBody hSig
 
 instance Praos.PraosCrypto c => Arbitrary (PraosState c) where

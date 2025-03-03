@@ -37,7 +37,9 @@ module Test.ThreadNet.Infra.Shelley (
 
 import           Cardano.Crypto.DSIGN (DSIGNAlgorithm (..), seedSizeDSIGN)
 import           Cardano.Crypto.Hash (HashAlgorithm)
-import           Cardano.Crypto.KES (KESAlgorithm (..))
+import           Cardano.Crypto.KES (UnsoundPureSignKeyKES, KESAlgorithm (..),
+                     UnsoundPureKESAlgorithm (..),
+                     seedSizeKES, unsoundPureGenKeyKES, unsoundPureDeriveVerKeyKES)
 import           Cardano.Crypto.Seed (mkSeedFromBytes)
 import qualified Cardano.Crypto.Seed as Cardano.Crypto
 import           Cardano.Crypto.VRF (SignKeyVRF, deriveVerKeyVRF, genKeyVRF,
@@ -78,8 +80,10 @@ import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Protocol.Praos.Common
                      (PraosCanBeLeader (PraosCanBeLeader),
-                     praosCanBeLeaderColdVerKey, praosCanBeLeaderOpCert,
-                     praosCanBeLeaderSignKeyVRF)
+                     praosCanBeLeaderColdVerKey,
+                     praosCanBeLeaderSignKeyVRF,
+                     praosCanBeLeaderCredentialsSource,
+                     PraosCredentialsSource (..))
 import           Ouroboros.Consensus.Protocol.TPraos
 import           Ouroboros.Consensus.Shelley.Eras (EraCrypto, ShelleyEra)
 import           Ouroboros.Consensus.Shelley.Ledger (GenTx (..),
@@ -87,7 +91,6 @@ import           Ouroboros.Consensus.Shelley.Ledger (GenTx (..),
                      mkShelleyTx)
 import           Ouroboros.Consensus.Shelley.Node
 import           Ouroboros.Consensus.Util.Assert
-import           Ouroboros.Consensus.Util.IOLike
 import           Quiet (Quiet (..))
 import qualified Test.Cardano.Ledger.Core.KeyPair as TL (KeyPair (..),
                      mkWitnessesVKey)
@@ -97,6 +100,7 @@ import           Test.QuickCheck
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Slots (NumSlots (..))
 import           Test.Util.Time (dawnOfTime)
+import           Ouroboros.Consensus.Protocol.Praos.AgentClient (KESAgentContext)
 
 {-------------------------------------------------------------------------------
   The decentralization parameter
@@ -138,7 +142,7 @@ data CoreNode c = CoreNode {
       -- ^ The hash of the corresponding verification (public) key will be
       -- used as the staking credential.
     , cnVRF         :: !(SL.SignKeyVRF   c)
-    , cnKES         :: !(SL.SignKeyKES   c)
+    , cnKES         :: !(UnsoundPureSignKeyKES (KES c))
     , cnOCert       :: !(SL.OCert        c)
     }
 
@@ -180,8 +184,8 @@ genCoreNode startKESPeriod = do
     delKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @(DSIGN c)))
     stkKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @(DSIGN c)))
     vrfKey <- genKeyVRF   <$> genSeed (seedSizeVRF   (Proxy @(VRF   c)))
-    kesKey <- genKeyKES   <$> genSeed (seedSizeKES   (Proxy @(KES   c)))
-    let kesPub = deriveVerKeyKES kesKey
+    kesKey <- unsoundPureGenKeyKES <$> genSeed (seedSizeKES   (Proxy @(KES   c)))
+    let kesPub = unsoundPureDeriveVerKeyKES kesKey
         sigma  = LK.signedDSIGN
           @c
           delKey
@@ -212,9 +216,8 @@ genCoreNode startKESPeriod = do
 mkLeaderCredentials :: PraosCrypto c => CoreNode c -> ShelleyLeaderCredentials c
 mkLeaderCredentials CoreNode { cnDelegateKey, cnVRF, cnKES, cnOCert } =
     ShelleyLeaderCredentials {
-        shelleyLeaderCredentialsInitSignKey = cnKES
-      , shelleyLeaderCredentialsCanBeLeader = PraosCanBeLeader {
-          praosCanBeLeaderOpCert     = cnOCert
+        shelleyLeaderCredentialsCanBeLeader = PraosCanBeLeader {
+          praosCanBeLeaderCredentialsSource = PraosCredentialsUnsound cnOCert cnKES
         , praosCanBeLeaderColdVerKey = SL.VKey $ deriveVerKeyDSIGN cnDelegateKey
         , praosCanBeLeaderSignKeyVRF = cnVRF
         }
@@ -405,7 +408,10 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
 
 mkProtocolShelley ::
      forall m c.
-     (IOLike m, PraosCrypto c, ShelleyCompatible (TPraos c) (ShelleyEra c))
+     ( KESAgentContext c m
+     , PraosCrypto c
+     , ShelleyCompatible (TPraos c) (ShelleyEra c)
+     )
   => ShelleyGenesis c
   -> SL.Nonce
   -> ProtVer
@@ -421,6 +427,7 @@ mkProtocolShelley genesis initialNonce protVer coreNode =
         , shelleyBasedLeaderCredentials = [mkLeaderCredentials coreNode]
         }
       protVer
+
 {-------------------------------------------------------------------------------
   Necessary transactions for updating the 'DecentralizationParam'
 -------------------------------------------------------------------------------}
