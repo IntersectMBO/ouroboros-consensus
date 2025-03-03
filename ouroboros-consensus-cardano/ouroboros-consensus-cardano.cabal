@@ -70,6 +70,7 @@ library
     src/shelley
 
   exposed-modules:
+    Ouroboros.Consensus.Byron.ByronHFC
     Ouroboros.Consensus.Byron.Crypto.DSIGN
     Ouroboros.Consensus.Byron.EBBs
     Ouroboros.Consensus.Byron.Ledger
@@ -91,7 +92,6 @@ library
     Ouroboros.Consensus.Byron.Protocol
     Ouroboros.Consensus.Cardano
     Ouroboros.Consensus.Cardano.Block
-    Ouroboros.Consensus.Cardano.ByronHFC
     Ouroboros.Consensus.Cardano.CanHardFork
     Ouroboros.Consensus.Cardano.Condense
     Ouroboros.Consensus.Cardano.Node

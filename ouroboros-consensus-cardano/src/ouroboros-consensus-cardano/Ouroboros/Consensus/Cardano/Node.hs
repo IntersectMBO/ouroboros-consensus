@@ -75,6 +75,7 @@ import           Data.SOP.Strict
 import           Data.Word (Word16, Word64)
 import           Lens.Micro ((^.))
 import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.Byron.ByronHFC
 import           Ouroboros.Consensus.Byron.Ledger (ByronBlock)
 import qualified Ouroboros.Consensus.Byron.Ledger as Byron
 import qualified Ouroboros.Consensus.Byron.Ledger.Conversions as Byron
@@ -116,8 +117,6 @@ import           Ouroboros.Consensus.Util.IOLike
 {-------------------------------------------------------------------------------
   SerialiseHFC
 -------------------------------------------------------------------------------}
-
-instance SerialiseConstraintsHFC ByronBlock
 
 -- | Important: we need to maintain binary compatibility with Byron blocks, as
 -- they are already stored on disk.
