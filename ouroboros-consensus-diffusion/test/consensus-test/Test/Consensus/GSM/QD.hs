@@ -71,6 +71,13 @@ data Model = Model {
   }
   deriving (Show)
 
+initialSelection :: Maybe LedgerStateJudgement -> Selection
+initialSelection initStateInitialJudgement = Selection 0 s
+  where s = S $ case initStateInitialJudgement of
+                       Nothing          -> (-11)
+                       Just TooOld      -> (-11)
+                       Just YoungEnough -> 0
+
 deriving instance Show (QD.Action Model a)
 deriving instance Eq (QD.Action Model a)
 
@@ -264,21 +271,18 @@ transition model cmd =
   let isHaaSatisfied = applyOpaqueFun (fromMaybe (Opaque $ const False) $ mIsHaaSatisfied model)
    in fixupModelState isHaaSatisfied cmd $
        case cmd of
-         InitState upstreamPeerBound initStateInitialJudgement initStateIsHaaSatisfied ->
-           let initialS = S $ case initStateInitialJudgement of
-                         TooOld      -> (-11)
-                         YoungEnough -> 0
-           in model' {
+         InitState initUpstreamPeerBound initStateInitialJudgement initStateIsHaaSatisfied ->
+           model' {
                      mInitialJudgement = Just initStateInitialJudgement,
                      mIsHaaSatisfied = Just initStateIsHaaSatisfied,
-                     mUpstreamPeerBound = upstreamPeerBound,
-                     mSelection = Selection 0 initialS,
+                     mUpstreamPeerBound = initUpstreamPeerBound,
+                     mSelection = initialSelection (Just initStateInitialJudgement),
                      mState = case initStateInitialJudgement of
                                TooOld
                                  | applyOpaqueFun initStateIsHaaSatisfied idlers -> ModelSyncing
                                  | otherwise             -> ModelPreSyncing
                                YoungEnough               -> ModelCaughtUp (SI.Time (-10000))
-               }
+                  }
          Disconnect peer ->
              model' {
                  mCandidates = Map.delete peer cands
@@ -470,7 +474,7 @@ initModel =
     ,
       mPrev = WhetherPrevTimePasses True
     ,
-      mSelection = Selection 0 s
+      mSelection = initialSelection Nothing
     ,
       mState = ModelPreSyncing
     ,
@@ -482,8 +486,6 @@ initModel =
     }
     where
       idlers = Set.empty
-
-      s = -11 -- TODO: this needs to be updated in InitAction
 
 --- System Under Test
 
@@ -548,15 +550,11 @@ instance IOLike m => QD.RunModel Model (RunMonad m) where
 
       pre $ case action of
         InitState _upstreamPeerBound initStateInitialJudgement _initStateIsHaaSatisfied -> do
-          let initialS = S $ case initStateInitialJudgement of
-                        TooOld      -> (-11)
-                        YoungEnough -> 0
-              initialSelection = Selection 0 initialS
-              initialGsmState = case initStateInitialJudgement of
+          let initialGsmState = case initStateInitialJudgement of
                                   TooOld      -> GSM.PreSyncing
                                   YoungEnough -> GSM.CaughtUp
           atomically $ do
-            writeTVar varSelection $ initialSelection
+            writeTVar varSelection $ initialSelection (Just initStateInitialJudgement)
             writeTVar varGsmState $ initialGsmState
           pure initialGsmState
         Disconnect peer -> do
