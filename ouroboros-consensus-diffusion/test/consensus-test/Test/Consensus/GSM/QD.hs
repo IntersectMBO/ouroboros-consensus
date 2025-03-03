@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeApplications #-}
@@ -532,6 +533,7 @@ instance MonadTrans RunMonad where
 
 instance IOLike m => QD.RunModel Model (RunMonad m) where
   -- TODO: make the reader over vars into a newtype to remove lifts
+  perform :: Model -> QD.Action Model a -> QD.LookUp -> RunMonad m a
   perform _ action _ = do --    pre $
       Vars
           varSelection
@@ -663,6 +665,15 @@ setupVars initStateInitialJudgement = do
              varMarker
              varEvents
 
+-- | Execute an action in both the model and the system under test, returning
+--   the new model and a property that checks that the action brought the model and the SUT into the same state
+takeActionInBoth :: IOLike m => Model -> QD.Action Model GSM.GsmState -> QC.PropertyM (RunMonad m) (QC.Property, Model)
+takeActionInBoth model action = do
+    actual <- lift $ QD.perform model action undefined
+    let expected = QD.nextState model action undefined
+    pure (QC.counterexample ("Lockstep " <> show action) $
+          ((toGsmState . mState $ expected) QC.=== actual), expected)
+
 -- | Test the example from the Note [Why yield after the command]
 --
 -- This property fails when 'yieldSeveralTimes' is removed/redefined to @pure
@@ -741,13 +752,9 @@ prop_sequential_iosim1 upstreamPeerBound initialJudgement (QC.Fn isHaaSatisfied)
 
   lift . lift $ yieldSeveralTimes
 
-  let initStateAction = InitState upstreamPeerBound initialJudgement (Opaque isHaaSatisfied)
   -- effectively add a 'InitState' to as the first command
-  (initStateCheck, modelAfterInitState) <- do
-    actual <- lift $ QD.perform model initStateAction undefined
-    let expected = QD.nextState model initStateAction undefined
-    pure (QC.counterexample "initStateCheck (initial model state == initial SUT state)" $
-          ((toGsmState . mState $ expected) QC.=== actual), expected)
+  (initStateCheck, modelAfterInitState) <- takeActionInBoth model $
+    InitState upstreamPeerBound initialJudgement (Opaque isHaaSatisfied)
 
   -- TODO: figure out how to do withAsync here
   hGSM <- lift . lift $ async gsmEntryPoint
@@ -758,7 +765,7 @@ prop_sequential_iosim1 upstreamPeerBound initialJudgement (QC.Fn isHaaSatisfied)
         -- TODO: is there a cleaner way to inject InitState as the first action into the sequence,
         -- while still keeping the above check?
         (metadata, _env) <- QD.runActionsFrom (QD.Metadata mempty modelAfterInitState) cmds
-        -- this does not work as the Actions cannot be cons'd
+        -- this does not work as tActions cannot be cons'd
         -- (metadata, _env) <- QD.runActions (initStateAction : cmds)
         (lift . lift $ poll hGSM) <&> \case
             Just Right{}    ->
@@ -779,11 +786,7 @@ prop_sequential_iosim1 upstreamPeerBound initialJudgement (QC.Fn isHaaSatisfied)
           Just exn -> QC.counterexample (show exn) False
 
   -- effectively add a 'ReadGsmState' to the end of the command list
-  (finalStateCheck, finalModelState) <- do
-    actual <- lift $ QD.perform modelStateAfterActions ReadGsmState undefined
-    let expected = QD.nextState modelStateAfterActions ReadGsmState undefined
-    pure (QC.counterexample "finalStateCheck (final model state == final SUT state)" $
-          ((toGsmState . mState $ expected) QC.=== actual), expected)
+  (finalStateCheck, finalModelState) <- takeActionInBoth modelStateAfterActions ReadGsmState
 
   watcherEvents <- lift . lift $ dumpEvents varEvents
 
