@@ -49,7 +49,7 @@ data TestSetup = TestSetup
 
 genEvolvingStake :: EpochSize -> TestConfig -> Gen PraosEvolvingStake
 genEvolvingStake epochSize TestConfig {numSlots, numCoreNodes} = do
-    chosenEpochs <- sublistOf [0..EpochNo $ max 1 maxEpochs - 1]
+    chosenEpochs <- sublistOf [EpochNo 0..EpochNo $ max 1 maxEpochs - 1]
     let l = fromIntegral maxEpochs
     stakeDists <- replicateM l genStakeDist
     return . PraosEvolvingStake . Map.fromList $ zip chosenEpochs stakeDists
