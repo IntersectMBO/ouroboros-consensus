@@ -28,8 +28,8 @@ import           Ouroboros.Consensus.Protocol.TPraos
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion ()
-import           Ouroboros.Consensus.Shelley.Protocol.Abstract (
-                     pHeaderBlockSize, pHeaderSize)
+import           Ouroboros.Consensus.Shelley.Protocol.Abstract
+                     (pHeaderBlockSize, pHeaderSize)
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Network.Block (Serialised, unwrapCBORinCBOR,
                      wrapCBORinCBOR)

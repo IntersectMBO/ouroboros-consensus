@@ -60,7 +60,9 @@ module Ouroboros.Consensus.Node (
   , openChainDB
   ) where
 
-import           Cardano.Network.PeerSelection.Bootstrap (UseBootstrapPeers (..))
+import           Cardano.Network.PeerSelection.Bootstrap
+                     (UseBootstrapPeers (..))
+import           Cardano.Network.Types (LedgerStateJudgement (..))
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (DeserialiseFailure)
@@ -80,10 +82,11 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe, isNothing)
 import           Data.Time (NominalDiffTime)
 import           Data.Typeable (Typeable)
+import           Network.DNS.Resolver (Resolver)
 import           Network.Mux.Types
-
-import           Cardano.Network.Types (LedgerStateJudgement (..))
+import qualified Ouroboros.Cardano.Network.ArgumentsExtra as Cardano
 import qualified Ouroboros.Cardano.Network.LedgerPeerConsensusInterface as Cardano
+import qualified Ouroboros.Cardano.Network.PeerSelection.Governor.PeerSelectionState as Cardano
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
 import           Ouroboros.Consensus.Config
@@ -122,12 +125,13 @@ import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
-import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..), FetchMode)
+import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..),
+                     FetchMode)
 import qualified Ouroboros.Network.Diffusion as Diffusion
 import qualified Ouroboros.Network.Diffusion.Common as Diffusion
 import qualified Ouroboros.Network.Diffusion.Configuration as Diffusion
-import qualified Ouroboros.Network.Diffusion.P2P as Diffusion.P2P
 import qualified Ouroboros.Network.Diffusion.NonP2P as NonP2P
+import qualified Ouroboros.Network.Diffusion.P2P as Diffusion.P2P
 import           Ouroboros.Network.Magic
 import           Ouroboros.Network.NodeToClient (ConnectionId, LocalAddress,
                      LocalSocket, NodeToClientVersionData (..), combineVersions,
@@ -145,6 +149,8 @@ import           Ouroboros.Network.PeerSelection.PeerMetric (PeerMetrics,
 import           Ouroboros.Network.PeerSelection.PeerSharing (PeerSharing)
 import           Ouroboros.Network.PeerSelection.PeerSharing.Codec
                      (decodeRemoteAddress, encodeRemoteAddress)
+import           Ouroboros.Network.PeerSelection.RootPeersDNS.PublicRootPeers
+                     (TracePublicRootPeers)
 import           Ouroboros.Network.RethrowPolicy
 import qualified SafeWildCards
 import           System.Exit (ExitCode (..))
@@ -153,10 +159,6 @@ import           System.FS.API (SomeHasFS (..))
 import           System.FS.API.Types (MountPoint (..))
 import           System.FS.IO (ioHasFS)
 import           System.Random (StdGen, newStdGen, randomIO, split)
-import qualified Ouroboros.Cardano.Network.PeerSelection.Governor.PeerSelectionState as Cardano
-import qualified Ouroboros.Cardano.Network.ArgumentsExtra as Cardano
-import Ouroboros.Network.PeerSelection.RootPeersDNS.PublicRootPeers (TracePublicRootPeers)
-import Network.DNS.Resolver (Resolver)
 
 {-------------------------------------------------------------------------------
   The arguments to the Consensus Layer node functionality

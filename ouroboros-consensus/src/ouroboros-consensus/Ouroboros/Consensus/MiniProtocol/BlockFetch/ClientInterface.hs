@@ -48,8 +48,9 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (MaxSlotNo)
 import           Ouroboros.Network.BlockFetch.ConsensusInterface
-                     (BlockFetchConsensusInterface (..), FetchMode (..), PraosFetchMode (..),
-                     ChainSelStarvation, FromConsensus (..), mkReadFetchMode)
+                     (BlockFetchConsensusInterface (..), ChainSelStarvation,
+                     FetchMode (..), FromConsensus (..), PraosFetchMode (..),
+                     mkReadFetchMode)
 import           Ouroboros.Network.SizeInBytes
 
 -- | Abstract over the ChainDB
