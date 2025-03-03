@@ -202,7 +202,7 @@ instance Crypto crypto => DecCBOR (HeaderBody crypto) where
         <! From
         <! From
         <! From
-        <! (unCBORGroup <$> From)
+        <! mapCoder unCBORGroup From
         <! From
 
 encodeHeaderRaw ::
