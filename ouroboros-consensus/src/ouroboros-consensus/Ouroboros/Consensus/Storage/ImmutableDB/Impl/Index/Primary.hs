@@ -230,7 +230,7 @@ readFirstFilledSlot ::
 readFirstFilledSlot pb hasFS@HasFS { hSeek, hGetSome } chunkInfo chunk =
     withFile hasFS primaryIndexFile ReadMode $ \pHnd -> do
       hSeek pHnd AbsoluteSeek skip
-      go pHnd $ NextRelativeSlot (firstBlockOrEBB chunkInfo chunk)
+      go pHnd $ NextRelativeSlot (firstBlock chunkInfo chunk)
   where
     primaryIndexFile = fsPathPrimaryIndexFile chunk
 
@@ -239,7 +239,7 @@ readFirstFilledSlot pb hasFS@HasFS { hSeek, hGetSome } chunkInfo chunk =
          + fromIntegral secondaryOffsetSize
 
     -- | Read offset per offset until we find a non-zero one. In the
-    -- Byron-era, the first slot is always filled with an EBB, so we only need
+    -- Byron-era, the first slot is almost always filled, so we'd only need
     -- to read one 4-byte offset. In the Shelley era, approximately one in ten
     -- slots is filled, so on average we need to read 5 4-byte offsets. The OS
     -- will buffer this anyway.
@@ -436,7 +436,7 @@ lastOffset (MkPrimaryIndex _ offsets)
 getLastSlot :: ChunkInfo -> PrimaryIndex -> Maybe RelativeSlot
 getLastSlot chunkInfo (MkPrimaryIndex chunk offsets) = do
     guard $ V.length offsets >= 2
-    return $ nthBlockOrEBB chunkInfo chunk (V.length offsets - 2)
+    return $ nthBlock chunkInfo chunk (V.length offsets - 2)
 
 -- | Check whether the given slot is within the primary index.
 containsSlot :: PrimaryIndex -> RelativeSlot -> Bool
@@ -505,7 +505,7 @@ nextFilledSlot chunkInfo primary@(MkPrimaryIndex chunk offsets) relSlot =
       | offsets ! i == offsets ! (i + 1)
       = go (i + 1)
       | otherwise
-      = Just (nthBlockOrEBB chunkInfo chunk i)
+      = Just (nthBlock chunkInfo chunk i)
 
 -- | Find the first filled (length > zero) slot in the primary index. If there
 -- is none, return 'Nothing'.
@@ -531,7 +531,7 @@ firstFilledSlot chunkInfo (MkPrimaryIndex chunk offsets) = go 1
       | offsets ! i == 0
       = go (i + 1)
       | otherwise
-      = Just (nthBlockOrEBB chunkInfo chunk (i - 1))
+      = Just (nthBlock chunkInfo chunk (i - 1))
 
 -- | Return a list of all the filled (length > zero) slots in the primary
 -- index.
@@ -553,7 +553,7 @@ lastFilledSlot chunkInfo (MkPrimaryIndex chunk offsets) =
       | offsets ! i == offsets ! (i - 1)
       = go (i - 1)
       | otherwise
-      = Just (nthBlockOrEBB chunkInfo chunk (i - 1))
+      = Just (nthBlock chunkInfo chunk (i - 1))
 
 -- | Return the slots to backfill the primary index file with.
 --

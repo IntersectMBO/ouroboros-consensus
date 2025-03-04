@@ -25,7 +25,7 @@ import           Data.Typeable (Typeable)
 import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
 import           NoThunks.Class (OnlyCheckWhnfNamed (..))
-import           Ouroboros.Consensus.Block (ConvertRawHash, IsEBB, StandardHash)
+import           Ouroboros.Consensus.Block (ConvertRawHash, StandardHash)
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index.Cache
                      (CacheConfig (..))
@@ -80,7 +80,7 @@ data Index m blk h = Index
   , readEntries
       :: forall t. (HasCallStack, Traversable t)
       => ChunkNo
-      -> t (IsEBB, SecondaryOffset)
+      -> t SecondaryOffset
       -> m (t (Secondary.Entry blk, BlockSize))
 
     -- | See 'Secondary.readAllEntries'
@@ -90,7 +90,6 @@ data Index m blk h = Index
       -> ChunkNo
       -> (Secondary.Entry blk -> Bool)
       -> Word64
-      -> IsEBB
       -> m [WithBlockSize (Secondary.Entry blk)]
 
     -- | See 'Secondary.appendEntry'
@@ -134,11 +133,10 @@ readEntry ::
      Functor m
   => Index m blk h
   -> ChunkNo
-  -> IsEBB
   -> SecondaryOffset
   -> m (Secondary.Entry blk, BlockSize)
-readEntry index chunk isEBB slotOffset = runIdentity <$>
-    readEntries index chunk (Identity (isEBB, slotOffset))
+readEntry index chunk slotOffset = runIdentity <$>
+    readEntries index chunk (Identity slotOffset)
 
 {------------------------------------------------------------------------------
   File-backed index

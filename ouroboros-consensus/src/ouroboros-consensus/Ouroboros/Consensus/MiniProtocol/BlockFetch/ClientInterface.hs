@@ -308,12 +308,10 @@ mkBlockFetchConsensusInterface
       --    precondition holds.
       --
       -- 4. Our chain's anchor can only move forward. We can detect this by
-      --    looking at the block/slot numbers of the anchors: When the anchor
-      --    advances, either the block number increases (usual case), or the
-      --    block number stays the same, but the slot number increases (EBB
-      --    case).
+      --    looking at the block numbers of the anchors: when the anchor
+      --    advances, the block number increases.
       --
-      | anchorBlockNoAndSlot cand < anchorBlockNoAndSlot ours  -- (4)
+      | anchorBlockNo cand < anchorBlockNo ours  -- (4)
       = case (AF.null ours, AF.null cand) of
           -- Both are non-empty, the precondition trivially holds.
           (False, False) -> preferAnchoredCandidate bcfg ours cand
@@ -333,13 +331,10 @@ mkBlockFetchConsensusInterface
       | otherwise
       = preferAnchoredCandidate bcfg ours cand
       where
-        anchorBlockNoAndSlot ::
+        anchorBlockNo ::
              AnchoredFragment (Header blk)
           -> (WithOrigin BlockNo, WithOrigin SlotNo)
-        anchorBlockNoAndSlot frag =
-            (AF.anchorToBlockNo a, AF.anchorToSlotNo a)
-          where
-            a = AF.anchor frag
+        anchorBlockNo = AF.anchorToBlockNo . AF.anchor
 
     compareCandidateChains :: AnchoredFragment (Header blk)
                            -> AnchoredFragment (Header blk)

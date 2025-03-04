@@ -41,7 +41,7 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index.Primary
                      (SecondaryOffset)
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Types
-                     (BlockOrEBB (..), WithBlockSize (..))
+                     (WithBlockSize (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Util
                      (fsPathSecondaryIndexFile, runGet, runGetWithUnconsumed)
 import           Ouroboros.Consensus.Util.IOLike
@@ -76,14 +76,11 @@ instance Binary HeaderSize where
   get = HeaderSize <$> Get.getWord16be
   put = Put.putWord16be . unHeaderSize
 
-getBlockOrEBB :: IsEBB -> Get BlockOrEBB
-getBlockOrEBB IsEBB    = EBB   . EpochNo <$> Get.getWord64be
-getBlockOrEBB IsNotEBB = Block . SlotNo  <$> Get.getWord64be
+getBlock :: Get SlotNo
+getBlock = SlotNo <$> Get.getWord64be
 
-putBlockOrEBB :: BlockOrEBB -> Put
-putBlockOrEBB blockOrEBB = Put.putWord64be $ case blockOrEBB of
-    Block slotNo  -> unSlotNo slotNo
-    EBB   epochNo -> unEpochNo epochNo
+putBlock :: SlotNo -> Put
+putBlock slotNo = Put.putWord64be $ unSlotNo slotNo
 
 {------------------------------------------------------------------------------
   Entry
@@ -95,7 +92,7 @@ data Entry blk = Entry {
     , headerSize   :: !HeaderSize
     , checksum     :: !CRC
     , headerHash   :: !(HeaderHash blk)
-    , blockOrEBB   :: !BlockOrEBB
+    , entrySlot    :: !SlotNo
     }
   deriving (Generic)
 
@@ -103,14 +100,14 @@ deriving instance StandardHash blk => Eq       (Entry blk)
 deriving instance StandardHash blk => Show     (Entry blk)
 deriving instance StandardHash blk => NoThunks (Entry blk)
 
-getEntry :: forall blk. ConvertRawHash blk => IsEBB -> Get (Entry blk)
-getEntry isEBB = do
+getEntry :: forall blk. ConvertRawHash blk => Get (Entry blk)
+getEntry = do
     blockOffset  <- get
     headerOffset <- get
     headerSize   <- get
     checksum     <- CRC <$> Get.getWord32be
     headerHash   <- getHash pb
-    blockOrEBB   <- getBlockOrEBB isEBB
+    entrySlot    <- getBlock
     return Entry {..}
   where
     pb :: Proxy blk
@@ -123,7 +120,7 @@ putEntry Entry {..} = mconcat [
     , put                headerSize
     , Put.putWord32be    (getCRC checksum)
     , putHash         pb headerHash
-    , putBlockOrEBB      blockOrEBB
+    , putBlock           entrySlot
     ]
   where
     pb :: Proxy blk
@@ -136,7 +133,7 @@ entrySize pb =
   + size 2 "headerSize"   headerSize
   + size 4 "checksum"     checksum
   + hashSize pb
-  + 8 -- blockOrEBB
+  + 8  -- entrySlot
   where
     size :: Storable a => Word32 -> String -> (Entry blk -> a) -> Word32
     size expected name field = assert (expected == actual) actual
@@ -150,8 +147,7 @@ data BlockSize
     -- offset after it that we can use to calculate the size of the block.
   deriving (Eq, Show, Generic, NoThunks)
 
--- | Read the entry at the given 'SecondaryOffset'. Interpret it as an EBB
--- depending on the given 'IsEBB'.
+-- | Read the entry at the given 'SecondaryOffset'.
 readEntry ::
      forall m blk h.
      ( HasCallStack
@@ -162,11 +158,10 @@ readEntry ::
      )
   => HasFS m h
   -> ChunkNo
-  -> IsEBB
   -> SecondaryOffset
   -> m (Entry blk, BlockSize)
-readEntry hasFS chunk isEBB slotOffset = runIdentity <$>
-    readEntries hasFS chunk (Identity (isEBB, slotOffset))
+readEntry hasFS chunk slotOffset = runIdentity <$>
+    readEntries hasFS chunk (Identity slotOffset)
 
 -- | Same as 'readEntry', but for multiple entries.
 --
@@ -184,13 +179,13 @@ readEntries ::
      )
   => HasFS m h
   -> ChunkNo
-  -> t (IsEBB, SecondaryOffset)
+  -> t SecondaryOffset
   -> m (t (Entry blk, BlockSize))
 readEntries hasFS chunk toRead =
     withFile hasFS secondaryIndexFile ReadMode $ \sHnd -> do
       -- TODO can we avoid this call to 'hGetSize'?
       size <- hGetSize sHnd
-      forM toRead $ \(isEBB, slotOffset) -> do
+      forM toRead $ \slotOffset -> do
         let offset = AbsOffset (fromIntegral slotOffset)
             -- Is there another entry after the entry we need to read so that
             -- we can read its 'blockOffset' that will allow us to calculate
@@ -201,14 +196,14 @@ readEntries hasFS chunk toRead =
           (entry, nextBlockOffset) <-
             hGetExactlyAt hasFS sHnd (nbBytes + nbBlockOffsetBytes) offset >>=
             runGet (Proxy @blk) secondaryIndexFile
-              ((,) <$> getEntry isEBB <*> get)
+              ((,) <$> getEntry <*> get)
           let blockSize = fromIntegral $
                 unBlockOffset nextBlockOffset -
                 unBlockOffset (blockOffset entry)
           return (entry, BlockSize blockSize)
         else do
           entry <- hGetExactlyAt hasFS sHnd nbBytes offset >>=
-            runGet (Proxy @blk) secondaryIndexFile (getEntry isEBB)
+            runGet (Proxy @blk) secondaryIndexFile getEntry
           return (entry, LastEntry)
   where
     secondaryIndexFile = fsPathSecondaryIndexFile chunk
@@ -234,29 +229,27 @@ readAllEntries ::
   -> (Entry blk -> Bool)  -- ^ Stop condition: stop after this entry
   -> Word64               -- ^ The size of the chunk file, used to compute
                           -- the size of the last block.
-  -> IsEBB                -- ^ Is the first entry to read an EBB?
   -> m [WithBlockSize (Entry blk)]
-readAllEntries hasFS secondaryOffset chunk stopAfter chunkFileSize = \isEBB ->
+readAllEntries hasFS secondaryOffset chunk stopAfter chunkFileSize =
     withFile hasFS secondaryIndexFile ReadMode $ \sHnd -> do
       bl <- hGetAllAt hasFS sHnd (AbsOffset (fromIntegral secondaryOffset))
-      go isEBB bl [] Nothing
+      go bl [] Nothing
   where
     secondaryIndexFile = fsPathSecondaryIndexFile chunk
 
-    go :: IsEBB  -- ^ Interpret the next entry as an EBB?
-       -> Lazy.ByteString
+    go :: Lazy.ByteString
        -> [WithBlockSize (Entry blk)]  -- ^ Accumulator
        -> Maybe (Entry blk)
           -- ^ The previous entry we read. We can only add it to the
           -- accumulator when we know its block size, which we compute based
           -- on the next entry's offset.
        -> m [WithBlockSize (Entry blk)]
-    go isEBB bl acc mbPrevEntry
+    go bl acc mbPrevEntry
       | Lazy.null bl = return $ reverse $
         (addBlockSize chunkFileSize <$> mbPrevEntry) `consMaybe` acc
       | otherwise    = do
         (remaining, entry) <-
-          runGetWithUnconsumed (Proxy @blk) secondaryIndexFile (getEntry isEBB) bl
+          runGetWithUnconsumed (Proxy @blk) secondaryIndexFile getEntry bl
         let offsetAfterPrevBlock = unBlockOffset (blockOffset entry)
             acc' = (addBlockSize offsetAfterPrevBlock <$> mbPrevEntry)
               `consMaybe` acc
@@ -276,9 +269,7 @@ readAllEntries hasFS secondaryOffset chunk stopAfter chunkFileSize = \isEBB ->
             return $ reverse $ addBlockSize nextBlockOffset entry : acc'
 
         else
-          -- Pass 'IsNotEBB' because there can only be one EBB and that must
-          -- be the first one in the file.
-          go IsNotEBB remaining acc' (Just entry)
+          go remaining acc' (Just entry)
 
     -- | Add the block size to an entry, it is computed by subtracting the
     -- entry's block offset from the offset after the entry's block, i.e.,
