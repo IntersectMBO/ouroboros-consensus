@@ -40,7 +40,6 @@ module Test.Consensus.HardFork.Combinator.A (
 
 import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Cardano.Slotting.EpochInfo
-import           Cardano.Slotting.EpochInfo
 import           Codec.Serialise
 import           Control.Monad (guard)
 import qualified Data.Binary as B
