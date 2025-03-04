@@ -21,11 +21,10 @@ module Test.Consensus.Shelley.Examples (
 
 
 import qualified Cardano.Ledger.Block as SL
-import           Cardano.Protocol.Crypto (StandardCrypto)
-import           Cardano.Ledger.Crypto (Crypto)
 import           Cardano.Ledger.Core
 import           Cardano.Ledger.Crypto (Crypto)
 import qualified Cardano.Ledger.Shelley.API as SL
+import           Cardano.Protocol.Crypto (StandardCrypto)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import           Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import           Cardano.Slotting.Time (mkSlotLength)

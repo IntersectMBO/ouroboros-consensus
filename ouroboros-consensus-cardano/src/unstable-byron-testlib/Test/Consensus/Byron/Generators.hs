@@ -32,9 +32,9 @@ import qualified Cardano.Chain.UTxO as CC.UTxO
 import           Cardano.Crypto (ProtocolMagicId (..),
                      RequiresNetworkMagic (..))
 import           Cardano.Crypto.Hashing (Hash)
-import           Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import           Cardano.Crypto.Signing
 import qualified Cardano.Crypto.Wallet as Wallet
+import           Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import           Cardano.Ledger.Binary (decCBOR, encCBOR)
 import           Control.Monad (replicateM)
 import qualified Data.ByteString as BS
