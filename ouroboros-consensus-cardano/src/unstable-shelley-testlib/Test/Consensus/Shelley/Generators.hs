@@ -10,19 +10,16 @@
 
 module Test.Consensus.Shelley.Generators (SomeResult (..)) where
 
-import           Cardano.Ledger.Core (toTxSeq)
-import           Cardano.Ledger.Core (toTxSeq)
-import           Cardano.Ledger.Crypto (Crypto)
 import           Cardano.Ledger.Core (TranslationContext, toTxSeq)
 import           Cardano.Ledger.Crypto (Crypto)
 import           Cardano.Ledger.Genesis
 import qualified Cardano.Ledger.Shelley.API as SL
-import           Cardano.Protocol.Crypto (Crypto)
 import           Cardano.Ledger.Shelley.Translation
+import           Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.BHeader as SL
-import           Control.Monad (replicateM)
 import           Cardano.Slotting.EpochInfo
+import           Control.Monad (replicateM)
 import           Data.Coerce (coerce)
 import           Generic.Random (genericArbitraryU)
 import           Ouroboros.Consensus.Block
