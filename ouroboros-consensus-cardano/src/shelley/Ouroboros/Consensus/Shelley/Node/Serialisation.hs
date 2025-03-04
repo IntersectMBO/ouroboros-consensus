@@ -214,7 +214,7 @@ instance (NoHardForks (ShelleyBlock proto era), ShelleyCompatible proto era)
 instance ShelleyBasedEra era
       => SerialiseNodeToClient (ShelleyBlock proto era) (ShelleyPartialLedgerConfig era) where
   decodeNodeToClient ccfg version = do
-    enforceSize "ShelleyPartialLedgerConfig era" 14
+    enforceSize "ShelleyPartialLedgerConfig era" 13
     ShelleyPartialLedgerConfig
       <$> ( ShelleyLedgerConfig
         <$> fromCBOR @CompactGenesis
@@ -256,7 +256,7 @@ instance ShelleyBasedEra era
       )
       triggerHardFork
     )
-      = encodeListLen 14
+      = encodeListLen 13
         <> toCBOR @CompactGenesis myCompactGenesis
         <> toCBOR @Word64 slotsPerKESPeriod'
         <> toCBOR @Word64 stabilityWindow'
