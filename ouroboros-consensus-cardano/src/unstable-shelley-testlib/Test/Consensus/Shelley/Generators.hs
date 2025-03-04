@@ -11,7 +11,6 @@
 module Test.Consensus.Shelley.Generators (SomeResult (..)) where
 
 import           Cardano.Ledger.Core (TranslationContext, toTxSeq)
-import           Cardano.Ledger.Crypto (Crypto)
 import           Cardano.Ledger.Genesis
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Ledger.Shelley.Translation
@@ -223,16 +222,14 @@ instance ShelleyBasedEra era
 
 -- | Generate a 'ShelleyLedgerConfig' with a fixed 'EpochInfo' (see
 -- 'arbitraryGlobalsWithFixedEpochInfo').
-instance ( Crypto (EraCrypto era)
-         , Arbitrary (TranslationContext era)
+instance ( Arbitrary (TranslationContext era)
          ) => Arbitrary (ShelleyLedgerConfig era) where
   arbitrary = ShelleyLedgerConfig
     <$> arbitrary
     <*> arbitraryGlobalsWithFixedEpochInfo
     <*> arbitrary
 
-instance ( Crypto c
-         ) => Arbitrary (CompactGenesis c) where
+instance Arbitrary CompactGenesis where
   arbitrary = compactGenesis <$> arbitrary
 
 -- | Generate 'Globals' with a fixed 'EpochInfo'. A fixed 'EpochInfo' is
@@ -258,7 +255,7 @@ arbitraryFixedEpochInfo = fixedEpochInfo <$> arbitrary <*> arbitrary
 instance Arbitrary (NoGenesis era) where
   arbitrary = pure NoGenesis
 
-instance Crypto c => Arbitrary (FromByronTranslationContext c) where
+instance Arbitrary FromByronTranslationContext where
   arbitrary = FromByronTranslationContext <$> arbitrary <*> arbitrary <*> arbitrary
 
 {-------------------------------------------------------------------------------

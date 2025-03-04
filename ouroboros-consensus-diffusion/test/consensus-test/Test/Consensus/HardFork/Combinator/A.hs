@@ -38,7 +38,7 @@ module Test.Consensus.HardFork.Combinator.A (
   , TxId (..)
   ) where
 
-import           Cardano.Ledger.BaseTypes (unNonZero)
+import           Cardano.Ledger.BaseTypes.NonZero
 import           Cardano.Slotting.EpochInfo
 import           Codec.Serialise
 import           Control.Monad (guard)
@@ -201,6 +201,13 @@ data PartialLedgerConfigA = LCfgA {
   deriving Serialise
 
 deriving newtype instance Serialise SecurityParam
+instance (HasZero a, Serialise a) => Serialise (NonZero a) where
+  encode = encode . unNonZero
+  decode = do
+    a <- decode
+    case nonZero a of
+      Nothing -> fail "Expected non zero but found zero!"
+      Just a' -> pure a'
 
 type instance LedgerCfg (LedgerState BlockA) =
     (EpochInfo Identity, PartialLedgerConfigA)

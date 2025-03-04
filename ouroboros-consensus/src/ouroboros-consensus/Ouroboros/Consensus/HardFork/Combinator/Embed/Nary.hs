@@ -165,7 +165,7 @@ instance Inject I where
   inject = injectNS' (Proxy @I) . forgetInjectionIndex
 
 instance Inject (K a) where
-  inject _ _ (K a) = K a
+  inject _ (K a) = K a
 
 instance Inject Header where
   inject = injectNS' (Proxy @Header) . forgetInjectionIndex
