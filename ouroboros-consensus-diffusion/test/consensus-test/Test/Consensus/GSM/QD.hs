@@ -28,7 +28,7 @@ import           Test.QuickCheck.Gen.Unsafe (Capture (Capture), capture)
 import           Control.Monad.Reader
 import           Data.List ((\\))
 import           Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked
-import           Control.Monad.Class.MonadAsync (poll, async)
+import           Control.Monad.Class.MonadAsync (poll, async, uninterruptibleCancel)
 import           Control.Monad.Class.MonadSTM
 import qualified Control.Monad.Class.MonadTime.SI as SI
 import qualified Control.Monad.Class.MonadTimer.SI as SI
@@ -442,6 +442,10 @@ fixupModelState isHaaSatisfied cmd model =
 
 instance QD.StateModel Model where
   data Action Model a where
+    -- InitState MUST be the first, and only the first, action in any sequence.
+    -- the semantics of InitState must agree in the model and the SUT
+    InitState :: Maybe UpstreamPeer -> LedgerStateJudgement -> Opaque (Set.Set UpstreamPeer -> Bool) -> QD.Action Model GSM.GsmState
+
     Disconnect :: UpstreamPeer -> QD.Action Model ()
     ExtendSelection :: S -> QD.Action Model ()
     ModifyCandidate :: UpstreamPeer -> B -> QD.Action Model ()
@@ -450,10 +454,6 @@ instance QD.StateModel Model where
     ReadMarker :: QD.Action Model MarkerState
     StartIdling :: UpstreamPeer -> QD.Action Model ()
     TimePasses :: Int -> QD.Action Model ()
-
-    -- the InitState MUST be the first, and only the first, action in any sequence.
-    -- the semantics of InitState must agree in the model and the SUT
-    InitState :: Maybe UpstreamPeer -> LedgerStateJudgement -> Opaque (Set.Set UpstreamPeer -> Bool) -> QD.Action Model GSM.GsmState
 
   precondition = precondition
 
@@ -682,6 +682,11 @@ takeActionInBoth conterexampleMessage model action = do
         ((toGsmState . mState $ expected) QC.=== actual), expected)
   where impossibleError = error "Impossible: unused argument"
 
+sanityCheckModels ::  Model -> Model -> QC.Property
+sanityCheckModels initial final =
+          mUpstreamPeerBound initial QC.=== mUpstreamPeerBound final
+  QC..&&. mInitialJudgement initial QC.=== mInitialJudgement final
+
 -- | Test the example from the Note [Why yield after the command]
 --
 -- This property fails when 'yieldSeveralTimes' is removed/redefined to @pure
@@ -690,7 +695,7 @@ prop_yield_regression :: QC.Fun (Set.Set UpstreamPeer) Bool -> QC.Property
 prop_yield_regression f =
    QC.once
  $ runIOSimProp
- $ prop_sequential_iosim1 Nothing YoungEnough f yieldRegressionActions
+ $ prop_sequential_iosim1 Nothing YoungEnough f (Just yieldRegressionActions)
 
  where yieldRegressionActions :: QD.Actions Model
        yieldRegressionActions =
@@ -706,18 +711,18 @@ prop_sequential_iosim ::
   Maybe UpstreamPeer ->
   LedgerStateJudgement ->
   QC.Fun (Set.Set UpstreamPeer) Bool ->
-  QD.Actions Model ->
+  Maybe (QD.Actions Model) ->
   QC.Property
-prop_sequential_iosim upstreamPeerBound initialJudgement isHaaSatisfied cmds =
-  runIOSimProp $ prop_sequential_iosim1 upstreamPeerBound initialJudgement isHaaSatisfied cmds
+prop_sequential_iosim upstreamPeerBound initialJudgement isHaaSatisfied mbActions =
+  runIOSimProp $ prop_sequential_iosim1 upstreamPeerBound initialJudgement isHaaSatisfied mbActions
 
 prop_sequential_iosim1 ::
   Maybe UpstreamPeer ->
   LedgerStateJudgement ->
   QC.Fun (Set.Set UpstreamPeer) Bool ->
-  QD.Actions Model ->
+  Maybe (QD.Actions Model) ->
   QC.PropertyM (RunMonad (IOSim.IOSim s)) QC.Property
-prop_sequential_iosim1 upstreamPeerBound initialJudgement (QC.Fn isHaaSatisfied) cmds = do
+prop_sequential_iosim1 upstreamPeerBound initialJudgement (QC.Fn isHaaSatisfied) mbActions = do
   Vars
     varSelection
     varStates
@@ -767,60 +772,73 @@ prop_sequential_iosim1 upstreamPeerBound initialJudgement (QC.Fn isHaaSatisfied)
                      model
                      initStateAction
 
-  -- TODO: figure out how to do withAsync here
-  hGSM <- lift . lift $ async gsmEntryPoint
+  -- the sequence of actions must be generation explicitly, as the generation
+  -- must be supplied the model state after executing the static 'InitState' action.
+  let genActions = case mbActions of
+                  Just adhocActions -> pure adhocActions
+                  Nothing -> QD.generateActionsWithOptions $
+                               QD.Options{ QD.actionLengthMultiplier = 1
+                                         , QD.oInitialAnnotatedState = QD.Metadata mempty modelAfterInitState
+                                         }
 
-  (metadata, mbExn)  <- do
-        -- we cannot use the stock QD.runActions here, as it will use QD.initialState and thus throw away the
-        -- modifications introduced by the InitState action we've just ran
-        -- TODO: is there a cleaner way to inject InitState as the first action into the sequence,
-        -- while still keeping the above check?
-        (metadata, _env) <- QD.runActionsFrom (QD.Metadata mempty modelAfterInitState) cmds
-        -- this does not work as tActions cannot be cons'd
-        -- (metadata, _env) <- QD.runActions (initStateAction : cmds)
-        (lift . lift $ poll hGSM) <&> \case
-            Just Right{}    ->
-                error "impossible! GSM terminated"
-            Just (Left exn) ->
-                -- we don't simply rethrow it, since we still want to pretty print
-                -- the command sequence
-                (metadata, Just exn)
-            Nothing         ->
-                (metadata, Nothing)
-  -- a good way to make this test fail it to wait for the GSM and cause a deadlock
-  -- _ <- lift . lift $ wait hGSM
+  QC.forAllM genActions $ \cmds -> do
+    -- TODO: figure out how to do withAsync here
+    hGSM <- lift . lift $ async gsmEntryPoint
 
-  let modelStateAfterActions = QD.underlyingState metadata
+    (metadata, mbExn)  <- do
+          -- we cannot use the stock QD.runActions here, as it will use QD.initialState and thus throw away the
+          -- modifications introduced by the InitState action we've just ran
+          -- TODO: is there a cleaner way to inject InitState as the first action into the sequence,
+          -- while still keeping the above check?
+          (metadata, _env) <- QD.runActionsFrom (QD.Metadata mempty modelAfterInitState) cmds
+          -- this does not work as tActions cannot be cons'd
+          -- (metadata, _env) <- QD.runActions (initStateAction : cmds)
+          (lift . lift $ poll hGSM) <&> \case
+              Just Right{}    ->
+                  error "impossible! GSM terminated"
+              Just (Left exn) ->
+                  -- we don't simply rethrow it, since we still want to pretty print
+                  -- the command sequence
+                  (metadata, Just exn)
+              Nothing         ->
+                  (metadata, Nothing)
+    -- a good way to make this test fail it to wait for the GSM and cause a deadlock
+    _ <- lift . lift $ uninterruptibleCancel hGSM
 
-  let noExn = case mbExn of
-          Nothing  -> QC.property ()
-          Just exn -> QC.counterexample (show exn) False
+    let modelStateAfterActions = QD.underlyingState metadata
 
-  -- effectively add a 'ReadGsmState' to the end of the command list
-  let readFinalStateAction = ReadGsmState
-  (finalStateCheck, finalModelState) <-
-    takeActionInBoth ("Difference after final action "  <> show readFinalStateAction)
-                     modelStateAfterActions
-                     readFinalStateAction
+    let noExn = case mbExn of
+            Nothing  -> QC.property ()
+            Just exn -> QC.counterexample (show exn) False
 
-  watcherEvents <- lift . lift $ dumpEvents varEvents
+    -- effectively add a 'ReadGsmState' to the end of the command list
+    let readFinalStateAction = ReadGsmState
+    (finalStateCheck, finalModelState) <-
+      takeActionInBoth ("Difference after final action "  <> show readFinalStateAction)
+                       modelStateAfterActions
+                       readFinalStateAction
 
-  pure $ QC.counterexample
-            (unlines
-               $ (:) "WATCHER"
-               $ map (("    " <>) . show)
-               $ watcherEvents
-            )
-       $ QC.counterexample (("ediff Initial Final " <>)
-                           . Pretty.render . TD.prettyEditExpr
-                           $ TD.ediff modelAfterInitState finalModelState)
-       $ QC.tabulate
-             "Notables"
-             (case Set.toList $ mNotables finalModelState of
-                []       -> ["<none>"]
-                notables -> map show notables
-             )
-       $ initStateCheck QC..&&. noExn QC..&&. finalStateCheck
+    watcherEvents <- lift . lift $ dumpEvents varEvents
+
+    pure $ QC.counterexample
+              (unlines
+                 $ (:) "WATCHER"
+                 $ map (("    " <>) . show)
+                 $ watcherEvents
+              )
+         $ QC.counterexample (("ediff Initial Final " <>)
+                             . Pretty.render . TD.prettyEditExpr
+                             $ TD.ediff modelAfterInitState finalModelState)
+         $ QC.tabulate
+               "Notables"
+               (case Set.toList $ mNotables finalModelState of
+                  []       -> ["<none>"]
+                  notables -> map show notables
+               )
+         $       initStateCheck
+         QC..&&.  sanityCheckModels modelAfterInitState finalModelState
+         QC..&&. noExn
+         QC..&&. finalStateCheck
 
 -- | See 'boringDurImpl'
 boringDur :: Model -> Int -> Bool
@@ -847,8 +865,6 @@ instance TD.ToExpr (Opaque a) where
 
 instance Eq (Opaque (Set.Set UpstreamPeer -> Bool)) where
   _ == _ = False
-
-
 
 applyOpaqueFun :: Opaque (a -> b) -> a -> b
 applyOpaqueFun (Opaque f) = f

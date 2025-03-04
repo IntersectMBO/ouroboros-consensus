@@ -49,7 +49,7 @@ if(os(windows))
 source-repository-package
   type: git
   location: https://github.com/geo2a/quickcheck-dynamic.git
-  tag: 19eda90b9a02a818662928b5b1ff3a87c9557da2
+  tag: dbe1f31
   subdir:
     quickcheck-dynamic
-  --sha256: dBpJB2A648WICCiabEDHCkOQD7MmDUdgbYX/zUaogOQ=
+  --sha256: MctrAJGPTeS1tQGbg0PbpvdIGP4o6vXAf2Qh00Dzyi0=
