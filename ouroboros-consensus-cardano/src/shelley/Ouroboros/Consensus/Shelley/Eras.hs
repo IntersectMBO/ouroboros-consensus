@@ -61,9 +61,6 @@ import qualified Cardano.Ledger.Conway.Rules as SL
 import qualified Cardano.Ledger.Conway.Translation as Conway
 import           Cardano.Ledger.Core as Core
 import           Cardano.Ledger.Crypto (StandardCrypto)
-import           Cardano.Ledger.Keys (DSignable, Hash)
-import           Cardano.Ledger.Core as Core
-import           Cardano.Ledger.Crypto (StandardCrypto)
 import           Cardano.Ledger.Genesis
 import           Cardano.Ledger.Keys (DSignable, Hash)
 import           Cardano.Ledger.Mary (MaryEra)
@@ -74,8 +71,8 @@ import           Cardano.Ledger.Shelley.Core as Core
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import qualified Cardano.Ledger.Shelley.Rules as SL
 import qualified Cardano.Ledger.Shelley.Transition as SL
-import           Cardano.Protocol.Crypto (StandardCrypto)
 import           Cardano.Ledger.Shelley.Translation
+import           Cardano.Protocol.Crypto (StandardCrypto)
 import qualified Cardano.Protocol.TPraos.API as SL
 import           Control.Monad.Except
 import           Control.State.Transition (PredicateFailure)
