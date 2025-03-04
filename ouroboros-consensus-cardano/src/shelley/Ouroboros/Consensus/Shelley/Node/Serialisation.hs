@@ -16,7 +16,6 @@ import           Cardano.Ledger.BaseTypes
 import           Cardano.Ledger.Core (fromEraCBOR, toEraCBOR)
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
-import qualified Cardano.Protocol.TPraos.API as SL
 import           Cardano.Slotting.EpochInfo (epochInfoSize,
                      epochInfoSlotToRelativeTime, fixedEpochInfo,
                      hoistEpochInfo)
@@ -169,27 +168,6 @@ instance ShelleyCompatible proto era
   encodeNodeToClient _ _ = wrapCBORinCBOR   encodeShelleyBlock
   decodeNodeToClient _ _ = unwrapCBORinCBOR decodeShelleyBlock
 
---------------------------------------------------------------------------------
---  ↓↓↓ REMOVE ↓↓↓
---
--- This code fills the holes from
--- https://github.com/IntersectMBO/cardano-ledger/issues/4893 and must
--- be removed before merging!!
---------------------------------------------------------------------------------
-
-instance FromCBOR ActiveSlotCoeff where
-  fromCBOR = undefined
-instance FromCBOR Network where
-  fromCBOR = undefined
-instance ToCBOR ActiveSlotCoeff where
-  toCBOR = undefined
-instance ToCBOR Network where
-  toCBOR = undefined
-
---------------------------------------------------------------------------------
--- ↑↑↑ REMOVE ↑↑↑
---------------------------------------------------------------------------------
-
 -- | This instance uses the invariant that the 'EpochInfo' in a
 -- 'ShelleyLedgerConfig' is fixed i.e. has a constant 'EpochSize' and
 -- 'SlotLength'. This is not true in the case of the HFC in a
@@ -239,13 +217,13 @@ instance ShelleyBasedEra era
     enforceSize "ShelleyPartialLedgerConfig era" 14
     ShelleyPartialLedgerConfig
       <$> ( ShelleyLedgerConfig
-        <$> fromCBOR @(CompactGenesis (EraCrypto era))
+        <$> fromCBOR @CompactGenesis
         <*> (SL.Globals
               (hoistEpochInfo (Right . runIdentity) $ toPureEpochInfo dummyEpochInfo)
               <$> fromCBOR @Word64
               <*> fromCBOR @Word64
               <*> fromCBOR @Word64
-              <*> fromCBOR @Word64
+              <*> fromCBOR @(NonZero Word64)
               <*> fromCBOR @Word64
               <*> fromCBOR @Word64
               <*> fromCBOR @Word64
@@ -279,11 +257,11 @@ instance ShelleyBasedEra era
       triggerHardFork
     )
       = encodeListLen 14
-        <> toCBOR @(CompactGenesis (EraCrypto era)) myCompactGenesis
+        <> toCBOR @CompactGenesis myCompactGenesis
         <> toCBOR @Word64 slotsPerKESPeriod'
         <> toCBOR @Word64 stabilityWindow'
         <> toCBOR @Word64 randomnessStabilisationWindow'
-        <> toCBOR @Word64 securityParameter'
+        <> toCBOR @(NonZero Word64) securityParameter'
         <> toCBOR @Word64 maxKESEvo'
         <> toCBOR @Word64 quorum'
         <> toCBOR @Word64 maxLovelaceSupply'

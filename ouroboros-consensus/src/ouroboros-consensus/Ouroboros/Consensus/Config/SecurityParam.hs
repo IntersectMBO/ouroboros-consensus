@@ -2,10 +2,12 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
+{-# OPTIONS_GHC -Wno-orphans #-}
+
 module Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..)) where
 
 import           Cardano.Binary
-import           Cardano.Ledger.BaseTypes (NonZero)
+import           Cardano.Ledger.BaseTypes.NonZero
 import           Data.Word
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
@@ -23,3 +25,13 @@ import           Quiet
 newtype SecurityParam = SecurityParam { maxRollbacks :: NonZero Word64 }
   deriving (Eq, Generic, NoThunks, ToCBOR, FromCBOR)
   deriving Show via Quiet SecurityParam
+
+instance ToCBOR a => ToCBOR (NonZero a) where
+  toCBOR = toCBOR . unNonZero
+
+instance (HasZero a, FromCBOR a) => FromCBOR (NonZero a) where
+  fromCBOR = do
+    a <- fromCBOR
+    case nonZero a of
+      Nothing -> fail "Non zero expected but zero found!"
+      Just a' -> pure a'
