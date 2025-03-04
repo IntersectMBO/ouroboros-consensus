@@ -22,7 +22,6 @@ module Test.Consensus.Shelley.Examples (
 
 import qualified Cardano.Ledger.Block as SL
 import           Cardano.Ledger.Core
-import           Cardano.Ledger.Crypto (Crypto)
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Protocol.Crypto (StandardCrypto)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
@@ -267,11 +266,11 @@ examplesBabbage = fromShelleyLedgerExamplesPraos ledgerExamplesBabbage
 examplesConway :: Examples StandardConwayBlock
 examplesConway = fromShelleyLedgerExamplesPraos ledgerExamplesConway
 
-exampleShelleyLedgerConfig :: forall era. ShelleyBasedEra era => TranslationContext era -> ShelleyLedgerConfig era
+exampleShelleyLedgerConfig :: TranslationContext era -> ShelleyLedgerConfig era
 exampleShelleyLedgerConfig translationContext = ShelleyLedgerConfig {
       shelleyLedgerCompactGenesis = compactGenesis testShelleyGenesis
     , shelleyLedgerGlobals = SL.mkShelleyGlobals
-        (testShelleyGenesis @(EraCrypto era))
+        testShelleyGenesis
         epochInfo
     , shelleyLedgerTranslationContext = translationContext
     }

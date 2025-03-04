@@ -107,7 +107,7 @@ combineEras perEraExamples = Examples {
         $ himap (\ix -> K . inj ix . getExamples) perEraExamplesPrefixed
       where
         inj :: forall blk. Index (CardanoEras Crypto) blk -> Labelled (f blk) -> Labelled (f (CardanoBlock Crypto))
-        inj idx = fmap (fmap (inject exampleStartBounds idx))
+        inj idx = fmap (fmap (inject $ oracularInjectionIndex exampleStartBounds idx))
 
     perEraExamplesPrefixed :: NP Examples (CardanoEras Crypto)
     perEraExamplesPrefixed = hzipWith (\(K eraName) es -> prefixExamples eraName es) perEraNames perEraExamples
