@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE InstanceSigs #-}
@@ -19,6 +20,7 @@
 
 module Test.Consensus.GSM.QD (tests) where
 
+import           Data.Typeable (Typeable)
 import           GHC.Generics (Generic)
 import qualified Text.PrettyPrint as Pretty
 import qualified Data.TreeDiff as TD
@@ -111,7 +113,7 @@ precondition :: Model-> QD.Action Model a -> Bool
 precondition model = \case
     InitState{} -> False -- this event must never be generated
     cmd@ExtendSelection{} ->
-        let model' = QD.nextState model cmd (error "precondition: not Var ()")
+        let model' = QD.nextState model cmd dummyVar
          in
             selectionIsBehind model
          &&
@@ -605,9 +607,9 @@ tests =    adhoc <> core
     adhoc = [testProperty "GSM yield regression" prop_yield_regression]
     core = [
           adjustQuickCheckTests (* 10)
-        $ testProperty ("GSM (" <> coreTestName ub <> ")")
-        $ prop_sequential_iosim ub
-      | ub <- Nothing : map Just [minBound .. maxBound :: UpstreamPeer]
+        $ testProperty ("GSM (" <> coreTestName upstreamPeerBound <> ")")
+        $ prop_sequential_iosim upstreamPeerBound
+      | upstreamPeerBound <- Nothing : map Just [minBound .. maxBound :: UpstreamPeer]
       ]
 
     coreTestName = \case
@@ -699,13 +701,25 @@ prop_yield_regression f =
 
  where yieldRegressionActions :: QD.Actions Model
        yieldRegressionActions =
-         (QD.Actions $
-           [ (QD.:=) (QD.mkVar 0) . (flip QD.ActionWithPolarity) QD.PosPolarity $ NewCandidate Amara (B 1)
-           , (QD.:=) (QD.mkVar 0) . (flip QD.ActionWithPolarity) QD.PosPolarity $ StartIdling Amara
-           , (QD.:=) (QD.mkVar 0) . (flip QD.ActionWithPolarity) QD.PosPolarity $ TimePasses 61
-           , (QD.:=) (QD.mkVar 0) . (flip QD.ActionWithPolarity) QD.PosPolarity $ ExtendSelection (S (-4))
-           ])
-         <> (QD.Actions [(QD.:=) (QD.mkVar 0) . (flip QD.ActionWithPolarity) QD.PosPolarity $ ReadMarker])
+            (wrapPositiveAction $ NewCandidate Amara (B 1))
+         <> (wrapPositiveAction $ StartIdling Amara)
+         <> (wrapPositiveAction $ TimePasses 61)
+         <> (wrapPositiveAction $ ExtendSelection (S (-4)))
+         <> (wrapPositiveAction $ ReadMarker)
+
+-- | Wrap an 'Action' into singleton 'Actions'.
+--   This function is useful for constructing adhoc test scenarios,
+--   see 'prop_yield_regression' for an example.
+--
+--   Note: this may break some invariant related to Variables,
+--         but we do not care about Variables in these tests.
+wrapPositiveAction :: ( Show (QD.Action state a)
+                      , Eq (QD.Action state a)
+                      , Typeable a)
+                   => QD.Action state a
+                   -> QD.Actions state
+wrapPositiveAction action =
+  QD.Actions [(QD.:=) dummyVar (QD.ActionWithPolarity action QD.PosPolarity)]
 
 prop_sequential_iosim ::
   Maybe UpstreamPeer ->
@@ -777,7 +791,7 @@ prop_sequential_iosim1 upstreamPeerBound initialJudgement (QC.Fn isHaaSatisfied)
   let genActions = case mbActions of
                   Just adhocActions -> pure adhocActions
                   Nothing -> QD.generateActionsWithOptions $
-                               QD.Options{ QD.actionLengthMultiplier = 1
+                               QD.Options{ QD.oActionLengthMultiplier = 1
                                          , QD.oInitialAnnotatedState = QD.Metadata mempty modelAfterInitState
                                          }
 
@@ -802,7 +816,7 @@ prop_sequential_iosim1 upstreamPeerBound initialJudgement (QC.Fn isHaaSatisfied)
                   (metadata, Just exn)
               Nothing         ->
                   (metadata, Nothing)
-    -- a good way to make this test fail it to wait for the GSM and cause a deadlock
+    -- stop the GSM
     _ <- lift . lift $ uninterruptibleCancel hGSM
 
     let modelStateAfterActions = QD.underlyingState metadata
@@ -854,6 +868,9 @@ boringDur model = boringDurImpl clk sel st
 
 ---
 
+dummyVar :: QD.Var a
+dummyVar = QD.mkVar 0
+
 -- | The 'Opaque' type exists to give a 'Show' instance to functions
 newtype Opaque a = Opaque a
 
@@ -868,3 +885,5 @@ instance Eq (Opaque (Set.Set UpstreamPeer -> Bool)) where
 
 applyOpaqueFun :: Opaque (a -> b) -> a -> b
 applyOpaqueFun (Opaque f) = f
+
+---
