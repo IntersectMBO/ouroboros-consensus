@@ -44,7 +44,6 @@ common common-lib
 
   if flag(asserts)
     ghc-options: -fno-ignore-asserts
-    cpp-options: -DENABLE_ASSERTIONS
 
 common common-test
   import: common-lib
@@ -204,6 +203,7 @@ test-suite mock-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.Ledger.Mock
+    Test.Consensus.Ledger.Mock.LedgerTables
     Test.ThreadNet.BFT
     Test.ThreadNet.LeaderSchedule
     Test.ThreadNet.PBFT
@@ -296,6 +296,7 @@ test-suite consensus-test
     hashable,
     io-classes,
     io-sim,
+    mempack,
     mtl,
     nothunks,
     ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib},
@@ -312,6 +313,7 @@ test-suite consensus-test
     resource-registry,
     serialise,
     si-timers,
+    sop-core,
     sop-extras,
     strict-checked-vars,
     strict-sop-core,

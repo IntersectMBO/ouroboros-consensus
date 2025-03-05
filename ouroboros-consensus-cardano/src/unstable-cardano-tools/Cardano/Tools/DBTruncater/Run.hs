@@ -27,6 +27,7 @@ import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB, Iterator,
                      IteratorResult (..), Tip (..))
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl
+import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
 import           Prelude hiding (truncate)
 import           System.IO
@@ -46,7 +47,7 @@ truncate DBTruncaterConfig{ dbDir, truncateAfter, verbose } args = do
     let
       fs = Node.stdMkChainDbHasFS dbDir (RelativeMountPoint "immutable")
       chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage config)
-      immutableDBArgs :: ImmutableDbArgs Identity IO block
+      immutableDBArgs :: Complete ImmutableDbArgs IO block
       immutableDBArgs =
         (ImmutableDB.defaultArgs @IO)
           { immTracer = immutableDBTracer

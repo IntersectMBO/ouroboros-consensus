@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TypeApplications #-}
@@ -350,7 +351,7 @@ prop_simple_real_tpraos_convergence TestSetup
             DoGeneratePPUs    -> True
             DoNotGeneratePPUs -> False
 
-        finalLedgers :: [(NodeId, LedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra))]
+        finalLedgers :: [(NodeId, LedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra) EmptyMK)]
         finalLedgers =
             Map.toList $ nodeOutputFinalLedger <$> testOutputNodes testOutput
 

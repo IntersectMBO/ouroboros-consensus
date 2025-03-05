@@ -143,6 +143,9 @@ data ImmutableDbArgs f m blk = ImmutableDbArgs {
       -- 'Ouroboros.Consensus.Storage.Common.GetVerifiedBlock' components when
       -- extracting them from the ImmutableDB.
     , immCheckIntegrity   :: HKD f (blk -> Bool)
+      -- ^ Predicate to check for integrity of
+      -- 'Ouroboros.Consensus.Storage.Common.GetVerifiedBlock' components when
+      -- extracting them from the ImmutableDB.
     , immChunkInfo        :: HKD f ChunkInfo
     , immCodecConfig      :: HKD f (CodecConfig blk)
     , immHasFS            :: HKD f (SomeHasFS m)
@@ -151,6 +154,8 @@ data ImmutableDbArgs f m blk = ImmutableDbArgs {
       -- | Which chunks of the ImmutableDB to validate on opening: all chunks, or
       -- only the most recent chunk?
     , immValidationPolicy :: ValidationPolicy
+      -- ^ Which chunks of the ImmutableDB to validate on opening: all chunks, or
+      -- only the most recent chunk?
     }
 
 -- | Default arguments

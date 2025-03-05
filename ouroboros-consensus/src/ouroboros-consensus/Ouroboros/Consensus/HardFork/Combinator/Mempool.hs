@@ -5,10 +5,12 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -25,19 +27,21 @@ module Ouroboros.Consensus.HardFork.Combinator.Mempool (
   , hardForkApplyTxErrToEither
   ) where
 
-import           Control.Arrow ((+++))
+import           Control.Arrow (first, (+++))
 import           Control.Monad.Except
+import           Data.Functor.Identity
 import           Data.Functor.Product
 import           Data.Kind (Type)
 import qualified Data.Measure as Measure
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
-import           Data.SOP.Functors (Product2 (..))
+import           Data.SOP.Functors
 import           Data.SOP.Index
 import           Data.SOP.InPairs (InPairs)
 import qualified Data.SOP.InPairs as InPairs
 import qualified Data.SOP.Match as Match
 import           Data.SOP.Strict
+import qualified Data.SOP.Telescope as Tele
 import           Data.Typeable (Typeable)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
@@ -47,14 +51,13 @@ import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.HardFork.Combinator.Info
 import           Ouroboros.Consensus.HardFork.Combinator.InjectTxs
-import           Ouroboros.Consensus.HardFork.Combinator.Ledger (Ticked (..))
+import           Ouroboros.Consensus.HardFork.Combinator.Ledger
 import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
-                     (WrapPartialLedgerConfig (..))
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.TypeFamilyWrappers
-import           Ouroboros.Consensus.Util (ShowProxy)
+import           Ouroboros.Consensus.Util
 
 data HardForkApplyTxErr xs =
     -- | Validation error from one of the eras
@@ -96,18 +99,114 @@ instance Typeable xs => ShowProxy (GenTx (HardForkBlock xs)) where
 
 type instance ApplyTxErr (HardForkBlock xs) = HardForkApplyTxErr xs
 
-instance CanHardFork xs => LedgerSupportsMempool (HardForkBlock xs) where
-  applyTx   = applyHelper ModeApply
+-- | Just to discharge cognitive load, this is equivalent to:
+--
+-- > ([invalidTxs, ...], [validTxs, ...], st)
+--
+-- Where @invalidTxs@ and @validTxs@ are hard-fork transactions, and only @st@
+-- depends on a particular @blk@.
+--
+-- We do not define this as a new data type to reuse the @Applicative@ and
+-- friends instances of these type constructors, which are useful to
+-- @hsequence'@ a @HardForkState@ of this.
+--
+-- This is also isomorphic to
+-- @'Ouroboros.Consensus.Ledger.SupportsMempool.ReapplyTxsResult' (HardForkBlock xs)@
+type DecomposedReapplyTxsResult extra xs =
+  (,,)
+    [Invalidated (HardForkBlock xs)]
+    [(Validated (GenTx (HardForkBlock xs)), extra)]
+  :.:
+    FlipTickedLedgerState TrackingMK
 
-  reapplyTx = \cfg slot vtx tls ->
-        fmap (\(tls', _vtx) -> tls')
-      $ applyHelper
+instance ( CanHardFork xs
+         , HasCanonicalTxIn xs
+         , HasHardForkTxOut xs
+         ) => LedgerSupportsMempool (HardForkBlock xs) where
+  applyTx = applyHelper ModeApply ComputeDiffs
+
+  reapplyTx doDiffs cfg slot vtx tls =
+          fst
+      <$> applyHelper
           ModeReapply
+          doDiffs
           cfg
           DoNotIntervene
           slot
           (WrapValidatedGenTx vtx)
           tls
+
+  reapplyTxs :: forall extra.
+       ComputeDiffs
+    -> LedgerConfig (HardForkBlock xs)
+    -> SlotNo -- ^ Slot number of the block containing the tx
+    -> [(Validated (GenTx (HardForkBlock xs)), extra)]
+    -> TickedLedgerState (HardForkBlock xs) ValuesMK
+    -> ReapplyTxsResult extra (HardForkBlock xs)
+  reapplyTxs
+    doDiffs
+    HardForkLedgerConfig{..}
+    slot
+    vtxs
+    (TickedHardForkLedgerState transition hardForkState) =
+        (\(err, val, st') ->
+           ReapplyTxsResult (mismatched' ++ err) val (TickedHardForkLedgerState transition st'))
+      . hsequence'
+      $ hcizipWith proxySingle modeApplyCurrent cfgs (State.HardForkState $ hmap flipCurrentAndProduct matched)
+
+    where
+      pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
+      cfgs  = hcmap proxySingle (completeLedgerConfig'' ei) pcfgs
+      ei    = State.epochInfoPrecomputedTransitionInfo
+                hardForkLedgerConfigShape
+                transition
+                hardForkState
+
+      flipCurrentAndProduct (Pair (State.Current c s) b) = State.Current c (Pair s b)
+
+      -- Transactions are unwrapped into the particular era transactions.
+      (mismatched, matched) =
+        matchPolyTxsTele
+          -- How to translate txs to later eras
+          (InPairs.hmap
+             (\(Pair2 _ (InjectPolyTx w)) -> InjectPolyTx (\(Comp (ex, tx)) -> Comp . (ex,) <$> w tx))
+             (InPairs.requiringBoth cfgs hardForkInjectTxs)
+          )
+          (State.getHardForkState hardForkState)
+          (map
+             (\(tx, extra) -> hmap (Comp . (extra,)) . getOneEraValidatedGenTx . getHardForkValidatedGenTx $ tx)
+             vtxs
+          )
+
+      mismatched' :: [Invalidated (HardForkBlock xs)]
+      mismatched' =
+        map (\x -> flip Invalidated ( HardForkApplyTxErrWrongEra
+                                    $ MismatchEraInfo
+                                    $ Match.bihcmap proxySingle singleEraInfo ledgerInfo
+                                    $ snd x)
+                 . HardForkValidatedGenTx
+                 . OneEraValidatedGenTx
+                 . hmap (snd . unComp)
+                 . fst
+                 $ x)
+            mismatched
+
+      modeApplyCurrent :: forall blk.
+           SingleEraBlock                              blk
+        => Index xs                                    blk
+        -> WrapLedgerConfig                            blk
+        -> Product
+             (FlipTickedLedgerState ValuesMK)
+             ([] :.: (,) extra :.: WrapValidatedGenTx) blk
+        -> DecomposedReapplyTxsResult extra xs         blk
+      modeApplyCurrent index cfg (Pair (FlipTickedLedgerState st) txs) =
+        let ReapplyTxsResult err val st' =
+              reapplyTxs doDiffs (unwrapLedgerConfig cfg) slot [ (unwrapValidatedGenTx tx, tk) | (Comp (tk,tx)) <- unComp txs ] st
+        in Comp
+           ( [ injectValidatedGenTx index (getInvalidated x) `Invalidated` injectApplyTxErr index (getReason x) | x <- err ]
+           , map (first (HardForkValidatedGenTx . OneEraValidatedGenTx . injectNS index . WrapValidatedGenTx)) val
+           , FlipTickedLedgerState st'
+           )
 
   txForgetValidated =
         HardForkGenTx
@@ -115,6 +214,61 @@ instance CanHardFork xs => LedgerSupportsMempool (HardForkBlock xs) where
       . hcmap proxySingle (txForgetValidated . unwrapValidatedGenTx)
       . getOneEraValidatedGenTx
       . getHardForkValidatedGenTx
+
+  getTransactionKeySets (HardForkGenTx (OneEraGenTx ns)) =
+        hcollapse
+      $ hcimap proxySingle f ns
+    where
+      f ::
+           SingleEraBlock                                           x
+        => Index                                       xs           x
+        -> GenTx                                                    x
+        -> K (LedgerTables (LedgerState (HardForkBlock xs)) KeysMK) x
+      f idx tx = K $ injectLedgerTables idx $ getTransactionKeySets tx
+
+  -- This optimization is worthwile because we can save the projection and
+  -- injection of ledger tables.
+  --
+  -- These operations are used when adding new transactions to the mempool,
+  -- which is _not_ in the critical path for the forging loop but still will
+  -- make adoption of new transactions faster. As adding a transaction takes a
+  -- TMVar, it is interesting to hold it for as short of a time as possible.
+  prependMempoolDiffs
+    (TickedHardForkLedgerState _ (State.HardForkState st1))
+    (TickedHardForkLedgerState tr (State.HardForkState st2))
+    = TickedHardForkLedgerState
+          tr
+        $ State.HardForkState
+        $ runIdentity
+         (Tele.alignExtend
+         (InPairs.hpure (error "When prepending mempool diffs we used to un-aligned states, this should be impossible!"))
+         (hcpure proxySingle $ fn_2 $ \(State.Current _ a) (State.Current start b) -> State.Current start $
+                         FlipTickedLedgerState
+                       $ prependMempoolDiffs
+                          (getFlipTickedLedgerState a)
+                          (getFlipTickedLedgerState b)
+                      )
+         st1
+         st2)
+
+  -- This optimization is worthwile because we can save the projection and
+  -- injection of ledger tables.
+  --
+  -- These operations are used when adding new transactions to the mempool,
+  -- which is _not_ in the critical path for the forging loop but still will
+  -- make adoption of new transactions faster. As adding a transaction takes a
+  -- TMVar, it is interesting to hold it for as short of a time as possible.
+  applyMempoolDiffs
+    vals keys (TickedHardForkLedgerState tr (State.HardForkState st)) =
+    TickedHardForkLedgerState tr $ State.HardForkState $ hcimap
+      proxySingle
+      (\idx (State.Current start (FlipTickedLedgerState a)) ->
+         State.Current start $ FlipTickedLedgerState
+         $ applyMempoolDiffs
+           (ejectLedgerTables idx vals)
+           (ejectLedgerTables idx keys) a )
+      st
+
 
 instance CanHardFork xs => TxLimits (HardForkBlock xs) where
   type TxMeasure (HardForkBlock xs) = HardForkTxMeasure xs
@@ -136,14 +290,14 @@ instance CanHardFork xs => TxLimits (HardForkBlock xs) where
            SingleEraBlock blk
         => Index xs blk
         -> WrapPartialLedgerConfig blk
-        -> (Ticked :.: LedgerState) blk
+        -> FlipTickedLedgerState mk blk
         -> K (HardForkTxMeasure xs) blk
       aux idx pcfg st' =
           K
         $ hardForkInjTxMeasure . injectNS idx . WrapTxMeasure
         $ blockCapacityTxMeasure
             (completeLedgerConfig' ei pcfg)
-            (unComp st')
+            (getFlipTickedLedgerState st')
 
   txMeasure
     HardForkLedgerConfig{..}
@@ -172,7 +326,7 @@ instance CanHardFork xs => TxLimits (HardForkBlock xs) where
            SingleEraBlock blk
         => Index xs blk
         -> WrapLedgerConfig blk
-        -> (Product GenTx (Ticked :.: LedgerState)) blk
+        -> (Product GenTx (FlipTickedLedgerState ValuesMK)) blk
         -> K (Except (HardForkApplyTxErr xs) (HardForkTxMeasure xs)) blk
       aux idx cfg (Pair tx' st') =
           K
@@ -187,7 +341,7 @@ instance CanHardFork xs => TxLimits (HardForkBlock xs) where
             )
         $ txMeasure
             (unwrapLedgerConfig cfg)
-            (unComp st')
+            (getFlipTickedLedgerState st')
             tx'
 
 -- | A private type used only to clarify the parameterization of 'applyHelper'
@@ -195,9 +349,14 @@ data ApplyHelperMode :: (Type -> Type) -> Type where
   ModeApply   :: ApplyHelperMode GenTx
   ModeReapply :: ApplyHelperMode WrapValidatedGenTx
 
+-- | 'applyHelper' has to return one of these, depending on the apply mode used.
+type family ApplyMK k where
+  ApplyMK (ApplyHelperMode GenTx) = DiffMK
+  ApplyMK (ApplyHelperMode WrapValidatedGenTx) = TrackingMK
+
 -- | A private type used only to clarify the definition of 'applyHelper'
-data ApplyResult xs blk = ApplyResult {
-    arState       :: Ticked (LedgerState blk)
+data ApplyResult xs txIn blk = ApplyResult {
+    arState       :: Ticked (LedgerState blk) (ApplyMK (ApplyHelperMode txIn))
   , arValidatedTx :: Validated (GenTx (HardForkBlock xs))
   }
 
@@ -207,17 +366,19 @@ data ApplyResult xs blk = ApplyResult {
 -- 'ApplyHelperMode'.
 applyHelper :: forall xs txIn. CanHardFork xs
   => ApplyHelperMode txIn
+  -> ComputeDiffs
   -> LedgerConfig (HardForkBlock xs)
   -> WhetherToIntervene
   -> SlotNo
   -> txIn (HardForkBlock xs)
-  -> TickedLedgerState (HardForkBlock xs)
+  -> TickedLedgerState (HardForkBlock xs) ValuesMK
   -> Except
       (HardForkApplyTxErr xs)
-      ( TickedLedgerState (HardForkBlock xs)
+      ( TickedLedgerState (HardForkBlock xs) (ApplyMK (ApplyHelperMode txIn))
       , Validated (GenTx (HardForkBlock xs))
       )
 applyHelper mode
+            doDiffs
             HardForkLedgerConfig{..}
             wti
             slot
@@ -248,10 +409,10 @@ applyHelper mode
           result <-
               hsequence'
             $ hcizipWith proxySingle modeApplyCurrent cfgs matched
-          let _ = result :: State.HardForkState (ApplyResult xs) xs
+          let _ = result :: State.HardForkState (ApplyResult xs txIn) xs
 
-              st' :: State.HardForkState (Ticked :.: LedgerState) xs
-              st' = (Comp . arState) `hmap` result
+              st' :: State.HardForkState (FlipTickedLedgerState (ApplyMK (ApplyHelperMode txIn))) xs
+              st' = (FlipTickedLedgerState . arState) `hmap` result
 
               vtx :: Validated (GenTx (HardForkBlock xs))
               vtx = hcollapse $ (K . arValidatedTx) `hmap` result
@@ -289,29 +450,33 @@ applyHelper mode
         ModeReapply -> injValidatedTx
 
     modeApplyCurrent :: forall blk.
-         SingleEraBlock                        blk
-      => Index xs                              blk
-      -> WrapLedgerConfig                      blk
-      -> Product txIn (Ticked :.: LedgerState) blk
+         SingleEraBlock                                blk
+      => Index xs                                      blk
+      -> WrapLedgerConfig                              blk
+      -> Product txIn (FlipTickedLedgerState ValuesMK) blk
       -> (     Except (HardForkApplyTxErr xs)
-           :.: ApplyResult xs
-         ) blk
-    modeApplyCurrent index cfg (Pair tx' (Comp st)) =
+           :.: ApplyResult xs txIn
+         )                                             blk
+    modeApplyCurrent index cfg (Pair tx' (FlipTickedLedgerState st)) =
           Comp
         $ withExcept (injectApplyTxErr index)
         $ do
             let lcfg = unwrapLedgerConfig cfg
-            (st', vtx) <- case mode of
-              ModeApply   -> applyTx lcfg wti slot tx' st
+            case mode of
+              ModeApply   -> do
+                (st', vtx) <- applyTx lcfg wti slot tx' st
+                pure ApplyResult {
+                    arValidatedTx = injectValidatedGenTx index vtx
+                  , arState       = st'
+                  }
               ModeReapply -> do
                   let vtx' = unwrapValidatedGenTx tx'
-                  st' <- reapplyTx lcfg slot vtx' st
+                  st' <- reapplyTx doDiffs lcfg slot vtx' st
                   -- provide the given transaction, which was already validated
-                  pure (st', vtx')
-            pure ApplyResult {
-                arValidatedTx = injectValidatedGenTx index vtx
-              , arState       = st'
-              }
+                  pure ApplyResult {
+                      arValidatedTx = injectValidatedGenTx index vtx'
+                    , arState       = st'
+                    }
 
 newtype instance TxId (GenTx (HardForkBlock xs)) = HardForkGenTxId {
       getHardForkGenTxId :: OneEraGenTxId xs
@@ -350,8 +515,8 @@ instance All HasTxs xs => HasTxs (HardForkBlock xs) where
   Auxiliary
 -------------------------------------------------------------------------------}
 
-ledgerInfo :: forall blk. SingleEraBlock blk
-           => State.Current (Ticked :.: LedgerState) blk -> LedgerEraInfo blk
+ledgerInfo :: forall blk mk. SingleEraBlock blk
+           => State.Current (FlipTickedLedgerState mk) blk -> LedgerEraInfo blk
 ledgerInfo _ = LedgerEraInfo $ singleEraInfo (Proxy @blk)
 
 injectApplyTxErr :: Index xs blk -> ApplyTxErr blk -> HardForkApplyTxErr xs

@@ -1,4 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE QuantifiedConstraints #-}
+{-# LANGUAGE RankNTypes #-}
 
 -- | Infrastructure required to run a node
 --
@@ -6,7 +8,7 @@
 module Ouroboros.Consensus.Node.Run (
     -- * SerialiseDisk
     ImmutableDbSerialiseConstraints
-  , LgrDbSerialiseConstraints
+  , LedgerDbSerialiseConstraints
   , SerialiseDiskConstraints
   , VolatileDbSerialiseConstraints
     -- * SerialiseNodeToNode
@@ -32,9 +34,9 @@ import           Ouroboros.Consensus.Node.InitStorage
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.Serialisation
 import           Ouroboros.Consensus.Storage.ChainDB
-                     (ImmutableDbSerialiseConstraints,
-                     LgrDbSerialiseConstraints, SerialiseDiskConstraints,
+                     (ImmutableDbSerialiseConstraints, SerialiseDiskConstraints,
                      VolatileDbSerialiseConstraints)
+import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Network.Block (Serialised)
@@ -66,46 +68,47 @@ class ( ConvertRawHash blk
 -- | Serialisation constraints needed by the node-to-client protocols
 class ( Typeable blk
       , ConvertRawHash blk
-      , SerialiseNodeToClient blk blk
-      , SerialiseNodeToClient blk (Serialised blk)
-      , SerialiseNodeToClient blk (GenTx blk)
-      , SerialiseNodeToClient blk (GenTxId blk)
-      , SerialiseNodeToClient blk SlotNo
-      , SerialiseNodeToClient blk (ApplyTxErr blk)
-      , SerialiseNodeToClient blk (SomeSecond BlockQuery blk)
-      , SerialiseNodeToClient blk (LedgerConfig blk)
-      , SerialiseResult       blk (BlockQuery blk)
-      , SerialiseNodeToClient blk (LedgerConfig blk)
+      , SerialiseNodeToClient     blk blk
+      , SerialiseNodeToClient     blk (Serialised blk)
+      , SerialiseNodeToClient     blk (GenTx blk)
+      , SerialiseNodeToClient     blk (GenTxId blk)
+      , SerialiseNodeToClient     blk SlotNo
+      , SerialiseNodeToClient     blk (ApplyTxErr blk)
+      , SerialiseNodeToClient     blk (SomeBlockQuery (BlockQuery blk))
+      , SerialiseNodeToClient     blk (LedgerConfig blk)
+      , SerialiseBlockQueryResult blk BlockQuery
       ) => SerialiseNodeToClientConstraints blk
 
-class ( LedgerSupportsProtocol           blk
-      , InspectLedger                    blk
-      , HasHardForkHistory               blk
-      , LedgerSupportsMempool            blk
-      , HasTxId                   (GenTx blk)
-      , BlockSupportsLedgerQuery         blk
-      , SupportedNetworkProtocolVersion  blk
-      , ConfigSupportsNode               blk
-      , ConvertRawHash                   blk
-      , CommonProtocolParams             blk
-      , HasBinaryBlockInfo               blk
-      , SerialiseDiskConstraints         blk
-      , SerialiseNodeToNodeConstraints   blk
-      , SerialiseNodeToClientConstraints blk
-      , LedgerSupportsPeerSelection      blk
-      , NodeInitStorage                  blk
-      , BlockSupportsMetrics             blk
-      , BlockSupportsDiffusionPipelining blk
-      , BlockSupportsSanityCheck         blk
-      , Show                (CannotForge blk)
-      , Show             (ForgeStateInfo blk)
-      , Show      (ForgeStateUpdateError blk)
-      , ShowProxy                        blk
-      , ShowProxy            (ApplyTxErr blk)
-      , ShowProxy                 (GenTx blk)
-      , ShowProxy                (Header blk)
-      , ShowProxy            (BlockQuery blk)
-      , ShowProxy           (TxId (GenTx blk))
+class ( LedgerSupportsProtocol            blk
+      , InspectLedger                     blk
+      , HasHardForkHistory                blk
+      , LedgerSupportsMempool             blk
+      , HasTxId                    (GenTx blk)
+      , BlockSupportsLedgerQuery          blk
+      , SupportedNetworkProtocolVersion   blk
+      , ConfigSupportsNode                blk
+      , ConvertRawHash                    blk
+      , CommonProtocolParams              blk
+      , HasBinaryBlockInfo                blk
+      , SerialiseDiskConstraints          blk
+      , SerialiseNodeToNodeConstraints    blk
+      , SerialiseNodeToClientConstraints  blk
+      , LedgerSupportsPeerSelection       blk
+      , NodeInitStorage                   blk
+      , BlockSupportsMetrics              blk
+      , BlockSupportsDiffusionPipelining  blk
+      , BlockSupportsSanityCheck          blk
+      , Show                 (CannotForge blk)
+      , Show              (ForgeStateInfo blk)
+      , Show       (ForgeStateUpdateError blk)
+      , ShowProxy                         blk
+      , ShowProxy             (ApplyTxErr blk)
+      , ShowProxy                  (GenTx blk)
+      , ShowProxy                 (Header blk)
+      , ShowProxy             (BlockQuery blk)
+      , ShowProxy            (TxId (GenTx blk))
+      , (forall fp. ShowQuery (BlockQuery blk fp))
+      , LedgerSupportsLedgerDB            blk
       ) => RunNode blk
   -- This class is intentionally empty. It is not necessarily compositional - ie
   -- the instance for 'HardForkBlock' might do more than merely delegate to the

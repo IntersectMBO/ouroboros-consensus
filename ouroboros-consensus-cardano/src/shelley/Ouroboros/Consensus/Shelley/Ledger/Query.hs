@@ -1,3 +1,5 @@
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
@@ -6,6 +8,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
@@ -17,6 +20,12 @@
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 {-# LANGUAGE UndecidableInstances #-}
+#if __GLASGOW_HASKELL__ <= 906
+{-# OPTIONS_GHC -Wno-incomplete-patterns
+                -Wno-incomplete-uni-patterns
+                -Wno-incomplete-record-updates
+                -Wno-overlapping-patterns #-}
+#endif
 
 module Ouroboros.Consensus.Shelley.Ledger.Query (
     BlockQuery (..)
@@ -29,16 +38,22 @@ module Ouroboros.Consensus.Shelley.Ledger.Query (
   , decodeShelleyResult
   , encodeShelleyQuery
   , encodeShelleyResult
+    -- * BlockSupportsHFLedgerQuery instances
+  , answerShelleyLookupQueries
+  , answerShelleyTraversingQueries
+  , shelleyQFTraverseTablesPredicate
   ) where
 
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..), encodeListLen,
                      enforceSize)
+import           Cardano.Ledger.Address
 import qualified Cardano.Ledger.Api.State.Query as SL
 import           Cardano.Ledger.CertState (lookupDepositDState)
 import qualified Cardano.Ledger.CertState as SL
 import           Cardano.Ledger.Coin (Coin)
 import           Cardano.Ledger.Compactible (Compactible (fromCompact))
 import qualified Cardano.Ledger.Conway.Governance as CG
+import qualified Cardano.Ledger.Core as SL
 import           Cardano.Ledger.Credential (StakeCredential)
 import           Cardano.Ledger.Keys (KeyHash, KeyRole (..))
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -57,24 +72,27 @@ import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (decode, encode)
 import           Control.DeepSeq (NFData)
 import           Data.Bifunctor (second)
-import           Data.Kind (Type)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.MemPack
 import           Data.Sequence (Seq (..))
 import           Data.Set (Set)
 import qualified Data.Set as Set
-import           Data.Type.Equality (apply)
 import           Data.Typeable (Typeable)
 import qualified Data.VMap as VMap
 import           GHC.Generics (Generic)
+import           Lens.Micro
 import           Lens.Micro.Extras (view)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.HardFork.Combinator.Basics
+import           Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsPeerSelection
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import qualified Ouroboros.Consensus.Shelley.Eras as SE
 import           Ouroboros.Consensus.Shelley.Ledger.Block
@@ -85,14 +103,17 @@ import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
 import           Ouroboros.Consensus.Shelley.Ledger.PeerSelection ()
 import           Ouroboros.Consensus.Shelley.Ledger.Query.Types
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
+import           Ouroboros.Consensus.Storage.LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Util (ShowProxy (..))
+import           Ouroboros.Consensus.Util.IndexedMemPack
 import           Ouroboros.Network.Block (Serialised (..), decodePoint,
                      encodePoint, mkSerialised)
 import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
 import           Ouroboros.Network.PeerSelection.LedgerPeers.Utils
 
 {-------------------------------------------------------------------------------
-  QueryLedger
+  BlockSupportsLedgerQuery
 -------------------------------------------------------------------------------}
 
 newtype NonMyopicMemberRewards = NonMyopicMemberRewards {
@@ -107,16 +128,16 @@ type Delegations = Map (SL.Credential 'SL.Staking) (SL.KeyHash 'SL.StakePool)
 
 type VoteDelegatees = Map (SL.Credential 'SL.Staking) SL.DRep
 
-data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
-  GetLedgerTip :: BlockQuery (ShelleyBlock proto era) (Point (ShelleyBlock proto era))
-  GetEpochNo :: BlockQuery (ShelleyBlock proto era) EpochNo
+data instance BlockQuery (ShelleyBlock proto era) fp result where
+  GetLedgerTip :: BlockQuery (ShelleyBlock proto era) QFNoTables (Point (ShelleyBlock proto era))
+  GetEpochNo :: BlockQuery (ShelleyBlock proto era) QFNoTables EpochNo
   -- | Calculate the Non-Myopic Pool Member Rewards for a set of
   -- credentials. See 'SL.getNonMyopicMemberRewards'
   GetNonMyopicMemberRewards
     :: Set (Either SL.Coin (SL.Credential 'SL.Staking))
-    -> BlockQuery (ShelleyBlock proto era) NonMyopicMemberRewards
+    -> BlockQuery (ShelleyBlock proto era) QFNoTables NonMyopicMemberRewards
   GetCurrentPParams
-    :: BlockQuery (ShelleyBlock proto era) (LC.PParams era)
+    :: BlockQuery (ShelleyBlock proto era) QFNoTables (LC.PParams era)
   -- | This gets the stake distribution, but not in terms of _active_ stake
   -- (which we need for the leader schedule), but rather in terms of _total_
   -- stake, which is relevant for rewards. It is used by the wallet to show
@@ -124,7 +145,7 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   -- an endpoint that provides all the information that the wallet wants about
   -- pools, in an extensible fashion.
   GetStakeDistribution
-    :: BlockQuery (ShelleyBlock proto era) (PoolDistr (ProtoCrypto proto))
+    :: BlockQuery (ShelleyBlock proto era) QFNoTables (PoolDistr (ProtoCrypto proto))
 
   -- | Get a subset of the UTxO, filtered by address. Although this will
   -- typically return a lot less data than 'GetUTxOWhole', it requires a linear
@@ -134,18 +155,18 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   --
   GetUTxOByAddress
     :: Set SL.Addr
-    -> BlockQuery (ShelleyBlock proto era) (SL.UTxO era)
+    -> BlockQuery (ShelleyBlock proto era) QFTraverseTables (SL.UTxO era)
 
   -- | Get the /entire/ UTxO. This is only suitable for debug/testing purposes
   -- because otherwise it is far too much data.
   --
   GetUTxOWhole
-    :: BlockQuery (ShelleyBlock proto era) (SL.UTxO era)
+    :: BlockQuery (ShelleyBlock proto era) QFTraverseTables (SL.UTxO era)
 
   -- | Only for debugging purposes, we make no effort to ensure binary
   -- compatibility (cf the comment on 'GetCBOR'). Moreover, it is huge.
   DebugEpochState
-    :: BlockQuery (ShelleyBlock proto era) (SL.EpochState era)
+    :: BlockQuery (ShelleyBlock proto era) QFNoTables (SL.EpochState era)
 
   -- | Wrap the result of the query using CBOR-in-CBOR.
   --
@@ -161,81 +182,81 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   -- decode it, the client can fall back to pretty printing the actual CBOR,
   -- which is better than no output at all.
   GetCBOR
-    :: BlockQuery (ShelleyBlock proto era) result
-    -> BlockQuery (ShelleyBlock proto era) (Serialised result)
+    :: BlockQuery (ShelleyBlock proto era) fp result
+    -> BlockQuery (ShelleyBlock proto era) fp (Serialised result)
 
   GetFilteredDelegationsAndRewardAccounts
     :: Set (SL.Credential 'SL.Staking)
-    -> BlockQuery (ShelleyBlock proto era)
+    -> BlockQuery (ShelleyBlock proto era) QFNoTables
              (Delegations, Map (SL.Credential 'Staking) Coin)
 
   GetGenesisConfig
-    :: BlockQuery (ShelleyBlock proto era) CompactGenesis
+    :: BlockQuery (ShelleyBlock proto era) QFNoTables CompactGenesis
 
   -- | Only for debugging purposes, we make no effort to ensure binary
   -- compatibility (cf the comment on 'GetCBOR'). Moreover, it is huge.
   DebugNewEpochState
-    :: BlockQuery (ShelleyBlock proto era) (SL.NewEpochState era)
+    :: BlockQuery (ShelleyBlock proto era) QFNoTables (SL.NewEpochState era)
 
   -- | Only for debugging purposes, we make no effort to ensure binary
   -- compatibility (cf the comment on 'GetCBOR').
   DebugChainDepState
-    :: BlockQuery (ShelleyBlock proto era) (ChainDepState proto)
+    :: BlockQuery (ShelleyBlock proto era) QFNoTables (ChainDepState proto)
 
   GetRewardProvenance
-    :: BlockQuery (ShelleyBlock proto era) SL.RewardProvenance
+    :: BlockQuery (ShelleyBlock proto era) QFNoTables SL.RewardProvenance
 
   -- | Get a subset of the UTxO, filtered by transaction input. This is
   -- efficient and costs only O(m * log n) for m inputs and a UTxO of size n.
   --
   GetUTxOByTxIn
     :: Set SL.TxIn
-    -> BlockQuery (ShelleyBlock proto era) (SL.UTxO era)
+    -> BlockQuery (ShelleyBlock proto era) QFLookupTables (SL.UTxO era)
 
   GetStakePools
-    :: BlockQuery (ShelleyBlock proto era)
+    :: BlockQuery (ShelleyBlock proto era) QFNoTables
                   (Set (SL.KeyHash 'SL.StakePool))
 
   GetStakePoolParams
     :: Set (SL.KeyHash 'SL.StakePool)
-    -> BlockQuery (ShelleyBlock proto era)
+    -> BlockQuery (ShelleyBlock proto era) QFNoTables
                   (Map (SL.KeyHash 'SL.StakePool) SL.PoolParams)
 
   GetRewardInfoPools
-    :: BlockQuery (ShelleyBlock proto era)
+    :: BlockQuery (ShelleyBlock proto era) QFNoTables
                   (SL.RewardParams,
                     Map (SL.KeyHash 'SL.StakePool)
                         (SL.RewardInfoPool))
 
   GetPoolState
     :: Maybe (Set (SL.KeyHash 'SL.StakePool))
-    -> BlockQuery (ShelleyBlock proto era)
+    -> BlockQuery (ShelleyBlock proto era) QFNoTables
                   (SL.PState era)
 
   GetStakeSnapshots
     :: Maybe (Set (SL.KeyHash 'SL.StakePool))
-    -> BlockQuery (ShelleyBlock proto era)
+    -> BlockQuery (ShelleyBlock proto era) QFNoTables
                   StakeSnapshots
 
   GetPoolDistr
     :: Maybe (Set (SL.KeyHash 'SL.StakePool))
-    -> BlockQuery (ShelleyBlock proto era)
+    -> BlockQuery (ShelleyBlock proto era) QFNoTables
                   (PoolDistr (ProtoCrypto proto))
 
   GetStakeDelegDeposits
     :: Set StakeCredential
-    -> BlockQuery (ShelleyBlock proto era)
+    -> BlockQuery (ShelleyBlock proto era) QFNoTables
                   (Map StakeCredential Coin)
 
   -- | Not supported in eras before Conway
   GetConstitution
     :: CG.ConwayEraGov era
-    => BlockQuery (ShelleyBlock proto era) (CG.Constitution era)
+    => BlockQuery (ShelleyBlock proto era) QFNoTables (CG.Constitution era)
 
   -- | Although this query was introduced as part of Conway, it is general and
   --  so has non-degenerate semantics for eras before Conway.
   GetGovState
-    :: BlockQuery (ShelleyBlock proto era) (LC.GovState era)
+    :: BlockQuery (ShelleyBlock proto era) QFNoTables (LC.GovState era)
 
   -- | The argument specifies the credential of each 'DRep' whose state should
   -- be returned. When it's empty, the state of every 'DRep' is returned.
@@ -245,6 +266,7 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
     :: CG.ConwayEraGov era
     => Set (SL.Credential 'DRepRole)
     -> BlockQuery (ShelleyBlock proto era)
+                  QFNoTables
                   (Map
                        (SL.Credential 'DRepRole)
                        SL.DRepState
@@ -261,7 +283,7 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   GetDRepStakeDistr
     :: CG.ConwayEraGov era
     => Set SL.DRep
-    -> BlockQuery (ShelleyBlock proto era) (Map SL.DRep Coin)
+    -> BlockQuery (ShelleyBlock proto era) QFNoTables (Map SL.DRep Coin)
 
   -- | Query committee members
   --
@@ -271,16 +293,16 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
     => Set (SL.Credential 'ColdCommitteeRole)
     -> Set (SL.Credential 'HotCommitteeRole)
     -> Set SL.MemberStatus
-    -> BlockQuery (ShelleyBlock proto era) SL.CommitteeMembersState
+    -> BlockQuery (ShelleyBlock proto era) QFNoTables SL.CommitteeMembersState
 
   -- | Not supported in eras before Conway.
   GetFilteredVoteDelegatees
     :: CG.ConwayEraGov era
     => Set (SL.Credential 'SL.Staking)
-    -> BlockQuery (ShelleyBlock proto era) VoteDelegatees
+    -> BlockQuery (ShelleyBlock proto era) QFNoTables VoteDelegatees
 
   GetAccountState
-    :: BlockQuery (ShelleyBlock proto era) AccountState
+    :: BlockQuery (ShelleyBlock proto era) QFNoTables AccountState
 
   -- | Query the SPO voting stake distribution.
   -- This stake distribution is different from the one used in leader election.
@@ -291,31 +313,31 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   GetSPOStakeDistr
     :: CG.ConwayEraGov era
     => Set (KeyHash 'StakePool)
-    -> BlockQuery (ShelleyBlock proto era) (Map (KeyHash 'StakePool) Coin)
+    -> BlockQuery (ShelleyBlock proto era) QFNoTables (Map (KeyHash 'StakePool) Coin)
 
   GetProposals
     :: CG.ConwayEraGov era
     => Set CG.GovActionId
-    -> BlockQuery (ShelleyBlock proto era) (Seq (CG.GovActionState era))
+    -> BlockQuery (ShelleyBlock proto era) QFNoTables (Seq (CG.GovActionState era))
 
   GetRatifyState
     :: CG.ConwayEraGov era
-    => BlockQuery (ShelleyBlock proto era) (CG.RatifyState era)
+    => BlockQuery (ShelleyBlock proto era) QFNoTables (CG.RatifyState era)
 
   GetFuturePParams
-    :: BlockQuery (ShelleyBlock proto era) (Maybe (LC.PParams era))
+    :: BlockQuery (ShelleyBlock proto era) QFNoTables (Maybe (LC.PParams era))
 
   -- | Obtain a snapshot of big ledger peers. CLI can serialize these,
   -- and if made available to the node by topology configuration,
   -- the diffusion layer can use these peers when syncing up from scratch
   -- or stale ledger state - especially useful for Genesis mode
   GetBigLedgerPeerSnapshot
-    :: BlockQuery (ShelleyBlock proto era) LedgerPeerSnapshot
+    :: BlockQuery (ShelleyBlock proto era) QFNoTables LedgerPeerSnapshot
 
   QueryStakePoolDefaultVote
     :: CG.ConwayEraGov era
     => KeyHash 'StakePool
-    -> BlockQuery (ShelleyBlock proto era) CG.DefaultVote
+    -> BlockQuery (ShelleyBlock proto era) QFNoTables CG.DefaultVote
 
   -- WARNING: please add new queries to the end of the list and stick to this
   -- order in all other pattern matches on queries. This helps in particular
@@ -334,14 +356,13 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
 instance (Typeable era, Typeable proto)
   => ShowProxy (BlockQuery (ShelleyBlock proto era)) where
 
-instance
-  ( ShelleyCompatible proto era
-  , ProtoCrypto proto ~ crypto
-  , Crypto crypto
-  ) =>
-  BlockSupportsLedgerQuery (ShelleyBlock proto era)
-  where
-  answerBlockQuery cfg query ext =
+instance ( ShelleyCompatible proto era
+         , LedgerSupportsProtocol (ShelleyBlock proto era)
+         , ProtoCrypto proto ~ crypto
+         , Crypto crypto
+         )
+      => BlockSupportsLedgerQuery (ShelleyBlock proto era) where
+  answerPureBlockQuery cfg query ext =
       case query of
         GetLedgerTip ->
           shelleyLedgerTipPoint lst
@@ -354,10 +375,6 @@ instance
           getPParams st
         GetStakeDistribution ->
           fromLedgerPoolDistr $ SL.poolsByTotalStakeFraction globals st
-        GetUTxOByAddress addrs ->
-          SL.getFilteredUTxO st addrs
-        GetUTxOWhole ->
-          SL.getUTxO st
         DebugEpochState ->
           getEpochState st
         GetCBOR query' ->
@@ -366,7 +383,7 @@ instance
           -- both client and server are running the same version; cf. the
           -- @GetCBOR@ Haddocks.
           mkSerialised (encodeShelleyResult maxBound query') $
-            answerBlockQuery cfg query' ext
+            answerPureBlockQuery cfg query' ext
         GetFilteredDelegationsAndRewardAccounts creds ->
           getFilteredDelegationsAndRewardAccounts st creds
         GetGenesisConfig ->
@@ -377,8 +394,6 @@ instance
           headerStateChainDep hst
         GetRewardProvenance ->
           snd $ SL.getRewardProvenance globals st
-        GetUTxOByTxIn txins ->
-          SL.getUTxOSubset st txins
         GetStakePools ->
           SL.getPools st
         GetStakePoolParams poolids ->
@@ -503,158 +518,162 @@ instance
       hst = headerState ext
       st  = shelleyLedgerState lst
 
-instance SameDepIndex (BlockQuery (ShelleyBlock proto era)) where
-  sameDepIndex GetLedgerTip GetLedgerTip
+  answerBlockQueryLookup = answerShelleyLookupQueries id id id
+
+  answerBlockQueryTraverse = answerShelleyTraversingQueries id id shelleyQFTraverseTablesPredicate
+
+instance SameDepIndex2 (BlockQuery (ShelleyBlock proto era)) where
+  sameDepIndex2 GetLedgerTip GetLedgerTip
     = Just Refl
-  sameDepIndex GetLedgerTip _
+  sameDepIndex2 GetLedgerTip _
     = Nothing
-  sameDepIndex GetEpochNo GetEpochNo
+  sameDepIndex2 GetEpochNo GetEpochNo
     = Just Refl
-  sameDepIndex GetEpochNo _
+  sameDepIndex2 GetEpochNo _
     = Nothing
-  sameDepIndex (GetNonMyopicMemberRewards creds) (GetNonMyopicMemberRewards creds')
+  sameDepIndex2 (GetNonMyopicMemberRewards creds) (GetNonMyopicMemberRewards creds')
     | creds == creds'
     = Just Refl
     | otherwise
     = Nothing
-  sameDepIndex (GetNonMyopicMemberRewards _) _
+  sameDepIndex2 (GetNonMyopicMemberRewards _) _
     = Nothing
-  sameDepIndex GetCurrentPParams GetCurrentPParams
+  sameDepIndex2 GetCurrentPParams GetCurrentPParams
     = Just Refl
-  sameDepIndex GetCurrentPParams _
+  sameDepIndex2 GetCurrentPParams _
     = Nothing
-  sameDepIndex GetStakeDistribution GetStakeDistribution
+  sameDepIndex2 GetStakeDistribution GetStakeDistribution
     = Just Refl
-  sameDepIndex GetStakeDistribution _
+  sameDepIndex2 GetStakeDistribution _
     = Nothing
-  sameDepIndex (GetUTxOByAddress addrs) (GetUTxOByAddress addrs')
+  sameDepIndex2 (GetUTxOByAddress addrs) (GetUTxOByAddress addrs')
     | addrs == addrs'
     = Just Refl
     | otherwise
     = Nothing
-  sameDepIndex (GetUTxOByAddress _) _
+  sameDepIndex2 (GetUTxOByAddress _) _
     = Nothing
-  sameDepIndex GetUTxOWhole GetUTxOWhole
+  sameDepIndex2 GetUTxOWhole GetUTxOWhole
     = Just Refl
-  sameDepIndex GetUTxOWhole _
+  sameDepIndex2 GetUTxOWhole _
     = Nothing
-  sameDepIndex DebugEpochState DebugEpochState
+  sameDepIndex2 DebugEpochState DebugEpochState
     = Just Refl
-  sameDepIndex DebugEpochState _
+  sameDepIndex2 DebugEpochState _
     = Nothing
-  sameDepIndex (GetCBOR q) (GetCBOR q')
-    = apply Refl <$> sameDepIndex q q'
-  sameDepIndex (GetCBOR _) _
+  sameDepIndex2 (GetCBOR q) (GetCBOR q')
+    = (\Refl -> Refl) <$> sameDepIndex2 q q'
+  sameDepIndex2 (GetCBOR _) _
     = Nothing
-  sameDepIndex (GetFilteredDelegationsAndRewardAccounts creds)
+  sameDepIndex2 (GetFilteredDelegationsAndRewardAccounts creds)
                (GetFilteredDelegationsAndRewardAccounts creds')
     | creds == creds'
     = Just Refl
     | otherwise
     = Nothing
-  sameDepIndex (GetFilteredDelegationsAndRewardAccounts _) _
+  sameDepIndex2 (GetFilteredDelegationsAndRewardAccounts _) _
     = Nothing
-  sameDepIndex GetGenesisConfig GetGenesisConfig
+  sameDepIndex2 GetGenesisConfig GetGenesisConfig
     = Just Refl
-  sameDepIndex GetGenesisConfig _
+  sameDepIndex2 GetGenesisConfig _
     = Nothing
-  sameDepIndex DebugNewEpochState DebugNewEpochState
+  sameDepIndex2 DebugNewEpochState DebugNewEpochState
     = Just Refl
-  sameDepIndex DebugNewEpochState _
+  sameDepIndex2 DebugNewEpochState _
     = Nothing
-  sameDepIndex DebugChainDepState DebugChainDepState
+  sameDepIndex2 DebugChainDepState DebugChainDepState
     = Just Refl
-  sameDepIndex DebugChainDepState _
+  sameDepIndex2 DebugChainDepState _
     = Nothing
-  sameDepIndex GetRewardProvenance GetRewardProvenance
+  sameDepIndex2 GetRewardProvenance GetRewardProvenance
     = Just Refl
-  sameDepIndex GetRewardProvenance _
+  sameDepIndex2 GetRewardProvenance _
     = Nothing
-  sameDepIndex (GetUTxOByTxIn addrs) (GetUTxOByTxIn addrs')
+  sameDepIndex2 (GetUTxOByTxIn addrs) (GetUTxOByTxIn addrs')
     | addrs == addrs'
     = Just Refl
     | otherwise
     = Nothing
-  sameDepIndex (GetUTxOByTxIn _) _
+  sameDepIndex2 (GetUTxOByTxIn _) _
     = Nothing
-  sameDepIndex GetStakePools GetStakePools
+  sameDepIndex2 GetStakePools GetStakePools
     = Just Refl
-  sameDepIndex GetStakePools _
+  sameDepIndex2 GetStakePools _
     = Nothing
-  sameDepIndex (GetStakePoolParams poolids) (GetStakePoolParams poolids')
+  sameDepIndex2 (GetStakePoolParams poolids) (GetStakePoolParams poolids')
     | poolids == poolids'
     = Just Refl
     | otherwise
     = Nothing
-  sameDepIndex (GetStakePoolParams _) _
+  sameDepIndex2 (GetStakePoolParams _) _
     = Nothing
-  sameDepIndex GetRewardInfoPools GetRewardInfoPools
+  sameDepIndex2 GetRewardInfoPools GetRewardInfoPools
     = Just Refl
-  sameDepIndex GetRewardInfoPools _
+  sameDepIndex2 GetRewardInfoPools _
     = Nothing
-  sameDepIndex (GetPoolState poolids) (GetPoolState poolids')
+  sameDepIndex2 (GetPoolState poolids) (GetPoolState poolids')
     | poolids == poolids'
     = Just Refl
     | otherwise
     = Nothing
-  sameDepIndex (GetPoolState _) _
+  sameDepIndex2 (GetPoolState _) _
     = Nothing
-  sameDepIndex (GetStakeSnapshots poolid) (GetStakeSnapshots poolid')
+  sameDepIndex2 (GetStakeSnapshots poolid) (GetStakeSnapshots poolid')
     | poolid == poolid'
     = Just Refl
     | otherwise
     = Nothing
-  sameDepIndex (GetStakeSnapshots _) _
+  sameDepIndex2 (GetStakeSnapshots _) _
     = Nothing
-  sameDepIndex (GetPoolDistr poolids) (GetPoolDistr poolids')
+  sameDepIndex2 (GetPoolDistr poolids) (GetPoolDistr poolids')
     | poolids == poolids'
     = Just Refl
     | otherwise
     = Nothing
-  sameDepIndex (GetPoolDistr _) _
+  sameDepIndex2 (GetPoolDistr _) _
     = Nothing
-  sameDepIndex (GetStakeDelegDeposits stakeCreds) (GetStakeDelegDeposits stakeCreds')
+  sameDepIndex2 (GetStakeDelegDeposits stakeCreds) (GetStakeDelegDeposits stakeCreds')
     | stakeCreds == stakeCreds'
     = Just Refl
     | otherwise
     = Nothing
-  sameDepIndex (GetStakeDelegDeposits _) _
+  sameDepIndex2 (GetStakeDelegDeposits _) _
     = Nothing
-  sameDepIndex GetConstitution GetConstitution = Just Refl
-  sameDepIndex GetConstitution _ = Nothing
-  sameDepIndex GetGovState GetGovState = Just Refl
-  sameDepIndex GetGovState _ = Nothing
-  sameDepIndex GetDRepState{} GetDRepState{} = Just Refl
-  sameDepIndex GetDRepState{} _ = Nothing
-  sameDepIndex GetDRepStakeDistr{} GetDRepStakeDistr{} = Just Refl
-  sameDepIndex GetDRepStakeDistr{} _ = Nothing
-  sameDepIndex GetCommitteeMembersState{} GetCommitteeMembersState{} = Just Refl
-  sameDepIndex GetCommitteeMembersState{} _ = Nothing
-  sameDepIndex (GetFilteredVoteDelegatees stakeCreds) (GetFilteredVoteDelegatees stakeCreds')
+  sameDepIndex2 GetConstitution GetConstitution = Just Refl
+  sameDepIndex2 GetConstitution _ = Nothing
+  sameDepIndex2 GetGovState GetGovState = Just Refl
+  sameDepIndex2 GetGovState _ = Nothing
+  sameDepIndex2 GetDRepState{} GetDRepState{} = Just Refl
+  sameDepIndex2 GetDRepState{} _ = Nothing
+  sameDepIndex2 GetDRepStakeDistr{} GetDRepStakeDistr{} = Just Refl
+  sameDepIndex2 GetDRepStakeDistr{} _ = Nothing
+  sameDepIndex2 GetCommitteeMembersState{} GetCommitteeMembersState{} = Just Refl
+  sameDepIndex2 GetCommitteeMembersState{} _ = Nothing
+  sameDepIndex2 (GetFilteredVoteDelegatees stakeCreds) (GetFilteredVoteDelegatees stakeCreds')
     | stakeCreds == stakeCreds'
     = Just Refl
     | otherwise
     = Nothing
-  sameDepIndex GetFilteredVoteDelegatees {} _ = Nothing
-  sameDepIndex GetAccountState {} GetAccountState {} = Just Refl
-  sameDepIndex GetAccountState {} _ = Nothing
-  sameDepIndex GetSPOStakeDistr{} GetSPOStakeDistr{} = Just Refl
-  sameDepIndex GetSPOStakeDistr{} _ = Nothing
-  sameDepIndex GetProposals{} GetProposals{} = Just Refl
-  sameDepIndex GetProposals{} _ = Nothing
-  sameDepIndex GetRatifyState{} GetRatifyState{} = Just Refl
-  sameDepIndex GetRatifyState{} _ = Nothing
-  sameDepIndex GetFuturePParams{} GetFuturePParams{} = Just Refl
-  sameDepIndex GetFuturePParams{} _ = Nothing
-  sameDepIndex GetBigLedgerPeerSnapshot GetBigLedgerPeerSnapshot = Just Refl
-  sameDepIndex GetBigLedgerPeerSnapshot _ = Nothing
-  sameDepIndex QueryStakePoolDefaultVote{} QueryStakePoolDefaultVote{} = Just Refl
-  sameDepIndex QueryStakePoolDefaultVote{} _ = Nothing
+  sameDepIndex2 GetFilteredVoteDelegatees {} _ = Nothing
+  sameDepIndex2 GetAccountState {} GetAccountState {} = Just Refl
+  sameDepIndex2 GetAccountState {} _ = Nothing
+  sameDepIndex2 GetSPOStakeDistr{} GetSPOStakeDistr{} = Just Refl
+  sameDepIndex2 GetSPOStakeDistr{} _ = Nothing
+  sameDepIndex2 GetProposals{} GetProposals{} = Just Refl
+  sameDepIndex2 GetProposals{} _ = Nothing
+  sameDepIndex2 GetRatifyState{} GetRatifyState{} = Just Refl
+  sameDepIndex2 GetRatifyState{} _ = Nothing
+  sameDepIndex2 GetFuturePParams{} GetFuturePParams{} = Just Refl
+  sameDepIndex2 GetFuturePParams{} _ = Nothing
+  sameDepIndex2 GetBigLedgerPeerSnapshot GetBigLedgerPeerSnapshot = Just Refl
+  sameDepIndex2 GetBigLedgerPeerSnapshot _ = Nothing
+  sameDepIndex2 QueryStakePoolDefaultVote{} QueryStakePoolDefaultVote{} = Just Refl
+  sameDepIndex2 QueryStakePoolDefaultVote{} _ = Nothing
 
-deriving instance Eq   (BlockQuery (ShelleyBlock proto era) result)
-deriving instance Show (BlockQuery (ShelleyBlock proto era) result)
+deriving instance Eq   (BlockQuery (ShelleyBlock proto era) fp result)
+deriving instance Show (BlockQuery (ShelleyBlock proto era) fp result)
 
-instance ShelleyCompatible proto era => ShowQuery (BlockQuery (ShelleyBlock proto era)) where
+instance ShelleyCompatible proto era => ShowQuery (BlockQuery (ShelleyBlock proto era) fp) where
   showResult = \case
       GetLedgerTip                               -> show
       GetEpochNo                                 -> show
@@ -693,7 +712,7 @@ instance ShelleyCompatible proto era => ShowQuery (BlockQuery (ShelleyBlock prot
       QueryStakePoolDefaultVote {}               -> show
 
 -- | Is the given query supported by the given 'ShelleyNodeToClientVersion'?
-querySupportedVersion :: BlockQuery (ShelleyBlock proto era) result -> ShelleyNodeToClientVersion -> Bool
+querySupportedVersion :: BlockQuery (ShelleyBlock proto era) fp result -> ShelleyNodeToClientVersion -> Bool
 querySupportedVersion = \case
     GetLedgerTip                               -> const True
     GetEpochNo                                 -> const True
@@ -763,7 +782,7 @@ getFilteredDelegationsAndRewardAccounts ss creds =
 
     filteredDelegations = Map.mapMaybe umElemSPool umElemsRestricted
     filteredRwdAcnts =
-      Map.mapMaybe (\e -> fromCompact . rdReward <$> umElemRDPair e) umElemsRestricted
+      Map.mapMaybe (fmap (fromCompact . rdReward) . umElemRDPair) umElemsRestricted
 
 getFilteredVoteDelegatees ::
      SL.EraCertState era
@@ -780,8 +799,8 @@ getFilteredVoteDelegatees ss creds = Map.mapMaybe umElemDRep umElemsRestricted
 -------------------------------------------------------------------------------}
 
 encodeShelleyQuery ::
-     forall era proto result. ShelleyBasedEra era
-  => BlockQuery (ShelleyBlock proto era) result -> Encoding
+     forall era proto fp result. ShelleyBasedEra era
+  => BlockQuery (ShelleyBlock proto era) fp result -> Encoding
 encodeShelleyQuery query = case query of
     GetLedgerTip ->
       CBOR.encodeListLen 1 <> CBOR.encodeWord8 0
@@ -856,7 +875,7 @@ encodeShelleyQuery query = case query of
 
 decodeShelleyQuery ::
      forall era proto. ShelleyBasedEra era
-  => forall s. Decoder s (SomeSecond BlockQuery (ShelleyBlock proto era))
+  => forall s. Decoder s (SomeBlockQuery (BlockQuery (ShelleyBlock proto era)))
 decodeShelleyQuery = do
     len <- CBOR.decodeListLen
     tag <- CBOR.decodeWord8
@@ -875,52 +894,52 @@ decodeShelleyQuery = do
             Nothing                  -> failmsg "that query is not supported before Conway,"
 
     case (len, tag) of
-      (1, 0)  ->             return $ SomeSecond GetLedgerTip
-      (1, 1)  ->             return $ SomeSecond GetEpochNo
-      (2, 2)  ->             SomeSecond . GetNonMyopicMemberRewards <$> fromCBOR
-      (1, 3)  ->             return $ SomeSecond GetCurrentPParams
-      (1, 5)  ->             return $ SomeSecond GetStakeDistribution
-      (2, 6)  ->             SomeSecond . GetUTxOByAddress <$> LC.fromEraCBOR @era
-      (1, 7)  ->             return $ SomeSecond GetUTxOWhole
-      (1, 8)  ->             return $ SomeSecond DebugEpochState
-      (2, 9)  ->             (\(SomeSecond q) -> SomeSecond (GetCBOR q)) <$> decodeShelleyQuery
-      (2, 10) ->             SomeSecond . GetFilteredDelegationsAndRewardAccounts <$> LC.fromEraCBOR @era
-      (1, 11) ->             return $ SomeSecond GetGenesisConfig
-      (1, 12) ->             return $ SomeSecond DebugNewEpochState
-      (1, 13) ->             return $ SomeSecond DebugChainDepState
-      (1, 14) ->             return $ SomeSecond GetRewardProvenance
-      (2, 15) ->             SomeSecond . GetUTxOByTxIn <$> LC.fromEraCBOR @era
-      (1, 16) ->             return $ SomeSecond GetStakePools
-      (2, 17) ->             SomeSecond . GetStakePoolParams <$> fromCBOR
-      (1, 18) ->             return $ SomeSecond GetRewardInfoPools
-      (2, 19) ->             SomeSecond . GetPoolState <$> fromCBOR
-      (2, 20) ->             SomeSecond . GetStakeSnapshots <$> fromCBOR
-      (2, 21) ->             SomeSecond . GetPoolDistr <$> fromCBOR
-      (2, 22) ->             SomeSecond . GetStakeDelegDeposits <$> fromCBOR
-      (1, 23) -> requireCG $ return $ SomeSecond GetConstitution
-      (1, 24) ->             return $ SomeSecond GetGovState
-      (2, 25) -> requireCG $ SomeSecond . GetDRepState <$> fromCBOR
-      (2, 26) -> requireCG $ SomeSecond . GetDRepStakeDistr <$> LC.fromEraCBOR @era
+      (1, 0)  ->             return $ SomeBlockQuery GetLedgerTip
+      (1, 1)  ->             return $ SomeBlockQuery GetEpochNo
+      (2, 2)  ->             SomeBlockQuery . GetNonMyopicMemberRewards <$> fromCBOR
+      (1, 3)  ->             return $ SomeBlockQuery GetCurrentPParams
+      (1, 5)  ->             return $ SomeBlockQuery GetStakeDistribution
+      (2, 6)  ->             SomeBlockQuery . GetUTxOByAddress <$> LC.fromEraCBOR @era
+      (1, 7)  ->             return $ SomeBlockQuery GetUTxOWhole
+      (1, 8)  ->             return $ SomeBlockQuery DebugEpochState
+      (2, 9)  ->             (\(SomeBlockQuery q) -> SomeBlockQuery (GetCBOR q)) <$> decodeShelleyQuery
+      (2, 10) ->             SomeBlockQuery . GetFilteredDelegationsAndRewardAccounts <$> LC.fromEraCBOR @era
+      (1, 11) ->             return $ SomeBlockQuery GetGenesisConfig
+      (1, 12) ->             return $ SomeBlockQuery DebugNewEpochState
+      (1, 13) ->             return $ SomeBlockQuery DebugChainDepState
+      (1, 14) ->             return $ SomeBlockQuery GetRewardProvenance
+      (2, 15) ->             SomeBlockQuery . GetUTxOByTxIn <$> LC.fromEraCBOR @era
+      (1, 16) ->             return $ SomeBlockQuery GetStakePools
+      (2, 17) ->             SomeBlockQuery . GetStakePoolParams <$> fromCBOR
+      (1, 18) ->             return $ SomeBlockQuery GetRewardInfoPools
+      (2, 19) ->             SomeBlockQuery . GetPoolState <$> fromCBOR
+      (2, 20) ->             SomeBlockQuery . GetStakeSnapshots <$> fromCBOR
+      (2, 21) ->             SomeBlockQuery . GetPoolDistr <$> fromCBOR
+      (2, 22) ->             SomeBlockQuery . GetStakeDelegDeposits <$> fromCBOR
+      (1, 23) -> requireCG $ return $ SomeBlockQuery GetConstitution
+      (1, 24) ->             return $ SomeBlockQuery GetGovState
+      (2, 25) -> requireCG $ SomeBlockQuery . GetDRepState <$> fromCBOR
+      (2, 26) -> requireCG $ SomeBlockQuery . GetDRepStakeDistr <$> LC.fromEraCBOR @era
       (4, 27) -> requireCG $ do
         coldCreds <- fromCBOR
         hotCreds <- fromCBOR
         statuses <- LC.fromEraCBOR @era
-        return $ SomeSecond $ GetCommitteeMembersState coldCreds hotCreds statuses
+        return $ SomeBlockQuery $ GetCommitteeMembersState coldCreds hotCreds statuses
       (2, 28) -> requireCG $ do
-        SomeSecond . GetFilteredVoteDelegatees <$> LC.fromEraCBOR @era
-      (1, 29) ->             return $ SomeSecond GetAccountState
-      (2, 30) -> requireCG $ SomeSecond . GetSPOStakeDistr <$> LC.fromEraCBOR @era
-      (2, 31) -> requireCG $ SomeSecond . GetProposals <$> LC.fromEraCBOR @era
-      (1, 32) -> requireCG $ return $ SomeSecond GetRatifyState
-      (1, 33) -> requireCG $ return $ SomeSecond GetFuturePParams
-      (1, 34) ->             return $ SomeSecond GetBigLedgerPeerSnapshot
-      (2, 35) -> requireCG $ SomeSecond . QueryStakePoolDefaultVote <$> LC.fromEraCBOR @era
+        SomeBlockQuery . GetFilteredVoteDelegatees <$> LC.fromEraCBOR @era
+      (1, 29) ->             return $ SomeBlockQuery GetAccountState
+      (2, 30) -> requireCG $ SomeBlockQuery . GetSPOStakeDistr <$> LC.fromEraCBOR @era
+      (2, 31) -> requireCG $ SomeBlockQuery . GetProposals <$> LC.fromEraCBOR @era
+      (1, 32) -> requireCG $ return $ SomeBlockQuery GetRatifyState
+      (1, 33) -> requireCG $ return $ SomeBlockQuery GetFuturePParams
+      (1, 34) ->             return $ SomeBlockQuery GetBigLedgerPeerSnapshot
+      (2, 35) -> requireCG $ SomeBlockQuery . QueryStakePoolDefaultVote <$> LC.fromEraCBOR @era
       _       -> failmsg "invalid"
 
 encodeShelleyResult ::
-     forall proto era result. ShelleyCompatible proto era
+     forall proto era fp result. ShelleyCompatible proto era
   => ShelleyNodeToClientVersion
-  -> BlockQuery (ShelleyBlock proto era) result -> result -> Encoding
+  -> BlockQuery (ShelleyBlock proto era) fp result -> result -> Encoding
 encodeShelleyResult _v query = case query of
     GetLedgerTip                               -> encodePoint encode
     GetEpochNo                                 -> toCBOR
@@ -959,9 +978,9 @@ encodeShelleyResult _v query = case query of
     QueryStakePoolDefaultVote {}               -> toCBOR
 
 decodeShelleyResult ::
-     forall proto era result. ShelleyCompatible proto era
+     forall proto era fp result. ShelleyCompatible proto era
   => ShelleyNodeToClientVersion
-  -> BlockQuery (ShelleyBlock proto era) result
+  -> BlockQuery (ShelleyBlock proto era) fp result
   -> forall s. Decoder s result
 decodeShelleyResult _v query = case query of
     GetLedgerTip                               -> decodePoint decode
@@ -1071,3 +1090,143 @@ instance
       <*> fromCBOR
       <*> fromCBOR
       <*> fromCBOR
+
+{-------------------------------------------------------------------------------
+ Instances to implement BlockSupportsHFLedgerQuery
+-------------------------------------------------------------------------------}
+
+answerShelleyLookupQueries ::
+     forall proto era m result blk.
+     ( Monad m
+     , ShelleyCompatible proto era
+     )
+  => (   LedgerTables (LedgerState (ShelleyBlock proto era)) KeysMK
+      -> LedgerTables (LedgerState blk)       KeysMK
+     )
+     -- ^ Inject ledger tables
+  -> (TxOut (LedgerState blk) -> LC.TxOut era)
+     -- ^ Eject TxOut
+  -> (TxIn (LedgerState blk) -> SL.TxIn)
+     -- ^ Eject TxIn
+  -> ExtLedgerCfg (ShelleyBlock proto era)
+  -> BlockQuery (ShelleyBlock proto era) QFLookupTables result
+  -> ReadOnlyForker' m blk
+  -> m result
+answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q forker =
+    case q of
+      GetUTxOByTxIn txins ->
+        answerGetUtxOByTxIn txins
+      GetCBOR q'          ->
+        -- We encode using the latest (@maxBound@) ShelleyNodeToClientVersion,
+        -- as the @GetCBOR@ query already is about opportunistically assuming
+        -- both client and server are running the same version; cf. the
+        -- @GetCBOR@ Haddocks.
+            mkSerialised (encodeShelleyResult maxBound q')
+        <$> answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q' forker
+  where
+    answerGetUtxOByTxIn ::
+         Set.Set SL.TxIn
+      -> m (SL.UTxO era)
+    answerGetUtxOByTxIn txins = do
+      LedgerTables (ValuesMK values) <-
+        LedgerDB.roforkerReadTables
+          forker
+          (castLedgerTables $ injTables (LedgerTables $ KeysMK txins))
+      pure
+        $ SL.UTxO
+        $ Map.mapKeys ejTxIn
+        $ Map.mapMaybeWithKey
+            (\k v ->
+               if ejTxIn k `Set.member` txins
+               then Just $ ejTxOut v
+               else Nothing)
+            values
+
+shelleyQFTraverseTablesPredicate ::
+     forall proto era proto' era' result.
+     (ShelleyBasedEra era, ShelleyBasedEra era')
+  => BlockQuery (ShelleyBlock proto era) QFTraverseTables result
+  -> TxOut (LedgerState (ShelleyBlock proto' era'))
+  -> Bool
+shelleyQFTraverseTablesPredicate q = case q of
+    GetUTxOByAddress addr -> filterGetUTxOByAddressOne addr
+    GetUTxOWhole          -> const True
+    GetCBOR q'            -> shelleyQFTraverseTablesPredicate q'
+  where
+    filterGetUTxOByAddressOne ::
+         Set Addr
+      -> LC.TxOut era'
+      -> Bool
+    filterGetUTxOByAddressOne addrs =
+      let
+        compactAddrSet = Set.map compactAddr addrs
+        checkAddr out =
+          case out ^. SL.addrEitherTxOutL of
+            Left addr   -> addr `Set.member` addrs
+            Right cAddr -> cAddr `Set.member` compactAddrSet
+      in
+        checkAddr
+
+answerShelleyTraversingQueries ::
+     forall proto era m result blk.
+     ( ShelleyCompatible proto era
+     , Ord (TxIn (LedgerState blk))
+     , Eq (TxOut (LedgerState blk))
+     , MemPack (TxOut (LedgerState blk))
+     , IndexedMemPack (LedgerState blk EmptyMK) (TxOut (LedgerState blk))
+     , MemPack (TxIn (LedgerState blk))
+     )
+  => Monad m
+  => (TxOut (LedgerState blk) -> LC.TxOut era)
+     -- ^ Eject TxOut
+  -> (TxIn (LedgerState blk) -> SL.TxIn)
+     -- ^ Eject TxIn
+  -> (forall result'.
+         BlockQuery (ShelleyBlock proto era) QFTraverseTables result'
+      -> TxOut (LedgerState blk)
+      -> Bool)
+     -- ^ Get filter by query
+  -> ExtLedgerCfg (ShelleyBlock proto era)
+  -> BlockQuery (ShelleyBlock proto era) QFTraverseTables result
+  -> ReadOnlyForker' m blk
+  -> m result
+answerShelleyTraversingQueries ejTxOut ejTxIn filt cfg q forker = case q of
+    GetUTxOByAddress{} -> loop (filt q) NoPreviousQuery emptyUtxo
+    GetUTxOWhole       -> loop (filt q) NoPreviousQuery emptyUtxo
+    GetCBOR q'         ->
+      -- We encode using the latest (@maxBound@) ShelleyNodeToClientVersion,
+      -- as the @GetCBOR@ query already is about opportunistically assuming
+      -- both client and server are running the same version; cf. the
+      -- @GetCBOR@ Haddocks.
+      mkSerialised (encodeShelleyResult maxBound q') <$>
+       answerShelleyTraversingQueries ejTxOut ejTxIn filt cfg q' forker
+  where
+    emptyUtxo               = SL.UTxO Map.empty
+
+    combUtxo (SL.UTxO l) vs = SL.UTxO $ Map.union l vs
+
+    partial ::
+         (TxOut (LedgerState blk) -> Bool)
+      -> LedgerTables (ExtLedgerState blk) ValuesMK
+      -> Map SL.TxIn (LC.TxOut era)
+    partial queryPredicate (LedgerTables (ValuesMK vs)) =
+        Map.mapKeys ejTxIn
+      $ Map.mapMaybeWithKey
+          (\_k v ->
+              if queryPredicate v
+              then Just $ ejTxOut v
+              else Nothing)
+          vs
+
+    vnull :: ValuesMK k v -> Bool
+    vnull (ValuesMK vs) = Map.null vs
+
+    toMaxKey (LedgerTables (ValuesMK vs)) = fst $ Map.findMax vs
+
+    loop queryPredicate !prev !acc = do
+      extValues <- LedgerDB.roforkerRangeReadTables forker prev
+      if ltcollapse $ ltmap (K2 . vnull) extValues
+        then pure acc
+        else loop queryPredicate
+               (PreviousQueryWasUpTo $ toMaxKey extValues)
+               (combUtxo acc $ partial queryPredicate extValues)

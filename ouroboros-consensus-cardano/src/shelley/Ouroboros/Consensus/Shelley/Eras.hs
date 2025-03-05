@@ -152,6 +152,8 @@ class ( Core.EraSegWits era
 
       , ToCBOR (Core.TranslationContext era)
       , FromCBOR (Core.TranslationContext era)
+      , DecCBOR SL.TxIn
+      , EncCBOR SL.TxIn
 
       ) => ShelleyBasedEra era where
 
