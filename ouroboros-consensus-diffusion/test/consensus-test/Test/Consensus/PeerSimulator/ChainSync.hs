@@ -12,7 +12,8 @@ module Test.Consensus.PeerSimulator.ChainSync (
 
 import           Control.Exception (SomeException)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
-import           Control.Tracer (Tracer (Tracer), nullTracer, traceWith)
+import           Control.Tracer (Tracer (Tracer), contramap, nullTracer,
+                     traceWith)
 import           Data.Proxy (Proxy (..))
 import           Network.TypedProtocol.Codec (AnyMessage)
 import           Ouroboros.Consensus.Block (Header, Point)
@@ -153,6 +154,7 @@ runChainSyncClient
   channel =
     bracketChainSyncClient
       nullTracer
+      (contramap (TraceCsjEvent peerId) tracer)
       chainDbView
       varHandles
       (pure Syncing)

@@ -308,6 +308,7 @@ library
     sop-core ^>=0.5,
     sop-extras ^>=0.2,
     streaming,
+    strict >=0.1 && <0.6,
     strict-checked-vars ^>=0.2,
     strict-mvar ^>=1.5,
     strict-sop-core ^>=0.1,
