@@ -132,6 +132,41 @@ cabal test ouroboros-consensus:test:consensus-test --test-show-details=direct
 Note the second one cannot be used when we want to provide CLI arguments to the
 test-suite.
 
+# Generating documentation and setting up hoogle
+
+The documentation contains some [tikz](https://tikz.net) figures that require
+some preprocessing for them to be displayed. To do this, use the documentation
+script:
+
+```bash
+./scripts/docs/haddocks.sh
+```
+
+If not already in your `PATH` (eg when in a Nix shell), this will install
+[`cabal-docspec`](https://github.com/phadej/cabal-extras/tree/master/cabal-docspec)
+from a binary, and then build the haddocks for the project.
+
+Often times, it is useful to have a
+[`hoogle`](https://github.com/ndmitchell/hoogle) server at hand, with the
+packages and its dependencies. Our suggestion is to install
+[`cabal-hoogle`](https://github.com/kokobd/cabal-hoogle) from github:
+
+```bash
+git clone git@github.com:kokobd/cabal-hoogle
+cd cabal-hoogle
+cabal install exe:cabal-hoogle
+```
+
+and then run `cabal-hoogle`:
+
+```bash
+cabal-hoogle generate
+cabal-hoogle run -- server --local
+```
+
+This will fire a `hoogle` server at https://localhost:8080/ with the local
+packages and their dependencies.
+
 # Contributing to the code
 
 The following sections contain some guidelines that should be followed when

@@ -82,6 +82,7 @@ takePrefix (PrefixLen n) =
 --   1. @0@ in places where it is necessary
 --   2. the security parameter as is, in other places
 data LedgerDBPruneTip = LedgerDBPruneTipZero | LedgerDBPruneTip SecurityParam
+  deriving (Show)
 
 {-------------------------------------------------------------------------------
   BinaryBlockInfo
@@ -171,7 +172,6 @@ data BlockComponent blk a where
   GetHash          :: BlockComponent blk (HeaderHash blk)
   GetSlot          :: BlockComponent blk SlotNo
   GetIsEBB         :: BlockComponent blk IsEBB
-  -- TODO: use `SizeInBytes` rather than Word32
   GetBlockSize     :: BlockComponent blk SizeInBytes
   GetHeaderSize    :: BlockComponent blk Word16
   GetNestedCtxt    :: BlockComponent blk (SomeSecond (NestedCtxt Header) blk)

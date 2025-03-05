@@ -3,6 +3,7 @@
 set -e
 
 echo "The custom options for formatting this repo are:"
+stylish-haskell --version
 stylish-haskell --defaults | diff - ./.stylish-haskell.yaml | grep -E "^>.*[[:alnum:]]" | grep -v "#"
 printf "\nFormatting haskell files...\n"
 
@@ -26,16 +27,11 @@ esac
 
 $fdcmd --full-path "$path" \
        --extension hs \
-       --exclude Setup.hs \
-       --exclude ouroboros-consensus-cardano/app/DBAnalyser/Parsers.hs \
+       --exclude ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Dual.hs \
+       --exclude ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Extended.hs \
        --exec-batch stylish-haskell -c .stylish-haskell.yaml -i
-
-# We don't want these deprecation warnings to be removed accidentally
-grep "#if __GLASGOW_HASKELL__ < 900
-import           Data.Foldable (asum)
-#endif" ouroboros-consensus-cardano/app/DBAnalyser/Parsers.hs                           >/dev/null 2>&1
 
 case "$(uname -s)" in
     MINGW*) git ls-files --eol | grep "w/crlf" | awk '{print $4}' | xargs dos2unix;;
     *) ;;
-esac
+esac || true

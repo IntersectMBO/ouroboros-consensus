@@ -56,6 +56,14 @@ const sidebars = {
         'for-developers/HandlingBlocksFromTheFuture'
       ]
     },
+    { type: 'category',
+      label: 'UTxO HD',
+      items: [
+        'for-developers/utxo-hd/Overview',
+        'for-developers/utxo-hd/utxo-hd-in-depth',
+        'for-developers/utxo-hd/future-ledger-hd',
+      ]
+    }
   ]
 
 };

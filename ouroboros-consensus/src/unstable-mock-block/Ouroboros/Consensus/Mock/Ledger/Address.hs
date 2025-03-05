@@ -9,8 +9,10 @@ module Ouroboros.Consensus.Mock.Ledger.Address (
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import           Codec.Serialise (Serialise)
 import           Control.DeepSeq (NFData)
+import qualified Data.ByteString.Char8 as BS8
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.MemPack (MemPack (..))
 import           Data.String
 import           Data.Text (pack, unpack)
 import           NoThunks.Class (NoThunks)
@@ -29,6 +31,11 @@ newtype Addr = Addr String
     , NFData
     , NoThunks
     )
+
+instance MemPack Addr where
+  packM (Addr addr) = packM $ BS8.pack addr
+  unpackM = Addr . BS8.unpack <$> unpackM
+  packedByteCount (Addr addr) = packedByteCount $ BS8.pack addr
 
 instance ToCBOR Addr where
   toCBOR (Addr a) = toCBOR $ pack a

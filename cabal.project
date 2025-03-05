@@ -14,7 +14,7 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2025-01-14T00:25:08Z
+  , hackage.haskell.org 2025-01-14T03:16:27Z
   -- Bump this if you need newer packages from CHaP
   , cardano-haskell-packages 2025-02-26T16:38:34Z
 
@@ -45,6 +45,11 @@ if(os(windows))
   constraints:
     bitvec -simd
 
+-- https://github.com/ulidtko/cabal-doctest/issues/85
+constraints:
+    quickcheck-lockstep <0.6.0
+
+-- mempack support
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-base

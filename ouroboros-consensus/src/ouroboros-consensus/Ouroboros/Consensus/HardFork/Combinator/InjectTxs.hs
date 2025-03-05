@@ -11,7 +11,7 @@ module Ouroboros.Consensus.HardFork.Combinator.InjectTxs (
     InjectPolyTx (..)
   , cannotInjectPolyTx
   , matchPolyTx
-  , matchPolyTxsNS
+  , matchPolyTxsTele
     -- * Unvalidated transactions
   , InjectTx
   , cannotInjectTx
@@ -94,50 +94,30 @@ matchPolyTx is tx =
         , currentState = Pair tx' currentState
         }
 
--- | Match transaction with an 'NS', attempting to inject where possible
-matchPolyTxNS ::
-     InPairs (InjectPolyTx tx) xs
-  -> NS tx xs
-  -> NS f xs
-  -> Either (Mismatch tx f xs)
-            (NS (Product tx f) xs)
-matchPolyTxNS = go
-  where
-    go :: InPairs (InjectPolyTx tx) xs
-       -> NS tx xs
-       -> NS f xs
-       -> Either (Mismatch tx f xs)
-                 (NS (Product tx f) xs)
-    go _            (Z x) (Z f) = Right $ Z (Pair x f)
-    go (PCons _ is) (S x) (S f) = bimap MS S $ go is x f
-    go _            (S x) (Z f) = Left $ MR x f
-    go (PCons i is) (Z x) (S f) =
-        case injectTxWith i x of
-          Nothing -> Left $ ML x f
-          Just x' -> bimap MS S $ go is (Z x') f
-
--- | Match a list of transactions with an 'NS', attempting to inject where
--- possible
-matchPolyTxsNS ::
-     forall tx f xs. SListI xs
+-- | Match a list of transactions with an 'Telescope', attempting to inject
+-- where possible
+matchPolyTxsTele ::
+     forall tx g f xs. SListI xs
   => InPairs (InjectPolyTx tx) xs
-  -> NS f xs
+  -> Telescope g f xs
   -> [NS tx xs]
-  -> ([Mismatch tx f xs], NS (Product f ([] :.: tx)) xs)
-matchPolyTxsNS is ns = go
+  -> ( [(NS tx xs, Mismatch tx f xs)]
+     , Telescope g (Product f ([] :.: tx)) xs
+     )
+matchPolyTxsTele is ns = go
   where
     go :: [NS tx xs]
-       -> ([Mismatch tx f xs], NS (Product f ([] :.: tx)) xs)
+       -> ([(NS tx xs, Mismatch tx f xs)], Telescope g (Product f ([] :.: tx)) xs)
     go []       = ([], hmap (`Pair` Comp []) ns)
     go (tx:txs) =
       let (mismatched, matched) = go txs
-      in case matchPolyTxNS is tx matched of
-           Left  err      -> (hmap pairFst err : mismatched, matched)
+      in case matchPolyTx' is tx matched of
+           Left  err      -> ((tx, hmap pairFst err) : mismatched, matched)
            Right matched' -> (mismatched, insert matched')
 
-    insert :: NS (Product tx (Product f ([] :.: tx))) xs
-           -> NS (Product f ([] :.: tx)) xs
-    insert = hmap $ \(Pair tx (Pair f (Comp txs))) -> Pair f (Comp (tx:txs))
+    insert :: Telescope g (Product tx (Product f ([] :.: tx))) xs
+           -> Telescope g (Product f ([] :.: tx)) xs
+    insert = hmap (\(Pair tx (Pair f (Comp txs))) -> Pair f (Comp (tx:txs)))
 
 {-------------------------------------------------------------------------------
   Monomorphic aliases
@@ -194,4 +174,4 @@ matchValidatedTxsNS ::
   -> NS f xs
   -> [NS WrapValidatedGenTx xs]
   -> ([Mismatch WrapValidatedGenTx f xs], NS (Product f ([] :.: WrapValidatedGenTx)) xs)
-matchValidatedTxsNS = matchPolyTxsNS
+matchValidatedTxsNS ips ns txs = bimap (map snd) Telescope.tip $ matchPolyTxsTele ips (Telescope.fromTip ns) txs

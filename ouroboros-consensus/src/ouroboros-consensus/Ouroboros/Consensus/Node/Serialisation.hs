@@ -3,10 +3,11 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Serialisation for sending things across the network.
@@ -19,7 +20,8 @@
 -- both directions and we don't have access to the bytestrings that could be
 -- used for the annotations (we use CBOR-in-CBOR in those cases).
 module Ouroboros.Consensus.Node.Serialisation (
-    SerialiseNodeToClient (..)
+    SerialiseBlockQueryResult (..)
+  , SerialiseNodeToClient (..)
   , SerialiseNodeToNode (..)
   , SerialiseResult (..)
     -- * Defaults
@@ -32,6 +34,7 @@ module Ouroboros.Consensus.Node.Serialisation (
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding)
 import           Codec.Serialise (Serialise (decode, encode))
+import           Data.Kind
 import           Data.SOP.BasicFunctors
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Abstract
@@ -39,8 +42,8 @@ import           Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr,
                      GenTxId)
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.TypeFamilyWrappers
+import           Ouroboros.Consensus.Util (Some (..))
 import           Ouroboros.Network.Block (unwrapCBORinCBOR, wrapCBORinCBOR)
-import           Ouroboros.Network.Protocol.LocalStateQuery.Codec (Some (..))
 
 {-------------------------------------------------------------------------------
   NodeToNode
@@ -92,22 +95,42 @@ class SerialiseNodeToClient blk a where
   NodeToClient - SerialiseResult
 -------------------------------------------------------------------------------}
 
--- | How to serialise the result of the @result@ of a query.
+-- | How to serialise the @result@ of a query.
 --
 -- The @LocalStateQuery@ protocol is a node-to-client protocol, hence the
 -- 'NodeToClientVersion' argument.
+type SerialiseResult :: Type -> (Type -> Type -> Type) -> Constraint
 class SerialiseResult blk query where
   encodeResult
     :: forall result.
        CodecConfig blk
     -> BlockNodeToClientVersion blk
-    -> query result
+    -> query blk result
     -> result -> Encoding
   decodeResult
     :: forall result.
        CodecConfig blk
     -> BlockNodeToClientVersion blk
-    -> query result
+    -> query blk result
+    -> forall s. Decoder s result
+
+-- | How to serialise the @result@ of a block query.
+--
+-- The @LocalStateQuery@ protocol is a node-to-client protocol, hence the
+-- 'NodeToClientVersion' argument.
+type SerialiseBlockQueryResult :: Type -> (Type -> k -> Type -> Type) -> Constraint
+class SerialiseBlockQueryResult blk query where
+  encodeBlockQueryResult
+    :: forall fp result.
+       CodecConfig blk
+    -> BlockNodeToClientVersion blk
+    -> query blk fp result
+    -> result -> Encoding
+  decodeBlockQueryResult
+    :: forall fp result.
+       CodecConfig blk
+    -> BlockNodeToClientVersion blk
+    -> query blk fp result
     -> forall s. Decoder s result
 
 {-------------------------------------------------------------------------------
