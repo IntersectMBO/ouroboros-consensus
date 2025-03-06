@@ -35,6 +35,7 @@ class ( All SingleEraBlock xs
       , HasByteSize (HardForkTxMeasure xs)
       , NoThunks    (HardForkTxMeasure xs)
       , Show        (HardForkTxMeasure xs)
+      , TxMeasureMetrics (HardForkTxMeasure xs)
       ) => CanHardFork xs where
   -- | A measure that can accurately represent the 'TxMeasure' of any era.
   --

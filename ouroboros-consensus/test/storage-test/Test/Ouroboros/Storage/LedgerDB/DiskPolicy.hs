@@ -6,6 +6,8 @@
 
 module Test.Ouroboros.Storage.LedgerDB.DiskPolicy (tests) where
 
+import           Cardano.Ledger.BaseTypes (unNonZero)
+import           Cardano.Ledger.BaseTypes.NonZero (nonZero)
 import           Data.Time.Clock (DiffTime, diffTimeToPicoseconds,
                      picosecondsToDiffTime, secondsToDiffTime)
 import           Data.Word
@@ -16,6 +18,7 @@ import           Ouroboros.Consensus.Storage.LedgerDB (DiskPolicy (..),
 import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
                      (DiskPolicyArgs (DiskPolicyArgs),
                      pattern DoDiskSnapshotChecksum)
+import           Test.Cardano.Ledger.Core.Arbitrary ()
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -69,14 +72,14 @@ instance Arbitrary TestSetup where
       k <- frequency [
           (9, choose (0, 3000))
         , (1, choose (0, maxBound))
-        ]
+        ] `suchThatMap` nonZero
 
       -- values within usual expectations
       let nominal =
                 (,)
 
             -- 20 k is average number in a Shelley epoch
-            <$> choose (0, 20 * k)
+            <$> choose (0, 20 * unNonZero k)
 
             -- a week is a defensible upper bound on the user input
             <*> just95 (chooseSeconds 0 oneWeekInSeconds)
@@ -153,7 +156,7 @@ instance Arbitrary TestSetup where
       ]
     where
       shrinkSecurityParam =
-          fmap SecurityParam . shrink @Word64 . maxRollbacks
+          fmap SecurityParam . shrink {-@(Word64)-} . maxRollbacks
 
       shrinkDiffTime =
           fmap picosecondsToDiffTime
@@ -195,7 +198,7 @@ prop_onDiskShouldTakeSnapshot ts =
       NoSnapshotTakenYet ->
             counterexample "haven't taken a snapshot yet"
           $ counterexample "should take snapshot if it processed at least k blocks"
-          $ shouldTakeSnapshot ts === (blocksSinceLast >= k)
+          $ shouldTakeSnapshot ts === (blocksSinceLast >= unNonZero k)
       TimeSinceLast    timeSinceLast ->
             counterexample "have previously taken a snapshot"
           $ isDisjunctionOf (shouldTakeSnapshot ts `named` "the decision")
@@ -211,7 +214,7 @@ prop_onDiskShouldTakeSnapshot ts =
       } = ts
 
     kTimes2 :: DiffTime
-    kTimes2 = secondsToDiffTime $ fromIntegral $ k * 2
+    kTimes2 = secondsToDiffTime $ fromIntegral $ unNonZero k * 2
 
     systemChecksHowMuchTimeHasPassed :: DiffTime -> NamedValue Bool
     systemChecksHowMuchTimeHasPassed timeSinceLast =

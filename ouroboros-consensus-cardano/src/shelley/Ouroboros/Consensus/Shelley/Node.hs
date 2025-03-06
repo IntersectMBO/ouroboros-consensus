@@ -28,6 +28,7 @@ module Ouroboros.Consensus.Shelley.Node (
   ) where
 
 import qualified Cardano.Ledger.Shelley.API as SL
+import           Cardano.Protocol.Crypto (Crypto)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block
@@ -39,14 +40,14 @@ import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.TPraos
-import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Inspect ()
 import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion ()
 import           Ouroboros.Consensus.Shelley.Node.DiffusionPipelining ()
 import           Ouroboros.Consensus.Shelley.Node.Serialisation ()
 import           Ouroboros.Consensus.Shelley.Node.TPraos
-import           Ouroboros.Consensus.Shelley.Protocol.Abstract (pHeaderIssuer)
+import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto,
+                     pHeaderIssuer)
 
 {-------------------------------------------------------------------------------
   ProtocolInfo
@@ -101,16 +102,18 @@ instance ShelleyCompatible proto era => BlockSupportsMetrics (ShelleyBlock proto
         -> IsNotSelfIssued
     where
 
-      issuerVKeys :: Map (SL.KeyHash 'SL.BlockIssuer (EraCrypto era))
-                         (SL.VKey 'SL.BlockIssuer (EraCrypto era))
+      issuerVKeys :: Map (SL.KeyHash 'SL.BlockIssuer)
+                         (SL.VKey 'SL.BlockIssuer)
       issuerVKeys = shelleyBlockIssuerVKeys cfg
 
 instance ConsensusProtocol proto => BlockSupportsSanityCheck (ShelleyBlock proto era) where
   configAllSecurityParams = pure . protocolSecurityParam . topLevelConfigProtocol
 
-instance ( ShelleyCompatible                      proto era
-         , LedgerSupportsProtocol   (ShelleyBlock proto era)
-         , BlockSupportsSanityCheck (ShelleyBlock proto era)
-         , TxLimits                 (ShelleyBlock proto era)
+instance ( ShelleyCompatible                              proto era
+         , LedgerSupportsProtocol           (ShelleyBlock proto era)
+         , BlockSupportsSanityCheck         (ShelleyBlock proto era)
+         , TxLimits                         (ShelleyBlock proto era)
+         , SerialiseNodeToClientConstraints (ShelleyBlock proto era)
+         , Crypto (ProtoCrypto proto)
          )
       => RunNode (ShelleyBlock proto era)

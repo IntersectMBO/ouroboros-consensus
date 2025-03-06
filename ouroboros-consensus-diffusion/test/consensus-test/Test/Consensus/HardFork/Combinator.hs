@@ -16,6 +16,7 @@
 
 module Test.Consensus.HardFork.Combinator (tests) where
 
+import           Cardano.Ledger.BaseTypes (nonZero, unNonZero)
 import qualified Data.Map.Strict as Map
 import           Data.SOP.Counting
 import           Data.SOP.InPairs (RequiringBoth (..))
@@ -94,7 +95,7 @@ data TestSetup = TestSetup {
 instance Arbitrary TestSetup where
   arbitrary = do
       testSetupEpochSize <- abM $ EpochSize <$> choose (1, 10)
-      testSetupK         <- SecurityParam   <$> choose (2, 10)
+      testSetupK         <- SecurityParam   <$> choose (2, 10) `suchThatMap` nonZero
       -- TODO why does k=1 cause the nodes to only forge in the first epoch?
       testSetupTxSlot    <- SlotNo          <$> choose (0, 9)
 
@@ -147,7 +148,7 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
         <*> testSetupSlotLength
         <*> AB (History.StandardSafeZone (safeFromTipA k))
                (safeZoneB k)
-        <*> pure (GenesisWindow ((maxRollbacks k) * 2))
+        <*> pure (GenesisWindow ((unNonZero $ maxRollbacks k) * 2))
 
     shape :: History.Shape '[BlockA, BlockB]
     shape = History.Shape $ exactlyTwo eraParamsA eraParamsB

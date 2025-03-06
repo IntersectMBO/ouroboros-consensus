@@ -57,6 +57,7 @@ And imports, of course:
 > import Control.Monad ()
 > import Control.Monad.Except (MonadError (throwError))
 > import Data.Word (Word64)
+> import Data.Void (Void, absurd)
 > import GHC.Generics (Generic)
 > import NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
 > import Data.Hashable (Hashable (hash))
@@ -77,8 +78,9 @@ And imports, of course:
 > import Ouroboros.Consensus.Ticked (Ticked)
 > import Ouroboros.Consensus.Ledger.Abstract
 >   (LedgerState, LedgerCfg, GetTip, LedgerResult (..), ApplyBlock (..),
->    UpdateLedger, IsLedger (..))
->
+>    UpdateLedger, IsLedger (..), defaultApplyBlockLedgerResult,
+>    defaultReapplyBlockLedgerResult)
+
 > import Ouroboros.Consensus.Ledger.SupportsMempool ()
 > import Ouroboros.Consensus.Ledger.SupportsProtocol
 >   (LedgerSupportsProtocol (..))
@@ -371,10 +373,11 @@ blocks are applied during the span of time represented by the slot argument.
 We can now use `tickLedgerStateD` to instantiate `IsLedger`:
 
 > instance IsLedger (LedgerState BlockD) where
->   type instance LedgerErr (LedgerState BlockD) = String
+>   type instance LedgerErr (LedgerState BlockD) = Void
 >   type instance AuxLedgerEvent (LedgerState BlockD) = ()
 >
->   applyChainTickLedgerResult _cfg slot ldgrSt =
+
+>   applyChainTickLedgerResult _events _cfg slot ldgrSt =
 >     LedgerResult { lrEvents = []
 >                  , lrResult = tickLedgerStateD slot ldgrSt
 >                  }
@@ -403,15 +406,13 @@ applying each individual transaction - exactly as it was in for `BlockC`:
 >         Dec -> i - 1
 
 > instance ApplyBlock (LedgerState BlockD) BlockD where
->   applyBlockLedgerResult _ldgrCfg b tickedLdgrSt =
+>   applyBlockLedgerResultWithValidation _validation _events _ldgrCfg b tickedLdgrSt =
 >     pure LedgerResult { lrResult = b `applyBlockTo` tickedLdgrSt
 >                       , lrEvents = []
 >                       }
 >
->   reapplyBlockLedgerResult _ldgrCfg b tickedLdgrSt =
->     LedgerResult { lrResult = b `applyBlockTo` tickedLdgrSt
->                  , lrEvents = []
->                  }
+>   applyBlockLedgerResult = defaultApplyBlockLedgerResult
+>   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult absurd
 
 Note that prior to `applyBlockLedgerResult` being invoked, the calling code will
 have already established that the header is valid and that the header matches

@@ -1,5 +1,8 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeApplications #-}
 module Test.ThreadNet.Util.Tests (tests) where
 
+import           Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import           Test.Tasty
@@ -15,7 +18,7 @@ tests = testGroup "Test.ThreadNet.Util.Tests" $
           prop_roundRobin_forkLength securityParam
     ]
   where
-    securityParam = SecurityParam 5
+    securityParam = SecurityParam $ knownNonZeroBounded @5
 
 -- | A round-robin schedule should reach consensus
 prop_roundRobin_forkLength ::

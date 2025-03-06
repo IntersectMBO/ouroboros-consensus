@@ -27,6 +27,11 @@ module Ouroboros.Consensus.NodeKernel (
   ) where
 
 
+import           Cardano.Network.ConsensusMode (ConsensusMode (..))
+import           Cardano.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
+import           Cardano.Network.PeerSelection.LocalRootPeers
+                     (OutboundConnectionsState (..))
+import           Cardano.Network.Types (LedgerStateJudgement (..))
 import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Control.DeepSeq (force)
@@ -95,15 +100,10 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (castTip, tipFromHeader)
 import           Ouroboros.Network.BlockFetch
-import           Ouroboros.Network.ConsensusMode (ConsensusMode (..))
-import           Ouroboros.Network.Diffusion (PublicPeerSelectionState)
 import           Ouroboros.Network.NodeToNode (ConnectionId,
                      MiniProtocolParameters (..))
-import           Ouroboros.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
-import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
-                     (LedgerStateJudgement (..))
-import           Ouroboros.Network.PeerSelection.LocalRootPeers
-                     (OutboundConnectionsState (..))
+import           Ouroboros.Network.PeerSelection.Governor.Types
+                     (PublicPeerSelectionState)
 import           Ouroboros.Network.PeerSharing (PeerSharingAPI,
                      PeerSharingRegistry, newPeerSharingAPI,
                      newPeerSharingRegistry, ps_POLICY_PEER_SHARE_MAX_PEERS,
@@ -541,6 +541,7 @@ forkBlockForging IS{..} blockForging =
         let tickedLedgerState :: Ticked (LedgerState blk)
             tickedLedgerState =
               applyChainTick
+                OmitLedgerEvents
                 (configLedger cfg)
                 currentSlot
                 (ledgerState unticked)
@@ -765,9 +766,9 @@ getMempoolReader mempool = MempoolReader.TxSubmissionMempoolReader
         { mempoolTxIdsAfter = \idx ->
             [ ( txId (txForgetValidated tx)
               , idx'
-              , SizeInBytes $ unByteSize32 byteSize
+              , SizeInBytes $ unByteSize32 $ txMeasureByteSize msr
               )
-            | (tx, idx', byteSize) <- snapshotTxsAfter idx
+            | (tx, idx', msr) <- snapshotTxsAfter idx
             ]
         , mempoolLookupTx   = snapshotLookupTx
         , mempoolHasTx      = snapshotHasTx

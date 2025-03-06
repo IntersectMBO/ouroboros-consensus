@@ -5,6 +5,7 @@
 
 module Test.ThreadNet.BFT (tests) where
 
+import           Cardano.Ledger.BaseTypes (nonZero, unNonZero)
 import           Data.Constraint
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
@@ -40,7 +41,7 @@ data TestSetup = TestSetup
 instance Arbitrary TestSetup where
   arbitrary = do
       -- TODO k > 1 as a workaround for Issue #1511.
-      k <- SecurityParam <$> choose (2, 10)
+      k <- SecurityParam <$> choose (2, 10) `suchThatMap` nonZero
 
       testConfig <- arbitrary
       let TestConfig{numCoreNodes, numSlots} = testConfig
@@ -87,7 +88,7 @@ prop_simple_bft_convergence TestSetup
       { forgeEbbEnv = Nothing
       , future      = singleEraFuture
           slotLength
-          (EpochSize $ maxRollbacks k * 10)
+          (EpochSize $ unNonZero (maxRollbacks k) * 10)
           -- The mock ledger doesn't really care, and neither does BFT. We
           -- stick with the common @k * 10@ size for now.
       , messageDelay = noCalcMessageDelay

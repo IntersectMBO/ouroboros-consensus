@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -13,6 +14,7 @@ module Ouroboros.Consensus.Byron.ByronHFC (
   , ByronPartialLedgerConfig (..)
   ) where
 
+import           Cardano.Binary
 import qualified Cardano.Chain.Common as CC
 import qualified Cardano.Chain.Genesis as CC.Genesis
 import qualified Cardano.Chain.Update as CC.Update
@@ -33,6 +35,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
 import           Ouroboros.Consensus.HardFork.Simple
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
+import           Ouroboros.Consensus.Node.Serialisation
 import           Ouroboros.Consensus.Protocol.PBFT (PBft, PBftCrypto)
 import           Ouroboros.Consensus.Storage.Serialisation
 
@@ -251,3 +254,16 @@ instance HasPartialLedgerConfig ByronBlock where
   type PartialLedgerConfig ByronBlock = ByronPartialLedgerConfig
 
   completeLedgerConfig _ _ = byronLedgerConfig
+
+instance SerialiseNodeToClient ByronBlock ByronPartialLedgerConfig where
+  encodeNodeToClient ccfg version (ByronPartialLedgerConfig lconfig triggerhf)
+    = mconcat [
+                encodeListLen 2
+              , toCBOR @(LedgerConfig ByronBlock) lconfig
+              , encodeNodeToClient ccfg version triggerhf
+              ]
+  decodeNodeToClient ccfg version = do
+    enforceSize "ByronPartialLedgerConfig" 2
+    ByronPartialLedgerConfig
+      <$> fromCBOR @(LedgerConfig ByronBlock)
+      <*> decodeNodeToClient ccfg version

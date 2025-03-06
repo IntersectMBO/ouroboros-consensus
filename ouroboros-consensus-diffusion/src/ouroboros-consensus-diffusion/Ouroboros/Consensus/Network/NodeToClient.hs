@@ -217,6 +217,7 @@ defaultCodecs ccfg version networkVersion = Codecs {
 
     , cTxMonitorCodec =
         codecLocalTxMonitor
+          networkVersion
           enc dec
           enc dec
           enc dec
@@ -277,6 +278,7 @@ clientCodecs ccfg version networkVersion = Codecs {
 
     , cTxMonitorCodec =
         codecLocalTxMonitor
+          networkVersion
           enc dec
           enc dec
           enc dec

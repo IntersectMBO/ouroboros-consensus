@@ -25,7 +25,6 @@ import qualified Ouroboros.Consensus.Mock.Ledger.State as L
 import qualified Ouroboros.Consensus.Mock.Ledger.UTxO as L
 import           Ouroboros.Consensus.Mock.Node.Serialisation ()
 import           Ouroboros.Consensus.Protocol.BFT
-import           Test.ChainGenerators ()
 import           Test.Crypto.Hash ()
 import           Test.QuickCheck
 import           Test.Util.Orphans.Arbitrary ()
@@ -107,6 +106,16 @@ instance (SimpleCrypto c, Typeable ext) => Arbitrary (SomeResult (SimpleBlock c 
 
 instance Arbitrary (LedgerState (SimpleBlock c ext)) where
   arbitrary = SimpleLedgerState <$> arbitrary
+
+instance Arbitrary ByteSize32 where
+  arbitrary = ByteSize32 <$> arbitrary
+
+instance Arbitrary L.MockConfig where
+  arbitrary = L.MockConfig <$> arbitrary
+
+instance ( Arbitrary (MockLedgerConfig c ext)
+         ) => Arbitrary (SimpleLedgerConfig c ext) where
+  arbitrary = SimpleLedgerConfig <$> arbitrary <*> arbitrary <*> arbitrary
 
 instance HashAlgorithm (SimpleHash c) => Arbitrary (AnnTip (SimpleBlock c ext)) where
   arbitrary = do

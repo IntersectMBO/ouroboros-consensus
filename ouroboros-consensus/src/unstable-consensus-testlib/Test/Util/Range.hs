@@ -11,6 +11,7 @@ module Test.Util.Range (
   , rangeK
   ) where
 
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import qualified Data.List as L
 import           Data.Word
 import           Ouroboros.Consensus.Config.SecurityParam
@@ -57,17 +58,17 @@ instance Show RangeK where
   show r =
       case r of
         Range_Eq_K         (SecurityParam k)   -> "= (k = " ++ show k ++ ")"
-        Range_Just_Below_K (SecurityParam k) n -> "= (k = " ++ show k ++ ")" ++ " >  " ++ show (k - n)
-        Range_Just_Above_K (SecurityParam k) n -> "= (k = " ++ show k ++ ")" ++ " <  " ++ show (k + n)
+        Range_Just_Below_K (SecurityParam k) n -> "= (k = " ++ show k ++ ")" ++ " >  " ++ show (unNonZero k - n)
+        Range_Just_Above_K (SecurityParam k) n -> "= (k = " ++ show k ++ ")" ++ " <  " ++ show (unNonZero k + n)
         Range_Near_Zero    (SecurityParam k) n -> "= (k = " ++ show k ++ ")" ++ " >> " ++ show n
         Range_Less_Than_K  (SecurityParam k) n -> "≈ (k = " ++ show k ++ ")" ++ " >> " ++ show n
         Range_More_Than_K  (SecurityParam k) n -> "≈ (k = " ++ show k ++ ")" ++ " << " ++ show n
 
 rangeK :: Integral a => SecurityParam -> a -> RangeK
 rangeK (SecurityParam k) a
-  | n == k    = Range_Eq_K      (SecurityParam k)
+  | n == unNonZero k    = Range_Eq_K      (SecurityParam k)
   | n < nearK = Range_Near_Zero (SecurityParam k) n
-  | n < k     = if belowK <= nearK
+  | n < unNonZero k     = if belowK <= nearK
                   then Range_Just_Below_K (SecurityParam k) n
                   else Range_Less_Than_K  (SecurityParam k) (n `div` bandSize)
   | otherwise = if aboveK <= nearK
@@ -75,15 +76,15 @@ rangeK (SecurityParam k) a
                   else Range_More_Than_K  (SecurityParam k) (head (dropWhile (< n) powers))
   where
     n      = fromIntegral a
-    belowK = k - n
-    aboveK = n - k
-    powers = [k + 2 ^ i | i <- [0..] :: [Int]]
+    belowK = unNonZero k - n
+    aboveK = n - unNonZero k
+    powers = [unNonZero k + 2 ^ i | i <- [0..] :: [Int]]
 
     -- threshold for determining if a value is near k
     nearK = 5
 
     -- bands for summarizing values less than k
-    bandSize = max 1 (k `div` 10)
+    bandSize = max 1 (unNonZero k `div` 10)
 
 {-------------------------------------------------------------------------------
   Summarize values not related to K

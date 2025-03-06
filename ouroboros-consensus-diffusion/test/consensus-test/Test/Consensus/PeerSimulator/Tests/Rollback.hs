@@ -5,6 +5,7 @@
 
 module Test.Consensus.PeerSimulator.Tests.Rollback (tests) where
 
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Control.Monad.Class.MonadTime.SI (Time (Time))
 import           Ouroboros.Consensus.Block (ChainHash (..), Header)
 import           Ouroboros.Consensus.Config.SecurityParam
@@ -52,7 +53,7 @@ prop_rollback = do
         -- TODO: Trim block tree, the rollback schedule does not use all of it
         let cls = classifiers gt
         if allAdversariesForecastable cls && allAdversariesKPlus1InForecast cls
-          then pure gt {gtSchedule = rollbackSchedule (fromIntegral (maxRollbacks gtSecurityParam)) gtBlockTree}
+          then pure gt {gtSchedule = rollbackSchedule (fromIntegral (unNonZero $ maxRollbacks gtSecurityParam)) gtBlockTree}
           else discard)
 
     defaultSchedulerConfig
@@ -70,7 +71,7 @@ prop_cannotRollback =
   forAllGenesisTest
 
     (do gt@GenesisTest{gtSecurityParam, gtBlockTree} <- genChains (pure 1)
-        pure gt {gtSchedule = rollbackSchedule (fromIntegral (maxRollbacks gtSecurityParam + 1)) gtBlockTree})
+        pure gt {gtSchedule = rollbackSchedule (fromIntegral (unNonZero $ maxRollbacks gtSecurityParam) + 1) gtBlockTree})
 
     defaultSchedulerConfig
 

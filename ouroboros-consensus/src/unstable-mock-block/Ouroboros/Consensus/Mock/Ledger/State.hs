@@ -50,7 +50,7 @@ data MockConfig = MockConfig {
     mockCfgMaxTxSize :: !(Maybe ByteSize32)
   }
   deriving stock (Show, Eq, Generic)
-  deriving anyclass (NoThunks)
+  deriving anyclass (NoThunks, Serialise)
 
 defaultMockConfig :: MockConfig
 defaultMockConfig = MockConfig {

@@ -18,8 +18,9 @@ import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Node ()
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Network.Block (Serialised (..))
+import           Test.Consensus.Byron.Generators (epochSlots)
 import qualified Test.Consensus.Cardano.Examples as Cardano.Examples
-import           Test.Consensus.Cardano.Generators (epochSlots)
+import           Test.Consensus.Cardano.Generators ()
 import           Test.Consensus.Cardano.MockCrypto (MockCryptoCompatByron)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck (Property, testProperty, (===))

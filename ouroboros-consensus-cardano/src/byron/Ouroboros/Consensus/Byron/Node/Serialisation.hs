@@ -12,6 +12,7 @@ module Ouroboros.Consensus.Byron.Node.Serialisation () where
 
 import qualified Cardano.Chain.Block as CC
 import qualified Cardano.Chain.Byron.API as CC
+import           Cardano.Chain.Genesis
 import           Cardano.Ledger.Binary (fromByronCBOR, toByronCBOR)
 import           Cardano.Ledger.Binary.Plain
 import qualified Codec.CBOR.Decoding as CBOR
@@ -145,6 +146,10 @@ instance SerialiseNodeToNode ByronBlock (GenTxId ByronBlock) where
 -------------------------------------------------------------------------------}
 
 instance SerialiseNodeToClientConstraints ByronBlock
+
+instance SerialiseNodeToClient ByronBlock Config where
+  encodeNodeToClient _ _ = toCBOR
+  decodeNodeToClient _ _ = fromCBOR
 
 -- | CBOR-in-CBOR for the annotation. This also makes it compatible with the
 -- wrapped ('Serialised') variant.
