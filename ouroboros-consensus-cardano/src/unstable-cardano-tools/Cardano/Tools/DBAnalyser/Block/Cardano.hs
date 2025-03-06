@@ -299,6 +299,8 @@ instance (HasAnnTip (CardanoBlock StandardCrypto), GetPrevHash (CardanoBlock Sta
         )
       ]
 
+  epochPoolDistr = analyseWithLedgerState epochPoolDistr
+
 dispatch ::
      LedgerState (CardanoBlock StandardCrypto)
   -> (LedgerState ByronBlock -> IO Builder)
