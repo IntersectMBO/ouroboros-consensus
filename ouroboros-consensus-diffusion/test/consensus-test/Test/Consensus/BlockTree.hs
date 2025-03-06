@@ -27,10 +27,12 @@ import           Cardano.Slotting.Slot (SlotNo (unSlotNo))
 import           Data.Foldable (asum)
 import           Data.Function ((&))
 import           Data.Functor ((<&>))
+import           Data.List (sortOn)
 import           Data.Maybe (fromJust, fromMaybe)
+import           Data.Ord (Down (Down))
 import qualified Data.Vector as Vector
 import           Ouroboros.Consensus.Block.Abstract (blockNo, blockSlot,
-                     fromWithOrigin, unBlockNo)
+                     fromWithOrigin, pointSlot, unBlockNo)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Text.Printf (printf)
 
@@ -164,11 +166,14 @@ prettyBlockTree :: AF.HasHeader blk => BlockTree blk -> [String]
 prettyBlockTree blockTree =
   ["slots:   " ++ unwords (map (printf "%2d" . unSlotNo) [veryFirstSlot .. veryLastSlot])]
     ++ [printTrunk honestFragment]
-    ++ (map printBranch adversarialFragments)
+    ++ (map (uncurry printBranch) adversarialFragments)
 
   where
     honestFragment = btTrunk blockTree
-    adversarialFragments = map btbSuffix (btBranches blockTree)
+    adversarialFragments =
+        sortOn (Down . pointSlot . AF.anchorPoint . snd)
+      $ zip [1..]
+      $ map btbSuffix (btBranches blockTree)
 
     veryFirstSlot = firstNo $ honestFragment
 
@@ -176,14 +181,18 @@ prettyBlockTree blockTree =
       foldl max 0 $
         map
           lastNo
-          (honestFragment : adversarialFragments)
+          (honestFragment : map snd adversarialFragments)
 
     printTrunk :: AF.HasHeader blk => AF.AnchoredFragment blk -> String
     printTrunk = printLine (\_ -> "trunk:  ─")
 
-    printBranch :: AF.HasHeader blk => AF.AnchoredFragment blk -> String
-    printBranch = printLine $ \firstSlot ->
-      "      " ++ replicate (3 * fromIntegral (unSlotNo (firstSlot - veryFirstSlot))) ' ' ++ " ╰─"
+    printBranch :: AF.HasHeader blk => Int -> AF.AnchoredFragment blk -> String
+    printBranch idx = printLine $ \firstSlot ->
+      let sidx = "  (" ++ show idx ++ ")"
+          pad = replicate 6 ' '
+          prefix = sidx ++ drop (length sidx) pad
+       in
+       prefix ++ replicate (3 * fromIntegral (unSlotNo (firstSlot - veryFirstSlot))) ' ' ++ " ╰─"
 
     printLine :: AF.HasHeader blk => (SlotNo -> String) -> AF.AnchoredFragment blk -> String
     printLine printHeader fragment =
