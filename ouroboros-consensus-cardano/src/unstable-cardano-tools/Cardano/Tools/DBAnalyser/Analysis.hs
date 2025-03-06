@@ -898,13 +898,9 @@ dumpStakeDistributions env = do
     process (oldLedger, mbEpoch) blk = do
       let lcfg      = ExtLedgerCfg cfg
           newLedger = tickThenReapply lcfg blk oldLedger
-          wls       =
-            HasAnalysis.WithLedgerState
-                blk
-                (ledgerState oldLedger)
-                (ledgerState newLedger)
+          lst       = ledgerState newLedger
 
-      (,) newLedger <$> case HasAnalysis.epochPoolDistr wls of
+      (,) newLedger <$> case HasAnalysis.epochPoolDistr lst of
           Just (epoch, pd)
             | mbEpoch /= Just epoch ->
               Just epoch <$ traceWith tracer (DumpStakeDistribution epoch pd)

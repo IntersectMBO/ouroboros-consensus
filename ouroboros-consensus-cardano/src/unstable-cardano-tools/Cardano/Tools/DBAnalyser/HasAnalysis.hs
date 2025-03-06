@@ -67,7 +67,7 @@ class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis
   --
   -- It should return 'Nothing' if and only if the block is in the Byron era.
   epochPoolDistr ::
-       WithLedgerState blk
+       LedgerState blk
     -> Maybe (EpochNo, PoolDistr StandardCrypto)
 
 class HasProtocolInfo blk where

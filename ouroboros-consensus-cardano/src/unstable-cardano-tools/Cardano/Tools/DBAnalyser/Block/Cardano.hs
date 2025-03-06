@@ -92,6 +92,16 @@ analyseBlock f =
     p :: Proxy HasAnalysis
     p = Proxy
 
+analyseLedgerState ::
+     (forall blk. HasAnalysis blk => LedgerState blk -> a)
+  -> LedgerState (CardanoBlock StandardCrypto) -> a
+analyseLedgerState f =
+      hcollapse
+    . hcmap (Proxy @HasAnalysis) (K . f . currentState)
+    . Telescope.tip
+    . getHardForkState
+    . hardForkLedgerStatePerEra
+
 -- | Lift a function polymorphic over all block types supporting `HasAnalysis`
 -- into a corresponding function over `CardanoBlock.`
 analyseWithLedgerState ::
@@ -299,7 +309,7 @@ instance (HasAnnTip (CardanoBlock StandardCrypto), GetPrevHash (CardanoBlock Sta
         )
       ]
 
-  epochPoolDistr = analyseWithLedgerState epochPoolDistr
+  epochPoolDistr = analyseLedgerState epochPoolDistr
 
 dispatch ::
      LedgerState (CardanoBlock StandardCrypto)

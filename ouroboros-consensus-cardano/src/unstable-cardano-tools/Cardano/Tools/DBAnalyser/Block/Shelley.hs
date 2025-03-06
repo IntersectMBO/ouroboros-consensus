@@ -106,12 +106,10 @@ instance ( ShelleyCompatible proto era
     -- metrics for Shelley-only eras.
   blockApplicationMetrics = []
 
-  epochPoolDistr wls =
+  epochPoolDistr lst =
       Just (SL.nesEL nes, SL.nesPd nes)
     where
-      WithLedgerState { wlsStateAfter = after } = wls
-
-      nes = shelleyLedgerState after
+      nes = shelleyLedgerState lst
 
 -----
 
