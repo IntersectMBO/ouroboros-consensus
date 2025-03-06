@@ -1,24 +1,24 @@
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE Rank2Types #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeFamilies #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Consensus.GSM.Common (module Test.Consensus.GSM.Common) where
 
-import qualified Control.Monad.IOSim as IOSim
-import           Control.Monad.Class.MonadFork (MonadFork, yield)
 import           Control.Monad (replicateM_)
+import           Control.Monad.Class.MonadFork (MonadFork, yield)
 import qualified Control.Monad.Class.MonadTime.SI as SI
+import qualified Control.Monad.IOSim as IOSim
 import           Data.Time (diffTimeToPicoseconds)
 import qualified Data.TreeDiff as TD
 import           GHC.Generics (Generic)

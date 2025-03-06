@@ -19,8 +19,8 @@ import qualified Ouroboros.Consensus.Node.GSM as GSM
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
 import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
                      (LedgerStateJudgement (..))
-import           Test.Consensus.GSM.QSM.Model
 import           Test.Consensus.GSM.Common
+import           Test.Consensus.GSM.QSM.Model
 import           Test.Consensus.IOSimQSM.Test.StateMachine.Sequential
                      (runCommands')
 import qualified Test.QuickCheck as QC

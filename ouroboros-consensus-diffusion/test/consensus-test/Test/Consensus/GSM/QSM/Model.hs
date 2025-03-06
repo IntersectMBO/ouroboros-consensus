@@ -21,14 +21,13 @@ import           GHC.Generics (Generic, Generic1)
 import qualified Ouroboros.Consensus.Node.GSM as GSM
 import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
                      (LedgerStateJudgement (..))
+import           Test.Consensus.GSM.Common
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (choose, elements, shrink)
 import qualified Test.StateMachine as QSM
 import           Test.StateMachine (Concrete, Symbolic)
 import qualified Test.StateMachine.Types.Rank2 as QSM
 import           Test.Util.Orphans.ToExpr ()
-
-import Test.Consensus.GSM.Common
 
 ----- the QSM model
 

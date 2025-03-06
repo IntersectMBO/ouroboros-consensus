@@ -1,19 +1,18 @@
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE InstanceSigs #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE Rank2Types #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -22,41 +21,41 @@
 
 module Test.Consensus.GSM.QD (tests) where
 
-import           Data.Proxy (Proxy(..))
-import qualified Data.Reflection as Reflection
-import           Data.Typeable (Typeable)
-import           GHC.Generics (Generic)
-import qualified Text.PrettyPrint as Pretty
-import qualified Data.TreeDiff as TD
-import           Control.Exception (SomeException (..))
-import           Test.QuickCheck.Gen.Unsafe (Capture (Capture), capture)
-import           Control.Monad.Reader
-import           Data.List ((\\))
 import           Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked
-import           Control.Monad.Class.MonadAsync (poll, async, uninterruptibleCancel)
+import           Control.Exception (SomeException (..))
+import           Control.Monad.Class.MonadAsync (async, poll,
+                     uninterruptibleCancel)
 import           Control.Monad.Class.MonadSTM
 import qualified Control.Monad.Class.MonadTime.SI as SI
 import qualified Control.Monad.Class.MonadTimer.SI as SI
 import qualified Control.Monad.IOSim as IOSim
+import           Control.Monad.Reader
 import           Control.Tracer (Tracer (Tracer))
 import           Data.Functor ((<&>))
+import           Data.List ((\\))
 import qualified Data.Map.Strict as Map
+import           Data.Proxy (Proxy (..))
+import qualified Data.Reflection as Reflection
 import qualified Data.Set as Set
+import qualified Data.TreeDiff as TD
+import           Data.Typeable (Typeable)
+import           GHC.Generics (Generic)
 import qualified Ouroboros.Consensus.Node.GSM as GSM
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
 import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
                      (LedgerStateJudgement (..))
+import           Test.Consensus.GSM.Common
 import qualified Test.QuickCheck as QC
+import           Test.QuickCheck.Gen.Unsafe (Capture (Capture), capture)
 import qualified Test.QuickCheck.Monadic as QC
+import qualified Test.QuickCheck.StateModel as QD
 import           Test.Tasty (TestTree)
 import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.Orphans.IOLike ()
+import           Test.Util.Orphans.ToExpr ()
 import           Test.Util.TestEnv (adjustQuickCheckTests)
 import           Test.Util.ToExpr ()
-import qualified Test.QuickCheck.StateModel as QD
-import           Test.Util.Orphans.ToExpr ()
-
-import Test.Consensus.GSM.Common
+import qualified Text.PrettyPrint as Pretty
 
 tests :: [TestTree]
 tests = adhoc <> core
@@ -85,7 +84,7 @@ prop_yield_regression =
     Reflection.reify (StaticParams{ pUpstreamPeerBound = Nothing
                                   , pInitialJudgement = YoungEnough
                                   , pIsHaaSatisfied = const True
-                                  }) $ \(Proxy @reflected) ->
+                                  }) $ \(Proxy :: Proxy reflected) ->
    QC.once
  $ runIOSimProp
  $ prop_sequential_iosim1 @_ @reflected yieldRegressionActions
@@ -105,7 +104,7 @@ prop_sequential_iosim pUpstreamPeerBound =
     Reflection.reify (StaticParams{ pUpstreamPeerBound
                                   , pInitialJudgement
                                   , pIsHaaSatisfied
-                                  }) $ \(Proxy @reflected) ->
+                                  }) $ \(Proxy :: Proxy reflected) ->
      QC.forAll QC.arbitrary $ \actions ->
        runIOSimProp $ prop_sequential_iosim1 @_ @reflected actions
 
@@ -187,6 +186,7 @@ prop_sequential_iosim1 actions = do
                 (metadata, Just exn)
             Nothing         ->
                 (metadata, Nothing)
+
   -- stop the GSM
   _ <- lift . lift $ uninterruptibleCancel hGSM
 
@@ -220,8 +220,7 @@ prop_sequential_iosim1 actions = do
                 []       -> ["<none>"]
                 notables -> map show notables
              )
-       noExn
-       QC..&&. finalStateCheck
+       noExn QC..&&. finalStateCheck
 
 ---
 
@@ -395,7 +394,6 @@ instance MonadTrans RunMonad where
   lift = RunMonad . lift
 
 instance (IOLike m, Reflection.Reifies reflected StaticParams) => QD.RunModel (Model reflected) (RunMonad m) where
-  perform :: Model s -> QD.Action (Model s) a -> QD.LookUp -> RunMonad m a
   perform _ action _ = do
       Vars
           varSelection
