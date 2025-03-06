@@ -25,6 +25,8 @@ module Cardano.Tools.DBAnalyser.Analysis (
   , runAnalysis
   ) where
 
+import           Cardano.Ledger.Crypto (StandardCrypto)
+import qualified Cardano.Ledger.PoolDistr as SL
 import qualified Cardano.Slotting.Slot as Slotting
 import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.FileWriting as F
 import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint as DP
@@ -115,6 +117,7 @@ runAnalysis analysisName = case go analysisName of
     go (ReproMempoolAndForge nBks)                       = mkAnalysis $ reproMempoolForge nBks
     go (BenchmarkLedgerOps mOutfile lgrAppMode)          = mkAnalysis $ benchmarkLedgerOps mOutfile lgrAppMode
     go (GetBlockApplicationMetrics nrBlocks mOutfile)    = mkAnalysis $ getBlockApplicationMetrics nrBlocks mOutfile
+    go DumpStakeDistributions                            = mkAnalysis $ dumpStakeDistributions
 
     mkAnalysis ::
          forall startFrom. SingI startFrom
@@ -218,6 +221,7 @@ data TraceEvent blk =
     --   * monotonic time to call 'Mempool.getSnapshotFor'
     --   * total time spent in the mutator when calling 'Mempool.getSnapshotFor'
     --   * total time spent in gc when calling 'Mempool.getSnapshotFor'
+  | DumpStakeDistribution EpochNo (SL.PoolDistr StandardCrypto)
 
 instance (HasAnalysis blk, LedgerSupportsProtocol blk) => Show (TraceEvent blk) where
   show (StartedEvent analysisName)        = "Started " <> (show analysisName)
@@ -271,7 +275,14 @@ instance (HasAnalysis blk, LedgerSupportsProtocol blk) => Show (TraceEvent blk) 
     , "mutSnap " <> show mutSnap
     , "gcSnap " <> show gcSnap
     ]
-
+  show (DumpStakeDistribution eno pd) =
+      intercalate "\t"
+    $ (\ss -> show eno : show (SL.pdTotalActiveStake pd) : show (Map.size mp) : ss)
+    $ [ show (keyhash, SL.individualTotalPoolStake x, SL.individualPoolStake x)
+      | (keyhash, x) <- Map.assocs mp
+      ]
+    where
+      mp = SL.unPoolDistr pd
 
 {-------------------------------------------------------------------------------
   Analysis: show block and slot number and hash for all blocks
@@ -862,6 +873,40 @@ reproMempoolForge numBlks env = do
 
           -- this flushes blk from the mempool, since every tx in it is now on the chain
           void $ Mempool.syncWithLedger mempool
+
+{-------------------------------------------------------------------------------
+  Analysis: print out the stake distibution for each epoch
+-------------------------------------------------------------------------------}
+
+dumpStakeDistributions ::
+  forall blk.
+  ( HasAnalysis blk,
+    LedgerSupportsProtocol blk
+  ) =>
+  Analysis blk StartFromLedgerState
+dumpStakeDistributions env = do
+    void $ processAll db registry GetBlock startFrom limit (initLedger, Nothing) process
+    pure Nothing
+  where
+    AnalysisEnv {db, cfg, limit, registry, startFrom, tracer} = env
+
+    FromLedgerState initLedger = startFrom
+
+    process
+      :: (ExtLedgerState blk, Maybe EpochNo)
+      -> blk
+      -> IO (ExtLedgerState blk, Maybe EpochNo)
+    process (oldLedger, mbEpoch) blk = do
+      let lcfg      = ExtLedgerCfg cfg
+          newLedger = tickThenReapply lcfg blk oldLedger
+          lst       = ledgerState newLedger
+
+      (,) newLedger <$> case HasAnalysis.epochPoolDistr lst of
+          Just (epoch, pd)
+            | mbEpoch /= Just epoch ->
+              Just epoch <$ traceWith tracer (DumpStakeDistribution epoch pd)
+
+          _ -> pure mbEpoch
 
 {-------------------------------------------------------------------------------
   Auxiliary: processing all blocks in the DB
