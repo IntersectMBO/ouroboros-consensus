@@ -906,7 +906,7 @@ dumpStakeDistributions env = do
 
       (,) newLedger <$> case HasAnalysis.epochPoolDistr wls of
           Just (epoch, pd)
-            | mbEpoch == Just epoch ->
+            | mbEpoch /= Just epoch ->
               Just epoch <$ traceWith tracer (DumpStakeDistribution epoch pd)
 
           _ -> pure mbEpoch
