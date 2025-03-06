@@ -684,8 +684,7 @@ processJumpResult context jumpResult =
         writeTVar nextJumpVar Nothing
         maybeElectNewObjector nextJumpVar goodJumpInfo (AF.headPoint badFragment)
       else do
-        let middlePoint = len `div` 2
-            theirFragment = AF.dropNewest middlePoint badFragment
+        let theirFragment = AF.dropNewest (len `div` 2) badFragment
         writeTVar nextJumpVar $ Just
           badJumpInfo { jTheirFragment = theirFragment }
         writeTVar (cschJumping (handle context)) $
@@ -698,8 +697,8 @@ processJumpResult context jumpResult =
           -- There is no objector yet. Promote the jumper to objector.
           writeTVar (cschJumping (handle context)) (Objector Starting goodJumpInfo badPoint)
           pure $ Just $ BecomingObjector Nothing
-        Just (oPeerId, oInitState, oGoodJump, oPoint, oHandle)
-          | pointSlot oPoint <= pointSlot badPoint -> do
+        Just (oPeerId, oInitState, oGoodJump, oBadPoint, oHandle)
+          | pointSlot oBadPoint <= pointSlot badPoint -> do
               -- The objector's intersection is still old enough. Keep it.
               writeTVar (cschJumping (handle context)) $
                 Jumper nextJumpVar (FoundIntersection Starting goodJumpInfo badPoint)
@@ -707,7 +706,7 @@ processJumpResult context jumpResult =
           | otherwise -> do
               -- Found an earlier intersection. Demote the old objector and
               -- promote the jumper to objector.
-              newJumper Nothing (FoundIntersection oInitState oGoodJump oPoint) >>=
+              newJumper Nothing (FoundIntersection oInitState oGoodJump oBadPoint) >>=
                 writeTVar (cschJumping oHandle)
               writeTVar (cschJumping (handle context)) (Objector Starting goodJumpInfo badPoint)
               pure $ Just $ BecomingObjector (Just oPeerId)
