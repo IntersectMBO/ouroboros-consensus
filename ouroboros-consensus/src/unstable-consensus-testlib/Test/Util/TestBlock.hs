@@ -183,7 +183,7 @@ import           Test.Util.Orphans.ToExpr ()
 newtype TestHash = UnsafeTestHash {
       unTestHash :: NonEmpty Word64
     }
-  deriving stock    (Generic, Typeable)
+  deriving stock    (Generic)
   deriving newtype  (Eq, Ord, Serialise, ToExpr)
   deriving anyclass (NoThunks)
 
