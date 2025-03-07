@@ -158,7 +158,7 @@
 --
 -- If the objector disconnects or is disengaged, and there are FI* jumpers, then
 -- the one with the oldest intersection with the dynamo gets elected (i).
--- Otherwise, we are left with no dynamo.
+-- Otherwise, we are left with no objector.
 --
 -- If the dynamo rolls back to a point older than the last jump it requested, it
 -- is disengaged (j), a new dynamo is elected (e|f), and all the other peers
@@ -166,16 +166,15 @@
 --
 -- If the objector agrees with the dynamo, it is disengaged (k). If there are
 -- FI* jumpers, then one of them gets elected as the new objector (i).
--- Otherwise, we are left with no dynamo.
+-- Otherwise, we are left with no objector.
 --
 -- If the dynamo or the objector claim to have no more headers, they are
 -- disengaged (j|k), triggering the same chain of effect as described in the two
 -- previous points.
 --
--- The BlockFetch logic can ask to change the dynamo if it is not serving blocks
--- fast enough. If there are other non-disengaged peers, the dynamo (and the
--- objector if there is one, and all the other peers) is demoted to a happy
--- jumper (l+g+h) and a new dynamo is elected (e).
+-- The BlockFetch logic can ask to change the dynamo if it is not serving
+-- blocks fast enough. If there are other non-disengaged peers, all peers are
+-- demoted to happy jumpers (l+g+h) and a new dynamo is elected (e).
 --
 module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping (
     Context
