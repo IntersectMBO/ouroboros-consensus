@@ -72,7 +72,8 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , consensusErrorTracer          :: f SomeException
   , gsmTracer                     :: f (TraceGsmEvent (Tip blk))
   , gddTracer                     :: f (TraceGDDEvent remotePeer blk)
-  , csjTracer                     :: f (CSJumping.TraceEvent remotePeer)
+  , csjTracer                     :: f (TraceLabelPeer remotePeer (CSJumping.TraceEventCsj remotePeer blk))
+  , dbfTracer                     :: f (CSJumping.TraceEventDbf remotePeer)
   }
 
 instance (forall a. Semigroup (f a))
@@ -97,6 +98,7 @@ instance (forall a. Semigroup (f a))
       , gsmTracer                     = f gsmTracer
       , gddTracer                     = f gddTracer
       , csjTracer                     = f csjTracer
+      , dbfTracer                     = f dbfTracer
       }
     where
       f :: forall a. Semigroup a
@@ -129,6 +131,7 @@ nullTracers = Tracers
     , gsmTracer                     = nullTracer
     , gddTracer                     = nullTracer
     , csjTracer                     = nullTracer
+    , dbfTracer                     = nullTracer
     }
 
 showTracers :: ( Show blk
@@ -164,6 +167,7 @@ showTracers tr = Tracers
     , gsmTracer                     = showTracing tr
     , gddTracer                     = showTracing tr
     , csjTracer                     = showTracing tr
+    , dbfTracer                     = showTracing tr
     }
 
 {-------------------------------------------------------------------------------

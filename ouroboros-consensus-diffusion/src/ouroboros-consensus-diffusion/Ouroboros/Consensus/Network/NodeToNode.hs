@@ -581,6 +581,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
         (getFetchClientRegistry kernel) them $
         CsClient.bracketChainSyncClient
             (contramap (TraceLabelPeer them) (Node.chainSyncClientTracer (getTracers kernel)))
+            (contramap (TraceLabelPeer them) (Node.csjTracer             (getTracers kernel)))
             (CsClient.defaultChainDbView (getChainDB kernel))
             (getChainSyncHandles kernel)
             (getGsmState       kernel)

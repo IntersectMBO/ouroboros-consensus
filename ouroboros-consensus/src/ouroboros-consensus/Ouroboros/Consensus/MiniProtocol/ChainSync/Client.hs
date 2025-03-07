@@ -78,6 +78,7 @@ import           Control.Monad (join, void)
 import           Control.Monad.Class.MonadTimer (MonadTimer)
 import           Control.Monad.Except (runExcept, throwError)
 import           Control.Tracer
+import           Data.Foldable (traverse_)
 import           Data.Functor ((<&>))
 import           Data.Kind (Type)
 import           Data.Map.Strict (Map)
@@ -333,6 +334,7 @@ bracketChainSyncClient ::
     , MonadTimer m
     )
  => Tracer m (TraceChainSyncClientEvent blk)
+ -> Tracer m (Jumping.TraceEventCsj peer blk)
  -> ChainDbView m blk
  -> ChainSyncClientHandleCollection peer m blk
     -- ^ The kill handle and states for each peer, we need the whole map because we
@@ -348,6 +350,7 @@ bracketChainSyncClient ::
  -> m a
 bracketChainSyncClient
     tracer
+    tracerCsj
     ChainDbView { getIsInvalidBlock }
     varHandles
     getGsmState
@@ -414,7 +417,8 @@ bracketChainSyncClient
       bracket_ insertHandle deleteHandle $ f Jumping.noJumping
 
     withCSJCallbacks lopBucket csHandleState (CSJEnabled csjEnabledConfig) f =
-      bracket (acquireContext lopBucket csHandleState csjEnabledConfig) releaseContext $ \peerContext ->
+      bracket (acquireContext lopBucket csHandleState csjEnabledConfig) releaseContext $ \(peerContext, mbEv) -> do
+        traverse_ (traceWith (Jumping.tracer peerContext)) mbEv
         f $ Jumping.mkJumping peerContext
 
     acquireContext lopBucket cschState (CSJEnabledConfig jumpSize) = do
@@ -423,7 +427,7 @@ bracketChainSyncClient
           initialGsmState <- getGsmState
           updateLopBucketConfig lopBucket initialGsmState time
           cschJumpInfo <- newTVar Nothing
-          context <- Jumping.makeContext varHandles jumpSize
+          context <- Jumping.makeContext varHandles jumpSize tracerCsj
           Jumping.registerClient context peer cschState $ \cschJumping -> ChainSyncClientHandle
             { cschGDDKill = throwTo tid DensityTooLow
             , cschOnGsmStateChanged = updateLopBucketConfig lopBucket
@@ -432,7 +436,9 @@ bracketChainSyncClient
             , cschJumpInfo
             }
 
-    releaseContext = atomically . Jumping.unregisterClient
+    releaseContext (peerContext, _mbEv) = do
+        mbEv <- atomically $ Jumping.unregisterClient peerContext
+        traverse_ (traceWith (Jumping.tracer peerContext)) mbEv
 
     invalidBlockWatcher varState =
         invalidBlockRejector

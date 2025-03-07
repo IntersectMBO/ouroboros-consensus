@@ -33,7 +33,9 @@ import           Ouroboros.Consensus.Genesis.Governor (DensityBounds (..),
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (TraceChainSyncClientEvent (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping
-                     (Instruction (..), JumpInstruction (..), JumpResult (..))
+                     (Instruction (..), JumpInstruction (..), JumpResult (..),
+                     TraceCsjReason (..), TraceEventCsj (..),
+                     TraceEventDbf (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
                      (ChainSyncJumpingJumperState (..),
                      ChainSyncJumpingState (..), DynamoInitState (..),
@@ -136,6 +138,8 @@ data TraceEvent blk
   | TraceBlockFetchClientTerminationEvent PeerId TraceBlockFetchClientTerminationEvent
   | TraceGenesisDDEvent (TraceGDDEvent PeerId blk)
   | TraceChainSyncSendRecvEvent PeerId String (TraceSendRecv (ChainSync (Header blk) (Point blk) (Tip blk)))
+  | TraceDbfEvent (TraceEventDbf PeerId)
+  | TraceCsjEvent PeerId (TraceEventCsj PeerId blk)
   | TraceOther String
 
 -- * 'TestBlock'-specific tracers for the peer simulator
@@ -189,6 +193,8 @@ traceEventTestBlockWith setTickTime tracer0 tracer = \case
     TraceBlockFetchClientTerminationEvent peerId traceEvent -> traceBlockFetchClientTerminationEventTestBlockWith peerId tracer traceEvent
     TraceGenesisDDEvent gddEvent -> traceWith tracer (terseGDDEvent gddEvent)
     TraceChainSyncSendRecvEvent peerId peerType traceEvent -> traceChainSyncSendRecvEventTestBlockWith peerId peerType tracer traceEvent
+    TraceDbfEvent traceEvent -> traceDbjEventWith tracer traceEvent
+    TraceCsjEvent peerId traceEvent -> traceCsjEventWith peerId tracer traceEvent
     TraceOther msg -> traceWith tracer msg
 
 traceSchedulerEventTestBlockWith ::
@@ -497,6 +503,40 @@ traceChainSyncSendRecvEventTestBlockWith pid ptp tracer = \case
         MsgIntersectFound point tip -> "MsgIntersectFound " ++ tersePoint point ++ " " ++ terseTip tip
         MsgIntersectNotFound tip -> "MsgIntersectNotFound " ++ terseTip tip
         MsgDone -> "MsgDone"
+
+traceDbjEventWith ::
+  Tracer m String ->
+  TraceEventDbf PeerId ->
+  m ()
+traceDbjEventWith tracer = traceWith tracer . \case
+    RotatedDynamo old new -> "Rotated dynamo from " ++ condense old ++ " to " ++ condense new
+
+traceCsjEventWith ::
+  PeerId ->
+  Tracer m String ->
+  TraceEventCsj PeerId TestBlock ->
+  m ()
+traceCsjEventWith peer tracer = f . \case
+    BecomingObjector mbOld -> "is now the Objector" ++ replacing mbOld
+    BlockedOnJump -> "is a happy Jumper blocked on the next CSJ instruction"
+    InitializedAsDynamo -> "initialized as the Dynamo"
+    NoLongerDynamo mbNew reason -> g reason ++ " and so is no longer the Dynamo" ++ replacedBy mbNew
+    NoLongerObjector mbNew reason -> g reason ++ " and so is no longer the Objector" ++ replacedBy mbNew
+    SentJumpInstruction p -> "instructed Jumpers to " ++ tersePoint p
+  where
+    f = traceUnitWith tracer ("CSJ " ++ condense peer)
+
+    g = \case
+      BecauseCsjDisconnect -> "disconnected"
+      BecauseCsjDisengage  -> "disengaged"
+
+    replacedBy = \case
+      Nothing -> ""
+      Just new -> ", replaced by: " ++ condense new
+
+    replacing = \case
+      Nothing -> ""
+      Just old -> ", replacing: " ++ condense old
 
 prettyDensityBounds :: [(PeerId, DensityBounds TestBlock)] -> [String]
 prettyDensityBounds bounds =
