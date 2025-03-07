@@ -868,7 +868,13 @@ electNewDynamo ::
   STM m (TraceCsjReason -> TraceEventCsj peer blk, Maybe (peer, ChainSyncClientHandle m blk))
 electNewDynamo context = do
   peerStates <- cschcSeq (handlesCol context)
-  mDynamo <- findNonDisengaged peerStates
+  mDynamo <- do
+    -- prefer a 'Started' 'Objector', if any exists
+    findObjector context >>= \case
+      Just (oId, Started, _oGoodJI, _oBad, oHandle) ->
+        pure $ Just $ (oId,oHandle)
+      _ ->
+        findNonDisengaged peerStates
   case mDynamo of
     Nothing -> pure (NoLongerDynamo Nothing, Nothing)
     Just (dynId, dynamo) -> do
@@ -886,13 +892,30 @@ promoteToDynamo ::
   ChainSyncClientHandle m blk ->
   STM m ()
 promoteToDynamo peerStates dynId dynamo = do
-  fragment <- csCandidate <$> readTVar (cschState dynamo)
   mJumpInfo <- readTVar (cschJumpInfo dynamo)
-  -- If there is no jump info, the dynamo must be just starting and
-  -- there is no need to set the intersection of the ChainSync server.
-  let dynamoInitState = maybe DynamoStarted DynamoStarting mJumpInfo
-  writeTVar (cschJumping dynamo) $
-    Dynamo dynamoInitState $ pointSlot $ AF.headPoint fragment
+  jumping' <- readTVar (cschJumping dynamo) >>= \case
+    -- An 'Objector' that already 'Started' need not be disrupted.
+    --
+    -- TODO Intuitively, a 'Starting' 'Objector' also need not be disrupted,
+    -- but disrupting it wouldn't waste any @MsgRollForward@s. More concretely,
+    -- it's not obvious to me how to build a 'DynamoStarting' from a
+    -- 'Starting'.
+    Objector Started oGoodJI _oBad -> do
+      -- This intersection point is necessarily behind the replaced Dynamos's
+      -- latest jump instruction, but its relative age is bounded.
+      let islot = pointSlot $ AF.headPoint $ jTheirFragment oGoodJI
+      pure $ Dynamo DynamoStarted islot
+    -- Otherwise, the peer being promoted could be a Jumper or an Objector
+    -- Starting, but never Dynamo nor Disengaged.
+    _ -> do
+      fragment <- csCandidate <$> readTVar (cschState dynamo)
+      -- If there is no jump info, the dynamo must be just starting and
+      -- there is no need to set the intersection of the ChainSync server.
+      let dynamoInitState = maybe DynamoStarted DynamoStarting mJumpInfo
+          slot = pointSlot $ AF.headPoint fragment
+      pure $ Dynamo dynamoInitState slot
+  writeTVar (cschJumping dynamo) jumping'
+
   -- Demote all other peers to jumpers
   forM_ peerStates $ \(peer, st) ->
     when (peer /= dynId) $ do
