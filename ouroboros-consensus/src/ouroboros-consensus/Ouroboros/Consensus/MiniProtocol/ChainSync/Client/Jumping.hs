@@ -481,7 +481,7 @@ onRollForward context point =
     setJumps Nothing = error "onRollForward: Dynamo without jump info"
     setJumps (Just jumpInfo) = do
         writeTVar (cschJumping (handle context)) $
-          Dynamo DynamoStarted $ pointSlot $ AF.headPoint $ jTheirFragment jumpInfo
+          Dynamo DynamoStarted $ AF.headSlot $ jTheirFragment jumpInfo
         handles <- cschcSeq (handlesCol context)
         forM_ handles $ \(_, h) ->
           readTVar (cschJumping h) >>= \case
@@ -520,7 +520,7 @@ onRollBackward context slot =
     Dynamo _ lastJumpSlot
       | slot < lastJumpSlot -> do
           disengage (handle context)
-          (Just . ($ BecauseCsjDisengage) . fst) <$> electNewDynamo (stripContext context)
+          (Just . ($ BecauseCsjDisengage) . fst) <$> backfillDynamo (stripContext context)
       | otherwise -> pure Nothing
 
 -- | This function is called when we receive a 'MsgAwaitReply' message.
@@ -538,7 +538,7 @@ onAwaitReply context =
   readTVar (cschJumping (handle context)) >>= \case
     Dynamo{} -> do
       disengage (handle context)
-      (Just . ($ BecauseCsjDisengage) . fst) <$> electNewDynamo (stripContext context)
+      (Just . ($ BecauseCsjDisengage) . fst) <$> backfillDynamo (stripContext context)
     Objector{} -> do
       disengage (handle context)
       (Just . ($ BecauseCsjDisengage)) <$> electNewObjector (stripContext context)
@@ -571,7 +571,7 @@ processJumpResult context jumpResult =
           unitNothing <$> updateChainSyncState (handle context) jumpInfo
         RejectedJump JumpToGoodPoint{} -> do
           startDisengaging (handle context)
-          (Just . ($ BecauseCsjDisengage) . fst) <$> electNewDynamo (stripContext context)
+          (Just . ($ BecauseCsjDisengage) . fst) <$> backfillDynamo (stripContext context)
 
         -- Not interesting in the dynamo state
         AcceptedJump JumpTo{} -> pure Nothing
@@ -808,7 +808,7 @@ unregisterClient context = do
     Disengaged{} -> pure Nothing
     Jumper{} -> pure Nothing
     Objector{} -> (Just . ($ BecauseCsjDisconnect)) <$> electNewObjector context'
-    Dynamo{} -> (Just . ($ BecauseCsjDisconnect) . fst) <$> electNewDynamo context'
+    Dynamo{} -> (Just . ($ BecauseCsjDisconnect) . fst) <$> backfillDynamo context'
 
 -- | Elects a new dynamo by demoting the given dynamo (and the objector if there
 -- is one) to a jumper, moving the peer to the end of the queue of chain sync
@@ -859,16 +859,28 @@ rotateDynamo tracer handlesCol peer = do
 
 -- | Choose an unspecified new non-idling dynamo and demote all other peers to
 -- jumpers.
-electNewDynamo ::
+--
+-- Prefer an 'Objector' that has already 'Started'. Such a peer can trivially
+-- transition to be the Dynamo, without any disruption to their ChainSync
+-- state. Moreover, if that Objector is honest, then their being the new Dynamo
+-- prevents the possibility of their candidate chain being lost and having to
+-- eventually be re-downloaded, which CSJ ought to avoid.
+backfillDynamo ::
   ( MonadSTM m,
     Eq peer,
     LedgerSupportsProtocol blk
   ) =>
   Context m peer blk ->
   STM m (TraceCsjReason -> TraceEventCsj peer blk, Maybe (peer, ChainSyncClientHandle m blk))
-electNewDynamo context = do
+backfillDynamo context = do
   peerStates <- cschcSeq (handlesCol context)
-  mDynamo <- findNonDisengaged peerStates
+  mDynamo <- do
+    -- prefer a 'Started' 'Objector', if any exists
+    findObjector context >>= \case
+      Just (oId, Started, _oGoodJI, _oBad, oHandle) ->
+        pure $ Just $ (oId,oHandle)
+      _ ->
+        findNonDisengaged peerStates
   case mDynamo of
     Nothing -> pure (NoLongerDynamo Nothing, Nothing)
     Just (dynId, dynamo) -> do
@@ -886,13 +898,29 @@ promoteToDynamo ::
   ChainSyncClientHandle m blk ->
   STM m ()
 promoteToDynamo peerStates dynId dynamo = do
-  fragment <- csCandidate <$> readTVar (cschState dynamo)
   mJumpInfo <- readTVar (cschJumpInfo dynamo)
-  -- If there is no jump info, the dynamo must be just starting and
-  -- there is no need to set the intersection of the ChainSync server.
-  let dynamoInitState = maybe DynamoStarted DynamoStarting mJumpInfo
-  writeTVar (cschJumping dynamo) $
-    Dynamo dynamoInitState $ pointSlot $ AF.headPoint fragment
+  jumping' <- readTVar (cschJumping dynamo) >>= \case
+    -- An 'Objector' that already 'Started' need not be disrupted.
+    --
+    -- Remark. Intuitively, a 'Starting' 'Objector' also need not be disrupted,
+    -- but disrupting it wouldn't waste any @MsgRollForward@s. More concretely,
+    -- it's not obvious how to build a 'DynamoStarting' from a 'Starting'.
+    Objector Started oGoodJI _oBad -> do
+      -- This intersection point is necessarily behind the replaced Dynamos's
+      -- latest jump instruction, but its relative age is bounded.
+      let islot = AF.headSlot $ jTheirFragment oGoodJI
+      pure $ Dynamo DynamoStarted islot
+    -- Otherwise, the peer being promoted could be a Jumper or an Objector
+    -- Starting, but never Dynamo nor Disengaged.
+    _ -> do
+      fragment <- csCandidate <$> readTVar (cschState dynamo)
+      -- If there is no jump info, the dynamo must be just starting and
+      -- there is no need to set the intersection of the ChainSync server.
+      let dynamoInitState = maybe DynamoStarted DynamoStarting mJumpInfo
+          slot = AF.headSlot fragment
+      pure $ Dynamo dynamoInitState slot
+  writeTVar (cschJumping dynamo) jumping'
+
   -- Demote all other peers to jumpers
   forM_ peerStates $ \(peer, st) ->
     when (peer /= dynId) $ do
