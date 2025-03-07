@@ -597,6 +597,7 @@ initialize replayTracer
           case eDB of
             Left err -> do
               traceWith snapTracer . InvalidSnapshot s $ err
+              terminateIfLegacySnapshot hasFS s
               Monad.when (diskSnapshotIsTemporary s) $ deleteSnapshot hasFS s
               closeDb initDb
               tryNewestFirst doChecksum (acc . InitFailure s err) ss
@@ -607,6 +608,20 @@ initialize replayTracer
     replayTracer' = decorateReplayTracerWithGoal
                                        replayGoal
                                        (TraceReplayProgressEvent >$< replayTracer)
+
+    terminateIfLegacySnapshot (SomeHasFS hasFS') s = do
+      exists <- doesFileExist hasFS' $ snapshotToDirPath s
+      Monad.when exists $ error $ unlines
+        [ "Detected a legacy-style snapshot!"
+        , ""
+        , "Legacy snapshots are incompatible with UTxO-HD. The node was shutdown before automatically deleting the snapshot to avoid having to replay the entire chain."
+        , ""
+        , "To convert your snapshot to the new UTxO-HD format, use the `snapshot-converter` tool in `ouroboros-consensus`:"
+        , ""
+        , "\t$ snapshot-converter Legacy <path-to-snapshot> [Mem|LMDB] <new-path> cardano --config <path-to-node's-config-file>"
+        , ""
+        , "After running the converter, put the new snapshot in the ledger database path and start the node again. You can also just delete all snapshots and replay from Genesis."
+        ]
 
 -- | Replay all blocks in the Immutable database using the 'StreamAPI' provided
 -- on top of the given @LedgerDB' blk@.
