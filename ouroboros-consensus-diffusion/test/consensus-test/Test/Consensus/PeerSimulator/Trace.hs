@@ -34,8 +34,8 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (TraceChainSyncClientEvent (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping
                      (Instruction (..), JumpInstruction (..), JumpResult (..),
-                      TraceEventCsj (..), TraceEventDbf (..),
-                      TraceCsjReason (..))
+                     TraceCsjReason (..), TraceEventCsj (..),
+                     TraceEventDbf (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
                      (ChainSyncJumpingJumperState (..),
                      ChainSyncJumpingState (..), DynamoInitState (..),
