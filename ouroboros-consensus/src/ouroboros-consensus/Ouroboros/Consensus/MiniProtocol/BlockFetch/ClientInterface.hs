@@ -186,7 +186,7 @@ mkBlockFetchConsensusInterface ::
      , Ord peer
      , LedgerSupportsProtocol blk
      )
-  => Tracer m (CSJumping.TraceEvent peer)
+  => Tracer m (CSJumping.TraceEventDbf peer)
   -> BlockConfig blk
   -> ChainDbView m blk
   -> CSClient.ChainSyncClientHandleCollection peer m blk
