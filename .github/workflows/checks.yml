@@ -56,15 +56,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Cabal check
-      run: |
-        for x in $(find . -name '*.cabal' | grep -vE 'dist-newstyle|asserts\.cabal' | cut -c 3-); do
-          (
-            d=$(dirname $x)
-            echo "== $d =="
-            cd $d
-            cabal check
-          )
-        done
+      run: ./scripts/ci/check-cabal-files.sh
 
   check-release-badges:
 
@@ -116,3 +108,14 @@ jobs:
 
     - name: Diff plans
       run: GH=1 ./scripts/release/cabal-plan-diff.sh
+
+  xrefcheck:
+
+    name: Check references
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: serokell/xrefcheck-action@v1
+      with:
+        xrefcheck-version: 0.3.1

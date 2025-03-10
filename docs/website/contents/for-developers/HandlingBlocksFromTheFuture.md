@@ -41,4 +41,4 @@ In the future we might delete blocks from the future from the `VolatileDB` to im
 # References
 
 - [Original issue that prompted the fix](https://github.com/IntersectMBO/ouroboros-network/issues/4251)
-- [Blocks from the future (Incident report)](https://updates.cardano.intersectmbo.org/2024-09-07-incident)
+- [Blocks from the future (Incident report)](https://updates.cardano.intersectmbo.org/2024-09-07-incident/)

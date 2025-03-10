@@ -158,4 +158,4 @@ trim their fragment so that it is anchored at our anchor point.
   sufficient number of headers to determine if their chain is preferred over
   ours (this needs careful consideration when adopting genesis).
 
-[^glossary]: See the [Glossary](https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/Glossary)
+[^glossary]: See the [Glossary](https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/Glossary/)

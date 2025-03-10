@@ -2,6 +2,62 @@
 
 # Changelog entries
 
+<a id='changelog-0.21.0.0'></a>
+## 0.21.0.0 — 2025-01-08
+
+### Patch
+
+- Adapted to removed `PraosParams` fields.
+
+- fixup NodeToClientV_19 mapping to ShelleyNodeToClientVersion11
+
+- Fixed a bug where a valid tx with less than `4` bytes less than the max tx
+  size would be incorrectly rejected by the mempool.
+
+* Use [`resource-registry`](https://hackage.haskell.org/package/resource-registry).
+
+### Non-Breaking
+
+- Remove references to `Ouroboros.Consensus.Fragment.InFuture`.
+- Adapt the code to account for the removed `cdbFutureBlocks` and related fields.
+
+- Updated to `ouroboros-network-0.14`, and `typed-protocols-0.3.0.0` as a consequence.
+- Updated to `ouroboros-network-api-0.11`, which introduced `NodeToClientV_19`.
+
+- Removed now-redundant hack in Babbage→Conway translation.
+
+- Depend on `network-mux` and use its types.
+
+### Breaking
+
+- Remove `CheckInFuture m blk` from `openChainDB`.
+
+- Changed `CardanoHardTriggers` to contain `CardanoHardForkTrigger`s which are a
+  simpler version of the previous `TriggerHardForkAt`. In particular, this will
+  affect call sites of `protocolInfoCardano`.
+
+  Migration notes:
+
+    - Change `TriggerHardForkAtEpoch` to `CardanoTriggerHardForkAtEpoch`.
+    - Change `TriggerHardForkAtVersion` to `CardanoTriggerHardForkAtDefaultVersion`.
+
+      This constructor does not take a version argument, but rather defaults to
+      the corresponding first ledger protocol version. We are not aware of any
+      use case that requires a different value, but if there is, it is still
+      possible to manually modify the returned `LedgerConfig`s of
+      `protocolInfoCardano` directly.
+
+- Added ShelleyNodeToClientVersion11 for GetBigLedgerPeerSnapshot query
+
+- Removed legacy (pre-Conway) diffusion pipelining scheme.
+
+- Changed `Ouroboros.Consensus.Cardano.CanHardFork` to expose
+  `crossEraForecastAcrossShelley`, in particular for testing.
+
+- Change the type of the `mkKeyHashVrf` function to use the new `VRFVerKeyHash` ledger type.
+
+- Remove versions before `NodeToClientV_16` from the `supportedNodeToClientVersions`.
+
 <a id='changelog-0.20.0.0'></a>
 ## 0.20.0.0 — 2024-10-14
 

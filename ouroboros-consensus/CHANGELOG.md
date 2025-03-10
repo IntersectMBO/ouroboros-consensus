@@ -2,6 +2,58 @@
 
 # Changelog entries
 
+<a id='changelog-0.22.0.0'></a>
+## 0.22.0.0 — 2025-01-08
+
+### Patch
+
+* Remove upper bound on `cardano-ledger-core`
+
+* Use [`resource-registry`](https://hackage.haskell.org/package/resource-registry).
+
+### Breaking
+
+- Integrated new bulk sync BlockFetch logic.
+
+- CSJ: implemented rotation of dynamos.
+
+- ChainDB: let the BlockFetch client add blocks asynchronously
+
+- GDD: added rate limit
+
+- Tweaked certain edge cases in the GDD and ChainSync client ([#1179](https://github.com/IntersectMBO/ouroboros-consensus/pull/1179))
+
+- Remove `cdbFutureBlocks` from `ChainDbEnv`.
+- Remove `BlockInTheFuture`, `ChainSelectionForFutureBlock`, `CandidateContainsFutureBlocks`, and `CandidateContainsFutureBlocksExceedingClockSkew` from `TraceAddBlockEvent`.
+- Remove `cdbCheckInFuture` from `CBD`.
+- Remove `cdbsCheckInFuture` from `ChainDbSpecificArgs`.
+- Remove `CheckInFuture m blk` argument from `completeChainDbArgs`.
+- Remove `CheckInFuture m blk` argument from `initialChainSelection`.
+- Remove `cdbsCheckInFuture` from `ChainDbSpecificArgs`.
+- Delete module `Ouroboros.Consensus.Fragment.InFuture`. `ClockSkew` functions live now in `Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck`.
+* Remove ``InvalidBlockReason`, since it was now simply wrapping up `ExtValidationError`.
+
+- Updated to `typed-protocols-0.3.0.0`.
+- The `ChainSync` client now requires `MoandLabelledSTM` constraint.
+- `NodeToClientV_19` was added in `ouroboros-network-api-0.11`.
+
+- Drop NodeToClient versions < 16.
+
+- When writing a ledger state snapshot to disk, calculate the state's CRC32 checksum and write it to a separate file, which is named the same as the snapshot file, plus the `.checksum` extension.
+- When reading a snapshot file in `readSnapshot`, calculate its checksum and compare it to the value in the corresponding `.checksum` file. Return an error if the checksum is different or invalid. Issue a warning if the checksum file does not exist, but still initialise the ledger DB.
+- To support the previous item, change the error type of the `readSnapshot` from `ReadIncrementalErr` to the extended `ReadSnaphotErr`.
+- Checksumming the snapshots is controlled via the `doChecksum :: Flag "DoDiskSnapshotChecksum"` parameter of `initFromSnapshot`. Ultimately, this parameter comes from the Node's configuration file via the `DiskPolicy` data type.
+- Extend the `DiskPolicyArgs` data type to enable the node to pass `Flag "DoDiskSnapshotChecksum"` to Consensus.
+
+* Use [`rawlock`](https://hackage.haskell.org/package/rawlock) instead of the in-tree implementation.
+
+### Non-breaking
+
+- Make `Ouroboros.Consensus.Util.CBOR.readIncremental` optionally compute the checksum of the data as it is read.
+- Introduce an explicit `Ord` instance for `DiskSnapshot` that compares the values on `dsNumber`.
+- Introduce a new utility newtype `Flag` to represent type-safe boolean flags. See ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Util.hs.
+- Use `Flag "DoDiskSnapshotChecksum"` to control the check of the snapshot checksum file in `takeSnapshot`, `readSnapshot` and `writeSnapshot`.
+
 <a id='changelog-0.21.0.0'></a>
 ## 0.21.0.0 — 2024-10-14
 

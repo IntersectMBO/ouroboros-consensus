@@ -52,6 +52,7 @@ import           Data.Hashable (Hashable)
 import           Data.Int (Int64)
 import           Data.Map.Strict (Map)
 import           Data.Void (Void)
+import qualified Network.Mux as Mux
 import           Network.TypedProtocol.Codec
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (DiffusionPipeliningSupport (..))
@@ -88,7 +89,6 @@ import           Ouroboros.Network.Mux
 import           Ouroboros.Network.NodeToNode
 import           Ouroboros.Network.PeerSelection.PeerMetric.Type
                      (FetchedMetricsTracer, ReportPeerMetrics (..))
-import qualified Ouroboros.Network.PeerSelection.PeerSharing as PSTypes
 import           Ouroboros.Network.PeerSharing (PeerSharingController,
                      bracketPeerSharingClient, peerSharingClient,
                      peerSharingServer)
@@ -368,19 +368,20 @@ identityCodecs = Codecs {
 -------------------------------------------------------------------------------}
 
 -- | A record of 'Tracer's for the different protocols.
-type Tracers m peer blk e =
-     Tracers'  peer blk e (Tracer m)
+type Tracers m ntnAddr blk e =
+     Tracers'  (ConnectionId ntnAddr) ntnAddr blk e (Tracer m)
 
-data Tracers' peer blk e f = Tracers {
+data Tracers' peer ntnAddr blk e f = Tracers {
       tChainSyncTracer            :: f (TraceLabelPeer peer (TraceSendRecv (ChainSync (Header blk) (Point blk) (Tip blk))))
     , tChainSyncSerialisedTracer  :: f (TraceLabelPeer peer (TraceSendRecv (ChainSync (SerialisedHeader blk) (Point blk) (Tip blk))))
     , tBlockFetchTracer           :: f (TraceLabelPeer peer (TraceSendRecv (BlockFetch blk (Point blk))))
     , tBlockFetchSerialisedTracer :: f (TraceLabelPeer peer (TraceSendRecv (BlockFetch (Serialised blk) (Point blk))))
     , tTxSubmission2Tracer        :: f (TraceLabelPeer peer (TraceSendRecv (TxSubmission2 (GenTxId blk) (GenTx blk))))
     , tKeepAliveTracer            :: f (TraceLabelPeer peer (TraceSendRecv KeepAlive))
+    , tPeerSharingTracer          :: f (TraceLabelPeer peer (TraceSendRecv (PeerSharing ntnAddr)))
     }
 
-instance (forall a. Semigroup (f a)) => Semigroup (Tracers' peer blk e f) where
+instance (forall a. Semigroup (f a)) => Semigroup (Tracers' peer ntnAddr blk e f) where
   l <> r = Tracers {
         tChainSyncTracer            = f tChainSyncTracer
       , tChainSyncSerialisedTracer  = f tChainSyncSerialisedTracer
@@ -388,15 +389,16 @@ instance (forall a. Semigroup (f a)) => Semigroup (Tracers' peer blk e f) where
       , tBlockFetchSerialisedTracer = f tBlockFetchSerialisedTracer
       , tTxSubmission2Tracer        = f tTxSubmission2Tracer
       , tKeepAliveTracer            = f tKeepAliveTracer
+      , tPeerSharingTracer          = f tPeerSharingTracer
       }
     where
       f :: forall a. Semigroup a
-        => (Tracers' peer blk e f -> a)
+        => (Tracers' peer ntnAddr blk e f -> a)
         -> a
       f prj = prj l <> prj r
 
 -- | Use a 'nullTracer' for each protocol.
-nullTracers :: Monad m => Tracers m peer blk e
+nullTracers :: Monad m => Tracers m ntnAddr blk e
 nullTracers = Tracers {
       tChainSyncTracer            = nullTracer
     , tChainSyncSerialisedTracer  = nullTracer
@@ -404,17 +406,18 @@ nullTracers = Tracers {
     , tBlockFetchSerialisedTracer = nullTracer
     , tTxSubmission2Tracer        = nullTracer
     , tKeepAliveTracer            = nullTracer
+    , tPeerSharingTracer          = nullTracer
     }
 
 showTracers :: ( Show blk
-               , Show peer
+               , Show ntnAddr
                , Show (Header blk)
                , Show (GenTx blk)
                , Show (GenTxId blk)
                , HasHeader blk
                , HasNestedContent Header blk
                )
-            => Tracer m String -> Tracers m peer blk e
+            => Tracer m String -> Tracers m ntnAddr blk e
 showTracers tr = Tracers {
       tChainSyncTracer            = showTracing tr
     , tChainSyncSerialisedTracer  = showTracing tr
@@ -422,6 +425,7 @@ showTracers tr = Tracers {
     , tBlockFetchSerialisedTracer = showTracing tr
     , tTxSubmission2Tracer        = showTracing tr
     , tKeepAliveTracer            = showTracing tr
+    , tPeerSharingTracer          = showTracing tr
     }
 
 {-------------------------------------------------------------------------------
@@ -542,7 +546,7 @@ mkApps ::
      , ShowProxy (GenTx blk)
      )
   => NodeKernel m addrNTN addrNTC blk -- ^ Needed for bracketing only
-  -> Tracers m (ConnectionId addrNTN) blk e
+  -> Tracers m addrNTN blk e
   -> (NodeToNodeVersion -> Codecs blk addrNTN e m bCS bCS bBF bBF bTX bKA bPS)
   -> ByteLimits bCS bBF bTX bKA
   -> m ChainSyncTimeout
@@ -769,8 +773,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
         $ \controller -> do
           psClient <- hPeerSharingClient version controlMessageSTM them controller
           ((), trailing) <- runPeerWithLimits
-            -- TODO: add tracer
-            nullTracer
+            (TraceLabelPeer them `contramap` tPeerSharingTracer)
             (cPeerSharingCodec (mkCodecs version))
             (byteLimitsPeerSharing (const 0))
             timeLimitsPeerSharing
@@ -786,8 +789,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
     aPeerSharingServer version ResponderContext { rcConnectionId = them } channel = do
       labelThisThread "PeerSharingServer"
       runPeerWithLimits
-        -- TODO: add tracer
-        nullTracer
+        (TraceLabelPeer them `contramap` tPeerSharingTracer)
         (cPeerSharingCodec (mkCodecs version))
         (byteLimitsPeerSharing (const 0))
         timeLimitsPeerSharing
@@ -808,10 +810,10 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
 initiator ::
      MiniProtocolParameters
   -> NodeToNodeVersion
-  -> PSTypes.PeerSharing
+  -> NodeToNodeVersionData
   -> Apps m addr b b b b b a c
-  -> OuroborosBundleWithExpandedCtx 'InitiatorMode addr b m a Void
-initiator miniProtocolParameters version ownPeerSharing Apps {..} =
+  -> OuroborosBundleWithExpandedCtx 'Mux.InitiatorMode addr b m a Void
+initiator miniProtocolParameters version versionData Apps {..} =
     nodeToNodeProtocols
       miniProtocolParameters
       -- TODO: currently consensus is using 'ConnectionId' for its 'peer' type.
@@ -833,7 +835,7 @@ initiator miniProtocolParameters version ownPeerSharing Apps {..} =
             (InitiatorProtocolOnly (MiniProtocolCb (\ctx -> aPeerSharingClient version ctx)))
         })
       version
-      ownPeerSharing
+      versionData
 
 -- | A bi-directional network application.
 --
@@ -843,10 +845,10 @@ initiator miniProtocolParameters version ownPeerSharing Apps {..} =
 initiatorAndResponder ::
      MiniProtocolParameters
   -> NodeToNodeVersion
-  -> PSTypes.PeerSharing
+  -> NodeToNodeVersionData
   -> Apps m addr b b b b b a c
-  -> OuroborosBundleWithExpandedCtx 'InitiatorResponderMode addr b m a c
-initiatorAndResponder miniProtocolParameters version ownPeerSharing Apps {..} =
+  -> OuroborosBundleWithExpandedCtx 'Mux.InitiatorResponderMode addr b m a c
+initiatorAndResponder miniProtocolParameters version versionData Apps {..} =
     nodeToNodeProtocols
       miniProtocolParameters
       (NodeToNodeProtocols {
@@ -873,4 +875,4 @@ initiatorAndResponder miniProtocolParameters version ownPeerSharing Apps {..} =
               (MiniProtocolCb (\responderCtx -> aPeerSharingServer version responderCtx)))
         })
       version
-      ownPeerSharing
+      versionData

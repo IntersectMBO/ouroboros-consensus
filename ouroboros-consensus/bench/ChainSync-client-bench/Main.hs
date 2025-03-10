@@ -1,6 +1,10 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
+-- | This is a comparative benchmark that can be used to spot regressions in the
+-- Chain Sync Client. It is not a benchmark intended to provide an absolute
+-- measure of performance. For that, it would arguably need to use Cardano
+-- blocks instead of Test Blocks
 module Main (main) where
 
 import           Bench.Consensus.ChainSyncClient.Driver (mainWith)

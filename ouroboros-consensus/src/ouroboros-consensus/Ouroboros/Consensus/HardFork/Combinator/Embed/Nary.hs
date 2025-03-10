@@ -1,5 +1,4 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -10,6 +9,7 @@
 
 module Ouroboros.Consensus.HardFork.Combinator.Embed.Nary (
     Inject (..)
+  , InjectionIndex (InjectionIndex)
   , inject'
     -- * Defaults
   , injectHardForkState
@@ -17,6 +17,9 @@ module Ouroboros.Consensus.HardFork.Combinator.Embed.Nary (
   , injectQuery
     -- * Initial 'ExtLedgerState'
   , injectInitialExtLedgerState
+    -- * Convenience
+  , forgetInjectionIndex
+  , oracularInjectionIndex
   ) where
 
 import           Data.Bifunctor (first)
@@ -46,9 +49,7 @@ import           Ouroboros.Consensus.Util ((.:))
 class Inject f where
   inject ::
        forall x xs. CanHardFork xs
-    => Exactly xs History.Bound
-       -- ^ Start bound of each era
-    -> Index xs x
+    => InjectionIndex xs x
     -> f x
     -> f (HardForkBlock xs)
 
@@ -59,8 +60,57 @@ inject' ::
      , Coercible a (f x)
      , Coercible b (f (HardForkBlock xs))
      )
-  => Proxy f -> Exactly xs History.Bound -> Index xs x -> a -> b
-inject' _ startBounds idx = coerce . inject @f startBounds idx . coerce
+  => Proxy f -> InjectionIndex xs x -> a -> b
+inject' _ iidx = coerce . inject @f iidx . coerce
+
+{-------------------------------------------------------------------------------
+  InjectionIndex
+-------------------------------------------------------------------------------}
+
+-- | This data type is isomorphic to an 'Index' that additionally provides a
+-- 'History.Bound' for every era up to and including that index, but none of
+-- the subsequent eras.
+newtype InjectionIndex xs x =
+    InjectionIndex (Telescope (K History.Bound) (State.Current ((:~:) x)) xs)
+
+-- | Many instances of 'Inject' do not need the 'History.Bound's, eg those that
+-- do not construct 'HardForkState's
+forgetInjectionIndex :: InjectionIndex xs x -> Index xs x
+forgetInjectionIndex (InjectionIndex tele) = case tele of
+    TZ (State.Current _k Refl) -> IZ
+    TS _k tele'                ->
+        IS (forgetInjectionIndex (InjectionIndex tele'))
+
+-- | Build an 'InjectionIndex' from oracular 'History.Bound's and an 'Index'
+--
+-- This bounds data is oracular, since the later eras in @xs@ might have not
+-- yet started. However, it can be known in test code.
+--
+-- INVARIANT: the result is completely independent of the 'history.Bound's for
+-- eras /after/ the given 'Index'.
+oracularInjectionIndex ::
+     Exactly xs History.Bound
+  -> Index xs x
+  -> InjectionIndex xs x
+oracularInjectionIndex (Exactly np) idx = case (idx, np) of
+    (IZ     , K start :* _      ) ->
+        InjectionIndex
+      $ TZ State.Current { currentStart = start, currentState = Refl }
+    (IS idx', kstart  :* kstarts) ->
+        let InjectionIndex iidx =
+              oracularInjectionIndex (Exactly kstarts) idx'
+        in
+        InjectionIndex (TS kstart iidx)
+
+-- | NOT EXPORTED
+--
+-- The first bound in a telescope. This is used in an inductive alternative
+-- within 'injectHardForkState', since the end of one era is the start of the
+-- next.
+firstBound :: InjectionIndex xs x -> History.Bound
+firstBound (InjectionIndex tele) = case tele of
+    TZ State.Current {currentStart = start} -> start
+    TS (K start) _tele'                     -> start
 
 {-------------------------------------------------------------------------------
   Defaults (to ease implementation)
@@ -86,88 +136,97 @@ injectQuery idx q = case idx of
 
 injectHardForkState ::
      forall f x xs.
-     Exactly xs History.Bound
-     -- ^ Start bound of each era
-  -> Index xs x
+     InjectionIndex xs x
   -> f x
   -> HardForkState f xs
-injectHardForkState startBounds idx x =
-    HardForkState $ go startBounds idx
+injectHardForkState iidx x =
+    HardForkState $ go iidx
   where
     go ::
-         Exactly xs' History.Bound
-      -> Index xs' x
+         InjectionIndex xs' x
       -> Telescope (K State.Past) (State.Current f) xs'
-    go (ExactlyCons start _) IZ =
-        TZ (State.Current { currentStart = start, currentState = x })
-    go (ExactlyCons start startBounds'@(ExactlyCons nextStart _)) (IS idx') =
-        TS (K State.Past { pastStart = start, pastEnd = nextStart })
-           (go startBounds' idx')
-    go (ExactlyCons _ ExactlyNil) (IS idx') = case idx' of {}
-    go ExactlyNil idx' = case idx' of {}
+    go (InjectionIndex (TZ current@State.Current { currentState = Refl })) =
+        TZ
+          current { State.currentState = x }
+    go (InjectionIndex (TS (K start) tele)) =
+        TS
+          (K State.Past {
+              pastStart = start
+            , pastEnd   = firstBound (InjectionIndex tele)
+            }
+          )
+          (go (InjectionIndex tele))
 
 {-------------------------------------------------------------------------------
   Instances
 -------------------------------------------------------------------------------}
 
 instance Inject I where
-  inject _ = injectNS' (Proxy @I)
+  inject = injectNS' (Proxy @I) . forgetInjectionIndex
 
 instance Inject Header where
-  inject _ = injectNS' (Proxy @Header)
+  inject = injectNS' (Proxy @Header) . forgetInjectionIndex
 
 instance Inject SerialisedHeader where
-  inject _ idx =
+  inject iidx =
         serialisedHeaderFromPair
       . first (mapSomeNestedCtxt (injectNestedCtxt_ idx))
       . serialisedHeaderToPair
+    where
+      idx = forgetInjectionIndex iidx
 
 instance Inject WrapHeaderHash where
-  inject _ (idx :: Index xs x) =
+  inject (iidx :: InjectionIndex xs x) =
     case dictIndexAll (Proxy @SingleEraBlock) idx of
       Dict ->
           WrapHeaderHash
         . OneEraHash
         . toShortRawHash (Proxy @x)
         . unwrapHeaderHash
+    where
+      idx = forgetInjectionIndex iidx
 
 instance Inject GenTx where
-  inject _ = injectNS' (Proxy @GenTx)
+  inject = injectNS' (Proxy @GenTx) . forgetInjectionIndex
 
 instance Inject WrapGenTxId where
-  inject _ = injectNS' (Proxy @WrapGenTxId)
+  inject = injectNS' (Proxy @WrapGenTxId) . forgetInjectionIndex
 
 instance Inject WrapApplyTxErr where
-  inject _ =
-      (WrapApplyTxErr . HardForkApplyTxErrFromEra)
-        .: injectNS' (Proxy @WrapApplyTxErr)
+  inject =
+      (   (WrapApplyTxErr . HardForkApplyTxErrFromEra)
+       .: injectNS' (Proxy @WrapApplyTxErr)
+      )
+    . forgetInjectionIndex
 
 instance Inject (SomeSecond BlockQuery) where
-  inject _ idx (SomeSecond q) = SomeSecond (QueryIfCurrent (injectQuery idx q))
+  inject iidx (SomeSecond q) =
+      SomeSecond (QueryIfCurrent (injectQuery idx q))
+    where
+      idx = forgetInjectionIndex iidx
 
 instance Inject AnnTip where
-  inject _ = undistribAnnTip .: injectNS' (Proxy @AnnTip)
+  inject =
+      (undistribAnnTip .: injectNS' (Proxy @AnnTip)) . forgetInjectionIndex
 
 instance Inject LedgerState where
-  inject startBounds idx =
-      HardForkLedgerState . injectHardForkState startBounds idx
+  inject = HardForkLedgerState .: injectHardForkState
 
 instance Inject WrapChainDepState where
-  inject startBounds idx =
-      coerce . injectHardForkState startBounds idx
+  inject = coerce .: injectHardForkState
 
 instance Inject HeaderState where
-  inject startBounds idx HeaderState {..} = HeaderState {
-        headerStateTip      = inject startBounds idx <$> headerStateTip
+  inject iidx HeaderState {..} = HeaderState {
+        headerStateTip      = inject iidx <$> headerStateTip
       , headerStateChainDep = unwrapChainDepState
-                            $ inject startBounds idx
+                            $ inject iidx
                             $ WrapChainDepState headerStateChainDep
       }
 
 instance Inject ExtLedgerState where
-  inject startBounds idx ExtLedgerState {..} = ExtLedgerState {
-        ledgerState = inject startBounds idx ledgerState
-      , headerState = inject startBounds idx headerState
+  inject iidx ExtLedgerState {..} = ExtLedgerState {
+        ledgerState = inject iidx ledgerState
+      , headerState = inject iidx headerState
       }
 
 {-------------------------------------------------------------------------------
@@ -184,6 +243,9 @@ instance Inject ExtLedgerState where
 -- extending 'applyChainTick' to translate across more than one era is not
 -- problematic, but extending 'ledgerViewForecastAt' is a lot more subtle; see
 -- @forecastNotFinal@.
+--
+-- Note: this function is an /alternative/ to the 'Inject' class above. It does
+-- not rely on that class.
 injectInitialExtLedgerState ::
      forall x xs. CanHardFork (x ': xs)
   => TopLevelConfig (HardForkBlock (x ': xs))

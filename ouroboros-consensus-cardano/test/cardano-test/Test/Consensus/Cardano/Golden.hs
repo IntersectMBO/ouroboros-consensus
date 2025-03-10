@@ -32,17 +32,6 @@ instance CardanoHardForkConstraints c
 instance CardanoHardForkConstraints c
       => ToGoldenDirectory (QueryVersion, HardForkNodeToClientVersion (CardanoEras c)) where
   toGoldenDirectory (queryVersion, blockVersion) = show queryVersion </> case blockVersion of
-    CardanoNodeToClientVersion1  -> "CardanoNodeToClientVersion1"
-    CardanoNodeToClientVersion2  -> "CardanoNodeToClientVersion2"
-    CardanoNodeToClientVersion3  -> "CardanoNodeToClientVersion3"
-    CardanoNodeToClientVersion4  -> "CardanoNodeToClientVersion4"
-    CardanoNodeToClientVersion5  -> "CardanoNodeToClientVersion5"
-    CardanoNodeToClientVersion6  -> "CardanoNodeToClientVersion6"
-    CardanoNodeToClientVersion7  -> "CardanoNodeToClientVersion7"
-    CardanoNodeToClientVersion8  -> "CardanoNodeToClientVersion8"
-    CardanoNodeToClientVersion9  -> "CardanoNodeToClientVersion9"
-    CardanoNodeToClientVersion10 -> "CardanoNodeToClientVersion10"
-    CardanoNodeToClientVersion11 -> "CardanoNodeToClientVersion11"
     CardanoNodeToClientVersion12 -> "CardanoNodeToClientVersion12"
     CardanoNodeToClientVersion13 -> "CardanoNodeToClientVersion13"
     CardanoNodeToClientVersion14 -> "CardanoNodeToClientVersion14"

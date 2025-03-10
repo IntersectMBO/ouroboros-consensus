@@ -196,7 +196,7 @@ See this file for usage information.
 
 If no analysis flag is provided, then the ChainDB will be opened, all the chunks
 in the immutable and volatile databases will be validated (see
-[validation](#database-validation)), and the tool will exit.
+[validation](#database-validation-via---db-validation)), and the tool will exit.
 
 ### Examples
 
@@ -261,14 +261,14 @@ cabal run exe:db-analyser -- cardano
 
 ##### Plotting the benchmark results
 
-Assuming you are at the top level of `ouroboros-network`, and the benchmark data
+Assuming you are at the top level of `ouroboros-consensus`, and the benchmark data
 has been written to a file named `ledger-ops-cost.csv`, a plot can be generated
 by running:
 
 ```sh
 gnuplot -e "bench_data='ledger-ops-cost.csv'" \
         -e "out_file='results.png'" \
-           ouroboros-consensus-cardano-tools/scripts/plot-ledger-ops-cost.gp
+           ouroboros-consensus-cardano/scripts/plot-ledger-ops-cost.gp
 ```
 
 The plot will be written to a file named `results.png`. See the script file for

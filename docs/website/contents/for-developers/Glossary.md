@@ -1,3 +1,4 @@
+<!-- xrefcheck: ignore all -->
 # Glossary
 
 Notes on the use and maintenance of this glossary:

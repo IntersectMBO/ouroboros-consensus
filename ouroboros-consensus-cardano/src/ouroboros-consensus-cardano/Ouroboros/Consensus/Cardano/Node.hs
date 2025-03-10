@@ -42,21 +42,10 @@ module Ouroboros.Consensus.Cardano.Node (
   , protocolClientInfoCardano
   , protocolInfoCardano
     -- * SupportedNetworkProtocolVersion
-  , pattern CardanoNodeToClientVersion1
-  , pattern CardanoNodeToClientVersion10
-  , pattern CardanoNodeToClientVersion11
   , pattern CardanoNodeToClientVersion12
   , pattern CardanoNodeToClientVersion13
   , pattern CardanoNodeToClientVersion14
   , pattern CardanoNodeToClientVersion15
-  , pattern CardanoNodeToClientVersion2
-  , pattern CardanoNodeToClientVersion3
-  , pattern CardanoNodeToClientVersion4
-  , pattern CardanoNodeToClientVersion5
-  , pattern CardanoNodeToClientVersion6
-  , pattern CardanoNodeToClientVersion7
-  , pattern CardanoNodeToClientVersion8
-  , pattern CardanoNodeToClientVersion9
   , pattern CardanoNodeToNodeVersion1
   , pattern CardanoNodeToNodeVersion2
   ) where
@@ -86,6 +75,7 @@ import           Data.SOP.Strict
 import           Data.Word (Word16, Word64)
 import           Lens.Micro ((^.))
 import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.Byron.ByronHFC
 import           Ouroboros.Consensus.Byron.Ledger (ByronBlock)
 import qualified Ouroboros.Consensus.Byron.Ledger as Byron
 import qualified Ouroboros.Consensus.Byron.Ledger.Conversions as Byron
@@ -127,8 +117,6 @@ import           Ouroboros.Consensus.Util.IOLike
 {-------------------------------------------------------------------------------
   SerialiseHFC
 -------------------------------------------------------------------------------}
-
-instance SerialiseConstraintsHFC ByronBlock
 
 -- | Important: we need to maintain binary compatibility with Byron blocks, as
 -- they are already stored on disk.
@@ -272,177 +260,6 @@ pattern CardanoNodeToNodeVersion2 =
       :* Nil
       )
 
--- | We support the sole Byron version with the hard fork disabled.
-pattern CardanoNodeToClientVersion1 :: BlockNodeToClientVersion (CardanoBlock c)
-pattern CardanoNodeToClientVersion1 =
-    HardForkNodeToClientDisabled ByronNodeToClientVersion1
-
--- | The hard fork enabled and the Shelley era enabled.
-pattern CardanoNodeToClientVersion2 :: BlockNodeToClientVersion (CardanoBlock c)
-pattern CardanoNodeToClientVersion2 =
-    HardForkNodeToClientEnabled
-      HardForkSpecificNodeToClientVersion1
-      (  EraNodeToClientEnabled ByronNodeToClientVersion1
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion1
-      :* EraNodeToClientDisabled
-      :* EraNodeToClientDisabled
-      :* EraNodeToClientDisabled
-      :* EraNodeToClientDisabled
-      :* EraNodeToClientDisabled
-      :* Nil
-      )
-
--- | The hard fork enabled and the Shelley era enabled, but using
--- 'ShelleyNodeToClientVersion2' and 'HardForkSpecificNodeToClientVersion2'.
-pattern CardanoNodeToClientVersion3 :: BlockNodeToClientVersion (CardanoBlock c)
-pattern CardanoNodeToClientVersion3 =
-    HardForkNodeToClientEnabled
-      HardForkSpecificNodeToClientVersion2
-      (  EraNodeToClientEnabled ByronNodeToClientVersion1
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion2
-      :* EraNodeToClientDisabled
-      :* EraNodeToClientDisabled
-      :* EraNodeToClientDisabled
-      :* EraNodeToClientDisabled
-      :* EraNodeToClientDisabled
-      :* Nil
-      )
-
--- | The hard fork enabled, and the Shelley and Allegra eras enabled.
---
--- We don't bother with 'ShelleyNodeToClientVersion1' and
--- 'HardForkSpecificNodeToClientVersion1'.
-pattern CardanoNodeToClientVersion4 :: BlockNodeToClientVersion (CardanoBlock c)
-pattern CardanoNodeToClientVersion4 =
-    HardForkNodeToClientEnabled
-      HardForkSpecificNodeToClientVersion2
-      (  EraNodeToClientEnabled ByronNodeToClientVersion1
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion2
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion2
-      :* EraNodeToClientDisabled
-      :* EraNodeToClientDisabled
-      :* EraNodeToClientDisabled
-      :* EraNodeToClientDisabled
-      :* Nil
-      )
-
--- | The hard fork enabled, and the Shelley, Allegra, and Mary eras enabled.
---
--- We don't bother with 'ShelleyNodeToClientVersion1'.
-pattern CardanoNodeToClientVersion5 :: BlockNodeToClientVersion (CardanoBlock c)
-pattern CardanoNodeToClientVersion5 =
-    HardForkNodeToClientEnabled
-      HardForkSpecificNodeToClientVersion2
-      (  EraNodeToClientEnabled ByronNodeToClientVersion1
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion2
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion2
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion2
-      :* EraNodeToClientDisabled
-      :* EraNodeToClientDisabled
-      :* EraNodeToClientDisabled
-      :* Nil
-      )
-
--- | The hard fork enabled, and the Shelley, Allegra, and Mary eras enabled, but
--- using 'ShelleyNodeToClientVersion3' for the Shelley-based eras , which
--- enables new queries.
-pattern CardanoNodeToClientVersion6 :: BlockNodeToClientVersion (CardanoBlock c)
-pattern CardanoNodeToClientVersion6 =
-    HardForkNodeToClientEnabled
-      HardForkSpecificNodeToClientVersion2
-      (  EraNodeToClientEnabled ByronNodeToClientVersion1
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion3
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion3
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion3
-      :* EraNodeToClientDisabled
-      :* EraNodeToClientDisabled
-      :* EraNodeToClientDisabled
-      :* Nil
-      )
-
--- | The hard fork enabled, and the Shelley, Allegra, Mary and Alonzo eras enabled
-pattern CardanoNodeToClientVersion7 :: BlockNodeToClientVersion (CardanoBlock c)
-pattern CardanoNodeToClientVersion7 =
-    HardForkNodeToClientEnabled
-      HardForkSpecificNodeToClientVersion2
-      (  EraNodeToClientEnabled ByronNodeToClientVersion1
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion4
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion4
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion4
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion4
-      :* EraNodeToClientDisabled
-      :* EraNodeToClientDisabled
-      :* Nil
-      )
-
--- | The hard fork enabled, and the Shelley, Allegra, Mary and Alonzo eras enabled
--- Using 'ShelleyNodeToClientVersion5' for the Shelley-based eras , which
--- enables new queries.
-pattern CardanoNodeToClientVersion8 :: BlockNodeToClientVersion (CardanoBlock c)
-pattern CardanoNodeToClientVersion8 =
-    HardForkNodeToClientEnabled
-      HardForkSpecificNodeToClientVersion2
-      (  EraNodeToClientEnabled ByronNodeToClientVersion1
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion5
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion5
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion5
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion5
-      :* EraNodeToClientDisabled
-      :* EraNodeToClientDisabled
-      :* Nil
-      )
-
--- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo and Babbage
--- eras enabled Using 'ShelleyNodeToClientVersion5' for the Shelley-based eras,
--- which enables new queries.
-pattern CardanoNodeToClientVersion9 :: BlockNodeToClientVersion (CardanoBlock c)
-pattern CardanoNodeToClientVersion9 =
-    HardForkNodeToClientEnabled
-      HardForkSpecificNodeToClientVersion2
-      (  EraNodeToClientEnabled ByronNodeToClientVersion1
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion5
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion5
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion5
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion5
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion5
-      :* EraNodeToClientDisabled
-      :* Nil
-      )
-
--- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo and Babbage
--- eras enabled Using 'ShelleyNodeToClientVersion6' for the Shelley-based eras,
--- which enables new queries.
-pattern CardanoNodeToClientVersion10 :: BlockNodeToClientVersion (CardanoBlock c)
-pattern CardanoNodeToClientVersion10 =
-    HardForkNodeToClientEnabled
-      HardForkSpecificNodeToClientVersion2
-      (  EraNodeToClientEnabled ByronNodeToClientVersion1
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion6
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion6
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion6
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion6
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion6
-      :* EraNodeToClientDisabled
-      :* Nil
-      )
-
--- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo and Babbage
--- eras enabled, using 'ShelleyNodeToClientVersion7' for the Shelley-based eras,
--- which enables new queries.
-pattern CardanoNodeToClientVersion11 :: BlockNodeToClientVersion (CardanoBlock c)
-pattern CardanoNodeToClientVersion11 =
-    HardForkNodeToClientEnabled
-      HardForkSpecificNodeToClientVersion2
-      (  EraNodeToClientEnabled ByronNodeToClientVersion1
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion7
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion7
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion7
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion7
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion7
-      :* EraNodeToClientDisabled
-      :* Nil
-      )
-
 -- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo and Babbage
 -- and Conway eras enabled, using 'ShelleyNodeToClientVersion8' for the
 -- Shelley-based eras.
@@ -519,14 +336,7 @@ instance CardanoHardForkConstraints c
       ]
 
   supportedNodeToClientVersions _ = Map.fromList $
-      [ (NodeToClientV_9 , CardanoNodeToClientVersion7)
-      , (NodeToClientV_10, CardanoNodeToClientVersion7)
-      , (NodeToClientV_11, CardanoNodeToClientVersion8)
-      , (NodeToClientV_12, CardanoNodeToClientVersion8)
-      , (NodeToClientV_13, CardanoNodeToClientVersion9)
-      , (NodeToClientV_14, CardanoNodeToClientVersion10)
-      , (NodeToClientV_15, CardanoNodeToClientVersion11)
-      , (NodeToClientV_16, CardanoNodeToClientVersion12)
+      [ (NodeToClientV_16, CardanoNodeToClientVersion12)
       , (NodeToClientV_17, CardanoNodeToClientVersion13)
       , (NodeToClientV_18, CardanoNodeToClientVersion14)
       , (NodeToClientV_19, CardanoNodeToClientVersion15)

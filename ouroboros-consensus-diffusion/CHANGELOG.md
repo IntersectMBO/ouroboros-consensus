@@ -2,6 +2,26 @@
 
 # Changelog entries
 
+<a id='changelog-0.19.0.0'></a>
+## 0.19.0.0 — 2025-01-08
+
+### Patch
+
+- Remove references to `Ouroboros.Consensus.Fragment.InFuture`.
+
+- Depend on `network-mux` from `ouroboros-network` and use its types.
+
+* Use [`resource-registry`](https://hackage.haskell.org/package/resource-registry).
+
+### Breaking
+
+- Adapted to Genesis-related changes in `ouroboros-consensus` ([#1179](https://github.com/IntersectMBO/ouroboros-consensus/pull/1179)).
+
+- Remove `CheckInFuture m blk` argument from `openChainDB`.
+
+- Updated to `typed-protocols-0.3.0.0`
+- Added `KeepAlive` tracer to `Tracers'` data type.
+
 <a id='changelog-0.18.0.0'></a>
 ## 0.18.0.0 — 2024-10-14
 
@@ -143,7 +163,7 @@ NOTE: version jumps from `0.11.0.0` to `0.13.0.0` because `0.12.0.0` was created
 
 - Added the Genesis State Machine (GSM), though for now it is merely the
   simpler [Bootstrap Peers State
-  Machine](https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/BootstrapPeersIER).
+  Machine](https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/BootstrapPeersIER/).
 
 - Added `rnGetUseBootstrapPeers` to `RunNodeArgs`, for dynamically
   enabling/disabling the GSM. The proper GSM must always be running, despite

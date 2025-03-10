@@ -42,6 +42,7 @@ import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.ByteString.Lazy (ByteString)
 import           Data.Void (Void)
+import qualified Network.Mux as Mux
 import           Network.TypedProtocol.Codec
 import qualified Network.TypedProtocol.Stateful.Codec as Stateful
 import           Ouroboros.Consensus.Block
@@ -73,7 +74,8 @@ import qualified Ouroboros.Network.Driver.Stateful as Stateful
 import           Ouroboros.Network.Mux
 import           Ouroboros.Network.NodeToClient hiding
                      (NodeToClientVersion (..))
-import qualified Ouroboros.Network.NodeToClient as N (NodeToClientVersion (..))
+import qualified Ouroboros.Network.NodeToClient as N (NodeToClientVersion (..),
+                     NodeToClientVersionData)
 import           Ouroboros.Network.Protocol.ChainSync.Codec
 import           Ouroboros.Network.Protocol.ChainSync.Server
 import           Ouroboros.Network.Protocol.ChainSync.Type
@@ -464,9 +466,10 @@ mkApps kernel Tracers {..} Codecs {..} Handlers {..} =
 -- 'OuroborosApplication' for the node-to-client protocols.
 responder ::
      N.NodeToClientVersion
+  -> N.NodeToClientVersionData
   -> Apps m (ConnectionId peer) b b b b a
-  -> OuroborosApplicationWithMinimalCtx 'ResponderMode peer b m Void a
-responder version Apps {..} =
+  -> OuroborosApplicationWithMinimalCtx 'Mux.ResponderMode peer b m Void a
+responder version versionData Apps {..} =
     nodeToClientProtocols
       (NodeToClientProtocols {
           localChainSyncProtocol =
@@ -483,3 +486,4 @@ responder version Apps {..} =
               aTxMonitorServer (rcConnectionId ctx)
         })
       version
+      versionData

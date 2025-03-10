@@ -32,14 +32,17 @@ import           Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
                      (TraceBlockFetchServerEvent)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (TraceChainSyncClientEvent)
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as CSJumping
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Server
                      (TraceChainSyncServerEvent)
 import           Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
                      (TraceLocalTxSubmissionServerEvent (..))
 import           Ouroboros.Consensus.Node.GSM (TraceGsmEvent)
 import           Ouroboros.Network.Block (Tip)
-import           Ouroboros.Network.BlockFetch (FetchDecision,
-                     TraceFetchClientState, TraceLabelPeer)
+import           Ouroboros.Network.BlockFetch (TraceFetchClientState,
+                     TraceLabelPeer)
+import           Ouroboros.Network.BlockFetch.Decision.Trace
+                     (TraceDecisionEvent)
 import           Ouroboros.Network.KeepAlive (TraceKeepAliveClient)
 import           Ouroboros.Network.TxSubmission.Inbound
                      (TraceTxSubmissionInbound)
@@ -54,7 +57,7 @@ data Tracers' remotePeer localPeer blk f = Tracers
   { chainSyncClientTracer         :: f (TraceLabelPeer remotePeer (TraceChainSyncClientEvent blk))
   , chainSyncServerHeaderTracer   :: f (TraceLabelPeer remotePeer (TraceChainSyncServerEvent blk))
   , chainSyncServerBlockTracer    :: f (TraceChainSyncServerEvent blk)
-  , blockFetchDecisionTracer      :: f [TraceLabelPeer remotePeer (FetchDecision [Point (Header blk)])]
+  , blockFetchDecisionTracer      :: f (TraceDecisionEvent remotePeer (Header blk))
   , blockFetchClientTracer        :: f (TraceLabelPeer remotePeer (TraceFetchClientState (Header blk)))
   , blockFetchServerTracer        :: f (TraceLabelPeer remotePeer (TraceBlockFetchServerEvent blk))
   , txInboundTracer               :: f (TraceLabelPeer remotePeer (TraceTxSubmissionInbound  (GenTxId blk) (GenTx blk)))
@@ -69,6 +72,7 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , consensusErrorTracer          :: f SomeException
   , gsmTracer                     :: f (TraceGsmEvent (Tip blk))
   , gddTracer                     :: f (TraceGDDEvent remotePeer blk)
+  , csjTracer                     :: f (CSJumping.TraceEvent remotePeer)
   }
 
 instance (forall a. Semigroup (f a))
@@ -92,6 +96,7 @@ instance (forall a. Semigroup (f a))
       , consensusErrorTracer          = f consensusErrorTracer
       , gsmTracer                     = f gsmTracer
       , gddTracer                     = f gddTracer
+      , csjTracer                     = f csjTracer
       }
     where
       f :: forall a. Semigroup a
@@ -123,6 +128,7 @@ nullTracers = Tracers
     , consensusErrorTracer          = nullTracer
     , gsmTracer                     = nullTracer
     , gddTracer                     = nullTracer
+    , csjTracer                     = nullTracer
     }
 
 showTracers :: ( Show blk
@@ -157,6 +163,7 @@ showTracers tr = Tracers
     , consensusErrorTracer          = showTracing tr
     , gsmTracer                     = showTracing tr
     , gddTracer                     = showTracing tr
+    , csjTracer                     = showTracing tr
     }
 
 {-------------------------------------------------------------------------------

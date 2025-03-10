@@ -13,9 +13,9 @@
     with-utf8,
 -}
 
-{-# LANGUAGE BlockArguments      #-}
-{-# LANGUAGE GHC2021             #-}
-{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE GHC2021 #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 {-# OPTIONS_GHC -Wall -Wextra #-}
@@ -27,6 +27,7 @@ import qualified Control.Foldl as Foldl
 import           Control.Monad
 import           Data.Map (Map)
 import qualified Data.Map as Map
+import           Data.Maybe (mapMaybe)
 import           Data.Monoid (First (..))
 import           Data.Semigroup (Max (..))
 import qualified Data.Text as Text
@@ -55,10 +56,10 @@ main = withStdTerminalHandles $ sh do
 
     pure (packageName, maxMaybe, dependencies)
 
-  packageVersions <- reduce Foldl.map do
-    (packageName, maybeSeverity) <- select $ Map.toList packageChangeSeverities
+  packageVersions <- reduce Foldl.list do
+    (packageName, _) <- select packages
 
-    case maybeSeverity of
+    case join $ Map.lookup packageName packageChangeSeverities of
       Nothing -> do
         liftIO do
           putStrLn $ "No changes need to be made for package " <> packageName <> "!"
@@ -69,22 +70,22 @@ main = withStdTerminalHandles $ sh do
 
         pure (packageName, (currentPackageVersion, nextPackageVersion))
 
-  void $ liftIO $ flip Map.traverseWithKey packageVersions $ \package (current, next) -> do
+  liftIO $ forM_ packageVersions $ \(package, (current, next)) -> do
     putStrLn $ package <> ": " <> showVersion current <> " -> " <> showVersion next
 
   unless isDryRun do
     unless skipGit do
-      createGitBranch packageVersions
+      createGitBranch (Map.fromList packageVersions)
 
-  (packageName, (current, next)) <- select $ Map.toList packageVersions
+  (packageName, (current, next)) <- select $ Map.toList (Map.fromList packageVersions)
 
   if isDryRun
     then
       liftIO do
         putStrLn $ "This is a dry run, so no changes will be made for " <> packageName
     else do
-      updateCabalFile packageName current next packageVersions
       runScrivCollect packageName next
+      updateCabalFile packageName current next (Map.fromList packageVersions)
       unless skipGit do
         createGitCommit packageName next
 
@@ -226,11 +227,10 @@ updateCabalFile :: FilePath
 updateCabalFile package current next dependenciesVersions = do
   inplace (updateVersion <|> updateDependencies) (package </> package <.> "cabal")
   where
-    versionText = Text.pack . showVersion
     updateVersion =
-      replaceIfContains "version:" (versionText current) (versionText next)
+      replaceIfContains "version:" (consensusVersionTextForCabal current) (consensusVersionTextForCabal next)
     updateDependencies = do
-      Map.foldlWithKey (\pat pkg (i, o) -> replaceIfContains (fromString pkg) (versionText i) (versionText o) <|> pat) empty dependenciesVersions
+      Map.foldlWithKey (\pat pkg (i, o) -> replaceIfContains (fromString pkg) (consensusVersionTextForCabal i) (consensusVersionTextForCabal o) <|> pat) empty dependenciesVersions
 
 replaceIfContains :: Pattern Text -> Text -> Text -> Pattern Text
 replaceIfContains t i o = do
@@ -252,6 +252,12 @@ createGitCommit package next = do
 packageNameWithVersion :: FilePath -> Version -> Text
 packageNameWithVersion package v = Text.pack $
   package <> "-" <> showVersion v
+
+consensusVersionTextForCabal :: Version -> Text
+consensusVersionTextForCabal Version{versionBranch = vb@[_zero, _major, _minor, _patch]} =
+  Text.intercalate "." . mapMaybe emptyIfZero $ vb
+  where emptyIfZero n = if n == 0 then Nothing else Just $ Text.pack $ show n
+consensusVersionTextForCabal v = Text.pack $ showVersion v
 
 -- The following newtypes and instances are only used to pick out the headings
 -- in the parsed Markdown files and can be safely ignored unless you care about

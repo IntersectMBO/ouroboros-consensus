@@ -1,6 +1,7 @@
-{-# LANGUAGE ApplicativeDo #-}
-{-# LANGUAGE CPP           #-}
-{-# LANGUAGE LambdaCase    #-}
+{-# LANGUAGE ApplicativeDo      #-}
+{-# LANGUAGE CPP                #-}
+{-# LANGUAGE LambdaCase         #-}
+{-# LANGUAGE PatternSynonyms    #-}
 
 module DBAnalyser.Parsers (
     BlockType (..)
@@ -21,6 +22,7 @@ import           Options.Applicative
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Node (PBftSignatureThreshold (..))
 import           Ouroboros.Consensus.Shelley.Node (Nonce (..))
+import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy (pattern DoDiskSnapshotChecksum, pattern NoDoDiskSnapshotChecksum)
 
 {-------------------------------------------------------------------------------
   Parsing
@@ -44,6 +46,10 @@ parseDBAnalyserConfig = DBAnalyserConfig
     <*> parseValidationPolicy
     <*> parseAnalysis
     <*> parseLimit
+    <*> flag DoDiskSnapshotChecksum NoDoDiskSnapshotChecksum (mconcat [
+            long "no-snapshot-checksum-on-read"
+          , help "Don't check the '.checksum' file when reading a ledger snapshot"
+          ])
 
 parseSelectDB :: Parser SelectDB
 parseSelectDB =
@@ -130,7 +136,14 @@ storeLedgerParser = do
             <> "This is much slower than block reapplication (the default)."
             )
     )
-  pure $ StoreLedgerStateAt slot ledgerValidation
+  doChecksum <- flag DoDiskSnapshotChecksum NoDoDiskSnapshotChecksum
+    (mconcat [ long "no-snapshot-checksum-on-write"
+             , help (unlines [ "Don't calculate the checksum and"
+                             , "write the '.checksum' file"
+                             , "when taking a ledger snapshot"
+                             ])
+             ])
+  pure $ StoreLedgerStateAt slot ledgerValidation doChecksum
 
 checkNoThunksParser :: Parser AnalysisName
 checkNoThunksParser = CheckNoThunksEvery <$> option auto

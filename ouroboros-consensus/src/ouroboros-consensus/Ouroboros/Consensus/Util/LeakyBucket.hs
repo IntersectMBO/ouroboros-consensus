@@ -222,7 +222,9 @@ runAgainstBucket config action = do
   leakingPeriodVersionTMVar <- atomically newEmptyTMVar -- see note [Leaky bucket design].
   tid <- myThreadId
   bucket <- init config
-  withAsync (leak (readTMVar leakingPeriodVersionTMVar) tid bucket) $ \_ -> do
+  withAsync (do
+    labelThisThread "Leaky bucket (ouroboros-consensus)"
+    leak (readTMVar leakingPeriodVersionTMVar) tid bucket) $ \_ -> do
     atomicallyWithMonotonicTime $ maybeStartThread Nothing leakingPeriodVersionTMVar bucket
     result <-
       action $

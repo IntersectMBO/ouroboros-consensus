@@ -6,6 +6,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MonadComprehensions #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -51,6 +52,8 @@ module Ouroboros.Consensus.Node (
   , RunNodeArgs (..)
   , Tracers
   , Tracers' (..)
+  , pattern DoDiskSnapshotChecksum
+  , pattern NoDoDiskSnapshotChecksum
     -- * Internal helpers
   , mkNodeKernelArgs
   , nodeKernelArgsEnforceInvariants
@@ -107,7 +110,8 @@ import           Ouroboros.Consensus.Storage.ChainDB (ChainDB, ChainDbArgs,
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
-                     (DiskPolicyArgs (..))
+                     (DiskPolicyArgs (..), pattern DoDiskSnapshotChecksum,
+                     pattern NoDoDiskSnapshotChecksum)
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
@@ -173,7 +177,7 @@ data RunNodeArgs m addrNTN addrNTC blk (p2p :: Diffusion.P2P) = RunNodeArgs {
       rnTraceConsensus :: Tracers m (ConnectionId addrNTN) (ConnectionId addrNTC) blk
 
       -- | Protocol tracers for node-to-node communication
-    , rnTraceNTN :: NTN.Tracers m (ConnectionId addrNTN) blk DeserialiseFailure
+    , rnTraceNTN :: NTN.Tracers m addrNTN blk DeserialiseFailure
 
       -- | Protocol tracers for node-to-client communication
     , rnTraceNTC :: NTC.Tracers m (ConnectionId addrNTC) blk DeserialiseFailure
@@ -207,7 +211,7 @@ data RunNodeArgs m addrNTN addrNTC blk (p2p :: Diffusion.P2P) = RunNodeArgs {
 -- 'runWith'. The @cardano-node@, for example, instead calls the 'run'
 -- abbreviation, which uses 'stdLowLevelRunNodeArgsIO' to indirectly specify
 -- these low-level values from the higher-level 'StdRunNodeArgs'.
-data LowLevelRunNodeArgs m addrNTN addrNTC versionDataNTN versionDataNTC blk
+data LowLevelRunNodeArgs m addrNTN addrNTC blk
                          (p2p :: Diffusion.P2P) =
    LowLevelRunNodeArgs {
 
@@ -265,15 +269,15 @@ data LowLevelRunNodeArgs m addrNTN addrNTC versionDataNTN versionDataNTC blk
       -- 'run' will not return before this does.
     , llrnRunDataDiffusion ::
            Diffusion.Applications
-             addrNTN NodeToNodeVersion   versionDataNTN
-             addrNTC NodeToClientVersion versionDataNTC
+             addrNTN NodeToNodeVersion   NodeToNodeVersionData
+             addrNTC NodeToClientVersion NodeToClientVersionData
              m NodeToNodeInitiatorResult
         -> Diffusion.ExtraApplications p2p addrNTN m NodeToNodeInitiatorResult
         -> m ()
 
-    , llrnVersionDataNTC :: versionDataNTC
+    , llrnVersionDataNTC :: NodeToClientVersionData
 
-    , llrnVersionDataNTN :: versionDataNTN
+    , llrnVersionDataNTN :: NodeToNodeVersionData
 
       -- | node-to-node protocol versions to run.
     , llrnNodeToNodeVersions :: Map NodeToNodeVersion (BlockNodeToNodeVersion blk)
@@ -392,7 +396,7 @@ type NetworkAddr addr = (
 -- network layer.
 --
 -- This function runs forever unless an exception is thrown.
-runWith :: forall m addrNTN addrNTC versionDataNTN versionDataNTC blk p2p.
+runWith :: forall m addrNTN addrNTC blk p2p.
      ( RunNode blk
      , IOLike m
      , Hashable addrNTN -- the constraint comes from `initNodeKernel`
@@ -402,7 +406,7 @@ runWith :: forall m addrNTN addrNTC versionDataNTN versionDataNTC blk p2p.
   => RunNodeArgs m addrNTN addrNTC blk p2p
   -> (NodeToNodeVersion -> addrNTN -> CBOR.Encoding)
   -> (NodeToNodeVersion -> forall s . CBOR.Decoder s addrNTN)
-  -> LowLevelRunNodeArgs m addrNTN addrNTC versionDataNTN versionDataNTC blk p2p
+  -> LowLevelRunNodeArgs m addrNTN addrNTC blk p2p
   -> m ()
 runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
 
@@ -597,8 +601,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
       -> NodeKernel m addrNTN (ConnectionId addrNTC) blk
       -> PeerMetrics m addrNTN
       -> ( Diffusion.Applications
-             addrNTN NodeToNodeVersion   versionDataNTN
-             addrNTC NodeToClientVersion versionDataNTC
+             addrNTN NodeToNodeVersion   NodeToNodeVersionData
+             addrNTC NodeToClientVersion NodeToClientVersionData
              m NodeToNodeInitiatorResult
          , Diffusion.ExtraApplications p2p addrNTN m NodeToNodeInitiatorResult
          )
@@ -636,7 +640,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                 [ simpleSingletonVersions
                     version
                     llrnVersionDataNTN
-                    (NTN.initiator miniProtocolParams version rnPeerSharing
+                    (\versionData ->
+                      NTN.initiator miniProtocolParams version versionData
                       -- Initiator side won't start responder side of Peer
                       -- Sharing protocol so we give a dummy implementation
                       -- here.
@@ -648,7 +653,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                 [ simpleSingletonVersions
                     version
                     llrnVersionDataNTN
-                    (NTN.initiatorAndResponder miniProtocolParams version rnPeerSharing
+                    (\versionData ->
+                        NTN.initiatorAndResponder miniProtocolParams version versionData
                       $ ntnApps blockVersion)
                 | (version, blockVersion) <- Map.toList llrnNodeToNodeVersions
                 ],
@@ -657,7 +663,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                 [ simpleSingletonVersions
                     version
                     llrnVersionDataNTC
-                    (NTC.responder version $ ntcApps blockVersion version)
+                    (\versionData -> NTC.responder version versionData $ ntcApps blockVersion version)
                 | (version, blockVersion) <- Map.toList llrnNodeToClientVersions
                 ],
             Diffusion.daLedgerPeersCtx =
@@ -892,8 +898,6 @@ stdLowLevelRunNodeArgsIO ::
           IO
           RemoteAddress
           LocalAddress
-          NodeToNodeVersionData
-          NodeToClientVersionData
           blk
           p2p)
 stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo

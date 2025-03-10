@@ -1,6 +1,6 @@
 cabal-version: 3.0
 name: ouroboros-consensus
-version: 0.21.0.0
+version: 0.22.0.0
 synopsis: Consensus layer for the Ouroboros blockchain protocol
 description: Consensus layer for the Ouroboros blockchain protocol.
 license: Apache-2.0
@@ -278,7 +278,7 @@ library
     bytestring >=0.10 && <0.13,
     cardano-binary,
     cardano-crypto-class,
-    cardano-ledger-core ^>=1.15,
+    cardano-ledger-core ^>=1.16,
     cardano-prelude,
     cardano-slotting,
     cardano-strict-containers,
@@ -292,15 +292,15 @@ library
     io-classes ^>=1.5,
     measures,
     mtl,
+    multiset ^>=0.3,
     nothunks ^>=0.2,
-    ouroboros-network-api ^>=0.11,
+    ouroboros-network-api ^>=0.12,
     ouroboros-network-mock ^>=0.1,
-    ouroboros-network-protocols ^>=0.12,
+    ouroboros-network-protocols ^>=0.13,
     primitive,
     psqueues ^>=0.2.3,
     quiet ^>=0.2,
     rawlock ^>=0.1,
-    reflection,
     resource-registry ^>=0.1,
     semialign >=1.1,
     serialise ^>=0.2,

@@ -10,13 +10,14 @@ module Test.Consensus.PeerSimulator.Run (
   , runPointSchedule
   ) where
 
-import           Control.Monad (foldM, forM, void)
+import           Control.Monad (foldM, forM, void, when)
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.ResourceRegistry
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
 import           Data.Coerce (coerce)
 import           Data.Foldable (for_)
+import           Data.List (sort)
 import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -27,7 +28,9 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (CSJConfig (..), CSJEnabledConfig (..), ChainDbView,
-                     ChainSyncClientHandle, ChainSyncLoPBucketConfig (..),
+                     ChainSyncClientHandle,
+                     ChainSyncClientHandleCollection (..),
+                     ChainSyncLoPBucketConfig (..),
                      ChainSyncLoPBucketEnabledConfig (..), viewChainSyncState)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.Node.GsmState as GSM
@@ -102,6 +105,11 @@ data SchedulerConfig =
     -- duration to trigger it.
     , scDowntime                 :: Maybe DiffTime
 
+    -- | Enable the use of ChainSel starvation information in the block fetch
+    -- decision logic. It is never actually disabled, but rather the grace
+    -- period is made virtually infinite.
+    , scEnableChainSelStarvation :: Bool
+
     -- | Whether to enable ChainSync Jumping. The parameters come from
     -- 'GenesisTest'.
     , scEnableCSJ                :: Bool
@@ -119,6 +127,7 @@ defaultSchedulerConfig =
     scEnableLoE = False,
     scEnableLoP = False,
     scDowntime = Nothing,
+    scEnableChainSelStarvation = True,
     scEnableCSJ = False
   }
 
@@ -147,7 +156,7 @@ startChainSyncConnectionThread ::
   ChainSyncLoPBucketConfig ->
   CSJConfig ->
   StateViewTracers blk m ->
-  StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
+  ChainSyncClientHandleCollection PeerId m blk ->
   m (Thread m (), Thread m ())
 startChainSyncConnectionThread
   registry
@@ -212,14 +221,20 @@ smartDelay ::
   LiveNode blk m ->
   DiffTime ->
   m (LiveNode blk m)
-smartDelay NodeLifecycle {nlMinDuration, nlStart, nlShutdown} node duration
-  | Just minInterval <- nlMinDuration, duration > minInterval = do
+smartDelay lifecycle@NodeLifecycle {nlStart, nlShutdown} node duration
+  | itIsTimeToRestartTheNode lifecycle duration = do
     results <- nlShutdown node
     threadDelay duration
     nlStart results
 smartDelay _ node duration = do
   threadDelay duration
   pure node
+
+itIsTimeToRestartTheNode :: NodeLifecycle blk m -> DiffTime -> Bool
+itIsTimeToRestartTheNode NodeLifecycle {nlMinDuration} duration =
+  case nlMinDuration of
+    Just minInterval -> duration > minInterval
+    Nothing          -> False
 
 -- | The 'Tick' contains a state update for a specific peer.
 -- If the peer has not terminated by protocol rules, this will update its TMVar
@@ -230,7 +245,7 @@ smartDelay _ node duration = do
 dispatchTick :: forall m blk.
   IOLike m =>
   Tracer m (TraceSchedulerEvent blk) ->
-  StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
+  STM m (Map PeerId (ChainSyncClientHandle m blk)) ->
   Map PeerId (PeerResources m blk) ->
   NodeLifecycle blk m ->
   LiveNode blk m ->
@@ -250,7 +265,7 @@ dispatchTick tracer varHandles peers lifecycle node (number, (duration, Peer pid
     traceNewTick = do
       currentChain <- atomically $ ChainDB.getCurrentChain (lnChainDb node)
       (csState, jumpingStates) <- atomically $ do
-         m <- readTVar varHandles
+         m <- varHandles
          csState <- traverse (readTVar . CSClient.cschState) (m Map.!? pid)
          jumpingStates <- forM (Map.toList m) $ \(peer, h) -> do
            st <- readTVar (CSClient.cschJumping h)
@@ -272,7 +287,7 @@ dispatchTick tracer varHandles peers lifecycle node (number, (duration, Peer pid
 runScheduler ::
   IOLike m =>
   Tracer m (TraceSchedulerEvent blk) ->
-  StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
+  STM m (Map PeerId (ChainSyncClientHandle m blk)) ->
   PointSchedule blk ->
   Map PeerId (PeerResources m blk) ->
   NodeLifecycle blk m ->
@@ -287,7 +302,16 @@ runScheduler tracer varHandles ps@PointSchedule{psMinEndTime} peers lifecycle@No
             else Nothing
         _        -> Just $ coerce psMinEndTime
   LiveNode{lnChainDb, lnStateViewTracers} <-
-    maybe (pure nodeEnd) (smartDelay lifecycle nodeEnd) extraDelay
+    case extraDelay of
+      Just duration -> do
+        nodeEnd' <- smartDelay lifecycle nodeEnd duration
+        -- Give an opportunity to the node to finish whatever it was doing at
+        -- shutdown
+        when (itIsTimeToRestartTheNode lifecycle duration) $
+          threadDelay $ coerce psMinEndTime
+        pure nodeEnd'
+      Nothing ->
+        pure nodeEnd
   traceWith tracer TraceEndOfTime
   pure (lnChainDb, lnStateViewTracers)
   where
@@ -314,7 +338,7 @@ mkStateTracer ::
   m (Tracer m ())
 mkStateTracer schedulerConfig GenesisTest {gtBlockTree} PeerSimulatorResources {psrHandles, psrPeers} chainDb
   | scTraceState schedulerConfig
-  , let getCandidates = viewChainSyncState psrHandles CSClient.csCandidate
+  , let getCandidates = viewChainSyncState (cschcMap psrHandles) CSClient.csCandidate
         getCurrentChain = ChainDB.getCurrentChain chainDb
         getPoints = traverse readTVar (srCurrentState . prShared <$> psrPeers)
   = peerSimStateDiagramSTMTracerDebug gtBlockTree getCurrentChain getCandidates getPoints
@@ -333,13 +357,18 @@ startNode ::
   LiveInterval TestBlock m ->
   m ()
 startNode schedulerConfig genesisTest interval = do
-  let
-      handles = psrHandles lrPeerSim
-      getCandidates = viewChainSyncState handles CSClient.csCandidate
+  let handles = psrHandles lrPeerSim
   fetchClientRegistry <- newFetchClientRegistry
   let chainDbView = CSClient.defaultChainDbView lnChainDb
-      activePeers = Map.restrictKeys (psrPeers lrPeerSim) (lirActive liveResult)
-  for_ activePeers $ \PeerResources {prShared, prChainSync, prBlockFetch} -> do
+      activePeers = Map.toList $ Map.restrictKeys (psrPeers lrPeerSim) (lirActive liveResult)
+      peersStartOrder = psStartOrder ++ sort [pid | (pid, _) <- activePeers, pid `notElem` psStartOrder]
+      activePeersOrdered = [
+          peerResources
+          | pid <- peersStartOrder
+          , (pid', peerResources) <- activePeers
+          , pid == pid'
+          ]
+  for_ activePeersOrdered $ \PeerResources {prShared, prChainSync, prBlockFetch} -> do
     let pid = srPeerId prShared
     forkLinkedThread lrRegistry ("Peer overview " ++ show pid) $
       -- The peerRegistry helps ensuring that if any thread fails, then
@@ -375,7 +404,13 @@ startNode schedulerConfig genesisTest interval = do
   -- The block fetch logic needs to be started after the block fetch clients
   -- otherwise, an internal assertion fails because getCandidates yields more
   -- peer fragments than registered clients.
-  BlockFetch.startBlockFetchLogic lrRegistry lrTracer lnChainDb fetchClientRegistry getCandidates
+  BlockFetch.startBlockFetchLogic
+    (scEnableChainSelStarvation schedulerConfig)
+    lrRegistry
+    lrTracer
+    lnChainDb
+    fetchClientRegistry
+    handles
 
   for_ lrLoEVar $ \ var -> do
       forkLinkedWatcher lrRegistry "LoE updater background" $
@@ -383,11 +418,16 @@ startNode schedulerConfig genesisTest interval = do
           lrConfig
           (mkGDDTracerTestBlock lrTracer)
           lnChainDb
+          0.0 -- The rate limit makes simpler the calculations of how long tests
+              -- should run and still should produce interesting interleavings.
+              -- It is similar to the setting of bfcDecisionLoopInterval in
+              -- Test.Consensus.PeerSimulator.BlockFetch
           (pure GSM.Syncing) -- TODO actually run GSM
-          (readTVar handles)
+          (cschcMap handles)
           var
 
-  void $ forkLinkedWatcher lrRegistry "CSJ invariants watcher" $ CSJInvariants.watcher handles
+  void $ forkLinkedWatcher lrRegistry "CSJ invariants watcher" $
+    CSJInvariants.watcher (cschcMap handles)
   where
     LiveResources {lrRegistry, lrTracer, lrConfig, lrPeerSim, lrLoEVar} = resources
 
@@ -402,6 +442,7 @@ startNode schedulerConfig genesisTest interval = do
       , gtBlockFetchTimeouts
       , gtLoPBucketParams = LoPBucketParams { lbpCapacity, lbpRate }
       , gtCSJParams = CSJParams { csjpJumpSize }
+      , gtSchedule = PointSchedule {psStartOrder}
       } = genesisTest
 
     StateViewTracers{svtTraceTracer} = lnStateViewTracers
@@ -483,7 +524,7 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
     lifecycle <- nodeLifecycle schedulerConfig genesisTest tracer registry peerSim
     (chainDb, stateViewTracers) <- runScheduler
       (Tracer $ traceWith tracer . TraceSchedulerEvent)
-      (psrHandles peerSim)
+      (cschcMap (psrHandles peerSim))
       gtSchedule
       (psrPeers peerSim)
       lifecycle

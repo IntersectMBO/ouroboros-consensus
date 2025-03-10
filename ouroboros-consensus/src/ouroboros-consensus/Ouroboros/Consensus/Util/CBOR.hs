@@ -55,6 +55,7 @@ import qualified Streaming as S
 import qualified Streaming.Prelude as S
 import           Streaming.Prelude (Of (..), Stream)
 import           System.FS.API
+import           System.FS.CRC (CRC (..), initCRC, updateCRC)
 
 {-------------------------------------------------------------------------------
   Incremental parsing in I/O
@@ -172,7 +173,7 @@ data ReadIncrementalErr =
   | TrailingBytes ByteString
   deriving (Eq, Show)
 
--- | Read a file incrementally
+-- | Read a file incrementally, optionally calculating the CRC checksum.
 --
 -- NOTE: The 'MonadThrow' constraint is only needed for 'bracket'. This
 -- function does not actually throw anything.
@@ -184,26 +185,29 @@ data ReadIncrementalErr =
 -- 'withStreamIncrementalOffsets'.
 readIncremental :: forall m a. IOLike m
                 => SomeHasFS m
+                -> Bool
                 -> CBOR.D.Decoder (U.PrimState m) a
                 -> FsPath
-                -> m (Either ReadIncrementalErr a)
-readIncremental = \(SomeHasFS hasFS) decoder fp -> do
+                -> m (Either ReadIncrementalErr (a, Maybe CRC))
+readIncremental = \(SomeHasFS hasFS) doChecksum decoder fp -> do
+    let mbInitCRC = if doChecksum then Just initCRC else Nothing
     withFile hasFS fp ReadMode $ \h ->
-      go hasFS h =<< U.stToIO (CBOR.R.deserialiseIncremental decoder)
+      go hasFS h mbInitCRC =<< U.stToIO (CBOR.R.deserialiseIncremental decoder)
   where
     go :: HasFS m h
        -> Handle h
+       -> Maybe CRC
        -> CBOR.R.IDecode (U.PrimState m) a
-       -> m (Either ReadIncrementalErr a)
-    go hasFS@HasFS{..} h (CBOR.R.Partial k) = do
+       -> m (Either ReadIncrementalErr (a, Maybe CRC))
+    go hasFS@HasFS{..} h !checksum  (CBOR.R.Partial k) = do
         bs   <- hGetSome h (fromIntegral defaultChunkSize)
         dec' <- U.stToIO $ k (checkEmpty bs)
-        go hasFS h dec'
-    go _ _ (CBOR.R.Done leftover _ a) =
+        go hasFS h (updateCRC bs <$> checksum) dec'
+    go _ _ !checksum (CBOR.R.Done leftover _ a) =
         return $ if BS.null leftover
-                   then Right a
+                   then Right (a, checksum)
                    else Left $ TrailingBytes leftover
-    go _ _ (CBOR.R.Fail _ _ err) =
+    go _ _ _ (CBOR.R.Fail _ _ err) =
         return $ Left $ ReadFailed err
 
     checkEmpty :: ByteString -> Maybe ByteString
