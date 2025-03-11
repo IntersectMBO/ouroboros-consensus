@@ -39,8 +39,9 @@ import           Test.Ouroboros.Consensus.ChainGenerator.Honest
 import           Test.Ouroboros.Consensus.ChainGenerator.Params
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Slot as S
 import           Test.Ouroboros.Consensus.ChainGenerator.Slot (S)
+import           Test.Ouroboros.Consensus.QuickCheck.Extras
+                     (unsafeMapSuchThatJust)
 import qualified Test.QuickCheck as QC
-import           Test.Ouroboros.Consensus.QuickCheck.Extras (unsafeMapSuchThatJust)
 import           Test.QuickCheck.Random (QCGen)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock hiding (blockTree)
