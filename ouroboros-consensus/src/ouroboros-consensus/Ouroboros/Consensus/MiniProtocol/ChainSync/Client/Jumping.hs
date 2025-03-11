@@ -158,7 +158,7 @@
 --
 -- If the objector disconnects or is disengaged, and there are FI* jumpers, then
 -- the one with the oldest intersection with the dynamo gets elected (i).
--- Otherwise, we are left with no dynamo.
+-- Otherwise, we are left with no objector.
 --
 -- If the dynamo rolls back to a point older than the last jump it requested, it
 -- is disengaged (j), a new dynamo is elected (e|f), and all the other peers
@@ -166,16 +166,15 @@
 --
 -- If the objector agrees with the dynamo, it is disengaged (k). If there are
 -- FI* jumpers, then one of them gets elected as the new objector (i).
--- Otherwise, we are left with no dynamo.
+-- Otherwise, we are left with no objector.
 --
 -- If the dynamo or the objector claim to have no more headers, they are
 -- disengaged (j|k), triggering the same chain of effect as described in the two
 -- previous points.
 --
--- The BlockFetch logic can ask to change the dynamo if it is not serving blocks
--- fast enough. If there are other non-disengaged peers, the dynamo (and the
--- objector if there is one, and all the other peers) is demoted to a happy
--- jumper (l+g+h) and a new dynamo is elected (e).
+-- The BlockFetch logic can ask to change the dynamo if it is not serving
+-- blocks fast enough. If there are other non-disengaged peers, all peers are
+-- demoted to happy jumpers (l+g+h) and a new dynamo is elected (e).
 --
 module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping (
     Context
@@ -184,7 +183,9 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping (
   , JumpInstruction (..)
   , JumpResult (..)
   , Jumping (..)
-  , TraceEvent (..)
+  , TraceCsjReason (..)
+  , TraceEventCsj (..)
+  , TraceEventDbf (..)
   , getDynamo
   , makeContext
   , mkJumping
@@ -195,7 +196,7 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping (
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo (..), WithOrigin (..))
-import           Control.Monad (forM, forM_, void, when)
+import           Control.Monad (forM, forM_, when)
 import           Control.Tracer (Tracer, traceWith)
 import           Data.Foldable (toList, traverse_)
 import           Data.List (sortOn)
@@ -204,6 +205,8 @@ import           Data.Maybe (catMaybes, fromMaybe)
 import           Data.Maybe.Strict (StrictMaybe (..))
 import           Data.Sequence.Strict (StrictSeq)
 import qualified Data.Sequence.Strict as Seq
+import qualified Data.Strict.Either as Strict
+import           Data.Void (absurd)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block (HasHeader (getHeaderFields), Header,
                      Point (..), castPoint, pointSlot, succWithOrigin)
@@ -282,13 +285,23 @@ mkJumping ::
   PeerContext m peer blk ->
   Jumping m blk
 mkJumping peerContext = Jumping
-  { jgNextInstruction = atomically $ nextInstruction peerContext
-  , jgOnAwaitReply = atomically $ onAwaitReply peerContext
-  , jgOnRollForward = atomically . onRollForward peerContext
-  , jgOnRollBackward = atomically . onRollBackward peerContext
-  , jgProcessJumpResult = atomically . processJumpResult peerContext
+  { jgNextInstruction =
+        atomically (nextInstruction (pure ()) peerContext) >>= \case
+            Strict.Right instr -> pure instr
+            Strict.Left () -> do
+                traceWith (tracer peerContext) BlockedOnJump
+                id
+                  $ fmap (Strict.either absurd id)
+                  $ atomically
+                  $ nextInstruction retry peerContext
+  , jgOnAwaitReply = f $ onAwaitReply peerContext
+  , jgOnRollForward = f . onRollForward peerContext
+  , jgOnRollBackward = f . onRollBackward peerContext
+  , jgProcessJumpResult = f . processJumpResult peerContext
   , jgUpdateJumpInfo = updateJumpInfo peerContext
   }
+  where
+    f m = atomically m >>= traverse_ (traceWith (tracer peerContext))
 
 -- | A context for ChainSync jumping
 --
@@ -304,7 +317,8 @@ data ContextWith peerField handleField m peer blk = Context
   { peer       :: !peerField,
     handle     :: !handleField,
     handlesCol :: !(ChainSyncClientHandleCollection peer m blk),
-    jumpSize   :: !SlotNo
+    jumpSize   :: !SlotNo,
+    tracer     :: Tracer m (TraceEventCsj peer blk)
   }
 
 -- | A non-specific, generic context for ChainSync jumping.
@@ -320,10 +334,11 @@ makeContext ::
   MonadSTM m =>
   ChainSyncClientHandleCollection peer m blk ->
   SlotNo ->
+  Tracer m (TraceEventCsj peer blk) ->
   -- ^ The size of jumps, in number of slots.
   STM m (Context m peer blk)
-makeContext h jumpSize = do
-  pure $ Context () () h jumpSize
+makeContext h jumpSize tracer = do
+  pure $ Context () () h jumpSize tracer
 
 -- | Get a generic context from a peer context by stripping away the
 -- peer-specific fields.
@@ -395,28 +410,29 @@ deriving anyclass instance
 -- requires writing to a TVar for every jumper.
 nextInstruction ::
   ( MonadSTM m ) =>
+  STM m retry ->
   PeerContext m peer blk ->
-  STM m (Instruction blk)
-nextInstruction context =
+  STM m (Strict.Either retry (Instruction blk))
+nextInstruction  retry_ context =
   readTVar (cschJumping (handle context)) >>= \case
-    Disengaged DisengagedDone -> pure RunNormally
+    Disengaged DisengagedDone -> pur RunNormally
     Disengaged Disengaging -> do
       writeTVar (cschJumping (handle context)) (Disengaged DisengagedDone)
-      pure Restart
+      pur Restart
     Dynamo (DynamoStarting goodJumpInfo) lastJumpSlot -> do
       writeTVar (cschJumping (handle context)) $
         Dynamo DynamoStarted lastJumpSlot
-      pure $ JumpInstruction $ JumpToGoodPoint goodJumpInfo
+      pur $ JumpInstruction $ JumpToGoodPoint goodJumpInfo
     Dynamo DynamoStarted _ ->
-      pure RunNormally
+      pur $ RunNormally
     Objector Starting goodJump badPoint -> do
       writeTVar (cschJumping (handle context)) $
         Objector Started goodJump badPoint
-      pure $ JumpInstruction $ JumpToGoodPoint goodJump
-    Objector Started _ _ -> pure RunNormally
+      pur $ JumpInstruction $ JumpToGoodPoint goodJump
+    Objector Started _ _ -> pur RunNormally
     Jumper nextJumpVar jumperState -> do
       readTVar nextJumpVar >>= \case
-        Nothing -> retry
+        Nothing -> Strict.Left <$> retry_
         Just jumpInfo -> do
           writeTVar nextJumpVar Nothing
           case jumperState of
@@ -424,7 +440,9 @@ nextInstruction context =
               writeTVar (cschJumping (handle context)) $
                 Jumper nextJumpVar $ Happy StartedJumper mGoodJumpInfo
             _ -> pure ()
-          pure $ JumpInstruction $ JumpTo jumpInfo
+          pur $ JumpInstruction $ JumpTo jumpInfo
+  where
+    pur = pure . Strict.Right
 
 -- | This function is called when we receive a 'MsgRollForward' message before
 -- validating it.
@@ -443,32 +461,38 @@ onRollForward :: forall m peer blk.
   ) =>
   PeerContext m peer blk ->
   Point (Header blk) ->
-  STM m ()
+  STM m (Maybe (TraceEventCsj peer blk))
 onRollForward context point =
   readTVar (cschJumping (handle context)) >>= \case
     Objector _ _ badPoint
       | badPoint == castPoint point -> do
           disengage (handle context)
-          electNewObjector (stripContext context)
-      | otherwise -> pure ()
-    Disengaged{} -> pure ()
-    Jumper{} -> pure ()
+          (Just . ($ BecauseCsjDisengage)) <$> electNewObjector (stripContext context)
+      | otherwise -> pure Nothing
+    Disengaged{} -> pure Nothing
+    Jumper{} -> pure Nothing
     Dynamo _ lastJumpSlot
       | let jumpBoundaryPlus1 = jumpSize context + succWithOrigin lastJumpSlot
       , succWithOrigin (pointSlot point) > jumpBoundaryPlus1 -> do
           mJumpInfo <- readTVar (cschJumpInfo (handle context))
           setJumps mJumpInfo
-      | otherwise -> pure ()
+      | otherwise -> pure Nothing
   where
     setJumps Nothing = error "onRollForward: Dynamo without jump info"
     setJumps (Just jumpInfo) = do
         writeTVar (cschJumping (handle context)) $
-          Dynamo DynamoStarted $ pointSlot $ AF.headPoint $ jTheirFragment jumpInfo
+          Dynamo DynamoStarted $ AF.headSlot $ jTheirFragment jumpInfo
         handles <- cschcSeq (handlesCol context)
         forM_ handles $ \(_, h) ->
           readTVar (cschJumping h) >>= \case
             Jumper nextJumpVar Happy{} -> writeTVar nextJumpVar (Just jumpInfo)
             _ -> pure ()
+        pure
+          $ Just
+          $ SentJumpInstruction
+          $ castPoint
+          $ AF.headPoint
+          $ jTheirFragment jumpInfo
 
 -- | This function is called when we receive a 'MsgRollBackward' message.
 --
@@ -483,21 +507,21 @@ onRollBackward :: forall m peer blk.
   ) =>
   PeerContext m peer blk ->
   WithOrigin SlotNo ->
-  STM m ()
+  STM m (Maybe (TraceEventCsj peer blk))
 onRollBackward context slot =
   readTVar (cschJumping (handle context)) >>= \case
     Objector _ _ badPoint
       | slot < pointSlot badPoint -> do
           disengage (handle context)
-          electNewObjector (stripContext context)
-      | otherwise -> pure ()
-    Disengaged{} -> pure ()
-    Jumper{} -> pure ()
+          (Just . ($ BecauseCsjDisengage)) <$> electNewObjector (stripContext context)
+      | otherwise -> pure Nothing
+    Disengaged{} -> pure Nothing
+    Jumper{} -> pure Nothing
     Dynamo _ lastJumpSlot
       | slot < lastJumpSlot -> do
           disengage (handle context)
-          void $ electNewDynamo (stripContext context)
-      | otherwise -> pure ()
+          (Just . ($ BecauseCsjDisengage) . fst) <$> backfillDynamo (stripContext context)
+      | otherwise -> pure Nothing
 
 -- | This function is called when we receive a 'MsgAwaitReply' message.
 --
@@ -509,21 +533,21 @@ onAwaitReply ::
     LedgerSupportsProtocol blk
   ) =>
   PeerContext m peer blk ->
-  STM m ()
+  STM m (Maybe (TraceEventCsj peer blk))
 onAwaitReply context =
   readTVar (cschJumping (handle context)) >>= \case
     Dynamo{} -> do
       disengage (handle context)
-      void $ electNewDynamo (stripContext context)
+      (Just . ($ BecauseCsjDisengage) . fst) <$> backfillDynamo (stripContext context)
     Objector{} -> do
       disengage (handle context)
-      electNewObjector (stripContext context)
+      (Just . ($ BecauseCsjDisengage)) <$> electNewObjector (stripContext context)
     Jumper{} ->
       -- A jumper might be receiving a 'MsgAwaitReply' message if it was
       -- previously an objector and a new dynamo was elected.
-      disengage (handle context)
+      unitNothing <$> disengage (handle context)
     Disengaged{} ->
-      pure ()
+      pure Nothing
 
 -- | Process the result of a jump. In the happy case, this only consists in
 -- updating the peer's handle to take the new candidate fragment and the new
@@ -538,35 +562,35 @@ processJumpResult :: forall m peer blk.
   ) =>
   PeerContext m peer blk ->
   JumpResult blk ->
-  STM m ()
+  STM m (Maybe (TraceEventCsj peer blk))
 processJumpResult context jumpResult =
   readTVar (cschJumping (handle context)) >>= \case
     Dynamo{} ->
       case jumpResult of
         AcceptedJump (JumpToGoodPoint jumpInfo) ->
-          updateChainSyncState (handle context) jumpInfo
+          unitNothing <$> updateChainSyncState (handle context) jumpInfo
         RejectedJump JumpToGoodPoint{} -> do
           startDisengaging (handle context)
-          void $ electNewDynamo (stripContext context)
+          (Just . ($ BecauseCsjDisengage) . fst) <$> backfillDynamo (stripContext context)
 
         -- Not interesting in the dynamo state
-        AcceptedJump JumpTo{} -> pure ()
-        RejectedJump JumpTo{} -> pure ()
+        AcceptedJump JumpTo{} -> pure Nothing
+        RejectedJump JumpTo{} -> pure Nothing
 
-    Disengaged{} -> pure ()
+    Disengaged{} -> pure Nothing
     Objector{} ->
       case jumpResult of
         AcceptedJump (JumpToGoodPoint jumpInfo) ->
-          updateChainSyncState (handle context) jumpInfo
+          unitNothing <$> updateChainSyncState (handle context) jumpInfo
         RejectedJump JumpToGoodPoint{} -> do
           -- If the objector rejects a good point, it is a sign of a rollback
           -- to earlier than the last jump.
           startDisengaging (handle context)
-          electNewObjector (stripContext context)
+          (Just . ($ BecauseCsjDisengage)) <$> electNewObjector (stripContext context)
 
         -- Not interesting in the objector state
-        AcceptedJump JumpTo{} -> pure ()
-        RejectedJump JumpTo{} -> pure ()
+        AcceptedJump JumpTo{} -> pure Nothing
+        RejectedJump JumpTo{} -> pure Nothing
 
     Jumper nextJumpVar jumperState ->
         case jumpResult of
@@ -584,11 +608,12 @@ processJumpResult context jumpResult =
                 -- looking for an intersection is the only client asking for its
                 -- jumps.
                 lookForIntersection nextJumpVar goodJumpInfo badJumpInfo
-              Happy StartedJumper _mGoodJumpInfo ->
+              Happy StartedJumper _mGoodJumpInfo -> do
                 writeTVar (cschJumping (handle context)) $
                   Jumper nextJumpVar $ Happy StartedJumper $ Just goodJumpInfo
+                pure Nothing
               Happy FreshJumper _mGoodJumpInfo ->
-                pure ()
+                pure Nothing
               FoundIntersection{} ->
                 -- Only happy jumpers are asked to jump by the dynamo, and only
                 -- jumpers looking for an intersection are asked to jump by
@@ -610,13 +635,13 @@ processJumpResult context jumpResult =
               Happy StartedJumper mGoodJumpInfo ->
                 lookForIntersection nextJumpVar (mkGoodJumpInfo mGoodJumpInfo badJumpInfo) badJumpInfo
               Happy FreshJumper _ ->
-                pure ()
+                pure Nothing
               FoundIntersection{} ->
                 error "processJumpResult (rejected): Jumpers in state FoundIntersection shouldn't be further jumping."
 
           -- These aren't interesting in the case of jumpers.
-          AcceptedJump JumpToGoodPoint{} -> pure ()
-          RejectedJump JumpToGoodPoint{} -> pure ()
+          AcceptedJump JumpToGoodPoint{} -> pure Nothing
+          RejectedJump JumpToGoodPoint{} -> pure Nothing
   where
     -- Avoid redundant constraint "HasHeader blk" reported by some ghc's
     _ = getHeaderFields @blk
@@ -659,29 +684,32 @@ processJumpResult context jumpResult =
         writeTVar nextJumpVar Nothing
         maybeElectNewObjector nextJumpVar goodJumpInfo (AF.headPoint badFragment)
       else do
-        let middlePoint = len `div` 2
-            theirFragment = AF.dropNewest middlePoint badFragment
+        let theirFragment = AF.dropNewest (len `div` 2) badFragment
         writeTVar nextJumpVar $ Just
           badJumpInfo { jTheirFragment = theirFragment }
         writeTVar (cschJumping (handle context)) $
           Jumper nextJumpVar (LookingForIntersection goodJumpInfo badJumpInfo)
+        pure Nothing
 
     maybeElectNewObjector nextJumpVar goodJumpInfo badPoint = do
       findObjector (stripContext context) >>= \case
-        Nothing ->
+        Nothing -> do
           -- There is no objector yet. Promote the jumper to objector.
           writeTVar (cschJumping (handle context)) (Objector Starting goodJumpInfo badPoint)
-        Just (oInitState, oGoodJump, oPoint, oHandle)
-          | pointSlot oPoint <= pointSlot badPoint ->
+          pure $ Just $ BecomingObjector Nothing
+        Just (oPeerId, oInitState, oGoodJump, oBadPoint, oHandle)
+          | pointSlot oBadPoint <= pointSlot badPoint -> do
               -- The objector's intersection is still old enough. Keep it.
               writeTVar (cschJumping (handle context)) $
                 Jumper nextJumpVar (FoundIntersection Starting goodJumpInfo badPoint)
+              pure Nothing
           | otherwise -> do
               -- Found an earlier intersection. Demote the old objector and
               -- promote the jumper to objector.
-              newJumper Nothing (FoundIntersection oInitState oGoodJump oPoint) >>=
+              newJumper Nothing (FoundIntersection oInitState oGoodJump oBadPoint) >>=
                 writeTVar (cschJumping oHandle)
               writeTVar (cschJumping (handle context)) (Objector Starting goodJumpInfo badPoint)
+              pure $ Just $ BecomingObjector (Just oPeerId)
 
 updateJumpInfo ::
   (MonadSTM m) =>
@@ -750,19 +778,19 @@ registerClient ::
   StrictTVar m (ChainSyncState blk) ->
   -- | A function to make a client handle from a jumping state.
   (StrictTVar m (ChainSyncJumpingState m blk) -> ChainSyncClientHandle m blk) ->
-  STM m (PeerContext m peer blk)
+  STM m (PeerContext m peer blk, Maybe (TraceEventCsj peer blk))
 registerClient context peer csState mkHandle = do
-  csjState <- getDynamo (handlesCol context) >>= \case
+  (csjState, mbEv) <- getDynamo (handlesCol context) >>= \case
     Nothing -> do
       fragment <- csCandidate <$> readTVar csState
-      pure $ Dynamo DynamoStarted $ pointSlot $ AF.anchorPoint fragment
+      pure (Dynamo DynamoStarted $ pointSlot $ AF.anchorPoint fragment, Just InitializedAsDynamo)
     Just (_, handle) -> do
       mJustInfo <- readTVar (cschJumpInfo handle)
-      newJumper mJustInfo (Happy FreshJumper Nothing)
+      (\x -> (x, Nothing)) <$> newJumper mJustInfo (Happy FreshJumper Nothing)
   cschJumping <- newTVar csjState
   let handle = mkHandle cschJumping
   cschcAddHandle (handlesCol context) peer handle
-  pure $ context {peer, handle}
+  pure (context {peer, handle}, mbEv)
 
 -- | Unregister a client from a 'PeerContext'; this might trigger the election
 -- of a new dynamo or objector if the peer was one of these two.
@@ -772,15 +800,15 @@ unregisterClient ::
     LedgerSupportsProtocol blk
   ) =>
   PeerContext m peer blk ->
-  STM m ()
+  STM m (Maybe (TraceEventCsj peer blk))
 unregisterClient context = do
   cschcRemoveHandle (handlesCol context) (peer context)
   let context' = stripContext context
   readTVar (cschJumping (handle context)) >>= \case
-    Disengaged{} -> pure ()
-    Jumper{} -> pure ()
-    Objector{} -> electNewObjector context'
-    Dynamo{} -> void $ electNewDynamo context'
+    Disengaged{} -> pure Nothing
+    Jumper{} -> pure Nothing
+    Objector{} -> (Just . ($ BecauseCsjDisconnect)) <$> electNewObjector context'
+    Dynamo{} -> (Just . ($ BecauseCsjDisconnect) . fst) <$> backfillDynamo context'
 
 -- | Elects a new dynamo by demoting the given dynamo (and the objector if there
 -- is one) to a jumper, moving the peer to the end of the queue of chain sync
@@ -793,7 +821,7 @@ rotateDynamo ::
     LedgerSupportsProtocol blk,
     MonadSTM m
   ) =>
-  Tracer m (TraceEvent peer) ->
+  Tracer m (TraceEventDbf peer) ->
   ChainSyncClientHandleCollection peer m blk ->
   peer ->
   m ()
@@ -831,21 +859,33 @@ rotateDynamo tracer handlesCol peer = do
 
 -- | Choose an unspecified new non-idling dynamo and demote all other peers to
 -- jumpers.
-electNewDynamo ::
+--
+-- Prefer an 'Objector' that has already 'Started'. Such a peer can trivially
+-- transition to be the Dynamo, without any disruption to their ChainSync
+-- state. Moreover, if that Objector is honest, then their being the new Dynamo
+-- prevents the possibility of their candidate chain being lost and having to
+-- eventually be re-downloaded, which CSJ ought to avoid.
+backfillDynamo ::
   ( MonadSTM m,
     Eq peer,
     LedgerSupportsProtocol blk
   ) =>
   Context m peer blk ->
-  STM m (Maybe (peer, ChainSyncClientHandle m blk))
-electNewDynamo context = do
+  STM m (TraceCsjReason -> TraceEventCsj peer blk, Maybe (peer, ChainSyncClientHandle m blk))
+backfillDynamo context = do
   peerStates <- cschcSeq (handlesCol context)
-  mDynamo <- findNonDisengaged peerStates
+  mDynamo <- do
+    -- prefer a 'Started' 'Objector', if any exists
+    findObjector context >>= \case
+      Just (oId, Started, _oGoodJI, _oBad, oHandle) ->
+        pure $ Just $ (oId,oHandle)
+      _ ->
+        findNonDisengaged peerStates
   case mDynamo of
-    Nothing -> pure Nothing
+    Nothing -> pure (NoLongerDynamo Nothing, Nothing)
     Just (dynId, dynamo) -> do
       promoteToDynamo peerStates dynId dynamo
-      pure $ Just (dynId, dynamo)
+      pure (NoLongerDynamo (Just dynId), Just (dynId, dynamo))
 
 -- | Promote the given peer to dynamo and demote all other peers to jumpers.
 promoteToDynamo ::
@@ -858,13 +898,29 @@ promoteToDynamo ::
   ChainSyncClientHandle m blk ->
   STM m ()
 promoteToDynamo peerStates dynId dynamo = do
-  fragment <- csCandidate <$> readTVar (cschState dynamo)
   mJumpInfo <- readTVar (cschJumpInfo dynamo)
-  -- If there is no jump info, the dynamo must be just starting and
-  -- there is no need to set the intersection of the ChainSync server.
-  let dynamoInitState = maybe DynamoStarted DynamoStarting mJumpInfo
-  writeTVar (cschJumping dynamo) $
-    Dynamo dynamoInitState $ pointSlot $ AF.headPoint fragment
+  jumping' <- readTVar (cschJumping dynamo) >>= \case
+    -- An 'Objector' that already 'Started' need not be disrupted.
+    --
+    -- Remark. Intuitively, a 'Starting' 'Objector' also need not be disrupted,
+    -- but disrupting it wouldn't waste any @MsgRollForward@s. More concretely,
+    -- it's not obvious how to build a 'DynamoStarting' from a 'Starting'.
+    Objector Started oGoodJI _oBad -> do
+      -- This intersection point is necessarily behind the replaced Dynamos's
+      -- latest jump instruction, but its relative age is bounded.
+      let islot = AF.headSlot $ jTheirFragment oGoodJI
+      pure $ Dynamo DynamoStarted islot
+    -- Otherwise, the peer being promoted could be a Jumper or an Objector
+    -- Starting, but never Dynamo nor Disengaged.
+    _ -> do
+      fragment <- csCandidate <$> readTVar (cschState dynamo)
+      -- If there is no jump info, the dynamo must be just starting and
+      -- there is no need to set the intersection of the ChainSync server.
+      let dynamoInitState = maybe DynamoStarted DynamoStarting mJumpInfo
+          slot = AF.headSlot fragment
+      pure $ Dynamo dynamoInitState slot
+  writeTVar (cschJumping dynamo) jumping'
+
   -- Demote all other peers to jumpers
   forM_ peerStates $ \(peer, st) ->
     when (peer /= dynId) $ do
@@ -893,15 +949,15 @@ findM p =
 findObjector ::
   (MonadSTM m) =>
   Context m peer blk ->
-  STM m (Maybe (ObjectorInitState, JumpInfo blk, Point (Header blk), ChainSyncClientHandle m blk))
+  STM m (Maybe (peer, ObjectorInitState, JumpInfo blk, Point (Header blk), ChainSyncClientHandle m blk))
 findObjector context =
   cschcSeq (handlesCol context) >>= go
   where
     go Seq.Empty = pure Nothing
-    go ((_, handle) Seq.:<| xs) =
+    go ((peer, handle) Seq.:<| xs) =
       readTVar (cschJumping handle) >>= \case
         Objector initState goodJump badPoint ->
-          pure $ Just (initState, goodJump, badPoint, handle)
+          pure $ Just (peer, initState, goodJump, badPoint, handle)
         _ -> go xs
 
 -- | Look into all dissenting jumper and promote the one with the oldest
@@ -909,26 +965,45 @@ findObjector context =
 electNewObjector ::
   (MonadSTM m) =>
   Context m peer blk ->
-  STM m ()
-electNewObjector context = do
+  STM m (TraceCsjReason -> TraceEventCsj peer blk)
+electNewObjector context = NoLongerObjector <$> do
   peerStates <- toList <$> cschcSeq (handlesCol context)
   dissentingJumpers <- collectDissentingJumpers peerStates
-  let sortedJumpers = sortOn (pointSlot . fst) dissentingJumpers
+  let sortedJumpers = sortOn (pointSlot . fst . snd) dissentingJumpers
   case sortedJumpers of
-    (badPoint, (initState, goodJumpInfo, handle)):_ ->
+    [] -> pure Nothing
+    (peer, (badPoint, (initState, goodJumpInfo, handle))):_ -> do
       writeTVar (cschJumping handle) $ Objector initState goodJumpInfo badPoint
-    _ ->
-      pure ()
+      pure $ Just peer
   where
     collectDissentingJumpers peerStates =
       fmap catMaybes $
-      forM peerStates $ \(_, handle) ->
+      forM peerStates $ \(peer, handle) ->
         readTVar (cschJumping handle) >>= \case
           Jumper _ (FoundIntersection initState goodJumpInfo badPoint) ->
-            pure $ Just (badPoint, (initState, goodJumpInfo, handle))
+            pure $ Just (peer, (badPoint, (initState, goodJumpInfo, handle)))
           _ ->
             pure Nothing
 
-data TraceEvent peer
+-- | Events due to the centralized Devoted BlockFetch logic
+data TraceEventDbf peer
   = RotatedDynamo peer peer
   deriving (Show)
+
+-- | Events arising from a specific ChainSync client
+data TraceEventCsj peer blk
+  = BecomingObjector (Maybe peer)   -- ^ previous objector
+  | BlockedOnJump
+  | InitializedAsDynamo
+  | NoLongerDynamo (Maybe peer) TraceCsjReason   -- ^ new dynamo if known
+  | NoLongerObjector (Maybe peer) TraceCsjReason  -- ^ new objector if known
+  | SentJumpInstruction (Point blk)   -- ^ jump target
+  deriving (Show)
+
+data TraceCsjReason
+  = BecauseCsjDisengage
+  | BecauseCsjDisconnect
+  deriving (Show)
+
+unitNothing :: () -> Maybe a
+unitNothing () = Nothing

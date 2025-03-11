@@ -507,6 +507,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
             void $ forkThread registry "ChainSyncClient" $
               bracketChainSyncClient
                  chainSyncTracer
+                 nullTracer   -- CSJ events
                  chainDbView
                  cschCol
                  -- 'Syncing' only ever impacts the LoP, which is disabled in
