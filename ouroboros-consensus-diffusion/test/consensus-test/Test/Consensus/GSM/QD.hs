@@ -11,7 +11,6 @@
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -19,7 +18,7 @@
 
 -- | Tests for the Genesis State Machine using the [quickcheck-dynamic](https://hackage.haskell.org/package/quickcheck-dynamic) library.
 --
---   The instance 'QD.StateModel (Model params)' describes the actions that the model supports,
+--   The instance 'QD.StateModel (Model)' describes the actions that the model supports,
 --   and their semantics in terms for the model and the system-under-test.
 --
 --   We use the [reflection](https://hackage.haskell.org/package/reflection) library to solve the problem of
@@ -41,7 +40,6 @@ import           Control.Tracer (Tracer (Tracer))
 import           Data.Functor ((<&>))
 import           Data.List ((\\))
 import qualified Data.Map.Strict as Map
-import           Data.Proxy (Proxy (..))
 import qualified Data.Reflection as Reflection
 import qualified Data.Set as Set
 import qualified Data.TreeDiff as TD
@@ -88,15 +86,15 @@ tests = adhoc <> core
 -- ()@.
 prop_yield_regression :: QC.Property
 prop_yield_regression =
-    Reflection.reify (StaticParams{ pUpstreamPeerBound = Nothing
-                                  , pInitialJudgement = YoungEnough
-                                  , pIsHaaSatisfied = const True
-                                  }) $ \(Proxy :: Proxy params) ->
-   QC.once
+   Reflection.give (StaticParams{ pUpstreamPeerBound = Nothing
+                                 , pInitialJudgement = YoungEnough
+                                 , pIsHaaSatisfied = const True
+                                 })
+ $ QC.once
  $ runIOSimProp
- $ prop_sequential_iosim1 @_ @params yieldRegressionActions
+ $ prop_sequential_iosim1 yieldRegressionActions
 
- where yieldRegressionActions :: QD.Actions (Model s)
+ where yieldRegressionActions :: QD.Actions Model
        yieldRegressionActions =
             (wrapPositiveAction $ NewCandidate Amara (B 1))
          <> (wrapPositiveAction $ StartIdling Amara)
@@ -106,14 +104,14 @@ prop_yield_regression =
 
 prop_sequential_iosim :: Maybe UpstreamPeer -> LedgerStateJudgement -> QC.Fun (Set.Set UpstreamPeer) Bool -> QC.Property
 prop_sequential_iosim pUpstreamPeerBound pInitialJudgement (QC.Fun _ pIsHaaSatisfied) =
-    Reflection.reify (StaticParams{ pUpstreamPeerBound
+    Reflection.give (StaticParams{ pUpstreamPeerBound
                                   , pInitialJudgement
                                   , pIsHaaSatisfied
-                                  }) $ \(Proxy :: Proxy params) ->
-     -- NOTE: the actions have to be generated with an explicit call, as
-     -- 'generator' relies on reflection for access to the parameters
-     QC.forAll QC.arbitrary $ \actions ->
-       runIOSimProp $ prop_sequential_iosim1 @_ @params actions
+                                  })
+  -- NOTE: the actions have to be generated with an explicit call, as
+  -- 'generator' relies on reflection for access to the parameters
+  $ QC.forAll QC.arbitrary $ \actions ->
+       runIOSimProp $ prop_sequential_iosim1 actions
 
 setupGsm :: (Set.Set UpstreamPeer -> Bool) -> SystemStateVars (IOSim.IOSim s) -> GSM.GsmEntryPoints (IOSim.IOSim s)
 setupGsm isHaaSatisfied vars = do
@@ -149,14 +147,14 @@ setupGsm isHaaSatisfied vars = do
     SystemStateVars{varSelection, varStates, varGsmState, varMarker, varEvents} = vars
 
 prop_sequential_iosim1 ::
-  forall s params.
-  Reflection.Reifies params StaticParams =>
-  QD.Actions (Model params) ->
+  forall s.
+  Reflection.Given StaticParams =>
+  QD.Actions (Model) ->
   QC.PropertyM (RunMonad (IOSim.IOSim s)) QC.Property
 prop_sequential_iosim1 actions = do
   vars@SystemStateVars{varEvents} <- lift ask
 
-  let StaticParams{pInitialJudgement, pIsHaaSatisfied} = Reflection.reflect (Proxy @params)
+  let StaticParams{pInitialJudgement, pIsHaaSatisfied} = Reflection.given
 
   -- initialise the SUT state using the model params
   lift . lift $ initVars pInitialJudgement vars
@@ -229,7 +227,7 @@ data StaticParams = StaticParams {
   }
 
 -- | The model state
-data Model s = Model {
+data Model = Model {
     mCandidates :: Map.Map UpstreamPeer Candidate
   ,
     mClock      :: SI.Time
@@ -248,7 +246,7 @@ data Model s = Model {
   deriving anyclass (TD.ToExpr)
 
 -- | Initialise the 'Model' state from 'StaticParams'
-initModel :: StaticParams -> Model params
+initModel :: StaticParams -> Model
 initModel StaticParams{pIsHaaSatisfied, pInitialJudgement} = Model {
     mCandidates = Map.empty
   ,
@@ -274,29 +272,29 @@ initModel StaticParams{pIsHaaSatisfied, pInitialJudgement} = Model {
 -- | The 'StaticParams' are supplied through reflection because this seems to be
 --   the cleanest way to pass static configuration needed by the 'initState' and
 --   'arbitraryAction' methods
-instance Reflection.Reifies params StaticParams => QD.StateModel (Model params) where
-  data Action (Model params) a where
-    Disconnect :: UpstreamPeer -> QD.Action (Model params) ()
+instance Reflection.Given StaticParams => QD.StateModel (Model) where
+  data Action (Model) a where
+    Disconnect :: UpstreamPeer -> QD.Action (Model) ()
     -- ^ INVARIANT must be an existing peer
     --
     -- Mocks the necessary ChainSync client behavior.
-    ExtendSelection :: S -> QD.Action (Model params) ()
+    ExtendSelection :: S -> QD.Action (Model) ()
     -- ^ INVARIANT 'selectionIsBehind'
     --
     -- NOTE Harmless to assume it only advances by @'B' 1@ at a time.
-    ModifyCandidate :: UpstreamPeer -> B -> QD.Action (Model params) ()
+    ModifyCandidate :: UpstreamPeer -> B -> QD.Action (Model) ()
     -- ^ INVARIANT existing peer
     --
     -- Mocks the necessary ChainSync client behavior.
-    NewCandidate :: UpstreamPeer -> B -> QD.Action (Model params) ()
+    NewCandidate :: UpstreamPeer -> B -> QD.Action (Model) ()
     -- ^ INVARIANT new peer
     --
     -- Mocks the necessary ChainSync client behavior.z
-    ReadGsmState :: QD.Action (Model params) GSM.GsmState
-    ReadMarker :: QD.Action (Model params) MarkerState
-    StartIdling :: UpstreamPeer -> QD.Action (Model params) ()
+    ReadGsmState :: QD.Action (Model) GSM.GsmState
+    ReadMarker :: QD.Action (Model) MarkerState
+    StartIdling :: UpstreamPeer -> QD.Action (Model) ()
     -- ^ INVARIANT existing peer, not idling
-    TimePasses :: Int -> QD.Action (Model params) ()
+    TimePasses :: Int -> QD.Action (Model) ()
     -- ^ tenths of a second
     --
     -- INVARIANT positive
@@ -314,27 +312,27 @@ instance Reflection.Reifies params StaticParams => QD.StateModel (Model params) 
   shrinkAction _ctx model = shrinker model
 
   initialState = initModel params
-    where params = Reflection.reflect (Proxy @params)
+    where params = Reflection.given
 
   nextState model action _ = transition model action
 
-deriving instance Show (QD.Action (Model s) a)
-deriving instance Eq (QD.Action (Model s) a)
+deriving instance Show (QD.Action Model a)
+deriving instance Eq (QD.Action Model a)
 
 instance QD.HasVariables SI.DiffTime where
   getAllVariables _ = mempty
 
-instance QD.HasVariables (QD.Action (Model s) a) where
+instance QD.HasVariables (QD.Action Model a) where
   getAllVariables _ = mempty
 
-instance QD.HasVariables (Model s) where
+instance QD.HasVariables Model where
   getAllVariables _ = mempty
 
 --- System Under Test
 
 -- | Trivial event accumulator, useful for debugging test failures
 data Ev =
-    forall a s. EvBegin (QD.Action (Model s) a)
+    forall a. EvBegin (QD.Action Model a)
     -- ^ 'perform' started stimulating the GSM code being tested
   |
     EvEnd
@@ -408,7 +406,7 @@ newtype RunMonad m a = RunMonad {runMonad :: ReaderT (SystemStateVars m) m a}
 instance MonadTrans RunMonad where
   lift = RunMonad . lift
 
-instance (IOLike m, Reflection.Reifies params StaticParams) => QD.RunModel (Model params) (RunMonad m) where
+instance (IOLike m, Reflection.Given StaticParams) => QD.RunModel (Model) (RunMonad m) where
   perform _ action _ = do
       SystemStateVars{varSelection, varStates, varGsmState, varMarker, varEvents} <- ask
       let
@@ -491,9 +489,9 @@ runIOSimProp p =
 -- | Execute an action in both the model and the system under test, returning
 --   the modified model and a property that checks that the action brought
 --   the model and the SUT into the same state.
-takeActionInBoth :: (IOLike m, Reflection.Reifies params StaticParams)
-                 => String -> Model params -> QD.Action (Model params) GSM.GsmState
-                 -> QC.PropertyM (RunMonad m) (QC.Property, Model params)
+takeActionInBoth :: (IOLike m, Reflection.Given StaticParams)
+                 => String -> Model -> QD.Action (Model) GSM.GsmState
+                 -> QC.PropertyM (RunMonad m) (QC.Property, Model)
 takeActionInBoth conterexampleMessage model action = do
   -- run the action in the model
   let expected = QD.nextState model action impossibleError
@@ -519,7 +517,7 @@ wrapPositiveAction action =
   QD.Actions [(QD.:=) dummyVar (QD.ActionWithPolarity action QD.PosPolarity)]
 
 -- | See 'boringDurImpl'
-boringDur :: Model s -> Int -> Bool
+boringDur :: Model -> Int -> Bool
 boringDur model = boringDurImpl clk sel st
   where
     Model {
@@ -530,12 +528,12 @@ boringDur model = boringDurImpl clk sel st
         mState = st
       } = model
 
-addNotableWhen :: Notable -> Bool -> (Model params) -> (Model params)
+addNotableWhen :: Notable -> Bool -> (Model) -> (Model)
 addNotableWhen n b model =
     if not b then model else
     model { mNotables = n `Set.insert` mNotables model }
 
-selectionIsBehind :: Model s -> Bool
+selectionIsBehind :: Model -> Bool
 selectionIsBehind model =
     any (\(Candidate b') -> b' > b) cands
   where
@@ -545,7 +543,7 @@ selectionIsBehind model =
         mSelection = Selection b _s
       } = model
 
-selectionIsNotEarly :: Model s -> Bool
+selectionIsNotEarly :: Model -> Bool
 selectionIsNotEarly model =
     onset sel <= clk
   where
@@ -568,8 +566,8 @@ dummyVar = QD.mkVar 0
 
 --- Definitions used in the 'ModelState' instance
 
-precondition :: forall params a. Reflection.Reifies params StaticParams
-             => Model params -> QD.Action (Model params) a -> Bool
+precondition :: forall a. Reflection.Given StaticParams
+             => Model -> QD.Action (Model) a -> Bool
 precondition model = \case
     cmd@ExtendSelection{} ->
         let model' = QD.nextState model cmd dummyVar
@@ -604,8 +602,8 @@ precondition model = \case
           mIdlers = idlers
         } = model
 
-generator :: forall params. Reflection.Reifies params StaticParams
-          => Model params -> QC.Gen (QD.Any (QD.Action (Model params)))
+generator :: forall. Reflection.Given StaticParams
+          => Model -> QC.Gen (QD.Any (QD.Action (Model)))
 generator model = QC.frequency $
     [ (,) 5 $  QD.Some . Disconnect <$> QC.elements old | notNull old ]
  <>
@@ -647,7 +645,7 @@ generator model = QC.frequency $
         mSelection = sel
       } = model
 
-    StaticParams {pUpstreamPeerBound = ub} = Reflection.reflect (Proxy @params)
+    StaticParams {pUpstreamPeerBound = ub} = Reflection.given
 
     notNull :: [a] -> Bool
     notNull = not . null
@@ -692,7 +690,7 @@ generator model = QC.frequency $
           ]
 
 
-shrinker :: Model s -> QD.Action (Model s) a -> [QD.Any (QD.Action (Model s))]
+shrinker :: Model -> QD.Action (Model) a -> [QD.Any (QD.Action (Model))]
 shrinker _model = \case
     Disconnect{} ->
         []
@@ -714,8 +712,8 @@ shrinker _model = \case
     shrinkB (B x) = [ B x' | x' <- QC.shrink x ]
     shrinkS (S x) = [ S x' | x' <- QC.shrink x ]
 
-transition :: forall params a. Reflection.Reifies params StaticParams
-           => Model params -> QD.Action (Model params) a -> Model params
+transition :: forall a. Reflection.Given StaticParams
+           => Model -> QD.Action (Model) a -> Model
 transition model cmd =
   fixupModelState cmd $
        case cmd of
@@ -759,7 +757,7 @@ transition model cmd =
         mSelection = Selection b s
       } = model
 
-    model' :: Model s
+    model' :: Model
     model' = model { mPrev = WhetherPrevTimePasses False }
 
     plusC (Candidate x) (Candidate y) = Candidate (x + y)
@@ -767,8 +765,8 @@ transition model cmd =
 -- | Update the 'mState', assuming that's the only stale field in the given
 -- 'Model'
 --
-fixupModelState :: forall params a. Reflection.Reifies params StaticParams
-                => QD.Action (Model params) a -> Model params -> Model params
+fixupModelState :: forall a. Reflection.Given StaticParams
+                => QD.Action (Model) a -> Model -> Model
 fixupModelState cmd model =
     case st of
         ModelPreSyncing
@@ -820,7 +818,7 @@ fixupModelState cmd model =
         mState = st
       } = model
 
-    StaticParams {pIsHaaSatisfied} = Reflection.reflect (Proxy @params)
+    StaticParams {pIsHaaSatisfied} = Reflection.given
 
     haaSatisfied         = pIsHaaSatisfied $ Map.keysSet cands
     caughtUp             = some && allIdling && all ok cands
@@ -871,5 +869,5 @@ fixupModelState cmd model =
              <>
                 show cmd
 
-    avoidTransientState :: Model params -> Model params
+    avoidTransientState :: Model -> Model
     avoidTransientState = fixupModelState cmd
