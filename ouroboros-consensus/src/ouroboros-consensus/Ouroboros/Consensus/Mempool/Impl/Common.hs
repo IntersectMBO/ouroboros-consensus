@@ -235,8 +235,8 @@ tickLedgerState ::
   -> ForgeLedgerState blk
   -> (SlotNo, TickedLedgerState blk)
 tickLedgerState _cfg (ForgeInKnownSlot slot st) = (slot, st)
-tickLedgerState  cfg (ForgeInUnknownSlot st) =
-    (slot, applyChainTick cfg slot st)
+tickLedgerState cfg (ForgeInUnknownSlot st) =
+    (slot, applyChainTick OmitLedgerEvents cfg slot st)
   where
     -- Optimistically assume that the transactions will be included in a block
     -- in the next available slot
@@ -431,12 +431,12 @@ snapshotFromIS is = MempoolSnapshot {
     }
  where
   implSnapshotGetTxs :: InternalState blk
-                     -> [(Validated (GenTx blk), TicketNo, ByteSize32)]
+                     -> [(Validated (GenTx blk), TicketNo, TxMeasure blk)]
   implSnapshotGetTxs = flip implSnapshotGetTxsAfter TxSeq.zeroTicketNo
 
   implSnapshotGetTxsAfter :: InternalState blk
                           -> TicketNo
-                          -> [(Validated (GenTx blk), TicketNo, ByteSize32)]
+                          -> [(Validated (GenTx blk), TicketNo, TxMeasure blk)]
   implSnapshotGetTxsAfter IS{isTxs} =
     TxSeq.toTuples . snd . TxSeq.splitAfterTicketNo isTxs
 

@@ -105,18 +105,22 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic = do
       where
         miniprotocols =
             [ mkMiniProtocol
+                Mux.StartOnDemandAny
                 N2N.keepAliveMiniProtocolNum
                 N2N.keepAliveProtocolLimits
                 keepAliveProt
             , mkMiniProtocol
+                Mux.StartOnDemand
                 N2N.chainSyncMiniProtocolNum
                 N2N.chainSyncProtocolLimits
                 chainSyncProt
             , mkMiniProtocol
+                Mux.StartOnDemand
                 N2N.blockFetchMiniProtocolNum
                 N2N.blockFetchProtocolLimits
                 blockFetchProt
             , mkMiniProtocol
+                Mux.StartOnDemand
                 N2N.txSubmissionMiniProtocolNum
                 N2N.txSubmissionProtocolLimits
                 txSubmissionProt
@@ -149,10 +153,11 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic = do
                 -- never reply, there is no timeout
                 MiniProtocolCb $ \_ctx _channel -> forever $ threadDelay 10
 
-        mkMiniProtocol miniProtocolNum limits proto = MiniProtocol {
+        mkMiniProtocol miniProtocolStart miniProtocolNum limits proto = MiniProtocol {
             miniProtocolNum
           , miniProtocolLimits = limits N2N.defaultMiniProtocolParameters
           , miniProtocolRun    = ResponderProtocolOnly proto
+          , miniProtocolStart
           }
 
 -- | The ChainSync specification requires sending a rollback instruction to the

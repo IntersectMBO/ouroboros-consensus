@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -77,6 +78,8 @@ module Test.Ouroboros.Storage.ChainDB.Model (
   , wipeVolatileDB
   ) where
 
+import           Cardano.Ledger.BaseTypes (knownNonZeroBounded, nonZeroOr,
+                     unNonZero)
 import           Codec.Serialise (Serialise, serialise)
 import           Control.Monad (unless)
 import           Control.Monad.Except (runExcept)
@@ -109,6 +112,7 @@ import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      StreamFrom (..), StreamTo (..), UnknownRange (..),
                      validBounds)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanK)
+import           Ouroboros.Consensus.Storage.Common (LedgerDBPruneTip (..))
 import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Util (repeatedly)
 import qualified Ouroboros.Consensus.Util.AnchoredFragment as Fragment
@@ -216,7 +220,7 @@ lastK :: HasHeader a
       -> Model blk
       -> AnchoredFragment a
 lastK (SecurityParam k) f =
-      Fragment.anchorNewest k
+      Fragment.anchorNewest (unNonZero k)
     . Chain.toAnchoredFragment
     . fmap f
     . currentChain
@@ -261,7 +265,7 @@ immutableChain ::
 immutableChain (SecurityParam k) m =
     maxBy
       Chain.length
-      (Chain.drop (fromIntegral k) (currentChain m))
+      (Chain.drop (fromIntegral $ unNonZero k) (currentChain m))
       (immutableDbChain m)
   where
     maxBy f a b
@@ -341,7 +345,7 @@ getLedgerDB ::
   -> Model blk
   -> LedgerDB (ExtLedgerState blk)
 getLedgerDB cfg m@Model{..} =
-      ledgerDbPrune (SecurityParam (maxActualRollback k m))
+      ledgerDbPrune tip
     $ ledgerDbPushMany' ledgerDbCfg blks
     $ ledgerDbWithAnchor initLedger
   where
@@ -350,9 +354,18 @@ getLedgerDB cfg m@Model{..} =
     k = configSecurityParam cfg
 
     ledgerDbCfg = LedgerDbCfg {
-          ledgerDbCfgSecParam = k
-        , ledgerDbCfg         = ExtLedgerCfg cfg
+          ledgerDbCfgSecParam            = k
+        , ledgerDbCfg                    = ExtLedgerCfg cfg
+        , ledgerDbCfgComputeLedgerEvents = OmitLedgerEvents
         }
+
+    tip =
+      case maxActualRollback k m of
+        0 -> LedgerDBPruneTipZero
+        n ->
+          -- Since we know that @`n`@ is not zero, it is impossible for `nonZeroOr`
+          -- to return a `Nothing` and the final result to have default value of @`1`@.
+          LedgerDBPruneTip $ SecurityParam $ nonZeroOr n $ knownNonZeroBounded @1
 
 getLoEFragment :: Model blk -> LoE (AnchoredFragment blk)
 getLoEFragment = loeFragment
@@ -480,7 +493,7 @@ chainSelection cfg m = Model {
         go []           _loePoints       = []
         -- The candidate is an extension of the LoE chain, return at most the
         -- next k blocks on the candidate.
-        go blks         []               = take (fromIntegral k) blks
+        go blks         []               = take (fromIntegral $ unNonZero k) blks
         go (blk : blks) (pt : loePoints)
           -- The candidate and the LoE chain agree on the next point, continue
           -- recursively.
@@ -741,7 +754,7 @@ validate cfg Model { initLedger, invalid } chain =
     go ledger validPrefix = \case
       -- Return 'mbFinal' if it contains an "earlier" result
       []    -> ValidatedChain validPrefix ledger invalid
-      b:bs' -> case runExcept (tickThenApply (ExtLedgerCfg cfg) b ledger) of
+      b:bs' -> case runExcept (tickThenApply OmitLedgerEvents (ExtLedgerCfg cfg) b ledger) of
         -- Invalid block according to the ledger
         Left e
           -> ValidatedChain

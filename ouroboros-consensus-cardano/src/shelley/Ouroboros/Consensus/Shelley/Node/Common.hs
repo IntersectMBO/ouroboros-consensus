@@ -20,9 +20,12 @@ module Ouroboros.Consensus.Shelley.Node.Common (
   , shelleyBlockIssuerVKey
   ) where
 
+import           Cardano.Crypto.KES (UnsoundPureSignKeyKES)
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import qualified Cardano.Ledger.Keys as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Ledger.Slot
+import           Cardano.Protocol.Crypto
 import           Data.Text (Text)
 import           Ouroboros.Consensus.Block (CannotForge, ForgeStateInfo,
                      ForgeStateUpdateError)
@@ -33,14 +36,13 @@ import           Ouroboros.Consensus.Node.InitStorage
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import           Ouroboros.Consensus.Protocol.Praos.Common
                      (PraosCanBeLeader (praosCanBeLeaderColdVerKey))
-import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock,
                      ShelleyCompatible, shelleyNetworkMagic,
                      shelleyStorageConfigSecurityParam,
                      shelleyStorageConfigSlotsPerKESPeriod, shelleySystemStart,
                      verifyBlockIntegrity)
-import           Ouroboros.Consensus.Shelley.Protocol.Abstract
-                     (ProtocolHeaderSupportsProtocol (CannotForgeError))
+import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto,
+                     ProtocolHeaderSupportsProtocol (CannotForgeError))
 import           Ouroboros.Consensus.Storage.ImmutableDB
 
 {-------------------------------------------------------------------------------
@@ -52,7 +54,7 @@ data ShelleyLeaderCredentials c = ShelleyLeaderCredentials
     --
     -- Note that this is not inside 'ShelleyCanBeLeader' since it gets evolved
     -- automatically, whereas 'ShelleyCanBeLeader' does not change.
-    shelleyLeaderCredentialsInitSignKey :: SL.SignKeyKES c,
+    shelleyLeaderCredentialsInitSignKey :: UnsoundPureSignKeyKES (KES c),
     shelleyLeaderCredentialsCanBeLeader :: PraosCanBeLeader c,
     -- | Identifier for this set of credentials.
     --
@@ -61,7 +63,7 @@ data ShelleyLeaderCredentials c = ShelleyLeaderCredentials
   }
 
 shelleyBlockIssuerVKey ::
-  ShelleyLeaderCredentials c -> SL.VKey 'SL.BlockIssuer c
+  ShelleyLeaderCredentials c -> SL.VKey 'SL.BlockIssuer
 shelleyBlockIssuerVKey =
   praosCanBeLeaderColdVerKey . shelleyLeaderCredentialsCanBeLeader
 
@@ -78,11 +80,11 @@ type instance ForgeStateUpdateError (ShelleyBlock proto era) = HotKey.KESEvoluti
 -- | Needed in '*SharedBlockForging' because we can't partially apply
 -- equality constraints.
 class
-  (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era), EraCrypto era ~ c) =>
+  (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era), ProtoCrypto proto ~ c) =>
   ShelleyEraWithCrypto c proto era
 
 instance
-  (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era), EraCrypto era ~ c) =>
+  (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era), ProtoCrypto proto ~ c) =>
   ShelleyEraWithCrypto c proto era
 
 {-------------------------------------------------------------------------------
@@ -105,6 +107,7 @@ instance ShelleyCompatible proto era => NodeInitStorage (ShelleyBlock proto era)
     simpleChunkInfo
       . EpochSize
       . (* 10)
+      . unNonZero
       . maxRollbacks
       . shelleyStorageConfigSecurityParam
 

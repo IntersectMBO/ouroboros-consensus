@@ -160,6 +160,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
         let tickedLedgerState :: Ticked (LedgerState blk)
             tickedLedgerState =
               applyChainTick
+                OmitLedgerEvents
                 (configLedger cfg)
                 currentSlot
                 (ledgerState unticked)

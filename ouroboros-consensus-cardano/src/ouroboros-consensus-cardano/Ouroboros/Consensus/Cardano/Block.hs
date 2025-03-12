@@ -29,7 +29,7 @@ module Ouroboros.Consensus.Cardano.Block (
   , CardanoGenTxId
   , GenTx (GenTxAllegra, GenTxAlonzo, GenTxByron, GenTxMary, GenTxShelley, GenTxBabbage, GenTxConway)
   , HardForkApplyTxErr (ApplyTxErrAllegra, ApplyTxErrAlonzo, ApplyTxErrByron, ApplyTxErrMary, ApplyTxErrShelley, ApplyTxErrWrongEra, ApplyTxErrBabbage, ApplyTxErrConway)
-  , TxId (GenTxIdAllegra, GenTxIdAlonzo, GenTxIdByron, GenTxIdMary, GenTxIdShelley, GenTxIdBabbage, GenTxIdConway)
+  , TxId (CardanoGenTxId)
     -- * LedgerError
   , CardanoLedgerError
   , HardForkLedgerError (LedgerErrorAllegra, LedgerErrorAlonzo, LedgerErrorByron, LedgerErrorMary, LedgerErrorShelley, LedgerErrorWrongEra, LedgerErrorBabbage, LedgerErrorConway)
@@ -69,6 +69,7 @@ module Ouroboros.Consensus.Cardano.Block (
   , EraMismatch (..)
   ) where
 
+import           Data.ByteString.Short (ShortByteString)
 import           Data.Kind
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Strict
@@ -103,22 +104,22 @@ type CardanoEras c = ByronBlock ': CardanoShelleyEras c
 
 type CardanoShelleyEras :: Type -> [Type]
 type CardanoShelleyEras c =
-  '[ ShelleyBlock (TPraos c) (ShelleyEra c)
-   , ShelleyBlock (TPraos c) (AllegraEra c)
-   , ShelleyBlock (TPraos c) (MaryEra c)
-   , ShelleyBlock (TPraos c) (AlonzoEra c)
-   , ShelleyBlock (Praos c)  (BabbageEra c)
-   , ShelleyBlock (Praos c)  (ConwayEra c)
+  '[ ShelleyBlock (TPraos c) ShelleyEra
+   , ShelleyBlock (TPraos c) AllegraEra
+   , ShelleyBlock (TPraos c) MaryEra
+   , ShelleyBlock (TPraos c) AlonzoEra
+   , ShelleyBlock (Praos c)  BabbageEra
+   , ShelleyBlock (Praos c)  ConwayEra
    ]
 
 type ShelleyBasedLedgerEras :: Type -> [Type]
 type ShelleyBasedLedgerEras c =
-  '[ ShelleyEra c
-   , AllegraEra c
-   , MaryEra c
-   , AlonzoEra c
-   , BabbageEra c
-   , ConwayEra c
+  '[ ShelleyEra
+   , AllegraEra
+   , MaryEra
+   , AlonzoEra
+   , BabbageEra
+   , ConwayEra
    ]
 
 {-------------------------------------------------------------------------------
@@ -129,12 +130,12 @@ type ShelleyBasedLedgerEras c =
 -- miscounted.
 
 pattern TagByron   :: f ByronBlock                               -> NS f (CardanoEras c)
-pattern TagShelley :: f (ShelleyBlock (TPraos c) (ShelleyEra c)) -> NS f (CardanoEras c)
-pattern TagAllegra :: f (ShelleyBlock (TPraos c) (AllegraEra c)) -> NS f (CardanoEras c)
-pattern TagMary    :: f (ShelleyBlock (TPraos c) (MaryEra    c)) -> NS f (CardanoEras c)
-pattern TagAlonzo  :: f (ShelleyBlock (TPraos c) (AlonzoEra  c)) -> NS f (CardanoEras c)
-pattern TagBabbage :: f (ShelleyBlock (Praos c)  (BabbageEra c)) -> NS f (CardanoEras c)
-pattern TagConway  :: f (ShelleyBlock (Praos c)  (ConwayEra  c)) -> NS f (CardanoEras c)
+pattern TagShelley :: f (ShelleyBlock (TPraos c) ShelleyEra) -> NS f (CardanoEras c)
+pattern TagAllegra :: f (ShelleyBlock (TPraos c) AllegraEra) -> NS f (CardanoEras c)
+pattern TagMary    :: f (ShelleyBlock (TPraos c) MaryEra) -> NS f (CardanoEras c)
+pattern TagAlonzo  :: f (ShelleyBlock (TPraos c) AlonzoEra) -> NS f (CardanoEras c)
+pattern TagBabbage :: f (ShelleyBlock (Praos c)  BabbageEra) -> NS f (CardanoEras c)
+pattern TagConway  :: f (ShelleyBlock (Praos c)  ConwayEra) -> NS f (CardanoEras c)
 
 pattern TagByron   x =                   Z x
 pattern TagShelley x =                S (Z x)
@@ -155,47 +156,47 @@ pattern TeleByron   ::
 
 pattern TeleShelley ::
      g ByronBlock
-  -> f (ShelleyBlock (TPraos c) (ShelleyEra c))
+  -> f (ShelleyBlock (TPraos c) ShelleyEra)
   -> Telescope g f (CardanoEras c)
 
 pattern TeleAllegra ::
      g ByronBlock
-  -> g (ShelleyBlock (TPraos c) (ShelleyEra c))
-  -> f (ShelleyBlock (TPraos c) (AllegraEra c))
+  -> g (ShelleyBlock (TPraos c) ShelleyEra)
+  -> f (ShelleyBlock (TPraos c) AllegraEra)
   -> Telescope g f (CardanoEras c)
 
 pattern TeleMary    ::
      g ByronBlock
-  -> g (ShelleyBlock (TPraos c) (ShelleyEra c))
-  -> g (ShelleyBlock (TPraos c) (AllegraEra c))
-  -> f (ShelleyBlock (TPraos c) (MaryEra    c))
+  -> g (ShelleyBlock (TPraos c) ShelleyEra)
+  -> g (ShelleyBlock (TPraos c) AllegraEra)
+  -> f (ShelleyBlock (TPraos c) MaryEra)
   -> Telescope g f (CardanoEras c)
 
 pattern TeleAlonzo  ::
      g ByronBlock
-  -> g (ShelleyBlock (TPraos c) (ShelleyEra c))
-  -> g (ShelleyBlock (TPraos c) (AllegraEra c))
-  -> g (ShelleyBlock (TPraos c) (MaryEra    c))
-  -> f (ShelleyBlock (TPraos c) (AlonzoEra  c))
+  -> g (ShelleyBlock (TPraos c) ShelleyEra)
+  -> g (ShelleyBlock (TPraos c) AllegraEra)
+  -> g (ShelleyBlock (TPraos c) MaryEra)
+  -> f (ShelleyBlock (TPraos c) AlonzoEra)
   -> Telescope g f (CardanoEras c)
 
 pattern TeleBabbage  ::
      g ByronBlock
-  -> g (ShelleyBlock (TPraos c) (ShelleyEra c))
-  -> g (ShelleyBlock (TPraos c) (AllegraEra c))
-  -> g (ShelleyBlock (TPraos c) (MaryEra    c))
-  -> g (ShelleyBlock (TPraos c) (AlonzoEra  c))
-  -> f (ShelleyBlock (Praos c)  (BabbageEra c))
+  -> g (ShelleyBlock (TPraos c) ShelleyEra)
+  -> g (ShelleyBlock (TPraos c) AllegraEra)
+  -> g (ShelleyBlock (TPraos c) MaryEra)
+  -> g (ShelleyBlock (TPraos c) AlonzoEra)
+  -> f (ShelleyBlock (Praos c)  BabbageEra)
   -> Telescope g f (CardanoEras c)
 
 pattern TeleConway  ::
      g ByronBlock
-  -> g (ShelleyBlock (TPraos c) (ShelleyEra c))
-  -> g (ShelleyBlock (TPraos c) (AllegraEra c))
-  -> g (ShelleyBlock (TPraos c) (MaryEra    c))
-  -> g (ShelleyBlock (TPraos c) (AlonzoEra  c))
-  -> g (ShelleyBlock (Praos c)  (BabbageEra c))
-  -> f (ShelleyBlock (Praos c)  (ConwayEra  c))
+  -> g (ShelleyBlock (TPraos c) ShelleyEra)
+  -> g (ShelleyBlock (TPraos c) AllegraEra)
+  -> g (ShelleyBlock (TPraos c) MaryEra)
+  -> g (ShelleyBlock (TPraos c) AlonzoEra)
+  -> g (ShelleyBlock (Praos c)  BabbageEra)
+  -> f (ShelleyBlock (Praos c)  ConwayEra)
   -> Telescope g f (CardanoEras c)
 
 -- Here we use layout and adjacency to make it obvious that we haven't
@@ -230,22 +231,22 @@ type CardanoBlock c = HardForkBlock (CardanoEras c)
 pattern BlockByron :: ByronBlock -> CardanoBlock c
 pattern BlockByron b = HardForkBlock (OneEraBlock (TagByron (I b)))
 
-pattern BlockShelley :: ShelleyBlock (TPraos c) (ShelleyEra c) -> CardanoBlock c
+pattern BlockShelley :: ShelleyBlock (TPraos c) ShelleyEra -> CardanoBlock c
 pattern BlockShelley b = HardForkBlock (OneEraBlock (TagShelley (I b)))
 
-pattern BlockAllegra :: ShelleyBlock (TPraos c) (AllegraEra c) -> CardanoBlock c
+pattern BlockAllegra :: ShelleyBlock (TPraos c) AllegraEra -> CardanoBlock c
 pattern BlockAllegra b = HardForkBlock (OneEraBlock (TagAllegra (I b)))
 
-pattern BlockMary :: ShelleyBlock (TPraos c) (MaryEra c) -> CardanoBlock c
+pattern BlockMary :: ShelleyBlock (TPraos c) MaryEra -> CardanoBlock c
 pattern BlockMary b = HardForkBlock (OneEraBlock (TagMary (I b)))
 
-pattern BlockAlonzo :: ShelleyBlock (TPraos c) (AlonzoEra c) -> CardanoBlock c
+pattern BlockAlonzo :: ShelleyBlock (TPraos c) AlonzoEra -> CardanoBlock c
 pattern BlockAlonzo b = HardForkBlock (OneEraBlock (TagAlonzo (I b)))
 
-pattern BlockBabbage :: ShelleyBlock (Praos c) (BabbageEra c) -> CardanoBlock c
+pattern BlockBabbage :: ShelleyBlock (Praos c) BabbageEra -> CardanoBlock c
 pattern BlockBabbage b = HardForkBlock (OneEraBlock (TagBabbage (I b)))
 
-pattern BlockConway :: ShelleyBlock (Praos c) (ConwayEra c) -> CardanoBlock c
+pattern BlockConway :: ShelleyBlock (Praos c) ConwayEra -> CardanoBlock c
 pattern BlockConway b = HardForkBlock (OneEraBlock (TagConway (I b)))
 
 {-# COMPLETE
@@ -270,32 +271,32 @@ pattern HeaderByron :: Header ByronBlock -> CardanoHeader c
 pattern HeaderByron h = HardForkHeader (OneEraHeader (TagByron h))
 
 pattern HeaderShelley ::
-     Header (ShelleyBlock (TPraos c) (ShelleyEra c))
+     Header (ShelleyBlock (TPraos c) ShelleyEra)
   -> CardanoHeader c
 pattern HeaderShelley h = HardForkHeader (OneEraHeader (TagShelley h))
 
 pattern HeaderAllegra ::
-     Header (ShelleyBlock (TPraos c) (AllegraEra c))
+     Header (ShelleyBlock (TPraos c) AllegraEra)
   -> CardanoHeader c
 pattern HeaderAllegra h = HardForkHeader (OneEraHeader (TagAllegra h))
 
 pattern HeaderMary ::
-     Header (ShelleyBlock (TPraos c) (MaryEra c))
+     Header (ShelleyBlock (TPraos c) MaryEra)
   -> CardanoHeader c
 pattern HeaderMary h = HardForkHeader (OneEraHeader (TagMary h))
 
 pattern HeaderAlonzo ::
-     Header (ShelleyBlock (TPraos c) (AlonzoEra c))
+     Header (ShelleyBlock (TPraos c) AlonzoEra)
   -> CardanoHeader c
 pattern HeaderAlonzo h = HardForkHeader (OneEraHeader (TagAlonzo h))
 
 pattern HeaderBabbage ::
-     Header (ShelleyBlock (Praos c) (BabbageEra c))
+     Header (ShelleyBlock (Praos c) BabbageEra)
   -> CardanoHeader c
 pattern HeaderBabbage h = HardForkHeader (OneEraHeader (TagBabbage h))
 
 pattern HeaderConway ::
-     Header (ShelleyBlock (Praos c) (ConwayEra c))
+     Header (ShelleyBlock (Praos c) ConwayEra)
   -> CardanoHeader c
 pattern HeaderConway h = HardForkHeader (OneEraHeader (TagConway h))
 
@@ -318,22 +319,22 @@ type CardanoGenTx c = GenTx (CardanoBlock c)
 pattern GenTxByron :: GenTx ByronBlock -> CardanoGenTx c
 pattern GenTxByron tx = HardForkGenTx (OneEraGenTx (TagByron tx))
 
-pattern GenTxShelley :: GenTx (ShelleyBlock (TPraos c) (ShelleyEra c)) -> CardanoGenTx c
+pattern GenTxShelley :: GenTx (ShelleyBlock (TPraos c) ShelleyEra) -> CardanoGenTx c
 pattern GenTxShelley tx = HardForkGenTx (OneEraGenTx (TagShelley tx))
 
-pattern GenTxAllegra :: GenTx (ShelleyBlock (TPraos c) (AllegraEra c)) -> CardanoGenTx c
+pattern GenTxAllegra :: GenTx (ShelleyBlock (TPraos c) AllegraEra) -> CardanoGenTx c
 pattern GenTxAllegra tx = HardForkGenTx (OneEraGenTx (TagAllegra tx))
 
-pattern GenTxMary :: GenTx (ShelleyBlock (TPraos c) (MaryEra c)) -> CardanoGenTx c
+pattern GenTxMary :: GenTx (ShelleyBlock (TPraos c) MaryEra) -> CardanoGenTx c
 pattern GenTxMary tx = HardForkGenTx (OneEraGenTx (TagMary tx))
 
-pattern GenTxAlonzo :: GenTx (ShelleyBlock (TPraos c) (AlonzoEra c)) -> CardanoGenTx c
+pattern GenTxAlonzo :: GenTx (ShelleyBlock (TPraos c) AlonzoEra) -> CardanoGenTx c
 pattern GenTxAlonzo tx = HardForkGenTx (OneEraGenTx (TagAlonzo tx))
 
-pattern GenTxBabbage :: GenTx (ShelleyBlock (Praos c) (BabbageEra c)) -> CardanoGenTx c
+pattern GenTxBabbage :: GenTx (ShelleyBlock (Praos c) BabbageEra) -> CardanoGenTx c
 pattern GenTxBabbage tx = HardForkGenTx (OneEraGenTx (TagBabbage tx))
 
-pattern GenTxConway :: GenTx (ShelleyBlock (Praos c) (ConwayEra c)) -> CardanoGenTx c
+pattern GenTxConway :: GenTx (ShelleyBlock (Praos c) ConwayEra) -> CardanoGenTx c
 pattern GenTxConway tx = HardForkGenTx (OneEraGenTx (TagConway tx))
 
 {-# COMPLETE
@@ -349,54 +350,10 @@ pattern GenTxConway tx = HardForkGenTx (OneEraGenTx (TagConway tx))
 -- | The ID of a Cardano transaction.
 type CardanoGenTxId c = GenTxId (CardanoBlock c)
 
-pattern GenTxIdByron :: GenTxId ByronBlock -> CardanoGenTxId c
-pattern GenTxIdByron txid =
-    HardForkGenTxId (OneEraGenTxId (TagByron (WrapGenTxId txid)))
+pattern CardanoGenTxId :: ShortByteString -> CardanoGenTxId c
+pattern CardanoGenTxId txid = HardForkGenTxId (OneEraGenTxId txid)
 
-pattern GenTxIdShelley ::
-     GenTxId (ShelleyBlock (TPraos c) (ShelleyEra c))
-  -> CardanoGenTxId c
-pattern GenTxIdShelley txid =
-    HardForkGenTxId (OneEraGenTxId (TagShelley (WrapGenTxId txid)))
-
-pattern GenTxIdAllegra ::
-     GenTxId (ShelleyBlock (TPraos c) (AllegraEra c))
-  -> CardanoGenTxId c
-pattern GenTxIdAllegra txid =
-    HardForkGenTxId (OneEraGenTxId (TagAllegra (WrapGenTxId txid)))
-
-pattern GenTxIdMary ::
-     GenTxId (ShelleyBlock (TPraos c) (MaryEra c))
-  -> CardanoGenTxId c
-pattern GenTxIdMary txid =
-    HardForkGenTxId (OneEraGenTxId (TagMary (WrapGenTxId txid)))
-
-pattern GenTxIdAlonzo ::
-     GenTxId (ShelleyBlock (TPraos c) (AlonzoEra c))
-  -> CardanoGenTxId c
-pattern GenTxIdAlonzo txid =
-    HardForkGenTxId (OneEraGenTxId (TagAlonzo (WrapGenTxId txid)))
-
-pattern GenTxIdBabbage ::
-     GenTxId (ShelleyBlock (Praos c) (BabbageEra c))
-  -> CardanoGenTxId c
-pattern GenTxIdBabbage txid =
-    HardForkGenTxId (OneEraGenTxId (TagBabbage (WrapGenTxId txid)))
-
-pattern GenTxIdConway ::
-     GenTxId (ShelleyBlock (Praos c) (ConwayEra c))
-  -> CardanoGenTxId c
-pattern GenTxIdConway txid =
-    HardForkGenTxId (OneEraGenTxId (TagConway (WrapGenTxId txid)))
-
-{-# COMPLETE GenTxIdByron
-           , GenTxIdShelley
-           , GenTxIdAllegra
-           , GenTxIdMary
-           , GenTxIdAlonzo
-           , GenTxIdBabbage
-           , GenTxIdConway
-  #-}
+{-# COMPLETE CardanoGenTxId #-}
 
 -- | An error resulting from applying a 'CardanoGenTx' to the ledger.
 --
@@ -421,37 +378,37 @@ pattern ApplyTxErrByron err =
     HardForkApplyTxErrFromEra (OneEraApplyTxErr (TagByron (WrapApplyTxErr err)))
 
 pattern ApplyTxErrShelley ::
-     ApplyTxErr (ShelleyBlock (TPraos c) (ShelleyEra c))
+     ApplyTxErr (ShelleyBlock (TPraos c) ShelleyEra)
   -> CardanoApplyTxErr c
 pattern ApplyTxErrShelley err =
     HardForkApplyTxErrFromEra (OneEraApplyTxErr (TagShelley (WrapApplyTxErr err)))
 
 pattern ApplyTxErrAllegra ::
-     ApplyTxErr (ShelleyBlock (TPraos c) (AllegraEra c))
+     ApplyTxErr (ShelleyBlock (TPraos c) AllegraEra)
   -> CardanoApplyTxErr c
 pattern ApplyTxErrAllegra err =
     HardForkApplyTxErrFromEra (OneEraApplyTxErr (TagAllegra (WrapApplyTxErr err)))
 
 pattern ApplyTxErrMary ::
-     ApplyTxErr (ShelleyBlock (TPraos c) (MaryEra c))
+     ApplyTxErr (ShelleyBlock (TPraos c) MaryEra)
   -> CardanoApplyTxErr c
 pattern ApplyTxErrMary err =
     HardForkApplyTxErrFromEra (OneEraApplyTxErr (TagMary (WrapApplyTxErr err)))
 
 pattern ApplyTxErrAlonzo ::
-     ApplyTxErr (ShelleyBlock (TPraos c) (AlonzoEra c))
+     ApplyTxErr (ShelleyBlock (TPraos c) AlonzoEra)
   -> CardanoApplyTxErr c
 pattern ApplyTxErrAlonzo err =
     HardForkApplyTxErrFromEra (OneEraApplyTxErr (TagAlonzo (WrapApplyTxErr err)))
 
 pattern ApplyTxErrBabbage ::
-     ApplyTxErr (ShelleyBlock (Praos c) (BabbageEra c))
+     ApplyTxErr (ShelleyBlock (Praos c) BabbageEra)
   -> CardanoApplyTxErr c
 pattern ApplyTxErrBabbage err =
     HardForkApplyTxErrFromEra (OneEraApplyTxErr (TagBabbage (WrapApplyTxErr err)))
 
 pattern ApplyTxErrConway ::
-     ApplyTxErr (ShelleyBlock (Praos c) (ConwayEra c))
+     ApplyTxErr (ShelleyBlock (Praos c) ConwayEra)
   -> CardanoApplyTxErr c
 pattern ApplyTxErrConway err =
     HardForkApplyTxErrFromEra (OneEraApplyTxErr (TagConway (WrapApplyTxErr err)))
@@ -497,42 +454,42 @@ pattern LedgerErrorByron err =
     HardForkLedgerErrorFromEra (OneEraLedgerError (TagByron (WrapLedgerErr err)))
 
 pattern LedgerErrorShelley ::
-     LedgerError (ShelleyBlock (TPraos c) (ShelleyEra c))
+     LedgerError (ShelleyBlock (TPraos c) ShelleyEra)
   -> CardanoLedgerError c
 pattern LedgerErrorShelley err =
     HardForkLedgerErrorFromEra
       (OneEraLedgerError (TagShelley (WrapLedgerErr err)))
 
 pattern LedgerErrorAllegra ::
-     LedgerError (ShelleyBlock (TPraos c) (AllegraEra c))
+     LedgerError (ShelleyBlock (TPraos c) AllegraEra)
   -> CardanoLedgerError c
 pattern LedgerErrorAllegra err =
     HardForkLedgerErrorFromEra
       (OneEraLedgerError (TagAllegra (WrapLedgerErr err)))
 
 pattern LedgerErrorMary ::
-     LedgerError (ShelleyBlock (TPraos c) (MaryEra c))
+     LedgerError (ShelleyBlock (TPraos c) MaryEra)
   -> CardanoLedgerError c
 pattern LedgerErrorMary err =
     HardForkLedgerErrorFromEra
       (OneEraLedgerError (TagMary (WrapLedgerErr err)))
 
 pattern LedgerErrorAlonzo ::
-     LedgerError (ShelleyBlock (TPraos c) (AlonzoEra c))
+     LedgerError (ShelleyBlock (TPraos c) AlonzoEra)
   -> CardanoLedgerError c
 pattern LedgerErrorAlonzo err =
     HardForkLedgerErrorFromEra
       (OneEraLedgerError (TagAlonzo (WrapLedgerErr err)))
 
 pattern LedgerErrorBabbage ::
-     LedgerError (ShelleyBlock (Praos c) (BabbageEra c))
+     LedgerError (ShelleyBlock (Praos c) BabbageEra)
   -> CardanoLedgerError c
 pattern LedgerErrorBabbage err =
     HardForkLedgerErrorFromEra
       (OneEraLedgerError (TagBabbage (WrapLedgerErr err)))
 
 pattern LedgerErrorConway ::
-     LedgerError (ShelleyBlock (Praos c) (ConwayEra c))
+     LedgerError (ShelleyBlock (Praos c) ConwayEra)
   -> CardanoLedgerError c
 pattern LedgerErrorConway err =
     HardForkLedgerErrorFromEra
@@ -567,37 +524,37 @@ pattern OtherHeaderEnvelopeErrorByron err =
       (OneEraEnvelopeErr (TagByron (WrapEnvelopeErr err)))
 
 pattern OtherHeaderEnvelopeErrorShelley
-  :: OtherHeaderEnvelopeError (ShelleyBlock (TPraos c) (ShelleyEra c))
+  :: OtherHeaderEnvelopeError (ShelleyBlock (TPraos c) ShelleyEra)
   -> CardanoOtherHeaderEnvelopeError c
 pattern OtherHeaderEnvelopeErrorShelley err =
     HardForkEnvelopeErrFromEra (OneEraEnvelopeErr (TagShelley (WrapEnvelopeErr err)))
 
 pattern OtherHeaderEnvelopeErrorAllegra
-  :: OtherHeaderEnvelopeError (ShelleyBlock (TPraos c) (AllegraEra c))
+  :: OtherHeaderEnvelopeError (ShelleyBlock (TPraos c) AllegraEra)
   -> CardanoOtherHeaderEnvelopeError c
 pattern OtherHeaderEnvelopeErrorAllegra err =
     HardForkEnvelopeErrFromEra (OneEraEnvelopeErr (TagAllegra (WrapEnvelopeErr err)))
 
 pattern OtherHeaderEnvelopeErrorMary
-  :: OtherHeaderEnvelopeError (ShelleyBlock (TPraos c) (MaryEra c))
+  :: OtherHeaderEnvelopeError (ShelleyBlock (TPraos c) MaryEra)
   -> CardanoOtherHeaderEnvelopeError c
 pattern OtherHeaderEnvelopeErrorMary err =
     HardForkEnvelopeErrFromEra (OneEraEnvelopeErr (TagMary (WrapEnvelopeErr err)))
 
 pattern OtherHeaderEnvelopeErrorAlonzo
-  :: OtherHeaderEnvelopeError (ShelleyBlock (TPraos c) (AlonzoEra c))
+  :: OtherHeaderEnvelopeError (ShelleyBlock (TPraos c) AlonzoEra)
   -> CardanoOtherHeaderEnvelopeError c
 pattern OtherHeaderEnvelopeErrorAlonzo err =
     HardForkEnvelopeErrFromEra (OneEraEnvelopeErr (TagAlonzo (WrapEnvelopeErr err)))
 
 pattern OtherHeaderEnvelopeErrorBabbage
-  :: OtherHeaderEnvelopeError (ShelleyBlock (Praos c) (BabbageEra c))
+  :: OtherHeaderEnvelopeError (ShelleyBlock (Praos c) BabbageEra)
   -> CardanoOtherHeaderEnvelopeError c
 pattern OtherHeaderEnvelopeErrorBabbage err =
     HardForkEnvelopeErrFromEra (OneEraEnvelopeErr (TagBabbage (WrapEnvelopeErr err)))
 
 pattern OtherHeaderEnvelopeErrorConway
-  :: OtherHeaderEnvelopeError (ShelleyBlock (Praos c) (ConwayEra c))
+  :: OtherHeaderEnvelopeError (ShelleyBlock (Praos c) ConwayEra)
   -> CardanoOtherHeaderEnvelopeError c
 pattern OtherHeaderEnvelopeErrorConway err =
     HardForkEnvelopeErrFromEra (OneEraEnvelopeErr (TagConway (WrapEnvelopeErr err)))
@@ -629,32 +586,32 @@ pattern TipInfoByron :: TipInfo ByronBlock -> CardanoTipInfo c
 pattern TipInfoByron ti = OneEraTipInfo (TagByron (WrapTipInfo ti))
 
 pattern TipInfoShelley ::
-     TipInfo (ShelleyBlock (TPraos c) (ShelleyEra c))
+     TipInfo (ShelleyBlock (TPraos c) ShelleyEra)
   -> CardanoTipInfo c
 pattern TipInfoShelley ti = OneEraTipInfo (TagShelley (WrapTipInfo ti))
 
 pattern TipInfoAllegra ::
-     TipInfo (ShelleyBlock (TPraos c) (AllegraEra c))
+     TipInfo (ShelleyBlock (TPraos c) AllegraEra)
   -> CardanoTipInfo c
 pattern TipInfoAllegra ti = OneEraTipInfo (TagAllegra (WrapTipInfo ti))
 
 pattern TipInfoMary ::
-     TipInfo (ShelleyBlock (TPraos c) (MaryEra c))
+     TipInfo (ShelleyBlock (TPraos c) MaryEra)
   -> CardanoTipInfo c
 pattern TipInfoMary ti = OneEraTipInfo (TagMary (WrapTipInfo ti))
 
 pattern TipInfoAlonzo ::
-     TipInfo (ShelleyBlock (TPraos c) (AlonzoEra c))
+     TipInfo (ShelleyBlock (TPraos c) AlonzoEra)
   -> CardanoTipInfo c
 pattern TipInfoAlonzo ti = OneEraTipInfo (TagAlonzo (WrapTipInfo ti))
 
 pattern TipInfoBabbage ::
-     TipInfo (ShelleyBlock (Praos c) (BabbageEra c))
+     TipInfo (ShelleyBlock (Praos c) BabbageEra)
   -> CardanoTipInfo c
 pattern TipInfoBabbage ti = OneEraTipInfo (TagBabbage (WrapTipInfo ti))
 
 pattern TipInfoConway ::
-     TipInfo (ShelleyBlock (Praos c) (ConwayEra c))
+     TipInfo (ShelleyBlock (Praos c) ConwayEra)
   -> CardanoTipInfo c
 pattern TipInfoConway ti = OneEraTipInfo (TagConway (WrapTipInfo ti))
 
@@ -687,7 +644,7 @@ pattern QueryIfCurrentByron
 pattern QueryIfCurrentShelley
   :: ()
   => CardanoQueryResult c result ~ a
-  => BlockQuery (ShelleyBlock (TPraos c) (ShelleyEra c)) result
+  => BlockQuery (ShelleyBlock (TPraos c) ShelleyEra) result
   -> CardanoQuery c a
 
 -- | Allegra-specific query that can only be answered when the ledger is in the
@@ -695,7 +652,7 @@ pattern QueryIfCurrentShelley
 pattern QueryIfCurrentAllegra
   :: ()
   => CardanoQueryResult c result ~ a
-  => BlockQuery (ShelleyBlock (TPraos c) (AllegraEra c)) result
+  => BlockQuery (ShelleyBlock (TPraos c) AllegraEra) result
   -> CardanoQuery c a
 
 -- | Mary-specific query that can only be answered when the ledger is in the
@@ -703,7 +660,7 @@ pattern QueryIfCurrentAllegra
 pattern QueryIfCurrentMary
   :: ()
   => CardanoQueryResult c result ~ a
-  => BlockQuery (ShelleyBlock (TPraos c) (MaryEra c)) result
+  => BlockQuery (ShelleyBlock (TPraos c) MaryEra) result
   -> CardanoQuery c a
 
 -- | Alonzo-specific query that can only be answered when the ledger is in the
@@ -711,7 +668,7 @@ pattern QueryIfCurrentMary
 pattern QueryIfCurrentAlonzo
   :: ()
   => CardanoQueryResult c result ~ a
-  => BlockQuery (ShelleyBlock (TPraos c) (AlonzoEra c)) result
+  => BlockQuery (ShelleyBlock (TPraos c) AlonzoEra) result
   -> CardanoQuery c a
 
 -- | Babbage-specific query that can only be answered when the ledger is in the
@@ -719,7 +676,7 @@ pattern QueryIfCurrentAlonzo
 pattern QueryIfCurrentBabbage
   :: ()
   => CardanoQueryResult c result ~ a
-  => BlockQuery (ShelleyBlock (Praos c) (BabbageEra c)) result
+  => BlockQuery (ShelleyBlock (Praos c) BabbageEra) result
   -> CardanoQuery c a
 
 -- | Conway-specific query that can only be answered when the ledger is in the
@@ -727,7 +684,7 @@ pattern QueryIfCurrentBabbage
 pattern QueryIfCurrentConway
   :: ()
   => CardanoQueryResult c result ~ a
-  => BlockQuery (ShelleyBlock (Praos c) (ConwayEra c)) result
+  => BlockQuery (ShelleyBlock (Praos c) ConwayEra) result
   -> CardanoQuery c a
 
 -- Here we use layout and adjacency to make it obvious that we haven't
@@ -875,12 +832,12 @@ type CardanoCodecConfig c = CodecConfig (CardanoBlock c)
 
 pattern CardanoCodecConfig
   :: CodecConfig ByronBlock
-  -> CodecConfig (ShelleyBlock (TPraos c) (ShelleyEra c))
-  -> CodecConfig (ShelleyBlock (TPraos c) (AllegraEra c))
-  -> CodecConfig (ShelleyBlock (TPraos c) (MaryEra c))
-  -> CodecConfig (ShelleyBlock (TPraos c) (AlonzoEra c))
-  -> CodecConfig (ShelleyBlock (Praos c)  (BabbageEra c))
-  -> CodecConfig (ShelleyBlock (Praos c)  (ConwayEra c))
+  -> CodecConfig (ShelleyBlock (TPraos c) ShelleyEra)
+  -> CodecConfig (ShelleyBlock (TPraos c) AllegraEra)
+  -> CodecConfig (ShelleyBlock (TPraos c) MaryEra)
+  -> CodecConfig (ShelleyBlock (TPraos c) AlonzoEra)
+  -> CodecConfig (ShelleyBlock (Praos c)  BabbageEra)
+  -> CodecConfig (ShelleyBlock (Praos c)  ConwayEra)
   -> CardanoCodecConfig c
 pattern CardanoCodecConfig cfgByron cfgShelley cfgAllegra cfgMary cfgAlonzo cfgBabbage cfgConway =
     HardForkCodecConfig {
@@ -910,12 +867,12 @@ type CardanoBlockConfig c = BlockConfig (CardanoBlock c)
 
 pattern CardanoBlockConfig
   :: BlockConfig ByronBlock
-  -> BlockConfig (ShelleyBlock (TPraos c) (ShelleyEra c))
-  -> BlockConfig (ShelleyBlock (TPraos c) (AllegraEra c))
-  -> BlockConfig (ShelleyBlock (TPraos c) (MaryEra c))
-  -> BlockConfig (ShelleyBlock (TPraos c) (AlonzoEra c))
-  -> BlockConfig (ShelleyBlock (Praos c)  (BabbageEra c))
-  -> BlockConfig (ShelleyBlock (Praos c)  (ConwayEra c))
+  -> BlockConfig (ShelleyBlock (TPraos c) ShelleyEra)
+  -> BlockConfig (ShelleyBlock (TPraos c) AllegraEra)
+  -> BlockConfig (ShelleyBlock (TPraos c) MaryEra)
+  -> BlockConfig (ShelleyBlock (TPraos c) AlonzoEra)
+  -> BlockConfig (ShelleyBlock (Praos c)  BabbageEra)
+  -> BlockConfig (ShelleyBlock (Praos c)  ConwayEra)
   -> CardanoBlockConfig c
 pattern CardanoBlockConfig cfgByron cfgShelley cfgAllegra cfgMary cfgAlonzo cfgBabbage cfgConway =
     HardForkBlockConfig {
@@ -945,12 +902,12 @@ type CardanoStorageConfig c = StorageConfig (CardanoBlock c)
 
 pattern CardanoStorageConfig
   :: StorageConfig ByronBlock
-  -> StorageConfig (ShelleyBlock (TPraos c) (ShelleyEra c))
-  -> StorageConfig (ShelleyBlock (TPraos c) (AllegraEra c))
-  -> StorageConfig (ShelleyBlock (TPraos c) (MaryEra c))
-  -> StorageConfig (ShelleyBlock (TPraos c) (AlonzoEra c))
-  -> StorageConfig (ShelleyBlock (Praos c)  (BabbageEra c))
-  -> StorageConfig (ShelleyBlock (Praos c)  (ConwayEra c))
+  -> StorageConfig (ShelleyBlock (TPraos c) ShelleyEra)
+  -> StorageConfig (ShelleyBlock (TPraos c) AllegraEra)
+  -> StorageConfig (ShelleyBlock (TPraos c) MaryEra)
+  -> StorageConfig (ShelleyBlock (TPraos c) AlonzoEra)
+  -> StorageConfig (ShelleyBlock (Praos c)  BabbageEra)
+  -> StorageConfig (ShelleyBlock (Praos c)  ConwayEra)
   -> CardanoStorageConfig c
 pattern CardanoStorageConfig cfgByron cfgShelley cfgAllegra cfgMary cfgAlonzo cfgBabbage cfgConway =
     HardForkStorageConfig {
@@ -983,12 +940,12 @@ type CardanoConsensusConfig c =
 
 pattern CardanoConsensusConfig
   :: PartialConsensusConfig (BlockProtocol ByronBlock)
-  -> PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) (ShelleyEra c)))
-  -> PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) (AllegraEra c)))
-  -> PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) (MaryEra c)))
-  -> PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) (AlonzoEra c)))
-  -> PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c)  (BabbageEra c)))
-  -> PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c)  (ConwayEra c)))
+  -> PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) ShelleyEra))
+  -> PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) AllegraEra))
+  -> PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) MaryEra))
+  -> PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) AlonzoEra))
+  -> PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c)  BabbageEra))
+  -> PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c)  ConwayEra))
   -> CardanoConsensusConfig c
 pattern CardanoConsensusConfig cfgByron cfgShelley cfgAllegra cfgMary cfgAlonzo cfgBabbage cfgConway <-
     HardForkConsensusConfig {
@@ -1020,12 +977,12 @@ type CardanoLedgerConfig c = HardForkLedgerConfig (CardanoEras c)
 
 pattern CardanoLedgerConfig
   :: PartialLedgerConfig ByronBlock
-  -> PartialLedgerConfig (ShelleyBlock (TPraos c) (ShelleyEra c))
-  -> PartialLedgerConfig (ShelleyBlock (TPraos c) (AllegraEra c))
-  -> PartialLedgerConfig (ShelleyBlock (TPraos c) (MaryEra c))
-  -> PartialLedgerConfig (ShelleyBlock (TPraos c) (AlonzoEra c))
-  -> PartialLedgerConfig (ShelleyBlock (Praos c)  (BabbageEra c))
-  -> PartialLedgerConfig (ShelleyBlock (Praos c)  (ConwayEra c))
+  -> PartialLedgerConfig (ShelleyBlock (TPraos c) ShelleyEra)
+  -> PartialLedgerConfig (ShelleyBlock (TPraos c) AllegraEra)
+  -> PartialLedgerConfig (ShelleyBlock (TPraos c) MaryEra)
+  -> PartialLedgerConfig (ShelleyBlock (TPraos c) AlonzoEra)
+  -> PartialLedgerConfig (ShelleyBlock (Praos c)  BabbageEra)
+  -> PartialLedgerConfig (ShelleyBlock (Praos c)  ConwayEra)
   -> CardanoLedgerConfig c
 pattern CardanoLedgerConfig cfgByron cfgShelley cfgAllegra cfgMary cfgAlonzo cfgBabbage cfgConway <-
     HardForkLedgerConfig {
@@ -1064,7 +1021,7 @@ pattern LedgerStateByron st <-
         (TeleByron (State.Current { currentState = st })))
 
 pattern LedgerStateShelley
-  :: LedgerState (ShelleyBlock (TPraos c) (ShelleyEra c))
+  :: LedgerState (ShelleyBlock (TPraos c) ShelleyEra)
   -> CardanoLedgerState c
 pattern LedgerStateShelley st <-
     HardForkLedgerState
@@ -1072,7 +1029,7 @@ pattern LedgerStateShelley st <-
         (TeleShelley _ (State.Current { currentState = st })))
 
 pattern LedgerStateAllegra
-  :: LedgerState (ShelleyBlock (TPraos c) (AllegraEra c))
+  :: LedgerState (ShelleyBlock (TPraos c) AllegraEra)
   -> CardanoLedgerState c
 pattern LedgerStateAllegra st <-
     HardForkLedgerState
@@ -1080,7 +1037,7 @@ pattern LedgerStateAllegra st <-
         (TeleAllegra _ _  (State.Current { currentState = st })))
 
 pattern LedgerStateMary
-  :: LedgerState (ShelleyBlock (TPraos c) (MaryEra c))
+  :: LedgerState (ShelleyBlock (TPraos c) MaryEra)
   -> CardanoLedgerState c
 pattern LedgerStateMary st <-
     HardForkLedgerState
@@ -1088,7 +1045,7 @@ pattern LedgerStateMary st <-
         (TeleMary _ _ _ (State.Current { currentState = st })))
 
 pattern LedgerStateAlonzo
-  :: LedgerState (ShelleyBlock (TPraos c) (AlonzoEra c))
+  :: LedgerState (ShelleyBlock (TPraos c) AlonzoEra)
   -> CardanoLedgerState c
 pattern LedgerStateAlonzo st <-
     HardForkLedgerState
@@ -1096,7 +1053,7 @@ pattern LedgerStateAlonzo st <-
         (TeleAlonzo _ _ _ _ (State.Current { currentState = st })))
 
 pattern LedgerStateBabbage
-  :: LedgerState (ShelleyBlock (Praos c) (BabbageEra c))
+  :: LedgerState (ShelleyBlock (Praos c) BabbageEra)
   -> CardanoLedgerState c
 pattern LedgerStateBabbage st <-
     HardForkLedgerState
@@ -1104,7 +1061,7 @@ pattern LedgerStateBabbage st <-
         (TeleBabbage _ _ _ _ _ (State.Current { currentState = st })))
 
 pattern LedgerStateConway
-  :: LedgerState (ShelleyBlock (Praos c) (ConwayEra c))
+  :: LedgerState (ShelleyBlock (Praos c) ConwayEra)
   -> CardanoLedgerState c
 pattern LedgerStateConway st <-
     HardForkLedgerState
@@ -1140,42 +1097,42 @@ pattern ChainDepStateByron st <-
       (TeleByron (State.Current { currentState = WrapChainDepState st }))
 
 pattern ChainDepStateShelley
-  :: ChainDepState (BlockProtocol (ShelleyBlock (TPraos c) (ShelleyEra c)))
+  :: ChainDepState (BlockProtocol (ShelleyBlock (TPraos c) ShelleyEra))
   -> CardanoChainDepState c
 pattern ChainDepStateShelley st <-
     State.HardForkState
       (TeleShelley _ (State.Current { currentState = WrapChainDepState st }))
 
 pattern ChainDepStateAllegra
-  :: ChainDepState (BlockProtocol (ShelleyBlock (TPraos c) (AllegraEra c)))
+  :: ChainDepState (BlockProtocol (ShelleyBlock (TPraos c) AllegraEra))
   -> CardanoChainDepState c
 pattern ChainDepStateAllegra st <-
     State.HardForkState
       (TeleAllegra _ _ (State.Current { currentState = WrapChainDepState st }))
 
 pattern ChainDepStateMary
-  :: ChainDepState (BlockProtocol (ShelleyBlock (TPraos c) (MaryEra c)))
+  :: ChainDepState (BlockProtocol (ShelleyBlock (TPraos c) MaryEra))
   -> CardanoChainDepState c
 pattern ChainDepStateMary st <-
     State.HardForkState
       (TeleMary _ _ _ (State.Current { currentState = WrapChainDepState st }))
 
 pattern ChainDepStateAlonzo
-  :: ChainDepState (BlockProtocol (ShelleyBlock (TPraos c) (AlonzoEra c)))
+  :: ChainDepState (BlockProtocol (ShelleyBlock (TPraos c) AlonzoEra))
   -> CardanoChainDepState c
 pattern ChainDepStateAlonzo st <-
     State.HardForkState
       (TeleAlonzo _ _ _ _ (State.Current { currentState = WrapChainDepState st }))
 
 pattern ChainDepStateBabbage
-  :: ChainDepState (BlockProtocol (ShelleyBlock (Praos c) (BabbageEra c)))
+  :: ChainDepState (BlockProtocol (ShelleyBlock (Praos c) BabbageEra))
   -> CardanoChainDepState c
 pattern ChainDepStateBabbage st <-
     State.HardForkState
       (TeleBabbage _ _ _ _ _ (State.Current { currentState = WrapChainDepState st }))
 
 pattern ChainDepStateConway
-  :: ChainDepState (BlockProtocol (ShelleyBlock (Praos c) (ConwayEra c)))
+  :: ChainDepState (BlockProtocol (ShelleyBlock (Praos c) ConwayEra))
   -> CardanoChainDepState c
 pattern ChainDepStateConway st <-
     State.HardForkState

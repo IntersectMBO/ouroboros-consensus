@@ -12,7 +12,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.LedgerDB (
     Checkpoint (..)
   , LedgerDB (..)
   , LedgerDB'
-  , LedgerDbCfg (..)
+  , LedgerDbCfg
+  , LedgerDbCfgF (..)
   , configLedgerDb
   ) where
 
@@ -24,6 +25,7 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerCfg (..),
                      ExtLedgerState)
 import           Ouroboros.Consensus.Protocol.Abstract (ConsensusProtocol)
+import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Network.AnchoredSeq (Anchorable (..),
                      AnchoredSeq (..))
 import qualified Ouroboros.Network.AnchoredSeq as AS
@@ -116,19 +118,24 @@ instance GetTip l => Anchorable (WithOrigin SlotNo) (Checkpoint l) (Checkpoint l
   LedgerDB Config
 -------------------------------------------------------------------------------}
 
-data LedgerDbCfg l = LedgerDbCfg {
-      ledgerDbCfgSecParam :: !SecurityParam
-    , ledgerDbCfg         :: !(LedgerCfg l)
+data LedgerDbCfgF f l = LedgerDbCfg {
+      ledgerDbCfgSecParam            :: !(HKD f SecurityParam)
+    , ledgerDbCfg                    :: !(HKD f (LedgerCfg l))
+    , ledgerDbCfgComputeLedgerEvents :: !ComputeLedgerEvents
     }
   deriving (Generic)
 
-deriving instance NoThunks (LedgerCfg l) => NoThunks (LedgerDbCfg l)
+type LedgerDbCfg l = Complete LedgerDbCfgF l
+
+deriving instance NoThunks (LedgerCfg l) => NoThunks (Complete LedgerDbCfgF l)
 
 configLedgerDb ::
      ConsensusProtocol (BlockProtocol blk)
   => TopLevelConfig blk
+  -> ComputeLedgerEvents
   -> LedgerDbCfg (ExtLedgerState blk)
-configLedgerDb cfg = LedgerDbCfg {
+configLedgerDb cfg opts = LedgerDbCfg {
       ledgerDbCfgSecParam = configSecurityParam cfg
     , ledgerDbCfg         = ExtLedgerCfg cfg
+    , ledgerDbCfgComputeLedgerEvents   = opts
     }

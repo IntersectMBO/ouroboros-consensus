@@ -46,8 +46,11 @@ module Ouroboros.Consensus.Cardano.Node (
   , pattern CardanoNodeToClientVersion13
   , pattern CardanoNodeToClientVersion14
   , pattern CardanoNodeToClientVersion15
+  , pattern CardanoNodeToClientVersion16
+  , pattern CardanoNodeToClientVersion17
   , pattern CardanoNodeToNodeVersion1
   , pattern CardanoNodeToNodeVersion2
+  , pattern CardanoNodeToNodeVersion3
   ) where
 
 import           Cardano.Binary (DecoderError (..), enforceSize)
@@ -114,6 +117,7 @@ import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util.Assert
 import           Ouroboros.Consensus.Util.IOLike
+
 {-------------------------------------------------------------------------------
   SerialiseHFC
 -------------------------------------------------------------------------------}
@@ -232,6 +236,16 @@ prependTag tag payload = mconcat [
     ]
 
 {-------------------------------------------------------------------------------
+  HasBlessedGenTxIdEra instances
+-------------------------------------------------------------------------------}
+
+instance HasBlessedGenTxIdEra (CardanoShelleyEras c) where
+  blessedGenTxIdEra = Z mempty
+
+instance HasBlessedGenTxIdEra (CardanoEras c) where
+  blessedGenTxIdEra = S blessedGenTxIdEra
+
+{-------------------------------------------------------------------------------
   SupportedNetworkProtocolVersion instance
 -------------------------------------------------------------------------------}
 
@@ -250,6 +264,20 @@ pattern CardanoNodeToNodeVersion2 :: BlockNodeToNodeVersion (CardanoBlock c)
 pattern CardanoNodeToNodeVersion2 =
     HardForkNodeToNodeEnabled
       HardForkSpecificNodeToNodeVersion1
+      (  WrapNodeToNodeVersion ByronNodeToNodeVersion2
+      :* WrapNodeToNodeVersion ShelleyNodeToNodeVersion1
+      :* WrapNodeToNodeVersion ShelleyNodeToNodeVersion1
+      :* WrapNodeToNodeVersion ShelleyNodeToNodeVersion1
+      :* WrapNodeToNodeVersion ShelleyNodeToNodeVersion1
+      :* WrapNodeToNodeVersion ShelleyNodeToNodeVersion1
+      :* WrapNodeToNodeVersion ShelleyNodeToNodeVersion1
+      :* Nil
+      )
+
+pattern CardanoNodeToNodeVersion3 :: BlockNodeToNodeVersion (CardanoBlock c)
+pattern CardanoNodeToNodeVersion3 =
+    HardForkNodeToNodeEnabled
+      HardForkSpecificNodeToNodeVersion2
       (  WrapNodeToNodeVersion ByronNodeToNodeVersion2
       :* WrapNodeToNodeVersion ShelleyNodeToNodeVersion1
       :* WrapNodeToNodeVersion ShelleyNodeToNodeVersion1
@@ -328,11 +356,46 @@ pattern CardanoNodeToClientVersion15 =
       :* Nil
       )
 
+-- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo and Babbage
+-- and Conway eras enabled, using 'ShelleyNodeToClientVersion12' for the
+-- Shelley-based eras.
+pattern CardanoNodeToClientVersion16 :: BlockNodeToClientVersion (CardanoBlock c)
+pattern CardanoNodeToClientVersion16 =
+    HardForkNodeToClientEnabled
+      HardForkSpecificNodeToClientVersion3
+      (  EraNodeToClientEnabled ByronNodeToClientVersion1
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
+      :* Nil
+      )
+
+-- | The hard fork enabled, using 'HardForkSpecificNodeToClientVersion4', and the Shelley, Allegra, Mary, Alonzo and Babbage
+-- and Conway eras enabled, using 'ShelleyNodeToClientVersion12' for the
+-- Shelley-based eras.
+pattern CardanoNodeToClientVersion17 :: BlockNodeToClientVersion (CardanoBlock c)
+pattern CardanoNodeToClientVersion17 =
+    HardForkNodeToClientEnabled
+      HardForkSpecificNodeToClientVersion4
+      (  EraNodeToClientEnabled ByronNodeToClientVersion1
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
+      :* Nil
+      )
+
 instance CardanoHardForkConstraints c
       => SupportedNetworkProtocolVersion (CardanoBlock c) where
   supportedNodeToNodeVersions _ = Map.fromList $
       [ (NodeToNodeV_13, CardanoNodeToNodeVersion2)
       , (NodeToNodeV_14, CardanoNodeToNodeVersion2)
+      , (NodeToNodeV_15, CardanoNodeToNodeVersion3)
       ]
 
   supportedNodeToClientVersions _ = Map.fromList $
@@ -340,9 +403,11 @@ instance CardanoHardForkConstraints c
       , (NodeToClientV_17, CardanoNodeToClientVersion13)
       , (NodeToClientV_18, CardanoNodeToClientVersion14)
       , (NodeToClientV_19, CardanoNodeToClientVersion15)
+      , (NodeToClientV_20, CardanoNodeToClientVersion16)
+      , (NodeToClientV_21, CardanoNodeToClientVersion17)
       ]
 
-  latestReleasedNodeVersion _prx = (Just NodeToNodeV_14, Just NodeToClientV_19)
+  latestReleasedNodeVersion _prx = (Just NodeToNodeV_15, Just NodeToClientV_20)
 
 {-------------------------------------------------------------------------------
   ProtocolInfo
@@ -378,12 +443,12 @@ newtype CardanoHardForkTriggers = CardanoHardForkTriggers {
 
 pattern CardanoHardForkTriggers' ::
      (c ~ StandardCrypto)
-  => CardanoHardForkTrigger (ShelleyBlock (TPraos c) (ShelleyEra  c))
-  -> CardanoHardForkTrigger (ShelleyBlock (TPraos c) (AllegraEra  c))
-  -> CardanoHardForkTrigger (ShelleyBlock (TPraos c) (MaryEra     c))
-  -> CardanoHardForkTrigger (ShelleyBlock (TPraos c) (AlonzoEra   c))
-  -> CardanoHardForkTrigger (ShelleyBlock (Praos  c) (BabbageEra  c))
-  -> CardanoHardForkTrigger (ShelleyBlock (Praos  c) (ConwayEra   c))
+  => CardanoHardForkTrigger (ShelleyBlock (TPraos c) ShelleyEra)
+  -> CardanoHardForkTrigger (ShelleyBlock (TPraos c) AllegraEra)
+  -> CardanoHardForkTrigger (ShelleyBlock (TPraos c) MaryEra)
+  -> CardanoHardForkTrigger (ShelleyBlock (TPraos c) AlonzoEra)
+  -> CardanoHardForkTrigger (ShelleyBlock (Praos  c) BabbageEra)
+  -> CardanoHardForkTrigger (ShelleyBlock (Praos  c) ConwayEra)
   -> CardanoHardForkTriggers
 pattern CardanoHardForkTriggers' {
         triggerHardForkShelley
@@ -431,7 +496,7 @@ data CardanoProtocolParams c = CardanoProtocolParams {
     byronProtocolParams           :: ProtocolParamsByron
   , shelleyBasedProtocolParams    :: ProtocolParamsShelleyBased c
   , cardanoHardForkTriggers       :: CardanoHardForkTriggers
-  , cardanoLedgerTransitionConfig :: L.TransitionConfig (L.LatestKnownEra c)
+  , cardanoLedgerTransitionConfig :: L.TransitionConfig L.LatestKnownEra
   , cardanoCheckpoints            :: CheckpointsMap (CardanoBlock c)
     -- | The greatest protocol version that this node's software and config
     -- files declare to handle correctly.
@@ -567,13 +632,13 @@ protocolInfoCardano paramsCardano
           -- This value is used for all Praos eras /except/ Babbage, see
           -- 'partialConsensusConfigBabbage'.
           SL.computeRandomnessStabilisationWindow
-            (SL.sgSecurityParam genesisShelley)
+            (SL.unNonZero $ SL.sgSecurityParam genesisShelley)
             (SL.mkActiveSlotCoeff $ SL.sgActiveSlotsCoeff genesisShelley)
       }
 
     PraosParams { praosSlotsPerKESPeriod, praosMaxKESEvo } = praosParams
 
-    blockConfigShelley :: BlockConfig (ShelleyBlock (TPraos c) (ShelleyEra c))
+    blockConfigShelley :: BlockConfig (ShelleyBlock (TPraos c) ShelleyEra)
     blockConfigShelley =
         Shelley.mkShelleyBlockConfig
           cardanoProtocolVersion
@@ -581,10 +646,10 @@ protocolInfoCardano paramsCardano
           (shelleyBlockIssuerVKey <$> credssShelleyBased)
 
     partialConsensusConfigShelley ::
-         PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) (ShelleyEra c)))
+         PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) ShelleyEra))
     partialConsensusConfigShelley = tpraosParams
 
-    partialLedgerConfigShelley :: PartialLedgerConfig (ShelleyBlock (TPraos c) (ShelleyEra c))
+    partialLedgerConfigShelley :: PartialLedgerConfig (ShelleyBlock (TPraos c) ShelleyEra)
     partialLedgerConfigShelley =
         mkPartialLedgerConfigShelley
           transitionConfigShelley
@@ -595,7 +660,7 @@ protocolInfoCardano paramsCardano
 
     -- Allegra
 
-    blockConfigAllegra :: BlockConfig (ShelleyBlock (TPraos c) (AllegraEra c))
+    blockConfigAllegra :: BlockConfig (ShelleyBlock (TPraos c) AllegraEra)
     blockConfigAllegra =
         Shelley.mkShelleyBlockConfig
           cardanoProtocolVersion
@@ -603,10 +668,10 @@ protocolInfoCardano paramsCardano
           (shelleyBlockIssuerVKey <$> credssShelleyBased)
 
     partialConsensusConfigAllegra ::
-         PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) (AllegraEra c)))
+         PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) AllegraEra))
     partialConsensusConfigAllegra = tpraosParams
 
-    partialLedgerConfigAllegra :: PartialLedgerConfig (ShelleyBlock (TPraos c) (AllegraEra c))
+    partialLedgerConfigAllegra :: PartialLedgerConfig (ShelleyBlock (TPraos c) AllegraEra)
     partialLedgerConfigAllegra =
         mkPartialLedgerConfigShelley
           transitionConfigAllegra
@@ -614,7 +679,7 @@ protocolInfoCardano paramsCardano
 
     -- Mary
 
-    blockConfigMary :: BlockConfig (ShelleyBlock (TPraos c) (MaryEra c))
+    blockConfigMary :: BlockConfig (ShelleyBlock (TPraos c) MaryEra)
     blockConfigMary =
         Shelley.mkShelleyBlockConfig
           cardanoProtocolVersion
@@ -622,10 +687,10 @@ protocolInfoCardano paramsCardano
           (shelleyBlockIssuerVKey <$> credssShelleyBased)
 
     partialConsensusConfigMary ::
-         PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) (MaryEra c)))
+         PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) MaryEra))
     partialConsensusConfigMary = tpraosParams
 
-    partialLedgerConfigMary :: PartialLedgerConfig (ShelleyBlock (TPraos c) (MaryEra c))
+    partialLedgerConfigMary :: PartialLedgerConfig (ShelleyBlock (TPraos c) MaryEra)
     partialLedgerConfigMary =
         mkPartialLedgerConfigShelley
           transitionConfigMary
@@ -633,7 +698,7 @@ protocolInfoCardano paramsCardano
 
     -- Alonzo
 
-    blockConfigAlonzo :: BlockConfig (ShelleyBlock (TPraos c) (AlonzoEra c))
+    blockConfigAlonzo :: BlockConfig (ShelleyBlock (TPraos c) AlonzoEra)
     blockConfigAlonzo =
         Shelley.mkShelleyBlockConfig
           cardanoProtocolVersion
@@ -641,10 +706,10 @@ protocolInfoCardano paramsCardano
           (shelleyBlockIssuerVKey <$> credssShelleyBased)
 
     partialConsensusConfigAlonzo ::
-         PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) (AlonzoEra c)))
+         PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) AlonzoEra))
     partialConsensusConfigAlonzo = tpraosParams
 
-    partialLedgerConfigAlonzo :: PartialLedgerConfig (ShelleyBlock (TPraos c) (AlonzoEra c))
+    partialLedgerConfigAlonzo :: PartialLedgerConfig (ShelleyBlock (TPraos c) AlonzoEra)
     partialLedgerConfigAlonzo =
         mkPartialLedgerConfigShelley
           transitionConfigAlonzo
@@ -652,7 +717,7 @@ protocolInfoCardano paramsCardano
 
     -- Babbage
 
-    blockConfigBabbage :: BlockConfig (ShelleyBlock (Praos c) (BabbageEra c))
+    blockConfigBabbage :: BlockConfig (ShelleyBlock (Praos c) BabbageEra)
     blockConfigBabbage =
         Shelley.mkShelleyBlockConfig
           cardanoProtocolVersion
@@ -660,7 +725,7 @@ protocolInfoCardano paramsCardano
           (shelleyBlockIssuerVKey <$> credssShelleyBased)
 
     partialConsensusConfigBabbage ::
-         PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c) (BabbageEra c)))
+         PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c) BabbageEra))
     partialConsensusConfigBabbage = praosParams {
           -- For Praos in Babbage (just as in all TPraos eras) we use the
           -- smaller (3k/f vs 4k/f slots) stability window here for
@@ -668,12 +733,12 @@ protocolInfoCardano paramsCardano
           -- specs for context.
           praosRandomnessStabilisationWindow =
             SL.computeStabilityWindow
-              (SL.sgSecurityParam genesisShelley)
+              (SL.unNonZero $ SL.sgSecurityParam genesisShelley)
               (SL.mkActiveSlotCoeff $ SL.sgActiveSlotsCoeff genesisShelley)
         }
 
 
-    partialLedgerConfigBabbage :: PartialLedgerConfig (ShelleyBlock (Praos c) (BabbageEra c))
+    partialLedgerConfigBabbage :: PartialLedgerConfig (ShelleyBlock (Praos c) BabbageEra)
     partialLedgerConfigBabbage =
         mkPartialLedgerConfigShelley
           transitionConfigBabbage
@@ -681,7 +746,7 @@ protocolInfoCardano paramsCardano
 
     -- Conway
 
-    blockConfigConway :: BlockConfig (ShelleyBlock (Praos c) (ConwayEra c))
+    blockConfigConway :: BlockConfig (ShelleyBlock (Praos c) ConwayEra)
     blockConfigConway =
         Shelley.mkShelleyBlockConfig
           cardanoProtocolVersion
@@ -689,10 +754,10 @@ protocolInfoCardano paramsCardano
           (shelleyBlockIssuerVKey <$> credssShelleyBased)
 
     partialConsensusConfigConway ::
-         PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c) (ConwayEra c)))
+         PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c) ConwayEra))
     partialConsensusConfigConway = praosParams
 
-    partialLedgerConfigConway :: PartialLedgerConfig (ShelleyBlock (Praos c) (ConwayEra c))
+    partialLedgerConfigConway :: PartialLedgerConfig (ShelleyBlock (Praos c) ConwayEra)
     partialLedgerConfigConway =
         mkPartialLedgerConfigShelley
           transitionConfigConway

@@ -1,5 +1,7 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | This is a comparative benchmark that can be used to spot regressions in the
 -- Chain Sync Client. It is not a benchmark intended to provide an absolute
@@ -9,6 +11,7 @@ module Main (main) where
 
 import           Bench.Consensus.ChainSyncClient.Driver (mainWith)
 import           Cardano.Crypto.DSIGN.Mock
+import           Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import           Control.Monad (void)
 import           Control.ResourceRegistry
 import           Control.Tracer (contramap, debugTracer, nullTracer)
@@ -214,7 +217,7 @@ kInt :: Int
 kInt = 5
 
 securityParam :: SecurityParam
-securityParam = SecurityParam $ fromIntegral kInt
+securityParam = SecurityParam $ knownNonZeroBounded @5
 
 initialChain :: NE.NonEmpty B
 initialChain =

@@ -4,6 +4,7 @@
 
 module Test.ThreadNet.PBFT (tests) where
 
+import           Cardano.Ledger.BaseTypes (nonZero, unNonZero)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import           Ouroboros.Consensus.Block
@@ -46,7 +47,7 @@ data TestSetup = TestSetup
 
 instance Arbitrary TestSetup where
   arbitrary = do
-      k <- SecurityParam <$> choose (1, 10)
+      k <- SecurityParam <$> choose (1, 10) `suchThatMap` nonZero
 
       testConfig <- arbitrary
       let TestConfig{numCoreNodes, numSlots} = testConfig
@@ -93,7 +94,7 @@ prop_simple_pbft_convergence TestSetup
       { forgeEbbEnv = Nothing
       , future      = singleEraFuture
           slotLength
-          (EpochSize $ maxRollbacks k * 10)
+          (EpochSize $ unNonZero (maxRollbacks k) * 10)
           -- The mock ledger doesn't really care, and neither does PBFT. We
           -- stick with the common @k * 10@ size for now.
       , messageDelay = noCalcMessageDelay

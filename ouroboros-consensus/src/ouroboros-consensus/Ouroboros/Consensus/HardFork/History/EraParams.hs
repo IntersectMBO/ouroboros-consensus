@@ -17,6 +17,7 @@ module Ouroboros.Consensus.HardFork.History.EraParams (
   ) where
 
 import           Cardano.Binary (enforceSize)
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Codec.CBOR.Decoding (Decoder, decodeListLen, decodeWord8)
 import           Codec.CBOR.Encoding (Encoding, encodeListLen, encodeWord8)
 import           Codec.Serialise (Serialise (..))
@@ -149,10 +150,10 @@ data EraParams = EraParams {
 -- This is primarily useful for tests.
 defaultEraParams :: SecurityParam -> SlotLength -> EraParams
 defaultEraParams (SecurityParam k) slotLength = EraParams {
-      eraEpochSize  = EpochSize (k * 10)
+      eraEpochSize  = EpochSize (unNonZero k * 10)
     , eraSlotLength = slotLength
-    , eraSafeZone   = StandardSafeZone (k * 2)
-    , eraGenesisWin = GenesisWindow (k * 2)
+    , eraSafeZone   = StandardSafeZone (unNonZero k * 2)
+    , eraGenesisWin = GenesisWindow (unNonZero k * 2)
     }
 
 -- | Zone in which it is guaranteed that no hard fork can take place

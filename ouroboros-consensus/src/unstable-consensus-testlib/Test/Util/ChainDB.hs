@@ -19,6 +19,7 @@ import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Config
                      (TopLevelConfig (topLevelConfigLedger), configCodec)
 import           Ouroboros.Consensus.HardFork.History.EraParams (eraEpochSize)
+import           Ouroboros.Consensus.Ledger.Basics (ComputeLedgerEvents (..))
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB hiding
@@ -117,7 +118,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
         , lgrGenesis          = return mcdbInitLedger
         , lgrHasFS            = SomeHasFS $ simHasFS (nodeDBsLgr mcdbNodeDBs)
         , lgrTracer           = nullTracer
-        , lgrConfig           = configLedgerDb mcdbTopLevelConfig
+        , lgrConfig           = configLedgerDb mcdbTopLevelConfig OmitLedgerEvents
         }
     , cdbsArgs = ChainDbSpecificArgs {
           cdbsBlocksToAddSize = 1

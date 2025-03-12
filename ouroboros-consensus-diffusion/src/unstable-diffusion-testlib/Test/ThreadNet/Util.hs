@@ -19,6 +19,7 @@ module Test.ThreadNet.Util (
   , module Test.ThreadNet.Util.Expectations
   ) where
 
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Data.Graph.Inductive.Graph
 import           Data.Graph.Inductive.PatriciaTree
 import           Data.GraphViz
@@ -232,7 +233,7 @@ consensusExpected ::
   -> LeaderSchedule
   -> Bool
 consensusExpected k nodeJoinPlan schedule =
-    maxForkLength <= maxRollbacks k
+    maxForkLength <= unNonZero (maxRollbacks k)
   where
     NumBlocks maxForkLength = determineForkLength k nodeJoinPlan schedule
 

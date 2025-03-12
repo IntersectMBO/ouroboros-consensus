@@ -86,7 +86,7 @@ _simplePBftHeader = simpleHeader
   Customization of the generic infrastructure
 -------------------------------------------------------------------------------}
 
-instance (SimpleCrypto c, PBftCrypto c')
+instance (SimpleCrypto c, PBftCrypto c', Serialise (PBftVerKeyHash c'))
       => MockProtocolSpecific c (SimplePBftExt c c') where
   -- | PBFT requires the ledger view; for the mock ledger, this is constant
   type MockLedgerConfig c (SimplePBftExt c c') = PBftLedgerView c'
@@ -175,10 +175,10 @@ instance SimpleCrypto c => SignableRepresentation (SignedSimplePBft c c') where
 instance (Typeable c', SimpleCrypto c) => ToCBOR (SignedSimplePBft c c') where
   toCBOR = encode
 
-instance (Serialise (PBftVerKeyHash c'), PBftCrypto c')
+instance PBftCrypto c'
       => EncodeDisk (SimplePBftBlock c c') (S.PBftState c') where
   encodeDisk = const S.encodePBftState
 
-instance (Serialise (PBftVerKeyHash c'), PBftCrypto c')
+instance PBftCrypto c'
       => DecodeDisk (SimplePBftBlock c c') (S.PBftState c') where
   decodeDisk = const S.decodePBftState

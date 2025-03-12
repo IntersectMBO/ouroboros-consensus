@@ -45,6 +45,7 @@ import           Ouroboros.Consensus.HardFork.Combinator (HardForkBlock,
 import           Ouroboros.Consensus.HardFork.Combinator.State (Current (..),
                      Past (..))
 import           Ouroboros.Consensus.HardFork.History (Bound (..))
+import           Ouroboros.Consensus.HardFork.History.EraParams
 import           Ouroboros.Consensus.HeaderValidation (TipInfo)
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Query
@@ -61,6 +62,7 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Layout
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index as Index
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Network.SizeInBytes
+import           Test.Cardano.Ledger.Binary.Arbitrary ()
 import           Test.Cardano.Slotting.Arbitrary ()
 import           Test.QuickCheck hiding (Fixed (..))
 import           Test.QuickCheck.Instances ()
@@ -264,6 +266,19 @@ instance (All (Arbitrary `Compose` f) xs, IsNonEmpty xs)
           , (lengthSList pf', S <$> arbitrary)
           ]
   shrink = hctraverse' (Proxy @(Arbitrary `Compose` f)) shrink
+
+{-------------------------------------------------------------------------------
+  Configuration
+-------------------------------------------------------------------------------}
+
+instance Arbitrary EraParams where
+  arbitrary = EraParams <$> arbitrary <*> arbitrary <*> arbitrary <*> (GenesisWindow <$> arbitrary)
+
+instance Arbitrary SafeZone where
+  arbitrary = oneof
+      [ StandardSafeZone <$> arbitrary
+      , return UnsafeIndefiniteSafeZone
+      ]
 
 {-------------------------------------------------------------------------------
   Telescope & HardForkState

@@ -14,7 +14,6 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Protocol.Signed
 import           Ouroboros.Consensus.Protocol.TPraos
-import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Config (BlockConfig (..))
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract
@@ -38,7 +37,7 @@ instance ShelleyCompatible proto era => BlockSupportsProtocol (ShelleyBlock prot
       , csvTieBreakVRF = pTieBreakVRFValue shdr
       }
     where
-      hdrIssuer ::  SL.VKey 'SL.BlockIssuer (EraCrypto era)
+      hdrIssuer ::  SL.VKey 'SL.BlockIssuer
       hdrIssuer = pHeaderIssuer shdr
 
   projectChainOrderConfig = shelleyVRFTiebreakerFlavor

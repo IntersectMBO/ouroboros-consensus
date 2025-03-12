@@ -20,6 +20,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (
   , olderThanK
   ) where
 
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Control.Exception (assert)
 import           Control.Monad (forM, forM_, when)
 import           Control.Monad.Except ()
@@ -184,7 +185,7 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
         -- adversarial (ie the LoE did not allow the node to select it when it
         -- arrived).
         suffixesAfterI :: [NonEmpty (HeaderHash blk)]
-        suffixesAfterI = Paths.maximalCandidates succsOf limit (AF.anchorToPoint i)
+        suffixesAfterI = Paths.maximalCandidates succsOf (unNonZero <$> limit) (AF.anchorToPoint i)
           where
             limit = case loE of
               LoEDisabled   -> Nothing
@@ -508,7 +509,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
           -- The current chain we're working with here is not longer than @k@
           -- blocks (see 'getCurrentChain' and 'cdbChain'), which is easier to
           -- reason about when doing chain selection, etc.
-          assert (fromIntegral (AF.length curChain) <= k) $
+          assert (fromIntegral (AF.length curChain) <= unNonZero k) $
           VF.ValidatedFragment curChain ledgerDB
 
         immBlockNo :: WithOrigin BlockNo
@@ -701,7 +702,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
           case AF.intersect cand loe of
             Nothing -> error "trimToLoE: precondition 2 violated: the LoE fragment must intersect with the current selection"
             Just (candPrefix, _, candSuffix, loeSuffix) ->
-              let trimmedCandSuffix = AF.takeOldest (fromIntegral k) candSuffix
+              let trimmedCandSuffix = AF.takeOldest (fromIntegral $ unNonZero k) candSuffix
                   trimmedCand =
                     if AF.null loeSuffix
                       then fromJust $ AF.join candPrefix trimmedCandSuffix

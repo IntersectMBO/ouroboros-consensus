@@ -27,6 +27,7 @@ instance CardanoHardForkConstraints c
   toGoldenDirectory v = case v of
     CardanoNodeToNodeVersion1 -> "CardanoNodeToNodeVersion1"
     CardanoNodeToNodeVersion2 -> "CardanoNodeToNodeVersion2"
+    CardanoNodeToNodeVersion3 -> "CardanoNodeToNodeVersion3"
     _                         -> error $ "Unknown version: " <> show v
 
 instance CardanoHardForkConstraints c
@@ -36,4 +37,6 @@ instance CardanoHardForkConstraints c
     CardanoNodeToClientVersion13 -> "CardanoNodeToClientVersion13"
     CardanoNodeToClientVersion14 -> "CardanoNodeToClientVersion14"
     CardanoNodeToClientVersion15 -> "CardanoNodeToClientVersion15"
+    CardanoNodeToClientVersion16 -> "CardanoNodeToClientVersion16"
+    CardanoNodeToClientVersion17 -> "CardanoNodeToClientVersion17"
     _                            -> error $ "Unknown version: " <> show blockVersion

@@ -1,6 +1,8 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NumericUnderscores #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Tests fairness aspects of the mempool.
 --
@@ -10,6 +12,7 @@ module Test.Consensus.Mempool.Fairness (
   , tests
   ) where
 
+import           Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import qualified Cardano.Slotting.Time as Time
 import           Control.Arrow ((***))
 import           Control.Concurrent (threadDelay)
@@ -86,7 +89,7 @@ testTxSizeFairness TestParams { mempoolMaxCapacity, smallTxSize, largeTxSize, nr
           }
 
       eraParams =
-          HardFork.defaultEraParams (Consensus.SecurityParam 10) (Time.slotLengthFromSec 2)
+          HardFork.defaultEraParams (Consensus.SecurityParam $ knownNonZeroBounded @10) (Time.slotLengthFromSec 2)
     mempool <- Mempool.openMempoolWithoutSyncThread
                    ledgerItf
                    (testBlockLedgerConfigFrom eraParams)

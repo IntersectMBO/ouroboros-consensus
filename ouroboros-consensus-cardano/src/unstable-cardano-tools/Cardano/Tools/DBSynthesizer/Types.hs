@@ -1,6 +1,5 @@
 module Cardano.Tools.DBSynthesizer.Types (module Cardano.Tools.DBSynthesizer.Types) where
 
-import           Cardano.Ledger.Crypto (StandardCrypto)
 import           Cardano.Node.Types (ProtocolFilepaths)
 import           Data.Aeson as Aeson (Value)
 import           Data.Word (Word64)
@@ -56,7 +55,7 @@ data DBSynthesizerConfig = DBSynthesizerConfig {
     confConfigStub          :: NodeConfigStub
   , confOptions             :: DBSynthesizerOptions
   , confProtocolCredentials :: ProtocolFilepaths
-  , confShelleyGenesis      :: ShelleyGenesis StandardCrypto
+  , confShelleyGenesis      :: ShelleyGenesis
   , confDbDir               :: FilePath
   }
   deriving Show
