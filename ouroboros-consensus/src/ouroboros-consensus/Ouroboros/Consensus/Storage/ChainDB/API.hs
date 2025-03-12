@@ -805,7 +805,6 @@ data ChainDbFailure blk =
     --
     -- Thrown when we are not sure in which DB the block /should/ have been.
   | ChainDbMissingBlock (RealPoint blk)
-  deriving (Typeable)
 
 deriving instance StandardHash blk => Show (ChainDbFailure blk)
 
@@ -849,7 +848,6 @@ data ChainDbError blk =
     -- * The bounds don't make sense, e.g., the lower bound starts after the
     --   upper bound, or the lower bound starts from genesis, /inclusive/.
   | InvalidIteratorRange (StreamFrom blk) (StreamTo blk)
-  deriving (Typeable)
 
 deriving instance (Typeable blk, StandardHash blk) => Show (ChainDbError blk)
 
