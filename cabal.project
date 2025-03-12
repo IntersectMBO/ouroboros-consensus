@@ -34,6 +34,11 @@ multi-repl: True
 
 import: ./asserts.cabal
 
+allow-newer: plutus-core:cardano-crypto-class
+           , bytestring
+           , serdoc-core:tasty-quickcheck
+           , kes-agent:base
+
 package ouroboros-network
   -- Certain ThreadNet tests rely on transactions to be submitted promptly after
   -- a node (re)start. Therefore, we disable this flag (see
@@ -44,3 +49,46 @@ package ouroboros-network
 if(os(windows))
   constraints:
     bitvec -simd
+
+source-repository-package
+  type: git
+  location: git@github.com:input-output-hk/kes-agent
+  tag: 7d3517d61004b3e0867b62f1b4cf02ae5eee5589
+  --sha256: sha256-N4XRVqC+UgWej+J16RPh3EO6MSIE3wmJvmP5/nRgIuw=
+  subdir:
+      kes-agent
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/cardano-ledger
+  tag: 9d380ab7d6ae52ff66aae9a19dbb3036b1b13c94
+  --sha256: sha256-N4XRVqC+UgWej+J16RPh3EO6MSIE3wmJvmP5/nRgIuw=
+  subdir:
+      eras/allegra/impl
+      eras/alonzo/impl
+      eras/alonzo/test-suite
+      eras/babbage/impl
+      eras/babbage/test-suite
+      eras/byron/chain/executable-spec
+      eras/byron/crypto
+      eras/byron/crypto/test
+      eras/byron/ledger/executable-spec
+      eras/byron/ledger/impl
+      eras/byron/ledger/impl/test
+      eras/conway/impl
+      eras/conway/test-suite
+      eras/mary/impl
+      eras/shelley/impl
+      eras/shelley-ma/test-suite
+      eras/shelley/test-suite
+      libs/cardano-data
+      libs/cardano-ledger-api
+      libs/cardano-ledger-binary
+      libs/cardano-ledger-core
+      libs/cardano-ledger-test
+      libs/cardano-protocol-tpraos
+      libs/constrained-generators
+      libs/non-integral
+      libs/set-algebra
+      libs/small-steps
+      libs/vector-map

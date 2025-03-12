@@ -21,6 +21,7 @@ module Test.Consensus.Cardano.ProtocolInfo (
   , protocolVersionZero
   ) where
 
+import           Ouroboros.Consensus.Protocol.Praos.AgentClient (KESAgentContext)
 import qualified Cardano.Chain.Genesis as CC.Genesis
 import qualified Cardano.Chain.Update as CC.Update
 import           Cardano.Ledger.Api.Era (StandardCrypto)
@@ -50,7 +51,6 @@ import           Ouroboros.Consensus.Protocol.PBFT (PBftParams,
 import           Ouroboros.Consensus.Shelley.Node
                      (ProtocolParamsShelleyBased (..), ShelleyGenesis,
                      ShelleyLeaderCredentials)
-import           Ouroboros.Consensus.Util.IOLike (IOLike)
 import qualified Test.Cardano.Ledger.Alonzo.Examples.Consensus as SL
 import qualified Test.Cardano.Ledger.Conway.Examples.Consensus as SL
 import qualified Test.ThreadNet.Infra.Byron as Byron
@@ -214,7 +214,10 @@ mkSimpleTestProtocolInfo
 --
 mkTestProtocolInfo ::
      forall m c
-   . (CardanoHardForkConstraints c, IOLike m, c ~ StandardCrypto)
+   . ( CardanoHardForkConstraints c
+     , KESAgentContext c m
+     , c ~ StandardCrypto
+     )
   => (CoreNodeId, Shelley.CoreNode c)
   -- ^ Id of the node for which the protocol info will be elaborated.
   -> ShelleyGenesis c

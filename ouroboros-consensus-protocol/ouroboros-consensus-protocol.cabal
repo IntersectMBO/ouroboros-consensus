@@ -57,6 +57,7 @@ library
     Ouroboros.Consensus.Protocol.Ledger.Util
     Ouroboros.Consensus.Protocol.Praos
     Ouroboros.Consensus.Protocol.Praos.Common
+    Ouroboros.Consensus.Protocol.Praos.AgentClient
     Ouroboros.Consensus.Protocol.Praos.Header
     Ouroboros.Consensus.Protocol.Praos.VRF
     Ouroboros.Consensus.Protocol.Praos.Views
@@ -66,7 +67,7 @@ library
     base >=4.14 && <4.21,
     bytestring,
     cardano-binary,
-    cardano-crypto-class,
+    cardano-crypto-class ^>= 2.2,
     cardano-ledger-binary,
     cardano-ledger-core,
     cardano-ledger-shelley,
@@ -74,11 +75,20 @@ library
     cardano-slotting,
     cborg,
     containers,
+    contra-tracer ^>=0.1.0,
+    io-classes ^>=1.5.0,
+    io-sim,
+    kes-agent,
     mtl,
+    network ^>=3.1.4.0,
     nothunks,
     ouroboros-consensus ^>=0.22,
+    ouroboros-network-framework ^>=0.16,
+    ouroboros-network-testing ^>=0.8,
     serialise,
+    serdoc-core,
     text,
+    Win32-network ^>=0.2,
 
 library unstable-protocol-testlib
   import: common-lib
@@ -94,9 +104,9 @@ library unstable-protocol-testlib
     base,
     base16-bytestring,
     bytestring,
-    cardano-crypto-class,
-    cardano-crypto-praos,
-    cardano-crypto-tests,
+    cardano-crypto-class ^>= 2.2,
+    cardano-crypto-praos ^>= 2.2,
+    cardano-crypto-tests ^>= 2.2,
     cardano-ledger-binary,
     cardano-ledger-core,
     cardano-ledger-shelley-test,
@@ -117,9 +127,9 @@ test-suite protocol-test
   build-depends:
     QuickCheck,
     base,
-    cardano-crypto-class,
+    cardano-crypto-class ^>= 2.2,
     cardano-ledger-binary:testlib,
-    cardano-ledger-core ^>=1.16,
+    cardano-ledger-core ^>=1.17,
     containers,
     ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib},
     ouroboros-consensus-protocol,
