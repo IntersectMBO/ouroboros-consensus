@@ -57,6 +57,9 @@ bh = MkBHeader
 hk :: KeyHashS
 hk = succ (bhbIssuerVk bhb) -- i.e., hash (bhbIssuerVk bhb)
 
+externalFunctions :: ExternalFunctions
+externalFunctions = dummyExternalFunctions { extIsSignedDSIG = \ _ _ sig -> sig > 0 }
+
 -- NOTE: Why should this test succeed? Here's the explanation:
 --
 -- hk = hash bhbIssuerVk = hash 456 = 457
@@ -79,7 +82,7 @@ spec :: Spec
 spec = do
   describe "ocertStep" $ do
     it "ocertStep results in the expected state" $
-      ocertStep dummyExternalFunctions stpools cs bh @?= Success cs'
+      ocertStep externalFunctions stpools cs bh @?= Success cs'
 -- NOTE: Uncomment to run the debug version.
 --  describe (unpack $ ocertDebug dummyExternalFunctions stpools cs bh) $ do
 --    it "shows its argument" True
