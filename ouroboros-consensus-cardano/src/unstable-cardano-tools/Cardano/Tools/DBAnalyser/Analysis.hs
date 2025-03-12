@@ -56,8 +56,8 @@ import           Ouroboros.Consensus.Ledger.Abstract
                      (ApplyBlock (reapplyBlockLedgerResult), LedgerCfg,
                      LedgerConfig, applyBlockLedgerResult, applyChainTick,
                      tickThenApply, tickThenApplyLedgerResult, tickThenReapply)
-import           Ouroboros.Consensus.Ledger.Basics (LedgerResult (..),
-                     LedgerState, getTipSlot)
+import           Ouroboros.Consensus.Ledger.Basics (ComputeLedgerEvents (..),
+                     LedgerResult (..), LedgerState, getTipSlot)
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsMempool
                      (LedgerSupportsMempool)
@@ -74,7 +74,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.LedgerDB (DiskSnapshot (..),
                      writeSnapshot)
 import           Ouroboros.Consensus.Storage.Serialisation (encodeDisk)
-import           Ouroboros.Consensus.Util (Flag (..), (..:))
+import           Ouroboros.Consensus.Util (Flag (..), (...:))
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import           Ouroboros.Network.SizeInBytes
 import           System.FS.API (SomeHasFS (..))
@@ -394,7 +394,7 @@ storeLedgerStateAt slotNo ledgerAppMode doChecksum env = do
     process :: ExtLedgerState blk -> blk -> IO (NextStep, ExtLedgerState blk)
     process oldLedger blk = do
       let ledgerCfg = ExtLedgerCfg cfg
-      case runExcept $ tickThenXApply ledgerCfg blk oldLedger of
+      case runExcept $ tickThenXApply OmitLedgerEvents ledgerCfg blk oldLedger of
         Right newLedger -> do
           when (blockSlot blk >= slotNo) $ storeLedgerState newLedger
           when (blockSlot blk > slotNo) $ issueWarning blk
@@ -406,7 +406,7 @@ storeLedgerStateAt slotNo ledgerAppMode doChecksum env = do
           pure (Stop, oldLedger)
 
     tickThenXApply = case ledgerAppMode of
-        LedgerReapply -> pure ..: tickThenReapply
+        LedgerReapply -> pure ...: tickThenReapply
         LedgerApply   -> tickThenApply
 
     continue :: blk -> NextStep
@@ -473,7 +473,7 @@ checkNoThunksEvery
     process :: ExtLedgerState blk -> blk -> IO (ExtLedgerState blk)
     process oldLedger blk = do
       let ledgerCfg     = ExtLedgerCfg cfg
-          appliedResult = tickThenApplyLedgerResult ledgerCfg blk oldLedger
+          appliedResult = tickThenApplyLedgerResult OmitLedgerEvents ledgerCfg blk oldLedger
           newLedger     = either (error . show) lrResult $ runExcept $ appliedResult
           bn            = blockNo blk
       when (unBlockNo bn `mod` nBlocks == 0 ) $ IOLike.evaluate (ledgerState newLedger) >>= checkNoThunks bn
@@ -511,7 +511,7 @@ traceLedgerProcessing
       -> IO (ExtLedgerState blk)
     process oldLedger blk = do
       let ledgerCfg     = ExtLedgerCfg cfg
-          appliedResult = tickThenApplyLedgerResult ledgerCfg blk oldLedger
+          appliedResult = tickThenApplyLedgerResult OmitLedgerEvents ledgerCfg blk oldLedger
           newLedger     = either (error . show) lrResult $ runExcept $ appliedResult
           traces        =
             (HasAnalysis.emitTraces $
@@ -667,18 +667,18 @@ benchmarkLedgerOps mOutfile ledgerAppMode AnalysisEnv {db, registry, startFrom, 
           -> ExtLedgerState blk
           -> IO (Ticked (LedgerState blk))
         tickTheLedgerState slot st =
-            pure $ applyChainTick lcfg slot (ledgerState st)
+            pure $ applyChainTick OmitLedgerEvents lcfg slot (ledgerState st)
 
         applyTheBlock ::
              Ticked (LedgerState blk)
           -> IO (LedgerState blk)
         applyTheBlock tickedLedgerSt = case ledgerAppMode of
           LedgerApply ->
-            case runExcept (lrResult <$> applyBlockLedgerResult lcfg blk tickedLedgerSt) of
+            case runExcept (lrResult <$> applyBlockLedgerResult OmitLedgerEvents lcfg blk tickedLedgerSt) of
               Left err -> fail $ "benchmark doesn't support invalid blocks: " <> show rp <> " " <> show err
               Right x  -> pure x
           LedgerReapply ->
-            pure $! lrResult $ reapplyBlockLedgerResult lcfg blk tickedLedgerSt
+            pure $! lrResult $ reapplyBlockLedgerResult OmitLedgerEvents lcfg blk tickedLedgerSt
 
 withFile :: Maybe FilePath -> (IO.Handle -> IO r) -> IO r
 withFile (Just outfile) = IO.withFile outfile IO.WriteMode
@@ -707,7 +707,7 @@ getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
 
     process :: IO.Handle -> ExtLedgerState blk -> blk -> IO (ExtLedgerState blk)
     process outFileHandle currLedgerSt blk = do
-      let nextLedgerSt = tickThenReapply (ExtLedgerCfg cfg) blk currLedgerSt
+      let nextLedgerSt = tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk currLedgerSt
       when (unBlockNo (blockNo blk) `mod` nrBlocks == 0) $ do
           let blockApplication =
                 HasAnalysis.WithLedgerState blk
@@ -830,7 +830,7 @@ reproMempoolForge numBlks env = do
           do
             let slot = blockSlot blk
             (ticked, durTick, mutTick, gcTick) <- timed $ IOLike.evaluate $
-              applyChainTick lCfg slot (ledgerState st)
+              applyChainTick OmitLedgerEvents lCfg slot (ledgerState st)
             ((), durSnap, mutSnap, gcSnap) <- timed $ IOLike.atomically $ do
               snap <- Mempool.getSnapshotFor mempool $ Mempool.ForgeInKnownSlot slot ticked
 
@@ -858,7 +858,7 @@ reproMempoolForge numBlks env = do
           -- since it currently matches the call in the forging thread, which is
           -- the primary intention of this Analysis. Maybe GHC's CSE is already
           -- doing this sharing optimization?
-          IOLike.atomically $ IOLike.writeTVar ref $! tickThenReapply elCfg blk st
+          IOLike.atomically $ IOLike.writeTVar ref $! tickThenReapply OmitLedgerEvents elCfg blk st
 
           -- this flushes blk from the mempool, since every tx in it is now on the chain
           void $ Mempool.syncWithLedger mempool

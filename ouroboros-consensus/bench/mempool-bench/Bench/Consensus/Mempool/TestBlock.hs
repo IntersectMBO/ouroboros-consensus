@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
@@ -5,6 +6,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -22,6 +24,7 @@ module Bench.Consensus.Mempool.TestBlock (
   , txSize
   ) where
 
+import           Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import qualified Cardano.Slotting.Time as Time
 import           Codec.Serialise (Serialise)
 import           Control.DeepSeq (NFData)
@@ -73,7 +76,7 @@ initialLedgerState = TestLedger {
 
 sampleLedgerConfig :: Ledger.LedgerConfig TestBlock
 sampleLedgerConfig = testBlockLedgerConfigFrom $
-  HardFork.defaultEraParams (Consensus.SecurityParam 10) (Time.slotLengthFromSec 2)
+  HardFork.defaultEraParams (Consensus.SecurityParam $ knownNonZeroBounded @10) (Time.slotLengthFromSec 2)
 
 {-------------------------------------------------------------------------------
   Payload semantics

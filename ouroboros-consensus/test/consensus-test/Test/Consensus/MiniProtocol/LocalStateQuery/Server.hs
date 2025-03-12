@@ -20,6 +20,7 @@
 module Test.Consensus.MiniProtocol.LocalStateQuery.Server (tests) where
 
 import           Cardano.Crypto.DSIGN.Mock
+import           Cardano.Ledger.BaseTypes (nonZero, unNonZero)
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer (nullTracer)
 import           Data.Map.Strict (Map)
@@ -29,6 +30,7 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query (Query (..))
 import           Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server
@@ -53,6 +55,7 @@ import           Ouroboros.Network.Protocol.LocalStateQuery.Server
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
                      (AcquireFailure (..), State (..), Target (..))
 import           System.FS.API (HasFS, SomeHasFS (..))
+import           Test.Cardano.Ledger.Core.Arbitrary ()
 import           Test.QuickCheck hiding (Result)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -128,7 +131,7 @@ checkOutcome k chain = conjoin . map (uncurry checkResult)
   where
     immutableSlot :: WithOrigin SlotNo
     immutableSlot = Chain.headSlot $
-      Chain.drop (fromIntegral (maxRollbacks k)) chain
+      Chain.drop (fromIntegral $ unNonZero (maxRollbacks k)) chain
 
     checkResult
       :: Target (Point TestBlock)
@@ -187,7 +190,7 @@ mkServer k chain = do
   where
     cfg = ExtLedgerCfg $ testCfg k
     getImmutablePoint = return $ Chain.headPoint $
-      Chain.drop (fromIntegral (maxRollbacks k)) chain
+      Chain.drop (fromIntegral $ unNonZero (maxRollbacks k)) chain
 
 -- | Initialise a 'LgrDB' with the given chain.
 initLgrDB ::
@@ -216,7 +219,7 @@ initLgrDB k chain = do
     blockMapping = Map.fromList
       [(blockRealPoint b, b) | b <- Chain.toOldestFirst chain]
 
-    cfg = configLedgerDb $ testCfg k
+    cfg = configLedgerDb (testCfg k) OmitLedgerEvents
 
     genesisLedgerDB = LgrDB.ledgerDbWithAnchor testInitExtLedger
 
@@ -261,5 +264,5 @@ testCfg securityParam = TopLevelConfig {
 -------------------------------------------------------------------------------}
 
 instance Arbitrary SecurityParam where
-  arbitrary = SecurityParam <$> choose (1, 100)
-  shrink (SecurityParam k) = [SecurityParam k' |  k' <- shrink k, k' > 0]
+  arbitrary = SecurityParam <$> choose (1, 100) `suchThatMap` nonZero
+  shrink (SecurityParam k) = [SecurityParam k' |  k' <- shrink k, unNonZero k' > 0]

@@ -12,6 +12,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Args (
   , RelativeMountPoint (..)
   , completeChainDbArgs
   , defaultArgs
+  , enableLedgerEvents
   , ensureValidateAll
   , updateDiskPolicyArgs
   , updateTracer
@@ -19,11 +20,13 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Args (
 
 import           Control.ResourceRegistry (ResourceRegistry)
 import           Control.Tracer (Tracer, nullTracer)
+import           Data.Function ((&))
 import           Data.Functor.Contravariant ((>$<))
 import           Data.Kind
 import           Data.Time.Clock (secondsToDiffTime)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.API (GetLoEFragment,
@@ -185,7 +188,10 @@ completeChainDbArgs
       , cdbLgrDbArgs = (cdbLgrDbArgs defArgs) {
             LedgerDB.lgrGenesis    = pure initLedger
           , LedgerDB.lgrHasFS      = mkVolFS $ RelativeMountPoint "ledger"
-          , LedgerDB.lgrConfig     = LedgerDB.configLedgerDb cdbsTopLevelConfig
+          , LedgerDB.lgrConfig     =
+              LedgerDB.configLedgerDb
+                cdbsTopLevelConfig
+                (LedgerDB.ledgerDbCfgComputeLedgerEvents $ LedgerDB.lgrConfig (cdbLgrDbArgs defArgs))
           }
       , cdbsArgs = (cdbsArgs defArgs) {
             cdbsRegistry       = registry
@@ -212,6 +218,16 @@ updateDiskPolicyArgs ::
   -> ChainDbArgs f m blk
 updateDiskPolicyArgs spa args =
   args { cdbLgrDbArgs = (cdbLgrDbArgs args) { LedgerDB.lgrDiskPolicyArgs = spa } }
+
+enableLedgerEvents ::
+     Complete ChainDbArgs m blk
+  -> Complete ChainDbArgs m blk
+enableLedgerEvents args =
+  args { cdbLgrDbArgs = (cdbLgrDbArgs args) & \x ->
+           x { LedgerDB.lgrConfig =
+               (LedgerDB.lgrConfig x) { LedgerDB.ledgerDbCfgComputeLedgerEvents = ComputeLedgerEvents }
+             }
+       }
 
 {-------------------------------------------------------------------------------
   Relative mount points

@@ -12,7 +12,7 @@ import           Test.ThreadNet.TxGen (TxGen (..))
 
 -- | Dummy generator until CAD-2119 is done, i.e., the transaction generator in
 -- the ledger has been generalised over the eras.
-instance TxGen (ShelleyBlock (Praos c) (BabbageEra c)) where
+instance TxGen (ShelleyBlock (Praos c) BabbageEra) where
 
   type TxGenExtra _ = ()
 

@@ -23,6 +23,7 @@ high-level concepts in `ouroboros-consensus`
 This example uses several extensions:
 
 > {-# OPTIONS_GHC -Wno-unused-top-binds   #-}
+> {-# LANGUAGE TypeApplications           #-}
 > {-# LANGUAGE TypeFamilies               #-}
 > {-# LANGUAGE DerivingVia                #-}
 > {-# LANGUAGE DataKinds                  #-}
@@ -36,13 +37,14 @@ This example uses several extensions:
 
 First, some imports we'll need:
 
-> import Data.Void(Void)
+> import Data.Void(Void, absurd)
 > import Data.Set(Set)
 > import qualified Data.Set as Set
 > import Data.Word(Word64, Word8)
 > import GHC.Generics (Generic)
 > import Codec.Serialise (Serialise)
 > import NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
+> import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 > import Ouroboros.Consensus.Block.Abstract
 >   (blockNo, blockPoint, castHeaderFields, castPoint, BlockNo, SlotNo,
 >    BlockConfig, BlockProtocol, CodecConfig, GetHeader(..), GetPrevHash(..),
@@ -56,7 +58,8 @@ First, some imports we'll need:
 > import Ouroboros.Consensus.Ledger.Abstract
 >   (GetTip(..), IsLedger(..), LedgerCfg,
 >    LedgerResult(LedgerResult, lrEvents, lrResult),
->    LedgerState, ApplyBlock(..), UpdateLedger)
+>    LedgerState, ApplyBlock(..), UpdateLedger,
+>    defaultApplyBlockLedgerResult, defaultReapplyBlockLedgerResult)
 > import Ouroboros.Consensus.Ledger.SupportsProtocol
 >   (LedgerSupportsProtocol(..))
 > import Ouroboros.Consensus.Forecast (trivialForecast)
@@ -159,7 +162,7 @@ Finally we define a few extra things used in this instantiation:
 > data SP_IsLeader = SP_IsLeader       -- Evidence that we /are/ leader
 >
 > k :: SecurityParam
-> k = SecurityParam { maxRollbacks = 1 }
+> k = SecurityParam { maxRollbacks = knownNonZeroBounded @1 }
 
 Let's examine each of these in turn:
 
@@ -559,7 +562,8 @@ types for a ledger.  Though we are here using
 >   type instance LedgerErr  (LedgerState BlockC) = Void
 >   type instance AuxLedgerEvent (LedgerState BlockC) = Void
 >
->   applyChainTickLedgerResult _cfg _slot ldgrSt =
+
+>   applyChainTickLedgerResult _events _cfg _slot ldgrSt =
 >     LedgerResult { lrEvents = []
 >                  , lrResult = TickedLedgerStateC ldgrSt
 >                  }
@@ -609,17 +613,14 @@ The interface used by the rest of the ledger infrastructure to access this is
 the `ApplyBlock` typeclass:
 
 > instance ApplyBlock (LedgerState BlockC) BlockC where
->   applyBlockLedgerResult _ldgrCfg block tickedLdgrSt =
+>   applyBlockLedgerResultWithValidation _validation _events _ldgrCfg block tickedLdgrSt =
 >     pure $ LedgerResult { lrEvents = []
 >                         , lrResult = block `applyBlockTo` tickedLdgrSt
 >                         }
 >
->   reapplyBlockLedgerResult _ldgrCfg block tickedLdgrSt =
->     LedgerResult { lrEvents = []
->                  , lrResult = block `applyBlockTo` tickedLdgrSt
->                  }
 >
->
+>   applyBlockLedgerResult = defaultApplyBlockLedgerResult
+>   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult absurd
 
 `applyBlockLedgerResult` tries to apply a block to the ledger and fails with a
 `LedgerErr` corresponding to the particular `LedgerState blk` if for whatever

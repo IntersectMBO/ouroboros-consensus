@@ -55,7 +55,7 @@ import           Data.Typeable
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation (AnnTip)
-import           Ouroboros.Consensus.Ledger.Abstract (LedgerState)
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState,
                      decodeExtLedgerState, encodeExtLedgerState)
 import           Ouroboros.Consensus.Ledger.Query (BlockQuery, Query (..),
@@ -167,6 +167,37 @@ roundtripAnd check enc dec a = checkRoundtripResult $ do
     checkRoundtripResult (Left str) = counterexample str False
     checkRoundtripResult (Right ()) = property ()
 
+roundtripComparingEncoding ::
+     (a -> Encoding)
+  -> (forall s. Decoder s a)
+  -> a
+  -> Property
+roundtripComparingEncoding enc dec = roundtripComparingEncoding' enc (const <$> dec)
+
+-- | Like 'roundtrip'', but checks for equality of the encoding (i.e. the byte
+-- string) instead of the @a@ values using @Eq a@. This is useful When we don't
+-- have an @Eq a@ instance.
+roundtripComparingEncoding' ::
+    (a -> Encoding)  -- ^ @enc@
+  -> (forall s. Decoder s (Lazy.ByteString -> a))
+  -> a
+  -> Property
+roundtripComparingEncoding' enc dec a = case deserialiseFromBytes dec bs of
+    Right (remainingBytes, a')
+      | let bs' = toLazyByteString (enc (a' bs))
+      , Lazy.null remainingBytes
+      -> bs === bs'
+      | otherwise
+      -> counterexample ("left-over bytes: " <> toBase16 remainingBytes) False
+    Left e
+      -> counterexample (show e) $
+         counterexample (toBase16 bs) False
+  where
+    bs = toLazyByteString (enc a)
+
+    toBase16 :: Lazy.ByteString -> String
+    toBase16 = Char8.unpack . Base16.encode
+
 {------------------------------------------------------------------------------
   Test skeleton
 ------------------------------------------------------------------------------}
@@ -207,6 +238,7 @@ roundtrip_all
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (ApplyTxErr blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeSecond BlockQuery blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeResult blk)
+     , Arbitrary (WithVersion (BlockNodeToClientVersion blk) (LedgerConfig blk))
      , ArbitraryWithVersion (QueryVersion, BlockNodeToClientVersion blk) (SomeSecond Query blk)
      )
   => CodecConfig blk
@@ -255,6 +287,7 @@ roundtrip_all_skipping
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (ApplyTxErr blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeSecond BlockQuery blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeResult blk)
+     , Arbitrary (WithVersion (BlockNodeToClientVersion blk) (LedgerConfig blk))
      , ArbitraryWithVersion (QueryVersion, BlockNodeToClientVersion blk) (SomeSecond Query blk)
      )
   => (TestName -> ShouldCheckCBORValidity)
@@ -340,6 +373,7 @@ instance ( blockVersion ~ BlockNodeToClientVersion blk
       -- support such top level `Query` constructors in this Arbitrary instance.
       Query.QueryVersion1 -> genTopLevelQuery1
       Query.QueryVersion2 -> genTopLevelQuery2
+      Query.QueryVersion3 -> genTopLevelQuery3
     where
       mkEntry :: QueryVersion
         -> Query blk query
@@ -363,6 +397,16 @@ instance ( blockVersion ~ BlockNodeToClientVersion blk
               , (1 , mkEntry version GetSystemStart )
               , (1 , mkEntry version GetChainBlockNo)
               , (1 , mkEntry version GetChainPoint  )
+              ]
+
+      genTopLevelQuery3 =
+        let version = Query.QueryVersion3
+        in  frequency
+              [ (15, arbitraryBlockQuery version    )
+              , (1 , mkEntry version GetSystemStart )
+              , (1 , mkEntry version GetChainBlockNo)
+              , (1 , mkEntry version GetChainPoint  )
+              , (1 , mkEntry version GetLedgerConfig)
               ]
 
       arbitraryBlockQuery :: QueryVersion
@@ -496,6 +540,7 @@ roundtrip_SerialiseNodeToClient
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (ApplyTxErr blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeSecond BlockQuery blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeResult blk)
+     , Arbitrary (WithVersion (BlockNodeToClientVersion blk) (LedgerConfig blk))
      , ArbitraryWithVersion (QueryVersion, BlockNodeToClientVersion blk) (SomeSecond Query blk)
 
        -- Needed for testing the @Serialised blk@
@@ -510,6 +555,12 @@ roundtrip_SerialiseNodeToClient shouldCheckCBORvalidity ccfg =
     , rt (Proxy @(GenTx blk))                 "GenTx"
     , rt (Proxy @(ApplyTxErr blk))            "ApplyTxErr"
     , rt (Proxy @(SomeSecond BlockQuery blk)) "BlockQuery"
+    -- Note: Ideally we'd just use 'rt' to test Ledger config, but that would
+    -- require an 'Eq' and 'Show' instance for all ledger config types which
+    -- we'd like to avoid (as the EpochInfo is a record of functions).
+    , testProperty "roundtrip (comparing encoding) LedgerConfig" $
+        withMaxSuccess 20 $ \(Blind (WithVersion version a)) ->
+          roundtripComparingEncoding @(LedgerConfig blk) (enc version) (dec version) a
     , rtWith
         @(SomeSecond Query blk)
         @(QueryVersion, BlockNodeToClientVersion blk)

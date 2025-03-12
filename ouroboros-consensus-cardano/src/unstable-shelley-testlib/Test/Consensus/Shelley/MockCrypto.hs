@@ -6,32 +6,34 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Test.Consensus.Shelley.MockCrypto (
     Block
   , CanMock
   , MockCrypto
-  , MockShelley
   ) where
 
-import           Cardano.Crypto.DSIGN (MockDSIGN)
-import           Cardano.Crypto.Hash (HashAlgorithm)
 import           Cardano.Crypto.KES (MockKES)
+import qualified Cardano.Crypto.KES as KES (Signable)
+import           Cardano.Crypto.Util (SignableRepresentation)
 import           Cardano.Crypto.VRF (MockVRF)
-import           Cardano.Ledger.Crypto (Crypto (..))
+import           Cardano.Ledger.BaseTypes (Seed)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as Core
 import           Cardano.Ledger.Shelley.LedgerState (StashedAVVMAddresses)
+import           Cardano.Protocol.Crypto (Crypto (..))
 import qualified Cardano.Protocol.TPraos.API as SL
+import qualified Cardano.Protocol.TPraos.BHeader as SL
 import           Control.State.Transition.Extended (PredicateFailure)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
-import           Ouroboros.Consensus.Shelley.Eras (EraCrypto, ShelleyEra)
+import           Ouroboros.Consensus.Shelley.Eras (ShelleyEra)
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock,
                      ShelleyCompatible)
-import qualified Test.Cardano.Ledger.Shelley.ConcreteCryptoTypes as SL (Mock)
+import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import           Test.QuickCheck (Arbitrary)
 
 -- | A mock replacement for 'StandardCrypto'
@@ -40,29 +42,29 @@ import           Test.QuickCheck (Arbitrary)
 -- debug things. The code is parametric in the crypto, so it shouldn't make
 -- much of a difference. This also has the important advantage
 -- that we can reuse the generators from cardano-ledger-specs.
-data MockCrypto h
+data MockCrypto
 
-instance HashAlgorithm h => Crypto (MockCrypto h) where
-  type ADDRHASH (MockCrypto h) = h
-  type DSIGN    (MockCrypto h) = MockDSIGN
-  type HASH     (MockCrypto h) = h
-  type KES      (MockCrypto h) = MockKES 10
-  type VRF      (MockCrypto h) = MockVRF
+instance Crypto MockCrypto where
+  type KES      MockCrypto = MockKES 10
+  type VRF      MockCrypto = MockVRF
 
-type MockShelley h = ShelleyEra (MockCrypto h)
+instance SL.PraosCrypto MockCrypto
+instance Praos.PraosCrypto MockCrypto
 
-instance HashAlgorithm h => SL.PraosCrypto (MockCrypto h)
-instance HashAlgorithm h => Praos.PraosCrypto (MockCrypto h)
-
-type Block h = ShelleyBlock (TPraos (MockCrypto h)) (MockShelley h)
+type Block = ShelleyBlock (TPraos MockCrypto) ShelleyEra
 
 -- | Cryptography that can easily be mocked
 type CanMock proto era =
   ( ShelleyCompatible proto era
   , LedgerSupportsProtocol (ShelleyBlock proto era)
-  , SL.Mock (EraCrypto era)
-  , Praos.PraosCrypto (EraCrypto era)
+  , Praos.PraosCrypto (ProtoCrypto proto)
+  , SL.PraosCrypto (ProtoCrypto proto)
   , Core.EraTx era
+  , SignableRepresentation Seed
+  , SignableRepresentation (SL.BHBody (ProtoCrypto proto))
+  , KES.Signable (KES (ProtoCrypto proto)) ~ SignableRepresentation
+  , Eq (PredicateFailure (Core.EraRule "LEDGER" era))
+  , Show (PredicateFailure (Core.EraRule "LEDGER" era))
   , Arbitrary (Core.TxAuxData era)
   , Arbitrary (Core.PParams era)
   , Arbitrary (Core.PParamsUpdate era)
@@ -75,4 +77,5 @@ type CanMock proto era =
   , Arbitrary (Core.TxWits era)
   , Arbitrary (StashedAVVMAddresses era)
   , Arbitrary (Core.GovState era)
+  , Arbitrary (SL.CertState era)
   )

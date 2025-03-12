@@ -33,6 +33,7 @@ module Ouroboros.Consensus.Genesis.Governor (
   , sharedCandidatePrefix
   ) where
 
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Control.Monad (guard, void, when)
 import           Control.Tracer (Tracer, traceWith)
 import           Data.Bifunctor (second)
@@ -380,7 +381,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
 
           -- Does the peer have more than k known blocks in _total_ after the intersection?
           -- If not, it is not qualified to compete by density (yet).
-          offersMoreThanK = totalBlockCount > k
+          offersMoreThanK = totalBlockCount > unNonZero k
 
       pure (peer, DensityBounds {clippedFragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot, idling})
 

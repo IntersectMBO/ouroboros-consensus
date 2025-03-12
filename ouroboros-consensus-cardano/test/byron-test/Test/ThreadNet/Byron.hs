@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
@@ -26,6 +27,8 @@ import           Cardano.Chain.Slotting (EpochNumber (..), unEpochSlots)
 import qualified Cardano.Crypto as Crypto
 import qualified Cardano.Crypto.DSIGN as Crypto
 import           Cardano.Crypto.Seed (mkSeedFromBytes)
+import           Cardano.Ledger.BaseTypes (knownNonZeroBounded, nonZero,
+                     unNonZero)
 import           Cardano.Ledger.Binary (byronProtVer, reAnnotate)
 import qualified Cardano.Ledger.Binary.Plain as Plain
 import           Control.Monad (join)
@@ -93,7 +96,7 @@ data TestSetup = TestSetup
 instance Arbitrary TestSetup where
   arbitrary = do
      -- TODO Issue #1566 will bring this to k>=0
-      k <- SecurityParam <$> choose (1, 10)
+      k <- SecurityParam <$> choose (1, 10) `suchThatMap` nonZero
 
       join $ genTestSetup k <$> arbitrary <*> arbitrary <*> arbitrary
 
@@ -148,7 +151,7 @@ tests = testGroup "Byron" $
           let ncn = NumCoreNodes 3 in
           prop_simple_real_pbft_convergence TestSetup
             { setupEBBs       = ProduceEBBs
-            , setupK          = SecurityParam 10
+            , setupK          = SecurityParam $ knownNonZeroBounded @10
             , setupTestConfig = TestConfig
               { initSeed     = Seed 0
               , nodeTopology = meshNodeTopology ncn
@@ -171,7 +174,7 @@ tests = testGroup "Byron" $
           -- state is empty.
           prop_simple_real_pbft_convergence TestSetup
             { setupEBBs       = ProduceEBBs
-            , setupK          = SecurityParam 10
+            , setupK          = SecurityParam $ knownNonZeroBounded @10
             , setupTestConfig = TestConfig
               { numCoreNodes = ncn
               , numSlots     = NumSlots 2
@@ -190,7 +193,7 @@ tests = testGroup "Byron" $
           -- node 1 tells it to rewind to the EBB.
           prop_simple_real_pbft_convergence TestSetup
             { setupEBBs       = ProduceEBBs
-            , setupK          = SecurityParam 10
+            , setupK          = SecurityParam $ knownNonZeroBounded @10
             , setupTestConfig = TestConfig
               { numCoreNodes = ncn
               , numSlots     = NumSlots 4
@@ -212,7 +215,7 @@ tests = testGroup "Byron" $
           -- instead of only from the onset of the slot.
           prop_simple_real_pbft_convergence TestSetup
             { setupEBBs       = ProduceEBBs
-            , setupK          = SecurityParam 5
+            , setupK          = SecurityParam $ knownNonZeroBounded @5
             , setupTestConfig = TestConfig
               { numCoreNodes = ncn
               , numSlots     = NumSlots 7
@@ -235,7 +238,7 @@ tests = testGroup "Byron" $
           -- resulting in a live lock.
           prop_simple_real_pbft_convergence TestSetup
             { setupEBBs       = ProduceEBBs
-            , setupK          = SecurityParam 5
+            , setupK          = SecurityParam $ knownNonZeroBounded @5
             , setupTestConfig = TestConfig
               { numCoreNodes = ncn
               , numSlots     = NumSlots 58
@@ -257,7 +260,7 @@ tests = testGroup "Byron" $
           let ncn5 = NumCoreNodes 5 in
           prop_simple_real_pbft_convergence TestSetup
             { setupEBBs       = NoEBBs
-            , setupK          = SecurityParam 2
+            , setupK          = SecurityParam $ knownNonZeroBounded @2
             , setupTestConfig = TestConfig
               { numCoreNodes = ncn5
               -- Still fails if I increase numSlots.
@@ -285,15 +288,14 @@ tests = testGroup "Byron" $
       adjustQuickCheckTests (`div` 10) $
       testProperty "re-delegation via NodeRekey" $ \seed w ->
           let ncn = NumCoreNodes 5
-              k :: Num a => a
-              k = 5   -- small so that multiple epochs fit into a simulation
+              k = knownNonZeroBounded @5   -- small so that multiple epochs fit into a simulation
               window :: Num a => a
               window = 20   -- just for generality
               slotsPerEpoch :: Num a => a
               slotsPerEpoch = fromIntegral $ unEpochSlots $
-                              kEpochSlots $ coerce (k :: Word64)
-              slotsPerRekey :: Num a => a
-              slotsPerRekey = 2 * k    -- delegations take effect 2k slots later
+                              kEpochSlots $ coerce (unNonZero k :: Word64)
+              slotsPerRekey :: Word64
+              slotsPerRekey = 2 * unNonZero k    -- delegations take effect 2k slots later
           in
           prop_simple_real_pbft_convergence TestSetup
             { setupEBBs       = ProduceEBBs
@@ -317,7 +319,7 @@ tests = testGroup "Byron" $
           --
           -- This failed with @Exception: the first block on the Byron chain
           -- must be an EBB@.
-          let k   = SecurityParam 1
+          let k   = SecurityParam $ knownNonZeroBounded @1
               ncn = NumCoreNodes 2
           in
           prop_simple_real_pbft_convergence TestSetup
@@ -343,7 +345,7 @@ tests = testGroup "Byron" $
           let ncn4 = NumCoreNodes 4 in
           prop_simple_real_pbft_convergence TestSetup
             { setupEBBs       = NoEBBs
-            , setupK          = SecurityParam 3
+            , setupK          = SecurityParam $ knownNonZeroBounded @3
             , setupTestConfig = TestConfig
               { numCoreNodes = ncn4
               , numSlots     = NumSlots 72
@@ -368,7 +370,7 @@ tests = testGroup "Byron" $
           let ncn3 = NumCoreNodes 3 in
           prop_simple_real_pbft_convergence TestSetup
             { setupEBBs       = ProduceEBBs
-            , setupK          = SecurityParam 2
+            , setupK          = SecurityParam $ knownNonZeroBounded @2
             , setupTestConfig = TestConfig
               { numCoreNodes = ncn3
               , numSlots     = NumSlots 84
@@ -423,7 +425,7 @@ tests = testGroup "Byron" $
           -- > TraceLabelPeer (CoreId (CoreNodeId 0)) Send MsgReplyTxs []
           prop_simple_real_pbft_convergence TestSetup
             { setupEBBs       = ProduceEBBs
-            , setupK          = SecurityParam 4
+            , setupK          = SecurityParam $ knownNonZeroBounded @4
             , setupTestConfig = TestConfig
               { numCoreNodes = NumCoreNodes 3
               , numSlots     = NumSlots 96
@@ -466,7 +468,7 @@ tests = testGroup "Byron" $
           once $
           prop_simple_real_pbft_convergence TestSetup
             { setupEBBs       = ProduceEBBs
-            , setupK          = SecurityParam 2
+            , setupK          = SecurityParam $ knownNonZeroBounded @2
             , setupTestConfig = TestConfig
               { numCoreNodes = ncn5
               , numSlots     = NumSlots 50
@@ -493,7 +495,7 @@ tests = testGroup "Byron" $
       let ncn = NumCoreNodes 3 in
       prop_simple_real_pbft_convergence TestSetup
         { setupEBBs       = NoEBBs
-        , setupK          = SecurityParam 2
+        , setupK          = SecurityParam $ knownNonZeroBounded @2
         , setupTestConfig = TestConfig
           { numCoreNodes = ncn
           , numSlots     = NumSlots 41
@@ -510,7 +512,7 @@ tests = testGroup "Byron" $
           let ncn = NumCoreNodes 2 in
           prop_simple_real_pbft_convergence TestSetup
             { setupEBBs       = NoEBBs
-            , setupK          = SecurityParam 7
+            , setupK          = SecurityParam $ knownNonZeroBounded @7
             , setupTestConfig = TestConfig
               { numCoreNodes = ncn
               , numSlots     = NumSlots 10
@@ -529,7 +531,7 @@ tests = testGroup "Byron" $
           let ncn = NumCoreNodes 3 in
           prop_simple_real_pbft_convergence TestSetup
             { setupEBBs       = NoEBBs
-            , setupK          = SecurityParam 9
+            , setupK          = SecurityParam $ knownNonZeroBounded @9
             , setupTestConfig = TestConfig
               { numCoreNodes = ncn
               , numSlots     = NumSlots 1
@@ -554,7 +556,7 @@ tests = testGroup "Byron" $
           let ncn = NumCoreNodes 4 in
           prop_simple_real_pbft_convergence TestSetup
             { setupEBBs       = NoEBBs
-            , setupK          = SecurityParam 8
+            , setupK          = SecurityParam $ knownNonZeroBounded @8
             , setupTestConfig = TestConfig
               { numCoreNodes = ncn
               , numSlots     = NumSlots 2
@@ -575,7 +577,7 @@ tests = testGroup "Byron" $
           let ncn = NumCoreNodes 4 in
           prop_simple_real_pbft_convergence TestSetup
             { setupEBBs       = NoEBBs
-            , setupK          = SecurityParam 5
+            , setupK          = SecurityParam $ knownNonZeroBounded @5
             , setupTestConfig = TestConfig
               { numCoreNodes = ncn
               , numSlots     = NumSlots 5
@@ -592,7 +594,7 @@ tests = testGroup "Byron" $
           let ncn = NumCoreNodes 5 in
           prop_simple_real_pbft_convergence TestSetup
             { setupEBBs       = NoEBBs
-            , setupK          = SecurityParam 10
+            , setupK          = SecurityParam $ knownNonZeroBounded @10
             , setupTestConfig = TestConfig
               { numCoreNodes = ncn
               , numSlots     = NumSlots 12
@@ -610,7 +612,7 @@ tests = testGroup "Byron" $
           let ncn = NumCoreNodes 5 in
           prop_simple_real_pbft_convergence TestSetup
             { setupEBBs       = NoEBBs
-            , setupK          = SecurityParam 10
+            , setupK          = SecurityParam $ knownNonZeroBounded @10
             , setupTestConfig = TestConfig
               { numCoreNodes = ncn
               , numSlots     = NumSlots 17
@@ -634,7 +636,7 @@ tests = testGroup "Byron" $
           let ncn = NumCoreNodes 3 in
           prop_simple_real_pbft_convergence TestSetup
             { setupEBBs       = ProduceEBBs
-            , setupK          = SecurityParam 2
+            , setupK          = SecurityParam $ knownNonZeroBounded @2
             , setupTestConfig = TestConfig
               { numCoreNodes = ncn
               , numSlots     = NumSlots 21
@@ -673,7 +675,7 @@ tests = testGroup "Byron" $
           -- non-mesh topologies.
           prop_simple_real_pbft_convergence TestSetup
             { setupEBBs       = NoEBBs
-            , setupK          = SecurityParam 10
+            , setupK          = SecurityParam $ knownNonZeroBounded @10
             , setupTestConfig = TestConfig
               { numCoreNodes = NumCoreNodes 5
               , numSlots     = NumSlots 13
@@ -713,7 +715,7 @@ tests = testGroup "Byron" $
           once $
           prop_simple_real_pbft_convergence TestSetup
             { setupEBBs       = ProduceEBBs
-            , setupK          = SecurityParam 8
+            , setupK          = SecurityParam $ knownNonZeroBounded @8
             , setupTestConfig = TestConfig
               { numCoreNodes = NumCoreNodes 3
               , numSlots     = NumSlots 81
@@ -731,7 +733,7 @@ tests = testGroup "Byron" $
           once $
           prop_simple_real_pbft_convergence TestSetup
             { setupEBBs       = ProduceEBBs
-            , setupK          = SecurityParam 2
+            , setupK          = SecurityParam $ knownNonZeroBounded @2
             , setupTestConfig = TestConfig
               { numCoreNodes = NumCoreNodes 2
               , numSlots     = NumSlots 39
@@ -765,7 +767,7 @@ tests = testGroup "Byron" $
           once $
           prop_simple_real_pbft_convergence TestSetup
             { setupEBBs       = NoEBBs
-            , setupK          = SecurityParam 2
+            , setupK          = SecurityParam $ knownNonZeroBounded @2
             , setupTestConfig = TestConfig
               { numCoreNodes = NumCoreNodes 3
               , numSlots     = NumSlots 21
@@ -843,7 +845,7 @@ latestPossibleDlgMaturation ::
      SecurityParam -> NumCoreNodes -> SlotNo -> SlotNo
 latestPossibleDlgMaturation
   (SecurityParam k) (NumCoreNodes n) (SlotNo rekeySlot) =
-    SlotNo $ rekeySlot + n + 2 * k
+    SlotNo $ rekeySlot + n + 2 * unNonZero k
 
 prop_simple_real_pbft_convergence :: TestSetup -> Property
 prop_simple_real_pbft_convergence TestSetup
@@ -1097,7 +1099,7 @@ hasAllEBBs k produceEBBs outcomes (nid, c) =
             where
               hi :: Word64
               hi = unSlotNo s `div` denom
-              denom = unEpochSlots $ kEpochSlots $ coerce k
+              denom = unEpochSlots $ kEpochSlots $ coerce (unNonZero (maxRollbacks k) :: Word64)
 
     actual   = mapMaybe blockIsEBB $ Chain.toOldestFirst c
 
@@ -1262,7 +1264,7 @@ genNodeRekeys params nodeJoinPlan nodeTopology numSlots@(NumSlots t)
       _ -> pure nodeRestarts
   where
     PBftParams{pbftSecurityParam} = params
-    k = maxRollbacks pbftSecurityParam
+    k = unNonZero $ maxRollbacks pbftSecurityParam
     sentinel = SlotNo t
     numCoreNodes = NumCoreNodes $ fromIntegral $ Map.size njp
 

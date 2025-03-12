@@ -12,7 +12,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -35,12 +34,10 @@ import           Ouroboros.Consensus.HardFork.History.Util
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol (..))
-import           Ouroboros.Consensus.Protocol.Abstract (TranslateProto,
-                     translateLedgerView)
+import           Ouroboros.Consensus.Protocol.Abstract (translateLedgerView)
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Praos
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
-import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Protocol ()
@@ -49,7 +46,7 @@ import           Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import           Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 
 instance
-  (ShelleyCompatible (TPraos crypto) era, crypto ~ EraCrypto era) =>
+  (ShelleyCompatible (TPraos crypto) era) =>
   LedgerSupportsProtocol (ShelleyBlock (TPraos crypto) era)
   where
   protocolLedgerView _cfg = SL.currentLedgerView . tickedShelleyLedgerState
@@ -75,7 +72,7 @@ instance
       swindow = SL.stabilityWindow globals
       at = ledgerTipSlot ledgerState
 
-      futureLedgerView :: SlotNo -> SL.LedgerView (EraCrypto era)
+      futureLedgerView :: SlotNo -> SL.LedgerView
       futureLedgerView =
         either
           (\e -> error ("futureLedgerView failed: " <> show e))
@@ -88,9 +85,7 @@ instance
 
 instance
   ( ShelleyCompatible (Praos crypto) era,
-    ShelleyCompatible (TPraos crypto) era,
-    crypto ~ EraCrypto era,
-    TranslateProto (TPraos crypto) (Praos crypto)
+    ShelleyCompatible (TPraos crypto) era
   ) =>
   LedgerSupportsProtocol (ShelleyBlock (Praos crypto) era)
   where

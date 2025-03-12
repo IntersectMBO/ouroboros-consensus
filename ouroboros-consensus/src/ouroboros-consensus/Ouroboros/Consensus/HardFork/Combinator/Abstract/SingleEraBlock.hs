@@ -45,6 +45,7 @@ import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Node.InitStorage
+import           Ouroboros.Consensus.Node.Serialisation
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util.Condense
 
@@ -68,6 +69,7 @@ class ( LedgerSupportsProtocol blk
       , NodeInitStorage blk
       , BlockSupportsDiffusionPipelining blk
       , BlockSupportsMetrics blk
+      , SerialiseNodeToClient blk (PartialLedgerConfig blk)
         -- Instances required to support testing
       , Eq   (GenTx blk)
       , Eq   (Validated (GenTx blk))

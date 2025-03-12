@@ -1,6 +1,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 module Test.Consensus.Cardano.SupportsSanityCheck (tests) where
 
+import           Cardano.Ledger.BaseTypes (nonZero, nonZeroOr, unNonZero)
 import           Ouroboros.Consensus.Cardano (CardanoHardForkTriggers)
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Config
@@ -37,10 +38,10 @@ breakTopLevelConfig :: TopLevelConfig (CardanoBlock StandardCrypto) -> TopLevelC
 breakTopLevelConfig tlc =
   let TopLevelConfig{topLevelConfigProtocol} = tlc
       HardForkConsensusConfig{hardForkConsensusConfigK} = topLevelConfigProtocol
-      SecurityParam k = hardForkConsensusConfigK
+      k = unNonZero $ maxRollbacks hardForkConsensusConfigK
   in tlc
     { topLevelConfigProtocol = topLevelConfigProtocol
-      { hardForkConsensusConfigK = SecurityParam (succ k)
+      { hardForkConsensusConfigK = SecurityParam $ nonZeroOr (succ k) $ error "Impossible! In breakTopLevelConfig, found zero, expected a positive number."
       }
     }
 
@@ -74,7 +75,7 @@ instance Arbitrary SimpleTestProtocolInfoSetup where
       <*> genHardForkTriggers
     where
       genSecurityParam =
-        SecurityParam <$> Gen.choose (8, 12)
+        SecurityParam <$> Gen.choose (8, 12) `suchThatMap` nonZero
       genByronSlotLength =
         ByronSlotLengthInSeconds <$> Gen.choose (1, 4)
       genShelleySlotLength =

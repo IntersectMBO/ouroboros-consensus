@@ -19,6 +19,7 @@
 -- necessary with ordinary wall-clock time.
 module Test.Ouroboros.Storage.ChainDB.FollowerPromptness (tests) where
 
+import           Cardano.Ledger.BaseTypes (nonZero)
 import           Control.Monad (forever)
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.ResourceRegistry
@@ -203,7 +204,7 @@ instance Condense FollowerPromptnessTestSetup where
 
 instance Arbitrary FollowerPromptnessTestSetup where
   arbitrary = do
-      securityParam   <- SecurityParam <$> chooseEnum (1, 5)
+      securityParam   <- SecurityParam <$> chooseEnum (1, 5) `suchThatMap` nonZero
       -- Note that genChainUpdates does not guarantee that every update (i.e. a
       -- SwitchFork) will result in a new tentative header, but we don't rely on
       -- this here; rather, we only want to see a tentative candidate
