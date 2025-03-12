@@ -99,7 +99,7 @@ The key features of these three suites with regard to this document are summariz
 | Repository | Byron | Shelley, ..., and/or Babbage | Conway |
 | - | - | - | - |
 | `cardano-db-sync` | No | Haskell, unsigned | Haskell, unsigned |
-| `ouroboros-consensus` | Haskell, signed | Haskell, signed | No (eg see https://github.com/IntersectMBO/ouroboros-consensus/issues/1065)|
+| `ouroboros-consensus` | Haskell, signed | Haskell, signed | No (eg see [Issue 1065](https://github.com/IntersectMBO/ouroboros-consensus/issues/1065)) |
 | `cardano-node-tests` | No | `cardano-cli`, signed | `cardano-cli`, signed |
 
 ## Initializing the Chain with a Later Protocol Version
