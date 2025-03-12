@@ -53,9 +53,10 @@ import           Test.Consensus.PointSchedule.Shrinking
                      (shrinkByRemovingAdversaries)
 import           Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..),
                      scheduleBlockPoint, scheduleHeaderPoint, scheduleTipPoint)
+import           Test.Ouroboros.Consensus.QuickCheck.Extras
+                     (unsafeMapSuchThatJust)
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck
-import           Test.QuickCheck.Extras (unsafeMapSuchThatJust)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
