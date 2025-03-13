@@ -1,0 +1,23 @@
+headerState =
+  [withOrigin<headerStateTip>, headerStateChainDep]
+
+headerStateTip =
+  ns7<byronAnnTip, annTip, annTip, annTip, annTip, annTip, annTip>
+
+byronAnnTip = [slotno, hash, blockno, bool]
+annTip = [slotno, hash, blockno]
+
+headerStateChainDep =
+  telescope7<versionedPbftState,
+             versionedTPraosState,
+             versionedTPraosState,
+             versionedTPraosState,
+             versionedTPraosState,
+             versionedPraosState,
+             versionedPraosState>
+
+versionedPbftState = [serializationFormat1, {* keyhash => [* slotno]}]
+
+;# import base
+;# import praos
+;# import tpraos
