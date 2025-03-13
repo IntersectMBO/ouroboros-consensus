@@ -425,7 +425,7 @@ The following concrete example of the second deadlock arose in our property test
 ```
 
 Suppose Adversary 1 is the Dynamo first, serves its chain up to the block 5-8, and then the peer disconnects.
-If Adversary 2 or 3 becomes the Dynamo and Adversary 3 or 2 becomes the Objector, then the (HAA-satisfying) honest peer is dormant as a PreObjector.
+If Adversary 2 becomes the Dynamo and Adversary 3 becomes the Objector (or the other way around), then the (HAA-satisfying) honest peer is dormant as a PreObjector.
 In this case, the LoE anchor is the block 2-2, but _not_ the 2-2 that's on the selection.
 This is an example of how the selection can be longer than the LoE anchor but not extend it, which is how the second deadlock above arises.
 Note again that the forecast range (anchored in G) for the Dynamo and Objector ends in slot 7, which means neither chain can become longer than the selection.
