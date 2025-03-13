@@ -1,0 +1,6 @@
+query = [19, maybe<set<keyhash>>]
+
+result = conway.pstate
+
+;# import base
+;# import conway as conway

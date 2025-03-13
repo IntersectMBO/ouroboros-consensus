@@ -1,0 +1,98 @@
+result = blockQueryResult
+       / getSystemStart.result
+       / getChainBlockNo.result
+       / getChainPoint.result
+
+blockQueryResult = queryAnytimeResult
+                 / queryHardForkResult
+                 / queryIfCurrentResult
+
+queryAnytimeResult = getEraStart.result
+
+queryHardForkResult = getInterpreter.result / getCurrentEra.result
+
+queryIfCurrentResult = byronResult
+                     / shelleyResult
+
+byronResult = getUpdateInterfaceState.result
+
+shelleyResult = getLedgerTip.result
+              / getEpochNo.result
+              / getNonMyopicMemberRewards.result
+              / getCurrentPParams.result
+              / getProposedPParamsUpdates.result
+              / getStakeDistribution.result
+              / getUTxOByAddress.result
+              / getUTxOWhole.result
+              / debugEpochState.result
+              / getCBOR.result
+              / getFilteredDelegationsAndRewardAccounts.result
+              / getGenesisConfig.result
+              / debugNewEpochState.result
+              / debugChainDepState.result
+              / getRewardProvenance.result
+              / getUTxOByTxIn.result
+              / getStakePools.result
+              / getStakePoolParams.result
+              / getRewardInfoPools.result
+              / getPoolState.result
+              / getStakeSnapshots.result
+              / getPoolDistr.result
+              / getStakeDelegDeposits.result
+              / getConstitution.result
+              / getGovState.result
+              / getDRepState.result
+              / getDRepStakeDistr.result
+              / getCommitteeMembersState.result
+              / getFilteredVoteDelegatees.result
+              / getAccountState.result
+              / getSPOStakeDistr.result
+              / getProposals.result
+              / getRatifyState.result
+              / getFuturePParams.result
+              / getBigLedgerPeersSnapshot.result
+
+getCBOR.result = #6.24(bstr .cbor shelleyResult)
+
+;# import getSystemStart as getSystemStart
+;# import getChainBlockNo as getChainBlockNo
+;# import getChainPoint as getChainPoint
+;# import getEraStart as getEraStart
+;# import getInterpreter as getInterpreter
+;# import getCurrentEra as getCurrentEra
+;# import getUpdateInterfaceState as getUpdateInterfaceState
+;# import getLedgerTip as getLedgerTip
+;# import getEpochNo as getEpochNo
+;# import getNonMyopicMemberRewards as getNonMyopicMemberRewards
+;# import getCurrentPParams as getCurrentPParams
+;# import getProposedPParamsUpdates as getProposedPParamsUpdates
+;# import getStakeDistribution as getStakeDistribution
+;# import getUTxOByAddress as getUTxOByAddress
+;# import getUTxOWhole as getUTxOWhole
+;# import debugEpochState as debugEpochState
+;# import getFilteredDelegationsAndRewardAccounts as getFilteredDelegationsAndRewardAccounts
+;# import getGenesisConfig as getGenesisConfig
+;# import debugNewEpochState as debugNewEpochState
+;# import debugChainDepState as debugChainDepState
+;# import getRewardProvenance as getRewardProvenance
+;# import getUTxOByTxIn as getUTxOByTxIn
+;# import getStakePools as getStakePools
+;# import getStakePoolParams as getStakePoolParams
+;# import getRewardInfoPools as getRewardInfoPools
+;# import getPoolState as getPoolState
+;# import getStakeSnapshots as getStakeSnapshots
+;# import getPoolDistr as getPoolDistr
+;# import getStakeDelegDeposits as getStakeDelegDeposits
+;# import getConstitution as getConstitution
+;# import getGovState as getGovState
+;# import getDRepState as getDRepState
+;# import getDRepStakeDistr as getDRepStakeDistr
+;# import getCommitteeMembersState as getCommitteeMembersState
+;# import getFilteredVoteDelegatees as getFilteredVoteDelegatees
+;# import getAccountState as getAccountState
+;# import getSPOStakeDistr as getSPOStakeDistr
+;# import getProposals as getProposals
+;# import getRatifyState as getRatifyState
+;# import getFuturePParams as getFuturePParams
+;# import getBigLedgerPeersSnapshot as getBigLedgerPeersSnapshot
+;# import base

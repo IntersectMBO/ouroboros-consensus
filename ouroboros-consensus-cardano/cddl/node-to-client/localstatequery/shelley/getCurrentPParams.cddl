@@ -1,0 +1,5 @@
+query = [3]
+
+result = conway.pparams
+
+;# import conway
