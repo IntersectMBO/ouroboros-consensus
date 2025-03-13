@@ -75,6 +75,42 @@ This design consists of the following components.
 - The {Node Versus Environment} tests scrutinize the behavior of the partially-mocked node when subjected to adversarial inputs.
   These are notably the first Cardano Consensus Layer tests to explicitly simulate non-trivial adversarial behaviors.
 
+All components are also depicted in the following diagram, with the exception of the GSM, which simply disables all other Genesis components (except Lightweight Checkpointing).
+
+```mermaid
+graph LR
+  LightweightCheckpointing[Lightweight Checkpointing]
+
+  subgraph ChainSel
+    LoE[Limit on Eagerness]
+  end
+
+  subgraph ChainSync
+    LoP[Limit on Patience]
+    CSJ[ChainSync Jumping]
+  end
+
+  GDD[Genesis Density Disconnection logic]
+
+  DBF[Devoted BlockFetch]
+  DBF -- "new blocks" --> ChainSel
+
+  LoEAnchor{LoE anchor}
+
+  ChainSync -- "(enriched) candidate fragments" --> GDD
+  GDD -- "kills peers with low-density chains" --> ChainSync
+  GDD -- "maintains" --> LoEAnchor
+
+  LoEAnchor -- "influences" --> LoE
+
+  LightweightCheckpointing -- "reject certain blocks" --> ChainSync
+  LightweightCheckpointing -- "reject certain blocks" --> ChainSel
+
+  ChainSync -- "candidate fragments" --> DBF
+
+  LoE -- "stalls until we disconnect peers offering low-density chains" --> GDD
+```
+
 TODO links to entrypoints in the Haddock once the Genesis work is merged
 
 ## How Components satisfy Requirements
