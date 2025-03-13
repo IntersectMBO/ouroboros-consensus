@@ -1,0 +1,5 @@
+query = [32]
+
+result = conway.ratifyState
+
+;# import conway as conway

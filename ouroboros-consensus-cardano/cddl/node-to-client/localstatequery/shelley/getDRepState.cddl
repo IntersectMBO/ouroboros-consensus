@@ -1,0 +1,6 @@
+query = [25, set<conway.drepCredential>]
+
+result = map<conway.drepCredential, conway.drepState>
+
+;# import base
+;# import conway as conway
