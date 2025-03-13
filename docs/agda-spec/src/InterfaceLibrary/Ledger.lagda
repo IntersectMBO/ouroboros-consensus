@@ -4,16 +4,14 @@
 -- TODO: The following should be likely located in Common.
 open import Ledger.Prelude
 open import Ledger.Crypto
-open import Ledger.Script
 open import Ledger.Types.Epoch
 
 module InterfaceLibrary.Ledger
   (crypto : Crypto)
   (es     : _) (open EpochStructure es)
-  (ss     : ScriptStructure crypto es) (open ScriptStructure ss)
   where
 
-open import Ledger.PParams crypto es ss using (PParams)
+open import Ledger.PParams using (PParams)
 open import InterfaceLibrary.Common.BaseTypes crypto using (PoolDistr)
 
 \end{code}

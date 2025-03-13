@@ -1,7 +1,6 @@
 {-# OPTIONS --safe #-}
 
 open import Ledger.Crypto
-open import Ledger.Script
 open import Ledger.Types.Epoch
 open import Spec.BaseTypes using (Nonces)
 
