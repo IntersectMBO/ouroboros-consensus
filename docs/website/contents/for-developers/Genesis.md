@@ -59,7 +59,7 @@ This design consists of the following components.
 - The {Limit on Eagerness} ({LoE}) prevents the syncing node from selecting more than Kcp blocks beyond the intersection of its peers' latest selections.
   That interesction is called the {LoE anchor}.
   (The implementation maintains an LoE fragment.
-  In an unfortunate collision of names, the LoE anchor is the tip of the LoE fragment, _not_ its [`anchor`](https://github.com/IntersectMBO/ouroboros-network/blob/88bf7766ddb70579b730f777e53473dcdc23b6d0/ouroboros-network-api/src/Ouroboros/Network/AnchoredSeq.hs#L94).)
+  In an unfortunate collision of names, the LoE anchor is the tip of the LoE fragment, _not_ its [`anchor`](https://github.com/IntersectMBO/ouroboros-network/blob/88bf7766ddb70579b730f777e53473dcdc23b6d0/ouroboros-network-api/src/Ouroboros/Network/AnchoredSeq.hs#L94), see here[^loe-anchor-example] for an example.)
 
 - The {Genesis Density Disconnection} logic ({GDD}) disconnects from any advertised peer whose chain has too few blocks to be the honest chain and could prevent the syncing node from finishing.
   There are some absolute limits, such as having no blocks at all within some interval of Scg slots.
@@ -716,3 +716,14 @@ Related idea: maybe that flag could just track whether the LoE anchor was an ext
      This could for example be accomplished by letting the jumpers jump to the tip of the dynamo just before rotation.
 - Possible improvements to the GDD:
    - Rerun GDD to disconnect peers earlier if the last run disconnected any peers.
+
+[^loe-anchor-example]:
+    For example, consider the following candidate chains, all with anchor `A` and ending in `E`, `F` and `G`, respectively.
+    ```
+    A---B---C---D---E
+            \    \
+             \    \-F
+              \-G
+    ```
+    The most recent common point on these fragments is `C`, which we call the LoE anchor.
+    However, the LoE fragment (the longest shared common prefix of the candidate chains) is instead anchored in `A` (a recent immutable tip) and has tip `C`.
