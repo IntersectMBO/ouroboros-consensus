@@ -111,8 +111,6 @@ graph LR
   LoE -- "stalls until we disconnect peers offering low-density chains" --> GDD
 ```
 
-TODO links to entrypoints in the Haddock once the Genesis work is merged
-
 ## How Components satisfy Requirements
 
 At a high-level, those requirements are satisfied by those components for the following reasons.
@@ -146,6 +144,8 @@ Each subsection specifies the high-level design of one component.
 
 ### The Lightweight Checkpointing Component
 
+[Link to code](https://github.com/IntersectMBO/ouroboros-consensus/blob/43c1fef4631d7a00879974e785c2291175a5f0dc/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HeaderValidation.hs#L318)
+
 The Lightweight Checkpointing is one of the simplest components.
 The node configuration data will include a list of pairs of block number[^checkpoint-block-vs-slot-no] (ie chain length) and hash.
 
@@ -173,6 +173,8 @@ In particular, this flexibility may be required by Disaster Tolerance: both duri
 Ultimately, though, disasters may require more severe remediation, such as temporarily falling back to the Bootstrap Peers mechanism instead of Genesis.
 
 ### The Genesis State Machine Component
+
+[Link to code](https://github.com/IntersectMBO/ouroboros-consensus/blob/43c1fef4631d7a00879974e785c2291175a5f0dc/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/Node/GSM.hs)
 
 The Genesis State Machine has three states.
 
@@ -231,6 +233,8 @@ But when it's almost CaughtUp, the new components must accommodate the potential
 
 ### The Limit on Eagerness Component
 
+Link to code: [Trimming candidates](https://github.com/IntersectMBO/ouroboros-consensus/blob/43c1fef4631d7a00879974e785c2291175a5f0dc/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L691) [Trigger without block](https://github.com/input-output-hk/ouroboros-consensus/blob/43c1fef4631d7a00879974e785c2291175a5f0dc/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L320)
+
 The LoE is another of the simplest components.
 The LoE prevents the syncing node from selecting a block that is more than Kcp ahead of the LoE anchor, the intersection of all _current_ peers' header chains.
 (Recall the exception that PreSyncing instead fixes the LoE anchor to the tip of the ImmutableDB.)
@@ -259,6 +263,8 @@ This component directly ensures Sync Safety, since the HAA ensures that the LoE 
 It is worth emphasizing that every subsequent component below is designed for the sake of Sync Liveness and Limited Sync Load --- the LoE alone suffices for Sync Safety.
 
 ### The Genesis Density Disconnection Component without CSJ
+
+[Link to code](https://github.com/IntersectMBO/ouroboros-consensus/blob/43c1fef4631d7a00879974e785c2291175a5f0dc/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Genesis/Governor.hs#L10)
 
 The GDD must disconnect from any peers serving chains that are preventing the LoE from advancing and also can be inferred to not be the best chain.
 
@@ -292,6 +298,8 @@ To prevent this component from spoiling Sync Liveness, this relatively-expensive
 
 ### The Limit on Patience Component
 
+Link to code: [Token bucket](https://github.com/IntersectMBO/ouroboros-consensus/blob/43c1fef4631d7a00879974e785c2291175a5f0dc/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Util/LeakyBucket.hs#L30), [ChainSync integration](https://github.com/input-output-hk/ouroboros-consensus/blob/43c1fef4631d7a00879974e785c2291175a5f0dc/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/ChainSync/Client.hs#L1905)
+
 If a peer claims to have subsequent headers, they must send them promptly.
 Otherwise, a disagreement amongst two peers might suffice to prevent the LoE anchor from advancing but not suffice for the GDD to make a decision.
 
@@ -308,6 +316,8 @@ This component contibutes to Sync Liveness because it forces a peer to enable a 
 Parameter Tuning will ensure this is less than one minute per adversarial peer, for example.
 
 ### The ChainSync Jumping Component
+
+[Link to code](https://github.com/IntersectMBO/ouroboros-consensus/blob/43c1fef4631d7a00879974e785c2291175a5f0dc/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/ChainSync/Client/Jumping.hs#L14)
 
 The ChainSync Jumping optimization is a backwards compatible optimization of the ChainSync mini protocol.
 Instead of simply running the normal ChainSync mini protocol with every peer, CSJ runs it with at most two while syncing the historical chain.
@@ -368,6 +378,8 @@ Under normal circumstances, all honest peers will be serving the singular histor
 CSJ eliminates the wasteful remote retrieval and local validation of each honest header by only syncing it once instead of once per peer.
 
 ### The Genesis Density Disconnection Component with CSJ
+
+[Link to code](https://github.com/IntersectMBO/ouroboros-consensus/blob/43c1fef4631d7a00879974e785c2291175a5f0dc/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Genesis/Governor.hs#L268)
 
 There are two possible deadlocks introduced by CSJ.
 Both can be resolved by implementing additional disconnections according to Genesis density comparisons.
@@ -437,6 +449,8 @@ This component contributes to Sync Liveness by mitigating the discussed deadlock
 ### The Devoted BlockFetch Component
 
 > Note that in the code, this component is still called *BulkSync BlockFetch* at the moment.
+
+[Link to code](https://github.com/IntersectMBO/ouroboros-network/blob/28b731cde005a1de0b4be0ea0bd16852e827c1bc/ouroboros-network/src/Ouroboros/Network/BlockFetch/Decision/Genesis.hs#L9)
 
 The rationale for Devoted BlockFetch continues the theme from the HAA and CSJ: one peer suffices for actually fetching the chain, once identified the amongst the peers.
 For this component, the key insight is that --- so far, at least --- most Cardano blocks can be trasmitted much faster than they can be validated.
@@ -538,31 +552,29 @@ To prevent this component from spoiling Sync Liveness, this relatively-expensive
 
 ### The Node Versus Environment Tests Component
 
-TODO: update references to point to `main` when all Genesis PRs in `ouroboros-consensus` are merged
-
 We introduce several test modules, which test one or several Genesis components. Refer to the documentation of each function to get a detailed description of each test.
 
-#### [`Test.Consensus.Genesis.LongRangeAttack`](https://github.com/IntersectMBO/ouroboros-consensus/blob/blockfetch/milestone-1/ouroboros-consensus-diffusion/test/consensus-test/Test/Consensus/Genesis/Tests/LongRangeAttack.hs)
+#### [`Test.Consensus.Genesis.LongRangeAttack`](https://github.com/IntersectMBO/ouroboros-consensus/blob/43c1fef4631d7a00879974e785c2291175a5f0dc/ouroboros-consensus-diffusion/test/consensus-test/Test/Consensus/Genesis/Tests/LongRangeAttack.hs)
 
 Checks that the Praos protocol without Genesis is indeed vulnerable to Long Range Attacks.
 
-#### [`Test.Consensus.Genesis.LoE`](https://github.com/IntersectMBO/ouroboros-consensus/blob/blockfetch/milestone-1/ouroboros-consensus-diffusion/test/consensus-test/Test/Consensus/Genesis/Tests/LoE.hs)
+#### [`Test.Consensus.Genesis.LoE`](https://github.com/IntersectMBO/ouroboros-consensus/blob/43c1fef4631d7a00879974e785c2291175a5f0dc/ouroboros-consensus-diffusion/test/consensus-test/Test/Consensus/Genesis/Tests/LoE.hs)
 
 Tests the LoE module in isolation.
 
-#### [`Test.Consensus.Genesis.LoP`](https://github.com/IntersectMBO/ouroboros-consensus/blob/blockfetch/milestone-1/ouroboros-consensus-diffusion/test/consensus-test/Test/Consensus/Genesis/Tests/LoP.hs)
+#### [`Test.Consensus.Genesis.LoP`](https://github.com/IntersectMBO/ouroboros-consensus/blob/43c1fef4631d7a00879974e785c2291175a5f0dc/ouroboros-consensus-diffusion/test/consensus-test/Test/Consensus/Genesis/Tests/LoP.hs)
 
 Tests the LoP module in isolation, and its efficiency in stopping a delaying attack.
 
-#### [`Test.Consensus.Genesis.DensityDisconnect`](https://github.com/IntersectMBO/ouroboros-consensus/blob/blockfetch/milestone-1/ouroboros-consensus-diffusion/test/consensus-test/Test/Consensus/Genesis/Tests/DensityDisconnect.hs)
+#### [`Test.Consensus.Genesis.DensityDisconnect`](https://github.com/IntersectMBO/ouroboros-consensus/blob/43c1fef4631d7a00879974e785c2291175a5f0dc/ouroboros-consensus-diffusion/test/consensus-test/Test/Consensus/Genesis/Tests/DensityDisconnect.hs)
 
 Tests the GDD rule in isolation, as well as in conjunction with the LoE.
 
-#### [`Test.Consensus.Genesis.CSJ`](https://github.com/IntersectMBO/ouroboros-consensus/blob/blockfetch/milestone-1/ouroboros-consensus-diffusion/test/consensus-test/Test/Consensus/Genesis/Tests/CSJ.hs)
+#### [`Test.Consensus.Genesis.CSJ`](https://github.com/IntersectMBO/ouroboros-consensus/blob/43c1fef4631d7a00879974e785c2291175a5f0dc/ouroboros-consensus-diffusion/test/consensus-test/Test/Consensus/Genesis/Tests/CSJ.hs)
 
 Tests ChainSync Jumping, in conjunction with LoE, LoP, and GDD.
 
-#### [`Test.Consensus.Genesis.Uniform`](https://github.com/IntersectMBO/ouroboros-consensus/blob/blockfetch/milestone-1/ouroboros-consensus-diffusion/test/consensus-test/Test/Consensus/Genesis/Tests/Uniform.hs)
+#### [`Test.Consensus.Genesis.Uniform`](https://github.com/IntersectMBO/ouroboros-consensus/blob/43c1fef4631d7a00879974e785c2291175a5f0dc/ouroboros-consensus-diffusion/test/consensus-test/Test/Consensus/Genesis/Tests/Uniform.hs)
 
 Randomly generates various "real life"-ish situations, and checks that the Genesis algorithm yields the correct result, *i.e.* that the tip of the immutable DB ends up within Kcp blocks of the tip of the honest branch.
 
