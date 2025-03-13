@@ -721,7 +721,6 @@ The following additional work on Genesis is suggested, as priorities and resourc
    - Integrate GSM into the peer simulator and test for consecutive periods of Syncing and CaughtUp states.
      This would require some rethinking on expressivity of the point schedules.
    - Adjust genesis tests to allow for a non-zero GDD rate limit.
-     [WIP code here](https://github.com/IntersectMBO/ouroboros-consensus/commit/4ff3138e6b6bfaf06f7f9ba49bab4d8b1e77a969).
    - Implement mutation testing for Genesis implementation (see test plan).
    - Standalone unit/state machine tests for CSJ; test for more CSJ invariants (like [here](https://github.com/IntersectMBO/ouroboros-consensus/blob/b14da83d982224edc1700b0bed31ebd96c9ceaf8/ouroboros-consensus-diffusion/test/consensus-test/Test/Consensus/PeerSimulator/CSJInvariants.hs).
 - Define finer grained coverage for Genesis and Praos, make plans to measure it, and then measure it.
@@ -742,7 +741,6 @@ Related idea: maybe that flag could just track whether the LoE anchor was an ext
    - Long-term optimization: Use a "chain selection datastructure", ie a data structure maintain a rooted tree that allows efficient inserts, advancing the root and queries of the longest chain (subject to the LoE). Also see section 24.10 in the Consensus report.
 - Possible improvements to CSJ:
    - Skip MsgFindIntersect during jumps if the candidate fragment contains the jump point, or if the chain in the immutable db contains the jump point.
-     [WIP code here](https://github.com/IntersectMBO/ouroboros-consensus/commit/95425d4af70c7c903a9242a5d81464eae08f0723).
      It is unclear how much this would optimize exactly though.
      Most of the time, jumpers jump to points that extend their candidate fragments.
      When a dynamo is elected, they might be asked to jump to a point behind the tip of their candidate fragment.
