@@ -1,4 +1,4 @@
-versionedCardanoExtLedgerState =
+cardanoLedgerStateSnapshot =
   [snapshotEncodingVersion1, cardanoExtLedgerState]
 
 snapshotEncodingVersion1 = 1
