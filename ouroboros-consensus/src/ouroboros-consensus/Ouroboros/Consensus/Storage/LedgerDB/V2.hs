@@ -191,7 +191,6 @@ mkInternals bss h = TestInternals {
                 (LedgerDBSnapshotEvent >$< ldbTracer env)
                 (ldbHasFS env)
                 suff
-                (onDiskShouldChecksumSnapshots $ ldbSnapshotPolicy env)
                 st
     , push = \st -> withRegistry $ \reg -> do
           eFrk <- newForkerAtTarget h reg VolatileTip
@@ -219,7 +218,6 @@ mkInternals bss h = TestInternals {
                   -> Tracer m (TraceSnapshotEvent blk)
                   -> SomeHasFS m
                   -> Maybe String
-                  -> Flag "DoDiskSnapshotChecksum"
                   -> StateRef m (ExtLedgerState blk)
                   -> m (Maybe (DiskSnapshot, RealPoint blk))
      takeSnapshot = case bss of
@@ -363,7 +361,6 @@ implTryTakeSnapshot bss env mTime nrBlocks =
              trcr
              fs
              Nothing
-             (onDiskShouldChecksumSnapshots $ ldbSnapshotPolicy env)
              ref
        LSMHandleArgs x    -> absurd x
 
