@@ -1,0 +1,16 @@
+cardanoBlock = byronBlock
+             / [2, shelleyBlock]
+             / [3, allegraBlock]
+             / [4, maryBlock]
+             / [5, alonzoBlock]
+             / [6, babbageBlock]
+             / [7, conwayBlock]
+
+; blocks are defined in Ledger CDDL's
+byronBlock   = any
+shelleyBlock = any
+allegraBlock = any
+maryBlock    = any
+alonzoBlock  = any
+babbageBlock = any
+conwayBlock  = any
