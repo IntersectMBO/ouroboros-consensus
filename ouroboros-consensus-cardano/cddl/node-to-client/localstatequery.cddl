@@ -1,9 +1,3 @@
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;
-;; This file is not yet finished!
-;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
 toplevel = cardanoQuery / cardanoResult
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -157,7 +151,7 @@ standardSafeZone = [0, safeFromTip, safeBeforeEpoch]
 safeFromTip = word64
 safeBeforeEpoch = [0]
 unsafeIndefiniteSafeZone = [1]
-genesisWindows = word64
+genesisWindow = word64
 
 getCurrentEraResult = eraIdx
 
@@ -221,7 +215,7 @@ debugChainDepStateResult = chainDepState
 getRewardProvenanceResult = rewardProvenance
 getUTxOByTxInResult = utxo
 getStakePoolsResult = set<keyhash>
-getStakePoolParamsResult = map<keyhash, poolparams>
+getStakePoolParamsResult = map<keyhash, poolParams>
 getRewardInfoPoolsResult = [rewardParams, map<keyhash, rewardInfoPool>]
 getPoolStateResult = pstate
 getStakeSnapshotsResult = stakeSnapshots
@@ -240,5 +234,85 @@ getRatifyStateResult = ratifyState
 getFuturePParamsResult = maybe<pparams>
 getBigLedgerPeerSnapshotResult = ledgerPeerSnapshot
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; Common
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 eraIdx = word8
 word8 = 0..255
+set<x> = #6.258([* x])
+either<x, y> = [0, x] / [1, y]
+coin = word64
+word64 = 0..18446744073709551615
+keyhash = bstr
+maybe<x> = []
+         / [x]
+map<x, y> = { * x => y }
+seq<x> = [*23 x]
+       / [24* x] ; encoded with indefinite-length encoding
+bound = [relativeTime, slotno, epochno]
+slotno = word64
+epochno = word64
+relativeTime = int
+point = []
+      / [ slotno, hash ]
+hash = bstr
+rational = [int, int]
+blockno = word64
+
+cardanoNs<byron, shelley, allegra, mary, alonzo, babbage, conway>
+  = [6, conway] /
+    [5, babbage] /
+    [4, alonzo] /
+    [3, mary] /
+    [2, allegra] /
+    [1, shelley] /
+    [0, byron]
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; Ledger
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+poolDistr = map<keyhash, individualPoolStake>
+individualPoolStake = [stake, hash]
+stake = rational
+
+stakeCredential = any
+drepCredential = any
+drep = any
+coldCredential = any
+hotCredential = any
+status = any
+govActionId = any
+addr = any
+txin = any
+upiState = any
+nonMyopicRewards = any
+pparams = any
+proposedPPUpdates = any
+utxo = any
+epochState = any
+delegations = any
+rewardAccounts = any
+compactGenesis = any
+newEpochState = any
+chainDepState = any
+rewardProvenance = any
+poolParams = any
+rewardParams = any
+rewardInfoPool = any
+pstate = any
+stakeSnapshots = any
+constitution = any
+govState = any
+drepState = any
+committeeMembersState = any
+voteDelegatees = any
+accountState = any
+govActionState = any
+ratifyState = any
+ledgerPeerSnapshot = any
