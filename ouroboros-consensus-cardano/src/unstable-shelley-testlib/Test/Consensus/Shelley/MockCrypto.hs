@@ -20,6 +20,7 @@ import           Cardano.Crypto.Util (SignableRepresentation)
 import           Cardano.Crypto.VRF (MockVRF)
 import           Cardano.Ledger.BaseTypes (Seed)
 import qualified Cardano.Ledger.Shelley.API as SL
+import qualified Cardano.Ledger.State as SL
 import qualified Cardano.Ledger.Shelley.Core as Core
 import           Cardano.Ledger.Shelley.LedgerState (StashedAVVMAddresses)
 import           Cardano.Protocol.Crypto (Crypto (..))
@@ -68,6 +69,7 @@ type CanMock proto era =
   , Arbitrary (Core.TxAuxData era)
   , Arbitrary (Core.PParams era)
   , Arbitrary (Core.PParamsUpdate era)
+  , Arbitrary (SL.InstantStake era)
   , Arbitrary (Core.Script era)
   , Arbitrary (Core.TxBody era)
   , Arbitrary (Core.Tx era)
