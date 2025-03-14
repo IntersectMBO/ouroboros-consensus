@@ -1,0 +1,175 @@
+cardanoLedgerStateSnapshot =
+  [snapshotEncodingVersion1, cardanoExtLedgerState]
+
+snapshotEncodingVersion1 = 1
+
+cardanoExtLedgerState = [cardanoLedgerState, cardanoHeaderState]
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; Ledger state
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+cardanoLedgerState =
+  cardanoTelescope<byron,
+                   versionedShelleyLedgerState<shelley>,
+                   versionedShelleyLedgerState<allegra>,
+                   versionedShelleyLedgerState<mary>,
+                   versionedShelleyLedgerState<alonzo>,
+                   versionedShelleyLedgerState<babbage>,
+                   versionedShelleyLedgerState<conway>>
+
+pastEra = [bound, bound]
+
+currentEra<st> = [bound, st]
+
+bound = [relativeTime, slotno, epochno]
+
+versionedShelleyLedgerState<era> = [ shelleyVersion2, shelleyLedgerState<era> ]
+
+shelleyVersion2 = 2
+
+shelleyLedgerState<era> = [ withOrigin<shelleyTip>, era, shelleyTransition ]
+
+shelleyTip = [slotno, blockno, hash]
+
+shelleyTransition = word32
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; Header state
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+cardanoHeaderState =
+  [withOrigin<cardanoHeaderStateTip>, cardanoHeaderStateChainDep]
+
+    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+    ;;
+    ;; Ann tip
+    ;;
+    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+cardanoHeaderStateTip =
+  cardanoNs<byronAnnTip, annTip, annTip, annTip, annTip, annTip, annTip>
+
+annTip = [slotno, hash, blockno]
+
+byronAnnTip = [slotno, hash, blockno, bool]
+
+    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+    ;;
+    ;; Chain dep state
+    ;;
+    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+cardanoHeaderStateChainDep =
+  cardanoTelescope<versionedPbftState,
+                   versionedTPraosState,
+                   versionedTPraosState,
+                   versionedTPraosState,
+                   versionedTPraosState,
+                   versionedPraosState,
+                   versionedPraosState>
+
+        ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+        ;;
+        ;; Pbft
+        ;;
+        ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+versionedPbftState = [serializationFormat1, {* keyhash => [* slotno]}]
+
+        ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+        ;;
+        ;; TPraos
+        ;;
+        ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+versionedTPraosState =
+  [serializationFormat1, [withOriginTH<slotno>, tpraosState]]
+
+tpraosState = [prtclState, ticknState, nonce]
+
+prtclState = [{* keyhash => word64}, nonce, nonce]
+
+ticknState = [nonce, nonce]
+
+        ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+        ;;
+        ;; Praos
+        ;;
+        ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+versionedPraosState = [praosVersion, praosState]
+
+praosVersion = 0
+
+praosState = [withOrigin<slotno>,
+              {* keyhash => word64},
+              nonce,
+              nonce,
+              nonce,
+              nonce,
+              nonce]
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; Basics
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+serializationFormat1 = 1
+
+cardanoTelescope<byron, shelley, allegra, mary, alonzo, babbage, conway>
+  = [pastEra, pastEra, pastEra, pastEra, pastEra, pastEra, currentEra<conway>] /
+    [pastEra, pastEra, pastEra, pastEra, pastEra, currentEra<babbage>] /
+    [pastEra, pastEra, pastEra, pastEra, currentEra<alonzo>] /
+    [pastEra, pastEra, pastEra, currentEra<mary>] /
+    [pastEra, pastEra, currentEra<allegra>] /
+    [pastEra, currentEra<shelley>] /
+    [currentEra<byron>]
+
+cardanoNs<byron, shelley, allegra, mary, alonzo, babbage, conway>
+  = [6, conway] /
+    [5, babbage] /
+    [4, alonzo] /
+    [3, mary] /
+    [2, allegra] /
+    [1, shelley] /
+    [0, byron]
+
+slotno = word64
+blockno = word64
+epochno = word64
+relativeTime = int
+
+hash = bstr
+keyhash = bstr
+
+withOriginTH<v> = [0]
+                / [1, v]
+
+withOrigin<v> = []
+              / [v]
+
+word32 = 0..4294967295
+word64 = 0..18446744073709551615
+
+nonce = [0]
+      / [1, hash]
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; Ledger types
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+byron = any
+shelley = any
+allegra = any
+mary = any
+alonzo = any
+babbage = any
+conway = any
