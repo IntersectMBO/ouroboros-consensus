@@ -1,0 +1,82 @@
+toplevel = cardanoTx / cardanoTxId / cardanoTicketNo
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; Tx
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+cardanoTx =
+  cardanoNs<byronTx,
+            serialisedShelleyTx,
+            serialisedShelleyTx,
+            serialisedShelleyTx,
+            serialisedShelleyTx,
+            serialisedShelleyTx,
+            serialisedShelleyTx>
+
+byronTx = byronPayload
+
+serialisedShelleyTx = #6.24(bytes .cbor shelleyTx)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; TxId
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+cardanoTxId =
+  cardanoNs<byronTxId,
+            shelleyTxId,
+            shelleyTxId,
+            shelleyTxId,
+            shelleyTxId,
+            shelleyTxId,
+            shelleyTxId>
+
+byronTxId = [0, utxoTxId]
+          / [1, certificateId]
+          / [2, upId]
+          / [3, voteId]
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; TicketNo
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+cardanoTicketNo = word64
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; Common
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+cardanoNs<byron, shelley, allegra, mary, alonzo, babbage, conway>
+  = [6, conway] /
+    [5, babbage] /
+    [4, alonzo] /
+    [3, mary] /
+    [2, allegra] /
+    [1, shelley] /
+    [0, byron]
+
+word64 = 0..18446744073709551615
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; Ledger
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+byronPayload = any
+shelleyTx = any
+
+; Byron txids
+utxoTxId = any
+certificateId = any
+upId = any
+voteId = any
+
+shelleyTxId = any

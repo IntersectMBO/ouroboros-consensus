@@ -1,12 +1,11 @@
-; instance SerialiseHFC xs
-;      => SerialiseNodeToNode (HardForkBlock xs) (Header (HardForkBlock xs)) where
-;  encodeNodeToNode = dispatchEncoder `after` (getOneEraHeader . getHardForkHeader)
-;
-; dispatchEncoder ccfg version ns =
-;  ...
-;  encodeNS (hczipWith pSHFC aux ccfgs versions) ns
-;  where
-;  aux ccfg' (WrapNodeToNodeVersion v) = Fn $ K . encodeNodeToNode ccfg' v
+toplevel = cardanoHeader / tip / point
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; Header
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 cardanoHeader
  = cardanoNs<byronHeader,
              serialisedShelleyHeader,
@@ -16,64 +15,12 @@ cardanoHeader
              serialisedShelleyHeader,
              serialisedShelleyHeader>
 
-; instance SerialiseNodeToNode ByronBlock (Header ByronBlock) where
-;   encodeNodeToNode ccfg = \case
-;       ByronNodeToNodeVersion1 ->
-;         wrapCBORinCBOR $
-;           encodeUnsizedHeader . fst . splitSizeHint
-;       ByronNodeToNodeVersion2 ->
-;         encodeDisk ccfg . unnest
-;
-; instance HasNestedContent Header ByronBlock where
-;   unnest hdr = case byronHeaderRaw hdr of
-;       CC.ABOBBoundaryHdr h -> DepPair (NestedCtxt (CtxtByronBoundary blockSize)) (slotNo, h)
-;       CC.ABOBBlockHdr    h -> DepPair (NestedCtxt (CtxtByronRegular  blockSize)) h
-;     where
-;       blockSize = byronHeaderBlockSizeHint hdr
-;       slotNo    = byronHeaderSlotNo        hdr
-;
-; instance (EncodeDiskDepIx f blk, EncodeDiskDep f blk)
-;        => EncodeDisk blk (DepPair (f blk)) where
-;   encodeDisk ccfg = encodeDisk ccfg . encodeDepPair ccfg
-;
-; encodeDepPair :: EncodeDiskDep f blk
-;               => CodecConfig blk
-;               -> DepPair (f blk) -> GenDepPair Serialised (f blk)
-; encodeDepPair ccfg (DepPair fa a) =
-;     GenDepPair fa (mkSerialised (encodeDiskDep ccfg fa) a)
-;
-; instance EncodeDiskDep (NestedCtxt Header) ByronBlock where
-;   encodeDiskDep _ccfg (NestedCtxt ctxt) h =
-;       case ctxt of
-;         CtxtByronRegular _size ->
-;           encodeByronRegularHeader h
-;         CtxtByronBoundary _size ->
-;           -- We don't encode the 'SlotNo'
-;           -- This is important, because this encoder/decoder must be compatible
-;           -- with the raw bytes as stored on disk as part of a Byron block.
-;           encodeByronBoundaryHeader (snd h)
-;
-; encodeByronRegularHeader :: RawHeader -> CBOR.Encoding
-; encodeByronRegularHeader = toByronCBOR . CBOR.encodePreEncoded . CC.headerAnnotation
-;
-; encodeByronBoundaryHeader :: RawBoundaryHeader -> CBOR.Encoding
-; encodeByronBoundaryHeader = toByronCBOR . CBOR.encodePreEncoded . CC.boundaryHeaderAnnotation
-;
-; instance EncodeDiskDepIx f blk => EncodeDisk blk (GenDepPair Serialised (f blk)) where
-;   encodeDisk ccfg (GenDepPair fa serialised) = mconcat [
-;         CBOR.encodeListLen 2
-;       , encodeDiskDepIx ccfg (SomeSecond fa)
-;       , encode serialised
-;       ]
 byronHeader = [byronRegularIdx, #6.24(bytes .cbor byronRegularHeader)]
             / [byronBoundaryIdx, #6.24(bytes .cbor byronBoundaryHeader)]
 
 byronBoundaryIdx = [0, word32]
 byronRegularIdx = [1, word32]
 
-; instance ShelleyCompatible proto era
-;   => SerialiseNodeToNode (ShelleyBlock proto era) (Header (ShelleyBlock proto era)) where
-;   encodeNodeToNode _ _ = wrapCBORinCBOR   encodeShelleyHeader
 serialisedShelleyHeader = #6.24(bytes .cbor shelleyHeader)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
