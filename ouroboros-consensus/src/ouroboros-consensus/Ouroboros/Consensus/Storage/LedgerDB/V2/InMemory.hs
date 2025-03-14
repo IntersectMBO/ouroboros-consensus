@@ -35,7 +35,7 @@ import           Control.Monad.Trans (lift)
 import           Control.Monad.Trans.Except
 import           Control.ResourceRegistry
 import           Control.Tracer
-import qualified Data.ByteString.Builder as BS
+import qualified Data.Aeson as Aeson
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
@@ -153,10 +153,23 @@ writeSnapshot fs@(SomeHasFS hasFs) doChecksum encLedger ds st = do
     createDirectoryIfMissing hasFs True $ snapshotToDirPath ds
     crc1 <- writeExtLedgerState fs encLedger (snapshotToStatePath ds) $ state st
     crc2 <- takeHandleSnapshot (tables st) $ snapshotToDirName ds
-    Monad.when (getFlag doChecksum) $
-      withFile hasFs (snapshotToChecksumPath ds) (WriteMode MustBeNew) $ \h ->
-        Monad.void $ hPutAll hasFs h . BS.toLazyByteString . BS.word32HexFixed $
-           (getCRC $ crcOfConcat crc1 crc2)
+    writeSnapshotMetadata fs ds $ SnapshotMetadata
+      { metadataChecksum = do
+          Monad.guard (getFlag doChecksum)
+          pure $ crcOfConcat crc1 crc2
+      }
+
+-- | Write a snapshot metadata JSON file.
+writeSnapshotMetadata ::
+     MonadThrow m
+  => SomeHasFS m
+  -> DiskSnapshot
+  -> SnapshotMetadata
+  -> m ()
+writeSnapshotMetadata (SomeHasFS hasFS) ds meta = do
+  let metadataPath = snapshotToMetadataPath ds
+  withFile hasFS metadataPath (WriteMode MustBeNew) $ \h ->
+    Monad.void $ hPutAll hasFS h $ Aeson.encode meta
 
 takeSnapshot ::
      ( IOLike m
@@ -200,7 +213,7 @@ loadSnapshot ::
     -> Flag "DoDiskSnapshotChecksum"
     -> DiskSnapshot
     -> ExceptT (SnapshotFailure blk) m (LedgerSeq' m blk, RealPoint blk)
-loadSnapshot _rr ccfg fs@(SomeHasFS hasFS) doChecksum ds = do
+loadSnapshot _rr ccfg fs doChecksum ds = do
   (extLedgerSt, mbChecksumAsRead)  <- withExceptT
       (InitFailureRead . ReadSnapshotFailed) $
       readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode doChecksum (snapshotToStatePath ds)
@@ -214,10 +227,34 @@ loadSnapshot _rr ccfg fs@(SomeHasFS hasFS) doChecksum ds = do
                   (fsPathFromList
                     $ fsPathToList (snapshotToDirPath ds)
                     <> [fromString "tables", fromString "tvar"])
+      let metaPath = snapshotToMetadataPath ds
+      snapshotMeta <- withExceptT (InitFailureRead . ReadMetadataError metaPath) $
+        loadSnapshotMetadata fs ds
       Monad.when (getFlag doChecksum) $ do
-        let crcPath = snapshotToChecksumPath ds
-        !snapshotCRC <- withExceptT (InitFailureRead . ReadSnapshotCRCError crcPath) $ readCRC hasFS crcPath
+        -- TODO: not sure that I like relying on all of these being non-Nothing
         let computedCRC = crcOfConcat <$> mbChecksumAsRead <*> mbCrcTables
-        Monad.when (computedCRC /= Just snapshotCRC) $
+        Monad.when (computedCRC /= metadataChecksum snapshotMeta) $
           throwE $ InitFailureRead $ ReadSnapshotDataCorruption
       (,pt) <$> lift (empty extLedgerSt values (newInMemoryLedgerTablesHandle fs))
+
+-- | Load a snapshot metadata JSON file.
+--
+--   - Fails with 'MetadataFileDoesNotExist' when the file doesn't exist;
+--   - Fails with 'MetadataInvalid' when the contents of the file cannot be
+--     deserialised correctly
+loadSnapshotMetadata ::
+     IOLike m
+  => SomeHasFS m
+  -> DiskSnapshot
+  -> ExceptT MetadataErr m SnapshotMetadata
+loadSnapshotMetadata (SomeHasFS hasFS) ds = ExceptT $ do
+  let metadataPath = snapshotToMetadataPath ds
+  exists <- doesFileExist hasFS metadataPath
+  if not exists
+    then pure $ Left MetadataFileDoesNotExist
+    else do
+      withFile hasFS metadataPath ReadMode $ \h -> do
+        bs <- hGetAll hasFS h
+        case Aeson.eitherDecode bs of
+          Left decodeErr -> pure $ Left $ MetadataInvalid decodeErr
+          Right meta -> pure $ Right meta
