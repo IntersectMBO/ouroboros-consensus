@@ -140,6 +140,7 @@ data Error blk
     | TablesCantDeserializeError DeserialiseFailure
     | TablesTrailingBytes
     | SnapshotFormatMismatch Format String
+    | ReadSnapshotCRCError FsPath CRCError
     deriving Exception
 
 instance StandardHash blk => Show (Error blk) where
@@ -147,6 +148,7 @@ instance StandardHash blk => Show (Error blk) where
     show (TablesCantDeserializeError err) = "Couldn't deserialize the tables: " <> show err
     show TablesTrailingBytes = "Malformed tables, there are trailing bytes!"
     show (SnapshotFormatMismatch expected err) = "The input snapshot does not seem to correspond to the input format:\n\t" <> show expected <> "\n\tThe provided path " <> err
+    show (ReadSnapshotCRCError fp err) = "An error occurred while reading the snapshot checksum at " <> show fp <> ": \n\t" <> show err
 
 checkSnapshotFileStructure :: Format -> FsPath -> SomeHasFS IO -> ExceptT (Error blk) IO ()
 checkSnapshotFileStructure m p (SomeHasFS fs) = case m of
@@ -189,17 +191,17 @@ load config@Config{inpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), pa
   case from config of
     Legacy -> do
       checkSnapshotFileStructure Legacy path fs
-      (st, mbChecksumAsRead) <-
+      (st, checksumAsRead) <-
              first unstowLedgerTables
          <$> withExceptT
                (SnapshotError . InitFailureRead . ReadSnapshotFailed)
-               (readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode checkChecksum path)
+               (readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode path)
       Monad.when (getFlag checkChecksum) $ do
         let crcPath = path <.> "checksum"
         snapshotCRC <-
-            withExceptT (SnapshotError . InitFailureRead . ReadSnapshotCRCError crcPath) $
+            withExceptT (ReadSnapshotCRCError crcPath) $
               readCRC hasFS crcPath
-        Monad.when (mbChecksumAsRead /= Just snapshotCRC) $
+        Monad.when (checksumAsRead /= snapshotCRC) $
           throwError $ SnapshotError $ InitFailureRead ReadSnapshotDataCorruption
       pure (forgetLedgerTables st, projectLedgerTables st)
     Mem -> do
@@ -244,13 +246,13 @@ store config@Config{outpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), 
     Mem -> do
       lseq <- V2.empty state tbs $ V2.newInMemoryLedgerTablesHandle fs
       let h = V2.currentHandle lseq
-      Monad.void $ V2.takeSnapshot ccfg nullTracer fs suffix writeChecksum h
+      Monad.void $ V2.takeSnapshot ccfg nullTracer fs suffix h
     LMDB -> do
       chlog <- newTVarIO (V1.empty state)
       lock <- V1.mkLedgerDBLock
       bs <- V1.newLMDBBackingStore nullTracer defaultLMDBLimits (V1.LiveLMDBFS tempFS) (V1.SnapshotsFS fs) (V1.InitFromValues (pointSlot $ getTip state) state tbs)
       Monad.void $ V1.withReadLock lock $ do
-        V1.takeSnapshot chlog ccfg nullTracer (V1.SnapshotsFS fs) bs suffix writeChecksum
+        V1.takeSnapshot chlog ccfg nullTracer (V1.SnapshotsFS fs) bs suffix
   where
    Config { writeChecksum } = config
 store _ _ _ _ = error "Malformed output path!"

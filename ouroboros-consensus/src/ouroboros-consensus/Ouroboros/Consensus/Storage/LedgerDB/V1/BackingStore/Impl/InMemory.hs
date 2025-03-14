@@ -34,6 +34,8 @@ import           GHC.Generics
 import           Ouroboros.Consensus.Ledger.Basics
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import           Ouroboros.Consensus.Storage.LedgerDB.API
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+                     (SnapshotBackend (..))
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import           Ouroboros.Consensus.Util.IOLike (Exception, IOLike,
                      MonadSTM (STM, atomically), MonadThrow (throwIO), NoThunks,
@@ -197,6 +199,7 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
                   (upgradeTables st st' (appDiffs values diff))
               pure slot1
          traceWith tracer $ BSWritten slot1 slot2
+      , bsSnapshotBackend = UTxOHDMemSnapshot
       }
   where
     extendPath path =

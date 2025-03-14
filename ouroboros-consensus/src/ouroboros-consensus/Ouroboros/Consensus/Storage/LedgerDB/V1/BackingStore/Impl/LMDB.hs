@@ -51,6 +51,8 @@ import           GHC.Generics (Generic)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Ledger.Tables
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+                     (SnapshotBackend (..))
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API as API
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Bridge as Bridge
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Status
@@ -512,10 +514,11 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
                  pure (dbsSeq, s {dbsSeq = At slot})
                Trace.traceWith dbTracer $ API.BSWritten oldSlot slot
 
-       in API.BackingStore { API.bsClose       = bsClose
-                           , API.bsCopy        = bsCopy
-                           , API.bsValueHandle = bsValueHandle
-                           , API.bsWrite       = bsWrite
+       in API.BackingStore { API.bsClose           = bsClose
+                           , API.bsCopy            = bsCopy
+                           , API.bsValueHandle     = bsValueHandle
+                           , API.bsWrite           = bsWrite
+                           , API.bsSnapshotBackend = UTxOHDLMDBSnapshot
                            }
 
       where
