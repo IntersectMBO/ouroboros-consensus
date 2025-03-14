@@ -296,6 +296,7 @@ library
 
   build-depends:
     FailT ^>=0.1.2,
+    aeson,
     base >=4.14 && <4.22,
     base-deriving-via,
     base16-bytestring,
@@ -705,6 +706,7 @@ test-suite storage-test
     Test.Ouroboros.Storage.ImmutableDB.StateMachine
     Test.Ouroboros.Storage.LedgerDB
     Test.Ouroboros.Storage.LedgerDB.Serialisation
+    Test.Ouroboros.Storage.LedgerDB.Snapshots
     Test.Ouroboros.Storage.LedgerDB.SnapshotPolicy
     Test.Ouroboros.Storage.LedgerDB.StateMachine
     Test.Ouroboros.Storage.LedgerDB.StateMachine.TestBlock
@@ -722,6 +724,7 @@ test-suite storage-test
 
   build-depends:
     QuickCheck,
+    aeson,
     base,
     bifunctors,
     binary,

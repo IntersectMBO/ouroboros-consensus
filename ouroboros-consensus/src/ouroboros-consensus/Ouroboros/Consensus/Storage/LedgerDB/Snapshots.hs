@@ -2,8 +2,10 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NumericUnderscores #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -19,9 +21,12 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots (
     -- * Snapshots
     CRCError (..)
   , DiskSnapshot (..)
+  , MetadataErr (..)
   , NumOfDiskSnapshots (..)
   , ReadSnapshotErr (..)
+  , SnapshotBackend (..)
   , SnapshotFailure (..)
+  , SnapshotMetadata (..)
   , SnapshotPolicyArgs (..)
   , defaultSnapshotPolicyArgs
     -- * Codec
@@ -33,10 +38,13 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots (
   , snapshotToChecksumPath
   , snapshotToDirName
   , snapshotToDirPath
+  , snapshotToMetadataPath
     -- * Management
   , deleteSnapshot
   , listSnapshots
+  , loadSnapshotMetadata
   , trimSnapshots
+  , writeSnapshotMetadata
     -- * Policy
   , SnapshotInterval (..)
   , SnapshotPolicy (..)
@@ -60,9 +68,13 @@ import           Codec.CBOR.Encoding
 import qualified Codec.CBOR.Write as CBOR
 import qualified Codec.Serialise.Decoding as Dec
 import           Control.Monad
+import qualified Control.Monad as Monad
 import           Control.Monad.Class.MonadTime.SI
 import           Control.Monad.Except
 import           Control.Tracer
+import           Data.Aeson (FromJSON (..), ToJSON (..), (.:), (.=))
+import qualified Data.Aeson as Aeson
+import           Data.Functor.Identity
 import qualified Data.List as List
 import           Data.Maybe (isJust, mapMaybe)
 import           Data.Ord
@@ -74,7 +86,7 @@ import           GHC.Generics
 import           NoThunks.Class
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
-import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Util (Flag (..))
 import           Ouroboros.Consensus.Util.CallStack
@@ -85,6 +97,7 @@ import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Versioned
 import           System.FS.API
+import           System.FS.API.Lazy
 import           System.FS.CRC
 import           Text.Read (readMaybe)
 
@@ -135,10 +148,51 @@ data ReadSnapshotErr =
     -- | Error while de-serialising data
     ReadSnapshotFailed ReadIncrementalErr
     -- | Checksum of read snapshot differs from the one tracked by
-    --   the corresponding '.checksum' file
+    --   its corresponding metadata file
   | ReadSnapshotDataCorruption
-    -- | An error occurred while reading the CRC file
-  | ReadSnapshotCRCError FsPath CRCError
+    -- | An error occurred while reading the snapshot metadata file
+  | ReadMetadataError FsPath MetadataErr
+  deriving (Eq, Show)
+
+data SnapshotMetadata = SnapshotMetadata
+  { snapshotBackend  :: SnapshotBackend
+  , snapshotChecksum :: CRC
+  } deriving (Eq, Show)
+
+instance ToJSON SnapshotMetadata where
+  toJSON sm = Aeson.object
+    [ "backend" .= snapshotBackend sm
+    , "checksum" .= getCRC (snapshotChecksum sm)
+    ]
+
+instance FromJSON SnapshotMetadata where
+  parseJSON = Aeson.withObject "SnapshotMetadata" $ \o ->
+    SnapshotMetadata <$> o .: "backend"
+                     <*> fmap CRC (o .: "checksum")
+
+data SnapshotBackend =
+    UTxOHDMemSnapshot
+  | UTxOHDLMDBSnapshot
+  deriving (Eq, Show)
+
+instance ToJSON SnapshotBackend where
+  toJSON = \case
+    UTxOHDMemSnapshot -> "utxohd-mem"
+    UTxOHDLMDBSnapshot -> "utxohd-lmdb"
+
+instance FromJSON SnapshotBackend where
+  parseJSON = Aeson.withText "SnapshotBackend" $ \case
+    "utxohd-mem" -> pure UTxOHDMemSnapshot
+    "utxohd-lmdb" -> pure UTxOHDLMDBSnapshot
+    _ -> fail "unknown SnapshotBackend"
+
+data MetadataErr =
+  -- | The metadata file does not exist
+    MetadataFileDoesNotExist
+  -- | The metadata file is invalid and does not deserialize
+  | MetadataInvalid String
+  -- | The metadata file has the incorrect backend
+  | MetadataBackendMismatch
   deriving (Eq, Show)
 
 -- | Named snapshot are permanent, they will never be deleted even if failing to
@@ -178,6 +232,40 @@ deleteSnapshot (SomeHasFS HasFS{doesDirectoryExist, removeDirectoryRecursive}) s
   exists <- doesDirectoryExist p
   when exists (removeDirectoryRecursive p)
 
+-- | Write a snapshot metadata JSON file.
+writeSnapshotMetadata ::
+     MonadThrow m
+  => SomeHasFS m
+  -> DiskSnapshot
+  -> SnapshotMetadata
+  -> m ()
+writeSnapshotMetadata (SomeHasFS hasFS) ds meta = do
+  let metadataPath = snapshotToMetadataPath ds
+  withFile hasFS metadataPath (WriteMode MustBeNew) $ \h ->
+    Monad.void $ hPutAll hasFS h $ Aeson.encode meta
+
+-- | Load a snapshot metadata JSON file.
+--
+--   - Fails with 'MetadataFileDoesNotExist' when the file doesn't exist;
+--   - Fails with 'MetadataInvalid' when the contents of the file cannot be
+--     deserialised correctly
+loadSnapshotMetadata ::
+     IOLike m
+  => SomeHasFS m
+  -> DiskSnapshot
+  -> ExceptT MetadataErr m SnapshotMetadata
+loadSnapshotMetadata (SomeHasFS hasFS) ds = ExceptT $ do
+  let metadataPath = snapshotToMetadataPath ds
+  exists <- doesFileExist hasFS metadataPath
+  if not exists
+    then pure $ Left MetadataFileDoesNotExist
+    else do
+      withFile hasFS metadataPath ReadMode $ \h -> do
+        bs <- hGetAll hasFS h
+        case Aeson.eitherDecode bs of
+          Left decodeErr -> pure $ Left $ MetadataInvalid decodeErr
+          Right meta     -> pure $ Right meta
+
 snapshotsMapM_ :: Monad m => SomeHasFS m -> (FilePath -> m a) -> m ()
 snapshotsMapM_ (SomeHasFS fs) f = do
   mapM_ f =<< Set.lookupMax . Set.filter (isJust . snapshotFromPath) <$> listDirectory fs (mkFsPath [])
@@ -198,12 +286,12 @@ readExtLedgerState ::
   => SomeHasFS m
   -> (forall s. Decoder s (ExtLedgerState blk EmptyMK))
   -> (forall s. Decoder s (HeaderHash blk))
-  -> Flag "DoDiskSnapshotChecksum"
   -> FsPath
-  -> ExceptT ReadIncrementalErr m (ExtLedgerState blk EmptyMK, Maybe CRC)
-readExtLedgerState hasFS decLedger decHash doChecksum = do
+  -> ExceptT ReadIncrementalErr m (ExtLedgerState blk EmptyMK, CRC)
+readExtLedgerState hasFS decLedger decHash = do
       ExceptT
-    . readIncremental hasFS (getFlag doChecksum) decoder
+    . fmap (fmap (fmap runIdentity))
+    . readIncremental hasFS Identity decoder
   where
     decoder :: Decoder s (ExtLedgerState blk EmptyMK)
     decoder = decodeLBackwardsCompatible (Proxy @blk) decLedger decHash
@@ -257,6 +345,9 @@ snapshotToDirName DiskSnapshot { dsNumber, dsSuffix } =
 
 snapshotToChecksumPath :: DiskSnapshot -> FsPath
 snapshotToChecksumPath = mkFsPath . (\x -> [x, "checksum"]) . snapshotToDirName
+
+snapshotToMetadataPath :: DiskSnapshot -> FsPath
+snapshotToMetadataPath = mkFsPath . (\x -> [x, "meta"]) . snapshotToDirName
 
 -- | The path within the LedgerDB's filesystem to the snapshot's directory
 snapshotToDirPath :: DiskSnapshot -> FsPath
@@ -475,6 +566,8 @@ data TraceSnapshotEvent blk
     -- ^ A snapshot was written to disk.
   | DeletedSnapshot DiskSnapshot
     -- ^ An old or invalid on-disk snapshot was deleted
-  | SnapshotMissingChecksum DiskSnapshot
-    -- ^ The checksum file for a snapshot was missing and was not checked
+  | SnapshotMetadataMissing DiskSnapshot
+    -- ^ The metadata file for a snapshot was missing and the snapshot was ignored
+  | SnapshotMetadataBackendMismatch DiskSnapshot
+    -- ^ The backend for a snapshot was incorrect and the snapshot was ignored
   deriving (Generic, Eq, Show)
