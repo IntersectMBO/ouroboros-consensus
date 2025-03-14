@@ -62,8 +62,8 @@ source-repository-package
   -- tag: 4b2721c8abdf704c6f8de042e8fb1f3f6b3f1aed
   -- This tag is before parameterising KeySpace and GenEnv over some (Crypto c)
   -- tag: a0d93ad3134a8c5fe04ddaacffdaf39e1af8b8cf
-  tag: f5b35692b4d92d664187781a98b7af3fab445bad
-  --sha256: sha256-krYzn7ct6S52bGLC8vs5/pL421UbP0+jVjxwUhOcbcA=
+  tag: e3fa55fccd30ff6c048764a447368f23d809487e
+  --sha256: sha256-qaoVERbGDGqMMuY1b90GQ31F5QxrgE1u04TEMRSMX4I=
   subdir:
       eras/allegra/impl
       eras/alonzo/impl

@@ -10,6 +10,7 @@ module Ouroboros.Consensus.Shelley.Protocol.TPraos () where
 import qualified Cardano.Crypto.KES as SL
 import           Cardano.Crypto.VRF (certifiedOutput)
 import           Cardano.Ledger.Chain (ChainPredicateFailure)
+import qualified Cardano.Ledger.Hashes as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Protocol.TPraos.API (PraosCrypto)
 import qualified Cardano.Protocol.TPraos.API as SL
@@ -44,7 +45,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (TPraos c) where
   pHeaderBodyHash = SL.bhash . SL.bhbody
   pHeaderSlot = SL.bheaderSlotNo . SL.bhbody
   pHeaderBlock = SL.bheaderBlockNo . SL.bhbody
-  pHeaderSize = fromIntegral . SL.bHeaderSize
+  pHeaderSize = fromIntegral . SL.originalBytesSize
   pHeaderBlockSize = fromIntegral @Word32 @Natural . SL.bsize . SL.bhbody
 
   type EnvelopeCheckError _ = ChainPredicateFailure
