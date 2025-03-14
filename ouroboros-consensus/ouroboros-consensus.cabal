@@ -295,6 +295,7 @@ library
 
   build-depends:
     FailT ^>=0.1.2,
+    aeson,
     base >=4.14 && <4.21,
     base-deriving-via,
     base16-bytestring,

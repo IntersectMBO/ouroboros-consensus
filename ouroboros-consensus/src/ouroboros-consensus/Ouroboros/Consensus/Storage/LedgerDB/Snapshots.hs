@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NumericUnderscores #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -21,6 +22,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots (
   , DiskSnapshot (..)
   , NumOfDiskSnapshots (..)
   , ReadSnapshotErr (..)
+  , SnapshotMetadata (..)
+  , MetadataErr (..)
   , SnapshotFailure (..)
   , SnapshotPolicyArgs (..)
   , defaultSnapshotPolicyArgs
@@ -30,6 +33,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots (
     -- * Paths
   , diskSnapshotIsTemporary
   , snapshotFromPath
+  , snapshotToMetadataPath
   , snapshotToChecksumPath
   , snapshotToDirName
   , snapshotToDirPath
@@ -63,6 +67,7 @@ import           Control.Monad
 import           Control.Monad.Class.MonadTime.SI
 import           Control.Monad.Except
 import           Control.Tracer
+import           Data.Aeson (ToJSON(..), object, (.=), FromJSON(..), withObject, (.:?))
 import qualified Data.List as List
 import           Data.Maybe (isJust, mapMaybe)
 import           Data.Ord
@@ -74,7 +79,7 @@ import           GHC.Generics
 import           NoThunks.Class
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
-import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Util (Flag (..))
 import           Ouroboros.Consensus.Util.CallStack
@@ -139,6 +144,30 @@ data ReadSnapshotErr =
   | ReadSnapshotDataCorruption
     -- | An error occurred while reading the CRC file
   | ReadSnapshotCRCError FsPath CRCError
+    -- | An error occurred while reading the snapshot metadata file
+  | ReadMetadataError FsPath MetadataErr
+  deriving (Eq, Show)
+
+data SnapshotMetadata = SnapshotMetadata
+  { metadataChecksum :: Maybe CRC
+  } deriving (Eq, Show)
+
+instance ToJSON SnapshotMetadata where
+  toJSON sm = object
+    [ "checksum" .= fmap getCRC (metadataChecksum sm)
+    ]
+
+instance FromJSON SnapshotMetadata where
+  parseJSON = withObject "SnapshotMetadata" $ \o ->
+    SnapshotMetadata <$> fmap (fmap CRC) (o .:? "checksum")
+
+data MetadataErr =
+  -- | The metadata file does not exist
+    MetadataFileDoesNotExist
+  -- | The metadata file is invalid and does not deserialize
+  | MetadataInvalid String
+  -- | The metadata file does not contain a checksum for the snapshot
+  | MetadataChecksumMissing
   deriving (Eq, Show)
 
 -- | Named snapshot are permanent, they will never be deleted even if failing to
@@ -257,6 +286,9 @@ snapshotToDirName DiskSnapshot { dsNumber, dsSuffix } =
 
 snapshotToChecksumPath :: DiskSnapshot -> FsPath
 snapshotToChecksumPath = mkFsPath . (\x -> [x, "checksum"]) . snapshotToDirName
+
+snapshotToMetadataPath :: DiskSnapshot -> FsPath
+snapshotToMetadataPath = mkFsPath . (\x -> [x, "meta"]) . snapshotToDirName
 
 -- | The path within the LedgerDB's filesystem to the snapshot's directory
 snapshotToDirPath :: DiskSnapshot -> FsPath
