@@ -8,6 +8,8 @@ module Cardano.Tools.DBAnalyser.HasAnalysis (
   , WithLedgerState (..)
   ) where
 
+import           Cardano.Ledger.Crypto (StandardCrypto)
+import           Cardano.Ledger.Shelley.API (PoolDistr)
 import           Data.Map.Strict (Map)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation (HasAnnTip (..))
@@ -57,6 +59,16 @@ class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis
   -- certain metrics such as the size of data need to be performed in
   -- the IO monad.
   blockApplicationMetrics :: [(Builder, WithLedgerState blk -> IO Builder)]
+
+  -- | The epoch number of the block's slot, and the stake distribution used
+  -- for the leader schedule of that epoch
+  --
+  -- This pool distribution should match 'protocolLedgerView', for example.
+  --
+  -- It should return 'Nothing' if and only if the block is in the Byron era.
+  epochPoolDistr ::
+       LedgerState blk
+    -> Maybe (EpochNo, PoolDistr StandardCrypto)
 
 class HasProtocolInfo blk where
   data Args blk

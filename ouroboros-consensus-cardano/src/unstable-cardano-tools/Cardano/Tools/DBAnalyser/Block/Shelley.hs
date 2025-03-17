@@ -5,6 +5,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -49,11 +50,13 @@ import qualified Ouroboros.Consensus.Shelley.Ledger.Block as Shelley
 import           Ouroboros.Consensus.Shelley.Node (Nonce (..),
                      ProtocolParamsShelleyBased (..), ShelleyGenesis,
                      protocolInfoShelley)
+import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import           Text.Builder (decimal)
 
 -- | Usable for each Shelley-based era
 instance ( ShelleyCompatible proto era
          , PerEraAnalysis era
+         , ProtoCrypto proto ~ StandardCrypto
          ) => HasAnalysis (ShelleyBlock proto era) where
 
   countTxOutputs blk = case Shelley.shelleyBlockRaw blk of
@@ -102,6 +105,13 @@ instance ( ShelleyCompatible proto era
     -- For the time being we do not support any block application
     -- metrics for Shelley-only eras.
   blockApplicationMetrics = []
+
+  epochPoolDistr lst =
+      Just (SL.nesEL nes, SL.nesPd nes)
+    where
+      nes = shelleyLedgerState lst
+
+-----
 
 class PerEraAnalysis era where
     txExUnitsSteps :: Maybe (Core.Tx era -> Word64)
