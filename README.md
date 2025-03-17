@@ -171,5 +171,8 @@ We have several sources of documentation:
   does.
   ([rendered](https://ouroboros-consensus.cardano.intersectmbo.org/pdfs/report.pdf))
 
+- [Formal specification](./docs/agda-spec/): this directory contains the formal (Agda)
+  specification of the Consensus layer.
+
 
 [webpage]: https://ouroboros-consensus.cardano.intersectmbo.org/
