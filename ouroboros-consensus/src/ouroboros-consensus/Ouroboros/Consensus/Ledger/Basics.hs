@@ -146,7 +146,7 @@ class ( -- Requirements on the ledger state itself
   -- that as soon as a certain slot was reached, /any/ block would be invalid.
   --
   -- PRECONDITION: The slot number must be strictly greater than the slot at
-  -- the tip of the ledger (except for EBBs, obviously..).
+  -- the tip of the ledger.
   --
   -- NOTE: 'applyChainTickLedgerResult' should /not/ change the tip of the
   -- underlying ledger state, which should still refer to the most recent

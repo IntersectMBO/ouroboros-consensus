@@ -300,7 +300,6 @@ instructionHelper registry varFollower chainType blockComponent fromMaybeSTM CDB
         GetRawHeader     -> return $ rawHdr
         GetHash          -> return $ headerHash hdr
         GetSlot          -> return $ blockSlot hdr
-        GetIsEBB         -> return $ headerToIsEBB hdr
         GetBlockSize     -> getBlockComponent GetBlockSize
         -- We could look up the header size in the index of the VolatileDB,
         -- but getting the serialisation is cheap because we keep the
@@ -360,8 +359,11 @@ instructionHelper registry varFollower chainType blockComponent fromMaybeSTM CDB
           -- The ImmutableDB somehow rolled back
           GT -> error "follower streamed beyond tip of the ImmutableDB"
 
+          EQ | pt /= pointAtImmutableDBTip
+             -> error "follower streamed different tip of the ImmutableDB"
+
           -- The tip is still the same, so switch to the in-memory chain
-          EQ | pt == pointAtImmutableDBTip
+             | otherwise
              -> do
             trace $ FollowerSwitchToMem pt slotNoAtImmutableDBTip
             fupdate <- atomically $ fromMaybeSTM $ do
@@ -374,15 +376,9 @@ instructionHelper registry varFollower chainType blockComponent fromMaybeSTM CDB
             -- block component.
             headerUpdateToBlockComponentUpdate fupdate
 
-          -- Two possibilities:
-          --
-          -- 1. (EQ): the tip changed, but the slot number is the same. This
-          --    is only possible when an EBB was at the tip and the regular
-          --    block in the same slot was appended to the ImmutableDB.
-          --
-          -- 2. (LT): the tip of the ImmutableDB has progressed since we
-          --    opened the iterator.
-          _  -> do
+          -- The tip of the ImmutableDB has progressed since we opened the
+          -- iterator.
+          LT  -> do
             trace $ FollowerNewImmIterator pt slotNoAtImmutableDBTip
             immIt' <- ImmutableDB.streamAfterKnownPoint cdbImmutableDB registry
               ((,) <$> getPoint <*> blockComponent) pt

@@ -54,12 +54,11 @@ import qualified Data.Vector as Vector
 import           Data.Void (Void)
 import           Data.Word (Word32, Word64)
 import           GHC.Generics (Generic)
-import           Ouroboros.Consensus.Block (ConvertRawHash, IsEBB (..),
+import           Ouroboros.Consensus.Block (ConvertRawHash,
                      StandardHash)
 import           Ouroboros.Consensus.Storage.ImmutableDB.API
                      (UnexpectedFailure (..), throwUnexpectedFailure)
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
-import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Layout
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index.Primary
                      (PrimaryIndex, SecondaryOffset)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index.Primary as Primary
@@ -471,20 +470,9 @@ readPrimaryIndex ::
   -> HasFS m h
   -> ChunkInfo
   -> ChunkNo
-  -> m (PrimaryIndex, IsEBB)
-     -- ^ The primary index and whether it starts with an EBB or not
-readPrimaryIndex pb hasFS chunkInfo chunk = do
-    primaryIndex <- Primary.load pb hasFS chunk
-    let firstIsEBB
-          | Primary.containsSlot primaryIndex firstRelativeSlot
-          , Primary.isFilledSlot primaryIndex firstRelativeSlot
-          = relativeSlotIsEBB firstRelativeSlot
-          | otherwise
-          = IsNotEBB
-    return (primaryIndex, firstIsEBB)
-  where
-    firstRelativeSlot :: RelativeSlot
-    firstRelativeSlot = firstBlockOrEBB chunkInfo chunk
+  -> m PrimaryIndex
+readPrimaryIndex pb hasFS _chunkInfo chunk = do
+    Primary.load pb hasFS chunk
 
 readSecondaryIndex ::
      ( HasCallStack
@@ -495,12 +483,15 @@ readSecondaryIndex ::
      )
   => HasFS m h
   -> ChunkNo
-  -> IsEBB
   -> m [Entry blk]
-readSecondaryIndex hasFS@HasFS { hGetSize } chunk firstIsEBB = do
+readSecondaryIndex hasFS@HasFS { hGetSize } chunk = do
     !chunkFileSize <- withFile hasFS chunkFile ReadMode hGetSize
-    Secondary.readAllEntries hasFS secondaryOffset
-      chunk stopCondition chunkFileSize firstIsEBB
+    Secondary.readAllEntries
+      hasFS
+      secondaryOffset
+      chunk
+      stopCondition
+      chunkFileSize
   where
     chunkFile = fsPathChunkFile chunk
     -- Read from the start
@@ -525,9 +516,8 @@ loadCurrentChunkInfo hasFS chunkInfo chunk = do
     -- index file will also exist
     chunkExists <- doesFileExist hasFS primaryIndexFile
     if chunkExists then do
-      (primaryIndex, firstIsEBB) <-
-        readPrimaryIndex (Proxy @blk) hasFS chunkInfo chunk
-      entries <- readSecondaryIndex hasFS chunk firstIsEBB
+      primaryIndex <- readPrimaryIndex (Proxy @blk) hasFS chunkInfo chunk
+      entries <- readSecondaryIndex hasFS chunk
       return CurrentChunkInfo
         { currentChunkNo      = chunk
         , currentChunkOffsets =
@@ -553,8 +543,8 @@ loadPastChunkInfo ::
   -> ChunkNo
   -> m (PastChunkInfo blk)
 loadPastChunkInfo hasFS chunkInfo chunk = do
-    (primaryIndex, firstIsEBB) <- readPrimaryIndex (Proxy @blk) hasFS chunkInfo chunk
-    entries <- readSecondaryIndex hasFS chunk firstIsEBB
+    primaryIndex <- readPrimaryIndex (Proxy @blk) hasFS chunkInfo chunk
+    entries <- readSecondaryIndex hasFS chunk
     return PastChunkInfo
       { pastChunkOffsets = primaryIndex
       , pastChunkEntries = Vector.fromList $ forceElemsToWHNF entries
@@ -792,17 +782,17 @@ readEntries ::
      )
   => CacheEnv m blk h
   -> ChunkNo
-  -> t (IsEBB, SecondaryOffset)
+  -> t SecondaryOffset
   -> m (t (Secondary.Entry blk, BlockSize))
 readEntries cacheEnv chunk toRead =
     getChunkInfo cacheEnv chunk >>= \case
       Left CurrentChunkInfo { currentChunkEntries } ->
-        forM toRead $ \(_isEBB, secondaryOffset) ->
+        forM toRead $ \secondaryOffset ->
           case currentChunkEntries Seq.!? indexForOffset secondaryOffset of
             Just (WithBlockSize size entry) -> return (entry, BlockSize size)
             Nothing                         -> noEntry secondaryOffset
       Right PastChunkInfo { pastChunkEntries } ->
-        forM toRead $ \(_isEBB, secondaryOffset) ->
+        forM toRead $ \secondaryOffset ->
           case pastChunkEntries Vector.!? indexForOffset secondaryOffset of
             Just (WithBlockSize size entry) -> return (entry, BlockSize size)
             Nothing                         -> noEntry secondaryOffset
@@ -835,10 +825,9 @@ readAllEntries ::
   -> ChunkNo
   -> (Secondary.Entry blk -> Bool)
   -> Word64
-  -> IsEBB
   -> m [WithBlockSize (Secondary.Entry blk)]
 readAllEntries cacheEnv secondaryOffset chunk stopCondition
-               _chunkFileSize _firstIsEBB =
+               _chunkFileSize =
     getChunkInfo cacheEnv chunk <&> \case
       Left CurrentChunkInfo { currentChunkEntries } ->
         takeUntil (stopCondition . withoutBlockSize) $

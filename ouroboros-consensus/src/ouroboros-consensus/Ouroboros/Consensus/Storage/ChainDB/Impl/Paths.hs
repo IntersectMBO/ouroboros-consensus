@@ -191,7 +191,7 @@ computePath lookupBlockInfo from to =
           | StreamFromInclusive _ <- from
           -> Just $ PartiallyInVolatileDB hash acc
 
-        volPath' ::> (flds, _isEBB)
+        volPath' ::> flds
           | StreamFromExclusive GenesisPoint <- from
           -> go (addToAcc flds acc) volPath'
           | StreamFromExclusive (BlockPoint _ hash') <- from
@@ -274,27 +274,14 @@ data ReversePath blk =
       -- Since block numbers are consecutive, we subtract 1 from the block
       -- number of the last block to obtain the block number corresponding to
       -- this hash.
-      --
-      -- EBBs share their block number with their predecessor:
-      --
-      -- > block:         regular block 1 | EBB | regular block 2
-      -- > block number:                X |   X | X + 1
-      --
-      -- So when the hash refers to regular block 1, we see that the successor
-      -- block is an EBB and use its block number without subtracting 1.
-      --
-      -- Edge case: if there are two or more consecutive EBBs, we might
-      -- predict the wrong block number, but there are no consecutive EBBs in
-      -- practice, they are one epoch apart.
     | StoppedAt (HeaderHash blk) BlockNo
 
       -- | Snoc: the block with the given 'HeaderFields' is in the VolatileDB.
-      -- We also track whether it is an EBB or not.
       --
       -- NOTE: we are intentionally lazy in the spine, as constructing the
       -- path requires lookups in the VolatileDB's in-memory indices, which
       -- are logarithmic in the size of the index.
-    | (ReversePath blk) ::> (HeaderFields blk, IsEBB)
+    | (ReversePath blk) ::> (HeaderFields blk)
 
 -- | Lazily compute the 'ReversePath' that starts (i.e., ends) with the given
 -- 'HeaderHash'.
@@ -310,43 +297,31 @@ computeReversePath
 computeReversePath lookupBlockInfo endHash =
     case lookupBlockInfo endHash of
       Nothing                                               -> Nothing
-      Just blockInfo@VolatileDB.BlockInfo { biBlockNo, biIsEBB, biPrevHash } -> Just $
-        go biPrevHash biBlockNo biIsEBB ::> (headerFieldsFromBlockInfo blockInfo, biIsEBB)
+      Just blockInfo@VolatileDB.BlockInfo { biBlockNo, biPrevHash } -> Just $
+        go biPrevHash biBlockNo ::> (headerFieldsFromBlockInfo blockInfo)
   where
     go ::
          ChainHash blk
          -- ^ The predecessor of the last block added to the path. Not
          -- necessarily in the VolatileDB.
       -> BlockNo  -- ^ The block number of the last block
-      -> IsEBB    -- ^ Whether the last block is an EBB or not
       -> ReversePath blk
-    go predecessor lastBlockNo lastIsEBB = case predecessor of
+    go predecessor lastBlockNo = case predecessor of
       GenesisHash        -> StoppedAtGenesis
       BlockHash prevHash -> case lookupBlockInfo prevHash of
         Nothing ->
-          StoppedAt prevHash (prevBlockNo lastBlockNo lastIsEBB)
-        Just blockInfo@VolatileDB.BlockInfo { biBlockNo, biIsEBB, biPrevHash } ->
-          go biPrevHash biBlockNo biIsEBB ::> (headerFieldsFromBlockInfo blockInfo, biIsEBB)
+          StoppedAt prevHash (prevBlockNo lastBlockNo)
+        Just blockInfo@VolatileDB.BlockInfo { biBlockNo, biPrevHash } ->
+          go biPrevHash biBlockNo ::> headerFieldsFromBlockInfo blockInfo
 
     -- | Predict the block number of the missing predecessor.
     --
-    -- PRECONDITION: the block number and 'IsEBB' correspond to a block that
+    -- PRECONDITION: the block number corresponds to a block that
     -- has a predecessor.
-    --
-    -- For regular blocks, this is just block number - 1, EBBs are special of
-    -- course: they share their block number with their predecessor:
-    --
-    -- > block:         regular block 1 | EBB | regular block 2
-    -- > block number:                X |   X | X + 1
-    --
-    -- Edge case: if there are two or more consecutive EBBs, we might predict
-    -- the wrong block number, but there are no consecutive EBBs in practice
-    -- (nor in the tests), they are one epoch apart.
-    prevBlockNo :: BlockNo -> IsEBB -> BlockNo
-    prevBlockNo bno isEBB = case (bno, isEBB) of
-      (0, IsNotEBB) -> error "precondition violated"
-      (_, IsNotEBB) -> bno - 1
-      (_, IsEBB)    -> bno
+    prevBlockNo :: BlockNo -> BlockNo
+    prevBlockNo bno = case bno of
+      0 -> error "precondition violated"
+      _ -> bno - 1
 
 {-------------------------------------------------------------------------------
   Reachability
@@ -398,7 +373,6 @@ isReachable lookupBlockInfo = \chain b ->
     -- thus the same slot. Both the chain and the path are ordered by slots,
     -- so we compare the slots and drop the largest one until we have a match
     -- in slot, then we check hashes. If those don't match, we drop both.
-    -- Note: EBBs complicate things, see 'ebbAwareCompare'.
     go
       :: AnchoredFragment (Header blk)
          -- ^ Prefix of the current chain
@@ -417,7 +391,7 @@ isReachable lookupBlockInfo = \chain b ->
           | otherwise
           -> Nothing
 
-        (AF.Empty anchor, path' ::> (flds, _))
+        (AF.Empty anchor, path' ::> flds)
           | AF.anchorToHeaderFields (AF.castAnchor anchor) == NotOrigin flds
           -> Just (ChainDiff rollback (AF.fromOldestFirst (AF.castAnchor anchor) acc))
           | AF.anchorToBlockNo anchor > NotOrigin (headerFieldBlockNo flds)
@@ -442,13 +416,13 @@ isReachable lookupBlockInfo = \chain b ->
           | otherwise
           -> Nothing
 
-        (chain' AF.:> hdr, path' ::> (flds, ptIsEBB)) ->
-          case hdr `ebbAwareCompare` (headerFieldBlockNo flds, ptIsEBB) of
+        (chain' AF.:> hdr, path' ::> flds) ->
+          case hdr `cmp` headerFieldBlockNo flds of
             -- Drop from the path
             LT -> go chain path' rollback (flds:acc)
             -- Drop from the current chain fragment
             GT -> go chain' path (rollback + 1) acc
-            -- Same slot and value for 'IsEBB'
+            -- Check hash
             EQ | blockHash hdr == headerFieldHash flds
                , let anchor = AF.castAnchor (AF.anchorFromBlock hdr)
                -- Found a match
@@ -457,14 +431,5 @@ isReachable lookupBlockInfo = \chain b ->
                | otherwise
                -> go chain' path' (rollback + 1) (flds:acc)
 
-    -- | EBBs have the same block number as their predecessor, which means
-    -- that in case we have an EBB and a regular block with the same slot, the
-    -- EBB comes /after/ the regular block.
-    ebbAwareCompare :: Header blk -> (BlockNo, IsEBB) -> Ordering
-    ebbAwareCompare hdr (ptBlockNo, ptIsEBB) =
-      compare (blockNo hdr) ptBlockNo `mappend`
-      case (headerToIsEBB hdr, ptIsEBB) of
-        (IsEBB,    IsNotEBB) -> GT
-        (IsNotEBB, IsEBB)    -> LT
-        (IsEBB,    IsEBB)    -> EQ
-        (IsNotEBB, IsNotEBB) -> EQ
+    cmp :: Header blk -> BlockNo -> Ordering
+    cmp hdr ptBlockNo = compare (blockNo hdr) ptBlockNo

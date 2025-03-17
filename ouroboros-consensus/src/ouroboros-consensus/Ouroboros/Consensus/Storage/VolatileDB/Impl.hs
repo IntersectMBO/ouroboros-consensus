@@ -268,7 +268,6 @@ getBlockComponentImpl env@VolatileDBEnv { codecConfig, checkIntegrity } blockCom
     getBlockComponent hasFS ibi = \case
         GetHash          -> return hash
         GetSlot          -> return biSlotNo
-        GetIsEBB         -> return biIsEBB
         GetBlockSize     -> return $ fromIntegral $ unBlockSize ibiBlockSize
         GetHeaderSize    -> return biHeaderSize
         GetPure a        -> return a
@@ -397,7 +396,7 @@ putBlockImpl env@VolatileDBEnv{ maxBlocksPerFile, tracer, codecConfig }
           , currentMaxSlotNo   = currentMaxSlotNo `max` MaxSlotNo biSlotNo
           }
 
--- | Garbage collect all files of which the highest slot is less than the
+-- | Garbage collect all files of which the highest slot is less than or equal to the
 -- given slot.
 --
 -- We first check whether we actually can garbage collect any file. If we can,
