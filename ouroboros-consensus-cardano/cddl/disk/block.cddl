@@ -1,16 +1,15 @@
-cardanoBlock = byronBlock
-             / [2, shelleyBlock]
-             / [3, allegraBlock]
-             / [4, maryBlock]
-             / [5, alonzoBlock]
-             / [6, babbageBlock]
-             / [7, conwayBlock]
+cardanoBlock = byron.block
+             / [2, shelley.block]
+             / [3, allegra.block]
+             / [4, mary.block]
+             / [5, alonzo.block]
+             / [6, babbage.block]
+             / [7, conway.block]
 
-; blocks are defined in Ledger CDDL's
-byronBlock   = any
-shelleyBlock = any
-allegraBlock = any
-maryBlock    = any
-alonzoBlock  = any
-babbageBlock = any
-conwayBlock  = any
+;# import byron as byron
+;# import shelley as shelley
+;# import allegra as allegra
+;# import mary as mary
+;# import alonzo as alonzo
+;# import babbage as babbage
+;# import conway as conway

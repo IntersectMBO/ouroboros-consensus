@@ -98,3 +98,5 @@ cabal.project.local
 cabal.project.local~
 .HTF/
 .ghc.environment.*
+
+ouroboros-consensus-cardano/cddl/*.compiled.cddl
