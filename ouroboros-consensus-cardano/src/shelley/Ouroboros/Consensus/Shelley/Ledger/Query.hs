@@ -14,9 +14,9 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
-{-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Shelley.Ledger.Query (
     BlockQuery (..)
@@ -107,6 +107,8 @@ type Delegations = Map (SL.Credential 'SL.Staking) (SL.KeyHash 'SL.StakePool)
 
 type VoteDelegatees = Map (SL.Credential 'SL.Staking) SL.DRep
 
+{-# DEPRECATED GetProposedPParamsUpdates "Deprecated in ShelleyNodeToClientVersion12" #-}
+
 data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   GetLedgerTip :: BlockQuery (ShelleyBlock proto era) (Point (ShelleyBlock proto era))
   GetEpochNo :: BlockQuery (ShelleyBlock proto era) EpochNo
@@ -117,6 +119,8 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
     -> BlockQuery (ShelleyBlock proto era) NonMyopicMemberRewards
   GetCurrentPParams
     :: BlockQuery (ShelleyBlock proto era) (LC.PParams era)
+  GetProposedPParamsUpdates
+    :: BlockQuery (ShelleyBlock proto era) (SL.ProposedPPUpdates era)
   -- | This gets the stake distribution, but not in terms of _active_ stake
   -- (which we need for the leader schedule), but rather in terms of _total_
   -- stake, which is relevant for rewards. It is used by the wallet to show
@@ -352,6 +356,8 @@ instance
             SL.getNonMyopicMemberRewards globals st creds
         GetCurrentPParams ->
           getPParams st
+        GetProposedPParamsUpdates ->
+          SL.ProposedPPUpdates Map.empty
         GetStakeDistribution ->
           fromLedgerPoolDistr $ SL.poolsByTotalStakeFraction globals st
         GetUTxOByAddress addrs ->
@@ -523,6 +529,10 @@ instance SameDepIndex (BlockQuery (ShelleyBlock proto era)) where
     = Just Refl
   sameDepIndex GetCurrentPParams _
     = Nothing
+  sameDepIndex GetProposedPParamsUpdates GetProposedPParamsUpdates
+    = Just Refl
+  sameDepIndex GetProposedPParamsUpdates _
+    = Nothing
   sameDepIndex GetStakeDistribution GetStakeDistribution
     = Just Refl
   sameDepIndex GetStakeDistribution _
@@ -660,6 +670,7 @@ instance ShelleyCompatible proto era => ShowQuery (BlockQuery (ShelleyBlock prot
       GetEpochNo                                 -> show
       GetNonMyopicMemberRewards {}               -> show
       GetCurrentPParams                          -> show
+      GetProposedPParamsUpdates                  -> show
       GetStakeDistribution                       -> show
       GetUTxOByAddress {}                        -> show
       GetUTxOWhole                               -> show
@@ -699,6 +710,7 @@ querySupportedVersion = \case
     GetEpochNo                                 -> const True
     GetNonMyopicMemberRewards {}               -> const True
     GetCurrentPParams                          -> const True
+    GetProposedPParamsUpdates                  -> (< v12)
     GetStakeDistribution                       -> const True
     GetUTxOByAddress {}                        -> const True
     GetUTxOWhole                               -> const True
@@ -791,6 +803,8 @@ encodeShelleyQuery query = case query of
       CBOR.encodeListLen 2 <> CBOR.encodeWord8 2 <> toCBOR creds
     GetCurrentPParams ->
       CBOR.encodeListLen 1 <> CBOR.encodeWord8 3
+    GetProposedPParamsUpdates ->
+      CBOR.encodeListLen 1 <> CBOR.encodeWord8 4
     GetStakeDistribution ->
       CBOR.encodeListLen 1 <> CBOR.encodeWord8 5
     GetUTxOByAddress addrs ->
@@ -879,6 +893,7 @@ decodeShelleyQuery = do
       (1, 1)  ->             return $ SomeSecond GetEpochNo
       (2, 2)  ->             SomeSecond . GetNonMyopicMemberRewards <$> fromCBOR
       (1, 3)  ->             return $ SomeSecond GetCurrentPParams
+      (1, 4)  ->             return $ SomeSecond GetProposedPParamsUpdates
       (1, 5)  ->             return $ SomeSecond GetStakeDistribution
       (2, 6)  ->             SomeSecond . GetUTxOByAddress <$> LC.fromEraCBOR @era
       (1, 7)  ->             return $ SomeSecond GetUTxOWhole
@@ -926,6 +941,7 @@ encodeShelleyResult _v query = case query of
     GetEpochNo                                 -> toCBOR
     GetNonMyopicMemberRewards {}               -> toCBOR
     GetCurrentPParams                          -> toCBOR
+    GetProposedPParamsUpdates                  -> toCBOR
     GetStakeDistribution                       -> LC.toEraCBOR @era
     GetUTxOByAddress {}                        -> toCBOR
     GetUTxOWhole                               -> toCBOR
@@ -968,6 +984,7 @@ decodeShelleyResult _v query = case query of
     GetEpochNo                                 -> fromCBOR
     GetNonMyopicMemberRewards {}               -> fromCBOR
     GetCurrentPParams                          -> fromCBOR
+    GetProposedPParamsUpdates                  -> fromCBOR
     GetStakeDistribution                       -> LC.fromEraCBOR @era
     GetUTxOByAddress {}                        -> fromCBOR
     GetUTxOWhole                               -> fromCBOR
