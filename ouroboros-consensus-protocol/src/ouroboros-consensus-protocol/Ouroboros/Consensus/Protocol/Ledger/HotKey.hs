@@ -270,7 +270,9 @@ evolveKey varKESState targetPeriod = modifyMVar varKESState $ \kesState -> do
           Nothing    -> error "Could not update KES key"
           Just !key' -> do
             -- Clear the memory associated with the old key
-            -- FIXME: Here we want to forget, but it was never implemented
+            -- FIXME: Secure forgetting is not available through the unsound KES API,
+            -- but we must restore this invocation when moving to the new mlocked KES
+            -- API.
             -- forgetSignKeyKES key
             let info' = info { kesEvolution = curEvolution + 1 }
             go targetEvolution info' key'
