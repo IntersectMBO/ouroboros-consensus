@@ -214,7 +214,7 @@ mkSimpleTestProtocolInfo
 --
 mkTestProtocolInfo ::
      forall m c
-   . (CardanoHardForkConstraints c, IOLike m) --, c ~ StandardCrypto)
+   . (CardanoHardForkConstraints c, IOLike m)
   => (CoreNodeId, Shelley.CoreNode c)
   -- ^ Id of the node for which the protocol info will be elaborated.
   -> ShelleyGenesis

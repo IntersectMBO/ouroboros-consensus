@@ -75,7 +75,6 @@ praosBlockForging praosParams credentials = do
 praosSharedBlockForging ::
      forall m c era.
      ( ShelleyEraWithCrypto c (Praos c) era
-     -- , Crypto c
      , IOLike m
      )
   => HotKey.HotKey c m

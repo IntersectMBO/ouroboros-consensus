@@ -93,7 +93,7 @@ instance ShelleyCompatible proto era
   SerialiseNodeToNode
 -------------------------------------------------------------------------------}
 
-instance (ShelleyCompatible proto era) -- , Crypto (ProtoCrypto proto))
+instance (ShelleyCompatible proto era)
   => SerialiseNodeToNodeConstraints (ShelleyBlock proto era) where
   estimateBlockSize hdr = overhead + hdrSize + bodySize
     where
@@ -137,7 +137,7 @@ instance ShelleyCompatible proto era
   encodeNodeToNode _ _ = toCBOR
   decodeNodeToNode _ _ = fromCBOR
 
-instance (ShelleyCompatible proto era) -- , Crypto (ProtoCrypto proto))
+instance (ShelleyCompatible proto era)
   => SerialiseNodeToNode (ShelleyBlock proto era) (GenTxId (ShelleyBlock proto era)) where
   encodeNodeToNode _ _ = toEraCBOR @era
   decodeNodeToNode _ _ = fromEraCBOR @era
@@ -281,7 +281,7 @@ instance ShelleyCompatible proto era
   encodeNodeToClient _ _ = toCBOR
   decodeNodeToClient _ _ = fromCBOR
 
-instance (ShelleyCompatible proto era) -- , Crypto (ProtoCrypto proto))
+instance (ShelleyCompatible proto era)
   => SerialiseNodeToClient (ShelleyBlock proto era) (GenTxId (ShelleyBlock proto era)) where
   encodeNodeToClient _ _ = toEraCBOR @era
   decodeNodeToClient _ _ = fromEraCBOR @era
@@ -301,7 +301,7 @@ instance ShelleyCompatible proto era
   decodeNodeToClient _ _ = decodeShelleyQuery
 
 instance
-  (ShelleyCompatible proto era{-, Crypto (ProtoCrypto proto)-}) =>
+  (ShelleyCompatible proto era) =>
   SerialiseResult (ShelleyBlock proto era) (BlockQuery (ShelleyBlock proto era)) where
   encodeResult _ = encodeShelleyResult
   decodeResult _ = decodeShelleyResult
