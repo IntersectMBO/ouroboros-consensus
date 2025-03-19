@@ -84,6 +84,7 @@ module Ouroboros.Consensus.Storage.LedgerDB (
   , LedgerDB'
   , LedgerDbCfg
   , LedgerDbCfgF (..)
+  , LedgerDbPrune (..)
   , configLedgerDb
     -- * Initialization
   , InitLog (..)
@@ -174,7 +175,7 @@ import           Ouroboros.Consensus.Storage.LedgerDB.Init (InitLog (..),
                      decorateReplayTracerWithStart, initLedgerDB)
 import           Ouroboros.Consensus.Storage.LedgerDB.LedgerDB (Checkpoint (..),
                      LedgerDB (..), LedgerDB', LedgerDbCfg, LedgerDbCfgF (..),
-                     configLedgerDb)
+                     LedgerDbPrune (..), configLedgerDb)
 import           Ouroboros.Consensus.Storage.LedgerDB.Query (ledgerDbAnchor,
                      ledgerDbCurrent, ledgerDbIsSaturated, ledgerDbMaxRollback,
                      ledgerDbPast, ledgerDbSnapshots, ledgerDbTip)

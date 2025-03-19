@@ -14,6 +14,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.LedgerDB (
   , LedgerDB'
   , LedgerDbCfg
   , LedgerDbCfgF (..)
+  , LedgerDbPrune (..)
   , configLedgerDb
   ) where
 
@@ -139,3 +140,15 @@ configLedgerDb cfg opts = LedgerDbCfg {
     , ledgerDbCfg         = ExtLedgerCfg cfg
     , ledgerDbCfgComputeLedgerEvents   = opts
     }
+
+{-------------------------------------------------------------------------------
+  Pruning
+-------------------------------------------------------------------------------}
+
+-- | Options for prunning the LedgerDB
+--
+-- Rather than using a plain `Word64` we use this to be able to distinguish that
+-- we are indeed using
+--   1. @0@ in places where it is necessary
+--   2. the security parameter as is, in other places
+data LedgerDbPrune = LedgerDbPruneAll | LedgerDbPruneKeeping SecurityParam

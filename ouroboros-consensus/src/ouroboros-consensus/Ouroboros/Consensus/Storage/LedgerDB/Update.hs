@@ -61,7 +61,6 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
-import           Ouroboros.Consensus.Storage.Common (LedgerDBPruneTip (..))
 import           Ouroboros.Consensus.Storage.LedgerDB.LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.Query
 import           Ouroboros.Consensus.Util
@@ -234,12 +233,12 @@ ledgerDbBimap f g =
 
 -- | Prune snapshots until at we have at most @k@ snapshots in the LedgerDB,
 -- excluding the snapshots stored at the anchor.
-ledgerDbPrune :: GetTip l => LedgerDBPruneTip -> LedgerDB l -> LedgerDB l
+ledgerDbPrune :: GetTip l => LedgerDbPrune -> LedgerDB l -> LedgerDB l
 ledgerDbPrune tip db =
   let tip' =
         case tip of
-          LedgerDBPruneTipZero               -> 0
-          LedgerDBPruneTip (SecurityParam k) -> unNonZero k
+          LedgerDbPruneAll                       -> 0
+          LedgerDbPruneKeeping (SecurityParam k) -> unNonZero k
    in db {
         ledgerDbCheckpoints = AS.anchorNewest tip' (ledgerDbCheckpoints db)
       }
@@ -260,7 +259,7 @@ pushLedgerState ::
   -> l -- ^ Updated ledger state
   -> LedgerDB l -> LedgerDB l
 pushLedgerState secParam current' db@LedgerDB{..}  =
-    ledgerDbPrune (LedgerDBPruneTip secParam) $ db {
+    ledgerDbPrune (LedgerDbPruneKeeping secParam) $ db {
         ledgerDbCheckpoints = ledgerDbCheckpoints AS.:> Checkpoint current'
       }
 

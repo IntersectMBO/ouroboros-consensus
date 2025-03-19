@@ -13,8 +13,6 @@ module Ouroboros.Consensus.Storage.Common (
   , PrefixLen (..)
   , addPrefixLen
   , takePrefix
-    -- * Pruning
-  , LedgerDBPruneTip (..)
     -- * BinaryBlockInfo
   , BinaryBlockInfo (..)
   , extractHeader
@@ -36,7 +34,6 @@ import           Data.Word
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Protocol.Abstract (SecurityParam)
 import           Ouroboros.Network.SizeInBytes (SizeInBytes)
 
 {-------------------------------------------------------------------------------
@@ -67,21 +64,6 @@ addPrefixLen m (PrefixLen n) = PrefixLen (m + n)
 takePrefix :: PrefixLen -> BL.ByteString -> ShortByteString
 takePrefix (PrefixLen n) =
     Short.toShort . BL.toStrict . BL.take (fromIntegral n)
-
-{-------------------------------------------------------------------------------
-  Pruning
--------------------------------------------------------------------------------}
-
--- | The "tip" to prune snapshots from.
---
--- `SecurityParam` has been updated to use `NonZero` but we need to prune from
--- @0@ in some cases.
---
--- Rather than using a plain `Word64` we use this to be able to distinguish that
--- we are indeed using
---   1. @0@ in places where it is necessary
---   2. the security parameter as is, in other places
-data LedgerDBPruneTip = LedgerDBPruneTipZero | LedgerDBPruneTip SecurityParam
 
 {-------------------------------------------------------------------------------
   BinaryBlockInfo
