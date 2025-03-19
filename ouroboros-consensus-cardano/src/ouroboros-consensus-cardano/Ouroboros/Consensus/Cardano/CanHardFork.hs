@@ -14,7 +14,6 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
-{-# LANGUAGE AllowAmbiguousTypes #-}
 
 module Ouroboros.Consensus.Cardano.CanHardFork (
     CardanoHardForkConstraints
@@ -201,11 +200,11 @@ instance (SelectView (BlockProtocol blk) ~ PraosChainSelectView c) => HasPraosSe
 
 translateHeaderHashByronToShelley ::
      forall c.
-     ( ShelleyCompatible (TPraos c) ShelleyEra
-     )
-  => HeaderHash ByronBlock
+     ShelleyCompatible (TPraos c) ShelleyEra
+  => Proxy c
+  -> HeaderHash ByronBlock
   -> HeaderHash (ShelleyBlock (TPraos c) ShelleyEra)
-translateHeaderHashByronToShelley =
+translateHeaderHashByronToShelley _ =
       fromShortRawHash (Proxy @(ShelleyBlock (TPraos c) ShelleyEra))
     . toShortRawHash   (Proxy @ByronBlock)
 
@@ -223,7 +222,7 @@ translatePointByronToShelley point bNo =
       (BlockPoint s h, NotOrigin n) -> NotOrigin ShelleyTip {
           shelleyTipSlotNo  = s
         , shelleyTipBlockNo = n
-        , shelleyTipHash    = translateHeaderHashByronToShelley @c h
+        , shelleyTipHash    = translateHeaderHashByronToShelley (Proxy @c) h
         }
       _otherwise ->
         error "translatePointByronToShelley: invalid Byron state"
