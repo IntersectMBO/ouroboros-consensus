@@ -69,7 +69,6 @@ import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDbFailure (..))
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
                      (BlockCache)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
-import           Ouroboros.Consensus.Storage.Common (LedgerDBPruneTip (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import           Ouroboros.Consensus.Storage.ImmutableDB.Stream
 import           Ouroboros.Consensus.Storage.LedgerDB (LedgerDB')
@@ -191,7 +190,7 @@ openDB args@LgrDbArgs { lgrHasFS = lgrHasFS@(SomeHasFS hasFS), .. } replayTracer
     -- >k blocks long. Thus 'Lbn' is the oldest point we can roll back to.
     -- Therefore, we need to make the newest state (current) of the ledger DB
     -- the anchor.
-    let dbPrunedToImmDBTip = LedgerDB.ledgerDbPrune LedgerDBPruneTipZero db
+    let dbPrunedToImmDBTip = LedgerDB.ledgerDbPrune LedgerDB.LedgerDbPruneAll db
     (varDB, varPrevApplied) <-
       (,) <$> newTVarIO dbPrunedToImmDBTip <*> newTVarIO Set.empty
     return (

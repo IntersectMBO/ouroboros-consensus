@@ -112,7 +112,6 @@ import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      StreamFrom (..), StreamTo (..), UnknownRange (..),
                      validBounds)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanK)
-import           Ouroboros.Consensus.Storage.Common (LedgerDBPruneTip (..))
 import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Util (repeatedly)
 import qualified Ouroboros.Consensus.Util.AnchoredFragment as Fragment
@@ -361,11 +360,11 @@ getLedgerDB cfg m@Model{..} =
 
     tip =
       case maxActualRollback k m of
-        0 -> LedgerDBPruneTipZero
+        0 -> LedgerDbPruneAll
         n ->
           -- Since we know that @`n`@ is not zero, it is impossible for `nonZeroOr`
           -- to return a `Nothing` and the final result to have default value of @`1`@.
-          LedgerDBPruneTip $ SecurityParam $ nonZeroOr n $ knownNonZeroBounded @1
+          LedgerDbPruneKeeping $ SecurityParam $ nonZeroOr n $ knownNonZeroBounded @1
 
 getLoEFragment :: Model blk -> LoE (AnchoredFragment blk)
 getLoEFragment = loeFragment
