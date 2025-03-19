@@ -363,7 +363,7 @@ instance SupportsTwoPhaseValidation ConwayEra where
 -- with this justification.
 newtype WrapTx era = WrapTx {unwrapTx :: Core.Tx era}
 
-instance ShelleyBasedEra AllegraEra => Core.TranslateEra AllegraEra WrapTx where
+instance Core.TranslateEra AllegraEra WrapTx where
   type TranslationError AllegraEra WrapTx = Core.TranslationError AllegraEra SL.ShelleyTx
   translateEra ctxt = fmap WrapTx . Core.translateEra ctxt . unwrapTx
 
