@@ -64,6 +64,8 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.RedundantConstraints
 import qualified Ouroboros.Network.Mock.Chain as MockChain
+import           Ouroboros.Network.TxSubmission.Inbound.V2
+                     (TxSubmissionLogicVersion (..))
 import System.FS.Sim.MockFS (MockFS)
 import qualified System.FS.Sim.MockFS as Mock
 import Test.QuickCheck
@@ -101,6 +103,7 @@ data TestConfig = TestConfig
   , numCoreNodes :: NumCoreNodes
   , numSlots :: NumSlots
   -- ^ TODO generate in function of @k@
+  , txLogicVersion :: TxSubmissionLogicVersion
   }
   deriving Show
 
@@ -132,6 +135,7 @@ instance Arbitrary TestConfig where
 
     numCoreNodes <- arbitrary
     nodeTopology <- genNodeTopology numCoreNodes
+    txLogicVersion <- QC.elements [minBound..maxBound]
 
     numSlots <- arbitrary
     pure
@@ -140,6 +144,7 @@ instance Arbitrary TestConfig where
         , nodeTopology
         , numCoreNodes
         , numSlots
+        , txLogicVersion
         }
 
   shrink
@@ -148,6 +153,7 @@ instance Arbitrary TestConfig where
       , nodeTopology
       , numCoreNodes
       , numSlots
+      , txLogicVersion
       } =
       dropId $
         [ TestConfig
@@ -155,6 +161,7 @@ instance Arbitrary TestConfig where
             , nodeTopology = top'
             , numCoreNodes = n'
             , numSlots = t'
+            , txLogicVersion
             }
         | n' <- andId shrink numCoreNodes
         , t' <- andId shrink numSlots
@@ -223,6 +230,7 @@ runTestNetwork
     , numSlots
     , nodeTopology
     , initSeed
+    , txLogicVersion
     }
   TestConfigB
     { forgeEbbEnv
@@ -261,6 +269,7 @@ runTestNetwork
           , tnaTxGenExtra = txGenExtra
           , tnaVersion = networkVersion
           , tnaBlockVersion = blockVersion
+          , tnaTxLogicVersion = txLogicVersion
           }
 
 {-------------------------------------------------------------------------------

@@ -142,12 +142,14 @@ genTestConfig k (EpochSize epochSize1, EpochSize epochSize2) = do
         Topo.unionNodeTopology oddTopo $
           topo0
 
-  pure
-    TestConfig
+    txLogicVersion <- elements [minBound..maxBound]
+
+    pure TestConfig
       { initSeed
       , nodeTopology
       , numCoreNodes = NumCoreNodes ncn
       , numSlots
+      , txLogicVersion
       }
 
 -- | Generate 'setupPartition'
