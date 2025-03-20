@@ -119,9 +119,13 @@ import           Ouroboros.Network.PeerSharing (PeerSharingAPI,
                      ps_POLICY_PEER_SHARE_STICKY_TIME)
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (..))
 import           Ouroboros.Network.SizeInBytes
-import           Ouroboros.Network.TxSubmission.Inbound
-                     (TxSubmissionMempoolWriter)
-import qualified Ouroboros.Network.TxSubmission.Inbound as Inbound
+import           Ouroboros.Network.TxSubmission.Inbound.V1
+                     (TxSubmissionInitDelay, TxSubmissionMempoolWriter)
+import qualified Ouroboros.Network.TxSubmission.Inbound.V1 as Inbound
+import           Ouroboros.Network.TxSubmission.Inbound.V2.Registry
+                     (SharedTxStateVar, TxChannelsVar, TxMempoolSem,
+                     decisionLogicThreads, newSharedTxStateVar,
+                     newTxChannelsVar, newTxMempoolSem)
 import           Ouroboros.Network.TxSubmission.Mempool.Reader
                      (TxSubmissionMempoolReader)
 import qualified Ouroboros.Network.TxSubmission.Mempool.Reader as MempoolReader
@@ -177,6 +181,18 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
     , getDiffusionPipeliningSupport
                              :: DiffusionPipeliningSupport
     , getBlockchainTime      :: BlockchainTime m
+
+    -- | Communication channels between `TxSubmission` client mini-protocol and
+    -- decision logic.
+    , getTxChannelsVar :: TxChannelsVar m (ConnectionId addrNTN) (GenTxId blk) (GenTx blk)
+
+    -- | Shared state of all `TxSubmission` clients.
+    --
+    , getSharedTxStateVar :: SharedTxStateVar m (ConnectionId addrNTN) (GenTxId blk) (GenTx blk)
+
+    -- | A semaphore used by tx-submission for submitting `tx`s to the mempool.
+    --
+    , getTxMempoolSem :: TxMempoolSem m
     }
 
 -- | Arguments required when initializing a node
@@ -199,6 +215,8 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs {
     , gsmArgs                 :: GsmNodeKernelArgs m blk
     , getUseBootstrapPeers    :: STM m UseBootstrapPeers
     , peerSharingRng          :: StdGen
+    , txSubmissionRng         :: StdGen
+    , txSubmissionInitDelay   :: TxSubmissionInitDelay
     , publicPeerSelectionStateVar
                               :: StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
     , genesisArgs             :: GenesisNodeKernelArgs m blk
@@ -222,9 +240,11 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                    , btime
                                    , gsmArgs
                                    , peerSharingRng
+                                   , txSubmissionRng
                                    , publicPeerSelectionStateVar
                                    , genesisArgs
                                    , getDiffusionPipeliningSupport
+                                   , miniProtocolParameters
                                    } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [BlockForging m blk] <- LazySTM.newTMVarIO []
@@ -297,21 +317,25 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                         ps_POLICY_PEER_SHARE_STICKY_TIME
                                         ps_POLICY_PEER_SHARE_MAX_PEERS
 
+    txChannelsVar <- newTxChannelsVar
+    sharedTxStateVar <- newSharedTxStateVar txSubmissionRng
+    txMempoolSem <- newTxMempoolSem
+
     case gnkaLoEAndGDDArgs genesisArgs of
-      LoEAndGDDDisabled       -> pure ()
-      LoEAndGDDEnabled lgArgs -> do
+      LoEAndGDDDisabled                  -> pure ()
+      LoEAndGDDEnabled varGetLoEFragment -> do
         varLoEFragment <- newTVarIO $ AF.Empty AF.AnchorGenesis
         setGetLoEFragment
           (readTVar varGsmState)
           (readTVar varLoEFragment)
-          (lgnkaLoEFragmentTVar lgArgs)
+          (lgnkaLoEFragmentTVar varGetLoEFragment)
 
         void $ forkLinkedWatcher registry "NodeKernel.GDD" $
           gddWatcher
             cfg
             (gddTracer tracers)
             chainDB
-            (lgnkaGDDRateLimit lgArgs)
+            (lgnkaGDDRateLimit varGetLoEFragment)
             (readTVar varGsmState)
             (cschcMap varChainSyncHandles)
             varLoEFragment
@@ -329,6 +353,14 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
         fetchClientRegistry
         blockFetchConfiguration
 
+    void $ forkLinkedThread registry "NodeKernel.decisionLogicThreads" $
+      decisionLogicThreads
+        (txLogicTracer tracers)
+        (txCountersTracer tracers)
+        (txDecisionPolicy miniProtocolParameters)
+        txChannelsVar
+        sharedTxStateVar
+
     return NodeKernel
       { getChainDB              = chainDB
       , getMempool              = mempool
@@ -345,6 +377,9 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                 = varOutboundConnectionsState
       , getDiffusionPipeliningSupport
       , getBlockchainTime       = btime
+      , getTxChannelsVar        = txChannelsVar
+      , getSharedTxStateVar     = sharedTxStateVar
+      , getTxMempoolSem         = txMempoolSem
       }
   where
     blockForgingController :: InternalState m remotePeer localPeer blk

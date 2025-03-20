@@ -111,12 +111,14 @@ genTestSetup k numCoreNodes numSlots setupSlotLength = do
     setupEBBs    <- arbitrary
     initSeed     <- arbitrary
     nodeTopology <- genNodeTopology numCoreNodes
+    txLogicVersion <- elements [minBound..maxBound]
 
     let testConfig = TestConfig
           { initSeed
           , nodeTopology
           , numCoreNodes
           , numSlots
+          , txLogicVersion
           }
     let params = byronPBftParams k numCoreNodes
 
@@ -154,10 +156,11 @@ tests = testGroup "Byron" $
             { setupEBBs       = ProduceEBBs
             , setupK          = SecurityParam $ knownNonZeroBounded @10
             , setupTestConfig = TestConfig
-              { initSeed     = Seed 0
-              , nodeTopology = meshNodeTopology ncn
-              , numCoreNodes = ncn
-              , numSlots     = NumSlots 24
+              { initSeed       = Seed 0
+              , nodeTopology   = meshNodeTopology ncn
+              , numCoreNodes   = ncn
+              , numSlots       = NumSlots 24
+              , txLogicVersion = maxBound
               }
             , setupNodeJoinPlan = NodeJoinPlan $ Map.fromList [(CoreNodeId 0,SlotNo 0), (CoreNodeId 1,SlotNo 20), (CoreNodeId 2,SlotNo 22)]
             , setupNodeRestarts = noRestarts
@@ -177,10 +180,11 @@ tests = testGroup "Byron" $
             { setupEBBs       = ProduceEBBs
             , setupK          = SecurityParam $ knownNonZeroBounded @10
             , setupTestConfig = TestConfig
-              { numCoreNodes = ncn
-              , numSlots     = NumSlots 2
-              , nodeTopology = meshNodeTopology ncn
-              , initSeed     = Seed 0
+              { numCoreNodes   = ncn
+              , numSlots       = NumSlots 2
+              , nodeTopology   = meshNodeTopology ncn
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
               }
             , setupNodeJoinPlan = NodeJoinPlan (Map.fromList [(CoreNodeId 0,SlotNo 0),(CoreNodeId 1,SlotNo 1)])
             , setupNodeRestarts = noRestarts
@@ -196,10 +200,11 @@ tests = testGroup "Byron" $
             { setupEBBs       = ProduceEBBs
             , setupK          = SecurityParam $ knownNonZeroBounded @10
             , setupTestConfig = TestConfig
-              { numCoreNodes = ncn
-              , numSlots     = NumSlots 4
-              , nodeTopology = meshNodeTopology ncn
-              , initSeed     = Seed 0
+              { numCoreNodes   = ncn
+              , numSlots       = NumSlots 4
+              , nodeTopology   = meshNodeTopology ncn
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
               }
             , setupNodeJoinPlan = NodeJoinPlan (Map.fromList [(CoreNodeId 0,SlotNo {unSlotNo = 0}),(CoreNodeId 1,SlotNo {unSlotNo = 3})])
             , setupNodeRestarts = noRestarts
@@ -218,10 +223,11 @@ tests = testGroup "Byron" $
             { setupEBBs       = ProduceEBBs
             , setupK          = SecurityParam $ knownNonZeroBounded @5
             , setupTestConfig = TestConfig
-              { numCoreNodes = ncn
-              , numSlots     = NumSlots 7
-              , nodeTopology = meshNodeTopology ncn
-              , initSeed     = Seed 0
+              { numCoreNodes   = ncn
+              , numSlots       = NumSlots 7
+              , nodeTopology   = meshNodeTopology ncn
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
               }
             , setupNodeJoinPlan = NodeJoinPlan (Map.fromList [(CoreNodeId 0,SlotNo {unSlotNo = 0}),(CoreNodeId 1,SlotNo {unSlotNo = 0})])
             , setupNodeRestarts = NodeRestarts (Map.fromList [(SlotNo {unSlotNo = 5},Map.fromList [(CoreNodeId 1,NodeRestart)])])
@@ -241,10 +247,11 @@ tests = testGroup "Byron" $
             { setupEBBs       = ProduceEBBs
             , setupK          = SecurityParam $ knownNonZeroBounded @5
             , setupTestConfig = TestConfig
-              { numCoreNodes = ncn
-              , numSlots     = NumSlots 58
-              , nodeTopology = meshNodeTopology ncn
-              , initSeed     = Seed 0
+              { numCoreNodes   = ncn
+              , numSlots       = NumSlots 58
+              , nodeTopology   = meshNodeTopology ncn
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
               }
             , setupNodeJoinPlan = NodeJoinPlan $ Map.fromList [(CoreNodeId 0,SlotNo 3),(CoreNodeId 1,SlotNo 3),(CoreNodeId 2,SlotNo 5),(CoreNodeId 3,SlotNo 57)]
             , setupNodeRestarts = noRestarts
@@ -264,10 +271,11 @@ tests = testGroup "Byron" $
             , setupK          = SecurityParam $ knownNonZeroBounded @2
             , setupTestConfig = TestConfig
               { numCoreNodes = ncn5
-              -- Still fails if I increase numSlots.
-              , numSlots     = NumSlots 54
-              , nodeTopology = meshNodeTopology ncn5
-              , initSeed     = Seed 0
+              -- Still fails   if I increase numSlots.
+              , numSlots       = NumSlots 54
+              , nodeTopology   = meshNodeTopology ncn5
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
               }
             , setupNodeJoinPlan = NodeJoinPlan $ Map.fromList
               [ (CoreNodeId 0, SlotNo {unSlotNo = 0})
@@ -302,10 +310,11 @@ tests = testGroup "Byron" $
             { setupEBBs       = ProduceEBBs
             , setupK          = SecurityParam k
             , setupTestConfig = TestConfig
-              { numCoreNodes = ncn
-              , numSlots     = NumSlots $ window + slotsPerEpoch + slotsPerRekey + window
-              , nodeTopology = meshNodeTopology ncn
-              , initSeed     = seed
+              { numCoreNodes   = ncn
+              , numSlots       = NumSlots $ window + slotsPerEpoch + slotsPerRekey + window
+              , nodeTopology   = meshNodeTopology ncn
+              , initSeed       = seed
+              , txLogicVersion = maxBound
               }
             , setupNodeJoinPlan = trivialNodeJoinPlan ncn
             , setupNodeRestarts = NodeRestarts $ Map.singleton (SlotNo (slotsPerEpoch + mod w window)) (Map.singleton (CoreNodeId 0) NodeRekey)
@@ -327,10 +336,11 @@ tests = testGroup "Byron" $
             { setupEBBs       = NoEBBs
             , setupK          = k
             , setupTestConfig = TestConfig
-              { numCoreNodes = ncn
-              , numSlots     = NumSlots 2
-              , nodeTopology = meshNodeTopology ncn
-              , initSeed     = Seed 0
+              { numCoreNodes   = ncn
+              , numSlots       = NumSlots 2
+              , nodeTopology   = meshNodeTopology ncn
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
               }
             , setupNodeJoinPlan = trivialNodeJoinPlan ncn
             , setupNodeRestarts = NodeRestarts $ Map.singleton (SlotNo 1) (Map.singleton (CoreNodeId 1) NodeRestart)
@@ -348,10 +358,11 @@ tests = testGroup "Byron" $
             { setupEBBs       = NoEBBs
             , setupK          = SecurityParam $ knownNonZeroBounded @3
             , setupTestConfig = TestConfig
-              { numCoreNodes = ncn4
-              , numSlots     = NumSlots 72
-              , nodeTopology = meshNodeTopology ncn4
-              , initSeed     = Seed 0
+              { numCoreNodes   = ncn4
+              , numSlots       = NumSlots 72
+              , nodeTopology   = meshNodeTopology ncn4
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
               }
             , setupNodeJoinPlan = trivialNodeJoinPlan ncn4
             , setupNodeRestarts = NodeRestarts (Map.fromList [(SlotNo 59,Map.fromList [(CoreNodeId 3,NodeRekey)])])
@@ -373,10 +384,11 @@ tests = testGroup "Byron" $
             { setupEBBs       = ProduceEBBs
             , setupK          = SecurityParam $ knownNonZeroBounded @2
             , setupTestConfig = TestConfig
-              { numCoreNodes = ncn3
-              , numSlots     = NumSlots 84
-              , nodeTopology = meshNodeTopology ncn3
-              , initSeed     = Seed 0
+              { numCoreNodes   = ncn3
+              , numSlots       = NumSlots 84
+              , nodeTopology   = meshNodeTopology ncn3
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
               }
             , setupNodeJoinPlan = NodeJoinPlan (Map.fromList [(CoreNodeId 0,SlotNo {unSlotNo = 1}),(CoreNodeId 1,SlotNo {unSlotNo = 1}),(CoreNodeId 2,SlotNo {unSlotNo = 58})])
             , setupNodeRestarts = NodeRestarts (Map.fromList [(SlotNo {unSlotNo = 58},Map.fromList [(CoreNodeId 2,NodeRekey)])])
@@ -428,11 +440,12 @@ tests = testGroup "Byron" $
             { setupEBBs       = ProduceEBBs
             , setupK          = SecurityParam $ knownNonZeroBounded @4
             , setupTestConfig = TestConfig
-              { numCoreNodes = NumCoreNodes 3
-              , numSlots     = NumSlots 96
-              , nodeTopology =    --   1 <-> 0 <-> 2
-                NodeTopology $ Map.fromList [(CoreNodeId 0,Set.fromList []),(CoreNodeId 1,Set.fromList [CoreNodeId 0]),(CoreNodeId 2,Set.fromList [CoreNodeId 0])]
-              , initSeed     = Seed 0
+              { numCoreNodes   = NumCoreNodes 3
+              , numSlots       = NumSlots 96
+              , nodeTopology   =    --   1 <-> 0 <-> 2
+                NodeTopology   $ Map.fromList [(CoreNodeId 0,Set.fromList []),(CoreNodeId 1,Set.fromList [CoreNodeId 0]),(CoreNodeId 2,Set.fromList [CoreNodeId 0])]
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
               }
             , setupNodeJoinPlan = NodeJoinPlan $ Map.fromList [(CoreNodeId 0,SlotNo 0),(CoreNodeId 1,SlotNo 0),(CoreNodeId 2,SlotNo 83)]
             , setupNodeRestarts = NodeRestarts $ Map.fromList [(SlotNo 83,Map.fromList [(CoreNodeId 2,NodeRekey)])]
@@ -471,11 +484,12 @@ tests = testGroup "Byron" $
             { setupEBBs       = ProduceEBBs
             , setupK          = SecurityParam $ knownNonZeroBounded @2
             , setupTestConfig = TestConfig
-              { numCoreNodes = ncn5
-              , numSlots     = NumSlots 50
-              , nodeTopology = -- 3 <-> {0,1,2} <-> 4
-                NodeTopology (Map.fromList [(CoreNodeId 0,Set.fromList []),(CoreNodeId 1,Set.fromList [CoreNodeId 0]),(CoreNodeId 2,Set.fromList [CoreNodeId 0, CoreNodeId 1]),(CoreNodeId 3,Set.fromList [CoreNodeId 0,CoreNodeId 1,CoreNodeId 2]),(CoreNodeId 4,Set.fromList [CoreNodeId 0,CoreNodeId 1,CoreNodeId 2])])
-              , initSeed     = Seed 0
+              { numCoreNodes   = ncn5
+              , numSlots       = NumSlots 50
+              , nodeTopology   = -- 3 <-> {0,1,2} <-> 4
+                NodeTopology   (Map.fromList [(CoreNodeId 0,Set.fromList []),(CoreNodeId 1,Set.fromList [CoreNodeId 0]),(CoreNodeId 2,Set.fromList [CoreNodeId 0, CoreNodeId 1]),(CoreNodeId 3,Set.fromList [CoreNodeId 0,CoreNodeId 1,CoreNodeId 2]),(CoreNodeId 4,Set.fromList [CoreNodeId 0,CoreNodeId 1,CoreNodeId 2])])
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
               }
             , setupNodeJoinPlan = NodeJoinPlan (Map.fromList [(CoreNodeId 0,SlotNo {unSlotNo = 0}),(CoreNodeId 1,SlotNo {unSlotNo = 0}),(CoreNodeId 2,SlotNo {unSlotNo = 0}),(CoreNodeId 3,SlotNo {unSlotNo = 37}),(CoreNodeId 4,SlotNo {unSlotNo = 37})])
             , setupNodeRestarts = NodeRestarts (Map.fromList [(SlotNo {unSlotNo = 37},Map.fromList [(CoreNodeId 4,NodeRekey)])])
@@ -498,10 +512,11 @@ tests = testGroup "Byron" $
         { setupEBBs       = NoEBBs
         , setupK          = SecurityParam $ knownNonZeroBounded @2
         , setupTestConfig = TestConfig
-          { numCoreNodes = ncn
-          , numSlots     = NumSlots 41
-          , nodeTopology = meshNodeTopology ncn
-          , initSeed     = Seed 0
+          { numCoreNodes   = ncn
+          , numSlots       = NumSlots 41
+          , nodeTopology   = meshNodeTopology ncn
+          , initSeed       = Seed 0
+          , txLogicVersion = maxBound
           }
         , setupNodeJoinPlan = trivialNodeJoinPlan ncn
         , setupNodeRestarts = NodeRestarts $ Map.singleton (SlotNo 30) $ Map.singleton (CoreNodeId 2) NodeRekey
@@ -515,10 +530,11 @@ tests = testGroup "Byron" $
             { setupEBBs       = NoEBBs
             , setupK          = SecurityParam $ knownNonZeroBounded @7
             , setupTestConfig = TestConfig
-              { numCoreNodes = ncn
-              , numSlots     = NumSlots 10
-              , nodeTopology = meshNodeTopology ncn
-              , initSeed     = Seed 0
+              { numCoreNodes   = ncn
+              , numSlots       = NumSlots 10
+              , nodeTopology   = meshNodeTopology ncn
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
               }
             , setupNodeJoinPlan = NodeJoinPlan (Map.fromList [(CoreNodeId 0,SlotNo {unSlotNo = 0}),(CoreNodeId 1,SlotNo {unSlotNo = 1})])
             , setupNodeRestarts = noRestarts
@@ -534,10 +550,11 @@ tests = testGroup "Byron" $
             { setupEBBs       = NoEBBs
             , setupK          = SecurityParam $ knownNonZeroBounded @9
             , setupTestConfig = TestConfig
-              { numCoreNodes = ncn
-              , numSlots     = NumSlots 1
-              , nodeTopology = meshNodeTopology ncn
-              , initSeed     = Seed 0
+              { numCoreNodes   = ncn
+              , numSlots       = NumSlots 1
+              , nodeTopology   = meshNodeTopology ncn
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
               }
             , setupNodeJoinPlan = trivialNodeJoinPlan ncn
             , setupNodeRestarts = noRestarts
@@ -559,10 +576,11 @@ tests = testGroup "Byron" $
             { setupEBBs       = NoEBBs
             , setupK          = SecurityParam $ knownNonZeroBounded @8
             , setupTestConfig = TestConfig
-              { numCoreNodes = ncn
-              , numSlots     = NumSlots 2
-              , nodeTopology = meshNodeTopology ncn
-              , initSeed     = Seed 0
+              { numCoreNodes   = ncn
+              , numSlots       = NumSlots 2
+              , nodeTopology   = meshNodeTopology ncn
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
               }
             , setupNodeJoinPlan = trivialNodeJoinPlan ncn
             , setupNodeRestarts = noRestarts
@@ -580,10 +598,11 @@ tests = testGroup "Byron" $
             { setupEBBs       = NoEBBs
             , setupK          = SecurityParam $ knownNonZeroBounded @5
             , setupTestConfig = TestConfig
-              { numCoreNodes = ncn
-              , numSlots     = NumSlots 5
-              , nodeTopology = meshNodeTopology ncn
-              , initSeed     = Seed 0
+              { numCoreNodes   = ncn
+              , numSlots       = NumSlots 5
+              , nodeTopology   = meshNodeTopology ncn
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
               }
             , setupNodeJoinPlan = NodeJoinPlan $ Map.fromList [ (CoreNodeId 0, SlotNo 2) , (CoreNodeId 1, SlotNo 3) , (CoreNodeId 2, SlotNo 4) , (CoreNodeId 3, SlotNo 4) ]
             , setupNodeRestarts = noRestarts
@@ -597,10 +616,11 @@ tests = testGroup "Byron" $
             { setupEBBs       = NoEBBs
             , setupK          = SecurityParam $ knownNonZeroBounded @10
             , setupTestConfig = TestConfig
-              { numCoreNodes = ncn
-              , numSlots     = NumSlots 12
-              , nodeTopology = meshNodeTopology ncn
-              , initSeed     = Seed 0
+              { numCoreNodes   = ncn
+              , numSlots       = NumSlots 12
+              , nodeTopology   = meshNodeTopology ncn
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
               }
             , setupNodeJoinPlan = NodeJoinPlan $ Map.fromList [ (CoreNodeId 0, SlotNo 0) , (CoreNodeId 1, SlotNo 0) , (CoreNodeId 2, SlotNo 10) , (CoreNodeId 3, SlotNo 10) , (CoreNodeId 4, SlotNo 10) ]
             , setupNodeRestarts = noRestarts
@@ -615,10 +635,11 @@ tests = testGroup "Byron" $
             { setupEBBs       = NoEBBs
             , setupK          = SecurityParam $ knownNonZeroBounded @10
             , setupTestConfig = TestConfig
-              { numCoreNodes = ncn
-              , numSlots     = NumSlots 17
-              , nodeTopology = meshNodeTopology ncn
-              , initSeed     = Seed 0
+              { numCoreNodes   = ncn
+              , numSlots       = NumSlots 17
+              , nodeTopology   = meshNodeTopology ncn
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
               }
             , setupNodeJoinPlan = NodeJoinPlan $ Map.fromList
               [(CoreNodeId 0, SlotNo 0)
@@ -639,10 +660,11 @@ tests = testGroup "Byron" $
             { setupEBBs       = ProduceEBBs
             , setupK          = SecurityParam $ knownNonZeroBounded @2
             , setupTestConfig = TestConfig
-              { numCoreNodes = ncn
-              , numSlots     = NumSlots 21
-              , nodeTopology = meshNodeTopology ncn
-              , initSeed     = Seed 0
+              { numCoreNodes   = ncn
+              , numSlots       = NumSlots 21
+              , nodeTopology   = meshNodeTopology ncn
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
               }
             , setupNodeJoinPlan = NodeJoinPlan $ Map.fromList
               [ (CoreNodeId 0,SlotNo {unSlotNo = 0})
@@ -689,6 +711,7 @@ tests = testGroup "Byron" $
                 , (CoreNodeId 4, Set.fromList [CoreNodeId 0, CoreNodeId 1, CoreNodeId 2, CoreNodeId 3])
               ]
               , initSeed = Seed 0
+              , txLogicVersion = maxBound
             }
             , setupNodeJoinPlan = NodeJoinPlan $ Map.fromList
               [ (CoreNodeId 0, SlotNo 0)
@@ -718,10 +741,11 @@ tests = testGroup "Byron" $
             { setupEBBs       = ProduceEBBs
             , setupK          = SecurityParam $ knownNonZeroBounded @8
             , setupTestConfig = TestConfig
-              { numCoreNodes = NumCoreNodes 3
-              , numSlots     = NumSlots 81
-              , nodeTopology = meshNodeTopology (NumCoreNodes 3)
-              , initSeed     = Seed 0
+              { numCoreNodes   = NumCoreNodes 3
+              , numSlots       = NumSlots 81
+              , nodeTopology   = meshNodeTopology (NumCoreNodes 3)
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
               }
             , setupNodeJoinPlan = NodeJoinPlan (Map.fromList [(CoreNodeId 0,SlotNo {unSlotNo = 2}),(CoreNodeId 1,SlotNo {unSlotNo = 6}),(CoreNodeId 2,SlotNo {unSlotNo = 9})])
             , setupNodeRestarts = noRestarts
@@ -736,10 +760,11 @@ tests = testGroup "Byron" $
             { setupEBBs       = ProduceEBBs
             , setupK          = SecurityParam $ knownNonZeroBounded @2
             , setupTestConfig = TestConfig
-              { numCoreNodes = NumCoreNodes 2
-              , numSlots     = NumSlots 39
-              , nodeTopology = meshNodeTopology (NumCoreNodes 2)
-              , initSeed     = Seed 0
+              { numCoreNodes   = NumCoreNodes 2
+              , numSlots       = NumSlots 39
+              , nodeTopology   = meshNodeTopology (NumCoreNodes 2)
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
               }
             , setupNodeJoinPlan = NodeJoinPlan (Map.fromList [(CoreNodeId 0,SlotNo {unSlotNo = 0}),(CoreNodeId 1,SlotNo {unSlotNo = 33})])
             , setupNodeRestarts = noRestarts
@@ -770,10 +795,11 @@ tests = testGroup "Byron" $
             { setupEBBs       = NoEBBs
             , setupK          = SecurityParam $ knownNonZeroBounded @2
             , setupTestConfig = TestConfig
-              { numCoreNodes = NumCoreNodes 3
-              , numSlots     = NumSlots 21
-              , nodeTopology = meshNodeTopology (NumCoreNodes 3)
-              , initSeed     = Seed 0
+              { numCoreNodes   = NumCoreNodes 3
+              , numSlots       = NumSlots 21
+              , nodeTopology   = meshNodeTopology (NumCoreNodes 3)
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
               }
             , setupNodeJoinPlan = NodeJoinPlan (Map.fromList [(CoreNodeId 0,SlotNo {unSlotNo = 0}),(CoreNodeId 1,SlotNo {unSlotNo = 0}),(CoreNodeId 2,SlotNo {unSlotNo = 20})])
             , setupNodeRestarts = noRestarts
