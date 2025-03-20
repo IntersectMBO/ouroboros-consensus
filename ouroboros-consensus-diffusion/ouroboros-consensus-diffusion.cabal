@@ -229,8 +229,10 @@ test-suite consensus-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.BlockTree
-    Test.Consensus.GSM
-    Test.Consensus.GSM.Model
+    Test.Consensus.GSM.Common
+    Test.Consensus.GSM.QD
+    Test.Consensus.GSM.QSM
+    Test.Consensus.GSM.QSM.Model
     Test.Consensus.Genesis.Setup
     Test.Consensus.Genesis.Setup.Classifiers
     Test.Consensus.Genesis.Setup.GenChains
@@ -301,10 +303,13 @@ test-suite consensus-test
     ouroboros-network-framework,
     ouroboros-network-mock,
     ouroboros-network-protocols,
+    pretty,
     pretty-show,
+    quickcheck-dynamic ^>=4.0.0,
     quickcheck-state-machine:no-vendored-treediff,
     quiet,
     random,
+    reflection,
     resource-registry,
     serialise,
     si-timers,
