@@ -121,6 +121,10 @@ import           Ouroboros.Network.Protocol.KeepAlive.Type
 import           Ouroboros.Network.Protocol.Limits (waitForever)
 import           Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharing)
 import           Ouroboros.Network.Protocol.TxSubmission2.Type
+import           Ouroboros.Network.TxSubmission.Inbound.V2.Policy
+                     (TxDecisionPolicy (..), defaultTxDecisionPolicy)
+import           Ouroboros.Network.TxSubmission.Inbound.V2
+                     (EnableNewTxSubmissionProtocol (..))
 import qualified System.FS.Sim.MockFS as Mock
 import           System.FS.Sim.MockFS (MockFS)
 import           System.Random (mkStdGen, split)
@@ -988,7 +992,8 @@ runThreadNetwork systemTime ThreadNetworkArgs
 
       let rng = case seed of
                     Seed s -> mkStdGen s
-          (kaRng, psRng) = split rng
+          (kaRng, rng') = split rng
+          (psRng, txRng) = split rng'
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
       let nodeKernelArgs = NodeKernelArgs
             { tracers
@@ -1006,11 +1011,13 @@ runThreadNetwork systemTime ThreadNetworkArgs
             , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
             , keepAliveRng            = kaRng
             , peerSharingRng          = psRng
+            , txSubmissionRng         = txRng
             , miniProtocolParameters  = MiniProtocolParameters {
                   chainSyncPipeliningHighMark = 4,
                   chainSyncPipeliningLowMark  = 2,
                   blockFetchPipeliningMax     = 10,
-                  txSubmissionMaxUnacked      = 1000 -- TODO ?
+                  txDecisionPolicy            =
+                    defaultTxDecisionPolicy { maxUnacknowledgedTxIds = 1000 } -- TODO ?
                 }
             , blockFetchConfiguration = BlockFetchConfiguration {
                   bfcMaxConcurrencyBulkSync = 1
@@ -1068,7 +1075,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
                   -- The purpose of this test is not testing protocols, so
                   -- returning constant empty list is fine if we have thorough
                   -- tests about the peer sharing protocol itself.
-                  (NTN.mkHandlers nodeKernelArgs nodeKernel)
+                  (NTN.mkHandlers nodeKernelArgs nodeKernel DisableNewTxSubmissionProtocol)
 
       -- In practice, a robust wallet/user can persistently add a transaction
       -- until it appears on the chain. This thread adds robustness for the
