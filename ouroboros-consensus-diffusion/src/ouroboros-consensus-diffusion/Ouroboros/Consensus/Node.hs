@@ -176,6 +176,8 @@ import Ouroboros.Network.PeerSelection.PeerSharing.Codec
   )
 import Ouroboros.Network.Protocol.ChainSync.Codec (timeLimitsChainSync)
 import Ouroboros.Network.RethrowPolicy
+import Ouroboros.Network.TxSubmission.Inbound.V2 (TxSubmissionLogicVersion)
+import Ouroboros.Network.TxSubmission.Inbound.V2.Types (TxSubmissionInitDelay)
 import qualified SafeWildCards
 import System.Exit (ExitCode (..))
 import System.FS.API (SomeHasFS (..))
@@ -239,6 +241,10 @@ data RunNodeArgs m addrNTN addrNTC blk = RunNodeArgs
   , rnGenesisConfig :: GenesisConfig
   , rnFeatureFlags :: Set CardanoFeatureFlag
   -- ^ Enabled experimental features
+  -- | Version of the tx-submission logic to run.
+  , rnTxSubmissionLogicVersion :: TxSubmissionLogicVersion
+
+  , rnTxSubmissionInitDelay :: TxSubmissionInitDelay
   }
 
 -- | Arguments that usually only tests /directly/ specify.
@@ -595,6 +601,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   llrnPublicPeerSelectionStateVar
                   genesisArgs
                   DiffusionPipeliningOn
+                  rnTxSubmissionInitDelay
             nodeKernel <- initNodeKernel nodeKernelArgs
             rnNodeKernelHook registry nodeKernel
             churnModeVar <- StrictSTM.newTVarIO ChurnModeNormal
@@ -871,6 +878,7 @@ mkNodeKernelArgs ::
   StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN) ->
   GenesisNodeKernelArgs m blk ->
   DiffusionPipeliningSupport ->
+  TxSubmissionInitDelay ->
   m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
   registry
@@ -892,7 +900,8 @@ mkNodeKernelArgs
   genesisArgs
   getDiffusionPipeliningSupport =
     do
-      let (kaRng, psRng) = split rng
+      let (kaRng, rng') = split rng
+          (psRng, txRng) = split rng'
       return
         NodeKernelArgs
           { tracers
@@ -918,9 +927,11 @@ mkNodeKernelArgs
           , getUseBootstrapPeers
           , keepAliveRng = kaRng
           , peerSharingRng = psRng
+          , txSubmissionRng = txRng
           , publicPeerSelectionStateVar
           , genesisArgs
           , getDiffusionPipeliningSupport
+          , txSubmissionInitDelay
           }
 
 -- | We allow the user running the node to customise the 'NodeKernelArgs'
