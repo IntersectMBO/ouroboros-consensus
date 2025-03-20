@@ -152,6 +152,8 @@ import           Ouroboros.Network.PeerSelection.PeerSharing.Codec
 import           Ouroboros.Network.PeerSelection.RootPeersDNS.PublicRootPeers
                      (TracePublicRootPeers)
 import           Ouroboros.Network.RethrowPolicy
+import           Ouroboros.Network.TxSubmission.Inbound.V2
+                     (TxSubmissionLogicVersion)
 import qualified SafeWildCards
 import           System.Exit (ExitCode (..))
 import           System.FilePath ((</>))
@@ -216,6 +218,9 @@ data RunNodeArgs m addrNTN addrNTC blk (p2p :: Diffusion.P2P) = RunNodeArgs {
     , rnGetUseBootstrapPeers :: STM m UseBootstrapPeers
 
     , rnGenesisConfig :: GenesisConfig
+
+    -- | Version of the tx-submission logic to run.
+    , rnTxSubmissionLogicVersion :: TxSubmissionLogicVersion
     }
 
 
@@ -451,6 +456,7 @@ runWith :: forall m addrNTN addrNTC blk p2p.
      , Hashable addrNTN -- the constraint comes from `initNodeKernel`
      , NetworkIO m
      , NetworkAddr addrNTN
+     , Show addrNTN
      )
   => RunNodeArgs m addrNTN addrNTC blk p2p
   -> (NodeToNodeVersion -> addrNTN -> CBOR.Encoding)
@@ -612,7 +618,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
           (gcChainSyncLoPBucketConfig llrnGenesisConfig)
           (gcCSJConfig llrnGenesisConfig)
           (reportMetric Diffusion.peerMetricsConfiguration peerMetrics)
-          (NTN.mkHandlers nodeKernelArgs nodeKernel)
+          (NTN.mkHandlers nodeKernelArgs nodeKernel rnTxSubmissionLogicVersion)
 
     mkNodeToClientApps
       :: NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
@@ -830,7 +836,8 @@ mkNodeKernelArgs
   genesisArgs
   getDiffusionPipeliningSupport
   = do
-    let (kaRng, psRng) = split rng
+    let (kaRng, rng') = split rng
+        (psRng, txRng) = split rng'
     return NodeKernelArgs
       { tracers
       , registry
@@ -853,6 +860,7 @@ mkNodeKernelArgs
       , getUseBootstrapPeers
       , keepAliveRng = kaRng
       , peerSharingRng = psRng
+      , txSubmissionRng = txRng
       , publicPeerSelectionStateVar
       , genesisArgs
       , getDiffusionPipeliningSupport

@@ -117,7 +117,11 @@ import           Ouroboros.Network.Protocol.TxSubmission2.Client
 import           Ouroboros.Network.Protocol.TxSubmission2.Codec
 import           Ouroboros.Network.Protocol.TxSubmission2.Server
 import           Ouroboros.Network.Protocol.TxSubmission2.Type
-import           Ouroboros.Network.TxSubmission.Inbound
+import           Ouroboros.Network.TxSubmission.Inbound.V1
+import           Ouroboros.Network.TxSubmission.Inbound.V2
+                     (PeerTxAPI, TxDecisionPolicy (..), TraceTxLogic,
+                      TxSubmissionLogicVersion (..), defaultTxDecisionPolicy,
+                      txSubmissionInboundV2, withPeer)
 import           Ouroboros.Network.TxSubmission.Mempool.Reader
                      (mapTxSubmissionMempoolReader)
 import           Ouroboros.Network.TxSubmission.Outbound
@@ -169,7 +173,13 @@ data Handlers m addr blk = Handlers {
     , hTxSubmissionServer
         :: NodeToNodeVersion
         -> ConnectionId addr
-        -> TxSubmissionServerPipelined (GenTxId blk) (GenTx blk) m ()
+        -> Either
+            (TxSubmissionServerPipelined (GenTxId blk) (GenTx blk) m ())
+            (PeerTxAPI m (GenTxId blk) (GenTx blk)
+               -> TxSubmissionServerPipelined (GenTxId blk) (GenTx blk) m ())
+        -- ^ Either we use the legacy tx submission protocol or the newest one
+        -- which require PeerTxAPI. This is decided by
+        -- 'EnableNewTxSubmissionProtocol' flag.
 
     , hKeepAliveClient
         :: NodeToNodeVersion
@@ -210,10 +220,12 @@ mkHandlers ::
      )
   => NodeKernelArgs m addrNTN addrNTC blk
   -> NodeKernel     m addrNTN addrNTC blk
+  -> TxSubmissionLogicVersion
   -> Handlers       m addrNTN           blk
 mkHandlers
       NodeKernelArgs {chainSyncFutureCheck, chainSyncHistoricityCheck, keepAliveRng, miniProtocolParameters, getDiffusionPipeliningSupport}
-      NodeKernel {getChainDB, getMempool, getTopLevelConfig, getTracers = tracers, getPeerSharingAPI, getGsmState} =
+      NodeKernel {getChainDB, getMempool, getTopLevelConfig, getTracers = tracers, getPeerSharingAPI, getGsmState}
+      txSubmissionLogicVersion =
     Handlers {
         hChainSyncClient = \peer _isBigLedgerpeer dynEnv ->
           CsClient.chainSyncClient
@@ -245,17 +257,32 @@ mkHandlers
       , hTxSubmissionClient = \version controlMessageSTM peer ->
           txSubmissionOutbound
             (contramap (TraceLabelPeer peer) (Node.txOutboundTracer tracers))
-            (txSubmissionMaxUnacked miniProtocolParameters)
+            (NumTxIdsToAck $ getNumTxIdsToReq
+                           $ maxUnacknowledgedTxIds
+                           $ txDecisionPolicy
+                           $ miniProtocolParameters)
             (mapTxSubmissionMempoolReader txForgetValidated $ getMempoolReader getMempool)
             version
             controlMessageSTM
       , hTxSubmissionServer = \version peer ->
-          txSubmissionInbound
-            (contramap (TraceLabelPeer peer) (Node.txInboundTracer tracers))
-            (txSubmissionMaxUnacked miniProtocolParameters)
-            (mapTxSubmissionMempoolReader txForgetValidated $ getMempoolReader getMempool)
-            (getMempoolWriter getMempool)
-            version
+          case txSubmissionLogicVersion of
+            TxSubmissionLogicV2 ->
+              Right $ \api ->
+                txSubmissionInboundV2
+                  (contramap (TraceLabelPeer peer) (Node.txInboundTracer tracers))
+                  (getMempoolWriter getMempool)
+                  api
+            TxSubmissionLogicV1 ->
+                Left
+              $ txSubmissionInbound
+                  (contramap (TraceLabelPeer peer) (Node.txInboundTracer tracers))
+                  (NumTxIdsToAck $ getNumTxIdsToReq
+                                 $ maxUnacknowledgedTxIds
+                                 $ txDecisionPolicy
+                                 $ miniProtocolParameters)
+                  (mapTxSubmissionMempoolReader txForgetValidated $ getMempoolReader getMempool)
+                  (getMempoolWriter getMempool)
+                  version
       , hKeepAliveClient = \_version -> keepAliveClient (Node.keepAliveClientTracer tracers) keepAliveRng
       , hKeepAliveServer = \_version _peer -> keepAliveServer
       , hPeerSharingClient = \_version controlMessageSTM _peer -> peerSharingClient controlMessageSTM
@@ -379,6 +406,7 @@ data Tracers' peer ntnAddr blk e f = Tracers {
     , tTxSubmission2Tracer        :: f (TraceLabelPeer peer (TraceSendRecv (TxSubmission2 (GenTxId blk) (GenTx blk))))
     , tKeepAliveTracer            :: f (TraceLabelPeer peer (TraceSendRecv KeepAlive))
     , tPeerSharingTracer          :: f (TraceLabelPeer peer (TraceSendRecv (PeerSharing ntnAddr)))
+    , tTxLogicTracer              :: f (TraceLabelPeer peer (TraceTxLogic peer (GenTxId blk) (GenTx blk)))
     }
 
 instance (forall a. Semigroup (f a)) => Semigroup (Tracers' peer ntnAddr blk e f) where
@@ -390,6 +418,7 @@ instance (forall a. Semigroup (f a)) => Semigroup (Tracers' peer ntnAddr blk e f
       , tTxSubmission2Tracer        = f tTxSubmission2Tracer
       , tKeepAliveTracer            = f tKeepAliveTracer
       , tPeerSharingTracer          = f tPeerSharingTracer
+      , tTxLogicTracer              = f tTxLogicTracer
       }
     where
       f :: forall a. Semigroup a
@@ -407,6 +436,7 @@ nullTracers = Tracers {
     , tTxSubmission2Tracer        = nullTracer
     , tKeepAliveTracer            = nullTracer
     , tPeerSharingTracer          = nullTracer
+    , tTxLogicTracer              = nullTracer
     }
 
 showTracers :: ( Show blk
@@ -426,6 +456,7 @@ showTracers tr = Tracers {
     , tTxSubmission2Tracer        = showTracing tr
     , tKeepAliveTracer            = showTracing tr
     , tPeerSharingTracer          = showTracing tr
+    , tTxLogicTracer              = showTracing tr
     }
 
 {-------------------------------------------------------------------------------
@@ -543,7 +574,7 @@ mkApps ::
      , ShowProxy blk
      , ShowProxy (Header blk)
      , ShowProxy (TxId (GenTx blk))
-     , ShowProxy (GenTx blk)
+     , ShowProxy (GenTx blk), HasTxId (GenTx blk), LedgerSupportsMempool blk, Show addrNTN
      )
   => NodeKernel m addrNTN addrNTC blk -- ^ Needed for bracketing only
   -> Tracers m addrNTN blk e
@@ -709,13 +740,31 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
       -> m ((), Maybe bTX)
     aTxSubmission2Server version ResponderContext { rcConnectionId = them } channel = do
       labelThisThread "TxSubmissionServer"
-      runPipelinedPeerWithLimits
-        (contramap (TraceLabelPeer them) tTxSubmission2Tracer)
-        (cTxSubmission2Codec (mkCodecs version))
-        blTxSubmission2
-        timeLimitsTxSubmission2
-        channel
-        (txSubmissionServerPeerPipelined (hTxSubmissionServer version them))
+
+      let runServer serverApi =
+              runPipelinedPeerWithLimits
+                  (contramap (TraceLabelPeer them) tTxSubmission2Tracer)
+                  (cTxSubmission2Codec (mkCodecs version))
+                  blTxSubmission2
+                  timeLimitsTxSubmission2
+                  channel
+                  (txSubmissionServerPeerPipelined serverApi)
+
+      case hTxSubmissionServer version them of
+        Left legacyTxSubmissionServer ->
+            runServer legacyTxSubmissionServer
+        Right newTxSubmissionServer ->
+          withPeer (TraceLabelPeer them `contramap` tTxLogicTracer)
+                   (getTxChannelsVar kernel)
+                   (getTxMempoolSem kernel)
+                   defaultTxDecisionPolicy 
+                   (getSharedTxStateVar kernel)
+                   (mapTxSubmissionMempoolReader txForgetValidated
+                   $ getMempoolReader (getMempool kernel))
+                   (getMempoolWriter (getMempool kernel))
+                   txWireSize
+                   them $ \api ->
+                     runServer (newTxSubmissionServer api)
 
     aKeepAliveClient
       :: NodeToNodeVersion
