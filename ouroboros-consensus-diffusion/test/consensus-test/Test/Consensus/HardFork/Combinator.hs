@@ -184,10 +184,11 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
 
     testConfig :: TestConfig
     testConfig = TestConfig {
-          numCoreNodes = ncn
-        , numSlots     = testSetupNumSlots testSetup
-        , nodeTopology = meshNodeTopology ncn
-        , initSeed     = testSetupSeed
+          numCoreNodes   = ncn
+        , numSlots       = testSetupNumSlots testSetup
+        , nodeTopology   = meshNodeTopology ncn
+        , initSeed       = testSetupSeed
+        , txLogicVersion = maxBound
         }
       where
         ncn :: NumCoreNodes
