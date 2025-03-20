@@ -60,9 +60,10 @@ import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Consensus.Util.RedundantConstraints
 import qualified Ouroboros.Network.Mock.Chain as MockChain
+import           Ouroboros.Network.TxSubmission.Inbound.V2 (TxSubmissionLogicVersion (..))
 import qualified System.FS.Sim.MockFS as Mock
 import           System.FS.Sim.MockFS (MockFS)
-import           Test.QuickCheck
+import           Test.QuickCheck as QC
 import           Test.ThreadNet.Network
 import           Test.ThreadNet.TxGen
 import           Test.ThreadNet.Util
@@ -97,6 +98,7 @@ data TestConfig = TestConfig
   , numCoreNodes :: NumCoreNodes
   , numSlots     :: NumSlots
     -- ^ TODO generate in function of @k@
+  , txLogicVersion :: TxSubmissionLogicVersion
   }
   deriving (Show)
 
@@ -125,6 +127,7 @@ instance Arbitrary TestConfig where
 
       numCoreNodes <- arbitrary
       nodeTopology <- genNodeTopology numCoreNodes
+      txLogicVersion <- QC.elements [minBound..maxBound] 
 
       numSlots     <- arbitrary
       pure TestConfig
@@ -132,6 +135,7 @@ instance Arbitrary TestConfig where
         , nodeTopology
         , numCoreNodes
         , numSlots
+        , txLogicVersion
         }
 
   shrink TestConfig
@@ -139,6 +143,7 @@ instance Arbitrary TestConfig where
     , nodeTopology
     , numCoreNodes
     , numSlots
+    , txLogicVersion
     } =
       dropId $
       [ TestConfig
@@ -146,6 +151,7 @@ instance Arbitrary TestConfig where
           , nodeTopology = top'
           , numCoreNodes = n'
           , numSlots     = t'
+          , txLogicVersion
           }
       | n'             <- andId shrink numCoreNodes
       , t'             <- andId shrink numSlots
@@ -213,6 +219,7 @@ runTestNetwork TestConfig
   , numSlots
   , nodeTopology
   , initSeed
+  , txLogicVersion
   } TestConfigB
   { forgeEbbEnv
   , future
@@ -234,20 +241,21 @@ runTestNetwork TestConfig
               (BTime.SystemStart dawnOfTime)
               nullTracer
     runThreadNetwork systemTime ThreadNetworkArgs
-      { tnaForgeEbbEnv  = forgeEbbEnv
-      , tnaFuture       = future
-      , tnaJoinPlan     = nodeJoinPlan
-      , tnaMessageDelay = messageDelay
-      , tnaNodeInfo     = nodeInfo
-      , tnaNumCoreNodes = numCoreNodes
-      , tnaNumSlots     = numSlots
-      , tnaSeed         = initSeed
-      , tnaMkRekeyM     = mkRekeyM
-      , tnaRestarts     = nodeRestarts
-      , tnaTopology     = nodeTopology
-      , tnaTxGenExtra   = txGenExtra
-      , tnaVersion      = networkVersion
-      , tnaBlockVersion = blockVersion
+      { tnaForgeEbbEnv    = forgeEbbEnv
+      , tnaFuture         = future
+      , tnaJoinPlan       = nodeJoinPlan
+      , tnaMessageDelay   = messageDelay
+      , tnaNodeInfo       = nodeInfo
+      , tnaNumCoreNodes   = numCoreNodes
+      , tnaNumSlots       = numSlots
+      , tnaSeed           = initSeed
+      , tnaMkRekeyM       = mkRekeyM
+      , tnaRestarts       = nodeRestarts
+      , tnaTopology       = nodeTopology
+      , tnaTxGenExtra     = txGenExtra
+      , tnaVersion        = networkVersion
+      , tnaBlockVersion   = blockVersion
+      , tnaTxLogicVersion = txLogicVersion
       }
 
 {-------------------------------------------------------------------------------
