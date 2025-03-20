@@ -99,4 +99,4 @@ cabal.project.local~
 .HTF/
 .ghc.environment.*
 
-ouroboros-consensus-cardano/cddl/*.compiled.cddl
+ouroboros-consensus-cardano/cddl/out/

@@ -1,0 +1,22 @@
+txId =
+  cardanoNs<byronTxId,
+            shelleyTxId,
+            shelleyTxId,
+            shelleyTxId,
+            shelleyTxId,
+            shelleyTxId,
+            shelleyTxId>
+
+byronTxId = [0, byron.txid]
+          / [1, certificateid]
+          / [2, byron.updid]
+          / [3, voteid]
+
+certificateid = byron.blake2b-256
+voteid = byron.blake2b-256
+
+shelleyTxId = shelley.$hash32
+
+;# include byron as byron
+;# include shelley as shelley
+;# import base
