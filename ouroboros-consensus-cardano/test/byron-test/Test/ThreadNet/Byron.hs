@@ -116,9 +116,10 @@ instance Arbitrary TestSetup where
 -- See the @'Arbitrary' 'Test.ThreadNet.DualByron.SetupDualByron'@ instance.
 genTestSetup :: SecurityParam -> NumCoreNodes -> NumSlots -> SlotLength -> Gen TestSetup
 genTestSetup k numCoreNodes numSlots setupSlotLength = do
-  setupEBBs <- arbitrary
-  initSeed <- arbitrary
-  nodeTopology <- genNodeTopology numCoreNodes
+    setupEBBs    <- arbitrary
+    initSeed     <- arbitrary
+    nodeTopology <- genNodeTopology numCoreNodes
+    txLogicVersion <- elements [minBound..maxBound]
 
   let testConfig =
         TestConfig
@@ -126,6 +127,7 @@ genTestSetup k numCoreNodes numSlots setupSlotLength = do
           , nodeTopology
           , numCoreNodes
           , numSlots
+          , txLogicVersion
           }
   let params = byronPBftParams k numCoreNodes
 
@@ -171,6 +173,7 @@ tests =
                           , nodeTopology = meshNodeTopology ncn
                           , numCoreNodes = ncn
                           , numSlots = NumSlots 24
+                          , txLogicVersion = maxBound
                           }
                     , setupNodeJoinPlan =
                         NodeJoinPlan $
@@ -180,152 +183,131 @@ tests =
                     , setupVersion = (minBound, ByronNodeToNodeVersion1)
                     }
     , testProperty "rewind to EBB supported as of Issue #1312, #1" $
-        once $
-          let ncn = NumCoreNodes 2
-           in -- When node 1 joins in slot 1, it leads with an empty chain and so
-              -- forges the 0-EBB again. This causes it to report slot 0 as the
-              -- found intersection point to node 0, which causes node 0 to
-              -- \"rewind\" to slot 0 (even though it's already there). That rewind
-              -- fails if EBBs don't affect the PBFT chain state, since its chain
-              -- state is empty.
-              prop_simple_real_pbft_convergence
-                TestSetup
-                  { setupEBBs = ProduceEBBs
-                  , setupK = SecurityParam $ knownNonZeroBounded @10
-                  , setupTestConfig =
-                      TestConfig
-                        { numCoreNodes = ncn
-                        , numSlots = NumSlots 2
-                        , nodeTopology = meshNodeTopology ncn
-                        , initSeed = Seed 0
-                        }
-                  , setupNodeJoinPlan = NodeJoinPlan (Map.fromList [(CoreNodeId 0, SlotNo 0), (CoreNodeId 1, SlotNo 1)])
-                  , setupNodeRestarts = noRestarts
-                  , setupSlotLength = defaultSlotLength
-                  , setupVersion = (minBound, ByronNodeToNodeVersion1)
-                  }
+          once $
+          let ncn = NumCoreNodes 2 in
+          -- When node 1 joins in slot 1, it leads with an empty chain and so
+          -- forges the 0-EBB again. This causes it to report slot 0 as the
+          -- found intersection point to node 0, which causes node 0 to
+          -- \"rewind\" to slot 0 (even though it's already there). That rewind
+          -- fails if EBBs don't affect the PBFT chain state, since its chain
+          -- state is empty.
+          prop_simple_real_pbft_convergence TestSetup
+            { setupEBBs       = ProduceEBBs
+            , setupK          = SecurityParam $ knownNonZeroBounded @10
+            , setupTestConfig = TestConfig
+              { numCoreNodes   = ncn
+              , numSlots       = NumSlots 2
+              , nodeTopology   = meshNodeTopology ncn
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
+              }
+            , setupNodeJoinPlan = NodeJoinPlan (Map.fromList [(CoreNodeId 0,SlotNo 0),(CoreNodeId 1,SlotNo 1)])
+            , setupNodeRestarts = noRestarts
+            , setupSlotLength   = defaultSlotLength
+            , setupVersion      = (minBound, ByronNodeToNodeVersion1)
+            }
     , testProperty "rewind to EBB supported as of Issue #1312, #2" $
-        once $
-          let ncn = NumCoreNodes 2
-           in -- Same as above, except node 0 gets to forge an actual block before
-              -- node 1 tells it to rewind to the EBB.
-              prop_simple_real_pbft_convergence
-                TestSetup
-                  { setupEBBs = ProduceEBBs
-                  , setupK = SecurityParam $ knownNonZeroBounded @10
-                  , setupTestConfig =
-                      TestConfig
-                        { numCoreNodes = ncn
-                        , numSlots = NumSlots 4
-                        , nodeTopology = meshNodeTopology ncn
-                        , initSeed = Seed 0
-                        }
-                  , setupNodeJoinPlan =
-                      NodeJoinPlan
-                        (Map.fromList [(CoreNodeId 0, SlotNo{unSlotNo = 0}), (CoreNodeId 1, SlotNo{unSlotNo = 3})])
-                  , setupNodeRestarts = noRestarts
-                  , setupSlotLength = defaultSlotLength
-                  , setupVersion = (minBound, ByronNodeToNodeVersion1)
-                  }
+          once $
+          let ncn = NumCoreNodes 2 in
+          -- Same as above, except node 0 gets to forge an actual block before
+          -- node 1 tells it to rewind to the EBB.
+          prop_simple_real_pbft_convergence TestSetup
+            { setupEBBs       = ProduceEBBs
+            , setupK          = SecurityParam $ knownNonZeroBounded @10
+            , setupTestConfig = TestConfig
+              { numCoreNodes   = ncn
+              , numSlots       = NumSlots 4
+              , nodeTopology   = meshNodeTopology ncn
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
+              }
+            , setupNodeJoinPlan = NodeJoinPlan (Map.fromList [(CoreNodeId 0,SlotNo {unSlotNo = 0}),(CoreNodeId 1,SlotNo {unSlotNo = 3})])
+            , setupNodeRestarts = noRestarts
+            , setupSlotLength   = defaultSlotLength
+            , setupVersion      = (minBound, ByronNodeToNodeVersion1)
+            }
     , testProperty "one testOutputTipBlockNos update per node per slot" $
-        once $
-          let ncn = NumCoreNodes 2
-           in -- In this example, a node was forging a new block and then
-              -- restarting. Its instrumentation thread ran before and also after
-              -- the restart, which caused the 'testOutputTipBlockNos' field to
-              -- contain data from the middle of the slot (after the node lead)
-              -- instead of only from the onset of the slot.
-              prop_simple_real_pbft_convergence
-                TestSetup
-                  { setupEBBs = ProduceEBBs
-                  , setupK = SecurityParam $ knownNonZeroBounded @5
-                  , setupTestConfig =
-                      TestConfig
-                        { numCoreNodes = ncn
-                        , numSlots = NumSlots 7
-                        , nodeTopology = meshNodeTopology ncn
-                        , initSeed = Seed 0
-                        }
-                  , setupNodeJoinPlan =
-                      NodeJoinPlan
-                        (Map.fromList [(CoreNodeId 0, SlotNo{unSlotNo = 0}), (CoreNodeId 1, SlotNo{unSlotNo = 0})])
-                  , setupNodeRestarts =
-                      NodeRestarts (Map.fromList [(SlotNo{unSlotNo = 5}, Map.fromList [(CoreNodeId 1, NodeRestart)])])
-                  , setupSlotLength = defaultSlotLength
-                  , setupVersion = (minBound, ByronNodeToNodeVersion1)
-                  }
+          once $
+          let ncn = NumCoreNodes 2 in
+          -- In this example, a node was forging a new block and then
+          -- restarting. Its instrumentation thread ran before and also after
+          -- the restart, which caused the 'testOutputTipBlockNos' field to
+          -- contain data from the middle of the slot (after the node lead)
+          -- instead of only from the onset of the slot.
+          prop_simple_real_pbft_convergence TestSetup
+            { setupEBBs       = ProduceEBBs
+            , setupK          = SecurityParam $ knownNonZeroBounded @5
+            , setupTestConfig = TestConfig
+              { numCoreNodes   = ncn
+              , numSlots       = NumSlots 7
+              , nodeTopology   = meshNodeTopology ncn
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
+              }
+            , setupNodeJoinPlan = NodeJoinPlan (Map.fromList [(CoreNodeId 0,SlotNo {unSlotNo = 0}),(CoreNodeId 1,SlotNo {unSlotNo = 0})])
+            , setupNodeRestarts = NodeRestarts (Map.fromList [(SlotNo {unSlotNo = 5},Map.fromList [(CoreNodeId 1,NodeRestart)])])
+            , setupSlotLength   = defaultSlotLength
+            , setupVersion      = (minBound, ByronNodeToNodeVersion1)
+            }
     , testProperty "BlockFetch live lock due to an EBB at the ImmutableDB tip, Issue #1435" $
-        once $
-          let ncn = NumCoreNodes 4
-           in -- c0's ImmutableDB is T > U > V. Note that U is an EBB and U and V
-              -- are both in slot 50. When its BlockFetchServer tries to stream T
-              -- and U using a ChainDB.Iterator, instead of looking in the
-              -- ImmutableDB, we end up looking in the VolatileDB and incorrectly
-              -- return ForkTooOld. The client keeps on requesting this block range,
-              -- resulting in a live lock.
-              prop_simple_real_pbft_convergence
-                TestSetup
-                  { setupEBBs = ProduceEBBs
-                  , setupK = SecurityParam $ knownNonZeroBounded @5
-                  , setupTestConfig =
-                      TestConfig
-                        { numCoreNodes = ncn
-                        , numSlots = NumSlots 58
-                        , nodeTopology = meshNodeTopology ncn
-                        , initSeed = Seed 0
-                        }
-                  , setupNodeJoinPlan =
-                      NodeJoinPlan $
-                        Map.fromList
-                          [ (CoreNodeId 0, SlotNo 3)
-                          , (CoreNodeId 1, SlotNo 3)
-                          , (CoreNodeId 2, SlotNo 5)
-                          , (CoreNodeId 3, SlotNo 57)
-                          ]
-                  , setupNodeRestarts = noRestarts
-                  , setupSlotLength = defaultSlotLength
-                  , setupVersion = (minBound, ByronNodeToNodeVersion1)
-                  }
+          once $
+          let ncn = NumCoreNodes 4 in
+          -- c0's ImmutableDB is T > U > V. Note that U is an EBB and U and V
+          -- are both in slot 50. When its BlockFetchServer tries to stream T
+          -- and U using a ChainDB.Iterator, instead of looking in the
+          -- ImmutableDB, we end up looking in the VolatileDB and incorrectly
+          -- return ForkTooOld. The client keeps on requesting this block range,
+          -- resulting in a live lock.
+          prop_simple_real_pbft_convergence TestSetup
+            { setupEBBs       = ProduceEBBs
+            , setupK          = SecurityParam $ knownNonZeroBounded @5
+            , setupTestConfig = TestConfig
+              { numCoreNodes   = ncn
+              , numSlots       = NumSlots 58
+              , nodeTopology   = meshNodeTopology ncn
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
+              }
+            , setupNodeJoinPlan = NodeJoinPlan $ Map.fromList [(CoreNodeId 0,SlotNo 3),(CoreNodeId 1,SlotNo 3),(CoreNodeId 2,SlotNo 5),(CoreNodeId 3,SlotNo 57)]
+            , setupNodeRestarts = noRestarts
+            , setupSlotLength   = defaultSlotLength
+            , setupVersion      = (minBound, ByronNodeToNodeVersion1)
+            }
     , testProperty "ImmutableDB is leaking file handles, #1543" $
-        -- The failure was: c0 leaks one ImmutableDB file handle (for path
-        -- @00000.epoch@, read only, offset at 0).
-        --
-        -- The test case seems somewhat fragile, since the 'slotLength' value
-        -- seems to matter!
-        once $
-          let ncn5 = NumCoreNodes 5
-           in prop_simple_real_pbft_convergence
-                TestSetup
-                  { setupEBBs = NoEBBs
-                  , setupK = SecurityParam $ knownNonZeroBounded @2
-                  , setupTestConfig =
-                      TestConfig
-                        { numCoreNodes = ncn5
-                        , -- Still fails if I increase numSlots.
-                          numSlots = NumSlots 54
-                        , nodeTopology = meshNodeTopology ncn5
-                        , initSeed = Seed 0
-                        }
-                  , setupNodeJoinPlan =
-                      NodeJoinPlan $
-                        Map.fromList
-                          [ (CoreNodeId 0, SlotNo{unSlotNo = 0})
-                          , (CoreNodeId 1, SlotNo{unSlotNo = 0})
-                          , (CoreNodeId 2, SlotNo{unSlotNo = 0})
-                          , (CoreNodeId 3, SlotNo{unSlotNo = 53})
-                          , (CoreNodeId 4, SlotNo{unSlotNo = 53})
-                          ]
-                  , -- Passes if I drop either of these restarts.
-                    setupNodeRestarts =
-                      NodeRestarts $
-                        Map.fromList
-                          [ (SlotNo{unSlotNo = 50}, Map.fromList [(CoreNodeId 0, NodeRestart)])
-                          , (SlotNo{unSlotNo = 53}, Map.fromList [(CoreNodeId 3, NodeRestart)])
-                          ]
-                  , -- Slot length of 19s passes, and 21s also fails; I haven't seen this matter before.
-                    setupSlotLength = slotLengthFromSec 20
-                  , setupVersion = (minBound, ByronNodeToNodeVersion1)
-                  }
+          -- The failure was: c0 leaks one ImmutableDB file handle (for path
+          -- @00000.epoch@, read only, offset at 0).
+          --
+          -- The test case seems somewhat fragile, since the 'slotLength' value
+          -- seems to matter!
+          once $
+          let ncn5 = NumCoreNodes 5 in
+          prop_simple_real_pbft_convergence TestSetup
+            { setupEBBs       = NoEBBs
+            , setupK          = SecurityParam $ knownNonZeroBounded @2
+            , setupTestConfig = TestConfig
+              { numCoreNodes = ncn5
+              -- Still fails   if I increase numSlots.
+              , numSlots       = NumSlots 54
+              , nodeTopology   = meshNodeTopology ncn5
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
+              }
+            , setupNodeJoinPlan = NodeJoinPlan $ Map.fromList
+              [ (CoreNodeId 0, SlotNo {unSlotNo = 0})
+              , (CoreNodeId 1, SlotNo {unSlotNo = 0})
+              , (CoreNodeId 2, SlotNo {unSlotNo = 0})
+              , (CoreNodeId 3, SlotNo {unSlotNo = 53})
+              , (CoreNodeId 4, SlotNo {unSlotNo = 53})
+              ]
+              -- Passes if I drop either of these restarts.
+            , setupNodeRestarts = NodeRestarts $ Map.fromList
+              [ (SlotNo {unSlotNo = 50},Map.fromList [(CoreNodeId 0,NodeRestart)])
+              , (SlotNo {unSlotNo = 53},Map.fromList [(CoreNodeId 3,NodeRestart)])
+              ]
+              -- Slot length of 19s passes, and 21s also fails; I haven't seen this matter before.
+            , setupSlotLength = slotLengthFromSec 20
+            , setupVersion    = (minBound, ByronNodeToNodeVersion1)
+            }
     , -- Byron runs are slow, so do 10x less of this narrow test
       adjustQuickCheckTests (`div` 10) $
         testProperty "re-delegation via NodeRekey" $ \seed w ->
@@ -340,111 +322,97 @@ tests =
                     kEpochSlots $
                       coerce (unNonZero k :: Word64)
               slotsPerRekey :: Word64
-              slotsPerRekey = 2 * unNonZero k -- delegations take effect 2k slots later
-           in prop_simple_real_pbft_convergence
-                TestSetup
-                  { setupEBBs = ProduceEBBs
-                  , setupK = SecurityParam k
-                  , setupTestConfig =
-                      TestConfig
-                        { numCoreNodes = ncn
-                        , numSlots = NumSlots $ window + slotsPerEpoch + slotsPerRekey + window
-                        , nodeTopology = meshNodeTopology ncn
-                        , initSeed = seed
-                        }
-                  , setupNodeJoinPlan = trivialNodeJoinPlan ncn
-                  , setupNodeRestarts =
-                      NodeRestarts $
-                        Map.singleton (SlotNo (slotsPerEpoch + mod w window)) (Map.singleton (CoreNodeId 0) NodeRekey)
-                  , setupSlotLength = defaultSlotLength
-                  , setupVersion = (minBound, ByronNodeToNodeVersion1)
-                  }
+              slotsPerRekey = 2 * unNonZero k    -- delegations take effect 2k slots later
+          in
+          prop_simple_real_pbft_convergence TestSetup
+            { setupEBBs       = ProduceEBBs
+            , setupK          = SecurityParam k
+            , setupTestConfig = TestConfig
+              { numCoreNodes   = ncn
+              , numSlots       = NumSlots $ window + slotsPerEpoch + slotsPerRekey + window
+              , nodeTopology   = meshNodeTopology ncn
+              , initSeed       = seed
+              , txLogicVersion = maxBound
+              }
+            , setupNodeJoinPlan = trivialNodeJoinPlan ncn
+            , setupNodeRestarts = NodeRestarts $ Map.singleton (SlotNo (slotsPerEpoch + mod w window)) (Map.singleton (CoreNodeId 0) NodeRekey)
+            , setupSlotLength   = defaultSlotLength
+            , setupVersion      = (minBound, ByronNodeToNodeVersion1)
+            }
     , testProperty "exercise a corner case of mkCurrentBlockContext" $
-        -- The current chain fragment is @Empty a :> B@ and we're trying to
-        -- forge B'; the oddity is that B and B' have the same slot, since
-        -- the node is actually leading for the /second/ time in that slot
-        -- due to the 'NodeRestart'.
-        --
-        -- This failed with @Exception: the first block on the Byron chain
-        -- must be an EBB@.
-        let k = SecurityParam $ knownNonZeroBounded @1
-            ncn = NumCoreNodes 2
-         in prop_simple_real_pbft_convergence
-              TestSetup
-                { setupEBBs = NoEBBs
-                , setupK = k
-                , setupTestConfig =
-                    TestConfig
-                      { numCoreNodes = ncn
-                      , numSlots = NumSlots 2
-                      , nodeTopology = meshNodeTopology ncn
-                      , initSeed = Seed 0
-                      }
-                , setupNodeJoinPlan = trivialNodeJoinPlan ncn
-                , setupNodeRestarts =
-                    NodeRestarts $ Map.singleton (SlotNo 1) (Map.singleton (CoreNodeId 1) NodeRestart)
-                , setupSlotLength = defaultSlotLength
-                , setupVersion = (minBound, ByronNodeToNodeVersion1)
-                }
+          -- The current chain fragment is @Empty a :> B@ and we're trying to
+          -- forge B'; the oddity is that B and B' have the same slot, since
+          -- the node is actually leading for the /second/ time in that slot
+          -- due to the 'NodeRestart'.
+          --
+          -- This failed with @Exception: the first block on the Byron chain
+          -- must be an EBB@.
+          let k   = SecurityParam $ knownNonZeroBounded @1
+              ncn = NumCoreNodes 2
+          in
+          prop_simple_real_pbft_convergence TestSetup
+            { setupEBBs       = NoEBBs
+            , setupK          = k
+            , setupTestConfig = TestConfig
+              { numCoreNodes   = ncn
+              , numSlots       = NumSlots 2
+              , nodeTopology   = meshNodeTopology ncn
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
+              }
+            , setupNodeJoinPlan = trivialNodeJoinPlan ncn
+            , setupNodeRestarts = NodeRestarts $ Map.singleton (SlotNo 1) (Map.singleton (CoreNodeId 1) NodeRestart)
+            , setupSlotLength   = defaultSlotLength
+            , setupVersion      = (minBound, ByronNodeToNodeVersion1)
+            }
     , testProperty "correct EpochNumber in delegation certificate 1" $
-        -- Node 3 rekeys in slot 59, which is epoch 1. But Node 3 also leads
-        -- that slot, and it forged and adopted a block before restarting. So
-        -- the delegation transaction ends up in a block in slot 60, which is
-        -- epoch 2.
-        once $
-          let ncn4 = NumCoreNodes 4
-           in prop_simple_real_pbft_convergence
-                TestSetup
-                  { setupEBBs = NoEBBs
-                  , setupK = SecurityParam $ knownNonZeroBounded @3
-                  , setupTestConfig =
-                      TestConfig
-                        { numCoreNodes = ncn4
-                        , numSlots = NumSlots 72
-                        , nodeTopology = meshNodeTopology ncn4
-                        , initSeed = Seed 0
-                        }
-                  , setupNodeJoinPlan = trivialNodeJoinPlan ncn4
-                  , setupNodeRestarts =
-                      NodeRestarts (Map.fromList [(SlotNo 59, Map.fromList [(CoreNodeId 3, NodeRekey)])])
-                  , setupSlotLength = defaultSlotLength
-                  , setupVersion = (minBound, ByronNodeToNodeVersion1)
-                  }
+          -- Node 3 rekeys in slot 59, which is epoch 1. But Node 3 also leads
+          -- that slot, and it forged and adopted a block before restarting. So
+          -- the delegation transaction ends up in a block in slot 60, which is
+          -- epoch 2.
+          once $
+          let ncn4 = NumCoreNodes 4 in
+          prop_simple_real_pbft_convergence TestSetup
+            { setupEBBs       = NoEBBs
+            , setupK          = SecurityParam $ knownNonZeroBounded @3
+            , setupTestConfig = TestConfig
+              { numCoreNodes   = ncn4
+              , numSlots       = NumSlots 72
+              , nodeTopology   = meshNodeTopology ncn4
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
+              }
+            , setupNodeJoinPlan = trivialNodeJoinPlan ncn4
+            , setupNodeRestarts = NodeRestarts (Map.fromList [(SlotNo 59,Map.fromList [(CoreNodeId 3,NodeRekey)])])
+            , setupSlotLength   = defaultSlotLength
+            , setupVersion      = (minBound, ByronNodeToNodeVersion1)
+            }
     , testProperty "correct EpochNumber in delegation certificate 2" $
-        -- Revealed the incorrectness of setting the dlg cert epoch based on
-        -- the slot in which the node rekeyed. It must be based on the slot
-        -- in which the next block will be successfully forged; hence adding
-        -- 'rekeyOracle' fixed this.
-        --
-        -- Node 2 joins and rekeys in slot 58, epoch 2. It also leads slot
-        -- 59. So its dlg cert tx will only be included in the block in slot
-        -- 60. However, since that's epoch 3, the tx is discarded as invalid
-        -- before the block is forged.
-        let ncn3 = NumCoreNodes 3
-         in prop_simple_real_pbft_convergence
-              TestSetup
-                { setupEBBs = ProduceEBBs
-                , setupK = SecurityParam $ knownNonZeroBounded @2
-                , setupTestConfig =
-                    TestConfig
-                      { numCoreNodes = ncn3
-                      , numSlots = NumSlots 84
-                      , nodeTopology = meshNodeTopology ncn3
-                      , initSeed = Seed 0
-                      }
-                , setupNodeJoinPlan =
-                    NodeJoinPlan
-                      ( Map.fromList
-                          [ (CoreNodeId 0, SlotNo{unSlotNo = 1})
-                          , (CoreNodeId 1, SlotNo{unSlotNo = 1})
-                          , (CoreNodeId 2, SlotNo{unSlotNo = 58})
-                          ]
-                      )
-                , setupNodeRestarts =
-                    NodeRestarts (Map.fromList [(SlotNo{unSlotNo = 58}, Map.fromList [(CoreNodeId 2, NodeRekey)])])
-                , setupSlotLength = defaultSlotLength
-                , setupVersion = (minBound, ByronNodeToNodeVersion1)
-                }
+          -- Revealed the incorrectness of setting the dlg cert epoch based on
+          -- the slot in which the node rekeyed. It must be based on the slot
+          -- in which the next block will be successfully forged; hence adding
+          -- 'rekeyOracle' fixed this.
+          --
+          -- Node 2 joins and rekeys in slot 58, epoch 2. It also leads slot
+          -- 59. So its dlg cert tx will only be included in the block in slot
+          -- 60. However, since that's epoch 3, the tx is discarded as invalid
+          -- before the block is forged.
+          let ncn3 = NumCoreNodes 3 in
+          prop_simple_real_pbft_convergence TestSetup
+            { setupEBBs       = ProduceEBBs
+            , setupK          = SecurityParam $ knownNonZeroBounded @2
+            , setupTestConfig = TestConfig
+              { numCoreNodes   = ncn3
+              , numSlots       = NumSlots 84
+              , nodeTopology   = meshNodeTopology ncn3
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
+              }
+            , setupNodeJoinPlan = NodeJoinPlan (Map.fromList [(CoreNodeId 0,SlotNo {unSlotNo = 1}),(CoreNodeId 1,SlotNo {unSlotNo = 1}),(CoreNodeId 2,SlotNo {unSlotNo = 58})])
+            , setupNodeRestarts = NodeRestarts (Map.fromList [(SlotNo {unSlotNo = 58},Map.fromList [(CoreNodeId 2,NodeRekey)])])
+            , setupSlotLength   = defaultSlotLength
+            , setupVersion      = (minBound, ByronNodeToNodeVersion1)
+            }
     , testProperty "repeatedly add the the dlg cert tx" $
         -- Revealed the incorrectness of only adding dlg cert tx to the
         -- mempool once (since it may be essentially immediately discarded);
@@ -503,6 +471,7 @@ tests =
                           , (CoreNodeId 2, Set.fromList [CoreNodeId 0])
                           ]
                   , initSeed = Seed 0
+                  , txLogicVersion = maxBound
                   }
             , setupNodeJoinPlan =
                 NodeJoinPlan $
@@ -560,6 +529,7 @@ tests =
                                     ]
                                 )
                           , initSeed = Seed 0
+                          , txLogicVersion = maxBound
                           }
                     , setupNodeJoinPlan =
                         NodeJoinPlan
@@ -598,6 +568,7 @@ tests =
                         , numSlots = NumSlots 41
                         , nodeTopology = meshNodeTopology ncn
                         , initSeed = Seed 0
+                        , txLogicVersion = maxBound
                         }
                   , setupNodeJoinPlan = trivialNodeJoinPlan ncn
                   , setupNodeRestarts =
@@ -606,131 +577,109 @@ tests =
                   , setupVersion = (minBound, ByronNodeToNodeVersion1)
                   }
     , testProperty "delayed message corner case" $
-        once $
-          let ncn = NumCoreNodes 2
-           in prop_simple_real_pbft_convergence
-                TestSetup
-                  { setupEBBs = NoEBBs
-                  , setupK = SecurityParam $ knownNonZeroBounded @7
-                  , setupTestConfig =
-                      TestConfig
-                        { numCoreNodes = ncn
-                        , numSlots = NumSlots 10
-                        , nodeTopology = meshNodeTopology ncn
-                        , initSeed = Seed 0
-                        }
-                  , setupNodeJoinPlan =
-                      NodeJoinPlan
-                        (Map.fromList [(CoreNodeId 0, SlotNo{unSlotNo = 0}), (CoreNodeId 1, SlotNo{unSlotNo = 1})])
-                  , setupNodeRestarts = noRestarts
-                  , setupSlotLength = defaultSlotLength
-                  , setupVersion = (minBound, ByronNodeToNodeVersion1)
-                  }
+          once $
+          let ncn = NumCoreNodes 2 in
+          prop_simple_real_pbft_convergence TestSetup
+            { setupEBBs       = NoEBBs
+            , setupK          = SecurityParam $ knownNonZeroBounded @7
+            , setupTestConfig = TestConfig
+              { numCoreNodes   = ncn
+              , numSlots       = NumSlots 10
+              , nodeTopology   = meshNodeTopology ncn
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
+              }
+            , setupNodeJoinPlan = NodeJoinPlan (Map.fromList [(CoreNodeId 0,SlotNo {unSlotNo = 0}),(CoreNodeId 1,SlotNo {unSlotNo = 1})])
+            , setupNodeRestarts = noRestarts
+            , setupSlotLength   = defaultSlotLength
+            , setupVersion      = (minBound, ByronNodeToNodeVersion1)
+            }
     , testProperty "mkUpdateLabels anticipates instant confirmation" $
-        -- caught a bug in 'mkUpdateLabels' where it didn't anticipate that
-        -- node c0 can confirm the proposal as soon as it joins when quorum
-        -- == 1
-        let ncn = NumCoreNodes 3
-         in prop_simple_real_pbft_convergence
-              TestSetup
-                { setupEBBs = NoEBBs
-                , setupK = SecurityParam $ knownNonZeroBounded @9
-                , setupTestConfig =
-                    TestConfig
-                      { numCoreNodes = ncn
-                      , numSlots = NumSlots 1
-                      , nodeTopology = meshNodeTopology ncn
-                      , initSeed = Seed 0
-                      }
-                , setupNodeJoinPlan = trivialNodeJoinPlan ncn
-                , setupNodeRestarts = noRestarts
-                , setupSlotLength = defaultSlotLength
-                , setupVersion = (minBound, ByronNodeToNodeVersion1)
-                }
+          -- caught a bug in 'mkUpdateLabels' where it didn't anticipate that
+          -- node c0 can confirm the proposal as soon as it joins when quorum
+          -- == 1
+          let ncn = NumCoreNodes 3 in
+          prop_simple_real_pbft_convergence TestSetup
+            { setupEBBs       = NoEBBs
+            , setupK          = SecurityParam $ knownNonZeroBounded @9
+            , setupTestConfig = TestConfig
+              { numCoreNodes   = ncn
+              , numSlots       = NumSlots 1
+              , nodeTopology   = meshNodeTopology ncn
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
+              }
+            , setupNodeJoinPlan = trivialNodeJoinPlan ncn
+            , setupNodeRestarts = noRestarts
+            , setupSlotLength   = defaultSlotLength
+            , setupVersion      = (minBound, ByronNodeToNodeVersion1)
+            }
     , testProperty "have nodes add transactions as promptly as possible, as expected by proposal tracking" $
-        -- this repro requires that changes to the ledger point triggers the
-        -- nearly oracular wallet to attempt to add its proposal vote again
-        --
-        -- Without that, node c1's own vote is not included in the block it
-        -- forges in the last slot, because it attempts to add the vote
-        -- before the proposal arrives from c0. With the trigger, the arrival
-        -- of c0's block triggers it. In particular, the ledger *slot*
-        -- doesn't change in this repro, since the new block and its
-        -- predecessor both inhabit slot 0. EBBeeeeeees!
-        let ncn = NumCoreNodes 4
-         in prop_simple_real_pbft_convergence
-              TestSetup
-                { setupEBBs = NoEBBs
-                , setupK = SecurityParam $ knownNonZeroBounded @8
-                , setupTestConfig =
-                    TestConfig
-                      { numCoreNodes = ncn
-                      , numSlots = NumSlots 2
-                      , nodeTopology = meshNodeTopology ncn
-                      , initSeed = Seed 0
-                      }
-                , setupNodeJoinPlan = trivialNodeJoinPlan ncn
-                , setupNodeRestarts = noRestarts
-                , setupSlotLength = defaultSlotLength
-                , setupVersion = (minBound, ByronNodeToNodeVersion1)
-                }
+          -- this repro requires that changes to the ledger point triggers the
+          -- nearly oracular wallet to attempt to add its proposal vote again
+          --
+          -- Without that, node c1's own vote is not included in the block it
+          -- forges in the last slot, because it attempts to add the vote
+          -- before the proposal arrives from c0. With the trigger, the arrival
+          -- of c0's block triggers it. In particular, the ledger *slot*
+          -- doesn't change in this repro, since the new block and its
+          -- predecessor both inhabit slot 0. EBBeeeeeees!
+          let ncn = NumCoreNodes 4 in
+          prop_simple_real_pbft_convergence TestSetup
+            { setupEBBs       = NoEBBs
+            , setupK          = SecurityParam $ knownNonZeroBounded @8
+            , setupTestConfig = TestConfig
+              { numCoreNodes   = ncn
+              , numSlots       = NumSlots 2
+              , nodeTopology   = meshNodeTopology ncn
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
+              }
+            , setupNodeJoinPlan = trivialNodeJoinPlan ncn
+            , setupNodeRestarts = noRestarts
+            , setupSlotLength   = defaultSlotLength
+            , setupVersion      = (minBound, ByronNodeToNodeVersion1)
+            }
     , testProperty "track proposals even when c0 is not the first to lead" $
-        -- requires prompt and accurate vote tracking when c0 is not the
-        -- first node to lead
-        --
-        -- The necessary promptness trigger in this case is the arrival of
-        -- the proposal transaction.
-        let ncn = NumCoreNodes 4
-         in prop_simple_real_pbft_convergence
-              TestSetup
-                { setupEBBs = NoEBBs
-                , setupK = SecurityParam $ knownNonZeroBounded @5
-                , setupTestConfig =
-                    TestConfig
-                      { numCoreNodes = ncn
-                      , numSlots = NumSlots 5
-                      , nodeTopology = meshNodeTopology ncn
-                      , initSeed = Seed 0
-                      }
-                , setupNodeJoinPlan =
-                    NodeJoinPlan $
-                      Map.fromList
-                        [ (CoreNodeId 0, SlotNo 2)
-                        , (CoreNodeId 1, SlotNo 3)
-                        , (CoreNodeId 2, SlotNo 4)
-                        , (CoreNodeId 3, SlotNo 4)
-                        ]
-                , setupNodeRestarts = noRestarts
-                , setupSlotLength = defaultSlotLength
-                , setupVersion = (minBound, ByronNodeToNodeVersion1)
-                }
+          -- requires prompt and accurate vote tracking when c0 is not the
+          -- first node to lead
+          --
+          -- The necessary promptness trigger in this case is the arrival of
+          -- the proposal transaction.
+          let ncn = NumCoreNodes 4 in
+          prop_simple_real_pbft_convergence TestSetup
+            { setupEBBs       = NoEBBs
+            , setupK          = SecurityParam $ knownNonZeroBounded @5
+            , setupTestConfig = TestConfig
+              { numCoreNodes   = ncn
+              , numSlots       = NumSlots 5
+              , nodeTopology   = meshNodeTopology ncn
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
+              }
+            , setupNodeJoinPlan = NodeJoinPlan $ Map.fromList [ (CoreNodeId 0, SlotNo 2) , (CoreNodeId 1, SlotNo 3) , (CoreNodeId 2, SlotNo 4) , (CoreNodeId 3, SlotNo 4) ]
+            , setupNodeRestarts = noRestarts
+            , setupSlotLength   = defaultSlotLength
+            , setupVersion      = (minBound, ByronNodeToNodeVersion1)
+            }
     , testProperty "cardano-ledger-byron checks for proposal confirmation before it checks for expiry" $
-        -- must check for quorum before checking for expiration
-        let ncn = NumCoreNodes 5
-         in prop_simple_real_pbft_convergence
-              TestSetup
-                { setupEBBs = NoEBBs
-                , setupK = SecurityParam $ knownNonZeroBounded @10
-                , setupTestConfig =
-                    TestConfig
-                      { numCoreNodes = ncn
-                      , numSlots = NumSlots 12
-                      , nodeTopology = meshNodeTopology ncn
-                      , initSeed = Seed 0
-                      }
-                , setupNodeJoinPlan =
-                    NodeJoinPlan $
-                      Map.fromList
-                        [ (CoreNodeId 0, SlotNo 0)
-                        , (CoreNodeId 1, SlotNo 0)
-                        , (CoreNodeId 2, SlotNo 10)
-                        , (CoreNodeId 3, SlotNo 10)
-                        , (CoreNodeId 4, SlotNo 10)
-                        ]
-                , setupNodeRestarts = noRestarts
-                , setupSlotLength = defaultSlotLength
-                , setupVersion = (minBound, ByronNodeToNodeVersion1)
-                }
+          -- must check for quorum before checking for expiration
+          let ncn = NumCoreNodes 5 in
+          prop_simple_real_pbft_convergence TestSetup
+            { setupEBBs       = NoEBBs
+            , setupK          = SecurityParam $ knownNonZeroBounded @10
+            , setupTestConfig = TestConfig
+              { numCoreNodes   = ncn
+              , numSlots       = NumSlots 12
+              , nodeTopology   = meshNodeTopology ncn
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
+              }
+            , setupNodeJoinPlan = NodeJoinPlan $ Map.fromList [ (CoreNodeId 0, SlotNo 0) , (CoreNodeId 1, SlotNo 0) , (CoreNodeId 2, SlotNo 10) , (CoreNodeId 3, SlotNo 10) , (CoreNodeId 4, SlotNo 10) ]
+            , setupNodeRestarts = noRestarts
+            , setupSlotLength   = defaultSlotLength
+            , setupVersion      = (minBound, ByronNodeToNodeVersion1)
+            }
     , testProperty "repropose an expired proposal" $
         -- the proposal expires in slot 10, but then c0 reintroduces it in
         -- slot 11 and it is eventually confirmed
@@ -745,6 +694,7 @@ tests =
                       , numSlots = NumSlots 17
                       , nodeTopology = meshNodeTopology ncn
                       , initSeed = Seed 0
+                      , txLogicVersion = maxBound
                       }
                 , setupNodeJoinPlan =
                     NodeJoinPlan $
@@ -760,81 +710,73 @@ tests =
                 , setupVersion = (minBound, ByronNodeToNodeVersion1)
                 }
     , testProperty "only expect EBBs if the reference simulator does" $
-        -- In this repro, block in the 20th slot is wasted since c2 just
-        -- joined. As a result, the final chains won't include that EBB.
-        let ncn = NumCoreNodes 3
-         in prop_simple_real_pbft_convergence
-              TestSetup
-                { setupEBBs = ProduceEBBs
-                , setupK = SecurityParam $ knownNonZeroBounded @2
-                , setupTestConfig =
-                    TestConfig
-                      { numCoreNodes = ncn
-                      , numSlots = NumSlots 21
-                      , nodeTopology = meshNodeTopology ncn
-                      , initSeed = Seed 0
-                      }
-                , setupNodeJoinPlan =
-                    NodeJoinPlan $
-                      Map.fromList
-                        [ (CoreNodeId 0, SlotNo{unSlotNo = 0})
-                        , (CoreNodeId 1, SlotNo{unSlotNo = 0})
-                        , (CoreNodeId 2, SlotNo{unSlotNo = 20})
-                        ]
-                , setupNodeRestarts = noRestarts
-                , setupSlotLength = defaultSlotLength
-                , setupVersion = (minBound, ByronNodeToNodeVersion1)
-                }
+          -- In this repro, block in the 20th slot is wasted since c2 just
+          -- joined. As a result, the final chains won't include that EBB.
+          let ncn = NumCoreNodes 3 in
+          prop_simple_real_pbft_convergence TestSetup
+            { setupEBBs       = ProduceEBBs
+            , setupK          = SecurityParam $ knownNonZeroBounded @2
+            , setupTestConfig = TestConfig
+              { numCoreNodes   = ncn
+              , numSlots       = NumSlots 21
+              , nodeTopology   = meshNodeTopology ncn
+              , initSeed       = Seed 0
+              , txLogicVersion = maxBound
+              }
+            , setupNodeJoinPlan = NodeJoinPlan $ Map.fromList
+              [ (CoreNodeId 0,SlotNo {unSlotNo = 0})
+              , (CoreNodeId 1,SlotNo {unSlotNo = 0})
+              , (CoreNodeId 2,SlotNo {unSlotNo = 20})
+              ]
+            , setupNodeRestarts = noRestarts
+            , setupSlotLength   = defaultSlotLength
+            , setupVersion      = (minBound, ByronNodeToNodeVersion1)
+            }
     , testProperty "only check updates for mesh topologies" $
-        -- This repro exercises
-        -- 'Test.ThreadNet.Byron.TrackUpdates.checkTopo'.
-        --
-        -- The predicted slot outcomes are
-        --
-        -- > leader 01234
-        -- >    s0  NAAAA
-        -- >    s5  NAAAA
-        -- >    s10 NWN
-        --
-        -- The votes of c1, c3, and c4 arrive to c2 during s11 via TxSub
-        -- /before/ the block containing the proposal does, so c2's mempool
-        -- rejects them as invalid. When it then forges in s12, it only
-        -- includes its own vote, which doesn't meet quota (3 = 5 * 0.6) and
-        -- so the proposal then expires (TTL 10 slots, but only after an
-        -- endorsement; see Issue 749 in cardano-ledger-byron).
-        --
-        -- "Test.ThreadNet.Byron.TrackUpdates" does not otherwise
-        -- correctly anticipate such races, so it makes no requirement for
-        -- non-mesh topologies.
-        prop_simple_real_pbft_convergence
-          TestSetup
-            { setupEBBs = NoEBBs
-            , setupK = SecurityParam $ knownNonZeroBounded @10
-            , setupTestConfig =
-                TestConfig
-                  { numCoreNodes = NumCoreNodes 5
-                  , numSlots = NumSlots 13
-                  , nodeTopology =
-                      NodeTopology $
-                        Map.fromList
-                          -- mesh except for 0 <-> 2
-                          [ (CoreNodeId 0, Set.fromList [])
-                          , (CoreNodeId 1, Set.fromList [CoreNodeId 0])
-                          , (CoreNodeId 2, Set.fromList [CoreNodeId 1])
-                          , (CoreNodeId 3, Set.fromList [CoreNodeId 0, CoreNodeId 1, CoreNodeId 2])
-                          , (CoreNodeId 4, Set.fromList [CoreNodeId 0, CoreNodeId 1, CoreNodeId 2, CoreNodeId 3])
-                          ]
-                  , initSeed = Seed 0
-                  }
-            , setupNodeJoinPlan =
-                NodeJoinPlan $
-                  Map.fromList
-                    [ (CoreNodeId 0, SlotNo 0)
-                    , (CoreNodeId 1, SlotNo 11)
-                    , (CoreNodeId 2, SlotNo 11)
-                    , (CoreNodeId 3, SlotNo 11)
-                    , (CoreNodeId 4, SlotNo 11)
-                    ]
+          -- This repro exercises
+          -- 'Test.ThreadNet.Byron.TrackUpdates.checkTopo'.
+          --
+          -- The predicted slot outcomes are
+          --
+          -- > leader 01234
+          -- >    s0  NAAAA
+          -- >    s5  NAAAA
+          -- >    s10 NWN
+          --
+          -- The votes of c1, c3, and c4 arrive to c2 during s11 via TxSub
+          -- /before/ the block containing the proposal does, so c2's mempool
+          -- rejects them as invalid. When it then forges in s12, it only
+          -- includes its own vote, which doesn't meet quota (3 = 5 * 0.6) and
+          -- so the proposal then expires (TTL 10 slots, but only after an
+          -- endorsement; see Issue 749 in cardano-ledger-byron).
+          --
+          -- "Test.ThreadNet.Byron.TrackUpdates" does not otherwise
+          -- correctly anticipate such races, so it makes no requirement for
+          -- non-mesh topologies.
+          prop_simple_real_pbft_convergence TestSetup
+            { setupEBBs       = NoEBBs
+            , setupK          = SecurityParam $ knownNonZeroBounded @10
+            , setupTestConfig = TestConfig
+              { numCoreNodes = NumCoreNodes 5
+              , numSlots     = NumSlots 13
+              , nodeTopology = NodeTopology $ Map.fromList
+                               -- mesh except for 0 <-> 2
+                [ (CoreNodeId 0, Set.fromList [])
+                , (CoreNodeId 1, Set.fromList [CoreNodeId 0])
+                , (CoreNodeId 2, Set.fromList [CoreNodeId 1])
+                , (CoreNodeId 3, Set.fromList [CoreNodeId 0, CoreNodeId 1, CoreNodeId 2])
+                , (CoreNodeId 4, Set.fromList [CoreNodeId 0, CoreNodeId 1, CoreNodeId 2, CoreNodeId 3])
+              ]
+              , initSeed = Seed 0
+              , txLogicVersion = maxBound
+            }
+            , setupNodeJoinPlan = NodeJoinPlan $ Map.fromList
+              [ (CoreNodeId 0, SlotNo 0)
+              , (CoreNodeId 1, SlotNo 11)
+              , (CoreNodeId 2, SlotNo 11)
+              , (CoreNodeId 3, SlotNo 11)
+              , (CoreNodeId 4, SlotNo 11)
+              ]
             , setupNodeRestarts = noRestarts
             , setupSlotLength = defaultSlotLength
             , setupVersion = (minBound, ByronNodeToNodeVersion1)
@@ -862,6 +804,7 @@ tests =
                     , numSlots = NumSlots 81
                     , nodeTopology = meshNodeTopology (NumCoreNodes 3)
                     , initSeed = Seed 0
+                    , txLogicVersion = maxBound
                     }
               , setupNodeJoinPlan =
                   NodeJoinPlan
@@ -889,6 +832,7 @@ tests =
                     , numSlots = NumSlots 39
                     , nodeTopology = meshNodeTopology (NumCoreNodes 2)
                     , initSeed = Seed 0
+                    , txLogicVersion = maxBound
                     }
               , setupNodeJoinPlan =
                   NodeJoinPlan
@@ -927,6 +871,7 @@ tests =
                     , numSlots = NumSlots 21
                     , nodeTopology = meshNodeTopology (NumCoreNodes 3)
                     , initSeed = Seed 0
+                    , txLogicVersion = maxBound
                     }
               , setupNodeJoinPlan =
                   NodeJoinPlan
