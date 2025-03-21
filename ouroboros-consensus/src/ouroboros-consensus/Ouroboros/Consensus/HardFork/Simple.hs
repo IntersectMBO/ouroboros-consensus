@@ -1,12 +1,17 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Ouroboros.Consensus.HardFork.Simple (TriggerHardFork (..)) where
 
+import           Cardano.Binary
 import           Cardano.Slotting.Slot (EpochNo)
 import           Data.Word
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
+import           Ouroboros.Consensus.Node.Serialisation
 
 -- | The trigger condition that will cause the hard fork transition.
 --
@@ -32,3 +37,17 @@ data TriggerHardFork =
     -- era.
   | TriggerHardForkNotDuringThisExecution
   deriving (Show, Generic, NoThunks)
+
+instance SerialiseNodeToClient blk TriggerHardFork where
+  encodeNodeToClient _ _ triggerHardFork = case triggerHardFork of
+    TriggerHardForkAtVersion v -> encodeListLen 2 <> encodeWord8 0 <> toCBOR v
+    TriggerHardForkAtEpoch e   -> encodeListLen 2 <> encodeWord8 1 <> toCBOR e
+    TriggerHardForkNotDuringThisExecution -> encodeListLen 2 <> encodeWord8 2
+  decodeNodeToClient _ _ = do
+    len <- decodeListLen
+    tag <- decodeWord8
+    case (len, tag) of
+      (2, 0)   -> TriggerHardForkAtVersion <$> fromCBOR @Word16
+      (2, 1)   -> TriggerHardForkAtEpoch <$> fromCBOR @EpochNo
+      (2, 2)   -> pure TriggerHardForkNotDuringThisExecution
+      _ -> fail $ "TriggerHardFork: invalid (len, tag): " <> show (len, tag)

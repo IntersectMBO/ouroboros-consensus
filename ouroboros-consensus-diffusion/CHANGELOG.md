@@ -2,6 +2,20 @@
 
 # Changelog entries
 
+<a id='changelog-0.20.0.0'></a>
+## 0.20.0.0 — 2025-02-10
+
+### Breaking
+
+- Updated to `ouroboros-network-0.19.0.2` & `ouroboros-network-framework-0.16`.
+- `runWith` and `LowLevelRunNodeArgs` are no longer polymorphic in version
+   data.
+- `NodeToNode.initiator`, `NodeToNode.initiatorAndResponder` take negotiated
+  `NodeToNodeVersionData` as an argument instead of `PeerSharing` (config
+   option).
+- `NodeToClient.responder` take negotiated `NodeToClientVersionData` as an
+   argument.
+
 <a id='changelog-0.19.0.0'></a>
 ## 0.19.0.0 — 2025-01-08
 

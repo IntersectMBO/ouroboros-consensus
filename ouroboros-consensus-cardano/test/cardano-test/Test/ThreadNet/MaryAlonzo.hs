@@ -12,9 +12,9 @@
 
 module Test.ThreadNet.MaryAlonzo (tests) where
 
-import           Cardano.Crypto.Hash (ShortHash)
 import           Cardano.Ledger.Alonzo.Genesis (AlonzoGenesis)
 import qualified Cardano.Ledger.Api.Transition as L
+import           Cardano.Ledger.BaseTypes (nonZero, unNonZero)
 import qualified Cardano.Ledger.BaseTypes as SL (Version, getVersion,
                      natVersion)
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -70,11 +70,8 @@ import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Slots (NumSlots (..))
 import           Test.Util.TestEnv
 
--- | No Byron era, so our crypto can be trivial.
-type Crypto = MockCrypto ShortHash
-
 type MaryAlonzoBlock =
-  ShelleyBasedHardForkBlock (TPraos Crypto) (MaryEra Crypto) (TPraos Crypto) (AlonzoEra Crypto)
+  ShelleyBasedHardForkBlock (TPraos MockCrypto) MaryEra (TPraos MockCrypto) AlonzoEra
 
 -- | The varying data of this test
 --
@@ -104,7 +101,7 @@ instance Arbitrary TestSetup where
                 -- Shelley epoch, since stake pools can only be created and
                 -- delegated to via Shelley transactions.
                 `suchThat` ((/= 0) . Shelley.decentralizationParamToRational)
-    setupK <- SecurityParam <$> choose (8, 10)
+    setupK <- SecurityParam <$> choose (8, 10) `suchThatMap` nonZero
                 -- If k < 8, common prefix violations become too likely in
                 -- Praos mode for thin overlay schedules (ie low d), even for
                 -- f=0.2.
@@ -268,12 +265,12 @@ prop_simple_allegraAlonzo_convergence TestSetup
           }
 
     maxForkLength :: NumBlocks
-    maxForkLength = NumBlocks $ maxRollbacks setupK
+    maxForkLength = NumBlocks $ unNonZero $ maxRollbacks setupK
 
     initialKESPeriod :: SL.KESPeriod
     initialKESPeriod = SL.KESPeriod 0
 
-    coreNodes :: [Shelley.CoreNode Crypto]
+    coreNodes :: [Shelley.CoreNode MockCrypto]
     coreNodes = runGen initSeed $
         replicateM (fromIntegral n) $
           Shelley.genCoreNode initialKESPeriod
@@ -284,7 +281,7 @@ prop_simple_allegraAlonzo_convergence TestSetup
     maxLovelaceSupply =
       fromIntegral (length coreNodes) * Shelley.initialLovelacePerCoreNode
 
-    shelleyGenesis :: ShelleyGenesis Crypto
+    shelleyGenesis :: ShelleyGenesis
     shelleyGenesis =
         Shelley.mkGenesisConfig
           (SL.ProtVer majorVersion1 0)
@@ -293,7 +290,7 @@ prop_simple_allegraAlonzo_convergence TestSetup
           setupD
           maxLovelaceSupply
           setupSlotLength
-          (Shelley.mkKesConfig (Proxy @Crypto) numSlots)
+          (Shelley.mkKesConfig (Proxy @MockCrypto) numSlots)
           coreNodes
 
     alonzoGenesis :: AlonzoGenesis
@@ -365,7 +362,7 @@ prop_simple_allegraAlonzo_convergence TestSetup
             show (nodeOutputFinalChain <$> testOutputNodes testOutput)
           ) $
         counterexample "CP violation in final chains!" $
-        property $ maxRollbacks setupK >= finalIntersectionDepth
+        property $ unNonZero (maxRollbacks setupK) >= finalIntersectionDepth
 
 {-------------------------------------------------------------------------------
   Constants

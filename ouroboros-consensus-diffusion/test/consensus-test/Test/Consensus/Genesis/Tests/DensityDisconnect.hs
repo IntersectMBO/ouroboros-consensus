@@ -6,6 +6,7 @@
 
 module Test.Consensus.Genesis.Tests.DensityDisconnect (tests) where
 
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Cardano.Slotting.Slot (SlotNo (unSlotNo), WithOrigin (..))
 import           Control.Exception (fromException)
 import           Control.Monad.Class.MonadTime.SI (Time (..))
@@ -116,7 +117,7 @@ staticCandidates GenesisTest {gtSecurityParam, gtGenesisWindow, gtBlockTree} =
     selections = selection <$> branches
 
     selection branch =
-      AF.takeOldest (AF.length (btbPrefix branch) + fromIntegral (maxRollbacks gtSecurityParam)) (btbFull branch)
+      AF.takeOldest (AF.length (btbPrefix branch) + fromIntegral (unNonZero $ maxRollbacks gtSecurityParam)) (btbFull branch)
 
     tips = branchTip <$> Map.fromList candidates
 
@@ -402,7 +403,7 @@ evolveBranches EvolvingPeers {k, sgen, peers = initialPeers, fullTree} =
         -- Take k blocks after the immutable tip on the first fork.
         selection imm Peer {value = EvolvingPeer {candidate}} =
           case AF.splitAfterPoint candidate imm of
-            Just (_, s) -> AF.takeOldest (fromIntegral k') s
+            Just (_, s) -> AF.takeOldest (fromIntegral $ unNonZero k') s
             Nothing     -> error "immutable tip not on candidate"
 
         ids = toList (getPeerIds ps)

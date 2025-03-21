@@ -255,8 +255,7 @@ fromChain cfg initState chain =
     anchorSnapshot NE.:| snapshots =
           fmap (mkHeaderStateWithTime (configLedger cfg))
         . NE.scanl
-            (flip (tickThenReapply (ExtLedgerCfg cfg)))
+            (flip (tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg)))
             initState
         . Chain.toOldestFirst
         $ chain
-

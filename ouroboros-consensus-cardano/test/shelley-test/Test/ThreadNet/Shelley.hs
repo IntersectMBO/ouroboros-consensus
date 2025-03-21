@@ -4,9 +4,10 @@
 
 module Test.ThreadNet.Shelley (tests) where
 
-import           Cardano.Crypto.Hash (ShortHash)
+import           Cardano.Ledger.BaseTypes (nonZero)
 import qualified Cardano.Ledger.BaseTypes as SL (UnitInterval,
                      mkNonceFromNumber, shelleyProtVer, unboundRational)
+import           Cardano.Ledger.Shelley (ShelleyEra)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as SL
 import qualified Cardano.Ledger.Shelley.Translation as SL
@@ -25,12 +26,12 @@ import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.NodeId
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
-import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import           Ouroboros.Consensus.Shelley.Node
-import           Test.Consensus.Shelley.MockCrypto (MockCrypto, MockShelley)
+import           Ouroboros.Consensus.Shelley.ShelleyHFC ()
+import           Test.Consensus.Shelley.MockCrypto (MockCrypto)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -48,9 +49,6 @@ import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Slots (NumSlots (..))
 import           Test.Util.TestEnv
 
-type Era   = MockShelley ShortHash
-type Proto = TPraos (MockCrypto ShortHash)
-
 data TestSetup = TestSetup
   { setupD            :: DecentralizationParam
   , setupD2           :: DecentralizationParam
@@ -65,7 +63,7 @@ data TestSetup = TestSetup
     -- This test varies it too ensure it explores different leader schedules.
   , setupK            :: SecurityParam
   , setupTestConfig   :: TestConfig
-  , setupVersion      :: (NodeToNodeVersion, BlockNodeToNodeVersion (ShelleyBlock Proto Era))
+  , setupVersion      :: (NodeToNodeVersion, BlockNodeToNodeVersion (ShelleyBlock (TPraos MockCrypto) ShelleyEra))
   }
   deriving (Show)
 
@@ -88,11 +86,11 @@ instance Arbitrary TestSetup where
         , (9, SL.mkNonceFromNumber <$> arbitrary)
         ]
 
-      setupK  <- SecurityParam <$> choose (minK, maxK)
+      setupK  <- SecurityParam <$> choose (minK, maxK) `suchThatMap` nonZero
 
       setupTestConfig <- arbitrary
 
-      setupVersion <- genVersion (Proxy @(ShelleyBlock Proto Era))
+      setupVersion <- genVersion (Proxy @(ShelleyBlock (TPraos MockCrypto) ShelleyEra))
 
       pure TestSetup
         { setupD
@@ -197,7 +195,7 @@ prop_simple_real_tpraos_convergence TestSetup
       , numSlots
       } = setupTestConfig
 
-    testConfigB :: TestConfigB (ShelleyBlock Proto Era)
+    testConfigB :: TestConfigB (ShelleyBlock (TPraos MockCrypto) ShelleyEra)
     testConfigB = TestConfigB
       { forgeEbbEnv  = Nothing
       , future       = singleEraFuture tpraosSlotLength epochSize
@@ -271,7 +269,7 @@ prop_simple_real_tpraos_convergence TestSetup
     initialKESPeriod :: SL.KESPeriod
     initialKESPeriod = SL.KESPeriod 0
 
-    coreNodes :: [CoreNode (EraCrypto Era)]
+    coreNodes :: [CoreNode MockCrypto]
     coreNodes = runGen initSeed $
         replicateM (fromIntegral n) $
           genCoreNode initialKESPeriod
@@ -282,7 +280,7 @@ prop_simple_real_tpraos_convergence TestSetup
     maxLovelaceSupply =
       fromIntegral (length coreNodes) * initialLovelacePerCoreNode
 
-    genesisConfig :: ShelleyGenesis (EraCrypto Era)
+    genesisConfig :: ShelleyGenesis
     genesisConfig =
         mkGenesisConfig
           genesisProtVer
@@ -291,7 +289,7 @@ prop_simple_real_tpraos_convergence TestSetup
           setupD
           maxLovelaceSupply
           tpraosSlotLength
-          (mkKesConfig (Proxy @(EraCrypto Era)) numSlots)
+          (mkKesConfig (Proxy @MockCrypto) numSlots)
           coreNodes
 
     epochSize :: EpochSize
@@ -314,7 +312,7 @@ prop_simple_real_tpraos_convergence TestSetup
                   -- slots to reach the epoch transition but the last several
                   -- slots end up empty.
                   Shelley.tickedShelleyLedgerState $
-                  applyChainTick ledgerConfig sentinel lsUnticked
+                  applyChainTick OmitLedgerEvents ledgerConfig sentinel lsUnticked
 
               msg =
                   "The ticked final ledger state of " <> show nid <>
@@ -352,11 +350,11 @@ prop_simple_real_tpraos_convergence TestSetup
             DoGeneratePPUs    -> True
             DoNotGeneratePPUs -> False
 
-        finalLedgers :: [(NodeId, LedgerState (ShelleyBlock Proto Era))]
+        finalLedgers :: [(NodeId, LedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra))]
         finalLedgers =
             Map.toList $ nodeOutputFinalLedger <$> testOutputNodes testOutput
 
-        ledgerConfig :: LedgerConfig (ShelleyBlock Proto Era)
+        ledgerConfig :: LedgerConfig (ShelleyBlock (TPraos MockCrypto) ShelleyEra)
         ledgerConfig = Shelley.mkShelleyLedgerConfig
             genesisConfig
             (SL.toFromByronTranslationContext genesisConfig)  -- trivial translation context

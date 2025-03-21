@@ -1,6 +1,6 @@
 cabal-version: 3.0
 name: ouroboros-consensus-diffusion
-version: 0.19.0.0
+version: 0.20.0.0
 synopsis: Integration for the Ouroboros Network layer
 description:
   Top level integration for consensus & network layers of the Ouroboros blockchain protocol.
@@ -84,17 +84,18 @@ library
     containers >=0.5 && <0.8,
     contra-tracer,
     deepseq,
+    dns,
     filepath,
     fs-api ^>=0.3,
     hashable,
     io-classes ^>=1.5,
     mtl,
-    network-mux ^>=0.6,
+    network-mux ^>=0.7,
     ouroboros-consensus ^>=0.22,
-    ouroboros-network ^>=0.19.0.2,
-    ouroboros-network-api ^>=0.12,
-    ouroboros-network-framework ^>=0.16,
-    ouroboros-network-protocols ^>=0.13,
+    ouroboros-network ^>=0.20,
+    ouroboros-network-api ^>=0.13,
+    ouroboros-network-framework ^>=0.17,
+    ouroboros-network-protocols ^>=0.14,
     random,
     resource-registry ^>=0.1,
     safe-wild-cards ^>=1.0,
@@ -133,6 +134,7 @@ library unstable-diffusion-testlib
     QuickCheck,
     base,
     bytestring,
+    cardano-ledger-core,
     cborg,
     containers,
     contra-tracer,
@@ -174,11 +176,10 @@ library unstable-mock-testlib
     QuickCheck,
     base,
     bytestring,
-    cardano-crypto-class,
-    cardano-crypto-tests,
+    cardano-crypto-class ^>=2.2,
+    cardano-crypto-tests ^>=2.2,
     containers,
     ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib, unstable-mock-block},
-    ouroboros-network-protocols:testlib,
     serialise,
     unstable-diffusion-testlib,
 
@@ -190,6 +191,7 @@ test-suite infra-test
   other-modules: Test.ThreadNet.Util.Tests
   build-depends:
     base,
+    cardano-ledger-core,
     ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib},
     tasty,
     tasty-quickcheck,
@@ -211,6 +213,7 @@ test-suite mock-test
     QuickCheck,
     base,
     bytestring,
+    cardano-ledger-core,
     cborg,
     constraints,
     containers,
@@ -281,7 +284,8 @@ test-suite consensus-test
     base,
     binary,
     bytestring,
-    cardano-crypto-class,
+    cardano-crypto-class ^>=2.2,
+    cardano-ledger-core,
     cardano-slotting:{cardano-slotting, testlib},
     cardano-strict-containers,
     containers,

@@ -12,6 +12,7 @@ module Test.Util.ChainUpdates (
   , prop_genChainUpdates
   ) where
 
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Control.Monad (replicateM, replicateM_)
 import           Control.Monad.State.Strict (MonadTrans, execStateT, get, lift,
                      modify)
@@ -105,7 +106,7 @@ genChainUpdateState updateBehavior securityParam n =
     addUpdate u cus = cus { cusUpdates = u : cusUpdates cus }
     setChain  c cus = cus { cusCurrentChain = c }
 
-    k = fromIntegral $ maxRollbacks securityParam
+    k = fromIntegral $ unNonZero $ maxRollbacks securityParam
 
     genChainUpdate = do
       ChainUpdateState { cusCurrentChain = chain } <- get

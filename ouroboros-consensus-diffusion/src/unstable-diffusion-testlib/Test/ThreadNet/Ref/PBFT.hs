@@ -24,6 +24,7 @@ module Test.ThreadNet.Ref.PBFT (
   , viable
   ) where
 
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Control.Applicative ((<|>))
 import           Control.Arrow ((&&&))
 import           Control.Monad (guard)
@@ -50,11 +51,11 @@ import           Test.Util.Slots (NumSlots (..))
 
 oneK :: Num a => PBftParams -> a
 oneK PBftParams{pbftSecurityParam} =
-    fromIntegral (maxRollbacks pbftSecurityParam)
+    fromIntegral $ unNonZero $ maxRollbacks pbftSecurityParam
 
 twoK :: Num a => PBftParams -> a
 twoK PBftParams{pbftSecurityParam} =
-    2 * fromIntegral (maxRollbacks pbftSecurityParam)
+    2 * fromIntegral (unNonZero $ maxRollbacks pbftSecurityParam)
 
 oneN :: Num a => PBftParams -> a
 oneN PBftParams{pbftNumNodes = NumCoreNodes n} = fromIntegral n
@@ -572,7 +573,7 @@ definitelyEnoughBlocks params = \case
       in go 0 $ zip exits enters
   where
     PBftParams{pbftSecurityParam} = params
-    k = maxRollbacks pbftSecurityParam
+    k = unNonZero $ maxRollbacks pbftSecurityParam
 
     tick :: Outcome -> Word64
     tick Nominal = 0

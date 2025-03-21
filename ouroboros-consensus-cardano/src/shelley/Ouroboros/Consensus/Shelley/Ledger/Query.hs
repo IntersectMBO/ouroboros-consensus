@@ -14,6 +14,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -39,19 +40,16 @@ import           Cardano.Ledger.Coin (Coin)
 import           Cardano.Ledger.Compactible (Compactible (fromCompact))
 import qualified Cardano.Ledger.Conway.Governance as CG
 import           Cardano.Ledger.Credential (StakeCredential)
-import           Cardano.Ledger.Crypto (Crypto)
-import qualified Cardano.Ledger.EpochBoundary as SL
 import           Cardano.Ledger.Keys (KeyHash, KeyRole (..))
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as LC
 import           Cardano.Ledger.Shelley.LedgerState (AccountState)
-import qualified Cardano.Ledger.Shelley.LedgerState as SL (RewardAccounts,
-                     newEpochStateGovStateL)
-import qualified Cardano.Ledger.Shelley.PParams as SL (emptyPPPUpdates)
 import qualified Cardano.Ledger.Shelley.RewardProvenance as SL
                      (RewardProvenance)
+import qualified Cardano.Ledger.State as SL
 import           Cardano.Ledger.UMap (UMap (..), rdReward, umElemDRep,
                      umElemRDPair, umElemSPool)
+import           Cardano.Protocol.Crypto (Crypto)
 import           Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
 import           Codec.CBOR.Encoding (Encoding)
@@ -62,7 +60,6 @@ import           Data.Bifunctor (second)
 import           Data.Kind (Type)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromMaybe)
 import           Data.Sequence (Seq (..))
 import           Data.Set (Set)
 import qualified Data.Set as Set
@@ -79,7 +76,6 @@ import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
-import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import qualified Ouroboros.Consensus.Shelley.Eras as SE
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Config
@@ -99,21 +95,19 @@ import           Ouroboros.Network.PeerSelection.LedgerPeers.Utils
   QueryLedger
 -------------------------------------------------------------------------------}
 
-newtype NonMyopicMemberRewards c = NonMyopicMemberRewards {
+newtype NonMyopicMemberRewards = NonMyopicMemberRewards {
       unNonMyopicMemberRewards ::
-        Map (Either SL.Coin (SL.Credential 'SL.Staking c))
-            (Map (SL.KeyHash 'SL.StakePool c) SL.Coin)
+        Map (Either SL.Coin (SL.Credential 'SL.Staking))
+            (Map (SL.KeyHash 'SL.StakePool) SL.Coin)
     }
   deriving stock   (Show)
   deriving newtype (Eq, ToCBOR, FromCBOR)
 
-type Delegations c =
-  Map (SL.Credential 'SL.Staking c)
-      (SL.KeyHash 'SL.StakePool c)
+type Delegations = Map (SL.Credential 'SL.Staking) (SL.KeyHash 'SL.StakePool)
 
-type VoteDelegatees c =
-  Map (SL.Credential 'SL.Staking c)
-      (SL.DRep c)
+type VoteDelegatees = Map (SL.Credential 'SL.Staking) SL.DRep
+
+{-# DEPRECATED GetProposedPParamsUpdates "Deprecated in ShelleyNodeToClientVersion12" #-}
 
 data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   GetLedgerTip :: BlockQuery (ShelleyBlock proto era) (Point (ShelleyBlock proto era))
@@ -121,8 +115,8 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   -- | Calculate the Non-Myopic Pool Member Rewards for a set of
   -- credentials. See 'SL.getNonMyopicMemberRewards'
   GetNonMyopicMemberRewards
-    :: Set (Either SL.Coin (SL.Credential 'SL.Staking (EraCrypto era)))
-    -> BlockQuery (ShelleyBlock proto era) (NonMyopicMemberRewards (EraCrypto era))
+    :: Set (Either SL.Coin (SL.Credential 'SL.Staking))
+    -> BlockQuery (ShelleyBlock proto era) NonMyopicMemberRewards
   GetCurrentPParams
     :: BlockQuery (ShelleyBlock proto era) (LC.PParams era)
   GetProposedPParamsUpdates
@@ -134,7 +128,7 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   -- an endpoint that provides all the information that the wallet wants about
   -- pools, in an extensible fashion.
   GetStakeDistribution
-    :: BlockQuery (ShelleyBlock proto era) (PoolDistr (EraCrypto era))
+    :: BlockQuery (ShelleyBlock proto era) (PoolDistr (ProtoCrypto proto))
 
   -- | Get a subset of the UTxO, filtered by address. Although this will
   -- typically return a lot less data than 'GetUTxOWhole', it requires a linear
@@ -143,7 +137,7 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   -- Only 'GetUTxOByTxIn' is efficient in time and space.
   --
   GetUTxOByAddress
-    :: Set (SL.Addr (EraCrypto era))
+    :: Set SL.Addr
     -> BlockQuery (ShelleyBlock proto era) (SL.UTxO era)
 
   -- | Get the /entire/ UTxO. This is only suitable for debug/testing purposes
@@ -175,12 +169,12 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
     -> BlockQuery (ShelleyBlock proto era) (Serialised result)
 
   GetFilteredDelegationsAndRewardAccounts
-    :: Set (SL.Credential 'SL.Staking (EraCrypto era))
+    :: Set (SL.Credential 'SL.Staking)
     -> BlockQuery (ShelleyBlock proto era)
-             (Delegations (EraCrypto era), SL.RewardAccounts (EraCrypto era))
+             (Delegations, Map (SL.Credential 'Staking) Coin)
 
   GetGenesisConfig
-    :: BlockQuery (ShelleyBlock proto era) (CompactGenesis (EraCrypto era))
+    :: BlockQuery (ShelleyBlock proto era) CompactGenesis
 
   -- | Only for debugging purposes, we make no effort to ensure binary
   -- compatibility (cf the comment on 'GetCBOR'). Moreover, it is huge.
@@ -193,50 +187,49 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
     :: BlockQuery (ShelleyBlock proto era) (ChainDepState proto)
 
   GetRewardProvenance
-    :: BlockQuery (ShelleyBlock proto era) (SL.RewardProvenance (EraCrypto era))
+    :: BlockQuery (ShelleyBlock proto era) SL.RewardProvenance
 
   -- | Get a subset of the UTxO, filtered by transaction input. This is
   -- efficient and costs only O(m * log n) for m inputs and a UTxO of size n.
   --
   GetUTxOByTxIn
-    :: Set (SL.TxIn (EraCrypto era))
+    :: Set SL.TxIn
     -> BlockQuery (ShelleyBlock proto era) (SL.UTxO era)
 
   GetStakePools
     :: BlockQuery (ShelleyBlock proto era)
-                  (Set (SL.KeyHash 'SL.StakePool (EraCrypto era)))
+                  (Set (SL.KeyHash 'SL.StakePool))
 
   GetStakePoolParams
-    :: Set (SL.KeyHash 'SL.StakePool (EraCrypto era))
+    :: Set (SL.KeyHash 'SL.StakePool)
     -> BlockQuery (ShelleyBlock proto era)
-                  (Map (SL.KeyHash 'SL.StakePool (EraCrypto era))
-                       (SL.PoolParams (EraCrypto era)))
+                  (Map (SL.KeyHash 'SL.StakePool) SL.PoolParams)
 
   GetRewardInfoPools
     :: BlockQuery (ShelleyBlock proto era)
                   (SL.RewardParams,
-                    Map (SL.KeyHash 'SL.StakePool (EraCrypto era))
+                    Map (SL.KeyHash 'SL.StakePool)
                         (SL.RewardInfoPool))
 
   GetPoolState
-    :: Maybe (Set (SL.KeyHash 'SL.StakePool (EraCrypto era)))
+    :: Maybe (Set (SL.KeyHash 'SL.StakePool))
     -> BlockQuery (ShelleyBlock proto era)
                   (SL.PState era)
 
   GetStakeSnapshots
-    :: Maybe (Set (SL.KeyHash 'SL.StakePool (EraCrypto era)))
+    :: Maybe (Set (SL.KeyHash 'SL.StakePool))
     -> BlockQuery (ShelleyBlock proto era)
-                  (StakeSnapshots (EraCrypto era))
+                  StakeSnapshots
 
   GetPoolDistr
-    :: Maybe (Set (SL.KeyHash 'SL.StakePool (EraCrypto era)))
+    :: Maybe (Set (SL.KeyHash 'SL.StakePool))
     -> BlockQuery (ShelleyBlock proto era)
-                  (PoolDistr (EraCrypto era))
+                  (PoolDistr (ProtoCrypto proto))
 
   GetStakeDelegDeposits
-    :: Set (StakeCredential (EraCrypto era))
+    :: Set StakeCredential
     -> BlockQuery (ShelleyBlock proto era)
-                  (Map (StakeCredential (EraCrypto era)) Coin)
+                  (Map StakeCredential Coin)
 
   -- | Not supported in eras before Conway
   GetConstitution
@@ -254,11 +247,11 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   -- Not supported in eras before Conway.
   GetDRepState
     :: CG.ConwayEraGov era
-    => Set (SL.Credential 'DRepRole (EraCrypto era))
+    => Set (SL.Credential 'DRepRole)
     -> BlockQuery (ShelleyBlock proto era)
                   (Map
-                       (SL.Credential 'DRepRole (EraCrypto era))
-                       (SL.DRepState (EraCrypto era))
+                       (SL.Credential 'DRepRole)
+                       SL.DRepState
                   )
 
   -- | Query the 'DRep' stake distribution. Note that this can be an expensive
@@ -271,24 +264,24 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   -- Not supported in eras before Conway.
   GetDRepStakeDistr
     :: CG.ConwayEraGov era
-    => Set (SL.DRep (EraCrypto era))
-    -> BlockQuery (ShelleyBlock proto era) (Map (SL.DRep (EraCrypto era)) Coin)
+    => Set SL.DRep
+    -> BlockQuery (ShelleyBlock proto era) (Map SL.DRep Coin)
 
   -- | Query committee members
   --
   -- Not supported in eras before Conway.
   GetCommitteeMembersState
     :: CG.ConwayEraGov era
-    => Set (SL.Credential 'ColdCommitteeRole (EraCrypto era) )
-    -> Set (SL.Credential 'HotCommitteeRole (EraCrypto era))
+    => Set (SL.Credential 'ColdCommitteeRole)
+    -> Set (SL.Credential 'HotCommitteeRole)
     -> Set SL.MemberStatus
-    -> BlockQuery (ShelleyBlock proto era) (SL.CommitteeMembersState (EraCrypto era))
+    -> BlockQuery (ShelleyBlock proto era) SL.CommitteeMembersState
 
   -- | Not supported in eras before Conway.
   GetFilteredVoteDelegatees
     :: CG.ConwayEraGov era
-    => Set (SL.Credential 'SL.Staking (EraCrypto era))
-    -> BlockQuery (ShelleyBlock proto era) (VoteDelegatees (EraCrypto era))
+    => Set (SL.Credential 'SL.Staking)
+    -> BlockQuery (ShelleyBlock proto era) VoteDelegatees
 
   GetAccountState
     :: BlockQuery (ShelleyBlock proto era) AccountState
@@ -301,12 +294,12 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   -- Not supported in eras before Conway.
   GetSPOStakeDistr
     :: CG.ConwayEraGov era
-    => Set (KeyHash 'StakePool (EraCrypto era))
-    -> BlockQuery (ShelleyBlock proto era) (Map (KeyHash 'StakePool (EraCrypto era)) Coin)
+    => Set (KeyHash 'StakePool)
+    -> BlockQuery (ShelleyBlock proto era) (Map (KeyHash 'StakePool) Coin)
 
   GetProposals
     :: CG.ConwayEraGov era
-    => Set (CG.GovActionId (EraCrypto era))
+    => Set CG.GovActionId
     -> BlockQuery (ShelleyBlock proto era) (Seq (CG.GovActionState era))
 
   GetRatifyState
@@ -322,6 +315,11 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   -- or stale ledger state - especially useful for Genesis mode
   GetBigLedgerPeerSnapshot
     :: BlockQuery (ShelleyBlock proto era) LedgerPeerSnapshot
+
+  QueryStakePoolDefaultVote
+    :: CG.ConwayEraGov era
+    => KeyHash 'StakePool
+    -> BlockQuery (ShelleyBlock proto era) CG.DefaultVote
 
   -- WARNING: please add new queries to the end of the list and stick to this
   -- order in all other pattern matches on queries. This helps in particular
@@ -340,8 +338,13 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
 instance (Typeable era, Typeable proto)
   => ShowProxy (BlockQuery (ShelleyBlock proto era)) where
 
-instance (ShelleyCompatible proto era, ProtoCrypto proto ~ crypto)
-      => BlockSupportsLedgerQuery (ShelleyBlock proto era) where
+instance
+  ( ShelleyCompatible proto era
+  , ProtoCrypto proto ~ crypto
+  , Crypto crypto
+  ) =>
+  BlockSupportsLedgerQuery (ShelleyBlock proto era)
+  where
   answerBlockQuery cfg query ext =
       case query of
         GetLedgerTip ->
@@ -354,7 +357,7 @@ instance (ShelleyCompatible proto era, ProtoCrypto proto ~ crypto)
         GetCurrentPParams ->
           getPParams st
         GetProposedPParamsUpdates ->
-          getProposedPPUpdates st
+          SL.ProposedPPUpdates Map.empty
         GetStakeDistribution ->
           fromLedgerPoolDistr $ SL.poolsByTotalStakeFraction globals st
         GetUTxOByAddress addrs ->
@@ -389,7 +392,7 @@ instance (ShelleyCompatible proto era, ProtoCrypto proto ~ crypto)
         GetRewardInfoPools ->
           SL.getRewardInfoPools globals st
         GetPoolState mPoolIds ->
-          let certPState = SL.certPState . SL.lsCertState . SL.esLState . SL.nesEs $ st in
+          let certPState = view SL.certPStateL . SL.lsCertState . SL.esLState . SL.nesEs $ st in
           case mPoolIds of
             Just poolIds ->
               SL.PState
@@ -408,16 +411,16 @@ instance (ShelleyCompatible proto era, ProtoCrypto proto ~ crypto)
                 , SL.ssStakeGo
                 } = SL.esSnapshots . SL.nesEs $ st
 
-              totalMarkByPoolId :: Map (KeyHash 'StakePool crypto) Coin
+              totalMarkByPoolId :: Map (KeyHash 'StakePool) Coin
               totalMarkByPoolId = SL.sumStakePerPool (SL.ssDelegations ssStakeMark) (SL.ssStake ssStakeMark)
 
-              totalSetByPoolId :: Map (KeyHash 'StakePool crypto) Coin
+              totalSetByPoolId :: Map (KeyHash 'StakePool) Coin
               totalSetByPoolId = SL.sumStakePerPool (SL.ssDelegations ssStakeSet) (SL.ssStake ssStakeSet)
 
-              totalGoByPoolId :: Map (KeyHash 'StakePool crypto) Coin
+              totalGoByPoolId :: Map (KeyHash 'StakePool) Coin
               totalGoByPoolId = SL.sumStakePerPool (SL.ssDelegations ssStakeGo) (SL.ssStake ssStakeGo)
 
-              getPoolStakes :: Set (KeyHash 'StakePool crypto) -> Map (KeyHash 'StakePool crypto) (StakeSnapshot crypto)
+              getPoolStakes :: Set (KeyHash 'StakePool) -> Map (KeyHash 'StakePool) StakeSnapshot
               getPoolStakes poolIds = Map.fromSet mkStakeSnapshot poolIds
                 where mkStakeSnapshot poolId = StakeSnapshot
                         { ssMarkPool = Map.findWithDefault mempty poolId totalMarkByPoolId
@@ -425,7 +428,7 @@ instance (ShelleyCompatible proto era, ProtoCrypto proto ~ crypto)
                         , ssGoPool   = Map.findWithDefault mempty poolId totalGoByPoolId
                         }
 
-              getAllStake :: SL.SnapShot crypto -> SL.Coin
+              getAllStake :: SL.SnapShot -> SL.Coin
               getAllStake (SL.SnapShot stake _ _) = VMap.foldMap fromCompact (SL.unStake stake)
           in
 
@@ -457,7 +460,7 @@ instance (ShelleyCompatible proto era, ProtoCrypto proto ~ crypto)
             SL.calculatePoolDistr' (maybe (const True) (flip Set.member) mPoolIds) stakeSet
         GetStakeDelegDeposits stakeCreds ->
           let lookupDeposit =
-                lookupDepositDState (SL.certDState $ SL.lsCertState $ SL.esLState $ SL.nesEs st)
+                lookupDepositDState (view SL.certDStateL $ SL.lsCertState $ SL.esLState $ SL.nesEs st)
               lookupInsert acc cred =
                 case lookupDeposit cred of
                   Nothing      -> acc
@@ -490,6 +493,8 @@ instance (ShelleyCompatible proto era, ProtoCrypto proto ~ crypto)
               ledgerPeers = second (fmap stakePoolRelayAccessPoint) <$> getPeers lst
               bigLedgerPeers = accumulateBigLedgerStake ledgerPeers
           in LedgerPeerSnapshot (slot, bigLedgerPeers)
+        QueryStakePoolDefaultVote stakePool ->
+          SL.queryStakePoolDefaultVote st stakePool
     where
       lcfg    = configLedger $ getExtLedgerCfg cfg
       globals = shelleyLedgerGlobals lcfg
@@ -653,6 +658,8 @@ instance SameDepIndex (BlockQuery (ShelleyBlock proto era)) where
   sameDepIndex GetFuturePParams{} _ = Nothing
   sameDepIndex GetBigLedgerPeerSnapshot GetBigLedgerPeerSnapshot = Just Refl
   sameDepIndex GetBigLedgerPeerSnapshot _ = Nothing
+  sameDepIndex QueryStakePoolDefaultVote{} QueryStakePoolDefaultVote{} = Just Refl
+  sameDepIndex QueryStakePoolDefaultVote{} _ = Nothing
 
 deriving instance Eq   (BlockQuery (ShelleyBlock proto era) result)
 deriving instance Show (BlockQuery (ShelleyBlock proto era) result)
@@ -694,6 +701,7 @@ instance ShelleyCompatible proto era => ShowQuery (BlockQuery (ShelleyBlock prot
       GetRatifyState {}                          -> show
       GetFuturePParams {}                        -> show
       GetBigLedgerPeerSnapshot                   -> show
+      QueryStakePoolDefaultVote {}               -> show
 
 -- | Is the given query supported by the given 'ShelleyNodeToClientVersion'?
 querySupportedVersion :: BlockQuery (ShelleyBlock proto era) result -> ShelleyNodeToClientVersion -> Bool
@@ -702,7 +710,7 @@ querySupportedVersion = \case
     GetEpochNo                                 -> const True
     GetNonMyopicMemberRewards {}               -> const True
     GetCurrentPParams                          -> const True
-    GetProposedPParamsUpdates                  -> const True
+    GetProposedPParamsUpdates                  -> (< v12)
     GetStakeDistribution                       -> const True
     GetUTxOByAddress {}                        -> const True
     GetUTxOWhole                               -> const True
@@ -733,6 +741,7 @@ querySupportedVersion = \case
     GetRatifyState {}                          -> (>= v9)
     GetFuturePParams {}                        -> (>= v10)
     GetBigLedgerPeerSnapshot                   -> (>= v11)
+    QueryStakePoolDefaultVote {}               -> (>= v12)
     -- WARNING: when adding a new query, a new @ShelleyNodeToClientVersionX@
     -- must be added. See #2830 for a template on how to do this.
   where
@@ -740,31 +749,24 @@ querySupportedVersion = \case
     v9  = ShelleyNodeToClientVersion9
     v10 = ShelleyNodeToClientVersion10
     v11 = ShelleyNodeToClientVersion11
+    v12 = ShelleyNodeToClientVersion12
 
 {-------------------------------------------------------------------------------
   Auxiliary
 -------------------------------------------------------------------------------}
 
--- | /Note/ - This query will be deprecated starting with Conway era
-getProposedPPUpdates ::
-     ShelleyBasedEra era
-  => SL.NewEpochState era -> SL.ProposedPPUpdates era
-getProposedPPUpdates =
-      fromMaybe SL.emptyPPPUpdates
-    . LC.getProposedPPUpdates
-    . view SL.newEpochStateGovStateL
-
 -- Get the current 'EpochState.' This is mainly for debugging.
 getEpochState :: SL.NewEpochState era -> SL.EpochState era
 getEpochState = SL.nesEs
 
-getDState :: SL.NewEpochState era -> SL.DState era
-getDState = SL.certDState . SL.lsCertState . SL.esLState . SL.nesEs
+getDState :: SL.EraCertState era => SL.NewEpochState era -> SL.DState era
+getDState = view SL.certDStateL . SL.lsCertState . SL.esLState . SL.nesEs
 
 getFilteredDelegationsAndRewardAccounts ::
-     SL.NewEpochState era
-  -> Set (SL.Credential 'SL.Staking (EraCrypto era))
-  -> (Delegations (EraCrypto era), SL.RewardAccounts (EraCrypto era))
+     SL.EraCertState era
+  => SL.NewEpochState era
+  -> Set (SL.Credential 'SL.Staking)
+  -> (Delegations, Map (SL.Credential 'Staking) Coin)
 getFilteredDelegationsAndRewardAccounts ss creds =
     (filteredDelegations, filteredRwdAcnts)
   where
@@ -776,9 +778,10 @@ getFilteredDelegationsAndRewardAccounts ss creds =
       Map.mapMaybe (\e -> fromCompact . rdReward <$> umElemRDPair e) umElemsRestricted
 
 getFilteredVoteDelegatees ::
-     SL.NewEpochState era
-  -> Set (SL.Credential 'SL.Staking (EraCrypto era))
-  -> VoteDelegatees (EraCrypto era)
+     SL.EraCertState era
+  => SL.NewEpochState era
+  -> Set (SL.Credential 'SL.Staking)
+  -> VoteDelegatees
 getFilteredVoteDelegatees ss creds = Map.mapMaybe umElemDRep umElemsRestricted
   where
     UMap umElems _ = SL.dsUnified $ getDState ss
@@ -862,6 +865,8 @@ encodeShelleyQuery query = case query of
       CBOR.encodeListLen 1 <> CBOR.encodeWord8 33
     GetBigLedgerPeerSnapshot ->
       CBOR.encodeListLen 1 <> CBOR.encodeWord8 34
+    QueryStakePoolDefaultVote stakePoolKey ->
+      CBOR.encodeListLen 2 <> CBOR.encodeWord8 35 <> LC.toEraCBOR @era stakePoolKey
 
 decodeShelleyQuery ::
      forall era proto. ShelleyBasedEra era
@@ -924,6 +929,7 @@ decodeShelleyQuery = do
       (1, 32) -> requireCG $ return $ SomeSecond GetRatifyState
       (1, 33) -> requireCG $ return $ SomeSecond GetFuturePParams
       (1, 34) ->             return $ SomeSecond GetBigLedgerPeerSnapshot
+      (2, 35) -> requireCG $ SomeSecond . QueryStakePoolDefaultVote <$> LC.fromEraCBOR @era
       _       -> failmsg "invalid"
 
 encodeShelleyResult ::
@@ -966,6 +972,7 @@ encodeShelleyResult _v query = case query of
     GetRatifyState {}                          -> LC.toEraCBOR @era
     GetFuturePParams {}                        -> LC.toEraCBOR @era
     GetBigLedgerPeerSnapshot                   -> toCBOR
+    QueryStakePoolDefaultVote {}               -> toCBOR
 
 decodeShelleyResult ::
      forall proto era result. ShelleyCompatible proto era
@@ -1008,6 +1015,7 @@ decodeShelleyResult _v query = case query of
     GetRatifyState {}                          -> LC.fromEraCBOR @era
     GetFuturePParams {}                        -> LC.fromEraCBOR @era
     GetBigLedgerPeerSnapshot                   -> fromCBOR
+    QueryStakePoolDefaultVote {}               -> fromCBOR
 
 -- | The stake snapshot returns information about the mark, set, go ledger snapshots for a pool,
 -- plus the total active stake for each snapshot that can be used in a 'sigma' calculation.
@@ -1015,17 +1023,16 @@ decodeShelleyResult _v query = case query of
 -- Each snapshot is taken at the end of a different era. The go snapshot is the current one and
 -- was taken two epochs earlier, set was taken one epoch ago, and mark was taken immediately
 -- before the start of the current epoch.
-data StakeSnapshot crypto = StakeSnapshot
+data StakeSnapshot = StakeSnapshot
   { ssMarkPool :: !SL.Coin
   , ssSetPool  :: !SL.Coin
   , ssGoPool   :: !SL.Coin
   } deriving (Eq, Show, Generic)
 
-instance NFData (StakeSnapshot crypto)
+instance NFData StakeSnapshot
 
 instance
-  Crypto crypto =>
-  ToCBOR (StakeSnapshot crypto)
+  ToCBOR StakeSnapshot
   where
   toCBOR
     StakeSnapshot
@@ -1038,8 +1045,7 @@ instance
       <> toCBOR ssGoPool
 
 instance
-  Crypto crypto =>
-  FromCBOR (StakeSnapshot crypto)
+  FromCBOR StakeSnapshot
   where
   fromCBOR = do
     enforceSize "StakeSnapshot" 3
@@ -1048,18 +1054,17 @@ instance
       <*> fromCBOR
       <*> fromCBOR
 
-data StakeSnapshots crypto = StakeSnapshots
-  { ssStakeSnapshots  :: !(Map (SL.KeyHash 'SL.StakePool crypto) (StakeSnapshot crypto))
-  , ssMarkTotal       :: !SL.Coin
-  , ssSetTotal        :: !SL.Coin
-  , ssGoTotal         :: !SL.Coin
+data StakeSnapshots = StakeSnapshots
+  { ssStakeSnapshots :: !(Map (SL.KeyHash 'SL.StakePool) StakeSnapshot)
+  , ssMarkTotal      :: !SL.Coin
+  , ssSetTotal       :: !SL.Coin
+  , ssGoTotal        :: !SL.Coin
   } deriving (Eq, Show, Generic)
 
-instance NFData (StakeSnapshots crypto)
+instance NFData StakeSnapshots
 
 instance
-  Crypto crypto =>
-  ToCBOR (StakeSnapshots crypto)
+  ToCBOR StakeSnapshots
   where
   toCBOR
     StakeSnapshots
@@ -1074,8 +1079,7 @@ instance
       <> toCBOR ssGoTotal
 
 instance
-  Crypto crypto =>
-  FromCBOR (StakeSnapshots crypto)
+  FromCBOR StakeSnapshots
   where
   fromCBOR = do
     enforceSize "StakeSnapshots" 4

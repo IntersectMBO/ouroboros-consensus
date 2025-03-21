@@ -288,14 +288,14 @@ uninvert =
     . Map.toList
 
 encodePBftState ::
-     (PBftCrypto c, Serialise (PBftVerKeyHash c))
+     PBftCrypto c
   => PBftState c -> Encoding
 encodePBftState st =
     encodeVersion serializationFormatVersion1 $
       encode (invert st)
 
 decodePBftState ::
-     forall c. (PBftCrypto c, Serialise (PBftVerKeyHash c))
+     forall c. PBftCrypto c
   => forall s. Decoder s (PBftState c)
 decodePBftState = decodeVersion
     [(serializationFormatVersion1, Decode decodePBftState1)]

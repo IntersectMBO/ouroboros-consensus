@@ -127,7 +127,7 @@ data LgrDbArgs f m blk = LgrDbArgs {
       lgrDiskPolicyArgs :: LedgerDB.DiskPolicyArgs
     , lgrGenesis        :: HKD f (m (ExtLedgerState blk))
     , lgrHasFS          :: HKD f (SomeHasFS m)
-    , lgrConfig         :: HKD f (LedgerDB.LedgerDbCfg (ExtLedgerState blk))
+    , lgrConfig         :: LedgerDB.LedgerDbCfgF f (ExtLedgerState blk)
     , lgrTracer         :: Tracer m (LedgerDB.TraceSnapshotEvent blk)
     }
 
@@ -137,7 +137,7 @@ defaultArgs = LgrDbArgs {
       lgrDiskPolicyArgs = LedgerDB.defaultDiskPolicyArgs
     , lgrGenesis        = noDefault
     , lgrHasFS          = noDefault
-    , lgrConfig         = noDefault
+    , lgrConfig         = LedgerDB.LedgerDbCfg noDefault noDefault OmitLedgerEvents
     , lgrTracer         = nullTracer
     }
 
@@ -190,7 +190,7 @@ openDB args@LgrDbArgs { lgrHasFS = lgrHasFS@(SomeHasFS hasFS), .. } replayTracer
     -- >k blocks long. Thus 'Lbn' is the oldest point we can roll back to.
     -- Therefore, we need to make the newest state (current) of the ledger DB
     -- the anchor.
-    let dbPrunedToImmDBTip = LedgerDB.ledgerDbPrune (SecurityParam 0) db
+    let dbPrunedToImmDBTip = LedgerDB.ledgerDbPrune LedgerDB.LedgerDbPruneAll db
     (varDB, varPrevApplied) <-
       (,) <$> newTVarIO dbPrunedToImmDBTip <*> newTVarIO Set.empty
     return (

@@ -35,10 +35,10 @@ import           Ouroboros.Consensus.Shelley.ShelleyHFC
 
 type ProtocolByron   = HardForkProtocol '[ ByronBlock ]
 type ProtocolCardano = HardForkProtocol '[ ByronBlock
-                                         , ShelleyBlock (TPraos StandardCrypto) StandardShelley
-                                         , ShelleyBlock (TPraos StandardCrypto) StandardAllegra
-                                         , ShelleyBlock (TPraos StandardCrypto) StandardMary
-                                         , ShelleyBlock (TPraos StandardCrypto) StandardAlonzo
-                                         , ShelleyBlock (Praos StandardCrypto)  StandardBabbage
-                                         , ShelleyBlock (Praos StandardCrypto)  StandardConway
+                                         , ShelleyBlock (TPraos StandardCrypto) ShelleyEra
+                                         , ShelleyBlock (TPraos StandardCrypto) AllegraEra
+                                         , ShelleyBlock (TPraos StandardCrypto) MaryEra
+                                         , ShelleyBlock (TPraos StandardCrypto) AlonzoEra
+                                         , ShelleyBlock (Praos StandardCrypto)  BabbageEra
+                                         , ShelleyBlock (Praos StandardCrypto)  ConwayEra
                                          ]

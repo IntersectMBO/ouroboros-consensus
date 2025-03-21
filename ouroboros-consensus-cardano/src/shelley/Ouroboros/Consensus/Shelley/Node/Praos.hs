@@ -8,7 +8,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 
 {-# OPTIONS_GHC -Wno-orphans     #-}
 
@@ -30,7 +29,6 @@ import           Ouroboros.Consensus.Protocol.Praos (Praos, PraosParams (..),
                      praosCheckCanForge)
 import           Ouroboros.Consensus.Protocol.Praos.Common
                      (PraosCanBeLeader (praosCanBeLeaderOpCert))
-import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock,
                      ShelleyCompatible, forgeShelleyBlock)
 import           Ouroboros.Consensus.Shelley.Node.Common (ShelleyEraWithCrypto,
@@ -46,12 +44,11 @@ import           Ouroboros.Consensus.Util.IOLike (IOLike)
 praosBlockForging ::
      forall m era c.
      ( ShelleyCompatible (Praos c) era
-     , c ~ EraCrypto era
      , Mempool.TxLimits (ShelleyBlock (Praos c) era)
      , IOLike m
      )
   => PraosParams
-  -> ShelleyLeaderCredentials (EraCrypto era)
+  -> ShelleyLeaderCredentials c
   -> m (BlockForging m (ShelleyBlock (Praos c) era))
 praosBlockForging praosParams credentials = do
     hotKey <- HotKey.mkHotKey @m @c initSignKey startPeriod praosMaxKESEvo

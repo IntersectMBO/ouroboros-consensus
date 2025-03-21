@@ -31,18 +31,19 @@ import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Crypto.KES as KES
 import           Cardano.Crypto.Util
                      (SignableRepresentation (getSignableRepresentation))
+import qualified Cardano.Crypto.VRF as VRF
 import           Cardano.Ledger.BaseTypes (ProtVer (pvMajor))
-import           Cardano.Ledger.Binary (Annotator (..), CBORGroup (unCBORGroup),
-                     DecCBOR (decCBOR), EncCBOR (..), ToCBOR (..),
-                     encodedSigKESSizeExpr, serialize', withSlice)
+import           Cardano.Ledger.Binary (Annotator (..), DecCBOR (decCBOR),
+                     EncCBOR (..), ToCBOR (..), encodedSigKESSizeExpr,
+                     serialize', unCBORGroup, withSlice)
 import           Cardano.Ledger.Binary.Coders
+import           Cardano.Ledger.Binary.Crypto (decodeSignedKES, decodeVerKeyVRF,
+                     encodeSignedKES, encodeVerKeyVRF)
 import qualified Cardano.Ledger.Binary.Plain as Plain
-import           Cardano.Ledger.Crypto (Crypto (HASH))
 import           Cardano.Ledger.Hashes (EraIndependentBlockBody,
-                     EraIndependentBlockHeader)
-import           Cardano.Ledger.Keys (CertifiedVRF, Hash, KeyRole (BlockIssuer),
-                     SignedKES, VKey, VerKeyVRF, decodeSignedKES,
-                     decodeVerKeyVRF, encodeSignedKES, encodeVerKeyVRF)
+                     EraIndependentBlockHeader, HASH)
+import           Cardano.Ledger.Keys (KeyRole (BlockIssuer), VKey)
+import           Cardano.Protocol.Crypto (Crypto, KES, VRF)
 import           Cardano.Protocol.TPraos.BHeader (PrevHash)
 import           Cardano.Protocol.TPraos.OCert (OCert)
 import           Cardano.Slotting.Block (BlockNo)
@@ -62,17 +63,17 @@ data HeaderBody crypto = HeaderBody
     -- | block slot
     hbSlotNo   :: !SlotNo,
     -- | Hash of the previous block header
-    hbPrev     :: !(PrevHash crypto),
+    hbPrev     :: !PrevHash,
     -- | verification key of block issuer
-    hbVk       :: !(VKey 'BlockIssuer crypto),
+    hbVk       :: !(VKey 'BlockIssuer),
     -- | VRF verification key for block issuer
-    hbVrfVk    :: !(VerKeyVRF crypto),
+    hbVrfVk    :: !(VRF.VerKeyVRF (VRF crypto)),
     -- | Certified VRF value
-    hbVrfRes   :: !(CertifiedVRF crypto InputVRF),
+    hbVrfRes   :: !(VRF.CertifiedVRF (VRF crypto) InputVRF),
     -- | Size of the block body
     hbBodySize :: !Word32,
     -- | Hash of block body
-    hbBodyHash :: !(Hash crypto EraIndependentBlockBody),
+    hbBodyHash :: !(Hash.Hash HASH EraIndependentBlockBody),
     -- | operational certificate
     hbOCert    :: !(OCert crypto),
     -- | protocol version
@@ -96,7 +97,7 @@ instance
 
 data HeaderRaw crypto = HeaderRaw
   { headerRawBody :: !(HeaderBody crypto),
-    headerRawSig  :: !(SignedKES crypto (HeaderBody crypto))
+    headerRawSig  :: !(KES.SignedKES (KES crypto) (HeaderBody crypto))
   }
   deriving (Show, Generic)
 
@@ -124,7 +125,7 @@ data Header crypto = HeaderConstr
 pattern Header ::
   Crypto crypto =>
   HeaderBody crypto ->
-  SignedKES crypto (HeaderBody crypto) ->
+  KES.SignedKES (KES crypto) (HeaderBody crypto) ->
   Header crypto
 pattern Header {headerBody, headerSig} <-
   HeaderConstr {
@@ -155,7 +156,7 @@ headerSize (HeaderConstr _ bytes) = BS.length bytes
 headerHash ::
   Crypto crypto =>
   Header crypto ->
-  Hash.Hash (HASH crypto) EraIndependentBlockHeader
+  Hash.Hash HASH EraIndependentBlockHeader
 headerHash = Hash.castHash . Hash.hashWithSerialiser toCBOR
 
 --------------------------------------------------------------------------------
@@ -201,7 +202,7 @@ instance Crypto crypto => DecCBOR (HeaderBody crypto) where
         <! From
         <! From
         <! From
-        <! (unCBORGroup <$> From)
+        <! mapCoder unCBORGroup From
         <! From
 
 encodeHeaderRaw ::

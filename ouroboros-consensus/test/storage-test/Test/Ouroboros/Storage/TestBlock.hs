@@ -60,6 +60,7 @@ module Test.Ouroboros.Storage.TestBlock (
   ) where
 
 import           Cardano.Crypto.DSIGN
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import qualified Codec.CBOR.Read as CBOR
 import qualified Codec.CBOR.Write as CBOR
 import           Codec.Serialise (Serialise (decode, encode), serialise)
@@ -555,10 +556,10 @@ instance IsLedger (LedgerState TestBlock) where
   type AuxLedgerEvent (LedgerState TestBlock) =
     VoidLedgerEvent (LedgerState TestBlock)
 
-  applyChainTickLedgerResult _ _ = pureLedgerResult . TickedTestLedger
+  applyChainTickLedgerResult _ _ _ = pureLedgerResult . TickedTestLedger
 
 instance ApplyBlock (LedgerState TestBlock) TestBlock where
-  applyBlockLedgerResult _ tb@TestBlock{..} (TickedTestLedger TestLedger{..})
+  applyBlockLedgerResultWithValidation _ _ _ tb@TestBlock{..} (TickedTestLedger TestLedger{..})
     | blockPrevHash tb /= lastAppliedHash
     = throwError $ InvalidHash lastAppliedHash (blockPrevHash tb)
     | not $ tbIsValid testBody
@@ -566,8 +567,9 @@ instance ApplyBlock (LedgerState TestBlock) TestBlock where
     | otherwise
     = return     $ pureLedgerResult $ TestLedger (Chain.blockPoint tb) (BlockHash (blockHash tb))
 
-  reapplyBlockLedgerResult _ tb _ =
-                   pureLedgerResult $ TestLedger (Chain.blockPoint tb) (BlockHash (blockHash tb))
+  applyBlockLedgerResult = defaultApplyBlockLedgerResult
+  reapplyBlockLedgerResult =
+    defaultReapplyBlockLedgerResult (error . ("reapplyBlockLedgerResult: impossible " <>) . show)
 
 data instance LedgerState TestBlock =
     TestLedger {
@@ -688,8 +690,8 @@ mkTestConfig k ChunkSize { chunkCanContainEBB, numRegularBlocks } =
     eraParams = HardFork.EraParams {
         eraEpochSize  = EpochSize numRegularBlocks
       , eraSlotLength = slotLength
-      , eraSafeZone   = HardFork.StandardSafeZone (maxRollbacks k * 2)
-      , eraGenesisWin = GenesisWindow (maxRollbacks k * 2)
+      , eraSafeZone   = HardFork.StandardSafeZone (unNonZero (maxRollbacks k) * 2)
+      , eraGenesisWin = GenesisWindow (unNonZero (maxRollbacks k) * 2)
       }
 
 {-------------------------------------------------------------------------------

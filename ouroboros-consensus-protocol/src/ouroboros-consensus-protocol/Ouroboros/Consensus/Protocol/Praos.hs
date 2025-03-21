@@ -10,7 +10,6 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 {-# LANGUAGE ViewPatterns #-}
@@ -36,20 +35,19 @@ module Ouroboros.Consensus.Protocol.Praos (
 
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..), enforceSize)
 import qualified Cardano.Crypto.DSIGN as DSIGN
+import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Crypto.KES as KES
 import qualified Cardano.Crypto.VRF as VRF
 import           Cardano.Ledger.BaseTypes (ActiveSlotCoeff, Nonce, (⭒))
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Chain as SL
-import           Cardano.Ledger.Crypto (Crypto, DSIGN, KES, StandardCrypto, VRF)
-import           Cardano.Ledger.Hashes (EraIndependentTxBody)
-import           Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer),
+import           Cardano.Ledger.Hashes (HASH)
+import           Cardano.Ledger.Keys (DSIGN, KeyHash, KeyRole (BlockIssuer),
                      VKey (VKey), coerceKeyRole, hashKey)
 import qualified Cardano.Ledger.Keys as SL
-import           Cardano.Ledger.PoolDistr
-                     (IndividualPoolStake (IndividualPoolStake))
-import qualified Cardano.Ledger.PoolDistr as SL
 import           Cardano.Ledger.Slot (Duration (Duration), (+*))
+import qualified Cardano.Ledger.State as SL
+import           Cardano.Protocol.Crypto (Crypto, KES, StandardCrypto, VRF)
 import qualified Cardano.Protocol.TPraos.API as SL
 import           Cardano.Protocol.TPraos.BHeader (BoundedNatural (bvValue),
                      checkLeaderNatValue, prevHashToNonce)
@@ -100,8 +98,7 @@ data Praos c
 
 class
   ( Crypto c,
-    DSIGN.Signable (DSIGN c) (OCertSignable c),
-    DSIGN.Signable (DSIGN c) (SL.Hash c EraIndependentTxBody),
+    DSIGN.Signable DSIGN (OCertSignable c),
     KES.Signable (KES c) (HeaderBody c),
     VRF.Signable (VRF c) InputVRF
   ) =>
@@ -114,7 +111,7 @@ instance PraosCrypto StandardCrypto
 -------------------------------------------------------------------------------}
 
 data PraosFields c toSign = PraosFields
-  { praosSignature :: SL.SignedKES c toSign,
+  { praosSignature :: KES.SignedKES (KES c) toSign,
     praosToSign    :: toSign
   }
   deriving (Generic)
@@ -131,11 +128,11 @@ deriving instance
 -- the block signature.
 data PraosToSign c = PraosToSign
   { -- | Verification key for the issuer of this block.
-    praosToSignIssuerVK :: SL.VKey 'SL.BlockIssuer c,
-    praosToSignVrfVK    :: SL.VerKeyVRF c,
+    praosToSignIssuerVK :: SL.VKey 'SL.BlockIssuer,
+    praosToSignVrfVK    :: VRF.VerKeyVRF (VRF c),
     -- | Verifiable random value. This is used both to prove the issuer is
     -- eligible to issue a block, and to contribute to the evolving nonce.
-    praosToSignVrfRes   :: SL.CertifiedVRF c InputVRF,
+    praosToSignVrfRes   :: VRF.CertifiedVRF (VRF c) InputVRF,
     -- | Lightweight delegation certificate mapping the cold (DSIGN) key to
     -- the online KES key.
     praosToSignOCert    :: OCert.OCert c
@@ -148,7 +145,7 @@ deriving instance PraosCrypto c => Show (PraosToSign c)
 
 forgePraosFields ::
   ( PraosCrypto c,
-    SL.KESignable c toSign,
+    KES.Signable (KES c) toSign,
     Monad m
   ) =>
   HotKey c m ->
@@ -214,7 +211,7 @@ data PraosParams = PraosParams
 -- | Assembled proof that the issuer has the right to issue a block in the
 -- selected slot.
 newtype PraosIsLeader c = PraosIsLeader
-  { praosIsLeaderVrfRes :: SL.CertifiedVRF c InputVRF
+  { praosIsLeaderVrfRes :: VRF.CertifiedVRF (VRF c) InputVRF
   }
   deriving (Generic)
 
@@ -243,10 +240,10 @@ type PraosValidateView c = Views.HeaderView c
 -- We track the last slot and the counters for operational certificates, as well
 -- as a series of nonces which get updated in different ways over the course of
 -- an epoch.
-data PraosState c = PraosState
+data PraosState = PraosState
   { praosStateLastSlot            :: !(WithOrigin SlotNo),
     -- | Operation Certificate counters
-    praosStateOCertCounters       :: !(Map (KeyHash 'BlockIssuer c) Word64),
+    praosStateOCertCounters       :: !(Map (KeyHash 'BlockIssuer) Word64),
     -- | Evolving nonce
     praosStateEvolvingNonce       :: !Nonce,
     -- | Candidate nonce
@@ -261,15 +258,15 @@ data PraosState c = PraosState
   }
   deriving (Generic, Show, Eq)
 
-instance PraosCrypto c => NoThunks (PraosState c)
+instance NoThunks PraosState
 
-instance PraosCrypto c => ToCBOR (PraosState c) where
+instance ToCBOR PraosState where
   toCBOR = encode
 
-instance PraosCrypto c => FromCBOR (PraosState c) where
+instance FromCBOR PraosState where
   fromCBOR = decode
 
-instance PraosCrypto c => Serialise (PraosState c) where
+instance Serialise PraosState where
   encode
     PraosState
       { praosStateLastSlot,
@@ -307,19 +304,19 @@ instance PraosCrypto c => Serialise (PraosState c) where
           <*> fromCBOR
           <*> fromCBOR
 
-data instance Ticked (PraosState c) = TickedPraosState
-  { tickedPraosStateChainDepState :: PraosState c,
-    tickedPraosStateLedgerView :: Views.LedgerView c
+data instance Ticked PraosState = TickedPraosState
+  { tickedPraosStateChainDepState :: PraosState,
+    tickedPraosStateLedgerView :: Views.LedgerView
   }
 
 -- | Errors which we might encounter
 data PraosValidationErr c
   = VRFKeyUnknown
-      !(KeyHash SL.StakePool c) -- unknown VRF keyhash (not registered)
+      !(KeyHash SL.StakePool) -- unknown VRF keyhash (not registered)
   | VRFKeyWrongVRFKey
-      !(KeyHash SL.StakePool c) -- KeyHash of block issuer
-      !(SL.Hash c (SL.VerKeyVRF c)) -- VRF KeyHash registered with stake pool
-      !(SL.Hash c (SL.VerKeyVRF c)) -- VRF KeyHash from Header
+      !(KeyHash SL.StakePool) -- KeyHash of block issuer
+      !(Hash.Hash HASH (VRF.VerKeyVRF (VRF c))) -- VRF KeyHash registered with stake pool
+      !(Hash.Hash HASH (VRF.VerKeyVRF (VRF c))) -- VRF KeyHash from Header
   | VRFKeyBadProof
       !SlotNo -- Slot used for VRF calculation
       !Nonce -- Epoch nonce used for VRF calculation
@@ -350,7 +347,7 @@ data PraosValidationErr c
       !Word64 -- max KES evolutions
       !String -- error message given by Consensus Layer
   | NoCounterForKeyHashOCERT
-      !(KeyHash 'BlockIssuer c) -- stake pool key hash
+      !(KeyHash 'BlockIssuer) -- stake pool key hash
   deriving (Generic)
 
 deriving instance PraosCrypto c => Eq (PraosValidationErr c)
@@ -360,11 +357,11 @@ deriving instance PraosCrypto c => NoThunks (PraosValidationErr c)
 deriving instance PraosCrypto c => Show (PraosValidationErr c)
 
 instance PraosCrypto c => ConsensusProtocol (Praos c) where
-  type ChainDepState (Praos c) = PraosState c
+  type ChainDepState (Praos c) = PraosState
   type IsLeader (Praos c) = PraosIsLeader c
   type CanBeLeader (Praos c) = PraosCanBeLeader c
   type SelectView (Praos c) = PraosChainSelectView c
-  type LedgerView (Praos c) = Views.LedgerView c
+  type LedgerView (Praos c) = Views.LedgerView
   type ValidationErr (Praos c) = PraosValidationErr c
   type ValidateView (Praos c) = PraosValidateView c
 
@@ -500,10 +497,9 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
 -- | Check whether this node meets the leader threshold to issue a block.
 meetsLeaderThreshold ::
   forall c.
-  PraosCrypto c =>
   ConsensusConfig (Praos c) ->
   LedgerView (Praos c) ->
-  SL.KeyHash 'SL.StakePool c ->
+  SL.KeyHash 'SL.StakePool ->
   VRF.CertifiedVRF (VRF c) InputVRF ->
   Bool
 meetsLeaderThreshold
@@ -526,7 +522,7 @@ validateVRFSignature ::
   ( PraosCrypto c
   ) =>
   Nonce ->
-  Views.LedgerView c ->
+  Views.LedgerView ->
   ActiveSlotCoeff ->
   Views.HeaderView c ->
   Except (PraosValidationErr c) ()
@@ -539,14 +535,14 @@ doValidateVRFSignature ::
   forall c.
   PraosCrypto c =>
   Nonce ->
-  Map (KeyHash SL.StakePool c) (IndividualPoolStake c) ->
+  Map (KeyHash SL.StakePool) SL.IndividualPoolStake ->
   ActiveSlotCoeff ->
   Views.HeaderView c ->
   Except (PraosValidationErr c) ()
 doValidateVRFSignature eta0 pd f b = do
   case Map.lookup hk pd of
     Nothing -> throwError $ VRFKeyUnknown hk
-    Just (IndividualPoolStake sigma _totalPoolStake vrfHK) -> do
+    Just (SL.IndividualPoolStake sigma _totalPoolStake vrfHK) -> do
       let vrfHKStake = SL.fromVRFVerKeyHash vrfHK
           vrfHKBlock = VRF.hashVerKeyVRF vrfK
       vrfHKStake == vrfHKBlock
@@ -570,7 +566,7 @@ validateKESSignature ::
   PraosCrypto c =>
   ConsensusConfig (Praos c) ->
   LedgerView (Praos c) ->
-  Map (KeyHash 'BlockIssuer c) Word64 ->
+  Map (KeyHash 'BlockIssuer) Word64 ->
   Views.HeaderView c ->
   Except (PraosValidationErr c) ()
 validateKESSignature
@@ -588,8 +584,8 @@ doValidateKESSignature ::
   PraosCrypto c =>
   Word64 ->
   Word64 ->
-  Map (KeyHash SL.StakePool c) (IndividualPoolStake c) ->
-  Map (KeyHash BlockIssuer c) Word64 ->
+  Map (KeyHash SL.StakePool) SL.IndividualPoolStake ->
+  Map (KeyHash BlockIssuer) Word64 ->
   Views.HeaderView c ->
   Except (PraosValidationErr c) ()
 doValidateKESSignature praosMaxKESEvo praosSlotsPerKESPeriod stakeDistribution ocertCounters b =
@@ -718,25 +714,15 @@ instance PraosCrypto c => PraosProtocolSupportsNode (Praos c) where
 -- - They share the same DSIGN verification keys
 -- - They share the same VRF verification keys
 instance
-  ( c1 ~ c2 ) =>
-  TranslateProto (TPraos c1) (Praos c2)
+  TranslateProto (TPraos c) (Praos c)
   where
   translateLedgerView _ SL.LedgerView {SL.lvPoolDistr, SL.lvChainChecks} =
       Views.LedgerView
-        { Views.lvPoolDistr = coercePoolDistr lvPoolDistr,
+        { Views.lvPoolDistr = lvPoolDistr,
           Views.lvMaxHeaderSize = SL.ccMaxBHSize lvChainChecks,
           Views.lvMaxBodySize = SL.ccMaxBBSize lvChainChecks,
           Views.lvProtocolVersion = SL.ccProtocolVersion lvChainChecks
         }
-      where
-        coercePoolDistr :: SL.PoolDistr c1 -> SL.PoolDistr c2
-        coercePoolDistr (SL.PoolDistr m totalActiveStake) =
-          SL.PoolDistr
-            (Map.mapKeysMonotonic coerce (Map.map coerceIndividualPoolStake m))
-            totalActiveStake
-        coerceIndividualPoolStake :: SL.IndividualPoolStake c1 -> SL.IndividualPoolStake c2
-        coerceIndividualPoolStake (SL.IndividualPoolStake stake totalStake vrf) =
-          SL.IndividualPoolStake stake totalStake (coerce vrf)
 
   translateChainDepState _ tpState =
     PraosState

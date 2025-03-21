@@ -33,11 +33,11 @@ import           Cardano.Crypto.Raw (Raw)
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as SL
 import           Cardano.Ledger.Core (TxOut)
-import           Cardano.Ledger.Crypto
 import qualified Cardano.Ledger.Shelley.LedgerState as Shelley.LedgerState
 import qualified Cardano.Ledger.Shelley.UTxO as Shelley.UTxO
 import           Cardano.Ledger.TxIn (TxIn)
 import           Cardano.Node.Types (AdjustFilePaths (..))
+import           Cardano.Protocol.Crypto
 import qualified Cardano.Tools.DBAnalyser.Block.Byron as BlockByron
 import           Cardano.Tools.DBAnalyser.Block.Shelley ()
 import           Cardano.Tools.DBAnalyser.HasAnalysis
@@ -58,7 +58,6 @@ import           Ouroboros.Consensus.Byron.Ledger (ByronBlock)
 import qualified Ouroboros.Consensus.Byron.Ledger.Ledger as Byron.Ledger
 import           Ouroboros.Consensus.Cardano
 import           Ouroboros.Consensus.Cardano.Block (CardanoEras)
-import qualified Ouroboros.Consensus.Cardano.Block as Cardano.Block
 import           Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams (..),
                      protocolInfoCardano)
 import           Ouroboros.Consensus.Config (emptyCheckpointsMap)
@@ -66,7 +65,6 @@ import           Ouroboros.Consensus.HardFork.Combinator (HardForkBlock (..),
                      OneEraBlock (..), OneEraHash (..), getHardForkState,
                      hardForkLedgerStatePerEra)
 import           Ouroboros.Consensus.HardFork.Combinator.State (currentState)
-import           Ouroboros.Consensus.HeaderValidation (HasAnnTip)
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Shelley.HFEras ()
@@ -263,7 +261,7 @@ instance Aeson.FromJSON CardanoConfig where
         , cfgHardForkTriggers = CardanoHardForkTriggers triggers
         }
 
-instance (HasAnnTip (CardanoBlock StandardCrypto), GetPrevHash (CardanoBlock StandardCrypto)) => HasAnalysis (CardanoBlock StandardCrypto) where
+instance HasAnalysis (CardanoBlock StandardCrypto) where
   countTxOutputs = analyseBlock countTxOutputs
   blockTxSizes   = analyseBlock blockTxSizes
   knownEBBs _    =
@@ -339,7 +337,7 @@ getByronUtxo = Byron.UTxO.unUTxO
              . Byron.Ledger.byronLedgerState
 
 applyToShelleyBasedUtxo ::
-     (Map (TxIn (Cardano.Block.EraCrypto era)) (TxOut era) -> IO Builder)
+     (Map TxIn (TxOut era) -> IO Builder)
   -> LedgerState (ShelleyBlock proto era)
   -> IO Builder
 applyToShelleyBasedUtxo f st = do
@@ -347,7 +345,7 @@ applyToShelleyBasedUtxo f st = do
 
 getShelleyBasedUtxo ::
      LedgerState (ShelleyBlock proto era)
-  -> Map (TxIn (Cardano.Block.EraCrypto era)) (TxOut era)
+  -> Map TxIn (TxOut era)
 getShelleyBasedUtxo = (\(Shelley.UTxO.UTxO xs)->  xs)
                     . Shelley.LedgerState.utxosUtxo
                     . Shelley.LedgerState.lsUTxOState
@@ -361,7 +359,7 @@ type CardanoBlockArgs = Args (CardanoBlock StandardCrypto)
 mkCardanoProtocolInfo ::
      Byron.Genesis.Config
   -> Maybe PBftSignatureThreshold
-  -> SL.TransitionConfig (L.LatestKnownEra StandardCrypto)
+  -> SL.TransitionConfig L.LatestKnownEra
   -> Nonce
   -> CardanoHardForkTriggers
   -> ProtocolInfo (CardanoBlock StandardCrypto)
@@ -382,7 +380,7 @@ mkCardanoProtocolInfo genesisByron signatureThreshold transitionConfig initialNo
         triggers
         transitionConfig
         emptyCheckpointsMap
-        (ProtVer (L.eraProtVerHigh @(L.LatestKnownEra StandardCrypto)) 0)
+        (ProtVer (L.eraProtVerHigh @L.LatestKnownEra) 0)
       )
   where
 

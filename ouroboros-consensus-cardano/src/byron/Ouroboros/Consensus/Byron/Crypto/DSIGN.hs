@@ -92,7 +92,7 @@ instance DSIGNAlgorithm ByronDSIGN where
       where
         seedBytes = case getBytesFromSeed 32 seed of
           Just (x,_) -> x
-          Nothing    -> throw $ SeedBytesExhausted (-1) -- TODO We can't get the seed size!
+          Nothing    -> throw $ SeedBytesExhausted (-1) (-1) -- TODO We can't get the seed size!
 
     deriveVerKeyDSIGN (SignKeyByronDSIGN sk) = VerKeyByronDSIGN $ toVerification sk
 
