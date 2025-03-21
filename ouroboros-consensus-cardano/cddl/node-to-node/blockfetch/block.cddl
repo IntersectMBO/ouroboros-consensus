@@ -1,0 +1,3 @@
+serialisedCardanoBlock = #6.24(bytes .cbor cardanoBlock)
+
+;# import cardanoBlock from block

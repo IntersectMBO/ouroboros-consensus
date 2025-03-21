@@ -1,0 +1,19 @@
+tx =
+  ns7<byron.tx,
+      serialisedShelleyTx<shelley.tx>,
+      serialisedShelleyTx<allegra.tx>,
+      serialisedShelleyTx<mary.tx>,
+      serialisedShelleyTx<alonzo.tx>,
+      serialisedShelleyTx<babbage.tx>,
+      serialisedShelleyTx<conway.tx>>
+
+serialisedShelleyTx<era> = #6.24(bytes .cbor era)
+
+;# include byron as byron
+;# include shelley as shelley
+;# include allegra as allegra
+;# include mary as mary
+;# include alonzo as alonzo
+;# include babbage as babbage
+;# include conway as conway
+;# import base

@@ -1,0 +1,6 @@
+query = [33]
+
+result = maybe<conway.pparams>
+
+;# import conway as conway
+;# import base
