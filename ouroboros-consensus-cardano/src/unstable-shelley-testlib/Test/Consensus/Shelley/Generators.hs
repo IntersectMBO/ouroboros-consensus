@@ -14,6 +14,7 @@ import           Cardano.Ledger.Core (TranslationContext, toTxSeq)
 import           Cardano.Ledger.Genesis
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Ledger.Shelley.Translation
+import           Cardano.Ledger.State (InstantStake)
 import           Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.BHeader as SL
@@ -155,7 +156,7 @@ instance CanMock proto era => Arbitrary (SomeSecond BlockQuery (ShelleyBlock pro
     , pure $ SomeSecond DebugNewEpochState
     ]
 
-instance CanMock proto era => Arbitrary (SomeResult (ShelleyBlock proto era)) where
+instance (Arbitrary (InstantStake era), CanMock proto era) => Arbitrary (SomeResult (ShelleyBlock proto era)) where
   arbitrary = oneof
     [ SomeResult GetLedgerTip <$> arbitrary
     , SomeResult GetEpochNo <$> arbitrary
@@ -194,7 +195,7 @@ instance CanMock proto era=> Arbitrary (ShelleyTip proto era) where
 instance Arbitrary ShelleyTransition where
   arbitrary = ShelleyTransitionInfo <$> arbitrary
 
-instance CanMock proto era => Arbitrary (LedgerState (ShelleyBlock proto era)) where
+instance (Arbitrary (InstantStake era), CanMock proto era) => Arbitrary (LedgerState (ShelleyBlock proto era)) where
   arbitrary = ShelleyLedgerState
     <$> arbitrary
     <*> arbitrary

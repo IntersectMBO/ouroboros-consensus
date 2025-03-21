@@ -33,9 +33,9 @@ import           Cardano.Crypto.Util
                      (SignableRepresentation (getSignableRepresentation))
 import qualified Cardano.Crypto.VRF as VRF
 import           Cardano.Ledger.BaseTypes (ProtVer (pvMajor))
-import           Cardano.Ledger.Binary (Annotator (..), CBORGroup (unCBORGroup),
-                     DecCBOR (decCBOR), EncCBOR (..), ToCBOR (..),
-                     encodedSigKESSizeExpr, serialize', withSlice)
+import           Cardano.Ledger.Binary (Annotator (..), DecCBOR (decCBOR),
+                     EncCBOR (..), ToCBOR (..), encodedSigKESSizeExpr,
+                     serialize', unCBORGroup, withSlice)
 import           Cardano.Ledger.Binary.Coders
 import           Cardano.Ledger.Binary.Crypto (decodeSignedKES, decodeVerKeyVRF,
                      encodeSignedKES, encodeVerKeyVRF)
@@ -202,7 +202,7 @@ instance Crypto crypto => DecCBOR (HeaderBody crypto) where
         <! From
         <! From
         <! From
-        <! (unCBORGroup <$> From)
+        <! mapCoder unCBORGroup From
         <! From
 
 encodeHeaderRaw ::
