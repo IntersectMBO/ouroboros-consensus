@@ -9,9 +9,22 @@ gen () {
     echo " ok"
 }
 
-IN=$(fd -e cddl -E ledger-cddls -E out -E base.cddl)
+IN=$(fd -e cddl -E ledger-cddls -E out -E base.cddl -E node-to-client/localstatequery/query.cddl -E node-to-client/localstatequery/result.cddl)
 
 echo "Generating complete CDDLs:"
 for f in $IN; do
     gen $(echo $f | cut -d'.' -f1)
 done
+
+UNDEFINEDS=$(grep -R undefined out)
+if [ ! -z "$UNDEFINEDS" ]; then
+    echo -e "\033[0;31mThere were undefined references!\n$UNDEFINEDS\033[0m"
+
+    while IFS= read -r line || [[ -n $line ]]; do
+        fileName=$(echo $line | cut -d':' -f1)
+        ref=$(echo $line | cut -d':' -f3 | tr -d ' ')
+        echo "$ref = any" >> $fileName
+    done < <(printf '%s' "$UNDEFINEDS")
+fi
+
+echo "Done"

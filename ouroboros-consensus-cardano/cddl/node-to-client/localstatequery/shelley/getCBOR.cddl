@@ -1,0 +1,3 @@
+query = [9, shelleyQuery]
+
+result = #6.24(bstr .cbor shelleyResult)
