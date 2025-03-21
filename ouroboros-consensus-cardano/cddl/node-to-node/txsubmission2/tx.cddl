@@ -1,11 +1,11 @@
 tx =
-  cardanoNs<byron.tx,
-            serialisedShelleyTx<shelley.tx>,
-            serialisedShelleyTx<allegra.tx>,
-            serialisedShelleyTx<mary.tx>,
-            serialisedShelleyTx<alonzo.tx>,
-            serialisedShelleyTx<babbage.tx>,
-            serialisedShelleyTx<conway.tx>>
+  ns7<byron.tx,
+      serialisedShelleyTx<shelley.tx>,
+      serialisedShelleyTx<allegra.tx>,
+      serialisedShelleyTx<mary.tx>,
+      serialisedShelleyTx<alonzo.tx>,
+      serialisedShelleyTx<babbage.tx>,
+      serialisedShelleyTx<conway.tx>>
 
 serialisedShelleyTx<era> = #6.24(bytes .cbor era)
 

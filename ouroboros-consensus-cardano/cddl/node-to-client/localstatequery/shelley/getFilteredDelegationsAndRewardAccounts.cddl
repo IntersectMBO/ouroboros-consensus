@@ -1,4 +1,4 @@
-query = [10, set<stakeCredentials>]
+query = [10, set<conway.stakeCredential>]
 
 result = [conway.delegations, conway.rewardAccounts]
 

@@ -1,4 +1,4 @@
-cardanoTelescope<byron, shelley, allegra, mary, alonzo, babbage, conway>
+telescope7<byron, shelley, allegra, mary, alonzo, babbage, conway>
   = [pastEra, pastEra, pastEra, pastEra, pastEra, pastEra, currentEra<conway>] /
     [pastEra, pastEra, pastEra, pastEra, pastEra, currentEra<babbage>] /
     [pastEra, pastEra, pastEra, pastEra, currentEra<alonzo>] /
@@ -7,7 +7,7 @@ cardanoTelescope<byron, shelley, allegra, mary, alonzo, babbage, conway>
     [pastEra, currentEra<shelley>] /
     [currentEra<byron>]
 
-cardanoNs<byron, shelley, allegra, mary, alonzo, babbage, conway>
+ns7<byron, shelley, allegra, mary, alonzo, babbage, conway>
   = [6, conway] /
     [5, babbage] /
     [4, alonzo] /
@@ -16,28 +16,36 @@ cardanoNs<byron, shelley, allegra, mary, alonzo, babbage, conway>
     [1, shelley] /
     [0, byron]
 
+;; Blockchain types
+pastEra = [bound, bound]
+currentEra<st> = [bound, st]
 blockno = word64
 bound = [relativeTime, slotno, epochno]
 coin = word64
-either<x, y> = [0, x] / [1, y]
 epochno = word64
 eraIdx = word8
 hash = bstr
 individualPoolStake = [stake, hash]
 keyhash = bstr
-map<x, y> = { * x => y }
-maybe<x> = [] / [x]
 nonce = [0] / [1, hash]
 point = [] / [ slotno, hash ]
 poolDistr = map<keyhash, individualPoolStake>
 rational = [int, int]
 relativeTime = int
-seq<x> = [*23 x] / [24* x] ; encoded with indefinite-length encoding
-set<x> = #6.258([* x])
 slotno = word64
 stake = rational
+
 withOrigin<v> = [] / [v]
 withOriginTH<v> = [0] / [1, v]
+
+;; Collections
+either<x, y> = [0, x] / [1, y]
+map<x, y> = { * x => y }
+maybe<x> = [] / [x]
+seq<x> = [*23 x] / [24* x] ; encoded with indefinite-length encoding
+set<x> = #6.258([* x])
+
+;; Base word types
+word8 = 0..255
 word32 = 0..4294967295
 word64 = 0..18446744073709551615
-word8 = 0..255

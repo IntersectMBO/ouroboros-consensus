@@ -12,14 +12,14 @@ queryAnyTime = [1, getEraStart.query, eraIdx]
 queryHardFork = [2, getInterpreter.query / getCurrentEra.query]
 
 queryIfCurrent =
-  [0, cardanoNs<byronQuery,
-                shelleyQuery,
-                shelleyQuery,
-                shelleyQuery,
-                shelleyQuery,
-                shelleyQuery,
-                shelleyQuery>
-                ]
+  [0, ns7<byronQuery,
+          shelleyQuery,
+          shelleyQuery,
+          shelleyQuery,
+          shelleyQuery,
+          shelleyQuery,
+          shelleyQuery>
+          ]
 
 byronQuery = getUpdateInterfaceState.query
 
@@ -57,47 +57,49 @@ shelleyQuery = getLedgerTip.query
              / getProposals.query
              / getRatifyState.query
              / getFuturePParams.query
-             / getBigLedgerPeerSnapshot.query
+             / getBigLedgerPeersSnapshot.query
 
-;# import getSystemStart as getSystemStart
-;# import getChainBlockNo as getChainBlockNo
-;# import getChainPoint as getChainPoint
-;# import getEraStart as getEraStart
-;# import getInterpreter as getInterpreter
-;# import getCurrentEra as getCurrentEra
-;# import getUpdateInterfaceState as getUpdateInterfaceState
-;# import getEpochNo as getEpochNo
-;# import getNonMyopicMemberRewards as getNonMyopicMemberRewards
-;# import getCurrentPParams as getCurrentPParams
-;# import getProposedPParamsUpdates as getProposedPParamsUpdates
-;# import getStakeDistribution as getStakeDistribution
-;# import getUTxOByAddress as getUTxOByAddress
-;# import getUTxOWhole as getUTxOWhole
-;# import debugEpochState as debugEpochState
-;# import getCBOR as getCBOR
-;# import getFilteredDelegationsAndRewardAccounts as getFilteredDelegationsAndRewardAccounts
-;# import getGenesisConfig as getGenesisConfig
-;# import debugNewEpochState as debugNewEpochState
-;# import debugChainDepState as debugChainDepState
-;# import getRewardProvenance as getRewardProvenance
-;# import getUTxOByTxIn as getUTxOByTxIn
-;# import getStakePools as getStakePools
-;# import getStakePoolParams as getStakePoolParams
-;# import getRewardInfoPools as getRewardInfoPools
-;# import getPoolState as getPoolState
-;# import getStakeSnapshots as getStakeSnapshots
-;# import getPoolDistr as getPoolDistr
-;# import getStakeDelegDeposits as getStakeDelegDeposits
-;# import getConstitution as getConstitution
-;# import getGovState as getGovState
-;# import getDRepState as getDRepState
-;# import getDRepStakeDistr as getDRepStakeDistr
-;# import getCommitteeMembersState as getCommitteeMembersState
-;# import getFilteredVoteDelegatees as getFilteredVoteDelegatees
-;# import getAccountState as getAccountState
-;# import getSPOStakeDistr as getSPOStakeDistr
-;# import getProposals as getProposals
-;# import getRatifyState as getRatifyState
-;# import getFuturePParams as getFuturePParams
-;# import getBigLedgerPeerSnapshotQuery as getBigLedgerPeerSnapshotQuery
+getCBOR.query = [9, shelleyQuery]
+
+;# include getSystemStart as getSystemStart
+;# include getChainBlockNo as getChainBlockNo
+;# include getChainPoint as getChainPoint
+;# include getEraStart as getEraStart
+;# include getInterpreter as getInterpreter
+;# include getCurrentEra as getCurrentEra
+;# include getUpdateInterfaceState as getUpdateInterfaceState
+;# include getLedgerTip as getLedgerTip
+;# include getEpochNo as getEpochNo
+;# include getNonMyopicMemberRewards as getNonMyopicMemberRewards
+;# include getCurrentPParams as getCurrentPParams
+;# include getProposedPParamsUpdates as getProposedPParamsUpdates
+;# include getStakeDistribution as getStakeDistribution
+;# include getUTxOByAddress as getUTxOByAddress
+;# include getUTxOWhole as getUTxOWhole
+;# include debugEpochState as debugEpochState
+;# include getFilteredDelegationsAndRewardAccounts as getFilteredDelegationsAndRewardAccounts
+;# include getGenesisConfig as getGenesisConfig
+;# include debugNewEpochState as debugNewEpochState
+;# include debugChainDepState as debugChainDepState
+;# include getRewardProvenance as getRewardProvenance
+;# include getUTxOByTxIn as getUTxOByTxIn
+;# include getStakePools as getStakePools
+;# include getStakePoolParams as getStakePoolParams
+;# include getRewardInfoPools as getRewardInfoPools
+;# include getPoolState as getPoolState
+;# include getStakeSnapshots as getStakeSnapshots
+;# include getPoolDistr as getPoolDistr
+;# include getStakeDelegDeposits as getStakeDelegDeposits
+;# include getConstitution as getConstitution
+;# include getGovState as getGovState
+;# include getDRepState as getDRepState
+;# include getDRepStakeDistr as getDRepStakeDistr
+;# include getCommitteeMembersState as getCommitteeMembersState
+;# include getFilteredVoteDelegatees as getFilteredVoteDelegatees
+;# include getAccountState as getAccountState
+;# include getSPOStakeDistr as getSPOStakeDistr
+;# include getProposals as getProposals
+;# include getRatifyState as getRatifyState
+;# include getFuturePParams as getFuturePParams
+;# include getBigLedgerPeersSnapshot as getBigLedgerPeersSnapshot
 ;# import base

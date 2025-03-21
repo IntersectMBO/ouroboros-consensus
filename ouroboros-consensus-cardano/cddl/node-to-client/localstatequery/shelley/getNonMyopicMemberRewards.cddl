@@ -1,4 +1,4 @@
-query = [2, set<either<coin, stakeCredential>>]
+query = [2, set<either<coin, conway.stakeCredential>>]
 
 result = conway.nonMyopicRewards
 

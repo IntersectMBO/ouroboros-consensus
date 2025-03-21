@@ -1,11 +1,11 @@
-cardanoHeader
- = cardanoNs<byronHeader,
-             serialisedShelleyHeader<shelley.header>,
-             serialisedShelleyHeader<allegra.header>,
-             serialisedShelleyHeader<mary.header>,
-             serialisedShelleyHeader<alonzo.header>,
-             serialisedShelleyHeader<babbage.header>,
-             serialisedShelleyHeader<conway.header>>
+header
+ = ns7<byronHeader,
+       serialisedShelleyHeader<shelley.header>,
+       serialisedShelleyHeader<allegra.header>,
+       serialisedShelleyHeader<mary.header>,
+       serialisedShelleyHeader<alonzo.header>,
+       serialisedShelleyHeader<babbage.header>,
+       serialisedShelleyHeader<conway.header>>
 
 byronHeader = [byronRegularIdx, #6.24(bytes .cbor byron.blockhead)]
             / [byronBoundaryIdx, #6.24(bytes .cbor byron.ebbhead)]

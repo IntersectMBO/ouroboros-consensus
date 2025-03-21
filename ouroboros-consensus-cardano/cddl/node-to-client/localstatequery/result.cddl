@@ -50,7 +50,9 @@ shelleyResult = getLedgerTip.result
               / getProposals.result
               / getRatifyState.result
               / getFuturePParams.result
-              / getBigLedgerPeerSnapshot.result
+              / getBigLedgerPeersSnapshot.result
+
+getCBOR.result = #6.24(bstr .cbor shelleyResult)
 
 ;# import getSystemStart as getSystemStart
 ;# import getChainBlockNo as getChainBlockNo
@@ -59,6 +61,7 @@ shelleyResult = getLedgerTip.result
 ;# import getInterpreter as getInterpreter
 ;# import getCurrentEra as getCurrentEra
 ;# import getUpdateInterfaceState as getUpdateInterfaceState
+;# import getLedgerTip as getLedgerTip
 ;# import getEpochNo as getEpochNo
 ;# import getNonMyopicMemberRewards as getNonMyopicMemberRewards
 ;# import getCurrentPParams as getCurrentPParams
@@ -67,7 +70,6 @@ shelleyResult = getLedgerTip.result
 ;# import getUTxOByAddress as getUTxOByAddress
 ;# import getUTxOWhole as getUTxOWhole
 ;# import debugEpochState as debugEpochState
-;# import getCBOR as getCBOR
 ;# import getFilteredDelegationsAndRewardAccounts as getFilteredDelegationsAndRewardAccounts
 ;# import getGenesisConfig as getGenesisConfig
 ;# import debugNewEpochState as debugNewEpochState
@@ -92,5 +94,5 @@ shelleyResult = getLedgerTip.result
 ;# import getProposals as getProposals
 ;# import getRatifyState as getRatifyState
 ;# import getFuturePParams as getFuturePParams
-;# import getBigLedgerPeerSnapshotQuery as getBigLedgerPeerSnapshotQuery
+;# import getBigLedgerPeersSnapshot as getBigLedgerPeersSnapshot
 ;# import base

@@ -1,11 +1,11 @@
 txId =
-  cardanoNs<byronTxId,
-            shelley.txid,
-            shelley.txid,
-            shelley.txid,
-            shelley.txid,
-            shelley.txid,
-            shelley.txid>
+  ns7<byronTxId,
+      shelley.txid,
+      shelley.txid,
+      shelley.txid,
+      shelley.txid,
+      shelley.txid,
+      shelley.txid>
 
 byronTxId = [0, byron.txid]
           / [1, byron.certificateid]

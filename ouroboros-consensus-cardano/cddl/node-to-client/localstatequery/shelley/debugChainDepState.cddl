@@ -1,5 +1,5 @@
 query = [13]
 
-result = praos.chainDepState
+result = headerStateChainDep
 
-;# import praos as praos
+;# import headerstate

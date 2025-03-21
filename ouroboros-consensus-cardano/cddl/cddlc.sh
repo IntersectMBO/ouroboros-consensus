@@ -1,5 +1,3 @@
-export CDDL_INCLUDE_PATH=ledger-cddls/eras/byron/cddl-spec:ledger-cddls/eras/shelley/impl/cddl-files:ledger-cddls/eras/allegra/impl/cddl-files:ledger-cddls/eras/mary/impl/cddl-files:ledger-cddls/eras/alonzo/impl/cddl-files:ledger-cddls/eras/babbage/impl/cddl-files:ledger-cddls/eras/conway/impl/cddl-files:disk:.:
-
 mkdir -p out
 
 gen () {
@@ -9,7 +7,22 @@ gen () {
     echo " ok"
 }
 
-IN=$(fd -e cddl -E ledger-cddls -E out -E base.cddl -E node-to-client/localstatequery/query.cddl -E node-to-client/localstatequery/result.cddl)
+CDDL_INCLUDE_PATH=""
+for f in $(fd -t d); do
+    CDDL_INCLUDE_PATH+="$f:"
+done
+
+export CDDL_INCLUDE_PATH=$CDDL_INCLUDE_PATH.:
+
+IN=$(fd -e cddl \
+        -E ledger-cddls \
+        -E out \
+        -E base.cddl \
+        -E node-to-client/localstatequery/shelley \
+        -E node-to-client/localstatequery/byron \
+        -E node-to-client/localstatequery/consensus \
+        -E disk/snapshot
+  )
 
 echo "Generating complete CDDLs:"
 for f in $IN; do
@@ -17,6 +30,7 @@ for f in $IN; do
 done
 
 UNDEFINEDS=$(grep -R undefined out)
+
 if [ ! -z "$UNDEFINEDS" ]; then
     echo -e "\033[0;31mThere were undefined references!\n$UNDEFINEDS\033[0m"
 
