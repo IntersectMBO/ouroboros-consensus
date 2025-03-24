@@ -28,6 +28,7 @@ data ShelleyNodeToClientVersion =
   | ShelleyNodeToClientVersion11
 
     -- | New queries introduced: QueryStakePoolDefaultVote
+    -- Queries deprecated: GetProposedPParamsUpdates
   | ShelleyNodeToClientVersion12
   deriving (Show, Eq, Ord, Enum, Bounded)
 
