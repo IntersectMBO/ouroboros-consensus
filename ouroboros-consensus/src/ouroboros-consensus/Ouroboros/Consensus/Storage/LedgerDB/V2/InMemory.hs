@@ -154,7 +154,8 @@ writeSnapshot fs@(SomeHasFS hasFs) doChecksum encLedger ds st = do
     crc1 <- writeExtLedgerState fs encLedger (snapshotToStatePath ds) $ state st
     crc2 <- takeHandleSnapshot (tables st) $ snapshotToDirName ds
     writeSnapshotMetadata fs ds $ SnapshotMetadata
-      { metadataChecksum = do
+      { snapshotBackend = UTxOHDMemSnapshot
+      , snapshotChecksum = do
           Monad.guard (getFlag doChecksum)
           pure $ crcOfConcat crc1 crc2
       }
@@ -214,6 +215,10 @@ loadSnapshot ::
     -> DiskSnapshot
     -> ExceptT (SnapshotFailure blk) m (LedgerSeq' m blk, RealPoint blk)
 loadSnapshot _rr ccfg fs doChecksum ds = do
+  snapshotMeta <- withExceptT (InitFailureRead . ReadMetadataError (snapshotToMetadataPath ds)) $
+    loadSnapshotMetadata fs ds
+  Monad.when (snapshotBackend snapshotMeta /= UTxOHDMemSnapshot) $ do
+    throwE $ InitFailureRead $ ReadMetadataError (snapshotToMetadataPath ds) MetadataBackendMismatch
   (extLedgerSt, mbChecksumAsRead)  <- withExceptT
       (InitFailureRead . ReadSnapshotFailed) $
       readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode doChecksum (snapshotToStatePath ds)
@@ -227,13 +232,10 @@ loadSnapshot _rr ccfg fs doChecksum ds = do
                   (fsPathFromList
                     $ fsPathToList (snapshotToDirPath ds)
                     <> [fromString "tables", fromString "tvar"])
-      let metaPath = snapshotToMetadataPath ds
-      snapshotMeta <- withExceptT (InitFailureRead . ReadMetadataError metaPath) $
-        loadSnapshotMetadata fs ds
       Monad.when (getFlag doChecksum) $ do
         -- TODO: not sure that I like relying on all of these being non-Nothing
         let computedCRC = crcOfConcat <$> mbChecksumAsRead <*> mbCrcTables
-        Monad.when (computedCRC /= metadataChecksum snapshotMeta) $
+        Monad.when (computedCRC /= snapshotChecksum snapshotMeta) $
           throwE $ InitFailureRead $ ReadSnapshotDataCorruption
       (,pt) <$> lift (empty extLedgerSt values (newInMemoryLedgerTablesHandle fs))
 
