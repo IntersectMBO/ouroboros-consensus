@@ -79,7 +79,7 @@ localTxMonitorServer mempool =
                 { txCount = fromIntegral $ length txs
                 , measuresMap =
                     mkMeasuresMap (Proxy :: Proxy blk) txsMeasures capacity
-                } -- TODO what to do about overflow?
+                }
           pure $ SendMsgReplyGetMeasures measures (serverStAcquired s txs)
       , recvMsgAwaitAcquire = do
           s' <- atomically $ do
