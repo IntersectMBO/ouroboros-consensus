@@ -19,19 +19,12 @@ ns7<byron, shelley, allegra, mary, alonzo, babbage, conway>
 ;; Blockchain types
 pastEra = [bound, bound]
 currentEra<st> = [bound, st]
-blockno = word64
 bound = [relativeTime, slotno, epochno]
-coin = word64
-epochno = word64
 eraIdx = word8
-hash = bstr
 individualPoolStake = [stake, hash]
-keyhash = bstr
 nonce = [0] / [1, hash]
 point = [] / [ slotno, hash ]
 poolDistr = map<keyhash, individualPoolStake>
-rational = [int, int]
-relativeTime = int
 slotno = word64
 stake = rational
 
@@ -44,6 +37,15 @@ map<x, y> = { * x => y }
 maybe<x> = [] / [x]
 seq<x> = [*23 x] / [24* x] ; encoded with indefinite-length encoding
 set<x> = #6.258([* x])
+
+;; Types from other packages
+blockno = word64
+epochno = word64
+coin = word64
+rational = [int, int]
+keyhash = bstr .size 28
+hash = bstr .size 32
+relativeTime = int
 
 ;; Base word types
 word8 = 0..255
