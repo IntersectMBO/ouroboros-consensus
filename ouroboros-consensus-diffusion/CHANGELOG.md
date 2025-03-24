@@ -3,7 +3,7 @@
 # Changelog entries
 
 <a id='changelog-0.20.0.0'></a>
-## 0.20.0.0 — 2025-02-10
+## 0.20.0.0 -- 2025-02-10
 
 ### Breaking
 
@@ -17,7 +17,7 @@
    argument.
 
 <a id='changelog-0.19.0.0'></a>
-## 0.19.0.0 — 2025-01-08
+## 0.19.0.0 -- 2025-01-08
 
 ### Patch
 
@@ -37,7 +37,7 @@
 - Added `KeepAlive` tracer to `Tracers'` data type.
 
 <a id='changelog-0.18.0.0'></a>
-## 0.18.0.0 — 2024-10-14
+## 0.18.0.0 -- 2024-10-14
 
 ### Patch
 
@@ -52,7 +52,7 @@
   is ran with pipelining enabled.
 
 <a id='changelog-0.17.1.0'></a>
-## 0.17.1.0 — 2024-08-26
+## 0.17.1.0 -- 2024-08-26
 
 ### Non-Breaking
 
@@ -78,14 +78,14 @@
   performant device) somewhere different than the volatile data.
 
 <a id='changelog-0.17.0.1'></a>
-## 0.17.0.1 — 2024-06-26
+## 0.17.0.1 -- 2024-06-26
 
 ### Patch
 
 - Add trivial `txRefScriptSize` definitions
 
 <a id='changelog-0.17.0.0'></a>
-## 0.17.0.0 — 2024-06-19
+## 0.17.0.0 -- 2024-06-19
 
 ### Patch
 
@@ -96,7 +96,7 @@
 - Implemented a first version of CSJ (ChainSync Jumping). (disabled by default)
 
 <a id='changelog-0.16.0.0'></a>
-## 0.16.0.0 — 2024-05-13
+## 0.16.0.0 -- 2024-05-13
 
 ### Patch
 
@@ -121,7 +121,7 @@
 - Removed `llrnRunDataDiffusion`'s unused `ResourceRegistry` argument.
 
 <a id='changelog-0.15.0.0'></a>
-## 0.15.0.0 — 2024-04-03
+## 0.15.0.0 -- 2024-04-03
 
 NOTE: version jumps from `0.13.0.0` to `0.15.0.0` because `0.14.0.0` was created in a [branch](https://github.com/IntersectMBO/ouroboros-consensus/pull/1042) containing backported fixes for Node 8.9.
 
@@ -132,7 +132,7 @@ NOTE: version jumps from `0.13.0.0` to `0.15.0.0` because `0.14.0.0` was created
   `PublicPeerSelectionState` variable.
 
 <a id='changelog-0.13.0.0'></a>
-## 0.13.0.0 — 2024-04-03
+## 0.13.0.0 -- 2024-04-03
 
 NOTE: version jumps from `0.11.0.0` to `0.13.0.0` because `0.12.0.0` was created in a [branch](https://github.com/IntersectMBO/ouroboros-consensus/pull/997) containing backported fixes for Node 8.9.
 
@@ -162,7 +162,7 @@ NOTE: version jumps from `0.11.0.0` to `0.13.0.0` because `0.12.0.0` was created
   - `ouroboros-network-framework`: `^>=0.12`
 
 <a id='changelog-0.11.0.0'></a>
-## 0.11.0.0 — 2024-02-23
+## 0.11.0.0 -- 2024-02-23
 
 ### Non-Breaking
 
@@ -192,7 +192,7 @@ NOTE: version jumps from `0.11.0.0` to `0.13.0.0` because `0.12.0.0` was created
   last sent `MsgAwaitReply`.
 
 <a id='changelog-0.10.0.0'></a>
-## 0.10.0.0 — 2024-01-29
+## 0.10.0.0 -- 2024-01-29
 
 ### Patch
 
@@ -223,7 +223,7 @@ NOTE: version jumps from `0.11.0.0` to `0.13.0.0` because `0.12.0.0` was created
   and Handlers.
 
 <a id='changelog-0.9.0.0'></a>
-## 0.9.0.0 — 2023-11-14
+## 0.9.0.0 -- 2023-11-14
 
 ### Breaking
 
@@ -232,14 +232,14 @@ NOTE: version jumps from `0.11.0.0` to `0.13.0.0` because `0.12.0.0` was created
 - Adds `srnChainSyncTimeout` argument to `StdRunNodeArgs`.
 
 <a id='changelog-0.8.0.2'></a>
-## 0.8.0.2 — 2023-10-26
+## 0.8.0.2 -- 2023-10-26
 
 ### Patch
 
 - In tests only: replace all occurrences of `WrapTickedLedgerView` and `TickedTrivial` with `WrapLedgerView` and `()`.
 
 <a id='changelog-0.8.0.1'></a>
-## 0.8.0.1 — 2023-09-27
+## 0.8.0.1 -- 2023-09-27
 
 ### Patch
 
@@ -247,7 +247,7 @@ NOTE: version jumps from `0.11.0.0` to `0.13.0.0` because `0.12.0.0` was created
   libraries.
 
 <a id='changelog-0.8.0.0'></a>
-## 0.8.0.0 — 2023-09-06
+## 0.8.0.0 -- 2023-09-06
 
 ### Patch
 
@@ -269,7 +269,7 @@ NOTE: version jumps from `0.11.0.0` to `0.13.0.0` because `0.12.0.0` was created
       `NetworkIO` and `NetworkAddr` type aliases within the module.
 
 <a id='changelog-0.7.1.1'></a>
-## 0.7.1.1 — 2023-08-21
+## 0.7.1.1 -- 2023-08-21
 
 ### Patch
 
@@ -278,7 +278,7 @@ NOTE: version jumps from `0.11.0.0` to `0.13.0.0` because `0.12.0.0` was created
   strongly indicate that we ignore them when evolving the package's version.
 
 <a id='changelog-0.7.1.0'></a>
-## 0.7.1.0 — 2023-08-18
+## 0.7.1.0 -- 2023-08-18
 
 ### Patch
 
@@ -289,7 +289,7 @@ NOTE: version jumps from `0.11.0.0` to `0.13.0.0` because `0.12.0.0` was created
 - Update to `ouroboros-network-framework` 0.7.0.0
 
 <a id='changelog-0.7.0.0'></a>
-## 0.7.0.0 — 2023-07-06
+## 0.7.0.0 -- 2023-07-06
 
 ### Non-Breaking
 
@@ -314,7 +314,7 @@ NOTE: version jumps from `0.11.0.0` to `0.13.0.0` because `0.12.0.0` was created
   block forging of the consensus layer.
 
 <a id='changelog-0.6.1.0'></a>
-## 0.6.1.0 — 2023-06-23
+## 0.6.1.0 -- 2023-06-23
 
 ### Patch
 
@@ -329,7 +329,7 @@ NOTE: version jumps from `0.11.0.0` to `0.13.0.0` because `0.12.0.0` was created
 - Update a comment in Ouroboros.Consensus.NodeKernel.forkBlockForging
 
 <a id='changelog-0.6.0.0'></a>
-## 0.6.0.0 — 2023-05-19
+## 0.6.0.0 -- 2023-05-19
 
 ### Non-Breaking
 
@@ -342,7 +342,7 @@ NOTE: version jumps from `0.11.0.0` to `0.13.0.0` because `0.12.0.0` was created
 * `blockFetchServerTracer` field of `Tracers` was changed to use `TraceLabelPeer`.
 
 <a id='changelog-0.5.1.0'></a>
-## 0.5.1.0 — 2023-04-28
+## 0.5.1.0 -- 2023-04-28
 
 ### Non-Breaking
 
@@ -351,7 +351,7 @@ NOTE: version jumps from `0.11.0.0` to `0.13.0.0` because `0.12.0.0` was created
 - Update `ouroboros-network` dependency.
 
 <a id='changelog-0.5.0.0'></a>
-## 0.5.0.0 - 2023-04-24
+## 0.5.0.0 -- 2023-04-24
 
 ### Breaking
 
@@ -359,7 +359,7 @@ NOTE: version jumps from `0.11.0.0` to `0.13.0.0` because `0.12.0.0` was created
   the ledger-agnostic test-suites that use them.
 
 <a id='changelog-0.4.0.0'></a>
-## 0.4.0.0 - 2023-04-21
+## 0.4.0.0 -- 2023-04-21
 
 ### Breaking
 

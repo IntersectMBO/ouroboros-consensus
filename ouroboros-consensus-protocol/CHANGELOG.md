@@ -3,7 +3,7 @@
 # Changelog entries
 
 <a id='changelog-0.10.0.0'></a>
-## 0.10.0.0 — 2025-01-08
+## 0.10.0.0 -- 2025-01-08
 
 ### Patch
 
@@ -17,21 +17,21 @@
 - Removed unused fields from `PraosParams`.
 
 <a id='changelog-0.9.0.2'></a>
-## 0.9.0.2 — 2024-10-14
+## 0.9.0.2 -- 2024-10-14
 
 ### Patch
 
 - Updated dependencies, but no changes to the interface.
 
 <a id='changelog-0.9.0.1'></a>
-## 0.9.0.1 — 2024-06-19
+## 0.9.0.1 -- 2024-06-19
 
 ### Patch
 
 - Updated dependencies, but no changes to the interface.
 
 <a id='changelog-0.9.0.0'></a>
-## 0.9.0.0 — 2024-05-13
+## 0.9.0.0 -- 2024-05-13
 
 ### Non-Breaking
 
@@ -56,7 +56,7 @@
   to `Ouroboros.Consensus.Protocol.Abstract`.
 
 <a id='changelog-0.8.0.0'></a>
-## 0.8.0.0 — 2024-04-03
+## 0.8.0.0 -- 2024-04-03
 
 ### Breaking
 
@@ -67,7 +67,7 @@
   between different eras).
 
 <a id='changelog-0.7.0.0'></a>
-## 0.7.0.0 — 2024-01-29
+## 0.7.0.0 -- 2024-01-29
 
 ### Patch
 
@@ -80,7 +80,7 @@
 - Praos' `LedgerView.lvMaxBoxySize` type changed from `Natural` to `Word32`.
 
 <a id='changelog-0.6.0.0'></a>
-## 0.6.0.0 — 2023-10-26
+## 0.6.0.0 -- 2023-10-26
 
 ### Breaking
 
@@ -89,14 +89,14 @@
 - Rename `translateTickedLedgerView` to `translateLedgerView`.
 
 <a id='changelog-0.5.0.7'></a>
-## 0.5.0.7 — 2023-09-27
+## 0.5.0.7 -- 2023-09-27
 
 ### Patch
 
 - Update upper bound on `ouroboros-consensus`
 
 <a id='changelog-0.5.0.6'></a>
-## 0.5.0.6 — 2023-08-21
+## 0.5.0.6 -- 2023-08-21
 
 ### Patch
 
@@ -105,42 +105,42 @@
   strongly indicate that we ignore them when evolving the package's version.
 
 <a id='changelog-0.5.0.5></a>
-## 0.5.0.5 — 2023-08-18
+## 0.5.0.5 -- 2023-08-18
 
 ### Non-Breaking
 
 - Relax upper bound on `ouroboros-consensus`
 
 <a id='changelog-0.5.0.4'></a>
-## 0.5.0.4 — 2023-07-06
+## 0.5.0.4 -- 2023-07-06
 
 ### Non-Breaking
 
 - Relax upper bound on `ouroboros-consensus`
 
 <a id='changelog-0.5.0.3'></a>
-## 0.5.0.3 — 2023-06-23
+## 0.5.0.3 -- 2023-06-23
 
 ### Patch
 
 - Rename `StrictMVar` to `StrictSVar`
 
 <a id='changelog-0.5.0.2'></a>
-## 0.5.0.2 — 2023-05-19
+## 0.5.0.2 -- 2023-05-19
 
 ### Patch
 
 - Relax bounds on `ouroboros-consensus`
 
 <a id='changelog-0.5.0.1'></a>
-## 0.5.0.1 — 2023-04-28
+## 0.5.0.1 -- 2023-04-28
 
 ### Patch
 
 - Relax bounds on `ouroboros-consensus`
 
 <a id='changelog-0.5.0.0'></a>
-## 0.5.0.0 - 2023-04-24
+## 0.5.0.0 -- 2023-04-24
 
 ### Breaking
 
