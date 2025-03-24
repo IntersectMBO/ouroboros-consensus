@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -23,6 +24,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots (
   , NumOfDiskSnapshots (..)
   , ReadSnapshotErr (..)
   , SnapshotMetadata (..)
+  , SnapshotBackend (..)
   , MetadataErr (..)
   , SnapshotFailure (..)
   , SnapshotPolicyArgs (..)
@@ -67,7 +69,7 @@ import           Control.Monad
 import           Control.Monad.Class.MonadTime.SI
 import           Control.Monad.Except
 import           Control.Tracer
-import           Data.Aeson (ToJSON(..), object, (.=), FromJSON(..), withObject, (.:?))
+import           Data.Aeson (ToJSON(..), object, (.=), FromJSON(..), withObject, withText, (.:), (.:?))
 import qualified Data.List as List
 import           Data.Maybe (isJust, mapMaybe)
 import           Data.Ord
@@ -149,17 +151,36 @@ data ReadSnapshotErr =
   deriving (Eq, Show)
 
 data SnapshotMetadata = SnapshotMetadata
-  { metadataChecksum :: Maybe CRC
+  { snapshotBackend :: SnapshotBackend
+  , snapshotChecksum :: Maybe CRC
   } deriving (Eq, Show)
 
 instance ToJSON SnapshotMetadata where
   toJSON sm = object
-    [ "checksum" .= fmap getCRC (metadataChecksum sm)
+    [ "backend" .= snapshotBackend sm
+    , "checksum" .= fmap getCRC (snapshotChecksum sm)
     ]
 
 instance FromJSON SnapshotMetadata where
   parseJSON = withObject "SnapshotMetadata" $ \o ->
-    SnapshotMetadata <$> fmap (fmap CRC) (o .:? "checksum")
+    SnapshotMetadata <$> o .: "backend"
+                     <*> fmap (fmap CRC) (o .:? "checksum")
+
+data SnapshotBackend =
+    UTxOHDMemSnapshot
+  | UTxOHDLMDBSnapshot
+  deriving (Eq, Show)
+
+instance ToJSON SnapshotBackend where
+  toJSON = \case
+    UTxOHDMemSnapshot -> "utxohd-mem"
+    UTxOHDLMDBSnapshot -> "utxohd-lmdb"
+
+instance FromJSON SnapshotBackend where
+  parseJSON = withText "SnapshotBackend" $ \case
+    "utxohd-mem" -> pure UTxOHDMemSnapshot
+    "utxohd-lmdb" -> pure UTxOHDLMDBSnapshot
+    _ -> fail "unknown SnapshotBackend"
 
 data MetadataErr =
   -- | The metadata file does not exist
@@ -168,6 +189,8 @@ data MetadataErr =
   | MetadataInvalid String
   -- | The metadata file does not contain a checksum for the snapshot
   | MetadataChecksumMissing
+  -- | The metadata file has the incorrect backend
+  | MetadataBackendMismatch
   deriving (Eq, Show)
 
 -- | Named snapshot are permanent, they will never be deleted even if failing to
