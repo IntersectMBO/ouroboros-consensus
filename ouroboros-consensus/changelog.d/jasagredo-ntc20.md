@@ -1,3 +1,3 @@
 ### Non-Breaking
 
-* Use new `NodeToClientV_20`.
+- Use new `NodeToClientV_20`.
