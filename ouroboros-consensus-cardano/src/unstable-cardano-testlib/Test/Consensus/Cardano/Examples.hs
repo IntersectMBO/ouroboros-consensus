@@ -33,6 +33,7 @@ import           Data.SOP.BasicFunctors
 import           Data.SOP.Counting (Exactly (..))
 import           Data.SOP.Index (Index (..), himap)
 import           Data.SOP.Strict
+import qualified Data.Text as T
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.ByronHFC
 import           Ouroboros.Consensus.Byron.Ledger (ByronBlock)
@@ -109,16 +110,11 @@ combineEras perEraExamples = Examples {
         inj idx = fmap (fmap (inject $ oracularInjectionIndex exampleStartBounds idx))
 
     perEraExamplesPrefixed :: NP Examples (CardanoEras Crypto)
-    perEraExamplesPrefixed = hzipWith (\(K eraName) es -> prefixExamples eraName es) perEraNames perEraExamples
+    perEraExamplesPrefixed = hcmap proxySingle prefixWithEraName perEraExamples
       where
-        perEraNames = K "Byron"
-                   :* K "Shelley"
-                   :* K "Allegra"
-                   :* K "Mary"
-                   :* K "Alonzo"
-                   :* K "Babbage"
-                   :* K "Conway"
-                   :* Nil
+        prefixWithEraName es = prefixExamples (T.unpack eraName) es
+          where
+            eraName = singleEraName $ singleEraInfo es
 
     exampleLedgerConfigCardano ::
          Labelled (HardForkLedgerConfig (CardanoEras Crypto))
@@ -199,8 +195,6 @@ instance Inject Examples where
            )
         => Proxy f -> Labelled a -> Labelled b
       inj p = map (fmap (inject' p iidx))
-
-
 
 {-------------------------------------------------------------------------------
   Setup

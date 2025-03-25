@@ -128,13 +128,13 @@ type ShelleyBasedLedgerEras c =
 -- Here we use layout and adjacency to make it obvious that we haven't
 -- miscounted.
 
-pattern TagByron   :: f ByronBlock                               -> NS f (CardanoEras c)
+pattern TagByron   :: f ByronBlock                           -> NS f (CardanoEras c)
 pattern TagShelley :: f (ShelleyBlock (TPraos c) ShelleyEra) -> NS f (CardanoEras c)
 pattern TagAllegra :: f (ShelleyBlock (TPraos c) AllegraEra) -> NS f (CardanoEras c)
-pattern TagMary    :: f (ShelleyBlock (TPraos c) MaryEra) -> NS f (CardanoEras c)
-pattern TagAlonzo  :: f (ShelleyBlock (TPraos c) AlonzoEra) -> NS f (CardanoEras c)
+pattern TagMary    :: f (ShelleyBlock (TPraos c) MaryEra   ) -> NS f (CardanoEras c)
+pattern TagAlonzo  :: f (ShelleyBlock (TPraos c) AlonzoEra ) -> NS f (CardanoEras c)
 pattern TagBabbage :: f (ShelleyBlock (Praos c)  BabbageEra) -> NS f (CardanoEras c)
-pattern TagConway  :: f (ShelleyBlock (Praos c)  ConwayEra) -> NS f (CardanoEras c)
+pattern TagConway  :: f (ShelleyBlock (Praos c)  ConwayEra ) -> NS f (CardanoEras c)
 
 pattern TagByron   x =                   Z x
 pattern TagShelley x =                S (Z x)

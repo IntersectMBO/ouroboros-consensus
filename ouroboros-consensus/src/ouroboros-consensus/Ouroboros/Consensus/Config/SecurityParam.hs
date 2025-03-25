@@ -17,8 +17,8 @@ import           Quiet
 --
 -- We interpret this as the number of rollbacks we support.
 --
--- i.e., k == 0: we can't roll back at all
---       k == 1: we can roll back at most one block, etc
+-- i.e., k == 1: we can roll back at most one block
+--       k == 2: we can roll back at most two blocks, etc
 --
 -- NOTE: This talks about the number of /blocks/ we can roll back, not
 -- the number of /slots/.

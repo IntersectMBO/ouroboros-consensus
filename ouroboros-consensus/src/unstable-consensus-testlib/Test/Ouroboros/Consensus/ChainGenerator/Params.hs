@@ -1,6 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE PatternSynonyms #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Ouroboros.Consensus.ChainGenerator.Params (
     Asc (Asc, UnsafeAsc)

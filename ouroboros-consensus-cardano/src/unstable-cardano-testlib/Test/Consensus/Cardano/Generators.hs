@@ -27,6 +27,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, fromMaybe)
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
 import           Data.SOP.Counting (Exactly (..))
 import           Data.SOP.Index
 import           Data.SOP.NonEmpty
@@ -726,23 +727,12 @@ instance SListI xs => Arbitrary (History.Shape xs) where
 
 instance (CardanoHardForkConstraints c)
       => Arbitrary (PerEraLedgerConfig (CardanoEras c)) where
-  arbitrary = do
-    byronPLC   <- WrapPartialLedgerConfig <$> arbitrary
-    shelleyPLC <- WrapPartialLedgerConfig <$> arbitrary
-    allegraPLC <- WrapPartialLedgerConfig <$> arbitrary
-    maryPLC    <- WrapPartialLedgerConfig <$> arbitrary
-    alonzoPLC  <- WrapPartialLedgerConfig <$> arbitrary
-    babbagePLC <- WrapPartialLedgerConfig <$> arbitrary
-    conwayPLC  <- WrapPartialLedgerConfig <$> arbitrary
-    return $ PerEraLedgerConfig $
-      byronPLC
-      :* shelleyPLC
-      :* allegraPLC
-      :* maryPLC
-      :* alonzoPLC
-      :* babbagePLC
-      :* conwayPLC
-      :* Nil
+  arbitrary =
+      fmap PerEraLedgerConfig . hsequence'
+    $ hcpure (Proxy @(Compose Arbitrary WrapPartialLedgerConfig)) (Comp arbitrary)
+
+instance Arbitrary (PartialLedgerConfig blk) => Arbitrary (WrapPartialLedgerConfig blk) where
+  arbitrary = WrapPartialLedgerConfig <$> arbitrary
 
 instance Arbitrary ByronPartialLedgerConfig where
   arbitrary = ByronPartialLedgerConfig <$> arbitrary <*> arbitrary

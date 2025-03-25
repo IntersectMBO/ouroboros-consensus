@@ -413,6 +413,7 @@ library unstable-cardano-testlib
     sop-core,
     sop-extras,
     strict-sop-core,
+    text,
     unstable-byron-testlib,
     unstable-shelley-testlib,
 
