@@ -2,6 +2,38 @@
 
 # Changelog entries
 
+<a id='changelog-0.23.0.0'></a>
+## 0.23.0.0 -- 2025-03-25
+
+### Breaking
+
+- Removed legacy `HardForkSpecificNodeToClientVersion`s and related code.
+
+- Add `TxMeasureMetrics (TxMeasure blk)` constraint to `CanHardFork`
+
+- Expose `ValidationPolicy` and `ComputeLedgerEvents` when calling
+  ledger rules for block application and ticking. This allows the user
+  to choose any validation policy form the `small-steps` package.
+
+- Make the type of `Nary.inject` more precise.
+  The old type involves oracular data, so any required changes downstream are almost certainly limited to testing code.
+
+- `SecurityParam` is now `NonZero` as needed by Ledger.
+
+- Added a new CSJ tracer to ChainSync client interface.
+
+### Non-Breaking
+
+- Remove redundant derived Typeable instances.
+
+- Bump upper bound on `base` dependency.
+
+- Use new `NodeToClientV_20`.
+
+### Patch
+
+- Label the leaky bucket thread.
+
 <a id='changelog-0.22.0.0'></a>
 ## 0.22.0.0 -- 2025-01-08
 

@@ -2,6 +2,18 @@
 
 # Changelog entries
 
+<a id='changelog-0.11.0.0'></a>
+## 0.11.0.0 -- 2025-03-25
+
+### Breaking
+
+- Adapt to Ledger's Crypto monomorphization. Many types and fields have lost their `c/crypto` type variable as now `StandardCrypto` is used by the Ledger everywhere.
+- `KESKey` now uses `UnsoundPureSignKeyKES` in preparation of the `kes-agent` feature.
+
+### Non-Breaking
+
+- Bump upper bound on `base` dependency.
+
 <a id='changelog-0.10.0.0'></a>
 ## 0.10.0.0 -- 2025-01-08
 
