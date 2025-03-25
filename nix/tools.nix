@@ -2,7 +2,7 @@ inputs: final: prev:
 
 let
   inherit (final) lib;
-  tool-index-state = "2024-07-04T00:00:00Z";
+  tool-index-state = "2025-03-18T17:41:11Z";
   tool = name: version: other:
     final.haskell-nix.tool final.hsPkgs.args.compiler-nix-name name ({
       version = version;
