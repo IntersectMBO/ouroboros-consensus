@@ -13,6 +13,7 @@
 
 module Test.Consensus.GSM.Model (module Test.Consensus.GSM.Model) where
 
+import           Cardano.Network.Types (LedgerStateJudgement (..))
 import qualified Control.Monad.Class.MonadTime.SI as SI
 import           Data.Kind (Type)
 import           Data.List ((\\))
@@ -22,8 +23,6 @@ import           Data.Time (diffTimeToPicoseconds)
 import qualified Data.TreeDiff as TD
 import           GHC.Generics (Generic, Generic1)
 import qualified Ouroboros.Consensus.Node.GSM as GSM
-import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
-                     (LedgerStateJudgement (..))
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (choose, elements, shrink)
 import qualified Test.StateMachine as QSM

@@ -4,6 +4,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -13,14 +14,17 @@ module Test.ThreadNet.TxGen.Cardano (CardanoTxGenExtra (..)) where
 import qualified Cardano.Chain.Common as Byron
 import           Cardano.Chain.Genesis (GeneratedSecrets (..))
 import           Cardano.Crypto (toVerification)
+import qualified Cardano.Crypto.DSIGN as DSIGN
 import qualified Cardano.Crypto.Signing as Byron
+import qualified Cardano.Crypto.VRF as VRF
 import qualified Cardano.Ledger.Address as SL (BootstrapAddress (..))
 import qualified Cardano.Ledger.Hashes as SL
+import           Cardano.Ledger.Keys (DSIGN)
 import qualified Cardano.Ledger.Keys.Bootstrap as SL (makeBootstrapWitness)
-import qualified Cardano.Ledger.SafeHash as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as SL
 import           Cardano.Ledger.Val ((<->))
+import           Cardano.Protocol.Crypto (VRF)
 import           Control.Exception (assert)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -41,8 +45,8 @@ import           Ouroboros.Consensus.HardFork.Combinator.Ledger
                      (tickedHardForkLedgerStatePerEra)
 import           Ouroboros.Consensus.HardFork.Combinator.State.Types
                      (currentState, getHardForkState)
-import           Ouroboros.Consensus.Ledger.Basics (LedgerConfig, LedgerState,
-                     applyChainTick)
+import           Ouroboros.Consensus.Ledger.Basics (ComputeLedgerEvents (..),
+                     LedgerConfig, LedgerState, applyChainTick)
 import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock, mkShelleyTx)
@@ -98,7 +102,7 @@ instance CardanoHardForkConstraints c => TxGen (CardanoBlock c) where
 
       -- Reuse the payment key as the pool key, since it's an individual
       -- stake pool and the namespaces are separate.
-      poolSK :: SL.SignKeyDSIGN c
+      poolSK :: DSIGN.SignKeyDSIGN DSIGN
       poolSK = paymentSK
 
 -- | See 'migrateUTxO'
@@ -107,10 +111,10 @@ data MigrationInfo c = MigrationInfo
     -- ^ Needed for creating a Byron address.
   , byronSK    :: Byron.SigningKey
     -- ^ The core node's Byron secret.
-  , paymentSK  :: SL.SignKeyDSIGN c
-  , poolSK     :: SL.SignKeyDSIGN c
-  , stakingSK  :: SL.SignKeyDSIGN c
-  , vrfSK      :: SL.SignKeyVRF   c
+  , paymentSK  :: DSIGN.SignKeyDSIGN DSIGN
+  , poolSK     :: DSIGN.SignKeyDSIGN DSIGN
+  , stakingSK  :: DSIGN.SignKeyDSIGN DSIGN
+  , vrfSK      :: VRF.SignKeyVRF (VRF c)
     -- ^ To be re-used by the individual pool.
   }
 
@@ -124,7 +128,9 @@ data MigrationInfo c = MigrationInfo
 -- It returns 'Nothing' if the core node does not have any utxo in its
 -- 'byronAddr' (eg if this transaction has already been applied).
 migrateUTxO ::
-     forall c. CardanoHardForkConstraints c
+     forall c.
+     ( CardanoHardForkConstraints c
+     )
   => MigrationInfo c
   -> SlotNo
   -> LedgerConfig (CardanoBlock c)
@@ -133,7 +139,7 @@ migrateUTxO ::
 migrateUTxO migrationInfo curSlot lcfg lst
     | Just utxo <- mbUTxO =
 
-    let picked :: Map (SL.TxIn c) (SL.TxOut (ShelleyEra c))
+    let picked :: Map SL.TxIn (SL.TxOut ShelleyEra)
         picked = Map.filter pick $ SL.unUTxO utxo
           where
             pick (SL.ShelleyTxOut addr _) =
@@ -156,7 +162,7 @@ migrateUTxO migrationInfo curSlot lcfg lst
             assert (pickedCoin > spentCoin) $
             pickedCoin <-> spentCoin
 
-        body :: SL.TxBody (ShelleyEra c)
+        body :: SL.TxBody ShelleyEra
         body = SL.mkBasicTxBody
           & SL.certsTxBodyL   .~ StrictSeq.fromList
               [ SL.RegTxCert $ Shelley.mkCredential stakingSK
@@ -170,24 +176,24 @@ migrateUTxO migrationInfo curSlot lcfg lst
           & SL.ttlTxBodyL     .~ SlotNo maxBound
           & SL.feeTxBodyL     .~ fee
 
-        bodyHash :: SL.SafeHash c SL.EraIndependentTxBody
+        bodyHash :: SL.SafeHash SL.EraIndependentTxBody
         bodyHash = SL.hashAnnotated body
 
         -- Witness the use of bootstrap address's utxo.
-        byronWit :: SL.BootstrapWitness c
+        byronWit :: SL.BootstrapWitness
         byronWit =
             SL.makeBootstrapWitness (SL.extractHash bodyHash) byronSK $
             Byron.addrAttributes byronAddr
 
         -- Witness the stake delegation.
-        delegWit :: SL.WitVKey 'SL.Witness c
+        delegWit :: SL.WitVKey 'SL.Witness
         delegWit =
             TL.mkWitnessVKey
               bodyHash
               (Shelley.mkKeyPair stakingSK)
 
         -- Witness the pool registration.
-        poolWit :: SL.WitVKey 'SL.Witness c
+        poolWit :: SL.WitVKey 'SL.Witness
         poolWit =
             TL.mkWitnessVKey
               bodyHash
@@ -207,11 +213,11 @@ migrateUTxO migrationInfo curSlot lcfg lst
     | otherwise           = Nothing
 
   where
-    mbUTxO :: Maybe (SL.UTxO (ShelleyEra c))
+    mbUTxO :: Maybe (SL.UTxO ShelleyEra)
     mbUTxO =
         fmap getUTxOShelley $
         ejectShelleyTickedLedgerState $
-        applyChainTick lcfg curSlot $
+        applyChainTick OmitLedgerEvents lcfg curSlot $
         lst
 
     MigrationInfo
@@ -229,14 +235,14 @@ migrateUTxO migrationInfo curSlot lcfg lst
 
     -- We use a base reference for the stake so that we can refer to it in the
     -- same tx that registers it.
-    shelleyAddr :: SL.Addr c
+    shelleyAddr :: SL.Addr
     shelleyAddr =
         SL.Addr Shelley.networkId
           (Shelley.mkCredential paymentSK)
           (SL.StakeRefBase $ Shelley.mkCredential stakingSK)
 
     -- A simplistic individual pool
-    poolParams :: SL.Coin -> SL.PoolParams c
+    poolParams :: SL.Coin -> SL.PoolParams
     poolParams pledge = SL.PoolParams
         { SL.ppCost          = SL.Coin 1
         , SL.ppMetadata      = SL.SNothing
@@ -247,14 +253,14 @@ migrateUTxO migrationInfo curSlot lcfg lst
         , SL.ppRewardAccount =
             SL.RewardAccount Shelley.networkId $ Shelley.mkCredential poolSK
         , SL.ppRelays        = StrictSeq.empty
-        , SL.ppVrf           = Shelley.mkKeyHashVrf vrfSK
+        , SL.ppVrf           = Shelley.mkKeyHashVrf @c vrfSK
         }
 
 -----
 
 ejectShelleyNS ::
      NS f (CardanoEras c)
-  -> Maybe (f (ShelleyBlock (TPraos c) (ShelleyEra c)))
+  -> Maybe (f (ShelleyBlock (TPraos c) ShelleyEra))
 ejectShelleyNS = \case
     S (Z x) -> Just x
     _       -> Nothing
@@ -270,7 +276,7 @@ getUTxOShelley tls =
 
 ejectShelleyTickedLedgerState ::
      Ticked (LedgerState (CardanoBlock c))
-  -> Maybe (Ticked (LedgerState (ShelleyBlock (TPraos c) (ShelleyEra c))))
+  -> Maybe (Ticked (LedgerState (ShelleyBlock (TPraos c) ShelleyEra)))
 ejectShelleyTickedLedgerState ls =
     fmap (unComp . currentState) $
     ejectShelleyNS $

@@ -19,9 +19,14 @@ module Test.Consensus.Shelley.Examples (
   , examplesShelley
   ) where
 
+
 import qualified Cardano.Ledger.Block as SL
-import           Cardano.Ledger.Crypto (Crypto)
+import           Cardano.Ledger.Core
+import qualified Cardano.Ledger.Shelley.API as SL
+import           Cardano.Protocol.Crypto (StandardCrypto)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
+import           Cardano.Slotting.EpochInfo (fixedEpochInfo)
+import           Cardano.Slotting.Time (mkSlotLength)
 import           Data.Coerce (coerce)
 import           Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Set as Set
@@ -29,20 +34,19 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsMempool
-import           Ouroboros.Consensus.Protocol.Abstract (TranslateProto,
-                     translateChainDepState)
+import           Ouroboros.Consensus.Protocol.Abstract (translateChainDepState)
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
 import           Ouroboros.Consensus.Protocol.Praos.Header
                      (HeaderBody (HeaderBody))
 import qualified Ouroboros.Consensus.Protocol.Praos.Header as Praos
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos,
                      TPraosState (TPraosState))
-import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.HFEras
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Query.Types
 import           Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import           Ouroboros.Consensus.Storage.Serialisation
+import           Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
 import           Ouroboros.Network.Block (Serialised (..))
 import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
 import           Ouroboros.Network.PeerSelection.RelayAccessPoint
@@ -73,12 +77,13 @@ codecConfig :: CodecConfig StandardShelleyBlock
 codecConfig = ShelleyCodecConfig
 
 fromShelleyLedgerExamples ::
-     ShelleyCompatible (TPraos (EraCrypto era)) era
+     ShelleyCompatible (TPraos StandardCrypto) era
   => ShelleyLedgerExamples era
-  -> Examples (ShelleyBlock (TPraos (EraCrypto era)) era)
-fromShelleyLedgerExamples ShelleyLedgerExamples {
-                            sleResultExamples = ShelleyResultExamples{..}
-                            , ..} =
+  -> Examples (ShelleyBlock (TPraos StandardCrypto) era)
+fromShelleyLedgerExamples
+  ShelleyLedgerExamples
+    { sleResultExamples = ShelleyResultExamples{..}
+    , ..} =
   Examples {
       exampleBlock            = unlabelled blk
     , exampleSerialisedBlock  = unlabelled serialisedBlock
@@ -95,6 +100,7 @@ fromShelleyLedgerExamples ShelleyLedgerExamples {
     , exampleChainDepState    = unlabelled chainDepState
     , exampleExtLedgerState   = unlabelled extLedgerState
     , exampleSlotNo           = unlabelled slotNo
+    , exampleLedgerConfig     = unlabelled ledgerConfig
     }
   where
     blk = mkShelleyBlock sleBlock
@@ -108,7 +114,6 @@ fromShelleyLedgerExamples ShelleyLedgerExamples {
           ("GetLedgerTip",              SomeSecond GetLedgerTip)
         , ("GetEpochNo",                SomeSecond GetEpochNo)
         , ("GetCurrentPParams",         SomeSecond GetCurrentPParams)
-        , ("GetProposedPParamsUpdates", SomeSecond GetProposedPParamsUpdates)
         , ("GetStakeDistribution",      SomeSecond GetStakeDistribution)
         , ("GetNonMyopicMemberRewards", SomeSecond $ GetNonMyopicMemberRewards sleRewardsCredentials)
         , ("GetGenesisConfig",          SomeSecond GetGenesisConfig)
@@ -118,7 +123,6 @@ fromShelleyLedgerExamples ShelleyLedgerExamples {
           ("LedgerTip",              SomeResult GetLedgerTip (blockPoint blk))
         , ("EpochNo",                SomeResult GetEpochNo 10)
         , ("EmptyPParams",           SomeResult GetCurrentPParams srePParams)
-        , ("ProposedPParamsUpdates", SomeResult GetProposedPParamsUpdates sreProposedPPUpdates)
         , ("StakeDistribution",      SomeResult GetStakeDistribution $ fromLedgerPoolDistr srePoolDistr)
         , ("NonMyopicMemberRewards", SomeResult (GetNonMyopicMemberRewards Set.empty)
                                      (NonMyopicMemberRewards $ sreNonMyopicRewards))
@@ -148,14 +152,14 @@ fromShelleyLedgerExamples ShelleyLedgerExamples {
                        ledgerState
                        (genesisHeaderState chainDepState)
 
+    ledgerConfig = exampleShelleyLedgerConfig sleTranslationContext
+
 -- | TODO Factor this out into something nicer.
 fromShelleyLedgerExamplesPraos ::
   forall era.
-  ( ShelleyCompatible (Praos (EraCrypto era)) era,
-    TranslateProto (TPraos (EraCrypto era)) (Praos (EraCrypto era))
-  )
+  ShelleyCompatible (Praos StandardCrypto) era
   => ShelleyLedgerExamples era
-  -> Examples (ShelleyBlock (Praos (EraCrypto era)) era)
+  -> Examples (ShelleyBlock (Praos StandardCrypto) era)
 fromShelleyLedgerExamplesPraos ShelleyLedgerExamples {
                             sleResultExamples = ShelleyResultExamples{..}
                             , ..} =
@@ -175,12 +179,14 @@ fromShelleyLedgerExamplesPraos ShelleyLedgerExamples {
     , exampleChainDepState    = unlabelled chainDepState
     , exampleExtLedgerState   = unlabelled extLedgerState
     , exampleSlotNo           = unlabelled slotNo
+    , exampleLedgerConfig     = unlabelled ledgerConfig
     }
   where
-    blk = mkShelleyBlock $ let
-      SL.Block hdr1 bdy = sleBlock in SL.Block (translateHeader hdr1) bdy
+    blk = mkShelleyBlock $
+      let SL.Block hdr1 bdy = sleBlock
+       in SL.Block (translateHeader hdr1) bdy
 
-    translateHeader :: Crypto c => SL.BHeader c -> Praos.Header c
+    translateHeader :: SL.BHeader StandardCrypto -> Praos.Header StandardCrypto
     translateHeader (SL.BHeader bhBody bhSig) =
         Praos.Header hBody hSig
       where
@@ -207,7 +213,6 @@ fromShelleyLedgerExamplesPraos ShelleyLedgerExamples {
           ("GetLedgerTip",              SomeSecond GetLedgerTip)
         , ("GetEpochNo",                SomeSecond GetEpochNo)
         , ("GetCurrentPParams",         SomeSecond GetCurrentPParams)
-        , ("GetProposedPParamsUpdates", SomeSecond GetProposedPParamsUpdates)
         , ("GetStakeDistribution",      SomeSecond GetStakeDistribution)
         , ("GetNonMyopicMemberRewards", SomeSecond $ GetNonMyopicMemberRewards sleRewardsCredentials)
         , ("GetGenesisConfig",          SomeSecond GetGenesisConfig)
@@ -216,7 +221,6 @@ fromShelleyLedgerExamplesPraos ShelleyLedgerExamples {
           ("LedgerTip",              SomeResult GetLedgerTip (blockPoint blk))
         , ("EpochNo",                SomeResult GetEpochNo 10)
         , ("EmptyPParams",           SomeResult GetCurrentPParams srePParams)
-        , ("ProposedPParamsUpdates", SomeResult GetProposedPParamsUpdates sreProposedPPUpdates)
         , ("StakeDistribution",      SomeResult GetStakeDistribution $ fromLedgerPoolDistr srePoolDistr)
         , ("NonMyopicMemberRewards", SomeResult (GetNonMyopicMemberRewards Set.empty)
                                      (NonMyopicMemberRewards $ sreNonMyopicRewards))
@@ -236,13 +240,13 @@ fromShelleyLedgerExamplesPraos ShelleyLedgerExamples {
     , shelleyLedgerState      = sleNewEpochState
     , shelleyLedgerTransition = ShelleyTransitionInfo {shelleyAfterVoting = 0}
     }
-    chainDepState = translateChainDepState (Proxy @(TPraos (EraCrypto era), Praos (EraCrypto era)))
+    chainDepState = translateChainDepState (Proxy @(TPraos StandardCrypto, Praos StandardCrypto))
       $ TPraosState (NotOrigin 1) sleChainDepState
     extLedgerState = ExtLedgerState
                        ledgerState
                        (genesisHeaderState chainDepState)
 
-
+    ledgerConfig = exampleShelleyLedgerConfig sleTranslationContext
 
 examplesShelley :: Examples StandardShelleyBlock
 examplesShelley = fromShelleyLedgerExamples ledgerExamplesShelley
@@ -261,3 +265,15 @@ examplesBabbage = fromShelleyLedgerExamplesPraos ledgerExamplesBabbage
 
 examplesConway :: Examples StandardConwayBlock
 examplesConway = fromShelleyLedgerExamplesPraos ledgerExamplesConway
+
+exampleShelleyLedgerConfig :: TranslationContext era -> ShelleyLedgerConfig era
+exampleShelleyLedgerConfig translationContext = ShelleyLedgerConfig {
+      shelleyLedgerCompactGenesis = compactGenesis testShelleyGenesis
+    , shelleyLedgerGlobals = SL.mkShelleyGlobals
+        testShelleyGenesis
+        epochInfo
+    , shelleyLedgerTranslationContext = translationContext
+    }
+  where
+    epochInfo  = fixedEpochInfo (EpochSize 4) slotLength
+    slotLength = mkSlotLength (secondsToNominalDiffTime 7)

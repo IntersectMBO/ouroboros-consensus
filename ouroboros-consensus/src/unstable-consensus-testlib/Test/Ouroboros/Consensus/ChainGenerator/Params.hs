@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE PatternSynonyms #-}
 
 module Test.Ouroboros.Consensus.ChainGenerator.Params (
@@ -100,7 +101,7 @@ genKSD :: QC.Gen (Kcp, Scg, Delta)
 genKSD = sized1 $ \sz -> do
     -- k > 0 so we can ensure an alternative schema loses the density comparison
     -- without having to deactivate the first active slot
-    k <- (+ 1) <$> QC.choose (0, sz)
+    k <- QC.choose (1, sz + 1)
     s <- (+ (k + 1)) <$> QC.choose (0, 2 * sz)   -- ensures @(k+1) / s <= 1@
     d <- QC.choose (0, max 0 $ min (div sz 4) (s-1)) -- ensures @d < s@
     pure (Kcp k, Scg s, Delta d)

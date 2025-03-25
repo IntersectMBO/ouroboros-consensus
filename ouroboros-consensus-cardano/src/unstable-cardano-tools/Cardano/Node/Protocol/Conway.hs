@@ -10,7 +10,6 @@ module Cardano.Node.Protocol.Conway (
   ) where
 
 import qualified Cardano.Ledger.Conway.Genesis as Conway
-import qualified Cardano.Ledger.Crypto as Crypto
 import           Cardano.Node.Protocol.Shelley (GenesisReadError,
                      readGenesisAny)
 import           Cardano.Node.Types
@@ -20,14 +19,13 @@ import           Cardano.Prelude
 -- Conway genesis
 --
 
-readGenesis :: Crypto.Crypto c
-            => GenesisFile
+readGenesis :: GenesisFile
             -> Maybe GenesisHash
             -> ExceptT GenesisReadError IO
-                       (Conway.ConwayGenesis c, GenesisHash)
+                       (Conway.ConwayGenesis, GenesisHash)
 readGenesis = readGenesisAny
 
-validateGenesis :: Conway.ConwayGenesis c
+validateGenesis :: Conway.ConwayGenesis
                 -> ExceptT ConwayProtocolInstantiationError IO ()
 validateGenesis _ = return () --TODO conway: do the validation
 

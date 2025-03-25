@@ -47,6 +47,7 @@ module Test.Consensus.PointSchedule (
   , uniformPoints
   ) where
 
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Cardano.Slotting.Time (SlotLength)
 import           Control.Monad (replicateM)
 import           Control.Monad.Class.MonadTime.SI (Time (Time), addTime,
@@ -408,7 +409,7 @@ uniformPointsWithExtraHonestPeersAndDowntime
     g
   = do
   let
-    kSlot = withOrigin 0 (fromIntegral . unSlotNo) (AF.headSlot (AF.takeOldest (fromIntegral k) btTrunk))
+    kSlot = withOrigin 0 (fromIntegral . unSlotNo) (AF.headSlot (AF.takeOldest (fromIntegral $ unNonZero k) btTrunk))
     midSlot = (AF.length btTrunk) `div` 2
     lowerBound = max kSlot midSlot
   pauseSlot <- SlotNo . fromIntegral <$> Random.uniformRM (lowerBound, AF.length btTrunk - 1) g

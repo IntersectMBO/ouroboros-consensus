@@ -3,6 +3,7 @@
 
 module Test.ThreadNet.LeaderSchedule (tests) where
 
+import           Cardano.Ledger.BaseTypes (nonZero)
 import           Control.Monad (replicateM)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -47,7 +48,7 @@ data TestSetup = TestSetup
 instance Arbitrary TestSetup where
   arbitrary = do
       -- TODO k > 1 as a workaround for Issue #1511.
-      k          <- SecurityParam <$> choose (2, 10)
+      k          <- SecurityParam <$> choose (2, 10) `suchThatMap` nonZero
       epochSize  <- EpochSize     <$> choose (1, 10)
       slotLength <- arbitrary
 

@@ -15,6 +15,9 @@ data QueryVersion
 
   -- Adds support for 'GetChainBlockNo' and 'GetChainPoint'.
   | QueryVersion2
+
+  -- Adds support for 'GetLedgerConfig'
+  | QueryVersion3
   deriving (Eq, Ord, Enum, Bounded, Show)
 
 -- | Get the @QueryVersion@ supported by this @NodeToClientVersion@.
@@ -24,3 +27,4 @@ nodeToClientVersionToQueryVersion x = case x of
   NodeToClientV_17 -> QueryVersion2
   NodeToClientV_18 -> QueryVersion2
   NodeToClientV_19 -> QueryVersion2
+  NodeToClientV_20 -> QueryVersion3

@@ -51,6 +51,7 @@ module Ouroboros.Consensus.Protocol.PBFT (
   ) where
 
 import           Cardano.Crypto.DSIGN.Class
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Codec.Serialise (Serialise (..))
 import qualified Control.Exception as Exn
 import           Control.Monad (unless)
@@ -406,7 +407,7 @@ pbftWindowParams PBftConfig{..} = PBftWindowParams {
 --
 -- We set the window size to be equal to k.
 pbftWindowSize :: SecurityParam -> S.WindowSize
-pbftWindowSize (SecurityParam k) = S.WindowSize k
+pbftWindowSize (SecurityParam k) = S.WindowSize $ unNonZero k
 
 -- | Does the number of blocks signed by this key exceed the threshold?
 --

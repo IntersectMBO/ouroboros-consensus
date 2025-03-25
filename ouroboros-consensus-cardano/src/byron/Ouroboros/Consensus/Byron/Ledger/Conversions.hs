@@ -19,6 +19,7 @@ import qualified Cardano.Chain.Common as CC
 import qualified Cardano.Chain.Genesis as Genesis
 import qualified Cardano.Chain.Slotting as CC
 import qualified Cardano.Chain.Update as CC
+import           Cardano.Ledger.BaseTypes (nonZeroOr, unNonZero)
 import           Data.Coerce
 import qualified Data.Set as Set
 import           Numeric.Natural (Natural)
@@ -39,7 +40,7 @@ fromByronBlockNo :: CC.ChainDifficulty -> BlockNo
 fromByronBlockNo = coerce
 
 fromByronBlockCount :: CC.BlockCount -> SecurityParam
-fromByronBlockCount (CC.BlockCount k) = SecurityParam k
+fromByronBlockCount (CC.BlockCount k) = SecurityParam $ nonZeroOr k $ error "Zero found while trying to construct a NonZero"
 
 fromByronEpochSlots :: CC.EpochSlots -> EpochSize
 fromByronEpochSlots (CC.EpochSlots n) = EpochSize n
@@ -56,7 +57,7 @@ toByronSlotNo :: SlotNo -> CC.SlotNumber
 toByronSlotNo = coerce
 
 toByronBlockCount :: SecurityParam -> CC.BlockCount
-toByronBlockCount (SecurityParam k) = CC.BlockCount k
+toByronBlockCount (SecurityParam k) = CC.BlockCount $ unNonZero k
 
 toByronSlotLength :: SlotLength -> Natural
 toByronSlotLength = (fromIntegral :: Integer -> Natural)

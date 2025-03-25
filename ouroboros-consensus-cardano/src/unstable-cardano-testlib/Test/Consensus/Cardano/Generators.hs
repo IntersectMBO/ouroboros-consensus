@@ -21,20 +21,24 @@
 --
 -- We combine the Byron and Shelley-based instances defined elsewhere into
 -- Cardano instances by picking randomly from one of the eras.
-module Test.Consensus.Cardano.Generators (module Test.Consensus.Byron.Generators) where
+module Test.Consensus.Cardano.Generators () where
 
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, fromMaybe)
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
+import           Data.SOP.Counting (Exactly (..))
 import           Data.SOP.Index
 import           Data.SOP.NonEmpty
 import           Data.SOP.Sing
 import           Data.SOP.Strict
 import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.Byron.ByronHFC
 import           Ouroboros.Consensus.Byron.Ledger
 import           Ouroboros.Consensus.Cardano.Block
-import           Ouroboros.Consensus.Cardano.Node (CardanoHardForkConstraints)
+import           Ouroboros.Consensus.Cardano.CanHardFork
+import           Ouroboros.Consensus.Cardano.Node ()
 import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import qualified Ouroboros.Consensus.HardFork.History as History
@@ -42,13 +46,15 @@ import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.Serialisation (Some (..))
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
+import           Ouroboros.Consensus.Shelley.HFEras ()
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Block ()
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import           Ouroboros.Consensus.TypeFamilyWrappers
+import           Test.Cardano.Ledger.Alonzo.Arbitrary ()
 import           Test.Cardano.Ledger.Alonzo.Serialisation.Generators ()
 import           Test.Cardano.Ledger.Conway.Arbitrary ()
-import           Test.Consensus.Byron.Generators
+import           Test.Consensus.Byron.Generators ()
 import           Test.Consensus.Cardano.MockCrypto
 import           Test.Consensus.Protocol.Serialisation.Generators ()
 import           Test.Consensus.Shelley.Generators
@@ -113,7 +119,7 @@ instance Arbitrary (Coherent (CardanoBlock MockCryptoCompatByron)) where
 instance Arbitrary (CardanoHeader MockCryptoCompatByron) where
   arbitrary = getHeader <$> arbitrary
 
-instance (CanMock (TPraos c) (ShelleyEra c), CardanoHardForkConstraints c)
+instance (CanMock (TPraos c) ShelleyEra, CardanoHardForkConstraints c)
       => Arbitrary (OneEraHash (CardanoEras c)) where
   arbitrary = inj <$> arbitrary
     where
@@ -125,7 +131,7 @@ instance (CanMock (TPraos c) (ShelleyEra c), CardanoHardForkConstraints c)
         => WrapHeaderHash blk -> K (OneEraHash (CardanoEras c)) blk
       aux = K . OneEraHash . toShortRawHash (Proxy @blk) . unwrapHeaderHash
 
-instance (c ~ MockCryptoCompatByron, ShelleyBasedEra (ShelleyEra c))
+instance (c ~ MockCryptoCompatByron, ShelleyBasedEra ShelleyEra)
       => Arbitrary (AnnTip (CardanoBlock c)) where
   arbitrary = AnnTip
       <$> (SlotNo <$> arbitrary)
@@ -543,19 +549,6 @@ instance Arbitrary History.EraEnd where
       , return History.EraUnbounded
       ]
 
-instance Arbitrary History.SafeZone where
-  arbitrary = oneof
-      [ History.StandardSafeZone <$> arbitrary
-      , return History.UnsafeIndefiniteSafeZone
-      ]
-
-instance Arbitrary History.EraParams where
-  arbitrary = History.EraParams
-      <$> (EpochSize <$> arbitrary)
-      <*> arbitrary
-      <*> arbitrary
-      <*> (GenesisWindow <$> arbitrary)
-
 instance Arbitrary History.EraSummary where
   arbitrary = History.EraSummary
       <$> arbitrary
@@ -705,3 +698,52 @@ instance c ~ MockCryptoCompatByron
               <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
               <*> (SomeResult (QueryHardFork GetCurrentEra) <$> arbitrary)
           ]
+
+{------------------------------------------------------------------------------
+  Ledger Config
+------------------------------------------------------------------------------}
+
+
+-- | See 'encodeNodeToClientNP' and 'decodeNodeToClientNP'.
+instance CardanoHardForkConstraints c
+      => Arbitrary (WithVersion
+                     (HardForkNodeToClientVersion (CardanoEras c))
+                     (HardForkLedgerConfig (CardanoEras c))
+                   ) where
+  arbitrary = WithVersion
+      -- Use a version that enables all eras. We assume that all eras are
+      -- enabled in the maximum supported version.
+      (snd $ fromMaybe err $ Map.lookupMax $ supportedNodeToClientVersions (Proxy @(CardanoBlock c)))
+      <$> arbitrary
+    where
+      err = error "Expected at least 1 supported note-to-client version, but `supportedNodeToClientVersions` has none"
+
+instance CardanoHardForkConstraints c
+      => Arbitrary (HardForkLedgerConfig (CardanoEras c)) where
+  arbitrary = HardForkLedgerConfig <$> arbitrary <*> arbitrary
+
+instance SListI xs => Arbitrary (History.Shape xs) where
+  arbitrary = History.Shape . Exactly <$> hsequenceK (hpure (K arbitrary))
+
+instance (CardanoHardForkConstraints c)
+      => Arbitrary (PerEraLedgerConfig (CardanoEras c)) where
+  arbitrary =
+      fmap PerEraLedgerConfig . hsequence'
+    $ hcpure (Proxy @(Compose Arbitrary WrapPartialLedgerConfig)) (Comp arbitrary)
+
+instance Arbitrary (PartialLedgerConfig blk) => Arbitrary (WrapPartialLedgerConfig blk) where
+  arbitrary = WrapPartialLedgerConfig <$> arbitrary
+
+instance Arbitrary ByronPartialLedgerConfig where
+  arbitrary = ByronPartialLedgerConfig <$> arbitrary <*> arbitrary
+
+instance Arbitrary (ShelleyLedgerConfig era)
+      => Arbitrary (ShelleyPartialLedgerConfig era) where
+  arbitrary = ShelleyPartialLedgerConfig <$> arbitrary <*> arbitrary
+
+instance Arbitrary TriggerHardFork where
+  arbitrary = oneof [
+      TriggerHardForkAtVersion <$> arbitrary
+    , TriggerHardForkAtEpoch <$> arbitrary
+    , pure TriggerHardForkNotDuringThisExecution
+    ]

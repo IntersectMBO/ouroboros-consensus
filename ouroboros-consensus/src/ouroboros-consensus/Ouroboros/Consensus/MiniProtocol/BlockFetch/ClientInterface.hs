@@ -13,6 +13,10 @@ module Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface (
   , readFetchModeDefault
   ) where
 
+import           Cardano.Network.ConsensusMode (ConsensusMode)
+import           Cardano.Network.PeerSelection.Bootstrap (UseBootstrapPeers,
+                     requiresBootstrapPeers)
+import           Cardano.Network.Types (LedgerStateJudgement)
 import           Control.Monad
 import           Control.Tracer (Tracer)
 import           Data.Map.Strict (Map)
@@ -44,14 +48,9 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (MaxSlotNo)
 import           Ouroboros.Network.BlockFetch.ConsensusInterface
-                     (BlockFetchConsensusInterface (..),
-                     ChainSelStarvation (..), FetchMode (..),
-                     FromConsensus (..), PraosFetchMode (..), mkReadFetchMode)
-import           Ouroboros.Network.ConsensusMode (ConsensusMode)
-import           Ouroboros.Network.PeerSelection.Bootstrap (UseBootstrapPeers,
-                     requiresBootstrapPeers)
-import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
-                     (LedgerStateJudgement)
+                     (BlockFetchConsensusInterface (..), ChainSelStarvation,
+                     FetchMode (..), FromConsensus (..), PraosFetchMode (..),
+                     mkReadFetchMode)
 import           Ouroboros.Network.SizeInBytes
 
 -- | Abstract over the ChainDB

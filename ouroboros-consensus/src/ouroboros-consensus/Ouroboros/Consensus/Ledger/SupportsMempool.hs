@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Ledger.SupportsMempool (
   , LedgerSupportsMempool (..)
   , TxId
   , TxLimits (..)
+  , TxMeasureMetrics (..)
   , Validated
   , WhetherToIntervene (..)
   ) where
@@ -35,6 +36,7 @@ import qualified Data.Measure
 import           Data.Word (Word32)
 import           GHC.Stack (HasCallStack)
 import           NoThunks.Class
+import           Numeric.Natural
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ticked
@@ -172,10 +174,11 @@ class HasTxs blk where
 -- bit more complex as it had to take other factors into account (like
 -- execution units). For details please see the individual instances for the
 -- TxLimits.
-class ( Measure     (TxMeasure blk)
-      , HasByteSize (TxMeasure blk)
-      , NoThunks    (TxMeasure blk)
-      , Show        (TxMeasure blk)
+class ( Measure          (TxMeasure blk)
+      , HasByteSize      (TxMeasure blk)
+      , NoThunks         (TxMeasure blk)
+      , TxMeasureMetrics (TxMeasure blk)
+      , Show             (TxMeasure blk)
       ) => TxLimits blk where
   -- | The (possibly multi-dimensional) size of a transaction in a block.
   type TxMeasure blk
@@ -271,6 +274,7 @@ newtype IgnoringOverflow a = IgnoringOverflow { unIgnoringOverflow :: a }
   deriving newtype  (Monoid, Semigroup)
   deriving newtype  (NoThunks)
   deriving newtype  (HasByteSize)
+  deriving newtype  (TxMeasureMetrics)
 
 instance Measure (IgnoringOverflow ByteSize32) where
   zero = coerce (0 :: Word32)
@@ -284,3 +288,15 @@ class HasByteSize a where
 
 instance HasByteSize ByteSize32 where
   txMeasureByteSize = id
+
+class TxMeasureMetrics msr where
+  txMeasureMetricTxSizeBytes :: msr -> ByteSize32
+  txMeasureMetricExUnitsMemory :: msr -> Natural
+  txMeasureMetricExUnitsSteps :: msr -> Natural
+  txMeasureMetricRefScriptsSizeBytes :: msr -> ByteSize32
+
+instance TxMeasureMetrics ByteSize32 where
+  txMeasureMetricTxSizeBytes = id
+  txMeasureMetricExUnitsMemory _ = 0
+  txMeasureMetricExUnitsSteps _ = 0
+  txMeasureMetricRefScriptsSizeBytes _ = mempty

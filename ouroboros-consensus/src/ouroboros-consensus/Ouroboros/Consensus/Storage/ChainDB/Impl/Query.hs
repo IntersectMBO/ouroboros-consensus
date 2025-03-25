@@ -25,6 +25,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query (
   , getChainSelStarvation
   ) where
 
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import           Ouroboros.Consensus.Block
@@ -78,7 +79,7 @@ getCurrentChain ::
   => ChainDbEnv m blk
   -> STM m (AnchoredFragment (Header blk))
 getCurrentChain CDB{..} =
-    AF.anchorNewest k <$> readTVar cdbChain
+    AF.anchorNewest (unNonZero k) <$> readTVar cdbChain
   where
     SecurityParam k = configSecurityParam cdbTopLevelConfig
 

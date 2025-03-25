@@ -1,12 +1,10 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -25,13 +23,13 @@ module Ouroboros.Consensus.Shelley.ShelleyHFC (
   ) where
 
 import qualified Cardano.Ledger.Api.Era as L
-import qualified Cardano.Ledger.BaseTypes as SL (mkVersion)
+import qualified Cardano.Ledger.BaseTypes as SL (mkVersion, unNonZero)
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
+import           Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.API as SL
-import           Cardano.Slotting.EpochInfo (hoistEpochInfo)
 import           Control.Monad (guard)
-import           Control.Monad.Except (runExcept, throwError, withExceptT)
+import           Control.Monad.Except (runExcept, throwError)
 import           Data.Coerce
 import qualified Data.Map.Strict as Map
 import           Data.SOP.BasicFunctors
@@ -39,9 +37,7 @@ import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
 import qualified Data.Text as T (pack)
 import           Data.Void (Void)
 import           Data.Word
-import           GHC.Generics (Generic)
 import           Lens.Micro ((^.))
-import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Forecast
@@ -59,11 +55,12 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.Praos
-import           Ouroboros.Consensus.Protocol.TPraos hiding (PraosCrypto)
+import           Ouroboros.Consensus.Protocol.TPraos
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Inspect as Shelley.Inspect
 import           Ouroboros.Consensus.Shelley.Node ()
+import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import           Ouroboros.Consensus.TypeFamilyWrappers
 
 {-------------------------------------------------------------------------------
@@ -79,7 +76,8 @@ type ShelleyBlockHFC proto era = HardForkBlock '[ShelleyBlock proto era]
 
 instance ( ShelleyCompatible proto era
          , LedgerSupportsProtocol (ShelleyBlock proto era)
-         , TxLimits               (ShelleyBlock proto era)
+         , TxLimits (ShelleyBlock proto era)
+         , Crypto (ProtoCrypto proto)
          ) => NoHardForks (ShelleyBlock proto era) where
   getEraParams =
         shelleyEraParamsNeverHardForks
@@ -100,6 +98,7 @@ instance ( ShelleyCompatible proto era
 instance ( ShelleyCompatible proto era
          , LedgerSupportsProtocol (ShelleyBlock proto era)
          , TxLimits               (ShelleyBlock proto era)
+         , Crypto (ProtoCrypto proto)
          ) => SupportedNetworkProtocolVersion (ShelleyBlockHFC proto era) where
   supportedNodeToNodeVersions _ =
       Map.map HardForkNodeToNodeDisabled $
@@ -121,17 +120,19 @@ instance ( ShelleyCompatible proto era
 instance ( ShelleyCompatible proto era
          , LedgerSupportsProtocol (ShelleyBlock proto era)
          , TxLimits               (ShelleyBlock proto era)
+         , Crypto (ProtoCrypto proto)
          ) => SerialiseHFC '[ShelleyBlock proto era]
 instance ( ShelleyCompatible proto era
          , LedgerSupportsProtocol (ShelleyBlock proto era)
          , TxLimits               (ShelleyBlock proto era)
+         , Crypto (ProtoCrypto proto)
          ) => SerialiseConstraintsHFC (ShelleyBlock proto era)
 
 {-------------------------------------------------------------------------------
   Protocol type definition
 -------------------------------------------------------------------------------}
 
-type ProtocolShelley = HardForkProtocol '[ ShelleyBlock (TPraos StandardCrypto) StandardShelley ]
+type ProtocolShelley = HardForkProtocol '[ ShelleyBlock (TPraos StandardCrypto) ShelleyEra ]
 
 {-------------------------------------------------------------------------------
   SingleEraBlock Shelley
@@ -154,11 +155,11 @@ shelleyTransition ShelleyPartialLedgerConfig{..}
 
     -- 'shelleyLedgerConfig' contains a dummy 'EpochInfo' but this does not
     -- matter for extracting the genesis config
-    genesis :: SL.ShelleyGenesis (EraCrypto era)
+    genesis :: SL.ShelleyGenesis
     genesis = shelleyLedgerGenesis shelleyLedgerConfig
 
     k :: Word64
-    k = SL.sgSecurityParam genesis
+    k = SL.unNonZero $ SL.sgSecurityParam genesis
 
     isTransition :: ShelleyLedgerUpdate era -> Maybe EpochNo
     isTransition (ShelleyUpdatedPParams maybePParams newPParamsEpochNo) = do
@@ -172,6 +173,7 @@ shelleyTransition ShelleyPartialLedgerConfig{..}
 instance ( ShelleyCompatible proto era
          , LedgerSupportsProtocol (ShelleyBlock proto era)
          , TxLimits               (ShelleyBlock proto era)
+         , Crypto (ProtoCrypto proto)
          ) => SingleEraBlock (ShelleyBlock proto era) where
   singleEraTransition pcfg _eraParams _eraStart ledgerState =
       -- TODO: We might be evaluating 'singleEraTransition' more than once when
@@ -194,7 +196,7 @@ instance ( ShelleyCompatible proto era
       singleEraName = T.pack (L.eraName @era)
     }
 
-instance PraosCrypto c => HasPartialConsensusConfig (Praos c) where
+instance Ouroboros.Consensus.Protocol.Praos.PraosCrypto c => HasPartialConsensusConfig (Praos c) where
   type PartialConsensusConfig (Praos c) = PraosParams
 
   completeConsensusConfig _ praosEpochInfo praosParams = PraosConfig {..}
@@ -207,36 +209,6 @@ instance SL.PraosCrypto c => HasPartialConsensusConfig (TPraos c) where
   completeConsensusConfig _ tpraosEpochInfo tpraosParams = TPraosConfig {..}
 
   toPartialConsensusConfig _ = tpraosParams
-
-data ShelleyPartialLedgerConfig era = ShelleyPartialLedgerConfig {
-      -- | We cache the non-partial ledger config containing a dummy
-      -- 'EpochInfo' that needs to be replaced with the correct one.
-      --
-      -- We do this to avoid recomputing the ledger config each time
-      -- 'completeLedgerConfig' is called, as 'mkShelleyLedgerConfig' does
-      -- some rather expensive computations that shouldn't be repeated too
-      -- often (e.g., 'sgActiveSlotCoeff').
-      shelleyLedgerConfig    :: !(ShelleyLedgerConfig era)
-    , shelleyTriggerHardFork :: !TriggerHardFork
-    }
-  deriving (Generic)
-
-deriving instance (NoThunks (SL.TranslationContext era), SL.Era era) =>
-    NoThunks (ShelleyPartialLedgerConfig era)
-
-instance ShelleyCompatible proto era => HasPartialLedgerConfig (ShelleyBlock proto era) where
-  type PartialLedgerConfig (ShelleyBlock proto era) = ShelleyPartialLedgerConfig era
-
-  -- Replace the dummy 'EpochInfo' with the real one
-  completeLedgerConfig _ epochInfo (ShelleyPartialLedgerConfig cfg _) =
-      cfg {
-          shelleyLedgerGlobals = (shelleyLedgerGlobals cfg) {
-              SL.epochInfo =
-                  hoistEpochInfo
-                    (runExcept . withExceptT (T.pack . show))
-                    epochInfo
-            }
-        }
 
 translateChainDepStateAcrossShelley ::
      forall eraFrom eraTo protoFrom protoTo.
@@ -315,7 +287,6 @@ forecastAcrossShelley cfgFrom cfgTo transition forecastFor ledgerStateFrom
 instance ( ShelleyBasedEra era
          , ShelleyBasedEra (SL.PreviousEra era)
          , SL.Era (SL.PreviousEra era)
-         , EraCrypto (SL.PreviousEra era) ~ EraCrypto era
          ) => SL.TranslateEra era (ShelleyTip proto) where
   translateEra _ (ShelleyTip sno bno (ShelleyHash hash)) =
       return $ ShelleyTip sno bno (ShelleyHash hash)

@@ -2,8 +2,15 @@
 
 # Changelog entries
 
+<a id='changelog-0.21.0.1'></a>
+## 0.21.0.1 -- 2025-02-10
+
+### Patch
+
+- Bump to ouroboros-network-framework 0.16.
+
 <a id='changelog-0.21.0.0'></a>
-## 0.21.0.0 — 2025-01-08
+## 0.21.0.0 -- 2025-01-08
 
 ### Patch
 
@@ -59,7 +66,7 @@
 - Remove versions before `NodeToClientV_16` from the `supportedNodeToClientVersions`.
 
 <a id='changelog-0.20.0.0'></a>
-## 0.20.0.0 — 2024-10-14
+## 0.20.0.0 -- 2024-10-14
 
 ### Patch
 
@@ -83,7 +90,7 @@
 - Add `GetFuturePParams` query.
 
 <a id='changelog-0.19.0.0'></a>
-## 0.18.0.0 — 2024-08-26
+## 0.18.0.0 -- 2024-08-26
 
 ### Breaking
 
@@ -103,7 +110,7 @@
   continues to be enabled in Babbage).
 
 <a id='changelog-0.18.0.0'></a>
-## 0.18.0.0 — 2024-07-02
+## 0.18.0.0 -- 2024-07-02
 
 ### Non-Breaking
 
@@ -125,14 +132,14 @@
 - Update N2C part of `latestReleasedNodeVersion` to `NodeToClientV_16`.
 
 <a id='changelog-0.17.1.0'></a>
-## 0.17.1.0 — 2024-06-26
+## 0.17.1.0 -- 2024-06-26
 
 ### Non-Breaking
 
 - Enforce Conway minfees for ref scripts in the mempool, even in Babbage
 
 <a id='changelog-0.17.0.0'></a>
-## 0.17.0.0 — 2024-06-19
+## 0.17.0.0 -- 2024-06-19
 
 ### Breaking
 
@@ -141,7 +148,7 @@
   Ledger, as it changed in a backwards-incompatible manner).
 
 <a id='changelog-0.16.0.0'></a>
-## 0.16.0.0 — 2024-05-13
+## 0.16.0.0 -- 2024-05-13
 
 ### Patch
 
@@ -184,7 +191,7 @@
 - Change `ShelleyLedgerUpdate` by replacing `ShelleyUpdatedProtocolUpdates` with `ShelleyUpdatedPParams`
 
 <a id='changelog-0.15.0.0'></a>
-## 0.15.0.0 — 2024-04-03
+## 0.15.0.0 -- 2024-04-03
 
 ### Patch
 
@@ -229,7 +236,7 @@
   `Cardano.Ledger.Api.Era` instead.
 
 <a id='changelog-0.14.0.0'></a>
-## 0.14.0.0 — 2024-02-23
+## 0.14.0.0 -- 2024-02-23
 
 ### Non-Breaking
 
@@ -239,7 +246,7 @@
 - Bump dependencies version bounds
 
 <a id='changelog-0.13.0.0'></a>
-## 0.13.0.0 — 2024-01-29
+## 0.13.0.0 -- 2024-01-29
 
 ### Patch
 
@@ -287,7 +294,7 @@
   dictionaries and issue a specific error message if there isn't one.
 
 <a id='changelog-0.12.1.0'></a>
-## 0.12.1.0 — 2023-11-30
+## 0.12.1.0 -- 2023-11-30
 
 ### Non-Breaking
 
@@ -297,7 +304,7 @@
   Cardano blocks.
 
 <a id='changelog-0.12.0.0'></a>
-## 0.12.0.0 — 2023-11-14
+## 0.12.0.0 -- 2023-11-14
 
 ### Non-Breaking
 
@@ -320,7 +327,7 @@
 - Add a query for vote delegatees: GetFilteredVoteDelegatees
 
 <a id='changelog-0.11.0.0'></a>
-## 0.11.0.0 — 2023-10-26
+## 0.11.0.0 -- 2023-10-26
 
 ### Patch
 
@@ -346,7 +353,7 @@
  - Replaced `GetCommitteeState` query with `GetCommitteeMembersState`
 
 <a id='changelog-0.10.0.0'></a>
-## 0.10.0.0 — 2023-09-27
+## 0.10.0.0 -- 2023-09-27
 
 ### Non-Breaking
 
@@ -373,7 +380,7 @@
  - Removed now-unused `Ouroboros.Consensus.Cardano.ShelleyBased` module.
 
 <a id='changelog-0.9.0.0'></a>
-## 0.9.0.0 — 2023-09-06
+## 0.9.0.0 -- 2023-09-06
 
 ### Non-Breaking
 
@@ -392,7 +399,7 @@
   `Cardano.Tools.ImmDBServer.Diffusion.serve` have changed.
 
 <a id='changelog-0.8.0.1'></a>
-## 0.8.0.1 — 2023-08-21
+## 0.8.0.1 -- 2023-08-21
 
 ### Patch
 
@@ -401,7 +408,7 @@
   strongly indicate that we ignore them when evolving the package's version.
 
 <a id='changelog-0.8.0.0'></a>
-## 0.8.0.0 — 2023-08-18
+## 0.8.0.0 -- 2023-08-18
 
 ### Patch
 
@@ -449,7 +456,7 @@
   argument, instead of a long list of arguments.
 
 <a id='changelog-0.7.0.0'></a>
-## 0.7.0.0 — 2023-07-06
+## 0.7.0.0 -- 2023-07-06
 
 ### Non-Breaking
 
@@ -466,7 +473,7 @@
 - Add `GetConstitutionHash` ledger query
 
 <a id='changelog-0.6.1.0'></a>
-## 0.6.1.0 — 2023-06-23
+## 0.6.1.0 -- 2023-06-23
 
 ### Patch
 
@@ -485,7 +492,7 @@
 - Call `cryptoInit` in our utility tools
 
 <a id='changelog-0.6.0.0'></a>
-## 0.6.0.0 — 2023-05-19
+## 0.6.0.0 -- 2023-05-19
 
 ### Patch
 
@@ -508,7 +515,7 @@
 - Bump `cardano-ledger-{alonzo,babbage}` to 1.2.1.0, which changes the corresponding `PParams` serialisation. This affects the ledger snapshots, and the `GetCurrentPParams` query for `NodeToClientVersion >= 15`.
 
 <a id='changelog-0.5.0.1'></a>
-## 0.5.0.1 — 2023-04-28
+## 0.5.0.1 -- 2023-04-28
 
 ### Patch
 
@@ -529,7 +536,7 @@
 - Add a new ledger query: `GetStakeDelegDeposits`
 
 <a id='changelog-0.4.0.1'></a>
-## 0.4.0.1 — 2023-04-10
+## 0.4.0.1 -- 2023-04-10
 
 ### Patch
 
@@ -541,7 +548,7 @@
 - Adapt to relocation of SOP-related `Util` modules.
 
 <a id='changelog-0.4.0.0'></a>
-## 0.4.0.0 — 2023-03-07
+## 0.4.0.0 -- 2023-03-07
 
 ### Non-Breaking
 
@@ -556,7 +563,7 @@
   `Mark` ledger snapshot were returned.
 
 <a id='changelog-0.3.0.0'></a>
-## 0.3.0.0 — 2023-02-09
+## 0.3.0.0 -- 2023-02-09
 
 ### Patch
 

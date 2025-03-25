@@ -39,11 +39,15 @@ module Ouroboros.Consensus.Protocol.TPraos (
   ) where
 
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..), enforceSize)
+import qualified Cardano.Crypto.Hash as Hash
+import qualified Cardano.Crypto.KES as KES
 import qualified Cardano.Crypto.VRF as VRF
 import qualified Cardano.Ledger.BaseTypes as SL (ActiveSlotCoeff, Seed)
-import           Cardano.Ledger.Crypto (StandardCrypto)
+import           Cardano.Ledger.BaseTypes.NonZero (nonZeroOr, unNonZero)
+import           Cardano.Ledger.Hashes (HASH)
 import qualified Cardano.Ledger.Keys as SL
 import qualified Cardano.Ledger.Shelley.API as SL
+import           Cardano.Protocol.Crypto (KES, StandardCrypto, VRF)
 import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
@@ -80,7 +84,7 @@ import           Ouroboros.Consensus.Util.Versioned
 -------------------------------------------------------------------------------}
 
 data TPraosFields c toSign = TPraosFields {
-      tpraosSignature :: SL.SignedKES c toSign
+      tpraosSignature :: KES.SignedKES (KES c) toSign
     , tpraosToSign    :: toSign
     }
   deriving (Generic)
@@ -98,17 +102,17 @@ data TPraosToSign c = TPraosToSign {
       -- Note that unlike in Classic/BFT where we have a key for the genesis
       -- delegate on whose behalf we are issuing this block, this key
       -- corresponds to the stake pool/core node actually forging the block.
-      tpraosToSignIssuerVK :: SL.VKey 'SL.BlockIssuer c
-    , tpraosToSignVrfVK    :: SL.VerKeyVRF c
+      tpraosToSignIssuerVK :: SL.VKey 'SL.BlockIssuer
+    , tpraosToSignVrfVK    :: VRF.VerKeyVRF (VRF c)
       -- | Verifiable result containing the updated nonce value.
-    , tpraosToSignEta      :: SL.CertifiedVRF c SL.Nonce
+    , tpraosToSignEta      :: VRF.CertifiedVRF (VRF c) SL.Nonce
       -- | Verifiable proof of the leader value, used to determine whether the
       -- node has the right to issue a block in this slot.
       --
       -- We include a value here even for blocks forged under the BFT
       -- schedule. It is not required that such a value be verifiable (though
       -- by default it will be verifiably correct, but unused.)
-    , tpraosToSignLeader   :: SL.CertifiedVRF c Natural
+    , tpraosToSignLeader   :: VRF.CertifiedVRF (VRF c) Natural
       -- | Lightweight delegation certificate mapping the cold (DSIGN) key to
       -- the online KES key.
     , tpraosToSignOCert    :: SL.OCert c
@@ -120,7 +124,7 @@ deriving instance SL.PraosCrypto c => Show (TPraosToSign c)
 
 forgeTPraosFields ::
      ( SL.PraosCrypto c
-     , SL.KESignable c toSign
+     , KES.Signable (KES c) toSign
      , Monad m
      )
   => HotKey c m
@@ -196,7 +200,7 @@ data TPraosParams = TPraosParams {
 mkTPraosParams ::
      MaxMajorProtVer
   -> SL.Nonce  -- ^ Initial nonce
-  -> SL.ShelleyGenesis era
+  -> SL.ShelleyGenesis
   -> TPraosParams
 mkTPraosParams maxMajorPV initialNonce genesis = TPraosParams {
       tpraosSlotsPerKESPeriod = SL.sgSlotsPerKESPeriod genesis
@@ -217,11 +221,11 @@ mkTPraosParams maxMajorPV initialNonce genesis = TPraosParams {
 -- | Assembled proof that the issuer has the right to issue a block in the
 -- selected slot.
 data TPraosIsLeader c = TPraosIsLeader {
-      tpraosIsLeaderEta        :: SL.CertifiedVRF c SL.Nonce
-    , tpraosIsLeaderProof      :: SL.CertifiedVRF c Natural
+      tpraosIsLeaderEta        :: VRF.CertifiedVRF (VRF c) SL.Nonce
+    , tpraosIsLeaderProof      :: VRF.CertifiedVRF (VRF c) Natural
       -- | When in the overlay schedule (otherwise 'Nothing'), return the hash
       -- of the VRF verification key in the overlay schedule
-    , tpraosIsLeaderGenVRFHash :: Maybe (SL.Hash c (SL.VerKeyVRF c))
+    , tpraosIsLeaderGenVRFHash :: Maybe (Hash.Hash HASH (VRF.VerKeyVRF (VRF c)))
     }
   deriving (Generic)
 
@@ -245,25 +249,25 @@ instance SL.PraosCrypto c => NoThunks (ConsensusConfig (TPraos c))
 --
 -- In addition to the 'ChainDepState' provided by the ledger, we track the slot
 -- number of the last applied header.
-data TPraosState c = TPraosState {
+data TPraosState = TPraosState {
       tpraosStateLastSlot      :: !(WithOrigin SlotNo)
-    , tpraosStateChainDepState :: !(SL.ChainDepState c)
+    , tpraosStateChainDepState :: !SL.ChainDepState
     }
   deriving (Generic, Show, Eq)
 
-instance SL.PraosCrypto c => NoThunks (TPraosState c)
+instance NoThunks TPraosState
 
 -- | Version 0 supported rollback, removed in #2575.
 serialisationFormatVersion1 :: VersionNumber
 serialisationFormatVersion1 = 1
 
-instance SL.PraosCrypto c => ToCBOR (TPraosState c) where
+instance ToCBOR TPraosState where
   toCBOR = encode
 
-instance SL.PraosCrypto c => FromCBOR (TPraosState c) where
+instance FromCBOR TPraosState where
   fromCBOR = decode
 
-instance SL.PraosCrypto c => Serialise (TPraosState c) where
+instance Serialise TPraosState where
   encode (TPraosState slot chainDepState) =
     encodeVersion serialisationFormatVersion1 $ mconcat [
         CBOR.encodeListLen 2
@@ -278,17 +282,17 @@ instance SL.PraosCrypto c => Serialise (TPraosState c) where
         enforceSize "TPraosState" 2
         TPraosState <$> fromCBOR <*> fromCBOR
 
-data instance Ticked (TPraosState c) = TickedChainDepState {
-      tickedTPraosStateChainDepState :: SL.ChainDepState c
-    , tickedTPraosStateLedgerView    :: LedgerView (TPraos c)
+data instance Ticked TPraosState = TickedChainDepState {
+      tickedTPraosStateChainDepState :: SL.ChainDepState
+    , tickedTPraosStateLedgerView    :: SL.LedgerView
     }
 
 instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
-  type ChainDepState (TPraos c) = TPraosState c
+  type ChainDepState (TPraos c) = TPraosState
   type IsLeader      (TPraos c) = TPraosIsLeader c
   type CanBeLeader   (TPraos c) = PraosCanBeLeader c
   type SelectView    (TPraos c) = PraosChainSelectView c
-  type LedgerView    (TPraos c) = SL.LedgerView c
+  type LedgerView    (TPraos c) = SL.LedgerView
   type ValidationErr (TPraos c) = SL.ChainTransitionError c
   type ValidateView  (TPraos c) = TPraosValidateView c
 
@@ -392,7 +396,7 @@ mkShelleyGlobals TPraosConfig{..} = SL.Globals {
     , slotsPerKESPeriod             = tpraosSlotsPerKESPeriod
     , stabilityWindow               = SL.computeStabilityWindow               k tpraosLeaderF
     , randomnessStabilisationWindow = SL.computeRandomnessStabilisationWindow k tpraosLeaderF
-    , securityParameter             = k
+    , securityParameter             = nonZeroOr k $ error "The security parameter cannot be zero."
     , maxKESEvo                     = tpraosMaxKESEvo
     , quorum                        = tpraosQuorum
     , maxLovelaceSupply             = tpraosMaxLovelaceSupply
@@ -401,7 +405,7 @@ mkShelleyGlobals TPraosConfig{..} = SL.Globals {
     , systemStart                   = tpraosSystemStart
     }
   where
-    SecurityParam k  = tpraosSecurityParam
+    k  = unNonZero $ maxRollbacks tpraosSecurityParam
     TPraosParams{..} = tpraosParams
 
 -- | Check whether this node meets the leader threshold to issue a block.
@@ -409,8 +413,8 @@ meetsLeaderThreshold ::
      forall c. SL.PraosCrypto c
   => ConsensusConfig (TPraos c)
   -> LedgerView (TPraos c)
-  -> SL.KeyHash 'SL.StakePool c
-  -> SL.CertifiedVRF c SL.Seed
+  -> SL.KeyHash 'SL.StakePool
+  -> VRF.CertifiedVRF (VRF c) SL.Seed
   -> Bool
 meetsLeaderThreshold TPraosConfig { tpraosParams }
                      SL.LedgerView { lvPoolDistr }
@@ -449,15 +453,15 @@ data TPraosCannotForge c =
     -- | We are a genesis delegate, but our VRF key (second argument) does not
     -- match the registered key for that delegate (first argument).
   | TPraosCannotForgeWrongVRF
-      !(SL.Hash c (SL.VerKeyVRF c))
-      !(SL.Hash c (SL.VerKeyVRF c))
+      !(Hash.Hash HASH (VRF.VerKeyVRF (VRF c)))
+      !(Hash.Hash HASH (VRF.VerKeyVRF (VRF c)))
   deriving (Generic)
 
 deriving instance SL.PraosCrypto c => Show (TPraosCannotForge c)
 
 tpraosCheckCanForge ::
      ConsensusConfig (TPraos c)
-  -> SL.Hash c (SL.VerKeyVRF c)
+  -> Hash.Hash HASH (VRF.VerKeyVRF (VRF c))
      -- ^ Precomputed hash of the VRF verification key
   -> SlotNo
   -> IsLeader (TPraos c)

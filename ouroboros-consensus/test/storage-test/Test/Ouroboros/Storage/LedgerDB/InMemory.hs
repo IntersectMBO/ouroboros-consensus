@@ -27,6 +27,7 @@
 --
 module Test.Ouroboros.Storage.LedgerDB.InMemory (tests) where
 
+import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Codec.CBOR.FlatTerm (FlatTerm, TermToken (..), fromFlatTerm,
                      toFlatTerm)
 import           Codec.Serialise (decode, encode)
@@ -140,7 +141,7 @@ prop_pushExpectedLedger :: ChainSetup -> Property
 prop_pushExpectedLedger setup@ChainSetup{..} =
     classify (chainSetupSaturated setup) "saturated" $
       conjoin [
-          l === refoldLedger cfg (expectedChain o) testInitLedger
+          l === refoldLedger OmitLedgerEvents cfg (expectedChain o) testInitLedger
         | (o, l) <- ledgerDbSnapshots csPushed
         ]
   where
@@ -191,7 +192,7 @@ prop_snapshotsMaxRollback setup@ChainSetup{..} =
         , (ledgerDbMaxRollback csPushed) `le` k
         ]
   where
-    SecurityParam k = csSecParam
+    k = unNonZero $ maxRollbacks csSecParam
 
 prop_switchSameChain :: SwitchSetup -> Property
 prop_switchSameChain setup@SwitchSetup{..} =
@@ -206,7 +207,7 @@ prop_switchExpectedLedger :: SwitchSetup -> Property
 prop_switchExpectedLedger setup@SwitchSetup{..} =
     classify (switchSetupSaturated setup) "saturated" $
       conjoin [
-          l === refoldLedger cfg (expectedChain o) testInitLedger
+          l === refoldLedger OmitLedgerEvents cfg (expectedChain o) testInitLedger
         | (o, l) <- ledgerDbSnapshots ssSwitched
         ]
   where
@@ -274,10 +275,11 @@ csBlockConfig = csBlockConfig' . csSecParam
 
 csBlockConfig' :: SecurityParam -> LedgerDbCfg (LedgerState TestBlock)
 csBlockConfig' secParam = LedgerDbCfg {
-      ledgerDbCfgSecParam = secParam
-    , ledgerDbCfg         =
+      ledgerDbCfgSecParam            = secParam
+    , ledgerDbCfg                    =
           testBlockLedgerConfigFrom
         $ HardFork.defaultEraParams secParam slotLength
+    , ledgerDbCfgComputeLedgerEvents = OmitLedgerEvents
     }
   where
     slotLength = slotLengthFromSec 20
@@ -353,7 +355,7 @@ mkRollbackSetup ssChainSetup ssNumRollback ssNumNew ssPrefixLen =
 instance Arbitrary ChainSetup where
   arbitrary = do
       secParam <- arbitrary
-      let k = maxRollbacks secParam
+      let k = unNonZero $ maxRollbacks secParam
       numBlocks <- choose (0, k * 2)
       prefixLen <- choose (0, numBlocks)
       return $ mkTestSetup secParam numBlocks prefixLen

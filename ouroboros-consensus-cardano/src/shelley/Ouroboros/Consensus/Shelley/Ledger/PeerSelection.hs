@@ -3,7 +3,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -11,7 +10,6 @@ module Ouroboros.Consensus.Shelley.Ledger.PeerSelection () where
 
 import           Cardano.Ledger.BaseTypes
 import qualified Cardano.Ledger.Keys as SL
-import qualified Cardano.Ledger.PoolDistr as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Control.DeepSeq (force)
 import           Data.Bifunctor (second)
@@ -24,25 +22,24 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, mapMaybe)
 import           Data.Ord (Down (..))
 import           Data.Text.Encoding (encodeUtf8)
+import           Lens.Micro.Extras (view)
 import           Ouroboros.Consensus.Ledger.SupportsPeerSelection
-import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Ledger
 
-instance c ~ EraCrypto era
-      => LedgerSupportsPeerSelection (ShelleyBlock proto era) where
+instance SL.EraCertState era => LedgerSupportsPeerSelection (ShelleyBlock proto era) where
   getPeers ShelleyLedgerState { shelleyLedgerState } = catMaybes
       [ (poolStake,) <$> Map.lookup stakePool poolRelayAccessPoints
       | (stakePool, poolStake) <- orderByStake poolDistr
       ]
     where
-      poolDistr :: SL.PoolDistr c
+      poolDistr :: SL.PoolDistr
       poolDistr = SL.nesPd shelleyLedgerState
 
       -- | Sort stake pools by descending stake
       orderByStake ::
-           SL.PoolDistr c
-        -> [(SL.KeyHash 'SL.StakePool c, PoolStake)]
+           SL.PoolDistr
+        -> [(SL.KeyHash 'SL.StakePool, PoolStake)]
       orderByStake =
             sortOn (Down . snd)
           . map (second (PoolStake . SL.individualPoolStake))
@@ -50,13 +47,13 @@ instance c ~ EraCrypto era
           . SL.unPoolDistr
 
       futurePoolParams, poolParams ::
-           Map (SL.KeyHash 'SL.StakePool c) (SL.PoolParams c)
+           Map (SL.KeyHash 'SL.StakePool) SL.PoolParams
       (futurePoolParams, poolParams) =
           (SL.psFutureStakePoolParams pstate, SL.psStakePoolParams pstate)
         where
           pstate :: SL.PState era
           pstate =
-                SL.certPState
+                view SL.certPStateL
               . SL.lsCertState
               . SL.esLState
               . SL.nesEs
@@ -79,7 +76,7 @@ instance c ~ EraCrypto era
       -- | Note that a stake pool can have multiple registered relays
       pparamsRelayAccessPoints ::
            (RelayAccessPoint -> StakePoolRelay)
-        -> SL.PoolParams c
+        -> SL.PoolParams
         -> Maybe (NonEmpty StakePoolRelay)
       pparamsRelayAccessPoints injStakePoolRelay =
             NE.nonEmpty
@@ -91,7 +88,7 @@ instance c ~ EraCrypto era
       -- | Combine the stake pools registered in the future and the current pool
       -- parameters, and remove duplicates.
       poolRelayAccessPoints ::
-           Map (SL.KeyHash 'SL.StakePool c) (NonEmpty StakePoolRelay)
+           Map (SL.KeyHash 'SL.StakePool) (NonEmpty StakePoolRelay)
       poolRelayAccessPoints =
           Map.unionWith
             (\futureRelays currentRelays -> NE.nub (futureRelays <> currentRelays))

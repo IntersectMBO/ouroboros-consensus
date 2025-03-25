@@ -3,7 +3,7 @@
 # Changelog entries
 
 <a id='changelog-0.22.0.0'></a>
-## 0.22.0.0 — 2025-01-08
+## 0.22.0.0 -- 2025-01-08
 
 ### Patch
 
@@ -55,7 +55,7 @@
 - Use `Flag "DoDiskSnapshotChecksum"` to control the check of the snapshot checksum file in `takeSnapshot`, `readSnapshot` and `writeSnapshot`.
 
 <a id='changelog-0.21.0.0'></a>
-## 0.21.0.0 — 2024-10-14
+## 0.21.0.0 -- 2024-10-14
 
 ### Patch
 
@@ -112,7 +112,7 @@
     to leverage the new type.
 
 <a id='changelog-0.20.1.0'></a>
-## 0.20.1.0 — 2024-08-26
+## 0.20.1.0 -- 2024-08-26
 
 ### Non-Breaking
 
@@ -146,21 +146,21 @@
   time it took to make the snapshot.
 
 <a id='changelog-0.20.0.0'></a>
-## 0.20.0.0 — 2024-07-02
+## 0.20.0.0 -- 2024-07-02
 
 ### Breaking
 
 - Added `TickedLedgerState` argument to `txMeasure`.
 
 <a id='changelog-0.19.1.0'></a>
-## 0.19.1.0 — 2024-06-26
+## 0.19.1.0 -- 2024-06-26
 
 ### Non-Breaking
 
 - Track size of txs' ref scripts in mempool.
 
 <a id='changelog-0.19.0.0'></a>
-## 0.19.0.0 — 2024-06-19
+## 0.19.0.0 -- 2024-06-19
 
 ### Patch
 
@@ -181,7 +181,7 @@
 - ImmutableDB `blockToTip`: relaxed constraints.
 
 <a id='changelog-0.18.0.0'></a>
-## 0.18.0.0 — 2024-05-13
+## 0.18.0.0 -- 2024-05-13
 
 ### Non-Breaking
 
@@ -270,7 +270,7 @@
 
 
 <a id='changelog-0.16.0.0'></a>
-## 0.16.0.0 — 2024-02-23
+## 0.16.0.0 -- 2024-02-23
 
 ### Non-Breaking
 
@@ -297,7 +297,7 @@
   to the legacy logic.
 
 <a id='changelog-0.15.0.0'></a>
-## 0.15.0.0 — 2024-01-29
+## 0.15.0.0 -- 2024-01-29
 
 ### Patch
 
@@ -332,7 +332,7 @@
   can be used in the node to enrich the trace output.
 
 <a id='changelog-0.14.0.0'></a>
-## 0.14.0.0 — 2023-11-30
+## 0.14.0.0 -- 2023-11-30
 
 ### Non-Breaking
 
@@ -347,14 +347,14 @@
  - ChainSync client: remove redundant `DoesntFit` exception
 
 <a id='changelog-0.13.0.1'></a>
-## 0.13.0.1 — 2023-11-14
+## 0.13.0.1 -- 2023-11-14
 
 ### Patch
 
 - Update to `vector ^>=0.13`
 
 <a id='changelog-0.13.0.0'></a>
-## 0.13.0.0 — 2023-10-26
+## 0.13.0.0 -- 2023-10-26
 
 ### Patch
 
@@ -388,14 +388,14 @@
 - Renamed `TriggerHardForkNever` to `TriggerHardForkNotDuringThisExecution`.
 
 <a id='changelog-0.12.0.0'></a>
-## 0.12.0.0 — 2023-09-27
+## 0.12.0.0 -- 2023-09-27
 
 ### Breaking
 
 - Refactorings in unstable test libraries.
 
 <a id='changelog-0.11.0.0'></a>
-## 0.11.0.0 — 2023-09-06
+## 0.11.0.0 -- 2023-09-06
 
 ### Patch
 
@@ -417,7 +417,7 @@
 - Replace `StrictSVar`s by `StrictMVar`s where possible.
 
 <a id='changelog-0.10.0.1'></a>
-## 0.10.0.1 — 2023-08-21
+## 0.10.0.1 -- 2023-08-21
 
 ### Patch
 
@@ -426,7 +426,7 @@
   strongly indicate that we ignore them when evolving the package's version.
 
 <a id='changelog-0.10.0.0'></a>
-## 0.10.0.0 — 2023-08-18
+## 0.10.0.0 -- 2023-08-18
 
 ### Patch
 
@@ -446,7 +446,7 @@
 - Remove `groupOn` and `groupSplit` from `Ouroboros.Consensus.Util`.
 
 <a id='changelog-0.9.0.0'></a>
-## 0.9.0.0 — 2023-07-06
+## 0.9.0.0 -- 2023-07-06
 
 ### Non-Breaking
 
@@ -469,7 +469,7 @@
   for improving the async exception safety.
 
 <a id='changelog-0.8.0.0'></a>
-## 0.8.0.0 — 2023-06-23
+## 0.8.0.0 -- 2023-06-23
 
 ### Patch
 
@@ -499,7 +499,7 @@
 - `IOLike m` now requires `MonadCatch (STM m)` instead of just `MonadThrow (STM m)`.
 
 <a id='changelog-0.7.0.0'></a>
-## 0.7.0.0 — 2023-05-19
+## 0.7.0.0 -- 2023-05-19
 
 ### Patch
 
@@ -542,7 +542,7 @@
   to `crossEraForecast`.
 
 <a id='changelog-0.6.0.0'></a>
-## 0.6.0.0 — 2023-04-28
+## 0.6.0.0 -- 2023-04-28
 
 ### Non-Breaking
 
@@ -577,7 +577,7 @@
   tutorials.
 
 <a id='changelog-0.4.0.0'></a>
-## 0.4.0.0 — 2023-04-10
+## 0.4.0.0 -- 2023-04-10
 
 ### Patch
 
@@ -619,7 +619,7 @@
   package called `fs-api`. The original modules become deprecated.
 
 <a id='changelog-0.3.1.0'></a>
-## 0.3.1.0 — 2023-03-07
+## 0.3.1.0 -- 2023-03-07
 
 ### Non-Breaking
 
@@ -633,7 +633,7 @@
   `quickcheck-state-machine`.
 
 <a id='changelog-0.3.0.0'></a>
-## 0.3.0.0 — 2023-02-27
+## 0.3.0.0 -- 2023-02-27
 
 ### Breaking
 
@@ -644,14 +644,14 @@
   with a deprecation warning.
 
 <a id='changelog-0.2.1.0'></a>
-## 0.2.1.0 — 2023-02-23
+## 0.2.1.0 -- 2023-02-23
 
 ### Non-Breaking
 
 - Exposed the `Pushing` newtype wrappers for the tracing of the `LedgerDB`
 
 <a id='changelog-0.2.0.0'></a>
-## 0.2.0.0 — 2023-02-09
+## 0.2.0.0 -- 2023-02-09
 
 ### Non-Breaking
 
@@ -677,7 +677,7 @@
   `ouroboros-consensus-diffusion` package.
 
 <a id='changelog-0.1.0.2'></a>
-## 0.1.0.2 — 2023-01-25
+## 0.1.0.2 -- 2023-01-25
 
 ### Patch
 

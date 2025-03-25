@@ -38,15 +38,15 @@ module Test.Consensus.HardFork.Combinator.A (
   , TxId (..)
   ) where
 
+import           Cardano.Ledger.BaseTypes.NonZero
 import           Cardano.Slotting.EpochInfo
 import           Codec.Serialise
 import           Control.Monad (guard)
-import           Control.Monad.Except (runExcept)
 import qualified Data.Binary as B
 import           Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.ByteString.Short as SBS
-import           Data.Functor.Identity (Identity)
+import           Data.Functor.Identity
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Set (Set)
@@ -81,7 +81,7 @@ import           Ouroboros.Consensus.Node.Serialisation
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import           Ouroboros.Consensus.Storage.Serialisation
-import           Ouroboros.Consensus.Util (repeatedlyM, (..:), (.:))
+import           Ouroboros.Consensus.Util (repeatedlyM, (.:))
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Network.Block (Serialised, unwrapCBORinCBOR,
@@ -197,6 +197,17 @@ data PartialLedgerConfigA = LCfgA {
     , lcfgA_forgeTxs    :: Map SlotNo [GenTx BlockA]
     }
   deriving NoThunks via OnlyCheckWhnfNamed "LCfgA" PartialLedgerConfigA
+  deriving Generic
+  deriving Serialise
+
+deriving newtype instance Serialise SecurityParam
+instance (HasZero a, Serialise a) => Serialise (NonZero a) where
+  encode = encode . unNonZero
+  decode = do
+    a <- decode
+    case nonZero a of
+      Nothing -> fail "Expected non zero but found zero!"
+      Just a' -> pure a'
 
 type instance LedgerCfg (LedgerState BlockA) =
     (EpochInfo Identity, PartialLedgerConfigA)
@@ -213,10 +224,10 @@ instance IsLedger (LedgerState BlockA) where
   type AuxLedgerEvent (LedgerState BlockA) =
     VoidLedgerEvent (LedgerState BlockA)
 
-  applyChainTickLedgerResult _ _ = pureLedgerResult . TickedLedgerStateA
+  applyChainTickLedgerResult _ _ _ = pureLedgerResult . TickedLedgerStateA
 
 instance ApplyBlock (LedgerState BlockA) BlockA where
-  applyBlockLedgerResult cfg blk =
+  applyBlockLedgerResultWithValidation _ _ cfg blk =
         fmap (pureLedgerResult . setTip)
       . repeatedlyM
           (fmap fst .: applyTx cfg DoNotIntervene (blockSlot blk))
@@ -225,13 +236,9 @@ instance ApplyBlock (LedgerState BlockA) BlockA where
       setTip :: TickedLedgerState BlockA -> LedgerState BlockA
       setTip (TickedLedgerStateA st) = st { lgrA_tip = blockPoint blk }
 
+  applyBlockLedgerResult = defaultApplyBlockLedgerResult
   reapplyBlockLedgerResult =
-      dontExpectError ..: applyBlockLedgerResult
-    where
-      dontExpectError :: Except a b -> b
-      dontExpectError mb = case runExcept mb of
-        Left  _ -> error "reapplyBlockLedgerResult: unexpected error"
-        Right b -> b
+    defaultReapplyBlockLedgerResult absurd
 
 instance UpdateLedger BlockA
 
@@ -296,13 +303,13 @@ blockForgingA = BlockForging {
 
 -- | See 'Ouroboros.Consensus.HardFork.History.EraParams.safeFromTip'
 safeFromTipA :: SecurityParam -> Word64
-safeFromTipA (SecurityParam k) = k
+safeFromTipA (SecurityParam k) = unNonZero k
 
 -- | This mock ledger assumes that every node is honest and online, every slot
 -- has a single leader, and ever message arrives before the next slot. So a run
 -- of @k@ slots is guaranteed to extend the chain by @k@ blocks.
 stabilityWindowA :: SecurityParam -> Word64
-stabilityWindowA (SecurityParam k) = k
+stabilityWindowA (SecurityParam k) = unNonZero k
 
 data instance GenTx BlockA = TxA {
        txA_id      :: TxId (GenTx BlockA)
@@ -518,6 +525,17 @@ instance HasBinaryBlockInfo BlockA where
       , headerSize   = fromIntegral $ Lazy.length (serialise blkA_header)
       }
 
+
+instance SerialiseNodeToClient BlockA PartialLedgerConfigA
+
+-- NOTE: we will never use BlockA as a SingleEraBlock, however in order to fulfill the
+-- constraints we need to be able to provide this instance.
+--
+-- We could follow what is done for Shelley and serialise a fixed EpochInfo, but it is
+-- not worth the effort, we will never call these methods.
+instance SerialiseNodeToClient BlockA (EpochInfo Identity, PartialLedgerConfigA) where
+  encodeNodeToClient = error "BlockA being used as a SingleEraBlock"
+  decodeNodeToClient = error "BlockA being used as a SingleEraBlock"
 
 instance SerialiseConstraintsHFC          BlockA
 instance SerialiseDiskConstraints         BlockA

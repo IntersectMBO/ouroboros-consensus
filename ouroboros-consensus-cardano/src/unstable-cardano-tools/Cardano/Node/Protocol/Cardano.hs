@@ -239,7 +239,7 @@ mkConsensusProtocolCardano NodeByronProtocolConfiguration {
         }
         transitionLedgerConfig
         emptyCheckpointsMap
-        (ProtVer (L.eraProtVerHigh @(L.LatestKnownEra StandardCrypto)) 0)
+        (ProtVer (L.eraProtVerHigh @L.LatestKnownEra) 0)
 
 ------------------------------------------------------------------------------
 -- Errors

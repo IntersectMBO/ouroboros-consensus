@@ -26,6 +26,10 @@ data ShelleyNodeToClientVersion =
 
     -- | New queries introduced: GetBigLedgerPeerSnapshot
   | ShelleyNodeToClientVersion11
+
+    -- | New queries introduced: QueryStakePoolDefaultVote
+    -- Queries deprecated: GetProposedPParamsUpdates
+  | ShelleyNodeToClientVersion12
   deriving (Show, Eq, Ord, Enum, Bounded)
 
 instance HasNetworkProtocolVersion (ShelleyBlock proto era) where
@@ -43,6 +47,7 @@ instance SupportedNetworkProtocolVersion (ShelleyBlock proto era) where
       , (NodeToClientV_17, ShelleyNodeToClientVersion9)
       , (NodeToClientV_18, ShelleyNodeToClientVersion10)
       , (NodeToClientV_19, ShelleyNodeToClientVersion11)
+      , (NodeToClientV_20, ShelleyNodeToClientVersion12)
       ]
 
   latestReleasedNodeVersion = latestReleasedNodeVersionDefault

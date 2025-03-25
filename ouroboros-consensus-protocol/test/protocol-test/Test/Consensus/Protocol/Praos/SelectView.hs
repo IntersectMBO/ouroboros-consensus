@@ -12,8 +12,8 @@ module Test.Consensus.Protocol.Praos.SelectView (tests) where
 import qualified Cardano.Crypto.Hash as Crypto
 import qualified Cardano.Crypto.Util as Crypto
 import           Cardano.Crypto.VRF (OutputVRF, mkTestOutputVRF)
-import           Cardano.Ledger.Crypto (Crypto (..), StandardCrypto)
 import qualified Cardano.Ledger.Keys as SL
+import           Cardano.Protocol.Crypto (Crypto (..), StandardCrypto)
 import           Codec.Serialise (encode)
 import           Control.Monad
 import           Data.Containers.ListUtils (nubOrdOn)
@@ -55,7 +55,7 @@ instance Crypto c => Arbitrary (PraosChainSelectView c) where
      -- We want to draw from the same small set of issuer identities in order to
      -- have a chance to explore cases where the issuers of two 'SelectView's
      -- are identical.
-     knownIssuers :: [SL.VKey SL.BlockIssuer c]
+     knownIssuers :: [SL.VKey SL.BlockIssuer]
      knownIssuers =
            nubOrdOn SL.hashKey
          $ unGen (replicateM numIssuers (SL.VKey <$> arbitrary)) randomSeed 100
@@ -66,7 +66,7 @@ instance Crypto c => Arbitrary (PraosChainSelectView c) where
      -- The header VRF is a deterministic function of the issuer VRF key, the
      -- slot and the epoch nonce. Additionally, for any particular chain, the
      -- slot determines the epoch nonce.
-     mkVRFFor :: SL.VKey SL.BlockIssuer c -> SlotNo -> OutputVRF (VRF c)
+     mkVRFFor :: SL.VKey SL.BlockIssuer -> SlotNo -> OutputVRF (VRF c)
      mkVRFFor issuer slot =
            mkTestOutputVRF
          $ Crypto.bytesToNatural

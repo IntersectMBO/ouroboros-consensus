@@ -1,5 +1,7 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
 
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 
@@ -28,6 +30,7 @@ import qualified Cardano.Chain.Byron.API as CC
 import qualified Cardano.Chain.Common as CC
 import qualified Cardano.Chain.Update.Validation.Interface as CC.UPI
 import qualified Cardano.Chain.UTxO as CC
+import           Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import           Control.Monad.Except (runExcept)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block
@@ -62,7 +65,7 @@ import           Test.Util.Serialisation.SomeResult (SomeResult (..))
 -- 'S.WindowSize', because 'decodeByronChainDepState' only takes the
 -- 'SecurityParam' and uses it as the basis for the 'S.WindowSize'.
 secParam :: SecurityParam
-secParam = SecurityParam 2
+secParam = SecurityParam $ knownNonZeroBounded @2
 
 windowSize :: S.WindowSize
 windowSize = S.WindowSize 2
@@ -104,6 +107,7 @@ examples = Examples {
     , exampleQuery            = unlabelled exampleQuery
     , exampleResult           = unlabelled exampleResult
     , exampleAnnTip           = unlabelled exampleAnnTip
+    , exampleLedgerConfig     = unlabelled ledgerConfig
     , exampleLedgerState      = unlabelled exampleLedgerState
     , exampleChainDepState    = unlabelled exampleChainDepState
     , exampleExtLedgerState   = unlabelled exampleExtLedgerState
@@ -122,7 +126,7 @@ exampleBlock =
       cfg
       (BlockNo 1)
       (SlotNo 1)
-      (applyChainTick ledgerConfig (SlotNo 1) ledgerStateAfterEBB)
+      (applyChainTick OmitLedgerEvents ledgerConfig (SlotNo 1) ledgerStateAfterEBB)
       [ValidatedByronTx exampleGenTx]
       (fakeMkIsLeader leaderCredentials)
   where
@@ -180,14 +184,14 @@ emptyLedgerState = ByronLedgerState {
 
 ledgerStateAfterEBB :: LedgerState ByronBlock
 ledgerStateAfterEBB =
-      reapplyLedgerBlock ledgerConfig exampleEBB
-    . applyChainTick ledgerConfig (SlotNo 0)
+      reapplyLedgerBlock OmitLedgerEvents ledgerConfig exampleEBB
+    . applyChainTick OmitLedgerEvents ledgerConfig (SlotNo 0)
     $ emptyLedgerState
 
 exampleLedgerState :: LedgerState ByronBlock
 exampleLedgerState =
-      reapplyLedgerBlock ledgerConfig exampleBlock
-    . applyChainTick ledgerConfig (SlotNo 1)
+      reapplyLedgerBlock OmitLedgerEvents ledgerConfig exampleBlock
+    . applyChainTick OmitLedgerEvents ledgerConfig (SlotNo 1)
     $ ledgerStateAfterEBB
 
 exampleHeaderState :: HeaderState ByronBlock
