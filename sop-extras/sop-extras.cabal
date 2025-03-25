@@ -5,7 +5,7 @@ description:
   This package provides some more constructs that are not present on the
   @sop-core@ package but built upon the same foundations.
 
-version: 0.2.1.0
+version: 0.2.2.0
 license: Apache-2.0
 license-files:
   LICENSE
