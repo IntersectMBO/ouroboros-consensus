@@ -27,6 +27,7 @@
 --   see 'prop_sequential_iosim' for the construction and reification of the configuration.
 module Test.Consensus.GSM.QD (tests) where
 
+import           Cardano.Network.Types (LedgerStateJudgement (..))
 import           Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked
 import           Control.Exception (SomeException (..))
 import           Control.Monad.Class.MonadAsync (async, poll,
@@ -47,8 +48,6 @@ import           Data.Typeable (Typeable)
 import           GHC.Generics (Generic)
 import qualified Ouroboros.Consensus.Node.GSM as GSM
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
-import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
-                     (LedgerStateJudgement (..))
 import           Test.Consensus.GSM.Common
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck.Gen.Unsafe (Capture (Capture), capture)

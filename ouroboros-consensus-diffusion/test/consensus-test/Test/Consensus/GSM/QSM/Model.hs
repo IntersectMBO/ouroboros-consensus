@@ -20,8 +20,6 @@ import qualified Data.Set as Set
 import qualified Data.TreeDiff as TD
 import           GHC.Generics (Generic, Generic1)
 import qualified Ouroboros.Consensus.Node.GSM as GSM
-import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
-                     (LedgerStateJudgement (..))
 import           Test.Consensus.GSM.Common
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (choose, elements, shrink)

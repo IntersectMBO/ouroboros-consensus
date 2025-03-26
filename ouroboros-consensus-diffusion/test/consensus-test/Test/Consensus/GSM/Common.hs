@@ -15,6 +15,7 @@
 
 module Test.Consensus.GSM.Common (module Test.Consensus.GSM.Common) where
 
+import           Cardano.Network.Types (LedgerStateJudgement (..))
 import           Control.Monad (replicateM_)
 import           Control.Monad.Class.MonadFork (MonadFork, yield)
 import qualified Control.Monad.Class.MonadTime.SI as SI
@@ -23,8 +24,6 @@ import           Data.Time (diffTimeToPicoseconds)
 import qualified Data.TreeDiff as TD
 import           GHC.Generics (Generic)
 import qualified Ouroboros.Consensus.Node.GSM as GSM
-import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
-                     (LedgerStateJudgement (..))
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (elements, shrink)
 import           Test.Util.Orphans.ToExpr ()
