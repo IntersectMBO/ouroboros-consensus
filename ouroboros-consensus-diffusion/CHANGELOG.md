@@ -2,6 +2,37 @@
 
 # Changelog entries
 
+<a id='changelog-0.21.0.0'></a>
+## 0.21.0.0 -- 2025-03-25
+
+### Breaking
+
+- Added peer sharing tracer to NTN tracers
+
+- Update to latest `ouroboros-network` release:
+    | Package                     | Version |
+    |-----------------------------|---------|
+    | network-mux                 | 0.7     |
+    | ouroboros-network           | 0.20.1  |
+    | ouroboros-network-api       | 0.13    |
+    | ouroboros-network-framework | 0.17    |
+    | ouroboros-network-protocols | 0.14    |
+
+- Added a new CSJ tracer to ChainSync client interface.
+- Renamed the existing tracer in `Ouroboros.Consensus.Node.Tracers.Tracers`.
+
+### Non-Breaking
+
+- Bump upper bound on `base` dependency.
+
+- Expose blockchain time as `getBlockchainTime :: BlockchainTime m` in the `NodeKernel`.
+
+### Patch
+
+- Use `OmitLedgerEvents` when ticking blocks in the forging loop
+
+- Label the DbLock acquisition thread.
+
 <a id='changelog-0.20.0.0'></a>
 ## 0.20.0.0 -- 2025-02-10
 

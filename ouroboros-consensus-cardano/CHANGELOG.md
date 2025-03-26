@@ -2,6 +2,47 @@
 
 # Changelog entries
 
+<a id='changelog-0.22.0.0'></a>
+## 0.22.0.0 -- 2025-03-25
+
+### Breaking
+
+ - Removed legacy `{Shelley,Cardano}NodeToClientVersion`s and related code.
+
+- Adapt to the change in block application and ticking interface in
+  Byron and Shelley. Block application and ticking now can choose
+  validation policy and enable or disable ledger events.
+
+- Move `Ouroboros.Consensus.Cardano.ByronHFC` to `Ouroboros.Consensus.Byron.ByronHFC`
+- Move Byron-only code from `Ouroboros.Consensus.Cardano.CanHardFork` to `Ouroboros.Consensus.Byron.ByronHFC`
+
+- Adapt to Ledger's Crypto monomorphization. Many types and fields have lost their `c/crypto` type variable as now `StandardCrypto` is used by the Ledger everywhere.
+- Deprecate the `StandardX` type aliases.
+
+- The serialization of `ApplyTxErr` for eras in between Shelley and
+  Babbage (both included) has changed from using an indefinite-length
+  list to using a definite-length list. This is still conformant to
+  the CDDL spec (as CDDL does not explicit whether lists are encoded
+  with definite or indefinite lengths), but it might require a change
+  in client codecs to account for this change.
+
+- Use new `NodeToClientV_20`.
+- Expose new query `QueryStakePoolDefaultVote` in new `ShelleyNodeToClientVersion12`.
+
+- Query `GetProposedPParamsUpdates` has been deprecated and is not
+  supported in `ShelleyNodeToClientV12`, which maps to
+  `NodeToClientV_20`. This query became redundant once the chain
+  transitioned to the Conway era. Moreover, the query constructor is
+  kept with a dummy response for previous `NodeToClientV_X` versions,
+  meaning that performing such a query in a node that is still not in
+  Conway will return dummy values.
+
+### Non-Breaking
+
+- Add instances for `TxMeasureMetrics` to Cardano block types
+
+- Bump upper bound on `base` dependency.
+
 <a id='changelog-0.21.0.1'></a>
 ## 0.21.0.1 -- 2025-02-10
 

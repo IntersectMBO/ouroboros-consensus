@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.1.3.0'></a>
+## 0.1.3.0 -- 2025-03-25
+
+### Non-Breaking
+
+- Bump upper bound on `base` dependency.
+
 <a id='changelog-0.1.2.0'></a>
 ## 0.1.1.0 -- 2024-08-26
 
