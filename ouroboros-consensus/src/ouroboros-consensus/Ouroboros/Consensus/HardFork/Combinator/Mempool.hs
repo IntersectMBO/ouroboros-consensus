@@ -354,14 +354,14 @@ ledgerInfo :: forall blk. SingleEraBlock blk
            => State.Current (Ticked :.: LedgerState) blk -> LedgerEraInfo blk
 ledgerInfo _ = LedgerEraInfo $ singleEraInfo (Proxy @blk)
 
-injectApplyTxErr :: Index xs blk -> ApplyTxErr blk -> HardForkApplyTxErr xs
+injectApplyTxErr :: SListI xs => Index xs blk -> ApplyTxErr blk -> HardForkApplyTxErr xs
 injectApplyTxErr index =
       HardForkApplyTxErrFromEra
     . OneEraApplyTxErr
     . injectNS index
     . WrapApplyTxErr
 
-injectValidatedGenTx :: Index xs blk -> Validated (GenTx blk) -> Validated (GenTx (HardForkBlock xs))
+injectValidatedGenTx :: SListI xs => Index xs blk -> Validated (GenTx blk) -> Validated (GenTx (HardForkBlock xs))
 injectValidatedGenTx index =
       HardForkValidatedGenTx
     . OneEraValidatedGenTx

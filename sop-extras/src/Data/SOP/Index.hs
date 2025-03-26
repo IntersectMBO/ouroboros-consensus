@@ -14,13 +14,11 @@
 
 module Data.SOP.Index (
     -- * Indexing SOP types
-    Index (..)
+    Index (.., IS, IZ)
   , dictIndexAll
   , indices
   , injectNS
   , injectNS'
-  , pattern IS
-  , pattern IZ
   , projectNP
     -- * Zipping with indices
   , hcimap
@@ -61,34 +59,30 @@ pattern IS ::
   => xs ~ (x' ': xs')
   => Index xs' x
   -> Index xs x
-pattern IS z <- Index (S (Index -> z)) where
-  IS (Index z) = Index (S z)
+pattern IS z <- Index (S (Index -> !z)) where
+  IS (Index !z) = Index (S z)
 
 {-# COMPLETE IZ, IS #-}
 
 indices :: forall xs. SListI xs => NP (Index xs) xs
 indices = case sList @xs of
     SNil  -> Nil
-    SCons -> IZ :* hmap (Index . S . getIndex) indices
+    SCons -> IZ :* hmap IS indices
 
-dictIndexAll :: All c xs => Proxy c -> Index xs x -> Dict c x
-dictIndexAll p = \case
-    IZ     -> Dict
-    IS idx -> dictIndexAll p idx
+dictIndexAll :: forall c xs x. All c xs => Proxy c -> Index xs x -> Dict c x
+dictIndexAll p (Index idx) = hcollapse $ hcmap p (\Refl -> K Dict) idx
 
-injectNS :: forall f x xs. Index xs x -> f x -> NS f xs
-injectNS idx x = case idx of
-    IZ      -> Z x
-    IS idx' -> S (injectNS idx' x)
+injectNS :: forall f x xs. All Top xs => Index xs x -> f x -> NS f xs
+injectNS (Index idx) x = hmap (\Refl -> x) idx
 
 injectNS' ::
-     forall f a b x xs. (Coercible a (f x), Coercible b (NS f xs))
+     forall f a b x xs. All Top xs => (Coercible a (f x), Coercible b (NS f xs))
   => Proxy f -> Index xs x -> a -> b
 injectNS' _ idx = coerce . injectNS @f idx . coerce
 
-projectNP :: Index xs x -> NP f xs -> f x
-projectNP IZ       (x :* _ ) = x
-projectNP (IS idx) (_ :* xs) = projectNP idx xs
+projectNP :: All Top xs => Index xs x -> NP f xs -> f x
+projectNP (Index idx) np =
+  hcollapse $ hliftA2 (\f Refl -> K f) np idx
 
 {-------------------------------------------------------------------------------
   Zipping with indices
@@ -214,9 +208,9 @@ nsFromIndex n = go 0 sList
     go !_ SNil    = Nothing
 
 toWord8 :: Index xs x -> Word8
-toWord8 = go 0
+toWord8 = go 0 . getIndex
   where
-    go :: Word8 -> Index ys y -> Word8
+    go :: Word8 -> NS ((:~:) y) ys -> Word8
     go !n = \case
-      IZ     -> n
-      IS idx -> go (n + 1) idx
+      Z Refl -> n
+      S idx  -> go (n + 1) idx
