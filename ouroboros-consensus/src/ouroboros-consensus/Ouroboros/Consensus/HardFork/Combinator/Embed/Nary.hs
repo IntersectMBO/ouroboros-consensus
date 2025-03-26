@@ -25,11 +25,13 @@ module Ouroboros.Consensus.HardFork.Combinator.Embed.Nary (
 import           Data.Bifunctor (first)
 import           Data.Coerce (Coercible, coerce)
 import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
 import           Data.SOP.Counting (Exactly (..))
 import           Data.SOP.Dict (Dict (..))
 import           Data.SOP.Index
 import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.Strict
+import qualified Data.SOP.Telescope as Telescope
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Combinator
@@ -75,11 +77,9 @@ newtype InjectionIndex xs x =
 
 -- | Many instances of 'Inject' do not need the 'History.Bound's, eg those that
 -- do not construct 'HardForkState's
-forgetInjectionIndex :: InjectionIndex xs x -> Index xs x
-forgetInjectionIndex (InjectionIndex tele) = case tele of
-    TZ (State.Current _k Refl) -> IZ
-    TS _k tele'                ->
-        IS (forgetInjectionIndex (InjectionIndex tele'))
+forgetInjectionIndex :: SListI xs => InjectionIndex xs x -> Index xs x
+forgetInjectionIndex (InjectionIndex tele) =
+  Index $ hmap State.currentState $ Telescope.tip tele
 
 -- | Build an 'InjectionIndex' from oracular 'History.Bound's and an 'Index'
 --
@@ -89,18 +89,17 @@ forgetInjectionIndex (InjectionIndex tele) = case tele of
 -- INVARIANT: the result is completely independent of the 'history.Bound's for
 -- eras /after/ the given 'Index'.
 oracularInjectionIndex ::
-     Exactly xs History.Bound
+     SListI xs
+  => Exactly xs History.Bound
   -> Index xs x
   -> InjectionIndex xs x
-oracularInjectionIndex (Exactly np) idx = case (idx, np) of
-    (IZ     , K start :* _      ) ->
-        InjectionIndex
-      $ TZ State.Current { currentStart = start, currentState = Refl }
-    (IS idx', kstart  :* kstarts) ->
-        let InjectionIndex iidx =
-              oracularInjectionIndex (Exactly kstarts) idx'
-        in
-        InjectionIndex (TS kstart iidx)
+oracularInjectionIndex (Exactly np) (Index idx) =
+  InjectionIndex
+    $ Telescope.bihzipWith
+      (\x (K ()) -> x)
+      (\(K start) Refl -> State.Current { currentStart = start, currentState = Refl })
+      np
+    $ Telescope.fromTip idx
 
 -- | NOT EXPORTED
 --

@@ -157,7 +157,7 @@ instance CanHardFork xs => IsLedger (LedgerState (HardForkBlock xs)) where
       extended :: HardForkState LedgerState xs
       extended = State.extendToSlot cfg slot st
 
-tickOne :: SingleEraBlock blk
+tickOne :: (SListI xs, SingleEraBlock blk)
         => EpochInfo (Except PastHorizonException)
         -> SlotNo
         -> ComputeLedgerEvents
@@ -207,7 +207,7 @@ instance CanHardFork xs
       error "reapplyBlockLedgerResult: can't be from other era"
       )
 
-apply :: SingleEraBlock blk
+apply :: (SListI xs, SingleEraBlock blk)
       => STS.ValidationPolicy
       -> ComputeLedgerEvents
       -> Index xs                                           blk
@@ -728,14 +728,14 @@ ledgerViewInfo :: forall blk f. SingleEraBlock blk
                => f blk -> LedgerEraInfo blk
 ledgerViewInfo _ = LedgerEraInfo $ singleEraInfo (Proxy @blk)
 
-injectLedgerError :: Index xs blk -> LedgerError blk -> HardForkLedgerError xs
+injectLedgerError :: SListI xs => Index xs blk -> LedgerError blk -> HardForkLedgerError xs
 injectLedgerError index =
       HardForkLedgerErrorFromEra
     . OneEraLedgerError
     . injectNS index
     . WrapLedgerErr
 
-injectLedgerEvent :: Index xs blk -> AuxLedgerEvent (LedgerState blk) -> OneEraLedgerEvent xs
+injectLedgerEvent :: SListI xs => Index xs blk -> AuxLedgerEvent (LedgerState blk) -> OneEraLedgerEvent xs
 injectLedgerEvent index =
       OneEraLedgerEvent
     . injectNS index
