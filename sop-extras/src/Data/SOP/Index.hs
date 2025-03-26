@@ -4,12 +4,13 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Data.SOP.Index (
     -- * Indexing SOP types
@@ -18,6 +19,8 @@ module Data.SOP.Index (
   , indices
   , injectNS
   , injectNS'
+  , pattern IS
+  , pattern IZ
   , projectNP
     -- * Zipping with indices
   , hcimap
@@ -36,29 +39,42 @@ module Data.SOP.Index (
   ) where
 
 import           Data.Coerce
-import           Data.Kind (Type)
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
 import           Data.SOP.Dict (Dict (..))
 import           Data.SOP.Sing
 import           Data.SOP.Strict
+import           Data.Type.Equality ((:~:) (..))
 import           Data.Word
 
-type Index :: [k] -> k -> Type
-data Index xs x where
-  IZ ::               Index (x ': xs) x
-  IS :: Index xs x -> Index (y ': xs) x
+newtype Index xs x = Index { getIndex :: NS ((:~:) x) xs }
+
+pattern IZ ::
+     ()
+  => xs ~ (x ': xs1)
+  => Index xs x
+pattern IZ = Index (Z Refl)
+
+pattern IS ::
+     ()
+  => xs ~ (x' ': xs')
+  => Index xs' x
+  -> Index xs x
+pattern IS z <- Index (S (Index -> z)) where
+  IS (Index z) = Index (S z)
+
+{-# COMPLETE IZ, IS #-}
 
 indices :: forall xs. SListI xs => NP (Index xs) xs
 indices = case sList @xs of
     SNil  -> Nil
-    SCons -> IZ :* hmap IS indices
+    SCons -> IZ :* hmap (Index . S . getIndex) indices
 
 dictIndexAll :: All c xs => Proxy c -> Index xs x -> Dict c x
 dictIndexAll p = \case
-    IZ      -> Dict
-    IS idx' -> dictIndexAll p idx'
+    IZ     -> Dict
+    IS idx -> dictIndexAll p idx
 
 injectNS :: forall f x xs. Index xs x -> f x -> NS f xs
 injectNS idx x = case idx of
@@ -202,5 +218,5 @@ toWord8 = go 0
   where
     go :: Word8 -> Index ys y -> Word8
     go !n = \case
-      IZ      -> n
-      IS idx' -> go (n + 1) idx'
+      IZ     -> n
+      IS idx -> go (n + 1) idx
