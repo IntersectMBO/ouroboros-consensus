@@ -1,3 +1,4 @@
+{-# LANGUAGE MonoLocalBinds #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
@@ -174,7 +175,9 @@ getEnvSTM1 (CDBHandle varState) f a = readTVar varState >>= \case
 data ChainDbState m blk
   = ChainDbOpen   !(ChainDbEnv m blk)
   | ChainDbClosed
-  deriving (Generic, NoThunks)
+  deriving (Generic)
+
+deriving instance NoThunks (ChainDbEnv m blk) => NoThunks (ChainDbState m blk)
 
 data ChainDbEnv m blk = CDB
   { cdbImmutableDB     :: !(ImmutableDB m blk)

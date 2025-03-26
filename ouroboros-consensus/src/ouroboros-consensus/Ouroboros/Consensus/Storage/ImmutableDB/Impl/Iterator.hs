@@ -1,3 +1,5 @@
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -73,7 +75,9 @@ data IteratorHandle m blk h = IteratorHandle {
 data IteratorStateOrExhausted m hash h =
     IteratorStateOpen !(IteratorState m hash h)
   | IteratorStateExhausted
-  deriving (Generic, NoThunks)
+  deriving (Generic)
+
+deriving instance NoThunks (IteratorState m hash h) => NoThunks (IteratorStateOrExhausted m hash h)
 
 data IteratorState m blk h = IteratorState {
       itsChunk        :: !ChunkNo
