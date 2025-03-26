@@ -379,7 +379,7 @@ library unstable-consensus-testlib
     Test.Ouroboros.Consensus.ChainGenerator.Some
     Test.Ouroboros.Consensus.DiffusionPipelining
     Test.Ouroboros.Consensus.Protocol
-    Test.QuickCheck.Extras
+    Test.Ouroboros.Consensus.QuickCheck.Extras
     Test.Util.BoolProps
     Test.Util.ChainDB
     Test.Util.ChainUpdates
