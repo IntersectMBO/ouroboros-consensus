@@ -130,15 +130,18 @@ and then use:
 
 It is possible to perform the above-mentioned tasks without the use of Nix, using the instructions below:
 
+- Install [latexmk](https://ctan.org/pkg/latexmk/) and [XeTeX](https://xetex.sourceforge.net/)
+
 - Install Agda version `2.7.0` (e.g. follow the instructions in <https://agda.readthedocs.io/en/v2.7.0/getting-started/installation.html#step-1-install-agda>
-).
+)
 
-- In a folder `<LIB>`, clone the dependencies
-    + [agda-stdlib](https://github.com/agda/agda-stdlib)
-    + [agda-stdlib-classes](https://github.com/agda/agda-stdlib-classes)
-    + [agda-stdlib-meta](https://github.com/agda/agda-stdlib-meta)
+- In a folder `<LIB>`, clone the dependencies and checkout the respective commits/tags:
 
-and checkout the commits/tags found in `nix/agda.nix` (e.g. `v2.1.1` for `agda-stdlib-meta`).
+  | *Dependency*                                                       | *Tag/commit*                               |
+  |--------------------------------------------------------------------|--------------------------------------------|
+  | [agda-stdlib](https://github.com/agda/agda-stdlib)                 | `v2.1.1`                                   |
+  | [agda-stdlib-classes](https://github.com/agda/agda-stdlib-classes) | `73f4da05aeea040fea4587629f9fd83a8f04e656` |
+  | [agda-stdlib-meta](https://github.com/agda/agda-stdlib-meta)       | `v2.1.1`                                   |
 
 - Create a file `<LIB>/libraries` with the following content:
 ```

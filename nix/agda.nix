@@ -19,9 +19,9 @@ let
   agdaStdlibClasses = customAgda.agdaPackages.mkDerivation {
     inherit (locales) LANG LC_ALL LOCALE_ARCHIVE;
     pname = "agda-stdlib-classes";
-    version = "2.0";
+    version = "2.1.1";
     src = pkgs.fetchFromGitHub {
-      owner = "omelkonian";
+      owner = "agda";
       repo = "agda-stdlib-classes";
       rev = "73f4da05aeea040fea4587629f9fd83a8f04e656";
       hash = "sha256-Uj3bmgMtdBJYGW7K+0rqxexm6M47odBuWyRo0aoYmZg=";
@@ -35,9 +35,9 @@ let
   agdaStdlibMeta = customAgda.agdaPackages.mkDerivation {
     inherit (locales) LANG LC_ALL LOCALE_ARCHIVE;
     pname = "agda-stdlib-meta";
-    version = "2.0";
+    version = "2.1.1";
     src = pkgs.fetchFromGitHub {
-      owner = "omelkonian";
+      owner = "agda";
       repo = "agda-stdlib-meta";
       rev = "v2.1.1";
       hash = "sha256-qOoThYMG0dzjKvwmzzVZmGcerfb++MApbaGRzLEq3/4=";
