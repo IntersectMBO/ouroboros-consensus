@@ -43,6 +43,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots (
   , deleteSnapshot
   , listSnapshots
   , trimSnapshots
+  , loadSnapshotMetadata
+  , writeSnapshotMetadata
     -- * Policy
   , SnapshotInterval (..)
   , SnapshotPolicy (..)
@@ -60,6 +62,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots (
   , snapshotsMapM_
   ) where
 
+import qualified Data.Aeson as Aeson
 import           Cardano.Ledger.BaseTypes
 import           Codec.CBOR.Decoding
 import           Codec.CBOR.Encoding
@@ -69,7 +72,7 @@ import           Control.Monad
 import           Control.Monad.Class.MonadTime.SI
 import           Control.Monad.Except
 import           Control.Tracer
-import           Data.Aeson (ToJSON(..), object, (.=), FromJSON(..), withObject, withText, (.:), (.:?))
+import           Data.Aeson (ToJSON(..), (.=), FromJSON(..), (.:), (.:?))
 import qualified Data.List as List
 import           Data.Maybe (isJust, mapMaybe)
 import           Data.Ord
@@ -92,8 +95,10 @@ import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Versioned
 import           System.FS.API
+import           System.FS.API.Lazy
 import           System.FS.CRC
 import           Text.Read (readMaybe)
+import qualified Control.Monad as Monad
 
 -- | Name of a disk snapshot.
 --
@@ -156,13 +161,13 @@ data SnapshotMetadata = SnapshotMetadata
   } deriving (Eq, Show)
 
 instance ToJSON SnapshotMetadata where
-  toJSON sm = object
+  toJSON sm = Aeson.object
     [ "backend" .= snapshotBackend sm
     , "checksum" .= fmap getCRC (snapshotChecksum sm)
     ]
 
 instance FromJSON SnapshotMetadata where
-  parseJSON = withObject "SnapshotMetadata" $ \o ->
+  parseJSON = Aeson.withObject "SnapshotMetadata" $ \o ->
     SnapshotMetadata <$> o .: "backend"
                      <*> fmap (fmap CRC) (o .:? "checksum")
 
@@ -177,7 +182,7 @@ instance ToJSON SnapshotBackend where
     UTxOHDLMDBSnapshot -> "utxohd-lmdb"
 
 instance FromJSON SnapshotBackend where
-  parseJSON = withText "SnapshotBackend" $ \case
+  parseJSON = Aeson.withText "SnapshotBackend" $ \case
     "utxohd-mem" -> pure UTxOHDMemSnapshot
     "utxohd-lmdb" -> pure UTxOHDLMDBSnapshot
     _ -> fail "unknown SnapshotBackend"
@@ -229,6 +234,40 @@ deleteSnapshot (SomeHasFS HasFS{doesDirectoryExist, removeDirectoryRecursive}) s
   let p = snapshotToDirPath ss
   exists <- doesDirectoryExist p
   when exists (removeDirectoryRecursive p)
+
+-- | Write a snapshot metadata JSON file.
+writeSnapshotMetadata ::
+     MonadThrow m
+  => SomeHasFS m
+  -> DiskSnapshot
+  -> SnapshotMetadata
+  -> m ()
+writeSnapshotMetadata (SomeHasFS hasFS) ds meta = do
+  let metadataPath = snapshotToMetadataPath ds
+  withFile hasFS metadataPath (WriteMode MustBeNew) $ \h ->
+    Monad.void $ hPutAll hasFS h $ Aeson.encode meta
+
+-- | Load a snapshot metadata JSON file.
+--
+--   - Fails with 'MetadataFileDoesNotExist' when the file doesn't exist;
+--   - Fails with 'MetadataInvalid' when the contents of the file cannot be
+--     deserialised correctly
+loadSnapshotMetadata ::
+     IOLike m
+  => SomeHasFS m
+  -> DiskSnapshot
+  -> ExceptT MetadataErr m SnapshotMetadata
+loadSnapshotMetadata (SomeHasFS hasFS) ds = ExceptT $ do
+  let metadataPath = snapshotToMetadataPath ds
+  exists <- doesFileExist hasFS metadataPath
+  if not exists
+    then pure $ Left MetadataFileDoesNotExist
+    else do
+      withFile hasFS metadataPath ReadMode $ \h -> do
+        bs <- hGetAll hasFS h
+        case Aeson.eitherDecode bs of
+          Left decodeErr -> pure $ Left $ MetadataInvalid decodeErr
+          Right meta -> pure $ Right meta
 
 snapshotsMapM_ :: Monad m => SomeHasFS m -> (FilePath -> m a) -> m ()
 snapshotsMapM_ (SomeHasFS fs) f = do

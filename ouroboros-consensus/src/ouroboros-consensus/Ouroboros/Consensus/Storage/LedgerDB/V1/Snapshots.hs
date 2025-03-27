@@ -138,7 +138,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots (
   , snapshotToTablesPath
   ) where
 
-import qualified Data.Aeson as Aeson
 import           Codec.CBOR.Encoding
 import           Codec.Serialise
 import qualified Control.Monad as Monad
@@ -162,7 +161,6 @@ import           Ouroboros.Consensus.Util.Args (Complete)
 import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike
 import           System.FS.API
-import           System.FS.API.Lazy
 
 
 -- | Try to take a snapshot of the /oldest ledger state/ in the ledger DB
@@ -236,18 +234,6 @@ writeSnapshot fs@(SomeHasFS hasFS) doChecksum backingStore encLedger snapshot cs
       backingStore
       (snapshotToTablesPath snapshot)
 
--- | Write a snapshot metadata JSON file.
-writeSnapshotMetadata ::
-     MonadThrow m
-  => SomeHasFS m
-  -> DiskSnapshot
-  -> SnapshotMetadata
-  -> m ()
-writeSnapshotMetadata (SomeHasFS hasFS) ds meta = do
-  let metadataPath = snapshotToMetadataPath ds
-  withFile hasFS metadataPath (WriteMode MustBeNew) $ \h ->
-    Monad.void $ hPutAll hasFS h $ Aeson.encode meta
-
 -- | The path within the LedgerDB's filesystem to the file that contains the
 -- snapshot's serialized ledger state
 snapshotToStatePath :: DiskSnapshot -> FsPath
@@ -295,25 +281,3 @@ loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs') doChecksum s = do
         backingStore <- Trans.lift (restoreBackingStore tracer bss fs extLedgerSt (snapshotToTablesPath s))
         let chlog  = empty extLedgerSt
         pure ((chlog, backingStore), pt)
-
--- | Load a snapshot metadata JSON file.
---
---   - Fails with 'MetadataFileDoesNotExist' when the file doesn't exist;
---   - Fails with 'MetadataInvalid' when the contents of the file cannot be
---     deserialised correctly
-loadSnapshotMetadata ::
-     IOLike m
-  => SomeHasFS m
-  -> DiskSnapshot
-  -> ExceptT MetadataErr m SnapshotMetadata
-loadSnapshotMetadata (SomeHasFS hasFS) ds = ExceptT $ do
-  let metadataPath = snapshotToMetadataPath ds
-  exists <- doesFileExist hasFS metadataPath
-  if not exists
-    then pure $ Left MetadataFileDoesNotExist
-    else do
-      withFile hasFS metadataPath ReadMode $ \h -> do
-        bs <- hGetAll hasFS h
-        case Aeson.eitherDecode bs of
-          Left decodeErr -> pure $ Left $ MetadataInvalid decodeErr
-          Right meta -> pure $ Right meta
