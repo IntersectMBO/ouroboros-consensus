@@ -5,9 +5,9 @@ open import Agda.Primitive renaming (Set to Type)
 module Data.Rational.Ext where
 
 open import Function using (_∘_; _$_)
-open import Data.Rational
+open import Data.Rational hiding (show)
 open import Data.Rational.Properties
-open import Data.Product using (_×_; ∃-syntax)
+open import Data.Product using (_×_; ∃-syntax; proj₁)
 open import Data.Nat as ℕ using (ℕ)
 open import Data.Integer as ℤ using (ℤ; +_)
 open import Data.Integer.GCD using (gcd)
@@ -15,10 +15,17 @@ import Data.Integer.Properties as ℤ
 open import Relation.Binary.PropositionalEquality.Core using (_≡_; _≢_; refl)
 open import Relation.Binary.PropositionalEquality using (cong; sym; module ≡-Reasoning)
 open import Relation.Nullary.Negation using (contradiction)
+open import Class.Show using (Show; show)
+open import Class.Semigroup using (_◇_)
+open import Class.Show.Instances using (Show-ℚ)
 
--- The interval (0, 1]
-PosUnitInterval : Type
-PosUnitInterval = ∃[ p ] Positive p × p ≤ 1ℚ
+-- A rational number in the interval (0, 1]
+InPosUnitInterval : Type
+InPosUnitInterval = ∃[ p ] Positive p × p ≤ 1ℚ
+
+instance
+  Show-InPosUnitInterval : Show InPosUnitInterval
+  Show-InPosUnitInterval .show = show ∘ proj₁
 
 record RationalExtStructure : Type where
   field
@@ -64,3 +71,10 @@ n<m⇒↥[n/m]<↧[n/m] {n} {m} n<m = ℤ.*-cancelʳ-<-nonNeg g $ begin-strict
   + n                 <⟨ ℤ.+<+ n<m ⟩
   + m                 ≡⟨ sym (↧-/ (+ n) m) ⟩
   ↧ (+ n / m) ℤ.* g   ∎ where open ℤ.≤-Reasoning; g = gcd (+ n) (+ m)
+
+-- 3rd Taylor polynomials for `exp` and `ln`.
+rationalExtStructure≈ : RationalExtStructure
+rationalExtStructure≈ = record
+  { exp = λ x → 1ℚ + x + ½ * x * x
+  ; ln  = λ x ⦃ x>0 ⦄ → let x-1 = x - 1ℚ in x-1 - ½ * x-1 * x-1 + (+ 1 / 3) * x-1 * x-1 * x-1
+  }

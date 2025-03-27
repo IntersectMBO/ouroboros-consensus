@@ -23,7 +23,6 @@ Its state is shown in Figure~\ref{fig:ts-types:prtcl} and consists of
 open import Spec.BaseTypes using (Nonces)
 open import Spec.BlockDefinitions
 open import Ledger.Crypto
-open import Ledger.Script
 open import Ledger.Types.Epoch
 open import Data.Rational.Ext
 
@@ -31,14 +30,13 @@ module Spec.Protocol
   (crypto : _) (open Crypto crypto)
   (nonces : Nonces crypto) (open Nonces nonces)
   (es     : _) (open EpochStructure es)
-  (ss     : ScriptStructure crypto es) (open ScriptStructure ss)  
-  (bs     : BlockStructure crypto nonces es ss) (open BlockStructure bs)
+  (bs     : BlockStructure crypto nonces es) (open BlockStructure bs)
   (af     : _) (open AbstractFunctions af)
   (rs     : _) (open RationalExtStructure rs)
   where
 
 open import InterfaceLibrary.Common.BaseTypes crypto using (PoolDistr; lookupPoolDistr)
-open import Spec.OperationalCertificate crypto nonces es ss bs af
+open import Spec.OperationalCertificate crypto nonces es bs af
 open import Spec.UpdateNonce crypto nonces es
 open import Spec.BaseTypes crypto using (OCertCounters)
 open import Data.Rational as ℚ using (ℚ; 0ℚ; 1ℚ)
@@ -105,7 +103,7 @@ hBNonce bhb = serHashToNonce (hash (encode "N" ∥ encode vrfRes))
 \end{code}
 \begin{AgdaAlign}
 \begin{code}
-checkLeaderVal : Certifiedℕ → PosUnitInterval → ℚ → Type
+checkLeaderVal : Certifiedℕ → InPosUnitInterval → ℚ → Type
 checkLeaderVal (certℕ , certℕprf) (f , posf , f≤1) σ =
    if f ≡ 1ℚ then ⊤ else
 \end{code}
@@ -133,7 +131,7 @@ checkLeaderVal (certℕ , certℕprf) (f , posf , f≤1) σ =
 \end{code}
 \end{AgdaAlign}
 \begin{code}
-vrfChecks : Nonce → PoolDistr → PosUnitInterval → BHBody → Type
+vrfChecks : Nonce → PoolDistr → InPosUnitInterval → BHBody → Type
 vrfChecks η₀ pd f bhb =
   case lookupPoolDistr pd hk of
     λ where
@@ -189,7 +187,7 @@ data _⊢_⇀⦇_,PRTCL⦈_ where
 \end{code}
 \begin{code}
   Evolve-Prtcl :
-    let (bhb , σ) = bh; open BHBody bhb
+    let 〖 bhb , σ 〗 = bh; open BHBody bhb
         η = hBNonce bhb
     in
     ∙ ⟦ η ⟧ᵘᵉ ⊢ ⟦ ηv , ηc ⟧ᵘˢ ⇀⦇ slot ,UPDN⦈ ⟦ ηv′ , ηc′ ⟧ᵘˢ

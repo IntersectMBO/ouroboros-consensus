@@ -7,17 +7,15 @@
 open import Spec.BaseTypes using (Nonces)
 open import Ledger.Prelude
 open import Ledger.Crypto
-open import Ledger.Script
 open import Ledger.Types.Epoch
 
 module Spec.BlockDefinitions
   (crypto : _) (open Crypto crypto)
   (nonces : Nonces crypto) (open Nonces nonces)  
   (es     : _) (open EpochStructure es)
-  (ss     : ScriptStructure crypto es) (open ScriptStructure ss)  
   where
 
-open import Ledger.PParams crypto es ss using (ProtVer)
+open import Ledger.PParams using (ProtVer)
 
 record BlockStructure : Type₁ where
   field
@@ -33,6 +31,11 @@ record BlockStructure : Type₁ where
 \end{code}
 \begin{code}[hide]
     ⦃ DecEq-HashHeader ⦄ : DecEq HashHeader
+    ⦃ DecEq-HashBBody  ⦄ : DecEq HashBBody
+    ⦃ DecEq-VRFRes     ⦄ : DecEq VRFRes
+    ⦃ Show-HashHeader  ⦄ : Show HashHeader
+    ⦃ Show-HashBBody   ⦄ : Show HashBBody
+    ⦃ Show-VRFRes      ⦄ : Show VRFRes
 \end{code}
 \emph{Concrete types}
 \begin{code}
@@ -79,7 +82,11 @@ record BlockStructure : Type₁ where
 \end{AgdaSuppressSpace}
 \emph{Block Types}
 \begin{code}
-  BHeader = BHBody × Sigᵏ -- block header
+  record BHeader : Type where
+    constructor 〖_,_〗
+    field
+      body : BHBody
+      sig  : Sigᵏ
 \end{code}
 \emph{Abstract functions}
 \begin{code}[hide]
@@ -93,6 +100,25 @@ record BlockStructure : Type₁ where
       prevHashToNonce : Maybe HashHeader → Nonce
       serHashToℕ      : SerHash → Certifiedℕ
       serHashToNonce  : SerHash → Nonce
+\end{code}
+\begin{code}[hide]
+open BlockStructure
+open import Tactic.Derive.Show
+
+instance
+  _ = Show-Maybe
+
+  Show-Certifiedℕ : ∀ {bs} → Show (Certifiedℕ bs)
+  Show-Certifiedℕ .show = show ∘ proj₁
+
+  unquoteDecl Show-OCert = derive-Show
+    [(quote OCert , Show-OCert)]
+
+  unquoteDecl Show-BHBody = derive-Show
+    [(quote BHBody , Show-BHBody)]
+
+  unquoteDecl Show-BHeader = derive-Show
+    [(quote BHeader , Show-BHeader)]
 \end{code}
 \end{AgdaAlign}
 \caption{Block definitions}

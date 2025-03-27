@@ -1,4 +1,4 @@
-name: formal-ledger
+name: formal-consensus
 depend:
   standard-library
   standard-library-classes

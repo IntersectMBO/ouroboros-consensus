@@ -1,0 +1,58 @@
+cabal-version:      3.0
+name:               cardano-consensus-executable-spec
+version:            0.1.0.0
+synopsis: Executable Formal Specification of Ouroboros Consensus
+description: The Haskell code generated from the Agda executable formal specification of the consensus layer for the Ouroboros blockchain protocol
+license: Apache-2.0
+license-files:
+  LICENSE
+  NOTICE
+homepage:
+author:             Javier Díaz
+maintainer:         javier.diaz@iohk.io
+category: Formal Specification
+
+common globalOptions
+    default-language: Haskell2010
+    build-depends: base
+    default-extensions:
+        PolyKinds EmptyDataDecls EmptyCase ExistentialQuantification
+        ScopedTypeVariables NoMonomorphismRestriction RankNTypes
+        PatternSynonyms DeriveGeneric
+    ghc-options:
+        -Wno-overlapping-patterns
+
+test-suite test
+    import: globalOptions
+    hs-source-dirs: test
+    main-is: Spec.hs
+    other-modules:
+        TickNonceSpec
+        UpdateNonceSpec
+        OperationalCertificateSpec
+        ProtocolSpec
+        TickForecastSpec
+        ChainHeadSpec
+    build-depends:
+        cardano-consensus-executable-spec,
+        hspec,
+        HUnit,
+        text
+    build-tool-depends: hspec-discover:hspec-discover
+    type: exitcode-stdio-1.0
+    ghc-options:
+        -Wall
+        -threaded -rtsopts -with-rtsopts=-N
+        -fno-warn-type-defaults
+
+library
+    import: globalOptions
+    hs-source-dirs: .
+    exposed-modules:
+        Lib
+    build-depends:
+        base >=4.14 && <4.21,
+        text,
+        ieee
+-- This will be generated automatically when building with nix
+    other-modules:

@@ -9,16 +9,17 @@ open import Algebra using (Semiring)
 open import Relation.Binary
 open import Data.Nat.Properties using (+-*-semiring)
 open import Data.Rational using (ℚ)
-open import Data.Rational.Ext using (PosUnitInterval)
+open import Data.Rational.Ext using (InPosUnitInterval)
 
 additionVia : ∀{A : Set} → (A → A) → ℕ → A → A
 additionVia sucFun zero r = r
 additionVia sucFun (suc l) r = sucFun (additionVia sucFun l r)
 
 record EpochStructure : Type₁ where
-  field Slotʳ     : Semiring 0ℓ 0ℓ
+  open Semiring using (Carrier)
+  field Slotʳ     : Semiring 0ℓ 0ℓ; ⦃ Show-Slotʳ ⦄ : Show (Slotʳ .Carrier)
         Epoch     : Type; ⦃ DecEq-Epoch ⦄ : DecEq Epoch; ⦃ Show-Epoch ⦄ : Show Epoch
-        KESPeriod : Type; ⦃ DecEq-KESPeriod ⦄ : DecEq KESPeriod; ⦃ DecTo-KESPeriod ⦄ : HasDecTotalOrder≡ {A = KESPeriod}
+        KESPeriod : Type; ⦃ DecEq-KESPeriod ⦄ : DecEq KESPeriod; ⦃ DecTo-KESPeriod ⦄ : HasDecTotalOrder≡ {A = KESPeriod}; ⦃ Show-KESPeriod ⦄ : Show KESPeriod
 
   Slot = Semiring.Carrier Slotʳ
 
@@ -35,7 +36,7 @@ record EpochStructure : Type₁ where
         _-ᵏ_                          : KESPeriod → KESPeriod → ℕ
         --⦃ -ᵏ-correct ⦄              : ∀ (kp kp′ : KESPeriod) → kp′ ≤ kp → kp′ +ᵏ (kp -ᵏ kp′) ≡ kp
         MaxKESEvo                     : ℕ
-        ActiveSlotCoeff               : PosUnitInterval
+        ActiveSlotCoeff               : InPosUnitInterval
         MaxMajorPV                    : ℕ
 
   _+ᵉ_ = additionVia sucᵉ
@@ -89,7 +90,7 @@ record GlobalConstants : Type₁ where
          NetworkId : Network
          SlotsPerKESPeriodᶜ : ℕ; ⦃ NonZero-SlotsPerKESPeriodᶜ ⦄ : NonZero SlotsPerKESPeriodᶜ
          MaxKESEvoᶜ : ℕ
-         ActiveSlotCoeffᶜ : PosUnitInterval
+         ActiveSlotCoeffᶜ : InPosUnitInterval
          MaxMajorPVᶜ : ℕ
 
   ℕ+ᵉ≡+ᵉ' : ∀ {a b} → additionVia suc a b ≡ a + b

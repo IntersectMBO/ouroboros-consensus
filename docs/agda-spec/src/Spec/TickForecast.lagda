@@ -9,15 +9,13 @@ and its signal is the current slot.
 {-# OPTIONS --safe #-}
 
 open import Ledger.Crypto
-open import Ledger.Script
 open import Ledger.Types.Epoch
 open import InterfaceLibrary.Ledger
 
 module Spec.TickForecast
   (crypto : Crypto)
   (es     : _) (open EpochStructure es)
-  (ss     : ScriptStructure crypto es) (open ScriptStructure ss)
-  (li     : LedgerInterface crypto es ss) (let open LedgerInterface li)
+  (li     : LedgerInterface crypto es) (let open LedgerInterface li)
   where
 
 open import Ledger.Prelude
