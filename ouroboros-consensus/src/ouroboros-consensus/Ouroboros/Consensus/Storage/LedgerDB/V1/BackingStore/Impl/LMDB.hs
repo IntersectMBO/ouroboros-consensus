@@ -60,6 +60,7 @@ import           Ouroboros.Consensus.Util (foldlM')
 import           Ouroboros.Consensus.Util.IndexedMemPack
 import           Ouroboros.Consensus.Util.IOLike (Exception (..), IOLike,
                      MonadCatch (..), MonadThrow (..), bracket)
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots (SnapshotBackend(..))
 import qualified System.FS.API as FS
 
 {-------------------------------------------------------------------------------
@@ -512,10 +513,11 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
                  pure (dbsSeq, s {dbsSeq = At slot})
                Trace.traceWith dbTracer $ API.BSWritten oldSlot slot
 
-       in API.BackingStore { API.bsClose       = bsClose
-                           , API.bsCopy        = bsCopy
-                           , API.bsValueHandle = bsValueHandle
-                           , API.bsWrite       = bsWrite
+       in API.BackingStore { API.bsClose           = bsClose
+                           , API.bsCopy            = bsCopy
+                           , API.bsValueHandle     = bsValueHandle
+                           , API.bsWrite           = bsWrite
+                           , API.bsSnapshotBackend = UTxOHDLMDBSnapshot
                            }
 
       where

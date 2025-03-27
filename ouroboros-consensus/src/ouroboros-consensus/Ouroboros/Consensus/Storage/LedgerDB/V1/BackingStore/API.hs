@@ -58,6 +58,7 @@ import           NoThunks.Class (OnlyCheckWhnfNamed (..))
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import           System.FS.API
 import qualified System.FS.API.Types as FS
 
@@ -105,6 +106,9 @@ data BackingStore m keys values diff = BackingStore {
   , bsValueHandle :: !(m (BackingStoreValueHandle m keys values))
     -- | Apply a valid diff to the contents of the backing store
   , bsWrite       :: !(SlotNo -> WriteHint diff -> diff -> m ())
+    -- | The name of the BackingStore backend, for loading and writing snapshots
+    --   to disk
+  , bsSnapshotBackend :: !SnapshotBackend
   }
 
 deriving via OnlyCheckWhnfNamed "BackingStore" (BackingStore m keys values diff)

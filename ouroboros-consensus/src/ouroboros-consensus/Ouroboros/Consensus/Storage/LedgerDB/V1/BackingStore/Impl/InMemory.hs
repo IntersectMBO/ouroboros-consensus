@@ -46,6 +46,7 @@ import           System.FS.API.Lazy (hGetAll, hPutAll)
 import           System.FS.API.Types (AllowExisting (MustBeNew), FsErrorPath,
                      FsPath (fsPathToList), OpenMode (ReadMode, WriteMode),
                      fsPathFromList)
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots (SnapshotBackend(..))
 
 {-------------------------------------------------------------------------------
   An in-memory backing store
@@ -197,6 +198,7 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
                   (upgradeTables st st' (appDiffs values diff))
               pure slot1
          traceWith tracer $ BSWritten slot1 slot2
+      , bsSnapshotBackend = UTxOHDMemSnapshot
       }
   where
     extendPath path =
