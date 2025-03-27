@@ -98,7 +98,7 @@ mkInitDb args bss getBlock =
   , initReapplyBlock = \cfg blk (chlog, bstore) -> do
       !chlog' <- reapplyThenPush cfg blk (readKeySets bstore) chlog
       -- It's OK to flush without a lock here, since the `LedgerDB` has not
-      -- finishined initializing: only this thread has access to the backing
+      -- finished initializing, only this thread has access to the backing
       -- store.
       chlog'' <- unsafeIgnoreWriteLock
         $ if shouldFlush flushFreq (flushableLength chlog')
