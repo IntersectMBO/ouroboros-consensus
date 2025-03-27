@@ -7,6 +7,7 @@
 module Test.Ouroboros.Storage.LedgerDB (tests) where
 
 import qualified Test.Ouroboros.Storage.LedgerDB.Serialisation as Serialisation
+import qualified Test.Ouroboros.Storage.LedgerDB.Snapshots as Snapshots
 import qualified Test.Ouroboros.Storage.LedgerDB.SnapshotPolicy as SnapshotPolicy
 import qualified Test.Ouroboros.Storage.LedgerDB.StateMachine as StateMachine
 import qualified Test.Ouroboros.Storage.LedgerDB.V1.BackingStore as BackingStore
@@ -22,6 +23,7 @@ tests = testGroup "LedgerDB" [
       -- Independent of the LedgerDB implementation
     , SnapshotPolicy.tests
     , Serialisation.tests
+    , Snapshots.tests
       -- Tests both V1 and V2
     , StateMachine.tests
     ]
