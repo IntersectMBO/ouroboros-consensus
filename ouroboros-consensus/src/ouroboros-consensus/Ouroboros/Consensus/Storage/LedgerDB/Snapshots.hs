@@ -147,7 +147,7 @@ data ReadSnapshotErr =
     -- | Error while de-serialising data
     ReadSnapshotFailed ReadIncrementalErr
     -- | Checksum of read snapshot differs from the one tracked by
-    --   the corresponding '.checksum' file
+    --   its corresponding metadata file
   | ReadSnapshotDataCorruption
     -- | An error occurred while reading the CRC file
   | ReadSnapshotCRCError FsPath CRCError
@@ -571,4 +571,8 @@ data TraceSnapshotEvent blk
     -- ^ An old or invalid on-disk snapshot was deleted
   | SnapshotMissingChecksum DiskSnapshot
     -- ^ The checksum file for a snapshot was missing and was not checked
+  | SnapshotMetadataMissing DiskSnapshot
+    -- ^ The metadata file for a snapshot was missing and the snapshot was ignored
+  | SnapshotMetadataBackendMismatch DiskSnapshot
+    -- ^ The backend for a snapshot was incorrect and the snapshot was ignored
   deriving (Generic, Eq, Show)
