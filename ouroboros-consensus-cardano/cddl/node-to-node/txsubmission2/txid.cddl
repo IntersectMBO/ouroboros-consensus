@@ -1,0 +1,17 @@
+txId =
+  ns7<byronTxId,
+      shelley.txid,
+      shelley.txid,
+      shelley.txid,
+      shelley.txid,
+      shelley.txid,
+      shelley.txid>
+
+byronTxId = [0, byron.txid]
+          / [1, byron.certificateid]
+          / [2, byron.updid]
+          / [3, byron.voteid]
+
+;# include byron as byron
+;# include shelley as shelley
+;# import base

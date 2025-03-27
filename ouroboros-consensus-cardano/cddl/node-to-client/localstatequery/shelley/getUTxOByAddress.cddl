@@ -1,0 +1,6 @@
+query = [6, set<conway.address>]
+
+result = conway.utxo
+
+;# import base
+;# import conway as conway

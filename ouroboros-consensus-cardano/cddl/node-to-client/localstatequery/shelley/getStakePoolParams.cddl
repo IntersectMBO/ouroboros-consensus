@@ -1,0 +1,6 @@
+query = [17, set<keyhash>]
+
+result = map<keyhash, conway.poolParams>
+
+;# import base
+;# import conway as conway
