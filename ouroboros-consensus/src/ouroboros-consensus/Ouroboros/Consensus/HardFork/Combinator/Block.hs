@@ -205,7 +205,7 @@ distribAnnTip AnnTip{..} =
     distrib (WrapTipInfo info) =
         AnnTip annTipSlotNo annTipBlockNo info
 
-undistribAnnTip :: SListI xs => NS AnnTip xs -> AnnTip (HardForkBlock xs)
+undistribAnnTip :: forall xs. SListI xs => NS AnnTip xs -> AnnTip (HardForkBlock xs)
 undistribAnnTip = hcollapse . himap undistrib
   where
     undistrib :: Index xs blk

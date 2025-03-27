@@ -69,7 +69,7 @@ import           Data.Functor.These (These1 (..))
 import qualified Data.Map.Strict as Map
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Counting
-import           Data.SOP.Index (Index (..))
+import           Data.SOP.Index
 import           Data.SOP.OptNP (NonEmptyOptNP, OptNP (OptSkip))
 import qualified Data.SOP.OptNP as OptNP
 import           Data.SOP.Strict
