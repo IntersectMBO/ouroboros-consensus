@@ -138,13 +138,13 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots (
   , snapshotToTablesPath
   ) where
 
+import qualified Data.Aeson as Aeson
 import           Codec.CBOR.Encoding
 import           Codec.Serialise
 import qualified Control.Monad as Monad
 import           Control.Monad.Except
 import qualified Control.Monad.Trans as Trans (lift)
 import           Control.Tracer
-import qualified Data.ByteString.Builder as BS
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.List as List
 import           Ouroboros.Consensus.Block
@@ -159,12 +159,10 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as V1
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
 import           Ouroboros.Consensus.Util.Args (Complete)
-import           Ouroboros.Consensus.Util.CRC
 import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike
 import           System.FS.API
 import           System.FS.API.Lazy
-import           System.FS.CRC
 
 
 -- | Try to take a snapshot of the /oldest ledger state/ in the ledger DB
@@ -228,12 +226,27 @@ writeSnapshot ::
 writeSnapshot fs@(SomeHasFS hasFS) doChecksum backingStore encLedger snapshot cs = do
     createDirectory hasFS (snapshotToDirPath snapshot)
     crc <- writeExtLedgerState fs encLedger (snapshotToStatePath snapshot) cs
-    Monad.when (getFlag doChecksum) $
-      withFile hasFS (snapshotToChecksumPath snapshot) (WriteMode MustBeNew) $ \h ->
-        Monad.void $ hPutAll hasFS h . BS.toLazyByteString . BS.word32HexFixed $ getCRC crc
+    writeSnapshotMetadata fs snapshot SnapshotMetadata
+      { snapshotBackend = bsSnapshotBackend backingStore
+      , snapshotChecksum = do
+          Monad.guard $ getFlag doChecksum
+          pure crc
+      }
     bsCopy
       backingStore
       (snapshotToTablesPath snapshot)
+
+-- | Write a snapshot metadata JSON file.
+writeSnapshotMetadata ::
+     MonadThrow m
+  => SomeHasFS m
+  -> DiskSnapshot
+  -> SnapshotMetadata
+  -> m ()
+writeSnapshotMetadata (SomeHasFS hasFS) ds meta = do
+  let metadataPath = snapshotToMetadataPath ds
+  withFile hasFS metadataPath (WriteMode MustBeNew) $ \h ->
+    Monad.void $ hPutAll hasFS h $ Aeson.encode meta
 
 -- | The path within the LedgerDB's filesystem to the file that contains the
 -- snapshot's serialized ledger state
@@ -263,14 +276,18 @@ loadSnapshot ::
   -> Flag "DoDiskSnapshotChecksum"
   -> DiskSnapshot
   -> ExceptT (SnapshotFailure blk) m ((DbChangelog' blk, LedgerBackingStore m (ExtLedgerState blk)), RealPoint blk)
-loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs'@(SomeHasFS fs'')) doChecksum s = do
+loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs') doChecksum s = do
   (extLedgerSt, mbChecksumAsRead) <- withExceptT (InitFailureRead . ReadSnapshotFailed) $
      readExtLedgerState fs' (decodeDiskExtLedgerState ccfg) decode doChecksum (snapshotToStatePath s)
+  snapshotMeta <- withExceptT (InitFailureRead . ReadMetadataError (snapshotToMetadataPath s)) $
+    loadSnapshotMetadata fs' s
+  case (bss, snapshotBackend snapshotMeta) of
+    (InMemoryBackingStoreArgs, UTxOHDMemSnapshot) -> pure ()
+    (LMDBBackingStoreArgs _ _ _, UTxOHDLMDBSnapshot) -> pure ()
+    (_, _) ->
+      throwError $ InitFailureRead $ ReadMetadataError (snapshotToMetadataPath s) MetadataBackendMismatch
   Monad.when (getFlag doChecksum) $ do
-    let crcPath = snapshotToChecksumPath s
-    !snapshotCRC <- withExceptT (InitFailureRead . ReadSnapshotCRCError crcPath) $
-      readCRC fs'' crcPath
-    Monad.when (mbChecksumAsRead /= Just snapshotCRC) $
+    Monad.when (mbChecksumAsRead /= snapshotChecksum snapshotMeta) $
       throwError $ InitFailureRead $ ReadSnapshotDataCorruption
   case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
     Origin        -> throwError InitFailureGenesis
@@ -278,3 +295,25 @@ loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs'@(SomeHasFS fs'')) doChecksum s 
         backingStore <- Trans.lift (restoreBackingStore tracer bss fs extLedgerSt (snapshotToTablesPath s))
         let chlog  = empty extLedgerSt
         pure ((chlog, backingStore), pt)
+
+-- | Load a snapshot metadata JSON file.
+--
+--   - Fails with 'MetadataFileDoesNotExist' when the file doesn't exist;
+--   - Fails with 'MetadataInvalid' when the contents of the file cannot be
+--     deserialised correctly
+loadSnapshotMetadata ::
+     IOLike m
+  => SomeHasFS m
+  -> DiskSnapshot
+  -> ExceptT MetadataErr m SnapshotMetadata
+loadSnapshotMetadata (SomeHasFS hasFS) ds = ExceptT $ do
+  let metadataPath = snapshotToMetadataPath ds
+  exists <- doesFileExist hasFS metadataPath
+  if not exists
+    then pure $ Left MetadataFileDoesNotExist
+    else do
+      withFile hasFS metadataPath ReadMode $ \h -> do
+        bs <- hGetAll hasFS h
+        case Aeson.eitherDecode bs of
+          Left decodeErr -> pure $ Left $ MetadataInvalid decodeErr
+          Right meta -> pure $ Right meta
