@@ -41,6 +41,8 @@ instance HasAnalysis ByronBlock where
     -- metrics for the Byron era only.
     blockApplicationMetrics = []
 
+    epochPoolDistr _lst = Nothing
+
 instance HasProtocolInfo ByronBlock where
     data Args ByronBlock =
       ByronBlockArgs {

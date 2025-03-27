@@ -120,6 +120,10 @@ parseAnalysis = asum [
         ]
     , benchmarkLedgerOpsParser
     , getBlockApplicationMetrics
+    , flag' DumpStakeDistributions $ mconcat [
+          long "dump-stake-distributions"
+        , help "Show the stake distribution for each epoch of some processed block"
+        ]
     , pure OnlyValidation
     ]
 
