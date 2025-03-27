@@ -574,6 +574,24 @@ initialize replayTracer
           traceWith snapTracer $ SnapshotMissingChecksum s
           tryNewestFirst NoDoDiskSnapshotChecksum acc allSnapshot
 
+        -- If the snapshot is missing a metadata file, issue a warning and try
+        -- the next oldest snapshot
+        Left err@(InitFailureRead (ReadMetadataError _ MetadataFileDoesNotExist)) -> do
+          traceWith snapTracer $ SnapshotMetadataMissing s
+          tryNewestFirst doChecksum (acc . InitFailure s err) ss
+
+        -- If the snapshot's backend is incorrect, issue a warning and try
+        -- the next oldest snapshot
+        Left err@(InitFailureRead (ReadMetadataError _ MetadataBackendMismatch)) -> do
+          traceWith snapTracer $ SnapshotMetadataBackendMismatch s
+          tryNewestFirst doChecksum (acc . InitFailure s err) ss
+
+        -- If the snapshot metadata is missing a checksum, issue a warning
+        -- and retry the same snapshot ignoring the checksum
+        Left (InitFailureRead (ReadMetadataError _ MetadataChecksumMissing)) -> do
+          traceWith snapTracer $ SnapshotMissingChecksum s
+          tryNewestFirst NoDoDiskSnapshotChecksum acc allSnapshot
+
         -- If we fail to use this snapshot for any other reason, delete it and
         -- try an older one
         Left err -> do
