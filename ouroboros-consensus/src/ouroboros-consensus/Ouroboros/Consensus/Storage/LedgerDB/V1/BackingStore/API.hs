@@ -57,8 +57,8 @@ import           GHC.Generics
 import           NoThunks.Class (OnlyCheckWhnfNamed (..))
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended
-import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import           Ouroboros.Consensus.Util.IOLike
 import           System.FS.API
 import qualified System.FS.API.Types as FS
 
@@ -92,7 +92,7 @@ data BackingStore m keys values diff = BackingStore {
     --
     -- Other methods throw exceptions if called on a closed store. 'bsClose'
     -- itself is idempotent.
-    bsClose       :: !(m ())
+    bsClose           :: !(m ())
     -- | Create a persistent copy
     --
     -- Each backing store implementation will offer a way to initialize itself
@@ -100,12 +100,12 @@ data BackingStore m keys values diff = BackingStore {
     --
     -- The destination path must not already exist. After this operation, it
     -- will be a directory.
-  , bsCopy        :: !(FS.FsPath -> m ())
+  , bsCopy            :: !(FS.FsPath -> m ())
     -- | Open a 'BackingStoreValueHandle' capturing the current value of the
     -- entire database
-  , bsValueHandle :: !(m (BackingStoreValueHandle m keys values))
+  , bsValueHandle     :: !(m (BackingStoreValueHandle m keys values))
     -- | Apply a valid diff to the contents of the backing store
-  , bsWrite       :: !(SlotNo -> WriteHint diff -> diff -> m ())
+  , bsWrite           :: !(SlotNo -> WriteHint diff -> diff -> m ())
     -- | The name of the BackingStore backend, for loading and writing snapshots
     --   to disk
   , bsSnapshotBackend :: !SnapshotBackend

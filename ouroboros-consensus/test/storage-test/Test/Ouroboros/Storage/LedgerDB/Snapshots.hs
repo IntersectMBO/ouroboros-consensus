@@ -1,15 +1,12 @@
 {-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-module Test.Ouroboros.Storage.LedgerDB.Snapshots
-  ( tests
-  ) where
+module Test.Ouroboros.Storage.LedgerDB.Snapshots (tests) where
 
-import Data.Aeson
-import Test.Tasty
-import Test.Tasty.QuickCheck hiding (Success)
-import System.FS.CRC
-
-import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import           Data.Aeson
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import           System.FS.CRC
+import           Test.Tasty
+import           Test.Tasty.QuickCheck hiding (Success)
 
 tests :: TestTree
 tests = testGroup "Snapshots"
@@ -20,7 +17,7 @@ tests = testGroup "Snapshots"
 prop_roundtrips :: (ToJSON a, FromJSON a, Eq a, Show a) => a -> Property
 prop_roundtrips a =
   case fromJSON (toJSON a) of
-    Error s -> counterexample s False
+    Error s   -> counterexample s False
     Success r -> r === a
 
 instance Arbitrary SnapshotBackend where

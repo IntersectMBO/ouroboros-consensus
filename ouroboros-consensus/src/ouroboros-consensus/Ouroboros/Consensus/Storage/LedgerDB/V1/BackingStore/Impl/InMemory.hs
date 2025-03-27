@@ -34,6 +34,8 @@ import           GHC.Generics
 import           Ouroboros.Consensus.Ledger.Basics
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import           Ouroboros.Consensus.Storage.LedgerDB.API
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+                     (SnapshotBackend (..))
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import           Ouroboros.Consensus.Util.IOLike (Exception, IOLike,
                      MonadSTM (STM, atomically), MonadThrow (throwIO), NoThunks,
@@ -46,7 +48,6 @@ import           System.FS.API.Lazy (hGetAll, hPutAll)
 import           System.FS.API.Types (AllowExisting (MustBeNew), FsErrorPath,
                      FsPath (fsPathToList), OpenMode (ReadMode, WriteMode),
                      fsPathFromList)
-import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots (SnapshotBackend(..))
 
 {-------------------------------------------------------------------------------
   An in-memory backing store
