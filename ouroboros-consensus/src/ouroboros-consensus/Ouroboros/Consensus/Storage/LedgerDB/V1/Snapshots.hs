@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -144,7 +143,6 @@ import qualified Control.Monad as Monad
 import           Control.Monad.Except
 import qualified Control.Monad.Trans as Trans (lift)
 import           Control.Tracer
-import qualified Data.ByteString.Builder as BS
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.List as List
 import           Ouroboros.Consensus.Block
@@ -159,12 +157,9 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as V1
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
 import           Ouroboros.Consensus.Util.Args (Complete)
-import           Ouroboros.Consensus.Util.CRC
 import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike
 import           System.FS.API
-import           System.FS.API.Lazy
-import           System.FS.CRC
 
 
 -- | Try to take a snapshot of the /oldest ledger state/ in the ledger DB
@@ -228,9 +223,12 @@ writeSnapshot ::
 writeSnapshot fs@(SomeHasFS hasFS) doChecksum backingStore encLedger snapshot cs = do
     createDirectory hasFS (snapshotToDirPath snapshot)
     crc <- writeExtLedgerState fs encLedger (snapshotToStatePath snapshot) cs
-    Monad.when (getFlag doChecksum) $
-      withFile hasFS (snapshotToChecksumPath snapshot) (WriteMode MustBeNew) $ \h ->
-        Monad.void $ hPutAll hasFS h . BS.toLazyByteString . BS.word32HexFixed $ getCRC crc
+    writeSnapshotMetadata fs snapshot SnapshotMetadata
+      { snapshotBackend = bsSnapshotBackend backingStore
+      , snapshotChecksum = do
+          Monad.guard $ getFlag doChecksum
+          pure crc
+      }
     bsCopy
       backingStore
       (snapshotToTablesPath snapshot)
@@ -263,14 +261,18 @@ loadSnapshot ::
   -> Flag "DoDiskSnapshotChecksum"
   -> DiskSnapshot
   -> ExceptT (SnapshotFailure blk) m ((DbChangelog' blk, LedgerBackingStore m (ExtLedgerState blk)), RealPoint blk)
-loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs'@(SomeHasFS fs'')) doChecksum s = do
+loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs') doChecksum s = do
   (extLedgerSt, mbChecksumAsRead) <- withExceptT (InitFailureRead . ReadSnapshotFailed) $
      readExtLedgerState fs' (decodeDiskExtLedgerState ccfg) decode doChecksum (snapshotToStatePath s)
+  snapshotMeta <- withExceptT (InitFailureRead . ReadMetadataError (snapshotToMetadataPath s)) $
+    loadSnapshotMetadata fs' s
+  case (bss, snapshotBackend snapshotMeta) of
+    (InMemoryBackingStoreArgs, UTxOHDMemSnapshot) -> pure ()
+    (LMDBBackingStoreArgs _ _ _, UTxOHDLMDBSnapshot) -> pure ()
+    (_, _) ->
+      throwError $ InitFailureRead $ ReadMetadataError (snapshotToMetadataPath s) MetadataBackendMismatch
   Monad.when (getFlag doChecksum) $ do
-    let crcPath = snapshotToChecksumPath s
-    !snapshotCRC <- withExceptT (InitFailureRead . ReadSnapshotCRCError crcPath) $
-      readCRC fs'' crcPath
-    Monad.when (mbChecksumAsRead /= Just snapshotCRC) $
+    Monad.when (mbChecksumAsRead /= snapshotChecksum snapshotMeta) $
       throwError $ InitFailureRead $ ReadSnapshotDataCorruption
   case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
     Origin        -> throwError InitFailureGenesis
