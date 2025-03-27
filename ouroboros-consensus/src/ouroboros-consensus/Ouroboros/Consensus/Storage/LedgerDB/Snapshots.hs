@@ -21,12 +21,12 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots (
     -- * Snapshots
     CRCError (..)
   , DiskSnapshot (..)
+  , MetadataErr (..)
   , NumOfDiskSnapshots (..)
   , ReadSnapshotErr (..)
-  , SnapshotMetadata (..)
   , SnapshotBackend (..)
-  , MetadataErr (..)
   , SnapshotFailure (..)
+  , SnapshotMetadata (..)
   , SnapshotPolicyArgs (..)
   , defaultSnapshotPolicyArgs
     -- * Codec
@@ -35,15 +35,15 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots (
     -- * Paths
   , diskSnapshotIsTemporary
   , snapshotFromPath
-  , snapshotToMetadataPath
   , snapshotToChecksumPath
   , snapshotToDirName
   , snapshotToDirPath
+  , snapshotToMetadataPath
     -- * Management
   , deleteSnapshot
   , listSnapshots
-  , trimSnapshots
   , loadSnapshotMetadata
+  , trimSnapshots
   , writeSnapshotMetadata
     -- * Policy
   , SnapshotInterval (..)
@@ -62,17 +62,18 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots (
   , snapshotsMapM_
   ) where
 
-import qualified Data.Aeson as Aeson
 import           Cardano.Ledger.BaseTypes
 import           Codec.CBOR.Decoding
 import           Codec.CBOR.Encoding
 import qualified Codec.CBOR.Write as CBOR
 import qualified Codec.Serialise.Decoding as Dec
 import           Control.Monad
+import qualified Control.Monad as Monad
 import           Control.Monad.Class.MonadTime.SI
 import           Control.Monad.Except
 import           Control.Tracer
-import           Data.Aeson (ToJSON(..), (.=), FromJSON(..), (.:), (.:?))
+import           Data.Aeson (FromJSON (..), ToJSON (..), (.:), (.:?), (.=))
+import qualified Data.Aeson as Aeson
 import qualified Data.List as List
 import           Data.Maybe (isJust, mapMaybe)
 import           Data.Ord
@@ -98,7 +99,6 @@ import           System.FS.API
 import           System.FS.API.Lazy
 import           System.FS.CRC
 import           Text.Read (readMaybe)
-import qualified Control.Monad as Monad
 
 -- | Name of a disk snapshot.
 --
@@ -156,7 +156,7 @@ data ReadSnapshotErr =
   deriving (Eq, Show)
 
 data SnapshotMetadata = SnapshotMetadata
-  { snapshotBackend :: SnapshotBackend
+  { snapshotBackend  :: SnapshotBackend
   , snapshotChecksum :: Maybe CRC
   } deriving (Eq, Show)
 
@@ -267,7 +267,7 @@ loadSnapshotMetadata (SomeHasFS hasFS) ds = ExceptT $ do
         bs <- hGetAll hasFS h
         case Aeson.eitherDecode bs of
           Left decodeErr -> pure $ Left $ MetadataInvalid decodeErr
-          Right meta -> pure $ Right meta
+          Right meta     -> pure $ Right meta
 
 snapshotsMapM_ :: Monad m => SomeHasFS m -> (FilePath -> m a) -> m ()
 snapshotsMapM_ (SomeHasFS fs) f = do

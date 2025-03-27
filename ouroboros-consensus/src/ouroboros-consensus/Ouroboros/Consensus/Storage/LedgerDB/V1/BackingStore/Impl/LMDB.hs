@@ -51,6 +51,8 @@ import           GHC.Generics (Generic)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Ledger.Tables
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+                     (SnapshotBackend (..))
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API as API
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Bridge as Bridge
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Status
@@ -60,7 +62,6 @@ import           Ouroboros.Consensus.Util (foldlM')
 import           Ouroboros.Consensus.Util.IndexedMemPack
 import           Ouroboros.Consensus.Util.IOLike (Exception (..), IOLike,
                      MonadCatch (..), MonadThrow (..), bracket)
-import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots (SnapshotBackend(..))
 import qualified System.FS.API as FS
 
 {-------------------------------------------------------------------------------
