@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
@@ -21,6 +22,8 @@ module Ouroboros.Consensus.Ledger.Query (
   , nodeToClientVersionToQueryVersion
   , queryDecodeNodeToClient
   , queryEncodeNodeToClient
+  , queryIsSupportedOnVersion
+  , querySupportedVersions
   ) where
 
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..))
@@ -131,6 +134,17 @@ instance Show (SomeSecond BlockQuery blk) => Show (SomeSecond Query blk) where
   show (SomeSecond GetChainPoint)             = "Query GetChainPoint"
   show (SomeSecond GetLedgerConfig)           = "Query GetLedgerConfig"
 
+queryIsSupportedOnVersion :: Query blk result -> QueryVersion -> Bool
+queryIsSupportedOnVersion = \case
+  BlockQuery{} -> (>= QueryVersion1)
+  GetSystemStart{} -> (>= QueryVersion1)
+  GetChainBlockNo{} -> (>= QueryVersion2)
+  GetChainPoint{} -> (>= QueryVersion2)
+  GetLedgerConfig{} -> (>= QueryVersion3)
+
+querySupportedVersions :: Query blk result -> [QueryVersion]
+querySupportedVersions q =
+  [ v | v <- [minBound..maxBound], queryIsSupportedOnVersion q v ]
 
 -- | Exception thrown in the encoders
 data QueryEncoderException blk =
@@ -155,41 +169,41 @@ queryEncodeNodeToClient ::
   -> SomeSecond Query blk
   -> Encoding
 queryEncodeNodeToClient codecConfig queryVersion blockVersion (SomeSecond query)
-  = case query of
+  = requireVersion query $ case query of
       BlockQuery blockQuery ->
-        requireVersion QueryVersion1 $ mconcat
+        mconcat
           [ encodeListLen 2
           , encodeWord8 0
           , encodeBlockQuery blockQuery
           ]
 
       GetSystemStart ->
-        requireVersion QueryVersion1 $ mconcat
+        mconcat
           [ encodeListLen 1
           , encodeWord8 1
           ]
 
       GetChainBlockNo ->
-        requireVersion QueryVersion2 $ mconcat
+        mconcat
           [ encodeListLen 1
           , encodeWord8 2
           ]
 
       GetChainPoint ->
-        requireVersion QueryVersion2 $ mconcat
+        mconcat
           [ encodeListLen 1
           , encodeWord8 3
           ]
 
       GetLedgerConfig ->
-        requireVersion QueryVersion3 $ mconcat
+        mconcat
           [ encodeListLen 1
           , encodeWord8 4
           ]
   where
-    requireVersion :: QueryVersion -> a -> a
-    requireVersion expectedVersion a =
-      if queryVersion >= expectedVersion
+    requireVersion :: Query blk result -> a -> a
+    requireVersion q a =
+      if queryIsSupportedOnVersion q queryVersion
         then a
         else throw $ QueryEncoderUnsupportedQuery (SomeSecond query) queryVersion
 
