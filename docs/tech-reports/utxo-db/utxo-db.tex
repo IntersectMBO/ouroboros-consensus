@@ -12,6 +12,7 @@
 \usepackage{dcolumn}
 \usepackage{graphicx}
 \usepackage{natbib}
+\usepackage{changelog}
 \usepackage{hyperref}
 \usepackage[capitalise,noabbrev,nameinlink]{cleveref}
 \hypersetup{
@@ -33,6 +34,10 @@
    }
 
 \maketitle
+
+\begin{changelog}[simple, sectioncmd=\section*]
+  \shortversion{author={Duncan Coutts, Douglas Wilson}, v=1.0, date=April 2021, changes=Final version}
+\end{changelog}
 
 \section{Introduction}
 \label{introduction}
@@ -1124,7 +1129,7 @@ databases, including for example SQLite and PostgreSQL. There is also an
 existing Haskell implementation of a B+ tree on hackage%
 \footnote{\url{https://hackage.haskell.org/package/haskey}}.
 
-We do not expect to be able to meet the minimum performance targets (see 
+We do not expect to be able to meet the minimum performance targets (see
 \cref{performance-requirements}) with a B+ tree based solution. The ability to
 reuse an existing implementation is a clear benefit for development time. This
 could therefore be a useful interim solution, on route to the final delivery.
