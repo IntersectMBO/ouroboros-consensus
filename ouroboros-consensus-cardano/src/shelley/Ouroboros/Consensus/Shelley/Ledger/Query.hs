@@ -23,7 +23,8 @@ module Ouroboros.Consensus.Shelley.Ledger.Query (
   , NonMyopicMemberRewards (..)
   , StakeSnapshot (..)
   , StakeSnapshots (..)
-  , querySupportedVersion
+  , queryIsSupportedOnVersion
+  , querySupportedVersions
     -- * Serialisation
   , decodeShelleyQuery
   , decodeShelleyResult
@@ -73,7 +74,8 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended
-import           Ouroboros.Consensus.Ledger.Query
+import           Ouroboros.Consensus.Ledger.Query hiding
+                     (queryIsSupportedOnVersion, querySupportedVersions)
 import           Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import qualified Ouroboros.Consensus.Shelley.Eras as SE
@@ -704,8 +706,8 @@ instance ShelleyCompatible proto era => ShowQuery (BlockQuery (ShelleyBlock prot
       QueryStakePoolDefaultVote {}               -> show
 
 -- | Is the given query supported by the given 'ShelleyNodeToClientVersion'?
-querySupportedVersion :: BlockQuery (ShelleyBlock proto era) result -> ShelleyNodeToClientVersion -> Bool
-querySupportedVersion = \case
+queryIsSupportedOnVersion :: BlockQuery (ShelleyBlock proto era) result -> ShelleyNodeToClientVersion -> Bool
+queryIsSupportedOnVersion = \case
     GetLedgerTip                               -> const True
     GetEpochNo                                 -> const True
     GetNonMyopicMemberRewards {}               -> const True
@@ -715,7 +717,7 @@ querySupportedVersion = \case
     GetUTxOByAddress {}                        -> const True
     GetUTxOWhole                               -> const True
     DebugEpochState                            -> const True
-    GetCBOR q                                  -> querySupportedVersion q
+    GetCBOR q                                  -> queryIsSupportedOnVersion q
     GetFilteredDelegationsAndRewardAccounts {} -> const True
     GetGenesisConfig                           -> const True
     DebugNewEpochState                         -> const True
@@ -750,6 +752,10 @@ querySupportedVersion = \case
     v10 = ShelleyNodeToClientVersion10
     v11 = ShelleyNodeToClientVersion11
     v12 = ShelleyNodeToClientVersion12
+
+querySupportedVersions :: BlockQuery (ShelleyBlock proto era) result -> [ShelleyNodeToClientVersion]
+querySupportedVersions q =
+  [ v | v <- [minBound..maxBound], queryIsSupportedOnVersion q v ]
 
 {-------------------------------------------------------------------------------
   Auxiliary

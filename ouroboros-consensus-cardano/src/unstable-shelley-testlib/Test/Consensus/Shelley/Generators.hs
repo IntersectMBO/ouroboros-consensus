@@ -25,7 +25,8 @@ import           Generic.Random (genericArbitraryU)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Ledger.Query
+import           Ouroboros.Consensus.Ledger.Query hiding
+                     (queryIsSupportedOnVersion)
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
@@ -278,5 +279,5 @@ instance CanMock proto era
       => Arbitrary (WithVersion ShelleyNodeToClientVersion (SomeSecond BlockQuery (ShelleyBlock proto era))) where
   arbitrary = do
       query@(SomeSecond q) <- arbitrary
-      version <- arbitrary `suchThat` querySupportedVersion q
+      version <- arbitrary `suchThat` queryIsSupportedOnVersion q
       return $ WithVersion version query

@@ -294,7 +294,7 @@ instance ShelleyBasedEra era => SerialiseNodeToClient (ShelleyBlock proto era) (
 instance ShelleyCompatible proto era
       => SerialiseNodeToClient (ShelleyBlock proto era) (SomeSecond BlockQuery (ShelleyBlock proto era)) where
   encodeNodeToClient _ version (SomeSecond q)
-    | querySupportedVersion q version
+    | queryIsSupportedOnVersion q version
     = encodeShelleyQuery q
     | otherwise
     = throw $ ShelleyEncoderUnsupportedQuery (SomeSecond q) version
