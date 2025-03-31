@@ -33,8 +33,6 @@ module Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common (
   , HardForkNodeToNodeVersion (..)
   , HardForkSpecificNodeToClientVersion (..)
   , HardForkSpecificNodeToNodeVersion (..)
-  , isHardForkNodeToClientEnabled
-  , isHardForkNodeToNodeEnabled
     -- * Dealing with annotations
   , AnnDecoder (..)
     -- * Serialisation of telescopes
@@ -70,7 +68,7 @@ import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as Enc
 import           Codec.Serialise (Serialise)
 import qualified Codec.Serialise as Serialise
-import           Control.Exception (Exception, throw)
+import           Control.Exception (Exception)
 import qualified Data.ByteString.Lazy as Lazy
 import           Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as Short
@@ -145,14 +143,6 @@ data HardForkSpecificNodeToClientVersion =
   deriving (Eq, Ord, Show, Enum, Bounded)
 
 data HardForkNodeToNodeVersion xs where
-  -- | Disable the HFC
-  --
-  -- This means that only the first era (@x@) is supported, and moreover, is
-  -- compatible with serialisation used if the HFC would not be present at all.
-  HardForkNodeToNodeDisabled ::
-       BlockNodeToNodeVersion x
-    -> HardForkNodeToNodeVersion (x ': xs)
-
   -- | Enable the HFC
   --
   -- Serialised values will always include tags inserted by the HFC to
@@ -164,13 +154,6 @@ data HardForkNodeToNodeVersion xs where
     -> HardForkNodeToNodeVersion xs
 
 data HardForkNodeToClientVersion xs where
-  -- | Disable the HFC
-  --
-  -- See 'HardForkNodeToNodeDisabled'
-  HardForkNodeToClientDisabled ::
-       BlockNodeToClientVersion x
-    -> HardForkNodeToClientVersion (x ': xs)
-
   -- | Enable the HFC
   --
   -- See 'HardForkNodeToNodeEnabled'
@@ -196,14 +179,6 @@ deriving instance SerialiseHFC xs => Eq (HardForkNodeToClientVersion xs)
 instance SerialiseHFC xs => HasNetworkProtocolVersion (HardForkBlock xs) where
   type BlockNodeToNodeVersion   (HardForkBlock xs) = HardForkNodeToNodeVersion   xs
   type BlockNodeToClientVersion (HardForkBlock xs) = HardForkNodeToClientVersion xs
-
-isHardForkNodeToNodeEnabled :: HardForkNodeToNodeVersion xs -> Bool
-isHardForkNodeToNodeEnabled HardForkNodeToNodeEnabled {} = True
-isHardForkNodeToNodeEnabled _                            = False
-
-isHardForkNodeToClientEnabled :: HardForkNodeToClientVersion xs -> Bool
-isHardForkNodeToClientEnabled HardForkNodeToClientEnabled {} = True
-isHardForkNodeToClientEnabled _                              = False
 
 {-------------------------------------------------------------------------------
   Conditions required by the HFC to support serialisation
@@ -565,10 +540,6 @@ encodeEitherMismatch :: forall xs a. SListI xs
                      -> (Either (MismatchEraInfo xs) a -> Encoding)
 encodeEitherMismatch version enc ma =
     case (version, ma) of
-      (HardForkNodeToClientDisabled {}, Right a) ->
-          enc a
-      (HardForkNodeToClientDisabled {}, Left err) ->
-          throw $ futureEraException (mismatchFutureEra err)
       (HardForkNodeToClientEnabled {}, Right a) -> mconcat [
             Enc.encodeListLen 1
           , enc a
@@ -592,8 +563,6 @@ decodeEitherMismatch :: SListI xs
                      -> Decoder s (Either (MismatchEraInfo xs) a)
 decodeEitherMismatch version dec =
     case version of
-      HardForkNodeToClientDisabled {} ->
-        Right <$> dec
       HardForkNodeToClientEnabled {} -> do
         tag <- Dec.decodeListLen
         case tag of

@@ -16,7 +16,6 @@ module Ouroboros.Consensus.HardFork.Combinator.Serialisation.SerialiseNodeToNode
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.Serialise as Serialise
-import           Control.Exception (throw)
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.NonEmpty (ProofNonEmpty (..), isNonEmpty)
@@ -57,10 +56,6 @@ dispatchEncoder ccfg version ns =
     case isNonEmpty (Proxy @xs) of
       ProofNonEmpty {} ->
         case (ccfgs, version, ns) of
-          (c0 :* _, HardForkNodeToNodeDisabled v0, Z x0) ->
-            encodeNodeToNode c0 v0 x0
-          (_, HardForkNodeToNodeDisabled _, S later) ->
-            throw $ futureEraException (notFirstEra later)
           (_, HardForkNodeToNodeEnabled _ versions, _) ->
             encodeNS (hczipWith pSHFC aux ccfgs versions) ns
   where
@@ -84,8 +79,6 @@ dispatchDecoder ccfg version =
     case isNonEmpty (Proxy @xs) of
       ProofNonEmpty {} ->
         case (ccfgs, version) of
-          (c0 :* _, HardForkNodeToNodeDisabled v0) ->
-            Z <$> decodeNodeToNode c0 v0
           (_, HardForkNodeToNodeEnabled _ versions) ->
             decodeNS (hczipWith pSHFC aux ccfgs versions)
   where

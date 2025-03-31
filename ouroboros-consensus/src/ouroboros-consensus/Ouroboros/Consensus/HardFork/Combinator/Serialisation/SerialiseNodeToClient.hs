@@ -80,9 +80,6 @@ encodeNodeToClientNP
     = error err
     | otherwise
     = case version of
-        HardForkNodeToClientDisabled versionX -> case ccfgs of
-          ccfg :* _ -> case xs of
-            x :* _ -> encodeElement ccfg versionX x
         HardForkNodeToClientEnabled _ subVersions ->
           let components :: [Encoding]
               components = catMaybes
@@ -123,12 +120,6 @@ decodeNodeToClientNP
     = error err
     | otherwise
     = case version of
-        HardForkNodeToClientDisabled versionX -> case ccfgs of
-          (ccfg :* Nil) -> do
-            singleElement <- decodeElement ccfg versionX
-            return (singleElement :* Nil)
-          _ -> failVersion
-
         HardForkNodeToClientEnabled _ subVersions -> do
           enforceSize failVersionTxt expectedN
           hsequence' $ hczipWith
@@ -155,7 +146,6 @@ validateHardForkNodeToClientVersion ::
   => HardForkNodeToClientVersion xs
   -> Maybe String
 validateHardForkNodeToClientVersion version = case version of
-    HardForkNodeToClientDisabled _            -> Nothing
     HardForkNodeToClientEnabled _ subVersions -> goEnabled subVersions
   where
     goEnabled :: NP EraNodeToClientVersion xs' -> Maybe String
@@ -217,10 +207,6 @@ dispatchEncoder ccfg version ns =
     case isNonEmpty (Proxy @xs) of
       ProofNonEmpty {} ->
         case (ccfgs, version, ns) of
-          (c0 :* _, HardForkNodeToClientDisabled v0, Z x0) ->
-            encodeNodeToClient c0 v0 x0
-          (_, HardForkNodeToClientDisabled _, S later) ->
-            throw $ futureEraException (notFirstEra later)
           (_, HardForkNodeToClientEnabled _ versions, _) ->
             encodeNS (hczipWith pSHFC aux ccfgs versions) ns
   where
@@ -246,8 +232,6 @@ dispatchDecoder ccfg version =
     case isNonEmpty (Proxy @xs) of
       ProofNonEmpty {} ->
         case (ccfgs, version) of
-          (c0 :* _, HardForkNodeToClientDisabled v0) ->
-            Z <$> decodeNodeToClient c0 v0
           (_, HardForkNodeToClientEnabled _ versions) ->
             decodeNS (hczipWith pSHFC aux ccfgs versions)
   where
@@ -370,16 +354,6 @@ decodeQueryHardFork = do
 instance SerialiseHFC xs
       => SerialiseNodeToClient (HardForkBlock xs) (SomeSecond BlockQuery (HardForkBlock xs)) where
   encodeNodeToClient ccfg version (SomeSecond q) = case version of
-      HardForkNodeToClientDisabled v0 -> case q of
-        QueryIfCurrent qry ->
-          case distribQueryIfCurrent (Some qry) of
-            Z qry0  -> encodeNodeToClient (hd ccfgs) v0 qry0
-            S later -> throw $ futureEraException (notFirstEra later)
-        QueryAnytime {} ->
-          throw HardForkEncoderQueryHfcDisabled
-        QueryHardFork {} ->
-          throw HardForkEncoderQueryHfcDisabled
-
       HardForkNodeToClientEnabled vHfc _ -> case q of
         QueryIfCurrent qry -> mconcat [
             Enc.encodeListLen 2
@@ -398,12 +372,8 @@ instance SerialiseHFC xs
           , encodeQueryHardFork vHfc (Some qry)
           ]
     where
-      ccfgs = getPerEraCodecConfig $ hardForkCodecConfigPerEra ccfg
 
   decodeNodeToClient ccfg version = case version of
-      HardForkNodeToClientDisabled v0 ->
-        injQueryIfCurrent . Z <$>
-          decodeNodeToClient (hd ccfgs) v0
       HardForkNodeToClientEnabled {} -> case isNonEmpty (Proxy @xs) of
         ProofNonEmpty (_ :: Proxy x') (p :: Proxy xs') -> do
           size <- Dec.decodeListLen
@@ -428,8 +398,6 @@ instance SerialiseHFC xs
 
             _ -> fail $ "HardForkQuery: invalid size and tag" <> show (size, tag)
     where
-      ccfgs = getPerEraCodecConfig $ hardForkCodecConfigPerEra ccfg
-
       injQueryIfCurrent :: NS (SomeSecond BlockQuery) xs
                         -> SomeSecond BlockQuery (HardForkBlock xs)
       injQueryIfCurrent ns =
@@ -447,10 +415,6 @@ instance SerialiseHFC xs
         ProofNonEmpty {} ->
           encodeEitherMismatch version $
             case (ccfgs, version, qry) of
-              (c0 :* _, HardForkNodeToClientDisabled v0, QZ qry') ->
-                encodeResult c0 v0 qry'
-              (_, HardForkNodeToClientDisabled _, QS qry') ->
-                throw $ futureEraException (hardForkQueryInfo qry')
               (_, HardForkNodeToClientEnabled _ versions, _) ->
                 encodeQueryIfCurrentResult ccfgs versions qry
     where
@@ -464,10 +428,6 @@ instance SerialiseHFC xs
         ProofNonEmpty {} ->
           decodeEitherMismatch version $
             case (ccfgs, version, qry) of
-              (c0 :* _, HardForkNodeToClientDisabled v0, QZ qry') ->
-                decodeResult c0 v0 qry'
-              (_, HardForkNodeToClientDisabled _, QS qry') ->
-                throw $ futureEraException (hardForkQueryInfo qry')
               (_, HardForkNodeToClientEnabled _ versions, _) ->
                 decodeQueryIfCurrentResult ccfgs versions qry
     where
