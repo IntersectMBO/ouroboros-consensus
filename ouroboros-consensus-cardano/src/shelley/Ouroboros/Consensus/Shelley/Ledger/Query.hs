@@ -23,7 +23,6 @@ module Ouroboros.Consensus.Shelley.Ledger.Query (
   , NonMyopicMemberRewards (..)
   , StakeSnapshot (..)
   , StakeSnapshots (..)
-  , querySupportedVersion
     -- * Serialisation
   , decodeShelleyQuery
   , decodeShelleyResult
@@ -509,6 +508,53 @@ instance
       hst = headerState ext
       st  = shelleyLedgerState lst
 
+  -- | Is the given query supported by the given 'ShelleyNodeToClientVersion'?
+  blockQueryIsSupportedOnVersion = \case
+    GetLedgerTip                               -> const True
+    GetEpochNo                                 -> const True
+    GetNonMyopicMemberRewards {}               -> const True
+    GetCurrentPParams                          -> const True
+    GetProposedPParamsUpdates                  -> (< v12)
+    GetStakeDistribution                       -> const True
+    GetUTxOByAddress {}                        -> const True
+    GetUTxOWhole                               -> const True
+    DebugEpochState                            -> const True
+    GetCBOR q                                  -> blockQueryIsSupportedOnVersion q
+    GetFilteredDelegationsAndRewardAccounts {} -> const True
+    GetGenesisConfig                           -> const True
+    DebugNewEpochState                         -> const True
+    DebugChainDepState                         -> const True
+    GetRewardProvenance                        -> const True
+    GetUTxOByTxIn {}                           -> const True
+    GetStakePools                              -> const True
+    GetStakePoolParams {}                      -> const True
+    GetRewardInfoPools                         -> const True
+    GetPoolState {}                            -> const True
+    GetStakeSnapshots {}                       -> const True
+    GetPoolDistr {}                            -> const True
+    GetStakeDelegDeposits {}                   -> const True
+    GetConstitution                            -> (>= v8)
+    GetGovState                                -> (>= v8)
+    GetDRepState {}                            -> (>= v8)
+    GetDRepStakeDistr {}                       -> (>= v8)
+    GetCommitteeMembersState {}                -> (>= v8)
+    GetFilteredVoteDelegatees {}               -> (>= v8)
+    GetAccountState {}                         -> (>= v8)
+    GetSPOStakeDistr {}                        -> (>= v8)
+    GetProposals {}                            -> (>= v9)
+    GetRatifyState {}                          -> (>= v9)
+    GetFuturePParams {}                        -> (>= v10)
+    GetBigLedgerPeerSnapshot                   -> (>= v11)
+    QueryStakePoolDefaultVote {}               -> (>= v12)
+    -- WARNING: when adding a new query, a new @ShelleyNodeToClientVersionX@
+    -- must be added. See #2830 for a template on how to do this.
+   where
+    v8  = ShelleyNodeToClientVersion8
+    v9  = ShelleyNodeToClientVersion9
+    v10 = ShelleyNodeToClientVersion10
+    v11 = ShelleyNodeToClientVersion11
+    v12 = ShelleyNodeToClientVersion12
+
 instance SameDepIndex (BlockQuery (ShelleyBlock proto era)) where
   sameDepIndex GetLedgerTip GetLedgerTip
     = Just Refl
@@ -702,54 +748,6 @@ instance ShelleyCompatible proto era => ShowQuery (BlockQuery (ShelleyBlock prot
       GetFuturePParams {}                        -> show
       GetBigLedgerPeerSnapshot                   -> show
       QueryStakePoolDefaultVote {}               -> show
-
--- | Is the given query supported by the given 'ShelleyNodeToClientVersion'?
-querySupportedVersion :: BlockQuery (ShelleyBlock proto era) result -> ShelleyNodeToClientVersion -> Bool
-querySupportedVersion = \case
-    GetLedgerTip                               -> const True
-    GetEpochNo                                 -> const True
-    GetNonMyopicMemberRewards {}               -> const True
-    GetCurrentPParams                          -> const True
-    GetProposedPParamsUpdates                  -> (< v12)
-    GetStakeDistribution                       -> const True
-    GetUTxOByAddress {}                        -> const True
-    GetUTxOWhole                               -> const True
-    DebugEpochState                            -> const True
-    GetCBOR q                                  -> querySupportedVersion q
-    GetFilteredDelegationsAndRewardAccounts {} -> const True
-    GetGenesisConfig                           -> const True
-    DebugNewEpochState                         -> const True
-    DebugChainDepState                         -> const True
-    GetRewardProvenance                        -> const True
-    GetUTxOByTxIn {}                           -> const True
-    GetStakePools                              -> const True
-    GetStakePoolParams {}                      -> const True
-    GetRewardInfoPools                         -> const True
-    GetPoolState {}                            -> const True
-    GetStakeSnapshots {}                       -> const True
-    GetPoolDistr {}                            -> const True
-    GetStakeDelegDeposits {}                   -> const True
-    GetConstitution                            -> (>= v8)
-    GetGovState                                -> (>= v8)
-    GetDRepState {}                            -> (>= v8)
-    GetDRepStakeDistr {}                       -> (>= v8)
-    GetCommitteeMembersState {}                -> (>= v8)
-    GetFilteredVoteDelegatees {}               -> (>= v8)
-    GetAccountState {}                         -> (>= v8)
-    GetSPOStakeDistr {}                        -> (>= v8)
-    GetProposals {}                            -> (>= v9)
-    GetRatifyState {}                          -> (>= v9)
-    GetFuturePParams {}                        -> (>= v10)
-    GetBigLedgerPeerSnapshot                   -> (>= v11)
-    QueryStakePoolDefaultVote {}               -> (>= v12)
-    -- WARNING: when adding a new query, a new @ShelleyNodeToClientVersionX@
-    -- must be added. See #2830 for a template on how to do this.
-  where
-    v8  = ShelleyNodeToClientVersion8
-    v9  = ShelleyNodeToClientVersion9
-    v10 = ShelleyNodeToClientVersion10
-    v11 = ShelleyNodeToClientVersion11
-    v12 = ShelleyNodeToClientVersion12
 
 {-------------------------------------------------------------------------------
   Auxiliary

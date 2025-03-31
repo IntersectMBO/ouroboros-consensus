@@ -117,6 +117,7 @@ library
     Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
     Ouroboros.Consensus.HardFork.Combinator.Lifting
     Ouroboros.Consensus.HardFork.Combinator.Mempool
+    Ouroboros.Consensus.HardFork.Combinator.NetworkVersion
     Ouroboros.Consensus.HardFork.Combinator.Node
     Ouroboros.Consensus.HardFork.Combinator.Node.DiffusionPipelining
     Ouroboros.Consensus.HardFork.Combinator.Node.InitStorage

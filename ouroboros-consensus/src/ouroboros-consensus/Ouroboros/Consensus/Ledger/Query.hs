@@ -21,6 +21,8 @@ module Ouroboros.Consensus.Ledger.Query (
   , nodeToClientVersionToQueryVersion
   , queryDecodeNodeToClient
   , queryEncodeNodeToClient
+  , queryIsSupportedOnNodeToClientVersion
+  , querySupportedVersions
   ) where
 
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..))
@@ -32,6 +34,7 @@ import           Codec.Serialise (Serialise)
 import           Codec.Serialise.Class (decode, encode)
 import           Control.Exception (Exception, throw)
 import           Data.Kind (Type)
+import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust)
 import           Data.Typeable (Typeable)
 import           Ouroboros.Consensus.Block.Abstract (CodecConfig)
@@ -44,7 +47,8 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query.Version
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
-                     (BlockNodeToClientVersion)
+                     (BlockNodeToClientVersion, NodeToClientVersion,
+                     SupportedNetworkProtocolVersion (supportedNodeToClientVersions))
 import           Ouroboros.Consensus.Node.Serialisation
                      (SerialiseNodeToClient (..), SerialiseResult (..))
 import           Ouroboros.Consensus.Util (ShowProxy (..), SomeSecond (..))
@@ -131,6 +135,41 @@ instance Show (SomeSecond BlockQuery blk) => Show (SomeSecond Query blk) where
   show (SomeSecond GetChainPoint)             = "Query GetChainPoint"
   show (SomeSecond GetLedgerConfig)           = "Query GetLedgerConfig"
 
+queryIsSupportedOnNodeToClientVersion ::
+     forall blk result.
+     (SupportedNetworkProtocolVersion blk, BlockSupportsLedgerQuery blk)
+  => Query blk result
+  -> NodeToClientVersion
+  -> Bool
+queryIsSupportedOnNodeToClientVersion q ntc =
+  case supportedNodeToClientVersions (Proxy @blk) Map.!? ntc of
+    Nothing -> False
+    Just bv -> queryIsSupportedOnVersion q qv bv
+  where
+    qv = nodeToClientVersionToQueryVersion ntc
+
+queryIsSupportedOnVersion ::
+     BlockSupportsLedgerQuery blk
+  => Query blk result
+  -> QueryVersion
+  -> BlockNodeToClientVersion blk
+  -> Bool
+queryIsSupportedOnVersion q qv bv = case q of
+      BlockQuery q'     -> qv >= QueryVersion1 && blockQueryIsSupportedOnVersion q' bv
+      GetSystemStart{}  -> qv >= QueryVersion1
+      GetChainBlockNo{} -> qv >= QueryVersion2
+      GetChainPoint{}   -> qv >= QueryVersion2
+      GetLedgerConfig{} -> qv >= QueryVersion3
+
+querySupportedVersions ::
+     forall blk result.
+     (SupportedNetworkProtocolVersion blk, BlockSupportsLedgerQuery blk)
+  => Query blk result
+  -> [NodeToClientVersion]
+querySupportedVersions q =
+  [ v | v <- [minBound..maxBound]
+      , queryIsSupportedOnNodeToClientVersion q v
+  ]
 
 -- | Exception thrown in the encoders
 data QueryEncoderException blk =
@@ -138,15 +177,16 @@ data QueryEncoderException blk =
     QueryEncoderUnsupportedQuery
          (SomeSecond Query blk)
          QueryVersion
+         (BlockNodeToClientVersion blk)
 
-deriving instance Show (SomeSecond BlockQuery blk)
+deriving instance (Show (SomeSecond BlockQuery blk), Show (BlockNodeToClientVersion blk))
     => Show (QueryEncoderException blk)
-instance (Typeable blk, Show (SomeSecond BlockQuery blk))
+instance (Typeable blk, Show (SomeSecond BlockQuery blk), Show (BlockNodeToClientVersion blk))
     => Exception (QueryEncoderException blk)
 
 queryEncodeNodeToClient ::
      forall blk.
-     Typeable blk
+     (Typeable blk, BlockSupportsLedgerQuery blk, Show (BlockNodeToClientVersion blk))
   => Show (SomeSecond BlockQuery blk)
   => SerialiseNodeToClient blk (SomeSecond BlockQuery blk)
   => CodecConfig blk
@@ -155,43 +195,43 @@ queryEncodeNodeToClient ::
   -> SomeSecond Query blk
   -> Encoding
 queryEncodeNodeToClient codecConfig queryVersion blockVersion (SomeSecond query)
-  = case query of
+  = requireVersion query $ case query of
       BlockQuery blockQuery ->
-        requireVersion QueryVersion1 $ mconcat
+        mconcat
           [ encodeListLen 2
           , encodeWord8 0
           , encodeBlockQuery blockQuery
           ]
 
       GetSystemStart ->
-        requireVersion QueryVersion1 $ mconcat
+        mconcat
           [ encodeListLen 1
           , encodeWord8 1
           ]
 
       GetChainBlockNo ->
-        requireVersion QueryVersion2 $ mconcat
+        mconcat
           [ encodeListLen 1
           , encodeWord8 2
           ]
 
       GetChainPoint ->
-        requireVersion QueryVersion2 $ mconcat
+        mconcat
           [ encodeListLen 1
           , encodeWord8 3
           ]
 
       GetLedgerConfig ->
-        requireVersion QueryVersion3 $ mconcat
+        mconcat
           [ encodeListLen 1
           , encodeWord8 4
           ]
   where
-    requireVersion :: QueryVersion -> a -> a
-    requireVersion expectedVersion a =
-      if queryVersion >= expectedVersion
+    requireVersion :: Query blk result -> a -> a
+    requireVersion q a =
+      if queryIsSupportedOnVersion q queryVersion blockVersion
         then a
-        else throw $ QueryEncoderUnsupportedQuery (SomeSecond query) queryVersion
+        else throw $ QueryEncoderUnsupportedQuery (SomeSecond query) queryVersion blockVersion
 
     encodeBlockQuery blockQuery =
       encodeNodeToClient
@@ -325,6 +365,20 @@ class (ShowQuery (BlockQuery blk), SameDepIndex (BlockQuery blk))
    -> BlockQuery blk result
    -> ExtLedgerState blk
    -> result
+
+  -- | Is the given query supported in this NTC version?
+  --
+  -- Encoders for queries should call this function before attempting to send a
+  -- query. The node will still try to answer block queries it knows about even
+  -- if they are not guaranteed to be supported on the negotiated version, but
+  -- clients can benefit of knowing beforehand whether the query is expected to
+  -- not work, even if it decides to send it anyways.
+  --
+  -- More reasoning on how queries are versioned in Consensus can be seen in
+  -- https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/QueryVersioning/. In
+  -- particular this function implements the check described in
+  -- https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/QueryVersioning/#checks.
+  blockQueryIsSupportedOnVersion :: BlockQuery blk result -> BlockNodeToClientVersion blk -> Bool
 
 instance SameDepIndex (BlockQuery blk) => Eq (SomeSecond BlockQuery blk) where
   SomeSecond qry == SomeSecond qry' = isJust (sameDepIndex qry qry')

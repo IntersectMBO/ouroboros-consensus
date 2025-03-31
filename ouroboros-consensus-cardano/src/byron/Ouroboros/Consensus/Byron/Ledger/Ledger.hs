@@ -200,6 +200,7 @@ data instance BlockQuery ByronBlock :: Type -> Type where
 instance BlockSupportsLedgerQuery ByronBlock where
   answerBlockQuery _cfg GetUpdateInterfaceState (ExtLedgerState ledgerState _) =
     CC.cvsUpdateState (byronLedgerState ledgerState)
+  blockQueryIsSupportedOnVersion GetUpdateInterfaceState = const True
 
 instance SameDepIndex (BlockQuery ByronBlock) where
   sameDepIndex GetUpdateInterfaceState GetUpdateInterfaceState = Just Refl

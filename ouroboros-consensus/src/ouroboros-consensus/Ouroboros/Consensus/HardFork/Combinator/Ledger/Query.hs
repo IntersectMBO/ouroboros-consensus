@@ -19,6 +19,7 @@
 
 module Ouroboros.Consensus.HardFork.Combinator.Ledger.Query (
     BlockQuery (..)
+  , HardForkNodeToClientVersion (..)
   , HardForkQueryResult
   , QueryAnytime (..)
   , QueryHardFork (..)
@@ -57,6 +58,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.HardFork.Combinator.Block
 import           Ouroboros.Consensus.HardFork.Combinator.Info
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger ()
+import           Ouroboros.Consensus.HardFork.Combinator.NetworkVersion
 import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import           Ouroboros.Consensus.HardFork.Combinator.State (Current (..),
                      Past (..), Situated (..))
@@ -108,7 +110,9 @@ data instance BlockQuery (HardForkBlock xs) :: Type -> Type where
     => QueryHardFork (x ': xs) result
     -> BlockQuery (HardForkBlock (x ': xs)) result
 
-instance All SingleEraBlock xs => BlockSupportsLedgerQuery (HardForkBlock xs) where
+
+
+instance (All SingleEraBlock xs, All BlockSupportsLedgerQuery xs) => BlockSupportsLedgerQuery (HardForkBlock xs) where
   answerBlockQuery
     (ExtLedgerCfg cfg)
     query
@@ -134,6 +138,21 @@ instance All SingleEraBlock xs => BlockSupportsLedgerQuery (HardForkBlock xs) wh
       cfgs = hmap ExtLedgerCfg $ distribTopLevelConfig ei cfg
       lcfg = configLedger cfg
       ei   = State.epochInfoLedger lcfg hardForkState
+
+  blockQueryIsSupportedOnVersion q (HardForkNodeToClientDisabled x) = case q of
+    QueryIfCurrent (QZ q') -> blockQueryIsSupportedOnVersion q' x
+    QueryIfCurrent{}       -> False
+    QueryAnytime{}         -> False
+    QueryHardFork {}       -> False
+  blockQueryIsSupportedOnVersion q (HardForkNodeToClientEnabled _hfv npversions) = case q of
+    QueryIfCurrent qc -> go qc npversions
+    QueryAnytime{}    -> True
+    QueryHardFork{}   -> True
+   where
+     go :: forall ys result. All BlockSupportsLedgerQuery ys => QueryIfCurrent ys result -> NP EraNodeToClientVersion ys -> Bool
+     go (QZ _) (EraNodeToClientDisabled :* _) = False
+     go (QZ x) (EraNodeToClientEnabled v :* _) = blockQueryIsSupportedOnVersion x v
+     go (QS x) (_ :* n) = go x n
 
 -- | Precondition: the 'ledgerState' and 'headerState' should be from the same
 -- era. In practice, this is _always_ the case, unless the 'ExtLedgerState' was

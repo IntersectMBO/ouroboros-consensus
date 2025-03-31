@@ -180,7 +180,6 @@ type ClientCodecs blk  m =
 defaultCodecs :: forall m blk.
                  ( MonadST m
                  , SerialiseNodeToClientConstraints blk
-                 , ShowQuery (BlockQuery blk)
                  , StandardHash blk
                  , Serialise (HeaderHash blk)
                  )
@@ -241,7 +240,6 @@ defaultCodecs ccfg version networkVersion = Codecs {
 clientCodecs :: forall m blk.
                 ( MonadST m
                 , SerialiseNodeToClientConstraints blk
-                , ShowQuery (BlockQuery blk)
                 , StandardHash blk
                 , Serialise (HeaderHash blk)
                 )
