@@ -31,6 +31,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Protocol (
 import           Control.Monad.Except
 import           Data.Functor.Product
 import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
 import           Data.SOP.Index
 import           Data.SOP.InPairs (InPairs (..))
 import qualified Data.SOP.InPairs as InPairs
@@ -304,7 +305,7 @@ update HardForkConsensusConfig{..}
   where
     cfgs = getPerEraConsensusConfig hardForkConsensusConfigPerEra
 
-updateEra :: forall xs blk. SingleEraBlock blk
+updateEra :: forall xs blk. (SListI xs, SingleEraBlock blk)
           => EpochInfo (Except PastHorizonException)
           -> SlotNo
           -> Index xs blk
@@ -378,7 +379,8 @@ translateConsensus ei HardForkConsensusConfig{..} =
     pcfgs = getPerEraConsensusConfig hardForkConsensusConfigPerEra
     cfgs  = hcmap proxySingle (completeConsensusConfig'' ei) pcfgs
 
-injectValidationErr :: Index xs blk
+injectValidationErr :: SListI xs
+                    => Index xs blk
                     -> ValidationErr (BlockProtocol blk)
                     -> HardForkValidationErr xs
 injectValidationErr index =

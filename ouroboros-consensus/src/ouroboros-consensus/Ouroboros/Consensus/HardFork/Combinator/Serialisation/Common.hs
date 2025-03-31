@@ -446,7 +446,7 @@ encodeNS es ns = mconcat [
     , hcollapse $ hzipWith apFn es ns
     ]
 
-decodeNS :: SListI xs => NP (Decoder s :.: f) xs -> Decoder s (NS f xs)
+decodeNS :: forall xs f s. SListI xs => NP (Decoder s :.: f) xs -> Decoder s (NS f xs)
 decodeNS ds = do
     enforceSize "decodeNS" 2
     i <- Dec.decodeWord8
@@ -460,7 +460,7 @@ decodeNS ds = do
         -> K (Decoder s (NS f xs)) blk
     aux index (Comp dec) (K ()) = K $ injectNS index <$> dec
 
-decodeAnnNS :: SListI xs
+decodeAnnNS :: forall xs f. SListI xs
             => NP (AnnDecoder f) xs
             -> forall s. Decoder s (Lazy.ByteString -> NS f xs)
 decodeAnnNS ds = do
