@@ -534,6 +534,7 @@ instance MockProtocolSpecific c ext => BlockSupportsLedgerQuery (SimpleBlock c e
         castPoint
       . ledgerTipPoint
       . ledgerState
+  blockQueryIsSupportedOnVersion QueryLedgerTip = const True
 
 instance SameDepIndex (BlockQuery (SimpleBlock c ext)) where
   sameDepIndex QueryLedgerTip QueryLedgerTip = Just Refl

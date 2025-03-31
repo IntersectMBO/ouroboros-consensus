@@ -214,7 +214,6 @@ roundtrip_all
      , SerialiseNodeToClientConstraints blk
 
      , Show (BlockNodeToNodeVersion   blk)
-     , Show (BlockNodeToClientVersion blk)
 
      , StandardHash blk
      , GetHeader    blk
@@ -263,7 +262,6 @@ roundtrip_all_skipping
      , SerialiseNodeToClientConstraints blk
 
      , Show (BlockNodeToNodeVersion   blk)
-     , Show (BlockNodeToClientVersion blk)
 
      , StandardHash blk
      , GetHeader    blk
@@ -534,7 +532,6 @@ roundtrip_SerialiseNodeToNode ccfg =
 roundtrip_SerialiseNodeToClient
   :: forall blk.
      ( SerialiseNodeToClientConstraints blk
-     , Show (BlockNodeToClientVersion blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) blk
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (GenTx blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (ApplyTxErr blk)

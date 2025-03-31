@@ -528,6 +528,7 @@ instance (Typeable m, Typeable a)
 -- | Not used in the tests: no constructors
 instance Bridge m a => BlockSupportsLedgerQuery (DualBlock m a) where
   answerBlockQuery _ = \case {}
+  blockQueryIsSupportedOnVersion qry _ = case qry of {}
 
 instance SameDepIndex (BlockQuery (DualBlock m a)) where
   sameDepIndex = \case {}

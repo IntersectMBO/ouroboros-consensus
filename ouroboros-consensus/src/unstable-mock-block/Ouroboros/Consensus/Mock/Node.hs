@@ -38,9 +38,6 @@ import           Ouroboros.Consensus.Util.RedundantConstraints
   RunNode instance for the mock ledger
 -------------------------------------------------------------------------------}
 
-instance HasNetworkProtocolVersion (SimpleBlock SimpleMockCrypto ext) where
-  -- Use defaults
-
 instance SupportedNetworkProtocolVersion (SimpleBlock SimpleMockCrypto ext) where
   supportedNodeToNodeVersions   _ = Map.singleton maxBound ()
   supportedNodeToClientVersions _ = Map.singleton maxBound ()
