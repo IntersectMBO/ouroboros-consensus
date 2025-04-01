@@ -271,7 +271,7 @@ loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs') doChecksum s = do
     Monad.when (checksumAsRead /= snapshotChecksum snapshotMeta) $
       throwError $ InitFailureRead $ ReadSnapshotDataCorruption
   case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
-    Origin        -> throwError InitFailureGenesis
+    Origin       -> throwError InitFailureGenesis
     NotOrigin pt -> do
         backingStore <- Trans.lift (restoreBackingStore tracer bss fs extLedgerSt (snapshotToTablesPath s))
         let chlog  = empty extLedgerSt
