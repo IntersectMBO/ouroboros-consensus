@@ -1,3 +1,0 @@
-[submodule "ledger-cddls"]
-	path = ouroboros-consensus-cardano/cddl/ledger-cddls
-	url = git@github.com:IntersectMBO/cardano-ledger
