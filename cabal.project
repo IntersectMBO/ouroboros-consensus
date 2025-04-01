@@ -61,7 +61,7 @@ if impl (ghc >= 9.12)
 source-repository-package
     type: git
     location: https://github.com/IntersectMBO/cardano-ledger
-    tag: 0540540858ced73be648669182729a59e4d9bb1b
+    tag: d48965e0dc1a324f432f1ee01bc0cf2d60a8a702
     subdir:
       eras/allegra/impl
       eras/alonzo/impl
@@ -87,3 +87,11 @@ source-repository-package
       eras/byron/ledger/executable-spec
       eras/byron/ledger/impl
       eras/byron/crypto
+
+allow-newer:
+    ouroboros-consensus:cardano-ledger-core,
+    ouroboros-consensus-cardano:cardano-ledger-byron,
+    ouroboros-consensus-cardano:cardano-ledger-conway,
+    ouroboros-consensus-cardano:cardano-ledger-core,
+    ouroboros-consensus-cardano:cardano-ledger-shelley,
+    ouroboros-consensus-protocol:cardano-ledger-core,
