@@ -30,4 +30,4 @@ instance Arbitrary SnapshotMetadata where
   arbitrary =
     SnapshotMetadata
       <$> arbitrary
-      <*> fmap (fmap CRC) arbitrary
+      <*> fmap CRC arbitrary

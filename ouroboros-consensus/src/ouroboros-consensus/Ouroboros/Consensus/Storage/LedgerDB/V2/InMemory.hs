@@ -153,7 +153,7 @@ writeSnapshot fs@(SomeHasFS hasFs) encLedger ds st = do
     crc2 <- takeHandleSnapshot (tables st) $ snapshotToDirName ds
     writeSnapshotMetadata fs ds $ SnapshotMetadata
       { snapshotBackend = UTxOHDMemSnapshot
-      , snapshotChecksum = Just $ crcOfConcat crc1 crc2
+      , snapshotChecksum = crcOfConcat crc1 crc2
       }
 
 takeSnapshot ::
@@ -217,6 +217,6 @@ loadSnapshot _rr ccfg fs doChecksum ds = do
                     <> [fromString "tables", fromString "tvar"])
       Monad.when (getFlag doChecksum) $ do
         let computedCRC = crcOfConcat checksumAsRead crcTables
-        Monad.when (Just computedCRC /= snapshotChecksum snapshotMeta) $
+        Monad.when (computedCRC /= snapshotChecksum snapshotMeta) $
           throwE $ InitFailureRead $ ReadSnapshotDataCorruption
       (,pt) <$> lift (empty extLedgerSt values (newInMemoryLedgerTablesHandle fs))

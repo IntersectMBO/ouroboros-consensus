@@ -72,7 +72,7 @@ import qualified Control.Monad as Monad
 import           Control.Monad.Class.MonadTime.SI
 import           Control.Monad.Except
 import           Control.Tracer
-import           Data.Aeson (FromJSON (..), ToJSON (..), (.:), (.:?), (.=))
+import           Data.Aeson (FromJSON (..), ToJSON (..), (.:), (.=))
 import qualified Data.Aeson as Aeson
 import           Data.Functor.Identity
 import qualified Data.List as List
@@ -158,19 +158,19 @@ data ReadSnapshotErr =
 
 data SnapshotMetadata = SnapshotMetadata
   { snapshotBackend  :: SnapshotBackend
-  , snapshotChecksum :: Maybe CRC
+  , snapshotChecksum :: CRC
   } deriving (Eq, Show)
 
 instance ToJSON SnapshotMetadata where
   toJSON sm = Aeson.object
     [ "backend" .= snapshotBackend sm
-    , "checksum" .= fmap getCRC (snapshotChecksum sm)
+    , "checksum" .= getCRC (snapshotChecksum sm)
     ]
 
 instance FromJSON SnapshotMetadata where
   parseJSON = Aeson.withObject "SnapshotMetadata" $ \o ->
     SnapshotMetadata <$> o .: "backend"
-                     <*> fmap (fmap CRC) (o .:? "checksum")
+                     <*> fmap CRC (o .: "checksum")
 
 data SnapshotBackend =
     UTxOHDMemSnapshot
