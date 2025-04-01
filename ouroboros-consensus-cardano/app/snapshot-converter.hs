@@ -189,17 +189,17 @@ load config@Config{inpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), pa
   case from config of
     Legacy -> do
       checkSnapshotFileStructure Legacy path fs
-      (st, mbChecksumAsRead) <-
+      (st, checksumAsRead) <-
              first unstowLedgerTables
          <$> withExceptT
                (SnapshotError . InitFailureRead . ReadSnapshotFailed)
-               (readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode checkChecksum path)
+               (readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode path)
       Monad.when (getFlag checkChecksum) $ do
         let crcPath = path <.> "checksum"
         snapshotCRC <-
             withExceptT (SnapshotError . InitFailureRead . ReadSnapshotCRCError crcPath) $
               readCRC hasFS crcPath
-        Monad.when (mbChecksumAsRead /= Just snapshotCRC) $
+        Monad.when (checksumAsRead /= snapshotCRC) $
           throwError $ SnapshotError $ InitFailureRead ReadSnapshotDataCorruption
       pure (forgetLedgerTables st, projectLedgerTables st)
     Mem -> do

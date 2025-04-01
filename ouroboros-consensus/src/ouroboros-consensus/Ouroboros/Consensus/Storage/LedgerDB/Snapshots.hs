@@ -74,6 +74,7 @@ import           Control.Monad.Except
 import           Control.Tracer
 import           Data.Aeson (FromJSON (..), ToJSON (..), (.:), (.:?), (.=))
 import qualified Data.Aeson as Aeson
+import           Data.Functor.Identity
 import qualified Data.List as List
 import           Data.Maybe (isJust, mapMaybe)
 import           Data.Ord
@@ -289,12 +290,12 @@ readExtLedgerState ::
   => SomeHasFS m
   -> (forall s. Decoder s (ExtLedgerState blk EmptyMK))
   -> (forall s. Decoder s (HeaderHash blk))
-  -> Flag "DoDiskSnapshotChecksum"
   -> FsPath
-  -> ExceptT ReadIncrementalErr m (ExtLedgerState blk EmptyMK, Maybe CRC)
-readExtLedgerState hasFS decLedger decHash doChecksum = do
+  -> ExceptT ReadIncrementalErr m (ExtLedgerState blk EmptyMK, CRC)
+readExtLedgerState hasFS decLedger decHash = do
       ExceptT
-    . readIncremental hasFS (if (getFlag doChecksum) then Just else const Nothing) decoder
+    . fmap (fmap (fmap runIdentity))
+    . readIncremental hasFS Identity decoder
   where
     decoder :: Decoder s (ExtLedgerState blk EmptyMK)
     decoder = decodeLBackwardsCompatible (Proxy @blk) decLedger decHash
