@@ -41,12 +41,13 @@ import           Cardano.Binary (FromCBOR (..), ToCBOR (..), encodeListLen,
                      enforceSize)
 import           Cardano.Ledger.Address
 import qualified Cardano.Ledger.Api.State.Query as SL
-import           Cardano.Ledger.CertState (lookupDepositDState)
-import qualified Cardano.Ledger.CertState as SL
+import           Cardano.Ledger.State (lookupDepositDState)
+import qualified Cardano.Ledger.State as SL
 import           Cardano.Ledger.Coin (Coin)
 import           Cardano.Ledger.Compactible (Compactible (fromCompact))
 import qualified Cardano.Ledger.Conway.Governance as CG
 import qualified Cardano.Ledger.Core as SL
+import           Cardano.Ledger.Conway.State (ConwayEraCertState)
 import           Cardano.Ledger.Credential (StakeCredential)
 import           Cardano.Ledger.Keys (KeyHash, KeyRole (..))
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -54,7 +55,6 @@ import qualified Cardano.Ledger.Shelley.Core as LC
 import           Cardano.Ledger.Shelley.LedgerState (AccountState)
 import qualified Cardano.Ledger.Shelley.RewardProvenance as SL
                      (RewardProvenance)
-import qualified Cardano.Ledger.State as SL
 import           Cardano.Ledger.UMap (UMap (..), rdReward, umElemDRep,
                      umElemRDPair, umElemSPool)
 import           Cardano.Protocol.Crypto (Crypto)
@@ -260,7 +260,7 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
   --
   -- Not supported in eras before Conway.
   GetDRepState
-    :: CG.ConwayEraGov era
+    :: (ConwayEraCertState era, CG.ConwayEraGov era)
     => Set (SL.Credential 'DRepRole)
     -> BlockQuery (ShelleyBlock proto era)
                   QFNoTables
@@ -286,7 +286,7 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
   --
   -- Not supported in eras before Conway.
   GetCommitteeMembersState
-    :: CG.ConwayEraGov era
+    :: (ConwayEraCertState era, CG.ConwayEraGov era)
     => Set (SL.Credential 'ColdCommitteeRole)
     -> Set (SL.Credential 'HotCommitteeRole)
     -> Set SL.MemberStatus
@@ -893,7 +893,7 @@ decodeShelleyQuery = do
 
         requireCG ::
              forall s ans.
-             (CG.ConwayEraGov era => Decoder s ans)
+             ((ConwayEraCertState era, CG.ConwayEraGov era) => Decoder s ans)
           -> Decoder s ans
         requireCG k = case SE.getConwayEraGovDict (Proxy @era) of
             Just SE.ConwayEraGovDict -> k
