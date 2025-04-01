@@ -140,6 +140,7 @@ data Error blk
     | TablesCantDeserializeError DeserialiseFailure
     | TablesTrailingBytes
     | SnapshotFormatMismatch Format String
+    | ReadSnapshotCRCError FsPath CRCError
     deriving Exception
 
 instance StandardHash blk => Show (Error blk) where
@@ -147,6 +148,7 @@ instance StandardHash blk => Show (Error blk) where
     show (TablesCantDeserializeError err) = "Couldn't deserialize the tables: " <> show err
     show TablesTrailingBytes = "Malformed tables, there are trailing bytes!"
     show (SnapshotFormatMismatch expected err) = "The input snapshot does not seem to correspond to the input format:\n\t" <> show expected <> "\n\tThe provided path " <> err
+    show (ReadSnapshotCRCError fp err) = "An error occurred while reading the snapshot checksum at " <> show fp <> ": \n\t" <> show err
 
 checkSnapshotFileStructure :: Format -> FsPath -> SomeHasFS IO -> ExceptT (Error blk) IO ()
 checkSnapshotFileStructure m p (SomeHasFS fs) = case m of
@@ -197,7 +199,7 @@ load config@Config{inpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), pa
       Monad.when (getFlag checkChecksum) $ do
         let crcPath = path <.> "checksum"
         snapshotCRC <-
-            withExceptT (SnapshotError . InitFailureRead . ReadSnapshotCRCError crcPath) $
+            withExceptT (ReadSnapshotCRCError crcPath) $
               readCRC hasFS crcPath
         Monad.when (checksumAsRead /= snapshotCRC) $
           throwError $ SnapshotError $ InitFailureRead ReadSnapshotDataCorruption
