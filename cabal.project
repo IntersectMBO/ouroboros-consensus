@@ -78,8 +78,8 @@ if impl (ghc >= 9.12)
 source-repository-package
  type: git
  location: https://github.com/IntersectMBO/cardano-ledger
- tag: 8467e3585304d0a69a39232178db114a52d25323
- --sha256: sha256-uYyu7GVtw10H2ABTLAnSdI8Zyo3BNWGRCOkEMiCsCmE=
+ tag: 415ce65893f57d9c6bce62b2cc33b2f2bf244a0f
+ --sha256: sha256-zPhCE9dtn99veDFjNwe2cFrOiCa6Xhlxs0VGM9AHGxk=
  subdir:
    eras/allegra/impl
    eras/alonzo/impl
