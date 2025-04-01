@@ -206,9 +206,9 @@ loadSnapshot _rr ccfg fs doChecksum ds = do
       (InitFailureRead . ReadSnapshotFailed) $
       readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode (snapshotToStatePath ds)
   case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
-    Origin        -> throwE InitFailureGenesis
+    Origin       -> throwE InitFailureGenesis
     NotOrigin pt -> do
-      (values, Identity crcTables)  <-
+      (values, Identity crcTables) <-
         withExceptT (InitFailureRead . ReadSnapshotFailed) $
           ExceptT $ readIncremental fs Identity
                   valuesMKDecoder
