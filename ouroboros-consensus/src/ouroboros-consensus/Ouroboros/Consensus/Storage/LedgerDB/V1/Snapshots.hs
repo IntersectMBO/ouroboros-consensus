@@ -223,7 +223,7 @@ writeSnapshot fs@(SomeHasFS hasFS) backingStore encLedger snapshot cs = do
     crc <- writeExtLedgerState fs encLedger (snapshotToStatePath snapshot) cs
     writeSnapshotMetadata fs snapshot SnapshotMetadata
       { snapshotBackend = bsSnapshotBackend backingStore
-      , snapshotChecksum = Just crc
+      , snapshotChecksum = crc
       }
     bsCopy
       backingStore
@@ -268,7 +268,7 @@ loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs') doChecksum s = do
     (_, _) ->
       throwError $ InitFailureRead $ ReadMetadataError (snapshotToMetadataPath s) MetadataBackendMismatch
   Monad.when (getFlag doChecksum) $ do
-    Monad.when (Just checksumAsRead /= snapshotChecksum snapshotMeta) $
+    Monad.when (checksumAsRead /= snapshotChecksum snapshotMeta) $
       throwError $ InitFailureRead $ ReadSnapshotDataCorruption
   case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
     Origin        -> throwError InitFailureGenesis
