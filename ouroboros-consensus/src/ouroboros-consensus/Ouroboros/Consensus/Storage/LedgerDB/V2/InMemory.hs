@@ -36,6 +36,7 @@ import           Control.Monad.Trans.Except
 import           Control.ResourceRegistry
 import           Control.Tracer
 import           Data.Functor.Contravariant ((>$<))
+import           Data.Functor.Identity
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import           Data.Maybe
@@ -201,22 +202,21 @@ loadSnapshot _rr ccfg fs doChecksum ds = do
     loadSnapshotMetadata fs ds
   Monad.when (snapshotBackend snapshotMeta /= UTxOHDMemSnapshot) $ do
     throwE $ InitFailureRead $ ReadMetadataError (snapshotToMetadataPath ds) MetadataBackendMismatch
-  (extLedgerSt, mbChecksumAsRead)  <- withExceptT
+  (extLedgerSt, checksumAsRead)  <- withExceptT
       (InitFailureRead . ReadSnapshotFailed) $
-      readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode doChecksum (snapshotToStatePath ds)
+      readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode (snapshotToStatePath ds)
   case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
     Origin        -> throwE InitFailureGenesis
     NotOrigin pt -> do
-      (values, mbCrcTables)  <-
+      (values, Identity crcTables)  <-
         withExceptT (InitFailureRead . ReadSnapshotFailed) $
-          ExceptT $ readIncremental fs (if getFlag doChecksum then Just else const Nothing)
+          ExceptT $ readIncremental fs Identity
                   valuesMKDecoder
                   (fsPathFromList
                     $ fsPathToList (snapshotToDirPath ds)
                     <> [fromString "tables", fromString "tvar"])
       Monad.when (getFlag doChecksum) $ do
-        -- TODO: not sure that I like relying on all of these being non-Nothing
-        let computedCRC = crcOfConcat <$> mbChecksumAsRead <*> mbCrcTables
-        Monad.when (computedCRC /= snapshotChecksum snapshotMeta) $
+        let computedCRC = crcOfConcat checksumAsRead crcTables
+        Monad.when (Just computedCRC /= snapshotChecksum snapshotMeta) $
           throwE $ InitFailureRead $ ReadSnapshotDataCorruption
       (,pt) <$> lift (empty extLedgerSt values (newInMemoryLedgerTablesHandle fs))
