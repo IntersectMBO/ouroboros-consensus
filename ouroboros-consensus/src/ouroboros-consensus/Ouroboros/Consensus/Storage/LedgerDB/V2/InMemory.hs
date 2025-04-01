@@ -142,20 +142,17 @@ snapshotToTablePath = mkFsPath . (\x -> [x, "tables", "tvar"]) . snapshotToDirNa
 writeSnapshot ::
      MonadThrow m
   => SomeHasFS m
-  -> Flag "DoDiskSnapshotChecksum"
   -> (ExtLedgerState blk EmptyMK -> Encoding)
   -> DiskSnapshot
   -> StateRef m (ExtLedgerState blk)
   -> m ()
-writeSnapshot fs@(SomeHasFS hasFs) doChecksum encLedger ds st = do
+writeSnapshot fs@(SomeHasFS hasFs) encLedger ds st = do
     createDirectoryIfMissing hasFs True $ snapshotToDirPath ds
     crc1 <- writeExtLedgerState fs encLedger (snapshotToStatePath ds) $ state st
     crc2 <- takeHandleSnapshot (tables st) $ snapshotToDirName ds
     writeSnapshotMetadata fs ds $ SnapshotMetadata
       { snapshotBackend = UTxOHDMemSnapshot
-      , snapshotChecksum = do
-          Monad.guard (getFlag doChecksum)
-          pure $ crcOfConcat crc1 crc2
+      , snapshotChecksum = Just $ crcOfConcat crc1 crc2
       }
 
 takeSnapshot ::
@@ -167,10 +164,9 @@ takeSnapshot ::
   -> Tracer m (TraceSnapshotEvent blk)
   -> SomeHasFS m
   -> Maybe String
-  -> Flag "DoDiskSnapshotChecksum"
   -> StateRef m (ExtLedgerState blk)
   -> m (Maybe (DiskSnapshot, RealPoint blk))
-takeSnapshot ccfg tracer hasFS suffix doChecksum st = do
+takeSnapshot ccfg tracer hasFS suffix st = do
   case pointToWithOriginRealPoint (castPoint (getTip $ state st)) of
     Origin -> return Nothing
     NotOrigin t -> do
@@ -181,7 +177,7 @@ takeSnapshot ccfg tracer hasFS suffix doChecksum st = do
         return Nothing
         else do
           encloseTimedWith (TookSnapshot snapshot t >$< tracer)
-              $ writeSnapshot hasFS doChecksum (encodeDiskExtLedgerState ccfg) snapshot st
+              $ writeSnapshot hasFS (encodeDiskExtLedgerState ccfg) snapshot st
           return $ Just (snapshot, t)
 
 -- | Read snapshot from disk.
