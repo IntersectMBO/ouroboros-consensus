@@ -57,6 +57,7 @@ import qualified Cardano.Ledger.Conway.Governance as CG
 import qualified Cardano.Ledger.Conway.Rules as Conway
 import qualified Cardano.Ledger.Conway.Rules as SL
                      (ConwayLedgerPredFailure (..))
+import           Cardano.Ledger.Conway.State
 import qualified Cardano.Ledger.Conway.Translation as Conway
 import           Cardano.Ledger.Core as Core
 import           Cardano.Ledger.Mary (MaryEra)
@@ -170,7 +171,7 @@ class ( Core.EraSegWits era
   getConwayEraGovDict :: proxy era -> Maybe (ConwayEraGovDict era)
 
 data ConwayEraGovDict era where
-    ConwayEraGovDict :: CG.ConwayEraGov era => ConwayEraGovDict era
+    ConwayEraGovDict :: (ConwayEraCertState era, CG.ConwayEraGov era) => ConwayEraGovDict era
 
 isBeforeConway :: forall era. L.Era era => Proxy era -> Bool
 isBeforeConway _ =
