@@ -192,9 +192,8 @@ takeSnapshot ::
   -> SnapshotsFS m
   -> BackingStore' m blk
   -> Maybe String -- ^ Override for snapshot numbering
-  -> Flag "DoDiskSnapshotChecksum"
   -> ReadLocked m (Maybe (DiskSnapshot, RealPoint blk))
-takeSnapshot ldbvar ccfg tracer (SnapshotsFS hasFS') backingStore suffix doChecksum = readLocked $ do
+takeSnapshot ldbvar ccfg tracer (SnapshotsFS hasFS') backingStore suffix = readLocked $ do
     state <- changelogLastFlushedState <$> readTVarIO ldbvar
     case pointToWithOriginRealPoint (castPoint (getTip state)) of
       Origin ->
@@ -207,27 +206,24 @@ takeSnapshot ldbvar ccfg tracer (SnapshotsFS hasFS') backingStore suffix doCheck
           return Nothing
         else do
           encloseTimedWith (TookSnapshot snapshot t >$< tracer)
-            $ writeSnapshot hasFS' doChecksum backingStore (encodeDiskExtLedgerState ccfg) snapshot state
+            $ writeSnapshot hasFS' backingStore (encodeDiskExtLedgerState ccfg) snapshot state
           return $ Just (snapshot, t)
 
 -- | Write snapshot to disk
 writeSnapshot ::
      MonadThrow m
   => SomeHasFS m
-  -> Flag "DoDiskSnapshotChecksum"
   -> BackingStore' m blk
   -> (ExtLedgerState blk EmptyMK -> Encoding)
   -> DiskSnapshot
   -> ExtLedgerState blk EmptyMK
   -> m ()
-writeSnapshot fs@(SomeHasFS hasFS) doChecksum backingStore encLedger snapshot cs = do
+writeSnapshot fs@(SomeHasFS hasFS) backingStore encLedger snapshot cs = do
     createDirectory hasFS (snapshotToDirPath snapshot)
     crc <- writeExtLedgerState fs encLedger (snapshotToStatePath snapshot) cs
     writeSnapshotMetadata fs snapshot SnapshotMetadata
       { snapshotBackend = bsSnapshotBackend backingStore
-      , snapshotChecksum = do
-          Monad.guard $ getFlag doChecksum
-          pure crc
+      , snapshotChecksum = Just crc
       }
     bsCopy
       backingStore

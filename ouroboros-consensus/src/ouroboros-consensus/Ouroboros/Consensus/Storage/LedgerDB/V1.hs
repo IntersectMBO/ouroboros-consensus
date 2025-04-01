@@ -274,7 +274,6 @@ implTryTakeSnapshot env mTime nrBlocks =
                                           (ldbHasFS env)
                                           (ldbBackingStore env)
                                           Nothing
-                                          (onDiskShouldChecksumSnapshots $ ldbSnapshotPolicy env)
                                         )
       void $ trimSnapshots
                 (LedgerDBSnapshotEvent >$< ldbTracer env)
@@ -365,7 +364,6 @@ implIntTakeSnapshot env whereTo suffix = do
       (ldbHasFS env)
       (ldbBackingStore env)
       suffix
-      (onDiskShouldChecksumSnapshots $ ldbSnapshotPolicy env)
 
 implIntPush ::
      ( IOLike m

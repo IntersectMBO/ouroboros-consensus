@@ -244,13 +244,13 @@ store config@Config{outpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), 
     Mem -> do
       lseq <- V2.empty state tbs $ V2.newInMemoryLedgerTablesHandle fs
       let h = V2.currentHandle lseq
-      Monad.void $ V2.takeSnapshot ccfg nullTracer fs suffix writeChecksum h
+      Monad.void $ V2.takeSnapshot ccfg nullTracer fs suffix h
     LMDB -> do
       chlog <- newTVarIO (V1.empty state)
       lock <- V1.mkLedgerDBLock
       bs <- V1.newLMDBBackingStore nullTracer defaultLMDBLimits (V1.LiveLMDBFS tempFS) (V1.SnapshotsFS fs) (V1.InitFromValues (pointSlot $ getTip state) state tbs)
       Monad.void $ V1.withReadLock lock $ do
-        V1.takeSnapshot chlog ccfg nullTracer (V1.SnapshotsFS fs) bs suffix writeChecksum
+        V1.takeSnapshot chlog ccfg nullTracer (V1.SnapshotsFS fs) bs suffix
   where
    Config { writeChecksum } = config
 store _ _ _ _ = error "Malformed output path!"
