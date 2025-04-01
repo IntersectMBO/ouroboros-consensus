@@ -90,8 +90,10 @@ import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.HardFork.Combinator.Block
 import           Ouroboros.Consensus.HardFork.Combinator.Info
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
+import           Ouroboros.Consensus.HardFork.Combinator.NetworkVersion
 import           Ouroboros.Consensus.HardFork.Combinator.State
 import           Ouroboros.Consensus.HardFork.Combinator.State.Instances
+import           Ouroboros.Consensus.Ledger.Query (BlockSupportsLedgerQuery)
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Node.Serialisation (Some (..))
@@ -126,84 +128,6 @@ notFirstEra = hcmap proxySingle aux
   where
     aux :: forall f blk. SingleEraBlock blk => f blk -> SingleEraInfo blk
     aux _ = singleEraInfo (Proxy @blk)
-
-{-------------------------------------------------------------------------------
-  Versioning
--------------------------------------------------------------------------------}
-
--- | Versioning of the specific additions made by the HFC to the @NodeToNode@
--- protocols, e.g., the era tag.
-data HardForkSpecificNodeToNodeVersion =
-    HardForkSpecificNodeToNodeVersion1
-  deriving (Eq, Ord, Show, Enum, Bounded)
-
--- | Versioning of the specific additions made by the HFC to the @NodeToClient@
--- protocols, e.g., the era tag or the hard-fork specific queries.
-data HardForkSpecificNodeToClientVersion =
-    -- | Include the Genesis window in 'EraParams'.
-    HardForkSpecificNodeToClientVersion3
-  deriving (Eq, Ord, Show, Enum, Bounded)
-
-data HardForkNodeToNodeVersion xs where
-  -- | Disable the HFC
-  --
-  -- This means that only the first era (@x@) is supported, and moreover, is
-  -- compatible with serialisation used if the HFC would not be present at all.
-  HardForkNodeToNodeDisabled ::
-       BlockNodeToNodeVersion x
-    -> HardForkNodeToNodeVersion (x ': xs)
-
-  -- | Enable the HFC
-  --
-  -- Serialised values will always include tags inserted by the HFC to
-  -- distinguish one era from another. We version the hard-fork specific parts
-  -- with 'HardForkSpecificNodeToNodeVersion'.
-  HardForkNodeToNodeEnabled ::
-       HardForkSpecificNodeToNodeVersion
-    -> NP WrapNodeToNodeVersion xs
-    -> HardForkNodeToNodeVersion xs
-
-data HardForkNodeToClientVersion xs where
-  -- | Disable the HFC
-  --
-  -- See 'HardForkNodeToNodeDisabled'
-  HardForkNodeToClientDisabled ::
-       BlockNodeToClientVersion x
-    -> HardForkNodeToClientVersion (x ': xs)
-
-  -- | Enable the HFC
-  --
-  -- See 'HardForkNodeToNodeEnabled'
-  HardForkNodeToClientEnabled ::
-       HardForkSpecificNodeToClientVersion
-    -> NP EraNodeToClientVersion xs
-    -> HardForkNodeToClientVersion xs
-
-data EraNodeToClientVersion blk =
-    EraNodeToClientEnabled !(BlockNodeToClientVersion blk)
-  | EraNodeToClientDisabled
-
-deriving instance Show (BlockNodeToClientVersion blk) => Show (EraNodeToClientVersion blk)
-
-deriving instance Eq (BlockNodeToClientVersion blk) => Eq (EraNodeToClientVersion blk)
-
-deriving instance SerialiseHFC xs => Show (HardForkNodeToNodeVersion xs)
-deriving instance SerialiseHFC xs => Show (HardForkNodeToClientVersion xs)
-
-deriving instance SerialiseHFC xs => Eq (HardForkNodeToNodeVersion xs)
-deriving instance SerialiseHFC xs => Eq (HardForkNodeToClientVersion xs)
-
-instance SerialiseHFC xs => HasNetworkProtocolVersion (HardForkBlock xs) where
-  type BlockNodeToNodeVersion   (HardForkBlock xs) = HardForkNodeToNodeVersion   xs
-  type BlockNodeToClientVersion (HardForkBlock xs) = HardForkNodeToClientVersion xs
-
-isHardForkNodeToNodeEnabled :: HardForkNodeToNodeVersion xs -> Bool
-isHardForkNodeToNodeEnabled HardForkNodeToNodeEnabled {} = True
-isHardForkNodeToNodeEnabled _                            = False
-
-isHardForkNodeToClientEnabled :: HardForkNodeToClientVersion xs -> Bool
-isHardForkNodeToClientEnabled HardForkNodeToClientEnabled {} = True
-isHardForkNodeToClientEnabled _                              = False
 
 {-------------------------------------------------------------------------------
   Conditions required by the HFC to support serialisation
@@ -256,6 +180,8 @@ class ( CanHardFork xs
       , All (DecodeDiskDepIx (NestedCtxt Header)) xs
         -- Required for 'getHfcBinaryBlockInfo'
       , All HasBinaryBlockInfo xs
+      , All HasNetworkProtocolVersion xs
+      , All BlockSupportsLedgerQuery xs
       ) => SerialiseHFC xs where
 
   encodeDiskHfcBlock :: CodecConfig (HardForkBlock xs)

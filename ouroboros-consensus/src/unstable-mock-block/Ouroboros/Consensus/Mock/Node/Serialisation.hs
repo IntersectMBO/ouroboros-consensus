@@ -23,6 +23,7 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Mock.Ledger
 import           Ouroboros.Consensus.Mock.Node.Abstract
+import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Node.Serialisation
 import           Ouroboros.Consensus.Storage.Serialisation
@@ -66,6 +67,9 @@ instance DecodeDisk (MockBlock ext) (AnnTip (MockBlock ext)) where
   possible.
 -------------------------------------------------------------------------------}
 
+instance HasNetworkProtocolVersion (MockBlock ext) where
+  -- Use defaults
+
 instance Serialise ext => SerialiseNodeToNodeConstraints (MockBlock ext) where
   estimateBlockSize hdr =
       7 {- CBOR-in-CBOR -} + 1 {- encodeListLen 2 -} + hdrSize + bodySize
@@ -95,7 +99,7 @@ instance SerialiseNodeToNode (MockBlock ext) (GenTxId (MockBlock ext))
   possible.
 -------------------------------------------------------------------------------}
 
-instance (Serialise ext, Typeable ext, Serialise (MockLedgerConfig SimpleMockCrypto ext))
+instance (Serialise ext, Typeable ext, Serialise (MockLedgerConfig SimpleMockCrypto ext), MockProtocolSpecific SimpleMockCrypto ext)
       => SerialiseNodeToClientConstraints (MockBlock ext)
 
 instance Serialise ext => SerialiseNodeToClient (MockBlock ext) (MockBlock ext) where

@@ -650,6 +650,7 @@ data instance BlockQuery TestBlock result where
 instance BlockSupportsLedgerQuery TestBlock where
   answerBlockQuery _cfg QueryLedgerTip (ExtLedgerState TestLedger { lastAppliedPoint } _) =
     lastAppliedPoint
+  blockQueryIsSupportedOnVersion QueryLedgerTip = const True
 
 instance SameDepIndex (BlockQuery TestBlock) where
   sameDepIndex QueryLedgerTip QueryLedgerTip = Just Refl

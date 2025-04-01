@@ -278,5 +278,5 @@ instance CanMock proto era
       => Arbitrary (WithVersion ShelleyNodeToClientVersion (SomeSecond BlockQuery (ShelleyBlock proto era))) where
   arbitrary = do
       query@(SomeSecond q) <- arbitrary
-      version <- arbitrary `suchThat` querySupportedVersion q
+      version <- arbitrary `suchThat` blockQueryIsSupportedOnVersion q
       return $ WithVersion version query

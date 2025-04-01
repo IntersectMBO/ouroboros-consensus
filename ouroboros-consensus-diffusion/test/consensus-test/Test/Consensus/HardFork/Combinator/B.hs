@@ -291,6 +291,7 @@ data instance BlockQuery BlockB result
 
 instance BlockSupportsLedgerQuery BlockB where
   answerBlockQuery _ qry = case qry of {}
+  blockQueryIsSupportedOnVersion qry _ = case qry of {}
 
 instance SameDepIndex (BlockQuery BlockB) where
   sameDepIndex qry _qry' = case qry of {}

@@ -76,6 +76,8 @@ class ( Typeable blk
       , SerialiseNodeToClient blk (LedgerConfig blk)
       , SerialiseResult       blk (BlockQuery blk)
       , SerialiseNodeToClient blk (LedgerConfig blk)
+      , BlockSupportsLedgerQuery blk
+      , Show (BlockNodeToClientVersion blk)
       ) => SerialiseNodeToClientConstraints blk
 
 class ( LedgerSupportsProtocol           blk

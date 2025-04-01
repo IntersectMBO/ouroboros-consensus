@@ -32,6 +32,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import           Ouroboros.Consensus.HardFork.History.EpochInfo
 import           Ouroboros.Consensus.HardFork.Simple
 import           Ouroboros.Consensus.HeaderValidation
+import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Node.Serialisation
@@ -294,7 +295,7 @@ instance ShelleyBasedEra era => SerialiseNodeToClient (ShelleyBlock proto era) (
 instance ShelleyCompatible proto era
       => SerialiseNodeToClient (ShelleyBlock proto era) (SomeSecond BlockQuery (ShelleyBlock proto era)) where
   encodeNodeToClient _ version (SomeSecond q)
-    | querySupportedVersion q version
+    | blockQueryIsSupportedOnVersion q version
     = encodeShelleyQuery q
     | otherwise
     = throw $ ShelleyEncoderUnsupportedQuery (SomeSecond q) version
