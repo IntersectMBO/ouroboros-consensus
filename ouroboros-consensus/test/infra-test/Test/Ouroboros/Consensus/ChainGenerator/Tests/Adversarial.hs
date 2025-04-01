@@ -36,8 +36,9 @@ import qualified Test.Ouroboros.Consensus.ChainGenerator.Slot as S
 import           Test.Ouroboros.Consensus.ChainGenerator.Slot (E (SlotE))
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Some as Some
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.Honest as H
+import           Test.Ouroboros.Consensus.QuickCheck.Extras
+                     (unsafeMapSuchThatJust)
 import qualified Test.QuickCheck as QC hiding (elements)
-import           Test.QuickCheck.Extras (unsafeMapSuchThatJust)
 import           Test.QuickCheck.Random (QCGen)
 import qualified Test.Tasty as TT
 import qualified Test.Tasty.QuickCheck as TT
