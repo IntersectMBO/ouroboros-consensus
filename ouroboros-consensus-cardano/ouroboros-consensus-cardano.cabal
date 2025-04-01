@@ -233,8 +233,7 @@ library unstable-byron-testlib
     cardano-binary,
     cardano-crypto,
     cardano-crypto-class,
-    cardano-crypto-test,
-    cardano-crypto-wrapper,
+    cardano-crypto-wrapper:{cardano-crypto-wrapper, testlib},
     cardano-ledger-binary:{cardano-ledger-binary, testlib},
     cardano-ledger-byron,
     cardano-ledger-byron-test,
@@ -745,3 +744,21 @@ executable gen-header
 
   autogen-modules:
     Paths_ouroboros_consensus_cardano
+
+executable pull-cddls
+  import: common-exe
+  hs-source-dirs: cddl
+  main-is: pull-cddls.hs
+  build-depends:
+    base,
+    bytestring,
+    cardano-ledger-allegra:testlib,
+    cardano-ledger-alonzo:testlib,
+    cardano-ledger-babbage:testlib,
+    cardano-ledger-byron:testlib,
+    cardano-ledger-conway:testlib,
+    cardano-ledger-mary:testlib,
+    cardano-ledger-shelley:testlib,
+    process-extras,
+    utf8-string,
+    filepath,
