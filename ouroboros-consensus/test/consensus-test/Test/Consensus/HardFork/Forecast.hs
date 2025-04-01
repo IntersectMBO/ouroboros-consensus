@@ -47,9 +47,9 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HardFork.History.Util
 import           Ouroboros.Consensus.Util (Some (..), repeatedly, splits)
 import           Test.Consensus.HardFork.Infra
-import           Test.QuickCheck hiding (elements)
+import           Test.QuickCheck
 import           Test.Tasty
-import           Test.Tasty.QuickCheck hiding (elements)
+import           Test.Tasty.QuickCheck
 import           Test.Util.QuickCheck
 
 tests :: TestTree

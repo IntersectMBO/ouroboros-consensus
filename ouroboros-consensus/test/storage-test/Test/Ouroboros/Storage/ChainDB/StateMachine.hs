@@ -133,7 +133,7 @@ import           Test.Ouroboros.Storage.ChainDB.Model (FollowerId, IteratorId,
                      ShouldGarbageCollect (DoNotGarbageCollect, GarbageCollect))
 import           Test.Ouroboros.Storage.Orphans ()
 import           Test.Ouroboros.Storage.TestBlock
-import           Test.QuickCheck hiding (elements, forAll)
+import           Test.QuickCheck hiding (forAll)
 import qualified Test.QuickCheck.Monadic as QC
 import           Test.StateMachine
 import qualified Test.StateMachine.Labelling as C

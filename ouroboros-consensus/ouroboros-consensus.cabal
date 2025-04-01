@@ -385,7 +385,7 @@ library unstable-consensus-testlib
     Test.Util.WithEq
 
   build-depends:
-    QuickCheck,
+    QuickCheck >=2.15,
     base,
     base16-bytestring,
     binary,

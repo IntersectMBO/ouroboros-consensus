@@ -70,11 +70,10 @@ import           Ouroboros.Consensus.Util (repeatedly, repeatedlyM,
 import           Ouroboros.Consensus.Util.Condense (condense)
 import           Ouroboros.Consensus.Util.IOLike
 import           Test.Crypto.Hash ()
-import           Test.QuickCheck hiding (elements)
+import           Test.QuickCheck
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.Orphans.IOLike ()
-import           Test.Util.QuickCheck (elements)
 
 tests :: TestTree
 tests = testGroup "Mempool"

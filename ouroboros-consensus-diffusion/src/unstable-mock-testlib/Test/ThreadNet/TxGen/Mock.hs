@@ -11,9 +11,8 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Mock.Ledger
-import           Test.QuickCheck hiding (elements)
+import           Test.QuickCheck
 import           Test.ThreadNet.TxGen
-import           Test.Util.QuickCheck
 
 {-------------------------------------------------------------------------------
   TxGen SimpleBlock

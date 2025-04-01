@@ -35,7 +35,7 @@ import           Data.Word
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
 import qualified Ouroboros.Consensus.HardFork.History as HF
-import           Test.QuickCheck hiding (elements)
+import           Test.QuickCheck
 
 {-------------------------------------------------------------------------------
   Generate hard fork shape
