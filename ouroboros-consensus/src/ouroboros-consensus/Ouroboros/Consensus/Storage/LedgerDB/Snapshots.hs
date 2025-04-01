@@ -294,7 +294,7 @@ readExtLedgerState ::
   -> ExceptT ReadIncrementalErr m (ExtLedgerState blk EmptyMK, Maybe CRC)
 readExtLedgerState hasFS decLedger decHash doChecksum = do
       ExceptT
-    . readIncremental hasFS (getFlag doChecksum) decoder
+    . readIncremental hasFS (if (getFlag doChecksum) then Just else const Nothing) decoder
   where
     decoder :: Decoder s (ExtLedgerState blk EmptyMK)
     decoder = decodeLBackwardsCompatible (Proxy @blk) decLedger decHash
