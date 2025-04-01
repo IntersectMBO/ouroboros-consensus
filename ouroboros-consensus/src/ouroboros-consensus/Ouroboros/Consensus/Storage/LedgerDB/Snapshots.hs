@@ -150,8 +150,6 @@ data ReadSnapshotErr =
     -- | Checksum of read snapshot differs from the one tracked by
     --   its corresponding metadata file
   | ReadSnapshotDataCorruption
-    -- | An error occurred while reading the CRC file
-  | ReadSnapshotCRCError FsPath CRCError
     -- | An error occurred while reading the snapshot metadata file
   | ReadMetadataError FsPath MetadataErr
   deriving (Eq, Show)
