@@ -209,7 +209,7 @@ loadSnapshot _rr ccfg fs doChecksum ds = do
     NotOrigin pt -> do
       (values, mbCrcTables)  <-
         withExceptT (InitFailureRead . ReadSnapshotFailed) $
-          ExceptT $ readIncremental fs (getFlag doChecksum)
+          ExceptT $ readIncremental fs (if getFlag doChecksum then Just else const Nothing)
                   valuesMKDecoder
                   (fsPathFromList
                     $ fsPathToList (snapshotToDirPath ds)
