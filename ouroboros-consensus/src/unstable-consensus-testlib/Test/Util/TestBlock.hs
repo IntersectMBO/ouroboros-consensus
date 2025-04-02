@@ -305,7 +305,7 @@ newtype instance Header (TestBlockWith ptype) =
 
 instance Typeable ptype => ShowProxy (Header (TestBlockWith ptype)) where
 
-instance (Typeable ptype, Eq ptype) => HasHeader (Header (TestBlockWith ptype)) where
+instance (Typeable ptype) => HasHeader (Header (TestBlockWith ptype)) where
   getHeaderFields (TestHeader TestBlockWith{..}) = HeaderFields {
         headerFieldHash    = tbHash
       , headerFieldSlot    = tbSlot

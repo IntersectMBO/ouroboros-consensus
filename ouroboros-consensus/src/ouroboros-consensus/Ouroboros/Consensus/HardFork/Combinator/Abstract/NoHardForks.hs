@@ -1,6 +1,7 @@
 module Ouroboros.Consensus.HardFork.Combinator.Abstract.NoHardForks (
-    NoHardForks (..)
-  , noHardForksEpochInfo
+    ImmutableEraParams (..)
+  , NoHardForks (..)
+  , immutableEpochInfo
   ) where
 
 import           Cardano.Slotting.EpochInfo
@@ -15,28 +16,39 @@ import           Ouroboros.Consensus.Ledger.Abstract
   Blocks that don't /have/ any transitions
 -------------------------------------------------------------------------------}
 
-class SingleEraBlock blk => NoHardForks blk where
+-- | A block type for which the 'EraParams' will /never/ change
+--
+-- Technically, some application of
+-- 'Ouroboros.Consensus.HardFork.Combinator.Basics.HardForkBlock' could have an
+-- instance for this. But that would only be appropriate if two conditions were
+-- met.
+--
+-- * all the eras in that block have the same 'EraParams'
+--
+-- * all eras that will /ever/ be added to that block in the future will also
+--   have those same 'EraParams'
+class ImmutableEraParams blk where
   -- | Extract 'EraParams' from the top-level config
   --
   -- The HFC itself does not care about this, as it must be given the full shape
   -- across /all/ eras.
-  getEraParams :: TopLevelConfig blk -> EraParams
+  immutableEraParams :: TopLevelConfig blk -> EraParams
 
-
+class (SingleEraBlock blk, ImmutableEraParams blk) => NoHardForks blk where
   -- | Construct partial ledger config from full ledger config
   --
   -- See also 'toPartialConsensusConfig'
   toPartialLedgerConfig :: proxy blk
                         -> LedgerConfig blk -> PartialLedgerConfig blk
 
-noHardForksEpochInfo :: (Monad m, NoHardForks blk)
-                     => TopLevelConfig blk
-                     -> EpochInfo m
-noHardForksEpochInfo cfg =
+immutableEpochInfo :: (Monad m, ImmutableEraParams blk)
+                   => TopLevelConfig blk
+                   -> EpochInfo m
+immutableEpochInfo cfg =
       hoistEpochInfo (pure . runIdentity)
     $ fixedEpochInfo
         (History.eraEpochSize  params)
         (History.eraSlotLength params)
   where
     params :: EraParams
-    params = getEraParams cfg
+    params = immutableEraParams cfg

@@ -19,8 +19,6 @@ import           Cardano.Ledger.Genesis (NoGenesis (..))
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.Serialise (Serialise (..))
 import           Control.Tracer (Tracer)
-import           Data.Bimap (Bimap)
-import qualified Data.Bimap as Bimap
 import           Data.IntPSQ (IntPSQ)
 import qualified Data.IntPSQ as PSQ
 import           Data.MultiSet (MultiSet)
@@ -28,8 +26,7 @@ import qualified Data.MultiSet as MultiSet
 import           Data.SOP.BasicFunctors
 import           GHC.TypeLits (KnownNat)
 import           NoThunks.Class (InspectHeap (..), InspectHeapNamed (..),
-                     NoThunks (..), OnlyCheckWhnfNamed (..), allNoThunks,
-                     noThunksInKeysAndValues)
+                     NoThunks (..), OnlyCheckWhnfNamed (..), allNoThunks)
 import           Ouroboros.Network.Util.ShowProxy
 import           System.FS.API (SomeHasFS)
 import           System.FS.API.Types (FsPath, Handle)
@@ -52,10 +49,6 @@ instance Serialise (VerKeyDSIGN MockDSIGN) where
 instance NoThunks (NoGenesis era) where
   showTypeOf _ = "NoGenesis"
   wNoThunks _ NoGenesis = return Nothing
-
-instance (NoThunks k, NoThunks v)
-      => NoThunks (Bimap k v) where
-  wNoThunks ctxt = noThunksInKeysAndValues ctxt . Bimap.toList
 
 instance ( NoThunks p
          , NoThunks v

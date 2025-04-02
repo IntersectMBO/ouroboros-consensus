@@ -50,9 +50,11 @@ type ByronBlockHFC = HardForkBlock '[ByronBlock]
   NoHardForks instance
 -------------------------------------------------------------------------------}
 
-instance NoHardForks ByronBlock where
-  getEraParams cfg =
+instance ImmutableEraParams ByronBlock where
+  immutableEraParams cfg =
       byronEraParamsNeverHardForks (byronGenesisConfig (configBlock cfg))
+
+instance NoHardForks ByronBlock where
   toPartialLedgerConfig _ cfg = ByronPartialLedgerConfig {
         byronLedgerConfig    = cfg
       , byronTriggerHardFork = TriggerHardForkNotDuringThisExecution
