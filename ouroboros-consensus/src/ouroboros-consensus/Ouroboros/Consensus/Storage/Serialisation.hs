@@ -99,14 +99,14 @@ class EncodeDisk blk a where
 -- instances can still decide to perform versioning internally to maintain
 -- compatibility.
 class DecodeDisk blk a where
-  decodeDisk :: CodecConfig blk -> forall s. Decoder s a
+  decodeDisk :: CodecConfig blk -> Lazy.ByteString -> forall s. Decoder s a
 
   -- When the config is not needed, we provide a default implementation using
   -- 'Serialise'
   default decodeDisk
     :: Serialise a
-    => CodecConfig blk -> forall s. Decoder s a
-  decodeDisk _ccfg = decode
+    => CodecConfig blk -> Lazy.ByteString -> forall s. Decoder s a
+  decodeDisk _ccfg _lbs = decode
 
 {-------------------------------------------------------------------------------
   Dependent pairs
@@ -147,15 +147,14 @@ class DecodeDiskDepIx f blk where
 --
 -- Typical usage: @f = NestedCtxt Header@.
 class DecodeDiskDep f blk where
-  decodeDiskDep :: CodecConfig blk -> f blk a -> forall s. Decoder s (Lazy.ByteString -> a)
+  decodeDiskDep :: CodecConfig blk -> f blk a -> Lazy.ByteString -> forall s. Decoder s a
 
   default decodeDiskDep
     :: ( TrivialDependency (f blk)
-       , DecodeDisk blk (Lazy.ByteString -> TrivialIndex (f blk))
+       , DecodeDisk blk (TrivialIndex (f blk))
        )
-    => CodecConfig blk -> f blk a -> forall s. Decoder s (Lazy.ByteString -> a)
-  decodeDiskDep cfg ctxt =
-      (\f -> toTrivialDependency ctxt . f) <$> decodeDisk cfg
+    => CodecConfig blk -> f blk a -> Lazy.ByteString -> forall s. Decoder s a
+  decodeDiskDep cfg ctxt lbs = toTrivialDependency ctxt <$> decodeDisk cfg lbs
 
 instance (EncodeDiskDepIx f blk, EncodeDiskDep f blk)
        => EncodeDisk blk (DepPair (f blk)) where
@@ -163,7 +162,7 @@ instance (EncodeDiskDepIx f blk, EncodeDiskDep f blk)
 
 instance (DecodeDiskDepIx f blk, DecodeDiskDep f blk)
        => DecodeDisk blk (DepPair (f blk)) where
-  decodeDisk ccfg = decodeDisk ccfg >>= decodeDepPair ccfg
+  decodeDisk ccfg lbs = decodeDisk ccfg lbs >>= decodeDepPair ccfg
 
 {-------------------------------------------------------------------------------
   Internal: support for serialisation of dependent pairs
@@ -189,10 +188,10 @@ instance EncodeDiskDepIx f blk => EncodeDisk blk (GenDepPair Serialised (f blk))
       ]
 
 instance DecodeDiskDepIx f blk => DecodeDisk blk (GenDepPair Serialised (f blk)) where
-  decodeDisk ccfg = do
+  decodeDisk ccfg _lbs = do
       enforceSize "DecodeDisk GenDepPair" 2
       SomeSecond fa <- decodeDiskDepIx ccfg
-      serialised   <- decode
+      serialised <- decode
       return $ GenDepPair fa serialised
 
 {-------------------------------------------------------------------------------
@@ -247,7 +246,7 @@ instance EncodeDiskDepIx (NestedCtxt Header) blk
 
 instance DecodeDiskDepIx (NestedCtxt Header) blk
       => DecodeDisk blk (SerialisedHeader blk) where
-  decodeDisk ccfg = SerialisedHeaderFromDepPair <$> decodeDisk ccfg
+  decodeDisk ccfg lbs = SerialisedHeaderFromDepPair <$> decodeDisk ccfg lbs
 
 -- | Encode the header without the 'NestedCtxt'
 --
@@ -329,7 +328,7 @@ instance EncodeDisk blk (ChainDepState (BlockProtocol blk))
 
 instance DecodeDisk blk (ChainDepState (BlockProtocol blk))
       => DecodeDisk blk (WrapChainDepState blk) where
-  decodeDisk cfg = WrapChainDepState <$> decodeDisk cfg
+  decodeDisk cfg lbs = WrapChainDepState <$> decodeDisk cfg lbs
 
 instance EncodeDisk blk blk
       => EncodeDisk blk (I blk) where
@@ -337,8 +336,8 @@ instance EncodeDisk blk blk
 
 instance DecodeDisk blk blk
       => DecodeDisk blk (I blk) where
-  decodeDisk cfg = I <$> decodeDisk cfg
+  decodeDisk cfg lbs = I <$> decodeDisk cfg lbs
 
 instance DecodeDisk blk (a -> f blk)
       => DecodeDisk blk (((->) a :.: f) blk) where
-  decodeDisk cfg = Comp <$> decodeDisk cfg
+  decodeDisk cfg lbs = Comp <$> decodeDisk cfg lbs

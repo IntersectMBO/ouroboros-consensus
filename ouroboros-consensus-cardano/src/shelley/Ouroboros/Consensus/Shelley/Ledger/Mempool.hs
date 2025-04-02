@@ -199,8 +199,9 @@ instance ShelleyCompatible proto era => ToCBOR (GenTx (ShelleyBlock proto era)) 
   toCBOR (ShelleyTx _txid tx) = wrapCBORinCBOR toCBOR tx
 
 instance ShelleyCompatible proto era => FromCBOR (GenTx (ShelleyBlock proto era)) where
-  fromCBOR = fmap mkShelleyTx $ unwrapCBORinCBOR
-    $ eraDecoder @era $ (. Full) . runAnnotator <$> decCBOR
+  -- fromCBOR = fmap mkShelleyTx $ unwrapCBORinCBOR
+  --   $ eraDecoder @era $ (. Full) . runAnnotator <$> decCBOR
+  fromCBOR = mkShelleyTx $ unwrapCBORinCBOR $ eraDecoder @era decCBOR
 
 {-------------------------------------------------------------------------------
   Pretty-printing
