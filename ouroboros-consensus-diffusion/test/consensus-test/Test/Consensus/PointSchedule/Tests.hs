@@ -22,7 +22,7 @@ import           Ouroboros.Network.Block (blockHash)
 import           System.Random.Stateful (runSTGen_)
 import           Test.Consensus.PointSchedule.SinglePeer
 import           Test.Consensus.PointSchedule.SinglePeer.Indices
-import qualified Test.QuickCheck as QC hiding (elements)
+import qualified Test.QuickCheck as QC
 import           Test.QuickCheck
 import           Test.QuickCheck.Random
 import           Test.Tasty

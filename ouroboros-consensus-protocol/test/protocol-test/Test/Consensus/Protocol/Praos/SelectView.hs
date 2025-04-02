@@ -24,8 +24,7 @@ import           Test.Ouroboros.Consensus.Protocol
 import           Test.QuickCheck.Gen (Gen (..))
 import           Test.QuickCheck.Random (mkQCGen)
 import           Test.Tasty
-import           Test.Tasty.QuickCheck hiding (elements)
-import           Test.Util.QuickCheck
+import           Test.Tasty.QuickCheck
 import           Test.Util.TestEnv
 
 tests :: TestTree

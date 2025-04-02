@@ -20,7 +20,6 @@ module Test.Util.QuickCheck (
     -- * Comparing maps
   , isSubmapOfBy
     -- * Improved variants
-  , elements
   , (=:=)
     -- * SOP
   , cshrinkNP
@@ -39,11 +38,9 @@ import qualified Data.Map.Strict as Map
 import           Data.Proxy
 import           Data.SOP.Constraint
 import           Data.SOP.Strict
-import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Util (repeatedly)
 import           Ouroboros.Consensus.Util.Condense (Condense, condense)
-import qualified Test.QuickCheck as QC
-import           Test.QuickCheck hiding (elements)
+import           Test.QuickCheck
 
 {-------------------------------------------------------------------------------
   Generic QuickCheck utilities
@@ -167,14 +164,6 @@ isSubmapOfBy p l r = conjoin [
 {-------------------------------------------------------------------------------
   Improved variants
 -------------------------------------------------------------------------------}
-
--- | Generates one of the given values. The input list must be non-empty.
---
--- NOTE unlike the standard @elements@, this variant has a 'HasCallStack'
--- constraint, which makes debugging the 'error' much easier.
-elements :: HasCallStack => [a] -> Gen a
-elements [] = error "Test.Util.QuickCheck.elements used with empty list"
-elements xs = QC.elements xs
 
 -- | Like '===', but uses 'Condense' instead of 'Show' when it fails.
 infix 4 =:=

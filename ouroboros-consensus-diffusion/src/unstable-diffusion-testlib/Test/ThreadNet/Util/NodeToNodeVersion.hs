@@ -7,8 +7,7 @@ module Test.ThreadNet.Util.NodeToNodeVersion (
 import qualified Data.Map.Strict as Map
 import           Data.Proxy (Proxy (..))
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
-import           Test.QuickCheck (Gen)
-import           Test.Util.QuickCheck
+import           Test.QuickCheck
 
 genVersion ::
      SupportedNetworkProtocolVersion blk

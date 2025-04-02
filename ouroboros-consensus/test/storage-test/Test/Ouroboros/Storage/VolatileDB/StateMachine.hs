@@ -65,7 +65,7 @@ import           System.Random (getStdRandom, randomR)
 import           Test.Ouroboros.Storage.Orphans ()
 import           Test.Ouroboros.Storage.TestBlock
 import           Test.Ouroboros.Storage.VolatileDB.Model
-import           Test.QuickCheck hiding (elements, forAll)
+import           Test.QuickCheck hiding (forAll)
 import           Test.QuickCheck.Monadic
 import           Test.QuickCheck.Random (mkQCGen)
 import           Test.StateMachine hiding (showLabelledExamples,
