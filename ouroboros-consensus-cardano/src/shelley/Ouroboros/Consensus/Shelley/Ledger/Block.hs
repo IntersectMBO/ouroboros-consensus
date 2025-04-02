@@ -6,6 +6,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
@@ -39,10 +40,9 @@ module Ouroboros.Consensus.Shelley.Ledger.Block (
   ) where
 
 import qualified Cardano.Crypto.Hash as Crypto
-import           Cardano.Ledger.Binary (Annotator (..), DecCBOR (..),
-                     EncCBOR (..), FullByteString (..), serialize)
+import           Cardano.Ledger.Binary (DecCBOR (..), EncCBOR (..), serialize)
 import qualified Cardano.Ledger.Binary.Plain as Plain
-import           Cardano.Ledger.Core as SL (eraDecoder, eraProtVerLow,
+import           Cardano.Ledger.Core as SL (eraDecoderWithBytes, eraProtVerLow,
                      toEraCBOR)
 import qualified Cardano.Ledger.Core as SL (hashTxSeq)
 import           Cardano.Ledger.Hashes (HASH)
@@ -87,7 +87,7 @@ class
   , Show (ShelleyProtocolHeader proto)
   , NoThunks (ShelleyProtocolHeader proto)
   , EncCBOR (ShelleyProtocolHeader proto)
-  , DecCBOR (Annotator (ShelleyProtocolHeader proto))
+  , DecCBOR (ShelleyProtocolHeader proto)
   , Show (CannotForgeError proto)
     -- Currently the chain select view is identical
     -- Era and proto crypto must coincide
@@ -252,15 +252,15 @@ instance ShelleyCompatible proto era => EncCBOR (ShelleyBlock proto era) where
   -- Don't encode the header hash, we recompute it during deserialisation
   encCBOR = encCBOR . shelleyBlockRaw
 
-instance ShelleyCompatible proto era => DecCBOR (Annotator (ShelleyBlock proto era)) where
-  decCBOR = fmap mkShelleyBlock <$> decCBOR
+instance ShelleyCompatible proto era => DecCBOR (ShelleyBlock proto era) where
+  decCBOR = mkShelleyBlock <$> decCBOR
 
 instance ShelleyCompatible proto era => EncCBOR (Header (ShelleyBlock proto era)) where
   -- Don't encode the header hash, we recompute it during deserialisation
   encCBOR = encCBOR . shelleyHeaderRaw
 
-instance ShelleyCompatible proto era => DecCBOR (Annotator (Header (ShelleyBlock proto era))) where
-  decCBOR = fmap mkShelleyHeader <$> decCBOR
+instance ShelleyCompatible proto era => DecCBOR (Header (ShelleyBlock proto era)) where
+  decCBOR = mkShelleyHeader <$> decCBOR
 
 encodeShelleyBlock ::
   forall proto era. ShelleyCompatible proto era
@@ -269,8 +269,8 @@ encodeShelleyBlock = toEraCBOR @era
 
 decodeShelleyBlock ::
   forall proto era. ShelleyCompatible proto era
-  => forall s. Plain.Decoder s (Lazy.ByteString -> ShelleyBlock proto era)
-decodeShelleyBlock = eraDecoder @era $ (. Full) . runAnnotator <$> decCBOR
+  => forall s. Lazy.ByteString -> Plain.Decoder s (ShelleyBlock proto era)
+decodeShelleyBlock = eraDecoderWithBytes @era decCBOR
 
 shelleyBinaryBlockInfo :: forall proto era. ShelleyCompatible proto era => ShelleyBlock proto era -> BinaryBlockInfo
 shelleyBinaryBlockInfo blk = BinaryBlockInfo {
@@ -288,8 +288,8 @@ encodeShelleyHeader = toEraCBOR @era
 
 decodeShelleyHeader ::
   forall proto era. ShelleyCompatible proto era
-  => forall s. Plain.Decoder s (Lazy.ByteString -> Header (ShelleyBlock proto era))
-decodeShelleyHeader = eraDecoder @era $ (. Full) . runAnnotator <$> decCBOR
+  => forall s. Lazy.ByteString -> Plain.Decoder s (Header (ShelleyBlock proto era))
+decodeShelleyHeader = eraDecoderWithBytes @era decCBOR
 
 {-------------------------------------------------------------------------------
   Condense

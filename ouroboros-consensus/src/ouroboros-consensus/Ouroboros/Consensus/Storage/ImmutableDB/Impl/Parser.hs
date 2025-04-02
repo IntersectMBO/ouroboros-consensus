@@ -97,8 +97,8 @@ parseChunkFile ccfg hasFS isNotCorrupt fsPath expectedChecksums k =
         . fmap (fmap (first ChunkErrRead))
         )
   where
-    decoder :: forall s. Decoder s (Lazy.ByteString -> (blk, CRC))
-    decoder = decodeDisk ccfg <&> \mkBlk bs ->
+    decoder :: forall s. Lazy.ByteString -> Decoder s (blk, CRC)
+    decoder bytes = decodeDisk ccfg (Just bytes) <&> \mkBlk bs ->
       let !blk      = mkBlk bs
           !checksum = computeCRC bs
       in (blk, checksum)

@@ -229,18 +229,19 @@ readIncremental = \(SomeHasFS hasFS) doChecksum decoder fp -> do
 withStreamIncrementalOffsets ::
      forall m h a r. (IOLike m, HasCallStack)
   => HasFS m h
-  -> (forall s . CBOR.D.Decoder s (LBS.ByteString -> a))
+  -> (forall s . LBS.ByteString -> CBOR.D.Decoder s a)
   -> FsPath
   -> (Stream (Of (Word64, (Word64, a))) m (Maybe (ReadIncrementalErr, Word64)) -> m r)
   -> m r
-withStreamIncrementalOffsets hasFS@HasFS{..} decoder fp = \k ->
+withStreamIncrementalOffsets hasFS@HasFS{..} sizeOfBytesToFetch decoder fp = \k ->
       withFile hasFS fp ReadMode $ \h -> k $ do
         fileSize <- S.lift $ hGetSize h
         if fileSize == 0 then
           -- If the file is empty, we will immediately get "end of input"
           return Nothing
-        else
-          S.lift (U.stToIO (CBOR.R.deserialiseIncremental decoder)) >>=
+        else do
+          bytes <- S.lift $ hGetSome h sizeOfBytesToFetch -- ? How do we go about this
+          S.lift (U.stToIO (CBOR.R.deserialiseIncremental (decoder bytes))) >>=
             go h 0 Nothing [] fileSize
   where
     -- TODO stream from HasFS?
