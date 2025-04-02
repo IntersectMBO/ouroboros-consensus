@@ -78,8 +78,8 @@ if impl (ghc >= 9.12)
 source-repository-package
  type: git
  location: https://github.com/IntersectMBO/cardano-ledger
- tag: 415ce65893f57d9c6bce62b2cc33b2f2bf244a0f
- --sha256: sha256-zPhCE9dtn99veDFjNwe2cFrOiCa6Xhlxs0VGM9AHGxk=
+ tag: 2afbd1bde62cac10214d1b818a904d1ee97334a7
+ --sha256: sha256-7dkJa8fmkybvO2sRuNJoyu4P8YjDC4xDdKaPReMm4wU=
  subdir:
    eras/allegra/impl
    eras/alonzo/impl
@@ -105,3 +105,23 @@ source-repository-package
    eras/byron/ledger/executable-spec
    eras/byron/ledger/impl
    eras/byron/crypto
+
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/ouroboros-network
+  tag: a5cfdb07d11d316948fabd5632f227ecc18c2bec
+  --sha256: sha256-uC3wjWQQewcFAZ3Juw5s5MbvOK5M/8lJLYDS8iCotTc=
+  subdir:
+    cardano-client
+    cardano-ping
+    monoidal-synchronisation
+    network-mux
+    ntp-client
+    ouroboros-network-api
+    ouroboros-network-framework
+    ouroboros-network-mock
+    ouroboros-network
+    ouroboros-network-protocols
+    ouroboros-network-testing
+    quickcheck-monoids
