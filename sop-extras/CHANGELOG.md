@@ -2,6 +2,15 @@
 
 # Changelog entries
 
+<a id='changelog-0.3.0.0'></a>
+## 0.3.0.0 -- 2025-04-02
+
+### Breaking
+
+- Refactor `Index` to use `NS ((:~:) x) xs`. Pattern synonyms `IZ` and `IS` are
+  provided, making this change transparent for users. Some functions need
+  additional constraints, hence the breaking nature of this change.
+
 <a id='changelog-0.2.2.0'></a>
 ## 0.2.2.0 -- 2025-03-25
 

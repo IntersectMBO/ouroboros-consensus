@@ -2,6 +2,14 @@
 
 # Changelog entries
 
+<a id='changelog-0.23.0.0'></a>
+## 0.23.0.0 -- 2025-04-02
+
+### Breaking
+
+- Define `blockQueryIsSupportedOnVersion` for Byron and Shelley.
+  - For Shelley, this is just a relocation of the now gone `querySupportedVersion` function.
+
 <a id='changelog-0.22.0.0'></a>
 ## 0.22.0.0 -- 2025-03-25
 

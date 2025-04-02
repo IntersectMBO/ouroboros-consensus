@@ -2,6 +2,19 @@
 
 # Changelog entries
 
+<a id='changelog-0.24.0.0'></a>
+## 0.24.0.0 -- 2025-04-02
+
+### Non-Breaking
+
+- Define some functions in terms of SOP combinators leveraging the recent
+  simplification of `Index` in `sop-extras` package.
+
+### Breaking
+
+- Add method `blockQueryIsSupportedOnVersion` to `BlockSupportsLedgerQuery`.
+- Export new function `querySupportedVersions`.
+
 <a id='changelog-0.23.0.0'></a>
 ## 0.23.0.0 -- 2025-03-25
 

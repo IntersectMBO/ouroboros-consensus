@@ -2,6 +2,14 @@
 
 # Changelog entries
 
+<a id='changelog-0.21.0.1'></a>
+## 0.21.0.1 -- 2025-04-03
+
+### Patch
+
+- Tighten lower bounds on `ouroboros-consensus` for the sake of
+  testlibs.
+
 <a id='changelog-0.21.0.0'></a>
 ## 0.21.0.0 -- 2025-03-25
 
