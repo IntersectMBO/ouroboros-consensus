@@ -108,7 +108,7 @@ streamImpl ::
      forall m blk b.
      ( IOLike m
      , HasHeader blk
-     , DecodeDisk blk (Lazy.ByteString -> blk)
+     , DecodeDisk blk blk
      , DecodeDiskDep (NestedCtxt Header) blk
      , ReconstructNestedCtxt Header blk
      , HasCallStack
@@ -403,7 +403,7 @@ iteratorNextImpl ::
      forall m blk b h.
      ( IOLike m
      , HasHeader blk
-     , DecodeDisk blk (Lazy.ByteString -> blk)
+     , DecodeDisk blk blk
      , DecodeDiskDep (NestedCtxt Header) blk
      , ReconstructNestedCtxt Header blk
      )
@@ -561,7 +561,7 @@ extractBlockComponent ::
      forall m blk b h.
      ( HasHeader blk
      , ReconstructNestedCtxt Header blk
-     , DecodeDisk blk (Lazy.ByteString -> blk)
+     , DecodeDisk blk blk
      , DecodeDiskDep (NestedCtxt Header) blk
      , IOLike m
      )
@@ -660,27 +660,26 @@ extractBlockComponent hasFS chunkInfo chunk ccfg checkIntegrity eHnd
         offset = AbsOffset $ Secondary.unBlockOffset blockOffset
 
     parseBlock :: Lazy.ByteString -> m blk
-    parseBlock bytes = throwParseErrors bytes $
-        CBOR.deserialiseFromBytes (decodeDisk ccfg) bytes
+    parseBlock bytes = throwParseErrors $
+        CBOR.deserialiseFromBytes (decodeDisk ccfg (Just bytes)) bytes
 
     parseHeader ::
          SomeSecond (NestedCtxt Header) blk
       -> Lazy.ByteString
       -> m (Header blk)
-    parseHeader (SomeSecond ctxt) bytes = throwParseErrors bytes $
+    parseHeader (SomeSecond ctxt) bytes = throwParseErrors $
         CBOR.deserialiseFromBytes
-          ((\f -> nest . DepPair ctxt . f) <$> decodeDiskDep ccfg ctxt)
+          (nest . DepPair ctxt <$> decodeDiskDep ccfg ctxt bytes)
           bytes
 
     throwParseErrors ::
          forall b'.
-         Lazy.ByteString
-      -> Either CBOR.DeserialiseFailure (Lazy.ByteString, Lazy.ByteString -> b')
+         Either CBOR.DeserialiseFailure (Lazy.ByteString, b')
       -> m b'
-    throwParseErrors fullBytes = \case
-        Right (trailing, f)
+    throwParseErrors = \case
+        Right (trailing, result)
           | Lazy.null trailing
-          -> return $ f fullBytes
+          -> return result
           | otherwise
           -> throwUnexpectedFailure $
                TrailingDataError (fsPathChunkFile chunk) pt trailing

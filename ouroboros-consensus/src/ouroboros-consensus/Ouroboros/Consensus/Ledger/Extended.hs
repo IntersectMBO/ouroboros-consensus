@@ -258,9 +258,9 @@ decodeDiskExtLedgerState ::
   => (CodecConfig blk -> forall s. Decoder s (ExtLedgerState blk))
 decodeDiskExtLedgerState cfg =
   decodeExtLedgerState
-    (decodeDisk cfg)
-    (decodeDisk cfg)
-    (decodeDisk cfg)
+    (decodeDisk cfg Nothing)
+    (decodeDisk cfg Nothing)
+    (decodeDisk cfg Nothing)
 
 {-------------------------------------------------------------------------------
   Casts

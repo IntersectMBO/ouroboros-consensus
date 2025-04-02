@@ -99,13 +99,13 @@ class EncodeDisk blk a where
 -- instances can still decide to perform versioning internally to maintain
 -- compatibility.
 class DecodeDisk blk a where
-  decodeDisk :: CodecConfig blk -> Lazy.ByteString -> forall s. Decoder s a
+  decodeDisk :: CodecConfig blk -> Maybe Lazy.ByteString -> forall s. Decoder s a
 
   -- When the config is not needed, we provide a default implementation using
   -- 'Serialise'
   default decodeDisk
     :: Serialise a
-    => CodecConfig blk -> Lazy.ByteString -> forall s. Decoder s a
+    => CodecConfig blk -> Maybe  Lazy.ByteString -> forall s. Decoder s a
   decodeDisk _ccfg _lbs = decode
 
 {-------------------------------------------------------------------------------
@@ -154,7 +154,7 @@ class DecodeDiskDep f blk where
        , DecodeDisk blk (TrivialIndex (f blk))
        )
     => CodecConfig blk -> f blk a -> Lazy.ByteString -> forall s. Decoder s a
-  decodeDiskDep cfg ctxt lbs = toTrivialDependency ctxt <$> decodeDisk cfg lbs
+  decodeDiskDep cfg ctxt lbs = toTrivialDependency ctxt <$> decodeDisk cfg (Just lbs)
 
 instance (EncodeDiskDepIx f blk, EncodeDiskDep f blk)
        => EncodeDisk blk (DepPair (f blk)) where
