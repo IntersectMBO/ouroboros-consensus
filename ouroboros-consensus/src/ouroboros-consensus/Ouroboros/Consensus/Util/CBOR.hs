@@ -183,22 +183,21 @@ data ReadIncrementalErr =
 --
 -- NOTE: This currently expects the file to contain precisely one value; see also
 -- 'withStreamIncrementalOffsets'.
-readIncremental :: forall m a. IOLike m
+readIncremental :: forall m f a. (IOLike m, Functor f)
                 => SomeHasFS m
-                -> Bool
+                -> (CRC -> f CRC)
                 -> CBOR.D.Decoder (U.PrimState m) a
                 -> FsPath
-                -> m (Either ReadIncrementalErr (a, Maybe CRC))
-readIncremental = \(SomeHasFS hasFS) doChecksum decoder fp -> do
-    let mbInitCRC = if doChecksum then Just initCRC else Nothing
+                -> m (Either ReadIncrementalErr (a, f CRC))
+readIncremental = \(SomeHasFS hasFS) mkInitCRC decoder fp -> do
     withFile hasFS fp ReadMode $ \h ->
-      go hasFS h mbInitCRC =<< U.stToIO (CBOR.R.deserialiseIncremental decoder)
+      go hasFS h (mkInitCRC initCRC) =<< U.stToIO (CBOR.R.deserialiseIncremental decoder)
   where
     go :: HasFS m h
        -> Handle h
-       -> Maybe CRC
+       -> f CRC
        -> CBOR.R.IDecode (U.PrimState m) a
-       -> m (Either ReadIncrementalErr (a, Maybe CRC))
+       -> m (Either ReadIncrementalErr (a, f CRC))
     go hasFS@HasFS{..} h !checksum  (CBOR.R.Partial k) = do
         bs   <- hGetSome h (fromIntegral defaultChunkSize)
         dec' <- U.stToIO $ k (checkEmpty bs)

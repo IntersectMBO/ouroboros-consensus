@@ -35,8 +35,8 @@ import           Control.Monad.Trans (lift)
 import           Control.Monad.Trans.Except
 import           Control.ResourceRegistry
 import           Control.Tracer
-import qualified Data.ByteString.Builder as BS
 import           Data.Functor.Contravariant ((>$<))
+import           Data.Functor.Identity
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import           Data.Maybe
@@ -57,7 +57,6 @@ import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike
 import           Prelude hiding (read)
 import           System.FS.API
-import           System.FS.API.Lazy
 import           System.FS.CRC
 
 {-------------------------------------------------------------------------------
@@ -144,19 +143,18 @@ snapshotToTablePath = mkFsPath . (\x -> [x, "tables", "tvar"]) . snapshotToDirNa
 writeSnapshot ::
      MonadThrow m
   => SomeHasFS m
-  -> Flag "DoDiskSnapshotChecksum"
   -> (ExtLedgerState blk EmptyMK -> Encoding)
   -> DiskSnapshot
   -> StateRef m (ExtLedgerState blk)
   -> m ()
-writeSnapshot fs@(SomeHasFS hasFs) doChecksum encLedger ds st = do
+writeSnapshot fs@(SomeHasFS hasFs) encLedger ds st = do
     createDirectoryIfMissing hasFs True $ snapshotToDirPath ds
     crc1 <- writeExtLedgerState fs encLedger (snapshotToStatePath ds) $ state st
     crc2 <- takeHandleSnapshot (tables st) $ snapshotToDirName ds
-    Monad.when (getFlag doChecksum) $
-      withFile hasFs (snapshotToChecksumPath ds) (WriteMode MustBeNew) $ \h ->
-        Monad.void $ hPutAll hasFs h . BS.toLazyByteString . BS.word32HexFixed $
-           (getCRC $ crcOfConcat crc1 crc2)
+    writeSnapshotMetadata fs ds $ SnapshotMetadata
+      { snapshotBackend = UTxOHDMemSnapshot
+      , snapshotChecksum = crcOfConcat crc1 crc2
+      }
 
 takeSnapshot ::
      ( IOLike m
@@ -167,10 +165,9 @@ takeSnapshot ::
   -> Tracer m (TraceSnapshotEvent blk)
   -> SomeHasFS m
   -> Maybe String
-  -> Flag "DoDiskSnapshotChecksum"
   -> StateRef m (ExtLedgerState blk)
   -> m (Maybe (DiskSnapshot, RealPoint blk))
-takeSnapshot ccfg tracer hasFS suffix doChecksum st = do
+takeSnapshot ccfg tracer hasFS suffix st = do
   case pointToWithOriginRealPoint (castPoint (getTip $ state st)) of
     Origin -> return Nothing
     NotOrigin t -> do
@@ -181,7 +178,7 @@ takeSnapshot ccfg tracer hasFS suffix doChecksum st = do
         return Nothing
         else do
           encloseTimedWith (TookSnapshot snapshot t >$< tracer)
-              $ writeSnapshot hasFS doChecksum (encodeDiskExtLedgerState ccfg) snapshot st
+              $ writeSnapshot hasFS (encodeDiskExtLedgerState ccfg) snapshot st
           return $ Just (snapshot, t)
 
 -- | Read snapshot from disk.
@@ -200,24 +197,26 @@ loadSnapshot ::
     -> Flag "DoDiskSnapshotChecksum"
     -> DiskSnapshot
     -> ExceptT (SnapshotFailure blk) m (LedgerSeq' m blk, RealPoint blk)
-loadSnapshot _rr ccfg fs@(SomeHasFS hasFS) doChecksum ds = do
-  (extLedgerSt, mbChecksumAsRead)  <- withExceptT
+loadSnapshot _rr ccfg fs doChecksum ds = do
+  snapshotMeta <- withExceptT (InitFailureRead . ReadMetadataError (snapshotToMetadataPath ds)) $
+    loadSnapshotMetadata fs ds
+  Monad.when (snapshotBackend snapshotMeta /= UTxOHDMemSnapshot) $ do
+    throwE $ InitFailureRead $ ReadMetadataError (snapshotToMetadataPath ds) MetadataBackendMismatch
+  (extLedgerSt, checksumAsRead)  <- withExceptT
       (InitFailureRead . ReadSnapshotFailed) $
-      readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode doChecksum (snapshotToStatePath ds)
+      readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode (snapshotToStatePath ds)
   case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
-    Origin        -> throwE InitFailureGenesis
+    Origin       -> throwE InitFailureGenesis
     NotOrigin pt -> do
-      (values, mbCrcTables)  <-
+      (values, Identity crcTables) <-
         withExceptT (InitFailureRead . ReadSnapshotFailed) $
-          ExceptT $ readIncremental fs (getFlag doChecksum)
+          ExceptT $ readIncremental fs Identity
                   valuesMKDecoder
                   (fsPathFromList
                     $ fsPathToList (snapshotToDirPath ds)
                     <> [fromString "tables", fromString "tvar"])
       Monad.when (getFlag doChecksum) $ do
-        let crcPath = snapshotToChecksumPath ds
-        !snapshotCRC <- withExceptT (InitFailureRead . ReadSnapshotCRCError crcPath) $ readCRC hasFS crcPath
-        let computedCRC = crcOfConcat <$> mbChecksumAsRead <*> mbCrcTables
-        Monad.when (computedCRC /= Just snapshotCRC) $
+        let computedCRC = crcOfConcat checksumAsRead crcTables
+        Monad.when (computedCRC /= snapshotChecksum snapshotMeta) $
           throwE $ InitFailureRead $ ReadSnapshotDataCorruption
       (,pt) <$> lift (empty extLedgerSt values (newInMemoryLedgerTablesHandle fs))

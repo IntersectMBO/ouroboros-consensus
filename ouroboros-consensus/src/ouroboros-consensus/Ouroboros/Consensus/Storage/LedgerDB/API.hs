@@ -566,10 +566,21 @@ initialize replayTracer
     tryNewestFirst doChecksum acc allSnapshot@(s:ss) = do
       eInitDb <- initFromSnapshot doChecksum s
       case eInitDb of
-        -- If a checksum file is missing for a snapshot,
-        -- issue a warning and retry the same snapshot
-        -- ignoring the checksum
-        Left (InitFailureRead (ReadSnapshotCRCError _ CRCNoFile)) -> do
+        -- If the snapshot is missing a metadata file, issue a warning and try
+        -- the next oldest snapshot
+        Left err@(InitFailureRead (ReadMetadataError _ MetadataFileDoesNotExist)) -> do
+          traceWith snapTracer $ SnapshotMetadataMissing s
+          tryNewestFirst doChecksum (acc . InitFailure s err) ss
+
+        -- If the snapshot's backend is incorrect, issue a warning and try
+        -- the next oldest snapshot
+        Left err@(InitFailureRead (ReadMetadataError _ MetadataBackendMismatch)) -> do
+          traceWith snapTracer $ SnapshotMetadataBackendMismatch s
+          tryNewestFirst doChecksum (acc . InitFailure s err) ss
+
+        -- If the snapshot metadata is missing a checksum, issue a warning
+        -- and retry the same snapshot ignoring the checksum
+        Left (InitFailureRead (ReadMetadataError _ MetadataChecksumMissing)) -> do
           traceWith snapTracer $ SnapshotMissingChecksum s
           tryNewestFirst NoDoDiskSnapshotChecksum acc allSnapshot
 

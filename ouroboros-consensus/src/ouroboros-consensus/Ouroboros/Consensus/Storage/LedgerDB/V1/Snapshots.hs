@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -144,7 +143,6 @@ import qualified Control.Monad as Monad
 import           Control.Monad.Except
 import qualified Control.Monad.Trans as Trans (lift)
 import           Control.Tracer
-import qualified Data.ByteString.Builder as BS
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.List as List
 import           Ouroboros.Consensus.Block
@@ -159,12 +157,9 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as V1
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
 import           Ouroboros.Consensus.Util.Args (Complete)
-import           Ouroboros.Consensus.Util.CRC
 import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike
 import           System.FS.API
-import           System.FS.API.Lazy
-import           System.FS.CRC
 
 
 -- | Try to take a snapshot of the /oldest ledger state/ in the ledger DB
@@ -197,9 +192,8 @@ takeSnapshot ::
   -> SnapshotsFS m
   -> BackingStore' m blk
   -> Maybe String -- ^ Override for snapshot numbering
-  -> Flag "DoDiskSnapshotChecksum"
   -> ReadLocked m (Maybe (DiskSnapshot, RealPoint blk))
-takeSnapshot ldbvar ccfg tracer (SnapshotsFS hasFS') backingStore suffix doChecksum = readLocked $ do
+takeSnapshot ldbvar ccfg tracer (SnapshotsFS hasFS') backingStore suffix = readLocked $ do
     state <- changelogLastFlushedState <$> readTVarIO ldbvar
     case pointToWithOriginRealPoint (castPoint (getTip state)) of
       Origin ->
@@ -212,25 +206,25 @@ takeSnapshot ldbvar ccfg tracer (SnapshotsFS hasFS') backingStore suffix doCheck
           return Nothing
         else do
           encloseTimedWith (TookSnapshot snapshot t >$< tracer)
-            $ writeSnapshot hasFS' doChecksum backingStore (encodeDiskExtLedgerState ccfg) snapshot state
+            $ writeSnapshot hasFS' backingStore (encodeDiskExtLedgerState ccfg) snapshot state
           return $ Just (snapshot, t)
 
 -- | Write snapshot to disk
 writeSnapshot ::
      MonadThrow m
   => SomeHasFS m
-  -> Flag "DoDiskSnapshotChecksum"
   -> BackingStore' m blk
   -> (ExtLedgerState blk EmptyMK -> Encoding)
   -> DiskSnapshot
   -> ExtLedgerState blk EmptyMK
   -> m ()
-writeSnapshot fs@(SomeHasFS hasFS) doChecksum backingStore encLedger snapshot cs = do
+writeSnapshot fs@(SomeHasFS hasFS) backingStore encLedger snapshot cs = do
     createDirectory hasFS (snapshotToDirPath snapshot)
     crc <- writeExtLedgerState fs encLedger (snapshotToStatePath snapshot) cs
-    Monad.when (getFlag doChecksum) $
-      withFile hasFS (snapshotToChecksumPath snapshot) (WriteMode MustBeNew) $ \h ->
-        Monad.void $ hPutAll hasFS h . BS.toLazyByteString . BS.word32HexFixed $ getCRC crc
+    writeSnapshotMetadata fs snapshot SnapshotMetadata
+      { snapshotBackend = bsSnapshotBackend backingStore
+      , snapshotChecksum = crc
+      }
     bsCopy
       backingStore
       (snapshotToTablesPath snapshot)
@@ -263,17 +257,21 @@ loadSnapshot ::
   -> Flag "DoDiskSnapshotChecksum"
   -> DiskSnapshot
   -> ExceptT (SnapshotFailure blk) m ((DbChangelog' blk, LedgerBackingStore m (ExtLedgerState blk)), RealPoint blk)
-loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs'@(SomeHasFS fs'')) doChecksum s = do
-  (extLedgerSt, mbChecksumAsRead) <- withExceptT (InitFailureRead . ReadSnapshotFailed) $
-     readExtLedgerState fs' (decodeDiskExtLedgerState ccfg) decode doChecksum (snapshotToStatePath s)
+loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs') doChecksum s = do
+  (extLedgerSt, checksumAsRead) <- withExceptT (InitFailureRead . ReadSnapshotFailed) $
+     readExtLedgerState fs' (decodeDiskExtLedgerState ccfg) decode (snapshotToStatePath s)
+  snapshotMeta <- withExceptT (InitFailureRead . ReadMetadataError (snapshotToMetadataPath s)) $
+    loadSnapshotMetadata fs' s
+  case (bss, snapshotBackend snapshotMeta) of
+    (InMemoryBackingStoreArgs, UTxOHDMemSnapshot) -> pure ()
+    (LMDBBackingStoreArgs _ _ _, UTxOHDLMDBSnapshot) -> pure ()
+    (_, _) ->
+      throwError $ InitFailureRead $ ReadMetadataError (snapshotToMetadataPath s) MetadataBackendMismatch
   Monad.when (getFlag doChecksum) $ do
-    let crcPath = snapshotToChecksumPath s
-    !snapshotCRC <- withExceptT (InitFailureRead . ReadSnapshotCRCError crcPath) $
-      readCRC fs'' crcPath
-    Monad.when (mbChecksumAsRead /= Just snapshotCRC) $
+    Monad.when (checksumAsRead /= snapshotChecksum snapshotMeta) $
       throwError $ InitFailureRead $ ReadSnapshotDataCorruption
   case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
-    Origin        -> throwError InitFailureGenesis
+    Origin       -> throwError InitFailureGenesis
     NotOrigin pt -> do
         backingStore <- Trans.lift (restoreBackingStore tracer bss fs extLedgerSt (snapshotToTablesPath s))
         let chlog  = empty extLedgerSt
