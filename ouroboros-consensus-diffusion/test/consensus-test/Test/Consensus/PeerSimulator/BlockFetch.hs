@@ -26,6 +26,7 @@ import           Network.TypedProtocol.Codec (ActiveState, AnyMessage,
 import           Ouroboros.Consensus.Block (HasHeader)
 import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
 import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (ChainSyncClientHandleCollection)
@@ -78,7 +79,7 @@ startBlockFetchLogic ::
   -> ResourceRegistry m
   -> Tracer m (TraceEvent TestBlock)
   -> ChainDB m TestBlock
-  -> FetchClientRegistry PeerId (Header TestBlock) TestBlock m
+  -> FetchClientRegistry PeerId (HeaderWithTime TestBlock) TestBlock m
   -> ChainSyncClientHandleCollection PeerId m TestBlock
   -> m ()
 startBlockFetchLogic enableChainSelStarvation registry tracer chainDb fetchClientRegistry csHandlesCol = do
@@ -132,10 +133,10 @@ startBlockFetchLogic enableChainSelStarvation registry tracer chainDb fetchClien
     decisionTracer = TraceOther . ("BlockFetchLogic | " ++) . show >$< tracer
 
 startKeepAliveThread ::
-     forall m peer blk.
+     forall m peer blk hdr.
      (Ord peer, IOLike m)
   => ResourceRegistry m
-  -> FetchClientRegistry peer (Header blk) blk m
+  -> FetchClientRegistry peer hdr blk m
   -> peer
   -> m ()
 startKeepAliveThread registry fetchClientRegistry peerId =
@@ -149,7 +150,7 @@ runBlockFetchClient ::
   -> PeerId
   -> BlockFetchTimeout
   -> StateViewTracers blk m
-  -> FetchClientRegistry PeerId (Header blk) blk m
+  -> FetchClientRegistry PeerId (HeaderWithTime blk) blk m
   -> ControlMessageSTM m
   -> Channel m (AnyMessage (BlockFetch blk (Point blk)))
      -- ^ Send and receive message via the given 'Channel'.

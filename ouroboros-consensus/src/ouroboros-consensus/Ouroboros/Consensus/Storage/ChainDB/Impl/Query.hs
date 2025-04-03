@@ -9,6 +9,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query (
     -- * Queries
     getBlockComponent
   , getCurrentChain
+  , getCurrentChainWithTime
   , getHeaderStateHistory
   , getIsFetched
   , getIsInvalidBlock
@@ -33,7 +34,8 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import           Ouroboros.Consensus.HeaderStateHistory
                      (HeaderStateHistory (..), mkHeaderStateWithTimeFromSummary)
-import           Ouroboros.Consensus.HeaderValidation (HasAnnTip)
+import           Ouroboros.Consensus.HeaderValidation (HasAnnTip,
+                     HeaderWithTime)
 import           Ouroboros.Consensus.Ledger.Abstract (IsLedger, LedgerState)
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Protocol.Abstract
@@ -79,7 +81,21 @@ getCurrentChain ::
   => ChainDbEnv m blk
   -> STM m (AnchoredFragment (Header blk))
 getCurrentChain CDB{..} =
-    AF.anchorNewest (unNonZero k) <$> readTVar cdbChain
+    AF.anchorNewest (unNonZero k) . icWithoutTime <$> readTVar cdbChain
+  where
+    SecurityParam k = configSecurityParam cdbTopLevelConfig
+
+-- | Same as 'getCurrentChain', /mutatis mutandi/.
+getCurrentChainWithTime ::
+     forall m blk.
+     ( IOLike m
+     , HasHeader (HeaderWithTime blk)
+     , ConsensusProtocol (BlockProtocol blk)
+     )
+  => ChainDbEnv m blk
+  -> STM m (AnchoredFragment (HeaderWithTime blk))
+getCurrentChainWithTime CDB{..} =
+    AF.anchorNewest (unNonZero k) . icWithTime <$> readTVar cdbChain
   where
     SecurityParam k = configSecurityParam cdbTopLevelConfig
 
@@ -136,7 +152,7 @@ getTipHeader ::
   => ChainDbEnv m blk
   -> m (Maybe (Header blk))
 getTipHeader CDB{..} = do
-    anchorOrHdr <- AF.head <$> atomically (readTVar cdbChain)
+    anchorOrHdr <- AF.head . icWithoutTime <$> atomically (readTVar cdbChain)
     case anchorOrHdr of
       Right hdr   -> return $ Just hdr
       Left anchor ->
@@ -155,7 +171,7 @@ getTipPoint ::
      forall m blk. (IOLike m, HasHeader (Header blk))
   => ChainDbEnv m blk -> STM m (Point blk)
 getTipPoint CDB{..} =
-    (castPoint . AF.headPoint) <$> readTVar cdbChain
+    (castPoint . AF.headPoint . icWithoutTime) <$> readTVar cdbChain
 
 getBlockComponent ::
      forall m blk b. IOLike m
@@ -218,7 +234,7 @@ getMaxSlotNo CDB{..} = do
     -- current chain), while the max slot of the VolatileDB will be 9.
     --
     -- Moreover, we have to look in 'ChainSelQueue' too.
-    curChainMaxSlotNo <- maxSlotNoFromWithOrigin . AF.headSlot
+    curChainMaxSlotNo <- maxSlotNoFromWithOrigin . AF.headSlot . icWithoutTime
                      <$> readTVar cdbChain
     volatileDbMaxSlotNo <- VolatileDB.getMaxSlotNo cdbVolatileDB
     queuedMaxSlotNo <- getMaxSlotNoChainSelQueue cdbChainSelQueue

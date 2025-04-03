@@ -1,4 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 
 -- | Utility functions on anchored fragments
 --
@@ -79,10 +81,15 @@ forksAtMostKBlocks k ours theirs = case ours `AF.intersect` theirs of
 -- these fragments intersect with our current chain, they must by transitivity
 -- also intersect each other.
 compareAnchoredFragments ::
-     forall blk. (BlockSupportsProtocol blk, HasCallStack)
+     forall blk h.
+     ( BlockSupportsProtocol blk
+     , HasCallStack
+     , GetHeader1 h
+     , HasHeader (h blk)
+     )
   => BlockConfig blk
-  -> AnchoredFragment (Header blk)
-  -> AnchoredFragment (Header blk)
+  -> AnchoredFragment (h blk)
+  -> AnchoredFragment (h blk)
   -> Ordering
 compareAnchoredFragments cfg frag1 frag2 =
     assertWithMsg (precondition frag1 frag2) $
@@ -98,19 +105,19 @@ compareAnchoredFragments cfg frag1 frag2 =
         -- fragments represent the same chain and are equally preferable. If
         -- not, the second chain is a strict extension of the first and is
         -- therefore strictly preferable.
-        if blockPoint tip' == AF.anchorToPoint anchor
+        if blockPoint tip' == AF.castPoint (AF.anchorToPoint anchor)
           then EQ
           else LT
       (_ :> tip, Empty anchor') ->
         -- This case is symmetric to the previous
-        if blockPoint tip == AF.anchorToPoint anchor'
+        if blockPoint tip == AF.castPoint (AF.anchorToPoint anchor')
           then EQ
           else GT
       (_ :> tip, _ :> tip') ->
         -- Case 4
         compare
-          (selectView cfg tip)
-          (selectView cfg tip')
+          (selectView cfg (getHeader1 tip ))
+          (selectView cfg (getHeader1 tip'))
 
 -- | Lift 'preferCandidate' to 'AnchoredFragment'
 --
@@ -123,28 +130,39 @@ compareAnchoredFragments cfg frag1 frag2 =
 -- from our tip, although the exact distance does not matter for
 -- 'compareAnchoredFragments').
 preferAnchoredCandidate ::
-     forall blk. (BlockSupportsProtocol blk, HasCallStack)
+     forall blk h h'.
+     ( BlockSupportsProtocol blk
+     , HasCallStack
+     , GetHeader1 h
+     , GetHeader1 h'
+     , HeaderHash (h blk) ~ HeaderHash (h' blk)
+     , HasHeader (h  blk)
+     , HasHeader (h' blk)
+     )
   => BlockConfig blk
-  -> AnchoredFragment (Header blk)      -- ^ Our chain
-  -> AnchoredFragment (Header blk)      -- ^ Candidate
+  -> AnchoredFragment (h  blk) -- ^ Our chain
+  -> AnchoredFragment (h' blk) -- ^ Candidate
   -> Bool
 preferAnchoredCandidate cfg ours cand =
     assertWithMsg (precondition ours cand) $
     case (ours, cand) of
       (_, Empty _) -> False
       (Empty ourAnchor, _ :> theirTip) ->
-        blockPoint theirTip /= AF.anchorToPoint ourAnchor
+        blockPoint theirTip /= castPoint (AF.anchorToPoint ourAnchor)
       (_ :> ourTip, _ :> theirTip) ->
         preferCandidate
           (projectChainOrderConfig cfg)
-          (selectView cfg ourTip)
-          (selectView cfg theirTip)
+          (selectView cfg (getHeader1 ourTip))
+          (selectView cfg (getHeader1 theirTip))
 
 -- For 'compareAnchoredFragment' and 'preferAnchoredCandidate'.
 precondition ::
-     GetHeader blk
-  => AnchoredFragment (Header blk)
-  -> AnchoredFragment (Header blk)
+     ( HeaderHash (h blk) ~ HeaderHash (h' blk)
+     , HasHeader (h  blk)
+     , HasHeader (h' blk)
+     )
+  => AnchoredFragment (h  blk)
+  -> AnchoredFragment (h' blk)
   -> Either String ()
 precondition frag1 frag2
   | not (AF.null frag1), not (AF.null frag2)
