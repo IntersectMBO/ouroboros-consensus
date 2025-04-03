@@ -2,6 +2,23 @@
 
 # Changelog entries
 
+<a id='changelog-0.24.0.0'></a>
+## 0.24.0.0 -- 2025-04-03
+
+### Non-Breaking
+
+- Define some functions in terms of SOP combinators leveraging the recent
+  simplification of `Index` in `sop-extras` package.
+
+### Breaking
+
+- Add method `blockQueryIsSupportedOnVersion` to `BlockSupportsLedgerQuery`.
+- Export new function `querySupportedVersions`.
+- Split out `ImmutableEraParams` so that the test blocks don't have to
+  instantiate the `SingleEraBlock` omnibus.
+- Remove the `NoThunks Bimap` orphan instance (it's now upstream in
+  the `resource-registry` library).
+
 <a id='changelog-0.23.0.0'></a>
 ## 0.23.0.0 -- 2025-03-25
 
