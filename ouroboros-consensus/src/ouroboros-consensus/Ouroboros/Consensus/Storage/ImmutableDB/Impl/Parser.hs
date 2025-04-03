@@ -161,9 +161,7 @@ parseChunkFile ccfg hasFS isNotCorrupt fsPath expectedChecksums k =
             , headerSize   = Secondary.HeaderSize   headerSize
             , checksum     = checksum
             , headerHash   = blockHash blk
-            , blockOrEBB   = case blockIsEBB blk of
-                Just epoch -> EBB epoch
-                Nothing    -> Block (blockSlot blk)
+            , entrySlot    = blockSlot blk
             }
         !blockSummary = BlockSummary {
               summaryEntry   = entry

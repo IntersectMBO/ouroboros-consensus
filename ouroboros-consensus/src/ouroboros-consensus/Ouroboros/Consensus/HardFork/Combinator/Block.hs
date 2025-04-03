@@ -68,12 +68,6 @@ instance CanHardFork xs => GetHeader (HardForkBlock xs) where
       matchesSingle :: GetHeader blk => Product Header I blk -> K Bool blk
       matchesSingle (Pair hdr (I blk)) = K (blockMatchesHeader hdr blk)
 
-  headerIsEBB =
-        hcollapse
-      . hcmap proxySingle (K . headerIsEBB)
-      . getOneEraHeader
-      . getHardForkHeader
-
 {-------------------------------------------------------------------------------
   HasHeader
 -------------------------------------------------------------------------------}
@@ -229,9 +223,6 @@ instance CanHardFork xs => BasicEnvelopeValidation (HardForkBlock xs) where
       case isNonEmpty (Proxy @xs) of
         ProofNonEmpty p _ -> minimumPossibleSlotNo p
 
-  -- TODO: If the block is from a different era as the current tip, we just
-  -- expect @succ b@. This may not be sufficient: if we ever transition /to/
-  -- an era with EBBs, this is not correct.
   expectedNextBlockNo _ (OneEraTipInfo oldTip) (OneEraTipInfo newBlock) b =
       case Match.matchNS oldTip newBlock of
         Right matched  -> hcollapse $ hcmap proxySingle aux matched
@@ -242,20 +233,6 @@ instance CanHardFork xs => BasicEnvelopeValidation (HardForkBlock xs) where
           -> K BlockNo blk
       aux (Pair (WrapTipInfo old) (WrapTipInfo new)) = K $
           expectedNextBlockNo (Proxy @blk) old new b
-
-  -- TODO: If the block is from a different era as the current tip, we just
-  -- expect @succ s@. This may not be sufficient: if we ever transition /to/
-  -- an era with EBBs, this is not correct.
-  minimumNextSlotNo _ (OneEraTipInfo oldTip) (OneEraTipInfo newBlock) s =
-      case Match.matchNS oldTip newBlock of
-        Right matched  -> hcollapse $ hcmap proxySingle aux matched
-        Left _mismatch -> succ s
-    where
-      aux :: forall blk. SingleEraBlock blk
-          => Product WrapTipInfo WrapTipInfo blk
-          -> K SlotNo blk
-      aux (Pair (WrapTipInfo old) (WrapTipInfo new)) = K $
-          minimumNextSlotNo (Proxy @blk) old new s
 
 {-------------------------------------------------------------------------------
   Other instances (primarily for the benefit of tests)

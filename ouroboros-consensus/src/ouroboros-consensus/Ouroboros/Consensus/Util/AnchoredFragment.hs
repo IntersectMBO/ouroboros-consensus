@@ -36,17 +36,6 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 --
 -- A fragment with a head is always \"greater\" than one without. When both
 -- fragments have no head (i.e. are empty), they are 'EQ'.
---
--- Note that an EBB can share its @BlockNo@ with another regular block. If
--- such an EBB is the head of one fragment and the regular block with the same
--- @BlockNo@ is the head of the other fragment, then this function will say
--- they are 'EQ', while in fact one fragment should be preferred over the
--- other.
---
--- This is not a big deal as we won't be seeing new EBBs, so they will not be
--- the head of a fragment very often anyway, only when catching up. As soon as
--- a new block/header is added to the fragment, the right decision will be
--- made again ('GT' or 'LT').
 compareHeadBlockNo ::
      HasHeader b
   => AnchoredFragment b

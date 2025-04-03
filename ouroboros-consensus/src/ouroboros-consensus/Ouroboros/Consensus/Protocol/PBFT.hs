@@ -38,8 +38,7 @@ module Ouroboros.Consensus.Protocol.PBFT (
   , PBftMockCrypto
   , PBftMockVerKeyHash (..)
   , PBftValidateView (..)
-  , pbftValidateBoundary
-  , pbftValidateRegular
+  , pbftValidate
     -- * CannotForge
   , PBftCannotForge (..)
   , pbftCheckCanForge
@@ -99,47 +98,31 @@ instance (PBftCrypto c, Typeable toSign) => NoThunks (PBftFields c toSign)
 
 -- | Part of the header that we validate
 data PBftValidateView c =
-     -- | Regular block
+     -- | Blocks are signed, and so we need to validate them.
      --
-     -- Regular blocks are signed, and so we need to validate them.
      -- We also need to know the slot number of the block
      forall signed. Signable (PBftDSIGN c) signed
-                 => PBftValidateRegular
+                 => PBftValidate
                       (PBftFields c signed)
                       signed
                       (ContextDSIGN (PBftDSIGN c))
 
-     -- | Boundary block (EBB)
-     --
-     -- EBBs are not signed and they do not affect the consensus state.
-   | PBftValidateBoundary
-
 -- | Convenience constructor for 'PBftValidateView' for regular blocks
-pbftValidateRegular :: ( SignedHeader hdr
+pbftValidate :: ( SignedHeader hdr
                        , Signable (PBftDSIGN c) (Signed hdr)
                        )
                     => ContextDSIGN (PBftDSIGN c)
                     -> (hdr -> PBftFields c (Signed hdr))
                     -> (hdr -> PBftValidateView c)
-pbftValidateRegular contextDSIGN getFields hdr =
-    PBftValidateRegular
+pbftValidate contextDSIGN getFields hdr =
+    PBftValidate
       (getFields hdr)
       (headerSigned hdr)
       contextDSIGN
 
--- | Convenience constructor for 'PBftValidateView' for boundary blocks
-pbftValidateBoundary :: hdr -> PBftValidateView c
-pbftValidateBoundary _hdr = PBftValidateBoundary
-
 -- | Part of the header required for chain selection
---
--- EBBs share a block number with regular blocks, and so for chain selection
--- we need to know if a block is an EBB or not (because a chain ending on an
--- EBB with a particular block number is longer than a chain on a regular
--- block with that same block number).
 data PBftSelectView = PBftSelectView {
       pbftSelectViewBlockNo :: BlockNo
-    , pbftSelectViewIsEBB   :: IsEBB
     }
   deriving stock (Show, Eq, Generic)
   deriving anyclass (NoThunks)
@@ -147,26 +130,13 @@ data PBftSelectView = PBftSelectView {
 
 mkPBftSelectView :: GetHeader blk => Header blk -> PBftSelectView
 mkPBftSelectView hdr = PBftSelectView {
-      pbftSelectViewBlockNo = blockNo       hdr
-    , pbftSelectViewIsEBB   = headerToIsEBB hdr
+      pbftSelectViewBlockNo = blockNo hdr
     }
 
 instance Ord PBftSelectView where
-  compare (PBftSelectView lBlockNo lIsEBB) (PBftSelectView rBlockNo rIsEBB) =
-      mconcat [
+  compare (PBftSelectView lBlockNo) (PBftSelectView rBlockNo) =
           -- Prefer the highest block number, as it is a proxy for chain length
           lBlockNo `compare` rBlockNo
-
-          -- If the block numbers are the same, check if one of them is an EBB.
-          -- An EBB has the same block number as the block before it, so the
-          -- chain ending with an EBB is actually longer than the one ending
-          -- with a regular block.
-        , score lIsEBB `compare` score rIsEBB
-        ]
-     where
-       score :: IsEBB -> Int
-       score IsEBB    = 1
-       score IsNotEBB = 0
 
 {-------------------------------------------------------------------------------
   Block forging
@@ -327,9 +297,7 @@ instance PBftCrypto c => ConsensusProtocol (PBft c) where
                       slot
                       (TickedPBftState (PBftLedgerView dms) state) =
       case toValidate of
-        PBftValidateBoundary ->
-          return state
-        PBftValidateRegular PBftFields{..} signed contextDSIGN -> do
+        PBftValidate PBftFields{..} signed contextDSIGN -> do
           -- Check that the issuer signature verifies, and that it's a delegate of a
           -- genesis key, and that genesis key hasn't voted too many times.
           case verifySignedDSIGN
@@ -340,10 +308,7 @@ instance PBftCrypto c => ConsensusProtocol (PBft c) where
             Right () -> return ()
             Left err -> throwError $ PBftInvalidSignature (Text.pack err)
 
-          -- FIXME confirm that non-strict inequality is ok in general.
-          -- It's here because EBBs have the same slot as the first block of their
-          -- epoch.
-          unless (NotOrigin slot >= S.lastSignedSlot state)
+          unless (NotOrigin slot > S.lastSignedSlot state)
             $ throwError PBftInvalidSlot
 
           case Bimap.lookupR (hashVerKey pbftIssuer) dms of
@@ -364,8 +329,7 @@ instance PBftCrypto c => ConsensusProtocol (PBft c) where
                         slot
                         (TickedPBftState (PBftLedgerView dms) state) =
       case toValidate of
-        PBftValidateBoundary -> state
-        PBftValidateRegular PBftFields{pbftIssuer} _ _ ->
+        PBftValidate PBftFields{pbftIssuer} _ _ ->
           case Bimap.lookupR (hashVerKey pbftIssuer) dms of
             Nothing ->
               error $ show $ PBftNotGenesisDelegate
