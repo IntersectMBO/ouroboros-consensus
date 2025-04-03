@@ -1,0 +1,5 @@
+query = [8]
+
+result = conway.epochState
+
+;# import conway as conway
