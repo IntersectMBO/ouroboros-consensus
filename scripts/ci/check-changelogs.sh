@@ -70,9 +70,10 @@ if [ "${RELEASE_LABEL}" = "true" ]; then
   echo "This PR is said to be a release. Checking that changelog.d directories are in fact empty"
   for p in "${packages[@]}"; do
     if [ 1 = $(ls -1 $p/changelog.d | wc -l) ]; then
-      printf "\t- %s OK" "$p"
+      printf "\t- %s OK\n" "$p"
     else
-      printf "\t- %s ERROR: There are fragments remaining in changelog.d!"
+      printf "\t- %s ERROR: There are fragments remaining in changelog.d:" "$p"
+      ls -1 $p/changelog.d
       exit 1
     fi
   done
