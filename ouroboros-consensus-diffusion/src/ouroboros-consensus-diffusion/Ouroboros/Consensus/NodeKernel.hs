@@ -49,7 +49,6 @@ import           Data.Hashable (Hashable)
 import           Data.List.NonEmpty (NonEmpty)
 import           Data.Maybe (isJust, mapMaybe)
 import           Data.Proxy
-import qualified Data.Set as Set
 import qualified Data.Text as Text
 import           Data.Void (Void)
 import           Ouroboros.Consensus.Block hiding (blockMatchesHeader)
@@ -101,7 +100,8 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (castTip, tipFromHeader)
 import           Ouroboros.Network.BlockFetch
-import qualified Ouroboros.Network.BlockFetch.ClientState as BF
+import           Ouroboros.Network.BlockFetch.ClientState
+                     (mapTraceFetchClientState)
 import           Ouroboros.Network.BlockFetch.Decision.Trace
                      (TraceDecisionEvent (..))
 import           Ouroboros.Network.NodeToNode (ConnectionId,
@@ -365,40 +365,6 @@ castTraceFetchClientState ::
      forall blk. HasHeader (Header blk)
   => TraceFetchClientState (HeaderWithTime blk) -> TraceFetchClientState (Header blk)
 castTraceFetchClientState = mapTraceFetchClientState hwtHeader
-
-mapTraceFetchClientState ::
-     (HeaderHash h1 ~ HeaderHash h2, HasHeader h2)
-  => (h1 -> h2) -> TraceFetchClientState h1 -> TraceFetchClientState h2
-mapTraceFetchClientState fheader = \case
-    AddedFetchRequest request inflight inflightLimits status -> AddedFetchRequest (frequest request) (finflight inflight) inflightLimits (fstatus status)
-
-    AcknowledgedFetchRequest request -> AcknowledgedFetchRequest (frequest request)
-
-    SendFetchRequest headers gsv -> SendFetchRequest (AF.mapAnchoredFragment fheader headers) gsv
-
-    StartedFetchBatch   range inflight inflightLimits status           -> StartedFetchBatch   (frange range) (finflight inflight) inflightLimits (fstatus status)
-    CompletedBlockFetch point inflight inflightLimits status time size -> CompletedBlockFetch (fpoint point) (finflight inflight) inflightLimits (fstatus status) time size
-    CompletedFetchBatch range inflight inflightLimits status           -> CompletedFetchBatch (frange range) (finflight inflight) inflightLimits (fstatus status)
-    RejectedFetchBatch  range inflight inflightLimits status           -> RejectedFetchBatch  (frange range) (finflight inflight) inflightLimits (fstatus status)
-
-    ClientTerminating i -> ClientTerminating i
-  where
-    frequest (BF.FetchRequest headers) = BF.FetchRequest $ map (AF.mapAnchoredFragment fheader) headers
-
-    finflight inflight = inflight { BF.peerFetchBlocksInFlight = fpoints (BF.peerFetchBlocksInFlight inflight) }
-
-    fstatus = \case
-      BF.PeerFetchStatusShutdown          -> BF.PeerFetchStatusShutdown
-      BF.PeerFetchStatusStarting          -> BF.PeerFetchStatusStarting
-      BF.PeerFetchStatusAberrant          -> BF.PeerFetchStatusAberrant
-      BF.PeerFetchStatusBusy              -> BF.PeerFetchStatusBusy
-      BF.PeerFetchStatusReady points idle -> BF.PeerFetchStatusReady (fpoints points) idle
-
-    fpoints = Set.mapMonotonic fpoint
-
-    frange (BF.ChainRange p1 p2) = BF.ChainRange (fpoint p1) (fpoint p2)
-
-    fpoint = castPoint
 
 {-------------------------------------------------------------------------------
   Internal node components
