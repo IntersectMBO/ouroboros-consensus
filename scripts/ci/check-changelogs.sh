@@ -72,7 +72,7 @@ if [ "${RELEASE_LABEL}" = "true" ]; then
     if [ 1 = $(ls -1 $p/changelog.d | wc -l) ]; then
       printf "\t- %s OK\n" "$p"
     else
-      printf "\t- %s ERROR: There are fragments remaining in changelog.d:" "$p"
+      printf "\t- %s ERROR: There are fragments remaining in changelog.d:\n" "$p"
       ls -1 $p/changelog.d
       exit 1
     fi

@@ -3,7 +3,7 @@
 # Changelog entries
 
 <a id='changelog-0.3.0.0'></a>
-## 0.3.0.0 -- 2025-04-02
+## 0.3.0.0 -- 2025-04-03
 
 ### Breaking
 

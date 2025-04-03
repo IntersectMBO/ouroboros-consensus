@@ -3,12 +3,13 @@
 # Changelog entries
 
 <a id='changelog-0.23.0.0'></a>
-## 0.23.0.0 -- 2025-04-02
+## 0.23.0.0 -- 2025-04-03
 
 ### Breaking
 
 - Define `blockQueryIsSupportedOnVersion` for Byron and Shelley.
   - For Shelley, this is just a relocation of the now gone `querySupportedVersion` function.
+- Update now that `ImmutableEraParams` was split out
 
 <a id='changelog-0.22.0.0'></a>
 ## 0.22.0.0 -- 2025-03-25
