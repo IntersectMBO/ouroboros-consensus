@@ -5,7 +5,6 @@
 
 module Data.SOP.Functors (
     Flip (..)
-  , K2 (..)
   , Product2 (..)
   , snd2
   ) where
@@ -26,6 +25,3 @@ snd2 (Pair2 _ g) = g
 type Flip :: (x -> y -> Type) -> y -> x -> Type
 newtype Flip f x y = Flip {unFlip :: f y x}
   deriving (Eq, Generic, NoThunks, Show)
-
-type K2 :: Type -> x -> y -> Type
-newtype K2 a b c = K2 a

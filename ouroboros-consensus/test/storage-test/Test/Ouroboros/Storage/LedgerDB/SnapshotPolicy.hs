@@ -1,10 +1,9 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE NumericUnderscores #-}
-{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE TypeApplications #-}
 
-module Test.Ouroboros.Storage.LedgerDB.DiskPolicy (tests) where
+module Test.Ouroboros.Storage.LedgerDB.SnapshotPolicy (tests) where
 
 import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Cardano.Ledger.BaseTypes.NonZero (nonZero)
@@ -12,12 +11,7 @@ import           Data.Time.Clock (DiffTime, diffTimeToPicoseconds,
                      picosecondsToDiffTime, secondsToDiffTime)
 import           Data.Word
 import           Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
-import           Ouroboros.Consensus.Storage.LedgerDB (DiskPolicy (..),
-                     NumOfDiskSnapshots (..), SnapshotInterval (..),
-                     TimeSinceLast (..), mkDiskPolicy)
-import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
-                     (DiskPolicyArgs (DiskPolicyArgs),
-                     pattern DoDiskSnapshotChecksum)
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import           Test.Cardano.Ledger.Core.Arbitrary ()
 import           Test.QuickCheck
 import           Test.Tasty
@@ -25,8 +19,8 @@ import           Test.Tasty.QuickCheck
 
 tests :: TestTree
 tests =
-    testGroup "DiskPolicy" [
-        testGroup "defaultDiskPolicy" [
+    testGroup "SnapshotPolicy" [
+        testGroup "defaultSnapshotPolicy" [
             testProperty "onDiskNumSnapshots"       prop_onDiskNumSnapshots
           , testProperty "onDiskShouldTakeSnapshot" prop_onDiskShouldTakeSnapshot
           ]
@@ -40,26 +34,27 @@ tests =
 data TestSetup = TestSetup {
     -- | argument to 'onDiskShouldTakeSnapshot'
     tsBlocksSince      :: Word64
-    -- | argument to 'defaultDiskPolicy'
+    -- | argument to 'defaultSnapshotPolicy'
   , tsK                :: SecurityParam
-    -- | argument to 'defaultDiskPolicy'
+    -- | argument to 'defaultSnapshotPolicy'
   , tsSnapshotInterval :: SnapshotInterval
     -- | argument to 'onDiskShouldTakeSnapshot'
-  , tsTimeSince        :: TimeSinceLast DiffTime
+  , tsTimeSince        :: Maybe DiffTime
   }
   deriving (Show)
 
--- | The represented default 'DiskPolicy'
-toDiskPolicy :: TestSetup -> DiskPolicy
-toDiskPolicy ts = mkDiskPolicy (tsK ts) diskPolicyArgs
+
+-- | The represented default 'SnapshotPolicy'
+toSnapshotPolicy :: TestSetup -> SnapshotPolicy
+toSnapshotPolicy ts = defaultSnapshotPolicy (tsK ts) snapshotPolicyArgs
   where
-    diskPolicyArgs =
-      DiskPolicyArgs (tsSnapshotInterval ts) DefaultNumOfDiskSnapshots DoDiskSnapshotChecksum
+    snapshotPolicyArgs =
+      SnapshotPolicyArgs (tsSnapshotInterval ts) DefaultNumOfDiskSnapshots DoDiskSnapshotChecksum
 
 -- | The result of the represented call to 'onDiskShouldTakeSnapshot'
 shouldTakeSnapshot :: TestSetup -> Bool
 shouldTakeSnapshot ts = onDiskShouldTakeSnapshot
-    (toDiskPolicy ts)
+    (toSnapshotPolicy ts)
     (tsTimeSince ts)
     (tsBlocksSince ts)
 
@@ -126,7 +121,7 @@ instance Arbitrary TestSetup where
           tsBlocksSince = b
         , tsK           = SecurityParam k
         , tsSnapshotInterval
-        , tsTimeSince   = maybe NoSnapshotTakenYet TimeSinceLast t
+        , tsTimeSince   = t
         }
     where
       -- 100 years seems a reasonable upper bound for consideration
@@ -164,10 +159,11 @@ instance Arbitrary TestSetup where
         . diffTimeToPicoseconds
 
       shrinkTSL shnk = \case
-        NoSnapshotTakenYet -> []
-        TimeSinceLast    d -> NoSnapshotTakenYet : fmap TimeSinceLast (shnk d)
+        Nothing -> []
+        Just  d -> Nothing : fmap Just (shnk d)
 
       shrinkSnapshotInterval = \case
+        DisableSnapshots            -> []
         DefaultSnapshotInterval     -> []
         RequestedSnapshotInterval d ->
               DefaultSnapshotInterval
@@ -177,12 +173,12 @@ instance Arbitrary TestSetup where
   Properties
 -------------------------------------------------------------------------------}
 
--- | Check 'onDiskNumSnapshots' of 'defaultDiskPolicy'
+-- | Check 'onDiskNumSnapshots' of 'defaultSnapshotPolicy'
 prop_onDiskNumSnapshots :: TestSetup -> Property
 prop_onDiskNumSnapshots ts =
     -- 'TestSetup' has more information than we need for this property
       counterexample "should always be 2"
-    $ onDiskNumSnapshots (toDiskPolicy ts) === 2
+    $ onDiskNumSnapshots (toSnapshotPolicy ts) === 2
 
 minBlocksBeforeSnapshot :: Word64
 minBlocksBeforeSnapshot = 50_000
@@ -190,16 +186,16 @@ minBlocksBeforeSnapshot = 50_000
 minSecondsBeforeSnapshot :: Integer
 minSecondsBeforeSnapshot = 6 * 60
 
--- | Check 'onDiskShouldTakeSnapshot' of 'defaultDiskPolicy'
+-- | Check 'onDiskShouldTakeSnapshot' of 'defaultSnapshotPolicy'
 prop_onDiskShouldTakeSnapshot :: TestSetup -> Property
 prop_onDiskShouldTakeSnapshot ts =
     counterexample ("decided to take snapshot? " ++ show (shouldTakeSnapshot ts)) $
     case t of
-      NoSnapshotTakenYet ->
+      Nothing ->
             counterexample "haven't taken a snapshot yet"
           $ counterexample "should take snapshot if it processed at least k blocks"
           $ shouldTakeSnapshot ts === (blocksSinceLast >= unNonZero k)
-      TimeSinceLast    timeSinceLast ->
+      Just timeSinceLast ->
             counterexample "have previously taken a snapshot"
           $ isDisjunctionOf (shouldTakeSnapshot ts `named` "the decision")
               [ systemChecksHowMuchTimeHasPassed timeSinceLast
@@ -227,6 +223,8 @@ prop_onDiskShouldTakeSnapshot ts =
           RequestedSnapshotInterval interval ->
               (timeSinceLast >= interval) `named`
                 "time since last is greater then explicitly requested interval"
+
+          DisableSnapshots -> error "Will never call this test with this value"
 
     systemChecksHowManyBlocksWereProcessed :: DiffTime -> NamedValue Bool
     systemChecksHowManyBlocksWereProcessed timeSinceLast =

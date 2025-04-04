@@ -43,11 +43,11 @@ As before, we require a few language extensions:
 > {-# LANGUAGE TypeFamilies               #-}
 > {-# LANGUAGE DerivingVia                #-}
 > {-# LANGUAGE DataKinds                  #-}
+> {-# LANGUAGE DeriveAnyClass             #-}
 > {-# LANGUAGE DeriveGeneric              #-}
 > {-# LANGUAGE FlexibleInstances          #-}
 > {-# LANGUAGE MultiParamTypeClasses      #-}
 > {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-> {-# LANGUAGE DeriveAnyClass #-}
 > {-# LANGUAGE StandaloneDeriving         #-}
 
 > module Ouroboros.Consensus.Tutorial.WithEpoch () where
@@ -56,8 +56,8 @@ And imports, of course:
 
 > import Control.Monad ()
 > import Control.Monad.Except (MonadError (throwError))
-> import Data.Word (Word64)
 > import Data.Void (Void, absurd)
+> import Data.Word (Word64)
 > import GHC.Generics (Generic)
 > import NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
 > import Data.Hashable (Hashable (hash))
@@ -74,8 +74,8 @@ And imports, of course:
 >   (BlockSupportsProtocol (..))
 > import Ouroboros.Consensus.Protocol.Abstract
 >   (ConsensusConfig, SecurityParam, ConsensusProtocol (..))
->
-> import Ouroboros.Consensus.Ticked (Ticked)
+
+> import Ouroboros.Consensus.Ticked (Ticked, Ticked)
 > import Ouroboros.Consensus.Ledger.Abstract
 >   (LedgerState, LedgerCfg, GetTip, LedgerResult (..), ApplyBlock (..),
 >    UpdateLedger, IsLedger (..), defaultApplyBlockLedgerResult,
@@ -84,13 +84,16 @@ And imports, of course:
 > import Ouroboros.Consensus.Ledger.SupportsMempool ()
 > import Ouroboros.Consensus.Ledger.SupportsProtocol
 >   (LedgerSupportsProtocol (..))
->
+
 > import Ouroboros.Consensus.HeaderValidation
 >   (ValidateEnvelope, BasicEnvelopeValidation, HasAnnTip)
 > import Ouroboros.Consensus.Forecast
 >   (Forecast (..), OutsideForecastRange (..))
 > import Ouroboros.Consensus.Ledger.Basics (GetTip(..))
+> import Ouroboros.Consensus.Ledger.Tables
 
+> import Ouroboros.Consensus.Storage.LedgerDB
+> import Ouroboros.Consensus.Util.IndexedMemPack
 
 Epochs
 ------
@@ -237,10 +240,10 @@ As before, we to implement a few type families to fully specify the header -
 
 > instance GetHeader BlockD where
 >   getHeader          = bd_header
->
+
 >   blockMatchesHeader hdr blk =
 >     hbd_Hash hdr == computeBlockHash blk
->
+
 >   headerIsEBB      _ = Nothing
 
 > instance GetPrevHash BlockD where
@@ -296,7 +299,7 @@ corresponding to `BlockD` needs to hold snapshots of the count at the last two
 epoch boundaries - this is the `lsbd_snapshot1` and `lsbd_snapshot2` fields
 below:
 
-> data instance LedgerState BlockD =
+> data instance LedgerState BlockD mk =
 >   LedgerD
 >     { lsbd_tip :: Point BlockD    -- ^ Point of the last applied block.
 >                                   --   (Point is header hash and slot no.)
@@ -328,9 +331,9 @@ Ticking
 `LedgerState BlockD` also needs a corresponding `Ticked` instance which is still
 very simple:
 
-> newtype instance Ticked (LedgerState BlockD) =
+> newtype instance Ticked (LedgerState BlockD) mk =
 >   TickedLedgerStateD {
->     unTickedLedgerStateD :: LedgerState BlockD
+>     unTickedLedgerStateD :: LedgerState BlockD mk
 >   }
 >   deriving stock (Show, Eq, Generic)
 >   deriving newtype (NoThunks, Serialise)
@@ -343,7 +346,7 @@ computing the `Ticked (LedgerState BlockD)` resulting from a starting
 intervening blocks are applied:
 
 > tickLedgerStateD ::
->   SlotNo -> LedgerState BlockD -> Ticked (LedgerState BlockD)
+>   SlotNo -> LedgerState BlockD mk -> Ticked (LedgerState BlockD) mk
 > tickLedgerStateD newSlot ldgrSt =
 >   TickedLedgerStateD $
 >     if isNewEpoch then
@@ -355,7 +358,7 @@ intervening blocks are applied:
 >             }
 >     else
 >       ldgrSt
->
+
 >   where
 >   isNewEpoch =
 >     case compare
@@ -376,10 +379,9 @@ We can now use `tickLedgerStateD` to instantiate `IsLedger`:
 >   type instance LedgerErr (LedgerState BlockD) = Void
 >   type instance AuxLedgerEvent (LedgerState BlockD) = ()
 >
-
 >   applyChainTickLedgerResult _events _cfg slot ldgrSt =
 >     LedgerResult { lrEvents = []
->                  , lrResult = tickLedgerStateD slot ldgrSt
+>                  , lrResult = tickLedgerStateD slot $ convertMapKind ldgrSt
 >                  }
 
 `UpdateLedger` is necessary but its implementation is always empty:
@@ -392,7 +394,7 @@ Applying Blocks
 Applying a `BlockD` to a `Ticked (LedgerState BlockD)` is (again) the result of
 applying each individual transaction - exactly as it was in for `BlockC`:
 
-> applyBlockTo :: BlockD -> Ticked (LedgerState BlockD) -> LedgerState BlockD
+> applyBlockTo :: BlockD -> Ticked (LedgerState BlockD) mk -> LedgerState BlockD mk
 > applyBlockTo block tickedLedgerState =
 >   ledgerState { lsbd_tip = blockPoint block
 >               , lsbd_count = lsbc_count'
@@ -407,12 +409,14 @@ applying each individual transaction - exactly as it was in for `BlockC`:
 
 > instance ApplyBlock (LedgerState BlockD) BlockD where
 >   applyBlockLedgerResultWithValidation _validation _events _ldgrCfg b tickedLdgrSt =
->     pure LedgerResult { lrResult = b `applyBlockTo` tickedLdgrSt
+>     pure LedgerResult { lrResult = convertMapKind $ b `applyBlockTo` tickedLdgrSt
 >                       , lrEvents = []
 >                       }
 >
 >   applyBlockLedgerResult = defaultApplyBlockLedgerResult
 >   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult absurd
+>
+>   getBlockKeySets = const trivialLedgerTables
 
 Note that prior to `applyBlockLedgerResult` being invoked, the calling code will
 have already established that the header is valid and that the header matches
@@ -455,7 +459,7 @@ instance of the `ConsensusProtocol` should be running as:
 >   PrtclD_Config
 >     { ccpd_securityParam :: SecurityParam  -- ^ i.e., 'k'
 >     , ccpd_mbCanBeLeader :: Maybe PrtclD_CanBeLeader
->
+
 >       -- ^ To lead, a node must have a 'ccpd_mbCanBeLeader' equal to
 >       -- `Just (PrtclD_CanBeLeader nodeid)`.
 >       -- We expect this value would be extracted from a config file.
@@ -514,24 +518,24 @@ Now we can instantiate `ConsensusProtocol PrtclD` proper with the types and
 functions defined above:
 
 > instance ConsensusProtocol PrtclD where
->
+
 >   type ChainDepState PrtclD = ChainDepStateD
 >   type IsLeader PrtclD = PrtclD_IsLeader
 >   type CanBeLeader PrtclD = PrtclD_CanBeLeader
->
+
 >   -- | View on a block header required for chain selection.  Here, BlockNo is
 >   --   sufficient. (BlockNo is also the default type for this type family.)
 >   type SelectView PrtclD = BlockNo
->
+
 >   -- | View on the ledger required by the protocol
 >   type LedgerView PrtclD = LedgerViewD
->
+
 >   -- | View on a block header required for header validation
 >   type ValidateView  PrtclD = NodeId  -- need this for the leader check
 >                                       -- currently not doing other checks
->
+
 >   type ValidationErr PrtclD = String
->
+
 >   -- | checkIsLeader - Am I the leader this slot?
 >   checkIsLeader cfg _cbl slot tcds =
 >     case ccpd_mbCanBeLeader cfg of
@@ -539,23 +543,23 @@ functions defined above:
 >         -- not providing any cryptographic proof
 >         | isLeader nodeId slot (tickedChainDepLV tcds) -> Just PrtclD_IsLeader
 >       _                             -> Nothing
->
+
 >   protocolSecurityParam = ccpd_securityParam
->
+
 >   tickChainDepState _cfg lv _slot _cds = TickedChainDepStateD lv
->
+
 >   -- | apply the header (hdrView) and do a header check.
 >   --
 >   -- Here we check the block's claim to lead the slot (though in Protocol D,
 >   -- this doesn't give us too much confidence, as there is nothing that
 >   -- precludes a node from masquerading as any other node).
->
+
 >   updateChainDepState _cfg hdrView slot tcds =
 >     if isLeader hdrView slot (tickedChainDepLV tcds) then
 >       return ChainDepStateD
 >     else
 >       throwError $ "leader check failed: " ++ show (hdrView,slot)
->
+
 >   reupdateChainDepState _ _ _ _ = ChainDepStateD
 
 Integration
@@ -570,7 +574,7 @@ from the block header, and `selectView` projecting out the block number:
 
 > instance BlockSupportsProtocol BlockD where
 >   validateView _bcfg hdr = hbd_nodeId hdr
->
+
 >   selectView _bcfg hdr = blockNo hdr
 
 All that remains is to establish `PrtclD` as the protocol for
@@ -591,7 +595,7 @@ ledger view: (1) the slot (`for` in the code below) is in the current epoch and
 >   protocolLedgerView _ldgrCfg (TickedLedgerStateD ldgrSt) =
 >     LVD $ lsbd_snapshot2 ldgrSt
 >       -- note that we use the snapshot from 2 epochs ago.
->
+
 >   -- | Borrowing somewhat from Ouroboros/Consensus/Byron/Ledger/Ledger.hs
 >   ledgerViewForecastAt _lccf ldgrSt =
 >     Forecast { forecastAt = at
@@ -618,12 +622,12 @@ ledger view: (1) the slot (`for` in the code below) is in the current epoch and
 >                            -- we can forecast into the following epoch because
 >                            -- we have the snapshot from 1 epoch ago.
 >              }
->
+
 >     where
 >     -- | the current slot that the ledger reflects
 >     at :: WithOrigin SlotNo
 >     at = pointSlot $ lsbd_tip ldgrSt
->
+
 >     -- | 'maxFor' is the "exclusive upper bound on the range of the forecast"
 >     -- (the name "max" does seem wrong, but we are following suit with the names
 >     -- and terminology in the 'Ouroboros.Consensus.Forecast' module)
@@ -666,3 +670,28 @@ involving `BlockC`:
 While this is a large ecosystem of interrelated typeclasses and families, the
 overall organization of things is such that Haskell's type checking can help
 guide the implementation.
+
+Appendix: UTxO-HD features
+==========================
+
+For reference on these instances and their meaning, please see the appendix in
+[the Simple tutorial](./Simple.lhs).
+
+> type instance TxIn  (LedgerState BlockD) = Void
+> type instance TxOut (LedgerState BlockD) = Void
+
+> instance LedgerTablesAreTrivial (LedgerState BlockD) where
+>   convertMapKind (LedgerD x y z z') = LedgerD x y z z'
+> instance LedgerTablesAreTrivial (Ticked (LedgerState BlockD)) where
+>   convertMapKind (TickedLedgerStateD x) =
+>       TickedLedgerStateD (convertMapKind x)
+> deriving via TrivialLedgerTables (LedgerState BlockD)
+>     instance HasLedgerTables (LedgerState BlockD)
+> deriving via TrivialLedgerTables (Ticked (LedgerState BlockD))
+>     instance HasLedgerTables (Ticked (LedgerState BlockD))
+> deriving via Void
+>     instance IndexedMemPack (LedgerState BlockD EmptyMK) Void
+> deriving via TrivialLedgerTables (LedgerState BlockD)
+>     instance CanStowLedgerTables (LedgerState BlockD)
+> deriving via TrivialLedgerTables (LedgerState BlockD)
+>     instance CanUpgradeLedgerTables (LedgerState BlockD)

@@ -28,6 +28,7 @@ import           Cardano.Ledger.BaseTypes (unNonZero)
 import           GHC.Stack
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Storage.ChainDB.API (LoE (..),
                      StreamFrom (..), StreamTo (..))
 import qualified Ouroboros.Consensus.Util.AnchoredFragment as AF
@@ -50,7 +51,7 @@ tests = testGroup "Model" [
     ]
 
 addBlocks :: LoE () -> [TestBlock] -> M.Model TestBlock
-addBlocks loe blks = M.addBlocks cfg blks (M.empty loe testInitExtLedger)
+addBlocks loe blks = M.addBlocks cfg blks (M.empty loe (convertMapKind testInitExtLedger))
   where
     cfg = singleNodeTestConfig
 

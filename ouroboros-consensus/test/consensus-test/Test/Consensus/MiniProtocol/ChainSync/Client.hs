@@ -750,10 +750,10 @@ computePastLedger ::
      TopLevelConfig TestBlock
   -> Point TestBlock
   -> Chain TestBlock
-  -> Maybe (ExtLedgerState TestBlock)
+  -> Maybe (ExtLedgerState TestBlock EmptyMK)
 computePastLedger cfg pt chain
     | pt `elem` validPoints
-    = Just $ go testInitExtLedger (Chain.toOldestFirst chain)
+    = Just $ go (convertMapKind testInitExtLedger) (Chain.toOldestFirst chain)
     | otherwise
     = Nothing
   where
@@ -773,12 +773,12 @@ computePastLedger cfg pt chain
     -- matching @pt@, after which we return the resulting ledger.
     --
     -- PRECONDITION: @pt@ is in the list of blocks or genesis.
-    go :: ExtLedgerState TestBlock -> [TestBlock] -> ExtLedgerState TestBlock
+    go :: ExtLedgerState TestBlock EmptyMK -> [TestBlock] -> ExtLedgerState TestBlock EmptyMK
     go !st blks
         | castPoint (getTip st) == pt
         = st
         | blk:blks' <- blks
-        = go (tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk st) blks'
+        = go (convertMapKind $ tickThenReapply OmitLedgerEvents (ExtLedgerCfg cfg) blk (convertMapKind st)) blks'
         | otherwise
         = error "point not in the list of blocks"
 
@@ -789,7 +789,7 @@ computeHeaderStateHistory ::
   -> HeaderStateHistory TestBlock
 computeHeaderStateHistory cfg =
       HeaderStateHistory.trim (fromIntegral k)
-    . HeaderStateHistory.fromChain cfg testInitExtLedger
+    . HeaderStateHistory.fromChain cfg (convertMapKind testInitExtLedger)
   where
     k = unNonZero $ maxRollbacks $ configSecurityParam cfg
 

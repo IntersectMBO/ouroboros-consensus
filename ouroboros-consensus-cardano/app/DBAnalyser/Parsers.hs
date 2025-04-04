@@ -1,7 +1,5 @@
-{-# LANGUAGE ApplicativeDo      #-}
-{-# LANGUAGE CPP                #-}
-{-# LANGUAGE LambdaCase         #-}
-{-# LANGUAGE PatternSynonyms    #-}
+{-# LANGUAGE ApplicativeDo #-}
+{-# LANGUAGE LambdaCase #-}
 
 module DBAnalyser.Parsers (
     BlockType (..)
@@ -15,14 +13,12 @@ import           Cardano.Tools.DBAnalyser.Block.Byron
 import           Cardano.Tools.DBAnalyser.Block.Cardano
 import           Cardano.Tools.DBAnalyser.Block.Shelley
 import           Cardano.Tools.DBAnalyser.Types
-#if __GLASGOW_HASKELL__ < 900
-import           Data.Foldable (asum)
-#endif
+import qualified Data.Foldable as Foldable
 import           Options.Applicative
-import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.Block (SlotNo (..), WithOrigin (..))
 import           Ouroboros.Consensus.Byron.Node (PBftSignatureThreshold (..))
 import           Ouroboros.Consensus.Shelley.Node (Nonce (..))
-import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy (pattern DoDiskSnapshotChecksum, pattern NoDoDiskSnapshotChecksum)
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 
 {-------------------------------------------------------------------------------
   Parsing
@@ -50,6 +46,27 @@ parseDBAnalyserConfig = DBAnalyserConfig
             long "no-snapshot-checksum-on-read"
           , help "Don't check the '.checksum' file when reading a ledger snapshot"
           ])
+    <*> flag DoDiskSnapshotChecksum NoDoDiskSnapshotChecksum (mconcat [
+            long "no-snapshot-checksum-on-write"
+          , help (unlines [ "Don't calculate the checksum and"
+                          , "write the '.checksum' file"
+                          , "when taking a ledger snapshot"
+                          ])
+          ])
+    <*> Foldable.asum [
+          flag' V1InMem $ mconcat [
+                long "v1-in-mem"
+              , help "use v1 in-memory backing store"
+              ]
+          , flag' V1LMDB $ mconcat [
+              long "lmdb"
+              , help "use v1 LMDB backing store"
+              ]
+          , flag' V2InMem $ mconcat [
+              long "v2-in-mem"
+              , help "use v2 in-memory backend"
+              ]
+          ]
 
 parseSelectDB :: Parser SelectDB
 parseSelectDB =
@@ -77,7 +94,7 @@ parseValidationPolicy =
         _                          -> Nothing
 
 parseAnalysis :: Parser AnalysisName
-parseAnalysis = asum [
+parseAnalysis = Foldable.asum [
       flag' ShowSlotBlockNo $ mconcat [
           long "show-slot-block-no"
         , help "Show slot and block number and hash of all blocks"
@@ -136,14 +153,7 @@ storeLedgerParser = do
             <> "This is much slower than block reapplication (the default)."
             )
     )
-  doChecksum <- flag DoDiskSnapshotChecksum NoDoDiskSnapshotChecksum
-    (mconcat [ long "no-snapshot-checksum-on-write"
-             , help (unlines [ "Don't calculate the checksum and"
-                             , "write the '.checksum' file"
-                             , "when taking a ledger snapshot"
-                             ])
-             ])
-  pure $ StoreLedgerStateAt slot ledgerValidation doChecksum
+  pure $ StoreLedgerStateAt slot ledgerValidation
 
 checkNoThunksParser :: Parser AnalysisName
 checkNoThunksParser = CheckNoThunksEvery <$> option auto
@@ -152,7 +162,7 @@ checkNoThunksParser = CheckNoThunksEvery <$> option auto
   <> help "Check the ledger state for thunks every n blocks" )
 
 parseLimit :: Parser Limit
-parseLimit = asum [
+parseLimit = Foldable.asum [
     Limit <$> option auto (mconcat [
         long "num-blocks-to-process"
       , help "Maximum number of blocks we want to process"
@@ -246,7 +256,7 @@ parseShelleyArgs = ShelleyBlockArgs
           , help "Path to config file"
           , metavar "PATH"
           ])
-    <*> asum [ Nonce  <$> parseNonce
+    <*> Foldable.asum [ Nonce  <$> parseNonce
              , pure NeutralNonce]
   where
     parseNonce = strOption (mconcat [

@@ -152,7 +152,6 @@ class ( Core.EraSegWits era
 
       , ToCBOR (Core.TranslationContext era)
       , FromCBOR (Core.TranslationContext era)
-
       ) => ShelleyBasedEra era where
 
   applyShelleyBasedTx ::
