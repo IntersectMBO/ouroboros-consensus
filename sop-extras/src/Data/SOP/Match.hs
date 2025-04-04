@@ -27,6 +27,7 @@ module Data.SOP.Match (
   , flipMatch
   , matchNS
   , matchTelescope
+  , telescopesMismatch
     -- * Utilities
   , mismatchNotEmpty
   , mismatchNotFirst
@@ -102,6 +103,19 @@ matchTelescope = go
     go (S r)  (TS  gx t) = bimap MS (TS gx) $ go r t
     go (Z hx) (TS _gx t) = Left $ ML hx (Telescope.tip t)
     go (S l)  (TZ fx)    = Left $ MR l fx
+
+telescopesMismatch :: Telescope a b xs
+                   -> Telescope g f xs
+                   -> Maybe (Mismatch b f xs)
+telescopesMismatch = go
+  where
+    go :: Telescope a b xs
+       -> Telescope g f xs
+       -> Maybe (Mismatch b f xs)
+    go (TZ _l)    (TZ _fx)   = Nothing
+    go (TS _hx r) (TS _gx t) = fmap MS $ go r t
+    go (TZ hx)    (TS _gx t) = Just $ ML hx (Telescope.tip t)
+    go (TS _hx l) (TZ fx)    = Just $ MR (Telescope.tip l) fx
 
 {-------------------------------------------------------------------------------
   SOP class instances for 'Mismatch'
