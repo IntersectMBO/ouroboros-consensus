@@ -14,7 +14,7 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2025-03-18T17:41:11Z
+  , hackage.haskell.org 2025-03-31T23:31:38Z
   -- Bump this if you need newer packages from CHaP
   , cardano-haskell-packages 2025-03-25T12:18:59Z
 
@@ -52,20 +52,11 @@ if impl (ghc >= 9.12)
     , fin:base
     , ral:base
 
-    -- https://github.com/well-typed/cborg/pull/339
-    , cborg:base
-    , cborg:ghc-prim
-    , serialise:base
-    , serialise:ghc-prim
-
     -- https://github.com/haskellari/tree-diff/issues/97
     , tree-diff:base
 
     -- https://github.com/kapralVV/Unique/issues/11
     , Unique:hashable
-
-    -- https://github.com/fizruk/http-api-data/pull/146
-    , http-api-data:base
 
     , ouroboros-network-protocols:base
     , ouroboros-network-framework:base
