@@ -1,5 +1,6 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE PolyKinds #-}
@@ -33,11 +34,15 @@ module Data.SOP.InPairs (
   , ignoringBoth
   , requiring
   , requiringBoth
+    -- * Composing
+  , Fn2 (..)
+  , composeFromTo
   ) where
 
 import           Data.Kind (Type)
 import           Data.Proxy
 import           Data.SOP.Constraint
+import           Data.SOP.Index
 import           Data.SOP.NonEmpty
 import           Data.SOP.Sing
 import           Data.SOP.Strict hiding (hcmap, hcpure, hczipWith, hmap, hpure)
@@ -138,3 +143,14 @@ requiringBoth = flip go
     go :: InPairs (RequiringBoth h f) xs -> NP h xs -> InPairs f xs
     go PNil         _              = PNil
     go (PCons f fs) (x :* y :* zs) = PCons (provideBoth f x y) (go fs (y :* zs))
+
+newtype Fn2 f x y = Fn2 {
+  apFn2 :: f x -> f y
+  }
+
+composeFromTo :: Index xs x -> Index xs y -> InPairs (Fn2 f) xs -> f x -> Maybe (f y)
+composeFromTo IZ IZ _ = Just
+composeFromTo IZ (IS t) (PCons f next) = composeFromTo IZ t next . apFn2 f
+composeFromTo (IS _) IZ _ = const Nothing
+composeFromTo (IS oIdx) (IS tIdx) (PCons _ next) = composeFromTo oIdx tIdx next
+composeFromTo _ (IS idx) PNil = case idx of {}

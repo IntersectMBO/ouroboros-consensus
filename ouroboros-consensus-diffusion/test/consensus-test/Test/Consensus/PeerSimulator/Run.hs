@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -351,7 +352,10 @@ mkStateTracer schedulerConfig GenesisTest {gtBlockTree} PeerSimulatorResources {
 -- provided by 'LiveIntervalResult'.
 startNode ::
   forall m.
-  (IOLike m, MonadTime m, MonadTimer m) =>
+  ( IOLike m
+  , MonadTime m
+  , MonadTimer m
+  ) =>
   SchedulerConfig ->
   GenesisTestFull TestBlock ->
   LiveInterval TestBlock m ->

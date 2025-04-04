@@ -28,6 +28,7 @@ import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
 import           Data.SOP.Counting (Exactly (..))
 import           Data.SOP.Dict (Dict (..))
+import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.Index
 import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.Strict
@@ -39,10 +40,12 @@ import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation (AnnTip, HeaderState (..),
                      genesisHeaderState)
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
+import           Ouroboros.Consensus.Ledger.Query
+import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.TypeFamilyWrappers
-import           Ouroboros.Consensus.Util ((.:))
 
 {-------------------------------------------------------------------------------
   Injection for a single block into a HardForkBlock
@@ -50,7 +53,7 @@ import           Ouroboros.Consensus.Util ((.:))
 
 class Inject f where
   inject ::
-       forall x xs. CanHardFork xs
+       forall x xs. (CanHardFork xs, HasCanonicalTxIn xs, HasHardForkTxOut xs)
     => InjectionIndex xs x
     -> f x
     -> f (HardForkBlock xs)
@@ -59,6 +62,8 @@ inject' ::
      forall f a b x xs.
      ( Inject f
      , CanHardFork xs
+     , HasCanonicalTxIn xs
+     , HasHardForkTxOut xs
      , Coercible a (f x)
      , Coercible b (f (HardForkBlock xs))
      )
@@ -125,10 +130,10 @@ injectNestedCtxt_ idx nc = case idx of
     IS idx' -> NCS (injectNestedCtxt_ idx' nc)
 
 injectQuery ::
-     forall x xs result.
+     forall x xs result fp.
      Index xs x
-  -> BlockQuery x result
-  -> QueryIfCurrent xs result
+  -> BlockQuery x fp      result
+  -> QueryIfCurrent xs fp result
 injectQuery idx q = case idx of
     IZ      -> QZ q
     IS idx' -> QS (injectQuery idx' q)
@@ -201,9 +206,9 @@ instance Inject WrapApplyTxErr where
       )
     . forgetInjectionIndex
 
-instance Inject (SomeSecond BlockQuery) where
-  inject iidx (SomeSecond q) =
-      SomeSecond (QueryIfCurrent (injectQuery idx q))
+instance Inject (SomeBlockQuery :.: BlockQuery) where
+  inject iidx (Comp (SomeBlockQuery q)) =
+      Comp $ SomeBlockQuery (QueryIfCurrent (injectQuery idx q))
     where
       idx = forgetInjectionIndex iidx
 
@@ -211,8 +216,9 @@ instance Inject AnnTip where
   inject =
       (undistribAnnTip .: injectNS' (Proxy @AnnTip)) . forgetInjectionIndex
 
-instance Inject LedgerState where
-  inject = HardForkLedgerState .: injectHardForkState
+instance Inject (Flip LedgerState mk) where
+  inject iidx =
+      Flip . HardForkLedgerState . injectHardForkState iidx
 
 instance Inject WrapChainDepState where
   inject = coerce .: injectHardForkState
@@ -225,9 +231,9 @@ instance Inject HeaderState where
                             $ WrapChainDepState headerStateChainDep
       }
 
-instance Inject ExtLedgerState where
-  inject iidx ExtLedgerState {..} = ExtLedgerState {
-        ledgerState = inject iidx ledgerState
+instance Inject (Flip ExtLedgerState mk) where
+  inject iidx (Flip ExtLedgerState {..}) = Flip $ ExtLedgerState {
+        ledgerState = unFlip $ inject iidx (Flip ledgerState)
       , headerState = inject iidx headerState
       }
 
@@ -249,10 +255,10 @@ instance Inject ExtLedgerState where
 -- Note: this function is an /alternative/ to the 'Inject' class above. It does
 -- not rely on that class.
 injectInitialExtLedgerState ::
-     forall x xs. CanHardFork (x ': xs)
+     forall x xs. (CanHardFork (x ': xs), HasLedgerTables (LedgerState (HardForkBlock (x : xs))))
   => TopLevelConfig (HardForkBlock (x ': xs))
-  -> ExtLedgerState x
-  -> ExtLedgerState (HardForkBlock (x ': xs))
+  -> ExtLedgerState x ValuesMK
+  -> ExtLedgerState (HardForkBlock (x ': xs)) ValuesMK
 injectInitialExtLedgerState cfg extLedgerState0 =
     ExtLedgerState {
         ledgerState = targetEraLedgerState
@@ -267,15 +273,19 @@ injectInitialExtLedgerState cfg extLedgerState0 =
              (hardForkLedgerStatePerEra targetEraLedgerState))
           cfg
 
-    targetEraLedgerState :: LedgerState (HardForkBlock (x ': xs))
-    targetEraLedgerState =
-        HardForkLedgerState $
-          -- We can immediately extend it to the right slot, executing any
-          -- scheduled hard forks in the first slot
-          State.extendToSlot
-            (configLedger cfg)
-            (SlotNo 0)
-            (initHardForkState (ledgerState extLedgerState0))
+    targetEraLedgerState :: LedgerState (HardForkBlock (x ': xs)) ValuesMK
+    targetEraLedgerState = applyDiffs st st'
+      where
+        st :: LedgerState (HardForkBlock (x ': xs)) ValuesMK
+        st = HardForkLedgerState . initHardForkState . Flip . ledgerState $ extLedgerState0
+        st' = HardForkLedgerState
+                -- We can immediately extend it to the right slot, executing any
+                -- scheduled hard forks in the first slot
+                  (State.extendToSlot
+                      (configLedger cfg)
+                      (SlotNo 0)
+                      (initHardForkState $ Flip $ forgetLedgerTables $ ledgerState extLedgerState0))
+
 
     firstEraChainDepState :: HardForkChainDepState (x ': xs)
     firstEraChainDepState =
