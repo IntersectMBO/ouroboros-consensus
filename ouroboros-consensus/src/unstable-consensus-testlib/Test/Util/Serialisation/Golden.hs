@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -53,6 +54,7 @@ import           Ouroboros.Consensus.Block (CodecConfig)
 import           Ouroboros.Consensus.Ledger.Extended (encodeExtLedgerState)
 import           Ouroboros.Consensus.Ledger.Query (QueryVersion,
                      nodeToClientVersionToQueryVersion)
+import           Ouroboros.Consensus.Ledger.Tables (valuesMKEncoder)
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
                      (HasNetworkProtocolVersion (..),
                      SupportedNetworkProtocolVersion (..))
@@ -60,8 +62,8 @@ import           Ouroboros.Consensus.Node.Run (SerialiseDiskConstraints,
                      SerialiseNodeToClientConstraints,
                      SerialiseNodeToNodeConstraints)
 import           Ouroboros.Consensus.Node.Serialisation
-                     (SerialiseNodeToClient (..), SerialiseNodeToNode (..),
-                     SerialiseResult (..))
+                     (SerialiseBlockQueryResult (..),
+                     SerialiseNodeToClient (..), SerialiseNodeToNode (..))
 import           Ouroboros.Consensus.Storage.Serialisation (EncodeDisk (..))
 import           Ouroboros.Consensus.Util.CBOR (decodeAsFlatTerm)
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
@@ -153,10 +155,12 @@ goldenTestCBOR testName example enc goldenFile =
               , show (ansiWlEditExpr (ediff (CBORBytes golden) (CBORBytes actual)))
               ]
 
-          (Right actualFlatTerm, Left _) -> Just $ unlines [
+          (Right actualFlatTerm, Left e) -> Just $ unlines [
                 "Golden output /= actual term:"
               , "Golden output is not valid CBOR:"
               , BS.UTF8.toString golden
+              , "Exception: "
+              , show e
               , "Actual term:"
               , condense actualFlatTerm
               ]
@@ -241,7 +245,10 @@ goldenTest_all codecConfig goldenDir examples =
 -- TODO how can we ensure that we have a test for each constraint listed in
 -- 'SerialiseDiskConstraints'?
 goldenTest_SerialiseDisk ::
-     forall blk. (SerialiseDiskConstraints blk, HasCallStack)
+     forall blk.
+     ( SerialiseDiskConstraints blk
+     , HasCallStack
+     )
   => CodecConfig blk
   -> FilePath
   -> Examples blk
@@ -254,6 +261,7 @@ goldenTest_SerialiseDisk codecConfig goldenDir Examples {..} =
       , test "AnnTip"         exampleAnnTip        (encodeDisk codecConfig)
       , test "ChainDepState"  exampleChainDepState (encodeDisk codecConfig)
       , test "ExtLedgerState" exampleExtLedgerState encodeExt
+      , test "LedgerTables"   exampleLedgerTables  valuesMKEncoder
       ]
   where
     test :: TestName -> Labelled a -> (a -> Encoding) -> TestTree
@@ -346,7 +354,7 @@ goldenTest_SerialiseNodeToClient codecConfig goldenDir Examples {..} =
         enc' = encodeNodeToClient codecConfig blockVersion
 
         encRes :: SomeResult blk -> Encoding
-        encRes (SomeResult q r) = encodeResult codecConfig blockVersion q r
+        encRes (SomeResult q r) = encodeBlockQueryResult codecConfig blockVersion q r
 
         test :: TestName -> Labelled a -> (a -> Encoding) -> TestTree
         test testName exampleValues enc =

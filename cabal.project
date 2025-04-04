@@ -45,6 +45,9 @@ if(os(windows))
   constraints:
     bitvec -simd
 
+constraints:
+    quickcheck-lockstep <0.6.0
+
 if impl (ghc >= 9.12)
   allow-newer:
     -- https://github.com/phadej/vec/issues/118
@@ -63,3 +66,9 @@ if impl (ghc >= 9.12)
     , ouroboros-network-api:base
     , network-mux:base
     , ouroboros-network:base
+
+    , fingertree-rm:base
+    , diff-containers:base
+    , cardano-lmdb-simple:base
+    , cardano-lmdb:base
+    , quickcheck-lockstep:base

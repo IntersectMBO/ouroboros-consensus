@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -33,7 +34,9 @@ import           Ouroboros.Consensus.HardFork.History.EpochInfo
 import           Ouroboros.Consensus.HardFork.Simple
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Query
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
+import           Ouroboros.Consensus.Ledger.Tables (EmptyMK)
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Node.Serialisation
 import           Ouroboros.Consensus.Protocol.Praos (PraosState)
@@ -66,9 +69,9 @@ instance ShelleyCompatible proto era => EncodeDisk (ShelleyBlock proto era) (Hea
 instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) (Lazy.ByteString -> Header (ShelleyBlock proto era)) where
   decodeDisk _ = decodeShelleyHeader
 
-instance ShelleyCompatible proto era => EncodeDisk (ShelleyBlock proto era) (LedgerState (ShelleyBlock proto era)) where
+instance ShelleyCompatible proto era => EncodeDisk (ShelleyBlock proto era) (LedgerState (ShelleyBlock proto era) EmptyMK) where
   encodeDisk _ = encodeShelleyLedgerState
-instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) (LedgerState (ShelleyBlock proto era)) where
+instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) (LedgerState (ShelleyBlock proto era) EmptyMK) where
   decodeDisk _ = decodeShelleyLedgerState
 
 -- | @'ChainDepState' ('BlockProtocol' ('ShelleyBlock' era))@
@@ -152,7 +155,7 @@ data ShelleyEncoderException era proto =
     -- | A query was submitted that is not supported by the given
     -- 'ShelleyNodeToClientVersion'.
     ShelleyEncoderUnsupportedQuery
-         (SomeSecond BlockQuery (ShelleyBlock proto era))
+         (SomeBlockQuery (BlockQuery (ShelleyBlock proto era)))
          ShelleyNodeToClientVersion
   deriving (Show)
 
@@ -292,20 +295,18 @@ instance ShelleyBasedEra era => SerialiseNodeToClient (ShelleyBlock proto era) (
   encodeNodeToClient _ _ = toEraCBOR @era
   decodeNodeToClient _ _ = fromEraCBOR @era
 
-instance ShelleyCompatible proto era
-      => SerialiseNodeToClient (ShelleyBlock proto era) (SomeSecond BlockQuery (ShelleyBlock proto era)) where
-  encodeNodeToClient _ version (SomeSecond q)
+instance (ShelleyCompatible proto era, LedgerSupportsProtocol (ShelleyBlock proto era))
+      => SerialiseNodeToClient (ShelleyBlock proto era) (SomeBlockQuery (BlockQuery (ShelleyBlock proto era))) where
+  encodeNodeToClient _ version (SomeBlockQuery q)
     | blockQueryIsSupportedOnVersion q version
     = encodeShelleyQuery q
     | otherwise
-    = throw $ ShelleyEncoderUnsupportedQuery (SomeSecond q) version
+    = throw $ ShelleyEncoderUnsupportedQuery (SomeBlockQuery q) version
   decodeNodeToClient _ _ = decodeShelleyQuery
 
-instance
-  (ShelleyCompatible proto era) =>
-  SerialiseResult (ShelleyBlock proto era) (BlockQuery (ShelleyBlock proto era)) where
-  encodeResult _ = encodeShelleyResult
-  decodeResult _ = decodeShelleyResult
+instance ShelleyCompatible proto era => SerialiseBlockQueryResult (ShelleyBlock proto era) BlockQuery where
+  encodeBlockQueryResult _ = encodeShelleyResult
+  decodeBlockQueryResult _ = decodeShelleyResult
 
 instance ShelleyCompatible proto era  => SerialiseNodeToClient (ShelleyBlock proto era) SlotNo where
   encodeNodeToClient _ _ = toCBOR

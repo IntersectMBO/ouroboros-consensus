@@ -10,6 +10,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 
@@ -38,6 +39,7 @@ import           Data.Coerce
 import           Data.Kind (Type)
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
+import           Data.SOP.Functors
 import qualified Data.SOP.OptNP as OptNP
 import           Data.SOP.Strict
 import qualified Data.SOP.Telescope as Telescope
@@ -61,6 +63,7 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Protocol.Abstract
@@ -195,7 +198,7 @@ instance Isomorphic StorageConfig where
   project = defaultProjectNP
   inject  = defaultInjectNP
 
-instance Isomorphic LedgerState where
+instance Isomorphic (Flip LedgerState mk) where
   project = defaultProjectSt
   inject  = defaultInjectSt
 
@@ -336,29 +339,29 @@ instance Isomorphic HeaderState where
       , headerStateChainDep = inject' (Proxy @(WrapChainDepState blk)) headerStateChainDep
       }
 
-instance Isomorphic (Ticked :.: LedgerState) where
+instance Isomorphic (FlipTickedLedgerState mk) where
   project =
         State.currentState
       . Telescope.fromTZ
       . getHardForkState
       . tickedHardForkLedgerStatePerEra
-      . unComp
+      . getFlipTickedLedgerState
 
   inject =
-        Comp
+        FlipTickedLedgerState
       . TickedHardForkLedgerState TransitionImpossible
       . HardForkState
       . Telescope.TZ
       . State.Current History.initBound
 
-instance Isomorphic ExtLedgerState where
-  project ExtLedgerState{..} = ExtLedgerState {
-        ledgerState = project ledgerState
+instance Isomorphic (Flip ExtLedgerState mk) where
+  project (Flip ExtLedgerState{..}) = Flip $ ExtLedgerState {
+        ledgerState = unFlip $ project $ Flip ledgerState
       , headerState = project headerState
       }
 
-  inject ExtLedgerState{..} = ExtLedgerState {
-        ledgerState = inject ledgerState
+  inject (Flip ExtLedgerState{..}) = Flip $ ExtLedgerState {
+        ledgerState = unFlip $ inject $ Flip ledgerState
       , headerState = inject headerState
       }
 
@@ -371,11 +374,11 @@ instance Isomorphic AnnTip where
 instance Functor m => Isomorphic (InitChainDB m) where
   project :: forall blk. NoHardForks blk
           => InitChainDB m (HardForkBlock '[blk]) -> InitChainDB m blk
-  project = InitChainDB.map (inject' (Proxy @(I blk))) project
+  project = InitChainDB.map (inject' (Proxy @(I blk))) (unFlip . project . Flip)
 
   inject :: forall blk. NoHardForks blk
          => InitChainDB m blk -> InitChainDB m (HardForkBlock '[blk])
-  inject = InitChainDB.map (project' (Proxy @(I blk))) inject
+  inject = InitChainDB.map (project' (Proxy @(I blk))) (unFlip . inject . Flip)
 
 instance Isomorphic ProtocolClientInfo where
   project ProtocolClientInfo{..} = ProtocolClientInfo {
@@ -442,7 +445,7 @@ instance Functor m => Isomorphic (BlockForging m) where
                                    (inject cfg)
                                    bno
                                    sno
-                                   (unComp (inject (Comp tickedLgrSt)))
+                                   (getFlipTickedLedgerState (inject (FlipTickedLedgerState tickedLgrSt)))
                                    (inject' (Proxy @(WrapValidatedGenTx blk)) <$> txs)
                                    (inject' (Proxy @(WrapIsLeader blk)) isLeader)
       }
@@ -485,7 +488,7 @@ instance Functor m => Isomorphic (BlockForging m) where
                                    (project cfg)
                                    bno
                                    sno
-                                   (unComp (project (Comp tickedLgrSt)))
+                                   (getFlipTickedLedgerState (project (FlipTickedLedgerState tickedLgrSt)))
                                    (project' (Proxy @(WrapValidatedGenTx blk)) <$> txs)
                                    (project' (Proxy @(WrapIsLeader blk)) isLeader)
       }
@@ -504,14 +507,14 @@ instance Isomorphic ProtocolInfo where
           => ProtocolInfo (HardForkBlock '[blk]) -> ProtocolInfo blk
   project ProtocolInfo {..} = ProtocolInfo {
         pInfoConfig       = project pInfoConfig
-      , pInfoInitLedger   = project pInfoInitLedger
+      , pInfoInitLedger   = unFlip $ project $ Flip pInfoInitLedger
       }
 
   inject :: forall blk. NoHardForks blk
          => ProtocolInfo blk -> ProtocolInfo (HardForkBlock '[blk])
   inject ProtocolInfo {..} = ProtocolInfo {
         pInfoConfig       = inject pInfoConfig
-      , pInfoInitLedger   = inject pInfoInitLedger
+      , pInfoInitLedger   = unFlip $ inject $ Flip pInfoInitLedger
       }
 
 {-------------------------------------------------------------------------------
@@ -611,10 +614,10 @@ instance Isomorphic SerialisedHeader where
 -- | Project 'BlockQuery'
 --
 -- Not an instance of 'Isomorphic' because the types change.
-projQuery :: BlockQuery (HardForkBlock '[b]) result
+projQuery :: BlockQuery (HardForkBlock '[b]) fp result
           -> (forall result'.
                   (result :~: HardForkQueryResult '[b] result')
-               -> BlockQuery b result'
+               -> BlockQuery b fp result'
                -> a)
           -> a
 projQuery qry k =
@@ -624,24 +627,25 @@ projQuery qry k =
       (\Refl prfNonEmpty _ _ -> case prfNonEmpty of {})
       (\Refl prfNonEmpty _   -> case prfNonEmpty of {})
   where
-    aux :: QueryIfCurrent '[b] result -> BlockQuery b result
+    aux :: QueryIfCurrent '[b] fp result -> BlockQuery b fp result
     aux (QZ q) = q
     aux (QS q) = case q of {}
 
-projQuery' :: BlockQuery (HardForkBlock '[b]) result
-           -> ProjHardForkQuery b result
+projQuery' :: BlockQuery (HardForkBlock '[b]) fp result
+           -> ProjHardForkQuery fp b result
 projQuery' qry = projQuery qry $ \Refl -> ProjHardForkQuery
 
-data ProjHardForkQuery b :: Type -> Type where
+type ProjHardForkQuery :: QueryFootprint -> Type -> Type -> Type
+data ProjHardForkQuery fp b res where
   ProjHardForkQuery ::
-       BlockQuery b result'
-    -> ProjHardForkQuery b (HardForkQueryResult '[b] result')
+       BlockQuery b fp result'
+    -> ProjHardForkQuery fp b (HardForkQueryResult '[b] result')
 
 -- | Inject 'BlockQuery'
 --
 -- Not an instance of 'Isomorphic' because the types change.
-injQuery :: BlockQuery b result
-         -> BlockQuery (HardForkBlock '[b]) (HardForkQueryResult '[b] result)
+injQuery :: forall fp b result. BlockQuery b fp result
+         -> BlockQuery (HardForkBlock '[b]) fp (HardForkQueryResult '[b] result)
 injQuery = QueryIfCurrent . QZ
 
 projQueryResult :: HardForkQueryResult '[b] result -> result

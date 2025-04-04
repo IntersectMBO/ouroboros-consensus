@@ -50,6 +50,7 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
 import           Data.SOP.BasicFunctors
+import           Data.SOP.Functors
 import           Data.SOP.Strict
 import qualified Data.SOP.Telescope as Telescope
 import           Data.String (IsString (..))
@@ -65,7 +66,7 @@ import           Ouroboros.Consensus.HardFork.Combinator (HardForkBlock (..),
                      OneEraBlock (..), OneEraHash (..), getHardForkState,
                      hardForkLedgerStatePerEra)
 import           Ouroboros.Consensus.HardFork.Combinator.State (currentState)
-import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.Abstract hiding (TxIn, TxOut)
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Shelley.HFEras ()
 import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley.Ledger
@@ -106,15 +107,15 @@ analyseWithLedgerState f (WithLedgerState cb sb sa) =
     p :: Proxy HasAnalysis
     p = Proxy
 
-    zipLS (Comp (Just sb')) (Comp (Just sa')) (I blk) =
+    zipLS (Comp (Just (Flip sb'))) (Comp (Just (Flip sa'))) (I blk) =
       Comp . Just $ WithLedgerState blk sb' sa'
     zipLS _ _ _ = Comp Nothing
 
     oeb = getOneEraBlock . getHardForkBlock $ cb
 
     goLS ::
-      LedgerState (CardanoBlock StandardCrypto) ->
-      NP (Maybe :.: LedgerState) (CardanoEras StandardCrypto)
+      LedgerState (CardanoBlock StandardCrypto) mk ->
+      NP (Maybe :.: Flip LedgerState mk) (CardanoEras StandardCrypto)
     goLS =
       hexpand (Comp Nothing)
         . hmap (Comp . Just . currentState)
@@ -279,6 +280,8 @@ instance HasAnalysis (CardanoBlock StandardCrypto) where
       , ("Block Number", \(WithLedgerState blk _preSt _postSt) ->
             pure $ Builder.decimal $ unBlockNo $ blockNo blk
         )
+      -- TODO the states will only contain the outputs produced by the block,
+      -- not the whole UTxO set, so there is a regression here.
       , ("UTxO size (via Compact)", \(WithLedgerState _blk _preSt postSt) -> do
             let compactSize utxo = do
                     compactedUtxo     <- Compact.compact utxo
@@ -298,9 +301,9 @@ instance HasAnalysis (CardanoBlock StandardCrypto) where
       ]
 
 dispatch ::
-     LedgerState (CardanoBlock StandardCrypto)
-  -> (LedgerState ByronBlock -> IO Builder)
-  -> (forall proto era. LedgerState (ShelleyBlock proto era) -> IO Builder)
+     LedgerState (CardanoBlock StandardCrypto) ValuesMK
+  -> (LedgerState ByronBlock ValuesMK -> IO Builder)
+  -> (forall proto era. LedgerState (ShelleyBlock proto era) ValuesMK -> IO Builder)
   -> IO Builder
 dispatch cardanoSt fByron fShelley =
     hcollapse $
@@ -315,22 +318,22 @@ dispatch cardanoSt fByron fShelley =
             )
             (hardForkLedgerStatePerEra cardanoSt)
   where
-    k_fByron   = K . fByron
+    k_fByron   = K . fByron . unFlip
 
     k_fShelley ::
          forall proto era.
-         LedgerState (ShelleyBlock proto era)
+         Flip LedgerState ValuesMK (ShelleyBlock proto era)
       -> K (IO Builder) (ShelleyBlock proto era)
-    k_fShelley = K . fShelley
+    k_fShelley = K . fShelley . unFlip
 
 applyToByronUtxo ::
     (Map Byron.UTxO.CompactTxIn Byron.UTxO.CompactTxOut -> IO Builder)
-  -> LedgerState ByronBlock
+  -> LedgerState ByronBlock ValuesMK
   -> IO Builder
 applyToByronUtxo f st  =
    f $ getByronUtxo st
 
-getByronUtxo :: LedgerState ByronBlock
+getByronUtxo :: LedgerState ByronBlock ValuesMK
              -> Map Byron.UTxO.CompactTxIn Byron.UTxO.CompactTxOut
 getByronUtxo = Byron.UTxO.unUTxO
              . Byron.Block.cvsUtxo
@@ -338,13 +341,13 @@ getByronUtxo = Byron.UTxO.unUTxO
 
 applyToShelleyBasedUtxo ::
      (Map TxIn (TxOut era) -> IO Builder)
-  -> LedgerState (ShelleyBlock proto era)
+  -> LedgerState (ShelleyBlock proto era) ValuesMK
   -> IO Builder
 applyToShelleyBasedUtxo f st = do
     f $ getShelleyBasedUtxo st
 
 getShelleyBasedUtxo ::
-     LedgerState (ShelleyBlock proto era)
+     LedgerState (ShelleyBlock proto era) ValuesMK
   -> Map TxIn (TxOut era)
 getShelleyBasedUtxo = (\(Shelley.UTxO.UTxO xs)->  xs)
                     . Shelley.LedgerState.utxosUtxo
