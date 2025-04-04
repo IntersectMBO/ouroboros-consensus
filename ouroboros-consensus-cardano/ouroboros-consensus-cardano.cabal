@@ -156,7 +156,7 @@ library
     nothunks,
     ouroboros-consensus ^>=0.24,
     ouroboros-consensus-protocol ^>=0.11,
-    ouroboros-network-api ^>=0.13,
+    ouroboros-network-api ^>=0.14,
     serialise ^>=0.2,
     small-steps,
     sop-core ^>=0.5,

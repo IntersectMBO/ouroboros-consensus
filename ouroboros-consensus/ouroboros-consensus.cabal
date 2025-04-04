@@ -295,7 +295,7 @@ library
     mtl,
     multiset ^>=0.3,
     nothunks ^>=0.2,
-    ouroboros-network-api ^>=0.13,
+    ouroboros-network-api ^>=0.14,
     ouroboros-network-mock ^>=0.1,
     ouroboros-network-protocols ^>=0.14,
     primitive,
