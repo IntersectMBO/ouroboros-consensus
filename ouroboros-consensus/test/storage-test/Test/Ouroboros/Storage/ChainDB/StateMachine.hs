@@ -103,6 +103,7 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB hiding
                      (TraceFollowerEvent (..))
@@ -113,8 +114,9 @@ import           Ouroboros.Consensus.Storage.Common (SizeInBytes)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
                      (unsafeChunkNoToEpochNo)
-import           Ouroboros.Consensus.Storage.LedgerDB (LedgerDB)
-import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB)
+import qualified Ouroboros.Consensus.Storage.LedgerDB.TraceEvent as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util (split)
 import           Ouroboros.Consensus.Util.CallStack
@@ -165,7 +167,6 @@ data Cmd blk it flr
     -- ^ Advance the current slot to the block's slot (unless smaller than the
     -- current slot), add the block and run chain selection.
   | GetCurrentChain
-  | GetLedgerDB
   | GetTipBlock
   | GetTipHeader
   | GetTipPoint
@@ -248,7 +249,7 @@ deriving instance SOP.HasDatatypeInfo (Cmd blk it flr)
 data Success blk it flr
   = Unit                ()
   | Chain               (AnchoredFragment (Header blk))
-  | LedgerDB            (LedgerDB (ExtLedgerState blk))
+  | LedgerDB            (DbChangelog.DbChangelog' blk)
   | MbBlock             (Maybe blk)
   | MbAllComponents     (Maybe (AllComponents blk))
   | MbGCedAllComponents (MaybeGCedBlock (AllComponents blk))
@@ -298,23 +299,26 @@ type AllComponents blk =
   )
 
 type TestConstraints blk =
-  ( ConsensusProtocol  (BlockProtocol blk)
-  , LedgerSupportsProtocol            blk
-  , BlockSupportsDiffusionPipelining  blk
-  , InspectLedger                     blk
-  , Eq (ChainDepState  (BlockProtocol blk))
-  , Eq (LedgerState                   blk)
-  , Eq                                blk
-  , Show                              blk
-  , HasHeader                         blk
-  , StandardHash                      blk
-  , Serialise                         blk
-  , ModelSupportsBlock                blk
-  , Eq                       (Header  blk)
-  , Show                     (Header  blk)
-  , ConvertRawHash                    blk
-  , HasHardForkHistory                blk
-  , SerialiseDiskConstraints          blk
+  ( ConsensusProtocol    (BlockProtocol blk)
+  , LedgerSupportsProtocol              blk
+  , BlockSupportsDiffusionPipelining    blk
+  , InspectLedger                       blk
+  , Eq (ChainDepState    (BlockProtocol blk))
+  , Eq (LedgerState                     blk EmptyMK)
+  , Eq                                  blk
+  , Show                                blk
+  , HasHeader                           blk
+  , StandardHash                        blk
+  , Serialise                           blk
+  , ModelSupportsBlock                  blk
+  , Eq                         (Header  blk)
+  , Show                       (Header  blk)
+  , ConvertRawHash                      blk
+  , HasHardForkHistory                  blk
+  , SerialiseDiskConstraints            blk
+  , Show (LedgerState                   blk EmptyMK)
+  , LedgerTablesAreTrivial (LedgerState blk)
+  , LedgerSupportsLedgerDB              blk
   )
 
 deriving instance (TestConstraints blk, Eq   it, Eq   flr)
@@ -382,7 +386,6 @@ run env@ChainDBEnv { varDB, .. } cmd =
     readTVarIO varDB >>= \st@ChainDBState { chainDB = ChainDB{..}, internal } -> case cmd of
       AddBlock blk             -> Point               <$> (advanceAndAdd st (blockSlot blk) blk)
       GetCurrentChain          -> Chain               <$> atomically getCurrentChain
-      GetLedgerDB              -> LedgerDB            <$> atomically getLedgerDB
       GetTipBlock              -> MbBlock             <$> getTipBlock
       GetTipHeader             -> MbHeader            <$> getTipHeader
       GetTipPoint              -> Point               <$> atomically getTipPoint
@@ -403,7 +406,7 @@ run env@ChainDBEnv { varDB, .. } cmd =
       Reopen                   -> Unit                <$> reopen env
       PersistBlks              -> ignore              <$> persistBlks DoNotGarbageCollect internal
       PersistBlksThenGC        -> ignore              <$> persistBlks GarbageCollect internal
-      UpdateLedgerSnapshots    -> ignore              <$> intUpdateLedgerSnapshots internal
+      UpdateLedgerSnapshots    -> ignore              <$> intTryTakeSnapshot internal
       WipeVolatileDB           -> Point               <$> wipeVolatileDB st
   where
     mbGCedAllComponents = MbGCedAllComponents . MaybeGCedBlock True
@@ -612,7 +615,6 @@ runPure :: forall blk.
 runPure cfg = \case
     AddBlock blk             -> ok  Point               $ update  (add blk)
     GetCurrentChain          -> ok  Chain               $ query   (Model.volatileChain k getHeader)
-    GetLedgerDB              -> ok  LedgerDB            $ query   (Model.getLedgerDB cfg)
     GetTipBlock              -> ok  MbBlock             $ query    Model.tipBlock
     GetTipHeader             -> ok  MbHeader            $ query   (fmap getHeader . Model.tipBlock)
     GetTipPoint              -> ok  Point               $ query    Model.tipPoint
@@ -742,7 +744,7 @@ deriving instance (TestConstraints blk, Show1 r) => Show (Model blk m r)
 initModel :: HasHeader blk
           => LoE ()
           -> TopLevelConfig blk
-          -> ExtLedgerState blk
+          -> ExtLedgerState blk EmptyMK
           -> Model blk m r
 initModel loe cfg initLedger = Model
   { dbModel        = Model.empty loe initLedger
@@ -870,7 +872,7 @@ generator ::
 generator loe genBlock m@Model {..} = At <$> frequency
     [ (30, genAddBlock)
     , (if empty then 1 else 10, return GetCurrentChain)
-    , (if empty then 1 else 10, return GetLedgerDB)
+--    , (if empty then 1 else 10, return GetLedgerDB)
     , (if empty then 1 else 10, return GetTipBlock)
       -- To check that we're on the right chain
     , (if empty then 1 else 10, return GetTipPoint)
@@ -1166,7 +1168,7 @@ semantics :: forall blk. TestConstraints blk
           -> At Cmd blk IO Concrete
           -> IO (At Resp blk IO Concrete)
 semantics env (At cmd) =
-    At . (bimap (QSM.reference . QSM.Opaque) (QSM.reference . QSM.Opaque)) <$>
+    At . bimap (QSM.reference . QSM.Opaque) (QSM.reference . QSM.Opaque) <$>
     runIO env (bimap QSM.opaque QSM.opaque cmd)
 
 -- | The state machine proper
@@ -1175,7 +1177,7 @@ sm :: TestConstraints blk
    -> ChainDBEnv IO blk
    -> BlockGen                  blk IO
    -> TopLevelConfig            blk
-   -> ExtLedgerState            blk
+   -> ExtLedgerState            blk EmptyMK
    -> StateMachine (Model       blk IO)
                    (At Cmd      blk IO)
                                     IO
@@ -1208,7 +1210,7 @@ deriving instance ( ToExpr blk
                   , ToExpr (HeaderHash  blk)
                   , ToExpr (ChainDepState (BlockProtocol blk))
                   , ToExpr (TipInfo blk)
-                  , ToExpr (LedgerState blk)
+                  , ToExpr (LedgerState blk EmptyMK)
                   , ToExpr (ExtValidationError blk)
                   )
                  => ToExpr (Model blk IO Concrete)
@@ -1234,10 +1236,8 @@ deriving instance SOP.Generic         (TraceGCEvent blk)
 deriving instance SOP.HasDatatypeInfo (TraceGCEvent blk)
 deriving instance SOP.Generic         (TraceIteratorEvent blk)
 deriving instance SOP.HasDatatypeInfo (TraceIteratorEvent blk)
-deriving instance SOP.Generic         (LedgerDB.TraceSnapshotEvent blk)
-deriving instance SOP.HasDatatypeInfo (LedgerDB.TraceSnapshotEvent blk)
-deriving instance SOP.Generic         (LedgerDB.TraceReplayEvent blk)
-deriving instance SOP.HasDatatypeInfo (LedgerDB.TraceReplayEvent blk)
+deriving instance SOP.Generic         (LedgerDB.TraceEvent blk)
+deriving instance SOP.HasDatatypeInfo (LedgerDB.TraceEvent blk)
 deriving instance SOP.Generic         (ImmutableDB.TraceEvent blk)
 deriving instance SOP.HasDatatypeInfo (ImmutableDB.TraceEvent blk)
 deriving instance SOP.Generic         (VolatileDB.TraceEvent blk)
@@ -1497,7 +1497,7 @@ runCmdsLockstep loe (SmallChunkInfo chunkInfo) cmds =
       let args = mkArgs
                    testCfg
                    chunkInfo
-                   testInitExtLedger
+                   (testInitExtLedger `withLedgerTables` emptyLedgerTables)
                    threadRegistry
                    nodeDBs
                    tracer
@@ -1633,8 +1633,7 @@ traceEventName = \case
     TraceOpenEvent              ev    -> "Open."              <> constrName ev
     TraceGCEvent                ev    -> "GC."                <> constrName ev
     TraceIteratorEvent          ev    -> "Iterator."          <> constrName ev
-    TraceSnapshotEvent          ev    -> "Ledger."            <> constrName ev
-    TraceLedgerReplayEvent      ev    -> "LedgerReplay."      <> constrName ev
+    TraceLedgerDBEvent          ev    -> "Ledger."            <> constrName ev
     TraceImmutableDBEvent       ev    -> "ImmutableDB."       <> constrName ev
     TraceVolatileDBEvent        ev    -> "VolatileDB."        <> constrName ev
     TraceLastShutdownUnclean          -> "LastShutdownUnclean"
@@ -1643,7 +1642,7 @@ traceEventName = \case
 mkArgs :: IOLike m
        => TopLevelConfig Blk
        -> ImmutableDB.ChunkInfo
-       -> ExtLedgerState Blk
+       -> ExtLedgerState Blk ValuesMK
        -> ResourceRegistry m
        -> NodeDBs (StrictTMVar m MockFS)
        -> CT.Tracer m (TraceEvent Blk)

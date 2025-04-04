@@ -43,6 +43,7 @@ import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation
+import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.Serialisation (Some (..))
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
@@ -500,7 +501,7 @@ instance CardanoHardForkConstraints c
 
 instance c ~ MockCryptoCompatByron
       => Arbitrary (WithVersion (HardForkNodeToClientVersion (CardanoEras c))
-                                (SomeSecond BlockQuery (CardanoBlock c))) where
+                                (SomeBlockQuery (BlockQuery (CardanoBlock c)))) where
   arbitrary = frequency
       [ (1, arbitraryNodeToClient injByron injShelley injAllegra injMary injAlonzo injBabbage injConway)
       , (1, WithVersion
@@ -527,21 +528,21 @@ instance c ~ MockCryptoCompatByron
       , (1, fmap injHardFork <$> arbitrary)
       ]
     where
-      injByron          (SomeSecond query) = SomeSecond (QueryIfCurrentByron   query)
-      injShelley        (SomeSecond query) = SomeSecond (QueryIfCurrentShelley query)
-      injAllegra        (SomeSecond query) = SomeSecond (QueryIfCurrentAllegra query)
-      injMary           (SomeSecond query) = SomeSecond (QueryIfCurrentMary    query)
-      injAlonzo         (SomeSecond query) = SomeSecond (QueryIfCurrentAlonzo  query)
-      injBabbage        (SomeSecond query) = SomeSecond (QueryIfCurrentBabbage query)
-      injConway         (SomeSecond query) = SomeSecond (QueryIfCurrentConway  query)
-      injAnytimeByron   (Some      query)  = SomeSecond (QueryAnytimeByron     query)
-      injAnytimeShelley (Some      query)  = SomeSecond (QueryAnytimeShelley   query)
-      injAnytimeAllegra (Some      query)  = SomeSecond (QueryAnytimeAllegra   query)
-      injAnytimeMary    (Some      query)  = SomeSecond (QueryAnytimeMary      query)
-      injAnytimeAlonzo  (Some      query)  = SomeSecond (QueryAnytimeAlonzo    query)
-      injAnytimeBabbage (Some      query)  = SomeSecond (QueryAnytimeBabbage   query)
-      injAnytimeConway  (Some      query)  = SomeSecond (QueryAnytimeConway    query)
-      injHardFork       (Some      query)  = SomeSecond (QueryHardFork         query)
+      injByron          (SomeBlockQuery query) = SomeBlockQuery (QueryIfCurrentByron   query)
+      injShelley        (SomeBlockQuery query) = SomeBlockQuery (QueryIfCurrentShelley query)
+      injAllegra        (SomeBlockQuery query) = SomeBlockQuery (QueryIfCurrentAllegra query)
+      injMary           (SomeBlockQuery query) = SomeBlockQuery (QueryIfCurrentMary    query)
+      injAlonzo         (SomeBlockQuery query) = SomeBlockQuery (QueryIfCurrentAlonzo  query)
+      injBabbage        (SomeBlockQuery query) = SomeBlockQuery (QueryIfCurrentBabbage query)
+      injConway         (SomeBlockQuery query) = SomeBlockQuery (QueryIfCurrentConway  query)
+      injAnytimeByron   (Some      query)      = SomeBlockQuery (QueryAnytimeByron     query)
+      injAnytimeShelley (Some      query)      = SomeBlockQuery (QueryAnytimeShelley   query)
+      injAnytimeAllegra (Some      query)      = SomeBlockQuery (QueryAnytimeAllegra   query)
+      injAnytimeMary    (Some      query)      = SomeBlockQuery (QueryAnytimeMary      query)
+      injAnytimeAlonzo  (Some      query)      = SomeBlockQuery (QueryAnytimeAlonzo    query)
+      injAnytimeBabbage (Some      query)      = SomeBlockQuery (QueryAnytimeBabbage   query)
+      injAnytimeConway  (Some      query)      = SomeBlockQuery (QueryAnytimeConway    query)
+      injHardFork       (Some      query)      = SomeBlockQuery (QueryHardFork         query)
 
 instance Arbitrary History.EraEnd where
   arbitrary = oneof

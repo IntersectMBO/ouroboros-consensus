@@ -21,6 +21,7 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
+import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import           Ouroboros.Consensus.Shelley.Eras (ShelleyEra)
 import           Ouroboros.Consensus.Shelley.HFEras ()
@@ -62,7 +63,10 @@ instance TxGen (ShelleyBlock (TPraos MockCrypto) ShelleyEra) where
         then pure []
         else do
           n <- choose (0, 20)
-          go [] n $ applyChainTick OmitLedgerEvents lcfg curSlotNo lst
+          go [] n
+            $ applyDiffs lst
+            $ applyChainTick OmitLedgerEvents lcfg curSlotNo
+            $ forgetLedgerTables lst
     where
       ShelleyTxGenExtra
         { stgeGenEnv
@@ -74,7 +78,7 @@ instance TxGen (ShelleyBlock (TPraos MockCrypto) ShelleyEra) where
 
       go :: [GenTx (ShelleyBlock (TPraos MockCrypto) ShelleyEra)]  -- ^ Accumulator
          -> Integer  -- ^ Number of txs to still produce
-         -> TickedLedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra)
+         -> TickedLedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra) ValuesMK
          -> Gen [GenTx (ShelleyBlock (TPraos MockCrypto) ShelleyEra)]
       go acc 0 _  = return (reverse acc)
       go acc n st = do
@@ -84,12 +88,12 @@ instance TxGen (ShelleyBlock (TPraos MockCrypto) ShelleyEra) where
           Just tx -> case runExcept $ fst <$> applyTx lcfg DoNotIntervene curSlotNo tx st of
               -- We don't mind generating invalid transactions
               Left  _   -> go (tx:acc) (n - 1) st
-              Right st' -> go (tx:acc) (n - 1) st'
+              Right st' -> go (tx:acc) (n - 1) (applyDiffs st st')
 
 genTx ::
      TopLevelConfig (ShelleyBlock (TPraos MockCrypto) ShelleyEra)
   -> SlotNo
-  -> TickedLedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra)
+  -> TickedLedgerState (ShelleyBlock (TPraos MockCrypto) ShelleyEra) ValuesMK
   -> Gen.GenEnv MockCrypto ShelleyEra
   -> Gen (Maybe (GenTx (ShelleyBlock (TPraos MockCrypto) ShelleyEra)))
 genTx _cfg slotNo TickedShelleyLedgerState { tickedShelleyLedgerState } genEnv =

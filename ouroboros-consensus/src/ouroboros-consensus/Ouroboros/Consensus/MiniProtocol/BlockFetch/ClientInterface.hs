@@ -83,7 +83,6 @@ initSlotForgeTimeOracle ::
      , BlockSupportsProtocol blk
      , History.HasHardForkHistory blk
      , SupportsNode.ConfigSupportsNode blk
-     , IsLedger (LedgerState blk)
      )
   => TopLevelConfig blk
   -> ChainDB m blk
@@ -132,7 +131,7 @@ initSlotForgeTimeOracle cfg chainDB = do
     pure slotForgeTime
   where
     toSummary ::
-         ExtLedgerState blk
+         ExtLedgerState blk EmptyMK
       -> History.Summary (History.HardForkIndices blk)
     toSummary = History.hardForkSummary (configLedger cfg) . ledgerState
 

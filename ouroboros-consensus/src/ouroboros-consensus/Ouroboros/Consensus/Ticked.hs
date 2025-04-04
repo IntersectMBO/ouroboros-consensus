@@ -2,7 +2,9 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
@@ -40,7 +42,8 @@ import           Ouroboros.Consensus.Block.Abstract
 -- * New leader schedule computed for Shelley
 -- * Transition from Byron to Shelley activated in the hard fork combinator.
 -- * Nonces switched out at the start of a new epoch.
-data family Ticked st :: Type
+type Ticked :: k -> k
+data family Ticked st
 
 -- Standard instance for use with trivial state
 
@@ -55,7 +58,7 @@ type instance HeaderHash (Ticked l) = HeaderHash l
 
 deriving newtype instance {-# OVERLAPPING #-}
      Show (Ticked (f a))
-  => Show ((Ticked :.: f) a)
+  => Show ((Ticked :.: f) (a :: Type))
 
 deriving newtype instance
      NoThunks (Ticked (f a))

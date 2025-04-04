@@ -3,12 +3,14 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Ouroboros.Consensus.Ledger.SupportsMempool (
     ApplyTxErr
   , ByteSize32 (..)
+  , ComputeDiffs (..)
   , ConvertRawTxId (..)
   , GenTx
   , GenTxId
@@ -16,7 +18,9 @@ module Ouroboros.Consensus.Ledger.SupportsMempool (
   , HasTxId (..)
   , HasTxs (..)
   , IgnoringOverflow (..)
+  , Invalidated (..)
   , LedgerSupportsMempool (..)
+  , ReapplyTxsResult (..)
   , TxId
   , TxLimits (..)
   , TxMeasureMetrics (..)
@@ -30,6 +34,7 @@ import           Control.Monad.Except
 import           Data.ByteString.Short (ShortByteString)
 import           Data.Coerce (coerce)
 import           Data.DerivingVia (InstantiatedAt (..))
+import qualified Data.Foldable as Foldable
 import           Data.Kind (Type)
 import           Data.Measure (Measure)
 import qualified Data.Measure
@@ -39,18 +44,20 @@ import           NoThunks.Class
 import           Numeric.Natural
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Ticked
+import           Ouroboros.Consensus.Ledger.Tables.Utils
 
 -- | Generalized transaction
 --
 -- The mempool (and, accordingly, blocks) consist of "generalized
 -- transactions"; this could be "proper" transactions (transferring funds) but
 -- also other kinds of things such as update proposals, delegations, etc.
-data family GenTx blk :: Type
+type GenTx :: Type -> Type
+data family GenTx blk
 
 -- | Updating the ledger with a single transaction may result in a different
 -- error type as when updating it with a block
-type family ApplyTxErr blk :: Type
+type ApplyTxErr :: Type -> Type
+type family ApplyTxErr blk
 
 -- | A flag indicating whether the mempool should reject a valid-but-problematic
 -- transaction, in order to to protect its author from penalties etc
@@ -75,11 +82,33 @@ data WhetherToIntervene
     -- them for it.
     deriving (Show)
 
+-- | Whether to keep track of the diffs produced by applying the transactions.
+--
+-- When getting a mempool snapshot, we will revalidate all the
+-- transactions but we won't do anything useful with the resulting
+-- state. We can safely omit computing the differences in this case.
+--
+-- This optimization is worthwile as snapshotting is in the critical
+-- path of block minting, and we don't make use of the resulting
+-- state, only of the transactions that remain valid.
+--
+-- Eventually, the Ledger rules will construct the differences for us,
+-- so this optimization will no longer be needed. That's why we chose
+-- to go with a boolean isomorph instead of something fancier.
+data ComputeDiffs
+  =
+    -- | This option should be used when syncing the mempool with the
+    -- LedgerDB, to store a useful state in the mempool.
+    ComputeDiffs
+    -- | This option should be used only when snapshotting the mempool,
+    -- as we discard the resulting state anyways.
+  | IgnoreDiffs
+  deriving (Show)
+
 class ( UpdateLedger blk
       , TxLimits blk
       , NoThunks (GenTx blk)
       , NoThunks (Validated (GenTx blk))
-      , NoThunks (Ticked (LedgerState blk))
       , Show (GenTx blk)
       , Show (Validated (GenTx blk))
       , Show (ApplyTxErr blk)
@@ -94,12 +123,16 @@ class ( UpdateLedger blk
   -- The mempool expects that the ledger checks the sanity of the transaction'
   -- size. The mempool implementation will add any valid transaction as long as
   -- there is at least one byte free in the mempool.
+  --
+  -- The resulting ledger state contains the diffs produced by applying this
+  -- transaction alone.
   applyTx :: LedgerConfig blk
           -> WhetherToIntervene
           -> SlotNo -- ^ Slot number of the block containing the tx
           -> GenTx blk
-          -> TickedLedgerState blk
-          -> Except (ApplyTxErr blk) (TickedLedgerState blk, Validated (GenTx blk))
+          -> TickedLedgerState blk ValuesMK
+             -- ^ Contain only the values for the tx to apply
+          -> Except (ApplyTxErr blk) (TickedLedgerState blk DiffMK, Validated (GenTx blk))
 
   -- | Apply a previously validated transaction to a potentially different
   -- ledger state
@@ -107,18 +140,107 @@ class ( UpdateLedger blk
   -- When we re-apply a transaction to a potentially different ledger state
   -- expensive checks such as cryptographic hashes can be skipped, but other
   -- checks (such as checking for double spending) must still be done.
+  --
+  -- The returned ledger state contains the resulting values too so that this
+  -- function can be used to reapply a list of transactions, providing as a
+  -- first state one that contains the values for all the transactions.
   reapplyTx :: HasCallStack
-            => LedgerConfig blk
+            => ComputeDiffs
+            -> LedgerConfig blk
             -> SlotNo -- ^ Slot number of the block containing the tx
             -> Validated (GenTx blk)
-            -> TickedLedgerState blk
-            -> Except (ApplyTxErr blk) (TickedLedgerState blk)
+            -> TickedLedgerState blk ValuesMK
+               -- ^ Contains at least the values for the tx to reapply
+            -> Except (ApplyTxErr blk) (TickedLedgerState blk TrackingMK)
+
+  -- | Apply a list of previously validated transactions to a new ledger state.
+  --
+  -- It is never the case that we reapply one single transaction, we always
+  -- reapply a list of transactions (and even one transaction can just be lifted
+  -- into the unary list).
+  --
+  -- When reapplying a list of transactions, in the hard-fork instance we want
+  -- to first project everything into the particular block instance and then we
+  -- can inject/project the ledger tables only once. For single era blocks, this
+  -- is by default implemented as a fold using 'reapplyTx'.
+  --
+  -- Notice: It is crucial that the list of validated transactions returned is
+  -- in the same order as they were given, as we will use those later on to
+  -- filter a list of 'TxTicket's.
+  reapplyTxs ::
+       ComputeDiffs
+    -> LedgerConfig blk
+    -> SlotNo -- ^ Slot number of the block containing the tx
+    -> [(Validated (GenTx blk), extra)]
+    -> TickedLedgerState blk ValuesMK
+    -> ReapplyTxsResult extra blk
+  reapplyTxs doDiffs cfg slot txs st =
+      (\(err, val, st') ->
+         ReapplyTxsResult
+           err
+           (reverse val)
+           st'
+      )
+    $ Foldable.foldl' (\(accE, accV, st') (tx, extra) ->
+                 case runExcept (reapplyTx doDiffs cfg slot tx $ trackingToValues st') of
+                   Left err   -> (Invalidated tx err : accE, accV, st')
+                   Right st'' -> (accE, (tx, extra) : accV,
+                                  case doDiffs of
+                                    ComputeDiffs -> prependTrackingDiffs st' st''
+                                    IgnoreDiffs -> st''
+                                 )
+             ) ([], [], attachEmptyDiffs st) txs
 
   -- | Discard the evidence that transaction has been previously validated
   txForgetValidated :: Validated (GenTx blk) -> GenTx blk
 
+  -- | Given a transaction, get the key-sets that we need to apply it to a
+  -- ledger state. This is implemented in the Ledger. An example of non-obvious
+  -- needed keys in Cardano are those of reference scripts for computing the
+  -- transaction size.
+  getTransactionKeySets :: GenTx blk -> LedgerTables (LedgerState blk) KeysMK
+
+  -- Mempools live in a single slot so in the hard fork block case
+  -- it is cheaper to perform these operations on LedgerStates, saving
+  -- the time of projecting and injecting ledger tables.
+  --
+  -- The cost of this when adding transactions is very small compared
+  -- to eg the networking costs of mempool synchronization, but still
+  -- it is worthwile locking the mempool for as short as possible.
+  --
+  -- Eventually the Ledger will provide these diffs, so we might even
+  -- be able to remove this optimization altogether.
+
+  -- | Prepend diffs on ledger states
+  prependMempoolDiffs ::
+       TickedLedgerState blk DiffMK
+    -> TickedLedgerState blk DiffMK
+    -> TickedLedgerState blk DiffMK
+  prependMempoolDiffs = prependDiffs
+
+  -- | Apply diffs on ledger states
+  applyMempoolDiffs ::
+       LedgerTables (LedgerState blk) ValuesMK
+    -> LedgerTables (LedgerState blk) KeysMK
+    -> TickedLedgerState blk DiffMK
+    -> TickedLedgerState blk ValuesMK
+  applyMempoolDiffs = applyDiffForKeysOnTables
+
+
+data ReapplyTxsResult extra blk =
+  ReapplyTxsResult {
+      -- | txs that are now invalid. Order doesn't matter
+      invalidatedTxs :: ![Invalidated blk]
+      -- | txs that are valid again, order must be the same as the order in
+      -- which txs were received
+    , validatedTxs   :: ![(Validated (GenTx blk), extra)]
+      -- | Resulting ledger state
+    , resultingState :: !(TickedLedgerState blk TrackingMK)
+    }
+
 -- | A generalized transaction, 'GenTx', identifier.
-data family TxId tx :: Type
+type TxId :: Type -> Type
+data family TxId blk
 
 -- | Transactions with an identifier
 --
@@ -215,7 +337,9 @@ class ( Measure          (TxMeasure blk)
   txMeasure ::
        LedgerConfig blk
        -- ^ used at least by HFC's composition logic
-    -> TickedLedgerState blk
+    -> TickedLedgerState blk ValuesMK
+       -- ^ This state needs values as a transaction measure might depend on
+       -- those. For example in Cardano they look at the reference scripts.
     -> GenTx blk
     -> Except (ApplyTxErr blk) (TxMeasure blk)
 
@@ -223,7 +347,7 @@ class ( Measure          (TxMeasure blk)
   blockCapacityTxMeasure ::
        LedgerConfig blk
        -- ^ at least for symmetry with 'txMeasure'
-    -> TickedLedgerState blk
+    -> TickedLedgerState blk mk
     -> TxMeasure blk
 
 -- | We intentionally do not declare a 'Num' instance! We prefer @ByteSize32@
@@ -300,3 +424,9 @@ instance TxMeasureMetrics ByteSize32 where
   txMeasureMetricExUnitsMemory _ = 0
   txMeasureMetricExUnitsSteps _ = 0
   txMeasureMetricRefScriptsSizeBytes _ = mempty
+
+-- | A transaction that was previously valid. Used to clarify the types on the
+-- 'reapplyTxs' function.
+data Invalidated blk = Invalidated { getInvalidated :: !(Validated (GenTx blk))
+                                   , getReason      :: !(ApplyTxErr blk)
+                                   }
