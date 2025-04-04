@@ -38,7 +38,6 @@ import qualified Control.RAWLock as RAWLock
 import           Control.ResourceRegistry (WithTempRegistry, allocateTemp,
                      modifyWithTempRegistry)
 import           Control.Tracer (Tracer, traceWith)
-import qualified Data.ByteString.Lazy as Lazy
 import           Data.List as List (foldl')
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -297,7 +296,7 @@ mkOpenState ::
      , GetPrevHash blk
      , HasBinaryBlockInfo blk
      , HasNestedContent Header blk
-     , DecodeDisk blk (Lazy.ByteString -> blk)
+     , DecodeDisk blk blk
      , Eq h
      )
   => CodecConfig blk
@@ -349,7 +348,7 @@ mkOpenStateHelper ::
      , GetPrevHash blk
      , HasBinaryBlockInfo blk
      , HasNestedContent Header blk
-     , DecodeDisk blk (Lazy.ByteString -> blk)
+     , DecodeDisk blk blk
      , Eq h
      )
   => CodecConfig blk

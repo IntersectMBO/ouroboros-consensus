@@ -33,11 +33,10 @@ module Ouroboros.Consensus.Shelley.Ledger.Query (
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..), encodeListLen,
                      enforceSize)
 import qualified Cardano.Ledger.Api.State.Query as SL
-import           Cardano.Ledger.CertState (lookupDepositDState)
-import qualified Cardano.Ledger.CertState as SL
 import           Cardano.Ledger.Coin (Coin)
 import           Cardano.Ledger.Compactible (Compactible (fromCompact))
 import qualified Cardano.Ledger.Conway.Governance as CG
+import qualified Cardano.Ledger.Conway.State as SL
 import           Cardano.Ledger.Credential (StakeCredential)
 import           Cardano.Ledger.Keys (KeyHash, KeyRole (..))
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -45,7 +44,6 @@ import qualified Cardano.Ledger.Shelley.Core as LC
 import           Cardano.Ledger.Shelley.LedgerState (AccountState)
 import qualified Cardano.Ledger.Shelley.RewardProvenance as SL
                      (RewardProvenance)
-import qualified Cardano.Ledger.State as SL
 import           Cardano.Ledger.UMap (UMap (..), rdReward, umElemDRep,
                      umElemRDPair, umElemSPool)
 import           Cardano.Protocol.Crypto (Crypto)
@@ -245,7 +243,7 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   --
   -- Not supported in eras before Conway.
   GetDRepState
-    :: CG.ConwayEraGov era
+    :: (CG.ConwayEraGov era, SL.ConwayEraCertState era)
     => Set (SL.Credential 'DRepRole)
     -> BlockQuery (ShelleyBlock proto era)
                   (Map
@@ -270,7 +268,7 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   --
   -- Not supported in eras before Conway.
   GetCommitteeMembersState
-    :: CG.ConwayEraGov era
+    :: (CG.ConwayEraGov era, SL.ConwayEraCertState era)
     => Set (SL.Credential 'ColdCommitteeRole)
     -> Set (SL.Credential 'HotCommitteeRole)
     -> Set SL.MemberStatus
@@ -459,7 +457,7 @@ instance
             SL.calculatePoolDistr' (maybe (const True) (flip Set.member) mPoolIds) stakeSet
         GetStakeDelegDeposits stakeCreds ->
           let lookupDeposit =
-                lookupDepositDState (view SL.certDStateL $ SL.lsCertState $ SL.esLState $ SL.nesEs st)
+                SL.lookupDepositDState (view SL.certDStateL $ SL.lsCertState $ SL.esLState $ SL.nesEs st)
               lookupInsert acc cred =
                 case lookupDeposit cred of
                   Nothing      -> acc
@@ -880,7 +878,7 @@ decodeShelleyQuery = do
 
         requireCG ::
              forall s ans.
-             (CG.ConwayEraGov era => Decoder s ans)
+             ((CG.ConwayEraGov era, SL.ConwayEraCertState era) => Decoder s ans)
           -> Decoder s ans
         requireCG k = case SE.getConwayEraGovDict (Proxy @era) of
             Just SE.ConwayEraGovDict -> k

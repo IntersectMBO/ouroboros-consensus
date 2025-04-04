@@ -47,7 +47,7 @@ applyCorruption (Corruption n) bs
 detectCorruption ::
      Show a
   => (a -> Encoding)
-  -> (forall s. Decoder s (Lazy.ByteString -> a))
+  -> (forall s. Lazy.ByteString -> Decoder s a)
   -> (a -> Bool)
      -- ^ Integrity check that should detect the corruption. Return 'False'
      -- when corrupt.
@@ -55,8 +55,8 @@ detectCorruption ::
   -> Corruption
   -> Property
 detectCorruption enc dec isValid a cor =
-    case deserialiseFromBytes dec corruptBytes of
-      Right (leftover, mkA')
+    case deserialiseFromBytes (dec origBytes) corruptBytes of
+      Right (leftover, a')
           | not (Lazy.null leftover)
           -> label "corruption detected by decoder" $ property True
           | not (isValid a')
@@ -73,8 +73,6 @@ detectCorruption enc dec isValid a cor =
            $ counterexample
                ("Corrupt CBOR: " <> show (deserialise corruptBytes :: Term))
              False
-        where
-          a' = mkA' corruptBytes
       Left _ -> label "corruption detected by decoder" $ property True
   where
     origBytes    = toLazyByteString (enc a)

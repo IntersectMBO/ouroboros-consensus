@@ -7,7 +7,6 @@
 module Ouroboros.Consensus.HardFork.Combinator.Serialisation.SerialiseDisk () where
 
 import           Codec.CBOR.Encoding (Encoding)
-import qualified Data.ByteString.Lazy as Lazy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
 import           Data.SOP.Dict (Dict (..), all_NP)
@@ -49,8 +48,8 @@ instance SerialiseHFC xs
   encodeDisk = encodeDiskHfcBlock
 
 instance SerialiseHFC xs
-      => DecodeDisk (HardForkBlock xs) (Lazy.ByteString -> HardForkBlock xs) where
-  decodeDisk = decodeDiskHfcBlock
+      => DecodeDisk (HardForkBlock xs) (HardForkBlock xs) where
+  decodeDisk ccfg = decodeDiskHfcBlock ccfg
 
 instance SerialiseHFC xs
       => EncodeDiskDepIx (NestedCtxt Header) (HardForkBlock xs) where
@@ -92,9 +91,9 @@ instance SerialiseHFC xs
 
 instance SerialiseHFC xs
       => DecodeDisk (HardForkBlock xs) (AnnTip (HardForkBlock xs)) where
-  decodeDisk cfg =
+  decodeDisk cfg lbs =
         fmap undistribAnnTip
-      $ decodeNS (hcmap pSHFC (Comp . decodeDisk) cfgs)
+      $ decodeNS (hcmap pSHFC (Comp . flip decodeDisk lbs) cfgs)
     where
       cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
 
@@ -111,8 +110,8 @@ instance SerialiseHFC xs
 
 instance SerialiseHFC xs
       => DecodeDisk (HardForkBlock xs) (HardForkChainDepState xs) where
-  decodeDisk cfg =
-      decodeTelescope (hcmap pSHFC (Comp . fmap WrapChainDepState . decodeDisk) cfgs)
+  decodeDisk cfg lbs =
+      decodeTelescope (hcmap pSHFC (Comp . fmap WrapChainDepState . flip decodeDisk lbs) cfgs)
     where
       cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
 
@@ -126,8 +125,8 @@ instance SerialiseHFC xs
 
 instance SerialiseHFC xs
       => DecodeDisk (HardForkBlock xs) (LedgerState (HardForkBlock xs)) where
-  decodeDisk cfg =
+  decodeDisk cfg lbs =
         fmap HardForkLedgerState
-      $ decodeTelescope (hcmap pSHFC (Comp . decodeDisk) cfgs)
+      $ decodeTelescope (hcmap pSHFC (Comp . flip decodeDisk lbs) cfgs)
     where
       cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)

@@ -10,7 +10,6 @@ module Ouroboros.Consensus.ByronDual.Node.Serialisation () where
 
 import           Cardano.Binary
 import           Cardano.Chain.Slotting (EpochSlots)
-import qualified Data.ByteString.Lazy as Lazy
 import           Data.Proxy
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger
@@ -26,6 +25,7 @@ import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Node.Serialisation
 import           Ouroboros.Consensus.Protocol.PBFT.State (PBftState)
 import           Ouroboros.Consensus.Storage.Serialisation
+import           Ouroboros.Consensus.Util.CBOR
 import           Ouroboros.Network.Block (Serialised, unwrapCBORinCBOR,
                      wrapCBORinCBOR)
 
@@ -54,7 +54,7 @@ instance SerialiseDiskConstraints DualByronBlock
 
 instance EncodeDisk DualByronBlock DualByronBlock where
   encodeDisk _ = encodeDualBlock encodeByronBlock
-instance DecodeDisk DualByronBlock (Lazy.ByteString -> DualByronBlock) where
+instance DecodeDisk DualByronBlock DualByronBlock where
   decodeDisk ccfg = decodeDualBlock (decodeByronBlock epochSlots)
     where
       epochSlots = extractEpochSlots ccfg
@@ -67,21 +67,21 @@ instance DecodeDiskDep (NestedCtxt Header) DualByronBlock where
 instance EncodeDisk DualByronBlock (LedgerState DualByronBlock) where
   encodeDisk _ = encodeDualLedgerState encodeByronLedgerState
 instance DecodeDisk DualByronBlock (LedgerState DualByronBlock) where
-  decodeDisk _ = decodeDualLedgerState decodeByronLedgerState
+  decodeDisk _ = noNeedOriginalBytes $ decodeDualLedgerState decodeByronLedgerState
 
 -- | @'ChainDepState' ('BlockProtocol' 'DualByronBlock')@
 instance EncodeDisk DualByronBlock (PBftState PBftByronCrypto) where
   encodeDisk _ = encodeByronChainDepState
 -- | @'ChainDepState' ('BlockProtocol' 'DualByronBlock')@
 instance DecodeDisk DualByronBlock (PBftState PBftByronCrypto) where
-  decodeDisk _ = decodeByronChainDepState
+  decodeDisk _ = noNeedOriginalBytes decodeByronChainDepState
 
 instance EncodeDisk DualByronBlock (AnnTip DualByronBlock) where
   encodeDisk ccfg = encodeDisk (dualCodecConfigMain ccfg)
                   . (castAnnTip :: AnnTip DualByronBlock -> AnnTip ByronBlock)
 instance DecodeDisk DualByronBlock (AnnTip DualByronBlock) where
-  decodeDisk ccfg = (castAnnTip :: AnnTip ByronBlock -> AnnTip DualByronBlock)
-                <$> decodeDisk (dualCodecConfigMain ccfg)
+  decodeDisk ccfg = fmap (castAnnTip :: AnnTip ByronBlock -> AnnTip DualByronBlock)
+                . decodeDisk (dualCodecConfigMain ccfg)
 
 {-------------------------------------------------------------------------------
   SerialiseNodeToNode

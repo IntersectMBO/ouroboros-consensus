@@ -13,7 +13,6 @@ module Ouroboros.Consensus.Storage.VolatileDB.Impl.Parser (
   ) where
 
 import           Data.Bifunctor (bimap)
-import qualified Data.ByteString.Lazy as Lazy
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Storage.Serialisation
@@ -51,7 +50,7 @@ parseBlockFile ::
      , GetPrevHash blk
      , HasBinaryBlockInfo blk
      , HasNestedContent Header blk
-     , DecodeDisk blk (Lazy.ByteString -> blk)
+     , DecodeDisk blk blk
      )
   => CodecConfig blk
   -> HasFS m h

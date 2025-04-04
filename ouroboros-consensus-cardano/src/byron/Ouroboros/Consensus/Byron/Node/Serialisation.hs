@@ -31,6 +31,7 @@ import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Node.Serialisation
 import           Ouroboros.Consensus.Protocol.PBFT.State (PBftState)
 import           Ouroboros.Consensus.Storage.Serialisation
+import           Ouroboros.Consensus.Util.CBOR
 import           Ouroboros.Network.Block (Serialised (..), unwrapCBORinCBOR,
                      wrapCBORinCBOR)
 import           Ouroboros.Network.SizeInBytes (SizeInBytes (..))
@@ -46,25 +47,25 @@ instance SerialiseDiskConstraints ByronBlock
 
 instance EncodeDisk ByronBlock ByronBlock where
   encodeDisk _ = encodeByronBlock
-instance DecodeDisk ByronBlock (Lazy.ByteString -> ByronBlock) where
+instance DecodeDisk ByronBlock ByronBlock where
   decodeDisk ccfg = decodeByronBlock (getByronEpochSlots ccfg)
 
 instance EncodeDisk ByronBlock (LedgerState ByronBlock) where
   encodeDisk _ = encodeByronLedgerState
 instance DecodeDisk ByronBlock (LedgerState ByronBlock) where
-  decodeDisk _ = decodeByronLedgerState
+  decodeDisk _ = noNeedOriginalBytes decodeByronLedgerState
 
 -- | @'ChainDepState' ('BlockProtocol' 'ByronBlock')@
 instance EncodeDisk ByronBlock (PBftState PBftByronCrypto) where
   encodeDisk _ = encodeByronChainDepState
 -- | @'ChainDepState' ('BlockProtocol' 'ByronBlock')@
 instance DecodeDisk ByronBlock (PBftState PBftByronCrypto) where
-  decodeDisk _ = decodeByronChainDepState
+  decodeDisk _ = noNeedOriginalBytes decodeByronChainDepState
 
 instance EncodeDisk ByronBlock (AnnTip ByronBlock) where
   encodeDisk _ = encodeByronAnnTip
 instance DecodeDisk ByronBlock (AnnTip ByronBlock) where
-  decodeDisk _ = decodeByronAnnTip
+  decodeDisk _ = noNeedOriginalBytes decodeByronAnnTip
 
 {-------------------------------------------------------------------------------
   SerialiseNodeToNode
@@ -91,11 +92,11 @@ instance SerialiseNodeToNode ByronBlock (Header ByronBlock) where
 
   decodeNodeToNode ccfg = \case
       ByronNodeToNodeVersion1 ->
-        unwrapCBORinCBOR $
-              (flip joinSizeHint fakeByronBlockSizeHint .)
-          <$> decodeUnsizedHeader epochSlots
+        unwrapCBORinCBOR $ \bs ->
+              (flip joinSizeHint fakeByronBlockSizeHint)
+          <$> decodeUnsizedHeader epochSlots bs
       ByronNodeToNodeVersion2 ->
-        nest <$> decodeDisk ccfg
+        nest <$> decodeDisk ccfg undefined
     where
       epochSlots = getByronEpochSlots ccfg
 
@@ -129,7 +130,11 @@ instance SerialiseNodeToNode ByronBlock (SerialisedHeader ByronBlock) where
               -> GenDepPair Serialised (f blk)
           aux (SomeSecond ix, bytes) = GenDepPair ix (Serialised bytes)
 
-      ByronNodeToNodeVersion2 -> decodeDisk ccfg
+      ByronNodeToNodeVersion2 ->
+        -- We can pass 'Lazy.empty' because this is a GenDepPair of
+        -- Serialised, which in the end will use CBOR-in-CBOR (see the
+        -- @Serialise (Serialised a)@ instance in network.
+        decodeDisk ccfg Lazy.empty
 
 -- | No CBOR-in-CBOR, because we check for canonical encodings, which means we
 -- can use the recomputed encoding for the annotation.
@@ -242,17 +247,14 @@ instance DecodeDiskDep (NestedCtxt Header) ByronBlock where
       case ctxt of
         CtxtByronRegular _size ->
           decodeByronRegularHeader getByronEpochSlots
-        CtxtByronBoundary _size ->
-          auxBoundary <$> decodeByronBoundaryHeader
+        CtxtByronBoundary _size -> \bs ->
+          auxBoundary <$> decodeByronBoundaryHeader bs
     where
-      auxBoundary :: (Lazy.ByteString -> RawBoundaryHeader)
-                  -> (Lazy.ByteString -> (SlotNo, RawBoundaryHeader))
-      auxBoundary f bs =
+      auxBoundary :: RawBoundaryHeader
+                  -> (SlotNo, RawBoundaryHeader)
+      auxBoundary hdr =
           (slotNo, hdr)
         where
-          hdr :: RawBoundaryHeader
-          hdr = f bs
-
           slotNo :: SlotNo
           slotNo = fromByronSlotNo $
               CC.boundaryBlockSlot getByronEpochSlots (CC.boundaryEpoch hdr)

@@ -22,7 +22,6 @@ import           Cardano.Slotting.EpochInfo (epochInfoSize,
 import           Cardano.Slotting.Time
 import           Codec.Serialise (decode, encode)
 import           Control.Exception (Exception, throw)
-import qualified Data.ByteString.Lazy as Lazy
 import           Data.Functor.Identity
 import           Data.Typeable (Typeable)
 import           Data.Word
@@ -44,6 +43,7 @@ import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion ()
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract
                      (pHeaderBlockSize, pHeaderSize)
 import           Ouroboros.Consensus.Storage.Serialisation
+import           Ouroboros.Consensus.Util.CBOR
 import           Ouroboros.Network.Block (Serialised, unwrapCBORinCBOR,
                      wrapCBORinCBOR)
 
@@ -58,37 +58,34 @@ instance ShelleyCompatible proto era => SerialiseDiskConstraints (ShelleyBlock p
 
 instance ShelleyCompatible proto era => EncodeDisk (ShelleyBlock proto era) (ShelleyBlock proto era) where
   encodeDisk _ = encodeShelleyBlock
-instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) (Lazy.ByteString -> ShelleyBlock proto era) where
+instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) (ShelleyBlock proto era) where
   decodeDisk _ = decodeShelleyBlock
 
 instance ShelleyCompatible proto era => EncodeDisk (ShelleyBlock proto era) (Header (ShelleyBlock proto era)) where
   encodeDisk _ = encodeShelleyHeader
-instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) (Lazy.ByteString -> Header (ShelleyBlock proto era)) where
+instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) (Header (ShelleyBlock proto era)) where
   decodeDisk _ = decodeShelleyHeader
 
 instance ShelleyCompatible proto era => EncodeDisk (ShelleyBlock proto era) (LedgerState (ShelleyBlock proto era)) where
   encodeDisk _ = encodeShelleyLedgerState
 instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) (LedgerState (ShelleyBlock proto era)) where
-  decodeDisk _ = decodeShelleyLedgerState
+  decodeDisk _ = noNeedOriginalBytes decodeShelleyLedgerState
 
 -- | @'ChainDepState' ('BlockProtocol' ('ShelleyBlock' era))@
 instance ShelleyCompatible proto era => EncodeDisk (ShelleyBlock proto era) TPraosState where
-  encodeDisk _ = encode
 -- | @'ChainDepState' ('BlockProtocol' ('ShelleyBlock' era))@
 instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) TPraosState where
-  decodeDisk _ = decode
 
 instance ShelleyCompatible proto era => EncodeDisk (ShelleyBlock proto era) PraosState where
-  encodeDisk _ = encode
 -- | @'ChainDepState' ('BlockProtocol' ('ShelleyBlock' era))@
 instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) PraosState where
-  decodeDisk _ = decode
+
 instance ShelleyCompatible proto era
   => EncodeDisk (ShelleyBlock proto era) (AnnTip (ShelleyBlock proto era)) where
   encodeDisk _ = encodeShelleyAnnTip
 instance ShelleyCompatible proto era
   =>  DecodeDisk (ShelleyBlock proto era) (AnnTip (ShelleyBlock proto era)) where
-  decodeDisk _ = decodeShelleyAnnTip
+  decodeDisk _ = noNeedOriginalBytes decodeShelleyAnnTip
 
 {-------------------------------------------------------------------------------
   SerialiseNodeToNode

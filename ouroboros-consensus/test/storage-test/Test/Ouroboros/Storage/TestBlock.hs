@@ -107,6 +107,7 @@ import           Ouroboros.Consensus.Storage.ImmutableDB (Tip)
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Storage.VolatileDB
+import           Ouroboros.Consensus.Util.CBOR
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.Orphans ()
 import qualified Ouroboros.Network.Mock.Chain as Chain
@@ -724,12 +725,10 @@ instance HasBinaryBlockInfo TestBlock where
 instance SerialiseDiskConstraints TestBlock
 
 instance EncodeDisk TestBlock TestBlock
-instance DecodeDisk TestBlock (Lazy.ByteString -> TestBlock) where
-  decodeDisk _ = const <$> decode
+instance DecodeDisk TestBlock TestBlock where
 
 instance EncodeDisk TestBlock (Header TestBlock)
-instance DecodeDisk TestBlock (Lazy.ByteString -> Header TestBlock) where
-  decodeDisk _ = const <$> decode
+instance DecodeDisk TestBlock (Header TestBlock) where
 
 instance EncodeDisk TestBlock (LedgerState TestBlock)
 instance DecodeDisk TestBlock (LedgerState TestBlock)
@@ -738,7 +737,7 @@ instance EncodeDisk TestBlock (AnnTip TestBlock) where
   encodeDisk _ = encodeAnnTipIsEBB encode
 
 instance DecodeDisk TestBlock (AnnTip TestBlock) where
-  decodeDisk _ = decodeAnnTipIsEBB decode
+  decodeDisk _ = noNeedOriginalBytes $ decodeAnnTipIsEBB decode
 
 instance ReconstructNestedCtxt       Header  TestBlock
 instance EncodeDiskDepIx (NestedCtxt Header) TestBlock

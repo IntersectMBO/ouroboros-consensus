@@ -93,7 +93,7 @@ library
     network-mux ^>=0.7,
     ouroboros-consensus ^>=0.24,
     ouroboros-network ^>=0.20.1,
-    ouroboros-network-api ^>=0.13,
+    ouroboros-network-api ^>=0.14,
     ouroboros-network-framework ^>=0.17,
     ouroboros-network-protocols ^>=0.14,
     random,

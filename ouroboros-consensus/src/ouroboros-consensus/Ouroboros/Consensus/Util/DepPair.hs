@@ -34,6 +34,9 @@ import           Data.Type.Equality ((:~:) (..))
 -- | Generalization of 'DepPair'
 --
 -- This adds an additional functor @g@ around the second value in the pair.
+--
+-- The only difference with 'Data.Functor.Product.Product' is that the type @a@
+-- is existential, and the arguments are flipped.
 data GenDepPair g f where
   GenDepPair :: !(f a) -> !(g a) -> GenDepPair g f
 

@@ -176,11 +176,10 @@ encodeByronBlock blk = mconcat [
     ]
 
 -- | Inverse of 'encodeByronBlock'
-decodeByronBlock :: CC.EpochSlots -> Decoder s (Lazy.ByteString -> ByronBlock)
-decodeByronBlock epochSlots =
+decodeByronBlock :: CC.EpochSlots -> Lazy.ByteString -> Decoder s ByronBlock
+decodeByronBlock epochSlots bs =
     toPlainDecoder Nothing byronProtVer $
-    flip (\bs -> mkByronBlock epochSlots
-               . annotationBytes bs)
+    (mkByronBlock epochSlots . annotationBytes bs)
     <$> CC.decCBORABlockOrBoundary epochSlots
 
 -- | Decoder for a regular (non-EBB) Byron block.
@@ -192,11 +191,12 @@ decodeByronBlock epochSlots =
 --
 -- Use 'decodeByronBlock' when you can, this function is provided for use by
 -- the hard-fork combinator.
-decodeByronRegularBlock :: CC.EpochSlots
-                        -> Decoder s (Lazy.ByteString -> ByronBlock)
-decodeByronRegularBlock epochSlots =
+decodeByronRegularBlock :: Lazy.ByteString
+                        -> CC.EpochSlots
+                        -> Decoder s ByronBlock
+decodeByronRegularBlock bs epochSlots =
     toPlainDecoder Nothing byronProtVer $
-    flip (\bs -> mkByronBlock epochSlots
+       (mkByronBlock epochSlots
                . annotationBytes bs
                . CC.ABOBBlock)
     <$> CC.decCBORABlock epochSlots
@@ -210,11 +210,12 @@ decodeByronRegularBlock epochSlots =
 --
 -- Use 'decodeByronBlock' when you can, this function is provided for use by
 -- the hard-fork combinator.
-decodeByronBoundaryBlock :: CC.EpochSlots
-                         -> Decoder s (Lazy.ByteString -> ByronBlock)
-decodeByronBoundaryBlock epochSlots =
+decodeByronBoundaryBlock :: Lazy.ByteString
+                         -> CC.EpochSlots
+                         -> Decoder s ByronBlock
+decodeByronBoundaryBlock bs epochSlots =
     toPlainDecoder Nothing byronProtVer $
-    flip (\bs -> mkByronBlock epochSlots
+        (mkByronBlock epochSlots
                . annotationBytes bs
                . CC.ABOBBoundary)
     <$> CC.decCBORABoundaryBlock
@@ -229,10 +230,11 @@ encodeByronRegularHeader = toByronCBOR . CBOR.encodePreEncoded . CC.headerAnnota
 -- | Inverse of 'encodeByronRegularHeader'
 decodeByronRegularHeader ::
      CC.EpochSlots
-  -> Decoder s (Lazy.ByteString -> RawHeader)
-decodeByronRegularHeader epochSlots =
+  -> Lazy.ByteString
+  -> Decoder s RawHeader
+decodeByronRegularHeader epochSlots bs =
     toPlainDecoder Nothing byronProtVer $
-    flip annotationBytes <$> CC.decCBORAHeader epochSlots
+    annotationBytes bs <$> CC.decCBORAHeader epochSlots
 
 -- | Encodes a raw Byron EBB header /without/ a tag indicating whether it's a
 -- regular header or an EBB header.
@@ -242,10 +244,10 @@ encodeByronBoundaryHeader :: RawBoundaryHeader -> CBOR.Encoding
 encodeByronBoundaryHeader = toByronCBOR . CBOR.encodePreEncoded . CC.boundaryHeaderAnnotation
 
 -- | Inverse of 'encodeByronBoundaryHeader'
-decodeByronBoundaryHeader :: Decoder s (Lazy.ByteString -> RawBoundaryHeader)
-decodeByronBoundaryHeader =
+decodeByronBoundaryHeader :: Lazy.ByteString -> Decoder s RawBoundaryHeader
+decodeByronBoundaryHeader bs =
     toPlainDecoder Nothing byronProtVer $
-    flip annotationBytes <$> CC.decCBORABoundaryHeader
+    annotationBytes bs <$> CC.decCBORABoundaryHeader
 
 -- | The 'BinaryBlockInfo' of the given 'ByronBlock'.
 --
@@ -323,13 +325,13 @@ encodeUnsizedHeader (UnsizedHeader raw _ _) = toByronCBOR $ CC.encCBORABlockOrBo
 
 -- | Inverse of 'encodeSizedHeader'
 decodeUnsizedHeader :: CC.EpochSlots
-                    -> Decoder s (Lazy.ByteString -> UnsizedHeader)
-decodeUnsizedHeader epochSlots =
+                    -> Lazy.ByteString
+                    -> Decoder s (UnsizedHeader)
+decodeUnsizedHeader epochSlots lbs =
     toPlainDecoder Nothing byronProtVer $
     fillInByteString <$> CC.decCBORABlockOrBoundaryHdr epochSlots
   where
     fillInByteString :: CC.ABlockOrBoundaryHdr ByteSpan
-                     -> Lazy.ByteString
                      -> UnsizedHeader
-    fillInByteString it theBytes = mkUnsizedHeader epochSlots $
-      Lazy.toStrict . slice theBytes <$> it
+    fillInByteString it = mkUnsizedHeader epochSlots $
+      Lazy.toStrict . slice lbs <$> it

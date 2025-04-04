@@ -35,12 +35,11 @@ module Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common (
   , HardForkSpecificNodeToNodeVersion (..)
   , isHardForkNodeToClientEnabled
   , isHardForkNodeToNodeEnabled
-    -- * Dealing with annotations
-  , AnnDecoder (..)
     -- * Serialisation of telescopes
   , decodeTelescope
   , encodeTelescope
     -- * Serialisation of sums
+  , DecoderF (..)
   , decodeAnnNS
   , decodeNS
   , encodeNS
@@ -193,16 +192,17 @@ class ( CanHardFork xs
       cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
 
   decodeDiskHfcBlock :: CodecConfig (HardForkBlock xs)
-                     -> forall s. Decoder s (Lazy.ByteString -> HardForkBlock xs)
-  decodeDiskHfcBlock cfg =
-        fmap (\f -> HardForkBlock . OneEraBlock . f)
+                     -> Lazy.ByteString
+                     -> forall s. Decoder s (HardForkBlock xs)
+  decodeDiskHfcBlock cfg lbs =
+        fmap (HardForkBlock . OneEraBlock)
       $ decodeAnnNS (hcmap pSHFC aux cfgs)
     where
       cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
 
       aux :: SerialiseDiskConstraints blk
-          => CodecConfig blk -> AnnDecoder I blk
-      aux cfg' = AnnDecoder $ (\f -> I . f) <$> decodeDisk cfg'
+          => CodecConfig blk -> DecoderF I blk
+      aux cfg' = DecoderF $ I <$> decodeDisk cfg' lbs
 
   -- | Used as the implementation of 'reconstructPrefixLen' for
   -- 'HardForkBlock'.
@@ -318,11 +318,11 @@ disabledEraException ::
 disabledEraException = HardForkEncoderDisabledEra . singleEraInfo
 
 {-------------------------------------------------------------------------------
-  Dealing with annotations
+  Decoder definition for partial application
 -------------------------------------------------------------------------------}
 
-data AnnDecoder f blk = AnnDecoder {
-      annDecoder :: forall s. Decoder s (Lazy.ByteString -> f blk)
+data DecoderF f blk = DecoderF {
+      annDecoder :: forall s. Decoder s (f blk)
     }
 
 {-------------------------------------------------------------------------------
@@ -387,8 +387,8 @@ decodeNS ds = do
     aux index (Comp dec) (K ()) = K $ injectNS index <$> dec
 
 decodeAnnNS :: forall xs f. SListI xs
-            => NP (AnnDecoder f) xs
-            -> forall s. Decoder s (Lazy.ByteString -> NS f xs)
+            => NP (DecoderF f) xs
+            -> forall s. Decoder s (NS f xs)
 decodeAnnNS ds = do
     enforceSize "decodeDiskAnnNS" 2
     i <- Dec.decodeWord8
@@ -397,10 +397,10 @@ decodeAnnNS ds = do
       Just ns -> hcollapse $ hizipWith aux ds ns
   where
     aux :: Index xs blk
-        -> AnnDecoder f blk
+        -> DecoderF f blk
         -> K () blk
-        -> K (Decoder s (Lazy.ByteString -> NS f xs)) blk
-    aux index (AnnDecoder dec) (K ()) = K $ (injectNS index .) <$> dec
+        -> K (Decoder s (NS f xs)) blk
+    aux index (DecoderF dec) (K ()) = K $ (injectNS index) <$> dec
 
 {-------------------------------------------------------------------------------
   Dependent serialisation
@@ -425,17 +425,18 @@ encodeNested = \ccfg (NestedCtxt ctxt) a ->
 decodeNested :: All (DecodeDiskDep (NestedCtxt f)) xs
              => CodecConfig (HardForkBlock xs)
              -> NestedCtxt f (HardForkBlock xs) a
-             -> forall s. Decoder s (Lazy.ByteString -> a)
-decodeNested = \ccfg (NestedCtxt ctxt) ->
+             -> Lazy.ByteString
+             -> forall s. Decoder s a
+decodeNested ccfg (NestedCtxt ctxt) lbs =
     go (getPerEraCodecConfig (hardForkCodecConfigPerEra ccfg)) ctxt
   where
     go :: All (DecodeDiskDep (NestedCtxt f)) xs'
        => NP CodecConfig xs'
        -> NestedCtxt_ (HardForkBlock xs') f a
-       -> Decoder s (Lazy.ByteString -> a)
-    go Nil       ctxt       = case ctxt of {}
-    go (c :* _)  (NCZ ctxt) = decodeDiskDep c (NestedCtxt ctxt)
-    go (_ :* cs) (NCS ctxt) = go cs ctxt
+       -> Decoder s a
+    go Nil       ctxt'       = case ctxt' of {}
+    go (c :* _)  (NCZ ctxt') = decodeDiskDep c (NestedCtxt ctxt') lbs
+    go (_ :* cs) (NCS ctxt') = go cs ctxt'
 
 encodeNestedCtxt :: All (EncodeDiskDepIx (NestedCtxt f)) xs
                  => CodecConfig (HardForkBlock xs)

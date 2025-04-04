@@ -2,9 +2,12 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE ViewPatterns #-}
 
 -- | Block header associated with Praos.
 --
@@ -33,9 +36,9 @@ import           Cardano.Crypto.Util
                      (SignableRepresentation (getSignableRepresentation))
 import qualified Cardano.Crypto.VRF as VRF
 import           Cardano.Ledger.BaseTypes (ProtVer (pvMajor))
-import           Cardano.Ledger.Binary (Annotator (..), DecCBOR (decCBOR),
-                     EncCBOR (..), ToCBOR (..), encodedSigKESSizeExpr,
-                     serialize', unCBORGroup, withSlice)
+import           Cardano.Ledger.Binary (DecCBOR (decCBOR), EncCBOR (..),
+                     ToCBOR (..), encodedSigKESSizeExpr, serialize',
+                     unCBORGroup)
 import           Cardano.Ledger.Binary.Coders
 import           Cardano.Ledger.Binary.Crypto (decodeSignedKES, decodeVerKeyVRF,
                      encodeSignedKES, encodeVerKeyVRF)
@@ -43,6 +46,7 @@ import qualified Cardano.Ledger.Binary.Plain as Plain
 import           Cardano.Ledger.Hashes (EraIndependentBlockBody,
                      EraIndependentBlockHeader, HASH)
 import           Cardano.Ledger.Keys (KeyRole (BlockIssuer), VKey)
+import           Cardano.Ledger.MemoBytes
 import           Cardano.Protocol.Crypto (Crypto, KES, VRF)
 import           Cardano.Protocol.TPraos.BHeader (PrevHash)
 import           Cardano.Protocol.TPraos.OCert (OCert)
@@ -52,7 +56,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import           Data.Word (Word32)
 import           GHC.Generics (Generic)
-import           NoThunks.Class (AllowThunksIn (..), NoThunks (..))
+import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF)
 
 -- | The body of the header is the part which gets hashed to form the hash
@@ -105,22 +109,16 @@ instance Crypto c => Eq (HeaderRaw c) where
   h1 == h2 = headerRawSig h1 == headerRawSig h2
              && headerRawBody h1 == headerRawBody h2
 
--- | Checks the binary representation first.
-instance Crypto c => Eq (Header c) where
-  h1 == h2 = headerBytes h1 == headerBytes h2
-             && headerRaw h1 == headerRaw h2
-
 instance
   Crypto crypto =>
   NoThunks (HeaderRaw crypto)
 
 -- | Full header type, carrying its own memoised bytes.
-data Header crypto = HeaderConstr
-  { headerRaw   :: !(HeaderRaw crypto)
-  , headerBytes :: BS.ByteString -- lazy on purpose, constructed on demand
-  }
-  deriving (Show, Generic)
-  deriving (NoThunks) via AllowThunksIn '["headerBytes"] (Header crypto)
+newtype Header crypto = HeaderConstr (MemoBytes (HeaderRaw crypto))
+  deriving newtype (Show, DecCBOR, Eq, NoThunks, Plain.ToCBOR)
+
+instance Memoized (Header c) where
+  type RawType (Header c) = HeaderRaw c
 
 pattern Header ::
   Crypto crypto =>
@@ -128,29 +126,16 @@ pattern Header ::
   KES.SignedKES (KES crypto) (HeaderBody crypto) ->
   Header crypto
 pattern Header {headerBody, headerSig} <-
-  HeaderConstr {
-    headerRaw =
-      HeaderRaw
-        { headerRawBody = headerBody
-        , headerRawSig = headerSig
-        }
-    }
+  (getMemoRawType -> HeaderRaw headerBody headerSig)
   where
     Header body sig =
-      let header = HeaderRaw
-            { headerRawBody = body
-            , headerRawSig = sig
-            }
-      in HeaderConstr
-         { headerRaw = header
-         , headerBytes = serialize' (pvMajor (hbProtVer body)) header
-         }
+      mkMemoized (pvMajor (hbProtVer body)) $ HeaderRaw body sig
 
 {-# COMPLETE Header #-}
 
 -- | Compute the size of the header
 headerSize :: Header crypto -> Int
-headerSize (HeaderConstr _ bytes) = BS.length bytes
+headerSize = BS.length . BSL.toStrict . shortToLazy . getMemoRawBytes
 
 -- | Hash a header
 headerHash ::
@@ -218,19 +203,8 @@ instance Crypto crypto => EncCBOR (HeaderRaw crypto) where
 instance Crypto crypto => DecCBOR (HeaderRaw crypto) where
   decCBOR = decode $ RecD HeaderRaw <! From <! D decodeSignedKES
 
-instance Crypto crypto => DecCBOR (Annotator (HeaderRaw crypto)) where
-  decCBOR = pure <$> decCBOR
-
-instance Crypto c => Plain.ToCBOR (Header c) where
-  toCBOR (HeaderConstr _ bytes) = Plain.encodePreEncoded bytes
-
 instance Crypto c => EncCBOR (Header c) where
   encodedSizeExpr size proxy =
     1
-      + encodedSizeExpr size (headerRawBody . headerRaw <$> proxy)
-      + encodedSigKESSizeExpr (KES.getSig . headerRawSig . headerRaw <$> proxy)
-
-instance Crypto c => DecCBOR (Annotator (Header c)) where
-  decCBOR = do
-    (Annotator getT, Annotator getBytes) <- withSlice decCBOR
-    pure (Annotator (\fullbytes -> HeaderConstr (getT fullbytes) (BSL.toStrict (getBytes fullbytes))))
+      + encodedSizeExpr size (headerRawBody . getMemoRawType <$> proxy)
+      + encodedSigKESSizeExpr (KES.getSig . headerRawSig . getMemoRawType <$> proxy)

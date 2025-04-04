@@ -10,6 +10,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -867,20 +868,20 @@ encodeDualBlock encodeMain DualBlock{..} = mconcat [
       ]
 
 decodeDualBlock :: (Bridge m a, Serialise a)
-                => Decoder s (Lazy.ByteString -> m)
-                -> Decoder s (Lazy.ByteString -> DualBlock m a)
-decodeDualBlock decodeMain = do
+                => (forall s. Lazy.ByteString -> Decoder s m)
+                -> (forall s. Lazy.ByteString -> Decoder s (DualBlock m a))
+decodeDualBlock decodeMain = \bs -> do
     enforceSize "DualBlock" 3
     dualBlock
-      <$> decodeMain
+      <$> decodeMain bs
       <*> decode
       <*> decode
   where
-    dualBlock :: (Lazy.ByteString -> m)
+    dualBlock :: m
               -> Maybe a
               -> BridgeBlock m a
-              -> (Lazy.ByteString -> DualBlock m a)
-    dualBlock conc abst bridge bs = DualBlock (conc bs) abst bridge
+              -> DualBlock m a
+    dualBlock m abst bridge = DualBlock m abst bridge
 
 encodeDualHeader :: (Header m -> Encoding)
                  -> Header (DualBlock m a) -> Encoding
