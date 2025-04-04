@@ -21,6 +21,7 @@ import qualified Ouroboros.Consensus.ByronSpec.Ledger.GenTx as GenTx
 import           Ouroboros.Consensus.ByronSpec.Ledger.Ledger
 import           Ouroboros.Consensus.ByronSpec.Ledger.Orphans ()
 import           Ouroboros.Consensus.Ledger.SupportsMempool
+import           Ouroboros.Consensus.Ledger.Tables.Utils
 
 newtype instance GenTx ByronSpecBlock = ByronSpecGenTx {
       unByronSpecGenTx :: ByronSpecGenTx
@@ -47,11 +48,13 @@ instance LedgerSupportsMempool ByronSpecBlock where
       $ GenTx.apply cfg (unByronSpecGenTx tx) st
 
   -- Byron spec doesn't have multiple validation modes
-  reapplyTx cfg slot vtx st =
-        fmap fst
-      $ applyTx cfg DoNotIntervene slot (forgetValidatedByronSpecGenTx vtx) st
+  reapplyTx _ cfg slot vtx st =
+        attachEmptyDiffs . applyDiffs st . fst
+    <$> applyTx cfg DoNotIntervene slot (forgetValidatedByronSpecGenTx vtx) st
 
   txForgetValidated = forgetValidatedByronSpecGenTx
+
+  getTransactionKeySets _ = emptyLedgerTables
 
 instance TxLimits ByronSpecBlock where
   type TxMeasure ByronSpecBlock = IgnoringOverflow ByteSize32

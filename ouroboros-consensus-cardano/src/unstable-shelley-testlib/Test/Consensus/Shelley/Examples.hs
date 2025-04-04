@@ -22,18 +22,25 @@ module Test.Consensus.Shelley.Examples (
 
 import qualified Cardano.Ledger.Block as SL
 import           Cardano.Ledger.Core
+import qualified Cardano.Ledger.Core as LC
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Protocol.Crypto (StandardCrypto)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import           Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import           Cardano.Slotting.Time (mkSlotLength)
 import           Data.Coerce (coerce)
+import           Data.Foldable (toList)
 import           Data.List.NonEmpty (NonEmpty ((:|)))
+import qualified Data.Map as Map
 import qualified Data.Set as Set
+import           Lens.Micro
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool
+import           Ouroboros.Consensus.Ledger.Tables hiding (TxIn)
+import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Protocol.Abstract (translateChainDepState)
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
 import           Ouroboros.Consensus.Protocol.Praos.Header
@@ -68,13 +75,39 @@ import           Test.Util.Serialisation.Examples (Examples (..), labelled,
                      unlabelled)
 import           Test.Util.Serialisation.SomeResult (SomeResult (..))
 
-
 {-------------------------------------------------------------------------------
   Examples
 -------------------------------------------------------------------------------}
 
 codecConfig :: CodecConfig StandardShelleyBlock
 codecConfig = ShelleyCodecConfig
+
+mkLedgerTables :: forall proto era.
+     ShelleyCompatible proto era
+  => LC.Tx era
+  -> LedgerTables (LedgerState (ShelleyBlock proto era)) ValuesMK
+mkLedgerTables tx =
+      LedgerTables
+    $ ValuesMK
+    $ Map.fromList
+    $ zip exampleTxIns exampleTxOuts
+  where
+    exampleTxIns :: [SL.TxIn]
+    exampleTxIns  = case toList (tx ^. (LC.bodyTxL . LC.allInputsTxBodyF)) of
+      [] -> error "No transaction inputs were provided to construct the ledger tables"
+            -- We require at least one transaction input (and one
+            -- transaction output) in the example provided by
+            -- cardano-ledger to make sure that we test the serialization
+            -- of ledger tables with at least one non-trivial example.
+            --
+            -- Also all transactions in Cardano have at least one input for
+            -- automatic replay protection.
+      xs -> xs
+
+    exampleTxOuts :: [LC.TxOut era]
+    exampleTxOuts = case toList (tx ^. (LC.bodyTxL . LC.outputsTxBodyL)) of
+      [] -> error "No transaction outputs were provided to construct the ledger tables"
+      xs -> xs
 
 fromShelleyLedgerExamples ::
      ShelleyCompatible (TPraos StandardCrypto) era
@@ -101,6 +134,7 @@ fromShelleyLedgerExamples
     , exampleExtLedgerState   = unlabelled extLedgerState
     , exampleSlotNo           = unlabelled slotNo
     , exampleLedgerConfig     = unlabelled ledgerConfig
+    , exampleLedgerTables     = unlabelled $ mkLedgerTables sleTx
     }
   where
     blk = mkShelleyBlock sleBlock
@@ -111,13 +145,13 @@ fromShelleyLedgerExamples
     serialisedHeader =
       SerialisedHeaderFromDepPair $ GenDepPair (NestedCtxt CtxtShelley) (Serialised "<HEADER>")
     queries = labelled [
-          ("GetLedgerTip",              SomeSecond GetLedgerTip)
-        , ("GetEpochNo",                SomeSecond GetEpochNo)
-        , ("GetCurrentPParams",         SomeSecond GetCurrentPParams)
-        , ("GetStakeDistribution",      SomeSecond GetStakeDistribution)
-        , ("GetNonMyopicMemberRewards", SomeSecond $ GetNonMyopicMemberRewards sleRewardsCredentials)
-        , ("GetGenesisConfig",          SomeSecond GetGenesisConfig)
-        , ("GetBigLedgerPeerSnapshot",  SomeSecond GetBigLedgerPeerSnapshot)
+          ("GetLedgerTip",              SomeBlockQuery GetLedgerTip)
+        , ("GetEpochNo",                SomeBlockQuery GetEpochNo)
+        , ("GetCurrentPParams",         SomeBlockQuery GetCurrentPParams)
+        , ("GetStakeDistribution",      SomeBlockQuery GetStakeDistribution)
+        , ("GetNonMyopicMemberRewards", SomeBlockQuery $ GetNonMyopicMemberRewards sleRewardsCredentials)
+        , ("GetGenesisConfig",          SomeBlockQuery GetGenesisConfig)
+        , ("GetBigLedgerPeerSnapshot",  SomeBlockQuery GetBigLedgerPeerSnapshot)
       ]
     results = labelled [
           ("LedgerTip",              SomeResult GetLedgerTip (blockPoint blk))
@@ -146,6 +180,7 @@ fromShelleyLedgerExamples
                                   }
     , shelleyLedgerState      = sleNewEpochState
     , shelleyLedgerTransition = ShelleyTransitionInfo {shelleyAfterVoting = 0}
+    , shelleyLedgerTables     = LedgerTables EmptyMK
     }
     chainDepState = TPraosState (NotOrigin 1) sleChainDepState
     extLedgerState = ExtLedgerState
@@ -176,6 +211,7 @@ fromShelleyLedgerExamplesPraos ShelleyLedgerExamples {
     , exampleResult           = results
     , exampleAnnTip           = unlabelled annTip
     , exampleLedgerState      = unlabelled ledgerState
+    , exampleLedgerTables     = unlabelled $ mkLedgerTables sleTx
     , exampleChainDepState    = unlabelled chainDepState
     , exampleExtLedgerState   = unlabelled extLedgerState
     , exampleSlotNo           = unlabelled slotNo
@@ -210,12 +246,12 @@ fromShelleyLedgerExamplesPraos ShelleyLedgerExamples {
     serialisedHeader =
       SerialisedHeaderFromDepPair $ GenDepPair (NestedCtxt CtxtShelley) (Serialised "<HEADER>")
     queries = labelled [
-          ("GetLedgerTip",              SomeSecond GetLedgerTip)
-        , ("GetEpochNo",                SomeSecond GetEpochNo)
-        , ("GetCurrentPParams",         SomeSecond GetCurrentPParams)
-        , ("GetStakeDistribution",      SomeSecond GetStakeDistribution)
-        , ("GetNonMyopicMemberRewards", SomeSecond $ GetNonMyopicMemberRewards sleRewardsCredentials)
-        , ("GetGenesisConfig",          SomeSecond GetGenesisConfig)
+          ("GetLedgerTip",              SomeBlockQuery GetLedgerTip)
+        , ("GetEpochNo",                SomeBlockQuery GetEpochNo)
+        , ("GetCurrentPParams",         SomeBlockQuery GetCurrentPParams)
+        , ("GetStakeDistribution",      SomeBlockQuery GetStakeDistribution)
+        , ("GetNonMyopicMemberRewards", SomeBlockQuery $ GetNonMyopicMemberRewards sleRewardsCredentials)
+        , ("GetGenesisConfig",          SomeBlockQuery GetGenesisConfig)
       ]
     results = labelled [
           ("LedgerTip",              SomeResult GetLedgerTip (blockPoint blk))
@@ -239,6 +275,7 @@ fromShelleyLedgerExamplesPraos ShelleyLedgerExamples {
                                   }
     , shelleyLedgerState      = sleNewEpochState
     , shelleyLedgerTransition = ShelleyTransitionInfo {shelleyAfterVoting = 0}
+    , shelleyLedgerTables     = emptyLedgerTables
     }
     chainDepState = translateChainDepState (Proxy @(TPraos StandardCrypto, Praos StandardCrypto))
       $ TPraosState (NotOrigin 1) sleChainDepState
