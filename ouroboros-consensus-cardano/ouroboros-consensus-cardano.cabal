@@ -194,7 +194,7 @@ library unstable-byronspec
     byron-spec-ledger,
     cardano-binary,
     cardano-ledger-binary,
-    cardano-ledger-byron:{testlib},
+    cardano-ledger-byron:testlib,
     cborg >=0.2.2 && <0.3,
     containers >=0.5 && <0.8,
     mtl,

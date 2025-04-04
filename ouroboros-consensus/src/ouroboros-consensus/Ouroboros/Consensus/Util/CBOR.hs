@@ -26,6 +26,8 @@ module Ouroboros.Consensus.Util.CBOR (
   , encodeMaybe
   , encodeSeq
   , encodeWithOrigin
+    -- * Decode interface
+  , noNeedOriginalBytes
   ) where
 
 import           Cardano.Binary (decodeMaybe, encodeMaybe)
@@ -214,7 +216,8 @@ readIncremental = \(SomeHasFS hasFS) doChecksum decoder fp -> do
     checkEmpty bs | BS.null bs = Nothing
                   | otherwise  = Just bs
 
--- | Read multiple @a@s incrementally from a file in a streaming way.
+-- | Read multiple @a@s incrementally from a file in a streaming way. Each @a@
+-- MUST be a valid cbor term.
 --
 -- Continuation-passing style to ensure proper closure of the file.
 --
@@ -229,19 +232,18 @@ readIncremental = \(SomeHasFS hasFS) doChecksum decoder fp -> do
 withStreamIncrementalOffsets ::
      forall m h a r. (IOLike m, HasCallStack)
   => HasFS m h
-  -> (forall s . LBS.ByteString -> CBOR.D.Decoder s a)
+  -> (LBS.ByteString -> forall s . CBOR.D.Decoder s a)
   -> FsPath
   -> (Stream (Of (Word64, (Word64, a))) m (Maybe (ReadIncrementalErr, Word64)) -> m r)
   -> m r
-withStreamIncrementalOffsets hasFS@HasFS{..} sizeOfBytesToFetch decoder fp = \k ->
+withStreamIncrementalOffsets hasFS@HasFS{..} decoder fp = \k ->
       withFile hasFS fp ReadMode $ \h -> k $ do
         fileSize <- S.lift $ hGetSize h
         if fileSize == 0 then
           -- If the file is empty, we will immediately get "end of input"
           return Nothing
-        else do
-          bytes <- S.lift $ hGetSome h sizeOfBytesToFetch -- ? How do we go about this
-          S.lift (U.stToIO (CBOR.R.deserialiseIncremental (decoder bytes))) >>=
+        else
+          S.lift (U.stToIO (CBOR.R.deserialiseIncremental decodeTerm_)) >>=
             go h 0 Nothing [] fileSize
   where
     -- TODO stream from HasFS?
@@ -250,7 +252,7 @@ withStreamIncrementalOffsets hasFS@HasFS{..} sizeOfBytesToFetch decoder fp = \k 
        -> Maybe ByteString         -- ^ Unconsumed bytes from last time
        -> [ByteString]             -- ^ Chunks pushed for this item (rev order)
        -> Word64                   -- ^ Total file size
-       -> CBOR.R.IDecode (U.PrimState m) (LBS.ByteString -> a)
+       -> CBOR.R.IDecode (U.PrimState m) ()
        -> Stream (Of (Word64, (Word64, a))) m (Maybe (ReadIncrementalErr, Word64))
     go h offset mbUnconsumed bss fileSize dec = case dec of
       CBOR.R.Partial k -> do
@@ -262,7 +264,7 @@ withStreamIncrementalOffsets hasFS@HasFS{..} sizeOfBytesToFetch decoder fp = \k 
         dec' <- S.lift $ U.stToIO $ k (checkEmpty bs)
         go h offset Nothing (bs:bss) fileSize dec'
 
-      CBOR.R.Done leftover size mkA -> do
+      CBOR.R.Done leftover size () -> do
         let nextOffset = offset + fromIntegral size
             -- We've been keeping track of the bytes pushed into the decoder
             -- for this item so far in bss. Now there's some trailing data to
@@ -280,17 +282,23 @@ withStreamIncrementalOffsets hasFS@HasFS{..} sizeOfBytesToFetch decoder fp = \k 
             -- hash. If we don't force the value it returned here, we're just
             -- putting a thunk that references the whole block in the list
             -- instead of merely the hash.
-            !a         = mkA aBytes
-        S.yield (offset, (fromIntegral size, a))
-        case checkEmpty leftover of
-          Nothing
-            | nextOffset == fileSize
-              -- We're at the end of the file, so stop
-            -> return Nothing
-          -- Some more bytes, so try to read the next @a@.
-          mbLeftover ->
-            S.lift (U.stToIO (CBOR.R.deserialiseIncremental decoder)) >>=
-            go h nextOffset mbLeftover [] fileSize
+            !a         = CBOR.R.deserialiseFromBytes (decoder aBytes) aBytes
+        case a of
+          -- Here we will have an offset in the cbor for this item, and the
+          -- @offset@ variable holds the offset since the beginning of the whole
+          -- file. Maybe this needs some thinking.
+          Left err -> return $ Just (ReadFailed err, offset)
+          Right (_, aa) -> do
+            S.yield (offset, (fromIntegral size, aa))
+            case checkEmpty leftover of
+              Nothing
+                | nextOffset == fileSize
+                  -- We're at the end of the file, so stop
+                -> return Nothing
+              -- Some more bytes, so try to read the next @a@.
+              mbLeftover ->
+                S.lift (U.stToIO (CBOR.R.deserialiseIncremental decodeTerm_)) >>=
+                go h nextOffset mbLeftover [] fileSize
 
       CBOR.R.Fail _ _ err -> return $ Just (ReadFailed err, offset)
 
@@ -327,3 +335,94 @@ encodeWithOrigin f = encodeMaybe f . withOriginToMaybe
 
 decodeWithOrigin :: CBOR.D.Decoder s a -> CBOR.D.Decoder s (WithOrigin a)
 decodeWithOrigin f = withOriginFromMaybe <$> decodeMaybe f
+
+noNeedOriginalBytes :: CBOR.D.Decoder s a -> LBS.ByteString -> CBOR.D.Decoder s a
+noNeedOriginalBytes f _ = f
+
+{-------------------------------------------------------------------------------
+  Decode a term
+-------------------------------------------------------------------------------}
+
+-- | Like 'decodeTerm' but ignoring the result. Intended for the side effect of
+-- consuming the bytestring in order to see a which point in the bytestring the
+-- cbor term ends.
+decodeTerm_ :: CBOR.D.Decoder s ()
+decodeTerm_ = do
+    tkty <- CBOR.D.peekTokenType
+    case tkty of
+      CBOR.D.TypeUInt   -> void CBOR.D.decodeWord
+      CBOR.D.TypeUInt64 -> void CBOR.D.decodeWord64
+      CBOR.D.TypeNInt   -> void CBOR.D.decodeNegWord
+      CBOR.D.TypeNInt64 -> void CBOR.D.decodeNegWord64
+      CBOR.D.TypeInteger -> void CBOR.D.decodeInteger
+      CBOR.D.TypeFloat16 -> void CBOR.D.decodeFloat
+      CBOR.D.TypeFloat32 -> void CBOR.D.decodeFloat
+      CBOR.D.TypeFloat64 -> void CBOR.D.decodeDouble
+      CBOR.D.TypeBytes        -> void CBOR.D.decodeBytes
+      CBOR.D.TypeBytesIndef   -> CBOR.D.decodeBytesIndef >> decodeBytesIndefLen
+      CBOR.D.TypeString       -> void CBOR.D.decodeString
+      CBOR.D.TypeStringIndef  -> CBOR.D.decodeStringIndef >> decodeStringIndefLen
+      CBOR.D.TypeListLen      -> CBOR.D.decodeListLen      >>= decodeListN
+      CBOR.D.TypeListLen64    -> CBOR.D.decodeListLen      >>= decodeListN
+      CBOR.D.TypeListLenIndef -> CBOR.D.decodeListLenIndef >>  decodeListIndefLen
+      CBOR.D.TypeMapLen       -> CBOR.D.decodeMapLen       >>= decodeMapN
+      CBOR.D.TypeMapLen64     -> CBOR.D.decodeMapLen       >>= decodeMapN
+      CBOR.D.TypeMapLenIndef  -> CBOR.D.decodeMapLenIndef  >>  decodeMapIndefLen
+      CBOR.D.TypeTag          -> CBOR.D.decodeTag64 *> decodeTerm_
+      CBOR.D.TypeTag64        -> CBOR.D.decodeTag64 *> decodeTerm_
+      CBOR.D.TypeBool    -> void CBOR.D.decodeBool
+      CBOR.D.TypeNull    -> void CBOR.D.decodeNull
+      CBOR.D.TypeSimple  -> void CBOR.D.decodeSimple
+      CBOR.D.TypeBreak   -> fail "unexpected break"
+      CBOR.D.TypeInvalid -> fail "invalid token encoding"
+
+--------------------------------------------------------------------------------
+-- Internal utilities
+
+decodeBytesIndefLen :: CBOR.D.Decoder s ()
+decodeBytesIndefLen = do
+    stop <- CBOR.D.decodeBreakOr
+    if stop then pure ()
+            else do void CBOR.D.decodeBytes
+                    decodeBytesIndefLen
+
+decodeStringIndefLen :: CBOR.D.Decoder s ()
+decodeStringIndefLen = do
+    stop <- CBOR.D.decodeBreakOr
+    if stop then pure ()
+            else do void CBOR.D.decodeString
+                    decodeStringIndefLen
+
+
+decodeListN :: Int -> CBOR.D.Decoder s ()
+decodeListN !n =
+    case n of
+      0 -> pure ()
+      _ -> do decodeTerm_
+              decodeListN (n-1)
+
+
+decodeListIndefLen :: CBOR.D.Decoder s ()
+decodeListIndefLen = do
+    stop <- CBOR.D.decodeBreakOr
+    if stop then pure ()
+            else do decodeTerm_
+                    decodeListIndefLen
+
+
+decodeMapN :: Int -> CBOR.D.Decoder s ()
+decodeMapN !n =
+    case n of
+      0 -> pure ()
+      _ -> do decodeTerm_
+              decodeTerm_
+              decodeMapN (n-1)
+
+
+decodeMapIndefLen :: CBOR.D.Decoder s ()
+decodeMapIndefLen = do
+    stop <- CBOR.D.decodeBreakOr
+    if stop then pure ()
+            else do decodeTerm_
+                    decodeTerm_
+                    decodeMapIndefLen

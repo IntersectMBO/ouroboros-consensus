@@ -107,7 +107,6 @@ import           Control.Monad.Except (runExceptT)
 import           Control.Monad.State.Strict (get, modify, put)
 import           Control.ResourceRegistry
 import           Control.Tracer (Tracer, nullTracer, traceWith)
-import qualified Data.ByteString.Lazy as Lazy
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block hiding (headerHash)
 import           Ouroboros.Consensus.Storage.Common
@@ -182,7 +181,7 @@ defaultArgs = ImmutableDbArgs {
 -- | 'EncodeDisk' and 'DecodeDisk' constraints needed for the ImmutableDB.
 type ImmutableDbSerialiseConstraints blk =
   ( EncodeDisk blk blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk blk
   , DecodeDiskDep (NestedCtxt Header) blk
   , ReconstructNestedCtxt Header blk
   , HasBinaryBlockInfo blk
@@ -435,7 +434,7 @@ getBlockComponentImpl ::
      forall m blk b.
      ( HasHeader blk
      , ReconstructNestedCtxt Header blk
-     , DecodeDisk blk (Lazy.ByteString -> blk)
+     , DecodeDisk blk blk
      , DecodeDiskDep (NestedCtxt Header) blk
      , IOLike m
      )

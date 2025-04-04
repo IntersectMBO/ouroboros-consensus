@@ -269,8 +269,9 @@ encodeShelleyBlock = toEraCBOR @era
 
 decodeShelleyBlock ::
   forall proto era. ShelleyCompatible proto era
-  => forall s. Lazy.ByteString -> Plain.Decoder s (ShelleyBlock proto era)
-decodeShelleyBlock = eraDecoderWithBytes @era decCBOR
+  => Lazy.ByteString
+  -> forall s. Plain.Decoder s (ShelleyBlock proto era)
+decodeShelleyBlock = flip (eraDecoderWithBytes @era) decCBOR
 
 shelleyBinaryBlockInfo :: forall proto era. ShelleyCompatible proto era => ShelleyBlock proto era -> BinaryBlockInfo
 shelleyBinaryBlockInfo blk = BinaryBlockInfo {
@@ -288,8 +289,8 @@ encodeShelleyHeader = toEraCBOR @era
 
 decodeShelleyHeader ::
   forall proto era. ShelleyCompatible proto era
-  => forall s. Lazy.ByteString -> Plain.Decoder s (Header (ShelleyBlock proto era))
-decodeShelleyHeader = eraDecoderWithBytes @era decCBOR
+  => Lazy.ByteString -> forall s. Plain.Decoder s (Header (ShelleyBlock proto era))
+decodeShelleyHeader = flip (eraDecoderWithBytes @era) decCBOR
 
 {-------------------------------------------------------------------------------
   Condense

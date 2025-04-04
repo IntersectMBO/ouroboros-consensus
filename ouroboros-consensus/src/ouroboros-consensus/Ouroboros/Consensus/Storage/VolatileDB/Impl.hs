@@ -178,7 +178,7 @@ defaultArgs = VolatileDbArgs {
 -- | 'EncodeDisk' and 'DecodeDisk' constraints needed for the VolatileDB.
 type VolatileDbSerialiseConstraints blk =
   ( EncodeDisk blk blk
-  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , DecodeDisk blk blk
   , DecodeDiskDep (NestedCtxt Header) blk
   , HasNestedContent Header blk
   , HasBinaryBlockInfo blk
@@ -244,7 +244,7 @@ getBlockComponentImpl ::
      forall m blk b.
      ( IOLike m
      , HasHeader blk
-     , DecodeDisk blk (Lazy.ByteString -> blk)
+     , DecodeDisk blk blk
      , HasNestedContent Header blk
      , DecodeDiskDep (NestedCtxt Header) blk
      , HasCallStack
@@ -296,16 +296,15 @@ getBlockComponentImpl env@VolatileDBEnv { codecConfig, checkIntegrity } blockCom
         InternalBlockInfo { ibiBlockInfo = BlockInfo {..}, .. } = ibi
 
         parseBlock :: Lazy.ByteString -> m blk
-        parseBlock bytes = throwParseErrors bytes $
-            CBOR.deserialiseFromBytes (decodeDisk codecConfig) bytes
+        parseBlock bytes = throwParseErrors $
+            CBOR.deserialiseFromBytes (decodeDisk codecConfig bytes) bytes
 
         parseHeader :: Lazy.ByteString -> m (Header blk)
-        parseHeader bytes = throwParseErrors bytes $
+        parseHeader bytes = throwParseErrors $
             case ibiNestedCtxt of
               SomeSecond ctxt ->
                 CBOR.deserialiseFromBytes
-                  ((\f -> nest . DepPair ctxt . f) <$>
-                      decodeDiskDep codecConfig ctxt)
+                  (nest . DepPair ctxt <$> decodeDiskDep codecConfig ctxt bytes)
                   bytes
 
         pt :: RealPoint blk
@@ -313,13 +312,12 @@ getBlockComponentImpl env@VolatileDBEnv { codecConfig, checkIntegrity } blockCom
 
         throwParseErrors ::
              forall b''.
-             Lazy.ByteString
-          -> Either CBOR.DeserialiseFailure (Lazy.ByteString, Lazy.ByteString -> b'')
+             Either CBOR.DeserialiseFailure (Lazy.ByteString, b'')
           -> m b''
-        throwParseErrors fullBytes = \case
+        throwParseErrors = \case
             Right (trailing, f)
               | Lazy.null trailing
-              -> return $ f fullBytes
+              -> return $ f
               | otherwise
               -> throwIO $ UnexpectedFailure $ TrailingDataError ibiFile pt trailing
             Left err

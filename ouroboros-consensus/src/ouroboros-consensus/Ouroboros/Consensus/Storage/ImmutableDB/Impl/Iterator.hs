@@ -661,7 +661,7 @@ extractBlockComponent hasFS chunkInfo chunk ccfg checkIntegrity eHnd
 
     parseBlock :: Lazy.ByteString -> m blk
     parseBlock bytes = throwParseErrors $
-        CBOR.deserialiseFromBytes (decodeDisk ccfg (Just bytes)) bytes
+        CBOR.deserialiseFromBytes (decodeDisk ccfg bytes) bytes
 
     parseHeader ::
          SomeSecond (NestedCtxt Header) blk

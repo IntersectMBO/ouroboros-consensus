@@ -36,8 +36,8 @@ import qualified Cardano.Crypto.VRF.Praos as VRF
 import           Cardano.Ledger.BaseTypes (ActiveSlotCoeff, Nonce (..),
                      PositiveUnitInterval, ProtVer (..), Version, activeSlotVal,
                      boundRational, mkActiveSlotCoeff, natVersion)
-import           Cardano.Ledger.Binary (MaxVersion, decCBOR,
-                     decodeFullAnnotator, serialize')
+import           Cardano.Ledger.Binary (MaxVersion, decCBOR, decodeFullDecoder,
+                     serialize')
 import           Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer), VKey (..),
                      hashKey, signedDSIGN)
 import           Cardano.Protocol.TPraos.BHeader (HashHeader (..),
@@ -250,7 +250,7 @@ instance Json.FromJSON MutatedHeader where
       where
         parseHeader cborHeader = do
             let headerBytes = Base16.decodeLenient (encodeUtf8 cborHeader)
-            either (fail . show) pure $ decodeFullAnnotator @(Header StandardCrypto) testVersion "Header" decCBOR $ LBS.fromStrict headerBytes
+            either (fail . show) pure $ decodeFullDecoder testVersion "Header" decCBOR $ LBS.fromStrict headerBytes
 
 -- * Generators
 type KESKey = KES.UnsoundPureSignKeyKES (KES.Sum6KES Ed25519DSIGN Blake2b_256)

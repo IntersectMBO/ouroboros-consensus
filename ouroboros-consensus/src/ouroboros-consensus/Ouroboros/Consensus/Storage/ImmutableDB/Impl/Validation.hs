@@ -22,7 +22,6 @@ import           Control.Monad.Except (ExceptT, runExceptT, throwError)
 import           Control.Monad.Trans.Class (lift)
 import           Control.ResourceRegistry
 import           Control.Tracer (Tracer, contramap, traceWith)
-import qualified Data.ByteString.Lazy as Lazy
 import           Data.Functor (($>))
 import           Data.Maybe (fromMaybe, mapMaybe)
 import qualified Data.Set as Set
@@ -73,7 +72,7 @@ validateAndReopen ::
      ( IOLike m
      , GetPrevHash blk
      , HasBinaryBlockInfo blk
-     , DecodeDisk blk (Lazy.ByteString -> blk)
+     , DecodeDisk blk blk
      , ConvertRawHash blk
      , Eq h
      , HasCallStack
@@ -116,7 +115,7 @@ validate ::
      ( IOLike m
      , GetPrevHash blk
      , HasBinaryBlockInfo blk
-     , DecodeDisk blk (Lazy.ByteString -> blk)
+     , DecodeDisk blk blk
      , ConvertRawHash blk
      , HasCallStack
      )
@@ -171,7 +170,7 @@ validateAllChunks ::
      ( IOLike m
      , GetPrevHash blk
      , HasBinaryBlockInfo blk
-     , DecodeDisk blk (Lazy.ByteString -> blk)
+     , DecodeDisk blk blk
      , ConvertRawHash blk
      , HasCallStack
      )
@@ -246,7 +245,7 @@ validateMostRecentChunk ::
      ( IOLike m
      , GetPrevHash blk
      , HasBinaryBlockInfo blk
-     , DecodeDisk blk (Lazy.ByteString -> blk)
+     , DecodeDisk blk blk
      , ConvertRawHash blk
      , HasCallStack
      )
@@ -325,7 +324,7 @@ validateChunk ::
      ( IOLike m
      , GetPrevHash blk
      , HasBinaryBlockInfo blk
-     , DecodeDisk blk (Lazy.ByteString -> blk)
+     , DecodeDisk blk blk
      , ConvertRawHash blk
      , HasCallStack
      )

@@ -69,6 +69,7 @@ import           Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..),
                      PrefixLen (..), addPrefixLen, takePrefix)
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util (ShowProxy (..))
+import           Ouroboros.Consensus.Util.CBOR (noNeedOriginalBytes)
 import           Ouroboros.Consensus.Util.RedundantConstraints
 import           Ouroboros.Network.Block (Serialised (..), fromSerialised,
                      mkSerialised)
@@ -99,14 +100,14 @@ class EncodeDisk blk a where
 -- instances can still decide to perform versioning internally to maintain
 -- compatibility.
 class DecodeDisk blk a where
-  decodeDisk :: CodecConfig blk -> Maybe Lazy.ByteString -> forall s. Decoder s a
+  decodeDisk :: CodecConfig blk -> Lazy.ByteString -> forall s. Decoder s a
 
   -- When the config is not needed, we provide a default implementation using
   -- 'Serialise'
   default decodeDisk
     :: Serialise a
-    => CodecConfig blk -> Maybe  Lazy.ByteString -> forall s. Decoder s a
-  decodeDisk _ccfg _lbs = decode
+    => CodecConfig blk -> Lazy.ByteString -> forall s. Decoder s a
+  decodeDisk _ccfg = noNeedOriginalBytes decode
 
 {-------------------------------------------------------------------------------
   Dependent pairs
@@ -154,7 +155,7 @@ class DecodeDiskDep f blk where
        , DecodeDisk blk (TrivialIndex (f blk))
        )
     => CodecConfig blk -> f blk a -> Lazy.ByteString -> forall s. Decoder s a
-  decodeDiskDep cfg ctxt lbs = toTrivialDependency ctxt <$> decodeDisk cfg (Just lbs)
+  decodeDiskDep cfg ctxt lbs = toTrivialDependency ctxt <$> decodeDisk cfg lbs
 
 instance (EncodeDiskDepIx f blk, EncodeDiskDep f blk)
        => EncodeDisk blk (DepPair (f blk)) where
@@ -188,7 +189,7 @@ instance EncodeDiskDepIx f blk => EncodeDisk blk (GenDepPair Serialised (f blk))
       ]
 
 instance DecodeDiskDepIx f blk => DecodeDisk blk (GenDepPair Serialised (f blk)) where
-  decodeDisk ccfg _lbs = do
+  decodeDisk ccfg = noNeedOriginalBytes $ do
       enforceSize "DecodeDisk GenDepPair" 2
       SomeSecond fa <- decodeDiskDepIx ccfg
       serialised <- decode
@@ -203,9 +204,6 @@ instance DecodeDiskDepIx f blk => DecodeDisk blk (GenDepPair Serialised (f blk))
 
 -- | A 'Serialised' header along with context identifying what kind of header
 -- it is.
---
--- The 'SerialiseNodeToNodeDep' for 'Header' will decide how to actually
--- encode this.
 newtype SerialisedHeader blk = SerialisedHeaderFromDepPair {
       serialisedHeaderToDepPair :: GenDepPair Serialised (NestedCtxt Header blk)
     }

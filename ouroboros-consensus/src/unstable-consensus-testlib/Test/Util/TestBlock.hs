@@ -865,12 +865,10 @@ instance ConvertRawHash (TestBlockWith ptype) where
       pure $ TestHash h
 
 instance Serialise ptype => EncodeDisk (TestBlockWith ptype) (TestBlockWith ptype)
-instance Serialise ptype => DecodeDisk (TestBlockWith ptype) (BL.ByteString -> TestBlockWith ptype) where
-  decodeDisk _ = const <$> decode
+instance Serialise ptype => DecodeDisk (TestBlockWith ptype) (TestBlockWith ptype) where
 
 instance Serialise ptype => EncodeDisk (TestBlockWith ptype) (Header (TestBlockWith ptype))
-instance Serialise ptype => DecodeDisk (TestBlockWith ptype) (BL.ByteString -> Header (TestBlockWith ptype)) where
-  decodeDisk _ = const <$> decode
+instance Serialise ptype => DecodeDisk (TestBlockWith ptype) (Header (TestBlockWith ptype)) where
 
 instance EncodeDisk (TestBlockWith ptype) (AnnTip (TestBlockWith ptype))
 instance DecodeDisk (TestBlockWith ptype) (AnnTip (TestBlockWith ptype))

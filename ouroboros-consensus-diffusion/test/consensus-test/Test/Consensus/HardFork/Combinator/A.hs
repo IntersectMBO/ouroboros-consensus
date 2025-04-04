@@ -380,8 +380,7 @@ instance TrivialDependency (NestedCtxt_ BlockA f) where
   indexIsTrivial = CtxtA
 
 instance EncodeDisk BlockA (Header BlockA)
-instance DecodeDisk BlockA (Lazy.ByteString -> Header BlockA) where
-  decodeDisk _ = const <$> decode
+instance DecodeDisk BlockA (Header BlockA) where
 
 instance EncodeDiskDepIx (NestedCtxt Header) BlockA
 instance EncodeDiskDep   (NestedCtxt Header) BlockA
@@ -554,8 +553,7 @@ instance EncodeDisk BlockA (LedgerState BlockA)
 instance DecodeDisk BlockA (LedgerState BlockA)
 
 instance EncodeDisk BlockA BlockA
-instance DecodeDisk BlockA (Lazy.ByteString -> BlockA) where
-  decodeDisk _ = const <$> decode
+instance DecodeDisk BlockA BlockA where
 
 instance EncodeDisk BlockA (AnnTip BlockA)
 instance DecodeDisk BlockA (AnnTip BlockA)
@@ -580,7 +578,7 @@ instance SerialiseNodeToNode BlockA (GenTxId BlockA)
 -- the @Serialise (SerialisedHeader BlockA)@ instance below
 instance SerialiseNodeToNode BlockA (Header BlockA) where
   encodeNodeToNode _ _ = wrapCBORinCBOR   encode
-  decodeNodeToNode _ _ = unwrapCBORinCBOR (const <$> decode)
+  decodeNodeToNode _ _ = unwrapCBORinCBOR (const decode)
 
 instance Serialise (SerialisedHeader BlockA) where
   encode = encodeTrivialSerialisedHeader

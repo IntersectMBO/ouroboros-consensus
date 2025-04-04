@@ -27,6 +27,7 @@ import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Node.Serialisation
 import           Ouroboros.Consensus.Storage.Serialisation
+import           Ouroboros.Consensus.Util.CBOR
 import           Ouroboros.Network.Block (Serialised)
 
 -- | Local shorthand to make the instances more readable
@@ -45,12 +46,10 @@ instance (Serialise ext, RunMockBlock SimpleMockCrypto ext)
       => SerialiseDiskConstraints (MockBlock ext)
 
 instance Serialise ext => EncodeDisk (MockBlock ext) (MockBlock ext)
-instance Serialise ext => DecodeDisk (MockBlock ext) (Lazy.ByteString -> MockBlock ext) where
-  decodeDisk _ = const <$> decode
+instance Serialise ext => DecodeDisk (MockBlock ext) (MockBlock ext) where
 
 instance Serialise ext => EncodeDisk (MockBlock ext) (Header (MockBlock ext))
-instance Serialise ext => DecodeDisk (MockBlock ext) (Lazy.ByteString -> Header (MockBlock ext)) where
-  decodeDisk _ = const <$> decode
+instance Serialise ext => DecodeDisk (MockBlock ext) (Header (MockBlock ext)) where
 
 instance EncodeDisk (MockBlock ext) (LedgerState (MockBlock ext))
 instance DecodeDisk (MockBlock ext) (LedgerState (MockBlock ext))
@@ -58,7 +57,7 @@ instance DecodeDisk (MockBlock ext) (LedgerState (MockBlock ext))
 instance EncodeDisk (MockBlock ext) (AnnTip (MockBlock ext)) where
   encodeDisk _ = defaultEncodeAnnTip encode
 instance DecodeDisk (MockBlock ext) (AnnTip (MockBlock ext)) where
-  decodeDisk _ = defaultDecodeAnnTip decode
+  decodeDisk _ = noNeedOriginalBytes $ defaultDecodeAnnTip decode
 
 {-------------------------------------------------------------------------------
   NodeToNode
@@ -83,12 +82,12 @@ instance Serialise ext => SerialiseNodeToNode (MockBlock ext) (MockBlock ext) wh
 
 instance Serialise ext => SerialiseNodeToNode (MockBlock ext) (Header (MockBlock ext)) where
   encodeNodeToNode ccfg _ = encodeDisk ccfg . unnest
-  decodeNodeToNode ccfg _ = nest <$> decodeDisk ccfg
+  decodeNodeToNode ccfg _ = nest <$> decodeDisk ccfg Lazy.empty
 
 instance SerialiseNodeToNode (MockBlock ext) (Serialised (MockBlock ext))
 instance Serialise ext => SerialiseNodeToNode (MockBlock ext) (SerialisedHeader (MockBlock ext)) where
   encodeNodeToNode ccfg _ = encodeDisk ccfg
-  decodeNodeToNode ccfg _ = decodeDisk ccfg
+  decodeNodeToNode ccfg _ = decodeDisk ccfg Lazy.empty
 instance SerialiseNodeToNode (MockBlock ext) (GenTx (MockBlock ext))
 instance SerialiseNodeToNode (MockBlock ext) (GenTxId (MockBlock ext))
 

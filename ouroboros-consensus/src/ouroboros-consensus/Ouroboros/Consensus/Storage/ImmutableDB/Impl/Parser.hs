@@ -16,7 +16,6 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Parser (
 import           Codec.CBOR.Decoding (Decoder)
 import           Data.Bifunctor (first)
 import qualified Data.ByteString.Lazy as Lazy
-import           Data.Functor ((<&>))
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block hiding (headerHash)
 import           Ouroboros.Consensus.Storage.Common
@@ -76,7 +75,7 @@ parseChunkFile ::
      ( IOLike m
      , GetPrevHash blk
      , HasBinaryBlockInfo blk
-     , DecodeDisk blk (Lazy.ByteString -> blk)
+     , DecodeDisk blk blk
      )
   => CodecConfig blk
   -> HasFS m h
@@ -97,11 +96,11 @@ parseChunkFile ccfg hasFS isNotCorrupt fsPath expectedChecksums k =
         . fmap (fmap (first ChunkErrRead))
         )
   where
-    decoder :: forall s. Lazy.ByteString -> Decoder s (blk, CRC)
-    decoder bytes = decodeDisk ccfg (Just bytes) <&> \mkBlk bs ->
-      let !blk      = mkBlk bs
-          !checksum = computeCRC bs
-      in (blk, checksum)
+    decoder :: Lazy.ByteString -> forall s. Decoder s (blk, CRC)
+    decoder bs = do
+      blk <- decodeDisk ccfg bs
+      let !checksum = computeCRC bs
+      pure (blk, checksum)
 
     -- | Go over the expected checksums and blocks in parallel. Stop with an
     -- error when a block is corrupt. Yield correct entries along the way.

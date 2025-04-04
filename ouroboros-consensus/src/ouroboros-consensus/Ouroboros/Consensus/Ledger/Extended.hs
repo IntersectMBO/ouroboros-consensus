@@ -31,6 +31,7 @@ module Ouroboros.Consensus.Ledger.Extended (
 import           Codec.CBOR.Decoding (Decoder, decodeListLenOf)
 import           Codec.CBOR.Encoding (Encoding, encodeListLen)
 import           Control.Monad.Except
+import qualified Data.ByteString.Lazy as BSL
 import           Data.Coerce
 import           Data.Functor ((<&>))
 import           Data.Proxy
@@ -258,9 +259,9 @@ decodeDiskExtLedgerState ::
   => (CodecConfig blk -> forall s. Decoder s (ExtLedgerState blk))
 decodeDiskExtLedgerState cfg =
   decodeExtLedgerState
-    (decodeDisk cfg Nothing)
-    (decodeDisk cfg Nothing)
-    (decodeDisk cfg Nothing)
+    (decodeDisk cfg BSL.empty)
+    (decodeDisk cfg BSL.empty)
+    (decodeDisk cfg BSL.empty)
 
 {-------------------------------------------------------------------------------
   Casts

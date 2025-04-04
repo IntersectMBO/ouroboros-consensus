@@ -41,6 +41,7 @@ import           Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 import           Ouroboros.Consensus.Protocol.Signed
 import           Ouroboros.Consensus.Storage.Serialisation
+import           Ouroboros.Consensus.Util.CBOR
 import           Ouroboros.Consensus.Util.Condense
 
 {-------------------------------------------------------------------------------
@@ -181,4 +182,4 @@ instance PBftCrypto c'
 
 instance PBftCrypto c'
       => DecodeDisk (SimplePBftBlock c c') (S.PBftState c') where
-  decodeDisk = const S.decodePBftState
+  decodeDisk _ = noNeedOriginalBytes S.decodePBftState
