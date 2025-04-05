@@ -82,25 +82,29 @@ tests = testGroup "LocalStateQueryServer"
 --   chain, a state and send the 'QueryLedgerTip'. Collect these results.
 -- * Check that when acquiring failed, it rightfully failed. Otherwise, check
 --   whether the returned tip matches the block.
-prop_localStateQueryServer
-  :: SecurityParam
+prop_localStateQueryServer ::
+     SecurityParam
   -> BlockTree
   -> Permutation
-  -> Positive (Small Int)
   -> Property
-prop_localStateQueryServer k bt p (Positive (Small n)) = checkOutcome k chain actualOutcome
+prop_localStateQueryServer k bt p = checkOutcome k chain actualOutcome
   where
     chain :: Chain TestBlock
     chain = treePreferredChain bt
 
-    points :: [Target (Point TestBlock)]
-    points = permute p $
-         replicate n VolatileTip
-      ++ (SpecificPoint . blockPoint <$> treeToBlocks bt)
+    -- A random sequence of targets: one for each block in the tree and also a
+    -- random number of immtip/voltip queries
+    --
+    -- The fact that the queries are ordered /shouldn't/ ultimately matter,
+    -- since the server has selected the same chain the entire time.
+    targets :: [Target (Point TestBlock)]
+    targets = permute p $
+        VolatileTip
+      : ImmutableTip
+      : (SpecificPoint . blockPoint <$> treeToBlocks bt)
 
-    actualOutcome :: [(Target (Point TestBlock), Either AcquireFailure (Point TestBlock))]
     actualOutcome = runSimOrThrow $ do
-      let client = mkClient points
+      let client = mkClient targets
       server <- mkServer k chain
       (\(a, _, _) -> a) <$>
         connect
@@ -133,8 +137,8 @@ checkOutcome k chain = conjoin . map (uncurry checkResult)
     immutableSlot = Chain.headSlot $
       Chain.drop (fromIntegral $ unNonZero (maxRollbacks k)) chain
 
-    checkResult
-      :: Target (Point TestBlock)
+    checkResult ::
+         Target (Point TestBlock)
       -> Either AcquireFailure (Point TestBlock)
       -> Property
     checkResult (SpecificPoint pt) = \case
@@ -149,7 +153,7 @@ checkOutcome k chain = conjoin . map (uncurry checkResult)
         | otherwise
         -> tabulate "Acquired" ["AcquireFailurePointNotOnChain"] $ property True
       Left AcquireFailurePointTooOld
-        | pointSlot pt >= immutableSlot
+        | pointSlot pt >= immutableSlot   -- TODO what if the immtip is a multi-leader slot?
         -> counterexample
            ("Point " <> show pt <>
             " newer than the immutable tip, but got AcquireFailurePointTooOld")
@@ -158,13 +162,13 @@ checkOutcome k chain = conjoin . map (uncurry checkResult)
         -> tabulate "Acquired" ["AcquireFailurePointTooOld"] $ property True
     checkResult VolatileTip = \case
       Right _result -> tabulate "Acquired" ["Success"] True
-      Left  failure -> counterexample ("acquire tip point resulted in " ++ show failure) False
+      Left  failure -> counterexample ("Acquiring the volatile tip resulted in " ++ show failure) False
     checkResult ImmutableTip = \case
       Right _result -> tabulate "Acquired" ["Success"] True
-      Left  failure -> counterexample ("acquire tip point resulted in " ++ show failure) False
+      Left  failure -> counterexample ("Acquiring the immutable tip resulted in " ++ show failure) False
 
-mkClient
-  :: Monad m
+mkClient ::
+     Monad m
   => [Target (Point TestBlock)]
   -> LocalStateQueryClient
        TestBlock
@@ -172,7 +176,7 @@ mkClient
        (Query TestBlock)
        m
        [(Target (Point TestBlock), Either AcquireFailure (Point TestBlock))]
-mkClient points = localStateQueryClient [(pt, BlockQuery QueryLedgerTip) | pt <- points]
+mkClient targets = localStateQueryClient [(tgt, BlockQuery QueryLedgerTip) | tgt <- targets]
 
 mkServer ::
      IOLike m
