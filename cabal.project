@@ -45,9 +45,6 @@ if(os(windows))
   constraints:
     bitvec -simd
 
-constraints:
-    quickcheck-lockstep <0.6.0
-
 if impl (ghc >= 9.12)
   allow-newer:
     -- https://github.com/phadej/vec/issues/118

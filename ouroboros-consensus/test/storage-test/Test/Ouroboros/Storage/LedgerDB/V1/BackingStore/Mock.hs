@@ -53,7 +53,7 @@ import           Control.Monad.Except (ExceptT (..), MonadError (throwError),
                      runExceptT)
 import           Control.Monad.State (MonadState, State, StateT (StateT), gets,
                      modify, runState)
-import           Data.Data (Proxy)
+import           Data.Data (Proxy, Typeable)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block.Abstract (SlotNo, WithOrigin (..))
@@ -125,6 +125,15 @@ class ( EmptyValues vs, ApplyDiff vs d, LookupKeysRange ks vs
       , LookupKeys ks vs, ValuesLength vs, MakeDiff vs d
       , DiffSize d, KeysSize ks
       , MakeInitHint vs, MakeWriteHint d, MakeReadHint vs
+      , Show ks, Show vs, Show d
+      , Show (BS.InitHint vs), Show (BS.WriteHint d)
+      , Show (BS.ReadHint vs)
+      , Eq ks, Eq vs, Eq d
+      , Eq (BS.InitHint vs), Eq (BS.WriteHint d)
+      , Eq (BS.ReadHint vs)
+      , Typeable ks, Typeable vs, Typeable d
+      , Typeable (BS.InitHint vs), Typeable (BS.WriteHint d)
+      , Typeable (BS.ReadHint vs)
       ) => HasOps ks vs d
 
 class EmptyValues vs where

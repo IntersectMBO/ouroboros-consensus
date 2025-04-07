@@ -255,7 +255,7 @@ instance ( Show ks, Show vs, Show d
 
   modelNextState :: forall a.
        LockstepAction (BackingStoreState ks vs d) a
-    -> ModelLookUp (BackingStoreState ks vs d)
+    -> ModelVarContext (BackingStoreState ks vs d)
     -> BackingStoreState ks vs d -> (BSVal ks vs d a, BackingStoreState ks vs d)
   modelNextState action lookUp (BackingStoreState mock stats) =
       auxStats $ runMock lookUp action mock
@@ -287,13 +287,13 @@ instance ( Show ks, Show vs, Show d
     BSVHStat h             -> [SomeGVar h]
 
   arbitraryWithVars ::
-       ModelFindVariables (BackingStoreState ks vs d)
+       ModelVarContext (BackingStoreState ks vs d)
     -> BackingStoreState ks vs d
     -> Gen (Any (LockstepAction (BackingStoreState ks vs d)))
   arbitraryWithVars = arbitraryBackingStoreAction
 
   shrinkWithVars ::
-       ModelFindVariables (BackingStoreState ks vs d)
+       ModelVarContext (BackingStoreState ks vs d)
     -> BackingStoreState ks vs d
     -> LockstepAction (BackingStoreState ks vs d) a
     -> [Any (LockstepAction (BackingStoreState ks vs d))]
@@ -372,8 +372,8 @@ instance ( Show ks, Show vs, Show d
 -------------------------------------------------------------------------------}
 
 runMock ::
-     forall ks vs d a. Mock.HasOps ks vs d
-  => ModelLookUp (BackingStoreState ks vs d)
+     forall ks vs d a. (Mock.HasOps ks vs d, QC.Arbitrary ks, QC.Arbitrary vs, QC.Arbitrary d, QC.Arbitrary (BS.RangeQuery ks))
+  => ModelVarContext (BackingStoreState ks vs d)
   -> Action (Lockstep (BackingStoreState ks vs d)) a
   -> Mock vs
   -> ( BSVal ks vs d a
@@ -393,15 +393,15 @@ runMock lookUp = \case
     BSWrite sl whint d    ->
       wrap MUnit . runMockMonad (Mock.mBSWrite sl whint d)
     BSVHClose h        ->
-      wrap MUnit . runMockMonad (Mock.mBSVHClose (getHandle $ lookUp h))
+      wrap MUnit . runMockMonad (Mock.mBSVHClose (getHandle $ lookupVar lookUp h))
     BSVHRangeRead h rhint rq ->
-      wrap MValues . runMockMonad (Mock.mBSVHRangeRead (getHandle $ lookUp h) rhint rq)
+      wrap MValues . runMockMonad (Mock.mBSVHRangeRead (getHandle $ lookupVar lookUp h) rhint rq)
     BSVHRead h rhint ks      ->
-      wrap MValues . runMockMonad (Mock.mBSVHRead (getHandle $ lookUp h) rhint ks)
+      wrap MValues . runMockMonad (Mock.mBSVHRead (getHandle $ lookupVar lookUp h) rhint ks)
     BSVHAtSlot h       ->
-      wrap MSlotNo . runMockMonad (Mock.mBSVHAtSlot (getHandle $ lookUp h))
+      wrap MSlotNo . runMockMonad (Mock.mBSVHAtSlot (getHandle $ lookupVar lookUp h))
     BSVHStat h         ->
-      wrap MStatistics . runMockMonad (Mock.mBSVHStat (getHandle $ lookUp h))
+      wrap MStatistics . runMockMonad (Mock.mBSVHStat (getHandle $ lookupVar lookUp h))
   where
     wrap f = first (MEither . bimap MErr f)
 
@@ -414,22 +414,17 @@ runMock lookUp = \case
 
 arbitraryBackingStoreAction ::
      forall ks vs d.
-     ( Eq ks, Eq vs, Eq d, Typeable ks, Typeable vs
-     , Eq (BS.InitHint vs), Eq (BS.WriteHint d), Eq (BS.ReadHint vs)
+     ( Mock.HasOps ks vs d
      , QC.Arbitrary ks, QC.Arbitrary vs, QC.Arbitrary d
      , QC.Arbitrary (BS.RangeQuery ks)
-     , Mock.MakeDiff vs d
-     , Mock.MakeInitHint vs
-     , Mock.MakeWriteHint d
-     , Mock.MakeReadHint vs
      )
-  => ModelFindVariables (BackingStoreState ks vs d)
+  => ModelVarContext (BackingStoreState ks vs d)
   -> BackingStoreState ks vs d
   -> Gen (Any (LockstepAction (BackingStoreState ks vs d)))
-arbitraryBackingStoreAction findVars (BackingStoreState mock _stats) =
+arbitraryBackingStoreAction fv (BackingStoreState mock _stats) =
     QC.frequency $
          withoutVars
-      ++ case findVars (Proxy @(Either Err (BS.BackingStoreValueHandle IO ks vs))) of
+      ++ case findVars fv (Proxy @(Either Err (BS.BackingStoreValueHandle IO ks vs))) of
           []   -> []
           vars -> withVars (QC.elements vars)
   where
@@ -500,7 +495,7 @@ shrinkBackingStoreAction ::
        , Eq (BS.InitHint vs), Eq (BS.WriteHint d), Eq (BS.ReadHint vs)
        , QC.Arbitrary d, QC.Arbitrary (BS.RangeQuery ks), QC.Arbitrary ks
        )
-    => ModelFindVariables (BackingStoreState ks vs d)
+    => ModelVarContext (BackingStoreState ks vs d)
     -> BackingStoreState ks vs d
     -> LockstepAction (BackingStoreState ks vs d) a
     -> [Any (LockstepAction (BackingStoreState ks vs d))]
@@ -607,9 +602,9 @@ initStats = Stats {
   }
 
 updateStats ::
-     forall ks vs d a. Mock.HasOps ks vs d
+     forall ks vs d a. (Mock.HasOps ks vs d, QC.Arbitrary ks, QC.Arbitrary vs, QC.Arbitrary d, QC.Arbitrary (BS.RangeQuery ks))
   => LockstepAction (BackingStoreState ks vs d) a
-  -> ModelLookUp (BackingStoreState ks vs d)
+  -> ModelVarContext (BackingStoreState ks vs d)
   -> BSVal ks vs d a
   -> Stats ks vs d
   -> Stats ks vs d
@@ -630,7 +625,7 @@ updateStats action lookUp result stats@Stats{handleSlots, writeSlots} =
       (BSClose, MEither (Right _))
         -> s {handleSlots = Map.empty}
       (BSVHClose h, MEither (Right _))
-        -> s {handleSlots = Map.delete (getHandle $ lookUp h) handleSlots}
+        -> s {handleSlots = Map.delete (getHandle $ lookupVar lookUp h) handleSlots}
       _ -> s
 
     updateWriteSlots :: Stats ks vs d -> Stats ks vs d
@@ -645,7 +640,7 @@ updateStats action lookUp result stats@Stats{handleSlots, writeSlots} =
     updateReadAfterWrite :: Stats ks vs d -> Stats ks vs d
     updateReadAfterWrite s = case (action, result) of
       (BSVHRead h _ _, MEither (Right (MValues vs)))
-        | h' <- getHandle $ lookUp h
+        | h' <- getHandle $ lookupVar lookUp h
         , Just wosl <- Map.lookup h' handleSlots
         , Just (sl, _) <- Map.lookupMax writeSlots
         , wosl < at sl
@@ -656,7 +651,7 @@ updateStats action lookUp result stats@Stats{handleSlots, writeSlots} =
     updateRangeReadAfterWrite :: Stats ks vs d -> Stats ks vs d
     updateRangeReadAfterWrite s = case (action, result) of
       (BSVHRangeRead h _ _, MEither (Right (MValues vs)))
-        | h' <- getHandle $ lookUp h
+        | h' <- getHandle $ lookupVar lookUp h
         , Just wosl <- Map.lookup h' handleSlots
         , Just (sl, _) <- Map.lookupMax writeSlots
         , wosl < at sl
