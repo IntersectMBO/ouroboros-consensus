@@ -11,8 +11,8 @@ import qualified Data.Aeson.Encoding as Aeson.Encoding
 import           Data.Int (Int64)
 import           Data.Word (Word32, Word64)
 import           GHC.Generics (Generic)
-import qualified Text.Builder as Builder
-import           Text.Builder (Builder)
+import qualified TextBuilder as Builder
+import           TextBuilder (TextBuilder)
 
 -- | Information about the time spent processing the block corresponding to
 -- 'slot', divided into the five major operations:
@@ -60,14 +60,14 @@ data SlotDataPoint =
       , blockStats      :: !BlockStats
       } deriving (Generic, Show)
 
-newtype BlockStats = BlockStats { unBlockStats :: [Builder] }
+newtype BlockStats = BlockStats { unBlockStats :: [TextBuilder] }
   deriving (Generic, Show)
 
 instance ToJSON BlockStats where
   -- We convert the blocks stats to a 'Vector Text'.
-  toJSON = toJSON . fmap Builder.run . unBlockStats
+  toJSON = toJSON . fmap Builder.toText . unBlockStats
 
-  toEncoding = Aeson.Encoding.list (Aeson.Encoding.text . Builder.run) . unBlockStats
+  toEncoding = Aeson.Encoding.list (Aeson.Encoding.text . Builder.toText) . unBlockStats
 
 instance ToJSON SlotDataPoint where
   toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
