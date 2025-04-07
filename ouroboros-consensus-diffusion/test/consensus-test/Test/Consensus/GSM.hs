@@ -18,7 +18,7 @@
 
 -- | Tests for the Genesis State Machine using the [quickcheck-dynamic](https://hackage.haskell.org/package/quickcheck-dynamic) library.
 --
---   The instance 'QD.StateModel (Model)' describes the actions that the model supports,
+--   The instance 'QD.StateModel Model' describes the actions that the model supports,
 --   and their semantics in terms for the model and the system-under-test.
 --
 --   We use the [reflection](https://hackage.haskell.org/package/reflection) library to solve the problem of
@@ -30,7 +30,7 @@ module Test.Consensus.GSM (tests) where
 import           Cardano.Network.Types (LedgerStateJudgement (..))
 import           Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked
 import           Control.Exception (SomeException (..))
-import           Control.Monad (replicateM_)
+import qualified Control.Monad as Monad
 import           Control.Monad.Class.MonadAsync (async, poll,
                      uninterruptibleCancel)
 import           Control.Monad.Class.MonadFork (MonadFork, yield)
@@ -110,9 +110,9 @@ prop_sequential_iosim pUpstreamPeerBound pInitialJudgement (QC.Fun _ pIsHaaSatis
                                   , pInitialJudgement
                                   , pIsHaaSatisfied
                                   })
-  -- NOTE: the actions have to be generated with an explicit call, as
-  -- 'generator' relies on reflection for access to the parameters
-  $ QC.forAll QC.arbitrary $ \actions ->
+  -- NOTE: the actions have to be generated within the application of 'Reflection.give',
+  -- as 'generator' relies on reflection for access to the parameters.
+  $ QC.property $ \actions ->
        runIOSimProp $ prop_sequential_iosim1 actions
 
 setupGsm :: (Set.Set UpstreamPeer -> Bool) -> SystemStateVars (IOSim.IOSim s) -> GSM.GsmEntryPoints (IOSim.IOSim s)
@@ -151,7 +151,7 @@ setupGsm isHaaSatisfied vars = do
 prop_sequential_iosim1 ::
   forall s.
   Reflection.Given StaticParams =>
-  QD.Actions (Model) ->
+  QD.Actions Model ->
   QC.PropertyM (RunMonad (IOSim.IOSim s)) QC.Property
 prop_sequential_iosim1 actions = do
   vars@SystemStateVars{varEvents} <- lift ask
@@ -169,7 +169,7 @@ prop_sequential_iosim1 actions = do
 
   lift . lift $ yieldSeveralTimes
 
-  -- TODO: figure out how to do withAsync here
+  -- start the GSM
   hGSM <- lift . lift $ async gsmEntryPoint
 
   (metadata, mbExn)  <- do
@@ -248,8 +248,8 @@ data Model = Model {
   deriving anyclass (TD.ToExpr)
 
 -- | Initialise the 'Model' state from 'StaticParams'
-initModel :: StaticParams -> Model
-initModel StaticParams{pIsHaaSatisfied, pInitialJudgement} = Model {
+initModel :: Reflection.Given StaticParams => Model
+initModel = Model {
     mCandidates = Map.empty
   ,
     mClock = SI.Time 0
@@ -271,32 +271,34 @@ initModel StaticParams{pIsHaaSatisfied, pInitialJudgement} = Model {
   where
     idlers = Set.empty
 
+    StaticParams{pIsHaaSatisfied, pInitialJudgement} = Reflection.given
+
 -- | The 'StaticParams' are supplied through reflection because this seems to be
 --   the cleanest way to pass static configuration needed by the 'initState' and
 --   'arbitraryAction' methods
-instance Reflection.Given StaticParams => QD.StateModel (Model) where
-  data Action (Model) a where
-    Disconnect :: UpstreamPeer -> QD.Action (Model) ()
+instance Reflection.Given StaticParams => QD.StateModel Model where
+  data Action Model a where
+    Disconnect :: UpstreamPeer -> QD.Action Model ()
     -- ^ INVARIANT must be an existing peer
     --
     -- Mocks the necessary ChainSync client behavior.
-    ExtendSelection :: S -> QD.Action (Model) ()
+    ExtendSelection :: S -> QD.Action Model ()
     -- ^ INVARIANT 'selectionIsBehind'
     --
     -- NOTE Harmless to assume it only advances by @'B' 1@ at a time.
-    ModifyCandidate :: UpstreamPeer -> B -> QD.Action (Model) ()
+    ModifyCandidate :: UpstreamPeer -> B -> QD.Action Model ()
     -- ^ INVARIANT existing peer
     --
     -- Mocks the necessary ChainSync client behavior.
-    NewCandidate :: UpstreamPeer -> B -> QD.Action (Model) ()
+    NewCandidate :: UpstreamPeer -> B -> QD.Action Model ()
     -- ^ INVARIANT new peer
     --
     -- Mocks the necessary ChainSync client behavior.z
-    ReadGsmState :: QD.Action (Model) GSM.GsmState
-    ReadMarker :: QD.Action (Model) MarkerState
-    StartIdling :: UpstreamPeer -> QD.Action (Model) ()
+    ReadGsmState :: QD.Action Model GSM.GsmState
+    ReadMarker :: QD.Action Model MarkerState
+    StartIdling :: UpstreamPeer -> QD.Action Model ()
     -- ^ INVARIANT existing peer, not idling
-    TimePasses :: Int -> QD.Action (Model) ()
+    TimePasses :: Int -> QD.Action Model ()
     -- ^ tenths of a second
     --
     -- INVARIANT positive
@@ -313,8 +315,7 @@ instance Reflection.Given StaticParams => QD.StateModel (Model) where
 
   shrinkAction _ctx model = shrinker model
 
-  initialState = initModel params
-    where params = Reflection.given
+  initialState = initModel
 
   nextState model action _ = transition model action
 
@@ -408,7 +409,7 @@ newtype RunMonad m a = RunMonad {runMonad :: ReaderT (SystemStateVars m) m a}
 instance MonadTrans RunMonad where
   lift = RunMonad . lift
 
-instance (IOLike m, Reflection.Given StaticParams) => QD.RunModel (Model) (RunMonad m) where
+instance (IOLike m, Reflection.Given StaticParams) => QD.RunModel Model (RunMonad m) where
   perform _ action _ = do
       SystemStateVars{varSelection, varStates, varGsmState, varMarker, varEvents} <- ask
       let
@@ -492,7 +493,7 @@ runIOSimProp p =
 --   the modified model and a property that checks that the action brought
 --   the model and the SUT into the same state.
 takeActionInBoth :: (IOLike m, Reflection.Given StaticParams)
-                 => String -> Model -> QD.Action (Model) GSM.GsmState
+                 => String -> Model -> QD.Action Model GSM.GsmState
                  -> QC.PropertyM (RunMonad m) (QC.Property, Model)
 takeActionInBoth conterexampleMessage model action = do
   -- run the action in the model
@@ -530,7 +531,7 @@ boringDur model = boringDurImpl clk sel st
         mState = st
       } = model
 
-addNotableWhen :: Notable -> Bool -> (Model) -> (Model)
+addNotableWhen :: Notable -> Bool -> Model -> Model
 addNotableWhen n b model =
     if not b then model else
     model { mNotables = n `Set.insert` mNotables model }
@@ -569,7 +570,7 @@ dummyVar = QD.mkVar 0
 --- Definitions used in the 'ModelState' instance
 
 precondition :: forall a. Reflection.Given StaticParams
-             => Model -> QD.Action (Model) a -> Bool
+             => Model -> QD.Action Model a -> Bool
 precondition model = \case
     cmd@ExtendSelection{} ->
         let model' = QD.nextState model cmd dummyVar
@@ -604,8 +605,8 @@ precondition model = \case
           mIdlers = idlers
         } = model
 
-generator :: forall. Reflection.Given StaticParams
-          => Model -> QC.Gen (QD.Any (QD.Action (Model)))
+generator :: Reflection.Given StaticParams
+          => Model -> QC.Gen (QD.Any (QD.Action Model))
 generator model = QC.frequency $
     [ (,) 5 $  QD.Some . Disconnect <$> QC.elements old | notNull old ]
  <>
@@ -692,7 +693,7 @@ generator model = QC.frequency $
           ]
 
 
-shrinker :: Model -> QD.Action (Model) a -> [QD.Any (QD.Action (Model))]
+shrinker :: Model -> QD.Action Model a -> [QD.Any (QD.Action Model)]
 shrinker _model = \case
     Disconnect{} ->
         []
@@ -715,7 +716,7 @@ shrinker _model = \case
     shrinkS (S x) = [ S x' | x' <- QC.shrink x ]
 
 transition :: forall a. Reflection.Given StaticParams
-           => Model -> QD.Action (Model) a -> Model
+           => Model -> QD.Action Model a -> Model
 transition model cmd =
   fixupModelState cmd $
        case cmd of
@@ -766,9 +767,8 @@ transition model cmd =
 
 -- | Update the 'mState', assuming that's the only stale field in the given
 -- 'Model'
---
 fixupModelState :: forall a. Reflection.Given StaticParams
-                => QD.Action (Model) a -> Model -> Model
+                => QD.Action Model a -> Model -> Model
 fixupModelState cmd model =
     case st of
         ModelPreSyncing
@@ -973,7 +973,7 @@ isIdling (PeerState {psIdling = Idling i}) = i
 -- Despite the crudeness, this seems much more compositional than invasive
 -- explicit synchronization.
 yieldSeveralTimes :: MonadFork m => m ()
-yieldSeveralTimes = replicateM_ 10 yield
+yieldSeveralTimes = Monad.replicateM_ 10 yield
 
 {-
 
