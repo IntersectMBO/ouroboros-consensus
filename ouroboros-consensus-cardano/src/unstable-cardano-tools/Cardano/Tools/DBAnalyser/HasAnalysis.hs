@@ -15,7 +15,7 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Storage.Serialisation (SizeInBytes)
 import           Ouroboros.Consensus.Util.Condense (Condense)
-import           Text.Builder (Builder)
+import           TextBuilder (TextBuilder)
 
 {-------------------------------------------------------------------------------
   HasAnalysis
@@ -39,7 +39,7 @@ class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis
   emitTraces     :: WithLedgerState blk -> [String]
 
   -- | This method was introduced for the sake of the 'BenchmarkLedgerOps' pass.
-  blockStats     :: blk -> [Builder]
+  blockStats     :: blk -> [TextBuilder]
 
   -- | This function allows to define different metrics about block application.
   --
@@ -58,7 +58,7 @@ class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis
   -- The block application metrics are mapped to an IO action because
   -- certain metrics such as the size of data need to be performed in
   -- the IO monad.
-  blockApplicationMetrics :: [(Builder, WithLedgerState blk -> IO Builder)]
+  blockApplicationMetrics :: [(TextBuilder, WithLedgerState blk -> IO TextBuilder)]
 
 class HasProtocolInfo blk where
   data Args blk

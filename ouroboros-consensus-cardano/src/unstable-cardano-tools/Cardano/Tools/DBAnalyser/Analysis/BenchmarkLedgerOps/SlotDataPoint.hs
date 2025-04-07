@@ -11,8 +11,8 @@ import qualified Data.Aeson.Encoding as Aeson.Encoding
 import           Data.Int (Int64)
 import           Data.Word (Word32, Word64)
 import           GHC.Generics (Generic)
-import qualified Text.Builder as Builder
-import           Text.Builder (Builder)
+import qualified TextBuilder as Builder
+import           TextBuilder (TextBuilder)
 
 -- | Information about the time spent processing the block corresponding to
 -- 'slot', divided into the five major operations:
@@ -60,7 +60,7 @@ data SlotDataPoint =
       , blockStats      :: !BlockStats
       } deriving (Generic, Show)
 
-newtype BlockStats = BlockStats { unBlockStats :: [Builder] }
+newtype BlockStats = BlockStats { unBlockStats :: [TextBuilder] }
   deriving (Generic, Show)
 
 instance ToJSON BlockStats where
