@@ -149,18 +149,13 @@ analyse dbaConfig args =
           args'' =
             args' {
               ChainDB.cdbLgrDbArgs =
-                (\x -> x {
-                    LedgerDB.lgrSnapshotPolicyArgs =
-                      (\y -> y {
-                          LedgerDB.spaDoChecksum = diskSnapshotChecksumOnRead
-                          })
-                      $ LedgerDB.lgrSnapshotPolicyArgs x
-                  , LedgerDB.lgrConfig =
+                (\x -> x
+                  { LedgerDB.lgrConfig =
                       LedgerDB.LedgerDbCfg
                         (SecurityParam (knownNonZeroBounded @1))
                         (LedgerDB.ledgerDbCfg $ LedgerDB.lgrConfig x)
                         OmitLedgerEvents
-                    }
+                  }
                 )
                 (ChainDB.cdbLgrDbArgs args')
               }
@@ -219,7 +214,6 @@ analyse dbaConfig args =
       , validation
       , verbose
       , ldbBackend
-      , diskSnapshotChecksumOnRead
       } = dbaConfig
 
     SelectImmutableDB startSlot = selectDB
