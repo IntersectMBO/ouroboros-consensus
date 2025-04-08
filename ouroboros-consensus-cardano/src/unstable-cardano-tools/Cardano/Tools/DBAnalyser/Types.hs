@@ -11,15 +11,14 @@ data SelectDB =
     SelectImmutableDB (WithOrigin SlotNo)
 
 data DBAnalyserConfig = DBAnalyserConfig {
-    dbDir                       :: FilePath
-  , verbose                     :: Bool
-  , selectDB                    :: SelectDB
-  , validation                  :: Maybe ValidateBlocks
-  , analysis                    :: AnalysisName
-  , confLimit                   :: Limit
-  , diskSnapshotChecksumOnRead  :: Flag "DoDiskSnapshotChecksum"
-  , diskSnapshotChecksumOnWrite :: Flag "DoDiskSnapshotChecksum"
-  , ldbBackend                  :: LedgerDBBackend
+    dbDir                      :: FilePath
+  , verbose                    :: Bool
+  , selectDB                   :: SelectDB
+  , validation                 :: Maybe ValidateBlocks
+  , analysis                   :: AnalysisName
+  , confLimit                  :: Limit
+  , diskSnapshotChecksumOnRead :: Flag "DoDiskSnapshotChecksum"
+  , ldbBackend                 :: LedgerDBBackend
   }
 
 data AnalysisName =

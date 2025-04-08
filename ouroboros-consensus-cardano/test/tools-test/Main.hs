@@ -71,7 +71,6 @@ testAnalyserConfig =
     , analysis                    = CountBlocks
     , confLimit                   = Unlimited
     , diskSnapshotChecksumOnRead  = NoDoDiskSnapshotChecksum
-    , diskSnapshotChecksumOnWrite = NoDoDiskSnapshotChecksum
     }
 
 testBlockArgs :: Cardano.Args (CardanoBlock StandardCrypto)
