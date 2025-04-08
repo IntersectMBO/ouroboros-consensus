@@ -18,7 +18,6 @@ import           Options.Applicative
 import           Ouroboros.Consensus.Block (SlotNo (..), WithOrigin (..))
 import           Ouroboros.Consensus.Byron.Node (PBftSignatureThreshold (..))
 import           Ouroboros.Consensus.Shelley.Node (Nonce (..))
-import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 
 {-------------------------------------------------------------------------------
   Parsing
@@ -42,13 +41,6 @@ parseDBAnalyserConfig = DBAnalyserConfig
     <*> parseValidationPolicy
     <*> parseAnalysis
     <*> parseLimit
-    <*> flag DoDiskSnapshotChecksum NoDoDiskSnapshotChecksum (mconcat [
-            long "no-snapshot-checksum-on-read"
-          , help $ mconcat
-            [ "Skip validation of the checksum in the '.checksum' or"
-            , "'metadata.json' file when reading a ledger snapshot from disk"
-            ]
-          ])
     <*> Foldable.asum [
           flag' V1InMem $ mconcat [
                 long "v1-in-mem"
