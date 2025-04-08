@@ -65,9 +65,8 @@ data Config = Config
     -- ^ Which format the output snapshot must be in
     , outpath       :: FilePath
     -- ^ Path to the output snapshot
-    , writeChecksum :: Flag "DoDiskSnapshotChecksum"
-    -- ^ Write and check checksums
     , checkChecksum :: Flag "DoDiskSnapshotChecksum"
+    -- ^ Whether to check checksums match
     }
 
 getCommandLineConfig :: IO (Config, BlockType)
@@ -105,12 +104,6 @@ parseConfig =
             ( mconcat
                 [ help "Output dir/file Use relative paths like ./100007913"
                 , metavar "PATH-OUT"
-                ]
-            )
-        <*> flag DoDiskSnapshotChecksum NoDoDiskSnapshotChecksum
-            ( mconcat
-                [ long "no-write-checksum"
-                , help "Disable writing checksums"
                 ]
             )
         <*> flag DoDiskSnapshotChecksum NoDoDiskSnapshotChecksum
@@ -240,9 +233,8 @@ store config@Config{outpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), 
    case to config of
     Legacy -> do
       crc <- writeExtLedgerState fs (encodeDiskExtLedgerState ccfg) path (stowLedgerTables $ state `withLedgerTables` tbs)
-      Monad.when (getFlag writeChecksum) $
-        withFile hasFS (path <.> "checksum") (WriteMode MustBeNew) $ \h ->
-          Monad.void $ hPutAll hasFS h . BS.toLazyByteString . BS.word32HexFixed $ getCRC crc
+      withFile hasFS (path <.> "checksum") (WriteMode MustBeNew) $ \h ->
+        Monad.void $ hPutAll hasFS h . BS.toLazyByteString . BS.word32HexFixed $ getCRC crc
     Mem -> do
       lseq <- V2.empty state tbs $ V2.newInMemoryLedgerTablesHandle fs
       let h = V2.currentHandle lseq
@@ -253,8 +245,6 @@ store config@Config{outpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), 
       bs <- V1.newLMDBBackingStore nullTracer defaultLMDBLimits (V1.LiveLMDBFS tempFS) (V1.SnapshotsFS fs) (V1.InitFromValues (pointSlot $ getTip state) state tbs)
       Monad.void $ V1.withReadLock lock $ do
         V1.takeSnapshot chlog ccfg nullTracer (V1.SnapshotsFS fs) bs suffix
-  where
-   Config { writeChecksum } = config
 store _ _ _ _ = error "Malformed output path!"
 
 main :: IO ()
