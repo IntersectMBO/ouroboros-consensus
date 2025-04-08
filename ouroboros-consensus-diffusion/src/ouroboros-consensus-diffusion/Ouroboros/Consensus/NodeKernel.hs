@@ -417,7 +417,6 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
 
     fetchClientRegistry <- newFetchClientRegistry
 
-    slotForgeTimeOracle <- BlockFetchClientInterface.initSlotForgeTimeOracle cfg chainDB
     let readFetchMode = BlockFetchClientInterface.readFetchModeDefault
           (toConsensusMode $ gnkaLoEAndGDDArgs genesisArgs)
           btime
@@ -431,7 +430,6 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
           (BlockFetchClientInterface.defaultChainDbView chainDB)
           varChainSyncHandles
           blockFetchSize
-          slotForgeTimeOracle
           readFetchMode
           getDiffusionPipeliningSupport
 

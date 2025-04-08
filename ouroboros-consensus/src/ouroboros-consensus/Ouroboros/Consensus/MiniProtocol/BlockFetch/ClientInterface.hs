@@ -194,15 +194,12 @@ mkBlockFetchConsensusInterface ::
   -> ChainDbView m blk
   -> CSClient.ChainSyncClientHandleCollection peer m blk
   -> (Header blk -> SizeInBytes)
-  -> SlotForgeTimeOracle m blk
-     -- ^ Slot forge time, see 'headerForgeUTCTime' and 'blockForgeUTCTime'.
-     -- TODO(georgy.lukyanov): do we need that?? Remove
   -> STM m FetchMode
      -- ^ See 'readFetchMode'.
   -> DiffusionPipeliningSupport
   -> BlockFetchConsensusInterface peer (HeaderWithTime blk) blk m
 mkBlockFetchConsensusInterface
-  csjTracer bcfg chainDB csHandlesCol blockFetchSize _slotForgeTime readFetchMode pipelining =
+  csjTracer bcfg chainDB csHandlesCol blockFetchSize readFetchMode pipelining =
     BlockFetchConsensusInterface {blockFetchSize = blockFetchSize . hwtHeader, ..}
   where
     getCandidates :: STM m (Map peer (AnchoredFragment (HeaderWithTime blk)))

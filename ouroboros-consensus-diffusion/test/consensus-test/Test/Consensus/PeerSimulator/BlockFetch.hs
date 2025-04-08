@@ -70,7 +70,6 @@ import           Test.Consensus.PointSchedule (BlockFetchTimeout (..))
 import           Test.Consensus.PointSchedule.Peers (PeerId)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (BlockConfig (TestBlockConfig), TestBlock)
-import           Test.Util.Time (dawnOfTime)
 
 startBlockFetchLogic ::
      forall m.
@@ -83,10 +82,7 @@ startBlockFetchLogic ::
   -> ChainSyncClientHandleCollection PeerId m TestBlock
   -> m ()
 startBlockFetchLogic enableChainSelStarvation registry tracer chainDb fetchClientRegistry csHandlesCol = do
-    let slotForgeTime :: BlockFetchClientInterface.SlotForgeTimeOracle m blk
-        slotForgeTime _ = pure dawnOfTime
-
-        blockFetchConsensusInterface =
+    let blockFetchConsensusInterface =
           BlockFetchClientInterface.mkBlockFetchConsensusInterface
             nullTracer -- FIXME
             (TestBlockConfig $ NumCoreNodes 0) -- Only needed when minting blocks
@@ -95,7 +91,6 @@ startBlockFetchLogic enableChainSelStarvation registry tracer chainDb fetchClien
             -- The size of headers in bytes is irrelevant because our tests
             -- do not serialize the blocks.
             (\_hdr -> 1000)
-            slotForgeTime
             -- This is a syncing test, so we use 'FetchModeGenesis'.
             (pure FetchModeGenesis)
             DiffusionPipeliningOn

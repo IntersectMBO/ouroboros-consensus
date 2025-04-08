@@ -84,7 +84,6 @@ import           Test.Util.LogicalClock (Tick (..))
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.Schedule
 import           Test.Util.TestBlock
-import           Test.Util.Time (dawnOfTime)
 import           Test.Util.Tracer (recordingTracerTVar)
 
 tests :: TestTree
@@ -296,17 +295,11 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
           chainDbView
           (error "ChainSyncClientHandleCollection not provided to mkBlockFetchConsensusInterface")
           (\_hdr -> 1000) -- header size, only used for peer prioritization
-          slotForgeTime
           (pure blockFetchMode)
           blockFetchPipelining)
             { readCandidateChains          = getCandidates
             , demoteChainSyncJumpingDynamo = const (pure ())
             }
-      where
-        -- Bogus implementation; this is fine as this is only used for
-        -- enriching tracing information ATM.
-        slotForgeTime :: BlockFetchClientInterface.SlotForgeTimeOracle m blk
-        slotForgeTime _ = pure dawnOfTime
 
 mockBlockFetchServer ::
      forall m blk.
