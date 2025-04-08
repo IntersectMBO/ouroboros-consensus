@@ -172,7 +172,7 @@ analyse dbaConfig args =
                 (\x -> x {
                     LedgerDB.lgrSnapshotPolicyArgs =
                       (\y -> y {
-                          LedgerDB.spaDoChecksum = diskSnapshotChecksumOnWrite
+                          LedgerDB.spaDoChecksum = LedgerDB.Flag True
                           })
                       $ LedgerDB.lgrSnapshotPolicyArgs x
                     }
@@ -220,7 +220,6 @@ analyse dbaConfig args =
       , verbose
       , ldbBackend
       , diskSnapshotChecksumOnRead
-      , diskSnapshotChecksumOnWrite
       } = dbaConfig
 
     SelectImmutableDB startSlot = selectDB
