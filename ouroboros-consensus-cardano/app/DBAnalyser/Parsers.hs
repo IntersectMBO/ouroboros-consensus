@@ -44,14 +44,10 @@ parseDBAnalyserConfig = DBAnalyserConfig
     <*> parseLimit
     <*> flag DoDiskSnapshotChecksum NoDoDiskSnapshotChecksum (mconcat [
             long "no-snapshot-checksum-on-read"
-          , help "Don't check the '.checksum' file when reading a ledger snapshot"
-          ])
-    <*> flag DoDiskSnapshotChecksum NoDoDiskSnapshotChecksum (mconcat [
-            long "no-snapshot-checksum-on-write"
-          , help (unlines [ "Don't calculate the checksum and"
-                          , "write the '.checksum' file"
-                          , "when taking a ledger snapshot"
-                          ])
+          , help $ mconcat
+            [ "Skip validation of the checksum in the '.checksum' or"
+            , "'metadata.json' file when reading a ledger snapshot from disk"
+            ]
           ])
     <*> Foldable.asum [
           flag' V1InMem $ mconcat [
