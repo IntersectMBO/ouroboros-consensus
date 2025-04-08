@@ -21,8 +21,8 @@ import           Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as BSL
 import           System.FilePath.Posix (takeExtension)
 import qualified System.IO as IO
-import qualified Text.Builder as Builder
-import           Text.Builder (Builder, decimal)
+import qualified TextBuilder as Builder
+import           TextBuilder (TextBuilder, decimal)
 
 {-------------------------------------------------------------------------------
   Output format
@@ -54,7 +54,7 @@ getOutputFormat Nothing         = pure CSV
 -------------------------------------------------------------------------------}
 
 -- | Separator used for CSV output.
-csvSeparator :: Builder
+csvSeparator :: TextBuilder
 csvSeparator = "\t"
 
 -- | Write a header for the data points.
@@ -97,7 +97,7 @@ writeMetadata  outFileHandle JSON lgrAppMode =
   Operations to assist CSV printing
 -------------------------------------------------------------------------------}
 
-dataPointCsvBuilder :: [(Builder, SlotDataPoint -> Builder)]
+dataPointCsvBuilder :: [(TextBuilder, SlotDataPoint -> TextBuilder)]
 dataPointCsvBuilder =
     [ ("slot"                  , decimal . unSlotNo . DP.slot)
     , ("slotGap"               , decimal . DP.slotGap)

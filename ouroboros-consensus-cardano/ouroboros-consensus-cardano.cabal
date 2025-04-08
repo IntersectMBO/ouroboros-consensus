@@ -572,7 +572,7 @@ library unstable-cardano-tools
     sop-extras,
     strict-sop-core,
     text,
-    text-builder,
+    text-builder >=0.6.10,
     transformers,
     transformers-except,
 

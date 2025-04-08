@@ -10,14 +10,14 @@
 -- correspondence between headers and data, we usually specify a CSV
 -- builder as:
 --
--- > [(Builder, a -> IO Builder)]
+-- > [(TextBuilder, a -> IO TextBuilder)]
 --
 -- where each first component of each tuple in the list represents a
 -- header, and each second component determines how the value that
 -- corresponds to that header is computed, given a certain value that
 -- is needed to compute a row in the resulting CSV.
 --
--- We use 'Text.Builder' to efficiently intercalate values with the CSV 'Separator'.
+-- We use 'TextBuilder' to efficiently intercalate values with the CSV 'Separator'.
 --
 module Cardano.Tools.DBAnalyser.CSV (
     Separator (Separator, unSeparator)
@@ -32,37 +32,37 @@ module Cardano.Tools.DBAnalyser.CSV (
 import           Data.String (IsString)
 import qualified Data.Text.IO as Text.IO
 import qualified System.IO as IO
-import qualified Text.Builder as Builder
-import           Text.Builder (Builder)
+import qualified TextBuilder as TextBuilder
+import           TextBuilder (TextBuilder)
 
-newtype Separator = Separator { unSeparator :: Builder }
+newtype Separator = Separator { unSeparator :: TextBuilder }
   deriving (Show, IsString, Monoid, Semigroup)
 
-writeHeaderLine :: IO.Handle -> Separator -> [(Builder, a)] -> IO ()
+writeHeaderLine :: IO.Handle -> Separator -> [(TextBuilder, a)] -> IO ()
 writeHeaderLine handle (Separator separator) =
       Text.IO.hPutStrLn handle
-    . Builder.run
-    . Builder.intercalate separator
+    . TextBuilder.toText
+    . TextBuilder.intercalate separator
     . fmap fst
 
-writeLine :: IO.Handle -> Separator -> [Builder] -> IO ()
+writeLine :: IO.Handle -> Separator -> [TextBuilder] -> IO ()
 writeLine handle (Separator separator) =
       Text.IO.hPutStrLn handle
-    . Builder.run
-    . Builder.intercalate separator
+    . TextBuilder.toText
+    . TextBuilder.intercalate separator
 
-computeAndWriteLine :: IO.Handle -> Separator -> [(a, b -> IO Builder)] -> b -> IO ()
-computeAndWriteLine handle separator csvBuilder b = do
-  computeColumns (fmap snd csvBuilder) b >>= writeLine handle separator
+computeAndWriteLine :: IO.Handle -> Separator -> [(a, b -> IO TextBuilder)] -> b -> IO ()
+computeAndWriteLine handle separator csvTextBuilder b = do
+  computeColumns (fmap snd csvTextBuilder) b >>= writeLine handle separator
 
-computeAndWriteLinePure :: IO.Handle -> Separator -> [(a, b -> Builder)] -> b -> IO ()
-computeAndWriteLinePure handle separator csvBuilder b =
-    writeLine handle separator $ computeColumnsPure (fmap snd csvBuilder) b
+computeAndWriteLinePure :: IO.Handle -> Separator -> [(a, b -> TextBuilder)] -> b -> IO ()
+computeAndWriteLinePure handle separator csvTextBuilder b =
+    writeLine handle separator $ computeColumnsPure (fmap snd csvTextBuilder) b
 
-computeColumns :: [a -> IO Builder] -> a -> IO [Builder]
-computeColumns fBuilders a =
-  sequence $ fmap ($ a) fBuilders
+computeColumns :: [a -> IO TextBuilder] -> a -> IO [TextBuilder]
+computeColumns fTextBuilders a =
+  sequence $ fmap ($ a) fTextBuilders
 
-computeColumnsPure :: [a -> Builder] -> a -> [Builder]
-computeColumnsPure fBuilders a =
-  fmap ($ a) fBuilders
+computeColumnsPure :: [a -> TextBuilder] -> a -> [TextBuilder]
+computeColumnsPure fTextBuilders a =
+  fmap ($ a) fTextBuilders

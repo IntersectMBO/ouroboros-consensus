@@ -27,7 +27,7 @@ import qualified Ouroboros.Consensus.Byron.Ledger as Byron
 import           Ouroboros.Consensus.Byron.Node (PBftSignatureThreshold (..),
                      ProtocolParamsByron (..), protocolInfoByron)
 import           Ouroboros.Consensus.Node.ProtocolInfo
-import           Text.Builder (decimal)
+import           TextBuilder (decimal)
 
 instance HasAnalysis ByronBlock where
     countTxOutputs = aBlockOrBoundary (const 0) countTxOutputsByron

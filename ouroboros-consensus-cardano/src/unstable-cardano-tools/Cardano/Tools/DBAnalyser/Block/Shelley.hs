@@ -47,7 +47,7 @@ import qualified Ouroboros.Consensus.Shelley.Ledger.Block as Shelley
 import           Ouroboros.Consensus.Shelley.Node (Nonce (..),
                      ProtocolParamsShelleyBased (..), ShelleyGenesis,
                      protocolInfoShelley)
-import           Text.Builder (decimal)
+import           TextBuilder (decimal)
 
 -- | Usable for each Shelley-based era
 instance ( ShelleyCompatible proto era

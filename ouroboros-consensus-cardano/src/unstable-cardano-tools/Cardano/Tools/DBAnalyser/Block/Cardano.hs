@@ -74,8 +74,8 @@ import           Ouroboros.Consensus.Shelley.Ledger.Block (IsShelleyBlock,
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import           System.Directory (makeAbsolute)
 import           System.FilePath (takeDirectory, (</>))
-import qualified Text.Builder as Builder
-import           Text.Builder (Builder)
+import qualified TextBuilder as Builder
+import           TextBuilder (TextBuilder)
 
 analyseBlock ::
      (forall blk. HasAnalysis blk => blk -> a)
@@ -299,9 +299,9 @@ instance HasAnalysis (CardanoBlock StandardCrypto) where
 
 dispatch ::
      LedgerState (CardanoBlock StandardCrypto)
-  -> (LedgerState ByronBlock -> IO Builder)
-  -> (forall proto era. LedgerState (ShelleyBlock proto era) -> IO Builder)
-  -> IO Builder
+  -> (LedgerState ByronBlock -> IO TextBuilder)
+  -> (forall proto era. LedgerState (ShelleyBlock proto era) -> IO TextBuilder)
+  -> IO TextBuilder
 dispatch cardanoSt fByron fShelley =
     hcollapse $
         hap (   fn k_fByron
@@ -320,13 +320,13 @@ dispatch cardanoSt fByron fShelley =
     k_fShelley ::
          forall proto era.
          LedgerState (ShelleyBlock proto era)
-      -> K (IO Builder) (ShelleyBlock proto era)
+      -> K (IO TextBuilder) (ShelleyBlock proto era)
     k_fShelley = K . fShelley
 
 applyToByronUtxo ::
-    (Map Byron.UTxO.CompactTxIn Byron.UTxO.CompactTxOut -> IO Builder)
+    (Map Byron.UTxO.CompactTxIn Byron.UTxO.CompactTxOut -> IO TextBuilder)
   -> LedgerState ByronBlock
-  -> IO Builder
+  -> IO TextBuilder
 applyToByronUtxo f st  =
    f $ getByronUtxo st
 
@@ -337,9 +337,9 @@ getByronUtxo = Byron.UTxO.unUTxO
              . Byron.Ledger.byronLedgerState
 
 applyToShelleyBasedUtxo ::
-     (Map TxIn (TxOut era) -> IO Builder)
+     (Map TxIn (TxOut era) -> IO TextBuilder)
   -> LedgerState (ShelleyBlock proto era)
-  -> IO Builder
+  -> IO TextBuilder
 applyToShelleyBasedUtxo f st = do
     f $ getShelleyBasedUtxo st
 
