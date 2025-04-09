@@ -186,9 +186,9 @@ newtype ClockSkew = ClockSkew { unClockSkew :: NominalDiffTime }
 
 -- | Default maximum permissible clock skew
 --
--- See 'ClockSkew' for details. We allow for 5 seconds skew by default.
+-- See 'ClockSkew' for details. We allow for 2 seconds skew by default.
 defaultClockSkew :: ClockSkew
-defaultClockSkew = clockSkewInSeconds 5
+defaultClockSkew = clockSkewInSeconds 2
 
 -- | Specify maximum clock skew in seconds
 clockSkewInSeconds :: Double -> ClockSkew
