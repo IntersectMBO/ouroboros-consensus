@@ -424,7 +424,7 @@ openLedgerDB flavArgs env cfg fs = do
   replayGoal <- fmap (realPointToPoint . last . Map.keys) . atomically $ readTVar (dbBlocks env)
   rr <- unsafeNewRegistry
   let args = LedgerDbArgs
-               (SnapshotPolicyArgs DisableSnapshots DefaultNumOfDiskSnapshots NoDoDiskSnapshotChecksum)
+               (SnapshotPolicyArgs DisableSnapshots DefaultNumOfDiskSnapshots)
                (pure genesis)
                fs
                cfg

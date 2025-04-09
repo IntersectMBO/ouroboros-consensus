@@ -254,10 +254,9 @@ loadSnapshot ::
   -> Complete BackingStoreArgs m
   -> CodecConfig blk
   -> SnapshotsFS m
-  -> Flag "DoDiskSnapshotChecksum"
   -> DiskSnapshot
   -> ExceptT (SnapshotFailure blk) m ((DbChangelog' blk, LedgerBackingStore m (ExtLedgerState blk)), RealPoint blk)
-loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs') doChecksum s = do
+loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs') s = do
   (extLedgerSt, checksumAsRead) <- withExceptT (InitFailureRead . ReadSnapshotFailed) $
      readExtLedgerState fs' (decodeDiskExtLedgerState ccfg) decode (snapshotToStatePath s)
   snapshotMeta <- withExceptT (InitFailureRead . ReadMetadataError (snapshotToMetadataPath s)) $
@@ -267,9 +266,8 @@ loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs') doChecksum s = do
     (LMDBBackingStoreArgs _ _ _, UTxOHDLMDBSnapshot) -> pure ()
     (_, _) ->
       throwError $ InitFailureRead $ ReadMetadataError (snapshotToMetadataPath s) MetadataBackendMismatch
-  Monad.when (getFlag doChecksum) $ do
-    Monad.when (checksumAsRead /= snapshotChecksum snapshotMeta) $
-      throwError $ InitFailureRead $ ReadSnapshotDataCorruption
+  Monad.when (checksumAsRead /= snapshotChecksum snapshotMeta) $
+    throwError $ InitFailureRead $ ReadSnapshotDataCorruption
   case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
     Origin       -> throwError InitFailureGenesis
     NotOrigin pt -> do

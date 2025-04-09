@@ -34,7 +34,6 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1 as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
@@ -161,20 +160,7 @@ analyse dbaConfig args =
               }
           chainDbArgs = maybeValidateAll $ ChainDB.updateTracer chainDBTracer args''
           immutableDbArgs = ChainDB.cdbImmDbArgs chainDbArgs
-          args''' =
-            args'' {
-              ChainDB.cdbLgrDbArgs =
-                (\x -> x {
-                    LedgerDB.lgrSnapshotPolicyArgs =
-                      (\y -> y {
-                          LedgerDB.spaDoChecksum = LedgerDB.Flag True
-                          })
-                      $ LedgerDB.lgrSnapshotPolicyArgs x
-                    }
-                )
-                (ChainDB.cdbLgrDbArgs args'')
-              }
-          ldbArgs = ChainDB.cdbLgrDbArgs args'''
+          ldbArgs = ChainDB.cdbLgrDbArgs args''
 
       withImmutableDB immutableDbArgs $ \(immutableDB, internal) -> do
         SomeAnalysis (Proxy :: Proxy startFrom) ana <- pure $ runAnalysis analysis

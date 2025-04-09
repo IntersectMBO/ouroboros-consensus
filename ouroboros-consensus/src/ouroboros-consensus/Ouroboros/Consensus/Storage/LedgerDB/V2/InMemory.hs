@@ -194,10 +194,9 @@ loadSnapshot ::
     => ResourceRegistry m
     -> CodecConfig blk
     -> SomeHasFS m
-    -> Flag "DoDiskSnapshotChecksum"
     -> DiskSnapshot
     -> ExceptT (SnapshotFailure blk) m (LedgerSeq' m blk, RealPoint blk)
-loadSnapshot _rr ccfg fs doChecksum ds = do
+loadSnapshot _rr ccfg fs ds = do
   snapshotMeta <- withExceptT (InitFailureRead . ReadMetadataError (snapshotToMetadataPath ds)) $
     loadSnapshotMetadata fs ds
   Monad.when (snapshotBackend snapshotMeta /= UTxOHDMemSnapshot) $ do
@@ -215,8 +214,7 @@ loadSnapshot _rr ccfg fs doChecksum ds = do
                   (fsPathFromList
                     $ fsPathToList (snapshotToDirPath ds)
                     <> [fromString "tables", fromString "tvar"])
-      Monad.when (getFlag doChecksum) $ do
-        let computedCRC = crcOfConcat checksumAsRead crcTables
-        Monad.when (computedCRC /= snapshotChecksum snapshotMeta) $
-          throwE $ InitFailureRead $ ReadSnapshotDataCorruption
+      let computedCRC = crcOfConcat checksumAsRead crcTables
+      Monad.when (computedCRC /= snapshotChecksum snapshotMeta) $
+        throwE $ InitFailureRead $ ReadSnapshotDataCorruption
       (,pt) <$> lift (empty extLedgerSt values (newInMemoryLedgerTablesHandle fs))

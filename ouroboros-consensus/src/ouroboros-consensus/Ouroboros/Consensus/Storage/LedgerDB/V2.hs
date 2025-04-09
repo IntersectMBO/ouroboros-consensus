@@ -133,11 +133,10 @@ mkInitDb args flavArgs getBlock =
 
    loadSnapshot :: CodecConfig blk
                 -> SomeHasFS m
-                -> Flag "DoDiskSnapshotChecksum"
                 -> DiskSnapshot
                 -> m (Either (SnapshotFailure blk) (LedgerSeq' m blk, RealPoint blk))
-   loadSnapshot ccfg fs f ds = case bss of
-     InMemoryHandleArgs -> runExceptT $ InMemory.loadSnapshot lgrRegistry ccfg fs f ds
+   loadSnapshot ccfg fs ds = case bss of
+     InMemoryHandleArgs -> runExceptT $ InMemory.loadSnapshot lgrRegistry ccfg fs ds
      LSMHandleArgs x    -> absurd x
 
 implMkLedgerDb ::

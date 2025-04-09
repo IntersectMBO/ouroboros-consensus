@@ -49,7 +49,7 @@ toSnapshotPolicy :: TestSetup -> SnapshotPolicy
 toSnapshotPolicy ts = defaultSnapshotPolicy (tsK ts) snapshotPolicyArgs
   where
     snapshotPolicyArgs =
-      SnapshotPolicyArgs (tsSnapshotInterval ts) DefaultNumOfDiskSnapshots DoDiskSnapshotChecksum
+      SnapshotPolicyArgs (tsSnapshotInterval ts) DefaultNumOfDiskSnapshots
 
 -- | The result of the represented call to 'onDiskShouldTakeSnapshot'
 shouldTakeSnapshot :: TestSetup -> Bool
