@@ -465,7 +465,7 @@ type InitDB :: Type -> (Type -> Type) -> Type -> Type
 data InitDB db m blk = InitDB {
     initFromGenesis  :: !(m db)
     -- ^ Create a DB from the genesis state
-  , initFromSnapshot :: !(Flag "DoDiskSnapshotChecksum" -> DiskSnapshot -> m (Either (SnapshotFailure blk) (db, RealPoint blk)))
+  , initFromSnapshot :: !(DiskSnapshot -> m (Either (SnapshotFailure blk) (db, RealPoint blk)))
     -- ^ Create a DB from a Snapshot
   , closeDb          :: !(db -> m ())
     -- ^ Closing the database, to be reopened again with a different snapshot or
@@ -516,7 +516,6 @@ initialize ::
   -> Point blk
   -> InitDB db m blk
   -> Maybe DiskSnapshot
-  -> Flag "DoDiskSnapshotChecksum"
   -> m (InitLog blk, db, Word64)
 initialize replayTracer
            snapTracer
@@ -525,22 +524,20 @@ initialize replayTracer
            stream
            replayGoal
            dbIface
-           fromSnapshot
-           doDoDiskSnapshotChecksum =
+           fromSnapshot =
     case fromSnapshot of
-      Nothing   -> listSnapshots hasFS >>= tryNewestFirst doDoDiskSnapshotChecksum id
-      Just snap -> tryNewestFirst doDoDiskSnapshotChecksum id [snap]
+      Nothing   -> listSnapshots hasFS >>= tryNewestFirst id
+      Just snap -> tryNewestFirst id [snap]
   where
     InitDB {initFromGenesis, initFromSnapshot, closeDb} = dbIface
 
-    tryNewestFirst :: Flag "DoDiskSnapshotChecksum"
-                   -> (InitLog blk -> InitLog blk)
+    tryNewestFirst :: (InitLog blk -> InitLog blk)
                    -> [DiskSnapshot]
                    -> m ( InitLog   blk
                         , db
                         , Word64
                         )
-    tryNewestFirst _ acc [] = do
+    tryNewestFirst acc [] = do
       -- We're out of snapshots. Start at genesis
       traceWith (TraceReplayStartEvent >$< replayTracer) ReplayFromGenesis
       let replayTracer'' = decorateReplayTracerWithStart (Point Origin) replayTracer'
@@ -564,29 +561,38 @@ initialize replayTracer
                  , replayed
                  )
 
-    tryNewestFirst doChecksum acc (s:ss) = do
-      eInitDb <- initFromSnapshot doChecksum s
+    tryNewestFirst acc (s:ss) = do
+      eInitDb <- initFromSnapshot s
       case eInitDb of
         -- If the snapshot is missing a metadata file, issue a warning and try
         -- the next oldest snapshot
         Left err@(InitFailureRead (ReadMetadataError _ MetadataFileDoesNotExist)) -> do
           traceWith snapTracer $ SnapshotMetadataMissing s
-          tryNewestFirst doChecksum (acc . InitFailure s err) ss
+          tryNewestFirst (acc . InitFailure s err) ss
 
         -- If the snapshot's backend is incorrect, issue a warning and try
         -- the next oldest snapshot
         Left err@(InitFailureRead (ReadMetadataError _ MetadataBackendMismatch)) -> do
           traceWith snapTracer $ SnapshotMetadataBackendMismatch s
-          tryNewestFirst doChecksum (acc . InitFailure s err) ss
+          tryNewestFirst (acc . InitFailure s err) ss
+
+        -- If the snapshot has a checksum that doesn't match the actual data,
+        -- issue a warning, delete it, and try the next oldest snapshot
+        Left err@(InitFailureRead ReadSnapshotDataCorruption) -> do
+          traceWith snapTracer $ InvalidSnapshot s err
+          Monad.when (diskSnapshotIsTemporary s) $ do
+            traceWith snapTracer $ DeletedSnapshot s
+            deleteSnapshot hasFS s
+          tryNewestFirst (acc . InitFailure s err) ss
 
         -- If we fail to use this snapshot for any other reason, delete it and
         -- try an older one
         Left err -> do
-          Monad.when (diskSnapshotIsTemporary s || err == InitFailureGenesis) $
+          Monad.when (diskSnapshotIsTemporary s || err == InitFailureGenesis) $ do
+            traceWith snapTracer $ DeletedSnapshot s
             deleteSnapshot hasFS s
           traceWith snapTracer . InvalidSnapshot s $ err
-          -- reset checksum flag to the initial state after failure
-          tryNewestFirst doChecksum (acc . InitFailure s err) ss
+          tryNewestFirst (acc . InitFailure s err) ss
 
         Right (initDb, pt) -> do
           let pt' = realPointToPoint pt
@@ -605,7 +611,7 @@ initialize replayTracer
               traceWith snapTracer . InvalidSnapshot s $ err
               Monad.when (diskSnapshotIsTemporary s) $ deleteSnapshot hasFS s
               closeDb initDb
-              tryNewestFirst doChecksum (acc . InitFailure s err) ss
+              tryNewestFirst (acc . InitFailure s err) ss
             Right (db, replayed) -> do
               db' <- pruneDb dbIface db
               return (acc (InitFromSnapshot s pt), db', replayed)
