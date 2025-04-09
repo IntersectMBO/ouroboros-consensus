@@ -60,7 +60,7 @@ import           Test.QuickCheck
 import           Test.QuickCheck.Extras (unsafeMapSuchThatJust)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
-import           Test.Util.HeaderValidation (attachSlotTimeToFragment)
+import           Test.Util.Header (attachSlotTimeToFragment)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.PartialAccessors
 import           Test.Util.TersePrinting (terseHFragment, terseHWTFragment,

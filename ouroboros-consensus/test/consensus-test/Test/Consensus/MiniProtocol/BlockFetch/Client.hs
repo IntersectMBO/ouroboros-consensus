@@ -78,7 +78,7 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.ChainDB
 import           Test.Util.ChainUpdates
-import           Test.Util.HeaderValidation (attachSlotTime)
+import           Test.Util.Header (attachSlotTime)
 import qualified Test.Util.LogicalClock as LogicalClock
 import           Test.Util.LogicalClock (Tick (..))
 import           Test.Util.Orphans.IOLike ()

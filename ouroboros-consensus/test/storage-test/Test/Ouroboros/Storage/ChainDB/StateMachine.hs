@@ -146,7 +146,7 @@ import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.ChainDB
 import           Test.Util.ChunkInfo
-import           Test.Util.HeaderValidation (attachSlotTimeToFragment)
+import           Test.Util.Header (attachSlotTimeToFragment)
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Orphans.ToExpr ()
 import           Test.Util.QuickCheck

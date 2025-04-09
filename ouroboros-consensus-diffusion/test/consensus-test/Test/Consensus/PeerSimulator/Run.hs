@@ -67,7 +67,7 @@ import           Test.Consensus.PointSchedule.NodeState (NodeState)
 import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId,
                      getPeerIds)
 import           Test.Util.ChainDB
-import           Test.Util.HeaderValidation (dropTimeFromFragment)
+import           Test.Util.Header (dropTimeFromFragment)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock)
 

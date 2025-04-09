@@ -352,7 +352,7 @@ library unstable-consensus-testlib
     Test.Util.FileLock
     Test.Util.HardFork.Future
     Test.Util.HardFork.OracularClock
-    Test.Util.HeaderValidation
+    Test.Util.Header
     Test.Util.InvertedMap
     Test.Util.LogicalClock
     Test.Util.MockChain

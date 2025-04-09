@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 
-module Test.Util.HeaderValidation (
+module Test.Util.Header (
     -- * Enriching headers with a relative slot time
     attachSlotTime
   , attachSlotTimeToFragment
