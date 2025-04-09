@@ -474,18 +474,12 @@ data SnapshotPolicy = SnapshotPolicy {
       --
       -- See also 'defaultSnapshotPolicy'
     , onDiskShouldTakeSnapshot      :: Maybe DiffTime -> Word64 -> Bool
-
-      -- | Whether or not to checksum the ledger snapshots to detect data
-      -- corruption on disk.  "yes" if @'DoDiskSnapshotChecksum'@; "no" if
-      -- @'NoDoDiskSnapshotChecksum'@.
-    , onDiskShouldChecksumSnapshots :: Flag "DoDiskSnapshotChecksum"
     }
   deriving NoThunks via OnlyCheckWhnf SnapshotPolicy
 
 data SnapshotPolicyArgs = SnapshotPolicyArgs {
     spaInterval   :: !(SnapshotInterval)
   , spaNum        :: !(NumOfDiskSnapshots)
-  , spaDoChecksum :: !(Flag "DoDiskSnapshotChecksum")
   }
 
 defaultSnapshotPolicyArgs :: SnapshotPolicyArgs
@@ -493,7 +487,6 @@ defaultSnapshotPolicyArgs =
   SnapshotPolicyArgs
     DefaultSnapshotInterval
     DefaultNumOfDiskSnapshots
-    DoDiskSnapshotChecksum
 
 -- | Default on-disk policy suitable to use with cardano-node
 --
@@ -503,11 +496,10 @@ defaultSnapshotPolicy ::
   -> SnapshotPolicy
 defaultSnapshotPolicy
   (SecurityParam k)
-  (SnapshotPolicyArgs requestedInterval reqNumOfSnapshots onDiskShouldChecksumSnapshots) =
+  (SnapshotPolicyArgs requestedInterval reqNumOfSnapshots) =
     SnapshotPolicy {
         onDiskNumSnapshots
       , onDiskShouldTakeSnapshot
-      , onDiskShouldChecksumSnapshots
       }
   where
     onDiskNumSnapshots :: Word

@@ -93,7 +93,7 @@ mkInitDb args bss getBlock =
           bsClose
       pure (chlog, backingStore)
   , initFromSnapshot =
-      runExceptT .: loadSnapshot bsTracer baArgs (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) lgrHasFS'
+      runExceptT . loadSnapshot bsTracer baArgs (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) lgrHasFS'
   , closeDb = bsClose . snd
   , initReapplyBlock = \cfg blk (chlog, bstore) -> do
       !chlog' <- reapplyThenPush cfg blk (readKeySets bstore) chlog

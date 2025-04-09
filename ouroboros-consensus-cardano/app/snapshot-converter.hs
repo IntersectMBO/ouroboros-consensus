@@ -65,8 +65,6 @@ data Config = Config
     -- ^ Which format the output snapshot must be in
     , outpath       :: FilePath
     -- ^ Path to the output snapshot
-    , checkChecksum :: Flag "DoDiskSnapshotChecksum"
-    -- ^ Whether to check checksums match
     }
 
 getCommandLineConfig :: IO (Config, BlockType)
@@ -104,12 +102,6 @@ parseConfig =
             ( mconcat
                 [ help "Output dir/file Use relative paths like ./100007913"
                 , metavar "PATH-OUT"
-                ]
-            )
-        <*> flag DoDiskSnapshotChecksum NoDoDiskSnapshotChecksum
-            ( mconcat
-                [ long "no-read-checksum"
-                , help "Disable checking checksums"
                 ]
             )
 
@@ -189,8 +181,9 @@ load config@Config{inpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), pa
          <$> withExceptT
                (SnapshotError . InitFailureRead . ReadSnapshotFailed)
                (readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode path)
-      Monad.when (getFlag checkChecksum) $ do
-        let crcPath = path <.> "checksum"
+      let crcPath = path <.> "checksum"
+      crcFileExists <- Trans.lift $ doesFileExist hasFS crcPath
+      Monad.when crcFileExists $ do
         snapshotCRC <-
             withExceptT (ReadSnapshotCRCError crcPath) $
               readCRC hasFS crcPath
@@ -199,7 +192,7 @@ load config@Config{inpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), pa
       pure (forgetLedgerTables st, projectLedgerTables st)
     Mem -> do
       checkSnapshotFileStructure Mem path fs
-      (ls, _) <- withExceptT SnapshotError $ V2.loadSnapshot rr ccfg fs checkChecksum ds
+      (ls, _) <- withExceptT SnapshotError $ V2.loadSnapshot rr ccfg fs ds
       let h = V2.currentHandle ls
       (V2.state h,) <$> Trans.lift (V2.readAll (V2.tables h))
     LMDB -> do
@@ -211,11 +204,8 @@ load config@Config{inpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), pa
           (V1.LMDBBackingStoreArgs tempFP defaultLMDBLimits Dict.Dict)
           ccfg
           (V1.SnapshotsFS fs)
-          checkChecksum
           ds
       (V1.current dbch,) <$> Trans.lift (V1.bsReadAll bstore (V1.changelogLastFlushedState dbch))
-  where
-    Config { checkChecksum } = config
 load _ _ _ _ = error "Malformed input path!"
 
 store ::

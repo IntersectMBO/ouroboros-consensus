@@ -116,7 +116,6 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
             LedgerDB.SnapshotPolicyArgs
               LedgerDB.DefaultSnapshotInterval
               LedgerDB.DefaultNumOfDiskSnapshots
-              LedgerDB.DoDiskSnapshotChecksum
           -- Keep 2 ledger snapshots, and take a new snapshot at least every 2 *
           -- k seconds, where k is the security parameter.
         , lgrGenesis            = return mcdbInitLedger
