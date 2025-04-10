@@ -37,6 +37,8 @@ in
 
   hlint = tool "hlint" "3.8" { };
 
+  xrefcheck = tool "xrefcheck" "0.3.1" { };
+
   haskellBuildUtils = prev.haskellBuildUtils.override {
     inherit (final.hsPkgs.args) compiler-nix-name;
     index-state = tool-index-state;
