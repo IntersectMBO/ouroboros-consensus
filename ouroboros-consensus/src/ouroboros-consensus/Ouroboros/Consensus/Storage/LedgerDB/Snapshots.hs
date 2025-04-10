@@ -558,8 +558,4 @@ data TraceSnapshotEvent blk
     -- ^ A snapshot was written to disk.
   | DeletedSnapshot DiskSnapshot
     -- ^ An old or invalid on-disk snapshot was deleted
-  | SnapshotMetadataMissing DiskSnapshot
-    -- ^ The metadata file for a snapshot was missing and the snapshot was ignored
-  | SnapshotMetadataBackendMismatch DiskSnapshot
-    -- ^ The backend for a snapshot was incorrect and the snapshot was ignored
   deriving (Generic, Eq, Show)
