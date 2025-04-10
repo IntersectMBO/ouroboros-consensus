@@ -15,6 +15,7 @@ hsPkgs.shellFor {
     pkgs.hlint
     pkgs.cabal-hoogle
     pkgs.ghcid
+    pkgs.xrefcheck
 
     # release management
     pkgs.scriv
