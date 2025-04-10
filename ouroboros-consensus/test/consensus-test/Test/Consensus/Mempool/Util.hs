@@ -49,7 +49,7 @@ import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import           Ouroboros.Consensus.Protocol.BFT
 import           Ouroboros.Consensus.Util (safeMaximumOn)
 import           Test.Crypto.Hash ()
-import           Test.QuickCheck 
+import           Test.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 
 type TestBlock = SimpleBftBlock SimpleMockCrypto BftMockCrypto

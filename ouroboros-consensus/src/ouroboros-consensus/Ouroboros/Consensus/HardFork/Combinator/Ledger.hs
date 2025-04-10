@@ -1153,7 +1153,7 @@ extendTables st =
 
 
 injectHardForkTxOutDefault ::
-     SListI xs 
+     SListI xs
   => Index xs x
   -> TxOut (LedgerState x)
   -> DefaultHardForkTxOut xs
