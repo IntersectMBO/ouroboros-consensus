@@ -706,8 +706,8 @@ test-suite storage-test
     Test.Ouroboros.Storage.ImmutableDB.StateMachine
     Test.Ouroboros.Storage.LedgerDB
     Test.Ouroboros.Storage.LedgerDB.Serialisation
-    Test.Ouroboros.Storage.LedgerDB.Snapshots
     Test.Ouroboros.Storage.LedgerDB.SnapshotPolicy
+    Test.Ouroboros.Storage.LedgerDB.Snapshots
     Test.Ouroboros.Storage.LedgerDB.StateMachine
     Test.Ouroboros.Storage.LedgerDB.StateMachine.TestBlock
     Test.Ouroboros.Storage.LedgerDB.V1.BackingStore

@@ -48,11 +48,11 @@ import           Codec.Serialise (Serialise)
 import           Codec.Serialise.Class (decode, encode)
 import           Control.Exception (throw)
 import           Data.Kind (Type)
-import Data.Typeable (Typeable)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust)
 import           Data.Singletons
 import           Data.SOP.BasicFunctors
+import           Data.Typeable (Typeable)
 import           Ouroboros.Consensus.Block.Abstract (CodecConfig)
 import           Ouroboros.Consensus.BlockchainTime (SystemStart)
 import           Ouroboros.Consensus.Config
@@ -187,8 +187,8 @@ class
   -- https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/QueryVersioning/. In
   -- particular this function implements the check described in
   -- https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/QueryVersioning/#checks.
-  blockQueryIsSupportedOnVersion :: 
-      BlockQuery blk fp result 
+  blockQueryIsSupportedOnVersion ::
+       BlockQuery blk fp result
     -> BlockNodeToClientVersion blk
     -> Bool
 

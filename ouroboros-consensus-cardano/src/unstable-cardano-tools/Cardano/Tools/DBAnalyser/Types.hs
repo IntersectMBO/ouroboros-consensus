@@ -5,7 +5,6 @@ module Cardano.Tools.DBAnalyser.Types (module Cardano.Tools.DBAnalyser.Types) wh
 
 import           Data.Word
 import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Util (Flag)
 
 data SelectDB =
     SelectImmutableDB (WithOrigin SlotNo)

@@ -21,8 +21,8 @@
 
 module Ouroboros.Consensus.HardFork.Combinator.Ledger.Query (
     BlockQuery (..)
-  , HardForkNodeToClientVersion (..)
   , BlockSupportsHFLedgerQuery (..)
+  , HardForkNodeToClientVersion (..)
   , HardForkQueryResult
   , QueryAnytime (..)
   , QueryHardFork (..)

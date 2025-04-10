@@ -63,7 +63,7 @@ import           Ouroboros.Consensus.Util.IndexedMemPack
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import           Ouroboros.Network.Block (Point (..))
 import qualified Ouroboros.Network.Point as Point
-import           Test.QuickCheck 
+import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck hiding (elements)
 import           Test.Util.Orphans.Arbitrary ()

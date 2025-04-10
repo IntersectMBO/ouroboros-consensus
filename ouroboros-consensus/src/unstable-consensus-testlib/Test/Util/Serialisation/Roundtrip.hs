@@ -7,9 +7,9 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -291,7 +291,7 @@ roundtrip_all_skipping
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeResult blk)
      , Arbitrary (WithVersion (BlockNodeToClientVersion blk) (LedgerConfig blk))
      , ArbitraryWithVersion (QueryVersion, BlockNodeToClientVersion blk) (SomeSecond Query blk)
-     
+
      , Show (BlockNodeToClientVersion blk)
      , BlockSupportsLedgerQuery blk
      )

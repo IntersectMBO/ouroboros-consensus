@@ -113,7 +113,8 @@ import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      validBounds)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanK)
 import           Ouroboros.Consensus.Storage.Common ()
-import           Ouroboros.Consensus.Storage.LedgerDB.API (LedgerDbCfgF (..), LedgerDbPrune (..))
+import           Ouroboros.Consensus.Storage.LedgerDB.API (LedgerDbCfgF (..),
+                     LedgerDbPrune (..))
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import           Ouroboros.Consensus.Util (repeatedly)
 import qualified Ouroboros.Consensus.Util.AnchoredFragment as Fragment

@@ -114,7 +114,7 @@ inPairsToTails = go
             ) n'
 
 extendWithTails ::
-     SListI xs 
+     SListI xs
   => Index xs x
   -> Index xs y
   -> Tails (InPairs.Fn2 f) xs

@@ -29,8 +29,8 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
-import           Ouroboros.Consensus.Storage.LedgerDB.Args
 import           Ouroboros.Consensus.Storage.LedgerDB.API
+import           Ouroboros.Consensus.Storage.LedgerDB.Args
 import           Ouroboros.Consensus.Storage.LedgerDB.Forker as Forker
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API as BackingStore

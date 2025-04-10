@@ -453,7 +453,7 @@ data SnapshotPolicy = SnapshotPolicy {
       --        the next snapshot, we delete the oldest one, leaving the middle
       --        one available in case of truncation of the write. This is
       --        probably a sane value in most circumstances.
-      onDiskNumSnapshots            :: Word
+      onDiskNumSnapshots       :: Word
 
       -- | Should we write a snapshot of the ledger state to disk?
       --
@@ -473,13 +473,13 @@ data SnapshotPolicy = SnapshotPolicy {
       --   blocks had to be replayed.
       --
       -- See also 'defaultSnapshotPolicy'
-    , onDiskShouldTakeSnapshot      :: Maybe DiffTime -> Word64 -> Bool
+    , onDiskShouldTakeSnapshot :: Maybe DiffTime -> Word64 -> Bool
     }
   deriving NoThunks via OnlyCheckWhnf SnapshotPolicy
 
 data SnapshotPolicyArgs = SnapshotPolicyArgs {
-    spaInterval   :: !(SnapshotInterval)
-  , spaNum        :: !(NumOfDiskSnapshots)
+    spaInterval :: !SnapshotInterval
+  , spaNum      :: !NumOfDiskSnapshots
   }
 
 defaultSnapshotPolicyArgs :: SnapshotPolicyArgs
