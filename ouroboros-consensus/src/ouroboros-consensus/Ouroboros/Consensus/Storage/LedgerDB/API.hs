@@ -567,13 +567,13 @@ initialize replayTracer
         -- If the snapshot is missing a metadata file, issue a warning and try
         -- the next oldest snapshot
         Left err@(InitFailureRead (ReadMetadataError _ MetadataFileDoesNotExist)) -> do
-          traceWith snapTracer $ SnapshotMetadataMissing s
+          traceWith snapTracer $ InvalidSnapshot s err
           tryNewestFirst (acc . InitFailure s err) ss
 
         -- If the snapshot's backend is incorrect, issue a warning and try
         -- the next oldest snapshot
         Left err@(InitFailureRead (ReadMetadataError _ MetadataBackendMismatch)) -> do
-          traceWith snapTracer $ SnapshotMetadataBackendMismatch s
+          traceWith snapTracer $ InvalidSnapshot s err
           tryNewestFirst (acc . InitFailure s err) ss
 
         -- If the snapshot has a checksum that doesn't match the actual data,
