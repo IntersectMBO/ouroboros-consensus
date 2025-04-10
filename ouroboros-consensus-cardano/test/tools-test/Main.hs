@@ -1,5 +1,3 @@
-{-# LANGUAGE PatternSynonyms #-}
-
 module Main (main) where
 
 import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
@@ -10,8 +8,6 @@ import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
 import           Cardano.Tools.DBSynthesizer.Types
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Cardano.Block
-import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
-                     (pattern NoDoDiskSnapshotChecksum)
 import qualified Test.Cardano.Tools.Headers
 import           Test.Tasty
 import           Test.Tasty.HUnit
@@ -66,19 +62,19 @@ testImmutaliserConfig =
 testAnalyserConfig :: DBAnalyserConfig
 testAnalyserConfig =
   DBAnalyserConfig {
-      dbDir                      = chainDB
-    , verbose                    = False
-    , selectDB                   = SelectImmutableDB Origin
-    , validation                 = Just ValidateAllBlocks
-    , analysis                   = CountBlocks
-    , confLimit                  = Unlimited
-    , diskSnapshotChecksumOnRead = NoDoDiskSnapshotChecksum
+      dbDir                       = chainDB
+    , ldbBackend                  = V2InMem
+    , verbose                     = False
+    , selectDB                    = SelectImmutableDB Origin
+    , validation                  = Just ValidateAllBlocks
+    , analysis                    = CountBlocks
+    , confLimit                   = Unlimited
     }
 
 testBlockArgs :: Cardano.Args (CardanoBlock StandardCrypto)
 testBlockArgs = Cardano.CardanoBlockArgs nodeConfig Nothing
 
--- | A multi-step test including synthesis and analaysis 'SomeConsensusProtocol' using the Cardano instance.
+-- | A multi-step test including synthesis and analysis 'SomeConsensusProtocol' using the Cardano instance.
 --
 -- 1. step: synthesize a ChainDB from scratch and count the amount of blocks forged.
 -- 2. step: append to the previous ChainDB and coutn the amount of blocks forged.
@@ -114,7 +110,7 @@ blockCountTest logStep = do
         "wrong number of blocks encountered during analysis \
         \ (counted: " ++ show resultAnalysis ++ "; expected: " ++ show blockCount ++ ")"
   where
-    genTxs _ _ _ = pure []
+    genTxs _ _ _ _ = pure []
 
 tests :: TestTree
 tests =

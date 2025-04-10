@@ -31,8 +31,8 @@ module Test.Ouroboros.Storage.ChainDB.Model (
   , getBlock
   , getBlockByPoint
   , getBlockComponentByPoint
+  , getDbChangelog
   , getIsValid
-  , getLedgerDB
   , getLoEFragment
   , getMaxSlotNo
   , hasBlock
@@ -112,7 +112,10 @@ import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      StreamFrom (..), StreamTo (..), UnknownRange (..),
                      validBounds)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanK)
-import           Ouroboros.Consensus.Storage.LedgerDB
+import           Ouroboros.Consensus.Storage.Common ()
+import           Ouroboros.Consensus.Storage.LedgerDB.API (LedgerDbCfgF (..),
+                     LedgerDbPrune (..))
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import           Ouroboros.Consensus.Util (repeatedly)
 import qualified Ouroboros.Consensus.Util.AnchoredFragment as Fragment
 import           Ouroboros.Consensus.Util.IOLike (MonadSTM)
@@ -135,8 +138,8 @@ data Model blk = Model {
     , immutableDbChain :: Chain blk
       -- ^ The ImmutableDB
     , cps              :: CPS.ChainProducerState blk
-    , currentLedger    :: ExtLedgerState blk
-    , initLedger       :: ExtLedgerState blk
+    , currentLedger    :: ExtLedgerState blk EmptyMK
+    , initLedger       :: ExtLedgerState blk EmptyMK
     , iterators        :: Map IteratorId [blk]
     , valid            :: Set (HeaderHash blk)
     , invalid          :: InvalidBlocks blk
@@ -153,11 +156,11 @@ deriving instance ( ToExpr blk
                   , ToExpr (HeaderHash blk)
                   , ToExpr (ChainDepState (BlockProtocol blk))
                   , ToExpr (TipInfo blk)
-                  , ToExpr (LedgerState blk)
+                  , ToExpr (LedgerState blk EmptyMK)
                   , ToExpr (ExtValidationError blk)
                   , ToExpr (Chain blk)
                   , ToExpr (ChainProducerState blk)
-                  , ToExpr (ExtLedgerState blk)
+                  , ToExpr (ExtLedgerState blk EmptyMK)
                   )
                  => ToExpr (Model blk)
 
@@ -338,15 +341,15 @@ isValid :: forall blk. LedgerSupportsProtocol blk
         -> Maybe Bool
 isValid = flip getIsValid
 
-getLedgerDB ::
-     LedgerSupportsProtocol blk
+getDbChangelog ::
+     (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (LedgerState blk))
   => TopLevelConfig blk
   -> Model blk
-  -> LedgerDB (ExtLedgerState blk)
-getLedgerDB cfg m@Model{..} =
-      ledgerDbPrune tip
-    $ ledgerDbPushMany' ledgerDbCfg blks
-    $ ledgerDbWithAnchor initLedger
+  -> DbChangelog.DbChangelog' blk
+getDbChangelog cfg m@Model{..} =
+      DbChangelog.prune tip
+    . DbChangelog.reapplyThenPushMany' ledgerDbCfg blks
+    $ DbChangelog.empty initLedger
   where
     blks = Chain.toOldestFirst $ currentChain m
 
@@ -376,7 +379,7 @@ getLoEFragment = loeFragment
 empty ::
      HasHeader blk
   => LoE ()
-  -> ExtLedgerState blk
+  -> ExtLedgerState blk EmptyMK
   -> Model blk
 empty loe initLedger = Model {
       volatileDbBlocks = Map.empty
@@ -391,7 +394,7 @@ empty loe initLedger = Model {
     , loeFragment      = loe $> Fragment.Empty Fragment.AnchorGenesis
     }
 
-addBlock :: forall blk. LedgerSupportsProtocol blk
+addBlock :: forall blk. (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk))
          => TopLevelConfig blk
          -> blk
          -> Model blk -> Model blk
@@ -413,9 +416,14 @@ addBlock cfg blk m
         -- If it's an invalid block we've seen before, ignore it.
         Map.member (blockHash blk) (invalid m)
 
-chainSelection :: forall blk. LedgerSupportsProtocol blk
-         => TopLevelConfig blk
-         -> Model blk -> Model blk
+chainSelection ::
+     forall blk.
+     ( LedgerTablesAreTrivial (ExtLedgerState blk)
+     , LedgerSupportsProtocol blk
+     )
+  => TopLevelConfig blk
+  -> Model blk
+  -> Model blk
 chainSelection cfg m = Model {
       volatileDbBlocks = volatileDbBlocks m
     , immutableDbChain = immutableDbChain m
@@ -434,7 +442,7 @@ chainSelection cfg m = Model {
     -- @invalid'@ will be a (non-strict) superset of the previous value of
     -- @invalid@, see 'validChains', thus no need to union.
     invalid'   :: InvalidBlocks blk
-    candidates :: [(Chain blk, ExtLedgerState blk)]
+    candidates :: [(Chain blk, ExtLedgerState blk EmptyMK)]
     (invalid', candidates) = validChains cfg m (blocks m)
 
     immutableChainHashes =
@@ -512,7 +520,7 @@ chainSelection cfg m = Model {
         volatileFrag = volatileChain secParam id m
 
     newChain  :: Chain blk
-    newLedger :: ExtLedgerState blk
+    newLedger :: ExtLedgerState blk EmptyMK
     (newChain, newLedger) =
         fromMaybe (currentChain m, currentLedger m)
       . selectChain
@@ -531,7 +539,7 @@ chainSelection cfg m = Model {
           (Set.fromList . map blockHash . Chain.toOldestFirst . fst)
           consideredCandidates
 
-addBlocks :: LedgerSupportsProtocol blk
+addBlocks :: (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk))
           => TopLevelConfig blk
           -> [blk]
           -> Model blk -> Model blk
@@ -539,7 +547,7 @@ addBlocks cfg = repeatedly (addBlock cfg)
 
 -- | Wrapper around 'addBlock' that returns an 'AddBlockPromise'.
 addBlockPromise ::
-     forall m blk. (LedgerSupportsProtocol blk, MonadSTM m)
+     forall m blk. (LedgerSupportsProtocol blk, MonadSTM m, LedgerTablesAreTrivial (ExtLedgerState blk))
   => TopLevelConfig blk
   -> blk
   -> Model blk
@@ -557,7 +565,10 @@ addBlockPromise cfg blk m = (result, m')
 -- | Update the LoE fragment, trigger chain selection and return the new tip
 -- point.
 updateLoE ::
-     forall blk. LedgerSupportsProtocol blk
+     forall blk.
+     ( LedgerTablesAreTrivial (ExtLedgerState blk)
+     , LedgerSupportsProtocol blk
+     )
   => TopLevelConfig blk
   -> AnchoredFragment blk
   -> Model blk
@@ -726,7 +737,7 @@ type InvalidBlocks blk = Map (HeaderHash blk) (ExtValidationError blk, SlotNo)
 data ValidatedChain blk =
     ValidatedChain
       (Chain blk)           -- ^ Valid prefix
-      (ExtLedgerState blk)  -- ^ Corresponds to the tip of the valid prefix
+      (ExtLedgerState blk EmptyMK)  -- ^ Corresponds to the tip of the valid prefix
       (InvalidBlocks blk)   -- ^ Invalid blocks encountered while validating
                             -- the candidate chain.
 
@@ -734,7 +745,7 @@ data ValidatedChain blk =
 --
 -- The 'InvalidBlocks' in the returned 'ValidatedChain' will be >= the
 -- 'invalid' of the given 'Model'.
-validate :: forall blk. LedgerSupportsProtocol blk
+validate :: forall blk. (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk))
          => TopLevelConfig blk
          -> Model blk
          -> Chain blk
@@ -746,14 +757,14 @@ validate cfg Model { initLedger, invalid } chain =
     mkInvalid b reason =
       Map.singleton (blockHash b) (reason, blockSlot b)
 
-    go :: ExtLedgerState blk  -- ^ Corresponds to the tip of the valid prefix
+    go :: ExtLedgerState blk EmptyMK  -- ^ Corresponds to the tip of the valid prefix
        -> Chain blk           -- ^ Valid prefix
        -> [blk]               -- ^ Remaining blocks to validate
        -> ValidatedChain blk
     go ledger validPrefix = \case
       -- Return 'mbFinal' if it contains an "earlier" result
       []    -> ValidatedChain validPrefix ledger invalid
-      b:bs' -> case runExcept (tickThenApply OmitLedgerEvents (ExtLedgerCfg cfg) b ledger) of
+      b:bs' -> case runExcept (tickThenApply OmitLedgerEvents (ExtLedgerCfg cfg) b (convertMapKind ledger)) of
         -- Invalid block according to the ledger
         Left e
           -> ValidatedChain
@@ -771,7 +782,7 @@ validate cfg Model { initLedger, invalid } chain =
 
           -- This is the good path
           | otherwise
-          -> go ledger' (validPrefix :> b) bs'
+          -> go (convertMapKind ledger') (validPrefix :> b) bs'
 
 chains :: forall blk. (GetPrevHash blk)
        => Map (HeaderHash blk) blk -> [Chain blk]
@@ -794,11 +805,11 @@ chains bs = go Chain.Genesis
     fwd :: Map (ChainHash blk) (Map (HeaderHash blk) blk)
     fwd = successors (Map.elems bs)
 
-validChains :: forall blk. LedgerSupportsProtocol blk
+validChains :: forall blk. (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk))
             => TopLevelConfig blk
             -> Model blk
             -> Map (HeaderHash blk) blk
-            -> (InvalidBlocks blk, [(Chain blk, ExtLedgerState blk)])
+            -> (InvalidBlocks blk, [(Chain blk, ExtLedgerState blk EmptyMK)])
 validChains cfg m bs =
     foldMap (classify . validate cfg m) $
     -- Note that we sort here to make sure we pick the same chain as the real
@@ -827,7 +838,7 @@ validChains cfg m bs =
         )
 
     classify :: ValidatedChain blk
-             -> (InvalidBlocks blk, [(Chain blk, ExtLedgerState blk)])
+             -> (InvalidBlocks blk, [(Chain blk, ExtLedgerState blk EmptyMK)])
     classify (ValidatedChain chain ledger invalid) =
       (invalid, [(chain, ledger)])
 
@@ -1016,7 +1027,7 @@ reopen :: Model blk -> Model blk
 reopen m = m { isOpen = True }
 
 wipeVolatileDB ::
-     forall blk. LedgerSupportsProtocol blk
+     forall blk. (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk))
   => TopLevelConfig blk
   -> Model blk
   -> (Point blk, Model blk)
@@ -1037,7 +1048,7 @@ wipeVolatileDB cfg m =
     -- Get the chain ending at the ImmutableDB by doing chain selection on the
     -- sole candidate (or none) in the ImmutableDB.
     newChain  :: Chain blk
-    newLedger :: ExtLedgerState blk
+    newLedger :: ExtLedgerState blk EmptyMK
     (newChain, newLedger) =
         isSameAsImmutableDbChain
       $ selectChain

@@ -16,11 +16,12 @@ module Test.Util.Serialisation.Examples (
 
 import           Data.Bifunctor (first)
 import           Ouroboros.Consensus.Block (BlockProtocol, Header, HeaderHash,
-                     SlotNo, SomeSecond)
+                     SlotNo)
 import           Ouroboros.Consensus.HeaderValidation (AnnTip)
-import           Ouroboros.Consensus.Ledger.Abstract (LedgerConfig, LedgerState)
+import           Ouroboros.Consensus.Ledger.Abstract (EmptyMK, LedgerConfig,
+                     LedgerState, LedgerTables, ValuesMK)
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
-import           Ouroboros.Consensus.Ledger.Query (BlockQuery)
+import           Ouroboros.Consensus.Ledger.Query (BlockQuery, SomeBlockQuery)
 import           Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr, GenTx,
                      GenTxId)
 import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
@@ -41,14 +42,15 @@ data Examples blk = Examples {
     , exampleGenTx            :: Labelled (GenTx blk)
     , exampleGenTxId          :: Labelled (GenTxId blk)
     , exampleApplyTxErr       :: Labelled (ApplyTxErr blk)
-    , exampleQuery            :: Labelled (SomeSecond BlockQuery blk)
+    , exampleQuery            :: Labelled (SomeBlockQuery (BlockQuery blk))
     , exampleResult           :: Labelled (SomeResult blk)
     , exampleAnnTip           :: Labelled (AnnTip blk)
-    , exampleLedgerState      :: Labelled (LedgerState blk)
+    , exampleLedgerState      :: Labelled (LedgerState blk EmptyMK)
     , exampleChainDepState    :: Labelled (ChainDepState (BlockProtocol blk))
-    , exampleExtLedgerState   :: Labelled (ExtLedgerState blk)
+    , exampleExtLedgerState   :: Labelled (ExtLedgerState blk EmptyMK)
     , exampleSlotNo           :: Labelled SlotNo
     , exampleLedgerConfig     :: Labelled (LedgerConfig blk)
+    , exampleLedgerTables     :: Labelled (LedgerTables (LedgerState blk) ValuesMK)
     }
 
 emptyExamples :: Examples blk
@@ -69,6 +71,7 @@ emptyExamples = Examples {
     , exampleExtLedgerState   = mempty
     , exampleSlotNo           = mempty
     , exampleLedgerConfig     = mempty
+    , exampleLedgerTables     = mempty
     }
 
 combineExamples ::
@@ -94,6 +97,7 @@ combineExamples f e1 e2 = Examples {
     , exampleExtLedgerState   = combine exampleExtLedgerState
     , exampleSlotNo           = combine exampleSlotNo
     , exampleLedgerConfig     = combine exampleLedgerConfig
+    , exampleLedgerTables     = combine exampleLedgerTables
     }
   where
     combine :: (Examples blk -> Labelled a) -> Labelled a

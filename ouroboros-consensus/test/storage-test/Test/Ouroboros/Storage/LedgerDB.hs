@@ -6,14 +6,24 @@
 --
 module Test.Ouroboros.Storage.LedgerDB (tests) where
 
-import qualified Test.Ouroboros.Storage.LedgerDB.DiskPolicy as DiskPolicy
-import qualified Test.Ouroboros.Storage.LedgerDB.InMemory as InMemory
-import qualified Test.Ouroboros.Storage.LedgerDB.OnDisk as OnDisk
-import           Test.Tasty
+import qualified Test.Ouroboros.Storage.LedgerDB.Serialisation as Serialisation
+import qualified Test.Ouroboros.Storage.LedgerDB.SnapshotPolicy as SnapshotPolicy
+import qualified Test.Ouroboros.Storage.LedgerDB.Snapshots as Snapshots
+import qualified Test.Ouroboros.Storage.LedgerDB.StateMachine as StateMachine
+import qualified Test.Ouroboros.Storage.LedgerDB.V1.BackingStore as BackingStore
+import qualified Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog as DbChangelog
+import           Test.Tasty (TestTree, testGroup)
 
 tests :: TestTree
 tests = testGroup "LedgerDB" [
-      InMemory.tests
-    , OnDisk.tests
-    , DiskPolicy.tests
+      testGroup "V1" [
+          BackingStore.tests
+        , DbChangelog.tests
+    ]
+      -- Independent of the LedgerDB implementation
+    , SnapshotPolicy.tests
+    , Serialisation.tests
+    , Snapshots.tests
+      -- Tests both V1 and V2
+    , StateMachine.tests
     ]
