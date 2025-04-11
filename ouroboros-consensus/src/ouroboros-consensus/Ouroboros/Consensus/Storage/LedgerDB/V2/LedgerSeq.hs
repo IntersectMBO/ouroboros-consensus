@@ -92,7 +92,6 @@ data LedgerTablesHandle m l = LedgerTablesHandle {
     -- | Consult the size of the ledger tables in the database. This will return
     -- 'Nothing' in backends that do not support this operation.
   , tablesSize         :: !(m (Maybe Int))
-  , isOpen             :: !(m Bool)
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LedgerTablesHandle" (LedgerTablesHandle m l)
 
