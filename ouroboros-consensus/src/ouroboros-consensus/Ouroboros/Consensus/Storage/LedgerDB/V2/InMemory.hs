@@ -121,11 +121,6 @@ newInMemoryLedgerTablesHandle someFS@(SomeHasFS hasFS) l = do
     , tablesSize = do
         hs <- readTVarIO tv
         guardClosed hs (pure . Just . Map.size . getValuesMK . getLedgerTables)
-    , isOpen = do
-        hs <- readTVarIO tv
-        case hs of
-          LedgerTablesHandleOpen{}   -> pure True
-          LedgerTablesHandleClosed{} -> pure False
     }
 
 {-------------------------------------------------------------------------------
