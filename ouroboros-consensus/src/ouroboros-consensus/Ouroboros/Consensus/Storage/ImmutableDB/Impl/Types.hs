@@ -4,9 +4,7 @@
 
 module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Types (
     -- * Misc types
-    BlockOrEBB (..)
-  , WithBlockSize (..)
-  , isBlockOrEBB
+    WithBlockSize (..)
     -- * Validation policy
   , ValidationPolicy (..)
     -- * Chunk file error
@@ -30,15 +28,6 @@ import           Ouroboros.Consensus.Util.CBOR (ReadIncrementalErr)
 {------------------------------------------------------------------------------
   Misc types
 ------------------------------------------------------------------------------}
-
-data BlockOrEBB =
-    Block !SlotNo
-  | EBB   !EpochNo
-  deriving (Eq, Show, Generic, NoThunks)
-
-isBlockOrEBB :: BlockOrEBB -> IsEBB
-isBlockOrEBB (Block _) = IsNotEBB
-isBlockOrEBB (EBB   _) = IsEBB
 
 data WithBlockSize a = WithBlockSize {
       blockSize        :: !Word32

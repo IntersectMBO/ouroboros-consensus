@@ -740,7 +740,7 @@ data TraceAddBlockEvent blk =
   | PoppedReprocessLoEBlocksFromQueue
 
     -- | A block was added to the Volatile DB
-  | AddedBlockToVolatileDB (RealPoint blk) BlockNo IsEBB Enclosing
+  | AddedBlockToVolatileDB (RealPoint blk) BlockNo Enclosing
 
     -- | The block fits onto the current chain, we'll try to use it to extend
     -- our chain.

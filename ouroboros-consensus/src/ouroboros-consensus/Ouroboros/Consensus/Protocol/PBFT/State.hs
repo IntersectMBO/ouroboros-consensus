@@ -181,8 +181,6 @@ countSignedBy PBftState{..} gk = Map.findWithDefault 0 gk counts
 --
 -- Returns 'Origin' if there are no signatures in the window (this will happen
 -- exactly at genesis only).
---
--- Unaffected by EBBs, since they're not signed.
 lastSignedSlot :: PBftState c -> WithOrigin SlotNo
 lastSignedSlot PBftState{..} =
     case inWindow of

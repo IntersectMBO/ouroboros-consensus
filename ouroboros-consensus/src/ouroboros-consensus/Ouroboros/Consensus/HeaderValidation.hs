@@ -44,14 +44,10 @@ module Ouroboros.Consensus.HeaderValidation (
     -- * Errors
   , HeaderError (..)
   , castHeaderError
-    -- * TipInfoIsEBB
-  , TipInfoIsEBB (..)
     -- * Serialization
-  , decodeAnnTipIsEBB
   , decodeHeaderState
   , defaultDecodeAnnTip
   , defaultEncodeAnnTip
-  , encodeAnnTipIsEBB
   , encodeHeaderState
     -- * Type family instances
   , Ticked (..)
@@ -87,9 +83,7 @@ import qualified Ouroboros.Consensus.Util.CBOR as Util.CBOR
 -- | Annotated information about the tip of the chain
 --
 -- The annotation is the additional information we need to validate the
--- header envelope. Under normal circumstances no additional information is
--- required, but for instance for Byron we need to know if the previous header
--- was an EBB.
+-- header envelope.
 data AnnTip blk = AnnTip {
       annTipSlotNo  :: !SlotNo
     , annTipBlockNo :: !BlockNo
@@ -275,13 +269,6 @@ class ( HasHeader (Header blk)
   minimumPossibleSlotNo :: Proxy blk -> SlotNo
   minimumPossibleSlotNo _ = SlotNo 0
 
-  -- | Minimum next slot number
-  minimumNextSlotNo :: proxy blk
-                    -> TipInfo blk -- ^ Old tip
-                    -> TipInfo blk -- ^ New block
-                    -> SlotNo -> SlotNo
-  minimumNextSlotNo _ _ _ = succ
-
 -- | Validate header envelope
 class ( BasicEnvelopeValidation blk
       , GetPrevHash blk
@@ -311,8 +298,8 @@ validateEnvelope :: forall blk. (ValidateEnvelope blk)
 validateEnvelope cfg ledgerView oldTip hdr = do
     unless (actualBlockNo == expectedBlockNo) $
       throwError $ UnexpectedBlockNo expectedBlockNo actualBlockNo
-    unless (actualSlotNo >= expectedSlotNo) $
-      throwError $ UnexpectedSlotNo expectedSlotNo actualSlotNo
+    unless (actualSlotNo >= minimumSlotNo) $
+      throwError $ UnexpectedSlotNo minimumSlotNo actualSlotNo
     unless (checkPrevHash' (annTipHash <$> oldTip) actualPrevHash) $
       throwError $ UnexpectedPrevHash (annTipHash <$> oldTip) actualPrevHash
     validateIfCheckpoint (topLevelConfigCheckpoints cfg) hdr
@@ -334,13 +321,11 @@ validateEnvelope cfg ledgerView oldTip hdr = do
     actualBlockNo  = blockNo        hdr
     actualPrevHash = headerPrevHash hdr
 
-    expectedSlotNo :: SlotNo -- Lower bound only
-    expectedSlotNo =
+    minimumSlotNo :: SlotNo
+    minimumSlotNo =
         case oldTip of
           Origin        -> minimumPossibleSlotNo p
-          NotOrigin tip -> minimumNextSlotNo p (annTipInfo tip)
-                                               (getTipInfo hdr)
-                                               (annTipSlotNo tip)
+          NotOrigin tip -> succ $ annTipSlotNo tip
 
     expectedBlockNo  :: BlockNo
     expectedBlockNo =
@@ -487,19 +472,6 @@ revalidateHeader cfg ledgerView hdr st =
           hdr
 
 {-------------------------------------------------------------------------------
-  TipInfoIsEBB
--------------------------------------------------------------------------------}
-
--- | Reusable strict data type for 'TipInfo' in case the 'TipInfo' should
--- contain 'IsEBB' in addition to the 'HeaderHash'.
-data TipInfoIsEBB blk = TipInfoIsEBB !(HeaderHash blk) !IsEBB
-  deriving (Generic)
-
-deriving instance StandardHash blk => Eq   (TipInfoIsEBB blk)
-deriving instance StandardHash blk => Show (TipInfoIsEBB blk)
-deriving instance StandardHash blk => NoThunks (TipInfoIsEBB blk)
-
-{-------------------------------------------------------------------------------
   Serialisation
 -------------------------------------------------------------------------------}
 
@@ -522,36 +494,6 @@ defaultDecodeAnnTip decodeHash = do
     annTipInfo    <- decodeHash
     annTipBlockNo <- decode
     return AnnTip{..}
-
-encodeAnnTipIsEBB :: TipInfo blk ~ TipInfoIsEBB blk
-                  => (HeaderHash blk -> Encoding)
-                  -> (AnnTip     blk -> Encoding)
-encodeAnnTipIsEBB encodeHash AnnTip{..} = mconcat [
-      encodeListLen 4
-    , encode     annTipSlotNo
-    , encodeHash hash
-    , encode     annTipBlockNo
-    , encodeInfo isEBB
-    ]
-  where
-    TipInfoIsEBB hash isEBB = annTipInfo
-
-    encodeInfo :: IsEBB -> Encoding
-    encodeInfo = encode
-
-decodeAnnTipIsEBB :: TipInfo blk ~ TipInfoIsEBB blk
-                  => (forall s. Decoder s (HeaderHash blk))
-                  -> (forall s. Decoder s (AnnTip     blk))
-decodeAnnTipIsEBB decodeHash = do
-    enforceSize "AnnTip" 4
-    annTipSlotNo  <- decode
-    hash          <- decodeHash
-    annTipBlockNo <- decode
-    isEBB         <- decodeInfo
-    return AnnTip{annTipInfo = TipInfoIsEBB hash isEBB, ..}
-  where
-    decodeInfo :: forall s. Decoder s IsEBB
-    decodeInfo = decode
 
 encodeHeaderState :: (ChainDepState (BlockProtocol blk) -> Encoding)
                   -> (AnnTip      blk -> Encoding)

@@ -13,8 +13,7 @@
 -- = Internal format
 --
 -- The API of the ImmutableDB uses 'SlotNo' to indicate a location in the
--- chain\/immutable database. To distinguish EBBs from regular blocks, the hash
--- is used (together they form a 'RealPoint'). The contents of the database are
+-- chain\/immutable database. The contents of the database are
 -- not stored in one big file that is appended to in eternity, but a separate
 -- file is created for each 'ChunkNo'.
 --
@@ -33,9 +32,7 @@
 -- >                 │   │   │   │   │   │ │   │   │   │   │
 -- >                 └───┴───┴───┴───┴───┘ └───┴───┴───┴───┘
 -- > 'RelativeSlot':   0   1   2   3   4     0   1   2   3
--- > 'SlotNo':        EBB  0   1   2   3    EBB  4   5   6
---
--- Not all chunks can contain EBBs; see 'ChunkInfo' for details.
+-- > 'SlotNo':         0   1   2   3   4     5   6   7   8
 --
 -- = Errors
 --
@@ -76,7 +73,7 @@
 --     nothing is stored for empty slots.
 --
 --   * A \"secondary index file\" that stores information about each block: its
---     hash, the slot number or epoch number in case of an EBB, a checksum of
+--     hash, the slot number, a checksum of
 --     the block, the offset of the block in the chunk file, and more. This
 --     index is sparse to save space.
 --
@@ -202,8 +199,7 @@ data Internal m blk = Internal {
     --
     -- Throws a 'ClosedDBError' if the database is closed.
     deleteAfter_    :: HasCallStack => WithOrigin (Tip blk) -> m ()
-    -- | Get the hash of the block in the given slot. If the slot contains both
-    -- an EBB and a non-EBB, return the hash of the non-EBB.
+    -- | Get the hash of the block in the given slot.
   , getHashForSlot_ :: HasCallStack => SlotNo -> m (Maybe (HeaderHash blk))
   }
 
@@ -364,12 +360,11 @@ deleteAfterImpl dbEnv@ImmutableDBEnv { tracer, chunkInfo } newTip =
         primaryIndex <- Primary.load (Proxy @blk) hasFS chunk
         Primary.truncateToSlotFS hasFS chunk relSlot
         let lastSecondaryOffset = Primary.offsetOfSlot primaryIndex relSlot
-            isEBB               = relativeSlotIsEBB relSlot
 
         -- Retrieve the needed info from the secondary index file and then
         -- truncate it.
         (entry :: Secondary.Entry blk, blockSize) <-
-          Secondary.readEntry hasFS chunk isEBB lastSecondaryOffset
+          Secondary.readEntry hasFS chunk lastSecondaryOffset
         Secondary.truncateToEntry (Proxy @blk) hasFS chunk lastSecondaryOffset
 
         -- Truncate the chunk file.
@@ -397,8 +392,7 @@ getHashForSlotImpl dbEnv slot =
           readOffset offset =
             lift $ Index.readOffset index chunk (chunkRelative offset)
 
-          (chunk, mIfBoundary, ifRegular) =
-            chunkSlotForUnknownBlock chunkInfo slot
+          (chunk, chunkSlot) = chunkSlotForUnknownBlock chunkInfo slot
 
       -- Check that the slot is not beyond the tip.
       case currentTip of
@@ -407,18 +401,13 @@ getHashForSlotImpl dbEnv slot =
           -> pure ()
         _ -> exitEarly
 
-      -- Primary index: test whether the slot contains a non-EBB, or an EBB as a
-      -- fallback.
-      (offset, isEBB) <- readOffset ifRegular >>= \case
-        (Just offset, _) -> pure (offset, IsNotEBB)
-        (Nothing, _)     -> case mIfBoundary of
-          Nothing         -> exitEarly
-          Just ifBoundary -> readOffset ifBoundary >>= \case
-            (Just offset, _) -> pure (offset, IsEBB)
-            (Nothing, _)     -> exitEarly
+      -- Read offset from primary index.
+      offset <- readOffset chunkSlot >>= \case
+        (Just offset, _) -> pure offset
+        (Nothing, _)     -> exitEarly
 
       -- Read hash from secondary index.
-      (entry, _) <- lift $ Index.readEntry index chunk isEBB offset
+      (entry, _) <- lift $ Index.readEntry index chunk offset
       pure $ Secondary.headerHash entry
   where
     ImmutableDBEnv { chunkInfo } = dbEnv
@@ -539,9 +528,9 @@ appendBlockImpl dbEnv blk =
               -- If we had to start a new chunk, we start with slot 0. Note that
               -- in this case the 'currentTip' will refer to something in a
               -- chunk before 'currentChunk'.
-              then firstBlockOrEBB chunkInfo chunk
+              then firstBlock chunkInfo chunk
               else case currentTip of
-                Origin        -> firstBlockOrEBB chunkInfo firstChunkNo
+                Origin        -> firstBlock chunkInfo firstChunkNo
                 -- Invariant: the currently open chunk is never full
                 NotOrigin tip -> unsafeNextRelativeSlot . chunkRelative $
                                    chunkSlotForTip chunkInfo tip
@@ -560,7 +549,7 @@ appendBlockImpl dbEnv blk =
                 , headerSize   = HeaderSize headerSize
                 , checksum     = crc
                 , headerHash   = tipHash blockTip
-                , blockOrEBB   = blockOrEBB
+                , entrySlot    = blockSlot blk
                 }
           entrySize <-
             fromIntegral <$>
@@ -589,15 +578,7 @@ appendBlockImpl dbEnv blk =
   where
     ImmutableDBEnv { chunkInfo, codecConfig } = dbEnv
 
-    newBlockIsEBB :: Maybe EpochNo
-    newBlockIsEBB = blockIsEBB blk
-
-    blockOrEBB :: BlockOrEBB
-    blockOrEBB = case newBlockIsEBB of
-        Just epochNo -> EBB epochNo
-        Nothing      -> Block (blockSlot blk)
-
-    ChunkSlot chunk relSlot = chunkSlotForBlockOrEBB chunkInfo blockOrEBB
+    ChunkSlot chunk relSlot = chunkSlotForSlot chunkInfo (blockSlot blk)
 
     blockTip :: Tip blk
     blockTip = blockToTip blk
@@ -624,13 +605,13 @@ startNewChunk hasFS index chunkInfo tipChunk = do
     let nextFreeRelSlot :: NextRelativeSlot
         nextFreeRelSlot = case currentTip of
           Origin ->
-            NextRelativeSlot $ firstBlockOrEBB chunkInfo firstChunkNo
+            NextRelativeSlot $ firstBlock chunkInfo firstChunkNo
           NotOrigin tip ->
             if tipChunk == currentChunk then
               let ChunkSlot _ relSlot = chunkSlotForTip chunkInfo tip
               in nextRelativeSlot relSlot
             else
-              NextRelativeSlot $ firstBlockOrEBB chunkInfo currentChunk
+              NextRelativeSlot $ firstBlock chunkInfo currentChunk
 
     let backfillOffsets = Primary.backfillChunk
                             chunkInfo

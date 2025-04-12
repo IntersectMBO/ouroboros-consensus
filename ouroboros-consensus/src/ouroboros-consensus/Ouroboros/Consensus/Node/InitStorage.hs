@@ -29,7 +29,7 @@ class NodeInitStorage blk where
   -- production.
   --
   -- This function can be used to, for example, create the genesis EBB in case
-  -- the chain(DB) is empty.
+  -- the chain(DB) is empty (as was the case before EBBs were removed).
   --
   -- We only provide a limited interface to the chain DB. This is primarily
   -- useful for the definition of combinators (which may need to turn a

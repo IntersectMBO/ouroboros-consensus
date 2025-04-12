@@ -108,7 +108,6 @@ extractBlockInfo blk = BlockInfo {
       biHash         = blockHash     blk
     , biSlotNo       = blockSlot     blk
     , biBlockNo      = blockNo       blk
-    , biIsEBB        = blockToIsEBB  blk
     , biPrevHash     = blockPrevHash blk
     , biHeaderOffset = headerOffset
     , biHeaderSize   = headerSize

@@ -107,11 +107,11 @@ data VolatileDB m blk = VolatileDB {
       -- after all. Say we have mistakenly garbage collected such a block, in
       -- that case the following would be true:
       --
-      -- 1. The block has a slot number older than the immutable block's slot
+      -- 1. The block has a slot number older than or equal to the immutable block's slot
       --    number: otherwise we wouldn't have mistakenly garbage collected
       --    it.
       --
-      -- 2. The block has a block number greater than the immutable block's
+      -- 2. The block has a block number greater than or equal to the immutable block's
       --    block number: otherwise we wouldn't want to adopt it, as it would
       --    have been older than @k@.
       --
@@ -121,19 +121,9 @@ data VolatileDB m blk = VolatileDB {
       --
       -- As slot numbers grow monotonically within a chain, all forks starting
       -- after the immutable block will only contain blocks with slot numbers
-      -- greater (or equal to in case of EBBs) than the immutable block's slot
+      -- greater than the immutable block's slot
       -- number. This directly contradicts (1), so we will /never/ garbage
       -- collect a block that we might still want to adopt.
-      --
-      -- = Less than vs. less than or equal to
-      --
-      -- Note that we remove blocks with a slot number /less than/ the given
-      -- slot number, but not /equal to/ it. In practice, this off-by-one
-      -- difference will not matter in terms of disk space usage, because as
-      -- soon as the chain grows again by at least one block, those blocks
-      -- will be removed anyway. The reason for @<@ opposed to @<=@ is to
-      -- avoid issues with /EBBs/, which have the same slot number as the
-      -- block after it.
     , garbageCollect      :: HasCallStack => SlotNo -> m ()
       -- | Return the highest slot number ever stored by the VolatileDB.
     , getMaxSlotNo        :: HasCallStack => STM m MaxSlotNo
@@ -150,7 +140,6 @@ data BlockInfo blk = BlockInfo {
     , biSlotNo       :: !SlotNo
     , biBlockNo      :: !BlockNo
     , biPrevHash     :: !(ChainHash blk)
-    , biIsEBB        :: !IsEBB
     , biHeaderOffset :: !Word16
     , biHeaderSize   :: !Word16
     }
