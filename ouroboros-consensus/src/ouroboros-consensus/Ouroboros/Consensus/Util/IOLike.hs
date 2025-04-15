@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE QuantifiedConstraints #-}
@@ -49,7 +50,6 @@ module Ouroboros.Consensus.Util.IOLike (
 
 import           Cardano.Crypto.KES (KESAlgorithm, SignKeyKES)
 import qualified Cardano.Crypto.KES as KES
-import           Control.Applicative (Alternative)
 import           Control.Concurrent.Class.MonadMVar (MonadInspectMVar (..))
 import qualified Control.Concurrent.Class.MonadMVar.Strict as Strict
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
@@ -74,29 +74,8 @@ import           Ouroboros.Consensus.Util.Orphans ()
   IOLike
 -------------------------------------------------------------------------------}
 
-class ( MonadAsync              m
-      , MonadLabelledSTM        m
-      , MonadTraceSTM           m
-      , MonadMVar               m
-      , MonadEventlog           m
-      , MonadFork               m
-      , MonadST                 m
-      , MonadDelay              m
-      , MonadThread             m
-      , MonadThrow              m
-      , MonadCatch              m
-      , MonadMask               m
-      , MonadMonotonicTime      m
-      , MonadEvaluate           m
-      , Alternative        (STM m)
-      , MonadCatch         (STM m)
-      , PrimMonad               m
-      , forall a. NoThunks (m a)
-      , forall a. NoThunks a => NoThunks (StrictSTM.StrictTVar m a)
-      , forall a. NoThunks a => NoThunks (StrictSVar m a)
-      , forall a. NoThunks a => NoThunks (Strict.StrictMVar m a)
-      , forall a. NoThunks a => NoThunks (StrictTVar m a)
-      , forall a. NoThunks a => NoThunks (StrictMVar m a)
+class (
+  m ~ IO
       ) => IOLike m where
   -- | Securely forget a KES signing key.
   --
