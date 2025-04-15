@@ -42,8 +42,8 @@ import           Data.Function (on)
 import           Data.Proxy
 import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Util ((.:))
-import           Ouroboros.Consensus.Util.IOLike (IOLike (..), PrimMonad (..),
-                     StrictMVar, StrictSVar, StrictTVar, castStrictSVar)
+import           Ouroboros.Consensus.Util.IOLike (PrimMonad (..),
+                     StrictSVar, castStrictSVar)
 
 {-------------------------------------------------------------------------------
   Basic definitions
@@ -344,10 +344,3 @@ instance MonadTraceSTM m => MonadTraceSTM (WithEarlyExit m) where
 {-------------------------------------------------------------------------------
   Finally, the consensus IOLike wrapper
 -------------------------------------------------------------------------------}
-
-instance ( IOLike m
-         , forall a. NoThunks (StrictTVar (WithEarlyExit m) a)
-         , forall a. NoThunks (StrictSVar (WithEarlyExit m) a)
-         , forall a. NoThunks (StrictMVar (WithEarlyExit m) a)
-         ) => IOLike (WithEarlyExit m) where
-  forgetSignKeyKES = lift . forgetSignKeyKES
