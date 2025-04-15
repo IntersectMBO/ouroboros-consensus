@@ -374,6 +374,9 @@ library unstable-consensus-testlib
   visibility: public
   hs-source-dirs: src/unstable-consensus-testlib
   exposed-modules:
+    Test.CsjModel
+    Test.CsjModel.NonEmptySeq
+    Test.CsjModel.Perm
     Test.LedgerTables
     Test.Ouroboros.Consensus.ChainGenerator.Adversarial
     Test.Ouroboros.Consensus.ChainGenerator.BitVector
@@ -476,6 +479,7 @@ library unstable-consensus-testlib
     strict-mvar,
     strict-sop-core,
     strict-stm,
+    strict,
     tasty,
     tasty-golden,
     tasty-hunit,
