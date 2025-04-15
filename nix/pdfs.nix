@@ -24,6 +24,10 @@ inputs: final: prev: {
       make
       cd ..
 
+      cd utxo-db-lsm
+      make
+      cd ..
+
       cd ..
 
       cd formal-spec
