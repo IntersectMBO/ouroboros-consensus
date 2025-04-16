@@ -5,19 +5,18 @@ module Cardano.Tools.DBAnalyser.Types (module Cardano.Tools.DBAnalyser.Types) wh
 
 import           Data.Word
 import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Util (Flag)
 
 data SelectDB =
     SelectImmutableDB (WithOrigin SlotNo)
 
 data DBAnalyserConfig = DBAnalyserConfig {
-    dbDir                      :: FilePath
-  , verbose                    :: Bool
-  , selectDB                   :: SelectDB
-  , validation                 :: Maybe ValidateBlocks
-  , analysis                   :: AnalysisName
-  , confLimit                  :: Limit
-  , diskSnapshotChecksumOnRead :: Flag "DoDiskSnapshotChecksum"
+    dbDir      :: FilePath
+  , verbose    :: Bool
+  , selectDB   :: SelectDB
+  , validation :: Maybe ValidateBlocks
+  , analysis   :: AnalysisName
+  , confLimit  :: Limit
+  , ldbBackend :: LedgerDBBackend
   }
 
 data AnalysisName =
@@ -27,7 +26,7 @@ data AnalysisName =
   | ShowBlockTxsSize
   | ShowEBBs
   | OnlyValidation
-  | StoreLedgerStateAt SlotNo LedgerApplicationMode (Flag "DoDiskSnapshotChecksum")
+  | StoreLedgerStateAt SlotNo LedgerApplicationMode
   | CountBlocks
   | CheckNoThunksEvery Word64
   | TraceLedgerProcessing
@@ -49,6 +48,8 @@ newtype NumberOfBlocks = NumberOfBlocks { unNumberOfBlocks :: Word64 }
   deriving (Eq, Show, Num, Read)
 
 data Limit = Limit Int | Unlimited
+
+data LedgerDBBackend = V1InMem | V1LMDB | V2InMem
 
 -- | The extent of the ChainDB on-disk files validation. This is completely
 -- unrelated to validation of the ledger rules.

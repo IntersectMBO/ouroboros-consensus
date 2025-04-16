@@ -12,17 +12,21 @@ module Test.Consensus.Mempool.Mocked (
     -- * Mempool API functions
   , addTx
   , getTxs
-  , removeTxs
+  , removeTxsEvenIfValid
   ) where
 
 import           Control.Concurrent.Class.MonadSTM.Strict (StrictTVar,
-                     atomically, newTVarIO, readTVar, writeTVar)
+                     atomically, newTVarIO, readTVar, readTVarIO, writeTVar)
 import           Control.DeepSeq (NFData (rnf))
 import           Control.Tracer (Tracer)
+import qualified Data.List.NonEmpty as NE
+import           Ouroboros.Consensus.Block (castPoint)
 import           Ouroboros.Consensus.HeaderValidation as Header
-import           Ouroboros.Consensus.Ledger.Basics (LedgerState)
+import           Ouroboros.Consensus.Ledger.Basics
 import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
+import           Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables,
+                     restrictValues')
 import           Ouroboros.Consensus.Mempool (Mempool)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Mempool.API (AddTxOnBehalfOf,
@@ -30,7 +34,7 @@ import           Ouroboros.Consensus.Mempool.API (AddTxOnBehalfOf,
 
 data MockedMempool m blk = MockedMempool {
       getLedgerInterface :: !(Mempool.LedgerInterface m blk)
-    , getLedgerStateTVar :: !(StrictTVar m (LedgerState blk))
+    , getLedgerStateTVar :: !(StrictTVar m (LedgerState blk ValuesMK))
     , getMempool         :: !(Mempool m blk)
     }
 
@@ -47,7 +51,7 @@ instance NFData (MockedMempool m blk) where
 
 data InitialMempoolAndModelParams blk = MempoolAndModelParams {
       -- | Initial ledger state for the mocked Ledger DB interface.
-      immpInitialState :: !(Ledger.LedgerState blk)
+      immpInitialState :: !(Ledger.LedgerState blk ValuesMK)
       -- | Ledger configuration, which is needed to open the mempool.
     , immpLedgerConfig :: !(Ledger.LedgerConfig blk)
     }
@@ -64,7 +68,12 @@ openMockedMempool ::
 openMockedMempool capacityOverride tracer initialParams = do
     currentLedgerStateTVar <- newTVarIO (immpInitialState initialParams)
     let ledgerItf = Mempool.LedgerInterface {
-            Mempool.getCurrentLedgerState = readTVar currentLedgerStateTVar
+          Mempool.getCurrentLedgerState = forgetLedgerTables <$> readTVar currentLedgerStateTVar
+        , Mempool.getLedgerTablesAtFor  = \pt keys -> do
+            st <- readTVarIO currentLedgerStateTVar
+            if castPoint (getTip st) == pt
+              then pure $ Just $ restrictValues' st keys
+              else pure Nothing
         }
     mempool <- Mempool.openMempoolWithoutSyncThread
                    ledgerItf
@@ -79,7 +88,7 @@ openMockedMempool capacityOverride tracer initialParams = do
 
 setLedgerState ::
      MockedMempool IO blk
-  -> LedgerState blk
+  -> LedgerState blk ValuesMK
   -> IO ()
 setLedgerState MockedMempool {getLedgerStateTVar} newSt =
   atomically $ writeTVar getLedgerStateTVar newSt
@@ -91,11 +100,11 @@ addTx ::
   -> m (MempoolAddTxResult blk)
 addTx = Mempool.addTx . getMempool
 
-removeTxs ::
+removeTxsEvenIfValid ::
      MockedMempool m blk
-  -> [Ledger.GenTxId blk]
+  -> NE.NonEmpty (Ledger.GenTxId blk)
   -> m ()
-removeTxs = Mempool.removeTxs . getMempool
+removeTxsEvenIfValid = Mempool.removeTxsEvenIfValid . getMempool
 
 getTxs :: forall blk.
      (Ledger.LedgerSupportsMempool blk)

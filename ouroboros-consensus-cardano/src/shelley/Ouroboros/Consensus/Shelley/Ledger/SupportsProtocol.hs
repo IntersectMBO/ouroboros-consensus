@@ -34,6 +34,7 @@ import           Ouroboros.Consensus.HardFork.History.Util
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol (..))
+import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Protocol.Abstract (translateLedgerView)
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Praos
@@ -112,11 +113,12 @@ instance
     mapForecast (translateLedgerView (Proxy @(TPraos crypto, Praos crypto))) $
       ledgerViewForecastAt @(ShelleyBlock (TPraos crypto) era) cfg st'
     where
-      st' :: LedgerState (ShelleyBlock (TPraos crypto) era)
+      st' :: LedgerState (ShelleyBlock (TPraos crypto) era) EmptyMK
       st' =
         ShelleyLedgerState
           { shelleyLedgerTip = coerceTip <$> shelleyLedgerTip st,
             shelleyLedgerState = shelleyLedgerState st,
-            shelleyLedgerTransition = shelleyLedgerTransition st
+            shelleyLedgerTransition = shelleyLedgerTransition st,
+            shelleyLedgerTables = emptyLedgerTables
           }
       coerceTip (ShelleyTip slot block hash) = ShelleyTip slot block (coerce hash)

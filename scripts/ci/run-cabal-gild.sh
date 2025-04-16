@@ -24,4 +24,4 @@ $fdcmd --full-path "$path" -e cabal -x cabal-gild -i {} -o {}
 case "$(uname -s)" in
     MINGW*) git ls-files --eol | grep "w/crlf" | awk '{print $4}' | xargs dos2unix;;
     *) ;;
-esac
+esac || true
