@@ -221,7 +221,7 @@ reapplyBlock evs cfg b _rr db = do
 --
 -- >>> ldb  = LedgerSeq $ AS.fromOldestFirst l0 [l1, l2, l3]
 -- >>> ldb' = LedgerSeq $ AS.fromOldestFirst     l1 [l2, l3]
--- >>> snd (prune (SecurityParam 2) ldb) == ldb'
+-- >>> snd (prune (LedgerDbPruneKeeping (SecurityParam (unsafeNonZero 2))) ldb) == ldb'
 -- True
 prune :: GetTip l
       => LedgerDbPrune
@@ -373,9 +373,9 @@ tip = castPoint . getTip . current
 -- | Have we seen at least @k@ blocks?
 --
 -- >>> ldb = LedgerSeq $ AS.fromOldestFirst l0 [l1, l2, l3]
--- >>> isSaturated (SecurityParam 3) ldb
+-- >>> isSaturated (SecurityParam (unsafeNonZero 3)) ldb
 -- True
--- >>> isSaturated (SecurityParam 4) ldb
+-- >>> isSaturated (SecurityParam (unsafeNonZero 4)) ldb
 -- False
 isSaturated :: GetTip l => SecurityParam -> LedgerSeq m l -> Bool
 isSaturated (SecurityParam k) db =
@@ -481,7 +481,7 @@ volatileStatesBimap f g =
 -------------------------------------------------------------------------------}
 
 -- $setup
--- >>> :set -XTypeFamilies -XUndecidableInstances -XFlexibleInstances
+-- >>> :set -XTypeFamilies -XUndecidableInstances -XFlexibleInstances -XTypeApplications -XMultiParamTypeClasses
 -- >>> import qualified Ouroboros.Network.AnchoredSeq as AS
 -- >>> import Ouroboros.Network.Block
 -- >>> import Ouroboros.Network.Point
@@ -490,6 +490,9 @@ volatileStatesBimap f g =
 -- >>> import Ouroboros.Consensus.Ledger.Basics
 -- >>> import Ouroboros.Consensus.Config
 -- >>> import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
+-- >>> import Ouroboros.Consensus.Util.IndexedMemPack
+-- >>> import Ouroboros.Consensus.Storage.LedgerDB.API
+-- >>> import Cardano.Ledger.BaseTypes.NonZero
 -- >>> import Data.Void
 -- >>> import Cardano.Slotting.Slot
 -- >>> data B
@@ -502,7 +505,7 @@ volatileStatesBimap f g =
 -- >>> instance LedgerTablesAreTrivial LS where convertMapKind (LS p) = LS p
 -- >>> s = [LS (Point Origin), LS (Point (At (Block 0 0))), LS (Point (At (Block 1 1))), LS (Point (At (Block 2 2))), LS (Point (At (Block 3 3)))]
 -- >>> [l0s, l1s, l2s, l3s, l4s] = s
--- >>> emptyHandle = LedgerTablesHandle undefined undefined undefined undefined undefined undefined undefined undefined
+-- >>> emptyHandle = LedgerTablesHandle (pure ()) (pure emptyHandle) (\_ -> undefined) (\_ -> undefined) (pure trivialLedgerTables) (\_ _ _ -> undefined) (\_ -> undefined) (pure Nothing)
 -- >>> [l0, l1, l2, l3, l4] = map (flip StateRef emptyHandle) s
 -- >>> instance GetTip LS where getTip (LS p) = p
 -- >>> instance Eq (LS EmptyMK) where LS p1 == LS p2 = p1 == p2
@@ -510,6 +513,11 @@ volatileStatesBimap f g =
 -- >>> instance HasHeader B where getHeaderFields = undefined
 -- >>> :{
 --  instance HasLedgerTables LS where
---    projectLedgerTables = trivialProjectLedgerTables
---    withLedgerTables = trivialWithLedgerTables
+--    projectLedgerTables _ = trivialLedgerTables
+--    withLedgerTables st _ = convertMapKind st
+--  instance IndexedMemPack (LS EmptyMK) Void where
+--    indexedTypeName _ = typeName @Void
+--    indexedPackedByteCount _ = packedByteCount
+--    indexedPackM _ = packM
+--    indexedUnpackM _ = unpackM
 -- :}
