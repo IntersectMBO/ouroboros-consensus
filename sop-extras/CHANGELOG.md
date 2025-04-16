@@ -2,6 +2,16 @@
 
 # Changelog entries
 
+<a id='changelog-0.4.0.0'></a>
+## 0.4.0.0 -- 2025-04-16
+
+### Breaking
+
+- Delete the `K2` combinator.
+- Define `Fn2` and add `composeFromTo`.
+- Define `telescopeMismatch`.
+- Define `inPairsToTails` and `extendWithTails`.
+
 <a id='changelog-0.3.0.0'></a>
 ## 0.3.0.0 -- 2025-04-03
 
