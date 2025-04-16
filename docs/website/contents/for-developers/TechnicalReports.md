@@ -14,6 +14,8 @@ The following artifacts influence and/or describe the Consensus implementation.
 * [Storing the Cardano ledger state on disk: analysis and design options (An IOHK technical report)](/pdfs/utxo-db.pdf)
 <!-- xrefcheck: ignore link -->
 * [Storing the Cardano ledger state on disk: API design concepts (An IOHK technical report)](/pdfs/utxo-db-api.pdf)
+<!-- xrefcheck: ignore link -->
+* [Storing the Cardano ledger state on disk: requirements for high performance backend](/pdfs/utxo-db-lsm.pdf)
 
 
 <!-- Links -->
