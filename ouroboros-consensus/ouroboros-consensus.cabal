@@ -333,6 +333,9 @@ library unstable-consensus-testlib
   visibility: public
   hs-source-dirs: src/unstable-consensus-testlib
   exposed-modules:
+    Test.CsjModel
+    Test.CsjModel.NonEmptySeq
+    Test.CsjModel.Perm
     Test.Ouroboros.Consensus.ChainGenerator.Adversarial
     Test.Ouroboros.Consensus.ChainGenerator.BitVector
     Test.Ouroboros.Consensus.ChainGenerator.Counting
@@ -396,6 +399,7 @@ library unstable-consensus-testlib
     cardano-ledger-binary:testlib,
     cardano-ledger-core,
     cardano-prelude,
+    cardano-slotting,
     cardano-slotting:testlib,
     cardano-strict-containers,
     cborg,
@@ -430,6 +434,7 @@ library unstable-consensus-testlib
     strict-mvar,
     strict-sop-core,
     strict-stm,
+    strict,
     tasty,
     tasty-golden,
     tasty-hunit,
