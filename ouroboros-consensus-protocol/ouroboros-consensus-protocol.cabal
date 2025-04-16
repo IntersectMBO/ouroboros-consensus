@@ -76,7 +76,7 @@ library
     containers,
     mtl,
     nothunks,
-    ouroboros-consensus >=0.23 && <0.25,
+    ouroboros-consensus >=0.23 && <0.26,
     serialise,
     text,
 
