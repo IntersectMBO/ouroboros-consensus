@@ -26,6 +26,7 @@ import           Network.TypedProtocol.Codec (ActiveState, AnyMessage,
 import           Ouroboros.Consensus.Block (HasHeader)
 import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
 import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (ChainSyncClientHandleCollection)
@@ -69,7 +70,6 @@ import           Test.Consensus.PointSchedule (BlockFetchTimeout (..))
 import           Test.Consensus.PointSchedule.Peers (PeerId)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (BlockConfig (TestBlockConfig), TestBlock)
-import           Test.Util.Time (dawnOfTime)
 
 startBlockFetchLogic ::
      forall m.
@@ -78,14 +78,11 @@ startBlockFetchLogic ::
   -> ResourceRegistry m
   -> Tracer m (TraceEvent TestBlock)
   -> ChainDB m TestBlock
-  -> FetchClientRegistry PeerId (Header TestBlock) TestBlock m
+  -> FetchClientRegistry PeerId (HeaderWithTime TestBlock) TestBlock m
   -> ChainSyncClientHandleCollection PeerId m TestBlock
   -> m ()
 startBlockFetchLogic enableChainSelStarvation registry tracer chainDb fetchClientRegistry csHandlesCol = do
-    let slotForgeTime :: BlockFetchClientInterface.SlotForgeTimeOracle m blk
-        slotForgeTime _ = pure dawnOfTime
-
-        blockFetchConsensusInterface =
+    let blockFetchConsensusInterface =
           BlockFetchClientInterface.mkBlockFetchConsensusInterface
             nullTracer -- FIXME
             (TestBlockConfig $ NumCoreNodes 0) -- Only needed when minting blocks
@@ -94,7 +91,6 @@ startBlockFetchLogic enableChainSelStarvation registry tracer chainDb fetchClien
             -- The size of headers in bytes is irrelevant because our tests
             -- do not serialize the blocks.
             (\_hdr -> 1000)
-            slotForgeTime
             -- This is a syncing test, so we use 'FetchModeGenesis'.
             (pure FetchModeGenesis)
             DiffusionPipeliningOn
@@ -132,10 +128,10 @@ startBlockFetchLogic enableChainSelStarvation registry tracer chainDb fetchClien
     decisionTracer = TraceOther . ("BlockFetchLogic | " ++) . show >$< tracer
 
 startKeepAliveThread ::
-     forall m peer blk.
+     forall m peer blk hdr.
      (Ord peer, IOLike m)
   => ResourceRegistry m
-  -> FetchClientRegistry peer (Header blk) blk m
+  -> FetchClientRegistry peer hdr blk m
   -> peer
   -> m ()
 startKeepAliveThread registry fetchClientRegistry peerId =
@@ -149,7 +145,7 @@ runBlockFetchClient ::
   -> PeerId
   -> BlockFetchTimeout
   -> StateViewTracers blk m
-  -> FetchClientRegistry PeerId (Header blk) blk m
+  -> FetchClientRegistry PeerId (HeaderWithTime blk) blk m
   -> ControlMessageSTM m
   -> Channel m (AnyMessage (BlockFetch blk (Point blk)))
      -- ^ Send and receive message via the given 'Channel'.
