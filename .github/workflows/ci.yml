@@ -76,11 +76,6 @@ jobs:
         cabal clean
         cabal update
 
-    - name: Install lmdb
-      run: |
-        sudo apt update
-        sudo apt install liblmdb-dev
-
     # We create a `dependencies.txt` file that can be used to index the cabal
     # store cache.
     #
@@ -168,7 +163,7 @@ jobs:
       if: |
         github.event_name == 'push'
         && github.ref == 'refs/heads/main'
-        && matrix.ghc=='9.6.6'
+        && matrix.ghc=='9.10.1'
       run: |
         # need for latex, dvisvgm and standalone
         sudo apt install texlive-latex-extra texlive-latex-base
@@ -183,7 +178,7 @@ jobs:
       if: |
         github.event_name == 'push'
         && github.ref == 'refs/heads/main'
-        && matrix.ghc=='9.6.6'
+        && matrix.ghc=='9.10.1'
       uses: actions/upload-artifact@v4
       with:
         name: haddocks
