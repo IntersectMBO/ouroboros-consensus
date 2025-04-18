@@ -207,7 +207,7 @@ deriving via TrivialLedgerTables (Ticked (LedgerState ByronBlock))
 deriving via TrivialLedgerTables (LedgerState ByronBlock)
     instance CanStowLedgerTables (LedgerState ByronBlock)
 deriving via TrivialLedgerTables (LedgerState ByronBlock)
-    instance DecTablesWithHintLedgerState (LedgerState ByronBlock)
+    instance SerializeTablesWithHint (LedgerState ByronBlock)
 
 {-------------------------------------------------------------------------------
   Supporting the various consensus interfaces

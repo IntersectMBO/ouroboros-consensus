@@ -167,7 +167,10 @@ module Ouroboros.Consensus.Ledger.Tables (
   , HasLedgerTables (..)
   , HasTickedLedgerTables
     -- * Serialization
-  , DecTablesWithHintLedgerState (..)
+  , SerializeTablesHint
+  , SerializeTablesWithHint (..)
+  , defaultDecodeTablesWithHint
+  , defaultEncodeTablesWithHint
   , valuesMKDecoder
   , valuesMKEncoder
     -- * Special classes
@@ -177,7 +180,6 @@ module Ouroboros.Consensus.Ledger.Tables (
   , trivialLedgerTables
   ) where
 
-import           Cardano.Binary (ToCBOR (toCBOR))
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import           Data.Kind (Constraint, Type)
@@ -275,34 +277,48 @@ class CanStowLedgerTables l where
 -- | Default encoder of @'LedgerTables' l ''ValuesMK'@ to be used by the
 -- in-memory backing store.
 valuesMKEncoder ::
-     forall l. DecTablesWithHintLedgerState l
+     forall l. SerializeTablesWithHint l
   => l EmptyMK
   -> LedgerTables l ValuesMK
   -> CBOR.Encoding
 valuesMKEncoder st tbs =
-       CBOR.encodeListLen 1
-    <> encTablesWithHint st tbs
+  CBOR.encodeListLen 1 <> encodeTablesWithHint st tbs
 
 -- | Default decoder of @'LedgerTables' l ''ValuesMK'@ to be used by the
 -- in-memory backing store.
 valuesMKDecoder ::
-     forall l s. DecTablesWithHintLedgerState l
+     forall l s. SerializeTablesWithHint l
   => l EmptyMK
   -> CBOR.Decoder s (LedgerTables l ValuesMK)
-valuesMKDecoder st = do
-    _ <- CBOR.decodeListLenOf 1
-    decTablesWithHint st
+valuesMKDecoder st =
+  CBOR.decodeListLenOf 1 >> decodeTablesWithHint st
 
--- When decoding the tables and in particular the UTxO set we want to
--- share in the same way the Ledger did. We need to provide the state
--- in the HFC case so that we can call 'eraDecoder' and also to
--- extract the interns from the state.
+-- | When decoding the tables and in particular the UTxO set we want
+-- to share data in the TxOuts in the same way the Ledger did (see the
+-- @Share (TxOut era)@ instances). We need to provide the state in the
+-- HFC case so that we can call 'eraDecoder' and also to extract the
+-- interns from the state.
 --
--- See @DecTablesWithHintLedgerState (LedgerState (HardForkBlock
--- (CardanoBlock c)))@ for a clear view.
-class DecTablesWithHintLedgerState l where
-  encTablesWithHint :: l EmptyMK -> LedgerTables l ValuesMK -> CBOR.Encoding
-  decTablesWithHint :: l EmptyMK -> CBOR.Decoder s (LedgerTables l ValuesMK)
+-- As we will decode with 'eraDecoder' we also need to use such era
+-- for the encoding thus we need the hint also in the encoding.
+--
+-- See @SerializeTablesWithHint (LedgerState (HardForkBlock
+-- (CardanoBlock c)))@ for a good example, the rest of the instances
+-- are somewhat degenerate.
+class SerializeTablesWithHint l where
+  encodeTablesWithHint ::
+       SerializeTablesHint (LedgerTables l ValuesMK)
+    -> LedgerTables l ValuesMK -> CBOR.Encoding
+  decodeTablesWithHint ::
+       SerializeTablesHint (LedgerTables l ValuesMK)
+    -> CBOR.Decoder s (LedgerTables l ValuesMK)
+
+-- This is just for the BackingStore Lockstep tests. Once V1 is gone
+-- we can inline it above.
+
+-- | The hint for 'SerializeTablesWithHint'
+type family SerializeTablesHint values :: Type
+type instance SerializeTablesHint (LedgerTables l ValuesMK) = l EmptyMK
 
 {-------------------------------------------------------------------------------
   Special classes of ledger states
@@ -353,8 +369,8 @@ instance IndexedMemPack (TrivialLedgerTables l EmptyMK) Void where
   indexedPackM _ = packM
   indexedUnpackM _ = unpackM
 
-instance DecTablesWithHintLedgerState (TrivialLedgerTables l) where
-   decTablesWithHint _ = do
+instance SerializeTablesWithHint (TrivialLedgerTables l) where
+   decodeTablesWithHint _ = do
      _ <- CBOR.decodeMapLen
      pure (LedgerTables $ ValuesMK Map.empty)
-   encTablesWithHint _ _ = CBOR.encodeMapLen 0
+   encodeTablesWithHint _ _ = CBOR.encodeMapLen 0

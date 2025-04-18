@@ -217,6 +217,8 @@ deriving via TrivialLedgerTables (LedgerState BlockA)
     instance CanStowLedgerTables (LedgerState BlockA)
 deriving via TrivialLedgerTables (LedgerState BlockA)
     instance CanUpgradeLedgerTables (LedgerState BlockA)
+deriving via TrivialLedgerTables (LedgerState BlockA)
+    instance SerializeTablesWithHint (LedgerState BlockA)
 
 
 data PartialLedgerConfigA = LCfgA {

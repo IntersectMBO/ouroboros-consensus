@@ -124,16 +124,16 @@ data Err =
 class ( EmptyValues vs, ApplyDiff vs d, LookupKeysRange ks vs
       , LookupKeys ks vs, ValuesLength vs, MakeDiff vs d
       , DiffSize d, KeysSize ks
-      , MakeInitHint vs, MakeWriteHint d, MakeReadHint vs
+      , MakeInitHint vs, MakeWriteHint d, MakeReadHint vs, MakeSerializeTablesHint vs
       , Show ks, Show vs, Show d
       , Show (BS.InitHint vs), Show (BS.WriteHint d)
-      , Show (BS.ReadHint vs)
+      , Show (BS.ReadHint vs), Show (SerializeTablesHint vs)
       , Eq ks, Eq vs, Eq d
       , Eq (BS.InitHint vs), Eq (BS.WriteHint d)
-      , Eq (BS.ReadHint vs)
+      , Eq (BS.ReadHint vs), Eq (SerializeTablesHint vs)
       , Typeable ks, Typeable vs, Typeable d
       , Typeable (BS.InitHint vs), Typeable (BS.WriteHint d)
-      , Typeable (BS.ReadHint vs)
+      , Typeable (BS.ReadHint vs), Typeable (SerializeTablesHint vs)
       ) => HasOps ks vs d
 
 class EmptyValues vs where
@@ -170,6 +170,9 @@ class MakeWriteHint d where
 
 class MakeReadHint vs where
   makeReadHint :: Proxy vs -> BS.ReadHint vs
+
+class MakeSerializeTablesHint vs where
+  makeSerializeTablesHint :: Proxy vs -> SerializeTablesHint vs
 
 {-------------------------------------------------------------------------------
   State monad to run the mock in
@@ -242,8 +245,8 @@ mBSClose = do
         })
 
 -- | Copy the contents of the backing store to the given path.
-mBSCopy :: (MonadState (Mock vs) m, MonadError Err m) => FS.FsPath ->  m ()
-mBSCopy bsp = do
+mBSCopy :: (MonadState (Mock vs) m, MonadError Err m) => SerializeTablesHint vs -> FS.FsPath ->  m ()
+mBSCopy _ bsp = do
   mGuardBSClosed
   cps <- gets copies
   when (bsp `Map.member` cps) $

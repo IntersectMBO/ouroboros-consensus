@@ -70,7 +70,7 @@ newInMemoryBackingStore ::
      ( IOLike m
      , HasLedgerTables l
      , CanUpgradeLedgerTables l
-     , DecTablesWithHintLedgerState l
+     , SerializeTablesWithHint l
      )
   => Tracer m BackingStoreTrace
   -> SnapshotsFS m

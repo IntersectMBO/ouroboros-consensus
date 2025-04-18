@@ -440,6 +440,10 @@ instance SupportedNetworkProtocolVersion TestBlock where
 instance SerialiseHFC '[BlockA, BlockB]
   -- Use defaults
 
+instance SerializeTablesWithHint (LedgerState (HardForkBlock '[BlockA, BlockB])) where
+  encodeTablesWithHint = undefined
+  decodeTablesWithHint = undefined
+
 instance IndexedMemPack
           (LedgerState (HardForkBlock '[BlockA, BlockB]) EmptyMK)
           (DefaultHardForkTxOut '[BlockA, BlockB]) where
