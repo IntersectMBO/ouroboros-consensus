@@ -252,6 +252,9 @@ instance Mock.MakeWriteHint D where
 instance Mock.MakeReadHint V where
   makeReadHint _ = emptyOTLedgerState
 
+instance Mock.MakeSerializeTablesHint V where
+  makeSerializeTablesHint _ = emptyOTLedgerState
+
 instance Mock.HasOps K V D
 
 {-------------------------------------------------------------------------------

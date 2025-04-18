@@ -261,7 +261,7 @@ goldenTest_SerialiseDisk codecConfig goldenDir Examples {..} =
       , test "AnnTip"         exampleAnnTip        (encodeDisk codecConfig)
       , test "ChainDepState"  exampleChainDepState (encodeDisk codecConfig)
       , test "ExtLedgerState" exampleExtLedgerState encodeExt
-      , test "LedgerTables"   exampleLedgerTables  valuesMKEncoder
+      , test "LedgerTables"   exampleLedgerTables  (valuesMKEncoder $ snd $ head exampleLedgerState)
       ]
   where
     test :: TestName -> Labelled a -> (a -> Encoding) -> TestTree

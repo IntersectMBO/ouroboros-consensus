@@ -62,15 +62,20 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger (
 import qualified Cardano.Ledger.BaseTypes as SL (epochInfoPure)
 import           Cardano.Ledger.BaseTypes.NonZero (unNonZero)
 import qualified Cardano.Ledger.BHeaderView as SL (BHeaderView)
+import           Cardano.Ledger.Binary.Decoding (decShareCBOR, decodeMap,
+                     decodeMemPack, internsFromMap)
+import           Cardano.Ledger.Binary.Encoding (encodeMap, encodeMemPack,
+                     toPlainEncoding)
 import           Cardano.Ledger.Binary.Plain (FromCBOR (..), ToCBOR (..),
                      enforceSize)
 import qualified Cardano.Ledger.Block as Core
-import           Cardano.Ledger.Core (Era, ppMaxBHSizeL, ppMaxTxSizeL)
+import           Cardano.Ledger.Core (Era, eraDecoder, ppMaxBHSizeL,
+                     ppMaxTxSizeL)
 import qualified Cardano.Ledger.Core as Core
-import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Governance as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
+import qualified Cardano.Ledger.UMap as SL
 import           Cardano.Slotting.EpochInfo
 import           Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -196,7 +201,7 @@ data ShelleyPartialLedgerConfig era = ShelleyPartialLedgerConfig {
     }
   deriving (Generic)
 
-deriving instance (NoThunks (SL.TranslationContext era), SL.Era era) =>
+deriving instance (NoThunks (Core.TranslationContext era), Core.Era era) =>
     NoThunks (ShelleyPartialLedgerConfig era)
 
 instance ShelleyCompatible proto era => HasPartialLedgerConfig (ShelleyBlock proto era) where
@@ -292,6 +297,23 @@ instance (txout ~ Core.TxOut era, MemPack txout)
   indexedPackedByteCount _ = packedByteCount
   indexedPackM _ = packM
   indexedUnpackM _ = unpackM
+
+
+instance ShelleyCompatible proto era
+      => SerializeTablesWithHint (LedgerState (ShelleyBlock proto era)) where
+  encodeTablesWithHint _ (LedgerTables (ValuesMK tbs)) =
+    toPlainEncoding (Core.eraProtVerLow @era) $ encodeMap encodeMemPack encodeMemPack tbs
+  decodeTablesWithHint st =
+     let certInterns =
+           internsFromMap
+             $ shelleyLedgerState st
+               ^. SL.nesEsL
+                . SL.esLStateL
+                . SL.lsCertStateL
+                . SL.certDStateL
+                . SL.dsUnifiedL
+                . SL.umElemsL
+     in LedgerTables . ValuesMK <$> (eraDecoder @era $ decodeMap decodeMemPack (decShareCBOR certInterns))
 
 instance ShelleyBasedEra era
       => HasLedgerTables (LedgerState (ShelleyBlock proto era)) where

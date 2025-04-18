@@ -33,6 +33,7 @@ import           Data.Constraint
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Typeable
+import           Ouroboros.Consensus.Ledger.Tables
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as BS
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
@@ -128,7 +129,8 @@ instance ( Show ks, Show vs, Show d
                      -> FS.FsPath
                      -> BSAct ks vs d ()
     BSClose          :: BSAct ks vs d ()
-    BSCopy           :: FS.FsPath
+    BSCopy           :: SerializeTablesHint vs
+                     -> FS.FsPath
                      -> BSAct ks vs d ()
     BSValueHandle    :: BSAct ks vs d (BS.BackingStoreValueHandle IO ks vs)
     BSWrite          :: SlotNo
@@ -159,10 +161,10 @@ instance ( Show ks, Show vs, Show d
   shrinkAction        = Lockstep.shrinkAction
 
 deriving stock instance ( Show ks, Show vs, Show d
-                        , Show (BS.InitHint vs), Show (BS.WriteHint d), Show (BS.ReadHint vs)
+                        , Show (BS.InitHint vs), Show (BS.WriteHint d), Show (BS.ReadHint vs), Show (SerializeTablesHint vs)
                         ) => Show (LockstepAction (BackingStoreState ks vs d) a)
 deriving stock instance ( Eq ks, Eq vs, Eq d
-                        , Eq (BS.InitHint vs), Eq (BS.WriteHint d), Eq (BS.ReadHint vs)
+                        , Eq (BS.InitHint vs), Eq (BS.WriteHint d), Eq (BS.ReadHint vs), Eq (SerializeTablesHint vs)
                         ) => Eq (LockstepAction (BackingStoreState ks vs d) a)
 
 instance ( Show ks, Show vs, Show d
@@ -191,7 +193,7 @@ modelPrecondition ::
 modelPrecondition (BackingStoreState mock _stats) action = case action of
     BSInitFromValues _ _ _ -> isClosed mock
     BSInitFromCopy _ _     -> isClosed mock
-    BSCopy _               -> canOpenReader
+    BSCopy _ _             -> canOpenReader
     BSValueHandle          -> canOpenReader
     _                      -> True
   where
@@ -277,7 +279,7 @@ instance ( Show ks, Show vs, Show d
     BSInitFromValues _ _ _ -> []
     BSInitFromCopy _ _     -> []
     BSClose                -> []
-    BSCopy _               -> []
+    BSCopy _ _             -> []
     BSValueHandle          -> []
     BSWrite _ _ _          -> []
     BSVHClose h            -> [SomeGVar h]
@@ -341,7 +343,7 @@ instance ( Show ks, Show vs, Show d
     BSInitFromValues _ _ _ -> OEither . bimap OId OId
     BSInitFromCopy _ _     -> OEither . bimap OId OId
     BSClose                -> OEither . bimap OId OId
-    BSCopy _               -> OEither . bimap OId OId
+    BSCopy _ _             -> OEither . bimap OId OId
     BSValueHandle          -> OEither . bimap OId (const OValueHandle)
     BSWrite _ _ _          -> OEither . bimap OId OId
     BSVHClose _            -> OEither . bimap OId OId
@@ -358,7 +360,7 @@ instance ( Show ks, Show vs, Show d
     BSInitFromValues _ _ _ -> Just Dict
     BSInitFromCopy _ _     -> Just Dict
     BSClose                -> Just Dict
-    BSCopy _               -> Just Dict
+    BSCopy _ _             -> Just Dict
     BSValueHandle          -> Nothing
     BSWrite _ _ _          -> Just Dict
     BSVHClose _            -> Just Dict
@@ -386,8 +388,8 @@ runMock lookUp = \case
       wrap MUnit . runMockMonad (Mock.mBSInitFromCopy h bsp)
     BSClose            ->
       wrap MUnit . runMockMonad Mock.mBSClose
-    BSCopy bsp         ->
-      wrap MUnit . runMockMonad (Mock.mBSCopy bsp)
+    BSCopy h bsp       ->
+      wrap MUnit . runMockMonad (Mock.mBSCopy h bsp)
     BSValueHandle      ->
       wrap MValueHandle . runMockMonad Mock.mBSValueHandle
     BSWrite sl whint d    ->
@@ -435,7 +437,7 @@ arbitraryBackingStoreAction fv (BackingStoreState mock _stats) =
       , (5, fmap Some $ BSInitFromCopy <$>
               pure (Mock.makeInitHint (Proxy @vs)) <*> genBackingStorePath)
       , (2, pure $ Some BSClose)
-      , (5, fmap Some $ BSCopy <$> genBackingStorePath)
+      , (5, fmap Some $ BSCopy <$> pure (Mock.makeSerializeTablesHint (Proxy @vs)) <*> genBackingStorePath)
       , (5, pure $ Some BSValueHandle)
       , (5, fmap Some $ BSWrite <$> genSlotNo <*>
               pure (Mock.makeWriteHint (Proxy @d)) <*> genDiff)
@@ -492,7 +494,7 @@ arbitraryBackingStoreAction fv (BackingStoreState mock _stats) =
 shrinkBackingStoreAction ::
        forall ks vs d a.
        ( Typeable vs, Eq ks, Eq vs, Eq d
-       , Eq (BS.InitHint vs), Eq (BS.WriteHint d), Eq (BS.ReadHint vs)
+       , Eq (BS.InitHint vs), Eq (BS.WriteHint d), Eq (BS.ReadHint vs), Eq (SerializeTablesHint vs)
        , QC.Arbitrary d, QC.Arbitrary (BS.RangeQuery ks), QC.Arbitrary ks
        )
     => ModelVarContext (BackingStoreState ks vs d)
@@ -546,8 +548,8 @@ runIO action lookUp = ReaderT $ \renv ->
           void $ swapMVar bsVar bs
         BSClose            -> catchErr $
           readMVar bsVar >>= BS.bsClose
-        BSCopy bsp         -> catchErr $
-          readMVar bsVar >>= \bs -> BS.bsCopy bs bsp
+        BSCopy s bsp       -> catchErr $
+          readMVar bsVar >>= \bs -> BS.bsCopy bs s bsp
         BSValueHandle      -> catchErr $
           readMVar bsVar >>= BS.bsValueHandle
         BSWrite sl whint d    -> catchErr $
@@ -679,7 +681,7 @@ tAction = \case
   BSInitFromValues _ _ _ -> TBSInitFromValues
   BSInitFromCopy _ _     -> TBSInitFromCopy
   BSClose                -> TBSClose
-  BSCopy _               -> TBSCopy
+  BSCopy _ _             -> TBSCopy
   BSValueHandle          -> TBSValueHandle
   BSWrite _ _ _          -> TBSWrite
   BSVHClose _            -> TBSVHClose

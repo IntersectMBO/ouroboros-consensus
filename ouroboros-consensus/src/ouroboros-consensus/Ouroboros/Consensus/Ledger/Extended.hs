@@ -357,3 +357,7 @@ instance (txout ~ (TxOut (LedgerState blk)), IndexedMemPack (LedgerState blk Emp
   indexedPackedByteCount (ExtLedgerState st _) = indexedPackedByteCount st
   indexedPackM (ExtLedgerState st _) = indexedPackM st
   indexedUnpackM (ExtLedgerState st _) = indexedUnpackM st
+
+instance SerializeTablesWithHint (LedgerState blk) => SerializeTablesWithHint (ExtLedgerState blk) where
+  decodeTablesWithHint st = castLedgerTables <$> decodeTablesWithHint (ledgerState st)
+  encodeTablesWithHint st tbs = encodeTablesWithHint (ledgerState st) (castLedgerTables tbs)

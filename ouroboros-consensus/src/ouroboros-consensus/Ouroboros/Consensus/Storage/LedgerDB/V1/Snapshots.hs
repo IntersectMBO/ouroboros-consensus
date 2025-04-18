@@ -227,6 +227,7 @@ writeSnapshot fs@(SomeHasFS hasFS) backingStore encLedger snapshot cs = do
       }
     bsCopy
       backingStore
+      cs
       (snapshotToTablesPath snapshot)
 
 -- | The path within the LedgerDB's filesystem to the file that contains the

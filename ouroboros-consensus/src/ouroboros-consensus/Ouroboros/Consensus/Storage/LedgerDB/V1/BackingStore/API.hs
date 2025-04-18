@@ -100,7 +100,7 @@ data BackingStore m keys values diff = BackingStore {
     --
     -- The destination path must not already exist. After this operation, it
     -- will be a directory.
-  , bsCopy            :: !(FS.FsPath -> m ())
+  , bsCopy            :: !(SerializeTablesHint values -> FS.FsPath -> m ())
     -- | Open a 'BackingStoreValueHandle' capturing the current value of the
     -- entire database
   , bsValueHandle     :: !(m (BackingStoreValueHandle m keys values))

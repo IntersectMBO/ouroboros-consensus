@@ -70,6 +70,7 @@ newInMemoryBackingStore ::
      ( IOLike m
      , HasLedgerTables l
      , CanUpgradeLedgerTables l
+     , SerializeTablesWithHint l
      )
   => Tracer m BackingStoreTrace
   -> SnapshotsFS m
@@ -79,14 +80,14 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
     traceWith tracer BSOpening
     ref <- do
       (slot, values) <- case initialization of
-        InitFromCopy _ path -> do
+        InitFromCopy hint path -> do
           traceWith tracer $ BSInitialisingFromCopy path
           tvarFileExists <- doesFileExist fs (extendPath path)
           unless tvarFileExists $
             throwIO . StoreDirIsIncompatible $ mkFsErrorPath fs path
           withFile fs (extendPath path) ReadMode $ \h -> do
             bs <- hGetAll fs h
-            case CBOR.deserialiseFromBytes ((,) <$> CBOR.fromCBOR <*> valuesMKDecoder) bs of
+            case CBOR.deserialiseFromBytes ((,) <$> CBOR.fromCBOR <*> valuesMKDecoder hint) bs of
               Left  err        -> throwIO $ InMemoryBackingStoreDeserialiseExn err
               Right (extra, x) -> do
                 unless (BSL.null extra) $ throwIO InMemoryIncompleteDeserialiseExn
@@ -110,7 +111,7 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
                 e -> throwIO e
               )
             traceWith tracer BSClosed
-      , bsCopy = \path -> do
+      , bsCopy = \hint path -> do
           traceWith tracer $ BSCopying path
           join $ atomically $ do
             readTVar ref >>= \case
@@ -123,7 +124,7 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
                 withFile fs (extendPath path) (WriteMode MustBeNew) $ \h ->
                   void $ hPutAll fs h
                        $ CBOR.toLazyByteString
-                       $ CBOR.toCBOR slot <> valuesMKEncoder values
+                       $ CBOR.toCBOR slot <> valuesMKEncoder hint values
           traceWith tracer $ BSCopied path
       , bsValueHandle = do
           traceWith tracer BSCreatingValueHandle

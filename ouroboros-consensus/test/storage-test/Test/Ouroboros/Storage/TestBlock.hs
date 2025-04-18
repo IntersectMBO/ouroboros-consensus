@@ -579,8 +579,11 @@ deriving via TrivialLedgerTables (LedgerState TestBlock)
     instance CanStowLedgerTables (LedgerState TestBlock)
 deriving via TrivialLedgerTables (LedgerState TestBlock)
     instance CanUpgradeLedgerTables (LedgerState TestBlock)
+deriving via TrivialLedgerTables (LedgerState TestBlock)
+    instance SerializeTablesWithHint (LedgerState TestBlock)
 deriving via Void
     instance IndexedMemPack (LedgerState TestBlock EmptyMK) Void
+
 
 instance ApplyBlock (LedgerState TestBlock) TestBlock where
   applyBlockLedgerResultWithValidation _ _ _ tb@TestBlock{..} (TickedTestLedger TestLedger{..})

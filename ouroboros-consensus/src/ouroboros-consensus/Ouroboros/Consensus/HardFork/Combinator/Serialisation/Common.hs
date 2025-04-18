@@ -185,6 +185,7 @@ class ( CanHardFork xs
         -- LedgerTables on the HardForkBlock might not be compositionally
         -- defined, but we need to require this instances for any instantiation.
       , HasLedgerTables (LedgerState (HardForkBlock xs))
+      , SerializeTablesWithHint (LedgerState (HardForkBlock xs))
       ) => SerialiseHFC xs where
 
   encodeDiskHfcBlock :: CodecConfig (HardForkBlock xs)

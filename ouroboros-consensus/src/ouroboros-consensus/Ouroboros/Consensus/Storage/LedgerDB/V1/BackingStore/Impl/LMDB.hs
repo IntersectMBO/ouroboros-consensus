@@ -515,7 +515,7 @@ newLMDBBackingStore dbTracer limits liveFS@(API.LiveLMDBFS liveFS') snapFS@(API.
                Trace.traceWith dbTracer $ API.BSWritten oldSlot slot
 
        in API.BackingStore { API.bsClose           = bsClose
-                           , API.bsCopy            = bsCopy
+                           , API.bsCopy            = const bsCopy
                            , API.bsValueHandle     = bsValueHandle
                            , API.bsWrite           = bsWrite
                            , API.bsSnapshotBackend = UTxOHDLMDBSnapshot

@@ -528,6 +528,8 @@ deriving via TrivialLedgerTables (LedgerState TestBlock)
     instance CanStowLedgerTables (LedgerState TestBlock)
 deriving via TrivialLedgerTables (LedgerState TestBlock)
     instance CanUpgradeLedgerTables (LedgerState TestBlock)
+deriving via TrivialLedgerTables (LedgerState TestBlock)
+    instance SerializeTablesWithHint (LedgerState TestBlock)
 deriving via Void
     instance IndexedMemPack (LedgerState TestBlock EmptyMK) Void
 
@@ -960,6 +962,7 @@ instance ( Serialise ptype
          , IndexedMemPack
              (LedgerState (TestBlockWith ptype) EmptyMK)
              (TxOut (LedgerState (TestBlockWith ptype)))
+         , SerializeTablesWithHint (LedgerState (TestBlockWith ptype))
          ) => SerialiseDiskConstraints (TestBlockWith ptype)
 
 -----

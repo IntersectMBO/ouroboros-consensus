@@ -315,3 +315,6 @@ instance BlockSupportsHFLedgerQuery '[ByronBlock] where
 
   queryLedgerGetTraversingFilter IZ (q :: BlockQuery ByronBlock QFTraverseTables result) = case q of {}
   queryLedgerGetTraversingFilter (IS is) _q = case is of {}
+
+deriving via TrivialLedgerTables (LedgerState (HardForkBlock '[ByronBlock]))
+    instance SerializeTablesWithHint (LedgerState (HardForkBlock '[ByronBlock]))

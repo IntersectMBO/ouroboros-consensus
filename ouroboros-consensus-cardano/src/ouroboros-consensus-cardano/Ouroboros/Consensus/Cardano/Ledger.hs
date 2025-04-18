@@ -32,25 +32,38 @@ module Ouroboros.Consensus.Cardano.Ledger (
   , eliminateCardanoTxOut
   ) where
 
+import           Cardano.Ledger.Binary.Decoding hiding (Decoder)
+import           Cardano.Ledger.Binary.Encoding hiding (Encoding)
+import           Cardano.Ledger.Core (Era, eraDecoder, eraProtVerLow)
 import qualified Cardano.Ledger.Shelley.API as SL
+import           Cardano.Ledger.Shelley.LedgerState as SL (dsUnifiedL,
+                     esLStateL, lsCertStateL, nesEsL)
+import qualified Cardano.Ledger.UMap as SL
+import           Codec.CBOR.Decoding
+import           Codec.CBOR.Encoding
+import qualified Data.Map as Map
 import           Data.Maybe
 import           Data.MemPack
+import           Data.Proxy
 import           Data.SOP.BasicFunctors
+import           Data.SOP.Functors
 import           Data.SOP.Index
 import           Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
 import qualified Data.SOP.Telescope as Telescope
 import           Data.Void
 import           GHC.Generics (Generic)
+import           Lens.Micro
 import           NoThunks.Class
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.CanHardFork
 import           Ouroboros.Consensus.HardFork.Combinator
+import           Ouroboros.Consensus.HardFork.Combinator.State.Types
 import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import           Ouroboros.Consensus.Shelley.Ledger (IsShelleyBlock,
-                     ShelleyBlock)
+                     ShelleyBlock, ShelleyCompatible, shelleyLedgerState)
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -203,3 +216,50 @@ instance CardanoHardForkConstraints c
           :* Nil
           )
     hcollapse <$> (hsequence' $ hap np $ Telescope.tip idx)
+
+instance CardanoHardForkConstraints c => SerializeTablesWithHint (LedgerState (HardForkBlock (CardanoEras c))) where
+  encodeTablesWithHint (HardForkLedgerState (HardForkState idx)) (LedgerTables (ValuesMK tbs)) =
+    let
+      np = (Fn $ const $ K $ Codec.CBOR.Encoding.encodeMapLen 0)
+        :* (Fn $ const $ K $ encOne (Proxy @ShelleyEra))
+        :* (Fn $ const $ K $ encOne (Proxy @AllegraEra))
+        :* (Fn $ const $ K $ encOne (Proxy @MaryEra))
+        :* (Fn $ const $ K $ encOne (Proxy @AlonzoEra))
+        :* (Fn $ const $ K $ encOne (Proxy @BabbageEra))
+        :* (Fn $ const $ K $ encOne (Proxy @ConwayEra))
+        :* Nil
+    in hcollapse $ hap np $ Telescope.tip idx
+   where
+     encOne :: forall era. Era era => Proxy era -> Encoding
+     encOne _ = toPlainEncoding (eraProtVerLow @era) $ encodeMap encodeMemPack (eliminateCardanoTxOut (const encodeMemPack)) tbs
+
+  decodeTablesWithHint :: forall s. LedgerState (HardForkBlock (CardanoEras c)) EmptyMK
+                    -> Decoder s (LedgerTables (LedgerState (HardForkBlock (CardanoEras c))) ValuesMK)
+  decodeTablesWithHint (HardForkLedgerState (HardForkState idx)) =
+    let
+      np = (Fn $ const $ Comp $ K . LedgerTables @(LedgerState (HardForkBlock (CardanoEras c))) . ValuesMK <$> pure Map.empty)
+        :* (Fn $ Comp . fmap K . getOne ShelleyTxOut . unFlip . currentState)
+        :* (Fn $ Comp . fmap K . getOne AllegraTxOut . unFlip . currentState)
+        :* (Fn $ Comp . fmap K . getOne MaryTxOut    . unFlip . currentState)
+        :* (Fn $ Comp . fmap K . getOne AlonzoTxOut  . unFlip . currentState)
+        :* (Fn $ Comp . fmap K . getOne BabbageTxOut . unFlip . currentState)
+        :* (Fn $ Comp . fmap K . getOne ConwayTxOut  . unFlip . currentState)
+        :* Nil
+    in hcollapse <$> (hsequence' $ hap np $ Telescope.tip idx)
+   where
+     getOne :: forall proto era.
+               ShelleyCompatible proto era
+            => (TxOut (LedgerState (ShelleyBlock proto era)) -> CardanoTxOut c)
+            -> LedgerState (ShelleyBlock proto era) EmptyMK
+            -> Decoder s (LedgerTables (LedgerState (HardForkBlock (CardanoEras c))) ValuesMK)
+     getOne toCardanoTxOut st =
+       let certInterns =
+             internsFromMap
+             $ shelleyLedgerState st
+               ^. SL.nesEsL
+                . SL.esLStateL
+                . SL.lsCertStateL
+                . SL.certDStateL
+                . SL.dsUnifiedL
+                . SL.umElemsL
+       in LedgerTables . ValuesMK <$> eraDecoder @era (decodeMap decodeMemPack (toCardanoTxOut <$> decShareCBOR certInterns))

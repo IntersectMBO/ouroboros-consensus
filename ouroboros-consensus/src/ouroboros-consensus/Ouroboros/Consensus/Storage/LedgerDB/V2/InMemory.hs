@@ -82,6 +82,7 @@ newInMemoryLedgerTablesHandle ::
      ( IOLike m
      , HasLedgerTables l
      , CanUpgradeLedgerTables l
+     , SerializeTablesWithHint l
      )
   => SomeHasFS m
   -> LedgerTables l ValuesMK
@@ -109,7 +110,7 @@ newInMemoryLedgerTablesHandle someFS@(SomeHasFS hasFS) l = do
         atomically
         $ modifyTVar tv
         (\r -> guardClosed r (LedgerTablesHandleOpen . flip (ltliftA2 (\(ValuesMK vals) (DiffMK d) -> ValuesMK (Diff.applyDiff vals d))) (projectLedgerTables diffs) . upgradeTables st0 diffs))
-    , takeHandleSnapshot = \snapshotName -> do
+    , takeHandleSnapshot = \hint snapshotName -> do
         createDirectoryIfMissing hasFS True $ mkFsPath [snapshotName, "tables"]
         h <- readTVarIO tv
         guardClosed h $
@@ -117,7 +118,7 @@ newInMemoryLedgerTablesHandle someFS@(SomeHasFS hasFS) l = do
             withFile hasFS (mkFsPath [snapshotName, "tables", "tvar"]) (WriteMode MustBeNew) $ \hf ->
               fmap snd $ hPutAllCRC hasFS hf
                    $ CBOR.toLazyByteString
-                   $ valuesMKEncoder values
+                   $ valuesMKEncoder hint values
     , tablesSize = do
         hs <- readTVarIO tv
         guardClosed hs (pure . Just . Map.size . getValuesMK . getLedgerTables)
@@ -145,7 +146,7 @@ writeSnapshot ::
 writeSnapshot fs@(SomeHasFS hasFs) encLedger ds st = do
     createDirectoryIfMissing hasFs True $ snapshotToDirPath ds
     crc1 <- writeExtLedgerState fs encLedger (snapshotToStatePath ds) $ state st
-    crc2 <- takeHandleSnapshot (tables st) $ snapshotToDirName ds
+    crc2 <- takeHandleSnapshot (tables st) (state st) $ snapshotToDirName ds
     writeSnapshotMetadata fs ds $ SnapshotMetadata
       { snapshotBackend = UTxOHDMemSnapshot
       , snapshotChecksum = crcOfConcat crc1 crc2
@@ -205,7 +206,7 @@ loadSnapshot _rr ccfg fs ds = do
       (values, Identity crcTables) <-
         withExceptT (InitFailureRead . ReadSnapshotFailed) $
           ExceptT $ readIncremental fs Identity
-                  valuesMKDecoder
+                  (valuesMKDecoder extLedgerSt)
                   (fsPathFromList
                     $ fsPathToList (snapshotToDirPath ds)
                     <> [fromString "tables", fromString "tvar"])
