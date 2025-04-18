@@ -59,6 +59,7 @@ restoreBackingStore ::
      , HasCallStack
      , CanUpgradeLedgerTables l
      , MemPackIdx l EmptyMK ~ l EmptyMK
+     , DecTablesWithHintLedgerState l
      )
   => Tracer m FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m
@@ -76,6 +77,7 @@ newBackingStore ::
      , HasCallStack
      , CanUpgradeLedgerTables l
      , MemPackIdx l EmptyMK ~ l EmptyMK
+     , DecTablesWithHintLedgerState l
      )
   => Tracer m FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m
@@ -93,6 +95,7 @@ newBackingStoreInitialiser ::
      , HasCallStack
      , CanUpgradeLedgerTables l
      , MemPackIdx l EmptyMK ~ l EmptyMK
+     , DecTablesWithHintLedgerState l
      )
   => Tracer m FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m

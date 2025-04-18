@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -29,10 +30,17 @@ module Ouroboros.Consensus.Shelley.ShelleyHFC (
 
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.BaseTypes as SL (mkVersion, unNonZero)
+import           Cardano.Ledger.Binary.Decoding (decShareCBOR, decodeMap,
+                     decodeMemPack, internsFromMap)
+import           Cardano.Ledger.Binary.Encoding (encodeMap, encodeMemPack,
+                     toPlainEncoding)
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
+import qualified Cardano.Ledger.Shelley.LedgerState as SL
+import qualified Cardano.Ledger.UMap as SL
 import           Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.API as SL
+import           Codec.CBOR.Decoding
 import           Control.Monad (guard)
 import           Control.Monad.Except (runExcept, throwError)
 import           Data.Coerce
@@ -44,6 +52,7 @@ import           Data.SOP.Index (Index (..))
 import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
 import           Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
+import qualified Data.SOP.Telescope as Telescope
 import qualified Data.Text as T (pack)
 import           Data.Typeable
 import           Data.Void (Void)
@@ -378,7 +387,7 @@ deriving newtype instance MemPack (CanonicalTxIn '[ShelleyBlock proto era])
   HardForkTxOut
 -------------------------------------------------------------------------------}
 
-instance SL.EraTxOut era => HasHardForkTxOut '[ShelleyBlock proto era] where
+instance ShelleyCompatible proto era => HasHardForkTxOut '[ShelleyBlock proto era] where
   type instance HardForkTxOut '[ShelleyBlock proto era] = SL.TxOut era
   injectHardForkTxOut IZ txOut    = txOut
   injectHardForkTxOut (IS idx') _ = case idx' of {}
@@ -418,3 +427,26 @@ instance (txout ~ SL.TxOut era, MemPack txout)
   indexedPackedByteCount _ = packedByteCount
   indexedPackM _ = packM
   indexedUnpackM _ = unpackM
+
+instance ShelleyCompatible proto era
+         => DecTablesWithHintLedgerState (LedgerState (HardForkBlock '[ShelleyBlock proto era])) where
+  decTablesWithHint :: forall s. LedgerState (HardForkBlock '[ShelleyBlock proto era]) EmptyMK
+                    -> Decoder s (LedgerTables (LedgerState (HardForkBlock '[ShelleyBlock proto era])) ValuesMK)
+  decTablesWithHint (HardForkLedgerState (HardForkState idx)) =
+    let
+      np = ((Fn $ Comp . fmap K . getOne . unFlip . currentState) :* Nil)
+    in hcollapse <$> (hsequence' $ hap np $ Telescope.tip idx)
+   where
+     getOne :: LedgerState (ShelleyBlock proto era) EmptyMK
+            -> Decoder s (LedgerTables (LedgerState (HardForkBlock '[ShelleyBlock proto era])) ValuesMK)
+     getOne st =
+       let certInterns =
+             internsFromMap
+             $ shelleyLedgerState st
+               ^. SL.nesEsL
+                . SL.esLStateL
+                . SL.lsCertStateL
+                . SL.certDStateL
+                . SL.dsUnifiedL
+                . SL.umElemsL
+       in LedgerTables . ValuesMK <$> (SL.eraDecoder @era $ decodeMap decodeMemPack (decShareCBOR certInterns))

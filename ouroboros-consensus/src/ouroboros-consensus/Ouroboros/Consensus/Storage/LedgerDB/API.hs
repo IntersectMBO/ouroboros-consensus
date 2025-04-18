@@ -209,6 +209,7 @@ type LedgerDbSerialiseConstraints blk =
   , MemPack (TxIn (LedgerState blk))
     -- For OnDisk LedgerDBs
   , IndexedMemPack (LedgerState blk EmptyMK) (TxOut (LedgerState blk))
+  , DecTablesWithHintLedgerState (LedgerState blk)
   )
 
 -- | The core API of the LedgerDB component

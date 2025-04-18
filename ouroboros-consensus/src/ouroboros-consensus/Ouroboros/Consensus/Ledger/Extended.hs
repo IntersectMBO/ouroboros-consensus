@@ -357,3 +357,6 @@ instance (txout ~ (TxOut (LedgerState blk)), IndexedMemPack (LedgerState blk Emp
   indexedPackedByteCount (ExtLedgerState st _) = indexedPackedByteCount st
   indexedPackM (ExtLedgerState st _) = indexedPackM st
   indexedUnpackM (ExtLedgerState st _) = indexedUnpackM st
+
+instance DecTablesWithHintLedgerState (LedgerState blk) => DecTablesWithHintLedgerState (ExtLedgerState blk) where
+  decTablesWithHint st = castLedgerTables <$> decTablesWithHint (ledgerState st)
