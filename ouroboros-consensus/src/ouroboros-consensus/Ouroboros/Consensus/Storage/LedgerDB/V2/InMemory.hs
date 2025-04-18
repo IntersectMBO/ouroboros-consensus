@@ -205,7 +205,7 @@ loadSnapshot _rr ccfg fs ds = do
       (values, Identity crcTables) <-
         withExceptT (InitFailureRead . ReadSnapshotFailed) $
           ExceptT $ readIncremental fs Identity
-                  valuesMKDecoder
+                  (valuesMKDecoder extLedgerSt)
                   (fsPathFromList
                     $ fsPathToList (snapshotToDirPath ds)
                     <> [fromString "tables", fromString "tvar"])

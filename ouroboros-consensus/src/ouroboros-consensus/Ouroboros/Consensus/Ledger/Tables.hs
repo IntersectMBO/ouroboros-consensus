@@ -167,6 +167,7 @@ module Ouroboros.Consensus.Ledger.Tables (
   , HasLedgerTables (..)
   , HasTickedLedgerTables
     -- * Serialization
+  , DecTablesWithHintLedgerState (..)
   , valuesMKDecoder
   , valuesMKEncoder
     -- * Special classes
@@ -176,10 +177,9 @@ module Ouroboros.Consensus.Ledger.Tables (
   , trivialLedgerTables
   ) where
 
-import           Cardano.Binary (FromCBOR (fromCBOR), ToCBOR (toCBOR))
+import           Cardano.Binary (ToCBOR (toCBOR))
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
-import           Data.ByteString (ByteString)
 import           Data.Kind (Constraint, Type)
 import qualified Data.Map.Strict as Map
 import           Data.MemPack
@@ -290,20 +290,22 @@ valuesMKEncoder (LedgerTables tables) =
 -- | Default decoder of @'LedgerTables' l ''ValuesMK'@ to be used by the
 -- in-memory backing store.
 valuesMKDecoder ::
-     forall l s. (Ord (TxIn l), MemPack (TxIn l), MemPack (TxOut l))
-  => CBOR.Decoder s (LedgerTables l ValuesMK)
-valuesMKDecoder = do
+     forall l s. (DecTablesWithHintLedgerState l)
+  => l EmptyMK
+  -> CBOR.Decoder s (LedgerTables l ValuesMK)
+valuesMKDecoder st = do
     _ <- CBOR.decodeListLenOf 1
-    mapLen <- CBOR.decodeMapLen
-    LedgerTables . ValuesMK <$> go mapLen Map.empty
- where
-  go :: Int
-     -> Map.Map (TxIn l) (TxOut l)
-     -> CBOR.Decoder s (Map.Map (TxIn l) (TxOut l))
-  go 0 m = pure m
-  go len !m = do
-    (ti, to) <- unpackError @(TxIn l, TxOut l) @ByteString <$> fromCBOR
-    go (len - 1) (Map.insert ti to m)
+    decTablesWithHint st
+
+-- When decoding the tables and in particular the UTxO set we want to
+-- share in the same way the Ledger did. We need to provide the state
+-- in the HFC case so that we can call 'eraDecoder' and also to
+-- extract the interns from the state.
+--
+-- See @DecTablesWithHintLedgerState (LedgerState (HardForkBlock
+-- (CardanoBlock c)))@ for a clear view.
+class DecTablesWithHintLedgerState l where
+  decTablesWithHint :: l EmptyMK -> CBOR.Decoder s (LedgerTables l ValuesMK)
 
 {-------------------------------------------------------------------------------
   Special classes of ledger states
@@ -353,3 +355,6 @@ instance IndexedMemPack (TrivialLedgerTables l EmptyMK) Void where
   indexedPackedByteCount _ = packedByteCount
   indexedPackM _ = packM
   indexedUnpackM _ = unpackM
+
+instance DecTablesWithHintLedgerState (TrivialLedgerTables l) where
+   decTablesWithHint _ = pure (LedgerTables $ ValuesMK Map.empty)
