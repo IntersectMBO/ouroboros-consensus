@@ -27,6 +27,7 @@ module Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock (
   , MakeDiff (..)
   , MakeInitHint (..)
   , MakeReadHint (..)
+  , MakeSerializeTablesHint (..)
   , MakeWriteHint (..)
   , ValuesLength (..)
     -- * State monad to run the mock in
@@ -57,6 +58,7 @@ import           Data.Data (Proxy, Typeable)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block.Abstract (SlotNo, WithOrigin (..))
+import           Ouroboros.Consensus.Ledger.Tables
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
 import qualified System.FS.API.Types as FS
 

@@ -441,8 +441,8 @@ instance SerialiseHFC '[BlockA, BlockB]
   -- Use defaults
 
 instance SerializeTablesWithHint (LedgerState (HardForkBlock '[BlockA, BlockB])) where
-  encodeTablesWithHint = undefined
-  decodeTablesWithHint = undefined
+  encodeTablesWithHint = defaultEncodeTablesWithHint
+  decodeTablesWithHint = defaultDecodeTablesWithHint
 
 instance IndexedMemPack
           (LedgerState (HardForkBlock '[BlockA, BlockB]) EmptyMK)

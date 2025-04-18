@@ -220,14 +220,14 @@ instance CardanoHardForkConstraints c
 instance CardanoHardForkConstraints c => SerializeTablesWithHint (LedgerState (HardForkBlock (CardanoEras c))) where
   encodeTablesWithHint (HardForkLedgerState (HardForkState idx)) (LedgerTables (ValuesMK tbs)) =
     let
-      np = (  (Fn $ const $ K $ Codec.CBOR.Encoding.encodeMapLen 0)
-           :* (Fn $ const $ K $ encOne (Proxy @ShelleyEra))
-           :* (Fn $ const $ K $ encOne (Proxy @AllegraEra))
-           :* (Fn $ const $ K $ encOne (Proxy @MaryEra))
-           :* (Fn $ const $ K $ encOne (Proxy @AlonzoEra))
-           :* (Fn $ const $ K $ encOne (Proxy @BabbageEra))
-           :* (Fn $ const $ K $ encOne (Proxy @ConwayEra))
-           :* Nil)
+      np = (Fn $ const $ K $ Codec.CBOR.Encoding.encodeMapLen 0)
+        :* (Fn $ const $ K $ encOne (Proxy @ShelleyEra))
+        :* (Fn $ const $ K $ encOne (Proxy @AllegraEra))
+        :* (Fn $ const $ K $ encOne (Proxy @MaryEra))
+        :* (Fn $ const $ K $ encOne (Proxy @AlonzoEra))
+        :* (Fn $ const $ K $ encOne (Proxy @BabbageEra))
+        :* (Fn $ const $ K $ encOne (Proxy @ConwayEra))
+        :* Nil
     in hcollapse $ hap np $ Telescope.tip idx
    where
      encOne :: forall era. Era era => Proxy era -> Encoding
