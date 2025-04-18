@@ -33,15 +33,18 @@ module Ouroboros.Consensus.Cardano.Ledger (
   ) where
 
 import           Cardano.Ledger.Binary.Decoding hiding (Decoder)
-import           Cardano.Ledger.Core (eraDecoder)
+import           Cardano.Ledger.Binary.Encoding hiding (Encoding)
+import           Cardano.Ledger.Core (Era, eraDecoder, eraProtVerLow)
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Ledger.Shelley.LedgerState as SL (dsUnifiedL,
                      esLStateL, lsCertStateL, nesEsL)
 import qualified Cardano.Ledger.UMap as SL
 import           Codec.CBOR.Decoding
+import           Codec.CBOR.Encoding
 import qualified Data.Map as Map
 import           Data.Maybe
 import           Data.MemPack
+import           Data.Proxy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Functors
 import           Data.SOP.Index
@@ -215,6 +218,21 @@ instance CardanoHardForkConstraints c
     hcollapse <$> (hsequence' $ hap np $ Telescope.tip idx)
 
 instance CardanoHardForkConstraints c => DecTablesWithHintLedgerState (LedgerState (HardForkBlock (CardanoEras c))) where
+  encTablesWithHint (HardForkLedgerState (HardForkState idx)) (LedgerTables (ValuesMK tbs)) =
+    let
+      np = (  (Fn $ const $ K $ Codec.CBOR.Encoding.encodeMapLen 0)
+           :* (Fn $ const $ K $ encOne (Proxy @ShelleyEra))
+           :* (Fn $ const $ K $ encOne (Proxy @AllegraEra))
+           :* (Fn $ const $ K $ encOne (Proxy @MaryEra))
+           :* (Fn $ const $ K $ encOne (Proxy @AlonzoEra))
+           :* (Fn $ const $ K $ encOne (Proxy @BabbageEra))
+           :* (Fn $ const $ K $ encOne (Proxy @ConwayEra))
+           :* Nil)
+    in hcollapse $ hap np $ Telescope.tip idx
+   where
+     encOne :: forall era. Era era => Proxy era -> Encoding
+     encOne _ = toPlainEncoding (eraProtVerLow @era) $ encodeMap encodeMemPack (eliminateCardanoTxOut (const encodeMemPack)) tbs
+
   decTablesWithHint :: forall s. LedgerState (HardForkBlock (CardanoEras c)) EmptyMK
                     -> Decoder s (LedgerTables (LedgerState (HardForkBlock (CardanoEras c))) ValuesMK)
   decTablesWithHint (HardForkLedgerState (HardForkState idx)) =

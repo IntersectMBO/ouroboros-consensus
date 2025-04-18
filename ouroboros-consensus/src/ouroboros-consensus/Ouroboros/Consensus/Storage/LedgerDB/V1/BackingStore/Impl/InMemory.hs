@@ -111,7 +111,7 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
                 e -> throwIO e
               )
             traceWith tracer BSClosed
-      , bsCopy = \path -> do
+      , bsCopy = \hint path -> do
           traceWith tracer $ BSCopying path
           join $ atomically $ do
             readTVar ref >>= \case
@@ -124,7 +124,7 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
                 withFile fs (extendPath path) (WriteMode MustBeNew) $ \h ->
                   void $ hPutAll fs h
                        $ CBOR.toLazyByteString
-                       $ CBOR.toCBOR slot <> valuesMKEncoder values
+                       $ CBOR.toCBOR slot <> valuesMKEncoder hint values
           traceWith tracer $ BSCopied path
       , bsValueHandle = do
           traceWith tracer BSCreatingValueHandle

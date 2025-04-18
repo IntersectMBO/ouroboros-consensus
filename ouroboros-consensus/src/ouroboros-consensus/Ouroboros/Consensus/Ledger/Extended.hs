@@ -360,3 +360,4 @@ instance (txout ~ (TxOut (LedgerState blk)), IndexedMemPack (LedgerState blk Emp
 
 instance DecTablesWithHintLedgerState (LedgerState blk) => DecTablesWithHintLedgerState (ExtLedgerState blk) where
   decTablesWithHint st = castLedgerTables <$> decTablesWithHint (ledgerState st)
+  encTablesWithHint st tbs = encTablesWithHint (ledgerState st) (castLedgerTables tbs)

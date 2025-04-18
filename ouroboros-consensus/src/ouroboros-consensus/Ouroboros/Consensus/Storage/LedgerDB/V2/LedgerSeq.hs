@@ -88,7 +88,7 @@ data LedgerTablesHandle m l = LedgerTablesHandle {
     -- the block, the second argument should be the ledger state after
     -- applying a block. See 'CanUpgradeLedgerTables'.
   , pushDiffs          :: !(forall mk. l mk -> l DiffMK -> m ())
-  , takeHandleSnapshot :: !(String -> m CRC)
+  , takeHandleSnapshot :: !(l EmptyMK -> String -> m CRC)
     -- | Consult the size of the ledger tables in the database. This will return
     -- 'Nothing' in backends that do not support this operation.
   , tablesSize         :: !(m (Maybe Int))
