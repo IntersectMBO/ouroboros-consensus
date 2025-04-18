@@ -64,6 +64,8 @@ import           Cardano.Ledger.BaseTypes.NonZero (unNonZero)
 import qualified Cardano.Ledger.BHeaderView as SL (BHeaderView)
 import           Cardano.Ledger.Binary.Decoding (decShareCBOR, decodeMap,
                      decodeMemPack, internsFromMap)
+import           Cardano.Ledger.Binary.Encoding (encodeMap, encodeMemPack,
+                     toPlainEncoding)
 import           Cardano.Ledger.Binary.Plain (FromCBOR (..), ToCBOR (..),
                      enforceSize)
 import qualified Cardano.Ledger.Block as Core
@@ -299,6 +301,8 @@ instance (txout ~ Core.TxOut era, MemPack txout)
 
 instance ShelleyCompatible proto era
       => DecTablesWithHintLedgerState (LedgerState (ShelleyBlock proto era)) where
+  encTablesWithHint _ (LedgerTables (ValuesMK tbs)) =
+    toPlainEncoding (Core.eraProtVerLow @era) $ encodeMap encodeMemPack encodeMemPack tbs
   decTablesWithHint st =
      let certInterns =
            internsFromMap

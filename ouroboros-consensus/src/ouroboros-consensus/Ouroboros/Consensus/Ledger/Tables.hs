@@ -275,22 +275,18 @@ class CanStowLedgerTables l where
 -- | Default encoder of @'LedgerTables' l ''ValuesMK'@ to be used by the
 -- in-memory backing store.
 valuesMKEncoder ::
-     forall l. (MemPack (TxIn l), MemPack (TxOut l))
-  => LedgerTables l ValuesMK
+     forall l. DecTablesWithHintLedgerState l
+  => l EmptyMK
+  -> LedgerTables l ValuesMK
   -> CBOR.Encoding
-valuesMKEncoder (LedgerTables tables) =
+valuesMKEncoder st tbs =
        CBOR.encodeListLen 1
-    <> go tables
-  where
-    go :: ValuesMK (TxIn l) (TxOut l) -> CBOR.Encoding
-    go (ValuesMK m) =
-         CBOR.encodeMapLen (fromIntegral $ Map.size m)
-      <> Map.foldMapWithKey (\k v -> toCBOR (packByteString (k, v))) m
+    <> encTablesWithHint st tbs
 
 -- | Default decoder of @'LedgerTables' l ''ValuesMK'@ to be used by the
 -- in-memory backing store.
 valuesMKDecoder ::
-     forall l s. (DecTablesWithHintLedgerState l)
+     forall l s. DecTablesWithHintLedgerState l
   => l EmptyMK
   -> CBOR.Decoder s (LedgerTables l ValuesMK)
 valuesMKDecoder st = do
@@ -305,6 +301,7 @@ valuesMKDecoder st = do
 -- See @DecTablesWithHintLedgerState (LedgerState (HardForkBlock
 -- (CardanoBlock c)))@ for a clear view.
 class DecTablesWithHintLedgerState l where
+  encTablesWithHint :: l EmptyMK -> LedgerTables l ValuesMK -> CBOR.Encoding
   decTablesWithHint :: l EmptyMK -> CBOR.Decoder s (LedgerTables l ValuesMK)
 
 {-------------------------------------------------------------------------------
@@ -357,4 +354,7 @@ instance IndexedMemPack (TrivialLedgerTables l EmptyMK) Void where
   indexedUnpackM _ = unpackM
 
 instance DecTablesWithHintLedgerState (TrivialLedgerTables l) where
-   decTablesWithHint _ = pure (LedgerTables $ ValuesMK Map.empty)
+   decTablesWithHint _ = do
+     _ <- CBOR.decodeMapLen
+     pure (LedgerTables $ ValuesMK Map.empty)
+   encTablesWithHint _ _ = CBOR.encodeMapLen 0
