@@ -320,6 +320,32 @@ class SerializeTablesWithHint l where
 type family SerializeTablesHint values :: Type
 type instance SerializeTablesHint (LedgerTables l ValuesMK) = l EmptyMK
 
+defaultEncodeTablesWithHint ::
+     (MemPack (TxIn l), MemPack (TxOut l))
+  => SerializeTablesHint (LedgerTables l ValuesMK)
+  -> LedgerTables l ValuesMK -> CBOR.Encoding
+defaultEncodeTablesWithHint _ (LedgerTables (ValuesMK tbs)) =
+  mconcat [ CBOR.encodeMapLen (fromIntegral $ Map.size tbs)
+          , Map.foldMapWithKey (\k v ->
+                                   mconcat [ CBOR.encodeBytes (packByteString k)
+                                           , CBOR.encodeBytes (packByteString v)
+                                           ]
+                               ) tbs
+          ]
+
+defaultDecodeTablesWithHint ::
+     (Ord (TxIn l), MemPack (TxIn l), MemPack (TxOut l))
+  => SerializeTablesHint (LedgerTables l ValuesMK)
+  -> CBOR.Decoder s (LedgerTables l ValuesMK)
+defaultDecodeTablesWithHint _ = do
+  n <- CBOR.decodeMapLen
+  LedgerTables . ValuesMK <$> go n Map.empty
+  where
+    go 0 m = pure m
+    go n !m = do
+      (k, v) <- (,) <$> (unpackMonadFail =<< CBOR.decodeBytes) <*> (unpackMonadFail =<< CBOR.decodeBytes)
+      go (n - 1) (Map.insert k v m)
+
 {-------------------------------------------------------------------------------
   Special classes of ledger states
 -------------------------------------------------------------------------------}

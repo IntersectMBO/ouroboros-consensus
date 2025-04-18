@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -35,8 +36,16 @@ module Test.ThreadNet.Infra.ShelleyBasedHardFork (
   ) where
 
 import qualified Cardano.Ledger.Api.Transition as L
+import           Cardano.Ledger.Binary.Decoding (decShareCBOR, decodeMap,
+                     decodeMemPack, internsFromMap)
+import           Cardano.Ledger.Binary.Encoding (encodeMap, encodeMemPack,
+                     toPlainEncoding)
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
+import qualified Cardano.Ledger.Shelley.LedgerState as SL
+import qualified Cardano.Ledger.UMap as SL
+import           Codec.CBOR.Decoding
+import           Codec.CBOR.Encoding
 import           Control.Monad.Except (runExcept)
 import           Data.Coerce
 import qualified Data.Map.Strict as Map
@@ -479,9 +488,49 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
   injectHardForkTxOut = injectHardForkTxOutDefault
   ejectHardForkTxOut = ejectHardForkTxOutDefault
 
-instance SerializeTablesWithHint (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))) where
-  encodeTablesWithHint = undefined
-  decodeTablesWithHint = undefined
+instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
+      => SerializeTablesWithHint (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))) where
+  encodeTablesWithHint :: LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)) EmptyMK
+                       -> LedgerTables (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))) ValuesMK
+                       -> Encoding
+  encodeTablesWithHint (HardForkLedgerState (HardForkState idx)) (LedgerTables (ValuesMK tbs)) =
+    let
+      np = (Fn $ const $ K $ encOne (Proxy @era1))
+        :* (Fn $ const $ K $ encOne (Proxy @era2))
+        :* Nil
+    in hcollapse $ hap np $ Telescope.tip idx
+   where
+     encOne :: forall era. SL.Era era => Proxy era -> Encoding
+     encOne _ = toPlainEncoding (SL.eraProtVerLow @era)
+                 $ encodeMap (encodeMemPack . getShelleyHFCTxIn) (\case
+                                               Z txout -> encodeMemPack $ unwrapTxOut txout
+                                               S (Z txout) -> encodeMemPack $ unwrapTxOut txout
+                                           ) tbs
+
+  decodeTablesWithHint :: forall s. LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)) EmptyMK
+                    -> Decoder s (LedgerTables (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))) ValuesMK)
+  decodeTablesWithHint (HardForkLedgerState (HardForkState idx)) =
+    let
+      np = (Fn $ Comp . fmap K . getOne (Z . WrapTxOut) . unFlip . currentState)
+        :* (Fn $ Comp . fmap K . getOne (S . Z . WrapTxOut) . unFlip . currentState)
+        :* Nil
+    in hcollapse <$> (hsequence' $ hap np $ Telescope.tip idx)
+   where
+     getOne :: forall proto era. ShelleyCompatible proto era
+            => (TxOut (LedgerState (ShelleyBlock proto era)) -> TxOut (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))))
+            -> LedgerState (ShelleyBlock proto era) EmptyMK
+            -> Decoder s (LedgerTables (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))) ValuesMK)
+     getOne toShelleyTxOut st =
+       let certInterns =
+             internsFromMap
+             $ shelleyLedgerState st
+               ^. SL.nesEsL
+                . SL.esLStateL
+                . SL.lsCertStateL
+                . SL.certDStateL
+                . SL.dsUnifiedL
+                . SL.umElemsL
+       in LedgerTables . ValuesMK <$> SL.eraDecoder @era (decodeMap (ShelleyHFCTxIn <$> decodeMemPack) (toShelleyTxOut <$> decShareCBOR certInterns))
 
 instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
       => IndexedMemPack

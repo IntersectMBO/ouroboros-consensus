@@ -41,6 +41,7 @@ import qualified Cardano.Ledger.UMap as SL
 import           Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.API as SL
 import           Codec.CBOR.Decoding
+import           Codec.CBOR.Encoding
 import           Control.Monad (guard)
 import           Control.Monad.Except (runExcept, throwError)
 import           Data.Coerce
@@ -430,7 +431,16 @@ instance (txout ~ SL.TxOut era, MemPack txout)
 
 instance ShelleyCompatible proto era
          => SerializeTablesWithHint (LedgerState (HardForkBlock '[ShelleyBlock proto era])) where
-  encodeTablesWithHint = undefined
+  encodeTablesWithHint :: LedgerState (HardForkBlock '[ShelleyBlock proto era]) EmptyMK
+                       -> LedgerTables (LedgerState (HardForkBlock '[ShelleyBlock proto era])) ValuesMK
+                       -> Encoding
+  encodeTablesWithHint (HardForkLedgerState (HardForkState idx)) (LedgerTables (ValuesMK tbs)) =
+    let
+      np = (Fn $ const $ K encOne) :* Nil
+    in hcollapse $ hap np $ Telescope.tip idx
+   where
+     encOne :: Encoding
+     encOne = toPlainEncoding (SL.eraProtVerLow @era) $ encodeMap encodeMemPack encodeMemPack tbs
 
   decodeTablesWithHint :: forall s. LedgerState (HardForkBlock '[ShelleyBlock proto era]) EmptyMK
                     -> Decoder s (LedgerTables (LedgerState (HardForkBlock '[ShelleyBlock proto era])) ValuesMK)

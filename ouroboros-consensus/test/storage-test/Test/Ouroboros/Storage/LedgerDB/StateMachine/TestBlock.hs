@@ -209,8 +209,8 @@ instance IndexedMemPack (LedgerState TestBlock EmptyMK) TValue where
   indexedUnpackM _ = unpackM
 
 instance SerializeTablesWithHint (LedgerState TestBlock) where
-  encodeTablesWithHint = undefined
-  decodeTablesWithHint = undefined
+  encodeTablesWithHint = defaultEncodeTablesWithHint
+  decodeTablesWithHint = defaultDecodeTablesWithHint
 
 instance HasLedgerTables (LedgerState TestBlock) where
   projectLedgerTables st       = utxtoktables $ payloadDependentState st
