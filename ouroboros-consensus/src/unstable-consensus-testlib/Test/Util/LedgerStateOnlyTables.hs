@@ -69,6 +69,10 @@ instance MemPack v
   indexedPackM _ = packM
   indexedUnpackM _ = unpackM
 
+instance SerializeTablesWithHint (LedgerState (OTBlock k v)) where
+  encodeTablesWithHint = undefined
+  decodeTablesWithHint = undefined
+
 {-------------------------------------------------------------------------------
   Stowable
 -------------------------------------------------------------------------------}

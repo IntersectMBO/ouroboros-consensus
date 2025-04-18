@@ -1085,7 +1085,7 @@ class ( Show (HardForkTxOut xs)
       , NoThunks (HardForkTxOut xs)
       , MemPack (HardForkTxOut xs)
       , IndexedMemPack (LedgerState (HardForkBlock xs) EmptyMK) (HardForkTxOut xs)
-      , DecTablesWithHintLedgerState (LedgerState (HardForkBlock xs))
+      , SerializeTablesWithHint (LedgerState (HardForkBlock xs))
       ) => HasHardForkTxOut xs where
   type HardForkTxOut xs :: Type
   type HardForkTxOut xs = DefaultHardForkTxOut xs

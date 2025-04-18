@@ -87,7 +87,7 @@ data DiffsToFlush l = DiffsToFlush {
   , toFlushSlot  :: !SlotNo
   }
 
-data BackingStore m l keys values diff = BackingStore {
+data BackingStore m keys values diff = BackingStore {
     -- | Close the backing store
     --
     -- Other methods throw exceptions if called on a closed store. 'bsClose'
@@ -100,7 +100,7 @@ data BackingStore m l keys values diff = BackingStore {
     --
     -- The destination path must not already exist. After this operation, it
     -- will be a directory.
-  , bsCopy            :: !(l EmptyMK -> FS.FsPath -> m ())
+  , bsCopy            :: !(SerializeTablesHint values -> FS.FsPath -> m ())
     -- | Open a 'BackingStoreValueHandle' capturing the current value of the
     -- entire database
   , bsValueHandle     :: !(m (BackingStoreValueHandle m keys values))
@@ -111,11 +111,11 @@ data BackingStore m l keys values diff = BackingStore {
   , bsSnapshotBackend :: !SnapshotBackend
   }
 
-deriving via OnlyCheckWhnfNamed "BackingStore" (BackingStore m l keys values diff)
-  instance NoThunks (BackingStore m l keys values diff)
+deriving via OnlyCheckWhnfNamed "BackingStore" (BackingStore m keys values diff)
+  instance NoThunks (BackingStore m keys values diff)
 
 type LedgerBackingStore m l =
-  BackingStore m l
+  BackingStore m
     (LedgerTables l KeysMK)
     (LedgerTables l ValuesMK)
     (LedgerTables l DiffMK)
@@ -209,7 +209,7 @@ castBackingStoreValueHandle f g bsvh =
 -- | A combination of 'bsValueHandle' and 'bsvhRead'
 bsRead ::
      MonadThrow m
-  => BackingStore m l keys values diff
+  => BackingStore m keys values diff
   -> ReadHint values
   -> keys
   -> m (WithOrigin SlotNo, values)
@@ -219,7 +219,7 @@ bsRead store rhint keys = withBsValueHandle store $ \vh -> do
 
 bsReadAll ::
      MonadThrow m
-  => BackingStore m l keys values diff
+  => BackingStore m keys values diff
   -> ReadHint values
   -> m values
 bsReadAll store rhint = withBsValueHandle store $ \vh -> bsvhReadAll vh rhint
@@ -227,7 +227,7 @@ bsReadAll store rhint = withBsValueHandle store $ \vh -> bsvhReadAll vh rhint
 -- | A 'IOLike.bracket'ed 'bsValueHandle'
 withBsValueHandle ::
      MonadThrow m
-  => BackingStore m l keys values diff
+  => BackingStore m keys values diff
   -> (BackingStoreValueHandle m keys values -> m a)
   -> m a
 withBsValueHandle store =

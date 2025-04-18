@@ -82,7 +82,7 @@ newInMemoryLedgerTablesHandle ::
      ( IOLike m
      , HasLedgerTables l
      , CanUpgradeLedgerTables l
-     , DecTablesWithHintLedgerState l
+     , SerializeTablesWithHint l
      )
   => SomeHasFS m
   -> LedgerTables l ValuesMK

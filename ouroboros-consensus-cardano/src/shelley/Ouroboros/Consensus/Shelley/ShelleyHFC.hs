@@ -429,12 +429,14 @@ instance (txout ~ SL.TxOut era, MemPack txout)
   indexedUnpackM _ = unpackM
 
 instance ShelleyCompatible proto era
-         => DecTablesWithHintLedgerState (LedgerState (HardForkBlock '[ShelleyBlock proto era])) where
-  decTablesWithHint :: forall s. LedgerState (HardForkBlock '[ShelleyBlock proto era]) EmptyMK
+         => SerializeTablesWithHint (LedgerState (HardForkBlock '[ShelleyBlock proto era])) where
+  encodeTablesWithHint = undefined
+
+  decodeTablesWithHint :: forall s. LedgerState (HardForkBlock '[ShelleyBlock proto era]) EmptyMK
                     -> Decoder s (LedgerTables (LedgerState (HardForkBlock '[ShelleyBlock proto era])) ValuesMK)
-  decTablesWithHint (HardForkLedgerState (HardForkState idx)) =
+  decodeTablesWithHint (HardForkLedgerState (HardForkState idx)) =
     let
-      np = ((Fn $ Comp . fmap K . getOne . unFlip . currentState) :* Nil)
+      np = (Fn $ Comp . fmap K . getOne . unFlip . currentState) :* Nil
     in hcollapse <$> (hsequence' $ hap np $ Telescope.tip idx)
    where
      getOne :: LedgerState (ShelleyBlock proto era) EmptyMK
@@ -449,4 +451,4 @@ instance ShelleyCompatible proto era
                 . SL.certDStateL
                 . SL.dsUnifiedL
                 . SL.umElemsL
-       in LedgerTables . ValuesMK <$> (SL.eraDecoder @era $ decodeMap decodeMemPack (decShareCBOR certInterns))
+       in LedgerTables . ValuesMK <$> SL.eraDecoder @era (decodeMap decodeMemPack (decShareCBOR certInterns))

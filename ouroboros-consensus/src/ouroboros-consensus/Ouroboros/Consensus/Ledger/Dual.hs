@@ -1005,6 +1005,10 @@ instance (txout ~ TxOut (LedgerState m), IndexedMemPack (LedgerState m EmptyMK) 
   indexedPackM (DualLedgerState st _ _) = indexedPackM st
   indexedUnpackM (DualLedgerState st _ _) = indexedUnpackM st
 
+instance SerializeTablesWithHint (LedgerState (DualBlock m a)) where
+  encodeTablesWithHint = undefined
+  decodeTablesWithHint = undefined
+
 instance (
     Bridge m a
 #if __GLASGOW_HASKELL__ >= 906

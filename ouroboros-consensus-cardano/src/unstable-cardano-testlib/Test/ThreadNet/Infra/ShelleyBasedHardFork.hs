@@ -479,6 +479,10 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
   injectHardForkTxOut = injectHardForkTxOutDefault
   ejectHardForkTxOut = ejectHardForkTxOutDefault
 
+instance SerializeTablesWithHint (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))) where
+  encodeTablesWithHint = undefined
+  decodeTablesWithHint = undefined
+
 instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
       => IndexedMemPack
           (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)) EmptyMK)

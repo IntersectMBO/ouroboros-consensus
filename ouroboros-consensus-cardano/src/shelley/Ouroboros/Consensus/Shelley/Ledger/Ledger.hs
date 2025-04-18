@@ -300,10 +300,10 @@ instance (txout ~ Core.TxOut era, MemPack txout)
 
 
 instance ShelleyCompatible proto era
-      => DecTablesWithHintLedgerState (LedgerState (ShelleyBlock proto era)) where
-  encTablesWithHint _ (LedgerTables (ValuesMK tbs)) =
+      => SerializeTablesWithHint (LedgerState (ShelleyBlock proto era)) where
+  encodeTablesWithHint _ (LedgerTables (ValuesMK tbs)) =
     toPlainEncoding (Core.eraProtVerLow @era) $ encodeMap encodeMemPack encodeMemPack tbs
-  decTablesWithHint st =
+  decodeTablesWithHint st =
      let certInterns =
            internsFromMap
              $ shelleyLedgerState st
