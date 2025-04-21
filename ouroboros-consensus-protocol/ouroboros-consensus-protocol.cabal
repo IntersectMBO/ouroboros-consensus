@@ -1,6 +1,6 @@
 cabal-version: 3.0
 name: ouroboros-consensus-protocol
-version: 0.11.0.0
+version: 0.12.0.0
 synopsis: Cardano consensus protocols
 description: Cardano consensus protocols.
 license: Apache-2.0
@@ -76,7 +76,7 @@ library
     containers,
     mtl,
     nothunks,
-    ouroboros-consensus >=0.23 && <0.26,
+    ouroboros-consensus >=0.23 && <0.27,
     serialise,
     text,
 

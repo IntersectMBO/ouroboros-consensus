@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.22.0.1'></a>
+## 0.22.0.1 -- 2025-04-21
+
+### Patch
+
+- Update tests to use `SerializeTablesWithHint`.
+
 <a id='changelog-0.22.0.0'></a>
 ## 0.22.0.0 -- 2025-04-16
 
