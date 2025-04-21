@@ -300,7 +300,6 @@ instance (
   , Show (TxIn (LedgerState blk))
   , Eq (TxOut (LedgerState blk))
   , Ord (TxIn (LedgerState blk))
-  , MemPack (TxOut (LedgerState blk))
   , MemPack (TxIn (LedgerState blk))
 #endif
   ) => HasLedgerTables (ExtLedgerState blk) where
@@ -330,7 +329,6 @@ instance (
   , Eq (TxOut (LedgerState blk))
   , Ord (TxIn (LedgerState blk))
   , MemPack (TxIn (LedgerState blk))
-  , MemPack (TxOut (LedgerState blk))
 #endif
   ) => HasLedgerTables (Ticked (ExtLedgerState blk)) where
   projectLedgerTables (TickedExtLedgerState lstate _view _hstate) =

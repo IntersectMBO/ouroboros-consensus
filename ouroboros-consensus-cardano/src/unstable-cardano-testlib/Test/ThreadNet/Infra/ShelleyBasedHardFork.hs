@@ -52,7 +52,6 @@ import qualified Data.Map.Strict as Map
 import           Data.MemPack
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
-import           Data.SOP.Constraint
 import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.Index (Index (..), hcimap)
 import qualified Data.SOP.InPairs as InPairs
@@ -190,6 +189,9 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
   , PraosCrypto (ProtoCrypto proto1)
   , proto1 ~ TPraos (ProtoCrypto proto1)
   , proto1 ~ proto2
+
+  , MemPack (TxOut (LedgerState (ShelleyBlock proto1 era1)))
+  , MemPack (TxOut (LedgerState (ShelleyBlock proto2 era2)))
   )
 
 class TranslateTxMeasure a b where
@@ -540,18 +542,18 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
     typeName @(DefaultHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
   indexedPackedByteCount _ txout =
     hcollapse $
-    hcmap (Proxy @(Compose HasLedgerTables LedgerState))
+    hcmap (Proxy @MemPackTxOut)
       (K . packedByteCount . unwrapTxOut)
       txout
   indexedPackM _ =
     hcollapse . hcimap
-      (Proxy @(Compose HasLedgerTables LedgerState))
+      (Proxy @MemPackTxOut)
       (\_ (WrapTxOut txout) -> K $ do
          packM txout
       )
   indexedUnpackM (HardForkLedgerState (HardForkState idx)) = do
     hsequence'
       $ hcmap
-          (Proxy @(Compose HasLedgerTables LedgerState))
+          (Proxy @MemPackTxOut)
           (const $ Comp $ WrapTxOut <$> unpackM)
           $ Telescope.tip idx

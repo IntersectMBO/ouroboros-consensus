@@ -207,7 +207,6 @@ class ( Ord (TxIn l)
       , NoThunks (TxIn l)
       , NoThunks (TxOut l)
       , MemPack (TxIn l)
-      , MemPack (TxOut l)
       , IndexedMemPack (MemPackIdx l EmptyMK) (TxOut l)
       ) => HasLedgerTables l where
 
@@ -243,7 +242,6 @@ instance ( Ord (TxIn l)
          , NoThunks (TxIn l)
          , NoThunks (TxOut l)
          , MemPack (TxIn l)
-         , MemPack (TxOut l)
          , IndexedMemPack (MemPackIdx l EmptyMK) (TxOut l)
          ) => HasLedgerTables (LedgerTables l) where
   projectLedgerTables = castLedgerTables

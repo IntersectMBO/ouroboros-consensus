@@ -205,11 +205,10 @@ type LedgerDbSerialiseConstraints blk =
   , EncodeDisk blk (ChainDepState (BlockProtocol blk))
   , DecodeDisk blk (ChainDepState (BlockProtocol blk))
     -- For InMemory LedgerDBs
-  , MemPack (TxOut (LedgerState blk))
   , MemPack (TxIn (LedgerState blk))
+  , SerializeTablesWithHint (LedgerState blk)
     -- For OnDisk LedgerDBs
   , IndexedMemPack (LedgerState blk EmptyMK) (TxOut (LedgerState blk))
-  , SerializeTablesWithHint (LedgerState blk)
   )
 
 -- | The core API of the LedgerDB component

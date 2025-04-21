@@ -42,7 +42,6 @@ import qualified Cardano.Ledger.UMap as SL
 import           Codec.CBOR.Decoding
 import           Codec.CBOR.Encoding
 import qualified Data.Map as Map
-import           Data.Maybe
 import           Data.MemPack
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
@@ -174,34 +173,9 @@ instance CardanoHardForkConstraints c => HasHardForkTxOut (CardanoEras c) where
          . WrapTxOut
       )
 
-instance CardanoHardForkConstraints c => MemPack (CardanoTxOut c) where
-  packM = eliminateCardanoTxOut (\idx txout -> do
-                                    packM (toWord8 idx)
-                                    packM txout
-                                )
-
-  packedByteCount = eliminateCardanoTxOut (\_ txout -> 1 + packedByteCount txout)
-
-  unpackM = do
-    tag <- unpackM
-    let
-      np = ( (Fn $ const $ error "unpacking a byron txout")
-          :* (Fn $ const $ Comp $ K . ShelleyTxOut <$> unpackM)
-          :* (Fn $ const $ Comp $ K . AllegraTxOut <$> unpackM)
-          :* (Fn $ const $ Comp $ K . MaryTxOut    <$> unpackM)
-          :* (Fn $ const $ Comp $ K . AlonzoTxOut  <$> unpackM)
-          :* (Fn $ const $ Comp $ K . BabbageTxOut <$> unpackM)
-          :* (Fn $ const $ Comp $ K . ConwayTxOut  <$> unpackM)
-          :* Nil
-          )
-    hcollapse <$>
-      (hsequence'
-      $ hap np
-      $ fromMaybe (error "Unknown tag") (nsFromIndex tag :: Maybe (NS (K ()) (CardanoEras c))))
-
 instance CardanoHardForkConstraints c
       => IndexedMemPack (LedgerState (HardForkBlock (CardanoEras c)) EmptyMK) (CardanoTxOut c) where
-  indexedTypeName _ = typeName @(CardanoTxOut c)
+  indexedTypeName _ = "CardanoTxOut"
   indexedPackM _ = eliminateCardanoTxOut (const packM)
   indexedPackedByteCount _ = eliminateCardanoTxOut (const packedByteCount)
   indexedUnpackM (HardForkLedgerState (HardForkState idx)) = do

@@ -40,6 +40,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger (
     -- ** HardForkTxOut
   , DefaultHardForkTxOut
   , HasHardForkTxOut (..)
+  , MemPackTxOut
   , ejectHardForkTxOutDefault
   , injectHardForkTxOutDefault
   ) where
@@ -1083,7 +1084,6 @@ type DefaultHardForkTxOut xs = NS WrapTxOut xs
 class ( Show (HardForkTxOut xs)
       , Eq (HardForkTxOut xs)
       , NoThunks (HardForkTxOut xs)
-      , MemPack (HardForkTxOut xs)
       , IndexedMemPack (LedgerState (HardForkBlock xs) EmptyMK) (HardForkTxOut xs)
       , SerializeTablesWithHint (LedgerState (HardForkBlock xs))
       ) => HasHardForkTxOut xs where
@@ -1199,23 +1199,26 @@ composeTxOutTranslations = \case
       Z x -> l x
       S x -> r x
 
-instance (All (Compose HasLedgerTables LedgerState) xs, Typeable xs)
+class MemPack (TxOut (LedgerState x)) => MemPackTxOut x
+instance MemPack (TxOut (LedgerState x)) => MemPackTxOut x
+
+instance (All MemPackTxOut xs, Typeable xs)
       => MemPack (DefaultHardForkTxOut xs) where
   packM =
     hcollapse . hcimap
-      (Proxy @(Compose HasLedgerTables LedgerState))
+      (Proxy @MemPackTxOut)
       (\idx (WrapTxOut txout) -> K $ do
          packM (toWord8 idx)
          packM txout
       )
 
   packedByteCount txout =
-    1 + hcollapse (hcmap (Proxy @(Compose HasLedgerTables LedgerState)) (K . packedByteCount . unwrapTxOut) txout)
+    1 + hcollapse (hcmap (Proxy @MemPackTxOut) (K . packedByteCount . unwrapTxOut) txout)
 
   unpackM = do
     idx <- unpackM
     hsequence'
       $ hcmap
-          (Proxy @(Compose HasLedgerTables LedgerState))
+          (Proxy @MemPackTxOut)
           (const $ Comp $ WrapTxOut <$> unpackM)
           $ fromMaybe (error "Unknown tag") (nsFromIndex idx)

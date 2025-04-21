@@ -1187,9 +1187,8 @@ answerShelleyTraversingQueries ::
      ( ShelleyCompatible proto era
      , Ord (TxIn (LedgerState blk))
      , Eq (TxOut (LedgerState blk))
-     , MemPack (TxOut (LedgerState blk))
-     , IndexedMemPack (LedgerState blk EmptyMK) (TxOut (LedgerState blk))
      , MemPack (TxIn (LedgerState blk))
+     , IndexedMemPack (LedgerState blk EmptyMK) (TxOut (LedgerState blk))
      )
   => Monad m
   => (TxOut (LedgerState blk) -> LC.TxOut era)

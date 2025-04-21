@@ -84,14 +84,13 @@ import           Ouroboros.Consensus.Util.IndexedMemPack
 -- deltas instead of us being the ones that compute them, we can probably drop
 -- this constraint.
 type LedgerTableConstraints l =
-  ( Ord (TxIn l), Eq (TxOut l)
-  , MemPack (TxOut l), MemPack (TxIn l)
+  ( Ord (TxIn l), Eq (TxOut l), MemPack (TxIn l)
   , IndexedMemPack (MemPackIdx l EmptyMK) (TxOut l)
   )
 
 type LedgerTableConstraints' l k v =
   ( Ord k, Eq v
-  , MemPack v, MemPack k
+  , MemPack k
   , IndexedMemPack (MemPackIdx l EmptyMK) v
   )
 
