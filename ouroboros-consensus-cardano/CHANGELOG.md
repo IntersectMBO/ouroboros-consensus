@@ -2,6 +2,18 @@
 
 # Changelog entries
 
+<a id='changelog-0.25.0.0'></a>
+## 0.25.0.0 -- 2025-04-21
+
+### Breaking
+
+- Remove `MemPack (CardanoTxOut c)` in favor of `SerializeTablesWithHint`.
+
+### Non-Breaking
+
+- Use `SerializeTablesWithHint` and in particular for Shelley eras
+  decode `TxOut`s sharing the credentials.
+
 <a id='changelog-0.24.0.0'></a>
 ## 0.24.0.0 -- 2025-04-16
 

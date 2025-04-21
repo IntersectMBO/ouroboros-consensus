@@ -2,6 +2,20 @@
 
 # Changelog entries
 
+<a id='changelog-0.26.0.0'></a>
+## 0.26.0.0 -- 2025-04-21
+
+### Breaking
+
+- Define new class `SerializeTablesWithHint` to allow decoding with
+  sharing in the Cardano case.
+- `valuesMKDecoder` and `valuesMKEncoder` now require a
+  `SerializeTablesHint`, i.e. a ledger state.
+- Remove requirement for `MemPack (TxOut l)` in favor of
+  `SerializeTablesWithHint`.
+- Added new class `MemPackTxOut x` for implying `MemPack (TxOut
+  (LedgerState x))`.
+
 <a id='changelog-0.25.0.0'></a>
 ## 0.25.0.0 -- 2025-04-16
 

@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.12.0.0'></a>
+## 0.12.0.0 -- 2025-04-21
+
+### Breaking
+
+- Restrict `ouroboros-consensus` to UTxO-HD versions (>=0.25).
+
 <a id='changelog-0.11.0.0'></a>
 ## 0.11.0.0 -- 2025-03-25
 
