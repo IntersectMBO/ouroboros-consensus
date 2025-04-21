@@ -104,7 +104,7 @@ combineEras perEraExamples = Examples {
       , exampleExtLedgerState   = fmap (second unFlip) $ viaInject      (fmap (second Flip) . exampleExtLedgerState)
       , exampleSlotNo           = coerce $ viaInject @(K SlotNo)        (coerce exampleSlotNo)
       , exampleLedgerConfig     = exampleLedgerConfigCardano
-      , exampleLedgerTables     = mempty -- TODO
+      , exampleLedgerTables     = exampleLedgerTablesCardano
       }
   where
     viaInject ::
@@ -125,6 +125,13 @@ combineEras perEraExamples = Examples {
         prefixWithEraName es = prefixExamples (T.unpack eraName) es
           where
             eraName = singleEraName $ singleEraInfo es
+
+    exampleLedgerTablesCardano ::
+         Labelled (LedgerTables (LedgerState (HardForkBlock (CardanoEras Crypto))) ValuesMK)
+    exampleLedgerTablesCardano =
+           mconcat
+         $ hcollapse
+         $ himap (\ix -> K . map (second (injectLedgerTables ix)) . exampleLedgerTables) perEraExamplesPrefixed
 
     exampleLedgerConfigCardano ::
          Labelled (HardForkLedgerConfig (CardanoEras Crypto))
