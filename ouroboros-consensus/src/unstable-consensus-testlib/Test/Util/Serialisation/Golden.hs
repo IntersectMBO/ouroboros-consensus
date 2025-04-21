@@ -51,7 +51,7 @@ import           Data.Proxy (Proxy (..))
 import           Data.TreeDiff
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block (CodecConfig)
-import           Ouroboros.Consensus.Ledger.Extended (encodeExtLedgerState)
+import           Ouroboros.Consensus.Ledger.Extended (encodeDiskExtLedgerState)
 import           Ouroboros.Consensus.Ledger.Query (QueryVersion,
                      nodeToClientVersionToQueryVersion)
 import           Ouroboros.Consensus.Ledger.Tables (valuesMKEncoder)
@@ -191,6 +191,31 @@ goldenTests testName examples enc goldenFolder
     labels :: [Maybe String]
     labels = map fst examples
 
+goldenTests' ::
+     HasCallStack
+  => TestName
+  -> Labelled (a, a -> Encoding)
+  -> FilePath  -- ^ Folder containing the golden files
+  -> TestTree
+goldenTests' testName examples goldenFolder
+  | nub labels /= labels
+  = error $ "Examples with the same label for " <> testName
+  | [(Nothing, (example, exampleEncoder))] <- examples
+    -- If there's just a single unlabelled example, no need for grouping,
+    -- which makes the output more verbose.
+  = goldenTestCBOR testName example exampleEncoder (goldenFolder </> testName)
+  | otherwise
+  = testGroup testName [
+        goldenTestCBOR testName' example exampleEncoder (goldenFolder </> testName')
+      | (mbLabel, (example, exampleEncoder)) <- examples
+      , let testName' = case mbLabel of
+              Nothing    -> testName
+              Just label -> testName <> "_" <> label
+      ]
+  where
+    labels :: [Maybe String]
+    labels = map fst examples
+
 {-------------------------------------------------------------------------------
   Skeletons
 -------------------------------------------------------------------------------}
@@ -261,7 +286,7 @@ goldenTest_SerialiseDisk codecConfig goldenDir Examples {..} =
       , test "AnnTip"         exampleAnnTip        (encodeDisk codecConfig)
       , test "ChainDepState"  exampleChainDepState (encodeDisk codecConfig)
       , test "ExtLedgerState" exampleExtLedgerState encodeExt
-      , test "LedgerTables"   exampleLedgerTables  valuesMKEncoder
+      , testLedgerTables
       ]
   where
     test :: TestName -> Labelled a -> (a -> Encoding) -> TestTree
@@ -272,11 +297,14 @@ goldenTest_SerialiseDisk codecConfig goldenDir Examples {..} =
           enc
           (goldenDir </> "disk")
 
-    encodeExt =
-        encodeExtLedgerState
-          (encodeDisk codecConfig)
-          (encodeDisk codecConfig)
-          (encodeDisk codecConfig)
+    testLedgerTables :: TestTree
+    testLedgerTables =
+        goldenTests'
+          "LedgerTables"
+          (zipWith (\(lbl, tbs) (_, st) -> (lbl, (tbs, valuesMKEncoder st))) exampleLedgerTables exampleLedgerState)
+          (goldenDir </> "disk")
+
+    encodeExt = encodeDiskExtLedgerState codecConfig
 
 -- TODO how can we ensure that we have a test for each constraint listed in
 -- 'SerialiseNodeToNodeConstraints'?

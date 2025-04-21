@@ -69,6 +69,10 @@ instance MemPack v
   indexedPackM _ = packM
   indexedUnpackM _ = unpackM
 
+instance (Ord k, MemPack k, MemPack v) => SerializeTablesWithHint (LedgerState (OTBlock k v)) where
+  encodeTablesWithHint = defaultEncodeTablesWithHint
+  decodeTablesWithHint = defaultDecodeTablesWithHint
+
 {-------------------------------------------------------------------------------
   Stowable
 -------------------------------------------------------------------------------}

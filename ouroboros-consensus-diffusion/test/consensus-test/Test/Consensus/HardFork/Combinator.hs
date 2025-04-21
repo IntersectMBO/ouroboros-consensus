@@ -23,7 +23,6 @@ import           Cardano.Ledger.BaseTypes (nonZero, unNonZero)
 import qualified Data.Map.Strict as Map
 import           Data.MemPack
 import           Data.SOP.BasicFunctors
-import           Data.SOP.Constraint
 import           Data.SOP.Counting
 import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.Index (Index (..), hcimap)
@@ -440,25 +439,29 @@ instance SupportedNetworkProtocolVersion TestBlock where
 instance SerialiseHFC '[BlockA, BlockB]
   -- Use defaults
 
+instance SerializeTablesWithHint (LedgerState (HardForkBlock '[BlockA, BlockB])) where
+  encodeTablesWithHint = defaultEncodeTablesWithHint
+  decodeTablesWithHint = defaultDecodeTablesWithHint
+
 instance IndexedMemPack
           (LedgerState (HardForkBlock '[BlockA, BlockB]) EmptyMK)
           (DefaultHardForkTxOut '[BlockA, BlockB]) where
   indexedTypeName _ = typeName @(DefaultHardForkTxOut '[BlockA, BlockB])
   indexedPackedByteCount _ txout =
     hcollapse $
-    hcmap (Proxy @(Compose HasLedgerTables LedgerState))
+    hcmap (Proxy @MemPackTxOut)
       (K . packedByteCount . unwrapTxOut)
       txout
   indexedPackM _ =
     hcollapse . hcimap
-      (Proxy @(Compose HasLedgerTables LedgerState))
+      (Proxy @MemPackTxOut)
       (\_ (WrapTxOut txout) -> K $ do
          packM txout
       )
   indexedUnpackM (HardForkLedgerState (HardForkState idx)) = do
     hsequence'
       $ hcmap
-          (Proxy @(Compose HasLedgerTables LedgerState))
+          (Proxy @MemPackTxOut)
           (const $ Comp $ WrapTxOut <$> unpackM)
           $ Telescope.tip idx
 

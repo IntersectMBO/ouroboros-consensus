@@ -300,7 +300,6 @@ instance (
   , Show (TxIn (LedgerState blk))
   , Eq (TxOut (LedgerState blk))
   , Ord (TxIn (LedgerState blk))
-  , MemPack (TxOut (LedgerState blk))
   , MemPack (TxIn (LedgerState blk))
 #endif
   ) => HasLedgerTables (ExtLedgerState blk) where
@@ -330,7 +329,6 @@ instance (
   , Eq (TxOut (LedgerState blk))
   , Ord (TxIn (LedgerState blk))
   , MemPack (TxIn (LedgerState blk))
-  , MemPack (TxOut (LedgerState blk))
 #endif
   ) => HasLedgerTables (Ticked (ExtLedgerState blk)) where
   projectLedgerTables (TickedExtLedgerState lstate _view _hstate) =
@@ -357,3 +355,7 @@ instance (txout ~ (TxOut (LedgerState blk)), IndexedMemPack (LedgerState blk Emp
   indexedPackedByteCount (ExtLedgerState st _) = indexedPackedByteCount st
   indexedPackM (ExtLedgerState st _) = indexedPackM st
   indexedUnpackM (ExtLedgerState st _) = indexedUnpackM st
+
+instance SerializeTablesWithHint (LedgerState blk) => SerializeTablesWithHint (ExtLedgerState blk) where
+  decodeTablesWithHint st = castLedgerTables <$> decodeTablesWithHint (ledgerState st)
+  encodeTablesWithHint st tbs = encodeTablesWithHint (ledgerState st) (castLedgerTables tbs)
