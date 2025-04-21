@@ -25,4 +25,4 @@ node.
 
 In terms of functionality, both backends are fully functional.
 
-For a more extensive description of UTxO-HD, see [the full documentation](./utxo-hd-in-depth).
+For a more extensive description of UTxO-HD, see [the full documentation](utxo-hd-in-depth.md).

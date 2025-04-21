@@ -8,7 +8,7 @@
 ### Breaking
 
 - Implement the UTxO-HD feature. See the documentation in [the
-  webpage](https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/utxo-hd/Overview).
+  webpage](https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/utxo-hd/Overview/).
   - `hStateQueryServer` now needs a `ResourceRegistry` to allocate `Forker`s.
   - `DiskPolicyArgs` was transformed into `SnapshotPolicyArgs`.
   - `StdRunNodeArgs` got two new fields:

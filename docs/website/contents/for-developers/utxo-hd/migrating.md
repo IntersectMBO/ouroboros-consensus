@@ -92,7 +92,7 @@ $ snapshot-converter Legacy ./ledger/<slotno> LMDB ./ledger/<slotno>_lmdb cardan
 ```
 
 This will create a snapshot with the proper format for UTxO-HD. See [the UTxO-HD
-in depth document](./utxo-hd-in-depth#storing-snapshots) for more
+in depth document](utxo-hd-in-depth.md#storing-snapshots) for more
 information on the contents of the different files in the snapshot.
 
 If the snapshot does not have the expected structure or the backend for which it
