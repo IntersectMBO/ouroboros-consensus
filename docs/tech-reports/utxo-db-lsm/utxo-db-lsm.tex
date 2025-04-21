@@ -2340,7 +2340,7 @@ are ones which are reported synchronously, usually as I/O exceptions, such as
 failure to write to a file or the disk being full. This could also include
 data corruption detected as part of a read operation (e.g. checking a checksum
 after reading data). The silent faults are those that do not report a problem
-at the time the problem occurs, but results in data being lots or corrupted.
+at the time the problem occurs, but results in data being lost or corrupted.
 A primary example is data failing to be persisted to disk due to the machine
 being turned off, but this could also include undetected hardware faults and
 bit flips due to cosmic rays.
