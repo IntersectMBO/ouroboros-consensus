@@ -62,7 +62,7 @@ data BinarySearchResult =
 
 neBinarySearch :: (a -> Bool) -> NonEmptySeq a -> BinarySearchResult
 neBinarySearch predicate (UnsafeNonEmptySeq xs) =
-      finish $ go l0 r0
+    finish $ go l0 r0
   where
     l0 = negate 1
     r0 = length xs

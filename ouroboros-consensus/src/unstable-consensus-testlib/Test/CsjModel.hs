@@ -94,7 +94,7 @@ data CsjClientState p = CsjClientState {
     -- | the greatest point the peer has accepted as part of a jump
     --
     -- If 'latestJump' is 'Origin', then this is the immutable tip as of when
-    -- the peer connected (and so is the Dynamo's, which means the Dynamo'S
+    -- the peer connected (and so is the Dynamo's, which means the Dynamo's
     -- 'comm' cannot be any younger than this peer's 'comm').
     comm      :: !(WithOrigin p)
   }
@@ -183,8 +183,8 @@ trimCandidate y =
 
 -- | A 'MsgFindIntersect' for 'comm'
 --
--- minor optimization opportunity: if the Jumpers latest response was
--- @MsgIntersectionFound@ then this could be 'NoReset'.
+-- Minor optimization opportunity: if the Jumper's latest response was
+-- @MsgIntersectionFound@ then this could be skipped.
 promotionMessage :: CsjClientState p -> CsjReaction p
 promotionMessage = MsgFindIntersect . comm
 
@@ -269,12 +269,12 @@ nextMsgFindIntersect2 bi =
             -- Dynamo, and so by offering the whole jump in the first message,
             -- load on honest Jumpers is minimized: one message per jump.
         Just{}  -> neMid  nyd
-            -- TODO At least for the reference Haskell Cardano node, each
-            -- additional point in the 'MsgFindIntersect' message is most
-            -- negligible unless they're in different ImmDB chunk files. So
-            -- this logic here could include more points (perhaps once all of
-            -- @nyd@ is in the same chunk file) in order to ensure the
-            -- bisection requires fewer round trips while only increasing the
+            -- TODO At least for the reference Haskell Cardano node, the cost
+            -- of each additional point in the 'MsgFindIntersect' message is
+            -- mostly negligible unless they're in different ImmDB chunk files.
+            -- So this logic here could include more points (perhaps once all
+            -- of @nyd@ is in the same chunk file) in order to ensure the
+            -- bisection requires fewer round trips while increasing the
             -- upstream per-message cost only negligibly.
   where
     nyd = notYetDetermined bi
@@ -971,7 +971,7 @@ csjReactions env x pid = fmap (issueNextJump env . backfill) . \case
 --
 -- Beyond those invariants, it doesn't matter which Jumper or Objector
 -- backfills as the Dynamo nor which Jumper backfills as the Objector for the
--- oldest 'comm', as long as ties are broken in a way that ensures a peer that
+-- oldest 'Class', as long as ties are broken in a way that ensures a peer that
 -- satisifes the Honest Availability Assumption will eventually become Dynamo.
 -- The 'queue' mechanism achieves that without overreacting to 'Starvation'
 -- events (which are inevitable due to the imperfection of the public Internet
@@ -983,10 +983,10 @@ csjReactions env x pid = fmap (issueNextJump env . backfill) . \case
 -- is if the Dynamo starves ChainSel. It is excusable to demote that Dynamo
 -- since it will only happen at most once to each honest peer until a peer that
 -- satisfies the Honest Availability Assumption becomes the Dynamo, which will
--- remain the Dynamo until the end of the sync.
+-- remain the Dynamo until the end of the sync (or the next networking hiccup).
 --
--- The prohibition on demoting Objectors prevents the CSJ design from doing
--- both of the following.
+-- The prohibition on demoting Objectors is incompatible with a specification
+-- that does both of the following simultaneously.
 --
 -- - Promoting a Jumper to Objector before all Jumpers have finished bisecting.
 --
