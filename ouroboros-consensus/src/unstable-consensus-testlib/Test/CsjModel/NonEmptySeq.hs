@@ -2,9 +2,7 @@
 
 -- | A non-empty sequence type with some custom methods with types that are
 -- convenient for "Test.CsjModel"
-module Test.CsjModel.NonEmptySeq (
-    module Test.CsjModel.NonEmptySeq
-  ) where
+module Test.CsjModel.NonEmptySeq (module Test.CsjModel.NonEmptySeq) where
 
 import           Control.Monad (guard)
 import qualified Data.Maybe as L (Maybe (Just, Nothing))

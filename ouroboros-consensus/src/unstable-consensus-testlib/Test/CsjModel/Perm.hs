@@ -1,9 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 -- | A simple permutation type catered to uses of 'queue' in "Test.CsjModel"
-module Test.CsjModel.Perm (
-    module Test.CsjModel.Perm
-  ) where
+module Test.CsjModel.Perm (module Test.CsjModel.Perm) where
 
 import qualified Data.Maybe as L (Maybe (Just, Nothing))
 import           Data.Sequence (Seq)

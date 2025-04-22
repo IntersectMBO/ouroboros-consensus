@@ -19,24 +19,24 @@
 -- Work after a few tweaks.
 module Test.CsjModel (
     -- * ChainSync Jumping (CSJ)
-    ChainSyncReply (..),
-    CsjClientState (..),
-    CsjEnv (..),
-    CsjReaction (..),
-    CsjState (..),
-    CsjStimulus (..),
-    csjLoeConstraint,
-    csjReactions,
-    initialCsjState,
+    ChainSyncReply (..)
+  , CsjClientState (..)
+  , CsjEnv (..)
+  , CsjReaction (..)
+  , CsjState (..)
+  , CsjStimulus (..)
+  , csjLoeConstraint
+  , csjReactions
+  , initialCsjState
     -- * A non-empty sequence, catered to CSJ
-    NonEmptySeq (..),
-    nonEmptySeq,
-    toSeq,
+  , NonEmptySeq (..)
+  , nonEmptySeq
+  , toSeq
     -- * 'Perm'
-    Perm (..),
-    deletePerm,
-    indexPerm,
-    snocPerm,
+  , Perm (..)
+  , deletePerm
+  , indexPerm
+  , snocPerm
   ) where
 
 import           Cardano.Slotting.Slot (WithOrigin (At, Origin))
@@ -54,8 +54,7 @@ import qualified Data.Sequence as Seq
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Strict.Classes (toLazy)
-import           Data.Strict.Maybe (Maybe (Just, Nothing), fromMaybe,
-                     maybe)
+import           Data.Strict.Maybe (Maybe (Just, Nothing), fromMaybe, maybe)
 import           Data.Word (Word64)
 import           Prelude hiding (Maybe (Just, Nothing), maybe)
 import           Test.CsjModel.NonEmptySeq
@@ -85,7 +84,7 @@ data CsjClientState p = CsjClientState {
     -- entirely bounded by how many adversarial peers became Dynamo without an
     -- honest peer becoming Dynamo. So this seems sufficiently bounded to never
     -- be a resource leak---also: each @p@ is tiny on the heap.
-    anticomm :: !(Set p)
+    anticomm  :: !(Set p)
   ,
     -- | the candidate fetched from the peer so far
     --
@@ -97,7 +96,7 @@ data CsjClientState p = CsjClientState {
     -- If 'latestJump' is 'Origin', then this is the immutable tip as of when
     -- the peer connected (and so is the Dynamo's, which means the Dynamo'S
     -- 'comm' cannot be any younger than this peer's 'comm').
-    comm :: !(WithOrigin p)
+    comm      :: !(WithOrigin p)
   }
   deriving (Read, Show)
 
@@ -170,7 +169,7 @@ backward wp y = do
 trimCandidate :: Ord p => CsjClientState p -> CsjClientState p
 trimCandidate y =
     CsjClientState {
-        anticomm  = anticomm y  
+        anticomm  = anticomm y
       ,
         candidate =
             case comm y of
@@ -179,7 +178,7 @@ trimCandidate y =
                     L.Nothing -> error "impossible!"
                     L.Just i  -> Seq.take (i + 1) (candidate y)
       ,
-        comm      = comm y  
+        comm      = comm y
       }
 
 -- | A 'MsgFindIntersect' for 'comm'
@@ -248,7 +247,7 @@ data Bisecting p = Bisecting {
     --
     -- INVARIANT: This is 'Just' if and only if the peer has sent
     -- 'MsgIntersectionNotFound' as part of /this/ jump.
-    rejected :: !(Maybe p)
+    rejected         :: !(Maybe p)
   }
   deriving (Read, Show)
 
@@ -316,7 +315,7 @@ bisectionStep y bi found =
   where
     nyd = notYetDetermined      bi
     p   = nextMsgFindIntersect2 bi
-    
+
     rejected' = if found then rejected bi else Just p
 
     -- the points that are accepted by implication and the points that remain
@@ -461,7 +460,7 @@ data CsjState pid p = CsjState {
     --
     -- Excluding transient states, there will only not be a Dynamo if all peers
     -- are disengaged. See 'backfill' for more details.
-    dynamo :: !(Maybe (Dynamo pid p))
+    dynamo     :: !(Maybe (Dynamo pid p))
   ,
     -- | All peers that are not the Dynamo
     --
@@ -479,7 +478,7 @@ data CsjState pid p = CsjState {
     -- It would be safe for an implementation to break ties randomly instead of
     -- via this queue, but it's nice to not need randomness in the
     -- specification and the queue might reduce volatility in the "fairness".
-    queue :: !(Perm pid)
+    queue      :: !(Perm pid)
   }
   deriving (Read, Show)
 
@@ -1148,7 +1147,7 @@ data CsjEnv p = CsjEnv {
     -- too complicated, which might reduce the adversary's opportunity to delay
     -- (since 'newJumpRequest2' leverages the 'comm' and 'rejected' of the
     -- interrupted jump to trim the new jump's 'notYetDetermined').
-    minJumpSlots :: Word64
+    minJumpSlots  :: Word64
   ,
     realPointSlot :: p -> Word64
   }
