@@ -78,7 +78,7 @@ main = withStdTerminalHandles $ mainWith $ \n -> do
 
 {-# INLINE oneBenchRun #-}
 oneBenchRun ::
-     StrictTVar IO (AnchoredFragment H)
+     StrictTVar IO (AnchoredFragment (HV.HeaderWithTime B))
   -> StrictTVar IO (Tip B)
   -> ChainDB.Follower IO B (ChainDB.WithPoint B H)
   -> Int

@@ -13,6 +13,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Types used throughout the implementation: handle, state, environment,
@@ -30,6 +32,8 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
   , getEnvSTM1
     -- * Exposed internals for testing purposes
   , Internal (..)
+  , InternalChain (..)
+  , checkInternalChain
     -- * Iterator-related
   , IteratorKey (..)
     -- * Follower-related
@@ -86,7 +90,8 @@ import           NoThunks.Class (OnlyCheckWhnfNamed (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Fragment.Diff (ChainDiff)
-import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
+import           Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.Abstract
@@ -113,6 +118,7 @@ import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Consensus.Util.STM (WithFingerprint)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
+import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (MaxSlotNo (..))
 import           Ouroboros.Network.BlockFetch.ConsensusInterface
                      (ChainSelStarvation (..))
@@ -177,11 +183,49 @@ data ChainDbState m blk
   | ChainDbClosed
   deriving (Generic, NoThunks)
 
+-- | The current chain, both without and with slot times
+--
+-- INVARIANT @'AF.mapAnchoredFragment' 'hwtHeader' . 'icWithTime' = 'icWithoutTime'@
+--
+-- The fragment with times is maintained separately --- but exactly in parallel
+-- --- for performance reasons and modularity reasons, trading a few thousand
+-- pointers to avoid extra allocation per use, more granular interfaces
+-- (notably
+-- 'Ouroboros.Network.BlockFetch.ConsensusInterface.BlockFetchConsensusInterface'),
+-- etc.
+data InternalChain blk = InternalChain
+  { icWithoutTime :: !(AnchoredFragment (Header         blk))
+  , icWithTime    :: !(AnchoredFragment (HeaderWithTime blk))
+  }
+  deriving (Generic)
+
+deriving instance (HasHeader blk, NoThunks (Header blk)) => NoThunks (InternalChain blk)
+
+checkInternalChain ::
+     forall blk. (HasHeader blk, HasHeader (Header blk))
+  => InternalChain blk
+  -> Maybe String
+checkInternalChain (InternalChain cur curWithTime) =
+    if cnv id cur == cnv hwtHeader curWithTime then Nothing else
+    Just $ unlines
+      [ "cdbChain and cdbChainWithTime were out of sync:"
+      , show (cnv id cur)
+      , show (cnv hwtHeader curWithTime)
+      ]
+  where
+    cnv ::
+         (HeaderHash h ~ HeaderHash blk)
+      => (h -> Header blk) -> AnchoredFragment h -> (Point blk, [Point blk])
+    cnv f af =
+      ( castPoint $ AF.anchorPoint af
+      , (headerPoint . f) `map` AF.toNewestFirst af
+      )
+
 data ChainDbEnv m blk = CDB
   { cdbImmutableDB     :: !(ImmutableDB m blk)
   , cdbVolatileDB      :: !(VolatileDB m blk)
   , cdbLedgerDB        :: !(LedgerDB' m blk)
-  , cdbChain           :: !(StrictTVar m (AnchoredFragment (Header blk)))
+  , cdbChain           :: !(StrictTVar m (InternalChain blk))
     -- ^ Contains the current chain fragment.
     --
     -- INVARIANT: the anchor point of this fragment is the tip of the
@@ -256,7 +300,7 @@ data ChainDbEnv m blk = CDB
     -- ^ A handle to kill the background threads.
   , cdbChainSelQueue   :: !(ChainSelQueue m blk)
     -- ^ Queue of blocks that still have to be added.
-  , cdbLoE             :: !(m (LoE (AnchoredFragment (Header blk))))
+  , cdbLoE             :: !(m (LoE (AnchoredFragment (HeaderWithTime blk))))
     -- ^ Configure the Limit on Eagerness. If this is 'LoEEnabled', it contains
     -- an action that returns the LoE fragment, which indicates the latest rollback
     -- point, i.e. we are not allowed to select a chain from which we could not

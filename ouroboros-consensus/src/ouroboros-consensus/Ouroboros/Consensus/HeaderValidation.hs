@@ -1,6 +1,7 @@
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
@@ -55,6 +56,9 @@ module Ouroboros.Consensus.HeaderValidation (
   , encodeHeaderState
     -- * Type family instances
   , Ticked (..)
+    -- * Header with time
+  , HeaderWithTime (..)
+  , mkHeaderWithTime
   ) where
 
 import           Cardano.Binary (enforceSize)
@@ -68,12 +72,18 @@ import           Data.Coerce
 import           Data.Kind (Type)
 import qualified Data.Map.Strict as Map
 import           Data.Proxy
+import           Data.Typeable (Typeable)
 import           Data.Void (Void)
 import           GHC.Generics (Generic)
 import           GHC.Stack (HasCallStack)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.BlockchainTime (RelativeTime)
 import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.HardFork.Abstract
+                     (HasHardForkHistory (hardForkSummary))
+import qualified Ouroboros.Consensus.HardFork.History.Qry as Qry
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Ticked
 import           Ouroboros.Consensus.Util (whenJust)
@@ -237,10 +247,11 @@ data HeaderEnvelopeError blk =
   | OtherHeaderEnvelopeError !(OtherHeaderEnvelopeError blk)
   deriving (Generic)
 
-deriving instance (ValidateEnvelope blk) => Eq   (HeaderEnvelopeError blk)
-deriving instance (ValidateEnvelope blk) => Show (HeaderEnvelopeError blk)
-deriving instance (ValidateEnvelope blk)
-               => NoThunks (HeaderEnvelopeError blk)
+deriving instance (ValidateEnvelope blk) => Eq       (HeaderEnvelopeError blk)
+deriving instance (ValidateEnvelope blk) => Show     (HeaderEnvelopeError blk)
+deriving instance ( ValidateEnvelope blk
+                  , Typeable blk
+                  )                      => NoThunks (HeaderEnvelopeError blk)
 
 castHeaderEnvelopeError :: ( HeaderHash blk ~ HeaderHash blk'
                            , OtherHeaderEnvelopeError blk ~ OtherHeaderEnvelopeError blk'
@@ -498,6 +509,75 @@ data TipInfoIsEBB blk = TipInfoIsEBB !(HeaderHash blk) !IsEBB
 deriving instance StandardHash blk => Eq   (TipInfoIsEBB blk)
 deriving instance StandardHash blk => Show (TipInfoIsEBB blk)
 deriving instance StandardHash blk => NoThunks (TipInfoIsEBB blk)
+
+{-------------------------------------------------------------------------------
+  Header with time
+-------------------------------------------------------------------------------}
+
+-- | A header paired with the time of the slot that it inhabits.
+--
+-- Note that the header's slot was translated to this time (in the ChainSync
+-- client) according to the header's chain. This clarification may be helpful,
+-- since it's possible that some other chain would translate that same slot to
+-- a different time.
+data HeaderWithTime blk = HeaderWithTime {
+    hwtHeader           :: !(Header blk)
+  , hwtSlotRelativeTime :: !RelativeTime
+  }
+  deriving (Generic)
+
+deriving stock instance (Eq (Header blk))
+                      => Eq (HeaderWithTime blk)
+deriving stock instance (Show (Header blk))
+                      => Show (HeaderWithTime blk)
+deriving anyclass instance (NoThunks (Header blk))
+                         => NoThunks (HeaderWithTime blk)
+
+type instance HeaderHash (HeaderWithTime blk) = HeaderHash (Header blk)
+
+instance ( Show (HeaderHash blk)
+         , Eq (HeaderHash blk)
+         , Ord (HeaderHash blk)
+         , Typeable (HeaderHash blk)
+         , NoThunks (HeaderHash blk)
+         ) => StandardHash (HeaderWithTime blk)
+
+instance ( HasHeader (Header blk)
+         , StandardHash (HeaderWithTime blk)
+         , Typeable blk
+         ) => HasHeader (HeaderWithTime blk) where
+  getHeaderFields =
+      castHeaderFields
+    . getHeaderFields
+    . hwtHeader
+
+instance GetHeader1 HeaderWithTime where
+  getHeader1 = hwtHeader
+
+-- | Convert 'Header' to 'HeaderWithTime'
+--
+-- PREREQ: The given ledger must be able to translate the slot of the given
+-- header.
+--
+-- This is INLINEed since the summary can usually be reused.
+mkHeaderWithTime ::
+      ( HasHardForkHistory blk
+      , HasHeader (Header blk)
+      )
+   => LedgerConfig blk
+   -> LedgerState blk mk
+   -> Header blk
+   -> HeaderWithTime blk
+{-# INLINE mkHeaderWithTime #-}
+mkHeaderWithTime cfg lst = \hdr ->
+    let summary       = hardForkSummary cfg lst
+        slot          = realPointSlot $ headerRealPoint hdr
+        qry           = Qry.slotToWallclock slot
+        (slotTime, _) = Qry.runQueryPure qry summary
+    in HeaderWithTime {
+        hwtHeader           = hdr
+      , hwtSlotRelativeTime = slotTime
+      }
 
 {-------------------------------------------------------------------------------
   Serialisation

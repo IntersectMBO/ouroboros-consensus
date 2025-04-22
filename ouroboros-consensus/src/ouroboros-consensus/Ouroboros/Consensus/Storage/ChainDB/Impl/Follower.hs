@@ -272,7 +272,7 @@ instructionHelper registry varFollower chainType blockComponent fromMaybeSTM CDB
     trace = traceWith (contramap TraceFollowerEvent cdbTracer)
 
     getCurrentChainByType = do
-        curChain <- readTVar cdbChain
+        curChain <- icWithoutTime <$> readTVar cdbChain
         case chainType of
           SelectedChain  -> pure curChain
           TentativeChain -> readTVar cdbTentativeHeader <&> \case
@@ -434,7 +434,7 @@ forward registry varFollower blockComponent CDB{..} = \pts -> do
     -- that happen to have not yet been copied over to the ImmutableDB.
     join $ atomically $
       findFirstPointOnChain
-        <$> readTVar cdbChain
+        <$> (icWithoutTime <$> readTVar cdbChain)
         <*> readTVar varFollower
         <*> ImmutableDB.getTipSlot cdbImmutableDB
         <*> pure pts

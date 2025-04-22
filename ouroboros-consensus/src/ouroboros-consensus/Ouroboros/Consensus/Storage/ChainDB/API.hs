@@ -67,7 +67,9 @@ import           Control.ResourceRegistry
 import           Data.Typeable (Typeable)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.HeaderStateHistory (HeaderStateHistory)
+import           Ouroboros.Consensus.HeaderStateHistory
+                     (HeaderStateHistory (..))
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
@@ -172,6 +174,13 @@ data ChainDB m blk = ChainDB {
       -- fragment will move as the chain grows.
     , getCurrentChain    :: STM m (AnchoredFragment (Header blk))
 
+      -- | Exact same as 'getCurrentChain', except each header is annotated
+      -- with the 'RelativeTime' of the onset of its slot (translated according
+      -- to the chain it is on)
+      --
+      -- INVARIANT @'hwtHeader' <$> 'getCurrentChainWithTime' = 'getCurrentChain'@
+    , getCurrentChainWithTime
+                         :: STM m (AnchoredFragment (HeaderWithTime blk))
 
       -- | Get current ledger
     , getCurrentLedger :: STM m (ExtLedgerState blk EmptyMK)
@@ -911,4 +920,4 @@ data LoE a =
 -- | Get the current LoE fragment (if the LoE is enabled), see 'LoE' for more
 -- details. This fragment must be anchored in a (recent) point on the immutable
 -- chain, just like candidate fragments.
-type GetLoEFragment m blk = m (LoE (AnchoredFragment (Header blk)))
+type GetLoEFragment m blk = m (LoE (AnchoredFragment (HeaderWithTime blk)))

@@ -6,9 +6,7 @@
 -- | Initialization of the 'BlockFetchConsensusInterface'
 module Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface (
     ChainDbView (..)
-  , SlotForgeTimeOracle
   , defaultChainDbView
-  , initSlotForgeTimeOracle
   , mkBlockFetchConsensusInterface
   , readFetchModeDefault
   ) where
@@ -27,10 +25,7 @@ import qualified Ouroboros.Consensus.Block as Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.Config.SupportsNode as SupportsNode
-import qualified Ouroboros.Consensus.HardFork.Abstract as History
-import qualified Ouroboros.Consensus.HardFork.History as History
-import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
@@ -55,7 +50,8 @@ import           Ouroboros.Network.SizeInBytes
 
 -- | Abstract over the ChainDB
 data ChainDbView m blk = ChainDbView {
-     getCurrentChain           :: STM m (AnchoredFragment (Header blk))
+     getCurrentChain           :: STM m (AnchoredFragment (Header         blk))
+   , getCurrentChainWithTime   :: STM m (AnchoredFragment (HeaderWithTime blk))
    , getIsFetched              :: STM m (Point blk -> Bool)
    , getMaxSlotNo              :: STM m MaxSlotNo
    , addBlockAsync             :: InvalidBlockPunishment m -> blk -> m (AddBlockPromise m blk)
@@ -64,80 +60,13 @@ data ChainDbView m blk = ChainDbView {
 
 defaultChainDbView :: ChainDB m blk -> ChainDbView m blk
 defaultChainDbView chainDB = ChainDbView {
-    getCurrentChain           = ChainDB.getCurrentChain chainDB
+    getCurrentChain           = ChainDB.getCurrentChain         chainDB
+  , getCurrentChainWithTime   = ChainDB.getCurrentChainWithTime chainDB
   , getIsFetched              = ChainDB.getIsFetched chainDB
   , getMaxSlotNo              = ChainDB.getMaxSlotNo chainDB
   , addBlockAsync             = ChainDB.addBlockAsync chainDB
   , getChainSelStarvation     = ChainDB.getChainSelStarvation chainDB
   }
-
--- | How to get the wall-clock time of a slot. Note that this is a very
--- non-trivial operation in the context of the HFC, cf. 'headerForgeUTCTime'.
-type SlotForgeTimeOracle m blk = RealPoint blk -> STM m UTCTime
-
--- | Create a HFC-enabled 'SlotForgeTimeOracle'. Note that its semantics are
--- rather tricky, cf. 'headerForgeUTCTime'.
-initSlotForgeTimeOracle ::
-     forall m blk.
-     ( IOLike m
-     , BlockSupportsProtocol blk
-     , History.HasHardForkHistory blk
-     , SupportsNode.ConfigSupportsNode blk
-     )
-  => TopLevelConfig blk
-  -> ChainDB m blk
-  -> m (SlotForgeTimeOracle m blk)
-initSlotForgeTimeOracle cfg chainDB = do
-    cache <-
-      History.runWithCachedSummary
-        (toSummary <$> ChainDB.getCurrentLedger chainDB)
-    let slotForgeTime rp =
-              fmap
-                (either errMsg toAbsolute)
-            $ History.cachedRunQuery
-                cache
-                (fst <$> History.slotToWallclock (realPointSlot rp))
-          where
-            -- This @cachedRunQuery@ fail for the following reasons.
-            --
-            -- By the PRECONDITIONs documented in the 'headerForgeUTCTime', we
-            -- can assume that the given header was validated by the ChainSync
-            -- client. This means its slot was, at some point, within the ledger
-            -- view forecast range of the ledger state of our contemporary
-            -- intersection with the header itself (and that intersection
-            -- extended our contemporary immutable tip). A few additional facts
-            -- ensure that we will always be able to thereafter correctly
-            -- convert that header's slot using our current chain's ledger
-            -- state.
-            --
-            --   o For under-developed reasons, the ledger view forecast range
-            --     is equivalent to the time forecast range, ie " Definition
-            --     17.2 (Forecast range) " from The Consensus Report.
-            --
-            --   o Because rollback is bounded, our currently selected chain
-            --     will always be an evolution (ie " switch(n, bs) ") of that
-            --     intersection point. (This one is somewhat obvious in
-            --     retrospect, but we're being explicit here in order to
-            --     emphasize the relation to the " chain evolution " jargon.)
-            --
-            --   o Because " stability itself is stable ", the HFC satisfies "
-            --     Property 17.3 (Time conversions stable under chain evolution)
-            --     " from The Consensus Report.
-            errMsg err =
-              error $
-                 "Consensus could not determine forge UTCTime!"
-              <> " " <> show rp
-              <> " " <> show err
-    pure slotForgeTime
-  where
-    toSummary ::
-         ExtLedgerState blk EmptyMK
-      -> History.Summary (History.HardForkIndices blk)
-    toSummary = History.hardForkSummary (configLedger cfg) . ledgerState
-
-    toAbsolute :: RelativeTime -> UTCTime
-    toAbsolute =
-        fromRelativeTime (SupportsNode.getSystemStart (configBlock cfg))
 
 readFetchModeDefault ::
      (MonadSTM m, HasHeader blk)
@@ -183,33 +112,32 @@ mkBlockFetchConsensusInterface ::
      , BlockSupportsDiffusionPipelining blk
      , Ord peer
      , LedgerSupportsProtocol blk
+     , SupportsNode.ConfigSupportsNode blk
      )
   => Tracer m (CSJumping.TraceEventDbf peer)
   -> BlockConfig blk
   -> ChainDbView m blk
   -> CSClient.ChainSyncClientHandleCollection peer m blk
   -> (Header blk -> SizeInBytes)
-  -> SlotForgeTimeOracle m blk
-     -- ^ Slot forge time, see 'headerForgeUTCTime' and 'blockForgeUTCTime'.
   -> STM m FetchMode
      -- ^ See 'readFetchMode'.
   -> DiffusionPipeliningSupport
-  -> BlockFetchConsensusInterface peer (Header blk) blk m
+  -> BlockFetchConsensusInterface peer (HeaderWithTime blk) blk m
 mkBlockFetchConsensusInterface
-  csjTracer bcfg chainDB csHandlesCol blockFetchSize slotForgeTime readFetchMode pipelining =
-    BlockFetchConsensusInterface {..}
+  csjTracer bcfg chainDB csHandlesCol blockFetchSize readFetchMode pipelining =
+    BlockFetchConsensusInterface {blockFetchSize = blockFetchSize . hwtHeader, ..}
   where
-    getCandidates :: STM m (Map peer (AnchoredFragment (Header blk)))
+    getCandidates :: STM m (Map peer (AnchoredFragment (HeaderWithTime blk)))
     getCandidates = CSClient.viewChainSyncState (CSClient.cschcMap csHandlesCol) CSClient.csCandidate
 
-    blockMatchesHeader :: Header blk -> blk -> Bool
-    blockMatchesHeader = Block.blockMatchesHeader
+    blockMatchesHeader :: HeaderWithTime blk -> blk -> Bool
+    blockMatchesHeader hwt b = Block.blockMatchesHeader (hwtHeader hwt) b
 
-    readCandidateChains :: STM m (Map peer (AnchoredFragment (Header blk)))
+    readCandidateChains :: STM m (Map peer (AnchoredFragment (HeaderWithTime blk)))
     readCandidateChains = getCandidates
 
-    readCurrentChain :: STM m (AnchoredFragment (Header blk))
-    readCurrentChain = getCurrentChain chainDB
+    readCurrentChain :: STM m (AnchoredFragment (HeaderWithTime blk))
+    readCurrentChain = getCurrentChainWithTime chainDB
 
     readFetchedBlocks :: STM m (Point blk -> Bool)
     readFetchedBlocks = getIsFetched chainDB
@@ -288,8 +216,8 @@ mkBlockFetchConsensusInterface
     -- fragment, by the time the block fetch download logic considers the
     -- fragment, our current chain might have changed.
     plausibleCandidateChain :: HasCallStack
-                            => AnchoredFragment (Header blk)
-                            -> AnchoredFragment (Header blk)
+                            => AnchoredFragment (HeaderWithTime blk)
+                            -> AnchoredFragment (HeaderWithTime blk)
                             -> Bool
     plausibleCandidateChain ours cand
       -- 1. The ChainDB maintains the invariant that the anchor of our fragment
@@ -332,19 +260,23 @@ mkBlockFetchConsensusInterface
       = preferAnchoredCandidate bcfg ours cand
       where
         anchorBlockNoAndSlot ::
-             AnchoredFragment (Header blk)
+             AnchoredFragment (HeaderWithTime blk)
           -> (WithOrigin BlockNo, WithOrigin SlotNo)
         anchorBlockNoAndSlot frag =
             (AF.anchorToBlockNo a, AF.anchorToSlotNo a)
           where
             a = AF.anchor frag
 
-    compareCandidateChains :: AnchoredFragment (Header blk)
-                           -> AnchoredFragment (Header blk)
+    compareCandidateChains :: AnchoredFragment (HeaderWithTime blk)
+                           -> AnchoredFragment (HeaderWithTime blk)
                            -> Ordering
     compareCandidateChains = compareAnchoredFragments bcfg
 
-    headerForgeUTCTime = slotForgeTime . headerRealPoint . unFromConsensus
+    headerForgeUTCTime :: FromConsensus (HeaderWithTime blk) -> STM m UTCTime
+    headerForgeUTCTime  = pure
+                        . fromRelativeTime (SupportsNode.getSystemStart bcfg)
+                        . hwtSlotRelativeTime
+                        . unFromConsensus
 
     readChainSelStarvation = getChainSelStarvation chainDB
 

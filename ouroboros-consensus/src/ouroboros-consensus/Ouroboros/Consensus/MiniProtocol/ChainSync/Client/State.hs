@@ -28,10 +28,11 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe.Strict (StrictMaybe (..))
 import           Data.Sequence.Strict (StrictSeq)
 import qualified Data.Sequence.Strict as Seq
-import           Data.Typeable (Proxy (..), typeRep)
+import           Data.Typeable (Proxy (..), Typeable, typeRep)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block (HasHeader, Header, Point)
 import           Ouroboros.Consensus.HeaderStateHistory (HeaderStateHistory)
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.Node.GsmState (GsmState)
@@ -45,8 +46,7 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
 data ChainSyncState blk = ChainSyncState {
 
     -- | The current candidate fragment.
-    csCandidate  :: !(AnchoredFragment (Header blk))
-
+    csCandidate  :: !(AnchoredFragment (HeaderWithTime blk))
     -- | Whether the last message sent by the peer was MsgAwaitReply.
     --
     -- This ChainSync client should ensure that its peer sets this flag while
@@ -257,12 +257,12 @@ deriving anyclass instance
 data JumpInfo blk = JumpInfo
   { jMostRecentIntersection  :: !(Point blk)
   , jOurFragment             :: !(AnchoredFragment (Header blk))
-  , jTheirFragment           :: !(AnchoredFragment (Header blk))
+  , jTheirFragment           :: !(AnchoredFragment (HeaderWithTime blk))
   , jTheirHeaderStateHistory :: !(HeaderStateHistory blk)
   }
   deriving (Generic)
 
-instance (HasHeader (Header blk)) => Eq (JumpInfo blk) where
+instance (HasHeader (Header blk), Typeable blk) => Eq (JumpInfo blk) where
   (==) = (==) `on` headPoint . jTheirFragment
 
 instance LedgerSupportsProtocol blk => NoThunks (JumpInfo blk) where

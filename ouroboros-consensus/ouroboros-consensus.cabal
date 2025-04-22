@@ -394,6 +394,7 @@ library unstable-consensus-testlib
     Test.Util.FileLock
     Test.Util.HardFork.Future
     Test.Util.HardFork.OracularClock
+    Test.Util.Header
     Test.Util.InvertedMap
     Test.Util.LedgerStateOnlyTables
     Test.Util.LogicalClock
@@ -439,6 +440,7 @@ library unstable-consensus-testlib
     cardano-ledger-binary:testlib,
     cardano-ledger-core,
     cardano-prelude,
+    cardano-slotting,
     cardano-slotting:testlib,
     cardano-strict-containers,
     cborg,
