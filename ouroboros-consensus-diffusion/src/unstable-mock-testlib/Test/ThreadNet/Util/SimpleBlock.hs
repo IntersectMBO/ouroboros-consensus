@@ -2,7 +2,7 @@
 
 module Test.ThreadNet.Util.SimpleBlock (prop_validSimpleBlock) where
 
-import           Data.Typeable
+import           Data.Typeable (Typeable)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Mock.Ledger
 import           Ouroboros.Consensus.Util.Condense (condense)

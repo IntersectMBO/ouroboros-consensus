@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Fragment.Diff (
     -- * Application
   , apply
     -- * Manipulation
+  , Ouroboros.Consensus.Fragment.Diff.map
   , append
   , mapM
   , takeWhileOldest
@@ -165,6 +166,18 @@ takeWhileOldest ::
   -> ChainDiff b
 takeWhileOldest accept (ChainDiff nbRollback suffix) =
     ChainDiff nbRollback (AF.takeWhileOldest accept suffix)
+
+map ::
+     forall a b.
+     ( HasHeader b
+     , HeaderHash a ~ HeaderHash b
+     )
+  => (a -> b)
+  -> ChainDiff a
+  -> ChainDiff b
+map f (ChainDiff rollback suffix) =
+    ChainDiff rollback
+  $ AF.mapAnchoredFragment f suffix
 
 mapM ::
      forall a b m.

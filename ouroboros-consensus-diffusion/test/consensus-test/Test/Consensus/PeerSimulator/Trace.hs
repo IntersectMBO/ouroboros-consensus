@@ -30,6 +30,7 @@ import           Ouroboros.Consensus.Block (GenesisWindow (..), Header, Point,
                      WithOrigin (NotOrigin, Origin), succWithOrigin)
 import           Ouroboros.Consensus.Genesis.Governor (DensityBounds (..),
                      GDDDebugInfo (..), TraceGDDEvent (..))
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (TraceChainSyncClientEvent (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping
@@ -59,8 +60,9 @@ import           Ouroboros.Network.Protocol.ChainSync.Type (ChainSync,
 import           Test.Consensus.PointSchedule.NodeState (NodeState)
 import           Test.Consensus.PointSchedule.Peers (Peer (Peer), PeerId)
 import           Test.Util.TersePrinting (terseAnchor, terseBlock,
-                     terseFragment, terseHFragment, terseHeader, tersePoint,
-                     terseRealPoint, terseTip, terseWithOrigin)
+                     terseFragment, terseHFragment, terseHWTFragment,
+                     terseHeader, tersePoint, terseRealPoint, terseTip,
+                     terseWithOrigin)
 import           Test.Util.TestBlock (TestBlock)
 import           Text.Printf (printf)
 
@@ -555,7 +557,7 @@ prettyDensityBounds bounds =
         -- the density comparison should not be applied to two peers if they share any headers after the LoE fragment.
         lastPoint =
           "point: " ++
-          tersePoint (castPoint @(Header TestBlock) @TestBlock (AF.lastPoint clippedFragment)) ++
+          tersePoint (castPoint @(HeaderWithTime TestBlock) @TestBlock (AF.lastPoint clippedFragment)) ++
           ", "
 
         showLatestSlot = \case
@@ -582,14 +584,14 @@ terseGDDEvent = \case
     } ->
     unlines $ [
       "GDD | Window: " ++ window sgen loeHead,
-      "      Selection: " ++ terseHFragment curChain,
+      "      Selection: " ++ terseHWTFragment curChain,
       "      Candidates:"
       ] ++
       showPeers (second (tersePoint . castPoint . AF.headPoint) <$> candidates) ++
       [
       "      Candidate suffixes (bounds):"
       ] ++
-      showPeers (second (terseHFragment . clippedFragment) <$> bounds) ++
+      showPeers (second (terseHWTFragment . clippedFragment) <$> bounds) ++
       ["      Density bounds:"] ++
       prettyDensityBounds bounds ++
       ["      New candidate tips:"] ++

@@ -18,6 +18,7 @@ module Ouroboros.Consensus.Block.Abstract (
   , blockPrevHash
     -- * Working with headers
   , GetHeader (..)
+  , GetHeader1 (..)
   , Header
   , blockIsEBB
   , blockToIsEBB
@@ -127,6 +128,7 @@ data family Header blk :: Type
 
 class HasHeader (Header blk) => GetHeader blk where
   getHeader          :: blk -> Header blk
+
   -- | Check whether the header is the header of the block.
   --
   -- For example, by checking whether the hash of the body stored in the
@@ -147,6 +149,11 @@ blockToIsEBB :: GetHeader blk => blk -> IsEBB
 blockToIsEBB = headerToIsEBB . getHeader
 
 type instance BlockProtocol (Header blk) = BlockProtocol blk
+
+class GetHeader1 t where
+  getHeader1 :: t blk -> Header blk
+
+instance GetHeader1 Header where getHeader1 = id
 
 {-------------------------------------------------------------------------------
   Some automatic instances for 'Header'

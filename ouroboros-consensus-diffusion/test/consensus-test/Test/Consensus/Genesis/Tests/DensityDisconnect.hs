@@ -31,6 +31,7 @@ import           Ouroboros.Consensus.Config.SecurityParam
                      (SecurityParam (SecurityParam), maxRollbacks)
 import           Ouroboros.Consensus.Genesis.Governor (DensityBounds,
                      densityDisconnect, sharedCandidatePrefix)
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (ChainSyncClientException (..), ChainSyncState (..))
 import           Ouroboros.Consensus.Util.Condense (condense)
@@ -59,12 +60,15 @@ import           Test.QuickCheck
 import           Test.QuickCheck.Extras (unsafeMapSuchThatJust)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
+import           Test.Util.Header (attachSlotTimeToFragment)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.PartialAccessors
-import           Test.Util.TersePrinting (terseHFragment, terseHeader)
-import           Test.Util.TestBlock (TestBlock)
+import           Test.Util.TersePrinting (terseHFragment, terseHWTFragment,
+                     terseHeader)
+import           Test.Util.TestBlock (TestBlock, singleNodeTestConfig)
 import           Test.Util.TestEnv (adjustQuickCheckMaxSize,
                      adjustQuickCheckTests)
+
 
 tests :: TestTree
 tests =
@@ -87,9 +91,9 @@ data StaticCandidates =
   StaticCandidates {
     k        :: SecurityParam,
     sgen     :: GenesisWindow,
-    suffixes :: [(PeerId, AnchoredFragment (Header TestBlock))],
+    suffixes :: [(PeerId, AnchoredFragment (HeaderWithTime TestBlock))],
     tips     :: Map PeerId (Tip TestBlock),
-    loeFrag  :: AnchoredFragment (Header TestBlock)
+    loeFrag  :: AnchoredFragment (HeaderWithTime TestBlock)
   }
   deriving Show
 
@@ -100,7 +104,7 @@ data StaticCandidates =
 -- 'sharedCandidatePrefix' from the selection.
 staticCandidates :: GenesisTest TestBlock s -> [StaticCandidates]
 staticCandidates GenesisTest {gtSecurityParam, gtGenesisWindow, gtBlockTree} =
-  one . toHeaders <$> selections
+ one . attachTimeUsingTestConfig . toHeaders <$> selections
   where
     one curChain =
       StaticCandidates {
@@ -112,7 +116,11 @@ staticCandidates GenesisTest {gtSecurityParam, gtGenesisWindow, gtBlockTree} =
       }
       where
         (loeFrag, suffixes) =
-          sharedCandidatePrefix curChain (second toHeaders <$> candidates)
+          sharedCandidatePrefix
+              curChain
+              (second (attachTimeUsingTestConfig . toHeaders)
+                <$> candidates
+              )
 
     selections = selection <$> branches
 
@@ -128,6 +136,15 @@ staticCandidates GenesisTest {gtSecurityParam, gtGenesisWindow, gtBlockTree} =
 
     branches = btBranches gtBlockTree
 
+-- | Attach a relative slot time to a fragment of headers using the
+-- 'singleNodeTestConfig'. Since 'k' is not used for time conversions,
+-- it is safe to use this configuration even if other 'k' values are
+-- used in the tests that call this function.
+attachTimeUsingTestConfig ::
+  AnchoredFragment (Header TestBlock) ->
+  AnchoredFragment (HeaderWithTime TestBlock)
+attachTimeUsingTestConfig = attachSlotTimeToFragment singleNodeTestConfig
+
 -- | Check that the GDD disconnects from some peers for each full Genesis window starting at any of a block tree's
 -- intersections, and that it's not the honest peer.
 prop_densityDisconnectStatic :: Property
@@ -139,7 +156,7 @@ prop_densityDisconnectStatic =
      counterexample "it should not disconnect the honest peers"
        (not $ any isHonestPeerId disconnect)
   where
-    mkState :: AnchoredFragment (Header TestBlock) -> ChainSyncState TestBlock
+    mkState :: AnchoredFragment (HeaderWithTime TestBlock) -> ChainSyncState TestBlock
     mkState frag =
       ChainSyncState {
         csCandidate = frag,
@@ -167,7 +184,7 @@ data EvolvingPeers =
     k        :: SecurityParam,
     sgen     :: GenesisWindow,
     peers    :: Peers EvolvingPeer,
-    loeFrag  :: AnchoredFragment (Header TestBlock),
+    loeFrag  :: AnchoredFragment (HeaderWithTime TestBlock),
     fullTree :: BlockTree TestBlock
   }
   deriving Show
@@ -227,7 +244,7 @@ data UpdateEvent = UpdateEvent {
   , bounds   :: [(PeerId, DensityBounds TestBlock)]
     -- | The current chains
   , tree     :: BlockTree (Header TestBlock)
-  , loeFrag  :: AnchoredFragment (Header TestBlock)
+  , loeFrag  :: AnchoredFragment (HeaderWithTime TestBlock)
   , curChain :: AnchoredFragment (Header TestBlock)
   }
 
@@ -240,7 +257,7 @@ prettyUpdateEvent UpdateEvent {target, added, killed, bounds, tree, loeFrag, cur
   [
     "Extended " ++ condense target ++ " with " ++ terseHeader added,
     "        disconnect: " ++ show killed,
-    "        LoE frag: " ++ terseHFragment loeFrag,
+    "        LoE frag: " ++ terseHWTFragment loeFrag,
     "        selection: " ++ terseHFragment curChain
   ]
   ++ prettyDensityBounds bounds
@@ -377,12 +394,17 @@ evolveBranches EvolvingPeers {k, sgen, peers = initialPeers, fullTree} =
         states =
           candidates <&> \ csCandidate ->
             ChainSyncState {
-              csCandidate,
+              csCandidate = attachTimeUsingTestConfig csCandidate,
               csIdling = False,
               csLatestSlot = SJust (AF.headSlot csCandidate)
             }
         -- Run GDD.
-        (loeFrag, suffixes) = sharedCandidatePrefix curChain (Map.toList candidates)
+        (loeFrag, suffixes) =
+          sharedCandidatePrefix
+             (attachTimeUsingTestConfig curChain)
+             (Map.toList $
+               fmap attachTimeUsingTestConfig candidates
+             )
         (killedNow, bounds) = first Set.fromList $ densityDisconnect sgen k states suffixes loeFrag
         event = UpdateEvent {
           target,
@@ -415,7 +437,7 @@ peerInfo EvolvingPeers {k = SecurityParam k, sgen = GenesisWindow sgen, loeFrag}
   [
     "k: " <> show k,
     "sgen: " <> show sgen,
-    "loeFrag: " <> terseHFragment loeFrag
+    "loeFrag: " <> terseHWTFragment loeFrag
   ]
 
 -- | Tests that when GDD disconnects a peer, it continues to disconnect it when

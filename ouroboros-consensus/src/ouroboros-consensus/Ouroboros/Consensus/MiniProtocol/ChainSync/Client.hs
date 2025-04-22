@@ -120,8 +120,8 @@ import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import           Ouroboros.Consensus.Util
-import           Ouroboros.Consensus.Util.AnchoredFragment (cross,
-                     preferAnchoredCandidate)
+import           Ouroboros.Consensus.Util.AnchoredFragment
+                     (preferAnchoredCandidate)
 import           Ouroboros.Consensus.Util.Assert (assertWithMsg)
 import           Ouroboros.Consensus.Util.EarlyExit (WithEarlyExit, exitEarly)
 import qualified Ouroboros.Consensus.Util.EarlyExit as EarlyExit
@@ -304,7 +304,7 @@ noLoPBucket =
 -- 'bracketChainSyncClient'.
 data ChainSyncStateView m blk = ChainSyncStateView {
     -- | The current candidate fragment
-    csvSetCandidate  :: !(AnchoredFragment (Header blk) -> STM m ())
+    csvSetCandidate  :: !(AnchoredFragment (HeaderWithTime blk) -> STM m ())
 
     -- | Update the slot of the latest received header
   , csvSetLatestSlot :: !(WithOrigin SlotNo -> STM m ())
@@ -638,7 +638,7 @@ data KnownIntersectionState blk = KnownIntersectionState {
     -- 'theirFrag' forks off within the last @k@ headers/blocks of the
     -- 'ourFrag'.
   ,
-    theirFrag               :: !(AnchoredFragment (Header blk))
+    theirFrag               :: !(AnchoredFragment (HeaderWithTime blk))
     -- ^ The candidate, the synched fragment of their chain.
     --
     -- See the \"Candidate fragment size\" note above.
@@ -663,7 +663,7 @@ instance
   => NoThunks (KnownIntersectionState blk) where
     showTypeOf _ = show $ typeRep (Proxy @(KnownIntersectionState blk))
 
-checkKnownIntersectionInvariants ::
+checkKnownIntersectionInvariants :: forall blk.
     ( HasHeader blk
     , HasHeader (Header blk)
     , HasAnnTip blk
@@ -675,8 +675,10 @@ checkKnownIntersectionInvariants ::
 checkKnownIntersectionInvariants cfg kis
     -- 'theirHeaderStateHistory' invariant
     | let HeaderStateHistory snapshots = theirHeaderStateHistory
+          historyTips :: [WithOrigin (AnnTip blk)]
           historyTips  = headerStateTip . hswtHeaderState <$> AS.toOldestFirst snapshots
-          fragmentTips = NotOrigin . getAnnTip <$> AF.toOldestFirst theirFrag
+          fragmentTips :: [WithOrigin (AnnTip blk)]
+          fragmentTips = NotOrigin . getAnnTip . hwtHeader <$> AF.toOldestFirst theirFrag
 
           fragmentAnchorPoint = castPoint $ AF.anchorPoint theirFrag
           historyAnchorPoint  =
@@ -713,7 +715,7 @@ checkKnownIntersectionInvariants cfg kis
 
     | let ourFragAnchor   = AF.anchorPoint ourFrag
           theirFragAnchor = AF.anchorPoint theirFrag
-    , ourFragAnchor /= theirFragAnchor
+    , ourFragAnchor /= castPoint theirFragAnchor
     = throwError $ unwords
       [ "ourFrag and theirFrag have different anchor points:"
       , show ourFragAnchor
@@ -785,7 +787,7 @@ data DynamicEnv m blk = DynamicEnv {
     version             :: NodeToNodeVersion
   , controlMessageSTM   :: ControlMessageSTM m
   , headerMetricsTracer :: HeaderMetricsTracer m
-  , setCandidate        :: AnchoredFragment (Header blk) -> STM m ()
+  , setCandidate        :: AnchoredFragment (HeaderWithTime blk) -> STM m ()
   , setLatestSlot       :: WithOrigin SlotNo -> STM m ()
   , idling              :: Idling m
   , loPBucket           :: LoPBucket m
@@ -957,11 +959,12 @@ chainSyncClient cfgEnv dynEnv =
         -- ('rollBackward'), so we have nothing to do.
         let noChange = AF.headPoint ourFrag == AF.headPoint ourFrag'
 
-        return $ if noChange then StillIntersects () kis else
-            case cross ourFrag' theirFrag of
-                Nothing -> NoLongerIntersects
-
-                Just (intersection, trimmedCandidate) ->
+        return $ if noChange then StillIntersects () kis else do
+            case AF.intersectionPoint ourFrag' theirFrag of
+                Just intersection
+                  | Just (_, trimmedCandidate) <-
+                      AF.splitAfterPoint theirFrag (AF.anchorPoint ourFrag')
+                  ->
                     -- Even though our current chain changed it still
                     -- intersects with candidate fragment, so update the
                     -- 'ourFrag' field and trim the candidate fragment to the
@@ -987,6 +990,8 @@ chainSyncClient cfgEnv dynEnv =
                                 theirHeaderStateHistory
                       , kBestBlockNo
                       }
+
+                _ -> NoLongerIntersects
 
 {-------------------------------------------------------------------------------
   (Re-)Establishing a common intersection
@@ -1112,7 +1117,11 @@ findIntersectionTop cfgEnv dynEnv intEnv =
             (theirFrag, theirHeaderStateHistory) <- do
                 case attemptRollback
                          intersection
-                         (ourFrag, ourHeaderStateHistory)
+                         -- We only perform the linear computation
+                         -- required by 'withTime' once when finding
+                         -- an intersection with a peer, so this
+                         -- should not impact the performance.
+                         (ourFrag `withTime` ourHeaderStateHistory, ourHeaderStateHistory)
                   of
                     Just (c, d, _oldestRewound) -> return (c, d)
                     Nothing ->
@@ -1138,6 +1147,35 @@ findIntersectionTop cfgEnv dynEnv intEnv =
               setLatestSlot dynEnv (AF.headSlot theirFrag)
             continueWithState kis $
                 knownIntersectionStateTop cfgEnv dynEnv intEnv theirTip
+
+-- | Augment the given fragment of headers with the times specified in
+-- the given state history.
+--
+-- PRECONDITION: the fragment must be a prefix of the state history.
+--
+withTime ::
+     (Typeable blk, HasHeader (Header blk))
+  => AnchoredFragment (Header blk)
+  -> HeaderStateHistory blk
+  -> AnchoredFragment (HeaderWithTime blk)
+withTime fragment (HeaderStateHistory history) =
+    assertWithMsg (
+      if AF.length fragment == AF.length history
+      then Right ()
+      else Left $ "Fragment and history have different lengths (|fragment| = "
+                   ++ show (AF.length fragment)
+                   ++ ", |history| = " ++ show (AF.length history)
+                   ++ ")"
+      ) $
+    AF.fromOldestFirst
+        (AF.castAnchor $ AF.anchor fragment)
+        $ fmap addTimeToHeader $ zip (AF.toOldestFirst fragment) (AF.toOldestFirst history)
+  where
+     addTimeToHeader :: (Header blk, HeaderStateWithTime blk) -> HeaderWithTime blk
+     addTimeToHeader (hdr, hsWt) = HeaderWithTime {
+         hwtHeader = hdr
+       , hwtSlotRelativeTime = hswtSlotTime hsWt
+     }
 
 {-------------------------------------------------------------------------------
   Processing 'MsgRollForward' and 'MsgRollBackward'
@@ -1866,7 +1904,11 @@ checkValid cfgEnv intEnv hdr hdrSlotTime theirTip kis ledgerView = do
                 disconnect
               $ HeaderError hdrPoint vErr (ourTipFromChain ourFrag) theirTip
 
-    let theirFrag' = theirFrag :> hdr
+    let
+        validatedHdr = HeaderWithTime { hwtHeader           = hdr
+                                      , hwtSlotRelativeTime = hdrSlotTime
+                                      }
+        theirFrag' = theirFrag :> validatedHdr
         -- Advance the most recent intersection if we have the same
         -- header on our fragment too. This is cheaper than recomputing
         -- the intersection from scratch.
@@ -1982,8 +2024,8 @@ ourTipFromChain ::
 ourTipFromChain = Our . AF.anchorToTip . AF.headAnchor
 
 theirTipFromChain ::
-     HasHeader (Header blk)
-  => AnchoredFragment (Header blk)
+     HasHeader (HeaderWithTime blk)
+  => AnchoredFragment (HeaderWithTime blk)
   -> Their (Tip blk)
 theirTipFromChain = Their . AF.anchorToTip . AF.headAnchor
 
@@ -1996,9 +2038,9 @@ attemptRollback ::
      , HasAnnTip blk
      )
   => Point blk
-  ->       (AnchoredFragment (Header blk), HeaderStateHistory blk)
+  ->       (AnchoredFragment (HeaderWithTime blk), HeaderStateHistory blk)
   -> Maybe
-       ( AnchoredFragment (Header blk)
+       ( AnchoredFragment (HeaderWithTime blk)
        , HeaderStateHistory blk
        , -- The state of the oldest header that was rolled back, if any.
          Maybe (HeaderStateWithTime blk)
@@ -2037,7 +2079,7 @@ invalidBlockRejector ::
   -> DiffusionPipeliningSupport
   -> STM m (WithFingerprint (HeaderHash blk -> Maybe (ExtValidationError blk)))
      -- ^ Get the invalid block checker
-  -> STM m (AnchoredFragment (Header blk))
+  -> STM m (AnchoredFragment (HeaderWithTime blk))
      -- ^ Get the candidate
   -> Watcher m
          (WithFingerprint (HeaderHash blk -> Maybe (ExtValidationError blk)))
@@ -2063,10 +2105,17 @@ invalidBlockRejector tracer _version pipelining getIsInvalidBlock getCandidate =
         -- tentative
         mapM_ (uncurry disconnect)
           $ firstJust
-                (\hdr -> (hdr,) <$> isInvalidBlock (headerHash hdr))
+                (\hdrWithTime ->
+                   let hdr = hwtHeader hdrWithTime in
+                     (hdr,) <$> isInvalidBlock (headerHash hdr)
+                )
           $ (   case pipelining of
-                    DiffusionPipeliningOn  -> drop 1
                     DiffusionPipeliningOff -> id
+                    DiffusionPipeliningOn  ->
+                      -- As mentioned in the comment above, if the
+                      -- header is tentative we skip the fragment tip,
+                      -- dropping the first element.
+                      drop 1
             )
           $ AF.toNewestFirst theirFrag
 
