@@ -355,10 +355,11 @@ bisectionStep y bi found =
             rejected         = rejected'
           }
 
--- | For 'jumpings' that just processed their latest response
+-- | For 'Jumpings' that have processed the latest reply from their
+-- peer
 --
--- They were otherwise about to either become 'jumpeds' or send another request
--- and stay in 'jumpings'.
+-- They were otherwise about to either become 'Jumpeds' or send
+-- another request and stay in 'Jumpings'.
 newJumpRequest ::
      Ord p
   => JumpRequest p
@@ -383,7 +384,7 @@ newJumpRequest req (y, eBi) =
             Nothing
           )
 
--- | For possibly restarting 'jumpeds' and for pivoting 'jumpings' that just
+-- | For possibly restarting 'Jumpeds' and for pivoting 'Jumpings' that just
 -- processed their latest response
 --
 -- Note that the resulting 'notYetDetermined' has already been constrained by
@@ -548,7 +549,7 @@ data NonDynamo p =
     -- intersection with the jump request.
     --
     -- The 'JumpRequest' is present if a new request arose.
-    Jumping !(CsjClientState p) !(Bisecting p) !(Maybe (JumpRequest p))
+    Jumping !(CsjClientState p) !(Bisecting p) !(SentStatus p)
   |
     -- | Peers that are currently challenging the Dynamo
     --
@@ -556,6 +557,39 @@ data NonDynamo p =
     Objector !(Class p) !(CsjClientState p) !(Maybe p)
   deriving (Read, Show)
 
+data SentStatus p =
+    -- | The CSJ governor is waiting for the ChainSync client to
+    -- report the peer's reply to the 'MsgFindIntersect' that was
+    -- sent
+    --
+    -- The CSJ governor will not emit more 'MsgFindIntersect' in this
+    -- state.
+    --
+    -- The argument is 'Just' if a new 'JumpRequest' arose before the
+    -- CSJ governor was informed of the peer's reply to the latest
+    -- jump.
+    --
+    -- When the reply arrives, the peer either continues bisecting
+    -- with 'NotYetSet' (pivoting if there's a new jump request) or it
+    -- finishes bisecting with 'Jumped' (and perhaps is immediately
+    -- promoted). (Or it might disengage.)
+    AlreadySent !(Maybe (JumpRequest p))
+  |
+    -- | The CSJ governor has emitted at least one 'MsgFindIntersect'
+    -- to this 'Jumping' peer and is waiting for the ChainSync client
+    -- to indicate that it has sent the most recently emitted
+    -- 'MsgFindIntersect' by signaling 'Offered'
+    --
+    -- The CSJ governer might emit more 'MsgFindIntersect' until that
+    -- 'Offered' happens.
+    --
+    -- The most interesting motivation for 'NotYetSet' is if the
+    -- Dynamo was demoted while blocked on the forecast range. It will
+    -- be stuck until the forecast horizon advances far enough, and
+    -- during that time the CSJ governor will consider it to be
+    -- 'NotYetSent', without needing any details beyond that.
+    NotYetSent
+  deriving (Read, Show)
 
 objectorClasses :: Ord p => CsjState pid p -> Set (Class p)
 objectorClasses x =
@@ -580,6 +614,10 @@ data CsjStimulus p =
   |
     -- | The peer disconnected, including LoP, GDD, etc
     Disconnect
+  |
+    -- | The ChainSync client sent the CSJ's latest 'MsgFindIntersect'
+    -- to the peer
+    Offered
   |
     -- | The peer starved ChainSel
     Starvation
@@ -663,7 +701,7 @@ csjReactions env x pid = fmap (issueNextJump env . backfill) . \case
                             rejected         = Nothing
                           }
                     in
-                    (Jumping y bi Nothing, Just (nextMsgFindIntersect bi))
+                    (Jumping y bi NotYetSent, Just (nextMsgFindIntersect bi))
         in (
             CsjState {
                 dynamo     = dynamo x
@@ -692,11 +730,11 @@ csjReactions env x pid = fmap (issueNextJump env . backfill) . \case
             -- recent headers, and there could be thousands of them.
 
         MsgIntersectionFound p ->
-                onJumping (intersectionFound p)
+                onAlreadySent (intersectionFound p)
             <|>
                 onActive (finishPromotion p)
         MsgIntersectionNotFound ->
-                onJumping intersectionNotFound
+                onAlreadySent intersectionNotFound
             <|>
                 -- The Jumper failed its promotion.
                 onActive (const L.Nothing)
@@ -708,6 +746,8 @@ csjReactions env x pid = fmap (issueNextJump env . backfill) . \case
           $ preDynamo p <|> preObjector p
 
     Disconnect -> pure disconnect
+
+    Offered -> onNotYetSent
 
     Starvation -> do
         Dynamo pid' clss y _mbQ <- toLazy $ dynamo x
@@ -812,9 +852,35 @@ csjReactions env x pid = fmap (issueNextJump env . backfill) . \case
                 [(pid, Continue)]
               )
 
-    onJumping f = do
-        Jumping y bi mbNext <- Map.lookup pid (nonDynamos x)
-        pure $ case maybe id newJumpRequest mbNext <$> f y bi of
+    onNotYetSent = do
+        Jumping y bi sent <- Map.lookup pid (nonDynamos x)
+        case sent of
+            AlreadySent _mbNext -> L.Nothing
+            NotYetSent          -> pure ()
+        pure (
+            CsjState {
+                dynamo     = dynamo x
+              ,
+                latestJump = latestJump x
+              ,
+                nonDynamos =
+                    Map.insert
+                        pid
+                        (Jumping y bi (AlreadySent Nothing))
+                        (nonDynamos x)
+              ,
+                queue      = queue x
+              }
+          ,
+            []
+          )
+
+    onAlreadySent f = do
+        Jumping y bi sent <- Map.lookup pid (nonDynamos x)
+        k <- case sent of
+            AlreadySent mbNext -> pure $ maybe id newJumpRequest mbNext
+            NotYetSent         -> L.Nothing
+        pure $ case k <$> f y bi of
             L.Nothing         -> disengage
             L.Just (y', eBi') -> case eBi' of
                 Left clss -> (
@@ -843,7 +909,7 @@ csjReactions env x pid = fmap (issueNextJump env . backfill) . \case
                         nonDynamos =
                             Map.insert
                                 pid
-                                (Jumping y' bi' Nothing)
+                                (Jumping y' bi' NotYetSent)
                                 (nonDynamos x)
                       ,
                         queue      = queue x
@@ -1150,12 +1216,21 @@ issueNextJump env (x, msgs) =
                         case newJumpRequest2 req y (Just clss) of
                             Left clss' -> (Jumped clss' y, acc)
                             Right bi   -> (
-                                Jumping y bi Nothing
+                                Jumping y bi NotYetSent
                               ,
                                 (pid, nextMsgFindIntersect bi) : acc
                               )
-                    Jumping y bi _next ->
-                        (Jumping y bi (Just req), [])
+                    Jumping y bi sent -> case sent of
+                        AlreadySent _mbNext ->
+                            (Jumping y bi (AlreadySent (Just req)), [])
+                        NotYetSent          ->
+                            case newJumpRequest req (y, Right bi) of
+                                (y', Left clss') -> (Jumped clss' y', acc)
+                                (y', Right bi')   -> (
+                                    Jumping y' bi' NotYetSent
+                                  ,
+                                    (pid, nextMsgFindIntersect bi') : acc
+                                  )
                     Objector clss y mbQ ->
                         -- This 'min' ensures the Objector's class is a point
                         -- in the new jump.
