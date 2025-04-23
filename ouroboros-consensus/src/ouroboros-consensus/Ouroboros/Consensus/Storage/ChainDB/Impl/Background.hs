@@ -128,7 +128,7 @@ copyToImmutableDB ::
   -> Electric m (WithOrigin SlotNo)
 copyToImmutableDB CDB{..} = electric $ do
     toCopy <- atomically $ do
-      curChain <- readTVar cdbChain
+      curChain <- icWithoutTime <$> readTVar cdbChain
       let nbToCopy = max 0 (AF.length curChain - fromIntegral (unNonZero k))
           toCopy :: [Point blk]
           toCopy = map headerPoint
@@ -175,12 +175,11 @@ copyToImmutableDB CDB{..} = electric $ do
     removeFromChain :: Point blk -> STM m ()
     removeFromChain pt = do
       -- The chain might have been extended in the meantime.
-      curChain <- readTVar cdbChain
-      case curChain of
-        hdr :< curChain'
+      readTVar cdbChain >>= \case
+        InternalChain (hdr :< newChain) (_hwt :< newChainWithTime)
           | headerPoint hdr == pt
-          -> writeTVar cdbChain curChain'
-        -- We're the only one removing things from 'curChain', so this cannot
+          -> writeTVar cdbChain $ InternalChain newChain newChainWithTime
+        -- We're the only one removing things from 'cdbChain', so this cannot
         -- happen if the precondition was satisfied.
         _ -> error "header to remove not on the current chain"
 
@@ -242,7 +241,7 @@ copyAndSnapshotRunner cdb@CDB{..} gcSchedule replayed fuse = do
 
       -- Wait for the chain to grow larger than @k@
       numToWrite <- atomically $ do
-        curChain <- readTVar cdbChain
+        curChain <- icWithoutTime <$> readTVar cdbChain
         check $ fromIntegral (AF.length curChain) > unNonZero k
         return $ fromIntegral (AF.length curChain) - unNonZero k
 

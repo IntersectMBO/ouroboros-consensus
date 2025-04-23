@@ -18,8 +18,10 @@ import           Control.Tracer (Tracer (..), traceWith)
 import           Data.Functor (void)
 import           Data.Set (Set)
 import qualified Data.Set as Set
+import           Data.Typeable (Typeable)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (ChainSyncClientHandleCollection (..))
 import           Ouroboros.Consensus.Storage.ChainDB.API
@@ -90,7 +92,7 @@ data LiveResources blk m = LiveResources {
   , lrCdb      :: NodeDBs (StrictTMVar m MockFS)
 
     -- | The LoE fragment must be reset for each live interval.
-  , lrLoEVar   :: LoE (StrictTVar m (AnchoredFragment (Header blk)))
+  , lrLoEVar   :: LoE (StrictTVar m (AnchoredFragment (HeaderWithTime blk)))
   }
 
 data LiveInterval blk m = LiveInterval {
@@ -190,7 +192,7 @@ lifecycleStart start liResources liResult = do
 -- | Shut down the node by killing all its threads after extracting the
 -- persistent state used to restart the node later.
 lifecycleStop ::
-  (IOLike m, GetHeader blk) =>
+  (IOLike m, GetHeader blk, Typeable blk) =>
   LiveResources blk m ->
   LiveNode blk m ->
   m (LiveIntervalResult blk)

@@ -119,6 +119,8 @@ import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Forecast
 import           Ouroboros.Consensus.HardFork.Abstract
+import           Ouroboros.Consensus.HardFork.Combinator.Abstract
+                     (ImmutableEraParams (immutableEraParams))
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
@@ -312,7 +314,7 @@ newtype instance Header (TestBlockWith ptype) =
 
 instance Typeable ptype => ShowProxy (Header (TestBlockWith ptype)) where
 
-instance (Typeable ptype) => HasHeader (Header (TestBlockWith ptype)) where
+instance Typeable ptype => HasHeader (Header (TestBlockWith ptype)) where
   getHeaderFields (TestHeader TestBlockWith{..}) = HeaderFields {
         headerFieldHash    = tbHash
       , headerFieldSlot    = tbSlot
@@ -682,6 +684,9 @@ singleNodeTestConfigWith codecConfig storageConfig k genesisWindow = TopLevelCon
         },
       tblcForecastRange = SNothing
     }
+
+instance ImmutableEraParams (TestBlockWith ptype) where
+    immutableEraParams = tblcHardForkParams . topLevelConfigLedger
 
 {-------------------------------------------------------------------------------
   Test blocks without payload

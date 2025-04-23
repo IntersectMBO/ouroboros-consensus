@@ -26,8 +26,10 @@ module Ouroboros.Consensus.Node.Genesis (
 import           Control.Monad (join)
 import           Data.Maybe (fromMaybe)
 import           Data.Traversable (for)
+import           Data.Typeable (Typeable)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (CSJConfig (..), CSJEnabledConfig (..),
                      ChainSyncLoPBucketConfig (..),
@@ -194,7 +196,7 @@ data LoEAndGDDNodeKernelArgs m blk = LoEAndGDDNodeKernelArgs {
 -- 'ChainDB.GetLoEFragment' that will be replaced via 'setGetLoEFragment') and a
 -- function to update the 'ChainDbArgs' accordingly.
 mkGenesisNodeKernelArgs ::
-     forall m blk. (IOLike m, GetHeader blk)
+     forall m blk. (IOLike m, GetHeader blk, Typeable blk)
   => GenesisConfig
   -> m ( GenesisNodeKernelArgs m blk
        , Complete ChainDbArgs m blk -> Complete ChainDbArgs m blk
@@ -222,9 +224,9 @@ mkGenesisNodeKernelArgs gcfg = do
 -- | Set 'gnkaGetLoEFragment' to the actual logic for determining the current
 -- LoE fragment.
 setGetLoEFragment ::
-     forall m blk. (IOLike m, GetHeader blk)
+     forall m blk. (IOLike m, GetHeader blk, Typeable blk)
   => STM m GSM.GsmState
-  -> STM m (AnchoredFragment (Header blk))
+  -> STM m (AnchoredFragment (HeaderWithTime blk))
      -- ^ The LoE fragment.
   -> StrictTVar m (ChainDB.GetLoEFragment m blk)
   -> m ()
