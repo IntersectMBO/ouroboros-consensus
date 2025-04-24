@@ -140,8 +140,6 @@ deriving stock instance
   , StandardHash blk
   ) => Show (TraceImmutalisationEvent blk)
 
--- data ImmutalisationException =
-
 -- | Copy a specific chain from the given 'VolatileDB' to the 'ImmutableDB',
 -- such that other tools that only work with an 'ImmutableDB' can process the
 -- corresponding blocks.
