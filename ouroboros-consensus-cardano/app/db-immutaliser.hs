@@ -37,4 +37,12 @@ optsParser =
         , help "Path to config file, in the same format as for the node or db-analyser"
         , metavar "PATH"
         ]
-      pure Opts {dbDirs, configFile}
+      verbose <- switch $ mconcat
+        [ long "verbose"
+        , help "Enable verbose logging"
+        ]
+      dotOut <- optional $ strOption $ mconcat
+        [ long "dot-out"
+        , help "Write the volatile block tree to a file in DOT format"
+        ]
+      pure Opts {dbDirs, configFile, verbose, dotOut}
