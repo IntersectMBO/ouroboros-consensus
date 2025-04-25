@@ -100,28 +100,13 @@ instance CardanoHardForkConstraints c => MemPack (CanonicalTxIn (CardanoEras c))
   packedByteCount = packedByteCount . getCardanoTxIn
   unpackM = CardanoTxIn <$> unpackM
 
--- Unpacking the fields of the era-specific TxOuts could save a chunk of memory.
--- However, unpacking of sum types is only possible on @ghc-9.6.1@ and later, so
--- before @ghc-9.6.1@ we only unpack the TxOuts for eras before Alonzo.
---
--- For more information on the @UNPACK@ pragma, see
--- https://downloads.haskell.org/ghc/latest/docs/users_guide/exts/pragmas.html#unpack-pragma
 data CardanoTxOut c =
-#if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
-    ShelleyTxOut {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) ShelleyEra)))
-  | AllegraTxOut {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) AllegraEra)))
-  | MaryTxOut    {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) MaryEra)))
-  | AlonzoTxOut  {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) AlonzoEra)))
-  | BabbageTxOut {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (Praos c) BabbageEra)))
-  | ConwayTxOut  {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (Praos c) ConwayEra)))
-#else
     ShelleyTxOut {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) ShelleyEra)))
   | AllegraTxOut {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) AllegraEra)))
   | MaryTxOut    {-# UNPACK #-} !(TxOut (LedgerState (ShelleyBlock (TPraos c) MaryEra)))
   | AlonzoTxOut  !(TxOut (LedgerState (ShelleyBlock (TPraos c) AlonzoEra)))
   | BabbageTxOut !(TxOut (LedgerState (ShelleyBlock (Praos c) BabbageEra)))
   | ConwayTxOut  !(TxOut (LedgerState (ShelleyBlock (Praos c) ConwayEra)))
-#endif
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
