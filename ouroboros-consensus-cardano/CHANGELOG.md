@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.25.0.1'></a>
+## 0.25.0.1 -- 2025-04-25
+
+### Patch
+
+- Do not unpack the sum `TxOut`s in `CardanoTxOut`.
+
 <a id='changelog-0.25.0.0'></a>
 ## 0.25.0.0 -- 2025-04-21
 
