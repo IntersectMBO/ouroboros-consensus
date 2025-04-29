@@ -20,6 +20,7 @@ module Cardano.Tools.DBImmutaliser.Run (
 
 import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
 import           Cardano.Tools.DBAnalyser.HasAnalysis (mkProtocolInfo)
+import           Control.Monad (unless)
 import           Control.ResourceRegistry
 import           Control.Tracer (Tracer (..), stdoutTracer, traceWith)
 import           Data.Foldable (for_)
@@ -62,16 +63,17 @@ data Opts = Opts {
   , configFile :: FilePath
   , verbose    :: Bool
   , dotOut     :: Maybe FilePath
+  , dryRun     :: Bool
   }
 
 run :: Opts -> IO ()
-run Opts {dbDirs, configFile, verbose, dotOut} = do
+run Opts {dbDirs, configFile, verbose, dotOut, dryRun} = do
     let dbDirs' = SomeHasFS . ioHasFS . MountPoint <$> dbDirs
         args    = Cardano.CardanoBlockArgs configFile Nothing
     ProtocolInfo{pInfoConfig = cfg} <- mkProtocolInfo args
     withRegistry $ \registry ->
       withDBs cfg registry dbDirs' $
-        immutalise (configBlock cfg) (tracer <> dotTracer)
+        immutalise (configBlock cfg) (tracer <> dotTracer) dryRun
   where
     tracer = prettyTrace verbose >$< stdoutTracer
     dotTracer = Tracer $ \case
@@ -154,10 +156,11 @@ immutalise ::
      )
   => BlockConfig blk
   -> Tracer m (TraceImmutalisationEvent blk)
+  -> Bool -- ^ Dry run?
   -> ImmutableDB m blk
   -> VolatileDB m blk
   -> m ()
-immutalise bcfg tracer immDB volDB = do
+immutalise bcfg tracer dryRun immDB volDB = do
     immTip       <- atomically $ ImmutableDB.getTip immDB
     volMaxSlotNo <- atomically $ VolatileDB.getMaxSlotNo volDB
     traceWith tracer $ TraceStartImmutalisation immTip volMaxSlotNo
@@ -197,13 +200,14 @@ immutalise bcfg tracer immDB volDB = do
           (NE.length candidate)
           sv
 
-        -- Copy the candidate blocks from volDB to immDB.
-        for_ candidate $ \hdrHash -> do
-          blk <- VolatileDB.getKnownBlockComponent volDB GetBlock hdrHash
-          ImmutableDB.appendBlock immDB blk
+        unless dryRun $ do
+          -- Copy the candidate blocks from volDB to immDB.
+          for_ candidate $ \hdrHash -> do
+            blk <- VolatileDB.getKnownBlockComponent volDB GetBlock hdrHash
+            ImmutableDB.appendBlock immDB blk
 
-        newImmTip <- atomically $ ImmutableDB.getTip immDB
-        traceWith tracer $ TraceCopiedtoImmutableDB newImmTip
+          newImmTip <- atomically $ ImmutableDB.getTip immDB
+          traceWith tracer $ TraceCopiedtoImmutableDB newImmTip
 
 {-------------------------------------------------------------------------------
   Tracing

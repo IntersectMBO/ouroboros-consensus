@@ -45,4 +45,8 @@ optsParser =
         [ long "dot-out"
         , help "Write the volatile block tree to a file in DOT format"
         ]
-      pure Opts {dbDirs, configFile, verbose, dotOut}
+      dryRun <- switch $ mconcat
+        [ long "dry-run"
+        , help "Do not actually append anything to the ImmutableDB"
+        ]
+      pure Opts {dbDirs, configFile, verbose, dotOut, dryRun}

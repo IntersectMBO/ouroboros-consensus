@@ -335,6 +335,8 @@ Additional flags:
    immutable tip in the graphviz DOT format to a file. The `dot` CLI tool can
    then be used to graphically render this tree.
 
+ - `--dry-run`: Do not actually append anything to the ImmutableDB.
+
 ## db-synthesizer
 
 ### About
