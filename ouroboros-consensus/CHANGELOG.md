@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.26.0.1'></a>
+## 0.26.0.1 -- 2025-04-29
+
+### Patch
+
+- Fix potential race condition in `Follower` forwarding.
+
 <a id='changelog-0.26.0.0'></a>
 ## 0.26.0.0 -- 2025-04-21
 
