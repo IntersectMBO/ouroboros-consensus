@@ -22,6 +22,9 @@ neIndex (UnsafeNonEmptySeq xs) i = Seq.index xs i
 neLength :: NonEmptySeq a -> Int
 neLength (UnsafeNonEmptySeq xs) = Seq.length xs
 
+neHead :: NonEmptySeq a -> a
+neHead xs = xs `neIndex` 0
+
 neLast :: NonEmptySeq a -> a
 neLast xs = xs `neIndex` (neLength xs - 1)
 
@@ -35,6 +38,9 @@ neBeforeMid (UnsafeNonEmptySeq xs) = Seq.take (Seq.length xs `div` 2) xs
 
 neDrop :: Int -> NonEmptySeq a -> Seq a
 neDrop n (UnsafeNonEmptySeq xs) = Seq.drop n xs
+
+neTake :: Int -> NonEmptySeq a -> Seq a
+neTake n (UnsafeNonEmptySeq xs) = Seq.take n xs
 
 -- | 'neMid' is the rightmost element of the first half
 neHalves :: NonEmptySeq a -> (NonEmptySeq a, Seq a)
@@ -80,13 +86,13 @@ neBinarySearch predicate (UnsafeNonEmptySeq xs) =
         _              -> LastFalseFirstTrue l r
 
 -- | Find the leftmost index of a point in a strictly ascending 'Seq'
-leftmostInAscSeq :: Ord p => Seq p -> p -> L.Maybe Int
-leftmostInAscSeq xs =
+leftmostInAscSeq :: Ord q => (p -> q) -> Seq p -> q -> L.Maybe Int
+leftmostInAscSeq f xs =
     case nonEmptySeq xs of
         L.Nothing -> const L.Nothing
-        L.Just ne -> \p -> do
-            i <- case neBinarySearch (> p) ne of
+        L.Just ne -> \q -> do
+            i <- case neBinarySearch ((> q) . f) ne of
                 LastFalseFirstTrue i _j -> L.Just i
                 Uniformly False         -> L.Just $ neLength ne - 1
                 Uniformly True          -> L.Nothing
-            i <$ guard (p == ne `neIndex` i)
+            i <$ guard (q == f (neIndex ne i))

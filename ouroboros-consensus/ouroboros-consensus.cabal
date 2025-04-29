@@ -377,6 +377,7 @@ library unstable-consensus-testlib
     Test.CsjModel
     Test.CsjModel.NonEmptySeq
     Test.CsjModel.Perm
+    Test.CsjModel.StateTypes
     Test.LedgerTables
     Test.Ouroboros.Consensus.ChainGenerator.Adversarial
     Test.Ouroboros.Consensus.ChainGenerator.BitVector
