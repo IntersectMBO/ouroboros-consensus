@@ -221,6 +221,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
                      DisengagedInitState (..), DynamoInitState (..),
                      JumpInfo (..), JumperInitState (..),
                      ObjectorInitState (..))
+import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike hiding (handle)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
@@ -946,10 +947,6 @@ findNonDisengaged =
 isDisengaged :: ChainSyncJumpingState m blk -> Bool
 isDisengaged Disengaged{} = True
 isDisengaged _            = False
-
-findM :: (Foldable f, Monad m) => (a -> m Bool) -> f a -> m (Maybe a)
-findM p =
-  foldr (\x mb -> p x >>= \case True -> pure (Just x); False -> mb) (pure Nothing)
 
 -- | Find the objector in a context, if there is one.
 findObjector ::
