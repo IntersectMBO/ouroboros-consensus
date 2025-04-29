@@ -34,6 +34,7 @@ module Ouroboros.Consensus.Util (
   , allEqual
   , chunks
   , dropLast
+  , findM
   , firstJust
   , markLast
   , pickOne
@@ -226,6 +227,10 @@ takeUntil p = \case
       -> [x]
       | otherwise
       -> x:takeUntil p xs
+
+findM :: (Foldable f, Monad m) => (a -> m Bool) -> f a -> m (Maybe a)
+findM p =
+  foldr (\x mb -> p x >>= \case True -> pure (Just x); False -> mb) (pure Nothing)
 
 -- | Focus on one element in the list
 --

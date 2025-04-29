@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -34,6 +35,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.Serialisation
+import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.STM (blockUntilJust)
@@ -428,32 +430,22 @@ forward ::
   -> ChainDbEnv m blk
   -> [Point blk]
   -> m (Maybe (Point blk))
-forward registry varFollower blockComponent CDB{..} = \pts -> do
-    -- NOTE: we use 'cdbChain' instead of 'Query.getCurrentChain', which only
-    -- returns the last @k@ headers, because we need to also see the headers
-    -- that happen to have not yet been copied over to the ImmutableDB.
-    join $ atomically $
-      findFirstPointOnChain
-        <$> (icWithoutTime <$> readTVar cdbChain)
-        <*> readTVar varFollower
-        <*> ImmutableDB.getTipSlot cdbImmutableDB
-        <*> pure pts
+forward registry varFollower blockComponent CDB{..} =
+    findM checkIfPointOnChain
   where
-    findFirstPointOnChain ::
-         HasCallStack
-      => AnchoredFragment (Header blk)
-      -> FollowerState m blk b
-      -> WithOrigin SlotNo
-      -> [Point blk]
-      -> m (Maybe (Point blk))
-    findFirstPointOnChain curChain followerState slotNoAtImmutableDBTip = \case
-      []     -> return Nothing
-      pt:pts
+    checkIfPointOnChain :: HasCallStack => Point blk -> m Bool
+    checkIfPointOnChain pt = join $ atomically $ do
+      -- NOTE: we use 'cdbChain' instead of 'Query.getCurrentChain', which only
+      -- returns the last @k@ headers, because we need to also see the headers
+      -- that happen to have not yet been copied over to the ImmutableDB.
+      curChain      <- icWithoutTime <$> readTVar cdbChain
+      followerState <- readTVar varFollower
+      if
         | AF.withinFragmentBounds (castPoint pt) curChain
         -> do
           -- It's in the in-memory chain fragment.
-          updateState $ FollowerInMem $ RollBackTo pt
-          return $ Just pt
+          action <- updateState $ FollowerInMem $ RollBackTo pt
+          return $ True <$ action
 
         | otherwise
         -- Not in the in-memory chain fragment, so older than @k@, hence it
@@ -463,13 +455,13 @@ forward registry varFollower blockComponent CDB{..} = \pts -> do
         -- We try to avoid IO (in the ImmutableDB) as much as possible by
         -- checking whether the requested point corresponds to the current
         -- state of the follower.
-        -> case followerState of
+        -> return $ case followerState of
             FollowerInit
               | pt == GenesisPoint
               -- The 'FollowerInit' state is equivalent to @'RollBackTo'
               -- 'genesisPoint'@, so the state doesn't have to change when
               -- requesting a rollback to genesis.
-              -> return $ Just pt
+              -> return True
 
             FollowerInImmutableDB rollState immIt
               | rollState == RollBackTo pt
@@ -477,7 +469,7 @@ forward registry varFollower blockComponent CDB{..} = \pts -> do
               -- ImmutableDB, the state doesn't have to change, saving us from
               -- checking whether the point is in the ImmutableDB (cached disk
               -- reads), closing, and opening the same ImmutableDB iterator.
-              -> return $ Just pt
+              -> return True
 
               | rollState == RollForwardFrom pt
               -- If we're already rolling forward from the given point in the
@@ -487,30 +479,31 @@ forward registry varFollower blockComponent CDB{..} = \pts -> do
               -> do
                 atomically $ writeTVar varFollower $
                   FollowerInImmutableDB (RollBackTo pt) immIt
-                return $ Just pt
+                return True
 
             _otherwise -> case pointToWithOriginRealPoint pt of
               -- Genesis is always "in" the ImmutableDB
               Origin -> do
-                updateState FollowerInit
-                return $ Just pt
+                join $ atomically $ updateState FollowerInit
+                return True
 
               NotOrigin pt' -> do
                 inImmutableDB <- ImmutableDB.hasBlock cdbImmutableDB pt'
                 if inImmutableDB then do
                   immIt <- ImmutableDB.streamAfterKnownPoint cdbImmutableDB registry
                     ((,) <$> getPoint <*> blockComponent) pt
-                  updateState $ FollowerInImmutableDB (RollBackTo pt) immIt
-                  return $ Just pt
+                  join $ atomically $
+                    updateState $ FollowerInImmutableDB (RollBackTo pt) immIt
+                  return True
                 else
-                  -- The point is not in the current chain, try the next point
-                  findFirstPointOnChain curChain followerState slotNoAtImmutableDBTip pts
+                  -- The point is not in the current chain
+                  return False
 
     -- | Update the state of the follower to the given state. If the current
     -- state is 'FollowerInImmutableDB', close the ImmutableDB iterator to avoid
     -- leaking the file handles.
-    updateState :: FollowerState m blk b -> m ()
-    updateState newFollowerState = join $ atomically $
+    updateState :: FollowerState m blk b -> STM m (m ())
+    updateState newFollowerState =
       stateTVar varFollower $ \followerState ->
         (, newFollowerState) $ case followerState of
           -- Return a continuation (that we'll 'join') that closes the
