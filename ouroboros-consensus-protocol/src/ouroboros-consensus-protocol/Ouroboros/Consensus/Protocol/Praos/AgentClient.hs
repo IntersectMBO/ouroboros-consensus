@@ -82,6 +82,9 @@ class ( Crypto c
 instance AgentCrypto StandardCrypto where
   type ACrypto StandardCrypto = Agent.StandardCrypto
 
+convertPeriod :: Agent.KESPeriod -> OCert.KESPeriod
+convertPeriod (Agent.KESPeriod p) = OCert.KESPeriod p
+
 convertOCert :: ( AgentCrypto c
                 )
               => Agent.OCert (ACrypto c) -> OCert.OCert c
@@ -130,9 +133,10 @@ runKESAgentClient :: forall m c.
                      )
                   => Tracer m KESAgentClientTrace
                   -> FilePath
-                  -> (OCert.OCert c -> SignKeyKES (KES c) -> Word -> m ())
+                  -> (OCert.OCert c -> SignKeyKES (KES c) -> Word -> OCert.KESPeriod -> m ())
                   -> m ()
-runKESAgentClient tracer path handleKey = do
+                  -> m ()
+runKESAgentClient tracer path handleKey handleDropKey = do
   withAgentContext $ \snocket -> do
     forever $ do
       Agent.runServiceClient
@@ -151,9 +155,11 @@ runKESAgentClient tracer path handleKey = do
                 -- finishes.
                 _ <- acquireCRef skpRef
                 withCRefValue skpRef $ \(SignKeyWithPeriodKES sk p) ->
-                  handleKey (convertOCert ocert) sk p
+                  handleKey (convertOCert ocert) sk p (convertPeriod $ Agent.ocertKESPeriod ocert)
                 return Agent.RecvOK
-              _ -> undefined -- TODO
+              _ -> do
+                handleDropKey
+                return Agent.RecvOK
         )
         (contramap KESAgentClientTrace tracer)
         `catch` ( \(_e :: AsyncCancelled) ->

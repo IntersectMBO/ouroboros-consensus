@@ -264,6 +264,13 @@ mkKESState maxKESEvolutions newOCert newKey evolution startPeriod@(Absolute.KESP
       , kesStateKey = KESKey newOCert newKey
     }
 
+type KeyProducer c m =
+  (OCert.OCert c -> KES.SignKeyKES (KES c) -> Word -> Absolute.KESPeriod -> m ())
+  -- ^ Callback that will be invoked when a new key has been received
+  -> m ()
+  -- ^ Callback that will be invoked when a key deletion has been received
+  -> m ()
+
 -- | Create a new 'HotKey' that runs a key-producer action on a separate thread.
 -- The key producer action will receive a callback that can be used to pass
 -- keys into the HotKey; the HotKey will dynamically update its internal state
@@ -271,10 +278,7 @@ mkKESState maxKESEvolutions newOCert newKey evolution startPeriod@(Absolute.KESP
 mkDynamicHotKey ::
      forall m c. (Crypto c, IOLike m)
   => Word64              -- ^ Max KES evolutions
-  -> Maybe (
-        (OCert.OCert c -> KES.SignKeyKES (KES c) -> Word -> Absolute.KESPeriod -> m ())
-        -> m ()
-     )
+  -> Maybe (KeyProducer c m)
   -> m ()
   -> m (HotKey c m)
 mkDynamicHotKey = mkHotKeyWith Nothing
@@ -285,10 +289,7 @@ mkHotKeyWith ::
      forall m c. (Crypto c, IOLike m)
   => Maybe (OCert.OCert c, KES.SignKeyKES (KES c), Word, Absolute.KESPeriod)
   -> Word64              -- ^ Max KES evolutions
-  -> Maybe (
-        (OCert.OCert c -> KES.SignKeyKES (KES c) -> Word -> Absolute.KESPeriod -> m ())
-        -> m ()
-     )
+  -> Maybe (KeyProducer c m)
   -> m ()
   -> m (HotKey c m)
 mkHotKeyWith initialStateMay maxKESEvolutions keyThreadMay finalizer = do
@@ -298,6 +299,8 @@ mkHotKeyWith initialStateMay maxKESEvolutions keyThreadMay finalizer = do
           modifyMVar_ varKESState $ \oldState -> do
             _ <- poisonState oldState
             return $ mkKESState maxKESEvolutions newOCert newKey evolution startPeriod
+        unset =
+          modifyMVar_ varKESState $ poisonState
 
     forM_ initialStateMay $ \(newOCert, newKey, evolution, startPeriod) ->
             set newOCert newKey evolution startPeriod
@@ -306,7 +309,7 @@ mkHotKeyWith initialStateMay maxKESEvolutions keyThreadMay finalizer = do
       Just keyThread -> do
         keyThreadAsync <- async $ do
                             labelThisThread "HotKey receiver"
-                            keyThread set
+                            keyThread set unset
         return (cancel keyThreadAsync >> finalizer)
       Nothing ->
         return finalizer
@@ -327,8 +330,7 @@ mkHotKeyWith initialStateMay maxKESEvolutions keyThreadMay finalizer = do
               KESKey _ key -> do
                 let evolution = kesEvolution kesStateInfo
                 KES.signedKES () evolution toSign key
-      , forget = do
-          modifyMVar_ varKESState $ poisonState
+      , forget = unset
       , finalize_ = finalizer'
       }
   where

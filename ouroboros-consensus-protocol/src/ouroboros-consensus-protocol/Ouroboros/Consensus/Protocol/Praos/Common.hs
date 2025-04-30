@@ -300,10 +300,8 @@ instantiatePraosCredentials maxKESEvolutions (PraosCredentialsUnsound ocert skUn
 instantiatePraosCredentials maxKESEvolutions (PraosCredentialsAgent path) = do
   HotKey.mkDynamicHotKey
       maxKESEvolutions
-      (Just $ \send -> do
-        let handleKey ocert sk p = do
-              send ocert sk p (OCert.ocertKESPeriod ocert)
-        runKESAgentClient nullTracer path handleKey
+      (Just $ \handleKey handleDrop -> do
+        runKESAgentClient nullTracer path handleKey handleDrop
       )
       (pure ())
 
