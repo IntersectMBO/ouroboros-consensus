@@ -57,6 +57,9 @@ testImmutaliserConfig =
         , DBImmutaliser.volDBDir = chainDB <> "/volatile"
         }
    , DBImmutaliser.configFile = nodeConfig
+   , DBImmutaliser.verbose = False
+   , DBImmutaliser.dotOut = Nothing
+   , DBImmutaliser.dryRun = False
    }
 
 testAnalyserConfig :: DBAnalyserConfig

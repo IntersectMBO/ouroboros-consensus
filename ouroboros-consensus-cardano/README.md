@@ -326,6 +326,17 @@ cabal run db-immutaliser -- \
 The `config.json` should be in the same format (Node configuration) as for eg
 db-analyser.
 
+Additional flags:
+
+ - `--verbose`: Print additional information on the blocks reachable from the
+   immutable tip, as well as all possible volatile candidates.
+
+ - `--dot-out /path/to/volatile.dot`: Write the block tree rooted at the
+   immutable tip in the graphviz DOT format to a file. The `dot` CLI tool can
+   then be used to graphically render this tree.
+
+ - `--dry-run`: Do not actually append anything to the ImmutableDB.
+
 ## db-synthesizer
 
 ### About
