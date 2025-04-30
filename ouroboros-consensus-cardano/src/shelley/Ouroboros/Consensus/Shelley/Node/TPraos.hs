@@ -10,6 +10,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
@@ -32,14 +33,14 @@ module Ouroboros.Consensus.Shelley.Node.TPraos (
   ) where
 
 import           Cardano.Crypto.Hash (Hash)
-import qualified Cardano.Crypto.VRF as VRF
 import qualified Cardano.Crypto.KES as KES
+import qualified Cardano.Crypto.VRF as VRF
+import qualified Cardano.KESAgent.Serialization.DirectCodec as Agent
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
 import           Cardano.Ledger.Hashes (HASH)
 import qualified Cardano.Ledger.Shelley.API as SL
-import           Cardano.Protocol.Crypto (VRF)
-import           Cardano.Ledger.Crypto (KES)
+import           Cardano.Protocol.Crypto (KES, VRF)
 import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
 import qualified Cardano.Protocol.TPraos.OCert as SL
@@ -63,22 +64,20 @@ import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
+import           Ouroboros.Consensus.Protocol.Praos.AgentClient
 import           Ouroboros.Consensus.Protocol.Praos.Common
 import           Ouroboros.Consensus.Protocol.TPraos
-import           Ouroboros.Consensus.Protocol.Praos.AgentClient
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Inspect ()
 import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion ()
 import           Ouroboros.Consensus.Shelley.Node.Common
                      (ProtocolParamsShelleyBased (..), ShelleyEraWithCrypto,
-                     ShelleyLeaderCredentials (..),
-                     shelleyBlockIssuerVKey)
+                     ShelleyLeaderCredentials (..), shelleyBlockIssuerVKey)
 import           Ouroboros.Consensus.Shelley.Node.Serialisation ()
 import           Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import           Ouroboros.Consensus.Util.Assert
 import           Ouroboros.Consensus.Util.IOLike
-import qualified Cardano.KESAgent.Serialization.DirectCodec as Agent
 
 {-------------------------------------------------------------------------------
   BlockForging
@@ -96,7 +95,7 @@ shelleyBlockForging ::
       )
   => TPraosParams
   -> HotKey c m
-  -> ShelleyLeaderCredentials (EraCrypto era)
+  -> ShelleyLeaderCredentials c
   -> BlockForging m (ShelleyBlock (TPraos c) era)
 shelleyBlockForging tpraosParams hotKey credentials = do
     shelleySharedBlockForging hotKey slotToPeriod credentials
@@ -169,10 +168,9 @@ validateGenesis = first errsToString . SL.validateGenesis
 protocolInfoShelley ::
      forall m c.
       ( IOLike m
-      , PraosCrypto c
       , AgentCrypto c
-      , ShelleyCompatible (TPraos c) (ShelleyEra c)
-      , TxLimits (ShelleyBlock (TPraos c) (ShelleyEra c))
+      , ShelleyCompatible (TPraos c) ShelleyEra
+      , TxLimits (ShelleyBlock (TPraos c) ShelleyEra)
       , MonadKESAgent m
       , SerDoc.HasInfo (Agent.DirectCodec m) (KES.VerKeyKES (KES c))
       , SerDoc.HasInfo (Agent.DirectCodec m) (KES.SignKeyKES (KES c))
@@ -193,10 +191,8 @@ protocolInfoShelley shelleyGenesis
 
 protocolInfoTPraosShelleyBased ::
      forall m era c.
-      ( PraosCrypto c
-      , ShelleyCompatible (TPraos c) era
+      ( ShelleyCompatible (TPraos c) era
       , TxLimits (ShelleyBlock (TPraos c) era)
-      , c ~ EraCrypto era
       , KESAgentContext c m
       )
   => ProtocolParamsShelleyBased c
@@ -231,7 +227,7 @@ protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
 
       return $ shelleyBlockForging tpraosParams hotKey credentials
 
-    genesis :: SL.ShelleyGenesis c
+    genesis :: SL.ShelleyGenesis
     genesis = transitionCfg ^. L.tcShelleyGenesisL
 
     maxMajorProtVer :: MaxMajorProtVer

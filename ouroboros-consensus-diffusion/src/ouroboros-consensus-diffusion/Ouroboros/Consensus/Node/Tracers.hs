@@ -38,7 +38,8 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Server
 import           Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
                      (TraceLocalTxSubmissionServerEvent (..))
 import           Ouroboros.Consensus.Node.GSM (TraceGsmEvent)
-import           Ouroboros.Consensus.Protocol.Praos.AgentClient (KESAgentClientTrace (..))
+import           Ouroboros.Consensus.Protocol.Praos.AgentClient
+                     (KESAgentClientTrace (..))
 import           Ouroboros.Network.Block (Tip)
 import           Ouroboros.Network.BlockFetch (TraceFetchClientState,
                      TraceLabelPeer)

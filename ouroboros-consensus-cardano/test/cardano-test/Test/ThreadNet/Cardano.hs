@@ -41,6 +41,7 @@ import           Ouroboros.Consensus.Byron.Ledger.Block (ByronBlock)
 import           Ouroboros.Consensus.Byron.Ledger.Conversions
 import           Ouroboros.Consensus.Byron.Node
 import           Ouroboros.Consensus.Cardano.Block
+import           Ouroboros.Consensus.Cardano.CanHardFork
 import           Ouroboros.Consensus.Cardano.Condense ()
 import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.HardFork.Combinator
@@ -53,8 +54,9 @@ import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.NodeId
 import           Ouroboros.Consensus.Protocol.PBFT
+import           Ouroboros.Consensus.Protocol.Praos.AgentClient
+                     (KESAgentContext)
 import           Ouroboros.Consensus.Shelley.HFEras ()
-import           Ouroboros.Consensus.Protocol.Praos.AgentClient (KESAgentContext)
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import           Ouroboros.Consensus.Shelley.Node
 import           Test.Consensus.Cardano.ProtocolInfo
@@ -437,7 +439,7 @@ prop_simple_cardano_convergence TestSetup
         property $ unNonZero (maxRollbacks setupK) >= finalIntersectionDepth
 
 mkProtocolCardanoAndHardForkTxs ::
-     forall c m. (KESAgentContext c m, c ~ StandardCrypto)
+     forall c m. (CardanoHardForkConstraints c, KESAgentContext c m)
      -- Byron
   => PBftParams
   -> CoreNodeId

@@ -48,7 +48,7 @@ instance HasTypeProxy UnsoundPureKesKey where
 instance Key UnsoundPureKesKey where
 
     newtype VerificationKey UnsoundPureKesKey =
-        KesVerificationKey (Shelley.VerKeyKES StandardCrypto)
+        KesVerificationKey (Crypto.VerKeyKES (KES StandardCrypto))
       deriving stock (Eq)
       deriving (Show, IsString) via UsingRawBytesHex (VerificationKey UnsoundPureKesKey)
       deriving newtype (EncCBOR, DecCBOR, ToCBOR, FromCBOR)
@@ -104,10 +104,9 @@ instance SerialiseAsBech32 (SigningKey UnsoundPureKesKey) where
     bech32PrefixFor         _ =  "kes_sk"
     bech32PrefixesPermitted _ = ["kes_sk"]
 
-
 newtype instance Hash UnsoundPureKesKey =
-    UnsoundPureKesKeyHash (Shelley.Hash StandardCrypto
-                             (Shelley.VerKeyKES StandardCrypto))
+    UnsoundPureKesKeyHash (Crypto.Hash HASH
+                             (Crypto.VerKeyKES (KES StandardCrypto)))
   deriving stock (Eq, Ord)
   deriving (Show, IsString) via UsingRawBytesHex (Hash UnsoundPureKesKey)
   deriving (ToCBOR, FromCBOR) via UsingRawBytes (Hash UnsoundPureKesKey)

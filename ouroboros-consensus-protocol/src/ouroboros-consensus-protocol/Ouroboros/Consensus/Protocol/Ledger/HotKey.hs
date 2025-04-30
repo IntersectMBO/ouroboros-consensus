@@ -3,11 +3,14 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 -- | Hot key
 --
@@ -22,31 +25,29 @@ module Ouroboros.Consensus.Protocol.Ledger.HotKey (
   , kesStatus
     -- * Hot Key
   , HotKey (..)
-  , finalize
-  , getOCert
   , KESEvolutionError (..)
   , KESEvolutionInfo
+  , finalize
+  , getOCert
+  , mkDynamicHotKey
+  , mkEmptyHotKey
   , mkHotKey
   , mkHotKeyAtEvolution
-  , mkEmptyHotKey
-  , mkDynamicHotKey
   , sign
   ) where
 
 import qualified Cardano.Crypto.KES as KES
 import qualified Cardano.Crypto.KES as Relative (Period)
 import           Cardano.Protocol.Crypto (Crypto (..))
-import           Cardano.Ledger.Crypto (Crypto (..))
-import qualified Cardano.Ledger.Keys as SL
-import qualified Cardano.Protocol.TPraos.OCert as OCert
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
+import qualified Cardano.Protocol.TPraos.OCert as OCert
+import           Control.Monad (forM_)
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           GHC.Stack (HasCallStack)
+import           NoThunks.Class (OnlyCheckWhnfNamed (..))
 import           Ouroboros.Consensus.Block.Forging (UpdateInfo (..))
 import           Ouroboros.Consensus.Util.IOLike
-import           NoThunks.Class (OnlyCheckWhnfNamed (..))
-import           Control.Monad (forM_)
 
 {-------------------------------------------------------------------------------
   KES Info
@@ -160,9 +161,9 @@ data HotKey c m = HotKey {
       -- PRECONDITION: the key is not poisoned.
       --
       -- POSTCONDITION: the signature is in normal form.
-    , sign_      :: forall toSign. (SL.KESignable c toSign, HasCallStack)
+    , sign_      :: forall toSign. (KES.Signable (KES c) toSign, HasCallStack)
                  => toSign
-                 -> m (SL.SignedKES c toSign)
+                 -> m (KES.SignedKES (KES c) toSign)
 
       -- | Securely erase the key and release its memory.
     , forget :: m ()
@@ -184,7 +185,7 @@ getOCert hotKey = do
   ocertMay <- getOCertMaybe hotKey
   case ocertMay of
     Just ocert -> return ocert
-    Nothing -> error "trying to read OpCert for poisoned key"
+    Nothing    -> error "trying to read OpCert for poisoned key"
 
 sign ::
      (KES.Signable (KES c) toSign, HasCallStack)
@@ -195,15 +196,15 @@ sign = sign_
 -- | The actual KES key, unless it expired, in which case it is replaced by
 -- \"poison\".
 data KESKey c =
-    KESKey !(OCert.OCert c) !(SL.SignKeyKES c)
+    KESKey !(OCert.OCert c) !(KES.SignKeyKES (KES c))
   | KESKeyPoisoned
   deriving (Generic)
 
-instance Crypto c => NoThunks (KESKey c)
+instance (NoThunks (KES.SignKeyKES (KES c)), Crypto c) => NoThunks (KESKey c)
 
 kesKeyIsPoisoned :: KESKey c -> Bool
 kesKeyIsPoisoned KESKeyPoisoned = True
-kesKeyIsPoisoned (KESKey _ _)     = False
+kesKeyIsPoisoned (KESKey _ _)   = False
 
 data KESState c = KESState {
       kesStateInfo :: !KESInfo
@@ -211,7 +212,7 @@ data KESState c = KESState {
     }
   deriving (Generic)
 
-instance Crypto c => NoThunks (KESState c)
+instance (NoThunks (KES.SignKeyKES (KES c)), Crypto c) => NoThunks (KESState c)
 
 -- Create a new 'HotKey' and initialize it to the given initial KES key. The
 -- initial key must be at evolution 0 (i.e., freshly generated and never
@@ -219,7 +220,7 @@ instance Crypto c => NoThunks (KESState c)
 mkHotKey ::
      forall m c. (Crypto c, IOLike m)
   => OCert.OCert c
-  -> SL.SignKeyKES c
+  -> KES.SignKeyKES (KES c)
   -> Absolute.KESPeriod  -- ^ Start period
   -> Word64              -- ^ Max KES evolutions
   -> m (HotKey c m)
@@ -231,7 +232,7 @@ mkHotKeyAtEvolution ::
      forall m c. (Crypto c, IOLike m)
   => Word
   -> OCert.OCert c
-  -> SL.SignKeyKES c
+  -> KES.SignKeyKES (KES c)
   -> Absolute.KESPeriod  -- ^ Start period
   -> Word64              -- ^ Max KES evolutions
   -> m (HotKey c m)
@@ -252,7 +253,7 @@ mkEmptyHotKey ::
 mkEmptyHotKey maxKESEvolutions =
   mkDynamicHotKey maxKESEvolutions Nothing
 
-mkKESState :: Word64 -> OCert.OCert c -> SL.SignKeyKES c -> Word -> Absolute.KESPeriod -> KESState c
+mkKESState :: Word64 -> OCert.OCert c -> KES.SignKeyKES (KES c) -> Word -> Absolute.KESPeriod -> KESState c
 mkKESState maxKESEvolutions newOCert newKey evolution startPeriod@(Absolute.KESPeriod start) =
     KESState {
       kesStateInfo = KESInfo {
@@ -271,7 +272,7 @@ mkDynamicHotKey ::
      forall m c. (Crypto c, IOLike m)
   => Word64              -- ^ Max KES evolutions
   -> Maybe (
-        (OCert.OCert c -> SL.SignKeyKES c -> Word -> Absolute.KESPeriod -> m ())
+        (OCert.OCert c -> KES.SignKeyKES (KES c) -> Word -> Absolute.KESPeriod -> m ())
         -> m ()
      )
   -> m ()
@@ -282,10 +283,10 @@ mkDynamicHotKey = mkHotKeyWith Nothing
 -- set of credentials, a key producer action, and a custom finalizer.
 mkHotKeyWith ::
      forall m c. (Crypto c, IOLike m)
-  => Maybe (OCert.OCert c, SL.SignKeyKES c, Word, Absolute.KESPeriod)
+  => Maybe (OCert.OCert c, KES.SignKeyKES (KES c), Word, Absolute.KESPeriod)
   -> Word64              -- ^ Max KES evolutions
   -> Maybe (
-        (OCert.OCert c -> SL.SignKeyKES c -> Word -> Absolute.KESPeriod -> m ())
+        (OCert.OCert c -> KES.SignKeyKES (KES c) -> Word -> Absolute.KESPeriod -> m ())
         -> m ()
      )
   -> m ()
@@ -325,7 +326,7 @@ mkHotKeyWith initialStateMay maxKESEvolutions keyThreadMay finalizer = do
                 error "trying to sign with a poisoned key"
               KESKey _ key -> do
                 let evolution = kesEvolution kesStateInfo
-                SL.signedKES () evolution toSign key
+                KES.signedKES () evolution toSign key
       , forget = do
           modifyMVar_ varKESState $ poisonState
       , finalize_ = finalizer'
@@ -341,7 +342,7 @@ mkHotKeyWith initialStateMay maxKESEvolutions keyThreadMay finalizer = do
       , kesStateKey = KESKeyPoisoned
       }
 
-poisonState :: forall m c. (Crypto c, IOLike m)
+poisonState :: forall m c. (KES.KESAlgorithm (KES c), IOLike m)
             => KESState c -> m (KESState c)
 poisonState kesState = do
   case kesStateKey kesState of
@@ -366,7 +367,7 @@ poisonState kesState = do
 --
 -- When the key is poisoned, we always return 'UpdateFailed'.
 evolveKey ::
-     forall m c. (Crypto c, IOLike m)
+     forall m c. (IOLike m, KES.ContextKES (KES c) ~ (), KES.KESAlgorithm (KES c))
   => StrictMVar m (KESState c) -> Absolute.KESPeriod -> m KESEvolutionInfo
 evolveKey varKESState targetPeriod = modifyMVar varKESState $ \kesState -> do
     let info = kesStateInfo kesState
@@ -408,13 +409,13 @@ evolveKey varKESState targetPeriod = modifyMVar varKESState $ \kesState -> do
     -- | PRECONDITION:
     --
     -- > targetEvolution >= curEvolution
-    go :: KESEvolution -> KESInfo -> OCert.OCert c -> SL.SignKeyKES c -> m (KESState c)
+    go :: KESEvolution -> KESInfo -> OCert.OCert c -> KES.SignKeyKES (KES c) -> m (KESState c)
     go targetEvolution info ocert key
       | targetEvolution <= curEvolution
       = return $ KESState { kesStateInfo = info, kesStateKey = KESKey ocert key }
       | otherwise
       = do
-          maybeKey' <- SL.updateKES () key curEvolution
+          maybeKey' <- KES.updateKES () key curEvolution
           case maybeKey' of
             Nothing    ->
               -- This cannot happen

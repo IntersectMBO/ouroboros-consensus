@@ -27,8 +27,6 @@ import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Mempool
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import           Ouroboros.Consensus.Protocol.Praos (Praos, PraosParams (..),
                      praosCheckCanForge)
-import           Ouroboros.Consensus.Protocol.Praos.Common
-                     (PraosCanBeLeader (praosCanBeLeaderOpCert))
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock,
                      ShelleyCompatible, forgeShelleyBlock)
 import           Ouroboros.Consensus.Shelley.Node.Common (ShelleyEraWithCrypto,
@@ -49,7 +47,7 @@ praosBlockForging ::
      )
   => PraosParams
   -> HotKey.HotKey c m
-  -> ShelleyLeaderCredentials (EraCrypto era)
+  -> ShelleyLeaderCredentials c
   -> BlockForging m (ShelleyBlock (Praos c) era)
 praosBlockForging praosParams hotKey credentials =
     praosSharedBlockForging hotKey slotToPeriod credentials

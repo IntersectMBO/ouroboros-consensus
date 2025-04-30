@@ -1,57 +1,55 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
+{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE TypeSynonymInstances #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE ConstraintKinds #-}
 
 module Ouroboros.Consensus.Protocol.Praos.AgentClient (
-  runKESAgentClient,
-  AgentCrypto (..),
-  MonadKESAgent (..),
-  KESAgentContext,
-  KESAgentClientTrace (..),
-)
-where
+    AgentCrypto (..)
+  , KESAgentClientTrace (..)
+  , KESAgentContext
+  , MonadKESAgent (..)
+  , runKESAgentClient
+  ) where
 
+import           Cardano.Crypto.DirectSerialise (DirectDeserialise,
+                     DirectSerialise)
+import           Cardano.Crypto.KES.Class
+import           Cardano.Crypto.VRF.Class
 import qualified Cardano.KESAgent.KES.Bundle as Agent
 import qualified Cardano.KESAgent.KES.Crypto as Agent
 import qualified Cardano.KESAgent.KES.OCert as Agent
 import qualified Cardano.KESAgent.Processes.ServiceClient as Agent
 import qualified Cardano.KESAgent.Protocols.RecvResult as Agent
-import qualified Cardano.KESAgent.Protocols.VersionedProtocol as Agent
 import qualified Cardano.KESAgent.Protocols.StandardCrypto as Agent
+import qualified Cardano.KESAgent.Protocols.VersionedProtocol as Agent
 import qualified Cardano.KESAgent.Serialization.DirectCodec as Agent
 import           Cardano.KESAgent.Util.RefCounting
+import           Cardano.Ledger.Keys (DSIGN)
+import           Cardano.Protocol.Crypto (Crypto, KES, StandardCrypto, VRF)
 import qualified Cardano.Protocol.TPraos.OCert as OCert
-import           Cardano.Ledger.Crypto (Crypto, KES, DSIGN, VRF, StandardCrypto)
-
-import Cardano.Crypto.KES.Class
-import Cardano.Crypto.VRF.Class
-import Cardano.Crypto.DirectSerialise (DirectSerialise, DirectDeserialise)
-
+import           Control.Monad (forever)
+import           Control.Monad.Class.MonadAsync
+import           Control.Monad.IOSim
+import           Control.Tracer
+import           Data.Coerce (coerce)
+import           Data.Kind
+import           Data.SerDoc.Class as SerDoc
+import           Data.Typeable
+import           Network.Socket
+import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.RawBearer
 import           Ouroboros.Network.Snocket
-import           Ouroboros.Consensus.Util.IOLike
-
-import Control.Monad (forever)
-import Control.Monad.Class.MonadAsync
-import Control.Tracer
-import Data.Coerce (coerce)
-import Network.Socket
-import System.IOManager
-import Data.Typeable
-import Data.Kind
-import Data.SerDoc.Class as SerDoc
-import Control.Monad.IOSim
 import qualified Simulation.Network.Snocket as SimSnocket
-import Test.Ouroboros.Network.Data.AbsBearerInfo as ABI
+import           System.IOManager
+import           Test.Ouroboros.Network.Data.AbsBearerInfo as ABI
 
 type KESAgentContext c m =
       ( AgentCrypto c
@@ -70,7 +68,7 @@ class ( Crypto c
       , Agent.Crypto (ACrypto c)
       , Agent.NamedCrypto (ACrypto c)
       , Agent.KES (ACrypto c) ~ KES c
-      , Agent.DSIGN (ACrypto c) ~ DSIGN c
+      , Agent.DSIGN (ACrypto c) ~ DSIGN
       , ContextKES (KES c) ~ ()
       , ContextVRF (VRF c) ~ ()
       , Typeable (ACrypto c)
@@ -145,14 +143,17 @@ runKESAgentClient tracer path handleKey = do
           , Agent.serviceClientAddress = makeAddress (Proxy @m) path
           } :: Agent.ServiceClientOptions m (FD m) (Addr m)
         )
-        (\(Agent.Bundle skpRef ocert) -> do
-            -- We take ownership of the key, so we acquire one extra reference,
-            -- preventing the key from being discarded after `handleKey`
-            -- finishes.
-            _ <- acquireCRef skpRef
-            withCRefValue skpRef $ \(SignKeyWithPeriodKES sk p) ->
-              handleKey (convertOCert ocert) sk p
-            return Agent.RecvOK
+        (\(Agent.TaggedBundle mBundle _) -> do
+            case mBundle of
+              Just (Agent.Bundle skpRef ocert) -> do
+                -- We take ownership of the key, so we acquire one extra reference,
+                -- preventing the key from being discarded after `handleKey`
+                -- finishes.
+                _ <- acquireCRef skpRef
+                withCRefValue skpRef $ \(SignKeyWithPeriodKES sk p) ->
+                  handleKey (convertOCert ocert) sk p
+                return Agent.RecvOK
+              _ -> undefined -- TODO
         )
         (contramap KESAgentClientTrace tracer)
         `catch` ( \(_e :: AsyncCancelled) ->
@@ -180,4 +181,3 @@ toBearerInfo abi =
           <$> abiAcceptFailure abi
     , SimSnocket.biSDUSize = toSduSize (ABI.abiSDUSize abi)
     }
-

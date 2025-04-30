@@ -4,11 +4,11 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 -- | Various things common to iterations of the Praos protocol.
 module Ouroboros.Consensus.Protocol.Praos.Common (
@@ -17,20 +17,20 @@ module Ouroboros.Consensus.Protocol.Praos.Common (
   , PraosChainSelectView (..)
   , VRFTiebreakerFlavor (..)
     -- * node support
+  , PraosCredentialsSource (..)
   , PraosNonces (..)
   , PraosProtocolSupportsNode (..)
-  , PraosCredentialsSource (..)
   , instantiatePraosCredentials
   ) where
 
-import qualified Cardano.Crypto.VRF as VRF
-import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Crypto.KES.Class as KES
+import           Cardano.Crypto.VRF
+import qualified Cardano.Crypto.VRF as VRF
 import           Cardano.Ledger.BaseTypes (Nonce)
-import           Cardano.Ledger.Crypto (Crypto, VRF, KES)
+import qualified Cardano.Ledger.BaseTypes as SL
 import           Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer))
 import qualified Cardano.Ledger.Shelley.API as SL
-import           Cardano.Protocol.Crypto (Crypto, VRF)
+import           Cardano.Protocol.Crypto (Crypto, KES, VRF)
 import qualified Cardano.Protocol.TPraos.OCert as OCert
 import           Cardano.Slotting.Block (BlockNo)
 import           Cardano.Slotting.Slot (SlotNo)
@@ -256,14 +256,14 @@ instance Crypto c => ChainOrder (PraosChainSelectView c) where
 
 data PraosCanBeLeader c = PraosCanBeLeader
   { -- | Stake pool cold key or genesis stakeholder delegate cold key.
-    praosCanBeLeaderColdVerKey :: !(SL.VKey 'SL.BlockIssuer c),
-    praosCanBeLeaderSignKeyVRF :: !(SL.SignKeyVRF c),
+    praosCanBeLeaderColdVerKey        :: !(SL.VKey 'SL.BlockIssuer),
+    praosCanBeLeaderSignKeyVRF        :: !(SignKeyVRF (VRF c)),
     -- | How to obtain KES credentials (ocert + sign key)
     praosCanBeLeaderCredentialsSource :: !(PraosCredentialsSource c)
   }
   deriving (Generic)
 
-instance (NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (PraosCanBeLeader c)
+instance (NoThunks (SignKeyVRF (VRF c)), NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (PraosCanBeLeader c)
 
 -- | Defines a method for obtaining Praos credentials (opcert + KES signing
 -- key).

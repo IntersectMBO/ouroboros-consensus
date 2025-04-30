@@ -1,6 +1,4 @@
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -29,7 +27,7 @@ import           Test.QuickCheck (Arbitrary (..), Gen, choose, oneof)
 instance Arbitrary InputVRF where
   arbitrary = mkInputVRF <$> arbitrary <*> arbitrary
 
-instance (Praos.PraosCrypto c) => Arbitrary (HeaderBody c) where
+instance Praos.PraosCrypto c => Arbitrary (HeaderBody c) where
   arbitrary =
     let ocert =
           OCert
@@ -57,7 +55,7 @@ instance (Praos.PraosCrypto c) => Arbitrary (HeaderBody c) where
           <*> ocert
           <*> arbitrary
 
-instance (Praos.PraosCrypto c) => Arbitrary (Header c) where
+instance Praos.PraosCrypto c => Arbitrary (Header c) where
   arbitrary = do
     hBody <- arbitrary
     period <- arbitrary

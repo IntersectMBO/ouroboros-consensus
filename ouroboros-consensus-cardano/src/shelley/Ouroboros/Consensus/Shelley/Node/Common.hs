@@ -20,12 +20,10 @@ module Ouroboros.Consensus.Shelley.Node.Common (
   , shelleyBlockIssuerVKey
   ) where
 
-import           Cardano.Crypto.KES (UnsoundPureSignKeyKES)
 import           Cardano.Ledger.BaseTypes (unNonZero)
 import qualified Cardano.Ledger.Keys as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Ledger.Slot
-import           Cardano.Protocol.Crypto
 import           Data.Text (Text)
 import           Ouroboros.Consensus.Block (CannotForge, ForgeStateInfo,
                      ForgeStateUpdateError)

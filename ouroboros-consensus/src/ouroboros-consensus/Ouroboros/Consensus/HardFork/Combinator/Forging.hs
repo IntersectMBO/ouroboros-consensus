@@ -19,8 +19,8 @@ import           Control.Monad (void)
 import           Data.Functor.Product
 import           Data.Maybe (fromMaybe)
 import           Data.SOP (Top)
-import           Data.SOP.Constraint (All)
 import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint (All)
 import           Data.SOP.Functors (Product2 (..))
 import           Data.SOP.Index
 import           Data.SOP.InPairs (InPairs)
