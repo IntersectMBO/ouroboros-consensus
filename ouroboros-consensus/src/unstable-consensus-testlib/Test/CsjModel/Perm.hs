@@ -1,6 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
--- | A simple permutation type catered to uses of 'queue' in "Test.CsjModel"
+-- | A simple permutation type catered to uses of
+-- 'Test.CsjModel.StateTypes.queue' in "Test.CsjModel"
 module Test.CsjModel.Perm (module Test.CsjModel.Perm) where
 
 import qualified Data.Maybe as L (Maybe (Just, Nothing))

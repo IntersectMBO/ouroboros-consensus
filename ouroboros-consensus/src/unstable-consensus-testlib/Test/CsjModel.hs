@@ -80,7 +80,7 @@ data ChainSyncReply p a =
     -- | After the ChainSync client processes the header
     MsgRollForwardDONE !(WithPayload p a)
   |
-    -- | As soon as the ChainSync client recieves the header
+    -- | As soon as the ChainSync client receives the header
     --
     -- In particular: before it might block on forecasting the ledger view.
     MsgRollForwardSTART !p
@@ -106,13 +106,11 @@ data CsjReaction p a =
     -- ChainSync client's don't necessarily have to handle all of these (eg
     -- while they're blocked on the ledger view forecast), but should handle
     -- the latest as soon as they're able to.
-    --
-    -- If the peer response with 'MsgIntersectFound'
     MsgFindIntersect !(WithPayload (WithOrigin p) a)
   |
     -- | used to demote the Dynamo to a Jumper upon 'Starvation'
     --
-    -- Implies a @drainThePipe@ call and also suppression of an outstanding
+    -- Implies a @drainThePipe@ call and also suppression of an imminent
     -- 'MsgRollForwardDONE' if there is one.
     Stop
   deriving (Read, Show)
