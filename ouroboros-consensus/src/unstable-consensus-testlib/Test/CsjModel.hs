@@ -435,19 +435,7 @@ csjReactions env imm x pid = fmap fixup . \case
         Dynamo pid' clss y _mbQ <- toLazy $ dynamo x
         guard $ pid' == pid
         pure $ case f y of
-            L.Nothing -> (
-                CsjState {
-                    dynamo     = Nothing
-                  ,
-                    latestJump = latestJump x
-                  ,
-                    nonDynamos = nonDynamos x
-                  ,
-                    queue      = queue x
-                  }
-              ,
-                [(pid, Disengage)]
-              )
+            L.Nothing -> disengage
             L.Just y' -> (
                 CsjState {
                     dynamo     = Just $ Dynamo pid clss y' Nothing
@@ -605,7 +593,7 @@ csjReactions env imm x pid = fmap fixup . \case
                             (Jumped clss (truncCandidate y))
                             (nonDynamos x)
                   ,
-                    queue      = snocPerm pid (queue x)
+                    queue      = queue x
                   }
               ,
                 [(pid, Stop)]
@@ -731,7 +719,9 @@ backfillDynamo (x, msgs) =
           ,
             nonDynamos = Map.delete pid (nonDynamos x)
           ,
-            queue      = deletePerm pid (queue x)
+            queue      =
+                -- This peer just got picked, so send them to the end.
+                snocPerm pid $ deletePerm pid $ queue x
           }
       ,
           maybe id (:) ((,) pid <$> mbMsg) msgs

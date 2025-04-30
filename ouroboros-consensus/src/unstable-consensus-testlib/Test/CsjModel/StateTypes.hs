@@ -173,7 +173,8 @@ data CsjState pid p a = CsjState {
     -- this set of peers as a last resort.
     latestJump :: !(Either (Map pid (CsjClientState p a)) (JumpRequest p a))
   ,
-    -- | The queue for becoming Dynamo
+    -- | The queue for becoming Dynamo; it contains the @pid@ of every peer
+    -- that is not disengaged
     --
     -- It would be safe for an implementation to break ties randomly instead of
     -- via this queue, but it's nice to not need randomness in the

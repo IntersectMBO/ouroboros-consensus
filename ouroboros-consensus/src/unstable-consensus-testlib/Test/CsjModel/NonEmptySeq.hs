@@ -93,4 +93,5 @@ leftmostInAscSeq f xs =
                 LastFalseFirstTrue i _j -> L.Just i
                 Uniformly False         -> L.Just $ neLength ne - 1
                 Uniformly True          -> L.Nothing
-            i <$ guard (q == f (neIndex ne i))
+            guard $ q == f (neIndex ne i)
+            pure i
