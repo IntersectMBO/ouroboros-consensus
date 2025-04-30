@@ -54,8 +54,8 @@ data CsjStimulus p a =
   |
     -- | The peer just connected
     --
-    -- The argument is the current immutable tip.
-    Connect !(WithPayload (WithOrigin p) a)
+    -- The argument is the payload for the current immutable tip.
+    Connect !a
   |
     -- | The peer disconnected, including LoP, GDD, etc
     Disconnect
@@ -83,10 +83,7 @@ data ChainSyncReply p a =
     -- | As soon as the ChainSync client recieves the header
     --
     -- In particular: before it might block on forecasting the ledger view.
-    --
-    -- The first argumet is the node's current immutable tip; this is merely
-    -- used to garbage collect the peer's 'candidate'.
-    MsgRollForwardSTART !(WithOrigin p) !p
+    MsgRollForwardSTART !p
   deriving (Read, Show)
 
 -- | What a particular ChainSync client should do as part of the CSJ logic's
@@ -305,13 +302,15 @@ bisectionStep y bi found =
 csjReactions ::
      (Ord p, Ord pid)
   => CsjEnv p
+  -> WithOrigin p
+     -- ^ the current immutable tip
   -> CsjState pid p a
   -> pid
   -> CsjStimulus p a
   -> L.Maybe (CsjState pid p a, [(pid, CsjReaction p a)])
-csjReactions env x pid = fmap (issueNextJumpIfReady env . backfill) . \case
+csjReactions env imm x pid = fmap fixup . \case
 
-    Connect wp -> pure $ connect wp
+    Connect z -> pure $ connect z
 
     ChainSyncReply reply -> case reply of
 
@@ -332,10 +331,9 @@ csjReactions env x pid = fmap (issueNextJumpIfReady env . backfill) . \case
 
         MsgRollBackward     p -> onActive (backward  p)
         MsgRollForwardDONE wp -> onActive (forward  wp)
-
-        MsgRollForwardSTART imm p ->
+        MsgRollForwardSTART p ->
             fmap (flip (,) [])
-          $ preDynamo imm p <|> preObjector imm p
+          $ preDynamo p <|> preObjector p
 
     Disconnect -> pure disconnect
 
@@ -344,6 +342,8 @@ csjReactions env x pid = fmap (issueNextJumpIfReady env . backfill) . \case
     Starvation -> starvation
 
   where
+    fixup = issueNextJumpIfReady env imm . backfill
+
     disengage  = forget False
     disconnect = forget True
 
@@ -364,7 +364,7 @@ csjReactions env x pid = fmap (issueNextJumpIfReady env . backfill) . \case
           if disconnecting then [] else [(pid, Disengage)]
         )
 
-    connect wp =
+    connect z =
         let -- TODO currently, ChainSync clients send the "standard Fibonacci
             -- points" before issuing 'Connect'. That's ultimately harmless,
             -- but does seem wasteful. The immediate concern, however, is that
@@ -377,11 +377,11 @@ csjReactions env x pid = fmap (issueNextJumpIfReady env . backfill) . \case
             y = CsjClientState {
                 anticomm  = Set.empty
               ,
-                candidate = case wpPoint wp of
+                candidate = case imm of
                     Origin -> Seq.empty
-                    At p   -> Seq.singleton $ p `WP` wpPayload wp
+                    At p   -> Seq.singleton $ WP p z
               ,
-                comm      = wp
+                comm      = WP imm z
               }
 
             -- the imm tip is not on 'latestJump'
@@ -391,7 +391,7 @@ csjReactions env x pid = fmap (issueNextJumpIfReady env . backfill) . \case
             (latestJump', mbNonDynamo, mbMsg) = case latestJump x of
                 Left waitings -> cornerCase waitings
                 Right req     ->
-                    case firstJumpRequest (wpPoint wp) req of
+                    case firstJumpRequest imm req of
                         Nothing          -> cornerCase Map.empty
                         Just (Left clss) -> (
                             latestJump x
@@ -510,7 +510,8 @@ csjReactions env x pid = fmap (issueNextJumpIfReady env . backfill) . \case
     onAlreadySent f = do
         Jumping y bi sent <- Map.lookup pid (nonDynamos x)
         k <- case sent of
-            AlreadySent mbNext -> pure $ maybe id newJumpRequest mbNext
+            AlreadySent mbNext ->
+                pure $ maybe id (uncurry . newJumpRequest) mbNext
             NotYetSent         -> L.Nothing
         pure $ case k <$> f y bi of
             L.Nothing         -> disengage
@@ -550,11 +551,11 @@ csjReactions env x pid = fmap (issueNextJumpIfReady env . backfill) . \case
                     [(pid, nextMsgFindIntersect bi')]
                   )
 
-    preDynamo imm p = do
+    preDynamo p = do
         Dynamo pid' clss y Nothing <- toLazy $ dynamo x
         guard $ pid' == pid
         pure CsjState {
-            dynamo     = Just $ Dynamo pid' clss (trimCandidate imm y) (Just p)
+            dynamo     = Just $ Dynamo pid' clss y (Just p)
           ,
             latestJump = latestJump x
           ,
@@ -563,7 +564,7 @@ csjReactions env x pid = fmap (issueNextJumpIfReady env . backfill) . \case
             queue      = queue x
           }
 
-    preObjector imm p = do
+    preObjector p = do
         Objector clss y Nothing <- Map.lookup pid (nonDynamos x)
         pure CsjState {
             dynamo     = dynamo x
@@ -573,7 +574,7 @@ csjReactions env x pid = fmap (issueNextJumpIfReady env . backfill) . \case
             nonDynamos =
                 Map.insert
                     pid
-                    (Objector clss (trimCandidate imm y) (Just p))
+                    (Objector clss y (Just p))
                     (nonDynamos x)
           ,
             queue      = queue x
@@ -883,9 +884,10 @@ bigEnoughJump env clss p mbQ =
 issueNextJumpIfReady ::
      (Ord pid, Ord p)
   => CsjEnv p
+  -> WithOrigin p
   -> (CsjState pid p a, [(pid, CsjReaction p a)])
   -> (CsjState pid p a, [(pid, CsjReaction p a)])
-issueNextJumpIfReady env (x, msgs) =
+issueNextJumpIfReady env imm (x, msgs) =
     case dynamo x of
 
         Nothing -> (x, msgs)
@@ -904,20 +906,21 @@ issueNextJumpIfReady env (x, msgs) =
               -- If the Dynamo could never satisfy this conjunct because its
               -- forecast range is empty it will be disconnected, since the
               -- ChainSync client kills any peer with an empty forecast range.
-         -> issueNextJump (:) (x, msgs) dyn neCandidate
+         -> issueNextJump imm (:) (x, msgs) dyn neCandidate
           | otherwise -> (x, msgs)
 
 -- | Called by 'issueNextJumpIfReady' when there actually is a new jump
 issueNextJump ::
      (Ord pid, Ord p)
-  => ((pid, CsjReaction p a) -> msgs -> msgs)
+  => WithOrigin p
+  -> ((pid, CsjReaction p a) -> msgs -> msgs)
      -- ^ The parametricity here ensures this function doesn't scrutinize or
      -- alter (eg accidentally drop!) the incoming messages.
   -> (CsjState pid p a, msgs)
   -> Dynamo pid p a
   -> NonEmptySeq (WithPayload p a)
   -> (CsjState pid p a, msgs)
-issueNextJump cons (x, msgs) dyn neCandidate =
+issueNextJump imm cons (x, msgs) dyn neCandidate =
   (
     CsjState {
         -- The Dynamo effectively instantly accepts the entire jump.
@@ -926,17 +929,16 @@ issueNextJump cons (x, msgs) dyn neCandidate =
           $ Dynamo
                 dynamoPid
                 dynamoClss
-                CsjClientState {
+                (trimC CsjClientState {
                     -- 'Set.empty' would suffice here if it weren't
                     -- for counterexamples to the NON-invariant
                     -- documented at 'JumpRequest'.
-                    anticomm  =
-                        trimAnticomm (At p) $ anticomm dynamoY
+                    anticomm  = trimAnticomm (At p) $ anticomm dynamoY
                   ,
                     candidate = candidate dynamoY
                   ,
                     comm      = wpAt wp
-                  }
+                  })
                 dynamoMbQ
       ,
         latestJump = Right req
@@ -949,6 +951,11 @@ issueNextJump cons (x, msgs) dyn neCandidate =
       msgs'
   )
   where
+    -- 'issueNextJump' necessarily traverses all peers and must happen
+    -- infinitely often, so it's a reasonble place to call 'trimCandidate' on
+    -- all peers
+    trimC = trimCandidate imm
+
     Dynamo dynamoPid dynamoPrevClss dynamoY dynamoMbQ = dyn
 
     dynamoClss = Class $ At p
@@ -974,7 +981,7 @@ issueNextJump cons (x, msgs) dyn neCandidate =
 
     instructNewJump2 pid acc = \case
         Jumped clss y ->
-            let (y', eBi') = newJumpRequest req (y, Left clss)
+            let (y', eBi') = newJumpRequest req (trimC y) (Left clss)
             in
             case eBi' of
                 Left clss' -> (Jumped clss' y', acc)
@@ -985,9 +992,9 @@ issueNextJump cons (x, msgs) dyn neCandidate =
                   )
         Jumping y bi sent -> case sent of
             AlreadySent _mbNext ->
-                (Jumping y bi (AlreadySent (Just req)), acc)
+                (Jumping (trimC y) bi (AlreadySent (Just req)), acc)
             NotYetSent          ->
-                case newJumpRequest req (y, Right bi) of
+                case newJumpRequest req (trimC y) (Right bi) of
                     (y', Left clss') -> (Jumped clss' y', acc)
                     (y', Right bi')  -> (
                         Jumping y' bi' NotYetSent
@@ -1007,7 +1014,7 @@ issueNextJump cons (x, msgs) dyn neCandidate =
     doneWaiting pid y = State.state $ doneWaiting2 pid y
 
     doneWaiting2 pid y acc =
-        case firstJumpRequest (wpPoint (comm y)) req of
+        case firstJumpRequest imm req of
             Nothing           ->
                 -- 'firstJumpRequest' is only called on waiting peers in 'Left'
                 -- of 'latestJump'. Those peers are only put their by the
@@ -1071,9 +1078,10 @@ firstJumpRequest imm req =
 newJumpRequest ::
      Ord p
   => JumpRequest p a
+  -> CsjClientState p a
+  -> Either (Class p) (Bisecting p a)
   -> (CsjClientState p a, Either (Class p) (Bisecting p a))
-  -> (CsjClientState p a, Either (Class p) (Bisecting p a))
-newJumpRequest req (rawY, eBi) =
+newJumpRequest req y eBi =
     case eBi of
         Left clss ->
             if clss == dynamoPrevClss then go else
@@ -1093,14 +1101,11 @@ newJumpRequest req (rawY, eBi) =
   where
     JumpRequest dynamoPrevClss ps = req
 
-    -- @req@ tends to have a more recent immutable tip.
-    y = trimCandidate (At $ wpPoint $ neHead ps) rawY
-
     go               = (y, eBi')
     goWithRejected p = (integrateRejected p, eBi')
 
-    eBi' = newJumpRequest2 rawY ps
-        -- This result does not depend on the other changes to @rawY@.
+    eBi' = newJumpRequest2 y ps
+        -- This result does not depend on the other changes to @y@.
 
     -- This peer's ongoing bisection is being cancelled in favor of this new
     -- jump request, so integrate 'rejected' into 'anticomm' now.

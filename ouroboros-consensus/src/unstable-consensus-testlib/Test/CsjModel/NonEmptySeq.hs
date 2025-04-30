@@ -22,9 +22,6 @@ neIndex (UnsafeNonEmptySeq xs) i = Seq.index xs i
 neLength :: NonEmptySeq a -> Int
 neLength (UnsafeNonEmptySeq xs) = Seq.length xs
 
-neHead :: NonEmptySeq a -> a
-neHead xs = xs `neIndex` 0
-
 neLast :: NonEmptySeq a -> a
 neLast xs = xs `neIndex` (neLength xs - 1)
 

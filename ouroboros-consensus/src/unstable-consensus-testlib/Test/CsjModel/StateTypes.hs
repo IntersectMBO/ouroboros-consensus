@@ -95,7 +95,7 @@ trimAnticomm newcomm ps = case newcomm of
 trimCandidate ::
      Ord p
   => WithOrigin p
-     -- ^ imm tip
+     -- ^ current imm tip
   -> CsjClientState p a
   -> CsjClientState p a
 trimCandidate imm y =
@@ -363,7 +363,7 @@ data SentStatus p a =
 
 -- | A jump requested by the Dynamo
 --
--- The payload is the Dynamo's 'Class' and 'candidate' immediately before it
+-- The arguments are the Dynamo's 'Class' and 'candidate' immediately before it
 -- requests the jump. Morever, in the real implementation, this data structure
 -- includes enough information for a Jumper to update its ChainSync client
 -- state each time it accepts a point in a jump.
@@ -381,5 +381,6 @@ data SentStatus p a =
 -- - In either order: Y stops being the Dynamo and another peer Z /joins/.
 --
 -- - Z becomes Dynamo and serves the same chain as X.
-data JumpRequest p a = JumpRequest (Class p) (NonEmptySeq (WithPayload p a))
+data JumpRequest p a =
+    JumpRequest !(Class p) !(NonEmptySeq (WithPayload p a))
   deriving (Read, Show)
