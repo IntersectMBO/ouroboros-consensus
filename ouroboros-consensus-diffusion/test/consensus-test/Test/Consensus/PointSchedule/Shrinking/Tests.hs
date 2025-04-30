@@ -8,6 +8,7 @@ module Test.Consensus.PointSchedule.Shrinking.Tests (tests) where
 import           Data.Foldable (toList)
 import           Data.Map (keys)
 import           Data.Maybe (mapMaybe)
+import           Ouroboros.Consensus.Util (lastMaybe)
 import           Test.Consensus.Genesis.Setup (genChains)
 import           Test.Consensus.Genesis.Tests.Uniform (genUniformSchedulePoints)
 import           Test.Consensus.PointSchedule (PeerSchedule, PointSchedule (..),
@@ -35,12 +36,6 @@ prop_shortens = checkShrinkProperty isShorterThan
 prop_preservesFinalStates :: Property
 prop_preservesFinalStates = checkShrinkProperty doesNotChangeFinalState
 
--- | Apparently, `unsnoc` hasn't been invented yet, so we'll do this manually
-lastM :: [a] -> Maybe a
-lastM []     = Nothing
-lastM [a]    = Just a
-lastM (_:ps) = lastM ps
-
 samePeers :: Peers (PeerSchedule blk) -> Peers (PeerSchedule blk) -> Bool
 samePeers sch1 sch2 =
   (keys $ adversarialPeers sch1)
@@ -53,7 +48,7 @@ isShorterThan :: Peers (PeerSchedule blk) -> Peers (PeerSchedule blk) -> Bool
 isShorterThan original shrunk =
   samePeers original shrunk
   && (or $ zipWith
-    (\oldSch newSch -> (fst <$> lastM newSch) < (fst <$> lastM oldSch))
+    (\oldSch newSch -> (fst <$> lastMaybe newSch) < (fst <$> lastMaybe oldSch))
     (toList original)
     (toList shrunk)
   )
@@ -72,11 +67,11 @@ doesNotChangeFinalState original shrunk =
   )
   where
     lastTP :: PeerSchedule blk -> Maybe (SchedulePoint blk)
-    lastTP sch = lastM $ mapMaybe (\case (_, p@(ScheduleTipPoint    _)) -> Just p ; _ -> Nothing) sch
+    lastTP sch = lastMaybe $ mapMaybe (\case (_, p@(ScheduleTipPoint    _)) -> Just p ; _ -> Nothing) sch
     lastHP :: PeerSchedule blk -> Maybe (SchedulePoint blk)
-    lastHP sch = lastM $ mapMaybe (\case (_, p@(ScheduleHeaderPoint _)) -> Just p ; _ -> Nothing) sch
+    lastHP sch = lastMaybe $ mapMaybe (\case (_, p@(ScheduleHeaderPoint _)) -> Just p ; _ -> Nothing) sch
     lastBP :: PeerSchedule blk -> Maybe (SchedulePoint blk)
-    lastBP sch = lastM $ mapMaybe (\case (_, p@(ScheduleBlockPoint  _)) -> Just p ; _ -> Nothing) sch
+    lastBP sch = lastMaybe $ mapMaybe (\case (_, p@(ScheduleBlockPoint  _)) -> Just p ; _ -> Nothing) sch
 
 checkShrinkProperty :: (Peers (PeerSchedule TestBlock) -> Peers (PeerSchedule TestBlock) -> Bool) -> Property
 checkShrinkProperty prop =

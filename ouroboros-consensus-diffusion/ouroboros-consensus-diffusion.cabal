@@ -107,9 +107,6 @@ library
     typed-protocols,
     typed-protocols-stateful,
 
-  -- GHC 8.10.7 on aarch64-darwin cannot use text-2
-  build-depends: text >=1.2.5.0 && <2.2
-
 library unstable-diffusion-testlib
   import: common-lib
   visibility: public

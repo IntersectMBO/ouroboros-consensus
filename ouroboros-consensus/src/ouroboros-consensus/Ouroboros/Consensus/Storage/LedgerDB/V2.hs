@@ -146,9 +146,6 @@ implMkLedgerDb ::
      , IsLedger l
      , l ~ ExtLedgerState blk
      , StandardHash l, HasLedgerTables l
-#if __GLASGOW_HASKELL__ < 908
-     , HeaderHash l ~ HeaderHash blk
-#endif
      , LedgerSupportsProtocol blk
      , LedgerDbSerialiseConstraints blk
      , HasHardForkHistory blk

@@ -1,9 +1,5 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE TypeOperators #-}
-#if __GLASGOW_HASKELL__ < 900
-{-# LANGUAGE DataKinds #-}
-#endif
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE EmptyCase #-}
@@ -20,6 +16,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
@@ -1012,7 +1009,6 @@ instance (Ord (TxIn (LedgerState m)), MemPack (TxIn (LedgerState m)), MemPack (T
 
 instance (
     Bridge m a
-#if __GLASGOW_HASKELL__ >= 906
   , NoThunks (TxOut (LedgerState m))
   , NoThunks (TxIn (LedgerState m))
   , Show (TxOut (LedgerState m))
@@ -1020,7 +1016,6 @@ instance (
   , Eq (TxOut (LedgerState m))
   , Ord (TxIn (LedgerState m))
   , MemPack (TxIn (LedgerState m))
-#endif
   ) => HasLedgerTables (LedgerState (DualBlock m a)) where
   projectLedgerTables DualLedgerState{..} =
       castLedgerTables
@@ -1036,7 +1031,6 @@ instance (
 
 instance (
     Bridge m a
-#if __GLASGOW_HASKELL__ >= 906
   , NoThunks (TxOut (LedgerState m))
   , NoThunks (TxIn (LedgerState m))
   , Show (TxOut (LedgerState m))
@@ -1044,7 +1038,6 @@ instance (
   , Eq (TxOut (LedgerState m))
   , Ord (TxIn (LedgerState m))
   , MemPack (TxIn (LedgerState m))
-#endif
   )=> HasLedgerTables (Ticked (LedgerState (DualBlock m a))) where
   projectLedgerTables TickedDualLedgerState{..} =
       castLedgerTables

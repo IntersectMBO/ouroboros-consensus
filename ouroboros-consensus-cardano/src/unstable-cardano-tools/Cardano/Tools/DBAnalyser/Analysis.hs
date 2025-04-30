@@ -371,9 +371,7 @@ showEBBs AnalysisEnv { db, registry, startFrom, limit, tracer } = do
 storeLedgerStateAt ::
      forall blk .
      ( LedgerSupportsProtocol blk
-#if __GLASGOW_HASKELL__ > 810
      , HasAnalysis blk
-#endif
      )
   => SlotNo
   -> LedgerApplicationMode

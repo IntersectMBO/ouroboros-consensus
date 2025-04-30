@@ -42,11 +42,6 @@ let
       formattingLinting = import ./formatting-linting.nix pkgs;
       inherit (pkgs) consensus-pdfs agda-spec;
 
-      # ensure we can still build on 8.10, can be removed soon
-      haskell810 = builtins.removeAttrs
-        (mkHaskellJobsFor pkgs.hsPkgs.projectVariants.ghc810)
-        [ "checks" "devShell" "devShellProfiled" ];
-
       # also already test GHC 9.10, but only on Linux to reduce CI load
       haskell910 = mkHaskellJobsFor pkgs.hsPkgs.projectVariants.ghc910;
     };

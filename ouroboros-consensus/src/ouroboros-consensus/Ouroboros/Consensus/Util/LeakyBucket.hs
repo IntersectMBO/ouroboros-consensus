@@ -51,6 +51,7 @@ import           Control.Monad (forever, void, when)
 import qualified Control.Monad.Class.MonadSTM.Internal as TVar
 import           Control.Monad.Class.MonadTimer (MonadTimer, registerDelay)
 import           Control.Monad.Class.MonadTimer.SI (diffTimeToMicrosecondsAsInt)
+import           Data.Ord (clamp)
 import           Data.Ratio ((%))
 import           Data.Time.Clock (diffTimeToPicoseconds)
 import           GHC.Generics (Generic)
@@ -434,10 +435,6 @@ atomicallyWithMonotonicTime ::
   m b
 atomicallyWithMonotonicTime f =
   atomically . f =<< getMonotonicTime
-
--- NOTE: Needed for GHC 8
-clamp :: Ord a => (a, a) -> a -> a
-clamp (low, high) x = min high (max low x)
 
 -- | Number of microseconds in a second (@10^6@).
 microsecondsPerSecond :: Integer

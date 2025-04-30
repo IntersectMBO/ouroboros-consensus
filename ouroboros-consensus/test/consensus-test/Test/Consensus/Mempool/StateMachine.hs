@@ -586,9 +586,7 @@ mkSUT cfg initialLedger = do
 semantics ::
      ( MonadSTM m
      , LedgerSupportsMempool blk
-#if __GLASGOW_HASKELL__  > 810
      , ValidateEnvelope blk
-#endif
      ) =>
      CT.Tracer m String
   -> Command blk Concrete
@@ -680,9 +678,7 @@ shrinker _ _ = []
 sm ::
   ( LedgerSupportsMempool blk
   , IOLike m
-#if __GLASGOW_HASKELL__  > 810
-     , ValidateEnvelope blk
-#endif
+  , ValidateEnvelope blk
   )
   => StateMachine (Model blk) (Command blk) m (Response blk)
   -> CT.Tracer m String
@@ -731,9 +727,7 @@ prop_mempoolSequential ::
   ( HasTxId (GenTx blk)
   , blk ~ TestBlock
   , LedgerSupportsMempool blk
-#if __GLASGOW_HASKELL__ > 900
   , LedgerSupportsProtocol blk
-#endif
   )
   => LedgerConfig blk
   -> TxMeasure blk
@@ -774,9 +768,7 @@ prop_mempoolParallel ::
   ( HasTxId (GenTx blk)
   , blk ~ TestBlock
   , LedgerSupportsMempool blk
-#if __GLASGOW_HASKELL__ > 900
   , LedgerSupportsProtocol blk
-#endif
   )
   => LedgerConfig blk
   -> TxMeasure blk
