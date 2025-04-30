@@ -6,6 +6,7 @@ module Test.CsjModel.NonEmptySeq (module Test.CsjModel.NonEmptySeq) where
 
 import           Control.Monad (guard)
 import qualified Data.Maybe as L (Maybe (Just, Nothing))
+-- TODO use AnchoredSeq?
 import           Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 

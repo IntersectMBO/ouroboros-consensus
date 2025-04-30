@@ -9,6 +9,7 @@ import           Cardano.Slotting.Slot (WithOrigin (At, Origin))
 import           Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Maybe as L (Maybe (Just, Nothing))
+-- TODO use AnchoredSeq?
 import           Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import           Data.Set (Set)
