@@ -48,11 +48,19 @@ import           Test.CsjModel.StateTypes
 -------------------------------------------------------------------------------}
 
 -- | Events the CSJ logic needs to react to
+--
+-- TODO copy <https://github.com/IntersectMBO/ouroboros-consensus/pull/1492>'s
+-- explanation that a @Reengage@ stimulus is unnecessary even when the GSM
+-- transitions out of 'Ouroboros.Consensus.Node.GsmState.CaughtUp'
 data CsjStimulus p a =
     -- | The peer responded to a ChainSync message
     ChainSyncReply !(ChainSyncReply p a)
   |
-    -- | The peer just connected
+    -- | An upstream peer just connected
+    --
+    -- Note that this should simply not be called when the Genesis State
+    -- Machine (GSM) is in the 'Ouroboros.Consensus.Node.GsmState.CaughtUp'
+    -- state.
     --
     -- The argument is the payload for the current immutable tip.
     Connect !a
