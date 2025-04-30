@@ -80,7 +80,8 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Node
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
-import           Ouroboros.Consensus.Protocol.Praos.AgentClient (KESAgentContext)
+import           Ouroboros.Consensus.Protocol.Praos.AgentClient
+                     (KESAgentContext)
 import           Ouroboros.Consensus.Protocol.TPraos
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger
@@ -90,7 +91,6 @@ import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util (eitherToMaybe)
 import           Ouroboros.Consensus.Util.IndexedMemPack
-import           Ouroboros.Consensus.Util.IOLike (IOLike)
 import           Test.ThreadNet.TxGen
 import           Test.ThreadNet.TxGen.Shelley ()
 

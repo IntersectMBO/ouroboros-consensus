@@ -14,7 +14,7 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2025-05-15T07:59:00Z
+  , hackage.haskell.org 2025-04-16T18:30:40Z
   -- Bump this if you need newer packages from CHaP
   , cardano-haskell-packages 2025-05-15T08:36:14Z
 
@@ -34,10 +34,9 @@ multi-repl: True
 
 import: ./asserts.cabal
 
-allow-newer: plutus-core:cardano-crypto-class
-           , bytestring
-           , serdoc-core:tasty-quickcheck
-           , kes-agent:base
+allow-newer:
+    serdoc-core:tasty-quickcheck
+  , kes-agent:base
 
 package ouroboros-network
   -- Certain ThreadNet tests rely on transactions to be submitted promptly after
@@ -49,6 +48,10 @@ package ouroboros-network
 if(os(windows))
   constraints:
     bitvec -simd
+
+if impl (ghc < 9)
+  allow-older:
+    kes-agent:template-haskell
 
 if impl (ghc >= 9.12)
   allow-newer:
@@ -69,3 +72,16 @@ if impl (ghc >= 9.12)
 
     -- https://github.com/kapralVV/Unique/issues/11
     , Unique:hashable
+
+    , serdoc-core:template-haskell
+    , serdoc-core:th-abstraction
+    , kes-agent:containers
+    , kes-agent:extra
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/kes-agent
+  tag: a212f98b9bc567ebf3c8472e62f28450990f7821
+  --sha256: sha256-b/6L3WqQ+fY1K6uBJVeoOTE4RAc3SUc72qZtXO0DAfE=
+  subdir:
+      kes-agent

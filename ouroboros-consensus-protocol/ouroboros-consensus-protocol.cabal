@@ -56,14 +56,15 @@ library
     Ouroboros.Consensus.Protocol.Ledger.HotKey
     Ouroboros.Consensus.Protocol.Ledger.Util
     Ouroboros.Consensus.Protocol.Praos
-    Ouroboros.Consensus.Protocol.Praos.Common
     Ouroboros.Consensus.Protocol.Praos.AgentClient
+    Ouroboros.Consensus.Protocol.Praos.Common
     Ouroboros.Consensus.Protocol.Praos.Header
     Ouroboros.Consensus.Protocol.Praos.VRF
     Ouroboros.Consensus.Protocol.Praos.Views
     Ouroboros.Consensus.Protocol.TPraos
 
   build-depends:
+    Win32-network ^>=0.2,
     base >=4.14 && <4.22,
     bytestring,
     cardano-binary,
@@ -80,15 +81,14 @@ library
     io-sim,
     kes-agent,
     mtl,
-    network ^>=3.1.4.0,
+    network ^>=3.2.7,
     nothunks,
     ouroboros-consensus >=0.23 && <0.28,
-    ouroboros-network-framework ^>=0.16,
+    ouroboros-network-framework ^>=0.18,
     ouroboros-network-testing ^>=0.8,
-    serialise,
     serdoc-core,
+    serialise,
     text,
-    Win32-network ^>=0.2,
 
 library unstable-protocol-testlib
   import: common-lib
@@ -130,6 +130,7 @@ test-suite protocol-test
     cardano-crypto-class ^>=2.2,
     cardano-ledger-binary:testlib,
     cardano-ledger-core ^>=1.17,
+    cardano-protocol-tpraos,
     containers,
     ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib},
     ouroboros-consensus-protocol,

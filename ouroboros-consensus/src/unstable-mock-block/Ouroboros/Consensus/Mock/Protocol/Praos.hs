@@ -48,7 +48,6 @@ import           Cardano.Crypto.Hash.Class (HashAlgorithm (..), hashToBytes,
                      hashWithSerialiser, sizeHash)
 import           Cardano.Crypto.Hash.SHA256 (SHA256)
 import           Cardano.Crypto.KES.Class
-
 import           Cardano.Crypto.KES.Mock
 import           Cardano.Crypto.KES.Simple
 import           Cardano.Crypto.Util

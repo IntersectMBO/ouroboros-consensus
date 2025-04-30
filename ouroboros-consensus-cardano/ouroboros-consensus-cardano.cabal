@@ -161,10 +161,10 @@ library
     ouroboros-consensus ^>=0.27,
     ouroboros-consensus-protocol ^>=0.12,
     ouroboros-network-api ^>=0.14,
+    serdoc-core,
     serialise ^>=0.2,
     singletons ^>=3.0,
     small-steps,
-    serdoc-core,
     sop-core ^>=0.5,
     sop-extras ^>=0.4,
     strict-sop-core ^>=0.1,
@@ -332,7 +332,6 @@ library unstable-shelley-testlib
     ouroboros-consensus-protocol:{ouroboros-consensus-protocol, unstable-protocol-testlib},
     ouroboros-network-api,
     quiet ^>=0.2,
-    serdoc-core,
     small-steps,
 
 test-suite shelley-test
@@ -586,8 +585,6 @@ library unstable-cardano-tools
     ouroboros-network-framework ^>=0.18,
     ouroboros-network-protocols,
     resource-registry,
-    serdoc-core,
-    serialise ^>=0.2,
     singletons,
     sop-core,
     sop-extras,

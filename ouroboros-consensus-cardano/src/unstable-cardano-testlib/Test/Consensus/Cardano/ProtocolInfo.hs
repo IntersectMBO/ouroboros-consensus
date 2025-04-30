@@ -20,7 +20,6 @@ module Test.Consensus.Cardano.ProtocolInfo (
   , protocolVersionZero
   ) where
 
-import           Ouroboros.Consensus.Protocol.Praos.AgentClient (KESAgentContext)
 import qualified Cardano.Chain.Genesis as CC.Genesis
 import qualified Cardano.Chain.Update as CC.Update
 import qualified Cardano.Ledger.Api.Transition as L
@@ -47,6 +46,8 @@ import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..),
 import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import           Ouroboros.Consensus.Protocol.PBFT (PBftParams,
                      PBftSignatureThreshold (..))
+import           Ouroboros.Consensus.Protocol.Praos.AgentClient
+                     (KESAgentContext)
 import           Ouroboros.Consensus.Shelley.Node
                      (ProtocolParamsShelleyBased (..), ShelleyGenesis,
                      ShelleyLeaderCredentials)
@@ -143,7 +144,7 @@ hardForkInto Conway =
 --
 mkSimpleTestProtocolInfo ::
      forall c
-   . (CardanoHardForkConstraints c)
+   . (CardanoHardForkConstraints c, KESAgentContext c IO)
   => Shelley.DecentralizationParam
   -- ^ Network decentralization parameter.
   -> SecurityParam
@@ -216,7 +217,6 @@ mkTestProtocolInfo ::
      forall m c
    . ( CardanoHardForkConstraints c
      , KESAgentContext c m
-     , c ~ StandardCrypto
      )
   => (CoreNodeId, Shelley.CoreNode c)
   -- ^ Id of the node for which the protocol info will be elaborated.

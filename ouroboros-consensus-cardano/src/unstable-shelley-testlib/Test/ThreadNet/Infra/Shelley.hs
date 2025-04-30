@@ -38,14 +38,10 @@ module Test.ThreadNet.Infra.Shelley (
 
 import           Cardano.Crypto.DSIGN (DSIGNAlgorithm (..), SignKeyDSIGN,
                      seedSizeDSIGN)
-import           Cardano.Crypto.KES (KESAlgorithm (..), UnsoundPureSignKeyKES,
+import           Cardano.Crypto.KES (KESAlgorithm (..),
+                     UnsoundPureKESAlgorithm (..), UnsoundPureSignKeyKES,
                      seedSizeKES, unsoundPureDeriveVerKeyKES,
                      unsoundPureGenKeyKES)
-import           Cardano.Crypto.DSIGN (DSIGNAlgorithm (..), seedSizeDSIGN)
-import           Cardano.Crypto.Hash (HashAlgorithm)
-import           Cardano.Crypto.KES (UnsoundPureSignKeyKES, KESAlgorithm (..),
-                     UnsoundPureKESAlgorithm (..),
-                     seedSizeKES, unsoundPureGenKeyKES, unsoundPureDeriveVerKeyKES)
 import           Cardano.Crypto.Seed (mkSeedFromBytes)
 import qualified Cardano.Crypto.Seed as Cardano.Crypto
 import           Cardano.Crypto.VRF (SignKeyVRF, deriveVerKeyVRF, genKeyVRF,
@@ -83,12 +79,13 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.Node.ProtocolInfo
+import           Ouroboros.Consensus.Protocol.Praos.AgentClient
+                     (KESAgentContext)
 import           Ouroboros.Consensus.Protocol.Praos.Common
                      (PraosCanBeLeader (PraosCanBeLeader),
-                     praosCanBeLeaderColdVerKey,
-                     praosCanBeLeaderSignKeyVRF,
+                     PraosCredentialsSource (..), praosCanBeLeaderColdVerKey,
                      praosCanBeLeaderCredentialsSource,
-                     PraosCredentialsSource (..))
+                     praosCanBeLeaderSignKeyVRF)
 import           Ouroboros.Consensus.Protocol.TPraos
 import           Ouroboros.Consensus.Shelley.Eras (ShelleyEra)
 import           Ouroboros.Consensus.Shelley.Ledger (GenTx (..),
@@ -106,7 +103,6 @@ import           Test.QuickCheck
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Slots (NumSlots (..))
 import           Test.Util.Time (dawnOfTime)
-import           Ouroboros.Consensus.Protocol.Praos.AgentClient (KESAgentContext)
 
 {-------------------------------------------------------------------------------
   The decentralization parameter
@@ -147,7 +143,7 @@ data CoreNode c = CoreNode {
     , cnStakingKey  :: !(SignKeyDSIGN LK.DSIGN)
       -- ^ The hash of the corresponding verification (public) key will be
       -- used as the staking credential.
-    , cnVRF         :: !(SL.SignKeyVRF   c)
+    , cnVRF         :: !(SignKeyVRF   (VRF c))
     , cnKES         :: !(UnsoundPureSignKeyKES (KES c))
     , cnOCert       :: !(SL.OCert        c)
     }
@@ -186,9 +182,10 @@ genCoreNode ::
      Crypto c
   => SL.KESPeriod
   -> Gen (CoreNode c)
-    genKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @(DSIGN c)))
-    delKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @(DSIGN c)))
-    stkKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @(DSIGN c)))
+genCoreNode startKESPeriod = do
+    genKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @LK.DSIGN))
+    delKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @LK.DSIGN))
+    stkKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @LK.DSIGN))
     vrfKey <- genKeyVRF   <$> genSeed (seedSizeVRF   (Proxy @(VRF   c)))
     kesKey <- unsoundPureGenKeyKES <$> genSeed (seedSizeKES   (Proxy @(KES   c)))
     let kesPub = unsoundPureDeriveVerKeyKES kesKey
@@ -414,10 +411,9 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
 mkProtocolShelley ::
      forall m c.
      ( KESAgentContext c m
-     , PraosCrypto c
-     , ShelleyCompatible (TPraos c) (ShelleyEra c)
+     , ShelleyCompatible (TPraos c) ShelleyEra
      )
-  => ShelleyGenesis c
+  => ShelleyGenesis
   -> SL.Nonce
   -> ProtVer
   -> CoreNode c
