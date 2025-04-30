@@ -44,7 +44,7 @@ import           Cardano.Ledger.Binary (Annotator (..), DecCBOR (..),
 import qualified Cardano.Ledger.Binary.Plain as Plain
 import           Cardano.Ledger.Core as SL (eraDecoder, eraProtVerLow,
                      toEraCBOR)
-import qualified Cardano.Ledger.Core as SL (hashTxSeq)
+import qualified Cardano.Ledger.Core as SL (TranslationContext, hashTxSeq)
 import           Cardano.Ledger.Hashes (HASH)
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Protocol.Crypto (Crypto)
@@ -89,6 +89,7 @@ class
   , EncCBOR (ShelleyProtocolHeader proto)
   , DecCBOR (Annotator (ShelleyProtocolHeader proto))
   , Show (CannotForgeError proto)
+  , Show (SL.TranslationContext era)
     -- Currently the chain select view is identical
     -- Era and proto crypto must coincide
   , SelectView proto ~ PraosChainSelectView (ProtoCrypto proto)

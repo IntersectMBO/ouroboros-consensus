@@ -350,6 +350,9 @@ deriving via LiftNS WrapTipInfo               xs instance CanHardFork xs => Show
 deriving via LiftNS WrapValidatedGenTx        xs instance CanHardFork xs => Show (OneEraValidatedGenTx        xs)
 deriving via LiftNS WrapValidationErr         xs instance CanHardFork xs => Show (OneEraValidationErr         xs)
 
+deriving instance Show (PartialLedgerConfig xs) => Show (WrapPartialLedgerConfig xs)
+deriving via LiftNP WrapPartialLedgerConfig xs instance CanHardFork xs => Show (PerEraLedgerConfig xs)
+
 deriving via LiftMismatch SingleEraInfo LedgerEraInfo xs instance All SingleEraBlock xs => Eq   (MismatchEraInfo xs)
 deriving via LiftMismatch SingleEraInfo LedgerEraInfo xs instance All SingleEraBlock xs => Show (MismatchEraInfo xs)
 

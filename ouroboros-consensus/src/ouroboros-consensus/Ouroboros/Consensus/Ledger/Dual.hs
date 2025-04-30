@@ -238,6 +238,7 @@ class (
       , CommonProtocolParams   m
       , HasTxId (GenTx         m)
       , Show (ApplyTxErr       m)
+      , Show (LedgerConfig     m)
 
         -- Requirements on the auxiliary block
         -- No 'LedgerSupportsProtocol' for @a@!
@@ -245,6 +246,7 @@ class (
       , UpdateLedger            a
       , LedgerSupportsMempool   a
       , Show (ApplyTxErr        a)
+      , Show (LedgerConfig      a)
       , NoThunks (LedgerConfig  a)
       , NoThunks (CodecConfig   a)
       , NoThunks (StorageConfig a)
@@ -333,6 +335,8 @@ data DualLedgerConfig m a = DualLedgerConfig {
     , dualLedgerConfigAux  :: LedgerConfig a
     }
   deriving NoThunks via AllowThunk (DualLedgerConfig m a)
+
+deriving instance (Show (LedgerConfig m), Show (LedgerConfig a)) => Show (DualLedgerConfig m a)
 
 type instance LedgerCfg (LedgerState (DualBlock m a)) = DualLedgerConfig m a
 

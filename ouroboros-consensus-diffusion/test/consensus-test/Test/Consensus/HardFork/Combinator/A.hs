@@ -226,6 +226,7 @@ data PartialLedgerConfigA = LCfgA {
     , lcfgA_systemStart :: SystemStart
     , lcfgA_forgeTxs    :: Map SlotNo [GenTx BlockA]
     }
+  deriving Show
   deriving NoThunks via OnlyCheckWhnfNamed "LCfgA" PartialLedgerConfigA
   deriving Generic
   deriving Serialise

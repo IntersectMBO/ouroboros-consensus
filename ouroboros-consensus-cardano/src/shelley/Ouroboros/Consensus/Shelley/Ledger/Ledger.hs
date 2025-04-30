@@ -195,6 +195,8 @@ data ShelleyPartialLedgerConfig era = ShelleyPartialLedgerConfig {
     }
   deriving (Generic)
 
+deriving instance Show (ShelleyLedgerConfig era) => Show (ShelleyPartialLedgerConfig era)
+
 deriving instance (NoThunks (Core.TranslationContext era), Core.Era era) =>
     NoThunks (ShelleyPartialLedgerConfig era)
 
