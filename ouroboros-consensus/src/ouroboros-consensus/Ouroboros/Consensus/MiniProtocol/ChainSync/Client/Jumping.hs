@@ -399,7 +399,7 @@ deriving anyclass instance
 
 -- | The result of a jump request, either accepted or rejected.
 data JumpResult blk
-  = AcceptedJump !(Point blk) !(JumpInstruction blk)
+  = AcceptedJump !(JumpInstruction blk)
   | RejectedJump !(JumpInstruction blk)
   deriving (Generic)
 
@@ -577,20 +577,20 @@ processJumpResult context jumpResult =
   readTVar (cschJumping (handle context)) >>= \case
     Dynamo{} ->
       case jumpResult of
-        AcceptedJump _p (JumpToGoodPoint jumpInfo) ->
+        AcceptedJump (JumpToGoodPoint jumpInfo) ->
           unitNothing <$> updateChainSyncState (handle context) jumpInfo
         RejectedJump JumpToGoodPoint{} -> do
           startDisengaging (handle context)
           (Just . ($ BecauseCsjDisengage) . fst) <$> backfillDynamo (stripContext context)
 
         -- Not interesting in the dynamo state
-        AcceptedJump _p JumpTo{} -> pure Nothing
-        RejectedJump    JumpTo{} -> pure Nothing
+        AcceptedJump JumpTo{} -> pure Nothing
+        RejectedJump JumpTo{} -> pure Nothing
 
     Disengaged{} -> pure Nothing
     Objector{} ->
       case jumpResult of
-        AcceptedJump _p (JumpToGoodPoint jumpInfo) ->
+        AcceptedJump (JumpToGoodPoint jumpInfo) ->
           unitNothing <$> updateChainSyncState (handle context) jumpInfo
         RejectedJump JumpToGoodPoint{} -> do
           -- If the objector rejects a good point, it is a sign of a rollback
@@ -599,12 +599,12 @@ processJumpResult context jumpResult =
           (Just . ($ BecauseCsjDisengage)) <$> electNewObjector (stripContext context)
 
         -- Not interesting in the objector state
-        AcceptedJump _p JumpTo{} -> pure Nothing
+        AcceptedJump JumpTo{} -> pure Nothing
         RejectedJump JumpTo{} -> pure Nothing
 
     Jumper nextJumpVar jumperState ->
         case jumpResult of
-          AcceptedJump _p (JumpTo goodJumpInfo) -> do
+          AcceptedJump (JumpTo goodJumpInfo) -> do
             -- The jump was accepted; we set the jumper's candidate fragment to
             -- the dynamo's candidate fragment up to the accepted point.
             --
@@ -650,7 +650,7 @@ processJumpResult context jumpResult =
                 error "processJumpResult (rejected): Jumpers in state FoundIntersection shouldn't be further jumping."
 
           -- These aren't interesting in the case of jumpers.
-          AcceptedJump _p JumpToGoodPoint{} -> pure Nothing
+          AcceptedJump JumpToGoodPoint{} -> pure Nothing
           RejectedJump JumpToGoodPoint{} -> pure Nothing
   where
     -- Avoid redundant constraint "HasHeader blk" reported by some ghc's

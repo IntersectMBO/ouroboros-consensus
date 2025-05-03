@@ -1301,8 +1301,8 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
               recvMsgIntersectFound = \pt theirTip ->
                   if
                     | pt == dynamoTipPt -> do
-                      Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedJump pt jump
-                      traceWith tracer $ TraceJumpResult $ Jumping.AcceptedJump pt jump
+                      Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedJump jump
+                      traceWith tracer $ TraceJumpResult $ Jumping.AcceptedJump jump
                       let kis' = case jump of
                             -- Since the updated kis is needed to validate headers,
                             -- we only update it if we are becoming a Dynamo or
