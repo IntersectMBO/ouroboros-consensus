@@ -1306,8 +1306,8 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
               recvMsgIntersectFound = \pt theirTip ->
                   if
                     | pt == dynamoTipPt -> do
-                      Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedJump jump
-                      traceWith tracer $ TraceJumpResult $ Jumping.AcceptedJump jump
+                      Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedJump pt jump
+                      traceWith tracer $ TraceJumpResult $ Jumping.AcceptedJump pt jump
                       let kis' = case jump of
                             -- Since the updated kis is needed to validate headers,
                             -- we only update it if we are becoming a Dynamo or
@@ -1478,9 +1478,10 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
 
             let slotNo = blockSlot hdr
 
+            Jumping.jgOnRecvRollForward jumping (blockRealPoint hdr)
+
             checkKnownInvalid cfgEnv dynEnv intEnv hdr
 
-            Jumping.jgOnRollForward jumping (blockPoint hdr)
             atomically (setLatestSlot dynEnv (NotOrigin slotNo))
 
             checkTime cfgEnv dynEnv intEnv kis arrival slotNo >>= \case
@@ -1498,6 +1499,11 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     kis'' <-
                         checkValid cfgEnv intEnv hdr hdrSlotTime theirTip kis' ledgerView
                     kis''' <- checkLoP cfgEnv dynEnv hdr kis''
+
+                    Jumping.jgOnRollForward jumping HeaderWithTime
+                      { hwtHeader           = hdr
+                      , hwtSlotRelativeTime = hdrSlotTime
+                      }
 
                     atomically $ do
                       updateJumpInfoSTM jumping kis'''
@@ -1603,7 +1609,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     setCandidate theirFrag'
                     setLatestSlot dynEnv (pointSlot rollBackPoint)
 
-                  Jumping.jgOnRollBackward jumping (pointSlot rollBackPoint)
+                  Jumping.jgOnRollBackward jumping rollBackPoint
 
                   continueWithState kis' $
                       nextStep mkPipelineDecision n theirTip

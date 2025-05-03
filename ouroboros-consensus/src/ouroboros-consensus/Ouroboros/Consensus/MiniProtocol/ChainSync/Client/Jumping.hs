@@ -211,6 +211,8 @@ import           Data.Void (absurd)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block (HasHeader (getHeaderFields), Header,
                      Point (..), castPoint, pointSlot, succWithOrigin)
+import           Ouroboros.Consensus.Block.RealPoint
+import qualified Ouroboros.Consensus.HeaderValidation as HV
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
@@ -224,6 +226,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike hiding (handle)
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import           Ouroboros.Network.Block (StandardHash)
 
 -- | Hooks for ChainSync jumping.
 data Jumping m blk = Jumping
@@ -238,10 +241,13 @@ data Jumping m blk = Jumping
 
     -- | To be called whenever a header is received from the peer
     -- before it is validated.
-    jgOnRollForward     :: !(Point (Header blk) -> m ()),
+    jgOnRecvRollForward :: !(RealPoint (Header blk) -> m ()),
+
+    -- | To be called whenever a header from the peer has been validated.
+    jgOnRollForward     :: !(HV.HeaderWithTime blk -> m ()),
 
     -- | To be called whenever a peer rolls back.
-    jgOnRollBackward    :: !(WithOrigin SlotNo -> m ()),
+    jgOnRollBackward    :: !(Point blk -> m ()),
 
     -- | Process the result of a jump, either accepted or rejected.
     --
@@ -272,6 +278,7 @@ noJumping =
   Jumping
     { jgNextInstruction = pure RunNormally
     , jgOnAwaitReply = pure ()
+    , jgOnRecvRollForward = const $ pure ()
     , jgOnRollForward = const $ pure ()
     , jgOnRollBackward = const $ pure ()
     , jgProcessJumpResult = const $ pure ()
@@ -297,8 +304,9 @@ mkJumping peerContext = Jumping
                   $ atomically
                   $ nextInstruction retry peerContext
   , jgOnAwaitReply = f $ onAwaitReply peerContext
-  , jgOnRollForward = f . onRollForward peerContext
-  , jgOnRollBackward = f . onRollBackward peerContext
+  , jgOnRollForward = const $ pure ()
+  , jgOnRecvRollForward = f . onRollForward peerContext . realPointToPoint
+  , jgOnRollBackward = f . onRollBackward peerContext . pointSlot
   , jgProcessJumpResult = f . processJumpResult peerContext
   , jgUpdateJumpInfo = updateJumpInfo peerContext
   }
@@ -391,12 +399,12 @@ deriving anyclass instance
 
 -- | The result of a jump request, either accepted or rejected.
 data JumpResult blk
-  = AcceptedJump !(JumpInstruction blk)
+  = AcceptedJump !(Point blk) !(JumpInstruction blk)
   | RejectedJump !(JumpInstruction blk)
   deriving (Generic)
 
-deriving instance (Typeable blk, HasHeader (Header blk), Eq (Header blk)) => Eq (JumpResult blk)
-deriving instance (Typeable blk, HasHeader (Header blk), Show (Header blk)) => Show (JumpResult blk)
+deriving instance (Typeable blk, HasHeader (Header blk), Eq (Header blk), StandardHash blk) => Eq (JumpResult blk)
+deriving instance (Typeable blk, HasHeader (Header blk), Show (Header blk), StandardHash blk) => Show (JumpResult blk)
 
 deriving anyclass instance
   ( HasHeader blk,
@@ -467,7 +475,7 @@ onRollForward :: forall m peer blk.
 onRollForward context point =
   readTVar (cschJumping (handle context)) >>= \case
     Objector _ _ badPoint
-      | badPoint == castPoint point -> do
+      | badPoint == point -> do
           disengage (handle context)
           (Just . ($ BecauseCsjDisengage)) <$> electNewObjector (stripContext context)
       | otherwise -> pure Nothing
@@ -569,20 +577,20 @@ processJumpResult context jumpResult =
   readTVar (cschJumping (handle context)) >>= \case
     Dynamo{} ->
       case jumpResult of
-        AcceptedJump (JumpToGoodPoint jumpInfo) ->
+        AcceptedJump _p (JumpToGoodPoint jumpInfo) ->
           unitNothing <$> updateChainSyncState (handle context) jumpInfo
         RejectedJump JumpToGoodPoint{} -> do
           startDisengaging (handle context)
           (Just . ($ BecauseCsjDisengage) . fst) <$> backfillDynamo (stripContext context)
 
         -- Not interesting in the dynamo state
-        AcceptedJump JumpTo{} -> pure Nothing
-        RejectedJump JumpTo{} -> pure Nothing
+        AcceptedJump _p JumpTo{} -> pure Nothing
+        RejectedJump    JumpTo{} -> pure Nothing
 
     Disengaged{} -> pure Nothing
     Objector{} ->
       case jumpResult of
-        AcceptedJump (JumpToGoodPoint jumpInfo) ->
+        AcceptedJump _p (JumpToGoodPoint jumpInfo) ->
           unitNothing <$> updateChainSyncState (handle context) jumpInfo
         RejectedJump JumpToGoodPoint{} -> do
           -- If the objector rejects a good point, it is a sign of a rollback
@@ -591,12 +599,12 @@ processJumpResult context jumpResult =
           (Just . ($ BecauseCsjDisengage)) <$> electNewObjector (stripContext context)
 
         -- Not interesting in the objector state
-        AcceptedJump JumpTo{} -> pure Nothing
+        AcceptedJump _p JumpTo{} -> pure Nothing
         RejectedJump JumpTo{} -> pure Nothing
 
     Jumper nextJumpVar jumperState ->
         case jumpResult of
-          AcceptedJump (JumpTo goodJumpInfo) -> do
+          AcceptedJump _p (JumpTo goodJumpInfo) -> do
             -- The jump was accepted; we set the jumper's candidate fragment to
             -- the dynamo's candidate fragment up to the accepted point.
             --
@@ -642,7 +650,7 @@ processJumpResult context jumpResult =
                 error "processJumpResult (rejected): Jumpers in state FoundIntersection shouldn't be further jumping."
 
           -- These aren't interesting in the case of jumpers.
-          AcceptedJump JumpToGoodPoint{} -> pure Nothing
+          AcceptedJump _p JumpToGoodPoint{} -> pure Nothing
           RejectedJump JumpToGoodPoint{} -> pure Nothing
   where
     -- Avoid redundant constraint "HasHeader blk" reported by some ghc's
