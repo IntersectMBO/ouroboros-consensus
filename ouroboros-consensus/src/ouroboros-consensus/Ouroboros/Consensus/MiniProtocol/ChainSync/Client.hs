@@ -864,14 +864,13 @@ chainSyncClient cfgEnv dynEnv =
     case someHeaderInFutureCheck cfgEnv of
         InFutureCheck.SomeHeaderInFutureCheck headerInFutureCheck ->
             ChainSyncClientPipelined
-          $ continueWithState ()
+          $ continueWithState (BlockNo 0)
           $ -- Start ChainSync by looking for an intersection between our
             -- current chain fragment and their chain.
             findIntersectionTop
                 cfgEnv
                 dynEnv
                 (mkIntEnv headerInFutureCheck)
-                (BlockNo 0)
                 (ForkTooDeep GenesisPoint)
   where
     ConfigEnv {
@@ -1005,11 +1004,10 @@ findIntersectionTop ::
   => ConfigEnv m blk
   -> DynamicEnv m blk
   -> InternalEnv m blk arrival judgment
-  -> BlockNo
-     -- ^ Peer's best block; needed to build an 'UnknownIntersectionState'.
   -> (Our (Tip blk) -> Their (Tip blk) -> ChainSyncClientResult)
      -- ^ Exception to throw when no intersection is found.
-  -> Stateful m blk () (ClientPipelinedStIdle 'Z)
+  -> Stateful m blk BlockNo (ClientPipelinedStIdle 'Z)
+     -- ^ the incoming state is 'uBlockNo'/'kBlockNo'
 findIntersectionTop cfgEnv dynEnv intEnv =
     findIntersection
   where
@@ -1041,12 +1039,10 @@ findIntersectionTop cfgEnv dynEnv intEnv =
     -- intersect, disconnect by throwing the exception obtained by calling the
     -- passed function.
     findIntersection ::
-        BlockNo
-        -- ^ Peer's best block; needed to build an 'UnknownIntersectionState'.
-     -> (Our (Tip blk) -> Their (Tip blk) -> ChainSyncClientResult)
+        (Our (Tip blk) -> Their (Tip blk) -> ChainSyncClientResult)
         -- ^ Exception to throw when no intersection is found.
-     -> Stateful m blk () (ClientPipelinedStIdle 'Z)
-    findIntersection uBestBlockNo mkResult = Stateful $ \() -> do
+     -> Stateful m blk BlockNo (ClientPipelinedStIdle 'Z)
+    findIntersection mkResult = Stateful $ \uBestBlockNo -> do
         (ourFrag, ourHeaderStateHistory) <- atomically $ (,)
             <$> getCurrentChain
             <*> getHeaderStateHistory
@@ -1262,13 +1258,12 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                         $ nextStep' mkPipelineDecision n theirTip
                     Jumping.Restart -> do
                       lbResume loPBucket
-                      continueWithState ()
+                      continueWithState (kBestBlockNo kis)
                         $ drainThePipe n
                         $ findIntersectionTop
                             cfgEnv
                             dynEnv
                             intEnv
-                            (kBestBlockNo kis)
                             NoMoreIntersection
 
     nextStep' ::
@@ -1486,13 +1481,12 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
 
             checkTime cfgEnv dynEnv intEnv kis arrival slotNo >>= \case
                 NoLongerIntersects ->
-                    continueWithState ()
+                    continueWithState (kBestBlockNo kis)
                   $ drainThePipe n
                   $ findIntersectionTop
                         cfgEnv
                         dynEnv
                         intEnv
-                        (kBestBlockNo kis)
                         NoMoreIntersection
 
                 StillIntersects (ledgerView, hdrSlotTime) kis' -> do
