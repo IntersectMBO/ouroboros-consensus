@@ -31,8 +31,11 @@ import qualified Data.Sequence.Strict as Seq
 import           Data.Typeable (Proxy (..), Typeable, typeRep)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block (HasHeader, Header, Point)
+import           Ouroboros.Consensus.Block.SupportsProtocol
+                     (BlockSupportsProtocol)
 import           Ouroboros.Consensus.HeaderStateHistory (HeaderStateHistory)
-import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
+import           Ouroboros.Consensus.HeaderValidation (HasAnnTip,
+                     HeaderWithTime (..))
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.Node.GsmState (GsmState)
@@ -261,6 +264,12 @@ data JumpInfo blk = JumpInfo
   , jTheirHeaderStateHistory :: !(HeaderStateHistory blk)
   }
   deriving (Generic)
+
+deriving instance
+  ( BlockSupportsProtocol blk,
+    HasAnnTip blk,
+    Show (Header blk)
+  ) => Show (JumpInfo blk)
 
 instance (HasHeader (Header blk), Typeable blk) => Eq (JumpInfo blk) where
   (==) = (==) `on` headPoint . jTheirFragment

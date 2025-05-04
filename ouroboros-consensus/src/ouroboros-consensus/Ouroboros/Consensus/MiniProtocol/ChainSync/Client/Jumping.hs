@@ -196,13 +196,12 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping (
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo (..), WithOrigin (..))
-import           Control.Monad (forM, forM_, when)
+import           Control.Monad (forM, forM_, join, when)
 import           Control.Tracer (Tracer, traceWith)
-import           Data.Foldable (toList, traverse_)
+import           Data.Foldable (toList)
 import           Data.List (sortOn)
 import qualified Data.Map as Map
 import           Data.Maybe (catMaybes, fromMaybe)
-import           Data.Maybe.Strict (StrictMaybe (..))
 import           Data.Sequence.Strict (StrictSeq)
 import qualified Data.Sequence.Strict as Seq
 import qualified Data.Strict.Either as Strict
@@ -212,7 +211,6 @@ import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block (HasHeader (getHeaderFields), Header,
                      Point (..), castPoint, pointSlot, succWithOrigin)
 import           Ouroboros.Consensus.Block.RealPoint
-import qualified Ouroboros.Consensus.HeaderValidation as HV
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
@@ -230,7 +228,9 @@ import           Ouroboros.Network.Block (StandardHash)
 
 -- | Hooks for ChainSync jumping.
 data Jumping m blk = Jumping
-  { -- | Get the next instruction to execute, which can be either to run normal
+  { jgConnect           :: !(JumpInfo blk -> STM m ()),
+
+    -- | Get the next instruction to execute, which can be either to run normal
     -- ChainSync, to jump to a given point, or to restart ChainSync. When the
     -- peer is a jumper and there is no jump request, 'jgNextInstruction' blocks
     -- until a jump request is made.
@@ -244,7 +244,11 @@ data Jumping m blk = Jumping
     jgOnRecvRollForward :: !(RealPoint (Header blk) -> m ()),
 
     -- | To be called whenever a header from the peer has been validated.
-    jgOnRollForward     :: !(HV.HeaderWithTime blk -> m ()),
+    --
+    -- The argument is the 'JumpInfo' this peer would provide if it jumped
+    -- right now. (That argument is redundant with 'jgUpdateJumpInfo', but
+    -- needed by "Test.CsjModel".)
+    jgOnRollForward     :: !(RealPoint blk -> JumpInfo blk -> m ()),
 
     -- | To be called whenever a peer rolls back.
     jgOnRollBackward    :: !(Point blk -> m ()),
@@ -253,7 +257,7 @@ data Jumping m blk = Jumping
     --
     -- The jump result is used to decide on the next jumps or whether to elect
     -- an objector.
-    jgProcessJumpResult :: !(JumpResult blk -> m ()),
+    jgProcessJumpResult :: !(JumpResult blk -> STM m (m ())),
 
     -- | To be called to update the last known jump possible to the tip of
     -- the peers candidate fragment. The ChainSync clients for all peers should
@@ -276,12 +280,13 @@ deriving anyclass instance
 noJumping :: (MonadSTM m) => Jumping m blk
 noJumping =
   Jumping
-    { jgNextInstruction = pure RunNormally
+    { jgConnect = const $ pure ()
+    , jgNextInstruction = pure RunNormally
     , jgOnAwaitReply = pure ()
     , jgOnRecvRollForward = const $ pure ()
-    , jgOnRollForward = const $ pure ()
+    , jgOnRollForward = \_ _ -> pure ()
     , jgOnRollBackward = const $ pure ()
-    , jgProcessJumpResult = const $ pure ()
+    , jgProcessJumpResult = const $ pure (pure ())
     , jgUpdateJumpInfo = const $ pure ()
     }
 
@@ -294,7 +299,8 @@ mkJumping ::
   PeerContext m peer blk ->
   Jumping m blk
 mkJumping peerContext = Jumping
-  { jgNextInstruction =
+  { jgConnect = const $ pure ()
+  , jgNextInstruction =
         atomically (nextInstruction (pure ()) peerContext) >>= \case
             Strict.Right instr -> pure instr
             Strict.Left () -> do
@@ -304,14 +310,16 @@ mkJumping peerContext = Jumping
                   $ atomically
                   $ nextInstruction retry peerContext
   , jgOnAwaitReply = f $ onAwaitReply peerContext
-  , jgOnRollForward = const $ pure ()
+  , jgOnRollForward = \_ _ -> pure ()
   , jgOnRecvRollForward = f . onRollForward peerContext . realPointToPoint
   , jgOnRollBackward = f . onRollBackward peerContext . pointSlot
-  , jgProcessJumpResult = f . processJumpResult peerContext
+  , jgProcessJumpResult = g . processJumpResult peerContext
   , jgUpdateJumpInfo = updateJumpInfo peerContext
   }
   where
-    f m = atomically m >>= traverse_ (traceWith (tracer peerContext))
+    f = join . atomically . g
+
+    g m = flip whenJust (traceWith (tracer peerContext)) <$> m
 
 -- | A context for ChainSync jumping
 --
@@ -559,12 +567,12 @@ onAwaitReply context =
     Disengaged{} ->
       pure Nothing
 
--- | Process the result of a jump. In the happy case, this only consists in
--- updating the peer's handle to take the new candidate fragment and the new
--- last jump point into account. When disagreeing with the dynamo, though, we
--- enter a phase of several jumps to pinpoint exactly where the disagreement
--- occurs. Once this phase is finished, we trigger the election of a new
--- objector, which might update many TVars.
+-- | Process the result of a jump. In the happy case, there's nothing to update
+-- for this specific peer since the ChainSync client already updated its
+-- 'csState'. When disagreeing with the dynamo, though, we enter a phase of
+-- several jumps to pinpoint exactly where the disagreement occurs. Once this
+-- phase is finished, we trigger the election of a new objector, which might
+-- update many TVars.
 processJumpResult :: forall m peer blk.
   ( MonadSTM m,
     Eq peer,
@@ -577,8 +585,7 @@ processJumpResult context jumpResult =
   readTVar (cschJumping (handle context)) >>= \case
     Dynamo{} ->
       case jumpResult of
-        AcceptedJump (JumpToGoodPoint jumpInfo) ->
-          unitNothing <$> updateChainSyncState (handle context) jumpInfo
+        AcceptedJump JumpToGoodPoint{} -> pure Nothing
         RejectedJump JumpToGoodPoint{} -> do
           startDisengaging (handle context)
           (Just . ($ BecauseCsjDisengage) . fst) <$> backfillDynamo (stripContext context)
@@ -590,8 +597,7 @@ processJumpResult context jumpResult =
     Disengaged{} -> pure Nothing
     Objector{} ->
       case jumpResult of
-        AcceptedJump (JumpToGoodPoint jumpInfo) ->
-          unitNothing <$> updateChainSyncState (handle context) jumpInfo
+        AcceptedJump JumpToGoodPoint{} -> pure Nothing
         RejectedJump JumpToGoodPoint{} -> do
           -- If the objector rejects a good point, it is a sign of a rollback
           -- to earlier than the last jump.
@@ -605,13 +611,6 @@ processJumpResult context jumpResult =
     Jumper nextJumpVar jumperState ->
         case jumpResult of
           AcceptedJump (JumpTo goodJumpInfo) -> do
-            -- The jump was accepted; we set the jumper's candidate fragment to
-            -- the dynamo's candidate fragment up to the accepted point.
-            --
-            -- The candidate fragments of jumpers don't grow otherwise, as only the
-            -- objector and the dynamo request further headers.
-            updateChainSyncState (handle context) goodJumpInfo
-            writeTVar (cschJumpInfo (handle context)) $ Just goodJumpInfo
             case jumperState of
               LookingForIntersection _goodJumpInfo badJumpInfo ->
                 -- @AF.headPoint fragment@ is in @badFragment@, as the jumper
@@ -655,13 +654,6 @@ processJumpResult context jumpResult =
   where
     -- Avoid redundant constraint "HasHeader blk" reported by some ghc's
     _ = getHeaderFields @blk
-
-    updateChainSyncState :: ChainSyncClientHandle m blk -> JumpInfo blk -> STM m ()
-    updateChainSyncState handle jump = do
-      let fragment = jTheirFragment jump
-      modifyTVar (cschState handle) $ \csState ->
-        csState {csCandidate = fragment, csLatestSlot = SJust (AF.headSlot fragment) }
-      writeTVar (cschJumpInfo handle) $ Just jump
 
     mkGoodJumpInfo :: Maybe (JumpInfo blk) -> JumpInfo blk -> JumpInfo blk
     mkGoodJumpInfo mGoodJumpInfo badJumpInfo = do
@@ -870,7 +862,7 @@ rotateDynamo tracer handlesCol peer = do
           _ ->
             -- Do not re-elect a dynamo if the peer is not the dynamo.
             pure Nothing
-  traverse_ (traceWith tracer) traceEvent
+  whenJust traceEvent $ \ev -> traceWith tracer ev
 
 -- | Choose an unspecified new non-idling dynamo and demote all other peers to
 -- jumpers.

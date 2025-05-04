@@ -375,6 +375,7 @@ library unstable-consensus-testlib
   hs-source-dirs: src/unstable-consensus-testlib
   exposed-modules:
     Test.CsjModel
+    Test.CsjModel.Jumping
     Test.CsjModel.NonEmptySeq
     Test.CsjModel.Perm
     Test.CsjModel.StateTypes

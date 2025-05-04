@@ -34,7 +34,9 @@ deriving instance Read p => Read (WithOrigin p)
 -- order to correctly set its ChainSync client candidate (TODO not even
 -- necessarily the rest of the ChainSync state) when the peer replies with
 -- 'Test.CsjModel.MsgIntersectFound' for that point
-data WithPayload p a = WP !p !a
+--
+-- Note that the payload argument is intentionally not strict.
+data WithPayload p a = WP !p a
   deriving (Read, Show)
 
 mkWithPayload :: p -> a -> WithPayload p a

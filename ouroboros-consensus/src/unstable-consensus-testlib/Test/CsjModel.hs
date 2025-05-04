@@ -8,6 +8,7 @@
 module Test.CsjModel (
     ChainSyncReply (..)
   , CsjEnv (..)
+  , CsjIntersectPurpose (..)
   , CsjReaction (..)
   , CsjState
   , CsjStimulus (..)
@@ -15,8 +16,8 @@ module Test.CsjModel (
   , csjReactions
   , initialCsjState
   , mkWithPayload
-  , wpPoint
   , wpPayload
+  , wpPoint
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo (unSlotNo), WithOrigin (At, Origin))
@@ -79,7 +80,10 @@ data CsjStimulus p a =
 data ChainSyncReply p a =
     MsgAwaitReply
   |
-    MsgIntersectFound !(WithOrigin p)
+    -- |
+    -- 'Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InvalidJumpResponse'
+    -- ensures that response from the peer is the same point we offered
+    MsgIntersectFound
   |
     MsgIntersectNotFound
   |
@@ -99,10 +103,14 @@ data ChainSyncReply p a =
 data CsjReaction p a =
     -- | the ChainSync client should run as normal (ie pipelining
     -- @MsgRequestNext@s) until 'Stop' is given
+    --
+    -- This message is only sent to the Dynamo or an Objector, never to a Jumper.
     Continue
   |
     -- | ChainSync should hereafter run as normal; CSJ will never give it
     -- another command
+    --
+    -- This message is only sent to the Dynamo or an Objector, never to a Jumper.
     Disengage
   |
     -- | the ChainSync client should send a @MsgFindIntersect@ with only this
@@ -114,18 +122,35 @@ data CsjReaction p a =
     -- ChainSync client's don't necessarily have to handle all of these (eg
     -- while they're blocked on the ledger view forecast), but should handle
     -- the latest as soon as they're able to.
-    MsgFindIntersect !(WithPayload (WithOrigin p) a)
+    --
+    -- This message is only sent to a Jumper, never the Dynamo or an Objector.
+    MsgFindIntersect !CsjIntersectPurpose !(WithPayload (WithOrigin p) a)
   |
     -- | used to demote the Dynamo to a Jumper upon 'Starvation'
     --
     -- Implies a @drainThePipe@ call and also suppression of an imminent
     -- 'MsgRollForwardDONE' if there is one.
+    --
+    -- This message is only sent to the Dynamo, never an Objector nor a Jumper.
     Stop
+  deriving (Read, Show)
+
+-- | Why this 'MsgFindIntersect' is being sent
+data CsjIntersectPurpose =
+    -- | To determine which points of a 'JumpRequest' the peer has
+    ToBisect
+  |
+    -- | To reset the mini protocol state so that the peer can definitely send
+    -- headers starting from the expected point
+    --
+    -- If the peer replies with 'MsgIntersectNotFound', they will be
+    -- disengaged.
+    ToPromote
   deriving (Read, Show)
 
 -- | @'nextMsgFindIntersect' = 'MsgFindIntersect' . 'wpAt' . 'nextPivot'@
 nextMsgFindIntersect :: Bisecting p a -> CsjReaction p a
-nextMsgFindIntersect = MsgFindIntersect . wpAt . nextPivot
+nextMsgFindIntersect = MsgFindIntersect ToBisect . wpAt . nextPivot
 
 {-------------------------------------------------------------------------------
   Promotion and demotion
@@ -133,20 +158,26 @@ nextMsgFindIntersect = MsgFindIntersect . wpAt . nextPivot
 
 -- | A 'MsgFindIntersect' for 'comm'
 --
--- Minor optimization opportunity: if the Jumper's latest response was
--- @MsgIntersectFound@ then this could be skipped.
-promotionMessage :: CsjClientState p a -> CsjReaction p a
-promotionMessage = MsgFindIntersect . comm
-
--- | 'MsgIntersectFound' after promoting a Jumper
+-- This message is always sent when a peer is promoted to the Dynamo or an
+-- Objector.
 --
--- This disengages if the new intersection isn't 'comm'.
-finishPromotion ::
-     Ord p
-  => WithOrigin p
-  -> CsjClientState p a
-  -> L.Maybe (CsjClientState p a)
-finishPromotion p y = y <$ guard (p == wpPoint (comm y))
+-- Minor optimization opportunity: if the Jumper's latest response was
+-- @MsgIntersectFound@ then this could be skipped. There are only few cases
+-- where this 'promotionMessage' currently must not be skipped.
+--
+-- - The first peer to 'Connect' will immediately be promoted to Dynamo despite
+--   never having sent any messages to its peer.
+--
+-- - Similarly, if a peer waiting in 'latestJump' is promoted to Dynamo, it has
+--   never sent any messages to its peer.
+--
+-- - If a peer was demoted from Dynamo, the last message it sent to its peer
+--   most likely would have been @MsgRequestNext@. But when it was demoted,
+--   'truncCandidate' most likely discarded some of its 'candidate' and it also
+--   probably had to @drainThePipe@. So it's out of sync with its mini protocol
+--   peer.
+promotionMessage :: CsjClientState p a -> CsjReaction p a
+promotionMessage = MsgFindIntersect ToPromote . comm
 
 -- | Reset 'candidate' to 'comm' when demoting the Dynamo in response to
 -- 'Starvation'
@@ -220,25 +251,6 @@ backward wp y = do
   Updates due to 'MsgIntersectFound' and 'MsgIntersectNotFound'
 -------------------------------------------------------------------------------}
 
--- | @MsgIntersectNotFound@
-intersectNotFound ::
-     Ord p
-  => CsjClientState p a
-  -> Bisecting p a
-  -> L.Maybe (CsjClientState p a, Either (Class p) (Bisecting p a))
-intersectNotFound y bi = pure $ bisectionStep y bi False
-
--- | @MsgIntersectFound@
-intersectionFound ::
-     Ord p
-  => WithOrigin p
-  -> CsjClientState p a
-  -> Bisecting p a
-  -> L.Maybe (CsjClientState p a, Either (Class p) (Bisecting p a))
-intersectionFound p y bi = do
-    guard $ p == (At $ wpPoint $ nextPivot bi)
-    pure $ bisectionStep y bi True
-
 -- | Update a 'Bisecting' based on the response to its 'nextMsgFindIntersect'.
 --
 -- Recall that 'newJumpRequest' uses 'comm' and 'anticomm' to constrain
@@ -246,12 +258,12 @@ intersectionFound p y bi = do
 -- need to check them and so cannot fail.
 bisectionStep ::
      Ord p
-  => CsjClientState p a
-  -> Bisecting p a
-  -> Bool
+  => Bool
      -- ^ 'True' for 'MsgIntersectFound', 'False' for 'MsgIntersectNotFound'
+  -> CsjClientState p a
+  -> Bisecting p a
   -> (CsjClientState p a, Either (Class p) (Bisecting p a))
-bisectionStep y bi found =
+bisectionStep found y bi =
     (y', eBi')
   where
     nyd = notYetDetermined bi
@@ -325,15 +337,14 @@ csjReactions env imm x pid = fmap fixup . \case
             -- 'minJumpSlots'? Otherwise every peer will have to fetch the
             -- recent headers, and there could be several thousand of them.
 
-        MsgIntersectFound p ->
-                onAlreadySent (intersectionFound p)
+        MsgIntersectFound ->
+                onAlreadySent (bisectionStep True)
             <|>
-                onActive (finishPromotion p)
+                onPromotee L.Just
         MsgIntersectNotFound ->
-                onAlreadySent intersectNotFound
+                onAlreadySent (bisectionStep False)
             <|>
-                -- The Jumper failed its promotion.
-                onActive (const L.Nothing)
+                onPromotee (const L.Nothing)
 
         MsgRollBackward     p -> onActive (backward  p)
         MsgRollForwardDONE wp -> onActive (forward  wp)
@@ -435,6 +446,9 @@ csjReactions env imm x pid = fmap fixup . \case
             maybe [] ((:[]) . (,) pid) mbMsg
           )
 
+    -- A Dynamo or Objector has responded to its 'promotionMessage'.
+    onPromotee = onActive
+
     onActive f = onDynamo f <|> onObjector f
 
     onDynamo f = do
@@ -507,9 +521,10 @@ csjReactions env imm x pid = fmap fixup . \case
             AlreadySent mbNext ->
                 pure $ maybe id (uncurry . newJumpRequest) mbNext
             NotYetSent         -> L.Nothing
-        pure $ case k <$> f y bi of
-            L.Nothing         -> disengage
-            L.Just (y', eBi') -> case eBi' of
+        pure $
+            let (y', eBi') = k $ f y bi
+            in
+            case eBi' of
                 Left clss -> (
                     CsjState {
                         dynamo     = dynamo x
@@ -1048,8 +1063,10 @@ firstJumpRequest imm req =
             Just $ Right $ mkBi ps
         At p   -> case neFindPoint ps p of
             L.Just i  -> Just $ case nonEmptySeq $ neDrop (i + 1) ps of
-                L.Nothing    -> Left $ Class imm
                 L.Just neNyd -> Right $ mkBi neNyd
+                L.Nothing    ->
+                    -- TODO how could this branch be reachable?
+                    Left $ Class imm
             L.Nothing ->
                 -- the imm tip is not on the jump request
                 Nothing
