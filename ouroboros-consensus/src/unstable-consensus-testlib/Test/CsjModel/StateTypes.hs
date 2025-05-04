@@ -1,3 +1,6 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE StandaloneDeriving #-}
 
@@ -16,6 +19,8 @@ import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Strict.Either (Either (Left))
 import           Data.Strict.Maybe (Maybe (Just, Nothing))
+import           GHC.Generics (Generic)
+import           NoThunks.Class (NoThunks)
 import           Prelude hiding (Either (Left, Right), Maybe (Just, Nothing), either, maybe)
 import           Test.CsjModel.NonEmptySeq
 import           Test.CsjModel.Perm
@@ -37,7 +42,8 @@ deriving instance Read p => Read (WithOrigin p)
 --
 -- Note that the payload argument is intentionally not strict.
 data WithPayload p a = WP !p a
-  deriving (Read, Show)
+  deriving stock    (Generic, Read, Show)
+  deriving anyclass (NoThunks)
 
 mkWithPayload :: p -> a -> WithPayload p a
 mkWithPayload = WP
@@ -97,26 +103,37 @@ trimAnticomm newcomm ps = case newcomm of
 -- | Drop all but one immutable point from 'candidate'
 trimCandidate ::
      Ord p
-  => WithOrigin p
+  => CsjClientState p a
+  -> WithOrigin p
      -- ^ current imm tip
   -> CsjClientState p a
-  -> CsjClientState p a
-trimCandidate imm y =
-    CsjClientState {
-        anticomm  = anticomm y
-      ,
-        candidate = case imm of
-            Origin -> candidate y
-            At p   -> case findPoint (candidate y) p of
-                L.Just i  -> Seq.drop i (candidate y)
-                L.Nothing ->
-                    -- The LoE prevents this, since 'candidate' includes at
-                    -- least one point that was previously the immutable tip.
-                    error "impossible!"
-      ,
-        -- The LoE ensures that @imm@ is not an extension of 'comm'.
-        comm      = comm y
-      }
+trimCandidate y = \case
+    Origin -> y
+    At p   -> case findPoint (candidate y) p of
+        L.Nothing ->
+            -- The LoE prevents this, since 'candidate' includes at least
+            -- one point that was previously the immutable tip.
+            error "impossible!"
+        L.Just i  ->
+            CsjClientState {
+                anticomm  = anticomm y
+              ,
+                candidate = Seq.drop i (candidate y)
+              ,
+                -- The LoE always ensures that 'comm' and @imm@ are on the
+                -- same chain.
+                --
+                -- Under normal circumstances, 'comm' is not older than
+                -- @imm@. However, that's not always true. For example, if
+                -- there is exactly one peer, then it will be the Dynamo
+                -- and the node /technically/ could sync more than k blocks
+                -- from it before another jump request comes due.
+                comm      =
+                  let immWp      = wpAt $ Seq.index (candidate y) i
+                      cornerCase = wpPoint (comm y) < wpPoint immWp
+                  in
+                  if cornerCase then immWp else comm y
+              }
 
 {-------------------------------------------------------------------------------
   The state of the CSJ governor

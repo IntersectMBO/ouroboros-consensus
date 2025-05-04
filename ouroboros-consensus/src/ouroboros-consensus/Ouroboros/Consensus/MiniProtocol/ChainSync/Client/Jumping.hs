@@ -219,7 +219,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
                      ChainSyncJumpingJumperState (..),
                      ChainSyncJumpingState (..), ChainSyncState (..),
                      DisengagedInitState (..), DynamoInitState (..),
-                     JumpInfo (..), JumperInitState (..),
+                     ImmutableJumpInfo, JumpInfo (..), JumperInitState (..),
                      ObjectorInitState (..))
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike hiding (handle)
@@ -228,9 +228,7 @@ import           Ouroboros.Network.Block (StandardHash)
 
 -- | Hooks for ChainSync jumping.
 data Jumping m blk = Jumping
-  { jgConnect           :: !(JumpInfo blk -> STM m ()),
-
-    -- | Get the next instruction to execute, which can be either to run normal
+  { -- | Get the next instruction to execute, which can be either to run normal
     -- ChainSync, to jump to a given point, or to restart ChainSync. When the
     -- peer is a jumper and there is no jump request, 'jgNextInstruction' blocks
     -- until a jump request is made.
@@ -280,8 +278,7 @@ deriving anyclass instance
 noJumping :: (MonadSTM m) => Jumping m blk
 noJumping =
   Jumping
-    { jgConnect = const $ pure ()
-    , jgNextInstruction = pure RunNormally
+    { jgNextInstruction = pure RunNormally
     , jgOnAwaitReply = pure ()
     , jgOnRecvRollForward = const $ pure ()
     , jgOnRollForward = \_ _ -> pure ()
@@ -299,8 +296,7 @@ mkJumping ::
   PeerContext m peer blk ->
   Jumping m blk
 mkJumping peerContext = Jumping
-  { jgConnect = const $ pure ()
-  , jgNextInstruction =
+  { jgNextInstruction =
         atomically (nextInstruction (pure ()) peerContext) >>= \case
             Strict.Right instr -> pure instr
             Strict.Left () -> do
@@ -373,10 +369,17 @@ data Instruction blk
   | Restart
   | -- | Jump to the tip of the given fragment.
     JumpInstruction !(JumpInstruction blk)
+  | -- | CSJ is commanding the peer to stop fetching headers, and to truncate
+    -- its ChainSync state to the given point
+    --
+    -- The point is necessarily on its candidate; if it weren't, the peer would
+    -- have been disengaged already. The point is also necessarily ahead of the
+    -- node's immutable tip.
+    StopRunningNormally !(Point blk)
   deriving (Generic)
 
-deriving instance (Typeable blk, HasHeader (Header blk), Eq (Header blk)) => Eq (Instruction blk)
-deriving instance (Typeable blk, HasHeader (Header blk), Show (Header blk)) => Show (Instruction blk)
+deriving instance (StandardHash blk, Typeable blk, HasHeader (Header blk), Eq (Header blk)) => Eq (Instruction blk)
+deriving instance (StandardHash blk, Typeable blk, HasHeader (Header blk), Show (Header blk)) => Show (Instruction blk)
 deriving anyclass instance
   ( HasHeader blk,
     LedgerSupportsProtocol blk,
@@ -783,10 +786,11 @@ registerClient ::
   Context m peer blk ->
   peer ->
   StrictTVar m (ChainSyncState blk) ->
+  ImmutableJumpInfo blk ->
   -- | A function to make a client handle from a jumping state.
   (StrictTVar m (ChainSyncJumpingState m blk) -> ChainSyncClientHandle m blk) ->
   STM m (PeerContext m peer blk, Maybe (TraceEventCsj peer blk))
-registerClient context peer csState mkHandle = do
+registerClient context peer csState _immJumpInfo mkHandle = do
   (csjState, mbEv) <- getDynamo (handlesCol context) >>= \case
     Nothing -> do
       fragment <- csCandidate <$> readTVar csState

@@ -1,3 +1,7 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 
 -- | An executable specification of the centralized CSJ logic
@@ -39,6 +43,8 @@ import           Data.Strict.Classes (toLazy)
 import           Data.Strict.Either (Either (Left, Right), either)
 import           Data.Strict.Maybe (Maybe (Just, Nothing), fromMaybe, maybe)
 import           Data.Word (Word64)
+import           GHC.Generics (Generic)
+import           NoThunks.Class (NoThunks)
 import           Prelude hiding (Either (Left, Right), Maybe (Just, Nothing), either, maybe)
 import           Test.CsjModel.NonEmptySeq
 import           Test.CsjModel.Perm
@@ -128,12 +134,17 @@ data CsjReaction p a =
   |
     -- | used to demote the Dynamo to a Jumper upon 'Starvation'
     --
-    -- Implies a @drainThePipe@ call and also suppression of an imminent
-    -- 'MsgRollForwardDONE' if there is one.
+    -- Implies suppression of an imminent 'MsgRollForwardDONE', if there is
+    -- one.
+    --
+    -- The argument is the point that the peer should truncate their ChainSync
+    -- candidate fragment to.
     --
     -- This message is only sent to the Dynamo, never an Objector nor a Jumper.
-    Stop
-  deriving (Read, Show)
+    Stop !(WithOrigin p)
+  deriving (Generic, Read, Show)
+
+deriving instance (NoThunks p, NoThunks a) => NoThunks (CsjReaction p a)
 
 -- | Why this 'MsgFindIntersect' is being sent
 data CsjIntersectPurpose =
@@ -146,7 +157,8 @@ data CsjIntersectPurpose =
     -- If the peer replies with 'MsgIntersectNotFound', they will be
     -- disengaged.
     ToPromote
-  deriving (Read, Show)
+  deriving stock    (Generic, Read, Show)
+  deriving anyclass (NoThunks)
 
 -- | @'nextMsgFindIntersect' = 'MsgFindIntersect' . 'wpAt' . 'nextPivot'@
 nextMsgFindIntersect :: Bisecting p a -> CsjReaction p a
@@ -320,13 +332,13 @@ bisectionStep found y bi =
 csjReactions ::
      (Ord p, Ord pid)
   => CsjEnv p
-  -> WithOrigin p
-     -- ^ the current immutable tip
   -> CsjState pid p a
   -> pid
+  -> WithOrigin p
+     -- ^ the current immutable tip
   -> CsjStimulus p a
   -> L.Maybe (CsjState pid p a, [(pid, CsjReaction p a)])
-csjReactions env imm x pid = fmap fixup . \case
+csjReactions env x pid imm = fmap fixup . \case
 
     Connect z -> pure $ connect z
 
@@ -347,7 +359,17 @@ csjReactions env imm x pid = fmap fixup . \case
                 onPromotee (const L.Nothing)
 
         MsgRollBackward     p -> onActive (backward  p)
-        MsgRollForwardDONE wp -> onActive (forward  wp)
+        MsgRollForwardDONE wp ->
+                -- This special case prevents the immutable tip from surpassing
+                -- the Dynamo's 'comm'. For example, that would be a risk at
+                -- least when the Dynamo is the /only/ upstream peer: the node
+                -- could sync k+1 blocks before the next jump request arises
+                -- (especially if the blocks are nearly empty). I'm not certain
+                -- that's the only case, so this 'trimCandidate' call is done
+                -- for every header from the Dynamo.
+                onDynamo (fmap (flip trimCandidate imm) . forward wp)
+            <|>
+                onObjector (forward wp)
         MsgRollForwardSTART p ->
             fmap (flip (,) [])
           $ preDynamo p <|> preObjector p
@@ -382,16 +404,7 @@ csjReactions env imm x pid = fmap fixup . \case
         )
 
     connect z =
-        let -- TODO currently, ChainSync clients send the "standard Fibonacci
-            -- points" before issuing 'Connect'. That's ultimately harmless,
-            -- but does seem wasteful. The immediate concern, however, is that
-            -- it means this 'comm' assignment is out of sync with the actual
-            -- ChainSync client.
-            --
-            -- TODO ChainSync client initialization should immediately set the
-            -- candidate to the contemporary imm tip and force the LoE to
-            -- update accordingly? Is that a harmless race condition?
-            y = CsjClientState {
+        let y = CsjClientState {
                 anticomm  = Set.empty
               ,
                 candidate = case imm of
@@ -617,7 +630,7 @@ csjReactions env imm x pid = fmap fixup . \case
                     queue      = queue x
                   }
               ,
-                [(pid, Stop)]
+                [(pid, Stop $ wpPoint $ comm y)]
               )
 
 {-------------------------------------------------------------------------------
@@ -910,7 +923,7 @@ issueNextJumpIfReady env imm (x, msgs) =
           , bigEnoughJump env (let Class q = dynamoClss in q) p dynamoMbQ
               -- It's crucial to use the 'Class' here rather than their 'comm',
               -- since---after they're promoted but before they request their
-              -- first jump---their 'comm' might be ahead of their 'Class' .
+              -- first jump---their 'comm' might be ahead of their 'Class'.
           , dynamoClss /= Class (At p)
               -- Suppress empty jumps.
               --
@@ -940,7 +953,7 @@ issueNextJump imm cons (x, msgs) dyn neCandidate =
           $ Dynamo
                 dynamoPid
                 dynamoClss
-                (trimC CsjClientState {
+                CsjClientState {
                     -- 'Set.empty' would suffice here if it weren't
                     -- for counterexamples to the NON-invariant
                     -- documented at 'JumpRequest'.
@@ -949,7 +962,7 @@ issueNextJump imm cons (x, msgs) dyn neCandidate =
                     candidate = candidate dynamoY
                   ,
                     comm      = wpAt wp
-                  })
+                  }
                 dynamoMbQ
       ,
         latestJump = Right req
@@ -963,9 +976,10 @@ issueNextJump imm cons (x, msgs) dyn neCandidate =
   )
   where
     -- 'issueNextJump' necessarily traverses all peers and must happen
-    -- infinitely often, so it's a reasonble place to call 'trimCandidate' on
-    -- all peers
-    trimC = trimCandidate imm
+    -- infinitely often, so it's a reasonable place to call 'trimCandidate' on
+    -- all peers except the Dynamo. The Dynamo needs to trim more often because
+    -- its the only kind of peer that might be /the only peer/.
+    trimC = flip trimCandidate imm
 
     Dynamo dynamoPid dynamoPrevClss dynamoY dynamoMbQ = dyn
 
@@ -1020,7 +1034,7 @@ issueNextJump imm cons (x, msgs) dyn neCandidate =
             -- promotion, then Jumpers that are serving the same chain as the
             -- Objector might end up with a inequal class after bisecting the
             -- new jump.
-            (Objector (min dynamoPrevClss clss) y mbQ, acc)
+            (Objector (min dynamoPrevClss clss) (trimC y) mbQ, acc)
 
     doneWaiting pid y = State.state $ doneWaiting2 pid y
 
