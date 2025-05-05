@@ -408,11 +408,11 @@ instance ( blockVersion ~ BlockNodeToClientVersion blk
       genTopLevelQuery3 =
         let version = Query.QueryVersion3
         in  frequency
-              [ (15, arbitraryBlockQuery version    )
-              , (1 , mkEntry version GetSystemStart )
-              , (1 , mkEntry version GetChainBlockNo)
-              , (1 , mkEntry version GetChainPoint  )
-              , (1 , mkEntry version GetLedgerConfig)
+              [ (15, arbitraryBlockQuery version      )
+              , (1 , mkEntry version GetSystemStart   )
+              , (1 , mkEntry version GetChainBlockNo  )
+              , (1 , mkEntry version GetChainPoint    )
+              , (1 , mkEntry version DebugLedgerConfig)
               ]
 
       arbitraryBlockQuery :: QueryVersion

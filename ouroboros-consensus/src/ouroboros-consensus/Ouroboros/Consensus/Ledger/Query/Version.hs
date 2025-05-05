@@ -16,7 +16,7 @@ data QueryVersion
   -- Adds support for 'GetChainBlockNo' and 'GetChainPoint'.
   | QueryVersion2
 
-  -- Adds support for 'GetLedgerConfig'
+  -- Adds support for 'DebugLedgerConfig'
   | QueryVersion3
   deriving (Eq, Ord, Enum, Bounded, Show)
 
