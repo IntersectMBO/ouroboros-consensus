@@ -198,11 +198,11 @@ class
 
 queryName :: Query blk result -> String
 queryName query = case query of
-  BlockQuery _    -> "BlockQuery"
-  GetSystemStart  -> "GetSystemStart"
-  GetChainBlockNo -> "GetChainBlockNo"
-  GetChainPoint   -> "GetChainPoint"
-  GetLedgerConfig -> "GetLedgerConfig"
+  BlockQuery _      -> "BlockQuery"
+  GetSystemStart    -> "GetSystemStart"
+  GetChainBlockNo   -> "GetChainBlockNo"
+  GetChainPoint     -> "GetChainPoint"
+  DebugLedgerConfig -> "DebugLedgerConfig"
 
 -- | Different queries supported by the ledger for all block types, indexed
 -- by the result type.
@@ -230,12 +230,13 @@ data Query blk result where
   -- Supported by 'QueryVersion' >= 'QueryVersion2'.
   GetChainPoint :: Query blk (Point blk)
 
-  -- | Get the ledger config.
+  -- | Get the ledger config. Note that this is a debug query, so we are not
+  -- (yet) guaranteeing stability across node versions.
   --
   -- This constructor is supported by 'QueryVersion' >= 'QueryVersion3'.
   -- Serialisation of the @LedgerConfig blk@ result is versioned by the
   -- @BlockNodeToClientVersion blk@.
-  GetLedgerConfig :: Query blk (LedgerConfig blk)
+  DebugLedgerConfig :: Query blk (LedgerConfig blk)
 
 -- | Answer the given query about the extended ledger state.
 answerQuery ::
@@ -263,7 +264,7 @@ answerQuery config forker query = case query of
     GetChainPoint ->
       headerStatePoint . headerState <$>
         atomically (roforkerGetLedgerState forker)
-    GetLedgerConfig ->
+    DebugLedgerConfig ->
       pure $ topLevelConfigLedger (getExtLedgerCfg config)
 
 {-------------------------------------------------------------------------------
@@ -293,7 +294,7 @@ instance
   showResult GetSystemStart          = show
   showResult GetChainBlockNo         = show
   showResult GetChainPoint           = show
-  showResult GetLedgerConfig         = const "LedgerConfig{..}"
+  showResult DebugLedgerConfig       = const "LedgerConfig{..}"
 
 instance Show (SomeBlockQuery (BlockQuery blk)) => Show (SomeSecond Query blk) where
   show (SomeSecond (BlockQuery blockQueryA))  =
@@ -301,7 +302,7 @@ instance Show (SomeBlockQuery (BlockQuery blk)) => Show (SomeSecond Query blk) w
   show (SomeSecond GetSystemStart)            = "Query GetSystemStart"
   show (SomeSecond GetChainBlockNo)           = "Query GetChainBlockNo"
   show (SomeSecond GetChainPoint)             = "Query GetChainPoint"
-  show (SomeSecond GetLedgerConfig)           = "Query GetLedgerConfig"
+  show (SomeSecond DebugLedgerConfig)         = "Query DebugLedgerConfig"
 
 queryIsSupportedOnNodeToClientVersion ::
      forall blk result.
@@ -323,11 +324,11 @@ queryIsSupportedOnVersion ::
   -> BlockNodeToClientVersion blk
   -> Bool
 queryIsSupportedOnVersion q qv bv = case q of
-      BlockQuery q'     -> qv >= QueryVersion1 && blockQueryIsSupportedOnVersion q' bv
-      GetSystemStart{}  -> qv >= QueryVersion1
-      GetChainBlockNo{} -> qv >= QueryVersion2
-      GetChainPoint{}   -> qv >= QueryVersion2
-      GetLedgerConfig{} -> qv >= QueryVersion3
+      BlockQuery q'       -> qv >= QueryVersion1 && blockQueryIsSupportedOnVersion q' bv
+      GetSystemStart{}    -> qv >= QueryVersion1
+      GetChainBlockNo{}   -> qv >= QueryVersion2
+      GetChainPoint{}     -> qv >= QueryVersion2
+      DebugLedgerConfig{} -> qv >= QueryVersion3
 
 querySupportedVersions ::
      forall blk result.
@@ -379,9 +380,9 @@ instance SameDepIndex2 (BlockQuery blk) => SameDepIndex (Query blk) where
     = Just Refl
   sameDepIndex GetChainPoint _
     = Nothing
-  sameDepIndex GetLedgerConfig GetLedgerConfig
+  sameDepIndex DebugLedgerConfig DebugLedgerConfig
     = Just Refl
-  sameDepIndex GetLedgerConfig _
+  sameDepIndex DebugLedgerConfig _
     = Nothing
 
 ------
@@ -431,7 +432,7 @@ queryEncodeNodeToClient codecConfig queryVersion blockVersion (SomeSecond query)
           , encodeWord8 3
           ]
 
-      GetLedgerConfig ->
+      DebugLedgerConfig ->
         mconcat
           [ encodeListLen 1
           , encodeWord8 4
@@ -477,7 +478,7 @@ queryDecodeNodeToClient codecConfig queryVersion blockVersion
           (1, 1) -> requireVersion QueryVersion1 $ SomeSecond GetSystemStart
           (1, 2) -> requireVersion QueryVersion2 $ SomeSecond GetChainBlockNo
           (1, 3) -> requireVersion QueryVersion2 $ SomeSecond GetChainPoint
-          (1, 4) -> requireVersion QueryVersion3 $ SomeSecond GetLedgerConfig
+          (1, 4) -> requireVersion QueryVersion3 $ SomeSecond DebugLedgerConfig
           _      -> fail $ "Query: invalid size and tag" <> show (size, tag)
 
     requireVersion ::
@@ -511,7 +512,7 @@ instance ( SerialiseBlockQueryResult blk BlockQuery
     = toCBOR result
   encodeResult _ _ GetChainPoint result
     = encodePoint encode result
-  encodeResult codecConfig blockVersion GetLedgerConfig result
+  encodeResult codecConfig blockVersion DebugLedgerConfig result
     = encodeNodeToClient codecConfig blockVersion result
 
   decodeResult codecConfig blockVersion (BlockQuery query)
@@ -522,5 +523,5 @@ instance ( SerialiseBlockQueryResult blk BlockQuery
     = fromCBOR
   decodeResult _ _ GetChainPoint
     = decodePoint decode
-  decodeResult codecConfig blockVersion GetLedgerConfig
+  decodeResult codecConfig blockVersion DebugLedgerConfig
     = decodeNodeToClient @blk @(LedgerConfig blk) codecConfig blockVersion
