@@ -41,7 +41,7 @@ const config = {
     mermaid: true,
       // We don't want to use MDX, as this requires escaping `<` and `{` symbols, which is quite inconvenient.
       // See: https://docusaurus.io/docs/markdown-features#mdx-vs-commonmark
-    format: 'md',
+    format: 'detect',
   },
 
   themes: ['@docusaurus/theme-mermaid'],

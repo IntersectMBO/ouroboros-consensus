@@ -28,14 +28,18 @@ How these backends work is shown below in this document.
 
 ## UTXO-HD design in Consensus
 
-> ℹ️ We are going to focus on Shelley based eras, ignoring Byron for now.
+:::info
+
+We are going to focus on Shelley based eras, ignoring Byron for now.
+
+:::
 
 ### The `NewEpochState` data structure
 
 The Ledger layer defines the data structure that holds the state of the
 blockchain after applying some number of blocks, the `NewEpochState`. Among
-other things, this data structure holds a UTXO set which is a `Map` from `TxIn
-(EraCrypto era)` to `TxOut era`.
+other things, this data structure holds a UTXO set which is a `Map` from `TxIn`
+to `TxOut era`.
 
 In order to apply the different Ledger operations, there is no need for this set
 to be complete at all times, as only entries consumed by the transactions will
@@ -68,7 +72,7 @@ data LedgerTables l mk = LedgerTables {
 
 For a Shelley block, these type families are mapped to the same types as above:
 
-- `TxIn (LedgerState (ShelleyBlock proto era)) = SL.TxIn (EraCrypto era)`
+- `TxIn (LedgerState (ShelleyBlock proto era)) = SL.TxIn`
 - `TxOut (LedgerState (ShelleyBlock proto era)) = SL.TxOut era`
 
 To instantiate the `mk` type variable, some _mapkinds_ are defined:
@@ -275,11 +279,6 @@ had two choices:
   great care in not violating it for example by injecting and projecting the whole
   UTXO set on every block which would simply blow up the memory consumption.
 
-It is important to note that for any era in the Cardano blockchain, the
-`EraCrypto` type family instance is the same (`StandardCrypto`), which makes all
-`TxIn (EraCrypto era)` keys equal. Thanks to this, we can define the `TxIn` for
-`HardForkBlocks` equal to this same type, which we call a `CanonicalTxIn`.
-
 ### Storing snapshots
 
 Before UTXO-HD, ledger state snapshots were CBOR-serialized files containing a
@@ -290,6 +289,12 @@ the UTXO-HD design and replaying the chain will be needed when enabling UTXO-HD
 for the first time. Moreover, snapshots created when using one of the UTXO-HD
 backends cannot be used with the other backend, and will require a replay.
 
+:::info
+
+The mentioned replays can be avoided by using the `snapshot-converter` utility, as described in [the migration guide](migrating.mdx#convert-the-existing-ledger-snapshots-with-snapshot-converter).
+
+:::
+
 |           | `ExtLedgerState blk EmptyMK`      | `LedgerTables (ExtLedgerState blk) ValuesMK`      | Live tables                   |
 |-----------|-----------------------------------|---------------------------------------------------|-------------------------------|
 | In-memory | `<db-root>/ledger/<slotno>/state` | `<db-root>/ledger/<slotno>/state/tables/tvar`     | N/A                           |
@@ -298,6 +303,10 @@ backends cannot be used with the other backend, and will require a replay.
 In the tables part of the snapshot, the in-memory backend will store a
 serialization of the `Map (TxIn (CardanoBlock c)) (TxOut (CardanoBlock c))`,
 whereas the on-disk backend will store a copy of the LMDB database.
+
+There will exist a new JSON file `<db-root>/ledger/<slotno>/meta` which
+describes the backend that was used when creating the snapshot and the CRC
+checksum of the on-disk data.
 
 ## Impact on the node
 
