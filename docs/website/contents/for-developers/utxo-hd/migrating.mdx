@@ -1,0 +1,189 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Migrating to a UTxO-HD node as a user
+
+This is a checklist of modifications needed to be performed by node users when
+migrating to UTxO-HD. It aims to ease the transition for node 10.4.
+
+## Install the LMDB library
+
+As the Consensus layer now allows for the use of the LMDB backend, the
+development library needs to be present on the system. If using Nix, this
+library will be available in the Nix shell. Otherwise, it will have to be
+manually installed:
+
+<div class="tabsblock">
+<Tabs>
+  <TabItem value="ubuntu" label="Debian/Ubuntu" default>
+    ```bash
+    sudo apt-get update -y
+    sudo apt-get install liblmdb-dev -y
+    ```
+  </TabItem>
+  <TabItem value="fedora" label="Fedora, RedHat or CentOS">
+  ```bash
+  sudo yum update -y
+  sudo yum install lmdb -y
+  ```
+  </TabItem>
+  <TabItem value="macOS" label="macOS">
+  ```bash
+  brew install lmdb
+  ```
+  </TabItem>
+  <TabItem value="windows" label="Windows MSYS2">
+  ```bash
+  pacman -S mingw-w64-<env>-x86_64-lmdb
+  ```
+
+  Which for the `CLANG64` environment will be:
+
+  ```bash
+  pacman -S mingw-w64-clang-x86_64-lmdb
+  ```
+  </TabItem>
+</Tabs>
+</div>
+
+## Populate the new configuration options
+
+The shape of the configuration file was slightly altered to put together all the
+options related to the LedgerDB into a JSON object `"LedgerDB"`. The shape of
+this object is as follows:
+
+```json
+{
+  ..., // other top level configuration options
+  "LedgerDB": {
+    "SnapshotInterval":   INT, //in seconds
+    "NumOfDiskSnapshots": INT,
+    "QueryBatchSize":     INT,
+    "Backend":            <backend>
+  }
+}
+```
+
+Notice that `"SnapshotInterval"` and `"NumOfDiskSnapshots"` have moved from the
+top-level to the `"LedgerDB"` object. The option `"DoDiskSnapshotChecksum"` has
+been deleted as snapshots now include the metadata unconditionally.
+
+By default, `"SnapshotInterval"` is set to $2  k = 4320$ seconds, and
+`"NumOfDiskSnapshots"` is set to 2.
+
+`"QueryBatchSize"` sets the size of the batches in which the store will be read
+when querying the store for a big range of UTxOs (such as with
+`QueryUTxOByAddress`). By default we read the store in batches of 100,000
+values.
+
+The value of `<backend>` depends on your choice of backend for UTxO-HD. It can
+be one of these:
+
+<div class="tabsblock">
+<Tabs>
+  <TabItem value="mem" label="In memory">
+  ```json
+  {
+    ...,
+    "LedgerDB": {
+      ...,
+      "Backend": "V2InMemory"
+    }
+  }
+  ```
+  </TabItem>
+  <TabItem value="dsk" label="LMDB">
+  ```json
+  {
+    ...,
+    "LedgerDB": {
+      ...,
+      "Backend":        "V1LMDB",
+      "FlushFrequency": INT,
+      "MapSize":        INT,  // number of GBs
+      "LiveTablesPath": PATH
+    }
+  }
+  ```
+
+The explanation for the new options applicable only to this backend follows:
+
+
+- `"FlushFrequency"`: The number of immutable blocks that need to exists before
+  we flush the sequence of differences to the disk. Smaller implies more
+  frequent disk writing, bigger implies more retained memory and slower
+  consulting of values. By default it is set to 100 blocks.
+- `"MapSize"`: LMDB needs to be given the desired mapsize with which the
+  database is open. See the [LMDB
+  docs](http://www.lmdb.tech/doc/group__mdb.html#gaa2506ec8dab3d969b0e609cd82e619e5).
+  By default we set this value to 16, which is fine on Linux as the file
+  progressively grows. On Windows this will write a 16GB file directly on the
+  disk. This is something that LMDB does, out of our control.
+- `"LiveTablesPath"`: LMDB will use a live database on the file system to store
+  the live UTxO set. Taking snapshots will "copy" this database to the snapshot
+  path. Therefore this "live" database is not needed for starting a node (as the
+  one from the snapshot will be used instead), but it will be used by the
+  running node process. It is recommended that this path is **on SSD
+  storage**. The default is `mainnet/db/lmdb`.
+
+</TabItem>
+</Tabs>
+</div>
+
+## Convert the existing Ledger snapshots with `snapshot-converter`
+
+:::warning
+
+Backup your ledger state snapshots before converting them to be safe in the
+unlikely case that something fails during conversion.
+
+:::
+
+The format of the Ledger snapshots in the ChainDB has changed with UTxO-HD. The
+simplest way to use the new format is deleting your snapshots and replaying the
+chain from Genesis, however this can take some hours.
+
+We provide the `snapshot-converter` tool which can load a snapshot in the Legacy
+format and write it either in the in-memory or on-disk formats for
+UTxO-HD. Supposing you have copied a legacy snapshot to
+`<tmpdir>/snapshots/<slotno>` you can run the following command:
+
+<div class="tabsblock">
+<Tabs>
+<TabItem value="mem" label="In memory">
+```console
+$ cd <tmpdir>
+$ snapshot-converter Legacy ./snapshots/<slotno> Mem ./snapshots/<slotno>_mem cardano --config <path-to-config.json>
+$ rm -rf <dbDir>/ledger/*
+$ cp -r ./snapshots/<slotno>_mem <dbDir>/ledger/<slotno>
+```
+</TabItem>
+<TabItem value="dsk" label="LMDB">
+```console
+$ cd <tmpdir>
+$ snapshot-converter Legacy ./snapshots/<slotno> LMDB ./snapshots/<slotno>_lmdb cardano --config <path-to-config.json>
+$ rm -rf <dbDir>/ledger/*
+$ cp -r ./snapshots/<slotno>_lmdb <dbDir>/ledger/<slotno>
+```
+</TabItem>
+</Tabs>
+</div>
+
+:::info
+
+You can do this process directly in the snapshots directory in the database
+path, but you have to make sure you delete the old format snapshots before
+running the node as otherwise you would have two snapshots with the same slot
+number and the node would be free to pick the one with the old format
+again. Doing the conversion in a separate directory and then copying only the
+new format snapshot prevents this situation.
+
+:::
+
+This will create a snapshot with the proper format for UTxO-HD. See [the UTxO-HD
+in depth document](utxo-hd-in-depth.md#storing-snapshots) for more
+information on the contents of the different files in the snapshot.
+
+If the snapshot does not have the expected structure or the backend for which it
+was created is different from the backend used by the node, the node will issue
+a warning mentioning the `snapshot-converter` and will ignore such snapshot.
