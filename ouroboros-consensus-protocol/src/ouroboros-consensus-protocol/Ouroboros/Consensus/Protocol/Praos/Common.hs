@@ -34,7 +34,7 @@ import           Cardano.Protocol.Crypto (Crypto, KES, VRF)
 import qualified Cardano.Protocol.TPraos.OCert as OCert
 import           Cardano.Slotting.Block (BlockNo)
 import           Cardano.Slotting.Slot (SlotNo)
-import           Control.Tracer (nullTracer)
+import qualified Control.Tracer as Tracer
 import           Data.Function (on)
 import           Data.Map.Strict (Map)
 import           Data.Ord (Down (Down))
@@ -284,9 +284,10 @@ instantiatePraosCredentials :: forall m c.
                                ( KESAgentContext c m
                                )
                             => Word64
+                            -> Tracer.Tracer m KESAgentClientTrace
                             -> PraosCredentialsSource c
                             -> m (HotKey.HotKey c m)
-instantiatePraosCredentials maxKESEvolutions (PraosCredentialsUnsound ocert skUnsound) = do
+instantiatePraosCredentials maxKESEvolutions _ (PraosCredentialsUnsound ocert skUnsound) = do
   sk <- KES.unsoundPureSignKeyKESToSoundSignKeyKES skUnsound
   let startPeriod :: OCert.KESPeriod
       startPeriod = OCert.ocertKESPeriod ocert
@@ -297,11 +298,11 @@ instantiatePraosCredentials maxKESEvolutions (PraosCredentialsUnsound ocert skUn
               startPeriod
               maxKESEvolutions
 
-instantiatePraosCredentials maxKESEvolutions (PraosCredentialsAgent path) = do
+instantiatePraosCredentials maxKESEvolutions tr (PraosCredentialsAgent path) = do
   HotKey.mkDynamicHotKey
       maxKESEvolutions
       (Just $ \handleKey handleDrop -> do
-        runKESAgentClient nullTracer path handleKey handleDrop
+        runKESAgentClient tr path handleKey handleDrop
       )
       (pure ())
 

@@ -47,6 +47,7 @@ import qualified Cardano.Ledger.UMap as SL
 import           Codec.CBOR.Decoding
 import           Codec.CBOR.Encoding
 import           Control.Monad.Except (runExcept)
+import qualified Control.Tracer as Tracer
 import           Data.Coerce
 import qualified Data.Map.Strict as Map
 import           Data.MemPack
@@ -62,7 +63,7 @@ import           Data.Void (Void)
 import           Lens.Micro ((^.))
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block.Abstract (BlockProtocol)
-import           Ouroboros.Consensus.Block.Forging (BlockForging)
+import           Ouroboros.Consensus.Block.Forging (BlockForging, KESTracer)
 import           Ouroboros.Consensus.Cardano.CanHardFork
                      (crossEraForecastAcrossShelley,
                      translateChainDepStateAcrossShelley)
@@ -81,7 +82,7 @@ import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Node
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Protocol.Praos.AgentClient
-                     (KESAgentContext)
+                     (KESAgentClientTrace, KESAgentContext)
 import           Ouroboros.Consensus.Protocol.TPraos
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger
@@ -363,6 +364,8 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
   Protocol info
 -------------------------------------------------------------------------------}
 
+type instance KESTracer (ShelleyBlock proto era) = KESAgentClientTrace
+
 protocolInfoShelleyBasedHardFork ::
      forall m proto1 era1 proto2 era2.
      ( KESAgentContext (ProtoCrypto proto2) m
@@ -374,7 +377,7 @@ protocolInfoShelleyBasedHardFork ::
   -> L.TransitionConfig era2
   -> TriggerHardFork
   -> ( ProtocolInfo      (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)
-     , m [BlockForging m (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)]
+     , Tracer.Tracer m KESAgentClientTrace -> m [BlockForging m (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)]
      )
 protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
                                  protVer1
@@ -406,7 +409,7 @@ protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
     genesis = transCfg2 ^. L.tcShelleyGenesisL
 
     protocolInfo1 :: ProtocolInfo (ShelleyBlock proto1 era1)
-    blockForging1 :: m [BlockForging m (ShelleyBlock proto1 era1)]
+    blockForging1 :: Tracer.Tracer m KESAgentClientTrace -> m [BlockForging m (ShelleyBlock proto1 era1)]
     (protocolInfo1, blockForging1) =
         protocolInfoTPraosShelleyBased
           protocolParamsShelleyBased
@@ -427,7 +430,7 @@ protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
     -- Era 2
 
     protocolInfo2 :: ProtocolInfo (ShelleyBlock proto2 era2)
-    blockForging2 :: m [BlockForging m (ShelleyBlock proto2 era2)]
+    blockForging2 :: Tracer.Tracer m KESAgentClientTrace -> m [BlockForging m (ShelleyBlock proto2 era2)]
     (protocolInfo2, blockForging2) =
         protocolInfoTPraosShelleyBased
           ProtocolParamsShelleyBased {

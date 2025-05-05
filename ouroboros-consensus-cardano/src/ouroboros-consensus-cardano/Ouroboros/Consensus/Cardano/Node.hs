@@ -48,6 +48,7 @@ import qualified Codec.CBOR.Decoding as CBOR
 import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import           Control.Exception (assert)
+import qualified Control.Tracer as Tracer
 import qualified Data.ByteString.Short as Short
 import           Data.Functor.These (These1 (..))
 import qualified Data.Map.Strict as Map
@@ -476,7 +477,7 @@ protocolInfoCardano ::
      )
   => CardanoProtocolParams c
   -> ( ProtocolInfo      (CardanoBlock c)
-     , m [BlockForging m (CardanoBlock c)]
+     , Tracer.Tracer m KESAgentClientTrace -> m [BlockForging m (CardanoBlock c)]
      )
 protocolInfoCardano paramsCardano
   | SL.Mainnet <- SL.sgNetworkId genesisShelley
@@ -839,9 +840,9 @@ protocolInfoCardano paramsCardano
     -- credentials. If there are multiple Shelley credentials, we merge the
     -- Byron credentials with the first Shelley one but still have separate
     -- threads for the remaining Shelley ones.
-    mkBlockForgings :: m [BlockForging m (CardanoBlock c)]
-    mkBlockForgings = do
-        shelleyBased <- traverse blockForgingShelleyBased credssShelleyBased
+    mkBlockForgings :: Tracer.Tracer m KESAgentClientTrace -> m [BlockForging m (CardanoBlock c)]
+    mkBlockForgings tr = do
+        shelleyBased <- traverse (blockForgingShelleyBased tr) credssShelleyBased
         let blockForgings :: [NonEmptyOptNP (BlockForging m) (CardanoEras c)]
             blockForgings = case (mBlockForgingByron, shelleyBased) of
               (Nothing,    shelleys)         -> shelleys
@@ -863,9 +864,10 @@ protocolInfoCardano paramsCardano
         return $ byronBlockForging creds `OptNP.at` IZ
 
     blockForgingShelleyBased ::
-         ShelleyLeaderCredentials c
+         Tracer.Tracer m KESAgentClientTrace
+      -> ShelleyLeaderCredentials c
       -> m (NonEmptyOptNP (BlockForging m) (CardanoEras c))
-    blockForgingShelleyBased credentials = do
+    blockForgingShelleyBased tr credentials = do
         let canBeLeader = shelleyLeaderCredentialsCanBeLeader credentials
 
         let slotToPeriod :: SlotNo -> Absolute.KESPeriod
@@ -877,6 +879,7 @@ protocolInfoCardano paramsCardano
 
         hotKey <- instantiatePraosCredentials
                     maxKESEvo
+                    tr
                     (praosCanBeLeaderCredentialsSource canBeLeader)
 
         let tpraos :: forall era.

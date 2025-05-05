@@ -47,6 +47,7 @@ import qualified Cardano.Protocol.TPraos.OCert as SL
 import           Cardano.Slotting.EpochInfo
 import           Cardano.Slotting.Time (mkSlotLength)
 import           Control.Monad.Except (Except)
+import qualified Control.Tracer as Tracer
 import           Data.Bifunctor (first)
 import qualified Data.SerDoc.Class as SerDoc
 import qualified Data.Text as T
@@ -179,7 +180,7 @@ protocolInfoShelley ::
   -> ProtocolParamsShelleyBased c
   -> SL.ProtVer
   -> ( ProtocolInfo (ShelleyBlock (TPraos c) ShelleyEra)
-     , m [BlockForging m (ShelleyBlock (TPraos c) ShelleyEra)]
+     , Tracer.Tracer m KESAgentClientTrace -> m [BlockForging m (ShelleyBlock (TPraos c) ShelleyEra)]
      )
 protocolInfoShelley shelleyGenesis
                     protocolParamsShelleyBased
@@ -200,7 +201,7 @@ protocolInfoTPraosShelleyBased ::
   -> SL.ProtVer
      -- ^ see 'shelleyProtVer', mutatis mutandi
   -> ( ProtocolInfo (ShelleyBlock (TPraos c) era)
-     , m [BlockForging m (ShelleyBlock (TPraos c) era)]
+     , Tracer.Tracer m KESAgentClientTrace -> m [BlockForging m (ShelleyBlock (TPraos c) era)]
      )
 protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
                              shelleyBasedInitialNonce      = initialNonce
@@ -213,16 +214,19 @@ protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
         pInfoConfig       = topLevelConfig
       , pInfoInitLedger   = initExtLedgerState
       }
-    , traverse mkBlockForging credentialss
+    , \tr -> traverse (mkBlockForging tr) credentialss
     )
   where
-    mkBlockForging :: ShelleyLeaderCredentials c -> m (BlockForging m (ShelleyBlock (TPraos c) era))
-    mkBlockForging credentials = do
+    mkBlockForging :: Tracer.Tracer m KESAgentClientTrace
+                   -> ShelleyLeaderCredentials c
+                   -> m (BlockForging m (ShelleyBlock (TPraos c) era))
+    mkBlockForging tr credentials = do
       let canBeLeader = shelleyLeaderCredentialsCanBeLeader credentials
 
       hotKey :: HotKey c m <-
                   instantiatePraosCredentials
                     (tpraosMaxKESEvo tpraosParams)
+                    tr
                     (praosCanBeLeaderCredentialsSource canBeLeader)
 
       return $ shelleyBlockForging tpraosParams hotKey credentials

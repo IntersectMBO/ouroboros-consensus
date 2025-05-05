@@ -27,6 +27,7 @@ import qualified Cardano.Ledger.BaseTypes as SL
 import           Cardano.Protocol.Crypto (StandardCrypto)
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import qualified Cardano.Slotting.Time as Time
+import qualified Control.Tracer as Tracer
 import           Data.Proxy (Proxy (..))
 import           Data.SOP.Strict
 import           Data.Word (Word64)
@@ -47,7 +48,7 @@ import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import           Ouroboros.Consensus.Protocol.PBFT (PBftParams,
                      PBftSignatureThreshold (..))
 import           Ouroboros.Consensus.Protocol.Praos.AgentClient
-                     (KESAgentContext)
+                     (KESAgentClientTrace, KESAgentContext)
 import           Ouroboros.Consensus.Shelley.Node
                      (ProtocolParamsShelleyBased (..), ShelleyGenesis,
                      ShelleyLeaderCredentials)
@@ -235,7 +236,7 @@ mkTestProtocolInfo ::
   -- that __might__ appear in the 'CardanoHardForkTriggers' parameter.
   -> CardanoHardForkTriggers
   -- ^ Specification of the era to which the initial state should hard-fork to.
-  -> (ProtocolInfo (CardanoBlock c), m [BlockForging m (CardanoBlock c)])
+  -> (ProtocolInfo (CardanoBlock c), Tracer.Tracer m KESAgentClientTrace -> m [BlockForging m (CardanoBlock c)])
 mkTestProtocolInfo
     (coreNodeId, coreNode)
     shelleyGenesis
