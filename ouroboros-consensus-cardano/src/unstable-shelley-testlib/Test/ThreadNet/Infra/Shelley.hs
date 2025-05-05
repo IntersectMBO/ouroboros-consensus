@@ -61,6 +61,7 @@ import           Cardano.Protocol.TPraos.OCert
 import qualified Cardano.Protocol.TPraos.OCert as SL (KESPeriod, OCert (OCert),
                      OCertSignable (..))
 import           Control.Monad.Except (throwError)
+import qualified Control.Tracer as Tracer
 import qualified Data.ByteString as BS
 import           Data.Coerce (coerce)
 import           Data.ListMap (ListMap (ListMap))
@@ -80,7 +81,7 @@ import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Protocol.Praos.AgentClient
-                     (KESAgentContext)
+                     (KESAgentClientTrace, KESAgentContext)
 import           Ouroboros.Consensus.Protocol.Praos.Common
                      (PraosCanBeLeader (PraosCanBeLeader),
                      PraosCredentialsSource (..), praosCanBeLeaderColdVerKey,
@@ -418,7 +419,7 @@ mkProtocolShelley ::
   -> ProtVer
   -> CoreNode c
   -> ( ProtocolInfo (ShelleyBlock (TPraos c) ShelleyEra)
-     , m [BlockForging m (ShelleyBlock (TPraos c) ShelleyEra)]
+     , Tracer.Tracer m KESAgentClientTrace -> m [BlockForging m (ShelleyBlock (TPraos c) ShelleyEra)]
      )
 mkProtocolShelley genesis initialNonce protVer coreNode =
     protocolInfoShelley

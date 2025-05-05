@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -19,6 +20,7 @@ module Cardano.Api.Protocol.Types (
   ) where
 
 import           Cardano.Chain.Slotting (EpochSlots)
+import qualified Control.Tracer as Tracer
 import           Data.Bifunctor (bimap)
 import           Ouroboros.Consensus.Block.Forging (BlockForging)
 import           Ouroboros.Consensus.Byron.ByronHFC (ByronBlockHFC)
@@ -41,11 +43,10 @@ import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import           Ouroboros.Consensus.Shelley.ShelleyHFC (ShelleyBlockHFC)
 import           Ouroboros.Consensus.Util.IOLike
 
-
 class (RunNode blk, IOLike m) => Protocol m blk where
   data ProtocolInfoArgs m blk
   protocolInfo :: ProtocolInfoArgs m blk -> ( ProtocolInfo blk
-                                            , m [BlockForging m blk]
+                                            , Tracer.Tracer m KESAgentClientTrace -> m [BlockForging m blk]
                                             )
 
 -- | Node client support for each consensus protocol.
@@ -62,7 +63,7 @@ class RunNode blk => ProtocolClient blk where
 instance IOLike m => Protocol m ByronBlockHFC where
   data ProtocolInfoArgs m ByronBlockHFC = ProtocolInfoArgsByron ProtocolParamsByron
   protocolInfo (ProtocolInfoArgsByron params) = ( inject $ protocolInfoByron params
-                                                , pure . map inject $ blockForgingByron params
+                                                , \_ -> pure . map inject $ blockForgingByron params
                                                 )
 
 instance ( CardanoHardForkConstraints StandardCrypto
@@ -101,7 +102,9 @@ instance ( IOLike m
     (ProtocolParamsShelleyBased StandardCrypto)
     ProtVer
   protocolInfo (ProtocolInfoArgsShelley genesis shelleyBasedProtocolParams' protVer) =
-    bimap inject (fmap $ map inject) $ protocolInfoShelley genesis shelleyBasedProtocolParams' protVer
+    bimap inject injectBlockForging $ protocolInfoShelley genesis shelleyBasedProtocolParams' protVer
+    where
+      injectBlockForging bf tr = fmap (map inject) $ bf tr
 
 instance Consensus.LedgerSupportsProtocol
           (Consensus.ShelleyBlock

@@ -141,7 +141,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
               flavargs $
              ChainDB.defaultArgs
 
-        (_, forgers) <- allocate registry (const $ mkForgers) (mapM_ BlockForging.finalize)
+        (_, forgers) <- allocate registry (const $ mkForgers nullTracer) (mapM_ BlockForging.finalize)
         let fCount = length forgers
         putStrLn $ "--> forger count: " ++ show fCount
         if fCount > 0
