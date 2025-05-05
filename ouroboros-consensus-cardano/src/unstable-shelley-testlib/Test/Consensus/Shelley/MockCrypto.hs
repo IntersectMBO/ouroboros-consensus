@@ -15,11 +15,14 @@ module Test.Consensus.Shelley.MockCrypto (
   , MockCrypto
   ) where
 
+import           Cardano.Crypto.DSIGN (MockDSIGN)
 import           Cardano.Crypto.KES (MockKES)
 import qualified Cardano.Crypto.KES as KES (Signable)
 import           Cardano.Crypto.Util (SignableRepresentation)
 import           Cardano.Crypto.VRF (MockVRF)
-import           Cardano.KESAgent.Protocols.StandardCrypto (MockCrypto)
+import qualified Cardano.KESAgent.KES.Crypto as Agent
+import qualified Cardano.KESAgent.Processes.ServiceClient as Agent
+import qualified Cardano.KESAgent.Protocols.VersionedProtocol as Agent
 import           Cardano.Ledger.BaseTypes (Seed)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as Core
@@ -40,8 +43,16 @@ import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock,
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import           Test.QuickCheck (Arbitrary)
 
+-- | A mock replacement for 'StandardCrypto'
+--
+-- We run the tests with this mock crypto, as it is easier to generate and
+-- debug things. The code is parametric in the crypto, so it shouldn't make
+-- much of a difference. This also has the important advantage
+-- that we can reuse the generators from cardano-ledger-specs.
+data MockCrypto
+
 instance Crypto MockCrypto where
-  type KES      MockCrypto = MockKES 128
+  type KES      MockCrypto = MockKES 10
   type VRF      MockCrypto = MockVRF
 
 instance SL.PraosCrypto MockCrypto
@@ -75,6 +86,16 @@ type CanMock proto era =
   , Arbitrary (Core.GovState era)
   , Arbitrary (SL.CertState era)
   )
+
+instance Agent.NamedCrypto MockCrypto where
+  cryptoName _ = Agent.CryptoName "Mock"
+
+instance Agent.ServiceClientDrivers MockCrypto where
+  availableServiceClientDrivers = []
+
+instance Agent.Crypto MockCrypto where
+  type KES MockCrypto = MockKES 10
+  type DSIGN MockCrypto = MockDSIGN
 
 instance AgentCrypto MockCrypto where
   type ACrypto MockCrypto = MockCrypto

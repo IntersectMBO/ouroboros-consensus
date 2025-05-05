@@ -3,7 +3,9 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -26,9 +28,10 @@ module Ouroboros.Consensus.Protocol.Praos.Common (
 import qualified Cardano.Crypto.KES.Class as KES
 import           Cardano.Crypto.VRF
 import qualified Cardano.Crypto.VRF as VRF
+import qualified Cardano.KESAgent.KES.Crypto as Agent
 import           Cardano.Ledger.BaseTypes (Nonce)
 import qualified Cardano.Ledger.BaseTypes as SL
-import           Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer))
+import           Cardano.Ledger.Keys (DSIGN, KeyHash, KeyRole (BlockIssuer))
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Protocol.Crypto (Crypto, KES, VRF)
 import qualified Cardano.Protocol.TPraos.OCert as OCert
@@ -40,6 +43,7 @@ import           Data.Map.Strict (Map)
 import           Data.Ord (Down (Down))
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
+import           NoThunks.Class
 import           Ouroboros.Consensus.Protocol.Abstract
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import           Ouroboros.Consensus.Protocol.Praos.AgentClient
@@ -267,18 +271,25 @@ instance (NoThunks (SignKeyVRF (VRF c)), NoThunks (KES.UnsoundPureSignKeyKES (KE
 
 -- | Defines a method for obtaining Praos credentials (opcert + KES signing
 -- key).
-data PraosCredentialsSource c
-  = -- | Pass an opcert and sign key directly. This uses
+data PraosCredentialsSource c where
+   -- | Pass an opcert and sign key directly. This uses
     -- 'KES.UnsoundPureSignKeyKES', which does not provide mlocking guarantees,
     -- violating the rule that KES secrets must never be stored on disk, but
     -- allows the sign key to be loaded from a local file. This method is
     -- provided for backwards compatibility.
-    PraosCredentialsUnsound (OCert.OCert c) (KES.UnsoundPureSignKeyKES (KES c))
-  | -- | Connect to a KES agent listening on a service socket at the given path.
-    PraosCredentialsAgent FilePath
-  deriving (Generic)
+    PraosCredentialsUnsound :: OCert.OCert c -> KES.UnsoundPureSignKeyKES (KES c) -> PraosCredentialsSource c
+    -- | Connect to a KES agent listening on a service socket at the given path.
+    PraosCredentialsAgent :: Agent.DSIGN (ACrypto c) ~ DSIGN => FilePath -> PraosCredentialsSource c
 
-instance (NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (PraosCredentialsSource c)
+instance (NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (PraosCredentialsSource c) where
+  wNoThunks ctxt = \case
+    PraosCredentialsUnsound oca k -> allNoThunks [
+        noThunks ctxt oca
+      , noThunks ctxt k
+      ]
+    PraosCredentialsAgent fp -> noThunks ctxt fp
+
+  showTypeOf _ = "PraosCredentialsSource"
 
 instantiatePraosCredentials :: forall m c.
                                ( KESAgentContext c m

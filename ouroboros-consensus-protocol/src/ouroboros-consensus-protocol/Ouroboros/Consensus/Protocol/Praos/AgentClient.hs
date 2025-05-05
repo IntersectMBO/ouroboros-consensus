@@ -68,7 +68,7 @@ class ( Crypto c
       , Agent.Crypto (ACrypto c)
       , Agent.NamedCrypto (ACrypto c)
       , Agent.KES (ACrypto c) ~ KES c
-      , Agent.DSIGN (ACrypto c) ~ DSIGN
+
       , ContextKES (KES c) ~ ()
       , ContextVRF (VRF c) ~ ()
       , Typeable (ACrypto c)
@@ -77,24 +77,22 @@ class ( Crypto c
       , DirectDeserialise (SignKeyKES (KES c))
       )
   => AgentCrypto c where
-        type ACrypto c :: Type
+  type ACrypto c :: Type
 
 instance AgentCrypto StandardCrypto where
   type ACrypto StandardCrypto = Agent.StandardCrypto
 
+convertOCert :: (AgentCrypto c, Agent.DSIGN (ACrypto c) ~ DSIGN) => Agent.OCert (ACrypto c) -> OCert.OCert c
+convertOCert oca =
+    OCert.OCert
+      { OCert.ocertVkHot = Agent.ocertVkHot oca
+      , OCert.ocertN = Agent.ocertN oca
+      , OCert.ocertKESPeriod = OCert.KESPeriod (Agent.unKESPeriod $ Agent.ocertKESPeriod oca)
+      , OCert.ocertSigma = coerce (Agent.ocertSigma oca)
+      }
+
 convertPeriod :: Agent.KESPeriod -> OCert.KESPeriod
 convertPeriod (Agent.KESPeriod p) = OCert.KESPeriod p
-
-convertOCert :: ( AgentCrypto c
-                )
-              => Agent.OCert (ACrypto c) -> OCert.OCert c
-convertOCert oca =
-  OCert.OCert
-    { OCert.ocertVkHot = Agent.ocertVkHot oca
-    , OCert.ocertN = Agent.ocertN oca
-    , OCert.ocertKESPeriod = OCert.KESPeriod (Agent.unKESPeriod $ Agent.ocertKESPeriod oca)
-    , OCert.ocertSigma = coerce (Agent.ocertSigma oca)
-    }
 
 class (MonadFail m, Show (Addr m)) => MonadKESAgent m where
   type FD m :: Type
@@ -130,6 +128,7 @@ instance SimSnocket.GlobalAddressScheme FilePath where
 
 runKESAgentClient :: forall m c.
                      ( KESAgentContext c m
+                     , Agent.DSIGN (ACrypto c) ~ DSIGN
                      )
                   => Tracer m KESAgentClientTrace
                   -> FilePath
