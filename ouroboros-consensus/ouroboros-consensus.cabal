@@ -585,6 +585,7 @@ test-suite consensus-test
     Test.Consensus.Mempool.StateMachine
     Test.Consensus.Mempool.Util
     Test.Consensus.MiniProtocol.BlockFetch.Client
+    Test.Consensus.MiniProtocol.ChainSync.CSJ
     Test.Consensus.MiniProtocol.ChainSync.Client
     Test.Consensus.MiniProtocol.LocalStateQuery.Server
     Test.Consensus.Util.MonadSTM.NormalForm
