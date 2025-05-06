@@ -410,8 +410,8 @@ bracketChainSyncClient
             , cschJumpInfo
             }
           insertHandle = atomicallyWithMonotonicTime $ \time -> do
-            initialGsmState <- getGsmState
-            updateLopBucketConfig lopBucket initialGsmState time
+            gsmState <- getGsmState
+            updateLopBucketConfig lopBucket gsmState time
             cschcAddHandle varHandles peer handle
           deleteHandle = atomically $ cschcRemoveHandle varHandles peer
       bracket_ insertHandle deleteHandle $ f Jumping.noJumping
@@ -424,13 +424,15 @@ bracketChainSyncClient
     acquireContext lopBucket cschState (CSJEnabledConfig jumpSize) = do
         tid <- myThreadId
         atomicallyWithMonotonicTime $ \time -> do
-          initialGsmState <- getGsmState
-          updateLopBucketConfig lopBucket initialGsmState time
+          gsmState <- getGsmState
+          updateLopBucketConfig lopBucket gsmState time
           cschJumpInfo <- newTVar Nothing
           context <- Jumping.makeContext varHandles jumpSize tracerCsj
-          Jumping.registerClient context peer cschState $ \cschJumping -> ChainSyncClientHandle
+          Jumping.registerClient gsmState context peer cschState $ \cschJumping -> ChainSyncClientHandle
             { cschGDDKill = throwTo tid DensityTooLow
             , cschOnGsmStateChanged = updateLopBucketConfig lopBucket
+                -- See Note [Updating the CSJ State when the GSM State Changes]
+                -- in the Haddocks of 'Jumping.registerClient'.
             , cschState
             , cschJumping
             , cschJumpInfo

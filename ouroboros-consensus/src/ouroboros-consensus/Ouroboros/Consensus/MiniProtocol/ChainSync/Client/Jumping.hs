@@ -221,6 +221,8 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
                      DisengagedInitState (..), DynamoInitState (..),
                      JumpInfo (..), JumperInitState (..),
                      ObjectorInitState (..))
+import           Ouroboros.Consensus.Node.GsmState (GsmState)
+import qualified Ouroboros.Consensus.Node.GsmState as GSM
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike hiding (handle)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -776,28 +778,95 @@ newJumper jumpInfo jumperState = do
 -- | Register a new ChainSync client to a context, returning a 'PeerContext' for
 -- that peer. If there is no dynamo, the peer starts as dynamo; otherwise, it
 -- starts as a jumper.
+--
+-- @Note [Updating the CSJ State when the GSM State Changes]@:
+--
+-- The 'GsmState' argument to this function is the only way that the state of
+-- the GSM influences CSJ. In particular, when the GSM state changes, the CSJ
+-- state does not need any updates whatsoever. That is remarkable enough to
+-- deserve some explanation.
+--
+-- - The 'GsmState' argument to this function merely causes a new client to be
+--   immediately disengaged if the GSM is currently in 'GSM.CaughtUp'.
+--   Otherwise, CSJ will initialize that peer as a Jumper instead of running
+--   full ChainSync (unless they happen to be immediately promoted to Dynamo,
+--   eg they're the first upstream peer).
+--
+-- - The transition into 'GSM.CaughtUp' does not raise any design questions.
+--   The GSM only makes that transition when all peers are idle, and an idle
+--   peer will have already disengaged from CSJ. So CSJ doesn't need to react
+--   to this transition.
+--
+-- - The GSM only transitions out of 'GSM.CaughtUp' if the tip of its selection
+--   is much older than expected (eg 20 minutes). There are many possible
+--   explanations for why that could have happened, so it's not obvious what is
+--   the best reaction to that transition. This is the interesting case.
+--
+-- The relevant high-level assumption is that in the moment the GSM exits the
+-- 'GSM.CaughtUp' state, either (i) the node has no proper upstream peers or
+-- (ii) the node's selection is out-of-date but not by a huge amount.
+--
+-- - If the node has no peers, then the CSJ state doesn't need any updates: all
+--   of its state is peer-specific. This is anticipated as the main reason the
+--   CSJ will leave 'GSM.CaughtUp': eg when the node process was asleep because
+--   the user closed the laptop lid overnight.
+--
+-- - If the node still has peers, then note that they are already disengaged
+--   from CSJ, since the GSM was in 'GSM.CaughtUp'. The only reason to
+--   re-engage them would be to prevent unnecessary load on them. The key
+--   design decision here is that the potential load the node's current peers
+--   might be able to avoid if they re-engage CSJ from is not worth the extra
+--   complexity in CSJ. It's only ~20min worth of ChainSync headers. And if the
+--   node hadn't been, eg, asleep last ~20min, those peers would have all sent
+--   those headers anyway---the only difference is that the load arrives in a
+--   burst.
+--
+-- One key remark: the transition out of 'GSM.CaughtUp' does (elsewhere)
+-- re-enable the LoP, the LoE, and the GDD, and they apply to all peers
+-- regardless of whether those peers are disengaged from CSJ. So security is
+-- not directly relevant to this question---recall that CSJ is merely an
+-- optimization to avoid excess load on honest upstream peers.
 registerClient ::
   ( LedgerSupportsProtocol blk,
     IOLike m
   ) =>
+  GsmState ->
+  -- ^ the GSM state as of when the node connected to the upstream peer
   Context m peer blk ->
   peer ->
   StrictTVar m (ChainSyncState blk) ->
   -- | A function to make a client handle from a jumping state.
   (StrictTVar m (ChainSyncJumpingState m blk) -> ChainSyncClientHandle m blk) ->
   STM m (PeerContext m peer blk, Maybe (TraceEventCsj peer blk))
-registerClient context peer csState mkHandle = do
-  (csjState, mbEv) <- getDynamo (handlesCol context) >>= \case
+registerClient gsmState context peer csState mkHandle = do
+  (csjState, mbEv) <- case gsmState of
+    GSM.CaughtUp   -> pure (Disengaged DisengagedDone, Nothing)
+      -- This branch disables CSJ while the GSM is in the CaughtUp state.
+    GSM.PreSyncing -> engageClient context csState
+    GSM.Syncing    -> engageClient context csState
+  cschJumping <- newTVar csjState
+  let handle = mkHandle cschJumping
+  cschcAddHandle (handlesCol context) peer handle
+  pure (context {peer, handle}, mbEv)
+
+-- | A helper for 'registerClient'
+--
+-- /NOT EXPORTED/
+engageClient ::
+  ( LedgerSupportsProtocol blk,
+    IOLike m
+  ) =>
+  Context m peer blk ->
+  StrictTVar m (ChainSyncState blk) ->
+  STM m (ChainSyncJumpingState m blk, Maybe (TraceEventCsj peer blk))
+engageClient context csState = do
+  getDynamo (handlesCol context) >>= \case
     Nothing -> do
       fragment <- csCandidate <$> readTVar csState
       pure (Dynamo DynamoStarted $ pointSlot $ AF.anchorPoint fragment, Just InitializedAsDynamo)
     Just (_, handle) -> do
       mJustInfo <- readTVar (cschJumpInfo handle)
       (\x -> (x, Nothing)) <$> newJumper mJustInfo (Happy FreshJumper Nothing)
-  cschJumping <- newTVar csjState
-  let handle = mkHandle cschJumping
-  cschcAddHandle (handlesCol context) peer handle
-  pure (context {peer, handle}, mbEv)
 
 -- | Unregister a client from a 'PeerContext'; this might trigger the election
 -- of a new dynamo or objector if the peer was one of these two.
