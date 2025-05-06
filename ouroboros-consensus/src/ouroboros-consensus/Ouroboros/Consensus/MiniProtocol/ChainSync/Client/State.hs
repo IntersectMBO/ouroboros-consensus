@@ -17,7 +17,9 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (
   , DynamoInitState (..)
   , JumpInfo (..)
   , JumperInitState (..)
+  , ImmutableJumpInfo (..)
   , ObjectorInitState (..)
+  , immutableJumpInfo
   , newChainSyncClientHandleCollection
   ) where
 
@@ -31,8 +33,11 @@ import qualified Data.Sequence.Strict as Seq
 import           Data.Typeable (Proxy (..), Typeable, typeRep)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block (HasHeader, Header, Point)
-import           Ouroboros.Consensus.HeaderStateHistory (HeaderStateHistory)
-import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
+import           Ouroboros.Consensus.Block.SupportsProtocol
+                     (BlockSupportsProtocol)
+import           Ouroboros.Consensus.HeaderStateHistory (HeaderStateHistory (HeaderStateHistory), HeaderStateWithTime)
+import           Ouroboros.Consensus.HeaderValidation (HasAnnTip,
+                     HeaderWithTime (..))
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.Node.GsmState (GsmState)
@@ -40,6 +45,7 @@ import           Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks (..), STM,
                      StrictTVar, Time, modifyTVar, newTVar, readTVar)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      headPoint)
+import qualified Ouroboros.Network.AnchoredFragment as AF
 
 -- | A ChainSync client's state that's used by other components, like the GDD or
 -- the jumping governor.
@@ -261,6 +267,29 @@ data JumpInfo blk = JumpInfo
   , jTheirHeaderStateHistory :: !(HeaderStateHistory blk)
   }
   deriving (Generic)
+
+deriving instance
+  ( BlockSupportsProtocol blk,
+    HasAnnTip blk,
+    Show (Header blk)
+  ) => Show (JumpInfo blk)
+
+-- | The underlying data of the 'JumpInfo' that corresponds to the node's
+-- immutable tip
+data ImmutableJumpInfo blk =
+    ImmutableJumpInfo !(AF.Anchor blk) !(HeaderStateWithTime blk)
+
+immutableJumpInfo ::
+     (HasHeader (Header blk), Typeable blk)
+  => ImmutableJumpInfo blk -> JumpInfo blk
+immutableJumpInfo immJumpInfo = JumpInfo {
+    jMostRecentIntersection  = AF.castPoint $ AF.anchorToPoint immAnchor
+  , jOurFragment             = AF.Empty $ AF.castAnchor immAnchor
+  , jTheirFragment           = AF.Empty $ AF.castAnchor immAnchor
+  , jTheirHeaderStateHistory = HeaderStateHistory $ AF.Empty immHdrStateWithTime 
+  }
+  where
+    ImmutableJumpInfo immAnchor immHdrStateWithTime = immJumpInfo
 
 instance (HasHeader (Header blk), Typeable blk) => Eq (JumpInfo blk) where
   (==) = (==) `on` headPoint . jTheirFragment

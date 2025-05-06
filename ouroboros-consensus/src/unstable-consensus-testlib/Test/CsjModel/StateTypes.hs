@@ -1,0 +1,407 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE StandaloneDeriving #-}
+
+{-# OPTIONS_GHC -Wno-orphans #-}
+
+module Test.CsjModel.StateTypes (module Test.CsjModel.StateTypes) where
+
+import           Cardano.Slotting.Slot (WithOrigin (At, Origin))
+import           Data.Map (Map)
+import qualified Data.Map.Strict as Map
+import qualified Data.Maybe as L (Maybe (Just, Nothing))
+-- TODO use AnchoredSeq?
+import           Data.Sequence (Seq)
+import qualified Data.Sequence as Seq
+import           Data.Set (Set)
+import qualified Data.Set as Set
+import           Data.Strict.Either (Either (Left))
+import           Data.Strict.Maybe (Maybe (Just, Nothing))
+import           GHC.Generics (Generic)
+import           NoThunks.Class (NoThunks)
+import           Prelude hiding (Either (Left, Right), Maybe (Just, Nothing), either, maybe)
+import           Test.CsjModel.NonEmptySeq
+import           Test.CsjModel.Perm
+
+{-------------------------------------------------------------------------------
+  An orphan instance for testing
+-------------------------------------------------------------------------------}
+
+deriving instance Read p => Read (WithOrigin p)
+
+{-------------------------------------------------------------------------------
+  Helper pair type for clarity
+-------------------------------------------------------------------------------}
+
+-- | A point paired with whatever data (from the Dynamo) a Jumper needs in
+-- order to correctly set its ChainSync client candidate (TODO not even
+-- necessarily the rest of the ChainSync state) when the peer replies with
+-- 'Test.CsjModel.MsgIntersectFound' for that point
+--
+-- Note that the payload argument is intentionally not strict.
+data WithPayload p a = WP !p a
+  deriving stock    (Generic, Read, Show)
+  deriving anyclass (NoThunks)
+
+mkWithPayload :: p -> a -> WithPayload p a
+mkWithPayload = WP
+
+wpPoint :: WithPayload p a -> p
+wpPoint (WP p _x) = p
+
+wpPayload :: WithPayload p a -> a
+wpPayload (WP _p x) = x
+
+wpAt :: WithPayload p a -> WithPayload (WithOrigin p) a
+wpAt (WP p x) = WP (At p) x
+
+findPoint :: Ord p => Seq (WithPayload p a) -> p -> L.Maybe Int
+findPoint = leftmostInAscSeq wpPoint
+
+neFindPoint :: Ord p => NonEmptySeq (WithPayload p a) -> p -> L.Maybe Int
+neFindPoint = leftmostInAscSeq wpPoint . toSeq
+
+{-------------------------------------------------------------------------------
+  State for each engaged ChainSync client
+-------------------------------------------------------------------------------}
+
+-- | CSJ-specific state for a peer
+--
+-- INVARIANT: For a Jumper, 'comm' equals the tip of 'candidate'.
+data CsjClientState p a = CsjClientState {
+    -- | points that were the youngest point rejected while bisecting a single
+    -- 'JumpRequest'
+    --
+    -- See 'trimAnticomm'.
+    --
+    -- This cannot contain more points than the number of jumps this peer has
+    -- ever handled without 'comm'itting to a younger point. And that's almost
+    -- entirely bounded by how many adversarial peers became Dynamo without an
+    -- honest peer becoming Dynamo. So this seems sufficiently bounded to never
+    -- be a resource leak---also: each @p@ is tiny on the heap.
+    anticomm  :: !(Set p)
+  ,
+    -- | the candidate fetched from the peer so far
+    --
+    -- Strictly ascending, and begins with a recent immutable tip. It's only
+    -- empty if the candidate is 'Origin'.
+    candidate :: !(Seq (WithPayload p a))
+  ,
+    -- | the greatest point the peer has accepted as part of a jump
+    comm      :: !(WithPayload (WithOrigin p) a)
+  }
+  deriving (Read, Show)
+
+-- | 'anticomm' can be garbage-collected when 'comm' advances
+trimAnticomm :: Ord p => WithOrigin p -> Set p -> Set p
+trimAnticomm newcomm ps = case newcomm of
+    Origin -> ps
+    At p   -> snd $ Set.split p ps
+
+-- | Drop all but one immutable point from 'candidate'
+trimCandidate ::
+     Ord p
+  => CsjClientState p a
+  -> WithOrigin p
+     -- ^ current imm tip
+  -> CsjClientState p a
+trimCandidate y = \case
+    Origin -> y
+    At p   -> case findPoint (candidate y) p of
+        L.Nothing ->
+            -- The LoE prevents this, since 'candidate' includes at least
+            -- one point that was previously the immutable tip.
+            error "impossible!"
+        L.Just i  ->
+            CsjClientState {
+                anticomm  = anticomm y
+              ,
+                candidate = Seq.drop i (candidate y)
+              ,
+                -- The LoE always ensures that 'comm' and @imm@ are on the
+                -- same chain.
+                --
+                -- Under normal circumstances, 'comm' is not older than
+                -- @imm@. However, that's not always true. For example, if
+                -- there is exactly one peer, then it will be the Dynamo
+                -- and the node /technically/ could sync more than k blocks
+                -- from it before another jump request comes due.
+                comm      =
+                  let immWp      = wpAt $ Seq.index (candidate y) i
+                      cornerCase = wpPoint (comm y) < wpPoint immWp
+                  in
+                  if cornerCase then immWp else comm y
+              }
+
+{-------------------------------------------------------------------------------
+  The state of the CSJ governor
+-------------------------------------------------------------------------------}
+
+-- | State for the CSJ logic
+--
+-- Disengaged peers are not present here, but it is assumed that they still
+-- participate in the GDD contests and calculation of the Limit on Eagerness
+-- (LoE).
+--
+-- See 'Test.CsjModel.backfill' for the invariants about where a @pid@ is
+-- located within this data structure.
+data CsjState pid p a = CsjState {
+    -- | The peer that will request the next jump, unless it stops being Dynamo
+    -- before then
+    --
+    -- See 'Test.CsjModel.issueNextJumpIfReady' for the conditions that will
+    -- trigger that next jump.
+    --
+    -- See 'Test.CsjModel.backfill' for details about how the 'dynamo' is
+    -- replaced when lost (eg disconnects, disengages, or Devoted BlockFetch
+    -- demotion).
+    dynamo     :: !(Maybe (Dynamo pid p a))
+  ,
+    -- | Peers that are not the 'dynamo' and are not waiting in 'latestJump'
+    --
+    -- See 'NonDynamo'.
+    --
+    -- TODO need a different name here, since each peer in 'latestJump' is not
+    -- disengaged, not the Dynamo, and not in this map.
+    nonDynamos :: !(Map pid (NonDynamo p a))
+  ,
+    -- | Only used to handle the 'Test.CsjModel.Connect' event
+    --
+    -- It's initialized as @'Left' 'Map.empty'@. Whenever a Dynamo requests a
+    -- jump, it becomes 'Right'. If a new peer 'Test.CsjModel.Connect's while
+    -- this is 'Left', then they are added to the 'Map'; they'll become
+    -- 'Jumping's as soon as this value becomes a 'Right'. This value reverts
+    -- to 'Left' if a peer 'Test.CsjModel.Connect's while the immutable tip
+    -- (imm tip) is not a point on 'latestJump', a surprising corner case that
+    -- must be supported.
+    --
+    -- The peers in the @'Left' 'Map'@ have no 'Class' and their 'cand' and
+    -- 'comm' are set to the contemporary imm tip. (Note that they satisfy the
+    -- Jumper invariant). Note that as soon as any peer has the imm tip as
+    -- their candidate, the LoE prevents the imm tip from changing, so the imm
+    -- tip is stuck while this map is non-empty. There will necessarily
+    -- eventually be a next 'JumpRequest', because
+    -- 'Test.CsjModel.issueNextJumpIfReady' measures its
+    -- 'Test.CsjModel.minJumpSlots' starting from the 'Class' of the Dynamo,
+    -- 'Test.CsjModel.minJumpSlots' is no greater than the forecast range, and
+    -- 'latestJump' is only 'Left' while the imm tip (and so the candidate of
+    -- the 'dynamo') is a proper extension of the 'Class' of the Dynamo. And
+    -- also because 'Test.CsjModel.backfill' will even promote a Dynamo from
+    -- this set of peers as a last resort.
+    latestJump :: !(Either (Map pid (CsjClientState p a)) (JumpRequest p a))
+  ,
+    -- | The queue for becoming Dynamo; it contains the @pid@ of every peer
+    -- that is not disengaged
+    --
+    -- It would be safe for an implementation to break ties randomly instead of
+    -- via this queue, but it's nice to not need randomness in the
+    -- specification and the queue might reduce volatility in the "fairness".
+    queue      :: !(Perm pid)
+  }
+  deriving (Read, Show)
+
+initialCsjState :: CsjState pid p a
+initialCsjState = CsjState {
+    dynamo     = Nothing
+  ,
+    nonDynamos = Map.empty
+  ,
+    latestJump = Left Map.empty
+  ,
+    queue      = UnsafePerm Seq.empty
+  }
+
+-- | This is called by 'Test.CsjModel.backfillDynamo' when there is no Dynamo
+objectorClasses :: Ord p => CsjState pid p a -> Set (Class p)
+objectorClasses x =
+    Map.foldl snoc Set.empty (nonDynamos x)
+  where
+    snoc acc = \case
+        -- the peers in 'latestJump' are essentially Jumpers
+        Jumped{}              -> acc
+        Jumping{}             -> acc
+        Objector clss _y _mbQ -> Set.insert clss acc
+
+-----
+
+-- | The (exact!) intersection of a peer's 'comm' and the latest jump request
+-- they've handled
+--
+-- This could be a calculation intead of being tracked in the state, but in any
+-- implementation it will definitely be cached, so it's nice for the
+-- specification to also explain how to maintain it directly.
+--
+-- Jumpers that are still bisecting do not have a 'Class', since their exact
+-- intersection with 'latestJump' is unknown.
+--
+-- INVARIANT: Peers serving the same chain will have the same 'Class' once they
+-- finish bisecting.
+--
+-- Since it's possible for the 'latestJump' to be so stale that the imm tip is
+-- a proper extension of some point on it, the 'Class' might also be older than
+-- the imm tip. However, 'comm' is an extension of the 'Class', so the imm tip
+-- in that case must also be an extension of the 'Class'.
+newtype Class p = Class (WithOrigin p)
+  deriving (Eq, Ord, Read, Show)
+
+data Dynamo pid p a =
+    -- | The @'Maybe' p@ is the header the ChainSync client has just received,
+    -- /before/ having processed it. The reception of a header beyond the
+    -- forecast range can still trigger a jump because the CSJ logic can
+    -- observe this piece of state (via 'Test.CsjModel.MsgRollForwardSTART')---the peer has
+    -- informed the syncing node that the slots between this header and the
+    -- previous are empty.
+    Dynamo !pid !(Class p) !(CsjClientState p a) !(Maybe p)
+  deriving (Read, Show)
+
+-- | Peers that are not the Dynamo and are not waiting in 'latestJump'
+data NonDynamo p a =
+    -- | Jumpers that are done bisecting the latest jump request
+    --
+    -- It's easy to forget that 'comm' might be a proper extension of 'Class':
+    -- the 'Class' must be part of the previous 'JumpRequest', so if a Jumper
+    -- had already committed to a different chain (due to a prior
+    -- 'JumpRequest'), its 'Class' will be the intersection of 'comm' and the
+    -- 'latestJump'.
+    Jumped !(Class p) !(CsjClientState p a)
+  |
+    -- | Jumpers that are still bisecting
+    Jumping !(CsjClientState p a) !(Bisecting p a) !(SentStatus p a)
+  |
+    -- | Peers that are currently challenging the Dynamo
+    --
+    -- The @'Maybe' p@ is the same as for 'dynamo'.
+    --
+    -- They must be serving a different chain than the Dynamo and all
+    -- Objectors; see 'Test.CsjModel.backfill' for details.
+    Objector !(Class p) !(CsjClientState p a) !(Maybe p)
+  deriving (Read, Show)
+
+-----
+
+-- | An argument to the 'Jumping' constructor that tracks the progress of
+-- determining the peer's intersection with some 'JumpRequest' (not necessarily
+-- the latest!)
+data Bisecting p a = Bisecting {
+    -- | points that might still be the exact intersection of this peer and the
+    -- jump request
+    --
+    -- INVARIANT: The oldest point in this non-empty sequence is the jump
+    -- request's successor of this peer's 'comm' (recall that 'comm' is the tip
+    -- of 'candidate' since this peer is a Jumper).
+    --
+    -- INVARIANT: If @'rejected' = Just p@, then @p@ is the successor of the
+    -- youngest point in this sequence. If @'rejected' = Nothing@, then this
+    -- list is the entire jump offer.
+    notYetDetermined :: !(NonEmptySeq (WithPayload p a))
+  ,
+    -- | The youngest point rejected so far as part of this jump
+    --
+    -- It is not yet included in 'anticomm', since that only contains the
+    -- points that were the youngest of all points rejected while bisecting a
+    -- single 'JumpRequest'.
+    --
+    -- INVARIANT: This is 'Just' if and only if the peer has sent
+    -- 'Test.CsjModel.MsgIntersectNotFound' as part of /this/ bisection.
+    rejected         :: !(Maybe p)
+  }
+  deriving (Read, Show)
+
+-- | A bisecting Jumper is stuck until it receives a response to the
+-- 'Test.CsjModel.MsgFindIntersect' with this payload
+nextPivot :: Bisecting p a -> WithPayload p a
+nextPivot bi =
+    case rejected bi of
+        Nothing -> neLast nyd
+            -- It would be sound and more uniform to just always bisect.
+            -- However, the first request per jump is instead for the entire
+            -- jump.
+            --
+            -- This is because /most/ jumps will be offered by an honest
+            -- Dynamo, and so by offering the whole jump in the first message,
+            -- load on honest Jumpers is minimized: one round-trip per jump.
+        Just{}  -> neMid nyd
+            -- TODO At least for the reference Haskell Cardano node, the cost
+            -- of each additional point in the 'Test.CsjModel.MsgFindIntersect'
+            -- message is mostly negligible unless they're in different ImmDB
+            -- chunk files. So this logic here could include more points
+            -- (perhaps once all of @nyd@ is in the same chunk file) in order
+            -- to ensure the bisection requires fewer round trips while
+            -- increasing the upstream per-message cost only negligibly.
+  where
+    nyd = notYetDetermined bi
+
+-- | An argument to the 'Jumping' constructor that tracks whether the expected
+-- 'Test.CsjModel.Offered', 'Test.CsjModel.MsgIntersectFound', or
+-- 'Test.CsjModel.MsgIntersectNotFound stimulus has arrived.
+data SentStatus p a =
+    -- | The CSJ governor is waiting for the ChainSync client to report the
+    -- peer's reply to the 'Test.CsjModel.MsgFindIntersect' that was sent
+    --
+    -- The CSJ governor will not emit more 'Test.CsjModel.MsgFindIntersect' in
+    -- this state.
+    --
+    -- The argument is 'Just' if a new 'JumpRequest' arose before the CSJ
+    -- governor was informed of the peer's reply to the latest jump; we wait to
+    -- update the Jumper for the new request until the in-flight reply has been
+    -- processed. When the reply arrives, the peer either continues bisecting
+    -- with 'NotYetSet' (pivoting if there's a new jump request) or it finishes
+    -- bisecting with 'Jumped' (and perhaps is immediately promoted). (Or it
+    -- might disengage).
+    --
+    -- Clarification: the actual semantics here is that a Jumper's 'SentStatus'
+    -- should become 'AlreadySent' as soon as the ChainSync client's
+    -- continuation involves sending the message (ie after some
+    -- 'Control.Monad.STM.atomically' block reads the latest
+    -- 'Test.CsjModel.MsgFindIntersect' 'Test.CsjModel.CsjReaction'), even
+    -- before the message is actually on the wire. IE, it should be
+    -- 'AlreadySent' as soon as the CSJ governor should stop emitting more
+    -- 'Test.CsjModel.MsgFindIntersect' 'Test.CsjModel.CsjReaction's for this
+    -- peer and synchronized such that no emitted
+    -- 'Test.CsjModel.MsgFindIntersect' is lost.
+    AlreadySent !(Maybe (JumpRequest p a))
+  |
+    -- | The CSJ governor has emitted at least one
+    -- 'Test.CsjModel.MsgFindIntersect' to this 'Jumping' peer and is waiting
+    -- for the ChainSync client to indicate that it has sent the most recently
+    -- emitted 'Test.CsjModel.MsgFindIntersect' by signaling
+    -- 'Test.CsjModel.Offered'
+    --
+    -- The CSJ governor might emit more 'Test.CsjModel.MsgFindIntersect' before
+    -- that 'Test.CsjModel.Offered' happens.
+    --
+    -- The most interesting motivation for 'NotYetSet' is if the Dynamo was
+    -- demoted while blocked on the forecast range. It will be stuck until the
+    -- forecast horizon advances far enough, and during that time the CSJ
+    -- governor will consider its state to be 'NotYetSent', without needing any
+    -- details beyond that.
+    NotYetSent
+  deriving (Read, Show)
+
+-----
+
+-- | A jump requested by the Dynamo
+--
+-- The arguments are the Dynamo's 'Class' and 'candidate' immediately before it
+-- requests the jump. Morever, in the real implementation, this data structure
+-- includes enough information for a Jumper to update its ChainSync client
+-- state each time it accepts a point in a jump.
+--
+-- NON-invariant: It is very tempting to conclude that the jump points after
+-- the Dynamo's 'Class' have never been offered as part of any previous jump by
+-- any previous Dynamo. However, the following sequence is a counterexample.
+--
+-- - A peer X offers a jump as Dynamo.
+--
+-- - X stops being the Dynamo (disconnect or demote).
+--
+-- - Another peer Y offers a different jump as Dynamo, overwriting 'latestJump'.
+--
+-- - In either order: Y stops being the Dynamo and another peer Z /joins/.
+--
+-- - Z becomes Dynamo and serves the same chain as X.
+data JumpRequest p a =
+    JumpRequest !(Class p) !(NonEmptySeq (WithPayload p a))
+  deriving (Read, Show)
