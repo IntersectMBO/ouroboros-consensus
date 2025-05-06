@@ -16,6 +16,7 @@ import           Control.Monad.IOSim (IOSim, runSimOrThrow)
 import           Data.Either (isLeft, isRight)
 import           Data.Functor ((<&>))
 import           Data.List (intersperse)
+import           Data.Ord (clamp)
 import           Data.Ratio ((%))
 import           Data.Time.Clock (DiffTime, picosecondsToDiffTime)
 import           Ouroboros.Consensus.Util.IOLike (Exception (displayException),
@@ -401,6 +402,3 @@ prop_random =
           counterexample ("Model:  " ++ show modelResult) $
           result == modelResult
 
--- NOTE: Needed for GHC 8
-clamp :: Ord a => (a, a) -> a -> a
-clamp (low, high) x = min high (max low x)

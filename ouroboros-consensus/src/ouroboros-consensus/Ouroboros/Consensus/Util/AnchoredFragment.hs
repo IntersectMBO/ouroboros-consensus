@@ -17,8 +17,9 @@ module Ouroboros.Consensus.Util.AnchoredFragment (
 
 import           Control.Monad.Except (throwError)
 import           Data.Foldable (toList)
+import qualified Data.Foldable1 as F1
 import           Data.Function (on)
-import qualified Data.List as L
+import qualified Data.List.NonEmpty as NE
 import           Data.Maybe (isJust)
 import           Data.Word (Word64)
 import           GHC.Stack
@@ -217,10 +218,9 @@ stripCommonPrefix sharedAnchor frags
       Just (cp, _, _, _) -> cp
       Nothing            -> error "unreachable"
 
-    commonPrefix
-      | null frags = AF.Empty sharedAnchor
-      -- TODO use Foldable1 once all our GHCs support it
-      | otherwise = L.foldl1' computeCommonPrefix (toList frags)
+    commonPrefix = case NE.nonEmpty $ toList frags of
+      Nothing      -> AF.Empty sharedAnchor
+      Just fragsNE -> F1.foldl1' computeCommonPrefix fragsNE
 
     splitAfterCommonPrefix frag =
       case AF.splitAfterPoint frag (AF.headPoint commonPrefix) of

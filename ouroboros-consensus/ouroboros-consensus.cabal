@@ -61,8 +61,7 @@ common common-bench
   -- We use this option to avoid skewed results due to changes in cache-line
   -- alignment. See
   -- https://github.com/Bodigrim/tasty-bench#comparison-against-baseline
-  if impl(ghc >=8.6)
-    ghc-options: -fproc-alignment=64
+  ghc-options: -fproc-alignment=64
 
 library
   import: common-lib
@@ -356,10 +355,6 @@ library
     typed-protocols ^>=0.3,
     vector ^>=0.13,
 
-  if !impl(ghc >=9.4)
-    build-depends: data-array-byte
-  -- GHC 8.10.7 on aarch64-darwin cannot use text-2
-  build-depends: text >=1.2.5.0 && <2.2
   x-docspec-extra-packages:
     directory
     latex-svg-image

@@ -21,7 +21,7 @@ import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
 import           Data.Maybe (mapMaybe)
 import           Data.Word (Word64)
-import           Ouroboros.Consensus.Block (ChainHash (BlockHash), HeaderHash,
+import           Ouroboros.Consensus.Block (ChainHash (..), HeaderHash,
                      blockSlot, succWithOrigin)
 import           Ouroboros.Consensus.Block.Abstract (SlotNo (SlotNo),
                      withOrigin)
@@ -269,6 +269,4 @@ simpleHash ::
   [Word64]
 simpleHash = \case
   BlockHash (TestHash h) -> reverse (NonEmpty.toList h)
-  -- not matching on @GenesisHash@ because 8.10 can't prove exhaustiveness of
-  -- TestHash with the equality constraint
-  _ -> []
+  GenesisHash            -> []

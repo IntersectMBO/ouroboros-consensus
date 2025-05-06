@@ -38,7 +38,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ["8.10.7", "9.6.6", "9.10.1", "9.12"]
+        ghc: ["9.6.6", "9.10.1", "9.12"]
         variant: [default, no-thunks]
         test-set: [all, no-thunks-safe]
         exclude:
@@ -193,7 +193,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ["8.10.7", "9.6.6", "9.10.1"]
+        ghc: ["9.6.6", "9.10.1"]
 
     steps:
     - uses: actions/checkout@v4

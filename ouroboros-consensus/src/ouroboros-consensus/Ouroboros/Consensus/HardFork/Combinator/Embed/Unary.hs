@@ -5,11 +5,12 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE InstanceSigs #-}
-{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
@@ -36,7 +37,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Embed.Unary (
 import           Cardano.Slotting.EpochInfo
 import           Data.Bifunctor (first)
 import           Data.Coerce
-import           Data.Kind (Type)
+import           Data.Kind (Constraint, Type)
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Functors
@@ -106,49 +107,43 @@ inject' _ =
 
 {-------------------------------------------------------------------------------
   Defaults (to ease implementation)
-
-  It'd be nicer to use deriving-via here, but we cannot due to a GHC bug
-  (resulting in @No family instance for ‘GenTx’@ errors).
-  See <https://gitlab.haskell.org/ghc/ghc/issues/13154#note_224287> .
 -------------------------------------------------------------------------------}
 
-defaultProjectNS :: forall f blk.
-                    Coercible (f (HardForkBlock '[blk])) (NS f '[blk])
-                 => f (HardForkBlock '[blk]) -> f blk
-defaultProjectNS = unZ . (coerce :: f (HardForkBlock '[blk]) -> NS f '[blk])
+type IsomorphicUnary :: ((k -> Type) -> [k] -> Type) -> (k -> Type) -> k -> Type
+newtype IsomorphicUnary h f a = IsomorphicUnary (f a)
 
-defaultInjectNS :: forall f blk.
-                   Coercible (f (HardForkBlock '[blk])) (NS f '[blk])
-                => f blk -> f (HardForkBlock '[blk])
-defaultInjectNS = (coerce :: NS f '[blk] -> f (HardForkBlock '[blk])) . Z
+instance
+  ( IsSOPLike h
+  , forall blk. Coercible (f (HardForkBlock '[blk])) (h f '[blk])
+  ) => Isomorphic (IsomorphicUnary h f) where
+  project ::
+       forall blk.
+       IsomorphicUnary h f (HardForkBlock '[blk])
+    -> IsomorphicUnary h f blk
+  project = coerce (fromSOPLike :: h f '[blk] -> f blk)
 
-defaultProjectNP :: forall f blk.
-                    Coercible (f (HardForkBlock '[blk])) (NP f '[blk])
-                 => f (HardForkBlock '[blk]) -> f blk
-defaultProjectNP = hd . (coerce :: f (HardForkBlock '[blk]) -> NP f '[blk])
+  inject ::
+       forall blk.
+       IsomorphicUnary h f blk
+    -> IsomorphicUnary h f (HardForkBlock '[blk])
+  inject = coerce (toSOPLike :: f blk -> h f '[blk])
 
-defaultInjectNP :: forall f blk.
-                   Coercible (f (HardForkBlock '[blk])) (NP f '[blk])
-                => f blk -> f (HardForkBlock '[blk])
-defaultInjectNP = (coerce :: NP f '[blk] -> f (HardForkBlock '[blk])) . (:* Nil)
+type IsSOPLike :: ((k -> Type) -> [k] -> Type) -> Constraint
+class IsSOPLike h where
+  fromSOPLike :: h f '[a] -> f a
+  toSOPLike :: f a -> h f '[a]
 
-defaultProjectSt :: forall f blk.
-                    Coercible (f (HardForkBlock '[blk])) (HardForkState f '[blk])
-                 => f (HardForkBlock '[blk]) -> f blk
-defaultProjectSt =
-      State.currentState
-    . Telescope.fromTZ
-    . getHardForkState
-    . (coerce :: f (HardForkBlock '[blk]) -> HardForkState f '[blk])
+instance IsSOPLike NS where
+  fromSOPLike = unZ
+  toSOPLike = Z
 
-defaultInjectSt :: forall f blk.
-                   Coercible (f (HardForkBlock '[blk])) (HardForkState f '[blk])
-                => f blk -> f (HardForkBlock '[blk])
-defaultInjectSt =
-      (coerce :: HardForkState f '[blk] -> f (HardForkBlock '[blk]))
-    . HardForkState
-    . Telescope.TZ
-    . State.Current History.initBound
+instance IsSOPLike NP where
+  fromSOPLike = hd
+  toSOPLike = (:* Nil)
+
+instance IsSOPLike HardForkState where
+  fromSOPLike = State.fromTZ
+  toSOPLike = HardForkState . Telescope.TZ . State.Current History.initBound
 
 {-------------------------------------------------------------------------------
   Forwarding instances
@@ -162,61 +157,22 @@ instance Isomorphic ((->) a) where
   Simple instances
 -------------------------------------------------------------------------------}
 
-instance Isomorphic WrapIsLeader where
-  project = defaultProjectNS
-  inject  = defaultInjectNS
+deriving via IsomorphicUnary NP BlockConfig   instance Isomorphic BlockConfig
+deriving via IsomorphicUnary NP CodecConfig   instance Isomorphic CodecConfig
+deriving via IsomorphicUnary NP StorageConfig instance Isomorphic StorageConfig
 
-instance Isomorphic WrapGenTxId where
-  project = defaultProjectNS
-  inject  = defaultInjectNS
+deriving via IsomorphicUnary NS GenTx                     instance Isomorphic GenTx
+deriving via IsomorphicUnary NS Header                    instance Isomorphic Header
+deriving via IsomorphicUnary NS I                         instance Isomorphic I
+deriving via IsomorphicUnary NS WrapCannotForge           instance Isomorphic WrapCannotForge
+deriving via IsomorphicUnary NS WrapForgeStateUpdateError instance Isomorphic WrapForgeStateUpdateError
+deriving via IsomorphicUnary NS WrapGenTxId               instance Isomorphic WrapGenTxId
+deriving via IsomorphicUnary NS WrapIsLeader              instance Isomorphic WrapIsLeader
+deriving via IsomorphicUnary NS WrapTipInfo               instance Isomorphic WrapTipInfo
+deriving via IsomorphicUnary NS WrapValidatedGenTx        instance Isomorphic WrapValidatedGenTx
 
-instance Isomorphic WrapValidatedGenTx where
-  project = defaultProjectNS
-  inject  = defaultInjectNS
-
-instance Isomorphic I where
-  project = defaultProjectNS
-  inject  = defaultInjectNS
-
-instance Isomorphic GenTx where
-  project = defaultProjectNS
-  inject  = defaultInjectNS
-
-instance Isomorphic Header where
-  project = defaultProjectNS
-  inject  = defaultInjectNS
-
-instance Isomorphic BlockConfig where
-  project = defaultProjectNP
-  inject  = defaultInjectNP
-
-instance Isomorphic CodecConfig where
-  project = defaultProjectNP
-  inject  = defaultInjectNP
-
-instance Isomorphic StorageConfig where
-  project = defaultProjectNP
-  inject  = defaultInjectNP
-
-instance Isomorphic (Flip LedgerState mk) where
-  project = defaultProjectSt
-  inject  = defaultInjectSt
-
-instance Isomorphic WrapCannotForge where
-  project = defaultProjectNS
-  inject  = defaultInjectNS
-
-instance Isomorphic WrapChainDepState where
-  project = defaultProjectSt
-  inject  = defaultInjectSt
-
-instance Isomorphic WrapForgeStateUpdateError where
-  project = defaultProjectNS
-  inject  = defaultInjectNS
-
-instance Isomorphic WrapTipInfo where
-  project = defaultProjectNS
-  inject  = defaultInjectNS
+deriving via IsomorphicUnary HardForkState (Flip LedgerState mk) instance Isomorphic (Flip LedgerState mk)
+deriving via IsomorphicUnary HardForkState WrapChainDepState     instance Isomorphic WrapChainDepState
 
 {-------------------------------------------------------------------------------
   Hash

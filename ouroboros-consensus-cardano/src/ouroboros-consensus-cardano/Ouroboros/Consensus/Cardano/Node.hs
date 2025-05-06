@@ -17,21 +17,6 @@
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
--- Disable completeness checks on GHC versions pre-9.6, where this can be
--- exceptionally slow:
-#if __GLASGOW_HASKELL__ <= 906
-{-# OPTIONS_GHC -Wno-incomplete-patterns
-                -Wno-incomplete-uni-patterns
-                -Wno-incomplete-record-updates
-                -Wno-overlapping-patterns #-}
-#endif
-
--- TODO: this is required for ghc-8.10.7, because using NamedFieldPuns and
--- PatternSynonyms with record syntax results in warnings related to shadowing.
--- This can be removed once we drop ghc-8.10.7.
-
-{-# OPTIONS_GHC -Wno-name-shadowing #-}
-
 module Ouroboros.Consensus.Cardano.Node (
     CardanoHardForkConstraints
   , CardanoHardForkTrigger (..)
@@ -831,10 +816,10 @@ protocolInfoCardano paramsCardano
              ShelleyBasedEra era
           => WrapTransitionConfig (ShelleyBlock proto era)
           -> (Flip LedgerState ValuesMK -.-> Flip LedgerState ValuesMK) (ShelleyBlock proto era)
-        injectIntoTestState (WrapTransitionConfig cfg) = fn $ \(Flip st) ->
+        injectIntoTestState (WrapTransitionConfig tcfg) = fn $ \(Flip st) ->
           -- We need to unstow the injected values
           Flip $ unstowLedgerTables $ forgetLedgerTables $ st {
-            Shelley.shelleyLedgerState = L.injectIntoTestState cfg
+            Shelley.shelleyLedgerState = L.injectIntoTestState tcfg
               (Shelley.shelleyLedgerState $ stowLedgerTables st)
           }
 
