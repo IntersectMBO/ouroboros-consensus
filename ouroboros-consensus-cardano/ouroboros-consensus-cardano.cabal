@@ -448,6 +448,7 @@ test-suite cardano-test
     Test.Consensus.Cardano.SupportsSanityCheck
     Test.Consensus.Cardano.Translation
     Test.ThreadNet.AllegraMary
+    Test.Consensus.Ledger.Query
     Test.ThreadNet.Cardano
     Test.ThreadNet.MaryAlonzo
     Test.ThreadNet.ShelleyAllegra
@@ -481,15 +482,18 @@ test-suite cardano-test
     contra-tracer,
     directory,
     filepath,
+    io-classes,
     microlens,
-    ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib, unstable-mempool-test-utils},
     ouroboros-consensus-cardano:{ouroboros-consensus-cardano, unstable-cardano-testlib},
+    ouroboros-consensus-diffusion,
     ouroboros-consensus-diffusion:unstable-diffusion-testlib,
     ouroboros-consensus-protocol,
+    ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib, unstable-mempool-test-utils},
+    ouroboros-network,
     ouroboros-network-api,
     ouroboros-network-protocols:{ouroboros-network-protocols, testlib},
     pretty-simple,
-    process-extras,
+    serialise,
     sop-core,
     sop-extras,
     strict-sop-core,
@@ -498,6 +502,7 @@ test-suite cardano-test
     tasty-quickcheck,
     temporary,
     typed-protocols ^>=0.3,
+    typed-protocols-stateful,
     unstable-byron-testlib,
     unstable-cardano-testlib,
     unstable-shelley-testlib,

@@ -598,6 +598,8 @@ test-suite consensus-test
     async,
     base,
     base-deriving-via,
+    bytestring,
+    base16-bytestring,
     cardano-binary,
     cardano-crypto-class ^>=2.2,
     cardano-crypto-tests ^>=2.2,
