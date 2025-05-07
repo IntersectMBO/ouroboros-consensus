@@ -1,26 +1,57 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeApplications #-}
 
 -- | Serialization tests for local state queries and results.
 module Test.Consensus.Ledger.Query (tests) where
 
-import Codec.CBOR.Read (deserialiseFromBytes)
+import Codec.CBOR.Read (DeserialiseFailure, deserialiseFromBytes)
 import Codec.CBOR.Write (toLazyByteString)
+import Codec.Serialise (Serialise)
+import Control.Monad.Class.MonadST (MonadST)
 import Control.Monad.Class.MonadThrow (throwIO)
 import qualified Data.ByteString.Base16.Lazy as LBase16
 import qualified Data.ByteString.Lazy as LBS
 import Data.Function ((&))
+import Network.TypedProtocol.Stateful.Codec (decode, runDecoder)
+import qualified Network.TypedProtocol.Stateful.Codec as Stateful
+import Ouroboros.Consensus.Block (HeaderHash, Point, StandardHash)
 import Ouroboros.Consensus.Ledger.Query (
+  BlockSupportsLedgerQuery,
+  Query,
   QueryVersion (..),
   queryDecodeNodeToClient,
   queryEncodeNodeToClient,
  )
-import Ouroboros.Consensus.Mock.Node.Serialisation (MockBlock)
+import Ouroboros.Consensus.Network.NodeToClient (cStateQueryCodec, clientCodecs)
+import Ouroboros.Consensus.Node.NetworkProtocolVersion (BlockNodeToClientVersion)
+import Ouroboros.Consensus.Node.Run (SerialiseNodeToClientConstraints)
+import Ouroboros.Network.NodeToClient (NodeToClientVersion (NodeToClientV_20))
+import Ouroboros.Network.Protocol.LocalStateQuery.Type (LocalStateQuery)
+import qualified Ouroboros.Network.Protocol.LocalStateQuery.Type as LocalStateQuery
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase)
 
--- | We only test the latest query version against the API.
-latestVersion :: QueryVersion
-latestVersion = QueryVersion3
+-- | We only test the latest query version and n2c protocol version against the API.
+stateQueryCodec ::
+  ( MonadST m
+  , SerialiseNodeToClientConstraints blk
+  , BlockSupportsLedgerQuery blk
+  , Show (BlockNodeToClientVersion blk)
+  , StandardHash blk
+  , Serialise (HeaderHash blk)
+  ) =>
+  Stateful.Codec (LocalStateQuery blk (Point blk) (Query blk)) DeserialiseFailure LocalStateQuery.State m LBS.ByteString
+stateQueryCodec =
+  cStateQueryCodec $
+    clientCodecs mockCodecConfig mockBlockNodeToClientVersion latestN2CVersion
+ where
+  latestN2CVersion = NodeToClientV_20
+
+  -- NOTE: Not used for non-block queries
+  mockCodecConfig = error "CodecConfig used unexpectedly"
+
+  -- NOTE: Not used for non-block queries
+  mockBlockNodeToClientVersion = error "BlockNodeToClientVersion used unexpectedly"
 
 tests :: TestTree
 tests =
@@ -33,25 +64,21 @@ tests =
             -- Decode blueprint example query with queryDecodeNodeToClient
             exampleHex <- LBS.readFile "../cardano-blueprint/src/api/examples/getSystemStart/query.cbor"
             print exampleHex
-            -- FIXME: the example in cardano-blueprint is wrapping the query in the n2c network message
-            let decoder =
-                  queryDecodeNodeToClient
-                    mockCodecConfig
-                    latestVersion
-                    mockBlockNodeToClientVersion
-            someQuery <-
-              LBase16.decodeLenient exampleHex
-                & deserialiseFromBytes decoder
-                & either throwIO (pure . snd)
-            print someQuery
+            -- FIXME: I need the 'CardanoBlock', but that is defined
+            -- ouroboros-consensus-cardano; can't import because of cyclic
+            -- dependencies.. maybe move to ouroboros-consensus-cardano tests?
+            decoder <- decode stateQueryCodec LocalStateQuery.SingAcquired LocalStateQuery.StateAcquired
+            decoded <- either throwIO pure <$> runDecoder [LBase16.decodeLenient exampleHex] decoder
+            print decoded
             -- TODO: encode query with queryEncodeNodeToClient
             let encoded =
                   toLazyByteString $
-                    queryEncodeNodeToClient @(MockBlock ())
-                      mockCodecConfig
-                      latestVersion
-                      mockBlockNodeToClientVersion
-                      someQuery
+                    undefined
+            -- queryEncodeNodeToClient @(MockBlock ())
+            --   mockCodecConfig
+            --   latestVersion
+            --   mockBlockNodeToClientVersion
+            --   someQuery
             print $ LBase16.encode encoded
             -- TODO: check whether cbor is equal
             -- TODO: validate cbor against cddl
@@ -88,7 +115,3 @@ tests =
             fail "TODO"
         ]
     ]
- where
-  mockCodecConfig = error "CodecConfig used unexpectedly"
-
-  mockBlockNodeToClientVersion = error "BlockNodeToClientVersion used unexpectedly"
