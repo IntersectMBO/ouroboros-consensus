@@ -36,7 +36,7 @@ module Ouroboros.Consensus.Genesis.Governor (
 import           Cardano.Ledger.BaseTypes (unNonZero)
 import           Control.Monad (guard, void, when)
 import           Control.Tracer (Tracer, traceWith)
-import           Data.Bifunctor (second)
+import           Data.Bifunctor (Bifunctor (first), second)
 import           Data.Containers.ListUtils (nubOrd)
 import           Data.Foldable (for_, toList)
 import           Data.Functor.Compose (Compose (..))
@@ -234,7 +234,7 @@ evaluateGDD cfg tracer stateView = do
 
       traceWith tracer $ TraceGDDDebug $ GDDDebugInfo
         { sgen
-        , curChain
+        , curChain          = AF.mapAnchoredFragment hwtHeader curChain
         , bounds
         , candidates        = dropTimes candidates
         , candidateSuffixes = dropTimes candidateSuffixes
@@ -306,7 +306,7 @@ sharedCandidatePrefix curChain candidates =
 
 data DensityBounds blk =
   DensityBounds {
-    clippedFragment :: AnchoredFragment (HeaderWithTime blk),
+    clippedFragment :: AnchoredFragment (Header blk),
     offersMoreThanK :: Bool,
     lowerBound      :: Word64,
     upperBound      :: Word64,
@@ -355,7 +355,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
     densityBounds = do
       (peer, candidateSuffix) <- candidateSuffixes
       let (clippedFragment, _) =
-            AF.splitAtSlot firstSlotAfterGenesisWindow candidateSuffix
+            first (AF.mapAnchoredFragment hwtHeader) $ AF.splitAtSlot firstSlotAfterGenesisWindow candidateSuffix
       state <- maybeToList (states Map.!? peer)
       -- Skip peers that haven't sent any headers yet.
       -- They should be disconnected by timeouts instead.
@@ -473,7 +473,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
 data GDDDebugInfo peer blk =
   GDDDebugInfo {
     bounds            :: [(peer, DensityBounds blk)],
-    curChain          :: AnchoredFragment (HeaderWithTime blk),
+    curChain          :: AnchoredFragment (Header blk),
     candidates        :: [(peer, AnchoredFragment (Header blk))],
     candidateSuffixes :: [(peer, AnchoredFragment (Header blk))],
     losingPeers       :: [peer],
