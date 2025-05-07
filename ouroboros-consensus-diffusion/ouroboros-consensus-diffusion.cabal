@@ -248,7 +248,6 @@ test-suite consensus-test
     Test.Consensus.HardFork.Combinator.A
     Test.Consensus.HardFork.Combinator.B
     Test.Consensus.IOSimQSM.Test.StateMachine.Sequential
-    Test.Consensus.Ledger.Query
     Test.Consensus.Network.AnchoredFragment.Extras
     Test.Consensus.Node
     Test.Consensus.PeerSimulator.BlockFetch
@@ -285,8 +284,6 @@ test-suite consensus-test
     base,
     binary,
     bytestring,
-    base16-bytestring,
-    cborg,
     cardano-crypto-class ^>=2.2,
     cardano-ledger-core,
     cardano-slotting:{cardano-slotting, testlib},
@@ -328,6 +325,5 @@ test-suite consensus-test
     time,
     tree-diff,
     typed-protocols,
-    typed-protocols-stateful,
     unstable-diffusion-testlib,
     vector,

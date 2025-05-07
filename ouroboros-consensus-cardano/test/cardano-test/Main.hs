@@ -8,6 +8,7 @@ import qualified Test.Consensus.Cardano.Serialisation (tests)
 import qualified Test.Consensus.Cardano.SupportedNetworkProtocolVersion
 import qualified Test.Consensus.Cardano.SupportsSanityCheck
 import qualified Test.Consensus.Cardano.Translation (tests)
+import qualified Test.Consensus.Ledger.Query (tests)
 import           Test.Tasty
 import qualified Test.ThreadNet.AllegraMary
 import qualified Test.ThreadNet.Cardano
@@ -35,4 +36,5 @@ tests =
   , Test.ThreadNet.ShelleyAllegra.tests
   , Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server.tests
   , Test.Consensus.Cardano.Translation.tests
+  , Test.Consensus.Ledger.Query.tests
   ]
