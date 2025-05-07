@@ -234,7 +234,7 @@ evaluateGDD cfg tracer stateView = do
 
       traceWith tracer $ TraceGDDDebug $ GDDDebugInfo
         { sgen
-        , curChain
+        , curChain          = AF.mapAnchoredFragment hwtHeader curChain
         , bounds
         , candidates        = dropTimes candidates
         , candidateSuffixes = dropTimes candidateSuffixes
@@ -306,7 +306,7 @@ sharedCandidatePrefix curChain candidates =
 
 data DensityBounds blk =
   DensityBounds {
-    clippedFragment :: AnchoredFragment (HeaderWithTime blk),
+    clippedFragment :: AnchoredFragment (Header blk),
     offersMoreThanK :: Bool,
     lowerBound      :: Word64,
     upperBound      :: Word64,
@@ -395,7 +395,13 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
           -- If not, it is not qualified to compete by density (yet).
           offersMoreThanK = totalBlockCount > unNonZero k
 
-      pure (peer, DensityBounds {clippedFragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot, idling})
+      pure (peer, DensityBounds { clippedFragment = AF.mapAnchoredFragment hwtHeader clippedFragment
+                                , offersMoreThanK
+                                , lowerBound
+                                , upperBound
+                                , hasBlockAfter
+                                , latestSlot
+                                , idling})
 
     losingPeers = nubOrd $ densityBounds >>= \
       (peer0 , DensityBounds { clippedFragment = frag0
@@ -473,7 +479,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
 data GDDDebugInfo peer blk =
   GDDDebugInfo {
     bounds            :: [(peer, DensityBounds blk)],
-    curChain          :: AnchoredFragment (HeaderWithTime blk),
+    curChain          :: AnchoredFragment (Header blk),
     candidates        :: [(peer, AnchoredFragment (Header blk))],
     candidateSuffixes :: [(peer, AnchoredFragment (Header blk))],
     losingPeers       :: [peer],
