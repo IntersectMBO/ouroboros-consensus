@@ -439,6 +439,7 @@ test-suite cardano-test
     Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.ByteStringTxParser
     Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server
     Test.Consensus.Cardano.Serialisation
+    Test.Consensus.Cardano.Show
     Test.Consensus.Cardano.SupportedNetworkProtocolVersion
     Test.Consensus.Cardano.SupportsSanityCheck
     Test.Consensus.Cardano.Translation

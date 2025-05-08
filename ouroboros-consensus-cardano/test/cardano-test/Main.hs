@@ -5,6 +5,7 @@ import qualified Test.Consensus.Cardano.DiffusionPipelining
 import qualified Test.Consensus.Cardano.Golden
 import qualified Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server
 import qualified Test.Consensus.Cardano.Serialisation (tests)
+import qualified Test.Consensus.Cardano.Show ()
 import qualified Test.Consensus.Cardano.SupportedNetworkProtocolVersion
 import qualified Test.Consensus.Cardano.SupportsSanityCheck
 import qualified Test.Consensus.Cardano.Translation (tests)
