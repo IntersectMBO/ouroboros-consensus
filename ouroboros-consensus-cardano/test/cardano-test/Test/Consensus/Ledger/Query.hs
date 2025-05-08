@@ -16,11 +16,11 @@ import qualified Network.TypedProtocol.Stateful.Codec as Stateful
 import Ouroboros.Consensus.Block (Point)
 import Ouroboros.Consensus.Cardano.Block (CardanoBlock, StandardCrypto)
 import Ouroboros.Consensus.Cardano.Node ()
-import Ouroboros.Consensus.Ledger.Query (Query)
+import Ouroboros.Consensus.Ledger.Query (Query (GetSystemStart))
 import Ouroboros.Consensus.Network.NodeToClient (cStateQueryCodec, clientCodecs)
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Network.NodeToClient (NodeToClientVersion (NodeToClientV_20))
-import Ouroboros.Network.Protocol.LocalStateQuery.Type (LocalStateQuery, Message (MsgQuery), State (StateAcquired))
+import Ouroboros.Network.Protocol.LocalStateQuery.Type (LocalStateQuery, Message (MsgQuery, MsgResult), SingLocalStateQuery (SingAcquired, SingQuerying), State (StateAcquired, StateQuerying))
 import qualified Ouroboros.Network.Protocol.LocalStateQuery.Type as LocalStateQuery
 import System.IO.Temp (withSystemTempDirectory)
 import Test.Cardano.Ledger.Binary.Cddl (validateCddlConformance)
@@ -60,7 +60,7 @@ tests =
         [ testCase "Query example" $ do
             -- Decode blueprint example query
             exampleHex <- LBS.readFile "../cardano-blueprint/src/api/examples/getSystemStart/query.cbor"
-            decoder <- decode stateQueryCodec LocalStateQuery.SingAcquired LocalStateQuery.StateAcquired
+            decoder <- decode stateQueryCodec SingAcquired StateAcquired
             runDecoder [LBase16.decodeLenient exampleHex] decoder >>= \case
               Left err -> throwIO err
               -- XXX: can't bind monadically into test case?
@@ -92,11 +92,30 @@ tests =
             -- TODO: validate cbor against cddl
             fail "TODO"
         , testCase "Result example" $ do
-            -- TODO: decode blueprint example result with decodeResult
-            -- TODO: encode result with encodeResult
-            -- TODO: check whether cbor is equal
-            -- TODO: validate cbor against cddl
-            fail "TODO"
+            -- Decode blueprint example query
+            exampleHex <- LBS.readFile "../cardano-blueprint/src/api/examples/getSystemStart/result.cbor"
+            decoder <- decode stateQueryCodec SingQuerying (StateQuerying GetSystemStart)
+            result <-
+              runDecoder [LBase16.decodeLenient exampleHex] decoder >>= \case
+                Left err -> throwIO err
+                Right (SomeMessage (MsgResult result)) -> pure result
+
+            -- Re-encode result
+            let encoded = encode stateQueryCodec (StateQuerying GetSystemStart) (MsgResult result)
+
+            -- Validate against composed cddl
+            -- REVIEW: Do we want to use $sockets or the ;# include module extension?
+            protocolCddlBytes <- BS.readFile "../cardano-blueprint/src/api/cddl/local-state-query.cddl"
+            queryCddlBytes <- BS.readFile "../cardano-blueprint/src/api/cddl/getSystemStart.cddl"
+            withSystemTempDirectory "ouroboros-consensus-cardano-test" $ \dir -> do
+              let cddlFile = dir <> "/composed.cddl"
+              BS.writeFile cddlFile (protocolCddlBytes <> queryCddlBytes)
+              validateCddlConformance cddlFile encoded >>= either fail (const $ pure ())
+
+            -- Check whether re-encoded cbor is equal
+            -- NOTE: Using hex-encoded bytes for better debugging
+            -- TODO: re-coding not stable?
+            assertEqual "re-encoded result" exampleHex (LBase16.encode encoded)
         , testCase "Query roundtrip" $ do
             -- TODO: generate arbitrary result terms given cddl
             -- TODO: decode result with decodeResult
