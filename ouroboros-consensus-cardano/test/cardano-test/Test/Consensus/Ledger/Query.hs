@@ -22,7 +22,8 @@ import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Network.NodeToClient (NodeToClientVersion (NodeToClientV_20))
 import Ouroboros.Network.Protocol.LocalStateQuery.Type (LocalStateQuery, Message (MsgQuery), State (StateAcquired))
 import qualified Ouroboros.Network.Protocol.LocalStateQuery.Type as LocalStateQuery
-import Test.Cardano.Ledger.Binary.Cddl (cddlRoundTripExpectation, validateCddlConformance)
+import System.IO.Temp (withSystemTempDirectory)
+import Test.Cardano.Ledger.Binary.Cddl (validateCddlConformance)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertEqual, testCase)
 
@@ -69,11 +70,14 @@ tests =
                 -- Check whether re-encoded cbor is equal
                 -- NOTE: Using hex-encoded bytes for better debugging
                 assertEqual "re-encoded query" exampleHex (LBase16.encode encoded)
-                BS.writeFile "/tmp/encoded.cbor" (BS.toStrict encoded)
-                -- TODO: compose 'local-state-query.cddl' with 'getSystemStart.cddl' to validate
-                -- FIXME: validate cbor against cddl; running "cddl" seems to pass while it should not
-                validateCddlConformance "../cardano-blueprint/src/api/cddl/local-state-query.cddl" encoded
-                  >>= either fail print
+                -- Validate against composed cddl
+                -- REVIEW: Do we want to use $sockets or the ;# include module extension?
+                protocolCddlBytes <- BS.readFile "../cardano-blueprint/src/api/cddl/local-state-query.cddl"
+                queryCddlBytes <- BS.readFile "../cardano-blueprint/src/api/cddl/getSystemStart.cddl"
+                withSystemTempDirectory "ouroboros-consensus-cardano-test" $ \dir -> do
+                  let cddlFile = dir <> "/composed.cddl"
+                  BS.writeFile cddlFile (protocolCddlBytes <> queryCddlBytes)
+                  validateCddlConformance cddlFile encoded >>= either fail (const $ pure ())
               Right (SomeMessage _) -> fail "Decoded unexpected message"
         , testCase "Query roundtrip" $ do
             -- TODO: generate arbitrary query terms given cddl
