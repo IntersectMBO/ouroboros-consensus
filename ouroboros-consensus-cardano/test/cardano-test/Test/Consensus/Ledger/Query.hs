@@ -102,6 +102,10 @@ tests =
 
             -- Re-encode result
             let encoded = encode stateQueryCodec (StateQuerying GetSystemStart) (MsgResult result)
+            -- Check whether re-encoded cbor is equal
+            -- NOTE: Using hex-encoded bytes for better debugging
+            -- FIXME: this fails because 'fromOrdinalDate' is used in 'FromCBOR UTCTime'
+            assertEqual "re-encoded result" exampleHex (LBase16.encode encoded)
 
             -- Validate against composed cddl
             -- REVIEW: Do we want to use $sockets or the ;# include module extension?
@@ -111,11 +115,6 @@ tests =
               let cddlFile = dir <> "/composed.cddl"
               BS.writeFile cddlFile (protocolCddlBytes <> queryCddlBytes)
               validateCddlConformance cddlFile encoded >>= either fail (const $ pure ())
-
-            -- Check whether re-encoded cbor is equal
-            -- NOTE: Using hex-encoded bytes for better debugging
-            -- TODO: re-coding not stable?
-            assertEqual "re-encoded result" exampleHex (LBase16.encode encoded)
         , testCase "Query roundtrip" $ do
             -- TODO: generate arbitrary result terms given cddl
             -- TODO: decode result with decodeResult
