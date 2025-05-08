@@ -68,6 +68,7 @@ class ( ConsensusProtocol p
 
 -- | Partial ledger config
 class ( UpdateLedger blk
+      , Show (PartialLedgerConfig blk)
       , NoThunks (PartialLedgerConfig blk)
       ) => HasPartialLedgerConfig blk where
   type PartialLedgerConfig blk :: Type

@@ -259,7 +259,7 @@ data ByronPartialLedgerConfig = ByronPartialLedgerConfig {
       byronLedgerConfig    :: !(LedgerConfig ByronBlock)
     , byronTriggerHardFork :: !TriggerHardFork
     }
-  deriving (Generic, NoThunks)
+  deriving (Show, Generic, NoThunks)
 
 instance HasPartialLedgerConfig ByronBlock where
 
