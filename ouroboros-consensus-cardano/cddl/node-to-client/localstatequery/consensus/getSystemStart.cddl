@@ -1,0 +1,7 @@
+query = 1
+result = utctime
+
+utctime = [year, dayOfYear, timeOfDayPico]
+year = bigint
+dayOfYear = int
+timeOfDayPico = bigint

@@ -582,7 +582,7 @@ applyHelper f cfg blk stBefore = do
           -- means the value must not be serialized. We're only passing it to
           -- 'STS.applyBlockOpts', which does not serialize it. So this is a
           -- safe use.
-          in SL.UnsafeUnserialisedBlock h' (SL.bbody b)
+          in SL.Block h' (SL.bbody b)
         )
 
     let track ::
