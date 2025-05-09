@@ -37,8 +37,8 @@ along with its context -- eg whatever is available in the GitHub PR interface.
 As long that rendering doesn't show that the PR spoils something like
 intentional alignment for example, then the PR has no style problems.
 
-We run `stylish-haskell` as a requirement for merging. The specific
-configuration can be found [here][stylish-config].
+We run `fourmolu` as a requirement for merging. The specific
+configuration can be found [here][fourmolu-config].
 
 ## Guiding principles
 
@@ -871,8 +871,8 @@ the rules below, it is good practice to update the code's style to match them.
 
     *Why:* to avoid wasting horizontal screen space.
 
-15. __Import lists__: we use `stylish-haskell` to automatically format import
-    lists. See the [`.stylish-haskell.yaml` config][stylish-config].
+15. __Import lists__: we use `fourmolu` to automatically format import
+    lists. See the [`fourmolu.yaml` config][fourmolu-config].
 
     When importing modules from consensus and in particular modules from the
     same package, an import list and a qualifier can be omitted. For example,
@@ -882,8 +882,8 @@ the rules below, it is good practice to update the code's style to match them.
     When importing from other packages, we prefer to use either an import list
     or a qualifier.
 
-16. __Export lists__: we use `stylish-haskell` to automatically format export
-    lists. See the [`.stylish-haskell.yaml` config][stylish-config]. We format
+16. __Export lists__: we use `fourmolu` to automatically format export
+    lists. See the [`fourmolu.yaml` config][fourmolu-config]. We format
     export lists in the following way:
 
     ```haskell
@@ -917,7 +917,7 @@ the rules below, it is good practice to update the code's style to match them.
       ) where
     ```
 
-    *Why:* this is consistent with how `stylish-haskell` formats it when
+    *Why:* this is consistent with how `fourmolu` formats it when
     importing it.
 
     When intentionally hiding the constructor of a datatype or newtype, we add
@@ -978,7 +978,7 @@ the rules below, it is good practice to update the code's style to match them.
 18. __Records__:
 
     We purposefully discourage the use of `RecordWildCards`.
-    
+
     For records we often use `NamedFieldPuns` to make it convenient to extract
     fields from the record. We use the following convention when naming fields
     to avoid duplicate record fields (we do not use `DuplicateRecordFields`):
@@ -1123,10 +1123,10 @@ the rules below, it is good practice to update the code's style to match them.
     import Foo.C (fooC, ...)
 
     ```
-    
+
     *Why:* this leads to more changes to the export list, but makes it
     absolutely clear where each identifier comes from.
-    
+
 ## Guidelines
 
 There are more general guidelines on how we write and structure code.
@@ -1204,4 +1204,4 @@ There are more general guidelines on how we write and structure code.
    use that shared code in a test suite defined in another package. To avoid
    this problem, we avoid sharing source directories in `cabal` files.
 
-[stylish-config]: https://github.com/IntersectMBO/ouroboros-consensus/blob/master/.stylish-haskell.yaml
+[fourmolu-config]: https://github.com/IntersectMBO/ouroboros-consensus/blob/master/fourmolu.yaml

@@ -99,12 +99,13 @@
 -- means deleting all of its contents. In order to achieve this, it truncates
 -- the files containing blocks if some blocks fail to parse, are invalid, or are
 -- duplicated.
-module Ouroboros.Consensus.Storage.VolatileDB.Impl (
-    -- * Opening the database
+module Ouroboros.Consensus.Storage.VolatileDB.Impl
+  ( -- * Opening the database
     VolatileDbArgs (..)
   , VolatileDbSerialiseConstraints
   , defaultArgs
   , openDB
+
     -- * Re-exported
   , BlockValidationPolicy (..)
   , BlocksPerFile
@@ -116,67 +117,75 @@ module Ouroboros.Consensus.Storage.VolatileDB.Impl (
 
 import qualified Codec.CBOR.Read as CBOR
 import qualified Codec.CBOR.Write as CBOR
-import           Control.Monad (unless, when)
-import           Control.Monad.State.Strict (get, gets, lift, modify, put,
-                     state)
+import Control.Monad (unless, when)
+import Control.Monad.State.Strict
+  ( get
+  , gets
+  , lift
+  , modify
+  , put
+  , state
+  )
 import qualified Control.RAWLock as RAWLock
-import           Control.ResourceRegistry
-import           Control.Tracer (Tracer, nullTracer, traceWith)
+import Control.ResourceRegistry
+import Control.Tracer (Tracer, nullTracer, traceWith)
 import qualified Data.ByteString.Lazy as Lazy
-import           Data.List as List (foldl')
+import Data.List as List (foldl')
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromMaybe, mapMaybe)
-import           Data.Set (Set)
+import Data.Maybe (fromMaybe, mapMaybe)
+import Data.Set (Set)
 import qualified Data.Set as Set
-import           Data.Word (Word64)
-import           GHC.Stack (HasCallStack)
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Storage.Common (BlockComponent (..))
-import           Ouroboros.Consensus.Storage.Serialisation
-import           Ouroboros.Consensus.Storage.VolatileDB.API
-import           Ouroboros.Consensus.Storage.VolatileDB.Impl.FileInfo (FileInfo)
+import Data.Word (Word64)
+import GHC.Stack (HasCallStack)
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
+import Ouroboros.Consensus.Storage.Serialisation
+import Ouroboros.Consensus.Storage.VolatileDB.API
+import Ouroboros.Consensus.Storage.VolatileDB.Impl.FileInfo (FileInfo)
 import qualified Ouroboros.Consensus.Storage.VolatileDB.Impl.FileInfo as FileInfo
 import qualified Ouroboros.Consensus.Storage.VolatileDB.Impl.Index as Index
-import           Ouroboros.Consensus.Storage.VolatileDB.Impl.Parser
-import           Ouroboros.Consensus.Storage.VolatileDB.Impl.State
-import           Ouroboros.Consensus.Storage.VolatileDB.Impl.Types
-import           Ouroboros.Consensus.Storage.VolatileDB.Impl.Util
-import           Ouroboros.Consensus.Util.Args
-import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Network.Block (MaxSlotNo (..))
-import           System.FS.API.Lazy
+import Ouroboros.Consensus.Storage.VolatileDB.Impl.Parser
+import Ouroboros.Consensus.Storage.VolatileDB.Impl.State
+import Ouroboros.Consensus.Storage.VolatileDB.Impl.Types
+import Ouroboros.Consensus.Storage.VolatileDB.Impl.Util
+import Ouroboros.Consensus.Util.Args
+import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Network.Block (MaxSlotNo (..))
+import System.FS.API.Lazy
 
 {------------------------------------------------------------------------------
   Opening the database
 ------------------------------------------------------------------------------}
 
-data VolatileDbArgs f m blk = VolatileDbArgs {
-      -- | Predicate to check for integrity of
-      -- 'Ouroboros.Consensus.Storage.Common.GetVerifiedBlock' components when
-      -- extracting them from the VolatileDB.
-      volCheckIntegrity   :: HKD f (blk -> Bool)
-      -- ^ Predicate to check for integrity of
-      -- 'Ouroboros.Consensus.Storage.Common.GetVerifiedBlock' components when
-      -- extracting them from the VolatileDB.
-    , volCodecConfig      :: HKD f (CodecConfig blk)
-    , volHasFS            :: HKD f (SomeHasFS m)
-    , volMaxBlocksPerFile :: BlocksPerFile
-    , volTracer           :: Tracer m (TraceEvent blk)
-      -- | Should the parser for the VolatileDB fail when it encounters a
-      -- corrupt/invalid block?
-    , volValidationPolicy :: BlockValidationPolicy
-      -- ^ Should the parser for the VolatileDB fail when it encounters a
-      -- corrupt/invalid block?
-    }
+data VolatileDbArgs f m blk = VolatileDbArgs
+  { volCheckIntegrity :: HKD f (blk -> Bool)
+  -- ^ Predicate to check for integrity of
+  -- 'Ouroboros.Consensus.Storage.Common.GetVerifiedBlock' components when
+  -- extracting them from the VolatileDB.
+  , -- \^ Predicate to check for integrity of
+    -- 'Ouroboros.Consensus.Storage.Common.GetVerifiedBlock' components when
+    -- extracting them from the VolatileDB.
+    volCodecConfig :: HKD f (CodecConfig blk)
+  , volHasFS :: HKD f (SomeHasFS m)
+  , volMaxBlocksPerFile :: BlocksPerFile
+  , volTracer :: Tracer m (TraceEvent blk)
+  , volValidationPolicy :: BlockValidationPolicy
+  -- ^ Should the parser for the VolatileDB fail when it encounters a
+  -- corrupt/invalid block?
+  }
+
+-- \^ Should the parser for the VolatileDB fail when it encounters a
+-- corrupt/invalid block?
 
 -- | Default arguments
 defaultArgs :: Applicative m => Incomplete VolatileDbArgs m blk
-defaultArgs = VolatileDbArgs {
-      volCheckIntegrity   = noDefault
-    , volCodecConfig      = noDefault
-    , volHasFS            = noDefault
+defaultArgs =
+  VolatileDbArgs
+    { volCheckIntegrity = noDefault
+    , volCodecConfig = noDefault
+    , volHasFS = noDefault
     , volMaxBlocksPerFile = mkBlocksPerFile 1000
-    , volTracer           = nullTracer
+    , volTracer = nullTracer
     , volValidationPolicy = NoValidation
     }
 
@@ -190,145 +199,155 @@ type VolatileDbSerialiseConstraints blk =
   )
 
 openDB ::
-     forall m blk ans.
-     ( HasCallStack
-     , IOLike m
-     , GetPrevHash blk
-     , VolatileDbSerialiseConstraints blk
-     )
-  => Complete VolatileDbArgs m blk
-  -> (forall st. WithTempRegistry st m (VolatileDB m blk, st) -> ans)
-  -> ans
-openDB VolatileDbArgs { volHasFS = SomeHasFS hasFS, .. } cont = cont $ do
-    lift $ createDirectoryIfMissing hasFS True (mkFsPath [])
-    ost <- mkOpenState
-               volCodecConfig
-               hasFS
-               volCheckIntegrity
-               volValidationPolicy
-               volTracer
-               volMaxBlocksPerFile
-    stVar <- lift $ RAWLock.new (DbOpen ost)
-    let env = VolatileDBEnv {
-            hasFS            = hasFS
+  forall m blk ans.
+  ( HasCallStack
+  , IOLike m
+  , GetPrevHash blk
+  , VolatileDbSerialiseConstraints blk
+  ) =>
+  Complete VolatileDbArgs m blk ->
+  (forall st. WithTempRegistry st m (VolatileDB m blk, st) -> ans) ->
+  ans
+openDB VolatileDbArgs{volHasFS = SomeHasFS hasFS, ..} cont = cont $ do
+  lift $ createDirectoryIfMissing hasFS True (mkFsPath [])
+  ost <-
+    mkOpenState
+      volCodecConfig
+      hasFS
+      volCheckIntegrity
+      volValidationPolicy
+      volTracer
+      volMaxBlocksPerFile
+  stVar <- lift $ RAWLock.new (DbOpen ost)
+  let env =
+        VolatileDBEnv
+          { hasFS = hasFS
           , varInternalState = stVar
           , maxBlocksPerFile = volMaxBlocksPerFile
-          , tracer           = volTracer
-          , codecConfig      = volCodecConfig
-          , checkIntegrity   = volCheckIntegrity
+          , tracer = volTracer
+          , codecConfig = volCodecConfig
+          , checkIntegrity = volCheckIntegrity
           }
-        volatileDB = VolatileDB {
-            closeDB             = closeDBImpl             env
-          , getBlockComponent   = getBlockComponentImpl   env
-          , putBlock            = putBlockImpl            env
-          , garbageCollect      = garbageCollectImpl      env
+      volatileDB =
+        VolatileDB
+          { closeDB = closeDBImpl env
+          , getBlockComponent = getBlockComponentImpl env
+          , putBlock = putBlockImpl env
+          , garbageCollect = garbageCollectImpl env
           , filterByPredecessor = filterByPredecessorImpl env
-          , getBlockInfo        = getBlockInfoImpl        env
-          , getMaxSlotNo        = getMaxSlotNoImpl        env
+          , getBlockInfo = getBlockInfoImpl env
+          , getMaxSlotNo = getMaxSlotNoImpl env
           }
-    return (volatileDB, ost)
+  return (volatileDB, ost)
 
 {------------------------------------------------------------------------------
   VolatileDB API
 ------------------------------------------------------------------------------}
 
 closeDBImpl ::
-     forall m blk. (IOLike m, HasHeader blk)
-  => VolatileDBEnv m blk
-  -> m ()
-closeDBImpl VolatileDBEnv { varInternalState, tracer, hasFS } = do
-    mbInternalState <-
-      RAWLock.withWriteAccess varInternalState $ \st -> return (st, DbClosed)
-    case mbInternalState of
-      DbClosed -> traceWith tracer DBAlreadyClosed
-      DbOpen ost -> do
-        wrapFsError (Proxy @blk) $ closeOpenHandles hasFS ost
-        traceWith tracer DBClosed
+  forall m blk.
+  (IOLike m, HasHeader blk) =>
+  VolatileDBEnv m blk ->
+  m ()
+closeDBImpl VolatileDBEnv{varInternalState, tracer, hasFS} = do
+  mbInternalState <-
+    RAWLock.withWriteAccess varInternalState $ \st -> return (st, DbClosed)
+  case mbInternalState of
+    DbClosed -> traceWith tracer DBAlreadyClosed
+    DbOpen ost -> do
+      wrapFsError (Proxy @blk) $ closeOpenHandles hasFS ost
+      traceWith tracer DBClosed
 
 getBlockComponentImpl ::
-     forall m blk b.
-     ( IOLike m
-     , HasHeader blk
-     , DecodeDisk blk (Lazy.ByteString -> blk)
-     , HasNestedContent Header blk
-     , DecodeDiskDep (NestedCtxt Header) blk
-     , HasCallStack
-     )
-  => VolatileDBEnv m blk
-  -> BlockComponent blk b
-  -> HeaderHash blk
-  -> m (Maybe b)
-getBlockComponentImpl env@VolatileDBEnv { codecConfig, checkIntegrity } blockComponent hash =
-    withOpenState env $ \hasFS OpenState { currentRevMap } ->
-      case Map.lookup hash currentRevMap of
-        Nothing                -> return Nothing
-        Just internalBlockInfo -> Just <$>
-          getBlockComponent hasFS internalBlockInfo blockComponent
-  where
-    getBlockComponent ::
-         forall b' h. HasFS m h
-      -> InternalBlockInfo blk
-      -> BlockComponent blk b'
-      -> m b'
-    getBlockComponent hasFS ibi = \case
-        GetHash          -> return hash
-        GetSlot          -> return biSlotNo
-        GetIsEBB         -> return biIsEBB
-        GetBlockSize     -> return $ fromIntegral $ unBlockSize ibiBlockSize
-        GetHeaderSize    -> return biHeaderSize
-        GetPure a        -> return a
-        GetApply f bc    ->
-          getBlockComponent hasFS ibi f <*> getBlockComponent hasFS ibi bc
-        GetBlock         ->
-          getBlockComponent hasFS ibi GetRawBlock >>= parseBlock
-        GetRawBlock      -> withFile hasFS ibiFile ReadMode $ \hndl -> do
-          let size   = fromIntegral $ unBlockSize ibiBlockSize
-              offset = unBlockOffset ibiBlockOffset
-          hGetExactlyAt hasFS hndl size (AbsOffset offset)
-        GetHeader        ->
-          getBlockComponent hasFS ibi GetRawHeader >>= parseHeader
-        GetRawHeader     -> withFile hasFS ibiFile ReadMode $ \hndl -> do
-          let size   = fromIntegral biHeaderSize
-              offset = unBlockOffset ibiBlockOffset + fromIntegral biHeaderOffset
-          hGetExactlyAt hasFS hndl size (AbsOffset offset)
-        GetNestedCtxt    -> return ibiNestedCtxt
-        GetVerifiedBlock ->
-          getBlockComponent hasFS ibi GetBlock >>= \blk -> do
-            unless (checkIntegrity blk) $
-              throwIO $ UnexpectedFailure $ CorruptBlockError @blk hash
-            return blk
-      where
-        InternalBlockInfo { ibiBlockInfo = BlockInfo {..}, .. } = ibi
+  forall m blk b.
+  ( IOLike m
+  , HasHeader blk
+  , DecodeDisk blk (Lazy.ByteString -> blk)
+  , HasNestedContent Header blk
+  , DecodeDiskDep (NestedCtxt Header) blk
+  , HasCallStack
+  ) =>
+  VolatileDBEnv m blk ->
+  BlockComponent blk b ->
+  HeaderHash blk ->
+  m (Maybe b)
+getBlockComponentImpl env@VolatileDBEnv{codecConfig, checkIntegrity} blockComponent hash =
+  withOpenState env $ \hasFS OpenState{currentRevMap} ->
+    case Map.lookup hash currentRevMap of
+      Nothing -> return Nothing
+      Just internalBlockInfo ->
+        Just
+          <$> getBlockComponent hasFS internalBlockInfo blockComponent
+ where
+  getBlockComponent ::
+    forall b' h.
+    HasFS m h ->
+    InternalBlockInfo blk ->
+    BlockComponent blk b' ->
+    m b'
+  getBlockComponent hasFS ibi = \case
+    GetHash -> return hash
+    GetSlot -> return biSlotNo
+    GetIsEBB -> return biIsEBB
+    GetBlockSize -> return $ fromIntegral $ unBlockSize ibiBlockSize
+    GetHeaderSize -> return biHeaderSize
+    GetPure a -> return a
+    GetApply f bc ->
+      getBlockComponent hasFS ibi f <*> getBlockComponent hasFS ibi bc
+    GetBlock ->
+      getBlockComponent hasFS ibi GetRawBlock >>= parseBlock
+    GetRawBlock -> withFile hasFS ibiFile ReadMode $ \hndl -> do
+      let size = fromIntegral $ unBlockSize ibiBlockSize
+          offset = unBlockOffset ibiBlockOffset
+      hGetExactlyAt hasFS hndl size (AbsOffset offset)
+    GetHeader ->
+      getBlockComponent hasFS ibi GetRawHeader >>= parseHeader
+    GetRawHeader -> withFile hasFS ibiFile ReadMode $ \hndl -> do
+      let size = fromIntegral biHeaderSize
+          offset = unBlockOffset ibiBlockOffset + fromIntegral biHeaderOffset
+      hGetExactlyAt hasFS hndl size (AbsOffset offset)
+    GetNestedCtxt -> return ibiNestedCtxt
+    GetVerifiedBlock ->
+      getBlockComponent hasFS ibi GetBlock >>= \blk -> do
+        unless (checkIntegrity blk) $
+          throwIO $
+            UnexpectedFailure $
+              CorruptBlockError @blk hash
+        return blk
+   where
+    InternalBlockInfo{ibiBlockInfo = BlockInfo{..}, ..} = ibi
 
-        parseBlock :: Lazy.ByteString -> m blk
-        parseBlock bytes = throwParseErrors bytes $
-            CBOR.deserialiseFromBytes (decodeDisk codecConfig) bytes
+    parseBlock :: Lazy.ByteString -> m blk
+    parseBlock bytes =
+      throwParseErrors bytes $
+        CBOR.deserialiseFromBytes (decodeDisk codecConfig) bytes
 
-        parseHeader :: Lazy.ByteString -> m (Header blk)
-        parseHeader bytes = throwParseErrors bytes $
-            case ibiNestedCtxt of
-              SomeSecond ctxt ->
-                CBOR.deserialiseFromBytes
-                  ((\f -> nest . DepPair ctxt . f) <$>
-                      decodeDiskDep codecConfig ctxt)
-                  bytes
+    parseHeader :: Lazy.ByteString -> m (Header blk)
+    parseHeader bytes = throwParseErrors bytes $
+      case ibiNestedCtxt of
+        SomeSecond ctxt ->
+          CBOR.deserialiseFromBytes
+            ( (\f -> nest . DepPair ctxt . f)
+                <$> decodeDiskDep codecConfig ctxt
+            )
+            bytes
 
-        pt :: RealPoint blk
-        pt = RealPoint biSlotNo hash
+    pt :: RealPoint blk
+    pt = RealPoint biSlotNo hash
 
-        throwParseErrors ::
-             forall b''.
-             Lazy.ByteString
-          -> Either CBOR.DeserialiseFailure (Lazy.ByteString, Lazy.ByteString -> b'')
-          -> m b''
-        throwParseErrors fullBytes = \case
-            Right (trailing, f)
-              | Lazy.null trailing
-              -> return $ f fullBytes
-              | otherwise
-              -> throwIO $ UnexpectedFailure $ TrailingDataError ibiFile pt trailing
-            Left err
-              -> throwIO $ UnexpectedFailure $ ParseError ibiFile pt err
+    throwParseErrors ::
+      forall b''.
+      Lazy.ByteString ->
+      Either CBOR.DeserialiseFailure (Lazy.ByteString, Lazy.ByteString -> b'') ->
+      m b''
+    throwParseErrors fullBytes = \case
+      Right (trailing, f)
+        | Lazy.null trailing ->
+            return $ f fullBytes
+        | otherwise ->
+            throwIO $ UnexpectedFailure $ TrailingDataError ibiFile pt trailing
+      Left err ->
+        throwIO $ UnexpectedFailure $ ParseError ibiFile pt err
 
 -- | This function follows the approach:
 -- (1) hPut bytes to the file
@@ -347,59 +366,67 @@ getBlockComponentImpl env@VolatileDBEnv { codecConfig, checkIntegrity } blockCom
 -- We should be careful about not leaking open fds when we open a new file,
 -- since this can affect garbage collection of files.
 putBlockImpl ::
-     forall m blk.
-     ( GetPrevHash blk
-     , EncodeDisk blk blk
-     , HasBinaryBlockInfo blk
-     , HasNestedContent Header blk
-     , IOLike m
-     )
-  => VolatileDBEnv m blk
-  -> blk
-  -> m ()
-putBlockImpl env@VolatileDBEnv{ maxBlocksPerFile, tracer, codecConfig }
-             blk =
+  forall m blk.
+  ( GetPrevHash blk
+  , EncodeDisk blk blk
+  , HasBinaryBlockInfo blk
+  , HasNestedContent Header blk
+  , IOLike m
+  ) =>
+  VolatileDBEnv m blk ->
+  blk ->
+  m ()
+putBlockImpl
+  env@VolatileDBEnv{maxBlocksPerFile, tracer, codecConfig}
+  blk =
     appendOpenState env $ \hasFS -> do
-      OpenState { currentRevMap, currentWriteHandle } <- get
-      if Map.member biHash currentRevMap then
-        lift $ lift $ traceWith tracer $ BlockAlreadyHere biHash
-      else do
-        let bytes = CBOR.toLazyByteString $ encodeDisk codecConfig blk
-        bytesWritten <- lift $ lift $ hPutAll hasFS currentWriteHandle bytes
-        fileIsFull <- state $ updateStateAfterWrite bytesWritten
-        when fileIsFull $ nextFile hasFS
-  where
-    blockInfo@BlockInfo { biHash, biSlotNo, biPrevHash } = extractBlockInfo blk
+      OpenState{currentRevMap, currentWriteHandle} <- get
+      if Map.member biHash currentRevMap
+        then
+          lift $ lift $ traceWith tracer $ BlockAlreadyHere biHash
+        else do
+          let bytes = CBOR.toLazyByteString $ encodeDisk codecConfig blk
+          bytesWritten <- lift $ lift $ hPutAll hasFS currentWriteHandle bytes
+          fileIsFull <- state $ updateStateAfterWrite bytesWritten
+          when fileIsFull $ nextFile hasFS
+   where
+    blockInfo@BlockInfo{biHash, biSlotNo, biPrevHash} = extractBlockInfo blk
 
-    updateStateAfterWrite
-      :: forall h.
-         Word64
-      -> OpenState blk h
-      -> (Bool, OpenState blk h)  -- ^ True: current file is full
+    updateStateAfterWrite ::
+      forall h.
+      Word64 ->
+      OpenState blk h ->
+      (Bool, OpenState blk h)
+    -- \^ True: current file is full
     updateStateAfterWrite bytesWritten st@OpenState{..} =
-        (FileInfo.isFull maxBlocksPerFile fileInfo', st')
-      where
-        fileInfo = fromMaybe
-            (error $ "VolatileDB invariant violation:"
-                    ++ "Current write file not found in Index.")
-            (Index.lookup currentWriteId currentMap)
-        fileInfo' = FileInfo.addBlock biSlotNo biHash fileInfo
-        currentMap' = Index.insert currentWriteId fileInfo' currentMap
-        internalBlockInfo' = InternalBlockInfo {
-            ibiFile         = currentWritePath
-          , ibiBlockOffset  = BlockOffset currentWriteOffset
-          , ibiBlockSize    = BlockSize $ fromIntegral bytesWritten
-          , ibiBlockInfo    = blockInfo
-          , ibiNestedCtxt   = case unnest (getHeader blk) of
-                                DepPair nestedCtxt _ -> SomeSecond nestedCtxt
+      (FileInfo.isFull maxBlocksPerFile fileInfo', st')
+     where
+      fileInfo =
+        fromMaybe
+          ( error $
+              "VolatileDB invariant violation:"
+                ++ "Current write file not found in Index."
+          )
+          (Index.lookup currentWriteId currentMap)
+      fileInfo' = FileInfo.addBlock biSlotNo biHash fileInfo
+      currentMap' = Index.insert currentWriteId fileInfo' currentMap
+      internalBlockInfo' =
+        InternalBlockInfo
+          { ibiFile = currentWritePath
+          , ibiBlockOffset = BlockOffset currentWriteOffset
+          , ibiBlockSize = BlockSize $ fromIntegral bytesWritten
+          , ibiBlockInfo = blockInfo
+          , ibiNestedCtxt = case unnest (getHeader blk) of
+              DepPair nestedCtxt _ -> SomeSecond nestedCtxt
           }
-        currentRevMap' = Map.insert biHash internalBlockInfo' currentRevMap
-        st' = st {
-            currentWriteOffset = currentWriteOffset + bytesWritten
-          , currentMap         = currentMap'
-          , currentRevMap      = currentRevMap'
-          , currentSuccMap     = insertMapSet biPrevHash biHash currentSuccMap
-          , currentMaxSlotNo   = currentMaxSlotNo `max` MaxSlotNo biSlotNo
+      currentRevMap' = Map.insert biHash internalBlockInfo' currentRevMap
+      st' =
+        st
+          { currentWriteOffset = currentWriteOffset + bytesWritten
+          , currentMap = currentMap'
+          , currentRevMap = currentRevMap'
+          , currentSuccMap = insertMapSet biPrevHash biHash currentSuccMap
+          , currentMaxSlotNo = currentMaxSlotNo `max` MaxSlotNo biSlotNo
           }
 
 -- | Garbage collect all files of which the highest slot is less than the
@@ -416,55 +443,58 @@ putBlockImpl env@VolatileDBEnv{ maxBlocksPerFile, tracer, codecConfig }
 --
 -- NOTE: the current file is never garbage collected.
 garbageCollectImpl ::
-     forall m blk. (IOLike m, HasHeader blk)
-  => VolatileDBEnv m blk
-  -> SlotNo
-  -> m ()
+  forall m blk.
+  (IOLike m, HasHeader blk) =>
+  VolatileDBEnv m blk ->
+  SlotNo ->
+  m ()
 garbageCollectImpl env slot = do
-    -- Check if we can actually GC something using a cheaper read (allowing
-    -- for more concurrency) before obtaining the more expensive exclusive
-    -- write lock.
-    usefulGC <- atomically $ getterSTM gcPossible env
+  -- Check if we can actually GC something using a cheaper read (allowing
+  -- for more concurrency) before obtaining the more expensive exclusive
+  -- write lock.
+  usefulGC <- atomically $ getterSTM gcPossible env
 
-    when usefulGC $
-      writeOpenState env $ \hasFS -> do
-        -- This event will be picked up by ghc-events-analyze
-        lift $ lift $ traceEventIO "START garbage collection"
-        -- Note that this is /monotonic/: if 'usefulGC' is @True@, then
-        -- 'filesToGC' has to be non-empty.
-        --
-        -- Only a single thread performs garbage collection, so no files could
-        -- have been GC'ed in the meantime. The only thing that could have
-        -- happened is that blocks have been appended. If they have been
-        -- appended to the current file, nothing changes, as we never GC the
-        -- current file anyway. If a new file was opened, either we can now GC
-        -- the previous file (increase in the number of files to GC) or not
-        -- (same number of files to GC).
-        filesToGC <- gets getFilesToGC
-        mapM_ (garbageCollectFile hasFS) filesToGC
-        -- Recompute the 'MaxSlotNo' based on the files left in the
-        -- VolatileDB. This value can never go down, except to 'NoMaxSlotNo'
-        -- (when we GC everything), because a GC can only delete blocks < a
-        -- slot.
-        modify $ \st -> st {
-            currentMaxSlotNo = FileInfo.maxSlotNoInFiles
-                                 (Index.elems (currentMap st))
+  when usefulGC $
+    writeOpenState env $ \hasFS -> do
+      -- This event will be picked up by ghc-events-analyze
+      lift $ lift $ traceEventIO "START garbage collection"
+      -- Note that this is /monotonic/: if 'usefulGC' is @True@, then
+      -- 'filesToGC' has to be non-empty.
+      --
+      -- Only a single thread performs garbage collection, so no files could
+      -- have been GC'ed in the meantime. The only thing that could have
+      -- happened is that blocks have been appended. If they have been
+      -- appended to the current file, nothing changes, as we never GC the
+      -- current file anyway. If a new file was opened, either we can now GC
+      -- the previous file (increase in the number of files to GC) or not
+      -- (same number of files to GC).
+      filesToGC <- gets getFilesToGC
+      mapM_ (garbageCollectFile hasFS) filesToGC
+      -- Recompute the 'MaxSlotNo' based on the files left in the
+      -- VolatileDB. This value can never go down, except to 'NoMaxSlotNo'
+      -- (when we GC everything), because a GC can only delete blocks < a
+      -- slot.
+      modify $ \st ->
+        st
+          { currentMaxSlotNo =
+              FileInfo.maxSlotNoInFiles
+                (Index.elems (currentMap st))
           }
-        lift $ lift $ traceEventIO "STOP garbage collection"
-  where
-    -- | Return 'True' if a garbage collection would actually garbage collect
-    -- at least one file.
-    gcPossible :: OpenState blk h -> Bool
-    gcPossible = not . null . getFilesToGC
+      lift $ lift $ traceEventIO "STOP garbage collection"
+ where
+  -- \| Return 'True' if a garbage collection would actually garbage collect
+  -- at least one file.
+  gcPossible :: OpenState blk h -> Bool
+  gcPossible = not . null . getFilesToGC
 
-    -- | Return the list of files that can be garbage collected.
-    getFilesToGC :: OpenState blk h -> [(FileId, FileInfo blk)]
-    getFilesToGC st = filter canGC . Index.toAscList . currentMap $ st
-      where
-        -- We don't GC the current file. This is unlikely to happen in
-        -- practice anyway, and it makes things simpler.
-        canGC (fileId, fileInfo) =
-          FileInfo.canGC fileInfo slot && fileId /= currentWriteId st
+  -- \| Return the list of files that can be garbage collected.
+  getFilesToGC :: OpenState blk h -> [(FileId, FileInfo blk)]
+  getFilesToGC st = filter canGC . Index.toAscList . currentMap $ st
+   where
+    -- We don't GC the current file. This is unlikely to happen in
+    -- practice anyway, and it makes things simpler.
+    canGC (fileId, fileInfo) =
+      FileInfo.canGC fileInfo slot && fileId /= currentWriteId st
 
 -- | Garbage collect the given file /unconditionally/, updating the
 -- 'OpenState'.
@@ -478,49 +508,53 @@ garbageCollectImpl env slot = do
 --
 -- This may throw an FsError.
 garbageCollectFile ::
-     forall m h blk. (MonadThrow m, HasHeader blk)
-  => HasFS m h
-  -> (FileId, FileInfo blk)
-  -> ModifyOpenState m blk h ()
+  forall m h blk.
+  (MonadThrow m, HasHeader blk) =>
+  HasFS m h ->
+  (FileId, FileInfo blk) ->
+  ModifyOpenState m blk h ()
 garbageCollectFile hasFS (fileId, fileInfo) = do
+  lift $ lift $ removeFile hasFS $ filePath fileId
 
-    lift $ lift $ removeFile hasFS $ filePath fileId
+  st@OpenState{currentMap, currentRevMap, currentSuccMap} <- get
 
-    st@OpenState { currentMap, currentRevMap, currentSuccMap } <- get
+  let hashes = FileInfo.hashes fileInfo
+      currentRevMap' = Map.withoutKeys currentRevMap hashes
+      deletedPairs =
+        mapMaybe
+          (\h -> (,h) . biPrevHash . ibiBlockInfo <$> Map.lookup h currentRevMap)
+          (Set.toList hashes)
+      currentSuccMap' =
+        List.foldl' (flip (uncurry deleteMapSet)) currentSuccMap deletedPairs
 
-    let hashes          = FileInfo.hashes fileInfo
-        currentRevMap'  = Map.withoutKeys currentRevMap hashes
-        deletedPairs    =
-          mapMaybe
-            (\h -> (, h) . biPrevHash . ibiBlockInfo <$> Map.lookup h currentRevMap)
-            (Set.toList hashes)
-        currentSuccMap' =
-          List.foldl' (flip (uncurry deleteMapSet)) currentSuccMap deletedPairs
-
-    put st {
-        currentMap     = Index.delete fileId currentMap
-      , currentRevMap  = currentRevMap'
+  put
+    st
+      { currentMap = Index.delete fileId currentMap
+      , currentRevMap = currentRevMap'
       , currentSuccMap = currentSuccMap'
       }
 
 filterByPredecessorImpl ::
-     forall m blk. (IOLike m, HasHeader blk)
-  => VolatileDBEnv m blk
-  -> STM m (ChainHash blk -> Set (HeaderHash blk))
+  forall m blk.
+  (IOLike m, HasHeader blk) =>
+  VolatileDBEnv m blk ->
+  STM m (ChainHash blk -> Set (HeaderHash blk))
 filterByPredecessorImpl = getterSTM $ \st hash ->
-    fromMaybe Set.empty (Map.lookup hash (currentSuccMap st))
+  fromMaybe Set.empty (Map.lookup hash (currentSuccMap st))
 
 getBlockInfoImpl ::
-     forall m blk. (IOLike m, HasHeader blk)
-  => VolatileDBEnv m blk
-  -> STM m (HeaderHash blk -> Maybe (BlockInfo blk))
+  forall m blk.
+  (IOLike m, HasHeader blk) =>
+  VolatileDBEnv m blk ->
+  STM m (HeaderHash blk -> Maybe (BlockInfo blk))
 getBlockInfoImpl = getterSTM $ \st hash ->
-    ibiBlockInfo <$> Map.lookup hash (currentRevMap st)
+  ibiBlockInfo <$> Map.lookup hash (currentRevMap st)
 
 getMaxSlotNoImpl ::
-     forall m blk. (IOLike m, HasHeader blk)
-  => VolatileDBEnv m blk
-  -> STM m MaxSlotNo
+  forall m blk.
+  (IOLike m, HasHeader blk) =>
+  VolatileDBEnv m blk ->
+  STM m MaxSlotNo
 getMaxSlotNoImpl = getterSTM currentMaxSlotNo
 
 {------------------------------------------------------------------------------
@@ -530,37 +564,45 @@ getMaxSlotNoImpl = getterSTM currentMaxSlotNo
 -- | Creates a new file and updates the 'OpenState' accordingly.
 -- This may throw an FsError.
 nextFile ::
-     forall h m blk. (IOLike m, Eq h)
-  => HasFS m h -> ModifyOpenState m blk h ()
+  forall h m blk.
+  (IOLike m, Eq h) =>
+  HasFS m h -> ModifyOpenState m blk h ()
 nextFile hasFS = do
-    st@OpenState { currentWriteHandle = curHndl, currentWriteId, currentMap } <- get
+  st@OpenState{currentWriteHandle = curHndl, currentWriteId, currentMap} <- get
 
-    let currentWriteId' = currentWriteId + 1
-        file = filePath currentWriteId'
+  let currentWriteId' = currentWriteId + 1
+      file = filePath currentWriteId'
 
-    lift $ lift $ hClose hasFS curHndl
+  lift $ lift $ hClose hasFS curHndl
 
-    hndl <- lift $ allocateTemp
-      (hOpen   hasFS file (AppendMode MustBeNew))
-      (hClose' hasFS)
-      ((==) . currentWriteHandle)
-    put st {
-        currentWriteHandle = hndl
-      , currentWritePath   = file
-      , currentWriteId     = currentWriteId'
+  hndl <-
+    lift $
+      allocateTemp
+        (hOpen hasFS file (AppendMode MustBeNew))
+        (hClose' hasFS)
+        ((==) . currentWriteHandle)
+  put
+    st
+      { currentWriteHandle = hndl
+      , currentWritePath = file
+      , currentWriteId = currentWriteId'
       , currentWriteOffset = 0
-      , currentMap         = Index.insert currentWriteId' FileInfo.empty
-                                currentMap
+      , currentMap =
+          Index.insert
+            currentWriteId'
+            FileInfo.empty
+            currentMap
       }
 
 -- | Gets part of the 'OpenState' in 'STM'.
 getterSTM ::
-     forall m blk a. (IOLike m, HasHeader blk)
-  => (forall h. OpenState blk h -> a)
-  -> VolatileDBEnv m blk
-  -> STM m a
-getterSTM fromSt VolatileDBEnv { varInternalState } = do
-    mSt <- RAWLock.read varInternalState
-    case mSt of
-      DbClosed  -> throwIO $ ApiMisuse @blk $ ClosedDBError Nothing
-      DbOpen st -> return $ fromSt st
+  forall m blk a.
+  (IOLike m, HasHeader blk) =>
+  (forall h. OpenState blk h -> a) ->
+  VolatileDBEnv m blk ->
+  STM m a
+getterSTM fromSt VolatileDBEnv{varInternalState} = do
+  mSt <- RAWLock.read varInternalState
+  case mSt of
+    DbClosed -> throwIO $ ApiMisuse @blk $ ClosedDBError Nothing
+    DbOpen st -> return $ fromSt st

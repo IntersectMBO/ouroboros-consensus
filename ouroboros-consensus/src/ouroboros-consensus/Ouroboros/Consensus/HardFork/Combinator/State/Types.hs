@@ -4,12 +4,13 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Ouroboros.Consensus.HardFork.Combinator.State.Types (
-    -- * Main types
+module Ouroboros.Consensus.HardFork.Combinator.State.Types
+  ( -- * Main types
     Current (..)
   , HardForkState (..)
   , Past (..)
   , sequenceHardForkState
+
     -- * Supporting types
   , CrossEraForecaster (..)
   , TransitionInfo (..)
@@ -20,19 +21,19 @@ module Ouroboros.Consensus.HardFork.Combinator.State.Types (
   , translateLedgerTablesWith
   ) where
 
-import           Control.Monad.Except
+import Control.Monad.Except
 import qualified Data.Map.Strict as Map
-import           Data.SOP.BasicFunctors
-import           Data.SOP.Constraint
-import           Data.SOP.Strict
-import           Data.SOP.Telescope (Telescope)
+import Data.SOP.BasicFunctors
+import Data.SOP.Constraint
+import Data.SOP.Strict
+import Data.SOP.Telescope (Telescope)
 import qualified Data.SOP.Telescope as Telescope
-import           GHC.Generics (Generic)
-import           NoThunks.Class (NoThunks (..))
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Forecast
-import           Ouroboros.Consensus.HardFork.History (Bound)
-import           Ouroboros.Consensus.Ledger.Basics
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks (..))
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Forecast
+import Ouroboros.Consensus.HardFork.History (Bound)
+import Ouroboros.Consensus.Ledger.Basics
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 
 {-------------------------------------------------------------------------------
@@ -80,35 +81,38 @@ import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 -- validation check. Note that in this particular example, the ledger state will
 -- always be ahead of the consensus state, never behind; 'alignExtend' can be
 -- used in this case.
-newtype HardForkState f xs = HardForkState {
-      getHardForkState :: Telescope (K Past) (Current f) xs
-    } deriving (Generic)
+newtype HardForkState f xs = HardForkState
+  { getHardForkState :: Telescope (K Past) (Current f) xs
+  }
+  deriving Generic
 
 -- | Information about the current era
-data Current f blk = Current {
-      currentStart :: !Bound
-    , currentState :: !(f blk)
-    }
-  deriving (Generic)
+data Current f blk = Current
+  { currentStart :: !Bound
+  , currentState :: !(f blk)
+  }
+  deriving Generic
 
 -- | Information about a past era
-data Past = Past {
-      pastStart :: !Bound
-    , pastEnd   :: !Bound
-    }
+data Past = Past
+  { pastStart :: !Bound
+  , pastEnd :: !Bound
+  }
   deriving (Eq, Show, Generic, NoThunks)
 
 -- | Thin wrapper around 'Telescope.sequence'
-sequenceHardForkState :: forall m f xs. (All Top xs, Functor m)
-                      => HardForkState (m :.: f) xs -> m (HardForkState f xs)
+sequenceHardForkState ::
+  forall m f xs.
+  (All Top xs, Functor m) =>
+  HardForkState (m :.: f) xs -> m (HardForkState f xs)
 sequenceHardForkState (HardForkState tel) =
-      fmap HardForkState
-    $ Telescope.sequence
-    $ hmap sequenceCurrent tel
-  where
-    sequenceCurrent :: Current (m :.: f) a -> (m :.: Current f) a
-    sequenceCurrent (Current start state) =
-      Comp $ Current start <$> unComp state
+  fmap HardForkState $
+    Telescope.sequence $
+      hmap sequenceCurrent tel
+ where
+  sequenceCurrent :: Current (m :.: f) a -> (m :.: Current f) a
+  sequenceCurrent (Current start state) =
+    Comp $ Current start <$> unComp state
 
 {-------------------------------------------------------------------------------
   Supporting types
@@ -117,9 +121,9 @@ sequenceHardForkState (HardForkState tel) =
 -- | Translate @f x@ to @f y@ across an era transition
 --
 -- Typically @f@ will be 'LedgerState' or 'WrapChainDepState'.
-newtype Translate f x y = Translate {
-      translateWith :: EpochNo -> f x -> f y
-    }
+newtype Translate f x y = Translate
+  { translateWith :: EpochNo -> f x -> f y
+  }
 
 -- | Forecast a @view y@ from a @state x@ across an era transition.
 --
@@ -127,17 +131,21 @@ newtype Translate f x y = Translate {
 -- 'SlotNo' we're constructing a forecast for. This enables the translation
 -- function to take into account any scheduled changes that the final ledger
 -- view in the preceding era might have.
-newtype CrossEraForecaster state view x y = CrossEraForecaster {
-      crossEraForecastWith ::
-           Bound    -- 'Bound' of the transition (start of the new era)
-        -> SlotNo   -- 'SlotNo' we're constructing a forecast for
-        -> state x EmptyMK
-        -> Except OutsideForecastRange (view y)
-    }
+newtype CrossEraForecaster state view x y = CrossEraForecaster
+  { crossEraForecastWith ::
+      Bound -> -- 'Bound' of the transition (start of the new era)
+      SlotNo -> -- 'SlotNo' we're constructing a forecast for
+      state x EmptyMK ->
+      Except OutsideForecastRange (view y)
+  }
 
 -- | Translate a 'LedgerState' across an era transition.
-newtype TranslateLedgerState x y = TranslateLedgerState {
-  -- | How to translate a 'LedgerState' during the era transition.
+newtype TranslateLedgerState x y = TranslateLedgerState
+  { translateLedgerStateWith ::
+      EpochNo ->
+      LedgerState x EmptyMK ->
+      LedgerState y DiffMK
+  -- ^ How to translate a 'LedgerState' during the era transition.
   --
   -- When translating between eras, it can be the case that values are modified,
   -- thus requiring this to be a @DiffMK@ on the return type. If no tables are
@@ -154,23 +162,18 @@ newtype TranslateLedgerState x y = TranslateLedgerState {
   -- related to the AVVMs. In particular they were deleted and included in the
   -- reserves. See the code that performs the translation Shelley->Allegra for
   -- more information.
-    translateLedgerStateWith ::
-         EpochNo
-      -> LedgerState x EmptyMK
-      -> LedgerState y DiffMK
   }
 
 -- | Transate a 'LedgerTables' across an era transition.
-data TranslateLedgerTables x y = TranslateLedgerTables {
-    -- | Translate a 'TxIn' across an era transition.
-    --
-    -- See 'translateLedgerTablesWith'.
-    translateTxInWith  :: !(TxIn (LedgerState x) -> TxIn (LedgerState y))
-
-    -- | Translate a 'TxOut' across an era transition.
-    --
-    -- See 'translateLedgerTablesWith'.
+data TranslateLedgerTables x y = TranslateLedgerTables
+  { translateTxInWith :: !(TxIn (LedgerState x) -> TxIn (LedgerState y))
+  -- ^ Translate a 'TxIn' across an era transition.
+  --
+  -- See 'translateLedgerTablesWith'.
   , translateTxOutWith :: !(TxOut (LedgerState x) -> TxOut (LedgerState y))
+  -- ^ Translate a 'TxOut' across an era transition.
+  --
+  -- See 'translateLedgerTablesWith'.
   }
 
 newtype TranslateTxOut x y = TranslateTxOut (TxOut (LedgerState x) -> TxOut (LedgerState y))
@@ -200,12 +203,12 @@ newtype TranslateTxOut x y = TranslateTxOut (TxOut (LedgerState x) -> TxOut (Led
 -- previous eras, so it will be called only when crossing era boundaries,
 -- therefore the translation won't be equivalent to 'id'.
 translateLedgerTablesWith ::
-     Ord (TxIn (LedgerState y))
-  => TranslateLedgerTables x y
-  -> LedgerTables (LedgerState x) DiffMK
-  -> LedgerTables (LedgerState y) DiffMK
+  Ord (TxIn (LedgerState y)) =>
+  TranslateLedgerTables x y ->
+  LedgerTables (LedgerState x) DiffMK ->
+  LedgerTables (LedgerState y) DiffMK
 translateLedgerTablesWith f =
-      LedgerTables
+  LedgerTables
     . DiffMK
     . Diff.Diff
     . Map.mapKeys (translateTxInWith f)
@@ -213,12 +216,12 @@ translateLedgerTablesWith f =
     . getDiffMK
     . mapMK (translateTxOutWith f)
     . getLedgerTables
-  where
-    getDiff (Diff.Diff m) = m
+ where
+  getDiff (Diff.Diff m) = m
 
 -- | Knowledge in a particular era of the transition to the next era
-data TransitionInfo =
-    -- | No transition is yet known for this era
+data TransitionInfo
+  = -- | No transition is yet known for this era
     -- We instead record the ledger tip (which must be in /this/ era)
     --
     -- NOTE: If we are forecasting, this will be set to the slot number of the
@@ -227,11 +230,9 @@ data TransitionInfo =
     -- range of that 'EpochInfo' will extend a safe zone from that /past/
     -- ledger state.
     TransitionUnknown !(WithOrigin SlotNo)
-
-    -- | Transition to the next era is known to happen at this 'EpochNo'
-  | TransitionKnown !EpochNo
-
-    -- | The transition is impossible
+  | -- | Transition to the next era is known to happen at this 'EpochNo'
+    TransitionKnown !EpochNo
+  | -- | The transition is impossible
     --
     -- This can be due to one of two reasons:
     --
@@ -239,5 +240,5 @@ data TransitionInfo =
     -- * This era has not actually begun yet (we are forecasting). In this case,
     --   we cannot look past the safe zone of this era and hence, by definition,
     --   the transition to the /next/ era cannot happen.
-  | TransitionImpossible
+    TransitionImpossible
   deriving (Show, Generic, NoThunks)
