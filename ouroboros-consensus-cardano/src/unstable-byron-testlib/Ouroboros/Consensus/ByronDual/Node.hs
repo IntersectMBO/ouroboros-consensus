@@ -66,6 +66,7 @@ dualByronBlockForging creds = BlockForging {
         fmap castForgeStateUpdateInfo .: updateForgeState (dualTopLevelConfigMain cfg)
     , checkCanForge    = checkCanForge . dualTopLevelConfigMain
     , forgeBlock       = return .....: forgeDualByronBlock
+    , finalize         = return ()
     }
   where
     BlockForging {..} = byronBlockForging creds

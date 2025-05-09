@@ -18,9 +18,10 @@ module Ouroboros.Consensus.Shelley.HFEras (
   , StandardShelleyBlock
   ) where
 
+import           Cardano.Protocol.Crypto
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
-import           Ouroboros.Consensus.Protocol.TPraos (StandardCrypto, TPraos)
+import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 import           Ouroboros.Consensus.Shelley.Eras (AllegraEra, AlonzoEra,
                      BabbageEra, ConwayEra, MaryEra, ShelleyEra)
@@ -75,7 +76,7 @@ instance
   ShelleyCompatible (TPraos c) BabbageEra
 
 instance
-  (Praos.PraosCrypto c) => ShelleyCompatible (Praos c) BabbageEra
+  Praos.PraosCrypto c => ShelleyCompatible (Praos c) BabbageEra
 
 -- This instance is required since the ledger view forecast function for
 -- Praos/Conway still goes through the forecast for TPraos. Once this is
@@ -85,4 +86,4 @@ instance
   ShelleyCompatible (TPraos c) ConwayEra
 
 instance
-  (Praos.PraosCrypto c) => ShelleyCompatible (Praos c) ConwayEra
+  Praos.PraosCrypto c => ShelleyCompatible (Praos c) ConwayEra

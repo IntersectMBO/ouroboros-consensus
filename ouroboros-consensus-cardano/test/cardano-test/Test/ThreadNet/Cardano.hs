@@ -26,6 +26,7 @@ import qualified Cardano.Protocol.TPraos.OCert as SL
 import           Cardano.Slotting.Slot (EpochSize (..), SlotNo (..))
 import           Control.Exception (assert)
 import           Control.Monad (replicateM)
+import qualified Control.Tracer as Tracer
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (maybeToList)
 import           Data.Proxy (Proxy (..))
@@ -41,6 +42,7 @@ import           Ouroboros.Consensus.Byron.Ledger.Block (ByronBlock)
 import           Ouroboros.Consensus.Byron.Ledger.Conversions
 import           Ouroboros.Consensus.Byron.Node
 import           Ouroboros.Consensus.Cardano.Block
+import           Ouroboros.Consensus.Cardano.CanHardFork
 import           Ouroboros.Consensus.Cardano.Condense ()
 import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.HardFork.Combinator
@@ -53,10 +55,11 @@ import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.NodeId
 import           Ouroboros.Consensus.Protocol.PBFT
+import           Ouroboros.Consensus.Protocol.Praos.AgentClient
+                     (KESAgentClientTrace, KESAgentContext)
 import           Ouroboros.Consensus.Shelley.HFEras ()
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import           Ouroboros.Consensus.Shelley.Node
-import           Ouroboros.Consensus.Util.IOLike (IOLike)
 import           Test.Consensus.Cardano.ProtocolInfo
                      (hardForkOnDefaultProtocolVersions, mkTestProtocolInfo)
 import           Test.QuickCheck
@@ -437,7 +440,7 @@ prop_simple_cardano_convergence TestSetup
         property $ unNonZero (maxRollbacks setupK) >= finalIntersectionDepth
 
 mkProtocolCardanoAndHardForkTxs ::
-     forall c m. (IOLike m, c ~ StandardCrypto)
+     forall c m. (CardanoHardForkConstraints c, KESAgentContext c m)
      -- Byron
   => PBftParams
   -> CoreNodeId
@@ -456,7 +459,7 @@ mkProtocolCardanoAndHardForkTxs
     TestNodeInitialization
       { tniCrucialTxs   = crucialTxs
       , tniProtocolInfo = protocolInfo
-      , tniBlockForging = blockForging
+      , tniBlockForging = blockForging Tracer.nullTracer
       }
   where
     crucialTxs :: [GenTx (CardanoBlock c)]
@@ -475,7 +478,7 @@ mkProtocolCardanoAndHardForkTxs
               propPV
 
     protocolInfo :: ProtocolInfo (CardanoBlock c)
-    blockForging :: m [BlockForging m (CardanoBlock c)]
+    blockForging :: Tracer.Tracer m KESAgentClientTrace -> m [BlockForging m (CardanoBlock c)]
     (setByronProtVer -> protocolInfo, blockForging) =
       mkTestProtocolInfo
         (coreNodeId, coreNodeShelley)

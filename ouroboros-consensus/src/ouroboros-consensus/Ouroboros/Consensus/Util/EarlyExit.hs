@@ -340,7 +340,7 @@ instance MonadLabelledSTM m => MonadLabelledSTM (WithEarlyExit m) where
 instance MonadSay m => MonadSay (WithEarlyExit m) where
   say = lift . say
 
-instance (MonadInspectSTM m, Monad (InspectMonad m)) =>  MonadInspectSTM (WithEarlyExit m) where
+instance (MonadInspectSTM m) =>  MonadInspectSTM (WithEarlyExit m) where
     type InspectMonad (WithEarlyExit m) = InspectMonad m
     inspectTVar  _ = inspectTVar (Proxy @m)
     inspectTMVar _ = inspectTMVar (Proxy @m)
