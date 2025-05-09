@@ -1,15 +1,17 @@
 module Test.Consensus.Genesis.Tests (tests) where
 
-import qualified Test.Consensus.Genesis.Tests.CSJ as CSJ
-import qualified Test.Consensus.Genesis.Tests.DensityDisconnect as GDD
-import qualified Test.Consensus.Genesis.Tests.LoE as LoE
-import qualified Test.Consensus.Genesis.Tests.LongRangeAttack as LongRangeAttack
-import qualified Test.Consensus.Genesis.Tests.LoP as LoP
-import qualified Test.Consensus.Genesis.Tests.Uniform as Uniform
-import           Test.Tasty
+import Test.Consensus.Genesis.Tests.CSJ qualified as CSJ
+import Test.Consensus.Genesis.Tests.DensityDisconnect qualified as GDD
+import Test.Consensus.Genesis.Tests.LoE qualified as LoE
+import Test.Consensus.Genesis.Tests.LoP qualified as LoP
+import Test.Consensus.Genesis.Tests.LongRangeAttack qualified as LongRangeAttack
+import Test.Consensus.Genesis.Tests.Uniform qualified as Uniform
+import Test.Tasty
 
 tests :: TestTree
-tests = testGroup "Genesis tests"
+tests =
+  testGroup
+    "Genesis tests"
     [ CSJ.tests
     , GDD.tests
     , LongRangeAttack.tests

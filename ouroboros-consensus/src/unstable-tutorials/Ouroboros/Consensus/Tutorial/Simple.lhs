@@ -39,7 +39,7 @@ First, some imports we'll need:
 
 > import Data.Void(Void, absurd)
 > import Data.Set(Set)
-> import qualified Data.Set as Set
+> import Data.Set qualified as Set
 > import Data.Word(Word64, Word8)
 > import GHC.Generics (Generic)
 > import Codec.Serialise (Serialise)
@@ -568,7 +568,7 @@ types for a ledger.  Though we are here using
 > instance IsLedger (LedgerState BlockC) where
 >   type instance LedgerErr  (LedgerState BlockC) = Void
 >   type instance AuxLedgerEvent (LedgerState BlockC) = Void
->
+
 >   applyChainTickLedgerResult _events _cfg _slot ldgrSt =
 >     LedgerResult { lrEvents = []
 >                  , lrResult = TickedLedgerStateC $ convertMapKind ldgrSt
@@ -623,10 +623,10 @@ the `ApplyBlock` typeclass:
 >     pure $ LedgerResult { lrEvents = []
 >                         , lrResult = convertMapKind $ block `applyBlockTo` tickedLdgrSt
 >                         }
->
+
 >   applyBlockLedgerResult = defaultApplyBlockLedgerResult
 >   reapplyBlockLedgerResult = defaultReapplyBlockLedgerResult absurd
->
+
 >   getBlockKeySets = const trivialLedgerTables
 
 `applyBlockLedgerResult` tries to apply a block to the ledger and fails with a

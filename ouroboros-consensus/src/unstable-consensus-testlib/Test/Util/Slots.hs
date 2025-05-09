@@ -4,17 +4,17 @@
 
 module Test.Util.Slots (NumSlots (..)) where
 
-import           Data.Word (Word64)
-import           GHC.Generics (Generic)
-import           NoThunks.Class (NoThunks)
-import           Quiet (Quiet (..))
-import qualified Test.QuickCheck as QC
-import           Test.QuickCheck (Arbitrary (..))
+import Data.Word (Word64)
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
+import Quiet (Quiet (..))
+import Test.QuickCheck (Arbitrary (..))
+import Test.QuickCheck qualified as QC
 
 -- | Number of slots
 newtype NumSlots = NumSlots {unNumSlots :: Word64}
   deriving (Eq, Generic, NoThunks)
-  deriving (Show) via (Quiet NumSlots)
+  deriving Show via (Quiet NumSlots)
 
 {-------------------------------------------------------------------------------
   Arbitrary instances

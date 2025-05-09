@@ -34,6 +34,7 @@ flag asserts
 
 common common-lib
   default-language: Haskell2010
+  default-extensions: ImportQualifiedPost
   ghc-options:
     -Wall
     -Wcompat
@@ -45,6 +46,7 @@ common common-lib
     -Wmissing-export-lists
     -Wunused-packages
     -Wno-unticked-promoted-constructors
+    -Wprepositive-qualified-module
 
   if flag(asserts)
     ghc-options: -fno-ignore-asserts
