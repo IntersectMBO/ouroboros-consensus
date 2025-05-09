@@ -1,0 +1,9 @@
+### NOTE
+# Run `git config blame.ignoreRevsFile .git-blame-ignore-revs`
+# from the repository's root to tell `git blame` to ignore
+# the commits below.
+
+# 2025
+########################################
+# Format with fourmolu
+d98f80ee5fcf6a1d5579ebd194909b3a7396eecb
