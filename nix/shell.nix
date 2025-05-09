@@ -17,6 +17,9 @@ hsPkgs.shellFor {
     pkgs.ghcid
     pkgs.xrefcheck
 
+    # testing cddls
+    pkgs.cddl
+
     # release management
     pkgs.scriv
     (pkgs.python3.withPackages (p: [ p.beautifulsoup4 p.html5lib p.matplotlib p.pandas ]))
