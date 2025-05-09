@@ -1,3 +1,5 @@
+{- FOURMOLU_DISABLE -}
+
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
