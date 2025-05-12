@@ -12,7 +12,6 @@
 module Test.CsjModel (
     ChainSyncReply (..)
   , CsjEnv (..)
-  , CsjIntersectPurpose (..)
   , CsjReaction (..)
   , CsjState
   , CsjStimulus (..)
@@ -25,10 +24,9 @@ module Test.CsjModel (
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo (unSlotNo), WithOrigin (At, Origin))
-import           Control.Applicative ((<|>), liftA2)
+import           Control.Applicative ((<|>))
 import qualified Control.Applicative as Alt (empty)
 import           Control.Arrow (first)
-import           Control.Exception (assert)
 import           Control.Monad (guard)
 import qualified Control.Monad.State.Strict as State
 import           Data.Foldable (foldl')
@@ -72,6 +70,10 @@ data CsjStimulus p a =
     -- The argument is the payload for the current immutable tip.
     Connect !a
   |
+    -- | The Dynamo's ChainSync client has processed all of its outstanding
+    -- replies
+    Demoted
+  |
     -- | The peer disconnected, including LoP, GDD, etc
     Disconnect
   |
@@ -93,6 +95,16 @@ data ChainSyncReply p a =
   |
     MsgIntersectNotFound
   |
+    -- | CSJ simply disengages any peer that discards a header
+    --
+    -- The point is only used to check whether this message actually rolled
+    -- back any headers. For example, the ChainSync server's response to the
+    -- first @MsgRequestNext@ received after having sent @MsgIntersectionFound@
+    -- is a (redundant) @MsgRollBackward@ to the agreed upon intersection. That
+    -- must not disengage the peer.
+    --
+    -- Note that the ChainSync client disconnects if the rollback discards a
+    -- header whose slot is old enough to definitely be historical.
     MsgRollBackward !(WithOrigin p)
   |
     -- | After the ChainSync client processes the header
@@ -107,11 +119,14 @@ data ChainSyncReply p a =
 -- | What a particular ChainSync client should do as part of the CSJ logic's
 -- reaction to some 'CsjStimulus'
 data CsjReaction p a =
-    -- | the ChainSync client should run as normal (ie pipelining
-    -- @MsgRequestNext@s) until 'Stop' is given
+    -- | used to demote the Dynamo to a Jumper upon 'Starvation'
     --
-    -- This message is only sent to the Dynamo or an Objector, never to a Jumper.
-    Continue
+    -- The ChainSyncclient should stop sending @MsgRequestNext@, but continue
+    -- processing outstanding replies as they arrive. The peer remains the
+    -- Dynamo until its client sends the 'Demoted' stimulus.
+    --
+    -- This message is only sent to the Dynamo, never an Objector nor a Jumper.
+    Demoting
   |
     -- | ChainSync should hereafter run as normal; CSJ will never give it
     -- another command
@@ -123,92 +138,28 @@ data CsjReaction p a =
     -- point
     --
     -- The point cannot be older than the ImmDB tip, since it's younger than
-    -- the peer's 'comm' and the LoE cannot be younger than any 'comm'.
+    -- the peer's 'candidate' and the LoE cannot be younger than any
+    -- 'candidate'.
     --
     -- ChainSync client's don't necessarily have to handle all of these (eg
     -- while they're blocked on the ledger view forecast), but should handle
     -- the latest as soon as they're able to.
     --
     -- This message is only sent to a Jumper, never the Dynamo or an Objector.
-    MsgFindIntersect !CsjIntersectPurpose !(WithPayload (WithOrigin p) a)
+    MsgFindIntersect !(WithPayload (WithOrigin p) a)
   |
-    -- | used to demote the Dynamo to a Jumper upon 'Starvation'
+    -- | the ChainSync client should run as normal (ie pipelining
+    -- @MsgRequestNext@s) until 'Sleep' is given
     --
-    -- Implies suppression of an imminent 'MsgRollForwardDONE', if there is
-    -- one.
-    --
-    -- The argument is the point that the peer should truncate their ChainSync
-    -- candidate fragment to.
-    --
-    -- This message is only sent to the Dynamo, never an Objector nor a Jumper.
-    Stop !(WithOrigin p)
+    -- This message is only sent to a Jumper, never the Dynamo or an Objector.
+    Promoted
   deriving (Generic, Read, Show)
 
 deriving instance (NoThunks p, NoThunks a) => NoThunks (CsjReaction p a)
 
--- | Why this 'MsgFindIntersect' is being sent
-data CsjIntersectPurpose =
-    -- | To determine which points of a 'JumpRequest' the peer has
-    ToBisect
-  |
-    -- | To reset the mini protocol state so that the peer can definitely send
-    -- headers starting from the expected point
-    --
-    -- If the peer replies with 'MsgIntersectNotFound', they will be
-    -- disengaged.
-    ToPromote
-  deriving stock    (Generic, Read, Show)
-  deriving anyclass (NoThunks)
-
 -- | @'nextMsgFindIntersect' = 'MsgFindIntersect' . 'wpAt' . 'nextPivot'@
 nextMsgFindIntersect :: Bisecting p a -> CsjReaction p a
-nextMsgFindIntersect = MsgFindIntersect ToBisect . wpAt . nextPivot
-
-{-------------------------------------------------------------------------------
-  Promotion and demotion
--------------------------------------------------------------------------------}
-
--- | A 'MsgFindIntersect' for 'comm'
---
--- This message is always sent when a peer is promoted to the Dynamo or an
--- Objector.
---
--- Minor optimization opportunity: if the Jumper's latest response was
--- @MsgIntersectFound@ then this could be skipped. There are only few cases
--- where this 'promotionMessage' currently must not be skipped.
---
--- - The first peer to 'Connect' will immediately be promoted to Dynamo despite
---   never having sent any messages to its peer.
---
--- - Similarly, if a peer waiting in 'latestJump' is promoted to Dynamo, it has
---   never sent any messages to its peer.
---
--- - If a peer was demoted from Dynamo, the last message it sent to its peer
---   most likely would have been @MsgRequestNext@. But when it was demoted,
---   'truncCandidate' most likely discarded some of its 'candidate' and it also
---   probably had to @drainThePipe@. So it's out of sync with its mini protocol
---   peer.
-promotionMessage :: CsjClientState p a -> CsjReaction p a
-promotionMessage = MsgFindIntersect ToPromote . comm
-
--- | Reset 'candidate' to 'comm' when demoting the Dynamo in response to
--- 'Starvation'
-truncCandidate :: Ord p => CsjClientState p a -> CsjClientState p a
-truncCandidate y =
-    CsjClientState {
-        anticomm  = anticomm y
-      ,
-        candidate =
-            case wpPoint (comm y) of
-                Origin -> Seq.empty
-                At p   -> case findPoint (candidate y) p of
-                    L.Just i  -> Seq.take (i + 1) (candidate y)
-                    L.Nothing ->
-                        -- 'candidate' must be an extension of 'comm'
-                        error "impossible!"
-      ,
-        comm      = comm y
-      }
+nextMsgFindIntersect = MsgFindIntersect . wpAt . nextPivot
 
 {-------------------------------------------------------------------------------
   Updates due to 'MsgRollForwardDONE' and 'MsgRollBackward'
@@ -228,36 +179,19 @@ forward p y = do
         anticomm  = anticomm y
       ,
         candidate = candidate y Seq.|> p
-      ,
-        comm      = comm y
       }
 
 -- | @MsgRollBackward@
 --
--- Disengages if it violates 'comm'. Truncates 'candidate'.
---
--- NB the ChainSync server sends 'MsgRollBackward' in response to the first
--- @MsgRequestNext@ after having sent 'MsgIntersectFound'. So Jumpers will not
--- receive 'MsgRollBackward' until after the 'Continue' command.
+-- Disengages if it actually discards any headers.
 backward ::
      Ord p
   => WithOrigin p
   -> CsjClientState p a
   -> L.Maybe (CsjClientState p a)
-backward wp y = do
-    guard $ wpPoint (comm y) <= wp
-    candidate' <- case wp of
-        Origin -> pure Seq.empty
-        At p   -> do
-            ip <- findPoint (candidate y) p
-            pure $ Seq.take (ip + 1) (candidate y)
-    pure CsjClientState {
-        anticomm  = anticomm y
-      ,
-        candidate = candidate'
-      ,
-        comm      = comm y
-      }
+backward p y = do
+    guard $ p == candidateTip y
+    pure y
 
 {-------------------------------------------------------------------------------
   Updates due to 'MsgIntersectFound' and 'MsgIntersectNotFound'
@@ -265,7 +199,7 @@ backward wp y = do
 
 -- | Update a 'Bisecting' based on the response to its 'nextMsgFindIntersect'.
 --
--- Recall that 'newJumpRequest' uses 'comm' and 'anticomm' to constrain
+-- Recall that 'newJumpRequest' uses 'candidate' and 'anticomm' to constrain
 -- 'notYetDetermined' when initializing it. Thus 'bisectionStep' does not even
 -- need to check them and so cannot fail.
 bisectionStep ::
@@ -284,15 +218,12 @@ bisectionStep found y bi =
 
     rejected' = if found then rejected bi else Just p
 
-    comm' = if not found then comm y else wpAt wp
-
     -- the points that are accepted by implication and the points that remain
     -- undetermined
     --
     -- NB @implied@ excludes @p@ even when @p@ is accepted. This is so the
-    -- definition of 'candidate' below can explicitly include @p@ in parallel
-    -- with 'comm', in order to make the relevant invariant for Jumpers
-    -- obviously true.
+    -- definition of 'candidate' below can explicitly include @p@, in order to
+    -- make the relevant invariant for Jumpers obviously true.
     (implied, nyd') = case (rejected bi, found) of
         (Nothing, False) -> (Seq.empty, neInit nyd)
         (Nothing, True ) -> (neInit (notYetDetermined bi), Seq.empty)
@@ -308,12 +239,10 @@ bisectionStep found y bi =
         candidate =
             (if not found then id else (\c -> c <> implied Seq.|> wp))
           $ candidate y
-      ,
-        comm      = comm'
       }
 
     eBi' = case nonEmptySeq nyd' of
-        L.Nothing     -> Left $ Class $ wpPoint comm'
+        L.Nothing     -> Left $ Class $ candidateTip y'
         L.Just neNyd' -> Right Bisecting {
             notYetDetermined = neNyd'
           ,
@@ -349,30 +278,16 @@ csjReactions env x pid imm = fmap fixup . \case
             -- 'minJumpSlots'? Otherwise every peer will have to fetch the
             -- recent headers, and there could be several thousand of them.
 
-        MsgIntersectFound ->
-                onAlreadySent (bisectionStep True)
-            <|>
-                onPromotee L.Just
-        MsgIntersectNotFound ->
-                onAlreadySent (bisectionStep False)
-            <|>
-                onPromotee (const L.Nothing)
+        MsgIntersectFound    -> onAlreadySent (bisectionStep True)
+        MsgIntersectNotFound -> onAlreadySent (bisectionStep False)
 
         MsgRollBackward     p -> onActive (backward  p)
-        MsgRollForwardDONE wp ->
-                -- This special case prevents the immutable tip from surpassing
-                -- the Dynamo's 'comm'. For example, that would be a risk at
-                -- least when the Dynamo is the /only/ upstream peer: the node
-                -- could sync k+1 blocks before the next jump request arises
-                -- (especially if the blocks are nearly empty). I'm not certain
-                -- that's the only case, so this 'trimCandidate' call is done
-                -- for every header from the Dynamo.
-                onDynamo (fmap (flip trimCandidate imm) . forward wp)
-            <|>
-                onObjector (forward wp)
+        MsgRollForwardDONE wp -> onActive (forward  wp)
         MsgRollForwardSTART p ->
             fmap (flip (,) [])
           $ preDynamo p <|> preObjector p
+
+    Demoted -> demoted
 
     Disconnect -> pure disconnect
 
@@ -381,7 +296,9 @@ csjReactions env x pid imm = fmap fixup . \case
     Starvation -> starvation
 
   where
-    fixup = issueNextJumpIfReady env imm . backfill
+    fixup =
+       issueNextJumpIfReady env imm
+     . backfill (\pid' msgs -> (pid', Promoted) : msgs)
 
     disengage  = forget False
     disconnect = forget True
@@ -410,8 +327,6 @@ csjReactions env x pid imm = fmap fixup . \case
                 candidate = case imm of
                     Origin -> Seq.empty
                     At p   -> Seq.singleton $ WP p z
-              ,
-                comm      = WP imm z
               }
 
             -- the imm tip is not on 'latestJump'
@@ -459,10 +374,10 @@ csjReactions env x pid imm = fmap fixup . \case
             maybe [] ((:[]) . (,) pid) mbMsg
           )
 
-    -- A Dynamo or Objector has responded to its 'promotionMessage'.
-    onPromotee = onActive
-
-    onActive f = onDynamo f <|> onObjector f
+    onActive f =
+          onDynamo f
+      <|>
+          onObjector f
 
     onDynamo f = do
         Dynamo pid' clss y _mbQ <- toLazy $ dynamo x
@@ -480,7 +395,7 @@ csjReactions env x pid imm = fmap fixup . \case
                     queue      = queue x
                   }
               ,
-                [(pid, Continue)]
+                []
               )
 
     onObjector f = do
@@ -502,7 +417,7 @@ csjReactions env x pid imm = fmap fixup . \case
                     queue      = queue x
                   }
               ,
-                [(pid, Continue)]
+                []
               )
 
     onNotYetSent = do
@@ -603,7 +518,7 @@ csjReactions env x pid imm = fmap fixup . \case
           }
 
     starvation = do
-        Dynamo pid' clss y _mbQ <- toLazy $ dynamo x
+        Dynamo pid' _clss _y _mbQ <- toLazy $ dynamo x
         let shouldDemote =
                 pid' == pid
              &&
@@ -614,24 +529,24 @@ csjReactions env x pid imm = fmap fixup . \case
                 Jumped{}   -> True
                 Jumping{}  -> False
                 Objector{} -> True
-        pure $
-            if not shouldDemote then (x, []) else (
-                CsjState {
-                    dynamo     = Nothing
-                  ,
-                    latestJump = latestJump x
-                  ,
-                    nonDynamos =
-                        Map.insert
-                            pid
-                            (Jumped clss (truncCandidate y))
-                            (nonDynamos x)
-                  ,
-                    queue      = queue x
-                  }
-              ,
-                [(pid, Stop $ wpPoint $ comm y)]
-              )
+        pure (x, if not shouldDemote then [] else [(pid, Demoting)])
+
+    demoted = do
+        -- TODO need to check pid?
+        Dynamo _pid clss y _mbQ <- toLazy $ dynamo x
+        pure $ flip (,) [] $ CsjState {
+            dynamo     = Nothing
+          ,
+            latestJump = latestJump x
+          ,
+            nonDynamos =
+                Map.insert
+                    pid
+                    (Jumped clss y)
+                    (nonDynamos x)
+          ,
+            queue      = queue x
+          }
 
 {-------------------------------------------------------------------------------
   Promoting Objectors and the Dynamo
@@ -640,7 +555,7 @@ csjReactions env x pid imm = fmap fixup . \case
 -- | Promote Jumpers or Objectors to the Dynamo and Jumpers to Objectors as
 -- necessary
 --
--- @'backfill' = 'fillObjectors' . 'backfillDynamo'@
+-- @'backfill' f msgs = 'fillObjectors' f . 'backfillDynamo' f@
 --
 -- There are only the following invariants to maintain.
 --
@@ -651,8 +566,8 @@ csjReactions env x pid imm = fmap fixup . \case
 --   chain. This is ensured by only promoting a Jumper if it is done bisecting
 --   and has a different 'Class' than the Dynamo and every Objector. The
 --   'Class' of a Jumper that's done bisecting is its exact intersection with
---   the bisected jump; the 'comm' before its done bisecting is merely a lower
---   bound on its 'Class'.
+--   the bisected jump; the 'candidate' before its done bisecting is merely a
+--   lower bound on its eventual 'Class'.
 --
 -- - A Jumper that is not yet done bisecting must not be promoted. The 'Class'
 --   of the Dynamo or an Objector must be its exact intersection with
@@ -698,9 +613,10 @@ csjReactions env x pid imm = fmap fixup . \case
 -- to Objectors also seems plausible.
 backfill ::
      (Ord p, Ord pid)
-  => (CsjState pid p a, [(pid, CsjReaction p a)])
-  -> (CsjState pid p a, [(pid, CsjReaction p a)])
-backfill = fillObjectors . backfillDynamo
+  => (pid -> msgs -> msgs)
+  -> (CsjState pid p a, msgs)
+  -> (CsjState pid p a, msgs)
+backfill f = fillObjectors f . backfillDynamo f
 
 -- | See 'backfill'
 --
@@ -709,9 +625,10 @@ backfill = fillObjectors . backfillDynamo
 -- waiting for the first jump offer, it promotes the leftmost of those.
 backfillDynamo ::
      (Ord p, Ord pid)
-  => (CsjState pid p a, [(pid, CsjReaction p a)])
-  -> (CsjState pid p a, [(pid, CsjReaction p a)])
-backfillDynamo (x, msgs) =
+  => (pid -> msgs -> msgs)
+  -> (CsjState pid p a, msgs)
+  -> (CsjState pid p a, msgs)
+backfillDynamo cons (x, msgs) =
     L.maybe (x, msgs) promote
   $ case dynamo x of
         Just{}  -> Alt.empty
@@ -724,28 +641,26 @@ backfillDynamo (x, msgs) =
                 pure (
                     Dynamo pid clss y Nothing
                   ,
-                    Just (promotionMessage y)
-                  ,
                     latestJump x
                   )
             Jumping{}           -> Alt.empty
             Objector clss y mbQ ->
-                pure (Dynamo pid clss y mbQ, Nothing, latestJump x)
+                pure (Dynamo pid clss y mbQ, latestJump x)
         L.Nothing        ->
             let waitings = either id (\_req -> Map.empty) $ latestJump x
             in
             case Map.lookup pid waitings of
                 L.Just y  ->
                     if not $ Map.null $ nonDynamos x then Alt.empty else
-                    let clss = Class $ wpPoint $ comm y
+                    let clss = Class $ candidateTip y
                     in
-                    pure (Dynamo pid clss y Nothing, Nothing, latestJump x)
+                    pure (Dynamo pid clss y Nothing, latestJump x)
                 L.Nothing ->
                     -- Each pid in 'queue' must be in either 'nonDynamos' or
                     -- 'latestJump'.
                     error "impossible!"
 
-    promote (Dynamo pid clss y mbQ, mbMsg, latestJump') = (
+    promote (Dynamo pid clss y mbQ, latestJump') = (
         CsjState {
             dynamo     = Just $ Dynamo pid clss y mbQ
           ,
@@ -757,9 +672,9 @@ backfillDynamo (x, msgs) =
                 -- This peer just got picked, so send them to the end.
                 snocPerm pid $ deletePerm pid $ queue x
           }
-      ,
-          maybe id (:) ((,) pid <$> mbMsg) msgs
-      )
+        ,
+          cons pid msgs
+        )
 
 -- | See 'backfill'
 --
@@ -770,9 +685,10 @@ backfillDynamo (x, msgs) =
 -- 'Class' that contains no 'Objector' nor 'dynamo'.
 fillObjectors ::
      (Ord p, Ord pid)
-  => (CsjState pid p a, [(pid, CsjReaction p a)])
-  -> (CsjState pid p a, [(pid, CsjReaction p a)])
-fillObjectors (x, msgs) =
+  => (pid -> msgs -> msgs)
+  -> (CsjState pid p a, msgs)
+  -> (CsjState pid p a, msgs)
+fillObjectors cons (x, msgs) =
     fromMaybe (x, msgs)
   $ case dynamo x of
         Nothing                         -> Nothing
@@ -782,8 +698,10 @@ fillObjectors (x, msgs) =
   where
     promote clss = \case
         AlreadyOccupied -> Nothing
-        Filler _i pid y -> Just (
-            CsjState {
+        Filler _i pid y ->
+            Just
+          $ (flip (,) (cons pid msgs))
+          $ CsjState {
                 dynamo     = dynamo x
               ,
                 latestJump = latestJump x
@@ -796,9 +714,6 @@ fillObjectors (x, msgs) =
               ,
                 queue      = queue x
               }
-          ,
-            (pid, promotionMessage y) : msgs
-          )
 
     snoc acc pid nonDynamo = case nonDynamo of
         Jumped clss y         ->
@@ -869,7 +784,7 @@ data CsjEnv p = CsjEnv {
     -- jump. It would be possible to simply wait for all bisections to finish
     -- before allowing the next jump, but the logic for interrupting them isn't
     -- too complicated, which might reduce the adversary's opportunity to delay
-    -- (since 'newJumpRequest' leverages the 'comm' and 'rejected' of the
+    -- (since 'newJumpRequest' leverages the 'candidate' and 'rejected' of the
     -- interrupted jump to trim&truncate the new jump's 'notYetDetermined').
     minJumpSlots  :: Word64
   ,
@@ -921,9 +836,10 @@ issueNextJumpIfReady env imm (x, msgs) =
           , let wp = neLast neCandidate
                 p  = wpPoint wp
           , bigEnoughJump env (let Class q = dynamoClss in q) p dynamoMbQ
-              -- It's crucial to use the 'Class' here rather than their 'comm',
-              -- since---after they're promoted but before they request their
-              -- first jump---their 'comm' might be ahead of their 'Class'.
+              -- It's crucial to use the 'Class' here rather than their
+              -- 'candidate', since---after they're promoted but before they
+              -- request their first jump---their 'candidate' might be ahead of
+              -- their 'Class'.
           , dynamoClss /= Class (At p)
               -- Suppress empty jumps.
               --
@@ -953,16 +869,14 @@ issueNextJump imm cons (x, msgs) dyn neCandidate =
           $ Dynamo
                 dynamoPid
                 dynamoClss
-                CsjClientState {
+                (trimC CsjClientState {
                     -- 'Set.empty' would suffice here if it weren't
                     -- for counterexamples to the NON-invariant
                     -- documented at 'JumpRequest'.
                     anticomm  = trimAnticomm (At p) $ anticomm dynamoY
                   ,
                     candidate = candidate dynamoY
-                  ,
-                    comm      = wpAt wp
-                  }
+                  })
                 dynamoMbQ
       ,
         latestJump = Right req
@@ -1044,10 +958,10 @@ issueNextJump imm cons (x, msgs) dyn neCandidate =
                 -- 'firstJumpRequest' is only called on waiting peers in 'Left'
                 -- of 'latestJump'. Those peers are only put their by the
                 -- 'Connect' event, and when they are put there, their
-                -- 'candidate' and 'comm' are set to the current imm tip. The
+                -- 'candidate' is set to the current imm tip. The
                 -- LoE is therefore that same point, which means the imm tip
-                -- cannot have advanced. So the current imm tip must be the
-                -- same as the waiting peer's 'comm'. Also, 'req' must include
+                -- cannot have advanced (TODO race condition vs ChainSel). So the current imm tip must be the
+                -- same as the waiting peer's 'candidate'. Also, 'req' must include
                 -- that same imm tip, since it's the Dynamo's 'candidate',
                 -- which reaches back to current imm tip (and perhaps further).
                 error "impossible!"
@@ -1100,7 +1014,7 @@ firstJumpRequest imm req =
 -- 'Jumped's or send another offer and remain a 'Jumping'.
 --
 -- Note that the resulting 'notYetDetermined' (if any) will have been
--- constrained by the incoming 'comm' and 'anticomm'; therefore, a Jumper
+-- constrained by the incoming 'candidate' and 'anticomm'; therefore, a Jumper
 -- /cannot/ violate them.
 newJumpRequest ::
      Ord p
@@ -1141,57 +1055,54 @@ newJumpRequest req y eBi =
             anticomm  = Set.insert p $ anticomm y
           ,
             candidate = candidate y
-          ,
-            comm      = comm y
           }
 
 -- | Helper for 'newJumpRequest'
 --
 -- Discards however much of the new 'JumpRequest' the Jumper has already
--- accepted via 'comm'.
+-- accepted.
 newJumpRequest2 ::
      Ord p
   => CsjClientState p a
   -> NonEmptySeq (WithPayload p a)
   -> Either (Class p) (Bisecting p a)
-newJumpRequest2 y = \jump ->
-    case neBinarySearch (\p -> At (wpPoint p) >= commp) jump of
-        LastFalseFirstTrue _i j ->
-            if commp == get jump j then go $ neDrop (j + 1) jump else
-            Left $ Class $ isect $ neTake j jump
-        Uniformly False         ->
-            Left $ Class $ isect $ toSeq jump
-        Uniformly True          ->
-            if commp == prj (neLast jump) then go Seq.empty else
-            -- @jump@ and 'candidate' both include a recent immutable tip. So
-            -- this is impossible unless 'comm' is 'Origin'.
-                assert (Origin == commp)
-              $ go $ toSeq jump
+newJumpRequest2 y jump =
+    if isect /= candidateTip y then Left $ Class isect else
+    case newJumpRequest3 (anticomm y) nyd of
+        Nothing -> Left $ Class $ candidateTip y
+        Just bi -> Right bi
   where
-    commp = wpPoint $ comm y
-
     get ps = prj . neIndex ps
     prj    = At . wpPoint
 
-    go nyd = case newJumpRequest3 (anticomm y) nyd of
-        Nothing -> Left $ Class commp
-        Just bi -> Right bi
-
-    -- find the intersection of @jump@ and 'candidate', when 'comm' is not on
-    -- @jump@
-    --
-    -- The argument is the prefix of @jump@ that is older than 'comm', since
-    -- those are the points that might 'comm' might be an extension of.
-    isect jumpPrefix =
-        case nonEmptySeq jumpPrefix of
-            L.Nothing        -> Origin
-            L.Just ne ->
-                let onCandidate = L.isJust . findPoint (candidate y)
-                in
-                case neBinarySearch (not . onCandidate . wpPoint) ne of
-                    LastFalseFirstTrue i _j -> get ne i
-                    Uniformly False         -> Origin
-                    Uniformly True          -> prj $ neLast ne
+    -- the intersection of @jump@ and 'candidate'
+    (isect, nyd) =
+        let onCandidate = L.isJust . findPoint (candidate y)
+        in
+        case neBinarySearch (not . onCandidate . wpPoint) jump of
+            LastFalseFirstTrue i j -> (get jump i, neDrop j jump)
+            Uniformly False        ->
+                -- The entire jump is already on this 'candidate' (TODO how?).
+                (prj $ neLast jump, Seq.empty)
+            Uniformly True         ->
+                -- The current immutable tip is on 'candidate' and @jump@.
+                -- Relevant facts:
+                --
+                -- - The LoE prevents the current immutable tip from advancing
+                --   if doing so would mean it is no longer on some peer's
+                --   'candidate'.
+                --
+                -- - 'trimCandidate' never removes the current immutable tip
+                --   from a 'candidate'.
+                --
+                -- - @jump@ was recently a Dynamo's 'candidate'. (TODO
+                --   Moreover, it was the Dynamo's candidate more recently than
+                --   this Jumper's candidate changed, right? Or is that
+                --   irrelevant?)
+                --
+                -- So if they have no point in common, the current immutable
+                -- tip is their intersection and must be 'Origin'.
+                (Origin, toSeq jump)
 
 -- | Helper for 'newJumpRequest2'
 --

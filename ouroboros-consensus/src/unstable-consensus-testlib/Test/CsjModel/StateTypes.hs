@@ -11,7 +11,7 @@ module Test.CsjModel.StateTypes (module Test.CsjModel.StateTypes) where
 import           Cardano.Slotting.Slot (WithOrigin (At, Origin))
 import           Data.Map (Map)
 import qualified Data.Map.Strict as Map
-import qualified Data.Maybe as L (Maybe (Just, Nothing))
+import qualified Data.Maybe as L
 -- TODO use AnchoredSeq?
 import           Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
@@ -68,8 +68,6 @@ neFindPoint = leftmostInAscSeq wpPoint . toSeq
 -------------------------------------------------------------------------------}
 
 -- | CSJ-specific state for a peer
---
--- INVARIANT: For a Jumper, 'comm' equals the tip of 'candidate'.
 data CsjClientState p a = CsjClientState {
     -- | points that were the youngest point rejected while bisecting a single
     -- 'JumpRequest'
@@ -77,7 +75,7 @@ data CsjClientState p a = CsjClientState {
     -- See 'trimAnticomm'.
     --
     -- This cannot contain more points than the number of jumps this peer has
-    -- ever handled without 'comm'itting to a younger point. And that's almost
+    -- ever handled without accepting more points. And that's almost
     -- entirely bounded by how many adversarial peers became Dynamo without an
     -- honest peer becoming Dynamo. So this seems sufficiently bounded to never
     -- be a resource leak---also: each @p@ is tiny on the heap.
@@ -86,15 +84,17 @@ data CsjClientState p a = CsjClientState {
     -- | the candidate fetched from the peer so far
     --
     -- Strictly ascending, and begins with a recent immutable tip. It's only
-    -- empty if the candidate is 'Origin'.
+    -- empty if the candidate (and recent immutable tip) is 'Origin'.
     candidate :: !(Seq (WithPayload p a))
-  ,
-    -- | the greatest point the peer has accepted as part of a jump
-    comm      :: !(WithPayload (WithOrigin p) a)
   }
   deriving (Read, Show)
 
--- | 'anticomm' can be garbage-collected when 'comm' advances
+candidateTip :: CsjClientState p a -> WithOrigin p
+candidateTip y = case candidate y of
+    Seq.Empty       -> Origin
+    _wps Seq.:|> wp -> At $ wpPoint wp
+
+-- | 'anticomm' can be garbage-collected when more points are accepted
 trimAnticomm :: Ord p => WithOrigin p -> Set p -> Set p
 trimAnticomm newcomm ps = case newcomm of
     Origin -> ps
@@ -119,20 +119,6 @@ trimCandidate y = \case
                 anticomm  = anticomm y
               ,
                 candidate = Seq.drop i (candidate y)
-              ,
-                -- The LoE always ensures that 'comm' and @imm@ are on the
-                -- same chain.
-                --
-                -- Under normal circumstances, 'comm' is not older than
-                -- @imm@. However, that's not always true. For example, if
-                -- there is exactly one peer, then it will be the Dynamo
-                -- and the node /technically/ could sync more than k blocks
-                -- from it before another jump request comes due.
-                comm      =
-                  let immWp      = wpAt $ Seq.index (candidate y) i
-                      cornerCase = wpPoint (comm y) < wpPoint immWp
-                  in
-                  if cornerCase then immWp else comm y
               }
 
 {-------------------------------------------------------------------------------
@@ -177,8 +163,8 @@ data CsjState pid p a = CsjState {
     -- (imm tip) is not a point on 'latestJump', a surprising corner case that
     -- must be supported.
     --
-    -- The peers in the @'Left' 'Map'@ have no 'Class' and their 'cand' and
-    -- 'comm' are set to the contemporary imm tip. (Note that they satisfy the
+    -- The peers in the @'Left' 'Map'@ have no 'Class' and their 'cand'
+    -- is set to the contemporary imm tip. (Note that they satisfy the
     -- Jumper invariant). Note that as soon as any peer has the imm tip as
     -- their candidate, the LoE prevents the imm tip from changing, so the imm
     -- tip is stuck while this map is non-empty. There will necessarily
@@ -226,7 +212,7 @@ objectorClasses x =
 
 -----
 
--- | The (exact!) intersection of a peer's 'comm' and the latest jump request
+-- | The (exact!) intersection of a peer's 'cand' and the latest jump request
 -- they've handled
 --
 -- This could be a calculation intead of being tracked in the state, but in any
@@ -241,7 +227,7 @@ objectorClasses x =
 --
 -- Since it's possible for the 'latestJump' to be so stale that the imm tip is
 -- a proper extension of some point on it, the 'Class' might also be older than
--- the imm tip. However, 'comm' is an extension of the 'Class', so the imm tip
+-- the imm tip. However, 'cand' is an extension of the 'Class', so the imm tip
 -- in that case must also be an extension of the 'Class'.
 newtype Class p = Class (WithOrigin p)
   deriving (Eq, Ord, Read, Show)
@@ -260,10 +246,10 @@ data Dynamo pid p a =
 data NonDynamo p a =
     -- | Jumpers that are done bisecting the latest jump request
     --
-    -- It's easy to forget that 'comm' might be a proper extension of 'Class':
+    -- It's easy to forget that 'cand' might be a proper extension of 'Class':
     -- the 'Class' must be part of the previous 'JumpRequest', so if a Jumper
     -- had already committed to a different chain (due to a prior
-    -- 'JumpRequest'), its 'Class' will be the intersection of 'comm' and the
+    -- 'JumpRequest'), its 'Class' will be the intersection of 'cand' and the
     -- 'latestJump'.
     Jumped !(Class p) !(CsjClientState p a)
   |
@@ -289,8 +275,7 @@ data Bisecting p a = Bisecting {
     -- jump request
     --
     -- INVARIANT: The oldest point in this non-empty sequence is the jump
-    -- request's successor of this peer's 'comm' (recall that 'comm' is the tip
-    -- of 'candidate' since this peer is a Jumper).
+    -- request's successor of this peer's 'cand'.
     --
     -- INVARIANT: If @'rejected' = Just p@, then @p@ is the successor of the
     -- youngest point in this sequence. If @'rejected' = Nothing@, then this

@@ -75,7 +75,7 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client (
   ) where
 
 import           Cardano.Ledger.BaseTypes (unNonZero)
-import           Control.Monad (join, when, void)
+import           Control.Monad (join, void)
 import           Control.Monad.Class.MonadTimer (MonadTimer)
 import           Control.Monad.Except (runExcept, throwError)
 import           Control.Tracer
@@ -1213,8 +1213,11 @@ withTime fragment (HeaderStateHistory history) =
   The ChainSync client state machine
 -------------------------------------------------------------------------------}
 
--- | If CSJ is enabled, the ChainSync client initializes via the CSJ governor's
--- first instruction, instead of via 'findIntersectionTop'
+-- | If CSJ is enabled, the ChainSync client initializes differently than
+-- 'findIntersectionTop'
+--
+-- Instead of sending the Fibonacci points, it merely sends a request for the
+-- current immutable tip.
 csjTop ::
   forall m blk arrival judgment.
      ( IOLike m
@@ -1226,26 +1229,43 @@ csjTop ::
   -> ImmutableJumpInfo blk
   -> m (Consensus (ClientPipelinedStIdle 'Z) blk m)
 csjTop cfgEnv dynEnv intEnv immJumpInfo = do
-    (dummy, kis) <- atomically $ do
-      -- @theirTip@ is only ever used to handle 'Jumping.RunNormally', and CSJ
-      -- will never send that instruction first
-      let dummy = Their $ AF.anchorToTip immAnchor
-          kis   = KnownIntersectionState {
-              genuine = True
-            , mostRecentIntersection  = jMostRecentIntersection ji
-            , ourFrag                 = jOurFragment ji
-            , theirFrag               = jTheirFragment ji
-            , theirHeaderStateHistory = jTheirHeaderStateHistory ji
-            , kBestBlockNo            = fromWithOrigin 0 $ AF.headBlockNo $ jTheirFragment ji
-            }
-      pure (dummy, kis)
-
-    continueWithState kis
-      $ knownIntersectionStateTop cfgEnv dynEnv intEnv dummy
+    pure
+      $ SendMsgFindIntersect [AF.anchorToPoint immAnchor]
+      $ ClientPipelinedStIntersect {
+            recvMsgIntersectFound    = \i theirTip ->
+                let die = throwIO InvalidJumpResponse
+                in
+                if i /= AF.anchorToPoint immAnchor then die else
+                continueWithState kis
+                  $ knownIntersectionStateTop
+                        cfgEnv
+                        dynEnv
+                        intEnv
+                        (Their theirTip)
+          ,
+            recvMsgIntersectNotFound = \theirTip ->
+                terminate
+              $ ForkTooDeep
+                    GenesisPoint
+                    (ourTipFromChain $ jOurFragment ji)
+                    (Their theirTip)
+          }
   where
+    InternalEnv {
+        terminate
+      } = intEnv
+
     ImmutableJumpInfo immAnchor _immHswt = immJumpInfo
 
-    ji = immutableJumpInfo immJumpInfo
+    ji  = immutableJumpInfo immJumpInfo
+    kis = KnownIntersectionState {
+        genuine = True
+      , mostRecentIntersection  = jMostRecentIntersection ji
+      , ourFrag                 = jOurFragment ji
+      , theirFrag               = jTheirFragment ji
+      , theirHeaderStateHistory = jTheirHeaderStateHistory ji
+      , kBestBlockNo            = fromWithOrigin 0 $ AF.headBlockNo $ jTheirFragment ji
+      }
 
 knownIntersectionStateTop ::
   forall m blk arrival judgment.
@@ -1315,17 +1335,19 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                 -- or `Restart`.
                 traceWith tracer TraceJumpingWaitingForNextInstruction
                 lbPause loPBucket
-                instruction <- Jumping.jgNextInstruction jumping
+                instruction <- Jumping.jgNextInstruction jumping $ case n of
+                    Zero   -> Jumping.NoRepliesOutstanding
+                    Succ{} -> Jumping.SomeRepliesOutstanding
                 traceWith tracer $ TraceJumpingInstructionIs instruction
                 case instruction of
                     Jumping.JumpInstruction jumpInstruction ->
                       continueWithState kis
-                        $ drainThePipe n
+                        $ drainThePipe n   -- TODO in CsjModel.hs, n will always be Zero here
                         $ offerJump mkPipelineDecision jumpInstruction
                     Jumping.RunNormally -> do
                       lbResume loPBucket
                       continueWithState (truncateJumpInfo kis)
-                        $ nextStep' mkPipelineDecision n theirTip
+                        $ doRequestNext mkPipelineDecision n theirTip
                     Jumping.Restart -> do
                       lbResume loPBucket
                       continueWithState (kBestBlockNo kis)
@@ -1335,25 +1357,24 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                             dynEnv
                             intEnv
                             NoMoreIntersection
-                    Jumping.StopRunningNormally p -> do
+                    Jumping.StopRunningNormally -> do
                       lbResume loPBucket
-                      continueWithState kis
-                        $ drainThePipe n
-                        $ rollBackward
-                              mkPipelineDecision0
-                              Zero
-                              False
-                              p
-                              theirTip
+                      case n of
+                        Zero    -> error "impossible!"   -- the CSJ governor never sends this command
+                        Succ n' ->
+                            pure
+                          $ CollectResponse
+                                Nothing
+                                (handleNext kis mkPipelineDecision n')
 
-    nextStep' ::
+    doRequestNext ::
         MkPipelineDecision
      -> Nat n
      -> Their (Tip blk)
      -> Stateful m blk
             (KnownIntersectionState blk)
             (ClientPipelinedStIdle n)
-    nextStep' mkPipelineDecision n theirTip =
+    doRequestNext mkPipelineDecision n theirTip =
         Stateful $ \kis ->
           return $
             requestNext
@@ -1497,7 +1518,6 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                 rollBackward
                     mkPipelineDecision
                     n
-                    True
                     intersection'
                     (Their theirTip)
       }
@@ -1561,13 +1581,12 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
     rollBackward ::
         MkPipelineDecision
      -> Nat n
-     -> Bool
      -> Point blk
      -> Their (Tip blk)
      -> Stateful m blk
           (KnownIntersectionState blk)
           (ClientPipelinedStIdle n)
-    rollBackward mkPipelineDecision n actualRollback rollBackPoint theirTip =
+    rollBackward mkPipelineDecision n rollBackPoint theirTip =
         Stateful $ \kis ->
             traceException
           $ let KnownIntersectionState {
@@ -1616,7 +1635,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
 
                 Just (theirFrag', theirHeaderStateHistory', mOldestRewound) -> do
 
-                  when actualRollback $ whenJust mOldestRewound $ \oldestRewound ->
+                  whenJust mOldestRewound $ \oldestRewound ->
                     HistoricityCheck.judgeMessageHistoricity
                         historicityCheck
                         HistoricalMsgRollBackward
@@ -1655,7 +1674,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     setCandidate theirFrag'
                     setLatestSlot dynEnv (pointSlot rollBackPoint)
 
-                  when actualRollback $ Jumping.jgOnRollBackward jumping rollBackPoint
+                  Jumping.jgOnRollBackward jumping rollBackPoint
 
                   continueWithState kis' $
                       nextStep mkPipelineDecision n theirTip

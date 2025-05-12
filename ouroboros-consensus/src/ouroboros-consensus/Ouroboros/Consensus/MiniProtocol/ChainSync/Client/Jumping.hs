@@ -186,6 +186,7 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping (
   , TraceCsjReason (..)
   , TraceEventCsj (..)
   , TraceEventDbf (..)
+  , WhetherZero (..)
   , getDynamo
   , makeContext
   , mkJumping
@@ -226,13 +227,15 @@ import           Ouroboros.Consensus.Util.IOLike hiding (handle)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (StandardHash)
 
+data WhetherZero = SomeRepliesOutstanding | NoRepliesOutstanding
+
 -- | Hooks for ChainSync jumping.
 data Jumping m blk = Jumping
   { -- | Get the next instruction to execute, which can be either to run normal
     -- ChainSync, to jump to a given point, or to restart ChainSync. When the
     -- peer is a jumper and there is no jump request, 'jgNextInstruction' blocks
     -- until a jump request is made.
-    jgNextInstruction   :: !(m (Instruction blk)),
+    jgNextInstruction   :: !(WhetherZero -> m (Instruction blk)),
 
     -- | To be called whenever the peer claims to have no more headers.
     jgOnAwaitReply      :: !(m ()),
@@ -278,7 +281,7 @@ deriving anyclass instance
 noJumping :: (MonadSTM m) => Jumping m blk
 noJumping =
   Jumping
-    { jgNextInstruction = pure RunNormally
+    { jgNextInstruction = \_whetherZero -> pure RunNormally
     , jgOnAwaitReply = pure ()
     , jgOnRecvRollForward = const $ pure ()
     , jgOnRollForward = \_ _ -> pure ()
@@ -296,7 +299,7 @@ mkJumping ::
   PeerContext m peer blk ->
   Jumping m blk
 mkJumping peerContext = Jumping
-  { jgNextInstruction =
+  { jgNextInstruction = \_whetherZero ->
         atomically (nextInstruction (pure ()) peerContext) >>= \case
             Strict.Right instr -> pure instr
             Strict.Left () -> do
@@ -369,13 +372,12 @@ data Instruction blk
   | Restart
   | -- | Jump to the tip of the given fragment.
     JumpInstruction !(JumpInstruction blk)
-  | -- | CSJ is commanding the peer to stop fetching headers, and to truncate
-    -- its ChainSync state to the given point
+  | -- | CSJ is commanding the peer to stop fetching headers and wait for a
+    -- next instruction
     --
-    -- The point is necessarily on its candidate; if it weren't, the peer would
-    -- have been disengaged already. The point is also necessarily ahead of the
-    -- node's immutable tip.
-    StopRunningNormally !(Point blk)
+    -- In the meantime, it should continue processing replies to the requests
+    -- it had already sent.
+    StopRunningNormally
   deriving (Generic)
 
 deriving instance (StandardHash blk, Typeable blk, HasHeader (Header blk), Eq (Header blk)) => Eq (Instruction blk)

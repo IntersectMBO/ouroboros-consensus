@@ -46,7 +46,7 @@ registerClient ::
      ,
        Show (Header blk)
      ,
-       BlockSupportsProtocol blk, LedgerSupportsProtocol blk
+       LedgerSupportsProtocol blk
      ,
        IOLike m
      )
@@ -136,42 +136,35 @@ csjModelJumping ::
   -> pid
   -> Jumping m blk
 csjModelJumping getImmTip env varCsj varInboxes pid = Jumping {
-    jgNextInstruction   = atomically $ do
-        inboxes <- readTVar varInboxes
-        let inbox = inboxes Map.! pid
-        reaction <- readTVar inbox >>= \case
-            Strict.Nothing       -> retry
-            Strict.Just reaction -> pure reaction
-        writeTVar inbox Strict.Nothing
-        case reaction of
-            Continue                 -> pure RunNormally
-            Disengage                -> pure RunNormally
-            MsgFindIntersect purp wp -> do
-                stepSTM Offered
-                let f = case purp of
-                        ToBisect  -> JumpTo          
-                        ToPromote -> JumpToGoodPoint
-                pure $ JumpInstruction $ f $ wpPayload wp
-            Stop p                   ->
-                pure $ StopRunningNormally $ withOriginRealPointToPoint p
+    jgNextInstruction   = \whetherZero -> loopy $ do
+            inboxes <- readTVar varInboxes
+            let inbox = inboxes Map.! pid
+            reaction <- readTVar inbox >>= \case
+                Strict.Nothing       -> retry
+                Strict.Just reaction -> pure reaction
+            case reaction of
+                Demoting                 -> case whetherZero of
+                    NoRepliesOutstanding   -> do
+                        writeTVar inbox Strict.Nothing
+                        stepSTM Demoted
+                        pure Nothing
+                    SomeRepliesOutstanding -> pure $ Just StopRunningNormally
+                Disengage           -> pure $ Just RunNormally
+                MsgFindIntersect wp -> do
+                    writeTVar inbox Strict.Nothing
+                    stepSTM Offered
+                    pure $ Just $ JumpInstruction $ JumpTo $ wpPayload wp
+                Promoted                 -> pure $ Just RunNormally
   ,
     jgOnAwaitReply      = step $ ChainSyncReply MsgAwaitReply
   ,
     jgOnRecvRollForward =
         step . ChainSyncReply . MsgRollForwardSTART . castRealPoint
   ,
-    jgOnRollForward     = \p ji -> atomically $ do
-        -- Suppress this stimulus if CSJ has already sent 'Stop'; this
-        -- ChainSync client is no longer the Dynamo---it just hasn't noticed
-        -- yet.
-        inboxes <- readTVar varInboxes
-        let inbox = inboxes Map.! pid
-        readTVar inbox >>= \case
-            Strict.Just Stop{} -> pure ()
-            _                  ->
-                stepSTM
-              $ ChainSyncReply . MsgRollForwardDONE
-              $ mkWithPayload p ji
+    jgOnRollForward     = \p ji ->
+        step
+          $ ChainSyncReply . MsgRollForwardDONE
+          $ mkWithPayload p ji
   ,
     jgOnRollBackward    =
         step . ChainSyncReply . MsgRollBackward . pointToWithOriginRealPoint
@@ -193,6 +186,11 @@ csjModelJumping getImmTip env varCsj varInboxes pid = Jumping {
     stepSTM stimulus =  do
         imm <- getImmTip
         stimulateSTM env varCsj varInboxes pid imm stimulus
+
+loopy :: IOLike m => STM m (Maybe a) -> m a
+loopy m = atomically m >>= \case
+    Nothing -> loopy m
+    Just a  -> pure a
 
 -----
 
