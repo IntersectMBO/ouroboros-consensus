@@ -313,7 +313,6 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
             chainDB
             (lgnkaGDDRateLimit lgArgs)
             (readTVar varGsmState)
-            -- TODO GDD should only consider (big) ledger peers
             (cschcMap varChainSyncHandles)
             varLoEFragment
 
