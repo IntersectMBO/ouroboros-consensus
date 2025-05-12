@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 
@@ -83,7 +84,9 @@ data CsjStimulus p a =
   |
     -- | The peer starved ChainSel
     Starvation
-  deriving (Read, Show)
+  deriving (Show)
+
+deriving instance (Read (WithOrigin p), Read p, Read a) => Read (CsjStimulus p a)
 
 data ChainSyncReply p a =
     MsgAwaitReply
@@ -114,7 +117,9 @@ data ChainSyncReply p a =
     --
     -- In particular: before it might block on forecasting the ledger view.
     MsgRollForwardSTART !p
-  deriving (Read, Show)
+  deriving (Show)
+
+deriving instance (Read (WithOrigin p), Read p, Read a) => Read (ChainSyncReply p a)
 
 -- | What a particular ChainSync client should do as part of the CSJ logic's
 -- reaction to some 'CsjStimulus'
@@ -153,8 +158,9 @@ data CsjReaction p a =
     --
     -- This message is only sent to a Jumper, never the Dynamo or an Objector.
     Promoted
-  deriving (Generic, Read, Show)
+  deriving (Generic, Show)
 
+deriving instance (Read (WithOrigin p), Read p, Read a) => Read (CsjReaction p a)
 deriving instance (NoThunks p, NoThunks a) => NoThunks (CsjReaction p a)
 
 -- | @'nextMsgFindIntersect' = 'MsgFindIntersect' . 'wpAt' . 'nextPivot'@

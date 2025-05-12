@@ -147,7 +147,7 @@ debugScheduler conf = conf { scDebug = True }
 -- Execution is started asynchronously, returning an action that kills the thread,
 -- to allow extraction of a potential exception.
 startChainSyncConnectionThread ::
-  (IOLike m, MonadTimer m, LedgerSupportsProtocol blk, ShowProxy blk, ShowProxy (Header blk)) =>
+  (IOLike m, MonadTimer m, LedgerSupportsProtocol blk, Show (Header blk), ShowProxy blk, ShowProxy (Header blk)) =>
   ResourceRegistry m ->
   Tracer m (TraceEvent blk) ->
   TopLevelConfig blk ->

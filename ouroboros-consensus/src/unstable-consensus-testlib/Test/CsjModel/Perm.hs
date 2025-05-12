@@ -1,3 +1,6 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 -- | A simple permutation type catered to uses of
@@ -7,10 +10,14 @@ module Test.CsjModel.Perm (module Test.CsjModel.Perm) where
 import qualified Data.Maybe as L (Maybe (Just, Nothing))
 import           Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
+import           GHC.Generics (Generic)
+import           NoThunks.Class (NoThunks)
 
 -- | A permutation
 newtype Perm pid = UnsafePerm (Seq pid)
-  deriving (Foldable, Read, Show)
+  deriving stock (Generic, Read, Show)
+  deriving anyclass (NoThunks)
+  deriving newtype (Foldable)
 
 -- | PREREQUISITE: the @pid@ is already in the permutation
 indexPerm :: Eq pid => pid -> Perm pid -> Int

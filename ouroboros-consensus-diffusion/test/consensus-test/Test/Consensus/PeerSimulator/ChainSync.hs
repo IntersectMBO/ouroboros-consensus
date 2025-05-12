@@ -10,13 +10,20 @@ module Test.Consensus.PeerSimulator.ChainSync (
   , runChainSyncServer
   ) where
 
+import           Cardano.Slotting.Slot (SlotNo (unSlotNo))
 import           Control.Exception (SomeException)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer (Tracer), contramap, nullTracer,
                      traceWith)
+import qualified Data.Map as Map
 import           Data.Proxy (Proxy (..))
+import qualified Data.Strict.Either as Strict
+import qualified Data.Strict.Maybe as Strict
 import           Network.TypedProtocol.Codec (AnyMessage)
+import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block (Header, Point)
+import           Ouroboros.Consensus.Block.RealPoint
+                    (pointToWithOriginRealPoint, realPointSlot)
 import           Ouroboros.Consensus.BlockchainTime (RelativeTime (..))
 import           Ouroboros.Consensus.Config (DiffusionPipeliningSupport (..),
                      TopLevelConfig (..))
@@ -30,10 +37,13 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as Jumping
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State as Jumping
 import           Ouroboros.Consensus.Node.GsmState (GsmState (Syncing))
 import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
-                     IOLike, MonadCatch (try))
+                     IOLike, MonadCatch (try), newTVarIO)
+import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (Tip)
 import           Ouroboros.Network.Channel (Channel)
 import           Ouroboros.Network.ControlMessage (ControlMessage (..))
@@ -61,7 +71,10 @@ import           Test.Consensus.PeerSimulator.Trace
                      (TraceChainSyncClientTerminationEvent (..),
                      TraceEvent (..))
 import           Test.Consensus.PointSchedule.Peers (PeerId)
+import qualified Test.CsjModel as CsjModel
+import qualified Test.CsjModel.Jumping as CsjModel
 import           Test.Util.Orphans.IOLike ()
+import           Test.Util.NoThunks ()
 
 -- | A basic ChainSync client. It wraps around 'chainSyncClient', but simplifies
 -- quite a few aspects. In particular, the size of the pipeline cannot exceed 20
@@ -74,13 +87,15 @@ basicChainSyncClient ::
   TopLevelConfig blk ->
   ChainDbView m blk ->
   ChainSyncStateView m blk ->
+  Maybe (Jumping.ImmutableJumpInfo blk) ->
   Consensus ChainSyncClientPipelined blk m
 basicChainSyncClient
     peerId
     tracer
     cfg
     chainDbView
-    csState =
+    csState
+    mbImmJumpInfo =
   chainSyncClient
     CSClient.ConfigEnv {
         CSClient.mkPipelineDecision0     = pipelineDecisionLowHighMark 10 20
@@ -104,6 +119,7 @@ basicChainSyncClient
       , CSClient.setLatestSlot = csvSetLatestSlot csState
       , CSClient.jumping = csvJumping csState
       }
+    mbImmJumpInfo
   where
     dummyHeaderInFutureCheck ::
       InFutureCheck.SomeHeaderInFutureCheck m blk
@@ -121,7 +137,13 @@ basicChainSyncClient
 -- 'basicChainSyncClient', synchronously. Exceptions are caught, sent to the
 -- 'StateViewTracers' and logged.
 runChainSyncClient ::
-  (IOLike m, MonadTimer m, LedgerSupportsProtocol blk, ShowProxy blk, ShowProxy (Header blk)) =>
+  ( IOLike m
+  , MonadTimer m
+  , LedgerSupportsProtocol blk
+  , Show (Header blk)
+  , ShowProxy blk
+  , ShowProxy (Header blk)
+  ) =>
   Tracer m (TraceEvent blk) ->
   TopLevelConfig blk ->
   ChainDbView m blk ->
@@ -152,9 +174,33 @@ runChainSyncClient
   StateViewTracers {svtPeerSimulatorResultsTracer}
   varHandles
   channel =
+
+    newTVarIO CsjModel.initialCsjState >>= \varCsj     ->
+    newTVarIO Map.empty                >>= \varInboxes ->
+
     bracketChainSyncClient
       nullTracer
       (contramap (TraceCsjEvent peerId) tracer)
+      CSClient.JumpingGovernor {
+        CSClient.registerJumpingClient = \context pid _var immJumpInfo -> do
+          (jumping, unregister, io) <- CsjModel.registerClient
+              (    (pointToWithOriginRealPoint . AF.castPoint . AF.anchorPoint)
+               <$> CSClient.getCurrentChain chainDbView
+              )
+              CsjModel.CsjEnv {
+                  CsjModel.minJumpSlots  = unSlotNo $ Jumping.jumpSize context
+                , CsjModel.realPointSlot = realPointSlot
+                }
+              varCsj
+              varInboxes
+              immJumpInfo
+              pid
+          pure ( Jumping.Disengaged Jumping.DisengagedDone   -- dummy for impl's required handle var
+               , const jumping
+               , const unregister
+               , io
+               )
+        }
       chainDbView
       varHandles
       (pure Syncing)
@@ -163,7 +209,7 @@ runChainSyncClient
       lopBucketConfig
       csjConfig
       DiffusionPipeliningOn -- ^ TODO make this a parameter?
-      $ \csState -> do
+      $ \mbImmJumpInfo csState -> do
         res <-
           try $
             runPipelinedPeerWithLimits
@@ -178,7 +224,8 @@ runChainSyncClient
                   tracer
                   cfg
                   chainDbView
-                  csState))
+                  csState
+                  mbImmJumpInfo))
         case res of
           Right res' -> traceWith svtPeerSimulatorResultsTracer $
             PeerSimulatorResult peerId $ SomeChainSyncClientResult $ Right res'

@@ -72,6 +72,9 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client (
   , noIdling
   , noLoPBucket
   , viewChainSyncState
+    -- * Hacky TODO
+  , JumpingGovernor (..)
+  , implJumpingGovernor
   ) where
 
 import           Cardano.Ledger.BaseTypes (unNonZero)
@@ -324,15 +327,48 @@ deriving anyclass instance (
   NoThunks (Header blk)
   ) => NoThunks (ChainSyncStateView m blk)
 
-bracketChainSyncClient ::
-  forall m peer blk a.
+newtype JumpingGovernor m peer blk = JumpingGovernor {
+    registerJumpingClient   ::
+        Jumping.Context m peer blk
+     -> peer
+     -> StrictTVar m (ChainSyncState blk)
+     -> ImmutableJumpInfo blk
+     -> STM m ( ChainSyncJumpingState m blk
+              , Jumping.PeerContext m peer blk -> Jumping.Jumping m blk
+              , Jumping.PeerContext m peer blk -> STM m (m ())
+              , m ()
+              )
+  }
+
+implJumpingGovernor ::
+  forall m peer blk.
     ( IOLike m
     , Ord peer
     , LedgerSupportsProtocol blk
     , MonadTimer m
     )
+ => JumpingGovernor m peer blk
+implJumpingGovernor = JumpingGovernor {
+    registerJumpingClient   = \context _peer csState _immJumpInfo -> do
+        (csjState, mbEv) <- Jumping.registerClient context csState
+        pure ( csjState
+             , Jumping.mkJumping
+             , \peerContext -> do
+                 mbEv' <- Jumping.unregisterClient peerContext
+                 pure $ whenJust mbEv' $ \ev -> traceWith (Jumping.tracer peerContext) ev
+             , whenJust mbEv $ \ev -> traceWith (Jumping.tracer context) ev
+             )
+  }
+
+bracketChainSyncClient ::
+  forall m peer blk a.
+    ( IOLike m
+    , LedgerSupportsProtocol blk
+    , MonadTimer m
+    )
  => Tracer m (TraceChainSyncClientEvent blk)
  -> Tracer m (Jumping.TraceEventCsj peer blk)
+ -> JumpingGovernor m peer blk
  -> ChainDbView m blk
  -> ChainSyncClientHandleCollection peer m blk
     -- ^ The kill handle and states for each peer, we need the whole map because we
@@ -349,6 +385,7 @@ bracketChainSyncClient ::
 bracketChainSyncClient
     tracer
     tracerCsj
+    csjGov
     ChainDbView { getIsInvalidBlock, getCurrentChain, getHeaderStateHistory }
     varHandles
     getGsmState
@@ -425,20 +462,22 @@ bracketChainSyncClient
       bracket_ insertHandle deleteHandle $ f Nothing Jumping.noJumping
 
     withCSJCallbacks lopBucket csHandleState immJumpInfo (CSJEnabled csjEnabledConfig) f =
-      bracket (acquireContext lopBucket csHandleState immJumpInfo csjEnabledConfig) releaseContext $ \(gsmState, (peerContext, mbEv)) -> do
-        whenJust mbEv $ \ev -> traceWith (Jumping.tracer peerContext) ev
+      bracket (acquireContext lopBucket csHandleState immJumpInfo csjEnabledConfig) releaseContext $ \(gsmState, jumping, _unregister, io) -> do
+        io
         let mbImmJumpInfo = case gsmState of
               PreSyncing -> Just immJumpInfo
               Syncing    -> Just immJumpInfo
               CaughtUp   -> Nothing
-        f mbImmJumpInfo $ Jumping.mkJumping peerContext
+        f mbImmJumpInfo jumping
 
+{-
     acquireContext ::
       LeakyBucket.Handlers m ->
       StrictTVar m (ChainSyncState blk) ->
       ImmutableJumpInfo blk ->
       CSJEnabledConfig ->
       m (GsmState, (Jumping.ContextWith peer (ChainSyncClientHandle m blk) m peer blk, Maybe (Jumping.TraceEventCsj peer blk)))
+-}
     acquireContext lopBucket cschState immJumpInfo (CSJEnabledConfig jumpSize) = do
         tid <- myThreadId
         atomicallyWithMonotonicTime $ \time -> do
@@ -446,17 +485,20 @@ bracketChainSyncClient
           updateLopBucketConfig lopBucket gsmState time
           cschJumpInfo <- newTVar $ Just $ immutableJumpInfo immJumpInfo
           context <- Jumping.makeContext varHandles jumpSize tracerCsj
-          fmap ((,) gsmState) $ Jumping.registerClient context peer cschState immJumpInfo $ \cschJumping -> ChainSyncClientHandle
-            { cschGDDKill = throwTo tid DensityTooLow
-            , cschOnGsmStateChanged = updateLopBucketConfig lopBucket
-            , cschState
-            , cschJumping
-            , cschJumpInfo
-            }
+          (csjState, mkJumping, mkUnregisterCsj, io) <- registerJumpingClient csjGov context peer cschState immJumpInfo
+          cschJumping <- newTVar csjState
+          let handle = ChainSyncClientHandle
+                { cschGDDKill = throwTo tid DensityTooLow
+                , cschOnGsmStateChanged = updateLopBucketConfig lopBucket
+                , cschState
+                , cschJumping
+                , cschJumpInfo
+                }
+              peerContext = context {Jumping.peer, Jumping.handle}
+          cschcAddHandle (Jumping.handlesCol context) peer handle
+          pure (gsmState, mkJumping peerContext, mkUnregisterCsj peerContext, io)
 
-    releaseContext (_gsmState, (peerContext, _mbEv)) = do
-        mbEv <- atomically $ Jumping.unregisterClient peerContext
-        whenJust mbEv $ \ev -> traceWith (Jumping.tracer peerContext) ev
+    releaseContext (_gsmState, _jumping, unregisterCsj, _io) = join $ atomically unregisterCsj
 
     invalidBlockWatcher varState =
         invalidBlockRejector

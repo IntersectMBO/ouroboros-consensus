@@ -63,6 +63,7 @@ import           Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (ChainSyncStateView (..))
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CsClient
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (ImmutableJumpInfo)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Server
 import           Ouroboros.Consensus.Node.ExitPolicy
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -134,6 +135,7 @@ data Handlers m addr blk = Handlers {
         :: ConnectionId addr
         -> IsBigLedgerPeer
         -> CsClient.DynamicEnv m blk
+        -> Maybe (ImmutableJumpInfo blk)
         -> ChainSyncClientPipelined (Header blk) (Point blk) (Tip blk) m
              CsClient.ChainSyncClientResult
         -- TODO: we should reconsider bundling these context parameters into a
@@ -216,7 +218,7 @@ mkHandlers
       NodeKernelArgs {chainSyncFutureCheck, chainSyncHistoricityCheck, keepAliveRng, miniProtocolParameters, getDiffusionPipeliningSupport}
       NodeKernel {getChainDB, getMempool, getTopLevelConfig, getTracers = tracers, getPeerSharingAPI, getGsmState} =
     Handlers {
-        hChainSyncClient = \peer _isBigLedgerpeer dynEnv ->
+        hChainSyncClient = \peer _isBigLedgerpeer dynEnv mbImmJumpInfo ->
           CsClient.chainSyncClient
             CsClient.ConfigEnv {
                 CsClient.cfg                     = getTopLevelConfig
@@ -232,6 +234,7 @@ mkHandlers
               , CsClient.getDiffusionPipeliningSupport = getDiffusionPipeliningSupport
               }
             dynEnv
+            mbImmJumpInfo
       , hChainSyncServer = \peer _version ->
           chainSyncHeadersServer
             (contramap (TraceLabelPeer peer) (Node.chainSyncServerHeaderTracer tracers))
@@ -583,6 +586,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
         CsClient.bracketChainSyncClient
             (contramap (TraceLabelPeer them) (Node.chainSyncClientTracer (getTracers kernel)))
             (contramap (TraceLabelPeer them) (Node.csjTracer             (getTracers kernel)))
+            CsClient.implJumpingGovernor
             (CsClient.defaultChainDbView (getChainDB kernel))
             (getChainSyncHandles kernel)
             (getGsmState       kernel)
@@ -591,7 +595,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
             lopBucketConfig
             csjConfig
             getDiffusionPipeliningSupport
-            $ \csState -> do
+            $ \mbImmJumpInfo csState -> do
               chainSyncTimeout <- genChainSyncTimeout
               (r, trailing) <-
                 runPipelinedPeerWithLimits
@@ -614,6 +618,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
                         , CsClient.setLatestSlot = csvSetLatestSlot csState
                         , CsClient.jumping = csvJumping csState
                         }
+                      mbImmJumpInfo
               return (ChainSyncInitiatorResult r, trailing)
 
     aChainSyncServer

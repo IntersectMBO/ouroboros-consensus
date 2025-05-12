@@ -445,6 +445,7 @@ traceChainSyncClientEventTestBlockWith pid tracer = \case
       JumpInstruction (JumpToGoodPoint ji) -> "JumpToGoodPoint " ++ terseJumpInfo ji
       RunNormally -> "RunNormally"
       Restart -> "Restart"
+      StopRunningNormally -> "StopRunningNormally"
 
 terseJumpInfo :: JumpInfo TestBlock -> String
 terseJumpInfo ji = tersePoint (castPoint $ headPoint $ jTheirFragment ji)

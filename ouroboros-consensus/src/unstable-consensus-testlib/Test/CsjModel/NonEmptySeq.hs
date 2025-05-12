@@ -1,4 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 
 -- | A non-empty sequence type with some custom methods with types that are
 -- convenient for "Test.CsjModel"
@@ -9,10 +12,13 @@ import qualified Data.Maybe as L (Maybe (Just, Nothing))
 -- TODO use AnchoredSeq?
 import           Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
+import           GHC.Generics (Generic)
+import           NoThunks.Class (NoThunks)
 
 -- | A non-empty 'Seq'
 newtype NonEmptySeq a = UnsafeNonEmptySeq (Seq a)
-  deriving (Read, Show)
+  deriving stock (Generic, Read, Show)
+  deriving anyclass (NoThunks)
 
 nonEmptySeq :: Seq a -> L.Maybe (NonEmptySeq a)
 nonEmptySeq xs = UnsafeNonEmptySeq xs <$ guard (not (Seq.null xs))

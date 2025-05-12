@@ -2,9 +2,8 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE StandaloneDeriving #-}
-
-{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.CsjModel.Jumping (module Test.CsjModel.Jumping) where
 
@@ -30,8 +29,6 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (HasHeader)
 import           Test.CsjModel
 
-deriving instance NoThunks a => NoThunks (Strict.Maybe a)
-
 -----
 
 type F f blk = f (RealPoint blk) (JumpInfo blk)
@@ -49,6 +46,8 @@ registerClient ::
        LedgerSupportsProtocol blk
      ,
        IOLike m
+     ,
+       forall x. NoThunks x => NoThunks (Strict.Maybe x)
      )
   => STM m (WithOrigin (RealPoint blk))
      -- ^ current immutable tip
@@ -58,12 +57,18 @@ registerClient ::
      -- ^ CSJ client inboxes
   -> ImmutableJumpInfo blk
   -> pid
-  -> STM m (Jumping m blk)
+  -> STM m (Jumping m blk, STM m (m ()), m ())
 registerClient getImmTip env varCsj varInboxes immJumpInfo pid = do
     inbox <- newTVar Strict.Nothing
     modifyTVar varInboxes $ Map.insert pid inbox
     stepSTM $ Connect $ immutableJumpInfo immJumpInfo
-    pure $ csjModelJumping getImmTip env varCsj varInboxes pid
+    pure ( Test.CsjModel.Jumping.mkJumping getImmTip env varCsj varInboxes pid
+         , do
+               imm' <- getImmTip
+               Test.CsjModel.Jumping.unregisterClient env varCsj varInboxes pid imm'
+               pure (pure ())
+         , pure ()
+         )
   where
     ImmutableJumpInfo immAnchor _immHdrSt = immJumpInfo
 
@@ -117,7 +122,7 @@ rotateDynamo env varCsj varInboxes pid imm = do
   where
     stepSTM = stimulateSTM env varCsj varInboxes pid imm
 
-csjModelJumping ::
+mkJumping ::
      (
        Ord pid, Show pid
      ,
@@ -135,7 +140,7 @@ csjModelJumping ::
      -- ^ CSJ client inboxes
   -> pid
   -> Jumping m blk
-csjModelJumping getImmTip env varCsj varInboxes pid = Jumping {
+mkJumping getImmTip env varCsj varInboxes pid = Jumping {
     jgNextInstruction   = \whetherZero -> loopy $ do
             inboxes <- readTVar varInboxes
             let inbox = inboxes Map.! pid

@@ -183,6 +183,7 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping (
   , JumpInstruction (..)
   , JumpResult (..)
   , Jumping (..)
+  , PeerContext
   , TraceCsjReason (..)
   , TraceEventCsj (..)
   , TraceEventDbf (..)
@@ -786,24 +787,16 @@ registerClient ::
     IOLike m
   ) =>
   Context m peer blk ->
-  peer ->
   StrictTVar m (ChainSyncState blk) ->
-  ImmutableJumpInfo blk ->
-  -- | A function to make a client handle from a jumping state.
-  (StrictTVar m (ChainSyncJumpingState m blk) -> ChainSyncClientHandle m blk) ->
-  STM m (PeerContext m peer blk, Maybe (TraceEventCsj peer blk))
-registerClient context peer csState _immJumpInfo mkHandle = do
-  (csjState, mbEv) <- getDynamo (handlesCol context) >>= \case
+  STM m (ChainSyncJumpingState m blk, Maybe (TraceEventCsj peer blk))
+registerClient context csState = do
+  getDynamo (handlesCol context) >>= \case
     Nothing -> do
       fragment <- csCandidate <$> readTVar csState
       pure (Dynamo DynamoStarted $ pointSlot $ AF.anchorPoint fragment, Just InitializedAsDynamo)
     Just (_, handle) -> do
       mJustInfo <- readTVar (cschJumpInfo handle)
       (\x -> (x, Nothing)) <$> newJumper mJustInfo (Happy FreshJumper Nothing)
-  cschJumping <- newTVar csjState
-  let handle = mkHandle cschJumping
-  cschcAddHandle (handlesCol context) peer handle
-  pure (context {peer, handle}, mbEv)
 
 -- | Unregister a client from a 'PeerContext'; this might trigger the election
 -- of a new dynamo or objector if the peer was one of these two.

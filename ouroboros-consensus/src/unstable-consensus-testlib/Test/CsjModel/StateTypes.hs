@@ -1,10 +1,11 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE StandaloneDeriving #-}
-
-{-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Test.CsjModel.StateTypes (module Test.CsjModel.StateTypes) where
 
@@ -24,12 +25,6 @@ import           NoThunks.Class (NoThunks)
 import           Prelude hiding (Either (Left, Right), Maybe (Just, Nothing), either, maybe)
 import           Test.CsjModel.NonEmptySeq
 import           Test.CsjModel.Perm
-
-{-------------------------------------------------------------------------------
-  An orphan instance for testing
--------------------------------------------------------------------------------}
-
-deriving instance Read p => Read (WithOrigin p)
 
 {-------------------------------------------------------------------------------
   Helper pair type for clarity
@@ -87,7 +82,8 @@ data CsjClientState p a = CsjClientState {
     -- empty if the candidate (and recent immutable tip) is 'Origin'.
     candidate :: !(Seq (WithPayload p a))
   }
-  deriving (Read, Show)
+  deriving stock (Generic, Read, Show)
+  deriving anyclass (NoThunks)
 
 candidateTip :: CsjClientState p a -> WithOrigin p
 candidateTip y = case candidate y of
@@ -197,7 +193,10 @@ data CsjState pid p a = CsjState {
     -- specification and the queue might reduce volatility in the "fairness".
     queue      :: !(Perm pid)
   }
-  deriving (Read, Show)
+  deriving stock (Generic, Show)
+
+deriving instance (Ord p, Ord pid, Read (WithOrigin p), Read pid, Read p, Read a) => Read (CsjState pid p a)
+deriving instance (forall x y. (NoThunks x, NoThunks y) => NoThunks (Either x y), forall x. NoThunks x => NoThunks (Maybe x), NoThunks pid, NoThunks p, NoThunks a) => NoThunks (CsjState pid p a)
 
 initialCsjState :: CsjState pid p a
 initialCsjState = CsjState {
@@ -241,7 +240,10 @@ objectorClasses x =
 -- the imm tip. However, 'cand' is an extension of the 'Class', so the imm tip
 -- in that case must also be an extension of the 'Class'.
 newtype Class p = Class (WithOrigin p)
-  deriving (Eq, Ord, Read, Show)
+  deriving stock (Eq, Generic, Ord, Show)
+  deriving anyclass (NoThunks)
+
+deriving instance (Read (WithOrigin p), Read p) => Read (Class p)
 
 data Dynamo pid p a =
     -- | The @'Maybe' p@ is the header the ChainSync client has just received,
@@ -251,7 +253,10 @@ data Dynamo pid p a =
     -- informed the syncing node that the slots between this header and the
     -- previous are empty.
     Dynamo !pid !(Class p) !(CsjClientState p a) !(Maybe p)
-  deriving (Read, Show)
+  deriving stock (Generic, Show)
+
+deriving instance (Ord p, Read (WithOrigin p), Read pid, Read p, Read a) => Read (Dynamo pid p a)
+deriving instance (forall x. NoThunks x => NoThunks (Maybe x), NoThunks pid, NoThunks p, NoThunks a) => NoThunks (Dynamo pid p a)
 
 -- | Peers that are not the Dynamo and are not waiting in 'latestJump'
 data NonDynamo p a =
@@ -274,7 +279,10 @@ data NonDynamo p a =
     -- They must be serving a different chain than the Dynamo and all
     -- Objectors; see 'Test.CsjModel.backfill' for details.
     Objector !(Class p) !(CsjClientState p a) !(Maybe p)
-  deriving (Read, Show)
+  deriving stock (Generic, Show)
+
+deriving instance (Ord p, Read (WithOrigin p), Read p, Read a) => Read (NonDynamo p a)
+deriving instance (forall x. NoThunks x => NoThunks (Maybe x), NoThunks p, NoThunks a) => NoThunks (NonDynamo p a)
 
 -----
 
@@ -303,7 +311,9 @@ data Bisecting p a = Bisecting {
     -- 'Test.CsjModel.MsgIntersectNotFound' as part of /this/ bisection.
     rejected         :: !(Maybe p)
   }
-  deriving (Read, Show)
+  deriving stock (Generic, Read, Show)
+
+deriving instance (forall x. NoThunks x => NoThunks (Maybe x), NoThunks p, NoThunks a) => NoThunks (Bisecting p a)
 
 -- | A bisecting Jumper is stuck until it receives a response to the
 -- 'Test.CsjModel.MsgFindIntersect' with this payload
@@ -374,7 +384,10 @@ data SentStatus p a =
     -- governor will consider its state to be 'NotYetSent', without needing any
     -- details beyond that.
     NotYetSent
-  deriving (Read, Show)
+  deriving stock (Generic, Show)
+
+deriving instance (Read (WithOrigin p), Read p, Read a) => Read (SentStatus p a)
+deriving instance (forall x. NoThunks x => NoThunks (Maybe x), NoThunks p, NoThunks a) => NoThunks (SentStatus p a)
 
 -----
 
@@ -400,4 +413,7 @@ data SentStatus p a =
 -- - Z becomes Dynamo and serves the same chain as X.
 data JumpRequest p a =
     JumpRequest !(Class p) !(NonEmptySeq (WithPayload p a))
-  deriving (Read, Show)
+  deriving stock (Generic, Show)
+  deriving anyclass (NoThunks)
+
+deriving instance (Read (WithOrigin p), Read p, Read a) => Read (JumpRequest p a)
