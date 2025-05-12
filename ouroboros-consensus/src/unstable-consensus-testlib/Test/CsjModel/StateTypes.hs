@@ -156,26 +156,37 @@ data CsjState pid p a = CsjState {
     -- | Only used to handle the 'Test.CsjModel.Connect' event
     --
     -- It's initialized as @'Left' 'Map.empty'@. Whenever a Dynamo requests a
-    -- jump, it becomes 'Right'. If a new peer 'Test.CsjModel.Connect's while
-    -- this is 'Left', then they are added to the 'Map'; they'll become
-    -- 'Jumping's as soon as this value becomes a 'Right'. This value reverts
-    -- to 'Left' if a peer 'Test.CsjModel.Connect's while the immutable tip
-    -- (imm tip) is not a point on 'latestJump', a surprising corner case that
-    -- must be supported.
+    -- jump, it becomes 'Right'.
     --
-    -- The peers in the @'Left' 'Map'@ have no 'Class' and their 'cand'
-    -- is set to the contemporary imm tip. (Note that they satisfy the
-    -- Jumper invariant). Note that as soon as any peer has the imm tip as
-    -- their candidate, the LoE prevents the imm tip from changing, so the imm
-    -- tip is stuck while this map is non-empty. There will necessarily
-    -- eventually be a next 'JumpRequest', because
-    -- 'Test.CsjModel.issueNextJumpIfReady' measures its
-    -- 'Test.CsjModel.minJumpSlots' starting from the 'Class' of the Dynamo,
-    -- 'Test.CsjModel.minJumpSlots' is no greater than the forecast range, and
-    -- 'latestJump' is only 'Left' while the imm tip (and so the candidate of
-    -- the 'dynamo') is a proper extension of the 'Class' of the Dynamo. And
-    -- also because 'Test.CsjModel.backfill' will even promote a Dynamo from
-    -- this set of peers as a last resort.
+    -- If a new peer 'Test.CsjModel.Connect's while this is 'Left', then they
+    -- are added to the 'Map'; they'll become a Jumper as soon as this value
+    -- becomes a 'Right'. If a new peer 'Test.CsjModel.Connect's while this is
+    -- 'Right', then either the imm tip is a point on this jump or it isn't (a
+    -- surprising corner case that must be supported). If it is, then the peer
+    -- is initialized as a Jumper with that 'JumpRequest'. If the imm tip isn't
+    -- present, this value reverts to 'Left' with the peer as its singleton
+    -- argument.
+    --
+    -- The peers in the @'Left' 'Map'@ have no 'Class' and their 'candidate' is
+    -- set to the contemporary imm tip. Note that as soon as any peer has the
+    -- imm tip as their candidate the LoE prevents the imm tip from changing.
+    --
+    -- It's important that there will necessarily eventually be a next
+    -- 'JumpRequest' while this value is 'Left'.
+    --
+    -- - 'Test.CsjModel.minJumpSlots' is no greater than the forecast range.
+    --
+    -- - 'Test.CsjModel.issueNextJumpIfReady' measures its
+    -- 'Test.CsjModel.minJumpSlots' starting from the 'Class' of the Dynamo.
+    --
+    -- - This value is 'Left' only when the imm tip is younger than every point
+    --   on the most recent 'JumpRequest', which includes the Dynamo's 'Class'.
+    --   Thus the Dynamo's forecast range starts ahead of it's 'Class', and so
+    --   the Dynamo will either reach 'Test.CsjModel.minJumpSlots' or die
+    --   trying (and be backfilled).
+    --
+    -- - 'Test.CsjModel.backfill' will even promote a Dynamo from this set of
+    --   peers as a last resort.
     latestJump :: !(Either (Map pid (CsjClientState p a)) (JumpRequest p a))
   ,
     -- | The queue for becoming Dynamo; it contains the @pid@ of every peer
