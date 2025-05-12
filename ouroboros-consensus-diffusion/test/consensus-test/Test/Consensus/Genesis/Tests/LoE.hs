@@ -14,6 +14,7 @@ import           Ouroboros.Network.Driver.Limits
                      (ProtocolLimitFailure (ExceededTimeLimit))
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..))
 import           Test.Consensus.Genesis.Setup
+import qualified Test.Consensus.Genesis.Tests.LoE.CaughtUp as LoE.CaughtUp
 import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
@@ -38,7 +39,8 @@ tests =
       adjustQuickCheckMaxSize (`div` 5) $
         testProperty "adversary does not hit timeouts" (prop_adversaryHitsTimeouts False),
       adjustQuickCheckMaxSize (`div` 5) $
-        testProperty "adversary hits timeouts" (prop_adversaryHitsTimeouts True)
+        testProperty "adversary hits timeouts" (prop_adversaryHitsTimeouts True),
+      LoE.CaughtUp.tests
     ]
 
 -- | Tests that the selection advances in presence of the LoE when a peer is
