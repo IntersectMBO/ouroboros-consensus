@@ -166,7 +166,6 @@ deriving via IsomorphicUnary NS Header                    instance Isomorphic He
 deriving via IsomorphicUnary NS I                         instance Isomorphic I
 deriving via IsomorphicUnary NS WrapCannotForge           instance Isomorphic WrapCannotForge
 deriving via IsomorphicUnary NS WrapForgeStateUpdateError instance Isomorphic WrapForgeStateUpdateError
-deriving via IsomorphicUnary NS WrapGenTxId               instance Isomorphic WrapGenTxId
 deriving via IsomorphicUnary NS WrapIsLeader              instance Isomorphic WrapIsLeader
 deriving via IsomorphicUnary NS WrapTipInfo               instance Isomorphic WrapTipInfo
 deriving via IsomorphicUnary NS WrapValidatedGenTx        instance Isomorphic WrapValidatedGenTx

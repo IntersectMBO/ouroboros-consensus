@@ -30,6 +30,7 @@ import qualified Cardano.Chain.UTxO as Impl
 import           Cardano.Crypto.DSIGN.Class
 import           Codec.Serialise
 import           Data.ByteString (ByteString)
+import           Data.Coerce
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -82,12 +83,16 @@ instance Monoid SpecToImplIds where
 -- | Construct singleton 'SpecToImplIds' for a transaction
 specToImplTx :: Spec.Tx -> Impl.ATxAux ByteString -> SpecToImplIds
 specToImplTx spec impl = SpecToImplIds $ Spec.Test.AbstractToConcreteIdMaps {
-      transactionIds = Map.singleton (specTxId spec) (byronIdTx impl)
+      transactionIds =
+        Map.singleton (specTxId spec) (byronGenTxIdToTxId $ byronIdTx impl)
     , proposalIds    = Map.empty
     }
   where
     specTxId :: Spec.Tx -> Spec.TxId
     specTxId = Spec.txid . Spec.body
+
+    byronGenTxIdToTxId :: TxId (GenTx ByronBlock) -> Impl.TxId
+    byronGenTxIdToTxId (ByronGenTxId i) = coerce i
 
 {-------------------------------------------------------------------------------
   Bridge

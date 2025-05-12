@@ -488,8 +488,11 @@ instance Typeable xs => ShowProxy (TxId (GenTx (HardForkBlock xs))) where
 
 instance CanHardFork xs => HasTxId (GenTx (HardForkBlock xs)) where
   txId = HardForkGenTxId . OneEraGenTxId
-       . hcmap proxySingle (WrapGenTxId . txId)
+       . hcollapse . hcmap proxySingle (K . toRawTxIdHash . txId)
        . getOneEraGenTx . getHardForkGenTx
+
+instance CanHardFork xs => ConvertRawTxId (GenTx (HardForkBlock xs)) where
+  toRawTxIdHash (HardForkGenTxId (OneEraGenTxId txid)) = txid
 
 {-------------------------------------------------------------------------------
   HasTxs

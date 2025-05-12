@@ -29,6 +29,7 @@ import           Data.Maybe (listToMaybe, mapMaybe)
 import           Data.MemPack
 import           Data.SOP.Index (Index (..))
 import           Data.Void (Void, absurd)
+import           Data.SOP.Strict.NS (NS(..))
 import           Data.Word
 import           GHC.Generics
 import           NoThunks.Class
@@ -87,6 +88,13 @@ instance SupportedNetworkProtocolVersion ByronBlockHFC where
       supportedNodeToClientVersions (Proxy @ByronBlock)
 
   latestReleasedNodeVersion = latestReleasedNodeVersionDefault
+
+{-------------------------------------------------------------------------------
+  HasBlessedGenTxIdEra instance
+-------------------------------------------------------------------------------}
+
+instance HasBlessedGenTxIdEra '[ByronBlock] where
+  blessedGenTxIdEra = Z mempty
 
 {-------------------------------------------------------------------------------
   SerialiseHFC instance

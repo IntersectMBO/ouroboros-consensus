@@ -17,6 +17,7 @@
 module Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common (
     -- * Conditions required by the HFC to support serialisation
     HardForkEncoderException (..)
+  , HasBlessedGenTxIdEra (..)
   , SerialiseConstraintsHFC
   , SerialiseHFC (..)
   , disabledEraException
@@ -129,6 +130,15 @@ notFirstEra = hcmap proxySingle aux
     aux :: forall f blk. SingleEraBlock blk => f blk -> SingleEraInfo blk
     aux _ = singleEraInfo (Proxy @blk)
 
+
+-- | 'HasBlessedGenTxIdEra' is used solely for backwards-compatibility reasons
+-- for when we're communicating with older node / client versions and need to
+-- serialise / deserialise era-tagged 'GenTxId's. The 'blessedGenTxIdEra' is
+-- used as the "default" era tag when we want to send a (non-era-tagged)
+-- 'GenTxId' to these nodes / clients.
+class HasBlessedGenTxIdEra (xs :: [Type]) where
+  blessedGenTxIdEra :: NS Proxy xs
+
 {-------------------------------------------------------------------------------
   Conditions required by the HFC to support serialisation
 -------------------------------------------------------------------------------}
@@ -169,6 +179,7 @@ pSHFC = Proxy
 --    This would then lead to problems with binary streaming, and we do not
 --    currently provide any provisions to resolve these.
 class ( CanHardFork xs
+      , HasBlessedGenTxIdEra xs
       , All SerialiseConstraintsHFC xs
         -- Required for HasNetworkProtocolVersion
       , All (Compose Show EraNodeToClientVersion) xs

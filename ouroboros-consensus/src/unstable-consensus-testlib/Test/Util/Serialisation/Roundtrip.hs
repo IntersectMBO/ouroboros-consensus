@@ -235,6 +235,7 @@ roundtrip_all
 
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) blk
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (GenTx blk)
+     , ArbitraryWithVersion (BlockNodeToClientVersion blk) (GenTxId blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (ApplyTxErr blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeBlockQuery (BlockQuery blk))
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeResult blk)
@@ -286,6 +287,7 @@ roundtrip_all_skipping
 
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) blk
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (GenTx blk)
+     , ArbitraryWithVersion (BlockNodeToClientVersion blk) (GenTxId blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (ApplyTxErr blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeBlockQuery (BlockQuery blk))
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeResult blk)
@@ -542,6 +544,7 @@ roundtrip_SerialiseNodeToClient
      ( SerialiseNodeToClientConstraints blk
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) blk
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (GenTx blk)
+     , ArbitraryWithVersion (BlockNodeToClientVersion blk) (GenTxId blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (ApplyTxErr blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeBlockQuery (BlockQuery blk))
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeResult blk)
@@ -560,6 +563,7 @@ roundtrip_SerialiseNodeToClient
 roundtrip_SerialiseNodeToClient shouldCheckCBORvalidity ccfg =
     [ rt (Proxy @blk)                         "blk"
     , rt (Proxy @(GenTx blk))                 "GenTx"
+    , rt (Proxy @(GenTxId blk))               "GenTxId"
     , rt (Proxy @(ApplyTxErr blk))            "ApplyTxErr"
     , rt (Proxy @(SomeBlockQuery (BlockQuery blk))) "BlockQuery"
     -- Note: Ideally we'd just use 'rt' to test Ledger config, but that would

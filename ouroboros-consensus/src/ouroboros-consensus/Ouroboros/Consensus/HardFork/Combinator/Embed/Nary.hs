@@ -44,6 +44,8 @@ import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.Tables.Utils
+import           Ouroboros.Consensus.Ledger.SupportsMempool
+                     (ConvertRawTxId (..))
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.TypeFamilyWrappers
 
@@ -197,7 +199,10 @@ instance Inject GenTx where
   inject = injectNS' (Proxy @GenTx) . forgetInjectionIndex
 
 instance Inject WrapGenTxId where
-  inject = injectNS' (Proxy @WrapGenTxId) . forgetInjectionIndex
+  inject ix w =
+    WrapGenTxId $ HardForkGenTxId $ OneEraGenTxId $
+    hcollapse $ hcmap proxySingle (K . toRawTxIdHash . unwrapGenTxId) $
+    injectNS (forgetInjectionIndex ix) w
 
 instance Inject WrapApplyTxErr where
   inject =

@@ -6,7 +6,9 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE ViewPatterns #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -16,6 +18,10 @@ module Ouroboros.Consensus.Byron.Ledger.Mempool (
     GenTx (..)
   , TxId (..)
   , Validated (..)
+  , pattern ByronDlgId
+  , pattern ByronTxId
+  , pattern ByronUpdateProposalId
+  , pattern ByronUpdateVoteId
     -- * Transaction IDs
   , byronIdDlg
   , byronIdProp
@@ -44,20 +50,17 @@ import qualified Cardano.Chain.UTxO as Utxo
 import qualified Cardano.Chain.ValidationMode as CC
 import           Cardano.Crypto (hashDecoded)
 import qualified Cardano.Crypto as CC
-import           Cardano.Ledger.Binary (ByteSpan, DecoderError (..),
-                     byronProtVer, fromByronCBOR, serialize, slice, toByronCBOR,
-                     unsafeDeserialize)
-import           Cardano.Ledger.Binary.Plain (enforceSize)
-import           Cardano.Prelude (Natural, cborError)
+import           Cardano.Ledger.Binary (ByteSpan, byronProtVer, fromByronCBOR,
+                     serialize, slice, toByronCBOR, unsafeDeserialize)
+import           Cardano.Prelude (Natural)
 import           Codec.CBOR.Decoding (Decoder)
-import qualified Codec.CBOR.Decoding as CBOR
 import           Codec.CBOR.Encoding (Encoding)
-import qualified Codec.CBOR.Encoding as CBOR
 import           Control.Monad (void)
 import           Control.Monad.Except (Except, throwError)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
+import           Data.Coerce
 import           Data.Maybe (maybeToList)
 import           Data.Word
 import           GHC.Generics (Generic)
@@ -84,10 +87,10 @@ import           Ouroboros.Consensus.Util.Condense
 -- This is effectively the same as 'CC.AMempoolPayload' but we cache the
 -- transaction ID (a hash).
 data instance GenTx ByronBlock
-  = ByronTx             !Utxo.TxId                !(Utxo.ATxAux             ByteString)
-  | ByronDlg            !Delegation.CertificateId !(Delegation.ACertificate ByteString)
-  | ByronUpdateProposal !Update.UpId              !(Update.AProposal        ByteString)
-  | ByronUpdateVote     !Update.VoteId            !(Update.AVote            ByteString)
+  = ByronTx             !(GenTxId ByronBlock) !(Utxo.ATxAux             ByteString)
+  | ByronDlg            !(GenTxId ByronBlock) !(Delegation.ACertificate ByteString)
+  | ByronUpdateProposal !(GenTxId ByronBlock) !(Update.AProposal        ByteString)
+  | ByronUpdateVote     !(GenTxId ByronBlock) !(Update.AVote            ByteString)
   deriving (Eq, Generic)
   deriving NoThunks via InspectHeapNamed "GenTx ByronBlock" (GenTx ByronBlock)
 
@@ -160,26 +163,47 @@ instance TxLimits ByronBlock where
         $ Utxo.TxValidationTxTooLarge txszNat maxTxSize
 
 data instance TxId (GenTx ByronBlock)
-  = ByronTxId             !Utxo.TxId
-  | ByronDlgId            !Delegation.CertificateId
-  | ByronUpdateProposalId !Update.UpId
-  | ByronUpdateVoteId     !Update.VoteId
+  = ByronGenTxId !(CC.Hash (GenTx ByronBlock))
   deriving (Eq, Ord)
   deriving NoThunks via InspectHeapNamed "TxId (GenTx ByronBlock)" (TxId (GenTx ByronBlock))
 
 instance ShowProxy (TxId (GenTx ByronBlock)) where
 
 instance HasTxId (GenTx ByronBlock) where
-  txId (ByronTx             i _) = ByronTxId             i
-  txId (ByronDlg            i _) = ByronDlgId            i
-  txId (ByronUpdateProposal i _) = ByronUpdateProposalId i
-  txId (ByronUpdateVote     i _) = ByronUpdateVoteId     i
+  txId (ByronTx             i _) = i
+  txId (ByronDlg            i _) = i
+  txId (ByronUpdateProposal i _) = i
+  txId (ByronUpdateVote     i _) = i
 
 instance ConvertRawTxId (GenTx ByronBlock) where
-  toRawTxIdHash (ByronTxId             i) = CC.abstractHashToShort i
-  toRawTxIdHash (ByronDlgId            i) = CC.abstractHashToShort i
-  toRawTxIdHash (ByronUpdateProposalId i) = CC.abstractHashToShort i
-  toRawTxIdHash (ByronUpdateVoteId     i) = CC.abstractHashToShort i
+  toRawTxIdHash (ByronGenTxId i) = CC.abstractHashToShort i
+
+castAbstractHash :: CC.Hash a -> CC.Hash b
+castAbstractHash = coerce
+
+pattern ByronTxId :: Utxo.TxId -> TxId (GenTx ByronBlock)
+pattern ByronTxId i <- ByronGenTxId (castAbstractHash -> i)
+  where ByronTxId i = ByronGenTxId (castAbstractHash i)
+
+{-# COMPLETE ByronTxId #-}
+
+pattern ByronDlgId :: Delegation.CertificateId -> TxId (GenTx ByronBlock)
+pattern ByronDlgId i <- ByronGenTxId (castAbstractHash -> i)
+  where ByronDlgId i = ByronGenTxId (castAbstractHash i)
+
+{-# COMPLETE ByronDlgId #-}
+
+pattern ByronUpdateProposalId :: Update.UpId -> TxId (GenTx ByronBlock)
+pattern ByronUpdateProposalId i <- ByronGenTxId (castAbstractHash -> i)
+  where ByronUpdateProposalId i = ByronGenTxId (castAbstractHash i)
+
+{-# COMPLETE ByronUpdateProposalId #-}
+
+pattern ByronUpdateVoteId :: Update.VoteId -> TxId (GenTx ByronBlock)
+pattern ByronUpdateVoteId i <- ByronGenTxId (castAbstractHash -> i)
+  where ByronUpdateVoteId i = ByronGenTxId (castAbstractHash i)
+
+{-# COMPLETE ByronUpdateVoteId #-}
 
 instance HasTxs ByronBlock where
   extractTxs blk = case byronBlockRaw blk of
@@ -224,17 +248,17 @@ fromMempoolPayload = go
 -------------------------------------------------------------------------------}
 
 -- TODO: move to cardano-ledger-byron (cardano-ledger-byron#581)
-byronIdTx :: Utxo.ATxAux ByteString -> Utxo.TxId
-byronIdTx = hashDecoded . Utxo.aTaTx
+byronIdTx :: Utxo.ATxAux ByteString -> GenTxId ByronBlock
+byronIdTx = ByronTxId . hashDecoded . Utxo.aTaTx
 
-byronIdDlg :: Delegation.ACertificate ByteString -> Delegation.CertificateId
-byronIdDlg = Delegation.recoverCertificateId
+byronIdDlg :: Delegation.ACertificate ByteString -> GenTxId ByronBlock
+byronIdDlg = ByronDlgId . Delegation.recoverCertificateId
 
-byronIdProp :: Update.AProposal ByteString -> Update.UpId
-byronIdProp = Update.recoverUpId
+byronIdProp :: Update.AProposal ByteString -> GenTxId ByronBlock
+byronIdProp = ByronUpdateProposalId . Update.recoverUpId
 
-byronIdVote :: Update.AVote ByteString -> Update.VoteId
-byronIdVote = Update.recoverVoteId
+byronIdVote :: Update.AVote ByteString -> GenTxId ByronBlock
+byronIdVote = ByronUpdateVoteId . Update.recoverVoteId
 
 {-------------------------------------------------------------------------------
   Pretty-printing
@@ -244,10 +268,7 @@ instance Condense (GenTx ByronBlock) where
   condense = condense . toMempoolPayload
 
 instance Condense (GenTxId ByronBlock) where
-  condense (ByronTxId             i) = condense i
-  condense (ByronDlgId            i) = condense i
-  condense (ByronUpdateProposalId i) = condense i
-  condense (ByronUpdateVoteId     i) = condense i
+  condense (ByronGenTxId i) = show $ CC.abstractHashToShort i
 
 instance Show (GenTx ByronBlock) where
   show = condense
@@ -316,24 +337,10 @@ decodeByronGenTx = fromMempoolPayload . canonicalise <$> fromByronCBOR
         mp'            = unsafeDeserialize byronProtVer canonicalBytes
 
 encodeByronGenTxId :: GenTxId ByronBlock -> Encoding
-encodeByronGenTxId genTxId = mconcat [
-      CBOR.encodeListLen 2
-    , case genTxId of
-        ByronTxId             i -> toByronCBOR (0 :: Word8) <> toByronCBOR i
-        ByronDlgId            i -> toByronCBOR (1 :: Word8) <> toByronCBOR i
-        ByronUpdateProposalId i -> toByronCBOR (2 :: Word8) <> toByronCBOR i
-        ByronUpdateVoteId     i -> toByronCBOR (3 :: Word8) <> toByronCBOR i
-    ]
+encodeByronGenTxId (ByronGenTxId i) = toByronCBOR i
 
 decodeByronGenTxId :: Decoder s (GenTxId ByronBlock)
-decodeByronGenTxId = do
-    enforceSize "GenTxId (ByronBlock cfg)" 2
-    CBOR.decodeWord8 >>= \case
-      0   -> ByronTxId             <$> fromByronCBOR
-      1   -> ByronDlgId            <$> fromByronCBOR
-      2   -> ByronUpdateProposalId <$> fromByronCBOR
-      3   -> ByronUpdateVoteId     <$> fromByronCBOR
-      tag -> cborError $ DecoderErrorUnknownTag "GenTxId (ByronBlock cfg)" tag
+decodeByronGenTxId = ByronGenTxId <$> fromByronCBOR
 
 encodeByronApplyTxError :: ApplyTxErr ByronBlock -> Encoding
 encodeByronApplyTxError = toByronCBOR

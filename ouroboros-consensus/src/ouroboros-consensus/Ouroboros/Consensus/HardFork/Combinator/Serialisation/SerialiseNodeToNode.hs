@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
@@ -17,6 +18,7 @@ import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.Serialise as Serialise
 import           Control.Exception (throw)
+import           Data.ByteString.Short (ShortByteString)
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.NonEmpty (ProofNonEmpty (..), isNonEmpty)
@@ -137,7 +139,32 @@ instance SerialiseHFC xs
   encodeNodeToNode = dispatchEncoder `after` (getOneEraGenTx . getHardForkGenTx)
   decodeNodeToNode = fmap (HardForkGenTx . OneEraGenTx) .: dispatchDecoder
 
+
 instance SerialiseHFC xs
       => SerialiseNodeToNode (HardForkBlock xs) (GenTxId (HardForkBlock xs)) where
-  encodeNodeToNode = dispatchEncoder `after` (getOneEraGenTxId . getHardForkGenTxId)
-  decodeNodeToNode = fmap (HardForkGenTxId . OneEraGenTxId) .: dispatchDecoder
+  -- This instance can be massively simplified after we drop support for
+  -- 'NodeToNodeVersion's earlier than 'NodeToNodeV_15', since we no longer
+  -- need to handle the cases where 'ShortByteString's are serialised with
+  -- an era tag ('encodeNS').
+
+  encodeNodeToNode _cc v (HardForkGenTxId (OneEraGenTxId txid)) = do
+    case v of
+      HardForkNodeToNodeEnabled hfv _ | hfv >= HardForkSpecificNodeToNodeVersion2 ->
+        Serialise.encode txid
+      HardForkNodeToNodeEnabled _ _ -> do
+        let blessedGenTxId :: NS (K ShortByteString) xs
+            blessedGenTxId = hmap (pure $ K txid) blessedGenTxIdEra
+        encodeNS (hpure $ Fn $ K . Serialise.encode . unK) blessedGenTxId
+      HardForkNodeToNodeDisabled _ ->
+        Serialise.encode txid
+  decodeNodeToNode _cc v =
+    fmap (HardForkGenTxId . OneEraGenTxId) $
+      case v of
+        HardForkNodeToNodeEnabled hfv _ | hfv >= HardForkSpecificNodeToNodeVersion2 ->
+          Serialise.decode
+        HardForkNodeToNodeEnabled _ _ -> do
+          let eraDecoders :: NP (Decoder s :.: K ShortByteString) xs
+              eraDecoders = hpure $ Comp $ K <$> Serialise.decode
+          hcollapse <$> decodeNS eraDecoders
+        HardForkNodeToNodeDisabled _ ->
+          Serialise.decode

@@ -57,3 +57,20 @@ if impl (ghc >= 9.12)
 
     -- https://github.com/kapralVV/Unique/issues/11
     , Unique:hashable
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/plutus
+  tag: be9ccfc7f8ecc6ebc577dcf3374a30530ecdb168
+  --sha256: sha256-R7t5Luc1d9l2tXKg5Jgqye+vQAEONwCrQ9/JDkFCu9M=
+  subdir:
+    plutus-core
+    plutus-ledger-api
+    plutus-tx
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/ouroboros-network
+  -- branch: fraser-iohk/one-era-gen-tx-id-protocol-version-bump
+  tag: d1f4c7983b19a5e4768fb5f691fa8d10cd0f10ee
+  subdir: ouroboros-network-api
