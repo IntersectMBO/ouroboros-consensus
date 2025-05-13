@@ -221,7 +221,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
                      ChainSyncJumpingJumperState (..),
                      ChainSyncJumpingState (..), ChainSyncState (..),
                      DisengagedInitState (..), DynamoInitState (..),
-                     ImmutableJumpInfo, JumpInfo (..), JumperInitState (..),
+                     JumpInfo (..), JumperInitState (..),
                      ObjectorInitState (..))
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike hiding (handle)
@@ -808,7 +808,6 @@ unregisterClient ::
   PeerContext m peer blk ->
   STM m (Maybe (TraceEventCsj peer blk))
 unregisterClient context = do
-  cschcRemoveHandle (handlesCol context) (peer context)
   let context' = stripContext context
   readTVar (cschJumping (handle context)) >>= \case
     Disengaged{} -> pure Nothing

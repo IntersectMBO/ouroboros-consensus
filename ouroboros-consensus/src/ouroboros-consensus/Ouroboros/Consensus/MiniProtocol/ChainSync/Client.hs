@@ -495,10 +495,13 @@ bracketChainSyncClient
                 , cschJumpInfo
                 }
               peerContext = context {Jumping.peer, Jumping.handle}
-          cschcAddHandle (Jumping.handlesCol context) peer handle
+          cschcAddHandle varHandles peer handle
           pure (gsmState, mkJumping peerContext, mkUnregisterCsj peerContext, io)
 
-    releaseContext (_gsmState, _jumping, unregisterCsj, _io) = join $ atomically unregisterCsj
+    releaseContext (_gsmState, _jumping, unregisterCsj, _io) = join $ atomically $ do
+        io <- unregisterCsj
+        cschcRemoveHandle varHandles peer
+        pure io
 
     invalidBlockWatcher varState =
         invalidBlockRejector
