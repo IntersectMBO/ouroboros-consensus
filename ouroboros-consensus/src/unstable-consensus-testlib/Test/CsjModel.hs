@@ -702,7 +702,7 @@ backfillDynamo cons (x, msgs) =
           ,
             dynamo     = Just $ Dynamo pid clss y mbQ
           ,
-            latestJump = latestJump'
+            latestJump = either (Left . Map.delete pid) Right latestJump'
           ,
             nonDynamos = Map.delete pid (nonDynamos x)
           ,
