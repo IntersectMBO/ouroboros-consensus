@@ -26,6 +26,9 @@ neTrim xs = UnsafeNonEmptySeq $ Seq.Empty Seq.|> neHead xs Seq.|> neLast xs
 nonEmptySeq :: Seq a -> L.Maybe (NonEmptySeq a)
 nonEmptySeq xs = UnsafeNonEmptySeq xs <$ guard (not (Seq.null xs))
 
+consSeq :: a -> Seq a -> (NonEmptySeq a)
+consSeq x xs = UnsafeNonEmptySeq $ x Seq.<| xs
+
 neIndex :: NonEmptySeq a -> Int -> a
 neIndex (UnsafeNonEmptySeq xs) i = Seq.index xs i
 

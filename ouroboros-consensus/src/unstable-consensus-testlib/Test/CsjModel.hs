@@ -1114,19 +1114,30 @@ newJumpRequest2 y jump =
         Nothing -> Left $ Class $ candidateTip y
         Just bi -> Right bi
   where
+    cand = candidate y
+
     get ps = prj . neIndex ps
     prj    = At . wpPoint
 
-    -- the intersection of @jump@ and 'candidate'
+    -- the suffix of @jump@ that begins with oldest point of 'candidate'
+    trimmedJump = case cand of
+        Seq.Empty    -> Nothing
+        c0 Seq.:<| _ -> case neFindPoint jump $ wpPoint c0 of
+            L.Nothing -> Nothing
+            L.Just i  -> Just $ consSeq c0 $ neDrop (i + 1) jump
+
+    -- the suffix of 'candidate' that begins with oldest point of @jump@
+    trimmedCandidate = case findPoint cand $ wpPoint $ neHead jump of
+        L.Nothing -> Nothing
+        L.Just i  -> Just $ Seq.drop i cand
+
+    -- the intersection of @jump@ and 'candidate', and the suffix of the @jump@
+    -- after that point
     (isect, nyd) =
-        let onCandidate = L.isJust . findPoint (candidate y)
-        in
-        case neBinarySearch (not . onCandidate . wpPoint) jump of
-            LastFalseFirstTrue i j -> (get jump i, neDrop j jump)
-            Uniformly False        ->
-                -- The entire jump is already on this 'candidate' (TODO how?).
-                (prj $ neLast jump, Seq.empty)
-            Uniformly True         ->
+        case (trimmedJump, trimmedCandidate) of
+            (Just jump', _         ) -> go cand  jump'
+            (Nothing   , Just cand') -> go cand' jump
+            (Nothing   , Nothing   ) ->
                 -- The current immutable tip is on 'candidate' and @jump@.
                 -- Relevant facts:
                 --
@@ -1145,6 +1156,17 @@ newJumpRequest2 y jump =
                 -- So if they have no point in common, the current immutable
                 -- tip is their intersection and must be 'Origin'.
                 (Origin, toSeq jump)
+
+    go cnd jmp =
+        let onCandidate = L.isJust . findPoint cnd
+        in
+        case neBinarySearch (not . onCandidate . wpPoint) jmp of
+            LastFalseFirstTrue i j -> (get jmp i, neDrop j jmp)
+            Uniformly False        ->
+                -- The entire jump is already on this 'candidate' (TODO how?).
+                (prj $ neLast jmp, Seq.empty)
+            Uniformly True         ->
+                error "impossible!"   -- guarded by the tuple case above
 
 -- | Helper for 'newJumpRequest2'
 --
