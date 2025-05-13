@@ -82,7 +82,7 @@ data NumHonestSchedulesFlag = OneScheduleForAllPeers | OneSchedulePerHonestPeer
 -- of the chain.
 --
 prop_CSJ :: WithAdversariesFlag -> NumHonestSchedulesFlag -> Property
-prop_CSJ adversariesFlag numHonestSchedules = do
+prop_CSJ adversariesFlag numHonestSchedules = within 10000000 $ do
   let genForks = case adversariesFlag of
                    NoAdversaries   -> pure 0
                    WithAdversaries -> choose (2, 4)
