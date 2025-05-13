@@ -1,7 +1,9 @@
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -19,8 +21,8 @@ import           Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import           Data.Set (Set)
 import qualified Data.Set as Set
-import           Data.Strict.Either (Either (Left, Right))
-import           Data.Strict.Maybe (Maybe (Just, Nothing))
+import           Data.Strict.Either (Either (Left, Right), either)
+import           Data.Strict.Maybe (Maybe (Just, Nothing), maybe)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import           Prelude hiding (Either (Left, Right), Maybe (Just, Nothing), either, maybe)
@@ -38,7 +40,7 @@ import           Test.CsjModel.Perm
 --
 -- Note that the payload argument is intentionally not strict.
 data WithPayload p a = WP !p a
-  deriving stock    (Generic, Read, Show)
+  deriving stock    (Functor, Generic, Read, Show)
   deriving anyclass (NoThunks)
 
 mkWithPayload :: p -> a -> WithPayload p a
@@ -83,7 +85,7 @@ data CsjClientState p a = CsjClientState {
     -- empty if the candidate (and recent immutable tip) is 'Origin'.
     candidate :: !(Seq (WithPayload p a))
   }
-  deriving stock (Generic, Read, Show)
+  deriving stock (Functor, Generic, Read, Show)
   deriving anyclass (NoThunks)
 
 candidateTip :: CsjClientState p a -> WithOrigin p
@@ -204,6 +206,20 @@ data CsjState pid p a = CsjState {
 deriving instance (Ord p, Ord pid, Read (WithOrigin p), Read pid, Read p, Read a) => Read (CsjState pid p a)
 deriving instance (forall x y. (NoThunks x, NoThunks y) => NoThunks (Either x y), forall x. NoThunks x => NoThunks (Maybe x), NoThunks pid, NoThunks p, NoThunks a) => NoThunks (CsjState pid p a)
 
+-- the deriver can't handle the 'Left' case
+instance Functor (CsjState pid p) where
+    fmap f x = CsjState {
+        disengaged = disengaged x
+      ,
+        dynamo     = maybe Nothing (Just . fmap f) $ dynamo x
+      ,
+        nonDynamos = Map.map (fmap f) $ nonDynamos x
+      ,
+        latestJump = either (Left . Map.map (fmap f)) (Right . fmap f) $ latestJump x
+      ,
+        queue      = queue x
+      }
+
 initialCsjState :: CsjState pid p a
 initialCsjState = CsjState {
     disengaged = Set.empty
@@ -261,7 +277,7 @@ data Dynamo pid p a =
     -- informed the syncing node that the slots between this header and the
     -- previous are empty.
     Dynamo !pid !(Class p) !(CsjClientState p a) !(Maybe p)
-  deriving stock (Generic, Show)
+  deriving stock (Functor, Generic, Show)
 
 deriving instance (Ord p, Read (WithOrigin p), Read pid, Read p, Read a) => Read (Dynamo pid p a)
 deriving instance (forall x. NoThunks x => NoThunks (Maybe x), NoThunks pid, NoThunks p, NoThunks a) => NoThunks (Dynamo pid p a)
@@ -287,7 +303,7 @@ data NonDynamo p a =
     -- They must be serving a different chain than the Dynamo and all
     -- Objectors; see 'Test.CsjModel.backfill' for details.
     Objector !(Class p) !(CsjClientState p a) !(Maybe p)
-  deriving stock (Generic, Show)
+  deriving stock (Functor, Generic, Show)
 
 deriving instance (Ord p, Read (WithOrigin p), Read p, Read a) => Read (NonDynamo p a)
 deriving instance (forall x. NoThunks x => NoThunks (Maybe x), NoThunks p, NoThunks a) => NoThunks (NonDynamo p a)
@@ -319,7 +335,7 @@ data Bisecting p a = Bisecting {
     -- 'Test.CsjModel.MsgIntersectNotFound' as part of /this/ bisection.
     rejected         :: !(Maybe p)
   }
-  deriving stock (Generic, Read, Show)
+  deriving stock (Functor, Generic, Read, Show)
 
 deriving instance (forall x. NoThunks x => NoThunks (Maybe x), NoThunks p, NoThunks a) => NoThunks (Bisecting p a)
 
@@ -392,7 +408,7 @@ data SentStatus p a =
     -- governor will consider its state to be 'NotYetSent', without needing any
     -- details beyond that.
     NotYetSent
-  deriving stock (Generic, Show)
+  deriving stock (Functor, Generic, Show)
 
 deriving instance (Read (WithOrigin p), Read p, Read a) => Read (SentStatus p a)
 deriving instance (forall x. NoThunks x => NoThunks (Maybe x), NoThunks p, NoThunks a) => NoThunks (SentStatus p a)
@@ -421,7 +437,7 @@ deriving instance (forall x. NoThunks x => NoThunks (Maybe x), NoThunks p, NoThu
 -- - Z becomes Dynamo and serves the same chain as X.
 data JumpRequest p a =
     JumpRequest !(Class p) !(NonEmptySeq (WithPayload p a))
-  deriving stock (Generic, Show)
+  deriving stock (Functor, Generic, Show)
   deriving anyclass (NoThunks)
 
 deriving instance (Read (WithOrigin p), Read p, Read a) => Read (JumpRequest p a)
@@ -470,9 +486,10 @@ instance FullTrim (SentStatus p a) where
 instance FullTrim (JumpRequest p a) where
     fullTrim (JumpRequest clss ps) = JumpRequest clss (fullTrim ps)
 
-instance FullTrim (NonEmptySeq a) where fullTrim = neTrim
+instance FullTrim (NonEmptySeq (WithPayload p a)) where
+    fullTrim = neTrim
 
-instance FullTrim (Seq a) where
+instance FullTrim (Seq (WithPayload p a)) where
     fullTrim xs = case xs of
         Seq.Empty                 -> Seq.Empty
         _ Seq.:<| Seq.Empty       -> xs

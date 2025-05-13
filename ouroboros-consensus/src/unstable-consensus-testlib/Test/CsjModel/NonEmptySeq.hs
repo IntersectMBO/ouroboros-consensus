@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 -- | A non-empty sequence type with some custom methods with types that are
 -- convenient for "Test.CsjModel"
@@ -18,6 +19,7 @@ import           NoThunks.Class (NoThunks)
 -- | A non-empty 'Seq'
 newtype NonEmptySeq a = UnsafeNonEmptySeq (Seq a)
   deriving stock (Generic, Read, Show)
+  deriving newtype (Functor)
   deriving anyclass (NoThunks)
 
 neTrim :: NonEmptySeq a -> NonEmptySeq a
@@ -78,6 +80,7 @@ data BinarySearchResult =
   |
     -- | All of the elements have the same value for the predicate.
     Uniformly !Bool
+  deriving (Eq, Show)
 
 neBinarySearch :: (a -> Bool) -> NonEmptySeq a -> BinarySearchResult
 neBinarySearch predicate (UnsafeNonEmptySeq xs) =

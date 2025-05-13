@@ -23,14 +23,14 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping hiding (tracer)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
-                    (ImmutableJumpInfo (..), JumpInfo, immutableJumpInfo,
+                    (ImmutableJumpInfo (..), JumpInfo (..), immutableJumpInfo,
                      jTheirFragment)
 import           Ouroboros.Consensus.Util (whenJust)
 import           Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (HasHeader)
 import           Test.CsjModel
-import           Test.CsjModel.StateTypes (fullTrim)
+import           Test.CsjModel.StateTypes (CsjState (..), FullTrim (fullTrim))
 
 -----
 
@@ -59,14 +59,29 @@ prettyCsjModelEvent ev =
     unlines
   $ (("CsjModelEvent " ++ show pid) :)
   $ map ("    " ++)
-    [ show stimulus
-    , show imm
-    , show msgs
-    , show $ fullTrim x
-    , show $ fullTrim x'
-    ]
+  $ ([ show stimulus, show imm, show msgs] <>)
+  $ pretty (fullTrim $ fmap discardJI x) <> pretty (fullTrim $ fmap discardJI x')
   where
     CsjModelEvent pid stimulus imm msgs x x' = ev
+
+    discardJI :: JumpInfo blk -> JI
+    discardJI = const JI
+
+    pretty z =
+        ("CsjState" :)
+      $ map ("    " ++)
+      $ [ "disengaged = " ++ show (disengaged z)
+        , "queue      = " ++ show (queue z)
+        , "latestJump = " ++ show (latestJump z)
+        , "dynamo     = " ++ show (dynamo z)
+        ]
+        <>
+        (("nonDynamos =" :) $ map ("    " ++) $ map show $ Map.assocs $ nonDynamos z)
+
+data JI = JI
+  deriving (Show)
+
+instance FullTrim JI where fullTrim JI = JI
 
 -----
 
