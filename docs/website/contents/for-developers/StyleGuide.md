@@ -59,20 +59,6 @@ We value the following principles in the consensus team:
   similar steps, documenting why it does this and that, ..., are all worth the
   extra effort.
 
-  The layout and formatting of the code can help convey the meaning and the
-  essence of the code. Alignment can help emphasise the similarities *and* the
-  differences between cases.
-
-  This is why we do not believe in automatic code formatters: they have no idea
-  of the story the code is trying to tell. While the convenience, automation,
-  and uniformity are big advantages, in our opinion, they come at the cost of
-  code clarity.
-
-  The style is not optimised for "diff-ability" (code review is important,
-  but happens less frequently than reading code). All things being equal,
-  writing code in a way that minimises unnecessary noise in a `diff` is good,
-  but not at the cost of clarity.
-
 * __Consistency__: inconsistent style, especially within a single module,
   looks sloppy, inspires little confidence in the quality of the code,
   and distracts. Consistency is also a helpful guiding factor when deciding
@@ -82,177 +68,22 @@ We value the following principles in the consensus team:
 
 ## Formatting
 
-We now list the formatting rules we have converged on. As these have grown
-organically, not all code follows these rules. When touching some existing code,
-we in general recommend sticking to the existing style, but when it differs from
-the rules below, it is good practice to update the code's style to match them.
+We now list the formatting rules we have converged on.
 
 1. __Indentation__: we indent by 2 spaces.
 
    *Why:* to avoid wasting horizontal screen space.
 
-   Some consequences of this rule:
-
-   a. The `where` clause of a function body is indented 2 spaces from the left
-      margin, and the function body is indented 2 spaces from the `where`:
-
-      ```haskell
-      foo x y z =
-          ..
-        where
-          a = ..
-      ```
-
-      The `where` keyword acts as a separator between the body and the bindings.
-      Keeping them at the same indentation level would make it hard to see where
-      the body ends.
-
-      We stick with this indentation even if the `where` clause is not present,
-      just to avoid unnecessary changes when a `where` clause is added.
-
-   b. We indent record `data` and `newtype` definitions as follows:
-
-      ```haskell
-      data Foo = Foo {
-            fooBar      :: Int
-          , fooArgument :: Bool
-          }
-        deriving (Show, Eq)
-
-      newtype Foo = Foo {
-            unFoo :: Int
-          }
-        deriving (Show, Eq)
-      ```
-
-      The `deriving` is indented from the left margin, and the constructors
-      are indented from the `deriving` clause. This provides a consistent
-      style for datatypes with multiple constructors (see below).
-
-      Multiple deriving clauses using `DerivingStrategies` are aligned:
-
-      ```haskell
-      data Foo = Foo {
-            fooBar      :: Int
-          , fooArgument :: Bool
-          }
-        deriving stock    (Show, Eq, Generic)
-        deriving anyclass (NoThunks, NFData)
-
-      newtype Foo = Foo {
-            unFoo :: Int
-          }
-        deriving stock   (Show)
-        deriving newtype (Eq)
-        deriving NoThunks via InspectHeapNamed "Foo" Foo
-      ```
-
-      Parentheses around a singleton list of classes are optional.
-
-      Records that fit onto a single line can be formatted like this:
-
-      ```haskell
-      data Foo = X {foo :: A, bar :: B} | Y
-      ```
-
-   c. We indent `data` definitions with multiple constructors as follows:
-
-      ```haskell
-      data Foo =
-          Bar Int Int
-        | Baz
-            Int
-            Int
-            (Maybe Bool)
-            [Foo]
-      ```
-
-      Note the arguments of `Baz` being indented by two spaces.
-
-   d. Both of the following are fine
-
-      ```haskell
-      let fooBarBaz = fooBar
-                        baz
-
-      let fooBarBaz =
-            fooBar baz
-      ```
-
-      whichever is more natural.
-
-      In the rare case that you want a `where` clause on a `let` binding, indent
-      by 4 spaces, like described in (a):
-
-      ```haskell
-      let fooBarBaz =
-              ..
-            where
-              aux = ..
-      ```
-
-   e. `do` is placed after the `=`:
-
-      ```haskell
-      foo .. = do
-          bar
-          baz
-      ```
-
-      Function calls can be placed on the same line as the `do`, unless this
-      would make the line too long:
-
-      ```haskell
-      foo .. = atomically $ do
-          bar
-          baz
-
-      -- If the first line too long:
-      foo .. =
-          atomically $ do
-            bar
-            baz
-      ```
-
-      The `where` block can be indented by 2 spaces, as described in (a).
-
-      In a `case`, use hanging `do`:
-
-      ```haskell
-      case foo of
-        X -> do
-          ..
-        Y -> do
-          ..
-      ```
-
-   f. While it is technically possible to add a `where` clause to a pattern
-      match case, use a `let` instead, to emphasise that the binding is local:
-
-      ```haskell
-      case x of y
-        A x -> A_body
-        B y ->
-          let bl = bl_body y
-          in  B_body
-      ```
-
-      Note that we align `B_body` with `bl` in the `let` block. At the moment we
-      are not being very consistent with this.
-
-      Using a `where` clause for a `case` can be okay, but tends to make the
-      scope a bit confusing, so we try to avoid it.
-
-2. __Line length__: we limit the number of characters per line to 80.
+2. __Line length__: we limit the number of characters per line to 100.
 
    *Why:* long lines are less readable (there is a reason why books and
    newspapers limit their line length). It's also practical: even with
    (ultra-)wide monitors, most people tend to have many windows side by side.
 
-   If you are going beyond 80 characters, wrap the line, introduce local
+   If you are going beyond 100 characters, wrap the line, introduce local
    bindings, etc.
 
-   Comments and docstrings should also be wrapped at 80 characters.
+   Comments and docstrings should also be wrapped at 100 characters.
 
    There are a few exceptions:
 
@@ -261,252 +92,8 @@ the rules below, it is good practice to update the code's style to match them.
      alignment (emphasising differences and similarities) can outweigh the line
      length limit.
 
-   * Diagrams, examples, or long URLs in the comments can be wider than 80
+   * Diagrams, examples, or long URLs in the comments can be wider than 100
      characters.
-
-   For certain constructs we have concrete recommendations on how to wrap them
-   in case their length exceeds 80 characters:
-
-   a. Type signatures: if a type signature doesn't fit on one line, wrap it like
-      this:
-
-      ```haskell
-      fooBar ::
-           a
-        -> ..
-        -> ..
-      ```
-
-      *Why:* Keeping the `::` on the first line is consistent with the rest of
-      the style (compare to `module Foo where` for example), and has a practical
-      benefit: it makes it much easier to grep for the definition of `fooBar`.
-      The `->` is indented 2 spaces from the left margin, as usual; the first
-      argument is aligned with the rest (and happens to therefore be indented 5
-      spaces).
-
-      When there are constraints:
-
-      ```haskell
-      fooBar ::
-           (Eq a, ..)
-        => a
-        -> ..
-        -> ..
-      ```
-
-      When there is an explicit `forall`:
-
-      ```haskell
-      fooBar ::
-           forall a .. z. (Eq a, ..)
-        => a
-        -> ..
-        -> ..
-      ```
-
-      If the `forall` line gets too long, wrap it after the `.`:
-
-      ```haskell
-      fooBar ::
-           forall a .. z.
-           (Eq a, ..)
-        => a
-        -> ..
-        -> ..
-      ```
-
-      Note that the `.` after the `forall` stays on the same line and that there
-      is no space before it.
-
-      If the constraints don't fit on one line:
-
-      ```haskell
-      fooBar ::
-           forall a .. z. (
-             Eq a
-           , ..
-           )
-        => a
-        -> ..
-        -> ..
-      ```
-
-      If there is a large function argument in the type signature:
-
-      ```haskell
-      fooBar ::
-        => a
-        -> (   forall c. Eq c
-            => c
-            -> ..
-            -> ..
-           )
-        -> ..
-      ```
-
-      Note that the first arrow in the function argument is indented one space
-      relative to the opening parenthesis. The above line wrapping rules apply
-      to the nested function type as well.
-
-   b. Function calls: when not all arguments to a function call fit on a single
-      line, either introduce clear local bindings for the arguments or put each
-      argument on a separate line, indented 2 spaces from the function call:
-
-      ```haskell
-      fooBar
-        x
-        (baz + 1)
-        bar
-        (foo (bar x))
-      ```
-
-      *Why*: multiple lines of multiple arguments are hard to read; for example,
-      in
-
-      ```haskell
-      fooBar
-        x (baz + 1)
-        bar (foo (bar x))
-      ```
-
-      it might look like `bar` is applied to `(foo (bar x))`, whereas in fact
-      of course they are both just two arguments to `fooBar`. So, either
-      everything on the same line as the function call, or else a line
-      per argument.
-
-      When writing a function call in the applicative style that does not fit on
-      a single line, indent it as follows:
-
-      ```haskell
-      fooBar
-        <$> x
-        <*> baz + 1
-        <*> bar
-        <*> foo (bar x)
-      ```
-
-   c. Argument lists: put the formal arguments of a function on a single line
-      when possible:
-
-      ```haskell
-      foo a b (SomeRecord {field = x}) =
-          ..
-      ```
-
-      Bracketing a pattern match on a record is optional, but we feel it aids
-      clarity.
-
-      When that does not fit on a single line, move any pattern matches to a
-      `where` block:
-
-      ```haskell
-      foo a b c =
-          ..
-        where
-          SomeRecord {field = x} = c
-      ```
-
-      When that is still not enough, then the function has so many arguments
-      that *naming* them is not only useful for alignment, it also helps to
-      clarify call sites: introduce a record.
-
-      ```haskell
-      foo args =
-          ..
-        where
-          Args {
-              argA = a
-            , argB = b
-            , argC = SomeRecord {field = x}
-            } = args
-      ```
-
-   d. Class or instance contexts: when a class or instance declaration doesn't
-      fit onto a single line because of the super-class context, wrap the line
-      before the `=>` and align the class name with the first character in the
-      context:
-
-      ```haskell
-      class (Eq a, ..)
-         => C a where
-
-      instance (Eq a, ..)
-            => C a where
-      ```
-
-      When the context doesn't fit onto a single line, wrap as follows:
-
-      ```haskell
-      class ( Eq a
-            , ..
-            ) => C a where
-
-      instance ( Eq a
-               , ..
-               ) => C a where
-      ```
-
-   e. Tuples in type signatures:
-
-      ```haskell
-      foo ::
-           a
-        -> ( ..
-           , ..
-           )
-        -> ( ..
-           , ..
-           )
-      ```
-
-   f. Datatypes:
-
-      ```haskell
-      data Foo =
-          Bar
-            Arg1
-            Arg2
-            ..
-            ArgN
-        | Baz
-
-      data Foo = Foo {
-          , longFieldName ::
-                 HasCallStack
-              => Int
-              -> ..
-          }
-      ```
-
-   g. Type synonyms:
-
-      ```haskell
-      type Foo a b =
-        AVeryLongTypeHereAndItKeepsGoing
-          Arg1
-          (Maybe b)
-          Arg3
-
-      type Cts a = (
-          Eq a
-        , ..
-        , ..
-        )
-      ```
-
-   h. Function composition:
-
-      ```haskell
-      foo =
-            h
-          . g
-          . f
-      ```
-
-      *Why*: The alignment of the `.`s and the function names makes the
-      structure easy to see at a glance.
-
-      This generalises to other binary operators, e.g., `+`, `*`, etc.
 
 3. __Parentheses__: avoid redundant parentheses, except when they help with the
    order of operations. Use your judgement, and aim for clarity. Redundant
@@ -554,38 +141,7 @@ the rules below, it is good practice to update the code's style to match them.
    Choose between using parenthesis, `$` and `.` in whichever way you think
    results in the most readable code.
 
-6. __Opening braces__: we don't start a new line for opening braces:
-
-   ```haskell
-   data Foo = Foo {
-         ..
-       , ..
-       }
-
-   mkFoo x = Foo {
-         ..
-       , ..
-       }
-
-   modifyFoo foo = foo {
-         ..
-       , ..
-       }
-
-   bar foo = ..
-     where
-       Foo {
-           ..
-         , ..
-         } = foo
-   ```
-
-   There don't seem to be any really good arguments for putting the bracket
-   either on the same line or on the next, other than the fact that the opening
-   bracket indicates that there is more to follow. It is also consistent with
-   the `where` in `instance .. where` and `class .. where`.
-
-7. __Blank lines__: we use *exactly one blank line* between different
+6. __Blank lines__: we use *exactly one blank line* between different
    declarations: export lists, import lists, declarations, etc.
 
    *Why:* a blank line helps with readability. Always using a single one is
@@ -631,7 +187,7 @@ the rules below, it is good practice to update the code's style to match them.
 
    [posix-line]: https://stackoverflow.com/questions/729692/why-should-text-files-end-with-a-newline#answer-729795
 
-8. __Sections__: we group related definitions in sections that start with a
+7. __Sections__: we group related definitions in sections that start with a
    section title. The same grouping can be replicated in the export list.
 
     ```haskell
@@ -668,10 +224,10 @@ the rules below, it is good practice to update the code's style to match them.
     which is separated from the first line by one blank line. The section header
     has a single blank line above and below it.
 
-9. __Comment style__: in general we tend to use `--` instead of `{- .. -}`. We
+8. __Comment style__: in general we tend to use `--` instead of `{- .. -}`. We
    sometimes make exceptions for big non-Haddock comments.
 
-10. __Haddock formatting__: we use [Haddock formatting][haddock-formatting] in
+9. __Haddock formatting__: we use [Haddock formatting][haddock-formatting] in
     docstrings. We also do this in comments for consistency.
 
     ```haskell
@@ -743,106 +299,6 @@ the rules below, it is good practice to update the code's style to match them.
 
     [haddock-formatting]: https://www.haskell.org/haddock/doc/html/ch03s08.html
 
-11. __Alignment__: we align things when it helps with readability.
-
-    Alignment makes it clear which things are the *same* and which things are
-    *different*, compare the following code block
-
-    ```haskell
-    foo (Quux a b c) = bar a b c
-    foo (Bar b c) = bar [] b c
-    foo (FooBar a c) = bar a [] c
-    ```
-
-    with the aligned version:
-
-    ```haskell
-    foo (Quux   a b c) = bar a  b  c
-    foo (Bar      b c) = bar [] b  c
-    foo (FooBar a   c) = bar a  [] c
-    ```
-
-    Alignment makes it easier to spot errors. For example, compare the two code
-    blocks, where the `c` argument is forgotten on the second line:
-
-    ```haskell
-    foo (Quux a b c) = bar a b c
-    foo (Bar b c) = bar [] b c
-    foo (FooBar a c) = bar a []
-    ```
-
-    ```haskell
-    foo (Quux   a b c) = bar a  b  c
-    foo (Bar      b c) = bar [] b  c
-    foo (FooBar a   c) = bar a  []
-    ```
-
-    It is immediately obvious in the aligned code, but not in the unaligned
-    code.
-
-12. __Pattern guard alignment__:
-
-    This is one area in which we have not yet converged on a single style,
-    and there are two styles in use:
-
-    ```haskell
-    foo x y z
-        | x == y
-        = ..
-        | Just z' <- z
-        , z' == x
-        , let x' = ..
-        = .. x'
-        | otherwise
-        = ..
-      where
-        ..
-    ```
-
-    versus
-
-    ```haskell
-    foo x y z
-      | x == y =
-          ..
-      | otherwise =
-          ..
-      where
-        ..
-    ```
-
-    Similarly for `case`:
-
-    ```haskell
-    case mX of
-      Just x
-        | x > 100
-        -> ..
-        | x > 0
-        -> ..
-      _otherwise
-        -> ..
-    ```
-
-    versus
-
-    ```haskell
-    case mX of
-      Just x
-        | x > 100 ->
-            ..
-        | x > 0 ->
-            ..
-      _otherwise ->
-        ..
-    ```
-
-    Choose whichever style you prefer. The latter style is more suitable for
-    hanging `do`.
-
-    In either style, use of `_otherwise` instead of `_`, as the latter is
-    easy to miss.
-
 13. __case vs function with multiple clauses__:
 
     The choice between using a `case` and having multiple clauses of the
@@ -854,22 +310,6 @@ the rules below, it is good practice to update the code's style to match them.
         []   -> ..
         x:xs -> ..
     ```
-
-14. __if-then-else__:
-
-    When using `if-then-else` in combination with `do`, follow the following
-    style:
-
-    ```haskell
-    if foo then do
-      bar
-      baz
-    else do
-      quux
-      bar
-    ```
-
-    *Why:* to avoid wasting horizontal screen space.
 
 15. __Import lists__: we use `fourmolu` to automatically format import
     lists. See the [`fourmolu.yaml` config][fourmolu-config].
@@ -887,7 +327,8 @@ the rules below, it is good practice to update the code's style to match them.
     export lists in the following way:
 
     ```haskell
-    module X (
+    module X
+      (
         ..
       , ..
       ) where
@@ -896,8 +337,8 @@ the rules below, it is good practice to update the code's style to match them.
     We sometimes use Haddock headings:
 
     ```haskell
-    module X (
-        -- * Foo
+    module X
+      ( -- * Foo
         ..
         -- ** Foo Bar
       , ..
@@ -911,8 +352,8 @@ the rules below, it is good practice to update the code's style to match them.
     (note the space):
 
     ```haskell
-    module X (
-        Foo (..)
+    module X
+      ( Foo (..)
       , Bar (MkBar)
       ) where
     ```
@@ -924,8 +365,8 @@ the rules below, it is good practice to update the code's style to match them.
     a `-- opaque` comment after it in the export list to be explicit about this:
 
     ```haskell
-    module X (
-        Foo -- opaque
+    module X
+      ( Foo -- opaque
       ) where
     ```
 
@@ -984,8 +425,8 @@ the rules below, it is good practice to update the code's style to match them.
     to avoid duplicate record fields (we do not use `DuplicateRecordFields`):
 
     ```haskell
-    data SomeRecord = SomeRecord {
-          someRecordA :: ..
+    data SomeRecord = SomeRecord
+        { someRecordA :: ..
         , someRecordB :: ..
         }
     ```
