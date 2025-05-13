@@ -1446,10 +1446,11 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     | pt == dynamoTipPt -> do
                       join $ atomically $ do
                         let theirFrag = jTheirFragment ji
-                        setCandidate theirFrag
                         setLatestSlot dynEnv $ AF.headSlot theirFrag
                         Jumping.jgUpdateJumpInfo jumping ji
-                        Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedJump jump
+                        io <- Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedJump jump
+                        setCandidate theirFrag
+                        pure io
                       traceWith tracer $ TraceJumpResult $ Jumping.AcceptedJump jump
                       let kis' = KnownIntersectionState {
                               genuine                 = False

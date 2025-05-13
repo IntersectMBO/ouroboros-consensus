@@ -59,6 +59,7 @@ import           Ouroboros.Network.Protocol.ChainSync.Type (ChainSync,
                      Message (..))
 import           Test.Consensus.PointSchedule.NodeState (NodeState)
 import           Test.Consensus.PointSchedule.Peers (Peer (Peer), PeerId)
+import           Test.CsjModel.Jumping (CsjModelEvent, prettyCsjModelEvent)
 import           Test.Util.TersePrinting (terseAnchor, terseBlock,
                      terseFragment, terseHFragment, terseHWTFragment,
                      terseHeader, tersePoint, terseRealPoint, terseTip,
@@ -142,6 +143,7 @@ data TraceEvent blk
   | TraceChainSyncSendRecvEvent PeerId String (TraceSendRecv (ChainSync (Header blk) (Point blk) (Tip blk)))
   | TraceDbfEvent (TraceEventDbf PeerId)
   | TraceCsjEvent PeerId (TraceEventCsj PeerId blk)
+  | TraceCsjModelEvent (CsjModelEvent PeerId blk)
   | TraceOther String
 
 -- * 'TestBlock'-specific tracers for the peer simulator
@@ -197,6 +199,7 @@ traceEventTestBlockWith setTickTime tracer0 tracer = \case
     TraceChainSyncSendRecvEvent peerId peerType traceEvent -> traceChainSyncSendRecvEventTestBlockWith peerId peerType tracer traceEvent
     TraceDbfEvent traceEvent -> traceDbjEventWith tracer traceEvent
     TraceCsjEvent peerId traceEvent -> traceCsjEventWith peerId tracer traceEvent
+    TraceCsjModelEvent csjModelEvent -> traceWith tracer (prettyCsjModelEvent csjModelEvent)
     TraceOther msg -> traceWith tracer msg
 
 traceSchedulerEventTestBlockWith ::

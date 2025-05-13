@@ -17,10 +17,7 @@ import           Control.Tracer (Tracer (Tracer), contramap, nullTracer,
                      traceWith)
 import qualified Data.Map as Map
 import           Data.Proxy (Proxy (..))
-import qualified Data.Strict.Either as Strict
-import qualified Data.Strict.Maybe as Strict
 import           Network.TypedProtocol.Codec (AnyMessage)
-import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block (Header, Point)
 import           Ouroboros.Consensus.Block.RealPoint
                     (pointToWithOriginRealPoint, realPointSlot)
@@ -42,7 +39,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State as Jump
 import           Ouroboros.Consensus.Node.GsmState (GsmState (Syncing))
 import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
-                     IOLike, MonadCatch (try), newTVarIO)
+                     IOLike, MonadCatch (try), StrictTVar)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (Tip)
 import           Ouroboros.Network.Channel (Channel)
@@ -161,6 +158,8 @@ runChainSyncClient ::
   -- ^ A TVar containing a map of states for each peer. This
   -- function will (via 'bracketChainSyncClient') register and de-register a
   -- TVar for the state of the peer.
+  StrictTVar m (CsjModel.F (CsjModel.CsjState PeerId) blk) ->
+  StrictTVar m (Map.Map PeerId (CsjModel.Inbox m blk)) ->
   Channel m (AnyMessage (ChainSync (Header blk) (Point blk) (Tip blk))) ->
   m ()
 runChainSyncClient
@@ -173,10 +172,9 @@ runChainSyncClient
   csjConfig
   StateViewTracers {svtPeerSimulatorResultsTracer}
   varHandles
+  varCsj
+  varInboxes
   channel =
-
-    newTVarIO CsjModel.initialCsjState >>= \varCsj     ->
-    newTVarIO Map.empty                >>= \varInboxes ->
 
     bracketChainSyncClient
       nullTracer
@@ -184,6 +182,7 @@ runChainSyncClient
       CSClient.JumpingGovernor {
         CSClient.registerJumpingClient = \context pid _var immJumpInfo -> do
           (jumping, unregister, io) <- CsjModel.registerClient
+              (contramap TraceCsjModelEvent tracer)
               (    (pointToWithOriginRealPoint . AF.castPoint . AF.anchorPoint)
                <$> CSClient.getCurrentChain chainDbView
               )

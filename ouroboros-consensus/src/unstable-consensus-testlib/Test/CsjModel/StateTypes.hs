@@ -130,6 +130,8 @@ trimCandidate y = \case
 -- See 'Test.CsjModel.backfill' for the invariants about where a @pid@ is
 -- located within this data structure.
 data CsjState pid p a = CsjState {
+    disengaged :: !(Set pid)
+  ,
     -- | The peer that will request the next jump, unless it stops being Dynamo
     -- before then
     --
@@ -200,6 +202,8 @@ deriving instance (forall x y. (NoThunks x, NoThunks y) => NoThunks (Either x y)
 
 initialCsjState :: CsjState pid p a
 initialCsjState = CsjState {
+    disengaged = Set.empty
+  ,
     dynamo     = Nothing
   ,
     nonDynamos = Map.empty

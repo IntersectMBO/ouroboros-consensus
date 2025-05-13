@@ -11,6 +11,7 @@ import qualified Data.Maybe as L (Maybe (Just, Nothing))
 import           Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import           GHC.Generics (Generic)
+import           GHC.Stack (HasCallStack)
 import           NoThunks.Class (NoThunks)
 
 -- | A permutation
@@ -20,12 +21,13 @@ newtype Perm pid = UnsafePerm (Seq pid)
   deriving newtype (Foldable)
 
 -- | PREREQUISITE: the @pid@ is already in the permutation
-indexPerm :: Eq pid => pid -> Perm pid -> Int
+indexPerm :: (HasCallStack, Eq pid, Show pid) => pid -> Perm pid -> Int
 indexPerm pid (UnsafePerm pids) = case Seq.elemIndexL pid pids of
-    L.Nothing -> error "impossible!"
+    L.Nothing -> error $ "impossible! " ++ show (pid, pids)
     L.Just i  -> i
 
-deletePerm :: Eq pid => pid -> Perm pid -> Perm pid
+-- | PREREQUISITE: the @pid@ is already in the permutation
+deletePerm :: (HasCallStack, Eq pid, Show pid) => pid -> Perm pid -> Perm pid
 deletePerm pid perm@(UnsafePerm pids) =
     UnsafePerm $ Seq.deleteAt (indexPerm pid perm) pids
 

@@ -67,6 +67,8 @@ import           Test.Consensus.PointSchedule (BlockFetchTimeout,
 import           Test.Consensus.PointSchedule.NodeState (NodeState)
 import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId,
                      getPeerIds)
+import qualified Test.CsjModel as CsjModel
+import qualified Test.CsjModel.Jumping as CsjModel
 import           Test.Util.ChainDB
 import           Test.Util.Header (dropTimeFromFragment)
 import           Test.Util.Orphans.IOLike ()
@@ -160,6 +162,8 @@ startChainSyncConnectionThread ::
   CSJConfig ->
   StateViewTracers blk m ->
   ChainSyncClientHandleCollection PeerId m blk ->
+  StrictTVar m (CsjModel.F (CsjModel.CsjState PeerId) blk) ->
+  StrictTVar m (Map PeerId (CsjModel.Inbox m blk)) ->
   m (Thread m (), Thread m ())
 startChainSyncConnectionThread
   registry
@@ -174,12 +178,14 @@ startChainSyncConnectionThread
   csjConfig
   tracers
   varHandles
+  varCsj
+  varInboxes
   = do
     (clientChannel, serverChannel) <- createConnectedChannels
     clientThread <-
       forkLinkedThread registry ("ChainSyncClient" <> condense srPeerId) $
         bracketSyncWithFetchClient fetchClientRegistry srPeerId $
-          ChainSync.runChainSyncClient tracer cfg chainDbView srPeerId chainSyncTimeouts_ chainSyncLoPBucketConfig csjConfig tracers varHandles clientChannel
+          ChainSync.runChainSyncClient tracer cfg chainDbView srPeerId chainSyncTimeouts_ chainSyncLoPBucketConfig csjConfig tracers varHandles varCsj varInboxes clientChannel
     serverThread <-
       forkLinkedThread registry ("ChainSyncServer" <> condense srPeerId) $
         ChainSync.runChainSyncServer tracer srPeerId tracers csrServer serverChannel
@@ -378,6 +384,10 @@ startNode schedulerConfig genesisTest interval = do
           , (pid', peerResources) <- activePeers
           , pid == pid'
           ]
+
+  varCsj     <- newTVarIO CsjModel.initialCsjState
+  varInboxes <- newTVarIO Map.empty
+
   for_ activePeersOrdered $ \PeerResources {prShared, prChainSync, prBlockFetch} -> do
     let pid = srPeerId prShared
     forkLinkedThread lrRegistry ("Peer overview " ++ show pid) $
@@ -399,6 +409,8 @@ startNode schedulerConfig genesisTest interval = do
           csjConfig
           lnStateViewTracers
           handles
+          varCsj
+          varInboxes
         BlockFetch.startKeepAliveThread peerRegistry fetchClientRegistry pid
         (bfClient, bfServer) <-
           startBlockFetchConnectionThread

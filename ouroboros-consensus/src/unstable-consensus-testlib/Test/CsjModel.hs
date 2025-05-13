@@ -265,7 +265,7 @@ bisectionStep found y bi =
 -- It only returns 'Nothing' if the given @pid@ is disengaged or the given
 -- 'ChainSyncReply' implies a mini protocol violation.
 csjReactions ::
-     (Ord p, Ord pid)
+     (Ord p, Ord pid, Show pid)
   => CsjEnv p
   -> CsjState pid p a
   -> pid
@@ -277,7 +277,7 @@ csjReactions env x pid imm = fmap fixup . \case
 
     Connect z -> pure $ connect z
 
-    ChainSyncReply reply -> case reply of
+    ChainSyncReply reply -> skipDisengaged $ case reply of
 
         MsgAwaitReply -> onActive (const L.Nothing)
             -- TODO should the Dynamo immediately issue a jump regardless of
@@ -293,15 +293,20 @@ csjReactions env x pid imm = fmap fixup . \case
             fmap (flip (,) [])
           $ preDynamo p <|> preObjector p
 
-    Demoted -> demoted
+    Demoted -> skipDisengaged $ demoted
 
     Disconnect -> pure disconnect
 
-    Offered -> onNotYetSent
+    Offered -> skipDisengaged $ onNotYetSent
 
-    Starvation -> starvation
+    Starvation -> skipDisengaged $ starvation
 
   where
+    hasDisengaged = Set.member pid $ disengaged x
+
+    -- Peers that CSJ has disengaged will still raise stimuli.
+    skipDisengaged m = if hasDisengaged then pure (x, []) else m
+
     fixup =
        issueNextJumpIfReady env imm
      . backfill (\pid' msgs -> (pid', Promoted) : msgs)
@@ -311,6 +316,11 @@ csjReactions env x pid imm = fmap fixup . \case
 
     forget disconnecting = (
         CsjState {
+            disengaged =
+                (if disconnecting then Set.delete else Set.insert)
+                    pid
+                    (disengaged x)
+          ,
             dynamo     =
                 case dynamo x of
                     Just (Dynamo pid' _clss _y _mbQ) | pid /= pid' -> dynamo x
@@ -320,7 +330,9 @@ csjReactions env x pid imm = fmap fixup . \case
           ,
             nonDynamos = Map.delete pid (nonDynamos x)
           ,
-            queue      = deletePerm pid (queue x)
+            queue      =
+                (if hasDisengaged then id else deletePerm pid)
+              $ queue x
           }
         ,
           if disconnecting then [] else [(pid, Disengage)]
@@ -361,6 +373,8 @@ csjReactions env x pid imm = fmap fixup . \case
         in
         (
             CsjState {
+                disengaged = disengaged x
+              ,
                 dynamo     = dynamo x
               ,
                 latestJump = latestJump'
@@ -392,6 +406,8 @@ csjReactions env x pid imm = fmap fixup . \case
             L.Nothing -> disengage
             L.Just y' -> (
                 CsjState {
+                    disengaged = disengaged x
+                  ,
                     dynamo     = Just $ Dynamo pid clss y' Nothing
                   ,
                     latestJump = latestJump x
@@ -410,6 +426,8 @@ csjReactions env x pid imm = fmap fixup . \case
             L.Nothing -> disengage
             L.Just y' -> (
                 CsjState {
+                    disengaged = disengaged x
+                  ,
                     dynamo     = dynamo x
                   ,
                     latestJump = latestJump x
@@ -433,6 +451,8 @@ csjReactions env x pid imm = fmap fixup . \case
             NotYetSent          -> pure ()
         pure (
             CsjState {
+                disengaged = disengaged x
+              ,
                 dynamo     = dynamo x
               ,
                 latestJump = latestJump x
@@ -461,6 +481,8 @@ csjReactions env x pid imm = fmap fixup . \case
             case eBi' of
                 Left clss -> (
                     CsjState {
+                        disengaged = disengaged x
+                      ,
                         dynamo     = dynamo x
                       ,
                         latestJump = latestJump x
@@ -478,6 +500,8 @@ csjReactions env x pid imm = fmap fixup . \case
                   )
                 Right bi' -> (
                     CsjState {
+                        disengaged = disengaged x
+                      ,
                         dynamo     = dynamo x
                       ,
                         latestJump = latestJump x
@@ -498,6 +522,8 @@ csjReactions env x pid imm = fmap fixup . \case
         Dynamo pid' clss y Nothing <- toLazy $ dynamo x
         guard $ pid' == pid
         pure CsjState {
+            disengaged = disengaged x
+          ,
             dynamo     = Just $ Dynamo pid' clss y (Just p)
           ,
             latestJump = latestJump x
@@ -510,6 +536,8 @@ csjReactions env x pid imm = fmap fixup . \case
     preObjector p = do
         Objector clss y Nothing <- Map.lookup pid (nonDynamos x)
         pure CsjState {
+            disengaged = disengaged x
+          ,
             dynamo     = dynamo x
           ,
             latestJump = latestJump x
@@ -541,6 +569,8 @@ csjReactions env x pid imm = fmap fixup . \case
         -- TODO need to check pid?
         Dynamo _pid clss y _mbQ <- toLazy $ dynamo x
         pure $ flip (,) [] $ CsjState {
+            disengaged = disengaged x
+          ,
             dynamo     = Nothing
           ,
             latestJump = latestJump x
@@ -618,7 +648,7 @@ csjReactions env x pid imm = fmap fixup . \case
 -- design that waits for all Jumpers to finish bisecting before promoting any
 -- to Objectors also seems plausible.
 backfill ::
-     (Ord p, Ord pid)
+     (Ord p, Ord pid, Show pid)
   => (pid -> msgs -> msgs)
   -> (CsjState pid p a, msgs)
   -> (CsjState pid p a, msgs)
@@ -630,7 +660,7 @@ backfill f = fillObjectors f . backfillDynamo f
 -- 'Jumped' in a 'Class' that has no Objectors. Otherwise, if /all/ peers are
 -- waiting for the first jump offer, it promotes the leftmost of those.
 backfillDynamo ::
-     (Ord p, Ord pid)
+     (Ord p, Ord pid, Show pid)
   => (pid -> msgs -> msgs)
   -> (CsjState pid p a, msgs)
   -> (CsjState pid p a, msgs)
@@ -668,6 +698,8 @@ backfillDynamo cons (x, msgs) =
 
     promote (Dynamo pid clss y mbQ, latestJump') = (
         CsjState {
+            disengaged = disengaged x
+          ,
             dynamo     = Just $ Dynamo pid clss y mbQ
           ,
             latestJump = latestJump'
@@ -690,7 +722,7 @@ backfillDynamo cons (x, msgs) =
 -- A correct implementation could additinoally promote 'Jumped's from /any/
 -- 'Class' that contains no 'Objector' nor 'dynamo'.
 fillObjectors ::
-     (Ord p, Ord pid)
+     (Ord p, Ord pid, Show pid)
   => (pid -> msgs -> msgs)
   -> (CsjState pid p a, msgs)
   -> (CsjState pid p a, msgs)
@@ -708,6 +740,8 @@ fillObjectors cons (x, msgs) =
             Just
           $ (flip (,) (cons pid msgs))
           $ CsjState {
+                disengaged = disengaged x
+              ,
                 dynamo     = dynamo x
               ,
                 latestJump = latestJump x
@@ -869,6 +903,8 @@ issueNextJump ::
 issueNextJump imm cons (x, msgs) dyn neCandidate =
   (
     CsjState {
+        disengaged = disengaged x
+      ,
         -- The Dynamo effectively instantly accepts the entire jump.
         dynamo     =
             Just

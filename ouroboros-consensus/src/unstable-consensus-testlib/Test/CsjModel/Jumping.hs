@@ -8,6 +8,7 @@
 module Test.CsjModel.Jumping (module Test.CsjModel.Jumping) where
 
 import           Cardano.Slotting.Slot (WithOrigin)
+import           Control.Tracer (Tracer, traceWith)
 import           Data.Foldable (for_)
 import           Data.Map (Map)
 import qualified Data.Map.Strict as Map
@@ -20,10 +21,11 @@ import           Ouroboros.Consensus.Block.SupportsProtocol
 import qualified Ouroboros.Consensus.HeaderValidation as HV
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
-import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping hiding (tracer)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
                     (ImmutableJumpInfo (..), JumpInfo, immutableJumpInfo,
                      jTheirFragment)
+import           Ouroboros.Consensus.Util (whenJust)
 import           Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (HasHeader)
@@ -34,6 +36,37 @@ import           Test.CsjModel
 type F f blk = f (RealPoint blk) (JumpInfo blk)
 
 type Inbox m blk = StrictTVar m (Strict.Maybe (F CsjReaction blk))
+
+-----
+
+data CsjModelEvent pid blk =
+    CsjModelEvent
+        pid
+        (F CsjStimulus blk)
+        (WithOrigin (RealPoint blk))
+        [(pid, F CsjReaction blk)]
+        (F (CsjState pid) blk)
+        (F (CsjState pid) blk)
+
+deriving instance (BlockSupportsProtocol blk, HV.HasAnnTip blk, Show pid, Show (Header blk)) => Show (CsjModelEvent pid blk)
+
+prettyCsjModelEvent ::
+     (BlockSupportsProtocol blk, HV.HasAnnTip blk, Show pid, Show (Header blk))
+  => CsjModelEvent pid blk
+  -> String
+prettyCsjModelEvent ev =
+    unlines
+  $ ("CsjModelEvent" :)
+  $ map ("    " ++)
+    [ show pid
+    , show stimulus
+    , show imm
+    , show msgs
+    , show x
+    , show x'
+    ]
+  where
+    CsjModelEvent pid stimulus imm msgs x x' = ev
 
 -----
 
@@ -49,7 +82,8 @@ registerClient ::
      ,
        forall x. NoThunks x => NoThunks (Strict.Maybe x)
      )
-  => STM m (WithOrigin (RealPoint blk))
+  => Tracer m (CsjModelEvent pid blk)
+  -> STM m (WithOrigin (RealPoint blk))
      -- ^ current immutable tip
   -> CsjEnv (RealPoint blk)
   -> StrictTVar m (F (CsjState pid) blk)
@@ -58,16 +92,16 @@ registerClient ::
   -> ImmutableJumpInfo blk
   -> pid
   -> STM m (Jumping m blk, STM m (m ()), m ())
-registerClient getImmTip env varCsj varInboxes immJumpInfo pid = do
+registerClient tracer getImmTip env varCsj varInboxes immJumpInfo pid = do
     inbox <- newTVar Strict.Nothing
     modifyTVar varInboxes $ Map.insert pid inbox
-    stepSTM $ Connect $ immutableJumpInfo immJumpInfo
-    pure ( Test.CsjModel.Jumping.mkJumping getImmTip env varCsj varInboxes pid
+    ev <- stepSTM $ Connect $ immutableJumpInfo immJumpInfo
+    pure ( Test.CsjModel.Jumping.mkJumping tracer getImmTip env varCsj varInboxes pid
          , do
                imm' <- getImmTip
-               Test.CsjModel.Jumping.unregisterClient env varCsj varInboxes pid imm'
-               pure (pure ())
-         , pure ()
+               ev' <- Test.CsjModel.Jumping.unregisterClient env varCsj varInboxes pid imm'
+               pure $ traceWith tracer ev'
+         , traceWith tracer ev
          )
   where
     ImmutableJumpInfo immAnchor _immHdrSt = immJumpInfo
@@ -93,10 +127,11 @@ unregisterClient ::
   -> pid
   -> WithOrigin (RealPoint blk)
      -- ^ current immutable tip
-  -> STM m ()
+  -> STM m (CsjModelEvent pid blk)
 unregisterClient env varCsj varInboxes pid imm = do
-    stepSTM Disconnect
+    ev <- stepSTM Disconnect
     modifyTVar varInboxes $ Map.delete pid
+    pure ev
   where
     stepSTM = stimulateSTM env varCsj varInboxes pid imm
 
@@ -110,15 +145,16 @@ rotateDynamo ::
      ,
        IOLike m
      )
-  => CsjEnv (RealPoint blk)
+  => Tracer m (CsjModelEvent pid blk)
+  -> CsjEnv (RealPoint blk)
   -> StrictTVar m (F (CsjState pid) blk)
   -> StrictTVar m (Map pid (Inbox m blk))
   -> pid
   -> WithOrigin (RealPoint blk)
      -- ^ current immutable tip
-  -> STM m ()
-rotateDynamo env varCsj varInboxes pid imm = do
-    stepSTM Starvation
+  -> STM m (m ())
+rotateDynamo tracer env varCsj varInboxes pid imm = do
+    traceWith tracer <$> stepSTM Starvation
   where
     stepSTM = stimulateSTM env varCsj varInboxes pid imm
 
@@ -132,7 +168,8 @@ mkJumping ::
      ,
        IOLike m
      )
-  => STM m (WithOrigin (RealPoint blk))
+  => Tracer m (CsjModelEvent pid blk)
+  -> STM m (WithOrigin (RealPoint blk))
      -- ^ current immutable tip
   -> CsjEnv (RealPoint blk)
   -> StrictTVar m (F (CsjState pid) blk)
@@ -140,8 +177,9 @@ mkJumping ::
      -- ^ CSJ client inboxes
   -> pid
   -> Jumping m blk
-mkJumping getImmTip env varCsj varInboxes pid = Jumping {
-    jgNextInstruction   = \whetherZero -> loopy $ do
+mkJumping tracer getImmTip env varCsj varInboxes pid = Jumping {
+    jgNextInstruction   = \whetherZero -> do
+        (mbEv, instr) <- loopy $ do
             inboxes <- readTVar varInboxes
             let inbox = inboxes Map.! pid
             reaction <- readTVar inbox >>= \case
@@ -151,15 +189,17 @@ mkJumping getImmTip env varCsj varInboxes pid = Jumping {
                 Demoting                 -> case whetherZero of
                     NoRepliesOutstanding   -> do
                         writeTVar inbox Strict.Nothing
-                        stepSTM Demoted
-                        pure Nothing
-                    SomeRepliesOutstanding -> pure $ Just StopRunningNormally
-                Disengage           -> pure $ Just RunNormally
+                        ev <- stepSTM Demoted
+                        pure $ Left $ traceWith tracer ev
+                    SomeRepliesOutstanding -> pure $ Right (Nothing, StopRunningNormally)
+                Disengage           -> pure $ Right (Nothing, RunNormally)
                 MsgFindIntersect wp -> do
                     writeTVar inbox Strict.Nothing
-                    stepSTM Offered
-                    pure $ Just $ JumpInstruction $ JumpTo $ wpPayload wp
-                Promoted                 -> pure $ Just RunNormally
+                    ev <- stepSTM Offered
+                    pure $ Right (Just ev, JumpInstruction $ JumpTo $ wpPayload wp)
+                Promoted                 -> pure $ Right (Nothing, RunNormally)
+        whenJust mbEv $ \ev -> traceWith tracer ev
+        pure instr
   ,
     jgOnAwaitReply      = step $ ChainSyncReply MsgAwaitReply
   ,
@@ -175,7 +215,7 @@ mkJumping getImmTip env varCsj varInboxes pid = Jumping {
         step . ChainSyncReply . MsgRollBackward . pointToWithOriginRealPoint
   ,
     jgProcessJumpResult = \jr ->
-          fmap (\() -> pure ())
+          fmap (traceWith tracer)
         $ stepSTM . ChainSyncReply
         $ case jr of
             AcceptedJump{} -> MsgIntersectFound
@@ -186,16 +226,18 @@ mkJumping getImmTip env varCsj varInboxes pid = Jumping {
       --  'jgUpdateJumpInfo'
   }
   where
-    step = atomically . stepSTM
+    step stimulus = do
+      ev <- atomically $ stepSTM stimulus
+      traceWith tracer ev
 
     stepSTM stimulus =  do
         imm <- getImmTip
         stimulateSTM env varCsj varInboxes pid imm stimulus
 
-loopy :: IOLike m => STM m (Maybe a) -> m a
+loopy :: IOLike m => STM m (Either (m ()) a) -> m a
 loopy m = atomically m >>= \case
-    Nothing -> loopy m
-    Just a  -> pure a
+    Left io -> do io; loopy m
+    Right x -> pure x
 
 -----
 
@@ -217,7 +259,7 @@ stimulateSTM ::
   -> WithOrigin (RealPoint blk)
      -- ^ current immutable tip
   -> F CsjStimulus blk
-  -> STM m ()
+  -> STM m (CsjModelEvent pid blk)
 stimulateSTM env varCsj varInboxes pid imm stimulus = do
     x <- readTVar varCsj
     case csjReactions env x pid imm stimulus of
@@ -227,6 +269,7 @@ stimulateSTM env varCsj varInboxes pid imm stimulus = do
             inboxes <- readTVar varInboxes
             for_ msgs $ \(pid', reaction) -> do
                 writeTVar (inboxes Map.! pid') $ Strict.Just reaction
+            pure $ CsjModelEvent pid stimulus imm msgs x x'
 
 data CsjModelException =
     forall pid p a.
