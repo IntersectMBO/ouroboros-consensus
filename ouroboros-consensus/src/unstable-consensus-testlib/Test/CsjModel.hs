@@ -153,6 +153,9 @@ data CsjReaction p a =
     -- This message is only sent to a Jumper, never the Dynamo or an Objector.
     MsgFindIntersect !(WithPayload (WithOrigin p) a)
   |
+    -- | Rescind a jump offer that the client hasn't actually sent yet
+    Nevermind
+  |
     -- | the ChainSync client should run as normal (ie pipelining
     -- @MsgRequestNext@s) until 'Sleep' is given
     --
@@ -964,7 +967,11 @@ issueNextJump imm cons (x, msgs) dyn neCandidate =
                 (Jumping (trimC y) bi (AlreadySent (Just req)), acc)
             NotYetSent          ->
                 case newJumpRequest req (trimC y) (Right bi) of
-                    (y', Left clss') -> (Jumped clss' y', acc)
+                    (y', Left clss') -> (
+                        Jumped clss' y'
+                      ,
+                        (pid, Nevermind) `cons` acc
+                      )
                     (y', Right bi')  -> (
                         Jumping y' bi' NotYetSent
                       ,

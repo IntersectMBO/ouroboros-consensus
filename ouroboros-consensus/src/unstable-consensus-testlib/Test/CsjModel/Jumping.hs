@@ -212,6 +212,9 @@ mkJumping tracer getImmTip env varCsj varInboxes pid = Jumping {
                     writeTVar inbox Strict.Nothing
                     ev <- stepSTM Offered
                     pure $ Right (Just ev, JumpInstruction $ JumpTo $ wpPayload wp)
+                Nevermind                -> do
+                    writeTVar inbox Strict.Nothing
+                    pure $ Left $ pure ()
                 Promoted                 -> pure $ Right (Nothing, RunNormally)
         whenJust mbEv $ \ev -> traceWith tracer ev
         pure instr
