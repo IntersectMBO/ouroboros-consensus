@@ -30,6 +30,7 @@ import           Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (HasHeader)
 import           Test.CsjModel
+import           Test.CsjModel.StateTypes (fullTrim)
 
 -----
 
@@ -56,14 +57,13 @@ prettyCsjModelEvent ::
   -> String
 prettyCsjModelEvent ev =
     unlines
-  $ ("CsjModelEvent" :)
+  $ (("CsjModelEvent " ++ show pid) :)
   $ map ("    " ++)
-    [ show pid
-    , show stimulus
+    [ show stimulus
     , show imm
     , show msgs
-    , show x
-    , show x'
+    , show $ fullTrim x
+    , show $ fullTrim x'
     ]
   where
     CsjModelEvent pid stimulus imm msgs x x' = ev

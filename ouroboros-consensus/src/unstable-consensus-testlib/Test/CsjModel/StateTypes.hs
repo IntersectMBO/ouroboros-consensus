@@ -10,6 +10,7 @@
 module Test.CsjModel.StateTypes (module Test.CsjModel.StateTypes) where
 
 import           Cardano.Slotting.Slot (WithOrigin (At, Origin))
+import           Data.Functor ((<&>))
 import           Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Maybe as L
@@ -18,7 +19,7 @@ import           Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import           Data.Set (Set)
 import qualified Data.Set as Set
-import           Data.Strict.Either (Either (Left))
+import           Data.Strict.Either (Either (Left, Right))
 import           Data.Strict.Maybe (Maybe (Just, Nothing))
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
@@ -424,3 +425,55 @@ data JumpRequest p a =
   deriving anyclass (NoThunks)
 
 deriving instance (Read (WithOrigin p), Read p, Read a) => Read (JumpRequest p a)
+
+-----
+
+class FullTrim a where fullTrim :: a -> a
+
+instance FullTrim (CsjState pid p a) where
+    fullTrim x = CsjState {
+        disengaged = disengaged x
+      ,
+        dynamo     = dynamo x <&> \(Dynamo pid clss y mbQ) -> Dynamo pid clss (fullTrim y) mbQ
+      ,
+        nonDynamos = nonDynamos x <&> \case
+            Jumped clss y -> Jumped clss (fullTrim y)
+            Jumping y bi sent -> Jumping (fullTrim y) (fullTrim bi) (fullTrim sent)
+            Objector clss y mbQ -> Objector clss (fullTrim y) mbQ
+      ,
+        latestJump = case latestJump x of
+            Left  waiting -> Left $ fmap fullTrim waiting
+            Right jreq    -> Right $ fullTrim jreq
+      ,
+        queue      = queue x
+      }
+
+instance FullTrim (CsjClientState p a) where
+    fullTrim y = CsjClientState {
+        anticomm  = anticomm y
+      ,
+        candidate = fullTrim $ candidate y
+      }
+
+instance FullTrim (Bisecting p a) where
+    fullTrim bi = Bisecting {
+        notYetDetermined = fullTrim $ notYetDetermined bi
+      ,
+        rejected = rejected bi
+      }
+
+instance FullTrim (SentStatus p a) where
+    fullTrim = \case
+        AlreadySent mbReq -> AlreadySent (fmap fullTrim mbReq)
+        NotYetSent        -> NotYetSent
+
+instance FullTrim (JumpRequest p a) where
+    fullTrim (JumpRequest clss ps) = JumpRequest clss (fullTrim ps)
+
+instance FullTrim (NonEmptySeq a) where fullTrim = neTrim
+
+instance FullTrim (Seq a) where
+    fullTrim xs = case xs of
+        Seq.Empty                 -> Seq.Empty
+        _ Seq.:<| Seq.Empty       -> xs
+        x0 Seq.:<| (_ Seq.:|> xN) -> Seq.Empty Seq.|> x0 Seq.|> xN

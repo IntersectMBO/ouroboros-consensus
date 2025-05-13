@@ -20,6 +20,9 @@ newtype NonEmptySeq a = UnsafeNonEmptySeq (Seq a)
   deriving stock (Generic, Read, Show)
   deriving anyclass (NoThunks)
 
+neTrim :: NonEmptySeq a -> NonEmptySeq a
+neTrim xs = UnsafeNonEmptySeq $ Seq.Empty Seq.|> neHead xs Seq.|> neLast xs
+
 nonEmptySeq :: Seq a -> L.Maybe (NonEmptySeq a)
 nonEmptySeq xs = UnsafeNonEmptySeq xs <$ guard (not (Seq.null xs))
 
@@ -28,6 +31,9 @@ neIndex (UnsafeNonEmptySeq xs) i = Seq.index xs i
 
 neLength :: NonEmptySeq a -> Int
 neLength (UnsafeNonEmptySeq xs) = Seq.length xs
+
+neHead :: NonEmptySeq a -> a
+neHead xs = xs `neIndex` 0
 
 neLast :: NonEmptySeq a -> a
 neLast xs = xs `neIndex` (neLength xs - 1)
