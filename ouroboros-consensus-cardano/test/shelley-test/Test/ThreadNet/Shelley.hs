@@ -16,6 +16,7 @@ import qualified Cardano.Ledger.Shelley.Translation as SL
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import           Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import           Control.Monad (replicateM)
+import           Control.Tracer (nullTracer)
 import qualified Data.Map.Strict as Map
 import           Data.Word (Word64)
 import           Lens.Micro ((^.))
@@ -262,7 +263,7 @@ prop_simple_real_tpraos_convergence TestSetup
                           nextProtVer
                           sentinel   -- Does not expire during test
                           setupD2
-                    , tniBlockForging = blockForging
+                    , tniBlockForging = blockForging nullTracer
                     }
             , mkRekeyM = Nothing
             }

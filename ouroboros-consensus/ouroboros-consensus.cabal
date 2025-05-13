@@ -518,7 +518,7 @@ library unstable-mock-block
     cardano-binary,
     cardano-crypto-class,
     cardano-ledger-core,
-    cardano-slotting:{cardano-slotting, testlib},
+    cardano-slotting,
     cborg,
     containers,
     deepseq,
