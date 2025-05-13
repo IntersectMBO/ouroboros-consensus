@@ -23,7 +23,9 @@ newtype NonEmptySeq a = UnsafeNonEmptySeq (Seq a)
   deriving anyclass (NoThunks)
 
 neTrim :: NonEmptySeq a -> NonEmptySeq a
-neTrim xs = UnsafeNonEmptySeq $ Seq.Empty Seq.|> neHead xs Seq.|> neLast xs
+neTrim xs =
+  if 1 == neLength xs then xs else
+  UnsafeNonEmptySeq $ Seq.Empty Seq.|> neHead xs Seq.|> neLast xs
 
 nonEmptySeq :: Seq a -> L.Maybe (NonEmptySeq a)
 nonEmptySeq xs = UnsafeNonEmptySeq xs <$ guard (not (Seq.null xs))
