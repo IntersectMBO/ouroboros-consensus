@@ -49,7 +49,7 @@ import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Util.CallStack
-import Ouroboros.Consensus.Util.RedundantConstraints
+import Ouroboros.Consensus.Util.RedundantConstraints (keepRedundantConstraint)
 
 -- | Size of the chunks of the immutable DB
 --
@@ -251,6 +251,7 @@ data ChunkAssertionFailure
 
 instance Exception ChunkAssertionFailure
 
+{- FOURMOLU_DISABLE -}
 assertSameChunk :: HasCallStack => ChunkNo -> ChunkNo -> a -> a
 #if ENABLE_ASSERTIONS
 assertSameChunk a b
@@ -258,10 +259,12 @@ assertSameChunk a b
   | otherwise = throw $ NotSameChunk a b prettyCallStack
 #else
 assertSameChunk _ _ = id
+#endif
   where
     _ = keepRedundantConstraint (Proxy @HasCallStack)
-#endif
+{- FOURMOLU_ENABLE -}
 
+{- FOURMOLU_DISABLE -}
 assertWithinBounds :: HasCallStack => Word64 -> ChunkSize -> a -> a
 #if ENABLE_ASSERTIONS
 assertWithinBounds ix sz
@@ -269,10 +272,12 @@ assertWithinBounds ix sz
   | otherwise                 = throw $ NotWithinBounds ix sz prettyCallStack
 #else
 assertWithinBounds _ _ = id
+#endif
   where
     _ = keepRedundantConstraint (Proxy @HasCallStack)
-#endif
+{- FOURMOLU_ENABLE -}
 
+{- FOURMOLU_DISABLE -}
 assertChunkCanContainEBB :: HasCallStack => ChunkNo -> ChunkSize -> a -> a
 #if ENABLE_ASSERTIONS
 assertChunkCanContainEBB chunk size
@@ -280,6 +285,7 @@ assertChunkCanContainEBB chunk size
   | otherwise               = throw $ ChunkCannotContainEBBs chunk prettyCallStack
 #else
 assertChunkCanContainEBB _ _ = id
+#endif
   where
     _ = keepRedundantConstraint (Proxy @HasCallStack)
-#endif
+{- FOURMOLU_ENABLE -}
