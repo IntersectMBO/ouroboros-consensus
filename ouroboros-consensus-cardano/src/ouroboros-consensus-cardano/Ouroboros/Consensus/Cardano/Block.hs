@@ -31,7 +31,7 @@ module Ouroboros.Consensus.Cardano.Block (
   , CardanoGenTxId
   , GenTx (GenTxAllegra, GenTxAlonzo, GenTxByron, GenTxMary, GenTxShelley, GenTxBabbage, GenTxConway)
   , HardForkApplyTxErr (ApplyTxErrAllegra, ApplyTxErrAlonzo, ApplyTxErrByron, ApplyTxErrMary, ApplyTxErrShelley, ApplyTxErrWrongEra, ApplyTxErrBabbage, ApplyTxErrConway)
-  , TxId (GenTxIdAllegra, GenTxIdAlonzo, GenTxIdByron, GenTxIdMary, GenTxIdShelley, GenTxIdBabbage, GenTxIdConway)
+  , TxId (CardanoGenTxId)
     -- * LedgerError
   , CardanoLedgerError
   , HardForkLedgerError (LedgerErrorAllegra, LedgerErrorAlonzo, LedgerErrorByron, LedgerErrorMary, LedgerErrorShelley, LedgerErrorWrongEra, LedgerErrorBabbage, LedgerErrorConway)
@@ -71,6 +71,7 @@ module Ouroboros.Consensus.Cardano.Block (
   , EraMismatch (..)
   ) where
 
+import           Data.ByteString.Short (ShortByteString)
 import           Data.Kind
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Functors
@@ -353,54 +354,10 @@ pattern GenTxConway tx = HardForkGenTx (OneEraGenTx (TagConway tx))
 -- | The ID of a Cardano transaction.
 type CardanoGenTxId c = GenTxId (CardanoBlock c)
 
-pattern GenTxIdByron :: GenTxId ByronBlock -> CardanoGenTxId c
-pattern GenTxIdByron txid =
-    HardForkGenTxId (OneEraGenTxId (TagByron (WrapGenTxId txid)))
+pattern CardanoGenTxId :: ShortByteString -> CardanoGenTxId c
+pattern CardanoGenTxId txid = HardForkGenTxId (OneEraGenTxId txid)
 
-pattern GenTxIdShelley ::
-     GenTxId (ShelleyBlock (TPraos c) ShelleyEra)
-  -> CardanoGenTxId c
-pattern GenTxIdShelley txid =
-    HardForkGenTxId (OneEraGenTxId (TagShelley (WrapGenTxId txid)))
-
-pattern GenTxIdAllegra ::
-     GenTxId (ShelleyBlock (TPraos c) AllegraEra)
-  -> CardanoGenTxId c
-pattern GenTxIdAllegra txid =
-    HardForkGenTxId (OneEraGenTxId (TagAllegra (WrapGenTxId txid)))
-
-pattern GenTxIdMary ::
-     GenTxId (ShelleyBlock (TPraos c) MaryEra)
-  -> CardanoGenTxId c
-pattern GenTxIdMary txid =
-    HardForkGenTxId (OneEraGenTxId (TagMary (WrapGenTxId txid)))
-
-pattern GenTxIdAlonzo ::
-     GenTxId (ShelleyBlock (TPraos c) AlonzoEra)
-  -> CardanoGenTxId c
-pattern GenTxIdAlonzo txid =
-    HardForkGenTxId (OneEraGenTxId (TagAlonzo (WrapGenTxId txid)))
-
-pattern GenTxIdBabbage ::
-     GenTxId (ShelleyBlock (Praos c) BabbageEra)
-  -> CardanoGenTxId c
-pattern GenTxIdBabbage txid =
-    HardForkGenTxId (OneEraGenTxId (TagBabbage (WrapGenTxId txid)))
-
-pattern GenTxIdConway ::
-     GenTxId (ShelleyBlock (Praos c) ConwayEra)
-  -> CardanoGenTxId c
-pattern GenTxIdConway txid =
-    HardForkGenTxId (OneEraGenTxId (TagConway (WrapGenTxId txid)))
-
-{-# COMPLETE GenTxIdByron
-           , GenTxIdShelley
-           , GenTxIdAllegra
-           , GenTxIdMary
-           , GenTxIdAlonzo
-           , GenTxIdBabbage
-           , GenTxIdConway
-  #-}
+{-# COMPLETE CardanoGenTxId #-}
 
 -- | An error resulting from applying a 'CardanoGenTx' to the ledger.
 --

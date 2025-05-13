@@ -30,8 +30,10 @@ import qualified Cardano.Chain.Byron.API as CC
 import qualified Cardano.Chain.Common as CC
 import qualified Cardano.Chain.Update.Validation.Interface as CC.UPI
 import qualified Cardano.Chain.UTxO as CC
+import qualified Cardano.Crypto.Hashing as Crypto
 import           Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 import           Control.Monad.Except (runExcept)
+import           Data.Coerce
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Crypto.DSIGN (SignKeyDSIGN (..))
@@ -215,11 +217,14 @@ exampleExtLedgerState = ExtLedgerState {
 exampleHeaderHash :: ByronHash
 exampleHeaderHash = blockHash exampleBlock
 
+exampleTxId :: Crypto.Hash (GenTx ByronBlock)
+exampleTxId = coerce CC.exampleTxId
+
 exampleGenTx :: GenTx ByronBlock
-exampleGenTx = ByronTx CC.exampleTxId (CC.annotateTxAux CC.exampleTxAux)
+exampleGenTx = ByronTx exampleGenTxId (CC.annotateTxAux CC.exampleTxAux)
 
 exampleGenTxId :: TxId (GenTx ByronBlock)
-exampleGenTxId = ByronTxId CC.exampleTxId
+exampleGenTxId = ByronGenTxId exampleTxId
 
 exampleUPIState :: CC.UPI.State
 exampleUPIState = CC.UPI.initialState ledgerConfig

@@ -396,6 +396,9 @@ instance HasHardForkTxOut '[BlockA, BlockB] where
 
 type TestBlock = HardForkBlock '[BlockA, BlockB]
 
+instance HasBlessedGenTxIdEra '[BlockA, BlockB] where
+  blessedGenTxIdEra = Z mempty
+
 instance CanHardFork '[BlockA, BlockB] where
   type HardForkTxMeasure '[BlockA, BlockB] = IgnoringOverflow ByteSize32
 

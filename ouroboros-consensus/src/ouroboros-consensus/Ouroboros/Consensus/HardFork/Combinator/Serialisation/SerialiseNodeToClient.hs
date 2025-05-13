@@ -44,12 +44,14 @@ import           Ouroboros.Consensus.HardFork.Combinator.Serialisation.Serialise
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
+import           Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId, toRawTxIdHash)
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Node.Serialisation
 import           Ouroboros.Consensus.Util ((.:))
 import           Ouroboros.Network.Block (Serialised, unwrapCBORinCBOR,
                      wrapCBORinCBOR)
+import           Data.ByteString.Short (ShortByteString)
 
 {-------------------------------------------------------------------------------
   Serialisation of products
@@ -328,8 +330,33 @@ instance SerialiseHFC xs
 
 instance SerialiseHFC xs
       => SerialiseNodeToClient (HardForkBlock xs) (GenTxId (HardForkBlock xs)) where
-  encodeNodeToClient = dispatchEncoder `after` (getOneEraGenTxId . getHardForkGenTxId)
-  decodeNodeToClient = fmap (HardForkGenTxId . OneEraGenTxId) .: dispatchDecoder
+  -- This instance can be massively simplified after we drop support for
+  -- 'NodeToClientVersion's earlier than 'NodeToClientV_19', since we no longer
+  -- need to handle the cases where 'ShortByteString's are serialised with
+  -- an era tag ('encodeNS').
+
+  encodeNodeToClient _cc v (HardForkGenTxId (OneEraGenTxId txid)) =
+    case v of
+      HardForkNodeToClientEnabled hfv _ | hfv >= HardForkSpecificNodeToClientVersion4 ->
+        Serialise.encode txid
+      HardForkNodeToClientEnabled _ _ -> do
+        let blessedGenTxId :: NS (K ShortByteString) xs
+            blessedGenTxId = hmap (pure $ K txid) blessedGenTxIdEra
+        encodeNS (hpure $ Fn $ K . Serialise.encode . unK) blessedGenTxId
+      HardForkNodeToClientDisabled _ ->
+        Serialise.encode txid
+  decodeNodeToClient _cc v =
+    fmap (HardForkGenTxId . OneEraGenTxId) $
+      case v of
+        HardForkNodeToClientEnabled hfc _
+          | hfc >= HardForkSpecificNodeToClientVersion4 -> do
+            Serialise.decode
+        HardForkNodeToClientEnabled _ _ -> do
+          let eraDecoders :: NP (Decoder s :.: K ShortByteString) xs
+              eraDecoders = hpure $ Comp $ K <$> Serialise.decode
+          hcollapse <$> decodeNS eraDecoders
+        HardForkNodeToClientDisabled _ ->
+          Serialise.decode
 
 instance SerialiseHFC xs
       => SerialiseNodeToClient (HardForkBlock xs) SlotNo where

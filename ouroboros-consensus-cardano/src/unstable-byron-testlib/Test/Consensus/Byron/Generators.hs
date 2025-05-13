@@ -234,10 +234,10 @@ instance Arbitrary (GenTx ByronBlock) where
 
 instance Arbitrary (GenTxId ByronBlock) where
   arbitrary = oneof
-      [ ByronTxId             <$> hedgehog CC.genTxId
-      , ByronDlgId            <$> hedgehog genCertificateId
+      [ ByronTxId <$> hedgehog CC.genTxId
+      , ByronDlgId <$> hedgehog genCertificateId
       , ByronUpdateProposalId <$> hedgehog (UG.genUpId protocolMagicId)
-      , ByronUpdateVoteId     <$> hedgehog genUpdateVoteId
+      , ByronUpdateVoteId <$> hedgehog genUpdateVoteId
       ]
     where
       genCertificateId = CC.genAbstractHash (CC.genCertificate protocolMagicId)

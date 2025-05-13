@@ -54,6 +54,7 @@ import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
 import           Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
 import qualified Data.SOP.Telescope as Telescope
+import           Data.SOP.Strict.NS
 import qualified Data.Text as T (pack)
 import           Data.Typeable
 import           Data.Void (Void)
@@ -140,6 +141,9 @@ instance ( ShelleyCompatible proto era
 {-------------------------------------------------------------------------------
   SerialiseHFC instance
 -------------------------------------------------------------------------------}
+
+instance HasBlessedGenTxIdEra '[ShelleyBlock proto era] where
+  blessedGenTxIdEra = Z mempty
 
 -- | Use the default implementations. This means the serialisation of blocks
 -- includes an era wrapper. Each block should do this from the start to be
