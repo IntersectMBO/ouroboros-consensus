@@ -308,8 +308,9 @@ csjReactions env x pid imm = fmap fixup . \case
     skipDisengaged m = if hasDisengaged then pure (x, []) else m
 
     fixup =
-       issueNextJumpIfReady env imm
-     . backfill (\pid' msgs -> (pid', Promoted) : msgs)
+       fillObjectors (\pid' msgs -> (pid', Promoted) : msgs)
+     . issueNextJumpIfReady env imm
+     . backfillDynamo (\pid' msgs -> (pid', Promoted) : msgs)
 
     disengage  = forget False
     disconnect = forget True
@@ -588,10 +589,9 @@ csjReactions env x pid imm = fmap fixup . \case
   Promoting Objectors and the Dynamo
 -------------------------------------------------------------------------------}
 
--- | Promote Jumpers or Objectors to the Dynamo and Jumpers to Objectors as
--- necessary
---
--- @'backfill' f msgs = 'fillObjectors' f . 'backfillDynamo' f@
+-- | Promotes the leftmost @pid@ in 'queue' that is either an Objector or a
+-- 'Jumped' in a 'Class' that has no Objectors. Otherwise, if /all/ peers are
+-- waiting for the first jump offer, it promotes the leftmost of those.
 --
 -- There are only the following invariants to maintain.
 --
@@ -647,18 +647,6 @@ csjReactions env x pid imm = fmap fixup . \case
 -- contest the Dynamo---might as well start immediately. But the alternative
 -- design that waits for all Jumpers to finish bisecting before promoting any
 -- to Objectors also seems plausible.
-backfill ::
-     (Ord p, Ord pid, Show pid)
-  => (pid -> msgs -> msgs)
-  -> (CsjState pid p a, msgs)
-  -> (CsjState pid p a, msgs)
-backfill f = fillObjectors f . backfillDynamo f
-
--- | See 'backfill'
---
--- Promotes the leftmost @pid@ in 'queue' that is either an Objector or a
--- 'Jumped' in a 'Class' that has no Objectors. Otherwise, if /all/ peers are
--- waiting for the first jump offer, it promotes the leftmost of those.
 backfillDynamo ::
      (Ord p, Ord pid, Show pid)
   => (pid -> msgs -> msgs)
@@ -714,10 +702,10 @@ backfillDynamo cons (x, msgs) =
           cons pid msgs
         )
 
--- | See 'backfill'
---
--- If there is a 'dynamo' and the oldest 'Class' has only 'Jumped's, then
+-- | If there is a 'dynamo' and the oldest 'Class' has only 'Jumped's, then
 -- promotes the leftmost according to 'queue'.
+--
+-- See 'backfillDynamo' for context.
 --
 -- A correct implementation could additinoally promote 'Jumped's from /any/
 -- 'Class' that contains no 'Objector' nor 'dynamo'.

@@ -278,7 +278,7 @@ stimulateSTM ::
 stimulateSTM env varCsj varInboxes pid imm stimulus = do
     x <- readTVar varCsj
     case csjReactions env x pid imm stimulus of
-        Nothing         -> throwSTM $ CsjModelStuck imm x pid stimulus
+        Nothing         -> throwSTM $ CsjModelStuck pid stimulus imm x
         Just (x', msgs) -> do
             writeTVar varCsj x'
             inboxes <- readTVar varInboxes
@@ -295,10 +295,10 @@ data CsjModelException =
      ,
        Show a
      ) => CsjModelStuck
-       (WithOrigin p)
-       (CsjState pid p a)
        pid
        (CsjStimulus p a)
+       (WithOrigin p)
+       (CsjState pid p a)
 
 deriving instance Show CsjModelException
 
