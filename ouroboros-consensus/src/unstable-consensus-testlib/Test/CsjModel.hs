@@ -26,7 +26,7 @@ module Test.CsjModel (
 
 import           Cardano.Slotting.Slot (SlotNo (unSlotNo),
                      WithOrigin (At, Origin))
-import           Control.Applicative ((<|>))
+import           Control.Applicative (Applicative (..), (<|>))
 import           Control.Arrow (first)
 import           Control.Monad (guard)
 import qualified Control.Monad.State.Strict as State
@@ -43,11 +43,15 @@ import           Data.Strict.Maybe (Maybe (Just, Nothing), fromMaybe, maybe)
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
-import           Prelude hiding (Either (Left, Right), Maybe (Just, Nothing),
-                     either, maybe)
+import           Prelude hiding (Applicative (..), Either (Left, Right),
+                     Foldable (..), Maybe (Just, Nothing), either, maybe)
 import           Test.CsjModel.NonEmptySeq
 import           Test.CsjModel.Perm
 import           Test.CsjModel.StateTypes
+
+-- The weird Prelude hiding Applicative and Foldable trick in the above import
+-- list is to deal with recent versions of base adding exports of 'liftA2' and
+-- 'foldl''.
 
 {-------------------------------------------------------------------------------
   Stimuli to and reactions of the CSJ governor

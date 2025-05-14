@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -303,7 +304,11 @@ mkJumping peerContext = Jumping
         atomically (nextInstruction (pure ()) peerContext) >>= \case
             Strict.Right instr -> pure instr
             Strict.Left () -> do
-                traceWith (tracer peerContext) BlockedOnJump
+                -- Need to use NamedFieldPuns somewhere in this module,
+                -- otherwise stylish-haskell complains. But if I remove the
+                -- LANGUAGE pragma, then there's a lot of name-shadowing
+                -- warnings.
+                traceWith (let Context{tracer} = peerContext in tracer) BlockedOnJump
                 id
                   $ fmap (Strict.either absurd id)
                   $ atomically
