@@ -345,7 +345,6 @@ implJumpingGovernor ::
     ( IOLike m
     , Ord peer
     , LedgerSupportsProtocol blk
-    , MonadTimer m
     )
  => JumpingGovernor m peer blk
 implJumpingGovernor = JumpingGovernor {
