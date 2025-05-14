@@ -2,8 +2,8 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE StandaloneDeriving #-}
 
 -- | An executable specification of the centralized CSJ logic
 --
@@ -24,7 +24,8 @@ module Test.CsjModel (
   , wpPoint
   ) where
 
-import           Cardano.Slotting.Slot (SlotNo (unSlotNo), WithOrigin (At, Origin))
+import           Cardano.Slotting.Slot (SlotNo (unSlotNo),
+                     WithOrigin (At, Origin))
 import           Control.Applicative ((<|>))
 import           Control.Arrow (first)
 import           Control.Monad (guard)
@@ -42,7 +43,8 @@ import           Data.Strict.Maybe (Maybe (Just, Nothing), fromMaybe, maybe)
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
-import           Prelude hiding (Either (Left, Right), Maybe (Just, Nothing), either, maybe)
+import           Prelude hiding (Either (Left, Right), Maybe (Just, Nothing),
+                     either, maybe)
 import           Test.CsjModel.NonEmptySeq
 import           Test.CsjModel.Perm
 import           Test.CsjModel.StateTypes

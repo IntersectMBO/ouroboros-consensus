@@ -1,5 +1,3 @@
-{-# LANGUAGE StandaloneDeriving #-}
-
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Util.NoThunks () where

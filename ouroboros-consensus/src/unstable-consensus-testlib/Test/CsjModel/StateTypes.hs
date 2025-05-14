@@ -16,7 +16,6 @@ import           Data.Functor ((<&>))
 import           Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Maybe as L
--- TODO use AnchoredSeq?
 import           Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import           Data.Set (Set)
@@ -25,7 +24,8 @@ import           Data.Strict.Either (Either (Left, Right), either)
 import           Data.Strict.Maybe (Maybe (Just, Nothing), maybe)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
-import           Prelude hiding (Either (Left, Right), Maybe (Just, Nothing), either, maybe)
+import           Prelude hiding (Either (Left, Right), Maybe (Just, Nothing),
+                     either, maybe)
 import           Test.CsjModel.NonEmptySeq
 import           Test.CsjModel.Perm
 

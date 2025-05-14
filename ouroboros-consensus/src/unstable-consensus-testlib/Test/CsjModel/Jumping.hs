@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
@@ -21,9 +20,10 @@ import           Ouroboros.Consensus.Block.SupportsProtocol
 import qualified Ouroboros.Consensus.HeaderValidation as HV
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
-import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping hiding (tracer)
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping hiding
+                     (tracer)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
-                    (ImmutableJumpInfo (..), JumpInfo (..), immutableJumpInfo,
+                     (ImmutableJumpInfo (..), JumpInfo (..), immutableJumpInfo,
                      jTheirFragment)
 import           Ouroboros.Consensus.Util (whenJust)
 import           Ouroboros.Consensus.Util.IOLike
@@ -259,7 +259,7 @@ loopy m = atomically m >>= \case
 
 -----
 
-stimulateSTM :: 
+stimulateSTM ::
      (
        Ord pid, Show pid
      ,

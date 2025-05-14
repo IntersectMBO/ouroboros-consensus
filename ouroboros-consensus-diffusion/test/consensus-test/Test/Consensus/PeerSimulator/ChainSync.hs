@@ -20,7 +20,7 @@ import           Data.Proxy (Proxy (..))
 import           Network.TypedProtocol.Codec (AnyMessage)
 import           Ouroboros.Consensus.Block (Header, Point)
 import           Ouroboros.Consensus.Block.RealPoint
-                    (pointToWithOriginRealPoint, realPointSlot)
+                     (pointToWithOriginRealPoint, realPointSlot)
 import           Ouroboros.Consensus.BlockchainTime (RelativeTime (..))
 import           Ouroboros.Consensus.Config (DiffusionPipeliningSupport (..),
                      TopLevelConfig (..))
@@ -70,8 +70,8 @@ import           Test.Consensus.PeerSimulator.Trace
 import           Test.Consensus.PointSchedule.Peers (PeerId)
 import qualified Test.CsjModel as CsjModel
 import qualified Test.CsjModel.Jumping as CsjModel
-import           Test.Util.Orphans.IOLike ()
 import           Test.Util.NoThunks ()
+import           Test.Util.Orphans.IOLike ()
 
 -- | A basic ChainSync client. It wraps around 'chainSyncClient', but simplifies
 -- quite a few aspects. In particular, the size of the pipeline cannot exceed 20

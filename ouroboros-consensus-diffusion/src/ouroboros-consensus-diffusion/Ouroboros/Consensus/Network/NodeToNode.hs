@@ -63,7 +63,8 @@ import           Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (ChainSyncStateView (..))
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CsClient
-import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (ImmutableJumpInfo)
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
+                     (ImmutableJumpInfo)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Server
 import           Ouroboros.Consensus.Node.ExitPolicy
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion

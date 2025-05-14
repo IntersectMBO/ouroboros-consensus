@@ -15,9 +15,9 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (
   , ChainSyncState (..)
   , DisengagedInitState (..)
   , DynamoInitState (..)
+  , ImmutableJumpInfo (..)
   , JumpInfo (..)
   , JumperInitState (..)
-  , ImmutableJumpInfo (..)
   , ObjectorInitState (..)
   , immutableJumpInfo
   , newChainSyncClientHandleCollection
@@ -35,7 +35,9 @@ import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block (HasHeader, Header, Point)
 import           Ouroboros.Consensus.Block.SupportsProtocol
                      (BlockSupportsProtocol)
-import           Ouroboros.Consensus.HeaderStateHistory (HeaderStateHistory (HeaderStateHistory), HeaderStateWithTime)
+import           Ouroboros.Consensus.HeaderStateHistory
+                     (HeaderStateHistory (HeaderStateHistory),
+                     HeaderStateWithTime)
 import           Ouroboros.Consensus.HeaderValidation (HasAnnTip,
                      HeaderWithTime (..))
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -286,7 +288,7 @@ immutableJumpInfo immJumpInfo = JumpInfo {
     jMostRecentIntersection  = AF.castPoint $ AF.anchorToPoint immAnchor
   , jOurFragment             = AF.Empty $ AF.castAnchor immAnchor
   , jTheirFragment           = AF.Empty $ AF.castAnchor immAnchor
-  , jTheirHeaderStateHistory = HeaderStateHistory $ AF.Empty immHdrStateWithTime 
+  , jTheirHeaderStateHistory = HeaderStateHistory $ AF.Empty immHdrStateWithTime
   }
   where
     ImmutableJumpInfo immAnchor immHdrStateWithTime = immJumpInfo

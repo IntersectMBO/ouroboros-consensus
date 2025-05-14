@@ -97,7 +97,8 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCh
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
                      (ClockSkew, clockSkewInSeconds, unClockSkew)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
-import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (ImmutableJumpInfo)
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
+                     (ImmutableJumpInfo)
 import           Ouroboros.Consensus.Node.GsmState (GsmState (Syncing))
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
                      (NodeToNodeVersion)

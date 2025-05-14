@@ -673,7 +673,7 @@ instance
 -- | State used when the intersection between the candidate and the current
 -- chain is known.
 data KnownIntersectionState blk = KnownIntersectionState {
-    genuine :: !Bool
+    genuine                 :: !Bool
     -- ^ 'False' if and only if this data structure is not actually the known
     -- intersection state but is rather merely bundling the 'kBestBlockNo' and
     -- a non-truncated 'JumpInfo'
@@ -950,7 +950,7 @@ chainSyncClient cfgEnv dynEnv mbImmJumpInfo =
                     dynEnv
                     intEnv
                     (ForkTooDeep GenesisPoint)
-              
+
   where
     ConfigEnv {
         cfg
