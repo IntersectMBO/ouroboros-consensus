@@ -233,17 +233,6 @@ initialCsjState = CsjState {
     queue      = UnsafePerm Seq.empty
   }
 
--- | This is called by 'Test.CsjModel.backfillDynamo' when there is no Dynamo
-objectorClasses :: Ord p => CsjState pid p a -> Set (Class p)
-objectorClasses x =
-    Map.foldl snoc Set.empty (nonDynamos x)
-  where
-    snoc acc = \case
-        -- the peers in 'latestJump' are essentially Jumpers
-        Jumped{}              -> acc
-        Jumping{}             -> acc
-        Objector clss _y _mbQ -> Set.insert clss acc
-
 -----
 
 -- | The (exact!) intersection of a peer's 'cand' and the latest jump request
@@ -263,6 +252,37 @@ objectorClasses x =
 -- a proper extension of some point on it, the 'Class' might also be older than
 -- the imm tip. However, 'cand' is an extension of the 'Class', so the imm tip
 -- in that case must also be an extension of the 'Class'.
+--
+-- WARNING. The 'Class' of an 'Objector' cannot increase, for two reasons.
+--
+-- - The CSJ governor doesn't even check if the 'candidate' of an 'Objector'
+--   overlaps with a new 'JumpRequest'---it merely combines their 'Class'es.
+--
+-- - Even if the governor did check, the 'Objector' couldn't have a 'Class'
+--   until they send enough headers (either one that disagrees or the tip of
+--   the latest 'JumpRequest'), since the header they haven't sent yet might
+--   also be on the 'JumpRequest'. Thus adding that logic would either require
+--   more synchronization (eg delaying the next 'JumpRequest', or maybe a
+--   @Objecting@ comparable to 'Jumping', etc) or else risk assigning the
+--   'Objector' to a 'Class' that is older than its actual intersection.
+--
+-- Because the 'Class' of an 'Objector' cannot increase, it also must not
+-- decrease! Suppose it decreased and then it should have increased but could
+-- not (see above). Thus its 'Class' is again older than its actual
+-- intersection with the 'Dynamo' that sent the most recent 'JumpRequest'.
+--
+-- It's unacceptable for its 'Class' to be different than it's actual
+-- intersection, since that would unjustly prevent a 'Jumped' with that same
+-- older 'Class' from being promoted. And that threatens liveness, since the
+-- 'candidate' of that 'Jumped' might be restraining the LoE, and so the imm
+-- tip, and so the forecast range of the 'Dynamo' and all 'Objector's, and so
+-- preventing a GDD disconnection.
+--
+-- Thus, the 'Dynamo' must never have a 'Class' older than the 'Class' of any
+-- 'Objector', since such a 'Dynamo' would eventually send out a 'JumpRequest'
+-- that would decrease the 'Class' of some 'Objector's. A peer with an older
+-- 'Class' could eventually become 'Dynamo', but only by outliving all the
+-- younger 'Class' members /as an 'Objector'/.
 newtype Class p = Class (WithOrigin p)
   deriving stock (Eq, Generic, Ord, Show)
   deriving anyclass (NoThunks)

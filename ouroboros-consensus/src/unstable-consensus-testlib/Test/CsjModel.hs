@@ -26,14 +26,12 @@ module Test.CsjModel (
 
 import           Cardano.Slotting.Slot (SlotNo (unSlotNo), WithOrigin (At, Origin))
 import           Control.Applicative ((<|>))
-import qualified Control.Applicative as Alt (empty)
 import           Control.Arrow (first)
 import           Control.Monad (guard)
 import qualified Control.Monad.State.Strict as State
 import           Data.Foldable (foldl')
 import qualified Data.Map.Strict as Map
 import qualified Data.Maybe as L (Maybe (Just, Nothing), isJust, maybe)
-import           Data.Monoid (Alt (Alt, getAlt))
 import           Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 import           Data.Set (Set)
@@ -593,20 +591,22 @@ csjReactions env x pid imm = fmap fixup . \case
 -------------------------------------------------------------------------------}
 
 -- | Promotes the leftmost @pid@ in 'queue' that is either an Objector or a
--- 'Jumped' in a 'Class' that has no Objectors. Otherwise, if /all/ peers are
+-- 'Jumped' in a 'Class' that has no 'Objector's. Otherwise, if /all/ peers are
 -- waiting for the first jump offer, it promotes the leftmost of those.
 --
 -- There are only the following invariants to maintain.
 --
--- - There is a Dynamo unless all peers are disengaged or are Jumpers that are
---   not yet done bisecting.
+-- - There is a 'Dynamo' unless all peers are disengaged or are Jumpers that
+--   are not yet done bisecting.
 --
--- - No two peers among the Dynamo and the Objectors are serving the same
---   chain. This is ensured by only promoting a Jumper if it is done bisecting
---   and has a different 'Class' than the Dynamo and every Objector. The
---   'Class' of a Jumper that's done bisecting is its exact intersection with
---   the bisected jump; the 'candidate' before its done bisecting is merely a
---   lower bound on its eventual 'Class'.
+-- - No two peers among the 'Dynamo' and the 'Objector's are serving the same
+--   chain. This is ensured by only promoting a Jumper to 'Objector' if it is
+--   done bisecting and has an different 'Class' than the Dynamo and every
+--   Objector. The 'Class' of a Jumper that's done bisecting is its exact
+--   intersection with the bisected jump; the 'candidate' before its done
+--   bisecting is merely a lower bound on its eventual 'Class'. It can't be
+--   promoted unless its 'Class' is the oldest because an 'Objector' does not
+--   necessarily know its new 'Class' if the new 'JumpRequest' might be ah
 --
 -- - A Jumper that is not yet done bisecting must not be promoted. The 'Class'
 --   of the Dynamo or an Objector must be its exact intersection with
@@ -614,8 +614,13 @@ csjReactions env x pid imm = fmap fixup . \case
 --   actually be serving the same chain as the Dynamo or an Objector.
 --
 -- - The oldest 'Class' among the Jumpers that are done bisecting is equal to
---   the 'Class' of the Dynamo or some Objector. This should be restored by
---   promoting such a Jumper.
+--   the 'Class' of the 'Dynamo' or some 'Objector'. This should be restored by
+--   promoting such a Jumper to 'Objector'. This ensures that at least one GDD
+--   contest has a Genesis window that fits entirely within the forecast range.
+--
+-- - See the Haddock on 'Class' for why the 'Class' of the 'Dynamo' must never
+--   be older than the 'Class' of some 'Objector'. This merely constraints
+--   which peers can backfill the 'Dynamo'.
 --
 -- Beyond those invariants, it doesn't matter which Jumper or Objector
 -- backfills as the Dynamo nor which Jumper backfills as the Objector for the
@@ -643,7 +648,7 @@ csjReactions env x pid imm = fmap fixup . \case
 --
 -- - Promoting a Jumper to Objector before all Jumpers have finished bisecting.
 --
--- - Never having multiple Objectors.
+-- - Never having more than one Objector.
 --
 -- The design in this file favors having multiple Objectors, since every Jumper
 -- that is ready to be Objector will eventually need to have a chance to
@@ -658,42 +663,49 @@ backfillDynamo ::
 backfillDynamo cons (x, msgs) =
     L.maybe (x, msgs) promote
   $ case dynamo x of
-        Just{}  -> Alt.empty
-        Nothing -> getAlt $ foldMap (Alt . try) (queue x)
+        Just{}  -> L.Nothing
+        Nothing -> foldl' snoc L.Nothing (queue x)
   where
-    try pid = case Map.lookup pid (nonDynamos x) of
+    snoc acc pid =
+        -- Primary: Objector > Jumper > peer waiting in 'latestJump'
+        --
+        -- Secondary: favor the younger 'Class'
+        --
+        -- Tertiary (implicit): favor earlier in 'queue'
+        let cmp (flavor, Dynamo _pid clss _y _mbQ, _msgs) =
+                (flavor :: Int, clss)
+        in
+        -- biased towards acc in order to favor earlier members of 'queue'
+        if fmap cmp (f pid) > fmap cmp acc then f pid else acc
+
+    f pid = case Map.lookup pid (nonDynamos x) of
         L.Just nonDynamo -> case nonDynamo of
             Jumped clss y       -> do
-                guard $ clss `Set.notMember` objectorClasses x
-                pure (
-                    Dynamo pid clss y Nothing
-                  ,
-                    latestJump x
-                  )
-            Jumping{}           -> Alt.empty
-            Objector clss y mbQ ->
-                pure (Dynamo pid clss y mbQ, latestJump x)
+                pure (1, Dynamo pid clss y Nothing, cons pid msgs)
+            Jumping{}           -> L.Nothing
+            Objector clss y mbQ -> do
+                pure (2, Dynamo pid clss y mbQ, msgs)
         L.Nothing        ->
             let waitings = either id (\_req -> Map.empty) $ latestJump x
             in
             case Map.lookup pid waitings of
-                L.Just y  ->
-                    if not $ Map.null $ nonDynamos x then Alt.empty else
+                L.Just y  -> do
+                    guard $ Map.null $ nonDynamos x
                     let clss = Class $ candidateTip y
-                    in
-                    pure (Dynamo pid clss y Nothing, latestJump x)
+                    pure (0, Dynamo pid clss y Nothing, cons pid msgs)
                 L.Nothing ->
                     -- Each pid in 'queue' must be in either 'nonDynamos' or
                     -- 'latestJump'.
                     error "impossible!"
 
-    promote (Dynamo pid clss y mbQ, latestJump') = (
-        CsjState {
+    promote (_flavor, Dynamo pid clss y mbQ, msgs') =
+        flip (,) msgs'
+      $ CsjState {
             disengaged = disengaged x
           ,
             dynamo     = Just $ Dynamo pid clss y mbQ
           ,
-            latestJump = either (Left . Map.delete pid) Right latestJump'
+            latestJump = either (Left . Map.delete pid) Right (latestJump x)
           ,
             nonDynamos = Map.delete pid (nonDynamos x)
           ,
@@ -701,17 +713,15 @@ backfillDynamo cons (x, msgs) =
                 -- This peer just got picked, so send them to the end.
                 snocPerm pid $ deletePerm pid $ queue x
           }
-        ,
-          cons pid msgs
-        )
 
--- | If there is a 'dynamo' and the oldest 'Class' has only 'Jumped's, then
--- promotes the leftmost according to 'queue'.
+-- | If there is a 'Dynamo' and the oldest 'Class' has only 'Jumped's, then
+-- promotes the leftmost of those 'Jumped's in 'queue'.
 --
 -- See 'backfillDynamo' for context.
 --
--- A correct implementation could additinoally promote 'Jumped's from /any/
--- 'Class' that contains no 'Objector' nor 'dynamo'.
+-- A correct implementation could additionally promote 'Jumped's from any
+-- 'Class' that contains no 'Objector' and is /older/ than the 'Class' of the
+-- 'Dynamo'.
 fillObjectors ::
      (Ord p, Ord pid, Show pid)
   => (pid -> msgs -> msgs)
@@ -978,14 +988,10 @@ issueNextJump imm cons (x, msgs) dyn neCandidate =
                         (pid, nextMsgFindIntersect bi') `cons` acc
                       )
         Objector clss y mbQ ->
-            -- This 'min' ensures the Objector's class is always a point in the
-            -- new jump.
-            --
-            -- If an Objector's class instead weren't updated after their
-            -- promotion, then Jumpers that are serving the same chain as the
-            -- Objector might end up with a inequal class after bisecting the
-            -- new jump.
-            (Objector (min dynamoPrevClss clss) (trimC y) mbQ, acc)
+            -- Along with the basics of jumping, 'backfillDynamo' together
+            -- ensures that an Objector always has the same intersection with
+            -- subsequent jumps.
+            (Objector clss (trimC y) mbQ, acc)
 
     doneWaiting pid y = State.state $ doneWaiting2 pid y
 
@@ -1062,11 +1068,10 @@ newJumpRequest ::
 newJumpRequest req y eBi =
     case eBi of
         Left clss ->
-            if clss == dynamoPrevClss then go else
-            -- This 'min' is the same as for Objectors, which makes sense: this
-            -- 'Jumped' is merely waiting its turn to be promoted to Objector.
-            -- See the relevant case in 'issueNextJump' for more comments.
-            (y, Left $ min clss dynamoPrevClss)
+            -- Unlike an 'Objector', a 'Jumped' /can/ correctly increase its
+            -- 'Class'; see the Haddock on 'Class' for why 'Objector's cannot.
+            if clss <= dynamoPrevClss then go else
+            (y, Left dynamoPrevClss)
         Right bi  ->
             -- If 'rejected' is on the new jump (TODO how?), then this Jumping
             -- doesn't need to change its state at all.
