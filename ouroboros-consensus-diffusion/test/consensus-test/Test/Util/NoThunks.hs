@@ -1,5 +1,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 
+{-# OPTIONS_GHC -Wno-orphans #-}
+
 module Test.Util.NoThunks () where
 
 import qualified Data.Strict.Either as Strict
