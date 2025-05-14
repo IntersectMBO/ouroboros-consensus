@@ -16,7 +16,7 @@ index-state:
   -- Bump this if you need newer packages from Hackage
   , hackage.haskell.org 2025-04-08T10:52:25Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2025-04-08T11:09:22Z
+  , cardano-haskell-packages 2025-05-14T06:57:45Z
 
 packages:
   ouroboros-consensus
@@ -47,6 +47,13 @@ if(os(windows))
 
 if impl (ghc >= 9.12)
   allow-newer:
+    -- Bounds will be relaxed in next release
+    , network-mux:base
+    , ouroboros-network-api:base
+    , ouroboros-network-framework:base
+    , ouroboros-network-protocols:base
+    , ouroboros-network:base
+
     -- https://github.com/phadej/vec/issues/118
     , bin:base
     , fin:base
