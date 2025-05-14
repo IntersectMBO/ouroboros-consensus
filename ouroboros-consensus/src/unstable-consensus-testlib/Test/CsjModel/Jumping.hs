@@ -285,7 +285,9 @@ stimulateSTM env varCsj varInboxes pid imm stimulus = do
         Just (x', msgs) -> do
             writeTVar varCsj x'
             inboxes <- readTVar varInboxes
-            for_ msgs $ \(pid', reaction) -> do
+            -- Process the messages backwards because the model adds new
+            -- messages by just consing them onto the front of the list.
+            for_ (reverse msgs) $ \(pid', reaction) -> do
                 writeTVar (inboxes Map.! pid') $ Strict.Just reaction
             pure $ CsjModelEvent pid stimulus imm msgs x x'
 
