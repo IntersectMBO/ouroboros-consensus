@@ -191,10 +191,9 @@ getIsValid CDB{..} = do
     prevApplied <- LedgerDB.getPrevApplied cdbLedgerDB
     invalid     <- forgetFingerprint <$> readTVar cdbInvalid
     return $ \pt@(RealPoint _ hash) ->
-      -- Blocks from the future that were valid according to the ledger but
-      -- that exceeded the max clock skew will be in 'prevApplied' *and*
-      -- 'invalid'. So we first check 'invalid' before 'prevApplied'. See
-      -- #2413.
+      -- A block can not both be in the set of invalid blocks and
+      -- previously-applied blocks, so the order in which we check them does not
+      -- matter.
       if | Map.member hash invalid   -> Just False
          | Set.member pt prevApplied -> Just True
          | otherwise                 -> Nothing
