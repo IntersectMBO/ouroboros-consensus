@@ -60,9 +60,9 @@ prettyCsjModelEvent ev =
   $ (("CsjModelEvent " ++ show pid) :)
   $ map ("    " ++)
   $ ([ show stimulus, show imm, show msgs] <>)
-  $ pretty (fullTrim $ fmap discardJI x) <> pretty (fullTrim $ fmap discardJI x')
+  $ pretty (fullTrim $ fmap discardJI x')
   where
-    CsjModelEvent pid stimulus imm msgs x x' = ev
+    CsjModelEvent pid stimulus imm msgs _x x' = ev
 
     discardJI :: JumpInfo blk -> JI
     discardJI = const JI
