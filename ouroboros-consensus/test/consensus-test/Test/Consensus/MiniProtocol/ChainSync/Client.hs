@@ -89,13 +89,15 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      ConfigEnv (..), Consensus, DynamicEnv (..), Our (..),
                      Their (..), TraceChainSyncClientEvent (..),
                      bracketChainSyncClient, chainSyncClient, chainSyncStateFor,
-                     newChainSyncClientHandleCollection, viewChainSyncState)
+                     implJumpingGovernor, newChainSyncClientHandleCollection,
+                     viewChainSyncState)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
                      (HistoricityCheck, HistoricityCutoff (..))
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck as HistoricityCheck
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
                      (ClockSkew, clockSkewInSeconds, unClockSkew)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (ImmutableJumpInfo)
 import           Ouroboros.Consensus.Node.GsmState (GsmState (Syncing))
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
                      (NodeToNodeVersion)
@@ -420,11 +422,14 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
         diffusionPipelining :: DiffusionPipeliningSupport
         diffusionPipelining = DiffusionPipeliningOn
 
-        client :: ChainSyncStateView m TestBlock
+        client :: Maybe (ImmutableJumpInfo TestBlock)
+               -> ChainSyncStateView m TestBlock
                -> Consensus ChainSyncClientPipelined
                     TestBlock
                     m
-        client ChainSyncStateView {csvSetCandidate, csvSetLatestSlot, csvIdling, csvLoPBucket, csvJumping} =
+        client
+            mbImmJumpInfo
+            ChainSyncStateView {csvSetCandidate, csvSetLatestSlot, csvIdling, csvLoPBucket, csvJumping} =
             chainSyncClient
               ConfigEnv {
                   chainDbView
@@ -447,6 +452,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                 , setLatestSlot = csvSetLatestSlot
                 , jumping = csvJumping
                 }
+              mbImmJumpInfo
 
     -- Set up the server
     varChainProducerState <- uncheckedNewTVarM $ initChainProducerState Genesis
@@ -510,6 +516,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
               bracketChainSyncClient
                  chainSyncTracer
                  nullTracer   -- CSJ events
+                 implJumpingGovernor
                  chainDbView
                  cschCol
                  -- 'Syncing' only ever impacts the LoP, which is disabled in
@@ -520,13 +527,13 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                  lopBucketConfig
                  csjConfig
                  diffusionPipelining
-                 $ \csState -> do
+                 $ \mbImmJumpInfo csState -> do
                    atomically $ do
                      handles <- cschcMap cschCol
                      modifyTVar varFinalCandidates $ Map.insert serverId (handles Map.! serverId)
                    (result, _) <-
                      runPipelinedPeer protocolTracer codecChainSyncId clientChannel $
-                       chainSyncClientPeerPipelined $ client csState
+                       chainSyncClientPeerPipelined $ client mbImmJumpInfo csState
                    atomically $ writeTVar varClientResult (Just (ClientFinished result))
                    return ()
               `catchAlsoLinked` \ex -> do

@@ -153,6 +153,7 @@ oneBenchRun
               , CSClient.loPBucket           = CSClient.noLoPBucket
               , CSClient.jumping             = CSClient.noJumping
               }
+            Nothing
 
     server :: ChainSyncServer H (Point B) (Tip B) IO ()
     server =
