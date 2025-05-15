@@ -2,6 +2,42 @@
 
 # Changelog entries
 
+<a id='changelog-0.27.0.0'></a>
+## 0.27.0.0 -- 2025-05-15
+
+### Patch
+
+- Fix potential race condition in `Follower` forwarding.
+
+- Bugfix in Ouroboros Genesis. Added the @GsmState@ argument to the
+  @registerClient@ function for the ChainSync Jumping optimization. If the node
+  is in the @GSM.CaughtUp@ state, new peers now immediately disengage from CSJ.
+
+- Bump `ouroboros-network` packages dependencies.
+
+### Non-Breaking
+
+- Maintain a parallel selection with time annotations since the
+  `ConsensusBlockFetchInterface` uses the same type argument for ChainSync
+  candidates and the current selection.
+
+- Drop GHC 8.10 support.
+
+### Breaking
+
+- Define `HeaderWithTime`.
+
+- Use `HeaderWithTime` for the ChainSync candidates.
+
+- Remove `SlotForgeTimeOracle` and its use in the BlockFetch client interface,
+  as we no longer translate time in the BlockFetch client.
+
+- Rename `GetLedgerConfig` to `DebugLedgerConfig`, indicating that it is a debug
+  query, meaning that compatibility across node versions is not guaranteed.
+
+  Please let us know if you want to rely on this query and would benefit from
+  proper backwards-compatibility guarantees.
+
 <a id='changelog-0.26.0.0'></a>
 ## 0.26.0.0 -- 2025-04-21
 

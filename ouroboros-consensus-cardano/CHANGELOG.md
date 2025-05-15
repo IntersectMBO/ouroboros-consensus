@@ -2,6 +2,17 @@
 
 # Changelog entries
 
+<a id='changelog-0.25.1.0'></a>
+## 0.25.1.0 -- 2025-05-15
+
+### Patch
+
+- Removed reference to deleted NodeToNodeV_13 from SupportedNetworkProtocolVersion
+
+### Non-Breaking
+
+- Drop GHC 8.10 support.
+
 <a id='changelog-0.25.0.1'></a>
 ## 0.25.0.1 -- 2025-04-25
 
