@@ -75,6 +75,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCh
                      (HistoricityCheck)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
                      (SomeHeaderInFutureCheck)
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as CSJumping
 import           Ouroboros.Consensus.Node.Genesis (GenesisNodeKernelArgs (..),
                      LoEAndGDDConfig (..), LoEAndGDDNodeKernelArgs (..),
                      setGetLoEFragment)
@@ -438,6 +439,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
           blockFetchSize
           readFetchMode
           getDiffusionPipeliningSupport
+          CSJumping.rotateDynamo
 
     peerSharingRegistry <- newPeerSharingRegistry
 

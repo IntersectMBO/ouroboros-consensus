@@ -110,7 +110,6 @@ mkBlockFetchConsensusInterface ::
      forall m peer blk.
      ( IOLike m
      , BlockSupportsDiffusionPipelining blk
-     , Ord peer
      , LedgerSupportsProtocol blk
      , SupportsNode.ConfigSupportsNode blk
      )
@@ -122,9 +121,10 @@ mkBlockFetchConsensusInterface ::
   -> STM m FetchMode
      -- ^ See 'readFetchMode'.
   -> DiffusionPipeliningSupport
+  -> (Tracer m (CSJumping.TraceEventDbf peer) -> CSClient.ChainSyncClientHandleCollection peer m blk -> peer -> m ())
   -> BlockFetchConsensusInterface peer (HeaderWithTime blk) blk m
 mkBlockFetchConsensusInterface
-  csjTracer bcfg chainDB csHandlesCol blockFetchSize readFetchMode pipelining =
+  csjTracer bcfg chainDB csHandlesCol blockFetchSize readFetchMode pipelining csjDemote =
     BlockFetchConsensusInterface {blockFetchSize = blockFetchSize . hwtHeader, ..}
   where
     getCandidates :: STM m (Map peer (AnchoredFragment (HeaderWithTime blk)))
@@ -281,4 +281,4 @@ mkBlockFetchConsensusInterface
     readChainSelStarvation = getChainSelStarvation chainDB
 
     demoteChainSyncJumpingDynamo :: peer -> m ()
-    demoteChainSyncJumpingDynamo = CSJumping.rotateDynamo csjTracer csHandlesCol
+    demoteChainSyncJumpingDynamo = csjDemote csjTracer csHandlesCol

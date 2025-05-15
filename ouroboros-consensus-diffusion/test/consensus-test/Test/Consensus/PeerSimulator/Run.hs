@@ -433,6 +433,9 @@ startNode schedulerConfig genesisTest interval = do
     lnChainDb
     fetchClientRegistry
     handles
+    csjpJumpSize
+    varCsj
+    varInboxes
 
   for_ lrLoEVar $ \ var -> do
       forkLinkedWatcher lrRegistry "LoE updater background" $

@@ -15,16 +15,20 @@ module Test.Consensus.PeerSimulator.BlockFetch (
   , startKeepAliveThread
   ) where
 
-import           Control.Monad (void)
+import           Cardano.Slotting.Slot (SlotNo (unSlotNo))
+import           Control.Monad (join, void)
 import           Control.Monad.Class.MonadTime
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.ResourceRegistry
-import           Control.Tracer (Tracer, nullTracer, traceWith)
+import           Control.Tracer (Tracer, contramap, nullTracer, traceWith)
 import           Data.Functor.Contravariant ((>$<))
+import           Data.Map (Map)
 import           Network.TypedProtocol.Codec (ActiveState, AnyMessage,
                      StateToken, notActiveState)
 import           Ouroboros.Consensus.Block (HasHeader)
 import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
+import           Ouroboros.Consensus.Block.RealPoint
+                     (pointToWithOriginRealPoint, realPointSlot)
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
@@ -37,6 +41,7 @@ import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Consensus.Util.IOLike
+import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..),
                      FetchClientRegistry, GenesisBlockFetchConfiguration (..),
                      blockFetchLogic, bracketFetchClient,
@@ -68,6 +73,8 @@ import           Test.Consensus.PeerSimulator.Trace
                      TraceEvent (..))
 import           Test.Consensus.PointSchedule (BlockFetchTimeout (..))
 import           Test.Consensus.PointSchedule.Peers (PeerId)
+import qualified Test.CsjModel as CsjModel
+import qualified Test.CsjModel.Jumping as CsjModel
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (BlockConfig (TestBlockConfig), TestBlock)
 
@@ -80,8 +87,11 @@ startBlockFetchLogic ::
   -> ChainDB m TestBlock
   -> FetchClientRegistry PeerId (HeaderWithTime TestBlock) TestBlock m
   -> ChainSyncClientHandleCollection PeerId m TestBlock
+  -> SlotNo
+  -> StrictTVar m (CsjModel.F (CsjModel.CsjState PeerId) TestBlock)
+  -> StrictTVar m (Map PeerId (CsjModel.Inbox m TestBlock))
   -> m ()
-startBlockFetchLogic enableChainSelStarvation registry tracer chainDb fetchClientRegistry csHandlesCol = do
+startBlockFetchLogic enableChainSelStarvation registry tracer chainDb fetchClientRegistry csHandlesCol jumpSize varCsj varInboxes = do
     let blockFetchConsensusInterface =
           BlockFetchClientInterface.mkBlockFetchConsensusInterface
             nullTracer -- FIXME
@@ -94,6 +104,19 @@ startBlockFetchLogic enableChainSelStarvation registry tracer chainDb fetchClien
             -- This is a syncing test, so we use 'FetchModeGenesis'.
             (pure FetchModeGenesis)
             DiffusionPipeliningOn
+            (\_tracer _cschcol peer -> join $ atomically $ do
+                imm <- (pointToWithOriginRealPoint . AF.castPoint . AF.anchorPoint) <$> getCurrentChain chainDb
+                CsjModel.rotateDynamo
+                    (contramap TraceCsjModelEvent tracer)
+                    CsjModel.CsjEnv {
+                      CsjModel.minJumpSlots  = unSlotNo jumpSize
+                    , CsjModel.realPointSlot = realPointSlot
+                    }
+                    varCsj
+                    varInboxes
+                    peer
+                    imm
+            )
 
         bfcGenesisBFConfig = if enableChainSelStarvation
           then GenesisBlockFetchConfiguration
