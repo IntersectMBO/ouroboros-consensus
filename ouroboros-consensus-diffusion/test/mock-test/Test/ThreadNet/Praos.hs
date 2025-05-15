@@ -108,6 +108,7 @@ prop_simple_praos_convergence TestSetup
   , setupTestConfig    = testConfig
   , setupEvolvingStake = evolvingStake
   } =
+    counterexample flakyTestCopy $
     counterexample (tracesToDot testOutputNodes) $
     prop_general PropGeneralArgs
       { pgaBlockProperty       = prop_validSimpleBlock
@@ -155,3 +156,5 @@ prop_simple_praos_convergence TestSetup
                                   (blockForgingPraos numCoreNodes nid)
             , mkRekeyM = Nothing
             }
+
+    flakyTestCopy = "This test may be flaky, and its failure may not be indicative of an actual problem: see https://github.com/IntersectMBO/ouroboros-consensus/issues/1105"
