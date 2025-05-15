@@ -176,6 +176,7 @@ prop_simple_cardano_convergence TestSetup
   , setupTestConfig
   , setupVersion
   } =
+    counterexample flakyTestCopy $
     prop_general_semisync pga testOutput .&&.
     prop_inSync testOutput .&&.
     prop_ReachesEra2 reachesEra2 .&&.
@@ -435,6 +436,9 @@ prop_simple_cardano_convergence TestSetup
           ) $
         counterexample "CP violation in final chains!" $
         property $ unNonZero (maxRollbacks setupK) >= finalIntersectionDepth
+
+    flakyTestCopy :: String
+    flakyTestCopy = "This test may be flaky, and its failure may not be indicative of an actual problem: see https://github.com/IntersectMBO/ouroboros-consensus/issues/545"
 
 mkProtocolCardanoAndHardForkTxs ::
      forall c m. (IOLike m, c ~ StandardCrypto)
