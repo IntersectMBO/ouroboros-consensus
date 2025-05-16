@@ -49,5 +49,5 @@ relativeTime = int
 
 ;; Base word types
 word8  = uint .size 1
-word32 = unit .size 4
-word64 = unit .size 8
+word32 = uint .size 4
+word64 = uint .size 8

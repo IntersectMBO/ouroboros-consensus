@@ -29,33 +29,52 @@ import qualified Test.Cardano.Ledger.Shelley.Binary.Cddl as Shelley
 import Test.Tasty
 import Test.Tasty.HUnit
 
+goldenFilesPrefixed :: FilePath -> FilePath -> IO [FilePath]
+goldenFilesPrefixed inPath prefix =
+    (map (inPath F.</>)) . filter (L.isPrefixOf prefix) <$> D.listDirectory inPath
+
 main :: IO ()
 main = do
   probeTools
   setupCDDLCEnv
 
   -- Only test the golden blocks
-  goldenBlocks <-
-      (map ("ouroboros-consensus-cardano/golden/cardano/disk" F.</>))
-    . filter (L.isPrefixOf "Block_")
-    <$> D.listDirectory "ouroboros-consensus-cardano/golden/cardano/disk/"
+  goldenDiskBlocks <- goldenFilesPrefixed "ouroboros-consensus-cardano/golden/cardano/disk/" "Block_"
+  goldenNTNBlocks <- goldenFilesPrefixed "ouroboros-consensus-cardano/golden/cardano/CardanoNodeToNodeVersion2/" "Block_"
+  goldenNTNHeaders <- goldenFilesPrefixed "ouroboros-consensus-cardano/golden/cardano/CardanoNodeToNodeVersion2/" "Header_"
+
 
   defaultMain
     $ testGroup "Golden"
       [ withResource
          (cddlc "cddl/disk/block.cddl"
-          >>= fixupBlockCDDL
-          >>= BS.writeFile "block.cddl" . cddlSpec
+            >>= fixupBlockCDDL
+            >>= BS.writeFile "diskblock.cddl" . cddlSpec
          )
-         (\() -> D.removeFile "block.cddl")
-         $ \_ -> testGroup "Blocks" $
-                   map (cuddleValidate "block.cddl" "cardanoBlock") goldenBlocks
+         (\() -> D.removeFile "diskblock.cddl")
+         $ \_ -> testGroup "Disk Blocks" $
+                   map (cuddleValidate "diskblock.cddl" "cardanoBlock") goldenDiskBlocks
+      , withResource
+         (cddlc "cddl/node-to-node/blockfetch/block.cddl"
+          >>= fixupBlockCDDL
+          >>= BS.writeFile "ntnblock.cddl" . cddlSpec
+         )
+         (\() -> D.removeFile "ntnblock.cddl")
+         $ \_ -> testGroup "NTN Blocks" $
+                   map (cuddleValidate "ntnblock.cddl" "serialisedCardanoBlock") goldenNTNBlocks
+      , withResource
+         (cddlc "cddl/node-to-node/chainsync/header.cddl"
+          >>= BS.writeFile "ntnheader.cddl" . cddlSpec
+         )
+         (\() -> D.removeFile "ntnheader.cddl")
+         $ \_ -> testGroup "NTN Headers" $
+                   map (cuddleValidate "ntnheader.cddl" "header") goldenNTNHeaders
       ]
 
 
 cuddleValidate :: FilePath -> String -> FilePath -> TestTree
 cuddleValidate cddl rule cbor = testCase cbor $ do
-  (e, err, _) <- P.readProcessWithExitCode "cuddle" ["validate-cbor", "-c", cbor, "-r", rule, cddl] mempty
+  (e, _, err) <- P.readProcessWithExitCode "cuddle" ["validate-cbor", "-c", cbor, "-r", rule, cddl] mempty
   case e of
     ExitSuccess -> pure ()
     ExitFailure _ -> assertFailure $ BS8.unpack $ BSL.toStrict err
