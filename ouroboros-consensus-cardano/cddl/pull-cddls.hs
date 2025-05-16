@@ -52,7 +52,7 @@ main = do
             >>= BS.writeFile "diskblock.cddl" . cddlSpec
          )
          (\() -> D.removeFile "diskblock.cddl")
-         $ \_ -> testGroup "Disk Blocks" $
+         $ \_ -> testGroup "Disk Blocks (cddl/disk/block.cddl)" $
                    map (cuddleValidate "diskblock.cddl" "cardanoBlock") goldenDiskBlocks
       , withResource
          (cddlc "cddl/node-to-node/blockfetch/block.cddl"
@@ -60,14 +60,14 @@ main = do
           >>= BS.writeFile "ntnblock.cddl" . cddlSpec
          )
          (\() -> D.removeFile "ntnblock.cddl")
-         $ \_ -> testGroup "NTN Blocks" $
+         $ \_ -> testGroup "NTN Blocks (cddl/node-to-node/blockfetch/block.cddl)" $
                    map (cuddleValidate "ntnblock.cddl" "serialisedCardanoBlock") goldenNTNBlocks
       , withResource
          (cddlc "cddl/node-to-node/chainsync/header.cddl"
           >>= BS.writeFile "ntnheader.cddl" . cddlSpec
          )
          (\() -> D.removeFile "ntnheader.cddl")
-         $ \_ -> testGroup "NTN Headers" $
+         $ \_ -> testGroup "NTN Headers (cddl/node-to-node/chainsync/header.cddl)" $
                    map (cuddleValidate "ntnheader.cddl" "header") goldenNTNHeaders
       ]
 

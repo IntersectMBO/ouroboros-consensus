@@ -99,7 +99,7 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/input-output-hk/cuddle
-  tag: 847e9c4fbacc261a2fb154d8d28e50227eaa9085
+  tag: 12667de12c911f94f0c40433bb02e46e74fad02d
 
 allow-newer:
     ouroboros-consensus:cardano-ledger-core,
