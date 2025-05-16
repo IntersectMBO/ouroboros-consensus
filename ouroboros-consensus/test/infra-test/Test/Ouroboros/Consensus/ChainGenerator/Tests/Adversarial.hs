@@ -459,6 +459,7 @@ instance QC.Arbitrary SomeTestAdversarialMutation where
 -- TODO this did fail after >500,000 tests. Is that amount of flakiness acceptable?
 prop_adversarialChainMutation :: SomeTestAdversarialMutation -> QCGen -> QC.Property
 prop_adversarialChainMutation (SomeTestAdversarialMutation Proxy Proxy testAdversarialMut) testSeedAsSeed0 =
+  TT.counterexample flakyTestCopy $
   QC.ioProperty $ do
     A.SomeCheckedAdversarialRecipe Proxy recipeA' <- pure someRecipeA'
 
@@ -506,6 +507,8 @@ prop_adversarialChainMutation (SomeTestAdversarialMutation Proxy Proxy testAdver
                 A.BadCount{}   -> error $ "impossible! " <> show e
                 A.BadDensity{} -> pure $ QC.property ()
                 A.BadRace{}    -> pure $ QC.property ()
+
+    flakyTestCopy = "This test may be flaky, and its failure may not be indicative of an actual problem: see https://github.com/IntersectMBO/ouroboros-consensus/issues/1442"
 
 -----
 

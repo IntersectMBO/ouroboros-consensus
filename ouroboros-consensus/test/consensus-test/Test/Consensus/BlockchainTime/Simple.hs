@@ -112,7 +112,7 @@ instance Arbitrary TestDelayIO where
 -- test gives us a more useful property. Also see issue #3894.
 prop_delayNextSlot :: TestDelayIO -> Property
 prop_delayNextSlot TestDelayIO{..} =
-    ioProperty test
+    counterexample flakyTestCopy $ ioProperty test
   where
     test :: IO Property
     test = do
@@ -261,6 +261,7 @@ instance Arbitrary Schedule where
 
 prop_delayClockShift :: Schedule -> Property
 prop_delayClockShift schedule =
+    counterexample flakyTestCopy $
     tabulate "schedule length"    [show $ range (length (getSchedule schedule))] $
     tabulate "schedule goes back" [show $ scheduleGoesBack schedule]             $
     tabulate "schedule skips"     [show $ range (scheduleCountSkips schedule)]   $
@@ -312,15 +313,16 @@ prop_delayClockShift schedule =
 -- | Just as a sanity check, verify that this works in IO
 prop_delayNoClockShift :: Property
 prop_delayNoClockShift =
-    ioProperty $ do
-      now   <- getCurrentTime
-      slots <- originalDelay $
-                 testOverrideDelay
-                   (SystemStart now)
-                   (slotLengthFromMillisec 100)
-                   (secondsToNominalDiffTime 20)
-                   5
-      pure $ slots === [SlotNo n | n <- [0..4]]
+    counterexample flakyTestCopy $
+      ioProperty $ do
+        now   <- getCurrentTime
+        slots <- originalDelay $
+                   testOverrideDelay
+                     (SystemStart now)
+                     (slotLengthFromMillisec 100)
+                     (secondsToNominalDiffTime 20)
+                     5
+        pure $ slots === [SlotNo n | n <- [0..4]]
 
 -- | Note that that under load, the returned list could be missing certain slots
 -- or contain more slots than requested. This means that tests using this
@@ -624,3 +626,6 @@ overrideDelay start schedule ma = runSim $ do
 
 originalDelay :: OverrideDelay IO a -> IO a
 originalDelay ma = runReaderT (unOverrideDelay ma) (error "schedule unused")
+
+flakyTestCopy :: String
+flakyTestCopy = "This test may be flaky, and its failure may not be indicative of an actual problem: see https://github.com/IntersectMBO/ouroboros-consensus/issues/567"

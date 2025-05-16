@@ -23,6 +23,7 @@ import           Main.Utf8 (withStdTerminalHandles)
 import           Ouroboros.Consensus.Ledger.SupportsMempool (ByteSize32)
 import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool
 import           System.Exit (die, exitFailure)
+import           System.IO (hPutStrLn, stderr)
 import qualified Test.Consensus.Mempool.Mocked as Mocked
 import           Test.Consensus.Mempool.Mocked (MockedMempool)
 import           Test.Tasty (withResource)
@@ -46,7 +47,9 @@ main = withStdTerminalHandles $ do
           Nothing               -> exitFailure
           Just    runIngredient -> do
             success <- runIngredient
-            unless success exitFailure
+            unless success $ do
+              hPutStrLn stderr "This benchmark is flaky in GitHub Actions due to CI runner load, which can it to run significantly slower than expected. It may be useful to try to re-run the job if it fails. See https://github.com/IntersectMBO/ouroboros-consensus/issues/313"
+              exitFailure
       where
         benchmarkJustAddingTransactions =
             bgroup "Just adding" $

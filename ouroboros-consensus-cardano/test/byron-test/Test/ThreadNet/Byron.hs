@@ -862,6 +862,7 @@ prop_simple_real_pbft_convergence TestSetup
     tabulate "Ref.PBFT result" [Ref.resultConstrName refResult] $
     tabulate "proposed protocol version was adopted" [show aPvuRequired] $
     tabulate "proposed software version was adopted" [show aSvuRequired] $
+    counterexample flakyTestCopy $
     counterexample ("params: " <> show params) $
     counterexample ("Ref.PBFT result: " <> show refResult) $
     counterexample
@@ -1054,6 +1055,9 @@ prop_simple_real_pbft_convergence TestSetup
     genesisConfig  :: Genesis.Config
     genesisSecrets :: Genesis.GeneratedSecrets
     (genesisConfig, genesisSecrets) = generateGenesisConfig slotLength params
+
+    flakyTestCopy :: String
+    flakyTestCopy = "This test may be flaky, and its failure may not be indicative of an actual problem: see https://github.com/IntersectMBO/ouroboros-consensus/issues/1294 and / or https://github.com/IntersectMBO/ouroboros-consensus/issues/582"
 
 byronForgeEbbEnv :: ForgeEbbEnv ByronBlock
 byronForgeEbbEnv = ForgeEbbEnv
