@@ -136,15 +136,15 @@ library
     cardano-crypto,
     cardano-crypto-class ^>=2.2,
     cardano-crypto-wrapper,
-    cardano-ledger-allegra ^>=1.7,
-    cardano-ledger-alonzo ^>=1.13,
-    cardano-ledger-api ^>=1.11,
-    cardano-ledger-babbage ^>=1.11,
-    cardano-ledger-binary ^>=1.6,
+    cardano-ledger-allegra ^>=1.8,
+    cardano-ledger-alonzo ^>=1.14,
+    cardano-ledger-api ^>=1.12,
+    cardano-ledger-babbage ^>=1.12,
+    cardano-ledger-binary ^>=1.7,
     cardano-ledger-byron ^>=1.1,
     cardano-ledger-conway ^>=1.19,
     cardano-ledger-core ^>=1.17,
-    cardano-ledger-mary ^>=1.8,
+    cardano-ledger-mary ^>=1.9,
     cardano-ledger-shelley ^>=1.16,
     cardano-prelude,
     cardano-protocol-tpraos ^>=1.4,
@@ -744,11 +744,13 @@ executable gen-header
   autogen-modules:
     Paths_ouroboros_consensus_cardano
 
-executable pull-cddls
+test-suite cddl-compliance
   import: common-exe
+  type: exitcode-stdio-1.0
   hs-source-dirs: cddl
   main-is: pull-cddls.hs
   other-modules: Paths_ouroboros_consensus_cardano
+  build-tool-depends: cuddle:cuddle
   build-depends:
     base,
     bytestring,
@@ -762,4 +764,5 @@ executable pull-cddls
     directory,
     filepath,
     process-extras,
-    utf8-string,
+    tasty-hunit,
+    tasty,

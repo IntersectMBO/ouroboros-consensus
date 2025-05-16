@@ -1,3 +1,5 @@
+{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE CPP #-}
 -- |
@@ -5,14 +7,15 @@
 module Main (main) where
 
 import qualified Control.Monad as Monad
-import qualified Data.ByteString.Lazy as BL
-import qualified Data.ByteString.Lazy.UTF8 as BL8
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
+import qualified Data.ByteString.Char8 as BS8
 import           Data.Maybe (isNothing)
 import qualified Data.List as L
 import           Paths_ouroboros_consensus_cardano
 import qualified System.Directory as D
 import qualified System.Environment as E
-import           System.Exit (exitFailure)
+import           System.Exit
 import qualified System.FilePath as F
 import qualified System.Process.ByteString.Lazy as P
 import qualified Test.Cardano.Chain.Binary.Cddl as Byron
@@ -22,16 +25,43 @@ import qualified Test.Cardano.Ledger.Babbage.Binary.Cddl as Babbage
 import qualified Test.Cardano.Ledger.Conway.Binary.Cddl as Conway
 import qualified Test.Cardano.Ledger.Mary.Binary.Cddl as Mary
 import qualified Test.Cardano.Ledger.Shelley.Binary.Cddl as Shelley
+--import System.IO
+import Test.Tasty
+import Test.Tasty.HUnit
 
 main :: IO ()
 main = do
   probeTools
-  setupEnv
-  -- For now I just print this.
-  print =<< getCDDLs
+  setupCDDLCEnv
 
-setupEnv :: IO ()
-setupEnv = do
+  -- Only test the golden blocks
+  goldenBlocks <-
+      (map ("ouroboros-consensus-cardano/golden/cardano/disk" F.</>))
+    . filter (L.isPrefixOf "Block_")
+    <$> D.listDirectory "ouroboros-consensus-cardano/golden/cardano/disk/"
+
+  defaultMain
+    $ testGroup "Golden"
+      [ withResource
+         (cddlc "cddl/disk/block.cddl"
+          >>= fixupBlockCDDL
+          >>= BS.writeFile "block.cddl" . cddlSpec
+         )
+         (\() -> D.removeFile "block.cddl")
+         $ \_ -> testGroup "Blocks" $
+                   map (cuddleValidate "block.cddl" "cardanoBlock") goldenBlocks
+      ]
+
+
+cuddleValidate :: FilePath -> String -> FilePath -> TestTree
+cuddleValidate cddl rule cbor = testCase cbor $ do
+  (e, err, _) <- P.readProcessWithExitCode "cuddle" ["validate-cbor", "-c", cbor, "-r", rule, cddl] mempty
+  case e of
+    ExitSuccess -> pure ()
+    ExitFailure _ -> assertFailure $ BS8.unpack $ BSL.toStrict err
+
+setupCDDLCEnv :: IO ()
+setupCDDLCEnv = do
   byron   <- map takePath <$> Byron.readByronCddlFileNames
   shelley <- map takePath <$> Shelley.readShelleyCddlFileNames
   allegra <- map takePath <$> Allegra.readAllegraCddlFileNames
@@ -58,7 +88,7 @@ setupEnv = do
 
   E.setEnv "CDDL_INCLUDE_PATH" (include_path <> ":")
 
-newtype CDDLSpec = CDDLSpec BL.ByteString deriving Show
+newtype CDDLSpec = CDDLSpec { cddlSpec :: BS.ByteString } deriving Show
 
 data CDDLs = CDDLs {
     diskBlockCDDL :: CDDLSpec
@@ -83,42 +113,71 @@ data CDDLs = CDDLs {
   , ntcTxMonitorSlotNoCDDL :: CDDLSpec
   } deriving Show
 
-getCDDLs :: IO CDDLs
-getCDDLs = CDDLs
-  -- Disk
-  <$> cddlc "cddl/disk/block.cddl"
-  <*> cddlc "cddl/disk/snapshot.cddl"
+-- getCDDLs :: IO CDDLs
+-- getCDDLs = CDDLs
+--   -- Disk
+--   <$> cddlc "cddl/disk/block.cddl"
+--   <*> cddlc "cddl/disk/snapshot.cddl"
 
-  -- Node to node
-  -- -- BlockFetch
-  <*> cddlc "cddl/node-to-node/blockfetch/block.cddl"
-  <*> cddlc "cddl/node-to-node/blockfetch/point.cddl"
+--   -- Node to node
+--   -- -- BlockFetch
+--   <*> cddlc "cddl/node-to-node/blockfetch/block.cddl"
+--   <*> cddlc "cddl/node-to-node/blockfetch/point.cddl"
 
-  -- -- ChainSync
-  <*> cddlc "cddl/node-to-node/chainsync/header.cddl"
-  <*> cddlc "cddl/node-to-node/chainsync/point.cddl"
-  <*> cddlc "cddl/node-to-node/chainsync/tip.cddl"
+--   -- -- ChainSync
+--   <*> cddlc "cddl/node-to-node/chainsync/header.cddl"
+--   <*> cddlc "cddl/node-to-node/chainsync/point.cddl"
+--   <*> cddlc "cddl/node-to-node/chainsync/tip.cddl"
 
-  -- -- TxSubmission2
-  <*> cddlc "cddl/node-to-node/txsubmission2/ticketno.cddl"
-  <*> cddlc "cddl/node-to-node/txsubmission2/tx.cddl"
-  <*> cddlc "cddl/node-to-node/txsubmission2/txid.cddl"
+--   -- -- TxSubmission2
+--   <*> cddlc "cddl/node-to-node/txsubmission2/ticketno.cddl"
+--   <*> cddlc "cddl/node-to-node/txsubmission2/tx.cddl"
+--   <*> cddlc "cddl/node-to-node/txsubmission2/txid.cddl"
 
-  -- Node to client
-  -- -- LocalStateQuery
-  <*> cddlc "cddl/node-to-client/localstatequery/query.cddl"
-  <*> cddlc "cddl/node-to-client/localstatequery/result.cddl"
+--   -- Node to client
+--   -- -- LocalStateQuery
+--   <*> cddlc "cddl/node-to-client/localstatequery/query.cddl"
+--   <*> cddlc "cddl/node-to-client/localstatequery/result.cddl"
 
-  -- -- TxMonitor
-  <*> cddlc "cddl/node-to-client/txmonitor/tx.cddl"
-  <*> cddlc "cddl/node-to-client/txmonitor/txid.cddl"
-  <*> cddlc "cddl/node-to-client/txmonitor/slotno.cddl"
+--   -- -- TxMonitor
+--   <*> cddlc "cddl/node-to-client/txmonitor/tx.cddl"
+--   <*> cddlc "cddl/node-to-client/txmonitor/txid.cddl"
+--   <*> cddlc "cddl/node-to-client/txmonitor/slotno.cddl"
+
+fixupBlockCDDL :: CDDLSpec -> IO CDDLSpec
+fixupBlockCDDL spec = do
+    let fp = "block-temp.cddl"
+    BS.writeFile fp . cddlSpec $ spec
+    -- This is wrong, both the metadata_hash of a pool and a transaction body
+    -- point to this type, but only the latter must be 32B.
+    sed fp ["-i", "s/\\(metadata_hash = \\)/\\1 bytes ;/g"]
+    -- For plutus, the type is actually `bytes`, but the distinct construct is
+    -- for forcing generation of different values.
+    sed fp ["-i", "s/\\(conway\\.distinct_VBytes = \\)/\\1 bytes ;\\//g"]
+    -- These 3 below are hardcoded for generation. See cardano-ledger#5054
+    sed fp ["-i", "s/\\([yaoye]\\.address = \\)/\\1 bytes ;/g"]
+    sed fp ["-i", "s/\\(reward_account = \\)/\\1 bytes ;/g"]
+    sed fp ["-i", "-z", "s/unit_interval = #6\\.30(\\[\\n\\s*1,\\n\\s*2,\\n\\])/unit_interval = #6.30([uint, uint])/g"]
+    r <- BS.readFile fp
+    D.removeFile fp
+    pure (CDDLSpec r)
+
+-- -- | Some CDDLs in the ledger are wrong or misleading. This step is to
+-- -- sed-replace to fix them until e.g. cardano-ledger#5054.
+-- fixup :: CDDLs -> IO CDDLs
+-- fixup CDDLs {..} = do
+--   diskBlockCDDL' <- fixupBlockCDDL diskBlockCDDL
+--   pure CDDLs {diskBlockCDDL = diskBlockCDDL', ..}
+
+sed :: FilePath -> [String] -> IO ()
+sed fp args =
+  Monad.void $ P.readProcessWithExitCode "sed" (args ++ [fp]) mempty
 
 cddlc :: FilePath -> IO CDDLSpec
 cddlc dataFile = do
   putStrLn $ "Generating: " <> dataFile
   path <- getDataFileName dataFile
-  (_, cddl, err) <-
+  (_, BSL.toStrict -> cddl, BSL.toStrict -> err) <-
 #ifdef POSIX
     P.readProcessWithExitCode "cddlc" ["-u", "-2", "-t", "cddl", path] mempty
 #else
@@ -129,7 +188,7 @@ cddlc dataFile = do
     prefix <- E.getEnv "MSYSTEM_PREFIX"
     P.readProcessWithExitCode "ruby" [prefix F.</> "bin/cddlc", "-u", "-2", "-t", "cddl", path] mempty
 #endif
-  Monad.unless (BL.null err) $ red $ BL8.toString err
+  Monad.unless (BS.null err) $ red $ BS8.unpack err
   return $ CDDLSpec cddl
  where
   red s = putStrLn $ "\ESC[31m" <> s <> "\ESC[0m"
@@ -177,7 +236,7 @@ probeTools = do
   rubyExe <- D.findExecutable "ruby"
   if (isNothing rubyExe)
   then do
-    putStrLn "not found!\nPlease install ruby and the `cddl` and `cddlc` gems"
+    putStrLn "not found!\nPlease install ruby"
     exitFailure
   else
     putStrLn "found"
