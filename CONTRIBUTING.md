@@ -203,7 +203,7 @@ and improvements are always welcome.
 
 ## Formatting the code
 
-We use `fourmolu` 0.17.0.0 for Haskell code formatting.
+We use `fourmolu` for Haskell code formatting. See [tools.nix](./nix/tools.nix) for the `fourmolu` version used in CI.
 
 Either enable editor integration or call the script used by CI itself:
 
