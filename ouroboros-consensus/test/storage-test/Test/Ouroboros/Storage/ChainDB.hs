@@ -19,28 +19,29 @@
 --   have some properties that verify that that the model behaves the way we
 --   think it should.
 -- * The main DB itself.
---
 module Test.Ouroboros.Storage.ChainDB (tests) where
 
-import           System.Info (os)
-import qualified Test.Ouroboros.Storage.ChainDB.FollowerPromptness as FollowerPromptness
-import qualified Test.Ouroboros.Storage.ChainDB.GcSchedule as GcSchedule
-import qualified Test.Ouroboros.Storage.ChainDB.Iterator as Iterator
-import qualified Test.Ouroboros.Storage.ChainDB.Model.Test as Model
-import qualified Test.Ouroboros.Storage.ChainDB.Paths as Paths
-import qualified Test.Ouroboros.Storage.ChainDB.StateMachine as StateMachine
-import qualified Test.Ouroboros.Storage.ChainDB.Unit as Unit
-import           Test.Tasty
+import System.Info (os)
+import Test.Ouroboros.Storage.ChainDB.FollowerPromptness qualified as FollowerPromptness
+import Test.Ouroboros.Storage.ChainDB.GcSchedule qualified as GcSchedule
+import Test.Ouroboros.Storage.ChainDB.Iterator qualified as Iterator
+import Test.Ouroboros.Storage.ChainDB.Model.Test qualified as Model
+import Test.Ouroboros.Storage.ChainDB.Paths qualified as Paths
+import Test.Ouroboros.Storage.ChainDB.StateMachine qualified as StateMachine
+import Test.Ouroboros.Storage.ChainDB.Unit qualified as Unit
+import Test.Tasty
 
 tests :: TestTree
-tests = testGroup "ChainDB" $ [
-      Iterator.tests
+tests =
+  testGroup "ChainDB" $
+    [ Iterator.tests
     , FollowerPromptness.tests
     , GcSchedule.tests
     , Model.tests
     , Paths.tests
     , Unit.tests
-    ] <>
-    -- The ChainDB q-s-m test is flaky on Windows, see
-    -- https://github.com/IntersectMBO/ouroboros-network/issues/3874
-    [ StateMachine.tests | os /= "mingw32" ]
+    ]
+      <>
+      -- The ChainDB q-s-m test is flaky on Windows, see
+      -- https://github.com/IntersectMBO/ouroboros-network/issues/3874
+      [StateMachine.tests | os /= "mingw32"]

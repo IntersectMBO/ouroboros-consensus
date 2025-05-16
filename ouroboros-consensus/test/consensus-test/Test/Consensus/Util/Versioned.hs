@@ -8,23 +8,24 @@
 -- Some of our serialization code supports some limited migration capability.
 -- This module contains a few unit tests that check that the migration
 -- infrastructure we provide works as expected.
---
 module Test.Consensus.Util.Versioned (tests) where
 
-import           Codec.CBOR.Read (deserialiseFromBytes)
-import           Codec.CBOR.Write (toLazyByteString)
-import           Codec.Serialise (DeserialiseFailure (..), Serialise (..))
-import           GHC.Generics (Generic)
-import           Ouroboros.Consensus.Util.Versioned
-import           Test.Tasty
-import           Test.Tasty.HUnit
+import Codec.CBOR.Read (deserialiseFromBytes)
+import Codec.CBOR.Write (toLazyByteString)
+import Codec.Serialise (DeserialiseFailure (..), Serialise (..))
+import GHC.Generics (Generic)
+import Ouroboros.Consensus.Util.Versioned
+import Test.Tasty
+import Test.Tasty.HUnit
 
 tests :: TestTree
-tests = testGroup "Versioned"
+tests =
+  testGroup
+    "Versioned"
     [ testCase "version0" test_version0
     , testCase "version1" test_version1
     , testCase "version2" test_version2
-    , testCase "unknown"  test_unknown
+    , testCase "unknown" test_unknown
     ]
 
 {-------------------------------------------------------------------------------
@@ -44,23 +45,23 @@ tests = testGroup "Versioned"
 -- from an encoding of 'Version1' using 'Migrate'.
 
 data Version0 = Version0
-    { field1 :: Int
-    }
+  { field1 :: Int
+  }
   deriving (Eq, Show, Generic, Serialise)
 
 data Version1 = Version1
-    { field1 :: Int
-    , field2 :: Int
-      -- ^ Let's say this field cannot be reconstructed from nothing
-    }
+  { field1 :: Int
+  , field2 :: Int
+  -- ^ Let's say this field cannot be reconstructed from nothing
+  }
   deriving (Eq, Show, Generic, Serialise)
 
 data Version2 = Version2
-    { field1 :: Int
-    , field2 :: Int
-    , field3 :: Int
-      -- ^ This field is the sum of 'field1' and 'field2'
-    }
+  { field1 :: Int
+  , field2 :: Int
+  , field3 :: Int
+  -- ^ This field is the sum of 'field1' and 'field2'
+  }
   deriving (Eq, Show, Generic, Serialise)
 
 version0 :: Version0
@@ -73,47 +74,50 @@ version2 :: Version2
 version2 = Version2 1 100 101
 
 decodeLatestVersion ::
-     [(VersionNumber, VersionDecoder Version2)]
+  [(VersionNumber, VersionDecoder Version2)]
 decodeLatestVersion =
-    [ (0, Incompatible "missing field 1")
-    , (1, Migrate (Decode decode) $ \(Version1 a b) ->
-        return $ Version2 a b (a + b))
-    , (2, Decode decode)
-    ]
+  [ (0, Incompatible "missing field 1")
+  ,
+    ( 1
+    , Migrate (Decode decode) $ \(Version1 a b) ->
+        return $ Version2 a b (a + b)
+    )
+  , (2, Decode decode)
+  ]
 
 {-------------------------------------------------------------------------------
   Tests
 -------------------------------------------------------------------------------}
 
-test_decodeVersioned
-  :: Serialise a
-  => [(VersionNumber, VersionDecoder b)]
-  -> VersionNumber
-  -> a
-  -> Either String (Versioned b)
+test_decodeVersioned ::
+  Serialise a =>
+  [(VersionNumber, VersionDecoder b)] ->
+  VersionNumber ->
+  a ->
+  Either String (Versioned b)
 test_decodeVersioned decs vn a =
-    case deserialiseFromBytes
-           (decodeVersioned decs)
-           (toLazyByteString (encodeVersion vn (encode a))) of
-      Left  (DeserialiseFailure _offset msg) -> Left  msg
-      Right (_unconsumed, b)                 -> Right b
+  case deserialiseFromBytes
+    (decodeVersioned decs)
+    (toLazyByteString (encodeVersion vn (encode a))) of
+    Left (DeserialiseFailure _offset msg) -> Left msg
+    Right (_unconsumed, b) -> Right b
 
 test_version0 :: Assertion
 test_version0 =
-    test_decodeVersioned decodeLatestVersion 0 version0
-      @?= Left "IncompatibleVersion 0 \"missing field 1\""
+  test_decodeVersioned decodeLatestVersion 0 version0
+    @?= Left "IncompatibleVersion 0 \"missing field 1\""
 
 test_version1 :: Assertion
 test_version1 =
-    test_decodeVersioned decodeLatestVersion 1 version1
-      @?= Right (Versioned 1 version2)
+  test_decodeVersioned decodeLatestVersion 1 version1
+    @?= Right (Versioned 1 version2)
 
 test_version2 :: Assertion
 test_version2 =
-    test_decodeVersioned decodeLatestVersion 2 version2
-      @?= Right (Versioned 2 version2)
+  test_decodeVersioned decodeLatestVersion 2 version2
+    @?= Right (Versioned 2 version2)
 
 test_unknown :: Assertion
 test_unknown =
-    test_decodeVersioned decodeLatestVersion 12 True
-      @?= Left "UnknownVersion 12"
+  test_decodeVersioned decodeLatestVersion 12 True
+    @?= Left "UnknownVersion 12"

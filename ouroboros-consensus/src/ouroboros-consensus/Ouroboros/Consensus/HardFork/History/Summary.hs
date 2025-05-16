@@ -14,21 +14,25 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Ouroboros.Consensus.HardFork.History.Summary (
-    -- * Bounds
+module Ouroboros.Consensus.HardFork.History.Summary
+  ( -- * Bounds
     Bound (..)
   , initBound
   , mkUpperBound
   , slotToEpochBound
+
     -- * Per-era summary
   , EraEnd (..)
   , EraSummary (..)
   , mkEraEnd
+
     -- * Overall summary
   , Summary (..)
+
     -- ** Construction
   , neverForksSummary
   , summaryWithExactly
+
     -- *** Summarize
   , Shape (..)
   , Transitions (..)
@@ -37,83 +41,95 @@ module Ouroboros.Consensus.HardFork.History.Summary (
   , singletonShape
   , summarize
   , transitionsUnknown
+
     -- ** Query
   , summaryBounds
   , summaryInit
   ) where
 
-import           Cardano.Binary (enforceSize)
-import           Codec.CBOR.Decoding (TokenType (TypeNull), decodeNull,
-                     peekTokenType)
-import           Codec.CBOR.Encoding (encodeListLen, encodeNull)
-import           Codec.Serialise
-import           Control.Monad (unless)
-import           Control.Monad.Except (Except, throwError)
-import           Data.Bifunctor
-import           Data.Foldable (toList)
-import           Data.Kind (Type)
-import           Data.Proxy
-import           Data.SOP.Counting
-import           Data.SOP.NonEmpty
-import           Data.SOP.Sing (SListI, lengthSList)
-import           Data.Time hiding (UTCTime)
-import           Data.Word
-import           GHC.Generics (Generic)
-import           GHC.Stack
-import           NoThunks.Class (InspectHeapNamed (..), NoThunks)
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.BlockchainTime.WallClock.Types
-import           Ouroboros.Consensus.HardFork.History.EraParams
-import           Ouroboros.Consensus.HardFork.History.Util
+import Cardano.Binary (enforceSize)
+import Codec.CBOR.Decoding
+  ( TokenType (TypeNull)
+  , decodeNull
+  , peekTokenType
+  )
+import Codec.CBOR.Encoding (encodeListLen, encodeNull)
+import Codec.Serialise
+import Control.Monad (unless)
+import Control.Monad.Except (Except, throwError)
+import Data.Bifunctor
+import Data.Foldable (toList)
+import Data.Kind (Type)
+import Data.Proxy
+import Data.SOP.Counting
+import Data.SOP.NonEmpty
+import Data.SOP.Sing (SListI, lengthSList)
+import Data.Time hiding (UTCTime)
+import Data.Word
+import GHC.Generics (Generic)
+import GHC.Stack
+import NoThunks.Class (InspectHeapNamed (..), NoThunks)
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime.WallClock.Types
+import Ouroboros.Consensus.HardFork.History.EraParams
+import Ouroboros.Consensus.HardFork.History.Util
 
 {-------------------------------------------------------------------------------
   Bounds
 -------------------------------------------------------------------------------}
 
 -- | Detailed information about the time bounds of an era
-data Bound = Bound {
-      boundTime  :: !RelativeTime
-    , boundSlot  :: !SlotNo
-    , boundEpoch :: !EpochNo
-    }
-  deriving stock    (Show, Eq, Generic)
-  deriving anyclass (NoThunks)
+data Bound = Bound
+  { boundTime :: !RelativeTime
+  , boundSlot :: !SlotNo
+  , boundEpoch :: !EpochNo
+  }
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
 
 initBound :: Bound
-initBound = Bound {
-      boundTime  = RelativeTime 0
-    , boundSlot  = SlotNo       0
-    , boundEpoch = EpochNo      0
+initBound =
+  Bound
+    { boundTime = RelativeTime 0
+    , boundSlot = SlotNo 0
+    , boundEpoch = EpochNo 0
     }
 
 -- | Version of 'mkUpperBound' when the upper bound may not be known
 --
 -- If passed 'Nothing', assumes 'EraUnbounded'. This is /NOT/
 -- suitable for eras where the transition is simply unknown.
-mkEraEnd :: EraParams
-         -> Bound          -- ^ Lower bound
-         -> Maybe EpochNo  -- ^ Upper bound
-         -> EraEnd
+mkEraEnd ::
+  EraParams ->
+  -- | Lower bound
+  Bound ->
+  -- | Upper bound
+  Maybe EpochNo ->
+  EraEnd
 mkEraEnd params lo = maybe EraUnbounded (EraEnd . mkUpperBound params lo)
 
 -- | Compute upper bound given just the epoch number and era parameters
-mkUpperBound :: HasCallStack
-             => EraParams
-             -> Bound    -- ^ Lower bound
-             -> EpochNo  -- ^ Upper bound
-             -> Bound
-mkUpperBound EraParams{..} lo hiEpoch = Bound {
-      boundTime  = addRelTime inEraTime  $ boundTime lo
-    , boundSlot  = addSlots   inEraSlots $ boundSlot lo
+mkUpperBound ::
+  HasCallStack =>
+  EraParams ->
+  -- | Lower bound
+  Bound ->
+  -- | Upper bound
+  EpochNo ->
+  Bound
+mkUpperBound EraParams{..} lo hiEpoch =
+  Bound
+    { boundTime = addRelTime inEraTime $ boundTime lo
+    , boundSlot = addSlots inEraSlots $ boundSlot lo
     , boundEpoch = hiEpoch
     }
-  where
-    inEraEpochs, inEraSlots :: Word64
-    inEraEpochs = countEpochs hiEpoch (boundEpoch lo)
-    inEraSlots  = inEraEpochs * unEpochSize eraEpochSize
+ where
+  inEraEpochs, inEraSlots :: Word64
+  inEraEpochs = countEpochs hiEpoch (boundEpoch lo)
+  inEraSlots = inEraEpochs * unEpochSize eraEpochSize
 
-    inEraTime :: NominalDiffTime
-    inEraTime = fromIntegral inEraSlots * getSlotLength eraSlotLength
+  inEraTime :: NominalDiffTime
+  inEraTime = fromIntegral inEraSlots * getSlotLength eraSlotLength
 
 -- Given the 'SlotNo' of the first /slot/ in which a transition could take
 -- place, compute the first /epoch/ in which this could happen (since
@@ -122,12 +138,12 @@ mkUpperBound EraParams{..} lo hiEpoch = Bound {
 -- however, it will be the /next/ epoch.
 slotToEpochBound :: EraParams -> Bound -> SlotNo -> EpochNo
 slotToEpochBound EraParams{eraEpochSize = EpochSize epochSize} lo hiSlot =
-    addEpochs
-      (if inEpoch == 0 then epochs else epochs + 1)
-      (boundEpoch lo)
-  where
-    slots             = countSlots hiSlot (boundSlot lo)
-    (epochs, inEpoch) = slots `divMod` epochSize
+  addEpochs
+    (if inEpoch == 0 then epochs else epochs + 1)
+    (boundEpoch lo)
+ where
+  slots = countSlots hiSlot (boundSlot lo)
+  (epochs, inEpoch) = slots `divMod` epochSize
 
 {-------------------------------------------------------------------------------
   Summary
@@ -166,25 +182,27 @@ slotToEpochBound EraParams{eraEpochSize = EpochSize epochSize} lo hiSlot =
 -- >       t' - t             ==     ((s' - s) * slotLen)
 -- >      (t' - t) / slotLen  ==       s' - s
 -- > s + ((t' - t) / slotLen) ==       s'
-data EraSummary = EraSummary {
-      eraStart  :: !Bound     -- ^ Inclusive lower bound
-    , eraEnd    :: !EraEnd    -- ^ Exclusive upper bound
-    , eraParams :: !EraParams -- ^ Active parameters
-    }
-  deriving stock    (Show, Eq, Generic)
-  deriving anyclass (NoThunks)
+data EraSummary = EraSummary
+  { eraStart :: !Bound
+  -- ^ Inclusive lower bound
+  , eraEnd :: !EraEnd
+  -- ^ Exclusive upper bound
+  , eraParams :: !EraParams
+  -- ^ Active parameters
+  }
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
 
 -- | Exclusive upper bound on the era
-data EraEnd =
-    -- | Bounded era
+data EraEnd
+  = -- | Bounded era
     EraEnd !Bound
-
-    -- | Unbounded era
+  | -- | Unbounded era
     --
     -- This arises from the use of 'UnsafeIndefiniteSafeZone'.
-  | EraUnbounded
-  deriving stock    (Show, Eq, Generic)
-  deriving anyclass (NoThunks)
+    EraUnbounded
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass NoThunks
 
 -- | Summary of the /confirmed/ part of the ledger
 --
@@ -192,7 +210,7 @@ data EraEnd =
 -- about the start and end of each era.
 --
 -- We have at most one summary for each era, and at least one
-newtype Summary xs = Summary { getSummary :: NonEmpty xs EraSummary }
+newtype Summary xs = Summary {getSummary :: NonEmpty xs EraSummary}
   deriving (Eq, Show)
   deriving NoThunks via InspectHeapNamed "Summary" (Summary xs)
 
@@ -202,16 +220,20 @@ newtype Summary xs = Summary { getSummary :: NonEmpty xs EraSummary }
 
 -- | 'Summary' for a ledger that never forks
 neverForksSummary :: EpochSize -> SlotLength -> GenesisWindow -> Summary '[x]
-neverForksSummary epochSize slotLen genesisWindow = Summary $ NonEmptyOne $ EraSummary {
-      eraStart  = initBound
-    , eraEnd    = EraUnbounded
-    , eraParams = EraParams {
-          eraEpochSize  = epochSize
-        , eraSlotLength = slotLen
-        , eraSafeZone   = UnsafeIndefiniteSafeZone
-        , eraGenesisWin = genesisWindow
+neverForksSummary epochSize slotLen genesisWindow =
+  Summary $
+    NonEmptyOne $
+      EraSummary
+        { eraStart = initBound
+        , eraEnd = EraUnbounded
+        , eraParams =
+            EraParams
+              { eraEpochSize = epochSize
+              , eraSlotLength = slotLen
+              , eraSafeZone = UnsafeIndefiniteSafeZone
+              , eraGenesisWin = genesisWindow
+              }
         }
-    }
 
 {-------------------------------------------------------------------------------
   Basic API for 'Summary'
@@ -220,7 +242,7 @@ neverForksSummary epochSize slotLen genesisWindow = Summary $ NonEmptyOne $ EraS
 -- | Outer bounds of the summary
 summaryBounds :: Summary xs -> (Bound, EraEnd)
 summaryBounds (Summary summary) =
-    (eraStart (nonEmptyHead summary), eraEnd (nonEmptyLast summary))
+  (eraStart (nonEmptyHead summary), eraEnd (nonEmptyLast summary))
 
 -- | Analogue of 'Data.List.init' for 'Summary' (i.e., split off the final era)
 --
@@ -250,8 +272,8 @@ summaryWithExactly = Summary . exactlyWeakenNonEmpty
 -- look something like @'[ByronBlock, ShelleyBlock, GoguenBlock]@ and do affect
 -- the hard fork combinator. So far this is a list of block types, since most
 -- of consensus is indexed by block types.
-newtype Shape xs = Shape { getShape :: Exactly xs EraParams }
-  deriving (Show)
+newtype Shape xs = Shape {getShape :: Exactly xs EraParams}
+  deriving Show
   deriving NoThunks via InspectHeapNamed "Shape" (Shape xs)
 
 -- | There is only one era
@@ -302,63 +324,66 @@ transitionsUnknown = Transitions AtMostNil
 -- 'minimumPossibleSlotNo' is not zero (e.g., some ledgers might set it to 1),
 -- the maximum number of blocks (aka filled slots) in an epoch is just 1 (or
 -- more) less than the other epochs.
-summarize :: WithOrigin SlotNo -- ^ Slot at the tip of the ledger
-          -> Shape       xs
-          -> Transitions xs
-          -> Summary     xs
+summarize ::
+  -- | Slot at the tip of the ledger
+  WithOrigin SlotNo ->
+  Shape xs ->
+  Transitions xs ->
+  Summary xs
 summarize ledgerTip = \(Shape shape) (Transitions transitions) ->
-    Summary $ go initBound shape transitions
-  where
-    go :: Bound                          -- Lower bound for current era
-       -> Exactly  (x ': xs) EraParams   -- params for all eras
-       -> AtMost         xs  EpochNo     -- transitions
-       -> NonEmpty (x ': xs) EraSummary
-    -- CASE (ii) from 'EraParams' Haddock
-    -- NOTE: Ledger tip might be close to the end of this era (or indeed past
-    -- it) but this doesn't matter for the summary of /this/ era.
-    go lo (ExactlyCons params ss) (AtMostCons epoch fs) =
-        NonEmptyCons (EraSummary lo (EraEnd hi) params) $ go hi ss fs
-      where
-        hi = mkUpperBound params lo epoch
-    -- CASE (i) or (iii) from 'EraParams' Haddock
-    go lo (ExactlyCons params@EraParams{..} _) AtMostNil =
-        NonEmptyOne (EraSummary lo hi params)
-      where
-        hi :: EraEnd
-        hi = case eraSafeZone of
-               UnsafeIndefiniteSafeZone ->
-                   EraUnbounded
-               StandardSafeZone safeFromTip ->
-                   EraEnd
-                 . mkUpperBound params lo
-                 . slotToEpochBound params lo
-                 . addSlots safeFromTip
-                   -- If the tip is already in this era, safe zone applies from the
-                   -- ledger tip (CASE (i) from 'EraParams' Haddock). If the ledger
-                   -- tip is in the /previous/ era, but the transition to /this/ era
-                   -- is already known, the safe zone applies from the start of this
-                   -- era (CASE (iii) from 'EraParams' Haddock).
-                   --
-                   -- NOTE: The upper bound is /exclusive/:
-                   --
-                   -- o Suppose the ledger tip is at slot 10, and 'safeFromTip' is 2.
-                   --   Then we should be able to make accurate predictions for slots
-                   --   10 (of course), as well as (the safe zone) slots 11 and 12.
-                   --   Since the upper bound is /exclusive/, this means that the
-                   --   upper bound becomes 13. (Case i)
-                   -- o If the ledger tip is in the previous era (case iii), and the
-                   --   start of this era is slot 100, then we should be able to
-                   --   give accurate predictions for the first two slots in this era
-                   --   (100 and 101), and the upper bound becomes 102.
-                   --
-                   -- This explains the use of the extra addition ('next') for
-                   -- case (i) but not for case (iii).
-                 $ max (next ledgerTip) (boundSlot lo)
+  Summary $ go initBound shape transitions
+ where
+  go ::
+    Bound -> -- Lower bound for current era
+    Exactly (x ': xs) EraParams -> -- params for all eras
+    AtMost xs EpochNo -> -- transitions
+    NonEmpty (x ': xs) EraSummary
+  -- CASE (ii) from 'EraParams' Haddock
+  -- NOTE: Ledger tip might be close to the end of this era (or indeed past
+  -- it) but this doesn't matter for the summary of /this/ era.
+  go lo (ExactlyCons params ss) (AtMostCons epoch fs) =
+    NonEmptyCons (EraSummary lo (EraEnd hi) params) $ go hi ss fs
+   where
+    hi = mkUpperBound params lo epoch
+  -- CASE (i) or (iii) from 'EraParams' Haddock
+  go lo (ExactlyCons params@EraParams{..} _) AtMostNil =
+    NonEmptyOne (EraSummary lo hi params)
+   where
+    hi :: EraEnd
+    hi = case eraSafeZone of
+      UnsafeIndefiniteSafeZone ->
+        EraUnbounded
+      StandardSafeZone safeFromTip ->
+        EraEnd
+          . mkUpperBound params lo
+          . slotToEpochBound params lo
+          . addSlots safeFromTip
+          -- If the tip is already in this era, safe zone applies from the
+          -- ledger tip (CASE (i) from 'EraParams' Haddock). If the ledger
+          -- tip is in the /previous/ era, but the transition to /this/ era
+          -- is already known, the safe zone applies from the start of this
+          -- era (CASE (iii) from 'EraParams' Haddock).
+          --
+          -- NOTE: The upper bound is /exclusive/:
+          --
+          -- o Suppose the ledger tip is at slot 10, and 'safeFromTip' is 2.
+          --   Then we should be able to make accurate predictions for slots
+          --   10 (of course), as well as (the safe zone) slots 11 and 12.
+          --   Since the upper bound is /exclusive/, this means that the
+          --   upper bound becomes 13. (Case i)
+          -- o If the ledger tip is in the previous era (case iii), and the
+          --   start of this era is slot 100, then we should be able to
+          --   give accurate predictions for the first two slots in this era
+          --   (100 and 101), and the upper bound becomes 102.
+          --
+          -- This explains the use of the extra addition ('next') for
+          -- case (i) but not for case (iii).
+          $ max (next ledgerTip) (boundSlot lo)
 
-    -- Upper bound is exclusive, so we count from the /next/ ledger tip
-    next :: WithOrigin SlotNo -> SlotNo
-    next Origin        = SlotNo 0
-    next (NotOrigin s) = succ s
+  -- Upper bound is exclusive, so we count from the /next/ ledger tip
+  next :: WithOrigin SlotNo -> SlotNo
+  next Origin = SlotNo 0
+  next (NotOrigin s) = succ s
 
 {-------------------------------------------------------------------------------
   Invariants
@@ -374,119 +399,131 @@ summarize ledgerTip = \(Shape shape) (Transitions transitions) ->
 -- be non-empty).
 invariantShape :: Shape xs -> Except String ()
 invariantShape = \(Shape shape) ->
-    go (EpochNo 0) shape
-  where
-    go :: EpochNo -- Lower bound on the start of the era
-       -> Exactly xs EraParams -> Except String ()
-    go _           ExactlyNil                    = return ()
-    go lowerBound (ExactlyCons _ shape') =
-        let nextLowerBound = addEpochs 1 lowerBound
-        in go nextLowerBound shape'
+  go (EpochNo 0) shape
+ where
+  go ::
+    EpochNo -> -- Lower bound on the start of the era
+    Exactly xs EraParams ->
+    Except String ()
+  go _ ExactlyNil = return ()
+  go lowerBound (ExactlyCons _ shape') =
+    let nextLowerBound = addEpochs 1 lowerBound
+     in go nextLowerBound shape'
 
 -- | Check 'Summary' invariants
 invariantSummary :: Summary xs -> Except String ()
 invariantSummary = \(Summary summary) ->
-    -- Pretend the start of the first era is the "end of the previous" one
-    go (eraStart (nonEmptyHead summary)) (toList summary)
-  where
-    go :: Bound   -- ^ End of the previous era
-       -> [EraSummary] -> Except String ()
-    go _       []                  = return ()
-    go prevEnd (curSummary : next) = do
-        unless (curStart == prevEnd) $
-          throwError $ mconcat [
-              "Bounds don't line up: end of previous era "
-            , show prevEnd
-            , " /= start of current era "
-            , show curStart
-            ]
+  -- Pretend the start of the first era is the "end of the previous" one
+  go (eraStart (nonEmptyHead summary)) (toList summary)
+ where
+  go ::
+    Bound ->
+    -- \^ End of the previous era
+    [EraSummary] ->
+    Except String ()
+  go _ [] = return ()
+  go prevEnd (curSummary : next) = do
+    unless (curStart == prevEnd) $
+      throwError $
+        mconcat
+          [ "Bounds don't line up: end of previous era "
+          , show prevEnd
+          , " /= start of current era "
+          , show curStart
+          ]
 
-        case mCurEnd of
-          EraUnbounded ->
-            unless (null next) $
-              throwError "Unbounded non-final era"
-          EraEnd curEnd -> do
-            -- Check the invariants mentioned at 'EraSummary'
-            --
-            -- o @epochsInEra@ corresponds to @e' - e@
-            -- o @slotsInEra@ corresponds to @(e' - e) * epochSize)@
-            -- o @timeInEra@ corresponds to @((e' - e) * epochSize * slotLen@
-            --   which, if INV-1b holds, equals @(s' - s) * slotLen@
-            let epochsInEra, slotsInEra :: Word64
-                epochsInEra = countEpochs (boundEpoch curEnd) (boundEpoch curStart)
-                slotsInEra  = epochsInEra * unEpochSize (eraEpochSize curParams)
+    case mCurEnd of
+      EraUnbounded ->
+        unless (null next) $
+          throwError "Unbounded non-final era"
+      EraEnd curEnd -> do
+        -- Check the invariants mentioned at 'EraSummary'
+        --
+        -- o @epochsInEra@ corresponds to @e' - e@
+        -- o @slotsInEra@ corresponds to @(e' - e) * epochSize)@
+        -- o @timeInEra@ corresponds to @((e' - e) * epochSize * slotLen@
+        --   which, if INV-1b holds, equals @(s' - s) * slotLen@
+        let epochsInEra, slotsInEra :: Word64
+            epochsInEra = countEpochs (boundEpoch curEnd) (boundEpoch curStart)
+            slotsInEra = epochsInEra * unEpochSize (eraEpochSize curParams)
 
-                timeInEra :: NominalDiffTime
-                timeInEra = fromIntegral slotsInEra
-                          * getSlotLength (eraSlotLength curParams)
+            timeInEra :: NominalDiffTime
+            timeInEra =
+              fromIntegral slotsInEra
+                * getSlotLength (eraSlotLength curParams)
 
-            unless (boundEpoch curEnd > boundEpoch curStart) $
-              throwError "Empty era"
+        unless (boundEpoch curEnd > boundEpoch curStart) $
+          throwError "Empty era"
 
-            unless (boundSlot curEnd == addSlots slotsInEra (boundSlot curStart)) $
-              throwError $ mconcat [
-                  "Invalid final boundSlot in "
-                , show curSummary
-                , " (INV-1b)"
-                ]
+        unless (boundSlot curEnd == addSlots slotsInEra (boundSlot curStart)) $
+          throwError $
+            mconcat
+              [ "Invalid final boundSlot in "
+              , show curSummary
+              , " (INV-1b)"
+              ]
 
-            unless (boundTime curEnd == addRelTime timeInEra (boundTime curStart)) $
-              throwError $ mconcat [
-                  "Invalid final boundTime in "
-                , show curSummary
-                , " (INV-2b)"
-                ]
+        unless (boundTime curEnd == addRelTime timeInEra (boundTime curStart)) $
+          throwError $
+            mconcat
+              [ "Invalid final boundTime in "
+              , show curSummary
+              , " (INV-2b)"
+              ]
 
-            go curEnd next
-      where
-        curStart  :: Bound
-        mCurEnd   :: EraEnd
-        curParams :: EraParams
-        EraSummary curStart mCurEnd curParams = curSummary
+        go curEnd next
+   where
+    curStart :: Bound
+    mCurEnd :: EraEnd
+    curParams :: EraParams
+    EraSummary curStart mCurEnd curParams = curSummary
 
 {-------------------------------------------------------------------------------
   Serialisation
 -------------------------------------------------------------------------------}
 
 instance Serialise Bound where
-  encode Bound{..} = mconcat [
-        encodeListLen 3
+  encode Bound{..} =
+    mconcat
+      [ encodeListLen 3
       , encode boundTime
       , encode boundSlot
       , encode boundEpoch
       ]
 
   decode = do
-      enforceSize "Bound" 3
-      boundTime  <- decode
-      boundSlot  <- decode
-      boundEpoch <- decode
-      return Bound{..}
+    enforceSize "Bound" 3
+    boundTime <- decode
+    boundSlot <- decode
+    boundEpoch <- decode
+    return Bound{..}
 
 instance Serialise EraEnd where
-  encode EraUnbounded   = encodeNull
+  encode EraUnbounded = encodeNull
   encode (EraEnd bound) = encode bound
 
-  decode = peekTokenType >>= \case
+  decode =
+    peekTokenType >>= \case
       TypeNull -> do
         decodeNull
         return EraUnbounded
       _ -> EraEnd <$> decode
 
 instance Serialise EraSummary where
-  encode EraSummary{..} = mconcat [
-        encodeListLen 3
+  encode EraSummary{..} =
+    mconcat
+      [ encodeListLen 3
       , encode eraStart
       , encode eraEnd
       , encode eraParams
       ]
 
   decode = do
-      enforceSize "EraSummary" 3
-      eraStart  <- decode
-      eraEnd    <- decode
-      eraParams <- decode
-      return EraSummary{..}
+    enforceSize "EraSummary" 3
+    eraStart <- decode
+    eraEnd <- decode
+    eraParams <- decode
+    return EraSummary{..}
 
 instance SListI xs => Serialise (Summary xs) where
   encode (Summary eraSummaries) = encode (toList eraSummaries)
@@ -528,13 +565,13 @@ instance SListI xs => Serialise (Summary xs) where
   --
   -- - If @|xs| == |ys|@, then at most @n == |xs|@.
   decode = do
-      -- Drop all eras we don't know about
-      eraSummaries <- take nbXs <$> decode
+    -- Drop all eras we don't know about
+    eraSummaries <- take nbXs <$> decode
 
-      case Summary <$> nonEmptyFromList eraSummaries of
-        Just summary -> return summary
-        Nothing      -> fail "Summary: expected at least one era summary"
-    where
-      -- @|xs|@
-      nbXs :: Int
-      nbXs = lengthSList (Proxy @xs)
+    case Summary <$> nonEmptyFromList eraSummaries of
+      Just summary -> return summary
+      Nothing -> fail "Summary: expected at least one era summary"
+   where
+    -- @|xs|@
+    nbXs :: Int
+    nbXs = lengthSList (Proxy @xs)

@@ -43,11 +43,10 @@
 -- "Ouroboros.Consensus.Storage.LedgerDB" contains the whole definition and API
 -- for the LedgerDB, but the other three databases are broken up into multiple
 -- smaller submodules. We aim to resolve this when UTxO-HD is merged.
---
-module Ouroboros.Consensus.Storage.ChainDB (
-    module Ouroboros.Consensus.Storage.ChainDB.API
+module Ouroboros.Consensus.Storage.ChainDB
+  ( module Ouroboros.Consensus.Storage.ChainDB.API
   , module Ouroboros.Consensus.Storage.ChainDB.Impl
   ) where
 
-import           Ouroboros.Consensus.Storage.ChainDB.API
-import           Ouroboros.Consensus.Storage.ChainDB.Impl
+import Ouroboros.Consensus.Storage.ChainDB.API
+import Ouroboros.Consensus.Storage.ChainDB.Impl

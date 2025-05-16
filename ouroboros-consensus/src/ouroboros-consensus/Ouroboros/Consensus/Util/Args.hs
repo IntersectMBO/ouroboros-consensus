@@ -30,31 +30,32 @@
 --
 -- Leaving out the 'hasNoDefault' field from 'theArgs' will result in a type
 -- error.
-module Ouroboros.Consensus.Util.Args (
-    Defaults (..)
+module Ouroboros.Consensus.Util.Args
+  ( Defaults (..)
   , HKD
   , MapHKD (..)
+
     -- * Types
   , Complete
   , Incomplete
   , noDefault
   ) where
 
-import           Data.Functor.Identity (Identity (..))
-import           Data.Kind
+import Data.Functor.Identity (Identity (..))
+import Data.Kind
 
 data Defaults t = NoDefault
-  deriving (Functor)
+  deriving Functor
 
 noDefault :: Defaults t
 noDefault = NoDefault
 
 type family HKD f a where
   HKD Identity a = a
-  HKD f        a = f a
+  HKD f a = f a
 
 type Incomplete (args :: (Type -> Type) -> k) = args Defaults
-type Complete   (args :: (Type -> Type) -> k) = args Identity
+type Complete (args :: (Type -> Type) -> k) = args Identity
 
 class MapHKD f where
   mapHKD :: proxy (f b) -> (a -> b) -> HKD f a -> HKD f b

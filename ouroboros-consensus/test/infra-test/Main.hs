@@ -9,29 +9,31 @@
 --  round-robin schedule for this, and then compute the expected fork length, we'd
 --  expect to get no forks at all.
 -- * Some invariants of various utility functions.
---
 module Main (main) where
 
-import qualified Ouroboros.Consensus.Util.Tests (tests)
-import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests (tests)
-import qualified Test.Ouroboros.Consensus.Util.LeakyBucket.Tests (tests)
-import           Test.Tasty (TestTree, testGroup)
-import qualified Test.Util.ChainUpdates.Tests (tests)
-import qualified Test.Util.Schedule.Tests (tests)
-import qualified Test.Util.Split.Tests (tests)
-import           Test.Util.TestEnv (defaultMainWithTestEnv,
-                     defaultTestEnvConfig)
+import Ouroboros.Consensus.Util.Tests qualified (tests)
+import Test.Ouroboros.Consensus.ChainGenerator.Tests qualified (tests)
+import Test.Ouroboros.Consensus.Util.LeakyBucket.Tests qualified (tests)
+import Test.Tasty (TestTree, testGroup)
+import Test.Util.ChainUpdates.Tests qualified (tests)
+import Test.Util.Schedule.Tests qualified (tests)
+import Test.Util.Split.Tests qualified (tests)
+import Test.Util.TestEnv
+  ( defaultMainWithTestEnv
+  , defaultTestEnvConfig
+  )
 
 main :: IO ()
 main = defaultMainWithTestEnv defaultTestEnvConfig tests
 
 tests :: TestTree
 tests =
-  testGroup "test-infra"
-  [ Ouroboros.Consensus.Util.Tests.tests
-  , Test.Ouroboros.Consensus.ChainGenerator.Tests.tests
-  , Test.Ouroboros.Consensus.Util.LeakyBucket.Tests.tests
-  , Test.Util.ChainUpdates.Tests.tests
-  , Test.Util.Schedule.Tests.tests
-  , Test.Util.Split.Tests.tests
-  ]
+  testGroup
+    "test-infra"
+    [ Ouroboros.Consensus.Util.Tests.tests
+    , Test.Ouroboros.Consensus.ChainGenerator.Tests.tests
+    , Test.Ouroboros.Consensus.Util.LeakyBucket.Tests.tests
+    , Test.Util.ChainUpdates.Tests.tests
+    , Test.Util.Schedule.Tests.tests
+    , Test.Util.Split.Tests.tests
+    ]

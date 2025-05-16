@@ -1,9 +1,9 @@
-module Test.QuickCheck.Extras (
-    sized1
+module Test.QuickCheck.Extras
+  ( sized1
   , unsafeMapSuchThatJust
   ) where
 
-import qualified Test.QuickCheck as QC
+import Test.QuickCheck qualified as QC
 
 sized1 :: (Int -> QC.Gen a) -> QC.Gen a
 sized1 f = QC.sized (f . succ)
