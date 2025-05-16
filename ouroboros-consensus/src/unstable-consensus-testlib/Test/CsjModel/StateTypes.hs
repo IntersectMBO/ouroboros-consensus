@@ -304,6 +304,29 @@ deriving instance (forall x. NoThunks x => NoThunks (Maybe x), NoThunks pid, NoT
 
 -- | Peers that are not the Dynamo and are not waiting in 'latestJump'
 data NonDynamo p a =
+    -- | A peer that received the 'Demoting' reaction but has net yet sent
+    -- 'Demoted'.
+    --
+    -- If such a peer could never be blocked, then they could just remain the
+    -- 'Dynamo' until they sent 'Demoted'; then they become a Jumper. However,
+    -- the peer might be blocked on the forecast range, so they'll never send
+    -- 'Demoted'. Therefore, it must be possible to elect a replacement
+    -- 'Dynamo' before this peer sends 'Demoted'.
+    --
+    -- Recall that in tests, an honest peer will never be demoted.
+    --
+    -- This peer cannot necessarily maintain a 'Class'. It can if a new
+    -- 'JumpRequest' wouldn't transition this peer to 'Jumping'. For example,
+    -- if it would need to become a 'Jumping', though, it can't, since some
+    -- headers might still be incoming. We could drain them, but that would
+    -- desynchronize the ChainSync mini protocol client and server, which this
+    -- CSJ governor avoids doing, so that disengaging never needs a Fibonacci
+    -- @MsgFindIntersect@.
+    FormerDynamo
+        !(Either (Class p) (JumpRequest p a))   -- would swap if DeriveFunctor allowed
+        !(CsjClientState p a)
+        !(Maybe p)
+  |
     -- | Jumpers that are done bisecting the latest jump request
     --
     -- It's easy to forget that 'cand' might be a proper extension of 'Class':
@@ -326,7 +349,17 @@ data NonDynamo p a =
   deriving stock (Functor, Generic, Show)
 
 deriving instance (Ord p, Read (WithOrigin p), Read p, Read a) => Read (NonDynamo p a)
-deriving instance (forall x. NoThunks x => NoThunks (Maybe x), NoThunks p, NoThunks a) => NoThunks (NonDynamo p a)
+deriving instance (forall x y. (NoThunks x, NoThunks y) => NoThunks (Either x y), forall x. NoThunks x => NoThunks (Maybe x), NoThunks p, NoThunks a) => NoThunks (NonDynamo p a)
+
+showPids :: Show pid => CsjState pid p a -> String
+showPids x =
+    unlines
+    [ "disengaged = " ++ show (disengaged x)
+    , "queue      = " ++ show (queue x)
+    , "latestJump = " ++ show (either Map.keys (const []) $ latestJump x)
+    , "dynamo     = " ++ show (dynamo x <&> \(Dynamo pid _clss _y _mbQ) -> pid)
+    , "nonDynamos = " ++ show (Map.keys (nonDynamos x))
+    ]
 
 -----
 
@@ -473,9 +506,10 @@ instance FullTrim (CsjState pid p a) where
         dynamo     = dynamo x <&> \(Dynamo pid clss y mbQ) -> Dynamo pid clss (fullTrim y) mbQ
       ,
         nonDynamos = nonDynamos x <&> \case
-            Jumped clss y -> Jumped clss (fullTrim y)
-            Jumping y bi sent -> Jumping (fullTrim y) (fullTrim bi) (fullTrim sent)
-            Objector clss y mbQ -> Objector clss (fullTrim y) mbQ
+            FormerDynamo mbClss y mbQ -> FormerDynamo mbClss (fullTrim y) mbQ
+            Jumped clss y             -> Jumped clss (fullTrim y)
+            Jumping y bi sent         -> Jumping (fullTrim y) (fullTrim bi) (fullTrim sent)
+            Objector clss y mbQ       -> Objector clss (fullTrim y) mbQ
       ,
         latestJump = case latestJump x of
             Left  waiting -> Left $ fmap fullTrim waiting

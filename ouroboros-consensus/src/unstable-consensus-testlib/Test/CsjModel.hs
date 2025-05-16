@@ -3,6 +3,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 
 -- | An executable specification of the centralized CSJ logic
@@ -272,6 +273,7 @@ bisectionStep found y bi =
 -- It only returns 'Nothing' if the given @pid@ is disengaged or the given
 -- 'ChainSyncReply' implies a mini protocol violation.
 csjReactions ::
+  forall pid p a.
      (Ord p, Ord pid, Show pid)
   => CsjEnv p
   -> CsjState pid p a
@@ -298,7 +300,7 @@ csjReactions env x pid imm = fmap fixup . \case
         MsgRollForwardDONE wp -> onActive (forward  wp)
         MsgRollForwardSTART p ->
             fmap (flip (,) [])
-          $ preDynamo p <|> preObjector p
+          $ preDynamo p <|> preObjector p <|> preFormerDynamo p
 
     Demoted -> skipDisengaged $ demoted
 
@@ -406,6 +408,8 @@ csjReactions env x pid imm = fmap fixup . \case
           onDynamo f
       <|>
           onObjector f
+      <|>
+          onFormerDynamo f
 
     onDynamo f = do
         Dynamo pid' clss y _mbQ <- toLazy $ dynamo x
@@ -444,6 +448,30 @@ csjReactions env x pid imm = fmap fixup . \case
                         Map.insert
                             pid
                             (Objector clss y' Nothing)
+                            (nonDynamos x)
+                  ,
+                    queue      = queue x
+                  }
+              ,
+                []
+              )
+
+    onFormerDynamo f = do
+        FormerDynamo eiClss y _mbQ <- Map.lookup pid (nonDynamos x)
+        pure $ case f y of
+            L.Nothing -> disengage
+            L.Just y' -> (
+                CsjState {
+                    disengaged = disengaged x
+                  ,
+                    dynamo     = dynamo x
+                  ,
+                    latestJump = latestJump x
+                  ,
+                    nonDynamos =
+                        Map.insert
+                            pid
+                            (FormerDynamo eiClss y' Nothing)
                             (nonDynamos x)
                   ,
                     queue      = queue x
@@ -559,8 +587,26 @@ csjReactions env x pid imm = fmap fixup . \case
             queue      = queue x
           }
 
+    preFormerDynamo p = do
+        FormerDynamo eiClss y Nothing <- Map.lookup pid (nonDynamos x)
+        pure CsjState {
+            disengaged = disengaged x
+          ,
+            dynamo     = dynamo x
+          ,
+            latestJump = latestJump x
+          ,
+            nonDynamos =
+                Map.insert
+                    pid
+                    (FormerDynamo eiClss y (Just p))
+                    (nonDynamos x)
+          ,
+            queue      = queue x
+          }
+
     starvation = do
-        Dynamo pid' _clss _y _mbQ <- toLazy $ dynamo x
+        Dynamo pid' clss y mbQ <- toLazy $ dynamo x
         let shouldDemote =
                 pid' == pid
              &&
@@ -568,25 +614,60 @@ csjReactions env x pid imm = fmap fixup . \case
                 -- repromote the same peer.
                 any eligible (nonDynamos x)
             eligible = \case
-                Jumped{}   -> True
-                Jumping{}  -> False
-                Objector{} -> True
-        pure (x, if not shouldDemote then [] else [(pid, Demoting)])
+                FormerDynamo eiClss _y _mbQ -> case eiClss of
+                    Left clss' -> let _ = clss' :: Class p in True
+                    Right{}    -> False
+                Jumped{}                    -> True
+                Jumping{}                   -> False
+                Objector{}                  -> True
+
+        pure $ if not shouldDemote then (x, []) else (
+          CsjState {
+                disengaged = disengaged x
+              ,
+                dynamo     = Nothing
+              ,
+                latestJump = latestJump x
+              ,
+                nonDynamos =
+                    Map.insert
+                        pid
+                        (FormerDynamo (Left clss) y mbQ)
+                        (nonDynamos x)
+              ,
+                queue      = queue x
+              }
+            ,
+              [(pid, Demoting)]
+            )
 
     demoted = do
-        -- TODO need to check pid?
-        Dynamo _pid clss y _mbQ <- toLazy $ dynamo x
-        pure $ flip (,) [] $ CsjState {
+        -- TODO mbQ must be Nothing
+        FormerDynamo eiClss y _mbQ <- Map.lookup pid $ nonDynamos x
+        let (jumper, mbMsg) = case eiClss of
+                Left clss -> (Jumped clss y, Nothing)
+                Right req ->
+                    let JumpRequest _dynamoClss ps = req
+                    in
+                    case newJumpRequest2 y ps of
+                        Left clss -> (Jumped clss y, Nothing)
+                        Right bi  -> (
+                            Jumping y bi NotYetSent
+                          ,
+                            Just $ nextMsgFindIntersect bi
+                          )
+        let msgs = maybe [] ((:[]) . (,) pid) mbMsg
+        pure $ flip (,) msgs $ CsjState {
             disengaged = disengaged x
           ,
-            dynamo     = Nothing
+            dynamo     = dynamo x
           ,
             latestJump = latestJump x
           ,
             nonDynamos =
                 Map.insert
                     pid
-                    (Jumped clss y)
+                    jumper
                     (nonDynamos x)
           ,
             queue      = queue x
@@ -664,6 +745,7 @@ csjReactions env x pid imm = fmap fixup . \case
 backfillDynamo ::
      (Ord p, Ord pid, Show pid)
   => (pid -> msgs -> msgs)
+     -- ^ Sends 'Promoted'
   -> (CsjState pid p a, msgs)
   -> (CsjState pid p a, msgs)
 backfillDynamo cons (x, msgs) =
@@ -686,6 +768,9 @@ backfillDynamo cons (x, msgs) =
 
     f pid = case Map.lookup pid (nonDynamos x) of
         L.Just nonDynamo -> case nonDynamo of
+            FormerDynamo eiClss y mbQ -> case eiClss of
+                Left clss -> pure (1, Dynamo pid clss y mbQ, cons pid msgs)
+                Right{}   -> L.Nothing
             Jumped clss y       -> do
                 pure (1, Dynamo pid clss y Nothing, cons pid msgs)
             Jumping{}           -> L.Nothing
@@ -702,7 +787,7 @@ backfillDynamo cons (x, msgs) =
                 L.Nothing ->
                     -- Each pid in 'queue' must be in either 'nonDynamos' or
                     -- 'latestJump'.
-                    error "impossible!"
+                    error $ "impossible! " <> showPids x
 
     promote (_flavor, Dynamo pid clss y mbQ, msgs') =
         flip (,) msgs'
@@ -743,7 +828,7 @@ fillObjectors cons (x, msgs) =
   where
     promote clss = \case
         AlreadyOccupied -> Nothing
-        Filler _i pid y ->
+        Filler _i pid y mbQ ->
             Just
           $ (flip (,) (cons pid msgs))
           $ CsjState {
@@ -756,18 +841,23 @@ fillObjectors cons (x, msgs) =
                 nonDynamos =
                     Map.insert
                         pid
-                        (Objector clss y Nothing)
+                        (Objector clss y mbQ)
                         (nonDynamos x)
               ,
                 queue      = queue x
               }
 
     snoc acc pid nonDynamo = case nonDynamo of
-        Jumped clss y         ->
+        FormerDynamo eiClss y mbQ -> case eiClss of
+            Left clss ->
+                snoc2 acc clss
+              $ Filler (indexPerm pid (queue x)) pid y mbQ
+            Right{}   -> acc
+        Jumped clss y           ->
             snoc2 acc clss
-          $ Filler (indexPerm pid (queue x)) pid y
-        Jumping{}             -> acc
-        Objector clss _y _mbQ -> snoc2 acc clss AlreadyOccupied
+          $ Filler (indexPerm pid (queue x)) pid y Nothing
+        Jumping{}               -> acc
+        Objector clss _y _mbQ   -> snoc2 acc clss AlreadyOccupied
 
     snoc2 acc clss filler =
         if newBest acc clss filler then (clss, filler) else acc
@@ -788,14 +878,14 @@ data FillAcc pid p a =
     AlreadyOccupied
   |
     -- | A peer with the given position in 'queue' inhabits this class
-    Filler !Int !pid !(CsjClientState p a)
+    Filler !Int !pid !(CsjClientState p a) !(Maybe p)
 
 -- | 'fillObjectors' breaks ties between two 'Filler's by choosing the lowest
 -- rank
 fillerRank :: FillAcc pid p a -> Maybe Int
 fillerRank = \case
-    AlreadyOccupied  -> Nothing
-    Filler i _pid _y -> Just i
+    AlreadyOccupied       -> Nothing
+    Filler i _pid _y _mbQ -> Just i
 
 {-------------------------------------------------------------------------------
   Triggering and constructing jump requests
@@ -968,6 +1058,16 @@ issueNextJump imm cons (x, msgs) dyn neCandidate =
         State.state $ instructNewJump2 pid `flip` nonDynamo
 
     instructNewJump2 pid acc = \case
+        FormerDynamo eiClss y mbQ ->
+            let eiClss' = if keep then eiClss else Right req
+                keep    = case eiClss of
+                    Right _   -> False
+                    Left clss ->
+                        case snd $ newJumpRequest req (trimC y) (Left clss) of
+                            Left clss' -> clss' == clss
+                            Right{}    -> False
+            in
+            (FormerDynamo eiClss' (trimC y) mbQ, acc)
         Jumped clss y ->
             let (y', eBi') = newJumpRequest req (trimC y) (Left clss)
             in
@@ -994,9 +1094,9 @@ issueNextJump imm cons (x, msgs) dyn neCandidate =
                         (pid, nextMsgFindIntersect bi') `cons` acc
                       )
         Objector clss y mbQ ->
-            -- Along with the basics of jumping, 'backfillDynamo' together
-            -- ensures that an Objector always has the same intersection with
-            -- subsequent jumps.
+            -- The basics of jumping and 'backfillDynamo' together ensure that
+            -- an Objector always has the same intersection with subsequent
+            -- jumps.
             (Objector clss (trimC y) mbQ, acc)
 
     doneWaiting pid y = State.state $ doneWaiting2 pid y
