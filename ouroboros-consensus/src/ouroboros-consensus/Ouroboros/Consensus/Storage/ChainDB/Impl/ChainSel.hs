@@ -332,29 +332,29 @@ chainSelSync ::
 -- We run a background thread that polls the candidate fragments and sends
 -- 'ChainSelReprocessLoEBlocks' whenever we receive a new header or lose a
 -- peer.
--- If 'cdbLoE' is 'LoEDisabled', this task is skipped.
+--
+-- Note that we do this even when we are caught-up, as we might want to select
+-- blocks that were originally postponed by the LoE, but can be adopted once we
+-- conclude that we are caught-up (and hence are longer bound by the LoE).
 chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = do
-    lift cdbLoE >>= \case
-      LoEDisabled  -> pure ()
-      LoEEnabled _ -> do
-        (succsOf, chain) <- lift $ atomically $ do
-          invalid <- forgetFingerprint <$> readTVar cdbInvalid
-          (,)
-            <$> (ignoreInvalidSuc cdbVolatileDB invalid <$>
-              VolatileDB.filterByPredecessor cdbVolatileDB)
-            <*> Query.getCurrentChain cdb
-        let
-            succsOf' = Set.toList . succsOf . pointHash . castPoint
-            loeHashes = succsOf' (AF.anchorPoint chain)
-            firstHeader = either (const Nothing) Just $ AF.last chain
-            -- We avoid the VolatileDB for the headers we already have in the chain
-            getHeaderFromHash hash =
-              case firstHeader of
-                Just header | headerHash header == hash -> pure header
-                _ -> VolatileDB.getKnownBlockComponent cdbVolatileDB GetHeader hash
-        loeHeaders <- lift (mapM getHeaderFromHash loeHashes)
-        for_ loeHeaders $ \hdr ->
-          chainSelectionForBlock cdb BlockCache.empty hdr noPunishment
+    (succsOf, chain) <- lift $ atomically $ do
+      invalid <- forgetFingerprint <$> readTVar cdbInvalid
+      (,)
+        <$> (ignoreInvalidSuc cdbVolatileDB invalid <$>
+          VolatileDB.filterByPredecessor cdbVolatileDB)
+        <*> Query.getCurrentChain cdb
+    let
+        succsOf' = Set.toList . succsOf . pointHash . castPoint
+        loeHashes = succsOf' (AF.anchorPoint chain)
+        firstHeader = either (const Nothing) Just $ AF.last chain
+        -- We avoid the VolatileDB for the headers we already have in the chain
+        getHeaderFromHash hash =
+          case firstHeader of
+            Just header | headerHash header == hash -> pure header
+            _ -> VolatileDB.getKnownBlockComponent cdbVolatileDB GetHeader hash
+    loeHeaders <- lift (mapM getHeaderFromHash loeHashes)
+    for_ loeHeaders $ \hdr ->
+      chainSelectionForBlock cdb BlockCache.empty hdr noPunishment
     lift $ atomically $ putTMVar varProcessed ()
 
 chainSelSync cdb@CDB {..} (ChainSelAddBlock BlockToAdd { blockToAdd = b, .. }) = do

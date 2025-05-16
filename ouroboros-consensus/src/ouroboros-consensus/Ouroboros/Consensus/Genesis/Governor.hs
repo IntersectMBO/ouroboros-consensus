@@ -1,6 +1,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -103,16 +104,22 @@ gddWatcher ::
      -- ^ The LoE fragment. It starts at a (recent) immutable tip and ends at
      -- the common intersection of the candidate fragments.
   -> Watcher m
-       (GsmState, GDDStateView m blk peer)
-       (Map peer (StrictMaybe (WithOrigin SlotNo), Bool))
+       (GDDTrigger (GDDStateView m blk peer))
+       (GDDTrigger (Map peer (StrictMaybe (WithOrigin SlotNo), Bool)))
 gddWatcher cfg tracer chainDb rateLimit getGsmState getHandles varLoEFrag =
     Watcher {
         wInitial = Nothing
-      , wReader  = (,) <$> getGsmState <*> getGDDStateView
+      , wReader
       , wFingerprint
       , wNotify
       }
   where
+    wReader :: STM m (GDDTrigger (GDDStateView m blk peer))
+    wReader = getGsmState >>= \case
+        PreSyncing -> pure GDDPreSyncing
+        Syncing    -> GDDSyncing <$> getGDDStateView
+        CaughtUp   -> pure GDDCaughtUp
+
     getGDDStateView :: STM m (GDDStateView m blk peer)
     getGDDStateView = do
         curChain          <- ChainDB.getCurrentChainWithTime chainDb
@@ -127,14 +134,11 @@ gddWatcher cfg tracer chainDb rateLimit getGsmState getHandles varLoEFrag =
           }
 
     wFingerprint ::
-         (GsmState, GDDStateView m blk peer)
-      -> Map peer (StrictMaybe (WithOrigin SlotNo), Bool)
-    wFingerprint (gsmState, GDDStateView{gddCtxStates}) = case gsmState of
-        -- When we are in 'PreSyncing' (HAA not satisfied) or are caught up, we
-        -- don't have to run the GDD on changes to the candidate fragments.
-        -- (Maybe we want to do it in 'PreSycing'?)
-        PreSyncing -> Map.empty
-        CaughtUp   -> Map.empty
+         GDDTrigger (GDDStateView m blk peer)
+      -> GDDTrigger (Map peer (StrictMaybe (WithOrigin SlotNo), Bool))
+    wFingerprint = \case
+        GDDPreSyncing -> GDDPreSyncing
+        GDDCaughtUp   -> GDDCaughtUp
         -- When syncing, wake up regularly while headers are sent.
         -- Watching csLatestSlot ensures that GDD is woken up when a peer is
         -- sending headers even if they are after the forecast horizon. Note
@@ -142,22 +146,37 @@ gddWatcher cfg tracer chainDb rateLimit getGsmState getHandles varLoEFrag =
         -- it becoming visible to GDD. It will be visible only when csLatestSlot
         -- changes again or when csIdling changes, which is guaranteed to happen
         -- eventually.
-        Syncing    ->
+        GDDSyncing GDDStateView{gddCtxStates} -> GDDSyncing $
           Map.map (\css -> (csLatestSlot css, csIdling css)) gddCtxStates
 
-    wNotify :: (GsmState, GDDStateView m blk peer) -> m ()
-    wNotify (_gsmState, stateView) = do
-        t0 <- getMonotonicTime
-        loeFrag <- evaluateGDD cfg tracer stateView
-        oldLoEFrag <- atomically $ swapTVar varLoEFrag loeFrag
-        -- The chain selection only depends on the LoE tip, so there
-        -- is no point in retriggering it if the LoE tip hasn't changed.
-        when (AF.headHash oldLoEFrag /= AF.headHash loeFrag) $
+    wNotify :: GDDTrigger (GDDStateView m blk peer) -> m ()
+    wNotify = \case
+        -- No need to run the GDD in PreSyncing as the LoE advancing doesn't
+        -- allow us to select more blocks here by design.
+        GDDPreSyncing        -> pure ()
+        -- Make sure that any LoE-postponed blocks have a chance to be selected.
+        GDDCaughtUp          ->
           void $ ChainDB.triggerChainSelectionAsync chainDb
-        tf <- getMonotonicTime
-        -- We limit the rate at which GDD is evaluated, otherwise it would
-        -- be called every time a new header is validated.
-        threadDelay $ rateLimit - diffTime tf t0
+        -- Run the GDD on the candidate fragments.
+        GDDSyncing stateView -> do
+          t0 <- getMonotonicTime
+          loeFrag <- evaluateGDD cfg tracer stateView
+          oldLoEFrag <- atomically $ swapTVar varLoEFrag loeFrag
+          -- The chain selection only depends on the LoE tip, so there
+          -- is no point in retriggering it if the LoE tip hasn't changed.
+          when (AF.headHash oldLoEFrag /= AF.headHash loeFrag) $
+            void $ ChainDB.triggerChainSelectionAsync chainDb
+          tf <- getMonotonicTime
+          -- We limit the rate at which GDD is evaluated, otherwise it would
+          -- be called every time a new header is validated.
+          threadDelay $ rateLimit - diffTime tf t0
+
+-- | Data indicating what triggered the GDD.
+data GDDTrigger a =
+    GDDPreSyncing
+  | GDDSyncing a
+  | GDDCaughtUp
+  deriving stock (Show, Eq)
 
 -- | Pure snapshot of the dynamic data the GDD operates on.
 data GDDStateView m blk peer = GDDStateView {
