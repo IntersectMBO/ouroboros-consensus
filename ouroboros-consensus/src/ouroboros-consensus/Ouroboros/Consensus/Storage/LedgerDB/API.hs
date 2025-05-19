@@ -252,7 +252,7 @@ data LedgerDB m l blk = LedgerDB
   -- back as many blocks as the passed @Word64@.
   , getPrevApplied :: STM m (Set (RealPoint blk))
   -- ^ Get the references to blocks that have previously been applied.
-  , garbageCollect :: SlotNo -> STM m ()
+  , garbageCollect :: SlotNo -> m ()
   -- ^ Garbage collect references to old blocks that have been previously
   -- applied and committed.
   , tryTakeSnapshot ::
