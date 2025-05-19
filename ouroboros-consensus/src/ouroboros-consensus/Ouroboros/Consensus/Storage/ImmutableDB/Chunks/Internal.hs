@@ -250,6 +250,7 @@ data ChunkAssertionFailure =
 
 instance Exception ChunkAssertionFailure
 
+{- FOURMOLU_DISABLE -}
 assertSameChunk :: HasCallStack => ChunkNo -> ChunkNo -> a -> a
 #if ENABLE_ASSERTIONS
 assertSameChunk a b
@@ -260,7 +261,9 @@ assertSameChunk _ _ = id
 #endif
   where
     _ = keepRedundantConstraint (Proxy @HasCallStack)
+{- FOURMOLU_ENABLE -}
 
+{- FOURMOLU_DISABLE -}
 assertWithinBounds :: HasCallStack => Word64 -> ChunkSize -> a -> a
 #if ENABLE_ASSERTIONS
 assertWithinBounds ix sz
@@ -271,7 +274,9 @@ assertWithinBounds _ _ = id
 #endif
   where
     _ = keepRedundantConstraint (Proxy @HasCallStack)
+{- FOURMOLU_ENABLE -}
 
+{- FOURMOLU_DISABLE -}
 assertChunkCanContainEBB :: HasCallStack => ChunkNo -> ChunkSize -> a -> a
 #if ENABLE_ASSERTIONS
 assertChunkCanContainEBB chunk size
@@ -282,3 +287,4 @@ assertChunkCanContainEBB _ _ = id
 #endif
   where
     _ = keepRedundantConstraint (Proxy @HasCallStack)
+{- FOURMOLU_ENABLE -}
