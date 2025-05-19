@@ -200,6 +200,7 @@ mkInternals bss h =
               TakeAtImmutableTip -> anchorHandle
               TakeAtVolatileTip -> currentHandle
           )
+            . volatileSuffix (ledgerDbCfgSecParam (ldbCfg env))
             <$> readTVarIO (ldbSeq env)
         Monad.void $
           takeSnapshot
@@ -387,6 +388,7 @@ implTryTakeSnapshot bss env mTime nrBlocks =
           (LedgerDBSnapshotEvent >$< ldbTracer env)
           (ldbHasFS env)
         . anchorHandle
+        . volatileSuffix (ledgerDbCfgSecParam (ldbCfg env))
         =<< readTVarIO (ldbSeq env)
       Monad.void $
         trimSnapshots
