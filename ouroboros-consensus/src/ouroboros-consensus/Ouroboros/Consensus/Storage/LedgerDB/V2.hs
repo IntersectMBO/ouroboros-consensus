@@ -274,10 +274,13 @@ implGetVolatileTip ::
 implGetVolatileTip = fmap current . readTVar . ldbSeq
 
 implGetImmutableTip ::
-  MonadSTM m =>
+  (MonadSTM m, GetTip l) =>
   LedgerDBEnv m l blk ->
   STM m (l EmptyMK)
-implGetImmutableTip = fmap anchor . readTVar . ldbSeq
+implGetImmutableTip env =
+  anchor . volatileSuffix k <$> readTVar (ldbSeq env)
+ where
+  k = ledgerDbCfgSecParam $ ldbCfg env
 
 implGetPastLedgerState ::
   ( MonadSTM m
@@ -287,7 +290,10 @@ implGetPastLedgerState ::
   , HeaderHash l ~ HeaderHash blk
   ) =>
   LedgerDBEnv m l blk -> Point blk -> STM m (Maybe (l EmptyMK))
-implGetPastLedgerState env point = getPastLedgerAt point <$> readTVar (ldbSeq env)
+implGetPastLedgerState env point =
+  getPastLedgerAt point . volatileSuffix k <$> readTVar (ldbSeq env)
+ where
+  k = ledgerDbCfgSecParam $ ldbCfg env
 
 implGetHeaderStateHistory ::
   ( MonadSTM m
@@ -311,7 +317,10 @@ implGetHeaderStateHistory env = do
   pure
     . HeaderStateHistory
     . AS.bimap mkHeaderStateWithTime' mkHeaderStateWithTime'
-    $ getLedgerSeq ldb
+    . getLedgerSeq
+    $ volatileSuffix k ldb
+ where
+  k = ledgerDbCfgSecParam $ ldbCfg env
 
 implValidate ::
   forall m l blk.
@@ -608,7 +617,7 @@ acquireAtTarget ::
   Either Word64 (Target (Point blk)) ->
   m (Either GetForkerError (StateRef m l))
 acquireAtTarget ldbEnv target =
-  getStateRef ldbEnv $ \l -> case target of
+  getStateRef ldbEnv $ \(volatileSuffix k -> l) -> case target of
     Right VolatileTip -> pure $ currentHandle l
     Right ImmutableTip -> pure $ anchorHandle l
     Right (SpecificPoint pt) -> do
@@ -628,6 +637,8 @@ acquireAtTarget ldbEnv target =
                 , rollbackRequested = n
                 }
       Just l' -> pure $ currentHandle l'
+ where
+  k = ledgerDbCfgSecParam $ ldbCfg ldbEnv
 
 newForkerAtTarget ::
   ( HeaderHash l ~ HeaderHash blk
