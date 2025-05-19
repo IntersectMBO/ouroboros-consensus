@@ -4,8 +4,8 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Test.Util.BoolProps (
-    CollectReqs (..)
+module Test.Util.BoolProps
+  ( CollectReqs (..)
   , Prereq (..)
   , Requirement (..)
   , checkReqs
@@ -14,8 +14,8 @@ module Test.Util.BoolProps (
   , requiredIf
   ) where
 
-import           Data.Kind (Type)
-import           GHC.Generics
+import Data.Kind (Type)
+import GHC.Generics
 
 {-------------------------------------------------------------------------------
   Generic boolean properties
@@ -52,9 +52,9 @@ requiredIf b = if b then Required else Optional
 -- 'Bool's as either disjunctive\/conjunctive\/etc observations.
 class CollectReqs a where
   collectReqs :: a -> ([Prereq], [Requirement])
-
-  default collectReqs :: (Generic a, GCollectReqs (Rep a))
-                      => a -> ([Prereq], [Requirement])
+  default collectReqs ::
+    (Generic a, GCollectReqs (Rep a)) =>
+    a -> ([Prereq], [Requirement])
   collectReqs = gCollectReqs . from
 
 instance CollectReqs Bool where
@@ -66,14 +66,18 @@ instance CollectReqs a => CollectReqs [a] where
 instance (CollectReqs a, CollectReqs b) => CollectReqs (a, b) where
   collectReqs (a, b) = collectReqs a <> collectReqs b
 
-instance (CollectReqs a, CollectReqs b, CollectReqs c)
-      => CollectReqs (a, b, c) where
+instance
+  (CollectReqs a, CollectReqs b, CollectReqs c) =>
+  CollectReqs (a, b, c)
+  where
   collectReqs (a, b, c) = collectReqs a <> collectReqs b <> collectReqs c
 
-instance (CollectReqs a, CollectReqs b, CollectReqs c, CollectReqs d)
-      => CollectReqs (a, b, c, d) where
+instance
+  (CollectReqs a, CollectReqs b, CollectReqs c, CollectReqs d) =>
+  CollectReqs (a, b, c, d)
+  where
   collectReqs (a, b, c, d) =
-      collectReqs a <> collectReqs b <> collectReqs c <> collectReqs d
+    collectReqs a <> collectReqs b <> collectReqs c <> collectReqs d
 
 instance CollectReqs Requirement where
   collectReqs req = ([], [req])
@@ -84,11 +88,11 @@ instance CollectReqs Prereq where
 -- | Via 'CollectReqs', check if the ultimate observation has a required value
 checkReqs :: CollectReqs a => a -> Maybe Bool
 checkReqs x
-      | Blocked  `elem` prereqs = Just False
-      | Optional `elem` reqs    = Nothing
-      | otherwise               = Just True
-    where
-      (prereqs, reqs) = collectReqs x
+  | Blocked `elem` prereqs = Just False
+  | Optional `elem` reqs = Nothing
+  | otherwise = Just True
+ where
+  (prereqs, reqs) = collectReqs x
 
 {-------------------------------------------------------------------------------
   Generic boolean properties, generically
@@ -103,15 +107,19 @@ instance GCollectReqs U1 where
 instance GCollectReqs rep => GCollectReqs (M1 c meta rep) where
   gCollectReqs (M1 rep) = gCollectReqs rep
 
-instance (GCollectReqs rep1, GCollectReqs rep2)
-      => GCollectReqs (rep1 :*: rep2) where
+instance
+  (GCollectReqs rep1, GCollectReqs rep2) =>
+  GCollectReqs (rep1 :*: rep2)
+  where
   gCollectReqs (rep1 :*: rep2) = gCollectReqs rep1 <> gCollectReqs rep2
 
-instance (GCollectReqs rep1, GCollectReqs rep2)
-      => GCollectReqs (rep1 :+: rep2) where
+instance
+  (GCollectReqs rep1, GCollectReqs rep2) =>
+  GCollectReqs (rep1 :+: rep2)
+  where
   gCollectReqs = \case
-      L1 rep -> gCollectReqs rep
-      R1 rep -> gCollectReqs rep
+    L1 rep -> gCollectReqs rep
+    R1 rep -> gCollectReqs rep
 
 instance CollectReqs c => GCollectReqs (K1 meta c) where
   gCollectReqs (K1 c) = collectReqs c

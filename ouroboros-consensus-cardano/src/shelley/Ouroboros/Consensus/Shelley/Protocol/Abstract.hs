@@ -16,8 +16,8 @@
 --   Everything in this module is indexed on the protocol (or the crypto),
 --   rather than on the block type. This allows it to be imported in
 --   @Ouroboros.Consensus.Shelley.Ledger.Block@.
-module Ouroboros.Consensus.Shelley.Protocol.Abstract (
-    ProtoCrypto
+module Ouroboros.Consensus.Shelley.Protocol.Abstract
+  ( ProtoCrypto
   , ProtocolHeaderSupportsEnvelope (..)
   , ProtocolHeaderSupportsKES (..)
   , ProtocolHeaderSupportsLedger (..)
@@ -27,32 +27,41 @@ module Ouroboros.Consensus.Shelley.Protocol.Abstract (
   , ShelleyProtocolHeader
   ) where
 
-import           Cardano.Binary (FromCBOR (fromCBOR), ToCBOR (toCBOR))
+import Cardano.Binary (FromCBOR (fromCBOR), ToCBOR (toCBOR))
 import qualified Cardano.Crypto.Hash as Hash
-import           Cardano.Crypto.VRF (OutputVRF)
-import           Cardano.Ledger.BaseTypes (ProtVer)
-import           Cardano.Ledger.BHeaderView (BHeaderView)
-import           Cardano.Ledger.Hashes (EraIndependentBlockBody,
-                     EraIndependentBlockHeader, HASH)
-import           Cardano.Ledger.Keys (KeyRole (BlockIssuer), VKey)
-import           Cardano.Protocol.Crypto (Crypto, VRF)
-import           Cardano.Protocol.TPraos.BHeader (PrevHash)
-import           Cardano.Slotting.Block (BlockNo)
-import           Cardano.Slotting.Slot (SlotNo)
-import           Codec.Serialise (Serialise (..))
-import           Control.Monad.Except (Except)
-import           Data.Kind (Type)
-import           Data.Typeable (Typeable)
-import           Data.Word (Word64)
-import           GHC.Generics (Generic)
-import           NoThunks.Class (NoThunks)
-import           Numeric.Natural (Natural)
-import           Ouroboros.Consensus.Protocol.Abstract (CanBeLeader,
-                     ChainDepState, ConsensusConfig, ConsensusProtocol,
-                     IsLeader, LedgerView, ValidateView)
-import           Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
-import           Ouroboros.Consensus.Protocol.Signed (SignedHeader)
-import           Ouroboros.Consensus.Util.Condense (Condense (..))
+import Cardano.Crypto.VRF (OutputVRF)
+import Cardano.Ledger.BHeaderView (BHeaderView)
+import Cardano.Ledger.BaseTypes (ProtVer)
+import Cardano.Ledger.Hashes
+  ( EraIndependentBlockBody
+  , EraIndependentBlockHeader
+  , HASH
+  )
+import Cardano.Ledger.Keys (KeyRole (BlockIssuer), VKey)
+import Cardano.Protocol.Crypto (Crypto, VRF)
+import Cardano.Protocol.TPraos.BHeader (PrevHash)
+import Cardano.Slotting.Block (BlockNo)
+import Cardano.Slotting.Slot (SlotNo)
+import Codec.Serialise (Serialise (..))
+import Control.Monad.Except (Except)
+import Data.Kind (Type)
+import Data.Typeable (Typeable)
+import Data.Word (Word64)
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
+import Numeric.Natural (Natural)
+import Ouroboros.Consensus.Protocol.Abstract
+  ( CanBeLeader
+  , ChainDepState
+  , ConsensusConfig
+  , ConsensusProtocol
+  , IsLeader
+  , LedgerView
+  , ValidateView
+  )
+import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
+import Ouroboros.Consensus.Protocol.Signed (SignedHeader)
+import Ouroboros.Consensus.Util.Condense (Condense (..))
 
 {-------------------------------------------------------------------------------
   Crypto
@@ -68,18 +77,15 @@ newtype ShelleyHash = ShelleyHash
   { unShelleyHash :: Hash.Hash HASH EraIndependentBlockHeader
   }
   deriving stock (Eq, Ord, Show, Generic)
-  deriving anyclass (NoThunks)
+  deriving anyclass NoThunks
 
 deriving newtype instance ToCBOR ShelleyHash
 
 deriving newtype instance FromCBOR ShelleyHash
 
-instance
-  Serialise ShelleyHash
-  where
+instance Serialise ShelleyHash where
   encode = toCBOR
   decode = fromCBOR
-
 
 instance Condense ShelleyHash where
   condense = show . unShelleyHash
@@ -89,16 +95,15 @@ instance Condense ShelleyHash where
 -------------------------------------------------------------------------------}
 
 -- | Shelley header, determined by the associated protocol.
---
 type family ShelleyProtocolHeader proto = (sh :: Type) | sh -> proto
 
 -- | Indicates that the header (determined by the protocol) supports " Envelope
 -- " functionality. Envelope functionality refers to the minimal functionality
 -- required to construct a chain.
 class
-  ( Eq (EnvelopeCheckError proto),
-    NoThunks (EnvelopeCheckError proto),
-    Show (EnvelopeCheckError proto)
+  ( Eq (EnvelopeCheckError proto)
+  , NoThunks (EnvelopeCheckError proto)
+  , Show (EnvelopeCheckError proto)
   ) =>
   ProtocolHeaderSupportsEnvelope proto
   where
@@ -126,7 +131,6 @@ class
 --    header (made specific to KES-using protocols through the need to handle
 --    the hot key).
 class ProtocolHeaderSupportsKES proto where
-
   -- | Extract the "slots per KES period" value from the protocol config.
   --
   --   Note that we do not require `ConsensusConfig` in 'verifyHeaderIntegrity'
@@ -163,7 +167,6 @@ class ProtocolHeaderSupportsKES proto where
 -- | ProtocolHeaderSupportsProtocol` provides support for the concrete
 --   block header to support the `ConsensusProtocol` itself.
 class ProtocolHeaderSupportsProtocol proto where
-
   type CannotForgeError proto :: Type
 
   protocolHeaderView ::
@@ -173,6 +176,7 @@ class ProtocolHeaderSupportsProtocol proto where
     ShelleyProtocolHeader proto -> VKey 'BlockIssuer
   pHeaderIssueNo ::
     ShelleyProtocolHeader proto -> Word64
+
   -- | A VRF value in the header, used to choose between otherwise equally
   -- preferable chains.
   pTieBreakVRFValue ::
@@ -184,19 +188,18 @@ class ProtocolHeaderSupportsProtocol proto where
 class ProtocolHeaderSupportsLedger proto where
   mkHeaderView :: ShelleyProtocolHeader proto -> BHeaderView
 
-
 {-------------------------------------------------------------------------------
   Key constraints
 -------------------------------------------------------------------------------}
 
 class
-  ( ConsensusProtocol proto,
-    Typeable (ShelleyProtocolHeader proto),
-    ProtocolHeaderSupportsEnvelope proto,
-    ProtocolHeaderSupportsKES proto,
-    ProtocolHeaderSupportsProtocol proto,
-    ProtocolHeaderSupportsLedger proto,
-    Serialise (ChainDepState proto),
-    SignedHeader (ShelleyProtocolHeader proto)
+  ( ConsensusProtocol proto
+  , Typeable (ShelleyProtocolHeader proto)
+  , ProtocolHeaderSupportsEnvelope proto
+  , ProtocolHeaderSupportsKES proto
+  , ProtocolHeaderSupportsProtocol proto
+  , ProtocolHeaderSupportsLedger proto
+  , Serialise (ChainDepState proto)
+  , SignedHeader (ShelleyProtocolHeader proto)
   ) =>
   ShelleyProtocol proto

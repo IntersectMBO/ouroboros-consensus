@@ -3,24 +3,24 @@
 
 module Cardano.Tools.DBAnalyser.Types (module Cardano.Tools.DBAnalyser.Types) where
 
-import           Data.Word
-import           Ouroboros.Consensus.Block
+import Data.Word
+import Ouroboros.Consensus.Block
 
-data SelectDB =
-    SelectImmutableDB (WithOrigin SlotNo)
+data SelectDB
+  = SelectImmutableDB (WithOrigin SlotNo)
 
-data DBAnalyserConfig = DBAnalyserConfig {
-    dbDir      :: FilePath
-  , verbose    :: Bool
-  , selectDB   :: SelectDB
+data DBAnalyserConfig = DBAnalyserConfig
+  { dbDir :: FilePath
+  , verbose :: Bool
+  , selectDB :: SelectDB
   , validation :: Maybe ValidateBlocks
-  , analysis   :: AnalysisName
-  , confLimit  :: Limit
+  , analysis :: AnalysisName
+  , confLimit :: Limit
   , ldbBackend :: LedgerDBBackend
   }
 
-data AnalysisName =
-    ShowSlotBlockNo
+data AnalysisName
+  = ShowSlotBlockNo
   | CountTxOutputs
   | ShowBlockHeaderSize
   | ShowBlockTxsSize
@@ -32,19 +32,19 @@ data AnalysisName =
   | TraceLedgerProcessing
   | BenchmarkLedgerOps (Maybe FilePath) LedgerApplicationMode
   | ReproMempoolAndForge Int
-    -- | Compute different block application metrics every 'NumberOfBlocks'.
+  | -- | Compute different block application metrics every 'NumberOfBlocks'.
     --
     -- The metrics will be written to the provided file path, or to
     -- the standard output if no file path is specified.
-  | GetBlockApplicationMetrics NumberOfBlocks (Maybe FilePath)
+    GetBlockApplicationMetrics NumberOfBlocks (Maybe FilePath)
   deriving Show
 
-data AnalysisResult =
-    ResultCountBlock Int
+data AnalysisResult
+  = ResultCountBlock Int
   | ResultMaxHeaderSize Word16
   deriving (Eq, Show)
 
-newtype NumberOfBlocks = NumberOfBlocks { unNumberOfBlocks :: Word64 }
+newtype NumberOfBlocks = NumberOfBlocks {unNumberOfBlocks :: Word64}
   deriving (Eq, Show, Num, Read)
 
 data Limit = Limit Int | Unlimited

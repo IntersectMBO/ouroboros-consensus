@@ -1,16 +1,16 @@
-module Ouroboros.Consensus.HardFork.Combinator.Abstract.NoHardForks (
-    ImmutableEraParams (..)
+module Ouroboros.Consensus.HardFork.Combinator.Abstract.NoHardForks
+  ( ImmutableEraParams (..)
   , NoHardForks (..)
   , immutableEpochInfo
   ) where
 
-import           Cardano.Slotting.EpochInfo
-import           Data.Functor.Identity (runIdentity)
-import           Ouroboros.Consensus.Config
-import           Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
-import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
-import           Ouroboros.Consensus.HardFork.History as History
-import           Ouroboros.Consensus.Ledger.Abstract
+import Cardano.Slotting.EpochInfo
+import Data.Functor.Identity (runIdentity)
+import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
+import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
+import Ouroboros.Consensus.HardFork.History as History
+import Ouroboros.Consensus.Ledger.Abstract
 
 {-------------------------------------------------------------------------------
   Blocks that don't /have/ any transitions
@@ -38,17 +38,20 @@ class (SingleEraBlock blk, ImmutableEraParams blk) => NoHardForks blk where
   -- | Construct partial ledger config from full ledger config
   --
   -- See also 'toPartialConsensusConfig'
-  toPartialLedgerConfig :: proxy blk
-                        -> LedgerConfig blk -> PartialLedgerConfig blk
+  toPartialLedgerConfig ::
+    proxy blk ->
+    LedgerConfig blk ->
+    PartialLedgerConfig blk
 
-immutableEpochInfo :: (Monad m, ImmutableEraParams blk)
-                   => TopLevelConfig blk
-                   -> EpochInfo m
+immutableEpochInfo ::
+  (Monad m, ImmutableEraParams blk) =>
+  TopLevelConfig blk ->
+  EpochInfo m
 immutableEpochInfo cfg =
-      hoistEpochInfo (pure . runIdentity)
-    $ fixedEpochInfo
-        (History.eraEpochSize  params)
-        (History.eraSlotLength params)
-  where
-    params :: EraParams
-    params = immutableEraParams cfg
+  hoistEpochInfo (pure . runIdentity) $
+    fixedEpochInfo
+      (History.eraEpochSize params)
+      (History.eraSlotLength params)
+ where
+  params :: EraParams
+  params = immutableEraParams cfg

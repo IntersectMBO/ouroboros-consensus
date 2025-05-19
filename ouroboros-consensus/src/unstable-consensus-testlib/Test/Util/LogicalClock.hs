@@ -8,57 +8,58 @@
 --
 -- > import Test.Util.LogicalClock (LogicalClock)
 -- > import qualified Test.Util.LogicalClock as LogicalClock
-module Test.Util.LogicalClock (
-    -- * API
+module Test.Util.LogicalClock
+  ( -- * API
     LogicalClock (..)
   , NumTicks (..)
   , Tick (..)
+
     -- * Construction
   , new
   , sufficientTimeFor
+
     -- * Scheduling actions
   , blockUntilTick
   , onTick
   , tickWatcher
+
     -- * Utilities
   , tickTracer
   ) where
 
-import           Control.Monad
-import           Control.ResourceRegistry
-import           Control.Tracer (Tracer, contramapM)
-import           Data.Time (NominalDiffTime)
-import           Data.Word
-import           GHC.Stack
+import Control.Monad
+import Control.ResourceRegistry
+import Control.Tracer (Tracer, contramapM)
+import Data.Time (NominalDiffTime)
+import Data.Word
+import GHC.Stack
 import qualified Ouroboros.Consensus.BlockchainTime as BTime
-import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.STM
-import           Ouroboros.Consensus.Util.Time
-import           System.Random (Random)
+import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.Util.STM
+import Ouroboros.Consensus.Util.Time
+import System.Random (Random)
 
 {-------------------------------------------------------------------------------
   API
 -------------------------------------------------------------------------------}
 
 -- | Logical time unit
-newtype Tick = Tick { tickToWord64 :: Word64 }
-  deriving stock   (Show, Eq, Ord)
+newtype Tick = Tick {tickToWord64 :: Word64}
+  deriving stock (Show, Eq, Ord)
   deriving newtype (Num, Enum, Random)
 
 -- | Number of ticks the test will run for
 newtype NumTicks = NumTicks Word64
 
 -- | Logical clock (in terms of ticks rather than actual 'UTCTime')
-data LogicalClock m = LogicalClock {
-      -- | Get the current " time "
-      getCurrentTick :: STM m Tick
-
-      -- | Wait for the end of time (each clock has a maximum number of ticks)
-    , waitUntilDone  :: m ()
-
-      -- | Translate the logical clock to mock 'SystemTime'
-    , mockSystemTime :: BTime.SystemTime m
-    }
+data LogicalClock m = LogicalClock
+  { getCurrentTick :: STM m Tick
+  -- ^ Get the current " time "
+  , waitUntilDone :: m ()
+  -- ^ Wait for the end of time (each clock has a maximum number of ticks)
+  , mockSystemTime :: BTime.SystemTime m
+  -- ^ Translate the logical clock to mock 'SystemTime'
+  }
 
 {-------------------------------------------------------------------------------
   Construction
@@ -86,31 +87,33 @@ tickDelay = 0.5
 -------------------------------------------------------------------------------}
 
 -- | Execute action on every clock tick
-tickWatcher :: LogicalClock m
-            -> (Tick -> m ())
-            -> Watcher m Tick Tick
+tickWatcher ::
+  LogicalClock m ->
+  (Tick -> m ()) ->
+  Watcher m Tick Tick
 tickWatcher clock action =
-    Watcher {
-        wFingerprint = id
-      , wInitial     = Nothing
-      , wNotify      = action
-      , wReader      = getCurrentTick clock
-      }
+  Watcher
+    { wFingerprint = id
+    , wInitial = Nothing
+    , wNotify = action
+    , wReader = getCurrentTick clock
+    }
 
 -- | Execute action once at the specified tick
-onTick :: (IOLike m, HasCallStack)
-       => ResourceRegistry m
-       -> LogicalClock m
-       -> String
-       -> Tick
-       -> m ()
-       -> m ()
+onTick ::
+  (IOLike m, HasCallStack) =>
+  ResourceRegistry m ->
+  LogicalClock m ->
+  String ->
+  Tick ->
+  m () ->
+  m ()
 onTick registry clock threadLabel tick action = do
-    void $
-      forkLinkedThread
-        registry
-        threadLabel
-        (waitForTick clock tick >> action)
+  void $
+    forkLinkedThread
+      registry
+      threadLabel
+      (waitForTick clock tick >> action)
 
 -- | Block until the specified tick
 --
@@ -118,8 +121,9 @@ onTick registry clock threadLabel tick action = do
 -- 'True' if they were equal.
 blockUntilTick :: MonadSTM m => LogicalClock m -> Tick -> m Bool
 blockUntilTick clock tick = atomically $ do
-    now <- getCurrentTick clock
-    if now > tick then
+  now <- getCurrentTick clock
+  if now > tick
+    then
       return True
     else do
       when (now < tick) retry
@@ -130,12 +134,12 @@ blockUntilTick clock tick = atomically $ do
 -------------------------------------------------------------------------------}
 
 tickTracer ::
-     MonadSTM m
-  => LogicalClock m
-  -> Tracer m (Tick, ev)
-  -> Tracer m ev
+  MonadSTM m =>
+  LogicalClock m ->
+  Tracer m (Tick, ev) ->
+  Tracer m ev
 tickTracer clock = contramapM $ \ev ->
-    (,ev) <$> atomically (getCurrentTick clock)
+  (,ev) <$> atomically (getCurrentTick clock)
 
 {-------------------------------------------------------------------------------
   Internal
@@ -145,61 +149,64 @@ tickTracer clock = contramapM $ \ev ->
 --
 -- NOTE: Tests using the logical clock really should not need to know what the
 -- tick delay is; that's kind of the point of a /logical/ clock after all.
-newWithDelay :: (IOLike m, HasCallStack)
-             => ResourceRegistry m
-             -> NumTicks
-             -> NominalDiffTime
-             -> m (LogicalClock m)
+newWithDelay ::
+  (IOLike m, HasCallStack) =>
+  ResourceRegistry m ->
+  NumTicks ->
+  NominalDiffTime ->
+  m (LogicalClock m)
 newWithDelay registry (NumTicks numTicks) tickLen = do
-    current <- newTVarIO 0
-    done    <- newEmptyMVar
-    _thread <- forkThread registry "ticker" $ do
-                 -- Tick 0 is the first tick, so increment @numTicks - 1@ times
-                 replicateM_ (fromIntegral numTicks - 1) $ do
-                   -- Give simulator chance to execute other threads
-                   threadDelay (nominalDelay tickLen)
-                   atomically $ modifyTVar current (+ 1)
+  current <- newTVarIO 0
+  done <- newEmptyMVar
+  _thread <- forkThread registry "ticker" $ do
+    -- Tick 0 is the first tick, so increment @numTicks - 1@ times
+    replicateM_ (fromIntegral numTicks - 1) $ do
+      -- Give simulator chance to execute other threads
+      threadDelay (nominalDelay tickLen)
+      atomically $ modifyTVar current (+ 1)
 
-                 -- Give tests that need to do some final processing on the last
-                 -- tick a chance to do that before we indicate completion.
-                 threadDelay (nominalDelay tickLen)
-                 putMVar done ()
+    -- Give tests that need to do some final processing on the last
+    -- tick a chance to do that before we indicate completion.
+    threadDelay (nominalDelay tickLen)
+    putMVar done ()
 
-    return LogicalClock {
-        getCurrentTick = Tick <$> readTVar current
-      , waitUntilDone  = readMVar done
-      , mockSystemTime = BTime.SystemTime {
-            BTime.systemTimeCurrent = do
-              tick <- atomically $ readTVar current
-              return $ BTime.RelativeTime $ fromIntegral tick * tickLen
-          , BTime.systemTimeWait =
-              return ()
-          }
+  return
+    LogicalClock
+      { getCurrentTick = Tick <$> readTVar current
+      , waitUntilDone = readMVar done
+      , mockSystemTime =
+          BTime.SystemTime
+            { BTime.systemTimeCurrent = do
+                tick <- atomically $ readTVar current
+                return $ BTime.RelativeTime $ fromIntegral tick * tickLen
+            , BTime.systemTimeWait =
+                return ()
+            }
       }
 
 -- | Wait for the specified tick (blocking the current thread)
 waitForTick :: IOLike m => LogicalClock m -> Tick -> m ()
 waitForTick clock tick = do
-    start <- atomically $ getCurrentTick clock
-    when (start >= tick) $
-      throwIO $ WaitForTickTooLate {
-          tickRequest = tick
+  start <- atomically $ getCurrentTick clock
+  when (start >= tick) $
+    throwIO $
+      WaitForTickTooLate
+        { tickRequest = tick
         , tickCurrent = start
         }
 
-    atomically $ do
-      now <- getCurrentTick clock
-      check (now >= tick)
+  atomically $ do
+    now <- getCurrentTick clock
+    check (now >= tick)
 
 -- | Thrown by 'waitForTick' (and hence 'onTick')
-data WaitForTickException =
-    WaitForTickTooLate {
-        -- | The time the action should have run at
-        tickRequest :: Tick
-
-        -- | The time when 'onTick' was called
-      , tickCurrent :: Tick
-      }
+data WaitForTickException
+  = WaitForTickTooLate
+  { tickRequest :: Tick
+  -- ^ The time the action should have run at
+  , tickCurrent :: Tick
+  -- ^ The time when 'onTick' was called
+  }
   deriving (Eq, Show)
 
 instance Exception WaitForTickException

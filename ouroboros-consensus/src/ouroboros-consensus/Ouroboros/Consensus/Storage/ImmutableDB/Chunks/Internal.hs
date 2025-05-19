@@ -6,11 +6,12 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeApplications #-}
 
-module Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal (
-    ChunkInfo (..)
+module Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
+  ( ChunkInfo (..)
   , chunkInfoSupportsEBBs
   , simpleChunkInfo
   , singleChunkInfo
+
     -- * Chunk number
   , ChunkNo (..)
   , chunkNoFromInt
@@ -22,15 +23,18 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal (
   , prevChunkNo
   , unsafeChunkNoToEpochNo
   , unsafeEpochNoToChunkNo
+
     -- * Chunk size
   , ChunkSize (..)
   , getChunkSize
+
     -- * Layout
   , RelativeSlot (..)
   , assertRelativeSlotInChunk
   , compareRelativeSlot
   , maxRelativeIndex
   , mkRelativeSlot
+
     -- * Assertions
   , ChunkAssertionFailure
   , assertChunkCanContainEBB
@@ -38,14 +42,14 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal (
   , assertWithinBounds
   ) where
 
-import           Control.Exception
-import           Control.Monad
-import           Data.Word
-import           GHC.Generics (Generic)
-import           NoThunks.Class (NoThunks)
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Util.CallStack
-import           Ouroboros.Consensus.Util.RedundantConstraints
+import Control.Exception
+import Control.Monad
+import Data.Word
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Util.CallStack
+import Ouroboros.Consensus.Util.RedundantConstraints
 
 -- | Size of the chunks of the immutable DB
 --
@@ -53,16 +57,15 @@ import           Ouroboros.Consensus.Util.RedundantConstraints
 --
 -- TODO: Add support for non-uniform 'ChunkInfo'
 -- <https://github.com/IntersectMBO/ouroboros-network/issues/1754>
-data ChunkInfo =
-    -- | A single, uniform, chunk size
+data ChunkInfo
+  = -- | A single, uniform, chunk size
     --
     -- If EBBs are present, the chunk size must line up precisely with the
     -- epoch size (that is, the number of regular blocks in the chunk must equal
     -- the number of regular blocks in an epoch).
-    --
     UniformChunkSize !ChunkSize
-  deriving stock    (Show, Generic)
-  deriving anyclass (NoThunks)
+  deriving stock (Show, Generic)
+  deriving anyclass NoThunks
 
 -- | Simple chunk config with a single chunk size
 --
@@ -84,7 +87,7 @@ singleChunkInfo = UniformChunkSize
 -- become more complicated) once we support non-uniform 'ChunkInfo'.
 chunkInfoSupportsEBBs :: ChunkInfo -> Bool
 chunkInfoSupportsEBBs (UniformChunkSize chunkSize) =
-    chunkCanContainEBB chunkSize
+  chunkCanContainEBB chunkSize
 
 {-------------------------------------------------------------------------------
   Queries
@@ -94,19 +97,18 @@ chunkInfoSupportsEBBs (UniformChunkSize chunkSize) =
 --
 -- The total number of slots available in a chunk is equal to 'numRegularBlocks'
 -- if @not@ 'chunkCanContainEBB', and 'numRegularBlocks' @+ 1@ otherwise.
-data ChunkSize = ChunkSize {
-      -- | Does this chunk also accomodate an EBB?
-      chunkCanContainEBB :: !Bool
-
-      -- | The number of regular blocks in this chunk
-    , numRegularBlocks   :: !Word64
-    }
-  deriving stock    (Show, Generic)
-  deriving anyclass (NoThunks)
+data ChunkSize = ChunkSize
+  { chunkCanContainEBB :: !Bool
+  -- ^ Does this chunk also accomodate an EBB?
+  , numRegularBlocks :: !Word64
+  -- ^ The number of regular blocks in this chunk
+  }
+  deriving stock (Show, Generic)
+  deriving anyclass NoThunks
 
 -- | Chunk number
-newtype ChunkNo = ChunkNo { unChunkNo :: Word64 }
-  deriving stock   (Eq, Ord, Generic)
+newtype ChunkNo = ChunkNo {unChunkNo :: Word64}
+  deriving stock (Eq, Ord, Generic)
   deriving newtype (Show, NoThunks)
 
 -- | First chunk
@@ -143,8 +145,9 @@ countChunks (ChunkNo a) (ChunkNo b) = if a >= b then a - b else b - a
 -- > chunksBetween x              x  == [x]
 -- > chunksBetween x (nextChunkNo x) == [x, nextChunkNo x]
 chunksBetween :: ChunkNo -> ChunkNo -> [ChunkNo]
-chunksBetween (ChunkNo a) (ChunkNo b) = map ChunkNo $
-                                          if a >= b then [a .. b] else [b .. a]
+chunksBetween (ChunkNo a) (ChunkNo b) =
+  map ChunkNo $
+    if a >= b then [a .. b] else [b .. a]
 
 -- | Translate 'EpochNo' to 'ChunkNo'
 --
@@ -163,8 +166,8 @@ unsafeChunkNoToEpochNo (ChunkNo n) = EpochNo n
 
 getChunkSize :: ChunkInfo -> ChunkNo -> ChunkSize
 getChunkSize chunkInfo _chunk =
-    case chunkInfo of
-      UniformChunkSize sz -> sz
+  case chunkInfo of
+    UniformChunkSize sz -> sz
 
 {-------------------------------------------------------------------------------
   Layout
@@ -176,41 +179,39 @@ getChunkSize chunkInfo _chunk =
 -------------------------------------------------------------------------------}
 
 -- | A /relative/ slot within a chunk
-data RelativeSlot = RelativeSlot {
-    -- | The chunk index of the chunk this slot is in
-    --
-    -- Recorded primarily to be able to define a semi-sensible 'Ord' instance.
-    relativeSlotChunkNo   :: !ChunkNo
-
-    -- | The size of the chunk that this slot is in
-    --
-    -- We record this for bounds checking as well as to be able to answer
-    -- questions such as 'relativeSlotIsEBB'.
+data RelativeSlot = RelativeSlot
+  { relativeSlotChunkNo :: !ChunkNo
+  -- ^ The chunk index of the chunk this slot is in
+  --
+  -- Recorded primarily to be able to define a semi-sensible 'Ord' instance.
   , relativeSlotChunkSize :: !ChunkSize
-
-    -- | The index within the chunk
-  , relativeSlotIndex     :: !Word64
+  -- ^ The size of the chunk that this slot is in
+  --
+  -- We record this for bounds checking as well as to be able to answer
+  -- questions such as 'relativeSlotIsEBB'.
+  , relativeSlotIndex :: !Word64
+  -- ^ The index within the chunk
   }
-  deriving stock    (Show, Generic)
-  deriving anyclass (NoThunks)
+  deriving stock (Show, Generic)
+  deriving anyclass NoThunks
 
 -- | Maximum relative index within a chunk
 maxRelativeIndex :: ChunkSize -> Word64
 maxRelativeIndex ChunkSize{..}
   | chunkCanContainEBB = numRegularBlocks
-  | otherwise          = numRegularBlocks - 1
+  | otherwise = numRegularBlocks - 1
 
 -- | Smart constructor for 'RelativeSlot'
 mkRelativeSlot :: HasCallStack => ChunkInfo -> ChunkNo -> Word64 -> RelativeSlot
 mkRelativeSlot chunkInfo chunk index =
-    assertWithinBounds index size $
-    RelativeSlot {
-        relativeSlotChunkNo   = chunk
+  assertWithinBounds index size $
+    RelativeSlot
+      { relativeSlotChunkNo = chunk
       , relativeSlotChunkSize = size
-      , relativeSlotIndex     = index
+      , relativeSlotIndex = index
       }
-  where
-    size = getChunkSize chunkInfo chunk
+ where
+  size = getChunkSize chunkInfo chunk
 
 instance Eq RelativeSlot where
   a == b
@@ -226,13 +227,13 @@ instance Eq RelativeSlot where
 -- will result in an assertion failure.
 compareRelativeSlot :: HasCallStack => RelativeSlot -> RelativeSlot -> Ordering
 compareRelativeSlot a b =
-    assertSameChunk (relativeSlotChunkNo a) (relativeSlotChunkNo b) $
-      compare (relativeSlotIndex a) (relativeSlotIndex b)
+  assertSameChunk (relativeSlotChunkNo a) (relativeSlotChunkNo b) $
+    compare (relativeSlotIndex a) (relativeSlotIndex b)
 
 assertRelativeSlotInChunk :: HasCallStack => ChunkNo -> RelativeSlot -> Word64
 assertRelativeSlotInChunk chunk relSlot =
-    assertSameChunk (relativeSlotChunkNo relSlot) chunk $
-      relativeSlotIndex relSlot
+  assertSameChunk (relativeSlotChunkNo relSlot) chunk $
+    relativeSlotIndex relSlot
 
 {-------------------------------------------------------------------------------
   Assert failures
@@ -242,11 +243,11 @@ assertRelativeSlotInChunk chunk relSlot =
   any functions that (transitively) call these functions.
 -------------------------------------------------------------------------------}
 
-data ChunkAssertionFailure =
-    NotSameChunk ChunkNo ChunkNo PrettyCallStack
+data ChunkAssertionFailure
+  = NotSameChunk ChunkNo ChunkNo PrettyCallStack
   | NotWithinBounds Word64 ChunkSize PrettyCallStack
   | ChunkCannotContainEBBs ChunkNo PrettyCallStack
-  deriving (Show)
+  deriving Show
 
 instance Exception ChunkAssertionFailure
 
