@@ -3,61 +3,67 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
-
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Ouroboros.Consensus.Mock.Node.PBFT (
-    MockPBftBlock
+module Ouroboros.Consensus.Mock.Node.PBFT
+  ( MockPBftBlock
   , blockForgingMockPBFT
   , protocolInfoMockPBFT
   ) where
 
-import           Cardano.Crypto.DSIGN
+import Cardano.Crypto.DSIGN
 import qualified Data.Bimap as Bimap
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Config
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
-import           Ouroboros.Consensus.HeaderValidation
-import           Ouroboros.Consensus.Ledger.Extended
-import           Ouroboros.Consensus.Ledger.SupportsMempool (txForgetValidated)
-import           Ouroboros.Consensus.Mock.Ledger
-import           Ouroboros.Consensus.Node.ProtocolInfo
-import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
-import           Ouroboros.Consensus.Protocol.PBFT
+import Ouroboros.Consensus.HeaderValidation
+import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Ledger.SupportsMempool (txForgetValidated)
+import Ouroboros.Consensus.Mock.Ledger
+import Ouroboros.Consensus.Node.ProtocolInfo
+import Ouroboros.Consensus.NodeId (CoreNodeId (..))
+import Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 
 type MockPBftBlock = SimplePBftBlock SimpleMockCrypto PBftMockCrypto
 
-protocolInfoMockPBFT :: PBftParams
-                     -> HardFork.EraParams
-                     -> ProtocolInfo MockPBftBlock
+protocolInfoMockPBFT ::
+  PBftParams ->
+  HardFork.EraParams ->
+  ProtocolInfo MockPBftBlock
 protocolInfoMockPBFT params eraParams =
-    ProtocolInfo {
-        pInfoConfig = TopLevelConfig {
-            topLevelConfigProtocol = PBftConfig {
-                pbftParams = params
-              }
-          , topLevelConfigLedger      = SimpleLedgerConfig ledgerView eraParams defaultMockConfig
-          , topLevelConfigBlock       = SimpleBlockConfig
-          , topLevelConfigCodec       = SimpleCodecConfig
-          , topLevelConfigStorage     = SimpleStorageConfig (pbftSecurityParam params)
+  ProtocolInfo
+    { pInfoConfig =
+        TopLevelConfig
+          { topLevelConfigProtocol =
+              PBftConfig
+                { pbftParams = params
+                }
+          , topLevelConfigLedger = SimpleLedgerConfig ledgerView eraParams defaultMockConfig
+          , topLevelConfigBlock = SimpleBlockConfig
+          , topLevelConfigCodec = SimpleCodecConfig
+          , topLevelConfigStorage = SimpleStorageConfig (pbftSecurityParam params)
           , topLevelConfigCheckpoints = emptyCheckpointsMap
           }
-      , pInfoInitLedger = ExtLedgerState (genesisSimpleLedgerState addrDist)
-                                         (genesisHeaderState S.empty)
-      }
-  where
-    ledgerView :: PBftLedgerView PBftMockCrypto
-    ledgerView = PBftLedgerView $ Bimap.fromList [
-          (PBftMockVerKeyHash (verKey n), PBftMockVerKeyHash (verKey n))
+    , pInfoInitLedger =
+        ExtLedgerState
+          (genesisSimpleLedgerState addrDist)
+          (genesisHeaderState S.empty)
+    }
+ where
+  ledgerView :: PBftLedgerView PBftMockCrypto
+  ledgerView =
+    PBftLedgerView $
+      Bimap.fromList
+        [ (PBftMockVerKeyHash (verKey n), PBftMockVerKeyHash (verKey n))
         | n <- enumCoreNodes (pbftNumNodes params)
         ]
 
-    verKey :: CoreNodeId -> VerKeyDSIGN MockDSIGN
-    verKey (CoreNodeId n) = VerKeyMockDSIGN n
+  verKey :: CoreNodeId -> VerKeyDSIGN MockDSIGN
+  verKey (CoreNodeId n) = VerKeyMockDSIGN n
 
-    addrDist :: AddrDist
-    addrDist = mkAddrDist (pbftNumNodes params)
+  addrDist :: AddrDist
+  addrDist = mkAddrDist (pbftNumNodes params)
 
 {-------------------------------------------------------------------------------
   BlockForging
@@ -65,49 +71,51 @@ protocolInfoMockPBFT params eraParams =
 --
 blockForgingMockPBFT :: Monad m => CoreNodeId -> [BlockForging m MockPBftBlock]
 blockForgingMockPBFT nid = [pbftBlockForging canBeLeader]
-  where
-    canBeLeader :: PBftCanBeLeader PBftMockCrypto
-    canBeLeader = PBftCanBeLeader {
-          pbftCanBeLeaderCoreNodeId = nid
-        , pbftCanBeLeaderSignKey    = signKey nid
-          -- For Mock PBFT, we use our key as the genesis key.
-        , pbftCanBeLeaderDlgCert    = (verKey nid, verKey nid)
-        }
+ where
+  canBeLeader :: PBftCanBeLeader PBftMockCrypto
+  canBeLeader =
+    PBftCanBeLeader
+      { pbftCanBeLeaderCoreNodeId = nid
+      , pbftCanBeLeaderSignKey = signKey nid
+      , -- For Mock PBFT, we use our key as the genesis key.
+        pbftCanBeLeaderDlgCert = (verKey nid, verKey nid)
+      }
 
-    signKey :: CoreNodeId -> SignKeyDSIGN MockDSIGN
-    signKey (CoreNodeId n) = SignKeyMockDSIGN n
+  signKey :: CoreNodeId -> SignKeyDSIGN MockDSIGN
+  signKey (CoreNodeId n) = SignKeyMockDSIGN n
 
-    verKey :: CoreNodeId -> VerKeyDSIGN MockDSIGN
-    verKey (CoreNodeId n) = VerKeyMockDSIGN n
+  verKey :: CoreNodeId -> VerKeyDSIGN MockDSIGN
+  verKey (CoreNodeId n) = VerKeyMockDSIGN n
 
 pbftBlockForging ::
-     ( SimpleCrypto c
-     , PBftCrypto c'
-     , Signable (PBftDSIGN c') (SignedSimplePBft c c')
-     , ContextDSIGN (PBftDSIGN c') ~ ()
-     , Monad m
-     )
-  => PBftCanBeLeader c'
-  -> BlockForging m (SimplePBftBlock c c')
-pbftBlockForging canBeLeader = BlockForging {
-      forgeLabel       = "pbftBlockForging"
+  ( SimpleCrypto c
+  , PBftCrypto c'
+  , Signable (PBftDSIGN c') (SignedSimplePBft c c')
+  , ContextDSIGN (PBftDSIGN c') ~ ()
+  , Monad m
+  ) =>
+  PBftCanBeLeader c' ->
+  BlockForging m (SimplePBftBlock c c')
+pbftBlockForging canBeLeader =
+  BlockForging
+    { forgeLabel = "pbftBlockForging"
     , canBeLeader
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
-    , checkCanForge    = \cfg slot tickedPBftState _isLeader ->
-                           return $
-                             pbftCheckCanForge
-                               (configConsensus cfg)
-                               canBeLeader
-                               slot
-                               tickedPBftState
-    , forgeBlock       = \cfg slot bno lst txs proof ->
-        return
-          $ forgeSimple
-              forgePBftExt
-              cfg
-              slot
-              bno
-              lst
-              (map txForgetValidated txs)
-              proof
+    , checkCanForge = \cfg slot tickedPBftState _isLeader ->
+        return $
+          pbftCheckCanForge
+            (configConsensus cfg)
+            canBeLeader
+            slot
+            tickedPBftState
+    , forgeBlock = \cfg slot bno lst txs proof ->
+        return $
+          forgeSimple
+            forgePBftExt
+            cfg
+            slot
+            bno
+            lst
+            (map txForgetValidated txs)
+            proof
     }

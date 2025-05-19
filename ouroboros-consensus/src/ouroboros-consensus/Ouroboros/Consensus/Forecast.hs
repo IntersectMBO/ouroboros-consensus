@@ -1,35 +1,36 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
-module Ouroboros.Consensus.Forecast (
-    Forecast (..)
+module Ouroboros.Consensus.Forecast
+  ( Forecast (..)
   , OutsideForecastRange (..)
   , constantForecastInRange
   , constantForecastOf
   , mapForecast
   , trivialForecast
+
     -- * Utilities for constructing forecasts
   , crossEraForecastBound
   ) where
 
-import           Control.Exception (Exception)
-import           Control.Monad (guard)
-import           Control.Monad.Except (Except, throwError)
-import           Data.Word (Word64)
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.HardFork.History.Util (addSlots)
-import           Ouroboros.Consensus.Ledger.Basics (GetTip, getTipSlot)
+import Control.Exception (Exception)
+import Control.Monad (guard)
+import Control.Monad.Except (Except, throwError)
+import Data.Word (Word64)
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.HardFork.History.Util (addSlots)
+import Ouroboros.Consensus.Ledger.Basics (GetTip, getTipSlot)
 
-data Forecast a = Forecast {
-      forecastAt  :: WithOrigin SlotNo
-
-      -- Precondition: @At s >= forecastAt@
-    , forecastFor :: SlotNo -> Except OutsideForecastRange a
-    }
+data Forecast a = Forecast
+  { forecastAt :: WithOrigin SlotNo
+  , -- Precondition: @At s >= forecastAt@
+    forecastFor :: SlotNo -> Except OutsideForecastRange a
+  }
 
 mapForecast :: (a -> b) -> Forecast a -> Forecast b
-mapForecast f (Forecast at for) = Forecast{
-      forecastAt  = at
+mapForecast f (Forecast at for) =
+  Forecast
+    { forecastAt = at
     , forecastFor = fmap f . for
     }
 
@@ -52,36 +53,37 @@ constantForecastOf = constantForecastInRange Nothing
 -- This is primarily useful for tests; the forecast range is finite, and we
 -- do still check the precondition, to catch any bugs.
 constantForecastInRange :: Maybe SlotNo -> a -> WithOrigin SlotNo -> Forecast a
-constantForecastInRange range' a at = Forecast {
-      forecastAt  = at
+constantForecastInRange range' a at =
+  Forecast
+    { forecastAt = at
     , forecastFor = forecastForWithRange range'
     }
-  where
-    forecastForWithRange Nothing = \for ->
-        if NotOrigin for >= at
-          then return a
-          else error "constantForecastOf: precondition violated"
-    forecastForWithRange (Just range) = \for ->
-        let outsideForecastMaxFor = succWithOrigin at + range
-         in if for >= outsideForecastMaxFor
-              then throwError $ OutsideForecastRange {
-                  outsideForecastAt = at
+ where
+  forecastForWithRange Nothing = \for ->
+    if NotOrigin for >= at
+      then return a
+      else error "constantForecastOf: precondition violated"
+  forecastForWithRange (Just range) = \for ->
+    let outsideForecastMaxFor = succWithOrigin at + range
+     in if for >= outsideForecastMaxFor
+          then
+            throwError $
+              OutsideForecastRange
+                { outsideForecastAt = at
                 , outsideForecastMaxFor
                 , outsideForecastFor = for
                 }
-              else forecastForWithRange Nothing for
+          else forecastForWithRange Nothing for
 
-data OutsideForecastRange =
-    OutsideForecastRange {
-        -- | The slot for which the forecast was obtained
-        outsideForecastAt     :: !(WithOrigin SlotNo)
-
-        -- | Exclusive upper bound on the range of the forecast
-      , outsideForecastMaxFor :: !SlotNo
-
-        -- | The slot for which we requested a value
-      , outsideForecastFor    :: !SlotNo
-      }
+data OutsideForecastRange
+  = OutsideForecastRange
+  { outsideForecastAt :: !(WithOrigin SlotNo)
+  -- ^ The slot for which the forecast was obtained
+  , outsideForecastMaxFor :: !SlotNo
+  -- ^ Exclusive upper bound on the range of the forecast
+  , outsideForecastFor :: !SlotNo
+  -- ^ The slot for which we requested a value
+  }
   deriving (Show, Eq)
 
 instance Exception OutsideForecastRange
@@ -170,25 +172,29 @@ instance Exception OutsideForecastRange
 -- 'SlotNo' the first block in the next era can; their @minimum@ will serve as
 -- an exclusive upper bound for the forecast range.
 crossEraForecastBound ::
-     WithOrigin SlotNo  -- ^ Current tip (the slot the forecast is at)
-  -> SlotNo             -- ^ Slot at which the transition to the next era happens
-  -> Word64             -- ^ Max lookeahead in the current era
-  -> Word64             -- ^ Max lookeahead in the next era
-  -> SlotNo
+  -- | Current tip (the slot the forecast is at)
+  WithOrigin SlotNo ->
+  -- | Slot at which the transition to the next era happens
+  SlotNo ->
+  -- | Max lookeahead in the current era
+  Word64 ->
+  -- | Max lookeahead in the next era
+  Word64 ->
+  SlotNo
 crossEraForecastBound currentTip transitionSlot currentLookahead nextLookahead =
-    maybe boundFromNextEra (min boundFromNextEra) boundFromCurrentEra
-  where
-    tipSucc :: SlotNo
-    tipSucc = succWithOrigin currentTip
+  maybe boundFromNextEra (min boundFromNextEra) boundFromCurrentEra
+ where
+  tipSucc :: SlotNo
+  tipSucc = succWithOrigin currentTip
 
-    -- Upper bound arising from blocks in the current era
-    --
-    -- 'Nothing' if there are no more blocks in this era
-    boundFromCurrentEra :: Maybe SlotNo
-    boundFromCurrentEra = do
-        guard (tipSucc < transitionSlot)
-        return $ addSlots currentLookahead tipSucc
+  -- Upper bound arising from blocks in the current era
+  --
+  -- 'Nothing' if there are no more blocks in this era
+  boundFromCurrentEra :: Maybe SlotNo
+  boundFromCurrentEra = do
+    guard (tipSucc < transitionSlot)
+    return $ addSlots currentLookahead tipSucc
 
-    -- Upper bound arising from blocks in the next era
-    boundFromNextEra :: SlotNo
-    boundFromNextEra = addSlots nextLookahead transitionSlot
+  -- Upper bound arising from blocks in the next era
+  boundFromNextEra :: SlotNo
+  boundFromNextEra = addSlots nextLookahead transitionSlot

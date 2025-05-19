@@ -31,13 +31,15 @@ in
     };
   };
 
-  stylish-haskell = tool "stylish-haskell" "0.14.6.0" { };
-
   cabal-gild = tool "cabal-gild" "1.5.0.1" { };
 
   hlint = tool "hlint" "3.8" { };
 
   xrefcheck = tool "xrefcheck" "0.3.1" { };
+
+  fourmolu = tool "fourmolu" "0.18.0.0" {
+    compiler-nix-name = "ghc98";
+  };
 
   haskellBuildUtils = prev.haskellBuildUtils.override {
     inherit (final.hsPkgs.args) compiler-nix-name;

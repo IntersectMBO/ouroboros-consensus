@@ -7,8 +7,8 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 
-module Test.Ouroboros.Consensus.ChainGenerator.Honest (
-    -- * Generating
+module Test.Ouroboros.Consensus.ChainGenerator.Honest
+  ( -- * Generating
     ChainSchema (ChainSchema)
   , CheckedHonestRecipe (UnsafeCheckedHonestRecipe, chrScgDensity, chrWin)
   , HonestLbl
@@ -20,6 +20,7 @@ module Test.Ouroboros.Consensus.ChainGenerator.Honest (
   , countChainSchema
   , genHonestRecipe
   , uniformTheHonestChain
+
     -- * Testing
   , HonestChainViolation (BadCount, BadScgWindow, BadLength)
   , ScgLbl
@@ -29,24 +30,32 @@ module Test.Ouroboros.Consensus.ChainGenerator.Honest (
   , prettyWindow
   ) where
 
-import           Control.Monad (void, when)
+import Control.Monad (void, when)
 import qualified Control.Monad.Except as Exn
-import           Data.Monoid (Endo (Endo, appEndo))
-import           Data.Proxy (Proxy (Proxy))
-import           Data.STRef (newSTRef, readSTRef, writeSTRef)
+import Data.Monoid (Endo (Endo, appEndo))
+import Data.Proxy (Proxy (Proxy))
+import Data.STRef (newSTRef, readSTRef, writeSTRef)
 import qualified Data.Vector.Unboxed as V
-import           Prelude hiding (words)
 import qualified System.Random.Stateful as R
 import qualified Test.Ouroboros.Consensus.ChainGenerator.BitVector as BV
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Counting as C
-import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc,
-                     Delta (Delta), Kcp (Kcp), Len (Len), Scg (Scg), genKSD)
+import Test.Ouroboros.Consensus.ChainGenerator.Params
+  ( Asc
+  , Delta (Delta)
+  , Kcp (Kcp)
+  , Len (Len)
+  , Scg (Scg)
+  , genKSD
+  )
+import Test.Ouroboros.Consensus.ChainGenerator.Slot
+  ( E (ActiveSlotE, SlotE)
+  , S
+  )
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Slot as S
-import           Test.Ouroboros.Consensus.ChainGenerator.Slot
-                     (E (ActiveSlotE, SlotE), S)
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Some as Some
 import qualified Test.QuickCheck as QC
-import           Test.QuickCheck.Extras (sized1)
+import Test.QuickCheck.Extras (sized1)
+import Prelude hiding (words)
 
 -----
 
@@ -60,47 +69,46 @@ data HonestRecipe = HonestRecipe !Kcp !Scg !Delta !Len
 -- * @hon@ the type-level name of the honest chain's slot interval
 --
 -- TODO: Rename to CheckedHonestSchemaSpec
-data CheckedHonestRecipe base hon = UnsafeCheckedHonestRecipe {
-    -- | Desired density
-    chrScgDensity :: !(BV.SomeDensityWindow S.NotInverted)
-  , -- | Window in the @base@ containing sequence where the density should be
-    -- ensured
-    chrWin        :: !(C.Contains SlotE base hon)
+data CheckedHonestRecipe base hon = UnsafeCheckedHonestRecipe
+  { chrScgDensity :: !(BV.SomeDensityWindow S.NotInverted)
+  -- ^ Desired density
+  , chrWin :: !(C.Contains SlotE base hon)
+  -- ^ Window in the @base@ containing sequence where the density should be
+  -- ensured
   }
   deriving (Eq, Read, Show)
 
 -- TODO: Rename to SomeCheckedHonestSpec
-data SomeCheckedHonestRecipe =
-    forall base hon.
+data SomeCheckedHonestRecipe
+  = forall base hon.
     SomeCheckedHonestRecipe
-        !(Proxy base)
-        !(Proxy hon)
-        !(CheckedHonestRecipe base hon)
+      !(Proxy base)
+      !(Proxy hon)
+      !(CheckedHonestRecipe base hon)
 
 instance Show SomeCheckedHonestRecipe where
-    showsPrec p (SomeCheckedHonestRecipe base hon recipe) =
-        Some.runShowsPrec p
-      $ Some.showCtor SomeCheckedHonestRecipe "SomeCheckedHonestRecipe"
-            `Some.showArg` base
-            `Some.showArg` hon
-            `Some.showArg` recipe
+  showsPrec p (SomeCheckedHonestRecipe base hon recipe) =
+    Some.runShowsPrec p $
+      Some.showCtor SomeCheckedHonestRecipe "SomeCheckedHonestRecipe"
+        `Some.showArg` base
+        `Some.showArg` hon
+        `Some.showArg` recipe
 
 instance Read SomeCheckedHonestRecipe where
-    readPrec =
-        Some.runReadPrec
-      $ Some.readCtor SomeCheckedHonestRecipe "SomeCheckedHonestRecipe"
-            <*> Some.readArg
-            <*> Some.readArg
-            <*> Some.readArg
+  readPrec =
+    Some.runReadPrec $
+      Some.readCtor SomeCheckedHonestRecipe "SomeCheckedHonestRecipe"
+        <*> Some.readArg
+        <*> Some.readArg
+        <*> Some.readArg
 
-data NoSuchHonestChainSchema =
-    -- | must have @1 <= 'Kcp' < 'Scg'@
+data NoSuchHonestChainSchema
+  = -- | must have @1 <= 'Kcp' < 'Scg'@
     --
     -- Chosing @Kcp > 0@ allows adversarial schemas to have at least 1 active
     -- slot and still lose density comparisons and races.
     BadKcp
-  |
-    -- | 'Len' must be positive
+  | -- | 'Len' must be positive
     BadLen
   deriving (Eq, Read, Show)
 
@@ -144,29 +152,32 @@ data NoSuchHonestChainSchema =
 
 genHonestRecipe :: QC.Gen HonestRecipe
 genHonestRecipe = sized1 $ \sz -> do
-    (Kcp k, Scg s, Delta d) <- genKSD
-    -- See Note [Minimum schema length].
-    l <- (+ (s + d + k + 1)) <$> QC.choose (0, 5 * sz)
-    pure $ HonestRecipe (Kcp k) (Scg s) (Delta d) (Len l)
+  (Kcp k, Scg s, Delta d) <- genKSD
+  -- See Note [Minimum schema length].
+  l <- (+ (s + d + k + 1)) <$> QC.choose (0, 5 * sz)
+  pure $ HonestRecipe (Kcp k) (Scg s) (Delta d) (Len l)
 
 -- | Checks whether the given 'HonestRecipe' determines a valid input to
 -- 'uniformTheHonestChain'
 checkHonestRecipe :: HonestRecipe -> Exn.Except NoSuchHonestChainSchema SomeCheckedHonestRecipe
 checkHonestRecipe recipe = do
-    when (l <= 0) $ Exn.throwError BadLen
+  when (l <= 0) $ Exn.throwError BadLen
 
-    when (k < 1 || s < k) $ Exn.throwError BadKcp
+  when (k < 1 || s < k) $ Exn.throwError BadKcp
 
-    C.withTopWindow (C.Lbl @HonestLbl) l $ \base topWindow -> do
-        C.SomeWindow Proxy slots <- pure topWindow
+  C.withTopWindow (C.Lbl @HonestLbl) l $ \base topWindow -> do
+    C.SomeWindow Proxy slots <- pure topWindow
 
-        pure $ SomeCheckedHonestRecipe base Proxy UnsafeCheckedHonestRecipe {
-            chrScgDensity = BV.SomeDensityWindow (C.Count (k + 1)) (C.Count s)
-          ,
-            chrWin        = slots
+    pure $
+      SomeCheckedHonestRecipe
+        base
+        Proxy
+        UnsafeCheckedHonestRecipe
+          { chrScgDensity = BV.SomeDensityWindow (C.Count (k + 1)) (C.Count s)
+          , chrWin = slots
           }
-  where
-    HonestRecipe (Kcp k) (Scg s) (Delta _d) (Len l) = recipe
+ where
+  HonestRecipe (Kcp k) (Scg s) (Delta _d) (Len l) = recipe
 
 -----
 
@@ -177,65 +188,65 @@ checkHonestRecipe recipe = do
 -- extend the block from the previous active slot.
 --
 -- INVARIANT: at least one active slot
-data ChainSchema base inner =
-    ChainSchema
-        !(C.Contains SlotE base inner)
-        !(C.Vector inner SlotE S)
+data ChainSchema base inner
+  = ChainSchema
+      !(C.Contains SlotE base inner)
+      !(C.Vector inner SlotE S)
   deriving (Eq, Read, Show)
 
 countChainSchema :: ChainSchema base inner -> C.Size inner ActiveSlotE
 countChainSchema sched =
-    BV.countActivesInV S.notInverted v
-  where
-    ChainSchema _slots v = sched
+  BV.countActivesInV S.notInverted v
+ where
+  ChainSchema _slots v = sched
 
 prettyWindow :: C.Contains SlotE base inner -> String -> String
 prettyWindow win s =
-    -- for example, i=0 n=1 should be "[)"
-    replicate i ' ' <> "[" <> replicate (n - theOpenBracket) ' ' <> ")" <> s
-  where
-    C.Count i = C.windowStart win
-    C.Count n = C.windowSize win
+  -- for example, i=0 n=1 should be "[)"
+  replicate i ' ' <> "[" <> replicate (n - theOpenBracket) ' ' <> ")" <> s
+ where
+  C.Count i = C.windowStart win
+  C.Count n = C.windowSize win
 
-    theOpenBracket = 1
+  theOpenBracket = 1
 
 prettyChainSchema ::
   forall base inner.
-     ChainSchema base inner
-  -> String
-  -> [String]
+  ChainSchema base inner ->
+  String ->
+  [String]
 prettyChainSchema sched s =
-    map (replicate (C.getCount shift) ' ' <>)
-  $ [ prettyWindow slots s
+  map (replicate (C.getCount shift) ' ' <>) $
+    [ prettyWindow slots s
     , V.foldMap (Endo . S.showS) (C.getVector v) `appEndo` ""
     ]
-  where
-    ChainSchema slots v = sched
+ where
+  ChainSchema slots v = sched
 
-    shift = C.windowStart slots
+  shift = C.windowStart slots
 
-data SomeHonestChainSchema =
-     forall base hon.
-     SomeHonestChainSchema
-         !(Proxy base)
-         !(Proxy hon)
-         !(ChainSchema base hon)
+data SomeHonestChainSchema
+  = forall base hon.
+    SomeHonestChainSchema
+      !(Proxy base)
+      !(Proxy hon)
+      !(ChainSchema base hon)
 
 instance Show SomeHonestChainSchema where
-    showsPrec p (SomeHonestChainSchema base hon sched) =
-        Some.runShowsPrec p
-      $ Some.showCtor SomeHonestChainSchema "SomeHonestChainSchema"
-            `Some.showArg` base
-            `Some.showArg` hon
-            `Some.showArg` sched
+  showsPrec p (SomeHonestChainSchema base hon sched) =
+    Some.runShowsPrec p $
+      Some.showCtor SomeHonestChainSchema "SomeHonestChainSchema"
+        `Some.showArg` base
+        `Some.showArg` hon
+        `Some.showArg` sched
 
 instance Read SomeHonestChainSchema where
-    readPrec =
-        Some.runReadPrec
-      $ Some.readCtor SomeHonestChainSchema "SomeHonestChainSchema"
-            <*> Some.readArg
-            <*> Some.readArg
-            <*> Some.readArg
+  readPrec =
+    Some.runReadPrec $
+      Some.readCtor SomeHonestChainSchema "SomeHonestChainSchema"
+        <*> Some.readArg
+        <*> Some.readArg
+        <*> Some.readArg
 
 data HonestLbl
 
@@ -376,148 +387,146 @@ would solve the problem with just two toggles.
 -- to start with empty slots and be dense at the end.
 uniformTheHonestChain ::
   forall base hon g.
-     R.RandomGen g
-  => Maybe Asc   -- ^ When @Nothing@, the generated schema has a minimal amount
-                 -- of active slots. Deactivating any of them would violate
-                 -- safety properties. Such a minimal schema is necessarily
-                 -- completely periodic.
-  -> CheckedHonestRecipe base hon
-  -> g
-  -> ChainSchema base hon
-{-# INLINABLE uniformTheHonestChain #-}
+  R.RandomGen g =>
+  -- | When @Nothing@, the generated schema has a minimal amount
+  -- of active slots. Deactivating any of them would violate
+  -- safety properties. Such a minimal schema is necessarily
+  -- completely periodic.
+  Maybe Asc ->
+  CheckedHonestRecipe base hon ->
+  g ->
+  ChainSchema base hon
+{-# INLINEABLE uniformTheHonestChain #-}
 uniformTheHonestChain mbAsc recipe g0 = wrap $ C.createV $ do
-    BV.SomeDensityWindow (C.Count (toEnum -> numerator)) (C.Count (toEnum -> denominator)) <- pure chrScgDensity
-    let _ = numerator   :: C.Var hon ActiveSlotE
-        _ = denominator :: C.Var hon SlotE
+  BV.SomeDensityWindow (C.Count (toEnum -> numerator)) (C.Count (toEnum -> denominator)) <-
+    pure chrScgDensity
+  let _ = numerator :: C.Var hon ActiveSlotE
+      _ = denominator :: C.Var hon SlotE
 
-    g <- R.newSTGenM g0
+  g <- R.newSTGenM g0
 
-    -- randomly initialize the bitstring
-    mv <- C.replicateMV sz $ case mbAsc of
-        Nothing  -> pure $ S.mkActive S.inverted
-        Just asc -> S.genS asc `R.applySTGen` g
+  -- randomly initialize the bitstring
+  mv <- C.replicateMV sz $ case mbAsc of
+    Nothing -> pure $ S.mkActive S.inverted
+    Just asc -> S.genS asc `R.applySTGen` g
 
-    -- /always/ ensure at least one slot is filled
-    void $ BV.fillInWindow S.notInverted (C.Count 1 `BV.SomeDensityWindow` sz) g mv
+  -- /always/ ensure at least one slot is filled
+  void $ BV.fillInWindow S.notInverted (C.Count 1 `BV.SomeDensityWindow` sz) g mv
 
-    -- fill the first window up to @k+1@
-    rtot <- do
-        -- NB @withWindow@ truncates if it would reach past @slots@
-        C.SomeWindow Proxy scg <- pure $ C.withWindow sz (C.Lbl @ScgLbl) (C.Count 0) (C.toSize denominator)
-        tot <- C.fromWindowVar scg <$> BV.fillInWindow S.notInverted chrScgDensity g (C.sliceMV scg mv)
+  -- fill the first window up to @k+1@
+  rtot <- do
+    -- NB @withWindow@ truncates if it would reach past @slots@
+    C.SomeWindow Proxy scg <- pure $ C.withWindow sz (C.Lbl @ScgLbl) (C.Count 0) (C.toSize denominator)
+    tot <- C.fromWindowVar scg <$> BV.fillInWindow S.notInverted chrScgDensity g (C.sliceMV scg mv)
 
-        firstSlot <- BV.testMV S.notInverted mv (C.Count 0)
-        newSTRef $ (if firstSlot then subtract 1 else id) $ (tot :: C.Var hon ActiveSlotE)
+    firstSlot <- BV.testMV S.notInverted mv (C.Count 0)
+    newSTRef $ (if firstSlot then subtract 1 else id) $ (tot :: C.Var hon ActiveSlotE)
 
-    C.SomeWindow Proxy remainingFullWindows <- do
-        -- "number of windows that fit" is usually "total - windowWidth + 1",
-        -- but we do not add the one here because the previous init step above
-        -- already handled the first window
-        let numRemainingFullWindows = sz C.- C.getCount denominator
-        pure $ C.withWindow sz (C.Lbl @RemainingHcgWindowsLbl) (C.Count 1) numRemainingFullWindows
+  C.SomeWindow Proxy remainingFullWindows <- do
+    -- "number of windows that fit" is usually "total - windowWidth + 1",
+    -- but we do not add the one here because the previous init step above
+    -- already handled the first window
+    let numRemainingFullWindows = sz C.- C.getCount denominator
+    pure $ C.withWindow sz (C.Lbl @RemainingHcgWindowsLbl) (C.Count 1) numRemainingFullWindows
 
-    -- visit all subsequent windows that do not reach beyond @slots@
-    --
-    -- Visiting a window ensures it has at least k+1 active slots; thus the
-    -- first window beyond @slots@ will have at least k actives in its actual
-    -- slots. We assume slots beyond @slots@ are active; thus the first window
-    -- beyond has at least k+1 active slots. And subsequent windows can only have
-    -- more active slots than that; thus we don't need to visit windows that
-    -- reach beyond @slots@.
-    --
-    -- LOOP INVARIANT: @rtot@ contains the count active slots in the current window excluding its youngest slot
-    --
-    -- LOOP INVARIANT: @numerator - 1 <= rtot@
-    --
-    -- This loop only alters the final slot in each window. That is key to this
-    -- whole function being a /uniform/ sampler. In particular:
-    --
-    --     * Every excessive empty slot in the first window has an equal chance
-    --       to be filled in (by the init step above).
-    --
-    --     * If some subsequent window is sparse, then its final slot is filled
-    --       in (by this loop). It must never fill in any older slot in the
-    --       window because those slots have already been sampled (either by
-    --       the init step above or by previous iterations of this loop).
-    --
-    --     * Every slot that was not filled in was drawn from @mbAsc@.
-    --
-    --     * In total: the init step uniformly fills the first window up to
-    --       @numerator@, and then each slot not in the first window is either
-    --       forced to @1@ by its preceding @denominator - 1@ samples or is
-    --       sampled from @mbAsc@.
-    C.forRange_ (C.windowSize remainingFullWindows) $ \(C.fromWindow remainingFullWindows -> islot) -> do
-        -- NB will not be truncated
-        C.SomeWindow Proxy scgSlots <- pure $ C.withWindow sz (C.Lbl @ScgLbl) islot (C.toSize denominator)
+  -- visit all subsequent windows that do not reach beyond @slots@
+  --
+  -- Visiting a window ensures it has at least k+1 active slots; thus the
+  -- first window beyond @slots@ will have at least k actives in its actual
+  -- slots. We assume slots beyond @slots@ are active; thus the first window
+  -- beyond has at least k+1 active slots. And subsequent windows can only have
+  -- more active slots than that; thus we don't need to visit windows that
+  -- reach beyond @slots@.
+  --
+  -- LOOP INVARIANT: @rtot@ contains the count active slots in the current window excluding its youngest slot
+  --
+  -- LOOP INVARIANT: @numerator - 1 <= rtot@
+  --
+  -- This loop only alters the final slot in each window. That is key to this
+  -- whole function being a /uniform/ sampler. In particular:
+  --
+  --     * Every excessive empty slot in the first window has an equal chance
+  --       to be filled in (by the init step above).
+  --
+  --     * If some subsequent window is sparse, then its final slot is filled
+  --       in (by this loop). It must never fill in any older slot in the
+  --       window because those slots have already been sampled (either by
+  --       the init step above or by previous iterations of this loop).
+  --
+  --     * Every slot that was not filled in was drawn from @mbAsc@.
+  --
+  --     * In total: the init step uniformly fills the first window up to
+  --       @numerator@, and then each slot not in the first window is either
+  --       forced to @1@ by its preceding @denominator - 1@ samples or is
+  --       sampled from @mbAsc@.
+  C.forRange_ (C.windowSize remainingFullWindows) $ \(C.fromWindow remainingFullWindows -> islot) -> do
+    -- NB will not be truncated
+    C.SomeWindow Proxy scgSlots <- pure $ C.withWindow sz (C.Lbl @ScgLbl) islot (C.toSize denominator)
 
-        tot <- do
-            tot <- readSTRef rtot
-            end <- BV.testMV S.notInverted mv (C.windowLast scgSlots)
-            pure $ (if end then (+1) else id) $ tot
+    tot <- do
+      tot <- readSTRef rtot
+      end <- BV.testMV S.notInverted mv (C.windowLast scgSlots)
+      pure $ (if end then (+ 1) else id) $ tot
 
-        let sparse = tot == numerator - 1   -- see LOOP INVARIANT
+    let sparse = tot == numerator - 1 -- see LOOP INVARIANT
+    tot' <-
+      if not sparse
+        then pure tot
+        else do
+          BV.setMV S.notInverted mv (C.windowLast scgSlots)
+          pure numerator
 
-        tot' <- if not sparse then pure tot else do
-            BV.setMV S.notInverted mv (C.windowLast scgSlots)
-            pure numerator
+    start <- BV.testMV S.notInverted mv (C.windowStart scgSlots)
+    writeSTRef rtot $! (if start then subtract 1 else id) $ tot'
 
-        start <- BV.testMV S.notInverted mv (C.windowStart scgSlots)
-        writeSTRef rtot $! (if start then subtract 1 else id) $ tot'
+  pure mv
+ where
+  UnsafeCheckedHonestRecipe
+    { chrScgDensity
+    , chrWin = slots
+    } = recipe
 
-    pure mv
-  where
-    UnsafeCheckedHonestRecipe {
-        chrScgDensity
-      ,
-        chrWin         = slots
-      }  = recipe
-
-    sz  = C.windowSize slots :: C.Size hon SlotE   -- ie 'Len'
-
-    wrap v = ChainSchema slots v
+  sz = C.windowSize slots :: C.Size hon SlotE -- ie 'Len'
+  wrap v = ChainSchema slots v
 
 -----
 
-data ScgViolation hon =
-    forall skolem.
-    ScgViolation {
-        -- | How many active slots 'scgvWindow' has
-        scgvPopCount :: !(C.Size (C.Win ScgLbl skolem) ActiveSlotE)
-      ,
-        -- | The ChainGrowth window that doesn't have enough active slots
-        scgvWindow   :: !(C.Contains SlotE hon (C.Win ScgLbl skolem))
-      }
+data ScgViolation hon
+  = forall skolem.
+  ScgViolation
+  { scgvPopCount :: !(C.Size (C.Win ScgLbl skolem) ActiveSlotE)
+  -- ^ How many active slots 'scgvWindow' has
+  , scgvWindow :: !(C.Contains SlotE hon (C.Win ScgLbl skolem))
+  -- ^ The ChainGrowth window that doesn't have enough active slots
+  }
 
 instance Eq (ScgViolation hon) where
-    ScgViolation l1 l2 == ScgViolation r1 r2 =
-      C.forgetBase l1 == C.forgetBase r1
-      &&
-      C.forgetWindow l2 == C.forgetWindow r2
+  ScgViolation l1 l2 == ScgViolation r1 r2 =
+    C.forgetBase l1 == C.forgetBase r1
+      && C.forgetWindow l2 == C.forgetWindow r2
 
 instance Show (ScgViolation hon) where
-    showsPrec p (ScgViolation x y) =
-        Some.runShowsPrec p
-      $ Some.showCtor ScgViolation "ScgViolation"
-            `Some.showArg` x
-            `Some.showArg` y
+  showsPrec p (ScgViolation x y) =
+    Some.runShowsPrec p $
+      Some.showCtor ScgViolation "ScgViolation"
+        `Some.showArg` x
+        `Some.showArg` y
 
 instance Read (ScgViolation hon) where
-    readPrec =
-        Some.runReadPrec
-      $ Some.readCtor ScgViolation "ScgViolation"
-            <*> Some.readArg
-            <*> Some.readArg
+  readPrec =
+    Some.runReadPrec $
+      Some.readCtor ScgViolation "ScgViolation"
+        <*> Some.readArg
+        <*> Some.readArg
 
-data HonestChainViolation hon =
-    -- | The schema does not contain a positive number of active slots
+data HonestChainViolation hon
+  = -- | The schema does not contain a positive number of active slots
     BadCount
-  |
-    -- | The schema has some window of 'Scg' slots that contains less than
+  | -- | The schema has some window of 'Scg' slots that contains less than
     -- 'Kcp+1' active slots, even despite optimistically assuming that all slots
     -- beyond 'Len' are active
     BadScgWindow !(ScgViolation hon)
-  |
-    -- | The schema does not span exactly 'Len' slots
+  | -- | The schema does not span exactly 'Len' slots
     BadLength !(C.Size hon SlotE)
   deriving (Eq, Read, Show)
 
@@ -538,36 +547,37 @@ data ScgLbl
 -- @3k/f@ after Byron on Cardano @mainnet@.)
 checkHonestChain ::
   forall base hon.
-     HonestRecipe
-  -> ChainSchema base hon
-  -> Exn.Except (HonestChainViolation hon) ()
+  HonestRecipe ->
+  ChainSchema base hon ->
+  Exn.Except (HonestChainViolation hon) ()
 checkHonestChain recipe sched = do
-    when (C.getCount sz /= l) $ Exn.throwError $ BadLength sz
+  when (C.getCount sz /= l) $ Exn.throwError $ BadLength sz
 
-    do  let pc = countChainSchema sched
-        when (C.toVar pc <= 0) $ Exn.throwError BadCount
+  do
+    let pc = countChainSchema sched
+    when (C.toVar pc <= 0) $ Exn.throwError BadCount
 
-    -- every slot is the first slot of a unique stability window
-    C.forRange_ sz $ \i -> do
-        -- note that withWindow truncates if the requested slots reach past 'Len'
-        C.SomeWindow Proxy scg <- pure $ C.withWindow sz (C.Lbl @ScgLbl) i (C.Count s)
+  -- every slot is the first slot of a unique stability window
+  C.forRange_ sz $ \i -> do
+    -- note that withWindow truncates if the requested slots reach past 'Len'
+    C.SomeWindow Proxy scg <- pure $ C.withWindow sz (C.Lbl @ScgLbl) i (C.Count s)
 
-        let pc = BV.countActivesInV S.notInverted (C.sliceV scg v)
+    let pc = BV.countActivesInV S.notInverted (C.sliceV scg v)
 
-        -- generously assume that the slots of this stability window that extend past 'Len' are active
-        let benefitOfTheDoubt = s - C.getCount (C.windowSize scg)
+    -- generously assume that the slots of this stability window that extend past 'Len' are active
+    let benefitOfTheDoubt = s - C.getCount (C.windowSize scg)
 
-        -- check the density in the stability window
-        when (C.getCount pc + benefitOfTheDoubt < k + 1) $ do
-            Exn.throwError $ BadScgWindow $ ScgViolation {
-                scgvPopCount = pc
-              ,
-                scgvWindow   = scg
-              }
+    -- check the density in the stability window
+    when (C.getCount pc + benefitOfTheDoubt < k + 1) $ do
+      Exn.throwError $
+        BadScgWindow $
+          ScgViolation
+            { scgvPopCount = pc
+            , scgvWindow = scg
+            }
+ where
+  HonestRecipe (Kcp k) (Scg s) (Delta _d) (Len l) = recipe
 
-  where
-    HonestRecipe (Kcp k) (Scg s) (Delta _d) (Len l) = recipe
+  ChainSchema hon v = sched
 
-    ChainSchema hon v = sched
-
-    sz  = C.windowSize hon
+  sz = C.windowSize hon

@@ -1,8 +1,8 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE PatternSynonyms #-}
 
-module Test.Ouroboros.Consensus.ChainGenerator.Params (
-    Asc (Asc, UnsafeAsc)
+module Test.Ouroboros.Consensus.ChainGenerator.Params
+  ( Asc (Asc, UnsafeAsc)
   , Delta (Delta)
   , Kcp (Kcp)
   , Len (Len)
@@ -15,9 +15,9 @@ module Test.Ouroboros.Consensus.ChainGenerator.Params (
   ) where
 
 import qualified Data.Bits as B
-import           Data.Word (Word8)
+import Data.Word (Word8)
 import qualified Test.QuickCheck as QC
-import           Test.QuickCheck.Extras (sized1)
+import Test.QuickCheck.Extras (sized1)
 
 -----
 
@@ -80,8 +80,8 @@ pattern Asc d <- UnsafeAsc d
 
 ascFromDouble :: Double -> Asc
 ascFromDouble d
-  | d <= 0    = error "Asc must be > 0"
-  | 1 <= d    = error "Asc must be < 1"
+  | d <= 0 = error "Asc must be > 0"
+  | 1 <= d = error "Asc must be < 1"
   | otherwise = UnsafeAsc d
 
 -- | PRECONDITION: the bits aren't all the same
@@ -99,9 +99,9 @@ genAsc = ascFromBits <$> QC.choose (1 :: Word8, maxBound - 1)
 
 genKSD :: QC.Gen (Kcp, Scg, Delta)
 genKSD = sized1 $ \sz -> do
-    -- k > 0 so we can ensure an alternative schema loses the density comparison
-    -- without having to deactivate the first active slot
-    k <- QC.choose (1, sz + 1)
-    s <- (+ (k + 1)) <$> QC.choose (0, 2 * sz)   -- ensures @(k+1) / s <= 1@
-    d <- QC.choose (0, max 0 $ min (div sz 4) (s-1)) -- ensures @d < s@
-    pure (Kcp k, Scg s, Delta d)
+  -- k > 0 so we can ensure an alternative schema loses the density comparison
+  -- without having to deactivate the first active slot
+  k <- QC.choose (1, sz + 1)
+  s <- (+ (k + 1)) <$> QC.choose (0, 2 * sz) -- ensures @(k+1) / s <= 1@
+  d <- QC.choose (0, max 0 $ min (div sz 4) (s - 1)) -- ensures @d < s@
+  pure (Kcp k, Scg s, Delta d)

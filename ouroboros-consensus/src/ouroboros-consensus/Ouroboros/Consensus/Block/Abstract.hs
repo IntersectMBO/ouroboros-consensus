@@ -6,16 +6,19 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module Ouroboros.Consensus.Block.Abstract (
-    -- * Protocol
+module Ouroboros.Consensus.Block.Abstract
+  ( -- * Protocol
     BlockProtocol
+
     -- * Configuration
   , BlockConfig
   , CodecConfig
   , StorageConfig
+
     -- * Previous hash
   , GetPrevHash (..)
   , blockPrevHash
+
     -- * Working with headers
   , GetHeader (..)
   , GetHeader1 (..)
@@ -26,14 +29,18 @@ module Ouroboros.Consensus.Block.Abstract (
   , headerHash
   , headerPoint
   , headerToIsEBB
+
     -- * Raw hash
   , ConvertRawHash (..)
   , decodeRawHash
   , encodeRawHash
+
     -- * Utilities for working with WithOrigin
   , succWithOrigin
+
     -- * Ouroboros Genesis window
   , GenesisWindow (..)
+
     -- * Re-export basic definitions from @ouroboros-network@
   , ChainHash (..)
   , HasHeader (..)
@@ -50,6 +57,7 @@ module Ouroboros.Consensus.Block.Abstract (
   , castPoint
   , pointHash
   , pointSlot
+
     -- * Re-export basic definitions from @cardano-base@
   , BlockNo (..)
   , EpochNo (..)
@@ -62,27 +70,48 @@ module Ouroboros.Consensus.Block.Abstract (
   , withOriginToMaybe
   ) where
 
-import           Cardano.Slotting.Block (BlockNo (..))
-import           Cardano.Slotting.Slot (EpochNo (..), EpochSize (..),
-                     SlotNo (..), WithOrigin (Origin), fromWithOrigin,
-                     withOrigin, withOriginFromMaybe, withOriginToMaybe)
+import Cardano.Slotting.Block (BlockNo (..))
+import Cardano.Slotting.Slot
+  ( EpochNo (..)
+  , EpochSize (..)
+  , SlotNo (..)
+  , WithOrigin (Origin)
+  , fromWithOrigin
+  , withOrigin
+  , withOriginFromMaybe
+  , withOriginToMaybe
+  )
 import qualified Cardano.Slotting.Slot as Cardano
 import qualified Codec.Serialise as Serialise
-import           Codec.Serialise.Decoding (Decoder)
-import           Codec.Serialise.Encoding (Encoding)
+import Codec.Serialise.Decoding (Decoder)
+import Codec.Serialise.Encoding (Encoding)
 import qualified Data.ByteString as Strict
-import           Data.ByteString.Short (ShortByteString)
+import Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as Short
-import           Data.Kind (Type)
-import           Data.Maybe (isJust)
-import           Data.Word (Word32, Word64)
-import           NoThunks.Class (NoThunks)
-import           Ouroboros.Consensus.Block.EBB
-import           Ouroboros.Network.Block (ChainHash (..), HasHeader (..),
-                     HeaderFields (..), HeaderHash, Point, StandardHash,
-                     blockHash, blockNo, blockPoint, blockSlot, castHash,
-                     castHeaderFields, castPoint, pattern BlockPoint,
-                     pattern GenesisPoint, pointHash, pointSlot)
+import Data.Kind (Type)
+import Data.Maybe (isJust)
+import Data.Word (Word32, Word64)
+import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Block.EBB
+import Ouroboros.Network.Block
+  ( ChainHash (..)
+  , HasHeader (..)
+  , HeaderFields (..)
+  , HeaderHash
+  , Point
+  , StandardHash
+  , blockHash
+  , blockNo
+  , blockPoint
+  , blockSlot
+  , castHash
+  , castHeaderFields
+  , castPoint
+  , pointHash
+  , pointSlot
+  , pattern BlockPoint
+  , pattern GenesisPoint
+  )
 
 {-------------------------------------------------------------------------------
   Protocol
@@ -127,7 +156,7 @@ blockPrevHash = castHash . headerPrevHash . getHeader
 data family Header blk :: Type
 
 class HasHeader (Header blk) => GetHeader blk where
-  getHeader          :: blk -> Header blk
+  getHeader :: blk -> Header blk
 
   -- | Check whether the header is the header of the block.
   --
@@ -137,7 +166,7 @@ class HasHeader (Header blk) => GetHeader blk where
 
   -- | When the given header is the header of an Epoch Boundary Block, returns
   -- its epoch number.
-  headerIsEBB        :: Header blk -> Maybe EpochNo
+  headerIsEBB :: Header blk -> Maybe EpochNo
 
 headerToIsEBB :: GetHeader blk => Header blk -> IsEBB
 headerToIsEBB = toIsEBB . isJust . headerIsEBB
@@ -224,16 +253,20 @@ class ConvertRawHash blk where
   -- | The size of the hash in number of bytes
   hashSize :: proxy blk -> Word32
 
-  {-# MINIMAL hashSize
-            , (toRawHash | toShortRawHash)
-            , (fromRawHash | fromShortRawHash) #-}
+  {-# MINIMAL
+    hashSize
+    , (toRawHash | toShortRawHash)
+    , (fromRawHash | fromShortRawHash)
+    #-}
 
-encodeRawHash :: ConvertRawHash blk
-              => proxy blk -> HeaderHash blk -> Encoding
+encodeRawHash ::
+  ConvertRawHash blk =>
+  proxy blk -> HeaderHash blk -> Encoding
 encodeRawHash p = Serialise.encode . toShortRawHash p
 
-decodeRawHash :: ConvertRawHash blk
-              => proxy blk -> forall s. Decoder s (HeaderHash blk)
+decodeRawHash ::
+  ConvertRawHash blk =>
+  proxy blk -> forall s. Decoder s (HeaderHash blk)
 decodeRawHash p = fromShortRawHash p <$> Serialise.decode
 
 {-------------------------------------------------------------------------------
@@ -264,6 +297,6 @@ succWithOrigin = withOrigin minBound succ
 -- consider when deciding whether to disconnect from a peer. It has to be
 -- smaller or equal to the stability window. For instance, for Shelley-based
 -- eras, this will be equal to a stability window, that is @3k/f@.
-newtype GenesisWindow = GenesisWindow { unGenesisWindow :: Word64 }
+newtype GenesisWindow = GenesisWindow {unGenesisWindow :: Word64}
   deriving stock (Show, Eq, Ord)
   deriving newtype (NoThunks, Num)

@@ -2,8 +2,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Test.ThreadNet.Infra.Byron.ProtocolInfo (
-    mkLeaderCredentials
+module Test.ThreadNet.Infra.Byron.ProtocolInfo
+  ( mkLeaderCredentials
   , mkProtocolByron
   , theProposedProtocolVersion
   , theProposedSoftwareVersion
@@ -14,85 +14,91 @@ import qualified Cardano.Chain.Delegation as Delegation
 import qualified Cardano.Chain.Genesis as Genesis
 import qualified Cardano.Chain.Update as Update
 import qualified Cardano.Crypto as Crypto
-import           Data.Foldable (find)
-import           Data.Map.Strict (Map)
+import Data.Foldable (find)
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromMaybe)
-import           GHC.Stack (HasCallStack)
-import           Ouroboros.Consensus.Block.Forging (BlockForging)
-import           Ouroboros.Consensus.Byron.Crypto.DSIGN (ByronDSIGN,
-                     SignKeyDSIGN (..))
-import           Ouroboros.Consensus.Byron.Ledger (ByronBlock)
-import           Ouroboros.Consensus.Byron.Node
-import           Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
-import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
-import           Ouroboros.Consensus.Protocol.PBFT
+import Data.Maybe (fromMaybe)
+import GHC.Stack (HasCallStack)
+import Ouroboros.Consensus.Block.Forging (BlockForging)
+import Ouroboros.Consensus.Byron.Crypto.DSIGN
+  ( ByronDSIGN
+  , SignKeyDSIGN (..)
+  )
+import Ouroboros.Consensus.Byron.Ledger (ByronBlock)
+import Ouroboros.Consensus.Byron.Node
+import Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
+import Ouroboros.Consensus.NodeId (CoreNodeId (..))
+import Ouroboros.Consensus.Protocol.PBFT
 
 mkProtocolByron ::
-     forall m. (Monad m, HasCallStack)
-  => PBftParams
-  -> CoreNodeId
-  -> Genesis.Config
-  -> Genesis.GeneratedSecrets
-  -> (ProtocolInfo ByronBlock, [BlockForging m ByronBlock], SignKeyDSIGN ByronDSIGN)
-     -- ^ We return the signing key which is needed in some tests, because it
-     -- cannot easily be extracted from the 'ProtocolInfo'.
+  forall m.
+  (Monad m, HasCallStack) =>
+  PBftParams ->
+  CoreNodeId ->
+  Genesis.Config ->
+  Genesis.GeneratedSecrets ->
+  -- | We return the signing key which is needed in some tests, because it
+  -- cannot easily be extracted from the 'ProtocolInfo'.
+  (ProtocolInfo ByronBlock, [BlockForging m ByronBlock], SignKeyDSIGN ByronDSIGN)
 mkProtocolByron params coreNodeId genesisConfig genesisSecrets =
-    (protocolInfo, blockForging, signingKey)
-  where
-    leaderCredentials :: ByronLeaderCredentials
-    leaderCredentials =
-        mkLeaderCredentials
-          genesisConfig
-          genesisSecrets
-          coreNodeId
+  (protocolInfo, blockForging, signingKey)
+ where
+  leaderCredentials :: ByronLeaderCredentials
+  leaderCredentials =
+    mkLeaderCredentials
+      genesisConfig
+      genesisSecrets
+      coreNodeId
 
-    signingKey :: SignKeyDSIGN ByronDSIGN
-    signingKey = SignKeyByronDSIGN (blcSignKey leaderCredentials)
+  signingKey :: SignKeyDSIGN ByronDSIGN
+  signingKey = SignKeyByronDSIGN (blcSignKey leaderCredentials)
 
-    PBftParams { pbftSignatureThreshold } = params
+  PBftParams{pbftSignatureThreshold} = params
 
-    protocolInfo :: ProtocolInfo ByronBlock
-    protocolInfo = protocolInfoByron protocolParams
+  protocolInfo :: ProtocolInfo ByronBlock
+  protocolInfo = protocolInfoByron protocolParams
 
-    blockForging :: [BlockForging m ByronBlock]
-    blockForging = blockForgingByron protocolParams
+  blockForging :: [BlockForging m ByronBlock]
+  blockForging = blockForgingByron protocolParams
 
-    protocolParams :: ProtocolParamsByron
-    protocolParams = ProtocolParamsByron {
-            byronGenesis                = genesisConfig
-          , byronPbftSignatureThreshold = Just $ pbftSignatureThreshold
-          , byronProtocolVersion        = theProposedProtocolVersion
-          , byronSoftwareVersion        = theProposedSoftwareVersion
-          , byronLeaderCredentials      = Just leaderCredentials
-          }
+  protocolParams :: ProtocolParamsByron
+  protocolParams =
+    ProtocolParamsByron
+      { byronGenesis = genesisConfig
+      , byronPbftSignatureThreshold = Just $ pbftSignatureThreshold
+      , byronProtocolVersion = theProposedProtocolVersion
+      , byronSoftwareVersion = theProposedSoftwareVersion
+      , byronLeaderCredentials = Just leaderCredentials
+      }
 
 mkLeaderCredentials ::
-     HasCallStack
-  => Genesis.Config
-  -> Genesis.GeneratedSecrets
-  -> CoreNodeId
-  -> ByronLeaderCredentials
+  HasCallStack =>
+  Genesis.Config ->
+  Genesis.GeneratedSecrets ->
+  CoreNodeId ->
+  ByronLeaderCredentials
 mkLeaderCredentials genesisConfig genesisSecrets (CoreNodeId i) =
-    either (error . show) id $
-      mkByronLeaderCredentials
-        genesisConfig
-        dlgKey
-        dlgCert
-        "ThreadNet"
-  where
-    dlgKey :: Crypto.SigningKey
-    dlgKey = fromMaybe (error "dlgKey") $
-       find (\sec -> Delegation.delegateVK dlgCert == Crypto.toVerification sec)
-            $ Genesis.gsRichSecrets genesisSecrets
+  either (error . show) id $
+    mkByronLeaderCredentials
+      genesisConfig
+      dlgKey
+      dlgCert
+      "ThreadNet"
+ where
+  dlgKey :: Crypto.SigningKey
+  dlgKey =
+    fromMaybe (error "dlgKey") $
+      find (\sec -> Delegation.delegateVK dlgCert == Crypto.toVerification sec) $
+        Genesis.gsRichSecrets genesisSecrets
 
-    dlgCert :: Delegation.Certificate
-    dlgCert = snd $ Map.toAscList dlgMap !! (fromIntegral i)
+  dlgCert :: Delegation.Certificate
+  dlgCert = snd $ Map.toAscList dlgMap !! (fromIntegral i)
 
-    dlgMap :: Map Common.KeyHash Delegation.Certificate
-    dlgMap = Genesis.unGenesisDelegation
-           $ Genesis.gdHeavyDelegation
-           $ Genesis.configGenesisData genesisConfig
+  dlgMap :: Map Common.KeyHash Delegation.Certificate
+  dlgMap =
+    Genesis.unGenesisDelegation $
+      Genesis.gdHeavyDelegation $
+        Genesis.configGenesisData genesisConfig
 
 -- | The protocol version proposed as part of the hard-fork smoke test
 --
@@ -103,7 +109,6 @@ mkLeaderCredentials genesisConfig genesisSecrets (CoreNodeId i) =
 -- This value occurs in two crucial places: the proposal and also the
 -- 'Byron.byronProtocolVersion' field of the static node config. See the
 -- Haddock comment on 'mkProtocolByronAndHardForkTxs'.
---
 theProposedProtocolVersion :: Update.ProtocolVersion
 theProposedProtocolVersion = Update.ProtocolVersion 1 0 0
 
@@ -117,9 +122,9 @@ theProposedProtocolVersion = Update.ProtocolVersion 1 0 0
 -- The initial Byron ledger state begins with no recorded software versions.
 -- For the addition of a new software version, the Byron ledger rules require
 -- that it starts at 0 or 1.
---
 theProposedSoftwareVersion :: Update.SoftwareVersion
-theProposedSoftwareVersion = Update.SoftwareVersion
-  -- appnames must be ASCII and <= 12 characters
-  (Update.ApplicationName "Dummy")
-  0
+theProposedSoftwareVersion =
+  Update.SoftwareVersion
+    -- appnames must be ASCII and <= 12 characters
+    (Update.ApplicationName "Dummy")
+    0

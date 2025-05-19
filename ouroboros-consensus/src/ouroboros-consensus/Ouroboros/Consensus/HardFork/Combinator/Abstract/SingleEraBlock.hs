@@ -6,11 +6,12 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock (
-    -- * Single era block
+module Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
+  ( -- * Single era block
     SingleEraBlock (..)
   , proxySingle
   , singleEraTransition'
+
     -- * Era index
   , EraIndex (..)
   , eraIndexEmpty
@@ -21,70 +22,72 @@ module Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock (
   , eraIndexZero
   ) where
 
-import           Codec.Serialise
-import           Data.Either (isRight)
-import           Data.Proxy
-import           Data.SOP.BasicFunctors
-import           Data.SOP.Constraint
-import           Data.SOP.Index
-import           Data.SOP.Match
-import           Data.SOP.Strict
+import Codec.Serialise
+import Data.Either (isRight)
+import Data.Proxy
+import Data.SOP.BasicFunctors
+import Data.SOP.Constraint
+import Data.SOP.Index
+import Data.SOP.Match
+import Data.SOP.Strict
 import qualified Data.Text as Text
-import           Data.Void
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Config.SupportsNode
-import           Ouroboros.Consensus.HardFork.Combinator.Info
-import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
-import           Ouroboros.Consensus.HardFork.History (Bound, EraParams)
-import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Ledger.CommonProtocolParams
-import           Ouroboros.Consensus.Ledger.Inspect
-import           Ouroboros.Consensus.Ledger.Query
-import           Ouroboros.Consensus.Ledger.SupportsMempool
-import           Ouroboros.Consensus.Ledger.SupportsPeerSelection
-import           Ouroboros.Consensus.Ledger.SupportsProtocol
-import           Ouroboros.Consensus.Node.InitStorage
-import           Ouroboros.Consensus.Node.Serialisation
-import           Ouroboros.Consensus.Storage.Serialisation
-import           Ouroboros.Consensus.Ticked
-import           Ouroboros.Consensus.Util.Condense
+import Data.Void
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config.SupportsNode
+import Ouroboros.Consensus.HardFork.Combinator.Info
+import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
+import Ouroboros.Consensus.HardFork.History (Bound, EraParams)
+import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.CommonProtocolParams
+import Ouroboros.Consensus.Ledger.Inspect
+import Ouroboros.Consensus.Ledger.Query
+import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Ledger.SupportsPeerSelection
+import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Node.InitStorage
+import Ouroboros.Consensus.Node.Serialisation
+import Ouroboros.Consensus.Storage.Serialisation
+import Ouroboros.Consensus.Ticked
+import Ouroboros.Consensus.Util.Condense
 
 {-------------------------------------------------------------------------------
   SingleEraBlock
 -------------------------------------------------------------------------------}
 
 -- | Blocks from which we can assemble a hard fork
-class ( LedgerSupportsProtocol blk
-      , InspectLedger blk
-      , LedgerSupportsMempool blk
-      , ConvertRawTxId (GenTx blk)
-      , BlockSupportsLedgerQuery blk
-      , HasPartialConsensusConfig (BlockProtocol blk)
-      , HasPartialLedgerConfig blk
-      , ConvertRawHash blk
-      , ReconstructNestedCtxt Header blk
-      , CommonProtocolParams blk
-      , LedgerSupportsPeerSelection blk
-      , ConfigSupportsNode blk
-      , NodeInitStorage blk
-      , BlockSupportsDiffusionPipelining blk
-      , BlockSupportsMetrics blk
-      , SerialiseNodeToClient blk (PartialLedgerConfig blk)
-        -- LedgerTables
-      , CanStowLedgerTables (LedgerState blk)
-      , HasLedgerTables (LedgerState blk)
-      , HasLedgerTables (Ticked (LedgerState blk))
-        -- Instances required to support testing
-      , Eq   (GenTx blk)
-      , Eq   (Validated (GenTx blk))
-      , Eq   (ApplyTxErr blk)
-      , Show blk
-      , Show (Header blk)
-      , Show (CannotForge blk)
-      , Show (ForgeStateInfo blk)
-      , Show (ForgeStateUpdateError blk)
-      ) => SingleEraBlock blk where
-
+class
+  ( LedgerSupportsProtocol blk
+  , InspectLedger blk
+  , LedgerSupportsMempool blk
+  , ConvertRawTxId (GenTx blk)
+  , BlockSupportsLedgerQuery blk
+  , HasPartialConsensusConfig (BlockProtocol blk)
+  , HasPartialLedgerConfig blk
+  , ConvertRawHash blk
+  , ReconstructNestedCtxt Header blk
+  , CommonProtocolParams blk
+  , LedgerSupportsPeerSelection blk
+  , ConfigSupportsNode blk
+  , NodeInitStorage blk
+  , BlockSupportsDiffusionPipelining blk
+  , BlockSupportsMetrics blk
+  , SerialiseNodeToClient blk (PartialLedgerConfig blk)
+  , -- LedgerTables
+    CanStowLedgerTables (LedgerState blk)
+  , HasLedgerTables (LedgerState blk)
+  , HasLedgerTables (Ticked (LedgerState blk))
+  , -- Instances required to support testing
+    Eq (GenTx blk)
+  , Eq (Validated (GenTx blk))
+  , Eq (ApplyTxErr blk)
+  , Show blk
+  , Show (Header blk)
+  , Show (CannotForge blk)
+  , Show (ForgeStateInfo blk)
+  , Show (ForgeStateUpdateError blk)
+  ) =>
+  SingleEraBlock blk
+  where
   -- | Era transition
   --
   -- This should only report the transition point once it is stable (rollback
@@ -93,65 +96,74 @@ class ( LedgerSupportsProtocol blk
   -- Since we need this to construct the 'HardForkSummary' (and hence the
   -- 'EpochInfo'), this takes the /partial/ config, not the full config
   -- (or we'd end up with a catch-22).
-  singleEraTransition :: PartialLedgerConfig blk
-                      -> EraParams -- ^ Current era parameters
-                      -> Bound     -- ^ Start of this era
-                      -> LedgerState blk mk
-                      -> Maybe EpochNo
+  singleEraTransition ::
+    PartialLedgerConfig blk ->
+    -- | Current era parameters
+    EraParams ->
+    -- | Start of this era
+    Bound ->
+    LedgerState blk mk ->
+    Maybe EpochNo
 
   -- | Era information (for use in error messages)
-  singleEraInfo       :: proxy blk -> SingleEraInfo blk
+  singleEraInfo :: proxy blk -> SingleEraInfo blk
 
 proxySingle :: Proxy SingleEraBlock
 proxySingle = Proxy
 
-singleEraTransition' :: SingleEraBlock blk
-                     => WrapPartialLedgerConfig blk
-                     -> EraParams
-                     -> Bound
-                     -> LedgerState blk mk -> Maybe EpochNo
+singleEraTransition' ::
+  SingleEraBlock blk =>
+  WrapPartialLedgerConfig blk ->
+  EraParams ->
+  Bound ->
+  LedgerState blk mk ->
+  Maybe EpochNo
 singleEraTransition' = singleEraTransition . unwrapPartialLedgerConfig
 
 {-------------------------------------------------------------------------------
   Era index
 -------------------------------------------------------------------------------}
 
-newtype EraIndex xs = EraIndex {
-      getEraIndex :: NS (K ()) xs
-    }
+newtype EraIndex xs = EraIndex
+  { getEraIndex :: NS (K ()) xs
+  }
 
 instance Eq (EraIndex xs) where
   EraIndex era == EraIndex era' = isRight (matchNS era era')
 
 instance All SingleEraBlock xs => Show (EraIndex xs) where
   show = hcollapse . hcmap proxySingle getEraName . getEraIndex
-    where
-      getEraName :: forall blk. SingleEraBlock blk
-                 => K () blk -> K String blk
-      getEraName _ =
-            K
-          . (\name -> "<EraIndex " <> name <> ">")
-          . Text.unpack
-          . singleEraName
-          $ singleEraInfo (Proxy @blk)
+   where
+    getEraName ::
+      forall blk.
+      SingleEraBlock blk =>
+      K () blk -> K String blk
+    getEraName _ =
+      K
+        . (\name -> "<EraIndex " <> name <> ">")
+        . Text.unpack
+        . singleEraName
+        $ singleEraInfo (Proxy @blk)
 
 instance All SingleEraBlock xs => Condense (EraIndex xs) where
   condense = hcollapse . hcmap proxySingle getEraName . getEraIndex
-    where
-      getEraName :: forall blk. SingleEraBlock blk
-                 => K () blk -> K String blk
-      getEraName _ =
-            K
-          . Text.unpack
-          . singleEraName
-          $ singleEraInfo (Proxy @blk)
+   where
+    getEraName ::
+      forall blk.
+      SingleEraBlock blk =>
+      K () blk -> K String blk
+    getEraName _ =
+      K
+        . Text.unpack
+        . singleEraName
+        $ singleEraInfo (Proxy @blk)
 
 instance SListI xs => Serialise (EraIndex xs) where
   encode = encode . nsToIndex . getEraIndex
   decode = do
     idx <- decode
     case nsFromIndex idx of
-      Nothing       -> fail $ "EraIndex: invalid index " <> show idx
+      Nothing -> fail $ "EraIndex: invalid index " <> show idx
       Just eraIndex -> return (EraIndex eraIndex)
 
 eraIndexEmpty :: EraIndex '[] -> Void
