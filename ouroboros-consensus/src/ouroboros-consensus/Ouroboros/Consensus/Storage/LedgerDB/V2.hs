@@ -18,6 +18,7 @@
 module Ouroboros.Consensus.Storage.LedgerDB.V2 (mkInitDb) where
 
 import Control.Arrow ((>>>))
+import Control.Monad (join)
 import qualified Control.Monad as Monad (void, (>=>))
 import Control.Monad.Except
 import Control.RAWLock
@@ -347,12 +348,18 @@ implValidate h ldbEnv rr tr cache rollbacks hdrs =
 implGetPrevApplied :: MonadSTM m => LedgerDBEnv m l blk -> STM m (Set (RealPoint blk))
 implGetPrevApplied env = readTVar (ldbPrevApplied env)
 
--- | Remove all points with a slot older than the given slot from the set of
--- previously applied points.
-implGarbageCollect :: MonadSTM m => LedgerDBEnv m l blk -> SlotNo -> m ()
-implGarbageCollect env slotNo = atomically $ do
-  modifyTVar (ldbPrevApplied env) $
-    Set.dropWhileAntitone ((< slotNo) . realPointSlot)
+-- | Remove 'LedgerSeq' states older than the given slot, and all points with a
+-- slot older than the given slot from the set of previously applied points.
+implGarbageCollect :: (IOLike m, GetTip l) => LedgerDBEnv m l blk -> SlotNo -> m ()
+implGarbageCollect env slotNo = do
+  atomically $
+    modifyTVar (ldbPrevApplied env) $
+      Set.dropWhileAntitone ((< slotNo) . realPointSlot)
+  -- It is safe to close the handles outside of the locked region, which reduces
+  -- contention. See the docs of 'ldbOpenHandlesLock'.
+  join $ RAWLock.withWriteAccess (ldbOpenHandlesLock env) $ \() -> do
+    close <- atomically $ stateTVar (ldbSeq env) $ prune (LedgerDbPruneBeforeSlot slotNo)
+    pure (close, ())
 
 implTryTakeSnapshot ::
   forall m l blk.
@@ -470,7 +477,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   --    while holding a write lock. See e.g. 'closeForkerEnv'.
   --
   --  * Modify 'ldbSeq' while holding a write lock, and then close the removed
-  --    handles without any locking.
+  --    handles without any locking. See e.g. 'implGarbageCollect'.
   }
   deriving Generic
 
