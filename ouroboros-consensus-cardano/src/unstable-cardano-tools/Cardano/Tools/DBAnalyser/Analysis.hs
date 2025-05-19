@@ -394,10 +394,10 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
       LedgerDB.forkerClose frk
       case runExcept $ tickThenXApply OmitLedgerEvents ledgerCfg blk (oldLedger `withLedgerTables` tbs) of
         Right newLedger -> do
+          LedgerDB.push internal newLedger
           when (blockSlot blk >= slotNo) $ storeLedgerState newLedger
           when (blockSlot blk > slotNo) $ issueWarning blk
           when ((unBlockNo $ blockNo blk) `mod` 1000 == 0) $ reportProgress blk
-          LedgerDB.push internal newLedger
           LedgerDB.tryFlush initLedgerDB
           return (continue blk, ())
         Left err -> do
