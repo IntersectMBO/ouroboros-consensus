@@ -46,7 +46,8 @@ data HList :: [Type] -> Type where
   Nil  :: HList '[]
   (:*) :: a -> HList as -> HList (a ': as)
 
-infixr :*
+
+infixr 9 :*
 
 type family All c as :: Constraint where
   All c '[]       = ()

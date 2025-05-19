@@ -205,7 +205,7 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
       nil :: SOP.NS f '[] -> a
       nil = \case {}
 
-      infixr `o`
+      infixr 9 `o`
       o ::
            (TxMeasure x -> a)
         -> (SOP.NS WrapTxMeasure xs -> a)
