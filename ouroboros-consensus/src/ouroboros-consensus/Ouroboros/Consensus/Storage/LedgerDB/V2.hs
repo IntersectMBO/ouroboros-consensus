@@ -14,6 +14,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2 (mkInitDb) where
 
@@ -197,9 +198,11 @@ mkInternals ::
 mkInternals bss h =
   TestInternals
     { takeSnapshotNOW = \whereTo suff -> getEnv h $ \env -> do
-        let selectWhereTo = case whereTo of
-              TakeAtImmutableTip -> anchorHandle
-              TakeAtVolatileTip -> currentHandle
+        let selectWhereTo =
+              case whereTo of
+                TakeAtImmutableTip -> anchorHandle
+                TakeAtVolatileTip -> currentHandle
+                . volatileSuffix (ledgerDbCfgSecParam (ldbCfg env))
         withStateRef env (MkSolo . selectWhereTo) $ \(MkSolo st) ->
           Monad.void $
             takeSnapshot
@@ -385,7 +388,8 @@ implTryTakeSnapshot ::
 implTryTakeSnapshot bss env mTime nrBlocks =
   if onDiskShouldTakeSnapshot (ldbSnapshotPolicy env) (uncurry (flip diffTime) <$> mTime) nrBlocks
     then do
-      withStateRef env (MkSolo . anchorHandle) $ \(MkSolo st) ->
+      let volSuff = volatileSuffix (ledgerDbCfgSecParam (ldbCfg env))
+      withStateRef env (MkSolo . anchorHandle . volSuff) $ \(MkSolo st) ->
         Monad.void $
           takeSnapshot
             (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
