@@ -20,6 +20,7 @@
 -- module will be gone.
 module Ouroboros.Consensus.Storage.LedgerDB.V1 (mkInitDb) where
 
+import Cardano.Ledger.BaseTypes.NonZero (NonZero (..))
 import Control.Arrow ((>>>))
 import Control.Monad
 import Control.Monad.Except
@@ -28,6 +29,7 @@ import Control.ResourceRegistry
 import Control.Tracer
 import Data.Bifunctor (first)
 import qualified Data.Foldable as Foldable
+import Data.Functor ((<&>))
 import Data.Functor.Contravariant ((>$<))
 import Data.Kind (Type)
 import Data.Map (Map)
@@ -196,10 +198,17 @@ implGetVolatileTip ::
 implGetVolatileTip = fmap current . readTVar . ldbChangelog
 
 implGetImmutableTip ::
-  MonadSTM m =>
+  (MonadSTM m, GetTip l) =>
   LedgerDBEnv m l blk ->
   STM m (l EmptyMK)
-implGetImmutableTip = fmap anchor . readTVar . ldbChangelog
+implGetImmutableTip env =
+  -- The DbChangelog might contain more than k states if they have not yet
+  -- been garbage-collected.
+  fmap (AS.anchor . AS.anchorNewest k . changelogStates)
+    . readTVar
+    $ ldbChangelog env
+ where
+  k = unNonZero $ maxRollbacks $ ledgerDbCfgSecParam $ ldbCfg env
 
 implGetPastLedgerState ::
   ( MonadSTM m
@@ -210,7 +219,19 @@ implGetPastLedgerState ::
   , HeaderHash l ~ HeaderHash blk
   ) =>
   LedgerDBEnv m l blk -> Point blk -> STM m (Maybe (l EmptyMK))
-implGetPastLedgerState env point = getPastLedgerAt point <$> readTVar (ldbChangelog env)
+implGetPastLedgerState env point =
+  readTVar (ldbChangelog env) <&> \chlog -> do
+    -- The DbChangelog might contain more than k states if they have not yet
+    -- been garbage-collected, so make sure that the point is volatile (or the
+    -- immutable tip).
+    guard $
+      AS.withinBounds
+        (pointSlot point)
+        ((point ==) . castPoint . either getTip getTip)
+        (AS.anchorNewest k (changelogStates chlog))
+    getPastLedgerAt point chlog
+ where
+  k = unNonZero $ maxRollbacks $ ledgerDbCfgSecParam $ ldbCfg env
 
 implGetHeaderStateHistory ::
   ( MonadSTM m
@@ -233,7 +254,12 @@ implGetHeaderStateHistory env = do
   pure
     . HeaderStateHistory
     . AS.bimap mkHeaderStateWithTime' mkHeaderStateWithTime'
+    -- The DbChangelog might contain more than k states if they have not yet
+    -- been garbage-collected, so only take the corresponding suffix.
+    . AS.anchorNewest k
     $ changelogStates ldb
+ where
+  k = unNonZero $ maxRollbacks $ ledgerDbCfgSecParam $ ldbCfg env
 
 implValidate ::
   forall m l blk.
@@ -731,28 +757,37 @@ acquireAtTarget ::
   ReadLocked m (Either GetForkerError (Resources m l))
 acquireAtTarget ldbEnv rr target = readLocked $ runExceptT $ do
   dblog <- lift $ readTVarIO (ldbChangelog ldbEnv)
-  -- Get the prefix of the dblog ending in the specified target.
-  dblog' <- case target of
-    Right VolatileTip -> pure dblog
-    Right ImmutableTip -> pure $ rollbackToAnchor dblog
-    Right (SpecificPoint pt) -> do
-      let immTip = getTip $ anchor dblog
-      case rollback pt dblog of
+  -- The DbChangelog might contain more than k states if they have not yet
+  -- been garbage-collected.
+  let immTip :: Point blk
+      immTip = castPoint $ getTip $ AS.anchor $ AS.anchorNewest k $ changelogStates dblog
+
+      rollbackTo pt = case rollback pt dblog of
         Nothing
           | pointSlot pt < pointSlot immTip -> throwError $ PointTooOld Nothing
           | otherwise -> throwError PointNotOnChain
         Just dblog' -> pure dblog'
-    Left n -> case rollbackN n dblog of
-      Nothing ->
+  -- Get the prefix of the dblog ending in the specified target.
+  dblog' <- case target of
+    Right VolatileTip -> pure dblog
+    Right ImmutableTip -> rollbackTo immTip
+    Right (SpecificPoint pt) -> rollbackTo pt
+    Left n -> do
+      let rollbackMax = maxRollback dblog `min` k
+      when (n > rollbackMax) $
         throwError $
           PointTooOld $
             Just
               ExceededRollback
-                { rollbackMaximum = maxRollback dblog
+                { rollbackMaximum = rollbackMax
                 , rollbackRequested = n
                 }
-      Just dblog' -> pure dblog'
+      case rollbackN n dblog of
+        Nothing -> error "unreachable"
+        Just dblog' -> pure dblog'
   lift $ (,dblog') <$> acquire ldbEnv rr dblog'
+ where
+  k = unNonZero $ maxRollbacks $ ledgerDbCfgSecParam $ ldbCfg ldbEnv
 
 acquire ::
   (IOLike m, GetTip l) =>
