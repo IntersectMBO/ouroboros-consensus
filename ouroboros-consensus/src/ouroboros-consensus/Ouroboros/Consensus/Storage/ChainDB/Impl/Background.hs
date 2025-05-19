@@ -308,8 +308,8 @@ copyAndSnapshotRunner cdb@CDB{..} gcSchedule replayed fuse = do
 garbageCollect :: forall m blk. IOLike m => ChainDbEnv m blk -> SlotNo -> m ()
 garbageCollect CDB{..} slotNo = do
   VolatileDB.garbageCollect cdbVolatileDB slotNo
+  LedgerDB.garbageCollect cdbLedgerDB slotNo
   atomically $ do
-    LedgerDB.garbageCollect cdbLedgerDB slotNo
     modifyTVar cdbInvalid $ fmap $ Map.filter ((>= slotNo) . invalidBlockSlotNo)
   traceWith cdbTracer $ TraceGCEvent $ PerformedGC slotNo
 
