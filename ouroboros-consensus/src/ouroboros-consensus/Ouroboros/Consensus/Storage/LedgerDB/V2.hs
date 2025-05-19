@@ -18,6 +18,7 @@
 module Ouroboros.Consensus.Storage.LedgerDB.V2 (mkInitDb) where
 
 import Control.Arrow ((>>>))
+import Control.Monad (join)
 import qualified Control.Monad as Monad (void, (>=>))
 import Control.Monad.Except
 import Control.Monad.Trans (lift)
@@ -347,12 +348,14 @@ implValidate h ldbEnv rr tr cache rollbacks hdrs =
 implGetPrevApplied :: MonadSTM m => LedgerDBEnv m l blk -> STM m (Set (RealPoint blk))
 implGetPrevApplied env = readTVar (ldbPrevApplied env)
 
--- | Remove all points with a slot older than the given slot from the set of
--- previously applied points.
-implGarbageCollect :: MonadSTM m => LedgerDBEnv m l blk -> SlotNo -> m ()
-implGarbageCollect env slotNo = atomically $ do
+-- | Remove 'LedgerSeq' states older than the given slot, and all points with a
+-- slot older than the given slot from the set of previously applied points.
+implGarbageCollect :: (MonadSTM m, GetTip l) => LedgerDBEnv m l blk -> SlotNo -> m ()
+implGarbageCollect env slotNo = join $ atomically $ do
   modifyTVar (ldbPrevApplied env) $
     Set.dropWhileAntitone ((< slotNo) . realPointSlot)
+  stateTVar (ldbSeq env) $
+    prune (LedgerDbPruneBeforeSlot slotNo)
 
 implTryTakeSnapshot ::
   forall m l blk.
