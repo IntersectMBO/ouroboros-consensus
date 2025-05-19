@@ -17,6 +17,7 @@
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2 (mkInitDb) where
 
+import Cardano.Ledger.BaseTypes (unNonZero)
 import Control.Arrow ((>>>))
 import Control.Monad (join)
 import qualified Control.Monad as Monad (void, (>=>))
@@ -271,13 +272,13 @@ implGetVolatileTip ::
   (MonadSTM m, GetTip l) =>
   LedgerDBEnv m l blk ->
   STM m (l EmptyMK)
-implGetVolatileTip = fmap current . readTVar . ldbSeq
+implGetVolatileTip = fmap current . getVolatileLedgerSeq
 
 implGetImmutableTip ::
-  MonadSTM m =>
+  (MonadSTM m, GetTip l) =>
   LedgerDBEnv m l blk ->
   STM m (l EmptyMK)
-implGetImmutableTip = fmap anchor . readTVar . ldbSeq
+implGetImmutableTip = fmap anchor . getVolatileLedgerSeq
 
 implGetPastLedgerState ::
   ( MonadSTM m
@@ -287,7 +288,8 @@ implGetPastLedgerState ::
   , HeaderHash l ~ HeaderHash blk
   ) =>
   LedgerDBEnv m l blk -> Point blk -> STM m (Maybe (l EmptyMK))
-implGetPastLedgerState env point = getPastLedgerAt point <$> readTVar (ldbSeq env)
+implGetPastLedgerState env point =
+  getPastLedgerAt point <$> getVolatileLedgerSeq env
 
 implGetHeaderStateHistory ::
   ( MonadSTM m
@@ -298,7 +300,7 @@ implGetHeaderStateHistory ::
   ) =>
   LedgerDBEnv m l blk -> STM m (HeaderStateHistory blk)
 implGetHeaderStateHistory env = do
-  ldb <- readTVar (ldbSeq env)
+  ldb <- getVolatileLedgerSeq env
   let currentLedgerState = ledgerState $ current ldb
       -- This summary can convert all tip slots of the ledger states in the
       -- @ledgerDb@ as these are not newer than the tip slot of the current
@@ -311,7 +313,8 @@ implGetHeaderStateHistory env = do
   pure
     . HeaderStateHistory
     . AS.bimap mkHeaderStateWithTime' mkHeaderStateWithTime'
-    $ getLedgerSeq ldb
+    . getLedgerSeq
+    $ ldb
 
 implValidate ::
   forall m l blk.
@@ -357,9 +360,9 @@ implGarbageCollect env slotNo = do
       Set.dropWhileAntitone ((< slotNo) . realPointSlot)
   -- It is safe to close the handles outside of the locked region, which reduces
   -- contention. See the docs of 'ldbOpenHandlesLock'.
-  join $ RAWLock.withWriteAccess (ldbOpenHandlesLock env) $ \() -> do
+  join $ RAWLock.withWriteAccess (ldbOpenHandlesLock env) $ \LDBLock -> do
     close <- atomically $ stateTVar (ldbSeq env) $ prune (LedgerDbPruneBeforeSlot slotNo)
-    pure (close, ())
+    pure (close, LDBLock)
 
 implTryTakeSnapshot ::
   forall m l blk.
@@ -567,21 +570,32 @@ getEnvSTM (LDBHandle varState) f =
   Acquiring consistent views
 -------------------------------------------------------------------------------}
 
--- | Get a 'StateRef' from the 'LedgerSeq' in the 'LedgerDBEnv', with the
--- 'LedgerTablesHandle' having been duplicated (such that the original can be
--- closed). The caller is responsible for closing the handle.
+-- | Take the suffix of the 'ldbSeq' containing the @k@ most recent states. The
+-- 'LedgerSeq' can contain more than @k@ states if we adopted new blocks, but
+-- garbage collection has not yet been run.
+getVolatileLedgerSeq ::
+  (MonadSTM m, GetTip l) => LedgerDBEnv m l blk -> STM m (LedgerSeq m l)
+getVolatileLedgerSeq env =
+  LedgerSeq . AS.anchorNewest k . getLedgerSeq <$> readTVar (ldbSeq env)
+ where
+  k = unNonZero $ maxRollbacks $ ledgerDbCfgSecParam $ ldbCfg env
+
+-- | Get a 'StateRef' from the 'LedgerSeq' (via 'getVolatileLedgerSeq') in the
+-- 'LedgerDBEnv', with the 'LedgerTablesHandle' having been duplicated (such
+-- that the original can be closed). The caller is responsible for closing the
+-- handle.
 --
 -- For more flexibility, an arbitrary 'Traversable' of the 'StateRef' can be
 -- returned; for the simple use case of getting a single 'StateRef', use @t ~
 -- 'Solo'@.
 getStateRef ::
-  (IOLike m, Traversable t) =>
+  (IOLike m, Traversable t, GetTip l) =>
   LedgerDBEnv m l blk ->
   (LedgerSeq m l -> t (StateRef m l)) ->
   m (t (StateRef m l))
 getStateRef ldbEnv project =
   RAWLock.withReadAccess (ldbOpenHandlesLock ldbEnv) $ \LDBLock -> do
-    tst <- project <$> readTVarIO (ldbSeq ldbEnv)
+    tst <- project <$> atomically (getVolatileLedgerSeq ldbEnv)
     for tst $ \st -> do
       tables' <- duplicate $ tables st
       pure st{tables = tables'}
@@ -589,7 +603,7 @@ getStateRef ldbEnv project =
 -- | Like 'StateRef', but takes care of closing the handle when the given action
 -- returns or errors.
 withStateRef ::
-  (IOLike m, Traversable t) =>
+  (IOLike m, Traversable t, GetTip l) =>
   LedgerDBEnv m l blk ->
   (LedgerSeq m l -> t (StateRef m l)) ->
   (t (StateRef m l) -> m a) ->
