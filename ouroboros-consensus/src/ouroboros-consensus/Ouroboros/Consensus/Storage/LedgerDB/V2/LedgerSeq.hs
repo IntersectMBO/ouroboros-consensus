@@ -52,6 +52,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
   , snapshots
   , tip
   , volatileStatesBimap
+  , volatileSuffix
   ) where
 
 import Cardano.Ledger.BaseTypes
@@ -511,6 +512,13 @@ volatileStatesBimap ::
 volatileStatesBimap f g =
   AS.bimap (f . state) (g . state)
     . getLedgerSeq
+
+-- | Take the suffix containing the @k@ most recent states. The 'LedgerSeq' can
+-- contain more than @k@ states if we adopted new blocks, but garbage collection
+-- has not yet been run.
+volatileSuffix :: GetTip l => SecurityParam -> LedgerSeq m l -> LedgerSeq m l
+volatileSuffix (SecurityParam k) =
+  LedgerSeq . AS.anchorNewest (unNonZero k) . getLedgerSeq
 
 {-------------------------------------------------------------------------------
   docspec setup
