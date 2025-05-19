@@ -23,6 +23,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1 (mkInitDb) where
 import Control.Arrow ((>>>))
 import Control.Monad
 import Control.Monad.Except
+import Control.Monad.Trans (lift)
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Bifunctor (first)
@@ -721,38 +722,30 @@ acquireAtTarget ::
   ResourceRegistry m ->
   Either Word64 (Target (Point blk)) ->
   ReadLocked m (Either GetForkerError (Resources m l))
-acquireAtTarget ldbEnv rr (Right VolatileTip) =
-  readLocked $ do
-    dblog <- readTVarIO (ldbChangelog ldbEnv)
-    Right . (,dblog) <$> acquire ldbEnv rr dblog
-acquireAtTarget ldbEnv rr (Right ImmutableTip) =
-  readLocked $ do
-    dblog <- readTVarIO (ldbChangelog ldbEnv)
-    Right . (,rollbackToAnchor dblog)
-      <$> acquire ldbEnv rr dblog
-acquireAtTarget ldbEnv rr (Right (SpecificPoint pt)) =
-  readLocked $ do
-    dblog <- readTVarIO (ldbChangelog ldbEnv)
-    let immTip = getTip $ anchor dblog
-    case rollback pt dblog of
-      Nothing
-        | pointSlot pt < pointSlot immTip -> pure $ Left $ PointTooOld Nothing
-        | otherwise -> pure $ Left PointNotOnChain
-      Just dblog' -> Right . (,dblog') <$> acquire ldbEnv rr dblog'
-acquireAtTarget ldbEnv rr (Left n) = readLocked $ do
-  dblog <- readTVarIO (ldbChangelog ldbEnv)
-  case rollbackN n dblog of
-    Nothing ->
-      return $
-        Left $
+acquireAtTarget ldbEnv rr target = readLocked $ runExceptT $ do
+  dblog <- lift $ readTVarIO (ldbChangelog ldbEnv)
+  -- Get the prefix of the dblog ending in the specified target.
+  dblog' <- case target of
+    Right VolatileTip -> pure dblog
+    Right ImmutableTip -> pure $ rollbackToAnchor dblog
+    Right (SpecificPoint pt) -> do
+      let immTip = getTip $ anchor dblog
+      case rollback pt dblog of
+        Nothing
+          | pointSlot pt < pointSlot immTip -> throwError $ PointTooOld Nothing
+          | otherwise -> throwError PointNotOnChain
+        Just dblog' -> pure dblog'
+    Left n -> case rollbackN n dblog of
+      Nothing ->
+        throwError $
           PointTooOld $
-            Just $
+            Just
               ExceededRollback
                 { rollbackMaximum = maxRollback dblog
                 , rollbackRequested = n
                 }
-    Just dblog' ->
-      Right . (,dblog') <$> acquire ldbEnv rr dblog'
+      Just dblog' -> pure dblog'
+  lift $ (,dblog') <$> acquire ldbEnv rr dblog'
 
 acquire ::
   (IOLike m, GetTip l) =>
