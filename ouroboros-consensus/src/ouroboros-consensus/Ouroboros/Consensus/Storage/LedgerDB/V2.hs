@@ -20,6 +20,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2 (mkInitDb) where
 import Control.Arrow ((>>>))
 import qualified Control.Monad as Monad (void, (>=>))
 import Control.Monad.Except
+import Control.Monad.Trans (lift)
 import Control.RAWLock
 import qualified Control.RAWLock as RAWLock
 import Control.ResourceRegistry
@@ -563,39 +564,30 @@ acquireAtTarget ::
   Either Word64 (Target (Point blk)) ->
   LDBLock ->
   m (Either GetForkerError (StateRef m l))
-acquireAtTarget ldbEnv (Right VolatileTip) _ = do
-  l <- readTVarIO (ldbSeq ldbEnv)
-  let StateRef st tbs = currentHandle l
-  t <- duplicate tbs
-  pure $ Right $ StateRef st t
-acquireAtTarget ldbEnv (Right ImmutableTip) _ = do
-  l <- readTVarIO (ldbSeq ldbEnv)
-  let StateRef st tbs = anchorHandle l
-  t <- duplicate tbs
-  pure $ Right $ StateRef st t
-acquireAtTarget ldbEnv (Right (SpecificPoint pt)) _ = do
-  dblog <- readTVarIO (ldbSeq ldbEnv)
-  let immTip = getTip $ anchor dblog
-  case currentHandle <$> rollback pt dblog of
-    Nothing
-      | pointSlot pt < pointSlot immTip -> pure $ Left $ PointTooOld Nothing
-      | otherwise -> pure $ Left PointNotOnChain
-    Just (StateRef st tbs) ->
-      Right . StateRef st <$> duplicate tbs
-acquireAtTarget ldbEnv (Left n) _ = do
-  dblog <- readTVarIO (ldbSeq ldbEnv)
-  case currentHandle <$> rollbackN n dblog of
-    Nothing ->
-      return $
-        Left $
+acquireAtTarget ldbEnv target _ = runExceptT $ do
+  l <- lift $ readTVarIO (ldbSeq ldbEnv)
+  StateRef st tbs <- case target of
+    Right VolatileTip -> pure $ currentHandle l
+    Right ImmutableTip -> pure $ anchorHandle l
+    Right (SpecificPoint pt) -> do
+      let immTip = getTip $ anchor l
+      case rollback pt l of
+        Nothing
+          | pointSlot pt < pointSlot immTip -> throwError $ PointTooOld Nothing
+          | otherwise -> throwError PointNotOnChain
+        Just t' -> pure $ currentHandle t'
+    Left n -> case rollbackN n l of
+      Nothing ->
+        throwError $
           PointTooOld $
-            Just $
+            Just
               ExceededRollback
-                { rollbackMaximum = maxRollback dblog
+                { rollbackMaximum = maxRollback l
                 , rollbackRequested = n
                 }
-    Just (StateRef st tbs) ->
-      Right . StateRef st <$> duplicate tbs
+      Just l' -> pure $ currentHandle l'
+  tbs' <- lift $ duplicate tbs
+  pure $ StateRef st tbs'
 
 newForkerAtTarget ::
   ( HeaderHash l ~ HeaderHash blk
