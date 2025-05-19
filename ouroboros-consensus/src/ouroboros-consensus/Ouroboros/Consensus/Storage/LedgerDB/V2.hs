@@ -14,6 +14,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2 (mkInitDb) where
 
@@ -200,7 +201,8 @@ mkInternals bss h =
         let selectWhereTo = case whereTo of
               TakeAtImmutableTip -> anchorHandle
               TakeAtVolatileTip -> currentHandle
-        withStateRef env (MkSolo . selectWhereTo) $ \(MkSolo st) ->
+            volSuff = volatileSuffix (ledgerDbCfgSecParam (ldbCfg env))
+        withStateRef env (MkSolo . selectWhereTo . volSuff) $ \(MkSolo st) ->
           Monad.void $
             takeSnapshot
               (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
@@ -385,7 +387,8 @@ implTryTakeSnapshot ::
 implTryTakeSnapshot bss env mTime nrBlocks =
   if onDiskShouldTakeSnapshot (ldbSnapshotPolicy env) (uncurry (flip diffTime) <$> mTime) nrBlocks
     then do
-      withStateRef env (MkSolo . anchorHandle) $ \(MkSolo st) ->
+      let volSuff = volatileSuffix (ledgerDbCfgSecParam (ldbCfg env))
+      withStateRef env (MkSolo . anchorHandle . volSuff) $ \(MkSolo st) ->
         Monad.void $
           takeSnapshot
             (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
