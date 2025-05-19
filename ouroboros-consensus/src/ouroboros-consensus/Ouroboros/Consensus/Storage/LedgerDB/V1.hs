@@ -185,7 +185,7 @@ implMkLedgerDb h =
       , getForkerAtTarget = newForkerAtTarget h
       , validateFork = getEnv5 h (implValidate h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
-      , garbageCollect = getEnvSTM1 h implGarbageCollect
+      , garbageCollect = getEnv1 h implGarbageCollect
       , tryTakeSnapshot = getEnv2 h implTryTakeSnapshot
       , tryFlush = getEnv h implTryFlush
       , closeDB = implCloseDB h
@@ -276,8 +276,8 @@ implGetPrevApplied env = readTVar (ldbPrevApplied env)
 
 -- | Remove all points with a slot older than the given slot from the set of
 -- previously applied points.
-implGarbageCollect :: MonadSTM m => LedgerDBEnv m l blk -> SlotNo -> STM m ()
-implGarbageCollect env slotNo =
+implGarbageCollect :: MonadSTM m => LedgerDBEnv m l blk -> SlotNo -> m ()
+implGarbageCollect env slotNo = atomically $ do
   modifyTVar (ldbPrevApplied env) $
     Set.dropWhileAntitone ((< slotNo) . realPointSlot)
 
