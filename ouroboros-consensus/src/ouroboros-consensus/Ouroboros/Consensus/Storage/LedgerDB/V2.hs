@@ -180,8 +180,8 @@ mkInternals ::
 mkInternals bss h = TestInternals {
       takeSnapshotNOW = \whereTo suff -> getEnv h $ \env -> do
           st <- (case whereTo of
-            TakeAtVolatileTip  -> anchorHandle
-            TakeAtImmutableTip -> currentHandle) <$> readTVarIO (ldbSeq env)
+            TakeAtImmutableTip -> anchorHandle
+            TakeAtVolatileTip  -> currentHandle) <$> readTVarIO (ldbSeq env)
           Monad.void $ takeSnapshot
                 (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
                 (LedgerDBSnapshotEvent >$< ldbTracer env)

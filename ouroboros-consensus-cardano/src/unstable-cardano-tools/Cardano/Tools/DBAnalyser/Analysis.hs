@@ -394,15 +394,15 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
       LedgerDB.forkerClose frk
       case runExcept $ tickThenXApply OmitLedgerEvents ledgerCfg blk (oldLedger `withLedgerTables` tbs) of
         Right newLedger -> do
-          when (blockSlot blk >= slotNo) $ storeLedgerState newLedger
+          LedgerDB.push internal newLedger
+          when (blockSlot blk >= slotNo) storeLedgerState
           when (blockSlot blk > slotNo) $ issueWarning blk
           when ((unBlockNo $ blockNo blk) `mod` 1000 == 0) $ reportProgress blk
-          LedgerDB.push internal newLedger
           LedgerDB.tryFlush initLedgerDB
           return (continue blk, ())
         Left err -> do
           traceWith tracer $ LedgerErrorEvent (blockPoint blk) err
-          storeLedgerState (oldLedger `withLedgerTables` tbs)
+          storeLedgerState
           pure (Stop, ())
 
     tickThenXApply = case ledgerAppMode of
@@ -419,14 +419,13 @@ storeLedgerStateAt slotNo ledgerAppMode env = do
     reportProgress blk = let event = BlockSlotEvent (blockNo blk) (blockSlot blk) (blockHash blk)
                          in traceWith tracer event
 
-    storeLedgerState :: ExtLedgerState blk mk -> IO ()
-    storeLedgerState ledgerState = case pointSlot pt of
+    storeLedgerState :: IO ()
+    storeLedgerState =
+      IOLike.atomically (pointSlot <$> LedgerDB.currentPoint initLedgerDB) >>= \case
         NotOrigin slot -> do
           LedgerDB.takeSnapshotNOW internal LedgerDB.TakeAtVolatileTip (Just "db-analyser")
           traceWith tracer $ SnapshotStoredEvent slot
         Origin -> pure ()
-      where
-        pt = headerStatePoint $ headerState ledgerState
 
 countBlocks ::
      forall blk .
