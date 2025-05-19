@@ -29,7 +29,6 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
-import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Forker as Forker
 import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
@@ -41,6 +40,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq
   )
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq as DS
 import Ouroboros.Consensus.Util.IOLike
+import qualified Ouroboros.Network.AnchoredSeq as AS
 
 {-------------------------------------------------------------------------------
   Forkers
@@ -277,14 +277,12 @@ implForkerPush env newState = do
   traceWith (foeTracer env) ForkerPushStart
   atomically $ do
     chlog <- readTVar (foeChangelog env)
-    let chlog' =
-          prune (LedgerDbPruneKeeping (foeSecurityParam env)) $
-            extend newState chlog
+    let chlog' = extend newState chlog
     writeTVar (foeChangelog env) chlog'
   traceWith (foeTracer env) ForkerPushEnd
 
 implForkerCommit ::
-  (MonadSTM m, GetTip l, HasLedgerTables l) =>
+  (MonadSTM m, GetTip l, StandardHash l, HasLedgerTables l) =>
   ForkerEnv m l blk ->
   STM m ()
 implForkerCommit env = do
@@ -298,9 +296,17 @@ implForkerCommit env = do
             . pointSlot
             . getTip
             $ changelogLastFlushedState orig
+        -- The 'DbChangelog' might have gotten pruned in the meantime.
+        splitAfterOrigAnchor =
+          AS.splitAfterMeasure (pointSlot origAnchor) (either sameState sameState)
+         where
+          sameState = (origAnchor ==) . getTip
+          origAnchor = getTip $ anchor orig
      in DbChangelog
           { changelogLastFlushedState = changelogLastFlushedState orig
-          , changelogStates = changelogStates dblog
+          , changelogStates = case splitAfterOrigAnchor (changelogStates dblog) of
+              Nothing -> error "Forker chain does no longer intersect with selected chain."
+              Just (_, suffix) -> suffix
           , changelogDiffs =
               ltliftA2 (doPrune s) (changelogDiffs orig) (changelogDiffs dblog)
           }

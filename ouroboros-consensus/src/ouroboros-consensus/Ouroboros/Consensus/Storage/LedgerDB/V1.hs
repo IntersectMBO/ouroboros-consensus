@@ -270,10 +270,17 @@ implValidate h ldbEnv rr tr cache rollbacks hdrs =
 implGetPrevApplied :: MonadSTM m => LedgerDBEnv m l blk -> STM m (Set (RealPoint blk))
 implGetPrevApplied env = readTVar (ldbPrevApplied env)
 
--- | Remove all points with a slot older than the given slot from the set of
--- previously applied points.
-implGarbageCollect :: MonadSTM m => LedgerDBEnv m l blk -> SlotNo -> m ()
+-- | Remove 'DbChangelog' states older than the given slot, and all points with
+-- a slot older than the given slot from the set of previously applied points.
+implGarbageCollect ::
+  ( MonadSTM m
+  , IsLedger (LedgerState blk)
+  , l ~ ExtLedgerState blk
+  ) =>
+  LedgerDBEnv m l blk -> SlotNo -> m ()
 implGarbageCollect env slotNo = atomically $ do
+  modifyTVar (ldbChangelog env) $
+    prune (LedgerDbPruneBeforeSlot slotNo)
   modifyTVar (ldbPrevApplied env) $
     Set.dropWhileAntitone ((< slotNo) . realPointSlot)
 
@@ -780,6 +787,7 @@ newForker ::
   , LedgerSupportsProtocol blk
   , NoThunks (l EmptyMK)
   , GetTip l
+  , StandardHash l
   ) =>
   LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->
@@ -806,6 +814,7 @@ mkForker ::
   , HasHeader blk
   , HasLedgerTables l
   , GetTip l
+  , StandardHash l
   ) =>
   LedgerDBHandle m l blk ->
   QueryBatchSize ->
