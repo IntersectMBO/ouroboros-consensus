@@ -33,7 +33,6 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
-import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Forker as Forker
 import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
@@ -314,9 +313,7 @@ implForkerPush env newState = do
   traceWith (foeTracer env) ForkerPushStart
   atomically $ do
     chlog <- readTVar (foeChangelog env)
-    let chlog' =
-          prune (LedgerDbPruneKeeping (foeSecurityParam env)) $
-            extend newState chlog
+    let chlog' = extend newState chlog
     writeTVar (foeChangelog env) chlog'
   traceWith (foeTracer env) ForkerPushEnd
 
