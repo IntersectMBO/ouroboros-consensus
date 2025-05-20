@@ -252,9 +252,15 @@ data LedgerDB m l blk = LedgerDB
   -- back as many blocks as the passed @Word64@.
   , getPrevApplied :: STM m (Set (RealPoint blk))
   -- ^ Get the references to blocks that have previously been applied.
-  , garbageCollect :: SlotNo -> STM m ()
-  -- ^ Garbage collect references to old blocks that have been previously
-  -- applied and committed.
+  , garbageCollect :: SlotNo -> m ()
+  -- ^ Garbage collect references to old state that is older than the given
+  -- slot.
+  --
+  -- Concretely, this affects:
+  --
+  --  * Ledger states (and potentially underlying handles for on-disk storage).
+  --
+  --  * The set of previously applied points.
   , tryTakeSnapshot ::
       l ~ ExtLedgerState blk =>
       Maybe (Time, Time) ->
@@ -299,7 +305,14 @@ data TestInternals m l blk = TestInternals
   { wipeLedgerDB :: m ()
   , takeSnapshotNOW :: WhereToTakeSnapshot -> Maybe String -> m ()
   , push :: ExtLedgerState blk DiffMK -> m ()
+  -- ^ Push a ledger state, and prune the 'LedgerDB' w.r.t. the security parameter.
+  --
+  -- This does not modify the set of previously applied points.
   , reapplyThenPushNOW :: blk -> m ()
+  -- ^ Apply block to the tip ledger state (using reapplication), and prune the
+  -- 'LedgerDB' w.r.t. the security parameter.
+  --
+  -- This does not modify the set of previously applied points.
   , truncateSnapshots :: m ()
   , closeLedgerDB :: m ()
   }
@@ -786,10 +799,11 @@ type LedgerSupportsLedgerDB blk =
 -------------------------------------------------------------------------------}
 
 -- | Options for prunning the LedgerDB
---
--- Rather than using a plain `Word64` we use this to be able to distinguish that
--- we are indeed using
---   1. @0@ in places where it is necessary
---   2. the security parameter as is, in other places
-data LedgerDbPrune = LedgerDbPruneAll | LedgerDbPruneKeeping SecurityParam
+data LedgerDbPrune
+  = -- | Prune all states, keeping only the current tip.
+    LedgerDbPruneAll
+  | -- | Prune to only keep the last @k@ states.
+    LedgerDbPruneKeeping SecurityParam
+  | -- | Prune such that all (non-anchor) states are older than the given slot.
+    LedgerDbPruneBeforeSlot SlotNo
   deriving Show
