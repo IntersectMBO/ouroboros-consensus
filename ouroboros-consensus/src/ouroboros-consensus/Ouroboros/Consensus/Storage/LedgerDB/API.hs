@@ -775,10 +775,12 @@ type LedgerSupportsLedgerDB blk =
 -------------------------------------------------------------------------------}
 
 -- | Options for prunning the LedgerDB
---
--- Rather than using a plain `Word64` we use this to be able to distinguish that
--- we are indeed using
---   1. @0@ in places where it is necessary
---   2. the security parameter as is, in other places
-data LedgerDbPrune = LedgerDbPruneAll | LedgerDbPruneKeeping SecurityParam
+data LedgerDbPrune
+  = -- | Prune all states, keeping only the current tip.
+    LedgerDbPruneAll
+  | -- | Prune to only keep the last @k@ states.
+    LedgerDbPruneKeeping SecurityParam
+  | -- | Prune such that all (non-anchor) states are not older than the given
+    -- slot.
+    LedgerDbPruneBeforeSlot SlotNo
   deriving Show
