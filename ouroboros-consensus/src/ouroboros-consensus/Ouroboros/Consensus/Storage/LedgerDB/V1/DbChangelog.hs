@@ -402,6 +402,14 @@ prune LedgerDbPruneAll dblog =
 
   vol' =
     snd $ AS.splitAt nvol changelogStates
+prune (LedgerDbPruneBeforeSlot slot) dblog =
+  dblog{changelogStates = vol'}
+ where
+  DbChangelog{changelogStates} = dblog
+
+  -- The anchor of @vol'@ might still have a tip slot smaller than @slot@, which
+  -- is fine to ignore (we will prune it later).
+  vol' = snd $ AS.splitAtMeasure (NotOrigin slot) changelogStates
 
 -- NOTE: we must inline 'prune' otherwise we get unexplained thunks in
 -- 'DbChangelog' and thus a space leak. Alternatively, we could disable the
