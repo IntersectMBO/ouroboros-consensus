@@ -255,6 +255,12 @@ prune howToPrune (LedgerSeq ldb) = case howToPrune of
     (closeButHead before, LedgerSeq after)
    where
     (before, after) = (ldb, AS.Empty (AS.headAnchor ldb))
+  LedgerDbPruneBeforeSlot slot ->
+    (closeButHead before, LedgerSeq after)
+   where
+    -- The anchor of @vol'@ might still have a tip slot older than @slot@, which
+    -- is fine to ignore (we will prune it later).
+    (before, after) = AS.splitAtMeasure (NotOrigin slot) ldb
  where
   -- Above, we split @ldb@ into two sequences @before@ and @after@ such that
   -- @AS.headAnchor before == AS.anchor after@. We want to close all handles of
