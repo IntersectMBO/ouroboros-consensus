@@ -253,8 +253,14 @@ data LedgerDB m l blk = LedgerDB
   , getPrevApplied :: STM m (Set (RealPoint blk))
   -- ^ Get the references to blocks that have previously been applied.
   , garbageCollect :: SlotNo -> m ()
-  -- ^ Garbage collect references to old blocks that have been previously
-  -- applied and committed.
+  -- ^ Garbage collect references to old state that is older than the given
+  -- slot.
+  --
+  -- Concretely, this affects:
+  --
+  --  * Ledger states (and potentially underlying handles for on-disk storage).
+  --
+  --  * The set of previously applied points.
   , tryTakeSnapshot ::
       l ~ ExtLedgerState blk =>
       Maybe (Time, Time) ->
