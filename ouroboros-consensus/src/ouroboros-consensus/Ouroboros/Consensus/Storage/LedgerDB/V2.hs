@@ -214,8 +214,9 @@ mkInternals bss h =
         eFrk <- newForkerAtTarget h reg VolatileTip
         case eFrk of
           Left{} -> error "Unreachable, Volatile tip MUST be in LedgerDB"
-          Right frk ->
+          Right frk -> do
             forkerPush frk st >> atomically (forkerCommit frk) >> forkerClose frk
+            getEnv h pruneLedgerSeq
     , reapplyThenPushNOW = \blk -> getEnv h $ \env -> withRegistry $ \reg -> do
         eFrk <- newForkerAtTarget h reg VolatileTip
         case eFrk of
@@ -230,6 +231,7 @@ mkInternals bss h =
                     blk
                     (st `withLedgerTables` tables)
             forkerPush frk st' >> atomically (forkerCommit frk) >> forkerClose frk
+            pruneLedgerSeq env
     , wipeLedgerDB = getEnv h $ destroySnapshots . ldbHasFS
     , closeLedgerDB =
         let LDBHandle tvar = h
@@ -251,6 +253,12 @@ mkInternals bss h =
   takeSnapshot = case bss of
     InMemoryHandleArgs -> InMemory.takeSnapshot
     LSMHandleArgs x -> absurd x
+
+  pruneLedgerSeq :: LedgerDBEnv m (ExtLedgerState blk) blk -> m ()
+  pruneLedgerSeq env =
+    join $ atomically $ stateTVar (ldbSeq env) $ prune (LedgerDbPruneKeeping k)
+   where
+    k = ledgerDbCfgSecParam $ ldbCfg env
 
 -- | Testing only! Truncate all snapshots in the DB.
 implIntTruncateSnapshots :: MonadThrow m => SomeHasFS m -> m ()

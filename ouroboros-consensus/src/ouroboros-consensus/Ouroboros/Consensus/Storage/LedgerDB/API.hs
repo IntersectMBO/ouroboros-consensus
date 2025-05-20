@@ -305,7 +305,14 @@ data TestInternals m l blk = TestInternals
   { wipeLedgerDB :: m ()
   , takeSnapshotNOW :: WhereToTakeSnapshot -> Maybe String -> m ()
   , push :: ExtLedgerState blk DiffMK -> m ()
+  -- ^ Push a ledger state, and prune the 'LedgerDB' w.r.t. the security parameter.
+  --
+  -- This does not modify the set of previously applied points.
   , reapplyThenPushNOW :: blk -> m ()
+  -- ^ Apply block to the tip ledger state (using reapplication), and prune the
+  -- 'LedgerDB' w.r.t. the security parameter.
+  --
+  -- This does not modify the set of previously applied points.
   , truncateSnapshots :: m ()
   , closeLedgerDB :: m ()
   , getNumLedgerTablesHandles :: m Word64
