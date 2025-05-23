@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
@@ -48,6 +49,7 @@ import Codec.CBOR.Write (toLazyByteString)
 import Codec.Serialise (decode, encode)
 import Control.Arrow (left)
 import Control.Monad (unless, when)
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16.Lazy as Base16
 import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.ByteString.Lazy.Char8 as Char8
@@ -55,7 +57,8 @@ import qualified Data.ByteString.Short as Short
 import Data.Constraint
 import Data.Function (on)
 import Data.Maybe (fromMaybe)
-import qualified Data.Text.Lazy as T
+import qualified Data.Text as T
+import qualified Data.Text.Lazy as TL
 import Data.Typeable
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
@@ -90,9 +93,11 @@ import Ouroboros.Network.Block
   , mkSerialised
   )
 import Quiet (Quiet (..))
+import Test.QuickCheck.Monadic
 import Test.Tasty
 import Test.Tasty.QuickCheck
 import Test.Util.Orphans.Arbitrary ()
+import Test.Util.Serialisation.CDDL
 import Test.Util.Serialisation.Examples (Examples (..), Labelled)
 import Test.Util.Serialisation.SomeResult (SomeResult (..))
 import Test.Util.TestEnv (adjustQuickCheckTests)
@@ -103,9 +108,10 @@ import Text.Pretty.Simple (pShow)
 ------------------------------------------------------------------------------}
 
 roundtrip ::
-  (Eq a, Show a) =>
+  (Eq a, Show a, Show e) =>
   (a -> Encoding) ->
   (forall s. Decoder s a) ->
+  (BS.ByteString -> IO (Either e ())) ->
   a ->
   Property
 roundtrip enc dec = roundtrip' enc (const <$> dec)
@@ -114,11 +120,12 @@ roundtrip enc dec = roundtrip' enc (const <$> dec)
 --
 -- See 'roundtripAnd'
 roundtrip' ::
-  forall a.
-  (Eq a, Show a) =>
+  forall a e.
+  (Eq a, Show a, Show e) =>
   -- | @enc@
   (a -> Encoding) ->
   (forall s. Decoder s (Lazy.ByteString -> a)) ->
+  (BS.ByteString -> IO (Either e ())) ->
   a ->
   Property
 roundtrip' = roundtripAnd CheckCBORValidity
@@ -141,29 +148,38 @@ data ShouldCheckCBORValidity = CheckCBORValidity | DoNotCheckCBORValidity
 -- might happen is if the annotation is not canonical CBOR, but @enc@ does
 -- produce canonical CBOR.
 roundtripAnd ::
-  forall a.
-  (Eq a, Show a) =>
+  forall a e.
+  (Eq a, Show a, Show e) =>
   ShouldCheckCBORValidity ->
   -- | @enc@
   (a -> Encoding) ->
   (forall s. Decoder s (Lazy.ByteString -> a)) ->
+  (BS.ByteString -> IO (Either e ())) ->
   a ->
   Property
-roundtripAnd check enc dec a = checkRoundtripResult $ do
+roundtripAnd check enc dec checkCddlValid a =
   let enc_a = enc a
       bs = toLazyByteString enc_a
-
-  when (check == CheckCBORValidity) $
-    (validFlatTerm (toFlatTerm enc_a) ?! "Encoded flat term is not valid: " <> show enc_a)
-  (bsRem, a') <- deserialiseFromBytes dec bs `onError` showByteString bs
-  Lazy.null bsRem ?! "Left-over bytes: " <> toBase16 bsRem
-  a == a' bs ?! pShowNeq a (a' bs)
+      cborValid =
+        throwLeft $
+          when (check == CheckCBORValidity) $
+            validFlatTerm (toFlatTerm enc_a) ?! "Encoded flat term is not valid: " <> show enc_a
+      doesRoundtrip = throwLeft $ do
+        (bsRem, a') <- deserialiseFromBytes dec bs `onError` showByteString bs
+        Lazy.null bsRem ?! "Left-over bytes: " <> toBase16 bsRem
+        a == a' bs ?! pShowNeq a (a' bs)
+      cddlValid =
+        monadicIO $
+          run (checkCddlValid $ Lazy.toStrict bs) >>= \case
+            Left err -> assertWith False (show err)
+            Right _ -> pure ()
+   in cborValid .&&. doesRoundtrip .&&. cddlValid
  where
   (?!) :: Bool -> String -> Either String ()
   cond ?! msg = unless cond $ Left msg
   infix 1 ?!
 
-  pShowNeq x y = T.unpack (pShow x) <> "\n \t/= \n" <> T.unpack (pShow y)
+  pShowNeq x y = TL.unpack (pShow x) <> "\n \t/= \n" <> TL.unpack (pShow y)
 
   onError ::
     Either DeserialiseFailure (Char8.ByteString, Char8.ByteString -> a) ->
@@ -182,9 +198,9 @@ roundtripAnd check enc dec a = checkRoundtripResult $ do
   toBase16 :: Lazy.ByteString -> String
   toBase16 = Char8.unpack . Base16.encode
 
-  checkRoundtripResult :: Either String () -> Property
-  checkRoundtripResult (Left str) = counterexample str False
-  checkRoundtripResult (Right ()) = property ()
+  throwLeft :: Either String () -> Property
+  throwLeft (Left str) = counterexample str False
+  throwLeft (Right ()) = property ()
 
 roundtripComparingEncoding ::
   (a -> Encoding) ->
@@ -259,6 +275,7 @@ roundtrip_all ::
   ) =>
   CodecConfig blk ->
   (forall a. NestedCtxt_ blk Header a -> Dict (Eq a, Show a)) ->
+  Maybe CDDLsForNodeToNode ->
   TestTree
 roundtrip_all = roundtrip_all_skipping (const CheckCBORValidity)
 
@@ -304,12 +321,13 @@ roundtrip_all_skipping ::
   (TestName -> ShouldCheckCBORValidity) ->
   CodecConfig blk ->
   (forall a. NestedCtxt_ blk Header a -> Dict (Eq a, Show a)) ->
+  Maybe CDDLsForNodeToNode ->
   TestTree
-roundtrip_all_skipping shouldCheckCBORvalidity ccfg dictNestedHdr =
+roundtrip_all_skipping shouldCheckCBORvalidity ccfg dictNestedHdr mCDDLs =
   testGroup
     "Roundtrip"
     [ testGroup "SerialiseDisk" $ roundtrip_SerialiseDisk ccfg dictNestedHdr
-    , testGroup "SerialiseNodeToNode" $ roundtrip_SerialiseNodeToNode ccfg
+    , testGroup "SerialiseNodeToNode" $ roundtrip_SerialiseNodeToNode ccfg mCDDLs
     , testGroup "SerialiseNodeToClient" $
         roundtrip_SerialiseNodeToClient
           shouldCheckCBORvalidity
@@ -336,7 +354,7 @@ roundtrip_SerialiseDisk ::
   [TestTree]
 roundtrip_SerialiseDisk ccfg dictNestedHdr =
   [ testProperty "roundtrip block" $
-      roundtrip' @blk (encodeDisk ccfg) (decodeDisk ccfg)
+      roundtrip' @blk (encodeDisk ccfg) (decodeDisk ccfg) (const $ pure (Right () :: Either () ()))
   , testProperty "roundtrip Header" $ \hdr ->
       case unnest hdr of
         DepPair ctxt nestedHdr -> case dictNestedHdr (flipNestedCtxt ctxt) of
@@ -344,6 +362,7 @@ roundtrip_SerialiseDisk ccfg dictNestedHdr =
             roundtrip'
               (encodeDiskDep ccfg ctxt)
               (decodeDiskDep ccfg ctxt)
+              (const $ pure (Right () :: Either () ()))
               nestedHdr
   , -- Since the 'LedgerState' is a large data structure, we lower the
     -- number of tests to avoid slowing down the testsuite too much
@@ -362,6 +381,7 @@ roundtrip_SerialiseDisk ccfg dictNestedHdr =
       roundtrip @a
         (encodeDisk ccfg)
         (decodeDisk ccfg)
+        (const $ pure (Right () :: Either () ()))
 
 -- | Used to generate arbitrary values for the serialisation roundtrip tests.
 -- As the serialisation format can change with the version, not all arbitrary
@@ -481,12 +501,13 @@ roundtrip_SerialiseNodeToNode ::
   , DecodeDiskDep (NestedCtxt Header) blk
   ) =>
   CodecConfig blk ->
+  Maybe CDDLsForNodeToNode ->
   [TestTree]
-roundtrip_SerialiseNodeToNode ccfg =
-  [ rt (Proxy @blk) "blk"
-  , rt (Proxy @(Header blk)) "Header"
-  , rt (Proxy @(GenTx blk)) "GenTx"
-  , rt (Proxy @(GenTxId blk)) "GenTxId"
+roundtrip_SerialiseNodeToNode ccfg mCDDLs =
+  [ rt (Proxy @blk) "blk" $ fmap blockCDDL mCDDLs
+  , rt (Proxy @(Header blk)) "Header" $ fmap blockCDDL mCDDLs
+  , rt (Proxy @(GenTx blk)) "GenTx" $ Nothing
+  , rt (Proxy @(GenTxId blk)) "GenTxId" $ Nothing
   , -- Roundtrip a @'Serialised' blk@
     --
     -- We generate a random @blk@, convert it to 'Serialised' (using
@@ -498,6 +519,17 @@ roundtrip_SerialiseNodeToNode ccfg =
         roundtrip @blk
           (encodeThroughSerialised (encodeDisk ccfg) (enc version))
           (decodeThroughSerialised (decodeDisk ccfg) (dec version))
+          ( case fmap blockCDDL mCDDLs of
+              Nothing -> (const $ pure (Right ()))
+              Just (cddl, rule) ->
+                ( \bs ->
+                    fmap (const ())
+                      <$> cddlTest
+                        (pure bs)
+                        cddl
+                        rule
+                )
+          )
           blk
   , -- Same as above but for 'Header'
     testProperty "roundtrip Serialised Header" $
@@ -505,6 +537,7 @@ roundtrip_SerialiseNodeToNode ccfg =
         roundtrip @(Header blk)
           (enc version . SerialisedHeaderFromDepPair . encodeDepPair ccfg . unnest)
           (nest <$> (decodeDepPair ccfg . serialisedHeaderToDepPair =<< dec version))
+          (const $ pure (Right () :: Either () ()))
           hdr
   , -- Check the compatibility between 'encodeNodeToNode' for @'Serialised'
     -- blk@ and 'decodeNodeToNode' for @blk@.
@@ -513,6 +546,7 @@ roundtrip_SerialiseNodeToNode ccfg =
         roundtrip @blk
           (encodeThroughSerialised (encodeDisk ccfg) (enc version))
           (dec version)
+          (const $ pure (Right () :: Either () ()))
           blk
   , -- Check the compatibility between 'encodeNodeToNode' for @blk@ and
     -- 'decodeNodeToNode' for @'Serialised' blk@.
@@ -521,6 +555,7 @@ roundtrip_SerialiseNodeToNode ccfg =
         roundtrip @blk
           (enc version)
           (decodeThroughSerialised (decodeDisk ccfg) (dec version))
+          (const $ pure (Right () :: Either () ()))
           blk
   , -- Same as above but for 'Header'
     testProperty "roundtrip Serialised Header compat 1" $
@@ -528,12 +563,14 @@ roundtrip_SerialiseNodeToNode ccfg =
         roundtrip @(Header blk)
           (enc version . SerialisedHeaderFromDepPair . encodeDepPair ccfg . unnest)
           (dec version)
+          (const $ pure (Right () :: Either () ()))
           hdr
   , testProperty "roundtrip Serialised Header compat 2" $
       \(WithVersion version hdr) ->
         roundtrip @(Header blk)
           (enc version)
           (nest <$> (decodeDepPair ccfg . serialisedHeaderToDepPair =<< dec version))
+          (const $ pure (Right () :: Either () ()))
           hdr
   ]
  where
@@ -554,10 +591,22 @@ roundtrip_SerialiseNodeToNode ccfg =
     , Show a
     , SerialiseNodeToNode blk a
     ) =>
-    Proxy a -> String -> TestTree
-  rt _ name =
-    testProperty ("roundtrip " <> name) $ \(WithVersion version x) ->
-      roundtrip @a (enc version) (dec version) x
+    Proxy a -> String -> Maybe (FilePath, T.Text) -> TestTree
+  rt _ name mCDDL =
+    testProperty ("roundtrip " <> name) $ \(WithVersion version x) -> do
+      roundtrip @a
+        (enc version)
+        (dec version)
+        ( case mCDDL of
+            Nothing -> const $ pure $ Right ()
+            Just (cddl, rule) -> \bs ->
+              fmap (const ())
+                <$> cddlTest
+                  (pure bs)
+                  cddl
+                  rule
+        )
+        x
 
 -- TODO how can we ensure that we have a test for each constraint listed in
 -- 'SerialiseNodeToClientConstraints'?
@@ -616,6 +665,7 @@ roundtrip_SerialiseNodeToClient shouldCheckCBORvalidity ccfg =
               (shouldCheckCBORvalidity testLabel)
               (encodeThroughSerialised (encodeDisk ccfg) (enc version))
               (const <$> decodeThroughSerialised (decodeDisk ccfg) (dec version))
+              (const $ pure (Right () :: Either () ()))
               blk
   , -- See roundtrip_SerialiseNodeToNode for more info
     let testLabel = "roundtrip Serialised blk compat"
@@ -625,6 +675,7 @@ roundtrip_SerialiseNodeToClient shouldCheckCBORvalidity ccfg =
               (shouldCheckCBORvalidity testLabel)
               (encodeThroughSerialised (encodeDisk ccfg) (enc version))
               (const <$> dec version)
+              (const $ pure (Right () :: Either () ()))
               blk
   , let testLabel = "roundtrip Result"
      in testProperty testLabel $
@@ -633,6 +684,7 @@ roundtrip_SerialiseNodeToClient shouldCheckCBORvalidity ccfg =
               (shouldCheckCBORvalidity testLabel)
               (encodeBlockQueryResult ccfg version query)
               (const <$> decodeBlockQueryResult ccfg version query)
+              (const $ pure (Right () :: Either () ()))
               result
   ]
  where
@@ -674,6 +726,7 @@ roundtrip_SerialiseNodeToClient shouldCheckCBORvalidity ccfg =
           (shouldCheckCBORvalidity testLabel)
           (enc' version)
           (const <$> dec' version)
+          (const $ pure (Right () :: Either () ()))
           a
    where
     testLabel = "roundtrip " <> name
@@ -697,6 +750,7 @@ roundtrip_envelopes ccfg (WithVersion v (SomeSecond ctxt)) =
   roundtrip
     (encodeNodeToNode ccfg v . unBase16)
     (Base16 <$> decodeNodeToNode ccfg v)
+    (const (pure (Right () :: Either () ())))
     (Base16 serialisedHeader)
  where
   serialisedHeader :: SerialisedHeader blk
@@ -873,4 +927,4 @@ examplesRoundtrip codecConfig examples =
     mkTest exampleName example =
       testProperty (fromMaybe "" exampleName) $
         once $
-          roundtrip' enc dec example
+          roundtrip' enc dec (const $ pure (Right () :: Either () ())) example
