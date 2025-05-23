@@ -1,0 +1,13 @@
+versionedPraosState = [praosVersion, praosState]
+
+praosVersion = 0
+
+praosState = [withOrigin<slotno>,
+              {* keyhash => word64},
+              nonce,
+              nonce,
+              nonce,
+              nonce,
+              nonce]
+
+;# import base
