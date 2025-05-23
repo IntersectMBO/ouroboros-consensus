@@ -16,6 +16,7 @@ hsPkgs.shellFor {
     pkgs.ghcid
     pkgs.xrefcheck
     pkgs.fourmolu
+    pkgs.cuddle
 
     # release management
     (pkgs.scriv.overridePythonAttrs (_oldAttrs: {
