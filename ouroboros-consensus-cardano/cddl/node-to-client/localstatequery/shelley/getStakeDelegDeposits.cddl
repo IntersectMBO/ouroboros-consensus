@@ -1,0 +1,6 @@
+query = [22, set<conway.stakeCredential>]
+
+result = map<conway.stakeCredential, conway.coin>
+
+;# import base
+;# import conway as conway

@@ -1,0 +1,5 @@
+query = [30, set<keyhash>]
+
+result = map<keyhash, coin>
+
+;# import base

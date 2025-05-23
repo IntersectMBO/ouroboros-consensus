@@ -1,0 +1,6 @@
+query = [2, set<either<coin, conway.stakeCredential>>]
+
+result = conway.nonMyopicRewards
+
+;# import base
+;# import conway

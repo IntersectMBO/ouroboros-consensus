@@ -1,0 +1,6 @@
+query = [18]
+
+result = [conway.rewardParams, map<keyhash, conway.rewardInfoPool>]
+
+;# import conway as conway
+;# import base

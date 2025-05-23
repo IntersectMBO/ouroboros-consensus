@@ -1,0 +1,105 @@
+query = [0, blockQuery]
+      / [getSystemStart.query]
+      / [getChainBlockNo.query]
+      / [getChainPoint.query]
+
+blockQuery = queryIfCurrent
+           / queryAnyTime
+           / queryHardFork
+
+queryAnyTime = [1, getEraStart.query, eraIdx]
+
+queryHardFork = [2, getInterpreter.query / getCurrentEra.query]
+
+queryIfCurrent =
+  [0, ns7<byronQuery,
+          shelleyQuery,
+          shelleyQuery,
+          shelleyQuery,
+          shelleyQuery,
+          shelleyQuery,
+          shelleyQuery>
+          ]
+
+byronQuery = getUpdateInterfaceState.query
+
+shelleyQuery = getLedgerTip.query
+             / getEpochNo.query
+             / getNonMyopicMemberRewards.query
+             / getCurrentPParams.query
+             / getProposedPParamsUpdates.query
+             / getStakeDistribution.query
+             / getUTxOByAddress.query
+             / getUTxOWhole.query
+             / debugEpochState.query
+             / getCBOR.query
+             / getFilteredDelegationsAndRewardAccounts.query
+             / getGenesisConfig.query
+             / debugNewEpochState.query
+             / debugChainDepState.query
+             / getRewardProvenance.query
+             / getUTxOByTxIn.query
+             / getStakePools.query
+             / getStakePoolParams.query
+             / getRewardInfoPools.query
+             / getPoolState.query
+             / getStakeSnapshots.query
+             / getPoolDistr.query
+             / getStakeDelegDeposits.query
+             / getConstitution.query
+             / getGovState.query
+             / getDRepState.query
+             / getDRepStakeDistr.query
+             / getCommitteeMembersState.query
+             / getFilteredVoteDelegatees.query
+             / getAccountState.query
+             / getSPOStakeDistr.query
+             / getProposals.query
+             / getRatifyState.query
+             / getFuturePParams.query
+             / getBigLedgerPeersSnapshot.query
+
+getCBOR.query = [9, shelleyQuery]
+
+;# include getSystemStart as getSystemStart
+;# include getChainBlockNo as getChainBlockNo
+;# include getChainPoint as getChainPoint
+;# include getEraStart as getEraStart
+;# include getInterpreter as getInterpreter
+;# include getCurrentEra as getCurrentEra
+;# include getUpdateInterfaceState as getUpdateInterfaceState
+;# include getLedgerTip as getLedgerTip
+;# include getEpochNo as getEpochNo
+;# include getNonMyopicMemberRewards as getNonMyopicMemberRewards
+;# include getCurrentPParams as getCurrentPParams
+;# include getProposedPParamsUpdates as getProposedPParamsUpdates
+;# include getStakeDistribution as getStakeDistribution
+;# include getUTxOByAddress as getUTxOByAddress
+;# include getUTxOWhole as getUTxOWhole
+;# include debugEpochState as debugEpochState
+;# include getFilteredDelegationsAndRewardAccounts as getFilteredDelegationsAndRewardAccounts
+;# include getGenesisConfig as getGenesisConfig
+;# include debugNewEpochState as debugNewEpochState
+;# include debugChainDepState as debugChainDepState
+;# include getRewardProvenance as getRewardProvenance
+;# include getUTxOByTxIn as getUTxOByTxIn
+;# include getStakePools as getStakePools
+;# include getStakePoolParams as getStakePoolParams
+;# include getRewardInfoPools as getRewardInfoPools
+;# include getPoolState as getPoolState
+;# include getStakeSnapshots as getStakeSnapshots
+;# include getPoolDistr as getPoolDistr
+;# include getStakeDelegDeposits as getStakeDelegDeposits
+;# include getConstitution as getConstitution
+;# include getGovState as getGovState
+;# include getDRepState as getDRepState
+;# include getDRepStakeDistr as getDRepStakeDistr
+;# include getCommitteeMembersState as getCommitteeMembersState
+;# include getFilteredVoteDelegatees as getFilteredVoteDelegatees
+;# include getAccountState as getAccountState
+;# include getSPOStakeDistr as getSPOStakeDistr
+;# include getProposals as getProposals
+;# include getRatifyState as getRatifyState
+;# include getFuturePParams as getFuturePParams
+;# include getBigLedgerPeersSnapshot as getBigLedgerPeersSnapshot
+;# import base

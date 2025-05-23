@@ -1,0 +1,5 @@
+query = [11]
+
+result = conway.compactGenesis
+
+;# import conway as conway

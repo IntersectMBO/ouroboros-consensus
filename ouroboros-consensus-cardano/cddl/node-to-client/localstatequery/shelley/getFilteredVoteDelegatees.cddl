@@ -1,0 +1,6 @@
+query = [28, set<conway.stakeCredential>]
+
+result = conway.voteDelegatees
+
+;# import base
+;# import conway as conway
