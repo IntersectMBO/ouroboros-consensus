@@ -1,0 +1,18 @@
+query = [0]
+result = interpreter
+
+interpreter = [* eraSummary]
+eraSummary = [eraStart, eraEnd, eraParams]
+eraStart = bound
+eraEnd = null / bound
+eraParams = [epochSize, slotLength, safeZone, genesisWindow]
+epochSize = word64
+slotLength = int  ; millisec
+safeZone = standardSafeZone / unsafeIndefiniteSafeZone
+standardSafeZone = [0, safeFromTip, safeBeforeEpoch]
+safeFromTip = word64
+safeBeforeEpoch = [0]
+unsafeIndefiniteSafeZone = [1]
+genesisWindow = word64
+
+;# import base

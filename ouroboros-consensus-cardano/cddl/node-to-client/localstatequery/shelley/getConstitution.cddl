@@ -1,0 +1,5 @@
+query = [23]
+
+result = conway.constitution
+
+;# import conway as conway

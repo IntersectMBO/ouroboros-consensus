@@ -1,0 +1,5 @@
+query = [14]
+
+result = conway.rewardProvenance
+
+;# import conway as conway

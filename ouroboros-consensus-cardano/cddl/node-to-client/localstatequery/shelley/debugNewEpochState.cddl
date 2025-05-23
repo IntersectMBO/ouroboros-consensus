@@ -1,0 +1,5 @@
+query = [12]
+
+result = conway.newEpochState
+
+;# import conway as conway

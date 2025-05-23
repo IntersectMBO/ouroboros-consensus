@@ -1,0 +1,6 @@
+query = [27, set<conway.coldCredential>, set<conway.hotCredential>, set<conway.status>]
+
+result = conway.committeeMembersState
+
+;# import base
+;# import conway as conway

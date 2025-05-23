@@ -1,0 +1,6 @@
+query = [20, maybe<set<keyhash>>]
+
+result = conway.stakeSnapshots
+
+;# import base
+;# import conway as conway

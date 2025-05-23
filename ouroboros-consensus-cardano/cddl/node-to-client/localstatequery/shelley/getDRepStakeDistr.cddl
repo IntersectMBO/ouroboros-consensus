@@ -1,0 +1,6 @@
+query = [26, set<conway.drep>]
+
+result = map<conway.drep, coin>
+
+;# import base
+;# import conway as conway

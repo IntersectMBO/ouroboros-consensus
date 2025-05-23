@@ -1,0 +1,3 @@
+query = [34]
+
+result = network.ledgerPeerSnapshot

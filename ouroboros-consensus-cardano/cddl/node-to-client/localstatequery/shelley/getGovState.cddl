@@ -1,0 +1,5 @@
+query = [24]
+
+result = conway.govState
+
+;# import conway as conway

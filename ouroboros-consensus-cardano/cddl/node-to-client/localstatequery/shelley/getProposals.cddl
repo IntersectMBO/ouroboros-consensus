@@ -1,0 +1,6 @@
+query = [31, set<conway.govActionId>]
+
+result = seq<conway.govActionState>
+
+;# import base
+;# import conway as conway

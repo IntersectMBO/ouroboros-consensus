@@ -1,0 +1,6 @@
+query = [15, set<conway.txin>]
+
+result = conway.utxo
+
+;# import base
+;# import conway as conway
