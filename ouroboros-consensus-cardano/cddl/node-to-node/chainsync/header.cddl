@@ -1,0 +1,25 @@
+header
+ = ns7<byronHeader,
+       serialisedShelleyHeader<shelley.header>,
+       serialisedShelleyHeader<allegra.header>,
+       serialisedShelleyHeader<mary.header>,
+       serialisedShelleyHeader<alonzo.header>,
+       serialisedShelleyHeader<babbage.header>,
+       serialisedShelleyHeader<conway.header>>
+
+byronHeader = [byronRegularIdx, #6.24(bytes .cbor byron.blockhead)]
+            / [byronBoundaryIdx, #6.24(bytes .cbor byron.ebbhead)]
+
+byronBoundaryIdx = [0, word32]
+byronRegularIdx = [1, word32]
+
+serialisedShelleyHeader<era> = #6.24(bytes .cbor era)
+
+;# include byron as byron
+;# include shelley as shelley
+;# include allegra as allegra
+;# include mary as mary
+;# include alonzo as alonzo
+;# include babbage as babbage
+;# include conway as conway
+;# import base
