@@ -1,0 +1,9 @@
+ledgerStateSnapshot =
+  [snapshotEncodingVersion1, extLedgerState]
+
+snapshotEncodingVersion1 = 1
+
+extLedgerState = [ledgerState, headerState]
+
+;# import ledgerstate
+;# import headerstate

@@ -1,0 +1,15 @@
+cardanoBlock = byron.block
+             / [2, shelley.block]
+             / [3, allegra.block]
+             / [4, mary.block]
+             / [5, alonzo.block]
+             / [6, babbage.block]
+             / [7, conway.block]
+
+;# import byron as byron
+;# import shelley as shelley
+;# import allegra as allegra
+;# import mary as mary
+;# import alonzo as alonzo
+;# import babbage as babbage
+;# import conway as conway
