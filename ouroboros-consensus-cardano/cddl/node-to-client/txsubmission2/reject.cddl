@@ -1,0 +1,5 @@
+; https://github.com/IntersectMBO/ouroboros-consensus/issues/1429
+applyTxErr = [ 6, conway.ledgerPredFailure ]
+
+; https://github.com/IntersectMBO/cardano-ledger/issues/5075
+conway.ledgerPredFailure = any
