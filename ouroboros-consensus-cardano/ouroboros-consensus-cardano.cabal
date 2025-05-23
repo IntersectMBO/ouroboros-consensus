@@ -23,6 +23,9 @@ extra-doc-files:
   CHANGELOG.md
   README.md
 
+data-files:
+  cddl/**/*.cddl
+
 source-repository head
   type: git
   location: https://github.com/IntersectMBO/ouroboros-consensus
@@ -316,7 +319,7 @@ library unstable-shelley-testlib
     cardano-ledger-shelley:{cardano-ledger-shelley, testlib},
     cardano-ledger-shelley-ma-test,
     cardano-ledger-shelley-test,
-    cardano-protocol-tpraos:{cardano-protocol-tpraos, testlib},
+    cardano-protocol-tpraos:{cardano-protocol-tpraos},
     cardano-slotting,
     cardano-strict-containers,
     containers,
@@ -436,6 +439,7 @@ test-suite cardano-test
   other-modules:
     Test.Consensus.Cardano.DiffusionPipelining
     Test.Consensus.Cardano.Golden
+    Test.Consensus.Cardano.GenCDDLs
     Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.ByteStringTxParser
     Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server
     Test.Consensus.Cardano.Serialisation
@@ -448,7 +452,9 @@ test-suite cardano-test
     Test.ThreadNet.MaryAlonzo
     Test.ThreadNet.ShelleyAllegra
 
+  other-modules: Paths_ouroboros_consensus_cardano
   build-depends:
+    temporary,
     QuickCheck,
     base,
     base16-bytestring,
@@ -488,6 +494,19 @@ test-suite cardano-test
     unstable-byron-testlib,
     unstable-cardano-testlib,
     unstable-shelley-testlib,
+    bytestring,
+    cardano-ledger-allegra:testlib,
+    cardano-ledger-alonzo:testlib,
+    cardano-ledger-babbage:testlib,
+    cardano-ledger-byron,
+    cardano-ledger-conway:testlib,
+    cardano-ledger-mary:testlib,
+    cardano-ledger-shelley:testlib,
+    directory,
+    filepath,
+    process-extras,
+    tasty-hunit,
+    tasty,
 
 library unstable-cardano-tools
   import: common-lib
