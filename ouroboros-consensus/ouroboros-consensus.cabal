@@ -410,6 +410,7 @@ library unstable-consensus-testlib
     Test.Util.Schedule
     Test.Util.Serialisation.Examples
     Test.Util.Serialisation.Golden
+    Test.Util.Serialisation.CDDL
     Test.Util.Serialisation.Roundtrip
     Test.Util.Serialisation.SomeResult
     Test.Util.Shrink
@@ -426,6 +427,7 @@ library unstable-consensus-testlib
 
   build-depends:
     QuickCheck >=2.15,
+    temporary,
     base,
     base16-bytestring,
     binary,
@@ -463,6 +465,7 @@ library unstable-consensus-testlib
     quickcheck-state-machine:no-vendored-treediff ^>=0.10,
     quiet,
     random,
+    process,
     resource-registry,
     serialise,
     si-timers,
