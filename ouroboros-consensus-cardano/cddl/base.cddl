@@ -29,6 +29,7 @@ slotno = word64
 stake = rational
 
 withOrigin<v> = [] / [v]
+withOriginTH<v> = [0] / [1, v]
 
 ;; Collections
 either<x, y> = [0, x] / [1, y]
