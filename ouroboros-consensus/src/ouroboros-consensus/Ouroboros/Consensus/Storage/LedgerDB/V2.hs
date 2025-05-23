@@ -85,12 +85,12 @@ mkInitDb args flavArgs getBlock =
     , closeDb = closeLedgerSeq
     , initReapplyBlock = \a b c -> do
         (x, y) <- reapplyThenPush lgrRegistry a b c
-        closeLedgerSeq x
+        x
         pure y
     , currentTip = ledgerState . current
     , pruneDb = \lseq -> do
-        let (LedgerSeq rel, dbPrunedToImmDBTip) = pruneToImmTipOnly lseq
-        mapM_ (close . tables) (AS.toOldestFirst rel)
+        let (rel, dbPrunedToImmDBTip) = pruneToImmTipOnly lseq
+        rel
         pure dbPrunedToImmDBTip
     , mkLedgerDb = \lseq -> do
         varDB <- newTVarIO lseq

@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
@@ -13,6 +14,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ViewPatterns #-}
 
 -- | The data structure that holds the cached ledger states.
 module Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
@@ -54,7 +56,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 
 import Cardano.Ledger.BaseTypes
 import Control.ResourceRegistry
-import qualified Data.Bifunctor as B
 import Data.Function (on)
 import Data.Word
 import GHC.Generics
@@ -183,8 +184,11 @@ empty' ::
   m (LedgerSeq m l)
 empty' st = empty (forgetLedgerTables st) (ltprj st)
 
+-- | Close all 'LedgerTablesHandle' in this 'LedgerSeq', in particular that on
+-- the anchor.
 closeLedgerSeq :: Monad m => LedgerSeq m l -> m ()
-closeLedgerSeq = mapM_ (close . tables) . toOldestFirst . getLedgerSeq
+closeLedgerSeq (LedgerSeq l) =
+  mapM_ (close . tables) $ AS.anchor l : AS.toOldestFirst l
 
 {-------------------------------------------------------------------------------
   Apply blocks
@@ -193,15 +197,14 @@ closeLedgerSeq = mapM_ (close . tables) . toOldestFirst . getLedgerSeq
 -- | Apply a block on top of the ledger state and extend the LedgerSeq with
 -- the result ledger state.
 --
--- The @fst@ component of the result should be closed as it contains the pruned
--- states.
+-- The @fst@ component of the result should be run to close the pruned states.
 reapplyThenPush ::
   (IOLike m, ApplyBlock l blk) =>
   ResourceRegistry m ->
   LedgerDbCfg l ->
   blk ->
   LedgerSeq m l ->
-  m (LedgerSeq m l, LedgerSeq m l)
+  m (m (), LedgerSeq m l)
 reapplyThenPush rr cfg ap db =
   (\current' -> prune (LedgerDbPruneKeeping (ledgerDbCfgSecParam cfg)) $ extend current' db)
     <$> reapplyBlock (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) ap rr db
@@ -229,30 +232,38 @@ reapplyBlock evs cfg b _rr db = do
 -- | Prune older ledger states until at we have at most @k@ volatile states in
 -- the LedgerDB, plus the one stored at the anchor.
 --
--- The @fst@ component of the returned value has to be @close@ed.
+-- The @fst@ component of the returned value is an action closing the pruned
+-- ledger states.
 --
 -- >>> ldb  = LedgerSeq $ AS.fromOldestFirst l0 [l1, l2, l3]
 -- >>> ldb' = LedgerSeq $ AS.fromOldestFirst     l1 [l2, l3]
 -- >>> snd (prune (LedgerDbPruneKeeping (SecurityParam (unsafeNonZero 2))) ldb) == ldb'
 -- True
 prune ::
-  GetTip l =>
+  (Monad m, GetTip l) =>
   LedgerDbPrune ->
   LedgerSeq m l ->
-  (LedgerSeq m l, LedgerSeq m l)
-prune (LedgerDbPruneKeeping (SecurityParam k)) (LedgerSeq ldb) =
-  if toEnum nvol <= unNonZero k
-    then (LedgerSeq $ Empty (AS.anchor ldb), LedgerSeq ldb)
-    else
-      -- We remove the new anchor from the @fst@ component so that its handle is
-      -- not closed.
-      B.bimap (LedgerSeq . dropNewest 1) LedgerSeq $ AS.splitAt (nvol - fromEnum (unNonZero k)) ldb
+  (m (), LedgerSeq m l)
+prune howToPrune (LedgerSeq ldb) = case howToPrune of
+  LedgerDbPruneKeeping (SecurityParam (fromEnum . unNonZero -> k))
+    | nvol <= k -> (pure (), LedgerSeq ldb)
+    | otherwise -> (closeButHead before, LedgerSeq after)
+   where
+    nvol = AS.length ldb
+    (before, after) = AS.splitAt (nvol - k) ldb
+  LedgerDbPruneAll ->
+    (closeButHead before, LedgerSeq after)
+   where
+    (before, after) = (ldb, AS.Empty (AS.headAnchor ldb))
  where
-  nvol = AS.length ldb
-prune LedgerDbPruneAll (LedgerSeq ldb) =
-  B.bimap (LedgerSeq . dropNewest 1) LedgerSeq $ AS.splitAt nvol ldb
- where
-  nvol = AS.length ldb
+  -- Above, we split @ldb@ into two sequences @before@ and @after@ such that
+  -- @AS.headAnchor before == AS.anchor after@. We want to close all handles of
+  -- @ldb@ not present in @after@, which are none if @before@ is empty, and all
+  -- (in particular the anchor) of @before@ apart from the the head of @before@
+  -- if @before@ is non-empty.
+  closeButHead = \case
+    AS.Empty _ -> pure ()
+    toPrune AS.:> _ -> closeLedgerSeq (LedgerSeq toPrune)
 
 -- NOTE: we must inline 'prune' otherwise we get unexplained thunks in
 -- 'LedgerSeq' and thus a space leak. Alternatively, we could disable the
@@ -296,9 +307,9 @@ extend newState =
 -- >>> AS.anchor ldb' == l3 && AS.toOldestFirst ldb' == []
 -- True
 pruneToImmTipOnly ::
-  GetTip l =>
+  (Monad m, GetTip l) =>
   LedgerSeq m l ->
-  (LedgerSeq m l, LedgerSeq m l)
+  (m (), LedgerSeq m l)
 pruneToImmTipOnly = prune LedgerDbPruneAll
 
 {-------------------------------------------------------------------------------
