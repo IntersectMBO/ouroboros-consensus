@@ -138,6 +138,22 @@ jobs:
     - name: Build projects [build]
       run: cabal build all -j
 
+    - name: Install cddlc
+      run: gem install cddlc
+
+    - name: Clone cuddle with validator
+      uses: actions/checkout
+      with:
+        repo: 'input-output-hk/cuddle'
+        ref: 'js/validator'
+        path: 'cuddle'
+
+    - name: Install cuddle
+      run: |
+        ( cd $GITHUB_WORKSPACE/cuddle
+          cabal install --ignore-project exe:cuddle
+        )
+
     - name: Test
       if: matrix.test-set == 'all'
       run: cabal test all -j --test-show-details=streaming
