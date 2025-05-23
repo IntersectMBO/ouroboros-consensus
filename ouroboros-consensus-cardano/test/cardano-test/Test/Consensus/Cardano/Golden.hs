@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -16,10 +17,16 @@ import System.FilePath ((</>))
 import Test.Consensus.Cardano.Examples
 import Test.Tasty
 import Test.Util.Paths
+import Test.Util.Serialisation.CDDL
 import Test.Util.Serialisation.Golden
 
 tests :: TestTree
-tests = goldenTest_all codecConfig ($(getGoldenDir) </> "cardano") examples
+tests =
+  goldenTest_all
+    codecConfig
+    ($(getGoldenDir) </> "cardano")
+    (Just $ CDDLsForNodeToNode ("ntnblock.cddl", "serialisedCardanoBlock") ("ntnheader.cddl", "header"))
+    examples
 
 instance
   CardanoHardForkConstraints c =>
