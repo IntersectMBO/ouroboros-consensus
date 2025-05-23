@@ -1,0 +1,3 @@
+blockDatFile = bytes .cborseq block.cardanoBlock
+
+;# import block as block

@@ -1,0 +1,5 @@
+versionedPbftState = [serializationFormat1, {* keyhash => [* slotno]}]
+
+serializationFormat1 = 1
+
+;# import keyhash, slotno from base
