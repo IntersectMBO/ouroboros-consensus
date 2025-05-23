@@ -6,12 +6,19 @@ import TabItem from '@theme/TabItem';
 This is a checklist of modifications needed to be performed by node users when
 migrating to UTxO-HD. It aims to ease the transition for node 10.4.
 
-## Install the LMDB library
+## If building the node from source code: install the LMDB library
+
+:::info
+
+If you download the binary from the Github release, there is no need to install
+`lmdb` as the distributed binary is statically linked.
+
+:::
 
 As the Consensus layer now allows for the use of the LMDB backend, the
-development library needs to be present on the system. If using Nix, this
-library will be available in the Nix shell. Otherwise, it will have to be
-manually installed:
+development library needs to be present on the system for building. If
+using Nix, this library will be available in the Nix shell. Otherwise,
+it will have to be manually installed:
 
 <div class="tabsblock">
 <Tabs>
@@ -82,6 +89,10 @@ be one of these:
 <div class="tabsblock">
 <Tabs>
   <TabItem value="mem" label="In memory">
+
+  This is the default value for `"Backend"` so you could leave it
+  undefined. We suggest setting it anyways to avoid confusion.
+
   ```json
   {
     ...,
@@ -106,7 +117,8 @@ be one of these:
   }
   ```
 
-The explanation for the new options applicable only to this backend follows:
+The explanation for the new options applicable only to this backend
+follows:
 
 
 - `"FlushFrequency"`: The number of immutable blocks that need to exists before
@@ -169,7 +181,7 @@ $ cp -r ./snapshots/<slotno>_lmdb <dbDir>/ledger/<slotno>
 </Tabs>
 </div>
 
-:::info
+:::warning
 
 You can do this process directly in the snapshots directory in the database
 path, but you have to make sure you delete the old format snapshots before
@@ -177,6 +189,16 @@ running the node as otherwise you would have two snapshots with the same slot
 number and the node would be free to pick the one with the old format
 again. Doing the conversion in a separate directory and then copying only the
 new format snapshot prevents this situation.
+
+:::
+
+:::warning
+
+In the command above, the target name for the copy of the new snapshot has no
+suffix. The snapshot deleting logic omits suffixed snapshots as those are
+considered "important" snapshots the user wants to keep around. So if you keep
+the suffix in the snapshot name then the node will never delete such snapshot
+even if it has two other much more recent snapshots.
 
 :::
 
