@@ -1,0 +1,22 @@
+txId =
+  ns7<byronTxId,
+      shelley.transaction_id,
+      allegra.transaction_id,
+      mary.transaction_id,
+      alonzo.transaction_id,
+      conway.transaction_id,
+      babbage.transaction_id>
+
+byronTxId = [0, byron.txid]
+          / [1, byron.certificateid]
+          / [2, byron.updid]
+          / [3, byron.voteid]
+
+;# include byron as byron
+;# include shelley as shelley
+;# include allegra as allegra
+;# include mary as mary
+;# include alonzo as alonzo
+;# include babbage as babbage
+;# include conway as conway
+;# import base

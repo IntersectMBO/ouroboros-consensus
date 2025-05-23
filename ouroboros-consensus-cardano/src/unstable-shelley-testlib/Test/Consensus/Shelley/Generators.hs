@@ -51,7 +51,6 @@ import Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators
   )
 import Test.Cardano.Ledger.Shelley.Serialisation.Generators ()
 import Test.Cardano.Ledger.ShelleyMA.Serialisation.Generators ()
-import Test.Cardano.Protocol.TPraos.Arbitrary (genBlock)
 import Test.Consensus.Protocol.Serialisation.Generators ()
 import Test.Consensus.Shelley.MockCrypto (CanMock)
 import Test.QuickCheck hiding (Result)
@@ -79,7 +78,7 @@ instance
     allPoolKeys <-
       replicateM (fromIntegral $ numCoreNodes defaultConstants) $
         genIssuerKeys defaultConstants
-    mkShelleyBlock <$> genBlock allPoolKeys
+    mkShelleyBlock <$> genCoherentBlock allPoolKeys
 
 instance
   (Praos.PraosCrypto crypto, CanMock (Praos crypto) era) =>

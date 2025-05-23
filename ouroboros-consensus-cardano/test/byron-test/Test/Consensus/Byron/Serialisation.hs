@@ -37,7 +37,7 @@ tests :: TestTree
 tests =
   testGroup
     "Byron"
-    [ roundtrip_all testCodecCfg dictNestedHdr
+    [ roundtrip_all testCodecCfg dictNestedHdr Nothing
     , testProperty "BinaryBlockInfo sanity check" prop_byronBinaryBlockInfo
     , testGroup
         "Integrity"
