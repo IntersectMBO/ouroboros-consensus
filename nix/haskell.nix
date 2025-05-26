@@ -35,9 +35,13 @@ let
               extraSrcFiles = [ "golden/${n}/**/*" ];
             }) [ "byron" "shelley" "cardano" ]);
       }
-      ({ pkgs, lib, ... }: lib.mkIf pkgs.stdenv.hostPlatform.isWindows {
-        # https://github.com/input-output-hk/haskell.nix/issues/2332
-        packages.basement.configureFlags = [ "--hsc2hs-option=--cflag=-Wno-int-conversion" ];
+      ({ pkgs, ... }: {
+        # Tools for CBOR/CDDL tests:
+        packages.ouroboros-consensus-cardano.components.tests.cardano-test = {
+          build-tools =
+            [ pkgs.cddlc pkgs.cuddle ];
+          extraSrcFiles = [ "cddl/**/*" ];
+        };
       })
     ];
     flake.variants = {
