@@ -47,6 +47,9 @@ in
     };
   };
 
+  # remove once our nixpkgs contains https://github.com/NixOS/nixpkgs/pull/394873
+  cddlc = final.callPackage ./cddlc/package.nix { };
+
   haskellBuildUtils = prev.haskellBuildUtils.override {
     inherit (final.hsPkgs.args) compiler-nix-name;
     index-state = tool-index-state;
