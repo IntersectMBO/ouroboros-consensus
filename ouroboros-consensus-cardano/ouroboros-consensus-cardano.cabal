@@ -484,7 +484,7 @@ test-suite cardano-test
     tasty,
     tasty-hunit,
     tasty-quickcheck,
-    typed-protocols ^>=0.3,
+    typed-protocols:{typed-protocols} ^>=1.0,
     unstable-byron-testlib,
     unstable-cardano-testlib,
     unstable-shelley-testlib,
