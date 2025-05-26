@@ -17,6 +17,7 @@ hsPkgs.shellFor {
     pkgs.xrefcheck
     pkgs.fourmolu
     pkgs.cuddle
+    pkgs.cddlc
 
     # release management
     pkgs.scriv
