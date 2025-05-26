@@ -34,6 +34,14 @@ let
               extraSrcFiles = [ "golden/${n}/**/*" ];
             }) [ "byron" "shelley" "cardano" ]);
       }
+      ({ pkgs, ... }: {
+        # Tools for CBOR/CDDL tests:
+        packages.ouroboros-consensus-cardano.components.tests.cardano-test = {
+          build-tools =
+            [ pkgs.cddlc pkgs.cuddle ];
+          extraSrcFiles = [ "cddl/**/*" ];
+        };
+      })
     ];
     flake.variants = {
       noAsserts = {
