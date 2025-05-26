@@ -102,8 +102,7 @@ library
     text,
     time,
     transformers,
-    typed-protocols,
-    typed-protocols-stateful,
+    typed-protocols:{typed-protocols,stateful},
 
 library unstable-diffusion-testlib
   import: common-lib
@@ -152,7 +151,7 @@ library unstable-diffusion-testlib
     sop-extras ^>=0.4,
     strict-sop-core ^>=0.1,
     text,
-    typed-protocols,
+    typed-protocols:{typed-protocols},
 
 library unstable-mock-testlib
   import: common-lib
@@ -316,6 +315,6 @@ test-suite consensus-test
     temporary,
     time,
     tree-diff,
-    typed-protocols,
+    typed-protocols:{typed-protocols},
     unstable-diffusion-testlib,
     vector,
