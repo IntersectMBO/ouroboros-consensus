@@ -19,6 +19,10 @@ index-state:
   , cardano-haskell-packages 2025-05-15T08:36:14Z
 
 packages:
+  ../../fs-sim/pr/fs-sim
+  ../../fs-sim/pr/fs-api
+
+packages:
   ouroboros-consensus
   ouroboros-consensus-cardano
   ouroboros-consensus-protocol
