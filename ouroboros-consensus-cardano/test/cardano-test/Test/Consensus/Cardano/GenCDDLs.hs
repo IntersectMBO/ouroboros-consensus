@@ -113,7 +113,7 @@ cddlc dataFile = do
   putStrLn $ "Generating: " <> dataFile
   path <- getDataFileName dataFile
   (_, BSL.toStrict -> cddl, BSL.toStrict -> err) <-
-#ifdef POSIX
+#ifndef mingw32_HOST_OS
     P.readProcessWithExitCode "cddlc" ["-u", "-2", "-t", "cddl", path] mempty
 #else
     -- we cannot call @cddlc@ directly because it is not an executable in
@@ -130,7 +130,7 @@ cddlc dataFile = do
 
 takePath :: FilePath -> FilePath
 takePath x =
-#ifdef POSIX
+#ifndef mingw32_HOST_OS
   F.takeDirectory x
 #else
   -- @cddlc@ is not capable of using backlashes
@@ -147,10 +147,10 @@ takePath x =
 probeTools :: IO ()
 probeTools = do
   putStrLn "Probing tools:"
-#ifdef POSIX
+#ifndef mingw32_HOST_OS
   posixProbeTool "cddlc" "install the `cddlc` ruby gem"
   where
-    posixProbeTool :: String -> Sring -> IO ()
+    posixProbeTool :: String -> String -> IO ()
     posixProbeTool tool suggestion = do
       putStr $ "- " <> tool <> " "
       exe <- D.findExecutable tool
