@@ -27,6 +27,7 @@ import           Data.Semigroup (stimes)
 import           Data.Word (Word32)
 import           GHC.Generics
 import           NoThunks.Class
+import           Numeric.Natural (Natural)
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 
@@ -89,15 +90,20 @@ newtype SemigroupViaMeasure a = SemigroupViaMeasure a
 
 -- | The size of a mempool.
 data MempoolSize = MempoolSize
-  { msNumTxs   :: !Word32
+  { msNumTxs        :: !Word32
     -- ^ The number of transactions in the mempool.
-  , msNumBytes :: !ByteSize32
+  , msNumBytes      :: !ByteSize32
     -- ^ The summed byte size of all the transactions in the mempool.
+  , msExUnitsMemory :: !Natural
+    -- ^ The execution memory units of all the transactions in the mempool.
+  , msExUnitsSteps  :: !Natural
+    -- ^ The execution steps of all the transactions in the mempool.
   } deriving (Eq, Show, Generic, NoThunks)
 
 instance Semigroup MempoolSize where
-  MempoolSize xt xb <> MempoolSize yt yb = MempoolSize (xt + yt) (xb <> yb)
+  MempoolSize xt xb xm xs <> MempoolSize yt yb ym ys = MempoolSize (xt + yt) (xb <> yb) (xm + ym) (xs + ys)
 
 instance Monoid MempoolSize where
-  mempty  = MempoolSize { msNumTxs = 0, msNumBytes = ByteSize32 0 }
+  mempty  = MempoolSize { msNumTxs = 0, msNumBytes = ByteSize32 0,
+                          msExUnitsMemory = 0, msExUnitsSteps = 0 }
   mappend = (<>)

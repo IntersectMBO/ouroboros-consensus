@@ -154,9 +154,13 @@ deriving instance ( NoThunks (Validated (GenTx blk))
 -- the Mempool paired with their total size in bytes.
 isMempoolSize :: TxLimits blk => InternalState blk -> MempoolSize
 isMempoolSize is = MempoolSize {
-    msNumTxs   = fromIntegral $ length $ isTxs is
-  , msNumBytes = txMeasureByteSize $ TxSeq.toSize $ isTxs is
-  }
+      msNumTxs        = fromIntegral $ length $ isTxs is
+    , msNumBytes      = txMeasureByteSize size
+    , msExUnitsMemory = txMeasureMetricExUnitsMemory size
+    , msExUnitsSteps  = txMeasureMetricExUnitsSteps size
+    }
+  where
+    size = TxSeq.toSize (isTxs is)
 
 initInternalState ::
      LedgerSupportsMempool blk
