@@ -15,12 +15,9 @@ import qualified System.Environment as E
 import System.Exit
 import qualified System.FilePath as F
 import qualified System.Process.ByteString.Lazy as P
-
--- TODO: this is waiting to update to a newer ledger
--- import qualified Test.Cardano.Chain.Binary.Cddl as Byron
-
 import System.IO
 import System.IO.Temp
+import qualified Test.Cardano.Chain.Binary.Cddl as Byron
 import qualified Test.Cardano.Ledger.Allegra.Binary.Cddl as Allegra
 import qualified Test.Cardano.Ledger.Alonzo.Binary.Cddl as Alonzo
 import qualified Test.Cardano.Ledger.Babbage.Binary.Cddl as Babbage
@@ -79,7 +76,7 @@ setupCDDLCEnv = do
   -- Note also that cabal run will run in the root of the project and
   -- cabal test will run in `ouroboros-consensus-cardano`. This path
   -- is for the latter.
-  byron <- pure ["../../cardano-ledger/eras/byron/cddl-spec/"]
+  byron <- map takePath <$> Byron.readByronCddlFileNames
   shelley <- map takePath <$> Shelley.readShelleyCddlFileNames
   allegra <- map takePath <$> Allegra.readAllegraCddlFileNames
   mary <- map takePath <$> Mary.readMaryCddlFileNames
