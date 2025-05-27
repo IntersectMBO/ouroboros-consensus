@@ -25,6 +25,8 @@ data ShelleyNodeToClientVersion
   | -- | New queries introduced: QueryStakePoolDefaultVote
     -- Queries deprecated: GetProposedPParamsUpdates
     ShelleyNodeToClientVersion12
+  | -- | New encoder for PParams, CompactGenesis
+    ShelleyNodeToClientVersion13
   deriving (Show, Eq, Ord, Enum, Bounded)
 
 instance HasNetworkProtocolVersion (ShelleyBlock proto era) where
@@ -44,6 +46,7 @@ instance SupportedNetworkProtocolVersion (ShelleyBlock proto era) where
       , (NodeToClientV_18, ShelleyNodeToClientVersion10)
       , (NodeToClientV_19, ShelleyNodeToClientVersion11)
       , (NodeToClientV_20, ShelleyNodeToClientVersion12)
+      , (NodeToClientV_20, ShelleyNodeToClientVersion13)
       ]
 
   latestReleasedNodeVersion = latestReleasedNodeVersionDefault
