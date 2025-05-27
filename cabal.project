@@ -55,7 +55,7 @@ if impl (ghc >= 9.12)
 source-repository-package
    type: git
    location: file://C:/Users/Javier/code/cardano/cardano-ledger
-   tag: 7738bd0796885a2a8741f808f6a237b5fc94bdb9
+   tag: d95fa77c1952b63d881a341ab6a9fc3bb515fd6d
    subdir:
       eras/allegra/impl
       eras/alonzo/impl
