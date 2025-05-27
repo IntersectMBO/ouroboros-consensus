@@ -14,9 +14,9 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2025-05-15T07:59:00Z
+  , hackage.haskell.org 2025-05-26T13:28:18Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2025-05-15T08:36:14Z
+  , cardano-haskell-packages 2025-05-26T19:51:53Z
 
 packages:
   ouroboros-consensus
@@ -40,11 +40,6 @@ package ouroboros-network
   -- https://github.com/IntersectMBO/ouroboros-network/issues/4927 for context).
   flags: -txsubmission-delay
 
--- We need to disable bitvec's SIMD for now, as it breaks during cross compilation.
-if(os(windows))
-  constraints:
-    bitvec -simd
-
 if impl (ghc >= 9.12)
   allow-newer:
     -- Bounds will be relaxed in next release
@@ -53,14 +48,6 @@ if impl (ghc >= 9.12)
     , ouroboros-network-framework:base
     , ouroboros-network-protocols:base
     , ouroboros-network:base
-
-    -- https://github.com/phadej/vec/issues/118
-    , bin:base
-    , fin:base
-    , ral:base
-
-    -- https://github.com/haskellari/tree-diff/issues/97
-    , tree-diff:base
 
     -- https://github.com/kapralVV/Unique/issues/11
     , Unique:hashable
