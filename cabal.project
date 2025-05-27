@@ -51,3 +51,35 @@ if impl (ghc >= 9.12)
 
     -- https://github.com/kapralVV/Unique/issues/11
     , Unique:hashable
+
+source-repository-package
+   type: git
+   location: file://C:/Users/Javier/code/cardano/cardano-ledger
+   tag: 7738bd0796885a2a8741f808f6a237b5fc94bdb9
+   subdir:
+      eras/allegra/impl
+      eras/alonzo/impl
+      eras/alonzo/test-suite
+      eras/babbage/impl
+      eras/babbage/test-suite
+      eras/byron/chain/executable-spec
+      eras/byron/crypto
+      eras/byron/ledger/executable-spec
+      eras/byron/ledger/impl
+      eras/conway/impl
+      eras/conway/test-suite
+      eras/mary/impl
+      eras/shelley/impl
+      eras/shelley-ma/test-suite
+      eras/shelley/test-suite
+      libs/cardano-data
+      libs/cardano-ledger-api
+      libs/cardano-ledger-binary
+      libs/cardano-ledger-core
+      libs/cardano-ledger-test
+      libs/cardano-protocol-tpraos
+      libs/constrained-generators
+      libs/non-integral
+      libs/set-algebra
+      libs/small-steps
+      libs/vector-map
