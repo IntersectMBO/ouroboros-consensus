@@ -38,7 +38,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ["9.6.6", "9.10.1", "9.12"]
+        ghc: ["9.6.7", "9.10.2", "9.12.2"]
         variant: [default, no-thunks]
         test-set: [all, no-thunks-safe]
         exclude:
@@ -163,7 +163,7 @@ jobs:
       if: |
         github.event_name == 'push'
         && github.ref == 'refs/heads/main'
-        && matrix.ghc=='9.10.1'
+        && matrix.ghc=='9.10.2'
       run: |
         # need for latex, dvisvgm and standalone
         sudo apt install texlive-latex-extra texlive-latex-base
@@ -178,7 +178,7 @@ jobs:
       if: |
         github.event_name == 'push'
         && github.ref == 'refs/heads/main'
-        && matrix.ghc=='9.10.1'
+        && matrix.ghc=='9.10.2'
       uses: actions/upload-artifact@v4
       with:
         name: haddocks
@@ -193,7 +193,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ["9.6.6", "9.10.1"]
+        ghc: ["9.6.7", "9.10.2"]
 
     steps:
     - uses: actions/checkout@v4
