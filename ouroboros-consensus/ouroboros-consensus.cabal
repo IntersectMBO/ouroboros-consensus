@@ -348,7 +348,7 @@ library
     time,
     transformers,
     transformers-base,
-    typed-protocols ^>=1.0,
+    typed-protocols:{typed-protocols} ^>=1.0,
     vector ^>=0.13,
 
   x-docspec-extra-packages:
@@ -811,7 +811,7 @@ benchmark ChainSync-client-bench
     ouroboros-network-protocols,
     resource-registry,
     time,
-    typed-protocols-examples,
+    typed-protocols:{examples},
     unstable-consensus-testlib,
     with-utf8,
 
