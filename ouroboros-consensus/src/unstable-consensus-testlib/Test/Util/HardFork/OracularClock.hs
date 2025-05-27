@@ -132,15 +132,15 @@ mkOracularClock BTime.SystemTime{..} numSlots future =
     , getCurrentSlot = do
         (slot, _leftInSlot, _slotLength) <- getPresent
         pure slot
-    , forkEachSlot_ = \rr threadLabel action ->
+    , forkEachSlot_ = \rr threadLabelStr action ->
         fmap cancelThread $
-          forkLinkedThread rr threadLabel $
+          forkLinkedThread rr threadLabelStr $
             fix $ \loop -> do
               -- INVARIANT the slot returned here ascends monotonically unless
               -- the underlying 'BTime.SystemTime' jumps backwards
               (slot, leftInSlot, _slotLength) <- getPresent
 
-              let lbl = threadLabel <> " [" <> show slot <> "]"
+              let lbl = threadLabelStr <> " [" <> show slot <> "]"
               -- fork the action, so it can't threadDelay us
               void $ forkLinkedThread rr lbl $ action slot
 
