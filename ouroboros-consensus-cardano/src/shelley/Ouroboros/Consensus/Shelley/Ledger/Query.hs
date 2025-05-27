@@ -969,19 +969,19 @@ encodeShelleyResult ::
   BlockQuery (ShelleyBlock proto era) fp result ->
   result ->
   Encoding
-encodeShelleyResult _v query = case query of
+encodeShelleyResult v query = case query of
   GetLedgerTip -> encodePoint encode
   GetEpochNo -> toCBOR
   GetNonMyopicMemberRewards{} -> toCBOR
-  GetCurrentPParams -> toCBOR
   GetProposedPParamsUpdates -> toCBOR
+  GetCurrentPParams -> fst $ currentPParamsEnDecoding v
   GetStakeDistribution -> LC.toEraCBOR @era
   GetUTxOByAddress{} -> toCBOR
   GetUTxOWhole -> toCBOR
   DebugEpochState -> toCBOR
   GetCBOR{} -> encode
   GetFilteredDelegationsAndRewardAccounts{} -> LC.toEraCBOR @era
-  GetGenesisConfig -> toCBOR
+  GetGenesisConfig -> fst $ genesisConfigEnDecoding v
   DebugNewEpochState -> toCBOR
   DebugChainDepState -> encode
   GetRewardProvenance -> LC.toEraCBOR @era
@@ -1014,19 +1014,19 @@ decodeShelleyResult ::
   BlockQuery (ShelleyBlock proto era) fp result ->
   forall s.
   Decoder s result
-decodeShelleyResult _v query = case query of
+decodeShelleyResult v query = case query of
   GetLedgerTip -> decodePoint decode
   GetEpochNo -> fromCBOR
   GetNonMyopicMemberRewards{} -> fromCBOR
-  GetCurrentPParams -> fromCBOR
   GetProposedPParamsUpdates -> fromCBOR
+  GetCurrentPParams -> snd $ currentPParamsEnDecoding v
   GetStakeDistribution -> LC.fromEraCBOR @era
   GetUTxOByAddress{} -> fromCBOR
   GetUTxOWhole -> fromCBOR
   DebugEpochState -> fromCBOR
   GetCBOR{} -> decode
   GetFilteredDelegationsAndRewardAccounts{} -> LC.fromEraCBOR @era
-  GetGenesisConfig -> fromCBOR
+  GetGenesisConfig -> snd $ genesisConfigEnDecoding v
   DebugNewEpochState -> fromCBOR
   DebugChainDepState -> decode
   GetRewardProvenance -> LC.fromEraCBOR @era
@@ -1051,6 +1051,31 @@ decodeShelleyResult _v query = case query of
   GetFuturePParams{} -> LC.fromEraCBOR @era
   GetBigLedgerPeerSnapshot -> fromCBOR
   QueryStakePoolDefaultVote{} -> fromCBOR
+
+currentPParamsEnDecoding ::
+  forall era s.
+  ( FromCBOR (LC.PParams era)
+  , ToCBOR (LC.PParams era)
+  , FromCBOR (LegacyPParams era)
+  , ToCBOR (LegacyPParams era)
+  ) =>
+  ShelleyNodeToClientVersion ->
+  (LC.PParams era -> Encoding, Decoder s (LC.PParams era))
+currentPParamsEnDecoding v
+  | v >= ShelleyNodeToClientVersion13 =
+      (toCBOR, fromCBOR)
+  | otherwise =
+      (encodeLegacyPParams, decodeLegacyPParams)
+
+genesisConfigEnDecoding ::
+  forall s.
+  ShelleyNodeToClientVersion ->
+  (CompactGenesis -> Encoding, Decoder s CompactGenesis)
+genesisConfigEnDecoding v
+  | v >= ShelleyNodeToClientVersion13 =
+      (toCBOR, fromCBOR)
+  | otherwise =
+      (encodeLegacyShelleyGenesis . getCompactGenesis, compactGenesis <$> decodeLegacyShelleyGenesis)
 
 -- | The stake snapshot returns information about the mark, set, go ledger snapshots for a pool,
 -- plus the total active stake for each snapshot that can be used in a 'sigma' calculation.
