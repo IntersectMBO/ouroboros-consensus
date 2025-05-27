@@ -46,17 +46,15 @@ import Cardano.Binary
   )
 import Cardano.Ledger.Address
 import qualified Cardano.Ledger.Api.State.Query as SL
-import Cardano.Ledger.CertState (lookupDepositDState)
-import qualified Cardano.Ledger.CertState as SL
 import Cardano.Ledger.Coin (Coin)
 import Cardano.Ledger.Compactible (Compactible (fromCompact))
 import qualified Cardano.Ledger.Conway.Governance as CG
+import qualified Cardano.Ledger.Conway.State as CG
 import qualified Cardano.Ledger.Core as SL
 import Cardano.Ledger.Credential (StakeCredential)
 import Cardano.Ledger.Keys (KeyHash, KeyRole (..))
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as LC
-import Cardano.Ledger.Shelley.LedgerState (AccountState)
 import qualified Cardano.Ledger.Shelley.RewardProvenance as SL
   ( RewardProvenance
   )
@@ -272,7 +270,7 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
   --
   -- Not supported in eras before Conway.
   GetDRepState ::
-    CG.ConwayEraGov era =>
+    (CG.ConwayEraGov era, CG.ConwayEraCertState era) =>
     Set (SL.Credential 'DRepRole) ->
     BlockQuery
       (ShelleyBlock proto era)
@@ -297,7 +295,7 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
   --
   -- Not supported in eras before Conway.
   GetCommitteeMembersState ::
-    CG.ConwayEraGov era =>
+    (CG.ConwayEraGov era, CG.ConwayEraCertState era) =>
     Set (SL.Credential 'ColdCommitteeRole) ->
     Set (SL.Credential 'HotCommitteeRole) ->
     Set SL.MemberStatus ->
@@ -308,7 +306,7 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
     Set (SL.Credential 'SL.Staking) ->
     BlockQuery (ShelleyBlock proto era) QFNoTables VoteDelegatees
   GetAccountState ::
-    BlockQuery (ShelleyBlock proto era) QFNoTables AccountState
+    BlockQuery (ShelleyBlock proto era) QFNoTables SL.ChainAccountState
   -- | Query the SPO voting stake distribution.
   -- This stake distribution is different from the one used in leader election.
   --
@@ -474,7 +472,7 @@ instance
               SL.calculatePoolDistr' (maybe (const True) (flip Set.member) mPoolIds) stakeSet
       GetStakeDelegDeposits stakeCreds ->
         let lookupDeposit =
-              lookupDepositDState (view SL.certDStateL $ SL.lsCertState $ SL.esLState $ SL.nesEs st)
+              SL.lookupDepositDState (view SL.certDStateL $ SL.lsCertState $ SL.esLState $ SL.nesEs st)
             lookupInsert acc cred =
               case lookupDeposit cred of
                 Nothing -> acc
@@ -493,7 +491,7 @@ instance
       GetFilteredVoteDelegatees stakeCreds ->
         getFilteredVoteDelegatees st stakeCreds
       GetAccountState ->
-        SL.queryAccountState st
+        SL.queryChainAccountState st
       GetSPOStakeDistr keys ->
         SL.querySPOStakeDistr st keys
       GetProposals gids ->
@@ -914,7 +912,7 @@ decodeShelleyQuery = do
 
       requireCG ::
         forall s ans.
-        (CG.ConwayEraGov era => Decoder s ans) ->
+        ((CG.ConwayEraGov era, CG.ConwayEraCertState era) => Decoder s ans) ->
         Decoder s ans
       requireCG k = case SE.getConwayEraGovDict (Proxy @era) of
         Just SE.ConwayEraGovDict -> k
