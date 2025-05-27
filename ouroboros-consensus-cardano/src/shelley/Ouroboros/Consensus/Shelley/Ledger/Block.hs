@@ -79,6 +79,7 @@ import Ouroboros.Consensus.Protocol.Praos.Common
   )
 import Ouroboros.Consensus.Protocol.Signed (SignedHeader)
 import Ouroboros.Consensus.Shelley.Eras
+import Ouroboros.Consensus.Shelley.Ledger.Query.Types
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
   ( ProtoCrypto
   , ProtocolHeaderSupportsEnvelope (pHeaderPrevHash)
@@ -128,6 +129,9 @@ class
     HasPartialConsensusConfig proto
   , DecCBOR (SL.PState era)
   , Crypto (ProtoCrypto proto)
+  , -- Backwards compatibility
+    Plain.FromCBOR (LegacyPParams era)
+  , Plain.ToCBOR (LegacyPParams era)
   ) =>
   ShelleyCompatible proto era
 
