@@ -50,11 +50,8 @@ fixupBlockCDDL spec =
   withTempFile "." "block-temp.cddl" $ \fp h -> do
     hClose h
     BS.writeFile fp . cddlSpec $ spec
-    -- This is wrong, both the metadata_hash of a pool and a transaction body
-    -- point to this type, but only the latter must be 32B.
-    sed fp ["-i", "s/\\(metadata_hash = \\)/\\1 bytes ;/g"]
     -- For plutus, the type is actually `bytes`, but the distinct construct is
-    -- for forcing generation of different values.
+    -- for forcing generation of different values. See cardano-ledger#5054
     sed fp ["-i", "s/\\(conway\\.distinct_VBytes = \\)/\\1 bytes ;\\//g"]
     -- These 3 below are hardcoded for generation. See cardano-ledger#5054
     sed fp ["-i", "s/\\([yaoye]\\.address = \\)/\\1 bytes ;/g"]
@@ -69,13 +66,6 @@ fixupBlockCDDL spec =
 
 setupCDDLCEnv :: IO ()
 setupCDDLCEnv = do
-  -- This is not how it should be because we can't update the Ledger
-  -- to a newer one. On `master` there is a function
-  -- `Byron.readByronCddlFileNames` which we would want to use.
-  --
-  -- Note also that cabal run will run in the root of the project and
-  -- cabal test will run in `ouroboros-consensus-cardano`. This path
-  -- is for the latter.
   byron <- map takePath <$> Byron.readByronCddlFileNames
   shelley <- map takePath <$> Shelley.readShelleyCddlFileNames
   allegra <- map takePath <$> Allegra.readAllegraCddlFileNames
@@ -103,7 +93,6 @@ setupCDDLCEnv = do
             map (mconcat . L.intersperse ":") [byron, shelley, allegra, mary, alonzo, babbage, conway]
               <> local_paths
 
-  writeFile "env" ("CDDL_INCLUDE_PATH=" <> include_path <> ":")
   E.setEnv "CDDL_INCLUDE_PATH" (include_path <> ":")
 
 sed :: FilePath -> [String] -> IO ()
