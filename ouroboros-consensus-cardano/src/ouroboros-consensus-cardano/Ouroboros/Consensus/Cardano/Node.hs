@@ -356,7 +356,7 @@ pattern CardanoNodeToClientVersion16 =
       )
 
 -- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo and Babbage
--- and Conway eras enabled, using 'ShelleyNodeToClientVersion12' for the
+-- and Conway eras enabled, using 'ShelleyNodeToClientVersion13' for the
 -- Shelley-based eras.
 pattern CardanoNodeToClientVersion17 :: BlockNodeToClientVersion (CardanoBlock c)
 pattern CardanoNodeToClientVersion17 =
@@ -388,7 +388,7 @@ instance
       , (NodeToClientV_18, CardanoNodeToClientVersion14)
       , (NodeToClientV_19, CardanoNodeToClientVersion15)
       , (NodeToClientV_20, CardanoNodeToClientVersion16)
-      , (NodeToClientV_20, CardanoNodeToClientVersion17)
+      , (NodeToClientV_21, CardanoNodeToClientVersion17)
       ]
 
   latestReleasedNodeVersion _prx = (Just NodeToNodeV_14, Just NodeToClientV_20)
