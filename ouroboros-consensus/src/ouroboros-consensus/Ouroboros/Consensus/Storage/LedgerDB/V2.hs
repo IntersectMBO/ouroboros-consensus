@@ -231,6 +231,10 @@ mkInternals bss h =
         let LDBHandle tvar = h
          in atomically (writeTVar tvar LedgerDBClosed)
     , truncateSnapshots = getEnv h $ implIntTruncateSnapshots . ldbHasFS
+    , getNumLedgerTablesHandles = getEnv h $ \env -> do
+        l <- readTVarIO (ldbSeq env)
+        -- We always have a state at the anchor.
+        pure $ 1 + maxRollback l
     }
  where
   takeSnapshot ::
