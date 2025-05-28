@@ -83,6 +83,7 @@ import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import Ouroboros.Consensus.Protocol.Ledger.Util
 import Ouroboros.Consensus.Protocol.Praos.Common
 import Ouroboros.Consensus.Ticked
+import Ouroboros.Consensus.Util.CBOR
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.Versioned
 
@@ -283,7 +284,7 @@ instance Serialise TPraosState where
     encodeVersion serialisationFormatVersion1 $
       mconcat
         [ CBOR.encodeListLen 2
-        , toCBOR slot
+        , encodeWithOrigin toCBOR slot
         , toCBOR chainDepState
         ]
 
@@ -293,7 +294,7 @@ instance Serialise TPraosState where
    where
     decodeTPraosState1 = do
       enforceSize "TPraosState" 2
-      TPraosState <$> fromCBOR <*> fromCBOR
+      TPraosState <$> decodeWithOrigin fromCBOR <*> fromCBOR
 
 data instance Ticked TPraosState = TickedChainDepState
   { tickedTPraosStateChainDepState :: SL.ChainDepState
