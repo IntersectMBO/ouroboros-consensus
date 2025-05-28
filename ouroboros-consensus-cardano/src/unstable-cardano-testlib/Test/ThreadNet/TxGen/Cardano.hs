@@ -22,6 +22,7 @@ import Cardano.Ledger.Keys (DSIGN)
 import qualified Cardano.Ledger.Keys.Bootstrap as SL (makeBootstrapWitness)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as SL
+import qualified Cardano.Ledger.Shelley.Tx as SL
 import Cardano.Ledger.Val ((<->))
 import Cardano.Protocol.Crypto (VRF)
 import Control.Exception (assert)
@@ -219,14 +220,9 @@ migrateUTxO migrationInfo curSlot lcfg lst
             then Nothing
             else
               (Just . GenTxShelley . mkShelleyTx) $
-                SL.ShelleyTx
-                  { SL.body = body
-                  , SL.auxiliaryData = SL.SNothing
-                  , SL.wits =
-                      SL.mkBasicTxWits
-                        & SL.addrTxWitsL .~ Set.fromList [delegWit, poolWit]
-                        & SL.bootAddrTxWitsL .~ Set.singleton byronWit
-                  }
+                SL.mkBasicTx body
+                  & SL.witsShelleyTxL . SL.addrTxWitsL .~ Set.fromList [delegWit, poolWit]
+                  & SL.witsShelleyTxL . SL.bootAddrTxWitsL .~ Set.singleton byronWit
   | otherwise = Nothing
  where
   mbUTxO :: Maybe (SL.UTxO ShelleyEra)
