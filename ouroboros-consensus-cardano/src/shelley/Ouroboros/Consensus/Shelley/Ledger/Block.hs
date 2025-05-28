@@ -102,6 +102,9 @@ import Ouroboros.Consensus.Util.Condense
 {-------------------------------------------------------------------------------
   ShelleyCompatible
 -------------------------------------------------------------------------------}
+
+type instance BlockProtocol (ShelleyBlock proto era) = proto
+
 class
   ( ShelleyBasedEra era
   , ShelleyProtocol proto
