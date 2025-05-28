@@ -104,6 +104,8 @@ import Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
   ( ShelleyNodeToClientVersion (..)
   )
 import Ouroboros.Consensus.Shelley.Ledger.PeerSelection ()
+import Ouroboros.Consensus.Shelley.Ledger.Query.LegacyPParams
+import Ouroboros.Consensus.Shelley.Ledger.Query.LegacyShelleyGenesis
 import Ouroboros.Consensus.Shelley.Ledger.Query.Types
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.Storage.LedgerDB
