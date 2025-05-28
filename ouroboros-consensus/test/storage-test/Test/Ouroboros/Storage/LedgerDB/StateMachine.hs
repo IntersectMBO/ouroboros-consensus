@@ -132,7 +132,7 @@ initialEnvironment fsOps getLmdbDir mkTestArguments cdb = do
   pure $
     Environment
       undefined
-      (TestInternals undefined undefined undefined undefined undefined (pure ()))
+      (TestInternals undefined undefined undefined undefined undefined (pure ()) (pure 0))
       cdb
       (flip mkTestArguments lmdbDir)
       sfs
