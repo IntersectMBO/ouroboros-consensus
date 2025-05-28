@@ -14,9 +14,9 @@ import qualified System.Directory as D
 import qualified System.Environment as E
 import System.Exit
 import qualified System.FilePath as F
-import qualified System.Process.ByteString.Lazy as P
 import System.IO
 import System.IO.Temp
+import qualified System.Process.ByteString.Lazy as P
 import qualified Test.Cardano.Chain.Binary.Cddl as Byron
 import qualified Test.Cardano.Ledger.Allegra.Binary.Cddl as Allegra
 import qualified Test.Cardano.Ledger.Alonzo.Binary.Cddl as Alonzo
@@ -28,16 +28,23 @@ import Test.Tasty
 
 newtype CDDLSpec = CDDLSpec {cddlSpec :: BS.ByteString} deriving Show
 
+-- | This function will run the provided test-tree after generating the node to
+-- node cddls for Blocks and Headers. As more CDDLs are stabilized they will
+-- have to be added here. Eventually we can have a datatype with one field for
+-- each CDDL so that we know always what is available.
 withCDDLs :: TestTree -> TestTree
 withCDDLs f =
   withResource
     ( do
         probeTools
         setupCDDLCEnv
-        BS.writeFile "ntnblock.cddl" . cddlSpec
-          =<< (cddlc "cddl/node-to-node/blockfetch/block.cddl" >>= fixupBlockCDDL)
-        BS.writeFile "ntnheader.cddl" . cddlSpec
-          =<< cddlc "cddl/node-to-node/chainsync/header.cddl"
+
+        ntnBlock <- cddlc "cddl/node-to-node/blockfetch/block.cddl"
+        ntnBlock' <- fixupBlockCDDL ntnBlock
+        BS.writeFile "ntnblock.cddl" . cddlSpec $ ntnBlock'
+
+        ntnHeader <- cddlc "cddl/node-to-node/chainsync/header.cddl"
+        BS.writeFile "ntnheader.cddl" . cddlSpec $ ntnHeader
     )
     ( \() -> do
         D.removeFile "ntnblock.cddl"
@@ -45,6 +52,8 @@ withCDDLs f =
     )
     (\_ -> f)
 
+-- | The Ledger CDDL specs are not _exactly_ correct. Here we do some dirty
+-- sed-replace to make them able to validate blocks. See cardano-ledger#5054.
 fixupBlockCDDL :: CDDLSpec -> IO CDDLSpec
 fixupBlockCDDL spec =
   withTempFile "." "block-temp.cddl" $ \fp h -> do
@@ -64,6 +73,7 @@ fixupBlockCDDL spec =
       ]
     CDDLSpec <$> BS.readFile fp
 
+-- | This sets the environment variables needed for `cddlc` to run properly.
 setupCDDLCEnv :: IO ()
 setupCDDLCEnv = do
   byron <- map takePath <$> Byron.readByronCddlFileNames
@@ -95,6 +105,7 @@ setupCDDLCEnv = do
 
   E.setEnv "CDDL_INCLUDE_PATH" (include_path <> ":")
 
+-- | Call @sed@ on the given file with the given args
 sed :: FilePath -> [String] -> IO ()
 sed fp args =
   Monad.void $ P.readProcessWithExitCode "sed" (args ++ [fp]) mempty
