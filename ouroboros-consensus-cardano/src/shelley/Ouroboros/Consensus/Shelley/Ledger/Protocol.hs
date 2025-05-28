@@ -27,8 +27,6 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   Support for Transitional Praos consensus algorithm
 -------------------------------------------------------------------------------}
 
-type instance BlockProtocol (ShelleyBlock proto era) = proto
-
 instance ShelleyCompatible proto era => BlockSupportsProtocol (ShelleyBlock proto era) where
   validateView _cfg = protocolHeaderView @proto . shelleyHeaderRaw
 

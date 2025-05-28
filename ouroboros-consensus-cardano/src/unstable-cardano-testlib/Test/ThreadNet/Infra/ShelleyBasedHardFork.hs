@@ -69,7 +69,6 @@ import qualified Data.SOP.Telescope as Telescope
 import Data.Void (Void)
 import Lens.Micro ((^.))
 import NoThunks.Class (NoThunks)
-import Ouroboros.Consensus.Block.Abstract (BlockProtocol)
 import Ouroboros.Consensus.Block.Forging (BlockForging)
 import Ouroboros.Consensus.Cardano.CanHardFork
   ( crossEraForecastAcrossShelley
@@ -184,8 +183,6 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
   , LedgerSupportsProtocol (ShelleyBlock proto2 era2)
   , TxLimits (ShelleyBlock proto1 era1)
   , TxLimits (ShelleyBlock proto2 era2)
-  , BlockProtocol (ShelleyBlock proto1 era1) ~ proto1
-  , BlockProtocol (ShelleyBlock proto2 era2) ~ proto2
   , TranslateTxMeasure (TxMeasure (ShelleyBlock proto1 era1)) (TxMeasure (ShelleyBlock proto2 era2))
   , SL.PreviousEra era2 ~ era1
   , SL.TranslateEra era2 SL.NewEpochState
