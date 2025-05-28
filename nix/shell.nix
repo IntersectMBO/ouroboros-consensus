@@ -18,7 +18,10 @@ hsPkgs.shellFor {
     pkgs.fourmolu
 
     # release management
-    pkgs.scriv
+    (pkgs.scriv.overridePythonAttrs (_oldAttrs: {
+      # Already fixed upstream: https://github.com/NixOS/nixpkgs/pull/407167
+      doCheck = false;
+    }))
     (pkgs.python3.withPackages (p: [ p.beautifulsoup4 p.html5lib p.matplotlib p.pandas ]))
   ];
 
@@ -26,8 +29,11 @@ hsPkgs.shellFor {
   # version as used in hsPkgs.
   tools = {
     haskell-language-server = {
-      src = inputs.haskellNix.inputs."hls-2.9";
+      src = inputs.hls;
       configureArgs = "--disable-benchmarks --disable-tests";
+      cabalProjectLocal = ''
+        allow-newer: haddock-library:base
+      '';
     };
   };
 

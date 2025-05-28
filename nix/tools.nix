@@ -2,9 +2,9 @@ inputs: final: prev:
 
 let
   inherit (final) lib;
-  tool-index-state = "2025-03-18T17:41:11Z";
+  tool-index-state = "2025-05-25T20:50:09Z";
   tool = name: version: other:
-    final.haskell-nix.tool final.hsPkgs.args.compiler-nix-name name ({
+    final.haskell-nix.tool "ghc98" name ({
       version = version;
       index-state = tool-index-state;
     } // other);
@@ -12,10 +12,9 @@ in
 {
   inherit tool-index-state;
 
-  cabal = tool "cabal" "3.12.1.0" { };
+  cabal = tool "cabal" "3.14.2.0" { };
 
   cabal-docspec = tool "cabal-docspec" "git" {
-    compiler-nix-name = "ghc98";
     src = inputs.cabal-extras;
     cabalProject = ''
       packages: peura cabal-docspec ${inputs.gentle-introduction} paths-0.2.0.0
@@ -31,15 +30,13 @@ in
     };
   };
 
-  cabal-gild = tool "cabal-gild" "1.5.0.1" { };
+  cabal-gild = tool "cabal-gild" "1.6.0.2" { };
 
-  hlint = tool "hlint" "3.8" { };
+  hlint = tool "hlint" "3.10" { };
 
-  xrefcheck = tool "xrefcheck" "0.3.1" { };
+  xrefcheck = tool "xrefcheck" "0.3.1" { compiler-nix-name = "ghc96"; };
 
-  fourmolu = tool "fourmolu" "0.18.0.0" {
-    compiler-nix-name = "ghc98";
-  };
+  fourmolu = tool "fourmolu" "0.18.0.0" { };
 
   haskellBuildUtils = prev.haskellBuildUtils.override {
     inherit (final.hsPkgs.args) compiler-nix-name;
