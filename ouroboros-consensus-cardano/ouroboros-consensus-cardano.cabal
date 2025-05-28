@@ -112,6 +112,8 @@ library
     Ouroboros.Consensus.Shelley.Ledger.PeerSelection
     Ouroboros.Consensus.Shelley.Ledger.Protocol
     Ouroboros.Consensus.Shelley.Ledger.Query
+    Ouroboros.Consensus.Shelley.Ledger.Query.LegacyPParams
+    Ouroboros.Consensus.Shelley.Ledger.Query.LegacyShelleyGenesis
     Ouroboros.Consensus.Shelley.Ledger.Query.Types
     Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol
     Ouroboros.Consensus.Shelley.Node
