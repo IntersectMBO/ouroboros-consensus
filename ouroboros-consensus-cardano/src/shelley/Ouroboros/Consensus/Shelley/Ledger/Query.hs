@@ -139,6 +139,14 @@ type Delegations = Map (SL.Credential 'SL.Staking) (SL.KeyHash 'SL.StakePool)
 type VoteDelegatees = Map (SL.Credential 'SL.Staking) SL.DRep
 
 {-# DEPRECATED GetProposedPParamsUpdates "Deprecated in ShelleyNodeToClientVersion12" #-}
+{-# DEPRECATED
+  GetPoolDistr
+  "Deprecated in ShelleyNodeToClientVersion13. Implement the new alterative GetPoolDistr2"
+  #-}
+{-# DEPRECATED
+  GetStakeDistribution
+  "Deprecated in ShelleyNodeToClientVersion13. Implement the new alterative GetStakeDistribution2"
+  #-}
 
 data instance BlockQuery (ShelleyBlock proto era) fp result where
   GetLedgerTip :: BlockQuery (ShelleyBlock proto era) QFNoTables (Point (ShelleyBlock proto era))
@@ -338,6 +346,20 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
     CG.ConwayEraGov era =>
     KeyHash 'StakePool ->
     BlockQuery (ShelleyBlock proto era) QFNoTables CG.DefaultVote
+  GetPoolDistr2 ::
+    Maybe (Set (SL.KeyHash 'SL.StakePool)) ->
+    BlockQuery
+      (ShelleyBlock proto era)
+      QFNoTables
+      SL.PoolDistr
+  -- | This gets the stake distribution, but not in terms of _active_ stake
+  -- (which we need for the leader schedule), but rather in terms of _total_
+  -- stake, which is relevant for rewards. It is used by the wallet to show
+  -- saturation levels to the end user. We should consider refactoring this, to
+  -- an endpoint that provides all the information that the wallet wants about
+  -- pools, in an extensible fashion.
+  GetStakeDistribution2 ::
+    BlockQuery (ShelleyBlock proto era) QFNoTables SL.PoolDistr
 
 -- WARNING: please add new queries to the end of the list and stick to this
 -- order in all other pattern matches on queries. This helps in particular
@@ -379,7 +401,7 @@ instance
       GetProposedPParamsUpdates ->
         SL.ProposedPPUpdates Map.empty
       GetStakeDistribution ->
-        fromLedgerPoolDistr $ SL.poolsByTotalStakeFraction globals st
+        fromLedgerPoolDistr $ answerPureBlockQuery cfg GetStakeDistribution2 ext
       DebugEpochState ->
         getEpochState st
       GetCBOR query' ->
@@ -469,9 +491,7 @@ instance
                   , ssGoTotal = getAllStake ssStakeGo
                   }
       GetPoolDistr mPoolIds ->
-        let stakeSet = SL.ssStakeSet . SL.esSnapshots $ getEpochState st
-         in fromLedgerPoolDistr $
-              SL.calculatePoolDistr' (maybe (const True) (flip Set.member) mPoolIds) stakeSet
+        fromLedgerPoolDistr $ answerPureBlockQuery cfg (GetPoolDistr2 mPoolIds) ext
       GetStakeDelegDeposits stakeCreds ->
         let lookupDeposit =
               SL.lookupDepositDState (view SL.certDStateL $ SL.lsCertState $ SL.esLState $ SL.nesEs st)
@@ -509,6 +529,11 @@ instance
          in LedgerPeerSnapshot (slot, bigLedgerPeers)
       QueryStakePoolDefaultVote stakePool ->
         SL.queryStakePoolDefaultVote st stakePool
+      GetPoolDistr2 mPoolIds ->
+        let stakeSet = SL.ssStakeSet . SL.esSnapshots $ getEpochState st
+         in SL.calculatePoolDistr' (maybe (const True) (flip Set.member) mPoolIds) stakeSet
+      GetStakeDistribution2 ->
+        SL.poolsByTotalStakeFraction globals st
    where
     lcfg = configLedger $ getExtLedgerCfg cfg
     globals = shelleyLedgerGlobals lcfg
@@ -534,7 +559,7 @@ instance
     GetNonMyopicMemberRewards{} -> const True
     GetCurrentPParams -> const True
     GetProposedPParamsUpdates -> (< v12)
-    GetStakeDistribution -> const True
+    GetStakeDistribution -> (< v13)
     GetUTxOByAddress{} -> const True
     GetUTxOWhole -> const True
     DebugEpochState -> const True
@@ -550,7 +575,7 @@ instance
     GetRewardInfoPools -> const True
     GetPoolState{} -> const True
     GetStakeSnapshots{} -> const True
-    GetPoolDistr{} -> const True
+    GetPoolDistr{} -> (< v13)
     GetStakeDelegDeposits{} -> const True
     GetConstitution -> (>= v8)
     GetGovState -> (>= v8)
@@ -565,6 +590,8 @@ instance
     GetFuturePParams{} -> (>= v10)
     GetBigLedgerPeerSnapshot -> (>= v11)
     QueryStakePoolDefaultVote{} -> (>= v12)
+    GetPoolDistr2{} -> (>= v13)
+    GetStakeDistribution2{} -> (>= v13)
    where
     -- WARNING: when adding a new query, a new @ShelleyNodeToClientVersionX@
     -- must be added. See #2830 for a template on how to do this.
@@ -574,6 +601,7 @@ instance
     v10 = ShelleyNodeToClientVersion10
     v11 = ShelleyNodeToClientVersion11
     v12 = ShelleyNodeToClientVersion12
+    v13 = ShelleyNodeToClientVersion13
 
 instance SameDepIndex2 (BlockQuery (ShelleyBlock proto era)) where
   sameDepIndex2 GetLedgerTip GetLedgerTip =
@@ -727,6 +755,10 @@ instance SameDepIndex2 (BlockQuery (ShelleyBlock proto era)) where
   sameDepIndex2 GetBigLedgerPeerSnapshot _ = Nothing
   sameDepIndex2 QueryStakePoolDefaultVote{} QueryStakePoolDefaultVote{} = Just Refl
   sameDepIndex2 QueryStakePoolDefaultVote{} _ = Nothing
+  sameDepIndex2 GetPoolDistr2{} GetPoolDistr2{} = Just Refl
+  sameDepIndex2 GetPoolDistr2{} _ = Nothing
+  sameDepIndex2 GetStakeDistribution2{} GetStakeDistribution2{} = Just Refl
+  sameDepIndex2 GetStakeDistribution2{} _ = Nothing
 
 deriving instance Eq (BlockQuery (ShelleyBlock proto era) fp result)
 deriving instance Show (BlockQuery (ShelleyBlock proto era) fp result)
@@ -769,6 +801,8 @@ instance ShelleyCompatible proto era => ShowQuery (BlockQuery (ShelleyBlock prot
     GetFuturePParams{} -> show
     GetBigLedgerPeerSnapshot -> show
     QueryStakePoolDefaultVote{} -> show
+    GetPoolDistr2{} -> show
+    GetStakeDistribution2{} -> show
 
 {-------------------------------------------------------------------------------
   Auxiliary
@@ -891,6 +925,10 @@ encodeShelleyQuery query = case query of
     CBOR.encodeListLen 1 <> CBOR.encodeWord8 34
   QueryStakePoolDefaultVote stakePoolKey ->
     CBOR.encodeListLen 2 <> CBOR.encodeWord8 35 <> LC.toEraCBOR @era stakePoolKey
+  GetPoolDistr2 poolids ->
+    CBOR.encodeListLen 2 <> CBOR.encodeWord8 36 <> toCBOR poolids
+  GetStakeDistribution2 ->
+    CBOR.encodeListLen 1 <> CBOR.encodeWord8 37
 
 decodeShelleyQuery ::
   forall era proto.
@@ -962,6 +1000,8 @@ decodeShelleyQuery = do
     (1, 33) -> requireCG $ return $ SomeBlockQuery GetFuturePParams
     (1, 34) -> return $ SomeBlockQuery GetBigLedgerPeerSnapshot
     (2, 35) -> requireCG $ SomeBlockQuery . QueryStakePoolDefaultVote <$> LC.fromEraCBOR @era
+    (2, 36) -> SomeBlockQuery . GetPoolDistr2 <$> fromCBOR
+    (1, 37) -> return $ SomeBlockQuery GetStakeDistribution2
     _ -> failmsg "invalid"
 
 encodeShelleyResult ::
@@ -975,8 +1015,8 @@ encodeShelleyResult v query = case query of
   GetLedgerTip -> encodePoint encode
   GetEpochNo -> toCBOR
   GetNonMyopicMemberRewards{} -> toCBOR
-  GetProposedPParamsUpdates -> toCBOR
   GetCurrentPParams -> fst $ currentPParamsEnDecoding v
+  GetProposedPParamsUpdates -> toCBOR
   GetStakeDistribution -> LC.toEraCBOR @era
   GetUTxOByAddress{} -> toCBOR
   GetUTxOWhole -> toCBOR
@@ -1008,6 +1048,8 @@ encodeShelleyResult v query = case query of
   GetFuturePParams{} -> LC.toEraCBOR @era
   GetBigLedgerPeerSnapshot -> toCBOR
   QueryStakePoolDefaultVote{} -> toCBOR
+  GetPoolDistr2{} -> LC.toEraCBOR @era
+  GetStakeDistribution2{} -> LC.toEraCBOR @era
 
 decodeShelleyResult ::
   forall proto era fp result.
@@ -1020,8 +1062,8 @@ decodeShelleyResult v query = case query of
   GetLedgerTip -> decodePoint decode
   GetEpochNo -> fromCBOR
   GetNonMyopicMemberRewards{} -> fromCBOR
-  GetProposedPParamsUpdates -> fromCBOR
   GetCurrentPParams -> snd $ currentPParamsEnDecoding v
+  GetProposedPParamsUpdates -> fromCBOR
   GetStakeDistribution -> LC.fromEraCBOR @era
   GetUTxOByAddress{} -> fromCBOR
   GetUTxOWhole -> fromCBOR
@@ -1053,6 +1095,8 @@ decodeShelleyResult v query = case query of
   GetFuturePParams{} -> LC.fromEraCBOR @era
   GetBigLedgerPeerSnapshot -> fromCBOR
   QueryStakePoolDefaultVote{} -> fromCBOR
+  GetPoolDistr2{} -> LC.fromEraCBOR @era
+  GetStakeDistribution2 -> LC.fromEraCBOR @era
 
 currentPParamsEnDecoding ::
   forall era s.
