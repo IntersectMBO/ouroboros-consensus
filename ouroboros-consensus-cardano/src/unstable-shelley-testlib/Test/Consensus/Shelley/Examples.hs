@@ -5,6 +5,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# OPTIONS_GHC -Wno-deprecations #-}
 
 module Test.Consensus.Shelley.Examples
   ( -- * Setup
@@ -169,6 +170,7 @@ fromShelleyLedgerExamples
         , ("GetNonMyopicMemberRewards", SomeBlockQuery $ GetNonMyopicMemberRewards sleRewardsCredentials)
         , ("GetGenesisConfig", SomeBlockQuery GetGenesisConfig)
         , ("GetBigLedgerPeerSnapshot", SomeBlockQuery GetBigLedgerPeerSnapshot)
+        , ("GetStakeDistribution2", SomeBlockQuery GetStakeDistribution2)
         ]
     results =
       labelled
@@ -201,6 +203,7 @@ fromShelleyLedgerExamples
                   )
               )
           )
+        , ("StakeDistribution2", SomeResult GetStakeDistribution2 srePoolDistr)
         ]
     annTip =
       AnnTip
