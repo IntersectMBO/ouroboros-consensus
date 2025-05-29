@@ -52,7 +52,10 @@ import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block (CodecConfig)
 import Ouroboros.Consensus.Ledger.Extended (encodeDiskExtLedgerState)
 import Ouroboros.Consensus.Ledger.Query
-  ( QueryVersion
+  ( BlockSupportsLedgerQuery
+  , QueryVersion
+  , SomeBlockQuery (..)
+  , blockQueryIsSupportedOnVersion
   , nodeToClientVersionToQueryVersion
   )
 import Ouroboros.Consensus.Ledger.Tables (valuesMKEncoder)
@@ -264,6 +267,7 @@ goldenTest_all ::
   , SerialiseNodeToNodeConstraints blk
   , SerialiseNodeToClientConstraints blk
   , SupportedNetworkProtocolVersion blk
+  , BlockSupportsLedgerQuery blk
   , ToGoldenDirectory (BlockNodeToNodeVersion blk)
   , ToGoldenDirectory (QueryVersion, BlockNodeToClientVersion blk)
   , HasCallStack
@@ -372,6 +376,7 @@ goldenTest_SerialiseNodeToClient ::
   forall blk.
   ( SerialiseNodeToClientConstraints blk
   , SupportedNetworkProtocolVersion blk
+  , BlockSupportsLedgerQuery blk
   , ToGoldenDirectory (QueryVersion, BlockNodeToClientVersion blk)
   , HasCallStack
   ) =>
@@ -397,10 +402,10 @@ goldenTest_SerialiseNodeToClient codecConfig goldenDir Examples{..} =
       , test "GenTx" exampleGenTx enc'
       , test "GenTxId" exampleGenTxId enc'
       , test "ApplyTxErr" exampleApplyTxErr enc'
-      , test "Query" exampleQuery enc'
       , test "SlotNo" exampleSlotNo enc'
       , test "LedgerConfig" exampleLedgerConfig enc'
-      , test "Result" exampleResult encRes
+      , testQuery "Query" exampleQuery enc'
+      , testResult "Result" exampleResult encRes
       ]
    where
     enc' :: SerialiseNodeToClient blk a => a -> Encoding
@@ -416,6 +421,12 @@ goldenTest_SerialiseNodeToClient codecConfig goldenDir Examples{..} =
         exampleValues
         enc
         (goldenDir </> toGoldenDirectory versions)
+
+    testQuery name values =
+      test name (filter (\(_, SomeBlockQuery q) -> blockQueryIsSupportedOnVersion q blockVersion) values)
+
+    testResult name values =
+      test name (filter (\(_, SomeResult q _) -> blockQueryIsSupportedOnVersion q blockVersion) values)
 
 {-------------------------------------------------------------------------------
   FlatTerm
