@@ -36,7 +36,6 @@ import: ./asserts.cabal
 
 allow-newer:
     serdoc-core:tasty-quickcheck
-  , kes-agent:base
 
 package ouroboros-network
   -- Certain ThreadNet tests rely on transactions to be submitted promptly after
@@ -81,7 +80,7 @@ if impl (ghc >= 9.12)
 source-repository-package
   type: git
   location: https://github.com/input-output-hk/kes-agent
-  tag: a212f98b9bc567ebf3c8472e62f28450990f7821
-  --sha256: sha256-b/6L3WqQ+fY1K6uBJVeoOTE4RAc3SUc72qZtXO0DAfE=
+  tag: 07437ed49022b13759c87c4e314f08fcff64b81a
+  --sha256: sha256-oTsxaFAs1c/H0oYLhiivO5mr48oHNsPi5k2XyXxwCJg=
   subdir:
       kes-agent

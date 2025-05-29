@@ -162,7 +162,6 @@ library
     ouroboros-consensus ^>=0.27,
     ouroboros-consensus-protocol ^>=0.12,
     ouroboros-network-api ^>=0.14,
-    serdoc-core,
     serialise ^>=0.2,
     singletons ^>=3.0,
     small-steps,

@@ -41,7 +41,6 @@ import           Control.Monad.IOSim
 import           Control.Tracer
 import           Data.Coerce (coerce)
 import           Data.Kind
-import           Data.SerDoc.Class as SerDoc
 import           Data.Typeable
 import           Network.Socket
 import           Ouroboros.Consensus.Util.IOLike
@@ -54,8 +53,6 @@ import           Test.Ouroboros.Network.Data.AbsBearerInfo as ABI
 type KESAgentContext c m =
       ( AgentCrypto c
       , MonadKESAgent m
-      , SerDoc.HasInfo (Agent.DirectCodec m) (VerKeyKES (KES c))
-      , SerDoc.HasInfo (Agent.DirectCodec m) (SignKeyKES (KES c))
       , IOLike m
       )
 

@@ -86,7 +86,6 @@ library
     ouroboros-consensus >=0.23 && <0.28,
     ouroboros-network-framework ^>=0.18,
     ouroboros-network-testing ^>=0.8,
-    serdoc-core,
     serialise,
     text,
 
