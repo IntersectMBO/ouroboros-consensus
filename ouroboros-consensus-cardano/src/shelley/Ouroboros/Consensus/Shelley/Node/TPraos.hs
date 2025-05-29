@@ -49,7 +49,6 @@ import           Cardano.Slotting.Time (mkSlotLength)
 import           Control.Monad.Except (Except)
 import qualified Control.Tracer as Tracer
 import           Data.Bifunctor (first)
-import qualified Data.SerDoc.Class as SerDoc
 import qualified Data.Text as T
 import qualified Data.Text as Text
 import           Lens.Micro ((^.))
@@ -173,8 +172,6 @@ protocolInfoShelley ::
       , ShelleyCompatible (TPraos c) ShelleyEra
       , TxLimits (ShelleyBlock (TPraos c) ShelleyEra)
       , MonadKESAgent m
-      , SerDoc.HasInfo (Agent.DirectCodec m) (KES.VerKeyKES (KES c))
-      , SerDoc.HasInfo (Agent.DirectCodec m) (KES.SignKeyKES (KES c))
       )
   => SL.ShelleyGenesis
   -> ProtocolParamsShelleyBased c
