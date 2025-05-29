@@ -33,7 +33,6 @@ import qualified Ouroboros.Consensus.Protocol.Praos.Header as Praos
 import Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosState (..))
 import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger
-import Ouroboros.Consensus.Shelley.Ledger.Query.Types
 import Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import Ouroboros.Network.Block (mkSerialised)
@@ -172,12 +171,12 @@ instance CanMock proto era => Arbitrary (SomeBlockQuery (BlockQuery (ShelleyBloc
       , pure $ SomeBlockQuery GetEpochNo
       , SomeBlockQuery . GetNonMyopicMemberRewards <$> arbitrary
       , pure $ SomeBlockQuery GetCurrentPParams
-      , pure $ SomeBlockQuery GetStakeDistribution
       , pure $ SomeBlockQuery DebugEpochState
       , (\(SomeBlockQuery q) -> SomeBlockQuery (GetCBOR q)) <$> arbitrary
       , SomeBlockQuery . GetFilteredDelegationsAndRewardAccounts <$> arbitrary
       , pure $ SomeBlockQuery GetGenesisConfig
       , pure $ SomeBlockQuery DebugNewEpochState
+      , pure $ SomeBlockQuery GetStakeDistribution2
       ]
 
 instance (Arbitrary (InstantStake era), CanMock proto era) => Arbitrary (SomeResult (ShelleyBlock proto era)) where
@@ -187,7 +186,6 @@ instance (Arbitrary (InstantStake era), CanMock proto era) => Arbitrary (SomeRes
       , SomeResult GetEpochNo <$> arbitrary
       , SomeResult <$> (GetNonMyopicMemberRewards <$> arbitrary) <*> arbitrary
       , SomeResult GetCurrentPParams <$> arbitrary
-      , SomeResult GetStakeDistribution . fromLedgerPoolDistr <$> arbitrary
       , SomeResult DebugEpochState <$> arbitrary
       , ( \(SomeResult q r) ->
             SomeResult (GetCBOR q) (mkSerialised (encodeShelleyResult maxBound q) r)
@@ -196,6 +194,7 @@ instance (Arbitrary (InstantStake era), CanMock proto era) => Arbitrary (SomeRes
       , SomeResult <$> (GetFilteredDelegationsAndRewardAccounts <$> arbitrary) <*> arbitrary
       , SomeResult GetGenesisConfig . compactGenesis <$> arbitrary
       , SomeResult DebugNewEpochState <$> arbitrary
+      , SomeResult GetStakeDistribution2 <$> arbitrary
       ]
 
 instance Arbitrary NonMyopicMemberRewards where
