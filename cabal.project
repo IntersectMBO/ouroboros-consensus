@@ -11,27 +11,18 @@ repository cardano-haskell-packages
     d4a35cd3121aa00d18544bb0ac01c3e1691d618f462c46129271bccf39f7e8ee
 
 source-repository-package
-  type: git
-  location: https://github.com/IntersectMBO/ouroboros-network
-  tag: 09d6aee2311de07184d9ad3ab2e999d47a1a9bd8
-  --sha256: sha256-wvnIJq/ZXDtU+j4r9JWj266ivJHTSLZDVK5ecu7Xnao=
-  subdir:
-    cardano-ping
-    monoidal-synchronisation
-    network-mux
-    ouroboros-network
-    ouroboros-network-api
-    ouroboros-network-framework
-    ouroboros-network-mock
-    ouroboros-network-protocols
-    ouroboros-network-testing
-    quickcheck-monoids
+   type: git
+   location: https://github.com/IntersectMBO/ouroboros-network
+   tag: 3e8d3b4b8c87ead794876c62d7fe25f32efb5142
+   -- sha256: sha256-uKrxpHhcNGzKUSeA4zIdkslfDFIJjkCsHUg+FUef1yE=
+   subdir:
+     ouroboros-network-api
 
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/cardano-ledger
-  tag: 223fdd5864b40e21ff502299caa641c964254fc4
-  --sha256: sha256-ix4VNneNgEYYipzrAtrRIQUP+ofz4D+R4zFlBylEMLc= 
+  tag: 0208ba0767c5e0143a20aaa58e6bb4e6ec8f9207
+  --sha256: sha256-453fLUKdzgK5lSPTAfmwIKBRV1GdDwKKaOTlD6Q2sQM=
   subdir:
     eras/allegra/impl
     eras/alonzo/impl
