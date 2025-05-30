@@ -12,8 +12,8 @@ const editUrl = 'https://github.com/IntersectMBO/ouroboros-consensus/tree/main/d
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: 'Ouroboros Consensus',
-  tagline: 'The family of protocols powering Cardano',
+  title: 'ouroboros-consensus documentation',
+  tagline: '',
   favicon: 'img/cardano_icon.ico',
 
   // Set the production url of your site here
@@ -95,14 +95,24 @@ const config = {
         // `docs` regardless of what `presets.docs.path` is set to.
         items: [
           {
-            to: '/docs/about-ouroboros/',
+            to: '/docs/explanation/',
             position: 'left',
-            label: 'About Ouroboros',
+            label: 'Explanation',
           },
           {
-            to: '/docs/for-developers',
+            to: '/docs/tutorials/',
             position: 'left',
-            label: 'For Developers',
+            label: 'Tutorials',
+          },
+          {
+            to: '/docs/howtos/',
+            position: 'left',
+            label: 'HOWTOs',
+          },
+          {
+            to: '/docs/reference',
+            position: 'left',
+            label: 'Reference',
           },
           {
             href: 'https://github.com/IntersectMBO/ouroboros-consensus',
@@ -118,12 +128,20 @@ const config = {
             title: 'Docs',
             items: [
               {
-                label: 'About Ouroboros',
-                to: '/docs/about-ouroboros/',
+                label: 'Explanation',
+                to: '/docs/explanation/',
               },
               {
-                label: 'For Developers',
-                to: '/docs/for-developers/',
+                label: 'Tutorials',
+                to: '/docs/tutorials/',
+              },
+	      {
+                label: 'HOWTOs',
+                to: '/docs/howtos/',
+	      },
+	      {
+                label: 'Reference',
+                to: '/docs/reference/',
               }
             ],
           },
