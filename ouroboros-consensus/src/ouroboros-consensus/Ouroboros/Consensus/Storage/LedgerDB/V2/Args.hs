@@ -26,6 +26,9 @@ data HandleArgs
   deriving (Generic, NoThunks)
 
 data FlavorImplSpecificTrace
-  = FlavorImplSpecificTraceInMemory
-  | FlavorImplSpecificTraceOnDisk
+  = -- | Created a new 'LedgerTablesHandle', potentially by duplicating an
+    -- existing one.
+    TraceLedgerTablesHandleCreate
+  | -- | Closed a 'LedgerTablesHandle'.
+    TraceLedgerTablesHandleClose
   deriving (Show, Eq)

@@ -85,12 +85,12 @@ mkInitDb args flavArgs getBlock =
     , closeDb = closeLedgerSeq
     , initReapplyBlock = \a b c -> do
         (x, y) <- reapplyThenPush lgrRegistry a b c
-        closeLedgerSeq x
+        x
         pure y
     , currentTip = ledgerState . current
     , pruneDb = \lseq -> do
-        let (LedgerSeq rel, dbPrunedToImmDBTip) = pruneToImmTipOnly lseq
-        mapM_ (close . tables) (AS.toOldestFirst rel)
+        let (rel, dbPrunedToImmDBTip) = pruneToImmTipOnly lseq
+        rel
         pure dbPrunedToImmDBTip
     , mkLedgerDb = \lseq -> do
         varDB <- newTVarIO lseq
@@ -128,12 +128,15 @@ mkInitDb args flavArgs getBlock =
 
   bss = case flavArgs of V2Args bss0 -> bss0
 
+  v2Tracer :: Tracer m V2.FlavorImplSpecificTrace
+  v2Tracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< lgrTracer
+
   emptyF ::
     ExtLedgerState blk ValuesMK ->
     m (LedgerSeq' m blk)
   emptyF st =
     empty' st $ case bss of
-      InMemoryHandleArgs -> InMemory.newInMemoryLedgerTablesHandle lgrHasFS
+      InMemoryHandleArgs -> InMemory.newInMemoryLedgerTablesHandle v2Tracer lgrHasFS
       LSMHandleArgs x -> absurd x
 
   loadSnapshot ::
@@ -142,7 +145,7 @@ mkInitDb args flavArgs getBlock =
     DiskSnapshot ->
     m (Either (SnapshotFailure blk) (LedgerSeq' m blk, RealPoint blk))
   loadSnapshot ccfg fs ds = case bss of
-    InMemoryHandleArgs -> runExceptT $ InMemory.loadSnapshot lgrRegistry ccfg fs ds
+    InMemoryHandleArgs -> runExceptT $ InMemory.loadSnapshot v2Tracer lgrRegistry ccfg fs ds
     LSMHandleArgs x -> absurd x
 
 implMkLedgerDb ::
@@ -228,6 +231,10 @@ mkInternals bss h =
         let LDBHandle tvar = h
          in atomically (writeTVar tvar LedgerDBClosed)
     , truncateSnapshots = getEnv h $ implIntTruncateSnapshots . ldbHasFS
+    , getNumLedgerTablesHandles = getEnv h $ \env -> do
+        l <- readTVarIO (ldbSeq env)
+        -- We always have a state at the anchor.
+        pure $ 1 + maxRollback l
     }
  where
   takeSnapshot ::

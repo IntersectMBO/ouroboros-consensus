@@ -353,6 +353,7 @@ mkInternals h =
     , wipeLedgerDB = getEnv h $ void . destroySnapshots . snapshotsFs . ldbHasFS
     , closeLedgerDB = getEnv h $ bsClose . ldbBackingStore
     , truncateSnapshots = getEnv h $ void . implIntTruncateSnapshots . ldbHasFS
+    , getNumLedgerTablesHandles = pure 0
     }
 
 -- | Testing only! Truncate all snapshots in the DB.

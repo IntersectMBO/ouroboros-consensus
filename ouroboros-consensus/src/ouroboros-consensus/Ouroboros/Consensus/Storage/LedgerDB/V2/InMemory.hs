@@ -51,6 +51,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.Util.CBOR (readIncremental)
 import Ouroboros.Consensus.Util.CRC
@@ -85,18 +86,21 @@ newInMemoryLedgerTablesHandle ::
   , CanUpgradeLedgerTables l
   , SerializeTablesWithHint l
   ) =>
+  Tracer m V2.FlavorImplSpecificTrace ->
   SomeHasFS m ->
   LedgerTables l ValuesMK ->
   m (LedgerTablesHandle m l)
-newInMemoryLedgerTablesHandle someFS@(SomeHasFS hasFS) l = do
+newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l = do
   !tv <- newTVarIO (LedgerTablesHandleOpen l)
+  traceWith tracer V2.TraceLedgerTablesHandleCreate
   pure
     LedgerTablesHandle
-      { close =
+      { close = do
           atomically $ writeTVar tv LedgerTablesHandleClosed
+          traceWith tracer V2.TraceLedgerTablesHandleClose
       , duplicate = do
           hs <- readTVarIO tv
-          !x <- guardClosed hs $ newInMemoryLedgerTablesHandle someFS
+          !x <- guardClosed hs $ newInMemoryLedgerTablesHandle tracer someFS
           pure x
       , read = \keys -> do
           hs <- readTVarIO tv
@@ -208,12 +212,13 @@ loadSnapshot ::
   , IOLike m
   , LedgerSupportsInMemoryLedgerDB blk
   ) =>
+  Tracer m V2.FlavorImplSpecificTrace ->
   ResourceRegistry m ->
   CodecConfig blk ->
   SomeHasFS m ->
   DiskSnapshot ->
   ExceptT (SnapshotFailure blk) m (LedgerSeq' m blk, RealPoint blk)
-loadSnapshot _rr ccfg fs ds = do
+loadSnapshot tracer _rr ccfg fs ds = do
   snapshotMeta <-
     withExceptT (InitFailureRead . ReadMetadataError (snapshotToMetadataPath ds)) $
       loadSnapshotMetadata fs ds
@@ -242,4 +247,4 @@ loadSnapshot _rr ccfg fs ds = do
         throwE $
           InitFailureRead $
             ReadSnapshotDataCorruption
-      (,pt) <$> lift (empty extLedgerSt values (newInMemoryLedgerTablesHandle fs))
+      (,pt) <$> lift (empty extLedgerSt values (newInMemoryLedgerTablesHandle tracer fs))
