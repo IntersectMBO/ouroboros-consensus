@@ -18,58 +18,30 @@ const sidebars = {
   // require prefixing all entries with numbers, which will make inserting a new
   // entry onerous since we would have to modify the entry numbers of each
   // subsequent entry.
-  about_ouroboros: [
+  explanation: [
     { type: 'category',
-      label: 'About Ouroboros',
-      items: [
-        'about-ouroboros/index',
-        'about-ouroboros/References'
-      ]
+      label: 'Explanation',
+      items: ['explanation/index']
     }
   ],
-
-  for_developers: [
+  tutorials: [
     { type: 'category',
-      label: 'For Developers',
-      items: [
-        'for-developers/index',
-        'for-developers/Glossary',
-        'for-developers/ComponentDiagram',
-        'for-developers/BlockBlockDiagram',
-        'for-developers/CardanoPraosBasics',
-        'for-developers/Ticking',
-        'for-developers/CivicTime',
-        'for-developers/AbstractProtocol',
-        'for-developers/AddingAnEra',
-        'for-developers/EraTransitionGovernance',
-        'for-developers/ChainSync',
-        'for-developers/HardWonWisdom',
-        'for-developers/StyleGuide',
-        'for-developers/ProfilingTipsAndTricks',
-        'for-developers/Benchmarks',
-        'for-developers/GitProcess',
-        'for-developers/ReleaseProcess',
-        'for-developers/SanityChecks',
-        'for-developers/QueryVersioning',
-        'for-developers/BootstrapPeersIER',
-        'for-developers/TechnicalReports',
-        'for-developers/PreflightGuide',
-        'for-developers/NodeTasks',
-        'for-developers/HandlingBlocksFromTheFuture',
-        'for-developers/Genesis',
-      ]
-    },
-    { type: 'category',
-      label: 'UTxO HD',
-      items: [
-        'for-developers/utxo-hd/Overview',
-        'for-developers/utxo-hd/migrating',
-        'for-developers/utxo-hd/utxo-hd-in-depth',
-        'for-developers/utxo-hd/future-ledger-hd',
-      ]
+      label: 'Tutorials',
+      items: ['tutorials/index']
     }
-  ]
-
+  ],
+  howtos: [
+    { type: 'category',
+      label: 'HOWTOs',
+      items: ['howtos/index']
+    }
+  ],
+  reference: [
+    { type: 'category',
+      label: 'Reference',
+      items: ['reference/index']
+    }
+  ],
 };
 
 module.exports = sidebars;
