@@ -160,6 +160,7 @@ import Ouroboros.Consensus.Util.Args (Complete)
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
+import System.FS.CRC
 
 -- | Try to take a snapshot of the /oldest ledger state/ in the ledger DB
 --
@@ -225,10 +226,7 @@ writeSnapshot fs@(SomeHasFS hasFS) backingStore encLedger snapshot cs = do
   writeSnapshotMetadata
     fs
     snapshot
-    SnapshotMetadata
-      { snapshotBackend = bsSnapshotBackend backingStore
-      , snapshotChecksum = crc
-      }
+    (metadataVersion1 UTxOHDLMDBSnapshot crc)
   bsCopy
     backingStore
     cs
@@ -268,18 +266,63 @@ loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs') s = do
   (extLedgerSt, checksumAsRead) <-
     withExceptT (InitFailureRead . ReadSnapshotFailed) $
       readExtLedgerState fs' (decodeDiskExtLedgerState ccfg) decode (snapshotToStatePath s)
+
   snapshotMeta <-
     withExceptT (InitFailureRead . ReadMetadataError (snapshotToMetadataPath s)) $
       loadSnapshotMetadata fs' s
+
   case (bss, snapshotBackend snapshotMeta) of
     (InMemoryBackingStoreArgs, UTxOHDMemSnapshot) -> pure ()
     (LMDBBackingStoreArgs _ _ _, UTxOHDLMDBSnapshot) -> pure ()
     (_, _) ->
       throwError $ InitFailureRead $ ReadMetadataError (snapshotToMetadataPath s) MetadataBackendMismatch
+
   Monad.when (checksumAsRead /= snapshotChecksum snapshotMeta) $
     throwError $
       InitFailureRead $
         ReadSnapshotDataCorruption
+
+  case snapshotVersion snapshotMeta of
+    Nothing -> do
+      Trans.lift $
+        upgradeSnapshotToV1 fs' (snapshotBackend snapshotMeta) (snapshotChecksum snapshotMeta) s
+      loadSnapshotV1 extLedgerSt tracer bss fs s
+    Just 1 -> loadSnapshotV1 extLedgerSt tracer bss fs s
+    Just other -> throwError $ InitFailureTablesUnknownVersion other
+
+{-------------------------------------------------------------------------------
+  Version 1 of LedgerDBV1 snapshots
+-------------------------------------------------------------------------------}
+
+metadataVersion1 :: SnapshotBackend -> CRC -> SnapshotMetadata
+metadataVersion1 backend crc =
+  SnapshotMetadata
+    { snapshotBackend = backend
+    , snapshotChecksum = crc
+    , snapshotVersion = Just 1
+    }
+
+upgradeSnapshotToV1 :: MonadThrow m => SomeHasFS m -> SnapshotBackend -> CRC -> DiskSnapshot -> m ()
+upgradeSnapshotToV1 fs backend crc ds =
+  writeSnapshotMetadata fs ds (metadataVersion1 backend crc)
+
+loadSnapshotV1 ::
+  forall m blk.
+  ( IOLike m
+  , LedgerDbSerialiseConstraints blk
+  , LedgerSupportsProtocol blk
+  , LedgerSupportsLedgerDB blk
+  ) =>
+  ExtLedgerState blk EmptyMK ->
+  Tracer m FlavorImplSpecificTrace ->
+  Complete BackingStoreArgs m ->
+  SnapshotsFS m ->
+  DiskSnapshot ->
+  ExceptT
+    (SnapshotFailure blk)
+    m
+    ((DbChangelog' blk, LedgerBackingStore m (ExtLedgerState blk)), RealPoint blk)
+loadSnapshotV1 extLedgerSt tracer bss fs s =
   case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
     Origin -> throwError InitFailureGenesis
     NotOrigin pt -> do

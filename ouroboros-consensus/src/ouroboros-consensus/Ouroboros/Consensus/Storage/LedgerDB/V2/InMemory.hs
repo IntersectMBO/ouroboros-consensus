@@ -15,6 +15,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
@@ -165,11 +166,7 @@ writeSnapshot fs@(SomeHasFS hasFs) encLedger ds st = do
   createDirectoryIfMissing hasFs True $ snapshotToDirPath ds
   crc1 <- writeExtLedgerState fs encLedger (snapshotToStatePath ds) $ state st
   crc2 <- takeHandleSnapshot (tables st) (state st) $ snapshotToDirName ds
-  writeSnapshotMetadata fs ds $
-    SnapshotMetadata
-      { snapshotBackend = UTxOHDMemSnapshot
-      , snapshotChecksum = crcOfConcat crc1 crc2
-      }
+  writeSnapshotMetadata fs ds $ metadataVersion1 (crcOfConcat crc1 crc2)
 
 takeSnapshot ::
   ( IOLike m
@@ -217,12 +214,55 @@ loadSnapshot _rr ccfg fs ds = do
   snapshotMeta <-
     withExceptT (InitFailureRead . ReadMetadataError (snapshotToMetadataPath ds)) $
       loadSnapshotMetadata fs ds
-  Monad.when (snapshotBackend snapshotMeta /= UTxOHDMemSnapshot) $ do
-    throwE $ InitFailureRead $ ReadMetadataError (snapshotToMetadataPath ds) MetadataBackendMismatch
+
+  Monad.when (snapshotBackend snapshotMeta /= UTxOHDMemSnapshot) $
+    throwE $
+      InitFailureRead $
+        ReadMetadataError (snapshotToMetadataPath ds) MetadataBackendMismatch
+
   (extLedgerSt, checksumAsRead) <-
     withExceptT
       (InitFailureRead . ReadSnapshotFailed)
       $ readExtLedgerState fs (decodeDiskExtLedgerState ccfg) decode (snapshotToStatePath ds)
+
+  case snapshotVersion snapshotMeta of
+    Just 1 -> loadTablesV1 extLedgerSt fs ds checksumAsRead snapshotMeta
+    Nothing -> do
+      lift $ upgradeSnapshotToV1 fs (snapshotChecksum snapshotMeta) ds
+      loadTablesV1 extLedgerSt fs ds checksumAsRead snapshotMeta
+    Just other -> throwE $ InitFailureTablesUnknownVersion other
+
+{-------------------------------------------------------------------------------
+  Version 1 of InMemory snapshots
+-------------------------------------------------------------------------------}
+
+metadataVersion1 :: CRC -> SnapshotMetadata
+metadataVersion1 crc =
+  SnapshotMetadata
+    { snapshotBackend = UTxOHDMemSnapshot
+    , snapshotChecksum = crc
+    , snapshotVersion = Just 1
+    }
+
+upgradeSnapshotToV1 :: MonadThrow m => SomeHasFS m -> CRC -> DiskSnapshot -> m ()
+upgradeSnapshotToV1 fs crc ds =
+  writeSnapshotMetadata fs ds (metadataVersion1 crc)
+
+loadTablesV1 ::
+  ( HeaderHash l ~ HeaderHash blk1
+  , GetTip l
+  , IOLike m
+  , SerializeTablesWithHint l
+  , HasLedgerTables l
+  , CanUpgradeLedgerTables l
+  ) =>
+  l EmptyMK ->
+  SomeHasFS m ->
+  DiskSnapshot ->
+  CRC ->
+  SnapshotMetadata ->
+  ExceptT (SnapshotFailure blk2) m (LedgerSeq m l, RealPoint blk1)
+loadTablesV1 extLedgerSt fs ds checksumAsRead snapshotMeta =
   case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
     Origin -> throwE InitFailureGenesis
     NotOrigin pt -> do

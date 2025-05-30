@@ -37,7 +37,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
     -- * Paths
   , diskSnapshotIsTemporary
   , snapshotFromPath
-  , snapshotToChecksumPath
   , snapshotToDirName
   , snapshotToDirPath
   , snapshotToMetadataPath
@@ -79,7 +78,7 @@ import qualified Control.Monad as Monad
 import Control.Monad.Class.MonadTime.SI
 import Control.Monad.Except
 import Control.Tracer
-import Data.Aeson (FromJSON (..), ToJSON (..), (.:), (.=))
+import Data.Aeson (FromJSON (..), ToJSON (..), (.:), (.:?), (.=))
 import qualified Data.Aeson as Aeson
 import Data.Functor.Identity
 import qualified Data.List as List
@@ -149,6 +148,11 @@ data SnapshotFailure blk
   | -- | This snapshot was of the ledger state at genesis, even though we never
     -- take snapshots at genesis, so this is unexpected.
     InitFailureGenesis
+  | -- | The version of the snapshot in the meta file is unknown
+    InitFailureTablesUnknownVersion Word8
+  | -- | The version of the snapshot in the meta file is incompatible
+    -- with the ones we can convert to.
+    InitFailureTablesIncompatibleVersion Word8 [Word8]
   deriving (Show, Eq, Generic)
 
 data ReadSnapshotErr
@@ -161,24 +165,34 @@ data ReadSnapshotErr
     ReadMetadataError FsPath MetadataErr
   deriving (Eq, Show)
 
+-- | Each snapshot will have an associated metadata file named
+-- @meta@in its directory.
 data SnapshotMetadata = SnapshotMetadata
   { snapshotBackend :: SnapshotBackend
+  -- ^ The backend used to create this snapshot
   , snapshotChecksum :: CRC
+  -- ^ A checkum to check the integrity of the snapshotn
+  , snapshotVersion :: Maybe Word8
+  -- ^ The version of the shape and codecs used to create this
+  -- snapshot. If possible we will upgrade the snapshot in place,
+  -- otherwise we will reject it.
   }
   deriving (Eq, Show)
 
 instance ToJSON SnapshotMetadata where
   toJSON sm =
-    Aeson.object
+    Aeson.object $
       [ "backend" .= snapshotBackend sm
       , "checksum" .= getCRC (snapshotChecksum sm)
       ]
+        <> maybe [] (\x -> ["codecVersion" .= x]) (snapshotVersion sm)
 
 instance FromJSON SnapshotMetadata where
   parseJSON = Aeson.withObject "SnapshotMetadata" $ \o ->
     SnapshotMetadata
       <$> o .: "backend"
       <*> fmap CRC (o .: "checksum")
+      <*> o .:? "codecVersion"
 
 data SnapshotBackend
   = UTxOHDMemSnapshot
@@ -361,9 +375,6 @@ snapshotToDirName DiskSnapshot{dsNumber, dsSuffix} =
   suffix = case dsSuffix of
     Nothing -> ""
     Just s -> "_" <> s
-
-snapshotToChecksumPath :: DiskSnapshot -> FsPath
-snapshotToChecksumPath = mkFsPath . (\x -> [x, "checksum"]) . snapshotToDirName
 
 snapshotToMetadataPath :: DiskSnapshot -> FsPath
 snapshotToMetadataPath = mkFsPath . (\x -> [x, "meta"]) . snapshotToDirName
