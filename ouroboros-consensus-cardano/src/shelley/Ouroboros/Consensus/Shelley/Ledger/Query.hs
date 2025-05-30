@@ -46,17 +46,15 @@ import Cardano.Binary
   )
 import Cardano.Ledger.Address
 import qualified Cardano.Ledger.Api.State.Query as SL
-import Cardano.Ledger.CertState (lookupDepositDState)
-import qualified Cardano.Ledger.CertState as SL
 import Cardano.Ledger.Coin (Coin)
 import Cardano.Ledger.Compactible (Compactible (fromCompact))
 import qualified Cardano.Ledger.Conway.Governance as CG
+import qualified Cardano.Ledger.Conway.State as CG
 import qualified Cardano.Ledger.Core as SL
 import Cardano.Ledger.Credential (StakeCredential)
 import Cardano.Ledger.Keys (KeyHash, KeyRole (..))
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as LC
-import Cardano.Ledger.Shelley.LedgerState (AccountState)
 import qualified Cardano.Ledger.Shelley.RewardProvenance as SL
   ( RewardProvenance
   )
@@ -106,6 +104,8 @@ import Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
   ( ShelleyNodeToClientVersion (..)
   )
 import Ouroboros.Consensus.Shelley.Ledger.PeerSelection ()
+import Ouroboros.Consensus.Shelley.Ledger.Query.LegacyPParams
+import Ouroboros.Consensus.Shelley.Ledger.Query.LegacyShelleyGenesis
 import Ouroboros.Consensus.Shelley.Ledger.Query.Types
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.Storage.LedgerDB
@@ -272,7 +272,7 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
   --
   -- Not supported in eras before Conway.
   GetDRepState ::
-    CG.ConwayEraGov era =>
+    (CG.ConwayEraGov era, CG.ConwayEraCertState era) =>
     Set (SL.Credential 'DRepRole) ->
     BlockQuery
       (ShelleyBlock proto era)
@@ -297,7 +297,7 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
   --
   -- Not supported in eras before Conway.
   GetCommitteeMembersState ::
-    CG.ConwayEraGov era =>
+    (CG.ConwayEraGov era, CG.ConwayEraCertState era) =>
     Set (SL.Credential 'ColdCommitteeRole) ->
     Set (SL.Credential 'HotCommitteeRole) ->
     Set SL.MemberStatus ->
@@ -308,7 +308,7 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
     Set (SL.Credential 'SL.Staking) ->
     BlockQuery (ShelleyBlock proto era) QFNoTables VoteDelegatees
   GetAccountState ::
-    BlockQuery (ShelleyBlock proto era) QFNoTables AccountState
+    BlockQuery (ShelleyBlock proto era) QFNoTables SL.ChainAccountState
   -- | Query the SPO voting stake distribution.
   -- This stake distribution is different from the one used in leader election.
   --
@@ -474,7 +474,7 @@ instance
               SL.calculatePoolDistr' (maybe (const True) (flip Set.member) mPoolIds) stakeSet
       GetStakeDelegDeposits stakeCreds ->
         let lookupDeposit =
-              lookupDepositDState (view SL.certDStateL $ SL.lsCertState $ SL.esLState $ SL.nesEs st)
+              SL.lookupDepositDState (view SL.certDStateL $ SL.lsCertState $ SL.esLState $ SL.nesEs st)
             lookupInsert acc cred =
               case lookupDeposit cred of
                 Nothing -> acc
@@ -493,7 +493,7 @@ instance
       GetFilteredVoteDelegatees stakeCreds ->
         getFilteredVoteDelegatees st stakeCreds
       GetAccountState ->
-        SL.queryAccountState st
+        SL.queryChainAccountState st
       GetSPOStakeDistr keys ->
         SL.querySPOStakeDistr st keys
       GetProposals gids ->
@@ -914,7 +914,7 @@ decodeShelleyQuery = do
 
       requireCG ::
         forall s ans.
-        (CG.ConwayEraGov era => Decoder s ans) ->
+        ((CG.ConwayEraGov era, CG.ConwayEraCertState era) => Decoder s ans) ->
         Decoder s ans
       requireCG k = case SE.getConwayEraGovDict (Proxy @era) of
         Just SE.ConwayEraGovDict -> k
@@ -971,19 +971,19 @@ encodeShelleyResult ::
   BlockQuery (ShelleyBlock proto era) fp result ->
   result ->
   Encoding
-encodeShelleyResult _v query = case query of
+encodeShelleyResult v query = case query of
   GetLedgerTip -> encodePoint encode
   GetEpochNo -> toCBOR
   GetNonMyopicMemberRewards{} -> toCBOR
-  GetCurrentPParams -> toCBOR
   GetProposedPParamsUpdates -> toCBOR
+  GetCurrentPParams -> fst $ currentPParamsEnDecoding v
   GetStakeDistribution -> LC.toEraCBOR @era
   GetUTxOByAddress{} -> toCBOR
   GetUTxOWhole -> toCBOR
   DebugEpochState -> toCBOR
   GetCBOR{} -> encode
   GetFilteredDelegationsAndRewardAccounts{} -> LC.toEraCBOR @era
-  GetGenesisConfig -> toCBOR
+  GetGenesisConfig -> fst $ genesisConfigEnDecoding v
   DebugNewEpochState -> toCBOR
   DebugChainDepState -> encode
   GetRewardProvenance -> LC.toEraCBOR @era
@@ -1016,19 +1016,19 @@ decodeShelleyResult ::
   BlockQuery (ShelleyBlock proto era) fp result ->
   forall s.
   Decoder s result
-decodeShelleyResult _v query = case query of
+decodeShelleyResult v query = case query of
   GetLedgerTip -> decodePoint decode
   GetEpochNo -> fromCBOR
   GetNonMyopicMemberRewards{} -> fromCBOR
-  GetCurrentPParams -> fromCBOR
   GetProposedPParamsUpdates -> fromCBOR
+  GetCurrentPParams -> snd $ currentPParamsEnDecoding v
   GetStakeDistribution -> LC.fromEraCBOR @era
   GetUTxOByAddress{} -> fromCBOR
   GetUTxOWhole -> fromCBOR
   DebugEpochState -> fromCBOR
   GetCBOR{} -> decode
   GetFilteredDelegationsAndRewardAccounts{} -> LC.fromEraCBOR @era
-  GetGenesisConfig -> fromCBOR
+  GetGenesisConfig -> snd $ genesisConfigEnDecoding v
   DebugNewEpochState -> fromCBOR
   DebugChainDepState -> decode
   GetRewardProvenance -> LC.fromEraCBOR @era
@@ -1053,6 +1053,31 @@ decodeShelleyResult _v query = case query of
   GetFuturePParams{} -> LC.fromEraCBOR @era
   GetBigLedgerPeerSnapshot -> fromCBOR
   QueryStakePoolDefaultVote{} -> fromCBOR
+
+currentPParamsEnDecoding ::
+  forall era s.
+  ( FromCBOR (LC.PParams era)
+  , ToCBOR (LC.PParams era)
+  , FromCBOR (LegacyPParams era)
+  , ToCBOR (LegacyPParams era)
+  ) =>
+  ShelleyNodeToClientVersion ->
+  (LC.PParams era -> Encoding, Decoder s (LC.PParams era))
+currentPParamsEnDecoding v
+  | v >= ShelleyNodeToClientVersion13 =
+      (toCBOR, fromCBOR)
+  | otherwise =
+      (encodeLegacyPParams, decodeLegacyPParams)
+
+genesisConfigEnDecoding ::
+  forall s.
+  ShelleyNodeToClientVersion ->
+  (CompactGenesis -> Encoding, Decoder s CompactGenesis)
+genesisConfigEnDecoding v
+  | v >= ShelleyNodeToClientVersion13 =
+      (toCBOR, fromCBOR)
+  | otherwise =
+      (encodeLegacyShelleyGenesis . getCompactGenesis, compactGenesis <$> decodeLegacyShelleyGenesis)
 
 -- | The stake snapshot returns information about the mark, set, go ledger snapshots for a pool,
 -- plus the total active stake for each snapshot that can be used in a 'sigma' calculation.
