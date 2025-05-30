@@ -21,7 +21,9 @@ const sidebars = {
   explanation: [
     { type: 'category',
       label: 'Explanation',
-      items: ['explanation/index']
+      items: ['explanation/index',
+	      'explanation/design-goals'
+	     ]
     }
   ],
   tutorials: [
