@@ -21,6 +21,7 @@
 
 module Ouroboros.Consensus.Cardano.Ledger
   ( CardanoTxOut (..)
+  , CanonicalTxIn (CardanoTxIn, getCardanoTxIn)
   , eliminateCardanoTxOut
   ) where
 
