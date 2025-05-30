@@ -18,6 +18,9 @@ hsPkgs.shellFor {
     pkgs.fourmolu
     pkgs.cuddle
 
+    # testing cddls
+    pkgs.cddl
+
     # release management
     (pkgs.scriv.overridePythonAttrs (_oldAttrs: {
       # Already fixed upstream: https://github.com/NixOS/nixpkgs/pull/407167

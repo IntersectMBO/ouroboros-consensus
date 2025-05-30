@@ -35,6 +35,9 @@ import Ouroboros.Network.Block (Serialised)
 -- | Local shorthand to make the instances more readable
 type MockBlock ext = SimpleBlock SimpleMockCrypto ext
 
+instance MockProtocolSpecific SimpleMockCrypto () where
+  type MockLedgerConfig SimpleMockCrypto () = ()
+
 {-------------------------------------------------------------------------------
   Disk
 
