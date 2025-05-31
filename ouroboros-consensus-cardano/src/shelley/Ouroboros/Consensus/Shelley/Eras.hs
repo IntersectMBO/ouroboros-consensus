@@ -68,7 +68,7 @@ import Cardano.Ledger.Mary (MaryEra)
 import Cardano.Ledger.Mary.Translation ()
 import Cardano.Ledger.Shelley (ShelleyEra)
 import qualified Cardano.Ledger.Shelley.API as SL
-import Cardano.Ledger.Shelley.Core as Core
+import Cardano.Ledger.Alonzo.Core as Core
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import qualified Cardano.Ledger.Shelley.Rules as SL
 import qualified Cardano.Ledger.Shelley.Transition as SL
@@ -77,6 +77,7 @@ import Control.Monad.Except
 import Control.State.Transition (PredicateFailure)
 import Data.Data (Proxy (Proxy))
 import Data.List.NonEmpty (NonEmpty ((:|)))
+import Lens.Micro
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( WhetherToIntervene (..)
@@ -243,7 +244,8 @@ instance ShelleyBasedEra ConwayEra where
 
 applyAlonzoBasedTx ::
   forall era.
-  ( ShelleyBasedEra era
+  ( AlonzoEraTx era
+  , ShelleyBasedEra era
   , SupportsTwoPhaseValidation era
   , Core.Tx era ~ Alonzo.AlonzoTx era
   ) =>
@@ -269,7 +271,7 @@ applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
   pure (mempoolState', vtx)
  where
   intervenedTx = case wti of
-    DoNotIntervene -> tx{Alonzo.isValid = Alonzo.IsValid True}
+    DoNotIntervene -> tx & Core.isValidTxL .~ Alonzo.IsValid True
     Intervene -> tx
 
   handler e = case (wti, e) of
@@ -289,7 +291,7 @@ applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
             ledgerEnv
             mempoolState
             wti
-            tx{Alonzo.isValid = Alonzo.IsValid False}
+            (tx & Core.isValidTxL .~ Alonzo.IsValid False)
     _ -> throwError e
 
 -- reject the transaction, protecting the local wallet
