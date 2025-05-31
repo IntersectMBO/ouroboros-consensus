@@ -55,7 +55,7 @@ import Cardano.Ledger.Core as SL
   , eraProtVerLow
   , toEraCBOR
   )
-import qualified Cardano.Ledger.Core as SL (TranslationContext, hashTxSeq)
+import qualified Cardano.Ledger.Core as SL (TranslationContext, hashBlockBody)
 import Cardano.Ledger.Hashes (HASH)
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (Crypto)
@@ -207,10 +207,10 @@ instance ShelleyCompatible proto era => GetHeader (ShelleyBlock proto era) where
   blockMatchesHeader hdr blk =
     -- Compute the hash the body of the block (the transactions) and compare
     -- that against the hash of the body stored in the header.
-    SL.hashTxSeq @era txs == pHeaderBodyHash shelleyHdr
+    SL.hashBlockBody blockBody == pHeaderBodyHash shelleyHdr
    where
     ShelleyHeader{shelleyHeaderRaw = shelleyHdr} = hdr
-    ShelleyBlock{shelleyBlockRaw = SL.Block _ txs} = blk
+    ShelleyBlock{shelleyBlockRaw = SL.Block _ blockBody} = blk
 
   headerIsEBB = const Nothing
 

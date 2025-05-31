@@ -40,10 +40,10 @@ import Cardano.Ledger.Binary.Encoding
   , encodeMemPack
   , toPlainEncoding
   )
+import qualified Cardano.Ledger.Conway.State as SL
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
-import qualified Cardano.Ledger.UMap as SL
 import Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.API as SL
 import Codec.CBOR.Decoding
@@ -527,6 +527,6 @@ instance
                   . SL.esLStateL
                   . SL.lsCertStateL
                   . SL.certDStateL
-                  . SL.dsUnifiedL
-                  . SL.umElemsL
+                  . SL.accountsL
+                  . SL.accountsMapL
        in LedgerTables . ValuesMK <$> SL.eraDecoder @era (decodeMap decodeMemPack (decShareCBOR certInterns))

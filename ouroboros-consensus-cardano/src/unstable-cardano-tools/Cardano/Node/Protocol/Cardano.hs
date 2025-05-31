@@ -25,6 +25,7 @@ import qualified Cardano.Ledger.Api.Transition as SL
 import qualified Cardano.Node.Protocol.Alonzo as Alonzo
 import qualified Cardano.Node.Protocol.Byron as Byron
 import qualified Cardano.Node.Protocol.Conway as Conway
+import Cardano.Node.Protocol.Shelley (readGenesisAny)
 import qualified Cardano.Node.Protocol.Shelley as Shelley
 import Cardano.Node.Protocol.Types
 import Cardano.Node.Types
@@ -101,7 +102,10 @@ mkConsensusProtocolCardano
     { npcConwayGenesisFile
     , npcConwayGenesisFileHash
     }
-  NodeDijkstraProtocolConfiguration{}
+  NodeDijkstraProtocolConfiguration
+    { npcDijkstraGenesisFile
+    , npcDijkstraGenesisFileHash
+    }
   NodeHardForkProtocolConfiguration
     { npcTestEnableDevelopmentHardForkEras = _
     , -- During testing of the latest unreleased era, we conditionally
@@ -147,12 +151,18 @@ mkConsensusProtocolCardano
           npcConwayGenesisFile
           npcConwayGenesisFileHash
 
+    (dijkstraGenesis, _dijkstraGenesisHash) <-
+      firstExceptT CardanoProtocolInstantiationDijkstraGenesisReadError $
+        readGenesisAny
+          npcDijkstraGenesisFile
+          npcDijkstraGenesisFileHash
+
     shelleyLeaderCredentials <-
       firstExceptT CardanoProtocolInstantiationPraosLeaderCredentialsError $
         Shelley.readLeaderCredentials files
 
     let transitionLedgerConfig =
-          SL.mkLatestTransitionConfig shelleyGenesis alonzoGenesis conwayGenesis
+          SL.mkLatestTransitionConfig shelleyGenesis alonzoGenesis conwayGenesis dijkstraGenesis
 
     -- TODO: all these protocol versions below are confusing and unnecessary.
     -- It could and should all be automated and these config entries eliminated.
@@ -209,6 +219,9 @@ mkConsensusProtocolCardano
                 -- Version 7 is Babbage
                 -- Version 8 is Babbage (intra era hardfork)
                 -- Version 9 is Conway
+                -- Version 10 is Conway (intra era hardfork)
+                -- Version 11 is Conway (intra era hardfork)
+                -- Version 12 is Dijkstra
                 --
                 -- But we also provide an override to allow for simpler test setups
                 -- such as triggering at the 0 -> 1 transition .
@@ -265,6 +278,8 @@ data CardanoProtocolInstantiationError
       Shelley.GenesisReadError
   | CardanoProtocolInstantiationConwayGenesisReadError
       Shelley.GenesisReadError
+  | CardanoProtocolInstantiationDijkstraGenesisReadError
+      Shelley.GenesisReadError
   | CardanoProtocolInstantiationPraosLeaderCredentialsError
       Shelley.PraosLeaderCredentialsError
   | CardanoProtocolInstantiationErrorAlonzo
@@ -280,6 +295,8 @@ instance Error CardanoProtocolInstantiationError where
     "Alonzo related: " <> displayError err
   displayError (CardanoProtocolInstantiationConwayGenesisReadError err) =
     "Conway related: " <> displayError err
+  displayError (CardanoProtocolInstantiationDijkstraGenesisReadError err) =
+    "Dijkstra related: " <> displayError err
   displayError (CardanoProtocolInstantiationPraosLeaderCredentialsError err) =
     displayError err
   displayError (CardanoProtocolInstantiationErrorAlonzo err) =

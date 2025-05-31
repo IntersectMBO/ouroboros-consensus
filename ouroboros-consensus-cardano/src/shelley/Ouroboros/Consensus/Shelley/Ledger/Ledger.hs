@@ -86,7 +86,7 @@ import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Governance as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
-import qualified Cardano.Ledger.UMap as SL
+import qualified Cardano.Ledger.State as SL
 import Cardano.Slotting.EpochInfo
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -343,8 +343,8 @@ instance
                 . SL.esLStateL
                 . SL.lsCertStateL
                 . SL.certDStateL
-                . SL.dsUnifiedL
-                . SL.umElemsL
+                . SL.accountsL
+                . SL.accountsMapL
      in LedgerTables . ValuesMK <$> (eraDecoder @era $ decodeMap decodeMemPack (decShareCBOR certInterns))
 
 instance

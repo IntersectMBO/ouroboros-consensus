@@ -78,7 +78,6 @@ import Ouroboros.Consensus.TypeFamilyWrappers
 import Test.Cardano.Ledger.Alonzo.Serialisation.Generators ()
 import Test.Cardano.Ledger.Api.Examples.Consensus.Shelley
 import Test.Cardano.Ledger.Babbage.Serialisation.Generators ()
-import Test.Cardano.Ledger.Conway.Arbitrary ()
 import Test.Cardano.Ledger.Dijkstra.Arbitrary ()
 import Test.Consensus.Byron.Generators
   ( genByronLedgerConfig

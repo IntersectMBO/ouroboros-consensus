@@ -59,13 +59,6 @@ import qualified Cardano.Ledger.Shelley.RewardProvenance as SL
   ( RewardProvenance
   )
 import qualified Cardano.Ledger.State as SL
-import Cardano.Ledger.UMap
-  ( UMap (..)
-  , rdReward
-  , umElemDRep
-  , umElemRDPair
-  , umElemSPool
-  )
 import Cardano.Protocol.Crypto (Crypto)
 import Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -832,25 +825,17 @@ getFilteredDelegationsAndRewardAccounts ::
   SL.NewEpochState era ->
   Set (SL.Credential 'SL.Staking) ->
   (Delegations, Map (SL.Credential 'Staking) Coin)
-getFilteredDelegationsAndRewardAccounts ss creds =
-  (filteredDelegations, filteredRwdAcnts)
- where
-  UMap umElems _ = SL.dsUnified $ getDState ss
-  umElemsRestricted = Map.restrictKeys umElems creds
-
-  filteredDelegations = Map.mapMaybe umElemSPool umElemsRestricted
-  filteredRwdAcnts =
-    Map.mapMaybe (fmap (fromCompact . rdReward) . umElemRDPair) umElemsRestricted
+getFilteredDelegationsAndRewardAccounts = SL.queryStakePoolDelegsAndRewards
 
 getFilteredVoteDelegatees ::
-  SL.EraCertState era =>
+  (SL.EraCertState era, CG.ConwayEraAccounts era) =>
   SL.NewEpochState era ->
   Set (SL.Credential 'SL.Staking) ->
   VoteDelegatees
-getFilteredVoteDelegatees ss creds = Map.mapMaybe umElemDRep umElemsRestricted
+getFilteredVoteDelegatees ss creds =
+  Map.mapMaybe (^. CG.dRepDelegationAccountStateL) accountsMapRestricted
  where
-  UMap umElems _ = SL.dsUnified $ getDState ss
-  umElemsRestricted = Map.restrictKeys umElems creds
+  accountsMapRestricted = Map.restrictKeys (getDState ss ^. SL.accountsL . SL.accountsMapL) creds
 
 {-------------------------------------------------------------------------------
   Serialisation
