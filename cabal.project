@@ -56,15 +56,15 @@ source-repository-package
    type: git
    location: https://github.com/IntersectMBO/ouroboros-network
    tag: 3e8d3b4b8c87ead794876c62d7fe25f32efb5142
-   -- sha256: sha256-uKrxpHhcNGzKUSeA4zIdkslfDFIJjkCsHUg+FUef1yE=
+   --sha256: sha256-uKrxpHhcNGzKUSeA4zIdkslfDFIJjkCsHUg+FUef1yE=
    subdir:
      ouroboros-network-api
 
 source-repository-package
    type: git
    location: https://github.com/IntersectMBO/cardano-ledger
-   tag: acef8ca86b741455309753b1f02a5f339eb545b4
-   --sha256: sha256-Tahrli+IOzrC0JiXYPE/XXFCWToyBzbAlgDaxlaokGE=
+   tag: bf0a705941d3eaff9ff2f4433379279d354efd82
+   --sha256: sha256-c2jB9RalUN0Pjvh3T2jPRhVHR4+lyXnCyPW1mgyDG3Q=
    subdir:
       eras/allegra/impl
       eras/alonzo/impl
