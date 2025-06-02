@@ -947,7 +947,10 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
             SwitchingToAFork -> do
               -- Update the followers
               followerHandles <- Map.elems <$> readTVar cdbFollowers
-              forM_ followerHandles $ switchFollowerToFork curChain
+              -- The suffix of @curChain@ that we are going to orphan by
+              -- adopting @chainDiff@.
+              let oldSuffix = AF.anchorNewest (getRollback chainDiff) curChain
+              forM_ followerHandles $ \hdl -> fhSwitchFork hdl oldSuffix
 
           return (curChain, newChain, events, prevTentativeHeader, newLedger)
     let mkTraceEvent = case chainSwitchType of
@@ -962,20 +965,6 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
 
     forkerClose newForker
    where
-    -- When we switch to a fork, we need to update the 'Follower' state (in the
-    -- same STM transaction).
-    switchFollowerToFork ::
-      -- The current chain (to which we are applying @chainDiff@).
-      AnchoredFragment (Header blk) ->
-      FollowerHandle m blk ->
-      STM m ()
-    switchFollowerToFork curChain =
-      \followerHandle -> fhSwitchFork followerHandle oldSuffix
-     where
-      -- The suffix of @curChain@ that we are going to orphan by adopting
-      -- @chainDiff@.
-      oldSuffix = AF.anchorNewest (getRollback chainDiff) curChain
-
     ValidatedChainDiff chainDiff newForker = vChainDiff
 
   -- \| We have a new block @b@ that doesn't fit onto the current chain, but
