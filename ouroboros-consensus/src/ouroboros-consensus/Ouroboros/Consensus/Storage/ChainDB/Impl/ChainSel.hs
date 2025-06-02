@@ -102,7 +102,6 @@ import Ouroboros.Network.AnchoredFragment
   , AnchoredSeq (..)
   )
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import qualified Ouroboros.Network.AnchoredSeq as AS
 import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (..))
 
 -- | Perform the initial chain selection based on the tip of the ImmutableDB
@@ -947,12 +946,11 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
             AddingBlocks -> pure ()
             SwitchingToAFork -> do
               -- Update the followers
-              --
-              -- 'Follower.switchFork' needs to know the intersection point
-              -- (@ipoint@) between the old and the current chain.
-              let ipoint = castPoint $ Diff.getAnchorPoint chainDiff
               followerHandles <- Map.elems <$> readTVar cdbFollowers
-              forM_ followerHandles $ switchFollowerToFork curChain newChain ipoint
+              -- The suffix of @curChain@ that we are going to orphan by
+              -- adopting @chainDiff@.
+              let oldSuffix = AF.anchorNewest (getRollback chainDiff) curChain
+              forM_ followerHandles $ \hdl -> fhSwitchFork hdl oldSuffix
 
           return (curChain, newChain, events, prevTentativeHeader, newLedger)
     let mkTraceEvent = case chainSwitchType of
@@ -967,18 +965,6 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
 
     forkerClose newForker
    where
-    -- Given the current chain and the new chain as chain fragments, and the
-    -- intersection point (an optimization, since it has already been
-    -- computed when calling this function), returns a function that updates
-    -- the state of a follower via its handle.
-    switchFollowerToFork curChain newChain ipoint =
-      let oldPoints =
-            Set.fromList . fmap headerPoint . AS.toOldestFirst $
-              Diff.getSuffix $
-                Diff.diff newChain curChain
-       in assert (AF.withinFragmentBounds (castPoint ipoint) newChain) $
-            \followerHandle -> fhSwitchFork followerHandle ipoint oldPoints
-
     ValidatedChainDiff chainDiff newForker = vChainDiff
 
   -- \| We have a new block @b@ that doesn't fit onto the current chain, but
@@ -1174,9 +1160,8 @@ chainSelection chainSelEnv rr chainDiffs =
         writeTVar varTentativeHeader SNothing
         writeTVar varTentativeState tentativeSt
         forTentativeFollowers $ \followerHandle -> do
-          let curTipPoint = castPoint $ AF.headPoint curChain
-              oldPoints = Set.singleton $ headerPoint tentativeHeader
-          fhSwitchFork followerHandle curTipPoint oldPoints
+          let oldSuffix = AF.Empty (AF.headAnchor curChain) AF.:> tentativeHeader
+          fhSwitchFork followerHandle oldSuffix
       traceWith pipeliningTracer $ TrapTentativeHeader tentativeHeader
      where
       forTentativeFollowers f = getTentativeFollowers >>= mapM_ f
