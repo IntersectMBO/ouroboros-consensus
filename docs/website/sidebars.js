@@ -22,7 +22,8 @@ const sidebars = {
     { type: 'category',
       label: 'Explanation',
       items: ['explanation/index',
-	      'explanation/design-goals'
+	      'explanation/design-goals',
+	      'explanation/ledger-interaction'
 	     ]
     }
   ],
