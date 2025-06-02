@@ -87,7 +87,6 @@ import Data.Maybe (mapMaybe)
 import Data.Maybe.Strict (StrictMaybe (..))
 import Data.MultiSet (MultiSet)
 import qualified Data.MultiSet as MultiSet
-import Data.Set (Set)
 import Data.Typeable
 import Data.Void (Void)
 import Data.Word (Word64)
@@ -425,8 +424,11 @@ newtype FollowerKey = FollowerKey Word
 data FollowerHandle m blk = FollowerHandle
   { fhChainType :: ChainType
   -- ^ Whether we follow the tentative chain.
-  , fhSwitchFork :: Point blk -> Set (Point blk) -> STM m ()
+  , fhSwitchFork :: AnchoredFragment (Header blk) -> STM m ()
   -- ^ When we have switched to a fork, all open 'Follower's must be notified.
+  --
+  -- Receives the suffix of the old chain anchored at the intersection with the
+  -- new chain.
   , fhClose :: m ()
   -- ^ When closing the ChainDB, we must also close all open 'Follower's, as
   -- they might be holding on to resources.
