@@ -505,29 +505,27 @@ forward registry varFollower blockComponent CDB{..} =
                       writeTVar varFollower $
                         FollowerInImmutableDB (RollBackTo pt) immIt
                     return True
-            _otherwise -> case pointToWithOriginRealPoint pt of
+            _otherwise -> case pt of
               -- Genesis is always "in" the ImmutableDB
-              Origin -> do
+              GenesisPoint -> do
                 join $ atomically $ updateState FollowerInit
                 return True
-              NotOrigin pt' -> do
-                inImmutableDB <- ImmutableDB.hasBlock cdbImmutableDB pt'
-                if inImmutableDB
-                  then do
-                    immIt <-
-                      ImmutableDB.streamAfterKnownPoint
-                        cdbImmutableDB
-                        registry
-                        ((,) <$> getPoint <*> blockComponent)
-                        pt
-                    join $
-                      atomically $
-                        updateState $
-                          FollowerInImmutableDB (RollBackTo pt) immIt
-                    return True
-                  else
-                    -- The point is not in the current chain
-                    return False
+              BlockPoint{} ->
+                ImmutableDB.streamAfterPoint
+                  cdbImmutableDB
+                  registry
+                  ((,) <$> getPoint <*> blockComponent)
+                  pt
+                  >>= \case
+                    Right immIt -> do
+                      join $
+                        atomically $
+                          updateState $
+                            FollowerInImmutableDB (RollBackTo pt) immIt
+                      return True
+                    Left _ ->
+                      -- The point is not in the current chain
+                      return False
 
   -- \| Update the state of the follower to the given state. If the current
   -- state is 'FollowerInImmutableDB', close the ImmutableDB iterator to avoid
