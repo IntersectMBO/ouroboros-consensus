@@ -25,8 +25,6 @@ import Data.Functor ((<&>))
 import Data.Functor.Identity (Identity (..))
 import qualified Data.Map.Strict as Map
 import Data.Maybe.Strict (StrictMaybe (..))
-import Data.Set (Set)
-import qualified Data.Set as Set
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Storage.ChainDB.API
@@ -126,9 +124,8 @@ newFollower h registry chainType blockComponent = getEnv h $ \CDB{..} -> do
           -- 'closeAllFollowers' will empty that map already.
           followerState <- atomically $ readTVar varFollower
           closeFollowerState followerState
-      , fhSwitchFork = \ipoint oldPoints ->
-          modifyTVar varFollower $
-            switchFork ipoint oldPoints
+      , fhSwitchFork = \oldSuffix ->
+          modifyTVar varFollower $ switchFork oldSuffix
       }
 
 makeNewFollower ::
@@ -545,25 +542,26 @@ forward registry varFollower blockComponent CDB{..} =
 -- intersection point if it is.
 switchFork ::
   forall m blk b.
-  HasHeader blk =>
-  -- | Intersection point between the new and the old chain.
-  Point blk ->
-  -- | Set of points that are in the old chain and not in the
-  -- new chain.
-  Set (Point blk) ->
+  GetHeader blk =>
+  -- | Suffix of the old chain anchored at the intersection with the new chain.
+  AnchoredFragment (Header blk) ->
   FollowerState m blk b ->
   FollowerState m blk b
-switchFork ipoint oldPoints =
+switchFork oldSuffix =
   \case
     -- Roll back to the intersection point if and only if the position of the
     -- follower is not in the new chain, but was part of the volatile DB. By the
     -- invariant that the follower state is always in the current chain, it then
-    -- should be in `oldPoints`.
+    -- should be on `oldSuffix` (ignoring the anchor).
     FollowerInMem (RollBackTo pt)
-      | pt `Set.member` oldPoints -> FollowerInMem (RollBackTo ipoint)
+      | isOnOldSuffix pt -> FollowerInMem (RollBackTo ipoint)
     FollowerInMem (RollForwardFrom pt)
-      | pt `Set.member` oldPoints -> FollowerInMem (RollBackTo ipoint)
+      | isOnOldSuffix pt -> FollowerInMem (RollBackTo ipoint)
     followerState -> followerState
+ where
+  ipoint = castPoint $ AF.anchorPoint oldSuffix
+
+  isOnOldSuffix pt = AF.pointOnFragment (castPoint pt) oldSuffix
 
 -- | Close all open block and header 'Follower's.
 closeAllFollowers ::

@@ -970,15 +970,11 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
       FollowerHandle m blk ->
       STM m ()
     switchFollowerToFork curChain =
-      \followerHandle -> fhSwitchFork followerHandle ipoint oldPoints
+      \followerHandle -> fhSwitchFork followerHandle oldSuffix
      where
-      -- Intersection between the old and the new chain.
-      ipoint = castPoint $ Diff.getAnchorPoint chainDiff
       -- The suffix of @curChain@ that we are going to orphan by adopting
       -- @chainDiff@.
       oldSuffix = AF.anchorNewest (getRollback chainDiff) curChain
-      -- Points that were on the old chain, but are not on the new chain.
-      oldPoints = Set.fromList $ headerPoint <$> AF.toOldestFirst oldSuffix
 
     ValidatedChainDiff chainDiff newForker = vChainDiff
 
@@ -1175,9 +1171,8 @@ chainSelection chainSelEnv rr chainDiffs =
         writeTVar varTentativeHeader SNothing
         writeTVar varTentativeState tentativeSt
         forTentativeFollowers $ \followerHandle -> do
-          let curTipPoint = castPoint $ AF.headPoint curChain
-              oldPoints = Set.singleton $ headerPoint tentativeHeader
-          fhSwitchFork followerHandle curTipPoint oldPoints
+          let oldSuffix = AF.Empty (AF.headAnchor curChain) AF.:> tentativeHeader
+          fhSwitchFork followerHandle oldSuffix
       traceWith pipeliningTracer $ TrapTentativeHeader tentativeHeader
      where
       forTentativeFollowers f = getTentativeFollowers >>= mapM_ f
