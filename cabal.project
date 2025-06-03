@@ -40,6 +40,11 @@ package ouroboros-network
   -- https://github.com/IntersectMBO/ouroboros-network/issues/4927 for context).
   flags: -txsubmission-delay
 
+-- We need to disable bitvec's SIMD for now, as it breaks during cross compilation.
+if os (windows)
+  constraints:
+    bitvec -simd
+
 if impl (ghc >= 9.12)
   allow-newer:
     -- Bounds will be relaxed in next release
