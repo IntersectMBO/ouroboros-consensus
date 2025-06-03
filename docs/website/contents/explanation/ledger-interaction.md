@@ -15,13 +15,29 @@ The [`ApplyBlock`](https://github.com/intersectmbo/ouroboros-consensus/blob/main
 
 The [`LedgerSupportsMempool`](https://github.com/intersectmbo/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/SupportsMempool.hs#L116) typeclass defines the essential interface that the Ledger layer provides to the Mempool. Its primary function is to enable the Mempool to validate individual transactions.
 
-The [`LedgerCfg`](https://github.com/intersectmbo/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Basics.hs#L127) type family defines the static environment or configuration required by a specific ledger implementation. It holds the fixed parameters and rules that govern a ledger's behavior. This configuration is passed to various ledger-related functions used throughout `ouroboros-consensus`. Different ledger eras require different static configurations. For instance, the duration of slots and the size (in slots) of epochs[^1], initial delegations or assignment of funds to addresses.
+The [`LedgerCfg`](https://github.com/intersectmbo/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Basics.hs#L127) type family defines the static environment or configuration required by a specific ledger implementation. It holds the fixed parameters and rules that govern a ledger's behavior. This configuration is passed to various ledger-related functions used throughout `ouroboros-consensus`. Different [ledger eras](TODO: link to some table that explains and summarizes them) require different static configurations. For instance, the duration of slots and the size (in slots) of epochs[^1], initial delegations or assignment of funds to addresses.
 
 The [`GetTip`](https://github.com/intersectmbo/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Basics.hs#L62) class requires that any ledger can report its tip as a `Point`. A `Point l` is either genesis or a pair of a hash and slot number, and it is parametric over the ledger type `l` to accommodate different hash types. This class is also required for the [ticked](#ticking) ledger state.
 
 The [`LedgerState`](https://github.com/intersectmbo/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Basics.hs#L244) data family defines the state of the ledger at a particular point in the chain and is associated with a specific block type (`blk`). The `LedgerState` encapsulates the accumulated effect of all applied blocks and time-based updates, essentially representing the summary needed to validate subsequent blocks and transactions.
 
 The `LedgerState` also provides a necessary projection of the state that the consensus protocol uses for tasks like leadership checks and header validation: the [`LedgerView`](https://github.com/intersectmbo/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs#L94).
+
+## Cardano Instances
+
+To instantiate the classes and types that define the interaction between `ouroboros-consensus` and the Cardano ledger, we rely on the [`cardano-ledger`](https://github.com/input-output-hk/cardano-ledger) packages. The sub-folder [`ouroboros-consensus-cardano`](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano) contains all the Cardano specific instantiations of the aforementioned classes and types.
+
+The Cardano chain contains block segments from [different eras](https://cardano-scaling.github.io/cardano-blueprint/consensus/index.html#the-consensus-protocol-in-cardano).
+The `cardano-ledger` packages offer an implementation of the ledger functionality for each of these eras.
+Each era implements the full Ouroboros Consensus ledger interface.
+The [Hard Fork Combinator](TODO: link to HFC/chain updates) (HFC) allows us to dispatch the era-specific implementations, depending on the era we need to use.
+
+Currently, we support two kinds of blocks in Cardano: Byron and Shelley-based.
+
+Shelley-based blocks, which include eras like Mary, Allegra, Alonzo, and Babbage, share part of their implementation. This shared aspect is facilitated by common APIs and classes defined within `cardano-ledger`, such as the `ShelleyBasedEra` class.
+
+In addition, each of these Shelley-based eras also implements details specific to their era. For instance, transactions (`GenTx`) and the logic for applying them (`applyTx`) or measuring their size (`TxMeasure`) can differ between eras.
+[Forecasting](#forecasting-and-the-forecast-range) ledger views might also have era-specific logic or parameters.
 
 ## Ticking
 
