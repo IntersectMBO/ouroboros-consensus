@@ -566,7 +566,7 @@ library unstable-cardano-tools
     directory,
     dot,
     filepath,
-    fs-api ^>=0.3,
+    fs-api ^>=0.4,
     githash,
     microlens,
     mtl,
