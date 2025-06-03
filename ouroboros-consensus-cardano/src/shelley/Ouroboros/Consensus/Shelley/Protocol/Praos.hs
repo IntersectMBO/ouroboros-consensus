@@ -7,7 +7,7 @@
 module Ouroboros.Consensus.Shelley.Protocol.Praos (PraosEnvelopeError (..)) where
 
 import qualified Cardano.Crypto.KES as KES
-import Cardano.Crypto.VRF (certifiedOutput)
+import Cardano.Crypto.VRF (certifiedOutput, mkTestOutputVRF)
 import Cardano.Ledger.BHeaderView
 import Cardano.Ledger.BaseTypes (ProtVer (ProtVer), Version)
 import Cardano.Ledger.Keys (hashKey)
@@ -26,6 +26,7 @@ import Ouroboros.Consensus.Protocol.Praos
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( MaxMajorProtVer (MaxMajorProtVer)
   )
+import Ouroboros.Consensus.Protocol.Praos.VRF (vrfLeaderValue)
 import Ouroboros.Consensus.Protocol.Praos.Header
   ( Header (..)
   , HeaderBody (..)
@@ -44,6 +45,8 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   , ShelleyProtocol
   , ShelleyProtocolHeader
   )
+import Cardano.Protocol.TPraos.BHeader (BoundedNatural (bvValue))
+import Data.Proxy (Proxy (..))
 
 type instance ProtoCrypto (Praos c) = c
 
@@ -184,12 +187,17 @@ instance PraosCrypto c => ProtocolHeaderSupportsProtocol (Praos c) where
   pHeaderIssuer = hbVk . headerBody
   pHeaderIssueNo = SL.ocertN . hbOCert . headerBody
 
-  -- This is the "unified" VRF value, prior to range extension which yields e.g.
-  -- the leader VRF value used for slot election.
-  --
-  -- In the future, we might want to use a dedicated range-extended VRF value
-  -- here instead.
-  pTieBreakVRFValue = certifiedOutput . hbVrfRes . headerBody
+  -- Use the leader VRF value derived via range extension.
+  -- This mirrors the behaviour of 'TPraos', giving a slight
+  -- advantage to smaller pools in slot battles.
+  -- See https://github.com/IntersectMBO/ouroboros-network/issues/4051
+  -- for the discussion around this tie breaker.
+  pTieBreakVRFValue =
+      mkTestOutputVRF
+    . bvValue
+    . vrfLeaderValue (Proxy @c)
+    . hbVrfRes
+    . headerBody
 
 instance PraosCrypto c => ProtocolHeaderSupportsLedger (Praos c) where
   mkHeaderView hdr@Header{headerBody} =
