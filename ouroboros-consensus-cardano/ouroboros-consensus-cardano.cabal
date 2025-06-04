@@ -23,6 +23,9 @@ extra-doc-files:
   CHANGELOG.md
   README.md
 
+data-files:
+  cddl/**/*.cddl
+
 source-repository head
   type: git
   location: https://github.com/IntersectMBO/ouroboros-consensus
