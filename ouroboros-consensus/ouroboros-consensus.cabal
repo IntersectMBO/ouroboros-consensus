@@ -407,6 +407,7 @@ library unstable-consensus-testlib
     Test.Util.SOP
     Test.Util.SanityCheck
     Test.Util.Schedule
+    Test.Util.Serialisation.CDDL
     Test.Util.Serialisation.Examples
     Test.Util.Serialisation.Golden
     Test.Util.Serialisation.Roundtrip
@@ -458,6 +459,7 @@ library unstable-consensus-testlib
     ouroboros-network-api,
     ouroboros-network-mock,
     pretty-simple,
+    process,
     quickcheck-instances,
     quickcheck-state-machine:no-vendored-treediff ^>=0.10,
     quiet,
@@ -476,6 +478,7 @@ library unstable-consensus-testlib
     tasty-quickcheck >=0.11,
     tasty-rerun,
     template-haskell,
+    temporary,
     text,
     time,
     transformers-base,
