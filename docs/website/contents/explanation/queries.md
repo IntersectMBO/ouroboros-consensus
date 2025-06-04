@@ -55,7 +55,7 @@ Custom implementations of the Cardano node client are free to bypass this check 
 
 Our code does not use the negotiated [`NodeToClientVersion`][n2c] directly, but translates them first to a [`CardanoNodeToClientVersion`][cardano-n2c] and then to [`ShelleyNodeToClientVersion`][shelley-n2c].
 
-- The [`querySupportedVersion`][query-supported-version] function assigns a [`ShelleyNodeToClientVersion`][shelley-n2c] to each Shelley-based query.
+- The [`querySupportedVersion`][query-supported-version] function assigns a [`ShelleyNodeToClientVersion`][shelley-n2c] to each Shelley-based query, indicating the minimum *Shelley* version that supports the query.
 - Each [`CardanoNodeToClientVersionX`][cardano-n2c] specifies the [`ShelleyNodeToClientVersion`][shelley-n2c] for each era, or indicates that a specific [era][feature-table] is not supported. As an example, consider
    ```haskell
    pattern CardanoNodeToClientVersion10 :: BlockNodeToClientVersion (CardanoBlock c)
@@ -74,7 +74,7 @@ Our code does not use the negotiated [`NodeToClientVersion`][n2c] directly, but 
    ```
    This tells us that in Shelley, Allegra, Mary, Alonzo and Babbage, we use `ShelleyNodeToClientVersion6`, and Conway is disabled. This means that no queries that were introduced in `ShelleyNodeToClientVersion7` can be used, and no queries in the Conway era are possible at all.
 
-   In order to reduce the number of possible version combinations, we currently follow the convention that all `ShelleyNodeToClientVersion`s in one `CardanoNodeToClientVersionX` are equal. This means that the developers of clients (like `cardano-api`, etc) can rely on the fact that once a `NodeToClient` version has been negotiated, all enabled Shelley-based eras support exactly the same queries.[^conway-queries] We might weaken this guarantee in the future, see [#864](https://github.com/IntersectMBO/ouroboros-consensus/issues/864).
+To reduce the number of possible version combinations, we currently follow the convention that all `ShelleyNodeToClientVersion`s in one `CardanoNodeToClientVersionX` are equal. This means that the developers of clients (like `cardano-api`, etc) can rely on the fact that once a `NodeToClient` version has been negotiated, all enabled Shelley-based eras support exactly the same queries.[^conway-queries] We might weaken this guarantee in the future, see [#864](https://github.com/IntersectMBO/ouroboros-consensus/issues/864).
 
 The mapping from `NodeToClientVersion`s to `CardanoNodeToClientVersion`s is [`supportedNodeToClientVersions`][supportedNodeToClientVersions]. Additionally, all versions larger than a certain `NodeToClientVersion` (see [`latestReleasedNodeVersion`][latestReleasedNodeVersion]) are considered experimental, which means that queries newly enabled by them can be added and changed at will, without compatibility guarantees. They are only offered in the version negotiation when a flag (currently, `ExperimentalProtocolsEnabled`) is set; also see [`limitToLatestReleasedVersion`][limitToLatestReleasedVersion] and its call/usage sites.
 
@@ -88,8 +88,8 @@ That same fundamental hypothetical of genuine chains with different block types 
 
 Each `ShelleyNodeToClientVersion` has a set of queries it supports. Assume the maximum version is $X$, and that it has queries $Q_0, \dots, Q_{n-1}$ associated to it. If no node was released that supports version $X$, ie `ShelleyNodeToClientVersionX`, we have a reasonable degree of certainty that no client will send any $Q_i$, $x \in [0, n - 1]$ to older nodes (since no such node was yet released). Therefore, if we add a new query $Q_n$ we can associate it to the unreleased version $X$ (`ShelleyNodeToClientVersionX`).
 
-On the other hand, the node that supports version `X` has been released, then we
-need to increase the maximum Shelley node-to-client version, by adding one more constructor to `ShelleyNodeToClientVersion`, which is defined in module [Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/NetworkProtocolVersion.hs). By adding this new version the node is able to detect if other Cardano clients that respect this versioning mechanism support said query.
+On the other hand, once the node that supports version `X` has been released, we need to increase the maximum Shelley node-to-client version, by adding one more constructor to `ShelleyNodeToClientVersion`, say `ShelleyNodeToClientVersionY`, which is defined in module [Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/NetworkProtocolVersion.hs).
+By adding this new version the node is able to detect if other Cardano clients that respect this versioning mechanism support said query.
 
 Henceforth, we call an unreleased version "experimental" (ie only used for demo purposes/specific to an unreleased era).
 
