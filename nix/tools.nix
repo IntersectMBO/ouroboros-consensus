@@ -38,6 +38,15 @@ in
 
   fourmolu = tool "fourmolu" "0.18.0.0" { };
 
+  cuddle = tool "cuddle" "git" {
+    src = final.fetchFromGitHub {
+      owner = "input-output-hk";
+      repo = "cuddle";
+      rev = "cuddle-0.5.0.0";
+      hash = "sha256-06a9N1IAh0kKW/xPu1qiLK22HpXyARnipA1YJxY4jOQ=";
+    };
+  };
+
   haskellBuildUtils = prev.haskellBuildUtils.override {
     inherit (final.hsPkgs.args) compiler-nix-name;
     index-state = tool-index-state;
