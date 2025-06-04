@@ -55,6 +55,17 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Clone Blueprints
+      uses: actions/checkout@v4
+      with:
+        repository: 'cardano-scaling/cardano-blueprint'
+        path: 'blueprints'
+
+    - name: Check CDDLs up-to-date with Blueprints
+      continue-on-error: true
+      run: |
+        ./scripts/ci/diff-cddls.sh
+
     - name: Install base libraries
       uses: input-output-hk/actions/base@latest
       with:
