@@ -23,7 +23,8 @@ const sidebars = {
       label: 'Explanation',
       items: ['explanation/index',
 	      'explanation/design-goals',
-	      'explanation/ledger-interaction'
+	      'explanation/ledger-interaction',
+	      'explanation/queries'
 	     ]
     }
   ],
