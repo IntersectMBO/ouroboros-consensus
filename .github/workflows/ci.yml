@@ -55,12 +55,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Clone Blueprints
-      uses: actions/checkout@v4
-      with:
-        repository: 'cardano-scaling/cardano-blueprint'
-        path: 'blueprints'
-
     - name: Check CDDLs up-to-date with Blueprints
       continue-on-error: true
       run: |
@@ -148,6 +142,13 @@ jobs:
 
     - name: Build projects [build]
       run: cabal build all -j
+
+    - name: Install cddl tools
+      run: |
+        export GEM_HOME="$HOME/.gem"
+        gem install cddlc
+        echo "PATH=$HOME/.gem/bin:$PATH" >> $GITHUB_ENV
+        cabal install cuddle-0.5.0.0
 
     - name: Test
       if: matrix.test-set == 'all'
