@@ -1,10 +1,12 @@
 #!/bin/bash
 
+git clone git@github.com:cardano-scaling/cardano-blueprint
+
 check_diff () {
-    diff "ouroboros-consensus-cardano/cddl/node-to-node/$1" "blueprints/src/network/node-to-node/$1"
+    diff "ouroboros-consensus-cardano/cddl/node-to-node/$1" "cardano-blueprint/src/network/node-to-node/$1"
     if [ $? -ne 0 ]
     then
-        echo "::warning ouroboros-consensus-cardano/cddl/node-to-node/$1 differs from blueprints/src/network/node-to-node/$1"
+        echo "::warning ouroboros-consensus-cardano/cddl/node-to-node/$1 differs from cardano-blueprint/src/network/node-to-node/$1"
     else
         echo "$1 OK"
     fi
