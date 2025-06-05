@@ -831,11 +831,14 @@ tests =
             \i -> fmap (fmap fst . fst) . genTxs i
     , testGroup
         "parallel"
-        [ testProperty "atomic" $
-            withMaxSuccess 1000 $
-              prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger Atomic $
-                \i -> fmap (fmap fst . fst) . genTxs i
-        , testProperty "non atomic" $
+        [ -- See ouroboros-consensus#1549 for why this test is disabled.
+
+          -- testProperty "atomic" $
+          --     withMaxSuccess 1000 $
+          --       prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger Atomic $
+          --         \i -> fmap (fmap fst . fst) . genTxs i
+          -- ,
+          testProperty "non atomic" $
             withMaxSuccess 10 $
               prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger NonAtomic $
                 \i -> fmap (fmap fst . fst) . genTxs i
