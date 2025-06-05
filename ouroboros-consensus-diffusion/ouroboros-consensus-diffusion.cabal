@@ -60,7 +60,6 @@ library
     Ouroboros.Consensus.Node
     Ouroboros.Consensus.Node.DbLock
     Ouroboros.Consensus.Node.DbMarker
-    Ouroboros.Consensus.Node.ErrorPolicy
     Ouroboros.Consensus.Node.Exit
     Ouroboros.Consensus.Node.ExitPolicy
     Ouroboros.Consensus.Node.GSM
@@ -83,7 +82,6 @@ library
     containers >=0.5 && <0.8,
     contra-tracer,
     deepseq,
-    dns,
     filepath,
     fs-api ^>=0.3,
     hashable,
@@ -91,7 +89,7 @@ library
     mtl,
     network-mux ^>=0.8,
     ouroboros-consensus ^>=0.27,
-    ouroboros-network ^>=0.21,
+    ouroboros-network:{cardano-diffusion,ouroboros-network} ^>=0.21,
     ouroboros-network-api ^>=0.14,
     ouroboros-network-framework ^>=0.18,
     ouroboros-network-protocols ^>=0.14,
