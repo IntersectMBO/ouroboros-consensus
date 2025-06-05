@@ -198,7 +198,7 @@ load config@Config{inpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), pa
       pure (forgetLedgerTables st, projectLedgerTables st)
     Mem -> do
       checkSnapshotFileStructure Mem path fs
-      (ls, _) <- withExceptT SnapshotError $ V2.loadSnapshot rr ccfg fs ds
+      (ls, _) <- withExceptT SnapshotError $ V2.loadSnapshot nullTracer rr ccfg fs ds
       let h = V2.currentHandle ls
       (V2.state h,) <$> Trans.lift (V2.readAll (V2.tables h))
     LMDB -> do
@@ -237,7 +237,7 @@ store config@Config{outpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), 
       withFile hasFS (path <.> "checksum") (WriteMode MustBeNew) $ \h ->
         Monad.void $ hPutAll hasFS h . BS.toLazyByteString . BS.word32HexFixed $ getCRC crc
     Mem -> do
-      lseq <- V2.empty state tbs $ V2.newInMemoryLedgerTablesHandle fs
+      lseq <- V2.empty state tbs $ V2.newInMemoryLedgerTablesHandle nullTracer fs
       let h = V2.currentHandle lseq
       Monad.void $ V2.takeSnapshot ccfg nullTracer fs suffix h
     LMDB -> do
