@@ -302,6 +302,9 @@ data TestInternals m l blk = TestInternals
   , reapplyThenPushNOW :: blk -> m ()
   , truncateSnapshots :: m ()
   , closeLedgerDB :: m ()
+  , getNumLedgerTablesHandles :: m Word64
+  -- ^ Get the number of referenced 'LedgerTablesHandle's for V2. For V1, this
+  -- always returns 0.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "TestInternals" (TestInternals m l blk)
 

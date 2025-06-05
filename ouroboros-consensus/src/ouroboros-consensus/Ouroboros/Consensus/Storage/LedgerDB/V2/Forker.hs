@@ -143,7 +143,7 @@ implForkerCommit env = do
   LedgerSeq lseq <- readTVar foeLedgerSeq
   let intersectionSlot = getTipSlot $ state $ AS.anchor lseq
   let predicate = (== getTipHash (state (AS.anchor lseq))) . getTipHash . state
-  (discardedBySelection, LedgerSeq discardedByPruning) <- do
+  closeDiscarded <- do
     stateTVar
       foeSwitchVar
       ( \(LedgerSeq olddb) -> fromMaybe theImpossible $ do
@@ -153,17 +153,25 @@ implForkerCommit env = do
           -- Join the prefix of the selection with the sequence in the forker
           newdb <- AS.join (const $ const True) olddb' lseq
           -- Prune the resulting sequence to keep @k@ states
-          let (l, s) = prune (LedgerDbPruneKeeping (foeSecurityParam env)) (LedgerSeq newdb)
-          pure ((toClose, l), s)
+          let (closePruned, s) = prune (LedgerDbPruneKeeping (foeSecurityParam env)) (LedgerSeq newdb)
+              closeDiscarded = do
+                closePruned
+                -- Do /not/ close the anchor of @toClose@, as that is also the
+                -- tip of @olddb'@ which will be used in @newdb@.
+                case toClose of
+                  AS.Empty _ -> pure ()
+                  _ AS.:< closeOld' -> closeLedgerSeq (LedgerSeq closeOld')
+                -- Finally, close the anchor of @lseq@ (which is a duplicate of
+                -- the head of @olddb'@).
+                close $ tables $ AS.anchor lseq
+          pure (closeDiscarded, s)
       )
 
   -- We are discarding the previous value in the TVar because we had accumulated
   -- actions for closing the states pushed to the forker. As we are committing
   -- those we have to close the ones discarded in this function and forget about
   -- those releasing actions.
-  writeTVar foeResourcesToRelease $
-    mapM_ (close . tables) $
-      AS.toOldestFirst discardedBySelection ++ AS.toOldestFirst discardedByPruning
+  writeTVar foeResourcesToRelease closeDiscarded
  where
   ForkerEnv
     { foeLedgerSeq
