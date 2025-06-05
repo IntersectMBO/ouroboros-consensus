@@ -279,7 +279,9 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     let testing =
           Internal
             { intCopyToImmutableDB = getEnv h (withFuse copyTestFuse . Background.copyToImmutableDB)
-            , intGarbageCollect = getEnv1 h Background.garbageCollect
+            , intGarbageCollect = \slot -> getEnv h $ \e -> do
+                Background.garbageCollectBlocks e slot
+                LedgerDB.garbageCollect (cdbLedgerDB e) slot
             , intTryTakeSnapshot = getEnv h $ \env' ->
                 void $ LedgerDB.tryTakeSnapshot (cdbLedgerDB env') Nothing maxBound
             , intAddBlockRunner = getEnv h (Background.addBlockRunner addBlockTestFuse)
