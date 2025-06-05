@@ -14,7 +14,7 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2025-06-03T21:29:34Z
+  , hackage.haskell.org 2025-06-17T07:53:04Z
   -- Bump this if you need newer packages from CHaP
   , cardano-haskell-packages 2025-06-03T13:42:38Z
 
@@ -59,14 +59,6 @@ if impl (ghc >= 9.12)
 
 source-repository-package
    type: git
-   location: https://github.com/IntersectMBO/ouroboros-network
-   tag: 3e8d3b4b8c87ead794876c62d7fe25f32efb5142
-   --sha256: 08fpkx3iagj83nn413h9a865zjcj3lrf7017a756qd2wg2jg3amq
-   subdir:
-     ouroboros-network-api
-
-source-repository-package
-   type: git
    location: https://github.com/IntersectMBO/cardano-ledger
    tag: b44ce911475794a15f908ad27a6f497d6a27e8ba
    --sha256: sha256-MXaVKKH9siUsmOnJmYyL6if48dx11zugux7AWGPABfA=
@@ -97,3 +89,25 @@ source-repository-package
       libs/set-algebra
       libs/small-steps
       libs/vector-map
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/ouroboros-network
+  tag: dd45510b6c5a935e0f330d7b180800a27ebe2fd8
+  --sha256: sha256-Xk+DbtqQwadtmRoZNVzDUWM8tnV+RECXYRe74IOkL0s=
+  subdir: 
+          network-mux
+          ouroboros-network
+          ouroboros-network-api
+          ouroboros-network-framework
+          ouroboros-network-mock
+          ouroboros-network-protocols
+          ouroboros-network-testing
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/fs-sim
+  tag: ee0b75bee5bcd426cfc5433b6c69c67fe6319c1b
+  --sha256: 0ss4n302khl13fj5f4l6cxfj5vn558s2wk533ikmxhgigf9qas0q
+  subdir: fs-api
+          fs-sim
