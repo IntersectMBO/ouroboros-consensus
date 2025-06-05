@@ -64,3 +64,17 @@ if impl (ghc >= 9.12)
 
     -- https://github.com/kapralVV/Unique/issues/11
     , Unique:hashable
+
+source-repository-package
+  type: git
+  location: git@github.com:IntersectMBO/ouroboros-network
+  tag: 99e727838ba3bde946db56d6b9b826bcf1bc1669
+  --sha256: sha256-ddsN0WLXhq+mScCekb9rKJBpnMOo6rVEh3kLUioT87s=
+  subdir: 
+          network-mux
+          ouroboros-network
+          ouroboros-network-api
+          ouroboros-network-framework
+          ouroboros-network-mock
+          ouroboros-network-protocols
+          ouroboros-network-testing

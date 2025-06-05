@@ -5,7 +5,6 @@ module Ouroboros.Consensus.Ledger.SupportsPeerSelection
   , stakePoolRelayAccessPoint
 
     -- * Re-exports for convenience
-  , DomainAccessPoint (..)
   , IP (..)
   , PortNumber
   , RelayAccessPoint (..)
@@ -18,8 +17,7 @@ import Ouroboros.Network.PeerSelection.LedgerPeers.Type
   ( PoolStake (..)
   )
 import Ouroboros.Network.PeerSelection.RelayAccessPoint
-  ( DomainAccessPoint (..)
-  , IP (..)
+  ( IP (..)
   , PortNumber
   , RelayAccessPoint (..)
   )

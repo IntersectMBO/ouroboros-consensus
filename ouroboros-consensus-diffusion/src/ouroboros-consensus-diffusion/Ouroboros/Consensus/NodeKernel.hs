@@ -24,6 +24,7 @@ module Ouroboros.Consensus.NodeKernel
   , getPeersFromCurrentLedger
   , getPeersFromCurrentLedgerAfterSlot
   , initNodeKernel
+  , toConsensusMode
   ) where
 
 import Cardano.Network.ConsensusMode (ConsensusMode (..))
@@ -482,11 +483,11 @@ initInternalState
     peerSharingRegistry <- newPeerSharingRegistry
 
     return IS{..}
-   where
-    toConsensusMode :: forall a. LoEAndGDDConfig a -> ConsensusMode
-    toConsensusMode = \case
-      LoEAndGDDDisabled -> PraosMode
-      LoEAndGDDEnabled _ -> GenesisMode
+
+toConsensusMode :: forall a. LoEAndGDDConfig a -> ConsensusMode
+toConsensusMode = \case
+  LoEAndGDDDisabled -> PraosMode
+  LoEAndGDDEnabled _ -> GenesisMode
 
 forkBlockForging ::
   forall m addrNTN addrNTC blk.
