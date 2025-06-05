@@ -96,7 +96,11 @@ newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l = do
   pure
     LedgerTablesHandle
       { close = do
-          atomically $ writeTVar tv LedgerTablesHandleClosed
+          -- Temporarily a no-op until
+          -- https://github.com/IntersectMBO/ouroboros-consensus/issues/1551 has
+          -- been fixed.
+
+          -- atomically $ writeTVar tv LedgerTablesHandleClosed
           traceWith tracer V2.TraceLedgerTablesHandleClose
       , duplicate = do
           hs <- readTVarIO tv
