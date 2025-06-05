@@ -99,9 +99,25 @@ The supported query versions are only enforced in the [Shelley query encoder][sh
 
 As an example, consider a query $Q$ that is enabled after version $x$, and consider a connection between a client and a node that negotiated version $y$. If $y < x$, then the client will throw an exception before sending $Q$ as the negotiated version is too old, so the server probably won't understand the query. But if the server does actually understand the query, and the client uses a custom implementation that does not perform the check on $x$ and $y$, then the server will reply as normal despite $y < x$.
 
+### Serialization
+
+Queries and their results need to be sent between the client and the node over the network.
+Therefore, they must be converted into a binary format for transmission (serialized and deserialized).
+
+The chosen format for serialization is CBOR (Concise Binary Object Representation). Within the codebase, this is handled by specific type classes and functions. Since local state queries are part of the node-to-client protocol, the relevant serialization abstraction is [`SerialiseNodeToClient`](https://github.com/intersectmbo/ouroboros-consensus/blob/a6883883b42ebc90de5b012c3bfe4d6010599625/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Node/Serialisation.hs#L81):
+
+- **Encoding queries**: The [`queryEncodeNodeToClient`](https://github.com/intersectmbo/ouroboros-consensus/blob/a6883883b42ebc90de5b012c3bfe4d6010599625/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Query.hs#L409) function is used to serialize a query before sending it.
+- **Decoding queries**: The [`queryDecodeNodeToClient`](https://github.com/intersectmbo/ouroboros-consensus/blob/a6883883b42ebc90de5b012c3bfe4d6010599625/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Query.hs#L468) function is used to deserialize incoming query data.
+- **Encoding results**: The [`encodeResult`](https://github.com/intersectmbo/ouroboros-consensus/blob/a6883883b42ebc90de5b012c3bfe4d6010599625/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Node/Serialisation.hs#L108) function serializes the response to a query.
+- **Decoding results**: The [`decodeResult`](https://github.com/intersectmbo/ouroboros-consensus/blob/a6883883b42ebc90de5b012c3bfe4d6010599625/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Node/Serialisation.hs#L115) function deserializes the query response.
+
+Block-specific queries (`BlockQuery blk footprint result`) are serialized within this framework using their corresponding encoding/decoding instances (e.g., [`encodeShelleyQuery`](https://github.com/intersectmbo/ouroboros-consensus/blob/a6883883b42ebc90de5b012c3bfe4d6010599625/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/Query.hs#L813), [`decodeShelleyQuery`](https://github.com/intersectmbo/ouroboros-consensus/blob/a6883883b42ebc90de5b012c3bfe4d6010599625/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/Query.hs#L895) for `ShelleyBlock`).
+
+Serialization is [version dependent](https://github.com/IntersectMBO/ouroboros-consensus/pull/95). Encoding and decoding functions take a `BlockNodeToClientVersion blk` parameter, which allow us to dispatch version specific codecs. For instance, see how function [`decodeShelleyResult`][decodeShelleyResult] uses `ShelleyNodeToClientVersion`
+
 ### On newly added golden files
 
-When adding a new `ShelleyNodeToClientVersion` or a new `CardanoNodeToClientVersions` new golden files will be generated. Because serialization is [version dependent](https://github.com/IntersectMBO/ouroboros-consensus/pull/95), a new `ShelleyNodeToClientVersion` could also introduce a different serialization. See how function [`decodeShelleyResult`][decodeShelleyResult] uses `ShelleyNodeToClientVersion`. Therefore we have to test the serialization for the new versions.
+When adding a new `ShelleyNodeToClientVersion` or a new `CardanoNodeToClientVersions` new golden files will be generated. Because serialization is version dependent, a new `ShelleyNodeToClientVersion` could also introduce a different serialization. Therefore we have to test the serialization for the new versions.
 
 The golden tests only generate golden files for queries that have examples. So if a newly added query does not have an example, no golden files will be generated for it.
 
