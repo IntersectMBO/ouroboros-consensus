@@ -55,7 +55,7 @@ Custom implementations of the Cardano node client are free to bypass this check 
 
 Our code does not use the negotiated [`NodeToClientVersion`][n2c] directly, but translates them first to a [`CardanoNodeToClientVersion`][cardano-n2c] and then to [`ShelleyNodeToClientVersion`][shelley-n2c].
 
-- The [`querySupportedVersion`][query-supported-version] function assigns a [`ShelleyNodeToClientVersion`][shelley-n2c] to each Shelley-based query, indicating the minimum *Shelley* version that supports the query.
+- The [`querySupportedVersions`][query-supported-versions] returns the [NodeToClientVersion][n2c]s that support the given query.
 - Each [`CardanoNodeToClientVersionX`][cardano-n2c] specifies the [`ShelleyNodeToClientVersion`][shelley-n2c] for each era, or indicates that a specific [era][feature-table] is not supported. As an example, consider
    ```haskell
    pattern CardanoNodeToClientVersion10 :: BlockNodeToClientVersion (CardanoBlock c)
@@ -109,7 +109,8 @@ The golden tests only generate golden files for queries that have examples. So i
 [network-spec]: https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec/network-spec.pdf
 [shelley-n2c]: https://github.com/IntersectMBO/ouroboros-consensus/blob/35e444f1440cef34e0989519f025231241397674/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/NetworkProtocolVersion.hs#L17
 [cardano-n2c]: https://github.com/IntersectMBO/ouroboros-consensus/blob/35e444f1440cef34e0989519f025231241397674/ouroboros-consensus-cardano/src/ouroboros-consensus-cardano/Ouroboros/Consensus/Cardano/Node.hs#L341-L527
-[query-supported-version]: https://github.com/IntersectMBO/ouroboros-consensus/blob/35e444f1440cef34e0989519f025231241397674/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/Query.hs#L537-L574
+[query-supported-versions]:
+https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Query.hs#L343
 [feature-table]: https://github.com/cardano-foundation/CIPs/blob/master/CIP-0059/feature-table.md
 [supportedNodeToClientVersions]: https://github.com/IntersectMBO/ouroboros-consensus/blob/35e444f1440cef34e0989519f025231241397674/ouroboros-consensus-cardano/src/ouroboros-consensus-cardano/Ouroboros/Consensus/Cardano/Node.hs#L540
 [latestReleasedNodeVersion]: https://github.com/IntersectMBO/ouroboros-consensus/blob/35e444f1440cef34e0989519f025231241397674/ouroboros-consensus-cardano/src/ouroboros-consensus-cardano/Ouroboros/Consensus/Cardano/Node.hs#L551
