@@ -229,6 +229,11 @@ copyToImmutableDB CDB{..} = electric $ do
 -- GC can happen, when we restart the node and schedule the /next/ GC, it will
 -- /imply/ any previously scheduled GC, since GC is driven by slot number
 -- ("garbage collect anything older than @x@").
+--
+-- Also garbage-collects the LedgerDB (instead of as part of the scheduled GC),
+-- as this is a cheap operation, and we reduce the heap size this way by pruning
+-- (the 'DbChangelog' in V1, or the 'LedgerSeq' in V2) earlier than we otherwise
+-- would.
 copyAndSnapshotRunner ::
   forall m blk.
   ( IOLike m
@@ -265,8 +270,12 @@ copyAndSnapshotRunner cdb@CDB{..} gcSchedule replayed fuse = do
     --
     -- This is a synchronous operation: when it returns, the blocks have been
     -- copied to disk (though not flushed, necessarily).
-    withFuse fuse (copyToImmutableDB cdb) >>= scheduleGC'
+    gcSlotNo <- withFuse fuse (copyToImmutableDB cdb)
+    scheduleGC' gcSlotNo
 
+    -- See the Haddocks above as for why we garbage-collect the LedgerDB already
+    -- here (instead of as part of the scheduled GC).
+    whenJust (withOriginToMaybe gcSlotNo) $ LedgerDB.garbageCollect cdbLedgerDB
     LedgerDB.tryFlush cdbLedgerDB
 
     now <- getMonotonicTime
@@ -293,9 +302,6 @@ copyAndSnapshotRunner cdb@CDB{..} gcSchedule replayed fuse = do
 -- | Trigger a garbage collection for blocks older than the given 'SlotNo' on
 -- the VolatileDB.
 --
--- Also removes the corresponding cached "previously applied points" from the
--- LedgerDB.
---
 -- This is thread-safe as the VolatileDB locks itself while performing a GC.
 --
 -- When calling this function it is __critical__ that the blocks that will be
@@ -309,7 +315,6 @@ garbageCollect :: forall m blk. IOLike m => ChainDbEnv m blk -> SlotNo -> m ()
 garbageCollect CDB{..} slotNo = do
   VolatileDB.garbageCollect cdbVolatileDB slotNo
   atomically $ do
-    LedgerDB.garbageCollect cdbLedgerDB slotNo
     modifyTVar cdbInvalid $ fmap $ Map.filter ((>= slotNo) . invalidBlockSlotNo)
   traceWith cdbTracer $ TraceGCEvent $ PerformedGC slotNo
 
