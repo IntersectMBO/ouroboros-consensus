@@ -37,7 +37,9 @@ const sidebars = {
   howtos: [
     { type: 'category',
       label: 'HOWTOs',
-      items: ['howtos/index']
+      items: ['howtos/index',
+	      'howtos/how-to-version-a-new-query'
+	     ]
     }
   ],
   reference: [
