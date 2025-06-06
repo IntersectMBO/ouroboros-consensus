@@ -18,10 +18,7 @@ hsPkgs.shellFor {
     pkgs.fourmolu
 
     # release management
-    (pkgs.scriv.overridePythonAttrs (_oldAttrs: {
-      # Already fixed upstream: https://github.com/NixOS/nixpkgs/pull/407167
-      doCheck = false;
-    }))
+    pkgs.scriv
     (pkgs.python3.withPackages (p: [ p.beautifulsoup4 p.html5lib p.matplotlib p.pandas ]))
   ];
 
