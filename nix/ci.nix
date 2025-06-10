@@ -50,8 +50,7 @@ let
     };
   } // lib.optionalAttrs (buildSystem == "x86_64-linux") {
     windows = {
-      # https://github.com/input-output-hk/haskell.nix/issues/2361
-      haskell912 = mkHaskellJobsFor pkgs.hsPkgs.projectCross.ucrt64.projectVariants.ghc912;
+      haskell96 = mkHaskellJobsFor pkgs.hsPkgs.projectCross.ucrt64;
     };
   });
 
