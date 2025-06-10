@@ -368,13 +368,17 @@ implTryTakeSnapshot ::
 implTryTakeSnapshot bss env mTime nrBlocks =
   if onDiskShouldTakeSnapshot (ldbSnapshotPolicy env) (uncurry (flip diffTime) <$> mTime) nrBlocks
     then do
-      Monad.void
-        . takeSnapshot
-          (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
-          (LedgerDBSnapshotEvent >$< ldbTracer env)
-          (ldbHasFS env)
-        . anchorHandle
-        =<< readTVarIO (ldbSeq env)
+      let getStateRef =
+            RAWLock.withReadAccess (ldbOpenHandlesLock env) $ \LDBLock -> do
+              stateRef <- anchorHandle <$> readTVarIO (ldbSeq env)
+              tables' <- duplicate $ tables stateRef
+              pure stateRef{tables = tables'}
+      bracket getStateRef (close . tables) $
+        Monad.void
+          . takeSnapshot
+            (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
+            (LedgerDBSnapshotEvent >$< ldbTracer env)
+            (ldbHasFS env)
       Monad.void $
         trimSnapshots
           (LedgerDBSnapshotEvent >$< ldbTracer env)
