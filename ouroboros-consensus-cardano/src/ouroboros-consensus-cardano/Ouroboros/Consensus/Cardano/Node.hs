@@ -391,6 +391,9 @@ instance
       , (NodeToClientV_21, CardanoNodeToClientVersion17)
       ]
 
+  -- This is not set to NodeToClientV_21 on purpose because that one is just a
+  -- stub. Once we have a proper ouroboros-network to integrate that comes with
+  -- said version and we remove the SRP then we can bump this value.
   latestReleasedNodeVersion _prx = (Just NodeToNodeV_14, Just NodeToClientV_20)
 
 {-------------------------------------------------------------------------------
