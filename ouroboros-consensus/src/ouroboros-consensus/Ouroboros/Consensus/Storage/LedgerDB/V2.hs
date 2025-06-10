@@ -458,6 +458,19 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   , ldbResolveBlock :: !(ResolveBlock m blk)
   , ldbQueryBatchSize :: !QueryBatchSize
   , ldbOpenHandlesLock :: !(RAWLock m LDBLock)
+  -- ^ While holding a read lock (at least), all handles in the 'ldbSeq' are
+  -- guaranteed to be open. During this time, the handle can be duplicated and
+  -- then be used independently, see 'getStateRef' and 'withStateRef'.
+  --
+  -- Therefore, closing any handles which were previously in 'ldbSeq' requires
+  -- acquiring a write lock. Concretely, both of the following approaches are
+  -- fine:
+  --
+  --  * Modify 'ldbSeq' without any locking, and then close the removed handles
+  --    while holding a write lock. See e.g. 'closeForkerEnv'.
+  --
+  --  * Modify 'ldbSeq' while holding a write lock, and then close the removed
+  --    handles without any locking.
   }
   deriving Generic
 
