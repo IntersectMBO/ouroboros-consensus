@@ -196,19 +196,17 @@ mkInternals ::
 mkInternals bss h =
   TestInternals
     { takeSnapshotNOW = \whereTo suff -> getEnv h $ \env -> do
-        st <-
-          ( case whereTo of
+        let selectWhereTo = case whereTo of
               TakeAtImmutableTip -> anchorHandle
               TakeAtVolatileTip -> currentHandle
-          )
-            <$> readTVarIO (ldbSeq env)
-        Monad.void $
-          takeSnapshot
-            (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
-            (LedgerDBSnapshotEvent >$< ldbTracer env)
-            (ldbHasFS env)
-            suff
-            st
+        withStateRef env (MkSolo . selectWhereTo) $ \(MkSolo st) ->
+          Monad.void $
+            takeSnapshot
+              (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
+              (LedgerDBSnapshotEvent >$< ldbTracer env)
+              (ldbHasFS env)
+              suff
+              st
     , push = \st -> withRegistry $ \reg -> do
         eFrk <- newForkerAtTarget h reg VolatileTip
         case eFrk of
