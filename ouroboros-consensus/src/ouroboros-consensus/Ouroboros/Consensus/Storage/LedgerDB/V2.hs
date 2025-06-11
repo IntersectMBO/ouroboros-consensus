@@ -24,6 +24,7 @@ import Control.RAWLock
 import qualified Control.RAWLock as RAWLock
 import Control.ResourceRegistry
 import Control.Tracer
+import Data.Foldable (traverse_)
 import qualified Data.Foldable as Foldable
 import Data.Functor.Contravariant ((>$<))
 import Data.Kind (Type)
@@ -31,6 +32,8 @@ import Data.Map (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Traversable (for)
+import Data.Tuple (Solo (..))
 import Data.Void
 import Data.Word
 import GHC.Generics
@@ -193,19 +196,17 @@ mkInternals ::
 mkInternals bss h =
   TestInternals
     { takeSnapshotNOW = \whereTo suff -> getEnv h $ \env -> do
-        st <-
-          ( case whereTo of
+        let selectWhereTo = case whereTo of
               TakeAtImmutableTip -> anchorHandle
               TakeAtVolatileTip -> currentHandle
-          )
-            <$> readTVarIO (ldbSeq env)
-        Monad.void $
-          takeSnapshot
-            (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
-            (LedgerDBSnapshotEvent >$< ldbTracer env)
-            (ldbHasFS env)
-            suff
-            st
+        withStateRef env (MkSolo . selectWhereTo) $ \(MkSolo st) ->
+          Monad.void $
+            takeSnapshot
+              (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
+              (LedgerDBSnapshotEvent >$< ldbTracer env)
+              (ldbHasFS env)
+              suff
+              st
     , push = \st -> withRegistry $ \reg -> do
         eFrk <- newForkerAtTarget h reg VolatileTip
         case eFrk of
@@ -368,13 +369,13 @@ implTryTakeSnapshot ::
 implTryTakeSnapshot bss env mTime nrBlocks =
   if onDiskShouldTakeSnapshot (ldbSnapshotPolicy env) (uncurry (flip diffTime) <$> mTime) nrBlocks
     then do
-      Monad.void
-        . takeSnapshot
-          (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
-          (LedgerDBSnapshotEvent >$< ldbTracer env)
-          (ldbHasFS env)
-        . anchorHandle
-        =<< readTVarIO (ldbSeq env)
+      withStateRef env (MkSolo . anchorHandle) $ \(MkSolo st) ->
+        Monad.void $
+          takeSnapshot
+            (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
+            (LedgerDBSnapshotEvent >$< ldbTracer env)
+            (ldbHasFS env)
+            st
       Monad.void $
         trimSnapshots
           (LedgerDBSnapshotEvent >$< ldbTracer env)
@@ -457,6 +458,19 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   , ldbResolveBlock :: !(ResolveBlock m blk)
   , ldbQueryBatchSize :: !QueryBatchSize
   , ldbOpenHandlesLock :: !(RAWLock m LDBLock)
+  -- ^ While holding a read lock (at least), all handles in the 'ldbSeq' are
+  -- guaranteed to be open. During this time, the handle can be duplicated and
+  -- then be used independently, see 'getStateRef' and 'withStateRef'.
+  --
+  -- Therefore, closing any handles which were previously in 'ldbSeq' requires
+  -- acquiring a write lock. Concretely, both of the following approaches are
+  -- fine:
+  --
+  --  * Modify 'ldbSeq' without any locking, and then close the removed handles
+  --    while holding a write lock. See e.g. 'closeForkerEnv'.
+  --
+  --  * Modify 'ldbSeq' while holding a write lock, and then close the removed
+  --    handles without any locking.
   }
   deriving Generic
 
@@ -546,8 +560,36 @@ getEnvSTM (LDBHandle varState) f =
   Acquiring consistent views
 -------------------------------------------------------------------------------}
 
--- | This function must hold the 'LDBLock' such that handles are not released
--- before they are duplicated.
+-- | Get a 'StateRef' from the 'LedgerSeq' in the 'LedgerDBEnv', with the
+-- 'LedgerTablesHandle' having been duplicated (such that the original can be
+-- closed). The caller is responsible for closing the handle.
+--
+-- For more flexibility, an arbitrary 'Traversable' of the 'StateRef' can be
+-- returned; for the simple use case of getting a single 'StateRef', use @t ~
+-- 'Solo'@.
+getStateRef ::
+  (IOLike m, Traversable t) =>
+  LedgerDBEnv m l blk ->
+  (LedgerSeq m l -> t (StateRef m l)) ->
+  m (t (StateRef m l))
+getStateRef ldbEnv project =
+  RAWLock.withReadAccess (ldbOpenHandlesLock ldbEnv) $ \LDBLock -> do
+    tst <- project <$> readTVarIO (ldbSeq ldbEnv)
+    for tst $ \st -> do
+      tables' <- duplicate $ tables st
+      pure st{tables = tables'}
+
+-- | Like 'StateRef', but takes care of closing the handle when the given action
+-- returns or errors.
+withStateRef ::
+  (IOLike m, Traversable t) =>
+  LedgerDBEnv m l blk ->
+  (LedgerSeq m l -> t (StateRef m l)) ->
+  (t (StateRef m l) -> m a) ->
+  m a
+withStateRef ldbEnv project =
+  bracket (getStateRef ldbEnv project) (traverse_ (close . tables))
+
 acquireAtTarget ::
   ( HeaderHash l ~ HeaderHash blk
   , IOLike m
@@ -557,41 +599,28 @@ acquireAtTarget ::
   ) =>
   LedgerDBEnv m l blk ->
   Either Word64 (Target (Point blk)) ->
-  LDBLock ->
   m (Either GetForkerError (StateRef m l))
-acquireAtTarget ldbEnv (Right VolatileTip) _ = do
-  l <- readTVarIO (ldbSeq ldbEnv)
-  let StateRef st tbs = currentHandle l
-  t <- duplicate tbs
-  pure $ Right $ StateRef st t
-acquireAtTarget ldbEnv (Right ImmutableTip) _ = do
-  l <- readTVarIO (ldbSeq ldbEnv)
-  let StateRef st tbs = anchorHandle l
-  t <- duplicate tbs
-  pure $ Right $ StateRef st t
-acquireAtTarget ldbEnv (Right (SpecificPoint pt)) _ = do
-  dblog <- readTVarIO (ldbSeq ldbEnv)
-  let immTip = getTip $ anchor dblog
-  case currentHandle <$> rollback pt dblog of
-    Nothing
-      | pointSlot pt < pointSlot immTip -> pure $ Left $ PointTooOld Nothing
-      | otherwise -> pure $ Left PointNotOnChain
-    Just (StateRef st tbs) ->
-      Right . StateRef st <$> duplicate tbs
-acquireAtTarget ldbEnv (Left n) _ = do
-  dblog <- readTVarIO (ldbSeq ldbEnv)
-  case currentHandle <$> rollbackN n dblog of
-    Nothing ->
-      return $
-        Left $
+acquireAtTarget ldbEnv target =
+  getStateRef ldbEnv $ \l -> case target of
+    Right VolatileTip -> pure $ currentHandle l
+    Right ImmutableTip -> pure $ anchorHandle l
+    Right (SpecificPoint pt) -> do
+      let immTip = getTip $ anchor l
+      case rollback pt l of
+        Nothing
+          | pointSlot pt < pointSlot immTip -> throwError $ PointTooOld Nothing
+          | otherwise -> throwError PointNotOnChain
+        Just t' -> pure $ currentHandle t'
+    Left n -> case rollbackN n l of
+      Nothing ->
+        throwError $
           PointTooOld $
-            Just $
+            Just
               ExceededRollback
-                { rollbackMaximum = maxRollback dblog
+                { rollbackMaximum = maxRollback l
                 , rollbackRequested = n
                 }
-    Just (StateRef st tbs) ->
-      Right . StateRef st <$> duplicate tbs
+      Just l' -> pure $ currentHandle l'
 
 newForkerAtTarget ::
   ( HeaderHash l ~ HeaderHash blk
@@ -605,8 +634,8 @@ newForkerAtTarget ::
   ResourceRegistry m ->
   Target (Point blk) ->
   m (Either GetForkerError (Forker m l blk))
-newForkerAtTarget h rr pt = getEnv h $ \ldbEnv@LedgerDBEnv{ldbOpenHandlesLock = lock} ->
-  RAWLock.withReadAccess lock (acquireAtTarget ldbEnv (Right pt)) >>= traverse (newForker h ldbEnv rr)
+newForkerAtTarget h rr pt = getEnv h $ \ldbEnv ->
+  acquireAtTarget ldbEnv (Right pt) >>= traverse (newForker h ldbEnv rr)
 
 newForkerByRollback ::
   ( HeaderHash l ~ HeaderHash blk
@@ -620,8 +649,8 @@ newForkerByRollback ::
   ResourceRegistry m ->
   Word64 ->
   m (Either GetForkerError (Forker m l blk))
-newForkerByRollback h rr n = getEnv h $ \ldbEnv@LedgerDBEnv{ldbOpenHandlesLock = lock} -> do
-  RAWLock.withReadAccess lock (acquireAtTarget ldbEnv (Left n)) >>= traverse (newForker h ldbEnv rr)
+newForkerByRollback h rr n = getEnv h $ \ldbEnv ->
+  acquireAtTarget ldbEnv (Left n) >>= traverse (newForker h ldbEnv rr)
 
 -- | Close all open 'Forker's.
 closeAllForkers ::
