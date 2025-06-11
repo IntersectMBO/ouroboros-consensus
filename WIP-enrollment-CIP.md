@@ -4,7 +4,7 @@ My relevant suggestions are essentially just a few sentences.
 
 > The authors of any CIP that explicitly affects the Cardano consensus protocol will need to communicate early and often with some combination of the IOG Researchers and the available experts on the various existing implementations.
 > We suggest beginning by scheduling a discussion on the agenda of a session of INTERSECT's Consensus Technical Working Group.
-> The discussion there will likely involve scheduling additional discussions with the aforementioned Researchers and experts (eg the IOE Consensus Team holds weekly office hours for this sort of communication, TODO does Amaru too?).
+> The discussion there will likely involve scheduling additional discussions with the aforementioned Researchers and experts (eg the IOE Consensus Team holds weekly office hours for this sort of communication; Amaru does not hold Office Hours yet, but is planning to).
 > 
 > As the Cardano consensus protocol undergoes additional evolutions over the coming years, hopefully this CIP can be expanded to include some lessons learned that will help CIP authors usefully describe consensus changes even before entering discussions with the contemporary experts.
 > 
