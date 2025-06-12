@@ -1141,7 +1141,7 @@ answerShelleyLookupQueries ::
   (TxIn (LedgerState blk) -> SL.TxIn) ->
   ExtLedgerCfg (ShelleyBlock proto era) ->
   BlockQuery (ShelleyBlock proto era) QFLookupTables result ->
-  ReadOnlyForker' m blk ->
+  ROForker' m blk ->
   m result
 answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q forker =
   case q of
@@ -1160,7 +1160,7 @@ answerShelleyLookupQueries injTables ejTxOut ejTxIn cfg q forker =
     m (SL.UTxO era)
   answerGetUtxOByTxIn txins = do
     LedgerTables (ValuesMK values) <-
-      LedgerDB.roforkerReadTables
+      LedgerDB.forkerReadTables
         forker
         (castLedgerTables $ injTables (LedgerTables $ KeysMK txins))
     pure $
@@ -1220,7 +1220,7 @@ answerShelleyTraversingQueries ::
   ) ->
   ExtLedgerCfg (ShelleyBlock proto era) ->
   BlockQuery (ShelleyBlock proto era) QFTraverseTables result ->
-  ReadOnlyForker' m blk ->
+  ROForker' m blk ->
   m result
 answerShelleyTraversingQueries ejTxOut ejTxIn filt cfg q forker = case q of
   GetUTxOByAddress{} -> loop (filt q) NoPreviousQuery emptyUtxo
@@ -1257,7 +1257,7 @@ answerShelleyTraversingQueries ejTxOut ejTxIn filt cfg q forker = case q of
   toMaxKey (LedgerTables (ValuesMK vs)) = fst $ Map.findMax vs
 
   loop queryPredicate !prev !acc = do
-    extValues <- LedgerDB.roforkerRangeReadTables forker prev
+    extValues <- LedgerDB.forkerRangeReadTables forker prev
     if ltcollapse $ ltmap (K2 . vnull) extValues
       then pure acc
       else

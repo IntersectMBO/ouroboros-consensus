@@ -1,9 +1,9 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server (localStateQueryServer) where
 
-import Data.Functor ((<&>))
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Query
@@ -31,7 +31,7 @@ localStateQueryServer ::
   ) =>
   ExtLedgerCfg blk ->
   ( Target (Point blk) ->
-    m (Either GetForkerError (ReadOnlyForker' m blk))
+    m (Either GetForkerError (Forker' m blk NoTablesForker))
   ) ->
   LocalStateQueryServer blk (Point blk) (Query blk) m ()
 localStateQueryServer cfg getView =
@@ -48,16 +48,18 @@ localStateQueryServer cfg getView =
     Target (Point blk) ->
     m (ServerStAcquiring blk (Point blk) (Query blk) m ())
   handleAcquire mpt = do
-    getView mpt <&> \case
-      Right forker -> SendMsgAcquired $ acquired forker
+    getView mpt >>= \case
+      Right forker -> do
+        forkerVar <- newTVarIO $ Query.SomeForker forker
+        pure $ SendMsgAcquired $ acquired forkerVar
       Left e -> case e of
         PointTooOld{} ->
-          SendMsgFailure AcquireFailurePointTooOld idle
+          pure $ SendMsgFailure AcquireFailurePointTooOld idle
         PointNotOnChain ->
-          SendMsgFailure AcquireFailurePointNotOnChain idle
+          pure $ SendMsgFailure AcquireFailurePointNotOnChain idle
 
   acquired ::
-    ReadOnlyForker' m blk ->
+    StrictTVar m (Query.SomeForker m blk) ->
     ServerStAcquired blk (Point blk) (Query blk) m ()
   acquired forker =
     ServerStAcquired
@@ -66,10 +68,10 @@ localStateQueryServer cfg getView =
       , recvMsgRelease = do close; return idle
       }
    where
-    close = roforkerClose forker
+    close = (\(Query.SomeForker f) -> forkerClose f) =<< readTVarIO forker
 
   handleQuery ::
-    ReadOnlyForker' m blk ->
+    StrictTVar m (Query.SomeForker m blk) ->
     Query blk result ->
     m (ServerStQuerying blk (Point blk) (Query blk) m () result)
   handleQuery forker query = do

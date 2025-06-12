@@ -41,6 +41,7 @@ module Ouroboros.Consensus.Ledger.Query
   , QueryFootprint (..)
   , SQueryFootprint (..)
   , SomeBlockQuery (..)
+  , SomeForker (..)
   ) where
 
 import Cardano.Binary (FromCBOR (..), ToCBOR (..))
@@ -170,7 +171,7 @@ class
     MonadSTM m =>
     ExtLedgerCfg blk ->
     BlockQuery blk QFLookupTables result ->
-    ReadOnlyForker' m blk ->
+    ROForker' m blk ->
     m result
 
   -- | Answer a query that requires to traverse the ledger tables. As consensus
@@ -185,7 +186,7 @@ class
     MonadSTM m =>
     ExtLedgerCfg blk ->
     BlockQuery blk QFTraverseTables result ->
-    ReadOnlyForker' m blk ->
+    ROForker' m blk ->
     m result
 
   -- | Is the given query supported in this NTC version?
@@ -247,34 +248,55 @@ data Query blk result where
   -- @BlockNodeToClientVersion blk@.
   DebugLedgerConfig :: Query blk (LedgerConfig blk)
 
+data SomeForker m blk where
+  SomeForker :: Forker' m blk ht -> SomeForker m blk
+
+instance (forall ht. NoThunks (Forker' m blk ht)) => NoThunks (SomeForker m blk) where
+  showTypeOf _ = "SomeForker"
+  wNoThunks ctxt (SomeForker frk) = wNoThunks ctxt frk
+
 -- | Answer the given query about the extended ledger state.
 answerQuery ::
   forall blk m result.
   (BlockSupportsLedgerQuery blk, ConfigSupportsNode blk, HasAnnTip blk, MonadSTM m) =>
   ExtLedgerCfg blk ->
-  ReadOnlyForker' m blk ->
+  StrictTVar m (SomeForker m blk) ->
   Query blk result ->
   m result
-answerQuery config forker query = case query of
-  BlockQuery (blockQuery :: BlockQuery blk footprint result) ->
-    case sing :: Sing footprint of
-      SQFNoTables ->
-        answerPureBlockQuery config blockQuery
-          <$> atomically (roforkerGetLedgerState forker)
-      SQFLookupTables ->
-        answerBlockQueryLookup config blockQuery forker
-      SQFTraverseTables ->
-        answerBlockQueryTraverse config blockQuery forker
-  GetSystemStart ->
-    pure $ getSystemStart (topLevelConfigBlock (getExtLedgerCfg config))
-  GetChainBlockNo ->
-    headerStateBlockNo . headerState
-      <$> atomically (roforkerGetLedgerState forker)
-  GetChainPoint ->
-    headerStatePoint . headerState
-      <$> atomically (roforkerGetLedgerState forker)
-  DebugLedgerConfig ->
-    pure $ topLevelConfigLedger (getExtLedgerCfg config)
+answerQuery config forkerVar query = do
+  sforker <- atomically $ readTVar forkerVar
+  case query of
+    BlockQuery (blockQuery :: BlockQuery blk footprint result) ->
+      case (sing :: Sing footprint, sforker) of
+        (SQFNoTables, SomeForker forker) ->
+          answerPureBlockQuery config blockQuery
+            <$> atomically (forkerGetLedgerState forker)
+        (SQFLookupTables, SomeForker forker@SimpleForker{}) -> do
+          forker' <- upgradeSimpleForker forker
+          atomically $ writeTVar forkerVar $ SomeForker forker'
+          answerBlockQueryLookup config blockQuery forker'
+        (SQFLookupTables, SomeForker forker@TablesReadForker{}) -> do
+          answerBlockQueryLookup config blockQuery forker
+        (SQFTraverseTables, SomeForker forker@SimpleForker{}) -> do
+          forker' <- upgradeSimpleForker forker
+          atomically $ writeTVar forkerVar $ SomeForker forker'
+          answerBlockQueryTraverse config blockQuery forker'
+        (SQFTraverseTables, SomeForker forker@TablesReadForker{}) ->
+          answerBlockQueryTraverse config blockQuery forker
+    GetSystemStart ->
+      pure $ getSystemStart (topLevelConfigBlock (getExtLedgerCfg config))
+    GetChainBlockNo ->
+      case sforker of
+        SomeForker forker ->
+          headerStateBlockNo . headerState
+            <$> atomically (forkerGetLedgerState forker)
+    GetChainPoint ->
+      case sforker of
+        SomeForker forker ->
+          headerStatePoint . headerState
+            <$> atomically (forkerGetLedgerState forker)
+    DebugLedgerConfig ->
+      pure $ topLevelConfigLedger (getExtLedgerCfg config)
 
 {-------------------------------------------------------------------------------
   Query instances
