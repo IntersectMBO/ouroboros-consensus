@@ -578,7 +578,7 @@ instance MonadLabelledSTM m => MonadLabelledSTM (OverrideDelay m) where
   labelTBQueueIO v = OverrideDelay . lift . LazySTM.labelTBQueueIO v
 
 instance MonadInspectSTM m => MonadInspectSTM (OverrideDelay m) where
-  type InspectMonad (OverrideDelay m) = InspectMonad m
+  type InspectMonadSTM (OverrideDelay m) = InspectMonadSTM m
   inspectTVar _ = inspectTVar (Proxy :: Proxy m)
   inspectTMVar _ = inspectTMVar (Proxy :: Proxy m)
 
