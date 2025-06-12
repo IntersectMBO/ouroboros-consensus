@@ -10,6 +10,21 @@
   overflow: hidden;
 }
 
+.heroBanner {
+  background-image: url('/img/ouroboros-consensus-banner.png');
+  width: 100%;
+  height: 250px; /* Adjust height based on the banner design */
+  background-size: cover; /* Ensures the image covers the entire banner */
+  background-position: center; /* Centers the image */
+  background-repeat: no-repeat; /* Prevents tiling */
+  background-color: transparent !important; /* Ensures no background override */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
 @media screen and (max-width: 996px) {
   .heroBanner {
     padding: 2rem;
