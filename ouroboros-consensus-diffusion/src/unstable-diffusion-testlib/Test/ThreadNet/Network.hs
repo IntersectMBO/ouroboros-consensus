@@ -631,7 +631,7 @@ runThreadNetwork
       ResourceRegistry m ->
       (SlotNo -> STM m ()) ->
       STM m (Point blk) ->
-      (ResourceRegistry m -> m (ReadOnlyForker' m blk)) ->
+      (ResourceRegistry m -> m (ROForker' m blk)) ->
       Mempool m blk ->
       [GenTx blk] ->
       -- \^ valid transactions the node should immediately propagate
@@ -640,9 +640,9 @@ runThreadNetwork
       void $ forkLinkedThread registry "crucialTxs" $ withRegistry $ \reg -> do
         let loop (slot, mempFp) = do
               forker <- mforker reg
-              extLedger <- atomically $ roforkerGetLedgerState forker
+              extLedger <- atomically $ forkerGetLedgerState forker
               let ledger = ledgerState extLedger
-              roforkerClose forker
+              forkerClose forker
 
               _ <- addTxs mempool txs0
 
@@ -693,20 +693,20 @@ runThreadNetwork
       OracularClock m ->
       TopLevelConfig blk ->
       Seed ->
-      (ResourceRegistry m -> m (ReadOnlyForker' m blk)) ->
+      (ResourceRegistry m -> m (ROForker' m blk)) ->
       -- \^ How to get the current ledger state
       Mempool m blk ->
       m ()
     forkTxProducer coreNodeId registry clock cfg nodeSeed mforker mempool =
       void $ OracularClock.forkEachSlot registry clock "txProducer" $ \curSlotNo -> withRegistry $ \reg -> do
         forker <- mforker reg
-        emptySt' <- atomically $ roforkerGetLedgerState forker
+        emptySt' <- atomically $ forkerGetLedgerState forker
         let emptySt = emptySt'
-            doRangeQuery = roforkerRangeReadTables forker
+            doRangeQuery = forkerRangeReadTables forker
         fullLedgerSt <- fmap ledgerState $ do
           fullUTxO <- doRangeQuery NoPreviousQuery
           pure $! withLedgerTables emptySt fullUTxO
-        roforkerClose forker
+        forkerClose forker
         -- Combine the node's seed with the current slot number, to make sure
         -- we generate different transactions in each slot.
         let txs =
@@ -1130,9 +1130,9 @@ runThreadNetwork
       -- needs the read-only forker to elaborate a complete UTxO set to generate
       -- transactions.
       let getForker rr = do
-            ChainDB.getReadOnlyForkerAtPoint chainDB rr VolatileTip >>= \case
+            ChainDB.getSimpleForkerAtPoint chainDB rr VolatileTip >>= \case
               Left e -> error $ show e
-              Right l -> pure l
+              Right l -> upgradeSimpleForker l
 
       -- In practice, a robust wallet/user can persistently add a transaction
       -- until it appears on the chain. This thread adds robustness for the
