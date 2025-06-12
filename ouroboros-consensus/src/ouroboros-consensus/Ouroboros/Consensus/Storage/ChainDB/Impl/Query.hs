@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiWayIf #-}
@@ -19,7 +20,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getLedgerTablesAtFor
   , getMaxSlotNo
   , getPastLedger
-  , getReadOnlyForkerAtPoint
+  , getSimpleForkerAtPoint
   , getStatistics
   , getTipBlock
   , getTipHeader
@@ -252,13 +253,12 @@ getPastLedger ::
   STM m (Maybe (ExtLedgerState blk EmptyMK))
 getPastLedger CDB{..} = LedgerDB.getPastLedgerState cdbLedgerDB
 
-getReadOnlyForkerAtPoint ::
-  IOLike m =>
+getSimpleForkerAtPoint ::
   ChainDbEnv m blk ->
   ResourceRegistry m ->
   Target (Point blk) ->
-  m (Either LedgerDB.GetForkerError (LedgerDB.ReadOnlyForker' m blk))
-getReadOnlyForkerAtPoint CDB{..} = LedgerDB.getReadOnlyForker cdbLedgerDB
+  m (Either LedgerDB.GetForkerError (LedgerDB.Forker' m blk LedgerDB.NoTablesForker))
+getSimpleForkerAtPoint CDB{..} = LedgerDB.getForkerAtTarget cdbLedgerDB
 
 getLedgerTablesAtFor ::
   IOLike m =>
