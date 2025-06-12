@@ -78,14 +78,15 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/ouroboros-network
-  tag: ee1c54202dee284838955314bb5f232869f3594c
-  --sha256: sha256-R0m332O0H20lLC3bmnrmDHldK3DCnDh2c+Gudp37VH0=
+  tag: 4ba716bdf748fc72d542728668a8cdd06b6b16a9
+  --sha256: sha256-kvinrbwYMRz44nbvGPV2K868dxjj73ATs9l0jjDI05U=
   subdir:
     ouroboros-network
     ouroboros-network-api
     ouroboros-network-protocols
     ouroboros-network-mock
     ouroboros-network-testing
+    ouroboros-network-framework
     network-mux
 
 
