@@ -70,12 +70,18 @@ instance SL.EraCertState era => LedgerSupportsPeerSelection (ShelleyBlock proto 
           (SJust ipv6)
         ) =
         Just $ RelayAccessAddress (IPv6 ipv6) (fromIntegral port)
+    -- no IP address or no port number
+    relayToRelayAccessPoint (SL.SingleHostAddr SNothing _ _) = Nothing
+    relayToRelayAccessPoint (SL.SingleHostAddr _ SNothing _) = Nothing
     relayToRelayAccessPoint (SL.SingleHostName (SJust (Port port)) dnsName) =
       Just $ RelayAccessDomain (encodeUtf8 $ dnsToText dnsName) (fromIntegral port)
-    relayToRelayAccessPoint _ =
-      -- This could be an unsupported relay (SRV records) or an unusable
-      -- relay such as a relay with an IP address but without a port number.
-      Nothing
+    -- srv support: either `SingleHostName` without port number or
+    -- `MultiHostName`
+
+    relayToRelayAccessPoint (SL.SingleHostName SNothing dnsName) =
+      Just $ RelayAccessSRVDomain (encodeUtf8 $ dnsToText dnsName)
+    relayToRelayAccessPoint (SL.MultiHostName dnsName) =
+      Just $ RelayAccessSRVDomain (encodeUtf8 $ dnsToText dnsName)
 
     -- \| Note that a stake pool can have multiple registered relays
     pparamsRelayAccessPoints ::
