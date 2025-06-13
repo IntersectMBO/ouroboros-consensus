@@ -21,6 +21,7 @@ module Test.Consensus.Shelley.Examples
   , examplesShelley
   ) where
 
+import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Block as SL
 import Cardano.Ledger.Core
 import qualified Cardano.Ledger.Core as LC
@@ -171,6 +172,7 @@ fromShelleyLedgerExamples
         , ("GetGenesisConfig", SomeBlockQuery GetGenesisConfig)
         , ("GetBigLedgerPeerSnapshot", SomeBlockQuery GetBigLedgerPeerSnapshot)
         , ("GetStakeDistribution2", SomeBlockQuery GetStakeDistribution2)
+        , ("GetMaxMajorProtocolVersion", SomeBlockQuery GetMaxMajorProtocolVersion)
         ]
     results =
       labelled
@@ -204,6 +206,7 @@ fromShelleyLedgerExamples
               )
           )
         , ("StakeDistribution2", SomeResult GetStakeDistribution2 srePoolDistr)
+        , ("MaxMajorProtocolVersion", SomeResult GetMaxMajorProtocolVersion (maxBound @SL.Version))
         ]
     annTip =
       AnnTip
