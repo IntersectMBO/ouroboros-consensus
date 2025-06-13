@@ -257,6 +257,9 @@ data instance ConsensusConfig (TPraos c) = TPraosConfig
 
 instance SL.PraosCrypto c => NoThunks (ConsensusConfig (TPraos c))
 
+instance HasMaxMajorProtVer (TPraos c) where
+  protoMaxMajorPV = tpraosMaxMajorPV . tpraosParams
+
 -- | Transitional Praos consensus state.
 --
 -- In addition to the 'ChainDepState' provided by the ledger, we track the slot
