@@ -45,6 +45,7 @@ import Ouroboros.Consensus.Ledger.Tables hiding (TxIn)
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Abstract (translateChainDepState)
 import Ouroboros.Consensus.Protocol.Praos (Praos)
+import Ouroboros.Consensus.Protocol.Praos.Common
 import Ouroboros.Consensus.Protocol.Praos.Header
   ( HeaderBody (HeaderBody)
   )
@@ -206,7 +207,10 @@ fromShelleyLedgerExamples
               )
           )
         , ("StakeDistribution2", SomeResult GetStakeDistribution2 srePoolDistr)
-        , ("MaxMajorProtocolVersion", SomeResult GetMaxMajorProtocolVersion (maxBound @SL.Version))
+        ,
+          ( "MaxMajorProtocolVersion"
+          , SomeResult GetMaxMajorProtocolVersion $ MaxMajorProtVer (maxBound @SL.Version)
+          )
         ]
     annTip =
       AnnTip
@@ -303,6 +307,9 @@ fromShelleyLedgerExamplesPraos
         , ("GetStakeDistribution", SomeBlockQuery GetStakeDistribution)
         , ("GetNonMyopicMemberRewards", SomeBlockQuery $ GetNonMyopicMemberRewards sleRewardsCredentials)
         , ("GetGenesisConfig", SomeBlockQuery GetGenesisConfig)
+        , ("GetBigLedgerPeerSnapshot", SomeBlockQuery GetBigLedgerPeerSnapshot)
+        , ("GetStakeDistribution2", SomeBlockQuery GetStakeDistribution2)
+        , ("GetMaxMajorProtocolVersion", SomeBlockQuery GetMaxMajorProtocolVersion)
         ]
     results =
       labelled
@@ -317,6 +324,29 @@ fromShelleyLedgerExamplesPraos
               (NonMyopicMemberRewards $ sreNonMyopicRewards)
           )
         , ("GenesisConfig", SomeResult GetGenesisConfig (compactGenesis sreShelleyGenesis))
+        ,
+          ( "GetBigLedgerPeerSnapshot"
+          , SomeResult
+              GetBigLedgerPeerSnapshot
+              ( LedgerPeerSnapshot
+                  ( NotOrigin slotNo
+                  ,
+                    [
+                      ( AccPoolStake 0.9
+                      ,
+                        ( PoolStake 0.9
+                        , RelayAccessAddress (IPv4 "1.1.1.1") 1234 :| []
+                        )
+                      )
+                    ]
+                  )
+              )
+          )
+        , ("StakeDistribution2", SomeResult GetStakeDistribution2 srePoolDistr)
+        ,
+          ( "MaxMajorProtocolVersion"
+          , SomeResult GetMaxMajorProtocolVersion $ MaxMajorProtVer (maxBound @SL.Version)
+          )
         ]
     annTip =
       AnnTip
