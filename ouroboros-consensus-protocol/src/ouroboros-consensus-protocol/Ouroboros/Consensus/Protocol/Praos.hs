@@ -260,6 +260,9 @@ instance PraosCrypto c => NoThunks (ConsensusConfig (Praos c))
 
 type PraosValidateView c = Views.HeaderView c
 
+instance HasMaxMajorProtVer (Praos c) where
+  protoMaxMajorPV = praosMaxMajorPV . praosParams
+
 {-------------------------------------------------------------------------------
   ConsensusProtocol
 -------------------------------------------------------------------------------}

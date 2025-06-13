@@ -9,6 +9,7 @@
 -- | Various things common to iterations of the Praos protocol.
 module Ouroboros.Consensus.Protocol.Praos.Common
   ( MaxMajorProtVer (..)
+  , HasMaxMajorProtVer (..)
   , PraosCanBeLeader (..)
   , PraosChainSelectView (..)
   , VRFTiebreakerFlavor (..)
@@ -21,6 +22,7 @@ module Ouroboros.Consensus.Protocol.Praos.Common
 import qualified Cardano.Crypto.VRF as VRF
 import Cardano.Ledger.BaseTypes (Nonce)
 import qualified Cardano.Ledger.BaseTypes as SL
+import Cardano.Ledger.Binary (FromCBOR, ToCBOR)
 import Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer))
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (Crypto, VRF)
@@ -59,7 +61,10 @@ newtype MaxMajorProtVer = MaxMajorProtVer
   { getMaxMajorProtVer :: SL.Version
   }
   deriving (Eq, Show, Generic)
-  deriving newtype NoThunks
+  deriving newtype (NoThunks, ToCBOR, FromCBOR)
+
+class HasMaxMajorProtVer proto where
+  protoMaxMajorPV :: ConsensusConfig proto -> MaxMajorProtVer
 
 -- | View of the tip of a header fragment for chain selection.
 data PraosChainSelectView c = PraosChainSelectView
