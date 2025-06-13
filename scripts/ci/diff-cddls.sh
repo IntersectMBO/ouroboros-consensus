@@ -1,6 +1,6 @@
 #!/bin/bash
 
-git clone git@github.com:cardano-scaling/cardano-blueprint
+git clone https://github.com/cardano-scaling/cardano-blueprint
 
 check_diff () {
     diff "ouroboros-consensus-cardano/cddl/node-to-node/$1" "cardano-blueprint/src/network/node-to-node/$1"
