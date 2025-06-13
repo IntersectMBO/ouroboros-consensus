@@ -61,6 +61,7 @@ import qualified Cardano.Ledger.Conway.Rules as Conway
 import qualified Cardano.Ledger.Conway.Rules as SL
   ( ConwayLedgerPredFailure (..)
   )
+import qualified Cardano.Ledger.Conway.State as CG
 import qualified Cardano.Ledger.Conway.Translation as Conway
 import Cardano.Ledger.Core as Core
 import Cardano.Ledger.Mary (MaryEra)
@@ -179,7 +180,7 @@ class
   getConwayEraGovDict :: proxy era -> Maybe (ConwayEraGovDict era)
 
 data ConwayEraGovDict era where
-  ConwayEraGovDict :: CG.ConwayEraGov era => ConwayEraGovDict era
+  ConwayEraGovDict :: (CG.ConwayEraGov era, CG.ConwayEraCertState era) => ConwayEraGovDict era
 
 isBeforeConway :: forall era. L.Era era => Proxy era -> Bool
 isBeforeConway _ =
@@ -268,7 +269,7 @@ applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
   pure (mempoolState', vtx)
  where
   intervenedTx = case wti of
-    DoNotIntervene -> tx{Alonzo.isValid = Alonzo.IsValid True}
+    DoNotIntervene -> tx{Alonzo.atIsValid = Alonzo.IsValid True}
     Intervene -> tx
 
   handler e = case (wti, e) of
@@ -288,7 +289,7 @@ applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
             ledgerEnv
             mempoolState
             wti
-            tx{Alonzo.isValid = Alonzo.IsValid False}
+            tx{Alonzo.atIsValid = Alonzo.IsValid False}
     _ -> throwError e
 
 -- reject the transaction, protecting the local wallet
