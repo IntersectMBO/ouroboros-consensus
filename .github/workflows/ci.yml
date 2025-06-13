@@ -143,11 +143,15 @@ jobs:
     - name: Build projects [build]
       run: cabal build all -j
 
+    - name: Install Ruby for CDDL
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.4'
+        bundler-cache: true
+
     - name: Install cddl tools
       run: |
-        export GEM_HOME="$HOME/.gem"
         gem install cddlc
-        echo "PATH=$HOME/.gem/bin:$PATH" >> $GITHUB_ENV
         cabal install cuddle-0.5.0.0
 
     - name: Test
