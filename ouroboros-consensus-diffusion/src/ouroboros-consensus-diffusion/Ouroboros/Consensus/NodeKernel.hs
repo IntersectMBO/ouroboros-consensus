@@ -528,10 +528,10 @@ forkBlockForging IS{..} blockForging =
     -- Get forker corresponding to bcPrevPoint
     --
     -- This might fail if, in between choosing 'bcPrevPoint' and this call to
-    -- 'ChainDB.getReadOnlyForkerAtPoint', we switched to a fork where 'bcPrevPoint'
+    -- 'ChainDB.getSimpleForkerAtPoint', we switched to a fork where 'bcPrevPoint'
     -- is no longer on our chain. When that happens, we simply give up on the
     -- chance to produce a block.
-    forkerEith <- lift $ ChainDB.getReadOnlyForkerAtPoint chainDB reg (SpecificPoint bcPrevPoint)
+    forkerEith <- lift $ ChainDB.getSimpleForkerAtPoint chainDB reg (SpecificPoint bcPrevPoint)
     -- Remember to close this forker before exiting!
     forker <- case forkerEith of
       Left _ -> do
@@ -539,7 +539,7 @@ forkBlockForging IS{..} blockForging =
         exitEarly
       Right forker -> pure forker
 
-    unticked <- lift $ atomically $ LedgerDB.roforkerGetLedgerState forker
+    unticked <- lift $ atomically $ LedgerDB.forkerGetLedgerState forker
 
     trace $ TraceLedgerState currentSlot bcPrevPoint
 
@@ -561,7 +561,7 @@ forkBlockForging IS{..} blockForging =
           -- produce a block in this case; we are most likely missing a blocks
           -- on our chain.
           trace $ TraceNoLedgerView currentSlot err
-          lift $ roforkerClose forker
+          lift $ forkerClose forker
           exitEarly
         Right lv ->
           return lv
@@ -595,15 +595,15 @@ forkBlockForging IS{..} blockForging =
       case shouldForge of
         ForgeStateUpdateError err -> do
           trace $ TraceForgeStateUpdateError currentSlot err
-          lift $ roforkerClose forker
+          lift $ forkerClose forker
           exitEarly
         CannotForge cannotForge -> do
           trace $ TraceNodeCannotForge currentSlot cannotForge
-          lift $ roforkerClose forker
+          lift $ forkerClose forker
           exitEarly
         NotLeader -> do
           trace $ TraceNodeNotLeader currentSlot
-          lift $ roforkerClose forker
+          lift $ forkerClose forker
           exitEarly
         ShouldForge p -> return p
 
@@ -633,7 +633,8 @@ forkBlockForging IS{..} blockForging =
       snap <- getSnapshot mempool -- only used for its tip-like information
       pure (castHash $ snapshotStateHash snap, snapshotSlotNo snap)
 
-    let readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
+    forker' <- lift $ upgradeSimpleForker forker
+    let readTables = fmap castLedgerTables . forkerReadTables forker' . castLedgerTables
 
     mempoolSnapshot <-
       lift $
@@ -643,7 +644,7 @@ forkBlockForging IS{..} blockForging =
           tickedLedgerState
           readTables
 
-    lift $ roforkerClose forker
+    lift $ forkerClose forker'
 
     let txs =
           snapshotTake mempoolSnapshot $

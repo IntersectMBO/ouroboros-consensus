@@ -135,7 +135,7 @@ class
     Index xs x ->
     ExtLedgerCfg x ->
     BlockQuery x QFLookupTables result ->
-    ReadOnlyForker' m (HardForkBlock xs) ->
+    ROForker' m (HardForkBlock xs) ->
     m result
 
   answerBlockQueryHFTraverse ::
@@ -144,7 +144,7 @@ class
     Index xs x ->
     ExtLedgerCfg x ->
     BlockQuery x QFTraverseTables result ->
-    ReadOnlyForker' m (HardForkBlock xs) ->
+    ROForker' m (HardForkBlock xs) ->
     m result
 
   -- | The @QFTraverseTables@ queries consist of some filter on the @TxOut@. This class
@@ -268,12 +268,12 @@ answerBlockQueryHelper ::
   (MonadSTM m, BlockSupportsHFLedgerQuery xs, CanHardFork xs) =>
   ( NP ExtLedgerCfg xs ->
     QueryIfCurrent xs footprint result ->
-    ReadOnlyForker' m (HardForkBlock xs) ->
+    ROForker' m (HardForkBlock xs) ->
     m (HardForkQueryResult xs result)
   ) ->
   ExtLedgerCfg (HardForkBlock xs) ->
   QueryIfCurrent xs footprint result ->
-  ReadOnlyForker' m (HardForkBlock xs) ->
+  ROForker' m (HardForkBlock xs) ->
   m (HardForkQueryResult xs result)
 answerBlockQueryHelper
   f
@@ -281,7 +281,8 @@ answerBlockQueryHelper
   qry
   forker = do
     hardForkState <-
-      hardForkLedgerStatePerEra . ledgerState <$> atomically (roforkerGetLedgerState forker)
+      hardForkLedgerStatePerEra . ledgerState
+        <$> atomically (forkerGetLedgerState forker)
     let ei = State.epochInfoLedger lcfg hardForkState
         cfgs = hmap ExtLedgerCfg $ distribTopLevelConfig ei cfg
     f cfgs qry forker
@@ -391,10 +392,10 @@ interpretQueryIfCurrentLookup ::
   (MonadSTM m, BlockSupportsHFLedgerQuery xs, CanHardFork xs) =>
   NP ExtLedgerCfg xs ->
   QueryIfCurrent xs QFLookupTables result ->
-  ReadOnlyForker' m (HardForkBlock xs) ->
+  ROForker' m (HardForkBlock xs) ->
   m (HardForkQueryResult xs result)
 interpretQueryIfCurrentLookup cfg q forker = do
-  st <- distribExtLedgerState <$> atomically (roforkerGetLedgerState forker)
+  st <- distribExtLedgerState <$> atomically (forkerGetLedgerState forker)
   go indices cfg q st
  where
   go ::
@@ -416,10 +417,10 @@ interpretQueryIfCurrentTraverse ::
   (MonadSTM m, BlockSupportsHFLedgerQuery xs, CanHardFork xs) =>
   NP ExtLedgerCfg xs ->
   QueryIfCurrent xs QFTraverseTables result ->
-  ReadOnlyForker' m (HardForkBlock xs) ->
+  ROForker' m (HardForkBlock xs) ->
   m (HardForkQueryResult xs result)
 interpretQueryIfCurrentTraverse cfg q forker = do
-  st <- distribExtLedgerState <$> atomically (roforkerGetLedgerState forker)
+  st <- distribExtLedgerState <$> atomically (forkerGetLedgerState forker)
   go indices cfg q st
  where
   go ::

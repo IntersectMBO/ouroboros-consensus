@@ -58,13 +58,13 @@ answerCardanoQueryHF ::
     Index xs blk ->
     ExtLedgerCfg blk ->
     BlockQuery blk footprint result ->
-    ReadOnlyForker' m (HardForkBlock xs) ->
+    ROForker' m (HardForkBlock xs) ->
     m result
   ) ->
   Index xs x ->
   ExtLedgerCfg x ->
   BlockQuery x footprint result ->
-  ReadOnlyForker' m (HardForkBlock xs) ->
+  ROForker' m (HardForkBlock xs) ->
   m result
 answerCardanoQueryHF f idx cfg q dlv =
   case sing :: Sing footprint of

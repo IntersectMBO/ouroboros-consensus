@@ -56,7 +56,7 @@ import Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
   , blockProcessed
   , getCurrentChain
   , getPastLedger
-  , getReadOnlyForkerAtPoint
+  , getSimpleForkerAtPoint
   )
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
   ( noPunishment
@@ -85,7 +85,7 @@ initialForgeState = ForgeState 0 0 0 0
 -- | An action to generate transactions for a given block
 type GenTxs blk mk =
   SlotNo ->
-  IO (ReadOnlyForker IO (ExtLedgerState blk) blk) ->
+  IO (ROForker' IO blk) ->
   TickedLedgerState blk DiffMK ->
   IO [Validated (GenTx blk)]
 
@@ -210,8 +210,8 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
         currentSlot
         ( either
             (error "Impossible: we are forging on top of a block that the ChainDB cannot create forkers on!")
-            id
-            <$> getReadOnlyForkerAtPoint chainDB reg (SpecificPoint bcPrevPoint)
+            upgradeSimpleForker
+            =<< getSimpleForkerAtPoint chainDB reg (SpecificPoint bcPrevPoint)
         )
         tickedLedgerState
 

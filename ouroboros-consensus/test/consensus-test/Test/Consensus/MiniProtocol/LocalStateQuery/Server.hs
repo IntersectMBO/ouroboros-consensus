@@ -202,7 +202,7 @@ mkServer rr k chain = do
   return $
     localStateQueryServer
       cfg
-      (LedgerDB.getReadOnlyForker lgrDB rr)
+      (LedgerDB.getForkerAtTarget lgrDB rr)
  where
   cfg = ExtLedgerCfg $ testCfg k
 

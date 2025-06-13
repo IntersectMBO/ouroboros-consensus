@@ -8,6 +8,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PolyKinds #-}
@@ -144,7 +145,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , LedgerDbError (..)
 
     -- * Forker
-  , getReadOnlyForker
   , getTipStatistics
   , readLedgerTablesAtFor
   , withPrivateTipForker
@@ -234,7 +234,7 @@ data LedgerDB m l blk = LedgerDB
   , getForkerAtTarget ::
       ResourceRegistry m ->
       Target (Point blk) ->
-      m (Either GetForkerError (Forker m l blk))
+      m (Either GetForkerError (Forker blk NoTablesForker l m))
   -- ^ Acquire a 'Forker' at the requested point. If a ledger state associated
   -- with the requested point does not exist in the LedgerDB, it will return a
   -- 'GetForkerError'.
@@ -364,15 +364,13 @@ withTipForker ::
   IOLike m =>
   LedgerDB m l blk ->
   ResourceRegistry m ->
-  (Forker m l blk -> m a) ->
+  (Forker blk NoTablesForker l m -> m a) ->
   m a
 withTipForker ldb rr =
   bracket
-    ( do
-        eFrk <- getForkerAtTarget ldb rr VolatileTip
-        case eFrk of
-          Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
-          Right frk -> pure frk
+    ( getForkerAtTarget ldb rr VolatileTip >>= \case
+        Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
+        Right frk -> pure frk
     )
     forkerClose
 
@@ -381,13 +379,12 @@ withTipForker ldb rr =
 withPrivateTipForker ::
   IOLike m =>
   LedgerDB m l blk ->
-  (Forker m l blk -> m a) ->
+  (Forker blk NoTablesForker l m -> m a) ->
   m a
 withPrivateTipForker ldb =
   bracketWithPrivateRegistry
-    ( \rr -> do
-        eFrk <- getForkerAtTarget ldb rr VolatileTip
-        case eFrk of
+    ( \rr ->
+        getForkerAtTarget ldb rr VolatileTip >>= \case
           Left{} -> error "Unreachable, volatile tip MUST be in the LedgerDB"
           Right frk -> pure frk
     )
@@ -398,15 +395,7 @@ getTipStatistics ::
   IOLike m =>
   LedgerDB m l blk ->
   m (Maybe Statistics)
-getTipStatistics ldb = withPrivateTipForker ldb forkerReadStatistics
-
-getReadOnlyForker ::
-  MonadSTM m =>
-  LedgerDB m l blk ->
-  ResourceRegistry m ->
-  Target (Point blk) ->
-  m (Either GetForkerError (ReadOnlyForker m l blk))
-getReadOnlyForker ldb rr pt = fmap readOnlyForker <$> getForkerAtTarget ldb rr pt
+getTipStatistics ldb = withPrivateTipForker ldb (\frk -> upgradeSimpleForker frk >>= forkerReadStatistics)
 
 -- | Read a table of values at the requested point via a 'ReadOnlyForker'
 readLedgerTablesAtFor ::
@@ -417,9 +406,14 @@ readLedgerTablesAtFor ::
   m (Either GetForkerError (LedgerTables l ValuesMK))
 readLedgerTablesAtFor ldb p ks =
   bracketWithPrivateRegistry
-    (\rr -> fmap readOnlyForker <$> getForkerAtTarget ldb rr (SpecificPoint p))
-    (mapM_ roforkerClose)
-    $ \foEith -> Monad.forM foEith (`roforkerReadTables` ks)
+    ( \rr -> do
+        eFrk <- getForkerAtTarget ldb rr (SpecificPoint p)
+        case eFrk of
+          Left gfe -> pure $ Left gfe
+          Right frk -> Right <$> upgradeSimpleForker frk
+    )
+    (mapM_ forkerClose)
+    $ \foEith -> Monad.forM foEith (`forkerReadTables` ks)
 
 {-------------------------------------------------------------------------------
   Snapshots
