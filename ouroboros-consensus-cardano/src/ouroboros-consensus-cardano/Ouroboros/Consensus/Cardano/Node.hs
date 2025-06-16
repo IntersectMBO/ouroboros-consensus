@@ -562,12 +562,20 @@ protocolInfoCardano paramsCardano
     , shelleyBasedLeaderCredentials = credssShelleyBased
     } = shelleyBasedProtocolParams
 
+  transitionConfigShelley :: L.TransitionConfig ShelleyEra
   transitionConfigShelley = transitionConfigAllegra ^. L.tcPreviousEraConfigL
+  transitionConfigAllegra :: L.TransitionConfig AllegraEra
   transitionConfigAllegra = transitionConfigMary ^. L.tcPreviousEraConfigL
+  transitionConfigMary :: L.TransitionConfig MaryEra
   transitionConfigMary = transitionConfigAlonzo ^. L.tcPreviousEraConfigL
+  transitionConfigAlonzo :: L.TransitionConfig AlonzoEra
   transitionConfigAlonzo = transitionConfigBabbage ^. L.tcPreviousEraConfigL
+  transitionConfigBabbage :: L.TransitionConfig BabbageEra
   transitionConfigBabbage = transitionConfigConway ^. L.tcPreviousEraConfigL
-  transitionConfigConway = cardanoLedgerTransitionConfig
+  transitionConfigConway :: L.TransitionConfig ConwayEra
+  transitionConfigConway = transitionConfigDijkstra ^. L.tcPreviousEraConfigL
+  transitionConfigDijkstra :: L.TransitionConfig L.DijkstraEra
+  transitionConfigDijkstra = cardanoLedgerTransitionConfig
 
   -- The major protocol version of the last era is the maximum major protocol
   -- version we support.
