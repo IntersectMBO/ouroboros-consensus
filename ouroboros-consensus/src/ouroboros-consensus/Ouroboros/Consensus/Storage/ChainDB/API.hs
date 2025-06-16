@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
@@ -85,11 +86,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.Common
-import Ouroboros.Consensus.Storage.LedgerDB
-  ( GetForkerError
-  , ReadOnlyForker'
-  , Statistics
-  )
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
@@ -208,10 +205,10 @@ data ChainDB m blk = ChainDB
   , getHeaderStateHistory :: STM m (HeaderStateHistory blk)
   -- ^ Get a 'HeaderStateHistory' populated with the 'HeaderState's of the
   -- last @k@ blocks of the current chain.
-  , getReadOnlyForkerAtPoint ::
+  , getSimpleForkerAtPoint ::
       ResourceRegistry m ->
       Target (Point blk) ->
-      m (Either GetForkerError (ReadOnlyForker' m blk))
+      m (Either GetForkerError (Forker' m blk NoTablesForker))
   -- ^ Acquire a read-only forker at a specific point if that point exists
   -- on the db.
   --

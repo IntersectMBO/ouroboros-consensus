@@ -1,9 +1,9 @@
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -16,18 +16,22 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Forker
   , implForkerRangeReadTables
   , implForkerReadStatistics
   , implForkerReadTables
+  , forkerCommon
+  , forkerValueHandle
+  , ForkerEnvCommon (..)
+  , upgradeForkerToRead
+  , mkSimpleForker
   ) where
 
+import Control.ResourceRegistry
 import Control.Tracer
+import Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
 import Data.Semigroup
 import qualified Data.Set as Set
-import GHC.Generics (Generic)
-import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
-import Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
@@ -40,45 +44,111 @@ import Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq
   , numInserts
   )
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq as DS
+import Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
 import Ouroboros.Consensus.Util.IOLike
 
 {-------------------------------------------------------------------------------
   Forkers
 -------------------------------------------------------------------------------}
 
-data ForkerEnv m l blk = ForkerEnv
-  { foeBackingStoreValueHandle :: !(LedgerBackingStoreValueHandle m l)
-  -- ^ Local, consistent view of backing store
-  , foeChangelog :: !(StrictTVar m (DbChangelog l))
+-- | The environment used by a forker.
+data ForkerEnv m l blk ft where
+  ReadForkerEnv ::
+    { rfoeBackingStoreValueHandle :: !(LedgerBackingStoreValueHandle m l)
+    -- ^ Local, consistent view of backing store.
+    , rfoeCommon :: !(ForkerEnvCommon m l)
+    -- ^ The environment common to all forkers.
+    } ->
+    ForkerEnv m l blk TablesForker
+  SimpleForkerEnv ::
+    { sfoeUpgradeIngredients :: !(LedgerDBLock m, LedgerBackingStore m l, ResourceRegistry m)
+    -- ^ Ingredients for updating to a forker with tables.
+    , sfoeCommon :: !(ForkerEnvCommon m l)
+    -- ^ The environment common to all forkers.
+    } ->
+    ForkerEnv m l blk NoTablesForker
+
+data ForkerEnvCommon m l = ForkerEnvCommon
+  { foeChangelog :: !(StrictTVar m (DbChangelog l))
   -- ^ In memory db changelog, 'foeBackingStoreValueHandle' must refer to
   -- the anchor of this changelog.
-  , foeSwitchVar :: !(StrictTVar m (DbChangelog l))
-  -- ^ The same 'StrictTVar' as 'ldbChangelog'
-  --
-  -- The anchor of this and 'foeChangelog' might get out of sync if diffs are
-  -- flushed, but 'forkerCommit' will take care of this.
   , foeSecurityParam :: !SecurityParam
   -- ^ Config
   , foeTracer :: !(Tracer m TraceForkerEvent)
   -- ^ Config
   }
-  deriving Generic
 
-deriving instance
-  ( IOLike m
-  , LedgerSupportsProtocol blk
-  , NoThunks (l EmptyMK)
-  , NoThunks (TxIn l)
-  , NoThunks (TxOut l)
-  ) =>
-  NoThunks (ForkerEnv m l blk)
+forkerCommon :: ForkerEnv m l blk ft -> ForkerEnvCommon m l
+forkerCommon ReadForkerEnv{rfoeCommon} = rfoeCommon
+forkerCommon SimpleForkerEnv{sfoeCommon} = sfoeCommon
+
+forkerValueHandle :: ForkerEnv m l blk TablesForker -> LedgerBackingStoreValueHandle m l
+forkerValueHandle ReadForkerEnv{rfoeBackingStoreValueHandle} = rfoeBackingStoreValueHandle
+
+mkSimpleForker ::
+  IOLike m =>
+  LedgerDBLock m ->
+  LedgerBackingStore m l ->
+  ResourceRegistry m ->
+  StrictTVar m (DbChangelog l) ->
+  SecurityParam ->
+  Tracer m TraceForkerEventWithKey ->
+  ForkerKey ->
+  m (ForkerEnv m l blk NoTablesForker)
+mkSimpleForker lock backingStore rr changelog secParam trcr forkerKey = do
+  atomically $ unsafeAcquireReadAccess lock
+  pure
+    SimpleForkerEnv
+      { sfoeUpgradeIngredients =
+          (lock, backingStore, rr)
+      , sfoeCommon =
+          ForkerEnvCommon
+            { foeChangelog = changelog
+            , foeSecurityParam = secParam
+            , foeTracer = TraceForkerEventWithKey forkerKey >$< trcr
+            }
+      }
+
+upgradeForkerToRead ::
+  (IOLike m, GetTip l) =>
+  ForkerEnv m l blk NoTablesForker -> m (ForkerEnv m l blk TablesForker)
+upgradeForkerToRead SimpleForkerEnv{sfoeUpgradeIngredients = (lk, bs, rr), sfoeCommon} = do
+  -- bsvhClose is idempotent, so we let the resource call it even if the value
+  -- handle might have been closed somewhere else
+  (_, vh) <-
+    allocate
+      rr
+      ( \_ -> do
+          vh <- bsValueHandle bs
+          atomically $ unsafeReleaseReadAccess lk
+          pure vh
+      )
+      bsvhClose
+  dblogSlot <- getTipSlot . changelogLastFlushedState <$> readTVarIO (foeChangelog sfoeCommon)
+  if bsvhAtSlot vh == dblogSlot
+    then
+      pure
+        ReadForkerEnv
+          { rfoeCommon = sfoeCommon
+          , rfoeBackingStoreValueHandle = vh
+          }
+    else
+      bsvhClose vh
+        >> error
+          ( "Critical error: Value handles are created at "
+              <> show (bsvhAtSlot vh)
+              <> " while the db changelog is at "
+              <> show dblogSlot
+              <> ". There is either a race condition or a logic bug"
+          )
 
 {-------------------------------------------------------------------------------
   Close
 -------------------------------------------------------------------------------}
 
-closeForkerEnv :: ForkerEnv m l blk -> m ()
-closeForkerEnv ForkerEnv{foeBackingStoreValueHandle} = bsvhClose foeBackingStoreValueHandle
+closeForkerEnv :: IOLike m => ForkerEnv m l blk ht -> m ()
+closeForkerEnv ReadForkerEnv{rfoeBackingStoreValueHandle} = bsvhClose rfoeBackingStoreValueHandle
+closeForkerEnv SimpleForkerEnv{sfoeUpgradeIngredients = (lk, _, _)} = atomically $ unsafeReleaseReadAccess lk
 
 {-------------------------------------------------------------------------------
   Acquiring consistent views
@@ -86,30 +156,30 @@ closeForkerEnv ForkerEnv{foeBackingStoreValueHandle} = bsvhClose foeBackingStore
 
 implForkerReadTables ::
   (MonadSTM m, HasLedgerTables l, GetTip l) =>
-  ForkerEnv m l blk ->
+  ForkerEnv m l blk TablesForker ->
   LedgerTables l KeysMK ->
   m (LedgerTables l ValuesMK)
 implForkerReadTables env ks = do
-  traceWith (foeTracer env) ForkerReadTablesStart
-  chlog <- readTVarIO (foeChangelog env)
+  traceWith (foeTracer $ forkerCommon env) ForkerReadTablesStart
+  chlog <- readTVarIO (foeChangelog $ forkerCommon env)
   unfwd <- readKeySetsWith lvh (changelogLastFlushedState chlog) ks
   case forwardTableKeySets chlog unfwd of
     Left _err -> error "impossible!"
     Right vs -> do
-      traceWith (foeTracer env) ForkerReadTablesEnd
+      traceWith (foeTracer $ forkerCommon env) ForkerReadTablesEnd
       pure vs
  where
-  lvh = foeBackingStoreValueHandle env
+  lvh = forkerValueHandle env
 
 implForkerRangeReadTables ::
   (MonadSTM m, HasLedgerTables l) =>
   QueryBatchSize ->
-  ForkerEnv m l blk ->
+  ForkerEnv m l blk TablesForker ->
   RangeQueryPrevious l ->
   m (LedgerTables l ValuesMK)
 implForkerRangeReadTables qbs env rq0 = do
-  traceWith (foeTracer env) ForkerRangeReadTablesStart
-  ldb <- readTVarIO $ foeChangelog env
+  traceWith (foeTracer $ forkerCommon env) ForkerRangeReadTablesStart
+  ldb <- readTVarIO $ foeChangelog $ forkerCommon env
   let
     -- Get the differences without the keys that are greater or equal
     -- than the maximum previously seen key.
@@ -133,10 +203,10 @@ implForkerRangeReadTables qbs env rq0 = do
 
   let st = changelogLastFlushedState ldb
   values <- BackingStore.bsvhRangeRead lvh st (rq{BackingStore.rqCount = nrequested})
-  traceWith (foeTracer env) ForkerRangeReadTablesEnd
+  traceWith (foeTracer $ forkerCommon env) ForkerRangeReadTablesEnd
   pure $ ltliftA2 (doFixupReadResult nrequested) diffs values
  where
-  lvh = foeBackingStoreValueHandle env
+  lvh = forkerValueHandle env
 
   rq = BackingStore.RangeQuery rq1 (fromIntegral $ defaultQueryBatchSize qbs)
 
@@ -223,19 +293,19 @@ implForkerRangeReadTables qbs env rq0 = do
 
 implForkerGetLedgerState ::
   (MonadSTM m, GetTip l) =>
-  ForkerEnv m l blk ->
+  ForkerEnv m l blk ht ->
   STM m (l EmptyMK)
-implForkerGetLedgerState env = current <$> readTVar (foeChangelog env)
+implForkerGetLedgerState env = current <$> readTVar (foeChangelog $ forkerCommon env)
 
 -- | Obtain statistics for a combination of backing store value handle and
 -- changelog.
 implForkerReadStatistics ::
   (MonadSTM m, HasLedgerTables l, GetTip l) =>
-  ForkerEnv m l blk ->
+  ForkerEnv m l blk TablesForker ->
   m (Maybe Forker.Statistics)
 implForkerReadStatistics env = do
-  traceWith (foeTracer env) ForkerReadStatistics
-  dblog <- readTVarIO (foeChangelog env)
+  traceWith (foeTracer $ forkerCommon env) ForkerReadStatistics
+  dblog <- readTVarIO (foeChangelog $ forkerCommon env)
 
   let seqNo = getTipSlot $ changelogLastFlushedState dblog
   BackingStore.Statistics{sequenceNumber = seqNo', numEntries = n} <- bsvhStat lbsvh
@@ -266,30 +336,31 @@ implForkerReadStatistics env = do
           { ledgerTableSize = n + nInserts - nDeletes
           }
  where
-  lbsvh = foeBackingStoreValueHandle env
+  lbsvh = forkerValueHandle env
 
 implForkerPush ::
   (MonadSTM m, GetTip l, HasLedgerTables l) =>
-  ForkerEnv m l blk ->
+  ForkerEnv m l blk TablesForker ->
   l DiffMK ->
   m ()
 implForkerPush env newState = do
-  traceWith (foeTracer env) ForkerPushStart
+  traceWith (foeTracer $ forkerCommon env) ForkerPushStart
   atomically $ do
-    chlog <- readTVar (foeChangelog env)
+    chlog <- readTVar (foeChangelog $ forkerCommon env)
     let chlog' =
-          prune (LedgerDbPruneKeeping (foeSecurityParam env)) $
+          prune (LedgerDbPruneKeeping (foeSecurityParam $ forkerCommon env)) $
             extend newState chlog
-    writeTVar (foeChangelog env) chlog'
-  traceWith (foeTracer env) ForkerPushEnd
+    writeTVar (foeChangelog $ forkerCommon env) chlog'
+  traceWith (foeTracer $ forkerCommon env) ForkerPushEnd
 
 implForkerCommit ::
   (MonadSTM m, GetTip l, HasLedgerTables l) =>
-  ForkerEnv m l blk ->
+  ForkerEnv m l blk TablesForker ->
+  StrictTVar m (DbChangelog l) ->
   STM m ()
-implForkerCommit env = do
-  dblog <- readTVar (foeChangelog env)
-  modifyTVar (foeSwitchVar env) $ \orig ->
+implForkerCommit env switchVar = do
+  dblog <- readTVar (foeChangelog $ forkerCommon env)
+  modifyTVar switchVar $ \orig ->
     -- We don't need to distinguish Origin from 0 because Origin has no diffs
     -- (SeqDiffMK is a fingertree measured by slot so there cannot be an entry
     -- for Origin).

@@ -167,7 +167,7 @@ initialChainSelection
     curForker <-
       LedgerDB.getForkerAtTarget lgrDB rr VolatileTip >>= \case
         Left{} -> error "Unreachable, VolatileTip MUST be in the LedgerDB"
-        Right frk -> pure frk
+        Right frk -> upgradeReadForker <$> upgradeSimpleForker frk
 
     chains <- constructChains i succsOf
 
@@ -197,7 +197,7 @@ initialChainSelection
     -- This is guaranteed by the fact that all constructed candidates start
     -- from this tip.
     toChainAndLedger ::
-      ValidatedChainDiff (Header blk) (Forker' m blk) ->
+      ValidatedChainDiff (Header blk) (FullForker' m blk) ->
       m (ChainAndLedger m blk)
     toChainAndLedger (ValidatedChainDiff chainDiff ledger) =
       case chainDiff of
@@ -254,7 +254,7 @@ initialChainSelection
       -- @i@.
       NonEmpty (AnchoredFragment (Header blk)) ->
       -- \^ Candidates anchored at @i@
-      m (Maybe (ValidatedChainDiff (Header blk) (Forker' m blk)))
+      m (Maybe (ValidatedChainDiff (Header blk) (FullForker' m blk)))
     chainSelection' curChainAndLedger candidates =
       atomically (forkerCurrentPoint ledger) >>= \curpt ->
         assert (all ((curpt ==) . castPoint . AF.anchorPoint) candidates) $
@@ -542,7 +542,8 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
         <*> Query.getTipPoint cdb
   -- This is safe: the LedgerDB tip doesn't change in between the previous
   -- atomically block and this call to 'withTipForker'.
-  LedgerDB.withTipForker cdbLedgerDB rr $ \curForker -> do
+  LedgerDB.withTipForker cdbLedgerDB rr $ \curForker0 -> do
+    curForker <- upgradeReadForker <$> upgradeSimpleForker curForker0
     curChainAndLedger :: ChainAndLedger m blk <-
       -- The current chain we're working with here is not longer than @k@
       -- blocks (see 'getCurrentChain' and 'cdbChain'), which is easier to
@@ -886,7 +887,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
   -- us, as we cannot roll back more than @k@ headers anyway.
   switchTo ::
     HasCallStack =>
-    ValidatedChainDiff (Header blk) (Forker' m blk) ->
+    ValidatedChainDiff (Header blk) (FullForker' m blk) ->
     -- \^ Chain and ledger to switch to
     StrictTVar m (StrictMaybe (Header blk)) ->
     -- \^ Tentative header
@@ -1057,7 +1058,7 @@ chainSelection ::
   -- | The (valid) chain diff and corresponding LedgerDB that was selected,
   -- or 'Nothing' if there is no valid chain diff preferred over the current
   -- chain.
-  m (Maybe (ValidatedChainDiff (Header blk) (Forker' m blk)))
+  m (Maybe (ValidatedChainDiff (Header blk) (FullForker' m blk)))
 chainSelection chainSelEnv rr chainDiffs =
   assert
     ( all
@@ -1089,7 +1090,7 @@ chainSelection chainSelEnv rr chainDiffs =
   --        [Ouroboros] below.
   go ::
     [ChainDiff (Header blk)] ->
-    m (Maybe (ValidatedChainDiff (Header blk) (Forker' m blk)))
+    m (Maybe (ValidatedChainDiff (Header blk) (FullForker' m blk)))
   go [] = return Nothing
   go (candidate : candidates0) = do
     mTentativeHeader <- setTentativeHeader
@@ -1203,7 +1204,7 @@ chainSelection chainSelEnv rr chainDiffs =
 -- | Result of 'validateCandidate'.
 data ValidationResult m blk
   = -- | The entire candidate fragment was valid.
-    FullyValid (ValidatedChainDiff (Header blk) (Forker' m blk))
+    FullyValid (ValidatedChainDiff (Header blk) (FullForker' m blk))
   | -- | The candidate fragment contained invalid blocks that had to
     -- be truncated from the fragment.
     ValidPrefix (ChainDiff (Header blk))
@@ -1238,7 +1239,7 @@ ledgerValidateCandidate ::
   ChainSelEnv m blk ->
   ResourceRegistry m ->
   ChainDiff (Header blk) ->
-  m (ValidatedChainDiff (Header blk) (Forker' m blk))
+  m (ValidatedChainDiff (Header blk) (FullForker' m blk))
 ledgerValidateCandidate chainSelEnv rr chainDiff@(ChainDiff rollback suffix) =
   LedgerDB.validateFork lgrDB rr traceUpdate blockCache rollback newBlocks >>= \case
     ValidateExceededRollBack{} ->
@@ -1333,7 +1334,7 @@ validateCandidate chainSelEnv rr chainDiff =
   -- If this function does not return a validated chain diff, then there is a
   -- leftover forker that we have to close so that its resources are correctly
   -- released.
-  cleanup :: ValidatedChainDiff b (Forker' m blk) -> m ()
+  cleanup :: ValidatedChainDiff b (FullForker' m blk) -> m ()
   cleanup = forkerClose . getLedger
 
 {-------------------------------------------------------------------------------
@@ -1341,7 +1342,7 @@ validateCandidate chainSelEnv rr chainDiff =
 -------------------------------------------------------------------------------}
 
 -- | Instantiate 'ValidatedFragment' in the way that chain selection requires.
-type ChainAndLedger m blk = ValidatedFragment (Header blk) (Forker' m blk)
+type ChainAndLedger m blk = ValidatedFragment (Header blk) (FullForker' m blk)
 
 {-------------------------------------------------------------------------------
   Diffusion pipelining
