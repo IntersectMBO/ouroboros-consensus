@@ -35,7 +35,6 @@ source-repository-package
     eras/byron/ledger/impl
     eras/conway/impl
     eras/conway/test-suite
-    eras/dijkstra
     eras/mary/impl
     eras/shelley/impl
     eras/shelley-ma/test-suite
