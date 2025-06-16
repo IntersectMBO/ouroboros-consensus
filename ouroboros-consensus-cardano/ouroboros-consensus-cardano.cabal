@@ -25,6 +25,7 @@ extra-doc-files:
 
 data-files:
   cddl/**/*.cddl
+  cddl/base.cddl
 
 source-repository head
   type: git
