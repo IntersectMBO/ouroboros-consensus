@@ -89,7 +89,7 @@ library
     mtl,
     network-mux ^>=0.8,
     ouroboros-consensus ^>=0.27,
-    ouroboros-network:{ouroboros-network, cardano-diffusion} ^>=0.21,
+    ouroboros-network:{cardano-diffusion, ouroboros-network} ^>=0.21,
     ouroboros-network-api ^>=0.14,
     ouroboros-network-framework ^>=0.18,
     ouroboros-network-protocols ^>=0.14,
@@ -100,7 +100,7 @@ library
     text,
     time,
     transformers,
-    typed-protocols:{typed-protocols, stateful},
+    typed-protocols:{stateful, typed-protocols},
 
 library unstable-diffusion-testlib
   import: common-lib
