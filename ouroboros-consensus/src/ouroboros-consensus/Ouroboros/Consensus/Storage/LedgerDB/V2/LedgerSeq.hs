@@ -52,6 +52,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
   , snapshots
   , tip
   , volatileStatesBimap
+  , volatileSuffix
   ) where
 
 import Cardano.Ledger.BaseTypes
@@ -255,6 +256,12 @@ prune howToPrune (LedgerSeq ldb) = case howToPrune of
     (closeButHead before, LedgerSeq after)
    where
     (before, after) = (ldb, AS.Empty (AS.headAnchor ldb))
+  LedgerDbPruneBeforeSlot slot ->
+    (closeButHead before, LedgerSeq after)
+   where
+    -- The anchor of @vol'@ might still have a tip slot larger than @slot@,
+    -- which is fine to ignore (we will prune it later).
+    (before, after) = AS.splitAtMeasure (NotOrigin slot) ldb
  where
   -- Above, we split @ldb@ into two sequences @before@ and @after@ such that
   -- @AS.headAnchor before == AS.anchor after@. We want to close all handles of
@@ -505,6 +512,13 @@ volatileStatesBimap ::
 volatileStatesBimap f g =
   AS.bimap (f . state) (g . state)
     . getLedgerSeq
+
+-- | Take the suffix containing the @k@ most recent states. The 'LedgerSeq' can
+-- contain more than @k@ states if we adopted new blocks, but garbage collection
+-- has not yet been run.
+volatileSuffix :: GetTip l => SecurityParam -> LedgerSeq m l -> LedgerSeq m l
+volatileSuffix (SecurityParam k) =
+  LedgerSeq . AS.anchorNewest (unNonZero k) . getLedgerSeq
 
 {-------------------------------------------------------------------------------
   docspec setup
