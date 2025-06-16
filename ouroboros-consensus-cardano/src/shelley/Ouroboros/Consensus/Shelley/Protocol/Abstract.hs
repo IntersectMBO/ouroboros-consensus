@@ -60,6 +60,7 @@ import Ouroboros.Consensus.Protocol.Abstract
   , ValidateView
   )
 import Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
+import Ouroboros.Consensus.Protocol.Praos.Common (HasMaxMajorProtVer)
 import Ouroboros.Consensus.Protocol.Signed (SignedHeader)
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 
@@ -201,5 +202,6 @@ class
   , ProtocolHeaderSupportsLedger proto
   , Serialise (ChainDepState proto)
   , SignedHeader (ShelleyProtocolHeader proto)
+  , HasMaxMajorProtVer proto
   ) =>
   ShelleyProtocol proto

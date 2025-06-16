@@ -96,6 +96,7 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
+import Ouroboros.Consensus.Protocol.Praos.Common
 import qualified Ouroboros.Consensus.Shelley.Eras as SE
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config
@@ -360,6 +361,8 @@ data instance BlockQuery (ShelleyBlock proto era) fp result where
   -- pools, in an extensible fashion.
   GetStakeDistribution2 ::
     BlockQuery (ShelleyBlock proto era) QFNoTables SL.PoolDistr
+  GetMaxMajorProtocolVersion ::
+    BlockQuery (ShelleyBlock proto era) QFNoTables MaxMajorProtVer
 
 -- WARNING: please add new queries to the end of the list and stick to this
 -- order in all other pattern matches on queries. This helps in particular
@@ -534,6 +537,11 @@ instance
          in SL.calculatePoolDistr' (maybe (const True) (flip Set.member) mPoolIds) stakeSet
       GetStakeDistribution2 ->
         SL.poolsByTotalStakeFraction globals st
+      GetMaxMajorProtocolVersion ->
+        protoMaxMajorPV
+          . configConsensus
+          . getExtLedgerCfg
+          $ cfg
    where
     lcfg = configLedger $ getExtLedgerCfg cfg
     globals = shelleyLedgerGlobals lcfg
@@ -592,6 +600,7 @@ instance
     QueryStakePoolDefaultVote{} -> (>= v12)
     GetPoolDistr2{} -> (>= v13)
     GetStakeDistribution2{} -> (>= v13)
+    GetMaxMajorProtocolVersion -> (>= v13)
    where
     -- WARNING: when adding a new query, a new @ShelleyNodeToClientVersionX@
     -- must be added. See #2830 for a template on how to do this.
@@ -759,6 +768,8 @@ instance SameDepIndex2 (BlockQuery (ShelleyBlock proto era)) where
   sameDepIndex2 GetPoolDistr2{} _ = Nothing
   sameDepIndex2 GetStakeDistribution2{} GetStakeDistribution2{} = Just Refl
   sameDepIndex2 GetStakeDistribution2{} _ = Nothing
+  sameDepIndex2 GetMaxMajorProtocolVersion{} GetMaxMajorProtocolVersion{} = Just Refl
+  sameDepIndex2 GetMaxMajorProtocolVersion{} _ = Nothing
 
 deriving instance Eq (BlockQuery (ShelleyBlock proto era) fp result)
 deriving instance Show (BlockQuery (ShelleyBlock proto era) fp result)
@@ -803,6 +814,7 @@ instance ShelleyCompatible proto era => ShowQuery (BlockQuery (ShelleyBlock prot
     QueryStakePoolDefaultVote{} -> show
     GetPoolDistr2{} -> show
     GetStakeDistribution2{} -> show
+    GetMaxMajorProtocolVersion{} -> show
 
 {-------------------------------------------------------------------------------
   Auxiliary
@@ -929,6 +941,8 @@ encodeShelleyQuery query = case query of
     CBOR.encodeListLen 2 <> CBOR.encodeWord8 36 <> toCBOR poolids
   GetStakeDistribution2 ->
     CBOR.encodeListLen 1 <> CBOR.encodeWord8 37
+  GetMaxMajorProtocolVersion ->
+    CBOR.encodeListLen 1 <> CBOR.encodeWord8 38
 
 decodeShelleyQuery ::
   forall era proto.
@@ -1002,6 +1016,7 @@ decodeShelleyQuery = do
     (2, 35) -> requireCG $ SomeBlockQuery . QueryStakePoolDefaultVote <$> LC.fromEraCBOR @era
     (2, 36) -> SomeBlockQuery . GetPoolDistr2 <$> fromCBOR
     (1, 37) -> return $ SomeBlockQuery GetStakeDistribution2
+    (1, 38) -> return $ SomeBlockQuery GetMaxMajorProtocolVersion
     _ -> failmsg "invalid"
 
 encodeShelleyResult ::
@@ -1050,6 +1065,7 @@ encodeShelleyResult v query = case query of
   QueryStakePoolDefaultVote{} -> toCBOR
   GetPoolDistr2{} -> LC.toEraCBOR @era
   GetStakeDistribution2{} -> LC.toEraCBOR @era
+  GetMaxMajorProtocolVersion -> toCBOR
 
 decodeShelleyResult ::
   forall proto era fp result.
@@ -1097,6 +1113,7 @@ decodeShelleyResult v query = case query of
   QueryStakePoolDefaultVote{} -> fromCBOR
   GetPoolDistr2{} -> LC.fromEraCBOR @era
   GetStakeDistribution2 -> LC.fromEraCBOR @era
+  GetMaxMajorProtocolVersion -> fromCBOR
 
 currentPParamsEnDecoding ::
   forall era s.
