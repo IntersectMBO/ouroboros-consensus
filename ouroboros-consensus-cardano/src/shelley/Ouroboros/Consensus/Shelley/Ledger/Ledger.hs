@@ -630,11 +630,7 @@ applyHelper f cfg blk stBefore = do
       tickedShelleyLedgerState
       ( let b = shelleyBlockRaw blk
             h' = mkHeaderView (SL.bheader b)
-         in -- Jared Corduan explains that the " Unsafe " here ultimately only
-            -- means the value must not be serialized. We're only passing it to
-            -- 'STS.applyBlockOpts', which does not serialize it. So this is a
-            -- safe use.
-            SL.UnsafeUnserialisedBlock h' (SL.bbody b)
+         in SL.Block h' (SL.bbody b)
       )
 
   let track ::

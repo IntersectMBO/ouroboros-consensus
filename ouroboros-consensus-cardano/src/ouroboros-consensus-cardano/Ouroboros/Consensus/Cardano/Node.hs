@@ -41,6 +41,7 @@ module Ouroboros.Consensus.Cardano.Node
   , pattern CardanoNodeToClientVersion14
   , pattern CardanoNodeToClientVersion15
   , pattern CardanoNodeToClientVersion16
+  , pattern CardanoNodeToClientVersion17
   , pattern CardanoNodeToNodeVersion1
   , pattern CardanoNodeToNodeVersion2
   ) where
@@ -354,6 +355,23 @@ pattern CardanoNodeToClientVersion16 =
         :* Nil
       )
 
+-- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo and Babbage
+-- and Conway eras enabled, using 'ShelleyNodeToClientVersion13' for the
+-- Shelley-based eras.
+pattern CardanoNodeToClientVersion17 :: BlockNodeToClientVersion (CardanoBlock c)
+pattern CardanoNodeToClientVersion17 =
+  HardForkNodeToClientEnabled
+    HardForkSpecificNodeToClientVersion3
+    ( EraNodeToClientEnabled ByronNodeToClientVersion1
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion13
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion13
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion13
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion13
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion13
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion13
+        :* Nil
+      )
+
 instance
   CardanoHardForkConstraints c =>
   SupportedNetworkProtocolVersion (CardanoBlock c)
@@ -370,8 +388,12 @@ instance
       , (NodeToClientV_18, CardanoNodeToClientVersion14)
       , (NodeToClientV_19, CardanoNodeToClientVersion15)
       , (NodeToClientV_20, CardanoNodeToClientVersion16)
+      , (NodeToClientV_21, CardanoNodeToClientVersion17)
       ]
 
+  -- This is not set to NodeToClientV_21 on purpose because that one is just a
+  -- stub. Once we have a proper ouroboros-network to integrate that comes with
+  -- said version and we remove the SRP then we can bump this value.
   latestReleasedNodeVersion _prx = (Just NodeToNodeV_14, Just NodeToClientV_20)
 
 {-------------------------------------------------------------------------------

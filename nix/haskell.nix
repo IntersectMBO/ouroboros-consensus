@@ -36,8 +36,6 @@ let
             }) [ "byron" "shelley" "cardano" ]);
       }
       ({ pkgs, lib, ... }: lib.mkIf pkgs.stdenv.hostPlatform.isWindows {
-        # https://github.com/input-output-hk/haskell.nix/issues/1836
-        packages.Cabal-syntax.components.library.build-tools = lib.mkForce [ pkgs.pkgsBuildBuild.alex ];
         # https://github.com/input-output-hk/haskell.nix/issues/2332
         packages.basement.configureFlags = [ "--hsc2hs-option=--cflag=-Wno-int-conversion" ];
       })

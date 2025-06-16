@@ -2,8 +2,11 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | This module contains copies of older versions of types from Ledger in order
 -- to retain backwards-compatibility. Eventually, types likes this should be
@@ -19,12 +22,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Query.Types
 import qualified Cardano.Crypto.Hash as Hash
 import qualified Cardano.Crypto.VRF as VRF
 import Cardano.Ledger.Binary
-  ( DecCBOR (..)
-  , EncCBOR (..)
-  , decodeRecordNamed
-  , encodeListLen
-  )
-import Cardano.Ledger.Hashes (HASH)
+import Cardano.Ledger.Core
 import qualified Cardano.Ledger.Keys as SL
 import qualified Cardano.Ledger.State as SL
 import Cardano.Protocol.Crypto (Crypto, VRF)
