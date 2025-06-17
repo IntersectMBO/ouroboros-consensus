@@ -25,7 +25,13 @@ tests =
   goldenTest_all
     codecConfig
     ($(getGoldenDir) </> "cardano")
-    (Just $ CDDLsForNodeToNode ("ntnblock.cddl", "serialisedCardanoBlock") ("ntnheader.cddl", "header"))
+    ( Just $
+        CDDLsForNodeToNode
+          ("ntnblock.cddl", "serialisedCardanoBlock")
+          ("ntnheader.cddl", "header")
+          ("ntntx.cddl", "tx")
+          ("ntntxid.cddl", "txId")
+    )
     examples
 
 instance

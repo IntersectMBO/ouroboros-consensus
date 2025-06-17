@@ -42,4 +42,6 @@ cddlTest cborM cddl rule =
 data CDDLsForNodeToNode = CDDLsForNodeToNode
   { blockCDDL :: (FilePath, T.Text)
   , headerCDDL :: (FilePath, T.Text)
+  , txCDDL :: (FilePath, T.Text)
+  , txIdCDDL :: (FilePath, T.Text)
   }
