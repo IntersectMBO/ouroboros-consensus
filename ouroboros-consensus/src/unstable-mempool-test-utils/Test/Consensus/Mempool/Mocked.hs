@@ -22,19 +22,19 @@ import Control.Concurrent.Class.MonadSTM.Strict
   , atomically
   , newTVarIO
   , readTVar
-  , readTVarIO
   , writeTVar
   )
 import Control.DeepSeq (NFData (rnf))
+import Control.ResourceRegistry
 import Control.Tracer (Tracer)
 import qualified Data.List.NonEmpty as NE
-import Ouroboros.Consensus.Block (castPoint)
 import Ouroboros.Consensus.HeaderValidation as Header
 import Ouroboros.Consensus.Ledger.Basics
 import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import Ouroboros.Consensus.Ledger.Tables.Utils
-  ( forgetLedgerTables
+  ( emptyLedgerTables
+  , forgetLedgerTables
   , restrictValues'
   )
 import Ouroboros.Consensus.Mempool (Mempool)
@@ -43,6 +43,8 @@ import Ouroboros.Consensus.Mempool.API
   ( AddTxOnBehalfOf
   , MempoolAddTxResult
   )
+import Ouroboros.Consensus.Mempool.Impl.Common (MempoolLedgerDBView (MempoolLedgerDBView))
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
 
 data MockedMempool m blk = MockedMempool
   { getLedgerInterface :: !(Mempool.LedgerInterface m blk)
@@ -62,7 +64,7 @@ instance NFData (MockedMempool m blk) where
   rnf MockedMempool{} = ()
 
 data InitialMempoolAndModelParams blk = MempoolAndModelParams
-  { immpInitialState :: !(Ledger.LedgerState blk ValuesMK)
+  { immpInitialState :: !(LedgerState blk ValuesMK)
   -- ^ Initial ledger state for the mocked Ledger DB interface.
   , immpLedgerConfig :: !(Ledger.LedgerConfig blk)
   -- ^ Ledger configuration, which is needed to open the mempool.
@@ -79,17 +81,29 @@ openMockedMempool ::
   IO (MockedMempool IO blk)
 openMockedMempool capacityOverride tracer initialParams = do
   currentLedgerStateTVar <- newTVarIO (immpInitialState initialParams)
+  reg <- unsafeNewRegistry
   let ledgerItf =
         Mempool.LedgerInterface
-          { Mempool.getCurrentLedgerState = forgetLedgerTables <$> readTVar currentLedgerStateTVar
-          , Mempool.getLedgerTablesAtFor = \pt keys -> do
-              st <- readTVarIO currentLedgerStateTVar
-              if castPoint (getTip st) == pt
-                then pure $ Just $ restrictValues' st keys
-                else pure Nothing
+          { Mempool.getCurrentLedgerState = \_reg -> do
+              st <- readTVar currentLedgerStateTVar
+              pure $
+                MempoolLedgerDBView
+                  (forgetLedgerTables st)
+                  ( pure $
+                      Right $
+                        ReadOnlyForker
+                          { roforkerClose = pure ()
+                          , roforkerGetLedgerState = pure (forgetLedgerTables st)
+                          , roforkerReadTables = \keys ->
+                              pure $ projectLedgerTables st `restrictValues'` keys
+                          , roforkerReadStatistics = pure Nothing
+                          , roforkerRangeReadTables = \_ -> pure emptyLedgerTables
+                          }
+                  )
           }
   mempool <-
     Mempool.openMempoolWithoutSyncThread
+      reg
       ledgerItf
       (immpLedgerConfig initialParams)
       capacityOverride

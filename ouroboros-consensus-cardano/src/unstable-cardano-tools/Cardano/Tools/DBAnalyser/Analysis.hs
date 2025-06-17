@@ -77,6 +77,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
   )
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import qualified Ouroboros.Consensus.Mempool as Mempool
+import Ouroboros.Consensus.Mempool.Impl.Common
 import Ouroboros.Consensus.Protocol.Abstract (LedgerView)
 import Ouroboros.Consensus.Storage.Common (BlockComponent (..))
 import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
@@ -862,31 +863,30 @@ reproMempoolForge numBlks env = do
           <> "1 or 2 blocks at a time, not "
           <> show numBlks
 
-  mempool <-
-    Mempool.openMempoolWithoutSyncThread
-      Mempool.LedgerInterface
-        { Mempool.getCurrentLedgerState = ledgerState <$> LedgerDB.getVolatileTip ledgerDB
-        , Mempool.getLedgerTablesAtFor = \pt keys -> do
-            frk <- LedgerDB.getForkerAtTarget ledgerDB registry (SpecificPoint pt)
-            case frk of
-              Left _ -> pure Nothing
-              Right fr -> do
-                tbs <-
-                  Just . castLedgerTables
-                    <$> LedgerDB.forkerReadTables fr (castLedgerTables keys)
-                LedgerDB.forkerClose fr
-                pure tbs
-        }
-      lCfg
-      -- one mebibyte should generously accomodate two blocks' worth of txs
-      ( Mempool.MempoolCapacityBytesOverride $
-          LedgerSupportsMempool.ByteSize32 $
-            1024 * 1024
-      )
-      nullTracer
+  withRegistry $ \reg -> do
+    mempool <-
+      Mempool.openMempoolWithoutSyncThread
+        reg
+        Mempool.LedgerInterface
+          { Mempool.getCurrentLedgerState = \reg' -> do
+              st <- LedgerDB.getVolatileTip ledgerDB
+              pure $
+                MempoolLedgerDBView
+                  (ledgerState st)
+                  ( fmap (LedgerDB.ledgerStateReadOnlyForker . LedgerDB.readOnlyForker)
+                      <$> LedgerDB.getForkerAtTarget ledgerDB reg' (SpecificPoint (castPoint $ getTip st))
+                  )
+          }
+        lCfg
+        -- one mebibyte should generously accomodate two blocks' worth of txs
+        ( Mempool.MempoolCapacityBytesOverride $
+            LedgerSupportsMempool.ByteSize32 $
+              1024 * 1024
+        )
+        nullTracer
 
-  void $ processAll db registry GetBlock startFrom limit Nothing (process howManyBlocks mempool)
-  pure Nothing
+    void $ processAll db registry GetBlock startFrom limit Nothing (process howManyBlocks mempool)
+    pure Nothing
  where
   AnalysisEnv
     { cfg
@@ -991,7 +991,7 @@ reproMempoolForge numBlks env = do
           LedgerDB.tryFlush ledgerDB
 
           -- this flushes blk from the mempool, since every tx in it is now on the chain
-          void $ Mempool.syncWithLedger mempool
+          void $ Mempool.testSyncWithLedger mempool
 
 {-------------------------------------------------------------------------------
   Auxiliary: processing all blocks in the DB
