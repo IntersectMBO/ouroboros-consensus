@@ -45,10 +45,19 @@ withCDDLs f =
 
         ntnHeader <- cddlc "cddl/node-to-node/chainsync/header.cddl"
         BS.writeFile "ntnheader.cddl" . cddlSpec $ ntnHeader
+
+        ntnTx <- cddlc "cddl/node-to-node/txsubmission2/tx.cddl"
+        ntnTx' <- fixupBlockCDDL ntnTx
+        BS.writeFile "ntntx.cddl" . cddlSpec $ ntnTx'
+
+        ntnTxId <- cddlc "cddl/node-to-node/txsubmission2/txId.cddl"
+        BS.writeFile "ntntxid.cddl" . cddlSpec $ ntnTxId
     )
     ( \() -> do
         D.removeFile "ntnblock.cddl"
         D.removeFile "ntnheader.cddl"
+        D.removeFile "ntntx.cddl"
+        D.removeFile "ntntxid.cddl"
     )
     (\_ -> f)
 

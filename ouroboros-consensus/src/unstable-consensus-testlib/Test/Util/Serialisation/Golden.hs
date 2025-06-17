@@ -379,8 +379,8 @@ goldenTest_SerialiseNodeToNode codecConfig goldenDir mCDDLs Examples{..} =
       , test "Header" exampleHeader $ fmap headerCDDL mCDDLs
       , test "SerialisedBlock" exampleSerialisedBlock Nothing
       , test "SerialisedHeader" exampleSerialisedHeader Nothing
-      , test "GenTx" exampleGenTx Nothing
-      , test "GenTxId" exampleGenTxId Nothing
+      , test "GenTx" exampleGenTx $ fmap txCDDL mCDDLs
+      , test "GenTxId" exampleGenTxId $ fmap txIdCDDL mCDDLs
       ]
    where
     test :: SerialiseNodeToNode blk a => TestName -> Labelled a -> Maybe (FilePath, T.Text) -> TestTree
