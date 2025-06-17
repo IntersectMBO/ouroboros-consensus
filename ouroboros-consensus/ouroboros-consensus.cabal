@@ -543,6 +543,7 @@ library unstable-mempool-test-utils
     contra-tracer,
     deepseq,
     ouroboros-consensus,
+    resource-registry,
     strict-stm,
 
 library unstable-tutorials

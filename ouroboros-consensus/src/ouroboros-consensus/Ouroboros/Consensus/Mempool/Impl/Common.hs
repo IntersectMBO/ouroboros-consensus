@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
@@ -39,9 +40,9 @@ module Ouroboros.Consensus.Mempool.Impl.Common
   , tickLedgerState
   ) where
 
-import Control.Concurrent.Class.MonadMVar (MVar, newMVar)
 import Control.Concurrent.Class.MonadSTM.Strict.TMVar (newTMVarIO)
 import Control.Monad.Trans.Except (runExcept)
+import Control.ResourceRegistry
 import Control.Tracer
 import qualified Data.Foldable as Foldable
 import qualified Data.List.NonEmpty as NE
@@ -61,8 +62,11 @@ import Ouroboros.Consensus.Mempool.TxSeq (TxSeq (..), TxTicket (..))
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import Ouroboros.Consensus.Storage.ChainDB (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Util.Enclose (EnclosingTimed)
 import Ouroboros.Consensus.Util.IOLike hiding (newMVar)
+import Ouroboros.Consensus.Util.NormalForm.StrictMVar
+import Ouroboros.Network.Protocol.LocalStateQuery.Type
 
 {-------------------------------------------------------------------------------
   Internal State
@@ -188,26 +192,26 @@ initInternalState capacityOverride lastTicketNo cfg slot st =
 
 -- | Abstract interface needed to run a Mempool.
 data LedgerInterface m blk = LedgerInterface
-  { getCurrentLedgerState :: STM m (LedgerState blk EmptyMK)
-  -- ^ Get the current tip of the LedgerDB.
-  , getLedgerTablesAtFor ::
-      Point blk ->
-      LedgerTables (LedgerState blk) KeysMK ->
-      m (Maybe (LedgerTables (LedgerState blk) ValuesMK))
-  -- ^ Get values at the given point on the chain. Returns Nothing if the
-  -- anchor moved or if the state is not found on the ledger db.
+  { getCurrentLedgerState ::
+      ResourceRegistry m ->
+      STM m (LedgerState blk EmptyMK, m (Either GetForkerError (ReadOnlyForker m (LedgerState blk) blk)))
+  -- ^ Get the current tip of the LedgerDB and an action to get a forker there.
   }
 
 -- | Create a 'LedgerInterface' from a 'ChainDB'.
 chainDBLedgerInterface ::
-  IOLike m =>
-  ChainDB m blk -> LedgerInterface m blk
+  (IOLike m, IsLedger (LedgerState blk)) =>
+  ChainDB m blk ->
+  LedgerInterface m blk
 chainDBLedgerInterface chainDB =
   LedgerInterface
-    { getCurrentLedgerState =
-        ledgerState <$> ChainDB.getCurrentLedger chainDB
-    , getLedgerTablesAtFor = \pt keys ->
-        fmap castLedgerTables <$> ChainDB.getLedgerTablesAtFor chainDB pt (castLedgerTables keys)
+    { getCurrentLedgerState = \reg -> do
+        st <- ChainDB.getCurrentLedger chainDB
+        pure
+          ( ledgerState st
+          , fmap (fmap ledgerStateReadOnlyForker) $
+              ChainDB.getReadOnlyForkerAtPoint chainDB reg (SpecificPoint (castPoint $ getTip st))
+          )
     }
 
 {-------------------------------------------------------------------------------
@@ -219,10 +223,12 @@ chainDBLedgerInterface chainDB =
 -- different operations.
 data MempoolEnv m blk = MempoolEnv
   { mpEnvLedger :: LedgerInterface m blk
+  , mpEnvForker :: StrictMVar m (ReadOnlyForker m (LedgerState blk) blk)
   , mpEnvLedgerCfg :: LedgerConfig blk
+  , mpEnvRegistry :: ResourceRegistry m
   , mpEnvStateVar :: StrictTMVar m (InternalState blk)
-  , mpEnvAddTxsRemoteFifo :: MVar m ()
-  , mpEnvAddTxsAllFifo :: MVar m ()
+  , mpEnvAddTxsRemoteFifo :: StrictMVar m ()
+  , mpEnvAddTxsAllFifo :: StrictMVar m ()
   , mpEnvTracer :: Tracer m (TraceEventMempool blk)
   , mpEnvCapacityOverride :: MempoolCapacityBytesOverride
   }
@@ -236,25 +242,39 @@ initMempoolEnv ::
   LedgerConfig blk ->
   MempoolCapacityBytesOverride ->
   Tracer m (TraceEventMempool blk) ->
+  ResourceRegistry m ->
   m (MempoolEnv m blk)
-initMempoolEnv ledgerInterface cfg capacityOverride tracer = do
-  st <- atomically $ getCurrentLedgerState ledgerInterface
-  let (slot, st') = tickLedgerState cfg (ForgeInUnknownSlot st)
-  isVar <-
-    newTMVarIO $
-      initInternalState capacityOverride TxSeq.zeroTicketNo cfg slot st'
-  addTxRemoteFifo <- newMVar ()
-  addTxAllFifo <- newMVar ()
-  return
-    MempoolEnv
-      { mpEnvLedger = ledgerInterface
-      , mpEnvLedgerCfg = cfg
-      , mpEnvStateVar = isVar
-      , mpEnvAddTxsRemoteFifo = addTxRemoteFifo
-      , mpEnvAddTxsAllFifo = addTxAllFifo
-      , mpEnvTracer = tracer
-      , mpEnvCapacityOverride = capacityOverride
-      }
+initMempoolEnv ledgerInterface cfg capacityOverride tracer registry = do
+  (_, mpEnvRegistry) <- allocate registry (\_ -> unsafeNewRegistry) closeRegistry
+  initMempoolEnv' mpEnvRegistry
+ where
+  initMempoolEnv' reg = do
+    (st, meFrk) <- atomically $ getCurrentLedgerState ledgerInterface reg
+    eFrk <- meFrk
+    case eFrk of
+      -- This should happen very rarely, if between getting the state and getting
+      -- the forker, the ledgerdb has changed. We just retry here.
+      Left{} -> initMempoolEnv' reg
+      Right frk -> do
+        frkMVar <- newMVar frk
+        let (slot, st') = tickLedgerState cfg (ForgeInUnknownSlot st)
+        isVar <-
+          newTMVarIO $
+            initInternalState capacityOverride TxSeq.zeroTicketNo cfg slot st'
+        addTxRemoteFifo <- newMVar ()
+        addTxAllFifo <- newMVar ()
+        return
+          MempoolEnv
+            { mpEnvLedger = ledgerInterface
+            , mpEnvLedgerCfg = cfg
+            , mpEnvForker = frkMVar
+            , mpEnvRegistry = reg
+            , mpEnvStateVar = isVar
+            , mpEnvAddTxsRemoteFifo = addTxRemoteFifo
+            , mpEnvAddTxsAllFifo = addTxAllFifo
+            , mpEnvTracer = tracer
+            , mpEnvCapacityOverride = capacityOverride
+            }
 
 {-------------------------------------------------------------------------------
   Ticking the ledger state
