@@ -95,7 +95,7 @@ setupCDDLCEnv = do
   babbage <- map takePath <$> Babbage.readBabbageCddlFileNames
   conway <- map takePath <$> Conway.readConwayCddlFileNames
 
-  localDataDir <- takePath <$> getDataDir
+  localDataDir <- windowsPathHack <$> getDataDir
   let local_paths =
         map
           (localDataDir F.</>)
@@ -135,21 +135,24 @@ cddlc dataFile = do
  where
   red s = putStrLn $ "\ESC[31m" <> s <> "\ESC[0m"
 
-takePath :: FilePath -> FilePath
-takePath x =
+-- | @cddlc@ is not capable of using backlashes
+--
+-- @cddlc@ mixes @C:@ with the separator in @CDDL_INCLUDE_PATH@, and it
+-- doesn't understand @;@ as a separator. It works if we remove @C:@ and we
+-- are running in the same drive as the cddl files.
+windowsPathHack :: FilePath -> FilePath
+windowsPathHack x =
 #ifdef mingw32_HOST_OS
-  -- @cddlc@ is not capable of using backlashes
-  --
-  -- @cddlc@ mixes @C:@ with the separator in @CDDL_INCLUDE_PATH@, and it
-  -- doesn't understand @;@ as a separator. It works if we remove @C:@ and we
-  -- are running in the same drive as the cddl files.
-  let f = [ if c /= '\\' then c else '/' | c <- F.takeDirectory x ]
+  let f = [ if c /= '\\' then c else '/' | c <- x ]
   in if "C:" `L.isPrefixOf` f
      then drop 2 f
      else f
 #else
-  F.takeDirectory x
+  x
 #endif
+
+takePath :: FilePath -> FilePath
+takePath = windowsPathHack . F.takeDirectory
 
 probeTools :: IO ()
 probeTools = do
