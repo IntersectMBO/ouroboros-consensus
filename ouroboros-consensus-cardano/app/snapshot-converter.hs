@@ -203,15 +203,18 @@ load config@Config{inpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), pa
       (V2.state h,) <$> Trans.lift (V2.readAll (V2.tables h))
     LMDB -> do
       checkSnapshotFileStructure LMDB path fs
-      ((dbch, bstore), _) <-
+      ((dbch, k, bstore), _) <-
         withExceptT SnapshotError $
           V1.loadSnapshot
             nullTracer
             (V1.LMDBBackingStoreArgs tempFP defaultLMDBLimits Dict.Dict)
             ccfg
             (V1.SnapshotsFS fs)
+            rr
             ds
-      (V1.current dbch,) <$> Trans.lift (V1.bsReadAll bstore (V1.changelogLastFlushedState dbch))
+      values <- Trans.lift (V1.bsReadAll bstore (V1.changelogLastFlushedState dbch))
+      _ <- Trans.lift $ RR.release k
+      pure (V1.current dbch, values)
 load _ _ _ _ = error "Malformed input path!"
 
 store ::
