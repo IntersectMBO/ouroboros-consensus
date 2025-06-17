@@ -1,5 +1,5 @@
 tx =
-  base.ns7<byron.tx,
+  base.ns7<byron.transaction,
            serialisedShelleyTx<shelley.transaction>,
            serialisedShelleyTx<allegra.transaction>,
            serialisedShelleyTx<mary.transaction>,
@@ -10,6 +10,10 @@ tx =
 serialisedShelleyTx<era> = #6.24(bytes .cbor era)
 
 ;# include byron as byron
+
+; See https://github.com/IntersectMBO/cardano-ledger/issues/5124
+byron.transaction = [0, [byron.tx, [+ byron.twit]]] / [1, any] / [2, any] / [3, any]
+
 ;# include shelley as shelley
 ;# include allegra as allegra
 ;# include mary as mary
