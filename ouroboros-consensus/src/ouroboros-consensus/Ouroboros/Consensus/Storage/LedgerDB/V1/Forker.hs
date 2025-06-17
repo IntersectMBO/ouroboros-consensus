@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -18,6 +19,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Forker
   , implForkerReadTables
   ) where
 
+import Control.ResourceRegistry
 import Control.Tracer
 import qualified Data.Map.Strict as Map
 import Data.Semigroup
@@ -40,6 +42,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq
   , numInserts
   )
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DiffSeq as DS
+import Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
 import Ouroboros.Consensus.Util.IOLike
 
 {-------------------------------------------------------------------------------
@@ -47,8 +50,17 @@ import Ouroboros.Consensus.Util.IOLike
 -------------------------------------------------------------------------------}
 
 data ForkerEnv m l blk = ForkerEnv
-  { foeBackingStoreValueHandle :: !(LedgerBackingStoreValueHandle m l)
-  -- ^ Local, consistent view of backing store
+  { foeBackingStoreValueHandle ::
+      !( StrictMVar
+           m
+           ( Either
+               (LedgerDBLock m, LedgerBackingStore m l, ResourceRegistry m)
+               (LedgerBackingStoreValueHandle m l)
+           )
+       )
+  -- ^ Either the ingredients to create a value handle or a value handle, i.e. a
+  -- local, consistent view of backing store. Use 'getValueHandle' to promote
+  -- this if needed.
   , foeChangelog :: !(StrictTVar m (DbChangelog l))
   -- ^ In memory db changelog, 'foeBackingStoreValueHandle' must refer to
   -- the anchor of this changelog.
@@ -77,32 +89,58 @@ deriving instance
   Close
 -------------------------------------------------------------------------------}
 
-closeForkerEnv :: ForkerEnv m l blk -> m ()
-closeForkerEnv ForkerEnv{foeBackingStoreValueHandle} = bsvhClose foeBackingStoreValueHandle
+closeForkerEnv :: IOLike m => ForkerEnv m l blk -> m ()
+closeForkerEnv ForkerEnv{foeBackingStoreValueHandle} = do
+  either (\(l, _, _) -> atomically . unsafeReleaseReadAccess $ l) bsvhClose
+    =<< takeMVar foeBackingStoreValueHandle
 
 {-------------------------------------------------------------------------------
   Acquiring consistent views
 -------------------------------------------------------------------------------}
 
+-- | Get the value handle in a forker, creating it on demand if this is the
+-- first time we access the tables.
+getValueHandle :: (GetTip l, IOLike m) => ForkerEnv m l blk -> m (LedgerBackingStoreValueHandle m l)
+getValueHandle ForkerEnv{foeBackingStoreValueHandle, foeChangelog} =
+  modifyMVar foeBackingStoreValueHandle $ \case
+    r@(Right bsvh) -> pure (r, bsvh)
+    Left (l, bs, rr) -> do
+      -- bsvhClose is idempotent, so we let the resource call it even if the value
+      -- handle might have been closed somewhere else
+      (_, bsvh) <- allocate rr (\_ -> bsValueHandle bs) bsvhClose
+      dblogSlot <- getTipSlot . changelogLastFlushedState <$> readTVarIO foeChangelog
+      if bsvhAtSlot bsvh == dblogSlot
+        then do
+          atomically $ unsafeReleaseReadAccess l
+          pure (Right bsvh, bsvh)
+        else
+          bsvhClose bsvh
+            >> error
+              ( "Critical error: Value handles are created at "
+                  <> show (bsvhAtSlot bsvh)
+                  <> " while the db changelog is at "
+                  <> show dblogSlot
+                  <> ". There is either a race condition or a logic bug"
+              )
+
 implForkerReadTables ::
-  (MonadSTM m, HasLedgerTables l, GetTip l) =>
+  (IOLike m, HasLedgerTables l, GetTip l) =>
   ForkerEnv m l blk ->
   LedgerTables l KeysMK ->
   m (LedgerTables l ValuesMK)
 implForkerReadTables env ks = do
   traceWith (foeTracer env) ForkerReadTablesStart
   chlog <- readTVarIO (foeChangelog env)
-  unfwd <- readKeySetsWith lvh (changelogLastFlushedState chlog) ks
+  bsvh <- getValueHandle env
+  unfwd <- readKeySetsWith bsvh (changelogLastFlushedState chlog) ks
   case forwardTableKeySets chlog unfwd of
     Left _err -> error "impossible!"
     Right vs -> do
       traceWith (foeTracer env) ForkerReadTablesEnd
       pure vs
- where
-  lvh = foeBackingStoreValueHandle env
 
 implForkerRangeReadTables ::
-  (MonadSTM m, HasLedgerTables l) =>
+  (IOLike m, GetTip l, HasLedgerTables l) =>
   QueryBatchSize ->
   ForkerEnv m l blk ->
   RangeQueryPrevious l ->
@@ -132,12 +170,11 @@ implForkerRangeReadTables qbs env rq0 = do
     nrequested = 1 + max (BackingStore.rqCount rq) (1 + maxDeletes)
 
   let st = changelogLastFlushedState ldb
-  values <- BackingStore.bsvhRangeRead lvh st (rq{BackingStore.rqCount = nrequested})
+  bsvh <- getValueHandle env
+  values <- BackingStore.bsvhRangeRead bsvh st (rq{BackingStore.rqCount = nrequested})
   traceWith (foeTracer env) ForkerRangeReadTablesEnd
   pure $ ltliftA2 (doFixupReadResult nrequested) diffs values
  where
-  lvh = foeBackingStoreValueHandle env
-
   rq = BackingStore.RangeQuery rq1 (fromIntegral $ defaultQueryBatchSize qbs)
 
   rq1 = case rq0 of
@@ -230,15 +267,15 @@ implForkerGetLedgerState env = current <$> readTVar (foeChangelog env)
 -- | Obtain statistics for a combination of backing store value handle and
 -- changelog.
 implForkerReadStatistics ::
-  (MonadSTM m, HasLedgerTables l, GetTip l) =>
+  (IOLike m, HasLedgerTables l, GetTip l) =>
   ForkerEnv m l blk ->
   m (Maybe Forker.Statistics)
 implForkerReadStatistics env = do
   traceWith (foeTracer env) ForkerReadStatistics
   dblog <- readTVarIO (foeChangelog env)
-
+  bsvh <- getValueHandle env
   let seqNo = getTipSlot $ changelogLastFlushedState dblog
-  BackingStore.Statistics{sequenceNumber = seqNo', numEntries = n} <- bsvhStat lbsvh
+  BackingStore.Statistics{sequenceNumber = seqNo', numEntries = n} <- bsvhStat bsvh
   if seqNo /= seqNo'
     then
       error $
@@ -265,8 +302,6 @@ implForkerReadStatistics env = do
         Forker.Statistics
           { ledgerTableSize = n + nInserts - nDeletes
           }
- where
-  lbsvh = foeBackingStoreValueHandle env
 
 implForkerPush ::
   (MonadSTM m, GetTip l, HasLedgerTables l) =>
