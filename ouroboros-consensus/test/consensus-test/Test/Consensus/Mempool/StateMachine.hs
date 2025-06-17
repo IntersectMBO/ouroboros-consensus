@@ -30,6 +30,7 @@ import Control.Arrow (second)
 import Control.Concurrent.Class.MonadSTM.Strict.TChan
 import Control.Monad (void)
 import Control.Monad.Except (runExcept)
+import Control.ResourceRegistry
 import qualified Control.Tracer as CT (Tracer (..), traceWith)
 import qualified Data.Foldable as Foldable
 import Data.Function (on)
@@ -58,6 +59,7 @@ import Ouroboros.Consensus.Mock.Ledger.Block
 import Ouroboros.Consensus.Mock.Ledger.State
 import Ouroboros.Consensus.Mock.Ledger.UTxO (Expiry, Tx, TxIn, TxOut)
 import qualified Ouroboros.Consensus.Mock.Ledger.UTxO as Mock
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Condense (condense)
 import Ouroboros.Consensus.Util.IOLike hiding (bracket)
@@ -555,33 +557,23 @@ newLedgerInterface initialLedger = do
   t <- newTVarIO $ MockedLedgerDB initialLedger Set.empty Set.empty
   pure
     ( LedgerInterface
-        { getCurrentLedgerState = forgetLedgerTables . ldbTip <$> readTVar t
-        , getLedgerTablesAtFor = \pt keys -> do
-            MockedLedgerDB ti oldReachableTips _ <- atomically $ readTVar t
-            if pt == castPoint (getTip ti) -- if asking for tables at the tip of the
-            -- ledger db
-              then
-                let tbs = ltliftA2 f keys $ projectLedgerTables ti
-                 in pure $ Just tbs
-              else case Foldable.find ((castPoint pt ==) . getTip) oldReachableTips of
-                Nothing -> pure Nothing
-                Just mtip ->
-                  if pt == castPoint (getTip mtip)
-                    -- if asking for tables at some still reachable state
-                    then
-                      let tbs = ltliftA2 f keys $ projectLedgerTables mtip
-                       in pure $ Just tbs
-                    else
-                      -- if asking for tables at other point or at the mempool tip but
-                      -- it is not reachable
-                      pure Nothing
+        { getCurrentLedgerState = \_reg -> do
+            st <- ldbTip <$> readTVar t
+            pure
+              ( forgetLedgerTables st
+              , pure $
+                  Right $
+                    ReadOnlyForker
+                      { roforkerClose = pure ()
+                      , roforkerReadStatistics = pure Nothing
+                      , roforkerReadTables = pure . (projectLedgerTables st `restrictValues'`)
+                      , roforkerRangeReadTables = const $ pure emptyLedgerTables
+                      , roforkerGetLedgerState = pure $ forgetLedgerTables st
+                      }
+              )
         }
     , t
     )
- where
-  f :: Ord k => KeysMK k v -> ValuesMK k v -> ValuesMK k v
-  f (KeysMK s) (ValuesMK v) =
-    ValuesMK (Map.restrictKeys v s)
 
 -- | Make a SUT
 mkSUT ::
@@ -594,20 +586,22 @@ mkSUT ::
   ) =>
   LedgerConfig blk ->
   LedgerState blk ValuesMK ->
-  m (SUT m blk, CT.Tracer m String)
+  m (SUT m blk, CT.Tracer m String, ResourceRegistry m)
 mkSUT cfg initialLedger = do
   (lif, t) <- newLedgerInterface initialLedger
   trcrChan <- atomically newTChan :: m (StrictTChan m (Either String (TraceEventMempool blk)))
   let trcr =
         CT.Tracer $ -- Dbg.traceShowM @(Either String (TraceEventMempool blk))
           atomically . writeTChan trcrChan
+  reg <- unsafeNewRegistry
   mempool <-
     openMempoolWithoutSyncThread
+      reg
       lif
       cfg
       (MempoolCapacityBytesOverride $ unIgnoringOverflow txMaxBytes')
       (CT.Tracer $ CT.traceWith trcr . Right)
-  pure (SUT mempool t, CT.Tracer $ atomically . writeTChan trcrChan . Left)
+  pure (SUT mempool t, CT.Tracer $ atomically . writeTChan trcrChan . Left, reg)
 
 semantics ::
   ( MonadSTM m
@@ -709,10 +703,12 @@ sm ::
   StateMachine (Model blk) (Command blk) m (Response blk) ->
   CT.Tracer m String ->
   StrictTVar m (SUT m blk) ->
+  ResourceRegistry m ->
   StateMachine (Model blk) (Command blk) m (Response blk)
-sm sm0 trcr ior =
+sm sm0 trcr ior reg =
   sm0
     { QC.semantics = \c -> semantics trcr c ior
+    , QC.cleanup = \_ -> closeRegistry reg
     }
 
 smUnused ::
@@ -767,9 +763,9 @@ prop_mempoolSequential cfg capacity initialState gTxs = forAllCommands sm0 Nothi
   \cmds ->
     monadicIO
       ( do
-          (sut, trcr) <- run $ mkSUT cfg initialState
+          (sut, trcr, reg) <- run $ mkSUT cfg initialState
           ior <- run $ newTVarIO sut
-          let sm' = sm sm0 trcr ior
+          let sm' = sm sm0 trcr ior reg
           (hist, model, res) <- runCommands sm' cmds
           prettyCommands sm0 hist
             $ checkCommandNames cmds
@@ -809,9 +805,9 @@ prop_mempoolParallel ::
   Property
 prop_mempoolParallel cfg capacity initialState ma gTxs = forAllParallelCommandsNTimes sm0 Nothing 100 $
   \cmds -> monadicIO $ do
-    (sut, trcr) <- run $ mkSUT cfg initialState
+    (sut, trcr, reg) <- run $ mkSUT cfg initialState
     ior <- run $ newTVarIO sut
-    let sm' = sm sm0 trcr ior
+    let sm' = sm sm0 trcr ior reg
     res <- runParallelCommands sm' cmds
     prettyParallelCommandsWithOpts
       cmds

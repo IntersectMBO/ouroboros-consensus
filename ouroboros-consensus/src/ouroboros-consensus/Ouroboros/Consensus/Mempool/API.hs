@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -34,8 +35,9 @@ module Ouroboros.Consensus.Mempool.API
   , zeroTicketNo
   ) where
 
+import Control.ResourceRegistry
 import qualified Data.List.NonEmpty as NE
-import Ouroboros.Consensus.Block (ChainHash, SlotNo)
+import Ouroboros.Consensus.Block (ChainHash, Point, SlotNo)
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Cap
@@ -112,7 +114,7 @@ data Mempool m blk = Mempool
   -- transactions which were valid in an older ledger state but are invalid
   -- in the current ledger state, could exist within the mempool until they
   -- are revalidated and dropped from the mempool via a call to
-  -- 'syncWithLedger' or by the background thread that watches the ledger
+  -- 'testSyncWithLedger' or by the background thread that watches the ledger
   -- for changes.
   --
   -- This action returns one of two results.
@@ -161,22 +163,6 @@ data Mempool m blk = Mempool
   -- persistence.
   , removeTxsEvenIfValid :: NE.NonEmpty (GenTxId blk) -> m ()
   -- ^ Manually remove the given transactions from the mempool.
-  , syncWithLedger :: m (MempoolSnapshot blk)
-  -- ^ Sync the transactions in the mempool with the current ledger state
-  --  of the 'ChainDB'.
-  --
-  -- The transactions that exist within the mempool will be revalidated
-  -- against the current ledger state. Transactions which are found to be
-  -- invalid with respect to the current ledger state, will be dropped
-  -- from the mempool, whereas valid transactions will remain.
-  --
-  -- We keep this in @m@ instead of @STM m@ to leave open the possibility
-  -- of persistence. Additionally, this makes it possible to trace the
-  -- removal of invalid transactions.
-  --
-  -- n.b. in our current implementation, when one opens a mempool, we
-  -- spawn a thread which performs this action whenever the 'ChainDB' tip
-  -- point changes.
   , getSnapshot :: STM m (MempoolSnapshot blk)
   -- ^ Get a snapshot of the current mempool state. This allows for
   -- further pure queries on the snapshot.
@@ -212,6 +198,33 @@ data Mempool m blk = Mempool
   -- Instead, we treat it the same way as a Mempool which is /at/
   -- capacity, i.e., we won't admit new transactions until some have been
   -- removed because they have become invalid.
+  , testSyncWithLedger :: m (MempoolSnapshot blk)
+  -- ^ ONLY FOR TESTS
+  --
+  -- Sync the transactions in the mempool with the current ledger state
+  --  of the 'ChainDB'.
+  --
+  -- The transactions that exist within the mempool will be revalidated
+  -- against the current ledger state. Transactions which are found to be
+  -- invalid with respect to the current ledger state, will be dropped
+  -- from the mempool, whereas valid transactions will remain.
+  --
+  -- We keep this in @m@ instead of @STM m@ to leave open the possibility
+  -- of persistence. Additionally, this makes it possible to trace the
+  -- removal of invalid transactions.
+  --
+  -- n.b. in our current implementation, when one opens a mempool, we
+  -- spawn a thread which performs this action whenever the 'ChainDB' tip
+  -- point changes.
+  , testForkMempoolThread :: forall a. String -> m a -> m (Thread m a)
+  -- ^ FOR TESTS ONLY
+  --
+  -- If we want to run a thread that can perform syncs in the mempool, it needs
+  -- to be registered in the mempool's internal registry. This function exposes
+  -- such functionality.
+  --
+  -- The 'String' passed will be used as the thread label, and the @m a@ will be
+  -- the action forked in the thread.
   }
 
 {-------------------------------------------------------------------------------
@@ -353,4 +366,5 @@ data MempoolSnapshot blk = MempoolSnapshot
   , snapshotStateHash :: ChainHash (TickedLedgerState blk)
   -- ^ The resulting state currently in the mempool after applying the
   -- transactions
+  , snapshotPoint :: Point blk
   }

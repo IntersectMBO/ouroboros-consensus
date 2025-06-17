@@ -146,7 +146,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
     -- * Forker
   , getReadOnlyForker
   , getTipStatistics
-  , readLedgerTablesAtFor
   , withPrivateTipForker
   , withTipForker
 
@@ -407,19 +406,6 @@ getReadOnlyForker ::
   Target (Point blk) ->
   m (Either GetForkerError (ReadOnlyForker m l blk))
 getReadOnlyForker ldb rr pt = fmap readOnlyForker <$> getForkerAtTarget ldb rr pt
-
--- | Read a table of values at the requested point via a 'ReadOnlyForker'
-readLedgerTablesAtFor ::
-  IOLike m =>
-  LedgerDB m l blk ->
-  Point blk ->
-  LedgerTables l KeysMK ->
-  m (Either GetForkerError (LedgerTables l ValuesMK))
-readLedgerTablesAtFor ldb p ks =
-  bracketWithPrivateRegistry
-    (\rr -> fmap readOnlyForker <$> getForkerAtTarget ldb rr (SpecificPoint p))
-    (mapM_ roforkerClose)
-    $ \foEith -> Monad.forM foEith (`roforkerReadTables` ks)
 
 {-------------------------------------------------------------------------------
   Snapshots

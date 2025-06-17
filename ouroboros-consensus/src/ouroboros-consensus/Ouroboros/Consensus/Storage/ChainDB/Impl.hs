@@ -271,7 +271,6 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , getPastLedger = getEnvSTM1 h Query.getPastLedger
             , getHeaderStateHistory = getEnvSTM h Query.getHeaderStateHistory
             , getReadOnlyForkerAtPoint = getEnv2 h Query.getReadOnlyForkerAtPoint
-            , getLedgerTablesAtFor = getEnv2 h Query.getLedgerTablesAtFor
             , getStatistics = getEnv h Query.getStatistics
             }
     addBlockTestFuse <- newFuse "test chain selection"
