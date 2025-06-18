@@ -43,7 +43,7 @@ let
         # Tools for CBOR/CDDL tests:
         packages.ouroboros-consensus-cardano.components.tests.cardano-test = {
           build-tools =
-            [ pkgs.cddlc pkgs.cuddle ];
+            [ pkgs.pkgsBuildBuild.cddlc pkgs.cuddle ];
           extraSrcFiles = [ "cddl/**/*" ];
         };
       })
