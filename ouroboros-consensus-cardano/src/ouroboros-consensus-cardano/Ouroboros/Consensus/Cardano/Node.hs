@@ -28,6 +28,7 @@ module Ouroboros.Consensus.Cardano.Node
     , triggerHardForkAlonzo
     , triggerHardForkBabbage
     , triggerHardForkConway
+    , triggerHardForkDijkstra
     )
   , CardanoProtocolParams (..)
   , MaxMajorProtVer (..)
@@ -154,7 +155,16 @@ import Ouroboros.Consensus.Util.IOLike
 -- For more details, see:
 -- <https://github.com/IntersectMBO/ouroboros-network/pull/1175#issuecomment-558147194>
 instance CardanoHardForkConstraints c => SerialiseHFC (CardanoEras c) where
-  encodeDiskHfcBlock (CardanoCodecConfig ccfgByron ccfgShelley ccfgAllegra ccfgMary ccfgAlonzo ccfgBabbage ccfgConway) = \case
+  encodeDiskHfcBlock ( CardanoCodecConfig
+                         ccfgByron
+                         ccfgShelley
+                         ccfgAllegra
+                         ccfgMary
+                         ccfgAlonzo
+                         ccfgBabbage
+                         ccfgConway
+                         ccfgDijkstra
+                       ) = \case
     -- We are backwards compatible with Byron and thus use the exact same
     -- encoding.
     BlockByron blockByron -> encodeDisk ccfgByron blockByron
@@ -165,7 +175,17 @@ instance CardanoHardForkConstraints c => SerialiseHFC (CardanoEras c) where
     BlockAlonzo blockAlonzo -> prependTag 5 $ encodeDisk ccfgAlonzo blockAlonzo
     BlockBabbage blockBabbage -> prependTag 6 $ encodeDisk ccfgBabbage blockBabbage
     BlockConway blockConway -> prependTag 7 $ encodeDisk ccfgConway blockConway
-  decodeDiskHfcBlock (CardanoCodecConfig ccfgByron ccfgShelley ccfgAllegra ccfgMary ccfgAlonzo ccfgBabbage ccfgConway) = do
+    BlockDijkstra blockDijkstra -> prependTag 8 $ encodeDisk ccfgDijkstra blockDijkstra
+  decodeDiskHfcBlock ( CardanoCodecConfig
+                         ccfgByron
+                         ccfgShelley
+                         ccfgAllegra
+                         ccfgMary
+                         ccfgAlonzo
+                         ccfgBabbage
+                         ccfgConway
+                         ccfgDijkstra
+                       ) = do
     enforceSize "CardanoBlock" 2
     CBOR.decodeWord >>= \case
       0 -> fmap BlockByron <$> Byron.decodeByronBoundaryBlock epochSlots
@@ -178,6 +198,7 @@ instance CardanoHardForkConstraints c => SerialiseHFC (CardanoEras c) where
       5 -> fmap BlockAlonzo <$> decodeDisk ccfgAlonzo
       6 -> fmap BlockBabbage <$> decodeDisk ccfgBabbage
       7 -> fmap BlockConway <$> decodeDisk ccfgConway
+      8 -> fmap BlockDijkstra <$> decodeDisk ccfgDijkstra
       t -> cborError $ DecoderErrorUnknownTag "CardanoBlock" (fromIntegral t)
    where
     epochSlots = Byron.getByronEpochSlots ccfgByron
@@ -194,6 +215,7 @@ instance CardanoHardForkConstraints c => SerialiseHFC (CardanoEras c) where
       5 -> SomeSecond $ NestedCtxt (NCS (NCS (NCS (NCS (NCZ Shelley.CtxtShelley)))))
       6 -> SomeSecond $ NestedCtxt (NCS (NCS (NCS (NCS (NCS (NCZ Shelley.CtxtShelley))))))
       7 -> SomeSecond $ NestedCtxt (NCS (NCS (NCS (NCS (NCS (NCS (NCZ Shelley.CtxtShelley)))))))
+      8 -> SomeSecond $ NestedCtxt (NCS (NCS (NCS (NCS (NCS (NCS (NCS (NCZ Shelley.CtxtShelley))))))))
       _ -> error $ "CardanoBlock: invalid prefix " <> show prefix
 
   getHfcBinaryBlockInfo = \case
@@ -213,6 +235,8 @@ instance CardanoHardForkConstraints c => SerialiseHFC (CardanoEras c) where
       shiftHeaderOffset 2 $ getBinaryBlockInfo blockBabbage
     BlockConway blockConway ->
       shiftHeaderOffset 2 $ getBinaryBlockInfo blockConway
+    BlockDijkstra blockDijkstra ->
+      shiftHeaderOffset 2 $ getBinaryBlockInfo blockDijkstra
    where
     shiftHeaderOffset :: Word16 -> BinaryBlockInfo -> BinaryBlockInfo
     shiftHeaderOffset shift binfo =
@@ -230,6 +254,7 @@ instance CardanoHardForkConstraints c => SerialiseHFC (CardanoEras c) where
     HeaderAlonzo headerAlonzo -> estimateBlockSize headerAlonzo + 2
     HeaderBabbage headerBabbage -> estimateBlockSize headerBabbage + 2
     HeaderConway headerConway -> estimateBlockSize headerConway + 2
+    HeaderDijkstra headerDijkstra -> estimateBlockSize headerDijkstra + 2
 
 -- | Prepend the given tag by creating a CBOR 2-tuple with the tag as the
 -- first element and the given 'Encoding' as the second.
@@ -267,11 +292,12 @@ pattern CardanoNodeToNodeVersion2 =
         :* WrapNodeToNodeVersion ShelleyNodeToNodeVersion1
         :* WrapNodeToNodeVersion ShelleyNodeToNodeVersion1
         :* WrapNodeToNodeVersion ShelleyNodeToNodeVersion1
+        :* WrapNodeToNodeVersion ShelleyNodeToNodeVersion1
         :* Nil
       )
 
--- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo and Babbage
--- and Conway eras enabled, using 'ShelleyNodeToClientVersion8' for the
+-- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo, Babbage,
+-- Conway and Dijkstra eras enabled, using 'ShelleyNodeToClientVersion8' for the
 -- Shelley-based eras.
 pattern CardanoNodeToClientVersion12 :: BlockNodeToClientVersion (CardanoBlock c)
 pattern CardanoNodeToClientVersion12 =
@@ -284,11 +310,12 @@ pattern CardanoNodeToClientVersion12 =
         :* EraNodeToClientEnabled ShelleyNodeToClientVersion8
         :* EraNodeToClientEnabled ShelleyNodeToClientVersion8
         :* EraNodeToClientEnabled ShelleyNodeToClientVersion8
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion8
         :* Nil
       )
 
--- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo and Babbage
--- and Conway eras enabled, using 'ShelleyNodeToClientVersion9' for the
+-- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo, Babbage,
+-- Conway and Dijkstra eras enabled, using 'ShelleyNodeToClientVersion9' for the
 -- Shelley-based eras.
 pattern CardanoNodeToClientVersion13 :: BlockNodeToClientVersion (CardanoBlock c)
 pattern CardanoNodeToClientVersion13 =
@@ -301,11 +328,12 @@ pattern CardanoNodeToClientVersion13 =
         :* EraNodeToClientEnabled ShelleyNodeToClientVersion9
         :* EraNodeToClientEnabled ShelleyNodeToClientVersion9
         :* EraNodeToClientEnabled ShelleyNodeToClientVersion9
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion9
         :* Nil
       )
 
--- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo and Babbage
--- and Conway eras enabled, using 'ShelleyNodeToClientVersion10' for the
+-- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo, Babbage,
+-- Conway and Dijkstra eras enabled, using 'ShelleyNodeToClientVersion10' for the
 -- Shelley-based eras.
 pattern CardanoNodeToClientVersion14 :: BlockNodeToClientVersion (CardanoBlock c)
 pattern CardanoNodeToClientVersion14 =
@@ -318,11 +346,12 @@ pattern CardanoNodeToClientVersion14 =
         :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
         :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
         :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion10
         :* Nil
       )
 
--- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo and Babbage
--- and Conway eras enabled, using 'ShelleyNodeToClientVersion11' for the
+-- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo, Babbage,
+-- Conway and Dijkstra eras enabled, using 'ShelleyNodeToClientVersion11' for the
 -- Shelley-based eras.
 pattern CardanoNodeToClientVersion15 :: BlockNodeToClientVersion (CardanoBlock c)
 pattern CardanoNodeToClientVersion15 =
@@ -335,11 +364,12 @@ pattern CardanoNodeToClientVersion15 =
         :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
         :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
         :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion11
         :* Nil
       )
 
--- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo and Babbage
--- and Conway eras enabled, using 'ShelleyNodeToClientVersion12' for the
+-- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo, Babbage,
+-- Conway and Dijkstra eras enabled, using 'ShelleyNodeToClientVersion12' for the
 -- Shelley-based eras.
 pattern CardanoNodeToClientVersion16 :: BlockNodeToClientVersion (CardanoBlock c)
 pattern CardanoNodeToClientVersion16 =
@@ -352,17 +382,19 @@ pattern CardanoNodeToClientVersion16 =
         :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
         :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
         :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion12
         :* Nil
       )
 
--- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo and Babbage
--- and Conway eras enabled, using 'ShelleyNodeToClientVersion13' for the
+-- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo, Babbage,
+-- Conway and Dijkstra eras enabled, using 'ShelleyNodeToClientVersion13' for the
 -- Shelley-based eras.
 pattern CardanoNodeToClientVersion17 :: BlockNodeToClientVersion (CardanoBlock c)
 pattern CardanoNodeToClientVersion17 =
   HardForkNodeToClientEnabled
     HardForkSpecificNodeToClientVersion3
     ( EraNodeToClientEnabled ByronNodeToClientVersion1
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion13
         :* EraNodeToClientEnabled ShelleyNodeToClientVersion13
         :* EraNodeToClientEnabled ShelleyNodeToClientVersion13
         :* EraNodeToClientEnabled ShelleyNodeToClientVersion13
@@ -436,6 +468,7 @@ pattern CardanoHardForkTriggers' ::
   CardanoHardForkTrigger (ShelleyBlock (TPraos c) AlonzoEra) ->
   CardanoHardForkTrigger (ShelleyBlock (Praos c) BabbageEra) ->
   CardanoHardForkTrigger (ShelleyBlock (Praos c) ConwayEra) ->
+  CardanoHardForkTrigger (ShelleyBlock (Praos c) DijkstraEra) ->
   CardanoHardForkTriggers
 pattern CardanoHardForkTriggers'
   { triggerHardForkShelley
@@ -444,6 +477,7 @@ pattern CardanoHardForkTriggers'
   , triggerHardForkAlonzo
   , triggerHardForkBabbage
   , triggerHardForkConway
+  , triggerHardForkDijkstra
   } =
   CardanoHardForkTriggers
     ( triggerHardForkShelley
@@ -452,6 +486,7 @@ pattern CardanoHardForkTriggers'
         :* triggerHardForkAlonzo
         :* triggerHardForkBabbage
         :* triggerHardForkConway
+        :* triggerHardForkDijkstra
         :* Nil
       )
 {-# COMPLETE CardanoHardForkTriggers' #-}
@@ -567,7 +602,8 @@ protocolInfoCardano paramsCardano
   transitionConfigMary = transitionConfigAlonzo ^. L.tcPreviousEraConfigL
   transitionConfigAlonzo = transitionConfigBabbage ^. L.tcPreviousEraConfigL
   transitionConfigBabbage = transitionConfigConway ^. L.tcPreviousEraConfigL
-  transitionConfigConway = cardanoLedgerTransitionConfig
+  transitionConfigConway = transitionConfigDijkstra ^. L.tcPreviousEraConfigL
+  transitionConfigDijkstra = cardanoLedgerTransitionConfig
 
   -- The major protocol version of the last era is the maximum major protocol
   -- version we support.
@@ -754,6 +790,25 @@ protocolInfoCardano paramsCardano
       transitionConfigConway
       TriggerHardForkNotDuringThisExecution
 
+  -- Dijkstra
+
+  blockConfigDijkstra :: BlockConfig (ShelleyBlock (Praos c) DijkstraEra)
+  blockConfigDijkstra =
+    Shelley.mkShelleyBlockConfig
+      cardanoProtocolVersion
+      genesisShelley
+      (shelleyBlockIssuerVKey <$> credssShelleyBased)
+
+  partialConsensusConfigDijkstra ::
+    PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c) DijkstraEra))
+  partialConsensusConfigDijkstra = praosParams
+
+  partialLedgerConfigDijkstra :: PartialLedgerConfig (ShelleyBlock (Praos c) DijkstraEra)
+  partialLedgerConfigDijkstra =
+    mkPartialLedgerConfigShelley
+      transitionConfigDijkstra
+      TriggerHardForkNotDuringThisExecution
+
   -- Cardano
 
   k :: SecurityParam
@@ -764,6 +819,7 @@ protocolInfoCardano paramsCardano
     History.Shape $
       Exactly $
         K (Byron.byronEraParams genesisByron)
+          :* K (Shelley.shelleyEraParams genesisShelley)
           :* K (Shelley.shelleyEraParams genesisShelley)
           :* K (Shelley.shelleyEraParams genesisShelley)
           :* K (Shelley.shelleyEraParams genesisShelley)
@@ -788,6 +844,7 @@ protocolInfoCardano paramsCardano
                       :* WrapPartialConsensusConfig partialConsensusConfigAlonzo
                       :* WrapPartialConsensusConfig partialConsensusConfigBabbage
                       :* WrapPartialConsensusConfig partialConsensusConfigConway
+                      :* WrapPartialConsensusConfig partialConsensusConfigDijkstra
                       :* Nil
                   )
             }
@@ -803,6 +860,7 @@ protocolInfoCardano paramsCardano
                       :* WrapPartialLedgerConfig partialLedgerConfigAlonzo
                       :* WrapPartialLedgerConfig partialLedgerConfigBabbage
                       :* WrapPartialLedgerConfig partialLedgerConfigConway
+                      :* WrapPartialLedgerConfig partialLedgerConfigDijkstra
                       :* Nil
                   )
             }
@@ -815,6 +873,7 @@ protocolInfoCardano paramsCardano
             blockConfigAlonzo
             blockConfigBabbage
             blockConfigConway
+            blockConfigDijkstra
       , topLevelConfigCodec =
           CardanoCodecConfig
             (configCodec topLevelConfigByron)
@@ -824,9 +883,11 @@ protocolInfoCardano paramsCardano
             Shelley.ShelleyCodecConfig
             Shelley.ShelleyCodecConfig
             Shelley.ShelleyCodecConfig
+            Shelley.ShelleyCodecConfig
       , topLevelConfigStorage =
           CardanoStorageConfig
             (configStorage topLevelConfigByron)
+            (Shelley.ShelleyStorageConfig tpraosSlotsPerKESPeriod k)
             (Shelley.ShelleyStorageConfig tpraosSlotsPerKESPeriod k)
             (Shelley.ShelleyStorageConfig tpraosSlotsPerKESPeriod k)
             (Shelley.ShelleyStorageConfig tpraosSlotsPerKESPeriod k)
@@ -865,6 +926,7 @@ protocolInfoCardano paramsCardano
           :* WrapTransitionConfig transitionConfigAlonzo
           :* WrapTransitionConfig transitionConfigBabbage
           :* WrapTransitionConfig transitionConfigConway
+          :* WrapTransitionConfig transitionConfigDijkstra
           :* Nil
 
     injectIntoTestState ::
@@ -970,6 +1032,7 @@ protocolInfoCardano paramsCardano
             :* tpraos
             :* praos
             :* praos
+            :* praos
             :* Nil
 
 protocolClientInfoCardano ::
@@ -982,6 +1045,7 @@ protocolClientInfoCardano epochSlots =
     { pClientInfoCodecConfig =
         CardanoCodecConfig
           (pClientInfoCodecConfig (protocolClientInfoByron epochSlots))
+          (pClientInfoCodecConfig protocolClientInfoShelley)
           (pClientInfoCodecConfig protocolClientInfoShelley)
           (pClientInfoCodecConfig protocolClientInfoShelley)
           (pClientInfoCodecConfig protocolClientInfoShelley)

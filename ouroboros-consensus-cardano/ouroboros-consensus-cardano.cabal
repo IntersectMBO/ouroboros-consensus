@@ -142,6 +142,7 @@ library
     cardano-ledger-binary ^>=1.7,
     cardano-ledger-byron ^>=1.2,
     cardano-ledger-conway ^>=1.20,
+    cardano-ledger-dijkstra ^>=0.1,
     cardano-ledger-core ^>=1.18,
     cardano-ledger-mary ^>=1.9,
     cardano-ledger-shelley ^>=1.17,

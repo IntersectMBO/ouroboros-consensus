@@ -25,6 +25,7 @@ module Ouroboros.Consensus.Cardano.CanHardFork
 
     -- * Exposed for testing
   , getConwayTranslationContext
+  , getDijkstraTranslationContext
   ) where
 
 import Cardano.Ledger.Allegra.Translation
@@ -112,6 +113,8 @@ type CardanoHardForkConstraints c =
   , LedgerSupportsProtocol (ShelleyBlock (Praos c) BabbageEra)
   , ShelleyCompatible (Praos c) ConwayEra
   , LedgerSupportsProtocol (ShelleyBlock (Praos c) ConwayEra)
+  , ShelleyCompatible (Praos c) DijkstraEra
+  , LedgerSupportsProtocol (ShelleyBlock (Praos c) DijkstraEra)
   )
 
 -- | When performing era translations, two eras have special behaviours on the
@@ -136,7 +139,8 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
                 PCons translateLedgerStateMaryToAlonzoWrapper $
                   PCons translateLedgerStateAlonzoToBabbageWrapper $
                     PCons translateLedgerStateBabbageToConwayWrapper $
-                      PNil
+                      PCons translateLedgerStateConwayToDijkstraWrapper $
+                        PNil
       , translateLedgerTables =
           PCons translateLedgerTablesByronToShelleyWrapper $
             PCons translateLedgerTablesShelleyToAllegraWrapper $
@@ -144,7 +148,8 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
                 PCons translateLedgerTablesMaryToAlonzoWrapper $
                   PCons translateLedgerTablesAlonzoToBabbageWrapper $
                     PCons translateLedgerTablesBabbageToConwayWrapper $
-                      PNil
+                      PCons translateLedgerTablesConwayToDijkstraWrapper $
+                        PNil
       , translateChainDepState =
           PCons translateChainDepStateByronToShelleyWrapper $
             PCons translateChainDepStateAcrossShelley $
@@ -152,7 +157,8 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
                 PCons translateChainDepStateAcrossShelley $
                   PCons translateChainDepStateAcrossShelley $
                     PCons translateChainDepStateAcrossShelley $
-                      PNil
+                      PCons translateChainDepStateAcrossShelley $
+                        PNil
       , crossEraForecast =
           PCons crossEraForecastByronToShelleyWrapper $
             PCons crossEraForecastAcrossShelley $
@@ -160,7 +166,8 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
                 PCons crossEraForecastAcrossShelley $
                   PCons crossEraForecastAcrossShelley $
                     PCons crossEraForecastAcrossShelley $
-                      PNil
+                      PCons crossEraForecastAcrossShelley $
+                        PNil
       }
   hardForkChainSel =
     -- Byron <-> Shelley, ...
@@ -203,6 +210,14 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
                   (translateTxBabbageToConwayWrapper ctxt)
                   (translateValidatedTxBabbageToConwayWrapper ctxt)
         )
+      $ PCons
+        ( RequireBoth $ \_cfgConway cfgDijkstra ->
+            -- TODO(geo2a): we'll likely need cfgConway
+            let ctxt = getDijkstraTranslationContext cfgDijkstra
+             in Pair2
+                  (translateTxConwayToDijkstraWrapper ctxt)
+                  (translateValidatedTxConwayToDijkstraWrapper ctxt)
+        )
       $ PNil
 
   hardForkInjTxMeasure =
@@ -211,6 +226,7 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
       `o` fromByteSize
       `o` fromByteSize
       `o` fromAlonzo
+      `o` fromConway
       `o` fromConway
       `o` fromConway
       `o` nil
@@ -741,3 +757,41 @@ translateValidatedTxBabbageToConwayWrapper ::
 translateValidatedTxBabbageToConwayWrapper ctxt =
   InjectValidatedTx $
     fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp
+
+{-------------------------------------------------------------------------------
+  Translation from Conway to Dijkstra
+-------------------------------------------------------------------------------}
+
+translateLedgerStateConwayToDijkstraWrapper ::
+  RequiringBoth
+    WrapLedgerConfig
+    TranslateLedgerState
+    (ShelleyBlock (Praos c) ConwayEra)
+    (ShelleyBlock (Praos c) DijkstraEra)
+translateLedgerStateConwayToDijkstraWrapper = error "TODO(geo2a)"
+
+translateLedgerTablesConwayToDijkstraWrapper ::
+  TranslateLedgerTables
+    (ShelleyBlock (Praos c) ConwayEra)
+    (ShelleyBlock (Praos c) DijkstraEra)
+translateLedgerTablesConwayToDijkstraWrapper = error "TODO(geo2a)"
+
+getDijkstraTranslationContext ::
+  WrapLedgerConfig (ShelleyBlock (Praos c) DijkstraEra) ->
+  SL.TranslationContext DijkstraEra
+getDijkstraTranslationContext = error "TODO(geo2a)"
+
+translateTxConwayToDijkstraWrapper ::
+  SL.TranslationContext DijkstraEra ->
+  InjectTx
+    (ShelleyBlock (Praos c) ConwayEra)
+    (ShelleyBlock (Praos c) DijkstraEra)
+translateTxConwayToDijkstraWrapper = error "TODO(geo2a)"
+
+translateValidatedTxConwayToDijkstraWrapper ::
+  forall c.
+  SL.TranslationContext DijkstraEra ->
+  InjectValidatedTx
+    (ShelleyBlock (Praos c) ConwayEra)
+    (ShelleyBlock (Praos c) DijkstraEra)
+translateValidatedTxConwayToDijkstraWrapper = error "TODO(geo2a)"
