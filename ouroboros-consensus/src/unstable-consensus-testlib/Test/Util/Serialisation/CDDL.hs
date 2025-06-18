@@ -1,23 +1,39 @@
 {-# LANGUAGE LambdaCase #-}
 
-module Test.Util.Serialisation.CDDL (cddlTestCase, cddlTest, CDDLsForNodeToNode (..)) where
+module Test.Util.Serialisation.CDDL
+  ( cddlTestCase
+  , cddlTest
+  , isCDDLCDisabled
+  , CDDLsForNodeToNode (..)
+  ) where
 
 import qualified Data.ByteString as BS
+import Data.Maybe (isJust)
 import qualified Data.Text as T
+import qualified System.Environment as E
 import System.Exit
 import System.IO
 import System.IO.Temp
+import System.IO.Unsafe (unsafePerformIO)
 import System.Process
 import Test.Tasty
 import Test.Tasty.HUnit
+
+-- | Windows on Hydra cannot cross-compile CDDLC so we decided to skip the tests
+-- there.
+isCDDLCDisabled :: Bool
+isCDDLCDisabled = isJust $ unsafePerformIO (E.lookupEnv "DISABLE_CDDLC")
 
 -- | A Tasty test case running the @cuddle@
 cddlTestCase :: IO BS.ByteString -> FilePath -> T.Text -> TestTree
 cddlTestCase cborM cddl rule =
   testCase "CDDL compliance" $
-    cddlTest cborM cddl rule >>= \case
-      Left err -> assertFailure err
-      Right _ -> pure ()
+    if isCDDLCDisabled
+      then assertBool "Skipped" True
+      else
+        cddlTest cborM cddl rule >>= \case
+          Left err -> assertFailure err
+          Right _ -> pure ()
 
 -- | Test the CDDL conformance of the given bytestring
 cddlTest ::
