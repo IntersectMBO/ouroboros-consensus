@@ -25,6 +25,7 @@ import qualified Test.Cardano.Ledger.Conway.Binary.Cddl as Conway
 import qualified Test.Cardano.Ledger.Mary.Binary.Cddl as Mary
 import qualified Test.Cardano.Ledger.Shelley.Binary.Cddl as Shelley
 import Test.Tasty
+import Test.Util.Serialisation.CDDL (isCDDLCDisabled)
 
 newtype CDDLSpec = CDDLSpec {cddlSpec :: BS.ByteString} deriving Show
 
@@ -34,32 +35,35 @@ newtype CDDLSpec = CDDLSpec {cddlSpec :: BS.ByteString} deriving Show
 -- each CDDL so that we know always what is available.
 withCDDLs :: TestTree -> TestTree
 withCDDLs f =
-  withResource
-    ( do
-        probeTools
-        setupCDDLCEnv
+  if isCDDLCDisabled
+    then f
+    else
+      withResource
+        ( do
+            probeTools
+            setupCDDLCEnv
 
-        ntnBlock <- cddlc "cddl/node-to-node/blockfetch/block.cddl"
-        ntnBlock' <- fixupBlockCDDL ntnBlock
-        BS.writeFile "ntnblock.cddl" . cddlSpec $ ntnBlock'
+            ntnBlock <- cddlc "cddl/node-to-node/blockfetch/block.cddl"
+            ntnBlock' <- fixupBlockCDDL ntnBlock
+            BS.writeFile "ntnblock.cddl" . cddlSpec $ ntnBlock'
 
-        ntnHeader <- cddlc "cddl/node-to-node/chainsync/header.cddl"
-        BS.writeFile "ntnheader.cddl" . cddlSpec $ ntnHeader
+            ntnHeader <- cddlc "cddl/node-to-node/chainsync/header.cddl"
+            BS.writeFile "ntnheader.cddl" . cddlSpec $ ntnHeader
 
-        ntnTx <- cddlc "cddl/node-to-node/txsubmission2/tx.cddl"
-        ntnTx' <- fixupBlockCDDL ntnTx
-        BS.writeFile "ntntx.cddl" . cddlSpec $ ntnTx'
+            ntnTx <- cddlc "cddl/node-to-node/txsubmission2/tx.cddl"
+            ntnTx' <- fixupBlockCDDL ntnTx
+            BS.writeFile "ntntx.cddl" . cddlSpec $ ntnTx'
 
-        ntnTxId <- cddlc "cddl/node-to-node/txsubmission2/txId.cddl"
-        BS.writeFile "ntntxid.cddl" . cddlSpec $ ntnTxId
-    )
-    ( \() -> do
-        D.removeFile "ntnblock.cddl"
-        D.removeFile "ntnheader.cddl"
-        D.removeFile "ntntx.cddl"
-        D.removeFile "ntntxid.cddl"
-    )
-    (\_ -> f)
+            ntnTxId <- cddlc "cddl/node-to-node/txsubmission2/txId.cddl"
+            BS.writeFile "ntntxid.cddl" . cddlSpec $ ntnTxId
+        )
+        ( \() -> do
+            D.removeFile "ntnblock.cddl"
+            D.removeFile "ntnheader.cddl"
+            D.removeFile "ntntx.cddl"
+            D.removeFile "ntntxid.cddl"
+        )
+        (\_ -> f)
 
 -- | The Ledger CDDL specs are not _exactly_ correct. Here we do some dirty
 -- sed-replace to make them able to validate blocks. See cardano-ledger#5054.
