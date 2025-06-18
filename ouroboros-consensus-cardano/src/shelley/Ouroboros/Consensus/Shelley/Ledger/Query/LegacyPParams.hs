@@ -20,6 +20,7 @@ import Cardano.Ledger.Binary.Coders
 import qualified Cardano.Ledger.Binary.Plain as Plain
 import Cardano.Ledger.Conway
 import Cardano.Ledger.Core
+import Cardano.Ledger.Dijkstra
 import Cardano.Ledger.Mary
 import Cardano.Ledger.Shelley
 import Cardano.Ledger.Shelley.PParams
@@ -371,4 +372,10 @@ instance ToCBOR (LegacyPParams ConwayEra) where
   toCBOR = toCBOR . unLegacyPParams
 
 instance FromCBOR (LegacyPParams ConwayEra) where
+  fromCBOR = LegacyPParams <$> fromCBOR
+
+instance ToCBOR (LegacyPParams DijkstraEra) where
+  toCBOR = toCBOR . unLegacyPParams
+
+instance FromCBOR (LegacyPParams DijkstraEra) where
   fromCBOR = LegacyPParams <$> fromCBOR
