@@ -119,7 +119,8 @@ instance CardanoHardForkConstraints c => BlockSupportsHFLedgerQuery (CardanoEras
     IS (IS (IS (IS IZ))) -> shelleyCardanoFilter q
     IS (IS (IS (IS (IS IZ)))) -> shelleyCardanoFilter q
     IS (IS (IS (IS (IS (IS IZ))))) -> shelleyCardanoFilter q
-    IS (IS (IS (IS (IS (IS (IS idx')))))) -> case idx' of {}
+    IS (IS (IS (IS (IS (IS (IS IZ)))))) -> shelleyCardanoFilter q
+    IS (IS (IS (IS (IS (IS (IS (IS idx'))))))) -> case idx' of {}
 
 byronCardanoFilter ::
   BlockQuery ByronBlock QFTraverseTables result ->

@@ -57,6 +57,8 @@ import qualified Cardano.Ledger.Conway.Rules as SL
 import qualified Cardano.Ledger.Conway.State as CG
 import qualified Cardano.Ledger.Conway.Translation as Conway
 import Cardano.Ledger.Core as Core
+import Cardano.Ledger.Dijkstra (DijkstraEra)
+import qualified Cardano.Ledger.Dijkstra.Translation as Dijkstra
 import Cardano.Ledger.Mary (MaryEra)
 import Cardano.Ledger.Mary.Translation ()
 import Cardano.Ledger.Shelley (ShelleyEra)
@@ -200,6 +202,11 @@ instance ShelleyBasedEra ConwayEra where
 
   getConwayEraGovDict _ = Just ConwayEraGovDict
 
+instance ShelleyBasedEra DijkstraEra where
+  applyShelleyBasedTx = applyAlonzoBasedTx
+
+  getConwayEraGovDict _ = Just ConwayEraGovDict
+
 applyAlonzoBasedTx ::
   forall era.
   ( ShelleyBasedEra era
@@ -316,6 +323,19 @@ instance SupportsTwoPhaseValidation ConwayEra where
         ) -> True
     _ -> False
 
+instance SupportsTwoPhaseValidation DijkstraEra where
+  isIncorrectClaimedFlag _ = \case
+    SL.ConwayUtxowFailure
+      ( Conway.UtxoFailure
+          ( Conway.UtxosFailure
+              ( Conway.ValidationTagMismatch
+                  (Alonzo.IsValid _claimedFlag)
+                  _validationErrs
+                )
+            )
+        ) -> True
+    _ -> False
+
 {-------------------------------------------------------------------------------
   Tx family wrapper
 -------------------------------------------------------------------------------}
@@ -362,4 +382,12 @@ instance Core.TranslateEra ConwayEra WrapTx where
     fmap (WrapTx . Conway.unTx)
       . Core.translateEra @ConwayEra ctxt
       . Conway.Tx
+      . unwrapTx
+
+instance Core.TranslateEra DijkstraEra WrapTx where
+  type TranslationError DijkstraEra WrapTx = Core.TranslationError DijkstraEra Dijkstra.Tx
+  translateEra ctxt =
+    fmap (WrapTx . Dijkstra.unTx)
+      . Core.translateEra @DijkstraEra ctxt
+      . Dijkstra.Tx
       . unwrapTx

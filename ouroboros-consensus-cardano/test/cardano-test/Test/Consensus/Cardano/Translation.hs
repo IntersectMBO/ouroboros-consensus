@@ -80,9 +80,10 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Test.Cardano.Ledger.Alonzo.Serialisation.Generators ()
+import Test.Cardano.Ledger.Api.Examples.Consensus.Shelley
 import Test.Cardano.Ledger.Babbage.Serialisation.Generators ()
 import Test.Cardano.Ledger.Conway.Arbitrary ()
-import Test.Cardano.Ledger.Shelley.Examples.Consensus
+import Test.Cardano.Ledger.Dijkstra.Arbitrary ()
 import Test.Consensus.Byron.Generators
   ( genByronLedgerConfig
   , genByronLedgerState
@@ -212,12 +213,7 @@ babbageToConwayLedgerStateTranslation ::
     (ShelleyBlock (Praos Crypto) ConwayEra)
 babbageToConwayLedgerStateTranslation = translateLedgerStateBabbageToConwayWrapper
 
--- | Tech debt: The babbage to conway translation performs a tick, and we would
--- need to create a reasonable ledger state. Instead this is just a copy-paste
--- of the code without the tick.
---
--- This should be fixed once the real translation is fixed.
-translateLedgerStateBabbageToConwayWrapper ::
+translateLedgerStateConwayToDijkstraWrapper ::
   RequiringBoth
     WrapLedgerConfig
     TranslateLedgerState

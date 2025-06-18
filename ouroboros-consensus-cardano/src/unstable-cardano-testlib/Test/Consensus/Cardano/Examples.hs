@@ -272,7 +272,7 @@ conwayEraParams = Shelley.shelleyEraParams Shelley.testShelleyGenesis
 
 -- | We use 10, 20, 30, 40, ... as the transition epochs
 shelleyTransitionEpoch :: EpochNo
-shelleyTransitionEpoch = 10
+shelleyTransitionEpoch = EpochNo 10
 
 byronStartBound :: History.Bound
 byronStartBound = History.initBound
@@ -289,35 +289,42 @@ allegraStartBound =
   History.mkUpperBound
     shelleyEraParams
     shelleyStartBound
-    20
+    (EpochNo 20)
 
 maryStartBound :: History.Bound
 maryStartBound =
   History.mkUpperBound
     allegraEraParams
     allegraStartBound
-    30
+    (EpochNo 30)
 
 alonzoStartBound :: History.Bound
 alonzoStartBound =
   History.mkUpperBound
     maryEraParams
     maryStartBound
-    40
+    (EpochNo 40)
 
 babbageStartBound :: History.Bound
 babbageStartBound =
   History.mkUpperBound
     alonzoEraParams
     alonzoStartBound
-    50
+    (EpochNo 50)
 
 conwayStartBound :: History.Bound
 conwayStartBound =
   History.mkUpperBound
     alonzoEraParams
     alonzoStartBound
-    60
+    (EpochNo 60)
+
+dijkstraStartBound :: History.Bound
+dijkstraStartBound =
+  History.mkUpperBound
+    alonzoEraParams
+    alonzoStartBound
+    (EpochNo 70)
 
 exampleStartBounds :: Exactly (CardanoEras Crypto) History.Bound
 exampleStartBounds =
