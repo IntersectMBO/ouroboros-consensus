@@ -58,11 +58,12 @@ mkSomeConsensusProtocolCardano ::
   NodeShelleyProtocolConfiguration ->
   NodeAlonzoProtocolConfiguration ->
   NodeConwayProtocolConfiguration ->
+  NodeDijkstraProtocolConfiguration ->
   NodeHardForkProtocolConfiguration ->
   Maybe ProtocolFilepaths ->
   ExceptT CardanoProtocolInstantiationError IO SomeConsensusProtocol
-mkSomeConsensusProtocolCardano nbpc nspc napc ncpc nhpc files = do
-  params <- mkConsensusProtocolCardano nbpc nspc napc ncpc nhpc files
+mkSomeConsensusProtocolCardano nbpc nspc napc ncpc ndpc nhpc files = do
+  params <- mkConsensusProtocolCardano nbpc nspc napc ncpc ndpc nhpc files
   return $!
     SomeConsensusProtocol CardanoBlockType $
       ProtocolInfoArgsCardano params
@@ -72,6 +73,7 @@ mkConsensusProtocolCardano ::
   NodeShelleyProtocolConfiguration ->
   NodeAlonzoProtocolConfiguration ->
   NodeConwayProtocolConfiguration ->
+  NodeDijkstraProtocolConfiguration ->
   NodeHardForkProtocolConfiguration ->
   Maybe ProtocolFilepaths ->
   ExceptT CardanoProtocolInstantiationError IO (CardanoProtocolParams StandardCrypto)
@@ -99,6 +101,7 @@ mkConsensusProtocolCardano
     { npcConwayGenesisFile
     , npcConwayGenesisFileHash
     }
+  NodeDijkstraProtocolConfiguration{}
   NodeHardForkProtocolConfiguration
     { npcTestEnableDevelopmentHardForkEras = _
     , -- During testing of the latest unreleased era, we conditionally
