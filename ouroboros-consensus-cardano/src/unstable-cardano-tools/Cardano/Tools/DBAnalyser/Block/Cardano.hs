@@ -337,6 +337,7 @@ dispatch cardanoSt fByron fShelley =
           :* fn k_fShelley
           :* fn k_fShelley
           :* fn k_fShelley
+          :* fn k_fShelley
           :* Nil
       )
       (hardForkLedgerStatePerEra cardanoSt)

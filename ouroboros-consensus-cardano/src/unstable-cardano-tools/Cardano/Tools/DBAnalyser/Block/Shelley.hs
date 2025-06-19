@@ -37,7 +37,7 @@ import Lens.Micro ((^.))
 import Lens.Micro.Extras (view)
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
-import Ouroboros.Consensus.Shelley.Eras (StandardCrypto)
+import Ouroboros.Consensus.Shelley.Eras (DijkstraEra, StandardCrypto)
 import Ouroboros.Consensus.Shelley.HFEras ()
 import Ouroboros.Consensus.Shelley.Ledger
   ( ShelleyCompatible
@@ -124,6 +124,11 @@ instance PerEraAnalysis BabbageEra where
      in toEnum $ fromEnum steps
 
 instance PerEraAnalysis ConwayEra where
+  txExUnitsSteps = Just $ \tx ->
+    let (Alonzo.ExUnits _mem steps) = Alonzo.totExUnits tx
+     in toEnum $ fromEnum steps
+
+instance PerEraAnalysis DijkstraEra where
   txExUnitsSteps = Just $ \tx ->
     let (Alonzo.ExUnits _mem steps) = Alonzo.totExUnits tx
      in toEnum $ fromEnum steps
