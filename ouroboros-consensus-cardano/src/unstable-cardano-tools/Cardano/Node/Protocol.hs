@@ -36,6 +36,7 @@ mkConsensusProtocol ncProtocolConfig mProtocolFiles =
       shelleyConfig
       alonzoConfig
       conwayConfig
+      dijkstraConfig
       hardForkConfig ->
         firstExceptT CardanoProtocolInstantiationError $
           mkSomeConsensusProtocolCardano
@@ -43,6 +44,7 @@ mkConsensusProtocol ncProtocolConfig mProtocolFiles =
             shelleyConfig
             alonzoConfig
             conwayConfig
+            dijkstraConfig
             hardForkConfig
             mProtocolFiles
 

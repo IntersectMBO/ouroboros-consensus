@@ -17,6 +17,7 @@ module Test.Consensus.Shelley.Examples
   , examplesAlonzo
   , examplesBabbage
   , examplesConway
+  , examplesDijkstra
   , examplesMary
   , examplesShelley
   ) where
@@ -397,6 +398,9 @@ examplesBabbage = fromShelleyLedgerExamplesPraos ledgerExamplesBabbage
 
 examplesConway :: Examples StandardConwayBlock
 examplesConway = fromShelleyLedgerExamplesPraos ledgerExamplesConway
+
+examplesDijkstra :: Examples StandardDijkstraBlock
+examplesDijkstra = fromShelleyLedgerExamplesPraos ledgerExamplesDijkstra
 
 exampleShelleyLedgerConfig :: TranslationContext era -> ShelleyLedgerConfig era
 exampleShelleyLedgerConfig translationContext =
