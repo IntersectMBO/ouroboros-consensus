@@ -38,11 +38,48 @@
 --   chain. 'Ouroboros.Consensus.Storage.ChainDB.API.ChainDB' defines the chain
 --   DB API.
 --
--- NOTE: at the moment there is an inconsistency in the module structure for
--- each of these components. In particular,
--- "Ouroboros.Consensus.Storage.LedgerDB" contains the whole definition and API
--- for the LedgerDB, but the other three databases are broken up into multiple
--- smaller submodules. We aim to resolve this when UTxO-HD is merged.
+-- == Resource management in the ChainDB
+--
+-- Each of the databases in the ChainDB can produce resources that need to be
+-- eventually freed. In particular:
+--
+-- - The LedgerDB is used to create 'Forker's
+--
+-- - The ChainDB is used to create 'Follower's (which in turn contain
+--   'Iterator's).
+--
+-- The 'runWith' function in Consensus spawns a resource registry (which we will
+-- name __the consensus registry__) which will contain the ChainDB. Shutting
+-- down the Consensus layer is what will close the ChainDB by the consensus
+-- resource registry going out of scope.
+--
+-- The resources above will be created by clients of the databases, not the
+-- databases themselves. For example, it is Chain selection the one that opens a
+-- forker using the LedgerDB. This in particular means that any clients that
+-- create these resources will be created later than the database.
+--
+-- We rely on a specific sequence of events for this schema to be correct:
+--
+-- - The ChainDB is only closed by exiting the scope of the consensus
+--   resource registry.
+--
+-- - If a client that can create resources is forked into a separate thread,
+--   such thread is linked to the consensus registry. That way, it will be
+--   deallocated before the ChainDB is closed, and its internal registry will
+--   release any resources created in the client.
+--
+-- At the moment, we have two different approaches to resources and closing of
+-- the databases:
+--
+-- - In the LedgerDB, closing the database does not close any of the resources
+--   but makes them unable to do any action other than being freed. See
+--   'ldbForkers'.
+--
+-- - In the ChainDB, closing the database does close all the followers and
+--   iterators.
+--
+-- Ideally, we would change the ChainDB to follow the same approach as the
+-- LedgerDB.
 module Ouroboros.Consensus.Storage.ChainDB
   ( module Ouroboros.Consensus.Storage.ChainDB.API
   , module Ouroboros.Consensus.Storage.ChainDB.Impl
