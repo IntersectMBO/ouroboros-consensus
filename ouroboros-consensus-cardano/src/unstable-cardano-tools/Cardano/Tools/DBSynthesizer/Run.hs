@@ -110,12 +110,14 @@ initialize NodeFilePaths{nfpConfig, nfpChainDB} creds synthOptions = do
         shelleyConfig
         alonzoConfig
         conwayConfig
+        dijkstraConfig
         hfConfig
         (Just confProtocolCredentials)
    where
     shelleyConfig = NodeShelleyProtocolConfiguration (GenesisFile $ ncsShelleyGenesisFile confConfigStub) Nothing
     alonzoConfig = NodeAlonzoProtocolConfiguration (GenesisFile $ ncsAlonzoGenesisFile confConfigStub) Nothing
     conwayConfig = NodeConwayProtocolConfiguration (GenesisFile $ ncsConwayGenesisFile confConfigStub) Nothing
+    dijkstraConfig = NodeDijkstraProtocolConfiguration (GenesisFile $ ncsDijkstraGenesisFile confConfigStub) Nothing
     hfConfig_ = eitherParseJson $ ncsNodeConfig confConfigStub
     byConfig_ = eitherParseJson $ ncsNodeConfig confConfigStub
 
