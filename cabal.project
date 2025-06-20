@@ -103,13 +103,3 @@ source-repository-package
       libs/set-algebra
       libs/small-steps
       libs/vector-map
-
-source-repository-package
-  type: git
-  location: https://github.com/IntersectMBO/io-classes-extra
-  tag: b2356a34b30a9431bbcdf1cf7a5b71e00e9e5bbe
-  --sha256: sha256-CmIOjmsYhyBsfAvRLTnsF2Puc+tnrjYJD/jNpxh5dbU=
-  subdir:
-    strict-checked-vars
-    resource-registry
-    rawlock
