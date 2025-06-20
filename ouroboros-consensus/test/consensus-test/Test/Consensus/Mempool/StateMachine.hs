@@ -30,6 +30,7 @@ import Control.Arrow (second)
 import Control.Concurrent.Class.MonadSTM.Strict.TChan
 import Control.Monad (void)
 import Control.Monad.Except (runExcept)
+import Control.ResourceRegistry
 import qualified Control.Tracer as CT (Tracer (..), traceWith)
 import qualified Data.Foldable as Foldable
 import Data.Function (on)
@@ -58,6 +59,7 @@ import Ouroboros.Consensus.Mock.Ledger.Block
 import Ouroboros.Consensus.Mock.Ledger.State
 import Ouroboros.Consensus.Mock.Ledger.UTxO (Expiry, Tx, TxIn, TxOut)
 import qualified Ouroboros.Consensus.Mock.Ledger.UTxO as Mock
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Condense (condense)
 import Ouroboros.Consensus.Util.IOLike hiding (bracket)
@@ -86,16 +88,6 @@ import Test.Util.ToExpr ()
   Datatypes
 -------------------------------------------------------------------------------}
 
--- | Whether the LedgerDB should be wiped out
-data ModifyDB = KeepDB | ClearDB deriving (Generic, ToExpr, NoThunks)
-
-instance Arbitrary ModifyDB where
-  arbitrary = elements [KeepDB, ClearDB]
-
-keepsDB :: ModifyDB -> Bool
-keepsDB KeepDB = True
-keepsDB ClearDB = False
-
 -- | The model
 data Model blk r = Model
   { modelMempoolIntermediateState :: !(TickedLedgerState blk ValuesMK)
@@ -115,11 +107,7 @@ data Model blk r = Model
     modelLedgerDBTip :: !(LedgerState blk ValuesMK)
   -- ^ The current tip on the ledgerdb
   , modelReachableStates :: !(Set (LedgerState blk ValuesMK))
-  -- ^ The old states which are still on the LedgerDB. These should
-  -- technically be ancestors of the tip, but for the mempool we don't care.
-  , modelOtherStates :: !(Set (LedgerState blk ValuesMK))
-  -- ^ States which were previously on the LedgerDB. We keep these so that
-  -- 'ChangeLedger' does not generate a different state with the same hash.
+  -- ^ The old states which are still on the LedgerDB.
   }
 
 -- | The commands used by QSM
@@ -150,7 +138,6 @@ data Action blk r
 data Event blk r
   = ChangeLedger
       !(LedgerState blk ValuesMK)
-      !ModifyDB
   deriving Generic1
   deriving (Rank2.Functor, Rank2.Foldable, Rank2.Traversable, CommandNames)
 
@@ -238,18 +225,15 @@ generator ma gTxs model =
                                        ( getTip modelLedgerDBTip
                                            `Set.insert` Set.map
                                              getTip
-                                             ( modelOtherStates
-                                                 `Set.union` modelReachableStates
-                                             )
+                                             modelReachableStates
                                        )
                                      . getTip
                                  )
                   ]
                     ++ (if Set.null modelReachableStates then [] else [elements (Set.toList modelReachableStates)])
-                    ++ (if Set.null modelOtherStates then [] else [elements (Set.toList modelOtherStates)])
                 )
                 `suchThat` (not . (== (getTip modelLedgerDBTip)) . getTip)
-            Event . ChangeLedger ls <$> arbitrary
+            pure $ Event $ ChangeLedger ls
         )
       , (10, pure $ Action GetSnapshot)
       ]
@@ -258,7 +242,6 @@ generator ma gTxs model =
     { modelMempoolIntermediateState
     , modelLedgerDBTip
     , modelReachableStates
-    , modelOtherStates
     } = model
 
 data Response blk r
@@ -291,7 +274,6 @@ initModel cfg capacity initialState =
     , modelLastSeenTicketNo = zeroTicketNo
     , modelCapacity = capacity
     , modelConfig = cfg
-    , modelOtherStates = Set.empty
     }
  where
   ticked = tick cfg initialState
@@ -304,7 +286,7 @@ mock model = \case
   Action (TryAddTxs _) -> pure Void
   Action SyncLedger -> pure Void
   Action GetSnapshot -> pure $ GotSnapshot $ modelTxs model
-  Event (ChangeLedger _ _) -> pure Void
+  Event (ChangeLedger _) -> pure Void
 
 {-------------------------------------------------------------------------------
   Transitions
@@ -345,25 +327,17 @@ doChangeLedger ::
   (StandardHash blk, GetTip (LedgerState blk)) =>
   Model blk r ->
   LedgerState blk ValuesMK ->
-  ModifyDB ->
   Model blk r
-doChangeLedger model l' b' =
+doChangeLedger model l' =
   model
     { modelLedgerDBTip = l'
     , modelReachableStates =
-        if keepsDB b'
-          then l' `Set.delete` Set.insert modelLedgerDBTip modelReachableStates
-          else Set.empty
-    , modelOtherStates =
-        if keepsDB b'
-          then modelOtherStates
-          else modelLedgerDBTip `Set.insert` (modelOtherStates `Set.union` modelReachableStates)
+        l' `Set.delete` Set.insert modelLedgerDBTip modelReachableStates
     }
  where
   Model
     { modelLedgerDBTip
     , modelReachableStates
-    , modelOtherStates
     } = model
 
 doTryAddTxs ::
@@ -417,7 +391,7 @@ transition ::
   Model blk r
 transition model cmd resp = case (cmd, resp) of
   (Action (TryAddTxs txs), Void) -> doTryAddTxs model txs
-  (Event (ChangeLedger l b), Void) -> doChangeLedger model l b
+  (Event (ChangeLedger l), Void) -> doChangeLedger model l
   (Action GetSnapshot, GotSnapshot{}) -> model
   (Action SyncLedger, Void) -> doSync model
   _ ->
@@ -555,33 +529,23 @@ newLedgerInterface initialLedger = do
   t <- newTVarIO $ MockedLedgerDB initialLedger Set.empty Set.empty
   pure
     ( LedgerInterface
-        { getCurrentLedgerState = forgetLedgerTables . ldbTip <$> readTVar t
-        , getLedgerTablesAtFor = \pt keys -> do
-            MockedLedgerDB ti oldReachableTips _ <- atomically $ readTVar t
-            if pt == castPoint (getTip ti) -- if asking for tables at the tip of the
-            -- ledger db
-              then
-                let tbs = ltliftA2 f keys $ projectLedgerTables ti
-                 in pure $ Just tbs
-              else case Foldable.find ((castPoint pt ==) . getTip) oldReachableTips of
-                Nothing -> pure Nothing
-                Just mtip ->
-                  if pt == castPoint (getTip mtip)
-                    -- if asking for tables at some still reachable state
-                    then
-                      let tbs = ltliftA2 f keys $ projectLedgerTables mtip
-                       in pure $ Just tbs
-                    else
-                      -- if asking for tables at other point or at the mempool tip but
-                      -- it is not reachable
-                      pure Nothing
+        { getCurrentLedgerState = \_reg -> do
+            st <- ldbTip <$> readTVar t
+            pure
+              ( forgetLedgerTables st
+              , pure $
+                  Right $
+                    ReadOnlyForker
+                      { roforkerClose = pure ()
+                      , roforkerReadStatistics = pure Nothing
+                      , roforkerReadTables = pure . (projectLedgerTables st `restrictValues'`)
+                      , roforkerRangeReadTables = const $ pure emptyLedgerTables
+                      , roforkerGetLedgerState = pure $ forgetLedgerTables st
+                      }
+              )
         }
     , t
     )
- where
-  f :: Ord k => KeysMK k v -> ValuesMK k v -> ValuesMK k v
-  f (KeysMK s) (ValuesMK v) =
-    ValuesMK (Map.restrictKeys v s)
 
 -- | Make a SUT
 mkSUT ::
@@ -594,20 +558,22 @@ mkSUT ::
   ) =>
   LedgerConfig blk ->
   LedgerState blk ValuesMK ->
-  m (SUT m blk, CT.Tracer m String)
+  m (SUT m blk, CT.Tracer m String, ResourceRegistry m)
 mkSUT cfg initialLedger = do
   (lif, t) <- newLedgerInterface initialLedger
   trcrChan <- atomically newTChan :: m (StrictTChan m (Either String (TraceEventMempool blk)))
   let trcr =
         CT.Tracer $ -- Dbg.traceShowM @(Either String (TraceEventMempool blk))
           atomically . writeTChan trcrChan
+  reg <- unsafeNewRegistry
   mempool <-
     openMempoolWithoutSyncThread
+      reg
       lif
       cfg
       (MempoolCapacityBytesOverride $ unIgnoringOverflow txMaxBytes')
       (CT.Tracer $ CT.traceWith trcr . Right)
-  pure (SUT mempool t, CT.Tracer $ atomically . writeTChan trcrChan . Left)
+  pure (SUT mempool t, CT.Tracer $ atomically . writeTChan trcrChan . Left, reg)
 
 semantics ::
   ( MonadSTM m
@@ -625,36 +591,22 @@ semantics trcr cmd r = do
       mapM_ (addTx m AddTxForRemotePeer) txs
       pure Void
     Action SyncLedger -> do
-      void $ syncWithLedger m
+      void $ testSyncWithLedger m
       pure Void
     Action GetSnapshot -> do
       txs <- snapshotTxs <$> atomically (getSnapshot m)
       pure $ GotSnapshot [(txForgetValidated vtx, tk) | (vtx, tk, _) <- txs]
-    Event (ChangeLedger l' newReachable) -> do
+    Event (ChangeLedger l') -> do
       CT.traceWith trcr $ "ChangingLedger to " <> show (getTip l')
       atomically $ do
         MockedLedgerDB ledgerTip oldReachableTips oldUnreachableTips <- readTVar t
         if getTip l' == getTip ledgerTip
           then
-            if keepsDB newReachable
-              then pure ()
-              else
-                let (newReachableTips, newUnreachableTips) =
-                      ( Set.empty
-                      , Set.insert ledgerTip $
-                          Set.union oldUnreachableTips oldReachableTips
-                      )
-                 in writeTVar t (MockedLedgerDB l' newReachableTips newUnreachableTips)
+            pure ()
           else
             let
               (newReachableTips, newUnreachableTips) =
-                if keepsDB newReachable
-                  then (Set.insert ledgerTip oldReachableTips, oldUnreachableTips)
-                  else
-                    ( Set.empty
-                    , Set.insert ledgerTip $
-                        Set.union oldUnreachableTips oldReachableTips
-                    )
+                (Set.insert ledgerTip oldReachableTips, oldUnreachableTips)
              in
               writeTVar t (MockedLedgerDB l' newReachableTips newUnreachableTips)
         pure Void
@@ -709,10 +661,12 @@ sm ::
   StateMachine (Model blk) (Command blk) m (Response blk) ->
   CT.Tracer m String ->
   StrictTVar m (SUT m blk) ->
+  ResourceRegistry m ->
   StateMachine (Model blk) (Command blk) m (Response blk)
-sm sm0 trcr ior =
+sm sm0 trcr ior reg =
   sm0
     { QC.semantics = \c -> semantics trcr c ior
+    , QC.cleanup = \_ -> closeRegistry reg
     }
 
 smUnused ::
@@ -767,9 +721,9 @@ prop_mempoolSequential cfg capacity initialState gTxs = forAllCommands sm0 Nothi
   \cmds ->
     monadicIO
       ( do
-          (sut, trcr) <- run $ mkSUT cfg initialState
+          (sut, trcr, reg) <- run $ mkSUT cfg initialState
           ior <- run $ newTVarIO sut
-          let sm' = sm sm0 trcr ior
+          let sm' = sm sm0 trcr ior reg
           (hist, model, res) <- runCommands sm' cmds
           prettyCommands sm0 hist
             $ checkCommandNames cmds
@@ -809,9 +763,9 @@ prop_mempoolParallel ::
   Property
 prop_mempoolParallel cfg capacity initialState ma gTxs = forAllParallelCommandsNTimes sm0 Nothing 100 $
   \cmds -> monadicIO $ do
-    (sut, trcr) <- run $ mkSUT cfg initialState
+    (sut, trcr, reg) <- run $ mkSUT cfg initialState
     ior <- run $ newTVarIO sut
-    let sm' = sm sm0 trcr ior
+    let sm' = sm sm0 trcr ior reg
     res <- runParallelCommands sm' cmds
     prettyParallelCommandsWithOpts
       cmds
@@ -831,14 +785,11 @@ tests =
             \i -> fmap (fmap fst . fst) . genTxs i
     , testGroup
         "parallel"
-        [ -- See ouroboros-consensus#1549 for why this test is disabled.
-
-          -- testProperty "atomic" $
-          --     withMaxSuccess 1000 $
-          --       prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger Atomic $
-          --         \i -> fmap (fmap fst . fst) . genTxs i
-          -- ,
-          testProperty "non atomic" $
+        [ testProperty "atomic" $
+            withMaxSuccess 1000 $
+              prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger Atomic $
+                \i -> fmap (fmap fst . fst) . genTxs i
+        , testProperty "non atomic" $
             withMaxSuccess 10 $
               prop_mempoolParallel testLedgerConfigNoSizeLimits txMaxBytes' testInitLedger NonAtomic $
                 \i -> fmap (fmap fst . fst) . genTxs i
@@ -931,11 +882,10 @@ instance ToExpr (Action TestBlock r) where
   toExpr GetSnapshot = App "GetSnapshot" []
 
 instance ToExpr (LedgerState blk ValuesMK) => ToExpr (Event blk r) where
-  toExpr (ChangeLedger ls b) =
+  toExpr (ChangeLedger ls) =
     Rec "ChangeLedger" $
       TD.fromList
         [ ("tip", toExpr ls)
-        , ("newFork", toExpr b)
         ]
 
 instance ToExpr (Command TestBlock r) where

@@ -16,7 +16,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query
   , getIsFetched
   , getIsInvalidBlock
   , getIsValid
-  , getLedgerTablesAtFor
   , getMaxSlotNo
   , getPastLedger
   , getReadOnlyForkerAtPoint
@@ -42,7 +41,7 @@ import Ouroboros.Consensus.HeaderStateHistory
   ( HeaderStateHistory (..)
   )
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
-import Ouroboros.Consensus.Ledger.Abstract (EmptyMK, KeysMK, ValuesMK)
+import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
@@ -259,16 +258,6 @@ getReadOnlyForkerAtPoint ::
   Target (Point blk) ->
   m (Either LedgerDB.GetForkerError (LedgerDB.ReadOnlyForker' m blk))
 getReadOnlyForkerAtPoint CDB{..} = LedgerDB.getReadOnlyForker cdbLedgerDB
-
-getLedgerTablesAtFor ::
-  IOLike m =>
-  ChainDbEnv m blk ->
-  Point blk ->
-  LedgerTables (ExtLedgerState blk) KeysMK ->
-  m (Maybe (LedgerTables (ExtLedgerState blk) ValuesMK))
-getLedgerTablesAtFor =
-  (\ldb pt ks -> eitherToMaybe <$> LedgerDB.readLedgerTablesAtFor ldb pt ks)
-    . cdbLedgerDB
 
 getStatistics :: IOLike m => ChainDbEnv m blk -> m (Maybe LedgerDB.Statistics)
 getStatistics CDB{..} = LedgerDB.getTipStatistics cdbLedgerDB
