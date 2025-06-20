@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Shelley.Eras
   , ConwayEra
   , MaryEra
   , ShelleyEra
+  , DijkstraEra
 
     -- * Eras instantiated with standard crypto
   , StandardAllegra
@@ -29,6 +30,7 @@ module Ouroboros.Consensus.Shelley.Eras
   , StandardConway
   , StandardMary
   , StandardShelley
+  , StandardDijkstra
 
     -- * Shelley-based era
   , ConwayEraGovDict (..)
@@ -64,6 +66,7 @@ import qualified Cardano.Ledger.Conway.Rules as SL
 import qualified Cardano.Ledger.Conway.State as CG
 import qualified Cardano.Ledger.Conway.Translation as Conway
 import Cardano.Ledger.Core as Core
+import Cardano.Ledger.Dijkstra (DijkstraEra)
 import Cardano.Ledger.Mary (MaryEra)
 import Cardano.Ledger.Mary.Translation ()
 import Cardano.Ledger.Shelley (ShelleyEra)
@@ -116,6 +119,12 @@ type StandardBabbage = BabbageEra
 type StandardConway = ConwayEra
 
 {-# DEPRECATED StandardConway "In favor of `ConwayEra`" #-}
+
+-- TODO(geo2a): feels weird to introduce a type alias and immediately deprecate it.
+--              Do we still need that?
+type StandardDijkstra = DijkstraEra
+
+{-# DEPRECATED StandardDijkstra "In favor of `DijkstraEra`" #-}
 
 {-------------------------------------------------------------------------------
   Era polymorphism
@@ -241,6 +250,11 @@ instance ShelleyBasedEra ConwayEra where
 
   getConwayEraGovDict _ = Just ConwayEraGovDict
 
+instance ShelleyBasedEra DijkstraEra where
+  applyShelleyBasedTx = applyAlonzoBasedTx
+
+  getConwayEraGovDict _ = Just ConwayEraGovDict
+
 applyAlonzoBasedTx ::
   forall era.
   ( ShelleyBasedEra era
@@ -345,6 +359,21 @@ instance SupportsTwoPhaseValidation BabbageEra where
     _ -> False
 
 instance SupportsTwoPhaseValidation ConwayEra where
+  isIncorrectClaimedFlag _ = \case
+    SL.ConwayUtxowFailure
+      ( Conway.UtxoFailure
+          ( Conway.UtxosFailure
+              ( Conway.ValidationTagMismatch
+                  (Alonzo.IsValid _claimedFlag)
+                  _validationErrs
+                )
+            )
+        ) -> True
+    _ -> False
+
+instance SupportsTwoPhaseValidation DijkstraEra where
+  -- TODO(geo2a): can't we do something like this? It does not typecheck.
+  -- isIncorrectClaimedFlag _ = coerce $ isIncorrectClaimedFlag (Proxy @ConwayEra)
   isIncorrectClaimedFlag _ = \case
     SL.ConwayUtxowFailure
       ( Conway.UtxoFailure

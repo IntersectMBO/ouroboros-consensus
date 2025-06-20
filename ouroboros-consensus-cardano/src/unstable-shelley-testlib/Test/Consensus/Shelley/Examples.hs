@@ -17,6 +17,7 @@ module Test.Consensus.Shelley.Examples
   , examplesAlonzo
   , examplesBabbage
   , examplesConway
+  , examplesDijkstra
   , examplesMary
   , examplesShelley
   ) where
@@ -75,6 +76,10 @@ import Test.Cardano.Ledger.Babbage.Examples.Consensus
 import Test.Cardano.Ledger.Conway.Examples.Consensus
   ( ledgerExamplesConway
   )
+-- TODO(geo2a): this needs to be defined in Ledger
+-- import Test.Cardano.Ledger.Dijkstra.Examples.Consensus
+--   ( ledgerExamplesDijkstra
+--   )
 import Test.Cardano.Ledger.Mary.Examples.Consensus
   ( ledgerExamplesMary
   )
@@ -394,6 +399,11 @@ examplesBabbage = fromShelleyLedgerExamplesPraos ledgerExamplesBabbage
 
 examplesConway :: Examples StandardConwayBlock
 examplesConway = fromShelleyLedgerExamplesPraos ledgerExamplesConway
+
+examplesDijkstra :: Examples StandardDijkstraBlock
+examplesDijkstra = fromShelleyLedgerExamplesPraos ledgerExamplesDijkstra
+ where
+  ledgerExamplesDijkstra = error "TODO(geo2a): needs to be defined in Ledger"
 
 exampleShelleyLedgerConfig :: TranslationContext era -> ShelleyLedgerConfig era
 exampleShelleyLedgerConfig translationContext =
