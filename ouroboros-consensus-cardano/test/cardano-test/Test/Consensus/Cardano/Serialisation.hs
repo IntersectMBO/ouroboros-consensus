@@ -51,6 +51,7 @@ testCodecCfg =
     ShelleyCodecConfig
     ShelleyCodecConfig
     ShelleyCodecConfig
+    ShelleyCodecConfig
 
 dictNestedHdr ::
   forall a.
@@ -65,6 +66,7 @@ dictNestedHdr = \case
   NCS (NCS (NCS (NCS (NCZ CtxtShelley)))) -> Dict
   NCS (NCS (NCS (NCS (NCS (NCZ CtxtShelley))))) -> Dict
   NCS (NCS (NCS (NCS (NCS (NCS (NCZ CtxtShelley)))))) -> Dict
+  NCS (NCS (NCS (NCS (NCS (NCS (NCS (NCZ CtxtShelley))))))) -> Dict
 
 {-------------------------------------------------------------------------------
   BinaryBlockInfo
