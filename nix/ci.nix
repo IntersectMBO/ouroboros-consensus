@@ -12,22 +12,24 @@ let
       projectHsPkgsNoAsserts =
         haskellLib.selectProjectPackages hsPkgs.projectVariants.noAsserts.hsPkgs;
       noCross = buildSystem == hsPkgs.pkgs.stdenv.hostPlatform.system;
-      set-git-revs =
-        lib.mapAttrsRecursiveCond (as: !lib.isDerivation as) (pa: pkgs.set-git-rev);
+
+      isCardanoExe = p:
+        let i = p.identifier;
+        in i.name == "ouroboros-consensus-cardano" && i.component-type == "exe";
+      setGitRevs =
+        lib.mapAttrsRecursiveCond (as: !lib.isDerivation as)
+          (_: p: if isCardanoExe p then pkgs.set-git-rev p else p);
     in
     {
-      libs =
-        haskellLib.collectComponents' "library" projectHsPkgs;
-      exes =
-        set-git-revs (haskellLib.collectComponents' "exes" projectHsPkgs);
-      exesNoAsserts =
-        set-git-revs (haskellLib.collectComponents' "exes" projectHsPkgsNoAsserts);
-      benchmarks =
-        haskellLib.collectComponents' "benchmarks" projectHsPkgs;
-      tests =
-        haskellLib.collectComponents' "tests" projectHsPkgs;
+      build =
+        setGitRevs (haskellLib.mkFlakePackages projectHsPkgs);
       checks =
-        haskellLib.collectChecks' projectHsPkgs;
+        haskellLib.mkFlakeChecks (haskellLib.collectChecks' projectHsPkgs);
+      exesNoAsserts =
+        setGitRevs
+          (lib.mapAttrs' (_: p: lib.nameValuePair p.identifier.component-name p)
+            (lib.filterAttrs (_: isCardanoExe)
+              (haskellLib.mkFlakePackages projectHsPkgsNoAsserts)));
     } // lib.optionalAttrs noCross {
       devShell =
         import ./shell.nix { inherit inputs pkgs hsPkgs; };
@@ -42,17 +44,13 @@ let
       formattingLinting = import ./formatting-linting.nix pkgs;
       inherit (pkgs) consensus-pdfs agda-spec;
 
-      # ensure we can still build on 8.10, can be removed soon
-      haskell810 = builtins.removeAttrs
-        (mkHaskellJobsFor pkgs.hsPkgs.projectVariants.ghc810)
-        [ "checks" "devShell" "devShellProfiled" ];
-
-      # also already test GHC 9.10, but only on Linux to reduce CI load
+      # also test newer GHCs, but only on Linux to reduce CI load
       haskell910 = mkHaskellJobsFor pkgs.hsPkgs.projectVariants.ghc910;
+      haskell912 = mkHaskellJobsFor pkgs.hsPkgs.projectVariants.ghc912;
     };
   } // lib.optionalAttrs (buildSystem == "x86_64-linux") {
     windows = {
-      haskell96 = mkHaskellJobsFor pkgs.hsPkgs.projectCross.mingwW64;
+      haskell96 = mkHaskellJobsFor pkgs.hsPkgs.projectCross.ucrt64;
     };
   });
 

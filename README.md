@@ -1,9 +1,9 @@
 # Ouroboros Consensus
 
-[![consensus](https://img.shields.io/badge/ouroboros--consensus-0.26.0.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-0.26.0.0/)
-[![diffusion](https://img.shields.io/badge/ouroboros--consensus--diffusion-0.22.0.1-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-diffusion-0.22.0.1/)
+[![consensus](https://img.shields.io/badge/ouroboros--consensus-0.27.0.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-0.27.0.0/)
+[![diffusion](https://img.shields.io/badge/ouroboros--consensus--diffusion-0.23.0.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-diffusion-0.23.0.0/)
 [![protocol](https://img.shields.io/badge/ouroboros--consensus--protocol-0.12.0.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-protocol-0.12.0.0/)
-[![cardano](https://img.shields.io/badge/ouroboros--consensus--cardano-0.25.0.1-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-cardano-0.25.0.1/)
+[![cardano](https://img.shields.io/badge/ouroboros--consensus--cardano-0.25.1.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-cardano-0.25.1.0/)
 [![sop-extras](https://img.shields.io/badge/sop--extras-0.4.0.0-blue)](https://chap.intersectmbo.org/package/sop-extras-0.4.0.0/)
 [![strict-sop-core](https://img.shields.io/badge/strict--sop--core-0.1.3.0-blue)](https://chap.intersectmbo.org/package/strict-sop-core-0.1.3.0/)
 

@@ -9,17 +9,21 @@
 --
 -- > import Ouroboros.Consensus.Fragment.Diff (ChainDiff (..))
 -- > import qualified Ouroboros.Consensus.Fragment.Diff as Diff
-module Ouroboros.Consensus.Fragment.Diff (
-    ChainDiff (..)
+module Ouroboros.Consensus.Fragment.Diff
+  ( ChainDiff (..)
+
     -- * Queries
   , getAnchorPoint
   , getTip
   , rollbackExceedsSuffix
+
     -- * Constructors
   , diff
   , extend
+
     -- * Application
   , apply
+
     -- * Manipulation
   , Ouroboros.Consensus.Fragment.Diff.map
   , append
@@ -28,15 +32,16 @@ module Ouroboros.Consensus.Fragment.Diff (
   , truncate
   ) where
 
-import           Data.Word (Word64)
-import           GHC.Stack (HasCallStack)
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
-                     AnchoredSeq (..))
+import Data.Word (Word64)
+import GHC.Stack (HasCallStack)
+import Ouroboros.Consensus.Block
+import Ouroboros.Network.AnchoredFragment
+  ( AnchoredFragment
+  , AnchoredSeq (..)
+  )
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Prelude hiding (mapM, truncate)
+import Prelude hiding (mapM, truncate)
 import qualified Prelude
-
 
 -- | A diff of a chain (fragment).
 --
@@ -47,13 +52,13 @@ import qualified Prelude
 -- back. In other words, applying a 'ChainDiff' can result in a chain shorter
 -- than the chain to which the diff was applied.
 data ChainDiff b = ChainDiff
-    { getRollback :: !Word64
-      -- ^ The number of blocks/headers to roll back the current chain
-    , getSuffix   :: !(AnchoredFragment b)
-      -- ^ The new blocks/headers to add after rolling back the current chain.
-    }
+  { getRollback :: !Word64
+  -- ^ The number of blocks/headers to roll back the current chain
+  , getSuffix :: !(AnchoredFragment b)
+  -- ^ The new blocks/headers to add after rolling back the current chain.
+  }
 
-deriving instance (StandardHash b, Eq   b) => Eq   (ChainDiff b)
+deriving instance (StandardHash b, Eq b) => Eq (ChainDiff b)
 deriving instance (StandardHash b, Show b) => Show (ChainDiff b)
 
 {-------------------------------------------------------------------------------
@@ -73,7 +78,7 @@ getAnchorPoint = castPoint . AF.anchorPoint . getSuffix
 -- greater than the length of the new elements in the suffix to add.
 rollbackExceedsSuffix :: HasHeader b => ChainDiff b -> Bool
 rollbackExceedsSuffix (ChainDiff nbRollback suffix) =
-    nbRollback > fromIntegral (AF.length suffix)
+  nbRollback > fromIntegral (AF.length suffix)
 
 {-------------------------------------------------------------------------------
   Constructors
@@ -91,16 +96,18 @@ extend = ChainDiff 0
 -- PRECONDITION: the candidate fragment must intersect with the current chain
 -- fragment.
 diff ::
-     (HasHeader b, HasHeader b', HeaderHash b ~ HeaderHash b', HasCallStack)
-  => AnchoredFragment b' -- ^ Current chain
-  -> AnchoredFragment b  -- ^ Candidate chain
-  -> ChainDiff b
+  (HasHeader b, HasHeader b', HeaderHash b ~ HeaderHash b', HasCallStack) =>
+  -- | Current chain
+  AnchoredFragment b' ->
+  -- | Candidate chain
+  AnchoredFragment b ->
+  ChainDiff b
 diff curChain candChain =
   case AF.intersect curChain candChain of
-    Just (_curChainPrefix, _candPrefix, curChainSuffix, candSuffix)
-      -> ChainDiff
-           (fromIntegral (AF.length curChainSuffix))
-           candSuffix
+    Just (_curChainPrefix, _candPrefix, curChainSuffix, candSuffix) ->
+      ChainDiff
+        (fromIntegral (AF.length curChainSuffix))
+        candSuffix
     -- Precondition violated.
     _ -> error "candidate fragment doesn't intersect with current chain"
 
@@ -119,12 +126,12 @@ diff curChain candChain =
 -- The returned fragment will have the same anchor point as the given
 -- fragment.
 apply ::
-     HasHeader b
-  => AnchoredFragment b
-  -> ChainDiff b
-  -> Maybe (AnchoredFragment b)
+  HasHeader b =>
+  AnchoredFragment b ->
+  ChainDiff b ->
+  Maybe (AnchoredFragment b)
 apply curChain (ChainDiff nbRollback suffix) =
-    AF.join (AF.dropNewest (fromIntegral nbRollback) curChain) suffix
+  AF.join (AF.dropNewest (fromIntegral nbRollback) curChain) suffix
 
 {-------------------------------------------------------------------------------
   Manipulation
@@ -145,50 +152,50 @@ append (ChainDiff nbRollback suffix) b = (ChainDiff nbRollback (suffix :> b))
 -- If the length of the truncated suffix is shorter than the rollback,
 -- 'Nothing' is returned.
 truncate ::
-     (HasHeader b, HasCallStack)
-  => Point b
-  -> ChainDiff b
-  -> ChainDiff b
+  (HasHeader b, HasCallStack) =>
+  Point b ->
+  ChainDiff b ->
+  ChainDiff b
 truncate pt (ChainDiff nbRollback suffix)
-    | Just suffix' <- AF.rollback (castPoint pt) suffix
-    = ChainDiff nbRollback suffix'
-    | otherwise
-    = error $ "rollback point not on the candidate suffix: " <> show pt
+  | Just suffix' <- AF.rollback (castPoint pt) suffix =
+      ChainDiff nbRollback suffix'
+  | otherwise =
+      error $ "rollback point not on the candidate suffix: " <> show pt
 
 -- | Return the longest prefix of the suffix matching the given predicate,
 -- starting from the left, i.e., the \"oldest\" blocks.
 --
 -- If the new suffix is shorter than the diff's rollback, return 'Nothing'.
 takeWhileOldest ::
-     HasHeader b
-  => (b -> Bool)
-  -> ChainDiff b
-  -> ChainDiff b
+  HasHeader b =>
+  (b -> Bool) ->
+  ChainDiff b ->
+  ChainDiff b
 takeWhileOldest accept (ChainDiff nbRollback suffix) =
-    ChainDiff nbRollback (AF.takeWhileOldest accept suffix)
+  ChainDiff nbRollback (AF.takeWhileOldest accept suffix)
 
 map ::
-     forall a b.
-     ( HasHeader b
-     , HeaderHash a ~ HeaderHash b
-     )
-  => (a -> b)
-  -> ChainDiff a
-  -> ChainDiff b
+  forall a b.
+  ( HasHeader b
+  , HeaderHash a ~ HeaderHash b
+  ) =>
+  (a -> b) ->
+  ChainDiff a ->
+  ChainDiff b
 map f (ChainDiff rollback suffix) =
-    ChainDiff rollback
-  $ AF.mapAnchoredFragment f suffix
+  ChainDiff rollback $
+    AF.mapAnchoredFragment f suffix
 
 mapM ::
-     forall a b m.
-     ( HasHeader b
-     , HeaderHash a ~ HeaderHash b
-     , Monad m
-     )
-  => (a -> m b)
-  -> ChainDiff a
-  -> m (ChainDiff b)
+  forall a b m.
+  ( HasHeader b
+  , HeaderHash a ~ HeaderHash b
+  , Monad m
+  ) =>
+  (a -> m b) ->
+  ChainDiff a ->
+  m (ChainDiff b)
 mapM f (ChainDiff rollback suffix) =
-       ChainDiff rollback
-    .  AF.fromOldestFirst (AF.castAnchor (AF.anchor suffix))
-   <$> Prelude.mapM f (AF.toOldestFirst suffix)
+  ChainDiff rollback
+    . AF.fromOldestFirst (AF.castAnchor (AF.anchor suffix))
+    <$> Prelude.mapM f (AF.toOldestFirst suffix)

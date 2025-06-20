@@ -1,6 +1,6 @@
 cabal-version: 3.0
 name: ouroboros-consensus-diffusion
-version: 0.22.0.1
+version: 0.23.0.0
 synopsis: Integration for the Ouroboros Network layer
 description:
   Top level integration for consensus & network layers of the Ouroboros blockchain protocol.
@@ -89,12 +89,12 @@ library
     hashable,
     io-classes ^>=1.5,
     mtl,
-    network-mux ^>=0.7,
-    ouroboros-consensus ^>=0.26,
+    network-mux ^>=0.8,
+    ouroboros-consensus ^>=0.27,
     ouroboros-consensus-protocol ^>=0.12,
-    ouroboros-network ^>=0.20.1,
-    ouroboros-network-api ^>=0.13,
-    ouroboros-network-framework ^>=0.17,
+    ouroboros-network ^>=0.21,
+    ouroboros-network-api ^>=0.14,
+    ouroboros-network-framework ^>=0.18,
     ouroboros-network-protocols ^>=0.14,
     random,
     resource-registry ^>=0.1,
@@ -107,9 +107,6 @@ library
     transformers,
     typed-protocols,
     typed-protocols-stateful,
-
-  -- GHC 8.10.7 on aarch64-darwin cannot use text-2
-  build-depends: text >=1.2.5.0 && <2.2
 
 library unstable-diffusion-testlib
   import: common-lib
@@ -243,6 +240,7 @@ test-suite consensus-test
     Test.Consensus.Genesis.Tests.CSJ
     Test.Consensus.Genesis.Tests.DensityDisconnect
     Test.Consensus.Genesis.Tests.LoE
+    Test.Consensus.Genesis.Tests.LoE.CaughtUp
     Test.Consensus.Genesis.Tests.LoP
     Test.Consensus.Genesis.Tests.LongRangeAttack
     Test.Consensus.Genesis.Tests.Uniform

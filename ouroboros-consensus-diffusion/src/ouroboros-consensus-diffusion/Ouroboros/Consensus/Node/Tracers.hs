@@ -5,175 +5,197 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Ouroboros.Consensus.Node.Tracers (
-    -- * All tracers of a node bundled together
+module Ouroboros.Consensus.Node.Tracers
+  ( -- * All tracers of a node bundled together
     Tracers
   , Tracers' (..)
   , nullTracers
   , showTracers
+
     -- * Specific tracers
   , TraceForgeEvent (..)
   , TraceLabelCreds (..)
   ) where
 
-import           Control.Exception (SomeException)
-import           Control.Tracer (Tracer, nullTracer, showTracing)
-import           Data.Text (Text)
-import           Data.Time (UTCTime)
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.BlockchainTime
-import           Ouroboros.Consensus.Forecast (OutsideForecastRange)
-import           Ouroboros.Consensus.Genesis.Governor (TraceGDDEvent)
-import           Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
-import           Ouroboros.Consensus.Ledger.SupportsMempool
-import           Ouroboros.Consensus.Ledger.SupportsProtocol
-import           Ouroboros.Consensus.Mempool (MempoolSize, TraceEventMempool)
-import           Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
-                     (TraceBlockFetchServerEvent)
-import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
-                     (TraceChainSyncClientEvent)
+import Control.Exception (SomeException)
+import Control.Tracer (Tracer, nullTracer, showTracing)
+import Data.Text (Text)
+import Data.Time (UTCTime)
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.BlockchainTime
+import Ouroboros.Consensus.Forecast (OutsideForecastRange)
+import Ouroboros.Consensus.Genesis.Governor (TraceGDDEvent)
+import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
+import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Mempool (MempoolSize, TraceEventMempool)
+import Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
+  ( TraceBlockFetchServerEvent
+  )
+import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+  ( TraceChainSyncClientEvent
+  )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as CSJumping
-import           Ouroboros.Consensus.MiniProtocol.ChainSync.Server
-                     (TraceChainSyncServerEvent)
-import           Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
-                     (TraceLocalTxSubmissionServerEvent (..))
-import           Ouroboros.Consensus.Node.GSM (TraceGsmEvent)
-import           Ouroboros.Consensus.Protocol.Praos.AgentClient
-                     (KESAgentClientTrace (..))
-import           Ouroboros.Network.Block (Tip)
-import           Ouroboros.Network.BlockFetch (TraceFetchClientState,
-                     TraceLabelPeer)
-import           Ouroboros.Network.BlockFetch.Decision.Trace
-                     (TraceDecisionEvent)
-import           Ouroboros.Network.KeepAlive (TraceKeepAliveClient)
-import           Ouroboros.Network.TxSubmission.Inbound
-                     (TraceTxSubmissionInbound)
-import           Ouroboros.Network.TxSubmission.Outbound
-                     (TraceTxSubmissionOutbound)
+import Ouroboros.Consensus.MiniProtocol.ChainSync.Server
+  ( TraceChainSyncServerEvent
+  )
+import Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
+  ( TraceLocalTxSubmissionServerEvent (..)
+  )
+import Ouroboros.Consensus.Node.GSM (TraceGsmEvent)
+import Ouroboros.Consensus.Protocol.Praos.AgentClient
+  ( KESAgentClientTrace (..)
+  )
+import Ouroboros.Network.Block (Tip)
+import Ouroboros.Network.BlockFetch
+  ( TraceFetchClientState
+  , TraceLabelPeer
+  )
+import Ouroboros.Network.BlockFetch.Decision.Trace
+  ( TraceDecisionEvent
+  )
+import Ouroboros.Network.KeepAlive (TraceKeepAliveClient)
+import Ouroboros.Network.TxSubmission.Inbound
+  ( TraceTxSubmissionInbound
+  )
+import Ouroboros.Network.TxSubmission.Outbound
+  ( TraceTxSubmissionOutbound
+  )
 
 {-------------------------------------------------------------------------------
   All tracers of a node bundled together
 -------------------------------------------------------------------------------}
 
 data Tracers' remotePeer localPeer blk f = Tracers
-  { chainSyncClientTracer         :: f (TraceLabelPeer remotePeer (TraceChainSyncClientEvent blk))
-  , chainSyncServerHeaderTracer   :: f (TraceLabelPeer remotePeer (TraceChainSyncServerEvent blk))
-  , chainSyncServerBlockTracer    :: f (TraceChainSyncServerEvent blk)
-  , blockFetchDecisionTracer      :: f (TraceDecisionEvent remotePeer (Header blk))
-  , blockFetchClientTracer        :: f (TraceLabelPeer remotePeer (TraceFetchClientState (Header blk)))
-  , blockFetchServerTracer        :: f (TraceLabelPeer remotePeer (TraceBlockFetchServerEvent blk))
-  , txInboundTracer               :: f (TraceLabelPeer remotePeer (TraceTxSubmissionInbound  (GenTxId blk) (GenTx blk)))
-  , txOutboundTracer              :: f (TraceLabelPeer remotePeer (TraceTxSubmissionOutbound (GenTxId blk) (GenTx blk)))
+  { chainSyncClientTracer :: f (TraceLabelPeer remotePeer (TraceChainSyncClientEvent blk))
+  , chainSyncServerHeaderTracer :: f (TraceLabelPeer remotePeer (TraceChainSyncServerEvent blk))
+  , chainSyncServerBlockTracer :: f (TraceChainSyncServerEvent blk)
+  , blockFetchDecisionTracer :: f (TraceDecisionEvent remotePeer (Header blk))
+  , blockFetchClientTracer :: f (TraceLabelPeer remotePeer (TraceFetchClientState (Header blk)))
+  , blockFetchServerTracer :: f (TraceLabelPeer remotePeer (TraceBlockFetchServerEvent blk))
+  , txInboundTracer ::
+      f (TraceLabelPeer remotePeer (TraceTxSubmissionInbound (GenTxId blk) (GenTx blk)))
+  , txOutboundTracer ::
+      f (TraceLabelPeer remotePeer (TraceTxSubmissionOutbound (GenTxId blk) (GenTx blk)))
   , localTxSubmissionServerTracer :: f (TraceLocalTxSubmissionServerEvent blk)
-  , mempoolTracer                 :: f (TraceEventMempool blk)
-  , forgeTracer                   :: f (TraceLabelCreds (TraceForgeEvent blk))
-  , blockchainTimeTracer          :: f (TraceBlockchainTimeEvent UTCTime)
-  , forgeStateInfoTracer          :: f (TraceLabelCreds (ForgeStateInfo blk))
-  , keepAliveClientTracer         :: f (TraceKeepAliveClient remotePeer)
-  , consensusSanityCheckTracer    :: f SanityCheckIssue
-  , consensusErrorTracer          :: f SomeException
-  , gsmTracer                     :: f (TraceGsmEvent (Tip blk))
-  , gddTracer                     :: f (TraceGDDEvent remotePeer blk)
-  , csjTracer                     :: f (TraceLabelPeer remotePeer (CSJumping.TraceEventCsj remotePeer blk))
-  , dbfTracer                     :: f (CSJumping.TraceEventDbf remotePeer)
-  , kesAgentTracer                :: f KESAgentClientTrace
+  , mempoolTracer :: f (TraceEventMempool blk)
+  , forgeTracer :: f (TraceLabelCreds (TraceForgeEvent blk))
+  , blockchainTimeTracer :: f (TraceBlockchainTimeEvent UTCTime)
+  , forgeStateInfoTracer :: f (TraceLabelCreds (ForgeStateInfo blk))
+  , keepAliveClientTracer :: f (TraceKeepAliveClient remotePeer)
+  , consensusSanityCheckTracer :: f SanityCheckIssue
+  , consensusErrorTracer :: f SomeException
+  , gsmTracer :: f (TraceGsmEvent (Tip blk))
+  , gddTracer :: f (TraceGDDEvent remotePeer blk)
+  , csjTracer ::
+      f (TraceLabelPeer remotePeer (CSJumping.TraceEventCsj remotePeer blk))
+  , dbfTracer :: f (CSJumping.TraceEventDbf remotePeer)
+  , kesAgentTracer :: f KESAgentClientTrace
   }
 
-instance (forall a. Semigroup (f a))
-      => Semigroup (Tracers' remotePeer localPeer blk f) where
-  l <> r = Tracers
-      { chainSyncClientTracer         = f chainSyncClientTracer
-      , chainSyncServerHeaderTracer   = f chainSyncServerHeaderTracer
-      , chainSyncServerBlockTracer    = f chainSyncServerBlockTracer
-      , blockFetchDecisionTracer      = f blockFetchDecisionTracer
-      , blockFetchClientTracer        = f blockFetchClientTracer
-      , blockFetchServerTracer        = f blockFetchServerTracer
-      , txInboundTracer               = f txInboundTracer
-      , txOutboundTracer              = f txOutboundTracer
+instance
+  (forall a. Semigroup (f a)) =>
+  Semigroup (Tracers' remotePeer localPeer blk f)
+  where
+  l <> r =
+    Tracers
+      { chainSyncClientTracer = f chainSyncClientTracer
+      , chainSyncServerHeaderTracer = f chainSyncServerHeaderTracer
+      , chainSyncServerBlockTracer = f chainSyncServerBlockTracer
+      , blockFetchDecisionTracer = f blockFetchDecisionTracer
+      , blockFetchClientTracer = f blockFetchClientTracer
+      , blockFetchServerTracer = f blockFetchServerTracer
+      , txInboundTracer = f txInboundTracer
+      , txOutboundTracer = f txOutboundTracer
       , localTxSubmissionServerTracer = f localTxSubmissionServerTracer
-      , mempoolTracer                 = f mempoolTracer
-      , forgeTracer                   = f forgeTracer
-      , blockchainTimeTracer          = f blockchainTimeTracer
-      , forgeStateInfoTracer          = f forgeStateInfoTracer
-      , keepAliveClientTracer         = f keepAliveClientTracer
-      , consensusSanityCheckTracer    = f consensusSanityCheckTracer
-      , consensusErrorTracer          = f consensusErrorTracer
-      , gsmTracer                     = f gsmTracer
-      , gddTracer                     = f gddTracer
-      , csjTracer                     = f csjTracer
-      , dbfTracer                     = f dbfTracer
-      , kesAgentTracer                = f kesAgentTracer
+      , mempoolTracer = f mempoolTracer
+      , forgeTracer = f forgeTracer
+      , blockchainTimeTracer = f blockchainTimeTracer
+      , forgeStateInfoTracer = f forgeStateInfoTracer
+      , keepAliveClientTracer = f keepAliveClientTracer
+      , consensusSanityCheckTracer = f consensusSanityCheckTracer
+      , consensusErrorTracer = f consensusErrorTracer
+      , gsmTracer = f gsmTracer
+      , gddTracer = f gddTracer
+      , csjTracer = f csjTracer
+      , dbfTracer = f dbfTracer
+      , kesAgentTracer = f kesAgentTracer
       }
-    where
-      f :: forall a. Semigroup a
-        => (Tracers' remotePeer localPeer blk f -> a) -> a
-      f prj = prj l <> prj r
+   where
+    f ::
+      forall a.
+      Semigroup a =>
+      (Tracers' remotePeer localPeer blk f -> a) -> a
+    f prj = prj l <> prj r
 
 -- | A record of 'Tracer's for the node.
 type Tracers m remotePeer localPeer blk =
-     Tracers'  remotePeer localPeer blk (Tracer m)
+  Tracers' remotePeer localPeer blk (Tracer m)
 
 -- | Use a 'nullTracer' for each of the 'Tracer's in 'Tracers'
 nullTracers :: Monad m => Tracers m remotePeer localPeer blk
-nullTracers = Tracers
-    { chainSyncClientTracer         = nullTracer
-    , chainSyncServerHeaderTracer   = nullTracer
-    , chainSyncServerBlockTracer    = nullTracer
-    , blockFetchDecisionTracer      = nullTracer
-    , blockFetchClientTracer        = nullTracer
-    , blockFetchServerTracer        = nullTracer
-    , txInboundTracer               = nullTracer
-    , txOutboundTracer              = nullTracer
+nullTracers =
+  Tracers
+    { chainSyncClientTracer = nullTracer
+    , chainSyncServerHeaderTracer = nullTracer
+    , chainSyncServerBlockTracer = nullTracer
+    , blockFetchDecisionTracer = nullTracer
+    , blockFetchClientTracer = nullTracer
+    , blockFetchServerTracer = nullTracer
+    , txInboundTracer = nullTracer
+    , txOutboundTracer = nullTracer
     , localTxSubmissionServerTracer = nullTracer
-    , mempoolTracer                 = nullTracer
-    , forgeTracer                   = nullTracer
-    , blockchainTimeTracer          = nullTracer
-    , forgeStateInfoTracer          = nullTracer
-    , keepAliveClientTracer         = nullTracer
-    , consensusSanityCheckTracer    = nullTracer
-    , consensusErrorTracer          = nullTracer
-    , gsmTracer                     = nullTracer
-    , gddTracer                     = nullTracer
-    , csjTracer                     = nullTracer
-    , dbfTracer                     = nullTracer
-    , kesAgentTracer                = nullTracer
+    , mempoolTracer = nullTracer
+    , forgeTracer = nullTracer
+    , blockchainTimeTracer = nullTracer
+    , forgeStateInfoTracer = nullTracer
+    , keepAliveClientTracer = nullTracer
+    , consensusSanityCheckTracer = nullTracer
+    , consensusErrorTracer = nullTracer
+    , gsmTracer = nullTracer
+    , gddTracer = nullTracer
+    , csjTracer = nullTracer
+    , dbfTracer = nullTracer
+    , kesAgentTracer = nullTracer
     }
 
-showTracers :: ( Show blk
-               , Show (GenTx blk)
-               , Show (Validated (GenTx blk))
-               , Show (GenTxId blk)
-               , Show (ApplyTxErr blk)
-               , Show (Header blk)
-               , Show (ForgeStateInfo blk)
-               , Show (ForgeStateUpdateError blk)
-               , Show (CannotForge blk)
-               , Show remotePeer
-               , LedgerSupportsProtocol blk
-               )
-            => Tracer m String -> Tracers m remotePeer localPeer blk
-showTracers tr = Tracers
-    { chainSyncClientTracer         = showTracing tr
-    , chainSyncServerHeaderTracer   = showTracing tr
-    , chainSyncServerBlockTracer    = showTracing tr
-    , blockFetchDecisionTracer      = showTracing tr
-    , blockFetchClientTracer        = showTracing tr
-    , blockFetchServerTracer        = showTracing tr
-    , txInboundTracer               = showTracing tr
-    , txOutboundTracer              = showTracing tr
+showTracers ::
+  ( Show blk
+  , Show (GenTx blk)
+  , Show (Validated (GenTx blk))
+  , Show (GenTxId blk)
+  , Show (ApplyTxErr blk)
+  , Show (Header blk)
+  , Show (ForgeStateInfo blk)
+  , Show (ForgeStateUpdateError blk)
+  , Show (CannotForge blk)
+  , Show remotePeer
+  , LedgerSupportsProtocol blk
+  ) =>
+  Tracer m String -> Tracers m remotePeer localPeer blk
+showTracers tr =
+  Tracers
+    { chainSyncClientTracer = showTracing tr
+    , chainSyncServerHeaderTracer = showTracing tr
+    , chainSyncServerBlockTracer = showTracing tr
+    , blockFetchDecisionTracer = showTracing tr
+    , blockFetchClientTracer = showTracing tr
+    , blockFetchServerTracer = showTracing tr
+    , txInboundTracer = showTracing tr
+    , txOutboundTracer = showTracing tr
     , localTxSubmissionServerTracer = showTracing tr
-    , mempoolTracer                 = showTracing tr
-    , forgeTracer                   = showTracing tr
-    , blockchainTimeTracer          = showTracing tr
-    , forgeStateInfoTracer          = showTracing tr
-    , keepAliveClientTracer         = showTracing tr
-    , consensusSanityCheckTracer    = showTracing tr
-    , consensusErrorTracer          = showTracing tr
-    , gsmTracer                     = showTracing tr
-    , gddTracer                     = showTracing tr
-    , csjTracer                     = showTracing tr
-    , dbfTracer                     = showTracing tr
-    , kesAgentTracer                = showTracing tr
+    , mempoolTracer = showTracing tr
+    , forgeTracer = showTracing tr
+    , blockchainTimeTracer = showTracing tr
+    , forgeStateInfoTracer = showTracing tr
+    , keepAliveClientTracer = showTracing tr
+    , consensusSanityCheckTracer = showTracing tr
+    , consensusErrorTracer = showTracing tr
+    , gsmTracer = showTracing tr
+    , gddTracer = showTracing tr
+    , csjTracer = showTracing tr
+    , dbfTracer = showTracing tr
+    , kesAgentTracer = showTracing tr
     }
 
 {-------------------------------------------------------------------------------
@@ -216,12 +238,11 @@ showTracers tr = Tracers
 -- >          |
 -- >  TraceAdoptedBlock
 data TraceForgeEvent blk
-    -- | Start of the leadership check
+  = -- | Start of the leadership check
     --
     -- We record the current slot number.
-  = TraceStartLeadershipCheck SlotNo
-
-    -- | Leadership check failed: the tip of the ImmutableDB inhabits the
+    TraceStartLeadershipCheck SlotNo
+  | -- | Leadership check failed: the tip of the ImmutableDB inhabits the
     -- current slot
     --
     -- This might happen in two cases.
@@ -238,9 +259,8 @@ data TraceForgeEvent blk
     -- ImmutableDB.
     --
     -- See also <https://github.com/IntersectMBO/ouroboros-network/issues/1462>
-  | TraceSlotIsImmutable SlotNo (Point blk) BlockNo
-
-    -- | Leadership check failed: the current chain contains a block from a slot
+    TraceSlotIsImmutable SlotNo (Point blk) BlockNo
+  | -- | Leadership check failed: the current chain contains a block from a slot
     -- /after/ the current slot
     --
     -- This can only happen if the system is under heavy load.
@@ -249,9 +269,8 @@ data TraceForgeEvent blk
     -- block at the tip of the chain.
     --
     -- See also <https://github.com/IntersectMBO/ouroboros-network/issues/1462>
-  | TraceBlockFromFuture SlotNo SlotNo
-
-    -- | We found out to which block we are going to connect the block we are about
+    TraceBlockFromFuture SlotNo SlotNo
+  | -- | We found out to which block we are going to connect the block we are about
     -- to forge.
     --
     -- We record the current slot number, the block number of the block to
@@ -259,9 +278,8 @@ data TraceForgeEvent blk
     --
     -- Note that block number of the block we will try to forge is one more than
     -- the recorded block number.
-  | TraceBlockContext SlotNo BlockNo (Point blk)
-
-    -- | Leadership check failed: we were unable to get the ledger state for the
+    TraceBlockContext SlotNo BlockNo (Point blk)
+  | -- | Leadership check failed: we were unable to get the ledger state for the
     -- point of the block we want to connect to
     --
     -- This can happen if after choosing which block to connect to the node
@@ -272,69 +290,59 @@ data TraceForgeEvent blk
     -- We record both the current slot number as well as the point of the block
     -- we attempt to connect the new block to (that we requested the ledger
     -- state for).
-  | TraceNoLedgerState SlotNo (Point blk)
-
-    -- | We obtained a ledger state for the point of the block we want to
+    TraceNoLedgerState SlotNo (Point blk)
+  | -- | We obtained a ledger state for the point of the block we want to
     -- connect to
     --
     -- We record both the current slot number as well as the point of the block
     -- we attempt to connect the new block to (that we requested the ledger
     -- state for).
-  | TraceLedgerState SlotNo (Point blk)
-
-    -- | Leadership check failed: we were unable to get the ledger view for the
+    TraceLedgerState SlotNo (Point blk)
+  | -- | Leadership check failed: we were unable to get the ledger view for the
     -- current slot number
     --
     -- This will only happen if there are many missing blocks between the tip of
     -- our chain and the current slot.
     --
     -- We record also the failure returned by 'forecastFor'.
-  | TraceNoLedgerView SlotNo OutsideForecastRange
-
-    -- | We obtained a ledger view for the current slot number
+    TraceNoLedgerView SlotNo OutsideForecastRange
+  | -- | We obtained a ledger view for the current slot number
     --
     -- We record the current slot number.
-  | TraceLedgerView SlotNo
-
-    -- | Updating the forge state failed.
+    TraceLedgerView SlotNo
+  | -- | Updating the forge state failed.
     --
     -- For example, the KES key could not be evolved anymore.
     --
     -- We record the error returned by 'updateForgeState'.
-  | TraceForgeStateUpdateError SlotNo (ForgeStateUpdateError blk)
-
-    -- | We did the leadership check and concluded that we should lead and forge
+    TraceForgeStateUpdateError SlotNo (ForgeStateUpdateError blk)
+  | -- | We did the leadership check and concluded that we should lead and forge
     -- a block, but cannot.
     --
     -- This should only happen rarely and should be logged with warning severity.
     --
     -- Records why we cannot forge a block.
-  | TraceNodeCannotForge SlotNo (CannotForge blk)
-
-    -- | We did the leadership check and concluded we are not the leader
+    TraceNodeCannotForge SlotNo (CannotForge blk)
+  | -- | We did the leadership check and concluded we are not the leader
     --
     -- We record the current slot number
-  | TraceNodeNotLeader SlotNo
-
-    -- | We did the leadership check and concluded we /are/ the leader
+    TraceNodeNotLeader SlotNo
+  | -- | We did the leadership check and concluded we /are/ the leader
     --
     -- The node will soon forge; it is about to read its transactions from the
     -- Mempool. This will be followed by TraceForgedBlock.
-  | TraceNodeIsLeader SlotNo
-
-    -- | We ticked the ledger state for the slot of the to-be-forged block.
+    TraceNodeIsLeader SlotNo
+  | -- | We ticked the ledger state for the slot of the to-be-forged block.
     --
     -- We record the current slot number and the point of the block we attempt
     -- to connect the new block to.
-  | TraceForgeTickedLedgerState SlotNo (Point blk)
-
-    -- | We acquired a mempool snapshot.
+    TraceForgeTickedLedgerState SlotNo (Point blk)
+  | -- | We acquired a mempool snapshot.
     --
     -- We record the the point of the state we are starting from (ie the point
     -- from 'TraceLedgerState') and point the mempool had most last synced wrt.
-  | TraceForgingMempoolSnapshot SlotNo (Point blk) (ChainHash blk) SlotNo
-
-    -- | We forged a block
+    TraceForgingMempoolSnapshot SlotNo (Point blk) (ChainHash blk) SlotNo
+  | -- | We forged a block
     --
     -- We record the current slot number, the point of the predecessor, the block
     -- itself, and the total size of the mempool snapshot at the time we produced
@@ -346,39 +354,39 @@ data TraceForgeEvent blk
     -- * TraceAdoptedBlock (normally)
     -- * TraceDidntAdoptBlock (rarely)
     -- * TraceForgedInvalidBlock (hopefully never -- this would indicate a bug)
-  | TraceForgedBlock SlotNo (Point blk) blk MempoolSize
-
-    -- | We did not adopt the block we produced, but the block was valid. We
+    TraceForgedBlock SlotNo (Point blk) blk MempoolSize
+  | -- | We did not adopt the block we produced, but the block was valid. We
     -- must have adopted a block that another leader of the same slot produced
     -- before we got the chance of adopting our own block. This is very rare,
     -- this warrants a warning.
-  | TraceDidntAdoptBlock SlotNo blk
-
-    -- | We did not adopt the block we produced, because the adoption thread
+    TraceDidntAdoptBlock SlotNo blk
+  | -- | We did not adopt the block we produced, because the adoption thread
     -- died.  Most likely because of an async exception.
-  | TraceAdoptionThreadDied SlotNo blk
-
-    -- | We forged a block that is invalid according to the ledger in the
+    TraceAdoptionThreadDied SlotNo blk
+  | -- | We forged a block that is invalid according to the ledger in the
     -- ChainDB. This means there is an inconsistency between the mempool
     -- validation and the ledger validation. This is a serious error!
-  | TraceForgedInvalidBlock SlotNo blk (ExtValidationError blk)
-
-    -- | We adopted the block we produced, we also trace the transactions
+    TraceForgedInvalidBlock SlotNo blk (ExtValidationError blk)
+  | -- | We adopted the block we produced, we also trace the transactions
     -- that were adopted.
-  | TraceAdoptedBlock SlotNo blk [Validated (GenTx blk)]
+    TraceAdoptedBlock SlotNo blk [Validated (GenTx blk)]
 
-deriving instance ( LedgerSupportsProtocol blk
-                  , Eq blk
-                  , Eq (Validated (GenTx blk))
-                  , Eq (ForgeStateUpdateError blk)
-                  , Eq (CannotForge blk)
-                  ) => Eq (TraceForgeEvent blk)
-deriving instance ( LedgerSupportsProtocol blk
-                  , Show blk
-                  , Show (Validated (GenTx blk))
-                  , Show (ForgeStateUpdateError blk)
-                  , Show (CannotForge blk)
-                  ) => Show (TraceForgeEvent blk)
+deriving instance
+  ( LedgerSupportsProtocol blk
+  , Eq blk
+  , Eq (Validated (GenTx blk))
+  , Eq (ForgeStateUpdateError blk)
+  , Eq (CannotForge blk)
+  ) =>
+  Eq (TraceForgeEvent blk)
+deriving instance
+  ( LedgerSupportsProtocol blk
+  , Show blk
+  , Show (Validated (GenTx blk))
+  , Show (ForgeStateUpdateError blk)
+  , Show (CannotForge blk)
+  ) =>
+  Show (TraceForgeEvent blk)
 
 -- | Label a forge-related trace event with the label associated with its
 -- credentials.

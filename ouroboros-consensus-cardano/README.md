@@ -33,9 +33,9 @@ nix build .#db-analyser
 ```
 For more GHC versions, use one of
 ```sh
-nix build .#hydraJobs.x86_64-linux.native.haskell810.exesNoAsserts.ouroboros-consensus-cardano.db-analyser
-nix build .#hydraJobs.x86_64-linux.native.haskell92.exesNoAsserts.ouroboros-consensus-cardano.db-analyser
-nix build .#hydraJobs.x86_64-linux.native.haskell96.exesNoAsserts.ouroboros-consensus-cardano.db-analyser
+nix build .#hydraJobs.x86_64-linux.native.haskell96.exesNoAsserts.db-analyser
+nix build .#hydraJobs.x86_64-linux.native.haskell910.exesNoAsserts.db-analyser
+nix build .#hydraJobs.x86_64-linux.native.haskell912.exesNoAsserts.db-analyser
 ```
 
 ## db-analyser

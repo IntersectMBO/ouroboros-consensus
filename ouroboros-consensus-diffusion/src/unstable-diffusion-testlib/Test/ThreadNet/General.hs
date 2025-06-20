@@ -9,13 +9,14 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Test.ThreadNet.General (
-    PropGeneralArgs (..)
+module Test.ThreadNet.General
+  ( PropGeneralArgs (..)
   , calcFinalIntersectionDepth
   , prop_general
   , prop_general_semisync
   , prop_inSync
   , runTestNetwork
+
     -- * TestConfig
   , TestConfig (..)
   , TestConfigB (..)
@@ -23,8 +24,10 @@ module Test.ThreadNet.General (
   , truncateNodeJoinPlan
   , truncateNodeRestarts
   , truncateNodeTopology
+
     -- * Expected CannotForge
   , noExpectedCannotForges
+
     -- * Re-exports
   , ForgeEbbEnv (..)
   , TestOutput (..)
@@ -32,54 +35,54 @@ module Test.ThreadNet.General (
   , plainTestNodeInitialization
   ) where
 
-import           Control.Exception (assert)
-import           Control.Monad (guard)
-import           Control.Monad.IOSim (runSimOrThrow, setCurrentTime)
-import           Control.Tracer (nullTracer)
+import Control.Exception (assert)
+import Control.Monad (guard)
+import Control.Monad.IOSim (runSimOrThrow, setCurrentTime)
+import Control.Tracer (nullTracer)
 import qualified Data.Map.Strict as Map
-import           Data.Set (Set)
+import Data.Set (Set)
 import qualified Data.Set as Set
-import           Data.Word (Word64)
-import           GHC.Stack (HasCallStack)
-import           Ouroboros.Consensus.Block
+import Data.Word (Word64)
+import GHC.Stack (HasCallStack)
+import Ouroboros.Consensus.Block
 import qualified Ouroboros.Consensus.Block.Abstract as BA
 import qualified Ouroboros.Consensus.BlockchainTime as BTime
-import           Ouroboros.Consensus.Config.SecurityParam
-import           Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
-import           Ouroboros.Consensus.Node.NetworkProtocolVersion
-import           Ouroboros.Consensus.Node.ProtocolInfo
-import           Ouroboros.Consensus.Node.Run
-import           Ouroboros.Consensus.NodeId
-import           Ouroboros.Consensus.Protocol.Abstract (LedgerView)
-import           Ouroboros.Consensus.Protocol.LeaderSchedule
-import           Ouroboros.Consensus.Protocol.Praos.AgentClient (MonadKESAgent)
+import Ouroboros.Consensus.Config.SecurityParam
+import Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
+import Ouroboros.Consensus.Node.NetworkProtocolVersion
+import Ouroboros.Consensus.Node.ProtocolInfo
+import Ouroboros.Consensus.Node.Run
+import Ouroboros.Consensus.NodeId
+import Ouroboros.Consensus.Protocol.Abstract (LedgerView)
+import Ouroboros.Consensus.Protocol.LeaderSchedule
+import Ouroboros.Consensus.Protocol.Praos.AgentClient (MonadKESAgent)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
-import           Ouroboros.Consensus.TypeFamilyWrappers
-import           Ouroboros.Consensus.Util.Condense
-import           Ouroboros.Consensus.Util.Enclose (pattern FallingEdge)
-import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.Orphans ()
-import           Ouroboros.Consensus.Util.RedundantConstraints
+import Ouroboros.Consensus.TypeFamilyWrappers
+import Ouroboros.Consensus.Util.Condense
+import Ouroboros.Consensus.Util.Enclose (pattern FallingEdge)
+import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.Util.Orphans ()
+import Ouroboros.Consensus.Util.RedundantConstraints
 import qualified Ouroboros.Network.Mock.Chain as MockChain
+import System.FS.Sim.MockFS (MockFS)
 import qualified System.FS.Sim.MockFS as Mock
-import           System.FS.Sim.MockFS (MockFS)
-import           Test.QuickCheck
-import           Test.ThreadNet.Network
-import           Test.ThreadNet.TxGen
-import           Test.ThreadNet.Util
-import           Test.ThreadNet.Util.NodeJoinPlan
-import           Test.ThreadNet.Util.NodeRestarts
-import           Test.ThreadNet.Util.NodeTopology
-import           Test.ThreadNet.Util.Seed
-import           Test.Util.HardFork.Future (Future)
-import           Test.Util.Orphans.Arbitrary ()
-import           Test.Util.Orphans.IOLike ()
-import           Test.Util.Orphans.NoThunks ()
-import           Test.Util.QuickCheck
-import           Test.Util.Range
-import           Test.Util.Shrink (andId, dropId)
-import           Test.Util.Slots (NumSlots (..))
-import           Test.Util.Time (dawnOfTime)
+import Test.QuickCheck
+import Test.ThreadNet.Network
+import Test.ThreadNet.TxGen
+import Test.ThreadNet.Util
+import Test.ThreadNet.Util.NodeJoinPlan
+import Test.ThreadNet.Util.NodeRestarts
+import Test.ThreadNet.Util.NodeTopology
+import Test.ThreadNet.Util.Seed
+import Test.Util.HardFork.Future (Future)
+import Test.Util.Orphans.Arbitrary ()
+import Test.Util.Orphans.IOLike ()
+import Test.Util.Orphans.NoThunks ()
+import Test.Util.QuickCheck
+import Test.Util.Range
+import Test.Util.Shrink (andId, dropId)
+import Test.Util.Slots (NumSlots (..))
+import Test.Util.Time (dawnOfTime)
 
 {-------------------------------------------------------------------------------
   Configuring tests
@@ -93,66 +96,71 @@ import           Test.Util.Time (dawnOfTime)
 -- (each of which realizes a ledger-protocol combination) influences the
 -- validity of these data.
 data TestConfig = TestConfig
-  { initSeed     :: Seed
+  { initSeed :: Seed
   , nodeTopology :: NodeTopology
   , numCoreNodes :: NumCoreNodes
-  , numSlots     :: NumSlots
-    -- ^ TODO generate in function of @k@
+  , numSlots :: NumSlots
+  -- ^ TODO generate in function of @k@
   }
-  deriving (Show)
+  deriving Show
 
 truncateNodeJoinPlan ::
-    NodeJoinPlan -> NumCoreNodes -> (NumSlots, NumSlots) -> NodeJoinPlan
+  NodeJoinPlan -> NumCoreNodes -> (NumSlots, NumSlots) -> NodeJoinPlan
 truncateNodeJoinPlan
-  (NodeJoinPlan m) (NumCoreNodes n') (NumSlots t, NumSlots t') =
+  (NodeJoinPlan m)
+  (NumCoreNodes n')
+  (NumSlots t, NumSlots t') =
     NodeJoinPlan $
-    -- scale by t' / t
-    Map.map (\(SlotNo i) -> SlotNo $ (i * t') `div` t) $
-    -- discard discarded nodes
-    Map.filterWithKey (\(CoreNodeId nid) _ -> nid < n')
-    m
+      -- scale by t' / t
+      Map.map (\(SlotNo i) -> SlotNo $ (i * t') `div` t) $
+        -- discard discarded nodes
+        Map.filterWithKey
+          (\(CoreNodeId nid) _ -> nid < n')
+          m
 
 truncateNodeTopology :: NodeTopology -> NumCoreNodes -> NodeTopology
 truncateNodeTopology (NodeTopology m) (NumCoreNodes n') =
-    NodeTopology $ Map.filterWithKey (\(CoreNodeId i) _ -> i < n') m
+  NodeTopology $ Map.filterWithKey (\(CoreNodeId i) _ -> i < n') m
 
 truncateNodeRestarts :: NodeRestarts -> NumSlots -> NodeRestarts
 truncateNodeRestarts (NodeRestarts m) (NumSlots t) =
-    NodeRestarts $ Map.filterWithKey (\(SlotNo s) _ -> s < t) m
+  NodeRestarts $ Map.filterWithKey (\(SlotNo s) _ -> s < t) m
 
 instance Arbitrary TestConfig where
   arbitrary = do
-      initSeed     <- arbitrary
+    initSeed <- arbitrary
 
-      numCoreNodes <- arbitrary
-      nodeTopology <- genNodeTopology numCoreNodes
+    numCoreNodes <- arbitrary
+    nodeTopology <- genNodeTopology numCoreNodes
 
-      numSlots     <- arbitrary
-      pure TestConfig
+    numSlots <- arbitrary
+    pure
+      TestConfig
         { initSeed
         , nodeTopology
         , numCoreNodes
         , numSlots
         }
 
-  shrink TestConfig
-    { initSeed
-    , nodeTopology
-    , numCoreNodes
-    , numSlots
-    } =
+  shrink
+    TestConfig
+      { initSeed
+      , nodeTopology
+      , numCoreNodes
+      , numSlots
+      } =
       dropId $
-      [ TestConfig
-          { initSeed
-          , nodeTopology = top'
-          , numCoreNodes = n'
-          , numSlots     = t'
-          }
-      | n'             <- andId shrink numCoreNodes
-      , t'             <- andId shrink numSlots
-      , let adjustedTop = truncateNodeTopology nodeTopology n'
-      , top'           <- andId shrinkNodeTopology adjustedTop
-      ]
+        [ TestConfig
+            { initSeed
+            , nodeTopology = top'
+            , numCoreNodes = n'
+            , numSlots = t'
+            }
+        | n' <- andId shrink numCoreNodes
+        , t' <- andId shrink numSlots
+        , let adjustedTop = truncateNodeTopology nodeTopology n'
+        , top' <- andId shrinkNodeTopology adjustedTop
+        ]
 
 {-------------------------------------------------------------------------------
   Configuring tests for a specific block type
@@ -168,17 +176,18 @@ instance Arbitrary TestConfig where
 -- absence/lateness. And 'epochSize' is here because eg the Byron ledger
 -- assumes a fixed epoch size of @10k@. And so on.
 data TestConfigB blk = TestConfigB
-  { forgeEbbEnv  :: Maybe (ForgeEbbEnv blk)
-  , future       :: Future
+  { forgeEbbEnv :: Maybe (ForgeEbbEnv blk)
+  , future :: Future
   , messageDelay :: CalcMessageDelay blk
   , nodeJoinPlan :: NodeJoinPlan
   , nodeRestarts :: NodeRestarts
-  , txGenExtra   :: TxGenExtra blk
-  , version      :: (NodeToNodeVersion, BlockNodeToNodeVersion blk)
+  , txGenExtra :: TxGenExtra blk
+  , version :: (NodeToNodeVersion, BlockNodeToNodeVersion blk)
   }
 
-deriving instance (Show (TxGenExtra blk), Show (BlockNodeToNodeVersion blk))
-                => Show (TestConfigB blk)
+deriving instance
+  (Show (TxGenExtra blk), Show (BlockNodeToNodeVersion blk)) =>
+  Show (TestConfigB blk)
 
 -- | Test configuration that depends on the block and the monad
 --
@@ -188,8 +197,8 @@ deriving instance (Show (TxGenExtra blk), Show (BlockNodeToNodeVersion blk))
 data TestConfigMB m blk = TestConfigMB
   { nodeInfo :: CoreNodeId -> TestNodeInitialization m blk
   , mkRekeyM :: Maybe (m (RekeyM m blk))
-    -- ^ 'runTestNetwork' immediately runs this action once in order to
-    -- initialize an 'RekeyM' value that it then reuses throughout the test
+  -- ^ 'runTestNetwork' immediately runs this action once in order to
+  -- initialize an 'RekeyM' value that it then reuses throughout the test
   }
 
 {-------------------------------------------------------------------------------
@@ -197,111 +206,107 @@ data TestConfigMB m blk = TestConfigMB
 -------------------------------------------------------------------------------}
 
 -- | Thin wrapper around 'runThreadNetwork'
---
 runTestNetwork ::
   forall blk.
-     ( RunNode blk
-     , TxGen blk
-     , TracingConstraints blk
-     , HasCallStack
-     )
-  => TestConfig
-  -> TestConfigB blk
-  -> (forall m. (IOLike m, MonadKESAgent m) => TestConfigMB m blk)
-  -> TestOutput blk
-runTestNetwork TestConfig
-  { numCoreNodes
-  , numSlots
-  , nodeTopology
-  , initSeed
-  } TestConfigB
-  { forgeEbbEnv
-  , future
-  , messageDelay
-  , nodeJoinPlan
-  , nodeRestarts
-  , txGenExtra
-  , version = (networkVersion, blockVersion)
-  }
-    mkTestConfigMB
-  = runSimOrThrow $ do
-    setCurrentTime dawnOfTime
-    let TestConfigMB
-          { nodeInfo
-          , mkRekeyM
-          } = mkTestConfigMB
-    let systemTime =
+  ( RunNode blk
+  , TxGen blk
+  , TracingConstraints blk
+  , HasCallStack
+  ) =>
+  TestConfig ->
+  TestConfigB blk ->
+  (forall m. (IOLike m, MonadKESAgent m) => TestConfigMB m blk) ->
+  TestOutput blk
+runTestNetwork
+  TestConfig
+    { numCoreNodes
+    , numSlots
+    , nodeTopology
+    , initSeed
+    }
+  TestConfigB
+    { forgeEbbEnv
+    , future
+    , messageDelay
+    , nodeJoinPlan
+    , nodeRestarts
+    , txGenExtra
+    , version = (networkVersion, blockVersion)
+    }
+  mkTestConfigMB =
+    runSimOrThrow $ do
+      setCurrentTime dawnOfTime
+      let TestConfigMB
+            { nodeInfo
+            , mkRekeyM
+            } = mkTestConfigMB
+      let systemTime =
             BTime.defaultSystemTime
               (BTime.SystemStart dawnOfTime)
               nullTracer
-    runThreadNetwork systemTime ThreadNetworkArgs
-      { tnaForgeEbbEnv  = forgeEbbEnv
-      , tnaFuture       = future
-      , tnaJoinPlan     = nodeJoinPlan
-      , tnaMessageDelay = messageDelay
-      , tnaNodeInfo     = nodeInfo
-      , tnaNumCoreNodes = numCoreNodes
-      , tnaNumSlots     = numSlots
-      , tnaSeed         = initSeed
-      , tnaMkRekeyM     = mkRekeyM
-      , tnaRestarts     = nodeRestarts
-      , tnaTopology     = nodeTopology
-      , tnaTxGenExtra   = txGenExtra
-      , tnaVersion      = networkVersion
-      , tnaBlockVersion = blockVersion
-      }
+      runThreadNetwork
+        systemTime
+        ThreadNetworkArgs
+          { tnaForgeEbbEnv = forgeEbbEnv
+          , tnaFuture = future
+          , tnaJoinPlan = nodeJoinPlan
+          , tnaMessageDelay = messageDelay
+          , tnaNodeInfo = nodeInfo
+          , tnaNumCoreNodes = numCoreNodes
+          , tnaNumSlots = numSlots
+          , tnaSeed = initSeed
+          , tnaMkRekeyM = mkRekeyM
+          , tnaRestarts = nodeRestarts
+          , tnaTopology = nodeTopology
+          , tnaTxGenExtra = txGenExtra
+          , tnaVersion = networkVersion
+          , tnaBlockVersion = blockVersion
+          }
 
 {-------------------------------------------------------------------------------
   Test properties
 -------------------------------------------------------------------------------}
 
 -- | Data about a node rejecting a block as invalid
---
 data BlockRejection blk = BlockRejection
   { brBlockHash :: !(HeaderHash blk)
   , brBlockSlot :: !SlotNo
-  , brReason    :: !(ExtValidationError blk)
-  , brRejector  :: !NodeId
+  , brReason :: !(ExtValidationError blk)
+  , brRejector :: !NodeId
   }
-  deriving (Show)
+  deriving Show
 
 data PropGeneralArgs blk = PropGeneralArgs
-  { pgaBlockProperty       :: blk -> Property
-    -- ^ test if the block is as expected
-    --
-    -- For example, it may fail if the block includes transactions that should
-    -- have expired before/when the block was forged.
-    --
-  , pgaCountTxs            :: blk -> Word64
-    -- ^ the number of transactions in the block
-    --
+  { pgaBlockProperty :: blk -> Property
+  -- ^ test if the block is as expected
+  --
+  -- For example, it may fail if the block includes transactions that should
+  -- have expired before/when the block was forged.
+  , pgaCountTxs :: blk -> Word64
+  -- ^ the number of transactions in the block
   , pgaExpectedCannotForge :: SlotNo -> NodeId -> WrapCannotForge blk -> Bool
-    -- ^ whether this 'CannotForge' was expected
-    --
-  , pgaFirstBlockNo        :: BlockNo
-    -- ^ the block number of the first proper block on the chain
-    --
-    -- At time of writing this comment... For example, this is 1 for Byron
-    -- tests and 0 for mock tests. The epoch boundary block (EBB) in slot 0
-    -- specifies itself as having block number 0, which implies the genesis
-    -- block is block number 0, and so the first proper block is number 1. For
-    -- the mock tests, the first proper block is block number 0.
-    --
-  , pgaFixedMaxForkLength  :: Maybe NumBlocks
-    -- ^ the maximum length of a unique suffix among the final chains
-    --
-    -- If not provided, it will be crudely estimated. For example, this
-    -- estimation is known to be incorrect for PBFT; it does not anticipate
-    -- 'Ouroboros.Consensus.Protocol.PBFT.PBftExceededSignThreshold'.
-    --
-  , pgaFixedSchedule       :: Maybe LeaderSchedule
-    -- ^ the leader schedule of the nodes
-    --
-    -- If not provided, it will be recovered from the nodes' 'Tracer' data.
-    --
-  , pgaSecurityParam       :: SecurityParam
-  , pgaTestConfig          :: TestConfig
-  , pgaTestConfigB         :: TestConfigB blk
+  -- ^ whether this 'CannotForge' was expected
+  , pgaFirstBlockNo :: BlockNo
+  -- ^ the block number of the first proper block on the chain
+  --
+  -- At time of writing this comment... For example, this is 1 for Byron
+  -- tests and 0 for mock tests. The epoch boundary block (EBB) in slot 0
+  -- specifies itself as having block number 0, which implies the genesis
+  -- block is block number 0, and so the first proper block is number 1. For
+  -- the mock tests, the first proper block is block number 0.
+  , pgaFixedMaxForkLength :: Maybe NumBlocks
+  -- ^ the maximum length of a unique suffix among the final chains
+  --
+  -- If not provided, it will be crudely estimated. For example, this
+  -- estimation is known to be incorrect for PBFT; it does not anticipate
+  -- 'Ouroboros.Consensus.Protocol.PBFT.PBftExceededSignThreshold'.
+  , pgaFixedSchedule :: Maybe LeaderSchedule
+  -- ^ the leader schedule of the nodes
+  --
+  -- If not provided, it will be recovered from the nodes' 'Tracer' data.
+  , pgaSecurityParam :: SecurityParam
+  , pgaTestConfig :: TestConfig
+  , pgaTestConfigB :: TestConfigB blk
   }
 
 -- | Expect no 'CannotForge's
@@ -327,6 +332,7 @@ noExpectedCannotForges _ _ _ = False
 -- * No nodes are unduly unable to lead (see 'pgaExpectedCannotForge').
 
 -- * No blocks are rejected as invalid.
+
 --
 -- Those properties are currently checked under several assumptions. If the
 -- nodes violate any of these assumptions, the tests will fail. The following
@@ -404,14 +410,14 @@ noExpectedCannotForges _ _ _ = False
 -- assumptions about delegation certificates, update proposals, etc.
 prop_general ::
   forall blk.
-     ( Condense blk
-     , Condense (HeaderHash blk)
-     , Eq blk
-     , RunNode blk
-     )
-  => PropGeneralArgs blk
-  -> TestOutput blk
-  -> Property
+  ( Condense blk
+  , Condense (HeaderHash blk)
+  , Eq blk
+  , RunNode blk
+  ) =>
+  PropGeneralArgs blk ->
+  TestOutput blk ->
+  Property
 prop_general = prop_general_internal Sync
 
 -- | /Synchrony/ or /Semi-synchrony/
@@ -432,455 +438,477 @@ data Synchronicity = SemiSync | Sync
 -- For now, this simply disables a few 'Property's that depend on synchrony.
 prop_general_semisync ::
   forall blk.
-     ( Condense blk
-     , Condense (HeaderHash blk)
-     , Eq blk
-     , RunNode blk
-     )
-  => PropGeneralArgs blk
-  -> TestOutput blk
-  -> Property
+  ( Condense blk
+  , Condense (HeaderHash blk)
+  , Eq blk
+  , RunNode blk
+  ) =>
+  PropGeneralArgs blk ->
+  TestOutput blk ->
+  Property
 prop_general_semisync = prop_general_internal SemiSync
 
 prop_general_internal ::
   forall blk.
-     ( Condense blk
-     , Condense (HeaderHash blk)
-     , Eq blk
-     , RunNode blk
-     )
-  => Synchronicity
-  -> PropGeneralArgs blk
-  -> TestOutput blk
-  -> Property
+  ( Condense blk
+  , Condense (HeaderHash blk)
+  , Eq blk
+  , RunNode blk
+  ) =>
+  Synchronicity ->
+  PropGeneralArgs blk ->
+  TestOutput blk ->
+  Property
 prop_general_internal syncity pga testOutput =
-    counterexample ("nodeChains: " <> nodeChainsString) $
-    counterexample ("nodeJoinPlan: " <> condense nodeJoinPlan) $
-    counterexample ("nodeRestarts: " <> condense nodeRestarts) $
-    counterexample ("nodeTopology: " <> condense nodeTopology) $
-    counterexample ("slot-node-tipBlockNo: " <> condense tipBlockNos) $
-    counterexample ("mbSchedule: " <> condense mbSchedule) $
-    counterexample ("growth schedule: " <> condense growthSchedule) $
-    counterexample ("actual leader schedule: " <> condense actualLeaderSchedule) $
-    counterexample ("consensus expected: " <> show isConsensusExpected) $
-    counterexample ("maxForkLength: " <> show maxForkLength) $
-    tabulateSync "consensus expected" [show isConsensusExpected] $
-    tabulate "k" [show (maxRollbacks k)] $
-    tabulate ("shortestLength (k = " <> show (maxRollbacks k) <> ")")
-      [show (rangeK k (shortestLength nodeChains))] $
-    tabulate "floor(4 * lastJoinSlot / numSlots)" [show lastJoinSlot] $
-    tabulate "minimumDegreeNodeTopology" [show (minimumDegreeNodeTopology nodeTopology)] $
-    tabulate "involves >=1 re-delegation" [show hasNodeRekey] $
-    tabulate "average #txs/block" [show (range averageNumTxs)] $
-    tabulate "updates" [unlines ("" : map (\x -> "  " <> condense x) (Map.toList nodeUpdates))] $
-    prop_no_BlockRejections .&&.
-    prop_no_unexpected_CannotForges .&&.
-    prop_no_invalid_blocks .&&.
-    prop_pipelining .&&.
-    propSync
-      ( prop_all_common_prefix maxForkLength (Map.elems nodeChains) .&&.
-        prop_all_growth .&&.
-        prop_no_unexpected_message_delays
-      ) .&&.
-    conjoin
-      [ fileHandleLeakCheck nid nodeDBs
-      | (nid, nodeDBs) <- Map.toList nodeOutputDBs ]
-  where
-    tabulateSync  = case syncity of
-        Sync     -> tabulate
-        SemiSync -> \_ _ -> id
-    propSync prop = case syncity of
-        Sync     -> prop
-        SemiSync -> property True
+  counterexample ("nodeChains: " <> nodeChainsString)
+    $ counterexample ("nodeJoinPlan: " <> condense nodeJoinPlan)
+    $ counterexample ("nodeRestarts: " <> condense nodeRestarts)
+    $ counterexample ("nodeTopology: " <> condense nodeTopology)
+    $ counterexample ("slot-node-tipBlockNo: " <> condense tipBlockNos)
+    $ counterexample ("mbSchedule: " <> condense mbSchedule)
+    $ counterexample ("growth schedule: " <> condense growthSchedule)
+    $ counterexample ("actual leader schedule: " <> condense actualLeaderSchedule)
+    $ counterexample ("consensus expected: " <> show isConsensusExpected)
+    $ counterexample ("maxForkLength: " <> show maxForkLength)
+    $ tabulateSync "consensus expected" [show isConsensusExpected]
+    $ tabulate "k" [show (maxRollbacks k)]
+    $ tabulate
+      ("shortestLength (k = " <> show (maxRollbacks k) <> ")")
+      [show (rangeK k (shortestLength nodeChains))]
+    $ tabulate "floor(4 * lastJoinSlot / numSlots)" [show lastJoinSlot]
+    $ tabulate "minimumDegreeNodeTopology" [show (minimumDegreeNodeTopology nodeTopology)]
+    $ tabulate "involves >=1 re-delegation" [show hasNodeRekey]
+    $ tabulate "average #txs/block" [show (range averageNumTxs)]
+    $ tabulate "updates" [unlines ("" : map (\x -> "  " <> condense x) (Map.toList nodeUpdates))]
+    $ prop_no_BlockRejections
+      .&&. prop_no_unexpected_CannotForges
+      .&&. prop_no_invalid_blocks
+      .&&. prop_pipelining
+      .&&. propSync
+        ( prop_all_common_prefix maxForkLength (Map.elems nodeChains)
+            .&&. prop_all_growth
+            .&&. prop_no_unexpected_message_delays
+        )
+      .&&. conjoin
+        [ fileHandleLeakCheck nid nodeDBs
+        | (nid, nodeDBs) <- Map.toList nodeOutputDBs
+        ]
+ where
+  tabulateSync = case syncity of
+    Sync -> tabulate
+    SemiSync -> \_ _ -> id
+  propSync prop = case syncity of
+    Sync -> prop
+    SemiSync -> property True
 
-    _ = keepRedundantConstraint (Proxy @(Show (LedgerView (BlockProtocol blk))))
+  _ = keepRedundantConstraint (Proxy @(Show (LedgerView (BlockProtocol blk))))
 
-    PropGeneralArgs
-      { pgaBlockProperty       = prop_valid_block
-      , pgaCountTxs            = countTxs
-      , pgaExpectedCannotForge = expectedCannotForge
-      , pgaFirstBlockNo        = firstBlockNo
-      , pgaFixedMaxForkLength  = mbMaxForkLength
-      , pgaFixedSchedule       = mbSchedule
-      , pgaSecurityParam       = k
-      , pgaTestConfig
-      , pgaTestConfigB
-      } = pga
-    TestConfig
-      { numSlots
-      , nodeTopology
-      } = pgaTestConfig
-    TestConfigB
-      { nodeJoinPlan
-      , nodeRestarts
-      } = pgaTestConfigB
-    TestOutput
-      { testOutputNodes
-      , testOutputTipBlockNos
-      } = testOutput
+  PropGeneralArgs
+    { pgaBlockProperty = prop_valid_block
+    , pgaCountTxs = countTxs
+    , pgaExpectedCannotForge = expectedCannotForge
+    , pgaFirstBlockNo = firstBlockNo
+    , pgaFixedMaxForkLength = mbMaxForkLength
+    , pgaFixedSchedule = mbSchedule
+    , pgaSecurityParam = k
+    , pgaTestConfig
+    , pgaTestConfigB
+    } = pga
+  TestConfig
+    { numSlots
+    , nodeTopology
+    } = pgaTestConfig
+  TestConfigB
+    { nodeJoinPlan
+    , nodeRestarts
+    } = pgaTestConfigB
+  TestOutput
+    { testOutputNodes
+    , testOutputTipBlockNos
+    } = testOutput
 
-    prop_no_BlockRejections =
-        counterexample msg $
-        null brs
-      where
-        msg =
-            "There were unexpected block rejections: " <>
-            unlines (map show brs)
-        brs =
-            [ BlockRejection
-                { brBlockHash = h
-                , brBlockSlot = s
-                , brRejector  = nid
-                , brReason    = err
-                }
-            | (nid, no) <- Map.toList testOutputNodes
-            , let NodeOutput{nodeOutputInvalids} = no
-            , (RealPoint s h, errs) <- Map.toList nodeOutputInvalids
-            , err                   <- errs
-            ]
+  prop_no_BlockRejections =
+    counterexample msg $
+      null brs
+   where
+    msg =
+      "There were unexpected block rejections: "
+        <> unlines (map show brs)
+    brs =
+      [ BlockRejection
+          { brBlockHash = h
+          , brBlockSlot = s
+          , brRejector = nid
+          , brReason = err
+          }
+      | (nid, no) <- Map.toList testOutputNodes
+      , let NodeOutput{nodeOutputInvalids} = no
+      , (RealPoint s h, errs) <- Map.toList nodeOutputInvalids
+      , err <- errs
+      ]
 
-    prop_no_unexpected_CannotForges =
-        counterexample msg $
-        Map.null cls
-      where
-        msg = "There were unexpected CannotForges: " <> show cls
-        cls =
-            Map.unionsWith (++) $
-            [ Map.filter (not . null) $
-              Map.mapWithKey (\s -> filter (not . ok s nid)) $
+  prop_no_unexpected_CannotForges =
+    counterexample msg $
+      Map.null cls
+   where
+    msg = "There were unexpected CannotForges: " <> show cls
+    cls =
+      Map.unionsWith (++) $
+        [ Map.filter (not . null) $
+            Map.mapWithKey (\s -> filter (not . ok s nid)) $
               nodeOutputCannotForges
-            | (nid, no) <- Map.toList testOutputNodes
-            , let NodeOutput{nodeOutputCannotForges} = no
-            ]
-        ok s nid cl =
-            expectedCannotForge s nid (WrapCannotForge cl)
-
-    schedule = case mbSchedule of
-        Nothing    -> actualLeaderSchedule
-        Just sched -> sched
-
-    NumBlocks maxForkLength = case mbMaxForkLength of
-      Nothing -> determineForkLength k nodeJoinPlan schedule
-      Just fl -> fl
-
-    -- build a leader schedule which includes every node that forged unless:
-    --
-    -- * the node rejected its own new block (eg 'PBftExceededSignThreshold')
-    --
-    actualLeaderSchedule :: LeaderSchedule
-    actualLeaderSchedule =
-        foldl (<>) (emptyLeaderSchedule numSlots) $
-        [ let NodeOutput
-                { nodeOutputForges
-                , nodeOutputInvalids
-                } = no
-          in
-          LeaderSchedule $
-          Map.mapMaybeWithKey
-              (actuallyLead cid (Map.keysSet nodeOutputInvalids))
-              nodeOutputForges
-        | (cid, no) <- Map.toList testOutputNodes
+        | (nid, no) <- Map.toList testOutputNodes
+        , let NodeOutput{nodeOutputCannotForges} = no
         ]
-      where
-        actuallyLead ::
-             NodeId
-          -> Set (RealPoint blk)
-          -> SlotNo
-          -> blk
-          -> Maybe [CoreNodeId]
-        actuallyLead nid invalids s b = do
-            cid <- case nid of
-                CoreId i  -> Just i
-                RelayId _ -> Nothing
+    ok s nid cl =
+      expectedCannotForge s nid (WrapCannotForge cl)
 
-            let j = nodeIdJoinSlot nodeJoinPlan nid
-            guard $ j <= s
+  schedule = case mbSchedule of
+    Nothing -> actualLeaderSchedule
+    Just sched -> sched
 
-            guard $ not $ Set.member (blockRealPoint b) invalids
+  NumBlocks maxForkLength = case mbMaxForkLength of
+    Nothing -> determineForkLength k nodeJoinPlan schedule
+    Just fl -> fl
 
-            pure [cid]
+  -- build a leader schedule which includes every node that forged unless:
+  --
+  -- \* the node rejected its own new block (eg 'PBftExceededSignThreshold')
+  --
+  actualLeaderSchedule :: LeaderSchedule
+  actualLeaderSchedule =
+    foldl (<>) (emptyLeaderSchedule numSlots) $
+      [ let NodeOutput
+              { nodeOutputForges
+              , nodeOutputInvalids
+              } = no
+         in LeaderSchedule $
+              Map.mapMaybeWithKey
+                (actuallyLead cid (Map.keysSet nodeOutputInvalids))
+                nodeOutputForges
+      | (cid, no) <- Map.toList testOutputNodes
+      ]
+   where
+    actuallyLead ::
+      NodeId ->
+      Set (RealPoint blk) ->
+      SlotNo ->
+      blk ->
+      Maybe [CoreNodeId]
+    actuallyLead nid invalids s b = do
+      cid <- case nid of
+        CoreId i -> Just i
+        RelayId _ -> Nothing
 
-    -- Refine 'actualLeaderSchedule' to also ignore a leader if:
-    --
-    -- * the node just joined in this slot (unless it's the earliest slot in
-    --   which any nodes joined)
-    --
-    growthSchedule :: LeaderSchedule
-    growthSchedule =
-        LeaderSchedule $ Map.mapWithKey (\s -> filter (keep s)) mlead
-      where
-        LeaderSchedule mlead = actualLeaderSchedule
+      let j = nodeIdJoinSlot nodeJoinPlan nid
+      guard $ j <= s
 
-        keep s cid =
-             isFirstJoinSlot s
-          || coreNodeIdJoinSlot nodeJoinPlan cid < s
+      guard $ not $ Set.member (blockRealPoint b) invalids
 
-        isFirstJoinSlot s =
-            Just s == (snd <$> Map.lookupMin mjoin)
-          where
-            NodeJoinPlan mjoin = nodeJoinPlan
+      pure [cid]
 
-    nodeChains    = nodeOutputFinalChain <$> testOutputNodes
-    nodeOutputDBs = nodeOutputNodeDBs    <$> testOutputNodes
-    nodeUpdates   = nodeOutputUpdates    <$> testOutputNodes
+  -- Refine 'actualLeaderSchedule' to also ignore a leader if:
+  --
+  -- \* the node just joined in this slot (unless it's the earliest slot in
+  --   which any nodes joined)
+  --
+  growthSchedule :: LeaderSchedule
+  growthSchedule =
+    LeaderSchedule $ Map.mapWithKey (\s -> filter (keep s)) mlead
+   where
+    LeaderSchedule mlead = actualLeaderSchedule
 
-    nodeChainsString :: String
-    nodeChainsString =
-        unlines $ ("" :) $
+    keep s cid =
+      isFirstJoinSlot s
+        || coreNodeIdJoinSlot nodeJoinPlan cid < s
+
+    isFirstJoinSlot s =
+      Just s == (snd <$> Map.lookupMin mjoin)
+     where
+      NodeJoinPlan mjoin = nodeJoinPlan
+
+  nodeChains = nodeOutputFinalChain <$> testOutputNodes
+  nodeOutputDBs = nodeOutputNodeDBs <$> testOutputNodes
+  nodeUpdates = nodeOutputUpdates <$> testOutputNodes
+
+  nodeChainsString :: String
+  nodeChainsString =
+    unlines $
+      ("" :) $
         map (\x -> "  " <> condense x) $
-        Map.toList $ fmap MockChain.headTip nodeChains
+          Map.toList $
+            fmap MockChain.headTip nodeChains
 
-    isConsensusExpected :: Bool
-    isConsensusExpected = consensusExpected k nodeJoinPlan schedule
+  isConsensusExpected :: Bool
+  isConsensusExpected = consensusExpected k nodeJoinPlan schedule
 
-    fileHandleLeakCheck :: NodeId -> NodeDBs MockFS -> Property
-    fileHandleLeakCheck nid nodeDBs = conjoin
-        [ checkLeak "ImmutableDB" $ nodeDBsImm nodeDBs
-        , checkLeak "VolatileDB"  $ nodeDBsVol nodeDBs
-        , checkLeak "LedgerDB"    $ nodeDBsLgr nodeDBs
+  fileHandleLeakCheck :: NodeId -> NodeDBs MockFS -> Property
+  fileHandleLeakCheck nid nodeDBs =
+    conjoin
+      [ checkLeak "ImmutableDB" $ nodeDBsImm nodeDBs
+      , checkLeak "VolatileDB" $ nodeDBsVol nodeDBs
+      , checkLeak "LedgerDB" $ nodeDBsLgr nodeDBs
+      ]
+   where
+    checkLeak dbName fs =
+      counterexample
+        ("Node " <> show nid <> "'s " <> dbName <> " is leaking file handles")
+        (Mock.numOpenHandles fs === 0)
+
+  -- in which quarter of the simulation does the last node join?
+  lastJoinSlot :: Maybe Word64
+  lastJoinSlot =
+    fmap (\(SlotNo i, _) -> (4 * i) `div` t) $
+      Map.maxView m
+   where
+    NumSlots t = numSlots
+    NodeJoinPlan m = nodeJoinPlan
+
+  -- check for Chain Growth violations if there are no Common Prefix
+  -- violations
+  --
+  -- We consider all possible non-empty intervals, so the interval span
+  -- @s@ varies but is always at least 1. We compute a different /speed
+  -- coefficient/ @τ@ for each interval under the assumption that there are
+  -- no message delays (ie @Δ = 0@). This is essentially a count of the
+  -- active slots for that interval in the refined @growthSchedule@.
+  --
+  -- The paper <https://eprint.iacr.org/2017/573/20171115:00183> defines
+  -- Common Growth as follows.
+  --
+  -- \* Chain Growth (CG); with parameters τ ∈ (0, 1], s ∈ N. Consider the
+  --   chains C1, C2 possessed by two honest parties at the onset of two
+  --   slots sl1, sl2 with sl2 at least s slots ahead of sl1. Then it holds
+  --   that len(C2) − len(C1) ≥ τs. We call τ the speed coefficient.
+  prop_all_growth =
+    isConsensusExpected
+      `implies` conjoin
+        [ prop_growth (s1, max1) (s2, min2)
+        | ((s1, _, max1), (s2, min2, _)) <- orderedPairs extrema
         ]
-      where
-        checkLeak dbName fs = counterexample
-          ("Node " <> show nid <> "'s " <> dbName <> " is leaking file handles")
-          (Mock.numOpenHandles fs === 0)
+   where
+    -- all pairs @(x, y)@ where @x@ precedes @y@ in the given list
+    orderedPairs :: [a] -> [(a, a)]
+    orderedPairs = \case
+      [] -> []
+      x : ys -> foldr ((:) . (,) x) (orderedPairs ys) ys
 
-    -- in which quarter of the simulation does the last node join?
-    lastJoinSlot :: Maybe Word64
-    lastJoinSlot =
-        fmap (\(SlotNo i, _) -> (4 * i) `div` t) $
-        Map.maxView m
-      where
-        NumSlots t = numSlots
-        NodeJoinPlan m = nodeJoinPlan
+    prop_growth ::
+      (SlotNo, WithOrigin BlockNo) ->
+      (SlotNo, WithOrigin BlockNo) ->
+      Property
+    prop_growth (s1, b1) (s2, b2) =
+      counterexample (condense (s1, s2, b1, b2, numActiveSlots)) $
+        nonNegativeGrowth
+          .&&. sufficientGrowth
+     where
+      nonNegativeGrowth =
+        counterexample "negative chain growth" $
+          property (b2 >= b1)
 
-    -- check for Chain Growth violations if there are no Common Prefix
-    -- violations
-    --
-    -- We consider all possible non-empty intervals, so the interval span
-    -- @s@ varies but is always at least 1. We compute a different /speed
-    -- coefficient/ @τ@ for each interval under the assumption that there are
-    -- no message delays (ie @Δ = 0@). This is essentially a count of the
-    -- active slots for that interval in the refined @growthSchedule@.
-    --
-    -- The paper <https://eprint.iacr.org/2017/573/20171115:00183> defines
-    -- Common Growth as follows.
-    --
-    -- * Chain Growth (CG); with parameters τ ∈ (0, 1], s ∈ N. Consider the
-    --   chains C1, C2 possessed by two honest parties at the onset of two
-    --   slots sl1, sl2 with sl2 at least s slots ahead of sl1. Then it holds
-    --   that len(C2) − len(C1) ≥ τs. We call τ the speed coefficient.
-    prop_all_growth =
-        isConsensusExpected `implies`
-            conjoin
-                [ prop_growth (s1, max1) (s2, min2)
-                | ((s1, _, max1), (s2, min2, _)) <- orderedPairs extrema
-                ]
-      where
-        -- all pairs @(x, y)@ where @x@ precedes @y@ in the given list
-        orderedPairs :: [a] -> [(a, a)]
-        orderedPairs = \case
-            []   -> []
-            x:ys -> foldr ((:) . (,) x) (orderedPairs ys) ys
+      sufficientGrowth =
+        counterexample "insufficient chain growth" $
+          property (d >= toEnum numActiveSlots)
 
-        prop_growth :: (SlotNo, WithOrigin BlockNo)
-                    -> (SlotNo, WithOrigin BlockNo)
-                    -> Property
-        prop_growth (s1, b1) (s2, b2) =
-            counterexample (condense (s1, s2, b1, b2, numActiveSlots)) $
-            nonNegativeGrowth .&&.
-            sufficientGrowth
-          where
-            nonNegativeGrowth =
-                counterexample "negative chain growth" $
-                    property (b2 >= b1)
+      BlockNo d = case (b1, b2) of
+        (NotOrigin b1', NotOrigin b2') -> b2' - b1'
+        (Origin, NotOrigin b2') -> b2' + 1
+        (Origin, Origin) -> 0
+        (NotOrigin _, Origin) -> error "prop_growth: negative growth"
+      numActiveSlots =
+        Map.size $
+          flip Map.filterWithKey (getLeaderSchedule growthSchedule) $
+            \slot ls -> s1 <= slot && slot < s2 && (not . null) ls
 
-            sufficientGrowth =
-                counterexample "insufficient chain growth" $
-                    property (d >= toEnum numActiveSlots)
+    -- @(s, min, max)@ the minimum and maximum block number of the tip of a
+    -- chain at the onset of slot @s@.
+    extrema :: [(SlotNo, WithOrigin BlockNo, WithOrigin BlockNo)]
+    extrema =
+      [ case map snd bnos' of
+          [] -> (slot, Origin, Origin)
+          o -> (slot, minimum o, maximum o)
+      | (slot, bnos) <- tipBlockNos
+      , let bnos' = filter (joinedBefore slot . fst) bnos
+      ]
 
-            BlockNo d = case (b1, b2) of
-                          (NotOrigin b1', NotOrigin b2') -> b2' - b1'
-                          (Origin,        NotOrigin b2') -> b2' + 1
-                          (Origin,        Origin)        -> 0
-                          (NotOrigin _,   Origin)        -> error "prop_growth: negative growth"
-            numActiveSlots =
-                Map.size $
-                flip Map.filterWithKey (getLeaderSchedule growthSchedule) $
-                \slot ls -> s1 <= slot && slot < s2 && (not . null) ls
+    joinedBefore slot nid = nodeIdJoinSlot nodeJoinPlan nid < slot
 
-        -- @(s, min, max)@ the minimum and maximum block number of the tip of a
-        -- chain at the onset of slot @s@.
-        extrema :: [(SlotNo, WithOrigin BlockNo, WithOrigin BlockNo)]
-        extrema =
-            [ case map snd bnos' of
-                  [] -> (slot, Origin, Origin)
-                  o  -> (slot, minimum o, maximum o)
-            | (slot, bnos) <- tipBlockNos
-            , let bnos' = filter (joinedBefore slot . fst) bnos
-            ]
-
-        joinedBefore slot nid = nodeIdJoinSlot nodeJoinPlan nid < slot
-
-    -- swizzled 'testOutputTipBlockNos'
-    tipBlockNos :: [(SlotNo, [(NodeId, WithOrigin BlockNo)])]
-    tipBlockNos =
-        Map.toAscList $
-        fmap Map.toAscList $
+  -- swizzled 'testOutputTipBlockNos'
+  tipBlockNos :: [(SlotNo, [(NodeId, WithOrigin BlockNo)])]
+  tipBlockNos =
+    Map.toAscList $
+      fmap Map.toAscList $
         testOutputTipBlockNos
 
-    -- In the paper <https://eprint.iacr.org/2017/573/20171115:00183>, a
-    -- /message/ carries a chain from one party to another. When a party forges
-    -- a block, it \"diffuses\" the chain with that block as its head by
-    -- sending a message to each other party (actually, to itself too, but
-    -- that's ultimately redundant). The adversary is able to delay each
-    -- message differently, so some parties may receive it before others do.
-    -- Once a party receives a message, the party can consider that chain for
-    -- selection.
-    --
-    -- In the implementation, on the other hand, our messages are varied and
-    -- much more granular than a whole chain. We therefore observe a delay
-    -- analogous to the paper's /message/ /delay/ by comparing the slot in
-    -- which a block is added to each node's ChainDB against the slot in which
-    -- that block was forged.
-    --
-    -- Since our mock network currently introduces only negligible latency
-    -- compared to the slot duration, we generally expect all messages to have
-    -- no delay: they should arrive to all nodes during the same slot in which
-    -- they were forged. However, some delays are expected, due to nodes
-    -- joining late and also due to the practicality of the ChainSync and
-    -- BlockFetch policies, which try to avoid /unnecessary/ header/block
-    -- fetches. See the relevant comments below.
-    --
-    -- NOTE: This current property does not check for interminable message
-    -- delay: i.e. for blocks that were never added to some ChainDBs. It only
-    -- checks the slot difference once a message does arrive. This seems
-    -- acceptable: if there are no Common Prefix or Chain Growth violations,
-    -- then each message must have either arrived or ultimately been
-    -- irrelevant.
-    --
-    prop_no_unexpected_message_delays :: HasCallStack => Property
-    prop_no_unexpected_message_delays =
-        conjoin $
-        [ case p of
-              RealPoint sendSlot hsh ->
-                  prop1 nid recvSlot sendSlot hsh bno
-        | (nid, m)          <- Map.toList adds
-        , (recvSlot, pbnos) <- Map.toList m
-        , (p, bno)          <- Set.toList pbnos
-        ]
-      where
-        -- INVARIANT: these AddBlock events are *not* for EBBs
-        adds = nodeOutputAdds <$> testOutputNodes
+  -- In the paper <https://eprint.iacr.org/2017/573/20171115:00183>, a
+  -- /message/ carries a chain from one party to another. When a party forges
+  -- a block, it \"diffuses\" the chain with that block as its head by
+  -- sending a message to each other party (actually, to itself too, but
+  -- that's ultimately redundant). The adversary is able to delay each
+  -- message differently, so some parties may receive it before others do.
+  -- Once a party receives a message, the party can consider that chain for
+  -- selection.
+  --
+  -- In the implementation, on the other hand, our messages are varied and
+  -- much more granular than a whole chain. We therefore observe a delay
+  -- analogous to the paper's /message/ /delay/ by comparing the slot in
+  -- which a block is added to each node's ChainDB against the slot in which
+  -- that block was forged.
+  --
+  -- Since our mock network currently introduces only negligible latency
+  -- compared to the slot duration, we generally expect all messages to have
+  -- no delay: they should arrive to all nodes during the same slot in which
+  -- they were forged. However, some delays are expected, due to nodes
+  -- joining late and also due to the practicality of the ChainSync and
+  -- BlockFetch policies, which try to avoid /unnecessary/ header/block
+  -- fetches. See the relevant comments below.
+  --
+  -- NOTE: This current property does not check for interminable message
+  -- delay: i.e. for blocks that were never added to some ChainDBs. It only
+  -- checks the slot difference once a message does arrive. This seems
+  -- acceptable: if there are no Common Prefix or Chain Growth violations,
+  -- then each message must have either arrived or ultimately been
+  -- irrelevant.
+  --
+  prop_no_unexpected_message_delays :: HasCallStack => Property
+  prop_no_unexpected_message_delays =
+    conjoin $
+      [ case p of
+          RealPoint sendSlot hsh ->
+            prop1 nid recvSlot sendSlot hsh bno
+      | (nid, m) <- Map.toList adds
+      , (recvSlot, pbnos) <- Map.toList m
+      , (p, bno) <- Set.toList pbnos
+      ]
+   where
+    -- INVARIANT: these AddBlock events are *not* for EBBs
+    adds = nodeOutputAdds <$> testOutputNodes
 
-        prop1 nid recvSlot sendSlot hsh bno =
-            counterexample msg $
-            delayOK || noDelay
-          where
-            msg =
-                "Unexpected message delay " <>
-                "(" <> "recipient: " <> condense nid <>
-                "," <> "expected receive slot: "
-                    <> condense firstPossibleReception <>
-                "," <> "actual receive slot: " <> condense recvSlot <>
-                "," <> "blockHash: " <> show hsh <>
-                "," <> "blockNo: " <> condense (unBlockNo bno) <>
-                ")"
+    prop1 nid recvSlot sendSlot hsh bno =
+      counterexample msg $
+        delayOK || noDelay
+     where
+      msg =
+        "Unexpected message delay "
+          <> "("
+          <> "recipient: "
+          <> condense nid
+          <> ","
+          <> "expected receive slot: "
+          <> condense firstPossibleReception
+          <> ","
+          <> "actual receive slot: "
+          <> condense recvSlot
+          <> ","
+          <> "blockHash: "
+          <> show hsh
+          <> ","
+          <> "blockNo: "
+          <> condense (unBlockNo bno)
+          <> ")"
 
-            -- a node cannot receive a block until both exist
-            firstPossibleReception =
-                nodeIdJoinSlot nodeJoinPlan nid `max` sendSlot
+      -- a node cannot receive a block until both exist
+      firstPossibleReception =
+        nodeIdJoinSlot nodeJoinPlan nid `max` sendSlot
 
-            noDelay = recvSlot == firstPossibleReception
+      noDelay = recvSlot == firstPossibleReception
 
-            delayOK = delayOK1 || delayOK2
+      delayOK = delayOK1 || delayOK2
 
-            -- When a node leads in the same slot in which it joins the
-            -- network, it immediately forges a single block on top of Genesis;
-            -- this block then prevents it from fetching the network's current
-            -- chain if that also consists of just one block.
-            --
-            -- NOTE This predicate is more general than that specific scenario,
-            -- but we don't anticipate it wholly masking any interesting cases.
-            delayOK1 = firstBlockNo == bno
+      -- When a node leads in the same slot in which it joins the
+      -- network, it immediately forges a single block on top of Genesis;
+      -- this block then prevents it from fetching the network's current
+      -- chain if that also consists of just one block.
+      --
+      -- NOTE This predicate is more general than that specific scenario,
+      -- but we don't anticipate it wholly masking any interesting cases.
+      delayOK1 = firstBlockNo == bno
 
-            -- When a slot has multiple leaders, each node chooses one of the
-            -- mutually-exclusive forged blocks and won't fetch any of the
-            -- others until it's later compelled to switch to a chain
-            -- containing one of them
-            --
-            -- TODO This predicate is more general than that specific scenario,
-            -- and should be tightened accordingly. We currently anticipate
-            -- that Issues #229 and #230 will handle that.
-            delayOK2 = case Map.lookup sendSlot sched of
-                Just (_:_:_) -> True
-                _            -> False
-              where
-                LeaderSchedule sched = actualLeaderSchedule
+      -- When a slot has multiple leaders, each node chooses one of the
+      -- mutually-exclusive forged blocks and won't fetch any of the
+      -- others until it's later compelled to switch to a chain
+      -- containing one of them
+      --
+      -- TODO This predicate is more general than that specific scenario,
+      -- and should be tightened accordingly. We currently anticipate
+      -- that Issues #229 and #230 will handle that.
+      delayOK2 = case Map.lookup sendSlot sched of
+        Just (_ : _ : _) -> True
+        _ -> False
+       where
+        LeaderSchedule sched = actualLeaderSchedule
 
-    hasNodeRekey :: Bool
-    hasNodeRekey =
-        NodeRekey `Set.member` (foldMap . foldMap) Set.singleton m
-      where
-        NodeRestarts m = nodeRestarts
+  hasNodeRekey :: Bool
+  hasNodeRekey =
+    NodeRekey `Set.member` (foldMap . foldMap) Set.singleton m
+   where
+    NodeRestarts m = nodeRestarts
 
-    -- Average number of txs/block
-    averageNumTxs :: Double
-    averageNumTxs =
-          average
-        . map (fromIntegral . countTxs)
-        . concatMap MockChain.toOldestFirst
-        $ Map.elems nodeChains
-      where
-        average :: [Double] -> Double
-        average [] = 0
-        average xs = sum xs / fromIntegral (length xs)
+  -- Average number of txs/block
+  averageNumTxs :: Double
+  averageNumTxs =
+    average
+      . map (fromIntegral . countTxs)
+      . concatMap MockChain.toOldestFirst
+      $ Map.elems nodeChains
+   where
+    average :: [Double] -> Double
+    average [] = 0
+    average xs = sum xs / fromIntegral (length xs)
 
-    -- The 'prop_valid_block' argument could, for example, check for no expired
-    -- transactions.
-    prop_no_invalid_blocks :: Property
-    prop_no_invalid_blocks = conjoin $
-        [ counterexample
-            ("In slot " <> condense s <> ", node " <> condense nid) $
-          counterexample ("forged an invalid block " <> condense blk) $
-          prop_valid_block blk
-        | (nid, NodeOutput{nodeOutputForges}) <- Map.toList testOutputNodes
-          -- checking all forged blocks, even if they were never or only
-          -- temporarily selected.
-        , (s, blk) <- Map.toAscList nodeOutputForges
-        ]
+  -- The 'prop_valid_block' argument could, for example, check for no expired
+  -- transactions.
+  prop_no_invalid_blocks :: Property
+  prop_no_invalid_blocks =
+    conjoin $
+      [ counterexample
+          ("In slot " <> condense s <> ", node " <> condense nid)
+          $ counterexample ("forged an invalid block " <> condense blk)
+          $ prop_valid_block blk
+      | (nid, NodeOutput{nodeOutputForges}) <- Map.toList testOutputNodes
+      , -- checking all forged blocks, even if they were never or only
+      -- temporarily selected.
+      (s, blk) <- Map.toAscList nodeOutputForges
+      ]
 
-    -- Check that all self-issued blocks are pipelined.
-    prop_pipelining :: Property
-    prop_pipelining = case syncity of
-      -- See #545 for why this is trivially true
-      SemiSync -> property True
-      Sync     -> conjoin
+  -- Check that all self-issued blocks are pipelined.
+  prop_pipelining :: Property
+  prop_pipelining = case syncity of
+    -- See #545 for why this is trivially true
+    SemiSync -> property True
+    Sync ->
+      conjoin
         [ counterexample ("Node " <> condense nid <> " did not pipeline") $
-          counterexample ("some of its blocks forged as the sole slot leader:") $
-          counterexample (condense forgedButNotPipelined) $
-          Set.null forgedButNotPipelined
-        | (nid, NodeOutput
-            { nodeOutputForges
-            , nodePipeliningEvents
-            }) <- Map.toList testOutputNodes
+            counterexample ("some of its blocks forged as the sole slot leader:") $
+              counterexample (condense forgedButNotPipelined) $
+                Set.null forgedButNotPipelined
+        | ( nid
+            , NodeOutput
+                { nodeOutputForges
+                , nodePipeliningEvents
+                }
+            ) <-
+            Map.toList testOutputNodes
         , CoreId cnid <- [nid]
-        , let tentativePoints = Set.fromList
-                [ headerPoint hdr
-                | ChainDB.SetTentativeHeader hdr FallingEdge <- nodePipeliningEvents
-                ]
-              forgedAsSoleLeaderPoints = Set.fromList $
-                [ blockPoint blk
-                | blk <- Map.elems nodeOutputForges
-                , let s = blockSlot blk
-                      NodeRestarts nrs = nodeRestarts
-                , getLeaderSchedule actualLeaderSchedule Map.! s == [cnid]
-                  -- When the node is restarted while it is a slot
+        , let tentativePoints =
+                Set.fromList
+                  [ headerPoint hdr
+                  | ChainDB.SetTentativeHeader hdr FallingEdge <- nodePipeliningEvents
+                  ]
+              forgedAsSoleLeaderPoints =
+                Set.fromList $
+                  [ blockPoint blk
+                  | blk <- Map.elems nodeOutputForges
+                  , let s = blockSlot blk
+                        NodeRestarts nrs = nodeRestarts
+                  , getLeaderSchedule actualLeaderSchedule Map.! s == [cnid]
+                  , -- When the node is restarted while it is a slot
                   -- leader, this property is often not satisfied in
                   -- the Byron ThreadNet tests. As diffusion
                   -- pipelining is concerned with up-to-date,
                   -- long-running nodes, we ignore this edge case.
-                , cnid `Map.notMember` Map.findWithDefault mempty s nrs
-                ]
+                  cnid `Map.notMember` Map.findWithDefault mempty s nrs
+                  ]
               forgedButNotPipelined =
                 forgedAsSoleLeaderPoints Set.\\ tentativePoints
         ]
@@ -893,56 +921,61 @@ prop_general_internal syncity pga testOutput =
 -- final chain in order to reach the final chains' common prefix?
 --
 -- NOTE: This count excludes EBBs.
-calcFinalIntersectionDepth :: forall blk. (BA.HasHeader blk)
-                           => PropGeneralArgs blk
-                           -> TestOutput blk
-                           -> NumBlocks
+calcFinalIntersectionDepth ::
+  forall blk.
+  BA.HasHeader blk =>
+  PropGeneralArgs blk ->
+  TestOutput blk ->
+  NumBlocks
 calcFinalIntersectionDepth pga testOutput =
-    NumBlocks $ unBlockNo $
-    case (MockChain.headBlockNo commonPrefix, maxLength) of
-      (BA.Origin,       BA.Origin)      -> 0
-      (BA.Origin,       BA.NotOrigin b) -> 1 + b - pgaFirstBlockNo
-      (BA.NotOrigin{},  BA.Origin)      -> error "impossible"
-      (BA.NotOrigin cp, BA.NotOrigin b) ->
-          assert (b >= cp) $   -- guaranteed by the foldl below
-          b - cp
-  where
-    PropGeneralArgs{pgaFirstBlockNo} = pga
-    TestOutput{testOutputNodes}      = testOutput
+  NumBlocks $
+    unBlockNo $
+      case (MockChain.headBlockNo commonPrefix, maxLength) of
+        (BA.Origin, BA.Origin) -> 0
+        (BA.Origin, BA.NotOrigin b) -> 1 + b - pgaFirstBlockNo
+        (BA.NotOrigin{}, BA.Origin) -> error "impossible"
+        (BA.NotOrigin cp, BA.NotOrigin b) ->
+          assert (b >= cp) $ -- guaranteed by the foldl below
+            b - cp
+ where
+  PropGeneralArgs{pgaFirstBlockNo} = pga
+  TestOutput{testOutputNodes} = testOutput
 
-    -- length of longest chain
-    maxLength    :: BA.WithOrigin BlockNo
-    -- the common prefix
-    commonPrefix :: MockChain.Chain blk
-    (maxLength, commonPrefix) =
-        case map prj $ Map.toList testOutputNodes of
-          []   -> (BA.Origin, MockChain.Genesis)
-          x:xs -> foldl combine x xs
-      where
-        prj (_nid, NodeOutput{nodeOutputFinalChain}) = (d, c)
-          where
-            d = MockChain.headBlockNo nodeOutputFinalChain
-            c = nodeOutputFinalChain
+  -- length of longest chain
+  maxLength :: BA.WithOrigin BlockNo
+  -- the common prefix
+  commonPrefix :: MockChain.Chain blk
+  (maxLength, commonPrefix) =
+    case map prj $ Map.toList testOutputNodes of
+      [] -> (BA.Origin, MockChain.Genesis)
+      x : xs -> foldl combine x xs
+   where
+    prj (_nid, NodeOutput{nodeOutputFinalChain}) = (d, c)
+     where
+      d = MockChain.headBlockNo nodeOutputFinalChain
+      c = nodeOutputFinalChain
 
-        combine (dl, cl) (dr, cr) = (max dl dr, chainCommonPrefix cl cr)
+    combine (dl, cl) (dr, cr) = (max dl dr, chainCommonPrefix cl cr)
 
 -- | All final chains have the same block number
-prop_inSync :: forall blk. (BA.HasHeader blk)
-            => TestOutput blk -> Property
+prop_inSync ::
+  forall blk.
+  BA.HasHeader blk =>
+  TestOutput blk -> Property
 prop_inSync testOutput =
-    counterexample (show lengths) $
+  counterexample (show lengths) $
     counterexample "the nodes' final chains have different block numbers" $
-    property $
-    case lengths of
-      []   -> False
-      l:ls -> all (== l) ls
-  where
-    TestOutput{testOutputNodes} = testOutput
+      property $
+        case lengths of
+          [] -> False
+          l : ls -> all (== l) ls
+ where
+  TestOutput{testOutputNodes} = testOutput
 
-    -- the length of each final chain
-    lengths :: [BA.WithOrigin BlockNo]
-    lengths =
-        [ MockChain.headBlockNo nodeOutputFinalChain
-        | (_nid, no) <- Map.toList testOutputNodes
-        , let NodeOutput{nodeOutputFinalChain} = no
-        ]
+  -- the length of each final chain
+  lengths :: [BA.WithOrigin BlockNo]
+  lengths =
+    [ MockChain.headBlockNo nodeOutputFinalChain
+    | (_nid, no) <- Map.toList testOutputNodes
+    , let NodeOutput{nodeOutputFinalChain} = no
+    ]

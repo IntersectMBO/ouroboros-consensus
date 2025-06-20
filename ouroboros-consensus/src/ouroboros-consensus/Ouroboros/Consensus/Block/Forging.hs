@@ -8,8 +8,8 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Ouroboros.Consensus.Block.Forging (
-    BlockForging (..)
+module Ouroboros.Consensus.Block.Forging
+  ( BlockForging (..)
   , CannotForge
   , ForgeStateInfo
   , ForgeStateUpdateError
@@ -18,21 +18,22 @@ module Ouroboros.Consensus.Block.Forging (
   , castForgeStateUpdateInfo
   , checkShouldForge
   , forgeStateUpdateInfoFromUpdateInfo
+
     -- * 'UpdateInfo'
   , KESTracer
   , UpdateInfo (..)
   ) where
 
-import           Control.Tracer (Tracer, traceWith)
-import           Data.Kind (Type)
-import           Data.Text (Text)
-import           GHC.Stack
-import           Ouroboros.Consensus.Block.Abstract
-import           Ouroboros.Consensus.Config
-import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Ledger.SupportsMempool
-import           Ouroboros.Consensus.Protocol.Abstract
-import           Ouroboros.Consensus.Ticked
+import Control.Tracer (Tracer, traceWith)
+import Data.Kind (Type)
+import Data.Text (Text)
+import GHC.Stack
+import Ouroboros.Consensus.Block.Abstract
+import Ouroboros.Consensus.Config
+import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Protocol.Abstract
+import Ouroboros.Consensus.Ticked
 
 -- | Information about why we /cannot/ forge a block, although we are a leader
 --
@@ -51,27 +52,28 @@ type family ForgeStateUpdateError blk :: Type
 -- | The result of 'updateForgeState'.
 --
 -- Note: the forge state itself is implicit and not reflected in the types.
-data ForgeStateUpdateInfo blk =
-    ForgeStateUpdated          (ForgeStateInfo        blk)
-    -- ^ NB The update might have not changed the forge state.
-  | ForgeStateUpdateFailed     (ForgeStateUpdateError blk)
-  | ForgeStateUpdateSuppressed
-    -- ^ A node was prevented from forging for an artificial reason, such as
+data ForgeStateUpdateInfo blk
+  = -- | NB The update might have not changed the forge state.
+    ForgeStateUpdated (ForgeStateInfo blk)
+  | ForgeStateUpdateFailed (ForgeStateUpdateError blk)
+  | -- | A node was prevented from forging for an artificial reason, such as
     -- testing, benchmarking, etc. It's /artificial/ in that this constructor
     -- should never occur in a production deployment.
+    ForgeStateUpdateSuppressed
 
-deriving instance (Show (ForgeStateInfo blk), Show (ForgeStateUpdateError blk))
-               => Show (ForgeStateUpdateInfo blk)
+deriving instance
+  (Show (ForgeStateInfo blk), Show (ForgeStateUpdateError blk)) =>
+  Show (ForgeStateUpdateInfo blk)
 
 castForgeStateUpdateInfo ::
-     ( ForgeStateInfo        blk ~ ForgeStateInfo        blk'
-     , ForgeStateUpdateError blk ~ ForgeStateUpdateError blk'
-     )
-  => ForgeStateUpdateInfo blk -> ForgeStateUpdateInfo blk'
+  ( ForgeStateInfo blk ~ ForgeStateInfo blk'
+  , ForgeStateUpdateError blk ~ ForgeStateUpdateError blk'
+  ) =>
+  ForgeStateUpdateInfo blk -> ForgeStateUpdateInfo blk'
 castForgeStateUpdateInfo = \case
-    ForgeStateUpdated x        -> ForgeStateUpdated x
-    ForgeStateUpdateFailed x   -> ForgeStateUpdateFailed x
-    ForgeStateUpdateSuppressed -> ForgeStateUpdateSuppressed
+  ForgeStateUpdated x -> ForgeStateUpdated x
+  ForgeStateUpdateFailed x -> ForgeStateUpdateFailed x
+  ForgeStateUpdateSuppressed -> ForgeStateUpdateSuppressed
 
 type family KESTracer blk
 
@@ -80,167 +82,159 @@ type family KESTracer blk
 -- NOTE: do not refer to the consensus or ledger config in the closure of this
 -- record because they might contain an @EpochInfo Identity@, which will be
 -- incorrect when used as part of the hard fork combinator.
-data BlockForging m blk = BlockForging {
-      -- | Identifier used in the trace messages produced for this
-      -- 'BlockForging' record.
-      --
-      -- Useful when the node is running with multiple sets of credentials.
-      forgeLabel :: Text
+data BlockForging m blk = BlockForging
+  { forgeLabel :: Text
+  -- ^ Identifier used in the trace messages produced for this
+  -- 'BlockForging' record.
+  --
+  -- Useful when the node is running with multiple sets of credentials.
+  , canBeLeader :: CanBeLeader (BlockProtocol blk)
+  -- ^ Proof that the node can be a leader
+  --
+  -- NOTE: the other fields of this record may refer to this value (or a
+  -- value derived from it) in their closure, which means one should not
+  -- override this field independently from the others.
+  , updateForgeState ::
+      TopLevelConfig blk ->
+      SlotNo ->
+      Ticked (ChainDepState (BlockProtocol blk)) ->
+      m (ForgeStateUpdateInfo blk)
+  -- ^ Update the forge state.
+  --
+  -- When the node can be a leader, this will be called at the start of
+  -- each slot, right before calling 'checkCanForge'.
+  --
+  -- When 'Updated' is returned, we trace the 'ForgeStateInfo'.
+  --
+  -- When 'UpdateFailed' is returned, we trace the 'ForgeStateUpdateError'
+  -- and don't call 'checkCanForge'.
+  , checkCanForge ::
+      TopLevelConfig blk ->
+      SlotNo ->
+      Ticked (ChainDepState (BlockProtocol blk)) ->
+      IsLeader (BlockProtocol blk) ->
+      ForgeStateInfo blk -> -- Proof that 'updateForgeState' did not fail
+      Either (CannotForge blk) ()
+  -- ^ After checking that the node indeed is a leader ('checkIsLeader'
+  -- returned 'Just') and successfully updating the forge state
+  -- ('updateForgeState' did not return 'UpdateFailed'), do another check
+  -- to see whether we can actually forge a block.
+  --
+  -- When 'CannotForge' is returned, we don't call 'forgeBlock'.
+  , forgeBlock ::
+      TopLevelConfig blk ->
+      BlockNo -> -- Current block number
+      SlotNo -> -- Current slot number
+      TickedLedgerState blk EmptyMK -> -- Current ledger state
+      [Validated (GenTx blk)] -> -- Transactions to include
+      IsLeader (BlockProtocol blk) -> -- Proof we are leader
+      m blk
+  -- ^ Forge a block
+  --
+  -- The function is passed the prefix of the mempool that will fit within
+  -- a valid block; this is a set of transactions that is guaranteed to be
+  -- consistent with the ledger state (also provided as an argument) and
+  -- with each other (when applied in order). All of them should be
+  -- included in the forged block, since the mempool ensures they can fit.
+  --
+  -- NOTE: do not refer to the consensus or ledger config in the closure,
+  -- because they might contain an @EpochInfo Identity@, which will be
+  -- incorrect when used as part of the hard fork combinator. Use the
+  -- given 'TopLevelConfig' instead, as it is guaranteed to be correct
+  -- even when used as part of the hard fork combinator.
+  --
+  -- PRECONDITION: 'checkCanForge' returned @Right ()@.
+  , finalize :: m ()
+  -- ^ Clean up any unmanaged resources.
+  --
+  -- Such resources may include KES keys that require explicit erasing
+  -- ("secure forgetting"), and threads that connect to a KES agent.
+  -- This method will be run once when the block forging thread
+  -- terminates, whether cleanly or due to an exception.
+  }
 
-      -- | Proof that the node can be a leader
-      --
-      -- NOTE: the other fields of this record may refer to this value (or a
-      -- value derived from it) in their closure, which means one should not
-      -- override this field independently from the others.
-    , canBeLeader :: CanBeLeader (BlockProtocol blk)
-
-      -- | Update the forge state.
-      --
-      -- When the node can be a leader, this will be called at the start of
-      -- each slot, right before calling 'checkCanForge'.
-      --
-      -- When 'Updated' is returned, we trace the 'ForgeStateInfo'.
-      --
-      -- When 'UpdateFailed' is returned, we trace the 'ForgeStateUpdateError'
-      -- and don't call 'checkCanForge'.
-    , updateForgeState ::
-           TopLevelConfig blk
-        -> SlotNo
-        -> Ticked (ChainDepState (BlockProtocol blk))
-        -> m (ForgeStateUpdateInfo blk)
-
-      -- | After checking that the node indeed is a leader ('checkIsLeader'
-      -- returned 'Just') and successfully updating the forge state
-      -- ('updateForgeState' did not return 'UpdateFailed'), do another check
-      -- to see whether we can actually forge a block.
-      --
-      -- When 'CannotForge' is returned, we don't call 'forgeBlock'.
-    , checkCanForge ::
-           TopLevelConfig blk
-        -> SlotNo
-        -> Ticked (ChainDepState (BlockProtocol blk))
-        -> IsLeader (BlockProtocol blk)
-        -> ForgeStateInfo blk  -- Proof that 'updateForgeState' did not fail
-        -> Either (CannotForge blk) ()
-
-      -- | Forge a block
-      --
-      -- The function is passed the prefix of the mempool that will fit within
-      -- a valid block; this is a set of transactions that is guaranteed to be
-      -- consistent with the ledger state (also provided as an argument) and
-      -- with each other (when applied in order). All of them should be
-      -- included in the forged block, since the mempool ensures they can fit.
-      --
-      -- NOTE: do not refer to the consensus or ledger config in the closure,
-      -- because they might contain an @EpochInfo Identity@, which will be
-      -- incorrect when used as part of the hard fork combinator. Use the
-      -- given 'TopLevelConfig' instead, as it is guaranteed to be correct
-      -- even when used as part of the hard fork combinator.
-      --
-      -- PRECONDITION: 'checkCanForge' returned @Right ()@.
-    , forgeBlock ::
-           TopLevelConfig blk
-        -> BlockNo                       -- Current block number
-        -> SlotNo                        -- Current slot number
-        -> TickedLedgerState blk EmptyMK -- Current ledger state
-        -> [Validated (GenTx blk)]       -- Transactions to include
-        -> IsLeader (BlockProtocol blk)  -- Proof we are leader
-        -> m blk
-
-      -- | Clean up any unmanaged resources.
-      --
-      -- Such resources may include KES keys that require explicit erasing
-      -- ("secure forgetting"), and threads that connect to a KES agent.
-      -- This method will be run once when the block forging thread
-      -- terminates, whether cleanly or due to an exception.
-    , finalize :: m ()
-
-    }
-
-data ShouldForge blk =
-    -- | Before check whether we are a leader in this slot, we tried to update
+data ShouldForge blk
+  = -- | Before check whether we are a leader in this slot, we tried to update
     --  our forge state ('updateForgeState'), but it failed. We will not check
     --  whether we are leader and will thus not forge a block either.
     --
     -- E.g., we could not evolve our KES key.
     ForgeStateUpdateError (ForgeStateUpdateError blk)
-
-    -- | We are a leader in this slot, but we cannot forge for a certain
+  | -- | We are a leader in this slot, but we cannot forge for a certain
     -- reason.
     --
     -- E.g., our KES key is not yet valid in this slot or we are not the
     -- current delegate of the genesis key we have a delegation certificate
     -- from.
-  | CannotForge (CannotForge blk)
-
-    -- | We are not a leader in this slot
-  | NotLeader
-
-    -- | We are a leader in this slot and we should forge a block.
-  | ShouldForge (IsLeader (BlockProtocol blk))
+    CannotForge (CannotForge blk)
+  | -- | We are not a leader in this slot
+    NotLeader
+  | -- | We are a leader in this slot and we should forge a block.
+    ShouldForge (IsLeader (BlockProtocol blk))
 
 checkShouldForge ::
-     forall m blk.
-     ( Monad m
-     , ConsensusProtocol (BlockProtocol blk)
-     , HasCallStack
-     )
-  => BlockForging m blk
-  -> Tracer m (ForgeStateInfo blk)
-  -> TopLevelConfig blk
-  -> SlotNo
-  -> Ticked (ChainDepState (BlockProtocol blk))
-  -> m (ShouldForge blk)
-checkShouldForge BlockForging{..}
-                 forgeStateInfoTracer
-                 cfg
-                 slot
-                 tickedChainDepState =
+  forall m blk.
+  ( Monad m
+  , ConsensusProtocol (BlockProtocol blk)
+  , HasCallStack
+  ) =>
+  BlockForging m blk ->
+  Tracer m (ForgeStateInfo blk) ->
+  TopLevelConfig blk ->
+  SlotNo ->
+  Ticked (ChainDepState (BlockProtocol blk)) ->
+  m (ShouldForge blk)
+checkShouldForge
+  BlockForging{..}
+  forgeStateInfoTracer
+  cfg
+  slot
+  tickedChainDepState =
     updateForgeState cfg slot tickedChainDepState >>= \updateInfo ->
       case updateInfo of
-        ForgeStateUpdated      info -> handleUpdated info
-        ForgeStateUpdateFailed err  -> return $ ForgeStateUpdateError err
-        ForgeStateUpdateSuppressed  -> return NotLeader
-  where
+        ForgeStateUpdated info -> handleUpdated info
+        ForgeStateUpdateFailed err -> return $ ForgeStateUpdateError err
+        ForgeStateUpdateSuppressed -> return NotLeader
+   where
     mbIsLeader :: Maybe (IsLeader (BlockProtocol blk))
     mbIsLeader =
-        -- WARNING: It is critical that we do not depend on the 'BlockForging'
-        -- record for the implementation of 'checkIsLeader'. Doing so would
-        -- make composing multiple 'BlockForging' values responsible for also
-        -- composing the 'checkIsLeader' checks, but that should be the
-        -- responsibility of the 'ConsensusProtocol' instance for the
-        -- composition of those blocks.
-        checkIsLeader
-          (configConsensus cfg)
-          canBeLeader
-          slot
-          tickedChainDepState
+      -- WARNING: It is critical that we do not depend on the 'BlockForging'
+      -- record for the implementation of 'checkIsLeader'. Doing so would
+      -- make composing multiple 'BlockForging' values responsible for also
+      -- composing the 'checkIsLeader' checks, but that should be the
+      -- responsibility of the 'ConsensusProtocol' instance for the
+      -- composition of those blocks.
+      checkIsLeader
+        (configConsensus cfg)
+        canBeLeader
+        slot
+        tickedChainDepState
 
     handleUpdated :: ForgeStateInfo blk -> m (ShouldForge blk)
     handleUpdated info = do
-        traceWith forgeStateInfoTracer info
-        return $ case mbIsLeader of
-          Nothing       -> NotLeader
-          Just isLeader ->
-              case checkCanForge cfg slot tickedChainDepState isLeader info of
-                Left cannotForge -> CannotForge cannotForge
-                Right ()         -> ShouldForge isLeader
+      traceWith forgeStateInfoTracer info
+      return $ case mbIsLeader of
+        Nothing -> NotLeader
+        Just isLeader ->
+          case checkCanForge cfg slot tickedChainDepState isLeader info of
+            Left cannotForge -> CannotForge cannotForge
+            Right () -> ShouldForge isLeader
 
 {-------------------------------------------------------------------------------
   UpdateInfo
 -------------------------------------------------------------------------------}
 
 -- | The result of updating something, e.g., the forge state.
-data UpdateInfo updated failed =
-    -- | NOTE: The update may have induced no change.
+data UpdateInfo updated failed
+  = -- | NOTE: The update may have induced no change.
     Updated updated
   | UpdateFailed failed
-  deriving (Show)
+  deriving Show
 
 -- | Embed 'UpdateInfo' into 'ForgeStateUpdateInfo'
 forgeStateUpdateInfoFromUpdateInfo ::
-     UpdateInfo (ForgeStateInfo blk) (ForgeStateUpdateError blk)
-  -> ForgeStateUpdateInfo blk
+  UpdateInfo (ForgeStateInfo blk) (ForgeStateUpdateError blk) ->
+  ForgeStateUpdateInfo blk
 forgeStateUpdateInfoFromUpdateInfo = \case
-    Updated      info -> ForgeStateUpdated      info
-    UpdateFailed err  -> ForgeStateUpdateFailed err
+  Updated info -> ForgeStateUpdated info
+  UpdateFailed err -> ForgeStateUpdateFailed err

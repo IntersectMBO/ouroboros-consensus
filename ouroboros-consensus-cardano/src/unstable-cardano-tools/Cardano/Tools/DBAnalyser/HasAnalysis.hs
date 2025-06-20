@@ -1,45 +1,44 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module Cardano.Tools.DBAnalyser.HasAnalysis (
-    HasAnalysis (..)
+module Cardano.Tools.DBAnalyser.HasAnalysis
+  ( HasAnalysis (..)
   , HasProtocolInfo (..)
   , SizeInBytes
   , WithLedgerState (..)
   ) where
 
-import           Data.Map.Strict (Map)
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.HeaderValidation (HasAnnTip (..))
-import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Node.ProtocolInfo
-import           Ouroboros.Consensus.Storage.Serialisation (SizeInBytes)
-import           Ouroboros.Consensus.Util.Condense (Condense)
-import           TextBuilder (TextBuilder)
+import Data.Map.Strict (Map)
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.HeaderValidation (HasAnnTip (..))
+import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Node.ProtocolInfo
+import Ouroboros.Consensus.Storage.Serialisation (SizeInBytes)
+import Ouroboros.Consensus.Util.Condense (Condense)
+import TextBuilder (TextBuilder)
 
 {-------------------------------------------------------------------------------
   HasAnalysis
 -------------------------------------------------------------------------------}
 
 data WithLedgerState blk = WithLedgerState
-  { wlsBlk         :: blk
-  -- | This ledger state contains only the values to be consumed by the block
+  { wlsBlk :: blk
   , wlsStateBefore :: LedgerState blk ValuesMK
-  -- | This ledger state contains only the values produced by the block
-  , wlsStateAfter  :: LedgerState blk ValuesMK
+  -- ^ This ledger state contains only the values to be consumed by the block
+  , wlsStateAfter :: LedgerState blk ValuesMK
+  -- ^ This ledger state contains only the values produced by the block
   }
 
 class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis blk where
-
   countTxOutputs :: blk -> Int
-  blockTxSizes   :: blk -> [SizeInBytes]
-  knownEBBs      :: proxy blk -> Map (HeaderHash blk) (ChainHash blk)
+  blockTxSizes :: blk -> [SizeInBytes]
+  knownEBBs :: proxy blk -> Map (HeaderHash blk) (ChainHash blk)
 
   -- | Emit trace markers at points in processing.
-  emitTraces     :: WithLedgerState blk -> [String]
+  emitTraces :: WithLedgerState blk -> [String]
 
   -- | This method was introduced for the sake of the 'BenchmarkLedgerOps' pass.
-  blockStats     :: blk -> [TextBuilder]
+  blockStats :: blk -> [TextBuilder]
 
   -- | This function allows to define different metrics about block application.
   --

@@ -10,83 +10,108 @@
 -- run of the actual bucket implementation against a model.
 module Test.Ouroboros.Consensus.Util.LeakyBucket.Tests (tests) where
 
-import           Control.Monad (foldM, void)
-import           Control.Monad.Class.MonadTimer (MonadTimer)
-import           Control.Monad.IOSim (IOSim, runSimOrThrow)
-import           Data.Either (isLeft, isRight)
-import           Data.Functor ((<&>))
-import           Data.List (intersperse)
-import           Data.Ratio ((%))
-import           Data.Time.Clock (DiffTime, picosecondsToDiffTime)
-import           Ouroboros.Consensus.Util.IOLike (Exception (displayException),
-                     MonadAsync, MonadCatch (try), MonadDelay, MonadFork,
-                     MonadMask, MonadSTM, MonadThrow (throwIO), NoThunks,
-                     SomeException, Time (Time), addTime, fromException,
-                     threadDelay)
-import           Ouroboros.Consensus.Util.LeakyBucket
-import           Test.QuickCheck (Arbitrary (arbitrary), Gen, Property,
-                     classify, counterexample, forAllShrinkBlind, frequency,
-                     ioProperty, liftArbitrary2, listOf1, scale, shrinkList,
-                     suchThat)
-import           Test.Tasty (TestTree, testGroup)
-import           Test.Tasty.QuickCheck (property, testProperty)
-import           Test.Util.TestEnv (adjustQuickCheckTests)
+import Control.Monad (foldM, void)
+import Control.Monad.Class.MonadTimer (MonadTimer)
+import Control.Monad.IOSim (IOSim, runSimOrThrow)
+import Data.Either (isLeft, isRight)
+import Data.Functor ((<&>))
+import Data.List (intersperse)
+import Data.Ord (clamp)
+import Data.Ratio ((%))
+import Data.Time.Clock (DiffTime, picosecondsToDiffTime)
+import Ouroboros.Consensus.Util.IOLike
+  ( Exception (displayException)
+  , MonadAsync
+  , MonadCatch (try)
+  , MonadDelay
+  , MonadFork
+  , MonadMask
+  , MonadSTM
+  , MonadThrow (throwIO)
+  , NoThunks
+  , SomeException
+  , Time (Time)
+  , addTime
+  , fromException
+  , threadDelay
+  )
+import Ouroboros.Consensus.Util.LeakyBucket
+import Test.QuickCheck
+  ( Arbitrary (arbitrary)
+  , Gen
+  , Property
+  , classify
+  , counterexample
+  , forAllShrinkBlind
+  , frequency
+  , ioProperty
+  , liftArbitrary2
+  , listOf1
+  , scale
+  , shrinkList
+  , suchThat
+  )
+import Test.Tasty (TestTree, testGroup)
+import Test.Tasty.QuickCheck (property, testProperty)
+import Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
-tests = testGroup "Ouroboros.Consensus.Util.LeakyBucket" [
-  testProperty "play a bit" prop_playABit,
-  testProperty "play too long" prop_playTooLong,
-  testProperty "play too long harmless" prop_playTooLongHarmless,
-  testProperty "play with pause" prop_playWithPause,
-  testProperty "play with pause too long" prop_playWithPauseTooLong,
-  testProperty "wait almost too long" (prop_noRefill False),
-  testProperty "wait just too long" (prop_noRefill True),
-  testProperty "propagates exceptions" prop_propagateExceptions,
-  testProperty "propagates exceptions (IO)" prop_propagateExceptionsIO,
-  testProperty "catch exception" prop_catchException,
-  adjustQuickCheckTests (* 10) $ testProperty "random" prop_random
-  ]
+tests =
+  testGroup
+    "Ouroboros.Consensus.Util.LeakyBucket"
+    [ testProperty "play a bit" prop_playABit
+    , testProperty "play too long" prop_playTooLong
+    , testProperty "play too long harmless" prop_playTooLongHarmless
+    , testProperty "play with pause" prop_playWithPause
+    , testProperty "play with pause too long" prop_playWithPauseTooLong
+    , testProperty "wait almost too long" (prop_noRefill False)
+    , testProperty "wait just too long" (prop_noRefill True)
+    , testProperty "propagates exceptions" prop_propagateExceptions
+    , testProperty "propagates exceptions (IO)" prop_propagateExceptionsIO
+    , testProperty "catch exception" prop_catchException
+    , adjustQuickCheckTests (* 10) $ testProperty "random" prop_random
+    ]
 
 --------------------------------------------------------------------------------
 -- Dummy configuration
 --------------------------------------------------------------------------------
 
-newtype Capacity = Capacity { unCapacity :: Rational }
+newtype Capacity = Capacity {unCapacity :: Rational}
   deriving Show
 
 instance Arbitrary Capacity where
   arbitrary = Capacity <$> arbitrary `suchThat` (> 0)
 
-newtype Rate = Rate { unRate :: Rational }
+newtype Rate = Rate {unRate :: Rational}
   deriving Show
 
 instance Arbitrary Rate where
   arbitrary = Rate <$> arbitrary `suchThat` (> 0)
 
-newtype FillOnOverflow = FillOnOverflow { unFillOnOverflow :: Bool }
+newtype FillOnOverflow = FillOnOverflow {unFillOnOverflow :: Bool}
   deriving Show
 
 instance Arbitrary FillOnOverflow where
   arbitrary = FillOnOverflow <$> arbitrary
 
 -- | Whether to throw on empty bucket.
-newtype ThrowOnEmpty = ThrowOnEmpty { unThrowOnEmpty :: Bool }
+newtype ThrowOnEmpty = ThrowOnEmpty {unThrowOnEmpty :: Bool}
   deriving (Eq, Show)
 
 instance Arbitrary ThrowOnEmpty where
   arbitrary = ThrowOnEmpty <$> arbitrary
 
 data TestConfig = TestConfig
-  { testCapacity     :: Rational,
-    testRate         :: Rational,
-    testThrowOnEmpty :: Bool
+  { testCapacity :: Rational
+  , testRate :: Rational
+  , testThrowOnEmpty :: Bool
   }
   deriving (Eq, Show)
 
 data TestState = TestState
-  { testLevel  :: Rational,
-    testTime   :: Time,
-    testPaused :: Bool
+  { testLevel :: Rational
+  , testTime :: Time
+  , testPaused :: Bool
   }
   deriving (Eq, Show)
 
@@ -104,12 +129,12 @@ instance Exception EmptyBucket
 
 -- | Make an actual configuration from a test configuration.
 mkConfig :: MonadThrow m => TestConfig -> Config m
-mkConfig TestConfig {testCapacity, testRate, testThrowOnEmpty} =
+mkConfig TestConfig{testCapacity, testRate, testThrowOnEmpty} =
   Config
-    { capacity = testCapacity,
-      rate = testRate,
-      fillOnOverflow = True,
-      onEmpty =
+    { capacity = testCapacity
+    , rate = testRate
+    , fillOnOverflow = True
+    , onEmpty =
         if testThrowOnEmpty
           then (throwIO EmptyBucket)
           else (pure ())
@@ -143,12 +168,12 @@ stateToTestState State{level, time, paused} =
 
 -- | 'execAgainstBucket' except it takes a 'TestConfig'.
 testExecAgainstBucket ::
-  ( MonadDelay m,
-    MonadAsync m,
-    MonadFork m,
-    MonadMask m,
-    MonadTimer m,
-    NoThunks (m ())
+  ( MonadDelay m
+  , MonadAsync m
+  , MonadFork m
+  , MonadMask m
+  , MonadTimer m
+  , NoThunks (m ())
   ) =>
   TestConfig ->
   (Handlers m -> m a) ->
@@ -158,12 +183,12 @@ testExecAgainstBucket testConfig action =
 
 -- | 'evalAgainstBucket' except it takes a 'TestConfig' and returns a 'TestState'.
 testEvalAgainstBucket ::
-  ( MonadDelay m,
-    MonadAsync m,
-    MonadFork m,
-    MonadMask m,
-    MonadTimer m,
-    NoThunks (m ())
+  ( MonadDelay m
+  , MonadAsync m
+  , MonadFork m
+  , MonadMask m
+  , MonadTimer m
+  , NoThunks (m ())
   ) =>
   TestConfig ->
   (Handlers m -> m a) ->
@@ -181,7 +206,8 @@ shouldThrow a e =
   try a <&> \case
     Left exn
       | fromException exn == Just e -> property True
-      | otherwise -> counterexample ("Expected exception " ++ show e ++ "; got exception " ++ show exn) False
+      | otherwise ->
+          counterexample ("Expected exception " ++ show e ++ "; got exception " ++ show exn) False
     Right result -> counterexample ("Expected exception " ++ show e ++ "; got " ++ show result) False
 
 -- | QuickCheck helper to check that a code evaluated to the given value.
@@ -202,55 +228,70 @@ shouldEvaluateTo a v =
 prop_playABit :: Property
 prop_playABit =
   ioSimProperty $
-    testEvalAgainstBucket config11Throw (\handlers -> do
-      threadDelay 0.5
-      void $ fill' handlers 67
-      threadDelay 0.9
-    ) `shouldEvaluateTo` TestState{testLevel = 1 % 10, testTime = Time 1.4, testPaused = False}
+    testEvalAgainstBucket
+      config11Throw
+      ( \handlers -> do
+          threadDelay 0.5
+          void $ fill' handlers 67
+          threadDelay 0.9
+      )
+      `shouldEvaluateTo` TestState{testLevel = 1 % 10, testTime = Time 1.4, testPaused = False}
 
 -- | One test case similar to 'prop_playABit' but we wait a bit too long and
 -- should observe the triggering of the 'onEmpty' action.
 prop_playTooLong :: Property
 prop_playTooLong =
   ioSimProperty $
-    testEvalAgainstBucket config11Throw (\handlers -> do
-      threadDelay 0.5
-      void $ fill' handlers 67
-      threadDelay 1.1
-    ) `shouldThrow` EmptyBucket
+    testEvalAgainstBucket
+      config11Throw
+      ( \handlers -> do
+          threadDelay 0.5
+          void $ fill' handlers 67
+          threadDelay 1.1
+      )
+      `shouldThrow` EmptyBucket
 
 -- | One test case similar to 'prop_playTooLong' but 'onEmpty' does nothing and
 -- therefore we should still observe a state at the end.
 prop_playTooLongHarmless :: Property
 prop_playTooLongHarmless =
   ioSimProperty $
-    testEvalAgainstBucket config11Pure (\handlers -> do
-      threadDelay 0.5
-      void $ fill' handlers 67
-      threadDelay 1.1
-    ) `shouldEvaluateTo` TestState{testLevel = 0, testTime = Time 1.6, testPaused = False}
+    testEvalAgainstBucket
+      config11Pure
+      ( \handlers -> do
+          threadDelay 0.5
+          void $ fill' handlers 67
+          threadDelay 1.1
+      )
+      `shouldEvaluateTo` TestState{testLevel = 0, testTime = Time 1.6, testPaused = False}
 
 prop_playWithPause :: Property
 prop_playWithPause =
   ioSimProperty $
-    testEvalAgainstBucket config11Throw (\handlers -> do
-      threadDelay 0.5
-      setPaused' handlers True
-      threadDelay 1.5
-      setPaused' handlers False
-      threadDelay 0.4
-    ) `shouldEvaluateTo` TestState{testLevel = 1 % 10, testTime = Time 2.4, testPaused = False}
+    testEvalAgainstBucket
+      config11Throw
+      ( \handlers -> do
+          threadDelay 0.5
+          setPaused' handlers True
+          threadDelay 1.5
+          setPaused' handlers False
+          threadDelay 0.4
+      )
+      `shouldEvaluateTo` TestState{testLevel = 1 % 10, testTime = Time 2.4, testPaused = False}
 
 prop_playWithPauseTooLong :: Property
 prop_playWithPauseTooLong =
   ioSimProperty $
-    testEvalAgainstBucket config11Throw (\handlers -> do
-      threadDelay 0.5
-      setPaused' handlers True
-      threadDelay 1.5
-      setPaused' handlers False
-      threadDelay 0.6
-    ) `shouldThrow` EmptyBucket
+    testEvalAgainstBucket
+      config11Throw
+      ( \handlers -> do
+          threadDelay 0.5
+          setPaused' handlers True
+          threadDelay 1.5
+          setPaused' handlers False
+          threadDelay 0.6
+      )
+      `shouldThrow` EmptyBucket
 
 -- | A bunch of test cases where we wait exactly as much as the bucket runs
 -- except for a given offset. If the offset is negative, we should get a
@@ -274,7 +315,7 @@ prop_noRefill tooLong capacity@(Capacity c) rate@(Rate r) = do
     else
       ioSimProperty $
         testEvalAgainstBucket (configThrow capacity rate) (\_ -> threadDelay time)
-          `shouldEvaluateTo` TestState {testLevel = level, testTime = Time time, testPaused = False}
+          `shouldEvaluateTo` TestState{testLevel = level, testTime = Time time, testPaused = False}
 
 --------------------------------------------------------------------------------
 -- Exception propagation
@@ -283,6 +324,7 @@ prop_noRefill tooLong capacity@(Capacity c) rate@(Rate r) = do
 -- | A dummy exception that we will use to outrun the bucket.
 data NoPlumberException = NoPlumberException
   deriving (Eq, Show)
+
 instance Exception NoPlumberException
 
 -- | One test to check that throwing an exception in the action does propagate
@@ -291,16 +333,14 @@ prop_propagateExceptions :: Property
 prop_propagateExceptions =
   ioSimProperty $
     testEvalAgainstBucket config11Throw (\_ -> throwIO NoPlumberException)
-      `shouldThrow`
-    NoPlumberException
+      `shouldThrow` NoPlumberException
 
 -- | Same as 'prop_propagateExceptions' except it runs in IO.
 prop_propagateExceptionsIO :: Property
 prop_propagateExceptionsIO =
   ioProperty $
     testEvalAgainstBucket config11Throw (\_ -> throwIO NoPlumberException)
-      `shouldThrow`
-    NoPlumberException
+      `shouldThrow` NoPlumberException
 
 -- | One test to show that we can catch the 'EmptyBucket' exception from the
 -- action itself, but that it is not wrapped in 'ExceptionInLinkedThread'.
@@ -308,8 +348,7 @@ prop_catchException :: Property
 prop_catchException =
   ioSimProperty $
     testExecAgainstBucket config11Throw (\_ -> try $ threadDelay 1000)
-      `shouldEvaluateTo`
-    Left EmptyBucket
+      `shouldEvaluateTo` Left EmptyBucket
 
 --------------------------------------------------------------------------------
 -- Against a model
@@ -331,13 +370,14 @@ data Action
 genAction :: Gen Action
 genAction =
   frequency
-    [ (1, Wait <$> genDelay),
-      (1, Fill <$> scale (* 1_000_000_000_000_000) (arbitrary `suchThat` (>= 0))),
-      (1, SetPaused <$> arbitrary),
-      (1, SetConfigWait <$> arbitrary <*> genDelay)
+    [ (1, Wait <$> genDelay)
+    , (1, Fill <$> scale (* 1_000_000_000_000_000) (arbitrary `suchThat` (>= 0)))
+    , (1, SetPaused <$> arbitrary)
+    , (1, SetConfigWait <$> arbitrary <*> genDelay)
     ]
-  where
-    genDelay = picosecondsToDiffTime <$> scale (* fromInteger picosecondsPerSecond) (arbitrary `suchThat` (>= 0))
+ where
+  genDelay =
+    picosecondsToDiffTime <$> scale (* fromInteger picosecondsPerSecond) (arbitrary `suchThat` (>= 0))
 
 -- | How to run the 'Action's in a monad.
 applyActions :: (MonadDelay m, MonadThrow m, MonadSTM m) => Handlers m -> [Action] -> m ()
@@ -353,12 +393,18 @@ applyActions handlers = mapM_ $ \case
 -- exception (if the bucket won the race) or a 'State' (otherwise).
 modelActions :: TestConfig -> [Action] -> Either EmptyBucket TestState
 modelActions testConfig =
-  (snd <$>) . foldM go (testConfig, TestState {testLevel = testCapacity testConfig, testTime = Time 0, testPaused = False})
-  where
-    go :: (TestConfig, TestState) -> Action -> Either EmptyBucket (TestConfig, TestState)
-    go (config@TestConfig {testCapacity, testRate, testThrowOnEmpty}, state@TestState {testTime, testLevel, testPaused}) = \case
+  (snd <$>)
+    . foldM
+      go
+      (testConfig, TestState{testLevel = testCapacity testConfig, testTime = Time 0, testPaused = False})
+ where
+  go :: (TestConfig, TestState) -> Action -> Either EmptyBucket (TestConfig, TestState)
+  go
+    ( config@TestConfig{testCapacity, testRate, testThrowOnEmpty}
+      , state@TestState{testTime, testLevel, testPaused}
+      ) = \case
       Fill t ->
-        Right (config, state {testLevel = clamp (0, testCapacity) (testLevel + t)})
+        Right (config, state{testLevel = clamp (0, testCapacity) (testLevel + t)})
       Wait t ->
         let newTime = addTime t testTime
             newLevel =
@@ -367,11 +413,11 @@ modelActions testConfig =
                 else clamp (0, testCapacity) (testLevel - diffTimeToSecondsRational t * testRate)
          in if newLevel <= 0 && testThrowOnEmpty
               then Left EmptyBucket
-              else Right (config, state {testTime = newTime, testLevel = newLevel})
+              else Right (config, state{testTime = newTime, testLevel = newLevel})
       SetPaused newPaused ->
-        Right (config, state {testPaused = newPaused})
-      SetConfigWait newConfig@TestConfig {testCapacity = newTestCapacity} t ->
-        go (newConfig, state {testLevel = clamp (0, newTestCapacity) testLevel}) (Wait t)
+        Right (config, state{testPaused = newPaused})
+      SetConfigWait newConfig@TestConfig{testCapacity = newTestCapacity} t ->
+        go (newConfig, state{testLevel = clamp (0, newTestCapacity) testLevel}) (Wait t)
 
 -- | A bunch of test cases where we generate a list of 'Action's ,run them via
 -- 'applyActions' and compare the result to that of 'modelActions'.
@@ -390,17 +436,13 @@ prop_random =
           modelResult = modelActions testConfig actions
           nbActions = length actions
        in classify (isLeft modelResult) "bucket finished empty" $
-          classify (isRight modelResult) "bucket finished non-empty" $
-          classify (nbActions <= 10) "<= 10 actions" $
-          classify (10 < nbActions && nbActions <= 20) "11-20 actions" $
-          classify (20 < nbActions && nbActions <= 50) "21-50 actions" $
-          classify (50 < nbActions) "> 50 actions" $
-          counterexample ("Config: " ++ show testConfig) $
-          counterexample ("Actions:\n" ++ (concat $ intersperse "\n" $ map ((" - " ++) . show) actions)) $
-          counterexample ("Result: " ++ show result) $
-          counterexample ("Model:  " ++ show modelResult) $
-          result == modelResult
-
--- NOTE: Needed for GHC 8
-clamp :: Ord a => (a, a) -> a -> a
-clamp (low, high) x = min high (max low x)
+            classify (isRight modelResult) "bucket finished non-empty" $
+              classify (nbActions <= 10) "<= 10 actions" $
+                classify (10 < nbActions && nbActions <= 20) "11-20 actions" $
+                  classify (20 < nbActions && nbActions <= 50) "21-50 actions" $
+                    classify (50 < nbActions) "> 50 actions" $
+                      counterexample ("Config: " ++ show testConfig) $
+                        counterexample ("Actions:\n" ++ (concat $ intersperse "\n" $ map ((" - " ++) . show) actions)) $
+                          counterexample ("Result: " ++ show result) $
+                            counterexample ("Model:  " ++ show modelResult) $
+                              result == modelResult

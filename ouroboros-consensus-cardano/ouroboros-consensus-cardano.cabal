@@ -1,6 +1,6 @@
 cabal-version: 3.0
 name: ouroboros-consensus-cardano
-version: 0.25.0.1
+version: 0.25.1.0
 synopsis:
   The instantation of the Ouroboros consensus layer used by Cardano
 
@@ -112,6 +112,8 @@ library
     Ouroboros.Consensus.Shelley.Ledger.PeerSelection
     Ouroboros.Consensus.Shelley.Ledger.Protocol
     Ouroboros.Consensus.Shelley.Ledger.Query
+    Ouroboros.Consensus.Shelley.Ledger.Query.LegacyPParams
+    Ouroboros.Consensus.Shelley.Ledger.Query.LegacyShelleyGenesis
     Ouroboros.Consensus.Shelley.Ledger.Query.Types
     Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol
     Ouroboros.Consensus.Shelley.Node
@@ -133,16 +135,16 @@ library
     cardano-crypto,
     cardano-crypto-class ^>=2.2,
     cardano-crypto-wrapper,
-    cardano-ledger-allegra ^>=1.7,
-    cardano-ledger-alonzo ^>=1.13,
-    cardano-ledger-api ^>=1.11,
-    cardano-ledger-babbage ^>=1.11,
-    cardano-ledger-binary ^>=1.6,
-    cardano-ledger-byron ^>=1.1,
-    cardano-ledger-conway ^>=1.19,
-    cardano-ledger-core ^>=1.17,
-    cardano-ledger-mary ^>=1.8,
-    cardano-ledger-shelley ^>=1.16,
+    cardano-ledger-allegra ^>=1.8,
+    cardano-ledger-alonzo ^>=1.14,
+    cardano-ledger-api ^>=1.12,
+    cardano-ledger-babbage ^>=1.12,
+    cardano-ledger-binary ^>=1.7,
+    cardano-ledger-byron ^>=1.2,
+    cardano-ledger-conway ^>=1.20,
+    cardano-ledger-core ^>=1.18,
+    cardano-ledger-mary ^>=1.9,
+    cardano-ledger-shelley ^>=1.17,
     cardano-prelude,
     cardano-protocol-tpraos ^>=1.4,
     cardano-slotting,
@@ -153,15 +155,14 @@ library
     crypton,
     deepseq,
     formatting >=6.3 && <7.3,
-    kes-agent,
     measures,
     mempack,
     microlens,
     mtl,
     nothunks,
-    ouroboros-consensus ^>=0.26,
+    ouroboros-consensus ^>=0.27,
     ouroboros-consensus-protocol ^>=0.12,
-    ouroboros-network-api ^>=0.13,
+    ouroboros-network-api ^>=0.14,
     serialise ^>=0.2,
     singletons ^>=3.0,
     small-steps,
@@ -172,9 +173,6 @@ library
     these ^>=1.2,
     validation,
     vector-map,
-
-  -- GHC 8.10.7 on aarch64-darwin cannot use text-2
-  build-depends: text >=1.2.5.0 && <2.2
 
 library unstable-byronspec
   import: common-lib
@@ -200,12 +198,12 @@ library unstable-byronspec
     byron-spec-ledger,
     cardano-binary,
     cardano-ledger-binary,
-    cardano-ledger-byron-test,
+    cardano-ledger-byron:testlib,
     cborg >=0.2.2 && <0.3,
     containers >=0.5 && <0.8,
     mtl,
     nothunks,
-    ouroboros-consensus ^>=0.26,
+    ouroboros-consensus ^>=0.27,
     serialise ^>=0.2,
     small-steps,
     transformers,
@@ -238,8 +236,7 @@ library unstable-byron-testlib
     cardano-crypto-test,
     cardano-crypto-wrapper,
     cardano-ledger-binary:{cardano-ledger-binary, testlib},
-    cardano-ledger-byron,
-    cardano-ledger-byron-test,
+    cardano-ledger-byron:{cardano-ledger-byron, testlib},
     cardano-ledger-core,
     containers,
     hedgehog-quickcheck,
@@ -274,8 +271,7 @@ test-suite byron-test
     cardano-crypto-class,
     cardano-crypto-wrapper,
     cardano-ledger-binary,
-    cardano-ledger-byron,
-    cardano-ledger-byron-test,
+    cardano-ledger-byron:{cardano-ledger-byron, testlib},
     cardano-ledger-core,
     cardano-slotting:testlib,
     cborg,
@@ -448,6 +444,7 @@ test-suite cardano-test
     Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.ByteStringTxParser
     Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server
     Test.Consensus.Cardano.Serialisation
+    Test.Consensus.Cardano.Show
     Test.Consensus.Cardano.SupportedNetworkProtocolVersion
     Test.Consensus.Cardano.SupportsSanityCheck
     Test.Consensus.Cardano.Translation
@@ -581,13 +578,13 @@ library unstable-cardano-tools
     network,
     network-mux,
     nothunks,
-    ouroboros-consensus ^>=0.26,
+    ouroboros-consensus ^>=0.27,
     ouroboros-consensus-cardano,
-    ouroboros-consensus-diffusion ^>=0.22,
+    ouroboros-consensus-diffusion ^>=0.23,
     ouroboros-consensus-protocol:{ouroboros-consensus-protocol, unstable-protocol-testlib} ^>=0.12,
     ouroboros-network,
     ouroboros-network-api,
-    ouroboros-network-framework ^>=0.17,
+    ouroboros-network-framework ^>=0.18,
     ouroboros-network-protocols,
     resource-registry,
     singletons,

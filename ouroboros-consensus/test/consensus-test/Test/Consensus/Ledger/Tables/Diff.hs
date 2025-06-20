@@ -6,38 +6,42 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
-
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Test.Consensus.Ledger.Tables.Diff (
-    lawsTestOne
+module Test.Consensus.Ledger.Tables.Diff
+  ( lawsTestOne
   , tests
   ) where
 
-import           Data.Foldable as F
-import           Data.Map.Strict (Map)
+import Data.Foldable as F
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import           Data.Typeable
-import           Ouroboros.Consensus.Ledger.Tables.Diff
-import           Test.QuickCheck.Classes
-import           Test.Tasty (TestTree, testGroup)
-import           Test.Tasty.QuickCheck hiding (Negative, Positive)
-import           Test.Util.QuickCheck (le)
+import Data.Typeable
+import Ouroboros.Consensus.Ledger.Tables.Diff
+import Test.QuickCheck.Classes
+import Test.Tasty (TestTree, testGroup)
+import Test.Tasty.QuickCheck hiding (Negative, Positive)
+import Test.Util.QuickCheck (le)
 
 tests :: TestTree
-tests = testGroup "Test.Consensus.Ledger.Tables.Diff" [
-      testGroup "quickcheck-classes" [
-          lawsTestOne (Proxy @(Diff K V)) [
-              semigroupLaws
+tests =
+  testGroup
+    "Test.Consensus.Ledger.Tables.Diff"
+    [ testGroup
+        "quickcheck-classes"
+        [ lawsTestOne
+            (Proxy @(Diff K V))
+            [ semigroupLaws
             , monoidLaws
             ]
         ]
-    , testGroup "Applying diffs" [
-          testProperty "prop_diffThenApply" prop_diffThenApply
+    , testGroup
+        "Applying diffs"
+        [ testProperty "prop_diffThenApply" prop_diffThenApply
         , testProperty "prop_applyMempty" prop_applyMempty
         , testProperty "prop_applySum" prop_applySum
-        , testProperty "prop_applyDiffNumInsertsDeletes"  prop_applyDiffNumInsertsDeletes
+        , testProperty "prop_applyDiffNumInsertsDeletes" prop_applyDiffNumInsertsDeletes
         , testProperty "prop_applyDiffNumInsertsDeletesExact" prop_applyDiffNumInsertsDeletesExact
         ]
     ]
@@ -47,12 +51,13 @@ tests = testGroup "Test.Consensus.Ledger.Tables.Diff" [
 ------------------------------------------------------------------------------}
 
 lawsTest :: Laws -> TestTree
-lawsTest Laws{lawsTypeclass, lawsProperties} = testGroup lawsTypeclass $
+lawsTest Laws{lawsTypeclass, lawsProperties} =
+  testGroup lawsTypeclass $
     fmap (uncurry testProperty) lawsProperties
 
 lawsTestOne :: Typeable a => Proxy a -> [Proxy a -> Laws] -> TestTree
 lawsTestOne p tts =
-    testGroup (show $ typeOf p) (fmap (\f -> lawsTest $ f p) tts)
+  testGroup (show $ typeOf p) (fmap (\f -> lawsTest $ f p) tts)
 
 {------------------------------------------------------------------------------
   Applying diffs
@@ -83,11 +88,11 @@ prop_applySum x ds = F.foldl' applyDiff x ds === applyDiff x (foldMap' id ds)
 -- only inserts new keys and deletes existing keys.
 prop_applyDiffNumInsertsDeletesExact :: Map K V -> Map K V -> Property
 prop_applyDiffNumInsertsDeletesExact m1 m2 =
-    Map.keysSet m1 `Set.disjoint` Map.keysSet m2 ==>
-      Map.size (applyDiff m1 d) ===
-        Map.size m1 + numInserts d - numDeletes d
-  where
-    d = diff m1 m2
+  Map.keysSet m1 `Set.disjoint` Map.keysSet m2 ==>
+    Map.size (applyDiff m1 d)
+      === Map.size m1 + numInserts d - numDeletes d
+ where
+  d = diff m1 m2
 
 -- | Applying a @'Diff' d@ to a @'Map' m@ may increase/decrease the size of @m@
 -- up to bounds depending on the number of inserts and deletes in @d@.
@@ -98,27 +103,29 @@ prop_applyDiffNumInsertsDeletesExact m1 m2 =
 --   if @d@ does not delete any existing keys.
 prop_applyDiffNumInsertsDeletes :: Map K V -> Diff K V -> Property
 prop_applyDiffNumInsertsDeletes m d =
-    lb `le` n' .&&. n' `le` ub
-  where
-    n        = Map.size m
-    nInserts = numInserts d
-    nDeletes = numDeletes d
-    n'  = Map.size (applyDiff m d)
-    lb = n - nDeletes
-    ub = n + nInserts
+  lb `le` n' .&&. n' `le` ub
+ where
+  n = Map.size m
+  nInserts = numInserts d
+  nDeletes = numDeletes d
+  n' = Map.size (applyDiff m d)
+  lb = n - nDeletes
+  ub = n + nInserts
 
 {------------------------------------------------------------------------------
   Plain @'Arbitrary'@ instances
 ------------------------------------------------------------------------------}
 
-deriving newtype instance (Ord k, Arbitrary k, Arbitrary v)
-                       => Arbitrary (Diff k v)
+deriving newtype instance
+  (Ord k, Arbitrary k, Arbitrary v) =>
+  Arbitrary (Diff k v)
 
 instance Arbitrary v => Arbitrary (Delta v) where
-  arbitrary = oneof [
-      Insert <$> arbitrary
-    , pure Delete
-    ]
+  arbitrary =
+    oneof
+      [ Insert <$> arbitrary
+      , pure Delete
+      ]
   shrink de = case de of
     Insert x -> Insert <$> shrink x
-    Delete   -> []
+    Delete -> []

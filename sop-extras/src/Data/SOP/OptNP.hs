@@ -20,8 +20,8 @@
 --
 -- > import           Data.SOP.OptNP (OptNP (..), ViewOptNP (..))
 -- > import qualified Data.SOP.OptNP as OptNP
-module Data.SOP.OptNP (
-    NonEmptyOptNP
+module Data.SOP.OptNP
+  ( NonEmptyOptNP
   , OptNP (..)
   , at
   , empty
@@ -30,86 +30,90 @@ module Data.SOP.OptNP (
   , fromSingleton
   , singleton
   , toNP
+
     -- * View
   , ViewOptNP (..)
   , view
+
     -- * Combining
   , combine
   , combineWith
   , zipWith
   ) where
 
-import           Control.Monad (guard)
-import           Data.Coerce (coerce)
-import           Data.Functor.These (These1 (..))
-import           Data.Kind (Type)
-import           Data.Maybe (isJust)
-import           Data.Proxy
-import           Data.SOP.BasicFunctors
-import           Data.SOP.Constraint
-import           Data.SOP.Index
-import           Data.SOP.NonEmpty
-import           Data.SOP.Sing
-import           Data.SOP.Strict
-import           Data.Type.Bool (type (&&))
-import           Data.Type.Equality
-import           GHC.Stack (HasCallStack)
-import           Prelude hiding (zipWith)
+import Control.Monad (guard)
+import Data.Coerce (coerce)
+import Data.Functor.These (These1 (..))
+import Data.Kind (Type)
+import Data.Maybe (isJust)
+import Data.Proxy
+import Data.SOP.BasicFunctors
+import Data.SOP.Constraint
+import Data.SOP.Index
+import Data.SOP.NonEmpty
+import Data.SOP.Sing
+import Data.SOP.Strict
+import Data.Type.Bool (type (&&))
+import Data.Type.Equality
+import GHC.Stack (HasCallStack)
+import Prelude hiding (zipWith)
 
 type NonEmptyOptNP = OptNP 'False
 
 -- | Like an 'NP', but with optional values
 type OptNP :: Bool -> (k -> Type) -> [k] -> Type
 data OptNP empty f xs where
-  OptNil  :: OptNP 'True f '[]
+  OptNil :: OptNP 'True f '[]
   OptCons :: !(f x) -> !(OptNP empty f xs) -> OptNP 'False f (x ': xs)
   OptSkip :: !(OptNP empty f xs) -> OptNP empty f (x ': xs)
 
-type instance AllN    (OptNP empty) c = All c
-type instance SListIN (OptNP empty)   = SListI
-type instance Prod    (OptNP empty)   = NP
+type instance AllN (OptNP empty) c = All c
+type instance SListIN (OptNP empty) = SListI
+type instance Prod (OptNP empty) = NP
 
 deriving instance All (Show `Compose` f) xs => Show (OptNP empty f xs)
 
 eq ::
-     All (Eq `Compose` f) xs
-  => OptNP empty f xs
-  -> OptNP empty' f xs -> Maybe (empty :~: empty')
-eq OptNil         OptNil         = Just Refl
-eq (OptSkip   xs) (OptSkip   ys) = eq xs ys
-eq (OptCons x xs) (OptCons y ys) = do guard (x == y)
-                                      Refl <- eq xs ys
-                                      return Refl
-eq _              _              = Nothing
+  All (Eq `Compose` f) xs =>
+  OptNP empty f xs ->
+  OptNP empty' f xs ->
+  Maybe (empty :~: empty')
+eq OptNil OptNil = Just Refl
+eq (OptSkip xs) (OptSkip ys) = eq xs ys
+eq (OptCons x xs) (OptCons y ys) = do
+  guard (x == y)
+  Refl <- eq xs ys
+  return Refl
+eq _ _ = Nothing
 
 instance All (Eq `Compose` f) xs => Eq (OptNP empty f xs) where
   xs == ys = isJust (eq xs ys)
 
 empty :: forall f xs. SListI xs => OptNP 'True f xs
 empty = case sList @xs of
-    SNil  -> OptNil
-    SCons -> OptSkip empty
+  SNil -> OptNil
+  SCons -> OptSkip empty
 
 fromNonEmptyNP :: forall f xs. IsNonEmpty xs => NP f xs -> NonEmptyOptNP f xs
 fromNonEmptyNP xs = case isNonEmpty (Proxy @xs) of
-    ProofNonEmpty {} ->
-      case xs of
-        x :* xs' -> fromNP (OptCons x) xs'
+  ProofNonEmpty{} ->
+    case xs of
+      x :* xs' -> fromNP (OptCons x) xs'
 
 fromNP :: (forall empty. OptNP empty f xs -> r) -> NP f xs -> r
-fromNP k Nil       = k OptNil
+fromNP k Nil = k OptNil
 fromNP k (x :* xs) = fromNP (k . OptCons x) xs
 
 toNP :: OptNP empty f xs -> NP (Maybe :.: f) xs
 toNP = go
-  where
-    go :: OptNP empty f xs -> NP (Maybe :.: f) xs
-    go OptNil         = Nil
-    go (OptCons x xs) = Comp (Just x) :* go xs
-    go (OptSkip   xs) = Comp Nothing  :* go xs
+ where
+  go :: OptNP empty f xs -> NP (Maybe :.: f) xs
+  go OptNil = Nil
+  go (OptCons x xs) = Comp (Just x) :* go xs
+  go (OptSkip xs) = Comp Nothing :* go xs
 
 at :: SListI xs => f x -> Index xs x -> NonEmptyOptNP f xs
-at x IZ         = OptCons x empty
+at x IZ = OptCons x empty
 at x (IS index) = OptSkip (at x index)
 
 singleton :: f x -> NonEmptyOptNP f '[x]
@@ -120,41 +124,45 @@ fromSingleton :: NonEmptyOptNP f '[x] -> f x
 fromSingleton (OptCons x _) = x
 
 ap ::
-     NP (f -.-> g) xs
-  -> OptNP empty f xs
-  -> OptNP empty g xs
+  NP (f -.-> g) xs ->
+  OptNP empty f xs ->
+  OptNP empty g xs
 ap = go
-  where
-    go :: NP (f -.-> g) xs -> OptNP empty f xs -> OptNP empty g xs
-    go (f :* fs) (OptCons x xs) = OptCons (apFn f x) (go fs xs)
-    go (_ :* fs) (OptSkip   xs) = OptSkip            (go fs xs)
-    go Nil       OptNil         = OptNil
+ where
+  go :: NP (f -.-> g) xs -> OptNP empty f xs -> OptNP empty g xs
+  go (f :* fs) (OptCons x xs) = OptCons (apFn f x) (go fs xs)
+  go (_ :* fs) (OptSkip xs) = OptSkip (go fs xs)
+  go Nil OptNil = OptNil
 
 ctraverse' ::
-     forall c proxy empty xs f f' g. (All c xs, Applicative g)
-  => proxy c
-  -> (forall a. c a => f a -> g (f' a))
-  -> OptNP empty f xs  -> g (OptNP empty f' xs)
+  forall c proxy empty xs f f' g.
+  (All c xs, Applicative g) =>
+  proxy c ->
+  (forall a. c a => f a -> g (f' a)) ->
+  OptNP empty f xs ->
+  g (OptNP empty f' xs)
 ctraverse' _ f = go
-  where
-    go :: All c ys => OptNP empty' f ys -> g (OptNP empty' f' ys)
-    go (OptCons x xs) = OptCons <$> f x <*> go xs
-    go (OptSkip   xs) = OptSkip <$>         go xs
-    go OptNil         = pure OptNil
+ where
+  go :: All c ys => OptNP empty' f ys -> g (OptNP empty' f' ys)
+  go (OptCons x xs) = OptCons <$> f x <*> go xs
+  go (OptSkip xs) = OptSkip <$> go xs
+  go OptNil = pure OptNil
 
 ctraverse_ ::
-     forall c proxy empty xs f g. (All c xs, Applicative g)
-  => proxy c -> (forall a. c a => f a -> g ()) -> OptNP empty f xs -> g ()
+  forall c proxy empty xs f g.
+  (All c xs, Applicative g) =>
+  proxy c -> (forall a. c a => f a -> g ()) -> OptNP empty f xs -> g ()
 ctraverse_ _ f = go
-  where
-    go :: All c ys => OptNP empty' f ys -> g ()
-    go (OptCons x xs) = f x *> go xs
-    go (OptSkip xs)   = go xs
-    go OptNil         = pure ()
+ where
+  go :: All c ys => OptNP empty' f ys -> g ()
+  go (OptCons x xs) = f x *> go xs
+  go (OptSkip xs) = go xs
+  go OptNil = pure ()
 
 traverse_ ::
-     forall empty xs f g. (SListI xs, Applicative g)
-  => (forall a. f a -> g ()) -> OptNP empty f xs -> g ()
+  forall empty xs f g.
+  (SListI xs, Applicative g) =>
+  (forall a. f a -> g ()) -> OptNP empty f xs -> g ()
 traverse_ f = ctraverse_ (Proxy @Top) f
 
 instance HAp (OptNP empty) where
@@ -166,34 +174,35 @@ instance HTraverse_ (OptNP empty) where
 
 instance HSequence (OptNP empty) where
   hctraverse' = ctraverse'
-  htraverse'  = hctraverse' (Proxy @Top)
-  hsequence'  = htraverse' unComp
+  htraverse' = hctraverse' (Proxy @Top)
+  hsequence' = htraverse' unComp
 
 type instance Same (OptNP empty) = OptNP empty
 
 instance HTrans (OptNP empty) (OptNP empty) where
-  htrans  = trans_OptNP
+  htrans = trans_OptNP
+
   -- NOTE(jdral): this code could be replaced by 'unsafeCoerce' (see 'trans_NP'
   -- or 'trans_NS' for examples), but this would technically sacrifice type
   -- safety. For now, this version should be sufficient.
   hcoerce = coerce_OptNP
 
 trans_OptNP ::
-     AllZipN (Prod (OptNP empty)) c xs ys
-  => proxy c
-  -> (forall x y. c x y => f x -> g y)
-  -> OptNP empty f xs
-  -> OptNP empty g ys
+  AllZipN (Prod (OptNP empty)) c xs ys =>
+  proxy c ->
+  (forall x y. c x y => f x -> g y) ->
+  OptNP empty f xs ->
+  OptNP empty g ys
 trans_OptNP p t = \case
-    OptNil -> OptNil
-    OptCons fx fxs -> OptCons (t fx) (trans_OptNP p t fxs)
-    OptSkip fxs -> OptSkip (trans_OptNP p t fxs)
+  OptNil -> OptNil
+  OptCons fx fxs -> OptCons (t fx) (trans_OptNP p t fxs)
+  OptSkip fxs -> OptSkip (trans_OptNP p t fxs)
 
 coerce_OptNP ::
-     forall empty f g xs ys.
-     AllZipN (Prod (OptNP empty)) (LiftedCoercible f g) xs ys
-  => OptNP empty f xs
-  -> OptNP empty g ys
+  forall empty f g xs ys.
+  AllZipN (Prod (OptNP empty)) (LiftedCoercible f g) xs ys =>
+  OptNP empty f xs ->
+  OptNP empty g ys
 coerce_OptNP = trans_OptNP (Proxy @(LiftedCoercible f g)) coerce
 
 {-------------------------------------------------------------------------------
@@ -202,69 +211,70 @@ coerce_OptNP = trans_OptNP (Proxy @(LiftedCoercible f g)) coerce
 
 data ViewOptNP f xs where
   OptNP_ExactlyOne :: f x -> ViewOptNP f '[x]
-  OptNP_AtLeastTwo ::        ViewOptNP f (x ': y ': zs)
+  OptNP_AtLeastTwo :: ViewOptNP f (x ': y ': zs)
 
 view :: forall f xs. NonEmptyOptNP f xs -> ViewOptNP f xs
 view = \case
-    OptCons x  OptNil       -> OptNP_ExactlyOne x
-    OptCons _ (OptCons _ _) -> OptNP_AtLeastTwo
-    OptCons _ (OptSkip _)   -> OptNP_AtLeastTwo
-    OptSkip   (OptCons _ _) -> OptNP_AtLeastTwo
-    OptSkip   (OptSkip _)   -> OptNP_AtLeastTwo
+  OptCons x OptNil -> OptNP_ExactlyOne x
+  OptCons _ (OptCons _ _) -> OptNP_AtLeastTwo
+  OptCons _ (OptSkip _) -> OptNP_AtLeastTwo
+  OptSkip (OptCons _ _) -> OptNP_AtLeastTwo
+  OptSkip (OptSkip _) -> OptNP_AtLeastTwo
 
 {-------------------------------------------------------------------------------
   Combining
 -------------------------------------------------------------------------------}
 
 zipWith ::
-     forall f g h xs.
-     (forall a. These1 f g a -> h a)
-  -> NonEmptyOptNP f xs
-  -> NonEmptyOptNP g xs
-  -> NonEmptyOptNP h xs
+  forall f g h xs.
+  (forall a. These1 f g a -> h a) ->
+  NonEmptyOptNP f xs ->
+  NonEmptyOptNP g xs ->
+  NonEmptyOptNP h xs
 zipWith = polyZipWith
 
 -- | NOT EXPORTED
 polyZipWith ::
-     forall f g h empty1 empty2 xs.
-     (forall a. These1 f g a -> h a)
-  -> OptNP empty1             f xs
-  -> OptNP empty2             g xs
-  -> OptNP (empty1 && empty2) h xs
+  forall f g h empty1 empty2 xs.
+  (forall a. These1 f g a -> h a) ->
+  OptNP empty1 f xs ->
+  OptNP empty2 g xs ->
+  OptNP (empty1 && empty2) h xs
 polyZipWith f =
-    go
-  where
-    go :: OptNP empty1'              f xs'
-       -> OptNP empty2'              g xs'
-       -> OptNP (empty1' && empty2') h xs'
-    go OptNil         OptNil         = OptNil
-    go (OptCons x xs) (OptSkip   ys) = OptCons (f (This1  x  )) (go xs ys)
-    go (OptSkip   xs) (OptCons y ys) = OptCons (f (That1    y)) (go xs ys)
-    go (OptCons x xs) (OptCons y ys) = OptCons (f (These1 x y)) (go xs ys)
-    go (OptSkip   xs) (OptSkip   ys) = OptSkip                  (go xs ys)
+  go
+ where
+  go ::
+    OptNP empty1' f xs' ->
+    OptNP empty2' g xs' ->
+    OptNP (empty1' && empty2') h xs'
+  go OptNil OptNil = OptNil
+  go (OptCons x xs) (OptSkip ys) = OptCons (f (This1 x)) (go xs ys)
+  go (OptSkip xs) (OptCons y ys) = OptCons (f (That1 y)) (go xs ys)
+  go (OptCons x xs) (OptCons y ys) = OptCons (f (These1 x y)) (go xs ys)
+  go (OptSkip xs) (OptSkip ys) = OptSkip (go xs ys)
 
 combineWith ::
-     SListI xs
-  => (forall a. These1 f g a -> h a)
-  -> Maybe (NonEmptyOptNP f xs)
-  -> Maybe (NonEmptyOptNP g xs)
-  -> Maybe (NonEmptyOptNP h xs)
-combineWith _ Nothing   Nothing   = Nothing
-combineWith f (Just xs) Nothing   = Just $ polyZipWith f xs    empty
-combineWith f Nothing   (Just ys) = Just $ polyZipWith f empty ys
-combineWith f (Just xs) (Just ys) = Just $ polyZipWith f xs    ys
+  SListI xs =>
+  (forall a. These1 f g a -> h a) ->
+  Maybe (NonEmptyOptNP f xs) ->
+  Maybe (NonEmptyOptNP g xs) ->
+  Maybe (NonEmptyOptNP h xs)
+combineWith _ Nothing Nothing = Nothing
+combineWith f (Just xs) Nothing = Just $ polyZipWith f xs empty
+combineWith f Nothing (Just ys) = Just $ polyZipWith f empty ys
+combineWith f (Just xs) (Just ys) = Just $ polyZipWith f xs ys
 
 -- | Precondition: there is no overlap between the two given lists: if there is
 -- a 'Just' at a given position in one, it must be 'Nothing' at the same
 -- position in the other.
 combine ::
-     forall (f :: Type -> Type) xs.
-     -- 'These1' is not kind-polymorphic
-     (SListI xs, HasCallStack)
-  => Maybe (NonEmptyOptNP f xs)
-  -> Maybe (NonEmptyOptNP f xs)
-  -> Maybe (NonEmptyOptNP f xs)
+  forall (f :: Type -> Type) xs.
+  -- 'These1' is not kind-polymorphic
+  (SListI xs, HasCallStack) =>
+  Maybe (NonEmptyOptNP f xs) ->
+  Maybe (NonEmptyOptNP f xs) ->
+  Maybe (NonEmptyOptNP f xs)
 combine = combineWith $ \case
-    This1 x   -> x
-    That1 y   -> y
-    These1 {} -> error "combine: precondition violated"
+  This1 x -> x
+  That1 y -> y
+  These1{} -> error "combine: precondition violated"

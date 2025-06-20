@@ -7,8 +7,8 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module Ouroboros.Consensus.Ledger.SupportsMempool (
-    ApplyTxErr
+module Ouroboros.Consensus.Ledger.SupportsMempool
+  ( ApplyTxErr
   , ByteSize32 (..)
   , ComputeDiffs (..)
   , ConvertRawTxId (..)
@@ -28,23 +28,23 @@ module Ouroboros.Consensus.Ledger.SupportsMempool (
   , WhetherToIntervene (..)
   ) where
 
-import           Codec.Serialise (Serialise)
-import           Control.DeepSeq (NFData)
-import           Control.Monad.Except
-import           Data.ByteString.Short (ShortByteString)
-import           Data.Coerce (coerce)
-import           Data.DerivingVia (InstantiatedAt (..))
+import Codec.Serialise (Serialise)
+import Control.DeepSeq (NFData)
+import Control.Monad.Except
+import Data.ByteString.Short (ShortByteString)
+import Data.Coerce (coerce)
+import Data.DerivingVia (InstantiatedAt (..))
 import qualified Data.Foldable as Foldable
-import           Data.Kind (Type)
-import           Data.Measure (Measure)
+import Data.Kind (Type)
+import Data.Measure (Measure)
 import qualified Data.Measure
-import           Data.Word (Word32)
-import           GHC.Stack (HasCallStack)
-import           NoThunks.Class
-import           Numeric.Natural
-import           Ouroboros.Consensus.Block.Abstract
-import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Ledger.Tables.Utils
+import Data.Word (Word32)
+import GHC.Stack (HasCallStack)
+import NoThunks.Class
+import Numeric.Natural
+import Ouroboros.Consensus.Block.Abstract
+import Ouroboros.Consensus.Ledger.Abstract
+import Ouroboros.Consensus.Ledger.Tables.Utils
 
 -- | Generalized transaction
 --
@@ -72,15 +72,15 @@ type family ApplyTxErr blk
 -- transaction: they must have made some sort of mistake, and we don't want the
 -- ledger to penalize them.
 data WhetherToIntervene
-  = DoNotIntervene
-    -- ^ We do not trust remote peers, so if a problematic-yet-valid transaction
+  = -- | We do not trust remote peers, so if a problematic-yet-valid transaction
     -- arrives over NTN, we accept it; it will end up in a block and the ledger
     -- will penalize them for it.
-  | Intervene
-    -- ^ We trust local clients, so if a problematic-yet-valid transaction
+    DoNotIntervene
+  | -- | We trust local clients, so if a problematic-yet-valid transaction
     -- arrives over NTC, we reject it in order to avoid the ledger penalizing
     -- them for it.
-    deriving (Show)
+    Intervene
+  deriving Show
 
 -- | Whether to keep track of the diffs produced by applying the transactions.
 --
@@ -96,24 +96,25 @@ data WhetherToIntervene
 -- so this optimization will no longer be needed. That's why we chose
 -- to go with a boolean isomorph instead of something fancier.
 data ComputeDiffs
-  =
-    -- | This option should be used when syncing the mempool with the
+  = -- | This option should be used when syncing the mempool with the
     -- LedgerDB, to store a useful state in the mempool.
     ComputeDiffs
-    -- | This option should be used only when snapshotting the mempool,
+  | -- | This option should be used only when snapshotting the mempool,
     -- as we discard the resulting state anyways.
-  | IgnoreDiffs
-  deriving (Show)
+    IgnoreDiffs
+  deriving Show
 
-class ( UpdateLedger blk
-      , TxLimits blk
-      , NoThunks (GenTx blk)
-      , NoThunks (Validated (GenTx blk))
-      , Show (GenTx blk)
-      , Show (Validated (GenTx blk))
-      , Show (ApplyTxErr blk)
-      ) => LedgerSupportsMempool blk where
-
+class
+  ( UpdateLedger blk
+  , TxLimits blk
+  , NoThunks (GenTx blk)
+  , NoThunks (Validated (GenTx blk))
+  , Show (GenTx blk)
+  , Show (Validated (GenTx blk))
+  , Show (ApplyTxErr blk)
+  ) =>
+  LedgerSupportsMempool blk
+  where
   -- | Check whether the internal invariants of the transaction hold.
   txInvariant :: GenTx blk -> Bool
   txInvariant = const True
@@ -126,13 +127,15 @@ class ( UpdateLedger blk
   --
   -- The resulting ledger state contains the diffs produced by applying this
   -- transaction alone.
-  applyTx :: LedgerConfig blk
-          -> WhetherToIntervene
-          -> SlotNo -- ^ Slot number of the block containing the tx
-          -> GenTx blk
-          -> TickedLedgerState blk ValuesMK
-             -- ^ Contain only the values for the tx to apply
-          -> Except (ApplyTxErr blk) (TickedLedgerState blk DiffMK, Validated (GenTx blk))
+  applyTx ::
+    LedgerConfig blk ->
+    WhetherToIntervene ->
+    -- | Slot number of the block containing the tx
+    SlotNo ->
+    GenTx blk ->
+    -- | Contain only the values for the tx to apply
+    TickedLedgerState blk ValuesMK ->
+    Except (ApplyTxErr blk) (TickedLedgerState blk DiffMK, Validated (GenTx blk))
 
   -- | Apply a previously validated transaction to a potentially different
   -- ledger state
@@ -144,14 +147,16 @@ class ( UpdateLedger blk
   -- The returned ledger state contains the resulting values too so that this
   -- function can be used to reapply a list of transactions, providing as a
   -- first state one that contains the values for all the transactions.
-  reapplyTx :: HasCallStack
-            => ComputeDiffs
-            -> LedgerConfig blk
-            -> SlotNo -- ^ Slot number of the block containing the tx
-            -> Validated (GenTx blk)
-            -> TickedLedgerState blk ValuesMK
-               -- ^ Contains at least the values for the tx to reapply
-            -> Except (ApplyTxErr blk) (TickedLedgerState blk TrackingMK)
+  reapplyTx ::
+    HasCallStack =>
+    ComputeDiffs ->
+    LedgerConfig blk ->
+    -- | Slot number of the block containing the tx
+    SlotNo ->
+    Validated (GenTx blk) ->
+    -- | Contains at least the values for the tx to reapply
+    TickedLedgerState blk ValuesMK ->
+    Except (ApplyTxErr blk) (TickedLedgerState blk TrackingMK)
 
   -- | Apply a list of previously validated transactions to a new ledger state.
   --
@@ -168,28 +173,34 @@ class ( UpdateLedger blk
   -- in the same order as they were given, as we will use those later on to
   -- filter a list of 'TxTicket's.
   reapplyTxs ::
-       ComputeDiffs
-    -> LedgerConfig blk
-    -> SlotNo -- ^ Slot number of the block containing the tx
-    -> [(Validated (GenTx blk), extra)]
-    -> TickedLedgerState blk ValuesMK
-    -> ReapplyTxsResult extra blk
+    ComputeDiffs ->
+    LedgerConfig blk ->
+    -- | Slot number of the block containing the tx
+    SlotNo ->
+    [(Validated (GenTx blk), extra)] ->
+    TickedLedgerState blk ValuesMK ->
+    ReapplyTxsResult extra blk
   reapplyTxs doDiffs cfg slot txs st =
-      (\(err, val, st') ->
-         ReapplyTxsResult
-           err
-           (reverse val)
-           st'
-      )
-    $ Foldable.foldl' (\(accE, accV, st') (tx, extra) ->
-                 case runExcept (reapplyTx doDiffs cfg slot tx $ trackingToValues st') of
-                   Left err   -> (Invalidated tx err : accE, accV, st')
-                   Right st'' -> (accE, (tx, extra) : accV,
-                                  case doDiffs of
-                                    ComputeDiffs -> prependTrackingDiffs st' st''
-                                    IgnoreDiffs -> st''
-                                 )
-             ) ([], [], attachEmptyDiffs st) txs
+    ( \(err, val, st') ->
+        ReapplyTxsResult
+          err
+          (reverse val)
+          st'
+    )
+      $ Foldable.foldl'
+        ( \(accE, accV, st') (tx, extra) ->
+            case runExcept (reapplyTx doDiffs cfg slot tx $ trackingToValues st') of
+              Left err -> (Invalidated tx err : accE, accV, st')
+              Right st'' ->
+                ( accE
+                , (tx, extra) : accV
+                , case doDiffs of
+                    ComputeDiffs -> prependTrackingDiffs st' st''
+                    IgnoreDiffs -> st''
+                )
+        )
+        ([], [], attachEmptyDiffs st)
+        txs
 
   -- | Discard the evidence that transaction has been previously validated
   txForgetValidated :: Validated (GenTx blk) -> GenTx blk
@@ -213,30 +224,29 @@ class ( UpdateLedger blk
 
   -- | Prepend diffs on ledger states
   prependMempoolDiffs ::
-       TickedLedgerState blk DiffMK
-    -> TickedLedgerState blk DiffMK
-    -> TickedLedgerState blk DiffMK
+    TickedLedgerState blk DiffMK ->
+    TickedLedgerState blk DiffMK ->
+    TickedLedgerState blk DiffMK
   prependMempoolDiffs = prependDiffs
 
   -- | Apply diffs on ledger states
   applyMempoolDiffs ::
-       LedgerTables (LedgerState blk) ValuesMK
-    -> LedgerTables (LedgerState blk) KeysMK
-    -> TickedLedgerState blk DiffMK
-    -> TickedLedgerState blk ValuesMK
+    LedgerTables (LedgerState blk) ValuesMK ->
+    LedgerTables (LedgerState blk) KeysMK ->
+    TickedLedgerState blk DiffMK ->
+    TickedLedgerState blk ValuesMK
   applyMempoolDiffs = applyDiffForKeysOnTables
 
-
-data ReapplyTxsResult extra blk =
-  ReapplyTxsResult {
-      -- | txs that are now invalid. Order doesn't matter
-      invalidatedTxs :: ![Invalidated blk]
-      -- | txs that are valid again, order must be the same as the order in
-      -- which txs were received
-    , validatedTxs   :: ![(Validated (GenTx blk), extra)]
-      -- | Resulting ledger state
-    , resultingState :: !(TickedLedgerState blk TrackingMK)
-    }
+data ReapplyTxsResult extra blk
+  = ReapplyTxsResult
+  { invalidatedTxs :: ![Invalidated blk]
+  -- ^ txs that are now invalid. Order doesn't matter
+  , validatedTxs :: ![(Validated (GenTx blk), extra)]
+  -- ^ txs that are valid again, order must be the same as the order in
+  -- which txs were received
+  , resultingState :: !(TickedLedgerState blk TrackingMK)
+  -- ^ Resulting ledger state
+  }
 
 -- | A generalized transaction, 'GenTx', identifier.
 type TxId :: Type -> Type
@@ -246,11 +256,13 @@ data family TxId blk
 --
 -- The mempool will use these to locate transactions, so two different
 -- transactions should have different identifiers.
-class ( Show     (TxId tx)
-      , Ord      (TxId tx)
-      , NoThunks (TxId tx)
-      ) => HasTxId tx where
-
+class
+  ( Show (TxId tx)
+  , Ord (TxId tx)
+  , NoThunks (TxId tx)
+  ) =>
+  HasTxId tx
+  where
   -- | Return the 'TxId' of a 'GenTx'.
   --
   -- NOTE: a 'TxId' must be unique up to ledger rules, i.e., two 'GenTx's with
@@ -263,7 +275,6 @@ class ( Show     (TxId tx)
 
 -- | Extract the raw hash bytes from a 'TxId'.
 class HasTxId tx => ConvertRawTxId tx where
-
   -- | NOTE: The composition @'toRawTxIdHash' . 'txId'@ must satisfy the same
   -- properties as defined in the docs of 'txId'.
   toRawTxIdHash :: TxId tx -> ShortByteString
@@ -296,12 +307,15 @@ class HasTxs blk where
 -- bit more complex as it had to take other factors into account (like
 -- execution units). For details please see the individual instances for the
 -- TxLimits.
-class ( Measure          (TxMeasure blk)
-      , HasByteSize      (TxMeasure blk)
-      , NoThunks         (TxMeasure blk)
-      , TxMeasureMetrics (TxMeasure blk)
-      , Show             (TxMeasure blk)
-      ) => TxLimits blk where
+class
+  ( Measure (TxMeasure blk)
+  , HasByteSize (TxMeasure blk)
+  , NoThunks (TxMeasure blk)
+  , TxMeasureMetrics (TxMeasure blk)
+  , Show (TxMeasure blk)
+  ) =>
+  TxLimits blk
+  where
   -- | The (possibly multi-dimensional) size of a transaction in a block.
   type TxMeasure blk
 
@@ -335,20 +349,20 @@ class ( Measure          (TxMeasure blk)
   -- Returns an exception if and only if the transaction violates the per-tx
   -- limits.
   txMeasure ::
-       LedgerConfig blk
-       -- ^ used at least by HFC's composition logic
-    -> TickedLedgerState blk ValuesMK
-       -- ^ This state needs values as a transaction measure might depend on
-       -- those. For example in Cardano they look at the reference scripts.
-    -> GenTx blk
-    -> Except (ApplyTxErr blk) (TxMeasure blk)
+    -- | used at least by HFC's composition logic
+    LedgerConfig blk ->
+    -- | This state needs values as a transaction measure might depend on
+    -- those. For example in Cardano they look at the reference scripts.
+    TickedLedgerState blk ValuesMK ->
+    GenTx blk ->
+    Except (ApplyTxErr blk) (TxMeasure blk)
 
   -- | What is the allowed capacity for the txs in an individual block?
   blockCapacityTxMeasure ::
-       LedgerConfig blk
-       -- ^ at least for symmetry with 'txMeasure'
-    -> TickedLedgerState blk mk
-    -> TxMeasure blk
+    -- | at least for symmetry with 'txMeasure'
+    LedgerConfig blk ->
+    TickedLedgerState blk mk ->
+    TxMeasure blk
 
 -- | We intentionally do not declare a 'Num' instance! We prefer @ByteSize32@
 -- to occur explicitly in the code where possible, for
@@ -370,15 +384,17 @@ class ( Measure          (TxMeasure blk)
 -- as encoders. Thus 'Natural' would merely defer the overflow concern, and
 -- even risks instilling a false sense that overflow need not be considered at
 -- all.
-newtype ByteSize32 = ByteSize32 { unByteSize32 :: Word32 }
-  deriving stock    (Show)
-  deriving newtype  (Eq, Ord)
-  deriving newtype  (NFData)
-  deriving newtype  (Serialise)
-  deriving          (Monoid, Semigroup)
-                via (InstantiatedAt Measure (IgnoringOverflow ByteSize32))
-  deriving          (NoThunks)
-                via OnlyCheckWhnfNamed "ByteSize" ByteSize32
+newtype ByteSize32 = ByteSize32 {unByteSize32 :: Word32}
+  deriving stock Show
+  deriving newtype (Eq, Ord)
+  deriving newtype NFData
+  deriving newtype Serialise
+  deriving
+    (Monoid, Semigroup)
+    via (InstantiatedAt Measure (IgnoringOverflow ByteSize32))
+  deriving
+    NoThunks
+    via OnlyCheckWhnfNamed "ByteSize" ByteSize32
 
 -- | @'IgnoringOverflow' a@ has the same semantics as @a@, except it ignores
 -- the fact that @a@ can overflow.
@@ -391,20 +407,20 @@ newtype ByteSize32 = ByteSize32 { unByteSize32 :: Word32 }
 -- will break assumptions, so overflow must therefore be guarded against.
 --
 -- TODO upstream this to the @measure@ package
-newtype IgnoringOverflow a = IgnoringOverflow { unIgnoringOverflow :: a }
-  deriving stock    (Show)
-  deriving newtype  (Eq, Ord)
-  deriving newtype  (NFData)
-  deriving newtype  (Monoid, Semigroup)
-  deriving newtype  (NoThunks)
-  deriving newtype  (HasByteSize)
-  deriving newtype  (TxMeasureMetrics)
+newtype IgnoringOverflow a = IgnoringOverflow {unIgnoringOverflow :: a}
+  deriving stock Show
+  deriving newtype (Eq, Ord)
+  deriving newtype NFData
+  deriving newtype (Monoid, Semigroup)
+  deriving newtype NoThunks
+  deriving newtype HasByteSize
+  deriving newtype TxMeasureMetrics
 
 instance Measure (IgnoringOverflow ByteSize32) where
   zero = coerce (0 :: Word32)
   plus = coerce $ (+) @Word32
-  min  = coerce $ min @Word32
-  max  = coerce $ max @Word32
+  min = coerce $ min @Word32
+  max = coerce $ max @Word32
 
 class HasByteSize a where
   -- | The byte size component (of 'TxMeasure')
@@ -427,6 +443,7 @@ instance TxMeasureMetrics ByteSize32 where
 
 -- | A transaction that was previously valid. Used to clarify the types on the
 -- 'reapplyTxs' function.
-data Invalidated blk = Invalidated { getInvalidated :: !(Validated (GenTx blk))
-                                   , getReason      :: !(ApplyTxErr blk)
-                                   }
+data Invalidated blk = Invalidated
+  { getInvalidated :: !(Validated (GenTx blk))
+  , getReason :: !(ApplyTxErr blk)
+  }

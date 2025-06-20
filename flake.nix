@@ -16,7 +16,7 @@
       inputs.hackage.follows = "hackageNix";
     };
     hackageNix = {
-      url = "github:input-output-hk/hackage.nix?ref=for-stackage";
+      url = "github:input-output-hk/hackage.nix";
       flake = false;
     };
     CHaP = {
@@ -29,6 +29,10 @@
     };
     flake-compat = {
       url = "github:nix-community/flake-compat";
+      flake = false;
+    };
+    hls = {
+      url = "github:haskell/haskell-language-server/2.11.0.0";
       flake = false;
     };
     agda-nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -77,6 +81,8 @@
           ghc96-profiled = hydraJobs.native.haskell96.devShellProfiled;
           ghc910 = hydraJobs.native.haskell910.devShell;
           ghc910-profiled = hydraJobs.native.haskell910.devShellProfiled;
+          ghc912 = hydraJobs.native.haskell912.devShell;
+          ghc912-profiled = hydraJobs.native.haskell912.devShellProfiled;
 
           agda-spec = pkgs.agda-spec.shell;
 
@@ -86,8 +92,7 @@
         };
         inherit hydraJobs;
         legacyPackages = pkgs;
-        packages =
-          hydraJobs.native.haskell96.exesNoAsserts.ouroboros-consensus-cardano;
+        packages = hydraJobs.native.haskell96.exesNoAsserts;
       }
     );
 }

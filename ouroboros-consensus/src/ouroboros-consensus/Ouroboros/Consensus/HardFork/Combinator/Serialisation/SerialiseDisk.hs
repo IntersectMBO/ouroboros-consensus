@@ -1,37 +1,36 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.Serialisation.SerialiseDisk () where
 
-import           Codec.CBOR.Encoding (Encoding)
+import Codec.CBOR.Encoding (Encoding)
 import qualified Data.ByteString.Lazy as Lazy
-import           Data.SOP.BasicFunctors
-import           Data.SOP.Constraint
-import           Data.SOP.Dict (Dict (..), all_NP)
-import           Data.SOP.Functors
-import           Data.SOP.Strict
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
-import           Ouroboros.Consensus.HardFork.Combinator.Basics
-import           Ouroboros.Consensus.HardFork.Combinator.Protocol
-import           Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
-import           Ouroboros.Consensus.HeaderValidation
-import           Ouroboros.Consensus.Ledger.Basics
-import           Ouroboros.Consensus.Storage.ChainDB
-import           Ouroboros.Consensus.Storage.Serialisation
-import           Ouroboros.Consensus.TypeFamilyWrappers
+import Data.SOP.BasicFunctors
+import Data.SOP.Constraint
+import Data.SOP.Dict (Dict (..), all_NP)
+import Data.SOP.Functors
+import Data.SOP.Strict
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.HardFork.Combinator.AcrossEras
+import Ouroboros.Consensus.HardFork.Combinator.Basics
+import Ouroboros.Consensus.HardFork.Combinator.Protocol
+import Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
+import Ouroboros.Consensus.HeaderValidation
+import Ouroboros.Consensus.Ledger.Basics
+import Ouroboros.Consensus.Storage.ChainDB
+import Ouroboros.Consensus.Storage.Serialisation
+import Ouroboros.Consensus.TypeFamilyWrappers
 
-instance SerialiseHFC xs => SerialiseDiskConstraints  (HardForkBlock xs)
+instance SerialiseHFC xs => SerialiseDiskConstraints (HardForkBlock xs)
 
 {-------------------------------------------------------------------------------
   'ReconstructNestedCtxt'
 -------------------------------------------------------------------------------}
 
 instance SerialiseHFC xs => ReconstructNestedCtxt Header (HardForkBlock xs) where
-  reconstructPrefixLen  = reconstructHfcPrefixLen
+  reconstructPrefixLen = reconstructHfcPrefixLen
   reconstructNestedCtxt = reconstructHfcNestedCtxt
 
 {-------------------------------------------------------------------------------
@@ -45,90 +44,115 @@ instance SerialiseHFC xs => HasBinaryBlockInfo (HardForkBlock xs) where
   Blocks/headers
 -------------------------------------------------------------------------------}
 
-instance SerialiseHFC xs
-      => EncodeDisk (HardForkBlock xs) (HardForkBlock xs) where
+instance
+  SerialiseHFC xs =>
+  EncodeDisk (HardForkBlock xs) (HardForkBlock xs)
+  where
   encodeDisk = encodeDiskHfcBlock
 
-instance SerialiseHFC xs
-      => DecodeDisk (HardForkBlock xs) (Lazy.ByteString -> HardForkBlock xs) where
+instance
+  SerialiseHFC xs =>
+  DecodeDisk (HardForkBlock xs) (Lazy.ByteString -> HardForkBlock xs)
+  where
   decodeDisk = decodeDiskHfcBlock
 
-instance SerialiseHFC xs
-      => EncodeDiskDepIx (NestedCtxt Header) (HardForkBlock xs) where
+instance
+  SerialiseHFC xs =>
+  EncodeDiskDepIx (NestedCtxt Header) (HardForkBlock xs)
+  where
   encodeDiskDepIx = encodeNestedCtxt
 
-instance SerialiseHFC xs
-      => DecodeDiskDepIx (NestedCtxt Header) (HardForkBlock xs) where
+instance
+  SerialiseHFC xs =>
+  DecodeDiskDepIx (NestedCtxt Header) (HardForkBlock xs)
+  where
   decodeDiskDepIx = decodeNestedCtxt
 
-instance SerialiseHFC xs
-      => EncodeDiskDep (NestedCtxt Header) (HardForkBlock xs) where
+instance
+  SerialiseHFC xs =>
+  EncodeDiskDep (NestedCtxt Header) (HardForkBlock xs)
+  where
   encodeDiskDep =
-      case dict of
-        Dict -> encodeNested
-    where
-      dict :: Dict (All (EncodeDiskDep (NestedCtxt Header))) xs
-      dict = all_NP (hcpure pSHFC Dict)
+    case dict of
+      Dict -> encodeNested
+   where
+    dict :: Dict (All (EncodeDiskDep (NestedCtxt Header))) xs
+    dict = all_NP (hcpure pSHFC Dict)
 
-instance SerialiseHFC xs
-      => DecodeDiskDep (NestedCtxt Header) (HardForkBlock xs) where
+instance
+  SerialiseHFC xs =>
+  DecodeDiskDep (NestedCtxt Header) (HardForkBlock xs)
+  where
   decodeDiskDep =
-      case dict of
-        Dict -> decodeNested
-    where
-      dict :: Dict (All (DecodeDiskDep (NestedCtxt Header))) xs
-      dict = all_NP (hcpure pSHFC Dict)
+    case dict of
+      Dict -> decodeNested
+   where
+    dict :: Dict (All (DecodeDiskDep (NestedCtxt Header))) xs
+    dict = all_NP (hcpure pSHFC Dict)
 
 {-------------------------------------------------------------------------------
   Ledger state
 -------------------------------------------------------------------------------}
 
-instance SerialiseHFC xs
-      => EncodeDisk (HardForkBlock xs) (AnnTip (HardForkBlock xs)) where
+instance
+  SerialiseHFC xs =>
+  EncodeDisk (HardForkBlock xs) (AnnTip (HardForkBlock xs))
+  where
   encodeDisk cfg =
-        encodeNS (hcmap pSHFC (fn . (K .: encodeDisk)) cfgs)
+    encodeNS (hcmap pSHFC (fn . (K .: encodeDisk)) cfgs)
       . distribAnnTip
-    where
-      cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
+   where
+    cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
 
-instance SerialiseHFC xs
-      => DecodeDisk (HardForkBlock xs) (AnnTip (HardForkBlock xs)) where
+instance
+  SerialiseHFC xs =>
+  DecodeDisk (HardForkBlock xs) (AnnTip (HardForkBlock xs))
+  where
   decodeDisk cfg =
-        fmap undistribAnnTip
-      $ decodeNS (hcmap pSHFC (Comp . decodeDisk) cfgs)
-    where
-      cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
+    fmap undistribAnnTip $
+      decodeNS (hcmap pSHFC (Comp . decodeDisk) cfgs)
+   where
+    cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
 
-instance SerialiseHFC xs
-      => EncodeDisk (HardForkBlock xs) (HardForkChainDepState xs) where
+instance
+  SerialiseHFC xs =>
+  EncodeDisk (HardForkBlock xs) (HardForkChainDepState xs)
+  where
   encodeDisk cfg =
-      encodeTelescope (hcmap pSHFC (fn . aux) cfgs)
-    where
-      cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
+    encodeTelescope (hcmap pSHFC (fn . aux) cfgs)
+   where
+    cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
 
-      aux :: SerialiseDiskConstraints blk
-          => CodecConfig blk -> WrapChainDepState blk -> K Encoding blk
-      aux cfg' (WrapChainDepState st) = K $ encodeDisk cfg' st
+    aux ::
+      SerialiseDiskConstraints blk =>
+      CodecConfig blk -> WrapChainDepState blk -> K Encoding blk
+    aux cfg' (WrapChainDepState st) = K $ encodeDisk cfg' st
 
-instance SerialiseHFC xs
-      => DecodeDisk (HardForkBlock xs) (HardForkChainDepState xs) where
+instance
+  SerialiseHFC xs =>
+  DecodeDisk (HardForkBlock xs) (HardForkChainDepState xs)
+  where
   decodeDisk cfg =
-      decodeTelescope (hcmap pSHFC (Comp . fmap WrapChainDepState . decodeDisk) cfgs)
-    where
-      cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
+    decodeTelescope (hcmap pSHFC (Comp . fmap WrapChainDepState . decodeDisk) cfgs)
+   where
+    cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
 
-instance SerialiseHFC xs
-      => EncodeDisk (HardForkBlock xs) (LedgerState (HardForkBlock xs) EmptyMK) where
+instance
+  SerialiseHFC xs =>
+  EncodeDisk (HardForkBlock xs) (LedgerState (HardForkBlock xs) EmptyMK)
+  where
   encodeDisk cfg =
-        encodeTelescope (hcmap pSHFC (\cfg' -> fn (K . encodeDisk cfg' . unFlip)) cfgs)
+    encodeTelescope (hcmap pSHFC (\cfg' -> fn (K . encodeDisk cfg' . unFlip)) cfgs)
       . hardForkLedgerStatePerEra
-    where
-      cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
+   where
+    cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
 
-instance SerialiseHFC xs
-      => DecodeDisk (HardForkBlock xs) (LedgerState (HardForkBlock xs) EmptyMK) where
+instance
+  SerialiseHFC xs =>
+  DecodeDisk (HardForkBlock xs) (LedgerState (HardForkBlock xs) EmptyMK)
+  where
   decodeDisk cfg =
-        fmap HardForkLedgerState
-      $ decodeTelescope (hcmap pSHFC (Comp . fmap Flip . decodeDisk) cfgs)
-    where
-      cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
+    fmap HardForkLedgerState $
+      decodeTelescope (hcmap pSHFC (Comp . fmap Flip . decodeDisk) cfgs)
+   where
+    cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)

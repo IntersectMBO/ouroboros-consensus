@@ -6,93 +6,95 @@
 -- DUPLICATE -- adapted from: cardano-api/src/Cardano/Api/OperationalCertificate.hs
 
 -- | Operational certificates
---
-module Cardano.Api.OperationalCertificate (
-    --  OperationalCertIssueError (..)
+module Cardano.Api.OperationalCertificate
+  ( --  OperationalCertIssueError (..)
     OperationalCertificate (..)
   , OperationalCertificateIssueCounter (..)
   , Shelley.KESPeriod (..)
   , getHotKey
   , getKesPeriod
   , getOpCertCount
-    -- , issueOperationalCertificate
+  -- , issueOperationalCertificate
+
     -- * Data family instances
   , AsType (..)
   ) where
 
-import           Cardano.Api.Any
-import           Cardano.Api.Key
-import           Cardano.Api.KeysByron
-import           Cardano.Api.KeysPraos
-import           Cardano.Api.KeysShelley
-import           Cardano.Api.SerialiseTextEnvelope
-import qualified Cardano.Ledger.Binary as CBOR (CBORGroup (..), shelleyProtVer,
-                     toPlainDecoder, toPlainEncoding)
-import           Cardano.Protocol.Crypto (StandardCrypto)
+import Cardano.Api.Any
+import Cardano.Api.Key
+import Cardano.Api.KeysByron
+import Cardano.Api.KeysPraos
+import Cardano.Api.KeysShelley
+import Cardano.Api.SerialiseTextEnvelope
+import qualified Cardano.Ledger.Binary as CBOR
+  ( CBORGroup (..)
+  , shelleyProtVer
+  , toPlainDecoder
+  , toPlainEncoding
+  )
+import Cardano.Protocol.Crypto (StandardCrypto)
 import qualified Cardano.Protocol.TPraos.OCert as Shelley
-import           Data.Word
-
+import Data.Word
 
 -- ----------------------------------------------------------------------------
 -- Operational certificates
 --
 
-data OperationalCertificate =
-     OperationalCertificate
-       !(Shelley.OCert StandardCrypto)
-       !(VerificationKey StakePoolKey)
+data OperationalCertificate
+  = OperationalCertificate
+      !(Shelley.OCert StandardCrypto)
+      !(VerificationKey StakePoolKey)
   deriving (Eq, Show)
   deriving anyclass SerialiseAsCBOR
 
-data OperationalCertificateIssueCounter =
-     OperationalCertificateIssueCounter
-       { opCertIssueCount   :: !Word64
-       , opCertIssueColdKey :: !(VerificationKey StakePoolKey) -- For consistency checking
-       }
+data OperationalCertificateIssueCounter
+  = OperationalCertificateIssueCounter
+  { opCertIssueCount :: !Word64
+  , opCertIssueColdKey :: !(VerificationKey StakePoolKey) -- For consistency checking
+  }
   deriving (Eq, Show)
   deriving anyclass SerialiseAsCBOR
-
 
 instance ToCBOR OperationalCertificate where
-    toCBOR = CBOR.toPlainEncoding CBOR.shelleyProtVer . encCBOR
+  toCBOR = CBOR.toPlainEncoding CBOR.shelleyProtVer . encCBOR
 
 instance FromCBOR OperationalCertificate where
-    fromCBOR = CBOR.toPlainDecoder Nothing CBOR.shelleyProtVer decCBOR
+  fromCBOR = CBOR.toPlainDecoder Nothing CBOR.shelleyProtVer decCBOR
 
 instance ToCBOR OperationalCertificateIssueCounter where
-    toCBOR = CBOR.toPlainEncoding CBOR.shelleyProtVer . encCBOR
+  toCBOR = CBOR.toPlainEncoding CBOR.shelleyProtVer . encCBOR
 
 instance FromCBOR OperationalCertificateIssueCounter where
-    fromCBOR = CBOR.toPlainDecoder Nothing CBOR.shelleyProtVer decCBOR
+  fromCBOR = CBOR.toPlainDecoder Nothing CBOR.shelleyProtVer decCBOR
 
 instance EncCBOR OperationalCertificate where
-    encCBOR (OperationalCertificate ocert vkey) =
-      encCBOR (CBOR.CBORGroup ocert, vkey)
+  encCBOR (OperationalCertificate ocert vkey) =
+    encCBOR (CBOR.CBORGroup ocert, vkey)
 
 instance DecCBOR OperationalCertificate where
-    decCBOR = do
-      (CBOR.CBORGroup ocert, vkey) <- decCBOR
-      return (OperationalCertificate ocert vkey)
+  decCBOR = do
+    (CBOR.CBORGroup ocert, vkey) <- decCBOR
+    return (OperationalCertificate ocert vkey)
 
 instance EncCBOR OperationalCertificateIssueCounter where
-    encCBOR (OperationalCertificateIssueCounter counter vkey) =
-      encCBOR (counter, vkey)
+  encCBOR (OperationalCertificateIssueCounter counter vkey) =
+    encCBOR (counter, vkey)
 
 instance DecCBOR OperationalCertificateIssueCounter where
-    decCBOR = do
-      (counter, vkey) <- decCBOR
-      return (OperationalCertificateIssueCounter counter vkey)
+  decCBOR = do
+    (counter, vkey) <- decCBOR
+    return (OperationalCertificateIssueCounter counter vkey)
 
 instance HasTypeProxy OperationalCertificate where
-    data AsType OperationalCertificate = AsOperationalCertificate
-    proxyToAsType _ = AsOperationalCertificate
+  data AsType OperationalCertificate = AsOperationalCertificate
+  proxyToAsType _ = AsOperationalCertificate
 
 instance HasTypeProxy OperationalCertificateIssueCounter where
-    data AsType OperationalCertificateIssueCounter = AsOperationalCertificateIssueCounter
-    proxyToAsType _ = AsOperationalCertificateIssueCounter
+  data AsType OperationalCertificateIssueCounter = AsOperationalCertificateIssueCounter
+  proxyToAsType _ = AsOperationalCertificateIssueCounter
 
 instance HasTextEnvelope OperationalCertificate where
-    textEnvelopeType _ = "NodeOperationalCertificate"
+  textEnvelopeType _ = "NodeOperationalCertificate"
 
 getHotKey :: OperationalCertificate -> VerificationKey UnsoundPureKesKey
 getHotKey (OperationalCertificate cert _) = KesVerificationKey $ Shelley.ocertVkHot cert

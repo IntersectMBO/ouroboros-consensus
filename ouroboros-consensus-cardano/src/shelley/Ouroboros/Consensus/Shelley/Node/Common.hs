@@ -8,51 +8,60 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
-
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Node configuration common to all (era, protocol) combinations deriving from
 -- Shelley.
-module Ouroboros.Consensus.Shelley.Node.Common (
-    ProtocolParamsShelleyBased (..)
+module Ouroboros.Consensus.Shelley.Node.Common
+  ( ProtocolParamsShelleyBased (..)
   , ShelleyEraWithCrypto
   , ShelleyLeaderCredentials (..)
   , shelleyBlockIssuerVKey
   ) where
 
-import           Cardano.Ledger.BaseTypes (unNonZero)
+import Cardano.Ledger.BaseTypes (unNonZero)
 import qualified Cardano.Ledger.Keys as SL
 import qualified Cardano.Ledger.Shelley.API as SL
-import           Cardano.Ledger.Slot
-import           Data.Text (Text)
-import           Ouroboros.Consensus.Block (CannotForge, ForgeStateInfo,
-                     ForgeStateUpdateError)
-import           Ouroboros.Consensus.Config (maxRollbacks)
-import           Ouroboros.Consensus.Config.SupportsNode
-import           Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
-import           Ouroboros.Consensus.Node.InitStorage
+import Cardano.Ledger.Slot
+import Data.Text (Text)
+import Ouroboros.Consensus.Block
+  ( CannotForge
+  , ForgeStateInfo
+  , ForgeStateUpdateError
+  )
+import Ouroboros.Consensus.Config (maxRollbacks)
+import Ouroboros.Consensus.Config.SupportsNode
+import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
+import Ouroboros.Consensus.Node.InitStorage
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
-import           Ouroboros.Consensus.Protocol.Praos.Common
-                     (PraosCanBeLeader (praosCanBeLeaderColdVerKey))
-import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock,
-                     ShelleyCompatible, shelleyNetworkMagic,
-                     shelleyStorageConfigSecurityParam,
-                     shelleyStorageConfigSlotsPerKESPeriod, shelleySystemStart,
-                     verifyBlockIntegrity)
-import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto,
-                     ProtocolHeaderSupportsProtocol (CannotForgeError))
-import           Ouroboros.Consensus.Storage.ImmutableDB
+import Ouroboros.Consensus.Protocol.Praos.Common
+  ( PraosCanBeLeader (praosCanBeLeaderColdVerKey)
+  )
+import Ouroboros.Consensus.Shelley.Ledger
+  ( ShelleyBlock
+  , ShelleyCompatible
+  , shelleyNetworkMagic
+  , shelleyStorageConfigSecurityParam
+  , shelleyStorageConfigSlotsPerKESPeriod
+  , shelleySystemStart
+  , verifyBlockIntegrity
+  )
+import Ouroboros.Consensus.Shelley.Protocol.Abstract
+  ( ProtoCrypto
+  , ProtocolHeaderSupportsProtocol (CannotForgeError)
+  )
+import Ouroboros.Consensus.Storage.ImmutableDB
 
 {-------------------------------------------------------------------------------
   Credentials
 -------------------------------------------------------------------------------}
 
 data ShelleyLeaderCredentials c = ShelleyLeaderCredentials
-  { shelleyLeaderCredentialsCanBeLeader :: PraosCanBeLeader c,
-    -- | Identifier for this set of credentials.
-    --
-    -- Useful when the node is running with multiple sets of credentials.
-    shelleyLeaderCredentialsLabel       :: Text
+  { shelleyLeaderCredentialsCanBeLeader :: PraosCanBeLeader c
+  , shelleyLeaderCredentialsLabel :: Text
+  -- ^ Identifier for this set of credentials.
+  --
+  -- Useful when the node is running with multiple sets of credentials.
   }
 
 shelleyBlockIssuerVKey ::
@@ -117,11 +126,11 @@ instance ShelleyCompatible proto era => NodeInitStorage (ShelleyBlock proto era)
 -- per-era protocol parameters, one value of 'ProtocolParamsShelleyBased' will
 -- be needed, which is shared among all Shelley-based eras.
 data ProtocolParamsShelleyBased c = ProtocolParamsShelleyBased
-  { -- | The initial nonce, typically derived from the hash of Genesis
-    -- config JSON file.
-    --
-    -- WARNING: chains using different values of this parameter will be
-    -- mutually incompatible.
-    shelleyBasedInitialNonce      :: SL.Nonce,
-    shelleyBasedLeaderCredentials :: [ShelleyLeaderCredentials c]
+  { shelleyBasedInitialNonce :: SL.Nonce
+  -- ^ The initial nonce, typically derived from the hash of Genesis
+  -- config JSON file.
+  --
+  -- WARNING: chains using different values of this parameter will be
+  -- mutually incompatible.
+  , shelleyBasedLeaderCredentials :: [ShelleyLeaderCredentials c]
   }

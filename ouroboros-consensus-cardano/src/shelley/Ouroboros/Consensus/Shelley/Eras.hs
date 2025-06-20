@@ -11,17 +11,17 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
-
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Ouroboros.Consensus.Shelley.Eras (
-    -- * Eras based on the Shelley ledger
+module Ouroboros.Consensus.Shelley.Eras
+  ( -- * Eras based on the Shelley ledger
     AllegraEra
   , AlonzoEra
   , BabbageEra
   , ConwayEra
   , MaryEra
   , ShelleyEra
+
     -- * Eras instantiated with standard crypto
   , StandardAllegra
   , StandardAlonzo
@@ -29,53 +29,59 @@ module Ouroboros.Consensus.Shelley.Eras (
   , StandardConway
   , StandardMary
   , StandardShelley
+
     -- * Shelley-based era
   , ConwayEraGovDict (..)
   , ShelleyBasedEra (..)
   , WrapTx (..)
+
     -- * Convenience functions
   , isBeforeConway
+
     -- * Re-exports
   , StandardCrypto
   ) where
 
-import           Cardano.Binary
-import           Cardano.Ledger.Allegra (AllegraEra)
-import           Cardano.Ledger.Allegra.Translation ()
-import           Cardano.Ledger.Alonzo (AlonzoEra)
+import Cardano.Binary
+import Cardano.Ledger.Allegra (AllegraEra)
+import Cardano.Ledger.Allegra.Translation ()
+import Cardano.Ledger.Alonzo (AlonzoEra)
 import qualified Cardano.Ledger.Alonzo.Rules as Alonzo
 import qualified Cardano.Ledger.Alonzo.Translation as Alonzo
 import qualified Cardano.Ledger.Alonzo.Tx as Alonzo
 import qualified Cardano.Ledger.Api.Era as L
-import           Cardano.Ledger.Babbage (BabbageEra)
+import Cardano.Ledger.Babbage (BabbageEra)
 import qualified Cardano.Ledger.Babbage.Rules as Babbage
 import qualified Cardano.Ledger.Babbage.Translation as Babbage
-import           Cardano.Ledger.BaseTypes
-import           Cardano.Ledger.Binary (DecCBOR, EncCBOR)
-import           Cardano.Ledger.Conway (ConwayEra)
+import Cardano.Ledger.BaseTypes
+import Cardano.Ledger.Binary (DecCBOR, EncCBOR)
+import Cardano.Ledger.Conway (ConwayEra)
 import qualified Cardano.Ledger.Conway.Governance as CG
 import qualified Cardano.Ledger.Conway.Rules as Conway
 import qualified Cardano.Ledger.Conway.Rules as SL
-                     (ConwayLedgerPredFailure (..))
+  ( ConwayLedgerPredFailure (..)
+  )
+import qualified Cardano.Ledger.Conway.State as CG
 import qualified Cardano.Ledger.Conway.Translation as Conway
-import           Cardano.Ledger.Core as Core
-import           Cardano.Ledger.Mary (MaryEra)
-import           Cardano.Ledger.Mary.Translation ()
-import           Cardano.Ledger.Shelley (ShelleyEra)
+import Cardano.Ledger.Core as Core
+import Cardano.Ledger.Mary (MaryEra)
+import Cardano.Ledger.Mary.Translation ()
+import Cardano.Ledger.Shelley (ShelleyEra)
 import qualified Cardano.Ledger.Shelley.API as SL
-import           Cardano.Ledger.Shelley.Core as Core
+import Cardano.Ledger.Shelley.Core as Core
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import qualified Cardano.Ledger.Shelley.Rules as SL
 import qualified Cardano.Ledger.Shelley.Transition as SL
 import qualified Cardano.Protocol.TPraos.API as SL
-import           Control.Monad.Except
-import           Control.State.Transition (PredicateFailure)
-import           Data.Data (Proxy (Proxy))
-import           Data.List.NonEmpty (NonEmpty ((:|)))
-import           NoThunks.Class (NoThunks)
-import           Ouroboros.Consensus.Ledger.SupportsMempool
-                     (WhetherToIntervene (..))
-import           Ouroboros.Consensus.Protocol.TPraos (StandardCrypto)
+import Control.Monad.Except
+import Control.State.Transition (PredicateFailure)
+import Data.Data (Proxy (Proxy))
+import Data.List.NonEmpty (NonEmpty ((:|)))
+import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Ledger.SupportsMempool
+  ( WhetherToIntervene (..)
+  )
+import Ouroboros.Consensus.Protocol.TPraos (StandardCrypto)
 
 {-------------------------------------------------------------------------------
   Eras instantiated with standard crypto
@@ -83,26 +89,32 @@ import           Ouroboros.Consensus.Protocol.TPraos (StandardCrypto)
 
 -- | The Shelley era with standard crypto
 type StandardShelley = ShelleyEra
+
 {-# DEPRECATED StandardShelley "In favor of `ShelleyEra`" #-}
 
 -- | The Allegra era with standard crypto
 type StandardAllegra = AllegraEra
+
 {-# DEPRECATED StandardAllegra "In favor of `AllegraEra`" #-}
 
 -- | The Mary era with standard crypto
 type StandardMary = MaryEra
+
 {-# DEPRECATED StandardMary "In favor of `MaryEra`" #-}
 
 -- | The Alonzo era with standard crypto
 type StandardAlonzo = AlonzoEra
+
 {-# DEPRECATED StandardAlonzo "In favor of `AlonzoEra`" #-}
 
 -- | The Babbage era with standard crypto
 type StandardBabbage = BabbageEra
+
 {-# DEPRECATED StandardBabbage "In favor of `BabbageEra`" #-}
 
 -- | The Conway era with standard crypto
 type StandardConway = ConwayEra
+
 {-# DEPRECATED StandardConway "In favor of `ConwayEra`" #-}
 
 {-------------------------------------------------------------------------------
@@ -125,73 +137,71 @@ type StandardConway = ConwayEra
 -- needed to determine the hard fork point. In the future this should be
 -- replaced with an appropriate API - see
 -- https://github.com/IntersectMBO/ouroboros-network/issues/2890
-class ( Core.EraSegWits era
-      , Core.EraGov era
-      , SL.ApplyTx era
-      , SL.ApplyBlock era
-      , SL.EraTransition era
-
-        -- TODO This constraint is quite tight, since it fixes things to the
-        -- original TPraos ledger view. We would like to ultimately remove it.
-      , SL.GetLedgerView era
-
-      , NoThunks (SL.StashedAVVMAddresses era)
-      , EncCBOR (SL.StashedAVVMAddresses era)
-      , DecCBOR (SL.StashedAVVMAddresses era)
-      , Show (SL.StashedAVVMAddresses era)
-      , Eq (SL.StashedAVVMAddresses era)
-
-      , DecCBOR (PredicateFailure (EraRule "LEDGER" era))
-      , EncCBOR (PredicateFailure (EraRule "LEDGER" era))
-      , DecCBOR (PredicateFailure (EraRule "UTXOW" era))
-      , EncCBOR (PredicateFailure (EraRule "UTXOW" era))
-      , Eq (PredicateFailure (EraRule "BBODY" era))
-      , Show (PredicateFailure (EraRule "BBODY" era))
-      , NoThunks (PredicateFailure (EraRule "BBODY" era))
-      , NoThunks (Core.TranslationContext era)
-
-      , ToCBOR (Core.TranslationContext era)
-      , FromCBOR (Core.TranslationContext era)
-      ) => ShelleyBasedEra era where
-
+class
+  ( Core.EraSegWits era
+  , Core.EraGov era
+  , SL.ApplyTx era
+  , SL.ApplyBlock era
+  , SL.EraTransition era
+  , -- TODO This constraint is quite tight, since it fixes things to the
+    -- original TPraos ledger view. We would like to ultimately remove it.
+    SL.GetLedgerView era
+  , NoThunks (SL.StashedAVVMAddresses era)
+  , EncCBOR (SL.StashedAVVMAddresses era)
+  , DecCBOR (SL.StashedAVVMAddresses era)
+  , Show (SL.StashedAVVMAddresses era)
+  , Eq (SL.StashedAVVMAddresses era)
+  , DecCBOR (PredicateFailure (EraRule "LEDGER" era))
+  , EncCBOR (PredicateFailure (EraRule "LEDGER" era))
+  , DecCBOR (PredicateFailure (EraRule "UTXOW" era))
+  , EncCBOR (PredicateFailure (EraRule "UTXOW" era))
+  , Eq (PredicateFailure (EraRule "BBODY" era))
+  , Show (PredicateFailure (EraRule "BBODY" era))
+  , NoThunks (PredicateFailure (EraRule "BBODY" era))
+  , NoThunks (Core.TranslationContext era)
+  , ToCBOR (Core.TranslationContext era)
+  , FromCBOR (Core.TranslationContext era)
+  ) =>
+  ShelleyBasedEra era
+  where
   applyShelleyBasedTx ::
-       SL.Globals
-    -> SL.LedgerEnv era
-    -> SL.LedgerState era
-    -> WhetherToIntervene
-    -> Core.Tx era
-    -> Except
-         (SL.ApplyTxError era)
-         ( SL.LedgerState era
-         , SL.Validated (Core.Tx era)
-         )
+    SL.Globals ->
+    SL.LedgerEnv era ->
+    SL.LedgerState era ->
+    WhetherToIntervene ->
+    Core.Tx era ->
+    Except
+      (SL.ApplyTxError era)
+      ( SL.LedgerState era
+      , SL.Validated (Core.Tx era)
+      )
 
   -- | Whether the era has an instance of 'CG.ConwayEraGov'
   getConwayEraGovDict :: proxy era -> Maybe (ConwayEraGovDict era)
 
 data ConwayEraGovDict era where
-    ConwayEraGovDict :: CG.ConwayEraGov era => ConwayEraGovDict era
+  ConwayEraGovDict :: (CG.ConwayEraGov era, CG.ConwayEraCertState era) => ConwayEraGovDict era
 
 isBeforeConway :: forall era. L.Era era => Proxy era -> Bool
 isBeforeConway _ =
-    L.eraProtVerLow @era < L.eraProtVerLow @L.ConwayEra
+  L.eraProtVerLow @era < L.eraProtVerLow @L.ConwayEra
 
 -- | The default implementation of 'applyShelleyBasedTx', a thin wrapper around
 -- 'SL.applyTx'
 defaultApplyShelleyBasedTx ::
-     ShelleyBasedEra era
-  => SL.Globals
-  -> SL.LedgerEnv era
-  -> SL.LedgerState era
-  -> WhetherToIntervene
-  -> Core.Tx era
-  -> Except
-       (SL.ApplyTxError era)
-       ( SL.LedgerState era
-       , SL.Validated (Core.Tx era)
-       )
+  ShelleyBasedEra era =>
+  SL.Globals ->
+  SL.LedgerEnv era ->
+  SL.LedgerState era ->
+  WhetherToIntervene ->
+  Core.Tx era ->
+  Except
+    (SL.ApplyTxError era)
+    ( SL.LedgerState era
+    , SL.Validated (Core.Tx era)
+    )
 defaultApplyShelleyBasedTx globals ledgerEnv mempoolState _wti tx =
-    liftEither $
+  liftEither $
     SL.applyTx
       globals
       ledgerEnv
@@ -231,10 +241,11 @@ instance ShelleyBasedEra ConwayEra where
 
   getConwayEraGovDict _ = Just ConwayEraGovDict
 
-applyAlonzoBasedTx :: forall era.
-  ( ShelleyBasedEra era,
-    SupportsTwoPhaseValidation era,
-    Core.Tx era ~ Alonzo.AlonzoTx era
+applyAlonzoBasedTx ::
+  forall era.
+  ( ShelleyBasedEra era
+  , SupportsTwoPhaseValidation era
+  , Core.Tx era ~ Alonzo.AlonzoTx era
   ) =>
   Globals ->
   SL.LedgerEnv era ->
@@ -243,45 +254,45 @@ applyAlonzoBasedTx :: forall era.
   Alonzo.AlonzoTx era ->
   Except
     (SL.ApplyTxError era)
-    ( SL.LedgerState era,
-      SL.Validated (Alonzo.AlonzoTx era)
+    ( SL.LedgerState era
+    , SL.Validated (Alonzo.AlonzoTx era)
     )
 applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
-      (mempoolState', vtx) <-
-          (`catchError` handler)
-        $ defaultApplyShelleyBasedTx
+  (mempoolState', vtx) <-
+    (`catchError` handler) $
+      defaultApplyShelleyBasedTx
+        globals
+        ledgerEnv
+        mempoolState
+        wti
+        intervenedTx
+  pure (mempoolState', vtx)
+ where
+  intervenedTx = case wti of
+    DoNotIntervene -> tx{Alonzo.atIsValid = Alonzo.IsValid True}
+    Intervene -> tx
+
+  handler e = case (wti, e) of
+    (DoNotIntervene, SL.ApplyTxError (err :| []))
+      | isIncorrectClaimedFlag (Proxy @era) err ->
+          -- rectify the flag and include the transaction
+          --
+          -- This either lets the ledger punish the script author for sending
+          -- a bad script or else prevents our peer's buggy script validator
+          -- from preventing inclusion of a valid script.
+          --
+          -- TODO 'applyTx' et al needs to include a return value indicating
+          -- whether we took this branch; it's a reason to disconnect from
+          -- the peer who sent us the incorrect flag (ie Issue #3276)
+          defaultApplyShelleyBasedTx
             globals
             ledgerEnv
             mempoolState
             wti
-            intervenedTx
-      pure (mempoolState', vtx)
-    where
-      intervenedTx = case wti of
-        DoNotIntervene -> tx { Alonzo.isValid = Alonzo.IsValid True }
-        Intervene      -> tx
+            tx{Alonzo.atIsValid = Alonzo.IsValid False}
+    _ -> throwError e
 
-      handler e = case (wti, e) of
-        (DoNotIntervene, SL.ApplyTxError (err :| []))
-          | isIncorrectClaimedFlag (Proxy @era) err
-          ->
-            -- rectify the flag and include the transaction
-            --
-            -- This either lets the ledger punish the script author for sending
-            -- a bad script or else prevents our peer's buggy script validator
-            -- from preventing inclusion of a valid script.
-            --
-            -- TODO 'applyTx' et al needs to include a return value indicating
-            -- whether we took this branch; it's a reason to disconnect from
-            -- the peer who sent us the incorrect flag (ie Issue #3276)
-            defaultApplyShelleyBasedTx
-              globals
-              ledgerEnv
-              mempoolState
-              wti
-              tx{Alonzo.isValid = Alonzo.IsValid False}
-        _ -> throwError e
-               -- reject the transaction, protecting the local wallet
+-- reject the transaction, protecting the local wallet
 
 class SupportsTwoPhaseValidation era where
   -- NOTE: this class won't be needed once https://github.com/IntersectMBO/cardano-ledger/issues/4167 is implemented.
@@ -327,23 +338,23 @@ instance SupportsTwoPhaseValidation BabbageEra where
                   ( Alonzo.ValidationTagMismatch
                       (Alonzo.IsValid _claimedFlag)
                       _validationErrs
-                  )
-              )
-          )
-      ) -> True
+                    )
+                )
+            )
+        ) -> True
     _ -> False
 
 instance SupportsTwoPhaseValidation ConwayEra where
   isIncorrectClaimedFlag _ = \case
     SL.ConwayUtxowFailure
       ( Conway.UtxoFailure
-              ( Conway.UtxosFailure
-                  ( Conway.ValidationTagMismatch
-                      (Alonzo.IsValid _claimedFlag)
-                      _validationErrs
-                  )
-              )
-      ) -> True
+          ( Conway.UtxosFailure
+              ( Conway.ValidationTagMismatch
+                  (Alonzo.IsValid _claimedFlag)
+                  _validationErrs
+                )
+            )
+        ) -> True
     _ -> False
 
 {-------------------------------------------------------------------------------
@@ -373,20 +384,23 @@ instance Core.TranslateEra MaryEra WrapTx where
 instance Core.TranslateEra AlonzoEra WrapTx where
   type TranslationError AlonzoEra WrapTx = Core.TranslationError AlonzoEra Alonzo.Tx
   translateEra ctxt =
-        fmap (WrapTx . Alonzo.unTx)
+    fmap (WrapTx . Alonzo.unTx)
       . Core.translateEra @AlonzoEra ctxt
-      . Alonzo.Tx . unwrapTx
+      . Alonzo.Tx
+      . unwrapTx
 
 instance Core.TranslateEra BabbageEra WrapTx where
   type TranslationError BabbageEra WrapTx = Core.TranslationError BabbageEra Babbage.Tx
   translateEra ctxt =
-        fmap (WrapTx . Babbage.unTx)
+    fmap (WrapTx . Babbage.unTx)
       . Core.translateEra @BabbageEra ctxt
-      . Babbage.Tx . unwrapTx
+      . Babbage.Tx
+      . unwrapTx
 
 instance Core.TranslateEra ConwayEra WrapTx where
   type TranslationError ConwayEra WrapTx = Core.TranslationError ConwayEra Conway.Tx
   translateEra ctxt =
-        fmap (WrapTx . Conway.unTx)
+    fmap (WrapTx . Conway.unTx)
       . Core.translateEra @ConwayEra ctxt
-      . Conway.Tx . unwrapTx
+      . Conway.Tx
+      . unwrapTx

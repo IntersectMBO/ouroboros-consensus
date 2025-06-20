@@ -7,8 +7,8 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (
-    ChainSyncClientHandle (..)
+module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
+  ( ChainSyncClientHandle (..)
   , ChainSyncClientHandleCollection (..)
   , ChainSyncJumpingJumperState (..)
   , ChainSyncJumpingState (..)
@@ -21,144 +21,155 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (
   , newChainSyncClientHandleCollection
   ) where
 
-import           Cardano.Slotting.Slot (SlotNo, WithOrigin)
-import           Data.Function (on)
-import           Data.Map.Strict (Map)
+import Cardano.Slotting.Slot (SlotNo, WithOrigin)
+import Data.Function (on)
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe.Strict (StrictMaybe (..))
-import           Data.Sequence.Strict (StrictSeq)
+import Data.Maybe.Strict (StrictMaybe (..))
+import Data.Sequence.Strict (StrictSeq)
 import qualified Data.Sequence.Strict as Seq
-import           Data.Typeable (Proxy (..), Typeable, typeRep)
-import           GHC.Generics (Generic)
-import           Ouroboros.Consensus.Block (HasHeader, Header, Point)
-import           Ouroboros.Consensus.HeaderStateHistory (HeaderStateHistory)
-import           Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
-import           Ouroboros.Consensus.Ledger.SupportsProtocol
-                     (LedgerSupportsProtocol)
-import           Ouroboros.Consensus.Node.GsmState (GsmState)
-import           Ouroboros.Consensus.Util.IOLike (IOLike, NoThunks (..), STM,
-                     StrictTVar, Time, modifyTVar, newTVar, readTVar)
-import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
-                     headPoint)
+import Data.Typeable (Proxy (..), Typeable, typeRep)
+import GHC.Generics (Generic)
+import Ouroboros.Consensus.Block (HasHeader, Header, Point)
+import Ouroboros.Consensus.HeaderStateHistory (HeaderStateHistory)
+import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
+import Ouroboros.Consensus.Ledger.SupportsProtocol
+  ( LedgerSupportsProtocol
+  )
+import Ouroboros.Consensus.Node.GsmState (GsmState)
+import Ouroboros.Consensus.Util.IOLike
+  ( IOLike
+  , NoThunks (..)
+  , STM
+  , StrictTVar
+  , Time
+  , modifyTVar
+  , newTVar
+  , readTVar
+  )
+import Ouroboros.Network.AnchoredFragment
+  ( AnchoredFragment
+  , headPoint
+  )
 
 -- | A ChainSync client's state that's used by other components, like the GDD or
 -- the jumping governor.
-data ChainSyncState blk = ChainSyncState {
-
-    -- | The current candidate fragment.
-    csCandidate  :: !(AnchoredFragment (HeaderWithTime blk))
-    -- | Whether the last message sent by the peer was MsgAwaitReply.
-    --
-    -- This ChainSync client should ensure that its peer sets this flag while
-    -- and only while both of the following conditions are satisfied: the
-    -- peer's latest message has been fully processed (especially that its
-    -- candidate has been updated; previous argument) and its latest message
-    -- did not claim that it already has headers that extend its candidate.
-    --
-    -- It's more important that the flag is unset promptly than it is for the
-    -- flag to be set promptly, because of how this is used by the GSM to
-    -- determine that the node is done syncing.
-  , csIdling     :: !Bool
-
-    -- | When the client receives a new header, it updates this field before
-    -- processing it further, and the latest slot may refer to a header beyond
-    -- the forecast horizon while the candidate fragment isn't extended yet, to
-    -- signal to GDD that the density is known up to this slot.
+data ChainSyncState blk = ChainSyncState
+  { csCandidate :: !(AnchoredFragment (HeaderWithTime blk))
+  -- ^ The current candidate fragment.
+  , csIdling :: !Bool
+  -- ^ Whether the last message sent by the peer was MsgAwaitReply.
+  --
+  -- This ChainSync client should ensure that its peer sets this flag while
+  -- and only while both of the following conditions are satisfied: the
+  -- peer's latest message has been fully processed (especially that its
+  -- candidate has been updated; previous argument) and its latest message
+  -- did not claim that it already has headers that extend its candidate.
+  --
+  -- It's more important that the flag is unset promptly than it is for the
+  -- flag to be set promptly, because of how this is used by the GSM to
+  -- determine that the node is done syncing.
   , csLatestSlot :: !(StrictMaybe (WithOrigin SlotNo))
+  -- ^ When the client receives a new header, it updates this field before
+  -- processing it further, and the latest slot may refer to a header beyond
+  -- the forecast horizon while the candidate fragment isn't extended yet, to
+  -- signal to GDD that the density is known up to this slot.
   }
-  deriving stock (Generic)
+  deriving stock Generic
 
-deriving anyclass instance (
-  HasHeader blk,
-  NoThunks (Header blk)
-  ) => NoThunks (ChainSyncState blk)
+deriving anyclass instance
+  ( HasHeader blk
+  , NoThunks (Header blk)
+  ) =>
+  NoThunks (ChainSyncState blk)
 
 -- | An interface to a ChainSync client that's used by other components, like
 -- the GDD governor.
-data ChainSyncClientHandle m blk = ChainSyncClientHandle {
-    -- | Disconnects from the peer when the GDD considers it adversarial
-    cschGDDKill           :: !(m ())
-
-    -- | Callback called by the GSM when the GSM state changes. They take the
-    -- current time and should execute rapidly. Used to enable/disable the LoP.
+data ChainSyncClientHandle m blk = ChainSyncClientHandle
+  { cschGDDKill :: !(m ())
+  -- ^ Disconnects from the peer when the GDD considers it adversarial
   , cschOnGsmStateChanged :: !(GsmState -> Time -> STM m ())
-
-    -- | Data shared between the client and external components like GDD.
-  , cschState             :: !(StrictTVar m (ChainSyncState blk))
-
-    -- | The state of the peer with respect to ChainSync jumping.
-  , cschJumping           :: !(StrictTVar m (ChainSyncJumpingState m blk))
-
-    -- | ChainSync state needed to jump to the tip of the candidate fragment of
-    -- the peer.
-  , cschJumpInfo          :: !(StrictTVar m (Maybe (JumpInfo blk)))
+  -- ^ Callback called by the GSM when the GSM state changes. They take the
+  -- current time and should execute rapidly. Used to enable/disable the LoP.
+  , cschState :: !(StrictTVar m (ChainSyncState blk))
+  -- ^ Data shared between the client and external components like GDD.
+  , cschJumping :: !(StrictTVar m (ChainSyncJumpingState m blk))
+  -- ^ The state of the peer with respect to ChainSync jumping.
+  , cschJumpInfo :: !(StrictTVar m (Maybe (JumpInfo blk)))
+  -- ^ ChainSync state needed to jump to the tip of the candidate fragment of
+  -- the peer.
   }
-  deriving stock (Generic)
+  deriving stock Generic
 
-deriving anyclass instance (
-  IOLike m,
-  LedgerSupportsProtocol blk
-  ) => NoThunks (ChainSyncClientHandle m blk)
+deriving anyclass instance
+  ( IOLike m
+  , LedgerSupportsProtocol blk
+  ) =>
+  NoThunks (ChainSyncClientHandle m blk)
 
 -- | A collection of ChainSync client handles for the peers of this node.
 --
 -- Sometimes we want to see the collection as a Map, and sometimes as a sequence.
 -- The implementation keeps both views in sync.
-data ChainSyncClientHandleCollection peer m blk = ChainSyncClientHandleCollection {
-    -- | A map containing the handles for the peers in the collection
-    cschcMap :: !(STM m (Map peer (ChainSyncClientHandle m blk)))
-    -- | A sequence containing the handles for the peers in the collection
+data ChainSyncClientHandleCollection peer m blk = ChainSyncClientHandleCollection
+  { cschcMap :: !(STM m (Map peer (ChainSyncClientHandle m blk)))
+  -- ^ A map containing the handles for the peers in the collection
   , cschcSeq :: !(STM m (StrictSeq (peer, ChainSyncClientHandle m blk)))
-    -- | Add the handle for the given peer to the collection
-    -- PRECONDITION: The peer is not already in the collection
-  , cschcAddHandle  :: !(peer -> ChainSyncClientHandle m blk -> STM m ())
-    -- | Remove the handle for the given peer from the collection
+  -- ^ A sequence containing the handles for the peers in the collection
+  , cschcAddHandle :: !(peer -> ChainSyncClientHandle m blk -> STM m ())
+  -- ^ Add the handle for the given peer to the collection
+  -- PRECONDITION: The peer is not already in the collection
   , cschcRemoveHandle :: !(peer -> STM m ())
-    -- | Moves the handle for the given peer to the end of the sequence
+  -- ^ Remove the handle for the given peer from the collection
   , cschcRotateHandle :: !(peer -> STM m ())
-    -- | Remove all the handles from the collection
+  -- ^ Moves the handle for the given peer to the end of the sequence
   , cschcRemoveAllHandles :: !(STM m ())
+  -- ^ Remove all the handles from the collection
   }
-  deriving stock (Generic)
+  deriving stock Generic
 
-deriving anyclass instance (
-  IOLike m,
-  LedgerSupportsProtocol blk,
-  NoThunks (STM m ()),
-  NoThunks (STM m (Map peer (ChainSyncClientHandle m blk))),
-  NoThunks (STM m (StrictSeq (peer, ChainSyncClientHandle m blk)))
-  ) => NoThunks (ChainSyncClientHandleCollection peer m blk)
+deriving anyclass instance
+  ( IOLike m
+  , HasHeader blk
+  , LedgerSupportsProtocol blk
+  , NoThunks (STM m ())
+  , NoThunks (Header blk)
+  , NoThunks (STM m (Map peer (ChainSyncClientHandle m blk)))
+  , NoThunks (STM m (StrictSeq (peer, ChainSyncClientHandle m blk)))
+  ) =>
+  NoThunks (ChainSyncClientHandleCollection peer m blk)
 
 newChainSyncClientHandleCollection ::
-     ( Ord peer,
-       IOLike m,
-       LedgerSupportsProtocol blk,
-       NoThunks peer
-     )
-  => STM m (ChainSyncClientHandleCollection peer m blk)
+  ( Ord peer
+  , IOLike m
+  , LedgerSupportsProtocol blk
+  , NoThunks peer
+  ) =>
+  STM m (ChainSyncClientHandleCollection peer m blk)
 newChainSyncClientHandleCollection = do
   handlesMap <- newTVar mempty
   handlesSeq <- newTVar mempty
 
-  return ChainSyncClientHandleCollection {
-      cschcMap = readTVar handlesMap
-    , cschcSeq = readTVar handlesSeq
-    , cschcAddHandle = \peer handle -> do
-        modifyTVar handlesMap (Map.insert peer handle)
-        modifyTVar handlesSeq (Seq.|> (peer, handle))
-    , cschcRemoveHandle = \peer -> do
-        modifyTVar handlesMap (Map.delete peer)
-        modifyTVar handlesSeq $ \s ->
-          let (xs, ys) = Seq.spanl ((/= peer) . fst) s
-           in xs Seq.>< Seq.drop 1 ys
-    , cschcRotateHandle = \peer ->
-        modifyTVar handlesSeq $ \s ->
-          let (xs, ys) = Seq.spanl ((/= peer) . fst) s
-           in xs Seq.>< Seq.drop 1 ys Seq.>< Seq.take 1 ys
-    , cschcRemoveAllHandles = do
-        modifyTVar handlesMap (const mempty)
-        modifyTVar handlesSeq (const mempty)
-    }
+  return
+    ChainSyncClientHandleCollection
+      { cschcMap = readTVar handlesMap
+      , cschcSeq = readTVar handlesSeq
+      , cschcAddHandle = \peer handle -> do
+          modifyTVar handlesMap (Map.insert peer handle)
+          modifyTVar handlesSeq (Seq.|> (peer, handle))
+      , cschcRemoveHandle = \peer -> do
+          modifyTVar handlesMap (Map.delete peer)
+          modifyTVar handlesSeq $ \s ->
+            let (xs, ys) = Seq.spanl ((/= peer) . fst) s
+             in xs Seq.>< Seq.drop 1 ys
+      , cschcRotateHandle = \peer ->
+          modifyTVar handlesSeq $ \s ->
+            let (xs, ys) = Seq.spanl ((/= peer) . fst) s
+             in xs Seq.>< Seq.drop 1 ys Seq.>< Seq.take 1 ys
+      , cschcRemoveAllHandles = do
+          modifyTVar handlesMap (const mempty)
+          modifyTVar handlesSeq (const mempty)
+      }
 
 data DynamoInitState blk
   = -- | The dynamo still has to set the intersection of the ChainSync server
@@ -168,11 +179,11 @@ data DynamoInitState blk
     -- the candidate fragment.
     DynamoStarting !(JumpInfo blk)
   | DynamoStarted
-  deriving (Generic)
+  deriving Generic
 
 deriving anyclass instance
-  ( LedgerSupportsProtocol blk
-  ) => NoThunks (DynamoInitState blk)
+  LedgerSupportsProtocol blk =>
+  NoThunks (DynamoInitState blk)
 
 data ObjectorInitState
   = -- | The objector still needs to set the intersection of the ChainSync
@@ -231,12 +242,13 @@ data ChainSyncJumpingState m blk
       !(StrictTVar m (Maybe (JumpInfo blk)))
       -- | More precisely, the state of the jumper.
       !(ChainSyncJumpingJumperState blk)
-  deriving (Generic)
+  deriving Generic
 
 deriving anyclass instance
-  ( IOLike m,
-    LedgerSupportsProtocol blk
-  ) => NoThunks (ChainSyncJumpingState m blk)
+  ( IOLike m
+  , LedgerSupportsProtocol blk
+  ) =>
+  NoThunks (ChainSyncJumpingState m blk)
 
 -- | The ChainSync state required for jumps
 --
@@ -247,12 +259,12 @@ deriving anyclass instance
 -- This can happen if we need to look for an intersection when the jumper
 -- rejects a jump.
 data JumpInfo blk = JumpInfo
-  { jMostRecentIntersection  :: !(Point blk)
-  , jOurFragment             :: !(AnchoredFragment (Header blk))
-  , jTheirFragment           :: !(AnchoredFragment (HeaderWithTime blk))
+  { jMostRecentIntersection :: !(Point blk)
+  , jOurFragment :: !(AnchoredFragment (Header blk))
+  , jTheirFragment :: !(AnchoredFragment (HeaderWithTime blk))
   , jTheirHeaderStateHistory :: !(HeaderStateHistory blk)
   }
-  deriving (Generic)
+  deriving Generic
 
 instance (HasHeader (Header blk), Typeable blk) => Eq (JumpInfo blk) where
   (==) = (==) `on` headPoint . jTheirFragment
@@ -284,8 +296,8 @@ data ChainSyncJumpingJumperState blk
     -- The init state indicates the initialization to use for the objector in
     -- case this jumper is promoted.
     FoundIntersection ObjectorInitState !(JumpInfo blk) !(Point (Header blk))
-  deriving (Generic)
+  deriving Generic
 
 deriving anyclass instance
-  ( LedgerSupportsProtocol blk
-  ) => NoThunks (ChainSyncJumpingJumperState blk)
+  LedgerSupportsProtocol blk =>
+  NoThunks (ChainSyncJumpingJumperState blk)

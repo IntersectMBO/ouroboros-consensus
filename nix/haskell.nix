@@ -4,20 +4,20 @@ let
   inherit (prev) lib;
   inherit (final) haskell-nix;
 
-  # from https://github.com/input-output-hk/haskell.nix/issues/298#issuecomment-767936405
-  forAllProjectPackages = cfg: args@{ lib, ... }: {
-    options.packages = lib.mkOption {
-      type = lib.types.attrsOf (lib.types.submodule ({ config, ... }: {
-        config = lib.mkIf config.package.isProject (cfg args);
-      }));
-    };
+  forAllProjectPackages = cfg: args@{ config, lib, ... }: {
+    options.packages = lib.genAttrs config.package-keys (_:
+      lib.mkOption {
+        type = lib.types.submodule ({ config, lib, ... }:
+          lib.mkIf config.package.isProject (cfg args)
+        );
+      });
   };
   hsPkgs = haskell-nix.cabalProject {
     src = ./..;
-    compiler-nix-name = "ghc966";
+    compiler-nix-name = "ghc967";
     flake.variants = {
-      ghc810 = { compiler-nix-name = lib.mkForce "ghc8107"; };
-      ghc910 = { compiler-nix-name = lib.mkForce "ghc9101"; };
+      ghc910 = { compiler-nix-name = lib.mkForce "ghc9102"; };
+      ghc912 = { compiler-nix-name = lib.mkForce "ghc9122"; };
     };
     inputMap = {
       "https://chap.intersectmbo.org/" = inputs.CHaP;
@@ -35,6 +35,10 @@ let
               extraSrcFiles = [ "golden/${n}/**/*" ];
             }) [ "byron" "shelley" "cardano" ]);
       }
+      ({ pkgs, lib, ... }: lib.mkIf pkgs.stdenv.hostPlatform.isWindows {
+        # https://github.com/input-output-hk/haskell.nix/issues/2332
+        packages.basement.configureFlags = [ "--hsc2hs-option=--cflag=-Wno-int-conversion" ];
+      })
     ];
     flake.variants = {
       noAsserts = {

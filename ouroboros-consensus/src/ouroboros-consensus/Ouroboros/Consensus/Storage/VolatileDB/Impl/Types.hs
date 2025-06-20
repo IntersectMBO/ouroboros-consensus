@@ -2,18 +2,23 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE StandaloneDeriving #-}
 
-module Ouroboros.Consensus.Storage.VolatileDB.Impl.Types (
-    -- * Blocks per file
+module Ouroboros.Consensus.Storage.VolatileDB.Impl.Types
+  ( -- * Blocks per file
     mkBlocksPerFile
   , unBlocksPerFile
+
     -- ** opaque
   , BlocksPerFile
+
     -- * Block validation policy
   , BlockValidationPolicy (..)
+
     -- * Parse error
   , ParseError (..)
+
     -- * Tracing
   , TraceEvent (..)
+
     -- * Internal indices
   , BlockOffset (..)
   , BlockSize (..)
@@ -23,24 +28,23 @@ module Ouroboros.Consensus.Storage.VolatileDB.Impl.Types (
   , SuccessorsIndex
   ) where
 
-
-import           Data.Map.Strict (Map)
-import           Data.Set (Set)
-import           Data.Word (Word32, Word64)
-import           GHC.Generics (Generic)
-import           NoThunks.Class (NoThunks)
-import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Storage.VolatileDB.API (BlockInfo)
-import           Ouroboros.Consensus.Util.CBOR (ReadIncrementalErr (..))
-import           System.FS.API.Types (FsPath)
+import Data.Map.Strict (Map)
+import Data.Set (Set)
+import Data.Word (Word32, Word64)
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Storage.VolatileDB.API (BlockInfo)
+import Ouroboros.Consensus.Util.CBOR (ReadIncrementalErr (..))
+import System.FS.API.Types (FsPath)
 
 {------------------------------------------------------------------------------
   Blocks per file
 ------------------------------------------------------------------------------}
 
 -- | The maximum number of blocks to store per file.
-newtype BlocksPerFile = BlocksPerFile { unBlocksPerFile :: Word32 }
-    deriving (Generic, Show)
+newtype BlocksPerFile = BlocksPerFile {unBlocksPerFile :: Word32}
+  deriving (Generic, Show)
 
 -- | Create a 'BlocksPerFile'.
 --
@@ -56,10 +60,10 @@ mkBlocksPerFile n = BlocksPerFile n
 
 -- | When block validation is enabled, the parser checks for each block a
 -- number of properties and stops parsing if it finds any invalid blocks.
-data BlockValidationPolicy =
-    NoValidation
+data BlockValidationPolicy
+  = NoValidation
   | ValidateAll
-  deriving (Eq)
+  deriving Eq
 
 {------------------------------------------------------------------------------
   Parse error
@@ -70,19 +74,19 @@ data BlockValidationPolicy =
 --
 -- Defined here instead of in the @Parser@ module because 'TraceEvent' depends
 -- on it.
-data ParseError blk =
+data ParseError blk
+  = -- | A block could not be parsed.
     BlockReadErr ReadIncrementalErr
-    -- ^ A block could not be parsed.
-  | BlockCorruptedErr (HeaderHash blk)
-    -- ^ A block was corrupted, e.g., checking its signature and/or hash
+  | -- | A block was corrupted, e.g., checking its signature and/or hash
     -- failed.
-  | DuplicatedBlock (HeaderHash blk) FsPath FsPath
-    -- ^ A block with the same hash occurred twice in the VolatileDB files.
+    BlockCorruptedErr (HeaderHash blk)
+  | -- | A block with the same hash occurred twice in the VolatileDB files.
     --
     -- We include the file in which it occurred first and the file in which it
     -- occured the second time. The two files can be the same.
+    DuplicatedBlock (HeaderHash blk) FsPath FsPath
 
-deriving instance StandardHash blk => Eq   (ParseError blk)
+deriving instance StandardHash blk => Eq (ParseError blk)
 deriving instance StandardHash blk => Show (ParseError blk)
 
 {------------------------------------------------------------------------------
@@ -90,11 +94,11 @@ deriving instance StandardHash blk => Show (ParseError blk)
 ------------------------------------------------------------------------------}
 
 data TraceEvent blk
-    = DBAlreadyClosed
-    | BlockAlreadyHere (HeaderHash blk)
-    | Truncate (ParseError blk) FsPath BlockOffset
-    | InvalidFileNames [FsPath]
-    | DBClosed
+  = DBAlreadyClosed
+  | BlockAlreadyHere (HeaderHash blk)
+  | Truncate (ParseError blk) FsPath BlockOffset
+  | InvalidFileNames [FsPath]
+  | DBClosed
   deriving (Eq, Generic, Show)
 
 {------------------------------------------------------------------------------
@@ -112,19 +116,19 @@ type ReverseIndex blk = Map (HeaderHash blk) (InternalBlockInfo blk)
 -- a predecessor (set of successors).
 type SuccessorsIndex blk = Map (ChainHash blk) (Set (HeaderHash blk))
 
-newtype BlockSize = BlockSize { unBlockSize :: Word32 }
+newtype BlockSize = BlockSize {unBlockSize :: Word32}
   deriving (Eq, Show, Generic, NoThunks)
 
 -- | The offset at which a block is stored in a file.
-newtype BlockOffset = BlockOffset { unBlockOffset :: Word64 }
+newtype BlockOffset = BlockOffset {unBlockOffset :: Word64}
   deriving (Eq, Show, Generic, NoThunks)
 
 -- | The internal information the db keeps for each block.
-data InternalBlockInfo blk = InternalBlockInfo {
-      ibiFile        :: !FsPath
-    , ibiBlockOffset :: !BlockOffset
-    , ibiBlockSize   :: !BlockSize
-    , ibiBlockInfo   :: !(BlockInfo blk)
-    , ibiNestedCtxt  :: !(SomeSecond (NestedCtxt Header) blk)
-    }
+data InternalBlockInfo blk = InternalBlockInfo
+  { ibiFile :: !FsPath
+  , ibiBlockOffset :: !BlockOffset
+  , ibiBlockSize :: !BlockSize
+  , ibiBlockInfo :: !(BlockInfo blk)
+  , ibiNestedCtxt :: !(SomeSecond (NestedCtxt Header) blk)
+  }
   deriving (Generic, NoThunks)

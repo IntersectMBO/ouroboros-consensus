@@ -1,6 +1,6 @@
 cabal-version: 3.0
 name: ouroboros-consensus
-version: 0.26.0.0
+version: 0.27.0.0
 synopsis: Consensus layer for the Ouroboros blockchain protocol
 description: Consensus layer for the Ouroboros blockchain protocol.
 license: Apache-2.0
@@ -61,8 +61,7 @@ common common-bench
   -- We use this option to avoid skewed results due to changes in cache-line
   -- alignment. See
   -- https://github.com/Bodigrim/tasty-bench#comparison-against-baseline
-  if impl(ghc >=8.6)
-    ghc-options: -fproc-alignment=64
+  ghc-options: -fproc-alignment=64
 
 library
   import: common-lib
@@ -102,7 +101,6 @@ library
     Ouroboros.Consensus.HardFork.Combinator.AcrossEras
     Ouroboros.Consensus.HardFork.Combinator.Basics
     Ouroboros.Consensus.HardFork.Combinator.Block
-    Ouroboros.Consensus.HardFork.Combinator.Compat
     Ouroboros.Consensus.HardFork.Combinator.Condense
     Ouroboros.Consensus.HardFork.Combinator.Degenerate
     Ouroboros.Consensus.HardFork.Combinator.Embed.Binary
@@ -305,7 +303,7 @@ library
     bytestring >=0.10 && <0.13,
     cardano-binary,
     cardano-crypto-class,
-    cardano-ledger-core ^>=1.17,
+    cardano-ledger-core ^>=1.18,
     cardano-lmdb >=0.4,
     cardano-lmdb-simple ^>=0.8,
     cardano-prelude,
@@ -327,7 +325,7 @@ library
     mtl,
     multiset ^>=0.3,
     nothunks ^>=0.2,
-    ouroboros-network-api ^>=0.13,
+    ouroboros-network-api ^>=0.14,
     ouroboros-network-mock ^>=0.1,
     ouroboros-network-protocols ^>=0.14,
     primitive,
@@ -356,10 +354,6 @@ library
     typed-protocols ^>=0.3,
     vector ^>=0.13,
 
-  if !impl(ghc >=9.4)
-    build-depends: data-array-byte
-  -- GHC 8.10.7 on aarch64-darwin cannot use text-2
-  build-depends: text >=1.2.5.0 && <2.2
   x-docspec-extra-packages:
     directory
     latex-svg-image
@@ -523,7 +517,7 @@ library unstable-mock-block
     cardano-binary,
     cardano-crypto-class,
     cardano-ledger-core,
-    cardano-slotting,
+    cardano-slotting:{cardano-slotting, testlib},
     cborg,
     containers,
     deepseq,
@@ -590,6 +584,7 @@ test-suite consensus-test
     Test.Consensus.Mempool.StateMachine
     Test.Consensus.Mempool.Util
     Test.Consensus.MiniProtocol.BlockFetch.Client
+    Test.Consensus.MiniProtocol.ChainSync.CSJ
     Test.Consensus.MiniProtocol.ChainSync.Client
     Test.Consensus.MiniProtocol.LocalStateQuery.Server
     Test.Consensus.Util.MonadSTM.NormalForm
@@ -758,7 +753,7 @@ test-suite storage-test
     ouroboros-network-mock,
     pretty-show,
     quickcheck-dynamic,
-    quickcheck-lockstep,
+    quickcheck-lockstep <0.7,
     quickcheck-state-machine:no-vendored-treediff ^>=0.10,
     random,
     resource-registry,

@@ -1,25 +1,29 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Ouroboros.Consensus.Node.Recovery (
-    LastShutDownWasClean (..)
+module Ouroboros.Consensus.Node.Recovery
+  ( LastShutDownWasClean (..)
   , createCleanShutdownMarker
   , hasCleanShutdownMarker
   , removeCleanShutdownMarker
   , runWithCheckedDB
   ) where
 
-import           Control.Monad (unless, when)
-import           Control.Tracer (Tracer, traceWith)
-import           Data.Proxy (Proxy)
-import           Data.Typeable (Typeable)
-import           Ouroboros.Consensus.Block (StandardHash)
-import           Ouroboros.Consensus.Node.Exit (ExitReason (..), toExitReason)
-import           Ouroboros.Consensus.Storage.ChainDB
-import           Ouroboros.Consensus.Util.IOLike
-import           System.FS.API (HasFS, doesFileExist, removeFile, withFile)
-import           System.FS.API.Types (AllowExisting (..), FsPath, OpenMode (..),
-                     mkFsPath)
+import Control.Monad (unless, when)
+import Control.Tracer (Tracer, traceWith)
+import Data.Proxy (Proxy)
+import Data.Typeable (Typeable)
+import Ouroboros.Consensus.Block (StandardHash)
+import Ouroboros.Consensus.Node.Exit (ExitReason (..), toExitReason)
+import Ouroboros.Consensus.Storage.ChainDB
+import Ouroboros.Consensus.Util.IOLike
+import System.FS.API (HasFS, doesFileExist, removeFile, withFile)
+import System.FS.API.Types
+  ( AllowExisting (..)
+  , FsPath
+  , OpenMode (..)
+  , mkFsPath
+  )
 
 -- | The path to the /clean shutdown marker file/.
 cleanShutdownMarkerFile :: FsPath
@@ -31,43 +35,44 @@ newtype LastShutDownWasClean = LastShutDownWasClean Bool
 
 -- | Return 'True' when 'cleanShutdownMarkerFile' exists.
 hasCleanShutdownMarker ::
-     HasFS m h
-  -> m Bool
+  HasFS m h ->
+  m Bool
 hasCleanShutdownMarker hasFS =
-    doesFileExist hasFS cleanShutdownMarkerFile
+  doesFileExist hasFS cleanShutdownMarkerFile
 
 -- | Create the 'cleanShutdownMarkerFile'.
 --
 -- Idempotent.
 createCleanShutdownMarker ::
-     IOLike m
-  => HasFS m h
-  -> m ()
+  IOLike m =>
+  HasFS m h ->
+  m ()
 createCleanShutdownMarker hasFS = do
-    alreadyExists <- hasCleanShutdownMarker hasFS
-    unless alreadyExists $
-      withFile hasFS cleanShutdownMarkerFile (WriteMode MustBeNew) $ \_h ->
-        return ()
+  alreadyExists <- hasCleanShutdownMarker hasFS
+  unless alreadyExists $
+    withFile hasFS cleanShutdownMarkerFile (WriteMode MustBeNew) $ \_h ->
+      return ()
 
 -- | Remove 'cleanShutdownMarkerFile'.
 --
 -- Will throw an 'FsResourceDoesNotExist' error when it does not exist.
 removeCleanShutdownMarker ::
-     HasFS m h
-  -> m ()
+  HasFS m h ->
+  m ()
 removeCleanShutdownMarker hasFS =
-    removeFile hasFS cleanShutdownMarkerFile
+  removeFile hasFS cleanShutdownMarkerFile
 
 -- | Return 'True' if the given exception indicates that recovery of the
 -- database is required on the next startup.
 exceptionRequiresRecovery ::
-     forall blk. (StandardHash blk, Typeable blk)
-  => Proxy blk
-  -> SomeException
-  -> Bool
+  forall blk.
+  (StandardHash blk, Typeable blk) =>
+  Proxy blk ->
+  SomeException ->
+  Bool
 exceptionRequiresRecovery pb e = case toExitReason pb e of
-    DatabaseCorruption -> True
-    _                  -> False
+  DatabaseCorruption -> True
+  _ -> False
 
 -- | A bracket function that manages the clean-shutdown marker on disk.
 --
@@ -87,48 +92,54 @@ exceptionRequiresRecovery pb e = case toExitReason pb e of
 --   (see 'exceptionRequiresRecovery') that indicate corruption, for which we
 --   want the next startup to do revalidation.
 runWithCheckedDB ::
-     forall a m h blk. (IOLike m, StandardHash blk, Typeable blk)
-  => Proxy blk
-  -> Tracer m (TraceEvent blk)
-  -> HasFS m h
-  -> (LastShutDownWasClean -> (ChainDB m blk -> m a -> m a) -> m a)
-  -> m a
+  forall a m h blk.
+  (IOLike m, StandardHash blk, Typeable blk) =>
+  Proxy blk ->
+  Tracer m (TraceEvent blk) ->
+  HasFS m h ->
+  (LastShutDownWasClean -> (ChainDB m blk -> m a -> m a) -> m a) ->
+  m a
 runWithCheckedDB pb tracer hasFS body = do
-    -- When we shut down cleanly, we create a marker file so that the next
-    -- time we start, we know we don't have to validate the contents of the
-    -- whole ChainDB. When we shut down with an exception indicating
-    -- corruption or something going wrong with the file system, we don't
-    -- create this marker file so that the next time we start, we do a full
-    -- validation.
-    wasClean <- hasCleanShutdownMarker hasFS
-    unless wasClean (traceWith tracer TraceLastShutdownUnclean)
-    removeMarkerOnUncleanShutdown wasClean
-      $ body
-          (LastShutDownWasClean wasClean)
-          (\_cdb runWithInitializedChainDB -> createMarkerOnCleanShutdown $ do
-            -- ChainDB initialization has finished by the time we reach this
-            -- point. We remove the marker so that a SIGKILL will cause an unclean
-            -- shutdown.
-            when wasClean $ removeCleanShutdownMarker hasFS
-            runWithInitializedChainDB
-          )
-  where
-    -- | If there is a unclean exception during ChainDB initialization, we want
-    -- to remove the marker file, so we install this handler.
-    --
-    -- It is OK to also wrap this handler around code that runs after ChainDB
-    -- initialization, because the condition on this handler is the opposite of
-    -- the condition in the @createMarkerOnCleanShutdown@ handler.
-    removeMarkerOnUncleanShutdown wasClean = if not wasClean then id else onExceptionIf
-      (exceptionRequiresRecovery pb)
-      (removeCleanShutdownMarker hasFS)
+  -- When we shut down cleanly, we create a marker file so that the next
+  -- time we start, we know we don't have to validate the contents of the
+  -- whole ChainDB. When we shut down with an exception indicating
+  -- corruption or something going wrong with the file system, we don't
+  -- create this marker file so that the next time we start, we do a full
+  -- validation.
+  wasClean <- hasCleanShutdownMarker hasFS
+  unless wasClean (traceWith tracer TraceLastShutdownUnclean)
+  removeMarkerOnUncleanShutdown wasClean $
+    body
+      (LastShutDownWasClean wasClean)
+      ( \_cdb runWithInitializedChainDB -> createMarkerOnCleanShutdown $ do
+          -- ChainDB initialization has finished by the time we reach this
+          -- point. We remove the marker so that a SIGKILL will cause an unclean
+          -- shutdown.
+          when wasClean $ removeCleanShutdownMarker hasFS
+          runWithInitializedChainDB
+      )
+ where
+  -- \| If there is a unclean exception during ChainDB initialization, we want
+  -- to remove the marker file, so we install this handler.
+  --
+  -- It is OK to also wrap this handler around code that runs after ChainDB
+  -- initialization, because the condition on this handler is the opposite of
+  -- the condition in the @createMarkerOnCleanShutdown@ handler.
+  removeMarkerOnUncleanShutdown wasClean =
+    if not wasClean
+      then id
+      else
+        onExceptionIf
+          (exceptionRequiresRecovery pb)
+          (removeCleanShutdownMarker hasFS)
 
-    -- | If a clean exception terminates the running node after ChainDB
-    -- initialization, we want to create the marker file.
-    --
-    -- NOTE: we assume the action (i.e., the node itself) never terminates without
-    -- an exception.
-    createMarkerOnCleanShutdown = onExceptionIf
+  -- \| If a clean exception terminates the running node after ChainDB
+  -- initialization, we want to create the marker file.
+  --
+  -- NOTE: we assume the action (i.e., the node itself) never terminates without
+  -- an exception.
+  createMarkerOnCleanShutdown =
+    onExceptionIf
       (not . exceptionRequiresRecovery pb)
       (createCleanShutdownMarker hasFS)
 
@@ -137,11 +148,14 @@ runWithCheckedDB pb tracer hasFS body = do
 -------------------------------------------------------------------------------}
 
 onExceptionIf ::
-     (IOLike m, Exception e)
-  => (e -> Bool)  -- ^ Predicate to selection exceptions
-  -> m ()         -- ^ Exception handler
-  -> m a
-  -> m a
-onExceptionIf p h m = m `catch` \e -> do
+  (IOLike m, Exception e) =>
+  -- | Predicate to selection exceptions
+  (e -> Bool) ->
+  -- | Exception handler
+  m () ->
+  m a ->
+  m a
+onExceptionIf p h m =
+  m `catch` \e -> do
     when (p e) h
     throwIO e

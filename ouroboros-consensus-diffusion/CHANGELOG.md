@@ -2,6 +2,21 @@
 
 # Changelog entries
 
+<a id='changelog-0.23.0.0'></a>
+## 0.23.0.0 -- 2025-05-15
+
+### Patch
+
+- Bump `ouroboros-network` packages dependencies.
+
+### Non-Breaking
+
+- Drop GHC 8.10 support.
+
+### Breaking
+
+- Use `HeaderWithTime` for the ChainSync candidates
+
 <a id='changelog-0.22.0.1'></a>
 ## 0.22.0.1 -- 2025-04-21
 

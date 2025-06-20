@@ -7,18 +7,20 @@
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
 -- | Very strong types for working with indices, counts, etc within sequences.
-module Test.Ouroboros.Consensus.ChainGenerator.Counting (
-    -- * general counts
+module Test.Ouroboros.Consensus.ChainGenerator.Counting
+  ( -- * general counts
     Count (Count)
   , forgetBase
   , forgetElem
   , getCount
   , (+)
   , (-)
+
     -- * indices and sizes
   , Index
   , Preds
@@ -28,6 +30,7 @@ module Test.Ouroboros.Consensus.ChainGenerator.Counting (
   , lastIndex
   , range
   , uniformIndex
+
     -- * windows
   , Contains (Contains, UnsafeContains)
   , Lbl (Lbl)
@@ -47,6 +50,7 @@ module Test.Ouroboros.Consensus.ChainGenerator.Counting (
   , withTopWindow
   , withWindow
   , withWindowBetween
+
     -- * vectors
   , MVector (MVector)
   , Vector (Vector)
@@ -63,6 +67,7 @@ module Test.Ouroboros.Consensus.ChainGenerator.Counting (
   , sliceV
   , unsafeThawV
   , writeMV
+
     -- * variables
   , Other
   , Var
@@ -72,20 +77,20 @@ module Test.Ouroboros.Consensus.ChainGenerator.Counting (
   , toVar
   ) where
 
-import           Control.Monad.ST (ST)
-import           Data.Coerce (coerce)
-import           Data.Foldable (for_)
-import           Data.Kind (Type)
-import           Data.Proxy (Proxy (Proxy))
+import Control.Monad.ST (ST)
+import Data.Coerce (coerce)
+import Data.Foldable (for_)
+import Data.Kind (Type)
+import Data.Proxy (Proxy (Proxy))
 import qualified Data.Type.Equality as TypeEq
 import qualified Data.Vector.Unboxed as V
 import qualified Data.Vector.Unboxed.Mutable as MV
-import           GHC.OverloadedLabels (IsLabel (fromLabel))
-import           Prelude hiding ((+), (-))
-import qualified Prelude
+import GHC.OverloadedLabels (IsLabel (fromLabel))
 import qualified System.Random.Stateful as R
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Some as Some
 import qualified Test.QuickCheck as QC
+import Prelude hiding ((+), (-))
+import qualified Prelude
 
 -----
 
@@ -137,7 +142,7 @@ data Preds
 data Total
 
 type Index base elem = Count base elem Preds
-type Size  base elem = Count base elem Total
+type Size base elem = Count base elem Total
 
 -- | The 'Index' of the rightmost element in the sequence of the given 'Size'
 lastIndex :: Size base elem -> Index base elem
@@ -155,12 +160,10 @@ uniformIndex n g = Count <$> R.uniformRM (0, getCount $ lastIndex n) g
 -----
 
 -- | A human-readable label for a 'Win'
-data Lbl lbl = Lbl   -- no explicit kind var so that type applications don't
-                     -- need to provide the kind
-                     --
-                     -- TODO as of GHC 9.0, use a standalone kind signature to
-                     -- declare k as /inferred/ instead of /specified/
-instance (lbl TypeEq.~~ s) => IsLabel s (Lbl lbl) where fromLabel = Lbl
+type Lbl :: forall {k}. k -> Type
+data Lbl lbl = Lbl
+
+instance lbl TypeEq.~~ s => IsLabel s (Lbl lbl) where fromLabel = Lbl
 
 -- | A type-level name for a window within some containing sequence
 --
@@ -184,13 +187,15 @@ data Win (lbl :: klbl) (skolem :: Type)
 -- than its type name.
 --
 -- TODO: rename Contains to Window
-data Contains (elem :: kelem) (outer :: Type) (inner :: Type) =
-    UnsafeContains
-        !(Index outer elem)   -- ^ index of the start of the window as
-                              -- an offset in the containing sequence.
-        !(Size  inner elem)   -- ^ size of the window
-                              -- INVARIANT: does not reach past the end of the containing
-                              -- sequence (whatever that end is)
+data Contains (elem :: kelem) (outer :: Type) (inner :: Type)
+  = UnsafeContains
+      -- | index of the start of the window as
+      -- an offset in the containing sequence.
+      !(Index outer elem)
+      -- | size of the window
+      -- INVARIANT: does not reach past the end of the containing
+      -- sequence (whatever that end is)
+      !(Size inner elem)
   deriving (Eq, Read, Show)
 
 pattern Contains :: Index outer elem -> Size inner elem -> Contains elem outer inner
@@ -234,29 +239,29 @@ joinWin :: Contains elem outer mid -> Contains elem mid inner -> Contains elem o
 {-# INLINE joinWin #-}
 joinWin win win2 = UnsafeContains (fromWindow win $ windowStart win2) (windowSize win2)
 
-data SomeWindow (lbl :: klbl) (outer :: Type) (elem :: kelem) =
-    forall (skolem :: Type).
+data SomeWindow (lbl :: klbl) (outer :: Type) (elem :: kelem)
+  = forall (skolem :: Type).
     SomeWindow
-        !(Proxy skolem)
-        !(Contains elem outer (Win lbl skolem))
+      !(Proxy skolem)
+      !(Contains elem outer (Win lbl skolem))
 
 instance Eq (SomeWindow lbl outer elem) where
-    SomeWindow _l1 l2 == SomeWindow _r1 r2 =
-      forgetWindow l2 == forgetWindow r2
+  SomeWindow _l1 l2 == SomeWindow _r1 r2 =
+    forgetWindow l2 == forgetWindow r2
 
 instance Show (SomeWindow lbl outer elem) where
-    showsPrec p (SomeWindow prx win) =
-        Some.runShowsPrec p
-      $ Some.showCtor SomeWindow "SomeWindow"
-          `Some.showArg` prx
-          `Some.showArg` win
+  showsPrec p (SomeWindow prx win) =
+    Some.runShowsPrec p $
+      Some.showCtor SomeWindow "SomeWindow"
+        `Some.showArg` prx
+        `Some.showArg` win
 
 instance Read (SomeWindow lbl outer elem) where
-    readPrec =
-        Some.runReadPrec
-      $ Some.readCtor SomeWindow "SomeWindow"
-          <*> Some.readArg
-          <*> Some.readArg
+  readPrec =
+    Some.runReadPrec $
+      Some.readCtor SomeWindow "SomeWindow"
+        <*> Some.readArg
+        <*> Some.readArg
 
 -- | @withWindow outerSz lbl offset innerSz@ is a window of length @innerSz@
 -- with name @lbl@ starting at @offset@ in a sequence with length @outerSz@.
@@ -267,22 +272,23 @@ instance Read (SomeWindow lbl outer elem) where
 -- Note that the window can spill either on the right if @i + innerSz > outerSz@,
 -- or it can spill on the left if @i < 0@, or it can spill on both sides
 -- simultaneously.
---
-withWindow :: Size outer elem -> Lbl lbl -> Index outer elem -> Size x elem -> SomeWindow lbl outer elem
+withWindow ::
+  Size outer elem -> Lbl lbl -> Index outer elem -> Size x elem -> SomeWindow lbl outer elem
 withWindow (Count n) _lbl (Count i) (Count m) =
-    SomeWindow Proxy $ UnsafeContains (Count i') (Count m')
-  where
-    i' = min n (max 0 i)
+  SomeWindow Proxy $ UnsafeContains (Count i') (Count m')
+ where
+  i' = min n (max 0 i)
 
-    -- we compute the elements that fall outside the containing sequence
-    precedingElements = i' .- i
-    trailingElements = max 0 $ i .+ m .- n
+  -- we compute the elements that fall outside the containing sequence
+  precedingElements = i' .- i
+  trailingElements = max 0 $ i .+ m .- n
 
-    m' = max 0 $ m .- precedingElements .- trailingElements
+  m' = max 0 $ m .- precedingElements .- trailingElements
 
 -- | @withWindowBetween outerSz lbl i j@ is the window between indices @i@
 -- and @j@ with name @lbl@ in a containing sequence of length @outerSz@.
-withWindowBetween :: Size outer elem -> Lbl lbl -> Index outer elem -> Index outer elem -> SomeWindow lbl outer elem
+withWindowBetween ::
+  Size outer elem -> Lbl lbl -> Index outer elem -> Index outer elem -> SomeWindow lbl outer elem
 withWindowBetween n lbl (Count i) (Count j) = withWindow n lbl (Count i) (Count $ j .- i .+ 1)
 
 -- | @withSuffixWindow outerSz lbl i@ is the window between indices @i@ and the
@@ -293,12 +299,12 @@ withSuffixWindow n lbl i = withWindow n lbl i (Count $ getCount n .- getCount i)
 -- | @withTopWindow lbl sz k@ passes to @k@ a window of size @sz@ with name
 -- @lbl@ at offset @0@ of some containing sequence with a unique name @base@.
 withTopWindow ::
-     Lbl lbl
-  -> Int
-  -> (forall base. Proxy base -> SomeWindow lbl base elem -> ans)
-  -> ans
+  Lbl lbl ->
+  Int ->
+  (forall base. Proxy base -> SomeWindow lbl base elem -> ans) ->
+  ans
 withTopWindow _lbl n k =
-      k Proxy $ SomeWindow Proxy $ UnsafeContains (Count 0) (Count n)
+  k Proxy $ SomeWindow Proxy $ UnsafeContains (Count 0) (Count n)
 
 -----
 
@@ -307,8 +313,8 @@ newtype Vector base elem a = Vector (V.Vector a)
   deriving (Eq, Read, Show)
 
 instance (QC.Arbitrary a, V.Unbox a) => QC.Arbitrary (Vector base elem a) where
-    arbitrary = (Vector . V.fromList) <$> QC.arbitrary
-    shrink    = map (Vector . V.fromList) . QC.shrink . V.toList . getVector
+  arbitrary = (Vector . V.fromList) <$> QC.arbitrary
+  shrink = map (Vector . V.fromList) . QC.shrink . V.toList . getVector
 
 getVector :: Vector base elem a -> V.Vector a
 getVector (Vector v) = v
@@ -319,10 +325,10 @@ lengthV = Count . V.length . getVector
 sliceV :: MV.Unbox a => Contains elem outer inner -> Vector outer elem a -> Vector inner elem a
 {-# INLINE sliceV #-}
 sliceV win (Vector v) =
-    Vector $ V.slice i n v
-  where
-    Count i = fromWindow win (Count 0)
-    Count n = windowSize win
+  Vector $ V.slice i n v
+ where
+  Count i = fromWindow win (Count 0)
+  Count n = windowSize win
 
 unsafeThawV :: MV.Unbox a => Vector base elem a -> ST s (MVector base elem s a)
 unsafeThawV (Vector v) = MVector <$> V.unsafeThaw v
@@ -334,7 +340,6 @@ createV m = Vector $ V.create (getMVector <$> m)
 --
 -- * @base@ is a type-level name identifying the container (e.g. @Win (Lbl HonestLbl) skolem1@)
 -- * @elem@ is a type-level name of the elements in the container (e.g. 'Test.Ouroboros.Consensus.ChainGenerator.Slot.SlotE')
---
 newtype MVector base elem s a = MVector (MV.MVector s a)
 
 getMVector :: MVector base elem s a -> MV.MVector s a
@@ -343,24 +348,24 @@ getMVector (MVector mv) = mv
 lengthMV :: MV.Unbox a => MVector base elem s a -> Size base elem
 lengthMV = Count . MV.length . getMVector
 
-sliceMV :: MV.Unbox a => Contains elem outer inner -> MVector outer elem s a -> MVector inner elem s a
+sliceMV ::
+  MV.Unbox a => Contains elem outer inner -> MVector outer elem s a -> MVector inner elem s a
 {-# INLINE sliceMV #-}
 sliceMV win (MVector mv) =
-    MVector $ MV.slice i n mv
-  where
-    Count i = fromWindow win (Count 0)
-    Count n = windowSize win
+  MVector $ MV.slice i n mv
+ where
+  Count i = fromWindow win (Count 0)
+  Count n = windowSize win
 
 replicateMV :: MV.Unbox a => Size base elem -> ST s a -> ST s (MVector base elem s a)
 replicateMV (Count n) m = fmap MVector $ MV.replicateM n m
 
-readMV   :: MV.Unbox a => MVector base elem s a ->             Index base elem ->      ST s a
-writeMV  :: MV.Unbox a => MVector base elem s a ->             Index base elem -> a -> ST s ()
-modifyMV :: MV.Unbox a => MVector base elem s a -> (a -> a) -> Index base elem ->      ST s ()
-
-readMV   (MVector mv)   (Count i)   = MV.read   mv i
-writeMV  (MVector mv)   (Count i) x = MV.write  mv i x
-modifyMV (MVector mv) f (Count i)   = MV.modify mv f i
+readMV :: MV.Unbox a => MVector base elem s a -> Index base elem -> ST s a
+writeMV :: MV.Unbox a => MVector base elem s a -> Index base elem -> a -> ST s ()
+modifyMV :: MV.Unbox a => MVector base elem s a -> (a -> a) -> Index base elem -> ST s ()
+readMV (MVector mv) (Count i) = MV.read mv i
+writeMV (MVector mv) (Count i) x = MV.write mv i x
+modifyMV (MVector mv) f (Count i) = MV.modify mv f i
 
 readV :: MV.Unbox a => Vector base elem a -> Index base elem -> a
 readV (Vector v) (Count i) = v V.! i
@@ -370,8 +375,8 @@ readV (Vector v) (Count i) = v V.! i
 -- | A type-level name for counting elements without a specific property
 data Other
 
-deriving instance (which TypeEq.~~ Other) => Enum (Count base elem which)
-deriving instance (which TypeEq.~~ Other) => Num  (Count base elem which)
+deriving instance which TypeEq.~~ Other => Enum (Count base elem which)
+deriving instance which TypeEq.~~ Other => Num (Count base elem which)
 
 type Var base elem = Count base elem Other
 
