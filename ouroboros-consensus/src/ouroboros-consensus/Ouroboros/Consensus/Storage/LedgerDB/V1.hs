@@ -9,7 +9,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -670,8 +669,11 @@ newForkerAtTarget ::
   Target (Point blk) ->
   m (Either GetForkerError (Forker m l blk))
 newForkerAtTarget h rr pt = getEnv h $ \ldbEnv ->
-  withReadLock (ldbLock ldbEnv) (acquireAtTarget ldbEnv rr (Right pt))
-    >>= traverse (newForker h ldbEnv)
+  withReadLock
+    (ldbLock ldbEnv)
+    ( acquireAtTarget ldbEnv (Right pt)
+        >>= traverse (newForker h ldbEnv rr)
+    )
 
 newForkerByRollback ::
   ( HeaderHash l ~ HeaderHash blk
@@ -687,7 +689,7 @@ newForkerByRollback ::
   Word64 ->
   m (Either GetForkerError (Forker m l blk))
 newForkerByRollback h rr n = getEnv h $ \ldbEnv -> do
-  withReadLock (ldbLock ldbEnv) (acquireAtTarget ldbEnv rr (Left n)) >>= traverse (newForker h ldbEnv)
+  withReadLock (ldbLock ldbEnv) (acquireAtTarget ldbEnv (Left n) >>= traverse (newForker h ldbEnv rr))
 
 -- | Close all open block and header 'Forker's.
 closeAllForkers ::
@@ -704,9 +706,6 @@ closeAllForkers ldbEnv =
  where
   forkersVar = ldbForkers ldbEnv
 
-type Resources m l =
-  (LedgerBackingStoreValueHandle m l, DbChangelog l)
-
 -- | Acquire both a value handle and a db changelog at the tip. Holds a read lock
 -- while doing so.
 acquireAtTarget ::
@@ -719,13 +718,12 @@ acquireAtTarget ::
   , LedgerSupportsProtocol blk
   ) =>
   LedgerDBEnv m l blk ->
-  ResourceRegistry m ->
   Either Word64 (Target (Point blk)) ->
-  ReadLocked m (Either GetForkerError (Resources m l))
-acquireAtTarget ldbEnv rr target = readLocked $ runExceptT $ do
+  ReadLocked m (Either GetForkerError (DbChangelog l))
+acquireAtTarget ldbEnv target = readLocked $ runExceptT $ do
   dblog <- lift $ readTVarIO (ldbChangelog ldbEnv)
   -- Get the prefix of the dblog ending in the specified target.
-  dblog' <- case target of
+  case target of
     Right VolatileTip -> pure dblog
     Right ImmutableTip -> pure $ rollbackToAnchor dblog
     Right (SpecificPoint pt) -> do
@@ -745,30 +743,6 @@ acquireAtTarget ldbEnv rr target = readLocked $ runExceptT $ do
                 , rollbackRequested = n
                 }
       Just dblog' -> pure dblog'
-  lift $ (,dblog') <$> acquire ldbEnv rr dblog'
-
-acquire ::
-  (IOLike m, GetTip l) =>
-  LedgerDBEnv m l blk ->
-  ResourceRegistry m ->
-  DbChangelog l ->
-  m (LedgerBackingStoreValueHandle m l)
-acquire ldbEnv rr dblog = do
-  -- bsvhClose is idempotent, so we let the resource call it even if the value
-  -- handle might have been closed somewhere else
-  (_, vh) <- allocate rr (\_ -> bsValueHandle $ ldbBackingStore ldbEnv) bsvhClose
-  let dblogSlot = getTipSlot (changelogLastFlushedState dblog)
-  if bsvhAtSlot vh == dblogSlot
-    then pure vh
-    else
-      bsvhClose vh
-        >> error
-          ( "Critical error: Value handles are created at "
-              <> show (bsvhAtSlot vh)
-              <> " while the db changelog is at "
-              <> show dblogSlot
-              <> ". There is either a race condition or a logic bug"
-          )
 
 {-------------------------------------------------------------------------------
   Make forkers from consistent views
@@ -783,21 +757,32 @@ newForker ::
   ) =>
   LedgerDBHandle m l blk ->
   LedgerDBEnv m l blk ->
-  Resources m l ->
-  m (Forker m l blk)
-newForker h ldbEnv (vh, dblog) = do
+  ResourceRegistry m ->
+  DbChangelog l ->
+  ReadLocked m (Forker m l blk)
+newForker h ldbEnv rr dblog = readLocked $ do
   dblogVar <- newTVarIO dblog
   forkerKey <- atomically $ stateTVar (ldbNextForkerKey ldbEnv) $ \r -> (r, r + 1)
+  forkerMVar <- newMVar $ Left (ldbLock ldbEnv, ldbBackingStore ldbEnv, rr)
   let forkerEnv =
         ForkerEnv
-          { foeBackingStoreValueHandle = vh
+          { foeBackingStoreValueHandle = forkerMVar
           , foeChangelog = dblogVar
           , foeSwitchVar = ldbChangelog ldbEnv
           , foeSecurityParam = ledgerDbCfgSecParam $ ldbCfg ldbEnv
           , foeTracer =
               LedgerDBForkerEvent . TraceForkerEventWithKey forkerKey >$< ldbTracer ldbEnv
           }
-  atomically $ modifyTVar (ldbForkers ldbEnv) $ Map.insert forkerKey forkerEnv
+  atomically $ do
+    -- We need to make sure to release this read access when we drop the value
+    -- handle, so in 'closeForkerEnv' (if it wasn't promoted) or in
+    -- 'getValueHandle' (if it was promoted).
+    unsafeAcquireReadAccess (ldbLock ldbEnv)
+
+    -- Note that we add the forkerEnv to the 'ldbForkers' so that an exception
+    -- which will close all the forkers, also closes this one, releasing the
+    -- read access we acquired above.
+    modifyTVar (ldbForkers ldbEnv) $ Map.insert forkerKey forkerEnv
   traceWith (foeTracer forkerEnv) ForkerOpen
   pure $ mkForker h (ldbQueryBatchSize ldbEnv) forkerKey
 
