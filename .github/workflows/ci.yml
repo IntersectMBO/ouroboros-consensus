@@ -55,6 +55,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Check CDDLs up-to-date with Blueprints
+      continue-on-error: true
+      run: |
+        ./scripts/ci/diff-cddls.sh
+
     - name: Install base libraries
       uses: input-output-hk/actions/base@latest
       with:
@@ -137,6 +142,17 @@ jobs:
 
     - name: Build projects [build]
       run: cabal build all -j
+
+    - name: Install Ruby for CDDL
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.4'
+        bundler-cache: true
+
+    - name: Install cddl tools
+      run: |
+        gem install cddlc
+        cabal install cuddle-0.5.0.0
 
     - name: Test
       if: matrix.test-set == 'all'
