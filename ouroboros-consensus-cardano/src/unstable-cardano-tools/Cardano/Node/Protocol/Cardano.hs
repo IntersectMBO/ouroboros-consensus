@@ -115,6 +115,7 @@ mkConsensusProtocolCardano
     , npcTestAlonzoHardForkAtEpoch
     , npcTestBabbageHardForkAtEpoch
     , npcTestConwayHardForkAtEpoch
+    , npcTestDijkstraHardForkAtEpoch
     }
   files = do
     byronGenesis <-
@@ -239,6 +240,11 @@ mkConsensusProtocolCardano
           , -- Babbage to Conway hard fork parameters
             triggerHardForkConway =
               case npcTestConwayHardForkAtEpoch of
+                Nothing -> Consensus.CardanoTriggerHardForkAtDefaultVersion
+                Just epochNo -> Consensus.CardanoTriggerHardForkAtEpoch epochNo
+          , -- Conway to Dijkstra hard fork parameters
+            triggerHardForkDijkstra =
+              case npcTestDijkstraHardForkAtEpoch of
                 Nothing -> Consensus.CardanoTriggerHardForkAtDefaultVersion
                 Just epochNo -> Consensus.CardanoTriggerHardForkAtEpoch epochNo
           }
