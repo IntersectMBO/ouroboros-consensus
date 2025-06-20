@@ -17,6 +17,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
   , withReadLock
   , withWriteLock
   , writeLocked
+  , unsafeAcquireReadAccess
+  , unsafeReleaseReadAccess
   ) where
 
 import qualified Control.RAWLock as Lock
@@ -85,3 +87,9 @@ writeLocked = WriteLocked
 withWriteLock :: IOLike m => LedgerDBLock m -> WriteLocked m a -> m a
 withWriteLock (LedgerDBLock lock) m =
   Lock.withWriteAccess lock (\() -> (,()) <$> runWriteLocked m)
+
+unsafeAcquireReadAccess :: IOLike m => LedgerDBLock m -> STM m ()
+unsafeAcquireReadAccess (LedgerDBLock lock) = Lock.unsafeAcquireReadAccess lock
+
+unsafeReleaseReadAccess :: IOLike m => LedgerDBLock m -> STM m ()
+unsafeReleaseReadAccess (LedgerDBLock lock) = Lock.unsafeReleaseReadAccess lock
