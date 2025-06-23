@@ -827,11 +827,15 @@ implForkerClose ::
   ForkerEnv m l blk ->
   m ()
 implForkerClose (LDBHandle varState) forkerKey env = do
-  atomically $
-    readTVar varState >>= \case
-      LedgerDBClosed -> pure ()
-      LedgerDBOpen ldbEnv -> do
-        modifyTVar
-          (ldbForkers ldbEnv)
-          (Map.delete forkerKey)
+  frk <-
+    atomically $
+      readTVar varState >>= \case
+        LedgerDBClosed -> pure Nothing
+        LedgerDBOpen ldbEnv -> do
+          stateTVar
+            (ldbForkers ldbEnv)
+            (\m -> Map.updateLookupWithKey (\_ _ -> Nothing) forkerKey m)
+  case frk of
+    Nothing -> pure ()
+    Just e -> traceWith (foeTracer e) DanglingForkerClosed
   closeForkerEnv env

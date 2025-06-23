@@ -628,4 +628,5 @@ data TraceForkerEvent
   | ForkerReadStatistics
   | ForkerPushStart
   | ForkerPushEnd
+  | DanglingForkerClosed
   deriving (Show, Eq)
