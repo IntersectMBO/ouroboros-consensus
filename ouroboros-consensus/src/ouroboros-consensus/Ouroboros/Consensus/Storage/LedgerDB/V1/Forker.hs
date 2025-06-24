@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -19,6 +20,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Forker
   , implForkerReadTables
   ) where
 
+import qualified Control.Monad as Monad
 import Control.ResourceRegistry
 import Control.Tracer
 import qualified Data.Map.Strict as Map
@@ -55,7 +57,7 @@ data ForkerEnv m l blk = ForkerEnv
            m
            ( Either
                (LedgerDBLock m, LedgerBackingStore m l, ResourceRegistry m)
-               (LedgerBackingStoreValueHandle m l)
+               (ResourceKey m, LedgerBackingStoreValueHandle m l)
            )
        )
   -- ^ Either the ingredients to create a value handle or a value handle, i.e. a
@@ -91,7 +93,9 @@ deriving instance
 
 closeForkerEnv :: IOLike m => ForkerEnv m l blk -> m ()
 closeForkerEnv ForkerEnv{foeBackingStoreValueHandle} = do
-  either (\(l, _, _) -> atomically . unsafeReleaseReadAccess $ l) bsvhClose
+  either
+    (\(l, _, _) -> atomically . unsafeReleaseReadAccess $ l)
+    (Monad.void . release . fst)
     =<< takeMVar foeBackingStoreValueHandle
 
 {-------------------------------------------------------------------------------
@@ -103,18 +107,16 @@ closeForkerEnv ForkerEnv{foeBackingStoreValueHandle} = do
 getValueHandle :: (GetTip l, IOLike m) => ForkerEnv m l blk -> m (LedgerBackingStoreValueHandle m l)
 getValueHandle ForkerEnv{foeBackingStoreValueHandle, foeChangelog} =
   modifyMVar foeBackingStoreValueHandle $ \case
-    r@(Right bsvh) -> pure (r, bsvh)
+    r@(Right (_, bsvh)) -> pure (r, bsvh)
     Left (l, bs, rr) -> do
-      -- bsvhClose is idempotent, so we let the resource call it even if the value
-      -- handle might have been closed somewhere else
-      (_, bsvh) <- allocate rr (\_ -> bsValueHandle bs) bsvhClose
+      (k, bsvh) <- allocate rr (\_ -> bsValueHandle bs) bsvhClose
       dblogSlot <- getTipSlot . changelogLastFlushedState <$> readTVarIO foeChangelog
       if bsvhAtSlot bsvh == dblogSlot
         then do
           atomically $ unsafeReleaseReadAccess l
-          pure (Right bsvh, bsvh)
+          pure (Right (k, bsvh), bsvh)
         else
-          bsvhClose bsvh
+          release k
             >> error
               ( "Critical error: Value handles are created at "
                   <> show (bsvhAtSlot bsvh)

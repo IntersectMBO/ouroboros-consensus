@@ -553,6 +553,48 @@ type NetworkAddr addr =
 -- network layer.
 --
 -- This function runs forever unless an exception is thrown.
+--
+-- This function spawns a resource registry (which we will refer to as
+-- __the consensus registry__) that will include the ChainDB as one of
+-- its resources. When the Consensus layer is shut down, the consensus
+-- resource registry will exit the scope of the 'withRegistry'
+-- function. This causes all resources allocated in the registry
+-- —including the ChainDB— to be closed.
+--
+-- During it's operation, different consensus threads will create
+-- resources associated with the ChainDB, eg Forkers in the LedgerDB,
+-- or Followers in the ChainDB. These resources are not created by the
+-- database themselves (LedgerDB, VolatileDB, and ImmutableDB). For
+-- example, chain selection opens a forker using the LedgerDB.
+-- Crucially, this means that clients creating these resources are
+-- instantiated after the ChainDB.
+--
+-- We rely on a specific sequence of events for this design to be correct:
+--
+-- - The ChainDB is only closed by exiting the scope of the consensus
+--   resource registry.
+--
+-- - If a client creates resources tied to any of the
+--   aforementioned databases and is forked into a separate thread,
+--   that thread is linked to the consensus registry. Because resources
+--   in a registry are deallocated in reverse order of allocation, any
+--   resources created by such threads will be deallocated before the
+--   ChainDB is closed, ensuring proper cleanup.
+--
+-- Currently, we have two distinct approaches to resource management
+-- and database closure:
+--
+-- - In the LedgerDB, closing the database does not close any resources
+--   created by its clients. We rely on the resource registry to deallocate
+--   these resources before the LedgerDB is closed. However, after closing
+--   the LedgerDB, the only permitted action on these resources is to free them.
+--   See 'ldbForkers'.
+--
+-- - In the ChainDB, closing the database also closes all followers and
+--   iterators.
+--
+-- TODO: Ideally, the ChainDB and LedgerDB should follow a consistent
+-- approach to resource deallocation.
 runWith ::
   forall m addrNTN addrNTC blk p2p.
   ( RunNode blk

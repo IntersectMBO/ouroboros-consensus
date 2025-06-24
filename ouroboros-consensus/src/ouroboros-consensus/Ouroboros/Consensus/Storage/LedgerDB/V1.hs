@@ -25,7 +25,6 @@ import Control.Monad.Except
 import Control.Monad.Trans (lift)
 import Control.ResourceRegistry
 import Control.Tracer
-import Data.Bifunctor (first)
 import qualified Data.Foldable as Foldable
 import Data.Functor.Contravariant ((>$<))
 import Data.Kind (Type)
@@ -83,24 +82,29 @@ mkInitDb ::
   Complete LedgerDbArgs m blk ->
   Complete V1.LedgerDbFlavorArgs m ->
   ResolveBlock m blk ->
-  InitDB (DbChangelog' blk, BackingStore' m blk) m blk
+  InitDB (DbChangelog' blk, ResourceKey m, BackingStore' m blk) m blk
 mkInitDb args bss getBlock =
   InitDB
     { initFromGenesis = do
         st <- lgrGenesis
         let genesis = forgetLedgerTables st
             chlog = DbCh.empty genesis
-        (_, backingStore) <-
+        (bsKey, backingStore) <-
           allocate
             lgrRegistry
             (\_ -> newBackingStore bsTracer baArgs lgrHasFS' genesis (projectLedgerTables st))
             bsClose
-        pure (chlog, backingStore)
+        pure (chlog, bsKey, backingStore)
     , initFromSnapshot =
         runExceptT
-          . loadSnapshot bsTracer baArgs (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) lgrHasFS'
-    , closeDb = bsClose . snd
-    , initReapplyBlock = \cfg blk (chlog, bstore) -> do
+          . loadSnapshot
+            bsTracer
+            baArgs
+            (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig)
+            lgrHasFS'
+            lgrRegistry
+    , closeDb = \(_, r, _) -> void $ release r
+    , initReapplyBlock = \cfg blk (chlog, r, bstore) -> do
         !chlog' <- reapplyThenPush cfg blk (readKeySets bstore) chlog
         -- It's OK to flush without a lock here, since the `LedgerDB` has not
         -- finished initializing, only this thread has access to the backing
@@ -113,10 +117,10 @@ mkInitDb args bss getBlock =
                 mapM_ (flushIntoBackingStore bstore) toFlush
                 pure toKeep
               else pure chlog'
-        pure (chlog'', bstore)
-    , currentTip = ledgerState . current . fst
-    , pruneDb = pure . first pruneToImmTipOnly
-    , mkLedgerDb = \(db, lgrBackingStore) -> do
+        pure (chlog'', r, bstore)
+    , currentTip = \(ch, _, _) -> ledgerState . current $ ch
+    , pruneDb = \(ch, r, bs) -> pure (pruneToImmTipOnly ch, r, bs)
+    , mkLedgerDb = \(db, ldbBackingStoreKey, ldbBackingStore) -> do
         (varDB, prevApplied) <-
           (,) <$> newTVarIO db <*> newTVarIO Set.empty
         flushLock <- mkLedgerDBLock
@@ -125,7 +129,8 @@ mkInitDb args bss getBlock =
         let env =
               LedgerDBEnv
                 { ldbChangelog = varDB
-                , ldbBackingStore = lgrBackingStore
+                , ldbBackingStore = ldbBackingStore
+                , ldbBackingStoreKey = ldbBackingStoreKey
                 , ldbLock = flushLock
                 , ldbPrevApplied = prevApplied
                 , ldbForkers = forkers
@@ -329,13 +334,14 @@ implCloseDB (LDBHandle varState) = do
         -- Idempotent
         LedgerDBClosed -> return Nothing
         LedgerDBOpen env -> do
+          -- By writing this tvar, we already make sure that no
+          -- forkers can perform operations other than closing, as
+          -- they rely on accessing the LedgerDB, which is now closed.
           writeTVar varState LedgerDBClosed
           return $ Just env
 
   -- Only when the LedgerDB was open
-  whenJust mbOpenEnv $ \env -> do
-    closeAllForkers env
-    bsClose (ldbBackingStore env)
+  whenJust mbOpenEnv $ void . release . ldbBackingStoreKey
 
 mkInternals ::
   ( IOLike m
@@ -351,7 +357,7 @@ mkInternals h =
     , push = getEnv1 h implIntPush
     , reapplyThenPushNOW = getEnv1 h implIntReapplyThenPush
     , wipeLedgerDB = getEnv h $ void . destroySnapshots . snapshotsFs . ldbHasFS
-    , closeLedgerDB = getEnv h $ bsClose . ldbBackingStore
+    , closeLedgerDB = getEnv h $ void . release . ldbBackingStoreKey
     , truncateSnapshots = getEnv h $ void . implIntTruncateSnapshots . ldbHasFS
     , getNumLedgerTablesHandles = pure 0
     }
@@ -482,6 +488,10 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   , ldbBackingStore :: !(LedgerBackingStore m l)
   -- ^ Handle to the ledger's backing store, containing the parts that grow too
   -- big for in-memory residency
+  , ldbBackingStoreKey :: !(ResourceKey m)
+  -- ^ When deallocating the backing store upon closing the LedgerDB
+  -- (via the ChainDB shutting down), we will release the backing
+  -- store with this action.
   , ldbLock :: !(LedgerDBLock m)
   -- ^ The flush lock to the 'BackingStore'. This lock is crucial when it
   -- comes to keeping the data in memory consistent with the data on-disk.
@@ -512,6 +522,18 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   -- ^ Open forkers.
   --
   -- INVARIANT: a forker is open iff its 'ForkerKey' is in this 'Map.
+  --
+  -- The resources that could possibly be held by these forkers will
+  -- be released by each one of the client's registries. This means
+  -- that for example ChainSelection will, upon closing its registry,
+  -- release its forker and any resources associated.
+  --
+  -- Upon closing the LedgerDB we will overwrite this variable such
+  -- that existing forkers can only be closed, as closing doesn't
+  -- involve accessing this map (other than possibly removing the
+  -- forker from it if the map still exists).
+  --
+  -- As the LedgerDB should outlive any clients, this is fine.
   , ldbNextForkerKey :: !(StrictTVar m ForkerKey)
   , ldbSnapshotPolicy :: !SnapshotPolicy
   , ldbTracer :: !(Tracer m (TraceEvent blk))
@@ -691,21 +713,6 @@ newForkerByRollback ::
 newForkerByRollback h rr n = getEnv h $ \ldbEnv -> do
   withReadLock (ldbLock ldbEnv) (acquireAtTarget ldbEnv (Left n) >>= traverse (newForker h ldbEnv rr))
 
--- | Close all open block and header 'Forker's.
-closeAllForkers ::
-  IOLike m =>
-  LedgerDBEnv m l blk ->
-  m ()
-closeAllForkers ldbEnv =
-  do
-    forkerEnvs <- atomically $ do
-      forkerEnvs <- Map.elems <$> readTVar forkersVar
-      writeTVar forkersVar Map.empty
-      return forkerEnvs
-    mapM_ closeForkerEnv forkerEnvs
- where
-  forkersVar = ldbForkers ldbEnv
-
 -- | Acquire both a value handle and a db changelog at the tip. Holds a read lock
 -- while doing so.
 acquireAtTarget ::
@@ -784,7 +791,7 @@ newForker h ldbEnv rr dblog = readLocked $ do
     -- read access we acquired above.
     modifyTVar (ldbForkers ldbEnv) $ Map.insert forkerKey forkerEnv
   traceWith (foeTracer forkerEnv) ForkerOpen
-  pure $ mkForker h (ldbQueryBatchSize ldbEnv) forkerKey
+  pure $ mkForker h (ldbQueryBatchSize ldbEnv) forkerKey forkerEnv
 
 mkForker ::
   ( IOLike m
@@ -795,10 +802,11 @@ mkForker ::
   LedgerDBHandle m l blk ->
   QueryBatchSize ->
   ForkerKey ->
+  ForkerEnv m l blk ->
   Forker m l blk
-mkForker h qbs forkerKey =
+mkForker h qbs forkerKey forkerEnv =
   Forker
-    { forkerClose = implForkerClose h forkerKey
+    { forkerClose = implForkerClose h forkerKey forkerEnv
     , forkerReadTables = getForkerEnv1 h forkerKey implForkerReadTables
     , forkerRangeReadTables = getForkerEnv1 h forkerKey (implForkerRangeReadTables qbs)
     , forkerGetLedgerState = getForkerEnvSTM h forkerKey implForkerGetLedgerState
@@ -807,18 +815,27 @@ mkForker h qbs forkerKey =
     , forkerCommit = getForkerEnvSTM h forkerKey implForkerCommit
     }
 
+-- | This function receives an environment instead of reading it from
+-- the DB such that we can close the forker even if the LedgerDB is
+-- closed. In fact this should never happen as clients of the LedgerDB
+-- (which are the ones opening forkers) should never outlive the
+-- LedgerDB.
 implForkerClose ::
   IOLike m =>
   LedgerDBHandle m l blk ->
   ForkerKey ->
+  ForkerEnv m l blk ->
   m ()
-implForkerClose (LDBHandle varState) forkerKey = do
-  envMay <-
+implForkerClose (LDBHandle varState) forkerKey env = do
+  frk <-
     atomically $
       readTVar varState >>= \case
         LedgerDBClosed -> pure Nothing
         LedgerDBOpen ldbEnv -> do
           stateTVar
             (ldbForkers ldbEnv)
-            (Map.updateLookupWithKey (\_ _ -> Nothing) forkerKey)
-  whenJust envMay closeForkerEnv
+            (\m -> Map.updateLookupWithKey (\_ _ -> Nothing) forkerKey m)
+  case frk of
+    Nothing -> pure ()
+    Just e -> traceWith (foeTracer e) DanglingForkerClosed
+  closeForkerEnv env
