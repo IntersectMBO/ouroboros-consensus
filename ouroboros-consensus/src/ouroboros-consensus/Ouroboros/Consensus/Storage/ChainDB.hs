@@ -48,10 +48,11 @@
 -- - The ChainDB is used to create 'Follower's (which in turn contain
 --   'Iterator's).
 --
--- These resources must eventually be freed. See function
--- 'Ouroboros.Consensus.Node.runWith' for an example of an approach
--- taken to resource management using a resource registry.
+-- These resources must eventually be freed.
 --
+-- Threads that make use of the ChainDB to allocate resources *MUST* be closed
+-- before the ChainDB is closed. See 'Ouroboros.Consensus.Node.runWith' for the
+-- approach we follow in consensus to ensure this principle.
 module Ouroboros.Consensus.Storage.ChainDB
   ( module Ouroboros.Consensus.Storage.ChainDB.API
   , module Ouroboros.Consensus.Storage.ChainDB.Impl
