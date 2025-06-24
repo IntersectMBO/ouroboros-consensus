@@ -142,6 +142,7 @@ import Codec.Serialise
 import qualified Control.Monad as Monad
 import Control.Monad.Except
 import qualified Control.Monad.Trans as Trans (lift)
+import Control.ResourceRegistry
 import Control.Tracer
 import Data.Functor.Contravariant ((>$<))
 import qualified Data.List as List
@@ -259,12 +260,13 @@ loadSnapshot ::
   Complete BackingStoreArgs m ->
   CodecConfig blk ->
   SnapshotsFS m ->
+  ResourceRegistry m ->
   DiskSnapshot ->
   ExceptT
     (SnapshotFailure blk)
     m
-    ((DbChangelog' blk, LedgerBackingStore m (ExtLedgerState blk)), RealPoint blk)
-loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs') s = do
+    ((DbChangelog' blk, ResourceKey m, LedgerBackingStore m (ExtLedgerState blk)), RealPoint blk)
+loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs') reg s = do
   (extLedgerSt, checksumAsRead) <-
     withExceptT (InitFailureRead . ReadSnapshotFailed) $
       readExtLedgerState fs' (decodeDiskExtLedgerState ccfg) decode (snapshotToStatePath s)
@@ -283,6 +285,8 @@ loadSnapshot tracer bss ccfg fs@(SnapshotsFS fs') s = do
   case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
     Origin -> throwError InitFailureGenesis
     NotOrigin pt -> do
-      backingStore <- Trans.lift (restoreBackingStore tracer bss fs extLedgerSt (snapshotToTablesPath s))
+      (bsKey, backingStore) <-
+        Trans.lift
+          (allocate reg (\_ -> restoreBackingStore tracer bss fs extLedgerSt (snapshotToTablesPath s)) bsClose)
       let chlog = empty extLedgerSt
-      pure ((chlog, backingStore), pt)
+      pure ((chlog, bsKey, backingStore), pt)

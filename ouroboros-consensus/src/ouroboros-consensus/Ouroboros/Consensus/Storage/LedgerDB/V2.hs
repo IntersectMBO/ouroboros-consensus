@@ -9,7 +9,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -58,7 +57,6 @@ import Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
-import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
@@ -98,9 +96,9 @@ mkInitDb args flavArgs getBlock =
     , mkLedgerDb = \lseq -> do
         varDB <- newTVarIO lseq
         prevApplied <- newTVarIO Set.empty
+        lock <- RAWLock.new ()
         forkers <- newTVarIO Map.empty
         nextForkerKey <- newTVarIO (ForkerKey 0)
-        lock <- RAWLock.new LDBLock
         let env =
               LedgerDBEnv
                 { ldbSeq = varDB
@@ -409,25 +407,18 @@ implTryFlush :: Applicative m => LedgerDBEnv m l blk -> m ()
 implTryFlush _ = pure ()
 
 implCloseDB :: IOLike m => LedgerDBHandle m l blk -> m ()
-implCloseDB (LDBHandle varState) = do
-  mbOpenEnv <-
-    atomically $
-      readTVar varState >>= \case
-        -- Idempotent
-        LedgerDBClosed -> return Nothing
-        LedgerDBOpen env -> do
-          writeTVar varState LedgerDBClosed
-          return $ Just env
-
-  -- Only when the LedgerDB was open
-  whenJust mbOpenEnv $ \env -> do
-    closeAllForkers env
+implCloseDB (LDBHandle varState) =
+  atomically $
+    readTVar varState >>= \case
+      -- Idempotent
+      LedgerDBClosed -> pure ()
+      LedgerDBOpen env -> do
+        writeTVar (ldbForkers env) Map.empty
+        writeTVar varState LedgerDBClosed
 
 {-------------------------------------------------------------------------------
   The LedgerDBEnv
 -------------------------------------------------------------------------------}
-
-data LDBLock = LDBLock deriving (Generic, NoThunks)
 
 type LedgerDBEnv :: (Type -> Type) -> LedgerStateKind -> Type -> Type
 data LedgerDBEnv m l blk = LedgerDBEnv
@@ -450,6 +441,18 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   -- ^ Open forkers.
   --
   -- INVARIANT: a forker is open iff its 'ForkerKey' is in this 'Map.
+  --
+  -- The resources that could possibly be held by these forkers will
+  -- be released by each one of the client's registries. This means
+  -- that for example ChainSelection will, upon closing its registry,
+  -- release its forker and any resources associated.
+  --
+  -- Upon closing the LedgerDB we will overwrite this variable such
+  -- that existing forkers can only be closed, as closing doesn't
+  -- involve accessing this map (other than possibly removing the
+  -- forker from it if the map still exists).
+  --
+  -- As the LedgerDB should outlive any clients, this is fine.
   , ldbNextForkerKey :: !(StrictTVar m ForkerKey)
   , ldbSnapshotPolicy :: !SnapshotPolicy
   , ldbTracer :: !(Tracer m (TraceEvent blk))
@@ -457,7 +460,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   , ldbHasFS :: !(SomeHasFS m)
   , ldbResolveBlock :: !(ResolveBlock m blk)
   , ldbQueryBatchSize :: !QueryBatchSize
-  , ldbOpenHandlesLock :: !(RAWLock m LDBLock)
+  , ldbOpenHandlesLock :: !(RAWLock m ())
   -- ^ While holding a read lock (at least), all handles in the 'ldbSeq' are
   -- guaranteed to be open. During this time, the handle can be duplicated and
   -- then be used independently, see 'getStateRef' and 'withStateRef'.
@@ -573,7 +576,7 @@ getStateRef ::
   (LedgerSeq m l -> t (StateRef m l)) ->
   m (t (StateRef m l))
 getStateRef ldbEnv project =
-  RAWLock.withReadAccess (ldbOpenHandlesLock ldbEnv) $ \LDBLock -> do
+  RAWLock.withReadAccess (ldbOpenHandlesLock ldbEnv) $ \() -> do
     tst <- project <$> readTVarIO (ldbSeq ldbEnv)
     for tst $ \st -> do
       tables' <- duplicate $ tables st
@@ -652,24 +655,14 @@ newForkerByRollback ::
 newForkerByRollback h rr n = getEnv h $ \ldbEnv ->
   acquireAtTarget ldbEnv (Left n) >>= traverse (newForker h ldbEnv rr)
 
--- | Close all open 'Forker's.
-closeAllForkers ::
-  IOLike m =>
-  LedgerDBEnv m l blk ->
-  m ()
-closeAllForkers ldbEnv = do
-  toClose <- fmap (ldbEnv,) <$> (atomically $ stateTVar forkersVar (,Map.empty))
-  mapM_ closeForkerEnv toClose
- where
-  forkersVar = ldbForkers ldbEnv
-
-closeForkerEnv :: IOLike m => (LedgerDBEnv m l blk, ForkerEnv m l blk) -> m ()
-closeForkerEnv (LedgerDBEnv{ldbOpenHandlesLock}, frkEnv) =
-  RAWLock.withWriteAccess ldbOpenHandlesLock $
+closeForkerEnv ::
+  IOLike m => ForkerEnv m l blk -> m ()
+closeForkerEnv ForkerEnv{foeResourcesToRelease = (lock, key, toRelease)} =
+  RAWLock.withWriteAccess lock $
     const $ do
-      id =<< readTVarIO (foeResourcesToRelease frkEnv)
-      atomically $ writeTVar (foeResourcesToRelease frkEnv) (pure ())
-      pure ((), LDBLock)
+      id =<< atomically (swapTVar toRelease (pure ()))
+      _ <- release key
+      pure ((), ())
 
 getForkerEnv ::
   forall m l blk r.
@@ -718,22 +711,33 @@ getForkerEnvSTM (LDBHandle varState) forkerKey f =
             )
 
 -- | Will release all handles in the 'foeLedgerSeq'.
+--
+-- This function receives an environment instead of reading it from
+-- the DB such that we can close the forker even if the LedgerDB is
+-- closed. In fact this should never happen as clients of the LedgerDB
+-- (which are the ones opening forkers) should never outlive the
+-- LedgerDB.
 implForkerClose ::
   IOLike m =>
   LedgerDBHandle m l blk ->
   ForkerKey ->
+  ForkerEnv m l blk ->
   m ()
-implForkerClose (LDBHandle varState) forkerKey = do
-  menv <-
+implForkerClose (LDBHandle varState) forkerKey forkerEnv = do
+  frk <-
     atomically $
       readTVar varState >>= \case
         LedgerDBClosed -> pure Nothing
-        LedgerDBOpen ldbEnv ->
-          fmap (ldbEnv,)
-            <$> stateTVar
-              (ldbForkers ldbEnv)
-              (Map.updateLookupWithKey (\_ _ -> Nothing) forkerKey)
-  whenJust menv closeForkerEnv
+        LedgerDBOpen ldbEnv -> do
+          stateTVar
+            (ldbForkers ldbEnv)
+            (\m -> Map.updateLookupWithKey (\_ _ -> Nothing) forkerKey m)
+
+  case frk of
+    Nothing -> pure ()
+    Just e -> traceWith (foeTracer e) DanglingForkerClosed
+
+  closeForkerEnv forkerEnv
 
 newForker ::
   ( IOLike m
@@ -753,14 +757,14 @@ newForker h ldbEnv rr st = do
   let tr = LedgerDBForkerEvent . TraceForkerEventWithKey forkerKey >$< ldbTracer ldbEnv
   traceWith tr ForkerOpen
   lseqVar <- newTVarIO . LedgerSeq . AS.Empty $ st
-  (_, toRelease) <- allocate rr (\_ -> newTVarIO (pure ())) (readTVarIO Monad.>=> id)
+  (k, toRelease) <- allocate rr (\_ -> newTVarIO (pure ())) (readTVarIO Monad.>=> id)
   let forkerEnv =
         ForkerEnv
           { foeLedgerSeq = lseqVar
           , foeSwitchVar = ldbSeq ldbEnv
           , foeSecurityParam = ledgerDbCfgSecParam $ ldbCfg ldbEnv
           , foeTracer = tr
-          , foeResourcesToRelease = toRelease
+          , foeResourcesToRelease = (ldbOpenHandlesLock ldbEnv, k, toRelease)
           }
   atomically $ modifyTVar (ldbForkers ldbEnv) $ Map.insert forkerKey forkerEnv
   pure $
@@ -772,5 +776,5 @@ newForker h ldbEnv rr st = do
       , forkerReadStatistics = getForkerEnv h forkerKey implForkerReadStatistics
       , forkerPush = getForkerEnv1 h forkerKey implForkerPush
       , forkerCommit = getForkerEnvSTM h forkerKey implForkerCommit
-      , forkerClose = implForkerClose h forkerKey
+      , forkerClose = implForkerClose h forkerKey forkerEnv
       }
