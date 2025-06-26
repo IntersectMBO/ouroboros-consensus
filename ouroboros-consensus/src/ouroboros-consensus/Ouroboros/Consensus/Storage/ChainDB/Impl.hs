@@ -38,6 +38,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl
   , openDBInternal
   ) where
 
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Control.Monad (void, when)
 import Control.Monad.Trans.Class (lift)
 import Control.ResourceRegistry
@@ -60,6 +61,7 @@ import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HeaderValidation (mkHeaderWithTime)
 import Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import Ouroboros.Consensus.Ledger.Inspect
+import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as API
@@ -105,6 +107,7 @@ withDB ::
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
   , LedgerSupportsLedgerDB blk
+  , LSM.GoodForLSM (LedgerState blk)
   ) =>
   Complete Args.ChainDbArgs m blk ->
   (ChainDB m blk -> m a) ->
@@ -121,6 +124,7 @@ openDB ::
   , ConvertRawHash blk
   , SerialiseDiskConstraints blk
   , LedgerSupportsLedgerDB blk
+  , LSM.GoodForLSM (LedgerState blk)
   ) =>
   Complete Args.ChainDbArgs m blk ->
   m (ChainDB m blk)
@@ -137,6 +141,7 @@ openDBInternal ::
   , SerialiseDiskConstraints blk
   , HasCallStack
   , LedgerSupportsLedgerDB blk
+  , LSM.GoodForLSM (LedgerState blk)
   ) =>
   Complete Args.ChainDbArgs m blk ->
   -- | 'True' = Launch background tasks

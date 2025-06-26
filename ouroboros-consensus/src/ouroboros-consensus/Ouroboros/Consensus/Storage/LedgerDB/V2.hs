@@ -56,6 +56,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
@@ -72,6 +73,7 @@ mkInitDb ::
   , IOLike m
   , LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
+  , LSM.GoodForLSM (LedgerState blk)
   , LedgerSupportsInMemoryLedgerDB blk
   ) =>
   Complete LedgerDbArgs m blk ->
@@ -138,7 +140,10 @@ mkInitDb args flavArgs getBlock =
   emptyF st =
     empty' st $ case bss of
       InMemoryHandleArgs -> InMemory.newInMemoryLedgerTablesHandle v2Tracer lgrHasFS
-      LSMHandleArgs x -> absurd x
+      LSMHandleArgs session ->
+        \values -> do
+          table <- LSM.tableFromValuesMK lgrRegistry session values
+          LSM.newLSMLedgerTablesHandle v2Tracer lgrRegistry session table
 
   loadSnapshot ::
     CodecConfig blk ->
@@ -147,7 +152,7 @@ mkInitDb args flavArgs getBlock =
     m (Either (SnapshotFailure blk) (LedgerSeq' m blk, RealPoint blk))
   loadSnapshot ccfg fs ds = case bss of
     InMemoryHandleArgs -> runExceptT $ InMemory.loadSnapshot v2Tracer lgrRegistry ccfg fs ds
-    LSMHandleArgs x -> absurd x
+    LSMHandleArgs session -> runExceptT $ LSM.loadSnapshot v2Tracer lgrRegistry ccfg fs session ds
 
 implMkLedgerDb ::
   forall m l blk.
@@ -162,7 +167,7 @@ implMkLedgerDb ::
   , HasHardForkHistory blk
   ) =>
   LedgerDBHandle m l blk ->
-  HandleArgs ->
+  HandleArgs m ->
   (LedgerDB m l blk, TestInternals m l blk)
 implMkLedgerDb h bss =
   ( LedgerDB
@@ -188,7 +193,7 @@ mkInternals ::
   , LedgerSupportsProtocol blk
   , ApplyBlock (ExtLedgerState blk) blk
   ) =>
-  HandleArgs ->
+  HandleArgs m ->
   LedgerDBHandle m (ExtLedgerState blk) blk ->
   TestInternals' m blk
 mkInternals bss h =
@@ -245,7 +250,7 @@ mkInternals bss h =
     m (Maybe (DiskSnapshot, RealPoint blk))
   takeSnapshot = case bss of
     InMemoryHandleArgs -> InMemory.takeSnapshot
-    LSMHandleArgs x -> absurd x
+    LSMHandleArgs{} -> LSM.takeSnapshot
 
 -- | Testing only! Truncate all snapshots in the DB.
 implIntTruncateSnapshots :: MonadThrow m => SomeHasFS m -> m ()
@@ -359,7 +364,7 @@ implTryTakeSnapshot ::
   , LedgerSupportsProtocol blk
   , LedgerDbSerialiseConstraints blk
   ) =>
-  HandleArgs ->
+  HandleArgs m ->
   LedgerDBEnv m l blk ->
   Maybe (Time, Time) ->
   Word64 ->
@@ -397,7 +402,13 @@ implTryTakeSnapshot bss env mTime nrBlocks =
         fs
         Nothing
         ref
-    LSMHandleArgs x -> absurd x
+    LSMHandleArgs{} ->
+      LSM.takeSnapshot
+        config
+        trcr
+        fs
+        Nothing
+        ref
 
 -- In the first version of the LedgerDB for UTxO-HD, there is a need to
 -- periodically flush the accumulated differences to the disk. However, in the
