@@ -253,6 +253,7 @@ library
     Ouroboros.Consensus.Storage.LedgerDB.V2.Args
     Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
     Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
+    Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
     Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
     Ouroboros.Consensus.Storage.Serialisation
     Ouroboros.Consensus.Storage.VolatileDB
@@ -350,6 +351,7 @@ library
     transformers-base,
     typed-protocols ^>=1.0,
     vector ^>=0.13,
+    lsm-tree,
 
   x-docspec-extra-packages:
     directory
