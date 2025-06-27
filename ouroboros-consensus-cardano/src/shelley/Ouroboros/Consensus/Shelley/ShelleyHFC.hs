@@ -64,6 +64,7 @@ import qualified Data.Text as T (pack)
 import Data.Typeable
 import Data.Void (Void)
 import Data.Word
+import qualified Database.LSMTree as LSM
 import Lens.Micro ((^.))
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -92,6 +93,7 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.Inspect as Shelley.Inspect
 import Ouroboros.Consensus.Shelley.Node ()
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
+import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -168,6 +170,8 @@ instance
   , LedgerSupportsProtocol (ShelleyBlock proto era)
   , TxLimits (ShelleyBlock proto era)
   , Crypto (ProtoCrypto proto)
+  , LSM.SerialiseValue (SL.TxOut era)
+  , LSM.ResolveValue (SL.TxOut era)
   ) =>
   SerialiseHFC '[ShelleyBlock proto era]
 
@@ -429,7 +433,7 @@ instance
     { getShelleyBlockHFCTxIn :: SL.TxIn
     }
     deriving stock (Show, Eq, Ord)
-    deriving newtype NoThunks
+    deriving newtype (NoThunks, MemPack, LSM.SerialiseKey)
 
   injectCanonicalTxIn IZ txIn = ShelleyBlockHFCTxIn txIn
   injectCanonicalTxIn (IS idx') _ = case idx' of {}
@@ -437,7 +441,11 @@ instance
   ejectCanonicalTxIn IZ txIn = getShelleyBlockHFCTxIn txIn
   ejectCanonicalTxIn (IS idx') _ = case idx' of {}
 
-deriving newtype instance MemPack (CanonicalTxIn '[ShelleyBlock proto era])
+instance LSMOrder (LedgerState (HardForkBlock '[ShelleyBlock proto era])) where
+  toLSMOrder _ =
+    map ShelleyBlockHFCTxIn
+      . toLSMOrder (Proxy @(LedgerState (ShelleyBlock proto era)))
+      . map getShelleyBlockHFCTxIn
 
 {-------------------------------------------------------------------------------
   HardForkTxOut
