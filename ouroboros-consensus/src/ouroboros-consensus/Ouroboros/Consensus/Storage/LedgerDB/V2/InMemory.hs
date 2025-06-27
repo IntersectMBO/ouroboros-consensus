@@ -137,7 +137,7 @@ newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l = do
           guardClosed h $
             \values ->
               withFile hasFS (mkFsPath [snapshotName, "tables", "tvar"]) (WriteMode MustBeNew) $ \hf ->
-                fmap snd $
+                fmap (Just . snd) $
                   hPutAllCRC hasFS hf $
                     CBOR.toLazyByteString $
                       valuesMKEncoder hint values
@@ -172,7 +172,7 @@ writeSnapshot fs@(SomeHasFS hasFs) encLedger ds st = do
   writeSnapshotMetadata fs ds $
     SnapshotMetadata
       { snapshotBackend = UTxOHDMemSnapshot
-      , snapshotChecksum = crcOfConcat crc1 crc2
+      , snapshotChecksum = maybe crc1 (crcOfConcat crc1) crc2
       }
 
 takeSnapshot ::

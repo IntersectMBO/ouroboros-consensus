@@ -39,6 +39,7 @@ import Codec.CBOR.Decoding
 import Codec.CBOR.Encoding
 import qualified Data.Map as Map
 import Data.MemPack
+import qualified Data.Primitive.ByteArray as PBA
 import Data.Proxy
 import Data.SOP.BasicFunctors
 import Data.SOP.Functors
@@ -46,7 +47,9 @@ import Data.SOP.Index
 import Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
 import qualified Data.SOP.Telescope as Telescope
+import Data.Vector.Primitive (Vector (..))
 import Data.Void
+import qualified Database.LSMTree as LSM
 import GHC.Generics (Generic)
 import Lens.Micro
 import NoThunks.Class
@@ -63,6 +66,7 @@ import Ouroboros.Consensus.Shelley.Ledger
   , ShelleyCompatible
   , shelleyLedgerState
   )
+import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -74,7 +78,7 @@ instance
     { getCardanoTxIn :: SL.TxIn
     }
     deriving stock (Show, Eq, Ord)
-    deriving newtype NoThunks
+    deriving newtype (NoThunks, LSM.SerialiseKey)
 
   injectCanonicalTxIn IZ byronTxIn = absurd byronTxIn
   injectCanonicalTxIn (IS idx) shelleyTxIn = case idx of
@@ -112,13 +116,30 @@ data CardanoTxOut c
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
+-- TODO
+instance CardanoHardForkConstraints c => LSM.SerialiseValue (CardanoTxOut c) where
+  serialiseValue txout =
+    let barr =
+          indexedPackByteArray
+            False
+            (undefined :: (LedgerState (HardForkBlock (CardanoEras c)) EmptyMK)) -- unused
+            txout
+     in LSM.RawBytes (Vector 0 (PBA.sizeofByteArray barr) barr)
+  deserialiseValue (LSM.RawBytes (Vector _ _ barr)) =
+    indexedUnpackError (undefined :: (LedgerState (HardForkBlock (CardanoEras c)) EmptyMK)) barr
+
+instance CardanoHardForkConstraints c => LSM.ResolveValue (CardanoTxOut c) where
+  resolve = undefined
+
+instance LSMOrder (LedgerState (HardForkBlock (CardanoEras c))) where
+  toLSMOrder _ = undefined
+
 -- | Eliminate the wrapping of CardanoTxOut with the provided function. Similar
 -- to 'hcimap' on an 'NS'.
 eliminateCardanoTxOut ::
   forall r c.
   CardanoHardForkConstraints c =>
   ( forall x.
-    -- TODO ProtoCrypto constraint should be in IsShelleyBlock
     IsShelleyBlock x =>
     Index (CardanoEras c) x ->
     TxOut (LedgerState x) ->
@@ -181,6 +202,8 @@ instance
             :* (Fn $ const $ Comp $ K . ConwayTxOut <$> unpackM)
             :* Nil
         )
+    -- TODO, we can extract the tip before this function! The class would be
+    -- IndexedMemPack (NS (Flip LedgerState EmptyMK) (CardanoEras c)) (CardanoTxOut c)
     hcollapse <$> (hsequence' $ hap np $ Telescope.tip idx)
 
 instance

@@ -70,7 +70,8 @@ import qualified Control.State.Transition.Extended as STS
 import Data.ByteString (ByteString)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Void (Void)
+import Data.Void (Void, absurd)
+import qualified Database.LSMTree as LSM
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
@@ -92,6 +93,7 @@ import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB
+import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -202,6 +204,16 @@ instance IsLedger (LedgerState ByronBlock) where
 
 type instance TxIn (LedgerState ByronBlock) = Void
 type instance TxOut (LedgerState ByronBlock) = Void
+
+instance LSM.SerialiseKey Void where
+  serialiseKey = absurd
+  deserialiseKey = error "deserialiseKey: Void"
+
+deriving via LSM.ResolveViaSemigroup Void instance LSM.ResolveValue Void
+
+instance LSMOrder (LedgerState ByronBlock) where
+  toLSMOrder _ [] = []
+  toLSMOrder _ (x : _) = absurd x
 
 instance LedgerTablesAreTrivial (LedgerState ByronBlock) where
   convertMapKind (ByronLedgerState x y z) = ByronLedgerState x y z

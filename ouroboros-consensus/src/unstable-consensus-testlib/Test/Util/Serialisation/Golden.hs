@@ -47,6 +47,7 @@ import qualified Data.ByteString.UTF8 as BS.UTF8
 import Data.List (nub)
 import qualified Data.Map.Strict as Map
 import Data.Proxy (Proxy (..))
+import qualified Data.Text as T
 import Data.TreeDiff
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block (CodecConfig)
@@ -81,6 +82,7 @@ import System.FilePath (takeDirectory, (</>))
 import Test.Cardano.Binary.TreeDiff (CBORBytes (..))
 import Test.Tasty
 import Test.Tasty.Golden.Advanced (goldenTest)
+import Test.Util.Serialisation.CDDL
 import Test.Util.Serialisation.Examples (Examples (..), Labelled)
 import Test.Util.Serialisation.SomeResult (SomeResult (..))
 
@@ -99,14 +101,27 @@ goldenTestCBOR ::
   (a -> Encoding) ->
   -- | Path to the file containing the golden output
   FilePath ->
+  -- | Path to the CDDL file that defines this CBOR, and the rule name
+  Maybe (FilePath, T.Text) ->
   TestTree
-goldenTestCBOR testName example enc goldenFile =
-  goldenTest
-    testName
-    (Strict.readFile goldenFile)
-    (either exceptionToByteString id <$> try (evaluate actualValue))
-    diff
-    updateGoldenFile
+goldenTestCBOR testName example enc goldenFile mCddlPath =
+  testGroup testName $
+    [ goldenTest
+        "Golden == actual"
+        (Strict.readFile goldenFile)
+        (either exceptionToByteString id <$> try (evaluate actualValue))
+        diff
+        updateGoldenFile
+    ]
+      ++ ( case mCddlPath of
+             Nothing -> []
+             Just (cddlPath, rule) ->
+               [ cddlTestCase
+                   (Strict.readFile goldenFile)
+                   cddlPath
+                   rule
+               ]
+         )
  where
   -- Copied from tasty-golden because it isn't exported
   updateGoldenFile :: Strict.ByteString -> IO ()
@@ -188,18 +203,19 @@ goldenTests ::
   (a -> Encoding) ->
   -- | Folder containing the golden files
   FilePath ->
+  Maybe (FilePath, T.Text) ->
   TestTree
-goldenTests testName examples enc goldenFolder
+goldenTests testName examples enc goldenFolder mCDDL
   | nub labels /= labels =
       error $ "Examples with the same label for " <> testName
   | [(Nothing, example)] <- examples =
       -- If there's just a single unlabelled example, no need for grouping,
       -- which makes the output more verbose.
-      goldenTestCBOR testName example enc (goldenFolder </> testName)
+      goldenTestCBOR testName example enc (goldenFolder </> testName) mCDDL
   | otherwise =
       testGroup
         testName
-        [ goldenTestCBOR testName' example enc (goldenFolder </> testName')
+        [ goldenTestCBOR testName' example enc (goldenFolder </> testName') mCDDL
         | (mbLabel, example) <- examples
         , let testName' = case mbLabel of
                 Nothing -> testName
@@ -215,18 +231,19 @@ goldenTests' ::
   Labelled (a, a -> Encoding) ->
   -- | Folder containing the golden files
   FilePath ->
+  Maybe (FilePath, T.Text) ->
   TestTree
-goldenTests' testName examples goldenFolder
+goldenTests' testName examples goldenFolder mCDDL
   | nub labels /= labels =
       error $ "Examples with the same label for " <> testName
   | [(Nothing, (example, exampleEncoder))] <- examples =
       -- If there's just a single unlabelled example, no need for grouping,
       -- which makes the output more verbose.
-      goldenTestCBOR testName example exampleEncoder (goldenFolder </> testName)
+      goldenTestCBOR testName example exampleEncoder (goldenFolder </> testName) mCDDL
   | otherwise =
       testGroup
         testName
-        [ goldenTestCBOR testName' example exampleEncoder (goldenFolder </> testName')
+        [ goldenTestCBOR testName' example exampleEncoder (goldenFolder </> testName') mCDDL
         | (mbLabel, (example, exampleEncoder)) <- examples
         , let testName' = case mbLabel of
                 Nothing -> testName
@@ -276,13 +293,14 @@ goldenTest_all ::
   -- | Path relative to the root of the repository that contains the golden
   -- files
   FilePath ->
+  Maybe CDDLsForNodeToNode ->
   Examples blk ->
   TestTree
-goldenTest_all codecConfig goldenDir examples =
+goldenTest_all codecConfig goldenDir mCDDLs examples =
   testGroup
     "Golden tests"
     [ goldenTest_SerialiseDisk codecConfig goldenDir examples
-    , goldenTest_SerialiseNodeToNode codecConfig goldenDir examples
+    , goldenTest_SerialiseNodeToNode codecConfig goldenDir mCDDLs examples
     , goldenTest_SerialiseNodeToClient codecConfig goldenDir examples
     ]
 
@@ -316,6 +334,7 @@ goldenTest_SerialiseDisk codecConfig goldenDir Examples{..} =
       exampleValues
       enc
       (goldenDir </> "disk")
+      Nothing
 
   testLedgerTables :: TestTree
   testLedgerTables =
@@ -327,6 +346,7 @@ goldenTest_SerialiseDisk codecConfig goldenDir Examples{..} =
           exampleLedgerState
       )
       (goldenDir </> "disk")
+      Nothing
 
   encodeExt = encodeDiskExtLedgerState codecConfig
 
@@ -341,9 +361,10 @@ goldenTest_SerialiseNodeToNode ::
   ) =>
   CodecConfig blk ->
   FilePath ->
+  Maybe CDDLsForNodeToNode ->
   Examples blk ->
   TestTree
-goldenTest_SerialiseNodeToNode codecConfig goldenDir Examples{..} =
+goldenTest_SerialiseNodeToNode codecConfig goldenDir mCDDLs Examples{..} =
   testGroup
     "SerialiseNodeToNode"
     [ testVersion version
@@ -354,15 +375,15 @@ goldenTest_SerialiseNodeToNode codecConfig goldenDir Examples{..} =
   testVersion version =
     testGroup
       (toGoldenDirectory version)
-      [ test "Block" exampleBlock
-      , test "Header" exampleHeader
-      , test "SerialisedBlock" exampleSerialisedBlock
-      , test "SerialisedHeader" exampleSerialisedHeader
-      , test "GenTx" exampleGenTx
-      , test "GenTxId" exampleGenTxId
+      [ test "Block" exampleBlock $ fmap blockCDDL mCDDLs
+      , test "Header" exampleHeader $ fmap headerCDDL mCDDLs
+      , test "SerialisedBlock" exampleSerialisedBlock Nothing
+      , test "SerialisedHeader" exampleSerialisedHeader Nothing
+      , test "GenTx" exampleGenTx $ fmap txCDDL mCDDLs
+      , test "GenTxId" exampleGenTxId $ fmap txIdCDDL mCDDLs
       ]
    where
-    test :: SerialiseNodeToNode blk a => TestName -> Labelled a -> TestTree
+    test :: SerialiseNodeToNode blk a => TestName -> Labelled a -> Maybe (FilePath, T.Text) -> TestTree
     test testName exampleValues =
       goldenTests
         testName
@@ -421,6 +442,7 @@ goldenTest_SerialiseNodeToClient codecConfig goldenDir Examples{..} =
         exampleValues
         enc
         (goldenDir </> toGoldenDirectory versions)
+        Nothing
 
     testQuery name values =
       test name (filter (\(_, SomeBlockQuery q) -> blockQueryIsSupportedOnVersion q blockVersion) values)

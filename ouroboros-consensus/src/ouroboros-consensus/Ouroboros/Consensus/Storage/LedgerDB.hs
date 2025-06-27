@@ -22,6 +22,7 @@ import Data.Word
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.Ledger.Inspect
+import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Storage.ImmutableDB.Stream
 import Ouroboros.Consensus.Storage.LedgerDB.API
@@ -30,6 +31,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1 as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2 as V2
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
@@ -44,6 +46,8 @@ openDB ::
   , HasCallStack
   , HasHardForkHistory blk
   , LedgerSupportsLedgerDB blk
+  , LSM.GoodForLSM (LedgerState blk)
+
   ) =>
   -- | Stateless initializaton arguments
   Complete LedgerDbArgs m blk ->
