@@ -36,6 +36,7 @@ import Control.Monad (foldM, forM, forM_, void)
 import Control.Monad.Except (runExcept)
 import Control.Monad.IOSim (runSimOrThrow)
 import Control.Monad.State (State, evalState, get, modify)
+import Control.ResourceRegistry
 import Control.Tracer (Tracer (..))
 import Data.Bifunctor (first, second)
 import Data.Either (isRight)
@@ -47,13 +48,14 @@ import Data.Maybe (mapMaybe)
 import Data.Semigroup (stimes)
 import qualified Data.Set as Set
 import Data.Word
-import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mempool
+import Ouroboros.Consensus.Mempool.Impl.Common (MempoolLedgerDBView (..))
 import Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import Ouroboros.Consensus.Mock.Ledger hiding (TxId)
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Util (repeatedly, repeatedlyM)
 import Ouroboros.Consensus.Util.Condense (condense)
 import Ouroboros.Consensus.Util.IOLike
@@ -295,7 +297,7 @@ prop_Mempool_TraceRemovedTxs setup =
 
     -- Sync the mempool with the ledger. Now some of the transactions in the
     -- mempool should have been removed.
-    void $ syncWithLedger mempool
+    void $ testSyncWithLedger mempool
 
     -- Predict which transactions should have been removed
     curLedger <- atomically getCurrentLedger
@@ -703,12 +705,22 @@ withTestMempool setup@TestSetup{..} prop =
     varCurrentLedgerState <- uncheckedNewTVarM testLedgerState
     let ledgerInterface =
           LedgerInterface
-            { getCurrentLedgerState = forgetLedgerTables <$> readTVar varCurrentLedgerState
-            , getLedgerTablesAtFor = \pt keys -> do
-                st <- atomically $ readTVar varCurrentLedgerState
-                if castPoint (getTip st) == pt
-                  then pure $ Just $ restrictValues' st keys
-                  else pure Nothing
+            { getCurrentLedgerState = \_reg -> do
+                st <- readTVar varCurrentLedgerState
+                pure $
+                  MempoolLedgerDBView
+                    (forgetLedgerTables st)
+                    ( pure $
+                        Right $
+                          ReadOnlyForker
+                            { roforkerClose = pure ()
+                            , roforkerReadTables =
+                                pure . (projectLedgerTables st `restrictValues'`)
+                            , roforkerRangeReadTables = const $ pure emptyLedgerTables
+                            , roforkerGetLedgerState = pure $ forgetLedgerTables st
+                            , roforkerReadStatistics = pure Nothing
+                            }
+                    )
             }
 
     -- Set up the Tracer
@@ -716,42 +728,44 @@ withTestMempool setup@TestSetup{..} prop =
     -- TODO use IOSim's dynamicTracer
     let tracer = Tracer $ \ev -> atomically $ modifyTVar varEvents (ev :)
 
-    -- Open the mempool and add the initial transactions
-    mempool <-
-      openMempoolWithoutSyncThread
-        ledgerInterface
-        testLedgerCfg
-        testMempoolCapOverride
-        tracer
-    result <- addTxs mempool testInitialTxs
+    withRegistry $ \reg -> do
+      -- Open the mempool and add the initial transactions
+      mempool <-
+        openMempoolWithoutSyncThread
+          reg
+          ledgerInterface
+          testLedgerCfg
+          testMempoolCapOverride
+          tracer
+      result <- addTxs mempool testInitialTxs
 
-    -- the invalid transactions are reported in the same order they were
-    -- added, so the first error is not the result of a cascade
-    sequence_
-      [ error $ "Invalid initial transaction: " <> condense invalidTx <> " because of error " <> show err
-      | MempoolTxRejected invalidTx err <- result
-      ]
+      -- the invalid transactions are reported in the same order they were
+      -- added, so the first error is not the result of a cascade
+      sequence_
+        [ error $ "Invalid initial transaction: " <> condense invalidTx <> " because of error " <> show err
+        | MempoolTxRejected invalidTx err <- result
+        ]
 
-    -- Clear the trace
-    atomically $ writeTVar varEvents []
+      -- Clear the trace
+      atomically $ writeTVar varEvents []
 
-    -- Apply the property to the 'TestMempool' record
-    res <-
-      property
-        <$> prop
-          TestMempool
-            { mempool
-            , getTraceEvents = atomically $ reverse <$> readTVar varEvents
-            , eraseTraceEvents = atomically $ writeTVar varEvents []
-            , addTxsToLedger = addTxsToLedger varCurrentLedgerState
-            , getCurrentLedger = readTVar varCurrentLedgerState
-            }
-    validContents <-
-      atomically $
-        checkMempoolValidity
-          <$> readTVar varCurrentLedgerState
-          <*> getSnapshot mempool
-    return $ res .&&. validContents
+      -- Apply the property to the 'TestMempool' record
+      res <-
+        property
+          <$> prop
+            TestMempool
+              { mempool
+              , getTraceEvents = atomically $ reverse <$> readTVar varEvents
+              , eraseTraceEvents = atomically $ writeTVar varEvents []
+              , addTxsToLedger = addTxsToLedger varCurrentLedgerState
+              , getCurrentLedger = readTVar varCurrentLedgerState
+              }
+      validContents <-
+        atomically $
+          checkMempoolValidity
+            <$> readTVar varCurrentLedgerState
+            <*> getSnapshot mempool
+      return $ res .&&. validContents
 
   addTxToLedger ::
     forall m.
@@ -1154,8 +1168,8 @@ executeAction testMempool action = case action of
 currentTicketAssignment ::
   IOLike m =>
   Mempool m TestBlock -> m TicketAssignment
-currentTicketAssignment Mempool{syncWithLedger} = do
-  MempoolSnapshot{snapshotTxs} <- syncWithLedger
+currentTicketAssignment Mempool{testSyncWithLedger} = do
+  MempoolSnapshot{snapshotTxs} <- testSyncWithLedger
   return $
     Map.fromList
       [ (ticketNo, txId (txForgetValidated tx))

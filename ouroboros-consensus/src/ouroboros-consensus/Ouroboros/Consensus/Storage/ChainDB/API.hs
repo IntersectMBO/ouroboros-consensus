@@ -383,14 +383,6 @@ data ChainDB m blk = ChainDB
   , getChainSelStarvation :: STM m ChainSelStarvation
   -- ^ Whether ChainSel is currently starved, or when was last time it
   -- stopped being starved.
-  , getLedgerTablesAtFor ::
-      Point blk ->
-      LedgerTables (ExtLedgerState blk) KeysMK ->
-      m (Maybe (LedgerTables (ExtLedgerState blk) ValuesMK))
-  -- ^ Read ledger tables at a given point on the chain, if it exists.
-  --
-  -- This is intended to be used by the mempool to hydrate a ledger state at
-  -- a specific point.
   , getStatistics :: m (Maybe Statistics)
   -- ^ Get statistics from the LedgerDB, in particular the number of entries
   -- in the tables.

@@ -628,16 +628,15 @@ runThreadNetwork
       HasCallStack =>
       OracularClock m ->
       SlotNo ->
-      ResourceRegistry m ->
       (SlotNo -> STM m ()) ->
       STM m (Point blk) ->
       (ResourceRegistry m -> m (ReadOnlyForker' m blk)) ->
       Mempool m blk ->
       [GenTx blk] ->
       -- \^ valid transactions the node should immediately propagate
-      m ()
-    forkCrucialTxs clock s0 registry unblockForge getTipPoint mforker mempool txs0 = do
-      void $ forkLinkedThread registry "crucialTxs" $ withRegistry $ \reg -> do
+      m (Thread m Void)
+    forkCrucialTxs clock s0 unblockForge getTipPoint mforker mempool txs0 = do
+      testForkMempoolThread mempool "crucialTxs" $ withRegistry $ \reg -> do
         let loop (slot, mempFp) = do
               forker <- mforker reg
               extLedger <- atomically $ roforkerGetLedgerState forker
@@ -679,7 +678,7 @@ runThreadNetwork
               -- avoid the race in which we wake up before the mempool's
               -- background thread wakes up by mimicking it before we do
               -- anything else
-              void $ syncWithLedger mempool
+              void $ testSyncWithLedger mempool
 
               loop fps'
         loop (s0, [])
@@ -1150,15 +1149,17 @@ runThreadNetwork
       --
       -- TODO Is there a risk that this will block because the 'forkTxProducer'
       -- fills up the mempool too quickly?
-      forkCrucialTxs
-        clock
-        joinSlot
-        registry
-        unblockForge
-        (ledgerTipPoint . ledgerState <$> ChainDB.getCurrentLedger chainDB)
-        getForker
-        mempool
-        txs0
+      threadCrucialTxs <-
+        forkCrucialTxs
+          clock
+          joinSlot
+          unblockForge
+          (ledgerTipPoint . ledgerState <$> ChainDB.getCurrentLedger chainDB)
+          getForker
+          mempool
+          txs0
+
+      void $ allocate registry (\_ -> pure threadCrucialTxs) cancelThread
 
       forkTxProducer
         coreNodeId

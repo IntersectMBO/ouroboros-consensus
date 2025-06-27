@@ -19,6 +19,7 @@ import Control.Concurrent (threadDelay)
 import qualified Control.Concurrent.Async as Async
 import Control.Exception (assert)
 import Control.Monad (forever, void)
+import Control.ResourceRegistry
 import qualified Control.Tracer as Tracer
 import Data.Foldable (asum)
 import qualified Data.List as List
@@ -32,6 +33,8 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Mempool (Mempool)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool
+import Ouroboros.Consensus.Mempool.Impl.Common (MempoolLedgerDBView (..))
+import Ouroboros.Consensus.Storage.LedgerDB.Forker
 import Ouroboros.Consensus.Util.IOLike (STM, atomically, retry)
 import System.Random (randomIO)
 import Test.Consensus.Mempool.Fairness.TestBlock
@@ -95,47 +98,57 @@ testTxSizeFairness TestParams{mempoolMaxCapacity, smallTxSize, largeTxSize, nrOf
     ledgerItf :: Mempool.LedgerInterface IO TestBlock
     ledgerItf =
       Mempool.LedgerInterface
-        { Mempool.getCurrentLedgerState =
+        { Mempool.getCurrentLedgerState = \_reg ->
             pure $
-              testInitLedgerWithState NoPayLoadDependentState
-        , Mempool.getLedgerTablesAtFor = \_ _ ->
-            pure $
-              Just emptyLedgerTables
+              MempoolLedgerDBView
+                (testInitLedgerWithState NoPayLoadDependentState)
+                ( pure $
+                    Right $
+                      ReadOnlyForker
+                        { roforkerClose = pure ()
+                        , roforkerReadTables = const $ pure emptyLedgerTables
+                        , roforkerRangeReadTables = const $ pure emptyLedgerTables
+                        , roforkerGetLedgerState = pure $ testInitLedgerWithState NoPayLoadDependentState
+                        , roforkerReadStatistics = pure Nothing
+                        }
+                )
         }
 
     eraParams =
       HardFork.defaultEraParams
         (Consensus.SecurityParam $ knownNonZeroBounded @10)
         (Time.slotLengthFromSec 2)
-  mempool <-
-    Mempool.openMempoolWithoutSyncThread
-      ledgerItf
-      (testBlockLedgerConfigFrom eraParams)
-      (Mempool.mkCapacityBytesOverride mempoolMaxCapacity)
-      Tracer.nullTracer
-  ----------------------------------------------------------------------------
-  --  Add and collect transactions
-  ----------------------------------------------------------------------------
-  let waitForSmallAddersToFillMempool = threadDelay 1_000
-  txs <-
-    runConcurrently
-      [ adders mempool smallTxSize
-      , waitForSmallAddersToFillMempool >> adders mempool largeTxSize
-      , waitForSmallAddersToFillMempool >> remover mempool nrOftxsToCollect
-      ]
+  withRegistry $ \reg -> do
+    mempool <-
+      Mempool.openMempoolWithoutSyncThread
+        reg
+        ledgerItf
+        (testBlockLedgerConfigFrom eraParams)
+        (Mempool.mkCapacityBytesOverride mempoolMaxCapacity)
+        Tracer.nullTracer
+    ----------------------------------------------------------------------------
+    --  Add and collect transactions
+    ----------------------------------------------------------------------------
+    let waitForSmallAddersToFillMempool = threadDelay 1_000
+    txs <-
+      runConcurrently
+        [ adders mempool smallTxSize
+        , waitForSmallAddersToFillMempool >> adders mempool largeTxSize
+        , waitForSmallAddersToFillMempool >> remover mempool nrOftxsToCollect
+        ]
 
-  ----------------------------------------------------------------------------
-  --  Count the small and large transactions
-  ----------------------------------------------------------------------------
-  let
-    nrSmall :: Double
-    nrLarge :: Double
-    (nrSmall, nrLarge) =
-      (fromIntegral . length *** fromIntegral . length) $
-        List.partition (<= smallTxSize) $
-          fmap txSize txs
-  length txs @?= nrOftxsToCollect
-  theRatioOfTheDifferenceBetween nrSmall nrLarge `isBelow` toleranceThreshold
+    ----------------------------------------------------------------------------
+    --  Count the small and large transactions
+    ----------------------------------------------------------------------------
+    let
+      nrSmall :: Double
+      nrLarge :: Double
+      (nrSmall, nrLarge) =
+        (fromIntegral . length *** fromIntegral . length) $
+          List.partition (<= smallTxSize) $
+            fmap txSize txs
+    length txs @?= nrOftxsToCollect
+    theRatioOfTheDifferenceBetween nrSmall nrLarge `isBelow` toleranceThreshold
  where
   theRatioOfTheDifferenceBetween x y = (abs (x - y) / (x + y), x, y)
 
