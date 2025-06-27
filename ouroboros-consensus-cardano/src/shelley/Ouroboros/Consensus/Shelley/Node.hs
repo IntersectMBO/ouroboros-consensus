@@ -26,10 +26,12 @@ module Ouroboros.Consensus.Shelley.Node
   , validateGenesis
   ) where
 
+import Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Shelley.API as SL
 import Cardano.Protocol.Crypto (Crypto)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Database.LSMTree as LSM
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.SupportsMempool (TxLimits)
@@ -121,5 +123,7 @@ instance
   , TxLimits (ShelleyBlock proto era)
   , SerialiseNodeToClientConstraints (ShelleyBlock proto era)
   , Crypto (ProtoCrypto proto)
+  , LSM.SerialiseValue (Core.TxOut era)
+  , LSM.ResolveValue (Core.TxOut era)
   ) =>
   RunNode (ShelleyBlock proto era)

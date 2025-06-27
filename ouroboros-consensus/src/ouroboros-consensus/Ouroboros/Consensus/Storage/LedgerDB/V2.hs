@@ -33,7 +33,6 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Traversable (for)
 import Data.Tuple (Solo (..))
-import Data.Void
 import Data.Word
 import GHC.Generics
 import NoThunks.Class

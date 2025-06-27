@@ -1,31 +1,33 @@
-{-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE TupleSections #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
--- |
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ViewPatterns #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
   ( -- * LedgerTablesHandle
     newLSMLedgerTablesHandle
   , GoodForLSM
+
     -- * Snapshots
   , loadSnapshot
   , snapshotToStatePath
   , takeSnapshot
-
   , tableFromValuesMK
+  , LSMOrder (..)
   ) where
 
 import Cardano.Binary as CBOR
-import qualified Codec.CBOR.Write as CBOR
 import Codec.Serialise (decode)
 import qualified Control.Monad as Monad
 import Control.Monad.Trans (lift)
@@ -33,11 +35,15 @@ import Control.Monad.Trans.Except
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Functor.Contravariant ((>$<))
-import Data.Functor.Identity
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import Data.Maybe
+import qualified Data.Set as Set
 import Data.String (fromString)
+import qualified Data.Vector as V
+import Data.Void
+import Database.LSMTree (Session, Table)
+import qualified Database.LSMTree as LSM
 import GHC.Generics
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -45,22 +51,16 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
+import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
-import Ouroboros.Consensus.Util.CBOR (readIncremental)
 import Ouroboros.Consensus.Util.CRC
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
-import System.FS.CRC
 import Prelude hiding (read)
-import Database.LSMTree (Table, Session)
-import qualified Database.LSMTree as LSM
-import Data.Void
-import qualified Data.Vector as V
-import qualified Data.Set as Set
 
 type UTxOTable m l = Table m (TxIn l) (TxOut l) Void
 
@@ -78,27 +78,42 @@ instance NoThunks (Table m txin txout Void) where
 data LSMClosedExn = LSMClosedExn
   deriving (Show, Exception)
 
-type GoodForLSM l = ( LSM.SerialiseKey (TxIn l)
-  , LSM.SerialiseValue (TxOut l)
-  , LSM.ResolveValue (TxOut l)
-  )
-
-tableFromValuesMK ::
-  IOLike m =>
+type GoodForLSM l =
   ( LSM.SerialiseKey (TxIn l)
   , LSM.SerialiseValue (TxOut l)
   , LSM.ResolveValue (TxOut l)
+  , LSMOrder l
   )
-  =>
-  ResourceRegistry m -> Session m -> LedgerTables l ValuesMK -> m (ResourceKey m, Table m (TxIn l) (TxOut l) Void)
+
+-- | Create the initial table from values
+tableFromValuesMK ::
+  IOLike m =>
+  GoodForLSM l =>
+  ResourceRegistry m ->
+  Session m ->
+  LedgerTables l ValuesMK ->
+  m (ResourceKey m, Table m (TxIn l) (TxOut l) Void)
 tableFromValuesMK rr session (LedgerTables (ValuesMK values)) = do
   res@(_, table) <- allocate rr (\_ -> LSM.newTable session) LSM.closeTable
-  LSM.inserts table $ V.fromList $ [ (k, v, Nothing) | (k, v) <- Map.toList values ]
+  LSM.inserts table $ V.fromList $ [(k, v, Nothing) | (k, v) <- Map.toList values]
   pure res
 
-guardClosed :: LedgerTablesHandleState m l -> (UTxOTable m l -> a) -> a
-guardClosed LedgerTablesHandleClosed _ = error $ show LSMClosedExn
-guardClosed (LedgerTablesHandleOpen st) f = f st
+guardClosed ::
+  MonadSTM m => StrictTVar m (LedgerTablesHandleState m l) -> (UTxOTable m l -> m a) -> m a
+guardClosed tv f = do
+  readTVarIO tv >>= \case
+    LedgerTablesHandleClosed -> error $ show LSMClosedExn
+    LedgerTablesHandleOpen st -> f st
+
+-- | LSM trees use a compact index for keys. This index compares the first 64
+-- bits of each serialized key. For UTxOs we have to flip the hash and the
+-- offset, so that the offset is properly reflected in those first 64 bits. See
+-- https://github.com/IntersectMBO/lsm-tree/blob/main/doc/final-report/integration-notes.md#the-compact-index
+class LSMOrder l where
+  toLSMOrder :: Proxy l -> [TxIn l] -> [TxIn l]
+
+instance LSMOrder (LedgerState blk) => LSMOrder (ExtLedgerState blk) where
+  toLSMOrder _ = toLSMOrder (Proxy @(LedgerState blk))
 
 -- TODO what about era transitions
 
@@ -108,9 +123,7 @@ newLSMLedgerTablesHandle ::
   , HasLedgerTables l
   , CanUpgradeLedgerTables l
   , SerializeTablesWithHint l
-  , LSM.SerialiseKey (TxIn l)
-  , LSM.SerialiseValue (TxOut l)
-  , LSM.ResolveValue (TxOut l)
+  , GoodForLSM l
   ) =>
   Tracer m V2.FlavorImplSpecificTrace ->
   ResourceRegistry m ->
@@ -127,57 +140,78 @@ newLSMLedgerTablesHandle tracer rr session (resKey, t0) = do
           atomically $ writeTVar tv LedgerTablesHandleClosed
           traceWith tracer V2.TraceLedgerTablesHandleClose
       , duplicate = do
-          hs <- readTVarIO tv
-          !x <- guardClosed hs $ \t -> allocate rr (\_ -> LSM.duplicate t) LSM.closeTable >>= newLSMLedgerTablesHandle tracer rr session
-          pure x
+          guardClosed tv $ \t -> do
+            table <- allocate rr (\_ -> LSM.duplicate t) LSM.closeTable
+            newLSMLedgerTablesHandle tracer rr session table
       , read = \(LedgerTables (KeysMK keys)) -> do
-          hs <- readTVarIO tv
           guardClosed
-            hs
-            (\t -> do
+            tv
+            ( \t -> do
                 let keys' = Set.toList keys
                 res <- LSM.lookups t (V.fromList keys')
-                pure $ LedgerTables $ ValuesMK $ Map.fromList [ (k, v) | (k, LSM.Found v) <- zip keys' (V.toList res) ]
+                pure $
+                  LedgerTables $
+                    ValuesMK $
+                      Map.fromList [(k, v) | (k, LSM.Found v) <- zip (toLSMOrder (Proxy @l) keys') (V.toList res)]
             )
-      , readRange = undefined -- \(f, t) -> do
-          -- hs <- readTVarIO tv
-          -- guardClosed
-          --   hs
-          --   ( \(LedgerTables (ValuesMK m)) ->
-          --       pure . LedgerTables . ValuesMK . Map.take t . (maybe id (\g -> snd . Map.split g) f) $ m
-          --   )
-      , readAll = undefined -- do
-          -- hs <- readTVarIO tv
-          -- guardClosed hs pure
+      , readRange = implReadRange tv
+      , readAll =
+          let readAll' m = do
+                v@(LedgerTables (ValuesMK values)) <- implReadRange tv (m, 100000)
+                maybe (pure v) (\k -> fmap (ltliftA2 unionValues v) $ readAll' (Just $ fst k)) $
+                  Map.lookupMax values
+           in readAll' Nothing
       , pushDiffs = const (implPushDiffs tv)
       , takeHandleSnapshot = \_ snapshotName -> do
           -- TODO create the tables directory
-          h <- readTVarIO tv
-          guardClosed h $
+          guardClosed tv $
             \table ->
               LSM.saveSnapshot (fromString snapshotName) "UTxO table" table >> pure Nothing
       , tablesSize = pure Nothing
       }
 
+implReadRange ::
+  IOLike m =>
+  HasLedgerTables l =>
+  GoodForLSM l =>
+  StrictTVar m (LedgerTablesHandleState m l) ->
+  (Maybe (TxIn l), Int) ->
+  m (LedgerTables l ValuesMK)
+implReadRange tv = \(mPrev, num) ->
+  guardClosed
+    tv
+    ( \table ->
+        let
+          cursorFromStart = LSM.withCursor table (LSM.take num)
+          cursorFromKey k = LSM.withCursorAtOffset table k (LSM.take num)
+         in
+          do
+            entries <- maybe cursorFromStart cursorFromKey mPrev
+            -- TODO are all values retrieved here? due to the flip in serialization are we maybe omitting values?
+            pure . LedgerTables . ValuesMK . Map.fromList $ [(k, v) | LSM.Entry k v <- V.toList entries]
+    )
+
 implPushDiffs ::
-  ( LSM.SerialiseKey (TxIn l)
-  , LSM.SerialiseValue (TxOut l)
-  , LSM.ResolveValue (TxOut l)
+  ( GoodForLSM l
   , IOLike m
-  , HasLedgerTables l)
-  => StrictTVar m (LedgerTablesHandleState m l) -> l DiffMK -> m ()
+  , HasLedgerTables l
+  ) =>
+  StrictTVar m (LedgerTablesHandleState m l) -> l DiffMK -> m ()
 implPushDiffs tv !st1 = do
-          let LedgerTables (DiffMK (Diff.Diff diffs)) = projectLedgerTables st1
-          hs <- readTVarIO tv
-          guardClosed
-            hs
-            ( \t ->
-                 LSM.updates t $ V.fromList [ (k, case h of
-                                     Diff.Insert v -> LSM.Insert v Nothing
-                                     Diff.Delete -> LSM.Delete
-                                   )
-                                 | (k, h) <- Map.toList diffs ]
-                )
+  let LedgerTables (DiffMK (Diff.Diff diffs)) = projectLedgerTables st1
+  guardClosed
+    tv
+    ( \t ->
+        LSM.updates t $
+          V.fromList
+            [ ( k
+              , case h of
+                  Diff.Insert v -> LSM.Insert v Nothing
+                  Diff.Delete -> LSM.Delete
+              )
+            | (k, h) <- Map.toList diffs
+            ]
+    )
 
 -- | The path within the LedgerDB's filesystem to the file that contains the
 -- snapshot's serialized ledger state
@@ -237,9 +271,7 @@ loadSnapshot ::
   , LedgerSupportsProtocol blk
   , IOLike m
   , LedgerSupportsInMemoryLedgerDB blk
-  , LSM.ResolveValue (TxOut (LedgerState blk))
-  , LSM.SerialiseValue (TxOut (LedgerState blk))
-  , LSM.SerialiseKey (TxIn (LedgerState blk))
+  , GoodForLSM (LedgerState blk)
   ) =>
   Tracer m V2.FlavorImplSpecificTrace ->
   ResourceRegistry m ->
@@ -261,8 +293,12 @@ loadSnapshot tracer rr ccfg fs session ds = do
   case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
     Origin -> throwE InitFailureGenesis
     NotOrigin pt -> do
-      values <- lift $ allocate rr (\_ -> LSM.openTableFromSnapshot session (fromString $ show $ dsNumber ds) "UTxO table")
-                            LSM.closeTable
+      values <-
+        lift $
+          allocate
+            rr
+            (\_ -> LSM.openTableFromSnapshot session (fromString $ show $ dsNumber ds) "UTxO table")
+            LSM.closeTable
       Monad.when (checksumAsRead /= snapshotChecksum snapshotMeta) $
         throwE $
           InitFailureRead $

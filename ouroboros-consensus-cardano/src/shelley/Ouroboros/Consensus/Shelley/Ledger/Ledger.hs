@@ -96,13 +96,19 @@ import Codec.Serialise (decode, encode)
 import Control.Arrow (left, second)
 import qualified Control.Exception as Exception
 import Control.Monad.Except
+import Control.Monad.Trans.Fail
 import qualified Control.State.Transition.Extended as STS
+import qualified Data.Array.Byte as BA
 import Data.Coerce (coerce)
 import Data.Functor.Identity
+import qualified Data.List as L
 import Data.MemPack
+import Data.Primitive.ByteArray as PBA
 import qualified Data.Text as T
 import qualified Data.Text as Text
+import Data.Vector.Primitive (Vector (..))
 import Data.Word
+import qualified Database.LSMTree as LSM
 import GHC.Generics (Generic)
 import Lens.Micro
 import Lens.Micro.Extras (view)
@@ -130,6 +136,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   , mkHeaderView
   )
 import Ouroboros.Consensus.Storage.LedgerDB
+import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 import Ouroboros.Consensus.Util.CBOR
   ( decodeWithOrigin
   , encodeWithOrigin
@@ -319,6 +326,37 @@ instance ShelleyCompatible proto era => UpdateLedger (ShelleyBlock proto era)
 
 type instance TxIn (LedgerState (ShelleyBlock proto era)) = SL.TxIn
 type instance TxOut (LedgerState (ShelleyBlock proto era)) = Core.TxOut era
+
+newtype LSMTxIn = LSMTxIn {lsmTxIn :: SL.TxIn}
+
+instance MemPack LSMTxIn where
+  packedByteCount = packedByteCount . lsmTxIn
+  packM (LSMTxIn (SL.TxIn txid txix)) = packM txix >> packM txid
+  unpackM = do
+    txix <- unpackM
+    txid <- unpackM
+    pure . LSMTxIn $ SL.TxIn txid txix
+
+instance LSM.SerialiseKey SL.TxIn where
+  serialiseKey txin =
+    let barr = pack $ LSMTxIn txin
+     in LSM.RawBytes (Vector 0 (PBA.sizeofByteArray barr) barr)
+  deserialiseKey (LSM.RawBytes (Vector _ _ barr)) = lsmTxIn . unpackError $ barr
+
+instance LSMOrder (LedgerState (ShelleyBlock proto era)) where
+  toLSMOrder _ =
+    L.sortBy
+      ( \(SL.TxIn id1 ix1) (SL.TxIn id2 ix2) ->
+          case compare ix1 ix2 of
+            EQ -> compare id1 id2
+            x -> x
+      )
+
+-- instance (txout ~ Core.TxOut era, MemPack txout) => LSM.SerialiseValue txout where
+--   serialiseValue txout =
+--     let barr = pack txout
+--      in LSM.RawBytes (Vector 0 (PBA.sizeofByteArray barr) barr)
+--   deserialiseValue (LSM.RawBytes (Vector _ _ barr)) = unpackError barr
 
 instance
   (txout ~ Core.TxOut era, MemPack txout) =>

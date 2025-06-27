@@ -29,6 +29,7 @@ import Data.MemPack
 import Data.SOP.Index (Index (..))
 import Data.Void (Void, absurd)
 import Data.Word
+import qualified Database.LSMTree as LSM
 import GHC.Generics
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -45,6 +46,7 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Protocol.PBFT (PBft, PBftCrypto)
+import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -292,7 +294,7 @@ instance HasCanonicalTxIn '[ByronBlock] where
     { getByronHFCTxIn :: Void
     }
     deriving stock (Show, Eq, Ord)
-    deriving newtype (NoThunks, MemPack)
+    deriving newtype (NoThunks, MemPack, LSM.SerialiseKey, LSM.SerialiseValue, LSM.ResolveValue)
 
   injectCanonicalTxIn IZ key = absurd key
   injectCanonicalTxIn (IS idx') _ = case idx' of {}
@@ -310,6 +312,10 @@ deriving via
   Void
   instance
     IndexedMemPack (LedgerState (HardForkBlock '[ByronBlock]) EmptyMK) Void
+
+instance LSMOrder (LedgerState (HardForkBlock '[ByronBlock])) where
+  toLSMOrder _ [] = []
+  toLSMOrder _ (x : _) = absurd . getByronHFCTxIn $ x
 
 instance BlockSupportsHFLedgerQuery '[ByronBlock] where
   answerBlockQueryHFLookup IZ _cfg (q :: BlockQuery ByronBlock QFLookupTables result) _dlv = case q of {}
