@@ -38,6 +38,19 @@ let
       ({ pkgs, lib, ... }: lib.mkIf pkgs.stdenv.hostPlatform.isWindows {
         # https://github.com/input-output-hk/haskell.nix/issues/2332
         packages.basement.configureFlags = [ "--hsc2hs-option=--cflag=-Wno-int-conversion" ];
+        # We can't cross-compile the ruby gem `cddlc` so we decided to skip this
+        # test on Windows in Hydra.
+        packages.ouroboros-consensus-cardano.components.tests.cardano-test.preCheck = ''
+          export DISABLE_CDDLC=1
+        '';
+      })
+      ({ pkgs, ... }: lib.mkIf (!pkgs.stdenv.hostPlatform.isWindows) {
+        # Tools for CBOR/CDDL tests:
+        packages.ouroboros-consensus-cardano.components.tests.cardano-test = {
+          build-tools =
+            [ pkgs.cddlc pkgs.cuddle ];
+          extraSrcFiles = [ "cddl/**/*" ];
+        };
       })
     ];
     flake.variants = {

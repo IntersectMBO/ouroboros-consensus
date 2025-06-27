@@ -55,7 +55,6 @@ import Test.Cardano.Ledger.Alonzo.Arbitrary ()
 import Test.Cardano.Ledger.Alonzo.Serialisation.Generators ()
 import Test.Cardano.Ledger.Conway.Arbitrary ()
 import Test.Consensus.Byron.Generators ()
-import Test.Consensus.Cardano.MockCrypto
 import Test.Consensus.Protocol.Serialisation.Generators ()
 import Test.Consensus.Shelley.Generators
 import Test.Consensus.Shelley.MockCrypto (CanMock)
@@ -70,14 +69,14 @@ import Test.Util.Serialisation.Roundtrip
   Disk
 -------------------------------------------------------------------------------}
 
-instance Arbitrary (CardanoBlock MockCryptoCompatByron) where
+instance Arbitrary (CardanoBlock StandardCrypto) where
   arbitrary =
     oneof $ catMaybes $ hcollapse generators
    where
     generators ::
       NP
-        (K (Maybe (Gen (CardanoBlock MockCryptoCompatByron))))
-        (CardanoEras MockCryptoCompatByron)
+        (K (Maybe (Gen (CardanoBlock StandardCrypto))))
+        (CardanoEras StandardCrypto)
     generators =
       mk BlockByron
         :* mk BlockShelley
@@ -91,18 +90,18 @@ instance Arbitrary (CardanoBlock MockCryptoCompatByron) where
     mk ::
       forall a x.
       Arbitrary a =>
-      (a -> CardanoBlock MockCryptoCompatByron) ->
-      K (Maybe (Gen (CardanoBlock MockCryptoCompatByron))) x
+      (a -> CardanoBlock StandardCrypto) ->
+      K (Maybe (Gen (CardanoBlock StandardCrypto))) x
     mk f = K $ Just $ f <$> arbitrary
 
-instance Arbitrary (Coherent (CardanoBlock MockCryptoCompatByron)) where
+instance Arbitrary (Coherent (CardanoBlock StandardCrypto)) where
   arbitrary =
     fmap Coherent $ oneof $ catMaybes $ hcollapse generators
    where
     generators ::
       NP
-        (K (Maybe (Gen (CardanoBlock MockCryptoCompatByron))))
-        (CardanoEras MockCryptoCompatByron)
+        (K (Maybe (Gen (CardanoBlock StandardCrypto))))
+        (CardanoEras StandardCrypto)
     generators =
       mk BlockByron
         :* mk BlockShelley
@@ -116,11 +115,11 @@ instance Arbitrary (Coherent (CardanoBlock MockCryptoCompatByron)) where
     mk ::
       forall a x.
       Arbitrary (Coherent a) =>
-      (a -> CardanoBlock MockCryptoCompatByron) ->
-      K (Maybe (Gen (CardanoBlock MockCryptoCompatByron))) x
+      (a -> CardanoBlock StandardCrypto) ->
+      K (Maybe (Gen (CardanoBlock StandardCrypto))) x
     mk f = K $ Just $ f . getCoherent <$> arbitrary
 
-instance Arbitrary (CardanoHeader MockCryptoCompatByron) where
+instance Arbitrary (CardanoHeader StandardCrypto) where
   arbitrary = getHeader <$> arbitrary
 
 instance
@@ -139,7 +138,7 @@ instance
     aux = K . OneEraHash . toShortRawHash (Proxy @blk) . unwrapHeaderHash
 
 instance
-  (c ~ MockCryptoCompatByron, ShelleyBasedEra ShelleyEra) =>
+  (c ~ StandardCrypto, ShelleyBasedEra ShelleyEra) =>
   Arbitrary (AnnTip (CardanoBlock c))
   where
   arbitrary =
@@ -344,7 +343,7 @@ arbitraryNodeToNode injByron injShelley injAllegra injMary injAlonzo injBabbage 
         x
 
 instance
-  c ~ MockCryptoCompatByron =>
+  c ~ StandardCrypto =>
   Arbitrary
     ( WithVersion
         (HardForkNodeToNodeVersion (CardanoEras c))
@@ -362,7 +361,7 @@ instance
     injConway = mapSomeNestedCtxt (NCS . NCS . NCS . NCS . NCS . NCS . NCZ)
 
 instance
-  c ~ MockCryptoCompatByron =>
+  c ~ StandardCrypto =>
   Arbitrary
     ( WithVersion
         (HardForkNodeToNodeVersion (CardanoEras c))
@@ -380,7 +379,7 @@ instance
       BlockConway
 
 instance
-  c ~ MockCryptoCompatByron =>
+  c ~ StandardCrypto =>
   Arbitrary
     ( WithVersion
         (HardForkNodeToNodeVersion (CardanoEras c))
@@ -398,7 +397,7 @@ instance
       HeaderConway
 
 instance
-  c ~ MockCryptoCompatByron =>
+  c ~ StandardCrypto =>
   Arbitrary
     ( WithVersion
         (HardForkNodeToNodeVersion (CardanoEras c))
@@ -416,7 +415,7 @@ instance
       GenTxConway
 
 instance
-  c ~ MockCryptoCompatByron =>
+  c ~ StandardCrypto =>
   Arbitrary
     ( WithVersion
         (HardForkNodeToNodeVersion (CardanoEras c))
@@ -695,7 +694,7 @@ arbitraryNodeToClient injByron injShelley injAllegra injMary injAlonzo injBabbag
     ]
 
 instance
-  c ~ MockCryptoCompatByron =>
+  c ~ StandardCrypto =>
   Arbitrary
     ( WithVersion
         (HardForkNodeToClientVersion (CardanoEras c))
@@ -713,7 +712,7 @@ instance
       BlockConway
 
 instance
-  c ~ MockCryptoCompatByron =>
+  c ~ StandardCrypto =>
   Arbitrary
     ( WithVersion
         (HardForkNodeToClientVersion (CardanoEras c))
@@ -731,7 +730,7 @@ instance
       GenTxConway
 
 instance
-  c ~ MockCryptoCompatByron =>
+  c ~ StandardCrypto =>
   Arbitrary
     ( WithVersion
         (HardForkNodeToClientVersion (CardanoEras c))
@@ -761,8 +760,8 @@ instance
   shrink = traverse aux
    where
     aux ::
-      CardanoApplyTxErr MockCryptoCompatByron ->
-      [CardanoApplyTxErr MockCryptoCompatByron]
+      CardanoApplyTxErr StandardCrypto ->
+      [CardanoApplyTxErr StandardCrypto]
     aux (HardForkApplyTxErrFromEra (OneEraApplyTxErr x)) =
       HardForkApplyTxErrFromEra . OneEraApplyTxErr <$> shrink x
     aux (HardForkApplyTxErrWrongEra x) =
@@ -796,7 +795,7 @@ instance
       ]
 
 instance
-  c ~ MockCryptoCompatByron =>
+  c ~ StandardCrypto =>
   Arbitrary
     ( WithVersion
         (HardForkNodeToClientVersion (CardanoEras c))
@@ -916,7 +915,7 @@ instance Arbitrary (EraIndex (CardanoEras c)) where
       Just ns -> return $ eraIndexFromNS ns
 
 instance
-  c ~ MockCryptoCompatByron =>
+  c ~ StandardCrypto =>
   Arbitrary
     ( WithVersion
         (HardForkNodeToClientVersion (CardanoEras c))

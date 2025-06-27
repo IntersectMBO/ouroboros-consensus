@@ -23,6 +23,10 @@ extra-doc-files:
   CHANGELOG.md
   README.md
 
+data-files:
+  cddl/**/*.cddl
+  cddl/base.cddl
+
 source-repository head
   type: git
   location: https://github.com/IntersectMBO/ouroboros-consensus
@@ -435,6 +439,7 @@ test-suite cardano-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.Cardano.DiffusionPipelining
+    Test.Consensus.Cardano.GenCDDLs
     Test.Consensus.Cardano.Golden
     Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.ByteStringTxParser
     Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server
@@ -448,20 +453,26 @@ test-suite cardano-test
     Test.ThreadNet.MaryAlonzo
     Test.ThreadNet.ShelleyAllegra
 
+  other-modules: Paths_ouroboros_consensus_cardano
   build-depends:
     QuickCheck,
     base,
     base16-bytestring,
     bytestring,
+    cardano-ledger-allegra:testlib,
     cardano-ledger-alonzo,
+    cardano-ledger-alonzo:testlib,
     cardano-ledger-alonzo-test,
     cardano-ledger-api,
+    cardano-ledger-babbage:testlib,
     cardano-ledger-babbage-test,
     cardano-ledger-binary:testlib,
-    cardano-ledger-byron,
+    cardano-ledger-byron:{cardano-ledger-byron, testlib},
     cardano-ledger-conway:testlib,
     cardano-ledger-core:{cardano-ledger-core, testlib},
+    cardano-ledger-mary:testlib,
     cardano-ledger-shelley,
+    cardano-ledger-shelley:testlib,
     cardano-ledger-shelley-test,
     cardano-protocol-tpraos,
     cardano-slotting,
@@ -469,6 +480,7 @@ test-suite cardano-test
     constraints,
     containers,
     contra-tracer,
+    directory,
     filepath,
     microlens,
     ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib, unstable-mempool-test-utils},
@@ -478,12 +490,14 @@ test-suite cardano-test
     ouroboros-network-api,
     ouroboros-network-protocols:{ouroboros-network-protocols, testlib},
     pretty-simple,
+    process-extras,
     sop-core,
     sop-extras,
     strict-sop-core,
     tasty,
     tasty-hunit,
     tasty-quickcheck,
+    temporary,
     typed-protocols ^>=0.3,
     unstable-byron-testlib,
     unstable-cardano-testlib,

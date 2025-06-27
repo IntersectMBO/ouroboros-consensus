@@ -31,7 +31,7 @@ tests :: TestTree
 tests =
   testGroup
     "Shelley"
-    [ roundtrip_all testCodecCfg dictNestedHdr
+    [ roundtrip_all testCodecCfg dictNestedHdr Nothing
     , -- Test for real crypto too
       testProperty "hashSize real crypto" $ prop_hashSize pReal
     , testProperty "ConvertRawHash real crypto" $ roundtrip_ConvertRawHash pReal

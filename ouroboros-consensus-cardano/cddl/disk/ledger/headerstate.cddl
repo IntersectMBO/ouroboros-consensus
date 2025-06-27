@@ -1,0 +1,28 @@
+headerState =
+  [withOrigin<headerStateTip>, headerStateChainDep]
+
+headerStateTip =
+  ns7<byronAnnTip, annTip, annTip, annTip, annTip, annTip, annTip>
+
+byronAnnTip = [slotno,
+               hash,
+               blockno,
+               bool]
+
+annTip = [slotno,
+          hash,
+          blockno]
+
+headerStateChainDep =
+  telescope7<versionedPbftState,
+             versionedTPraosState,
+             versionedTPraosState,
+             versionedTPraosState,
+             versionedTPraosState,
+             versionedPraosState,
+             versionedPraosState>
+
+;# import withOrigin, ns7, telescope7, slotno, hash, blockno from base
+;# import versionedPbftState from pbft
+;# import versionedPraosState from praos
+;# import versionedTPraosState from tpraos
