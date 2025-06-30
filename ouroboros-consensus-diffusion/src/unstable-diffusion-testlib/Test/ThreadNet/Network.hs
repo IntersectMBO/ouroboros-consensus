@@ -1034,7 +1034,8 @@ runThreadNetwork
 
       let rng = case seed of
             Seed s -> mkStdGen s
-          (kaRng, psRng) = split rng
+          (kaRng, rng') = split rng
+          (gsmRng, psRng) = split rng'
       publicPeerSelectionStateVar <- makePublicPeerSelectionStateVar
       let nodeKernelArgs =
             NodeKernelArgs
@@ -1073,7 +1074,7 @@ runThreadNetwork
                     }
               , gsmArgs =
                   GSM.GsmNodeKernelArgs
-                    { gsmAntiThunderingHerd = kaRng
+                    { gsmAntiThunderingHerd = gsmRng
                     , gsmDurationUntilTooOld = Nothing
                     , gsmMarkerFileView =
                         GSM.MarkerFileView
