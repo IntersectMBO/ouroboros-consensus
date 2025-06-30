@@ -108,11 +108,11 @@ onTick ::
   Tick ->
   m () ->
   m ()
-onTick registry clock threadLabel tick action = do
+onTick registry clock label tick action = do
   void $
     forkLinkedThread
       registry
-      threadLabel
+      label
       (waitForTick clock tick >> action)
 
 -- | Block until the specified tick
