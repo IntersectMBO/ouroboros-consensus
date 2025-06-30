@@ -252,18 +252,17 @@ initLedgerDB s c = do
           , lgrStartSnapshot = Nothing
           }
   ldb <-
-    fst
-      <$> runWithTempRegistry
-        ( do
-            db <-
-              LedgerDB.openDB
-                args
-                streamAPI
-                (Chain.headPoint c)
-                (\rpt -> pure $ fromMaybe (error "impossible") $ Chain.findBlock ((rpt ==) . blockRealPoint) c)
-                (LedgerDB.praosGetVolatileSuffix s)
-            pure (db, ())
-        )
+    runWithTempRegistry
+      ( do
+          db <-
+            LedgerDB.openDB
+              args
+              streamAPI
+              (Chain.headPoint c)
+              (\rpt -> pure $ fromMaybe (error "impossible") $ Chain.findBlock ((rpt ==) . blockRealPoint) c)
+              (LedgerDB.praosGetVolatileSuffix s)
+          pure (db, ())
+      )
 
   case NE.nonEmpty $ Chain.toOldestFirst c of
     Nothing -> pure ()
