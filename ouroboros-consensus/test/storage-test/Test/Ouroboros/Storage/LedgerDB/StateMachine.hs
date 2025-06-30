@@ -541,7 +541,7 @@ openLedgerDB flavArgs env cfg fs rr = do
   (tracer, getNumOpenHandles) <- mkTrackOpenHandles
   let args =
         LedgerDbArgs
-          (SnapshotPolicyArgs DisableSnapshots DefaultNumOfDiskSnapshots)
+          defaultSnapshotPolicyArgs
           (pure genesis)
           fs
           cfg

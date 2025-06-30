@@ -147,9 +147,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , withPrivateTipForker
   , withTipForker
 
-    -- * Snapshots
-  , SnapCounters (..)
-
     -- * Streaming
   , StreamingBackend (..)
   , Yield
@@ -166,7 +163,6 @@ import Codec.CBOR.Decoding
 import Codec.CBOR.Read
 import Codec.Serialise
 import qualified Control.Monad as Monad
-import Control.Monad.Class.MonadTime.SI
 import Control.Monad.Except
 import Control.ResourceRegistry
 import Control.Tracer
@@ -271,18 +267,12 @@ data LedgerDB m l blk = LedgerDB
   --  * The set of previously applied points.
   , tryTakeSnapshot ::
       l ~ ExtLedgerState blk =>
-      Maybe (Time, Time) ->
-      Word64 ->
-      m SnapCounters
+      m ()
   -- ^ If the provided arguments indicate so (based on the SnapshotPolicy with
   -- which this LedgerDB was opened), take a snapshot and delete stale ones.
   --
-  -- The arguments are:
-  --
-  -- - If a snapshot has been taken already, the time at which it was taken
-  --   and the current time.
-  --
-  -- - How many blocks have been processed since the last snapshot.
+  -- For V1, this must not be called concurrently with 'garbageCollect' and/or
+  -- 'tryFlush'.
   , tryFlush :: m ()
   -- ^ Flush V1 in-memory LedgerDB state to disk, if possible. This is a no-op
   -- for implementations that do not need an explicit flush function.
@@ -428,18 +418,6 @@ getReadOnlyForker ::
   Target (Point blk) ->
   m (Either GetForkerError (ReadOnlyForker m l blk))
 getReadOnlyForker ldb rr pt = fmap readOnlyForker <$> getForkerAtTarget ldb rr pt
-
-{-------------------------------------------------------------------------------
-  Snapshots
--------------------------------------------------------------------------------}
-
--- | Counters to keep track of when we made the last snapshot.
-data SnapCounters = SnapCounters
-  { prevSnapshotTime :: !(Maybe Time)
-  -- ^ When was the last time we made a snapshot
-  , ntBlocksSinceLastSnap :: !Word64
-  -- ^ How many blocks have we processed since the last snapshot
-  }
 
 {-------------------------------------------------------------------------------
   Initialization
