@@ -25,12 +25,14 @@ import Control.RAWLock
 import qualified Control.RAWLock as RAWLock
 import Control.ResourceRegistry
 import Control.Tracer
-import Data.Foldable (traverse_)
+import Data.Containers.ListUtils (nubOrd)
+import Data.Foldable (for_, traverse_)
 import qualified Data.Foldable as Foldable
 import Data.Functor.Contravariant ((>$<))
 import Data.Kind (Type)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (mapMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Traversable (for)
@@ -97,6 +99,7 @@ mkInitDb args flavArgs getBlock =
         lock <- RAWLock.new ()
         forkers <- newTVarIO Map.empty
         nextForkerKey <- newTVarIO (ForkerKey 0)
+        lastSnapshotWrite <- newTVarIO Nothing
         let env =
               LedgerDBEnv
                 { ldbSeq = varDB
@@ -110,6 +113,7 @@ mkInitDb args flavArgs getBlock =
                 , ldbResolveBlock = getBlock
                 , ldbQueryBatchSize = lgrQueryBatchSize
                 , ldbOpenHandlesLock = lock
+                , ldbLastSnapshotWrite = lastSnapshotWrite
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h bss
@@ -172,7 +176,7 @@ implMkLedgerDb h bss =
       , validateFork = getEnv5 h (implValidate h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
       , garbageCollect = \s -> getEnv h (flip implGarbageCollect s)
-      , tryTakeSnapshot = getEnv2 h (implTryTakeSnapshot bss)
+      , tryTakeSnapshot = getEnv h (implTryTakeSnapshot bss)
       , tryFlush = getEnv h implTryFlush
       , closeDB = implCloseDB h
       }
@@ -373,28 +377,46 @@ implTryTakeSnapshot ::
   ) =>
   HandleArgs ->
   LedgerDBEnv m l blk ->
-  Maybe (Time, Time) ->
-  Word64 ->
-  m SnapCounters
-implTryTakeSnapshot bss env mTime nrBlocks =
-  if onDiskShouldTakeSnapshot (ldbSnapshotPolicy env) (uncurry (flip diffTime) <$> mTime) nrBlocks
-    then do
-      withStateRef env (MkSolo . anchorHandle) $ \(MkSolo st) ->
-        Monad.void $
-          takeSnapshot
-            (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
-            (LedgerDBSnapshotEvent >$< ldbTracer env)
-            (ldbHasFS env)
-            st
+  m ()
+implTryTakeSnapshot bss env = do
+  timeSinceLastWrite <- do
+    mLastWrite <- readTVarIO $ ldbLastSnapshotWrite env
+    for mLastWrite $ \lastWrite -> do
+      now <- getMonotonicTime
+      pure $ now `diffTime` lastWrite
+  RAWLock.withReadAccess (ldbOpenHandlesLock env) $ \() -> do
+    lseq <- readTVarIO $ ldbSeq env
+    let immutableStates = AS.dropNewest (fromIntegral k) $ getLedgerSeq lseq
+        immutableSlots :: [SlotNo] =
+          nubOrd . mapMaybe (withOriginToMaybe . getTipSlot . state) $
+            AS.anchor immutableStates : AS.toOldestFirst immutableStates
+        snapshotSlots =
+          onDiskSnapshotSelector
+            (ldbSnapshotPolicy env)
+            SnapshotSelectorContext
+              { sscTimeSinceLast = timeSinceLastWrite
+              , sscSnapshotSlots = immutableSlots
+              }
+    for_ snapshotSlots $ \slot -> do
+      -- Prune the 'DbChangelog' such that the resulting anchor state has slot
+      -- number @slot@.
+      let pruneStrat = LedgerDbPruneBeforeSlot (slot + 1)
+      Monad.void $
+        takeSnapshot
+          (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
+          (LedgerDBSnapshotEvent >$< ldbTracer env)
+          (ldbHasFS env)
+          (anchorHandle $ snd $ prune pruneStrat lseq)
+      finished <- getMonotonicTime
+      atomically $ writeTVar (ldbLastSnapshotWrite env) (Just $! finished)
       Monad.void $
         trimSnapshots
           (LedgerDBSnapshotEvent >$< ldbTracer env)
           (ldbHasFS env)
           (ldbSnapshotPolicy env)
-      (`SnapCounters` 0) . Just <$> maybe getMonotonicTime (pure . snd) mTime
-    else
-      pure $ SnapCounters (fst <$> mTime) nrBlocks
  where
+  k = unNonZero $ maxRollbacks $ ledgerDbCfgSecParam $ ldbCfg env
+
   takeSnapshot ::
     CodecConfig blk ->
     Tracer m (TraceSnapshotEvent blk) ->
@@ -486,6 +508,8 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   --
   --  * Modify 'ldbSeq' while holding a write lock, and then close the removed
   --    handles without any locking. See e.g. 'implGarbageCollect'.
+  , ldbLastSnapshotWrite :: !(StrictTVar m (Maybe Time))
+  -- ^ When did we finish writing the last snapshot.
   }
   deriving Generic
 
@@ -535,16 +559,6 @@ getEnv (LDBHandle varState) f =
   readTVarIO varState >>= \case
     LedgerDBOpen env -> f env
     LedgerDBClosed -> throwIO $ ClosedDBError @blk prettyCallStack
-
--- | Variant 'of 'getEnv' for functions taking two arguments.
-getEnv2 ::
-  (IOLike m, HasCallStack, HasHeader blk) =>
-  LedgerDBHandle m l blk ->
-  (LedgerDBEnv m l blk -> a -> b -> m r) ->
-  a ->
-  b ->
-  m r
-getEnv2 h f a b = getEnv h (\env -> f env a b)
 
 -- | Variant 'of 'getEnv' for functions taking five arguments.
 getEnv5 ::
