@@ -21,11 +21,14 @@ import Control.RAWLock
 import qualified Control.RAWLock as RAWLock
 import Control.ResourceRegistry
 import Control.Tracer
+import Data.Containers.ListUtils (nubOrd)
+import Data.Foldable (for_)
 import qualified Data.Foldable as Foldable
 import Data.Functor.Contravariant ((>$<))
 import Data.Kind (Type)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (mapMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Traversable (for)
@@ -101,6 +104,7 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
         lock <- RAWLock.new ()
         forkers <- newTVarIO Map.empty
         nextForkerKey <- newTVarIO (ForkerKey 0)
+        lastSnapshotWrite <- newTVarIO Nothing
         ldbToClose <- newTVarIO []
         let env =
               LedgerDBEnv
@@ -118,6 +122,7 @@ mkInitDb args getBlock snapManager getVolatileSuffix res = do
                 , ldbOpenHandlesLock = lock
                 , ldbGetVolatileSuffix = getVolatileSuffix
                 , ldbResourceKeys = SomeResources res
+                , ldbLastSnapshotWrite = lastSnapshotWrite
                 , ldbToClose
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
@@ -167,7 +172,7 @@ implMkLedgerDb h snapManager =
       , validateFork = getEnv5 h (implValidate h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
       , garbageCollect = \s -> getEnv h (flip implGarbageCollect s)
-      , tryTakeSnapshot = getEnv2 h (implTryTakeSnapshot snapManager)
+      , tryTakeSnapshot = getEnv h (implTryTakeSnapshot snapManager)
       , tryFlush = getEnv h implTryFlush
       , closeDB = implCloseDB h
       }
@@ -349,25 +354,38 @@ implTryTakeSnapshot ::
   ) =>
   SnapshotManager m m blk (StateRef m (ExtLedgerState blk)) ->
   LedgerDBEnv m l blk ->
-  Maybe (Time, Time) ->
-  Word64 ->
-  m SnapCounters
-implTryTakeSnapshot snapManager env mTime nrBlocks =
-  if onDiskShouldTakeSnapshot (ldbSnapshotPolicy env) (uncurry (flip diffTime) <$> mTime) nrBlocks
-    then do
-      withStateRef env (MkSolo . anchorHandle) $ \(MkSolo (_, st)) ->
-        Monad.void $
-          takeSnapshot
-            snapManager
-            Nothing
-            st
-      Monad.void $
-        trimSnapshots
-          snapManager
-          (ldbSnapshotPolicy env)
-      (`SnapCounters` 0) . Just <$> maybe getMonotonicTime (pure . snd) mTime
-    else
-      pure $ SnapCounters (fst <$> mTime) nrBlocks
+  m ()
+implTryTakeSnapshot snapManager env = do
+  timeSinceLastWrite <- do
+    mLastWrite <- readTVarIO $ ldbLastSnapshotWrite env
+    for mLastWrite $ \lastWrite -> do
+      now <- getMonotonicTime
+      pure $ now `diffTime` lastWrite
+  RAWLock.withReadAccess (ldbOpenHandlesLock env) $ \() -> do
+    lseq@(LedgerSeq immutableStates) <- atomically $ do
+      LedgerSeq states <- readTVar $ ldbSeq env
+      volSuffix <- getVolatileSuffix (ldbGetVolatileSuffix env)
+      pure $ LedgerSeq $ AS.dropNewest (AS.length (volSuffix states)) states
+    let immutableSlots :: [SlotNo] =
+          -- Remove duplicates due to EBBs.
+          nubOrd . mapMaybe (withOriginToMaybe . getTipSlot . state) $
+            AS.anchor immutableStates : AS.toOldestFirst immutableStates
+        snapshotSlots =
+          onDiskSnapshotSelector
+            (ldbSnapshotPolicy env)
+            SnapshotSelectorContext
+              { sscTimeSinceLast = timeSinceLastWrite
+              , sscSnapshotSlots = immutableSlots
+              }
+    for_ snapshotSlots $ \slot -> do
+      -- Prune the 'DbChangelog' such that the resulting anchor state has slot
+      -- number @slot@.
+      let pruneStrat = LedgerDbPruneBeforeSlot (slot + 1)
+          st = anchorHandle $ snd $ prune pruneStrat lseq
+      Monad.void $ takeSnapshot snapManager Nothing st
+      finished <- getMonotonicTime
+      atomically $ writeTVar (ldbLastSnapshotWrite env) (Just $! finished)
+      Monad.void $ trimSnapshots snapManager (ldbSnapshotPolicy env)
 
 -- In the first version of the LedgerDB for UTxO-HD, there is a need to
 -- periodically flush the accumulated differences to the disk. However, in the
@@ -459,6 +477,8 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   -- in tests can release such resources. These are the resource keys for the
   -- LSM session and the resource key for the BlockIO interface.
   , ldbGetVolatileSuffix :: !(GetVolatileSuffix m blk)
+  , ldbLastSnapshotWrite :: !(StrictTVar m (Maybe Time))
+  -- ^ When did we finish writing the last snapshot.
   }
   deriving Generic
 
@@ -510,16 +530,6 @@ getEnv (LDBHandle varState) f =
   readTVarIO varState >>= \case
     LedgerDBOpen env -> f env
     LedgerDBClosed -> throwIO $ ClosedDBError @blk prettyCallStack
-
--- | Variant 'of 'getEnv' for functions taking two arguments.
-getEnv2 ::
-  (IOLike m, HasCallStack, HasHeader blk) =>
-  LedgerDBHandle m l blk ->
-  (LedgerDBEnv m l blk -> a -> b -> m r) ->
-  a ->
-  b ->
-  m r
-getEnv2 h f a b = getEnv h (\env -> f env a b)
 
 -- | Variant 'of 'getEnv' for functions taking five arguments.
 getEnv5 ::
