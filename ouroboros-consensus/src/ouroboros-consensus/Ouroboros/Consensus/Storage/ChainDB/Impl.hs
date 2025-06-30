@@ -164,7 +164,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     traceWith tracer $ TraceOpenEvent StartedOpeningLgrDB
     (ledgerDbGetVolatileSuffix, setGetCurrentChainForLedgerDB) <-
       mkLedgerDbGetVolatileSuffix
-    (lgrDB, _replayed) <-
+    lgrDB <-
       LedgerDB.openDB
         argsLgrDb
         (ImmutableDB.streamAPI immutableDB)

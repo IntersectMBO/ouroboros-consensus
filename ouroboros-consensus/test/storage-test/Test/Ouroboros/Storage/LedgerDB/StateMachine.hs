@@ -550,7 +550,7 @@ openLedgerDB flavArgs env cfg fs rr = do
           rr
           DefaultQueryBatchSize
           Nothing
-  (ldb, _, od) <- case lgrBackendArgs args of
+  (ldb, od) <- case lgrBackendArgs args of
     LedgerDbBackendArgsV1 bss ->
       let snapManager = V1.snapshotManager args
           initDb =

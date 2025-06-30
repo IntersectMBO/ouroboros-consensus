@@ -501,7 +501,7 @@ initialize ::
   InitDB db m blk ->
   SnapshotManager m n blk st ->
   Maybe DiskSnapshot ->
-  m (InitLog blk, db, Word64)
+  m (InitLog blk, db)
 initialize
   replayTracer
   snapTracer
@@ -523,7 +523,6 @@ initialize
       m
         ( InitLog blk
         , db
-        , Word64
         )
     tryNewestFirst acc [] = do
       -- We're out of snapshots. Start at genesis
@@ -544,7 +543,7 @@ initialize
         Left err -> do
           abortLedgerDbInit initDb
           error $ "Invariant violation: invalid immutable chain " <> show err
-        Right (db, replayed) -> return (acc InitFromGenesis, db, replayed)
+        Right db -> return (acc InitFromGenesis, db)
     tryNewestFirst acc (s : ss) = do
       eInitDb <- initFromSnapshot s
       case eInitDb of
@@ -596,7 +595,7 @@ initialize
               Monad.when (diskSnapshotIsTemporary s) $ deleteSnapshot snapManager s
               abortLedgerDbInit initDb
               tryNewestFirst (acc . InitFailure s err) ss
-            Right (db, replayed) -> return (acc (InitFromSnapshot s pt), db, replayed)
+            Right db -> return (acc (InitFromSnapshot s pt), db)
 
     replayTracer' =
       decorateReplayTracerWithGoal
@@ -620,32 +619,27 @@ replayStartingWith ::
   db ->
   Point blk ->
   InitDB db m blk ->
-  ExceptT (SnapshotFailure blk) m (db, Word64)
+  ExceptT (SnapshotFailure blk) m db
 replayStartingWith tracer cfg stream initDb from InitDB{initReapplyBlock, currentTip} = do
   streamAll
     stream
     from
     InitFailureTooRecent
-    (initDb, 0)
+    initDb
     push
  where
-  push ::
-    blk ->
-    (db, Word64) ->
-    m (db, Word64)
-  push blk (!db, !replayed) = do
+  push :: blk -> db -> m db
+  push blk !db = do
     !db' <- initReapplyBlock cfg blk db
 
-    let !replayed' = replayed + 1
-
-        events =
+    let events =
           inspectLedger
             (getExtLedgerCfg (ledgerDbCfg cfg))
             (currentTip db)
             (currentTip db')
 
     traceWith tracer (ReplayedBlock (blockRealPoint blk) events)
-    return (db', replayed')
+    return db'
 
 {-------------------------------------------------------------------------------
   Trace replay events
