@@ -499,7 +499,7 @@ openLedgerDB flavArgs env cfg fs = do
           rr
           DefaultQueryBatchSize
           Nothing
-  (ldb, _, od) <- case flavArgs of
+  (ldb, od) <- case flavArgs of
     LedgerDbFlavorArgsV1 bss ->
       let initDb =
             V1.mkInitDb

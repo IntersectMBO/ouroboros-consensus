@@ -160,7 +160,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
   (chainDB, testing, env) <- lift $ do
     traceWith tracer $ TraceOpenEvent (OpenedVolatileDB maxSlot)
     traceWith tracer $ TraceOpenEvent StartedOpeningLgrDB
-    (lgrDB, _replayed) <-
+    lgrDB <-
       LedgerDB.openDB
         argsLgrDb
         (ImmutableDB.streamAPI immutableDB)
