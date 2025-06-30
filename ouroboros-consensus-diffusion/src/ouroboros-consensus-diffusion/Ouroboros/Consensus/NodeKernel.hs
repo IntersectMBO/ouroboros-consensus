@@ -24,6 +24,7 @@ module Ouroboros.Consensus.NodeKernel
   , getPeersFromCurrentLedger
   , getPeersFromCurrentLedgerAfterSlot
   , initNodeKernel
+  , toConsensusMode
   ) where
 
 import Cardano.Network.ConsensusMode (ConsensusMode (..))
@@ -482,11 +483,11 @@ initInternalState
     peerSharingRegistry <- newPeerSharingRegistry
 
     return IS{..}
-   where
-    toConsensusMode :: forall a. LoEAndGDDConfig a -> ConsensusMode
-    toConsensusMode = \case
-      LoEAndGDDDisabled -> PraosMode
-      LoEAndGDDEnabled _ -> GenesisMode
+
+toConsensusMode :: forall a. LoEAndGDDConfig a -> ConsensusMode
+toConsensusMode = \case
+  LoEAndGDDDisabled -> PraosMode
+  LoEAndGDDEnabled _ -> GenesisMode
 
 forkBlockForging ::
   forall m addrNTN addrNTC blk.
@@ -495,12 +496,12 @@ forkBlockForging ::
   BlockForging m blk ->
   m (Thread m Void)
 forkBlockForging IS{..} blockForging =
-  forkLinkedWatcher registry threadLabel $
+  forkLinkedWatcher registry label $
     knownSlotWatcher btime $
       \currentSlot -> withRegistry (\rr -> withEarlyExit_ $ go rr currentSlot)
  where
-  threadLabel :: String
-  threadLabel =
+  label :: String
+  label =
     "NodeKernel.blockForging." <> Text.unpack (forgeLabel blockForging)
 
   go :: ResourceRegistry m -> SlotNo -> WithEarlyExit m ()
@@ -899,7 +900,7 @@ getPeersFromCurrentLedger ::
   (IOLike m, LedgerSupportsPeerSelection blk) =>
   NodeKernel m addrNTN addrNTC blk ->
   (LedgerState blk EmptyMK -> Bool) ->
-  STM m (Maybe [(PoolStake, NonEmpty RelayAccessPoint)])
+  STM m (Maybe [(PoolStake, NonEmpty LedgerRelayAccessPoint)])
 getPeersFromCurrentLedger kernel p = do
   immutableLedger <-
     ledgerState <$> ChainDB.getImmutableLedger (getChainDB kernel)
@@ -920,7 +921,7 @@ getPeersFromCurrentLedgerAfterSlot ::
   ) =>
   NodeKernel m addrNTN addrNTC blk ->
   SlotNo ->
-  STM m (Maybe [(PoolStake, NonEmpty RelayAccessPoint)])
+  STM m (Maybe [(PoolStake, NonEmpty LedgerRelayAccessPoint)])
 getPeersFromCurrentLedgerAfterSlot kernel slotNo =
   getPeersFromCurrentLedger kernel afterSlotNo
  where
