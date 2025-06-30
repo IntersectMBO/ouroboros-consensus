@@ -265,11 +265,16 @@ instance MonadMask m => MonadMask (WithEarlyExit m) where
           unmask' = earlyExit . unmask . withEarlyExit
        in withEarlyExit (f unmask')
 
+  getMaskingState = lift getMaskingState
+
+  interruptible f = earlyExit $ interruptible $ withEarlyExit f
+
 instance MonadThread m => MonadThread (WithEarlyExit m) where
   type ThreadId (WithEarlyExit m) = ThreadId m
 
   myThreadId = lift myThreadId
   labelThread = lift .: labelThread
+  threadLabel = lift . threadLabel
 
 instance
   (MonadMask m, MonadAsync m, MonadCatch (STM m)) =>
@@ -318,6 +323,8 @@ instance MonadFork m => MonadFork (WithEarlyExit m) where
   throwTo = lift .: throwTo
   yield = lift yield
 
+  getNumCapabilities = lift getNumCapabilities
+
 instance PrimMonad m => PrimMonad (WithEarlyExit m) where
   type PrimState (WithEarlyExit m) = PrimState m
   primitive = lift . primitive
@@ -365,8 +372,8 @@ instance MonadLabelledSTM m => MonadLabelledSTM (WithEarlyExit m) where
 instance MonadSay m => MonadSay (WithEarlyExit m) where
   say = lift . say
 
-instance (MonadInspectSTM m, Monad (InspectMonad m)) => MonadInspectSTM (WithEarlyExit m) where
-  type InspectMonad (WithEarlyExit m) = InspectMonad m
+instance (MonadInspectSTM m, Monad (InspectMonadSTM m)) => MonadInspectSTM (WithEarlyExit m) where
+  type InspectMonadSTM (WithEarlyExit m) = InspectMonadSTM m
   inspectTVar _ = inspectTVar (Proxy @m)
   inspectTMVar _ = inspectTMVar (Proxy @m)
 

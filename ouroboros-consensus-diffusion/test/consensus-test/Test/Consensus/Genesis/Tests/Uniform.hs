@@ -30,9 +30,6 @@ import Ouroboros.Consensus.Block.Abstract (WithOrigin (NotOrigin))
 import Ouroboros.Consensus.Util.Condense (condense)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.Block (blockNo, blockSlot, unBlockNo)
-import Ouroboros.Network.Protocol.ChainSync.Codec
-  ( ChainSyncTimeout (..)
-  )
 import Ouroboros.Network.Protocol.Limits (shortWait)
 import Test.Consensus.BlockTree (BlockTree (..), btbSuffix)
 import Test.Consensus.Genesis.Setup
