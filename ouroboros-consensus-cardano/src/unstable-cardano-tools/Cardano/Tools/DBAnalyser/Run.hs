@@ -64,7 +64,7 @@ openLedgerDB ::
     , LedgerDB.TestInternals' IO blk
     )
 openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.LedgerDbFlavorArgsV1 bss} = do
-  (ledgerDB, _, intLedgerDB) <-
+  (ledgerDB, intLedgerDB) <-
     LedgerDB.openDBInternal
       lgrDbArgs
       ( LedgerDB.V1.mkInitDb
@@ -76,7 +76,7 @@ openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.L
       genesisPoint
   pure (ledgerDB, intLedgerDB)
 openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.LedgerDbFlavorArgsV2 args} = do
-  (ledgerDB, _, intLedgerDB) <-
+  (ledgerDB, intLedgerDB) <-
     LedgerDB.openDBInternal
       lgrDbArgs
       ( LedgerDB.V2.mkInitDb
