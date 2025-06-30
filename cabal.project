@@ -14,9 +14,9 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2025-07-07T23:33:30Z
+  , hackage.haskell.org 2025-07-14T12:41:02Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2025-06-03T13:42:38Z
+  , cardano-haskell-packages 2025-07-02T14:54:39Z
 
 packages:
   ouroboros-consensus
@@ -57,13 +57,8 @@ if impl (ghc >= 9.12)
     -- https://github.com/kapralVV/Unique/issues/11
     , Unique:hashable
 
-source-repository-package
-   type: git
-   location: https://github.com/IntersectMBO/ouroboros-network
-   tag: 3e8d3b4b8c87ead794876c62d7fe25f32efb5142
-   --sha256: 08fpkx3iagj83nn413h9a865zjcj3lrf7017a756qd2wg2jg3amq
-   subdir:
-     ouroboros-network-api
+allow-newer: *:QuickCheck,
+allow-newer: quickcheck-lockstep:quickcheck-dynamic
 
 source-repository-package
    type: git
@@ -97,3 +92,13 @@ source-repository-package
       libs/set-algebra
       libs/small-steps
       libs/vector-map
+
+-- QuickCheck-2.16 support
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/plutus
+  tag: fffd12eb25985eebb84bf5d0cb1e2f6266a36124
+  --sha256: sha256-FA0aYLjoMT/6DTwOZ+zAar5TNO+cA2716DpsUbIFjPM=
+  subdir: plutus-core
+          plutus-tx
+          plutus-ledger-api
