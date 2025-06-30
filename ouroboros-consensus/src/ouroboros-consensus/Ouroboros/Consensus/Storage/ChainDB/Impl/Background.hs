@@ -53,7 +53,6 @@ import Data.Sequence.Strict (StrictSeq (..))
 import qualified Data.Sequence.Strict as Seq
 import Data.Time.Clock
 import Data.Void (Void)
-import Data.Word
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import Ouroboros.Consensus.Block
@@ -93,10 +92,8 @@ launchBgTasks ::
   , HasHardForkHistory blk
   ) =>
   ChainDbEnv m blk ->
-  -- | Number of immutable blocks replayed on ledger DB startup
-  Word64 ->
   m ()
-launchBgTasks cdb@CDB{..} replayed = do
+launchBgTasks cdb@CDB{..} = do
   !addBlockThread <-
     launch "ChainDB.addBlockRunner" $
       addBlockRunner cdbChainSelFuse cdb
@@ -107,7 +104,7 @@ launchBgTasks cdb@CDB{..} replayed = do
         garbageCollect cdb
   !copyAndSnapshotThread <-
     launch "ChainDB.copyAndSnapshotRunner" $
-      copyAndSnapshotRunner cdb gcSchedule replayed cdbCopyFuse
+      copyAndSnapshotRunner cdb gcSchedule cdbCopyFuse
   atomically $
     writeTVar cdbKillBgThreads $
       sequence_ [addBlockThread, gcThread, copyAndSnapshotThread]
@@ -241,30 +238,22 @@ copyAndSnapshotRunner ::
   ) =>
   ChainDbEnv m blk ->
   GcSchedule m ->
-  -- | Number of immutable blocks replayed on ledger DB startup
-  Word64 ->
   Fuse m ->
   m Void
-copyAndSnapshotRunner cdb@CDB{..} gcSchedule replayed fuse = do
+copyAndSnapshotRunner cdb@CDB{..} gcSchedule fuse = do
   -- this first flush will persist the differences that come from the initial
   -- chain selection.
   LedgerDB.tryFlush cdbLedgerDB
-  loop =<< LedgerDB.tryTakeSnapshot cdbLedgerDB Nothing replayed
+  forever copyAndSnapshot
  where
   SecurityParam k = configSecurityParam cdbTopLevelConfig
 
-  loop :: LedgerDB.SnapCounters -> m Void
-  loop counters = do
-    let LedgerDB.SnapCounters
-          { prevSnapshotTime
-          , ntBlocksSinceLastSnap
-          } = counters
-
+  copyAndSnapshot :: m ()
+  copyAndSnapshot = do
     -- Wait for the chain to grow larger than @k@
-    numToWrite <- atomically $ do
+    atomically $ do
       curChain <- icWithoutTime <$> readTVar cdbChain
       check $ fromIntegral (AF.length curChain) > unNonZero k
-      return $ fromIntegral (AF.length curChain) - unNonZero k
 
     -- Copy blocks to ImmutableDB
     --
@@ -273,15 +262,12 @@ copyAndSnapshotRunner cdb@CDB{..} gcSchedule replayed fuse = do
     gcSlotNo <- withFuse fuse (copyToImmutableDB cdb)
     scheduleGC' gcSlotNo
 
+    LedgerDB.tryTakeSnapshot cdbLedgerDB
+
     -- See the Haddocks above as for why we garbage-collect the LedgerDB already
     -- here (instead of as part of the scheduled GC).
     whenJust (withOriginToMaybe gcSlotNo) $ LedgerDB.garbageCollect cdbLedgerDB
     LedgerDB.tryFlush cdbLedgerDB
-
-    now <- getMonotonicTime
-    let ntBlocksSinceLastSnap' = ntBlocksSinceLastSnap + numToWrite
-
-    loop =<< LedgerDB.tryTakeSnapshot cdbLedgerDB ((,now) <$> prevSnapshotTime) ntBlocksSinceLastSnap'
 
   scheduleGC' :: WithOrigin SlotNo -> m ()
   scheduleGC' Origin = return ()
