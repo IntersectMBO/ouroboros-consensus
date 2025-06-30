@@ -63,10 +63,8 @@ import Ouroboros.Network.Protocol.ChainSync.ClientPipelined
   , chainSyncClientPeerPipelined
   )
 import Ouroboros.Network.Protocol.ChainSync.Codec
-  ( ChainSyncTimeout (..)
-  , byteLimitsChainSync
+  ( byteLimitsChainSync
   , codecChainSyncId
-  , timeLimitsChainSync
   )
 import Ouroboros.Network.Protocol.ChainSync.PipelineDecision
   ( pipelineDecisionLowHighMark
@@ -86,6 +84,7 @@ import Test.Consensus.PeerSimulator.Trace
   ( TraceChainSyncClientTerminationEvent (..)
   , TraceEvent (..)
   )
+import Test.Consensus.PointSchedule (ChainSyncTimeout (..), timeLimitsChainSync)
 import Test.Consensus.PointSchedule.Peers (PeerId)
 import Test.Util.Orphans.IOLike ()
 

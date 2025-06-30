@@ -26,9 +26,6 @@ import Ouroboros.Consensus.Protocol.Abstract
   )
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import Ouroboros.Network.Protocol.ChainSync.Codec
-  ( ChainSyncTimeout (..)
-  )
 import Ouroboros.Network.Protocol.Limits (shortWait)
 import qualified Test.Consensus.BlockTree as BT
 import Test.Consensus.PointSchedule

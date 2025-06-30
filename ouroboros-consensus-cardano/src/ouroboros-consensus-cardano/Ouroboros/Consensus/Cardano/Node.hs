@@ -43,6 +43,7 @@ module Ouroboros.Consensus.Cardano.Node
   , pattern CardanoNodeToClientVersion15
   , pattern CardanoNodeToClientVersion16
   , pattern CardanoNodeToClientVersion17
+  , pattern CardanoNodeToClientVersion18
   , pattern CardanoNodeToNodeVersion1
   , pattern CardanoNodeToNodeVersion2
   ) where
@@ -408,6 +409,21 @@ pattern CardanoNodeToClientVersion17 =
         :* Nil
       )
 
+pattern CardanoNodeToClientVersion18 :: BlockNodeToClientVersion (CardanoBlock c)
+pattern CardanoNodeToClientVersion18 =
+  HardForkNodeToClientEnabled
+    HardForkSpecificNodeToClientVersion3
+    ( EraNodeToClientEnabled ByronNodeToClientVersion1
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion14
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion14
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion14
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion14
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion14
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion14
+        :* EraNodeToClientEnabled ShelleyNodeToClientVersion14
+        :* Nil
+      )
+
 instance
   CardanoHardForkConstraints c =>
   SupportedNetworkProtocolVersion (CardanoBlock c)
@@ -415,6 +431,7 @@ instance
   supportedNodeToNodeVersions _ =
     Map.fromList $
       [ (NodeToNodeV_14, CardanoNodeToNodeVersion2)
+      , (NodeToNodeV_15, CardanoNodeToNodeVersion2)
       ]
 
   supportedNodeToClientVersions _ =
@@ -425,12 +442,10 @@ instance
       , (NodeToClientV_19, CardanoNodeToClientVersion15)
       , (NodeToClientV_20, CardanoNodeToClientVersion16)
       , (NodeToClientV_21, CardanoNodeToClientVersion17)
+      , (NodeToClientV_22, CardanoNodeToClientVersion18)
       ]
 
-  -- This is not set to NodeToClientV_21 on purpose because that one is just a
-  -- stub. Once we have a proper ouroboros-network to integrate that comes with
-  -- said version and we remove the SRP then we can bump this value.
-  latestReleasedNodeVersion _prx = (Just NodeToNodeV_14, Just NodeToClientV_20)
+  latestReleasedNodeVersion _prx = (Just NodeToNodeV_15, Just NodeToClientV_22)
 
 {-------------------------------------------------------------------------------
   ProtocolInfo
