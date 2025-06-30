@@ -27,13 +27,14 @@ import Control.Monad.Except
 import Control.Monad.Trans (lift)
 import Control.ResourceRegistry
 import Control.Tracer
+import Data.Containers.ListUtils (nubOrd)
 import qualified Data.Foldable as Foldable
 import Data.Functor ((<&>))
 import Data.Functor.Contravariant ((>$<))
 import Data.Kind (Type)
 import Data.Map (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, mapMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Word
@@ -123,6 +124,7 @@ mkInitDb args bss getBlock =
         flushLock <- mkLedgerDBLock
         forkers <- newTVarIO Map.empty
         nextForkerKey <- newTVarIO (ForkerKey 0)
+        lastSnapshotWrite <- newTVarIO Nothing
         let env =
               LedgerDBEnv
                 { ldbChangelog = varDB
@@ -138,6 +140,7 @@ mkInitDb args bss getBlock =
                 , ldbShouldFlush = shouldFlush flushFreq
                 , ldbQueryBatchSize = lgrQueryBatchSize
                 , ldbResolveBlock = getBlock
+                , ldbLastSnapshotWrite = lastSnapshotWrite
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h
@@ -182,7 +185,7 @@ implMkLedgerDb h =
       , validateFork = getEnv5 h (implValidate h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
       , garbageCollect = getEnv1 h implGarbageCollect
-      , tryTakeSnapshot = getEnv2 h implTryTakeSnapshot
+      , tryTakeSnapshot = getEnv h implTryTakeSnapshot
       , tryFlush = getEnv h implTryFlush
       , closeDB = implCloseDB h
       }
@@ -308,29 +311,53 @@ implTryTakeSnapshot ::
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
   ) =>
-  LedgerDBEnv m l blk -> Maybe (Time, Time) -> Word64 -> m SnapCounters
-implTryTakeSnapshot env mTime nrBlocks =
-  if onDiskShouldTakeSnapshot (ldbSnapshotPolicy env) (uncurry (flip diffTime) <$> mTime) nrBlocks
-    then do
-      void $
-        withReadLock
-          (ldbLock env)
-          ( takeSnapshot
-              (ldbChangelog env)
-              (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
-              (LedgerDBSnapshotEvent >$< ldbTracer env)
-              (ldbHasFS env)
-              (ldbBackingStore env)
-              Nothing
-          )
-      void $
-        trimSnapshots
-          (LedgerDBSnapshotEvent >$< ldbTracer env)
-          (snapshotsFs $ ldbHasFS env)
+  LedgerDBEnv m l blk -> m ()
+implTryTakeSnapshot env = do
+  timeSinceLastWrite <- do
+    mLastWrite <- readTVarIO $ ldbLastSnapshotWrite env
+    forM mLastWrite $ \lastWrite -> do
+      now <- getMonotonicTime
+      pure $ now `diffTime` lastWrite
+  chlog <- readTVarIO $ ldbChangelog env
+  let immutableStates =
+        AS.dropNewest (fromIntegral (envMaxRollbacks env)) $ changelogStates chlog
+      immutableSlots :: [SlotNo] =
+        nubOrd . mapMaybe (withOriginToMaybe . getTipSlot) $
+          AS.anchor immutableStates : AS.toOldestFirst immutableStates
+      snapshotSlots =
+        onDiskSnapshotSelector
           (ldbSnapshotPolicy env)
-      (`SnapCounters` 0) . Just <$> maybe getMonotonicTime (pure . snd) mTime
-    else
-      pure $ SnapCounters (fst <$> mTime) nrBlocks
+          SnapshotSelectorContext
+            { sscTimeSinceLast = timeSinceLastWrite
+            , sscSnapshotSlots = immutableSlots
+            }
+  forM_ snapshotSlots $ \slot -> do
+    -- Prune the 'DbChangelog' such that the resulting anchor state has slot
+    -- number @slot@.
+    let pruneStrat = LedgerDbPruneBeforeSlot (slot + 1)
+    atomically $ modifyTVar (ldbChangelog env) (prune pruneStrat)
+    -- Flush the LedgerDB such that we can take a snapshot for the new anchor
+    -- state due to the previous prune.
+    withWriteLock
+      (ldbLock env)
+      (flushLedgerDB (ldbChangelog env) (ldbBackingStore env))
+    -- Now, taking a snapshot (for the last flushed state) will do what we want.
+    void $
+      withReadLock (ldbLock env) $
+        takeSnapshot
+          (ldbChangelog env)
+          (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
+          (LedgerDBSnapshotEvent >$< ldbTracer env)
+          (ldbHasFS env)
+          (ldbBackingStore env)
+          Nothing
+    finished <- getMonotonicTime
+    atomically $ writeTVar (ldbLastSnapshotWrite env) (Just $! finished)
+    void $
+      trimSnapshots
+        (LedgerDBSnapshotEvent >$< ldbTracer env)
+        (snapshotsFs $ ldbHasFS env)
+        (ldbSnapshotPolicy env)
 
 -- If the DbChangelog in the LedgerDB can flush (based on the SnapshotPolicy
 -- with which this LedgerDB was opened), flush differences to the backing
@@ -549,6 +576,8 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   -- frequency that was provided when opening the LedgerDB.
   , ldbQueryBatchSize :: !QueryBatchSize
   , ldbResolveBlock :: !(ResolveBlock m blk)
+  , ldbLastSnapshotWrite :: !(StrictTVar m (Maybe Time))
+  -- ^ When did we finish writing the last snapshot.
   }
   deriving Generic
 
