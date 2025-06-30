@@ -183,7 +183,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
   -- want to track that one to close it on exception. See "Resource management
   -- in the LedgerDB" in "Ouroboros.Consensus.Storage.LedgerDB.API" for an
   -- explanation of why.
-  (lgrDB, _replayed) <-
+  lgrDB <-
     LedgerDB.openDB
       argsLgrDb
       (ImmutableDB.streamAPI immutableDB)

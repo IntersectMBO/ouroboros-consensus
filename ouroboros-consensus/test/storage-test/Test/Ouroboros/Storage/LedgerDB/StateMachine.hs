@@ -590,7 +590,7 @@ openLedgerDB flavArgs env cfg fs = do
           flavArgs
           DefaultQueryBatchSize
           Nothing
-  (ldb, _, od) <-
+  (ldb, od) <-
     runWithTempRegistry $
       (\x -> (x, ())) <$> case lgrBackendArgs args of
         LedgerDbBackendArgsV1 bss ->

@@ -252,8 +252,7 @@ initLedgerDB s c = do
           , lgrStartSnapshot = Nothing
           }
   ldb <-
-    fst
-      <$> runWithTempRegistry
+    runWithTempRegistry
         ( do
             db <-
               LedgerDB.openDB
