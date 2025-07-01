@@ -69,3 +69,11 @@ The [`LedgerSupportsProtocol`](https://github.com/intersectmbo/ouroboros-consens
 - [Byron instance](https://github.com/intersectmbo/ouroboros-consensus/blob/a70eb17ef28831cd2e140b33ded49ce791028d88/ouroboros-consensus-cardano/src/byron/Ouroboros/Consensus/Byron/Ledger/Ledger.hs#L282)
 - [Shelley instance](https://github.com/intersectmbo/ouroboros-consensus/blob/a70eb17ef28831cd2e140b33ded49ce791028d88/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/SupportsProtocol.hs#L51).
 - [`HardForkBlock` instance](https://github.com/intersectmbo/ouroboros-consensus/blob/a70eb17ef28831cd2e140b33ded49ce791028d88/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HardFork/Combinator/Ledger.hs#L399).
+
+### `BlockSupportsProtocol`
+
+The [`BlockSupportsProtocol`](https://github.com/intersectmbo/ouroboros-consensus/blob/a70eb17ef28831cd2e140b33ded49ce791028d88/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Block/SupportsProtocol.hs#L26) type class links the specific block type to its corresponding consensus protocol. It defines the capabilities a block must provide for the consensus protocol to operate correctly.
+
+- [Byron instance](https://github.com/intersectmbo/ouroboros-consensus/blob/a70eb17ef28831cd2e140b33ded49ce791028d88/ouroboros-consensus-cardano/src/byron/Ouroboros/Consensus/Byron/Ledger/PBFT.hs#L42).
+- [Shelley instance](https://github.com/intersectmbo/ouroboros-consensus/blob/a70eb17ef28831cd2e140b33ded49ce791028d88/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/Protocol.hs#L32).
+- [`HardForkBlock` instance](https://github.com/intersectmbo/ouroboros-consensus/blob/a70eb17ef28831cd2e140b33ded49ce791028d88/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HardFork/Combinator/Protocol.hs#L141).
