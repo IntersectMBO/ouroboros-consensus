@@ -39,6 +39,19 @@ class
     Header blk ->
     ValidateView (BlockProtocol blk)
 
+  -- | Projects a view of a block's 'Header' required by the consensus
+  -- protocol's chain selection logic.
+  --
+  -- A key design decision is that chain selection compares chains
+  -- based **only on their tips** (via their 'SelectView's). This is a
+  -- pragmatic refinement of theoretical models where chain selection
+  -- might involve scanning entire chains, which is impractical for
+  -- frequent operations on a growing blockchain. This function
+  -- enables this optimization by providing just the necessary
+  -- information for comparison by looking at the header of the chain
+  -- tip.
+  --
+  -- The default implementation of this function returns the block number.
   selectView ::
     BlockConfig blk ->
     Header blk ->
