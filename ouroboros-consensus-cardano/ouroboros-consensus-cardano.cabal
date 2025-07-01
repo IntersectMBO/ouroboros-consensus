@@ -175,7 +175,6 @@ library
     sop-extras ^>=0.4,
     strict-sop-core ^>=0.1,
     primitive,
-    FailT,
     text,
     these ^>=1.2,
     validation,
@@ -403,6 +402,7 @@ library unstable-cardano-testlib
 
   build-depends:
     QuickCheck,
+    lsm-tree,
     base,
     cardano-crypto-class,
     cardano-crypto-wrapper,

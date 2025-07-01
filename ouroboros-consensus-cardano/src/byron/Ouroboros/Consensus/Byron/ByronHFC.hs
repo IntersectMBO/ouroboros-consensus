@@ -11,6 +11,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Byron.ByronHFC
@@ -294,7 +295,7 @@ instance HasCanonicalTxIn '[ByronBlock] where
     { getByronHFCTxIn :: Void
     }
     deriving stock (Show, Eq, Ord)
-    deriving newtype (NoThunks, MemPack, LSM.SerialiseKey, LSM.SerialiseValue, LSM.ResolveValue)
+    deriving newtype (NoThunks, MemPack, LSM.SerialiseKey)
 
   injectCanonicalTxIn IZ key = absurd key
   injectCanonicalTxIn (IS idx') _ = case idx' of {}
@@ -313,9 +314,13 @@ deriving via
   instance
     IndexedMemPack (LedgerState (HardForkBlock '[ByronBlock]) EmptyMK) Void
 
-instance LSMOrder (LedgerState (HardForkBlock '[ByronBlock])) where
-  toLSMOrder _ [] = []
-  toLSMOrder _ (x : _) = absurd . getByronHFCTxIn $ x
+type instance
+  LSMTxOut (LedgerState (HardForkBlock '[ByronBlock])) =
+    TxOut (LedgerState (HardForkBlock '[ByronBlock]))
+
+instance ToLSMTxOut (LedgerState (HardForkBlock '[ByronBlock])) where
+  toLSMTxOut _ = id
+  fromLSMTxOut _ = id
 
 instance BlockSupportsHFLedgerQuery '[ByronBlock] where
   answerBlockQueryHFLookup IZ _cfg (q :: BlockQuery ByronBlock QFLookupTables result) _dlv = case q of {}

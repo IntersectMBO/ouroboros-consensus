@@ -5,22 +5,28 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2.Args
   ( FlavorImplSpecificTrace (..)
   , HandleArgs (..)
+  , HandleEnv (..)
   , LedgerDbFlavorArgs (..)
   ) where
 
-import Database.LSMTree (Session)
+import Database.LSMTree (LSMTreeTrace (..), Session)
 
-data LedgerDbFlavorArgs f m = V2Args (HandleArgs m)
+data LedgerDbFlavorArgs f = V2Args HandleArgs
 
-data HandleArgs m
+data HandleArgs
   = InMemoryHandleArgs
-  | LSMHandleArgs (Session m)
+  | LSMHandleArgs FilePath
+
+data HandleEnv m
+  = InMemoryHandleEnv
+  | LSMHandleEnv (Session m)
 
 data FlavorImplSpecificTrace
   = -- | Created a new 'LedgerTablesHandle', potentially by duplicating an
@@ -28,4 +34,5 @@ data FlavorImplSpecificTrace
     TraceLedgerTablesHandleCreate
   | -- | Closed a 'LedgerTablesHandle'.
     TraceLedgerTablesHandleClose
-  deriving (Show, Eq)
+  | LSMTrace LSMTreeTrace
+  deriving Show

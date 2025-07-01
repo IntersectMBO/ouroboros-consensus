@@ -279,6 +279,7 @@ test-suite consensus-test
     cardano-ledger-core,
     cardano-slotting:{cardano-slotting, testlib},
     cardano-strict-containers,
+    lsm-tree,
     containers,
     contra-tracer,
     directory,

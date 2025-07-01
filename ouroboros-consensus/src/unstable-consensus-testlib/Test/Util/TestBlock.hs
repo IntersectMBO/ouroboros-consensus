@@ -145,6 +145,7 @@ import Ouroboros.Consensus.Protocol.MockChainSel
 import Ouroboros.Consensus.Protocol.Signed
 import Ouroboros.Consensus.Storage.ChainDB (SerialiseDiskConstraints)
 import Ouroboros.Consensus.Storage.LedgerDB
+import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
@@ -530,6 +531,11 @@ instance
 
 type instance TxIn (LedgerState TestBlock) = Void
 type instance TxOut (LedgerState TestBlock) = Void
+type instance LSMTxOut (LedgerState TestBlock) = Void
+
+instance ToLSMTxOut (LedgerState TestBlock) where
+  toLSMTxOut _ = id
+  fromLSMTxOut _ = id
 
 instance LedgerTablesAreTrivial (LedgerState TestBlock) where
   convertMapKind (TestLedger x EmptyPLDS) = TestLedger x EmptyPLDS

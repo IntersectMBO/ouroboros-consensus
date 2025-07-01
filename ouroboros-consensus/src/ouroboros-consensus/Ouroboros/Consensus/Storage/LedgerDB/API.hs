@@ -502,6 +502,7 @@ initialize ::
   Point blk ->
   InitDB db m blk ->
   Maybe DiskSnapshot ->
+  (SomeHasFS m -> DiskSnapshot -> m ()) ->
   m (InitLog blk, db, Word64)
 initialize
   replayTracer
@@ -511,7 +512,8 @@ initialize
   stream
   replayGoal
   dbIface
-  fromSnapshot =
+  fromSnapshot
+  deleteSnapshot =
     case fromSnapshot of
       Nothing -> listSnapshots hasFS >>= tryNewestFirst id
       Just snap -> tryNewestFirst id [snap]

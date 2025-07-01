@@ -441,11 +441,13 @@ instance
   ejectCanonicalTxIn IZ txIn = getShelleyBlockHFCTxIn txIn
   ejectCanonicalTxIn (IS idx') _ = case idx' of {}
 
-instance LSMOrder (LedgerState (HardForkBlock '[ShelleyBlock proto era])) where
-  toLSMOrder _ =
-    map ShelleyBlockHFCTxIn
-      . toLSMOrder (Proxy @(LedgerState (ShelleyBlock proto era)))
-      . map getShelleyBlockHFCTxIn
+type instance
+  LSMTxOut (LedgerState (HardForkBlock '[ShelleyBlock proto era])) =
+    TxOut (LedgerState (HardForkBlock '[ShelleyBlock proto era]))
+
+instance ToLSMTxOut (LedgerState (HardForkBlock '[ShelleyBlock proto era])) where
+  toLSMTxOut _ = id
+  fromLSMTxOut _ = id
 
 {-------------------------------------------------------------------------------
   HardForkTxOut

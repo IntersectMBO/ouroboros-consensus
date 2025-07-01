@@ -128,6 +128,7 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
 import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.TraceEvent as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
+import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (split)
 import Ouroboros.Consensus.Util.CallStack
@@ -335,6 +336,7 @@ type TestConstraints blk =
   , LedgerTablesAreTrivial (LedgerState blk)
   , LedgerSupportsLedgerDB blk
   , ImmutableEraParams blk
+  , GoodForLSM (LedgerState blk)
   )
 
 deriving instance

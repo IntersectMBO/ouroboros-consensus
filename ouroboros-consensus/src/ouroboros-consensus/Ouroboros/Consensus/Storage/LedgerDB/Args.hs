@@ -86,7 +86,7 @@ defaultArgs =
 
 data LedgerDbFlavorArgs f m
   = LedgerDbFlavorArgsV1 (V1.LedgerDbFlavorArgs f m)
-  | LedgerDbFlavorArgsV2 (V2.LedgerDbFlavorArgs f m)
+  | LedgerDbFlavorArgsV2 (V2.LedgerDbFlavorArgs f)
 
 {-------------------------------------------------------------------------------
   QueryBatchSize

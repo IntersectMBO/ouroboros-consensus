@@ -25,7 +25,6 @@ packages:
   ouroboros-consensus-diffusion
   sop-extras
   strict-sop-core
-  ../lsm-tree
 
 -- We want to always build the test-suites and benchmarks
 tests: true
@@ -119,7 +118,7 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/jasagredo/lsm-tree
-  tag: fa0d862b7a609473538a0007bd0df314cd2fa635
+  tag: 55c4b99e3e569c168de38f6d351507236d027f49
   subdir:
-
+    .
     blockio

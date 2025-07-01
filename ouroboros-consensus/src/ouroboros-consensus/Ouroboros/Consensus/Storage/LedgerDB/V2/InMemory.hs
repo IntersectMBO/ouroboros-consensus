@@ -102,19 +102,19 @@ newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l = do
           hs <- readTVarIO tv
           !x <- guardClosed hs $ newInMemoryLedgerTablesHandle tracer someFS
           pure x
-      , read = \keys -> do
+      , read = \_ keys -> do
           hs <- readTVarIO tv
           guardClosed
             hs
             (pure . flip (ltliftA2 (\(ValuesMK v) (KeysMK k) -> ValuesMK $ v `Map.restrictKeys` k)) keys)
-      , readRange = \(f, t) -> do
+      , readRange = \_ (f, t) -> do
           hs <- readTVarIO tv
           guardClosed
             hs
             ( \(LedgerTables (ValuesMK m)) ->
                 pure . LedgerTables . ValuesMK . Map.take t . (maybe id (\g -> snd . Map.split g) f) $ m
             )
-      , readAll = do
+      , readAll = \_ -> do
           hs <- readTVarIO tv
           guardClosed hs pure
       , pushDiffs = \st0 !diffs ->

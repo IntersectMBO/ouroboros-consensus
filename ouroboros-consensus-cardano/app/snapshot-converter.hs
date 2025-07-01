@@ -200,7 +200,7 @@ load config@Config{inpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), pa
       checkSnapshotFileStructure Mem path fs
       (ls, _) <- withExceptT SnapshotError $ V2.loadSnapshot nullTracer rr ccfg fs ds
       let h = V2.currentHandle ls
-      (V2.state h,) <$> Trans.lift (V2.readAll (V2.tables h))
+      (V2.state h,) <$> Trans.lift (V2.readAll (V2.tables h) (V2.state h))
     LMDB -> do
       checkSnapshotFileStructure LMDB path fs
       ((dbch, k, bstore), _) <-

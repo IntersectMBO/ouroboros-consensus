@@ -14,6 +14,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Instances requires for consensus/ledger integration
@@ -70,8 +71,7 @@ import qualified Control.State.Transition.Extended as STS
 import Data.ByteString (ByteString)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Void (Void, absurd)
-import qualified Database.LSMTree as LSM
+import Data.Void (Void)
 import GHC.Generics (Generic)
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block
@@ -204,16 +204,11 @@ instance IsLedger (LedgerState ByronBlock) where
 
 type instance TxIn (LedgerState ByronBlock) = Void
 type instance TxOut (LedgerState ByronBlock) = Void
+type instance LSMTxOut (LedgerState ByronBlock) = TxOut (LedgerState ByronBlock)
 
-instance LSM.SerialiseKey Void where
-  serialiseKey = absurd
-  deserialiseKey = error "deserialiseKey: Void"
-
-deriving via LSM.ResolveViaSemigroup Void instance LSM.ResolveValue Void
-
-instance LSMOrder (LedgerState ByronBlock) where
-  toLSMOrder _ [] = []
-  toLSMOrder _ (x : _) = absurd x
+instance ToLSMTxOut (LedgerState ByronBlock) where
+  toLSMTxOut _ = id
+  fromLSMTxOut _ = id
 
 instance LedgerTablesAreTrivial (LedgerState ByronBlock) where
   convertMapKind (ByronLedgerState x y z) = ByronLedgerState x y z

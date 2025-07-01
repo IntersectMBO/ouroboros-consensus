@@ -85,9 +85,9 @@ data LedgerTablesHandle m l = LedgerTablesHandle
   { close :: !(m ())
   , duplicate :: !(m (LedgerTablesHandle m l))
   -- ^ It is expected that this operation takes constant time.
-  , read :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
-  , readRange :: !((Maybe (TxIn l), Int) -> m (LedgerTables l ValuesMK))
-  , readAll :: !(m (LedgerTables l ValuesMK))
+  , read :: !(l EmptyMK -> LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
+  , readRange :: !(l EmptyMK -> (Maybe (TxIn l), Int) -> m (LedgerTables l ValuesMK))
+  , readAll :: !(l EmptyMK -> m (LedgerTables l ValuesMK))
   -- ^ Costly read all operation, not to be used in Consensus but only in
   -- snapshot-converter executable.
   , pushDiffs :: !(forall mk. l mk -> l DiffMK -> m ())
@@ -222,7 +222,7 @@ reapplyBlock evs cfg b _rr db = do
   let ks = getBlockKeySets b
       StateRef st tbs = currentHandle db
   newtbs <- duplicate tbs
-  vals <- read newtbs ks
+  vals <- read newtbs st ks
   let st' = tickThenReapply evs cfg b (st `withLedgerTables` vals)
       newst = forgetLedgerTables st'
 

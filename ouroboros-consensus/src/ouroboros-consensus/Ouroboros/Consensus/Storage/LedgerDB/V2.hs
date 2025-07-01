@@ -76,10 +76,10 @@ mkInitDb ::
   , LedgerSupportsInMemoryLedgerDB blk
   ) =>
   Complete LedgerDbArgs m blk ->
-  Complete V2.LedgerDbFlavorArgs m ->
+  HandleEnv m ->
   ResolveBlock m blk ->
   InitDB (LedgerSeq' m blk) m blk
-mkInitDb args flavArgs getBlock =
+mkInitDb args bss getBlock =
   InitDB
     { initFromGenesis = emptyF =<< lgrGenesis
     , initFromSnapshot =
@@ -128,8 +128,6 @@ mkInitDb args flavArgs getBlock =
     , lgrRegistry
     } = args
 
-  bss = case flavArgs of V2Args bss0 -> bss0
-
   v2Tracer :: Tracer m V2.FlavorImplSpecificTrace
   v2Tracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< lgrTracer
 
@@ -138,8 +136,8 @@ mkInitDb args flavArgs getBlock =
     m (LedgerSeq' m blk)
   emptyF st =
     empty' st $ case bss of
-      InMemoryHandleArgs -> InMemory.newInMemoryLedgerTablesHandle v2Tracer lgrHasFS
-      LSMHandleArgs session ->
+      InMemoryHandleEnv -> InMemory.newInMemoryLedgerTablesHandle v2Tracer lgrHasFS
+      LSMHandleEnv session ->
         \values -> do
           table <- LSM.tableFromValuesMK lgrRegistry session values
           LSM.newLSMLedgerTablesHandle v2Tracer lgrRegistry session table
@@ -150,8 +148,8 @@ mkInitDb args flavArgs getBlock =
     DiskSnapshot ->
     m (Either (SnapshotFailure blk) (LedgerSeq' m blk, RealPoint blk))
   loadSnapshot ccfg fs ds = case bss of
-    InMemoryHandleArgs -> runExceptT $ InMemory.loadSnapshot v2Tracer lgrRegistry ccfg fs ds
-    LSMHandleArgs session -> runExceptT $ LSM.loadSnapshot v2Tracer lgrRegistry ccfg fs session ds
+    InMemoryHandleEnv -> runExceptT $ InMemory.loadSnapshot v2Tracer lgrRegistry ccfg fs ds
+    LSMHandleEnv session -> runExceptT $ LSM.loadSnapshot v2Tracer lgrRegistry ccfg fs session ds
 
 implMkLedgerDb ::
   forall m l blk.
@@ -166,7 +164,7 @@ implMkLedgerDb ::
   , HasHardForkHistory blk
   ) =>
   LedgerDBHandle m l blk ->
-  HandleArgs m ->
+  HandleEnv m ->
   (LedgerDB m l blk, TestInternals m l blk)
 implMkLedgerDb h bss =
   ( LedgerDB
@@ -192,7 +190,7 @@ mkInternals ::
   , LedgerSupportsProtocol blk
   , ApplyBlock (ExtLedgerState blk) blk
   ) =>
-  HandleArgs m ->
+  HandleEnv m ->
   LedgerDBHandle m (ExtLedgerState blk) blk ->
   TestInternals' m blk
 mkInternals bss h =
@@ -248,8 +246,8 @@ mkInternals bss h =
     StateRef m (ExtLedgerState blk) ->
     m (Maybe (DiskSnapshot, RealPoint blk))
   takeSnapshot = case bss of
-    InMemoryHandleArgs -> InMemory.takeSnapshot
-    LSMHandleArgs{} -> LSM.takeSnapshot
+    InMemoryHandleEnv -> InMemory.takeSnapshot
+    LSMHandleEnv{} -> LSM.takeSnapshot
 
 -- | Testing only! Truncate all snapshots in the DB.
 implIntTruncateSnapshots :: MonadThrow m => SomeHasFS m -> m ()
@@ -363,7 +361,7 @@ implTryTakeSnapshot ::
   , LedgerSupportsProtocol blk
   , LedgerDbSerialiseConstraints blk
   ) =>
-  HandleArgs m ->
+  HandleEnv m ->
   LedgerDBEnv m l blk ->
   Maybe (Time, Time) ->
   Word64 ->
@@ -382,6 +380,7 @@ implTryTakeSnapshot bss env mTime nrBlocks =
         trimSnapshots
           (LedgerDBSnapshotEvent >$< ldbTracer env)
           (ldbHasFS env)
+          deleteSnapshot
           (ldbSnapshotPolicy env)
       (`SnapCounters` 0) . Just <$> maybe getMonotonicTime (pure . snd) mTime
     else
@@ -394,20 +393,26 @@ implTryTakeSnapshot bss env mTime nrBlocks =
     StateRef m (ExtLedgerState blk) ->
     m (Maybe (DiskSnapshot, RealPoint blk))
   takeSnapshot config trcr fs ref = case bss of
-    InMemoryHandleArgs ->
+    InMemoryHandleEnv ->
       InMemory.takeSnapshot
         config
         trcr
         fs
         Nothing
         ref
-    LSMHandleArgs{} ->
+    LSMHandleEnv{} ->
       LSM.takeSnapshot
         config
         trcr
         fs
         Nothing
         ref
+
+  deleteSnapshot = case bss of
+    InMemoryHandleEnv ->
+      defaultDeleteSnapshot
+    LSMHandleEnv session ->
+      LSM.deleteSnapshot session
 
 -- In the first version of the LedgerDB for UTxO-HD, there is a need to
 -- periodically flush the accumulated differences to the disk. However, in the

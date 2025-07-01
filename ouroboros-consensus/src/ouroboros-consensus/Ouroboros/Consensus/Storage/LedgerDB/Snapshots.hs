@@ -43,7 +43,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots
   , snapshotToMetadataPath
 
     -- * Management
-  , deleteSnapshot
+  , defaultDeleteSnapshot
   , listSnapshots
   , loadSnapshotMetadata
   , trimSnapshots
@@ -239,8 +239,8 @@ listSnapshots (SomeHasFS HasFS{listDirectory}) =
   aux = List.sortOn (Down . dsNumber) . mapMaybe snapshotFromPath . Set.toList
 
 -- | Delete snapshot from disk
-deleteSnapshot :: (Monad m, HasCallStack) => SomeHasFS m -> DiskSnapshot -> m ()
-deleteSnapshot (SomeHasFS HasFS{doesDirectoryExist, removeDirectoryRecursive}) ss = do
+defaultDeleteSnapshot :: (Monad m, HasCallStack) => SomeHasFS m -> DiskSnapshot -> m ()
+defaultDeleteSnapshot (SomeHasFS HasFS{doesDirectoryExist, removeDirectoryRecursive}) ss = do
   let p = snapshotToDirPath ss
   exists <- doesDirectoryExist p
   when exists (removeDirectoryRecursive p)
@@ -341,9 +341,10 @@ trimSnapshots ::
   Monad m =>
   Tracer m (TraceSnapshotEvent r) ->
   SomeHasFS m ->
+  (SomeHasFS m -> DiskSnapshot -> m ()) ->
   SnapshotPolicy ->
   m [DiskSnapshot]
-trimSnapshots tracer fs SnapshotPolicy{onDiskNumSnapshots} = do
+trimSnapshots tracer fs deleteSnapshot SnapshotPolicy{onDiskNumSnapshots} = do
   -- We only trim temporary snapshots
   ss <- filter diskSnapshotIsTemporary <$> listSnapshots fs
   -- The snapshot are most recent first, so we can simply drop from the

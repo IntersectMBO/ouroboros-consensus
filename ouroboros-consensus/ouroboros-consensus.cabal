@@ -295,6 +295,7 @@ library
 
   build-depends:
     FailT ^>=0.1.2,
+    blockio,
     aeson,
     base >=4.14 && <4.22,
     base-deriving-via,
@@ -302,6 +303,7 @@ library
     bimap >=0.4 && <0.6,
     binary >=0.8 && <0.11,
     bytestring >=0.10 && <0.13,
+    random,
     cardano-binary,
     cardano-crypto-class,
     cardano-ledger-core ^>=1.18,
@@ -518,6 +520,7 @@ library unstable-mock-block
     cardano-ledger-core,
     cardano-slotting:{cardano-slotting, testlib},
     cborg,
+    lsm-tree,
     containers,
     deepseq,
     hashable,
@@ -719,6 +722,7 @@ test-suite storage-test
     aeson,
     base,
     bifunctors,
+    lsm-tree,
     binary,
     bytestring,
     cardano-binary,

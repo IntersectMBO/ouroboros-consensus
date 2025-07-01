@@ -67,6 +67,7 @@ import Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
 import qualified Data.SOP.Telescope as Telescope
 import Data.Void (Void)
+import qualified Database.LSMTree as LSM
 import Lens.Micro ((^.))
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Forging (BlockForging)
@@ -95,6 +96,7 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Node
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.Storage.LedgerDB
+import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util (eitherToMaybe)
 import Ouroboros.Consensus.Util.IOLike (IOLike)
@@ -512,6 +514,21 @@ instance
 deriving newtype instance
   ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
   MemPack (CanonicalTxIn (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
+
+type instance
+  LSMTxOut (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))) =
+    TxOut (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)))
+
+instance ToLSMTxOut (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))) where
+  toLSMTxOut _ = id
+  fromLSMTxOut _ = id
+
+instance
+  ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>
+  LSM.SerialiseKey (CanonicalTxIn (ShelleyBasedHardForkEras proto1 era1 proto2 era2))
+  where
+  serialiseKey = serialiseLSMViaMemPack
+  deserialiseKey = deserialiseLSMViaMemPack
 
 instance
   ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =>

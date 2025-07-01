@@ -40,6 +40,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2 as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as LedgerDB.V2
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LedgerDB.V2
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
@@ -57,6 +58,7 @@ openLedgerDB ::
   , LedgerDB.LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
   , LedgerDB.LedgerSupportsLedgerDB blk
+  , LedgerDB.V2.GoodForLSM (LedgerState blk)
   ) =>
   Complete LedgerDB.LedgerDbArgs IO blk ->
   IO

@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -96,12 +97,9 @@ import Codec.Serialise (decode, encode)
 import Control.Arrow (left, second)
 import qualified Control.Exception as Exception
 import Control.Monad.Except
-import Control.Monad.Trans.Fail
 import qualified Control.State.Transition.Extended as STS
-import qualified Data.Array.Byte as BA
 import Data.Coerce (coerce)
 import Data.Functor.Identity
-import qualified Data.List as L
 import Data.MemPack
 import Data.Primitive.ByteArray as PBA
 import qualified Data.Text as T
@@ -338,25 +336,16 @@ instance MemPack LSMTxIn where
     pure . LSMTxIn $ SL.TxIn txid txix
 
 instance LSM.SerialiseKey SL.TxIn where
-  serialiseKey txin =
-    let barr = pack $ LSMTxIn txin
-     in LSM.RawBytes (Vector 0 (PBA.sizeofByteArray barr) barr)
-  deserialiseKey (LSM.RawBytes (Vector _ _ barr)) = lsmTxIn . unpackError $ barr
+  serialiseKey = serialiseLSMViaMemPack . LSMTxIn
+  deserialiseKey = lsmTxIn . deserialiseLSMViaMemPack
 
-instance LSMOrder (LedgerState (ShelleyBlock proto era)) where
-  toLSMOrder _ =
-    L.sortBy
-      ( \(SL.TxIn id1 ix1) (SL.TxIn id2 ix2) ->
-          case compare ix1 ix2 of
-            EQ -> compare id1 id2
-            x -> x
-      )
+type instance
+  LSMTxOut (LedgerState (ShelleyBlock proto era)) =
+    TxOut (LedgerState (ShelleyBlock proto era))
 
--- instance (txout ~ Core.TxOut era, MemPack txout) => LSM.SerialiseValue txout where
---   serialiseValue txout =
---     let barr = pack txout
---      in LSM.RawBytes (Vector 0 (PBA.sizeofByteArray barr) barr)
---   deserialiseValue (LSM.RawBytes (Vector _ _ barr)) = unpackError barr
+instance ToLSMTxOut (LedgerState (ShelleyBlock proto era)) where
+  toLSMTxOut _ = id
+  fromLSMTxOut _ = id
 
 instance
   (txout ~ Core.TxOut era, MemPack txout) =>

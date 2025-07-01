@@ -4,6 +4,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -13,6 +14,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -116,23 +118,20 @@ data CardanoTxOut c
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
--- TODO
-instance CardanoHardForkConstraints c => LSM.SerialiseValue (CardanoTxOut c) where
-  serialiseValue txout =
-    let barr =
-          indexedPackByteArray
-            False
-            (undefined :: (LedgerState (HardForkBlock (CardanoEras c)) EmptyMK)) -- unused
-            txout
+type instance LSMTxOut (LedgerState (CardanoBlock c)) = LSM.RawBytes
+
+instance LSM.SerialiseValue LSM.RawBytes where
+  serialiseValue = id
+  deserialiseValue = id
+
+deriving via LSM.ResolveAsFirst LSM.RawBytes instance LSM.ResolveValue LSM.RawBytes
+
+instance CardanoHardForkConstraints c => ToLSMTxOut (LedgerState (CardanoBlock c)) where
+  toLSMTxOut _ txout =
+    let barr = eliminateCardanoTxOut (const pack) txout
      in LSM.RawBytes (Vector 0 (PBA.sizeofByteArray barr) barr)
-  deserialiseValue (LSM.RawBytes (Vector _ _ barr)) =
-    indexedUnpackError (undefined :: (LedgerState (HardForkBlock (CardanoEras c)) EmptyMK)) barr
-
-instance CardanoHardForkConstraints c => LSM.ResolveValue (CardanoTxOut c) where
-  resolve = undefined
-
-instance LSMOrder (LedgerState (HardForkBlock (CardanoEras c))) where
-  toLSMOrder _ = undefined
+  fromLSMTxOut st (LSM.RawBytes (Vector _ _ barr)) =
+    indexedUnpackError st barr
 
 -- | Eliminate the wrapping of CardanoTxOut with the provided function. Similar
 -- to 'hcimap' on an 'NS'.
