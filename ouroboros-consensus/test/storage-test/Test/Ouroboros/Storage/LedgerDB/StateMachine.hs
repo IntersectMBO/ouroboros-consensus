@@ -567,6 +567,9 @@ instance RunModel Model (StateT Environment IO) where
     lift $ truncateSnapshots testInternals
   perform UnInit _ _ = error "Uninitialized model created a command different than Init"
 
+  monitoring _ (ValidateAndCommit n _) _ _ = tabulate "Rollback depths" [show n]
+  monitoring _ _ _ _ = id
+
   -- NOTE
   --
   -- In terms of postcondition, we only need to check that the immutable and
