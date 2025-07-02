@@ -121,7 +121,6 @@ mkInitDb args bss getBlock =
               else pure chlog'
         pure (chlog'', r, bstore)
     , currentTip = \(ch, _, _) -> ledgerState . current $ ch
-    , pruneDb = \(ch, r, bs) -> pure (pruneToImmTipOnly ch, r, bs)
     , mkLedgerDb = \(db, ldbBackingStoreKey, ldbBackingStore) -> do
         (varDB, prevApplied) <-
           (,) <$> newTVarIO db <*> newTVarIO Set.empty
@@ -437,7 +436,7 @@ implIntPush ::
   LedgerDBEnv m l blk -> l DiffMK -> m ()
 implIntPush env st = do
   chlog <- readTVarIO $ ldbChangelog env
-  let chlog' = prune (LedgerDbPruneKeeping (ledgerDbCfgSecParam $ ldbCfg env)) $ extend st chlog
+  let chlog' = pruneToImmTipOnly $ extend st chlog
   atomically $ writeTVar (ldbChangelog env) chlog'
 
 implIntReapplyThenPush ::
