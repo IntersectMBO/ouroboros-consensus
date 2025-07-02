@@ -43,6 +43,7 @@ import Cardano.Crypto.DSIGN
   )
 import Cardano.Crypto.KES
   ( KESAlgorithm (..)
+  , UnsoundPureKESAlgorithm (..)
   , UnsoundPureSignKeyKES
   , seedSizeKES
   , unsoundPureDeriveVerKeyKES
@@ -79,6 +80,7 @@ import qualified Cardano.Protocol.TPraos.OCert as SL
   , OCertSignable (..)
   )
 import Control.Monad.Except (throwError)
+import qualified Control.Tracer as Tracer
 import qualified Data.ByteString as BS
 import Data.Coerce (coerce)
 import Data.ListMap (ListMap (ListMap))
@@ -97,10 +99,15 @@ import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
 import Ouroboros.Consensus.Config.SecurityParam
 import Ouroboros.Consensus.Node.ProtocolInfo
+import Ouroboros.Consensus.Protocol.Praos.AgentClient
+  ( KESAgentClientTrace
+  , KESAgentContext
+  )
 import Ouroboros.Consensus.Protocol.Praos.Common
   ( PraosCanBeLeader (PraosCanBeLeader)
+  , PraosCredentialsSource (..)
   , praosCanBeLeaderColdVerKey
-  , praosCanBeLeaderOpCert
+  , praosCanBeLeaderCredentialsSource
   , praosCanBeLeaderSignKeyVRF
   )
 import Ouroboros.Consensus.Protocol.TPraos
@@ -115,7 +122,6 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Node
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import Ouroboros.Consensus.Util.Assert
-import Ouroboros.Consensus.Util.IOLike
 import Quiet (Quiet (..))
 import qualified Test.Cardano.Ledger.Core.KeyPair as TL
   ( KeyPair (..)
@@ -245,10 +251,9 @@ genCoreNode startKESPeriod = do
 mkLeaderCredentials :: CoreNode c -> ShelleyLeaderCredentials c
 mkLeaderCredentials CoreNode{cnDelegateKey, cnVRF, cnKES, cnOCert} =
   ShelleyLeaderCredentials
-    { shelleyLeaderCredentialsInitSignKey = cnKES
-    , shelleyLeaderCredentialsCanBeLeader =
+    { shelleyLeaderCredentialsCanBeLeader =
         PraosCanBeLeader
-          { praosCanBeLeaderOpCert = cnOCert
+          { praosCanBeLeaderCredentialsSource = PraosCredentialsUnsound cnOCert cnKES
           , praosCanBeLeaderColdVerKey = SL.VKey $ deriveVerKeyDSIGN cnDelegateKey
           , praosCanBeLeaderSignKeyVRF = cnVRF
           }
@@ -457,13 +462,15 @@ mkGenesisConfig pVer k f d maxLovelaceSupply slotLength kesCfg coreNodes =
 
 mkProtocolShelley ::
   forall m c.
-  (IOLike m, ShelleyCompatible (TPraos c) ShelleyEra) =>
+  ( KESAgentContext c m
+  , ShelleyCompatible (TPraos c) ShelleyEra
+  ) =>
   ShelleyGenesis ->
   SL.Nonce ->
   ProtVer ->
   CoreNode c ->
   ( ProtocolInfo (ShelleyBlock (TPraos c) ShelleyEra)
-  , m [BlockForging m (ShelleyBlock (TPraos c) ShelleyEra)]
+  , Tracer.Tracer m KESAgentClientTrace -> m [BlockForging m (ShelleyBlock (TPraos c) ShelleyEra)]
   )
 mkProtocolShelley genesis initialNonce protVer coreNode =
   protocolInfoShelley
