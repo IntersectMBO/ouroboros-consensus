@@ -77,3 +77,32 @@ The [`BlockSupportsProtocol`](https://github.com/intersectmbo/ouroboros-consensu
 - [Byron instance](https://github.com/intersectmbo/ouroboros-consensus/blob/a70eb17ef28831cd2e140b33ded49ce791028d88/ouroboros-consensus-cardano/src/byron/Ouroboros/Consensus/Byron/Ledger/PBFT.hs#L42).
 - [Shelley instance](https://github.com/intersectmbo/ouroboros-consensus/blob/a70eb17ef28831cd2e140b33ded49ce791028d88/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/Protocol.hs#L32).
 - [`HardForkBlock` instance](https://github.com/intersectmbo/ouroboros-consensus/blob/a70eb17ef28831cd2e140b33ded49ce791028d88/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HardFork/Combinator/Protocol.hs#L141).
+
+### `ValidateEnvelope`
+
+Envelope validation is a specific, initial phase of [header validation](https://github.com/intersectmbo/ouroboros-consensus/blob/4091b92226a7d5b0fd6531876722df32ea6b7f16/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HeaderValidation.hs#L509) handled by the [`validateEnvelope`](https://github.com/intersectmbo/ouroboros-consensus/blob/4091b92226a7d5b0fd6531876722df32ea6b7f16/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HeaderValidation.hs#L356) function.
+It focuses on ledger-independent, basic structural checks and protocol compatibility of the block header.
+The `validateHeader` function first executes the `validateEnvelope` checks.
+If these pass, it then proceeds to update the chain-dependent state (`updateChainDepState`), where the more complex consensus-specific checks like VRF and KES validation occur.
+This sequential approach allows for early rejection of malformed or fundamentally incompatible headers before more computationally intensive cryptographic validations are performed.
+
+The `validateEnvelope` function performs the following checks:
+• **Block Number Consistency**: Ensures that the actual block number of the new header matches the expected next block number based on the previous chain tip.
+• **Slot Number Consistency**: Verifies that the actual slot number of the new header is greater than or equal to the minimum expected next slot number.
+• **Previous Hash Matching**: Checks that the `headerPrevHash` of the new header correctly references the hash of the previous block in the chain.
+• **Checkpoint Mismatches**: Validates against any configured [checkpoint](TODO: link to genesis) hashes for specific block numbers.
+• **Additional Envelope Checks**: This is an extensible part that allows for block-type or protocol-specific.
+
+For [Byron](https://github.com/intersectmbo/ouroboros-consensus/blob/4091b92226a7d5b0fd6531876722df32ea6b7f16/ouroboros-consensus-cardano/src/byron/Ouroboros/Consensus/Byron/Ledger/HeaderValidation.hs#L55), the additional envelope checks verify that [EBB](TODO: ref to EBBs)s occur only in allowed slots.
+
+For [Praos](https://github.com/intersectmbo/ouroboros-consensus/blob/4091b92226a7d5b0fd6531876722df32ea6b7f16/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Protocol/Praos.hs#L111), additional envelope checks specifically verify:
+- **Protocol Version Compatibility**: Ensuring that the major protocol version of the block does not exceed the maximum version supported by the node's configuration. If it does, it throws an `ObsoleteNode` error, preventing the node from processing blocks from a future, unsupported protocol version.
+- **Header Size Limits**: Verifying that the block header's size is within a configured maximum limit.
+- **Block Body Size Declaration**: Checking that the declared size of the block body (as indicated in the header) does not exceed the maximum allowed block body size.
+
+The `HardForkBlock` also has an [instance](https://github.com/intersectmbo/ouroboros-consensus/blob/4091b92226a7d5b0fd6531876722df32ea6b7f16/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HardFork/Combinator/Ledger.hs#L343) for `ValidateEnvelope`. Its `OtherHeaderEnvelopeError` is `HardForkEnvelopeErr`, which can encapsulate either a `HardForkEnvelopeErrFromEra` (an error from one of the constituent eras) or `HardForkEnvelopeErrWrongEra` (indicating a block from an unexpected era).
+The `additionalEnvelopeChecks` for the `HardForkBlock` ensures that the block's era matches the expected era at the current tip, and then it delegates the check to the `additionalEnvelopeChecks` of the specific era's block type.
+
+Envelope validation is largely ledger-independent, though the additional checks for Praos reference configured maximum sizes and protocol versions derived from the ledger configuration.
+
+Envelope validation relies on [ValidateEnvelope](https://github.com/intersectmbo/ouroboros-consensus/blob/4091b92226a7d5b0fd6531876722df32ea6b7f16/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HeaderValidation.hs#L340) instances. This class extends [`BasicEnvelopeValidation`](https://github.com/intersectmbo/ouroboros-consensus/blob/4091b92226a7d5b0fd6531876722df32ea6b7f16/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HeaderValidation.hs#L297).
