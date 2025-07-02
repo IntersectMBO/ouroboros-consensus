@@ -553,7 +553,9 @@ instance RunModel Model (StateT Environment IO) where
         vr <- validateFork ldb rr (const $ pure ()) BlockCache.empty n (map getHeader blks)
         case vr of
           ValidateSuccessful forker -> do
-            atomically $ modifyTVar (dbChain chainDb) (reverse (map blockRealPoint blks) ++)
+            atomically $
+              modifyTVar (dbChain chainDb) $
+                (reverse (map blockRealPoint blks) ++) . drop (fromIntegral n)
             atomically (forkerCommit forker)
             forkerClose forker
           ValidateExceededRollBack{} -> error "Unexpected Rollback"
