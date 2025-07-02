@@ -468,6 +468,17 @@ instance MaxTxSizeUTxO ConwayEra where
               , mismatchExpected = txSizeLimit
               }
 
+instance MaxTxSizeUTxO DijkstraEra where
+  maxTxSizeUTxO txSize txSizeLimit =
+    SL.ApplyTxError . pure $
+      ConwayEra.ConwayUtxowFailure $
+        ConwayEra.UtxoFailure $
+          ConwayEra.MaxTxSizeUTxO $
+            L.Mismatch
+              { mismatchSupplied = txSize
+              , mismatchExpected = txSizeLimit
+              }
+
 -----
 
 instance ShelleyCompatible p ShelleyEra => TxLimits (ShelleyBlock p ShelleyEra) where
@@ -594,6 +605,17 @@ instance ExUnitsTooBigUTxO ConwayEra where
               , mismatchExpected = limit
               }
 
+instance ExUnitsTooBigUTxO DijkstraEra where
+  exUnitsTooBigUTxO txsz limit =
+    SL.ApplyTxError . pure $
+      ConwayEra.ConwayUtxowFailure $
+        ConwayEra.UtxoFailure $
+          ConwayEra.ExUnitsTooBigUTxO $
+            L.Mismatch
+              { mismatchSupplied = txsz
+              , mismatchExpected = limit
+              }
+
 -----
 
 instance
@@ -690,6 +712,15 @@ instance TxRefScriptsSizeTooBig ConwayEra where
           , mismatchExpected = limit
           }
 
+instance TxRefScriptsSizeTooBig DijkstraEra where
+  txRefScriptsSizeTooBig txsz limit =
+    SL.ApplyTxError . pure $
+      ConwayEra.ConwayTxRefScriptsSizeTooBig $
+        L.Mismatch
+          { mismatchSupplied = txsz
+          , mismatchExpected = limit
+          }
+
 -----
 
 txMeasureBabbage ::
@@ -731,5 +762,13 @@ instance
   TxLimits (ShelleyBlock p ConwayEra)
   where
   type TxMeasure (ShelleyBlock p ConwayEra) = ConwayMeasure
+  txMeasure _cfg st tx = runValidation $ txMeasureConway st tx
+  blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure
+
+instance
+  ShelleyCompatible p DijkstraEra =>
+  TxLimits (ShelleyBlock p DijkstraEra)
+  where
+  type TxMeasure (ShelleyBlock p DijkstraEra) = ConwayMeasure
   txMeasure _cfg st tx = runValidation $ txMeasureConway st tx
   blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure

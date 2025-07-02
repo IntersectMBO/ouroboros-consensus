@@ -11,9 +11,7 @@
 module Test.Consensus.Shelley.Generators (SomeResult (..)) where
 
 import Cardano.Ledger.Core (TranslationContext, toTxSeq)
-import Cardano.Ledger.Genesis
 import qualified Cardano.Ledger.Shelley.API as SL
-import Cardano.Ledger.Shelley.Translation
 import Cardano.Ledger.State (InstantStake)
 import Cardano.Protocol.Crypto (Crypto)
 import qualified Cardano.Protocol.TPraos.API as SL
@@ -302,12 +300,6 @@ arbitraryGlobalsWithFixedEpochInfo =
 
 arbitraryFixedEpochInfo :: Monad m => Gen (EpochInfo m)
 arbitraryFixedEpochInfo = fixedEpochInfo <$> arbitrary <*> arbitrary
-
-instance Arbitrary (NoGenesis era) where
-  arbitrary = pure NoGenesis
-
-instance Arbitrary FromByronTranslationContext where
-  arbitrary = FromByronTranslationContext <$> arbitrary <*> arbitrary <*> arbitrary
 
 {-------------------------------------------------------------------------------
   Generators for cardano-ledger-specs
