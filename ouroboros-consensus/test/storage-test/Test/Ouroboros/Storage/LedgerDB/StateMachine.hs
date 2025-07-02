@@ -365,7 +365,9 @@ instance StateModel Model where
     n <= min (BT.unNonZero $ maxRollbacks secParam) (fromIntegral $ AS.length chain)
       && case blks of
         [] -> True
-        (b : _) -> tbSlot b == 1 + withOrigin 0 id (getTipSlot (AS.headAnchor chain))
+        (b : _) -> tbSlot b == 1 + fromWithOrigin 0 (getTipSlot (AS.headAnchor chain'))
+         where
+          chain' = AS.dropNewest (fromIntegral n) chain
   precondition _ Init{} = False
   precondition _ _ = True
 
