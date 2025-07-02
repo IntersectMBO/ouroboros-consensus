@@ -365,7 +365,9 @@ instance StateModel Model where
     n <= min (BT.unNonZero $ maxRollbacks secParam) (fromIntegral $ AS.length chain)
       && case blks of
         [] -> True
-        (b : _) -> tbSlot b == 1 + withOrigin 0 id (getTipSlot (AS.headAnchor chain))
+        (b : _) -> tbSlot b == 1 + fromWithOrigin 0 (getTipSlot (AS.headAnchor chain'))
+         where
+          chain' = AS.dropNewest (fromIntegral n) chain
   precondition _ Init{} = False
   precondition _ _ = True
 
@@ -551,7 +553,9 @@ instance RunModel Model (StateT Environment IO) where
         vr <- validateFork ldb rr (const $ pure ()) BlockCache.empty n (map getHeader blks)
         case vr of
           ValidateSuccessful forker -> do
-            atomically $ modifyTVar (dbChain chainDb) (reverse (map blockRealPoint blks) ++)
+            atomically $
+              modifyTVar (dbChain chainDb) $
+                (reverse (map blockRealPoint blks) ++) . drop (fromIntegral n)
             atomically (forkerCommit forker)
             forkerClose forker
           ValidateExceededRollBack{} -> error "Unexpected Rollback"
@@ -566,6 +570,9 @@ instance RunModel Model (StateT Environment IO) where
     Environment _ testInternals _ _ _ _ _ <- get
     lift $ truncateSnapshots testInternals
   perform UnInit _ _ = error "Uninitialized model created a command different than Init"
+
+  monitoring _ (ValidateAndCommit n _) _ _ = tabulate "Rollback depths" [show n]
+  monitoring _ _ _ _ = id
 
   -- NOTE
   --
