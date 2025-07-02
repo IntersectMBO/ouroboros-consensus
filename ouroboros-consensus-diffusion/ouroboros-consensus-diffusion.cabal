@@ -83,6 +83,8 @@ library
     contra-tracer,
     deepseq,
     filepath,
+    blockio,
+    lsm-tree,
     fs-api ^>=0.4,
     hashable,
     io-classes:{io-classes, si-timers, strict-stm} ^>=1.8,

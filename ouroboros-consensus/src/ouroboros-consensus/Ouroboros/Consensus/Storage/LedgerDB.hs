@@ -91,12 +91,12 @@ openDB
               <$> allocate
                 (lgrRegistry args)
                 ( \_ -> do
-                    hasBlockIO <- ioHasBlockIO (lgrHasFS args) defaultIOCtxParams
-                    salt <- fst . genWord64 <$> initStdGen
+                    SomeHasFSAndBlockIO fs blockio <- lgrMkLSMFS args "lsm"
+                    salt <- lgrGenSalt args
                     LSM.openSession
                       (LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 . V2.LSMTrace >$< lgrTracer args)
-                      (lgrHasFS args)
-                      hasBlockIO
+                      fs
+                      blockio
                       salt
                       (mkFsPath [path])
                 )

@@ -36,7 +36,7 @@ import Control.Monad (guard)
 import Data.Coerce (coerce)
 import Data.Maybe
 import Data.Text (Text)
-import Data.Void (Void)
+import Data.Void (Void, absurd)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime (SystemStart (..))
 import Ouroboros.Consensus.Byron.Crypto.DSIGN
@@ -61,10 +61,17 @@ import Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB (..))
 import Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import Ouroboros.Consensus.Util ((....:))
 import Ouroboros.Network.Magic (NetworkMagic (..))
+import qualified Database.LSMTree as LSM
 
 {-------------------------------------------------------------------------------
   Credentials
 -------------------------------------------------------------------------------}
+
+instance LSM.SerialiseKey Void where
+  serialiseKey = absurd
+  deserialiseKey = error "deserialiseKey: Void"
+
+deriving via LSM.ResolveAsFirst Void instance LSM.ResolveValue Void
 
 -- | Credentials needed to produce blocks in the Byron era.
 data ByronLeaderCredentials = ByronLeaderCredentials
