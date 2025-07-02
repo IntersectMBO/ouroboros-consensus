@@ -202,7 +202,8 @@ instance CardanoHardForkConstraints c => SerializeTablesWithHint (LedgerState (H
     let
       -- These could be made into a CAF to avoid recomputing it, but
       -- it is only used in serialization so it is not critical.
-      np = (Fn $ const $ Comp $ K . LedgerTables @(LedgerState (HardForkBlock (CardanoEras c))) . ValuesMK <$> pure Map.empty)
+      np = (Fn $ const $ Comp $ K . LedgerTables @(LedgerState (HardForkBlock (CardanoEras c))) . ValuesMK <$>
+             (Codec.CBOR.Decoding.decodeMapLen >> pure Map.empty))
         :* (Fn $ Comp . fmap K . getOne ShelleyTxOut . unFlip . currentState)
         :* (Fn $ Comp . fmap K . getOne AllegraTxOut . unFlip . currentState)
         :* (Fn $ Comp . fmap K . getOne MaryTxOut    . unFlip . currentState)
