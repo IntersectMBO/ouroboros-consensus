@@ -27,7 +27,6 @@ import Control.Monad.Except
 import Control.Monad.Trans (lift)
 import Control.ResourceRegistry
 import Control.Tracer
-import Data.Bifunctor (first)
 import qualified Data.Foldable as Foldable
 import Data.Functor ((<&>))
 import Data.Functor.Contravariant ((>$<))
@@ -118,7 +117,6 @@ mkInitDb args bss getBlock =
               else pure chlog'
         pure (chlog'', bstore)
     , currentTip = ledgerState . current . fst
-    , pruneDb = pure . first pruneToImmTipOnly
     , mkLedgerDb = \(db, lgrBackingStore) -> do
         (varDB, prevApplied) <-
           (,) <$> newTVarIO db <*> newTVarIO Set.empty
@@ -432,7 +430,7 @@ implIntPush ::
   LedgerDBEnv m l blk -> l DiffMK -> m ()
 implIntPush env st = do
   chlog <- readTVarIO $ ldbChangelog env
-  let chlog' = prune (LedgerDbPruneKeeping (ledgerDbCfgSecParam $ ldbCfg env)) $ extend st chlog
+  let chlog' = pruneToImmTipOnly $ extend st chlog
   atomically $ writeTVar (ldbChangelog env) chlog'
 
 implIntReapplyThenPush ::

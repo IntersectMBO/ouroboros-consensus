@@ -305,7 +305,14 @@ data TestInternals m l blk = TestInternals
   { wipeLedgerDB :: m ()
   , takeSnapshotNOW :: WhereToTakeSnapshot -> Maybe String -> m ()
   , push :: ExtLedgerState blk DiffMK -> m ()
+  -- ^ Push a ledger state, and prune the 'LedgerDB' to its immutable tip.
+  --
+  -- This does not modify the set of previously applied points.
   , reapplyThenPushNOW :: blk -> m ()
+  -- ^ Apply block to the tip ledger state (using reapplication), and prune the
+  -- 'LedgerDB' to its immutable tip.
+  --
+  -- This does not modify the set of previously applied points.
   , truncateSnapshots :: m ()
   , closeLedgerDB :: m ()
   , getNumLedgerTablesHandles :: m Word64
@@ -476,11 +483,10 @@ data InitDB db m blk = InitDB
   -- ^ Closing the database, to be reopened again with a different snapshot or
   -- with the genesis state.
   , initReapplyBlock :: !(LedgerDbCfg (ExtLedgerState blk) -> blk -> db -> m db)
-  -- ^ Reapply a block from the immutable DB when initializing the DB.
+  -- ^ Reapply a block from the immutable DB when initializing the DB. Prune the
+  -- LedgerDB such that there are no volatile states.
   , currentTip :: !(db -> LedgerState blk EmptyMK)
   -- ^ Getting the current tip for tracing the Ledger Events.
-  , pruneDb :: !(db -> m db)
-  -- ^ Prune the database so that no immutable states are considered volatile.
   , mkLedgerDb ::
       !(db -> m (LedgerDB m (ExtLedgerState blk) blk, TestInternals m (ExtLedgerState blk) blk))
   -- ^ Create a LedgerDB from the initialized data structures from previous
@@ -565,13 +571,7 @@ initialize
         Left err -> do
           closeDb initDb
           error $ "Invariant violation: invalid immutable chain " <> show err
-        Right (db, replayed) -> do
-          db' <- pruneDb dbIface db
-          return
-            ( acc InitFromGenesis
-            , db'
-            , replayed
-            )
+        Right (db, replayed) -> return (acc InitFromGenesis, db, replayed)
     tryNewestFirst acc (s : ss) = do
       eInitDb <- initFromSnapshot s
       case eInitDb of
@@ -623,9 +623,7 @@ initialize
               Monad.when (diskSnapshotIsTemporary s) $ deleteSnapshot hasFS s
               closeDb initDb
               tryNewestFirst (acc . InitFailure s err) ss
-            Right (db, replayed) -> do
-              db' <- pruneDb dbIface db
-              return (acc (InitFromSnapshot s pt), db', replayed)
+            Right (db, replayed) -> return (acc (InitFromSnapshot s pt), db, replayed)
 
     replayTracer' =
       decorateReplayTracerWithGoal
@@ -798,8 +796,6 @@ type LedgerSupportsLedgerDB blk =
 data LedgerDbPrune
   = -- | Prune all states, keeping only the current tip.
     LedgerDbPruneAll
-  | -- | Prune to only keep the last @k@ states.
-    LedgerDbPruneKeeping SecurityParam
   | -- | Prune such that all (non-anchor) states are not older than the given
     -- slot.
     LedgerDbPruneBeforeSlot SlotNo
