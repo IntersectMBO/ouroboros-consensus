@@ -14,7 +14,6 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE ViewPatterns #-}
 
 -- | The data structure that holds the cached ledger states.
 module Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
@@ -206,7 +205,7 @@ reapplyThenPush ::
   LedgerSeq m l ->
   m (m (), LedgerSeq m l)
 reapplyThenPush rr cfg ap db =
-  (\current' -> prune (LedgerDbPruneKeeping (ledgerDbCfgSecParam cfg)) $ extend current' db)
+  (\current' -> pruneToImmTipOnly $ extend current' db)
     <$> reapplyBlock (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) ap rr db
 
 reapplyBlock ::
@@ -229,28 +228,23 @@ reapplyBlock evs cfg b _rr db = do
   pushDiffs newtbs st st'
   pure (StateRef newst newtbs)
 
--- | Prune older ledger states until at we have at most @k@ volatile states in
--- the LedgerDB, plus the one stored at the anchor.
+-- | Prune older ledger states according to the given 'LedgerDbPrune' strategy.
 --
 -- The @fst@ component of the returned value is an action closing the pruned
 -- ledger states.
 --
 -- >>> ldb  = LedgerSeq $ AS.fromOldestFirst l0 [l1, l2, l3]
 -- >>> ldb' = LedgerSeq $ AS.fromOldestFirst     l1 [l2, l3]
--- >>> snd (prune (LedgerDbPruneKeeping (SecurityParam (unsafeNonZero 2))) ldb) == ldb'
+-- >>> snd (prune (LedgerDbPruneBeforeSlot 2) ldb) == ldb'
 -- True
+--
+-- where @lX@ is a ledger state from slot @X@.
 prune ::
   (Monad m, GetTip l) =>
   LedgerDbPrune ->
   LedgerSeq m l ->
   (m (), LedgerSeq m l)
 prune howToPrune (LedgerSeq ldb) = case howToPrune of
-  LedgerDbPruneKeeping (SecurityParam (fromEnum . unNonZero -> k))
-    | nvol <= k -> (pure (), LedgerSeq ldb)
-    | otherwise -> (closeButHead before, LedgerSeq after)
-   where
-    nvol = AS.length ldb
-    (before, after) = AS.splitAt (nvol - k) ldb
   LedgerDbPruneAll ->
     (closeButHead before, LedgerSeq after)
    where
@@ -298,15 +292,7 @@ extend newState =
   Reset
 -------------------------------------------------------------------------------}
 
--- | When creating a new @LedgerDB@, we should load whichever snapshot we find
--- and then replay the chain up to the immutable tip. When we get there, the
--- @LedgerDB@ will have a @k@-long sequence of states, which all come from
--- immutable blocks, so we just prune all of them and only keep the last one as
--- an anchor, as it is the immutable tip. Then we can proceed with opening the
--- VolatileDB.
---
--- If we didn't do this step, the @LedgerDB@ would accept rollbacks into the
--- immutable part of the chain, which must never be possible.
+-- | Set the volatile tip as the immutable tip and prune all older states.
 --
 -- >>> ldb  = LedgerSeq $ AS.fromOldestFirst l0 [l1, l2, l3]
 -- >>> LedgerSeq ldb' = snd $ pruneToImmTipOnly ldb

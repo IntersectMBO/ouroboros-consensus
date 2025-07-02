@@ -359,37 +359,27 @@ reapplyThenPush ::
   DbChangelog l ->
   m (DbChangelog l)
 reapplyThenPush cfg ap ksReader db =
-  (\current' -> prune (LedgerDbPruneKeeping (ledgerDbCfgSecParam cfg)) $ extend current' db)
+  (\current' -> pruneToImmTipOnly $ extend current' db)
     <$> reapplyBlock (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) ap ksReader db
 
--- | Prune oldest ledger states until at we have at most @k@ in the DbChangelog,
--- excluding the one stored at the anchor.
+-- | Prune oldest ledger states according to the given 'LedgerDbPrune' strategy.
 --
 -- +--------------+----------------------------+----------------------+
 -- | lastFlushed  | states                     | tableDiffs           |
 -- +==============+============================+======================+
 -- |     @L0@     | @L0 :> [ L1, L2, L3, L4 ]@ | @[ D1, D2, D3, D4 ]@ |
 -- +--------------+----------------------------+----------------------+
--- | @>> prune (SecurityParam 3)@                                     |
+-- | @>> prune (LedgerDbPruneBeforeSlot 3)@                           |
 -- +--------------+----------------------------+----------------------+
 -- |     @L0@     | @L2 :> [         L3, L4 ]@ | @[ D1, D2, D3, D4 ]@ |
 -- +--------------+----------------------------+----------------------+
+--
+-- where the state @LX@ is from slot @X@.
 prune ::
   GetTip l =>
   LedgerDbPrune ->
   DbChangelog l ->
   DbChangelog l
-prune (LedgerDbPruneKeeping (SecurityParam k)) dblog =
-  dblog{changelogStates = vol'}
- where
-  DbChangelog{changelogStates} = dblog
-
-  nvol = AS.length changelogStates
-
-  vol' =
-    if toEnum nvol <= unNonZero k
-      then changelogStates
-      else snd $ AS.splitAt (nvol - fromEnum (unNonZero k)) changelogStates
 prune LedgerDbPruneAll dblog =
   dblog{changelogStates = vol'}
  where
