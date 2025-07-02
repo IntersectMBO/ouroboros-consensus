@@ -160,7 +160,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
   (chainDB, testing, env) <- lift $ do
     traceWith tracer $ TraceOpenEvent (OpenedVolatileDB maxSlot)
     traceWith tracer $ TraceOpenEvent StartedOpeningLgrDB
-    (lgrDB, replayed) <-
+    lgrDB <-
       LedgerDB.openDB
         argsLgrDb
         (ImmutableDB.streamAPI immutableDB)
@@ -279,8 +279,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           Internal
             { intCopyToImmutableDB = getEnv h (withFuse copyTestFuse . Background.copyToImmutableDB)
             , intGarbageCollect = getEnv1 h Background.garbageCollect
-            , intTryTakeSnapshot = getEnv h $ \env' ->
-                void $ LedgerDB.tryTakeSnapshot (cdbLedgerDB env') Nothing maxBound
+            , intTryTakeSnapshot = getEnv h $ LedgerDB.tryTakeSnapshot . cdbLedgerDB
             , intAddBlockRunner = getEnv h (Background.addBlockRunner addBlockTestFuse)
             , intKillBgThreads = varKillBgThreads
             }
@@ -291,7 +290,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           (castPoint $ AF.anchorPoint chain)
           (castPoint $ AF.headPoint chain)
 
-    when launchBgTasks $ Background.launchBgTasks env replayed
+    when launchBgTasks $ Background.launchBgTasks env
 
     return (chainDB, testing, env)
 

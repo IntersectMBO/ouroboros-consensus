@@ -707,7 +707,6 @@ test-suite storage-test
     Test.Ouroboros.Storage.ImmutableDB.StateMachine
     Test.Ouroboros.Storage.LedgerDB
     Test.Ouroboros.Storage.LedgerDB.Serialisation
-    Test.Ouroboros.Storage.LedgerDB.SnapshotPolicy
     Test.Ouroboros.Storage.LedgerDB.Snapshots
     Test.Ouroboros.Storage.LedgerDB.StateMachine
     Test.Ouroboros.Storage.LedgerDB.StateMachine.TestBlock
@@ -733,7 +732,7 @@ test-suite storage-test
     cardano-binary,
     cardano-crypto-class ^>=2.2,
     cardano-ledger-binary:testlib,
-    cardano-ledger-core:{cardano-ledger-core, testlib},
+    cardano-ledger-core:cardano-ledger-core,
     cardano-slotting:{cardano-slotting, testlib},
     cardano-strict-containers,
     cborg,
