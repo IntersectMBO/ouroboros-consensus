@@ -118,7 +118,7 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/jasagredo/lsm-tree
-  tag: 2491d82e325be54dfa3525175f3382b56404404c
+  tag: 0fe8b227b78a78503d0201755d50435635da5a22
   subdir:
     .
     blockio

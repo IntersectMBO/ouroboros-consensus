@@ -101,10 +101,8 @@ import qualified Control.State.Transition.Extended as STS
 import Data.Coerce (coerce)
 import Data.Functor.Identity
 import Data.MemPack
-import Data.Primitive.ByteArray as PBA
 import qualified Data.Text as T
 import qualified Data.Text as Text
-import Data.Vector.Primitive (Vector (..))
 import Data.Word
 import qualified Database.LSMTree as LSM
 import GHC.Generics (Generic)

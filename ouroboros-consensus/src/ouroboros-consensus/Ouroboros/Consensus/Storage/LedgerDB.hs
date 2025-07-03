@@ -40,10 +40,6 @@ import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
-import System.FS.BlockIO.API
-import System.FS.BlockIO.IO
-import System.FS.IO
-import System.Random
 
 openDB ::
   forall m blk.

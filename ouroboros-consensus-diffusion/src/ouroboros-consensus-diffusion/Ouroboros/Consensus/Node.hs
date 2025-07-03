@@ -128,7 +128,6 @@ import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
-import System.FS.BlockIO.API
 import System.FS.BlockIO.IO
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
