@@ -18,11 +18,11 @@
 -- | Arguments for LedgerDB initialization.
 module Ouroboros.Consensus.Storage.LedgerDB.Args
   ( LedgerDbArgs (..)
+  , LedgerDbBackendArgs (..)
   , LedgerDbFlavorArgs (..)
   , QueryBatchSize (..)
   , defaultArgs
   , defaultQueryBatchSize
-  , SomeHasFSAndBlockIO (..)
   ) where
 
 import Control.ResourceRegistry
@@ -40,9 +40,8 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
 import Ouroboros.Consensus.Util.Args
 import System.FS.API
-import qualified Database.LSMTree as LSM
-import System.FS.BlockIO.API
-import Data.Typeable
+
+data LedgerDbBackendArgs m = V1LMDB (Complete V1.LedgerDbFlavorArgs m) | V2InMemory | V2LSM FilePath
 
 {-------------------------------------------------------------------------------
   Arguments
@@ -67,12 +66,7 @@ data LedgerDbArgs f m blk = LedgerDbArgs
   -- ^ If provided, the ledgerdb will start using said snapshot and fallback
   -- to genesis. It will ignore any other existing snapshots. Useful for
   -- db-analyser.
-  , lgrGenSalt :: HKD f (m LSM.Salt)
-  , lgrMkLSMFS :: HKD f (FilePath -> m (SomeHasFSAndBlockIO m))
   }
-
-data SomeHasFSAndBlockIO m where
-  SomeHasFSAndBlockIO :: (Eq h, Typeable h) => HasFS m h -> HasBlockIO m h -> SomeHasFSAndBlockIO m
 
 -- | Default arguments
 defaultArgs ::
@@ -91,13 +85,11 @@ defaultArgs =
       lgrFlavorArgs = LedgerDbFlavorArgsV2 (V2.V2Args V2.InMemoryHandleArgs)
     , lgrRegistry = NoDefault
     , lgrStartSnapshot = Nothing
-    , lgrGenSalt = NoDefault
-    , lgrMkLSMFS = NoDefault
     }
 
 data LedgerDbFlavorArgs f m
   = LedgerDbFlavorArgsV1 (V1.LedgerDbFlavorArgs f m)
-  | LedgerDbFlavorArgsV2 (V2.LedgerDbFlavorArgs f)
+  | LedgerDbFlavorArgsV2 (V2.LedgerDbFlavorArgs f m)
 
 {-------------------------------------------------------------------------------
   QueryBatchSize

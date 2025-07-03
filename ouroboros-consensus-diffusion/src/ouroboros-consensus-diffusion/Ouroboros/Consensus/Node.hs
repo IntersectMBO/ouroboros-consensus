@@ -53,6 +53,7 @@ module Ouroboros.Consensus.Node
   , pattern DoDiskSnapshotChecksum
   , pattern NoDoDiskSnapshotChecksum
   , ChainSyncIdleTimeout (..)
+  , LedgerDbBackendArgs (..)
 
     -- * Internal helpers
   , mkNodeKernelArgs
@@ -126,9 +127,9 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
-import System.FS.BlockIO.IO
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
 import Ouroboros.Network.BlockFetch
@@ -176,10 +177,10 @@ import qualified SafeWildCards
 import System.Exit (ExitCode (..))
 import System.FS.API (SomeHasFS (..))
 import System.FS.API.Types (MountPoint (..))
+import System.FS.BlockIO.IO
 import System.FS.IO (ioHasFS)
 import System.FilePath ((</>))
-import System.Random (StdGen, newStdGen, randomIO, split, genWord64, initStdGen)
-import qualified Database.LSMTree as LSM
+import System.Random (StdGen, genWord64, initStdGen, newStdGen, randomIO, split)
 
 {-------------------------------------------------------------------------------
   The arguments to the Consensus Layer node functionality
@@ -269,8 +270,6 @@ data LowLevelRunNodeArgs m addrNTN addrNTC blk
   , llrnMkVolatileHasFS :: ChainDB.RelativeMountPoint -> SomeHasFS m
   -- ^ File-system on which the directories for databases other than the ImmutableDB will
   -- be created.
-  , llrnMkLSMFS :: FilePath -> m (SomeHasFSAndBlockIO m)
-  , llrnGenSalt :: m LSM.Salt
   , llrnCustomiseChainDbArgs ::
       Complete ChainDbArgs m blk ->
       Complete ChainDbArgs m blk
@@ -379,7 +378,7 @@ data
   , -- Ad hoc values to replace default ChainDB configurations
     srnSnapshotPolicyArgs :: SnapshotPolicyArgs
   , srnQueryBatchSize :: QueryBatchSize
-  , srnLdbFlavorArgs :: Complete LedgerDbFlavorArgs m
+  , srnLdbFlavorArgs :: LedgerDbBackendArgs m
   }
 
 {-------------------------------------------------------------------------------
@@ -527,8 +526,6 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
               initLedger
               llrnMkImmutableHasFS
               llrnMkVolatileHasFS
-              llrnMkLSMFS
-              llrnGenSalt
               llrnLdbFlavorArgs
               llrnChainDbArgsDefaults
               ( setLoEinChainDbArgs
@@ -822,15 +819,13 @@ openChainDB ::
   (ChainDB.RelativeMountPoint -> SomeHasFS m) ->
   -- | Volatile FS, see 'NodeDatabasePaths'
   (ChainDB.RelativeMountPoint -> SomeHasFS m) ->
-  (FilePath -> m (SomeHasFSAndBlockIO m)) ->
-  (m LSM.Salt) ->
   Complete LedgerDbFlavorArgs m ->
   -- | A set of default arguments (possibly modified from 'defaultArgs')
   Incomplete ChainDbArgs m blk ->
   -- | Customise the 'ChainDbArgs'
   (Complete ChainDbArgs m blk -> Complete ChainDbArgs m blk) ->
   m (ChainDB m blk, Complete ChainDbArgs m blk)
-openChainDB registry cfg initLedger fsImm fsVol fsLSM genSalt flavorArgs defArgs customiseArgs =
+openChainDB registry cfg initLedger fsImm fsVol flavorArgs defArgs customiseArgs =
   let args =
         customiseArgs $
           ChainDB.completeChainDbArgs
@@ -841,8 +836,6 @@ openChainDB registry cfg initLedger fsImm fsVol fsLSM genSalt flavorArgs defArgs
             (nodeCheckIntegrity (configStorage cfg))
             fsImm
             fsVol
-            fsLSM
-            genSalt
             flavorArgs
             defArgs
    in (,args) <$> ChainDB.openDB args
@@ -1024,9 +1017,6 @@ stdLowLevelRunNodeArgsIO
         , llrnRng
         , llrnMkImmutableHasFS = stdMkChainDbHasFS $ immutableDbPath srnDatabasePath
         , llrnMkVolatileHasFS = stdMkChainDbHasFS $ nonImmutableDbPath srnDatabasePath
-        , llrnMkLSMFS = \s ->
-            uncurry SomeHasFSAndBlockIO <$> ioHasBlockIO (MountPoint $ nonImmutableDbPath srnDatabasePath </> s) defaultIOCtxParams
-        , llrnGenSalt = fst . genWord64 <$> initStdGen
         , llrnChainDbArgsDefaults = updateChainDbDefaults ChainDB.defaultArgs
         , llrnCustomiseChainDbArgs = id
         , llrnCustomiseNodeKernelArgs
@@ -1063,7 +1053,17 @@ stdLowLevelRunNodeArgsIO
         , llrnPublicPeerSelectionStateVar =
             Diffusion.dcPublicPeerSelectionVar srnDiffusionConfiguration
         , llrnLdbFlavorArgs =
-            srnLdbFlavorArgs
+            case srnLdbFlavorArgs of
+              V1LMDB args -> LedgerDbFlavorArgsV1 args
+              V2InMemory -> LedgerDbFlavorArgsV2 (V2.V2Args V2.InMemoryHandleArgs)
+              V2LSM path ->
+                let
+                  mkFS = \s ->
+                    uncurry V2.SomeHasFSAndBlockIO
+                      <$> ioHasBlockIO (MountPoint $ nonImmutableDbPath srnDatabasePath </> s) defaultIOCtxParams
+                  genSalt = fst . genWord64 <$> initStdGen
+                 in
+                  LedgerDbFlavorArgsV2 (V2.V2Args (V2.LSMHandleArgs (V2.LSMArgs path genSalt mkFS)))
         }
    where
     networkMagic :: NetworkMagic

@@ -45,7 +45,6 @@ import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
-import qualified Database.LSMTree as LSM
 
 {-------------------------------------------------------------------------------
   Arguments
@@ -170,10 +169,6 @@ completeChainDbArgs ::
   (RelativeMountPoint -> SomeHasFS m) ->
   -- | Volatile  FS, see 'NodeDatabasePaths'
   (RelativeMountPoint -> SomeHasFS m) ->
-  -- | Make LSM fs
-  (FilePath -> m (LedgerDB.SomeHasFSAndBlockIO m)) ->
-  -- | Make LSM Salt
-  (m LSM.Salt) ->
   Complete LedgerDbFlavorArgs m ->
   -- | A set of incomplete arguments, possibly modified wrt @defaultArgs@
   Incomplete ChainDbArgs m blk ->
@@ -186,8 +181,6 @@ completeChainDbArgs
   checkIntegrity
   mkImmFS
   mkVolFS
-  mkLSMFS
-  genSalt
   flavorArgs
   defArgs =
     defArgs
@@ -215,8 +208,6 @@ completeChainDbArgs
                   (LedgerDB.ledgerDbCfgComputeLedgerEvents $ LedgerDB.lgrConfig (cdbLgrDbArgs defArgs))
             , LedgerDB.lgrFlavorArgs = flavorArgs
             , LedgerDB.lgrRegistry = registry
-            , LedgerDB.lgrGenSalt = genSalt
-            , LedgerDB.lgrMkLSMFS = mkLSMFS
             }
       , cdbsArgs =
           (cdbsArgs defArgs)
