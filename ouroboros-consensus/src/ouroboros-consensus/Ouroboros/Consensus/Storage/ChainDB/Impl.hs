@@ -79,6 +79,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (newFuse, whenJust, withFuse)
 import Ouroboros.Consensus.Util.Args
@@ -173,6 +174,8 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
         ledgerDbGetVolatileSuffix
     traceWith tracer $ TraceOpenEvent OpenedLgrDB
 
+    perasCertDB <- PerasCertDB.openDB argsPerasCertDB
+
     varInvalid <- newTVarIO (WithFingerprint Map.empty (Fingerprint 0))
 
     let initChainSelTracer = TraceInitChainSelEvent >$< tracer
@@ -250,6 +253,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , cdbChainSelQueue = chainSelQueue
             , cdbLoE = Args.cdbsLoE cdbSpecificArgs
             , cdbChainSelStarvation = varChainSelStarvation
+            , cdbPerasCertDB = perasCertDB
             }
 
     setGetCurrentChainForLedgerDB $ Query.getCurrentChain env
@@ -310,7 +314,12 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
   return ((chainDB, testing), env)
  where
   tracer = Args.cdbsTracer cdbSpecificArgs
-  Args.ChainDbArgs argsImmutableDb argsVolatileDb argsLgrDb cdbSpecificArgs = args
+  Args.ChainDbArgs
+    argsImmutableDb
+    argsVolatileDb
+    argsLgrDb
+    argsPerasCertDB
+    cdbSpecificArgs = args
 
   -- The LedgerDB requires a criterion ('LedgerDB.GetVolatileSuffix')
   -- determining which of its states are volatile/immutable. Once we have
