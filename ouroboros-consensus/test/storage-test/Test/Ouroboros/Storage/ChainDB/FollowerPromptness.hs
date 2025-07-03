@@ -1,3 +1,5 @@
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE LambdaCase #-}
@@ -49,6 +51,15 @@ import Test.Util.ChainUpdates
 import Test.Util.Orphans.IOLike ()
 import Test.Util.TestBlock
 import Test.Util.Tracer (recordingTracerTVar)
+import qualified Database.LSMTree as LSM
+import Data.Void
+
+instance LSM.SerialiseKey Void where
+  serialiseKey = absurd
+  deserialiseKey = error "deserialiseKey: Void"
+
+deriving via LSM.ResolveAsFirst Void instance LSM.ResolveValue Void
+
 
 tests :: TestTree
 tests =
