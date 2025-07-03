@@ -32,6 +32,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Snapshots as LedgerDB
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Args
+import Ouroboros.Consensus.Storage.PerasCertDB (PerasCertDbArgs (..))
 import Ouroboros.Consensus.Storage.VolatileDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util.Args
@@ -134,6 +135,10 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , lgrFlavorArgs = LedgerDbFlavorArgsV2 (V2Args InMemoryHandleArgs)
           , lgrQueryBatchSize = DefaultQueryBatchSize
           , lgrStartSnapshot = Nothing
+          }
+    , cdbPerasCertDbArgs =
+        PerasCertDbArgs
+          { pcdbaTracer = nullTracer
           }
     , cdbsArgs =
         ChainDbSpecificArgs
