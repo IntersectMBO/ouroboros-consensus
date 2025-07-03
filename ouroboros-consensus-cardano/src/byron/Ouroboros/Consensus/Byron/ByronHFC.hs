@@ -47,7 +47,7 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Protocol.PBFT (PBft, PBftCrypto)
-import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
+import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -318,7 +318,7 @@ type instance
   LSMTxOut (LedgerState (HardForkBlock '[ByronBlock])) =
     TxOut (LedgerState (HardForkBlock '[ByronBlock]))
 
-instance ToLSMTxOut (LedgerState (HardForkBlock '[ByronBlock])) where
+instance HasLSMTxOut (LedgerState (HardForkBlock '[ByronBlock])) where
   toLSMTxOut _ = id
   fromLSMTxOut _ = id
 

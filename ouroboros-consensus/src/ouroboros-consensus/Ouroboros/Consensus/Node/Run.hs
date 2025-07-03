@@ -42,7 +42,6 @@ import Ouroboros.Consensus.Storage.ChainDB
   , VolatileDbSerialiseConstraints
   )
 import Ouroboros.Consensus.Storage.LedgerDB
-import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util (ShowProxy)
 import Ouroboros.Network.Block (Serialised)
@@ -121,7 +120,6 @@ class
   , ShowProxy (TxId (GenTx blk))
   , (forall fp. ShowQuery (BlockQuery blk fp))
   , LedgerSupportsLedgerDB blk
-  , GoodForLSM (LedgerState blk)
   ) =>
   RunNode blk
 

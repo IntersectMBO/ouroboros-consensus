@@ -126,7 +126,7 @@ instance LSM.SerialiseValue LSM.RawBytes where
 
 deriving via LSM.ResolveAsFirst LSM.RawBytes instance LSM.ResolveValue LSM.RawBytes
 
-instance CardanoHardForkConstraints c => ToLSMTxOut (LedgerState (CardanoBlock c)) where
+instance CardanoHardForkConstraints c => HasLSMTxOut (LedgerState (CardanoBlock c)) where
   toLSMTxOut _ txout =
     let barr = eliminateCardanoTxOut (const pack) txout
      in LSM.RawBytes (Vector 0 (PBA.sizeofByteArray barr) barr)

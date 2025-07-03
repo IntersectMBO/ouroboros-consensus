@@ -93,7 +93,6 @@ import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB
-import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -206,7 +205,7 @@ type instance TxIn (LedgerState ByronBlock) = Void
 type instance TxOut (LedgerState ByronBlock) = Void
 type instance LSMTxOut (LedgerState ByronBlock) = TxOut (LedgerState ByronBlock)
 
-instance ToLSMTxOut (LedgerState ByronBlock) where
+instance HasLSMTxOut (LedgerState ByronBlock) where
   toLSMTxOut _ = id
   fromLSMTxOut _ = id
 

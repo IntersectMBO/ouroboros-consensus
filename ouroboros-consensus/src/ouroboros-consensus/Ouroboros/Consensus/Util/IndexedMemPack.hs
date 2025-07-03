@@ -13,9 +13,9 @@
 module Ouroboros.Consensus.Util.IndexedMemPack
   ( IndexedMemPack (..)
   , MemPack (..)
+  , indexedPackByteArray
   , indexedPackByteString
   , indexedUnpackError
-  , indexedPackByteArray
   ) where
 
 import qualified Control.Monad as Monad

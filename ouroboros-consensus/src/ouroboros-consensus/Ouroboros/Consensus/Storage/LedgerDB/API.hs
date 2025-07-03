@@ -117,7 +117,10 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , LedgerDbSerialiseConstraints
   , LedgerSupportsInMemoryLedgerDB
   , LedgerSupportsLedgerDB
-  , LedgerSupportsOnDiskLedgerDB
+  , LedgerSupportsLMDBLedgerDB
+  , LedgerSupportsLSMLedgerDB
+  , LSMTxOut
+  , HasLSMTxOut (..)
   , ResolveBlock
   , currentPoint
 
@@ -171,6 +174,7 @@ import Data.MemPack
 import Data.Set (Set)
 import Data.Void (absurd)
 import Data.Word
+import qualified Database.LSMTree as LSM
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -764,12 +768,36 @@ instance
   Supporting On-Disk backing stores
 -------------------------------------------------------------------------------}
 
-type LedgerSupportsOnDiskLedgerDB blk =
+type LedgerSupportsLMDBLedgerDB blk =
   (IndexedMemPack (LedgerState blk EmptyMK) (TxOut (LedgerState blk)))
 
+type LedgerSupportsLSMLedgerDB blk =
+  ( LSM.SerialiseKey (TxIn (LedgerState blk))
+  , LSM.SerialiseValue (LSMTxOut (LedgerState blk))
+  , LSM.ResolveValue (LSMTxOut (LedgerState blk))
+  , HasLSMTxOut (LedgerState blk)
+  )
+
+-- | LSM trees need to be able to serialize and deserialize values several
+-- times, without any context. Therefore the approach of using a ledger state to
+-- hint the era in which values need to be deserialized cannot work with LSM.
+--
+-- Therefore, we will instead store 'LSMTxOut' in the LSM database, which will
+-- be 'TxOut' for most of the unitary blocks and basic hard fork blocks, but
+-- will be 'ByteArray's for the Cardano Block.
+type LSMTxOut :: LedgerStateKind -> Type
+type family LSMTxOut l
+
+-- | Conversion of 'TxOut's to and from 'LSMTxOut'.
+class HasLSMTxOut l where
+  toLSMTxOut :: Proxy l -> TxOut l -> LSMTxOut l
+  fromLSMTxOut :: l EmptyMK -> LSMTxOut l -> TxOut l
+
 type LedgerSupportsLedgerDB blk =
-  ( LedgerSupportsOnDiskLedgerDB blk
+  ( LedgerSupportsLMDBLedgerDB blk
   , LedgerSupportsInMemoryLedgerDB blk
+  , LedgerSupportsLSMLedgerDB blk
+  , LedgerDbSerialiseConstraints blk
   )
 
 {-------------------------------------------------------------------------------

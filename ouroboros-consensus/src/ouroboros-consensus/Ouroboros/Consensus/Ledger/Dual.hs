@@ -95,7 +95,6 @@ import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB
-import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.Condense
@@ -1106,7 +1105,7 @@ type instance TxIn (LedgerState (DualBlock m a)) = TxIn (LedgerState m)
 type instance TxOut (LedgerState (DualBlock m a)) = TxOut (LedgerState m)
 type instance LSMTxOut (LedgerState (DualBlock m a)) = TxOut (LedgerState m)
 
-instance ToLSMTxOut (LedgerState (DualBlock m a)) where
+instance HasLSMTxOut (LedgerState (DualBlock m a)) where
   toLSMTxOut _ = id
   fromLSMTxOut _ = id
 

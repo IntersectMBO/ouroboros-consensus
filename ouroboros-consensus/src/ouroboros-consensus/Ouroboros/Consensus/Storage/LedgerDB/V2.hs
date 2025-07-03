@@ -72,7 +72,7 @@ mkInitDb ::
   , IOLike m
   , LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
-  , LSM.GoodForLSM (LedgerState blk)
+  , LSM.LedgerSupportsLSMLedgerDB (LedgerState blk)
   , LedgerSupportsInMemoryLedgerDB blk
   ) =>
   Complete LedgerDbArgs m blk ->

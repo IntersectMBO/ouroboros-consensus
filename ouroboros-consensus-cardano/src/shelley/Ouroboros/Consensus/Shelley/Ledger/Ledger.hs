@@ -341,7 +341,7 @@ type instance
   LSMTxOut (LedgerState (ShelleyBlock proto era)) =
     TxOut (LedgerState (ShelleyBlock proto era))
 
-instance ToLSMTxOut (LedgerState (ShelleyBlock proto era)) where
+instance HasLSMTxOut (LedgerState (ShelleyBlock proto era)) where
   toLSMTxOut _ = id
   fromLSMTxOut _ = id
 

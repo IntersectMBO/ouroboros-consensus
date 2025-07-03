@@ -445,7 +445,7 @@ type instance
   LSMTxOut (LedgerState (HardForkBlock '[ShelleyBlock proto era])) =
     TxOut (LedgerState (HardForkBlock '[ShelleyBlock proto era]))
 
-instance ToLSMTxOut (LedgerState (HardForkBlock '[ShelleyBlock proto era])) where
+instance HasLSMTxOut (LedgerState (HardForkBlock '[ShelleyBlock proto era])) where
   toLSMTxOut _ = id
   fromLSMTxOut _ = id
 

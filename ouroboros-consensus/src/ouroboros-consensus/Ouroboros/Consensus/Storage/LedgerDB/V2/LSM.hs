@@ -17,21 +17,40 @@
 {-# LANGUAGE ViewPatterns #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
+-- | Implementation of the 'LedgerTablesHandle' interface with LSM trees.
 module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
   ( -- * LedgerTablesHandle
     newLSMLedgerTablesHandle
-  , GoodForLSM
+  , tableFromValuesMK
+
+    -- * Constraints
+  , LedgerSupportsLSMLedgerDB
+
+    -- * LSM TxOuts
   , LSMTxOut
-  , ToLSMTxOut (..)
+  , HasLSMTxOut (..)
 
     -- * Snapshots
   , loadSnapshot
   , snapshotToStatePath
   , takeSnapshot
-  , tableFromValuesMK
   , deleteSnapshot
+
+    -- * Serialise helpers
   , serialiseLSMViaMemPack
   , deserialiseLSMViaMemPack
+
+    -- * Re-exports
+  , LSM.Entry (..)
+  , LSM.SerialiseKey (..)
+  , LSM.SerialiseValue (..)
+  , LSM.ResolveValue (..)
+  , LSM.ResolveAsFirst (..)
+  , LSM.RawBytes (..)
+  , LSM.Salt
+  , Session
+  , LSM.openSession
+  , LSM.closeSession
   ) where
 
 import Cardano.Binary as CBOR
@@ -42,7 +61,6 @@ import Control.Monad.Trans.Except
 import Control.ResourceRegistry
 import Control.Tracer
 import Data.Functor.Contravariant ((>$<))
-import Data.Kind
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import Data.Maybe
@@ -64,7 +82,7 @@ import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Storage.LedgerDB.API
+import Ouroboros.Consensus.Storage.LedgerDB.API hiding (LedgerSupportsLSMLedgerDB)
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
@@ -74,10 +92,15 @@ import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
 import Prelude hiding (read)
 
-type UTxOTable m l = Table m (TxIn l) (LSMTxOut l) Void
+type LedgerSupportsLSMLedgerDB l =
+  ( LSM.SerialiseKey (TxIn l)
+  , LSM.SerialiseValue (LSMTxOut l)
+  , LSM.ResolveValue (LSMTxOut l)
+  , HasLSMTxOut l
+  )
 
-type LSMTxOut :: LedgerStateKind -> Type
-type family LSMTxOut l
+-- | Type alias for convenience
+type UTxOTable m l = Table m (TxIn l) (LSMTxOut l) Void
 
 data LedgerTablesHandleState m l
   = LedgerTablesHandleOpen !(UTxOTable m l)
@@ -93,22 +116,12 @@ instance NoThunks (Table m txin txout Void) where
 data LSMClosedExn = LSMClosedExn
   deriving (Show, Exception)
 
-type GoodForLSM l =
-  ( LSM.SerialiseKey (TxIn l)
-  , LSM.SerialiseValue (LSMTxOut l)
-  , LSM.ResolveValue (LSMTxOut l)
-  , ToLSMTxOut l
-  )
-
-class ToLSMTxOut l where
-  toLSMTxOut :: Proxy l -> TxOut l -> LSMTxOut l
-  fromLSMTxOut :: l EmptyMK -> LSMTxOut l -> TxOut l
-
--- | Create the initial table from values
+-- | Create the initial LSM table from values, which should happen only at the
+-- Genesis.
 tableFromValuesMK ::
   forall m l.
   IOLike m =>
-  GoodForLSM l =>
+  LedgerSupportsLSMLedgerDB l =>
   ResourceRegistry m ->
   Session m ->
   LedgerTables l ValuesMK ->
@@ -131,9 +144,7 @@ newLSMLedgerTablesHandle ::
   forall m l.
   ( IOLike m
   , HasLedgerTables l
-  , CanUpgradeLedgerTables l
-  , SerializeTablesWithHint l
-  , GoodForLSM l
+  , LedgerSupportsLSMLedgerDB l
   ) =>
   Tracer m V2.FlavorImplSpecificTrace ->
   ResourceRegistry m ->
@@ -173,15 +184,16 @@ newLSMLedgerTablesHandle tracer rr session (resKey, t0) = do
       , pushDiffs = const (implPushDiffs tv)
       , takeHandleSnapshot = \_ snapshotName -> do
           guardClosed tv $
-            \table ->
-              LSM.saveSnapshot (fromString snapshotName) "UTxO table" table >> pure Nothing
+            \table -> do
+              Monad.void $ LSM.saveSnapshot (fromString snapshotName) "UTxO table" table
+              pure Nothing
       , tablesSize = pure Nothing
       }
 
 implReadRange ::
   IOLike m =>
   HasLedgerTables l =>
-  GoodForLSM l =>
+  LedgerSupportsLSMLedgerDB l =>
   StrictTVar m (LedgerTablesHandleState m l) ->
   l EmptyMK ->
   (Maybe (TxIn l), Int) ->
@@ -192,23 +204,25 @@ implReadRange tv st = \(mPrev, num) ->
     ( \table ->
         let
           cursorFromStart = LSM.withCursor table (LSM.take num)
+          -- Here we ask for one value more and we drop one value because the
+          -- cursor returns also the key at which it was opened.
           cursorFromKey k = fmap (V.drop 1) $ LSM.withCursorAtOffset table k (LSM.take $ num + 1)
          in
           do
             entries <- V.toList <$> maybe cursorFromStart cursorFromKey mPrev
-            pure (LedgerTables . ValuesMK . Map.fromList $
-              [(k, (fromLSMTxOut st v)) | LSM.Entry k v <- entries ]
-                 , case snd <$> List.unsnoc entries of
-                     Nothing -> Nothing
-                     Just (LSM.Entry k _) -> Just k
-                     Just (LSM.EntryWithBlob k _ _) -> Just k
-
-                     )
+            pure
+              ( LedgerTables . ValuesMK . Map.fromList $
+                  [(k, (fromLSMTxOut st v)) | LSM.Entry k v <- entries]
+              , case snd <$> List.unsnoc entries of
+                  Nothing -> Nothing
+                  Just (LSM.Entry k _) -> Just k
+                  Just (LSM.EntryWithBlob k _ _) -> Just k
+              )
     )
 
 implPushDiffs ::
   forall m l.
-  ( GoodForLSM l
+  ( LedgerSupportsLSMLedgerDB l
   , IOLike m
   , HasLedgerTables l
   ) =>
@@ -236,7 +250,7 @@ snapshotToStatePath = mkFsPath . (\x -> [x, "state"]) . snapshotToDirName
 
 type instance LSMTxOut (ExtLedgerState blk) = LSMTxOut (LedgerState blk)
 
-instance ToLSMTxOut (LedgerState blk) => ToLSMTxOut (ExtLedgerState blk) where
+instance HasLSMTxOut (LedgerState blk) => HasLSMTxOut (ExtLedgerState blk) where
   toLSMTxOut _ txout = toLSMTxOut (Proxy @(LedgerState blk)) txout
   fromLSMTxOut l txout = fromLSMTxOut (ledgerState l) txout
 
@@ -285,7 +299,7 @@ writeSnapshot fs@(SomeHasFS hasFs) encLedger ds st = do
       , snapshotChecksum = maybe crc1 (crcOfConcat crc1) crc2
       }
 
--- | Delete snapshot from disk
+-- | Delete snapshot from disk and also from the LSM tree database.
 deleteSnapshot :: IOLike m => Session m -> SomeHasFS m -> DiskSnapshot -> m ()
 deleteSnapshot session (SomeHasFS HasFS{doesDirectoryExist, removeDirectoryRecursive}) ss = do
   let p = snapshotToDirPath ss
@@ -304,8 +318,7 @@ loadSnapshot ::
   ( LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
   , IOLike m
-  , LedgerSupportsInMemoryLedgerDB blk
-  , GoodForLSM (LedgerState blk)
+  , LedgerSupportsLSMLedgerDB (ExtLedgerState blk)
   ) =>
   Tracer m V2.FlavorImplSpecificTrace ->
   ResourceRegistry m ->
@@ -344,10 +357,14 @@ loadSnapshot tracer rr ccfg fs session ds = do
             ReadSnapshotDataCorruption
       (,pt) <$> lift (empty extLedgerSt values (newLSMLedgerTablesHandle tracer rr session))
 
+-- | Helper for implementing 'serialiseKey' and 'serialiseValue' for types that
+-- are serialized via 'MemPack'.
 serialiseLSMViaMemPack :: MemPack a => a -> LSM.RawBytes
 serialiseLSMViaMemPack a =
   let barr = pack a
    in LSM.RawBytes (Vector 0 (PBA.sizeofByteArray barr) barr)
 
+-- | Helper for implementing 'deserialiseKey' and 'deserialiseValue' for types
+-- that are serialized via 'MemPack'.
 deserialiseLSMViaMemPack :: MemPack b => LSM.RawBytes -> b
 deserialiseLSMViaMemPack (LSM.RawBytes (Vector _ _ barr)) = unpackError barr

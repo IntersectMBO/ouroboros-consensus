@@ -75,7 +75,6 @@ mkInitDb ::
   forall m blk.
   ( LedgerSupportsProtocol blk
   , IOLike m
-  , LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
   , LedgerSupportsLedgerDB blk
   ) =>

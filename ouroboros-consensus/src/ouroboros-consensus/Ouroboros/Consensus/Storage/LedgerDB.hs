@@ -20,10 +20,8 @@ module Ouroboros.Consensus.Storage.LedgerDB
 import Control.ResourceRegistry
 import Data.Functor.Contravariant ((>$<))
 import Data.Word
-import qualified Database.LSMTree as LSM hiding (deleteSnapshot)
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.HardFork.Abstract
-import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Storage.ImmutableDB.Stream
@@ -45,12 +43,10 @@ openDB ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , LedgerDbSerialiseConstraints blk
   , InspectLedger blk
   , HasCallStack
   , HasHardForkHistory blk
   , LedgerSupportsLedgerDB blk
-  , LSM.GoodForLSM (LedgerState blk)
   ) =>
   -- | Stateless initializaton arguments
   Complete LedgerDbArgs m blk ->

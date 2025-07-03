@@ -81,22 +81,44 @@ import Prelude hiding (read)
   LedgerTablesHandles
 -------------------------------------------------------------------------------}
 
+-- | The interface fulfilled by handles on both the InMemory and LSM handles.
 data LedgerTablesHandle m l = LedgerTablesHandle
   { close :: !(m ())
   , duplicate :: !(m (LedgerTablesHandle m l))
-  -- ^ It is expected that this operation takes constant time.
+  -- ^ Create a copy of the handle.
+  --
+  -- When applying diffs to a table, we will first duplicate the handle, then
+  -- apply the diffs in the copy. It is expected that this operation takes
+  -- constant time.
   , read :: !(l EmptyMK -> LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
+  -- ^ Read values for the given keys from the tables, and deserialize them as
+  -- if they were from the same era as the given ledger state.
   , readRange :: !(l EmptyMK -> (Maybe (TxIn l), Int) -> m (LedgerTables l ValuesMK, Maybe (TxIn l)))
+  -- ^ Read the requested number of values, possibly starting from the given
+  -- key, from the tables, and deserialize them as if they were from the same
+  -- era as the given ledger state.
+  --
+  -- The returned value contains both the read values as well as the last key
+  -- retrieved. This is necessary because the LSM backend uses an alternative
+  -- serialization format and the last key in the returned Map might not be the
+  -- last key read.
   , readAll :: !(l EmptyMK -> m (LedgerTables l ValuesMK))
   -- ^ Costly read all operation, not to be used in Consensus but only in
-  -- snapshot-converter executable.
+  -- snapshot-converter executable. The values will be read as if they were from
+  -- the same era as the given ledger state.
   , pushDiffs :: !(forall mk. l mk -> l DiffMK -> m ())
   -- ^ Push some diffs into the ledger tables handle.
   --
   -- The first argument has to be the ledger state before applying
   -- the block, the second argument should be the ledger state after
   -- applying a block. See 'CanUpgradeLedgerTables'.
+  --
+  -- Note 'CanUpgradeLedgerTables' is only used in the InMemory backend.
   , takeHandleSnapshot :: !(l EmptyMK -> String -> m (Maybe CRC))
+  -- ^ Take a snapshot of a handle. The given ledger state is used to decide the
+  -- encoding of the values based on the current era.
+  --
+  -- It returns a CRC only on backends that support it, as the InMemory backend.
   , tablesSize :: !(m (Maybe Int))
   -- ^ Consult the size of the ledger tables in the database. This will return
   -- 'Nothing' in backends that do not support this operation.
