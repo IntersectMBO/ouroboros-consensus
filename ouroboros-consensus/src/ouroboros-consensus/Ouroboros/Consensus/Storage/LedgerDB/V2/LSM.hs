@@ -167,12 +167,9 @@ newLSMLedgerTablesHandle tracer rr session (resKey, t0) = do
       , readRange = implReadRange tv
       , readAll = \st ->
           let readAll' m = do
-                v@(LedgerTables (ValuesMK values)) <- implReadRange tv st (m, 100000)
-                maybe (pure v) (\k -> fmap (ltliftA2 unionValues v) $ readAll' (Just $ fst k)) $
-                  Map.lookupMax values
-           in -- TODO!! Be careful with the order of the keys, the last in the map
-              -- is maybe not the last in the serialized form
-              readAll' Nothing
+                (v, n) <- implReadRange tv st (m, 100000)
+                maybe (pure v) (\k -> fmap (ltliftA2 unionValues v) $ readAll' (Just k)) n
+           in readAll' Nothing
       , pushDiffs = const (implPushDiffs tv)
       , takeHandleSnapshot = \_ snapshotName -> do
           guardClosed tv $
@@ -181,8 +178,6 @@ newLSMLedgerTablesHandle tracer rr session (resKey, t0) = do
       , tablesSize = pure Nothing
       }
 
--- TODO: use bytestrings as values
-
 implReadRange ::
   IOLike m =>
   HasLedgerTables l =>
@@ -190,7 +185,7 @@ implReadRange ::
   StrictTVar m (LedgerTablesHandleState m l) ->
   l EmptyMK ->
   (Maybe (TxIn l), Int) ->
-  m (LedgerTables l ValuesMK)
+  m (LedgerTables l ValuesMK, Maybe (TxIn l))
 implReadRange tv st = \(mPrev, num) ->
   guardClosed
     tv
@@ -200,9 +195,15 @@ implReadRange tv st = \(mPrev, num) ->
           cursorFromKey k = fmap (V.drop 1) $ LSM.withCursorAtOffset table k (LSM.take $ num + 1)
          in
           do
-            entries <- maybe cursorFromStart cursorFromKey mPrev
-            pure . LedgerTables . ValuesMK . Map.fromList $
-              [(k, (fromLSMTxOut st v)) | LSM.Entry k v <- V.toList entries]
+            entries <- V.toList <$> maybe cursorFromStart cursorFromKey mPrev
+            pure (LedgerTables . ValuesMK . Map.fromList $
+              [(k, (fromLSMTxOut st v)) | LSM.Entry k v <- entries ]
+                 , case snd <$> List.unsnoc entries of
+                     Nothing -> Nothing
+                     Just (LSM.Entry k _) -> Just k
+                     Just (LSM.EntryWithBlob k _ _) -> Just k
+
+                     )
     )
 
 implPushDiffs ::

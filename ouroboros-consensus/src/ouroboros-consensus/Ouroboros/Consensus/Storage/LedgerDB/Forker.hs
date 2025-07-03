@@ -55,6 +55,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
   , TraceValidateEvent (..)
   ) where
 
+import Data.Bifunctor (first)
 import Control.Monad (void)
 import Control.Monad.Base
 import Control.Monad.Except
@@ -105,7 +106,7 @@ data Forker m l blk = Forker
 
     forkerReadTables :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
   -- ^ Read ledger tables from disk.
-  , forkerRangeReadTables :: !(RangeQueryPrevious l -> m (LedgerTables l ValuesMK))
+  , forkerRangeReadTables :: !(RangeQueryPrevious l -> m (LedgerTables l ValuesMK, Maybe (TxIn l)))
   -- ^ Range-read ledger tables from disk.
   --
   -- This range read will return as many values as the 'QueryBatchSize' that
@@ -206,7 +207,7 @@ ledgerStateReadOnlyForker frk =
   ReadOnlyForker
     { roforkerClose = roforkerClose
     , roforkerReadTables = fmap castLedgerTables . roforkerReadTables . castLedgerTables
-    , roforkerRangeReadTables = fmap castLedgerTables . roforkerRangeReadTables . castRangeQueryPrevious
+    , roforkerRangeReadTables = fmap (first castLedgerTables) . roforkerRangeReadTables . castRangeQueryPrevious
     , roforkerGetLedgerState = ledgerState <$> roforkerGetLedgerState
     , roforkerReadStatistics = roforkerReadStatistics
     }
@@ -239,7 +240,7 @@ data ReadOnlyForker m l blk = ReadOnlyForker
   -- ^ See 'forkerClose'
   , roforkerReadTables :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
   -- ^ See 'forkerReadTables'
-  , roforkerRangeReadTables :: !(RangeQueryPrevious l -> m (LedgerTables l ValuesMK))
+  , roforkerRangeReadTables :: !(RangeQueryPrevious l -> m (LedgerTables l ValuesMK, Maybe (TxIn l)))
   -- ^ See 'forkerRangeReadTables'.
   , roforkerGetLedgerState :: !(STM m (l EmptyMK))
   -- ^ See 'forkerGetLedgerState'
