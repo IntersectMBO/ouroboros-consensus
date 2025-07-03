@@ -128,6 +128,7 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
 import Ouroboros.Consensus.Storage.LedgerDB (LedgerSupportsLedgerDB)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.TraceEvent as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
+import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (split)
 import Ouroboros.Consensus.Util.CallStack
@@ -1332,6 +1333,8 @@ deriving instance SOP.Generic (ImmutableDB.TraceEvent blk)
 deriving instance SOP.HasDatatypeInfo (ImmutableDB.TraceEvent blk)
 deriving instance SOP.Generic (VolatileDB.TraceEvent blk)
 deriving instance SOP.HasDatatypeInfo (VolatileDB.TraceEvent blk)
+deriving instance SOP.Generic (PerasCertDB.TraceEvent blk)
+deriving instance SOP.HasDatatypeInfo (PerasCertDB.TraceEvent blk)
 deriving anyclass instance SOP.Generic (TraceChainSelStarvationEvent blk)
 deriving anyclass instance SOP.HasDatatypeInfo (TraceChainSelStarvationEvent blk)
 
@@ -1760,6 +1763,7 @@ traceEventName = \case
   TraceLedgerDBEvent ev -> "Ledger." <> constrName ev
   TraceImmutableDBEvent ev -> "ImmutableDB." <> constrName ev
   TraceVolatileDBEvent ev -> "VolatileDB." <> constrName ev
+  TracePerasCertDbEvent ev -> "PerasCertDB." <> constrName ev
   TraceLastShutdownUnclean -> "LastShutdownUnclean"
   TraceChainSelStarvationEvent ev -> "ChainSelStarvation." <> constrName ev
 
