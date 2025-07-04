@@ -531,7 +531,7 @@ type instance TxIn (LedgerState (SimpleBlock c ext)) = Mock.TxIn
 type instance TxOut (LedgerState (SimpleBlock c ext)) = Mock.TxOut
 type instance LSMTxOut (LedgerState (SimpleBlock c ext)) = Mock.TxOut
 
-instance ToLSMTxOut (LedgerState (SimpleBlock c ext)) where
+instance HasLSMTxOut (LedgerState (SimpleBlock c ext)) where
   toLSMTxOut _ = id
   fromLSMTxOut _ = id
 

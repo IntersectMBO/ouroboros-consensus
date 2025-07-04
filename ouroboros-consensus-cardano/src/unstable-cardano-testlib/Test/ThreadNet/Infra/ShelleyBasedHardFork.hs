@@ -519,7 +519,7 @@ type instance
   LSMTxOut (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))) =
     TxOut (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2)))
 
-instance ToLSMTxOut (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))) where
+instance HasLSMTxOut (LedgerState (HardForkBlock (ShelleyBasedHardForkEras proto1 era1 proto2 era2))) where
   toLSMTxOut _ = id
   fromLSMTxOut _ = id
 

@@ -479,7 +479,7 @@ type instance
   LSMTxOut (LedgerState (HardForkBlock [BlockA, BlockB])) =
     TxOut (LedgerState (HardForkBlock [BlockA, BlockB]))
 
-instance ToLSMTxOut (LedgerState (HardForkBlock [BlockA, BlockB])) where
+instance HasLSMTxOut (LedgerState (HardForkBlock [BlockA, BlockB])) where
   toLSMTxOut _ = id
   fromLSMTxOut _ = id
 

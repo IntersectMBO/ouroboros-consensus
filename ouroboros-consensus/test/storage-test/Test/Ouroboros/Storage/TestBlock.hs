@@ -116,7 +116,6 @@ import Ouroboros.Consensus.Protocol.Signed
 import Ouroboros.Consensus.Storage.ImmutableDB (Tip)
 import Ouroboros.Consensus.Storage.ImmutableDB.Chunks
 import Ouroboros.Consensus.Storage.LedgerDB
-import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Storage.VolatileDB
 import Ouroboros.Consensus.Util.Condense
@@ -583,7 +582,7 @@ type instance TxIn (LedgerState TestBlock) = Void
 type instance TxOut (LedgerState TestBlock) = Void
 type instance LSMTxOut (LedgerState TestBlock) = Void
 
-instance ToLSMTxOut (LedgerState TestBlock) where
+instance HasLSMTxOut (LedgerState TestBlock) where
   toLSMTxOut _ = id
   fromLSMTxOut _ = id
 

@@ -228,7 +228,7 @@ instance LSM.SerialiseValue TValue where
 
 deriving via LSM.ResolveAsFirst TValue instance LSM.ResolveValue TValue
 
-instance ToLSMTxOut (LedgerState TestBlock) where
+instance HasLSMTxOut (LedgerState TestBlock) where
   toLSMTxOut _ = id
   fromLSMTxOut _ = id
 

@@ -134,9 +134,6 @@ fromMinimalChainDbArgs MinimalChainDbArgs{..} =
           , lgrFlavorArgs = LedgerDbFlavorArgsV2 (V2Args InMemoryHandleArgs)
           , lgrQueryBatchSize = DefaultQueryBatchSize
           , lgrStartSnapshot = Nothing
-          -- TODO @js
-          , lgrGenSalt = undefined
-          , lgrMkLSMFS = undefined
           }
     , cdbsArgs =
         ChainDbSpecificArgs

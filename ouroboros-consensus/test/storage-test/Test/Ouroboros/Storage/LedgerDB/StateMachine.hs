@@ -44,6 +44,7 @@ import Control.Monad.Except
 import Control.Monad.State hiding (state)
 import Control.ResourceRegistry
 import Control.Tracer (Tracer (..))
+import Data.Functor.Contravariant ((>$<))
 import qualified Data.List as L
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -68,6 +69,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.V2.Args hiding
   ( LedgerDbFlavorArgs
   )
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Util hiding (Some)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
@@ -495,14 +497,33 @@ openLedgerDB flavArgs env cfg fs = do
               args
               bss
               getBlock
-       in openDBInternal args initDb stream replayGoal
-    LedgerDbFlavorArgsV2 bss ->
+       in openDBInternal args defaultDeleteSnapshot initDb stream replayGoal
+    LedgerDbFlavorArgsV2 bss -> do
+      (ds, bss') <- case bss of
+        V2.V2Args V2.InMemoryHandleArgs -> pure (defaultDeleteSnapshot, V2.InMemoryHandleEnv)
+        V2.V2Args (V2.LSMHandleArgs (V2.LSMArgs path genSalt mkFS)) -> do
+          session <-
+            snd
+              <$> allocate
+                (lgrRegistry args)
+                ( \_ -> do
+                    V2.SomeHasFSAndBlockIO fs' blockio <- mkFS "lsm"
+                    salt <- genSalt
+                    LSM.openSession
+                      (LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 . V2.LSMTrace >$< lgrTracer args)
+                      fs'
+                      blockio
+                      salt
+                      (mkFsPath [path])
+                )
+                LSM.closeSession
+          pure (LSM.deleteSnapshot session, V2.LSMHandleEnv session)
       let initDb =
             V2.mkInitDb
               args
-              bss
+              bss'
               getBlock
-       in openDBInternal args initDb stream replayGoal
+      openDBInternal args ds initDb stream replayGoal
   withRegistry $ \reg -> do
     vr <- validateFork ldb reg (const $ pure ()) BlockCache.empty 0 (map getHeader volBlocks)
     case vr of
@@ -617,6 +638,7 @@ mkTrackOpenHandles = do
           atomically $ modifyTVar varOpen $ case ev of
             V2.TraceLedgerTablesHandleCreate -> succ
             V2.TraceLedgerTablesHandleClose -> pred
+            _ -> id
         _ -> pure ()
   pure (tracer, readTVarIO varOpen)
 
