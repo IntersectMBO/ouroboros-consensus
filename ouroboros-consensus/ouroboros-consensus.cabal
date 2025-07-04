@@ -296,7 +296,9 @@ library
   build-depends:
     FailT ^>=0.1.2,
     blockio,
+    random,
     aeson,
+    filepath,
     base >=4.14 && <4.22,
     base-deriving-via,
     base16-bytestring,

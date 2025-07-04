@@ -128,6 +128,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
@@ -177,10 +178,9 @@ import qualified SafeWildCards
 import System.Exit (ExitCode (..))
 import System.FS.API (SomeHasFS (..))
 import System.FS.API.Types (MountPoint (..))
-import System.FS.BlockIO.IO
 import System.FS.IO (ioHasFS)
 import System.FilePath ((</>))
-import System.Random (StdGen, genWord64, initStdGen, newStdGen, randomIO, split)
+import System.Random (StdGen, newStdGen, randomIO, split)
 
 {-------------------------------------------------------------------------------
   The arguments to the Consensus Layer node functionality
@@ -1057,13 +1057,12 @@ stdLowLevelRunNodeArgsIO
               V1LMDB args -> LedgerDbFlavorArgsV1 args
               V2InMemory -> LedgerDbFlavorArgsV2 (V2.V2Args V2.InMemoryHandleArgs)
               V2LSM path ->
-                let
-                  mkFS = \s ->
-                    uncurry V2.SomeHasFSAndBlockIO
-                      <$> ioHasBlockIO (MountPoint $ nonImmutableDbPath srnDatabasePath </> s) defaultIOCtxParams
-                  genSalt = fst . genWord64 <$> initStdGen
-                 in
-                  LedgerDbFlavorArgsV2 (V2.V2Args (V2.LSMHandleArgs (V2.LSMArgs path genSalt mkFS)))
+                LedgerDbFlavorArgsV2
+                  ( V2.V2Args
+                      ( V2.LSMHandleArgs
+                          (V2.LSMArgs path LSM.stdGenSalt (LSM.stdMkBlockIOFS (nonImmutableDbPath srnDatabasePath)))
+                      )
+                  )
         }
    where
     networkMagic :: NetworkMagic

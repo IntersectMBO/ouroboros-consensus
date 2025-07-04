@@ -10,6 +10,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.Args
   , LSMHandleArgs (..)
   ) where
 
+import Control.ResourceRegistry
 import Data.Typeable
 import Database.LSMTree (LSMTreeTrace (..), Salt, Session)
 import Ouroboros.Consensus.Util.Args
@@ -25,7 +26,7 @@ data HandleArgs f m
 data LSMHandleArgs f m = LSMArgs
   { lsmFilePath :: HKD f FilePath
   , lsmGenSalt :: HKD f (m Salt)
-  , lsmMkFS :: HKD f (FilePath -> m (SomeHasFSAndBlockIO m))
+  , lsmMkFS :: HKD f (ResourceRegistry m -> FilePath -> m (ResourceKey m, SomeHasFSAndBlockIO m))
   }
 
 data SomeHasFSAndBlockIO m where
@@ -33,7 +34,7 @@ data SomeHasFSAndBlockIO m where
 
 data HandleEnv m
   = InMemoryHandleEnv
-  | LSMHandleEnv (Session m)
+  | LSMHandleEnv (ResourceKey m, Session m) (ResourceKey m)
 
 data FlavorImplSpecificTrace
   = -- | Created a new 'LedgerTablesHandle', potentially by duplicating an

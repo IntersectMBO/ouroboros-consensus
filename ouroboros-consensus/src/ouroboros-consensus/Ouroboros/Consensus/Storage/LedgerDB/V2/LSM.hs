@@ -51,6 +51,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
   , Session
   , LSM.openSession
   , LSM.closeSession
+  , stdGenSalt
+  , stdMkBlockIOFS
   ) where
 
 import Cardano.Binary as CBOR
@@ -90,6 +92,10 @@ import Ouroboros.Consensus.Util.CRC
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
+import qualified System.FS.BlockIO.API as BIO
+import System.FS.BlockIO.IO
+import qualified System.FilePath as FilePath
+import System.Random
 import Prelude hiding (read)
 
 type LedgerSupportsLSMLedgerDB l =
@@ -368,3 +374,16 @@ serialiseLSMViaMemPack a =
 -- that are serialized via 'MemPack'.
 deserialiseLSMViaMemPack :: MemPack b => LSM.RawBytes -> b
 deserialiseLSMViaMemPack (LSM.RawBytes (Vector _ _ barr)) = unpackError barr
+
+stdGenSalt :: IO LSM.Salt
+stdGenSalt = fst . genWord64 <$> initStdGen
+
+stdMkBlockIOFS ::
+  FilePath -> ResourceRegistry IO -> FilePath -> IO (ResourceKey IO, V2.SomeHasFSAndBlockIO IO)
+stdMkBlockIOFS fastStoragePath rr relPath = do
+  (rk1, bio) <-
+    allocate
+      rr
+      (\_ -> ioHasBlockIO (MountPoint $ fastStoragePath FilePath.</> relPath) defaultIOCtxParams)
+      (BIO.close . snd)
+  pure $ (rk1, uncurry V2.SomeHasFSAndBlockIO bio)

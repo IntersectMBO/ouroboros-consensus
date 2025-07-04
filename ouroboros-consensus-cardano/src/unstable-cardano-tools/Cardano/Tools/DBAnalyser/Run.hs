@@ -85,24 +85,23 @@ openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.L
   (ds, bss') <- case args of
     V2.V2Args V2.InMemoryHandleArgs -> pure (defaultDeleteSnapshot, V2.InMemoryHandleEnv)
     V2.V2Args (V2.LSMHandleArgs (V2.LSMArgs path genSalt mkFS)) -> do
+      (rk1, V2.SomeHasFSAndBlockIO fs' blockio) <- mkFS (LedgerDB.lgrRegistry lgrDbArgs) "lsm"
       session <-
-        snd
-          <$> allocate
-            (LedgerDB.lgrRegistry lgrDbArgs)
-            ( \_ -> do
-                V2.SomeHasFSAndBlockIO fs' blockio <- mkFS "lsm"
-                salt <- genSalt
-                LSM.openSession
-                  ( LedgerDBFlavorImplEvent . LedgerDB.FlavorImplSpecificTraceV2 . V2.LSMTrace
-                      >$< LedgerDB.lgrTracer lgrDbArgs
-                  )
-                  fs'
-                  blockio
-                  salt
-                  (mkFsPath [path])
-            )
-            LSM.closeSession
-      pure (LSM.deleteSnapshot session, V2.LSMHandleEnv session)
+        allocate
+          (LedgerDB.lgrRegistry lgrDbArgs)
+          ( \_ -> do
+              salt <- genSalt
+              LSM.openSession
+                ( LedgerDBFlavorImplEvent . LedgerDB.FlavorImplSpecificTraceV2 . V2.LSMTrace
+                    >$< LedgerDB.lgrTracer lgrDbArgs
+                )
+                fs'
+                blockio
+                salt
+                (mkFsPath [path])
+          )
+          LSM.closeSession
+      pure (LSM.deleteSnapshot (snd session), V2.LSMHandleEnv session rk1)
   (ledgerDB, _, intLedgerDB) <-
     LedgerDB.openDBInternal
       lgrDbArgs

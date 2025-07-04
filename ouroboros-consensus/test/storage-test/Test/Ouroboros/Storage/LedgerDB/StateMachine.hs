@@ -104,7 +104,9 @@ tests =
     , testProperty "InMemV2" $
         prop_sequential 100000 inMemV2TestArguments noFilePath simulatedFS
     , testProperty "LMDB" $
-        prop_sequential 1000 lmdbTestArguments realFilePath realFS
+        prop_sequential 1000 lmdbTestArguments (realFilePath "lmdb") realFS
+    , testProperty "LSM" $
+        prop_sequential 1000 lsmTestArguments (realFilePath "lsm") realFS
     ]
 
 prop_sequential ::
@@ -158,9 +160,10 @@ data TestArguments m = TestArguments
 noFilePath :: IO (FilePath, IO ())
 noFilePath = pure ("Bogus", pure ())
 
-realFilePath :: IO (FilePath, IO ())
-realFilePath = liftIO $ do
-  tmpdir <- (FilePath.</> "test_lmdb") <$> Dir.getTemporaryDirectory
+realFilePath :: String -> IO (FilePath, IO ())
+realFilePath l = liftIO $ do
+  tmpdir <- (FilePath.</> ("test_" <> l)) <$> Dir.getTemporaryDirectory
+  Dir.createDirectoryIfMissing False tmpdir
   pure
     ( tmpdir
     , do
@@ -196,6 +199,17 @@ inMemV2TestArguments ::
 inMemV2TestArguments secParam _ =
   TestArguments
     { argFlavorArgs = LedgerDbFlavorArgsV2 $ V2Args InMemoryHandleArgs
+    , argLedgerDbCfg = extLedgerDbConfig secParam
+    }
+
+lsmTestArguments ::
+  SecurityParam ->
+  FilePath ->
+  TestArguments IO
+lsmTestArguments secParam fp =
+  TestArguments
+    { argFlavorArgs =
+        LedgerDbFlavorArgsV2 $ V2Args $ LSMHandleArgs $ LSMArgs fp LSM.stdGenSalt (LSM.stdMkBlockIOFS fp)
     , argLedgerDbCfg = extLedgerDbConfig secParam
     }
 
@@ -502,22 +516,21 @@ openLedgerDB flavArgs env cfg fs = do
       (ds, bss') <- case bss of
         V2.V2Args V2.InMemoryHandleArgs -> pure (defaultDeleteSnapshot, V2.InMemoryHandleEnv)
         V2.V2Args (V2.LSMHandleArgs (V2.LSMArgs path genSalt mkFS)) -> do
+          (rk1, V2.SomeHasFSAndBlockIO fs' blockio) <- mkFS (lgrRegistry args) "lsm"
           session <-
-            snd
-              <$> allocate
-                (lgrRegistry args)
-                ( \_ -> do
-                    V2.SomeHasFSAndBlockIO fs' blockio <- mkFS "lsm"
-                    salt <- genSalt
-                    LSM.openSession
-                      (LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 . V2.LSMTrace >$< lgrTracer args)
-                      fs'
-                      blockio
-                      salt
-                      (mkFsPath [path])
-                )
-                LSM.closeSession
-          pure (LSM.deleteSnapshot session, V2.LSMHandleEnv session)
+            allocate
+              (lgrRegistry args)
+              ( \_ -> do
+                  salt <- genSalt
+                  LSM.openSession
+                    (LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 . V2.LSMTrace >$< lgrTracer args)
+                    fs'
+                    blockio
+                    salt
+                    (mkFsPath [path])
+              )
+              LSM.closeSession
+          pure (LSM.deleteSnapshot (snd session), V2.LSMHandleEnv session rk1)
       let initDb =
             V2.mkInitDb
               args
