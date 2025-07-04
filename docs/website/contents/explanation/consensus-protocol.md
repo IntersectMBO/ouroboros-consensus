@@ -108,3 +108,32 @@ The `additionalEnvelopeChecks` for the `HardForkBlock` ensures that the block's 
 Envelope validation is largely ledger-independent, though the additional checks for Praos reference configured maximum sizes and protocol versions derived from the ledger configuration.
 
 Envelope validation relies on [ValidateEnvelope](https://github.com/intersectmbo/ouroboros-consensus/blob/4091b92226a7d5b0fd6531876722df32ea6b7f16/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HeaderValidation.hs#L340) instances. This class extends [`BasicEnvelopeValidation`](https://github.com/intersectmbo/ouroboros-consensus/blob/4091b92226a7d5b0fd6531876722df32ea6b7f16/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HeaderValidation.hs#L297).
+
+## The Extended Ledger State
+
+The **extended ledger state** ([`ExtLedgerState`](https://github.com/intersectmbo/ouroboros-consensus/blob/c573f0639584623bd143f39e722340e412859aa1/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Extended.hs#L71) is a combination of two primary components:
+
+- **Ledger State**
+- **Header State**, which includes the [protocol state](#consensusprotocol)
+
+Bundling these two states is not merely a matter of convenience—though it does help maintain consistency between them. This combination is essential because, to determine whether a block can extend the chain, we must validate both:
+
+- The block itself, using the ledger rules
+- The block header, using the protocol rules
+
+Therefore, both the ledger state and the protocol state are required. The [block application function](https://github.com/intersectmbo/ouroboros-consensus/blob/c573f0639584623bd143f39e722340e412859aa1/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Extended.hs#L191) takes a (ticked) extended ledger state as an argument.
+
+The `LedgerDB` is responsible for maintaining the `ExtLedgerState` at the chain tip and for the past `k` blocks. This is necessary to validate new blocks and handle potential forks. If the ledger and header states were stored separately, ensuring their consistency—especially during rollbacks or chain replays—would be significantly more complex.
+
+The extended ledger state is also used in queries, meaning that the validity, interpretation, and results of those queries may depend on the consensus-specific header state.
+
+The [`HeaderState`](https://github.com/intersectmbo/ouroboros-consensus/blob/c573f0639584623bd143f39e722340e412859aa1/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HeaderValidation.hs#L185) is defined as a data structure containing:
+
+- The **chain tip**, which includes:
+  - Slot number
+  - Block number
+  - Additional `TipInfo` specific to the block type (e.g., whether it's an Epoch Boundary Block in Byron)
+- The **chain-dependent state** of the consensus protocol ([`ChainDepState`](#consensusprotocol)), which:
+  - Is protocol-specific
+  - Is updated with new block headers
+  - Supports rollback
