@@ -116,7 +116,7 @@ The **extended ledger state** ([`ExtLedgerState`](https://github.com/intersectmb
 - **Ledger State**
 - **Header State**, which includes the [protocol state](#consensusprotocol)
 
-Bundling these two states is not merely a matter of convenience—though it does help maintain consistency between them. This combination is essential because, to determine whether a block can extend the chain, we must validate both:
+Bundling these two states is not merely a matter of convenience—though it does help maintain consistency between them. This combination is essential because, to determine whether a block can extend the chain, we must [validate](#block-validity) both:
 
 - The block itself, using the ledger rules
 - The block header, using the protocol rules
@@ -137,3 +137,43 @@ The [`HeaderState`](https://github.com/intersectmbo/ouroboros-consensus/blob/c57
   - Is protocol-specific
   - Is updated with new block headers
   - Supports rollback
+
+## Chain Validity
+
+Checking for chain validity in Cardano encompasses several stages, including time-based validity, header validity, and full block validity.
+
+### Time-based Validity
+
+The system must reject blocks from the **far future**, ie those whose slot [onset](#TODO-ref) is ahead of the local wall clock by more than the admissible clock skew. Such blocks are assumed not to have been minted by honest nodes.
+
+However, blocks from the **near future**, ie blocks whose slot onset is ahead of the wall clock but within the admissible skew, are not immediately rejected. These blocks are assumed to potentially have been minted by honest nodes.
+An artificial delay is introduced until their slot time is reached, preventing a node from processing a block before its actual slot onset.
+
+This time-based check is primarily performed when headers are [received by the chain client](https://github.com/intersectmbo/ouroboros-consensus/blob/5785878d4db2500e137276569a63e5d57f80df50/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/ChainSync/Client.hs#L1509), as shown in [this section of the code](https://github.com/intersectmbo/ouroboros-consensus/blob/5785878d4db2500e137276569a63e5d57f80df50/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/ChainSync/Client.hs#L1728).
+
+### Header Validity
+
+Header validity is primarily implemented in the abstract consensus layer.
+It is [performed by the `ChainSync` client](https://github.com/intersectmbo/ouroboros-consensus/blob/5785878d4db2500e137276569a63e5d57f80df50/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/ChainSync/Client.hs#L1937) when downloading headers from upstream peers.
+The goal of this early validation is to prevent Denial-of-Service (DoS) attacks by quickly discarding invalid headers.
+
+This process involves two main components:
+
+- **Header envelope validation**: defined by the [`ValidateEnvelope`](#validateenvelope) class.
+- **Consensus protocol validation**: implemented indirectly via the `updateChainDepState` function of the [`ConsensusProtocol`](#consensusprotocol) class.
+The validity of a header is determined by examining its `ValidateView`.
+
+### Block Validity
+
+Full block validity involves both:
+
+- Applying the block to the ledger state.
+- Applying the header to the protocol state.
+
+This validation is a critical part of the [chain selection](#chain-selection) process.
+
+Although headers are already validated by the `ChainSync` client, they are re-validated during block application.
+This re-validation is necessary to update the `ChainDepState` within the extended ledger state.
+This step is expected to succeed, given that the header was previously validated by the `ChainSync` client.
+
+## Chain Selection
