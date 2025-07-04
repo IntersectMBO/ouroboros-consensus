@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE EmptyDataDeriving #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -17,6 +18,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Simple block to go with the mock ledger
 --
@@ -86,6 +88,7 @@ import Data.Kind (Type)
 import Data.Proxy
 import Data.Typeable
 import Data.Word
+import qualified Database.LSMTree as LSM
 import GHC.Generics (Generic)
 import GHC.TypeNats (KnownNat)
 import NoThunks.Class (NoThunks (..))
@@ -112,6 +115,7 @@ import Ouroboros.Consensus.Storage.Common
   , SizeInBytes
   )
 import Ouroboros.Consensus.Storage.LedgerDB
+import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 import Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE)
 import Ouroboros.Consensus.Util.Condense
 import Ouroboros.Consensus.Util.IndexedMemPack
@@ -525,6 +529,21 @@ instance LedgerSupportsPeerSelection (SimpleBlock c ext) where
 
 type instance TxIn (LedgerState (SimpleBlock c ext)) = Mock.TxIn
 type instance TxOut (LedgerState (SimpleBlock c ext)) = Mock.TxOut
+type instance LSMTxOut (LedgerState (SimpleBlock c ext)) = Mock.TxOut
+
+instance HasLSMTxOut (LedgerState (SimpleBlock c ext)) where
+  toLSMTxOut _ = id
+  fromLSMTxOut _ = id
+
+instance LSM.SerialiseKey Mock.TxIn where
+  serialiseKey = serialiseLSMViaMemPack
+  deserialiseKey = deserialiseLSMViaMemPack
+
+instance LSM.SerialiseValue Mock.TxOut where
+  serialiseValue = serialiseLSMViaMemPack
+  deserialiseValue = deserialiseLSMViaMemPack
+
+deriving via LSM.ResolveAsFirst Mock.TxOut instance LSM.ResolveValue Mock.TxOut
 
 instance CanUpgradeLedgerTables (LedgerState (SimpleBlock c ext)) where
   upgradeTables _ _ = id

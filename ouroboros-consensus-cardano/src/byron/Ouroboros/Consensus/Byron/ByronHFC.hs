@@ -11,6 +11,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Byron.ByronHFC
@@ -29,6 +30,7 @@ import Data.MemPack
 import Data.SOP.Index (Index (..))
 import Data.Void (Void, absurd)
 import Data.Word
+import qualified Database.LSMTree as LSM
 import GHC.Generics
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -45,6 +47,7 @@ import Ouroboros.Consensus.Ledger.Query
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.Serialisation
 import Ouroboros.Consensus.Protocol.PBFT (PBft, PBftCrypto)
+import Ouroboros.Consensus.Storage.LedgerDB
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -292,7 +295,7 @@ instance HasCanonicalTxIn '[ByronBlock] where
     { getByronHFCTxIn :: Void
     }
     deriving stock (Show, Eq, Ord)
-    deriving newtype (NoThunks, MemPack)
+    deriving newtype (NoThunks, MemPack, LSM.SerialiseKey)
 
   injectCanonicalTxIn IZ key = absurd key
   injectCanonicalTxIn (IS idx') _ = case idx' of {}
@@ -310,6 +313,14 @@ deriving via
   Void
   instance
     IndexedMemPack (LedgerState (HardForkBlock '[ByronBlock]) EmptyMK) Void
+
+type instance
+  LSMTxOut (LedgerState (HardForkBlock '[ByronBlock])) =
+    TxOut (LedgerState (HardForkBlock '[ByronBlock]))
+
+instance HasLSMTxOut (LedgerState (HardForkBlock '[ByronBlock])) where
+  toLSMTxOut _ = id
+  fromLSMTxOut _ = id
 
 instance BlockSupportsHFLedgerQuery '[ByronBlock] where
   answerBlockQueryHFLookup IZ _cfg (q :: BlockQuery ByronBlock QFLookupTables result) _dlv = case q of {}

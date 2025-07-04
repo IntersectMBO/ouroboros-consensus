@@ -252,7 +252,6 @@ snapshotToTablesPath = mkFsPath . (\x -> [x, "tables"]) . snapshotToDirName
 loadSnapshot ::
   forall m blk.
   ( IOLike m
-  , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
   , LedgerSupportsLedgerDB blk
   ) =>

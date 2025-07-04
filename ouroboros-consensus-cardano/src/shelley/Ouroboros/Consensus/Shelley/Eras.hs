@@ -1,11 +1,13 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -77,11 +79,13 @@ import Control.Monad.Except
 import Control.State.Transition (PredicateFailure)
 import Data.Data (Proxy (Proxy))
 import Data.List.NonEmpty (NonEmpty ((:|)))
+import qualified Database.LSMTree as LSM
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Ledger.SupportsMempool
   ( WhetherToIntervene (..)
   )
 import Ouroboros.Consensus.Protocol.TPraos (StandardCrypto)
+import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 
 {-------------------------------------------------------------------------------
   Eras instantiated with standard crypto
@@ -404,3 +408,34 @@ instance Core.TranslateEra ConwayEra WrapTx where
       . Core.translateEra @ConwayEra ctxt
       . Conway.Tx
       . unwrapTx
+
+{-------------------------------------------------------------------------------
+ SerialiseValue
+-------------------------------------------------------------------------------}
+
+instance LSM.SerialiseValue (SL.ShelleyTxOut ShelleyEra) where
+  serialiseValue = serialiseLSMViaMemPack
+  deserialiseValue = deserialiseLSMViaMemPack
+
+deriving via
+  LSM.ResolveAsFirst (SL.ShelleyTxOut ShelleyEra)
+  instance
+    LSM.ResolveValue (SL.ShelleyTxOut ShelleyEra)
+
+-- instance LSM.SerialiseValue (SL.ShelleyTxOut AllegraEra) where
+--   serialiseValue = serialiseLSMViaMemPack
+--   deserialiseValue = deserialiseLSMViaMemPack
+
+-- deriving via
+--   LSM.ResolveAsFirst (SL.ShelleyTxOut AllegraEra)
+--   instance
+--     LSM.ResolveValue (SL.ShelleyTxOut AllegraEra)
+
+-- instance LSM.SerialiseValue (SL.ShelleyTxOut MaryEra) where
+--   serialiseValue = serialiseLSMViaMemPack
+--   deserialiseValue = deserialiseLSMViaMemPack
+
+-- deriving via
+--   LSM.ResolveAsFirst (SL.ShelleyTxOut MaryEra)
+--   instance
+--     LSM.ResolveValue (SL.ShelleyTxOut MaryEra)

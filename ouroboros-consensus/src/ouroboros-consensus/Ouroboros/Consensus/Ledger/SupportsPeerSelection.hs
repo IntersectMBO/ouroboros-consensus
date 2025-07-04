@@ -5,10 +5,9 @@ module Ouroboros.Consensus.Ledger.SupportsPeerSelection
   , stakePoolRelayAccessPoint
 
     -- * Re-exports for convenience
-  , DomainAccessPoint (..)
   , IP (..)
   , PortNumber
-  , RelayAccessPoint (..)
+  , LedgerRelayAccessPoint (..)
   ) where
 
 import Control.DeepSeq (NFData (..))
@@ -18,25 +17,24 @@ import Ouroboros.Network.PeerSelection.LedgerPeers.Type
   ( PoolStake (..)
   )
 import Ouroboros.Network.PeerSelection.RelayAccessPoint
-  ( DomainAccessPoint (..)
-  , IP (..)
+  ( IP (..)
+  , LedgerRelayAccessPoint (..)
   , PortNumber
-  , RelayAccessPoint (..)
   )
 
 -- | A relay registered for a stake pool
 data StakePoolRelay
   = -- | One of the current relays
-    CurrentRelay RelayAccessPoint
+    CurrentRelay LedgerRelayAccessPoint
   | -- | One of the future relays
-    FutureRelay RelayAccessPoint
+    FutureRelay LedgerRelayAccessPoint
   deriving (Show, Eq)
 
 instance NFData StakePoolRelay where
   rnf (CurrentRelay ra) = rnf ra
   rnf (FutureRelay ra) = rnf ra
 
-stakePoolRelayAccessPoint :: StakePoolRelay -> RelayAccessPoint
+stakePoolRelayAccessPoint :: StakePoolRelay -> LedgerRelayAccessPoint
 stakePoolRelayAccessPoint (CurrentRelay ra) = ra
 stakePoolRelayAccessPoint (FutureRelay ra) = ra
 

@@ -166,8 +166,7 @@ checkSnapshotFileStructure m p (SomeHasFS fs) = case m of
 
 load ::
   forall blk.
-  ( LedgerDbSerialiseConstraints blk
-  , CanStowLedgerTables (LedgerState blk)
+  ( CanStowLedgerTables (LedgerState blk)
   , LedgerSupportsProtocol blk
   , LedgerSupportsLedgerDB blk
   ) =>
@@ -200,7 +199,7 @@ load config@Config{inpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), pa
       checkSnapshotFileStructure Mem path fs
       (ls, _) <- withExceptT SnapshotError $ V2.loadSnapshot nullTracer rr ccfg fs ds
       let h = V2.currentHandle ls
-      (V2.state h,) <$> Trans.lift (V2.readAll (V2.tables h))
+      (V2.state h,) <$> Trans.lift (V2.readAll (V2.tables h) (V2.state h))
     LMDB -> do
       checkSnapshotFileStructure LMDB path fs
       ((dbch, k, bstore), _) <-
@@ -218,8 +217,7 @@ load config@Config{inpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), pa
 load _ _ _ _ = error "Malformed input path!"
 
 store ::
-  ( LedgerDbSerialiseConstraints blk
-  , CanStowLedgerTables (LedgerState blk)
+  ( CanStowLedgerTables (LedgerState blk)
   , LedgerSupportsProtocol blk
   , LedgerSupportsLedgerDB blk
   ) =>

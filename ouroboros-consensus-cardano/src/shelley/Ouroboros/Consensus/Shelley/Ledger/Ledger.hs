@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -103,6 +104,7 @@ import Data.MemPack
 import qualified Data.Text as T
 import qualified Data.Text as Text
 import Data.Word
+import qualified Database.LSMTree as LSM
 import GHC.Generics (Generic)
 import Lens.Micro
 import Lens.Micro.Extras (view)
@@ -130,6 +132,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   , mkHeaderView
   )
 import Ouroboros.Consensus.Storage.LedgerDB
+import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 import Ouroboros.Consensus.Util.CBOR
   ( decodeWithOrigin
   , encodeWithOrigin
@@ -319,6 +322,28 @@ instance ShelleyCompatible proto era => UpdateLedger (ShelleyBlock proto era)
 
 type instance TxIn (LedgerState (ShelleyBlock proto era)) = SL.TxIn
 type instance TxOut (LedgerState (ShelleyBlock proto era)) = Core.TxOut era
+
+newtype LSMTxIn = LSMTxIn {lsmTxIn :: SL.TxIn}
+
+instance MemPack LSMTxIn where
+  packedByteCount = packedByteCount . lsmTxIn
+  packM (LSMTxIn (SL.TxIn txid txix)) = packM txix >> packM txid
+  unpackM = do
+    txix <- unpackM
+    txid <- unpackM
+    pure . LSMTxIn $ SL.TxIn txid txix
+
+instance LSM.SerialiseKey SL.TxIn where
+  serialiseKey = serialiseLSMViaMemPack . LSMTxIn
+  deserialiseKey = lsmTxIn . deserialiseLSMViaMemPack
+
+type instance
+  LSMTxOut (LedgerState (ShelleyBlock proto era)) =
+    TxOut (LedgerState (ShelleyBlock proto era))
+
+instance HasLSMTxOut (LedgerState (ShelleyBlock proto era)) where
+  toLSMTxOut _ = id
+  fromLSMTxOut _ = id
 
 instance
   (txout ~ Core.TxOut era, MemPack txout) =>

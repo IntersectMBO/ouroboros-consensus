@@ -15,7 +15,6 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.Driver.Limits
   ( ProtocolLimitFailure (ExceededTimeLimit)
   )
-import Ouroboros.Network.Protocol.ChainSync.Codec (mustReplyTimeout)
 import Test.Consensus.BlockTree (btTrunk)
 import Test.Consensus.Genesis.Setup
 import Test.Consensus.PeerSimulator.Run
