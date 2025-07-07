@@ -136,11 +136,11 @@ The [`HeaderState`](https://github.com/intersectmbo/ouroboros-consensus/blob/c57
 - The **chain-dependent state** of the consensus protocol ([`ChainDepState`](#consensusprotocol)), which:
   - Is protocol-specific
   - Is updated with new block headers
-  - Supports rollback
+  - It can be rolled back
 
 ## Chain Validity
 
-Checking for chain validity in Cardano encompasses several stages, including time-based validity, header validity, and full block validity.
+Checking for [chain validity](https://cardano-scaling.github.io/cardano-blueprint/consensus/chainvalid.html) in Cardano encompasses several stages, including time-based validity, header validity, and full block validity.
 
 ### Time-based Validity
 
