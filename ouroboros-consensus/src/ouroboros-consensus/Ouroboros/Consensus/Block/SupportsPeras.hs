@@ -23,6 +23,7 @@ import Ouroboros.Consensus.Block.Abstract
 
 newtype PerasRoundNo = PerasRoundNo {unPerasRoundNo :: Word64}
   deriving stock Show
+  deriving Generic
   deriving newtype (Eq, Ord, NoThunks)
 
 newtype PerasWeight = PerasWeight {unPerasWeight :: Word64}
@@ -50,7 +51,7 @@ instance StandardHash blk => BlockSupportsPeras blk where
     { pcCertRound :: PerasRoundNo
     , pcCertBoostedBlock :: Point blk
     }
-    deriving stock Generic
+    deriving stock (Generic, Eq, Ord, Show)
     deriving anyclass NoThunks
 
   perasCertRound = pcCertRound
