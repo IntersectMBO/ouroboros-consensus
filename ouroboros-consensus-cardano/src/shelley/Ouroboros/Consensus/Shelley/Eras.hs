@@ -21,14 +21,7 @@ module Ouroboros.Consensus.Shelley.Eras
   , ConwayEra
   , MaryEra
   , ShelleyEra
-
-    -- * Eras instantiated with standard crypto
-  , StandardAllegra
-  , StandardAlonzo
-  , StandardBabbage
-  , StandardConway
-  , StandardMary
-  , StandardShelley
+  , DijkstraEra
 
     -- * Shelley-based era
   , ConwayEraGovDict (..)
@@ -82,40 +75,6 @@ import Ouroboros.Consensus.Ledger.SupportsMempool
   ( WhetherToIntervene (..)
   )
 import Ouroboros.Consensus.Protocol.TPraos (StandardCrypto)
-
-{-------------------------------------------------------------------------------
-  Eras instantiated with standard crypto
--------------------------------------------------------------------------------}
-
--- | The Shelley era with standard crypto
-type StandardShelley = ShelleyEra
-
-{-# DEPRECATED StandardShelley "In favor of `ShelleyEra`" #-}
-
--- | The Allegra era with standard crypto
-type StandardAllegra = AllegraEra
-
-{-# DEPRECATED StandardAllegra "In favor of `AllegraEra`" #-}
-
--- | The Mary era with standard crypto
-type StandardMary = MaryEra
-
-{-# DEPRECATED StandardMary "In favor of `MaryEra`" #-}
-
--- | The Alonzo era with standard crypto
-type StandardAlonzo = AlonzoEra
-
-{-# DEPRECATED StandardAlonzo "In favor of `AlonzoEra`" #-}
-
--- | The Babbage era with standard crypto
-type StandardBabbage = BabbageEra
-
-{-# DEPRECATED StandardBabbage "In favor of `BabbageEra`" #-}
-
--- | The Conway era with standard crypto
-type StandardConway = ConwayEra
-
-{-# DEPRECATED StandardConway "In favor of `ConwayEra`" #-}
 
 {-------------------------------------------------------------------------------
   Era polymorphism
