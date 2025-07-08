@@ -6,13 +6,15 @@ open import Spec.Foreign.HSConsensus.Core
 
 record ExternalFunctions : Type where
   field
+    extSignˢ     : ℕ → ℕ → ℕ
     extIsSignedˢ : ℕ → ℕ → ℕ → Bool
     extIsSignedᵏ : ℕ → ℕ → ℕ → ℕ → Bool
     extExp       : F.Rational → F.Rational
     extLn        : F.Rational → F.Rational
 {-# FOREIGN GHC
   data ExternalFunctions = MkExternalFunctions
-    { extIsSignedDSIG :: Integer -> Integer -> Integer -> Bool
+    { extSignDSIG     :: Integer -> Integer -> Integer
+    , extIsSignedDSIG :: Integer -> Integer -> Integer -> Bool
     , extIsSignedKES  :: Integer -> Integer -> Integer -> Integer -> Bool
     , extExp          :: Rational -> Rational
     , extLn           :: Rational -> Rational
@@ -22,7 +24,8 @@ record ExternalFunctions : Type where
 
 dummyExternalFunctions : ExternalFunctions
 dummyExternalFunctions = record
-  { extIsSignedˢ = λ _ _ _ → true
+  { extSignˢ     = λ _ _ → 0
+  ; extIsSignedˢ = λ _ _ _ → true
   ; extIsSignedᵏ = λ _ _ _ _ → true
   ; extExp       = λ p → to (rationalExtStructure≈ .exp (from p))
   ; extLn        = λ p → to (rationalExtStructure≈ .ln (from p) ⦃ if (from p) ℚ.> 0ℚ then (λ{p>0} → positive p>0) else error "Not a positive rational number" ⦄)

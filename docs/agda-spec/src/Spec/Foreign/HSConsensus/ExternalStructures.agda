@@ -33,7 +33,7 @@ instance
     { pks              = HSPKScheme
     ; Sig              = ℕ
     ; isSigned         = λ vk d σ → extIsSignedˢ vk d σ ≡ true
-    ; sign             = λ _ _ → 0 -- NOTE: Dummy for now
+    ; sign             = extSignˢ
     ; isSigned-correct = error "isSigned-correct evaluated"
     ; Dec-isSigned     = ⁇ (_ ≟ _)
     }
