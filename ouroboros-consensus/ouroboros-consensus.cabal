@@ -757,7 +757,7 @@ test-suite storage-test
     ouroboros-network-mock,
     pretty-show,
     quickcheck-dynamic,
-    quickcheck-lockstep <0.7,
+    quickcheck-lockstep ^>=0.8,
     quickcheck-state-machine:no-vendored-treediff ^>=0.10,
     random,
     resource-registry,
