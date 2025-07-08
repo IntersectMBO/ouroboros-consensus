@@ -1,8 +1,8 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE DeriveGeneric #-}
 
 module Ouroboros.Consensus.Storage.PerasCertDB.API
   ( PerasCertDB (..)
@@ -13,12 +13,12 @@ module Ouroboros.Consensus.Storage.PerasCertDB.API
 
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import GHC.Generics (Generic)
 
 data PerasCertDB m blk = PerasCertDB
   { addCert :: PerasCert blk -> m ()
@@ -30,7 +30,7 @@ data PerasCertDB m blk = PerasCertDB
 newtype PerasWeightSnapshot blk = PerasWeightSnapshot
   { getPerasWeightSnapshot :: Map (Point blk) PerasWeight
   }
-  deriving stock Show
+  deriving stock (Show, Eq)
   deriving Generic
   deriving newtype NoThunks
 
