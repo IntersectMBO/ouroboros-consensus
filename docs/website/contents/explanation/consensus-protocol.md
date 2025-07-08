@@ -31,8 +31,8 @@ The `ConsensusProtocol` type class is indexed over the protocol type. The type f
 
 Function `checkIsLeader` takes among its arguments a `CanBeLeader` value and the current slot (`SlotNo`). If the node is the leader for that slot, this function returns a `Just (IsLeader p)`. Otherwise it returns `Nothing`.
 
-The `SelectView` type represents a summary of the header at the tip of a chain. Values of this type allow the consensus protocol to choose between multiple competing chains by comparing these views.
-In Praos, the `SelectView` is instantiated as `PraosChainSelectView`, containing the necessary information for the chain selection process, namely:
+The `SelectView` type represents a summary of the header at the tip of a chain. It contains the necessary information for chain comparison. Values of this type allow the consensus protocol to choose between multiple competing chains by comparing these views.
+In Praos, the `SelectView` is instantiated as [`PraosChainSelectView`](https://github.com/intersectmbo/ouroboros-consensus/blob/010b374c54f4d2f485ab114f702db6ec3b7a8f95/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos/Common.hs#L65), containing the necessary information for the chain selection process, namely:
 - The length of the chain.
 - The slot number of the block.
 - The verification key of the block's issuer
@@ -63,6 +63,21 @@ This view is used when `updateChainDepState` and `reupdateChainDepState` functio
 - The KES signature data, which is used to verify the issuer's identity.
 
 Function `protocolSecurityParam` extracts the [security parameter](TODO!) `k` from the consensus protocol's static's configuration.
+
+### `ChainOrdering`
+
+To agree on a single, linear, and eventually consistent chain of blocks we need to have a mechanism for ordering chains.
+
+The abstract Consensus layer mainly relies on a `SelectView` taken from the tip of each header fragment.
+[`ChainOrder`](https://github.com/intersectmbo/ouroboros-consensus/blob/010b374c54f4d2f485ab114f702db6ec3b7a8f95/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs#L219) is a type class that defines how to compare these `SelectView`s.
+
+Its main function is [`preferCandidate`](https://github.com/intersectmbo/ouroboros-consensus/blob/010b374c54f4d2f485ab114f702db6ec3b7a8f95/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs#L262), which checks if a candidate chain is strictly better than the node’s current chain. This function is used during [initial chain selection](https://github.com/intersectmbo/ouroboros-consensus/blob/010b374c54f4d2f485ab114f702db6ec3b7a8f95/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L180) and in [chain selection](https://github.com/intersectmbo/ouroboros-consensus/blob/010b374c54f4d2f485ab114f702db6ec3b7a8f95/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L692).
+
+`ChainOrder` also requires a total order on the `SelectView` type. This allows candidate chains to be [sorted](https://github.com/intersectmbo/ouroboros-consensus/blob/010b374c54f4d2f485ab114f702db6ec3b7a8f95/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Util/AnchoredFragment.hs#L126) for prioritization.
+
+The `ConsensusProtocol` class provides a [`SimpleChainOrder`](https://github.com/intersectmbo/ouroboros-consensus/blob/010b374c54f4d2f485ab114f702db6ec3b7a8f95/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs#L272) deriving helper, which implements `preferCandidate` using the standard `Ord` instance of `SelectView`. However, some protocols like Praos use more complex tiebreaking rules. [`ChainOrderConfig`](https://github.com/intersectmbo/ouroboros-consensus/blob/010b374c54f4d2f485ab114f702db6ec3b7a8f95/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs#L227) allows different tiebreaking strategies to be used within the same protocol.
+
+For a detailed discussion on chain ordering in Ouroboros, see [this section](#Chain-Ordering-in-Ouroboros).
 
 ### `LedgerSupportsProtocol`
 
@@ -175,5 +190,78 @@ This validation is a critical part of the [chain selection](#chain-selection) pr
 Although headers are already validated by the `ChainSync` client, they are re-validated during block application.
 This re-validation is necessary to update the `ChainDepState` within the extended ledger state.
 This step is expected to succeed, given that the header was previously validated by the `ChainSync` client.
+
+## Chain Ordering in Ouroboros
+
+The core rule in Ouroboros protocols (including Praos) is to prefer longer chains over shorter ones. This assumes that the honest majority of stake will produce denser chains.
+
+- A chain that extends the current one is always preferred.
+- If two chains are equally preferable, the node sticks with its current chain.
+
+In Praos and Shelley-based eras, if chains have the same length, tiebreaking [rules](https://github.com/intersectmbo/ouroboros-consensus/blob/010b374c54f4d2f485ab114f702db6ec3b7a8f95/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos/Common.hs#L108) are applied in this order:
+
+- 1. **Operational Certificate Issue Number**:
+If both chain tips are from the same issuer and slot, the one with the higher `opcert` issue number is preferred.
+This allows a stake pool operator to replace a compromised hot key with a new one and still have their blocks take precedence.
+
+- 2. **VRF Tiebreaker**:
+If the `opcert` check is inconclusive (which is common when two pools are elected in the same slot), the chain with the lower VRF value at its tip is preferred.
+This avoids always picking the first block to arrive, which could encourage centralization to reduce latency (see ["The Frankfurt Problem"](https://github.com/IntersectMBO/ouroboros-consensus/blob/40d77fdd74a9b2b2a1d112a0b836b5cb8026c88c/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos/Common.hs#L227)). The VRF value used for tiebreaking (non-range extended) is uncorrelated to the leader VRF value and typically results in a uniformly random decision. Depending on the `ChainOrderConfig` for Praos, there are two [flavors](https://github.com/intersectmbo/ouroboros-consensus/blob/010b374c54f4d2f485ab114f702db6ec3b7a8f95/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos/Common.hs#L75) that determine when this tie-breaker comparison takes place.
+    - `UnrestrictedVRFTiebreaker`: With this flavor, VRF tiebreakers are always compared. This has been the standard behavior for all eras before Conway.
+    - `RestrictedVRFTiebreaker`: This flavor restricts the VRF tiebreaker comparison to situations where the slot numbers of the chain tips differ by at most a specified maximum distance (`maxDist`).
+The primary motivation for this restriction is to favor blocks that were diffused earlier (in earlier slots) over those diffused later, even if the later block has a "better" VRF tiebreaker value. This aims to mitigate [issues](https://github.com/IntersectMBO/ouroboros-network/issues/2913) caused by poorly configured or resource-constrained pools that might diffuse blocks later.
+
+### On the Transitivity of Praos Chain Ordering
+
+Praos chain ordering is **not transitive**, regardless of the VRF tiebreaker flavor.
+
+Consider the following select views where chains `A`, `B`, and `C` have the same length:
+
+|                 | A | B | C |
+|-----------------|---|---|---|
+| Issuer          | x | y | x |
+| Slot            | 0 | i | 0 |
+| `opcert` number | 2 | j | 1 |
+| VRF             | 3 | 2 | 1 |
+
+Lower-case letters stand for arbitrary values (two letters designate the same value if and only if they are same letter).
+
+In this example we have:
+
+- `B` is preferred over `A`, since `B` has lower VRF than `A`.
+- `C` is preferred over `B`, since `C` has lower VRF than `B`.
+- However `C` is **not** preferred over `A`, since they have the same issuer and slot, and therefore we prefer the chain with the highest `opcert` number (2), therefore `A` is preferred over `C`.
+
+Also, the `RestrictedVRFTiebreaker` flavour breaks the transitivity of chain ordering. To see this consider the following example where chains `D`, `E`, and `F` have the same length and different issuers, and assume `maxDist = 5` slots:
+
+|              | D | E | F |
+| ------------ | - | - | - |
+| Slot         | 0 | 3 | 6 |
+| VRF          | 3 | 2 | 1 |
+
+
+We have that:
+- `E` is preferred over `D`, since `E` has lower VRF than `D` and `|0 - 3| < 5`.
+- `F` is preferred over `E`, since `F` has lower VRF than `E` and `|3 - 6| < 5`
+- However, `D` is **not** preferred over `F`, but instead `D` and `F` are equally preferred since `|0 - 6| > 5` which implies that the VRF values of `D` and `F` are not used.
+
+Despite the non-transitivity, the fundamental Consensus properties, such as [Common Prefix](TODO-ref!), are not affected. This is because the primary factor for chain selection for a [caught-up](TODO-ref!) node remains the chain length, with longer chains always being preferred. However, a non-transitive chain ordering brings the following complications:
+
+- **Implementation**: The use of `sortBy` from base in `chain` selection, which is typically expected to work with transitive relations, could become a concern. While preliminary property tests suggest it works for the current non-transitive order, there's a theoretical risk that future GHC implementations might interact non-trivially.
+- **Reasoning**: The non-transitive order can be very confusing for reasoning about anything related to chain order, as transitivity is an implicitly assumed property of orders.
+This, in turn, leads to "obvious" properties failing to hold. For instance, the expectation that observing a node's selection over time yields a strictly improving sequence may not hold, as different observers could disagree on whether each selection is "strictly better" than the previous one. This non-objectivity can have practical effects, particularly for diffusion pipelining, which relies on a clear, consistent chain order.
+- **Potential for Cycles**: The non-transitivity can conceptually give rise to "cycles" in preference, such as `A < B < C = A`. However, in practice, the node's implementation guarantees that it will never end up changing its selection in such a cycle because blocks already in the VolatileDB are not added again
+
+See [this issue comment](https://github.com/IntersectMBO/ouroboros-consensus/issues/1075#issuecomment-3035911537) for potential approaches to restoring chain transitivity.
+
+### On The History Of Chain Ordering In Cardano
+
+The relevant changes to the chain order occurred in these PRs in chronological order:
+
+ - [ouroboros-network#2108](https://github.com/IntersectMBO/ouroboros-network/pull/2108) added the opcert number comparison step as the first tiebreaker (before that, only chain length was used).
+ - [ouroboros-network#2195](https://github.com/IntersectMBO/ouroboros-network/pull/2195) added the VRF tiebreaker, but lexicographically *before* the opcert number tiebreaker, in contrast to the status quo.
+   This means that the order still was total at this point, also see below.
+ - [ouroboros-network#2348](https://github.com/IntersectMBO/ouroboros-network/pull/2348) mostly did a change unrelated to the purpose of this document, but crucially, it swapped the order in which the VRF and opcert number comparison are done, introducing the current non-transitivity. Currently we do not prioritize the adoption of the node's own blocks. See [this comment](https://github.com/IntersectMBO/ouroboros-network/issues/1286#issuecomment-777614715), which mentions that this is not crucial for correctness, however the implications for incentives are still unclear.
+
 
 ## Chain Selection
