@@ -13,6 +13,7 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , PerasWeight (..)
   , boostPerCert
   , BlockSupportsPeras (..)
+  , PerasCert (..)
   ) where
 
 import Data.Monoid (Sum (..))
