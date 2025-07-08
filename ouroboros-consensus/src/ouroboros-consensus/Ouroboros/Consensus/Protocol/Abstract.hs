@@ -243,7 +243,7 @@ class Ord sv => ChainOrder sv where
   --
   --      However, this is not necessarily a sufficient condition; a concrete
   --      implementation may decide to not have @ours ⊏ cand@ despite @ours <
-  --      cand@ for some pairs @ours, can@. However, it is recommended to think
+  --      cand@ for some pairs @ours, cand@. However, it is recommended to think
   --      about this carefully and rather use 'SimpleChainOrder' if possible,
   --      which defines @ours ⊏ cand@ as @ours < cand@, as it simplifies
   --      reasoning about the chain ordering.
