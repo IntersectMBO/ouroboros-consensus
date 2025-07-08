@@ -14,9 +14,9 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2025-06-03T21:29:34Z
+  , hackage.haskell.org 2025-07-08T15:50:10Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2025-06-03T13:42:38Z
+  , cardano-haskell-packages 2025-07-02T14:54:39Z
 
 packages:
   ouroboros-consensus
@@ -35,7 +35,17 @@ multi-repl: True
 import: ./asserts.cabal
 
 allow-newer:
-    serdoc-core:tasty-quickcheck
+    , serdoc-core:tasty-quickcheck
+    , quickcheck-dynamic
+    , fs-sim
+    , io-classes
+
+allow-older:
+    , QuickCheck
+
+constraints:
+  , QuickCheck == 2.15
+  , quickcheck-dynamic == 4.0.0
 
 package ouroboros-network
   -- Certain ThreadNet tests rely on transactions to be submitted promptly after
@@ -55,11 +65,11 @@ if impl (ghc < 9)
 if impl (ghc >= 9.12)
   allow-newer:
     -- Bounds will be relaxed in next release
-    , network-mux:base
-    , ouroboros-network-api:base
-    , ouroboros-network-framework:base
-    , ouroboros-network-protocols:base
-    , ouroboros-network:base
+    -- , network-mux:base
+    -- , ouroboros-network-api:base
+    -- , ouroboros-network-framework:base
+    -- , ouroboros-network-protocols:base
+    -- , ouroboros-network:base
 
     -- https://github.com/kapralVV/Unique/issues/11
     , Unique:hashable
@@ -69,13 +79,13 @@ if impl (ghc >= 9.12)
     , kes-agent:containers
     , kes-agent:extra
 
-source-repository-package
-   type: git
-   location: https://github.com/IntersectMBO/ouroboros-network
-   tag: 3e8d3b4b8c87ead794876c62d7fe25f32efb5142
-   --sha256: 08fpkx3iagj83nn413h9a865zjcj3lrf7017a756qd2wg2jg3amq
-   subdir:
-     ouroboros-network-api
+-- source-repository-package
+--    type: git
+--    location: https://github.com/IntersectMBO/ouroboros-network
+--    tag: 3e8d3b4b8c87ead794876c62d7fe25f32efb5142
+--    --sha256: 08fpkx3iagj83nn413h9a865zjcj3lrf7017a756qd2wg2jg3amq
+--    subdir:
+--      ouroboros-network-api
 
 source-repository-package
    type: git
@@ -113,7 +123,7 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/input-output-hk/kes-agent
-  tag: 07437ed49022b13759c87c4e314f08fcff64b81a
+  tag: cac70bf9941b6afdc2ea6e64e4c11213a6fe52d1
   --sha256: sha256-oTsxaFAs1c/H0oYLhiivO5mr48oHNsPi5k2XyXxwCJg=
   subdir:
       kes-agent
