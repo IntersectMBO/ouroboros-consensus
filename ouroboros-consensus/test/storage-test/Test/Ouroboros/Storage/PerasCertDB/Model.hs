@@ -11,13 +11,14 @@ module Test.Ouroboros.Storage.PerasCertDB.Model
   , closeDB
   , addCert
   , getWeightSnapshot
+  , garbageCollect
   ) where
 
 import qualified Data.Map as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import GHC.Generics (Generic)
-import Ouroboros.Consensus.Block (PerasCert, StandardHash, boostPerCert, perasCertBoostedBlock)
+import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasWeightSnapshot (..))
 
 data Model blk = Model
@@ -56,3 +57,9 @@ getWeightSnapshot Model{certs} = snap
             Map.empty
             certs
       }
+
+garbageCollect :: StandardHash blk => SlotNo -> Model blk -> Model blk
+garbageCollect slot model@Model{certs} =
+  model{certs = Set.filter keepCert certs}
+ where
+  keepCert cert = pointSlot (perasCertBoostedBlock cert) >= NotOrigin slot

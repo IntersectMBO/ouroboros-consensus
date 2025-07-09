@@ -23,10 +23,9 @@ module Ouroboros.Consensus.Storage.PerasCertDB.Impl
 import Control.Monad (join)
 import Control.Tracer (Tracer, nullTracer, traceWith)
 import Data.Kind (Type)
+import qualified Data.Map.Merge.Strict as Map
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Set (Set)
-import qualified Data.Set as Set
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -58,13 +57,11 @@ openDB ::
   Complete PerasCertDbArgs m blk ->
   m (PerasCertDB m blk)
 openDB args = do
-  pcdbRoundNos <- newTVarIO Set.empty
-  pcdbWeightByPoint <- newTVarIO Map.empty
+  pcdbVolatileState <- newTVarIO initialPerasVolatileCertState
   let env =
         PerasCertDbEnv
           { pcdbTracer
-          , pcdbRoundNos
-          , pcdbWeightByPoint
+          , pcdbVolatileState
           }
   h <- PerasCertDbHandle <$> newTVarIO (PerasCertDbOpen env)
   traceWith pcdbTracer OpenedPerasCertDB
@@ -72,6 +69,7 @@ openDB args = do
     PerasCertDB
       { addCert = getEnv1 h implAddCert
       , getWeightSnapshot = getEnvSTM h implGetWeightSnapshot
+      , garbageCollect = getEnv1 h implGarbageCollect
       , closeDB = implCloseDB h
       }
  where
@@ -93,13 +91,8 @@ data PerasCertDbState m blk
 
 data PerasCertDbEnv m blk = PerasCertDbEnv
   { pcdbTracer :: !(Tracer m (TraceEvent blk))
-  , pcdbRoundNos :: !(StrictTVar m (Set PerasRoundNo))
+  , pcdbVolatileState :: !(StrictTVar m (PerasVolatileCertState blk))
   -- ^ The 'RoundNo's of all certificates currently in the db.
-  , pcdbWeightByPoint :: !(StrictTVar m (Map (Point blk) PerasWeight))
-  -- ^ The weight of boosted blocks w.r.t. the certificates currently in the
-  -- db.
-  --
-  -- INVARIANT: In sync with 'pcdbRoundNos'.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "PerasCertDbEnv" (PerasCertDbEnv m blk)
 
@@ -154,20 +147,25 @@ implAddCert ::
 implAddCert env cert = do
   traceWith pcdbTracer $ AddingPerasCert roundNo boostedPt
   join $ atomically $ do
-    roundNos <- readTVar pcdbRoundNos
-    if Set.member roundNo roundNos
+    PerasVolatileCertState{pvcsCerts, pvcsWeightByPoint} <- readTVar pcdbVolatileState
+    if Map.member roundNo pvcsCerts
       then do
         pure $ traceWith pcdbTracer $ IgnoredCertAlreadyInDB roundNo boostedPt
       else do
-        writeTVar pcdbRoundNos $ Set.insert roundNo roundNos
-        -- Note that the same block might be boosted by multiple points.
-        modifyTVar pcdbWeightByPoint $ Map.insertWith (<>) boostedPt boostPerCert
+        writeTVar
+          pcdbVolatileState
+          PerasVolatileCertState
+            { pvcsCerts =
+                Map.insert roundNo cert pvcsCerts
+            , -- Note that the same block might be boosted by multiple points.
+              pvcsWeightByPoint =
+                Map.insertWith (<>) boostedPt boostPerCert pvcsWeightByPoint
+            }
         pure $ traceWith pcdbTracer $ AddedPerasCert roundNo boostedPt
  where
   PerasCertDbEnv
     { pcdbTracer
-    , pcdbRoundNos
-    , pcdbWeightByPoint
+    , pcdbVolatileState
     } = env
 
   roundNo = perasCertRound cert
@@ -176,8 +174,72 @@ implAddCert env cert = do
 implGetWeightSnapshot ::
   IOLike m =>
   PerasCertDbEnv m blk -> STM m (PerasWeightSnapshot blk)
-implGetWeightSnapshot PerasCertDbEnv{pcdbWeightByPoint} =
-  PerasWeightSnapshot <$> readTVar pcdbWeightByPoint
+implGetWeightSnapshot PerasCertDbEnv{pcdbVolatileState} =
+  PerasWeightSnapshot . pvcsWeightByPoint <$> readTVar pcdbVolatileState
+
+implGarbageCollect ::
+  forall m blk.
+  (IOLike m, StandardHash blk) =>
+  PerasCertDbEnv m blk -> SlotNo -> m ()
+implGarbageCollect PerasCertDbEnv{pcdbVolatileState} slot =
+  atomically $ modifyTVar pcdbVolatileState gc
+ where
+  gc :: PerasVolatileCertState blk -> PerasVolatileCertState blk
+  gc PerasVolatileCertState{pvcsCerts, pvcsWeightByPoint} =
+    PerasVolatileCertState
+      { pvcsCerts = certsToKeep
+      , pvcsWeightByPoint =
+          Map.merge
+            -- Do not touch weight of boosted blocks that we do not subtract any
+            -- weight from.
+            Map.preserveMissing
+            -- Irrelevant, the key set of @weightToRemove@ is a subset of the
+            -- key set of @pvcsWeightByPoint@.
+            Map.dropMissing
+            (Map.zipWithMaybeMatched $ \_pt -> subtractWeight)
+            pvcsWeightByPoint
+            weightToRemove
+      }
+   where
+    (certsToRemove, certsToKeep) =
+      Map.partition isTooOld pvcsCerts
+    isTooOld cert =
+      pointSlot (perasCertBoostedBlock cert) < NotOrigin slot
+    weightToRemove =
+      Map.fromListWith
+        (<>)
+        [ (perasCertBoostedBlock cert, boostPerCert)
+        | cert <- Map.elems certsToRemove
+        ]
+
+  subtractWeight :: PerasWeight -> PerasWeight -> Maybe PerasWeight
+  subtractWeight (PerasWeight w1) (PerasWeight w2)
+    | w1 > w2 = Just $ PerasWeight (w1 - w2)
+    | otherwise = Nothing
+
+{-------------------------------------------------------------------------------
+  Implementation-internal types
+-------------------------------------------------------------------------------}
+
+-- | Volatile Peras certificate state, i.e. certificates that could influence
+-- chain selection by boosting a volatile block.
+data PerasVolatileCertState blk = PerasVolatileCertState
+  { pvcsCerts :: !(Map PerasRoundNo (PerasCert blk))
+  -- ^ The boosted blocks by 'RoundNo' of all certificates currently in the db.
+  , pvcsWeightByPoint :: !(Map (Point blk) PerasWeight)
+  -- ^ The weight of boosted blocks w.r.t. the certificates currently in the db.
+  --
+  -- INVARIANT: In sync with 'pvcsCerts'.
+  }
+  deriving stock (Show, Generic)
+  deriving anyclass NoThunks
+
+initialPerasVolatileCertState :: PerasVolatileCertState blk
+initialPerasVolatileCertState =
+  PerasVolatileCertState
+    { pvcsCerts = Map.empty
+    , pvcsWeightByPoint = Map.empty
+    }
 
 {-------------------------------------------------------------------------------
   Trace types
