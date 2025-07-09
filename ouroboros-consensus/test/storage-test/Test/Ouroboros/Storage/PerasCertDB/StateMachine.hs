@@ -51,6 +51,7 @@ instance StateModel Model where
     CloseDB :: Action Model ()
     AddCert :: PerasCert TestBlock -> Action Model ()
     GetWeightSnapshot :: Action Model (PerasWeightSnapshot TestBlock)
+    GarbageCollect :: SlotNo -> Action Model ()
 
   arbitraryAction _ (Model model)
     | model.open =
@@ -58,6 +59,7 @@ instance StateModel Model where
           [ (1, pure $ Some CloseDB)
           , (20, Some <$> genAddCert)
           , (20, pure $ Some GetWeightSnapshot)
+          , (5, Some . GarbageCollect . SlotNo <$> arbitrary)
           ]
     | otherwise = pure $ Some OpenDB
    where
@@ -82,6 +84,7 @@ instance StateModel Model where
     CloseDB -> Model.closeDB model
     AddCert cert -> Model.addCert model cert
     GetWeightSnapshot -> model
+    GarbageCollect slot -> Model.garbageCollect slot model
 
   precondition (Model model) = \case
     OpenDB -> not model.open
@@ -93,6 +96,7 @@ instance StateModel Model where
          where
           p cert' = perasCertRound cert /= perasCertRound cert' || cert == cert'
         GetWeightSnapshot -> True
+        GarbageCollect _slot -> True
 
 deriving stock instance Show (Action Model a)
 deriving stock instance Eq (Action Model a)
@@ -114,6 +118,9 @@ instance RunModel Model (StateT (PerasCertDB IO TestBlock) IO) where
     GetWeightSnapshot -> do
       perasCertDB <- get
       lift $ atomically $ PerasCertDB.getWeightSnapshot perasCertDB
+    GarbageCollect slot -> do
+      perasCertDB <- get
+      lift $ PerasCertDB.garbageCollect perasCertDB slot
 
   postcondition (Model model, _) GetWeightSnapshot _ actual = do
     let expected = Model.getWeightSnapshot model
