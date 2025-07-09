@@ -11,7 +11,6 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Ouroboros.Storage.PerasCertDB.StateMachine (tests) where
 
@@ -44,15 +43,14 @@ prop_qd actions = QC.monadic f $ property () <$ runActions actions
   f :: StateT (PerasCertDB IO TestBlock) IO Property -> Property
   f = ioProperty . flip evalStateT (error "unreachable")
 
-type Block = TestBlock
-newtype Model = Model (Model.Model Block) deriving (Show, Generic)
+newtype Model = Model (Model.Model TestBlock) deriving (Show, Generic)
 
 instance StateModel Model where
   data Action Model a where
     OpenDB :: Action Model ()
     CloseDB :: Action Model ()
-    AddCert :: PerasCert Block -> Action Model ()
-    GetWeightSnapshot :: Action Model (PerasWeightSnapshot Block)
+    AddCert :: PerasCert TestBlock -> Action Model ()
+    GetWeightSnapshot :: Action Model (PerasWeightSnapshot TestBlock)
 
   arbitraryAction _ (Model model)
     | model.open =
@@ -65,8 +63,17 @@ instance StateModel Model where
    where
     genAddCert = do
       pcCertRound <- PerasRoundNo <$> arbitrary
-      pcCertBoostedBlock <- arbitrary
+      pcCertBoostedBlock <- genPoint
       pure $ AddCert PerasCert{pcCertRound, pcCertBoostedBlock}
+
+    genPoint :: Gen (Point TestBlock)
+    genPoint =
+      oneof
+        [ return GenesisPoint
+        , BlockPoint <$> (SlotNo <$> arbitrary) <*> genHash
+        ]
+     where
+      genHash = TestHash . NE.fromList . getNonEmpty <$> arbitrary
 
   initialState = Model Model.initModel
 
@@ -81,6 +88,7 @@ instance StateModel Model where
     action ->
       model.open && case action of
         CloseDB -> True
+        -- Do not add equivocating certificates.
         AddCert cert -> all p model.certs
          where
           p cert' = perasCertRound cert /= perasCertRound cert' || cert == cert'
@@ -107,18 +115,9 @@ instance RunModel Model (StateT (PerasCertDB IO TestBlock) IO) where
       perasCertDB <- get
       lift $ atomically $ PerasCertDB.getWeightSnapshot perasCertDB
 
-  -- TODO: check open state consistency
   postcondition (Model model, _) GetWeightSnapshot _ actual = do
     let expected = Model.getWeightSnapshot model
     counterexamplePost $ "Model: " <> show expected
     counterexamplePost $ "SUT: " <> show actual
     pure $ expected == actual
   postcondition _ _ _ _ = pure True
-
--- TODO very ugly
-instance Arbitrary (Point TestBlock) where
-  arbitrary =
-    oneof
-      [ return GenesisPoint
-      , BlockPoint <$> (SlotNo <$> arbitrary) <*> (TestHash . NE.fromList . getNonEmpty <$> arbitrary)
-      ]
