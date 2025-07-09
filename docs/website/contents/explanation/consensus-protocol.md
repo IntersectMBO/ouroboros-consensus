@@ -64,7 +64,7 @@ This view is used when `updateChainDepState` and `reupdateChainDepState` functio
 
 Function `protocolSecurityParam` extracts the [security parameter](TODO!) `k` from the consensus protocol's static's configuration.
 
-### `ChainOrdering`
+### `ChainOrder`
 
 To agree on a single, linear, and eventually consistent chain of blocks we need to have a mechanism for ordering chains.
 
@@ -195,7 +195,7 @@ This step is expected to succeed, given that the header was previously validated
 
 The core rule in Ouroboros protocols (including Praos) is to prefer longer chains over shorter ones. This assumes that the honest majority of stake will produce denser chains.
 
-- A chain that extends the current one is always preferred.
+- A chain that extends the current one is always preferable to it.
 - If two chains are equally preferable, the node sticks with its current chain.
 
 In Praos and Shelley-based eras, if chains have the same length, tiebreaking [rules](https://github.com/intersectmbo/ouroboros-consensus/blob/010b374c54f4d2f485ab114f702db6ec3b7a8f95/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos/Common.hs#L108) are applied in this order:
@@ -206,12 +206,12 @@ This allows a stake pool operator to replace a compromised hot key with a new on
 
 - 2. **VRF Tiebreaker**:
 If the `opcert` check is inconclusive (which is common when two pools are elected in the same slot), the chain with the lower VRF value at its tip is preferred.
-This avoids always picking the first block to arrive, which could encourage centralization to reduce latency (see ["The Frankfurt Problem"](https://github.com/IntersectMBO/ouroboros-consensus/blob/40d77fdd74a9b2b2a1d112a0b836b5cb8026c88c/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos/Common.hs#L227)). The VRF value used for tiebreaking (non-range extended) is uncorrelated to the leader VRF value and typically results in a uniformly random decision. Depending on the `ChainOrderConfig` for Praos, there are two [flavors](https://github.com/intersectmbo/ouroboros-consensus/blob/010b374c54f4d2f485ab114f702db6ec3b7a8f95/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos/Common.hs#L75) that determine when this tie-breaker comparison takes place.
+This avoids always picking the first block to arrive, which could encourage geographic centralization to reduce latency (see ["The Frankfurt Problem"](https://github.com/IntersectMBO/ouroboros-consensus/blob/40d77fdd74a9b2b2a1d112a0b836b5cb8026c88c/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos/Common.hs#L227)). The VRF value used for tiebreaking (non-range extended) is uncorrelated to the leader VRF value and typically results in a uniformly random decision. Depending on the `ChainOrderConfig` for Praos, there are two [flavors](https://github.com/intersectmbo/ouroboros-consensus/blob/010b374c54f4d2f485ab114f702db6ec3b7a8f95/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos/Common.hs#L75) that determine when this tie-breaker comparison takes place.
     - `UnrestrictedVRFTiebreaker`: With this flavor, VRF tiebreakers are always compared. This has been the standard behavior for all eras before Conway.
     - `RestrictedVRFTiebreaker`: This flavor restricts the VRF tiebreaker comparison to situations where the slot numbers of the chain tips differ by at most a specified maximum distance (`maxDist`).
-The primary motivation for this restriction is to favor blocks that were diffused earlier (in earlier slots) over those diffused later, even if the later block has a "better" VRF tiebreaker value. This aims to mitigate [issues](https://github.com/IntersectMBO/ouroboros-network/issues/2913) caused by poorly configured or resource-constrained pools that might diffuse blocks later.
+The primary motivation for this restriction is to favor blocks that were diffused earlier over those diffused later, even if the later block has a "better" VRF tiebreaker value. This aims to mitigate [issues](https://github.com/IntersectMBO/ouroboros-network/issues/2913) caused by poorly configured or resource-constrained pools that might diffuse blocks later.
 
-### On the Transitivity of Praos Chain Ordering
+### On the Transitivity of Praos Chain Order
 
 Praos chain ordering is **not transitive**, regardless of the VRF tiebreaker flavor.
 
@@ -220,11 +220,11 @@ Consider the following select views where chains `A`, `B`, and `C` have the same
 |                 | A | B | C |
 |-----------------|---|---|---|
 | Issuer          | x | y | x |
-| Slot            | 0 | i | 0 |
+| Slot            | 0 | i | 1 |
 | `opcert` number | 2 | j | 1 |
 | VRF             | 3 | 2 | 1 |
 
-Lower-case letters stand for arbitrary values (two letters designate the same value if and only if they are same letter).
+Lower-case letters stand for arbitrary values.
 
 In this example we have:
 
@@ -241,16 +241,18 @@ Also, the `RestrictedVRFTiebreaker` flavour breaks the transitivity of chain ord
 
 
 We have that:
-- `E` is preferred over `D`, since `E` has lower VRF than `D` and `|0 - 3| < 5`.
-- `F` is preferred over `E`, since `F` has lower VRF than `E` and `|3 - 6| < 5`
+- `E` is preferred over `D`, since `E` has lower VRF than `D` and `|0 - 3| <= 5`.
+- `F` is preferred over `E`, since `F` has lower VRF than `E` and `|3 - 6| <= 5`
 - However, `D` is **not** preferred over `F`, but instead `D` and `F` are equally preferred since `|0 - 6| > 5` which implies that the VRF values of `D` and `F` are not used.
 
-Despite the non-transitivity, the fundamental Consensus properties, such as [Common Prefix](TODO-ref!), are not affected. This is because the primary factor for chain selection for a [caught-up](TODO-ref!) node remains the chain length, with longer chains always being preferred. However, a non-transitive chain ordering brings the following complications:
+Despite the non-transitivity, the fundamental Consensus properties, such as [Common Prefix](TODO-ref!), are not affected. This is because the primary factor for chain selection for a [caught-up](TODO-ref!) node remains the chain length, with longer chains always being preferred.
+The Ouroboros Praos authors make no assumptions about how nodes resolve ties.
+However, a non-transitive chain ordering brings the following complications:
 
-- **Implementation**: The use of `sortBy` from base in `chain` selection, which is typically expected to work with transitive relations, could become a concern. While preliminary property tests suggest it works for the current non-transitive order, there's a theoretical risk that future GHC implementations might interact non-trivially.
-- **Reasoning**: The non-transitive order can be very confusing for reasoning about anything related to chain order, as transitivity is an implicitly assumed property of orders.
+- **Implementation**: The use of `sortBy` from [`base`](https://hackage.haskell.org/package/base) in chain selection, which is typically expected to work with transitive relations, could become a concern. While preliminary property tests suggest it works for the current non-transitive order, there's a potential risk that future GHC implementations might behave in unexpected ways.
+- **Reasoning**: The non-transitive order can be very confusing for reasoning about anything related to chain order, as transitivity is an implicitly assumed property when working with order relations.
 This, in turn, leads to "obvious" properties failing to hold. For instance, the expectation that observing a node's selection over time yields a strictly improving sequence may not hold, as different observers could disagree on whether each selection is "strictly better" than the previous one. This non-objectivity can have practical effects, particularly for diffusion pipelining, which relies on a clear, consistent chain order.
-- **Potential for Cycles**: The non-transitivity can conceptually give rise to "cycles" in preference, such as `A < B < C = A`. However, in practice, the node's implementation guarantees that it will never end up changing its selection in such a cycle because blocks already in the VolatileDB are not added again
+- **Potential for Cycles**: The non-transitivity can conceptually give rise to "cycles" in preference, such as `A < B < C = A`. However, in practice, the node's implementation guarantees that it will never end up changing its selection in such a cycle because blocks already in the `VolatileDB` are not added again.
 
 See [this issue comment](https://github.com/IntersectMBO/ouroboros-consensus/issues/1075#issuecomment-3035911537) for potential approaches to restoring chain transitivity.
 
