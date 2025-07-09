@@ -218,7 +218,7 @@ The primary motivation for this restriction is to favor blocks that were diffuse
 
 Function `preferCandidate` is not defined in terms of the `Ord` instance of Praos' `SelectView` . This function is not transitive when using `RestrictedVRFTiebreaker`. However this does not constitute a problem.
 
-To see why `RestrictedVRFTiebreaker` flavour breaks the transitivity of chain ordering, consider the following example where chains `D`, `E`, and `F` have the same length and different issuers, and assume `maxDist = 5` slots:
+To see why `RestrictedVRFTiebreaker` flavour breaks the transitivity of chain ordering, consider the following example where chains `A`, `B`, and `C` have the same length and different issuers, and assume `maxDist = 5` slots:
 
 |      | A | B | C |
 |------|---|---|---|
