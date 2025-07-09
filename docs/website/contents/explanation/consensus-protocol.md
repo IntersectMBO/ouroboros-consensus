@@ -32,12 +32,15 @@ The `ConsensusProtocol` type class is indexed over the protocol type. The type f
 Function `checkIsLeader` takes among its arguments a `CanBeLeader` value and the current slot (`SlotNo`). If the node is the leader for that slot, this function returns a `Just (IsLeader p)`. Otherwise it returns `Nothing`.
 
 The `SelectView` type represents a summary of the header at the tip of a chain. It contains the necessary information for chain comparison. Values of this type allow the consensus protocol to choose between multiple competing chains by comparing these views.
+
 In Praos, the `SelectView` is instantiated as [`PraosChainSelectView`](https://github.com/intersectmbo/ouroboros-consensus/blob/010b374c54f4d2f485ab114f702db6ec3b7a8f95/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos/Common.hs#L65), containing the necessary information for the chain selection process, namely:
 - The length of the chain.
 - The slot number of the block.
 - The verification key of the block's issuer
 - A counter for blocks issued by a specific issuer within a KES period.
 - A Verifiable Random Function (VRF) output, used for tie-breaking.
+
+The `Ord` instance of `PraosChainSelectView` must be a total order (and in particular transitive). Currently there is [an edge case](https://github.com/IntersectMBO/ouroboros-consensus/issues/1075) that prevents this from being the case.
 
 The `LedgerView` type is a projection or summary of the ledger state,
 which the Consensus protocol requires for tasks such as leadership
@@ -213,48 +216,31 @@ The primary motivation for this restriction is to favor blocks that were diffuse
 
 ### On the Transitivity of Praos Chain Order
 
-Praos chain ordering is **not transitive**, regardless of the VRF tiebreaker flavor.
+Function `preferCandidate` is not defined in terms of the `Ord` instance of Praos' `SelectView` . This function is not transitive when using `RestrictedVRFTiebreaker`. However this does not constitute a problem.
 
-Consider the following select views where chains `A`, `B`, and `C` have the same length:
+To see why `RestrictedVRFTiebreaker` flavour breaks the transitivity of chain ordering, consider the following example where chains `D`, `E`, and `F` have the same length and different issuers, and assume `maxDist = 5` slots:
 
-|                 | A | B | C |
-|-----------------|---|---|---|
-| Issuer          | x | y | x |
-| Slot            | 0 | i | 1 |
-| `opcert` number | 2 | j | 1 |
-| VRF             | 3 | 2 | 1 |
-
-Lower-case letters stand for arbitrary values.
-
-In this example we have:
-
-- `B` is preferred over `A`, since `B` has lower VRF than `A`.
-- `C` is preferred over `B`, since `C` has lower VRF than `B`.
-- However `C` is **not** preferred over `A`, since they have the same issuer and slot, and therefore we prefer the chain with the highest `opcert` number (2), therefore `A` is preferred over `C`.
-
-Also, the `RestrictedVRFTiebreaker` flavour breaks the transitivity of chain ordering. To see this consider the following example where chains `D`, `E`, and `F` have the same length and different issuers, and assume `maxDist = 5` slots:
-
-|              | D | E | F |
-| ------------ | - | - | - |
-| Slot         | 0 | 3 | 6 |
-| VRF          | 3 | 2 | 1 |
+|      | A | B | C |
+|------|---|---|---|
+| Slot | 0 | 3 | 6 |
+| VRF  | 3 | 2 | 1 |
 
 
 We have that:
-- `E` is preferred over `D`, since `E` has lower VRF than `D` and `|0 - 3| <= 5`.
-- `F` is preferred over `E`, since `F` has lower VRF than `E` and `|3 - 6| <= 5`
-- However, `D` is **not** preferred over `F`, but instead `D` and `F` are equally preferred since `|0 - 6| > 5` which implies that the VRF values of `D` and `F` are not used.
+- `B` is preferred over `A`, since `B` has lower VRF than `A` and `|0 - 3| <= 5`.
+- `C` is preferred over `B`, since `C` has lower VRF than `B` and `|3 - 6| <= 5`
+- However, `C` is **not** preferred over `A`, but instead `A` and `C` are equally preferred since `|0 - 6| > 5` which implies that the VRF values of `A` and `C` are not used.
+
+It is worth noting that `RestrictedVRFTiebreaker` is used only for `preferCandidate`, but not for the `Ord` instance of `PraosChainSelectView`.
 
 Despite the non-transitivity, the fundamental Consensus properties, such as [Common Prefix](TODO-ref!), are not affected. This is because the primary factor for chain selection for a [caught-up](TODO-ref!) node remains the chain length, with longer chains always being preferred.
 The Ouroboros Praos authors make no assumptions about how nodes resolve ties.
 However, a non-transitive chain ordering brings the following complications:
 
-- **Implementation**: The use of `sortBy` from [`base`](https://hackage.haskell.org/package/base) in chain selection, which is typically expected to work with transitive relations, could become a concern. While preliminary property tests suggest it works for the current non-transitive order, there's a potential risk that future GHC implementations might behave in unexpected ways.
 - **Reasoning**: The non-transitive order can be very confusing for reasoning about anything related to chain order, as transitivity is an implicitly assumed property when working with order relations.
-This, in turn, leads to "obvious" properties failing to hold. For instance, the expectation that observing a node's selection over time yields a strictly improving sequence may not hold, as different observers could disagree on whether each selection is "strictly better" than the previous one. This non-objectivity can have practical effects, particularly for diffusion pipelining, which relies on a clear, consistent chain order.
+This, in turn, leads to "obvious" properties failing to hold. For instance, the expectation that observing a node's selection over time yields a strictly improving sequence may not hold, as different observers could disagree on whether each selection is "strictly better" than the previous one.
 - **Potential for Cycles**: The non-transitivity can conceptually give rise to "cycles" in preference, such as `A < B < C = A`. However, in practice, the node's implementation guarantees that it will never end up changing its selection in such a cycle because blocks already in the `VolatileDB` are not added again.
-
-See [this issue comment](https://github.com/IntersectMBO/ouroboros-consensus/issues/1075#issuecomment-3035911537) for potential approaches to restoring chain transitivity.
+In particular, the consistency of `ChainOrder` with `Ord` guarantees that we can never have `preferCandidate A B`, `preferCandidate B C`, but also `preferCandidate C A`.
 
 ### On The History Of Chain Ordering In Cardano
 
