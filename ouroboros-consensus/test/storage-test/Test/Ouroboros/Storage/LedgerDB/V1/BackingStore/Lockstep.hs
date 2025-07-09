@@ -458,7 +458,7 @@ instance
   observeReal ::
     Proxy (RealMonad IO ks vs d) ->
     LockstepAction (BackingStoreState ks vs d) a ->
-    Realized (RealMonad IO ks vs d) a ->
+    a ->
     BSObs ks vs d a
   observeReal _proxy = \case
     BSInitFromValues _ _ _ -> OEither . bimap OId OId
@@ -476,7 +476,7 @@ instance
   showRealResponse ::
     Proxy (RealMonad IO ks vs d) ->
     LockstepAction (BackingStoreState ks vs d) a ->
-    Maybe (Dict (Show (Realized (RealMonad IO ks vs d) a)))
+    Maybe (Dict (Show a))
   showRealResponse _proxy = \case
     BSInitFromValues _ _ _ -> Just Dict
     BSInitFromCopy _ _ -> Just Dict
@@ -697,8 +697,8 @@ instance InterpretOp Op (ModelValue (BackingStoreState ks vs d)) where
 runIO ::
   forall ks vs d a.
   LockstepAction (BackingStoreState ks vs d) a ->
-  LookUp (RealMonad IO ks vs d) ->
-  RealMonad IO ks vs d (Realized (RealMonad IO ks vs d) a)
+  LookUp ->
+  RealMonad IO ks vs d a
 runIO action lookUp = ReaderT $ \renv ->
   aux renv action
  where
@@ -748,8 +748,8 @@ runIO action lookUp = ReaderT $ \renv ->
       , reBackingStore = bsVar
       } = renv
 
-    lookUp' :: BSVar ks vs d x -> Realized (RealMonad IO ks vs d) x
-    lookUp' = lookUpGVar (Proxy @(RealMonad IO ks vs d)) lookUp
+    lookUp' :: BSVar ks vs d x -> x
+    lookUp' = realLookupVar lookUp
 
 catchErr :: forall m a. IOLike m => m a -> m (Either Err a)
 catchErr act =
