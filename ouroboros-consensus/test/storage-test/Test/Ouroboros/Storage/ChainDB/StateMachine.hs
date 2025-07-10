@@ -345,6 +345,8 @@ deriving instance
   (TestConstraints blk, Show it, Show flr) =>
   Show (Success blk it flr)
 
+instance ModelSupportsBlock TestBlock
+
 -- | Short-hand
 type TestIterator m blk = WithEq (Iterator m blk (AllComponents blk))
 
