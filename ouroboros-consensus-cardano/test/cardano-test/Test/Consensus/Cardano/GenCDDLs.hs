@@ -76,6 +76,7 @@ fixupBlockCDDL spec =
     -- For plutus, the type is actually `bytes`, but the distinct construct is
     -- for forcing generation of different values. See cardano-ledger#5054
     sed fp ["-i", "s/\\(conway\\.distinct_VBytes = \\)/\\1 bytes ;\\//g"]
+    sed fp ["-i", "s/\\(dijkstra\\.distinct_VBytes = \\)/\\1 bytes ;\\//g"]
     -- These 3 below are hardcoded for generation. See cardano-ledger#5054
     sed fp ["-i", "s/\\([yaoye]\\.address = \\)/\\1 bytes ;/g"]
     sed fp ["-i", "s/\\(reward_account = \\)/\\1 bytes ;/g"]
@@ -86,6 +87,8 @@ fixupBlockCDDL spec =
       , "s/unit_interval = #6\\.30(\\[\\n\\s*1,\\n\\s*2,\\n\\])/unit_interval = #6.30([uint, uint])/g"
       ]
 
+    -- for convenience, we use this test suite to generate the complete CDDL spec for manual testing.
+    -- while this sed replacement is not used in these tests, it is needed to validate some of the real blocks.
     sed fp ["-i", "s/\\(chain_code: bytes\\)/\\1, ;/g"]
     CDDLSpec <$> BS.readFile fp
 

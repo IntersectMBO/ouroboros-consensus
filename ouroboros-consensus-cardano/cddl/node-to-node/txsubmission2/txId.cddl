@@ -1,10 +1,12 @@
+; TODO(geo2a): why are this order? Why babbage is last?
 txId =
-  base.ns7<byronTxId,
+  base.ns8<byronTxId,
            shelley.transaction_id,
            allegra.transaction_id,
            mary.transaction_id,
            alonzo.transaction_id,
            conway.transaction_id,
+           dijkstra.transaction_id,
            babbage.transaction_id>
 
 byronTxId = [0, byron.txid]
@@ -19,4 +21,5 @@ byronTxId = [0, byron.txid]
 ;# include alonzo as alonzo
 ;# include babbage as babbage
 ;# include conway as conway
+;# include dijkstra as dijkstra
 ;# import base as base
