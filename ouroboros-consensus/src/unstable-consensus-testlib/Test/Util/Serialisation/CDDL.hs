@@ -7,9 +7,11 @@ module Test.Util.Serialisation.CDDL
   , CDDLsForNodeToNode (..)
   ) where
 
+import Control.Monad (join)
 import qualified Data.ByteString as BS
 import Data.Maybe (isJust)
 import qualified Data.Text as T
+import qualified System.Directory as D
 import qualified System.Environment as E
 import System.Exit
 import System.IO
@@ -47,12 +49,33 @@ cddlTest cborM cddl rule =
     BS.hPutStr h bs
     hClose h
     (code, _out, err) <-
-      readProcessWithExitCode "cuddle" ["validate-cbor", "-c", fp, "-r", T.unpack rule, cddl] mempty
+      readProcessWithExitCode "cuddle" (cuddleArgs fp (T.unpack rule) cddl) mempty
     case code of
       ExitFailure _ -> do
-        BS.writeFile "failing.cbor" bs
-        pure (Left err)
+        -- Copy the CBOR term and the CDDL file into a directory and
+        -- generate a script with a cuddle call that would lead to an error
+        errorReproducerDir <-
+          join $
+            dumpErrorReproducer <$> D.canonicalizePath fp <*> pure (T.unpack rule) <*> D.canonicalizePath cddl
+        pure (Left $ err <> " cuddle reproducer written to " <> errorReproducerDir)
       ExitSuccess -> pure (Right ())
+ where
+  cuddleArgs :: FilePath -> String -> FilePath -> [String]
+  cuddleArgs cborFile ruleName cddlFile = ["validate-cbor", "-c", cborFile, "-r", ruleName, cddlFile]
+
+  dumpErrorReproducer :: FilePath -> String -> FilePath -> IO FilePath
+  dumpErrorReproducer cborFile ruleName cddlFile = do
+    errorReproducerDir <- D.canonicalizePath $ "failing_cddl_tests"
+    D.createDirectoryIfMissing False errorReproducerDir
+    D.withCurrentDirectory errorReproducerDir $ do
+      failingCborFile <- D.canonicalizePath $ ruleName <> "_failing.cbor"
+      failingCddlFile <- D.canonicalizePath $ ruleName <> "_failing.cddl"
+      let failingCuddleCallFile = "call_cuddle_" <> ruleName <> "_failing.sh"
+          failingCuddleCall = unwords $ "cuddle" : (cuddleArgs failingCborFile ruleName failingCddlFile)
+      D.copyFile cborFile failingCborFile
+      D.copyFile cddlFile failingCddlFile
+      writeFile failingCuddleCallFile failingCuddleCall
+    pure errorReproducerDir
 
 -- | A collection of CDDL spec and the relevant rule to use
 data CDDLsForNodeToNode = CDDLsForNodeToNode
