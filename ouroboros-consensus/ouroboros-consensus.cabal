@@ -380,6 +380,7 @@ library unstable-consensus-testlib
     Test.Ouroboros.Consensus.DiffusionPipelining
     Test.Ouroboros.Consensus.Protocol
     Test.Ouroboros.Consensus.QuickCheck.Extras
+    Test.Ouroboros.Storage.TestBlock
     Test.Util.BoolProps
     Test.Util.ChainDB
     Test.Util.ChainUpdates
@@ -449,6 +450,7 @@ library unstable-consensus-testlib
     fs-api ^>=0.3,
     fs-sim ^>=0.3,
     generics-sop,
+    hashable,
     io-classes,
     io-sim,
     mempack,
@@ -717,7 +719,6 @@ test-suite storage-test
     Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog
     Test.Ouroboros.Storage.LedgerDB.V1.LMDB
     Test.Ouroboros.Storage.Orphans
-    Test.Ouroboros.Storage.TestBlock
     Test.Ouroboros.Storage.VolatileDB
     Test.Ouroboros.Storage.VolatileDB.Mock
     Test.Ouroboros.Storage.VolatileDB.Model
@@ -728,10 +729,8 @@ test-suite storage-test
     aeson,
     base,
     bifunctors,
-    binary,
     bytestring,
     cardano-binary,
-    cardano-crypto-class ^>=2.2,
     cardano-ledger-binary:testlib,
     cardano-ledger-core:{cardano-ledger-core, testlib},
     cardano-slotting:{cardano-slotting, testlib},
@@ -746,7 +745,6 @@ test-suite storage-test
     fs-api ^>=0.3,
     fs-sim ^>=0.3,
     generics-sop,
-    hashable,
     io-classes,
     io-sim,
     mempack,

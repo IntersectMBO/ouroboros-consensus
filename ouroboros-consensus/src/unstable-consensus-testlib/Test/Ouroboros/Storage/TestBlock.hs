@@ -125,7 +125,6 @@ import qualified Ouroboros.Network.Mock.Chain as Chain
 import System.FS.API.Lazy
 import Test.Cardano.Slotting.Numeric ()
 import Test.Cardano.Slotting.TreeDiff ()
-import Test.Ouroboros.Storage.ChainDB.Model
 import Test.QuickCheck
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Orphans.SignableRepresentation ()
@@ -934,8 +933,6 @@ deriving instance ToExpr TestBlockOtherHeaderEnvelopeError
 deriving instance ToExpr (HeaderEnvelopeError TestBlock)
 deriving instance ToExpr BftValidationErr
 deriving instance ToExpr (ExtValidationError TestBlock)
-
-instance ModelSupportsBlock TestBlock
 
 deriving anyclass instance ToExpr FsPath
 deriving anyclass instance ToExpr BlocksPerFile
