@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ViewPatterns #-}
 
 module Test.Consensus.Cardano.GenCDDLs (withCDDLs) where
@@ -41,7 +42,7 @@ withCDDLs f =
       withResource
         ( do
             probeTools
-            setupCDDLCEnv
+            D.getCurrentDirectory >>= setupCDDLCEnv
 
             ntnBlock <- cddlc "cddl/node-to-node/blockfetch/block.cddl"
             ntnBlock' <- fixupBlockCDDL ntnBlock
@@ -89,8 +90,8 @@ fixupBlockCDDL spec =
     CDDLSpec <$> BS.readFile fp
 
 -- | This sets the environment variables needed for `cddlc` to run properly.
-setupCDDLCEnv :: IO ()
-setupCDDLCEnv = do
+setupCDDLCEnv :: FilePath -> IO ()
+setupCDDLCEnv tempDirectory = do
   byron <- map takePath <$> Byron.readByronCddlFileNames
   shelley <- map takePath <$> Shelley.readShelleyCddlFileNames
   allegra <- map takePath <$> Allegra.readAllegraCddlFileNames
@@ -98,6 +99,13 @@ setupCDDLCEnv = do
   alonzo <- map takePath <$> Alonzo.readAlonzoCddlFileNames
   babbage <- map takePath <$> Babbage.readBabbageCddlFileNames
   conway <- map takePath <$> Conway.readConwayCddlFileNames
+  dijkstra <- copyConwayAsDijkstra tempDirectory conway
+  -- TODO(geo2a): once Ledger adds Dijkstra CDDLs, use the following
+  --              code instead of the line above and delete
+  --              the copyConwayAsDijkstra function.
+  --              This will also get rid of the spurious dijkstra.cddl
+  --              appearing in ouroboros-consensus-cardano
+  -- dijkstra <- map takePath <$> Dijkstra.readConwayCddlFileNames
 
   localDataDir <- windowsPathHack <$> getDataDir
   let local_paths =
@@ -107,10 +115,18 @@ setupCDDLCEnv = do
       include_path =
         mconcat $
           L.intersperse ":" $
-            map (mconcat . L.intersperse ":") [byron, shelley, allegra, mary, alonzo, babbage, conway]
+            map (mconcat . L.intersperse ":") [byron, shelley, allegra, mary, alonzo, babbage, conway, dijkstra]
               <> local_paths
 
   E.setEnv "CDDL_INCLUDE_PATH" (include_path <> ":")
+ where
+  copyConwayAsDijkstra :: FilePath -> [FilePath] -> IO [FilePath]
+  copyConwayAsDijkstra dijkstraDir =
+    \case
+      [conwayDir] -> do
+        D.copyFile (conwayDir F.</> "conway.cddl") (dijkstraDir F.</> "dijkstra.cddl")
+        pure [dijkstraDir]
+      other -> error $ unwords $ "Invalid Conway CDDL directory path: " : other
 
 -- | Call @sed@ on the given file with the given args
 sed :: FilePath -> [String] -> IO ()
