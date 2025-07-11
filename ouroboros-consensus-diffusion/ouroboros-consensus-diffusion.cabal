@@ -230,7 +230,6 @@ test-suite consensus-test
   other-modules:
     Test.Consensus.BlockTree
     Test.Consensus.GSM
-    Test.Consensus.GSM.Model
     Test.Consensus.Genesis.Setup
     Test.Consensus.Genesis.Setup.Classifiers
     Test.Consensus.Genesis.Setup.GenChains
@@ -245,7 +244,6 @@ test-suite consensus-test
     Test.Consensus.HardFork.Combinator
     Test.Consensus.HardFork.Combinator.A
     Test.Consensus.HardFork.Combinator.B
-    Test.Consensus.IOSimQSM.Test.StateMachine.Sequential
     Test.Consensus.Network.AnchoredFragment.Extras
     Test.Consensus.Node
     Test.Consensus.PeerSimulator.BlockFetch
@@ -304,10 +302,11 @@ test-suite consensus-test
     ouroboros-network-framework,
     ouroboros-network-mock,
     ouroboros-network-protocols,
-    pretty-show,
-    quickcheck-state-machine:no-vendored-treediff,
+    pretty,
+    quickcheck-dynamic ^>=4.0.0,
     quiet,
     random,
+    reflection,
     resource-registry,
     serialise,
     si-timers,

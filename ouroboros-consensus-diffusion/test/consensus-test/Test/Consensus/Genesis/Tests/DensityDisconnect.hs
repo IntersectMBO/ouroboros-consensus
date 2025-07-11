@@ -40,7 +40,7 @@ import Ouroboros.Consensus.Genesis.Governor
   , densityDisconnect
   , sharedCandidatePrefix
   )
-import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
+import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.MiniProtocol.ChainSync.Client
   ( ChainSyncClientException (..)
   , ChainSyncState (..)
@@ -80,19 +80,17 @@ import Test.Consensus.PointSchedule.SinglePeer
   , scheduleHeaderPoint
   , scheduleTipPoint
   )
+import Test.Ouroboros.Consensus.QuickCheck.Extras
+  ( unsafeMapSuchThatJust
+  )
 import Test.QuickCheck
 import qualified Test.QuickCheck as QC
-import Test.QuickCheck.Extras (unsafeMapSuchThatJust)
 import Test.Tasty
 import Test.Tasty.QuickCheck
 import Test.Util.Header (attachSlotTimeToFragment)
 import Test.Util.Orphans.IOLike ()
 import Test.Util.PartialAccessors
-import Test.Util.TersePrinting
-  ( terseHFragment
-  , terseHWTFragment
-  , terseHeader
-  )
+import Test.Util.TersePrinting (terseHFragment, terseHWTFragment, terseHeader)
 import Test.Util.TestBlock (TestBlock, singleNodeTestConfig)
 import Test.Util.TestEnv
   ( adjustQuickCheckMaxSize

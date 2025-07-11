@@ -1,4 +1,4 @@
-module Test.QuickCheck.Extras
+module Test.Ouroboros.Consensus.QuickCheck.Extras
   ( sized1
   , unsafeMapSuchThatJust
   ) where
