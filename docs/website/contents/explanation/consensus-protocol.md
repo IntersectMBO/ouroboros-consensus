@@ -251,5 +251,55 @@ The relevant changes to the chain order occurred in these PRs in chronological o
    This means that the order still was total at this point, also see below.
  - [ouroboros-network#2348](https://github.com/IntersectMBO/ouroboros-network/pull/2348) mostly did a change unrelated to the purpose of this document, but crucially, it swapped the order in which the VRF and opcert number comparison are done, introducing the current non-transitivity. Currently we do not prioritize the adoption of the node's own blocks. See [this comment](https://github.com/IntersectMBO/ouroboros-network/issues/1286#issuecomment-777614715), which mentions that this is not crucial for correctness, however the implications for incentives are still unclear.
 
-
 ## Chain Selection
+
+[Chain selection](https://cardano-scaling.github.io/cardano-blueprint/consensus/chainsel.html) is the process by which a node determines the best valid chain it has observed and adopted so far, among a set of competing chains. The node's internal storage layer maintains this chain, which is divided into two main parts:
+
+- The immutable part of the chain consists of blocks that are no longer subject to rollback, as they have been confirmed by at least `k` blocks. These blocks are stored in the [ImmutableDB](TODO-ref!)
+- The volatile part of the chain contains up to the newest `k` blocks of the current selection. These blocks are stored in the [`VolatileDB`](TODO-ref!), which can also contain multiple competing forks of the chain, including those the node has switched away from or might switch to in the future, as well as disconnected blocks received out of order. These volatile blocks are still subject to potential rollback if the chain selection process leads to the adoption of a more preferable fork. Conversely, blocks in the volatile part that are not part of the current chain, might become part of it as more block are added to the `VolatileDB`.
+
+The in-memory representation of the current chain fragment (the node's "current selection") is considered the best possible path through the VolatileDB, and it is anchored at the immutable tip of the chain (the most recent "immutable" block, which is the tip of the `ImmutableDB`).
+
+The chain selection process may result in the node's current chain either being extended by new blocks or the node performing a switch to a new fork. Furthermore, as the current selection grows, blocks that were previously part of the volatile portion of the chain (stored in the `VolatileDB`) may transition to the immutable part as they become confirmed by at least `k` blocks. See [this section](TODO-ref-to-garbage-collection) for more information on how blocks transition from the `VolatileDB` to the `ImmutableDB`.
+
+Chain selection is the responsibility of the chain database. This is because the `ChainDB` has knowledge of when new blocks arrive and which candidates exist in the database.
+
+The core logic for chain selection is implemented in the [`chainSelectionForBlock`](https://github.com/intersectmbo/ouroboros-consensus/blob/fcb4615f1d40f3baa24f9f1ac69d1feaaaf7bd9f/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L521) function. It uses the types and classes discussed in this section which abstract away the specifics of the consensus protocol being used.
+
+The gist of chain selection within a Cardano node involves identifying the best valid chain from a collection of potential chain fragments.
+These fragments are formed by paths through the `VolatileDB` that originate from the immutable tip.
+Candidates are sorted based on the `SelectView`, and the adoption of a new chain is ultimately decided by the [`ChainOrder`](#chainorder) defined by the specific protocol.
+
+A significant part of the decision-making process for adopting alternative chains is managed by the [`switchToAFork`](https://github.com/intersectmbo/ouroboros-consensus/blob/fcb4615f1d40f3baa24f9f1ac69d1feaaaf7bd9f/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L776) function. It explores potential forks originating from the newly added block to determine whether a chain switch is required.
+
+During chain selection, the candidates are validated according to the [chain validity](#chain-validity) rules.
+
+
+### Triggering Chain Selection
+
+Chain selection is triggered:
+
+- During initial chain selection via [`initialChainSelection`](https://github.com/intersectmbo/ouroboros-consensus/blob/fcb4615f1d40f3baa24f9f1ac69d1feaaaf7bd9f/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L112).
+
+- After initialization, by a background process called [`addBlockRunner`](https://github.com/intersectmbo/ouroboros-consensus/blob/fcb4615f1d40f3baa24f9f1ac69d1feaaaf7bd9f/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/Background.hs#L514).
+  This process calls [`chainSelSync`](https://github.com/intersectmbo/ouroboros-consensus/blob/fcb4615f1d40f3baa24f9f1ac69d1feaaaf7bd9f/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L339), which ensures that the `ChainDB` continuously recomputes the optimal path (according to the chain validity and chain order rules) through the `VolatileDB` with each block addition.
+
+When a new block is added to the `ChainDB`, it is first written to disk and then chain selection is triggered. The process involves adding the block to a queue ([`cdbChainSelQueue`](https://github.com/intersectmbo/ouroboros-consensus/blob/fcb4615f1d40f3baa24f9f1ac69d1feaaaf7bd9f/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/Types.hs#L341)), from which the `addBlockRunner` thread dequeues blocks.
+
+Blocks are added to `cdbChainSelQueue` whenever a new block is downloaded via the `BlockFetch` component or minted locally.
+
+The `ChainDB` assumes that no blocks from the future are added to the `cdbChainSelQueue`. The `ChainSync` process enforces this constraint.
+However, this precondition is currently not checked [during initialization](https://github.com/intersectmbo/ouroboros-consensus/blob/fcb4615f1d40f3baa24f9f1ac69d1feaaaf7bd9f/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L136).
+
+### Chain selection and LoE
+
+During the node's startup and initial chain selection phase, the `ChainDB` [explicitly prevents](https://github.com/intersectmbo/ouroboros-consensus/blob/fcb4615f1d40f3baa24f9f1ac69d1feaaaf7bd9f/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L231) selecting more than `k` blocks in maximal candidates if [LoE](TODO-ref!) (Limit on Eagerness) is enabled.
+This precaution helps avoid accidentally adopting an adversarial chain from the `VolatileDB`, a chain that LoE would have rejected during live syncing.
+
+When a new block (or part of a fork) would extend the current chain beyond the LoE limit, it is added to the `ChainDB`'s database, but it does not immediately trigger a chain selection switch or extension.
+This control mechanism is crucial for preventing the premature adoption of potentially undesirable chains.
+
+Blocks that were previously added to the database but not selected due to the LoE must be reprocessed by chain selection once the LoE fragment advances.
+A background thread ([`watcher`](https://github.com/intersectmbo/ouroboros-consensus/blob/fcb4615f1d40f3baa24f9f1ac69d1feaaaf7bd9f/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Genesis/Governor.hs#L122)) handles this by polling candidate fragments and explicitly sending `ChainSelReprocessLoEBlocks` messages to the `cdbChainSelQueue`, ensuring that these blocks are reconsidered.
+
+When chain selection evaluates candidate fragments (potential forks to switch to), these fragments are [trimmed](https://github.com/intersectmbo/ouroboros-consensus/blob/fcb4615f1d40f3baa24f9f1ac69d1feaaaf7bd9f/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L745) to respect the LoE.
