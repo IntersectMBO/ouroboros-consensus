@@ -317,3 +317,37 @@ Block forging invokes `forecastFor` on the `LedgerView`. If this operation takes
 If `checkLeader` confirms the node is a leader, a block is forged, extending the current [selected chain](#chain-selection). Transactions are selected from a [mempool snapshot](TODO-ref!), which is a sequence of valid transactions consistent with the ledger state upon which the block will be built. For the purposes of block forging and the consensus protocol, these transactions are irrelevant as long as they are _valid_.
 
 The forged block is added to the `ChainDB`, which triggers chain selection. The block is treated like any external block to ensure robustness, allowing both the forging and chain selection logic to independently validate and agree on the block’s correctness.
+
+## Security Parameter `k`
+
+The `k` parameter, often referred to as the security parameter, is a fundamental constant in the Ouroboros consensus protocols. On Cardano mainnet, `k` is set to 2160 blocks. This parameter underpins various aspects of a Cardano node's operation, from chain selection and storage to security guarantees and performance.
+
+For Ouroboros Praos, used in Shelley-based eras, theoretical proofs guarantee that within `3k/f` slots, the chain will grow by at least `k` blocks.
+
+### Chain Immutability and Volatility
+
+The blockchain in a Cardano node is conceptually divided into an immutable part and a volatile part. A block becomes part of the immutable portion once it has been confirmed by at least `k` subsequent blocks. This property, known as _Common Prefix_, is a security guarantee of Ouroboros Praos. Immutable blocks are stored in the [ImmutableDB](TODO-ref).
+
+The volatile part consists of the newest `k` blocks, which remain subject to rollback if a more preferable chain is discovered. These blocks, along with other potential fork candidates, are stored in the `VolatileDB`.
+
+### Chain Selection and Rollbacks
+
+The `ouroboros-consensus` implementation enforces a strict rule: a node will never switch to a chain that forks more than `k` blocks deep from its current tip.
+
+When a node is [caught up](TODO-ref), any candidate chains requiring a rollback exceeding `k` blocks are excluded from consideration. This constraint limits the number of ledger states that need to be retained to evaluate forks. Additionally, it prevents arbitrary-length rollbacks thus protecting against potential [attacks](#network-security-and-performance) that rely on this.
+
+When a node is [syncing](TODO-ref) with the chain, an adversary may present it with an alternative chain that forks more than `k` blocks from the current tip. However, the [Genesis](TODO-ref) syncing protocol ensures that a node joining the network does not switch to an adversarial chain.
+
+Genesis relies on the property that an honest chain is always denser than any adversarial chain within a window of `s` slots, which in practice is defined as `3k/f`, where `f` is the [active slot coefficient](TODO-ref).
+
+### Ledger and Protocol State Management
+
+The LedgerDB (Ledger Database) is designed to retain the last `k` ledger states (specifically, `k + 1` states including the anchor). This facilitates fast rollbacks and the evaluation of potential forks.
+
+To validate headers, the system must [forecast](./ledger-interaction.md#forecasting-and-the-forecast-range) a `LedgerView` for future slots. This process requires the ledger to look ahead `k+1` blocks  from a given reference point, providing sufficient information to enable a node to see if a candidate chain is better.
+
+### Network Security and Performance
+
+The `k` parameter is fundamental for bounding the work a node performs and its memory and storage requirements. This is crucial for preventing denial-of-service (DoS) attacks. Without the rollback constraint, an adversary could force a node to store unbounded amounts of data or perform unbounded validation work.
+
+For Cardano’s Praos implementation, `k` was specifically set to 2160 to help mitigate the risk of [grinding attacks](TODO-ref).
