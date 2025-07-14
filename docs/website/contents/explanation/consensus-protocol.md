@@ -351,3 +351,24 @@ To validate headers, the system must [forecast](./ledger-interaction.md#forecast
 The `k` parameter is fundamental for bounding the work a node performs and its memory and storage requirements. This is crucial for preventing denial-of-service (DoS) attacks. Without the rollback constraint, an adversary could force a node to store unbounded amounts of data or perform unbounded validation work.
 
 For Cardano’s Praos implementation, `k` was specifically set to 2160 to help mitigate the risk of [grinding attacks](TODO-ref).
+
+## Consensus Protocols Used in Cardano
+
+### PBFT
+
+In Cardano's early days, the system utilized Ouroboros Permissive BFT (PBFT) as its consensus algorithm, serving as a transitional protocol from the original Ouroboros Classic to the more advanced Ouroboros Praos.
+This choice ensured backward compatibility with the Byron era of the blockchain following the [original implementation](https://github.com/input-output-hk/cardano-sl/) rewrite, allowing the development effort to focus on the new implementation (including the new TPraos protocol).
+
+The use of PBFT in Byron reflected a more centralized phase for Cardano, with initial block production relying on a small set of core nodes.
+The eventual transition to a more decentralized system, where stake pools became responsible for block creation, was a gradual process managed by a [`d` parameter](https://github.com/intersectmbo/cardano-ledger/releases/latest/download/shelley-delegation.pdf) that controlled the proportion of slots assigned to bootstrap keys versus stake pools.
+
+Unlike the strict round-robin leader schedule of pure BFT, Permissive BFT relaxed this requirement, allowing blocks to be signed by any of the known core nodes.
+However, it imposed a limit on the number of signatures a given node could provide within a specific window of blocks; exceeding this threshold would result in the block being rejected as invalid.
+This threshold was set at 0.22, a value chosen to balance compatibility with Ouroboros Classic chains while still restricting malicious behavior.
+
+Although the Ouroboros BFT protocol did not impose a rollback limit of `k` blocks, the Consensus implementation of PBFT adheres to this bound for the reasons outlined in [this section](#security-parameter-k). Importantly, this constraint does not fundamentally change the protocol's behavior.
+
+In situations where multiple blocks could exist in the same slot, PBFT allowed for arbitrary tie-breaking. The chain selection order prioritized chain length, followed by the `opcert` number, and then the VRF value.
+
+The Consensus instances for the Byron era can be found in [this directory](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/src/byron/Ouroboros/Consensus/Byron).
+The specification for this protocol can be found [here](https://github.com/intersectmbo/cardano-ledger/releases/latest/download/byron-blockchain.pdf), and the research paper describing the BFT protocol can be found [here](https://iohk.io/en/research/library/papers/ouroboros-bft-a-simple-byzantine-fault-tolerant-consensus-protocol/).
