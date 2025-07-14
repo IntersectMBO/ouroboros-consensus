@@ -303,3 +303,17 @@ Blocks that were previously added to the database but not selected due to the Lo
 A background thread ([`watcher`](https://github.com/intersectmbo/ouroboros-consensus/blob/fcb4615f1d40f3baa24f9f1ac69d1feaaaf7bd9f/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Genesis/Governor.hs#L122)) handles this by polling candidate fragments and explicitly sending `ChainSelReprocessLoEBlocks` messages to the `cdbChainSelQueue`, ensuring that these blocks are reconsidered.
 
 When chain selection evaluates candidate fragments (potential forks to switch to), these fragments are [trimmed](https://github.com/intersectmbo/ouroboros-consensus/blob/fcb4615f1d40f3baa24f9f1ac69d1feaaaf7bd9f/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L745) to respect the LoE.
+
+## Block Forging
+
+Block forging is a single-threaded process initiated at the beginning of each slot. Its primary purpose is to determine whether the node is elected to mint a block and, if so, to create and submit that block to the chain. The process is defined in [`forkBlockForging`](https://github.com/intersectmbo/ouroboros-consensus/blob/6c1f0e293b50b898e69116df0355595004432077/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/NodeKernel.hs#L491).
+
+Block forging logic relies on the `ConsensusProtocol` instance of the protocol in use to determine if the node is a leader for the current slot ([`checkIsLeader`](https://github.com/intersectmbo/ouroboros-consensus/blob/6c1f0e293b50b898e69116df0355595004432077/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs#L142)).
+
+The [`blockForgingController`](https://github.com/intersectmbo/ouroboros-consensus/blob/6c1f0e293b50b898e69116df0355595004432077/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/NodeKernel.hs#L375) function uses [`BlockChainTime`](https://github.com/intersectmbo/ouroboros-consensus/blob/6c1f0e293b50b898e69116df0355595004432077/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/BlockchainTime/API.hs#L23) to monitor the current slot.
+
+Block forging invokes `forecastFor` on the `LedgerView`. If this operation takes too long, it can delay block production. Note that if it’s not possible to forecast to the current slot, then forging a block is not possible.
+
+If `checkLeader` confirms the node is a leader, a block is forged, extending the current [selected chain](#chain-selection). Transactions are selected from a [mempool snapshot](TODO-ref!), which is a sequence of valid transactions consistent with the ledger state upon which the block will be built. For the purposes of block forging and the consensus protocol, these transactions are irrelevant as long as they are _valid_.
+
+The forged block is added to the `ChainDB`, which triggers chain selection. The block is treated like any external block to ensure robustness, allowing both the forging and chain selection logic to independently validate and agree on the block’s correctness.
