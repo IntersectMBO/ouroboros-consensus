@@ -372,3 +372,16 @@ In situations where multiple blocks could exist in the same slot, PBFT allowed f
 
 The Consensus instances for the Byron era can be found in [this directory](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/src/byron/Ouroboros/Consensus/Byron).
 The specification for this protocol can be found [here](https://github.com/intersectmbo/cardano-ledger/releases/latest/download/byron-blockchain.pdf), and the research paper describing the BFT protocol can be found [here](https://iohk.io/en/research/library/papers/ouroboros-bft-a-simple-byzantine-fault-tolerant-consensus-protocol/).
+
+### TPraos
+
+Ouroboros Transitional Praos (TPraos) served as an intermediate consensus protocol in Cardano, bridging the gap between the initial, more centralized Byron era (which used Ouroboros Permissive BFT) and the fully decentralized Ouroboros Praos.
+Introduced for the Shelley-based eras, TPraos was designed to facilitate a smooth transition to decentralization.
+
+A key feature of TPraos was the `d` parameter, which controlled the proportion of slots assigned to core bootstrap keys versus those elected by stake pools.
+Starting at `d=1` (fully centralized bootstrap keys) and gradually decreasing to `d=0` (full decentralization), this parameter enabled a controlled handover of block production to the broader network of stake pools.
+For any given `d` value, the system would perform leader election according to Ouroboros Praos rules for all slots, but then override a `d`-fraction of these slots, assigning them to the old core nodes.
+
+Like its successor, Praos, TPraos relies on a Verifiable Random Function (VRF) to determine slot leadership in a publicly verifiable yet unpredictable manner.
+
+The TPraos related instances for Consensus can be found [here](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/TPraos.hs).
