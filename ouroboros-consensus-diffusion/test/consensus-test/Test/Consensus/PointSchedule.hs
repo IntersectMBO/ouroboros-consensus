@@ -1,9 +1,12 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -45,6 +48,8 @@ module Test.Consensus.PointSchedule
   , prettyPointSchedule
   , stToGen
   , uniformPoints
+  , ChainSyncTimeout (..)
+  , timeLimitsChainSync
   ) where
 
 import Cardano.Ledger.BaseTypes (unNonZero)
@@ -63,11 +68,11 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes, fromMaybe, mapMaybe)
 import Data.Time (DiffTime)
 import Data.Word (Word64)
+import Network.TypedProtocol
 import Ouroboros.Consensus.Block.Abstract (withOriginToMaybe)
 import Ouroboros.Consensus.Ledger.SupportsProtocol
   ( GenesisWindow (..)
   )
-import Ouroboros.Consensus.Network.NodeToNode (ChainSyncTimeout (..))
 import Ouroboros.Consensus.Protocol.Abstract
   ( SecurityParam (SecurityParam)
   , maxRollbacks
@@ -79,7 +84,9 @@ import Ouroboros.Consensus.Util.Condense
   )
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.Block (SlotNo (..), blockSlot)
+import Ouroboros.Network.Driver.Limits (ProtocolTimeLimits (..))
 import Ouroboros.Network.Point (withOrigin)
+import Ouroboros.Network.Protocol.ChainSync.Type
 import System.Random.Stateful (STGenM, StatefulGen, runSTGen_)
 import qualified System.Random.Stateful as Random
 import Test.Consensus.BlockTree
@@ -555,6 +562,43 @@ data BlockFetchTimeout = BlockFetchTimeout
   , streamingTimeout :: Maybe DiffTime
   }
 
+-- | Configurable chain-sync timeouts
+data ChainSyncTimeout = ChainSyncTimeout
+  { canAwaitTimeout :: Maybe DiffTime
+  , intersectTimeout :: Maybe DiffTime
+  , mustReplyTimeout :: Maybe DiffTime
+  , idleTimeout :: Maybe DiffTime
+  }
+
+-- | Time Limits
+--
+-- > 'TokIdle'               'waitForever' (ie never times out)
+-- > 'TokNext TokCanAwait'   the given 'canAwaitTimeout'
+-- > 'TokNext TokMustReply'  the given 'mustReplyTimeout'
+-- > 'TokIntersect'          the given 'intersectTimeout'
+timeLimitsChainSync ::
+  forall header point tip.
+  ChainSyncTimeout ->
+  ProtocolTimeLimits (ChainSync header point tip)
+timeLimitsChainSync csTimeouts = ProtocolTimeLimits stateToLimit
+ where
+  ChainSyncTimeout
+    { canAwaitTimeout
+    , intersectTimeout
+    , mustReplyTimeout
+    , idleTimeout
+    } = csTimeouts
+
+  stateToLimit ::
+    forall (st :: ChainSync header point tip).
+    ActiveState st =>
+    StateToken st -> Maybe DiffTime
+  stateToLimit SingIdle = idleTimeout
+  stateToLimit (SingNext SingCanAwait) = canAwaitTimeout
+  stateToLimit (SingNext SingMustReply) = mustReplyTimeout
+  stateToLimit SingIntersect = intersectTimeout
+  stateToLimit a@SingDone = notActiveState a
+
 -- | All the data used by point schedule tests.
 data GenesisTest blk schedule = GenesisTest
   { gtSecurityParam :: SecurityParam
@@ -654,20 +698,22 @@ ensureScheduleDuration gt PointSchedule{psSchedule, psStartOrder, psMinEndTime} 
     }
  where
   endingDelay =
-    let cst = gtChainSyncTimeouts gt
-        bft = gtBlockFetchTimeouts gt
-        bfGracePeriodDelay = fromIntegral adversaryCount * 10
-     in 1
-          + bfGracePeriodDelay
-          + fromIntegral peerCount
-            * maximum
-              ( 0
-                  : catMaybes
-                    [ canAwaitTimeout cst
-                    , intersectTimeout cst
-                    , busyTimeout bft
-                    , streamingTimeout bft
-                    ]
-              )
+    let
+      cst = gtChainSyncTimeouts gt
+      bft = gtBlockFetchTimeouts gt
+      bfGracePeriodDelay = fromIntegral adversaryCount * 10
+     in
+      1
+        + bfGracePeriodDelay
+        + fromIntegral peerCount
+          * maximum
+            ( 0
+                : catMaybes
+                  [ canAwaitTimeout cst
+                  , intersectTimeout cst
+                  , busyTimeout bft
+                  , streamingTimeout bft
+                  ]
+            )
   peerCount = length (peersList psSchedule)
   adversaryCount = Map.size (adversarialPeers psSchedule)

@@ -14,6 +14,8 @@ let
   };
   hsPkgs = haskell-nix.cabalProject {
     src = ./..;
+    index-state = "2025-07-14T12:41:02Z";
+    index-sha256 = "sha256-T95ADIwRyYlG41AHjkxgezWRwfMqg+a1DGlVhACwtC8=";
     compiler-nix-name = "ghc967";
     flake.variants = {
       ghc910 = { compiler-nix-name = lib.mkForce "ghc9102"; };
