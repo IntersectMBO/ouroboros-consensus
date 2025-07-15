@@ -15,12 +15,12 @@
 
 module Ouroboros.Consensus.Shelley.Eras
   ( -- * Eras based on the Shelley ledger
-    AllegraEra
+    ShelleyEra
+  , AllegraEra
+  , MaryEra
   , AlonzoEra
   , BabbageEra
   , ConwayEra
-  , MaryEra
-  , ShelleyEra
   , DijkstraEra
 
     -- * Shelley-based era
