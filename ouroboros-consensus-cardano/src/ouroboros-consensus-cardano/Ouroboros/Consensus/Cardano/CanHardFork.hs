@@ -128,7 +128,7 @@ type CardanoHardForkConstraints c =
 --     the calculation of later rewards. In this transition, we consume the
 --     'shelleyToAllegraAVVMsToDelete' as deletions in the ledger tables.
 instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
-  type HardForkTxMeasure (CardanoEras c) = ConwayMeasure
+  type HardForkTxMeasure (CardanoEras c) = DijkstraMeasure
 
   hardForkEraTranslation =
     EraTranslation
@@ -227,7 +227,7 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
       `o` fromAlonzo
       `o` fromConway
       `o` fromConway
-      `o` fromConway
+      `o` fromDijkstra
       `o` nil
    where
     nil :: SOP.NS f '[] -> a
@@ -243,10 +243,11 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
       SOP.Z (WrapTxMeasure x) -> f x
       SOP.S y -> g y
 
-    fromByteSize :: IgnoringOverflow ByteSize32 -> ConwayMeasure
+    fromByteSize :: IgnoringOverflow ByteSize32 -> DijkstraMeasure
     fromByteSize x = fromAlonzo $ AlonzoMeasure x mempty
     fromAlonzo x = fromConway $ ConwayMeasure x mempty
-    fromConway x = x
+    fromConway x = fromDijkstra $ DijkstraMeasure x
+    fromDijkstra x = x
 
 class SelectView (BlockProtocol blk) ~ PraosChainSelectView c => HasPraosSelectView c blk
 instance SelectView (BlockProtocol blk) ~ PraosChainSelectView c => HasPraosSelectView c blk

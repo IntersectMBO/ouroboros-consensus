@@ -33,6 +33,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Mempool
     -- * Exported for tests
   , AlonzoMeasure (..)
   , ConwayMeasure (..)
+  , DijkstraMeasure (..)
   , fromExUnits
   ) where
 
@@ -628,6 +629,41 @@ instance
 
 -----
 
+newtype DijkstraMeasure = DijkstraMeasure
+  { conwayMeasure :: ConwayMeasure
+  }
+  deriving stock (Eq, Generic, Show)
+  deriving anyclass NoThunks
+  deriving newtype (Semigroup, Monoid, HasByteSize, TxMeasureMetrics)
+  deriving
+    Measure
+    via (InstantiatedAt Generic DijkstraMeasure)
+
+blockCapacityDijkstraMeasure ::
+  forall proto era mk.
+  ( ShelleyCompatible proto era
+  , L.AlonzoEraPParams era
+  ) =>
+  TickedLedgerState (ShelleyBlock proto era) mk ->
+  DijkstraMeasure
+blockCapacityDijkstraMeasure = DijkstraMeasure . blockCapacityConwayMeasure
+
+txMeasureDijkstra ::
+  forall proto era.
+  ( ShelleyCompatible proto era
+  , L.AlonzoEraTxWits era
+  , L.BabbageEraTxBody era
+  , ExUnitsTooBigUTxO era
+  , MaxTxSizeUTxO era
+  , TxRefScriptsSizeTooBig era
+  ) =>
+  TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
+  GenTx (ShelleyBlock proto era) ->
+  V.Validation (TxErrorSG era) DijkstraMeasure
+txMeasureDijkstra st tx = DijkstraMeasure <$> txMeasureConway st tx -- TODO(geo2a): eta-reduce
+
+-----
+
 data ConwayMeasure = ConwayMeasure
   { alonzoMeasure :: !AlonzoMeasure
   , refScriptsSize :: !(IgnoringOverflow ByteSize32)
@@ -769,6 +805,6 @@ instance
   ShelleyCompatible p DijkstraEra =>
   TxLimits (ShelleyBlock p DijkstraEra)
   where
-  type TxMeasure (ShelleyBlock p DijkstraEra) = ConwayMeasure
-  txMeasure _cfg st tx = runValidation $ txMeasureConway st tx
-  blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure
+  type TxMeasure (ShelleyBlock p DijkstraEra) = DijkstraMeasure
+  txMeasure _cfg st tx = runValidation $ txMeasureDijkstra st tx
+  blockCapacityTxMeasure _cfg = blockCapacityDijkstraMeasure
