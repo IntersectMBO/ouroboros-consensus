@@ -375,7 +375,7 @@ The specification for this protocol can be found [here](https://github.com/inter
 
 ### TPraos
 
-Ouroboros Transitional Praos (TPraos) served as an intermediate consensus protocol in Cardano, bridging the gap between the initial, more centralized Byron era (which used Ouroboros Permissive BFT) and the fully decentralized Ouroboros Praos.
+Starting with the Shelley era, Ouroboros Transitional Praos (TPraos) served as an intermediate consensus protocol in Cardano, bridging the gap between the initial, more centralized Byron era (which used Ouroboros Permissive BFT) and the fully decentralized Ouroboros Praos.
 Introduced for the Shelley-based eras, TPraos was designed to facilitate a smooth transition to decentralization.
 
 A key feature of TPraos was the `d` parameter, which controlled the proportion of slots assigned to core bootstrap keys versus those elected by stake pools.
@@ -384,4 +384,22 @@ For any given `d` value, the system would perform leader election according to O
 
 Like its successor, Praos, TPraos relies on a Verifiable Random Function (VRF) to determine slot leadership in a publicly verifiable yet unpredictable manner.
 
-The TPraos related instances for Consensus can be found [here](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/TPraos.hs).
+The TPraos related instances for Consensus can be found [here](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/TPraos.hs). For its formal definition, refer to Section 12 of the [Shelley formal specification](https://github.com/intersectmbo/cardano-ledger/releases/latest/download/shelley-ledger.pdf).
+
+### Praos
+
+Starting with the Babbage era, the Consensus layer implements the [Ouroboros Praos](https://eprint.iacr.org/2017/573.pdf) protocol. This is a fully decentralized protocol, which operates without the `d` parameter used in TPraos.
+
+TPraos used the leader VRF value itself as the tie-breaker when multiple stake pools were elected to produce a block in the same slot.
+Praos (since the Babbage era) [revised](https://github.com/IntersectMBO/ouroboros-network/pull/3595) this tie-breaking mechanism to use the The non-range extended VRF value[^1], which is uncorrelated to the leader VRF, ensuring that in multi-leader scenarios, the probability of one pool winning over another is consistently 1/2, irrespective of their stake size.
+The reason for this change was performance: we now only require a single VRF computation, from which multiple outputs can be derived, reducing the number of computations from two in TPraos to one in Praos.
+
+Praos provides strong security guarantees, formally proven to ensure a vanishingly small failure probability for key properties:
+
+- Common Prefix: This property ensures that any two honest chains will share a [common prefix](TODO-ref-definition) of at least `k` blocks, meaning that a block deep in the chain (more than `k` blocks from the tip) is considered immutable and will remain on all honest nodes' chains.
+- Chain Growth: This property guarantees that the honest chain will grow by a certain number of blocks within a given period of slots.
+- This ensures that every span of a certain number of slots on an honest chain contains at least one block minted by an honest node.
+
+The Praos instances for Consensus can be found [in this module](https://github.com/intersectmbo/ouroboros-consensus/blob/50ea594c1e0c467f3d96a1d2848de5a15f792fdf/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos.hs#L17).
+
+[^1]: See this paper for background on range extension. Briefly, it means that one can derive multiple independent VRF outputs from a single VRF output via hashing and domain separation.
