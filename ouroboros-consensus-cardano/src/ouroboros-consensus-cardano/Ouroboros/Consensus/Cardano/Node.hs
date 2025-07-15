@@ -895,9 +895,9 @@ protocolInfoCardano paramsCardano
             (Shelley.ShelleyStorageConfig tpraosSlotsPerKESPeriod k)
             (Shelley.ShelleyStorageConfig tpraosSlotsPerKESPeriod k)
             (Shelley.ShelleyStorageConfig tpraosSlotsPerKESPeriod k)
-            (Shelley.ShelleyStorageConfig tpraosSlotsPerKESPeriod k)
-            (Shelley.ShelleyStorageConfig tpraosSlotsPerKESPeriod k)
-            (Shelley.ShelleyStorageConfig tpraosSlotsPerKESPeriod k)
+            (Shelley.ShelleyStorageConfig praosSlotsPerKESPeriod k)
+            (Shelley.ShelleyStorageConfig praosSlotsPerKESPeriod k)
+            (Shelley.ShelleyStorageConfig praosSlotsPerKESPeriod k)
       , topLevelConfigCheckpoints = cardanoCheckpoints
       }
 
