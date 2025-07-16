@@ -142,7 +142,7 @@ cddlc :: FilePath -> IO CDDLSpec
 cddlc dataFile = do
   putStrLn $ "Generating: " <> dataFile
   path <- getDataFileName dataFile
-  (_, BSL.toStrict -> cddl, BSL.toStrict -> err) <-
+  (exitCode, BSL.toStrict -> cddl, BSL.toStrict -> err) <-
 #ifdef mingw32_HOST_OS
     -- we cannot call @cddlc@ directly because it is not an executable in
     -- Haskell eyes, but we can call @ruby@ and pass the @cddlc@ script path as
@@ -153,7 +153,10 @@ cddlc dataFile = do
 #else
     P.readProcessWithExitCode "cddlc" ["-u", "-2", "-t", "cddl", path] mempty
 #endif
-  Monad.unless (BS.null err) $ red $ BS8.unpack err
+  case exitCode of
+    ExitSuccess -> pure ()
+    ExitFailure{} ->
+      Monad.unless (BS.null err) $ red $ BS8.unpack err
   return $ CDDLSpec cddl
  where
   red s = putStrLn $ "\ESC[31m" <> s <> "\ESC[0m"
