@@ -271,7 +271,7 @@ instance
         , translateTxOutWith = SL.upgradeTxOut
         }
 
-  hardForkChainSel = Tails.mk2 CompareSameSelectView
+  hardForkChainSel = Tails.mk2 SameTiebreakerAcrossEras
 
   hardForkInjectTxs =
     InPairs.mk2 $

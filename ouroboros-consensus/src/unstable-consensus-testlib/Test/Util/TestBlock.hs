@@ -865,7 +865,7 @@ treePreferredChain =
     . selectUnvalidatedChain
       (Proxy @(BlockProtocol TestBlock))
       (() :: ChainOrderConfig (SelectView (BlockProtocol TestBlock)))
-      blockNo
+      (\hdr -> SelectView (blockNo hdr) NoTiebreaker)
       Genesis
     . treeToChains
 
