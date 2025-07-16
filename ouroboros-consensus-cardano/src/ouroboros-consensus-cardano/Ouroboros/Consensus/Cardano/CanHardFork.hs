@@ -82,6 +82,7 @@ import Ouroboros.Consensus.Protocol.PBFT.State (PBftState)
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as PBftState
 import Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
+import Ouroboros.Consensus.Protocol.Praos.Common (PraosTiebreakerView)
 import Ouroboros.Consensus.Protocol.TPraos
 import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 import Ouroboros.Consensus.Shelley.HFEras ()
@@ -164,10 +165,10 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
       }
   hardForkChainSel =
     -- Byron <-> Shelley, ...
-    TCons (SOP.hpure CompareBlockNo)
+    TCons (SOP.hpure NoTiebreakerAcrossEras)
     -- Inter-Shelley-based
     $
-      Tails.hcpure (Proxy @(HasPraosSelectView c)) CompareSameSelectView
+      Tails.hcpure (Proxy @(HasPraosTiebreakerView c)) SameTiebreakerAcrossEras
   hardForkInjectTxs =
     PCons (ignoringBoth $ Pair2 cannotInjectTx cannotInjectValidatedTx)
       $ PCons
@@ -233,8 +234,8 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
     fromAlonzo x = fromConway $ ConwayMeasure x mempty
     fromConway x = x
 
-class SelectView (BlockProtocol blk) ~ PraosChainSelectView c => HasPraosSelectView c blk
-instance SelectView (BlockProtocol blk) ~ PraosChainSelectView c => HasPraosSelectView c blk
+class TiebreakerView (BlockProtocol blk) ~ PraosTiebreakerView c => HasPraosTiebreakerView c blk
+instance TiebreakerView (BlockProtocol blk) ~ PraosTiebreakerView c => HasPraosTiebreakerView c blk
 
 {-------------------------------------------------------------------------------
   Translation from Byron to Shelley
