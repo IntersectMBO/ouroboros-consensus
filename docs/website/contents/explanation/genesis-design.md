@@ -1,5 +1,3 @@
-<!-- xrefcheck: ignore all -->
-
 # Cardano Genesis
 
 This document contains the high-level design for adding Ouroboros Genesis to the existing Cardano implementation of Ouroboros Praos.
@@ -27,9 +25,13 @@ This document contains the high-level design for adding Ouroboros Genesis to the
 
 Any implementation of Genesis in Cardano must satisfy the following requirements.
 
-- {No Praos Disruption}: The new behaviors must not alter the functioning of a node that has already completed synchronization with the network—that is, nodes operating under standard Ouroboros Praos behavior.
+### No Praos Disruption
 
-- {Sync Safety}: If the syncing node always has at least one peer that is honest, not itself syncing, and connected with reasonable latency and bandwidth, both to the syncing node as well as the honest network, then the syncing node will never select more than `Kcp` blocks of a chain that is not extended by a recent selection of some honest nodes in the network (ie approximately within Δ).
+The new behaviors must not alter the functioning of a node that has already completed synchronization with the network—that is, nodes operating under standard Ouroboros Praos behavior.
+
+### Sync Safety
+
+If the syncing node always has at least one peer that is honest, not itself syncing, and connected with reasonable latency and bandwidth, both to the syncing node as well as the honest network, then the syncing node will never select more than `Kcp` blocks of a chain that is not extended by a recent selection of some honest nodes in the network (ie approximately within Δ).
 
   The antecedent of that implication is the {Honest Availability Assumption} ({HAA}).
   It is beyond the scope of this design to guarantee the HAA.
@@ -37,40 +39,67 @@ Any implementation of Genesis in Cardano must satisfy the following requirements
 
   It is important to note that the Sync Safety requirement directly prevents the [_long-range attack_](Glossary#long-range-attack), which was the original motivation for Ouroboros Genesis.
 
-- {Sync Liveness}: The upper bound of unnecessary delay incurred during some interval of the sync is proportional to how many of the syncing node's upstream peers in that same interval are adversarial.
+### Sync Liveness
+
+The upper bound of unnecessary delay incurred during some interval of the sync is proportional to how many of the syncing node's upstream peers in that same interval are adversarial.
   It is beyond the scope of this design to ensure that count of adversarial peers remains below some reasonable bound (eg 50).
 
-- {Limited Sync Load}: : A syncing node should avoid imposing excessive load on the honest network. For example, it should request the same block from multiple peers only as a last resort.
 
-- {Disaster Tolerance}: With adequate configuration, ideally temporary, the new behaviors should remain functional even in the event of a network-wide disruption.
+### Limited Sync Load
+
+A syncing node should avoid imposing excessive load on the honest network. For example, it should request the same block from multiple peers only as a last resort.
+
+### Disaster Tolerance
+
+With adequate configuration, ideally temporary, the new behaviors should remain functional even in the event of a network-wide disruption.
 
 ## Components
 
 This design consists of the following components.
 
-- The {Lightweight Checkpointing} logic allows configuration data (comparable in authority to the genesis block) to mandate that the node reject some chains as invalid by fiat.
+### Lightweight Checkpointing
 
-- The {Genesis State Machine} ({GSM}) determines the node synchronization status. For this, it transitions between different states: pre-syncing, syncing, and caught-up.
+The {Lightweight Checkpointing} logic allows configuration data (comparable in authority to the genesis block) to mandate that the node reject some chains as invalid by fiat.
+
+
+### Genesis State Machine
+
+The {Genesis State Machine} ({GSM}) determines the node synchronization status. For this, it transitions between different states: pre-syncing, syncing, and caught-up.
   When the node is caught-up, the GSM disables all components of this design except Lightweight Checkpointing and the GSM itself.
 
-- The {Limit on Eagerness} ({LoE}) prevents the syncing node from selecting more than `Kcp` blocks beyond the intersection of its peers' latest selections.
+
+### Limit on Eagerness
+
+The {Limit on Eagerness} ({LoE}) prevents the syncing node from selecting more than `Kcp` blocks beyond the intersection of its peers' latest selections.
   That interesction is called the {LoE anchor}.
   (The implementation maintains an LoE fragment.
   In an unfortunate collision of names, the LoE anchor is the tip of the LoE fragment, _not_ its [`anchor`](https://github.com/IntersectMBO/ouroboros-network/blob/88bf7766ddb70579b730f777e53473dcdc23b6d0/ouroboros-network-api/src/Ouroboros/Network/AnchoredSeq.hs#L94), see here[^loe-anchor-example] for an example.)
 
-- The {Genesis Density Disconnection} logic ({GDD}) disconnects from any advertised peer whose chain has too few blocks to be the honest chain and could prevent the syncing node from finishing.
+### Genesis Density Disconnection
+
+The {Genesis Density Disconnection} logic ({GDD}) disconnects from any advertised peer whose chain has too few blocks to be the honest chain and could prevent the syncing node from finishing.
   There are some absolute limits, such as having no blocks at all within some interval of `Scg` slots.
   The primary rule, though, involves comparisons between peers: Consider peer `A` offering chain `X`. We disconnect from `A` if there is a peer offering a chain `Y` such that: 1) there are no blocks in `Sgen` slots after `X ∩ Y`; 2) `Y` has more than `Kcp` blocks after `X∩Y`.
 
-- The {Limit on Patience} ({LoP}) disconnects from any peer that is claiming to have subsequent headers on its selection but not sending them promptly.
+### Limit on Patience
 
-- The {ChainSync Jumping} optimization ({CSJ}) avoids fetching the honest header chain from more than one peer.
+The {Limit on Patience} ({LoP}) disconnects from any peer that is claiming to have subsequent headers on its selection but not sending them promptly.
 
-	- The {Devoted BlockFetch} decision logic ({DBF}) of a syncing node prefers to request blocks from only one peer at a time, the first peer it finds that serves the best available header chain and serves the blocks faster than the syncing node can validate them.
+### ChainSync Jumping
+
+The {ChainSync Jumping} optimization ({CSJ}) avoids fetching the honest header chain from more than one peer.
+
+### Devoted BlockFetch
+
+The {Devoted BlockFetch} decision logic ({DBF}) of a syncing node prefers to request blocks from only one peer at a time, the first peer it finds that serves the best available header chain and serves the blocks faster than the syncing node can validate them.
   The Honest Availability Assumption ensures that one such peer exists.
+
+### Node Versus Environment Tests
 
 - The {Node Versus Environment} tests scrutinize the behavior of the partially-mocked node when subjected to adversarial inputs.
   These are notably the first Cardano Consensus Layer tests to explicitly simulate non-trivial adversarial behaviors.
+
+### Components Diagram
 
 All components are also depicted in the following diagram, with the exception of the GSM, which simply disables all other Genesis components (except Lightweight Checkpointing).
 
@@ -110,29 +139,42 @@ graph LR
   LoE -- "stalls until we disconnect peers offering low-density chains" --> GDD
 ```
 
-## How Components satisfy Requirements
+## How the Components Satisfy the Requirements
 
-At a high-level, those requirements are satisfied by those components for the following reasons.
+At a high-level, the [requirements](#requirements) outlined above are satisfied by the [components](#components) just discussed for the following reasons.
 
-- The Lightweight Checkpointing logic directly ensures Disaster Tolerance; during and/or after the disaster, some decision process (likely off-chain) would certify some additional checkpoints.
-  With sufficient checkpoint configuration data, a syncing node will be able to succesfully sync past a disasterously sparse section of the network's historical chain.
+### Satisfying Disaster Tolerance
 
-  Specifically, this allows for the GDD to favor some alternative chains over the network's densest chain, since a configured checkpoint could prevent the GDD from ever seeing those alternatives.
+The [Lightweight Checkpointing](#lightweight-checkpointing) logic directly ensures [Disaster Tolerance](#disaster-tolerance); during and/or after the disaster, some decision process (likely off-chain) would certify some additional checkpoints.
+  With sufficient checkpoint configuration data, a syncing node will be able to succesfully sync past a disastrously sparse section of the network's historical chain.
+
+Specifically, this allows for the [GDD](genesis-density-disconnection) to favor some alternative chains over the network's densest chain, since a configured checkpoint could prevent the GDD from ever seeing those alternatives.
   As a side benefit, this means the initial Genesis deployment can include checkpoints that cover the Byron era, which has different density characteristics, and some portions of the historical chain that are unusually sparse.
   Without checkpoints, it's theoretically possible that the "missing" blocks all ended up on some unknown adversarial chain that the GDD would actually prefer to today's Cardano network's chain.
 
-- The GSM directly ensures No Praos Disruption (unless the node becomes [eclipsed](Glossary#eclipse-attack) or the honest chain actually stops growing for too long).
+### Satisfying No Praos Disruption
 
-- The LoE directly ensures Sync Safety, because the Honest Availability Assumption ensures that the LoE anchor is a prefix of the latest honest chain.
+The [GSM](#genesis-state-machine) directly ensures [No Praos Disruption](#no-praos-disruption) (unless the node becomes [eclipsed](Glossary#eclipse-attack) or the honest chain actually stops growing for too long).
 
-- The GDD and LoP together ensure the LoE anchor will advance --- and with only moderate delay --- which is necessary but not sufficient for Sync Liveness.
+### Satisfying  Sync Safety
+
+The [LoE](#limit-on-eagerness) directly ensures Sync Safety, because the Honest Availability Assumption ensures that the LoE anchor is a prefix of the latest honest chain.
+
+### Satisfying Sync Liveness
+
+The [GDD](#genesis-density-disconnection) and [LoP](#limit-on-patience) together ensure the LoE anchor will advance --- and with only moderate delay --- which is necessary but not sufficient for Sync Liveness.
+
   In particular, one honest peer suffices for the GDD to disconnect from every peer that is advertising an alternative chain, based on the core assumption of Ouroboros Genesis that the honest network's historical chain is denser than any alternative.
 
-- The advancing LoE anchor and DBF together ensure Sync Liveness.
+The advancing LoE anchor and DBF together ensure Sync Liveness.
 
-- The CSJ and DBF together ensure Limited Sync Load.
+### Satisfying Limited Sync Load
 
-- The Node Versus Environment tests provide assurance that each component is correct.
+The CSJ and DBF together ensure Limited Sync Load.
+
+### Satisfying Component Correctness
+
+The [Node Versus Environment Tests](#node-versus-environment-tests)  provide a high degree of assurance that each component is correct.
 
 The descriptions of each component in the remainder of this document will include lower-level reasoning in support of these claims.
 A single completely detailed proof would be ideal, but is beyond the project's resources.
