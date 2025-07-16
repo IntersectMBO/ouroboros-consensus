@@ -1,0 +1,405 @@
+# Consensus Protocol
+
+The [Consensus protocol](https://cardano-scaling.github.io/cardano-blueprint/consensus/index.html) is a foundational element for Cardano and other blockchains. It provides the mechanism through which a single, linear, and eventually consistent chain of blocks is established among all network participants. The consensus layer acts as an orchestrator, mediating between the network and ledger layers.
+
+Two core responsibilities of a consensus protocol are:
+
+* **Chain Selection**: The process of choosing between multiple competing chains. The Chain Database (ChainDB) component within a node is responsible for performing the final stages of chain selection, by either extending the current chain or adopting a new one.
+
+* **Block Production**: The consensus protocol determines when a node is allowed to mint a block, via leader schedule. When the Ouroboros protocol designates a particular node (operating a stake pool) as the slot leader, that node is expected to extend the best chain it has seen by minting a new block.
+The consensus layer decides when to contribute to the chain by producing blocks.
+
+The Consensus layer of `ouroboros-consensus` implements all past and current protocols in the Cardano chain. When the consensus layer was re-implemented, it initially supported Permissive BFT (Byzantine Fault Tolerance) during the Byron era, and then transitioned to Ouroboros TPraos for Shelley. Starting with the Babbage era, the Consensus layer supports the Praos protocol. The [`ouroboros-consensus-protocol`](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-protocol) package defines the Praos and TPraos (Transitional Praos) instantiations. The [`ouroboros-consensus-cardano`](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano) package integrates these protocols into Cardano.
+
+## Classes
+
+The general implementation of a consensus protocol is abstracted into the following classes.
+
+### `ConsensusProtocol`
+
+The [**`ConsensusProtocol`**](https://github.com/intersectmbo/ouroboros-consensus/blob/d014aae802159286bdc09bc4730966094d2d95dd/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs#L66) class is a central abstraction within the Ouroboros consensus layer, generalizing across specific consensus algorithms.
+
+Among its responsibilities, the `ConsensusProtocol` class defines the protocol state required to run the protocol. This "protocol state" is represented by the `ChainDepState` type family. This state is updated when new block headers arrive, and is subject to rollback. In particular, in the Praos consensus protocol, the `ChainDepState` includes "nonces", which are random numbers derived from the chain itself, used as seeds for pseudo-random number generators in leader selection. This state is also ["ticked"](./ledger-interaction#ticking) to apply time-related changes, such as nonce rotation at certain slot numbers, even before a new block is processed.
+
+The `ConsensusProtocol` type class is indexed over the protocol type. The type family [`BlockProtocol`](https://github.com/intersectmbo/ouroboros-consensus/blob/c573f0639584623bd143f39e722340e412859aa1/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Block/Abstract.hs#L121) allows us to get the protocol associated to a given block. Note that, according to this definition, two blocks can be associated with the same protocol.
+
+`CanBeLeader` and `IsLeader` are type families that define the requirements and proofs, respectively, related to a node's ability to produce a block:
+
+- `CanBeLeader` represents the configuration data and keys a node needs to potentially be elected as leader. For instance, [in Praos](https://github.com/intersectmbo/ouroboros-consensus/blob/d014aae802159286bdc09bc4730966094d2d95dd/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos/Common.hs#L247), `PraosCanBeLeader` includes the operational certificate (OpCert), the cold verification key, and the VRF signing key.
+
+- `IsLeader` represents cryptographic evidence or proof that a node is the leader for a specific slot. [For Praos](https://github.com/intersectmbo/ouroboros-consensus/blob/d014aae802159286bdc09bc4730966094d2d95dd/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos.hs#L242), this type would typically its VRF output, which constitutes the cryptographic proof demonstrating the node's right to lead in that slot.
+
+Function `checkIsLeader` takes among its arguments a `CanBeLeader` value and the current slot (`SlotNo`). If the node is the leader for that slot, this function returns a `Just (IsLeader p)`. Otherwise it returns `Nothing`.
+
+The `SelectView` type represents a summary of the header at the tip of a chain. It contains the necessary information for chain comparison. Values of this type allow the consensus protocol to choose between multiple competing chains by comparing these views.
+
+In Praos, the `SelectView` is instantiated as [`PraosChainSelectView`](https://github.com/intersectmbo/ouroboros-consensus/blob/010b374c54f4d2f485ab114f702db6ec3b7a8f95/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos/Common.hs#L65), containing the necessary information for the chain selection process, namely:
+- The length of the chain.
+- The slot number of the block.
+- The verification key of the block's issuer
+- A counter for blocks issued by a specific issuer within a KES period.
+- A Verifiable Random Function (VRF) output, used for tie-breaking.
+
+The `Ord` instance of `PraosChainSelectView` must be a total order (and in particular transitive). Currently there is [an edge case](https://github.com/IntersectMBO/ouroboros-consensus/issues/1075) that prevents this from being the case.
+
+The `LedgerView` type is a projection or summary of the ledger state,
+which the Consensus protocol requires for tasks such as leadership
+checks or transaction size limits for blocks. This information, like
+the stake distribution, must be computable for slots in the near
+future. The `LedgerView` is used when [ticking](./ledger-interaction#ticking) the `ChainDepState` (`tickChainDepState`) to apply time-related changes. It can also be [forecast](./ledger-interaction.md#forecasting-and-the-forecast-range) for future slots, meaning we can predict that the `LedgerView` will be, irrespective of which blocks are applied in the given forecast range.
+
+[In Praos](https://github.com/intersectmbo/ouroboros-consensus/blob/d014aae802159286bdc09bc4730966094d2d95dd/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos/Views.hs#L41), the `LedgerView` contains:
+- The stake pool distribution, which is used by `checkIsLeader`.
+- Maximum allowed size for a block header and body.
+- The current ledger protocol version.
+
+The `ValidateView` type represents a projection of a block header that is used for validating said header.
+This view is used when `updateChainDepState` and `reupdateChainDepState` functions are called to advance the protocol's state based on a new header.
+
+[In Praos](https://github.com/intersectmbo/ouroboros-consensus/blob/d014aae802159286bdc09bc4730966094d2d95dd/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos/Views.hs#L22), the `ValidateView` of a header contains:
+- The verification key of the block's issuer (stake pool cold key).
+- The VRF verification key, which is checked against the registered VRF key for the stake pool.
+- The VRF output, which serves as a cryptographic proof that the issues is eligible to produce a block for that slot, and contributes to the evolving nonce.
+- The operational certificate, which delegates rights from the stake pool's cold key, to the online KES key.
+- The block's slot number.
+- The hash of the previous block.
+- The KES signature data, which is used to verify the issuer's identity.
+
+Function `protocolSecurityParam` extracts the [security parameter](TODO!) `k` from the consensus protocol's static's configuration.
+
+### `ChainOrder`
+
+To agree on a single, linear, and eventually consistent chain of blocks we need to have a mechanism for ordering chains.
+
+The abstract Consensus layer mainly relies on a `SelectView` taken from the tip of each header fragment.
+[`ChainOrder`](https://github.com/intersectmbo/ouroboros-consensus/blob/010b374c54f4d2f485ab114f702db6ec3b7a8f95/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs#L219) is a type class that defines how to compare these `SelectView`s.
+
+Its main function is [`preferCandidate`](https://github.com/intersectmbo/ouroboros-consensus/blob/010b374c54f4d2f485ab114f702db6ec3b7a8f95/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs#L262), which checks if a candidate chain is strictly better than the node’s current chain. This function is used during [initial chain selection](https://github.com/intersectmbo/ouroboros-consensus/blob/010b374c54f4d2f485ab114f702db6ec3b7a8f95/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L180) and in [chain selection](https://github.com/intersectmbo/ouroboros-consensus/blob/010b374c54f4d2f485ab114f702db6ec3b7a8f95/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L692).
+
+`ChainOrder` also requires a total order on the `SelectView` type. This allows candidate chains to be [sorted](https://github.com/intersectmbo/ouroboros-consensus/blob/010b374c54f4d2f485ab114f702db6ec3b7a8f95/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Util/AnchoredFragment.hs#L126) for prioritization.
+
+The `ConsensusProtocol` class provides a [`SimpleChainOrder`](https://github.com/intersectmbo/ouroboros-consensus/blob/010b374c54f4d2f485ab114f702db6ec3b7a8f95/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs#L272) deriving helper, which implements `preferCandidate` using the standard `Ord` instance of `SelectView`. However, some protocols like Praos use more complex tiebreaking rules. [`ChainOrderConfig`](https://github.com/intersectmbo/ouroboros-consensus/blob/010b374c54f4d2f485ab114f702db6ec3b7a8f95/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs#L227) allows different tiebreaking strategies to be used within the same protocol.
+
+For a detailed discussion on chain ordering in Ouroboros, see [this section](#Chain-Ordering-in-Ouroboros).
+
+### `LedgerSupportsProtocol`
+
+The [`LedgerSupportsProtocol`](https://github.com/intersectmbo/ouroboros-consensus/blob/a70eb17ef28831cd2e140b33ded49ce791028d88/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/SupportsProtocol.hs#L25) type class links the consensus protocol to the ledger. It defines what information the consensus layer requires from the ledger state to perform its operations, particularly for leader selection and forecasting future ledger states.
+
+- [Byron instance](https://github.com/intersectmbo/ouroboros-consensus/blob/a70eb17ef28831cd2e140b33ded49ce791028d88/ouroboros-consensus-cardano/src/byron/Ouroboros/Consensus/Byron/Ledger/Ledger.hs#L282)
+- [Shelley instance](https://github.com/intersectmbo/ouroboros-consensus/blob/a70eb17ef28831cd2e140b33ded49ce791028d88/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/SupportsProtocol.hs#L51).
+- [`HardForkBlock` instance](https://github.com/intersectmbo/ouroboros-consensus/blob/a70eb17ef28831cd2e140b33ded49ce791028d88/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HardFork/Combinator/Ledger.hs#L399).
+
+### `BlockSupportsProtocol`
+
+The [`BlockSupportsProtocol`](https://github.com/intersectmbo/ouroboros-consensus/blob/a70eb17ef28831cd2e140b33ded49ce791028d88/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Block/SupportsProtocol.hs#L26) type class links the specific block type to its corresponding consensus protocol. It defines the capabilities a block must provide for the consensus protocol to operate correctly.
+
+- [Byron instance](https://github.com/intersectmbo/ouroboros-consensus/blob/a70eb17ef28831cd2e140b33ded49ce791028d88/ouroboros-consensus-cardano/src/byron/Ouroboros/Consensus/Byron/Ledger/PBFT.hs#L42).
+- [Shelley instance](https://github.com/intersectmbo/ouroboros-consensus/blob/a70eb17ef28831cd2e140b33ded49ce791028d88/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/Protocol.hs#L32).
+- [`HardForkBlock` instance](https://github.com/intersectmbo/ouroboros-consensus/blob/a70eb17ef28831cd2e140b33ded49ce791028d88/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HardFork/Combinator/Protocol.hs#L141).
+
+### `ValidateEnvelope`
+
+Envelope validation is a specific, initial phase of [header validation](https://github.com/intersectmbo/ouroboros-consensus/blob/4091b92226a7d5b0fd6531876722df32ea6b7f16/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HeaderValidation.hs#L509) handled by the [`validateEnvelope`](https://github.com/intersectmbo/ouroboros-consensus/blob/4091b92226a7d5b0fd6531876722df32ea6b7f16/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HeaderValidation.hs#L356) function.
+It focuses on ledger-independent, basic structural checks and protocol compatibility of the block header.
+The `validateHeader` function first executes the `validateEnvelope` checks.
+If these pass, it then proceeds to update the chain-dependent state (`updateChainDepState`), where the more complex consensus-specific checks like VRF and KES validation occur.
+This sequential approach allows for early rejection of malformed or fundamentally incompatible headers before more computationally intensive cryptographic validations are performed.
+
+The `validateEnvelope` function performs the following checks:
+• **Block Number Consistency**: Ensures that the actual block number of the new header matches the expected next block number based on the previous chain tip.
+• **Slot Number Consistency**: Verifies that the actual slot number of the new header is greater than or equal to the minimum expected next slot number.
+• **Previous Hash Matching**: Checks that the `headerPrevHash` of the new header correctly references the hash of the previous block in the chain.
+• **Checkpoint Mismatches**: Validates against any configured [checkpoint](TODO: link to genesis) hashes for specific block numbers.
+• **Additional Envelope Checks**: This is an extensible part that allows for block-type or protocol-specific.
+
+For [Byron](https://github.com/intersectmbo/ouroboros-consensus/blob/4091b92226a7d5b0fd6531876722df32ea6b7f16/ouroboros-consensus-cardano/src/byron/Ouroboros/Consensus/Byron/Ledger/HeaderValidation.hs#L55), the additional envelope checks verify that [EBB](TODO: ref to EBBs)s occur only in allowed slots.
+
+For [Praos](https://github.com/intersectmbo/ouroboros-consensus/blob/4091b92226a7d5b0fd6531876722df32ea6b7f16/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Protocol/Praos.hs#L111), additional envelope checks specifically verify:
+- **Protocol Version Compatibility**: Ensuring that the major protocol version of the block does not exceed the maximum version supported by the node's configuration. If it does, it throws an `ObsoleteNode` error, preventing the node from processing blocks from a future, unsupported protocol version.
+- **Header Size Limits**: Verifying that the block header's size is within a configured maximum limit.
+- **Block Body Size Declaration**: Checking that the declared size of the block body (as indicated in the header) does not exceed the maximum allowed block body size.
+
+The `HardForkBlock` also has an [instance](https://github.com/intersectmbo/ouroboros-consensus/blob/4091b92226a7d5b0fd6531876722df32ea6b7f16/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HardFork/Combinator/Ledger.hs#L343) for `ValidateEnvelope`. Its `OtherHeaderEnvelopeError` is `HardForkEnvelopeErr`, which can encapsulate either a `HardForkEnvelopeErrFromEra` (an error from one of the constituent eras) or `HardForkEnvelopeErrWrongEra` (indicating a block from an unexpected era).
+The `additionalEnvelopeChecks` for the `HardForkBlock` ensures that the block's era matches the expected era at the current tip, and then it delegates the check to the `additionalEnvelopeChecks` of the specific era's block type.
+
+Envelope validation is largely ledger-independent, though the additional checks for Praos reference configured maximum sizes and protocol versions derived from the ledger configuration.
+
+Envelope validation relies on [ValidateEnvelope](https://github.com/intersectmbo/ouroboros-consensus/blob/4091b92226a7d5b0fd6531876722df32ea6b7f16/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HeaderValidation.hs#L340) instances. This class extends [`BasicEnvelopeValidation`](https://github.com/intersectmbo/ouroboros-consensus/blob/4091b92226a7d5b0fd6531876722df32ea6b7f16/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HeaderValidation.hs#L297).
+
+## The Extended Ledger State
+
+The **extended ledger state** ([`ExtLedgerState`](https://github.com/intersectmbo/ouroboros-consensus/blob/c573f0639584623bd143f39e722340e412859aa1/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Extended.hs#L71) is a combination of two primary components:
+
+- **Ledger State**
+- **Header State**, which includes the [protocol state](#consensusprotocol)
+
+Bundling these two states is not merely a matter of convenience—though it does help maintain consistency between them. This combination is essential because, to determine whether a block can extend the chain, we must [validate](#block-validity) both:
+
+- The block itself, using the ledger rules
+- The block header, using the protocol rules
+
+Therefore, both the ledger state and the protocol state are required. The [block application function](https://github.com/intersectmbo/ouroboros-consensus/blob/c573f0639584623bd143f39e722340e412859aa1/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Extended.hs#L191) takes a (ticked) extended ledger state as an argument.
+
+The `LedgerDB` is responsible for maintaining the `ExtLedgerState` at the chain tip and for the past `k` blocks. This is necessary to validate new blocks and handle potential forks. If the ledger and header states were stored separately, ensuring their consistency—especially during rollbacks or chain replays—would be significantly more complex.
+
+The extended ledger state is also used in queries, meaning that the validity, interpretation, and results of those queries may depend on the consensus-specific header state.
+
+The [`HeaderState`](https://github.com/intersectmbo/ouroboros-consensus/blob/c573f0639584623bd143f39e722340e412859aa1/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HeaderValidation.hs#L185) is defined as a data structure containing:
+
+- The **chain tip**, which includes:
+  - Slot number
+  - Block number
+  - Additional `TipInfo` specific to the block type (e.g., whether it's an Epoch Boundary Block in Byron)
+- The **chain-dependent state** of the consensus protocol ([`ChainDepState`](#consensusprotocol)), which:
+  - Is protocol-specific
+  - Is updated with new block headers
+  - It can be rolled back
+
+## Chain Validity
+
+Checking for [chain validity](https://cardano-scaling.github.io/cardano-blueprint/consensus/chainvalid.html) in Cardano encompasses several stages, including time-based validity, header validity, and full block validity.
+
+### Time-based Validity
+
+The system must reject blocks from the **far future**, ie those whose slot [onset](#TODO-ref) is ahead of the local wall clock by more than the admissible clock skew. Such blocks are assumed not to have been minted by honest nodes.
+
+However, blocks from the **near future**, ie blocks whose slot onset is ahead of the wall clock but within the admissible skew, are not immediately rejected. These blocks are assumed to potentially have been minted by honest nodes.
+An artificial delay is introduced until their slot time is reached, preventing a node from processing a block before its actual slot onset.
+
+This time-based check is primarily performed when headers are [received by the chain client](https://github.com/intersectmbo/ouroboros-consensus/blob/5785878d4db2500e137276569a63e5d57f80df50/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/ChainSync/Client.hs#L1509), as shown in [this section of the code](https://github.com/intersectmbo/ouroboros-consensus/blob/5785878d4db2500e137276569a63e5d57f80df50/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/ChainSync/Client.hs#L1728).
+
+### Header Validity
+
+Header validity is primarily implemented in the abstract consensus layer.
+It is [performed by the `ChainSync` client](https://github.com/intersectmbo/ouroboros-consensus/blob/5785878d4db2500e137276569a63e5d57f80df50/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/ChainSync/Client.hs#L1937) when downloading headers from upstream peers.
+The goal of this early validation is to prevent Denial-of-Service (DoS) attacks by quickly discarding invalid headers.
+
+This process involves two main components:
+
+- **Header envelope validation**: defined by the [`ValidateEnvelope`](#validateenvelope) class.
+- **Consensus protocol validation**: implemented indirectly via the `updateChainDepState` function of the [`ConsensusProtocol`](#consensusprotocol) class.
+The validity of a header is determined by examining its `ValidateView`.
+
+### Block Validity
+
+Full block validity involves both:
+
+- Applying the block to the ledger state.
+- Applying the header to the protocol state.
+
+This validation is a critical part of the [chain selection](#chain-selection) process.
+
+Although headers are already validated by the `ChainSync` client, they are re-validated during block application.
+This re-validation is necessary to update the `ChainDepState` within the extended ledger state.
+This step is expected to succeed, given that the header was previously validated by the `ChainSync` client.
+
+## Chain Ordering in Ouroboros
+
+The core rule in Ouroboros protocols (including Praos) is to prefer longer chains over shorter ones. This assumes that the honest majority of stake will produce denser chains.
+
+- A chain that extends the current one is always preferable to it.
+- If two chains are equally preferable, the node sticks with its current chain.
+
+In Praos and Shelley-based eras, if chains have the same length, tiebreaking [rules](https://github.com/intersectmbo/ouroboros-consensus/blob/010b374c54f4d2f485ab114f702db6ec3b7a8f95/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos/Common.hs#L108) are applied in this order:
+
+- 1. **Operational Certificate Issue Number**:
+If both chain tips are from the same issuer and slot, the one with the higher `opcert` issue number is preferred.
+This allows a stake pool operator to replace a compromised hot key with a new one and still have their blocks take precedence.
+
+- 2. **VRF Tiebreaker**:
+If the `opcert` check is inconclusive (which is common when two pools are elected in the same slot), the chain with the lower VRF value at its tip is preferred.
+This avoids always picking the first block to arrive, which could encourage geographic centralization to reduce latency (see ["The Frankfurt Problem"](https://github.com/IntersectMBO/ouroboros-consensus/blob/40d77fdd74a9b2b2a1d112a0b836b5cb8026c88c/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos/Common.hs#L227)). The VRF value used for tiebreaking (non-range extended) is uncorrelated to the leader VRF value and typically results in a uniformly random decision. Depending on the `ChainOrderConfig` for Praos, there are two [flavors](https://github.com/intersectmbo/ouroboros-consensus/blob/010b374c54f4d2f485ab114f702db6ec3b7a8f95/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos/Common.hs#L75) that determine when this tie-breaker comparison takes place.
+    - `UnrestrictedVRFTiebreaker`: With this flavor, VRF tiebreakers are always compared. This has been the standard behavior for all eras before Conway.
+    - `RestrictedVRFTiebreaker`: This flavor restricts the VRF tiebreaker comparison to situations where the slot numbers of the chain tips differ by at most a specified maximum distance (`maxDist`).
+The primary motivation for this restriction is to favor blocks that were diffused earlier over those diffused later, even if the later block has a "better" VRF tiebreaker value. This aims to mitigate [issues](https://github.com/IntersectMBO/ouroboros-network/issues/2913) caused by poorly configured or resource-constrained pools that might diffuse blocks later.
+
+### On the Transitivity of Praos Chain Order
+
+Function `preferCandidate` is not defined in terms of the `Ord` instance of Praos' `SelectView` . This function is not transitive when using `RestrictedVRFTiebreaker`. However this does not constitute a problem.
+
+To see why `RestrictedVRFTiebreaker` flavour breaks the transitivity of chain ordering, consider the following example where chains `A`, `B`, and `C` have the same length and different issuers, and assume `maxDist = 5` slots:
+
+|      | A | B | C |
+|------|---|---|---|
+| Slot | 0 | 3 | 6 |
+| VRF  | 3 | 2 | 1 |
+
+
+We have that:
+- `B` is preferred over `A`, since `B` has lower VRF than `A` and `|0 - 3| <= 5`.
+- `C` is preferred over `B`, since `C` has lower VRF than `B` and `|3 - 6| <= 5`
+- However, `C` is **not** preferred over `A`, but instead `A` and `C` are equally preferred since `|0 - 6| > 5` which implies that the VRF values of `A` and `C` are not used.
+
+It is worth noting that `RestrictedVRFTiebreaker` is used only for `preferCandidate`, but not for the `Ord` instance of `PraosChainSelectView`.
+
+Despite the non-transitivity, the fundamental Consensus properties, such as [Common Prefix](TODO-ref!), are not affected. This is because the primary factor for chain selection for a [caught-up](TODO-ref!) node remains the chain length, with longer chains always being preferred.
+The Ouroboros Praos authors make no assumptions about how nodes resolve ties.
+However, a non-transitive chain ordering brings the following complications:
+
+- **Reasoning**: The non-transitive order can be very confusing for reasoning about anything related to chain order, as transitivity is an implicitly assumed property when working with order relations.
+This, in turn, leads to "obvious" properties failing to hold. For instance, the expectation that observing a node's selection over time yields a strictly improving sequence may not hold, as different observers could disagree on whether each selection is "strictly better" than the previous one.
+- **Potential for Cycles**: The non-transitivity can conceptually give rise to "cycles" in preference, such as `A < B < C = A`. However, in practice, the node's implementation guarantees that it will never end up changing its selection in such a cycle because blocks already in the `VolatileDB` are not added again.
+In particular, the consistency of `ChainOrder` with `Ord` guarantees that we can never have `preferCandidate A B`, `preferCandidate B C`, but also `preferCandidate C A`.
+
+### On The History Of Chain Ordering In Cardano
+
+The relevant changes to the chain order occurred in these PRs in chronological order:
+
+ - [ouroboros-network#2108](https://github.com/IntersectMBO/ouroboros-network/pull/2108) added the opcert number comparison step as the first tiebreaker (before that, only chain length was used).
+ - [ouroboros-network#2195](https://github.com/IntersectMBO/ouroboros-network/pull/2195) added the VRF tiebreaker, but lexicographically *before* the opcert number tiebreaker, in contrast to the status quo.
+   This means that the order still was total at this point, also see below.
+ - [ouroboros-network#2348](https://github.com/IntersectMBO/ouroboros-network/pull/2348) mostly did a change unrelated to the purpose of this document, but crucially, it swapped the order in which the VRF and opcert number comparison are done, introducing the current non-transitivity. Currently we do not prioritize the adoption of the node's own blocks. See [this comment](https://github.com/IntersectMBO/ouroboros-network/issues/1286#issuecomment-777614715), which mentions that this is not crucial for correctness, however the implications for incentives are still unclear.
+
+## Chain Selection
+
+[Chain selection](https://cardano-scaling.github.io/cardano-blueprint/consensus/chainsel.html) is the process by which a node determines the best valid chain it has observed and adopted so far, among a set of competing chains. The node's internal storage layer maintains this chain, which is divided into two main parts:
+
+- The immutable part of the chain consists of blocks that are no longer subject to rollback, as they have been confirmed by at least `k` blocks. These blocks are stored in the [ImmutableDB](TODO-ref!)
+- The volatile part of the chain contains up to the newest `k` blocks of the current selection. These blocks are stored in the [`VolatileDB`](TODO-ref!), which can also contain multiple competing forks of the chain, including those the node has switched away from or might switch to in the future, as well as disconnected blocks received out of order. These volatile blocks are still subject to potential rollback if the chain selection process leads to the adoption of a more preferable fork. Conversely, blocks in the volatile part that are not part of the current chain, might become part of it as more block are added to the `VolatileDB`.
+
+The in-memory representation of the current chain fragment (the node's "current selection") is considered the best possible path through the VolatileDB, and it is anchored at the immutable tip of the chain (the most recent "immutable" block, which is the tip of the `ImmutableDB`).
+
+The chain selection process may result in the node's current chain either being extended by new blocks or the node performing a switch to a new fork. Furthermore, as the current selection grows, blocks that were previously part of the volatile portion of the chain (stored in the `VolatileDB`) may transition to the immutable part as they become confirmed by at least `k` blocks. See [this section](TODO-ref-to-garbage-collection) for more information on how blocks transition from the `VolatileDB` to the `ImmutableDB`.
+
+Chain selection is the responsibility of the chain database. This is because the `ChainDB` has knowledge of when new blocks arrive and which candidates exist in the database.
+
+The core logic for chain selection is implemented in the [`chainSelectionForBlock`](https://github.com/intersectmbo/ouroboros-consensus/blob/fcb4615f1d40f3baa24f9f1ac69d1feaaaf7bd9f/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L521) function. It uses the types and classes discussed in this section which abstract away the specifics of the consensus protocol being used.
+
+The gist of chain selection within a Cardano node involves identifying the best valid chain from a collection of potential chain fragments.
+These fragments are formed by paths through the `VolatileDB` that originate from the immutable tip.
+Candidates are sorted based on the `SelectView`, and the adoption of a new chain is ultimately decided by the [`ChainOrder`](#chainorder) defined by the specific protocol.
+
+A significant part of the decision-making process for adopting alternative chains is managed by the [`switchToAFork`](https://github.com/intersectmbo/ouroboros-consensus/blob/fcb4615f1d40f3baa24f9f1ac69d1feaaaf7bd9f/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L776) function. It explores potential forks originating from the newly added block to determine whether a chain switch is required.
+
+During chain selection, the candidates are validated according to the [chain validity](#chain-validity) rules.
+
+
+### Triggering Chain Selection
+
+Chain selection is triggered:
+
+- During initial chain selection via [`initialChainSelection`](https://github.com/intersectmbo/ouroboros-consensus/blob/fcb4615f1d40f3baa24f9f1ac69d1feaaaf7bd9f/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L112).
+
+- After initialization, by a background process called [`addBlockRunner`](https://github.com/intersectmbo/ouroboros-consensus/blob/fcb4615f1d40f3baa24f9f1ac69d1feaaaf7bd9f/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/Background.hs#L514).
+  This process calls [`chainSelSync`](https://github.com/intersectmbo/ouroboros-consensus/blob/fcb4615f1d40f3baa24f9f1ac69d1feaaaf7bd9f/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L339), which ensures that the `ChainDB` continuously recomputes the optimal path (according to the chain validity and chain order rules) through the `VolatileDB` with each block addition.
+
+When a new block is added to the `ChainDB`, it is first written to disk and then chain selection is triggered. The process involves adding the block to a queue ([`cdbChainSelQueue`](https://github.com/intersectmbo/ouroboros-consensus/blob/fcb4615f1d40f3baa24f9f1ac69d1feaaaf7bd9f/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/Types.hs#L341)), from which the `addBlockRunner` thread dequeues blocks.
+
+Blocks are added to `cdbChainSelQueue` whenever a new block is downloaded via the `BlockFetch` component or minted locally.
+
+The `ChainDB` assumes that no blocks from the future are added to the `cdbChainSelQueue`. The `ChainSync` process enforces this constraint.
+However, this precondition is currently not checked [during initialization](https://github.com/intersectmbo/ouroboros-consensus/blob/fcb4615f1d40f3baa24f9f1ac69d1feaaaf7bd9f/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L136).
+
+### Chain selection and LoE
+
+During the node's startup and initial chain selection phase, the `ChainDB` [explicitly prevents](https://github.com/intersectmbo/ouroboros-consensus/blob/fcb4615f1d40f3baa24f9f1ac69d1feaaaf7bd9f/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L231) selecting more than `k` blocks in maximal candidates if [LoE](TODO-ref!) (Limit on Eagerness) is enabled.
+This precaution helps avoid accidentally adopting an adversarial chain from the `VolatileDB`, a chain that LoE would have rejected during live syncing.
+
+When a new block (or part of a fork) would extend the current chain beyond the LoE limit, it is added to the `ChainDB`'s database, but it does not immediately trigger a chain selection switch or extension.
+This control mechanism is crucial for preventing the premature adoption of potentially undesirable chains.
+
+Blocks that were previously added to the database but not selected due to the LoE must be reprocessed by chain selection once the LoE fragment advances.
+A background thread ([`watcher`](https://github.com/intersectmbo/ouroboros-consensus/blob/fcb4615f1d40f3baa24f9f1ac69d1feaaaf7bd9f/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Genesis/Governor.hs#L122)) handles this by polling candidate fragments and explicitly sending `ChainSelReprocessLoEBlocks` messages to the `cdbChainSelQueue`, ensuring that these blocks are reconsidered.
+
+When chain selection evaluates candidate fragments (potential forks to switch to), these fragments are [trimmed](https://github.com/intersectmbo/ouroboros-consensus/blob/fcb4615f1d40f3baa24f9f1ac69d1feaaaf7bd9f/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L745) to respect the LoE.
+
+## Block Forging
+
+Block forging is a single-threaded process initiated at the beginning of each slot. Its primary purpose is to determine whether the node is elected to mint a block and, if so, to create and submit that block to the chain. The process is defined in [`forkBlockForging`](https://github.com/intersectmbo/ouroboros-consensus/blob/6c1f0e293b50b898e69116df0355595004432077/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/NodeKernel.hs#L491).
+
+Block forging logic relies on the `ConsensusProtocol` instance of the protocol in use to determine if the node is a leader for the current slot ([`checkIsLeader`](https://github.com/intersectmbo/ouroboros-consensus/blob/6c1f0e293b50b898e69116df0355595004432077/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs#L142)).
+
+The [`blockForgingController`](https://github.com/intersectmbo/ouroboros-consensus/blob/6c1f0e293b50b898e69116df0355595004432077/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/NodeKernel.hs#L375) function uses [`BlockChainTime`](https://github.com/intersectmbo/ouroboros-consensus/blob/6c1f0e293b50b898e69116df0355595004432077/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/BlockchainTime/API.hs#L23) to monitor the current slot.
+
+Block forging invokes `forecastFor` on the `LedgerView`. If this operation takes too long, it can delay block production. Note that if it’s not possible to forecast to the current slot, then forging a block is not possible.
+
+If `checkLeader` confirms the node is a leader, a block is forged, extending the current [selected chain](#chain-selection). Transactions are selected from a [mempool snapshot](TODO-ref!), which is a sequence of valid transactions consistent with the ledger state upon which the block will be built. For the purposes of block forging and the consensus protocol, these transactions are irrelevant as long as they are _valid_.
+
+The forged block is added to the `ChainDB`, which triggers chain selection. The block is treated like any external block to ensure robustness, allowing both the forging and chain selection logic to independently validate and agree on the block’s correctness.
+
+## Security Parameter `k`
+
+The `k` parameter, often referred to as the security parameter, is a fundamental constant in the Ouroboros consensus protocols. On Cardano mainnet, `k` is set to 2160 blocks. This parameter underpins various aspects of a Cardano node's operation, from chain selection and storage to security guarantees and performance.
+
+For Ouroboros Praos, used in Shelley-based eras, theoretical proofs guarantee that within `3k/f` slots, the chain will grow by at least `k` blocks.
+
+### Chain Immutability and Volatility
+
+The blockchain in a Cardano node is conceptually divided into an immutable part and a volatile part. A block becomes part of the immutable portion once it has been confirmed by at least `k` subsequent blocks. This property, known as _Common Prefix_, is a security guarantee of Ouroboros Praos. Immutable blocks are stored in the [ImmutableDB](TODO-ref).
+
+The volatile part consists of the newest `k` blocks, which remain subject to rollback if a more preferable chain is discovered. These blocks, along with other potential fork candidates, are stored in the `VolatileDB`.
+
+### Chain Selection and Rollbacks
+
+The `ouroboros-consensus` implementation enforces a strict rule: a node will never switch to a chain that forks more than `k` blocks deep from its current tip.
+
+When a node is [caught up](TODO-ref), any candidate chains requiring a rollback exceeding `k` blocks are excluded from consideration. This constraint limits the number of ledger states that need to be retained to evaluate forks. Additionally, it prevents arbitrary-length rollbacks thus protecting against potential [attacks](#network-security-and-performance) that rely on this.
+
+When a node is [syncing](TODO-ref) with the chain, an adversary may present it with an alternative chain that forks more than `k` blocks from the current tip. However, the [Genesis](TODO-ref) syncing protocol ensures that a node joining the network does not switch to an adversarial chain.
+
+Genesis relies on the property that an honest chain is always denser than any adversarial chain within a window of `s` slots, which in practice is defined as `3k/f`, where `f` is the [active slot coefficient](TODO-ref).
+
+### Ledger and Protocol State Management
+
+The LedgerDB (Ledger Database) is designed to retain the last `k` ledger states (specifically, `k + 1` states including the anchor). This facilitates fast rollbacks and the evaluation of potential forks.
+
+To validate headers, the system must [forecast](./ledger-interaction.md#forecasting-and-the-forecast-range) a `LedgerView` for future slots. This process requires the ledger to look ahead `k+1` blocks  from a given reference point, providing sufficient information to enable a node to see if a candidate chain is better.
+
+### Network Security and Performance
+
+The `k` parameter is fundamental for bounding the work a node performs and its memory and storage requirements. This is crucial for preventing denial-of-service (DoS) attacks. Without the rollback constraint, an adversary could force a node to store unbounded amounts of data or perform unbounded validation work.
+
+For Cardano’s Praos implementation, `k` was specifically set to 2160 to help mitigate the risk of [grinding attacks](TODO-ref).
+
+## Consensus Protocols Used in Cardano
+
+### PBFT
+
+In Cardano's early days, the system utilized Ouroboros Permissive BFT (PBFT) as its consensus algorithm, serving as a transitional protocol from the original Ouroboros Classic to the more advanced Ouroboros Praos.
+This choice ensured backward compatibility with the Byron era of the blockchain following the [original implementation](https://github.com/input-output-hk/cardano-sl/) rewrite, allowing the development effort to focus on the new implementation (including the new TPraos protocol).
+
+The use of PBFT in Byron reflected a more centralized phase for Cardano, with initial block production relying on a small set of core nodes.
+The eventual transition to a more decentralized system, where stake pools became responsible for block creation, was a gradual process managed by a [`d` parameter](https://github.com/intersectmbo/cardano-ledger/releases/latest/download/shelley-delegation.pdf) that controlled the proportion of slots assigned to bootstrap keys versus stake pools.
+
+Unlike the strict round-robin leader schedule of pure BFT, Permissive BFT relaxed this requirement, allowing blocks to be signed by any of the known core nodes.
+However, it imposed a limit on the number of signatures a given node could provide within a specific window of blocks; exceeding this threshold would result in the block being rejected as invalid.
+This threshold was set at 0.22, a value chosen to balance compatibility with Ouroboros Classic chains while still restricting malicious behavior.
+
+Although the Ouroboros BFT protocol did not impose a rollback limit of `k` blocks, the Consensus implementation of PBFT adheres to this bound for the reasons outlined in [this section](#security-parameter-k). Importantly, this constraint does not fundamentally change the protocol's behavior.
+
+In situations where multiple blocks could exist in the same slot, PBFT allowed for arbitrary tie-breaking. The chain selection order prioritized chain length, followed by the `opcert` number, and then the VRF value.
+
+The Consensus instances for the Byron era can be found in [this directory](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/src/byron/Ouroboros/Consensus/Byron).
+The specification for this protocol can be found [here](https://github.com/intersectmbo/cardano-ledger/releases/latest/download/byron-blockchain.pdf), and the research paper describing the BFT protocol can be found [here](https://iohk.io/en/research/library/papers/ouroboros-bft-a-simple-byzantine-fault-tolerant-consensus-protocol/).
+
+### TPraos
+
+Starting with the Shelley era, Ouroboros Transitional Praos (TPraos) served as an intermediate consensus protocol in Cardano, bridging the gap between the initial, more centralized Byron era (which used Ouroboros Permissive BFT) and the fully decentralized Ouroboros Praos.
+Introduced for the Shelley-based eras, TPraos was designed to facilitate a smooth transition to decentralization.
+
+A key feature of TPraos was the `d` parameter, which controlled the proportion of slots assigned to core bootstrap keys versus those elected by stake pools.
+Starting at `d=1` (fully centralized bootstrap keys) and gradually decreasing to `d=0` (full decentralization), this parameter enabled a controlled handover of block production to the broader network of stake pools.
+For any given `d` value, the system would perform leader election according to Ouroboros Praos rules for all slots, but then override a `d`-fraction of these slots, assigning them to the old core nodes.
+
+Like its successor, Praos, TPraos relies on a Verifiable Random Function (VRF) to determine slot leadership in a publicly verifiable yet unpredictable manner.
+
+The TPraos related instances for Consensus can be found [here](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/TPraos.hs). For its formal definition, refer to Section 12 of the [Shelley formal specification](https://github.com/intersectmbo/cardano-ledger/releases/latest/download/shelley-ledger.pdf).
+
+### Praos
+
+Starting with the Babbage era, the Consensus layer implements the [Ouroboros Praos](https://eprint.iacr.org/2017/573.pdf) protocol. This is a fully decentralized protocol, which operates without the `d` parameter used in TPraos.
+
+TPraos used the leader VRF value itself as the tie-breaker when multiple stake pools were elected to produce a block in the same slot.
+Praos (since the Babbage era) [revised](https://github.com/IntersectMBO/ouroboros-network/pull/3595) this tie-breaking mechanism to use the The non-range extended VRF value[^1], which is uncorrelated to the leader VRF, ensuring that in multi-leader scenarios, the probability of one pool winning over another is consistently 1/2, irrespective of their stake size.
+The reason for this change was performance: we now only require a single VRF computation, from which multiple outputs can be derived, reducing the number of computations from two in TPraos to one in Praos.
+
+Praos provides strong security guarantees, formally proven to ensure a vanishingly small failure probability for key properties:
+
+- Common Prefix: This property ensures that any two honest chains will share a [common prefix](TODO-ref-definition) of at least `k` blocks, meaning that a block deep in the chain (more than `k` blocks from the tip) is considered immutable and will remain on all honest nodes' chains.
+- Chain Growth: This property guarantees that the honest chain will grow by a certain number of blocks within a given period of slots.
+- This ensures that every span of a certain number of slots on an honest chain contains at least one block minted by an honest node.
+
+The Praos instances for Consensus can be found [in this module](https://github.com/intersectmbo/ouroboros-consensus/blob/50ea594c1e0c467f3d96a1d2848de5a15f792fdf/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos.hs#L17).
+
+[^1]: See this paper for background on range extension. Briefly, it means that one can derive multiple independent VRF outputs from a single VRF output via hashing and domain separation.

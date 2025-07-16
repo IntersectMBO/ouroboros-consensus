@@ -25,11 +25,33 @@ class
   ) =>
   BlockSupportsProtocol blk
   where
+  -- | Extracts a 'ValidateView' from a block's 'Header' for use by
+  -- the consensus protocol during block validation.
+  --
+  -- This function should return only the information necessary from
+  -- the header to perform protocol-specific validation checks, for
+  -- instance issuer id or proof of the right to produce a block in a
+  -- given slot.
+  --
+  -- This function enables  the "header/body split" optimization.
   validateView ::
     BlockConfig blk ->
     Header blk ->
     ValidateView (BlockProtocol blk)
 
+  -- | Projects a view of a block's 'Header' required by the consensus
+  -- protocol's chain selection logic.
+  --
+  -- A key design decision is that chain selection compares chains
+  -- based **only on their tips** (via their 'SelectView's). This is a
+  -- pragmatic refinement of theoretical models where chain selection
+  -- might involve scanning entire chains, which is impractical for
+  -- frequent operations on a growing blockchain. This function
+  -- enables this optimization by providing just the necessary
+  -- information for comparison by looking at the header of the chain
+  -- tip.
+  --
+  -- The default implementation of this function returns the block number.
   selectView ::
     BlockConfig blk ->
     Header blk ->

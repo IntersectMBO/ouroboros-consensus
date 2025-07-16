@@ -217,6 +217,13 @@ instance TranslateProto singleProto singleProto where
 -- include also recording\/storing arrival information and using that instead
 -- of\/in addition to the 'Ord' instance.
 class Ord sv => ChainOrder sv where
+
+  -- | The 'ChainOrder' type class's 'preferCandidate' function
+  -- consumes both the 'SelectView's of competing chain tips and the
+  -- 'ChainOrderConfig' to make the final decision on which chain is
+  -- strictly preferred. This design allows for flexible and
+  -- protocol-specific tie-breaking rules that go beyond simple chain
+  -- length comparisons.
   type ChainOrderConfig sv :: Type
 
   -- | Compare a candidate chain to our own.
@@ -236,7 +243,7 @@ class Ord sv => ChainOrder sv where
   --
   --      However, this is not necessarily a sufficient condition; a concrete
   --      implementation may decide to not have @ours ⊏ cand@ despite @ours <
-  --      cand@ for some pairs @ours, can@. However, it is recommended to think
+  --      cand@ for some pairs @ours, cand@. However, it is recommended to think
   --      about this carefully and rather use 'SimpleChainOrder' if possible,
   --      which defines @ours ⊏ cand@ as @ours < cand@, as it simplifies
   --      reasoning about the chain ordering.
