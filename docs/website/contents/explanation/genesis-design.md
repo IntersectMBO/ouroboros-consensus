@@ -2,14 +2,7 @@
 
 # Cardano Genesis
 
-This document contains the High-Level Design for adding Ouroboros Genesis to the existing Cardano implementation of Ouroboros Praos.
-
-## Prerequisites
-
-The following is taken for granted.
-
-- The reader is familir with the core architecture of the existing Praos implementation ([ChainSync](Glossary#chainsync) mini protocol, [BlockFetch](Glossary#blockfetch) mini protocol and decision logic, etc).
-- The reader is aware of the motivation for Ouroboros Genesis ([paper](https://iohk.io/en/research/library/papers/ouroboros-genesis-composable-proof-of-stake-blockchains-with-dynamic-availability/) & [blog post](https://iohk.io/en/blog/posts/2023/02/09/ouroboros-genesis-enhanced-security-in-a-dynamic-environment/)) over Ouroboros Praos ([paper](https://iohk.io/en/research/library/papers/ouroboros-praos-an-adaptively-secure-semi-synchronous-proof-of-stake-protocol/)), ie safe decentralized syncing.
+This document contains the high-level design for adding Ouroboros Genesis to the existing Cardano implementation of Ouroboros Praos.
 
 ## Notation
 
@@ -34,50 +27,54 @@ The following is taken for granted.
 
 Any implementation of Genesis in Cardano must satisfy the following requirements.
 
-- {No Praos Disruption}: The new behaviors do not alter the behavior of a node that is already done syncing with the network, ie the Ouroboros Praos behaviors.
+- {No Praos Disruption}: The new behaviors must not alter the functioning of a node that has already completed synchronization with the network—that is, nodes operating under standard Ouroboros Praos behavior.
 
-- {Sync Safety}: If the syncing node always has at least one peer that is honest, not itself syncing, and connected with reasonable latency and bandwidth to the syncing node as well as the honest network, then the syncing node will never select more than Kcp blocks of a chain that is not extended by a recent selection of some honest nodes in the network (ie approximately within Δ).
+- {Sync Safety}: If the syncing node always has at least one peer that is honest, not itself syncing, and connected with reasonable latency and bandwidth, both to the syncing node as well as the honest network, then the syncing node will never select more than `Kcp` blocks of a chain that is not extended by a recent selection of some honest nodes in the network (ie approximately within Δ).
+
   The antecedent of that implication is the {Honest Availability Assumption} ({HAA}).
-  It is beyond the scope of this design to ensure the HAA, but it seems viable even if non-trivial (see the Diffusion Layer's _Ledger Peers_ design).
+  It is beyond the scope of this design to guarantee the HAA.
+  Instead, we rely on the Network layer, which ensures—with high probability—that the node is connected to at least one honest peer. The Network layer, in turn, leverages the peers stake to probabilistically fulfill this requirement.
+
   It is important to note that the Sync Safety requirement directly prevents the [_long-range attack_](Glossary#long-range-attack), which was the original motivation for Ouroboros Genesis.
 
 - {Sync Liveness}: The upper bound of unnecessary delay incurred during some interval of the sync is proportional to how many of the syncing node's upstream peers in that same interval are adversarial.
   It is beyond the scope of this design to ensure that count of adversarial peers remains below some reasonable bound (eg 50).
 
-- {Limited Sync Load}: The syncing node does not incur unnecessary load on the honest network.
-  For example, a syncing node should only request the same block from more than one peer as a last resort.
+- {Limited Sync Load}: : A syncing node should avoid imposing excessive load on the honest network. For example, it should request the same block from multiple peers only as a last resort.
 
-- {Disaster Tolerance}: Given sufficient configuration (that is hopefully temporary), the new behaviors should work even despite a disaster on the Cardano network.
+- {Disaster Tolerance}: With adequate configuration, ideally temporary, the new behaviors should remain functional even in the event of a network-wide disruption.
 
 ## Components
 
 This design consists of the following components.
 
-- The {Lightweight Checkpointing} logic allows for configuration data (comparable in potency to the genesis block) to force the node to reject some chains as invalid by fiat.
+- The {Lightweight Checkpointing} logic allows configuration data (comparable in authority to the genesis block) to mandate that the node reject some chains as invalid by fiat.
 
-- The {Genesis State Machine} ({GSM}) determines whether the node has finished syncing.
-  Moreover, while the node is not syncing, the GSM disables all components of this design except Lightweight Checkpointing and the GSM itself.
+- The {Genesis State Machine} ({GSM}) determines the node synchronization status. For this, it transitions between different states: pre-syncing, syncing, and caught-up.
+  When the node is caught-up, the GSM disables all components of this design except Lightweight Checkpointing and the GSM itself.
 
-- The {Limit on Eagerness} ({LoE}) prevents the syncing node from selecting more than Kcp blocks beyond the intersection of its peers' latest selections.
+- The {Limit on Eagerness} ({LoE}) prevents the syncing node from selecting more than `Kcp` blocks beyond the intersection of its peers' latest selections.
   That interesction is called the {LoE anchor}.
   (The implementation maintains an LoE fragment.
   In an unfortunate collision of names, the LoE anchor is the tip of the LoE fragment, _not_ its [`anchor`](https://github.com/IntersectMBO/ouroboros-network/blob/88bf7766ddb70579b730f777e53473dcdc23b6d0/ouroboros-network-api/src/Ouroboros/Network/AnchoredSeq.hs#L94), see here[^loe-anchor-example] for an example.)
 
 - The {Genesis Density Disconnection} logic ({GDD}) disconnects from any advertised peer whose chain has too few blocks to be the honest chain and could prevent the syncing node from finishing.
-  There are some absolute limits, such as having no blocks at all within some interval of Scg slots.
-  The primary rule, though, involves comparisons between peers: disconnect from any peer whose advertised selection X doesn't have more blocks in the Sgen slots after its intersection X∩Y with any other peer's advertised selection Y than does Y, if Y has more than Kcp blocks after X∩Y.
+  There are some absolute limits, such as having no blocks at all within some interval of `Scg` slots.
+  The primary rule, though, involves comparisons between peers: Consider peer `A` offering chain `X`. We disconnect from `A` if there is a peer offering a chain `Y` such that: 1) there are no blocks in `Sgen` slots after `X ∩ Y`; 2) `Y` has more than `Kcp` blocks after `X∩Y`.
 
 - The {Limit on Patience} ({LoP}) disconnects from any peer that is claiming to have subsequent headers on its selection but not sending them promptly.
 
 - The {ChainSync Jumping} optimization ({CSJ}) avoids fetching the honest header chain from more than one peer.
 
-- The {Devoted BlockFetch} decision logic ({DBF}) of a syncing node prefers to request blocks from only one peer at a time, the first peer it finds that serves the best available header chain and serves the blocks faster than the syncing node can validate them.
+	- The {Devoted BlockFetch} decision logic ({DBF}) of a syncing node prefers to request blocks from only one peer at a time, the first peer it finds that serves the best available header chain and serves the blocks faster than the syncing node can validate them.
   The Honest Availability Assumption ensures that one such peer exists.
 
 - The {Node Versus Environment} tests scrutinize the behavior of the partially-mocked node when subjected to adversarial inputs.
   These are notably the first Cardano Consensus Layer tests to explicitly simulate non-trivial adversarial behaviors.
 
 All components are also depicted in the following diagram, with the exception of the GSM, which simply disables all other Genesis components (except Lightweight Checkpointing).
+
+TODO: edit this diagram, it's barely legible when rendered by Docusaurus. Maybe change it to top-down.
 
 ```mermaid
 graph LR
