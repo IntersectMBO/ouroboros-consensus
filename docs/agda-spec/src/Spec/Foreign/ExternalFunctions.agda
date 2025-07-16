@@ -8,6 +8,7 @@ record ExternalFunctions : Type where
   field
     extSignˢ     : ℕ → ℕ → ℕ
     extIsSignedˢ : ℕ → ℕ → ℕ → Bool
+    extSignᵏ     : (ℕ → ℕ) → ℕ → ℕ → ℕ
     extIsSignedᵏ : ℕ → ℕ → ℕ → ℕ → Bool
     extExp       : F.Rational → F.Rational
     extLn        : F.Rational → F.Rational
@@ -15,6 +16,7 @@ record ExternalFunctions : Type where
   data ExternalFunctions = MkExternalFunctions
     { extSignDSIG     :: Integer -> Integer -> Integer
     , extIsSignedDSIG :: Integer -> Integer -> Integer -> Bool
+    , extSignKES      :: (Integer -> Integer) -> Integer -> Integer -> Integer
     , extIsSignedKES  :: Integer -> Integer -> Integer -> Integer -> Bool
     , extExp          :: Rational -> Rational
     , extLn           :: Rational -> Rational
@@ -26,6 +28,7 @@ dummyExternalFunctions : ExternalFunctions
 dummyExternalFunctions = record
   { extSignˢ     = λ _ _ → 0
   ; extIsSignedˢ = λ _ _ _ → true
+  ; extSignᵏ     = λ _ _ _ → 0
   ; extIsSignedᵏ = λ _ _ _ _ → true
   ; extExp       = λ p → to (rationalExtStructure≈ .exp (from p))
   ; extLn        = λ p → to (rationalExtStructure≈ .ln (from p) ⦃ if (from p) ℚ.> 0ℚ then (λ{p>0} → positive p>0) else error "Not a positive rational number" ⦄)
