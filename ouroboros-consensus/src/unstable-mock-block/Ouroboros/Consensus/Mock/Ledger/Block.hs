@@ -1,3 +1,4 @@
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -183,6 +184,8 @@ instance
 
   headerIsEBB = const Nothing
 
+type KnownHashSize c = KnownNat (Hash.SizeHash (SimpleHash c))
+
 data SimpleStdHeader c ext = SimpleStdHeader
   { simplePrev :: ChainHash (SimpleBlock c ext)
   , simpleSlotNo :: SlotNo
@@ -194,7 +197,7 @@ data SimpleStdHeader c ext = SimpleStdHeader
   deriving anyclass NoThunks
 
 deriving anyclass instance
-  KnownNat (Hash.SizeHash (SimpleHash c)) =>
+  KnownHashSize c =>
   Serialise (SimpleStdHeader c ext)
 
 data SimpleBody = SimpleBody
@@ -729,7 +732,7 @@ instance InspectLedger (SimpleBlock c ext)
 -------------------------------------------------------------------------------}
 
 class
-  (KnownNat (Hash.SizeHash (SimpleHash c)), HashAlgorithm (SimpleHash c), Typeable c) =>
+  (KnownHashSize c, HashAlgorithm (SimpleHash c), Typeable c) =>
   SimpleCrypto c
   where
   type SimpleHash c :: Type
@@ -791,7 +794,7 @@ instance ToCBOR SimpleBody where
   toCBOR = encode
 
 encodeSimpleHeader ::
-  KnownNat (Hash.SizeHash (SimpleHash c)) =>
+  KnownHashSize c =>
   (ext' -> CBOR.Encoding) ->
   Header (SimpleBlock' c ext ext') ->
   CBOR.Encoding
