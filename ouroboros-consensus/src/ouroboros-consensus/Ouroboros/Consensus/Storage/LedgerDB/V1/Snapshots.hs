@@ -129,12 +129,11 @@
 --
 -- ------------------------------------------------------------------------------
 module Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots
-  ( loadSnapshot
-  , takeSnapshot
+  ( snapshotManagement
+  , loadSnapshot
 
-    -- * Testing
-  , snapshotToStatePath
-  , snapshotToTablesPath
+    -- * snapshot-converter
+  , implTakeSnapshot
   ) where
 
 import Codec.CBOR.Encoding
@@ -147,11 +146,14 @@ import Control.Tracer
 import Data.Functor.Contravariant ((>$<))
 import qualified Data.List as List
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Storage.LedgerDB.API
+import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
 import Ouroboros.Consensus.Storage.LedgerDB.V1.Args
 import Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as V1
@@ -161,6 +163,35 @@ import Ouroboros.Consensus.Util.Args (Complete)
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
+
+snapshotManagement ::
+  ( IOLike m
+  , LedgerDbSerialiseConstraints blk
+  , LedgerSupportsProtocol blk
+  ) =>
+  Complete LedgerDbArgs m blk ->
+  SnapshotManagement m (ReadLocked m) blk (StrictTVar m (DbChangelog' blk), BackingStore' m blk)
+snapshotManagement args =
+  snapshotManagement'
+    (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
+    (LedgerDBSnapshotEvent >$< lgrTracer args)
+    (SnapshotsFS (lgrHasFS args))
+
+snapshotManagement' ::
+  ( IOLike m
+  , LedgerDbSerialiseConstraints blk
+  , LedgerSupportsProtocol blk
+  ) =>
+  CodecConfig blk ->
+  Tracer m (TraceSnapshotEvent blk) ->
+  SnapshotsFS m ->
+  SnapshotManagement m (ReadLocked m) blk (StrictTVar m (DbChangelog' blk), BackingStore' m blk)
+snapshotManagement' ccfg tracer sfs@(SnapshotsFS fs) =
+  SnapshotManagement
+    { listSnapshots = defaultListSnapshots fs
+    , deleteSnapshot = defaultDeleteSnapshot fs tracer
+    , takeSnapshot = \suff (ldbVar, bs) -> implTakeSnapshot ldbVar ccfg tracer sfs bs suff
+    }
 
 -- | Try to take a snapshot of the /oldest ledger state/ in the ledger DB
 --
@@ -181,7 +212,7 @@ import System.FS.API
 -- whether this snapshot corresponds to a state that is more than @k@ back.
 --
 -- TODO: Should we delete the file if an error occurs during writing?
-takeSnapshot ::
+implTakeSnapshot ::
   ( IOLike m
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
@@ -194,7 +225,7 @@ takeSnapshot ::
   -- | Override for snapshot numbering
   Maybe String ->
   ReadLocked m (Maybe (DiskSnapshot, RealPoint blk))
-takeSnapshot ldbvar ccfg tracer (SnapshotsFS hasFS') backingStore suffix = readLocked $ do
+implTakeSnapshot ldbvar ccfg tracer (SnapshotsFS hasFS') backingStore suffix = readLocked $ do
   state <- changelogLastFlushedState <$> readTVarIO ldbvar
   case pointToWithOriginRealPoint (castPoint (getTip state)) of
     Origin ->
@@ -202,7 +233,7 @@ takeSnapshot ldbvar ccfg tracer (SnapshotsFS hasFS') backingStore suffix = readL
     NotOrigin t -> do
       let number = unSlotNo (realPointSlot t)
           snapshot = DiskSnapshot number suffix
-      diskSnapshots <- listSnapshots hasFS'
+      diskSnapshots <- defaultListSnapshots hasFS'
       if List.any (== DiskSnapshot number suffix) diskSnapshots
         then
           return Nothing

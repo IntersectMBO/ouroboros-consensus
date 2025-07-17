@@ -27,8 +27,10 @@ import Ouroboros.Consensus.Storage.ImmutableDB.Stream
 import Ouroboros.Consensus.Storage.LedgerDB.API
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Forker
+import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1 as V1
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2 as V2
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
@@ -65,13 +67,15 @@ openDB
   replayGoal
   getBlock = case lgrFlavorArgs args of
     LedgerDbFlavorArgsV1 bss ->
-      let initDb =
+      let snapManager = V1.snapshotManagement args
+          initDb =
             V1.mkInitDb
               args
               bss
               getBlock
-       in doOpenDB args initDb stream replayGoal
-    LedgerDbFlavorArgsV2 bss ->
+              snapManager
+       in doOpenDB args initDb snapManager stream replayGoal
+    LedgerDbFlavorArgsV2 bss -> do
       let initDb =
             V2.mkInitDb
               args
