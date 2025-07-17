@@ -488,7 +488,7 @@ data InitDB db m blk = InitDB
 -- obtained in this way will (hopefully) share much of their memory footprint
 -- with their predecessors.
 initialize ::
-  forall m blk db.
+  forall m n blk db st.
   ( IOLike m
   , LedgerSupportsProtocol blk
   , InspectLedger blk
@@ -496,24 +496,24 @@ initialize ::
   ) =>
   Tracer m (TraceReplayEvent blk) ->
   Tracer m (TraceSnapshotEvent blk) ->
-  SomeHasFS m ->
   LedgerDbCfg (ExtLedgerState blk) ->
   StreamAPI m blk blk ->
   Point blk ->
   InitDB db m blk ->
+  SnapshotManager m n blk st ->
   Maybe DiskSnapshot ->
   m (InitLog blk, db, Word64)
 initialize
   replayTracer
   snapTracer
-  hasFS
   cfg
   stream
   replayGoal
   dbIface
+  snapManager
   fromSnapshot =
     case fromSnapshot of
-      Nothing -> listSnapshots hasFS >>= tryNewestFirst id
+      Nothing -> listSnapshots snapManager >>= tryNewestFirst id
       Just snap -> tryNewestFirst id [snap]
    where
     InitDB{initFromGenesis, initFromSnapshot, closeDb} = dbIface
@@ -573,7 +573,7 @@ initialize
           traceWith snapTracer $ InvalidSnapshot s err
           Monad.when (diskSnapshotIsTemporary s) $ do
             traceWith snapTracer $ DeletedSnapshot s
-            deleteSnapshot hasFS s
+            deleteSnapshot snapManager s
           tryNewestFirst (acc . InitFailure s err) ss
 
         -- If we fail to use this snapshot for any other reason, delete it and
@@ -581,7 +581,7 @@ initialize
         Left err -> do
           Monad.when (diskSnapshotIsTemporary s || err == InitFailureGenesis) $ do
             traceWith snapTracer $ DeletedSnapshot s
-            deleteSnapshot hasFS s
+            deleteSnapshot snapManager s
           traceWith snapTracer . InvalidSnapshot s $ err
           tryNewestFirst (acc . InitFailure s err) ss
         Right (initDb, pt) -> do
@@ -600,7 +600,7 @@ initialize
           case eDB of
             Left err -> do
               traceWith snapTracer . InvalidSnapshot s $ err
-              Monad.when (diskSnapshotIsTemporary s) $ deleteSnapshot hasFS s
+              Monad.when (diskSnapshotIsTemporary s) $ deleteSnapshot snapManager s
               closeDb initDb
               tryNewestFirst (acc . InitFailure s err) ss
             Right (db, replayed) -> do
