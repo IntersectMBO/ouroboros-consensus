@@ -18,6 +18,7 @@
 -- | Arguments for LedgerDB initialization.
 module Ouroboros.Consensus.Storage.LedgerDB.Args
   ( LedgerDbArgs (..)
+  , LedgerDbBackendArgs (..)
   , LedgerDbFlavorArgs (..)
   , QueryBatchSize (..)
   , defaultArgs
@@ -39,6 +40,8 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
 import Ouroboros.Consensus.Util.Args
 import System.FS.API
+
+data LedgerDbBackendArgs m = V1LMDB (Complete V1.LedgerDbFlavorArgs m) | V2InMemory | V2LSM FilePath
 
 {-------------------------------------------------------------------------------
   Arguments
