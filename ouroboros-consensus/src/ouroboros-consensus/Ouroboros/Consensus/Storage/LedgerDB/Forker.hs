@@ -66,6 +66,7 @@ import Control.Monad.Except
 import Control.Monad.Reader (ReaderT (..))
 import Control.Monad.Trans (MonadTrans (..))
 import Control.ResourceRegistry
+import Data.Bifunctor (first)
 import Data.Kind
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -105,11 +106,20 @@ data Forker m l blk = Forker
 
     forkerReadTables :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
   -- ^ Read ledger tables from disk.
-  , forkerRangeReadTables :: !(RangeQueryPrevious l -> m (LedgerTables l ValuesMK))
+  , forkerRangeReadTables :: !(RangeQueryPrevious l -> m (LedgerTables l ValuesMK, Maybe (TxIn l)))
   -- ^ Range-read ledger tables from disk.
   --
-  -- This range read will return as many values as the 'QueryBatchSize' that
-  -- was passed when opening the LedgerDB.
+  -- This range read will return as many values as the 'QueryBatchSize' that was
+  -- passed when opening the LedgerDB.
+  --
+  -- The second component of the returned tuple is the maximal key found by the
+  -- forker. This is only necessary because some backends have a different
+  -- sorting for the keys than the order defined in Haskell.
+  --
+  -- The last key retrieved is part of the map too. It is intended to be fed
+  -- back into the next iteration of the range read. If the function returns
+  -- Nothing, it means the read returned no results, or in other words, we
+  -- reached the end of the ledger tables.
   , forkerGetLedgerState :: !(STM m (l EmptyMK))
   -- ^ Get the full ledger state without tables.
   --
@@ -206,7 +216,8 @@ ledgerStateReadOnlyForker frk =
   ReadOnlyForker
     { roforkerClose = roforkerClose
     , roforkerReadTables = fmap castLedgerTables . roforkerReadTables . castLedgerTables
-    , roforkerRangeReadTables = fmap castLedgerTables . roforkerRangeReadTables . castRangeQueryPrevious
+    , roforkerRangeReadTables =
+        fmap (first castLedgerTables) . roforkerRangeReadTables . castRangeQueryPrevious
     , roforkerGetLedgerState = ledgerState <$> roforkerGetLedgerState
     , roforkerReadStatistics = roforkerReadStatistics
     }
@@ -239,7 +250,7 @@ data ReadOnlyForker m l blk = ReadOnlyForker
   -- ^ See 'forkerClose'
   , roforkerReadTables :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
   -- ^ See 'forkerReadTables'
-  , roforkerRangeReadTables :: !(RangeQueryPrevious l -> m (LedgerTables l ValuesMK))
+  , roforkerRangeReadTables :: !(RangeQueryPrevious l -> m (LedgerTables l ValuesMK, Maybe (TxIn l)))
   -- ^ See 'forkerRangeReadTables'.
   , roforkerGetLedgerState :: !(STM m (l EmptyMK))
   -- ^ See 'forkerGetLedgerState'

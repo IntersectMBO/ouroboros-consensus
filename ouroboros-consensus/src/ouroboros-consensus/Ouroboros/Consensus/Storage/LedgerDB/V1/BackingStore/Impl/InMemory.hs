@@ -247,12 +247,14 @@ newInMemoryBackingStore tracer (SnapshotsFS (SomeHasFS fs)) initialization = do
   rangeRead ::
     RangeQuery (LedgerTables l KeysMK) ->
     LedgerTables l ValuesMK ->
-    LedgerTables l ValuesMK
-  rangeRead rq values = case rqPrev rq of
-    Nothing ->
-      ltmap (rangeRead0' (rqCount rq)) values
-    Just keys ->
-      ltliftA2 (rangeRead' (rqCount rq)) keys values
+    (LedgerTables l ValuesMK, Maybe (TxIn l))
+  rangeRead rq values =
+    let vs@(LedgerTables (ValuesMK m)) = case rqPrev rq of
+          Nothing ->
+            ltmap (rangeRead0' (rqCount rq)) values
+          Just keys ->
+            ltliftA2 (rangeRead' (rqCount rq)) keys values
+     in (vs, fst <$> Map.lookupMax m)
 
   rangeRead0' ::
     Int ->
