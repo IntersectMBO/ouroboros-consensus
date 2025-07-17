@@ -279,7 +279,7 @@ mkGsmEntryPoints varChainSyncHandles chainDB writeGsmState =
   GSM.realGsmEntryPoints
     (id, nullTracer)
     GSM.GsmView
-      { GSM.candidateOverSelection
+      { GSM.getCandidateOverSelection = pure candidateOverSelection
       , GSM.peerIsIdle = csIdling
       , GSM.equivalent = (==) `on` AF.headPoint
       , GSM.getChainSyncStates = fmap cschState <$> cschcMap varChainSyncHandles
