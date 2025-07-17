@@ -716,7 +716,7 @@ withTestMempool setup@TestSetup{..} prop =
                             { roforkerClose = pure ()
                             , roforkerReadTables =
                                 pure . (projectLedgerTables st `restrictValues'`)
-                            , roforkerRangeReadTables = const $ pure emptyLedgerTables
+                            , roforkerRangeReadTables = const $ pure (emptyLedgerTables, Nothing)
                             , roforkerGetLedgerState = pure $ forgetLedgerTables st
                             , roforkerReadStatistics = pure Nothing
                             }
