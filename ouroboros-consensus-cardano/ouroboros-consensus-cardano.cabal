@@ -167,6 +167,7 @@ library
     ouroboros-consensus ^>=0.27,
     ouroboros-consensus-protocol ^>=0.12,
     ouroboros-network-api ^>=0.15,
+    primitive,
     serialise ^>=0.2,
     singletons ^>=3.0,
     small-steps,
@@ -176,6 +177,7 @@ library
     text,
     these ^>=1.2,
     validation,
+    vector,
     vector-map,
 
 library unstable-byronspec

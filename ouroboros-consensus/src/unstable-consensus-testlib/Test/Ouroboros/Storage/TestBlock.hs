@@ -575,6 +575,11 @@ instance IsLedger (LedgerState TestBlock) where
 
 type instance TxIn (LedgerState TestBlock) = Void
 type instance TxOut (LedgerState TestBlock) = Void
+type instance LSMTxOut (LedgerState TestBlock) = Void
+
+instance HasLSMTxOut (LedgerState TestBlock) where
+  toLSMTxOut _ = id
+  fromLSMTxOut _ = id
 
 instance LedgerTablesAreTrivial (LedgerState TestBlock) where
   convertMapKind (TestLedger x y) = TestLedger x y
