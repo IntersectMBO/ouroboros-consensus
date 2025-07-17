@@ -166,8 +166,7 @@ checkSnapshotFileStructure m p (SomeHasFS fs) = case m of
 
 load ::
   forall blk.
-  ( LedgerDbSerialiseConstraints blk
-  , CanStowLedgerTables (LedgerState blk)
+  ( CanStowLedgerTables (LedgerState blk)
   , LedgerSupportsProtocol blk
   , LedgerSupportsLedgerDB blk
   ) =>
@@ -218,8 +217,7 @@ load config@Config{inpath = pathToDiskSnapshot -> Just (fs@(SomeHasFS hasFS), pa
 load _ _ _ _ = error "Malformed input path!"
 
 store ::
-  ( LedgerDbSerialiseConstraints blk
-  , CanStowLedgerTables (LedgerState blk)
+  ( CanStowLedgerTables (LedgerState blk)
   , LedgerSupportsProtocol blk
   , LedgerSupportsLedgerDB blk
   ) =>

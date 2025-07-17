@@ -117,7 +117,9 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , LedgerDbSerialiseConstraints
   , LedgerSupportsInMemoryLedgerDB
   , LedgerSupportsLedgerDB
-  , LedgerSupportsOnDiskLedgerDB
+  , LedgerSupportsLMDBLedgerDB
+  , LedgerSupportsV1LedgerDB
+  , LedgerSupportsV2LedgerDB
   , ResolveBlock
   , currentPoint
 
@@ -722,7 +724,11 @@ data TraceReplayProgressEvent blk
   Updating ledger tables
 -------------------------------------------------------------------------------}
 
-type LedgerSupportsInMemoryLedgerDB blk = (CanUpgradeLedgerTables (LedgerState blk))
+type LedgerSupportsInMemoryLedgerDB l =
+  (CanUpgradeLedgerTables l, SerializeTablesWithHint l)
+
+type LedgerSupportsV1LedgerDB l =
+  (LedgerSupportsInMemoryLedgerDB l, LedgerSupportsLMDBLedgerDB l)
 
 -- | When pushing differences on InMemory Ledger DBs, we will sometimes need to
 -- update ledger tables to the latest era. For unary blocks this is a no-op, but
@@ -761,12 +767,18 @@ instance
   Supporting On-Disk backing stores
 -------------------------------------------------------------------------------}
 
-type LedgerSupportsOnDiskLedgerDB blk =
-  (IndexedMemPack (LedgerState blk EmptyMK) (TxOut (LedgerState blk)))
+type LedgerSupportsLMDBLedgerDB l =
+  (IndexedMemPack (l EmptyMK) (TxOut l), MemPackIdx l EmptyMK ~ l EmptyMK)
 
-type LedgerSupportsLedgerDB blk =
-  ( LedgerSupportsOnDiskLedgerDB blk
-  , LedgerSupportsInMemoryLedgerDB blk
+type LedgerSupportsV2LedgerDB l =
+  (LedgerSupportsInMemoryLedgerDB l)
+
+type LedgerSupportsLedgerDB blk = LedgerSupportsLedgerDB' (LedgerState blk) blk
+
+type LedgerSupportsLedgerDB' l blk =
+  ( LedgerSupportsLMDBLedgerDB l
+  , LedgerSupportsInMemoryLedgerDB l
+  , LedgerDbSerialiseConstraints blk
   )
 
 {-------------------------------------------------------------------------------
