@@ -24,6 +24,7 @@ module Ouroboros.Consensus.Peras.Weight
   , prunePerasWeightSnapshot
 
     -- * Query
+  , isEmptyPerasWeightSnapshot
   , weightBoostOfPoint
   , weightBoostOfFragment
   , totalWeightOfFragment
@@ -163,6 +164,28 @@ prunePerasWeightSnapshot slot =
  where
   isTooOld :: Point blk -> Bool
   isTooOld pt = pointSlot pt < NotOrigin slot
+
+-- | Check whether the snapshot contains weights for any blocks.
+--
+-- >>> isEmptyPerasWeightSnapshot emptyPerasWeightSnapshot
+-- True
+--
+-- >>> :{
+-- weights :: [(Point Blk, PerasWeight)]
+-- weights =
+--   [ (BlockPoint 2 "foo", PerasWeight 2)
+--   , (GenesisPoint,       PerasWeight 3)
+--   , (BlockPoint 3 "bar", PerasWeight 2)
+--   , (BlockPoint 2 "foo", PerasWeight 2)
+--   ]
+-- :}
+--
+-- >>> snap = mkPerasWeightSnapshot weights
+--
+-- >>> isEmptyPerasWeightSnapshot snap
+-- False
+isEmptyPerasWeightSnapshot :: PerasWeightSnapshot blk -> Bool
+isEmptyPerasWeightSnapshot = Map.null . getPerasWeightSnapshot
 
 -- | Get the weight boost for a point, or @'mempty' :: 'PerasWeight'@ otherwise.
 --
