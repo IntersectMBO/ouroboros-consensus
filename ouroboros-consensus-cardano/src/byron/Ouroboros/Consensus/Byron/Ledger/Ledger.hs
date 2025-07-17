@@ -14,6 +14,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Instances requires for consensus/ledger integration
@@ -92,6 +93,7 @@ import Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Storage.LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Util (ShowProxy (..))
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -202,6 +204,14 @@ instance IsLedger (LedgerState ByronBlock) where
 
 type instance TxIn (LedgerState ByronBlock) = Void
 type instance TxOut (LedgerState ByronBlock) = Void
+
+-- Byron has no ledger tables, therefore we don't need to convert to and from LSMTxOut
+instance LedgerSupportsLSMLedgerDB (LedgerState ByronBlock) where
+  type LSMTxOut (LedgerState ByronBlock) = TxOut (LedgerState ByronBlock)
+  toLSMTxOut _ = id
+  fromLSMTxOut _ = id
+  lsmIndex _ = LSM.OrdinaryIndex
+  lsmSnapLabel _ = "Byron"
 
 instance LedgerTablesAreTrivial (LedgerState ByronBlock) where
   convertMapKind (ByronLedgerState x y z) = ByronLedgerState x y z
