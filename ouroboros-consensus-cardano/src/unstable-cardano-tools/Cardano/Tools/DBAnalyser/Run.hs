@@ -15,6 +15,7 @@ import Cardano.Tools.DBAnalyser.HasAnalysis
 import Cardano.Tools.DBAnalyser.Types
 import Control.ResourceRegistry
 import Control.Tracer (Tracer (..), nullTracer)
+import Data.Functor.Contravariant ((>$<))
 import qualified Data.SOP.Dict as Dict
 import Data.Singletons (Sing, SingI (..))
 import qualified Debug.Trace as Debug
@@ -34,16 +35,22 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.Stream as ImmutableDB
+import Ouroboros.Consensus.Storage.LedgerDB (TraceEvent (..))
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1 as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2 as LedgerDB.V2
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as LedgerDB.V2
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
 import Ouroboros.Network.Block (genesisPoint)
+import System.FS.API
 import System.IO
 import Text.Printf (printf)
 
@@ -54,7 +61,6 @@ import Text.Printf (printf)
 openLedgerDB ::
   ( LedgerSupportsProtocol blk
   , InspectLedger blk
-  , LedgerDB.LedgerDbSerialiseConstraints blk
   , HasHardForkHistory blk
   , LedgerDB.LedgerSupportsLedgerDB blk
   ) =>
@@ -64,6 +70,7 @@ openLedgerDB ::
     , LedgerDB.TestInternals' IO blk
     )
 openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.LedgerDbFlavorArgsV1 bss} = do
+  let snapManager = V1.snapshotManagement lgrDbArgs
   (ledgerDB, _, intLedgerDB) <-
     LedgerDB.openDBInternal
       lgrDbArgs
@@ -71,19 +78,43 @@ openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.L
           lgrDbArgs
           bss
           (\_ -> error "no replay")
+          snapManager
       )
+      snapManager
       emptyStream
       genesisPoint
   pure (ledgerDB, intLedgerDB)
 openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.LedgerDbFlavorArgsV2 args} = do
+  (snapManager, bss') <- case args of
+    V2.V2Args V2.InMemoryHandleArgs -> pure (InMemory.snapshotManagement lgrDbArgs, V2.InMemoryHandleEnv)
+    V2.V2Args (V2.LSMHandleArgs (V2.LSMArgs path genSalt mkFS)) -> do
+      (rk1, V2.SomeHasFSAndBlockIO fs' blockio) <- mkFS (LedgerDB.lgrRegistry lgrDbArgs) "lsm"
+      session <-
+        allocate
+          (LedgerDB.lgrRegistry lgrDbArgs)
+          ( \_ -> do
+              salt <- genSalt
+              LSM.openSession
+                ( LedgerDBFlavorImplEvent . LedgerDB.FlavorImplSpecificTraceV2 . V2.LSMTrace
+                    >$< LedgerDB.lgrTracer lgrDbArgs
+                )
+                fs'
+                blockio
+                salt
+                (mkFsPath [path])
+          )
+          LSM.closeSession
+      pure (LSM.snapshotManagement (snd session) lgrDbArgs, V2.LSMHandleEnv session rk1)
   (ledgerDB, _, intLedgerDB) <-
     LedgerDB.openDBInternal
       lgrDbArgs
       ( LedgerDB.V2.mkInitDb
           lgrDbArgs
-          args
+          bss'
           (\_ -> error "no replay")
+          snapManager
       )
+      snapManager
       emptyStream
       genesisPoint
   pure (ledgerDB, intLedgerDB)
