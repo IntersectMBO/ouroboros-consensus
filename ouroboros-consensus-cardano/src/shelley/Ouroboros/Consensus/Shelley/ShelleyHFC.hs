@@ -10,7 +10,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -92,6 +91,8 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.Inspect as Shelley.Inspect
 import Ouroboros.Consensus.Shelley.Node ()
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
+import Ouroboros.Consensus.Storage.LedgerDB.API
+import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.IndexedMemPack
 
@@ -168,6 +169,7 @@ instance
   , LedgerSupportsProtocol (ShelleyBlock proto era)
   , TxLimits (ShelleyBlock proto era)
   , Crypto (ProtoCrypto proto)
+  , LedgerSupportsLSMLedgerDB (LedgerState (ShelleyBlock proto era))
   ) =>
   SerialiseHFC '[ShelleyBlock proto era]
 
@@ -429,7 +431,7 @@ instance
     { getShelleyBlockHFCTxIn :: SL.TxIn
     }
     deriving stock (Show, Eq, Ord)
-    deriving newtype NoThunks
+    deriving newtype (NoThunks, MemPack, SerialiseKey)
 
   injectCanonicalTxIn IZ txIn = ShelleyBlockHFCTxIn txIn
   injectCanonicalTxIn (IS idx') _ = case idx' of {}
@@ -437,7 +439,18 @@ instance
   ejectCanonicalTxIn IZ txIn = getShelleyBlockHFCTxIn txIn
   ejectCanonicalTxIn (IS idx') _ = case idx' of {}
 
-deriving newtype instance MemPack (CanonicalTxIn '[ShelleyBlock proto era])
+instance
+  (SerialiseValue (SL.TxOut era), ResolveValue (SL.TxOut era)) =>
+  LedgerSupportsLSMLedgerDB (LedgerState (HardForkBlock '[ShelleyBlock proto era]))
+  where
+  type
+    LSMTxOut (LedgerState (HardForkBlock '[ShelleyBlock proto era])) =
+      TxOut (LedgerState (HardForkBlock '[ShelleyBlock proto era]))
+
+  toLSMTxOut _ = id
+  fromLSMTxOut _ = id
+  lsmIndex _ = CompactIndex
+  lsmSnapLabel _ = "ShelleyHFC"
 
 {-------------------------------------------------------------------------------
   HardForkTxOut

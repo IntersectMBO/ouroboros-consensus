@@ -14,6 +14,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Consensus.HardFork.Combinator (tests) where
@@ -56,6 +57,7 @@ import Ouroboros.Consensus.Protocol.LeaderSchedule
   ( LeaderSchedule (..)
   , leaderScheduleFor
   )
+import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Consensus.Util.Orphans ()
@@ -412,7 +414,7 @@ instance HasCanonicalTxIn '[BlockA, BlockB] where
     { getBlockABTxIn :: Void
     }
     deriving stock (Show, Eq, Ord)
-    deriving newtype (NoThunks, MemPack)
+    deriving newtype (NoThunks, MemPack, SerialiseKey)
 
   injectCanonicalTxIn IZ key = absurd key
   injectCanonicalTxIn (IS IZ) key = absurd key
@@ -471,6 +473,16 @@ instance SupportedNetworkProtocolVersion TestBlock where
   supportedNodeToClientVersions _ = Map.singleton maxBound versionN2C
 
   latestReleasedNodeVersion = latestReleasedNodeVersionDefault
+
+instance LedgerSupportsLSMLedgerDB (LedgerState (HardForkBlock [BlockA, BlockB])) where
+  type
+    LSMTxOut (LedgerState (HardForkBlock [BlockA, BlockB])) =
+      TxOut (LedgerState (HardForkBlock [BlockA, BlockB]))
+
+  toLSMTxOut _ = id
+  fromLSMTxOut _ = id
+  lsmIndex _ = OrdinaryIndex
+  lsmSnapLabel _ = "HFC_AB"
 
 instance SerialiseHFC '[BlockA, BlockB]
 
