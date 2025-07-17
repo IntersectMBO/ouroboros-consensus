@@ -19,7 +19,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasWeightSnapshot (..))
+import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot (..))
 
 data Model blk = Model
   { certs :: Set (PerasCert blk)
