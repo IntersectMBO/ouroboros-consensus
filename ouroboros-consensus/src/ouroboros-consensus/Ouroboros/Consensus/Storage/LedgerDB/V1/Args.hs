@@ -13,7 +13,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Args
   ( BackingStoreArgs (..)
   , FlushFrequency (..)
   , LedgerDbFlavorArgs (..)
-  , defaultLedgerDbFlavorArgs
   , shouldFlush
   ) where
 
@@ -55,9 +54,3 @@ data BackingStoreArgs f m
 
 class (MonadIO m, PrimState m ~ PrimState IO) => MonadIOPrim m
 instance (MonadIO m, PrimState m ~ PrimState IO) => MonadIOPrim m
-
-defaultLedgerDbFlavorArgs :: Incomplete LedgerDbFlavorArgs m
-defaultLedgerDbFlavorArgs = V1Args DefaultFlushFrequency defaultBackingStoreArgs
-
-defaultBackingStoreArgs :: Incomplete BackingStoreArgs m
-defaultBackingStoreArgs = InMemoryBackingStoreArgs
