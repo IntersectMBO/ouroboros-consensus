@@ -53,6 +53,7 @@ module Ouroboros.Consensus.Node
   , pattern DoDiskSnapshotChecksum
   , pattern NoDoDiskSnapshotChecksum
   , ChainSyncIdleTimeout (..)
+  , LedgerDbBackendArgs (..)
 
     -- * Internal helpers
   , mkNodeKernelArgs
@@ -126,6 +127,8 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
@@ -375,7 +378,7 @@ data
   , -- Ad hoc values to replace default ChainDB configurations
     srnSnapshotPolicyArgs :: SnapshotPolicyArgs
   , srnQueryBatchSize :: QueryBatchSize
-  , srnLdbFlavorArgs :: Complete LedgerDbFlavorArgs m
+  , srnLedgerDbBackendArgs :: LedgerDbBackendArgs m
   }
 
 {-------------------------------------------------------------------------------
@@ -1050,7 +1053,20 @@ stdLowLevelRunNodeArgsIO
         , llrnPublicPeerSelectionStateVar =
             Diffusion.dcPublicPeerSelectionVar srnDiffusionConfiguration
         , llrnLdbFlavorArgs =
-            srnLdbFlavorArgs
+            case srnLedgerDbBackendArgs of
+              V1LMDB args -> LedgerDbFlavorArgsV1 args
+              V2InMemory -> LedgerDbFlavorArgsV2 (V2.V2Args V2.InMemoryHandleArgs)
+              V2LSM path ->
+                LedgerDbFlavorArgsV2
+                  ( V2.V2Args
+                      ( V2.LSMHandleArgs
+                          ( V2.LSMArgs
+                              (mkFsPath $ splitDirectories path)
+                              LSM.stdGenSalt
+                              (LSM.stdMkBlockIOFS (nonImmutableDbPath srnDatabasePath))
+                          )
+                      )
+                  )
         }
    where
     networkMagic :: NetworkMagic
