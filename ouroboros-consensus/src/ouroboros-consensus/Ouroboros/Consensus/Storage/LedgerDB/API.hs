@@ -117,7 +117,10 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , LedgerDbSerialiseConstraints
   , LedgerSupportsInMemoryLedgerDB
   , LedgerSupportsLedgerDB
-  , LedgerSupportsOnDiskLedgerDB
+  , LedgerSupportsLMDBLedgerDB
+  , LedgerSupportsLSMLedgerDB
+  , LedgerSupportsV1LedgerDB
+  , LedgerSupportsV2LedgerDB
   , LSMTxOut
   , HasLSMTxOut (..)
   , ResolveBlock
@@ -173,6 +176,7 @@ import Data.MemPack
 import Data.Set (Set)
 import Data.Void (absurd)
 import Data.Word
+import qualified Database.LSMTree as LSM
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -195,7 +199,6 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
-import System.FS.API
 
 {-------------------------------------------------------------------------------
   Main API
@@ -725,7 +728,11 @@ data TraceReplayProgressEvent blk
   Updating ledger tables
 -------------------------------------------------------------------------------}
 
-type LedgerSupportsInMemoryLedgerDB blk = (CanUpgradeLedgerTables (LedgerState blk))
+type LedgerSupportsInMemoryLedgerDB l =
+  (CanUpgradeLedgerTables l, SerializeTablesWithHint l)
+
+type LedgerSupportsV1LedgerDB l =
+  (LedgerSupportsInMemoryLedgerDB l, LedgerSupportsLMDBLedgerDB l)
 
 -- | When pushing differences on InMemory Ledger DBs, we will sometimes need to
 -- update ledger tables to the latest era. For unary blocks this is a no-op, but
@@ -764,12 +771,18 @@ instance
   Supporting On-Disk backing stores
 -------------------------------------------------------------------------------}
 
-type LedgerSupportsOnDiskLedgerDB blk =
-  (IndexedMemPack (LedgerState blk EmptyMK) (TxOut (LedgerState blk)))
+type LedgerSupportsLMDBLedgerDB l =
+  (IndexedMemPack (l EmptyMK) (TxOut l), MemPackIdx l EmptyMK ~ l EmptyMK)
 
-type LedgerSupportsLedgerDB blk =
-  ( LedgerSupportsOnDiskLedgerDB blk
-  , LedgerSupportsInMemoryLedgerDB blk
+type LedgerSupportsLSMLedgerDB l =
+  ( LSM.SerialiseKey (TxIn l)
+  , LSM.SerialiseValue (LSMTxOut l)
+  , LSM.ResolveValue (LSMTxOut l)
+  , HasLSMTxOut l
+  )
+
+type LedgerSupportsV2LedgerDB l =
+  (LedgerSupportsInMemoryLedgerDB l, LedgerSupportsLSMLedgerDB l)
 
 -- | LSM trees need to be able to serialize and deserialize values several
 -- times, without any context. Therefore the approach of using a ledger state to
@@ -786,6 +799,13 @@ class HasLSMTxOut l where
   toLSMTxOut :: Proxy l -> TxOut l -> LSMTxOut l
   fromLSMTxOut :: l EmptyMK -> LSMTxOut l -> TxOut l
 
+type LedgerSupportsLedgerDB blk = LedgerSupportsLedgerDB' (LedgerState blk) blk
+
+type LedgerSupportsLedgerDB' l blk =
+  ( LedgerSupportsLMDBLedgerDB l
+  , LedgerSupportsInMemoryLedgerDB l
+  , LedgerSupportsLSMLedgerDB l
+  , LedgerDbSerialiseConstraints blk
   )
 
 {-------------------------------------------------------------------------------
