@@ -63,7 +63,8 @@ allow-newer:
     -- https://github.com/input-output-hk/fs-sim/pull/105
     , fs-sim:QuickCheck
 
-allow-newer: quickcheck-lockstep:quickcheck-dynamic
+    -- https://github.com/phadej/regression-simple/pull/14
+    , regression-simple:base
 
 source-repository-package
    type: git
@@ -103,8 +104,31 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/plutus
-  tag: fffd12eb25985eebb84bf5d0cb1e2f6266a36124
-  --sha256: sha256-FA0aYLjoMT/6DTwOZ+zAar5TNO+cA2716DpsUbIFjPM=
+  tag: ea66e96173dc484d82b987acb0df60396f7aa60b
+  --sha256: sha256-3RNqHbDinNz6KOIeCottY153wx7Pkr9WqpbVAvJADSc=
   subdir: plutus-core
           plutus-tx
           plutus-ledger-api
+
+source-repository-package
+  type: git
+  location: https://github.com/jasagredo/lsm-tree
+  tag: 0fe8b227b78a78503d0201755d50435635da5a22
+  --sha256: sha256-xyiMjHx0WgpN+DavosUgOAj2hzbi7S48oCUKhm3okBI=
+  subdir:
+    .
+    blockio
+
+source-repository-package
+  type: git
+  location: https://github.com/jasagredo/quickcheck-state-machine
+  tag: 876076ee7324ab63a071f565267140fab803bd76
+  --sha256: sha256-ejGyP//r2UraMjmntHkxrhqi791h7D6YBIVlAdzqT4c=
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/fs-sim
+  tag: b63d76f4a1c1f4e75c68af2431c4526afe684b3b
+  --sha256: sha256-wUHQffD+O74CsMM+D9kNI4pkcNLj9x9f0lBCcAJ5HyE=
+  subdir:
+    fs-sim
