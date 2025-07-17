@@ -270,7 +270,7 @@ initNodeKernel
               gsmTracerArgs
               GSM.GsmView
                 { GSM.antiThunderingHerd = Just gsmAntiThunderingHerd
-                , GSM.candidateOverSelection = \(headers, _lst) state ->
+                , GSM.getCandidateOverSelection = pure $ \(headers, _lst) state ->
                     case AF.intersectionPoint headers (csCandidate state) of
                       Nothing -> GSM.CandidateDoesNotIntersect
                       Just{} ->
