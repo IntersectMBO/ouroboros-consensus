@@ -20,10 +20,6 @@ import Ouroboros.Consensus.Util.Condense
   , condenseListWithPadding
   )
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import Ouroboros.Network.Protocol.ChainSync.Codec
-  ( ChainSyncTimeout (mustReplyTimeout)
-  , idleTimeout
-  )
 import Test.Consensus.BlockTree (BlockTree (..))
 import Test.Consensus.Genesis.Setup
 import Test.Consensus.Genesis.Tests.Uniform (genUniformSchedulePoints)

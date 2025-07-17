@@ -199,7 +199,7 @@ fromShelleyLedgerExamples
                       ( AccPoolStake 0.9
                       ,
                         ( PoolStake 0.9
-                        , RelayAccessAddress (IPv4 "1.1.1.1") 1234 :| []
+                        , LedgerRelayAccessAddress (IPv4 "1.1.1.1") 1234 :| []
                         )
                       )
                     ]
@@ -335,7 +335,7 @@ fromShelleyLedgerExamplesPraos
                       ( AccPoolStake 0.9
                       ,
                         ( PoolStake 0.9
-                        , RelayAccessAddress (IPv4 "1.1.1.1") 1234 :| []
+                        , LedgerRelayAccessAddress (IPv4 "1.1.1.1") 1234 :| []
                         )
                       )
                     ]

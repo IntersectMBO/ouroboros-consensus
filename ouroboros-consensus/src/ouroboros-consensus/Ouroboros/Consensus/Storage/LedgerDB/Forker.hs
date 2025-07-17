@@ -1,7 +1,7 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
@@ -28,6 +28,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.Forker
   , RangeQueryPrevious (..)
   , Statistics (..)
   , forkerCurrentPoint
+  , castRangeQueryPrevious
+  , ledgerStateReadOnlyForker
 
     -- ** Read only
   , ReadOnlyForker (..)
@@ -126,6 +128,8 @@ data Forker m l blk = Forker
   -- ^ Commit the fork, which was constructed using 'forkerPush', as the
   -- current version of the LedgerDB.
   }
+  deriving Generic
+  deriving NoThunks via OnlyCheckWhnf (Forker m l blk)
 
 -- | An identifier for a 'Forker'. See 'ldbForkers'.
 newtype ForkerKey = ForkerKey Word16
@@ -143,6 +147,11 @@ instance
   getTipSTM forker = castPoint . getTip <$> forkerGetLedgerState forker
 
 data RangeQueryPrevious l = NoPreviousQuery | PreviousQueryWasFinal | PreviousQueryWasUpTo (TxIn l)
+
+castRangeQueryPrevious :: TxIn l ~ TxIn l' => RangeQueryPrevious l -> RangeQueryPrevious l'
+castRangeQueryPrevious NoPreviousQuery = NoPreviousQuery
+castRangeQueryPrevious PreviousQueryWasFinal = PreviousQueryWasFinal
+castRangeQueryPrevious (PreviousQueryWasUpTo txin) = PreviousQueryWasUpTo txin
 
 data RangeQuery l = RangeQuery
   { rqPrev :: !(RangeQueryPrevious l)
@@ -191,6 +200,25 @@ forkerCurrentPoint forker =
     . getTip
     <$> forkerGetLedgerState forker
 
+ledgerStateReadOnlyForker ::
+  IOLike m => ReadOnlyForker m (ExtLedgerState blk) blk -> ReadOnlyForker m (LedgerState blk) blk
+ledgerStateReadOnlyForker frk =
+  ReadOnlyForker
+    { roforkerClose = roforkerClose
+    , roforkerReadTables = fmap castLedgerTables . roforkerReadTables . castLedgerTables
+    , roforkerRangeReadTables = fmap castLedgerTables . roforkerRangeReadTables . castRangeQueryPrevious
+    , roforkerGetLedgerState = ledgerState <$> roforkerGetLedgerState
+    , roforkerReadStatistics = roforkerReadStatistics
+    }
+ where
+  ReadOnlyForker
+    { roforkerClose
+    , roforkerReadTables
+    , roforkerRangeReadTables
+    , roforkerGetLedgerState
+    , roforkerReadStatistics
+    } = frk
+
 {-------------------------------------------------------------------------------
   Read-only forkers
 -------------------------------------------------------------------------------}
@@ -218,6 +246,11 @@ data ReadOnlyForker m l blk = ReadOnlyForker
   , roforkerReadStatistics :: !(m (Maybe Statistics))
   -- ^ See 'forkerReadStatistics'
   }
+  deriving Generic
+
+instance NoThunks (ReadOnlyForker m l blk) where
+  wNoThunks _ _ = pure Nothing
+  showTypeOf _ = "ReadOnlyForker"
 
 type instance HeaderHash (ReadOnlyForker m l blk) = HeaderHash l
 
@@ -628,4 +661,5 @@ data TraceForkerEvent
   | ForkerReadStatistics
   | ForkerPushStart
   | ForkerPushEnd
+  | DanglingForkerClosed
   deriving (Show, Eq)

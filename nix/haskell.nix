@@ -14,6 +14,8 @@ let
   };
   hsPkgs = haskell-nix.cabalProject {
     src = ./..;
+    index-state = "2025-07-14T12:41:02Z";
+    index-sha256 = "sha256-T95ADIwRyYlG41AHjkxgezWRwfMqg+a1DGlVhACwtC8=";
     compiler-nix-name = "ghc967";
     flake.variants = {
       ghc910 = { compiler-nix-name = lib.mkForce "ghc9102"; };
@@ -38,6 +40,19 @@ let
       ({ pkgs, lib, ... }: lib.mkIf pkgs.stdenv.hostPlatform.isWindows {
         # https://github.com/input-output-hk/haskell.nix/issues/2332
         packages.basement.configureFlags = [ "--hsc2hs-option=--cflag=-Wno-int-conversion" ];
+        # We can't cross-compile the ruby gem `cddlc` so we decided to skip this
+        # test on Windows in Hydra.
+        packages.ouroboros-consensus-cardano.components.tests.cardano-test.preCheck = ''
+          export DISABLE_CDDLC=1
+        '';
+      })
+      ({ pkgs, ... }: lib.mkIf (!pkgs.stdenv.hostPlatform.isWindows) {
+        # Tools for CBOR/CDDL tests:
+        packages.ouroboros-consensus-cardano.components.tests.cardano-test = {
+          build-tools =
+            [ pkgs.cddlc pkgs.cuddle ];
+          extraSrcFiles = [ "cddl/**/*" ];
+        };
       })
     ];
     flake.variants = {

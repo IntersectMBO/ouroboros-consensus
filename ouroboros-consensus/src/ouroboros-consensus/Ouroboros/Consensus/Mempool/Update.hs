@@ -10,8 +10,6 @@ module Ouroboros.Consensus.Mempool.Update
   ) where
 
 import Cardano.Slotting.Slot
-import Control.Concurrent.Class.MonadMVar (withMVar)
-import Control.Monad (void)
 import Control.Monad.Except (runExcept)
 import Control.Tracer
 import qualified Data.Foldable as Foldable
@@ -20,18 +18,20 @@ import qualified Data.List.NonEmpty as NE
 import Data.Maybe (fromMaybe)
 import qualified Data.Measure as Measure
 import qualified Data.Set as Set
-import Data.Void
 import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.SupportsMempool
+import Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 import Ouroboros.Consensus.Mempool.API
 import Ouroboros.Consensus.Mempool.Capacity
 import Ouroboros.Consensus.Mempool.Impl.Common
 import Ouroboros.Consensus.Mempool.TxSeq (TxTicket (..))
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
+import Ouroboros.Consensus.Storage.LedgerDB.Forker hiding (trace)
 import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike hiding (withMVar)
+import Ouroboros.Consensus.Util.NormalForm.StrictMVar
 import Ouroboros.Consensus.Util.STM
 import Ouroboros.Network.Block
 
@@ -154,7 +154,7 @@ doAddTx mpEnv wti tx =
   doAddTx' Nothing
  where
   MempoolEnv
-    { mpEnvLedger = ldgrInterface
+    { mpEnvForker = forker
     , mpEnvLedgerCfg = cfg
     , mpEnvStateVar = istate
     , mpEnvTracer = trcr
@@ -172,31 +172,16 @@ doAddTx mpEnv wti tx =
 
     res <- withTMVarAnd istate additionalCheck $
       \is () -> do
-        mTbs <- getLedgerTablesAtFor ldgrInterface (isTip is) (getTransactionKeySets tx)
-        case mTbs of
-          Just tbs -> do
-            traceWith trcr $ TraceMempoolLedgerFound (isTip is)
-            case pureTryAddTx cfg wti tx is tbs of
-              NotEnoughSpaceLeft -> do
-                pure (Retry (isMempoolSize is), is)
-              Processed outcome@(TransactionProcessingResult is' _ _) -> do
-                pure (OK outcome, fromMaybe is is')
-          Nothing -> do
-            traceWith trcr $ TraceMempoolLedgerNotFound (isTip is)
-            -- We couldn't retrieve the values because the state is no longer on
-            -- the db. We need to resync.
-            pure (Resync, is)
-    case res of
-      Retry s' -> doAddTx' (Just s')
-      OK outcome -> pure outcome
-      Resync -> do
-        void $ implSyncWithLedger mpEnv
-        doAddTx' mbPrevSize
-
-data WithTMVarOutcome retry ok
-  = Retry !retry
-  | OK ok
-  | Resync
+        frkr <- readMVar forker
+        tbs <-
+          castLedgerTables
+            <$> roforkerReadTables frkr (castLedgerTables $ getTransactionKeySets tx)
+        case pureTryAddTx cfg wti tx is tbs of
+          NotEnoughSpaceLeft -> do
+            pure (Left (isMempoolSize is), is)
+          Processed outcome@(TransactionProcessingResult is' _ _) -> do
+            pure (Right outcome, fromMaybe is is')
+    either (doAddTx' . Just) pure res
 
 pureTryAddTx ::
   ( LedgerSupportsMempool blk
@@ -212,7 +197,11 @@ pureTryAddTx ::
   LedgerTables (LedgerState blk) ValuesMK ->
   TriedToAddTx blk
 pureTryAddTx cfg wti tx is values =
-  let st = applyMempoolDiffs values (getTransactionKeySets tx) (isLedgerState is)
+  let st =
+        applyMempoolDiffs
+          values
+          (getTransactionKeySets tx)
+          (isLedgerState is)
    in case runExcept $ txMeasure cfg st tx of
         Left err ->
           -- The transaction does not have a valid measure (eg its ExUnits is
@@ -324,9 +313,9 @@ implRemoveTxsEvenIfValid ::
   MempoolEnv m blk ->
   NE.NonEmpty (GenTxId blk) ->
   m ()
-implRemoveTxsEvenIfValid mpEnv toRemove = do
-  (out :: WithTMVarOutcome Void ()) <- withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface) $
-    \is ls -> do
+implRemoveTxsEvenIfValid mpEnv toRemove =
+  withTMVar istate $
+    \is -> do
       let toKeep =
             filter
               ( (`notElem` Set.fromList (NE.toList toRemove))
@@ -335,33 +324,25 @@ implRemoveTxsEvenIfValid mpEnv toRemove = do
                   . txTicketTx
               )
               (TxSeq.toList $ isTxs is)
-          (slot, ticked) = tickLedgerState cfg (ForgeInUnknownSlot ls)
           toKeep' = Foldable.foldMap' (getTransactionKeySets . txForgetValidated . TxSeq.txTicketTx) toKeep
-      mTbs <- getLedgerTablesAtFor ldgrInterface (castPoint (getTip ls)) toKeep'
-      case mTbs of
-        Nothing -> pure (Resync, is)
-        Just tbs -> do
-          let (is', t) =
-                pureRemoveTxs
-                  capacityOverride
-                  cfg
-                  slot
-                  ticked
-                  tbs
-                  (isLastTicketNo is)
-                  toKeep
-                  toRemove
-          traceWith trcr t
-          pure (OK (), is')
-  case out of
-    Resync -> do
-      void $ implSyncWithLedger mpEnv
-      implRemoveTxsEvenIfValid mpEnv toRemove
-    OK () -> pure ()
+      frkr <- readMVar forker
+      tbs <- castLedgerTables <$> roforkerReadTables frkr (castLedgerTables toKeep')
+      let (is', t) =
+            pureRemoveTxs
+              capacityOverride
+              cfg
+              (isSlotNo is)
+              (isLedgerState is `withLedgerTables` emptyLedgerTables)
+              tbs
+              (isLastTicketNo is)
+              toKeep
+              toRemove
+      traceWith trcr t
+      pure ((), is')
  where
   MempoolEnv
     { mpEnvStateVar = istate
-    , mpEnvLedger = ldgrInterface
+    , mpEnvForker = forker
     , mpEnvTracer = trcr
     , mpEnvLedgerCfg = cfg
     , mpEnvCapacityOverride = capacityOverride
@@ -414,42 +395,68 @@ implSyncWithLedger ::
   ) =>
   MempoolEnv m blk ->
   m (MempoolSnapshot blk)
-implSyncWithLedger mpEnv = encloseTimedWith (TraceMempoolSynced >$< mpEnvTracer mpEnv) $ do
-  (res :: WithTMVarOutcome Void (MempoolSnapshot blk)) <-
-    withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface) $
-      \is ls -> do
-        let (slot, ls') = tickLedgerState cfg $ ForgeInUnknownSlot ls
-        if pointHash (isTip is) == castHash (getTipHash ls) && isSlotNo is == slot
-          then do
-            -- The tip didn't change, put the same state.
-            traceWith trcr $ TraceMempoolSyncNotNeeded (isTip is)
-            pure (OK (snapshotFromIS is), is)
-          else do
-            -- We need to revalidate
-            let pt = castPoint (getTip ls)
-            mTbs <- getLedgerTablesAtFor ldgrInterface pt (isTxKeys is)
-            case mTbs of
-              Just tbs -> do
-                let (is', mTrace) =
-                      pureSyncWithLedger
-                        capacityOverride
-                        cfg
-                        slot
-                        ls'
-                        tbs
-                        is
-                whenJust mTrace (traceWith trcr)
-                pure (OK (snapshotFromIS is'), is')
-              Nothing -> do
-                -- If the point is gone, resync
-                pure (Resync, is)
-  case res of
-    OK v -> pure v
-    Resync -> implSyncWithLedger mpEnv
+implSyncWithLedger mpEnv =
+  encloseTimedWith (TraceMempoolSynced >$< mpEnvTracer mpEnv) $ do
+    res <-
+      -- There could possibly be a race condition if we used there the state
+      -- that triggered the re-syncing in the background watcher, if a different
+      -- action acquired the state before the revalidation started.
+      --
+      -- For that reason, we read the state again here in the same STM
+      -- transaction in which we acquire the internal state of the mempool.
+      --
+      -- This implies that the watcher might be triggered again with the same
+      -- state from the point of view of the mempool, if after the watcher saw a
+      -- new state and this read for re-syncing, the state has changed. The
+      -- watcher will see it once again and trigger re-validation again. Just
+      -- for performance reasons, we will avoid re-validating the mempool if the
+      -- state didn't change.
+      withTMVarAnd istate (const $ getCurrentLedgerState ldgrInterface registry) $
+        \is (MempoolLedgerDBView ls meFrk) -> do
+          eFrk <- meFrk
+          case eFrk of
+            -- This case should happen only if the tip has moved again, this time
+            -- to a separate fork, since the background thread saw a change in the
+            -- tip, which should happen very rarely
+            Left{} -> do
+              traceWith trcr TraceMempoolTipMovedBetweenSTMBlocks
+              pure (Nothing, is)
+            Right frk -> do
+              let (slot, ls') = tickLedgerState cfg $ ForgeInUnknownSlot ls
+              if pointHash (isTip is) == castHash (getTipHash ls) && isSlotNo is == slot
+                then do
+                  -- The tip didn't change, put the same state.
+                  traceWith trcr $ TraceMempoolSyncNotNeeded (isTip is)
+                  pure (Just (snapshotFromIS is), is)
+                else do
+                  -- The tip changed, we have to revalidate
+                  modifyMVar_
+                    forkerMVar
+                    ( \oldFrk -> do
+                        roforkerClose oldFrk
+                        pure frk
+                    )
+                  tbs <- castLedgerTables <$> roforkerReadTables frk (castLedgerTables $ isTxKeys is)
+                  let (is', mTrace) =
+                        pureSyncWithLedger
+                          capacityOverride
+                          cfg
+                          slot
+                          ls'
+                          tbs
+                          is
+                  whenJust mTrace (traceWith trcr)
+                  pure (Just (snapshotFromIS is'), is')
+    maybe
+      (implSyncWithLedger mpEnv)
+      pure
+      res
  where
   MempoolEnv
     { mpEnvStateVar = istate
+    , mpEnvForker = forkerMVar
     , mpEnvLedger = ldgrInterface
+    , mpEnvRegistry = registry
     , mpEnvTracer = trcr
     , mpEnvLedgerCfg = cfg
     , mpEnvCapacityOverride = capacityOverride

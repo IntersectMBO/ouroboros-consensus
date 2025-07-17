@@ -220,7 +220,8 @@ instance
         ( Fn $
             const $
               Comp $
-                K . LedgerTables @(LedgerState (HardForkBlock (CardanoEras c))) . ValuesMK <$> pure Map.empty
+                K . LedgerTables @(LedgerState (HardForkBlock (CardanoEras c))) . ValuesMK
+                  <$> (Codec.CBOR.Decoding.decodeMapLen >> pure Map.empty)
         )
           :* (Fn $ Comp . fmap K . getOne ShelleyTxOut . unFlip . currentState)
           :* (Fn $ Comp . fmap K . getOne AllegraTxOut . unFlip . currentState)

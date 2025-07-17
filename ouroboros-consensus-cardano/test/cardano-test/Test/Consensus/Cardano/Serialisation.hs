@@ -1,6 +1,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Test.Consensus.Cardano.Serialisation (tests) where
@@ -21,7 +22,6 @@ import Ouroboros.Network.Block (Serialised (..))
 import Test.Consensus.Byron.Generators (epochSlots)
 import qualified Test.Consensus.Cardano.Examples as Cardano.Examples
 import Test.Consensus.Cardano.Generators ()
-import Test.Consensus.Cardano.MockCrypto (MockCryptoCompatByron)
 import Test.Tasty
 import Test.Tasty.QuickCheck (Property, testProperty, (===))
 import Test.Util.Orphans.Arbitrary ()
@@ -33,7 +33,21 @@ tests =
     "Cardano"
     [ testGroup "Examples roundtrip" $
         examplesRoundtrip Cardano.Examples.codecConfig Cardano.Examples.examples
-    , roundtrip_all_skipping result testCodecCfg dictNestedHdr
+    , roundtrip_all_skipping
+        result
+        testCodecCfg
+        dictNestedHdr
+        -- We would want to use this instead, but the generated blocks
+        -- do not quite validate yet or sometimes they are not
+        -- entirely coherent, so for now this is commented out.
+        --
+        -- It is also the case that some (conway in particular) blocks take a
+        -- very long time to validate or consume too much memory.
+        --
+        -- ( Just $
+        --     CDDLsForNodeToNode ("ntnblock.cddl", "serialisedCardanoBlock") ("ntnheader.cddl", "header")
+        -- )
+        Nothing
     , testProperty "BinaryBlockInfo sanity check" prop_CardanoBinaryBlockInfo
     ]
  where
@@ -41,7 +55,7 @@ tests =
   result "roundtrip Result" = DoNotCheckCBORValidity
   result _ = CheckCBORValidity
 
-testCodecCfg :: CardanoCodecConfig MockCryptoCompatByron
+testCodecCfg :: CardanoCodecConfig StandardCrypto
 testCodecCfg =
   CardanoCodecConfig
     (ByronCodecConfig epochSlots)
@@ -54,7 +68,7 @@ testCodecCfg =
 
 dictNestedHdr ::
   forall a.
-  NestedCtxt_ (CardanoBlock MockCryptoCompatByron) Header a ->
+  NestedCtxt_ (CardanoBlock StandardCrypto) Header a ->
   Dict (Eq a, Show a)
 dictNestedHdr = \case
   NCZ (CtxtByronBoundary{}) -> Dict
@@ -70,7 +84,7 @@ dictNestedHdr = \case
   BinaryBlockInfo
 -------------------------------------------------------------------------------}
 
-prop_CardanoBinaryBlockInfo :: CardanoBlock MockCryptoCompatByron -> Property
+prop_CardanoBinaryBlockInfo :: CardanoBlock StandardCrypto -> Property
 prop_CardanoBinaryBlockInfo blk =
   encodedNestedHeader === extractedHeader
  where

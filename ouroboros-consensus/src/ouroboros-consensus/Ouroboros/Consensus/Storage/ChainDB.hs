@@ -38,11 +38,21 @@
 --   chain. 'Ouroboros.Consensus.Storage.ChainDB.API.ChainDB' defines the chain
 --   DB API.
 --
--- NOTE: at the moment there is an inconsistency in the module structure for
--- each of these components. In particular,
--- "Ouroboros.Consensus.Storage.LedgerDB" contains the whole definition and API
--- for the LedgerDB, but the other three databases are broken up into multiple
--- smaller submodules. We aim to resolve this when UTxO-HD is merged.
+-- == Resource Management in the ChainDB
+--
+-- Clients of the ChainDB can allocate resources from the databases
+-- it contains (LedgerDB, VolatileDB, and ImmutableDB):
+--
+-- - The LedgerDB is used to create 'Forker's.
+--
+-- - The ChainDB is used to create 'Follower's (which in turn contain
+--   'Iterator's).
+--
+-- These resources must eventually be freed.
+--
+-- Threads that make use of the ChainDB to allocate resources *MUST* be closed
+-- before the ChainDB is closed. See 'Ouroboros.Consensus.Node.runWith' for the
+-- approach we follow in consensus to ensure this principle.
 module Ouroboros.Consensus.Storage.ChainDB
   ( module Ouroboros.Consensus.Storage.ChainDB.API
   , module Ouroboros.Consensus.Storage.ChainDB.Impl
