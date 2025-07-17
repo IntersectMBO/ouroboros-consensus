@@ -72,6 +72,7 @@ import Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
 import Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import qualified Ouroboros.Consensus.Storage.PerasCertDB.API as PerasCertDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Condense
@@ -311,6 +312,7 @@ garbageCollect CDB{..} slotNo = do
   atomically $ do
     LedgerDB.garbageCollect cdbLedgerDB slotNo
     modifyTVar cdbInvalid $ fmap $ Map.filter ((>= slotNo) . invalidBlockSlotNo)
+  PerasCertDB.garbageCollect cdbPerasCertDB slotNo
   traceWith cdbTracer $ TraceGCEvent $ PerformedGC slotNo
 
 {-------------------------------------------------------------------------------
