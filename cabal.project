@@ -123,9 +123,6 @@ source-repository-package
 
 source-repository-package
   type: git
-  location: https://github.com/jasagredo/lsm-tree
-  tag: 0fe8b227b78a78503d0201755d50435635da5a22
-  --sha256: sha256-xyiMjHx0WgpN+DavosUgOAj2hzbi7S48oCUKhm3okBI=
-  subdir:
-    .
-    blockio
+  location: https://github.com/IntersectMBO/lsm-tree
+  tag: 84857d4f921a265f267df175e74ba6c652d2b1a0
+  --sha256: sha256-IgE/sqDfehaJVRLaf2euzc7sJ3hRUr+hAe2GUILvXa8=
