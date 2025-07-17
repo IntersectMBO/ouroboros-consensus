@@ -1,9 +1,9 @@
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE LambdaCase #-}
 
--- | This module contains benchmarks for Peras chain weight calculation as implemented by
---   the by the 'Ouroboros.Consensus.Storage.PerasCertDB.API.boostedWeightForFragment'
---   function.
+-- | This module contains benchmarks for Peras chain weight calculation as
+--   implemented by the by the
+--   'Ouroboros.Consensus.Peras.Weight.boostedWeightForFragment' function.
 --
 --   We benchmark the calculation on a static sequence of chain fragments of increasing
 --   length, ranging from 0 to around 8640, with a sampling rate of 100. The chain fragments
@@ -15,7 +15,7 @@ import Data.List (iterate')
 import Data.Map.Strict qualified as Map
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block (PerasWeight (PerasWeight), SlotNo (..))
-import Ouroboros.Consensus.Storage.PerasCertDB.API
+import Ouroboros.Consensus.Peras.Weight
   ( PerasWeightSnapshot (..)
   , boostedWeightForFragment
   )
