@@ -722,12 +722,6 @@ data TraceEvent blk
   deriving Generic
 
 deriving instance
-  ( Eq (Header blk)
-  , LedgerSupportsProtocol blk
-  , InspectLedger blk
-  ) =>
-  Eq (TraceEvent blk)
-deriving instance
   ( Show (Header blk)
   , LedgerSupportsProtocol blk
   , InspectLedger blk
