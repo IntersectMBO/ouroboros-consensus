@@ -23,9 +23,10 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 
     -- * Snapshots
   , loadSnapshot
-  , snapshotToStatePath
-  , snapshotToTablePath
-  , takeSnapshot
+  , snapshotManagement
+
+    -- * snapshot-converter
+  , implTakeSnapshot
   ) where
 
 import Cardano.Binary as CBOR
@@ -150,13 +151,39 @@ newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l = do
   Snapshots
 -------------------------------------------------------------------------------}
 
+snapshotManagement ::
+  ( IOLike m
+  , LedgerDbSerialiseConstraints blk
+  , LedgerSupportsProtocol blk
+  ) =>
+  Complete LedgerDbArgs m blk ->
+  SnapshotManagement m m blk (StateRef m (ExtLedgerState blk))
+snapshotManagement args =
+  snapshotManagement'
+    (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
+    (LedgerDBSnapshotEvent >$< lgrTracer args)
+    (lgrHasFS args)
+
+snapshotManagement' ::
+  ( IOLike m
+  , LedgerDbSerialiseConstraints blk
+  , LedgerSupportsProtocol blk
+  ) =>
+  CodecConfig blk ->
+  Tracer m (TraceSnapshotEvent blk) ->
+  SomeHasFS m ->
+  SnapshotManagement m m blk (StateRef m (ExtLedgerState blk))
+snapshotManagement' ccfg tracer fs =
+  SnapshotManagement
+    { listSnapshots = defaultListSnapshots fs
+    , deleteSnapshot = defaultDeleteSnapshot fs tracer
+    , takeSnapshot = implTakeSnapshot ccfg tracer fs
+    }
+
 -- | The path within the LedgerDB's filesystem to the file that contains the
 -- snapshot's serialized ledger state
 snapshotToStatePath :: DiskSnapshot -> FsPath
 snapshotToStatePath = mkFsPath . (\x -> [x, "state"]) . snapshotToDirName
-
-snapshotToTablePath :: DiskSnapshot -> FsPath
-snapshotToTablePath = mkFsPath . (\x -> [x, "tables", "tvar"]) . snapshotToDirName
 
 writeSnapshot ::
   MonadThrow m =>
@@ -172,10 +199,10 @@ writeSnapshot fs@(SomeHasFS hasFs) encLedger ds st = do
   writeSnapshotMetadata fs ds $
     SnapshotMetadata
       { snapshotBackend = UTxOHDMemSnapshot
-      , snapshotChecksum = crcOfConcat crc1 crc2
+      , snapshotChecksum = maybe crc1 (crcOfConcat crc1) crc2
       }
 
-takeSnapshot ::
+implTakeSnapshot ::
   ( IOLike m
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
@@ -186,13 +213,13 @@ takeSnapshot ::
   Maybe String ->
   StateRef m (ExtLedgerState blk) ->
   m (Maybe (DiskSnapshot, RealPoint blk))
-takeSnapshot ccfg tracer hasFS suffix st = do
+implTakeSnapshot ccfg tracer hasFS suffix st = do
   case pointToWithOriginRealPoint (castPoint (getTip $ state st)) of
     Origin -> return Nothing
     NotOrigin t -> do
       let number = unSlotNo (realPointSlot t)
           snapshot = DiskSnapshot number suffix
-      diskSnapshots <- listSnapshots hasFS
+      diskSnapshots <- defaultListSnapshots hasFS
       if List.any (== DiskSnapshot number suffix) diskSnapshots
         then
           return Nothing
