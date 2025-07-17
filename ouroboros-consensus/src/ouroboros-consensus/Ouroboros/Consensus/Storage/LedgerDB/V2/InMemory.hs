@@ -46,14 +46,18 @@ import Data.String (fromString)
 import GHC.Generics
 import NoThunks.Class
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import Ouroboros.Consensus.Storage.LedgerDB.API
+import Ouroboros.Consensus.Storage.LedgerDB.Args
 import Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
+import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CBOR (readIncremental)
 import Ouroboros.Consensus.Util.CRC
 import Ouroboros.Consensus.Util.Enclose
@@ -103,19 +107,20 @@ newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l = do
           hs <- readTVarIO tv
           !x <- guardClosed hs $ newInMemoryLedgerTablesHandle tracer someFS
           pure x
-      , read = \keys -> do
+      , read = \_ keys -> do
           hs <- readTVarIO tv
           guardClosed
             hs
             (pure . flip (ltliftA2 (\(ValuesMK v) (KeysMK k) -> ValuesMK $ v `Map.restrictKeys` k)) keys)
-      , readRange = \(f, t) -> do
+      , readRange = \_ (f, t) -> do
           hs <- readTVarIO tv
           guardClosed
             hs
             ( \(LedgerTables (ValuesMK m)) ->
-                pure . LedgerTables . ValuesMK . Map.take t . (maybe id (\g -> snd . Map.split g) f) $ m
+                let m' = Map.take t . (maybe id (\g -> snd . Map.split g) f) $ m
+                 in pure (LedgerTables (ValuesMK m'), fst <$> Map.lookupMax m')
             )
-      , readAll = do
+      , readAll = \_ -> do
           hs <- readTVarIO tv
           guardClosed hs pure
       , pushDiffs = \st0 !diffs ->
