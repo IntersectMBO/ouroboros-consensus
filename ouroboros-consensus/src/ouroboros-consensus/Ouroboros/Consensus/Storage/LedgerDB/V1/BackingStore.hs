@@ -4,7 +4,6 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 
 -- | See "Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API" for the
 -- documentation. This module just puts together the implementations for the
@@ -62,9 +61,7 @@ restoreBackingStore ::
   ( IOLike m
   , HasLedgerTables l
   , HasCallStack
-  , CanUpgradeLedgerTables l
-  , MemPackIdx l EmptyMK ~ l EmptyMK
-  , SerializeTablesWithHint l
+  , LedgerSupportsV1LedgerDB l
   ) =>
   Tracer m FlavorImplSpecificTrace ->
   Complete BackingStoreArgs m ->
@@ -80,9 +77,7 @@ newBackingStore ::
   ( IOLike m
   , HasLedgerTables l
   , HasCallStack
-  , CanUpgradeLedgerTables l
-  , MemPackIdx l EmptyMK ~ l EmptyMK
-  , SerializeTablesWithHint l
+  , LedgerSupportsV1LedgerDB l
   ) =>
   Tracer m FlavorImplSpecificTrace ->
   Complete BackingStoreArgs m ->
@@ -98,9 +93,7 @@ newBackingStoreInitialiser ::
   ( IOLike m
   , HasLedgerTables l
   , HasCallStack
-  , CanUpgradeLedgerTables l
-  , MemPackIdx l EmptyMK ~ l EmptyMK
-  , SerializeTablesWithHint l
+  , LedgerSupportsV1LedgerDB l
   ) =>
   Tracer m FlavorImplSpecificTrace ->
   Complete BackingStoreArgs m ->
