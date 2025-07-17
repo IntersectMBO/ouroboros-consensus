@@ -162,9 +162,9 @@ implMkLedgerDb ::
   , HasHardForkHistory blk
   ) =>
   LedgerDBHandle m l blk ->
-  HandleArgs ->
+  SnapshotManager m m blk (StateRef m (ExtLedgerState blk)) ->
   (LedgerDB m l blk, TestInternals m l blk)
-implMkLedgerDb h bss =
+implMkLedgerDb h snapManager =
   ( LedgerDB
       { getVolatileTip = getEnvSTM h implGetVolatileTip
       , getImmutableTip = getEnvSTM h implGetImmutableTip
@@ -174,24 +174,23 @@ implMkLedgerDb h bss =
       , validateFork = getEnv5 h (implValidate h)
       , getPrevApplied = getEnvSTM h implGetPrevApplied
       , garbageCollect = \s -> getEnvSTM h (flip implGarbageCollect s)
-      , tryTakeSnapshot = getEnv2 h (implTryTakeSnapshot bss)
+      , tryTakeSnapshot = getEnv2 h (implTryTakeSnapshot snapManager)
       , tryFlush = getEnv h implTryFlush
       , closeDB = implCloseDB h
       }
-  , mkInternals bss h
+  , mkInternals h snapManager
   )
 
 mkInternals ::
   forall m blk.
   ( IOLike m
-  , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
   , ApplyBlock (ExtLedgerState blk) blk
   ) =>
-  HandleArgs ->
   LedgerDBHandle m (ExtLedgerState blk) blk ->
+  SnapshotManager m m blk (StateRef m (ExtLedgerState blk)) ->
   TestInternals' m blk
-mkInternals bss h =
+mkInternals h snapManager =
   TestInternals
     { takeSnapshotNOW = \whereTo suff -> getEnv h $ \env -> do
         let selectWhereTo = case whereTo of
@@ -200,11 +199,11 @@ mkInternals bss h =
         withStateRef env (MkSolo . selectWhereTo) $ \(MkSolo st) ->
           Monad.void $
             takeSnapshot
-              (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
-              (LedgerDBSnapshotEvent >$< ldbTracer env)
-              (ldbHasFS env)
+              snapManager
               suff
               st
+    , wipeLedgerDB = destroySnapshots snapManager
+    , truncateSnapshots = getEnv h $ implIntTruncateSnapshots snapManager . ldbHasFS
     , push = \st -> withRegistry $ \reg -> do
         eFrk <- newForkerAtTarget h reg VolatileTip
         case eFrk of
@@ -225,44 +224,25 @@ mkInternals bss h =
                     blk
                     (st `withLedgerTables` tables)
             forkerPush frk st' >> atomically (forkerCommit frk) >> forkerClose frk
-    , wipeLedgerDB = getEnv h $ destroySnapshots . ldbHasFS
-    , closeLedgerDB =
+    , closeLedgerDB = do
         let LDBHandle tvar = h
-         in atomically (writeTVar tvar LedgerDBClosed)
-    , truncateSnapshots = getEnv h $ implIntTruncateSnapshots . ldbHasFS
+        getEnv h $ \env ->
+          whenJust (ldbResourceKeys env) releaseLedgerDBResources
+        atomically (writeTVar tvar LedgerDBClosed)
     , getNumLedgerTablesHandles = getEnv h $ \env -> do
         l <- readTVarIO (ldbSeq env)
         -- We always have a state at the anchor.
         pure $ 1 + maxRollback l
     }
- where
-  takeSnapshot ::
-    CodecConfig blk ->
-    Tracer m (TraceSnapshotEvent blk) ->
-    SomeHasFS m ->
-    Maybe String ->
-    StateRef m (ExtLedgerState blk) ->
-    m (Maybe (DiskSnapshot, RealPoint blk))
-  takeSnapshot = case bss of
-    InMemoryHandleArgs -> InMemory.takeSnapshot
-    LSMHandleArgs x -> absurd x
 
--- | Testing only! Truncate all snapshots in the DB.
-implIntTruncateSnapshots :: MonadThrow m => SomeHasFS m -> m ()
-implIntTruncateSnapshots sfs@(SomeHasFS fs) = do
-  snapshotsMapM_ sfs (truncateRecursively . (: []))
- where
-  truncateRecursively pre = do
-    dirs <- listDirectory fs (mkFsPath pre)
-    mapM_
-      ( \d -> do
-          let d' = pre ++ [d]
-          isDir <- doesDirectoryExist fs $ mkFsPath d'
-          if isDir
-            then truncateRecursively d'
-            else withFile fs (mkFsPath d') (AppendMode AllowExisting) $ \h -> hTruncate fs h 0
-      )
-      dirs
+-- | Testing only! Truncate all snapshots in the DB. We only truncate the state
+-- file because it is unclear how to truncate the LSM database without
+-- corrupting it.
+implIntTruncateSnapshots :: MonadThrow m => SnapshotManager m m blk st -> SomeHasFS m -> m ()
+implIntTruncateSnapshots snapManager (SomeHasFS fs) = do
+  snapshotsMapM_ snapManager $
+    \pre -> withFile fs (snapshotToStatePath pre) (AppendMode AllowExisting) $
+      \h -> hTruncate fs h 0
 
 implGetVolatileTip ::
   (MonadSTM m, GetTip l) =>
@@ -356,48 +336,28 @@ implTryTakeSnapshot ::
   forall m l blk.
   ( l ~ ExtLedgerState blk
   , IOLike m
-  , LedgerSupportsProtocol blk
-  , LedgerDbSerialiseConstraints blk
   ) =>
-  HandleArgs ->
+  SnapshotManager m m blk (StateRef m (ExtLedgerState blk)) ->
   LedgerDBEnv m l blk ->
   Maybe (Time, Time) ->
   Word64 ->
   m SnapCounters
-implTryTakeSnapshot bss env mTime nrBlocks =
+implTryTakeSnapshot snapManager env mTime nrBlocks =
   if onDiskShouldTakeSnapshot (ldbSnapshotPolicy env) (uncurry (flip diffTime) <$> mTime) nrBlocks
     then do
       withStateRef env (MkSolo . anchorHandle) $ \(MkSolo st) ->
         Monad.void $
           takeSnapshot
-            (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
-            (LedgerDBSnapshotEvent >$< ldbTracer env)
-            (ldbHasFS env)
+            snapManager
+            Nothing
             st
       Monad.void $
         trimSnapshots
-          (LedgerDBSnapshotEvent >$< ldbTracer env)
-          (ldbHasFS env)
+          snapManager
           (ldbSnapshotPolicy env)
       (`SnapCounters` 0) . Just <$> maybe getMonotonicTime (pure . snd) mTime
     else
       pure $ SnapCounters (fst <$> mTime) nrBlocks
- where
-  takeSnapshot ::
-    CodecConfig blk ->
-    Tracer m (TraceSnapshotEvent blk) ->
-    SomeHasFS m ->
-    StateRef m (ExtLedgerState blk) ->
-    m (Maybe (DiskSnapshot, RealPoint blk))
-  takeSnapshot config trcr fs ref = case bss of
-    InMemoryHandleArgs ->
-      InMemory.takeSnapshot
-        config
-        trcr
-        fs
-        Nothing
-        ref
-    LSMHandleArgs x -> absurd x
 
 -- In the first version of the LedgerDB for UTxO-HD, there is a need to
 -- periodically flush the accumulated differences to the disk. However, in the
