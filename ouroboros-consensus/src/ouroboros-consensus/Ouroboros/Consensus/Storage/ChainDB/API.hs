@@ -83,6 +83,7 @@ import Ouroboros.Consensus.HeaderStateHistory
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime (..))
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
 import Ouroboros.Consensus.Storage.Common
 import Ouroboros.Consensus.Storage.LedgerDB
@@ -90,6 +91,7 @@ import Ouroboros.Consensus.Storage.LedgerDB
   , ReadOnlyForker'
   , Statistics
   )
+import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasCertSnapshot)
 import Ouroboros.Consensus.Storage.Serialisation
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
@@ -386,6 +388,12 @@ data ChainDB m blk = ChainDB
   , getStatistics :: m (Maybe Statistics)
   -- ^ Get statistics from the LedgerDB, in particular the number of entries
   -- in the tables.
+  , getPerasWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
+  -- ^ Get the 'PerasWeightSnapshot', representing the Peras weight boosts for
+  -- all blocks newer than the current immutable tip.
+  , getPerasCertSnapshot :: STM m (PerasCertSnapshot blk)
+  -- ^ Get the Peras certificate snapshot, containing the currently-known
+  -- certificates boosting blocks newer than the immutable tip.
   , closeDB :: m ()
   -- ^ Close the ChainDB
   --
