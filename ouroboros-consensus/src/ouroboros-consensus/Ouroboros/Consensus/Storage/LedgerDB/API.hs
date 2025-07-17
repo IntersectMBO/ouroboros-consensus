@@ -118,6 +118,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , LedgerSupportsInMemoryLedgerDB
   , LedgerSupportsLedgerDB
   , LedgerSupportsOnDiskLedgerDB
+  , LSMTxOut
+  , HasLSMTxOut (..)
   , ResolveBlock
   , currentPoint
 
@@ -768,6 +770,22 @@ type LedgerSupportsOnDiskLedgerDB blk =
 type LedgerSupportsLedgerDB blk =
   ( LedgerSupportsOnDiskLedgerDB blk
   , LedgerSupportsInMemoryLedgerDB blk
+
+-- | LSM trees need to be able to serialize and deserialize values several
+-- times, without any context. Therefore the approach of using a ledger state to
+-- hint the era in which values need to be deserialized cannot work with LSM.
+--
+-- Therefore, we will instead store 'LSMTxOut' in the LSM database, which will
+-- be 'TxOut' for most of the unitary blocks and basic hard fork blocks, but
+-- will be 'ByteArray's for the Cardano Block.
+type LSMTxOut :: LedgerStateKind -> Type
+type family LSMTxOut l
+
+-- | Conversion of 'TxOut's to and from 'LSMTxOut'.
+class HasLSMTxOut l where
+  toLSMTxOut :: Proxy l -> TxOut l -> LSMTxOut l
+  fromLSMTxOut :: l EmptyMK -> LSMTxOut l -> TxOut l
+
   )
 
 {-------------------------------------------------------------------------------
