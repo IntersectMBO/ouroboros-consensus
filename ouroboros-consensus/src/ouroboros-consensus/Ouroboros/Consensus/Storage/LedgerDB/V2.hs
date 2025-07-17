@@ -57,6 +57,7 @@ import Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
+import Ouroboros.Consensus.Util (whenJust)
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
@@ -83,7 +84,11 @@ mkInitDb args flavArgs getBlock =
     { initFromGenesis = emptyF =<< lgrGenesis
     , initFromSnapshot =
         loadSnapshot (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) lgrHasFS
-    , closeDb = closeLedgerSeq
+    , abortLedgerDbInit = \ls -> do
+        closeLedgerSeq ls
+        flip whenJust releaseLedgerDBResources $ case bss of
+          InMemoryHandleEnv -> Nothing
+          LSMHandleEnv lsmRes -> Just $ LedgerDBResourceKeys (sessionKey lsmRes) (blockIOKey lsmRes)
     , initReapplyBlock = \a b c -> do
         (x, y) <- reapplyThenPush lgrRegistry a b c
         x
@@ -367,14 +372,17 @@ implTryFlush :: Applicative m => LedgerDBEnv m l blk -> m ()
 implTryFlush _ = pure ()
 
 implCloseDB :: IOLike m => LedgerDBHandle m l blk -> m ()
-implCloseDB (LDBHandle varState) =
-  atomically $
-    readTVar varState >>= \case
-      -- Idempotent
-      LedgerDBClosed -> pure ()
-      LedgerDBOpen env -> do
-        writeTVar (ldbForkers env) Map.empty
-        writeTVar varState LedgerDBClosed
+implCloseDB (LDBHandle varState) = do
+  res <-
+    atomically $
+      readTVar varState >>= \case
+        -- Idempotent
+        LedgerDBClosed -> pure Nothing
+        LedgerDBOpen env -> do
+          writeTVar (ldbForkers env) Map.empty
+          writeTVar varState LedgerDBClosed
+          pure (ldbResourceKeys env)
+  whenJust res releaseLedgerDBResources
 
 {-------------------------------------------------------------------------------
   The LedgerDBEnv
@@ -436,6 +444,21 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   --    handles without any locking.
   }
   deriving Generic
+
+data LedgerDBResourceKeys m = LedgerDBResourceKeys
+  { sessionResourceKey :: ResourceKey m
+  , blockIOResourceKey :: ResourceKey m
+  }
+  deriving Generic
+
+deriving instance
+  IOLike m =>
+  NoThunks (LedgerDBResourceKeys m)
+
+releaseLedgerDBResources :: IOLike m => LedgerDBResourceKeys m -> m ()
+releaseLedgerDBResources l = do
+  Monad.void . release . sessionResourceKey $ l
+  Monad.void . release . blockIOResourceKey $ l
 
 deriving instance
   ( IOLike m

@@ -118,6 +118,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , LedgerSupportsInMemoryLedgerDB
   , LedgerSupportsLedgerDB
   , LedgerSupportsOnDiskLedgerDB
+  , LSMTxOut
+  , HasLSMTxOut (..)
   , ResolveBlock
   , currentPoint
 
@@ -452,7 +454,7 @@ data InitDB db m blk = InitDB
   -- ^ Create a DB from the genesis state
   , initFromSnapshot :: !(DiskSnapshot -> m (Either (SnapshotFailure blk) (db, RealPoint blk)))
   -- ^ Create a DB from a Snapshot
-  , closeDb :: !(db -> m ())
+  , abortLedgerDbInit :: !(db -> m ())
   -- ^ Closing the database, to be reopened again with a different snapshot or
   -- with the genesis state.
   , initReapplyBlock :: !(LedgerDbCfg (ExtLedgerState blk) -> blk -> db -> m db)
@@ -516,7 +518,7 @@ initialize
       Nothing -> listSnapshots snapManager >>= tryNewestFirst id
       Just snap -> tryNewestFirst id [snap]
    where
-    InitDB{initFromGenesis, initFromSnapshot, closeDb} = dbIface
+    InitDB{initFromGenesis, initFromSnapshot, abortLedgerDbInit} = dbIface
 
     tryNewestFirst ::
       (InitLog blk -> InitLog blk) ->
@@ -543,7 +545,7 @@ initialize
 
       case eDB of
         Left err -> do
-          closeDb initDb
+          abortLedgerDbInit initDb
           error $ "Invariant violation: invalid immutable chain " <> show err
         Right (db, replayed) -> do
           db' <- pruneDb dbIface db
@@ -768,6 +770,12 @@ type LedgerSupportsOnDiskLedgerDB blk =
 type LedgerSupportsLedgerDB blk =
   ( LedgerSupportsOnDiskLedgerDB blk
   , LedgerSupportsInMemoryLedgerDB blk
+
+  toLSMTxOut :: Proxy l -> TxOut l -> LSMTxOut l
+  fromLSMTxOut :: l EmptyMK -> LSMTxOut l -> TxOut l
+  lsmIndex :: Proxy l -> LSM.FencePointerIndexType
+  lsmSnapLabel :: Proxy l -> String
+
   )
 
 {-------------------------------------------------------------------------------

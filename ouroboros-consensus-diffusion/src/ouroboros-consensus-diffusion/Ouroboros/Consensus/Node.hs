@@ -173,10 +173,10 @@ import Ouroboros.Network.Protocol.ChainSync.Codec (timeLimitsChainSync)
 import Ouroboros.Network.RethrowPolicy
 import qualified SafeWildCards
 import System.Exit (ExitCode (..))
-import System.FS.API (SomeHasFS (..))
+import System.FS.API (SomeHasFS (..), mkFsPath)
 import System.FS.API.Types (MountPoint (..))
 import System.FS.IO (ioHasFS)
-import System.FilePath ((</>))
+import System.FilePath (splitDirectories, (</>))
 import System.Random (StdGen, newStdGen, randomIO, split)
 
 {-------------------------------------------------------------------------------
