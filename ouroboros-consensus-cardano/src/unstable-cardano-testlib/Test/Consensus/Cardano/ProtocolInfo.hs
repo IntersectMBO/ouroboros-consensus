@@ -66,8 +66,8 @@ import Ouroboros.Consensus.Shelley.Node
   , ShelleyLeaderCredentials
   )
 import Ouroboros.Consensus.Util.IOLike (IOLike)
-import qualified Test.Cardano.Ledger.Alonzo.Examples.Consensus as SL
-import qualified Test.Cardano.Ledger.Conway.Examples.Consensus as SL
+import qualified Test.Cardano.Ledger.Api.Examples.Consensus.Alonzo as SL
+import qualified Test.Cardano.Ledger.Api.Examples.Consensus.Conway as SL
 import qualified Test.ThreadNet.Infra.Byron as Byron
 import qualified Test.ThreadNet.Infra.Shelley as Shelley
 import Test.ThreadNet.Util.Seed (Seed (Seed), runGen)

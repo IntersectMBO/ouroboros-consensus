@@ -17,6 +17,7 @@ module Test.Consensus.Shelley.Examples
   , examplesAlonzo
   , examplesBabbage
   , examplesConway
+  , examplesDijkstra
   , examplesMary
   , examplesShelley
   ) where
@@ -63,22 +64,25 @@ import Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
 import Ouroboros.Network.Block (Serialised (..))
 import Ouroboros.Network.PeerSelection.LedgerPeers.Type
 import Ouroboros.Network.PeerSelection.RelayAccessPoint
-import Test.Cardano.Ledger.Allegra.Examples.Consensus
+import Test.Cardano.Ledger.Api.Examples.Consensus.Allegra
   ( ledgerExamplesAllegra
   )
-import Test.Cardano.Ledger.Alonzo.Examples.Consensus
+import Test.Cardano.Ledger.Api.Examples.Consensus.Alonzo
   ( ledgerExamplesAlonzo
   )
-import Test.Cardano.Ledger.Babbage.Examples.Consensus
+import Test.Cardano.Ledger.Api.Examples.Consensus.Babbage
   ( ledgerExamplesBabbage
   )
-import Test.Cardano.Ledger.Conway.Examples.Consensus
+import Test.Cardano.Ledger.Api.Examples.Consensus.Conway
   ( ledgerExamplesConway
   )
-import Test.Cardano.Ledger.Mary.Examples.Consensus
+import Test.Cardano.Ledger.Api.Examples.Consensus.Dijkstra
+  ( ledgerExamplesDijkstra
+  )
+import Test.Cardano.Ledger.Api.Examples.Consensus.Mary
   ( ledgerExamplesMary
   )
-import Test.Cardano.Ledger.Shelley.Examples.Consensus
+import Test.Cardano.Ledger.Api.Examples.Consensus.Shelley
   ( ShelleyLedgerExamples (..)
   , ShelleyResultExamples (..)
   , ledgerExamplesShelley
@@ -178,7 +182,7 @@ fromShelleyLedgerExamples
     results =
       labelled
         [ ("LedgerTip", SomeResult GetLedgerTip (blockPoint blk))
-        , ("EpochNo", SomeResult GetEpochNo 10)
+        , ("EpochNo", SomeResult GetEpochNo (EpochNo 10))
         , ("EmptyPParams", SomeResult GetCurrentPParams srePParams)
         , ("StakeDistribution", SomeResult GetStakeDistribution $ fromLedgerPoolDistr srePoolDistr)
         ,
@@ -314,7 +318,7 @@ fromShelleyLedgerExamplesPraos
     results =
       labelled
         [ ("LedgerTip", SomeResult GetLedgerTip (blockPoint blk))
-        , ("EpochNo", SomeResult GetEpochNo 10)
+        , ("EpochNo", SomeResult GetEpochNo (EpochNo 10))
         , ("EmptyPParams", SomeResult GetCurrentPParams srePParams)
         , ("StakeDistribution", SomeResult GetStakeDistribution $ fromLedgerPoolDistr srePoolDistr)
         ,
@@ -394,6 +398,9 @@ examplesBabbage = fromShelleyLedgerExamplesPraos ledgerExamplesBabbage
 
 examplesConway :: Examples StandardConwayBlock
 examplesConway = fromShelleyLedgerExamplesPraos ledgerExamplesConway
+
+examplesDijkstra :: Examples StandardDijkstraBlock
+examplesDijkstra = fromShelleyLedgerExamplesPraos ledgerExamplesDijkstra
 
 exampleShelleyLedgerConfig :: TranslationContext era -> ShelleyLedgerConfig era
 exampleShelleyLedgerConfig translationContext =

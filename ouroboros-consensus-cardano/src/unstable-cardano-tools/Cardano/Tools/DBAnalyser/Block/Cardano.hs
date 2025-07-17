@@ -194,6 +194,8 @@ data CardanoConfig = CardanoConfig
   -- ^ @AlonzoGenesisFile@ field
   , conwayGenesisPath :: FilePath
   -- ^ @ConwayGenesisFile@ field
+  , dijkstraGenesisPath :: FilePath
+  -- ^ @DijkstraGenesisFile@ field
   , cfgHardForkTriggers :: CardanoHardForkTriggers
   -- ^ @Test*HardForkAtEpoch@ for each Shelley era
   }
@@ -205,6 +207,7 @@ instance AdjustFilePaths CardanoConfig where
       , shelleyGenesisPath = f $ shelleyGenesisPath cc
       , alonzoGenesisPath = f $ alonzoGenesisPath cc
       , conwayGenesisPath = f $ conwayGenesisPath cc
+      , dijkstraGenesisPath = f $ dijkstraGenesisPath cc
       -- Byron, Shelley, Alonzo, and Conway are the only eras that have genesis
       -- data. The actual genesis block is a Byron block, therefore we needed a
       -- genesis file. To transition to Shelley, we needed to add some additional
@@ -234,6 +237,8 @@ instance Aeson.FromJSON CardanoConfig where
     alonzoGenesisPath <- v Aeson..: "AlonzoGenesisFile"
 
     conwayGenesisPath <- v Aeson..: "ConwayGenesisFile"
+
+    dijkstraGenesisPath <- v Aeson..: "DijkstraGenesisFile"
 
     triggers <- do
       let parseTrigger ::
@@ -271,6 +276,7 @@ instance Aeson.FromJSON CardanoConfig where
         , shelleyGenesisHash = shelleyGenesisHash
         , alonzoGenesisPath = alonzoGenesisPath
         , conwayGenesisPath = conwayGenesisPath
+        , dijkstraGenesisPath = dijkstraGenesisPath
         , cfgHardForkTriggers = CardanoHardForkTriggers triggers
         }
 
@@ -331,6 +337,7 @@ dispatch cardanoSt fByron fShelley =
   hcollapse $
     hap
       ( fn k_fByron
+          :* fn k_fShelley
           :* fn k_fShelley
           :* fn k_fShelley
           :* fn k_fShelley

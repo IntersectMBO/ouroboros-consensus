@@ -33,6 +33,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Mempool
     -- * Exported for tests
   , AlonzoMeasure (..)
   , ConwayMeasure (..)
+  , DijkstraMeasure (..)
   , fromExUnits
   ) where
 
@@ -468,6 +469,17 @@ instance MaxTxSizeUTxO ConwayEra where
               , mismatchExpected = txSizeLimit
               }
 
+instance MaxTxSizeUTxO DijkstraEra where
+  maxTxSizeUTxO txSize txSizeLimit =
+    SL.ApplyTxError . pure $
+      ConwayEra.ConwayUtxowFailure $
+        ConwayEra.UtxoFailure $
+          ConwayEra.MaxTxSizeUTxO $
+            L.Mismatch
+              { mismatchSupplied = txSize
+              , mismatchExpected = txSizeLimit
+              }
+
 -----
 
 instance ShelleyCompatible p ShelleyEra => TxLimits (ShelleyBlock p ShelleyEra) where
@@ -594,6 +606,17 @@ instance ExUnitsTooBigUTxO ConwayEra where
               , mismatchExpected = limit
               }
 
+instance ExUnitsTooBigUTxO DijkstraEra where
+  exUnitsTooBigUTxO txsz limit =
+    SL.ApplyTxError . pure $
+      ConwayEra.ConwayUtxowFailure $
+        ConwayEra.UtxoFailure $
+          ConwayEra.ExUnitsTooBigUTxO $
+            L.Mismatch
+              { mismatchSupplied = txsz
+              , mismatchExpected = limit
+              }
+
 -----
 
 instance
@@ -603,6 +626,41 @@ instance
   type TxMeasure (ShelleyBlock p AlonzoEra) = AlonzoMeasure
   txMeasure _cfg st tx = runValidation $ txMeasureAlonzo st tx
   blockCapacityTxMeasure _cfg = blockCapacityAlonzoMeasure
+
+-----
+
+newtype DijkstraMeasure = DijkstraMeasure
+  { conwayMeasure :: ConwayMeasure
+  }
+  deriving stock (Eq, Generic, Show)
+  deriving anyclass NoThunks
+  deriving newtype (Semigroup, Monoid, HasByteSize, TxMeasureMetrics)
+  deriving
+    Measure
+    via (InstantiatedAt Generic DijkstraMeasure)
+
+blockCapacityDijkstraMeasure ::
+  forall proto era mk.
+  ( ShelleyCompatible proto era
+  , L.AlonzoEraPParams era
+  ) =>
+  TickedLedgerState (ShelleyBlock proto era) mk ->
+  DijkstraMeasure
+blockCapacityDijkstraMeasure = DijkstraMeasure . blockCapacityConwayMeasure
+
+txMeasureDijkstra ::
+  forall proto era.
+  ( ShelleyCompatible proto era
+  , L.AlonzoEraTxWits era
+  , L.BabbageEraTxBody era
+  , ExUnitsTooBigUTxO era
+  , MaxTxSizeUTxO era
+  , TxRefScriptsSizeTooBig era
+  ) =>
+  TickedLedgerState (ShelleyBlock proto era) ValuesMK ->
+  GenTx (ShelleyBlock proto era) ->
+  V.Validation (TxErrorSG era) DijkstraMeasure
+txMeasureDijkstra st tx = DijkstraMeasure <$> txMeasureConway st tx -- TODO(geo2a): eta-reduce
 
 -----
 
@@ -690,6 +748,15 @@ instance TxRefScriptsSizeTooBig ConwayEra where
           , mismatchExpected = limit
           }
 
+instance TxRefScriptsSizeTooBig DijkstraEra where
+  txRefScriptsSizeTooBig txsz limit =
+    SL.ApplyTxError . pure $
+      ConwayEra.ConwayTxRefScriptsSizeTooBig $
+        L.Mismatch
+          { mismatchSupplied = txsz
+          , mismatchExpected = limit
+          }
+
 -----
 
 txMeasureBabbage ::
@@ -733,3 +800,11 @@ instance
   type TxMeasure (ShelleyBlock p ConwayEra) = ConwayMeasure
   txMeasure _cfg st tx = runValidation $ txMeasureConway st tx
   blockCapacityTxMeasure _cfg = blockCapacityConwayMeasure
+
+instance
+  ShelleyCompatible p DijkstraEra =>
+  TxLimits (ShelleyBlock p DijkstraEra)
+  where
+  type TxMeasure (ShelleyBlock p DijkstraEra) = DijkstraMeasure
+  txMeasure _cfg st tx = runValidation $ txMeasureDijkstra st tx
+  blockCapacityTxMeasure _cfg = blockCapacityDijkstraMeasure

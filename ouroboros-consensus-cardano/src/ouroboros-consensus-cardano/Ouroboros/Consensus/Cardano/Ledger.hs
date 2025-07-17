@@ -84,7 +84,8 @@ instance
     IS (IS (IS IZ)) -> CardanoTxIn shelleyTxIn
     IS (IS (IS (IS IZ))) -> CardanoTxIn shelleyTxIn
     IS (IS (IS (IS (IS IZ)))) -> CardanoTxIn shelleyTxIn
-    IS (IS (IS (IS (IS (IS idx'))))) -> case idx' of {}
+    IS (IS (IS (IS (IS (IS IZ))))) -> CardanoTxIn shelleyTxIn
+    IS (IS (IS (IS (IS (IS (IS idx')))))) -> case idx' of {}
 
   ejectCanonicalTxIn IZ _ =
     error "ejectCanonicalTxIn: Byron has no TxIns"
@@ -95,7 +96,8 @@ instance
     IS (IS (IS IZ)) -> getCardanoTxIn cardanoTxIn
     IS (IS (IS (IS IZ))) -> getCardanoTxIn cardanoTxIn
     IS (IS (IS (IS (IS IZ)))) -> getCardanoTxIn cardanoTxIn
-    IS (IS (IS (IS (IS (IS idx'))))) -> case idx' of {}
+    IS (IS (IS (IS (IS (IS IZ))))) -> getCardanoTxIn cardanoTxIn
+    IS (IS (IS (IS (IS (IS (IS idx')))))) -> case idx' of {}
 
 instance CardanoHardForkConstraints c => MemPack (CanonicalTxIn (CardanoEras c)) where
   packM = packM . getCardanoTxIn
@@ -109,6 +111,7 @@ data CardanoTxOut c
   | AlonzoTxOut !(TxOut (LedgerState (ShelleyBlock (TPraos c) AlonzoEra)))
   | BabbageTxOut !(TxOut (LedgerState (ShelleyBlock (Praos c) BabbageEra)))
   | ConwayTxOut !(TxOut (LedgerState (ShelleyBlock (Praos c) ConwayEra)))
+  | DijkstraTxOut !(TxOut (LedgerState (ShelleyBlock (Praos c) DijkstraEra)))
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
@@ -133,6 +136,7 @@ eliminateCardanoTxOut f = \case
   AlonzoTxOut txout -> f (IS (IS (IS (IS IZ)))) txout
   BabbageTxOut txout -> f (IS (IS (IS (IS (IS IZ))))) txout
   ConwayTxOut txout -> f (IS (IS (IS (IS (IS (IS IZ)))))) txout
+  DijkstraTxOut txout -> f (IS (IS (IS (IS (IS (IS (IS IZ))))))) txout
 
 instance CardanoHardForkConstraints c => HasHardForkTxOut (CardanoEras c) where
   type HardForkTxOut (CardanoEras c) = CardanoTxOut c
@@ -144,7 +148,8 @@ instance CardanoHardForkConstraints c => HasHardForkTxOut (CardanoEras c) where
     IS (IS (IS (IS IZ))) -> AlonzoTxOut txOut
     IS (IS (IS (IS (IS IZ)))) -> BabbageTxOut txOut
     IS (IS (IS (IS (IS (IS IZ))))) -> ConwayTxOut txOut
-    IS (IS (IS (IS (IS (IS (IS idx')))))) -> case idx' of {}
+    IS (IS (IS (IS (IS (IS (IS IZ)))))) -> DijkstraTxOut txOut
+    IS (IS (IS (IS (IS (IS (IS (IS idx'))))))) -> case idx' of {}
 
   ejectHardForkTxOut ::
     forall y.
@@ -179,6 +184,7 @@ instance
             :* (Fn $ const $ Comp $ K . AlonzoTxOut <$> unpackM)
             :* (Fn $ const $ Comp $ K . BabbageTxOut <$> unpackM)
             :* (Fn $ const $ Comp $ K . ConwayTxOut <$> unpackM)
+            :* (Fn $ const $ Comp $ K . DijkstraTxOut <$> unpackM)
             :* Nil
         )
     hcollapse <$> (hsequence' $ hap np $ Telescope.tip idx)
@@ -199,6 +205,7 @@ instance
           :* (Fn $ const $ K $ encOne (Proxy @AlonzoEra))
           :* (Fn $ const $ K $ encOne (Proxy @BabbageEra))
           :* (Fn $ const $ K $ encOne (Proxy @ConwayEra))
+          :* (Fn $ const $ K $ encOne (Proxy @DijkstraEra))
           :* Nil
      in
       hcollapse $ hap np $ Telescope.tip idx
@@ -229,6 +236,7 @@ instance
           :* (Fn $ Comp . fmap K . getOne AlonzoTxOut . unFlip . currentState)
           :* (Fn $ Comp . fmap K . getOne BabbageTxOut . unFlip . currentState)
           :* (Fn $ Comp . fmap K . getOne ConwayTxOut . unFlip . currentState)
+          :* (Fn $ Comp . fmap K . getOne DijkstraTxOut . unFlip . currentState)
           :* Nil
      in
       hcollapse <$> (hsequence' $ hap np $ Telescope.tip idx)

@@ -7,6 +7,7 @@ cardanoBlock = byron.block
              / [5, alonzo.block]
              / [6, babbage.block]
              / [7, conway.block]
+             / [8, dijkstra.block]
 
 ;# import byron as byron
 ;# import shelley as shelley
@@ -15,3 +16,4 @@ cardanoBlock = byron.block
 ;# import alonzo as alonzo
 ;# import babbage as babbage
 ;# import conway as conway
+;# import dijkstra as dijkstra
