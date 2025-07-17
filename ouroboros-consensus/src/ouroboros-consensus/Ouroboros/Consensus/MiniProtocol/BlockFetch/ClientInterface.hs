@@ -33,6 +33,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as CSJumping
+import Ouroboros.Consensus.Peras.Weight (emptyPerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockPromise
   , ChainDB
@@ -244,7 +245,7 @@ mkBlockFetchConsensusInterface
       AnchoredFragment (HeaderWithTime blk) ->
       AnchoredFragment (HeaderWithTime blk) ->
       Bool
-    plausibleCandidateChain ours cand
+    plausibleCandidateChain ours cand =
       -- 1. The ChainDB maintains the invariant that the anchor of our fragment
       --    corresponds to the immutable tip.
       --
@@ -258,45 +259,24 @@ mkBlockFetchConsensusInterface
       --    point. This means that we are no longer guaranteed that the
       --    precondition holds.
       --
-      -- 4. Our chain's anchor can only move forward. We can detect this by
-      --    looking at the block/slot numbers of the anchors: When the anchor
-      --    advances, either the block number increases (usual case), or the
-      --    block number stays the same, but the slot number increases (EBB
-      --    case).
-      --
-      | anchorBlockNoAndSlot cand < anchorBlockNoAndSlot ours -- (4)
-        =
-          case (AF.null ours, AF.null cand) of
-            -- Both are non-empty, the precondition trivially holds.
-            (False, False) -> preferAnchoredCandidate bcfg ours cand
-            -- The candidate is shorter than our chain and, worse, we'd have to
-            -- roll back past our immutable tip (the anchor of @cand@).
-            (_, True) -> False
-            -- As argued above we can only reach this case when our chain's anchor
-            -- has changed (4).
-            --
-            -- It is impossible for our chain to change /and/ still be empty: the
-            -- anchor of our chain only changes when a new block becomes
-            -- immutable. For a new block to become immutable, we must have
-            -- extended our chain with at least @k + 1@ blocks. Which means our
-            -- fragment can't be empty.
-            (True, _) -> error "impossible"
-      | otherwise =
-          preferAnchoredCandidate bcfg ours cand
-     where
-      anchorBlockNoAndSlot ::
-        AnchoredFragment (HeaderWithTime blk) ->
-        (WithOrigin BlockNo, WithOrigin SlotNo)
-      anchorBlockNoAndSlot frag =
-        (AF.anchorToBlockNo a, AF.anchorToSlotNo a)
-       where
-        a = AF.anchor frag
+      -- 4. Therefore, we check whether the candidate fragments still intersects
+      --    with our fragment; if not, then it is only a matter of time until the
+      --    ChainSync client disconnects from that peer.
+      case AF.intersectionPoint ours cand of
+        -- REVIEW: Hmm, maybe we want to change 'preferAnchoredCandidates' to
+        -- also just return 'False' in this case (and we remove the
+        -- precondition).
+        Nothing -> False
+        Just _ -> preferAnchoredCandidate bcfg weights ours cand
 
     compareCandidateChains ::
       AnchoredFragment (HeaderWithTime blk) ->
       AnchoredFragment (HeaderWithTime blk) ->
       Ordering
-    compareCandidateChains = compareAnchoredFragments bcfg
+    compareCandidateChains = compareAnchoredFragments bcfg weights
+
+    -- TODO requires https://github.com/IntersectMBO/ouroboros-network/pull/5161
+    weights = emptyPerasWeightSnapshot
 
     headerForgeUTCTime :: FromConsensus (HeaderWithTime blk) -> STM m UTCTime
     headerForgeUTCTime =
