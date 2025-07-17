@@ -18,8 +18,9 @@ import Control.Monad.State
 import Control.Tracer (nullTracer)
 import qualified Data.List.NonEmpty as NE
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
-import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasCertDB, PerasWeightSnapshot)
+import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasCertDB)
 import Ouroboros.Consensus.Util.IOLike
 import qualified Test.Ouroboros.Storage.PerasCertDB.Model as Model
 import Test.QuickCheck
