@@ -177,6 +177,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
 
     traceWith initChainSelTracer StartedInitChainSelection
     initialLoE <- Args.cdbsLoE cdbSpecificArgs
+    initialWeights <- atomically $ PerasCertDB.getWeightSnapshot perasCertDB
     chain <- withRegistry $ \rr -> do
       chainAndLedger <-
         ChainSel.initialChainSelection
@@ -188,6 +189,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           (Args.cdbsTopLevelConfig cdbSpecificArgs)
           varInvalid
           (void initialLoE)
+          (forgetFingerprint initialWeights)
       traceWith initChainSelTracer InitialChainSelected
 
       let chain = VF.validatedFragment chainAndLedger

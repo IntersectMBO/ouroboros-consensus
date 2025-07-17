@@ -113,6 +113,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.MockChainSel
 import Ouroboros.Consensus.Storage.ChainDB.API
@@ -902,9 +903,12 @@ validChains cfg m bs =
   sortChains =
     sortBy $
       flip
-        ( Fragment.compareAnchoredFragments (configBlock cfg)
+        ( Fragment.compareAnchoredFragments (configBlock cfg) weights
             `on` (Chain.toAnchoredFragment . fmap getHeader)
         )
+   where
+    -- TODO enrich with Peras weights/certs
+    weights = emptyPerasWeightSnapshot
 
   classify ::
     ValidatedChain blk ->
