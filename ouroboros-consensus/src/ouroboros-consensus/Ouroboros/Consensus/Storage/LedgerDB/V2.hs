@@ -2,6 +2,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -33,7 +34,6 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Traversable (for)
 import Data.Tuple (Solo (..))
-import Data.Void
 import Data.Word
 import GHC.Generics
 import NoThunks.Class
@@ -56,6 +56,8 @@ import Ouroboros.Consensus.Storage.LedgerDB.TraceEvent
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
 import Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
+import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM (snapshotToStatePath)
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
 import Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
@@ -66,6 +68,8 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import System.FS.API
 import Prelude hiding (read)
 
+type SnapshotManagementV2 m blk = SnapshotManagement m m blk (StateRef m (ExtLedgerState blk))
+
 mkInitDb ::
   forall m blk.
   ( LedgerSupportsProtocol blk
@@ -75,10 +79,11 @@ mkInitDb ::
   , LedgerSupportsV2LedgerDB (LedgerState blk)
   ) =>
   Complete LedgerDbArgs m blk ->
-  Complete V2.LedgerDbFlavorArgs m ->
+  HandleEnv m ->
   ResolveBlock m blk ->
+  SnapshotManagementV2 m blk ->
   InitDB (LedgerSeq' m blk) m blk
-mkInitDb args flavArgs getBlock =
+mkInitDb args bss getBlock snapManager =
   InitDB
     { initFromGenesis = emptyF =<< lgrGenesis
     , initFromSnapshot =
@@ -112,9 +117,12 @@ mkInitDb args flavArgs getBlock =
                 , ldbResolveBlock = getBlock
                 , ldbQueryBatchSize = lgrQueryBatchSize
                 , ldbOpenHandlesLock = lock
+                , testLdbResourceKeys = case bss of
+                    InMemoryHandleEnv -> Nothing
+                    LSMHandleEnv (s, _) k -> Just (s, k)
                 }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
-        pure $ implMkLedgerDb h bss
+        pure $ implMkLedgerDb h snapManager
     }
  where
   LedgerDbArgs
@@ -127,8 +135,6 @@ mkInitDb args flavArgs getBlock =
     , lgrRegistry
     } = args
 
-  bss = case flavArgs of V2Args bss0 -> bss0
-
   v2Tracer :: Tracer m V2.FlavorImplSpecificTrace
   v2Tracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV2 >$< lgrTracer
 
@@ -137,8 +143,11 @@ mkInitDb args flavArgs getBlock =
     m (LedgerSeq' m blk)
   emptyF st =
     empty' st $ case bss of
-      InMemoryHandleArgs -> InMemory.newInMemoryLedgerTablesHandle v2Tracer lgrHasFS
-      LSMHandleArgs x -> absurd x
+      InMemoryHandleEnv -> InMemory.newInMemoryLedgerTablesHandle v2Tracer lgrHasFS
+      LSMHandleEnv (_, session) _ ->
+        \values -> do
+          table <- LSM.tableFromValuesMK lgrRegistry session values
+          LSM.newLSMLedgerTablesHandle v2Tracer lgrRegistry session table
 
   loadSnapshot ::
     CodecConfig blk ->
@@ -146,8 +155,8 @@ mkInitDb args flavArgs getBlock =
     DiskSnapshot ->
     m (Either (SnapshotFailure blk) (LedgerSeq' m blk, RealPoint blk))
   loadSnapshot ccfg fs ds = case bss of
-    InMemoryHandleArgs -> runExceptT $ InMemory.loadSnapshot v2Tracer lgrRegistry ccfg fs ds
-    LSMHandleArgs x -> absurd x
+    InMemoryHandleEnv -> runExceptT $ InMemory.loadSnapshot v2Tracer lgrRegistry ccfg fs ds
+    LSMHandleEnv (_, session) _ -> runExceptT $ LSM.loadSnapshot v2Tracer lgrRegistry ccfg fs session ds
 
 implMkLedgerDb ::
   forall m l blk.
@@ -433,6 +442,10 @@ data LedgerDBEnv m l blk = LedgerDBEnv
   --
   --  * Modify 'ldbSeq' while holding a write lock, and then close the removed
   --    handles without any locking.
+  , testLdbResourceKeys :: !(Maybe (ResourceKey m, ResourceKey m))
+  -- ^ Resource keys used in the LSM backend so that the closing function used
+  -- in tests can release such resources. These are the resource keys for the
+  -- LSM session and the resource key for the BlockIO interface.
   }
   deriving Generic
 
