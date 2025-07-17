@@ -36,6 +36,7 @@ import Control.Monad (forM_, unless, void, when)
 import qualified Control.Monad.Class.MonadSTM as IOLike
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import qualified Control.Tracer as Trace
+import Data.Bifunctor (first)
 import Data.Functor (($>), (<&>))
 import Data.Functor.Contravariant ((>$<))
 import Data.Map (Map)
@@ -189,12 +190,12 @@ rangeRead ::
   API.RangeQuery (LedgerTables l KeysMK) ->
   idx ->
   LMDBMK (TxIn l) (TxOut l) ->
-  LMDB.Transaction mode (ValuesMK (TxIn l) (TxOut l))
+  LMDB.Transaction mode (ValuesMK (TxIn l) (TxOut l), Maybe (TxIn l))
 rangeRead rq st dbMK =
-  ValuesMK <$> case ksMK of
+  first ValuesMK <$> case ksMK of
     Nothing -> runCursorHelper Nothing
     Just (LedgerTables (KeysMK ks)) -> case Set.lookupMax ks of
-      Nothing -> pure mempty
+      Nothing -> pure (mempty, Nothing)
       Just lastExcludedKey ->
         runCursorHelper $ Just (lastExcludedKey, LMDB.Cursor.Exclusive)
  where
@@ -205,11 +206,11 @@ rangeRead rq st dbMK =
   runCursorHelper ::
     Maybe (TxIn l, LMDB.Cursor.Bound) ->
     -- \^ Lower bound on read range
-    LMDB.Transaction mode (Map (TxIn l) (TxOut l))
+    LMDB.Transaction mode (Map (TxIn l) (TxOut l), Maybe (TxIn l))
   runCursorHelper lb =
     Bridge.runCursorAsTransaction'
       st
-      (LMDB.Cursor.cgetMany lb count)
+      (LMDB.Cursor.cgetManyAndLast lb count)
       db
 
 initLMDBTable ::
@@ -631,7 +632,7 @@ mkLMDBBackingStoreValueHandle db = do
     bsvhRangeRead ::
       l EmptyMK ->
       API.RangeQuery (LedgerTables l KeysMK) ->
-      m (LedgerTables l ValuesMK)
+      m (LedgerTables l ValuesMK, Maybe (TxIn l))
     bsvhRangeRead st rq =
       Status.withReadAccess dbStatusLock (throwIO LMDBErrClosed) $ do
         Status.withReadAccess vhStatusLock (throwIO (LMDBErrNoValueHandle vhId)) $ do
@@ -640,7 +641,7 @@ mkLMDBBackingStoreValueHandle db = do
             liftIO $
               TrH.submitReadOnly trh $
                 let dbMK = getLedgerTables dbBackingTables
-                 in LedgerTables <$> rangeRead rq st dbMK
+                 in first LedgerTables <$> rangeRead rq st dbMK
           Trace.traceWith tracer API.BSVHRangeRead
           pure res
 

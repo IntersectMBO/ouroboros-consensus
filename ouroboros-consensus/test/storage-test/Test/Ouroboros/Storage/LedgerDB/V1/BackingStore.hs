@@ -101,14 +101,14 @@ scaleQuickCheckTests :: Int -> QuickCheckTests -> QuickCheckTests
 scaleQuickCheckTests c (QuickCheckTests n) = QuickCheckTests $ c * n
 
 testWithIO ::
-  IO (BSEnv IO K V D) ->
+  IO (BSEnv IO K K' V D) ->
   Actions (Lockstep T) ->
   Property
 testWithIO mkBSEnv = runActionsBracket pT mkBSEnv bsCleanup runner
 
 runner ::
-  RealMonad m ks vs d a ->
-  BSEnv m ks vs d ->
+  RealMonad m ks k vs d a ->
+  BSEnv m ks k vs d ->
   m a
 runner c r = runReaderT c $ bsRealEnv r
 
@@ -120,8 +120,8 @@ labelledExamples = QC.labelledExamples $ tagActions pT
   Resources
 -------------------------------------------------------------------------------}
 
-data BSEnv m ks vs d = BSEnv
-  { bsRealEnv :: RealEnv m ks vs d
+data BSEnv m ks k vs d = BSEnv
+  { bsRealEnv :: RealEnv m ks k vs d
   , bsCleanup :: m ()
   }
 
@@ -146,7 +146,7 @@ setupBSEnv ::
   Complete BS.BackingStoreArgs m ->
   m (SomeHasFS m) ->
   m () ->
-  m (BSEnv m K V D)
+  m (BSEnv m K K' V D)
 setupBSEnv mkBsArgs mkShfs cleanup = do
   shfs@(SomeHasFS hfs) <- mkShfs
 
@@ -188,12 +188,13 @@ closeHandlers =
   Types under test
 -------------------------------------------------------------------------------}
 
-type T = BackingStoreState K V D
+type T = BackingStoreState K K' V D
 
 pT :: Proxy T
 pT = Proxy
 
 type K = LedgerTables (OTLedgerState (QC.Fixed Word) (QC.Fixed Word)) KeysMK
+type K' = QC.Fixed Word
 type V = LedgerTables (OTLedgerState (QC.Fixed Word) (QC.Fixed Word)) ValuesMK
 type D = LedgerTables (OTLedgerState (QC.Fixed Word) (QC.Fixed Word)) DiffMK
 
@@ -207,13 +208,14 @@ instance Mock.EmptyValues V where
 instance Mock.ApplyDiff V D where
   applyDiff = applyDiffs'
 
-instance Mock.LookupKeysRange K V where
+instance Mock.LookupKeysRange K K' V where
   lookupKeysRange = \prev n vs ->
-    case prev of
-      Nothing ->
-        ltmap (rangeRead n) vs
-      Just ks ->
-        ltliftA2 (rangeRead' n) ks vs
+    let m'@(LedgerTables (ValuesMK v)) = case prev of
+          Nothing ->
+            ltmap (rangeRead n) vs
+          Just ks ->
+            ltliftA2 (rangeRead' n) ks vs
+     in (m', fst <$> Map.lookupMax v)
    where
     rangeRead :: Int -> ValuesMK k v -> ValuesMK k v
     rangeRead n (ValuesMK vs) =
@@ -273,7 +275,7 @@ instance Mock.MakeReadHint V where
 instance Mock.MakeSerializeTablesHint V where
   makeSerializeTablesHint _ = emptyOTLedgerState
 
-instance Mock.HasOps K V D
+instance Mock.HasOps K K' V D
 
 {-------------------------------------------------------------------------------
   Orphan Arbitrary instances

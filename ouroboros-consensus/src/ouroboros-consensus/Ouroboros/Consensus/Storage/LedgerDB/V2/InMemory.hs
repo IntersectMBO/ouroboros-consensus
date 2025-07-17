@@ -120,7 +120,8 @@ newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l = do
           guardClosed
             hs
             ( \(LedgerTables (ValuesMK m)) ->
-                pure . LedgerTables . ValuesMK . Map.take t . (maybe id (\g -> snd . Map.split g) f) $ m
+                let m' = Map.take t . (maybe id (\g -> snd . Map.split g) f) $ m
+                 in pure (LedgerTables (ValuesMK m'), fst <$> Map.lookupMax m')
             )
       , readAll = do
           hs <- readTVarIO tv
