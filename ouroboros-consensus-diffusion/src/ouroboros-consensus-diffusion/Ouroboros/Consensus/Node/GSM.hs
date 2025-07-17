@@ -104,10 +104,16 @@ data GsmView m upstreamPeer selection chainSyncState = GsmView
   -- thundering herd phenomenon.
   --
   -- 'Nothing' should only be used for testing.
-  , candidateOverSelection ::
-      selection ->
-      chainSyncState ->
-      CandidateVersusSelection
+  , getCandidateOverSelection ::
+      STM
+        m
+        ( selection ->
+          chainSyncState ->
+          CandidateVersusSelection
+        )
+  -- ^ Whether the candidate from the @chainSyncState@ is preferable to the
+  -- selection. This can depend on external state (Peras certificates boosting
+  -- blocks).
   , peerIsIdle :: chainSyncState -> Bool
   , durationUntilTooOld :: Maybe (selection -> m DurationFromNow)
   -- ^ How long from now until the selection will be so old that the node
@@ -234,7 +240,7 @@ realGsmEntryPoints tracerArgs gsmView =
 
   GsmView
     { antiThunderingHerd
-    , candidateOverSelection
+    , getCandidateOverSelection
     , peerIsIdle
     , durationUntilTooOld
     , equivalent
@@ -379,6 +385,7 @@ realGsmEntryPoints tracerArgs gsmView =
     -- long.
     selection <- getCurrentSelection
     candidates <- traverse StrictSTM.readTVar varsState
+    candidateOverSelection <- getCandidateOverSelection
     let ok candidate =
           WhetherCandidateIsBetter False
             == candidateOverSelection selection candidate
