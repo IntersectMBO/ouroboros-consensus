@@ -242,7 +242,7 @@ loadSnapshot ::
   ( LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
   , IOLike m
-  , LedgerSupportsInMemoryLedgerDB blk
+  , LedgerSupportsInMemoryLedgerDB (LedgerState blk)
   ) =>
   Tracer m V2.FlavorImplSpecificTrace ->
   ResourceRegistry m ->

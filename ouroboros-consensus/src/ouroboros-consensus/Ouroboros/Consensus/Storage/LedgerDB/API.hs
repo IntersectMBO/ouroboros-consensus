@@ -117,9 +117,10 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , LedgerDbSerialiseConstraints
   , LedgerSupportsInMemoryLedgerDB
   , LedgerSupportsLedgerDB
-  , LedgerSupportsOnDiskLedgerDB
-  , LSMTxOut
-  , HasLSMTxOut (..)
+  , LedgerSupportsLMDBLedgerDB
+  , LedgerSupportsLSMLedgerDB (..)
+  , LedgerSupportsV1LedgerDB
+  , LedgerSupportsV2LedgerDB
   , ResolveBlock
   , currentPoint
 
@@ -173,6 +174,7 @@ import Data.MemPack
 import Data.Set (Set)
 import Data.Void (absurd)
 import Data.Word
+import qualified Database.LSMTree as LSM
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -195,7 +197,6 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
-import System.FS.API
 
 {-------------------------------------------------------------------------------
   Main API
@@ -725,7 +726,11 @@ data TraceReplayProgressEvent blk
   Updating ledger tables
 -------------------------------------------------------------------------------}
 
-type LedgerSupportsInMemoryLedgerDB blk = (CanUpgradeLedgerTables (LedgerState blk))
+type LedgerSupportsInMemoryLedgerDB l =
+  (CanUpgradeLedgerTables l, SerializeTablesWithHint l)
+
+type LedgerSupportsV1LedgerDB l =
+  (LedgerSupportsInMemoryLedgerDB l, LedgerSupportsLMDBLedgerDB l)
 
 -- | When pushing differences on InMemory Ledger DBs, we will sometimes need to
 -- update ledger tables to the latest era. For unary blocks this is a no-op, but
@@ -764,18 +769,72 @@ instance
   Supporting On-Disk backing stores
 -------------------------------------------------------------------------------}
 
-type LedgerSupportsOnDiskLedgerDB blk =
-  (IndexedMemPack (LedgerState blk EmptyMK) (TxOut (LedgerState blk)))
+type LedgerSupportsLMDBLedgerDB l =
+  (IndexedMemPack (l EmptyMK) (TxOut l), MemPackIdx l EmptyMK ~ l EmptyMK)
 
-type LedgerSupportsLedgerDB blk =
-  ( LedgerSupportsOnDiskLedgerDB blk
-  , LedgerSupportsInMemoryLedgerDB blk
+type LedgerSupportsV2LedgerDB l =
+  (LedgerSupportsInMemoryLedgerDB l, LedgerSupportsLSMLedgerDB l)
+
+class
+  ( LSM.SerialiseKey (TxIn l)
+  , LSM.SerialiseValue (LSMTxOut l)
+  , LSM.ResolveValue (LSMTxOut l)
+  ) =>
+  LedgerSupportsLSMLedgerDB l
+  where
+  -- | LSM trees need to be able to serialize and deserialize values several
+  -- times, without any context. Therefore the approach of using a ledger state to
+  -- hint the era in which values need to be deserialized cannot work with LSM.
+  --
+  -- Therefore, we will instead store 'LSMTxOut' in the LSM database, which will
+  -- be 'TxOut' for most of the unitary blocks and basic hard fork blocks, but
+  -- will be 'ByteArray's for the Cardano Block.
+  --
+  -- In short, the serialisation API for `lsm-tree` looks like this:
+  --
+  -- > data Table k v = ...
+  -- > class SerialiseKey k where
+  -- >   serialiseKey :: k -> ByteArray
+  -- >   deserialiseKey :: ByteArray -> k
+  -- > class SerialiseValue k where
+  -- >   serialiseKey :: v -> ByteArray
+  -- >   deserialiseKey :: ByteArray -> v
+  --
+  -- So we cannot pass a deserialisation hint like we do with
+  -- 'IndexedMemPack', so this option must be discarded:
+  --
+  -- > type Option1 = Table TxIn TxOut
+  -- > instance SerialiseValue TxOut where
+  -- >   deserialiseValue = {- we want to use mempack, but we have no deserialisation hint -}
+  --
+  -- Therefore, we decided to use ByteArrays for Cardano which we later interpret
+  -- with a deserialisation hint in `fromLSMTxOut`:
+  --
+  -- > type Option2 = Table TxIn ByteArray
+  -- > instance SerialiseValue TxOut where
+  -- >   deserialiseValue = id
+  -- > fromLSMTxOut ::  Hint -> ByteArray -> TxOut
+  -- > fromLSMTxOut hint byteArray = {- use mempack with hint on byte array -}
+  -- >
+  -- > -- Roughly what I mean by "consensus deserialises manually outside of lsm-tree"
+  -- > readTxOuts hint txIns table = fromLSMTxOut hint <$> lookups table txIns
+  --
+  -- So we will define `LSMTxOut (LedgerState (CardanoBlock StandardCrypto))` to
+  -- `ByteArray`.
+  type LSMTxOut l
 
   toLSMTxOut :: Proxy l -> TxOut l -> LSMTxOut l
   fromLSMTxOut :: l EmptyMK -> LSMTxOut l -> TxOut l
   lsmIndex :: Proxy l -> LSM.FencePointerIndexType
   lsmSnapLabel :: Proxy l -> String
 
+type LedgerSupportsLedgerDB blk = LedgerSupportsLedgerDB' (LedgerState blk) blk
+
+type LedgerSupportsLedgerDB' l blk =
+  ( LedgerSupportsLMDBLedgerDB l
+  , LedgerSupportsInMemoryLedgerDB l
+  , LedgerSupportsLSMLedgerDB l
+  , LedgerDbSerialiseConstraints blk
   )
 
 {-------------------------------------------------------------------------------
