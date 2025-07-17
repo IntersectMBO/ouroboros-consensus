@@ -44,6 +44,7 @@ import Ouroboros.Consensus.HeaderStateHistory
 import Ouroboros.Consensus.HeaderValidation (HeaderWithTime)
 import Ouroboros.Consensus.Ledger.Abstract (EmptyMK)
 import Ouroboros.Consensus.Ledger.Extended
+import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( BlockComponent (..)
@@ -54,7 +55,6 @@ import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
-import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util (eitherToMaybe)

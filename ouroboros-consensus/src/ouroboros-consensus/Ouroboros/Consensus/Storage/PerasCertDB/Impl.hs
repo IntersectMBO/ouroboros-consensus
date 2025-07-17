@@ -29,6 +29,7 @@ import qualified Data.Map.Strict as Map
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Storage.PerasCertDB.API
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
