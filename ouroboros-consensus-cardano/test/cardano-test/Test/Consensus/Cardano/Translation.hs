@@ -39,15 +39,12 @@ import Cardano.Ledger.Shelley.UTxO (UTxO (..))
 import Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import Cardano.Slotting.Slot (EpochNo (..))
 import qualified Data.Map.Strict as Map
-import Data.SOP.BasicFunctors
-import Data.SOP.Functors
 import Data.SOP.InPairs (RequiringBoth (..), provideBoth)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( slotLengthFromSec
   )
 import Ouroboros.Consensus.Byron.Ledger (ByronBlock, byronLedgerState)
 import Ouroboros.Consensus.Cardano.Block (CardanoEras)
-import Ouroboros.Consensus.Cardano.CanHardFork
 import Ouroboros.Consensus.Cardano.CanHardFork ()
 import Ouroboros.Consensus.HardFork.Combinator
   ( InPairs (..)
@@ -55,7 +52,7 @@ import Ouroboros.Consensus.HardFork.Combinator
   , translateLedgerState
   )
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
-  ( TranslateLedgerState (TranslateLedgerState, translateLedgerStateWith)
+  ( TranslateLedgerState (..)
   )
 import Ouroboros.Consensus.Ledger.Basics
   ( LedgerCfg
@@ -65,7 +62,6 @@ import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Tables hiding (TxIn)
 import Ouroboros.Consensus.Ledger.Tables.Diff (Diff)
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Praos
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
@@ -191,6 +187,12 @@ babbageToConwayLedgerStateTranslation ::
     TranslateLedgerState
     (ShelleyBlock (Praos Crypto) BabbageEra)
     (ShelleyBlock (Praos Crypto) ConwayEra)
+conwayToDijkstraLedgerStateTranslation ::
+  RequiringBoth
+    WrapLedgerConfig
+    TranslateLedgerState
+    (ShelleyBlock (Praos Crypto) ConwayEra)
+    (ShelleyBlock (Praos Crypto) DijkstraEra)
 PCons
   byronToShelleyLedgerStateTranslation
   ( PCons
@@ -204,7 +206,7 @@ PCons
                   ( PCons
                       babbageToConwayLedgerStateTranslation
                       ( PCons
-                          _
+                          conwayToDijkstraLedgerStateTranslation
                           PNil
                         )
                     )
@@ -218,30 +220,6 @@ PCons
         (RequiringBoth WrapLedgerConfig TranslateLedgerState)
         (CardanoEras Crypto)
     tls = translateLedgerState hardForkEraTranslation
-
-conwayToDijkstraLedgerStateTranslation ::
-  RequiringBoth
-    WrapLedgerConfig
-    TranslateLedgerState
-    (ShelleyBlock (Praos Crypto) ConwayEra)
-    (ShelleyBlock (Praos Crypto) DijkstraEra)
-conwayToDijkstraLedgerStateTranslation = translateLedgerStateConwayToDijkstraWrapper
-
-translateLedgerStateConwayToDijkstraWrapper ::
-  RequiringBoth
-    WrapLedgerConfig
-    TranslateLedgerState
-    (ShelleyBlock (Praos Crypto) ConwayEra)
-    (ShelleyBlock (Praos Crypto) DijkstraEra)
-translateLedgerStateConwayToDijkstraWrapper =
-  RequireBoth $ \_ cfgDijkstra ->
-    TranslateLedgerState $ \_ ->
-      noNewTickingDiffs
-        . unFlip
-        . unComp
-        . Core.translateEra' (getDijkstraTranslationContext cfgDijkstra)
-        . Comp
-        . Flip
 
 -- | Check that the tables are correctly translated from one era to the next.
 testTablesTranslation ::
