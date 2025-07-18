@@ -109,8 +109,8 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/plutus
-  tag: ea66e96173dc484d82b987acb0df60396f7aa60b
-  --sha256: sha256-3RNqHbDinNz6KOIeCottY153wx7Pkr9WqpbVAvJADSc=
+  tag: aeaafb922dad93f891fb21b81539df51a4e39ec7
+  --sha256: sha256-79vsZ3Ecn1MAtalAvh4G+Q+EfF4n6Ji43WFN+XemPWI=
   subdir: plutus-core
           plutus-tx
           plutus-ledger-api
@@ -120,3 +120,6 @@ source-repository-package
   location: https://github.com/IntersectMBO/lsm-tree
   tag: 84857d4f921a265f267df175e74ba6c652d2b1a0
   --sha256: sha256-IgE/sqDfehaJVRLaf2euzc7sJ3hRUr+hAe2GUILvXa8=
+  subdir:
+    .
+    bloomfilter-blocked
