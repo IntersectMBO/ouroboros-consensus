@@ -126,3 +126,6 @@ source-repository-package
   location: https://github.com/IntersectMBO/lsm-tree
   tag: 84857d4f921a265f267df175e74ba6c652d2b1a0
   --sha256: sha256-IgE/sqDfehaJVRLaf2euzc7sJ3hRUr+hAe2GUILvXa8=
+  subdir:
+    .
+    bloomfilter-blocked
