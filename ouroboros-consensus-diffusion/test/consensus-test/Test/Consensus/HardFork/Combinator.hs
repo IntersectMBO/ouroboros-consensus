@@ -441,7 +441,7 @@ instance CanHardFork '[BlockA, BlockB] where
       , translateChainDepState = PCons chainDepState_AtoB PNil
       , crossEraForecast = PCons forecast_AtoB PNil
       }
-  hardForkChainSel = Tails.mk2 CompareBlockNo
+  hardForkChainSel = Tails.mk2 NoTiebreakerAcrossEras
   hardForkInjectTxs = InPairs.mk2 injectTx_AtoB
 
   hardForkInjTxMeasure = \case

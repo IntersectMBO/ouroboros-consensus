@@ -26,9 +26,9 @@ module Ouroboros.Consensus.Protocol.PBFT
   , PBftIsLeader (..)
   , PBftLedgerView (..)
   , PBftParams (..)
-  , PBftSelectView (..)
+  , PBftTiebreakerView (..)
   , PBftSignatureThreshold (..)
-  , mkPBftSelectView
+  , mkPBftTiebreakerView
   , pbftWindowExceedsThreshold
   , pbftWindowSize
 
@@ -138,38 +138,33 @@ pbftValidateRegular contextDSIGN getFields hdr =
 pbftValidateBoundary :: hdr -> PBftValidateView c
 pbftValidateBoundary _hdr = PBftValidateBoundary
 
--- | Part of the header required for chain selection
+-- | Part of the header required for chain selection between chains with an
+-- equal block number at their tip.
 --
 -- EBBs share a block number with regular blocks, and so for chain selection
 -- we need to know if a block is an EBB or not (because a chain ending on an
 -- EBB with a particular block number is longer than a chain on a regular
 -- block with that same block number).
-data PBftSelectView = PBftSelectView
-  { pbftSelectViewBlockNo :: BlockNo
-  , pbftSelectViewIsEBB :: IsEBB
+newtype PBftTiebreakerView = PBftTiebreakerView
+  { pbftTiebreakerViewIsEBB :: IsEBB
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
-  deriving ChainOrder via SimpleChainOrder PBftSelectView
+  deriving ChainOrder via SimpleChainOrder PBftTiebreakerView
 
-mkPBftSelectView :: GetHeader blk => Header blk -> PBftSelectView
-mkPBftSelectView hdr =
-  PBftSelectView
-    { pbftSelectViewBlockNo = blockNo hdr
-    , pbftSelectViewIsEBB = headerToIsEBB hdr
+mkPBftTiebreakerView :: GetHeader blk => Header blk -> PBftTiebreakerView
+mkPBftTiebreakerView hdr =
+  PBftTiebreakerView
+    { pbftTiebreakerViewIsEBB = headerToIsEBB hdr
     }
 
-instance Ord PBftSelectView where
-  compare (PBftSelectView lBlockNo lIsEBB) (PBftSelectView rBlockNo rIsEBB) =
-    mconcat
-      [ -- Prefer the highest block number, as it is a proxy for chain length
-        lBlockNo `compare` rBlockNo
-      , -- If the block numbers are the same, check if one of them is an EBB.
-        -- An EBB has the same block number as the block before it, so the
-        -- chain ending with an EBB is actually longer than the one ending
-        -- with a regular block.
-        score lIsEBB `compare` score rIsEBB
-      ]
+instance Ord PBftTiebreakerView where
+  compare (PBftTiebreakerView lIsEBB) (PBftTiebreakerView rIsEBB) =
+    -- If the block numbers are the same, check if one of them is an EBB.
+    -- An EBB has the same block number as the block before it, so the
+    -- chain ending with an EBB is actually longer than the one ending
+    -- with a regular block.
+    score lIsEBB `compare` score rIsEBB
    where
     score :: IsEBB -> Int
     score IsEBB = 1
@@ -297,7 +292,7 @@ data instance Ticked (PBftState c) = TickedPBftState
 instance PBftCrypto c => ConsensusProtocol (PBft c) where
   type ValidationErr (PBft c) = PBftValidationErr c
   type ValidateView (PBft c) = PBftValidateView c
-  type SelectView (PBft c) = PBftSelectView
+  type TiebreakerView (PBft c) = PBftTiebreakerView
 
   -- \| We require two things from the ledger state:
   --

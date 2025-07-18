@@ -67,13 +67,13 @@ And imports, of course:
 > import Ouroboros.Consensus.Block.Abstract
 >  (Header, SlotNo (..), HeaderHash, ChainHash, GetHeader (..),
 >   GetPrevHash (..), HasHeader (..), HeaderFields (..), StandardHash,
->   BlockProtocol, castHeaderFields, blockNo, BlockConfig, CodecConfig,
+>   BlockProtocol, castHeaderFields, BlockConfig, CodecConfig,
 >   StorageConfig, Point, castPoint, WithOrigin (..), EpochNo (EpochNo),
 >   pointSlot, blockPoint, BlockNo (..))
 > import Ouroboros.Consensus.Block.SupportsProtocol
 >   (BlockSupportsProtocol (..))
 > import Ouroboros.Consensus.Protocol.Abstract
->   (ConsensusConfig, SecurityParam, ConsensusProtocol (..))
+>   (ConsensusConfig, SecurityParam, ConsensusProtocol (..), NoTiebreaker (..))
 
 > import Ouroboros.Consensus.Ticked (Ticked, Ticked)
 > import Ouroboros.Consensus.Ledger.Abstract
@@ -523,9 +523,9 @@ functions defined above:
 >   type IsLeader PrtclD = PrtclD_IsLeader
 >   type CanBeLeader PrtclD = PrtclD_CanBeLeader
 
->   -- | View on a block header required for chain selection.  Here, BlockNo is
->   --   sufficient. (BlockNo is also the default type for this type family.)
->   type SelectView PrtclD = BlockNo
+>   -- | View on a block header required for tiebreaking.  Here, NoTiebreaker
+>   --   is sufficient, which is also the default type for this type family.
+>   type TiebreakerView PrtclD = NoTiebreaker
 
 >   -- | View on the ledger required by the protocol
 >   type LedgerView PrtclD = LedgerViewD
@@ -570,12 +570,12 @@ Block/Protocol Integration
 
 Our implementation of `BlockSupportsProtocol BlockD` supports our definition of
 `ConsensusProtocol PrtclD` closely, with `validateView` extracting the `NodeId`
-from the block header, and `selectView` projecting out the block number:
+from the block header, and `tiebreakerView` returning 'NoTiebreaker':
 
 > instance BlockSupportsProtocol BlockD where
 >   validateView _bcfg hdr = hbd_nodeId hdr
 
->   selectView _bcfg hdr = blockNo hdr
+>   tiebreakerView _bcfg _hdr = NoTiebreaker
 
 All that remains is to establish `PrtclD` as the protocol for
 `BlockD`:

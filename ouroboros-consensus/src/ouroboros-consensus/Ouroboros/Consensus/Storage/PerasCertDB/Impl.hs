@@ -1,0 +1,264 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
+
+module Ouroboros.Consensus.Storage.PerasCertDB.Impl
+  ( -- * Opening
+    PerasCertDbArgs (..)
+  , defaultArgs
+  , openDB
+
+    -- * Trace types
+  , TraceEvent (..)
+
+    -- * Exceptions
+  , PerasCertDbError (..)
+  ) where
+
+import Control.Monad (join)
+import Control.Tracer (Tracer, nullTracer, traceWith)
+import Data.Kind (Type)
+import qualified Data.Map.Merge.Strict as Map
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import GHC.Generics (Generic)
+import NoThunks.Class
+import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Peras.Weight
+import Ouroboros.Consensus.Storage.PerasCertDB.API
+import Ouroboros.Consensus.Util.Args
+import Ouroboros.Consensus.Util.CallStack
+import Ouroboros.Consensus.Util.IOLike
+
+{------------------------------------------------------------------------------
+  Opening the database
+------------------------------------------------------------------------------}
+
+type PerasCertDbArgs :: (Type -> Type) -> (Type -> Type) -> Type -> Type
+data PerasCertDbArgs f m blk = PerasCertDbArgs
+  { pcdbaTracer :: Tracer m (TraceEvent blk)
+  }
+
+defaultArgs :: Applicative m => Incomplete PerasCertDbArgs m blk
+defaultArgs =
+  PerasCertDbArgs
+    { pcdbaTracer = nullTracer
+    }
+
+openDB ::
+  forall m blk.
+  ( IOLike m
+  , StandardHash blk
+  ) =>
+  Complete PerasCertDbArgs m blk ->
+  m (PerasCertDB m blk)
+openDB args = do
+  pcdbVolatileState <- newTVarIO initialPerasVolatileCertState
+  let env =
+        PerasCertDbEnv
+          { pcdbTracer
+          , pcdbVolatileState
+          }
+  h <- PerasCertDbHandle <$> newTVarIO (PerasCertDbOpen env)
+  traceWith pcdbTracer OpenedPerasCertDB
+  pure
+    PerasCertDB
+      { addCert = getEnv1 h implAddCert
+      , getWeightSnapshot = getEnvSTM h implGetWeightSnapshot
+      , garbageCollect = getEnv1 h implGarbageCollect
+      , closeDB = implCloseDB h
+      }
+ where
+  PerasCertDbArgs
+    { pcdbaTracer = pcdbTracer
+    } = args
+
+{-------------------------------------------------------------------------------
+  Database state
+-------------------------------------------------------------------------------}
+
+newtype PerasCertDbHandle m blk = PerasCertDbHandle (StrictTVar m (PerasCertDbState m blk))
+
+data PerasCertDbState m blk
+  = PerasCertDbOpen !(PerasCertDbEnv m blk)
+  | PerasCertDbClosed
+  deriving stock Generic
+  deriving anyclass NoThunks
+
+data PerasCertDbEnv m blk = PerasCertDbEnv
+  { pcdbTracer :: !(Tracer m (TraceEvent blk))
+  , pcdbVolatileState :: !(StrictTVar m (PerasVolatileCertState blk))
+  -- ^ The 'RoundNo's of all certificates currently in the db.
+  }
+  deriving NoThunks via OnlyCheckWhnfNamed "PerasCertDbEnv" (PerasCertDbEnv m blk)
+
+getEnv ::
+  (IOLike m, HasCallStack) =>
+  PerasCertDbHandle m blk ->
+  (PerasCertDbEnv m blk -> m r) ->
+  m r
+getEnv (PerasCertDbHandle varState) f =
+  readTVarIO varState >>= \case
+    PerasCertDbOpen env -> f env
+    PerasCertDbClosed -> throwIO $ ClosedDBError prettyCallStack
+
+getEnv1 ::
+  (IOLike m, HasCallStack) =>
+  PerasCertDbHandle m blk ->
+  (PerasCertDbEnv m blk -> a -> m r) ->
+  a ->
+  m r
+getEnv1 h f a = getEnv h (\env -> f env a)
+
+getEnvSTM ::
+  (IOLike m, HasCallStack) =>
+  PerasCertDbHandle m blk ->
+  (PerasCertDbEnv m blk -> STM m r) ->
+  STM m r
+getEnvSTM (PerasCertDbHandle varState) f =
+  readTVar varState >>= \case
+    PerasCertDbOpen env -> f env
+    PerasCertDbClosed -> throwIO $ ClosedDBError prettyCallStack
+
+{-------------------------------------------------------------------------------
+  API implementation
+-------------------------------------------------------------------------------}
+
+implCloseDB :: IOLike m => PerasCertDbHandle m blk -> m ()
+implCloseDB (PerasCertDbHandle varState) =
+  atomically (swapTVar varState PerasCertDbClosed) >>= \case
+    PerasCertDbOpen PerasCertDbEnv{pcdbTracer} -> do
+      traceWith pcdbTracer ClosedPerasCertDB
+    -- DB was already closed.
+    PerasCertDbClosed -> pure ()
+
+-- TODO: validation
+implAddCert ::
+  ( IOLike m
+  , StandardHash blk
+  ) =>
+  PerasCertDbEnv m blk ->
+  PerasCert blk ->
+  m ()
+implAddCert env cert = do
+  traceWith pcdbTracer $ AddingPerasCert roundNo boostedPt
+  join $ atomically $ do
+    PerasVolatileCertState{pvcsCerts, pvcsWeightByPoint} <- readTVar pcdbVolatileState
+    if Map.member roundNo pvcsCerts
+      then do
+        pure $ traceWith pcdbTracer $ IgnoredCertAlreadyInDB roundNo boostedPt
+      else do
+        writeTVar
+          pcdbVolatileState
+          PerasVolatileCertState
+            { pvcsCerts =
+                Map.insert roundNo cert pvcsCerts
+            , -- Note that the same block might be boosted by multiple points.
+              pvcsWeightByPoint =
+                Map.insertWith (<>) boostedPt boostPerCert pvcsWeightByPoint
+            }
+        pure $ traceWith pcdbTracer $ AddedPerasCert roundNo boostedPt
+ where
+  PerasCertDbEnv
+    { pcdbTracer
+    , pcdbVolatileState
+    } = env
+
+  roundNo = perasCertRound cert
+  boostedPt = perasCertBoostedBlock cert
+
+implGetWeightSnapshot ::
+  IOLike m =>
+  PerasCertDbEnv m blk -> STM m (PerasWeightSnapshot blk)
+implGetWeightSnapshot PerasCertDbEnv{pcdbVolatileState} =
+  PerasWeightSnapshot . pvcsWeightByPoint <$> readTVar pcdbVolatileState
+
+implGarbageCollect ::
+  forall m blk.
+  (IOLike m, StandardHash blk) =>
+  PerasCertDbEnv m blk -> SlotNo -> m ()
+implGarbageCollect PerasCertDbEnv{pcdbVolatileState} slot =
+  atomically $ modifyTVar pcdbVolatileState gc
+ where
+  gc :: PerasVolatileCertState blk -> PerasVolatileCertState blk
+  gc PerasVolatileCertState{pvcsCerts, pvcsWeightByPoint} =
+    PerasVolatileCertState
+      { pvcsCerts = certsToKeep
+      , pvcsWeightByPoint =
+          Map.merge
+            -- Do not touch weight of boosted blocks that we do not subtract any
+            -- weight from.
+            Map.preserveMissing
+            -- Irrelevant, the key set of @weightToRemove@ is a subset of the
+            -- key set of @pvcsWeightByPoint@.
+            Map.dropMissing
+            (Map.zipWithMaybeMatched $ \_pt -> subtractWeight)
+            pvcsWeightByPoint
+            weightToRemove
+      }
+   where
+    (certsToRemove, certsToKeep) =
+      Map.partition isTooOld pvcsCerts
+    isTooOld cert =
+      pointSlot (perasCertBoostedBlock cert) < NotOrigin slot
+    weightToRemove =
+      Map.fromListWith
+        (<>)
+        [ (perasCertBoostedBlock cert, boostPerCert)
+        | cert <- Map.elems certsToRemove
+        ]
+
+  subtractWeight :: PerasWeight -> PerasWeight -> Maybe PerasWeight
+  subtractWeight (PerasWeight w1) (PerasWeight w2)
+    | w1 > w2 = Just $ PerasWeight (w1 - w2)
+    | otherwise = Nothing
+
+{-------------------------------------------------------------------------------
+  Implementation-internal types
+-------------------------------------------------------------------------------}
+
+-- | Volatile Peras certificate state, i.e. certificates that could influence
+-- chain selection by boosting a volatile block.
+data PerasVolatileCertState blk = PerasVolatileCertState
+  { pvcsCerts :: !(Map PerasRoundNo (PerasCert blk))
+  -- ^ The boosted blocks by 'RoundNo' of all certificates currently in the db.
+  , pvcsWeightByPoint :: !(Map (Point blk) PerasWeight)
+  -- ^ The weight of boosted blocks w.r.t. the certificates currently in the db.
+  --
+  -- INVARIANT: In sync with 'pvcsCerts'.
+  }
+  deriving stock (Show, Generic)
+  deriving anyclass NoThunks
+
+initialPerasVolatileCertState :: PerasVolatileCertState blk
+initialPerasVolatileCertState =
+  PerasVolatileCertState
+    { pvcsCerts = Map.empty
+    , pvcsWeightByPoint = Map.empty
+    }
+
+{-------------------------------------------------------------------------------
+  Trace types
+-------------------------------------------------------------------------------}
+
+data TraceEvent blk
+  = OpenedPerasCertDB
+  | ClosedPerasCertDB
+  | AddingPerasCert PerasRoundNo (Point blk)
+  | AddedPerasCert PerasRoundNo (Point blk)
+  | IgnoredCertAlreadyInDB PerasRoundNo (Point blk)
+  deriving stock (Show, Eq, Generic)
+
+{-------------------------------------------------------------------------------
+  Exceptions
+-------------------------------------------------------------------------------}
+
+data PerasCertDbError
+  = ClosedDBError PrettyCallStack
+  deriving stock Show
+  deriving anyclass Exception

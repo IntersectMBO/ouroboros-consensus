@@ -11,8 +11,8 @@ module Ouroboros.Consensus.Shelley.Ledger.Protocol () where
 
 import qualified Cardano.Ledger.Shelley.API as SL
 import Ouroboros.Consensus.Block
+import Ouroboros.Consensus.Protocol.Praos.Common
 import Ouroboros.Consensus.Protocol.Signed
-import Ouroboros.Consensus.Protocol.TPraos
 import Ouroboros.Consensus.Shelley.Ledger.Block
 import Ouroboros.Consensus.Shelley.Ledger.Config (BlockConfig (..))
 import Ouroboros.Consensus.Shelley.Protocol.Abstract
@@ -30,13 +30,12 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
 instance ShelleyCompatible proto era => BlockSupportsProtocol (ShelleyBlock proto era) where
   validateView _cfg = protocolHeaderView @proto . shelleyHeaderRaw
 
-  selectView _ hdr@(ShelleyHeader shdr _) =
-    PraosChainSelectView
-      { csvChainLength = blockNo hdr
-      , csvSlotNo = blockSlot hdr
-      , csvIssuer = hdrIssuer
-      , csvIssueNo = pHeaderIssueNo shdr
-      , csvTieBreakVRF = pTieBreakVRFValue shdr
+  tiebreakerView _ hdr@(ShelleyHeader shdr _) =
+    PraosTiebreakerView
+      { ptvSlotNo = blockSlot hdr
+      , ptvIssuer = hdrIssuer
+      , ptvIssueNo = pHeaderIssueNo shdr
+      , ptvTieBreakVRF = pTieBreakVRFValue shdr
       }
    where
     hdrIssuer :: SL.VKey 'SL.BlockIssuer

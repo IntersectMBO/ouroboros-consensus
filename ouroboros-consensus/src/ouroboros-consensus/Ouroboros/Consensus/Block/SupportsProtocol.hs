@@ -3,7 +3,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Ouroboros.Consensus.Block.SupportsProtocol (BlockSupportsProtocol (..)) where
+module Ouroboros.Consensus.Block.SupportsProtocol (BlockSupportsProtocol (..), selectView) where
 
 import NoThunks.Class (NoThunks)
 import Ouroboros.Consensus.Block.Abstract
@@ -30,17 +30,17 @@ class
     Header blk ->
     ValidateView (BlockProtocol blk)
 
-  selectView ::
+  tiebreakerView ::
     BlockConfig blk ->
     Header blk ->
-    SelectView (BlockProtocol blk)
+    TiebreakerView (BlockProtocol blk)
   -- Default chain selection just looks at longest chains
-  default selectView ::
-    SelectView (BlockProtocol blk) ~ BlockNo =>
+  default tiebreakerView ::
+    TiebreakerView (BlockProtocol blk) ~ NoTiebreaker =>
     BlockConfig blk ->
     Header blk ->
-    SelectView (BlockProtocol blk)
-  selectView _ = blockNo
+    TiebreakerView (BlockProtocol blk)
+  tiebreakerView _ _ = NoTiebreaker
 
   projectChainOrderConfig ::
     BlockConfig blk ->
@@ -50,3 +50,14 @@ class
     BlockConfig blk ->
     ChainOrderConfig (SelectView (BlockProtocol blk))
   projectChainOrderConfig _ = ()
+
+selectView ::
+  BlockSupportsProtocol blk =>
+  BlockConfig blk ->
+  Header blk ->
+  SelectView (BlockProtocol blk)
+selectView bcfg hdr =
+  SelectView
+    { svBlockNo = blockNo hdr
+    , svTiebreakerView = tiebreakerView bcfg hdr
+    }

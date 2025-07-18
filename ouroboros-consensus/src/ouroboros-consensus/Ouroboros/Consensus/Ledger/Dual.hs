@@ -312,7 +312,7 @@ type instance BlockProtocol (DualBlock m a) = BlockProtocol m
 
 instance Bridge m a => BlockSupportsProtocol (DualBlock m a) where
   validateView cfg = validateView (dualBlockConfigMain cfg) . dualHeaderMain
-  selectView cfg = selectView (dualBlockConfigMain cfg) . dualHeaderMain
+  tiebreakerView cfg = tiebreakerView (dualBlockConfigMain cfg) . dualHeaderMain
 
   projectChainOrderConfig = projectChainOrderConfig . dualBlockConfigMain
 

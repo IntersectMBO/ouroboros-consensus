@@ -46,15 +46,15 @@ First, some imports we'll need:
 > import NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
 > import Cardano.Ledger.BaseTypes (knownNonZeroBounded)
 > import Ouroboros.Consensus.Block.Abstract
->   (blockNo, blockPoint, castHeaderFields, castPoint, BlockNo, SlotNo,
+>   (blockPoint, castHeaderFields, castPoint, BlockNo, SlotNo,
 >    BlockConfig, BlockProtocol, CodecConfig, GetHeader(..), GetPrevHash(..),
 >    Header, StorageConfig, ChainHash, HasHeader(..), HeaderFields(..),
 >    HeaderHash, Point, StandardHash)
 > import Ouroboros.Consensus.Protocol.Abstract
->   (SecurityParam(..), ConsensusConfig, ConsensusProtocol(..) )
+>   (SecurityParam(..), ConsensusConfig, ConsensusProtocol(..), NoTiebreaker(..))
 > import Ouroboros.Consensus.Ticked ( Ticked, Ticked(TickedTrivial) )
 > import Ouroboros.Consensus.Block
->   (BlockSupportsProtocol (selectView, validateView))
+>   (BlockSupportsProtocol (tiebreakerView, validateView))
 > import Ouroboros.Consensus.Ledger.Abstract
 >   (GetTip(..), IsLedger(..), LedgerCfg,
 >    LedgerResult(LedgerResult, lrEvents, lrResult),
@@ -135,7 +135,7 @@ simple one here:
 Next, we instantiate the `ConsensusProtocol` for `SP`:
 
 > instance ConsensusProtocol SP where
->   type SelectView    SP = BlockNo
+>   type TiebreakerView SP = NoTiebreaker
 
 >   type LedgerView    SP = ()
 
@@ -169,14 +169,16 @@ Finally we define a few extra things used in this instantiation:
 
 Let's examine each of these in turn:
 
-Chain Selection: `SelectView`
------------------------------
+Chain Selection: `TiebreakerView`
+---------------------------------
 
 One of the major decisions when implementing a consensus protocol is encoding a
-policy for chain selection.  The `SelectView SP` type represents the information
-necessary from a block header to help make this decision.
+policy for chain selection. `ouroboros-consensus` targets *longest chain*
+protocols, i.e. longer chains are preferred to shorter chains. The
+`TiebreakerView SP` type represents the information necessary from a block
+header to make this decision between chains of *equal* length.
 
-The other half of this - which explains how a `SelectView` is derived from a
+The other half of this - which explains how a `TiebreakerView` is derived from a
 particular block - is expressed by the block's implementation of the
 `BlockSupportsProtocol` typeclass.
 
@@ -184,11 +186,11 @@ The `preferCandidate` function in `Ouroboros.Consensus.Protocol.Abstract`
 demonstrates how this is used.
 
 Note that instantiations of `ConsensusProtocol` for some protocol `p`
-consequently requires `ChainOrder (SelectView p)` (which in particular requires
-`Ord (SelectView p)`.
+consequently requires `ChainOrder (TiebreakerView p)` (which in particular
+requires `Ord (TiebreakerView p)`.
 
-For `SP` we will use only `BlockNo` - to implement the simplest rule of
-preferring longer chains to shorter chains.
+For `SP` we will use only `NoTiebreaker` - the simple rule of sticking with our
+current selection if we receive another chain of the same length.
 
 
 Ledger Integration: `LedgerView`
@@ -197,7 +199,7 @@ Ledger Integration: `LedgerView`
 Some decisions that a consensus protocol needs to make will depend on the
 ledger's state, `LedgerState blk`.  The data required from the ledger is of
 type `LedgerView p` (i.e., the protocol determines what is needed).  Similar to
-`SelectView` the projection of `LedgerState blk` into `LedgerView p` exists in
+`TiebreakerView` the projection of `LedgerState blk` into `LedgerView p` exists in
 a typeclass, namely `LedgerSupportsProtocol`.
 
 For `SP` we do not require any information from the ledger to make decisions of
@@ -477,7 +479,7 @@ block, again established by our prior instantiation of `BlockProtocol`:
 
 > instance BlockSupportsProtocol BlockC where
 >   validateView _ _ = ()
->   selectView _bcfg hdr = blockNo hdr
+>   tiebreakerView _bcfg _hdr = NoTiebreaker
 
 Given that `ValidateView SP` is of type `()` there is only one possible
 implementation for this typeclass.  Later examples will require more interesting
