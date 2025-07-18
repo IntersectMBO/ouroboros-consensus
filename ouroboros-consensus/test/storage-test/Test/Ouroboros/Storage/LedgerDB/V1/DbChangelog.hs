@@ -31,7 +31,7 @@
 -- * etc.
 module Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog (tests) where
 
-import Cardano.Ledger.BaseTypes (NonZero (..), unsafeNonZero)
+import Cardano.Ledger.BaseTypes (NonZero (..))
 import Cardano.Slotting.Slot (WithOrigin (..))
 import Control.Monad hiding (ap)
 import Control.Monad.Trans.Class (lift)
@@ -85,15 +85,12 @@ tests =
     , testGroup
         "Push"
         [ testProperty "expectedLedger" prop_pushExpectedLedger
-        , testProperty "pastLedger" prop_pastLedger
         ]
     , testGroup
         "Rollback"
         [ testProperty "maxRollbackGenesisZero" prop_maxRollbackGenesisZero
-        , testProperty "ledgerDbMaxRollback" prop_snapshotsMaxRollback
         , testProperty "switchSameChain" prop_switchSameChain
         , testProperty "switchExpectedLedger" prop_switchExpectedLedger
-        , testProperty "pastAfterSwitch" prop_pastAfterSwitch
         ]
     , testProperty "flushing" $
         withMaxSuccess samples $
@@ -117,8 +114,8 @@ tests =
             ]
     , testProperty "extending adds head to volatile states" $
         withMaxSuccess samples prop_extendingAdvancesTipOfVolatileStates
-    , testProperty "pruning leaves at most maxRollback volatile states" $
-        withMaxSuccess samples prop_pruningLeavesAtMostMaxRollbacksVolatileStates
+    , testProperty "pruning before a slot works as expected" $
+        withMaxSuccess samples prop_pruningBeforeSlotCorrectness
     ]
 
 {-------------------------------------------------------------------------------
@@ -151,28 +148,6 @@ prop_pushExpectedLedger setup@ChainSetup{..} =
   cfg :: LedgerConfig TestBlock.TestBlock
   cfg = ledgerDbCfg (csBlockConfig setup)
 
-prop_pastLedger :: ChainSetup -> Property
-prop_pastLedger setup@ChainSetup{..} =
-  classify (chainSetupSaturated setup) "saturated" $
-    classify withinReach "within reach" $
-      getPastLedgerAt tip csPushed
-        === if withinReach
-          then Just (current afterPrefix)
-          else Nothing
- where
-  prefix :: [TestBlock.TestBlock]
-  prefix = take (fromIntegral csPrefixLen) csChain
-
-  tip :: Point TestBlock.TestBlock
-  tip = maybe GenesisPoint blockPoint (lastMaybe prefix)
-
-  afterPrefix :: DbChangelog (LedgerState TestBlock.TestBlock)
-  afterPrefix = reapplyThenPushMany' (csBlockConfig setup) prefix csGenSnaps
-
-  -- See 'prop_snapshotsMaxRollback'
-  withinReach :: Bool
-  withinReach = (csNumBlocks - csPrefixLen) <= maxRollback csPushed
-
 {-------------------------------------------------------------------------------
   Rollback
 -------------------------------------------------------------------------------}
@@ -181,18 +156,6 @@ prop_maxRollbackGenesisZero :: Property
 prop_maxRollbackGenesisZero =
   maxRollback (empty (convertMapKind TestBlock.testInitLedger))
     === 0
-
-prop_snapshotsMaxRollback :: ChainSetup -> Property
-prop_snapshotsMaxRollback setup@ChainSetup{..} =
-  classify (chainSetupSaturated setup) "saturated" $
-    conjoin
-      [ if chainSetupSaturated setup
-          then (maxRollback csPushed) `ge` unNonZero k
-          else (maxRollback csPushed) `ge` (min (unNonZero k) csNumBlocks)
-      , (maxRollback csPushed) `le` unNonZero k
-      ]
- where
-  SecurityParam k = csSecParam
 
 prop_switchSameChain :: SwitchSetup -> Property
 prop_switchSameChain setup@SwitchSetup{..} =
@@ -218,29 +181,6 @@ prop_switchExpectedLedger setup@SwitchSetup{..} =
 
   cfg :: LedgerConfig TestBlock.TestBlock
   cfg = ledgerDbCfg (csBlockConfig ssChainSetup)
-
--- | Check 'prop_pastLedger' still holds after switching to a fork
-prop_pastAfterSwitch :: SwitchSetup -> Property
-prop_pastAfterSwitch setup@SwitchSetup{..} =
-  classify (switchSetupSaturated setup) "saturated" $
-    classify withinReach "within reach" $
-      getPastLedgerAt tip ssSwitched
-        === if withinReach
-          then Just (current afterPrefix)
-          else Nothing
- where
-  prefix :: [TestBlock.TestBlock]
-  prefix = take (fromIntegral ssPrefixLen) ssChain
-
-  tip :: Point TestBlock.TestBlock
-  tip = maybe GenesisPoint blockPoint (lastMaybe prefix)
-
-  afterPrefix :: DbChangelog (LedgerState TestBlock.TestBlock)
-  afterPrefix = reapplyThenPushMany' (csBlockConfig ssChainSetup) prefix (csGenSnaps ssChainSetup)
-
-  -- See 'prop_snapshotsMaxRollback'
-  withinReach :: Bool
-  withinReach = (ssNumBlocks - ssPrefixLen) <= maxRollback ssSwitched
 
 {-------------------------------------------------------------------------------
   Test setup
@@ -442,7 +382,7 @@ data DbChangelogTestSetup = DbChangelogTestSetup
   , dbChangelogStartsAt :: WithOrigin SlotNo
   }
 
-data Operation l = Extend (l DiffMK) | Prune LedgerDbPrune
+data Operation l = Extend (l DiffMK) | Prune
 deriving instance Show (l DiffMK) => Show (Operation l)
 
 data DbChangelogTestSetupWithRollbacks = DbChangelogTestSetupWithRollbacks
@@ -507,7 +447,7 @@ applyOperations ::
 applyOperations ops dblog = foldr' apply' dblog ops
  where
   apply' (Extend newState) dblog' = DbChangelog.extend newState dblog'
-  apply' (Prune sp) dblog' = DbChangelog.prune sp dblog'
+  apply' Prune dblog' = DbChangelog.pruneToImmTipOnly dblog'
 
 {-------------------------------------------------------------------------------
   Properties
@@ -549,14 +489,40 @@ prop_rollbackAfterExtendIsNoop setup (Positive n) =
  where
   dblog = resultingDbChangelog setup
 
--- | The number of volatile states left after pruning is at most the maximum number of rollbacks.
-prop_pruningLeavesAtMostMaxRollbacksVolatileStates ::
-  DbChangelogTestSetup -> SecurityParam -> Property
-prop_pruningLeavesAtMostMaxRollbacksVolatileStates setup sp@(SecurityParam k) =
-  property $ AS.length (DbChangelog.changelogStates dblog') <= fromIntegral (unNonZero k)
+-- | When pruning after a slot, all (non-anchor) states are not older than this
+-- slot, and the anchor /is/ older (unless nothing was pruned).
+prop_pruningBeforeSlotCorrectness ::
+  DbChangelogTestSetup -> Property
+prop_pruningBeforeSlotCorrectness setup =
+  counterexample ("dblog: " <> show dblog) $ forAll genPruneSlot $ \pruneSlot ->
+    let dblog' = DbChangelog.prune (LedgerDbPruneBeforeSlot pruneSlot) dblog
+     in counterexample ("pruned dblog: " <> show dblog') $
+          conjoin
+            [ counterexample "State not pruned unexpectedly" $
+                conjoin
+                  [ (NotOrigin pruneSlot `le` getTipSlot st)
+                  | (_, st) <-
+                      DbChangelog.snapshots dblog'
+                  ]
+            , counterexample "Anchor too old" $
+                let nothingPruned = DbChangelog.maxRollback dblog == DbChangelog.maxRollback dblog'
+                 in if nothingPruned
+                      then property ()
+                      else
+                        getTipSlot (DbChangelog.anchor dblog') `lt` NotOrigin pruneSlot
+            ]
  where
   dblog = resultingDbChangelog setup
-  dblog' = DbChangelog.prune (LedgerDbPruneKeeping sp) dblog
+
+  genPruneSlot = chooseEnum (lb, ub)
+   where
+    jitter = 5
+    lb
+      | anchorSlot >= jitter = anchorSlot - jitter
+      | otherwise = 0
+     where
+      anchorSlot = succWithOrigin $ getTipSlot $ DbChangelog.anchor dblog
+    ub = succWithOrigin (pointSlot (DbChangelog.tip dblog)) + jitter
 
 -- | The rollbackToAnchor function rolls back all volatile states.
 prop_rollbackToAnchorIsRollingBackVolatileStates :: DbChangelogTestSetup -> Property
@@ -628,18 +594,8 @@ genOperations slotNo nOps = gosOps <$> execStateT (replicateM_ nOps genOperation
 
   genOperation :: StateT GenOperationsState Gen ()
   genOperation = do
-    op <- frequency' [(1, genPrune), (10, genExtend)]
+    op <- frequency' [(1, pure Prune), (20, genExtend)]
     modify' $ \st -> st{gosOps = op : gosOps st}
-
-  genPrune :: StateT GenOperationsState Gen (Operation TestLedger)
-  genPrune =
-    Prune
-      <$> lift
-        ( oneof
-            [ pure LedgerDbPruneAll
-            , LedgerDbPruneKeeping . SecurityParam . unsafeNonZero <$> chooseEnum (1, 10)
-            ]
-        )
 
   genExtend :: StateT GenOperationsState Gen (Operation TestLedger)
   genExtend = do

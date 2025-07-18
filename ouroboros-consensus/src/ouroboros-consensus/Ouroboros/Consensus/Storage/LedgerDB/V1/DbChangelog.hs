@@ -47,8 +47,8 @@
 -- == Carrying states
 --
 -- The 'DbChangelog' contains an instantiation of the 'AnchoredSeq' data type to
--- hold the last \(k\) in-memory ledger states. This data type is impemented
--- using the /finger tree/ data structure and has the following time
+-- hold (at least) the last \(k\) in-memory ledger states. This data type is
+-- implemented using the /finger tree/ data structure and has the following time
 -- complexities:
 --
 -- - Appending a new ledger state to the end in constant time.
@@ -67,16 +67,12 @@
 --
 -- == Appending in-memory states
 --
--- When a new ledger state is appended to a fully saturated 'DbChangelog' (i.e.
--- that contains \(k\) states), the ledger state at the anchor is dropped and
--- the oldest element in the sequence becomes the new anchor, as it has become
--- immutable. Note that we only refer here to the in-memory states, as the diffs
--- from the anchor will remain in the 'DbChangelog' until flushing happens. This
--- maintains the invariant that only the last \(k\) in-memory ledger states are
--- stored, /excluding/ the ledger state at the anchor. This means that in
--- practice, \(k + 1\) ledger states will be kept in memory. When the
--- 'DbChangelog' contains fewer than \(k\) elements, new ones are appended
--- without shifting the anchor until it is saturated.
+-- When a new ledger state is appended to a 'DbChangelog', the ledger state at
+-- the anchor is now subject to pruning/garbage collection as they are
+-- immutable. This means that in practice, slightly more than \(k + 1\) ledger
+-- states will be kept in memory. When the 'DbChangelog' contains fewer than
+-- \(k\) elements, new ones are appended without causing the ones near the
+-- anchor to be pruned/garbage-collected.
 --
 -- == Getting and appending differences
 --
@@ -223,7 +219,8 @@ import qualified Ouroboros.Network.AnchoredSeq as AS
 -- that need a 'BackingStore' as an anchor point.
 --
 -- We illustrate its contents below, where @k = 3@ (for a state @Li@, the
--- corresponding set of differences is @Di@):
+-- corresponding set of differences is @Di@), assuming that we prune after every
+-- step:
 --
 -- +----------------+------------------------------------+------------------------------------------+
 -- | lastFlushed    | states                             | tableDiffs                               |
@@ -362,37 +359,27 @@ reapplyThenPush ::
   DbChangelog l ->
   m (DbChangelog l)
 reapplyThenPush cfg ap ksReader db =
-  (\current' -> prune (LedgerDbPruneKeeping (ledgerDbCfgSecParam cfg)) $ extend current' db)
+  (\current' -> pruneToImmTipOnly $ extend current' db)
     <$> reapplyBlock (ledgerDbCfgComputeLedgerEvents cfg) (ledgerDbCfg cfg) ap ksReader db
 
--- | Prune oldest ledger states until at we have at most @k@ in the DbChangelog,
--- excluding the one stored at the anchor.
+-- | Prune oldest ledger states according to the given 'LedgerDbPrune' strategy.
 --
 -- +--------------+----------------------------+----------------------+
 -- | lastFlushed  | states                     | tableDiffs           |
 -- +==============+============================+======================+
 -- |     @L0@     | @L0 :> [ L1, L2, L3, L4 ]@ | @[ D1, D2, D3, D4 ]@ |
 -- +--------------+----------------------------+----------------------+
--- | @>> prune (SecurityParam 3)@                                     |
+-- | @>> prune (LedgerDbPruneBeforeSlot 3)@                           |
 -- +--------------+----------------------------+----------------------+
 -- |     @L0@     | @L2 :> [         L3, L4 ]@ | @[ D1, D2, D3, D4 ]@ |
 -- +--------------+----------------------------+----------------------+
+--
+-- where the state @LX@ is from slot @X@.
 prune ::
   GetTip l =>
   LedgerDbPrune ->
   DbChangelog l ->
   DbChangelog l
-prune (LedgerDbPruneKeeping (SecurityParam k)) dblog =
-  dblog{changelogStates = vol'}
- where
-  DbChangelog{changelogStates} = dblog
-
-  nvol = AS.length changelogStates
-
-  vol' =
-    if toEnum nvol <= unNonZero k
-      then changelogStates
-      else snd $ AS.splitAt (nvol - fromEnum (unNonZero k)) changelogStates
 prune LedgerDbPruneAll dblog =
   dblog{changelogStates = vol'}
  where
@@ -402,6 +389,14 @@ prune LedgerDbPruneAll dblog =
 
   vol' =
     snd $ AS.splitAt nvol changelogStates
+prune (LedgerDbPruneBeforeSlot slot) dblog =
+  dblog{changelogStates = vol'}
+ where
+  DbChangelog{changelogStates} = dblog
+
+  -- The anchor of @vol'@ might still have a tip slot smaller than @slot@, which
+  -- is fine to ignore (we will prune it later).
+  vol' = snd $ AS.splitAtMeasure (NotOrigin slot) changelogStates
 
 -- NOTE: we must inline 'prune' otherwise we get unexplained thunks in
 -- 'DbChangelog' and thus a space leak. Alternatively, we could disable the
