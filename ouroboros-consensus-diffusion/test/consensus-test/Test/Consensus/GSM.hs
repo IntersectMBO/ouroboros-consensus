@@ -137,7 +137,8 @@ setupGsm isHaaSatisfied vars = do
     (id, tracer)
     GSM.GsmView
       { GSM.antiThunderingHerd = Nothing
-      , GSM.candidateOverSelection = \s (PeerState c _) -> candidateOverSelection s c
+      , GSM.getCandidateOverSelection = pure $ \s (PeerState c _) ->
+          candidateOverSelection s c
       , GSM.peerIsIdle = isIdling
       , GSM.durationUntilTooOld = Just durationUntilTooOld
       , GSM.equivalent = (==) -- unsound, but harmless in this test

@@ -27,6 +27,7 @@ import GHC.Stack
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.Ledger.Tables
+import Ouroboros.Consensus.Peras.Weight (emptyPerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( LoE (..)
   , StreamFrom (..)
@@ -101,10 +102,11 @@ prop_alwaysPickPreferredChain bt p =
   bcfg = configBlock singleNodeTestConfig
 
   preferCandidate' candidate =
-    AF.preferAnchoredCandidate bcfg curFragment candFragment
+    AF.preferAnchoredCandidate bcfg weights curFragment candFragment
       && AF.forksAtMostKBlocks (unNonZero k) curFragment candFragment
    where
     candFragment = Chain.toAnchoredFragment (getHeader <$> candidate)
+    weights = emptyPerasWeightSnapshot
 
 -- TODO add properties about forks too
 prop_between_currentChain :: LoE () -> BlockTree -> Property
