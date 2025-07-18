@@ -2,7 +2,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -130,6 +130,7 @@ import Ouroboros.Consensus.Shelley.Protocol.Abstract
   , mkHeaderView
   )
 import Ouroboros.Consensus.Storage.LedgerDB
+import Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 import Ouroboros.Consensus.Util.CBOR
   ( decodeWithOrigin
   , encodeWithOrigin
@@ -319,6 +320,32 @@ instance ShelleyCompatible proto era => UpdateLedger (ShelleyBlock proto era)
 
 type instance TxIn (LedgerState (ShelleyBlock proto era)) = SL.TxIn
 type instance TxOut (LedgerState (ShelleyBlock proto era)) = Core.TxOut era
+
+-- | We use this newtype only to alter MemPack serialization. LSM trees use an
+-- index that looks at the first 8 bytes so it is important to put the index
+-- first such that we avoid all TxIns from the same tx to imply a collision in
+-- the LSM index.
+newtype LSMTxIn = LSMTxIn {lsmTxIn :: SL.TxIn}
+
+instance MemPack LSMTxIn where
+  packedByteCount = packedByteCount . lsmTxIn
+  packM (LSMTxIn (SL.TxIn txid txix)) = packM txix >> packM txid
+  unpackM = do
+    txix <- unpackM
+    txid <- unpackM
+    pure . LSMTxIn $ SL.TxIn txid txix
+
+instance SerialiseKey SL.TxIn where
+  serialiseKey = serialiseLSMViaMemPack . LSMTxIn
+  deserialiseKey = lsmTxIn . deserialiseLSMViaMemPack
+
+type instance
+  LSMTxOut (LedgerState (ShelleyBlock proto era)) =
+    TxOut (LedgerState (ShelleyBlock proto era))
+
+instance HasLSMTxOut (LedgerState (ShelleyBlock proto era)) where
+  toLSMTxOut _ = id
+  fromLSMTxOut _ = id
 
 instance
   (txout ~ Core.TxOut era, MemPack txout) =>

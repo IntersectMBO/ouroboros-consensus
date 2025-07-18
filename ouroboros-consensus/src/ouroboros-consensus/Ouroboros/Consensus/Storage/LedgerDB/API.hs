@@ -117,7 +117,12 @@ module Ouroboros.Consensus.Storage.LedgerDB.API
   , LedgerDbSerialiseConstraints
   , LedgerSupportsInMemoryLedgerDB
   , LedgerSupportsLedgerDB
-  , LedgerSupportsOnDiskLedgerDB
+  , LedgerSupportsLMDBLedgerDB
+  , LedgerSupportsLSMLedgerDB
+  , LedgerSupportsV1LedgerDB
+  , LedgerSupportsV2LedgerDB
+  , LSMTxOut
+  , HasLSMTxOut (..)
   , ResolveBlock
   , currentPoint
 
@@ -171,6 +176,7 @@ import Data.MemPack
 import Data.Set (Set)
 import Data.Void (absurd)
 import Data.Word
+import qualified Database.LSMTree as LSM
 import GHC.Generics (Generic)
 import NoThunks.Class
 import Ouroboros.Consensus.Block
@@ -193,7 +199,6 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.IndexedMemPack
 import Ouroboros.Network.Block
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
-import System.FS.API
 
 {-------------------------------------------------------------------------------
   Main API
@@ -488,7 +493,7 @@ data InitDB db m blk = InitDB
 -- obtained in this way will (hopefully) share much of their memory footprint
 -- with their predecessors.
 initialize ::
-  forall m blk db.
+  forall m n blk db st.
   ( IOLike m
   , LedgerSupportsProtocol blk
   , InspectLedger blk
@@ -496,24 +501,24 @@ initialize ::
   ) =>
   Tracer m (TraceReplayEvent blk) ->
   Tracer m (TraceSnapshotEvent blk) ->
-  SomeHasFS m ->
   LedgerDbCfg (ExtLedgerState blk) ->
   StreamAPI m blk blk ->
   Point blk ->
   InitDB db m blk ->
+  SnapshotManagement m n blk st ->
   Maybe DiskSnapshot ->
   m (InitLog blk, db, Word64)
 initialize
   replayTracer
   snapTracer
-  hasFS
   cfg
   stream
   replayGoal
   dbIface
+  snapManager
   fromSnapshot =
     case fromSnapshot of
-      Nothing -> listSnapshots hasFS >>= tryNewestFirst id
+      Nothing -> listSnapshots snapManager >>= tryNewestFirst id
       Just snap -> tryNewestFirst id [snap]
    where
     InitDB{initFromGenesis, initFromSnapshot, closeDb} = dbIface
@@ -573,7 +578,7 @@ initialize
           traceWith snapTracer $ InvalidSnapshot s err
           Monad.when (diskSnapshotIsTemporary s) $ do
             traceWith snapTracer $ DeletedSnapshot s
-            deleteSnapshot hasFS s
+            deleteSnapshot snapManager s
           tryNewestFirst (acc . InitFailure s err) ss
 
         -- If we fail to use this snapshot for any other reason, delete it and
@@ -581,7 +586,7 @@ initialize
         Left err -> do
           Monad.when (diskSnapshotIsTemporary s || err == InitFailureGenesis) $ do
             traceWith snapTracer $ DeletedSnapshot s
-            deleteSnapshot hasFS s
+            deleteSnapshot snapManager s
           traceWith snapTracer . InvalidSnapshot s $ err
           tryNewestFirst (acc . InitFailure s err) ss
         Right (initDb, pt) -> do
@@ -600,7 +605,7 @@ initialize
           case eDB of
             Left err -> do
               traceWith snapTracer . InvalidSnapshot s $ err
-              Monad.when (diskSnapshotIsTemporary s) $ deleteSnapshot hasFS s
+              Monad.when (diskSnapshotIsTemporary s) $ deleteSnapshot snapManager s
               closeDb initDb
               tryNewestFirst (acc . InitFailure s err) ss
             Right (db, replayed) -> do
@@ -723,7 +728,11 @@ data TraceReplayProgressEvent blk
   Updating ledger tables
 -------------------------------------------------------------------------------}
 
-type LedgerSupportsInMemoryLedgerDB blk = (CanUpgradeLedgerTables (LedgerState blk))
+type LedgerSupportsInMemoryLedgerDB l =
+  (CanUpgradeLedgerTables l, SerializeTablesWithHint l)
+
+type LedgerSupportsV1LedgerDB l =
+  (LedgerSupportsInMemoryLedgerDB l, LedgerSupportsLMDBLedgerDB l)
 
 -- | When pushing differences on InMemory Ledger DBs, we will sometimes need to
 -- update ledger tables to the latest era. For unary blocks this is a no-op, but
@@ -762,12 +771,41 @@ instance
   Supporting On-Disk backing stores
 -------------------------------------------------------------------------------}
 
-type LedgerSupportsOnDiskLedgerDB blk =
-  (IndexedMemPack (LedgerState blk EmptyMK) (TxOut (LedgerState blk)))
+type LedgerSupportsLMDBLedgerDB l =
+  (IndexedMemPack (l EmptyMK) (TxOut l), MemPackIdx l EmptyMK ~ l EmptyMK)
 
-type LedgerSupportsLedgerDB blk =
-  ( LedgerSupportsOnDiskLedgerDB blk
-  , LedgerSupportsInMemoryLedgerDB blk
+type LedgerSupportsLSMLedgerDB l =
+  ( LSM.SerialiseKey (TxIn l)
+  , LSM.SerialiseValue (LSMTxOut l)
+  , LSM.ResolveValue (LSMTxOut l)
+  , HasLSMTxOut l
+  )
+
+type LedgerSupportsV2LedgerDB l =
+  (LedgerSupportsInMemoryLedgerDB l, LedgerSupportsLSMLedgerDB l)
+
+-- | LSM trees need to be able to serialize and deserialize values several
+-- times, without any context. Therefore the approach of using a ledger state to
+-- hint the era in which values need to be deserialized cannot work with LSM.
+--
+-- Therefore, we will instead store 'LSMTxOut' in the LSM database, which will
+-- be 'TxOut' for most of the unitary blocks and basic hard fork blocks, but
+-- will be 'ByteArray's for the Cardano Block.
+type LSMTxOut :: LedgerStateKind -> Type
+type family LSMTxOut l
+
+-- | Conversion of 'TxOut's to and from 'LSMTxOut'.
+class HasLSMTxOut l where
+  toLSMTxOut :: Proxy l -> TxOut l -> LSMTxOut l
+  fromLSMTxOut :: l EmptyMK -> LSMTxOut l -> TxOut l
+
+type LedgerSupportsLedgerDB blk = LedgerSupportsLedgerDB' (LedgerState blk) blk
+
+type LedgerSupportsLedgerDB' l blk =
+  ( LedgerSupportsLMDBLedgerDB l
+  , LedgerSupportsInMemoryLedgerDB l
+  , LedgerSupportsLSMLedgerDB l
+  , LedgerDbSerialiseConstraints blk
   )
 
 {-------------------------------------------------------------------------------

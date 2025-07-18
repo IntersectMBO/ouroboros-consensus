@@ -1103,6 +1103,11 @@ decodeDualLedgerState decodeMain = do
 
 type instance TxIn (LedgerState (DualBlock m a)) = TxIn (LedgerState m)
 type instance TxOut (LedgerState (DualBlock m a)) = TxOut (LedgerState m)
+type instance LSMTxOut (LedgerState (DualBlock m a)) = TxOut (LedgerState m)
+
+instance HasLSMTxOut (LedgerState (DualBlock m a)) where
+  toLSMTxOut _ = id
+  fromLSMTxOut _ = id
 
 instance CanUpgradeLedgerTables (LedgerState (DualBlock m a)) where
   upgradeTables _ _ = id
