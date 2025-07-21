@@ -26,6 +26,7 @@ const sidebars = {
 	      'explanation/ledger-interaction',
 	      'explanation/queries',
 	      'explanation/consensus-protocol',
+	      'explanation/genesis-design',
 	     ]
     }
   ],
