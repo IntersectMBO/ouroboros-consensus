@@ -25,6 +25,10 @@ module Ouroboros.Consensus.Storage.ChainDB.API
   , addBlockWaitWrittenToDisk
   , addBlock_
 
+    -- * Adding a Peras certificate
+  , AddPerasCertPromise (..)
+  , addPerasCertSync
+
     -- * Trigger chain selection
   , ChainSelectionPromise (..)
   , triggerChainSelection
@@ -392,6 +396,9 @@ data ChainDB m blk = ChainDB
   , getStatistics :: m (Maybe Statistics)
   -- ^ Get statistics from the LedgerDB, in particular the number of entries
   -- in the tables.
+  , addPerasCertAsync :: ValidatedPerasCert blk -> m (AddPerasCertPromise m)
+  -- ^ Asynchronously insert a certificate to the DB. If this leads to a fork to
+  -- be weightier than our current selection, this will trigger a fork switch.
   , getPerasWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
   -- ^ Get the 'PerasWeightSnapshot', representing the Peras weight boosts for
   -- all blocks newer than the current immutable tip.
@@ -516,6 +523,23 @@ newtype ChainSelectionPromise m = ChainSelectionPromise
 triggerChainSelection :: IOLike m => ChainDB m blk -> m ()
 triggerChainSelection chainDB =
   waitChainSelectionPromise =<< chainSelAsync chainDB
+
+{-------------------------------------------------------------------------------
+  Adding a Peras certificate
+-------------------------------------------------------------------------------}
+
+newtype AddPerasCertPromise m = AddPerasCertPromise
+  { waitPerasCertProcessed :: m ()
+  -- ^ Wait until the Peras certificate has been processed (which potentially
+  -- includes switching to a different chain). If the PerasCertDB did already
+  -- contain a certificate for this round, the certificate is ignored (as the
+  -- two certificates must be identical because certificate equivocation is
+  -- impossible).
+  }
+
+addPerasCertSync :: IOLike m => ChainDB m blk -> ValidatedPerasCert blk -> m ()
+addPerasCertSync chainDB cert =
+  waitPerasCertProcessed =<< addPerasCertAsync chainDB cert
 
 {-------------------------------------------------------------------------------
   Serialised block/header with its point

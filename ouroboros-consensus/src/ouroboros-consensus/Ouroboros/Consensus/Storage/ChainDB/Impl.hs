@@ -16,6 +16,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl
     -- * Trace types
   , SelectionChangedInfo (..)
   , TraceAddBlockEvent (..)
+  , TraceAddPerasCertEvent (..)
   , TraceChainSelStarvationEvent (..)
   , TraceCopyToImmutableDBEvent (..)
   , TraceEvent (..)
@@ -286,10 +287,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , getHeaderStateHistory = getEnvSTM h Query.getHeaderStateHistory
             , getReadOnlyForkerAtPoint = getEnv2 h Query.getReadOnlyForkerAtPoint
             , getStatistics = getEnv h Query.getStatistics
-            , addPerasCert = getEnv1 h $ \cdb@CDB{..} cert -> do
-                PerasCertDB.addCert cdbPerasCertDB cert
-                -- TODO trigger chain selection in a more efficient way
-                waitChainSelectionPromise =<< ChainSel.triggerChainSelectionAsync cdb
+            , addPerasCertAsync = getEnv1 h ChainSel.addPerasCertAsync
             , getPerasWeightSnapshot = getEnvSTM h Query.getPerasWeightSnapshot
             , getPerasCertSnapshot = getEnvSTM h Query.getPerasCertSnapshot
             }
