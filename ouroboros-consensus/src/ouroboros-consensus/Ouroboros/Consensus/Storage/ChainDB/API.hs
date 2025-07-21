@@ -389,7 +389,7 @@ data ChainDB m blk = ChainDB
   -- in the tables.
   , addPerasCert :: PerasCert blk -> m ()
   -- ^ TODO
-  , getPerasWeightSnapshot :: STM m (PerasWeightSnapshot blk)
+  , getPerasWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
   -- ^ TODO
   , closeDB :: m ()
   -- ^ Close the ChainDB
