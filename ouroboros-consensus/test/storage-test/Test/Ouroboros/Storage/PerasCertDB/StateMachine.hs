@@ -22,6 +22,7 @@ import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
 import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasCertDB)
 import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.Util.STM
 import qualified Test.Ouroboros.Storage.PerasCertDB.Model as Model
 import Test.QuickCheck hiding (Some (..))
 import qualified Test.QuickCheck.Monadic as QC
@@ -118,7 +119,7 @@ instance RunModel Model (StateT (PerasCertDB IO TestBlock) IO) where
       lift $ PerasCertDB.addCert perasCertDB cert
     GetWeightSnapshot -> do
       perasCertDB <- get
-      lift $ atomically $ PerasCertDB.getWeightSnapshot perasCertDB
+      lift $ atomically $ forgetFingerprint <$> PerasCertDB.getWeightSnapshot perasCertDB
     GarbageCollect slot -> do
       perasCertDB <- get
       lift $ PerasCertDB.garbageCollect perasCertDB slot

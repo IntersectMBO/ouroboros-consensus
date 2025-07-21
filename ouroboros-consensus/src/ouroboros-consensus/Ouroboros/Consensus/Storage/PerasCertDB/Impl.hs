@@ -34,6 +34,7 @@ import Ouroboros.Consensus.Storage.PerasCertDB.API
 import Ouroboros.Consensus.Util.Args
 import Ouroboros.Consensus.Util.CallStack
 import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.Util.STM
 
 {------------------------------------------------------------------------------
   Opening the database
@@ -92,7 +93,7 @@ data PerasCertDbState m blk
 
 data PerasCertDbEnv m blk = PerasCertDbEnv
   { pcdbTracer :: !(Tracer m (TraceEvent blk))
-  , pcdbVolatileState :: !(StrictTVar m (PerasVolatileCertState blk))
+  , pcdbVolatileState :: !(StrictTVar m (WithFingerprint (PerasVolatileCertState blk)))
   -- ^ The 'RoundNo's of all certificates currently in the db.
   }
   deriving NoThunks via OnlyCheckWhnfNamed "PerasCertDbEnv" (PerasCertDbEnv m blk)
@@ -148,20 +149,27 @@ implAddCert ::
 implAddCert env cert = do
   traceWith pcdbTracer $ AddingPerasCert roundNo boostedPt
   join $ atomically $ do
-    PerasVolatileCertState{pvcsCerts, pvcsWeightByPoint} <- readTVar pcdbVolatileState
+    WithFingerprint
+      PerasVolatileCertState
+        { pvcsCerts
+        , pvcsWeightByPoint
+        }
+      fp <-
+      readTVar pcdbVolatileState
     if Map.member roundNo pvcsCerts
       then do
         pure $ traceWith pcdbTracer $ IgnoredCertAlreadyInDB roundNo boostedPt
       else do
-        writeTVar
-          pcdbVolatileState
-          PerasVolatileCertState
-            { pvcsCerts =
-                Map.insert roundNo cert pvcsCerts
-            , -- Note that the same block might be boosted by multiple points.
-              pvcsWeightByPoint =
-                Map.insertWith (<>) boostedPt boostPerCert pvcsWeightByPoint
-            }
+        writeTVar pcdbVolatileState $
+          WithFingerprint
+            PerasVolatileCertState
+              { pvcsCerts =
+                  Map.insert roundNo cert pvcsCerts
+              , -- Note that the same block might be boosted by multiple points.
+                pvcsWeightByPoint =
+                  Map.insertWith (<>) boostedPt boostPerCert pvcsWeightByPoint
+              }
+            (succ fp)
         pure $ traceWith pcdbTracer $ AddedPerasCert roundNo boostedPt
  where
   PerasCertDbEnv
@@ -174,16 +182,18 @@ implAddCert env cert = do
 
 implGetWeightSnapshot ::
   IOLike m =>
-  PerasCertDbEnv m blk -> STM m (PerasWeightSnapshot blk)
+  PerasCertDbEnv m blk -> STM m (WithFingerprint (PerasWeightSnapshot blk))
 implGetWeightSnapshot PerasCertDbEnv{pcdbVolatileState} =
-  PerasWeightSnapshot . pvcsWeightByPoint <$> readTVar pcdbVolatileState
+  fmap (PerasWeightSnapshot . pvcsWeightByPoint) <$> readTVar pcdbVolatileState
 
 implGarbageCollect ::
   forall m blk.
   (IOLike m, StandardHash blk) =>
   PerasCertDbEnv m blk -> SlotNo -> m ()
 implGarbageCollect PerasCertDbEnv{pcdbVolatileState} slot =
-  atomically $ modifyTVar pcdbVolatileState gc
+  -- No need to update the 'Fingerprint' as we only remove certificates that do
+  -- not matter for comparing interesting chains.
+  atomically $ modifyTVar pcdbVolatileState (fmap gc)
  where
   gc :: PerasVolatileCertState blk -> PerasVolatileCertState blk
   gc PerasVolatileCertState{pvcsCerts, pvcsWeightByPoint} =
@@ -235,12 +245,14 @@ data PerasVolatileCertState blk = PerasVolatileCertState
   deriving stock (Show, Generic)
   deriving anyclass NoThunks
 
-initialPerasVolatileCertState :: PerasVolatileCertState blk
+initialPerasVolatileCertState :: WithFingerprint (PerasVolatileCertState blk)
 initialPerasVolatileCertState =
-  PerasVolatileCertState
-    { pvcsCerts = Map.empty
-    , pvcsWeightByPoint = Map.empty
-    }
+  WithFingerprint
+    PerasVolatileCertState
+      { pvcsCerts = Map.empty
+      , pvcsWeightByPoint = Map.empty
+      }
+    (Fingerprint 0)
 
 {-------------------------------------------------------------------------------
   Trace types
