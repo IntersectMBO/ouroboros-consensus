@@ -43,6 +43,7 @@ import qualified Control.Tracer as Tracer
 import Data.Function (on)
 import Data.Map.Strict (Map)
 import Data.Ord (Down (Down))
+import Data.Void
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import NoThunks.Class
@@ -277,7 +278,8 @@ data PraosCredentialsSource c where
   PraosCredentialsUnsound ::
     OCert.OCert c -> KES.UnsoundPureSignKeyKES (KES c) -> PraosCredentialsSource c
   -- | Connect to a KES agent listening on a service socket at the given path.
-  PraosCredentialsAgent :: Agent.DSIGN (ACrypto c) ~ DSIGN => FilePath -> PraosCredentialsSource c
+  PraosCredentialsAgent ::
+    Agent.DSIGN (ACrypto c) ~ DSIGN => Void -> FilePath -> PraosCredentialsSource c
 
 instance (NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (PraosCredentialsSource c) where
   wNoThunks ctxt = \case
@@ -286,7 +288,7 @@ instance (NoThunks (KES.UnsoundPureSignKeyKES (KES c)), Crypto c) => NoThunks (P
         [ noThunks ctxt oca
         , noThunks ctxt k
         ]
-    PraosCredentialsAgent fp -> noThunks ctxt fp
+    PraosCredentialsAgent _ fp -> noThunks ctxt fp
 
   showTypeOf _ = "PraosCredentialsSource"
 
@@ -307,7 +309,7 @@ instantiatePraosCredentials maxKESEvolutions _ (PraosCredentialsUnsound ocert sk
     sk
     startPeriod
     maxKESEvolutions
-instantiatePraosCredentials maxKESEvolutions tr (PraosCredentialsAgent path) = do
+instantiatePraosCredentials maxKESEvolutions tr (PraosCredentialsAgent _ path) = do
   HotKey.mkDynamicHotKey
     maxKESEvolutions
     (Just $ runKESAgentClient tr path)
