@@ -321,30 +321,30 @@ The GDD must disconnect from any peers serving chains that are preventing the Lo
 The logic compares every ordered pair of peers.
 An optimization could avoid symmetric comparisons, but that factor of two doesn't appear to be necessary for the relatively small expected upstream peer counts.
 
-Let {the GDD window} be the Sgen slots after the LoE anchor.
-Also, observe that when a peer's latest message was MsgAwaitReply, the syncing node must assume that peer does not have subsequent headers to send.
-That might be an incorrect assumption, but only for the short duration until the peer's next ChainSync message arrives.
+Let {the GDD window} be the `Sgen` slots after the LoE anchor.
+Also, observe that when a peer's latest message was `MsgAwaitReply`, the syncing node must assume that peer does not have subsequent headers to send.
+That might be an incorrect assumption, but only for the short duration until the peer's next `ChainSync` message arrives.
 
-The GDD will disconnect from a peer P due to comparison to a peer Q if all of the following conjuncts hold simultaneously.
+The GDD will disconnect from a peer `P` due to comparison with a peer `Q` if all of the following conditions hold:
 
-- P and Q disagree on which header directly succeeds the LoE anchor.
-  To clarify, this conjunct is satisfied if (but not only if) P's latest message was MsgAwaitReply but Q already sent a header.
-  Additionally, this disagreement can be determined even if P's first header after the LoE is not in the syncing node's forecast range: its validity is not yet relevant.
+- `P` and `Q` disagree on which header directly succeeds the LoE anchor.
+Note that this condition is satisfied if (but not only if) `P`'s latest message was `MsgAwaitReply` but `Q` already sent a header.
+Additionally, this disagreement can be determined even if `P`'s first header after the LoE is not in the syncing node's forecast range: its validity is not yet relevant.
 
-- Q has sent more than Kcp (valid) headers after the LoE anchor.
-  This prevents typical Praos short forks from triggering the GDD when the node is almost done syncing.
+- `Q` has sent more than `Kcp` (valid) headers after the LoE anchor.
+This prevents typical Praos short forks from triggering the GDD when the node is almost done syncing.
 
-- Either P's latest message was not MsgAwaitReply or else P does not already have more headers in the GDD window than Q does.
+- Either `P`'s latest message was not `MsgAwaitReply` or else `P` does not already have more headers in the GDD window than `Q` does.
 
-- Either P's latest message was MsgAwaitReply or else no extension of P's chain could have more headers in the GDD window than Q already does.
-  The non-existence of any such an extension is conservatively established by there being too few slots in the portion of the GDD window that is after P's header chain.
+- Either `P`'s latest message was `MsgAwaitReply` or else no extension of `P`'s chain could have more headers in the GDD window than `Q` already does.
+The absence of such an extension is conservatively determined by the insufficient number of slots in the portion of the GDD window that follows `P`’s header chain.
 
-This component contributes to Sync Liveness.
-The LoP component (in the next section) ensures that peers sending an alternative history must soon enough reveal their chain's sparseness so that the GDD will disconnect from them when compared to one of the HAA-satisfying peers.
+This component contributes to [Sync Liveness](#sync-liveness).
+The [LoP component](#the-limit-on-patience-component) ensures that peers sending an alternative history must soon enough reveal their chain's sparseness so that the GDD will disconnect from them when compared to one of the HAA-satisfying peers.
 
 In the "with CSJ" section below, the GDD is enriched beyond its primary responsibility for the sake of the CSJ design.
 
-To prevent this component from spoiling Sync Liveness, this relatively-expensive calculation is rate-limited with a parameter {GddRateLimit}; see the [Parameter Tuning](#parameter-tuning) section.
+To prevent this component from violating Sync Liveness, this relatively-expensive calculation is rate-limited with a parameter {GddRateLimit}; see the [Parameter Tuning](#parameter-tuning) section.
 
 ### The Limit on Patience Component
 
