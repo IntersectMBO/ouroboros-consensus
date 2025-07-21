@@ -376,26 +376,26 @@ Parameter Tuning could ensure this is less than one minute per adversarial peer,
 [Link to code](https://github.com/IntersectMBO/ouroboros-consensus/blob/43c1fef4631d7a00879974e785c2291175a5f0dc/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/MiniProtocol/ChainSync/Client/Jumping.hs#L14)
 
 The ChainSync Jumping optimization is a backwards compatible optimization of the ChainSync mini protocol.
-Instead of simply running the normal ChainSync mini protocol with every peer, CSJ runs it with at most two while syncing the historical chain.
+Instead of simply running the normal `ChainSync` mini protocol with every peer, CSJ runs it with at most two while syncing the historical chain.
 This saves significant bandwidth and CPU for both the syncing node and all but one of its honest upstream peers.
-By the time the node transitions to the CaughtUp state, all peers will be running full ChainSync &mdash; CSJ inherently ensures that, in addition to the GSM.
+By the time the node transitions to the `CaughtUp` state, all peers will be running full ChainSync &mdash; CSJ inherently ensures that, in addition to the GSM.
 
 The {CSJ governor} is centralized logic that divides peers into the following roles.
 
 - The {Dynamo} is a peer chosen to run full ChainSync.
-  It has never sent MsgAwaitReply or MsgRollBack.
+  It has never sent `MsgAwaitReply` or `MsgRollBack`.
 
-- A {Jumper} is a peer that idles until the CSJ governor occasionally sends it a MsgFindIntersect that offers to jump its header chain to the Dynamo's current header chain.
+- A {Jumper} is a peer that idles until the CSJ governor occasionally sends it a `MsgFindIntersect` that offers to jump its header chain to the Dynamo's current header chain.
 
 - A Jumper that rejects its offered jump becomes a {PreObjector}.
-  It sends subsequent bisecting MsgFindIntersect messages until its intersection with the Dynamo is exactly identified and then idles.
+  It sends subsequent bisecting `MsgFindIntersect` messages until its intersection with the Dynamo is exactly identified and then idles.
   (A PreObjector is referred to as a "dissenting jumper" in the code.)
 
 - The {Objector} is one of the PreObjectors with the oldest intersection with the Dynamo.
-  It also runs full ChainSync, in order to compete with the Dynamo via the GDD.
+  It also runs full `ChainSync`, in order to compete with the Dynamo via the GDD.
 
-- A {Disengaged} peer no longer participates in the CSJ optimization; it runs full ChainSync.
-  These are peers that have sent MsgAwaitReply or MsgRollBack.
+- A {Disengaged} peer no longer participates in the CSJ optimization; it runs full `ChainSync`.
+  These are peers that have sent `MsgAwaitReply` or `MsgRollBack`.
 
 Under some circumstances, the CSJ governor must choose a new Dynamo.
 The only constraint on this choosing mechanism is that it should eventually find an HAA-satisfying peer.
@@ -406,10 +406,10 @@ Peers are added to the end of the queue when they are first connected to.
 (The Devoted BlockFetch component specified below will also introduce an event that causes a peer to be moved to the end of this queue.)
 This is named the {Dynamo candidate queue}.
 
-The Dynamo offers a jump whenever its header chain has advanced by {MinJumpSlots} slots since it last offered a jump; the value of the MinJumpSlots design parameter is discussed in the [Parameter Tuning](#parameter-tuning) section.
-To offer a jump, the Dynamo makes a copy of its current candidate chain C and (via the CSJ governor) sends a corresponding MsgFindIntersect to every Jumper.
-If a Jumper accepts the entire jump, it's header chain is updated to C.
-If a Jumper refuses, additional bisecting MsgFindIntersect messages are sent to that peer in order to determine the exact intersection of its selection with C, and the peer becomes a PreObjector.
+The Dynamo offers a jump whenever its header chain has advanced by {MinJumpSlots} slots since it last offered a jump; the value of the `MinJumpSlots` design parameter is discussed in the [Parameter Tuning](#parameter-tuning) section.
+To offer a jump, the Dynamo makes a copy of its current candidate chain C and (via the CSJ governor) sends a corresponding `MsgFindIntersect` to every Jumper.
+If a Jumper accepts the entire jump, it's header chain is updated to `C`.
+If a Jumper refuses, additional bisecting `MsgFindIntersect` messages are sent to that peer in order to determine the exact intersection of its selection with `C`, and the peer becomes a PreObjector.
 While there are some PreObjectors, one with the oldest intersection is promoted to be the Objector, which might require demoting the current Objector back to PreObjector.
 It is crucial that no PreObjector has an older intersection than the Objector, since otherwise the forecast range might not be able to sufficiently advance for the GDD to resolve the competition between the Dynamo or the Objector.
 It is also important that there is only one Objector at a time, since all honest Jumpers would disagree with an alternative chain served by an adversarial Dynamo; multiple honest Objectors would violate the Limited Sync Load requirement.
@@ -417,16 +417,16 @@ It is also important that there is only one Objector at a time, since all honest
 Whenever a new peer becomes the Dynamo (eg because the GDD killed the previous Dynamo), all others peers (even the Objector) forget their most recent jump offer and are reset to Jumper.
 The new Dynamo immediately offers a jump to all Jumpers.
 
-If an Objector or a Dynamo sends MsgAwaitReply or MsgRollBack, then it immediately becomes Disengaged.
-In order to prevent adversarial peers from using MsgAwaitReply or MsgRollBack in order to waste the syncing nodes bandwidth and CPU by running full ChainSync for the historical chain, CSJ also enforces a {Limit on the Age of MsgAwaitReply/MsgRollBack}.
-This cannot be a perfect mitigation, since it's possible that an honest peer would need to rollback a header that is at most Scg slots old, even though that's very unlikely.
-But it's sufficient to simply limit that extra CPU cost to the final Scg window of the sync, instead of potentially paying that cost for the entire age of the chain.
-The maximum allowed age of a rolled back header is HistoricityCutoff, which cannot be less than Scg; see the [Parameter Tuning](#parameter-tuning) section below for more details.
-Any MsgRollBack that rolls back a header older than HistoricityCutoff (according to the wall clock) and any MsgAwaitReply that is sent when the candidate fragment tip is older than HistoricityCutoff immediately incurs a disconnection from that peer.
+If an Objector or a Dynamo sends `MsgAwaitReply` or `MsgRollBack`, then it immediately becomes Disengaged.
+In order to prevent adversarial peers from using `MsgAwaitReply` or `MsgRollBack` in order to waste the syncing nodes bandwidth and CPU by running full ChainSync for the historical chain, CSJ also enforces a {Limit on the Age of `MsgAwaitReply`/`MsgRollBack`}.
+This cannot be a perfect mitigation, since it's possible that an honest peer would need to rollback a header that is at most `Scg` slots old, even though that's very unlikely.
+But it's sufficient to simply limit that extra CPU cost to the final `Scg` window of the sync, instead of potentially paying that cost for the entire age of the chain.
+The maximum allowed age of a rolled back header is `HistoricityCutoff`, which cannot be less than `Scg`; see the [Parameter Tuning](#parameter-tuning) section below for more details.
+Any `MsgRollBack` that rolls back a header older than `HistoricityCutoff` (according to the wall clock) and any `MsgAwaitReply` that is sent when the candidate fragment tip is older than `HistoricityCutoff` immediately incurs a disconnection from that peer.
 
 The Dynamo, Objector, and every Disengaged peer are continually subject to the standard LoP.
 A CSJ Jumper's token bucket does not leak, though it does gain tokens when the Jumper accepts (some of) a jump, since the peer has effectly sent those headers.
-When a Jumper refuses a jump, it is only subject to the existing relatively-generous MsgFindIntersect timeout.
+When a Jumper refuses a jump, it is only subject to the existing relatively-generous `MsgFindIntersect` timeout.
 This may let an adversarial peer prevent the LoE anchor from advancing for a some minutes, but either the exact intersection is found, this PreObjector is reset to Jumper, or the peer is disengaged for sending a roll back.
 
 This component contributes to Sync Liveness and Limited Sync Load by eliminating redundant ChainSync exchanges.
