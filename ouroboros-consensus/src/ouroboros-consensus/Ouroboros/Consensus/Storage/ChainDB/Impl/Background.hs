@@ -634,6 +634,8 @@ addBlockRunner fuse cdb@CDB{..} = forever $ do
                   varBlockProcessed
                   (FailedToAddBlock "Failed to add block synchronously")
               pure ()
+            ChainSelAddPerasCert _cert varProcessed ->
+              void $ tryPutTMVar varProcessed ()
           closeChainSelQueue cdbChainSelQueue
       )
       ( \message -> do
@@ -642,6 +644,10 @@ addBlockRunner fuse cdb@CDB{..} = forever $ do
               trace PoppedReprocessLoEBlocksFromQueue
             ChainSelAddBlock BlockToAdd{blockToAdd} ->
               trace $ PoppedBlockFromQueue $ blockRealPoint blockToAdd
+            ChainSelAddPerasCert cert _varProcessed ->
+              traceWith cdbTracer $
+                TraceAddPerasCertEvent $
+                  PoppedPerasCertFromQueue (getPerasCertRound cert) (getPerasCertBoostedBlock cert)
           chainSelSync cdb message
           lift $ atomically $ processedChainSelMessage cdbChainSelQueue message
       )
