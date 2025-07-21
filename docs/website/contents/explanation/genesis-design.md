@@ -356,14 +356,20 @@ Otherwise, a disagreement amongst two peers might suffice to prevent the LoE anc
 This is in tension with the fact that any honest peer will inevitably exhibit some bursts of latency &mdash; even just garbage collection could cause it, eg, whether that collection be on the local node or on the remote peer.
 
 To accomodate this tension, the LoP is implemented as a token bucket.
-The bucket drips unless the peer has most recently sent MsgAwaitReply or their latest header is beyond the syncing node's forecast range.
+The bucket drips unless the peer has most recently sent `MsgAwaitReply` or their latest header is beyond the syncing node's forecast range.
 If the bucket is ever empty, the LoP disconnects from the peer.
 A token is added to the bucket whenever the peer sends a valid header that is longer (a la the block number) than any header they had previously sent, but it's discarded if the bucket is already full.
 
-The rate TDRIP at which the bucket drips and its maximum capacity TCAP are design parameters that must be tuned, see [Parameter Tuning](#parameter-tuning) below.
+The rate `TDRIP` at which the bucket drips and its maximum capacity `TCAP` are design parameters that must be tuned, see [Parameter Tuning](#parameter-tuning) below.
 
-This component contibutes to Sync Liveness because it forces a peer to enable a GDD decision within a duration of at most TDRIP × (TCAP + L), where L is the number of headers that can be in their alternative chain's GDD window before the GDD disconnects them.
-Parameter Tuning will ensure this is less than one minute per adversarial peer, for example.
+This component contibutes to [Sync Liveness](#sync-liveness) because it forces a peer to enable a GDD decision within a duration of at most:
+
+```
+TDRIP × (TCAP + L)
+```
+
+where `L` is the number of headers that can be in their alternative chain's GDD window before the GDD disconnects them.
+Parameter Tuning could ensure this is less than one minute per adversarial peer, for example.
 
 ### The ChainSync Jumping Component
 
