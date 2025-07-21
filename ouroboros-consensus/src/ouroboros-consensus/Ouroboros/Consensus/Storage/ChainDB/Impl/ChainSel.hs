@@ -370,16 +370,24 @@ chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks varProcessed) = do
           )
       <*> Query.getCurrentChain cdb
   let
-    succsOf' = Set.toList . succsOf . pointHash . castPoint
-    loeHashes = succsOf' (AF.anchorPoint chain)
-    firstHeader = either (const Nothing) Just $ AF.last chain
-    -- We avoid the VolatileDB for the headers we already have in the chain
-    getHeaderFromHash hash =
-      case firstHeader of
-        Just header | headerHash header == hash -> pure header
-        _ -> VolatileDB.getKnownBlockComponent cdbVolatileDB GetHeader hash
-  loeHeaders <- lift (mapM getHeaderFromHash loeHashes)
-  for_ loeHeaders $ \hdr ->
+    chainHashes :: [ChainHash blk]
+    chainHashes =
+      castHash . pointHash
+        <$> AF.anchorPoint chain : (blockPoint <$> AF.toOldestFirst chain)
+    chainHashesSet :: Set (ChainHash blk)
+    chainHashesSet = Set.fromList chainHashes
+
+    -- The hashes of all immediate successor blocks of blocks on our chain
+    -- (including the anchor) without hashes on our chain.
+    loeHashes :: [HeaderHash blk]
+    loeHashes =
+      [ loeHash
+      | hashSel <- chainHashes
+      , loeHash <- Set.toList $ succsOf hashSel
+      , BlockHash loeHash `Set.notMember` chainHashesSet
+      ]
+  for_ loeHashes $ \hash -> do
+    hdr <- lift $ VolatileDB.getKnownBlockComponent cdbVolatileDB GetHeader hash
     chainSelectionForBlock cdb BlockCache.empty hdr noPunishment
   lift $ atomically $ putTMVar varProcessed ()
 chainSelSync cdb@CDB{..} (ChainSelAddBlock BlockToAdd{blockToAdd = b, ..}) = do
