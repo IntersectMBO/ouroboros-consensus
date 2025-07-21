@@ -1351,6 +1351,8 @@ deriving instance SOP.Generic (PerasCertDB.TraceEvent blk)
 deriving instance SOP.HasDatatypeInfo (PerasCertDB.TraceEvent blk)
 deriving anyclass instance SOP.Generic (TraceChainSelStarvationEvent blk)
 deriving anyclass instance SOP.HasDatatypeInfo (TraceChainSelStarvationEvent blk)
+deriving anyclass instance SOP.Generic (TraceAddPerasCertEvent blk)
+deriving anyclass instance SOP.HasDatatypeInfo (TraceAddPerasCertEvent blk)
 
 data Tag
   = TagGetIsValidJust
@@ -1778,6 +1780,7 @@ traceEventName = \case
   TracePerasCertDbEvent ev -> "PerasCertDB." <> constrName ev
   TraceLastShutdownUnclean -> "LastShutdownUnclean"
   TraceChainSelStarvationEvent ev -> "ChainSelStarvation." <> constrName ev
+  TraceAddPerasCertEvent ev -> "AddPerasCert." <> constrName ev
 
 mkArgs ::
   IOLike m =>
