@@ -17,10 +17,11 @@ module Test.Ouroboros.Storage.PerasCertDB.StateMachine (tests) where
 import Control.Monad.State
 import Control.Tracer (nullTracer)
 import qualified Data.List.NonEmpty as NE
+import qualified Data.Set as Set
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import qualified Ouroboros.Consensus.Storage.PerasCertDB as PerasCertDB
-import Ouroboros.Consensus.Storage.PerasCertDB.API (PerasCertDB)
+import Ouroboros.Consensus.Storage.PerasCertDB.API (AddPerasCertResult (..), PerasCertDB)
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM
 import qualified Test.Ouroboros.Storage.PerasCertDB.Model as Model
@@ -51,7 +52,7 @@ instance StateModel Model where
   data Action Model a where
     OpenDB :: Action Model ()
     CloseDB :: Action Model ()
-    AddCert :: PerasCert TestBlock -> Action Model ()
+    AddCert :: PerasCert TestBlock -> Action Model AddPerasCertResult
     GetWeightSnapshot :: Action Model (PerasWeightSnapshot TestBlock)
     GarbageCollect :: SlotNo -> Action Model ()
 
@@ -124,6 +125,12 @@ instance RunModel Model (StateT (PerasCertDB IO TestBlock) IO) where
       perasCertDB <- get
       lift $ PerasCertDB.garbageCollect perasCertDB slot
 
+  postcondition (Model model, _) (AddCert cert) _ actual = do
+    let expected
+          | cert `Set.member` model.certs = PerasCertAlreadyInDB
+          | otherwise = AddedPerasCertToDB
+    counterexamplePost $ show expected <> " /= " <> show actual
+    pure $ expected == actual
   postcondition (Model model, _) GetWeightSnapshot _ actual = do
     let expected = Model.getWeightSnapshot model
     counterexamplePost $ "Model: " <> show expected

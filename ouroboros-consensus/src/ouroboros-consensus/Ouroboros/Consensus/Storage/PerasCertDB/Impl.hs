@@ -20,7 +20,6 @@ module Ouroboros.Consensus.Storage.PerasCertDB.Impl
   , PerasCertDbError (..)
   ) where
 
-import Control.Monad (join)
 import Control.Tracer (Tracer, nullTracer, traceWith)
 import Data.Kind (Type)
 import qualified Data.Map.Merge.Strict as Map
@@ -145,10 +144,10 @@ implAddCert ::
   ) =>
   PerasCertDbEnv m blk ->
   PerasCert blk ->
-  m ()
+  m AddPerasCertResult
 implAddCert env cert = do
   traceWith pcdbTracer $ AddingPerasCert roundNo boostedPt
-  join $ atomically $ do
+  res <- atomically $ do
     WithFingerprint
       PerasVolatileCertState
         { pvcsCerts
@@ -157,8 +156,7 @@ implAddCert env cert = do
       fp <-
       readTVar pcdbVolatileState
     if Map.member roundNo pvcsCerts
-      then do
-        pure $ traceWith pcdbTracer $ IgnoredCertAlreadyInDB roundNo boostedPt
+      then pure PerasCertAlreadyInDB
       else do
         writeTVar pcdbVolatileState $
           WithFingerprint
@@ -170,7 +168,11 @@ implAddCert env cert = do
                   Map.insertWith (<>) boostedPt boostPerCert pvcsWeightByPoint
               }
             (succ fp)
-        pure $ traceWith pcdbTracer $ AddedPerasCert roundNo boostedPt
+        pure AddedPerasCertToDB
+  traceWith pcdbTracer $ case res of
+    AddedPerasCertToDB -> AddedPerasCert roundNo boostedPt
+    PerasCertAlreadyInDB -> IgnoredCertAlreadyInDB roundNo boostedPt
+  pure res
  where
   PerasCertDbEnv
     { pcdbTracer

@@ -4,6 +4,7 @@
 
 module Ouroboros.Consensus.Storage.PerasCertDB.API
   ( PerasCertDB (..)
+  , AddPerasCertResult (..)
   ) where
 
 import NoThunks.Class
@@ -13,7 +14,7 @@ import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 
 data PerasCertDB m blk = PerasCertDB
-  { addCert :: PerasCert blk -> m ()
+  { addCert :: PerasCert blk -> m AddPerasCertResult
   , getWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
   -- ^ Return the Peras weights in order compare the current selection against
   -- potential candidate chains, namely the weights for blocks not older than
@@ -27,3 +28,6 @@ data PerasCertDB m blk = PerasCertDB
   , closeDB :: m ()
   }
   deriving NoThunks via OnlyCheckWhnfNamed "PerasCertDB" (PerasCertDB m blk)
+
+data AddPerasCertResult = AddedPerasCertToDB | PerasCertAlreadyInDB
+  deriving stock (Show, Eq)
