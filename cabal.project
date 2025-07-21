@@ -84,3 +84,19 @@ source-repository-package
     eras/byron/ledger/executable-spec
     eras/byron/ledger/impl
     eras/byron/crypto
+
+allow-newer:
+    -- https://github.com/phadej/vec/issues/121
+    , ral:QuickCheck
+    , fin:QuickCheck
+    , bin:QuickCheck
+
+-- Backported version of https://github.com/IntersectMBO/ouroboros-network/pull/5161
+source-repository-package
+   type: git
+   location: https://github.com/IntersectMBO/ouroboros-network
+   tag: b07a86ed853b63881b5a83e57508902f1562ac01
+   --sha256: sha256-n/XX0+cQegq2a1cAfmGx30T64eix4oEXzpVEFCKqmg0=
+   subdir:
+     ouroboros-network-api
+     ouroboros-network

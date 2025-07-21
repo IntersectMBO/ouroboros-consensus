@@ -33,7 +33,7 @@ import Ouroboros.Consensus.Ledger.SupportsProtocol
   )
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as CSJumping
-import Ouroboros.Consensus.Peras.Weight (emptyPerasWeightSnapshot)
+import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockPromise
   , ChainDB
@@ -46,14 +46,15 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunis
 import Ouroboros.Consensus.Util.AnchoredFragment
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.Orphans ()
+import Ouroboros.Consensus.Util.STM
 import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.Block (MaxSlotNo)
 import Ouroboros.Network.BlockFetch.ConsensusInterface
   ( BlockFetchConsensusInterface (..)
+  , ChainComparison (..)
   , ChainSelStarvation
   , FetchMode (..)
-  , FromConsensus (..)
   , PraosFetchMode (..)
   , mkReadFetchMode
   )
@@ -67,6 +68,7 @@ data ChainDbView m blk = ChainDbView
   , getMaxSlotNo :: STM m MaxSlotNo
   , addBlockAsync :: InvalidBlockPunishment m -> blk -> m (AddBlockPromise m blk)
   , getChainSelStarvation :: STM m ChainSelStarvation
+  , getPerasWeightSnapshot :: STM m (WithFingerprint (PerasWeightSnapshot blk))
   }
 
 defaultChainDbView :: ChainDB m blk -> ChainDbView m blk
@@ -78,6 +80,7 @@ defaultChainDbView chainDB =
     , getMaxSlotNo = ChainDB.getMaxSlotNo chainDB
     , addBlockAsync = ChainDB.addBlockAsync chainDB
     , getChainSelStarvation = ChainDB.getChainSelStarvation chainDB
+    , getPerasWeightSnapshot = ChainDB.getPerasWeightSnapshot chainDB
     }
 
 readFetchModeDefault ::
@@ -227,6 +230,16 @@ mkBlockFetchConsensusInterface
     readFetchedMaxSlotNo :: STM m MaxSlotNo
     readFetchedMaxSlotNo = getMaxSlotNo chainDB
 
+    readChainComparison :: STM m (WithFingerprint (ChainComparison (HeaderWithTime blk)))
+    readChainComparison =
+      fmap mkChainComparison <$> getPerasWeightSnapshot chainDB
+     where
+      mkChainComparison weights =
+        ChainComparison
+          { plausibleCandidateChain = plausibleCandidateChain weights
+          , compareCandidateChains = compareCandidateChains weights
+          }
+
     -- Note that @ours@ comes from the ChainDB and @cand@ from the ChainSync
     -- client.
     --
@@ -242,10 +255,11 @@ mkBlockFetchConsensusInterface
     -- fragment, our current chain might have changed.
     plausibleCandidateChain ::
       HasCallStack =>
+      PerasWeightSnapshot blk ->
       AnchoredFragment (HeaderWithTime blk) ->
       AnchoredFragment (HeaderWithTime blk) ->
       Bool
-    plausibleCandidateChain ours cand =
+    plausibleCandidateChain weights ours cand =
       -- 1. The ChainDB maintains the invariant that the anchor of our fragment
       --    corresponds to the immutable tip.
       --
@@ -270,20 +284,16 @@ mkBlockFetchConsensusInterface
         Just _ -> preferAnchoredCandidate bcfg weights ours cand
 
     compareCandidateChains ::
+      PerasWeightSnapshot blk ->
       AnchoredFragment (HeaderWithTime blk) ->
       AnchoredFragment (HeaderWithTime blk) ->
       Ordering
-    compareCandidateChains = compareAnchoredFragments bcfg weights
+    compareCandidateChains = compareAnchoredFragments bcfg
 
-    -- TODO requires https://github.com/IntersectMBO/ouroboros-network/pull/5161
-    weights = emptyPerasWeightSnapshot
-
-    headerForgeUTCTime :: FromConsensus (HeaderWithTime blk) -> STM m UTCTime
+    headerForgeUTCTime :: HeaderWithTime blk -> UTCTime
     headerForgeUTCTime =
-      pure
-        . fromRelativeTime (SupportsNode.getSystemStart bcfg)
+      fromRelativeTime (SupportsNode.getSystemStart bcfg)
         . hwtSlotRelativeTime
-        . unFromConsensus
 
     readChainSelStarvation = getChainSelStarvation chainDB
 

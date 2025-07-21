@@ -25,11 +25,11 @@ import Ouroboros.Consensus.Storage.PerasCertDB.API (AddPerasCertResult (..), Per
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Consensus.Util.STM
 import qualified Test.Ouroboros.Storage.PerasCertDB.Model as Model
-import Test.QuickCheck
+import Test.QuickCheck hiding (Some (..))
 import qualified Test.QuickCheck.Monadic as QC
 import Test.QuickCheck.StateModel
 import Test.Tasty
-import Test.Tasty.QuickCheck
+import Test.Tasty.QuickCheck hiding (Some (..))
 import Test.Util.TestBlock (TestBlock, TestHash (..))
 import Test.Util.TestEnv (adjustQuickCheckTests)
 
