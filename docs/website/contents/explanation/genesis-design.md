@@ -44,7 +44,6 @@ If the syncing node always has at least one peer that is honest, not itself sync
 The upper bound of unnecessary delay incurred during some interval of the sync is proportional to how many of the syncing node's upstream peers in that same interval are adversarial.
   It is beyond the scope of this design to ensure that count of adversarial peers remains below some reasonable bound (eg 50).
 
-
 ### Limited Sync Load
 
 A syncing node should avoid imposing excessive load on the honest network. For example, it should request the same block from multiple peers only as a last resort.
@@ -61,19 +60,29 @@ This design consists of the following components.
 
 The {Lightweight Checkpointing} logic allows configuration data (comparable in authority to the genesis block) to mandate that the node reject some chains as invalid by fiat.
 
-
 ### Genesis State Machine
 
 The {Genesis State Machine} ({GSM}) determines the node synchronization status. For this, it transitions between different states: pre-syncing, syncing, and caught-up.
   When the node is caught-up, the GSM disables all components of this design except Lightweight Checkpointing and the GSM itself.
-
 
 ### Limit on Eagerness
 
 The {Limit on Eagerness} ({LoE}) prevents the syncing node from selecting more than `Kcp` blocks beyond the intersection of its peers' latest selections.
   That interesction is called the {LoE anchor}.
   (The implementation maintains an LoE fragment.
-  In an unfortunate collision of names, the LoE anchor is the tip of the LoE fragment, _not_ its [`anchor`](https://github.com/IntersectMBO/ouroboros-network/blob/88bf7766ddb70579b730f777e53473dcdc23b6d0/ouroboros-network-api/src/Ouroboros/Network/AnchoredSeq.hs#L94), see here[^loe-anchor-example] for an example.)
+  In an unfortunate collision of names, the LoE anchor is the tip of the LoE fragment, _not_ its [`anchor`](https://github.com/IntersectMBO/ouroboros-network/blob/88bf7766ddb70579b730f777e53473dcdc23b6d0/ouroboros-network-api/src/Ouroboros/Network/AnchoredSeq.hs#L94).
+
+For example, consider the following candidate chains, all with anchor `A` and ending in `E`, `F` and `G`, respectively.
+
+```
+    A---B---C---D---E
+            \    \
+             \    \-F
+              \-G
+```
+
+The most recent common point on these fragments is `C`, which we call the **LoE anchor**.
+However, the LoE fragment (the longest shared common prefix of the candidate chains) is instead anchored in `A` (a recent immutable tip) and has tip `C`.
 
 ### Genesis Density Disconnection
 
@@ -156,7 +165,7 @@ Specifically, this allows for the [GDD](genesis-density-disconnection) to favor 
 
 The [GSM](#genesis-state-machine) directly ensures [No Praos Disruption](#no-praos-disruption) (unless the node becomes [eclipsed](Glossary#eclipse-attack) or the honest chain actually stops growing for too long).
 
-### Satisfying  Sync Safety
+### Satisfying Sync Safety
 
 The [LoE](#limit-on-eagerness) directly ensures Sync Safety, because the Honest Availability Assumption ensures that the LoE anchor is a prefix of the latest honest chain.
 
@@ -181,59 +190,56 @@ A single completely detailed proof would be ideal, but is beyond the project's r
 
 ## Component-level Designs
 
-Each subsection specifies the high-level design of one component.
+In the following sections, we describe the high-level design of the different Genesis components.
 
 ### The Lightweight Checkpointing Component
 
-[Link to code](https://github.com/IntersectMBO/ouroboros-consensus/blob/43c1fef4631d7a00879974e785c2291175a5f0dc/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HeaderValidation.hs#L318)
+[Lightweight Checkpointing](https://github.com/IntersectMBO/ouroboros-consensus/blob/43c1fef4631d7a00879974e785c2291175a5f0dc/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HeaderValidation.hs#L318) is one of the simplest components.
+The node configuration data [includes](https://github.com/IntersectMBO/cardano-node/blob/b11617eca88d6a09500bf7ae967d09e9194528f3/configuration/cardano/mainnet-checkpoints.json) a list of pairs of block number[^checkpoint-block-vs-slot-no] (ie chain length) and hash.
 
-The Lightweight Checkpointing is one of the simplest components.
-The node configuration data will include a list of pairs of block number[^checkpoint-block-vs-slot-no] (ie chain length) and hash.
+[^checkpoint-block-vs-slot-no]: We decided to use pairs of block numbers and hashes as the resulting semantics are very simple, in particular because any sufficiently long chain will contain a block with a given block number, in contrast to slot numbers (as slots can be empty). Depending on the exact context, one scheme or the other might be more convenient.
 
-[^checkpoint-block-vs-slot-no]: We decided to use pairs of block numbers and hashes as the resulting semantics are very simple, in particular because that any sufficiently long chain will contain a block with a given block number, in contrast to slot numbers (as slots can be empty). Depending on the exact context, one scheme or the other might be more convenient.
+During the [header validation](consensus-protocol#header-validity) process, the checkpoint mechanism introduces an additional dictionary (`Data.Map`) lookup for each header we want to validate. This is required to check whether the header has a corresponding checkpoint hash. If it does, the hash is compared against the header's own hash.
 
-Each pair N and H incurs an additional predicate to that node's header validation: if a header's block number is equal to N, then the header is valid if its hash is H.
+If an interval within the desired historical chain is sufficiently sparse such that the [GDD](#genesis-density-disconnection) might not prefer it, checkpoints can be used to prevent the GDD from detecting any competing alternative chains.
 
-If some interval of the desired historical chain is sufficiently sparse that the GDD might not prefer it, then checkpoints can be used to prevent the GDD from being aware of any competing alternative chains.
-There are two main options.
+When elaborating the list of checkpoints, there are two main options:
 
-- Add a checkpoint in at least each interval in which the desired chain doesn't necessarily have greater GDD density than some potential alternative chain.
-  This ensures the node will never see an alternative chain that would cause the GDD to disconnect from peers serving the (by fiat) desired chain.
-- Add merely one checkpoint that is after the weak interval.
-  This is enough to ensure that a node that was tricked onto an alternative chain will not be able to finish its sync.
-  But it's not enough to ensure the node will end up on the same chain as the honest network.
+- Add a checkpoint in at least every interval where the desired chain does not necessarily have greater GDD density than a potential alternative chain.
+This ensures the node will never encounter an alternative chain that would cause the GDD to disconnect from peers serving the desired chain (by fiat).
+- Add a single checkpoint placed after the weak interval.
+This is sufficient to prevent a node that was diverted onto an alternative chain from completing its sync.
+However, it does not guarantee the node will rejoin the same chain as the honest network.
 
 It cannot be emphasized enough that the list of checkpoints in the configuration data must be obtained from/signed by a trusted source.
 
 The Lightweight Checkpointing component is always active, regardless of whether the node is syncing.
-This could be changed, but this configuration data already needs such care that it shouldn't matter.
-In particular --- except perhaps _during_ a disaster scenario --- no configured checkpoint should ever be recent enough to affect a node that had already synced the desire chain, as required by No Praos Disruption.
+This could be changed, but this configuration data already needs to be elaborated with such care that it shouldn't matter.
+In particular --- except perhaps _during_ a disaster scenario --- no configured checkpoint should ever be recent enough to affect a node that had already synced the desire chain, as required by [No Praos Disruption](#no-praos-disruption).
 
-This component makes the Sync Safety requirement more flexible/expressive/accomodating, since it introduces the possibility of the community deciding to explicity overrule the GDD comparison for some (eg sparse) interval of the historical chain.
-In particular, this flexibility may be required by Disaster Tolerance: both during a disaster and even possibly after it, if the community decides to remain on that chain despite its weak interval.
+This component makes the [Sync Safety](#sync-safety) requirement more flexible and expressive, since it introduces the possibility of the community deciding to explicitly overrule the GDD comparison for some (eg sparse) interval of the historical chain.
+In particular, this flexibility is needed to satisfy [Disaster Tolerance](#disaster-tolerance): both during a disaster and even possibly after it, if the community decides to remain on that chain despite its weak interval.
 Ultimately, though, disasters may require more severe remediation, such as temporarily falling back to the Bootstrap Peers mechanism instead of Genesis.
 
 ### The Genesis State Machine Component
 
-[Link to code](https://github.com/IntersectMBO/ouroboros-consensus/blob/43c1fef4631d7a00879974e785c2291175a5f0dc/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/Node/GSM.hs)
+The [Genesis State Machine](https://github.com/IntersectMBO/ouroboros-consensus/blob/43c1fef4631d7a00879974e785c2291175a5f0dc/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/Node/GSM.hs) has three states.
 
-The Genesis State Machine has three states.
-
-- The {PreSyncing} state artificially sets the LoE anchor to the node's ImmutableDB tip --- the node cannot make any commitments.
+- The {PreSyncing} state artificially sets the [LoE anchor](TODO-ref) to the node's ImmutableDB tip --- the node cannot commit to any chain.
 - The {Syncing} state enables all of the functionality introduced by this design.
-- The {CaughtUp} state disables all of functionality introduced by this design except for Lightweight Checkpointing.
-  A node in the CaughtUp state is "just running Praos", and so it no longer needs to _constantly_ ensure the HAA.
+- The {CaughtUp} state disables all of functionality introduced by this design except for [Lightweight Checkpointing](#lightweight-checkpointing).
+  A node in the CaughtUp state is "just running Praos", and so it no longer needs to requires the [honest availability assumption](#sync-safety).
 
 The transitions are triggered as follows.
 
 - The nominal path consists of a cycle among the three states.
    - The GSM transitions from PreSyncing to Syncing when the Diffusion Layer indicates the HAA is satisfied.
    - The GSM transitions from Syncing to CaughtUp when every peer simultaneously indicates that is has no subsequent headers to send and the syncing node has selected a chain no worse than any received header.
-     This trigger is notably not time based, because an adversary is free to create an alternative chain with a very young tip in order to cause the node to lower its defenses by selecting it.
-     This is especially true in the context of an adversarial CSJ Dynamo (see below), which has a temporarily disproportionate influence over the syncing nodes selection.
-   - The GSM transitions from CaughtUp to PreSyncing only when the node's selection is older than MaxCaughtUpAge (eg the node was offline for a few hours).
-     The MaxCaughtUpAge duration is a parameter of this design; see [Parameter Tuning](#parameter-tuning) below for constraints on it.
-     Moreover, this transition is delayed by some small random duration (eg <5 minutes) in order to avoid an undesired simultaneity amongst honest nodes within a struggling honest network.
+     This trigger is notably not time based, because an adversary is free to create an alternative chain with a very young tip to cause the node to lower its defenses by selecting it.
+     This is especially true in the context of an adversarial CSJ Dynamo (see below), which has a temporarily disproportionate influence over the syncing nodes' selection.
+   - The GSM transitions from CaughtUp to PreSyncing only when the node's selection is older than `MaxCaughtUpAge` (eg the node was offline for a few hours).
+     The `MaxCaughtUpAge` duration is a parameter of this design; see [Parameter Tuning](#parameter-tuning) below for constraints on it.
+     Moreover, this transition is delayed by some small random duration (eg <5 minutes) to avoid an undesired simultaneity amongst honest nodes within a struggling honest network.
 - But that path is not necessarily guaranteed.
    - The GSM transitions from Syncing to PreSyncing if the Diffusion Layer indicates the HAA is no longer satisfied.
 
@@ -247,11 +253,12 @@ graph
 
     PreSyncing -- "HAA is satisfied" --> Syncing
     Syncing -- "HAA is no longer satisfied" --> PreSyncing
-    Syncing -- "all peers have most recently  sent MsgAwaitReply\nand the selection is ≥ the best header" --> CaughtUp
+    Syncing -- "all peers have most recently sent MsgAwaitReply
+	and the selection is ≥ the best header" --> CaughtUp
     CaughtUp -- "selection became older than MaxCaughtUpAge" --> PreSyncing
 
     StartUp[[Node start-up]]
-    StartUp -- "node was most recently in CaughtUp\nand selection is younger than MaxCaughtUpAge" --> CaughtUp
+    StartUp -- "node was most recently in CaughtUp and selection is younger than MaxCaughtUpAge" --> CaughtUp
     StartUp -- "otherwise" --> PreSyncing
 ```
 
@@ -263,45 +270,47 @@ Superficially, one would expect that a Syncing node needn't bother minting block
 On the other hand, the transition from Syncing to CaughtUp may be preceded by a duration in which the syncing node has the full chain but some peers are preventing it from concluding it has finished syncing.
 Wasting an election on a stale chain seems preferable to missing a minting opportunity.
 
-This component directly ensures No Praos Disruption, since the CaughtUp state disables all of the extra features and the Syncing state does not inhibit minting.
-The only difference is that the node will defensively transition to PreSyncing if it sees no new blocks for too long, eg if it's eclipsed for a duration of MaxCaughtUpAge and/or if the honest network actually doesn't mint blocks for a duration of MaxCaughtUpAge.
+This component directly ensures [No Praos Disruption](#no-praos-disruption), since the CaughtUp state disables all of the extra features and the Syncing state does not inhibit minting.
+The only difference is that the node will defensively transition to PreSyncing if it sees no new blocks for too long, eg if it's eclipsed for a duration of `MaxCaughtUpAge` and/or if the honest network actually doesn't mint blocks for a duration of `MaxCaughtUpAge`.
 
 When reasoning about this overall design, a virtual fourth state is often important to consider.
-The node is "almost CaughtUp"/"almost done syncing"/etc when it's technically in Syncing but its immutable tip is relatively close to the wall clock.
-This is the most difficult state to reason about because the new components are enabled while peers could be justifiably sending MsgAwaitReply and/or MsgRollBack.
-These messages are trivial to handle when syncing obviously historical parts of the chain, since they immediately indicate that the peer does not satisfy the HAA.
+The node is "almost CaughtUp"/"almost done syncing"/etc when it's technically in the Syncing state but its immutable tip is relatively close to the wall clock.
+This is the most difficult state to reason about because the new components are enabled while peers could be justifiably sending `MsgAwaitReply` and/or `MsgRollBack`.
+These messages are trivial to handle when syncing obviously historical parts of the chain, since they immediately indicate that the peer does not satisfy the honest availability assumption.
 But when it's almost CaughtUp, the new components must accommodate the potentially non-monotonic/stuttering/non-committal/reneging/etc semantics of these messages --- especially since even honest peers might be sending them.
 
 ### The Limit on Eagerness Component
 
 Link to code: [Trimming candidates](https://github.com/IntersectMBO/ouroboros-consensus/blob/43c1fef4631d7a00879974e785c2291175a5f0dc/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L691) [Trigger without block](https://github.com/input-output-hk/ouroboros-consensus/blob/43c1fef4631d7a00879974e785c2291175a5f0dc/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/Impl/ChainSel.hs#L320)
 
-The LoE is another of the simplest components.
-The LoE prevents the syncing node from selecting a block that is more than Kcp ahead of the LoE anchor, the intersection of all _current_ peers' header chains.
-(Recall the exception that PreSyncing instead fixes the LoE anchor to the tip of the ImmutableDB.)
+The LoE is another one of the simplest components.
+It prevents the syncing node from selecting a block that is more than `Kcp` ahead of the [LoE anchor](#limit-on-eagerness), the intersection of all _current_ peers' header chains.
+(Recall the exception that [PreSyncing](#the-genesis-state-machine-component)) instead fixes the LoE anchor to the tip of the ImmutableDB.)
 
-It is possible for the LoE anchor to move backwards, for example if a peer sends a roll back or if the syncing node connects to a new peer on a chain no one else was serving.
-This is the only way that the node's selection could be more than Kcp blocks ahead of the LoE.
+It is possible for the LoE anchor to move backwards, for example if a peer sends a rollback or if the syncing node connects to a new peer on a chain no one else was serving.
+This is the only way that the node's selection could be more than `Kcp` blocks ahead of the LoE.
 Because of the HAA, the GDD cannot favor this new chain, and so the GDD/LoP will disconnect from the peer unless it switches to the best chain.
 Thus such violations will be ephemeral in the design's assumed environment.
 
 The LoE anchor will always be an extension (possibly non-proper) of the ImmutableDB tip.
 Note that the ChainSync client already prohibits peers from rolling back past the ImmutableDB tip.
 
-One subtle consequence of the LoE is a necessary change in the existing Praos implementation.
-The chain selection logic ({ChainSel}) is currently only triggered by a block arriving.
+One subtle consequence of the LoE was a necessary change in the existing Praos implementation.
+The chain selection logic ({ChainSel}) was only triggered by a block arriving.
 However, when the LoE is enabled, ChainSel must also be triggered whenever the LoE advances, even if a block did not arrive.
-This may seem unnecessary, based on the idea that a subsequent block arrival should happen within some reasonable time bound.
-But that is not necessarily true.
-There are edge-case scenarios in which no additional blocks will arrive because none have been requested, which cannot happen until new headers are validated, which cannot happen until the forecast range advances, which cannot until the selection advances, which cannot until the LoE anchor advances.
 
-Moreover, due to the now-spoiled invariant, ChainSel is implemented in the context of "the block that just arrived".
-There isn't necessarily such a block when the LoE advances, so the new trigger of ChainSel must emulate that.
-Thus, whenever the LoE changes, ChainSel is invoked once per block in the VolatileDB that is an immediate successor of the tip of the ImmutableDB.
-(That is equipotent to reprocessing the ImmutableDB tip itself, but only involves mutable blocks.)
+This may seem unnecessary, assuming that a subsequent block will arrive within a reasonable time frame.
+However, that assumption doesn’t always hold.
+There are edge-case scenarios where no additional blocks arrive, not because they aren’t available, but because none have been requested yet.
+Blocks cannot be requested until new headers are validated, which cannot happen until the forecast range advances, which cannot happen until the selection advances, which in turn cannot happen until the LoE anchor progresses.
 
-This component directly ensures Sync Safety, since the HAA ensures that the LoE anchor is on the honest chain.
-It is worth emphasizing that every subsequent component below is designed for the sake of Sync Liveness and Limited Sync Load --- the LoE alone suffices for Sync Safety.
+Moreover, due to the now-invalidated invariant, ChainSel is implemented in the context of "the block that just arrived."
+When the LoE advances, such a block might not exist, so the new trigger for ChainSel must emulate its arrival.
+Therefore, whenever the LoE changes, ChainSel is invoked once for each block in the VolatileDB that is an immediate successor to the tip of the ImmutableDB.
+(This approach is identical to reprocessing the ImmutableDB tip itself, but operates only on mutable blocks.)
+
+This component directly ensures [Sync Safety](#sync-safety), since the HAA ensures that the LoE anchor is on the honest chain.
+It is worth emphasizing that every subsequent component described below is designed for the sake of Sync Liveness and Limited Sync Load &mdash; the LoE alone suffices for Sync Safety.
 
 ### The Genesis Density Disconnection Component without CSJ
 
@@ -803,14 +812,3 @@ Related idea: maybe that flag could just track whether the LoE anchor was an ext
      This could for example be accomplished by letting the jumpers jump to the tip of the dynamo just before rotation.
 - Possible improvements to the GDD:
    - Rerun GDD to disconnect peers earlier if the last run disconnected any peers.
-
-[^loe-anchor-example]:
-    For example, consider the following candidate chains, all with anchor `A` and ending in `E`, `F` and `G`, respectively.
-    ```
-    A---B---C---D---E
-            \    \
-             \    \-F
-              \-G
-    ```
-    The most recent common point on these fragments is `C`, which we call the LoE anchor.
-    However, the LoE fragment (the longest shared common prefix of the candidate chains) is instead anchored in `A` (a recent immutable tip) and has tip `C`.
