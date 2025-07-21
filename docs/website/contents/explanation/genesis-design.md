@@ -353,7 +353,7 @@ Link to code: [Token bucket](https://github.com/IntersectMBO/ouroboros-consensus
 If a peer claims to have subsequent headers, they must send them promptly.
 Otherwise, a disagreement amongst two peers might suffice to prevent the LoE anchor from advancing but not suffice for the GDD to make a decision.
 
-This is in tension with the fact that any honest peer will inevitably exhibit some bursts of latency --- even just garbage collection could cause it, eg, whether that collection be on the local node or on the remote peer.
+This is in tension with the fact that any honest peer will inevitably exhibit some bursts of latency &mdash; even just garbage collection could cause it, eg, whether that collection be on the local node or on the remote peer.
 
 To accomodate this tension, the LoP is implemented as a token bucket.
 The bucket drips unless the peer has most recently sent MsgAwaitReply or their latest header is beyond the syncing node's forecast range.
@@ -372,7 +372,7 @@ Parameter Tuning will ensure this is less than one minute per adversarial peer, 
 The ChainSync Jumping optimization is a backwards compatible optimization of the ChainSync mini protocol.
 Instead of simply running the normal ChainSync mini protocol with every peer, CSJ runs it with at most two while syncing the historical chain.
 This saves significant bandwidth and CPU for both the syncing node and all but one of its honest upstream peers.
-By the time the node transitions to the CaughtUp state, all peers will be running full ChainSync --- CSJ inherently ensures that, in addition to the GSM.
+By the time the node transitions to the CaughtUp state, all peers will be running full ChainSync &mdash; CSJ inherently ensures that, in addition to the GSM.
 
 The {CSJ governor} is centralized logic that divides peers into the following roles.
 
@@ -450,7 +450,7 @@ Both can be resolved by implementing additional disconnections according to Gene
 
 - Similarly, if the HAA-satisfying peers are all dormant, then it's possible that the node's selection is simultaneously longer than every peer's header chain and also branches off from some proper prefix of the LoE anchor.
   This is an unusual scenario, but may arise, for example, if the previous Dynamo recently disconnected (which implies it did not satisfy the HAA).
-  In this case, the DBF logic would idle, since no peer's header chain is better than the selection --- the node would not select the peers' blocks even if they did somehow arrive, since they're worse than the current selection.
+  In this case, the DBF logic would idle, since no peer's header chain is better than the selection &mdash; the node would not select the peers' blocks even if they did somehow arrive, since they're worse than the current selection.
   Moreover, deadlock is possible, since the Dynamo and Objector forecast ranges' do not necessarily include the entire GDD window.
   Thus the GDD is not necessarily able to make a decision between them, just as in the previous deadlock.
 
@@ -503,7 +503,7 @@ This component contributes to Sync Liveness by mitigating the discussed deadlock
 [Link to code](https://github.com/IntersectMBO/ouroboros-network/blob/28b731cde005a1de0b4be0ea0bd16852e827c1bc/ouroboros-network/src/Ouroboros/Network/BlockFetch/Decision/Genesis.hs#L9)
 
 The rationale for Devoted BlockFetch continues the theme from the HAA and CSJ: one peer suffices for actually fetching the chain, once identified the amongst the peers.
-For this component, the key insight is that --- so far, at least --- most Cardano blocks can be trasmitted much faster than they can be validated.
+For this component, the key insight is that &mdash; so far, at least &mdash; most Cardano blocks can be trasmitted much faster than they can be validated.
 Thus, once the syncing node starts requesting blocks from a peer that satisfies the HAA, blocks will tend to arrive faster than the syncing node can process them.
 That's a sufficient steady-state because the syncing node doesn't need to receive blocks any faster than that; doing so would just be wasting bandwidth, its own and its peers'.
 As a result, under nominal conditions, the syncing node will be able to fetch blocks from just one peer at a time.
@@ -527,7 +527,7 @@ When the node is initialized, E should be the empty set and T should be the curr
 
 Each iteration of the DBF logic executes the following steps.
 
-- If E is non-empty, then all those blocks were requested from a single peer --- that's the DBF invariant motivated above.
+- If E is non-empty, then all those blocks were requested from a single peer &mdash; that's the DBF invariant motivated above.
   If now > T + BlockFetchGracePeriod and the ChainSel logic has been blocked on an empty work queue at any point since the previous DBF logic iteration, then set E to the empty set.
   (The BlockFetch state must still ultimately track those blocks as in-flight, in order to enforce timeouts, per peer in-flight limits, etc.
   But the DBF logic is no longer influenced by those in-flight requests.)
@@ -584,7 +584,7 @@ This component contibutes to Sync Liveness for two reasons.
   But it might be in the same state once it does.
 
   The node can escape this state in a few ways, but the most important is that the longest header chain will soon enough be held by an honest peer.
-  When the node is syncing the historical chain: GDD and LoP ensure that the longest header chain of any peer will soon be the (honest) historical chain, and so offered by all honest peers --- CSJ doesn't spoil this because it will eventually offer a jump.
+  When the node is syncing the historical chain: GDD and LoP ensure that the longest header chain of any peer will soon be the (honest) historical chain, and so offered by all honest peers &mdash; CSJ doesn't spoil this because it will eventually offer a jump.
   When the node is almost done syncing: a healthy Praos network will frequently have its longest chain held by honest peers, so HAA ensures some honest peer's header chain will become the new longest chain.
 
 - If all peers have the longest chain, the syncing node might unfortunately choose to request it from an adversarial peer.
@@ -676,7 +676,7 @@ An adversary that is preventing the LoE anchor from advancing is {leashing} the 
 - HistoricityCutoff = 36+1 hours.
   This value must be greater than Scg of the Cardano chain's current era, which is 36 hours, and will remain so for the foreseeable future.
   It seems very unlikely that the community will increase the upper bound on settlement time, but if they did, then HistoricityCutoff would need to increase accordingly.
-  The extra hour is to eliminate corner cases/risks/etc --- eg 10 minutes would probably suffice just as well.
+  The extra hour is to eliminate corner cases/risks/etc &mdash; eg 10 minutes would probably suffice just as well.
 
   The primary cost of increasing HistoricityCutoff is that an adversarial peer could remove themselves from the CSJ optimization, thereby forcing the victim to sync every header younger that HistoricityCutoff from them as well as from the Dynamo.
   Thus, the potential cost of HistoricityCutoff is proportional to the number of adversarial peers, which is allowed in the definition of Sync Liveness.
@@ -793,7 +793,7 @@ The following additional work on Genesis is suggested, as priorities and resourc
 - Make MinJumpSlots dynamic such that it can vary per era (and in particular be larger in Shelley-based eras).
 - Ideally a peer whose candidate fragment branches off before the ImmDB must not satisfy the HAA.
   Therefore, the LoE anchor intersection could exclude that candidate fragment.
-  However, we've seen a repro where the honest peer does do that --- we're currently debugging it.
+  However, we've seen a repro where the honest peer does do that &mdash; we're currently debugging it.
   In the meantime, simply treating such a peer as having the ImmDB tip as their candidate fragment tip is sound; they were ignorable because they're doomed, so we can instead just wait for them to be disconnected.
 - Possible improvements to the LoE implementation:
    - Small-ish optimizations:
