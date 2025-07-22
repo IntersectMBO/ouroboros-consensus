@@ -508,7 +508,7 @@ openLedgerDB flavArgs env cfg fs = do
           Nothing
   (ldb, _, od) <- case flavArgs of
     LedgerDbFlavorArgsV1 bss ->
-      let snapManager = V1.snapshotManagement args
+      let snapManager = V1.snapshotManager args
           initDb =
             V1.mkInitDb
               args
@@ -518,7 +518,7 @@ openLedgerDB flavArgs env cfg fs = do
        in openDBInternal args initDb snapManager stream replayGoal
     LedgerDbFlavorArgsV2 bss -> do
       (snapManager, bss') <- case bss of
-        V2.V2Args V2.InMemoryHandleArgs -> pure (InMemory.snapshotManagement args, V2.InMemoryHandleEnv)
+        V2.V2Args V2.InMemoryHandleArgs -> pure (InMemory.snapshotManager args, V2.InMemoryHandleEnv)
         V2.V2Args (V2.LSMHandleArgs (V2.LSMArgs path genSalt mkFS)) -> do
           (rk1, V2.SomeHasFSAndBlockIO fs' blockio) <- mkFS (lgrRegistry args) "lsm"
           session <-
@@ -534,7 +534,7 @@ openLedgerDB flavArgs env cfg fs = do
                     (mkFsPath [path])
               )
               LSM.closeSession
-          pure (LSM.snapshotManagement (snd session) args, V2.LSMHandleEnv session rk1)
+          pure (LSM.snapshotManager (snd session) args, V2.LSMHandleEnv session rk1)
       let initDb =
             V2.mkInitDb
               args

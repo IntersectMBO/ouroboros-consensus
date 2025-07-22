@@ -27,8 +27,10 @@ data HandleArgs f m
 
 data LSMHandleArgs f m = LSMArgs
   { lsmFilePath :: HKD f FilePath
+  -- ^ The file path relative to the fast storage directory in which the LSM
+  -- trees database will be located.
   , lsmGenSalt :: HKD f (m Salt)
-  , lsmMkFS :: HKD f (ResourceRegistry m -> FilePath -> m (ResourceKey m, SomeHasFSAndBlockIO m))
+  , lsmMkFS :: HKD f (ResourceRegistry m -> m (ResourceKey m, SomeHasFSAndBlockIO m))
   }
 
 data SomeHasFSAndBlockIO m where

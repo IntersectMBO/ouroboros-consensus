@@ -70,7 +70,7 @@ openLedgerDB ::
     , LedgerDB.TestInternals' IO blk
     )
 openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.LedgerDbFlavorArgsV1 bss} = do
-  let snapManager = V1.snapshotManagement lgrDbArgs
+  let snapManager = V1.snapshotManager lgrDbArgs
   (ledgerDB, _, intLedgerDB) <-
     LedgerDB.openDBInternal
       lgrDbArgs
@@ -86,9 +86,9 @@ openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.L
   pure (ledgerDB, intLedgerDB)
 openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.LedgerDbFlavorArgsV2 args} = do
   (snapManager, bss') <- case args of
-    V2.V2Args V2.InMemoryHandleArgs -> pure (InMemory.snapshotManagement lgrDbArgs, V2.InMemoryHandleEnv)
+    V2.V2Args V2.InMemoryHandleArgs -> pure (InMemory.snapshotManager lgrDbArgs, V2.InMemoryHandleEnv)
     V2.V2Args (V2.LSMHandleArgs (V2.LSMArgs path genSalt mkFS)) -> do
-      (rk1, V2.SomeHasFSAndBlockIO fs' blockio) <- mkFS (LedgerDB.lgrRegistry lgrDbArgs) "lsm"
+      (rk1, V2.SomeHasFSAndBlockIO fs' blockio) <- mkFS (LedgerDB.lgrRegistry lgrDbArgs)
       session <-
         allocate
           (LedgerDB.lgrRegistry lgrDbArgs)
@@ -104,7 +104,7 @@ openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs = LedgerDB.L
                 (mkFsPath [path])
           )
           LSM.closeSession
-      pure (LSM.snapshotManagement (snd session) lgrDbArgs, V2.LSMHandleEnv session rk1)
+      pure (LSM.snapshotManager (snd session) lgrDbArgs, V2.LSMHandleEnv session rk1)
   (ledgerDB, _, intLedgerDB) <-
     LedgerDB.openDBInternal
       lgrDbArgs

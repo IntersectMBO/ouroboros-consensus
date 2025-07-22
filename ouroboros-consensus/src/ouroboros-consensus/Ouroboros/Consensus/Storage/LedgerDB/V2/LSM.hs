@@ -29,7 +29,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
     -- * Snapshots
   , loadSnapshot
   , snapshotToStatePath
-  , snapshotManagement
+  , snapshotManager
 
     -- * Serialise helpers
   , serialiseLSMViaMemPack
@@ -96,7 +96,6 @@ import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
 import qualified System.FS.BlockIO.API as BIO
 import System.FS.BlockIO.IO
-import qualified System.FilePath as FilePath
 import System.Random
 import Prelude hiding (read)
 
@@ -141,7 +140,7 @@ guardClosed tv f =
     LedgerTablesHandleClosed -> error $ show LSMClosedExn
     LedgerTablesHandleOpen st -> f st
 
-snapshotManagement ::
+snapshotManager ::
   ( IOLike m
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
@@ -149,14 +148,14 @@ snapshotManagement ::
   Session m ->
   Complete LedgerDbArgs m blk ->
   SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
-snapshotManagement session args =
-  snapshotManagement'
+snapshotManager session args =
+  snapshotManager'
     session
     (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
     (LedgerDBSnapshotEvent >$< lgrTracer args)
     (lgrHasFS args)
 
-snapshotManagement' ::
+snapshotManager' ::
   ( IOLike m
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
@@ -166,7 +165,7 @@ snapshotManagement' ::
   Tracer m (TraceSnapshotEvent blk) ->
   SomeHasFS m ->
   SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
-snapshotManagement' session ccfg tracer fs =
+snapshotManager' session ccfg tracer fs =
   SnapshotManager
     { listSnapshots = defaultListSnapshots fs
     , deleteSnapshot = implDeleteSnapshot session fs tracer
@@ -327,9 +326,7 @@ writeSnapshot ::
 writeSnapshot fs@(SomeHasFS hasFs) encLedger ds st = do
   createDirectoryIfMissing hasFs True $ snapshotToDirPath ds
   crc1 <- writeExtLedgerState fs encLedger (snapshotToStatePath ds) $ state st
-  crc2 <-
-    takeHandleSnapshot (tables st) (state st) $
-      show (dsNumber ds) <> maybe "" (("_" <>) . show) (dsSuffix ds)
+  crc2 <- takeHandleSnapshot (tables st) (state st) $ snapshotToDirName ds
   writeSnapshotMetadata fs ds $
     SnapshotMetadata
       { snapshotBackend = UTxOHDLSMSnapshot
@@ -345,7 +342,7 @@ implDeleteSnapshot session (SomeHasFS HasFS{doesDirectoryExist, removeDirectoryR
   Monad.when exists (removeDirectoryRecursive p)
   LSM.deleteSnapshot
     session
-    (fromString $ show (dsNumber ss) <> maybe "" (("_" <>) . show) (dsSuffix ss))
+    (fromString $ show (dsNumber ss) <> maybe "" ("_" <>) (dsSuffix ss))
   traceWith tracer (DeletedSnapshot ss)
 
 -- | Read snapshot from disk.
@@ -388,7 +385,7 @@ loadSnapshot tracer rr ccfg fs session ds = do
             ( \_ ->
                 LSM.openTableFromSnapshot
                   session
-                  (fromString $ show (dsNumber ds) <> maybe "" (("_" <>) . show) (dsSuffix ds))
+                  (fromString $ snapshotToDirName ds)
                   "UTxO table"
             )
             LSM.closeTable
@@ -413,11 +410,11 @@ stdGenSalt :: IO LSM.Salt
 stdGenSalt = fst . genWord64 <$> initStdGen
 
 stdMkBlockIOFS ::
-  FilePath -> ResourceRegistry IO -> FilePath -> IO (ResourceKey IO, V2.SomeHasFSAndBlockIO IO)
-stdMkBlockIOFS fastStoragePath rr relPath = do
+  FilePath -> ResourceRegistry IO -> IO (ResourceKey IO, V2.SomeHasFSAndBlockIO IO)
+stdMkBlockIOFS fastStoragePath rr = do
   (rk1, bio) <-
     allocate
       rr
-      (\_ -> ioHasBlockIO (MountPoint $ fastStoragePath FilePath.</> relPath) defaultIOCtxParams)
+      (\_ -> ioHasBlockIO (MountPoint fastStoragePath) defaultIOCtxParams)
       (BIO.close . snd)
   pure (rk1, uncurry V2.SomeHasFSAndBlockIO bio)

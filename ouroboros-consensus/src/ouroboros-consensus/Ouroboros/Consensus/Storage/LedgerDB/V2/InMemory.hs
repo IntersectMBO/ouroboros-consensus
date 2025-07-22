@@ -23,7 +23,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 
     -- * Snapshots
   , loadSnapshot
-  , snapshotManagement
+  , snapshotManager
 
     -- * snapshot-converter
   , implTakeSnapshot
@@ -156,20 +156,20 @@ newInMemoryLedgerTablesHandle tracer someFS@(SomeHasFS hasFS) l = do
   Snapshots
 -------------------------------------------------------------------------------}
 
-snapshotManagement ::
+snapshotManager ::
   ( IOLike m
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
   ) =>
   Complete LedgerDbArgs m blk ->
   SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
-snapshotManagement args =
-  snapshotManagement'
+snapshotManager args =
+  snapshotManager'
     (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
     (LedgerDBSnapshotEvent >$< lgrTracer args)
     (lgrHasFS args)
 
-snapshotManagement' ::
+snapshotManager' ::
   ( IOLike m
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
@@ -178,7 +178,7 @@ snapshotManagement' ::
   Tracer m (TraceSnapshotEvent blk) ->
   SomeHasFS m ->
   SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
-snapshotManagement' ccfg tracer fs =
+snapshotManager' ccfg tracer fs =
   SnapshotManager
     { listSnapshots = defaultListSnapshots fs
     , deleteSnapshot = defaultDeleteSnapshot fs tracer

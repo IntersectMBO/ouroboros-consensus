@@ -129,7 +129,7 @@
 --
 -- ------------------------------------------------------------------------------
 module Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots
-  ( snapshotManagement
+  ( snapshotManager
   , loadSnapshot
 
     -- * snapshot-converter
@@ -164,20 +164,20 @@ import Ouroboros.Consensus.Util.Enclose
 import Ouroboros.Consensus.Util.IOLike
 import System.FS.API
 
-snapshotManagement ::
+snapshotManager ::
   ( IOLike m
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
   ) =>
   Complete LedgerDbArgs m blk ->
   SnapshotManager m (ReadLocked m) blk (StrictTVar m (DbChangelog' blk), BackingStore' m blk)
-snapshotManagement args =
-  snapshotManagement'
+snapshotManager args =
+  snapshotManager'
     (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
     (LedgerDBSnapshotEvent >$< lgrTracer args)
     (SnapshotsFS (lgrHasFS args))
 
-snapshotManagement' ::
+snapshotManager' ::
   ( IOLike m
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
@@ -186,7 +186,7 @@ snapshotManagement' ::
   Tracer m (TraceSnapshotEvent blk) ->
   SnapshotsFS m ->
   SnapshotManager m (ReadLocked m) blk (StrictTVar m (DbChangelog' blk), BackingStore' m blk)
-snapshotManagement' ccfg tracer sfs@(SnapshotsFS fs) =
+snapshotManager' ccfg tracer sfs@(SnapshotsFS fs) =
   SnapshotManager
     { listSnapshots = defaultListSnapshots fs
     , deleteSnapshot = defaultDeleteSnapshot fs tracer
