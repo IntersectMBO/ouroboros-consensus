@@ -392,30 +392,30 @@ translateShelleyTables (LedgerTables utxoTable) =
 
 instance
   ( ShelleyBasedEra era
-  , SL.TranslateEra era WrapTx
+  , SL.TranslateEra era SL.Tx
   ) =>
   SL.TranslateEra era (GenTx :.: ShelleyBlock proto)
   where
-  type TranslationError era (GenTx :.: ShelleyBlock proto) = SL.TranslationError era WrapTx
+  type TranslationError era (GenTx :.: ShelleyBlock proto) = SL.TranslationError era SL.Tx
   translateEra ctxt (Comp (ShelleyTx _txId tx)) =
-    Comp . mkShelleyTx . unwrapTx @era
-      <$> SL.translateEra ctxt (WrapTx @(SL.PreviousEra era) tx)
+    Comp . mkShelleyTx
+      <$> SL.translateEra ctxt tx
 
 instance
   ( ShelleyBasedEra era
-  , SL.TranslateEra era WrapTx
+  , SL.TranslateEra era SL.Tx
   ) =>
   SL.TranslateEra era (WrapValidatedGenTx :.: ShelleyBlock proto)
   where
   type
     TranslationError era (WrapValidatedGenTx :.: ShelleyBlock proto) =
-      SL.TranslationError era WrapTx
+      SL.TranslationError era SL.Tx
   translateEra ctxt (Comp (WrapValidatedGenTx (ShelleyValidatedTx _txId vtx))) =
     Comp
       . WrapValidatedGenTx
       . mkShelleyValidatedTx
       . SL.coerceValidated
-      <$> SL.translateValidated @era @WrapTx ctxt (SL.coerceValidated vtx)
+      <$> SL.translateValidated @era @SL.Tx ctxt (SL.coerceValidated vtx)
 
 {-------------------------------------------------------------------------------
   Canonical TxIn

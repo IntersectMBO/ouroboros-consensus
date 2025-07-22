@@ -8,7 +8,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -26,7 +25,6 @@ module Ouroboros.Consensus.Shelley.Eras
     -- * Shelley-based era
   , ConwayEraGovDict (..)
   , ShelleyBasedEra (..)
-  , WrapTx (..)
 
     -- * Convenience functions
   , isBeforeConway
@@ -330,55 +328,3 @@ instance SupportsTwoPhaseValidation DijkstraEra where
             )
         ) -> True
     _ -> False
-
-{-------------------------------------------------------------------------------
-  Tx family wrapper
--------------------------------------------------------------------------------}
-
--- | Wrapper for partially applying the 'Tx' type family
---
--- For generality, Consensus uses that type family as eg the index of
--- 'Core.TranslateEra'. We thus need to partially apply it.
---
--- @cardano-ledger-specs@ also declares such a newtype, but currently it's only
--- defined in the Alonzo translation module, which seems somewhat inappropriate
--- to use for previous eras. Also, we use a @Wrap@ prefix in Consensus. Hence
--- this minor mediating definition. TODO I'm not even fully persuading myself
--- with this justification.
-newtype WrapTx era = WrapTx {unwrapTx :: Core.Tx era}
-
-instance Core.TranslateEra AllegraEra WrapTx where
-  type TranslationError AllegraEra WrapTx = Core.TranslationError AllegraEra Core.Tx
-  translateEra ctxt = fmap WrapTx . Core.translateEra ctxt . unwrapTx
-
-instance Core.TranslateEra MaryEra WrapTx where
-  type TranslationError MaryEra WrapTx = Core.TranslationError MaryEra Core.Tx
-  translateEra ctxt = fmap WrapTx . Core.translateEra ctxt . unwrapTx
-
-instance Core.TranslateEra AlonzoEra WrapTx where
-  type TranslationError AlonzoEra WrapTx = Core.TranslationError AlonzoEra Core.Tx
-  translateEra ctxt =
-    fmap WrapTx
-      . Core.translateEra @AlonzoEra ctxt
-      . unwrapTx
-
-instance Core.TranslateEra BabbageEra WrapTx where
-  type TranslationError BabbageEra WrapTx = Core.TranslationError BabbageEra Core.Tx
-  translateEra ctxt =
-    fmap WrapTx
-      . Core.translateEra @BabbageEra ctxt
-      . unwrapTx
-
-instance Core.TranslateEra ConwayEra WrapTx where
-  type TranslationError ConwayEra WrapTx = Core.TranslationError ConwayEra Core.Tx
-  translateEra ctxt =
-    fmap WrapTx
-      . Core.translateEra @ConwayEra ctxt
-      . unwrapTx
-
-instance Core.TranslateEra DijkstraEra WrapTx where
-  type TranslationError DijkstraEra WrapTx = Core.TranslationError DijkstraEra Core.Tx
-  translateEra ctxt =
-    fmap WrapTx
-      . Core.translateEra @DijkstraEra ctxt
-      . unwrapTx

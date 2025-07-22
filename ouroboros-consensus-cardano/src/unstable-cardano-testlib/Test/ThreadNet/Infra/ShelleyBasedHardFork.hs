@@ -90,7 +90,6 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Protocol.TPraos
-import Ouroboros.Consensus.Shelley.Eras
 import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Node
 import Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
@@ -186,7 +185,7 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
   , TranslateTxMeasure (TxMeasure (ShelleyBlock proto1 era1)) (TxMeasure (ShelleyBlock proto2 era2))
   , SL.PreviousEra era2 ~ era1
   , SL.TranslateEra era2 SL.NewEpochState
-  , SL.TranslateEra era2 WrapTx
+  , SL.TranslateEra era2 SL.Tx
   , SL.TranslationError era2 SL.NewEpochState ~ Void
   , -- At the moment, fix the protocols together
     ProtoCrypto proto1 ~ ProtoCrypto proto2
