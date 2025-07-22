@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -243,12 +244,19 @@ implReadRange tv st (mPrev, num) =
             pure
               ( LedgerTables . ValuesMK . Map.fromList $
                   [(k, (fromLSMTxOut st v)) | LSM.Entry k v <- entries]
-              , case snd <$> List.unsnoc entries of
+              , case snd <$> unsnoc entries of
                   Nothing -> Nothing
                   Just (LSM.Entry k _) -> Just k
                   Just (LSM.EntryWithBlob k _ _) -> Just k
               )
     )
+ where
+#if __GLASGOW_HASKELL__ < 908
+    unsnoc :: [a] -> Maybe ([a], a)
+    unsnoc = foldr (\x -> Just . maybe ([], x) (\(~(a, b)) -> (x : a, b))) Nothing
+#else
+    unsnoc = List.unsnoc
+#endif
 
 implPushDiffs ::
   forall m l.
