@@ -6,6 +6,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -47,7 +48,8 @@ module Ouroboros.Consensus.HardFork.History.Summary
   , summaryInit
   ) where
 
-import Cardano.Binary (enforceSize)
+import Cardano.Binary (DecoderError (DecoderErrorCustom), cborError, decodeListLen, enforceSize)
+import Cardano.Ledger.BaseTypes (StrictMaybe (..), fromSMaybe, isSJust)
 import Codec.CBOR.Decoding
   ( TokenType (TypeNull)
   , decodeNull
@@ -55,7 +57,7 @@ import Codec.CBOR.Decoding
   )
 import Codec.CBOR.Encoding (encodeListLen, encodeNull)
 import Codec.Serialise
-import Control.Monad (unless)
+import Control.Monad (unless, when)
 import Control.Monad.Except (Except, throwError)
 import Data.Bifunctor
 import Data.Foldable (toList)
@@ -83,6 +85,8 @@ data Bound = Bound
   { boundTime :: !RelativeTime
   , boundSlot :: !SlotNo
   , boundEpoch :: !EpochNo
+  , boundPerasRound :: !(StrictMaybe PerasRoundNo)
+  -- ^ Optional, as not every era will be Peras-enabled
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
@@ -93,6 +97,8 @@ initBound =
     { boundTime = RelativeTime 0
     , boundSlot = SlotNo 0
     , boundEpoch = EpochNo 0
+    , -- Peras is initially disabled
+      boundPerasRound = SNothing
     }
 
 -- | Version of 'mkUpperBound' when the upper bound may not be known
@@ -122,11 +128,15 @@ mkUpperBound EraParams{..} lo hiEpoch =
     { boundTime = addRelTime inEraTime $ boundTime lo
     , boundSlot = addSlots inEraSlots $ boundSlot lo
     , boundEpoch = hiEpoch
+    , boundPerasRound = addPerasRounds <$> inEraPerasRounds <*> boundPerasRound lo
     }
  where
   inEraEpochs, inEraSlots :: Word64
   inEraEpochs = countEpochs hiEpoch (boundEpoch lo)
   inEraSlots = inEraEpochs * unEpochSize eraEpochSize
+
+  inEraPerasRounds :: StrictMaybe Word64
+  inEraPerasRounds = div <$> SJust inEraSlots <*> (unPerasRoundLength <$> eraPerasRoundLength)
 
   inEraTime :: NominalDiffTime
   inEraTime = fromIntegral inEraSlots * getSlotLength eraSlotLength
@@ -182,6 +192,10 @@ slotToEpochBound EraParams{eraEpochSize = EpochSize epochSize} lo hiSlot =
 -- >       t' - t             ==     ((s' - s) * slotLen)
 -- >      (t' - t) / slotLen  ==       s' - s
 -- > s + ((t' - t) / slotLen) ==       s'
+--
+-- Ouroboros Peras adds an invariant relating epoch size and Peras voting round lengths:
+-- > epochSize % perasRoundLength == 0
+-- i.e. the round length should divide the epoch size
 data EraSummary = EraSummary
   { eraStart :: !Bound
   -- ^ Inclusive lower bound
@@ -219,8 +233,9 @@ newtype Summary xs = Summary {getSummary :: NonEmpty xs EraSummary}
 -------------------------------------------------------------------------------}
 
 -- | 'Summary' for a ledger that never forks
-neverForksSummary :: EpochSize -> SlotLength -> GenesisWindow -> Summary '[x]
-neverForksSummary epochSize slotLen genesisWindow =
+neverForksSummary ::
+  EpochSize -> SlotLength -> GenesisWindow -> StrictMaybe PerasRoundLength -> Summary '[x]
+neverForksSummary epochSize slotLen genesisWindow perasRoundLength =
   Summary $
     NonEmptyOne $
       EraSummary
@@ -232,6 +247,7 @@ neverForksSummary epochSize slotLen genesisWindow =
               , eraSlotLength = slotLen
               , eraSafeZone = UnsafeIndefiniteSafeZone
               , eraGenesisWin = genesisWindow
+              , eraPerasRoundLength = perasRoundLength
               }
         }
 
@@ -331,8 +347,16 @@ summarize ::
   Transitions xs ->
   Summary xs
 summarize ledgerTip = \(Shape shape) (Transitions transitions) ->
-  Summary $ go initBound shape transitions
+  Summary $ go initBoundWithPeras shape transitions
  where
+  -- as noted in the haddock, this function is only used for testing purposes,
+  -- therefore we make the initial era is Peras-enabled, which means
+  -- we only test Peras-enabled eras. It is rather difficult
+  -- to parameterise the test suite, as it requires also parameterise many non-test functions, like
+  -- 'HF.initBound', and leads to a huge diff. Therefore, we make the judgement call to
+  -- only test Peras-enabled eras.
+  initBoundWithPeras = initBound{boundPerasRound = SJust . PerasRoundNo $ 0}
+
   go ::
     Bound -> -- Lower bound for current era
     Exactly (x ': xs) EraParams -> -- params for all eras
@@ -471,6 +495,19 @@ invariantSummary = \(Summary summary) ->
               , " (INV-2b)"
               ]
 
+        when (isSJust $ eraPerasRoundLength curParams)
+          $ unless
+            ( (unEpochSize $ eraEpochSize curParams)
+                `mod` (fromSMaybe 0 $ unPerasRoundLength <$> eraPerasRoundLength curParams)
+                == 0
+            )
+          $ throwError
+          $ mconcat
+            [ "Invalid Peras round length "
+            , show curSummary
+            , " (Peras round length does not divide epoch size)"
+            ]
+
         go curEnd next
    where
     curStart :: Bound
@@ -484,18 +521,28 @@ invariantSummary = \(Summary summary) ->
 
 instance Serialise Bound where
   encode Bound{..} =
-    mconcat
-      [ encodeListLen 3
+    mconcat $
+      [ encodeListLen $ case boundPerasRound of
+          SNothing -> 3
+          SJust{} -> 4
       , encode boundTime
       , encode boundSlot
       , encode boundEpoch
       ]
+        <> case boundPerasRound of
+          SNothing -> []
+          SJust bound -> [encode bound]
 
   decode = do
-    enforceSize "Bound" 3
+    len <- decodeListLen
     boundTime <- decode
     boundSlot <- decode
     boundEpoch <- decode
+    boundPerasRound <-
+      if
+        | len == 3 -> pure SNothing
+        | len == 4 -> SJust <$> decode
+        | otherwise -> cborError (DecoderErrorCustom "Bound" "unexpected list length")
     return Bound{..}
 
 instance Serialise EraEnd where

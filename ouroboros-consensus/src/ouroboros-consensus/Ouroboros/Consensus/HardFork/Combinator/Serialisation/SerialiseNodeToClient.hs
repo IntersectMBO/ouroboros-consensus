@@ -539,7 +539,9 @@ encodeQueryIfCurrentResult (_ :* _) (EraNodeToClientDisabled :* _) (QZ qry) =
   qryDisabledEra ::
     forall blk fp result.
     SingleEraBlock blk =>
-    BlockQuery blk fp result -> result -> Encoding
+    BlockQuery blk fp result ->
+    result ->
+    Encoding
   qryDisabledEra _ _ = throw $ disabledEraException (Proxy @blk)
 encodeQueryIfCurrentResult (_ :* cs) (_ :* vs) (QS qry) =
   encodeQueryIfCurrentResult cs vs qry
@@ -560,7 +562,9 @@ decodeQueryIfCurrentResult (_ :* _) (EraNodeToClientDisabled :* _) (QZ qry) =
   qryDisabledEra ::
     forall blk fp result.
     SingleEraBlock blk =>
-    BlockQuery blk fp result -> forall s. Decoder s result
+    BlockQuery blk fp result ->
+    forall s.
+    Decoder s result
   qryDisabledEra _ = fail . show $ disabledEraException (Proxy @blk)
 decodeQueryIfCurrentResult (_ :* cs) (_ :* vs) (QS qry) =
   decodeQueryIfCurrentResult cs vs qry

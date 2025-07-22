@@ -64,7 +64,7 @@ module Test.Ouroboros.Storage.TestBlock
   ) where
 
 import Cardano.Crypto.DSIGN
-import Cardano.Ledger.BaseTypes (unNonZero)
+import Cardano.Ledger.BaseTypes (StrictMaybe (..), unNonZero)
 import qualified Codec.CBOR.Read as CBOR
 import qualified Codec.CBOR.Write as CBOR
 import Codec.Serialise (Serialise (decode, encode), serialise)
@@ -750,6 +750,7 @@ mkTestConfig k ChunkSize{chunkCanContainEBB, numRegularBlocks} =
       , eraSlotLength = slotLength
       , eraSafeZone = HardFork.StandardSafeZone (unNonZero (maxRollbacks k) * 2)
       , eraGenesisWin = GenesisWindow (unNonZero (maxRollbacks k) * 2)
+      , eraPerasRoundLength = SJust defaultPerasRoundLength
       }
 
 instance ImmutableEraParams TestBlock where

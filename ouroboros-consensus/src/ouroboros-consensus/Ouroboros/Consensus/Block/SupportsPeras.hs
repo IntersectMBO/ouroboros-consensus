@@ -10,12 +10,14 @@
 
 module Ouroboros.Consensus.Block.SupportsPeras
   ( PerasRoundNo (..)
+  , defaultPerasRoundNo
   , PerasWeight (..)
   , boostPerCert
   , BlockSupportsPeras (..)
   , PerasCert (..)
   ) where
 
+import Codec.Serialise.Class
 import Data.Monoid (Sum (..))
 import Data.Word (Word64)
 import GHC.Generics (Generic)
@@ -27,7 +29,10 @@ import Quiet (Quiet (..))
 newtype PerasRoundNo = PerasRoundNo {unPerasRoundNo :: Word64}
   deriving Show via Quiet PerasRoundNo
   deriving stock Generic
-  deriving newtype (Eq, Ord, NoThunks)
+  deriving newtype (Enum, Eq, Ord, NoThunks, Serialise)
+
+defaultPerasRoundNo :: PerasRoundNo
+defaultPerasRoundNo = PerasRoundNo 0
 
 instance Condense PerasRoundNo where
   condense = show . unPerasRoundNo

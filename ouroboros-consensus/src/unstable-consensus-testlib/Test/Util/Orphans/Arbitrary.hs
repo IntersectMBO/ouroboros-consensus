@@ -26,7 +26,7 @@ module Test.Util.Orphans.Arbitrary
   , genUTCTime50Years
   ) where
 
-import Cardano.Ledger.BaseTypes (NonZero (..), unsafeNonZero)
+import Cardano.Ledger.BaseTypes (NonZero (..), StrictMaybe (..), unsafeNonZero)
 import Data.Coerce (coerce)
 import Data.SOP.BasicFunctors
 import Data.SOP.Constraint
@@ -310,7 +310,17 @@ instance
 -------------------------------------------------------------------------------}
 
 instance Arbitrary EraParams where
-  arbitrary = EraParams <$> arbitrary <*> arbitrary <*> arbitrary <*> (GenesisWindow <$> arbitrary)
+  arbitrary =
+    EraParams
+      <$> arbitrary
+      <*> arbitrary
+      <*> arbitrary
+      <*> (GenesisWindow <$> arbitrary)
+      <*> mPerasRoundLength
+   where
+    mPerasRoundLength :: Gen (StrictMaybe PerasRoundLength)
+    mPerasRoundLength = do
+      (\x -> if x == 0 then SNothing else SJust . PerasRoundLength $ x) <$> arbitrary
 
 instance Arbitrary SafeZone where
   arbitrary =
@@ -332,6 +342,15 @@ instance Arbitrary Bound where
       <$> (RelativeTime <$> arbitrary)
       <*> (SlotNo <$> arbitrary)
       <*> (EpochNo <$> arbitrary)
+      <*> mPerasRoundNo
+   where
+    mPerasRoundNo :: Gen (StrictMaybe PerasRoundNo)
+    mPerasRoundNo = do
+      n <- arbitrary
+      pure $
+        if n == 0
+          then SNothing
+          else SJust (PerasRoundNo n)
 
 instance Arbitrary (K Past blk) where
   arbitrary = K <$> (Past <$> arbitrary <*> arbitrary)

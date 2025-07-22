@@ -3,6 +3,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeApplications #-}
@@ -17,8 +18,8 @@ module Ouroboros.Consensus.HardFork.History.EraParams
   , defaultEraParams
   ) where
 
-import Cardano.Binary (enforceSize)
-import Cardano.Ledger.BaseTypes (unNonZero)
+import Cardano.Binary (DecoderError (DecoderErrorCustom), cborError)
+import Cardano.Ledger.BaseTypes (StrictMaybe (..), unNonZero)
 import Codec.CBOR.Decoding (Decoder, decodeListLen, decodeWord8)
 import Codec.CBOR.Encoding (Encoding, encodeListLen, encodeWord8)
 import Codec.Serialise (Serialise (..))
@@ -136,6 +137,8 @@ data EraParams = EraParams
   , eraSlotLength :: !SlotLength
   , eraSafeZone :: !SafeZone
   , eraGenesisWin :: !GenesisWindow
+  , eraPerasRoundLength :: !(StrictMaybe PerasRoundLength)
+  -- ^ Optional, as not every era will be Peras-enabled
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
@@ -147,16 +150,21 @@ data EraParams = EraParams
 -- * epoch size to @10k@ slots
 -- * the safe zone to @2k@ slots
 -- * the upper bound to 'NoLowerBound'
+-- * the Peras Round Length is unset
 --
 -- This is primarily useful for tests.
 defaultEraParams :: SecurityParam -> SlotLength -> EraParams
 defaultEraParams (SecurityParam k) slotLength =
   EraParams
-    { eraEpochSize = EpochSize (unNonZero k * 10)
+    { eraEpochSize = EpochSize epochSize
     , eraSlotLength = slotLength
     , eraSafeZone = StandardSafeZone (unNonZero k * 2)
     , eraGenesisWin = GenesisWindow (unNonZero k * 2)
+    , -- Peras is disabled by default
+      eraPerasRoundLength = SNothing
     }
+ where
+  epochSize = unNonZero k * 10
 
 -- | Zone in which it is guaranteed that no hard fork can take place
 data SafeZone
@@ -235,17 +243,27 @@ decodeSafeBeforeEpoch = do
 instance Serialise EraParams where
   encode EraParams{..} =
     mconcat $
-      [ encodeListLen 4
+      [ encodeListLen $ case eraPerasRoundLength of
+          SNothing -> 4
+          SJust{} -> 5
       , encode (unEpochSize eraEpochSize)
       , encode eraSlotLength
       , encode eraSafeZone
       , encode (unGenesisWindow eraGenesisWin)
       ]
+        <> case eraPerasRoundLength of
+          SNothing -> []
+          SJust rl -> [encode (unPerasRoundLength rl)]
 
   decode = do
-    enforceSize "EraParams" 4
+    len <- decodeListLen
     eraEpochSize <- EpochSize <$> decode
     eraSlotLength <- decode
     eraSafeZone <- decode
     eraGenesisWin <- GenesisWindow <$> decode
+    eraPerasRoundLength <-
+      if
+        | len == 4 -> pure SNothing
+        | len == 5 -> SJust . PerasRoundLength <$> decode
+        | otherwise -> cborError (DecoderErrorCustom "EraParams" "unexpected list length")
     return EraParams{..}
