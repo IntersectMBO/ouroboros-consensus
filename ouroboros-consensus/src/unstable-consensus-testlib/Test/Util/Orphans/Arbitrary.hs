@@ -337,6 +337,7 @@ instance Arbitrary Bound where
       <$> (RelativeTime <$> arbitrary)
       <*> (SlotNo <$> arbitrary)
       <*> (EpochNo <$> arbitrary)
+      <*> (PerasRoundNo <$> arbitrary)
 
 instance Arbitrary (K Past blk) where
   arbitrary = K <$> (Past <$> arbitrary <*> arbitrary)

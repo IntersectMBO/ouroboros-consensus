@@ -83,6 +83,7 @@ data Bound = Bound
   { boundTime :: !RelativeTime
   , boundSlot :: !SlotNo
   , boundEpoch :: !EpochNo
+  , boundPerasRound :: !PerasRoundNo
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
@@ -93,6 +94,7 @@ initBound =
     { boundTime = RelativeTime 0
     , boundSlot = SlotNo 0
     , boundEpoch = EpochNo 0
+    , boundPerasRound = PerasRoundNo 0
     }
 
 -- | Version of 'mkUpperBound' when the upper bound may not be known
@@ -122,11 +124,14 @@ mkUpperBound EraParams{..} lo hiEpoch =
     { boundTime = addRelTime inEraTime $ boundTime lo
     , boundSlot = addSlots inEraSlots $ boundSlot lo
     , boundEpoch = hiEpoch
+    , boundPerasRound = addPerasRounds inEraPerasRounds $ boundPerasRound lo
     }
  where
-  inEraEpochs, inEraSlots :: Word64
+  inEraEpochs, inEraSlots, inEraPerasRounds :: Word64
   inEraEpochs = countEpochs hiEpoch (boundEpoch lo)
   inEraSlots = inEraEpochs * unEpochSize eraEpochSize
+  -- TODO(geo2a): the bound on Peras rounds may need to be
+  inEraPerasRounds = inEraSlots `div` (unPerasRoundLength eraPerasRoundLength)
 
   inEraTime :: NominalDiffTime
   inEraTime = fromIntegral inEraSlots * getSlotLength eraSlotLength
@@ -182,6 +187,10 @@ slotToEpochBound EraParams{eraEpochSize = EpochSize epochSize} lo hiSlot =
 -- >       t' - t             ==     ((s' - s) * slotLen)
 -- >      (t' - t) / slotLen  ==       s' - s
 -- > s + ((t' - t) / slotLen) ==       s'
+--
+-- Ouroboros Peras adds an invariant relating epoch size and Peras voting round lengths:
+-- > epochSize % perasRoundLength == 0
+-- i.e. the round length should divide the epoch size
 data EraSummary = EraSummary
   { eraStart :: !Bound
   -- ^ Inclusive lower bound
@@ -472,6 +481,17 @@ invariantSummary = \(Summary summary) ->
               , " (INV-2b)"
               ]
 
+        unless
+          ( (unEpochSize $ eraEpochSize curParams) `mod` (unPerasRoundLength $ eraPerasRoundLength curParams)
+              /= 0
+          ) $
+          throwError $
+            mconcat
+              [ "Invalid Peras round length "
+              , show curSummary
+              , " (Peras round length does not divide epoch size)"
+              ]
+
         go curEnd next
    where
     curStart :: Bound
@@ -486,17 +506,19 @@ invariantSummary = \(Summary summary) ->
 instance Serialise Bound where
   encode Bound{..} =
     mconcat
-      [ encodeListLen 3
+      [ encodeListLen 4
       , encode boundTime
       , encode boundSlot
       , encode boundEpoch
+      , encode boundPerasRound
       ]
 
   decode = do
-    enforceSize "Bound" 3
+    enforceSize "Bound" 4
     boundTime <- decode
     boundSlot <- decode
     boundEpoch <- decode
+    boundPerasRound <- decode
     return Bound{..}
 
 instance Serialise EraEnd where
