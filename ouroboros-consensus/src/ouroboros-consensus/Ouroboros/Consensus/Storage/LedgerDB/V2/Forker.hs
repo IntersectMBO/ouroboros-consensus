@@ -8,6 +8,7 @@
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2.Forker
   ( ForkerEnv (..)
+  , ForkerEnvResources (..)
   , implForkerCommit
   , implForkerGetLedgerState
   , implForkerPush
@@ -53,7 +54,7 @@ data ForkerEnv m l blk = ForkerEnv
   -- ^ Config
   , foeTracer :: !(Tracer m TraceForkerEvent)
   -- ^ Config
-  , foeResourcesToRelease :: !(RAWLock m (), ResourceKey m, StrictTVar m (m ()))
+  , foeResourcesToRelease :: !(ForkerEnvResources m)
   -- ^ Release the resources
   }
   deriving Generic
@@ -66,6 +67,15 @@ deriving instance
   , NoThunks (TxOut l)
   ) =>
   NoThunks (ForkerEnv m l blk)
+
+data ForkerEnvResources m = ForkerEnvResources
+  { foerRAWLock :: !(RAWLock m ())
+  , foerResourceKey :: !(ResourceKey m)
+  , foerStrictTVar :: !(StrictTVar m (m ()))
+  }
+  deriving Generic
+
+deriving instance IOLike m => NoThunks (ForkerEnvResources m)
 
 implForkerReadTables ::
   (MonadSTM m, GetTip l) =>
@@ -134,7 +144,7 @@ implForkerPush env newState = do
         traceWith (foeTracer env) ForkerPushEnd
         atomically $ do
           writeTVar (foeLedgerSeq env) lseq'
-          modifyTVar ((\(_, _, r) -> r) $ foeResourcesToRelease env) (>> close newtbs)
+          modifyTVar (foerStrictTVar $ foeResourcesToRelease env) (>> close newtbs)
     )
 
 implForkerCommit ::
@@ -173,7 +183,7 @@ implForkerCommit env = do
   -- actions for closing the states pushed to the forker. As we are committing
   -- those we have to close the ones discarded in this function and forget about
   -- those releasing actions.
-  writeTVar ((\(_, _, r) -> r) $ foeResourcesToRelease) closeDiscarded
+  writeTVar (foerStrictTVar $ foeResourcesToRelease) closeDiscarded
  where
   ForkerEnv
     { foeLedgerSeq

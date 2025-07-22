@@ -657,7 +657,12 @@ newForkerByRollback h rr n = getEnv h $ \ldbEnv ->
 
 closeForkerEnv ::
   IOLike m => ForkerEnv m l blk -> m ()
-closeForkerEnv ForkerEnv{foeResourcesToRelease = (lock, key, toRelease)} =
+closeForkerEnv ForkerEnv{foeResourcesToRelease = resources} = do
+  let ForkerEnvResources
+        { foerRAWLock = lock
+        , foerResourceKey = key
+        , foerStrictTVar = toRelease
+        } = resources
   RAWLock.withWriteAccess lock $
     const $ do
       id =<< atomically (swapTVar toRelease (pure ()))
@@ -764,7 +769,11 @@ newForker h ldbEnv rr st = do
           , foeSwitchVar = ldbSeq ldbEnv
           , foeSecurityParam = ledgerDbCfgSecParam $ ldbCfg ldbEnv
           , foeTracer = tr
-          , foeResourcesToRelease = (ldbOpenHandlesLock ldbEnv, k, toRelease)
+          , foeResourcesToRelease = ForkerEnvResources
+              { foerRAWLock = ldbOpenHandlesLock ldbEnv
+              , foerResourceKey = k
+              , foerStrictTVar = toRelease
+              }
           }
   atomically $ modifyTVar (ldbForkers ldbEnv) $ Map.insert forkerKey forkerEnv
   pure $
