@@ -66,35 +66,32 @@ source-repository-package
      ouroboros-network-api
 
 source-repository-package
-   type: git
-   location: https://github.com/IntersectMBO/cardano-ledger
-   tag: ca8d451bbce11dde3b68e99782c79f9b4c1dfca5
-   --sha256: sha256-YHIscWnp9GrFn0EYGM7xd8Ds8x0O00FWBAIZX22bWpA=
-   subdir:
-      eras/allegra/impl
-      eras/alonzo/impl
-      eras/alonzo/test-suite
-      eras/babbage/impl
-      eras/babbage/test-suite
-      eras/byron/chain/executable-spec
-      eras/byron/crypto
-      eras/byron/ledger/executable-spec
-      eras/byron/ledger/impl
-      eras/conway/impl
-      eras/conway/test-suite
-      eras/dijkstra/
-      eras/mary/impl
-      eras/shelley/impl
-      eras/shelley-ma/test-suite
-      eras/shelley/test-suite
-      libs/cardano-data
-      libs/cardano-ledger-api
-      libs/cardano-ledger-binary
-      libs/cardano-ledger-core
-      libs/cardano-ledger-test
-      libs/cardano-protocol-tpraos
-      libs/constrained-generators
-      libs/non-integral
-      libs/set-algebra
-      libs/small-steps
-      libs/vector-map
+  type: git
+  location: https://github.com/IntersectMBO/cardano-ledger
+  tag: ca8d451bbce11dde3b68e99782c79f9b4c1dfca5
+  --sha256: sha256-YHIscWnp9GrFn0EYGM7xd8Ds8x0O00FWBAIZX22bWpA=
+  subdir:
+    eras/allegra/impl
+    eras/alonzo/impl
+    eras/alonzo/test-suite
+    eras/babbage/impl
+    eras/babbage/test-suite
+    eras/byron/chain/executable-spec
+    eras/byron/crypto
+    eras/byron/ledger/executable-spec
+    eras/byron/ledger/impl
+    eras/conway/impl
+    eras/dijkstra
+    eras/mary/impl
+    eras/shelley/impl
+    eras/shelley-ma/test-suite
+    eras/shelley/test-suite
+    libs/cardano-data
+    libs/cardano-ledger-api
+    libs/cardano-ledger-binary
+    libs/cardano-ledger-core
+    libs/cardano-protocol-tpraos
+    libs/non-integral
+    libs/set-algebra
+    libs/small-steps
+    libs/vector-map
