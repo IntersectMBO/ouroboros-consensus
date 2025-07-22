@@ -41,6 +41,10 @@ module Ouroboros.Consensus.Block.Abstract
     -- * Ouroboros Genesis window
   , GenesisWindow (..)
 
+    -- * Ouroboros Peras round length
+  , PerasRoundLength (..)
+  , defaultPerasRoundLength
+
     -- * Re-export basic definitions from @ouroboros-network@
   , ChainHash (..)
   , HasHeader (..)
@@ -300,3 +304,16 @@ succWithOrigin = withOrigin minBound succ
 newtype GenesisWindow = GenesisWindow {unGenesisWindow :: Word64}
   deriving stock (Show, Eq, Ord)
   deriving newtype (NoThunks, Num)
+
+{-------------------------------------------------------------------------------
+  Ouroboros Peras round length
+-------------------------------------------------------------------------------}
+
+newtype PerasRoundLength = PerasRoundLength {unPerasRoundLength :: Word64}
+  deriving stock (Show, Eq, Ord)
+  deriving newtype (NoThunks, Num)
+
+-- | See the Protocol parameters section of the Peras design report:
+--   https://tweag.github.io/cardano-peras/peras-design.pdf#section.2.1
+defaultPerasRoundLength :: PerasRoundLength
+defaultPerasRoundLength = 90

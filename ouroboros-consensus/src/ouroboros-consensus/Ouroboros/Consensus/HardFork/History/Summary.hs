@@ -219,8 +219,8 @@ newtype Summary xs = Summary {getSummary :: NonEmpty xs EraSummary}
 -------------------------------------------------------------------------------}
 
 -- | 'Summary' for a ledger that never forks
-neverForksSummary :: EpochSize -> SlotLength -> GenesisWindow -> Summary '[x]
-neverForksSummary epochSize slotLen genesisWindow =
+neverForksSummary :: EpochSize -> SlotLength -> GenesisWindow -> PerasRoundLength -> Summary '[x]
+neverForksSummary epochSize slotLen genesisWindow perasRoundLength =
   Summary $
     NonEmptyOne $
       EraSummary
@@ -232,6 +232,7 @@ neverForksSummary epochSize slotLen genesisWindow =
               , eraSlotLength = slotLen
               , eraSafeZone = UnsafeIndefiniteSafeZone
               , eraGenesisWin = genesisWindow
+              , eraPerasRoundLength = perasRoundLength
               }
         }
 
