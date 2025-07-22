@@ -68,7 +68,7 @@ import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import System.FS.API
 import Prelude hiding (read)
 
-type SnapshotManagementV2 m blk = SnapshotManagement m m blk (StateRef m (ExtLedgerState blk))
+type SnapshotManagerV2 m blk = SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
 
 mkInitDb ::
   forall m blk.
@@ -81,7 +81,7 @@ mkInitDb ::
   Complete LedgerDbArgs m blk ->
   HandleEnv m ->
   ResolveBlock m blk ->
-  SnapshotManagementV2 m blk ->
+  SnapshotManagerV2 m blk ->
   InitDB (LedgerSeq' m blk) m blk
 mkInitDb args bss getBlock snapManager =
   InitDB
@@ -170,7 +170,7 @@ implMkLedgerDb ::
   , HasHardForkHistory blk
   ) =>
   LedgerDBHandle m l blk ->
-  SnapshotManagement m m blk (StateRef m (ExtLedgerState blk)) ->
+  SnapshotManager m m blk (StateRef m (ExtLedgerState blk)) ->
   (LedgerDB m l blk, TestInternals m l blk)
 implMkLedgerDb h snapManager =
   ( LedgerDB
@@ -196,7 +196,7 @@ mkInternals ::
   , ApplyBlock (ExtLedgerState blk) blk
   ) =>
   LedgerDBHandle m (ExtLedgerState blk) blk ->
-  SnapshotManagement m m blk (StateRef m (ExtLedgerState blk)) ->
+  SnapshotManager m m blk (StateRef m (ExtLedgerState blk)) ->
   TestInternals' m blk
 mkInternals h snapManager =
   TestInternals
@@ -246,7 +246,7 @@ mkInternals h snapManager =
 -- | Testing only! Truncate all snapshots in the DB. We only truncate the state
 -- file because it is unclear how to truncate the LSM database without
 -- corrupting it.
-implIntTruncateSnapshots :: MonadThrow m => SnapshotManagement m m blk st -> SomeHasFS m -> m ()
+implIntTruncateSnapshots :: MonadThrow m => SnapshotManager m m blk st -> SomeHasFS m -> m ()
 implIntTruncateSnapshots snapManager (SomeHasFS fs) = do
   snapshotsMapM_ snapManager $
     \pre -> withFile fs (snapshotToStatePath pre) (AppendMode AllowExisting) $
@@ -345,7 +345,7 @@ implTryTakeSnapshot ::
   ( l ~ ExtLedgerState blk
   , IOLike m
   ) =>
-  SnapshotManagement m m blk (StateRef m (ExtLedgerState blk)) ->
+  SnapshotManager m m blk (StateRef m (ExtLedgerState blk)) ->
   LedgerDBEnv m l blk ->
   Maybe (Time, Time) ->
   Word64 ->

@@ -147,7 +147,7 @@ snapshotManagement ::
   ) =>
   Session m ->
   Complete LedgerDbArgs m blk ->
-  SnapshotManagement m m blk (StateRef m (ExtLedgerState blk))
+  SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
 snapshotManagement session args =
   snapshotManagement'
     session
@@ -164,9 +164,9 @@ snapshotManagement' ::
   CodecConfig blk ->
   Tracer m (TraceSnapshotEvent blk) ->
   SomeHasFS m ->
-  SnapshotManagement m m blk (StateRef m (ExtLedgerState blk))
+  SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
 snapshotManagement' session ccfg tracer fs =
-  SnapshotManagement
+  SnapshotManager
     { listSnapshots = defaultListSnapshots fs
     , deleteSnapshot = implDeleteSnapshot session fs tracer
     , takeSnapshot = implTakeSnapshot ccfg tracer fs

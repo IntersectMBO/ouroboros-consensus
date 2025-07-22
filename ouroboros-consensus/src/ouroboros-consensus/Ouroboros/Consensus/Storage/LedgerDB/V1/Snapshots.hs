@@ -170,7 +170,7 @@ snapshotManagement ::
   , LedgerSupportsProtocol blk
   ) =>
   Complete LedgerDbArgs m blk ->
-  SnapshotManagement m (ReadLocked m) blk (StrictTVar m (DbChangelog' blk), BackingStore' m blk)
+  SnapshotManager m (ReadLocked m) blk (StrictTVar m (DbChangelog' blk), BackingStore' m blk)
 snapshotManagement args =
   snapshotManagement'
     (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
@@ -185,9 +185,9 @@ snapshotManagement' ::
   CodecConfig blk ->
   Tracer m (TraceSnapshotEvent blk) ->
   SnapshotsFS m ->
-  SnapshotManagement m (ReadLocked m) blk (StrictTVar m (DbChangelog' blk), BackingStore' m blk)
+  SnapshotManager m (ReadLocked m) blk (StrictTVar m (DbChangelog' blk), BackingStore' m blk)
 snapshotManagement' ccfg tracer sfs@(SnapshotsFS fs) =
-  SnapshotManagement
+  SnapshotManager
     { listSnapshots = defaultListSnapshots fs
     , deleteSnapshot = defaultDeleteSnapshot fs tracer
     , takeSnapshot = \suff (ldbVar, bs) -> implTakeSnapshot ldbVar ccfg tracer sfs bs suff
@@ -225,7 +225,7 @@ implTakeSnapshot ::
   -- | Override for snapshot numbering
   Maybe String ->
   ReadLocked m (Maybe (DiskSnapshot, RealPoint blk))
-implTakeSnapshot ldbvar ccfg tracer (SnapshotsFS hasFS') backingStore suffix = readLocked $ do
+implTakeSnapshot ldbvar ccfg tracer (SnapshotsFS hasFS) backingStore suffix = readLocked $ do
   state <- changelogLastFlushedState <$> readTVarIO ldbvar
   case pointToWithOriginRealPoint (castPoint (getTip state)) of
     Origin ->
@@ -233,13 +233,13 @@ implTakeSnapshot ldbvar ccfg tracer (SnapshotsFS hasFS') backingStore suffix = r
     NotOrigin t -> do
       let number = unSlotNo (realPointSlot t)
           snapshot = DiskSnapshot number suffix
-      diskSnapshots <- defaultListSnapshots hasFS'
+      diskSnapshots <- defaultListSnapshots hasFS
       if List.any (== DiskSnapshot number suffix) diskSnapshots
         then
           return Nothing
         else do
           encloseTimedWith (TookSnapshot snapshot t >$< tracer) $
-            writeSnapshot hasFS' backingStore (encodeDiskExtLedgerState ccfg) snapshot state
+            writeSnapshot hasFS backingStore (encodeDiskExtLedgerState ccfg) snapshot state
           return $ Just (snapshot, t)
 
 -- | Write snapshot to disk

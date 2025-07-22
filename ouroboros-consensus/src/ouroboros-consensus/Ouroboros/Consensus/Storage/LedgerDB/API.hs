@@ -505,7 +505,7 @@ initialize ::
   StreamAPI m blk blk ->
   Point blk ->
   InitDB db m blk ->
-  SnapshotManagement m n blk st ->
+  SnapshotManager m n blk st ->
   Maybe DiskSnapshot ->
   m (InitLog blk, db, Word64)
 initialize

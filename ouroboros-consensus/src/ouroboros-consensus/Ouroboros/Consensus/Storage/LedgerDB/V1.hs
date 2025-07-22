@@ -71,8 +71,8 @@ import qualified Ouroboros.Network.AnchoredSeq as AS
 import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import System.FS.API
 
-type SnapshotManagementV1 m blk =
-  SnapshotManagement m (ReadLocked m) blk (StrictTVar m (DbChangelog' blk), BackingStore' m blk)
+type SnapshotManagerV1 m blk =
+  SnapshotManager m (ReadLocked m) blk (StrictTVar m (DbChangelog' blk), BackingStore' m blk)
 
 mkInitDb ::
   forall m blk.
@@ -84,7 +84,7 @@ mkInitDb ::
   Complete LedgerDbArgs m blk ->
   Complete V1.LedgerDbFlavorArgs m ->
   ResolveBlock m blk ->
-  SnapshotManagementV1 m blk ->
+  SnapshotManagerV1 m blk ->
   InitDB (DbChangelog' blk, ResourceKey m, BackingStore' m blk) m blk
 mkInitDb args bss getBlock snapManager =
   InitDB
@@ -178,7 +178,7 @@ implMkLedgerDb ::
   , HasHardForkHistory blk
   ) =>
   LedgerDBHandle m l blk ->
-  SnapshotManagementV1 m blk ->
+  SnapshotManagerV1 m blk ->
   (LedgerDB' m blk, TestInternals' m blk)
 implMkLedgerDb h snapManager =
   ( LedgerDB
@@ -289,7 +289,7 @@ implTryTakeSnapshot ::
   ( l ~ ExtLedgerState blk
   , IOLike m
   ) =>
-  SnapshotManagementV1 m blk ->
+  SnapshotManagerV1 m blk ->
   LedgerDBEnv m l blk ->
   Maybe (Time, Time) ->
   Word64 ->
@@ -352,7 +352,7 @@ mkInternals ::
   , ApplyBlock (ExtLedgerState blk) blk
   ) =>
   LedgerDBHandle m (ExtLedgerState blk) blk ->
-  SnapshotManagementV1 m blk ->
+  SnapshotManagerV1 m blk ->
   TestInternals' m blk
 mkInternals h snapManager =
   TestInternals
@@ -389,7 +389,7 @@ implIntTakeSnapshot ::
   , LedgerSupportsProtocol blk
   , l ~ ExtLedgerState blk
   ) =>
-  SnapshotManagementV1 m blk ->
+  SnapshotManagerV1 m blk ->
   LedgerDBEnv m l blk ->
   WhereToTakeSnapshot ->
   Maybe String ->

@@ -162,7 +162,7 @@ snapshotManagement ::
   , LedgerSupportsProtocol blk
   ) =>
   Complete LedgerDbArgs m blk ->
-  SnapshotManagement m m blk (StateRef m (ExtLedgerState blk))
+  SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
 snapshotManagement args =
   snapshotManagement'
     (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig args)
@@ -177,9 +177,9 @@ snapshotManagement' ::
   CodecConfig blk ->
   Tracer m (TraceSnapshotEvent blk) ->
   SomeHasFS m ->
-  SnapshotManagement m m blk (StateRef m (ExtLedgerState blk))
+  SnapshotManager m m blk (StateRef m (ExtLedgerState blk))
 snapshotManagement' ccfg tracer fs =
-  SnapshotManagement
+  SnapshotManager
     { listSnapshots = defaultListSnapshots fs
     , deleteSnapshot = defaultDeleteSnapshot fs tracer
     , takeSnapshot = implTakeSnapshot ccfg tracer fs

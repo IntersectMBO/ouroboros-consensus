@@ -739,7 +739,6 @@ test-suite storage-test
     fs-api ^>=0.4,
     fs-sim ^>=0.4,
     generics-sop,
-    hashable,
     io-classes:{io-classes, strict-mvar, strict-stm},
     io-sim,
     lsm-tree,

@@ -118,7 +118,7 @@ doOpenDB ::
   ) =>
   Complete LedgerDbArgs m blk ->
   InitDB db m blk ->
-  SnapshotManagement m n blk st ->
+  SnapshotManager m n blk st ->
   StreamAPI m blk blk ->
   Point blk ->
   m (LedgerDB' m blk, Word64)
@@ -136,7 +136,7 @@ openDBInternal ::
   ) =>
   Complete LedgerDbArgs m blk ->
   InitDB db m blk ->
-  SnapshotManagement m n blk st ->
+  SnapshotManager m n blk st ->
   StreamAPI m blk blk ->
   Point blk ->
   m (LedgerDB' m blk, Word64, TestInternals' m blk)
