@@ -38,6 +38,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
 
     -- * snapshot-converter
   , implTakeSnapshot
+  , LSM.withNewSession
   ) where
 
 import Cardano.Binary as CBOR

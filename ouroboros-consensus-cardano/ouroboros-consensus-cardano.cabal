@@ -700,6 +700,7 @@ executable snapshot-converter
     cardano-crypto-class,
     cardano-crypto-wrapper,
     contra-tracer,
+    directory,
     filepath,
     fs-api,
     mtl,
