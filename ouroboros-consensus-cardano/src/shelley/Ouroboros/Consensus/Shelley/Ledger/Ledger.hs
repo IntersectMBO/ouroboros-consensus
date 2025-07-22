@@ -113,6 +113,7 @@ import Ouroboros.Consensus.Config
 import Ouroboros.Consensus.HardFork.Abstract
 import Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
+import Ouroboros.Consensus.HardFork.History.EraParams (EraParams (eraPerasRoundLength))
 import Ouroboros.Consensus.HardFork.History.Util
 import Ouroboros.Consensus.HardFork.Simple
 import Ouroboros.Consensus.HeaderValidation
@@ -168,6 +169,7 @@ shelleyEraParams genesis =
     , eraSlotLength = mkSlotLength $ SL.fromNominalDiffTimeMicro $ SL.sgSlotLength genesis
     , eraSafeZone = HardFork.StandardSafeZone stabilityWindow
     , eraGenesisWin = GenesisWindow stabilityWindow
+    , eraPerasRoundLength = Nothing -- Shelley is not Peras-enabled
     }
  where
   stabilityWindow =
@@ -183,6 +185,7 @@ shelleyEraParamsNeverHardForks genesis =
     , eraSlotLength = mkSlotLength $ SL.fromNominalDiffTimeMicro $ SL.sgSlotLength genesis
     , eraSafeZone = HardFork.UnsafeIndefiniteSafeZone
     , eraGenesisWin = GenesisWindow stabilityWindow
+    , eraPerasRoundLength = Nothing -- Shelley is not Peras-enabled
     }
  where
   stabilityWindow =
