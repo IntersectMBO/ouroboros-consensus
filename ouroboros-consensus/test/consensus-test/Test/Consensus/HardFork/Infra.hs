@@ -35,8 +35,9 @@ import Data.SOP.Strict
 import Data.Word
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.BlockchainTime
+import Ouroboros.Consensus.HardFork.History (Bound (..))
 import qualified Ouroboros.Consensus.HardFork.History as HF
-import Ouroboros.Consensus.HardFork.History.EraParams (EraParams(..))
+import Ouroboros.Consensus.HardFork.History.EraParams (EraParams (..))
 import Test.QuickCheck
 
 {-------------------------------------------------------------------------------
@@ -167,7 +168,7 @@ genSummary is =
   -- to parameterise the test suite, as it requires also parameterise many non-test functions, like
   -- 'HF.initBound', and leads to a huge diff. Therefore, we make the judgement call to
   -- only test Peras-enabled eras.
-  initBoundWithPeras = HF.initBound{HF.boundPerasRound = Just . PerasRoundNo $ 0}
+  initBoundWithPeras = HF.initBound{boundPerasRound = Just . PerasRoundNo $ 0}
 
   genEraSummary :: Era -> HF.Bound -> Gen (HF.EraSummary, HF.EraEnd)
   genEraSummary _era lo = do

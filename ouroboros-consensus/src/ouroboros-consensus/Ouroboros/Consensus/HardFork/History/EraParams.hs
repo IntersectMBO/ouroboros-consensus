@@ -149,6 +149,7 @@ data EraParams = EraParams
 -- * epoch size to @10k@ slots
 -- * the safe zone to @2k@ slots
 -- * the upper bound to 'NoLowerBound'
+-- * the Peras Round Length is unset
 --
 -- This is primarily useful for tests.
 defaultEraParams :: SecurityParam -> SlotLength -> EraParams
