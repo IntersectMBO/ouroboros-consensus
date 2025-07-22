@@ -750,6 +750,7 @@ mkTestConfig k ChunkSize{chunkCanContainEBB, numRegularBlocks} =
       , eraSlotLength = slotLength
       , eraSafeZone = HardFork.StandardSafeZone (unNonZero (maxRollbacks k) * 2)
       , eraGenesisWin = GenesisWindow (unNonZero (maxRollbacks k) * 2)
+      , eraPerasRoundLength = HardFork.PerasEnabled defaultPerasRoundLength
       }
 
 instance ImmutableEraParams TestBlock where

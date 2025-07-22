@@ -23,6 +23,10 @@ module Ouroboros.Consensus.Block.SupportsPeras
   , getPerasCertRound
   , getPerasCertBoostedBlock
   , getPerasCertBoost
+
+    -- * Ouroboros Peras round length
+  , PerasRoundLength (..)
+  , defaultPerasRoundLength
   ) where
 
 import Codec.Serialise (Serialise (..))
@@ -41,7 +45,7 @@ import Quiet (Quiet (..))
 newtype PerasRoundNo = PerasRoundNo {unPerasRoundNo :: Word64}
   deriving Show via Quiet PerasRoundNo
   deriving stock Generic
-  deriving newtype (Eq, Ord, NoThunks, Serialise)
+  deriving newtype (Enum, Eq, Ord, NoThunks, Serialise)
 
 instance Condense PerasRoundNo where
   condense = show . unPerasRoundNo
@@ -69,6 +73,20 @@ data ValidatedPerasCert blk = ValidatedPerasCert
   }
   deriving stock (Show, Eq, Ord, Generic)
   deriving anyclass NoThunks
+
+{-------------------------------------------------------------------------------
+  Ouroboros Peras round length
+-------------------------------------------------------------------------------}
+
+newtype PerasRoundLength = PerasRoundLength {unPerasRoundLength :: Word64}
+  deriving stock (Show, Eq, Ord)
+  deriving newtype (NoThunks, Num)
+
+-- | See the Protocol parameters section of the Peras design report:
+--   https://tweag.github.io/cardano-peras/peras-design.pdf#section.2.1
+-- TODO this will become a Ledger protocol parameter
+defaultPerasRoundLength :: PerasRoundLength
+defaultPerasRoundLength = 90
 
 class
   ( Show (PerasCfg blk)
