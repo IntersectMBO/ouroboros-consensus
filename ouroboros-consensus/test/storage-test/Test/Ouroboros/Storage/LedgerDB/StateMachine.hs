@@ -520,7 +520,7 @@ openLedgerDB flavArgs env cfg fs = do
       (snapManager, bss') <- case bss of
         V2.V2Args V2.InMemoryHandleArgs -> pure (InMemory.snapshotManager args, V2.InMemoryHandleEnv)
         V2.V2Args (V2.LSMHandleArgs (V2.LSMArgs path genSalt mkFS)) -> do
-          (rk1, V2.SomeHasFSAndBlockIO fs' blockio) <- mkFS (lgrRegistry args) "lsm"
+          (rk1, V2.SomeHasFSAndBlockIO fs' blockio) <- mkFS (lgrRegistry args)
           session <-
             allocate
               (lgrRegistry args)
