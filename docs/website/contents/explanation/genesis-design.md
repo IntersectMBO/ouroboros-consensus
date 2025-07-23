@@ -417,6 +417,8 @@ It is also important that there is only one Objector at a time, since all honest
 Whenever a new peer becomes the Dynamo (eg because the GDD killed the previous Dynamo), all others peers (even the Objector) forget their most recent jump offer and are reset to Jumper.
 The new Dynamo immediately offers a jump to all Jumpers.
 
+Note that, CSJ can [cause](https://github.com/intersectmbo/ouroboros-consensus/blob/c1fa8f386036d67b6d44fc9e6efc78cb97f33ed9/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Genesis/Governor.hs#L318) candidate fragments to recede without a rollback. This could happen if an Objector becomes a Jumper again, we request a jump to a point `p`, and by the time they accept it, the immutable tip moves past `p`.
+
 If an Objector or a Dynamo sends `MsgAwaitReply` or `MsgRollBack`, then it immediately becomes Disengaged.
 In order to prevent adversarial peers from using `MsgAwaitReply` or `MsgRollBack` in order to waste the syncing nodes bandwidth and CPU by running full ChainSync for the historical chain, CSJ also enforces a {Limit on the Age of `MsgAwaitReply`/`MsgRollBack`}.
 This cannot be a perfect mitigation, since it's possible that an honest peer would need to rollback a header that is at most `Scg` slots old, even though that's very unlikely.
@@ -801,10 +803,6 @@ The following additional work on Genesis is suggested, as priorities and resourc
    - Do not trigger chain selection when the LoE anchor moved backwards on a chain.
    - When computing the density upper bound in the GDD, we could use probabilistic argument with a sufficiently low failure probability to bound the number of the remaining slots that could be active to a value lower than the pessimistic current estimate that every slot might be active. However, the LoP guarantees that this is not necessary for liveness.
 - Make `MinJumpSlots` dynamic such that it can vary per era (and in particular be larger in Shelley-based eras).
-- Ideally a peer whose candidate fragment branches off before the ImmutableDB must not satisfy the HAA.
-  Therefore, the LoE anchor intersection could exclude that candidate fragment.
-  However, we've seen a repro where the honest peer does do that &mdash; we're currently debugging it.
-  In the meantime, simply treating such a peer as having the ImmutableDB tip as their candidate fragment tip is sound; they can be ignored because they're doomed, so we can instead just wait for them to be disconnected.
 - Possible improvements to the LoE implementation:
    - Small optimizations:
       - We have a special case to avoid fetching the selection's first header from disk, as it was slightly faster (see [here](https://github.com/IntersectMBO/ouroboros-consensus/pull/1118#discussion_r1613855402)). Determine whether that is still the case, and whether we want to keep it, also from an [average-case=worst-case](design-goals#predictable-performance) perspective.
