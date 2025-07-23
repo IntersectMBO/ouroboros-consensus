@@ -808,9 +808,8 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
                 . Diff.getSuffix
             )
         )
-        -- 4. Trim fragments so that they follow the LoE, that is, they
-        -- extend the LoE or are extended by the LoE. Filter them out
-        -- otherwise.
+        -- 4. Trim fragments so that they follow the LoE, that is, they extend
+        -- the LoE by at most @k@ blocks or are extended by the LoE.
         . fmap (fmap (trimToLoE loeFrag curChainAndLedger))
         -- 3. Translate the 'HeaderFields' to 'Header' by reading the
         -- headers from disk.
@@ -820,7 +819,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
         -- chain. We don't want to needlessly read the headers from disk
         -- for those candidates.
         . NE.filter (not . Diff.rollbackExceedsSuffix)
-        -- 1. Extend the diff with candidates fitting on @B@ and not exceeding the LoE
+        -- 1. Extend the diff with candidates fitting on @B@
         . Paths.extendWithSuccessors succsOf lookupBlockInfo
         $ diff
 
