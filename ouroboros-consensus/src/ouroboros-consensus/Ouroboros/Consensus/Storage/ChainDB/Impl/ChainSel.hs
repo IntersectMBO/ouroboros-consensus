@@ -1330,7 +1330,8 @@ validateCandidate chainSelEnv rr chainDiff =
       | AF.length (Diff.getSuffix chainDiff) == AF.length (Diff.getSuffix chainDiff') ->
           -- No truncation
           return $ FullyValid validatedChainDiff
-      | otherwise ->
+      | otherwise -> do
+          cleanup validatedChainDiff
           -- In case of invalid blocks, we throw away the ledger
           -- corresponding to the truncated fragment and will have to
           -- validate it again, even when it's the sole candidate.
@@ -1338,9 +1339,9 @@ validateCandidate chainSelEnv rr chainDiff =
      where
       chainDiff' = ValidatedDiff.getChainDiff validatedChainDiff
  where
-  -- If this function does not return a validated chain diff, then there is a
-  -- leftover forker that we have to close so that its resources are correctly
-  -- released.
+  -- If this function does not return a validated chain diff, then we can
+  -- already close the underlying forker, even before it would be closed due to
+  -- closing the 'ResourceRegistry' @rr@.
   cleanup :: ValidatedChainDiff b (Forker' m blk) -> m ()
   cleanup = forkerClose . getLedger
 
