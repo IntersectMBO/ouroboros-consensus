@@ -13,7 +13,6 @@ module Ouroboros.Consensus.Fragment.ValidatedDiff
   , getChainDiff
   , getLedger
   , new
-  , rollbackExceedsSuffix
   , toValidatedFragment
 
     -- * Monadic
@@ -95,9 +94,6 @@ toValidatedFragment ::
   ValidatedFragment b (l mk)
 toValidatedFragment (UnsafeValidatedChainDiff cs l) =
   VF.ValidatedFragment (Diff.getSuffix cs) l
-
-rollbackExceedsSuffix :: HasHeader b => ValidatedChainDiff b l -> Bool
-rollbackExceedsSuffix = Diff.rollbackExceedsSuffix . getChainDiff
 
 {-------------------------------------------------------------------------------
   Monadic
