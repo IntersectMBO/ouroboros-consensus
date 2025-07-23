@@ -23,12 +23,11 @@ import NoThunks.Class
 import Ouroboros.Consensus.Block.Abstract
 
 newtype PerasRoundNo = PerasRoundNo {unPerasRoundNo :: Word64}
-  deriving stock Show
-  deriving Generic
+  deriving stock (Show, Generic)
   deriving newtype (Eq, Ord, NoThunks)
 
 newtype PerasWeight = PerasWeight {unPerasWeight :: Word64}
-  deriving stock Show
+  deriving stock (Show, Generic)
   deriving newtype (Eq, Ord, NoThunks)
   deriving (Semigroup, Monoid) via Sum Word64
 
