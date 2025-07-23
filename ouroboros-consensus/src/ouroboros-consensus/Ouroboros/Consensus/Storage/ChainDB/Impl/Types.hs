@@ -826,9 +826,12 @@ data TraceAddBlockEvent blk
   | -- | The block was added to the queue and will be added to the ChainDB by
     -- the background thread. The size of the queue is included.
     AddedBlockToQueue (RealPoint blk) (Enclosing' Word)
+  | -- | Popping a new message for the chain selection background thread from
+    -- the queue.
+    PoppingFromQueue
   | -- | The block popped from the queue and will imminently be added to the
     -- ChainDB.
-    PoppedBlockFromQueue (Enclosing' (RealPoint blk))
+    PoppedBlockFromQueue (RealPoint blk)
   | -- | A message was added to the queue that requests that ChainSel reprocess
     -- blocks that were postponed by the LoE. The size of the queue is included.
     AddedReprocessLoEBlocksToQueue (Enclosing' Word)

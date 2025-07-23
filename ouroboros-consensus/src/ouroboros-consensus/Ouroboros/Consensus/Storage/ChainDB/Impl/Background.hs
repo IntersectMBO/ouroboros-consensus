@@ -75,7 +75,6 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import Ouroboros.Consensus.Util
 import Ouroboros.Consensus.Util.Condense
-import Ouroboros.Consensus.Util.Enclose (Enclosing' (..))
 import Ouroboros.Consensus.Util.IOLike
 import Ouroboros.Network.AnchoredFragment (AnchoredSeq (..))
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -524,7 +523,7 @@ addBlockRunner ::
   m Void
 addBlockRunner fuse cdb@CDB{..} = forever $ do
   let trace = traceWith cdbTracer . TraceAddBlockEvent
-  trace $ PoppedBlockFromQueue RisingEdge
+  trace PoppingFromQueue
   -- if the `chainSelSync` does not complete because it was killed by an async
   -- exception (or it errored), notify the blocked thread
   withFuse fuse $
@@ -551,10 +550,7 @@ addBlockRunner fuse cdb@CDB{..} = forever $ do
             ChainSelReprocessLoEBlocks _ ->
               trace PoppedReprocessLoEBlocksFromQueue
             ChainSelAddBlock BlockToAdd{blockToAdd} ->
-              trace $
-                PoppedBlockFromQueue $
-                  FallingEdgeWith $
-                    blockRealPoint blockToAdd
+              trace $ PoppedBlockFromQueue $ blockRealPoint blockToAdd
           chainSelSync cdb message
           lift $ atomically $ processedChainSelMessage cdbChainSelQueue message
       )
