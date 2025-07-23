@@ -51,7 +51,7 @@ A prime example is the Hard Fork Combinator (HFC), which enables the combination
 ## Predictable Performance
 
 This goal ensures that node operators can configure nodes for "normal circumstances" without the network failing during infrequent but expected events.
-It aims to make node performance predictable, ensuring that the best-case scenario aligns with the worst-case scenario in terms of resource requirements—not only for security but also to maintain network stability with honest nodes.
+It aims to make node performance predictable, ensuring that the average-case scenario aligns with the worst-case scenario in terms of resource requirements—not only for security but also to maintain network stability with honest nodes.
 
 ## Protection Against DoS Attacks
 
