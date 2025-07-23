@@ -439,14 +439,15 @@ CSJ eliminates the wasteful remote retrieval and local validation of each honest
 
 [Link to code](https://github.com/IntersectMBO/ouroboros-consensus/blob/43c1fef4631d7a00879974e785c2291175a5f0dc/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Genesis/Governor.hs#L268)
 
-There are two possible deadlocks introduced by CSJ.
-Both can be resolved by implementing additional disconnections according to Genesis density comparisons.
+CSJ introduces several subtleties, which we describe in the following sections.
 
-- Without CSJ, the GDD is always comparing each peer to the best header chain a HAA-satisfying peer can provide.
+#### Adversarial Dynamo and Objector
+
+Without CSJ, the GDD is always comparing each peer to the best header chain a HAA-satisfying peer can provide.
   With CSJ, the HAA-satisfying peers might instead be dormant as PreObjectors, with the Dynamo and Objector both adversarial.
 
   There's no guarantee in that scenario that the competing header chains of the Dynamo and Objector will (eventually) include more than `Kcp` headers.
-  Since that is one of the plain GDD's required conjuncts, the syncing node would be stuck.
+  Since that is one of the GDD's requirements, the syncing node would be stuck.
   This state might last a very long time, violating [Sync Liveness](#sync-liveness), since the Dynamo and Objector could each send a header beyond the forecast range in order to also avoid the LoP.
 
   To prevent this attack, the GDD trigger is relaxed for the sake of CSJ.
@@ -454,9 +455,11 @@ Both can be resolved by implementing additional disconnections according to Gene
 
   It's safe to make the GDD disconnect in more scenarios, as long as it will still never disconnect from an HAA-satisfying peer outside of a disaster scenario.
   In this case, if there has been no disaster and `P` satisfies the HAA, then Praos Chain Growth ensures `P`'s chain will have more than `Kcp` headers in the GDD window.
-  If this relaxed GDD were to disconnect from `P`, then `Q` must have at least as many headers as `P`, and so the plain GDD's conjunct would also have been satisfied.
+  If this relaxed GDD were to disconnect from `P`, then `Q` must have at least as many headers as `P`, and so the GDD condition would also have been satisfied.
 
-- Similarly, if the HAA-satisfying peers are all dormant, then it's possible that the node's selection is simultaneously longer than every peer's header chain and also branches off from some proper prefix of the LoE anchor.
+#### Only Peers' Header Chains Are Compared
+
+As in the previous situation, if the HAA-satisfying peers are all dormant, then it's possible that the node's selection is simultaneously longer than every peer's header chain and also branches off from some proper prefix of the LoE anchor.
   This is an unusual scenario, but may arise, for example, if the previous Dynamo recently disconnected (which implies it did not satisfy the HAA).
   In this case, the DBF logic would idle, since no peer's header chain is better than the selection &mdash; the node would not select the peers' blocks even if they did somehow arrive, since they're worse than the current selection.
   Moreover, deadlock is possible, since the Dynamo and Objector forecast ranges' do not necessarily include the entire GDD window.
@@ -504,6 +507,13 @@ Note again that the forecast range (anchored in `G`) for the Dynamo and Objector
 Even supposing tiebreakers, there's no guarantee that it would.)
 
 This component contributes to Sync Liveness by mitigating the discussed deadlocks, ultimately compensating for the fact that the HAA-satisfying peers might be dormant in the PreObjector state.
+
+#### Truncation of Candidate Fragments
+
+With the introduction of CSJ, [candidate fragments can now be truncated](https://github.com/intersectmbo/ouroboros-consensus/blob/e7d2b2ff5906f253de895c4057ae6f61e6257c4e/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Genesis/Governor.hs#L318) without rollbacks, and in particular, this could lead to a situation in which a fragment is anchored before the immutable tip.
+Before Genesis, only dishonest behavior could cause a rollback.
+However, CSJ allows honest  fragments to recede past the node's immutable tip, which could lead to GDD to dismiss valid selections.
+To contemplate this scenario, GDD now defaults to treating non-intersecting fragments as empty and anchored at the immutable tip, leaving it to the ChainSync client to update the fragment.
 
 ### The Devoted BlockFetch Component
 
