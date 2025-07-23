@@ -38,7 +38,7 @@ import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromJust, isJust, isNothing)
+import Data.Maybe (fromJust, isJust)
 import Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -1089,10 +1089,8 @@ chainSelection chainSelEnv rr chainDiffs =
 
   -- 1. Take the first candidate from the list of sorted candidates
   -- 2. Validate it
-  --    - If it is invalid -> discard it and go to 1 with the rest of the
-  --      list.
-  --    - If it is valid and has the same tip -> return it
-  --    - If it is valid, but is a prefix of the original ->
+  --    - If it is fully valid -> return it
+  --    - If only a proper prefix is valid ->
   --        add it to the list, sort it and go to 1. See the comment
   --        [Ouroboros] below.
   go ::
@@ -1102,13 +1100,6 @@ chainSelection chainSelEnv rr chainDiffs =
   go (candidate : candidates0) = do
     mTentativeHeader <- setTentativeHeader
     validateCandidate chainSelEnv rr candidate >>= \case
-      InsufficientSuffix ->
-        -- When the body of the tentative block turns out to be invalid, we
-        -- have a valid *empty* prefix, as the tentative header fits on top
-        -- of the current chain.
-        assert (isNothing mTentativeHeader) $ do
-          candidates1 <- truncateRejectedBlocks candidates0
-          go (sortCandidates candidates1)
       FullyValid validatedCandidate@(ValidatedChainDiff candidate' _) ->
         -- The entire candidate is valid
         assert (Diff.getTip candidate == Diff.getTip candidate') $
@@ -1212,13 +1203,10 @@ chainSelection chainSelEnv rr chainDiffs =
 data ValidationResult m blk
   = -- | The entire candidate fragment was valid.
     FullyValid (ValidatedChainDiff (Header blk) (Forker' m blk))
-  | -- | The candidate fragment contained invalid blocks that had to
-    -- be truncated from the fragment.
+  | -- | The candidate fragment contained invalid blocks that had to be
+    -- truncated from the fragment. We only return the (potentially empty) valid
+    -- prefix.
     ValidPrefix (ChainDiff (Header blk))
-  | -- | After truncating the invalid blocks from
-    -- the 'ChainDiff', it no longer contains enough blocks in its suffix to
-    -- compensate for the number of blocks it wants to roll back.
-    InsufficientSuffix
 
 -- | Validate a candidate by applying its blocks to the ledger, and return a
 -- 'ValidatedChainDiff' for it, i.e., a chain diff along with a ledger
@@ -1325,8 +1313,6 @@ validateCandidate ::
 validateCandidate chainSelEnv rr chainDiff =
   ledgerValidateCandidate chainSelEnv rr chainDiff >>= \case
     validatedChainDiff
-      | ValidatedDiff.rollbackExceedsSuffix validatedChainDiff ->
-          cleanup validatedChainDiff >> return InsufficientSuffix
       | AF.length (Diff.getSuffix chainDiff) == AF.length (Diff.getSuffix chainDiff') ->
           -- No truncation
           return $ FullyValid validatedChainDiff
