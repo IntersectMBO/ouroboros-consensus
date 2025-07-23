@@ -63,6 +63,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockPromise (..)
   , AddBlockResult (..)
@@ -809,10 +810,10 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
         -- headers from disk.
         . flip evalStateT initCache
         . mapM translateToHeaders
-        -- 2. Filter out candidates that are shorter than the current
-        -- chain. We don't want to needlessly read the headers from disk
-        -- for those candidates.
-        . NE.filter (not . Diff.rollbackExceedsSuffix)
+        -- 2. Filter out candidates that have less weight than the current
+        -- chain. We don't want to needlessly read the headers from disk for
+        -- those candidates.
+        . NE.filter (not . Diff.rollbackExceedsSuffix weights curChain)
         -- 1. Extend the diff with candidates fitting on @B@
         . Paths.extendWithSuccessors succsOf lookupBlockInfo
         $ diff
@@ -832,6 +833,8 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
    where
     chainSelEnv = mkChainSelEnv curChainAndLedger
     curChain = VF.validatedFragment curChainAndLedger
+    -- TODO use actual weights
+    weights = emptyPerasWeightSnapshot :: PerasWeightSnapshot blk
 
   mkSelectionChangedInfo ::
     AnchoredFragment (Header blk) ->
