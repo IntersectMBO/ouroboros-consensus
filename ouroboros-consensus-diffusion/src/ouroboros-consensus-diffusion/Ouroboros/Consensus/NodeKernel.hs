@@ -118,7 +118,6 @@ import           Ouroboros.Network.PeerSharing (PeerSharingAPI,
                      newPeerSharingRegistry, ps_POLICY_PEER_SHARE_MAX_PEERS,
                      ps_POLICY_PEER_SHARE_STICKY_TIME)
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (..))
-import           Ouroboros.Network.SizeInBytes
 import           Ouroboros.Network.TxSubmission.Inbound.V1
                      (TxSubmissionInitDelay, TxSubmissionMempoolWriter)
 import qualified Ouroboros.Network.TxSubmission.Inbound.V1 as Inbound
@@ -830,9 +829,9 @@ getMempoolReader mempool = MempoolReader.TxSubmissionMempoolReader
         { mempoolTxIdsAfter = \idx ->
             [ ( txId (txForgetValidated tx)
               , idx'
-              , SizeInBytes $ unByteSize32 $ txMeasureByteSize msr
+              , txWireSize $ txForgetValidated tx
               )
-            | (tx, idx', msr) <- snapshotTxsAfter idx
+            | (tx, idx', _msr) <- snapshotTxsAfter idx
             ]
         , mempoolLookupTx   = snapshotLookupTx
         , mempoolHasTx      = snapshotHasTx
