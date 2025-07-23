@@ -63,6 +63,7 @@ import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.Inspect
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Storage.ChainDB.API
   ( AddBlockPromise (..)
   , AddBlockResult (..)
@@ -666,10 +667,10 @@ constructPreferableCandidates CDB{..} curChain hdrCache p = do
             -- Translate the 'HeaderFields' to 'Header' by reading the headers
             -- from disk.
             mapM translateToHeaders
-              -- Filter out candidates that are shorter than the current chain.
-              -- We don't want to needlessly read the headers from disk for
-              -- those candidates.
-              . NE.filter (not . Diff.rollbackExceedsSuffix)
+              -- Filter out candidates that have less weight than the current
+              -- chain. We don't want to needlessly read the headers from disk
+              -- for those candidates.
+              . NE.filter (not . Diff.rollbackExceedsSuffix weights curChain)
               -- Extend the diff with candidates fitting on @p@
               . Paths.extendWithSuccessors succsOf lookupBlockInfo
               $ diff
@@ -685,6 +686,9 @@ constructPreferableCandidates CDB{..} curChain hdrCache p = do
  where
   bcfg = configBlock cdbTopLevelConfig
   k = unNonZero $ maxRollbacks $ configSecurityParam cdbTopLevelConfig
+
+  -- TODO use actual weights
+  weights = emptyPerasWeightSnapshot :: PerasWeightSnapshot blk
 
   curHead = AF.castAnchor $ AF.headAnchor curChain
 
