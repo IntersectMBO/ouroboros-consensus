@@ -443,16 +443,16 @@ Both can be resolved by implementing additional disconnections according to Gene
 - Without CSJ, the GDD is always comparing each peer to the best header chain a HAA-satisfying peer can provide.
   With CSJ, the HAA-satisfying peers might instead be dormant as PreObjectors, with the Dynamo and Objector both adversarial.
 
-  There's no guarantee in that scenario that the competing header chains of the Dynamo and Objector will (eventually) include more than Kcp headers.
+  There's no guarantee in that scenario that the competing header chains of the Dynamo and Objector will (eventually) include more than `Kcp` headers.
   Since that is one of the plain GDD's required conjuncts, the syncing node would be stuck.
-  This state might last a very long time, violating Sync Liveness, since the Dynamo and Objector could each send a header beyond the forecast range in order to also avoid the LoP.
+  This state might last a very long time, violating [Sync Liveness](#sync-liveness), since the Dynamo and Objector could each send a header beyond the forecast range in order to also avoid the LoP.
 
   To prevent this attack, the GDD trigger is relaxed for the sake of CSJ.
-  Specifically, Q does not need to have sent more than Kcp (valid) headers after the LoE anchor if P has already sent a header beyond the GDD window.
+  Specifically, `Q` does not need to have sent more than `Kcp` (valid) headers after the LoE anchor if `P` has already sent a header beyond the GDD window.
 
   It's safe to make the GDD disconnect in more scenarios, as long as it will still never disconnect from an HAA-satisfying peer outside of a disaster scenario.
-  In this case, if there has been no disaster and P satisfies the HAA, then Praos Chain Growth ensures P's chain will have more than Kcp headers in the GDD window.
-  If this relaxed GDD were to disconnect from P, then Q must have at least as many headers as P, and so the plain GDD's conjunct would also have been satisfied.
+  In this case, if there has been no disaster and `P` satisfies the HAA, then Praos Chain Growth ensures `P`'s chain will have more than `Kcp` headers in the GDD window.
+  If this relaxed GDD were to disconnect from `P`, then `Q` must have at least as many headers as `P`, and so the plain GDD's conjunct would also have been satisfied.
 
 - Similarly, if the HAA-satisfying peers are all dormant, then it's possible that the node's selection is simultaneously longer than every peer's header chain and also branches off from some proper prefix of the LoE anchor.
   This is an unusual scenario, but may arise, for example, if the previous Dynamo recently disconnected (which implies it did not satisfy the HAA).
@@ -464,20 +464,20 @@ Both can be resolved by implementing additional disconnections according to Gene
   Filling this blindspot suffices to prevent the deadlock.
   The new logic fits nicely in the ChainSync client, instead of in the GDD itself, since it only involves a single peer at a time.
 
-  If a MsgRollForward arrives that is beyond the forecast range (ie Scg slots beyond the intersection with the node's selection) but the predecessor of the new header (ie the tip of its validated header chain) is not preferable to the selection, then disconnect from the peer.
+  If a `MsgRollForward` arrives that is beyond the forecast range (ie `Scg` slots beyond the intersection with the node's selection) but the predecessor of the new header (ie the tip of its validated header chain) is not preferable to the selection, then disconnect from the peer.
   This is effectively a Genesis density comparison between the peer and the syncing node itself (but not necessarily in the GDD window, which is always anchored in the LoE anchor).
-  Even if Sgen were less than Scg, this comparison would still be sufficient and sound, since Sgen = Scg is the most conservative assignment of that Genesis parameter.
+  Even if `Sgen` were less than `Scg`, this comparison would still be sufficient and sound, since `Sgen = Scg` is the most conservative assignment of that Genesis parameter.
 
   In some sense, this rule is an optimization of the existing ChainSync client logic.
   It fires as soon as it becomes inevitable that the existing logic will subsequently terminate with ForkTooDeep.
 
 The latter addition also prevents another deadlock.
-If a peer P sends a header beyond the GDD window without having sent any headers within the GDD window, then it must be disconnected from.
-Because Sgen = Scg, such a chain includes a gap at least as large as the forecast range.
+If a peer `P` sends a header beyond the GDD window without having sent any headers within the GDD window, then it must be disconnected from.
+Because `Sgen = Scg`, such a chain includes a gap at least as large as the forecast range.
 No ChainSync client can progress past such a gap.
-This has always been true, and it has long been identified as a disaster scenario, since it is a severe violation of Chain Growth (PR https://github.com/IntersectMBO/ouroboros-network/pull/2844 is related future work, but remains Closed).
+This has always been true, and it has long been identified as a disaster scenario, since it is a severe violation of Chain Growth (PR [#2844](https://github.com/IntersectMBO/ouroboros-network/pull/2844) is related future work, but remains Closed).
 With CSJ, though, it's now possible that the Dynamo and Objector are stuck on such a gap while some PreObjector would be able to progess if it weren't dormant, just as in the deadlocks discussed above.
-Because this trigger does not require a comparison against another peer, not even Lightweight Checkpointing can prevent it.
+Because this trigger does not require a comparison against another peer, not even [Lightweight Checkpointing](#lightweight-checkpointing) can prevent it.
 
 The following concrete example of the second deadlock arose in our property tests, inspiring the fix specified above.
 (It could be minimized further, but this one was actually generated.)
@@ -492,19 +492,20 @@ The following concrete example of the second deadlock arose in our property test
            ╰─────1──2─────3──4────────5─────6   Adversary 1
 ```
 
-Suppose Adversary 1 is the Dynamo first, serves its chain up to the block 5-8, and then the peer disconnects.
-If Adversary 2 becomes the Dynamo and Adversary 3 becomes the Objector (or the other way around), then the (HAA-satisfying) honest peer is dormant as a PreObjector.
-In this case, the LoE anchor is the block 2-2, but _not_ the 2-2 that's on the selection.
+Henceforth, we refer `i-j` refers to the block number `i` at slot `j`.
+Suppose `Adversary 1` is the Dynamo first, serves its chain up to the block `5-8`, and then the peer disconnects.
+If `Adversary 2` becomes the Dynamo and `Adversary 3` becomes the Objector (or the other way around), then the (HAA-satisfying) honest peer is dormant as a PreObjector.
+In this case, the LoE anchor is the block `2-2`, but _not_ the `2-2` that's on the selection.
 This is an example of how the selection can be longer than the LoE anchor but not extend it, which is how the second deadlock above arises.
-Note again that the forecast range (anchored in G) for the Dynamo and Objector ends in slot 7, which means neither chain can become longer than the selection.
-(The block used in this test does not have any tiebreakers, so DBF will not fetch the 5-7 block.
+Note again that the forecast range (anchored in `G`) for the Dynamo and Objector ends in slot `7`, which means neither chain can become longer than the selection.
+(The block used in this test does not have any tiebreakers, so DBF will not fetch the `5-7` block.
 Even supposing tiebreakers, there's no guarantee that it would.)
 
 This component contributes to Sync Liveness by mitigating the discussed deadlocks, ultimately compensating for the fact that the HAA-satisfying peers might be dormant in the PreObjector state.
 
 ### The Devoted BlockFetch Component
 
-> Note that in the code, this component is still called *BulkSync BlockFetch* at the moment.
+In the implementation, this component is called *BulkSync BlockFetch*.
 
 [Link to code](https://github.com/IntersectMBO/ouroboros-network/blob/28b731cde005a1de0b4be0ea0bd16852e827c1bc/ouroboros-network/src/Ouroboros/Network/BlockFetch/Decision/Genesis.hs#L9)
 
@@ -525,26 +526,26 @@ There are two additional concerns.
 - The syncing BlockFetch logic should, like the normal Praos BlockFetch logic, still only request blocks from a peer that are on that peer's header chain.
   The syncing node's peers may have sent different header chains; they might disagree or merely be prefixes of one another.
 
-In summary: prioritize both fetching blocks from the longest header chain and also fetching blocks from the same peer as long as they're arriving faster than they can be validated.
+In summary: we prioritize both fetching blocks from the longest header chain and also fetching blocks from the same peer as long as they're arriving faster than they can be validated.
 
-The following specification of the DBF logic maintains two variables, the set E of blocks that are considered in-flight, and the latest time T at which E was empty.
-When the node is initialized, E should be the empty set and T should be the current wall clock.
+The following specification of the DBF logic maintains two variables, the set `E` of blocks that are considered in-flight, and the latest time `T` at which `E` was empty.
+When the node is initialized, `E` should be the empty set and `T` should be the current wall clock.
 (The implementation is free to maintain these variables in some other equivalent way.)
 
 Each iteration of the DBF logic executes the following steps.
 
-- If E is non-empty, then all those blocks were requested from a single peer &mdash; that's the DBF invariant motivated above.
-  If now > T + BlockFetchGracePeriod and the ChainSel logic has been blocked on an empty work queue at any point since the previous DBF logic iteration, then set E to the empty set.
+- If `E` is non-empty, then all those blocks were requested from a single peer &mdash; that's the DBF invariant motivated above.
+  If `now > T + BlockFetchGracePeriod` and the ChainSel logic has been blocked on an empty work queue at any point since the previous DBF logic iteration, then set `E` to the empty set.
   (The BlockFetch state must still ultimately track those blocks as in-flight, in order to enforce timeouts, per peer in-flight limits, etc.
   But the DBF logic is no longer influenced by those in-flight requests.)
   Also, if that peer is the Dynamo, signal the CSJ governor to rotate some other peer in as the Dynamo, if another peer is eligible.
 
 - Let the {desired headers} be the headers that are on the most preferable header chain but their blocks haven't already arrived.
-  Note that some desired headers might be in E.
+  Note that some desired headers might be in `E`.
 
-- If E is non-empty and that peer's header chain includes the first desired header, choose that same peer again.
+- If `E` is non-empty and that peer's header chain includes the first desired header, choose that same peer again.
 
-- Otherwise, set E to empty and set T to now.
+- Otherwise, set `E` to empty and set `T` to `now`.
   Also, choose one of the peers whose header chain includes the first desired header.
   The only constraint on this choosing mechanism is that it should eventually find an HAA-satisfying peer.
   For example, a simple round-robin queue (which would first be filtered according to the presence of the first desired header) or random choice would suffice.
@@ -557,12 +558,12 @@ Each iteration of the DBF logic executes the following steps.
 Some alternatives are worth mentioning.
 
 - BlockFetch does already have a low-level timeout of 60 seconds on its requests.
-  That is an insufficient per-request defense against an adversary, though; BlockFetchGracePeriod will be significantly shorter.
-  Moreover, BlockFetchGracePeriod does not disconnect from a peer, it merely deprioritizes it for CSJ Dynamo and DBF choices.
+  That is an insufficient per-request defense against an adversary, though; `BlockFetchGracePeriod` will be significantly shorter.
+  Moreover, `BlockFetchGracePeriod` does not disconnect from a peer, it merely deprioritizes it for CSJ Dynamo and DBF choices.
   In particular, it's very likely that an honest node will occasionally fail to serve blocks for BlockFetchGracePeriod, so disconnecting would be too aggressive.
   Block costs are more variable than header costs, so a token bucket like in the LoP is less obviously applicable here.
 
-- A possible alternative to the BlockFetchGracePeriod duration would disable the check just for the first in-flight block, but practical networking concerns such as the TCP congestion window make a time-based condition more effective and easier to reason about.
+- A possible alternative to the `BlockFetchGracePeriod` duration would disable the check just for the first in-flight block, but practical networking concerns such as the TCP congestion window make a time-based condition more effective and easier to reason about.
 
 - It would be possible to let a peer finish sending their in-flight blocks even if they aren't serving any of the desired headers.
   This would avoid the risk of subsequently requesting those blocks from someone else.
@@ -570,7 +571,7 @@ Some alternatives are worth mentioning.
 
 - The logic could require that the chosen peer is serving more than just the first desired header.
   There is a tension here.
-  The existing logic maximizes the number of peers considered, for example, which in turn maximizes the chance the same node could be chosen (in particular, even when they're not also the Dynamo), thereby avoiding another opportunity for the adversary to delay for a duration of BlockFetchGracePeriod.
+  The existing logic maximizes the number of peers considered, for example, which in turn maximizes the chance the same node could be chosen (in particular, even when they're not also the Dynamo), thereby avoiding another opportunity for the adversary to delay for a duration of `BlockFetchGracePeriod`.
   But it also risks wasting a round-trip to fetch just one block instead of prematurely switching peers in order to fetch potentially many blocks from a newly chosen peer.
 
 - It would be acceptable to not demote the Dynamo if it fails to send blocks fast enough.
@@ -582,11 +583,11 @@ Some alternatives are worth mentioning.
   Similarly, the Dynamo isn't necessarily serving the longest header chain.
   Another is because an adversarial Dynamo could satisfy the GDD and LoP but be extremely slow to serve blocks (although demoting the Dynamo if it's too slow to send blocks might suffice to redress this).
 
-This component contibutes to Sync Liveness for two reasons.
+This component contibutes to [Sync Liveness](#sync-liveness) for two reasons.
 
 - The node cannot be stuck indefinitely.
   If the unfetched blocks of the longest chain are offered only by adversarial peers, then the node will only request blocks from them.
-  The adversary can simply withhold those blocks, and the node will wait for a duration of BlockFetchGracePeriod before it considers requesting from a different peer.
+  The adversary can simply withhold those blocks, and the node will wait for a duration of `BlockFetchGracePeriod` before it considers requesting from a different peer.
   But it might be in the same state once it does.
 
   The node can escape this state in a few ways, but the most important is that the longest header chain will soon enough be held by an honest peer.
@@ -594,15 +595,15 @@ This component contibutes to Sync Liveness for two reasons.
   When the node is almost done syncing: a healthy Praos network will frequently have its longest chain held by honest peers, so HAA ensures some honest peer's header chain will become the new longest chain.
 
 - If all peers have the longest chain, the syncing node might unfortunately choose to request it from an adversarial peer.
-  That adversarial peer can withhold blocks for BlockFetchGracePeriod, after which time the node will re-request those blocks from another peer.
+  That adversarial peer can withhold blocks for `BlockFetchGracePeriod`, after which time the node will re-request those blocks from another peer.
 
   The probability of each chosen peer being adversarial is proportional to the ratio of honest to adversarial peers.
   The HAA merely requires this to be greater than 0; it could be 1 out of 30, for example.
-  The lower this ratio, the longer it will take the DBF to find a peer that satisfies the HAA, assuming each adversarial peer is delaying the node for a duration of BlockFetchGracePeriod.
+  The lower this ratio, the longer it will take the DBF to find a peer that satisfies the HAA, assuming each adversarial peer is delaying the node for a duration of `BlockFetchGracePeriod`.
   But once such a peer is found, the node will fetch as many blocks from it as possible.
   (Unfortunately that might not be all blocks, since the Dynamo might eventually be the only one with the longest chain.)
 
-This component also contributes to Limited Sync Load, since it avoids unnecessarily fetching a block from multiple honest peers.
+This component also contributes to [Limited Sync Load](#limited-sync-load), since it avoids unnecessarily fetching a block from multiple honest peers.
 
 To prevent this component from spoiling Sync Liveness, this relatively-expensive calculation is rate-limited with a parameter {DbfRateLimit}; see the [Parameter Tuning](#parameter-tuning) section.
 
@@ -632,7 +633,7 @@ Tests ChainSync Jumping, in conjunction with LoE, LoP, and GDD.
 
 #### [`Test.Consensus.Genesis.Uniform`](https://github.com/IntersectMBO/ouroboros-consensus/blob/43c1fef4631d7a00879974e785c2291175a5f0dc/ouroboros-consensus-diffusion/test/consensus-test/Test/Consensus/Genesis/Tests/Uniform.hs)
 
-Randomly generates various "real life"-ish situations, and checks that the Genesis algorithm yields the correct result, *i.e.* that the tip of the immutable DB ends up within Kcp blocks of the tip of the honest branch.
+Randomly generates various "real-life" scenarios and verifies that the Genesis algorithm produces the correct result—i.e., that the tip of the immutable database ends up within `Kcp` blocks of the tip of the honest branch.
 
 ## Parameter Tuning
 
@@ -643,76 +644,79 @@ This section therefore motivates the recommended value of each.
 A new piece of jargon improves some of these explanations:
 An adversary that is preventing the LoE anchor from advancing is {leashing} the victimized syncing node.
 
-- Sgen = Scg.
-  Sgen cannot be greater than Scg, since forecasting wouldn't necessarily allow the headers to be validated before being counted.
-  Despite the authors of Ouroboros Genesis expected a smaller value would suffice, the engineers have never considered a value less than Scg.
+- `Sgen = Scg`.
+  Sgen cannot be greater than `Scg`, since forecasting wouldn't necessarily allow the headers to be validated before being counted.
+  Despite the authors of Ouroboros Genesis expected a smaller value would suffice, the engineers have never considered a value less than `Scg`.
   If the requirements (eg no unneccesary delays) can be met while minimizing the adversary's chances, then that seems ideal.
 
-- TDRIP = 2 milliseconds and TCAP = 5000 tokens.
+- `TDRIP = 2 milliseconds` and `TCAP = 5000 tokens`.
   A peer withholding promised headers would therefore be disconnected within at most 10 seconds.
-  If the adversary were leashing with a relatively-dense chain, they might be able to extend that to (TCAP + ~4×Kcp)×TDRIP = ~27.28 seconds by earning and spending tokens during the leash.
-  This could happen at most once per adversary, which the HAA bounds at Valency - 1.
-  In total, that's at most ~15 minutes of total delay tolerated by the LoP while the node is being leashed.
+  If the adversary were leashing with a relatively-dense chain, they might be able to extend that to
+```
+  (TCAP + ~4×Kcp)×TDRIP = ~27.28 seconds
+```
+by earning and spending tokens during the leash.
+  This could happen at most once per adversary, which the HAA bounds at `Valency - 1`. In total, that's at most ~15 minutes of total delay tolerated by the LoP while the node is being leashed.
 
   While the node isn't being leashed, it's making progress.
-  Especially with modern Cardano blocks, 2ms is much faster than the typical time to fetch and validate a block.
+  Especially with modern Cardano blocks, `2ms` is much faster than the typical time to fetch and validate a block.
   Thus an adversary cannot protract the sync at all while satisfying the LoP on average.
 
-  If the LoP is spuriously disconnecting from honest nodes unacceptably often, then TCAP could be increased.
+  If the LoP is spuriously disconnecting from honest nodes unacceptably often, then `TCAP` could be increased.
   The duration for which an adversary could potentially leash the syncing node increases somewhat proportionally, but that's a less severe risk than the syncing node eclipsing itself.
 
-- GddRateLimit ~ 1 Hz.
+- `GddRateLimit ~ 1 Hz`.
   When the GDD is eventually triggered, the peer is disconnected from, so an extra delay on the order of seconds seems harmless.
-  The HistoricityCutoff parameter establishes a reasonable window in which an adversary could attempt to abuse this inattentiveness of the GDD by serving a leashing chain for 999 milliseconds and then serving of non-leashing chain for 1 millisecond, for example, and getting miraculously lucky with the thread scheduling etc.
+  The `HistoricityCutoff` parameter establishes a reasonable window in which an adversary could attempt to abuse this inattentiveness of the GDD by serving a leashing chain for 999 milliseconds and then serving of non-leashing chain for 1 millisecond, for example, and getting miraculously lucky with the thread scheduling etc.
   However, the LoP ultimately bounds how long that game could persist.
 
-- MaxCaughtUpAge = 20 minutes.
+- `MaxCaughtUpAge = 20 minutes`.
   There is a tension in this value.
 
-  Too low and outages that are inevitable in global public interconnects could cause the entire Cardano network to return to PreSyncing embarassingly often.
-  Prediction Network Solutions has advised that tolerating outages up to 20 minutes without cycling suffices for due diligence.
+If this value is too low,  outages that are inevitable in global public interconnects could cause the entire Cardano network to return to PreSyncing embarassingly often.
+[Predictable Network Solutions](https://www.pnsol.com/) has advised that tolerating outages of up to 20 minutes without cycling suffices for due diligence.
 
-  Too high, on the other hand, and a node might fall out of sync with the honest network without re-enabling the defenses of Ouroboros Genesis.
-  It is assumed that a node that missed out on just 20 minutes of honest chain growth is not a significantly higher risk of selecting more than Kcp blocks of an adversarial chain than is a properly caught-up node.
-  Because the Cardano chain grows by Kcp blocks in about 12 hours, that's only false if the adversary was already very close to creating a private chain that's longer than the honest chain, ie violating Praos Common Prefix.
+If this value is too high, on the other hand, and a node might fall out of sync with the honest network without re-enabling the defenses of Ouroboros Genesis.
+  It is assumed that a node that missed out on just 20 minutes of honest chain growth is not a significantly higher risk of selecting more than `Kcp` blocks of an adversarial chain than is a properly caught-up node.
+  Because the Cardano chain grows by `Kcp` blocks in about 12 hours, that's only false if the adversary was already very close to creating a private chain that's longer than the honest chain, ie violating [Praos Common Prefix](TODO-ref).
 
-  It is worth remarking that this MaxCaughtUpAge mechanism is not intended to detect and/or escape from eclipses.
+  It is worth remarking that this `MaxCaughtUpAge` mechanism is not intended to detect and/or escape from eclipses.
   The primary anticipated trigger is a user re-opening their laptop lid, for example.
 
-- HistoricityCutoff = 36+1 hours.
-  This value must be greater than Scg of the Cardano chain's current era, which is 36 hours, and will remain so for the foreseeable future.
-  It seems very unlikely that the community will increase the upper bound on settlement time, but if they did, then HistoricityCutoff would need to increase accordingly.
+- `HistoricityCutoff = 36+1 hours`.
+  This value must be greater than `Scg` of the Cardano chain's current era, which is 36 hours, and will remain so for the foreseeable future.
+  It seems very unlikely that the community will increase the upper bound on settlement time, but if they did, then `HistoricityCutoff` would need to increase accordingly.
   The extra hour is to eliminate corner cases/risks/etc &mdash; eg 10 minutes would probably suffice just as well.
 
-  The primary cost of increasing HistoricityCutoff is that an adversarial peer could remove themselves from the CSJ optimization, thereby forcing the victim to sync every header younger that HistoricityCutoff from them as well as from the Dynamo.
-  Thus, the potential cost of HistoricityCutoff is proportional to the number of adversarial peers, which is allowed in the definition of Sync Liveness.
+  The primary cost of increasing `HistoricityCutoff` is that an adversarial peer could remove themselves from the CSJ optimization, thereby forcing the victim to sync every header younger that `HistoricityCutoff` from them as well as from the Dynamo.
+  Thus, the potential cost of `HistoricityCutoff` is proportional to the number of adversarial peers, which is allowed in the definition of Sync Liveness.
 
-- MinJumpSlots = 2×Kcp.
-  Similar to Sgen, this parameter must not be greater than the smallest Scg of any era the node will be syncing.
-  However, unlike Sgen, Lightweight Checkpointing cannot be used to remove eras from consideration.
-  Thus, the recommended value of 2×Kcp arises from the Byron era's Scg, since it's the smallest of any era.
+- `MinJumpSlots = 2×Kcp`.
+  Similar to `Sgen`, this parameter must not be greater than the smallest `Scg` of any era the node will be syncing.
+  However, unlike `Sgen`, Lightweight Checkpointing cannot be used to remove eras from consideration.
+  Thus, the recommended value of `2×Kcp` arises from the Byron era's `Scg`, since it's the smallest of any era.
 
-  If it's actually Scg, then just before each jump, DBF will have no choice except the Dynamo, since it'll be the only one serving headers.
-  Note that the Dynamo can't validate the header that's Scg after its previous jump until the syncing node actually _selects_ that previous jump point.
+  If it's actually `Scg`, then just before each jump, DBF will have no choice except the Dynamo, since it'll be the only one serving headers.
+  Note that the Dynamo can't validate the header that's `Scg` after its previous jump until the syncing node actually _selects_ that previous jump point.
   Hence the next jump point won't be in the forecast range until the node has selected (and therefore fetched) the entire header chain of each Jumper.
 
-- BlockFetchGracePeriod = 10 seconds.
+- `BlockFetchGracePeriod = 10 seconds`.
   If the node chooses to fetch blocks from an adversarial peer, it could simply refuse to send them.
   In that case, the syncing node would give up on them after BlockFetchGracePeriod, and try a different peer.
   Once DBF finds an HAA-satisfying peer, however, the node will not be delayed again until it's almost caught-up, since that's when the node could learn of a longer chain that the HAA-satisfying peer might not yet have (ie a short fork or new growth).
-  Thus the practical worst-case delay via the vector is likely at most several instances of BlockFetchGracePeriod × (Valency - 1), which is almost certainly less than an hour.
+  Thus the practical worst-case delay via the vector is likely at most several instances of `BlockFetchGracePeriod × (Valency - 1)`, which is almost certainly less than an hour.
 
   There is a noteworthy corner case.
   The entire DBF design is predicated on the assumption that the syncing node can fetch blocks from an HAA-satisfying peer faster than it can validate them.
-  This is a generally reasonable assumption but could be violated by a node that has a terrible network connection and/or extremely strong compute hardware.
-  In that case, the node would sync as many blocks from the HAA-satisfying peer as it can in 10 seconds, before being forced to give its adversarial peers an opportunity to abuse BlockFetchGracePeriod.
+  This is a generally reasonable assumption but could be violated by a node that has a exceptionally bad network connection and/or extremely strong compute hardware.
+  In that case, the node would sync as many blocks from the HAA-satisfying peer as it can in 10 seconds, before being forced to give its adversarial peers an opportunity to abuse `BlockFetchGracePeriod`.
   It would be possibly starved in 10 second increments until it finds another HAA-satisfying peer, which would then last for another 10 seconds.
   Thus its duty cycle would still be proportional to the ratio of adverarial peers.
   (CSJ would also become unusually inefficient here, since the Dynamo is being rotated so often, many headers will be downloaded multiple times.)
-  In practice, this corner case is most likely to manifest as a node with a terrible network connection syncing even more slowly than it already would, which seems like a fair exception to the Sync Liveness requirement.
+  In practice, this corner case is most likely to manifest as a node with a exceptionally bad network connection syncing even more slowly than it already would, which seems like a fair exception to the Sync Liveness requirement.
 
-- DbfRateLimit = 25 Hz.
-  The DBF logic is relatively expensive to execute, since its intersecting/comparing/etc full chains from each peer (which typically contain ~4×Kcp = 8640 blocks).
+- `DbfRateLimit = 25 Hz`.
+  The DBF logic is relatively expensive to execute, since its intersecting/comparing/etc full chains from each peer (which typically contain around `4×Kcp = 8640 blocks`).
   However, the average block tends to take tens of milliseconds to validate.
   Because BlockFetch requestes are both pipelined and batched, it is unnecessary to analyze them every time a block arrives.
   Thus several iterations per second seems sufficient, and benchmarks have shown it leads to neglible overhead.
@@ -738,9 +742,9 @@ Thus this design ignores the past via Lightweight Checkpointing and ignores the 
 If the future does end up changing Scg, for example, that bridge will need to be crossed then.
 For example, perhaps the GDD will need to be aware of the HFC's era transitions and some how accomodate GDD windows that involve more than one era.
 
-Other parameters such as MaxCaughtUpAge and HistoricityCutoff have this same caveat as Sgen.
+Other parameters such as MaxCaughtUpAge and `HistoricityCutoff` have this same caveat as Sgen.
 
-One caveat: MaxCaughtUpAge and HistoricityCutoff are indeed constants in the implementation, but Sgen is actually implemented to vary as the chain transitions eras.
+One caveat: MaxCaughtUpAge and `HistoricityCutoff` are indeed constants in the implementation, but Sgen is actually implemented to vary as the chain transitions eras.
 This is technically more complicated than necessary, superseding this specification, due to the planned use of Lightweight Checkpointing to prevent alternate Byron and Transitional Praos histories.
 The extra flexibility may prove useful on testnets, eg.
 
