@@ -602,10 +602,13 @@ addReprocessLoEBlocks ::
 addReprocessLoEBlocks tracer ChainSelQueue{varChainSelQueue} = do
   varProcessed <- newEmptyTMVarIO
   let waitUntilRan = atomically $ readTMVar varProcessed
-  traceWith tracer $ AddedReprocessLoEBlocksToQueue
-  atomically $
+  traceWith tracer $ AddedReprocessLoEBlocksToQueue RisingEdge
+  queueSize <- atomically $ do
     writeTBQueue varChainSelQueue $
       ChainSelReprocessLoEBlocks varProcessed
+    lengthTBQueue varChainSelQueue
+  traceWith tracer $
+    AddedReprocessLoEBlocksToQueue (FallingEdgeWith (fromIntegral queueSize))
   return $ ChainSelectionPromise waitUntilRan
 
 -- | Get the oldest message from the 'ChainSelQueue' queue. Can block when the
@@ -827,8 +830,8 @@ data TraceAddBlockEvent blk
     -- ChainDB.
     PoppedBlockFromQueue (Enclosing' (RealPoint blk))
   | -- | A message was added to the queue that requests that ChainSel reprocess
-    -- blocks that were postponed by the LoE.
-    AddedReprocessLoEBlocksToQueue
+    -- blocks that were postponed by the LoE. The size of the queue is included.
+    AddedReprocessLoEBlocksToQueue (Enclosing' Word)
   | -- | ChainSel will reprocess blocks that were postponed by the LoE.
     PoppedReprocessLoEBlocksFromQueue
   | -- | A block was added to the Volatile DB
