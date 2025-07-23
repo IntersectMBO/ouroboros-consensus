@@ -753,7 +753,7 @@ The extra flexibility may prove useful on testnets, eg.
 No reasonable amount of offline testing could achieve the stress testing that a feature will endure when first released (as _experimental_).
 The basic recommendation for deployment is therefore a staged approach, where the default remains the Bootstrap Peers but configuration can opt-in to using Genesis instead.
 Staged releases are common practice for new Cardano features, and Genesis is no exception.
-There are a bevy of new flags in the node's `config.yaml` file, most notably the `EnableGenesis` Boolean and the `LowLevelGenesisOptions` tree.
+There are plenty of new flags in the node's `config.yaml` file, most notably the `EnableGenesis` Boolean and the `LowLevelGenesisOptions` tree.
 
 Full node wallets such as Daedalus will also need a means to update their Genesis snapshot config files and to opt-in to Genesis as an experimental feature.
 
@@ -762,7 +762,7 @@ Such a snapshot will need to be somehow regularly produced, certified, and distr
 A stale snapshot is not necessarily useful; the threshold is beyond the scope of the Genesis implementation.
 
 Additionally, the SDET team should be able to catch fundamental regressions via a scenario in which a very slow upstream peer serves a denser chain while a very fast peer serves a less dense alternative chain.
-The denser chain needs to have at least k blocks after the intersection, and the syncing node must select the denser chain in order for the test to pass.
+The denser chain needs to have at least `k` blocks after the intersection, and the syncing node must select the denser chain in order for the test to pass.
 The [`immdb-server`](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/app/immdb-server.hs) tool will be useful.
 
 The Genesis feature is intended to supercede the Bootstrap Peers method.
@@ -774,15 +774,15 @@ Either the logic for using Bootstrap Peers could be retained despite the introdu
 The following additional work on Genesis is suggested, as priorities and resources permit.
 
 - The HAA explicitly excludes disaster scenarios, but it is likely useful to anticipate/explore how the implementation handles disaster scenarios before they happen on mainnet, especially violations of Chain Growth.
-- As mentioned above, the engineers have always assumed Sgen = Scg.
-  Any such coincidence invites accidental conflations, so it will likely be useful to consider/excercise smaller Sgens, such as Sgen = 0.5×Scg.
-  This could result in some specifications and/or implementations being refined to invoke Scg directly instead of indirectly via Sgen, for example.
+- As mentioned above, the engineers have always assumed `Sgen = Scg`.
+  Any such coincidence invites accidental conflations, so it will likely be useful to consider/exercise smaller `Sgens`, such as `Sgen = 0.5×Scg`.
+  This could result in some specifications and/or implementations being refined to invoke `Scg` directly instead of indirectly via `Sgen`, for example.
 - The Parameter Tuning section above characterizes the upper bound of unnecessary delay by assuming that disconnected peers are not replaced.
   For example, if a leashing peer were immediately replaced, it could start with a significant number of LoP tokens and pick up where its predecessor left off.
   A reasonable compromise would be for the Diffusion Layer to only replace peers disconnected with prejudice after a moderate delay, eg 15 minutes.
   If the HAA is indeed satisfied, then an extra delay when replacing peers would not introduced any extra delay to the sync.
 - Refine some names, such as PreObjectors being called dissenting jumpers in the code, the Devoted BlockFetch implementation not including that name, Disengaged peers incorrectly suggesting they're inactive, etc.
-- Tighten the PreObjector MsgFindIntersect timeouts.
+- Tighten the PreObjector `MsgFindIntersect` timeouts.
   The Network team advises that this is not a high priority vector, but it'd still be preferable to simply eliminate it.
 - The LoP and DBF are tuned based on an assumption that modern empty blocks are not particularly concentrated.
   For example, ~4% of the ~650000 most recent blocks were empty as of writing.
@@ -800,19 +800,19 @@ The following additional work on Genesis is suggested, as priorities and resourc
    - Only compute the LoE anchor amongst the Ledger Peers.
    - Do not trigger chain selection when the LoE anchor moved backwards on a chain.
    - When computing the density upper bound in the GDD, we could use probabilistic argument with a sufficiently low failure probability to bound the number of the remaining slots that could be active to a value lower than the pessimistic current estimate that every slot might be active. However, the LoP guarantees that this is not necessary for liveness.
-- Make MinJumpSlots dynamic such that it can vary per era (and in particular be larger in Shelley-based eras).
-- Ideally a peer whose candidate fragment branches off before the ImmDB must not satisfy the HAA.
+- Make `MinJumpSlots` dynamic such that it can vary per era (and in particular be larger in Shelley-based eras).
+- Ideally a peer whose candidate fragment branches off before the ImmutableDB must not satisfy the HAA.
   Therefore, the LoE anchor intersection could exclude that candidate fragment.
   However, we've seen a repro where the honest peer does do that &mdash; we're currently debugging it.
-  In the meantime, simply treating such a peer as having the ImmDB tip as their candidate fragment tip is sound; they were ignorable because they're doomed, so we can instead just wait for them to be disconnected.
+  In the meantime, simply treating such a peer as having the ImmutableDB tip as their candidate fragment tip is sound; they can be ignored because they're doomed, so we can instead just wait for them to be disconnected.
 - Possible improvements to the LoE implementation:
-   - Small-ish optimizations:
-      - We have a special case to avoid fetching the selection's first header from disk, as it was slightly faster (see [here](https://github.com/IntersectMBO/ouroboros-consensus/pull/1118#discussion_r1613855402)). Determine whether that is still the case, and whether we want to keep it, also from a average-case=worst-case perspective.
-      - Perhaps we could maintain a flag that is True only if the LoE has prevented a selection since the last time the LoE advanced; we don't need trigger ChainSel when that flag is False. This would force the adversary to violate Limit on the Age of MsgAwaitReply/MsgRollBack etc in order to let LoE-advancements trigger ChainSel.
+   - Small optimizations:
+      - We have a special case to avoid fetching the selection's first header from disk, as it was slightly faster (see [here](https://github.com/IntersectMBO/ouroboros-consensus/pull/1118#discussion_r1613855402)). Determine whether that is still the case, and whether we want to keep it, also from an [average-case=worst-case](design-goals#predictable-performance) perspective.
+      - Perhaps we could maintain a flag that is `True` only if the LoE has prevented a selection since the last time the LoE advanced; we don't need trigger ChainSel when that flag is `False`. This would force the adversary to violate Limit on the Age of `MsgAwaitReply`/`MsgRollBack` etc to let LoE-advancements trigger ChainSel.
 Related idea: maybe that flag could just track whether the LoE anchor was an extension of the most recent ChainSel result?
    - Long-term optimization: Use a "chain selection datastructure", ie a data structure maintain a rooted tree that allows efficient inserts, advancing the root and queries of the longest chain (subject to the LoE). Also see section 24.10 in the Consensus report.
 - Possible improvements to CSJ:
-   - Skip MsgFindIntersect during jumps if the candidate fragment contains the jump point, or if the chain in the immutable db contains the jump point.
+   - Skip `MsgFindIntersect` during jumps if the candidate fragment contains the jump point, or if the chain in the immutable db contains the jump point.
      It is unclear how much this would optimize exactly though.
      Most of the time, jumpers jump to points that extend their candidate fragments.
      When a dynamo is elected, they might be asked to jump to a point behind the tip of their candidate fragment.
