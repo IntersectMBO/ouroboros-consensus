@@ -3,6 +3,7 @@
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Ouroboros.Consensus.Peras.Weight
   ( PerasWeightSnapshot (..)
@@ -33,13 +34,13 @@ boostedWeightForPoint (PerasWeightSnapshot weightByPoint) pt =
   Map.findWithDefault mempty pt weightByPoint
 
 boostedWeightForFragment ::
-  forall blk.
-  HasHeader blk =>
+  forall blk h.
+  (HasHeader blk, HasHeader h, HeaderHash blk ~ HeaderHash h) =>
   PerasWeightSnapshot blk ->
-  AnchoredFragment blk ->
+  AnchoredFragment h ->
   PerasWeight
 boostedWeightForFragment weightSnap frag =
   -- TODO think about whether this could be done in sublinear complexity
   foldMap
     (boostedWeightForPoint weightSnap)
-    (blockPoint <$> AF.toOldestFirst frag)
+    (castPoint . blockPoint <$> AF.toOldestFirst frag)
