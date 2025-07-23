@@ -797,28 +797,24 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ withRegist
     -- times in case they're part of multiple forks that go through @b@.
     let initCache = Map.singleton (headerHash hdr) hdr
     chainDiffs <-
-      -- 5. Filter out candidates that are not preferred over the current
+      -- 4. Filter out candidates that are not preferred over the current
       -- chain.
       --
       -- The suffixes all fork off from the current chain within @k@
       -- blocks, so it satisfies the precondition of 'preferCandidate'.
       fmap
-        ( filter
+        ( NE.filter
             ( preferAnchoredCandidate (bcfg chainSelEnv) curChain
                 . Diff.getSuffix
             )
         )
-        -- 4. Trim fragments so that they follow the LoE, that is, they extend
+        -- 3. Trim fragments so that they follow the LoE, that is, they extend
         -- the LoE by at most @k@ blocks or are extended by the LoE.
         . fmap (fmap (trimToLoE loeFrag curChainAndLedger))
-        -- 3. Translate the 'HeaderFields' to 'Header' by reading the
+        -- 2. Translate the 'HeaderFields' to 'Header' by reading the
         -- headers from disk.
         . flip evalStateT initCache
         . mapM translateToHeaders
-        -- 2. Filter out candidates that are shorter than the current
-        -- chain. We don't want to needlessly read the headers from disk
-        -- for those candidates.
-        . NE.filter (not . Diff.rollbackExceedsSuffix)
         -- 1. Extend the diff with candidates fitting on @B@
         . Paths.extendWithSuccessors succsOf lookupBlockInfo
         $ diff
