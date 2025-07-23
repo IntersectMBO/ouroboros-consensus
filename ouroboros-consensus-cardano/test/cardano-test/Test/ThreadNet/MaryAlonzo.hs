@@ -52,7 +52,7 @@ import Ouroboros.Consensus.Shelley.Node
   ( ProtocolParamsShelleyBased (..)
   , ShelleyGenesis (..)
   )
-import qualified Test.Cardano.Ledger.Alonzo.Examples.Consensus as SL
+import qualified Test.Cardano.Ledger.Api.Examples.Consensus.Alonzo as SL
 import Test.Consensus.Shelley.MockCrypto (MockCrypto)
 import Test.QuickCheck
 import Test.Tasty

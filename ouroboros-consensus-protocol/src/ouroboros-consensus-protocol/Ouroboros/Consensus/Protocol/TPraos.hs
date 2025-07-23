@@ -16,7 +16,6 @@
 --   schedule determining slots to be produced by BFT
 module Ouroboros.Consensus.Protocol.TPraos
   ( MaxMajorProtVer (..)
-  , PraosChainSelectView (..)
   , TPraos
   , TPraosFields (..)
   , TPraosIsLeader (..)
@@ -307,7 +306,7 @@ instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
   type ChainDepState (TPraos c) = TPraosState
   type IsLeader (TPraos c) = TPraosIsLeader c
   type CanBeLeader (TPraos c) = PraosCanBeLeader c
-  type SelectView (TPraos c) = PraosChainSelectView c
+  type TiebreakerView (TPraos c) = PraosTiebreakerView c
   type LedgerView (TPraos c) = SL.LedgerView
   type ValidationErr (TPraos c) = SL.ChainTransitionError c
   type ValidateView (TPraos c) = TPraosValidateView c

@@ -14,7 +14,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.Protocol
-  ( HardForkSelectView (..)
+  ( HardForkTiebreakerView (..)
 
     -- * Re-exports to keep 'Protocol.State' an internal module
   , HardForkCanBeLeader
@@ -69,41 +69,34 @@ import Ouroboros.Consensus.Util ((.:))
   ChainSelection
 -------------------------------------------------------------------------------}
 
-newtype HardForkSelectView xs = HardForkSelectView
-  { getHardForkSelectView :: WithBlockNo OneEraSelectView xs
+newtype HardForkTiebreakerView xs = HardForkTiebreakerView
+  { getHardForkTiebreakerView :: OneEraTiebreakerView xs
   }
   deriving (Show, Eq)
   deriving newtype NoThunks
 
-instance CanHardFork xs => Ord (HardForkSelectView xs) where
-  compare (HardForkSelectView l) (HardForkSelectView r) =
+instance CanHardFork xs => Ord (HardForkTiebreakerView xs) where
+  compare (HardForkTiebreakerView l) (HardForkTiebreakerView r) =
     acrossEraSelection
       AcrossEraCompare
       (hpure Proxy)
       hardForkChainSel
-      (mapWithBlockNo getOneEraSelectView l)
-      (mapWithBlockNo getOneEraSelectView r)
+      (getOneEraTiebreakerView l)
+      (getOneEraTiebreakerView r)
 
-instance CanHardFork xs => ChainOrder (HardForkSelectView xs) where
-  type ChainOrderConfig (HardForkSelectView xs) = PerEraChainOrderConfig xs
+instance CanHardFork xs => ChainOrder (HardForkTiebreakerView xs) where
+  type ChainOrderConfig (HardForkTiebreakerView xs) = PerEraChainOrderConfig xs
 
   preferCandidate
     (PerEraChainOrderConfig cfg)
-    (HardForkSelectView ours)
-    (HardForkSelectView cand) =
+    (HardForkTiebreakerView ours)
+    (HardForkTiebreakerView cand) =
       acrossEraSelection
         AcrossEraPreferCandidate
         cfg
         hardForkChainSel
-        (mapWithBlockNo getOneEraSelectView ours)
-        (mapWithBlockNo getOneEraSelectView cand)
-
-mkHardForkSelectView ::
-  BlockNo ->
-  NS WrapSelectView xs ->
-  HardForkSelectView xs
-mkHardForkSelectView bno view =
-  HardForkSelectView $ WithBlockNo bno (OneEraSelectView view)
+        (getOneEraTiebreakerView ours)
+        (getOneEraTiebreakerView cand)
 
 {-------------------------------------------------------------------------------
   ConsensusProtocol
@@ -114,7 +107,7 @@ type HardForkChainDepState xs = HardForkState WrapChainDepState xs
 instance CanHardFork xs => ConsensusProtocol (HardForkProtocol xs) where
   type ChainDepState (HardForkProtocol xs) = HardForkChainDepState xs
   type ValidationErr (HardForkProtocol xs) = HardForkValidationErr xs
-  type SelectView (HardForkProtocol xs) = HardForkSelectView xs
+  type TiebreakerView (HardForkProtocol xs) = HardForkTiebreakerView xs
   type LedgerView (HardForkProtocol xs) = HardForkLedgerView xs
   type CanBeLeader (HardForkProtocol xs) = HardForkCanBeLeader xs
   type IsLeader (HardForkProtocol xs) = HardForkIsLeader xs
@@ -147,9 +140,10 @@ instance CanHardFork xs => BlockSupportsProtocol (HardForkBlock xs) where
    where
     cfgs = getPerEraBlockConfig hardForkBlockConfigPerEra
 
-  selectView HardForkBlockConfig{..} hdr =
-    mkHardForkSelectView (blockNo hdr)
-      . hczipWith proxySingle (WrapSelectView .: selectView) cfgs
+  tiebreakerView HardForkBlockConfig{..} hdr =
+    HardForkTiebreakerView
+      . OneEraTiebreakerView
+      . hczipWith proxySingle (WrapTiebreakerView .: tiebreakerView) cfgs
       . getOneEraHeader
       $ getHardForkHeader hdr
    where

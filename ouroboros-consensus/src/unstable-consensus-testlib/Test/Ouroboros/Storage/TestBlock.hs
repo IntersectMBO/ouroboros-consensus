@@ -125,7 +125,6 @@ import qualified Ouroboros.Network.Mock.Chain as Chain
 import System.FS.API.Lazy
 import Test.Cardano.Slotting.Numeric ()
 import Test.Cardano.Slotting.TreeDiff ()
-import Test.Ouroboros.Storage.ChainDB.Model
 import Test.QuickCheck
 import Test.Util.Orphans.Arbitrary ()
 import Test.Util.Orphans.SignableRepresentation ()
@@ -475,24 +474,21 @@ mkNextEBB canContainEBB tb =
   Test infrastructure: protocol
 -------------------------------------------------------------------------------}
 
-data BftWithEBBsSelectView = BftWithEBBsSelectView
-  { bebbBlockNo :: !BlockNo
-  , bebbIsEBB :: !IsEBB
+data BftWithEBBsTiebreakerView = BftWithEBBsTiebreakerView
+  { bebbIsEBB :: !IsEBB
   , bebbChainLength :: !ChainLength
   , bebbHash :: !TestHeaderHash
   }
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
-  deriving ChainOrder via SimpleChainOrder BftWithEBBsSelectView
+  deriving ChainOrder via SimpleChainOrder BftWithEBBsTiebreakerView
 
-instance Ord BftWithEBBsSelectView where
+instance Ord BftWithEBBsTiebreakerView where
   compare
-    (BftWithEBBsSelectView lBlockNo lIsEBB lChainLength lHash)
-    (BftWithEBBsSelectView rBlockNo rIsEBB rChainLength rHash) =
+    (BftWithEBBsTiebreakerView lIsEBB lChainLength lHash)
+    (BftWithEBBsTiebreakerView rIsEBB rChainLength rHash) =
       mconcat
-        [ -- Prefer the highest block number, as it is a proxy for chain length
-          lBlockNo `compare` rBlockNo
-        , -- If the block numbers are the same, check if one of them is an EBB.
+        [ -- If the block numbers are the same, check if one of them is an EBB.
           -- An EBB has the same block number as the block before it, so the
           -- chain ending with an EBB is actually longer than the one ending
           -- with a regular block.
@@ -512,7 +508,7 @@ instance Ord BftWithEBBsSelectView where
 
 type instance
   BlockProtocol TestBlock =
-    ModChainSel (Bft BftMockCrypto) BftWithEBBsSelectView
+    ModChainSel (Bft BftMockCrypto) BftWithEBBsTiebreakerView
 
 {-------------------------------------------------------------------------------
   Test infrastructure: ledger state
@@ -539,10 +535,9 @@ instance BlockSupportsProtocol TestBlock where
     signKey :: SlotNo -> SignKeyDSIGN MockDSIGN
     signKey (SlotNo n) = SignKeyMockDSIGN $ n `mod` numCore
 
-  selectView _ hdr =
-    BftWithEBBsSelectView
-      { bebbBlockNo = blockNo hdr
-      , bebbIsEBB = headerToIsEBB hdr
+  tiebreakerView _ hdr =
+    BftWithEBBsTiebreakerView
+      { bebbIsEBB = headerToIsEBB hdr
       , bebbChainLength = thChainLength (unTestHeader hdr)
       , bebbHash = blockHash hdr
       }
@@ -934,8 +929,6 @@ deriving instance ToExpr TestBlockOtherHeaderEnvelopeError
 deriving instance ToExpr (HeaderEnvelopeError TestBlock)
 deriving instance ToExpr BftValidationErr
 deriving instance ToExpr (ExtValidationError TestBlock)
-
-instance ModelSupportsBlock TestBlock
 
 deriving anyclass instance ToExpr FsPath
 deriving anyclass instance ToExpr BlocksPerFile

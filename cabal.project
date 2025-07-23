@@ -14,7 +14,7 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2025-07-14T12:41:02Z
+  , hackage.haskell.org 2025-07-17T14:32:30Z
   -- Bump this if you need newer packages from CHaP
   , cardano-haskell-packages 2025-07-02T14:54:39Z
 
@@ -54,24 +54,27 @@ if impl (ghc < 9)
 
 if impl (ghc >= 9.12)
   allow-newer:
-    -- Bounds will be relaxed in next release
-    , network-mux:base
-    , ouroboros-network-api:base
-    , ouroboros-network-framework:base
-    , ouroboros-network-protocols:base
-    , ouroboros-network:base
-
     -- https://github.com/kapralVV/Unique/issues/11
     , Unique:hashable
 
-allow-newer: *:QuickCheck,
-allow-newer: quickcheck-lockstep:quickcheck-dynamic
+allow-newer:
+    -- https://github.com/phadej/vec/issues/121
+    , ral:QuickCheck
+    , fin:QuickCheck
+    , bin:QuickCheck
+
+    -- https://github.com/well-typed/quickcheck-lockstep/issues/38
+    , quickcheck-lockstep:QuickCheck
+    , quickckech-lockstep:quickcheck-dynamic
+
+    -- https://github.com/input-output-hk/fs-sim/pull/105
+    , fs-sim:QuickCheck
 
 source-repository-package
    type: git
    location: https://github.com/IntersectMBO/cardano-ledger
-   tag: b44ce911475794a15f908ad27a6f497d6a27e8ba
-   --sha256: sha256-MXaVKKH9siUsmOnJmYyL6if48dx11zugux7AWGPABfA=
+   tag: ca8d451bbce11dde3b68e99782c79f9b4c1dfca5
+   --sha256: sha256-YHIscWnp9GrFn0EYGM7xd8Ds8x0O00FWBAIZX22bWpA=
    subdir:
       eras/allegra/impl
       eras/alonzo/impl
@@ -84,6 +87,7 @@ source-repository-package
       eras/byron/ledger/impl
       eras/conway/impl
       eras/conway/test-suite
+      eras/dijkstra/
       eras/mary/impl
       eras/shelley/impl
       eras/shelley-ma/test-suite
@@ -112,8 +116,18 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/plutus
-  tag: fffd12eb25985eebb84bf5d0cb1e2f6266a36124
-  --sha256: sha256-FA0aYLjoMT/6DTwOZ+zAar5TNO+cA2716DpsUbIFjPM=
+  tag: 5634bfe5c5a55c3a46da07dfd1870ff3e742208c
+  --sha256: sha256-XHPlgoFdBfcjhgWm0M4ijYE1kzrWnP3fz7C2FhCWwLM=
   subdir: plutus-core
           plutus-tx
           plutus-ledger-api
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/ouroboros-network
+  tag: 253316ae1c5ec0eaf79f306eac1986969b7842a4
+  --sha256: sha256-0HZ49kIgCrv/H9I/aUb+wFfRiVuZMrUofJFdgWPG17o=
+  subdir: ouroboros-network-api
+          ouroboros-network
+          ouroboros-network-framework
+          ouroboros-network-protocols

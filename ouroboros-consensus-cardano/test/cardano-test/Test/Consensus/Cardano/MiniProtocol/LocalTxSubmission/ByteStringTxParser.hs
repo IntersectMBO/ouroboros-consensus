@@ -46,6 +46,7 @@ cardanoCodecCfg =
     ShelleyCodecConfig
     ShelleyCodecConfig
     ShelleyCodecConfig
+    ShelleyCodecConfig
 
 deserialiseTx ::
   BL.ByteString ->

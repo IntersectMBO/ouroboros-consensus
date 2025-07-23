@@ -1,11 +1,12 @@
 ledgerState =
-  telescope7<byron.ledgerstate,
+  telescope8<byron.ledgerstate,
              versionedShelleyLedgerState<shelley.ledgerstate>,
              versionedShelleyLedgerState<allegra.ledgerstate>,
              versionedShelleyLedgerState<mary.ledgerstate>,
              versionedShelleyLedgerState<alonzo.ledgerstate>,
              versionedShelleyLedgerState<babbage.ledgerstate>,
-             versionedShelleyLedgerState<conway.ledgerstate>>
+             versionedShelleyLedgerState<conway.ledgerstate>,
+             versionedShelleyLedgerState<dijkstra.ledgerstate>>
 
 versionedShelleyLedgerState<eraSt1> = [ shelleyVersion2, shelleyLedgerState<eraSt1> ]
 
@@ -26,5 +27,6 @@ mary.ledgerstate = any
 alonzo.ledgerstate = any
 babbage.ledgerstate = any
 conway.ledgerstate = any
+dijkstra.ledgerstate = any
 
-;# import telescope7, withOrigin, slotno, blockno, hash, word32 from base
+;# import telescope8, withOrigin, slotno, blockno, hash, word32 from base

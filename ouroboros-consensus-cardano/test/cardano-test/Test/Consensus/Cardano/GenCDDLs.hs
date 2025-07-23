@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ViewPatterns #-}
 
 module Test.Consensus.Cardano.GenCDDLs (withCDDLs) where
@@ -41,7 +42,7 @@ withCDDLs f =
       withResource
         ( do
             probeTools
-            setupCDDLCEnv
+            D.getCurrentDirectory >>= setupCDDLCEnv
 
             ntnBlock <- cddlc "cddl/node-to-node/blockfetch/block.cddl"
             ntnBlock' <- fixupBlockCDDL ntnBlock
@@ -75,6 +76,7 @@ fixupBlockCDDL spec =
     -- For plutus, the type is actually `bytes`, but the distinct construct is
     -- for forcing generation of different values. See cardano-ledger#5054
     sed fp ["-i", "s/\\(conway\\.distinct_VBytes = \\)/\\1 bytes ;\\//g"]
+    sed fp ["-i", "s/\\(dijkstra\\.distinct_VBytes = \\)/\\1 bytes ;\\//g"]
     -- These 3 below are hardcoded for generation. See cardano-ledger#5054
     sed fp ["-i", "s/\\([yaoye]\\.address = \\)/\\1 bytes ;/g"]
     sed fp ["-i", "s/\\(reward_account = \\)/\\1 bytes ;/g"]
@@ -85,12 +87,14 @@ fixupBlockCDDL spec =
       , "s/unit_interval = #6\\.30(\\[\\n\\s*1,\\n\\s*2,\\n\\])/unit_interval = #6.30([uint, uint])/g"
       ]
 
+    -- for convenience, we use this test suite to generate the complete CDDL spec for manual testing.
+    -- while this sed replacement is not used in these tests, it is needed to validate some of the real blocks.
     sed fp ["-i", "s/\\(chain_code: bytes\\)/\\1, ;/g"]
     CDDLSpec <$> BS.readFile fp
 
 -- | This sets the environment variables needed for `cddlc` to run properly.
-setupCDDLCEnv :: IO ()
-setupCDDLCEnv = do
+setupCDDLCEnv :: FilePath -> IO ()
+setupCDDLCEnv tempDirectory = do
   byron <- map takePath <$> Byron.readByronCddlFileNames
   shelley <- map takePath <$> Shelley.readShelleyCddlFileNames
   allegra <- map takePath <$> Allegra.readAllegraCddlFileNames
@@ -98,6 +102,13 @@ setupCDDLCEnv = do
   alonzo <- map takePath <$> Alonzo.readAlonzoCddlFileNames
   babbage <- map takePath <$> Babbage.readBabbageCddlFileNames
   conway <- map takePath <$> Conway.readConwayCddlFileNames
+  dijkstra <- copyConwayAsDijkstra tempDirectory conway
+  -- TODO(geo2a): once Ledger adds Dijkstra CDDLs, use the following
+  --              code instead of the line above and delete
+  --              the copyConwayAsDijkstra function.
+  --              This will also get rid of the spurious dijkstra.cddl
+  --              appearing in ouroboros-consensus-cardano
+  -- dijkstra <- map takePath <$> Dijkstra.readConwayCddlFileNames
 
   localDataDir <- windowsPathHack <$> getDataDir
   let local_paths =
@@ -107,10 +118,18 @@ setupCDDLCEnv = do
       include_path =
         mconcat $
           L.intersperse ":" $
-            map (mconcat . L.intersperse ":") [byron, shelley, allegra, mary, alonzo, babbage, conway]
+            map (mconcat . L.intersperse ":") [byron, shelley, allegra, mary, alonzo, babbage, conway, dijkstra]
               <> local_paths
 
   E.setEnv "CDDL_INCLUDE_PATH" (include_path <> ":")
+ where
+  copyConwayAsDijkstra :: FilePath -> [FilePath] -> IO [FilePath]
+  copyConwayAsDijkstra dijkstraDir =
+    \case
+      [conwayDir] -> do
+        D.copyFile (conwayDir F.</> "conway.cddl") (dijkstraDir F.</> "dijkstra.cddl")
+        pure [dijkstraDir]
+      other -> error $ unwords $ "Invalid Conway CDDL directory path: " : other
 
 -- | Call @sed@ on the given file with the given args
 sed :: FilePath -> [String] -> IO ()
@@ -123,7 +142,7 @@ cddlc :: FilePath -> IO CDDLSpec
 cddlc dataFile = do
   putStrLn $ "Generating: " <> dataFile
   path <- getDataFileName dataFile
-  (_, BSL.toStrict -> cddl, BSL.toStrict -> err) <-
+  (exitCode, BSL.toStrict -> cddl, BSL.toStrict -> err) <-
 #ifdef mingw32_HOST_OS
     -- we cannot call @cddlc@ directly because it is not an executable in
     -- Haskell eyes, but we can call @ruby@ and pass the @cddlc@ script path as
@@ -134,7 +153,10 @@ cddlc dataFile = do
 #else
     P.readProcessWithExitCode "cddlc" ["-u", "-2", "-t", "cddl", path] mempty
 #endif
-  Monad.unless (BS.null err) $ red $ BS8.unpack err
+  case exitCode of
+    ExitSuccess -> pure ()
+    ExitFailure{} ->
+      Monad.unless (BS.null err) $ red $ BS8.unpack err
   return $ CDDLSpec cddl
  where
   red s = putStrLn $ "\ESC[31m" <> s <> "\ESC[0m"

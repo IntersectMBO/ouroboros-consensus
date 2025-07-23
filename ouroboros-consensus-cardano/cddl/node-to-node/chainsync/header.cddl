@@ -1,11 +1,12 @@
 header
- = base.ns7<byronHeader,
+ = base.ns8<byronHeader,
             serialisedShelleyHeader<shelley.header>,
             serialisedShelleyHeader<allegra.header>,
             serialisedShelleyHeader<mary.header>,
             serialisedShelleyHeader<alonzo.header>,
             serialisedShelleyHeader<babbage.header>,
-            serialisedShelleyHeader<conway.header>>
+            serialisedShelleyHeader<conway.header>,
+            serialisedShelleyHeader<dijkstra.header>>
 
 byronHeader = [byronRegularIdx, #6.24(bytes .cbor byron.blockhead)]
             / [byronBoundaryIdx, #6.24(bytes .cbor byron.ebbhead)]
@@ -22,4 +23,5 @@ serialisedShelleyHeader<era> = #6.24(bytes .cbor era)
 ;# include alonzo as alonzo
 ;# include babbage as babbage
 ;# include conway as conway
+;# include dijkstra as dijkstra
 ;# import base as base

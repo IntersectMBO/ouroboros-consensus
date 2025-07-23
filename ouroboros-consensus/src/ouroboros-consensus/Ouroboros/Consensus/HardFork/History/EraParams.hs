@@ -167,7 +167,6 @@ data SafeZone
     -- * Number of slots from the tip of the ledger.
     --   This should be (at least) the number of slots in which we are
     --   guaranteed to have @k@ blocks.
-    -- * Optionally, an 'EpochNo' before which no hard fork can take place.
     StandardSafeZone !Word64
   | -- | Pretend the transition to the next era will not take place.
     --
@@ -219,11 +218,11 @@ instance Serialise SafeZone where
       (1, 1) -> return UnsafeIndefiniteSafeZone
       _ -> fail $ "SafeZone: invalid size and tag " <> show (size, tag)
 
--- | Artificial encoder for backward compatibility, see #2646.
+-- | Artificial encoder for backward compatibility, see ouroboros-network#2646.
 encodeSafeBeforeEpoch :: Encoding
 encodeSafeBeforeEpoch = encodeListLen 1 <> encodeWord8 0
 
--- | Artificial decoder for backward compatibility, see #2646.
+-- | Artificial decoder for backward compatibility, see ouroboros-network#2646.
 decodeSafeBeforeEpoch :: Decoder s ()
 decodeSafeBeforeEpoch = do
   size <- decodeListLen

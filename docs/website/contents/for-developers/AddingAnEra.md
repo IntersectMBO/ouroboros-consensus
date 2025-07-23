@@ -48,31 +48,19 @@ be adding is the Alonzo era, which comes after the Mary era.
   the `cabal.project` file. You will have to add it to some other cabal files
   too, let the compiler tell you which ones.
 
-## `ouroboros-consensus-shelley`
+## `ouroboros-consensus-cardano`
 
 * Define `StandardAlonzo` in `Ouroboros.Consensus.Shelley.Eras` and add any
   missing instances to that module, update the export list appropriately.
 
-* In `Ouroboros.Consensus.Shelley.Node`, define `ProtocolParamsAlonzo` just like
-  the existing ones. In case the era in question needs extra parameters (e.g., a
-  new genesis config?), they can be added here.
-
-## `ouroboros-consensus-shelley-test`
-
-* In `Test.Consensus.Shelley.Examples`, define an `examplesAlonzo` similar to
-  how `examplesMary` is defined. If necessary, i.e., when new type families have
-  been created in the ledger (e.g., `TxOut`), the `examples` function might have
-  to take more arguments. This is where the golden test examples are defined,
-  but only the Shelley ones are tested as part of this test suite. The others
-  are only tested as part of the `ouroboros-consensus-cardano-test` test suite.
-
-## `ouroboros-consensus-cardano`
-
-* In `Ouroboros.Consensus.Cardano.Block`, include `AlonzoEra` in
- `CardanoShelleyEras`. Update all the pattern synonyms in the module with the
-  new era. Don't forget to update the comments, the `COMPLETE` pragmas, and the
+* In `Ouroboros.Consensus.Cardano.Block`, include `AlonzoEra` in `CardanoShelleyEras` and
+  `ShelleyBasedLedgerEras`. Update all the pattern synonyms in the module with the new era.
+  Don't forget to update the comments, the `COMPLETE` pragmas, and the
   export lists. It's easy to forget a case and the compiler will likely not warn
   you, you'll notice it when trying to use the pattern synonyms.
+
+* In `Ouroboros.Consensus.Cardano.Ledger`, add new data constructors to `CardanoTxOut`.
+  Follow the pattern-matching failures to update the use sites.
 
 * In `Ouroboros.Consensus.Cardano.CanHardFork`, update
   `CardanoHardForkConstraints`, add additional translations to the `CanHardFork`
@@ -92,6 +80,39 @@ be adding is the Alonzo era, which comes after the Mary era.
   add the extra arguments needed for `protocolInfoCardano` to the
   `ProtocolCardano` constructor. Update `protocolInfo` accordingly.
 
+* In `Cardano.Node.Types`, add a field for the new era into the `NodeHardForkProtocolConfiguration` record.
+
+### CDDLs
+
+The various entities, such as block headers, block bodies, transactions, etc. need to be serialised for on-disk storage and over-the-wire transmission. Adding an era changes the serialised representation, and thus the CDDL specs need to change as well.
+
+* In `Test.Consensus.Cardano.GenCDDLs`, modify the `setupCDDLCEnv` function to bring the new era's CDDL in scope from Ledger. It could be the case that the new era is empty for now, and Ledger does not yet provide a CDDL. In this case, the new era's CDDL should be a copy of the previous era's one.
+* In `Test.Consensus.Cardano.GenCDDLs`, possibly modify the `fixupBlockCDDL` function, adding a new `sed` replacement. These calls to `sed` are intended to be a temporary hack to fix-up the Ledger-provided CDDLs and will hopefully be removed soon.
+* In `ouroboros-consensus-cardano/cddl/disk`, update the on-disk representation.
+* In `ouroboros-consensus-cardano/cddl/node-to-node`, update the over-the-wire representation.
+
+For feedback, run the CDDL tests:
+
+```sh
+cabal test cardano-test --test-options '-p "CDDL"'
+```
+
+These test serialise blocks, headers, transactions and transactions IDs into CDOR, and then validate the resulting binary blobs against the CDDL specs.
+
+Failing golden tests will produce several files in the `ouroboros-consensus-cardano/failing_cddl_tests` directory, for example:
+
+| Filename                                      | Description                                                       |
+|:----------------------------------------------|:------------------------------------------------------------------|
+| serialisedCardanoBlock_failing.cbor           | The binary CBOR term that failed the test                         |
+| serialisedCardanoBlock_failing.cddl           | The complete CDDL spec that was used to validate the above term   |
+| call_cuddle_serialisedCardanoBlock_failing.sh | The call to the `cuddle` tool to reproduce the validation failure |
+
+Assuming the `cuddle` and `pretty-simple` executable are available, the `cuddle` failure could be pretty-printed as follows:
+
+```sh
+bash ouroboros-consensus-cardano/failing_cddl_tests/call_cuddle_serialisedCardanoBlock_failing.sh 2>&1 | pretty-simple
+```
+
 ### `test`
 
 * In `Test.Consensus.Cardano.Serialisation`, update `testCodecCfg` and
@@ -107,15 +128,23 @@ be adding is the Alonzo era, which comes after the Mary era.
 
 * Run the golden tests
   (`cabal run ouroboros-consensus-cardano:cardano-test -- -p /Golden/`).
-  Golden test results should have been created for the new Cardano versions. 
+  Golden test results should have been created for the new Cardano versions.
   Don't forget to commit those files, otherwise they will be recreated on each
-  run in CI and not compared against the previous results, rendering them 
-  useless.  
+  run in CI and not compared against the previous results, rendering them
+  useless.
 
 * Extend `Test.ThreadNet.Cardano` with the new era.
 
+#### `unstable-shelley-testlib`
 
-### `unstable-cardano-testlib`
+* In `Test.Consensus.Shelley.Examples`, define an `examplesAlonzo` similar to
+  how `examplesMary` is defined. If necessary, i.e., when new type families have
+  been created in the ledger (e.g., `TxOut`), the `examples` function might have
+  to take more arguments. This is where the golden test examples are defined,
+  but only the Shelley ones are tested as part of this test suite. The others
+  are only tested as part of the `ouroboros-consensus-cardano-test` test suite.
+
+#### `unstable-cardano-testlib`
 
 * In `Test.Consensus.Cardano.Generators`, update `arbitraryNodeToNode`,
   `arbitraryNodeToClient`. Try to understand the logic of these two, you will

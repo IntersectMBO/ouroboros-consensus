@@ -39,15 +39,12 @@ import Cardano.Ledger.Shelley.UTxO (UTxO (..))
 import Cardano.Slotting.EpochInfo (fixedEpochInfo)
 import Cardano.Slotting.Slot (EpochNo (..))
 import qualified Data.Map.Strict as Map
-import Data.SOP.BasicFunctors
-import Data.SOP.Functors
 import Data.SOP.InPairs (RequiringBoth (..), provideBoth)
 import Ouroboros.Consensus.BlockchainTime.WallClock.Types
   ( slotLengthFromSec
   )
 import Ouroboros.Consensus.Byron.Ledger (ByronBlock, byronLedgerState)
 import Ouroboros.Consensus.Cardano.Block (CardanoEras)
-import Ouroboros.Consensus.Cardano.CanHardFork
 import Ouroboros.Consensus.Cardano.CanHardFork ()
 import Ouroboros.Consensus.HardFork.Combinator
   ( InPairs (..)
@@ -55,7 +52,7 @@ import Ouroboros.Consensus.HardFork.Combinator
   , translateLedgerState
   )
 import Ouroboros.Consensus.HardFork.Combinator.State.Types
-  ( TranslateLedgerState (TranslateLedgerState, translateLedgerStateWith)
+  ( TranslateLedgerState (..)
   )
 import Ouroboros.Consensus.Ledger.Basics
   ( LedgerCfg
@@ -65,7 +62,6 @@ import Ouroboros.Consensus.Ledger.Basics
 import Ouroboros.Consensus.Ledger.Tables hiding (TxIn)
 import Ouroboros.Consensus.Ledger.Tables.Diff (Diff)
 import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
-import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Protocol.Praos
 import Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import Ouroboros.Consensus.Shelley.Eras
@@ -80,9 +76,10 @@ import Ouroboros.Consensus.Shelley.Ledger
 import Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import Ouroboros.Consensus.TypeFamilyWrappers
 import Test.Cardano.Ledger.Alonzo.Serialisation.Generators ()
+import Test.Cardano.Ledger.Api.Examples.Consensus.Shelley
 import Test.Cardano.Ledger.Babbage.Serialisation.Generators ()
 import Test.Cardano.Ledger.Conway.Arbitrary ()
-import Test.Cardano.Ledger.Shelley.Examples.Consensus
+import Test.Cardano.Ledger.Dijkstra.Arbitrary ()
 import Test.Consensus.Byron.Generators
   ( genByronLedgerConfig
   , genByronLedgerState
@@ -141,6 +138,11 @@ tests =
         babbageToConwayLedgerStateTranslation
         utxoTablesAreEmpty
         (\st -> cover 50 (nonEmptyUtxosShelley st) "UTxO set is not empty")
+    , testTablesTranslation
+        "Conway to Dijkstra"
+        conwayToDijkstraLedgerStateTranslation
+        utxoTablesAreEmpty
+        (\st -> cover 50 (nonEmptyUtxosShelley st) "UTxO set is not empty")
     ]
 
 {-------------------------------------------------------------------------------
@@ -179,6 +181,18 @@ alonzoToBabbageLedgerStateTranslation ::
     TranslateLedgerState
     (ShelleyBlock (TPraos Crypto) AlonzoEra)
     (ShelleyBlock (Praos Crypto) BabbageEra)
+babbageToConwayLedgerStateTranslation ::
+  RequiringBoth
+    WrapLedgerConfig
+    TranslateLedgerState
+    (ShelleyBlock (Praos Crypto) BabbageEra)
+    (ShelleyBlock (Praos Crypto) ConwayEra)
+conwayToDijkstraLedgerStateTranslation ::
+  RequiringBoth
+    WrapLedgerConfig
+    TranslateLedgerState
+    (ShelleyBlock (Praos Crypto) ConwayEra)
+    (ShelleyBlock (Praos Crypto) DijkstraEra)
 PCons
   byronToShelleyLedgerStateTranslation
   ( PCons
@@ -190,8 +204,11 @@ PCons
               ( PCons
                   alonzoToBabbageLedgerStateTranslation
                   ( PCons
-                      _
-                      PNil
+                      babbageToConwayLedgerStateTranslation
+                      ( PCons
+                          conwayToDijkstraLedgerStateTranslation
+                          PNil
+                        )
                     )
                 )
             )
@@ -203,35 +220,6 @@ PCons
         (RequiringBoth WrapLedgerConfig TranslateLedgerState)
         (CardanoEras Crypto)
     tls = translateLedgerState hardForkEraTranslation
-
-babbageToConwayLedgerStateTranslation ::
-  RequiringBoth
-    WrapLedgerConfig
-    TranslateLedgerState
-    (ShelleyBlock (Praos Crypto) BabbageEra)
-    (ShelleyBlock (Praos Crypto) ConwayEra)
-babbageToConwayLedgerStateTranslation = translateLedgerStateBabbageToConwayWrapper
-
--- | Tech debt: The babbage to conway translation performs a tick, and we would
--- need to create a reasonable ledger state. Instead this is just a copy-paste
--- of the code without the tick.
---
--- This should be fixed once the real translation is fixed.
-translateLedgerStateBabbageToConwayWrapper ::
-  RequiringBoth
-    WrapLedgerConfig
-    TranslateLedgerState
-    (ShelleyBlock (Praos Crypto) BabbageEra)
-    (ShelleyBlock (Praos Crypto) ConwayEra)
-translateLedgerStateBabbageToConwayWrapper =
-  RequireBoth $ \_ cfgConway ->
-    TranslateLedgerState $ \_ ->
-      noNewTickingDiffs
-        . unFlip
-        . unComp
-        . Core.translateEra' (getConwayTranslationContext cfgConway)
-        . Comp
-        . Flip
 
 -- | Check that the tables are correctly translated from one era to the next.
 testTablesTranslation ::
@@ -439,6 +427,20 @@ instance
   arbitrary =
     TestSetup
       <$> (pure $ fixedShelleyLedgerConfig Genesis.NoGenesis)
+      <*> (fixedShelleyLedgerConfig <$> arbitrary)
+      <*> arbitrary
+      <*> (EpochNo <$> arbitrary)
+
+instance
+  Arbitrary
+    ( TestSetup
+        (ShelleyBlock (Praos Crypto) ConwayEra)
+        (ShelleyBlock (Praos Crypto) DijkstraEra)
+    )
+  where
+  arbitrary =
+    TestSetup
+      <$> (fixedShelleyLedgerConfig <$> arbitrary)
       <*> (fixedShelleyLedgerConfig <$> arbitrary)
       <*> arbitrary
       <*> (EpochNo <$> arbitrary)

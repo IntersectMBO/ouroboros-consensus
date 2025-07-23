@@ -117,7 +117,7 @@ instance
   BlockSupportsProtocol (SimplePBftBlock c PBftMockCrypto)
   where
   validateView _ = pbftValidateRegular () (simplePBftExt . simpleHeaderExt)
-  selectView _ = mkPBftSelectView
+  tiebreakerView _ = mkPBftTiebreakerView
 
 -- | The ledger view is constant for the mock instantiation of PBFT
 -- (mock blocks cannot change delegation)
