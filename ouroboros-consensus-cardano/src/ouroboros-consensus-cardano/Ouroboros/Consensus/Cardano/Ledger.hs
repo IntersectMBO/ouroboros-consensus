@@ -213,7 +213,9 @@ instance
     encOne :: forall era. Era era => Proxy era -> Encoding
     encOne _ =
       toPlainEncoding (eraProtVerLow @era) $
-        encodeMap encodeMemPack (eliminateCardanoTxOut (const encodeMemPack)) tbs
+        Cardano.Ledger.Binary.Encoding.encodeMapLenIndef
+          <> Map.foldMapWithKey (\k v -> encodeMemPack k <> eliminateCardanoTxOut (const encodeMemPack) v) tbs
+          <> Cardano.Ledger.Binary.Encoding.encodeBreak
 
   decodeTablesWithHint ::
     forall s.
