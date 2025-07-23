@@ -101,8 +101,8 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/plutus
-  tag: fffd12eb25985eebb84bf5d0cb1e2f6266a36124
-  --sha256: sha256-FA0aYLjoMT/6DTwOZ+zAar5TNO+cA2716DpsUbIFjPM=
+  tag: 5634bfe5c5a55c3a46da07dfd1870ff3e742208c
+  --sha256: sha256-XHPlgoFdBfcjhgWm0M4ijYE1kzrWnP3fz7C2FhCWwLM=
   subdir: plutus-core
           plutus-tx
           plutus-ledger-api
