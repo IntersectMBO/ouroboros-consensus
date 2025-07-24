@@ -571,9 +571,15 @@ chainSelection cfg m =
       . selectChain
         (Proxy @(BlockProtocol blk))
         (projectChainOrderConfig (configBlock cfg))
-        (selectView (configBlock cfg) . getHeader)
+        ( weightedSelectView (configBlock cfg) weights
+            . Chain.toAnchoredFragment
+            . fmap getHeader
+        )
         (currentChain m)
       $ consideredCandidates
+   where
+    -- TODO enrich with Peras weights/certs
+    weights = emptyPerasWeightSnapshot
 
   -- We update the set of valid blocks with all valid blocks on all candidate
   -- chains that are considered by the modeled chain selection. This ensures
@@ -1151,10 +1157,16 @@ wipeVolatileDB cfg m =
       $ selectChain
         (Proxy @(BlockProtocol blk))
         (projectChainOrderConfig (configBlock cfg))
-        (selectView (configBlock cfg) . getHeader)
+        ( weightedSelectView (configBlock cfg) weights
+            . Chain.toAnchoredFragment
+            . fmap getHeader
+        )
         Chain.genesis
       $ snd
       $ validChains cfg m (immutableDbBlocks m)
+   where
+    -- TODO enrich with Peras weights/certs
+    weights = emptyPerasWeightSnapshot
 
   isSameAsImmutableDbChain = \case
     Nothing
