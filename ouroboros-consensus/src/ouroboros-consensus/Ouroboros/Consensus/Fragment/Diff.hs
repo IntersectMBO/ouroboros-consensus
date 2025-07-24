@@ -15,7 +15,6 @@ module Ouroboros.Consensus.Fragment.Diff
     -- * Queries
   , getAnchorPoint
   , getTip
-  , rollbackExceedsSuffix
 
     -- * Constructors
   , diff
@@ -72,13 +71,6 @@ getTip = castPoint . AF.headPoint . getSuffix
 -- | Return the anchor point of the new suffix
 getAnchorPoint :: ChainDiff b -> Point b
 getAnchorPoint = castPoint . AF.anchorPoint . getSuffix
-
--- | Return 'True' iff applying the 'ChainDiff' to a chain @C@ will result in
--- a chain shorter than @C@, i.e., the number of blocks to roll back is
--- greater than the length of the new elements in the suffix to add.
-rollbackExceedsSuffix :: HasHeader b => ChainDiff b -> Bool
-rollbackExceedsSuffix (ChainDiff nbRollback suffix) =
-  nbRollback > fromIntegral (AF.length suffix)
 
 {-------------------------------------------------------------------------------
   Constructors

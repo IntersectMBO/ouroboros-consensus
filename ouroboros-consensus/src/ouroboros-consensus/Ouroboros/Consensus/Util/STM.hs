@@ -1,9 +1,5 @@
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -36,10 +32,12 @@ import Control.Monad (void)
 import Control.Monad.State (StateT (..))
 import Control.ResourceRegistry
 import Data.Void
-import Data.Word (Word64)
-import GHC.Generics (Generic)
 import GHC.Stack
 import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Network.BlockFetch.ConsensusInterface
+  ( Fingerprint (..)
+  , WithFingerprint (..)
+  )
 
 {-------------------------------------------------------------------------------
   Misc
@@ -76,26 +74,10 @@ runWhenJust registry label getMaybeA action =
 blockUntilJust :: MonadSTM m => STM m (Maybe a) -> STM m a
 blockUntilJust getMaybeA = do
   ma <- getMaybeA
-  case ma of
-    Nothing -> retry
-    Just a -> return a
+  maybe retry return ma
 
 blockUntilAllJust :: MonadSTM m => [STM m (Maybe a)] -> STM m [a]
 blockUntilAllJust = mapM blockUntilJust
-
--- | Simple type that can be used to indicate something in a @TVar@ is
--- changed.
-newtype Fingerprint = Fingerprint Word64
-  deriving stock (Show, Eq, Generic)
-  deriving newtype Enum
-  deriving anyclass NoThunks
-
--- | Store a value together with its fingerprint.
-data WithFingerprint a = WithFingerprint
-  { forgetFingerprint :: !a
-  , getFingerprint :: !Fingerprint
-  }
-  deriving (Show, Eq, Functor, Generic, NoThunks)
 
 {-------------------------------------------------------------------------------
   Simulate monad stacks
@@ -211,7 +193,7 @@ withTMVar ::
   StrictTMVar m a ->
   (a -> m (c, a)) ->
   m c
-withTMVar tv f = withTMVarAnd tv (const $ pure ()) (\a -> const $ f a)
+withTMVar tv f = withTMVarAnd tv (const $ pure ()) (const . f)
 
 -- | Apply @f@ with the content of @tv@ as state, restoring the original value
 -- when an exception occurs. Additionally run a @STM@ action when acquiring the

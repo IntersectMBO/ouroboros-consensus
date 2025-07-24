@@ -179,6 +179,7 @@ import Test.Util.WithEq
 -- | Commands
 data Cmd blk it flr
   = AddBlock blk
+  | AddPerasCert (PerasCert blk)
   | GetCurrentChain
   | GetTipBlock
   | GetTipHeader
@@ -403,8 +404,9 @@ run ::
   Cmd blk (TestIterator m blk) (TestFollower m blk) ->
   m (Success blk (TestIterator m blk) (TestFollower m blk))
 run cfg env@ChainDBEnv{varDB, ..} cmd =
-  readTVarIO varDB >>= \st@ChainDBState{chainDB = ChainDB{..}, internal} -> case cmd of
+  readTVarIO varDB >>= \st@ChainDBState{chainDB = chainDB@ChainDB{..}, internal} -> case cmd of
     AddBlock blk -> Point <$> advanceAndAdd st blk
+    AddPerasCert cert -> Unit <$> addPerasCertSync chainDB cert
     GetCurrentChain -> Chain <$> atomically getCurrentChain
     GetTipBlock -> MbBlock <$> getTipBlock
     GetTipHeader -> MbHeader <$> getTipHeader
@@ -640,6 +642,7 @@ runPure ::
   (Resp blk IteratorId FollowerId, DBModel blk)
 runPure cfg = \case
   AddBlock blk -> ok Point $ update (add blk)
+  AddPerasCert cert -> ok Unit $ ((),) . update (Model.addPerasCert cfg cert)
   GetCurrentChain -> ok Chain $ query (Model.volatileChain k getHeader)
   GetTipBlock -> ok MbBlock $ query Model.tipBlock
   GetTipHeader -> ok MbHeader $ query (fmap getHeader . Model.tipBlock)
@@ -911,6 +914,7 @@ generator loe genBlock m@Model{..} =
   At
     <$> frequency
       [ (30, genAddBlock)
+      , (10, genAddPerasCert)
       , (if empty then 1 else 10, return GetCurrentChain)
       , --    , (if empty then 1 else 10, return GetLedgerDB)
         (if empty then 1 else 10, return GetTipBlock)
@@ -1035,6 +1039,18 @@ generator loe genBlock m@Model{..} =
         else GetBlockComponent pt
 
   genAddBlock = AddBlock <$> genBlock m
+
+  genAddPerasCert = do
+    blk <- genBlock m
+    let pcCertRound = case Model.maxPerasRoundNo dbModel of
+          Nothing -> PerasRoundNo 0
+          Just (PerasRoundNo r) -> PerasRoundNo (r + 1)
+        cert =
+          PerasCert
+            { pcCertRound
+            , pcCertBoostedBlock = blockPoint blk
+            }
+    pure $ AddPerasCert cert
 
   genBounds :: Gen (StreamFrom blk, StreamTo blk)
   genBounds =
@@ -1335,12 +1351,15 @@ deriving instance SOP.Generic (PerasCertDB.TraceEvent blk)
 deriving instance SOP.HasDatatypeInfo (PerasCertDB.TraceEvent blk)
 deriving anyclass instance SOP.Generic (TraceChainSelStarvationEvent blk)
 deriving anyclass instance SOP.HasDatatypeInfo (TraceChainSelStarvationEvent blk)
+deriving anyclass instance SOP.Generic (TraceAddPerasCertEvent blk)
+deriving anyclass instance SOP.HasDatatypeInfo (TraceAddPerasCertEvent blk)
 
 data Tag
   = TagGetIsValidJust
   | TagGetIsValidNothing
   | TagChainSelReprocessChangedSelection
   | TagChainSelReprocessKeptSelection
+  | TagSwitchedToShorterChain
   deriving (Show, Eq)
 
 -- | Predicate on events
@@ -1367,6 +1386,7 @@ tag =
     , tagGetIsValidNothing
     , tagChainSelReprocess TagChainSelReprocessChangedSelection (/=)
     , tagChainSelReprocess TagChainSelReprocessKeptSelection (==)
+    , tagSwitchedToShorterChain
     ]
  where
   tagGetIsValidJust :: EventPred m
@@ -1390,6 +1410,14 @@ tag =
       | (test `on` Model.tipPoint . dbModel) (eventBefore ev) (eventAfter ev) ->
           Left t
     _ -> Right $ tagChainSelReprocess t test
+
+  tagSwitchedToShorterChain :: EventPred m
+  tagSwitchedToShorterChain = C.predicate $ \ev ->
+    if ((>) `on` curChainLength) (eventBefore ev) (eventAfter ev)
+      then Left TagSwitchedToShorterChain
+      else Right tagSwitchedToShorterChain
+   where
+    curChainLength = Chain.length . Model.currentChain . dbModel
 
 -- | Step the model using a 'QSM.Command' (i.e., a command associated with
 -- an explicit set of variables)
@@ -1762,6 +1790,7 @@ traceEventName = \case
   TracePerasCertDbEvent ev -> "PerasCertDB." <> constrName ev
   TraceLastShutdownUnclean -> "LastShutdownUnclean"
   TraceChainSelStarvationEvent ev -> "ChainSelStarvation." <> constrName ev
+  TraceAddPerasCertEvent ev -> "AddPerasCert." <> constrName ev
 
 mkArgs ::
   IOLike m =>
