@@ -10,7 +10,7 @@ module Ouroboros.Consensus.Util.AnchoredFragment
   ( compareAnchoredFragments
   , compareHeadBlockNo
   , cross
-  , forksAtMostKBlocks
+  , forksAtMostKWeight
   , preferAnchoredCandidate
   , stripCommonPrefix
   ) where
@@ -19,7 +19,6 @@ import Data.Foldable (toList)
 import qualified Data.Foldable1 as F1
 import Data.Function (on)
 import qualified Data.List.NonEmpty as NE
-import Data.Word (Word64)
 import GHC.Stack
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Peras.SelectView
@@ -55,20 +54,32 @@ compareHeadBlockNo ::
   Ordering
 compareHeadBlockNo = compare `on` AF.headBlockNo
 
-forksAtMostKBlocks ::
-  HasHeader b =>
-  -- | How many blocks can it fork?
-  Word64 ->
-  -- | Our chain.
+-- | Check that we can switch from @ours@ to @theirs@ by rolling back our chain
+-- by at most @k@ weight.
+--
+-- If @ours@ and @cand@ do not intersect, this returns 'False'. If they do
+-- intersect, then we check that the suffix of @ours@ after the intersection has
+-- total weight at most @k@.
+forksAtMostKWeight ::
+  ( StandardHash blk
+  , HasHeader b
+  , HeaderHash blk ~ HeaderHash b
+  ) =>
+  PerasWeightSnapshot blk ->
+  -- | By how much weight can we roll back our chain at most?
+  PerasWeight ->
+  -- | Our chain @ours@.
   AnchoredFragment b ->
-  -- | Their chain
+  -- | Their chain @theirs@.
   AnchoredFragment b ->
-  -- | Indicates whether their chain forks at most the
-  -- specified number of blocks.
+  -- | Indicates whether their chain forks at most the given the amount of
+  -- weight. Returns 'False' if the two fragments do not intersect.
   Bool
-forksAtMostKBlocks k ours theirs = case ours `AF.intersect` theirs of
-  Nothing -> False
-  Just (_, _, ourSuffix, _) -> fromIntegral (AF.length ourSuffix) <= k
+forksAtMostKWeight weights maxWeight ours theirs =
+  case ours `AF.intersect` theirs of
+    Nothing -> False
+    Just (_, _, ourSuffix, _) ->
+      totalWeightOfFragment weights ourSuffix <= maxWeight
 
 -- | Compare two (potentially empty!) 'AnchoredFragment's.
 --
