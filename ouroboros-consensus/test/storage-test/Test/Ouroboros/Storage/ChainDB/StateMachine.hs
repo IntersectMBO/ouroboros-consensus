@@ -1166,6 +1166,9 @@ precondition Model{..} (At cmd) =
       Stream from to -> isValidIterator from to
       Reopen -> Not $ Boolean (Model.isOpen dbModel)
       WipeVolatileDB -> Boolean $ Model.isOpen dbModel
+      UpdateLoE frag -> Boolean $ Chain.pointOnChain (AF.anchorPoint frag) immChain
+       where
+        immChain = Model.immutableChain (configSecurityParam cfg) dbModel
       _ -> Top
  where
   garbageCollectable :: RealPoint blk -> Logic
