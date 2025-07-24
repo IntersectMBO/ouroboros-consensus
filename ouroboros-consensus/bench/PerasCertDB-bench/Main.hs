@@ -12,12 +12,12 @@
 module Main (main) where
 
 import Data.List (iterate')
-import Data.Map.Strict qualified as Map
 import Numeric.Natural (Natural)
 import Ouroboros.Consensus.Block (PerasWeight (PerasWeight), SlotNo (..))
 import Ouroboros.Consensus.Peras.Weight
-  ( PerasWeightSnapshot (..)
+  ( PerasWeightSnapshot
   , boostedWeightForFragment
+  , mkPerasWeightSnapshot
   )
 import Ouroboros.Network.AnchoredFragment qualified as AF
 import Test.Ouroboros.Storage.TestBlock (TestBlock (..), TestBody (..), TestHeader (..))
@@ -96,7 +96,7 @@ uniformWeightSnapshot fragment =
           . AF.toOldestFirst
           $ fragment
       weights = repeat (boostWeight benchmarkParams)
-   in PerasWeightSnapshot{getPerasWeightSnapshot = Map.fromList $ zip pointsToBoost weights}
+   in mkPerasWeightSnapshot $ pointsToBoost `zip` weights
 
 getEveryN :: Natural -> [(Natural, a)] -> [(Natural, a)]
 getEveryN n = filter (\(i, _) -> (i `mod` n) == 0)
