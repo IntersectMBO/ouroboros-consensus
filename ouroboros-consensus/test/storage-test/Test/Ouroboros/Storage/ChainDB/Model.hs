@@ -113,6 +113,7 @@ import Ouroboros.Consensus.HeaderValidation
 import Ouroboros.Consensus.Ledger.Abstract
 import Ouroboros.Consensus.Ledger.Extended
 import Ouroboros.Consensus.Ledger.SupportsProtocol
+import Ouroboros.Consensus.Peras.SelectView
 import Ouroboros.Consensus.Peras.Weight
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.MockChainSel
@@ -571,9 +572,15 @@ chainSelection cfg m =
       . selectChain
         (Proxy @(BlockProtocol blk))
         (projectChainOrderConfig (configBlock cfg))
-        (selectView (configBlock cfg) . getHeader)
+        ( weightedSelectView (configBlock cfg) weights
+            . Chain.toAnchoredFragment
+            . fmap getHeader
+        )
         (currentChain m)
       $ consideredCandidates
+   where
+    -- TODO enrich with Peras weights/certs
+    weights = emptyPerasWeightSnapshot
 
   -- We update the set of valid blocks with all valid blocks on all candidate
   -- chains that are considered by the modeled chain selection. This ensures
@@ -1151,7 +1158,11 @@ wipeVolatileDB cfg m =
       $ selectChain
         (Proxy @(BlockProtocol blk))
         (projectChainOrderConfig (configBlock cfg))
-        (selectView (configBlock cfg) . getHeader)
+        -- Weight is inconsequential as there is only a single candidate.
+        ( weightedSelectView (configBlock cfg) emptyPerasWeightSnapshot
+            . Chain.toAnchoredFragment
+            . fmap getHeader
+        )
         Chain.genesis
       $ snd
       $ validChains cfg m (immutableDbBlocks m)
