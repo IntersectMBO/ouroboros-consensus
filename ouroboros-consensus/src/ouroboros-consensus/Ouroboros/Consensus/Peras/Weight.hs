@@ -6,11 +6,18 @@
 {-# LANGUAGE TypeOperators #-}
 
 module Ouroboros.Consensus.Peras.Weight
-  ( PerasWeightSnapshot (..)
+  ( -- * 'PerasWeightSnapshot'
+    PerasWeightSnapshot
+  , emptyPerasWeightSnapshot
+  , mkPerasWeightSnapshot
+  , perasWeightSnapshotToList
+  , addToPerasWeightSnapshot
+  , removeFromPerasWeightSnapshot
   , boostedWeightForPoint
   , boostedWeightForFragment
   ) where
 
+import Data.Foldable as Foldable (foldl')
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import GHC.Generics (Generic)
@@ -25,6 +32,44 @@ newtype PerasWeightSnapshot blk = PerasWeightSnapshot
   deriving stock (Show, Eq)
   deriving Generic
   deriving newtype NoThunks
+
+emptyPerasWeightSnapshot :: PerasWeightSnapshot blk
+emptyPerasWeightSnapshot = PerasWeightSnapshot Map.empty
+
+mkPerasWeightSnapshot ::
+  StandardHash blk =>
+  [(Point blk, PerasWeight)] ->
+  PerasWeightSnapshot blk
+mkPerasWeightSnapshot =
+  Foldable.foldl'
+    (\s (pt, weight) -> addToPerasWeightSnapshot pt weight s)
+    emptyPerasWeightSnapshot
+
+perasWeightSnapshotToList :: PerasWeightSnapshot blk -> [(Point blk, PerasWeight)]
+perasWeightSnapshotToList = Map.toList . getPerasWeightSnapshot
+
+addToPerasWeightSnapshot ::
+  StandardHash blk =>
+  Point blk ->
+  PerasWeight ->
+  PerasWeightSnapshot blk ->
+  PerasWeightSnapshot blk
+addToPerasWeightSnapshot pt weight =
+  PerasWeightSnapshot . Map.insertWith (<>) pt weight . getPerasWeightSnapshot
+
+removeFromPerasWeightSnapshot ::
+  StandardHash blk =>
+  Point blk ->
+  PerasWeight ->
+  PerasWeightSnapshot blk ->
+  PerasWeightSnapshot blk
+removeFromPerasWeightSnapshot pt (PerasWeight weight) =
+  PerasWeightSnapshot . Map.update subtractWeight pt . getPerasWeightSnapshot
+ where
+  subtractWeight :: PerasWeight -> Maybe PerasWeight
+  subtractWeight (PerasWeight w)
+    | w > weight = Just $ PerasWeight (w - weight)
+    | otherwise = Nothing
 
 boostedWeightForPoint ::
   forall blk.

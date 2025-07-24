@@ -14,12 +14,14 @@ module Test.Ouroboros.Storage.PerasCertDB.Model
   , garbageCollect
   ) where
 
-import qualified Data.Map as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import GHC.Generics (Generic)
 import Ouroboros.Consensus.Block
-import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot (..))
+import Ouroboros.Consensus.Peras.Weight
+  ( PerasWeightSnapshot
+  , mkPerasWeightSnapshot
+  )
 
 data Model blk = Model
   { certs :: Set (PerasCert blk)
@@ -47,16 +49,9 @@ addCert model@Model{certs} cert =
 getWeightSnapshot ::
   StandardHash blk =>
   Model blk -> PerasWeightSnapshot blk
-getWeightSnapshot Model{certs} = snap
- where
-  snap =
-    PerasWeightSnapshot
-      { getPerasWeightSnapshot =
-          Set.fold
-            (\cert acc -> Map.insertWith (<>) (perasCertBoostedBlock cert) boostPerCert acc)
-            Map.empty
-            certs
-      }
+getWeightSnapshot Model{certs} =
+  mkPerasWeightSnapshot
+    [(perasCertBoostedBlock cert, boostPerCert) | cert <- Set.toList certs]
 
 garbageCollect :: StandardHash blk => SlotNo -> Model blk -> Model blk
 garbageCollect slot model@Model{certs} =

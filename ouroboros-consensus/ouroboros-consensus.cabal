@@ -843,7 +843,6 @@ benchmark PerasCertDB-bench
   other-modules:
   build-depends:
     base,
-    containers,
     ouroboros-consensus,
     ouroboros-network-api,
     tasty-bench,
