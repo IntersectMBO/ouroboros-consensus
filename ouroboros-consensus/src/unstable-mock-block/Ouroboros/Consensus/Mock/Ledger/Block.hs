@@ -437,8 +437,8 @@ instance
     LedgerTables $ KeysMK $ Mock.txIns txs
 
 data instance LedgerState (SimpleBlock c ext) mk = SimpleLedgerState
-  { simpleLedgerState :: MockState (SimpleBlock c ext)
-  , simpleLedgerTables :: LedgerTables (LedgerState (SimpleBlock c ext)) mk
+  { simpleLedgerState :: !(MockState (SimpleBlock c ext))
+  , simpleLedgerTables :: !(LedgerTables (LedgerState (SimpleBlock c ext)) mk)
   }
   deriving stock Generic
 
