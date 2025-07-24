@@ -306,8 +306,16 @@ Blocks cannot be requested until new headers are validated, which cannot happen 
 
 Moreover, due to the now-invalidated invariant, ChainSel is implemented in the context of "the block that just arrived."
 When the LoE advances, such a block might not exist, so the new trigger for ChainSel must emulate its arrival.
-Therefore, whenever the LoE changes, ChainSel is invoked once for each block in the VolatileDB that is an immediate successor to the tip of the ImmutableDB.
-(This approach is identical to reprocessing the ImmutableDB tip itself, but operates only on mutable blocks.)
+Therefore, whenever the LoE anchor changes, we perform chain selection for all blocks that are successors of a point on our current selection, including the anchor, while ignoring blocks that are already in our selection.
+This avoids redundant evaluations and ensures that candidate chain suffixes properly intersect with their anchor. (See [#1598](https://github.com/IntersectMBO/ouroboros-consensus/pull/1598) for more details).
+For example, if our current chain is `A ] B :> C :> D`, we'll perform chain selection on `E`, `G`, and `F`.
+
+```
+A---B---C---D
+ \       \    \
+  \-E     \    \-F
+           \-G---H
+```
 
 This component directly ensures [Sync Safety](#sync-safety), since the HAA ensures that the LoE anchor is on the honest chain.
 It is worth emphasizing that every subsequent component described below is designed for the sake of Sync Liveness and Limited Sync Load &mdash; the LoE alone suffices for Sync Safety.
