@@ -21,8 +21,8 @@ module Ouroboros.Consensus.Storage.PerasCertDB.Impl
   ) where
 
 import Control.Tracer (Tracer, nullTracer, traceWith)
+import Data.Foldable as Foldable (foldl')
 import Data.Kind (Type)
-import qualified Data.Map.Merge.Strict as Map
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import GHC.Generics (Generic)
@@ -165,7 +165,7 @@ implAddCert env cert = do
                   Map.insert roundNo cert pvcsCerts
               , -- Note that the same block might be boosted by multiple points.
                 pvcsWeightByPoint =
-                  Map.insertWith (<>) boostedPt boostPerCert pvcsWeightByPoint
+                  addToPerasWeightSnapshot boostedPt boostPerCert pvcsWeightByPoint
               }
             (succ fp)
         pure AddedPerasCertToDB
@@ -186,7 +186,7 @@ implGetWeightSnapshot ::
   IOLike m =>
   PerasCertDbEnv m blk -> STM m (WithFingerprint (PerasWeightSnapshot blk))
 implGetWeightSnapshot PerasCertDbEnv{pcdbVolatileState} =
-  fmap (PerasWeightSnapshot . pvcsWeightByPoint) <$> readTVar pcdbVolatileState
+  fmap pvcsWeightByPoint <$> readTVar pcdbVolatileState
 
 implGarbageCollect ::
   forall m blk.
@@ -202,33 +202,21 @@ implGarbageCollect PerasCertDbEnv{pcdbVolatileState} slot =
     PerasVolatileCertState
       { pvcsCerts = certsToKeep
       , pvcsWeightByPoint =
-          Map.merge
-            -- Do not touch weight of boosted blocks that we do not subtract any
-            -- weight from.
-            Map.preserveMissing
-            -- Irrelevant, the key set of @weightToRemove@ is a subset of the
-            -- key set of @pvcsWeightByPoint@.
-            Map.dropMissing
-            (Map.zipWithMaybeMatched $ \_pt -> subtractWeight)
+          Foldable.foldl'
+            ( \s cert ->
+                removeFromPerasWeightSnapshot
+                  (perasCertBoostedBlock cert)
+                  boostPerCert
+                  s
+            )
             pvcsWeightByPoint
-            weightToRemove
+            certsToRemove
       }
    where
     (certsToRemove, certsToKeep) =
       Map.partition isTooOld pvcsCerts
     isTooOld cert =
       pointSlot (perasCertBoostedBlock cert) < NotOrigin slot
-    weightToRemove =
-      Map.fromListWith
-        (<>)
-        [ (perasCertBoostedBlock cert, boostPerCert)
-        | cert <- Map.elems certsToRemove
-        ]
-
-  subtractWeight :: PerasWeight -> PerasWeight -> Maybe PerasWeight
-  subtractWeight (PerasWeight w1) (PerasWeight w2)
-    | w1 > w2 = Just $ PerasWeight (w1 - w2)
-    | otherwise = Nothing
 
 {-------------------------------------------------------------------------------
   Implementation-internal types
@@ -239,7 +227,7 @@ implGarbageCollect PerasCertDbEnv{pcdbVolatileState} slot =
 data PerasVolatileCertState blk = PerasVolatileCertState
   { pvcsCerts :: !(Map PerasRoundNo (PerasCert blk))
   -- ^ The boosted blocks by 'RoundNo' of all certificates currently in the db.
-  , pvcsWeightByPoint :: !(Map (Point blk) PerasWeight)
+  , pvcsWeightByPoint :: !(PerasWeightSnapshot blk)
   -- ^ The weight of boosted blocks w.r.t. the certificates currently in the db.
   --
   -- INVARIANT: In sync with 'pvcsCerts'.
@@ -252,7 +240,7 @@ initialPerasVolatileCertState =
   WithFingerprint
     PerasVolatileCertState
       { pvcsCerts = Map.empty
-      , pvcsWeightByPoint = Map.empty
+      , pvcsWeightByPoint = emptyPerasWeightSnapshot
       }
     (Fingerprint 0)
 
