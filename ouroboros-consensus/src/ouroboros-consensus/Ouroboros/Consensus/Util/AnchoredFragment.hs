@@ -10,7 +10,7 @@ module Ouroboros.Consensus.Util.AnchoredFragment
   ( compareAnchoredFragments
   , compareHeadBlockNo
   , cross
-  , forksAtMostKBlocks
+  , forksAtMostKWeight
   , preferAnchoredCandidate
   , stripCommonPrefix
   ) where
@@ -19,7 +19,6 @@ import Data.Foldable (toList)
 import qualified Data.Foldable1 as F1
 import Data.Function (on)
 import qualified Data.List.NonEmpty as NE
-import Data.Word (Word64)
 import GHC.Stack
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Peras.SelectView
@@ -55,20 +54,31 @@ compareHeadBlockNo ::
   Ordering
 compareHeadBlockNo = compare `on` AF.headBlockNo
 
-forksAtMostKBlocks ::
-  HasHeader b =>
-  -- | How many blocks can it fork?
-  Word64 ->
+forksAtMostKWeight ::
+  ( StandardHash blk
+  , HasHeader b
+  , HeaderHash blk ~ HeaderHash b
+  ) =>
+  PerasWeightSnapshot blk ->
+  -- | By how much weight can we roll back our chain at most?
+  PerasWeight ->
   -- | Our chain.
   AnchoredFragment b ->
   -- | Their chain
   AnchoredFragment b ->
   -- | Indicates whether their chain forks at most the
-  -- specified number of blocks.
+  -- given the amount of weight.
   Bool
-forksAtMostKBlocks k ours theirs = case ours `AF.intersect` theirs of
-  Nothing -> False
-  Just (_, _, ourSuffix, _) -> fromIntegral (AF.length ourSuffix) <= k
+forksAtMostKWeight weights maxWeight ours theirs =
+  case ours `AF.intersect` theirs of
+    Nothing -> False
+    Just (_, _, ourSuffix, _) ->
+      anchorWeight <> suffixWeight <= maxWeight
+     where
+      anchorWeight =
+        weightBoostOfPoint weights (castPoint $ AF.anchorPoint ourSuffix)
+      suffixWeight =
+        totalWeightOfFragment weights ourSuffix
 
 -- | Compare two (potentially empty!) 'AnchoredFragment's.
 --

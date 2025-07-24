@@ -22,7 +22,6 @@
 -- chain DB, we always pick the most preferred chain.
 module Test.Ouroboros.Storage.ChainDB.Model.Test (tests) where
 
-import Cardano.Ledger.BaseTypes (unNonZero)
 import GHC.Stack
 import Ouroboros.Consensus.Block
 import Ouroboros.Consensus.Config
@@ -97,13 +96,13 @@ prop_alwaysPickPreferredChain bt p =
 
   curFragment = Chain.toAnchoredFragment (getHeader <$> current)
 
-  SecurityParam k = configSecurityParam singleNodeTestConfig
+  k = configSecurityParam singleNodeTestConfig
 
   bcfg = configBlock singleNodeTestConfig
 
   preferCandidate' candidate =
     AF.preferAnchoredCandidate bcfg weights curFragment candFragment
-      && AF.forksAtMostKBlocks (unNonZero k) curFragment candFragment
+      && AF.forksAtMostKWeight weights (maxRollbackWeight k) curFragment candFragment
    where
     candFragment = Chain.toAnchoredFragment (getHeader <$> candidate)
 

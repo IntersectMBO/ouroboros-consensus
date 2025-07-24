@@ -119,6 +119,12 @@ instance ToExpr FsError where
 
 deriving instance ToExpr a => ToExpr (LoE a)
 
+deriving anyclass instance ToExpr PerasRoundNo
+
+deriving anyclass instance ToExpr PerasWeight
+
+deriving anyclass instance ToExpr (HeaderHash blk) => ToExpr (PerasCert blk)
+
 {-------------------------------------------------------------------------------
   si-timers
 --------------------------------------------------------------------------------}
