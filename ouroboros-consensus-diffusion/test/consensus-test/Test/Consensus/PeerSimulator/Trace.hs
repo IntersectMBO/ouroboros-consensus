@@ -425,7 +425,9 @@ traceChainDBEventTestBlockWith tracer = \case
         trace $ "LoE fragment: " ++ terseHFragment loeFrag0
       ChainSelectionLoEDebug _ LoEDisabled ->
         pure ()
-      AddedReprocessLoEBlocksToQueue ->
+      AddedReprocessLoEBlocksToQueue RisingEdge ->
+        trace $ "Requesting ChainSel run..."
+      AddedReprocessLoEBlocksToQueue FallingEdgeWith{} ->
         trace $ "Requested ChainSel run"
       _ -> pure ()
   ChainDB.TraceChainSelStarvationEvent (ChainDB.ChainSelStarvation RisingEdge) ->

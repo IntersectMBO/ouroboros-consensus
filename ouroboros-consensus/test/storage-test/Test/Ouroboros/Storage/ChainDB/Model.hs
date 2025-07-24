@@ -842,14 +842,7 @@ validate cfg Model{initLedger, invalid} chain =
           ledger
           (invalid <> mkInvalid b e)
       -- Valid block according to the ledger
-      Right ledger'
-        -- But the block has been recorded as an invalid block. It must be
-        -- that it exceeded the clock skew in the past.
-        | Map.member (blockHash b) invalid ->
-            ValidatedChain validPrefix ledger invalid
-        -- This is the good path
-        | otherwise ->
-            go (convertMapKind ledger') (validPrefix :> b) bs'
+      Right ledger' -> go (convertMapKind ledger') (validPrefix :> b) bs'
 
 chains ::
   forall blk.
