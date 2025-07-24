@@ -139,6 +139,8 @@ import Ouroboros.Consensus.Ledger.Tables.Utils
 import Ouroboros.Consensus.Node.NetworkProtocolVersion
 import Ouroboros.Consensus.Node.ProtocolInfo
 import Ouroboros.Consensus.NodeId
+import Ouroboros.Consensus.Peras.SelectView (weightedSelectView)
+import Ouroboros.Consensus.Peras.Weight (PerasWeightSnapshot)
 import Ouroboros.Consensus.Protocol.Abstract
 import Ouroboros.Consensus.Protocol.BFT
 import Ouroboros.Consensus.Protocol.MockChainSel
@@ -859,15 +861,21 @@ treeToBlocks = Tree.flatten . blockTree
 treeToChains :: BlockTree -> [Chain TestBlock]
 treeToChains = map Chain.fromOldestFirst . allPaths . blockTree
 
-treePreferredChain :: BlockTree -> Chain TestBlock
-treePreferredChain =
+treePreferredChain ::
+  PerasWeightSnapshot TestBlock ->
+  BlockTree ->
+  Chain TestBlock
+treePreferredChain weights =
   fromMaybe Genesis
     . selectUnvalidatedChain
       (Proxy @(BlockProtocol TestBlock))
       (() :: ChainOrderConfig (SelectView (BlockProtocol TestBlock)))
-      (\hdr -> SelectView (blockNo hdr) NoTiebreaker)
+      (weightedSelectView bcfg weights . Chain.toAnchoredFragment . fmap getHeader)
       Genesis
     . treeToChains
+ where
+  -- inconsequential for this function
+  bcfg = TestBlockConfig (NumCoreNodes 0)
 
 instance Show BlockTree where
   show (BlockTree t) = Tree.drawTree (fmap show t)
