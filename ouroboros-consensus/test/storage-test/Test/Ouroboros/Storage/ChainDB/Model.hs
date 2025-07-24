@@ -25,6 +25,7 @@ module Test.Ouroboros.Storage.ChainDB.Model
   , addBlock
   , addBlockPromise
   , addBlocks
+  , addPerasCert
   , empty
 
     -- * Queries
@@ -46,6 +47,7 @@ module Test.Ouroboros.Storage.ChainDB.Model
   , isOpen
   , isValid
   , lastK
+  , maxPerasRoundNo
   , tipBlock
   , tipPoint
   , volatileChain
@@ -156,6 +158,7 @@ data Model blk = Model
   -- ^ The VolatileDB
   , immutableDbChain :: Chain blk
   -- ^ The ImmutableDB
+  , perasCerts :: Map PerasRoundNo (PerasCert blk)
   , cps :: CPS.ChainProducerState blk
   , currentLedger :: ExtLedgerState blk EmptyMK
   , initLedger :: ExtLedgerState blk EmptyMK
@@ -408,6 +411,16 @@ getDbChangelog cfg m@Model{..} =
 getLoEFragment :: Model blk -> LoE (AnchoredFragment blk)
 getLoEFragment = loeFragment
 
+perasWeights :: StandardHash blk => Model blk -> PerasWeightSnapshot blk
+perasWeights =
+  mkPerasWeightSnapshot
+    . fmap (\c -> (perasCertBoostedBlock c, boostPerCert))
+    . Map.elems
+    . perasCerts
+
+maxPerasRoundNo :: Model blk -> Maybe PerasRoundNo
+maxPerasRoundNo m = fst <$> Map.lookupMax (perasCerts m)
+
 {-------------------------------------------------------------------------------
   Construction
 -------------------------------------------------------------------------------}
@@ -421,6 +434,7 @@ empty loe initLedger =
   Model
     { volatileDbBlocks = Map.empty
     , immutableDbChain = Chain.Genesis
+    , perasCerts = Map.empty
     , cps = CPS.initChainProducerState Chain.Genesis
     , currentLedger = initLedger
     , initLedger = initLedger
@@ -460,6 +474,22 @@ addBlock cfg blk m
       -- If it's an invalid block we've seen before, ignore it.
       Map.member (blockHash blk) (invalid m)
 
+addPerasCert ::
+  forall blk.
+  (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk)) =>
+  TopLevelConfig blk ->
+  PerasCert blk ->
+  Model blk ->
+  Model blk
+addPerasCert cfg cert m
+  | Map.member certRound (perasCerts m) = m
+  | otherwise =
+      chainSelection
+        cfg
+        m{perasCerts = Map.insert certRound cert (perasCerts m)}
+ where
+  certRound = perasCertRound cert
+
 chainSelection ::
   forall blk.
   ( LedgerTablesAreTrivial (ExtLedgerState blk)
@@ -472,6 +502,7 @@ chainSelection cfg m =
   Model
     { volatileDbBlocks = volatileDbBlocks m
     , immutableDbChain = immutableDbChain m
+    , perasCerts = perasCerts m
     , cps = CPS.switchFork newChain (cps m)
     , currentLedger = newLedger
     , initLedger = initLedger m
@@ -571,15 +602,12 @@ chainSelection cfg m =
       . selectChain
         (Proxy @(BlockProtocol blk))
         (projectChainOrderConfig (configBlock cfg))
-        ( weightedSelectView (configBlock cfg) weights
+        ( weightedSelectView (configBlock cfg) (perasWeights m)
             . Chain.toAnchoredFragment
             . fmap getHeader
         )
         (currentChain m)
       $ consideredCandidates
-   where
-    -- TODO enrich with Peras weights/certs
-    weights = emptyPerasWeightSnapshot
 
   -- We update the set of valid blocks with all valid blocks on all candidate
   -- chains that are considered by the modeled chain selection. This ensures
@@ -909,12 +937,9 @@ validChains cfg m bs =
   sortChains =
     sortBy $
       flip
-        ( Fragment.compareAnchoredFragments (configBlock cfg) weights
+        ( Fragment.compareAnchoredFragments (configBlock cfg) (perasWeights m)
             `on` (Chain.toAnchoredFragment . fmap getHeader)
         )
-   where
-    -- TODO enrich with Peras weights/certs
-    weights = emptyPerasWeightSnapshot
 
   classify ::
     ValidatedChain blk ->
@@ -1088,6 +1113,7 @@ garbageCollect ::
 garbageCollect secParam m@Model{..} =
   m
     { volatileDbBlocks = Map.filter (not . collectable) volatileDbBlocks
+    -- TODO garbage collection Peras certs?
     }
  where
   -- TODO what about iterators that will stream garbage collected blocks?
@@ -1139,6 +1165,14 @@ wipeVolatileDB cfg m =
   m' =
     (closeDB m)
       { volatileDbBlocks = Map.empty
+      , -- TODO: Currently, the SUT has no persistence of Peras certs across
+        -- restarts, but this will change. There are at least two options:
+        --
+        --  * Change this command to mean "wipe volatile state" (including
+        --    volatile certificates)
+        --
+        --  * Add a separate "Wipe volatile certs".
+        perasCerts = Map.empty
       , cps = CPS.switchFork newChain (cps m)
       , currentLedger = newLedger
       , invalid = Map.empty
@@ -1157,16 +1191,13 @@ wipeVolatileDB cfg m =
       $ selectChain
         (Proxy @(BlockProtocol blk))
         (projectChainOrderConfig (configBlock cfg))
-        ( weightedSelectView (configBlock cfg) weights
+        ( weightedSelectView (configBlock cfg) (perasWeights m)
             . Chain.toAnchoredFragment
             . fmap getHeader
         )
         Chain.genesis
       $ snd
       $ validChains cfg m (immutableDbBlocks m)
-   where
-    -- TODO enrich with Peras weights/certs
-    weights = emptyPerasWeightSnapshot
 
   isSameAsImmutableDbChain = \case
     Nothing
